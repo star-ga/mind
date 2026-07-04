@@ -45,6 +45,7 @@ itself byte-identically with zero Rust & zero LLVM in the loop"* (integer/contro
 - [ ] **A7** Replace the determinism-only keystone with a **real independence gate** (assert stage1==stage2==stage3 in CI, fail-closed) — *next*
 - [ ] **A8** Fix stale docs (`README.md:35` still calls deleted `src/native` "normative")
 - [ ] **A-rebless** Re-bless the 3 self-host oracles (native-ELF + mic@1 fixed-point + mic@3-flip) to the driver-bearing image before committing the `main.mind` diff *(standing 3-gate rule)*
+- [ ] **A9 — mic@3 canonicality (NECESSARY, was "B4 non-blocking").** `mic@3` is the canonical anchor: `trace_hash = SHA-256(canonical mic@3 bytes)`. The evidence chain's "same source → same trace_hash" only holds if `mic@3` is **compiler-independent**. The pure-MIND `emit_mic3` currently **diverges from Rust's at offset 0x1d2** on the combined-pruned IR (native-ELF PT_NOTE preimage) — the self-host loop sidestepped it with a self-consistent hash, but the two compilers MUST agree byte-for-byte or a MIND-built and a Rust-built artifact get different trace_hashes. Close: port pure-MIND `emit_mic3(combined-pruned IR)` to byte-identical parity with Rust; gate it. *(Front-end mic@3 parity is the mic@3-flip gate above; this is the combined-pruned path.)*
 
 ## PHASE B — Full-surface front-end / middle-end self-host  ·  3–6 months
 `main.mind` covers only the subset its own source uses. To compile **arbitrary** MIND programs:
