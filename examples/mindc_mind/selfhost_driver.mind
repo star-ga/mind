@@ -1,0 +1,49 @@
+// ===========================================================================
+// SELF-HOST NATIVE DRIVER (Rust-independence #14 — stage1==stage2 loop)
+//
+// A thin bootstrap CLI shim, kept SEPARATE from main.mind (the compiler library)
+// on purpose: it is fed to the native backend only as APPENDED SOURCE, never
+// built via `mindc --emit-shared`. That keeps main.mind byte-identical to HEAD,
+// so the mic@1 fixed-point and mic@3-flip gates are untouched, and there is no
+// collision with mindc's reserved module-level `@main` symbol (main.mind defines
+// no `main`; this file does, only in the combined self-host source).
+//
+// When the native backend compiles the combined buffer [std + main.mind + this],
+// nb_find_main matches this `main` (the unchanged 4-byte "main" path) and lays it
+// as the emitted-ELF entry, so the native ELF is a runnable compiler. That closes
+// the loop: stage0 (Rust `.so`) emits stage1.elf; stage1.elf, run on the same
+// seeded source, emits stage2 byte-identical to itself, with Rust+LLVM out of the
+// stage1->stage2 step.
+//
+// stdin protocol (fd 0):  [8-byte user_lo LE][8-byte src_len LE][src bytes]
+//   src = 21 std/*.mind sources concatenated, then main.mind, then this file;
+//   user_lo = byte length of the std prefix (the reachability-prune seam).
+// The ELF is written to fd 1 (raw __mind_write, no libc). The note hash is the
+// self-computed nb_trace_hash — the loop needs determinism, not Rust-oracle
+// parity (the mic@3-vs-Rust match is a separate, non-blocking track).
+// ===========================================================================
+
+// Read exactly `want` bytes from `fd` into `buf` (a pipe read may return short).
+// Stops early on EOF/error (n <= 0); returns bytes actually read.
+pub fn nb_read_fully(fd: i64, buf: i64, want: i64, got: i64) -> i64 {
+    if got >= want {
+        return got;
+    }
+    let n: i64 = __mind_read(fd, buf + got, want - got, 0 - 1);
+    if n <= 0 {
+        return got;
+    }
+    nb_read_fully(fd, buf, want, got + n)
+}
+
+pub fn main() -> i64 {
+    let hdr: i64 = __mind_alloc(16);
+    let _h: i64 = nb_read_fully(0, hdr, 16, 0);
+    let user_lo: i64 = __mind_load_i64(hdr);
+    let src_len: i64 = __mind_load_i64(hdr + 8);
+    let src: i64 = __mind_alloc(src_len + 16);
+    let _r: i64 = nb_read_fully(0, src, src_len, 0);
+    let es: EmitState = selftest_native_elf_u(src, src_len, user_lo);
+    let _w: i64 = __mind_write(1, string_addr(es.buf), string_len(es.buf), 0 - 1);
+    0
+}

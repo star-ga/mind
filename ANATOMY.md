@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3009 | **Est. tokens:** ~7,238,820
-**Generated:** 2026-07-04 12:22 UTC
+**Files:** 3011 | **Est. tokens:** ~7,240,807
+**Generated:** 2026-07-04 12:32 UTC
 
 ## Token Budget Guide
 
@@ -53,8 +53,9 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 30 | ~70,280 |
+| `examples/mindc_mind/` | 31 | ~72,114 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
+| `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~83 |
 | `examples/native/` | 2 | ~71 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
@@ -63,7 +64,7 @@
 | `.githooks/` | 1 | ~255 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 8 | ~8,905 |
+| `.github/workflows/` | 8 | ~8,975 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~16,548 |
 | `scripts/` | 7 | ~9,074 |
@@ -794,6 +795,7 @@
 - `param_types_smoke.py` (~1273 tok, large)
 - `self_host_body_smoke.py` (~2995 tok, huge)
 - `selfhost_driver.mind` (~623 tok, large) — ===========================================================================
+- `self_host_loop_smoke.py` (~1834 tok, huge)
 - `self_host_mlir_smoke.py` (~1736 tok, huge)
 - `self_host_native_elf_smoke.py` (~8192 tok, huge)
 - `sha256_hash_smoke.py` (~732 tok, large) — # Copyright 2025 STARGA Inc.
@@ -807,6 +809,9 @@
 - `recursion.elf` (~175 tok, small) — ELF> @@@8
 - `struct_field.elf` (~166 tok, small) — ELF> @@@8
 - `value_if.elf` (~147 tok, small) — ELF> @@@8
+### `examples/mindc_mind/testdata/selfhost_loop/`
+
+- `MANIFEST.txt` (~83 tok, small) — # Frozen self-host bootstrap ELF (A6): the driver-bearing native compiler that
 ### `examples/mindc_mind/`
 
 - `unified_dispatch_smoke.py` (~1553 tok, huge)
@@ -880,7 +885,7 @@
 
 - `bench-gate.yml` (~1432 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~222 tok, medium) — name: Cargo Deny
-- `ci.yml` (~4274 tok, huge) — name: CI
+- `ci.yml` (~4344 tok, huge) — name: CI
 - `docs-claims.yml` (~364 tok, medium) — name: Docs Claims
 - `link-check.yml` (~221 tok, medium) — name: Link Check
 - `mindcraft.yml` (~545 tok, large) — name: Mindcraft Check
