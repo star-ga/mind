@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3006 | **Est. tokens:** ~7,234,820
-**Generated:** 2026-07-04 08:42 UTC
+**Files:** 3007 | **Est. tokens:** ~7,236,420
+**Generated:** 2026-07-04 10:55 UTC
 
 ## Token Budget Guide
 
@@ -406,7 +406,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 38 | ~179,983 |
-| `tests/` | 267 | ~448,229 |
+| `tests/` | 268 | ~449,829 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~674 |
@@ -4066,7 +4066,7 @@
 ### `tests/`
 
 - `crypto_vectors_driver.py` (~2653 tok, huge) — # Official-vector driver for std/aes_gcm.mind + std/hkdf.mind (pure-MIND crypto).
-- `diagnostics_parse.rs` (~359 tok, medium) — Copyright 2025 STARGA Inc.
+- `diagnostics_parse.rs` (~810 tok, large) — Copyright 2025 STARGA Inc.
 - `diagnostics.rs` (~688 tok, large) — Copyright 2025 STARGA Inc.
 - `digit_separator_run.rs` (~651 tok, large) — Copyright 2025 STARGA Inc.
 - `dot_enum_variant_run.rs` (~806 tok, large) — Copyright 2025 STARGA Inc.
@@ -4129,6 +4129,7 @@
 - `undefined_operand.mind` (~62 tok, small) — IR verification test: Undefined operand detection
 ### `tests/`
 
+- `issue_201_202_unary_not_const_ctx.rs` (~1149 tok, large) — Copyright 2025 STARGA Inc.
 - `keccak_driver.py` (~1507 tok, huge) — # Official-vector driver for std/keccak.mind (pure-MIND FIPS 202).
 ### `tests/lexical/`
 
