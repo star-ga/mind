@@ -54,7 +54,7 @@ The **native-ELF** path can win both. The **MLIR** path can only ever win axis 1
 
 ---
 
-## PHASE A — Close the scalar self-host loop  ·  **IN PROGRESS**  ·  no deadline; correctness-gated
+## PHASE A — Close the scalar self-host loop  ·  ✅ **COMPLETE** (2026-07-04) — loop closed, gated, bootstrap shipped
 **Unlocks:** *"MIND's compiler self-hosts — compiles itself to a native ELF and reproduces
 itself byte-identically with zero Rust & zero LLVM in the loop"* (integer/control-flow subset).
 *Gate is a runnable stage1==stage2, not a byte-comparison. Land it right, not fast.*
@@ -64,10 +64,10 @@ itself byte-identically with zero Rust & zero LLVM in the loop"* (integer/contro
 - [x] **A3** Compiler's own deterministic self-computed trace-hash used for the loop ✅ *(PT_NOTE `60725af3…`, non-zero, stable across stages)*
 - [x] **A4** First-ever execution of the 1.16 MB image — **ran clean, ZERO runtime bugs** ✅ *(1 GiB arena held, recursion held, short-read loop worked)*
 - [x] **A5** `stage1 == stage2 == stage3` byte-identical (sha256 `5a45f7c5…`, 1,159,233 B) — **independently re-verified by U1**: `./stage1.elf < src > stage2` → `cmp` IDENTICAL; `strace` = only `execve`(self)/`read`/`write`/`exit`; `ldd` = not dynamic ✅✅
-- [ ] **A6** Ship the frozen `stage1.elf` as a real bootstrap binary (repo ships none today)
-- [ ] **A7** Replace the determinism-only keystone with a **real independence gate** (assert stage1==stage2==stage3 in CI, fail-closed) — *next*
-- [ ] **A8** Fix stale docs (`README.md:35` still calls deleted `src/native` "normative")
-- [ ] **A-rebless** Re-bless the 3 self-host oracles (native-ELF + mic@1 fixed-point + mic@3-flip) to the driver-bearing image before committing the `main.mind` diff *(standing 3-gate rule)*
+- [x] **A6** Frozen `stage1.elf` bootstrap shipped (`3b1a060`, testdata/selfhost_loop/) ✅
+- [x] **A7** Fail-closed self-host loop gate (asserts stage1==stage2==stage3; not skippable) wired into CI (`self_host_loop_smoke.py`, `3b1a060`) ✅
+- [x] **A8** README backend claims corrected — self-host landmark + src/native deleted (`c508923`) ✅
+- [x] **A-rebless** NOT NEEDED — the separated-driver design (`selfhost_driver.mind`, fed only as source) left `main.mind` byte-identical to HEAD, so mic@1 + mic@3 gates stayed green with nothing to re-bless ✅
 - [x] **A9 — mic@3 canonicality: CLOSED (2026-07-04), it HOLDS.** Investigation found the pure-MIND `emit_mic3` is **already byte-identical to Rust's** on the combined-pruned IR — proven by direct `cmp` + matching `ir_trace_hash` on all 6 fixtures + main.mind, and gated green by mic@3-flip. Compiler-independence of `trace_hash = SHA-256(canonical mic@3 bytes)` holds exactly. The `0x1d2` "divergence" was a **stale frozen oracle**: the bundled stdlib grew 2 top-level items since capture, so both Rust *and* pure-MIND now emit 5461 B (oracle had 5447 B). Refreshed the 6 oracle PT_NOTEs from the Rust `emit_mic3` reference (`510a988`; test-data only, emitter/codec untouched). No `MIC3_VERSION` bump (no layout moved).
 - [x] **A9b — oracle notes test-time-derived (DONE 2026-07-04, 927f2eb).** The frozen native-ELF oracle re-stales on any `std/*.mind` top-level edit. Derive the 6 oracle PT_NOTEs at test time from the Rust `emit_mic3` reference instead of freezing them, so stdlib drift can't reopen A9. *(mind-compiler / CI lane.)*
 
