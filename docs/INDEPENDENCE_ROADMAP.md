@@ -6,6 +6,29 @@
 > **No fake wins:** every claim in this file is gated on a runnable, byte-verifiable
 > artifact — not a byte-comparison that was never executed.
 
+## The bigger goal: SOTA, not just independent
+Rust-independence is **one** pillar. The north star is a **SOTA compiler — fastest, most
+innovative, AND deterministic**. Independence must never be bought by sacrificing speed:
+- **Determinism + signed evidence chain = the innovative moat** no gcc/clang/rustc has.
+  Bit-identical cross-substrate output with an artifact-embedded, PQC-signed evidence chain
+  is the differentiation, not a side-constraint.
+- **"Fastest" is a hard requirement, not an afterthought.** The native-ELF independence path
+  is currently *unoptimized* (correct but slow); LLVM's `-O3` is what makes the MLIR path fast.
+  So Phase C6 (an optimizing backend in MIND) is not optional — it's how independence and SOTA
+  speed coexist.
+- **Method — autoresearch + alg-inv evolution.** The SOTA-fast, still-deterministic codegen is
+  a *search/invention* problem, and we own the machinery: `autoresearch` (overnight experiment
+  loop) + `alg-inv` (AB-MCTS algorithm invention on MIND kernels). Point them at the
+  performance-critical parts — deterministic reduction schedules (fastest bit-identical fold,
+  task #58), GEMM/int-dot kernel tiling + instruction selection (beat asm, #47), register
+  allocation / scheduling (C6), vectorization — **with fitness = speed GATED by keystone
+  byte-identity + correctness**. Nothing "invented" ships unless it stays bit-identical. This is
+  the genuinely novel edge: *a compiler whose optimizations are discovered by evolutionary search
+  under a hard determinism constraint.* Applicable **per-part** (one kernel/schedule at a time)
+  or, longer-term, to **whole** codegen strategy (pass ordering, lowering choices).
+  INVARIANT: parallel trajectories must preserve deterministic resume + a single deterministic
+  keep/discard decision; U1 net-verifies every invented deliverable (no fake wins).
+
 ## Two axes (do not conflate)
 Independence is **two separate axes**, and a public claim must be honest about both:
 1. **Rust-independence** — is `mindc` itself a pure-MIND program, not Rust?
