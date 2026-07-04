@@ -32,15 +32,22 @@ anchors on), (b) reproduces the `mic@1` IR-text bootstrap fixed point, and (c) e
 of the entire seeded module (21 stdlib modules + main.mind, 1 055 777 B) byte-identically against the Rust
 reference — the native-ELF self-host fixed point is closed. This is the core of Rust-independence.
 
-**Backend architecture:** the NATIVE-ELF backend (`src/native`) is the normative self-host target —
-determinism-by-construction (the native ELF is a pure function of the IR). MLIR-text is a
-downstream-interchange and exotic-chip-reach backend, demoted from the self-host path but not removed.
+**Backend architecture:** the pure-MIND NATIVE-ELF backend (`examples/mindc_mind/main.mind`,
+`nb_write_elf`) emits a static x86-64 ELF directly — zero LLVM — and is the normative
+Rust-independence target. The compiler **self-hosts** on it: run as a native ELF using only
+`read`/`write`/`exit`, a pure-MIND compiler reproduces its own compiler binary byte-identically
+three stages deep, with Rust **and** LLVM out of the loop (integer/control-flow subset; gated by
+`examples/mindc_mind/self_host_loop_smoke.py`). The Rust `src/native` backend it replaced was
+**deleted 2026-07-01** (recoverable in git history). MLIR-text is a downstream-interchange and
+exotic-chip-reach backend — demoted from the self-host path, still load-bearing for float/tensor/GPU.
 "Target any chip" is implemented via a pluggable backend trait plus commercial backends in the private
 `mind-runtime`.
 
-What remains: (1) the 32-byte `ir_trace_hash` PT\_NOTE is still fed from the Rust oracle (a pure-MIND
-SHA-256 is implemented but not yet wired to the pruned-combined mic@3 emit); (2) the Rust `src/native`
-backend is not yet deleted. See [`docs/roadmap.md`](docs/roadmap.md).
+What remains toward full Rust-independence: (1) **mic@3 canonicality** — the pure-MIND `emit_mic3`
+self-computed `trace_hash` still diverges from the Rust `--emit-mic3` oracle on the pruned-combined IR,
+so byte-parity is needed for a compiler-independent anchor; (2) the **full-surface native backend**
+(floats/tensors/GPU) that would let MLIR/LLVM be dropped. See
+[`docs/INDEPENDENCE_ROADMAP.md`](docs/INDEPENDENCE_ROADMAP.md) and [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Open-core vs proprietary runtime
 
