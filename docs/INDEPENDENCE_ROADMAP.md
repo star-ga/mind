@@ -36,14 +36,15 @@ The **native-ELF** path can win both. The **MLIR** path can only ever win axis 1
 itself byte-identically with zero Rust & zero LLVM in the loop"* (integer/control-flow subset).
 *Gate is a runnable stage1==stage2, not a byte-comparison. Land it right, not fast.*
 
-- [ ] **A1** Add a pure-MIND `fn main()` driver to `main.mind` (stdin→compile→stdout-ELF→exit); flips entry from exit-stub to real compiler *(blocker B1)*
-- [ ] **A2** Stdin seed protocol `[user_lo][21 std/*.mind][main.mind]` — only fd read/write exist, no argv/open *(B2/B3)*
-- [ ] **A3** Use the compiler's own **deterministic** self-computed trace-hash for the loop *(B4 — loop needs determinism, not Rust-parity)*
-- [ ] **A4** ⚠️ **First-ever execution of the 1.1 MB image**; fix runtime bugs (1 GiB arena under copy-realloc, recursion depth, stdin EOF) — *the schedule risk*
-- [ ] **A5** Prove `stage1-output == stage2` byte-identical (Rust+LLVM out of the stage1→stage2 step)
+- [x] **A1** `nb_main()` driver added to `main.mind` (stdin→compile→stdout-ELF→exit); entry flipped from exit-stub to real compiler ✅ *(named `nb_main`, not `main`, to dodge mindc's `@main` cdylib synthesis)*
+- [x] **A2** Stdin seed protocol `[8B user_lo][8B src_len][21 std/*.mind][main.mind]` via `nb_read_fully` ✅
+- [x] **A3** Compiler's own deterministic self-computed trace-hash used for the loop ✅ *(PT_NOTE `60725af3…`, non-zero, stable across stages)*
+- [x] **A4** First-ever execution of the 1.16 MB image — **ran clean, ZERO runtime bugs** ✅ *(1 GiB arena held, recursion held, short-read loop worked)*
+- [x] **A5** `stage1 == stage2 == stage3` byte-identical (sha256 `5a45f7c5…`, 1,159,233 B) — **independently re-verified by U1**: `./stage1.elf < src > stage2` → `cmp` IDENTICAL; `strace` = only `execve`(self)/`read`/`write`/`exit`; `ldd` = not dynamic ✅✅
 - [ ] **A6** Ship the frozen `stage1.elf` as a real bootstrap binary (repo ships none today)
-- [ ] **A7** Replace the determinism-only keystone with a **real independence gate** (stage1==stage2 in CI)
+- [ ] **A7** Replace the determinism-only keystone with a **real independence gate** (assert stage1==stage2==stage3 in CI, fail-closed) — *next*
 - [ ] **A8** Fix stale docs (`README.md:35` still calls deleted `src/native` "normative")
+- [ ] **A-rebless** Re-bless the 3 self-host oracles (native-ELF + mic@1 fixed-point + mic@3-flip) to the driver-bearing image before committing the `main.mind` diff *(standing 3-gate rule)*
 
 ## PHASE B — Full-surface front-end / middle-end self-host  ·  3–6 months
 `main.mind` covers only the subset its own source uses. To compile **arbitrary** MIND programs:
