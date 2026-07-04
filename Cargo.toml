@@ -32,6 +32,13 @@ flate2 = { version = "1.0", default-features = false, features = ["rust_backend"
 sha2 = { version = "0.10", optional = true }
 dirs = "5"
 pyo3 = { version = "0.22", optional = true, features = ["extension-module"] }
+# Post-quantum ML-DSA (FIPS-204) signing for the evidence chain (RFC 0021 §6).
+# OPTIONAL + off by default so the default compiler build keeps its minimal
+# dependency surface and the determinism/keystone gate never compiles it. This
+# is a vetted, pure-Rust FIPS-204 implementation (integritychain/fips204) — we do
+# NOT reimplement the lattice math. `default-features = false` drops the OS-RNG
+# path: signing is fully deterministic via keygen_from_seed + try_sign_with_seed.
+fips204 = { version = "0.4.6", default-features = false, features = ["ml-dsa-65"], optional = true }
 
 [dev-dependencies]
 criterion = "0.5"
@@ -230,6 +237,13 @@ std-surface = []  # RFC 0005 Phase 0: generic Instr::Call -> MLIR func.call lowe
 # path is untouched.
 std-surface-experimental = ["std-surface"]
 ffi-examples = []
+# Post-quantum evidence-chain signing (RFC 0021 §6). Enables ML-DSA-65 (FIPS-204)
+# and the hybrid ed25519+ML-DSA scheme in `mindc build --emit-evidence` and
+# `mindc verify`. OFF by default: the classical ed25519 layer is always available
+# (hand-rolled, zero deps); ML-DSA pulls the optional `fips204` crate. The
+# determinism/keystone gate builds WITHOUT this feature, so the trace_hash anchor
+# is untouched (signatures are metadata after the MAP sentinel).
+evidence-mldsa = ["fips204"]
 pkg = ["tar", "flate2", "sha2"]
 registry = []
 python-bindings = ["pyo3"]

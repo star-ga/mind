@@ -113,12 +113,18 @@
 //! | 0x26 | Relu |
 //! | 0x27 | ReluGrad |
 
+pub mod ed25519;
 mod emit;
 pub mod evidence;
+pub mod mldsa;
 mod parse;
 
 pub use emit::emit_mic3;
-pub use evidence::{emit_mic3_with_evidence, mic3_evidence_report};
+pub use evidence::{
+    SignatureStatus, SigningKey, VerifiedScheme, emit_mic3_with_evidence,
+    emit_mic3_with_signed_evidence, emit_mic3_with_signed_evidence_scheme, mic3_evidence_report,
+    mic3_signature_status,
+};
 pub use parse::{Mic3Error, parse_mic3};
 // Re-export the evidence vocabulary at the v3 level for convenience.
 pub use crate::ir::compact::v2::{Determinism, EvidenceError, EvidenceReport, TraceHashKind};

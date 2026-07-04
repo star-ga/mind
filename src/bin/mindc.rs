@@ -1334,13 +1334,58 @@ fn emit_evidence_if_requested(cli: &CompileArgs, products: &libmind::pipeline::C
     // propagated through the IR; for now the declaration defaults to Deterministic.
     let determinism = libmind::ir::compact::Determinism::Deterministic;
     let toolchain = env!("CARGO_PKG_VERSION");
-    let bytes = libmind::ir::compact::emit_mic3_with_evidence(
-        &products.ir,
-        substrate,
-        None,
-        determinism,
-        toolchain,
-    );
+
+    // Optional crypto-agile signing (RFC 0021 §6), opt-in via env-supplied seeds
+    // (never a hardcoded key):
+    //   * MIND_EVIDENCE_MLDSA_KEY   → post-quantum ML-DSA-65 (FIPS-204). PREFERRED
+    //                                 for federal PQC compliance (EO 14412 / OMB
+    //                                 M-26-15 / the FAR PQC rule).
+    //   * MIND_EVIDENCE_ED25519_KEY → classical Ed25519 (legacy/interop).
+    //   * BOTH set                  → hybrid (both must verify) — defence-in-depth.
+    // Each seed is 32 bytes as 64 hex chars. No env ⇒ the unsigned path, byte-
+    // identical to the pre-signing encoder (the determinism gate is untouched).
+    use libmind::ir::compact::SigningKey;
+    let ed_seed = read_seed_env(libmind::ir::compact::v3::evidence::ENV_ED25519_SEED);
+    let mldsa_seed = read_seed_env(libmind::ir::compact::v3::evidence::ENV_MLDSA_SEED);
+    let signing_key: Option<SigningKey> = match (ed_seed, mldsa_seed) {
+        (Some(ed), Some(ml)) => Some(SigningKey::Hybrid {
+            ed25519: ed,
+            mldsa65: ml,
+        }),
+        (Some(ed), None) => Some(SigningKey::Ed25519(ed)),
+        (None, Some(ml)) => Some(SigningKey::MlDsa65(ml)),
+        (None, None) => None,
+    };
+    let sig_label = match &signing_key {
+        Some(SigningKey::Hybrid { .. }) => ", hybrid-ed25519-ml-dsa-65-signed",
+        Some(SigningKey::MlDsa65(_)) => ", ml-dsa-65-signed",
+        Some(SigningKey::Ed25519(_)) => ", ed25519-signed",
+        None => "",
+    };
+
+    let bytes = match &signing_key {
+        Some(key) => match libmind::ir::compact::emit_mic3_with_signed_evidence_scheme(
+            &products.ir,
+            substrate,
+            None,
+            determinism,
+            toolchain,
+            key,
+        ) {
+            Ok(b) => b,
+            Err(msg) => {
+                eprintln!("error[emit-evidence]: {msg}");
+                process::exit(1);
+            }
+        },
+        None => libmind::ir::compact::emit_mic3_with_evidence(
+            &products.ir,
+            substrate,
+            None,
+            determinism,
+            toolchain,
+        ),
+    };
     // Built-in self-check (RFC 0016 Phase B verifier-core round-trip): peel the
     // freshly-emitted MAP, recompute the canonical mic@3 `trace_hash` over the
     // parsed IR body, and confirm it matches the stored hash before we hand the
@@ -1364,14 +1409,59 @@ fn emit_evidence_if_requested(cli: &CompileArgs, products: &libmind::pipeline::C
             process::exit(1);
         }
     }
+    // When signing was requested, the self-check must also confirm the signature
+    // verifies — a signing/serialization regression must not ship a bad signature.
+    if signing_key.is_some() {
+        match libmind::ir::compact::mic3_signature_status(&bytes) {
+            Ok(libmind::ir::compact::SignatureStatus::Valid(_)) => {}
+            other => {
+                eprintln!(
+                    "error[emit-evidence]: signature self-check failed — emitted signature \
+                     does not verify ({other:?}) (internal signing bug, not your input)"
+                );
+                process::exit(1);
+            }
+        }
+    }
     if let Err(err) = fs::write(path, &bytes) {
         eprintln!("error[emit-evidence]: failed to write {path}: {err}");
         process::exit(1);
     }
     eprintln!(
-        "Wrote mic@3 evidence artifact: {path} ({} bytes, self-check ok)",
-        bytes.len()
+        "Wrote mic@3 evidence artifact: {path} ({} bytes, self-check ok{sig_label})",
+        bytes.len(),
     );
+}
+
+/// Read a 32-byte seed from a hex env var. `None` if unset; hard-exits on a
+/// set-but-invalid value (fail-closed — never silently fall back to unsigned).
+fn read_seed_env(var: &str) -> Option<[u8; 32]> {
+    match std::env::var(var) {
+        Ok(hex) => match parse_ed25519_seed(hex.trim()) {
+            Ok(seed) => Some(seed),
+            Err(msg) => {
+                eprintln!("error[emit-evidence]: {var} is set but invalid: {msg}");
+                process::exit(1);
+            }
+        },
+        Err(_) => None,
+    }
+}
+
+/// Decode a 64-hex-char string into a 32-byte seed. No `hex` crate dep.
+fn parse_ed25519_seed(s: &str) -> Result<[u8; 32], String> {
+    if s.len() != 64 {
+        return Err(format!(
+            "expected 64 hex chars (32-byte seed), got {}",
+            s.len()
+        ));
+    }
+    let mut out = [0u8; 32];
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16)
+            .map_err(|_| "seed must be lowercase/uppercase hex".to_string())?;
+    }
+    Ok(out)
 }
 
 /// Lowercase hex-encode a byte slice (no `hex` crate dependency).
@@ -1469,6 +1559,31 @@ fn run_verify(artifact: &str, json: bool, require_strict_fp: bool) -> i32 {
         return 1;
     }
 
+    // Crypto-agile signature layer (RFC 0021 §6): checked when present, tolerated
+    // when absent (back-compat). The `signature.scheme` (`alg`) tag selects the
+    // verifier(s) — ed25519 / ml-dsa-65 / hybrid. A present-but-bad signature, an
+    // unknown scheme, or a required-but-uncompiled PQC verifier all fail closed.
+    use libmind::ir::compact::{SignatureStatus, mic3_signature_status};
+    let sig_status = mic3_signature_status(&bytes).unwrap_or(SignatureStatus::Absent);
+    // `sig_label` names the scheme when valid; the failure kind otherwise. The two
+    // pubkey fields carry the keys the signature(s) were checked against.
+    let (sig_label, sig_ed_pubkey, sig_mldsa_pubkey): (String, Option<String>, Option<String>) =
+        match &sig_status {
+            SignatureStatus::Absent => ("absent".to_string(), None, None),
+            SignatureStatus::Valid(v) => (
+                v.scheme.clone(),
+                v.ed25519_pubkey.map(|pk| hex_encode(&pk)),
+                v.mldsa_pubkey.as_deref().map(hex_encode),
+            ),
+            SignatureStatus::Invalid => ("invalid".to_string(), None, None),
+            SignatureStatus::Malformed(_) => ("malformed".to_string(), None, None),
+            SignatureStatus::Unsupported(_) => ("unsupported".to_string(), None, None),
+        };
+    let sig_ok = matches!(
+        sig_status,
+        SignatureStatus::Absent | SignatureStatus::Valid(_)
+    );
+
     match mic3_evidence_report(&bytes) {
         Ok(report) => {
             let determinism = match report.determinism {
@@ -1500,8 +1615,16 @@ fn run_verify(artifact: &str, json: bool, require_strict_fp: bool) -> i32 {
                     Some(r) => format!("\"{}\"", json_escape(r)),
                     None => "null".to_string(),
                 };
+                let sig_ed_pubkey_field = match &sig_ed_pubkey {
+                    Some(pk) => format!("\"{pk}\""),
+                    None => "null".to_string(),
+                };
+                let sig_mldsa_pubkey_field = match &sig_mldsa_pubkey {
+                    Some(pk) => format!("\"{pk}\""),
+                    None => "null".to_string(),
+                };
                 println!(
-                    "{{\"artifact\":\"{}\",\"substrate\":\"{}\",\"determinism\":\"{determinism}\",\"toolchain\":\"{}\",\"parent\":{parent_field},\"trace_hash\":\"{trace_hash}\",\"trace_hash_kind\":\"{trace_hash_kind}\",\"trace_hash_valid\":{},\"fp_mode\":\"{fp_mode}\",\"ssa_valid\":{ssa_valid},\"ssa_reason\":{ssa_reason_field}}}",
+                    "{{\"artifact\":\"{}\",\"substrate\":\"{}\",\"determinism\":\"{determinism}\",\"toolchain\":\"{}\",\"parent\":{parent_field},\"trace_hash\":\"{trace_hash}\",\"trace_hash_kind\":\"{trace_hash_kind}\",\"trace_hash_valid\":{},\"fp_mode\":\"{fp_mode}\",\"ssa_valid\":{ssa_valid},\"ssa_reason\":{ssa_reason_field},\"signature\":\"{sig_label}\",\"signature_ed25519_pubkey\":{sig_ed_pubkey_field},\"signature_mldsa_pubkey\":{sig_mldsa_pubkey_field}}}",
                     json_escape(artifact),
                     json_escape(&report.substrate),
                     json_escape(&report.toolchain),
@@ -1527,6 +1650,13 @@ fn run_verify(artifact: &str, json: bool, require_strict_fp: bool) -> i32 {
                 if let Some(r) = &ssa_reason {
                     println!("ssa_reason:       {r}");
                 }
+                println!("signature:        {sig_label}");
+                if let Some(pk) = &sig_ed_pubkey {
+                    println!("signature_ed25519_pubkey: {pk}");
+                }
+                if let Some(pk) = &sig_mldsa_pubkey {
+                    println!("signature_mldsa_pubkey:   {pk}");
+                }
             }
 
             // SSA is already established valid above (an SSA fault returns 1
@@ -1534,9 +1664,29 @@ fn run_verify(artifact: &str, json: bool, require_strict_fp: bool) -> i32 {
             // ssa_valid and the evidence-chain trace_hash result; it passes only
             // if the trace_hash also holds.
             if report.trace_hash_valid {
+                // Signature layer fails closed: a present-but-bad signature is a
+                // verification failure even though the trace_hash matched (an
+                // attacker who re-hashed a tampered anchor cannot re-sign it).
+                if !sig_ok {
+                    eprintln!(
+                        "error[verify]: signature is {sig_label} — artifact signature does not verify over the trace_hash (fail-closed)"
+                    );
+                    return 1;
+                }
                 if !json {
                     eprintln!("verified: evidence chain is intact (untampered)");
                     eprintln!("verified: IR body is SSA well-formed");
+                    match &sig_status {
+                        SignatureStatus::Valid(v) => {
+                            eprintln!("verified: signature is valid (scheme: {})", v.scheme);
+                        }
+                        SignatureStatus::Absent => {
+                            eprintln!(
+                                "note: artifact carries no signature (unsigned but attested)"
+                            );
+                        }
+                        _ => {}
+                    }
                     if matches!(report.determinism, Determinism::Nondeterministic) {
                         eprintln!(
                             "note: artifact declares a nondeterministic build; trace_hash matches but reproducibility is not asserted"
