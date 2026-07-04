@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3020 | **Est. tokens:** ~7,244,779
-**Generated:** 2026-07-04 13:05 UTC
+**Files:** 3020 | **Est. tokens:** ~7,246,784
+**Generated:** 2026-07-04 19:16 UTC
 
 ## Token Budget Guide
 
@@ -53,7 +53,7 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 39 | ~74,127 |
+| `examples/mindc_mind/` | 39 | ~75,957 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~83 |
 | `examples/native/` | 2 | ~71 |
@@ -407,7 +407,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 38 | ~179,983 |
-| `tests/` | 269 | ~451,088 |
+| `tests/` | 269 | ~451,263 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~674 |
@@ -805,7 +805,7 @@
 - `selfhost_driver.mind` (~623 tok, large) — ===========================================================================
 - `self_host_loop_smoke.py` (~1834 tok, huge)
 - `self_host_mlir_smoke.py` (~1736 tok, huge)
-- `self_host_native_elf_smoke.py` (~8192 tok, huge)
+- `self_host_native_elf_smoke.py` (~10022 tok, huge)
 - `sha256_hash_smoke.py` (~732 tok, large) — # Copyright 2025 STARGA Inc.
 - `struct_fields_smoke.py` (~1076 tok, large)
 - `struct_lit_smoke.py` (~1923 tok, huge)
@@ -4315,7 +4315,7 @@
 - `reap_threshold.rs` (~2047 tok, huge) — Copyright 2025 STARGA Inc.
 - `reductions_grad.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
 - `reductions_preview.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
-- `_ref_mic3_dump.rs` (~1259 tok, large) — Throwaway reference dumper: reconstruct emit_mic3(seeded+pruned combined IR)
+- `_ref_mic3_dump.rs` (~1434 tok, large) — Committed self-host reference generator (A9b): reconstruct
 - `region_phase_ja.rs` (~4228 tok, huge) — Copyright 2025 STARGA Inc.
 - `relu_exec.rs` (~472 tok, medium) — Copyright 2025 STARGA Inc.
 - `relu_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
