@@ -26,6 +26,8 @@ import ctypes
 import hashlib
 import os
 import pathlib
+import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -176,6 +178,100 @@ def oracle_elf(name: str) -> bytes:
                 f"sha256 {got_sha256} (expected {exp_sha256})"
             )
     return data
+
+
+# ---------------------------------------------------------------------------
+# A9b — TEST-TIME-DERIVED PT_NOTE trace-hashes (compiler-independence proof).
+#
+# The 32-byte PT_NOTE that anchors each native ELF is
+# `mini_sha256(emit_mic3(seeded+pruned combined IR))`. Its value is a pure
+# function of the CURRENT std/*.mind content: every time the bundled stdlib
+# grows a top-level item, the lowered IR's id namespace shifts and the note
+# changes — even though the pruned CODE region is unchanged. A FROZEN 32-byte
+# note therefore re-stales on any benign stdlib edit and false-reds the no-feed
+# rung (that is exactly the 0x1d2 "divergence" red herring from A9: a stale
+# frozen oracle note, NOT a real emit_mic3 divergence — the pure-MIND emit is
+# byte-identical to Rust's).
+#
+# Fix: DERIVE the expected note at test time from the Rust `emit_mic3` reference
+# over the SAME current std sources, by running the committed
+# `tests/_ref_mic3_dump.rs` helper. Because both the pure-MIND self-computed note
+# AND this Rust reference note are recomputed from the same live stdlib on every
+# run, a benign std edit reflows into both together (no false red), while a REAL
+# divergence between the pure-MIND emit_mic3 and Rust's flips the SHA-256 note and
+# the compare fails closed (SHA-256 is collision-resistant — one wrong mic@3 byte
+# flips the whole 32-byte note).
+_RUST_REF_TEST = "_ref_mic3_dump"
+_RUST_REF_FEATURES = "std-surface cross-module-imports"
+
+
+def committed_ref_note(name: str) -> bytes | None:
+    """Fallback: the last-regenerated Rust-reference note checked in beside the
+    smoke (examples/mindc_mind/_ref_<name>.note). Used ONLY when the live Rust
+    reference cannot be regenerated (no cargo / explicit skip); labelled loud so
+    a stale cache can never masquerade as a fresh derivation."""
+    p = _HERE / f"_ref_{name}.note"
+    if not p.exists():
+        return None
+    txt = p.read_text().strip()
+    try:
+        b = bytes.fromhex(txt)
+    except ValueError:
+        return None
+    return b if len(b) == 32 else None
+
+
+def derive_rust_ref_notes() -> dict[str, bytes] | None:
+    """Derive the expected PT_NOTE trace-hashes AT TEST TIME from the Rust
+    `emit_mic3` reference, by running the committed `tests/_ref_mic3_dump.rs`
+    helper over the CURRENT std/*.mind sources. Returns {name: 32-byte note}, or
+    None if the reference could not be regenerated (cargo unavailable / build
+    failed / explicitly skipped) — the caller then falls back to the committed
+    _ref_<name>.note cache with a loud label.
+
+    The helper prints one `REF <name>: ... note=<64-hex>` line per fixture (+ main)
+    to stderr; we parse those directly so the derivation is grounded in the fresh
+    cargo run's output, never in a possibly-stale intermediate file."""
+    if os.environ.get("MIND_SELFHOST_SKIP_REF_REGEN"):
+        print("  [ref] MIND_SELFHOST_SKIP_REF_REGEN set — using committed _ref_*.note cache")
+        return None
+    cargo = shutil.which("cargo")
+    if cargo is None:
+        print("  [ref] cargo not on PATH — using committed _ref_*.note cache")
+        return None
+    cmd = [
+        cargo, "test", "--features", _RUST_REF_FEATURES,
+        "--test", _RUST_REF_TEST, "--", "--nocapture",
+    ]
+    print(f"  [ref] deriving Rust emit_mic3 reference notes (cargo test --test {_RUST_REF_TEST}) ...")
+    try:
+        proc = subprocess.run(
+            cmd, cwd=str(_REPO), capture_output=True, text=True, timeout=1800
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        print(f"  [ref] reference generator did not run ({exc}) — using committed cache")
+        return None
+    out = proc.stdout + proc.stderr
+    notes: dict[str, bytes] = {}
+    for m in re.finditer(r"REF (\w+):.*note=([0-9a-f]{64})", out):
+        notes[m.group(1)] = bytes.fromhex(m.group(2))
+    if proc.returncode != 0 or not notes:
+        tail = "\n".join(out.strip().splitlines()[-8:])
+        print(f"  [ref] reference generator failed (rc={proc.returncode}) — using committed cache\n{tail}")
+        return None
+    print(f"  [ref] derived {len(notes)} Rust-reference notes from live std/*.mind")
+    return notes
+
+
+def expected_note(name: str, ref_notes: dict[str, bytes] | None) -> tuple[bytes | None, str]:
+    """Return (expected 32-byte note, provenance label) for fixture `name`,
+    preferring the freshly-derived Rust reference over the committed cache."""
+    if ref_notes and name in ref_notes:
+        return ref_notes[name], "rust-ref (regenerated from live stdlib)"
+    cached = committed_ref_note(name)
+    if cached is not None:
+        return cached, "committed _ref cache (NOT regenerated — may be stale)"
+    return None, "unavailable"
 
 
 # ---------------------------------------------------------------------------
@@ -398,20 +494,25 @@ def seeded_main_rung(lib) -> int:
     return 0
 
 
-def no_feed_seeded_main_rung(lib) -> int:
+def no_feed_seeded_main_rung(lib, ref_notes: dict[str, bytes] | None) -> int:
     """DECISIVE no-feed FULL-SCALE rung (#17 CLOSED): run the NO-HASH native entry
     selftest_native_elf_u(src, len, user_lo) — 3 args, NO hash buffer — over the WHOLE
-    stdlib-seeded main.mind combined buffer, and assert the resulting ELF (INCLUDING its
-    32-byte self-computed PT_NOTE) is byte-identical to the Rust mind-native oracle.
+    stdlib-seeded main.mind combined buffer, and assert the resulting ELF's CODE region
+    is byte-identical to the frozen Rust mind-native oracle while its self-computed
+    32-byte PT_NOTE matches the note DERIVED at test time from the Rust emit_mic3
+    reference (A9b — no frozen note).
 
     This is strictly stronger than the FED `seeded_main_rung` above (which feeds the
     oracle's trace_hash): here NO oracle byte is fed. The PT_NOTE = mini_sha256(
     emit_mic3(seeded+pruned combined IR)) is self-computed entirely in pure MIND
-    (nb_trace_hash -> nb_build_mic3 -> nb_sha256_note). A byte-identical full ELF here
-    proves the pure-MIND front-end reproduces the native artifact for its OWN source with
-    zero Rust assistance — the real, final proof that deleting src/native (#15) is safe.
-    It CANNOT silently pass with a wrong note (SHA-256 is collision-resistant; a single
-    wrong mic@3 byte flips the note) and the entry fails LOUD (empty ELF) on any wall."""
+    (nb_trace_hash -> nb_build_mic3 -> nb_sha256_note). A byte-identical CODE region +
+    a note equal to the independent Rust reference proves the pure-MIND front-end
+    reproduces the native artifact for its OWN source with zero Rust assistance — the
+    real, final proof that deleting src/native (#15) is safe. It CANNOT silently pass
+    with a wrong note (SHA-256 is collision-resistant; a single wrong mic@3 byte flips
+    the note) and the entry fails LOUD (empty ELF) on any wall. The note is DERIVED, not
+    frozen, so a benign std/*.mind top-level edit reflows into both the pure-MIND note
+    and the Rust reference together and can never re-stale this rung."""
     if not (_HERE / "main.mind").exists():
         print("  SKIP  no-feed seeded rung: main.mind not present")
         return 0
@@ -436,20 +537,35 @@ def no_feed_seeded_main_rung(lib) -> int:
             "nb_trace_hash could not self-compute the note for full main.mind"
         )
         return 1
-    if got != oracle:
+    # (1) CODE region vs the frozen (stdlib-content-stable) oracle.
+    if got[:-32] != oracle[:-32]:
         print(
-            f"  FAIL  no-feed seeded main.mind: self-computed ELF diverged from oracle "
-            f"(mind {len(got)} B vs oracle {len(oracle)} B)"
+            f"  FAIL  no-feed seeded main.mind: self-computed ELF CODE region diverged "
+            f"from frozen oracle (mind {len(got)} B vs oracle {len(oracle)} B) — a REAL "
+            f"code change, not a note drift"
         )
-        print(first_diverge(got, oracle))
+        print(first_diverge(got[:-32], oracle[:-32]))
         return 1
-    if got[-32:] != oracle[-32:]:
-        print("  FAIL  no-feed seeded main.mind: ELF matched but note bytes differ?!")
+    # (2) PT_NOTE vs the note DERIVED at test time from the Rust emit_mic3 reference.
+    exp_note, prov = expected_note("main", ref_notes)
+    if exp_note is None:
+        print(
+            "  FAIL  no-feed seeded main.mind: no derived Rust-reference note and no "
+            "committed cache — cannot prove PT_NOTE compiler-independence"
+        )
+        return 1
+    if got[-32:] != exp_note:
+        print(
+            f"  FAIL  no-feed seeded main.mind: self-computed PT_NOTE {got[-32:].hex()[:16]} "
+            f"!= Rust emit_mic3 reference {exp_note.hex()[:16]} [{prov}] — REAL mic@3 "
+            f"divergence (fails closed)"
+        )
         return 1
     print(
-        f"  PASS  no-feed seeded main.mind FULL native ELF BYTE-IDENTICAL "
-        f"({len(oracle)} B incl. SELF-COMPUTED PT_NOTE) — note self-computed, ZERO feeding; "
-        f"full-scale no-feed self-host CLOSED (#17)"
+        f"  PASS  no-feed seeded main.mind: CODE region == frozen oracle "
+        f"({len(oracle) - 32} B) AND self-computed PT_NOTE == derived Rust emit_mic3 "
+        f"reference [{prov}] — note self-computed, ZERO feeding; full-scale no-feed "
+        f"self-host CLOSED (#17)"
     )
     return 0
 
@@ -535,15 +651,20 @@ def sha256_leg_rung(lib) -> int:
     return 0 if all_ok else 1
 
 
-def no_feed_native_rung(lib) -> int:
+def no_feed_native_rung(lib, ref_notes: dict[str, bytes] | None) -> int:
     """Call the NO-HASH native-ELF entry selftest_native_elf(src,len) — 2 args, no
     hash buffer — so there is structurally NO oracle byte fed into the pure-MIND ELF.
-    The note is either self-computed-correct (full ELF incl. the 52-byte PT_NOTE ==
-    oracle) or the entry fails LOUD (empty ELF). It CANNOT silently pass with a wrong
-    note. While nb_trace_hash's pruned-combined mic@3 emitter is the open port item,
-    nb_trace_hash returns 0 -> the entry returns es_new() (empty) -> this rung reports
-    the open gap. Once the mic@3 emit lands, this rung becomes a full self-computed
-    byte-for-byte ELF compare (the note is self-computed, never fed)."""
+    The note is either self-computed-correct or the entry fails LOUD (empty ELF); it
+    CANNOT silently pass with a wrong note.
+
+    A9b split-check (no frozen note): the pure-MIND ELF's CODE region [:-32] is
+    compared against the frozen oracle (stdlib-content-STABLE — a real code change
+    fails here), while its self-computed 32-byte PT_NOTE [-32:] is compared against
+    the note DERIVED at test time from the Rust `emit_mic3` reference over the CURRENT
+    std sources. The frozen oracle's own last 32 bytes are NOT used as the note oracle
+    (they re-stale on benign stdlib growth); the derived note reflows with the stdlib
+    so a benign edit never false-reds, while a real emit_mic3 divergence still flips
+    the SHA-256 and fails closed."""
     # The note = ir_trace_hash(SEEDED+PRUNED combined IR); mind-native seeds the 21
     # bundled stdlib modules internally even for a tiny fixture (verified: the add
     # fixture's ELF note == sha256 of the 5447-byte combined mic@3). So the pure-MIND
@@ -570,29 +691,43 @@ def no_feed_native_rung(lib) -> int:
         )
         sh = rd(es, 0)
         got = ctypes.string_at(rd(sh, 0), rd(sh, 8)) if rd(sh, 8) > 0 else b""
-        if got == oracle:
-            # FULL self-computed ELF (incl. PT_NOTE) == oracle, with zero feeding.
-            if got[-32:] != oracle[-32:]:
-                print(f"  FAIL  no-feed {name}: ELF matched but note bytes differ?!")
-                return 1
-            print(
-                f"  PASS  no-feed {name}: self-computed full ELF == oracle "
-                f"({len(oracle)} B incl. PT_NOTE) — note SELF-COMPUTED, zero feeding"
-            )
-        elif len(got) == 0:
+        if len(got) == 0:
             # Open mic@3-over-pruned port: the entry fails closed (no fake note).
             print(
                 f"  OPEN  no-feed {name}: no-hash entry fails closed (nb_trace_hash "
                 "returns 0 — pruned-combined mic@3 emit not yet ported). Honest gap, "
                 "NOT a fake pass; the sha256 leg is proven separately above."
             )
-        else:
+            continue
+        # (1) CODE region vs the frozen (stdlib-content-stable) oracle.
+        if got[:-32] != oracle[:-32]:
             print(
-                f"  FAIL  no-feed {name}: self-computed ELF diverged from oracle "
-                f"(mind {len(got)} B vs oracle {len(oracle)} B)"
+                f"  FAIL  no-feed {name}: self-computed ELF CODE region diverged from "
+                f"frozen oracle (mind {len(got)} B vs oracle {len(oracle)} B) — a REAL "
+                f"code change, not a note drift"
             )
-            print(first_diverge(got, oracle))
+            print(first_diverge(got[:-32], oracle[:-32]))
             return 1
+        # (2) PT_NOTE vs the note DERIVED at test time from the Rust emit_mic3 reference.
+        exp_note, prov = expected_note(name, ref_notes)
+        if exp_note is None:
+            print(
+                f"  FAIL  no-feed {name}: no derived Rust-reference note available and no "
+                f"committed cache — cannot prove compiler-independence of the PT_NOTE"
+            )
+            return 1
+        if got[-32:] != exp_note:
+            print(
+                f"  FAIL  no-feed {name}: self-computed PT_NOTE {got[-32:].hex()[:16]} != "
+                f"Rust emit_mic3 reference {exp_note.hex()[:16]} [{prov}] — REAL mic@3 "
+                f"divergence (fails closed; SHA-256 flips on any wrong byte)"
+            )
+            return 1
+        print(
+            f"  PASS  no-feed {name}: CODE region == frozen oracle "
+            f"({len(oracle) - 32} B) AND self-computed PT_NOTE == derived Rust emit_mic3 "
+            f"reference [{prov}] — note SELF-COMPUTED, zero feeding"
+        )
     return 0
 
 
@@ -624,6 +759,12 @@ def main() -> int:
     print("[sha256 leg: pure-MIND ir_trace_hash sha256, no oracle feed]")
     if sha256_leg_rung(lib) != 0:
         return 1
+
+    # A9b: derive the expected PT_NOTE trace-hashes at test time from the Rust
+    # emit_mic3 reference over the CURRENT std sources, so the no-feed rungs never
+    # depend on a frozen note that re-stales on benign stdlib growth.
+    print("\n[derive Rust emit_mic3 reference notes (A9b test-time derivation)]")
+    ref_notes = derive_rust_ref_notes()
 
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
@@ -661,7 +802,7 @@ def main() -> int:
         # NO-FEED native rung: the no-hash entry self-computes the note (or fails
         # closed) — structurally no oracle byte fed into the pure-MIND ELF.
         print("\n[no-feed native rung: selftest_native_elf (no hash arg)]")
-        if no_feed_native_rung(lib) != 0:
+        if no_feed_native_rung(lib, ref_notes) != 0:
             return 1
 
         # SEEDED whole-module rung: compile main.mind WITH the bundled stdlib
@@ -673,7 +814,7 @@ def main() -> int:
         # NO-FEED FULL-SCALE rung: same whole-module main.mind, but via the NO-HASH
         # entry so the 32-byte PT_NOTE is SELF-COMPUTED (nb_trace_hash) — zero feeding.
         print("\n[no-feed full-scale rung: main.mind + bundled stdlib, self-computed note]")
-        if no_feed_seeded_main_rung(lib) != 0:
+        if no_feed_seeded_main_rung(lib, ref_notes) != 0:
             return 1
 
     print(
