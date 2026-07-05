@@ -146,6 +146,9 @@ pub fn tk_shl() -> i64 {
 pub fn tk_shr() -> i64 {
     34
 }
+pub fn tk_percent() -> i64 {
+    35
+}
 
 // ===== Byte loads =====
 
@@ -591,6 +594,9 @@ pub fn match_punct(b: i64) -> i64 {
     if b == 94 {
         return tk_caret();
     }
+    if b == 37 {
+        return tk_percent();
+    }
     tk_ident()
 }
 
@@ -829,6 +835,9 @@ pub fn op_shl() -> i64 {
 }
 pub fn op_shr() -> i64 {
     15
+}
+pub fn op_mod() -> i64 {
+    16
 }
 
 // ===== Token-stream accessors =====
@@ -1288,6 +1297,9 @@ pub fn infix_prec(kind: i64) -> i64 {
     if kind == tk_slash() {
         return 8;
     }
+    if kind == tk_percent() {
+        return 8;
+    }
     0
 }
 
@@ -1303,6 +1315,9 @@ pub fn tk_to_op(kind: i64) -> i64 {
     }
     if kind == tk_slash() {
         return op_div();
+    }
+    if kind == tk_percent() {
+        return op_mod();
     }
     if kind == tk_lt() {
         return op_lt();
@@ -12751,6 +12766,12 @@ pub fn binop_to_byte(op_tag: i64) -> i64 {
     }
     if op_tag == op_shr() {
         return 15;
+    }
+    // Mod=0x04 — MIND op-tag order appends mod=16 after the shift ops, but the
+    // Rust BinOp byte order (src/ir/compact/v3/emit.rs) places Mod=0x04 right
+    // after Div=0x03, so map it explicitly (op_tag - 1 would yield 15 = Shr).
+    if op_tag == op_mod() {
+        return 4;
     }
     op_tag - 1
 }
