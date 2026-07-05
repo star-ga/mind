@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3020 | **Est. tokens:** ~7,250,828
-**Generated:** 2026-07-05 14:46 UTC
+**Files:** 3022 | **Est. tokens:** ~7,251,860
+**Generated:** 2026-07-05 15:42 UTC
 
 ## Token Budget Guide
 
@@ -56,7 +56,7 @@
 | `examples/mindc_mind/` | 39 | ~75,957 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~83 |
-| `examples/native/` | 2 | ~71 |
+| `examples/native/` | 4 | ~527 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
 | `examples/zoo/` | 6 | ~12,518 |
@@ -64,7 +64,7 @@
 | `.githooks/` | 1 | ~255 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 8 | ~8,975 |
+| `.github/workflows/` | 8 | ~9,551 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~16,661 |
 | `scripts/` | 7 | ~9,074 |
@@ -830,6 +830,8 @@
 - `mlir_pipeline_demo.sh` (~1647 tok, huge) — MLIR/LLVM Pipeline Demonstration
 ### `examples/native/`
 
+- `ci_kernel.mind` (~39 tok, tiny)
+- `ci_kernel_smoke.py` (~417 tok, medium)
 - `fib.mind` (~34 tok, tiny) — fn fib(n: i64) -> i64 {
 - `loop.mind` (~37 tok, tiny) — fn main() -> i64 {
 ### `examples/parser/`
@@ -893,7 +895,7 @@
 
 - `bench-gate.yml` (~1432 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~222 tok, medium) — name: Cargo Deny
-- `ci.yml` (~4344 tok, huge) — name: CI
+- `ci.yml` (~4920 tok, huge) — name: CI
 - `docs-claims.yml` (~364 tok, medium) — name: Docs Claims
 - `link-check.yml` (~221 tok, medium) — name: Link Check
 - `mindcraft.yml` (~545 tok, large) — name: Mindcraft Check
