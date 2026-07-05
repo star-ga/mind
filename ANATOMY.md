@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3036 | **Est. tokens:** ~7,278,110
-**Generated:** 2026-07-05 19:23 UTC
+**Files:** 3036 | **Est. tokens:** ~7,278,408
+**Generated:** 2026-07-05 19:44 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~27,391 |
+| `./` | 34 | ~27,393 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -51,7 +51,7 @@
 | `examples/` | 18 | ~35,272 |
 | `examples/c/` | 2 | ~400 |
 | `examples/compliance/` | 3 | ~5,294 |
-| `examples/distribution-crossisa/` | 6 | ~5,936 |
+| `examples/distribution-crossisa/` | 6 | ~6,232 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
 | `examples/mindc_mind/` | 40 | ~78,057 |
@@ -481,7 +481,7 @@
 - `incompatible` (~0 tok, tiny)
 - `LICENSE` (~2573 tok, huge) —                                  Apache License
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
-- `Mind.toml` (~106 tok, small) — [package]
+- `Mind.toml` (~108 tok, small) — [package]
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
 - `README.md` (~5621 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
@@ -754,7 +754,7 @@
 - `data2.txt` (~223 tok, medium) — 107.50
 - `distribution.cpp` (~1217 tok, large)
 - `distribution_interp_f64.mind` (~1127 tok, large) — Deterministic IEEE-754 float64 piecewise-LINEAR density interpolation kernel,
-- `README.md` (~879 tok, large) — Cross-ISA determinism: a piecewise-linear density kernel
+- `README.md` (~1175 tok, large) — Cross-ISA determinism: a piecewise-linear density kernel
 ### `examples/emit_ir/`
 
 - `bootstrap_smoke.py` (~2890 tok, huge)
