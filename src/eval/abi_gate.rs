@@ -66,7 +66,7 @@ pub fn check_runnable_lowerable(module: &Module, src: &str, file: Option<&str>) 
             continue;
         };
         for p in params {
-            if let Some(reason) = sig_non_i64(&p.ty) {
+            if let Some(reason) = param_non_i64(&p.ty) {
                 out.push(mk(
                     src,
                     file,
@@ -93,6 +93,36 @@ pub fn check_runnable_lowerable(module: &Module, src: &str, file: Option<&str>) 
         }
     }
     out
+}
+
+/// Reason a function PARAMETER `TypeAnn` cannot lower in the runnable ABI, or
+/// `None` when it lowers correctly. Identical to [`sig_non_i64`] EXCEPT that a
+/// STATIC-SHAPE (all extents compile-time-known) `tensor` parameter is now
+/// allowed: it lowers to a real memref/tensor C ABI (ptr + baked-in static
+/// extents), not the erased i64 scalar. The `func.func` signature carries the
+/// true `tensor<..>` type (`type_ann_to_abi_mlir`), the param seeds a real
+/// `ValueKind::Tensor` (`type_ann_to_value_kind`), the build routes to the
+/// `arith-linalg` preset whose `one-shot-bufferize{bufferize-function-
+/// boundaries=true}` converts the boundary to a memref, and the pinned
+/// reduction fold reads it via `tensor.extract %param[..]`. A DYNAMIC/symbolic
+/// dim still gates (no static extent to bake into the memref descriptor), and a
+/// `diff tensor` param still gates (autodiff boundary is a separate change).
+/// Tensor RETURNS are unchanged — still routed through [`sig_non_i64`] and
+/// gated (the out-param C ABI is a separate, larger slice).
+fn param_non_i64(ty: &TypeAnn) -> Option<&'static str> {
+    match ty {
+        TypeAnn::Tensor { dims, .. } if tensor_dims_all_static(dims) => None,
+        _ => sig_non_i64(ty),
+    }
+}
+
+/// `true` when a tensor annotation's dims are all statically-known numeric
+/// extents (`tensor<f64[4]>` → `["4"]`), so the shape can be baked into a memref
+/// descriptor with no dynamic dim. A rank-0 tensor (`dims` empty) is NOT treated
+/// as static-lowerable here (there is no reduction surface for it yet), and a
+/// symbolic dim (`["N"]`) makes the whole annotation dynamic.
+fn tensor_dims_all_static(dims: &[String]) -> bool {
+    !dims.is_empty() && dims.iter().all(|d| d.parse::<usize>().is_ok())
 }
 
 /// Reason a function parameter/return `TypeAnn` cannot lower in the runnable
