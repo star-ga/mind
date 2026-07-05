@@ -19,33 +19,72 @@
 use std::collections::BTreeSet;
 
 use libmind::ast::Node;
-use libmind::ir::{Instr, IRModule};
+use libmind::ir::{IRModule, Instr};
 
 const FIXTURES: &[(&str, &str)] = &[
-    ("add", "fn add(a: i64, b: i64) -> i64 {\n    return a + b;\n}\nfn main() -> i64 {\n    return add(2, 3);\n}\n"),
-    ("if_ret", "fn f(c: i64) -> i64 {\n    if c == 0 {\n        return 1;\n    }\n    return 2;\n}\nfn main() -> i64 {\n    return f(0);\n}\n"),
-    ("value_if", "fn f(a: i64, b: i64) -> i64 {\n    let m: i64 = if a > b { a } else { b };\n    return m;\n}\nfn main() -> i64 {\n    return f(3, 7);\n}\n"),
-    ("recursion", "fn fib(n: i64) -> i64 {\n    if n < 2 {\n        return n;\n    }\n    return fib(n - 1) + fib(n - 2);\n}\nfn main() -> i64 {\n    return fib(7);\n}\n"),
-    ("struct_field", "struct P {\n    x: i64,\n    y: i64,\n}\nfn main() -> i64 {\n    let p: P = P { x: 7, y: 9 };\n    return p.x;\n}\n"),
+    (
+        "add",
+        "fn add(a: i64, b: i64) -> i64 {\n    return a + b;\n}\nfn main() -> i64 {\n    return add(2, 3);\n}\n",
+    ),
+    (
+        "if_ret",
+        "fn f(c: i64) -> i64 {\n    if c == 0 {\n        return 1;\n    }\n    return 2;\n}\nfn main() -> i64 {\n    return f(0);\n}\n",
+    ),
+    (
+        "value_if",
+        "fn f(a: i64, b: i64) -> i64 {\n    let m: i64 = if a > b { a } else { b };\n    return m;\n}\nfn main() -> i64 {\n    return f(3, 7);\n}\n",
+    ),
+    (
+        "recursion",
+        "fn fib(n: i64) -> i64 {\n    if n < 2 {\n        return n;\n    }\n    return fib(n - 1) + fib(n - 2);\n}\nfn main() -> i64 {\n    return fib(7);\n}\n",
+    ),
+    (
+        "struct_field",
+        "struct P {\n    x: i64,\n    y: i64,\n}\nfn main() -> i64 {\n    let p: P = P { x: 7, y: 9 };\n    return p.x;\n}\n",
+    ),
 ];
 
 const KEEP: &[&str] = &[
-    "std.arena", "std.async", "std.blas", "std.cli", "std.fs", "std.io",
-    "std.io_canon", "std.iouring", "std.json", "std.map", "std.net",
-    "std.process", "std.reactor", "std.regex", "std.ring", "std.sha256",
-    "std.string", "std.time", "std.toml", "std.tui", "std.vec",
+    "std.arena",
+    "std.async",
+    "std.blas",
+    "std.cli",
+    "std.fs",
+    "std.io",
+    "std.io_canon",
+    "std.iouring",
+    "std.json",
+    "std.map",
+    "std.net",
+    "std.process",
+    "std.reactor",
+    "std.regex",
+    "std.ring",
+    "std.sha256",
+    "std.string",
+    "std.time",
+    "std.toml",
+    "std.tui",
+    "std.vec",
 ];
 
 fn collect_call_names(body: &[Instr], out: &mut Vec<String>) {
     for ins in body {
         match ins {
             Instr::Call { name, .. } => out.push(name.clone()),
-            Instr::If { cond_instrs, then_instrs, else_instrs, .. } => {
+            Instr::If {
+                cond_instrs,
+                then_instrs,
+                else_instrs,
+                ..
+            } => {
                 collect_call_names(cond_instrs, out);
                 collect_call_names(then_instrs, out);
                 collect_call_names(else_instrs, out);
             }
-            Instr::While { cond_instrs, body, .. } => {
+            Instr::While {
+                cond_instrs, body, ..
+            } => {
                 collect_call_names(cond_instrs, out);
                 collect_call_names(body, out);
             }
@@ -56,7 +95,8 @@ fn collect_call_names(body: &[Instr], out: &mut Vec<String>) {
 
 fn prune_unreachable_fns(ir: &mut IRModule, user_fn_names: &[String]) {
     let mut reachable: BTreeSet<String> = user_fn_names.iter().cloned().collect();
-    let mut bodies: std::collections::HashMap<String, Vec<Instr>> = std::collections::HashMap::new();
+    let mut bodies: std::collections::HashMap<String, Vec<Instr>> =
+        std::collections::HashMap::new();
     for ins in &ir.instrs {
         if let Instr::FnDef { name, body, .. } = ins {
             bodies.insert(name.clone(), body.clone());
@@ -106,7 +146,10 @@ fn ref_ir(user_src: &str) -> IRModule {
 }
 
 fn note_of(ir: &IRModule) -> String {
-    libmind::ir::ir_trace_hash(ir).iter().map(|b| format!("{b:02x}")).collect()
+    libmind::ir::ir_trace_hash(ir)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 #[test]
@@ -117,7 +160,12 @@ fn dump_ref() {
         let bytes = libmind::ir::compact::emit_mic3(&ir);
         let note = note_of(&ir);
         std::fs::write(format!("{out_dir}/_ref_{name}.note"), &note).unwrap();
-        eprintln!("REF {name}: {} B  next_id={}  instrs={}  note={note}", bytes.len(), ir.next_id, ir.instrs.len());
+        eprintln!(
+            "REF {name}: {} B  next_id={}  instrs={}  note={note}",
+            bytes.len(),
+            ir.next_id,
+            ir.instrs.len()
+        );
     }
     // main.mind
     let main_src = std::fs::read_to_string(format!("{out_dir}/main.mind")).unwrap();
@@ -125,5 +173,10 @@ fn dump_ref() {
     let bytes = libmind::ir::compact::emit_mic3(&ir);
     let note = note_of(&ir);
     std::fs::write(format!("{out_dir}/_ref_main.note"), &note).unwrap();
-    eprintln!("REF main: {} B  next_id={}  instrs={}  note={note}", bytes.len(), ir.next_id, ir.instrs.len());
+    eprintln!(
+        "REF main: {} B  next_id={}  instrs={}  note={note}",
+        bytes.len(),
+        ir.next_id,
+        ir.instrs.len()
+    );
 }

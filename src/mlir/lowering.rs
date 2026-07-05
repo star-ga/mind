@@ -803,11 +803,26 @@ impl LoweringContext {
 
         if scalar_result {
             // The terminal fold op above already produced `%dst` as a scalar.
-            let kind = match dtype {
-                DType::F32 => ValueKind::ScalarF32,
-                _ => ValueKind::ScalarF64,
-            };
-            self.values.insert(dst, kind);
+            // The scalar-float `ValueKind`s only exist under `std-surface`; a
+            // fully-reduced float tensor therefore has no representable scalar
+            // result in a default/mlir-lowering-only build, so it falls back to
+            // `UnsupportedOp` there (never reached in the shipped std-surface
+            // build, so the strict cross-substrate fold stays byte-identical).
+            #[cfg(feature = "std-surface")]
+            {
+                let kind = match dtype {
+                    DType::F32 => ValueKind::ScalarF32,
+                    _ => ValueKind::ScalarF64,
+                };
+                self.values.insert(dst, kind);
+            }
+            #[cfg(not(feature = "std-surface"))]
+            {
+                return Err(MlirLowerError::UnsupportedOp {
+                    instr_index,
+                    op: format!("{op_name} reduced to scalar float requires std-surface"),
+                });
+            }
         } else {
             self.emit_line(&format!(
                 "    %{} = tensor.from_elements {} : {out_ty}",

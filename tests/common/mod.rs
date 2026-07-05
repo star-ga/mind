@@ -52,9 +52,5 @@ pub fn mindc_bin() -> PathBuf {
 #[allow(dead_code)]
 pub fn mindc_or_skip() -> Option<PathBuf> {
     let p = mindc_bin();
-    if p.exists() {
-        Some(p)
-    } else {
-        None
-    }
+    if p.exists() { Some(p) } else { None }
 }
