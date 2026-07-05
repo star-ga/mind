@@ -56,6 +56,7 @@ chk "body_smoke (real-body emit)"          python3 examples/mindc_mind/self_host
 chk "mic3_flip (whole-module FLIP)"        python3 examples/mindc_mind/mic3_flip_smoke.py
 chk "mic3_primitives (codec)"              python3 examples/mindc_mind/mic3_primitives_smoke.py
 chk "mlir_smoke (constructs; debug aid)"   python3 examples/mindc_mind/self_host_mlir_smoke.py
+chk "mod_operator (% remainder, both paths)" python3 examples/mindc_mind/mod_operator_smoke.py
 
 rm -f "$DIR_SO" "$MT_SO"
 echo "== $pass passed, $fail failed in $(($(date +%s)-t0))s =="
