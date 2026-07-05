@@ -1,0 +1,91 @@
+// Deterministic IEEE-754 float64 piecewise-LINEAR density interpolation kernel,
+// ported from a third-party author's third-party quant program `distribution.cpp`.
+//
+// WHAT IT PORTS
+// The divergent line of distribution.cpp (its `dlPDF` piecewise-linear density):
+//     x==b[i] ? r[i] : (r[i-1]*(b[i]-x) + r[i]*(x-b[i-1])) / (b[i]-b[i-1])
+// where b[] are sorted P&L interval boundaries and r[] the per-boundary densities,
+// and i is the lower_bound index of the query x. This is a straight-line interp
+// between the two densities bracketing x, normalized by the interval width.
+//
+// THE DIVERGENCE IT DEMONSTRATES
+// the author's distribution.cpp produced ULP-level DIVERGENT output between x86_64 and
+// native aarch64 (confirmed on real Graviton silicon). The numerator has the exact
+// `a*b + c*d` shape (`r[i-1]*(b[i]-x) + r[i]*(x-b[i-1])`). aarch64 g++ CONTRACTS
+// that into a single fused multiply-add (one rounding); x86 g++ emits separate
+// mul+add (two roundings). IEEE-754 leaves FMA contraction unspecified, so the two
+// ISAs disagree at the last bit. Rebuilding both with `-ffp-contract=off` collapses
+// them to byte-identical.
+//
+// WHY THE MIND VERSION IS IDENTICAL BY CONSTRUCTION
+// On MIND's STRICT lowering path the numerator lowers to arith.mulf/arith.mulf/
+// arith.addf with NO fmuladd, NO fastmath, NO reassociation, and fixed source
+// order. There is no contraction knob to get wrong: every substrate rounds the
+// two multiplies and the add the same way. Byte-identical across x86 and aarch64
+// with no flag — that is the MIND wedge on real external code.
+//
+// HONEST CAVEAT
+// This is the interpolation KERNEL shape, not a full re-port of distribution.cpp's
+// array/heap plumbing. The executable subset that reliably codegens here has no
+// arrays/heap-load, so the sorted-boundary lookup that C++ does with std::lower_bound
+// over b[] is expressed as an unrolled fixed if/else-if ladder over a hardcoded
+// small set of boundary/density pairs shaped like a real P&L distribution histogram
+// (negative loss tail, density peak near break-even, positive profit tail). The
+// arithmetic that actually causes the cross-ISA split — the `a*b + c*d` numerator
+// and the divide — is reproduced verbatim; only the index search is unrolled.
+//
+// deferred: the C++ uses std::lower_bound over runtime arrays b[]/r[]; the MIND
+// executable subset here lacks array/heap-load codegen, so the lookup is unrolled
+// into a fixed if/else ladder — upgrade path: replace the ladder with an array
+// scan once tensor/array-load lands on the executable-subset codegen path.
+//
+// Fixed source order, strict lowering. Returns the interpolated density at x as f64.
+
+pub fn dl_pdf(x: f64) -> f64 {
+    // Sorted P&L interval boundaries b[] (units: P&L) and densities r[], a small
+    // histogram-shaped sample drawn from the real distribution.cpp data pattern.
+    // b: -2.0  -1.0   0.0   1.0   2.0   3.0
+    // r:  0.02  0.11  0.37  0.28  0.09  0.01
+    let b0: f64 = -2.0
+    let b1: f64 = -1.0
+    let b2: f64 = 0.0
+    let b3: f64 = 1.0
+    let b4: f64 = 2.0
+    let b5: f64 = 3.0
+    let r0: f64 = 0.02
+    let r1: f64 = 0.11
+    let r2: f64 = 0.37
+    let r3: f64 = 0.28
+    let r4: f64 = 0.09
+    let r5: f64 = 0.01
+
+    // lower_bound over b[]: pick the bracketing pair (lo,ro)=(b[i-1],r[i-1]) and
+    // (hi,rh)=(b[i],r[i]) for the interval containing x. Unrolled ladder; both arms
+    // of every branch assign all four carried f64s so the block-arg edge types
+    // uniformly as f64 (the strict f64 loop/branch discipline).
+    let mut lo: f64 = b0
+    let mut ro: f64 = r0
+    let mut hi: f64 = b1
+    let mut rh: f64 = r1
+    if x < b1 {
+        // clamp to the first interval [b0, b1] for the left tail
+        lo = b0  ro = r0  hi = b1  rh = r1
+    } else if x < b2 {
+        lo = b1  ro = r1  hi = b2  rh = r2
+    } else if x < b3 {
+        lo = b2  ro = r2  hi = b3  rh = r3
+    } else if x < b4 {
+        lo = b3  ro = r3  hi = b4  rh = r4
+    } else {
+        // interval [b4, b5], also used for the right tail (x >= b5)
+        lo = b4  ro = r4  hi = b5  rh = r5
+    }
+
+    // The divergent expression, verbatim in source order:
+    //   numerator = r[i-1]*(b[i]-x) + r[i]*(x-b[i-1])   == ro*(hi-x) + rh*(x-lo)
+    //   result    = numerator / (b[i]-b[i-1])           == numerator / (hi-lo)
+    // Strict lowering: two arith.mulf then one arith.addf, no contraction.
+    let num: f64 = ro * (hi - x) + rh * (x - lo)
+    let den: f64 = hi - lo
+    return num / den
+}
