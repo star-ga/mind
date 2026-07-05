@@ -166,9 +166,16 @@ fn instr_taints(instr: &Instr) -> bool {
     // loop/if condition would read as strict.
     match instr {
         Instr::FnDef { body, .. } => stream_has_taint(body),
+        // The While / If / Region control-flow variants only exist under
+        // `std-surface`; in a default build they are absent, so the recursion
+        // into their nested streams must be gated to keep the no-feature lib
+        // compiling. A default build never constructs them, so the `_ => false`
+        // fallthrough is complete there.
+        #[cfg(feature = "std-surface")]
         Instr::While {
             cond_instrs, body, ..
         } => stream_has_taint(cond_instrs) || stream_has_taint(body),
+        #[cfg(feature = "std-surface")]
         Instr::If {
             cond_instrs,
             then_instrs,
@@ -179,6 +186,7 @@ fn instr_taints(instr: &Instr) -> bool {
                 || stream_has_taint(then_instrs)
                 || stream_has_taint(else_instrs)
         }
+        #[cfg(feature = "std-surface")]
         Instr::Region { body, .. } => stream_has_taint(body),
         _ => false,
     }

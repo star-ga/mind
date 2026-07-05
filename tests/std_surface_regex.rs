@@ -249,7 +249,7 @@ fn regex_mind_auto_exports_public_symbols() {
 fn bundled_stdlib_resolves_use_std_regex() {
     use libmind::project::module_table::build_module_table;
     use libmind::project::stdlib::parsed_stdlib_modules;
-    use libmind::type_checker::{check_module_types_with_modules, TypeEnv};
+    use libmind::type_checker::{TypeEnv, check_module_types_with_modules};
 
     let stdlib = parsed_stdlib_modules();
     let refs: Vec<(String, &libmind::ast::Module)> =

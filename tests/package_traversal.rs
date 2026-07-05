@@ -16,8 +16,8 @@
 use std::fs;
 use std::io::Cursor;
 
-use flate2::write::GzEncoder;
 use flate2::Compression;
+use flate2::write::GzEncoder;
 use libmind::package::install_package;
 use tar::{Builder, EntryType, Header};
 use tempfile::tempdir;

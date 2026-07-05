@@ -29,7 +29,18 @@
 //! Gate: `cargo test --features "std-surface mlir-build cross-module-imports"
 //!                   --test tensor_param_fail_loud_run`
 
-#![cfg(all(unix, feature = "std-surface", feature = "cross-module-imports"))]
+// `--emit-shared` shells out to the MLIR/LLVM toolchain and is only available
+// under `mlir-build` (without it mindc exits "--emit-shared requires building
+// with the 'mlir-build' feature"), so — as the module gate above documents —
+// these runnable-artifact assertions require it. A non-`mlir-build` test run
+// therefore compiles this file to an empty set instead of failing on a build
+// that structurally cannot produce a `.so`.
+#![cfg(all(
+    unix,
+    feature = "std-surface",
+    feature = "cross-module-imports",
+    feature = "mlir-build"
+))]
 
 mod common;
 use common::mindc_bin;

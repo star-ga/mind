@@ -220,10 +220,17 @@ fn build_genref_so() -> Option<PathBuf> {
     let out_dir = manifest_dir.join("target").join("genref_smoke");
     std::fs::create_dir_all(&out_dir).expect("create target/genref_smoke");
 
+    // Unique per-process output path: the shim is `clang -o`'d to this file, so
+    // a FIXED name would let two concurrent test processes (e.g. parallel cargo
+    // test jobs on one CI runner) clobber each other's `.so` mid-write and
+    // intermittently dlopen a half-written library. Keying the name on the PID
+    // gives each process its own artifact with no shared write target. (The
+    // in-process `OnceLock` already dedupes builds within one process.)
+    let pid = std::process::id();
     #[cfg(windows)]
-    let so_path = out_dir.join("mind_genref_smoke.dll");
+    let so_path = out_dir.join(format!("mind_genref_smoke_{pid}.dll"));
     #[cfg(not(windows))]
-    let so_path = out_dir.join("libmind_genref_smoke.so");
+    let so_path = out_dir.join(format!("libmind_genref_smoke_{pid}.so"));
 
     let mut cmd = Command::new(&clang);
     cmd.args([

@@ -87,21 +87,21 @@ import std.rsa_pss;
 // the §7.3 key/iv expansions.  Returns 0.
 // ---------------------------------------------------------------------------
 
-pub fn tls13_hs_derive_handshake_secrets(
-    dhe_addr: i64,
-    hello_hash_addr: i64,
-    out_addr: i64,
-) -> i64 {
+pub fn tls13_hs_derive_handshake_secrets(dhe_addr: i64, hello_hash_addr: i64, out_addr: i64) -> i64 {
     // Handshake Secret at out+0 (Early -> derived -> Extract with the DHE IKM).
     tls13_handshake_secret(dhe_addr, out_addr);
     // c/s handshake traffic secrets over Transcript-Hash(CH..SH).
     tls13_client_handshake_traffic_secret(out_addr, hello_hash_addr, out_addr + 32);
     tls13_server_handshake_traffic_secret(out_addr, hello_hash_addr, out_addr + 64);
     // Record-protection material (RFC 8446 §7.3) for both directions.
-    tls13_derive_key(out_addr + 32, out_addr + 96);   // client key
-    tls13_derive_iv(out_addr + 32, out_addr + 112);   // client iv
-    tls13_derive_key(out_addr + 64, out_addr + 124);  // server key
-    tls13_derive_iv(out_addr + 64, out_addr + 140);   // server iv
+    tls13_derive_key(out_addr + 32, out_addr + 96);
+    // client key
+    tls13_derive_iv(out_addr + 32, out_addr + 112);
+    // client iv
+    tls13_derive_key(out_addr + 64, out_addr + 124);
+    // server key
+    tls13_derive_iv(out_addr + 64, out_addr + 140);
+    // server iv
     0
 }
 
@@ -120,21 +120,21 @@ pub fn tls13_hs_derive_handshake_secrets(
 // Returns 0.
 // ---------------------------------------------------------------------------
 
-pub fn tls13_hs_derive_app_secrets(
-    hs_secret_addr: i64,
-    fin_hash_addr: i64,
-    out_addr: i64,
-) -> i64 {
+pub fn tls13_hs_derive_app_secrets(hs_secret_addr: i64, fin_hash_addr: i64, out_addr: i64) -> i64 {
     // Master Secret = Extract(Derive-Secret(HS,"derived",""), 0) at out+0.
     tls13_master_secret(hs_secret_addr, out_addr);
     // c/s application traffic secrets over Transcript-Hash(CH..server Finished).
     tls13_client_application_traffic_secret(out_addr, fin_hash_addr, out_addr + 32);
     tls13_server_application_traffic_secret(out_addr, fin_hash_addr, out_addr + 64);
     // Record-protection material (RFC 8446 §7.3) for both directions.
-    tls13_derive_key(out_addr + 32, out_addr + 96);   // client key
-    tls13_derive_iv(out_addr + 32, out_addr + 112);   // client iv
-    tls13_derive_key(out_addr + 64, out_addr + 124);  // server key
-    tls13_derive_iv(out_addr + 64, out_addr + 140);   // server iv
+    tls13_derive_key(out_addr + 32, out_addr + 96);
+    // client key
+    tls13_derive_iv(out_addr + 32, out_addr + 112);
+    // client iv
+    tls13_derive_key(out_addr + 64, out_addr + 124);
+    // server key
+    tls13_derive_iv(out_addr + 64, out_addr + 140);
+    // server iv
     0
 }
 
@@ -157,39 +157,72 @@ pub fn tls13_hs_cert_verify_content(thash_addr: i64, out_addr: i64) -> i64 {
     }
     // Context string "TLS 1.3, server CertificateVerify" (33 bytes, NO NUL —
     // the 0x00 below is the §4.4.3 separator, not part of the string).
-    __mind_store_i8(out_addr + 64, 84);   // 'T'
-    __mind_store_i8(out_addr + 65, 76);   // 'L'
-    __mind_store_i8(out_addr + 66, 83);   // 'S'
-    __mind_store_i8(out_addr + 67, 32);   // ' '
-    __mind_store_i8(out_addr + 68, 49);   // '1'
-    __mind_store_i8(out_addr + 69, 46);   // '.'
-    __mind_store_i8(out_addr + 70, 51);   // '3'
-    __mind_store_i8(out_addr + 71, 44);   // ','
-    __mind_store_i8(out_addr + 72, 32);   // ' '
-    __mind_store_i8(out_addr + 73, 115);  // 's'
-    __mind_store_i8(out_addr + 74, 101);  // 'e'
-    __mind_store_i8(out_addr + 75, 114);  // 'r'
-    __mind_store_i8(out_addr + 76, 118);  // 'v'
-    __mind_store_i8(out_addr + 77, 101);  // 'e'
-    __mind_store_i8(out_addr + 78, 114);  // 'r'
-    __mind_store_i8(out_addr + 79, 32);   // ' '
-    __mind_store_i8(out_addr + 80, 67);   // 'C'
-    __mind_store_i8(out_addr + 81, 101);  // 'e'
-    __mind_store_i8(out_addr + 82, 114);  // 'r'
-    __mind_store_i8(out_addr + 83, 116);  // 't'
-    __mind_store_i8(out_addr + 84, 105);  // 'i'
-    __mind_store_i8(out_addr + 85, 102);  // 'f'
-    __mind_store_i8(out_addr + 86, 105);  // 'i'
-    __mind_store_i8(out_addr + 87, 99);   // 'c'
-    __mind_store_i8(out_addr + 88, 97);   // 'a'
-    __mind_store_i8(out_addr + 89, 116);  // 't'
-    __mind_store_i8(out_addr + 90, 101);  // 'e'
-    __mind_store_i8(out_addr + 91, 86);   // 'V'
-    __mind_store_i8(out_addr + 92, 101);  // 'e'
-    __mind_store_i8(out_addr + 93, 114);  // 'r'
-    __mind_store_i8(out_addr + 94, 105);  // 'i'
-    __mind_store_i8(out_addr + 95, 102);  // 'f'
-    __mind_store_i8(out_addr + 96, 121);  // 'y'
+    __mind_store_i8(out_addr + 64, 84);
+    // 'T'
+    __mind_store_i8(out_addr + 65, 76);
+    // 'L'
+    __mind_store_i8(out_addr + 66, 83);
+    // 'S'
+    __mind_store_i8(out_addr + 67, 32);
+    // ' '
+    __mind_store_i8(out_addr + 68, 49);
+    // '1'
+    __mind_store_i8(out_addr + 69, 46);
+    // '.'
+    __mind_store_i8(out_addr + 70, 51);
+    // '3'
+    __mind_store_i8(out_addr + 71, 44);
+    // ','
+    __mind_store_i8(out_addr + 72, 32);
+    // ' '
+    __mind_store_i8(out_addr + 73, 115);
+    // 's'
+    __mind_store_i8(out_addr + 74, 101);
+    // 'e'
+    __mind_store_i8(out_addr + 75, 114);
+    // 'r'
+    __mind_store_i8(out_addr + 76, 118);
+    // 'v'
+    __mind_store_i8(out_addr + 77, 101);
+    // 'e'
+    __mind_store_i8(out_addr + 78, 114);
+    // 'r'
+    __mind_store_i8(out_addr + 79, 32);
+    // ' '
+    __mind_store_i8(out_addr + 80, 67);
+    // 'C'
+    __mind_store_i8(out_addr + 81, 101);
+    // 'e'
+    __mind_store_i8(out_addr + 82, 114);
+    // 'r'
+    __mind_store_i8(out_addr + 83, 116);
+    // 't'
+    __mind_store_i8(out_addr + 84, 105);
+    // 'i'
+    __mind_store_i8(out_addr + 85, 102);
+    // 'f'
+    __mind_store_i8(out_addr + 86, 105);
+    // 'i'
+    __mind_store_i8(out_addr + 87, 99);
+    // 'c'
+    __mind_store_i8(out_addr + 88, 97);
+    // 'a'
+    __mind_store_i8(out_addr + 89, 116);
+    // 't'
+    __mind_store_i8(out_addr + 90, 101);
+    // 'e'
+    __mind_store_i8(out_addr + 91, 86);
+    // 'V'
+    __mind_store_i8(out_addr + 92, 101);
+    // 'e'
+    __mind_store_i8(out_addr + 93, 114);
+    // 'r'
+    __mind_store_i8(out_addr + 94, 105);
+    // 'i'
+    __mind_store_i8(out_addr + 95, 102);
+    // 'f'
+    __mind_store_i8(out_addr + 96, 121);
+    // 'y'
     // Single 0x00 separator.
     __mind_store_i8(out_addr + 97, 0);
     // 32-byte transcript hash.
@@ -210,14 +243,9 @@ pub fn tls13_hs_cert_verify_content(thash_addr: i64, out_addr: i64) -> i64 {
 //   hLen = 32, dbLen = em_len - 33.  Returns 1 iff consistent, else 0.
 // ---------------------------------------------------------------------------
 
-fn tls13_hs_pss_emsa_check(
-    em: i64,
-    em_len: i64,
-    msg_addr: i64,
-    msg_len: i64,
-    salt_len: i64,
-) -> i64 {
-    let db_len: i64 = em_len - 33;          // emLen - hLen - 1
+fn tls13_hs_pss_emsa_check(em: i64, em_len: i64, msg_addr: i64, msg_len: i64, salt_len: i64) -> i64 {
+    let db_len: i64 = em_len - 33;
+    // emLen - hLen - 1
     if salt_len < 0 {
         return 0;
     }
@@ -247,7 +275,8 @@ fn tls13_hs_pss_emsa_check(
     // Step 9: set the leftmost 1 bit of DB to zero.
     __mind_store_i8(db + 0, __mind_load_i8(db + 0) & 127);
     // Step 10: DB = PS (dbLen - sLen - 1 zero octets) || 0x01 || salt.
-    let one_pos: i64 = db_len - salt_len - 1;   // index of the 0x01 separator
+    let one_pos: i64 = db_len - salt_len - 1;
+    // index of the 0x01 separator
     let mut ok: i64 = 1;
     let mut k: i64 = 0;
     while k < one_pos {
@@ -270,7 +299,8 @@ fn tls13_hs_pss_emsa_check(
         __mind_store_i8(mp + z, 0);
         z = z + 1;
     }
-    sha256(msg_addr, msg_len, mp + 8);   // mHash into M'[8..40)
+    sha256(msg_addr, msg_len, mp + 8);
+    // mHash into M'[8..40)
     let mut s: i64 = 0;
     while s < salt_len {
         __mind_store_i8(mp + 40 + s, __mind_load_i8(db + db_len - salt_len + s));
@@ -303,16 +333,7 @@ fn tls13_hs_pss_emsa_check(
 // 1024-bit n embeds losslessly in the 2048-bit machinery) + mgf1_sha256.
 // ---------------------------------------------------------------------------
 
-pub fn tls13_hs_rsa_pss_verify(
-    n_addr: i64,
-    n_len: i64,
-    e: i64,
-    sig_addr: i64,
-    sig_len: i64,
-    msg_addr: i64,
-    msg_len: i64,
-    salt_len: i64,
-) -> i64 {
+pub fn tls13_hs_rsa_pss_verify(n_addr: i64, n_len: i64, e: i64, sig_addr: i64, sig_len: i64, msg_addr: i64, msg_len: i64, salt_len: i64) -> i64 {
     // Geometry guards: modulus 128 (RSA-1024) or 256 (RSA-2048) octets with
     // the top bit set, so modBits = 8*n_len and emBits = 8*n_len - 1.
     if n_len != 128 {
@@ -336,7 +357,8 @@ pub fn tls13_hs_rsa_pss_verify(
     if msg_len < 0 {
         return 0;
     }
-    let n: i64 = __mind_alloc(1040);        // 130 limbs (std/x509.mind bignum)
+    let n: i64 = __mind_alloc(1040);
+    // 130 limbs (std/x509.mind bignum)
     let s: i64 = __mind_alloc(1040);
     let em_limbs: i64 = __mind_alloc(1040);
     bn_from_bytes(n_addr, n_len, n);
@@ -367,18 +389,10 @@ pub fn tls13_hs_rsa_pss_verify(
 // context prefix, wrong transcript hash, or forged signature all return 0.
 // ---------------------------------------------------------------------------
 
-pub fn tls13_hs_verify_cert_verify(
-    n_addr: i64,
-    n_len: i64,
-    e: i64,
-    sig_addr: i64,
-    sig_len: i64,
-    thash_addr: i64,
-) -> i64 {
+pub fn tls13_hs_verify_cert_verify(n_addr: i64, n_len: i64, e: i64, sig_addr: i64, sig_len: i64, thash_addr: i64) -> i64 {
     let content: i64 = __mind_alloc(130);
     let content_len: i64 = tls13_hs_cert_verify_content(thash_addr, content);
-    tls13_hs_rsa_pss_verify(
-        n_addr, n_len, e, sig_addr, sig_len, content, content_len, 32)
+    tls13_hs_rsa_pss_verify(n_addr, n_len, e, sig_addr, sig_len, content, content_len, 32)
 }
 
 // ---------------------------------------------------------------------------
@@ -393,11 +407,7 @@ pub fn tls13_hs_verify_cert_verify(
 // Returns 1 (match) or 0 (MUST terminate with decrypt_error per §4.4.4).
 // ---------------------------------------------------------------------------
 
-pub fn tls13_hs_verify_server_finished(
-    server_hs_traffic_secret_addr: i64,
-    thash_addr: i64,
-    received_vd_addr: i64,
-) -> i64 {
+pub fn tls13_hs_verify_server_finished(server_hs_traffic_secret_addr: i64, thash_addr: i64, received_vd_addr: i64) -> i64 {
     let fk: i64 = __mind_alloc(32);
     tls13_finished_key(server_hs_traffic_secret_addr, fk);
     tls13_finished_check(fk, thash_addr, received_vd_addr)
@@ -412,11 +422,7 @@ pub fn tls13_hs_verify_server_finished(
 // Returns 0.
 // ---------------------------------------------------------------------------
 
-pub fn tls13_hs_client_finished(
-    client_hs_traffic_secret_addr: i64,
-    thash_addr: i64,
-    out_vd_addr: i64,
-) -> i64 {
+pub fn tls13_hs_client_finished(client_hs_traffic_secret_addr: i64, thash_addr: i64, out_vd_addr: i64) -> i64 {
     tls13_finished_from_secret(client_hs_traffic_secret_addr, thash_addr, out_vd_addr);
     0
 }
