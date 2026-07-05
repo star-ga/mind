@@ -69,6 +69,7 @@ _SIGS = {
     "tls13_hs_verify_cert_verify": 6,
     "tls13_hs_verify_server_finished": 3,
     "tls13_hs_client_finished": 3,
+    "tls13_peer_auth_supported": 0,
 }
 for _name, _n in _SIGS.items():
     fn = getattr(T, _name)
@@ -547,6 +548,12 @@ cvd = out(32)
 T.tls13_hs_client_finished(addr(chts_b), addr(thsf_b), addr(cvd))
 record("(f) tls13_hs_client_finished == RFC client Finished verify_data",
        cvd.raw[:32], RFC_CLIENT_VERIFY_DATA)
+
+# Capability scope (honesty marker): std/tls13 does NOT authenticate a peer.
+# tls13_hs_verify_cert_verify checks signature math only (no chain/validity/
+# hostname). This must stay 0 until real peer auth lands, or the driver is RED.
+record_int("scope: tls13_peer_auth_supported()==0 (no chain/validity/hostname)",
+           T.tls13_peer_auth_supported(), 0)
 
 print("=" * 72)
 total = len(results)
