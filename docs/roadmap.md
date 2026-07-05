@@ -885,6 +885,18 @@ discipline already in force (a speedup never trips it).
    **plus features hardening** — fail-loud validation at every boundary, no
    surface lands un-audited.
 
+4c. **`mic@4` — autoresearch/alg-inv-evolved successor wire format.** Once
+   `mic@3` is stable, turn the autoresearch + alg-inv (AB-MCTS) engine on the
+   canonical IR encoding itself — fitness = **smaller + faster emit/parse**,
+   HARD-GATED by every invariant `mic@3` guarantees: deterministic byte-canonical
+   output, the emit→parse→emit fixed point, cross-substrate byte-identity, and
+   `trace_hash` stability (the evidence chain must survive). Target a denser
+   opcode / string-table layout and a faster codec than `mic@3` with zero loss
+   of determinism or provenance. Ships behind a version bump (`MIC4_VERSION`), a
+   `mic@3`↔`mic@4` migration, a full round-trip proof, and security review — a
+   real speed/size win only if it beats `mic@3` on a measured corpus AND stays
+   byte-identical (no fake wins).
+
 ### Deliverables — AI-era efficiency surface
 
 5. **Token-efficiency as a first-class design constraint.** Every
