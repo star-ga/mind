@@ -49,6 +49,8 @@ X.rsa_pkcs1_sha256_verify.restype = ctypes.c_int64
 X.rsa_pkcs1_sha256_verify.argtypes = [ctypes.c_int64] * 7
 X.x509_verify_self_signed.restype = ctypes.c_int64
 X.x509_verify_self_signed.argtypes = [ctypes.c_int64, ctypes.c_int64]
+X.x509_peer_auth_supported.restype = ctypes.c_int64
+X.x509_peer_auth_supported.argtypes = []
 
 results = []
 
@@ -313,6 +315,19 @@ for _ in range(200):
     rc_mv = X.x509_verify_self_signed(addr(mb), len(bad))
     assert rc_mv in (0, 1)
 record_bool("harden: 200 bit-flip mutations survived (no crash)", True)
+
+# ---------------------------------------------------------------------------
+# CAPABILITY SCOPE (honesty marker): std/x509 does NOT authenticate a peer.
+# The module must self-declare this fail-closed so nothing can wire it to a
+# live socket believing it is MITM-safe. Flipping this to 1 without adding
+# real chain+validity+hostname validation must turn this driver RED.
+# ---------------------------------------------------------------------------
+print("=" * 72)
+print("CAPABILITY SCOPE - module must declare it is NOT peer authentication")
+print("=" * 72)
+record_bool("scope: x509_peer_auth_supported()==0 (no chain/validity/hostname)",
+            X.x509_peer_auth_supported() == 0,
+            f"got={X.x509_peer_auth_supported()}")
 
 print("=" * 72)
 total = len(results)
