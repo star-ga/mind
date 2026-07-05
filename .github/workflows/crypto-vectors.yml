@@ -1,0 +1,120 @@
+name: Crypto Vectors
+
+# RFC known-answer-test (KAT) gate for the pure-MIND crypto/TLS std modules.
+#
+# ~7,500 LOC of pure-MIND cryptography (SHA-256, Keccak/SHA-3, HKDF, AES-GCM,
+# ChaCha20-Poly1305, X25519, ECDSA-P256, RSA-PSS, ML-KEM-768, X.509, and the
+# full TLS 1.3 key schedule / record / Finished / handshake) ship with
+# official-vector drivers under tests/*_driver.py — each replays published RFC
+# 8446/8448/7541/7748/8017/8439/FIPS-203 vectors (cross-checked against an
+# independent reference: pyca/cryptography, python-hpack, kyber-py) through the
+# compiled MIND .so and compares byte-for-byte. Before this job NOTHING in CI
+# ran them, so a silent crypto miscompile could ship green. This job builds
+# every module to a shared object and gates on every driver's exit code: a
+# single wrong KAT turns CI red.
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'assets/**'
+      - 'LICENSE*'
+      - '.gitignore'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'assets/**'
+      - 'LICENSE*'
+      - '.gitignore'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+  RUST_BACKTRACE: 1
+
+jobs:
+  crypto_vectors:
+    name: Crypto RFC known-answer vectors (pure-MIND crypto/TLS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # Fail-closed, exactly like the executable-miscompile and keystone gates:
+    #   1. MIND_BENCH_REQUIRE=1 is set for parity with the exec-gate/keystone
+    #      jobs (it turns a missing MLIR toolchain into a hard failure in any
+    #      Rust harness that reads it).
+    #   2. The real guard for THIS job is the "Verify toolchain on PATH" step
+    #      below plus the emit path in scripts/run_crypto_vectors.sh: mindc's
+    #      --emit-shared lowers MIND IR to MLIR text and shells out to
+    #      mlir-opt/mlir-translate/clang. If that toolchain is missing the
+    #      first `emit` in the script errors and the job aborts — it can NEVER
+    #      pass vacuously with zero drivers run.
+    env:
+      http_proxy: ""
+      https_proxy: ""
+      no_proxy: ""
+      MIND_BENCH_REQUIRE: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust (nightly)
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-crypto-vectors-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-crypto-vectors-
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install reference crypto libraries
+        # Independent oracles the drivers cross-check the pinned RFC vectors
+        # against BEFORE comparing MIND output — so the ground truth is real,
+        # not circular. kyber-py is required by mlkem768_driver.py (it exits 2
+        # / BLOCKED without it, which the runner counts as FAIL — fail-closed).
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install cryptography hyperframe hpack kyber-py
+
+      - name: Install MLIR toolchain (Ubuntu 24.04 LLVM 20)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mlir-20-tools clang-20
+          echo "/usr/lib/llvm-20/bin" >> "$GITHUB_PATH"
+
+      - name: Verify toolchain on PATH
+        # Fail-closed guard: if the MLIR toolchain is absent this errors here,
+        # long before any driver could be reported as "passed".
+        run: |
+          mlir-opt --version | head -1
+          mlir-translate --version | head -1
+          clang --version | head -1
+
+      - name: Build mindc (MLIR backend)
+        run: |
+          cargo build --release --no-default-features \
+            --features "mlir-build std-surface cross-module-imports" --bin mindc
+
+      - name: Run all crypto/TLS RFC vector drivers
+        # Every tests/*_driver.py is executed; the script aggregates and exits
+        # non-zero if ANY driver's exit code is non-zero (a wrong KAT = red).
+        run: |
+          MINDC=./target/release/mindc scripts/run_crypto_vectors.sh
+        working-directory: ${{ github.workspace }}
