@@ -68,5 +68,7 @@ the part that diverges — are reproduced verbatim.
 | File | What |
 |------|------|
 | `distribution_interp_f64.mind` | The MIND port of the divergent kernel (strict f64) |
-| `distribution.cpp` | The original third-party C++ program |
-| `data1.txt` | A sample P&L input for the C++ program |
+| `distribution.cpp` | The original third-party C++ program — the one that diverges across x86/ARM |
+| `afterkelly.cpp` | The companion C++ program — stays byte-identical across x86/ARM (seeded RNG + Kahan summation) |
+| `data1.txt` | A sample P&L input for the C++ programs |
+| `data2.txt` | A second P&L input (constant-payoff vector) |
