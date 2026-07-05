@@ -589,8 +589,18 @@ pub fn collect_sources(project_root: &Path, entry: &str) -> Result<Vec<PathBuf>>
 
     fn collect_recursive(dir: &Path, sources: &mut Vec<PathBuf>) -> Result<()> {
         if dir.is_dir() {
-            for entry in fs::read_dir(dir)? {
-                let entry = entry?;
+            // Skip a directory we cannot read (e.g. a root-owned `/tmp/systemd-private-*`
+            // sibling of a source compiled from `/tmp`) instead of failing the whole
+            // build with EACCES — an unreadable sibling dir holds no MIND sources we
+            // could import, so silently excluding it keeps `mindc` usable from any cwd.
+            let rd = match fs::read_dir(dir) {
+                Ok(rd) => rd,
+                Err(e) => {
+                    eprintln!("mindc: skipping unreadable dir {}: {e}", dir.display());
+                    return Ok(());
+                }
+            };
+            for entry in rd.flatten() {
                 let path = entry.path();
                 if path.is_dir() {
                     collect_recursive(&path, sources)?;

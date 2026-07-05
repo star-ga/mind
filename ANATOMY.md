@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3020 | **Est. tokens:** ~7,249,498
-**Generated:** 2026-07-05 05:11 UTC
+**Files:** 3020 | **Est. tokens:** ~7,249,771
+**Generated:** 2026-07-05 07:43 UTC
 
 ## Token Budget Guide
 
@@ -378,7 +378,7 @@
 | `src/build/` | 2 | ~11,359 |
 | `src/cache/` | 4 | ~3,525 |
 | `src/check/` | 3 | ~9,753 |
-| `src/deps/` | 1 | ~8,087 |
+| `src/deps/` | 1 | ~8,217 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,474 |
@@ -398,7 +398,7 @@
 | `src/opt/` | 4 | ~9,649 |
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 1 | ~3,811 |
-| `src/project/` | 3 | ~27,918 |
+| `src/project/` | 3 | ~28,061 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -3742,7 +3742,7 @@
 - `conformance.rs` (~1847 tok, huge) — The autodiff_pairwise conformance entry was removed 2026-05-20 — its
 ### `src/deps/`
 
-- `mod.rs` (~8087 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~8217 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/diagnostics/`
 
 - `mod.rs` (~2230 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3869,7 +3869,7 @@
 - `pipeline.rs` (~4477 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `mod.rs` (~20623 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~20766 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~3629 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
