@@ -445,13 +445,14 @@ jobs:
     # two builds AGREE; this gate proves the compiled code actually COMPUTES the
     # right answer — it catches a silent miscompile that is self-consistent
     # across substrates (e.g. a wrong operator lowering) and would otherwise ship
-    # green. MIND_BENCH_REQUIRE=1 makes a missing MLIR toolchain a hard failure
-    # so the gate can never pass vacuously.
+    # green. The "Verify toolchain on PATH" step below is the fail-closed guard:
+    # a missing MLIR toolchain makes `mindc build` error, so the gate cannot pass
+    # vacuously. (MIND_BENCH_REQUIRE is only read by the Rust test harnesses, not
+    # `mindc build`, so it would be inert in this job — deliberately omitted.)
     env:
       http_proxy: ""
       https_proxy: ""
       no_proxy: ""
-      MIND_BENCH_REQUIRE: "1"
 
     steps:
       - name: Checkout
@@ -467,7 +468,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-exec-gate-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-exec-gate-${{ hashFiles('**/Cargo.toml', 'src/**/*.rs') }}
           restore-keys: |
             ${{ runner.os }}-exec-gate-
 
