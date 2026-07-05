@@ -80,7 +80,7 @@ pub fn mgf1_sha256(seed_addr: i64, seed_len: i64, mask_addr: i64, mask_len: i64)
         let mut j: i64 = 0;
         while j < 32 {
             if produced + j < mask_len {
-                __mind_store_i8(mask_addr + produced + j, __mind_load_i8(dgst + j));
+                __mind_store_i8(mask_addr + produced + j, __mind_load_i8(dgst + j))
             }
             j = j + 1;
         }
@@ -102,7 +102,8 @@ fn rsa_pss_emsa_check(em: i64, msg_addr: i64, msg_len: i64, salt_len: i64) -> i6
     if salt_len < 0 {
         return 0;
     }
-    if salt_len > 222 {          // 256 < 32 + salt_len + 2
+    if salt_len > 222 {
+        // 256 < 32 + salt_len + 2
         return 0;
     }
     // Step 4: rightmost octet of EM must be 0xbc.
@@ -128,7 +129,8 @@ fn rsa_pss_emsa_check(em: i64, msg_addr: i64, msg_len: i64, salt_len: i64) -> i6
     // Step 9: set the leftmost 8*emLen - emBits = 1 bit of DB to zero.
     __mind_store_i8(db + 0, __mind_load_i8(db + 0) & 127);
     // Step 10: DB = PS (emLen - hLen - sLen - 2 zero octets) || 0x01 || salt.
-    let one_pos: i64 = 223 - salt_len - 1;   // index of the 0x01 separator
+    let one_pos: i64 = 223 - salt_len - 1;
+    // index of the 0x01 separator
     let mut ok: i64 = 1;
     let mut k: i64 = 0;
     while k < one_pos {
@@ -151,7 +153,8 @@ fn rsa_pss_emsa_check(em: i64, msg_addr: i64, msg_len: i64, salt_len: i64) -> i6
         __mind_store_i8(mp + z, 0);
         z = z + 1;
     }
-    sha256(msg_addr, msg_len, mp + 8);   // mHash into M'[8..40)
+    sha256(msg_addr, msg_len, mp + 8);
+    // mHash into M'[8..40)
     let mut s: i64 = 0;
     while s < salt_len {
         __mind_store_i8(mp + 40 + s, __mind_load_i8(db + 223 - salt_len + s));
@@ -179,23 +182,15 @@ fn rsa_pss_emsa_check(em: i64, msg_addr: i64, msg_len: i64, salt_len: i64) -> i6
 //   salt_len expected salt length (32 for TLS 1.3, RFC 8446 §4.2.3).
 // Returns 1 (valid) or 0 (invalid).  Fail-closed.
 // ---------------------------------------------------------------------------
-pub fn rsa_pss_verify_sha256(
-    n_addr: i64,
-    n_len: i64,
-    e: i64,
-    sig_addr: i64,
-    sig_len: i64,
-    msg_addr: i64,
-    msg_len: i64,
-    salt_len: i64,
-) -> i64 {
+pub fn rsa_pss_verify_sha256(n_addr: i64, n_len: i64, e: i64, sig_addr: i64, sig_len: i64, msg_addr: i64, msg_len: i64, salt_len: i64) -> i64 {
     // Geometry guards: this module's emBits/emLen constants assume a full
     // 2048-bit modulus (k = 256, top bit of n set).  §8.1.2 step 1: the
     // signature must be exactly k octets.
     if n_len != 256 {
         return 0;
     }
-    if (__mind_load_i8(n_addr + 0) & 128) == 0 {   // modBits must be 2048
+    if (__mind_load_i8(n_addr + 0) & 128) == 0 {
+        // modBits must be 2048
         return 0;
     }
     if sig_len != 256 {
@@ -216,7 +211,8 @@ pub fn rsa_pss_verify_sha256(
     if salt_len > 222 {
         return 0;
     }
-    let n: i64 = __mind_alloc(1040);        // 130 limbs (std/x509.mind bignum)
+    let n: i64 = __mind_alloc(1040);
+    // 130 limbs (std/x509.mind bignum)
     let s: i64 = __mind_alloc(1040);
     let em_limbs: i64 = __mind_alloc(1040);
     bn_from_bytes(n_addr, n_len, n);

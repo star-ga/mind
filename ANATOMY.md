@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3020 | **Est. tokens:** ~7,250,638
-**Generated:** 2026-07-05 11:40 UTC
+**Files:** 3020 | **Est. tokens:** ~7,250,589
+**Generated:** 2026-07-05 12:43 UTC
 
 ## Token Budget Guide
 
@@ -48,7 +48,7 @@
 | `docs/research/` | 1 | ~117 |
 | `docs/rfcs/` | 28 | ~118,403 |
 | `docs/specs/` | 2 | ~976 |
-| `examples/` | 18 | ~35,192 |
+| `examples/` | 18 | ~35,272 |
 | `examples/c/` | 2 | ~400 |
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
@@ -59,7 +59,7 @@
 | `examples/native/` | 2 | ~71 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
-| `examples/zoo/` | 6 | ~13,400 |
+| `examples/zoo/` | 6 | ~12,518 |
 | `experiments/global-vs-local/` | 7 | ~6,492 |
 | `.githooks/` | 1 | ~255 |
 | `.github/` | 3 | ~148 |
@@ -387,7 +387,7 @@
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~19,662 |
-| `src/ir/` | 5 | ~32,195 |
+| `src/ir/` | 5 | ~32,322 |
 | `src/ir/compact/` | 3 | ~15,194 |
 | `src/ir/compact/v2/` | 8 | ~37,885 |
 | `src/ir/compact/v3/` | 4 | ~45,526 |
@@ -406,11 +406,11 @@
 | `src/type_checker/` | 1 | ~11,258 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 38 | ~179,983 |
-| `tests/` | 269 | ~451,719 |
+| `std/` | 38 | ~179,783 |
+| `tests/` | 269 | ~452,551 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
-| `tests/common/` | 1 | ~674 |
+| `tests/common/` | 1 | ~668 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
 | `tests/conformance/gpu_profile/` | 2 | ~11 |
 | `tests/cross_substrate_identity/` | 2 | ~4,052 |
@@ -841,7 +841,7 @@
 - `README.md` (~2254 tok, huge) — RFC 0005 Phase 6.2 — Self-Host Parser Seed
 ### `examples/`
 
-- `policy.mind` (~1221 tok, large) — policy.mind — v0.1 Execution Boundary Kernel
+- `policy.mind` (~1301 tok, large) — policy.mind — v0.1 Execution Boundary Kernel
 - `README.md` (~2066 tok, huge) — MIND Examples
 - `remizov_benchmark.mind` (~6400 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
 - `remizov_feynman.mind` (~2894 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
@@ -859,12 +859,12 @@
 - `README.md` (~2612 tok, huge) — RFC 0005 Phase 6.3 — Self-Host Type-Checker Seed
 ### `examples/zoo/`
 
-- `conv_classifier.mind` (~2621 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
-- `linear_regression.mind` (~1423 tok, large) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
-- `logistic_classifier.mind` (~1624 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
-- `mlp_mnist.mind` (~2471 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
+- `conv_classifier.mind` (~2407 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
+- `linear_regression.mind` (~1347 tok, large) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
+- `logistic_classifier.mind` (~1517 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
+- `mlp_mnist.mind` (~2275 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
 - `README.md` (~1191 tok, large) — MIND Model Zoo
-- `transformer_block.mind` (~4070 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
+- `transformer_block.mind` (~3781 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
 ### `experiments/global-vs-local/`
 
 - `chern.py` (~1250 tok, large)
@@ -3818,8 +3818,8 @@
 ### `src/ir/`
 
 - `evidence.rs` (~1913 tok, huge) — Copyright 2025 STARGA Inc.
-- `fp_mode.rs` (~3759 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
-- `mod.rs` (~12285 tok, huge) — Copyright 2025 STARGA Inc.
+- `fp_mode.rs` (~3878 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
+- `mod.rs` (~12293 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~10698 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -3910,44 +3910,44 @@
 - `mod.rs` (~4906 tok, huge) — Copyright 2025 STARGA Inc.
 ### `std/`
 
-- `aes_gcm.mind` (~5431 tok, huge) — std/aes_gcm.mind — AES-128 (FIPS 197) + AES-128-GCM (NIST SP 800-38D) in
+- `aes_gcm.mind` (~5400 tok, huge) — std/aes_gcm.mind — AES-128 (FIPS 197) + AES-128-GCM (NIST SP 800-38D) in
 - `arena.mind` (~1323 tok, large) — std.arena — bump-pointer region allocator.
 - `async.mind` (~2460 tok, huge) — std/async.mind -- RFC 0011 Phase A: Scheduler injection + Sender/Receiver
 - `blas.mind` (~2518 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
 - `cli.mind` (~2781 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
-- `ecdsa_p256.mind` (~6619 tok, huge) — std/ecdsa_p256.mind — ECDSA signature VERIFICATION on NIST P-256
+- `ecdsa_p256.mind` (~6517 tok, huge) — std/ecdsa_p256.mind — ECDSA signature VERIFICATION on NIST P-256
 - `fs.mind` (~4326 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
-- `hkdf.mind` (~1555 tok, huge) — std/hkdf.mind — HMAC-SHA256 (RFC 2104) + HKDF (RFC 5869) in pure MIND.
-- `hpack.mind` (~9651 tok, huge) — std/hpack.mind — HPACK header-compression DECODING (RFC 7541) in pure MIND.
-- `http2_frame.mind` (~4183 tok, huge) — std/http2_frame.mind — HTTP/2 framing layer (RFC 9113 §3.4, §4.1, §6) in
+- `hkdf.mind` (~1547 tok, huge) — std/hkdf.mind — HMAC-SHA256 (RFC 2104) + HKDF (RFC 5869) in pure MIND.
+- `hpack.mind` (~9694 tok, huge) — std/hpack.mind — HPACK header-compression DECODING (RFC 7541) in pure MIND.
+- `http2_frame.mind` (~4191 tok, huge) — std/http2_frame.mind — HTTP/2 framing layer (RFC 9113 §3.4, §4.1, §6) in
 - `http.mind` (~6682 tok, huge) — std/http.mind — HTTP/1.1 client over std.net (task #XXX).
 - `io_canon.mind` (~2624 tok, huge) — std.io_canon — canonical completion ordering for deterministic I/O.
 - `io.mind` (~1688 tok, huge) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
 - `iouring.mind` (~18767 tok, huge) — std.iouring — minimal io_uring binding (Linux). The physical-I/O reap source
 - `json.mind` (~10267 tok, huge) — std/json.mind -- RFC 8259 / ECMA-404 subset parser (task #269, cargo-retirement track).
-- `keccak.mind` (~3941 tok, huge) — std/keccak.mind — Keccak / SHA-3 + SHAKE (FIPS 202) in pure MIND.
+- `keccak.mind` (~3926 tok, huge) — std/keccak.mind — Keccak / SHA-3 + SHAKE (FIPS 202) in pure MIND.
 - `llvm.mind` (~11108 tok, huge) — std/llvm.mind — RFC 0010 Phase F: hand-written MIND extern "C" bindings
 - `map.mind` (~1538 tok, huge) — std/map.mind — RFC 0005 Phase 2: pure-MIND insertion-ordered map.
 - `mlir.mind` (~11056 tok, huge) — std/mlir.mind — RFC 0010 Phase E: hand-written MIND extern "C" bindings
-- `mlkem768.mind` (~6462 tok, huge) — std/mlkem768.mind — ML-KEM-768 (FIPS 203, "Kyber") in pure MIND.
+- `mlkem768.mind` (~6449 tok, huge) — std/mlkem768.mind — ML-KEM-768 (FIPS 203, "Kyber") in pure MIND.
 - `net.mind` (~2381 tok, huge) — std/net.mind — Task #268: POSIX socket surface in pure MIND.
 - `process.mind` (~3072 tok, huge) — std/process.mind — Task #268: subprocess + process environment in pure MIND.
 - `reactor.mind` (~1420 tok, large) — std.reactor — deterministic per-connection request-id allocation.
 - `regex.mind` (~9536 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
 - `ring.mind` (~1407 tok, large) — std.ring — fixed-capacity byte ring buffer (FIFO).
-- `rsa_pss.mind` (~2461 tok, huge) — std/rsa_pss.mind — RSASSA-PSS signature VERIFICATION (RFC 8017 §8.1.2) with
-- `sha256.mind` (~3635 tok, huge) — std/sha256.mind — FIPS 180-4 SHA-256 in pure MIND.
+- `rsa_pss.mind` (~2453 tok, huge) — std/rsa_pss.mind — RSASSA-PSS signature VERIFICATION (RFC 8017 §8.1.2) with
+- `sha256.mind` (~3643 tok, huge) — std/sha256.mind — FIPS 180-4 SHA-256 in pure MIND.
 - `string.mind` (~2326 tok, huge) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
 - `time.mind` (~257 tok, medium) — std.time — wall-clock access for evidence / audit timestamps.
-- `tls13_finished.mind` (~1420 tok, large) — std/tls13_finished.mind — TLS 1.3 Finished-message MAC + transcript hash
-- `tls13_handshake.mind` (~5002 tok, huge) — std/tls13_handshake.mind — TLS 1.3 handshake CRYPTO ORCHESTRATION in pure
-- `tls13_keyschedule.mind` (~3219 tok, huge) — std/tls13_keyschedule.mind — TLS 1.3 key schedule (RFC 8446 §7.1) in pure MIND.
-- `tls13_record.mind` (~2220 tok, huge) — std/tls13_record.mind — TLS 1.3 record-layer protection (RFC 8446 §5.1-5.3)
+- `tls13_finished.mind` (~1409 tok, large) — std/tls13_finished.mind — TLS 1.3 Finished-message MAC + transcript hash
+- `tls13_handshake.mind` (~4988 tok, huge) — std/tls13_handshake.mind — TLS 1.3 handshake CRYPTO ORCHESTRATION in pure
+- `tls13_keyschedule.mind` (~3220 tok, huge) — std/tls13_keyschedule.mind — TLS 1.3 key schedule (RFC 8446 §7.1) in pure MIND.
+- `tls13_record.mind` (~2171 tok, huge) — std/tls13_record.mind — TLS 1.3 record-layer protection (RFC 8446 §5.1-5.3)
 - `toml.mind` (~10099 tok, huge) — std/toml.mind -- TOML 1.0 subset parser (task #258, cargo-retirement track).
 - `tui.mind` (~4815 tok, huge) — std/tui.mind — RFC 0013 Tier 1 (c): minimal pure-MIND TUI surface.
 - `vec.mind` (~1100 tok, large) — std/vec.mind — RFC 0005 Phase 2: pure-MIND growable vector.
 - `x25519.mind` (~4019 tok, huge) — std/x25519.mind — X25519 (RFC 7748 §5) Curve25519 Montgomery-ladder ECDH in
-- `x509.mind` (~6614 tok, huge) — std/x509.mind — minimal X.509v3 DER parsing + RSA PKCS#1 v1.5 (SHA-256)
+- `x509.mind` (~6605 tok, huge) — std/x509.mind — minimal X.509v3 DER parsing + RSA PKCS#1 v1.5 (SHA-256)
 ### `tests/`
 
 - `alias_miscompile_run.rs` (~1338 tok, large) — Copyright 2025 STARGA Inc.
@@ -3988,7 +3988,7 @@
 - `collection_mutation_expr_position_run.rs` (~1003 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/common/`
 
-- `mod.rs` (~674 tok, large) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~668 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/`
 
 - `compound_assign.rs` (~1034 tok, large) — Copyright 2025 STARGA Inc.
@@ -4111,16 +4111,16 @@
 ### `tests/`
 
 - `fmt_comment_placement.rs` (~2772 tok, huge) — Copyright 2025 STARGA Inc.
-- `fmt_idempotence.rs` (~2782 tok, huge) — Copyright 2025 STARGA Inc.
+- `fmt_idempotence.rs` (~2946 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_ir_preservation.rs` (~2030 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_module_block_item_preserved.rs` (~926 tok, large) — Regression: `mindc fmt` must not drop item declarations nested inside a
-- `fmt_stdlib_stability.rs` (~2693 tok, huge) — Copyright 2025 STARGA Inc.
+- `fmt_stdlib_stability.rs` (~2754 tok, huge) — Copyright 2025 STARGA Inc.
 - `fn_value_call_reject.rs` (~761 tok, large) — Copyright 2025 STARGA Inc.
 - `for_each_run.rs` (~859 tok, large) — Copyright 2025 STARGA Inc.
 - `g2_differential_mlir.rs` (~6203 tok, huge) — Copyright 2025 STARGA Inc.
 - `gather_preview.rs` (~288 tok, medium) — Copyright 2025 STARGA Inc.
 - `generics_lowering.rs` (~1384 tok, large) — Copyright 2026 STARGA Inc. Licensed under the Apache License, Version 2.0.
-- `genref_phase_jb.rs` (~3326 tok, huge) — Copyright 2025 STARGA Inc.
+- `genref_phase_jb.rs` (~3459 tok, huge) — Copyright 2025 STARGA Inc.
 - `grad_wrt_resolve.rs` (~737 tok, large) — Copyright 2025 STARGA Inc.
 - `hpack_driver.py` (~3027 tok, huge) — # Official-vector driver for std/hpack.mind (pure-MIND HPACK decoding,
 - `http2_frame_driver.py` (~4195 tok, huge) — # Reference-vector driver for std/http2_frame.mind (pure-MIND HTTP/2 framing,
@@ -4157,7 +4157,7 @@
 - `linalg_preview.rs` (~291 tok, medium) — Copyright 2025 STARGA Inc.
 - `lint_infrastructure.rs` (~2540 tok, huge) — Copyright 2025 STARGA Inc.
 - `loop_run.rs` (~764 tok, large) — Copyright 2025 STARGA Inc.
-- `loud_fail_non_i64.rs` (~745 tok, large) — Release-readiness P1.1 — the runnable-artifact ABI gate.
+- `loud_fail_non_i64.rs` (~852 tok, large) — Release-readiness P1.1 — the runnable-artifact ABI gate.
 - `map_get_inference_run.rs` (~713 tok, large) — Copyright 2025 STARGA Inc.
 - `map_runtime_run.rs` (~843 tok, large) — Copyright 2025 STARGA Inc.
 - `map_surface_run.rs` (~949 tok, large) — Copyright 2025 STARGA Inc.
@@ -4315,14 +4315,14 @@
 - `reap_threshold.rs` (~2047 tok, huge) — Copyright 2025 STARGA Inc.
 - `reductions_grad.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
 - `reductions_preview.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
-- `_ref_mic3_dump.rs` (~1434 tok, large) — Committed self-host reference generator (A9b): reconstruct
+- `_ref_mic3_dump.rs` (~1538 tok, huge) — Committed self-host reference generator (A9b): reconstruct
 - `region_phase_ja.rs` (~4228 tok, huge) — Copyright 2025 STARGA Inc.
 - `relu_exec.rs` (~472 tok, medium) — Copyright 2025 STARGA Inc.
 - `relu_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `repl_basic.rs` (~523 tok, large) — Copyright 2025 STARGA Inc.
 - `resolve_fn_body.rs` (~979 tok, large) — Copyright 2025 STARGA Inc.
 - `result_option_prelude_run.rs` (~910 tok, large) — Copyright 2025 STARGA Inc.
-- `return_cond_type_reject.rs` (~1498 tok, large) — Copyright 2025 STARGA Inc.
+- `return_cond_type_reject.rs` (~1572 tok, huge) — Copyright 2025 STARGA Inc.
 - `rfc0012_attribute_syntax.rs` (~1182 tok, large) — Copyright 2025 STARGA Inc.
 - `rfc0012_phase_a_shape_types.rs` (~6540 tok, huge) — Copyright 2025 STARGA Inc.
 - `rfc0012_phase_b_operators.rs` (~4514 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4492,7 +4492,7 @@
 - `tensor_broadcast.rs` (~1004 tok, large) — Copyright 2025 STARGA Inc.
 - `tensor_buffers.rs` (~517 tok, large) — Copyright 2025 STARGA Inc.
 - `tensor_eval.rs` (~457 tok, medium) — Copyright 2025 STARGA Inc.
-- `tensor_param_fail_loud_run.rs` (~1572 tok, huge) — Copyright 2025 STARGA Inc.
+- `tensor_param_fail_loud_run.rs` (~1693 tok, huge) — Copyright 2025 STARGA Inc.
 - `tensor_stdlib.rs` (~549 tok, large) — Copyright 2025 STARGA Inc.
 - `tensor_symbolic.rs` (~550 tok, large) — Copyright 2025 STARGA Inc.
 - `tls13_finished_driver.py` (~3085 tok, huge) — # Official-vector driver for std/tls13_finished.mind (pure-MIND TLS 1.3
@@ -4515,7 +4515,7 @@
 - `type_error_spans.rs` (~1064 tok, large) — Copyright 2025 STARGA Inc.
 - `type_infer.rs` (~344 tok, medium) — Copyright 2025 STARGA Inc.
 - `type_struct_run.rs` (~628 tok, large) — Copyright 2025 STARGA Inc.
-- `typo_reject.rs` (~1059 tok, large) — Copyright 2025 STARGA Inc.
+- `typo_reject.rs` (~1127 tok, large) — Copyright 2025 STARGA Inc.
 - `value_if_comparison.rs` (~813 tok, large) — Copyright 2025 STARGA Inc.
 - `value_if_f64_let.rs` (~1148 tok, large) — Copyright 2025 STARGA Inc.
 - `vars_assign.rs` (~260 tok, medium) — Copyright 2025 STARGA Inc.

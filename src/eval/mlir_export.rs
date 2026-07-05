@@ -575,7 +575,7 @@ fn emit_tensor_reduce(
     if matches!(dtype, DType::F32 | DType::F64) {
         if let Some(dims) = static_dims {
             let total: usize = dims.iter().product();
-            if total >= 1 && total <= PINNED_FOLD_ELEM_CAP {
+            if (1..=PINNED_FOLD_ELEM_CAP).contains(&total) {
                 emit_tensor_reduce_pinned(
                     emitter,
                     dst,
