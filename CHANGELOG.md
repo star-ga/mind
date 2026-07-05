@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-07-05
+
+### Proven
+- x86_64 (AVX2) == ARM64 (NEON) byte-identity PROVEN on real hardware (GCP Ampere Altra aarch64, LLVM 20.1.8): cross_substrate_identity 13/13, all 12 canaries byte-identical incl. a chaotic Q16.16 Lorenz integrator.
+- Native-ELF self-host loop closed (stage1==stage2==stage3 byte-identical, fail-closed gate).
+### Added
+- Tensor sum/mean pinned canonical fold + 1-D tensor-parameter ABI.
+- PQC ML-DSA (FIPS-204) hybrid signing direction.
+### Fixed
+- mindc import-walk hardening; Windows-portable __mind_now_ns (POSIX byte-identity unchanged).
+### Docs
+- Full docs/spec/site truth-alignment: scalar int/Q16.16/f64-f32 x86+ARM verified; float-vector + GPU scoped frontier/commercial-roadmap.
+
 ### Verified
 
 - **Cross-substrate byte-identity now proven on ARM64 hardware (2026-07-05).**
@@ -2559,6 +2572,19 @@ sequential arm evaluation; &expr is a no-op metadata wrapper).
   files in `rfn-mind/src`).
 
 ## [Unreleased]
+
+## [0.10.1] - 2026-07-05
+
+### Proven
+- x86_64 (AVX2) == ARM64 (NEON) byte-identity PROVEN on real hardware (GCP Ampere Altra aarch64, LLVM 20.1.8): cross_substrate_identity 13/13, all 12 canaries byte-identical incl. a chaotic Q16.16 Lorenz integrator.
+- Native-ELF self-host loop closed (stage1==stage2==stage3 byte-identical, fail-closed gate).
+### Added
+- Tensor sum/mean pinned canonical fold + 1-D tensor-parameter ABI.
+- PQC ML-DSA (FIPS-204) hybrid signing direction.
+### Fixed
+- mindc import-walk hardening; Windows-portable __mind_now_ns (POSIX byte-identity unchanged).
+### Docs
+- Full docs/spec/site truth-alignment: scalar int/Q16.16/f64-f32 x86+ARM verified; float-vector + GPU scoped frontier/commercial-roadmap.
 
 Infrastructure landed on `main` but not yet attached to a tag.
 
