@@ -152,7 +152,14 @@ fn note_of(ir: &IRModule) -> String {
         .collect()
 }
 
+// Manual reference-regeneration utility, not a CI assertion: it writes
+// `_ref_*.note` fixtures into a developer-local absolute path and makes no
+// assertions, so it is `#[ignore]`d and run explicitly with
+// `cargo test dump_ref -- --ignored` when the mic@3 references are refreshed.
+// (Left unignored it fails on any machine whose checkout is not that absolute
+// path — e.g. every CI runner.)
 #[test]
+#[ignore = "manual mic@3 reference-dump utility; writes into a dev-local path, run with --ignored"]
 fn dump_ref() {
     let out_dir = "/home/n/mind/examples/mindc_mind";
     for (name, src) in FIXTURES {
