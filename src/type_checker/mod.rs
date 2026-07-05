@@ -3147,7 +3147,7 @@ fn collect_fixed_bytes_locals(stmts: &[Node], out: &mut BTreeSet<String>) {
 /// RAII guard that installs the fixed-`bytes[N]` local set into the thread-local
 /// for the duration of a fn-body check and restores the previous value on drop.
 /// Merges onto any parent set (child names win) so a nested block's recursive
-/// body check still sees the enclosing fn's bytes[N] locals.
+/// body check still sees the enclosing fn's `bytes[N]` locals.
 struct FixedBytesLocalsGuard {
     prev: Option<BTreeSet<String>>,
 }

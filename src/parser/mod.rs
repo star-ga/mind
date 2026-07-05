@@ -238,6 +238,43 @@ impl<'a> P<'a> {
         }
     }
 
+    /// Render the token starting at the cursor as a short human string, for
+    /// diagnostics. An identifier reads to its word boundary; any other token
+    /// renders as its leading UTF-8 scalar (`@`, `%`, …), falling back to a
+    /// `\xNN` byte escape for invalid UTF-8. Never advances the cursor.
+    fn render_cur_token(&self) -> String {
+        if self.pos >= self.b.len() {
+            return "<eof>".to_string();
+        }
+        let start = self.pos;
+        let c = self.b[start];
+        if Self::is_ident_start(c) {
+            let mut end = start;
+            while end < self.b.len() && Self::is_ident_cont(self.b[end]) {
+                end += 1;
+            }
+            return String::from_utf8_lossy(&self.b[start..end]).into_owned();
+        }
+        let take = (self.b.len() - start).min(4);
+        for len in 1..=take {
+            if let Ok(s) = std::str::from_utf8(&self.b[start..start + len]) {
+                if let Some(ch) = s.chars().next() {
+                    return ch.to_string();
+                }
+            }
+        }
+        format!("\\x{c:02x}")
+    }
+
+    /// Error for a token that cannot begin an expression, reported AT the
+    /// offending token's own position (fixes #200: the old recursive-descent
+    /// chain unwound and re-reported at an earlier checkpoint; the Pratt parser
+    /// keeps `self.pos` on the real site, and this names the token too).
+    fn unexpected_prefix_err(&self) -> ParseError {
+        let tok = self.render_cur_token();
+        self.err(format!("unexpected `{tok}`, expected an expression"))
+    }
+
     fn starts_with(&self, s: &[u8]) -> bool {
         self.b[self.pos..].starts_with(s)
     }
@@ -3537,7 +3574,7 @@ impl<'a> P<'a> {
         let start = self.pos;
         let ident = self
             .dotted_ident()
-            .ok_or_else(|| self.err("expected expression".into()))?;
+            .ok_or_else(|| self.unexpected_prefix_err())?;
         self.skip_ws();
         // `map<K,V>.new(args)` / `set<T>.new()` / `array<T>.new()` — a generic-type
         // STATIC CONSTRUCTOR in expression position. Gated on the exact collection

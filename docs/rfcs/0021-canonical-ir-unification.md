@@ -162,9 +162,12 @@ today; convergence is a tracked deliverable**, not a shipped fact.
 - **Output-hash matrix (deferred):** Q16.16 is an i32 *encoding convention*, not a
   mic@1 `DType` — so mic@1 identity is **necessary but not sufficient**. True
   bit-identity is an output-hash property of the *lowered* binary and needs the
-  per-substrate runtime matrix (aarch64 runner / QEMU). Until a real second-substrate
-  run blesses it, stop committing `neon` reference hashes as hand-copied duplicates of
-  `avx2` (mark them `deferred`, never green-by-copy).
+  per-substrate runtime matrix (aarch64 runner / QEMU). **(RESOLVED 2026-07-05)** A
+  real second-substrate run has now blessed it: all 12 `cross_substrate_identity`
+  canaries were recomputed on real ARM64 (NEON) hardware (GCP Ampere Altra aarch64,
+  LLVM 20.1.8, `MIND_BENCH_REQUIRE=1`, 13/13 tests) and reproduced the `avx2`
+  reference hashes byte-for-byte, so the `neon` lines are hardware-verified, not
+  green-by-copy.
 
 ## 4. Migration path (must not regress the self-host bootstrap)
 

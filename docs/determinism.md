@@ -70,7 +70,8 @@ no reassociation, in fixed source order — and is **run-to-run bit-identical** 
 loop-carried `f64` integrator such as a Lorenz–Euler step reproduces a reference
 bit-for-bit). Because scalar `+ − × ÷ √` are correctly-rounded IEEE-754
 operations, cross-ISA bit-identity follows on any conforming FPU (x86-SSE2 ==
-ARM-NEON); re-verification on ARM hardware is in progress. The **Q16.16
+ARM-NEON), and is now verified on real ARM64 (NEON) hardware (2026-07-05)
+byte-identical to the x86_64 references. The **Q16.16
 fixed-point** tier is fully deterministic and byte-identical across substrates
 (x86 == ARM) today. The IEEE edge-case rules below pin the remaining special
 values.
@@ -127,8 +128,9 @@ Two execution tiers; the contract is **bit-identity**, never "within tolerance"
   multiply-add the hardware would otherwise apply — with FMA fusion left on, the
   chaotic trajectory diverges, worse the longer it runs. Because scalar
   `+ − × ÷ √` are correctly-rounded IEEE-754 operations, the same holds on any
-  conforming FPU (verification on further hardware is in
-  progress). ✅ The **f32 vector BLAS reductions** — the `dot` / `L1` / `matmul`
+  conforming FPU — now also verified on real ARM64 (NEON) hardware (2026-07-05),
+  where all 12 `cross_substrate` canaries reproduced the x86_64 references
+  byte-for-byte. ✅ The **f32 vector BLAS reductions** — the `dot` / `L1` / `matmul`
   `*_v` kernels — are now on the **strict tier** too: their per-lane FMA is
   unfused to separate `mulf`+`addf` and the horizontal sum is a pinned
   fixed-order fold, so they emit no `vector.fma` / `vector.reduction <add>` and

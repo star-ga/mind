@@ -93,11 +93,11 @@ fn car25519(o: i64) -> i64 {
         let c: i64 = oi >> 16;
         if i < 15 {
             let nxt: i64 = __mind_load_i64(o + (i + 1) * 8);
-            __mind_store_i64(o + (i + 1) * 8, nxt + c - 1);
+            __mind_store_i64(o + (i + 1) * 8, nxt + c - 1)
         } else {
             // Wrap the top-limb carry back into limb 0 as 38*(c-1) (2^256 = 38).
             let l0: i64 = __mind_load_i64(o + 0);
-            __mind_store_i64(o + 0, l0 + 38 * (c - 1));
+            __mind_store_i64(o + 0, l0 + 38 * (c - 1))
         }
         __mind_store_i64(o + i * 8, oi - (c << 16));
         i = i + 1;
@@ -255,7 +255,7 @@ fn finverse(o: i64, inp: i64) -> i64 {
         fsquare(c, c);
         if a != 2 {
             if a != 4 {
-                fmul(c, c, inp);
+                fmul(c, c, inp)
             }
         }
         a = a - 1;

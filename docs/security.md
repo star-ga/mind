@@ -8,8 +8,8 @@
 > `@validate`) are planned, not yet shipped. The currently-verified
 > determinism scope is defined in [`docs/determinism.md`](determinism.md):
 > bit-identical integer/Q16.16 execution gated across x86 == ARM, with scalar
-> IEEE-754 f64/f32 on the strict path (run-to-run bit-identical; cross-ISA
-> verification in progress).
+> IEEE-754 f64/f32 on the strict path (run-to-run bit-identical, and verified
+> byte-identical across x86_64 and ARM64 on real hardware, 2026-07-05).
 
 ## Overview
 

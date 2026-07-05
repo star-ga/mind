@@ -423,6 +423,12 @@ jobs:
             python3 examples/mindc_mind/gap_corpus_smoke.py
         working-directory: ${{ github.workspace }}
 
+      - name: Self-host LOOP gate — MIND compiles MIND, Rust+LLVM out (self_host_loop_smoke.py)
+        run: |
+          MINDC_SO=/tmp/libmindc_mind_self_host.so \
+            python3 examples/mindc_mind/self_host_loop_smoke.py
+        working-directory: ${{ github.workspace }}
+
       - name: Run Phase G integration tests
         run: |
           cargo test --release --no-default-features \

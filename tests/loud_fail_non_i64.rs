@@ -38,9 +38,18 @@ fn u32_return_is_clean() {
 }
 
 #[test]
-fn tensor_param_is_blocked() {
-    // tensor params still erase to the i64 ABI — not yet lowerable.
-    assert!(blockers("fn f(a: tensor<f32[4]>) -> i64 { 0 }") >= 1);
+fn static_shape_tensor_param_is_clean() {
+    // A STATIC-shape tensor param (`tensor<f32[4]>`) now lowers to a real
+    // memref/tensor C ABI (ptr + baked-in static dims), so it is no longer
+    // gated — runtime-fed static-shape tensor reductions build.
+    assert_eq!(blockers("fn f(a: tensor<f32[4]>) -> i64 { 0 }"), 0);
+}
+
+#[test]
+fn dynamic_shape_tensor_param_is_blocked() {
+    // A DYNAMIC/symbolic dim has no static extent to bake into the memref
+    // descriptor, so it still erases to the i64 ABI and remains gated.
+    assert!(blockers("fn f(a: tensor<f32[N]>) -> i64 { 0 }") >= 1);
 }
 
 #[test]
