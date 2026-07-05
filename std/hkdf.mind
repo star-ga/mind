@@ -43,13 +43,7 @@ fn mem_copy(dst: i64, src: i64, len: i64) -> i64 {
 // ipad = 0x36 repeated, opad = 0x5c repeated.
 // ---------------------------------------------------------------------------
 
-pub fn hmac_sha256(
-    key_addr: i64,
-    key_len: i64,
-    msg_addr: i64,
-    msg_len: i64,
-    out_addr: i64,
-) -> i64 {
+pub fn hmac_sha256(key_addr: i64, key_len: i64, msg_addr: i64, msg_len: i64, out_addr: i64) -> i64 {
     // K0 — 64-byte zero-padded key block.
     let k0: i64 = __mind_alloc(64);
     let mut i: i64 = 0;
@@ -60,7 +54,7 @@ pub fn hmac_sha256(
     if key_len > 64 {
         // Keys longer than the block are first hashed; sha256 writes 32 bytes,
         // leaving bytes 32..63 as the zero padding already in place.
-        sha256(key_addr, key_len, k0);
+        sha256(key_addr, key_len, k0)
     } else {
         let mut j: i64 = 0;
         while j < key_len {
@@ -108,13 +102,7 @@ pub fn hmac_sha256(
 // Writes the 32-byte PRK to prk_out.
 // ---------------------------------------------------------------------------
 
-pub fn hkdf_extract(
-    salt_addr: i64,
-    salt_len: i64,
-    ikm_addr: i64,
-    ikm_len: i64,
-    prk_out: i64,
-) -> i64 {
+pub fn hkdf_extract(salt_addr: i64, salt_len: i64, ikm_addr: i64, ikm_len: i64, prk_out: i64) -> i64 {
     hmac_sha256(salt_addr, salt_len, ikm_addr, ikm_len, prk_out);
     0
 }
@@ -129,14 +117,7 @@ pub fn hkdf_extract(
 // Writes L bytes to okm_out.
 // ---------------------------------------------------------------------------
 
-pub fn hkdf_expand(
-    prk_addr: i64,
-    prk_len: i64,
-    info_addr: i64,
-    info_len: i64,
-    length: i64,
-    okm_out: i64,
-) -> i64 {
+pub fn hkdf_expand(prk_addr: i64, prk_len: i64, info_addr: i64, info_len: i64, length: i64, okm_out: i64) -> i64 {
     let n: i64 = (length + 31) / 32;
 
     // Previous T block (T(i-1)); empty on the first iteration.
@@ -162,7 +143,11 @@ pub fn hkdf_expand(
 
         // Append T(i) to the output, truncating the last block to L total.
         let remaining: i64 = length - written;
-        let tocopy: i64 = if remaining < 32 { remaining } else { 32 };
+        let tocopy: i64 = if remaining < 32 {
+            remaining
+        } else {
+            32
+        };
         mem_copy(okm_out + written, tcur, tocopy);
         written = written + tocopy;
 

@@ -90,11 +90,11 @@ fn idempotence_stdlib() {
     let mut passed = 0usize;
     let mut skipped = 0usize;
 
-    // The four files below use only if/let/expression syntax — no while loops —
-    // and must parse under the default build. `string.mind` and `toml.mind`
-    // use `while` loops and are tested separately under std-surface
-    // (idempotence_stdlib_string / idempotence_stdlib_toml).
-    for name in &["vec", "io", "map", "blas"] {
+    // The three files below use only if/let/expression syntax — no while loops —
+    // and must parse under the default build. `string.mind`, `toml.mind` and
+    // `map.mind` use `while` loops and are tested separately under std-surface
+    // (idempotence_stdlib_string / idempotence_stdlib_toml / idempotence_stdlib_map).
+    for name in &["vec", "io", "blas"] {
         let path = base.join(format!("{name}.mind"));
         let src = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
@@ -109,7 +109,7 @@ fn idempotence_stdlib() {
         skipped, 0,
         "unexpected parse failures in std/ ({skipped} file(s))"
     );
-    assert_eq!(passed, 4, "expected 4 stdlib files, got {passed}");
+    assert_eq!(passed, 3, "expected 3 stdlib files, got {passed}");
 }
 
 /// `string.mind` uses `while` loops (the byte-compare bodies of
@@ -144,6 +144,23 @@ fn idempotence_stdlib_sha256() {
     assert!(
         exercised,
         "sha256.mind failed to parse under std-surface — unexpected"
+    );
+}
+
+/// `map.mind` uses `while` loops, which require the `std-surface` feature to be
+/// recognised by the formatter's parser.  This test is separately gated.
+#[test]
+#[cfg(feature = "std-surface")]
+fn idempotence_stdlib_map() {
+    let base = manifest_dir().join("std");
+    let cfg = default_cfg();
+    let path = base.join("map.mind");
+    let src = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    let exercised = check_idempotence("map", &src, &cfg);
+    assert!(
+        exercised,
+        "map.mind failed to parse under std-surface — unexpected"
     );
 }
 

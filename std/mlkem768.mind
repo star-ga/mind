@@ -99,13 +99,7 @@ fn mlkem_mulq(a: i64, b: i64) -> i64 {
 // ---------------------------------------------------------------------------
 
 fn mlkem_bitrev7(i: i64) -> i64 {
-    ((i >> 6) & 1)
-        | (((i >> 5) & 1) << 1)
-        | (((i >> 4) & 1) << 2)
-        | (((i >> 3) & 1) << 3)
-        | (((i >> 2) & 1) << 4)
-        | (((i >> 1) & 1) << 5)
-        | ((i & 1) << 6)
+    ((i >> 6) & 1) | (((i >> 5) & 1) << 1) | (((i >> 4) & 1) << 2) | (((i >> 3) & 1) << 3) | (((i >> 2) & 1) << 4) | (((i >> 1) & 1) << 5) | ((i & 1) << 6)
 }
 
 // ---------------------------------------------------------------------------
@@ -388,7 +382,7 @@ fn mlkem_encode_poly(f: i64, d: i64, out: i64) -> i64 {
         while b < d {
             if ((v >> b) & 1) == 1 {
                 let bit: i64 = i * d + b;
-                __mind_store_i8(out + bit / 8, __mind_load_i8(out + bit / 8) | (1 << (bit % 8)));
+                __mind_store_i8(out + bit / 8, __mind_load_i8(out + bit / 8) | (1 << (bit % 8)))
             }
             b = b + 1;
         }
@@ -734,10 +728,10 @@ pub fn mlkem768_decaps(dk: i64, ct: i64, out_ss: i64) -> i64 {
         i = i + 1;
     }
     if diff == 0 {
-        mlkem_mem_copy(out_ss, gout, 32);
+        mlkem_mem_copy(out_ss, gout, 32)
     }
     if diff != 0 {
-        mlkem_mem_copy(out_ss, kbar, 32);
+        mlkem_mem_copy(out_ss, kbar, 32)
     }
     0
 }

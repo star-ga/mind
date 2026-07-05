@@ -195,9 +195,19 @@ MIND_EXPORT int64_t __mind_free(int64_t addr) {
 MIND_EXPORT int64_t __mind_now_ns(int64_t _unused) {
     (void)_unused;
     struct timespec ts;
+#if defined(_WIN32) || defined(_WIN64)
+    // Windows (MSVC/clang) has no POSIX clock_gettime/CLOCK_REALTIME; the C11
+    // timespec_get(TIME_UTC) is the portable wall-clock read and resolves under
+    // the same <time.h>. This branch is Windows-only, so the POSIX path below is
+    // byte-for-byte unchanged and the substrate byte-identity gate is unaffected.
+    if (timespec_get(&ts, TIME_UTC) != TIME_UTC) {
+        return 0;
+    }
+#else
     if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {
         return 0;
     }
+#endif
     return (int64_t)ts.tv_sec * 1000000000LL + (int64_t)ts.tv_nsec;
 }
 
