@@ -103,16 +103,36 @@ fn h2_mem_eq(a: i64, b: i64, len: i64) -> i64 {
 // Frame type constants (RFC 9113 §6).
 // ---------------------------------------------------------------------------
 
-pub fn http2_type_data() -> i64 { 0 }
-pub fn http2_type_headers() -> i64 { 1 }
-pub fn http2_type_priority() -> i64 { 2 }
-pub fn http2_type_rst_stream() -> i64 { 3 }
-pub fn http2_type_settings() -> i64 { 4 }
-pub fn http2_type_push_promise() -> i64 { 5 }
-pub fn http2_type_ping() -> i64 { 6 }
-pub fn http2_type_goaway() -> i64 { 7 }
-pub fn http2_type_window_update() -> i64 { 8 }
-pub fn http2_type_continuation() -> i64 { 9 }
+pub fn http2_type_data() -> i64 {
+    0
+}
+pub fn http2_type_headers() -> i64 {
+    1
+}
+pub fn http2_type_priority() -> i64 {
+    2
+}
+pub fn http2_type_rst_stream() -> i64 {
+    3
+}
+pub fn http2_type_settings() -> i64 {
+    4
+}
+pub fn http2_type_push_promise() -> i64 {
+    5
+}
+pub fn http2_type_ping() -> i64 {
+    6
+}
+pub fn http2_type_goaway() -> i64 {
+    7
+}
+pub fn http2_type_window_update() -> i64 {
+    8
+}
+pub fn http2_type_continuation() -> i64 {
+    9
+}
 
 // ---------------------------------------------------------------------------
 // Frame header (RFC 9113 §4.1) — 9 bytes:
@@ -138,13 +158,7 @@ pub fn http2_frame_parse_header(buf_addr: i64, out_fields_addr: i64) -> i64 {
 // http2_frame_write_header — write the 9-byte frame header to out_addr.
 // length is masked to 24 bits, ftype/flags to 8 bits, stream_id to 31 bits
 // (the R bit is sent as zero, §4.1).  Returns 9.
-pub fn http2_frame_write_header(
-    length: i64,
-    ftype: i64,
-    flags: i64,
-    stream_id: i64,
-    out_addr: i64,
-) -> i64 {
+pub fn http2_frame_write_header(length: i64, ftype: i64, flags: i64, stream_id: i64, out_addr: i64) -> i64 {
     h2_be24_store(out_addr, length & 16777215);
     __mind_store_i8(out_addr + 3, ftype & 255);
     __mind_store_i8(out_addr + 4, flags & 255);
@@ -180,30 +194,54 @@ pub fn http2_frame_parse(buf_addr: i64, buf_len: i64, out_fields_addr: i64) -> i
 // http2_preface_write — write the exact 24 preface bytes to out_addr.
 // Returns 24.
 pub fn http2_preface_write(out_addr: i64) -> i64 {
-    __mind_store_i8(out_addr + 0, 80);   // 'P'
-    __mind_store_i8(out_addr + 1, 82);   // 'R'
-    __mind_store_i8(out_addr + 2, 73);   // 'I'
-    __mind_store_i8(out_addr + 3, 32);   // ' '
-    __mind_store_i8(out_addr + 4, 42);   // '*'
-    __mind_store_i8(out_addr + 5, 32);   // ' '
-    __mind_store_i8(out_addr + 6, 72);   // 'H'
-    __mind_store_i8(out_addr + 7, 84);   // 'T'
-    __mind_store_i8(out_addr + 8, 84);   // 'T'
-    __mind_store_i8(out_addr + 9, 80);   // 'P'
-    __mind_store_i8(out_addr + 10, 47);  // '/'
-    __mind_store_i8(out_addr + 11, 50);  // '2'
-    __mind_store_i8(out_addr + 12, 46);  // '.'
-    __mind_store_i8(out_addr + 13, 48);  // '0'
-    __mind_store_i8(out_addr + 14, 13);  // '\r'
-    __mind_store_i8(out_addr + 15, 10);  // '\n'
-    __mind_store_i8(out_addr + 16, 13);  // '\r'
-    __mind_store_i8(out_addr + 17, 10);  // '\n'
-    __mind_store_i8(out_addr + 18, 83);  // 'S'
-    __mind_store_i8(out_addr + 19, 77);  // 'M'
-    __mind_store_i8(out_addr + 20, 13);  // '\r'
-    __mind_store_i8(out_addr + 21, 10);  // '\n'
-    __mind_store_i8(out_addr + 22, 13);  // '\r'
-    __mind_store_i8(out_addr + 23, 10);  // '\n'
+    __mind_store_i8(out_addr + 0, 80);
+    // 'P'
+    __mind_store_i8(out_addr + 1, 82);
+    // 'R'
+    __mind_store_i8(out_addr + 2, 73);
+    // 'I'
+    __mind_store_i8(out_addr + 3, 32);
+    // ' '
+    __mind_store_i8(out_addr + 4, 42);
+    // '*'
+    __mind_store_i8(out_addr + 5, 32);
+    // ' '
+    __mind_store_i8(out_addr + 6, 72);
+    // 'H'
+    __mind_store_i8(out_addr + 7, 84);
+    // 'T'
+    __mind_store_i8(out_addr + 8, 84);
+    // 'T'
+    __mind_store_i8(out_addr + 9, 80);
+    // 'P'
+    __mind_store_i8(out_addr + 10, 47);
+    // '/'
+    __mind_store_i8(out_addr + 11, 50);
+    // '2'
+    __mind_store_i8(out_addr + 12, 46);
+    // '.'
+    __mind_store_i8(out_addr + 13, 48);
+    // '0'
+    __mind_store_i8(out_addr + 14, 13);
+    // '\r'
+    __mind_store_i8(out_addr + 15, 10);
+    // '\n'
+    __mind_store_i8(out_addr + 16, 13);
+    // '\r'
+    __mind_store_i8(out_addr + 17, 10);
+    // '\n'
+    __mind_store_i8(out_addr + 18, 83);
+    // 'S'
+    __mind_store_i8(out_addr + 19, 77);
+    // 'M'
+    __mind_store_i8(out_addr + 20, 13);
+    // '\r'
+    __mind_store_i8(out_addr + 21, 10);
+    // '\n'
+    __mind_store_i8(out_addr + 22, 13);
+    // '\r'
+    __mind_store_i8(out_addr + 23, 10);
+    // '\n'
     24
 }
 
@@ -361,13 +399,7 @@ pub fn http2_ping_write(flags: i64, opaque_addr: i64, out_addr: i64) -> i64 {
 // data length (>= 0).
 // debug_out_cap = bytes the caller allocated at debug_out_addr. Fail closed
 // (-1) if the attacker-controlled debug data would exceed it.
-pub fn http2_goaway_parse(
-    payload_addr: i64,
-    payload_len: i64,
-    out_fields_addr: i64,
-    debug_out_addr: i64,
-    debug_out_cap: i64,
-) -> i64 {
+pub fn http2_goaway_parse(payload_addr: i64, payload_len: i64, out_fields_addr: i64, debug_out_addr: i64, debug_out_cap: i64) -> i64 {
     if payload_len < 8 {
         return -1;
     }
@@ -386,13 +418,7 @@ pub fn http2_goaway_parse(
 // last_stream_id is masked to 31 bits (R bit sent as zero).  GOAWAY applies
 // to the connection: stream id 0, flags 0 (§6.8).
 // Returns the total frame size: 9 + 8 + debug_len.
-pub fn http2_goaway_write(
-    last_stream_id: i64,
-    error_code: i64,
-    debug_addr: i64,
-    debug_len: i64,
-    out_addr: i64,
-) -> i64 {
+pub fn http2_goaway_write(last_stream_id: i64, error_code: i64, debug_addr: i64, debug_len: i64, out_addr: i64) -> i64 {
     http2_frame_write_header(8 + debug_len, 7, 0, 0, out_addr);
     h2_be32_store(out_addr + 9, last_stream_id & 2147483647);
     h2_be32_store(out_addr + 13, error_code);

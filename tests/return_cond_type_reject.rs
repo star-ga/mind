@@ -134,7 +134,12 @@ fn float_if_condition_rejected() {
     );
 }
 
+// `while` loops are only parsed by the formatter/front-end under `std-surface`;
+// without it this source fails at parse before the type-checker can raise the
+// float-condition E2011, so the test is gated to the feature that makes the
+// `while` form reachable.
 #[test]
+#[cfg(feature = "std-surface")]
 fn float_while_condition_rejected() {
     let bad = write_tmp(
         "mind_cond_while_bad.mind",

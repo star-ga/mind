@@ -119,7 +119,8 @@ fn p256_bn_eq17(a: i64, b: i64) -> i64 {
 // p256_bn_cmp_ge17 — 1 if a >= b, else 0 (std/x509.mind:408 bn_cmp_ge pattern).
 fn p256_bn_cmp_ge17(a: i64, b: i64) -> i64 {
     let mut k: i64 = 16;
-    let mut res: i64 = 1;      // all-equal => a >= b
+    let mut res: i64 = 1;
+    // all-equal => a >= b
     let mut decided: i64 = 0;
     while k >= 0 {
         if decided == 0 {
@@ -341,12 +342,12 @@ fn p256_mul_mod(a: i64, b: i64, m: i64, out: i64) -> i64 {
     while bit >= 0 {
         p256_bn_shl1_17(out);
         if p256_bn_cmp_ge17(out, m) == 1 {
-            p256_bn_sub17(out, m);
+            p256_bn_sub17(out, m)
         }
         if p256_bit_of(a, bit) == 1 {
             p256_bn_add17(out, b);
             if p256_bn_cmp_ge17(out, m) == 1 {
-                p256_bn_sub17(out, m);
+                p256_bn_sub17(out, m)
             }
         }
         bit = bit - 1;
@@ -360,7 +361,7 @@ fn p256_add_mod(a: i64, b: i64, m: i64, out: i64) -> i64 {
     p256_bn_copy17(out, a);
     p256_bn_add17(out, b);
     if p256_bn_cmp_ge17(out, m) == 1 {
-        p256_bn_sub17(out, m);
+        p256_bn_sub17(out, m)
     }
     0
 }
@@ -370,7 +371,7 @@ fn p256_add_mod(a: i64, b: i64, m: i64, out: i64) -> i64 {
 fn p256_sub_mod(a: i64, b: i64, m: i64, out: i64) -> i64 {
     p256_bn_copy17(out, a);
     if p256_bn_cmp_ge17(out, b) == 0 {
-        p256_bn_add17(out, m);
+        p256_bn_add17(out, m)
     }
     p256_bn_sub17(out, b);
     0
@@ -385,11 +386,13 @@ fn p256_modexp(base: i64, e: i64, m: i64, out: i64) -> i64 {
     let tmp: i64 = __mind_alloc(136);
     let mut bit: i64 = 255;
     while bit >= 0 {
-        p256_mul_mod(out, out, m, tmp);       // square
+        p256_mul_mod(out, out, m, tmp);
+        // square
         p256_bn_copy17(out, tmp);
         if p256_bit_of(e, bit) == 1 {
-            p256_mul_mod(out, base, m, tmp);  // multiply
-            p256_bn_copy17(out, tmp);
+            p256_mul_mod(out, base, m, tmp);
+            // multiply
+            p256_bn_copy17(out, tmp)
         }
         bit = bit - 1;
     }
@@ -404,7 +407,8 @@ fn p256_mod_inv(a: i64, m: i64, out: i64) -> i64 {
     let two: i64 = __mind_alloc(136);
     p256_bn_zero17(two);
     __mind_store_i64(two + 0, 2);
-    p256_bn_sub17(e, two);                    // e = m - 2
+    p256_bn_sub17(e, two);
+    // e = m - 2
     p256_modexp(a, e, m, out);
     0
 }
@@ -434,10 +438,12 @@ fn p256_pt_set_infinity(pt: i64) -> i64 {
 // out must be distinct from pt.
 fn p256_point_double(pt: i64, m: i64, out: i64) -> i64 {
     if p256_bn_is_zero17(pt + 272) == 1 {
-        p256_pt_copy(out, pt);                // 2*infinity = infinity
+        p256_pt_copy(out, pt);
+        // 2*infinity = infinity
         return 0;
     }
-    let s: i64 = __mind_alloc(1496);          // 11 temporaries * 136 bytes
+    let s: i64 = __mind_alloc(1496);
+    // 11 temporaries * 136 bytes
     let delta: i64 = s;
     let gamma: i64 = s + 136;
     let beta: i64 = s + 272;
@@ -449,30 +455,48 @@ fn p256_point_double(pt: i64, m: i64, out: i64) -> i64 {
     let b4: i64 = s + 1088;
     let b8: i64 = s + 1224;
     let t5: i64 = s + 1360;
-    p256_mul_mod(pt + 272, pt + 272, m, delta);   // Z^2
-    p256_mul_mod(pt + 136, pt + 136, m, gamma);   // Y^2
-    p256_mul_mod(pt + 0, gamma, m, beta);         // X*gamma
-    p256_sub_mod(pt + 0, delta, m, t1);           // X - delta
-    p256_add_mod(pt + 0, delta, m, t2);           // X + delta
+    p256_mul_mod(pt + 272, pt + 272, m, delta);
+    // Z^2
+    p256_mul_mod(pt + 136, pt + 136, m, gamma);
+    // Y^2
+    p256_mul_mod(pt + 0, gamma, m, beta);
+    // X*gamma
+    p256_sub_mod(pt + 0, delta, m, t1);
+    // X - delta
+    p256_add_mod(pt + 0, delta, m, t2);
+    // X + delta
     p256_mul_mod(t1, t2, m, t3);
     p256_add_mod(t3, t3, m, t4);
-    p256_add_mod(t4, t3, m, alpha);               // 3*(X-d)*(X+d)
-    p256_add_mod(beta, beta, m, t1);              // 2*beta
-    p256_add_mod(t1, t1, m, b4);                  // 4*beta
-    p256_add_mod(b4, b4, m, b8);                  // 8*beta
-    p256_mul_mod(alpha, alpha, m, t2);            // alpha^2
-    p256_sub_mod(t2, b8, m, out + 0);             // X3
-    p256_add_mod(pt + 136, pt + 272, m, t1);      // Y + Z
-    p256_mul_mod(t1, t1, m, t2);                  // (Y+Z)^2
+    p256_add_mod(t4, t3, m, alpha);
+    // 3*(X-d)*(X+d)
+    p256_add_mod(beta, beta, m, t1);
+    // 2*beta
+    p256_add_mod(t1, t1, m, b4);
+    // 4*beta
+    p256_add_mod(b4, b4, m, b8);
+    // 8*beta
+    p256_mul_mod(alpha, alpha, m, t2);
+    // alpha^2
+    p256_sub_mod(t2, b8, m, out + 0);
+    // X3
+    p256_add_mod(pt + 136, pt + 272, m, t1);
+    // Y + Z
+    p256_mul_mod(t1, t1, m, t2);
+    // (Y+Z)^2
     p256_sub_mod(t2, gamma, m, t3);
-    p256_sub_mod(t3, delta, m, out + 272);        // Z3
-    p256_sub_mod(b4, out + 0, m, t1);             // 4*beta - X3
+    p256_sub_mod(t3, delta, m, out + 272);
+    // Z3
+    p256_sub_mod(b4, out + 0, m, t1);
+    // 4*beta - X3
     p256_mul_mod(alpha, t1, m, t2);
-    p256_mul_mod(gamma, gamma, m, t3);            // gamma^2
+    p256_mul_mod(gamma, gamma, m, t3);
+    // gamma^2
     p256_add_mod(t3, t3, m, t4);
     p256_add_mod(t4, t4, m, t5);
-    p256_add_mod(t5, t5, m, t1);                  // 8*gamma^2
-    p256_sub_mod(t2, t1, m, out + 136);           // Y3
+    p256_add_mod(t5, t5, m, t1);
+    // 8*gamma^2
+    p256_sub_mod(t2, t1, m, out + 136);
+    // Y3
     0
 }
 
@@ -486,14 +510,17 @@ fn p256_point_double(pt: i64, m: i64, out: i64) -> i64 {
 // out must be distinct from p1 and p2.
 fn p256_point_add(p1: i64, p2: i64, m: i64, out: i64) -> i64 {
     if p256_bn_is_zero17(p1 + 272) == 1 {
-        p256_pt_copy(out, p2);                // infinity + p2 = p2
+        p256_pt_copy(out, p2);
+        // infinity + p2 = p2
         return 0;
     }
     if p256_bn_is_zero17(p2 + 272) == 1 {
-        p256_pt_copy(out, p1);                // p1 + infinity = p1
+        p256_pt_copy(out, p1);
+        // p1 + infinity = p1
         return 0;
     }
-    let s: i64 = __mind_alloc(1768);          // 13 temporaries * 136 bytes
+    let s: i64 = __mind_alloc(1768);
+    // 13 temporaries * 136 bytes
     let z1z1: i64 = s;
     let z2z2: i64 = s + 136;
     let u1: i64 = s + 272;
@@ -507,37 +534,59 @@ fn p256_point_add(p1: i64, p2: i64, m: i64, out: i64) -> i64 {
     let v: i64 = s + 1360;
     let t1: i64 = s + 1496;
     let t2: i64 = s + 1632;
-    p256_mul_mod(p1 + 272, p1 + 272, m, z1z1);    // Z1^2
-    p256_mul_mod(p2 + 272, p2 + 272, m, z2z2);    // Z2^2
-    p256_mul_mod(p1 + 0, z2z2, m, u1);            // X1*Z2^2
-    p256_mul_mod(p2 + 0, z1z1, m, u2);            // X2*Z1^2
-    p256_mul_mod(p2 + 272, z2z2, m, t1);          // Z2^3
-    p256_mul_mod(p1 + 136, t1, m, s1);            // Y1*Z2^3
-    p256_mul_mod(p1 + 272, z1z1, m, t1);          // Z1^3
-    p256_mul_mod(p2 + 136, t1, m, s2);            // Y2*Z1^3
-    p256_sub_mod(u2, u1, m, h);                   // H
-    p256_sub_mod(s2, s1, m, rr);                  // R
+    p256_mul_mod(p1 + 272, p1 + 272, m, z1z1);
+    // Z1^2
+    p256_mul_mod(p2 + 272, p2 + 272, m, z2z2);
+    // Z2^2
+    p256_mul_mod(p1 + 0, z2z2, m, u1);
+    // X1*Z2^2
+    p256_mul_mod(p2 + 0, z1z1, m, u2);
+    // X2*Z1^2
+    p256_mul_mod(p2 + 272, z2z2, m, t1);
+    // Z2^3
+    p256_mul_mod(p1 + 136, t1, m, s1);
+    // Y1*Z2^3
+    p256_mul_mod(p1 + 272, z1z1, m, t1);
+    // Z1^3
+    p256_mul_mod(p2 + 136, t1, m, s2);
+    // Y2*Z1^3
+    p256_sub_mod(u2, u1, m, h);
+    // H
+    p256_sub_mod(s2, s1, m, rr);
+    // R
     if p256_bn_is_zero17(h) == 1 {
         if p256_bn_is_zero17(rr) == 1 {
-            p256_point_double(p1, m, out);        // P + P
+            p256_point_double(p1, m, out);
+            // P + P
             return 0;
         }
-        p256_pt_set_infinity(out);                // P + (-P)
+        p256_pt_set_infinity(out);
+        // P + (-P)
         return 0;
     }
-    p256_mul_mod(h, h, m, hh);                    // H^2
-    p256_mul_mod(h, hh, m, hhh);                  // H^3
-    p256_mul_mod(u1, hh, m, v);                   // U1*H^2
-    p256_mul_mod(rr, rr, m, t1);                  // R^2
+    p256_mul_mod(h, h, m, hh);
+    // H^2
+    p256_mul_mod(h, hh, m, hhh);
+    // H^3
+    p256_mul_mod(u1, hh, m, v);
+    // U1*H^2
+    p256_mul_mod(rr, rr, m, t1);
+    // R^2
     p256_sub_mod(t1, hhh, m, t2);
-    p256_add_mod(v, v, m, t1);                    // 2*V
-    p256_sub_mod(t2, t1, m, out + 0);             // X3
-    p256_sub_mod(v, out + 0, m, t1);              // V - X3
+    p256_add_mod(v, v, m, t1);
+    // 2*V
+    p256_sub_mod(t2, t1, m, out + 0);
+    // X3
+    p256_sub_mod(v, out + 0, m, t1);
+    // V - X3
     p256_mul_mod(rr, t1, m, t2);
     p256_mul_mod(s1, hhh, m, t1);
-    p256_sub_mod(t2, t1, m, out + 136);           // Y3
-    p256_mul_mod(p1 + 272, p2 + 272, m, t1);      // Z1*Z2
-    p256_mul_mod(t1, h, m, out + 272);            // Z3
+    p256_sub_mod(t2, t1, m, out + 136);
+    // Y3
+    p256_mul_mod(p1 + 272, p2 + 272, m, t1);
+    // Z1*Z2
+    p256_mul_mod(t1, h, m, out + 272);
+    // Z3
     0
 }
 
@@ -554,7 +603,7 @@ fn p256_scalar_mult(k: i64, pt: i64, m: i64, out: i64) -> i64 {
         p256_pt_copy(acc, tmp);
         if p256_bit_of(k, bit) == 1 {
             p256_point_add(acc, pt, m, tmp);
-            p256_pt_copy(acc, tmp);
+            p256_pt_copy(acc, tmp)
         }
         bit = bit - 1;
     }
@@ -595,9 +644,12 @@ fn p256_on_curve(x: i64, y: i64, pm: i64, bb: i64) -> i64 {
     p256_mul_mod(x, x, pm, x2);
     p256_mul_mod(x2, x, pm, x3);
     p256_add_mod(x, x, pm, t1);
-    p256_add_mod(t1, x, pm, t2);              // 3x
-    p256_sub_mod(x3, t2, pm, t1);             // x^3 - 3x
-    p256_add_mod(t1, bb, pm, rhs);            // x^3 - 3x + b
+    p256_add_mod(t1, x, pm, t2);
+    // 3x
+    p256_sub_mod(x3, t2, pm, t1);
+    // x^3 - 3x
+    p256_add_mod(t1, bb, pm, rhs);
+    // x^3 - 3x + b
     p256_bn_eq17(y2, rhs)
 }
 
@@ -617,7 +669,8 @@ pub fn p256_scalar_base_mult(scalar_addr: i64, out_x_addr: i64, out_y_addr: i64)
     p256_load_gx(g + 0);
     p256_load_gy(g + 136);
     p256_bn_zero17(g + 272);
-    __mind_store_i64(g + 272, 1);             // Z = 1 (affine G)
+    __mind_store_i64(g + 272, 1);
+    // Z = 1 (affine G)
     let rp: i64 = __mind_alloc(408);
     p256_scalar_mult(k, g, pm, rp);
     let ax: i64 = __mind_alloc(136);
@@ -639,14 +692,7 @@ pub fn p256_scalar_base_mult(scalar_addr: i64, out_x_addr: i64, out_y_addr: i64)
 // Returns 1 (valid) / 0 (invalid).  Fail-closed: out-of-range r or s
 // (must be in [1, n-1]), Qx/Qy >= p, Q not on the curve, or a point-at-
 // infinity result all return 0.
-pub fn ecdsa_p256_verify(
-    qx_addr: i64,
-    qy_addr: i64,
-    r_addr: i64,
-    s_addr: i64,
-    msg_addr: i64,
-    msg_len: i64,
-) -> i64 {
+pub fn ecdsa_p256_verify(qx_addr: i64, qy_addr: i64, r_addr: i64, s_addr: i64, msg_addr: i64, msg_len: i64) -> i64 {
     let pm: i64 = __mind_alloc(136);
     p256_load_p(pm);
     let nm: i64 = __mind_alloc(136);
@@ -693,7 +739,8 @@ pub fn ecdsa_p256_verify(
     let w: i64 = __mind_alloc(136);
     p256_mod_inv(s, nm, w);
     let u1: i64 = __mind_alloc(136);
-    p256_mul_mod(e, w, nm, u1);               // e may be >= n: allowed as a
+    p256_mul_mod(e, w, nm, u1);
+    // e may be >= n: allowed as a
     let u2: i64 = __mind_alloc(136);
     p256_mul_mod(r, w, nm, u2);
     // R = u1*G + u2*Q.
@@ -720,8 +767,9 @@ pub fn ecdsa_p256_verify(
         return 0;
     }
     if p256_bn_cmp_ge17(ax, nm) == 1 {
-        p256_bn_sub17(ax, nm);                // x < p < 2n: one subtract
+        p256_bn_sub17(ax, nm)
     }
+    // x < p < 2n: one subtract
     if p256_bn_eq17(ax, r) == 1 {
         return 1;
     }

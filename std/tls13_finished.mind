@@ -58,11 +58,7 @@ pub fn tls13_transcript_hash(msgs_addr: i64, msgs_len: i64, out_addr: i64) -> i6
 // the existing hmac_sha256 (key = finished_key, msg = transcript hash).
 // ---------------------------------------------------------------------------
 
-pub fn tls13_finished_verify_data(
-    finished_key_addr: i64,
-    transcript_hash_addr: i64,
-    out_addr: i64,
-) -> i64 {
+pub fn tls13_finished_verify_data(finished_key_addr: i64, transcript_hash_addr: i64, out_addr: i64) -> i64 {
     hmac_sha256(finished_key_addr, 32, transcript_hash_addr, 32, out_addr);
     0
 }
@@ -78,11 +74,7 @@ pub fn tls13_finished_verify_data(
 // Returns 1 if equal, 0 otherwise — fail-closed: any mismatch returns 0.
 // ---------------------------------------------------------------------------
 
-pub fn tls13_finished_check(
-    finished_key_addr: i64,
-    transcript_hash_addr: i64,
-    received_vd_addr: i64,
-) -> i64 {
+pub fn tls13_finished_check(finished_key_addr: i64, transcript_hash_addr: i64, received_vd_addr: i64) -> i64 {
     let expected: i64 = __mind_alloc(32);
     hmac_sha256(finished_key_addr, 32, transcript_hash_addr, 32, expected);
 
@@ -109,11 +101,7 @@ pub fn tls13_finished_check(
 // application traffic secret for post-handshake auth).  Writes 32 bytes.
 // ---------------------------------------------------------------------------
 
-pub fn tls13_finished_from_secret(
-    base_secret_addr: i64,
-    transcript_hash_addr: i64,
-    out_addr: i64,
-) -> i64 {
+pub fn tls13_finished_from_secret(base_secret_addr: i64, transcript_hash_addr: i64, out_addr: i64) -> i64 {
     let fk: i64 = __mind_alloc(32);
     tls13_finished_key(base_secret_addr, fk);
     hmac_sha256(fk, 32, transcript_hash_addr, 32, out_addr);

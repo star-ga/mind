@@ -43,16 +43,7 @@ import std.hkdf;
 // the "tls13 " prefix (6 bytes) is prepended here.
 // ---------------------------------------------------------------------------
 
-pub fn tls13_hkdf_expand_label(
-    secret_addr: i64,
-    secret_len: i64,
-    label_addr: i64,
-    label_len: i64,
-    context_addr: i64,
-    context_len: i64,
-    length: i64,
-    out_addr: i64,
-) -> i64 {
+pub fn tls13_hkdf_expand_label(secret_addr: i64, secret_len: i64, label_addr: i64, label_len: i64, context_addr: i64, context_len: i64, length: i64, out_addr: i64) -> i64 {
     // full label = "tls13 " (6 bytes) || Label
     let full_label_len: i64 = 6 + label_len;
     // HkdfLabel = 2 (uint16) + 1 (label len prefix) + full_label_len
@@ -67,12 +58,18 @@ pub fn tls13_hkdf_expand_label(
     // opaque label<7..255>: 1-byte length, then "tls13 " || Label.
     __mind_store_i8(hl + 2, full_label_len);
     // "tls13 " = 0x74 0x6c 0x73 0x31 0x33 0x20
-    __mind_store_i8(hl + 3, 116);  // 't'
-    __mind_store_i8(hl + 4, 108);  // 'l'
-    __mind_store_i8(hl + 5, 115);  // 's'
-    __mind_store_i8(hl + 6, 49);   // '1'
-    __mind_store_i8(hl + 7, 51);   // '3'
-    __mind_store_i8(hl + 8, 32);   // ' '
+    __mind_store_i8(hl + 3, 116);
+    // 't'
+    __mind_store_i8(hl + 4, 108);
+    // 'l'
+    __mind_store_i8(hl + 5, 115);
+    // 's'
+    __mind_store_i8(hl + 6, 49);
+    // '1'
+    __mind_store_i8(hl + 7, 51);
+    // '3'
+    __mind_store_i8(hl + 8, 32);
+    // ' '
     mem_copy(hl + 9, label_addr, label_len);
 
     // opaque context<0..255>: 1-byte length, then Context bytes.
@@ -96,35 +93,18 @@ pub fn tls13_hkdf_expand_label(
 // Hash.length = 32, so the output secret is always 32 bytes.
 // ---------------------------------------------------------------------------
 
-pub fn tls13_derive_secret_hashed(
-    secret_addr: i64,
-    secret_len: i64,
-    label_addr: i64,
-    label_len: i64,
-    thash_addr: i64,   // 32-byte transcript hash = Transcript-Hash(Messages)
-    out_addr: i64,
-) -> i64 {
-    tls13_hkdf_expand_label(
-        secret_addr, secret_len, label_addr, label_len,
-        thash_addr, 32, 32, out_addr);
+pub fn tls13_derive_secret_hashed(secret_addr: i64, secret_len: i64, label_addr: i64, label_len: i64, thash_addr: i64, out_addr: i64) -> i64 {
+    // 32-byte transcript hash = Transcript-Hash(Messages)
+    tls13_hkdf_expand_label(secret_addr, secret_len, label_addr, label_len, thash_addr, 32, 32, out_addr);
     0
 }
 
-pub fn tls13_derive_secret(
-    secret_addr: i64,
-    secret_len: i64,
-    label_addr: i64,
-    label_len: i64,
-    messages_addr: i64,
-    messages_len: i64,
-    out_addr: i64,
-) -> i64 {
+pub fn tls13_derive_secret(secret_addr: i64, secret_len: i64, label_addr: i64, label_len: i64, messages_addr: i64, messages_len: i64, out_addr: i64) -> i64 {
     // Transcript-Hash(Messages) = SHA-256(Messages).  messages_len = 0 yields
     // SHA-256("") — the empty-transcript case used by the "derived" step.
     let thash: i64 = __mind_alloc(32);
     sha256(messages_addr, messages_len, thash);
-    tls13_derive_secret_hashed(
-        secret_addr, secret_len, label_addr, label_len, thash, out_addr);
+    tls13_derive_secret_hashed(secret_addr, secret_len, label_addr, label_len, thash, out_addr);
     0
 }
 
@@ -135,26 +115,41 @@ pub fn tls13_derive_secret(
 // ---------------------------------------------------------------------------
 
 fn tls13_lbl_derived(dst: i64) -> i64 {
-    __mind_store_i8(dst + 0, 100); // 'd'
-    __mind_store_i8(dst + 1, 101); // 'e'
-    __mind_store_i8(dst + 2, 114); // 'r'
-    __mind_store_i8(dst + 3, 105); // 'i'
-    __mind_store_i8(dst + 4, 118); // 'v'
-    __mind_store_i8(dst + 5, 101); // 'e'
-    __mind_store_i8(dst + 6, 100); // 'd'
+    __mind_store_i8(dst + 0, 100);
+    // 'd'
+    __mind_store_i8(dst + 1, 101);
+    // 'e'
+    __mind_store_i8(dst + 2, 114);
+    // 'r'
+    __mind_store_i8(dst + 3, 105);
+    // 'i'
+    __mind_store_i8(dst + 4, 118);
+    // 'v'
+    __mind_store_i8(dst + 5, 101);
+    // 'e'
+    __mind_store_i8(dst + 6, 100);
+    // 'd'
     7
 }
 
 // Shared "traffic" suffix: " traffic" -> writes 8 bytes at dst, returns 8.
 fn tls13_lbl_suffix_traffic(dst: i64) -> i64 {
-    __mind_store_i8(dst + 0, 32);  // ' '
-    __mind_store_i8(dst + 1, 116); // 't'
-    __mind_store_i8(dst + 2, 114); // 'r'
-    __mind_store_i8(dst + 3, 97);  // 'a'
-    __mind_store_i8(dst + 4, 102); // 'f'
-    __mind_store_i8(dst + 5, 102); // 'f'
-    __mind_store_i8(dst + 6, 105); // 'i'
-    __mind_store_i8(dst + 7, 99);  // 'c'
+    __mind_store_i8(dst + 0, 32);
+    // ' '
+    __mind_store_i8(dst + 1, 116);
+    // 't'
+    __mind_store_i8(dst + 2, 114);
+    // 'r'
+    __mind_store_i8(dst + 3, 97);
+    // 'a'
+    __mind_store_i8(dst + 4, 102);
+    // 'f'
+    __mind_store_i8(dst + 5, 102);
+    // 'f'
+    __mind_store_i8(dst + 6, 105);
+    // 'i'
+    __mind_store_i8(dst + 7, 99);
+    // 'c'
     8
 }
 
@@ -163,7 +158,8 @@ fn tls13_lbl_suffix_traffic(dst: i64) -> i64 {
 // ('h','s' for handshake; 'a','p' for application).
 fn tls13_lbl_traffic(dst: i64, side: i64, p0: i64, p1: i64) -> i64 {
     __mind_store_i8(dst + 0, side);
-    __mind_store_i8(dst + 1, 32);  // ' '
+    __mind_store_i8(dst + 1, 32);
+    // ' '
     __mind_store_i8(dst + 2, p0);
     __mind_store_i8(dst + 3, p1);
     tls13_lbl_suffix_traffic(dst + 4);
@@ -206,18 +202,18 @@ pub fn tls13_handshake_secret(dhe_addr: i64, out_addr: i64) -> i64 {
 
 // client/server handshake traffic secrets — Derive-Secret over the
 // ClientHello..ServerHello transcript hash (`hello_hash_addr`, 32 bytes).
-pub fn tls13_client_handshake_traffic_secret(
-    hs_secret_addr: i64, hello_hash_addr: i64, out_addr: i64) -> i64 {
+pub fn tls13_client_handshake_traffic_secret(hs_secret_addr: i64, hello_hash_addr: i64, out_addr: i64) -> i64 {
     let lbl: i64 = __mind_alloc(16);
-    let n: i64 = tls13_lbl_traffic(lbl, 99, 104, 115); // "c hs traffic"
+    let n: i64 = tls13_lbl_traffic(lbl, 99, 104, 115);
+    // "c hs traffic"
     tls13_derive_secret_hashed(hs_secret_addr, 32, lbl, n, hello_hash_addr, out_addr);
     0
 }
 
-pub fn tls13_server_handshake_traffic_secret(
-    hs_secret_addr: i64, hello_hash_addr: i64, out_addr: i64) -> i64 {
+pub fn tls13_server_handshake_traffic_secret(hs_secret_addr: i64, hello_hash_addr: i64, out_addr: i64) -> i64 {
     let lbl: i64 = __mind_alloc(16);
-    let n: i64 = tls13_lbl_traffic(lbl, 115, 104, 115); // "s hs traffic"
+    let n: i64 = tls13_lbl_traffic(lbl, 115, 104, 115);
+    // "s hs traffic"
     tls13_derive_secret_hashed(hs_secret_addr, 32, lbl, n, hello_hash_addr, out_addr);
     0
 }
@@ -241,18 +237,18 @@ pub fn tls13_master_secret(hs_secret_addr: i64, out_addr: i64) -> i64 {
 
 // client/server application traffic secrets (secret_0) — Derive-Secret over the
 // ClientHello..server Finished transcript hash (`fin_hash_addr`, 32 bytes).
-pub fn tls13_client_application_traffic_secret(
-    master_secret_addr: i64, fin_hash_addr: i64, out_addr: i64) -> i64 {
+pub fn tls13_client_application_traffic_secret(master_secret_addr: i64, fin_hash_addr: i64, out_addr: i64) -> i64 {
     let lbl: i64 = __mind_alloc(16);
-    let n: i64 = tls13_lbl_traffic(lbl, 99, 97, 112); // "c ap traffic"
+    let n: i64 = tls13_lbl_traffic(lbl, 99, 97, 112);
+    // "c ap traffic"
     tls13_derive_secret_hashed(master_secret_addr, 32, lbl, n, fin_hash_addr, out_addr);
     0
 }
 
-pub fn tls13_server_application_traffic_secret(
-    master_secret_addr: i64, fin_hash_addr: i64, out_addr: i64) -> i64 {
+pub fn tls13_server_application_traffic_secret(master_secret_addr: i64, fin_hash_addr: i64, out_addr: i64) -> i64 {
     let lbl: i64 = __mind_alloc(16);
-    let n: i64 = tls13_lbl_traffic(lbl, 115, 97, 112); // "s ap traffic"
+    let n: i64 = tls13_lbl_traffic(lbl, 115, 97, 112);
+    // "s ap traffic"
     tls13_derive_secret_hashed(master_secret_addr, 32, lbl, n, fin_hash_addr, out_addr);
     0
 }
@@ -267,17 +263,22 @@ pub fn tls13_server_application_traffic_secret(
 
 pub fn tls13_derive_key(secret_addr: i64, out_addr: i64) -> i64 {
     let lbl: i64 = __mind_alloc(16);
-    __mind_store_i8(lbl + 0, 107); // 'k'
-    __mind_store_i8(lbl + 1, 101); // 'e'
-    __mind_store_i8(lbl + 2, 121); // 'y'
+    __mind_store_i8(lbl + 0, 107);
+    // 'k'
+    __mind_store_i8(lbl + 1, 101);
+    // 'e'
+    __mind_store_i8(lbl + 2, 121);
+    // 'y'
     tls13_hkdf_expand_label(secret_addr, 32, lbl, 3, secret_addr, 0, 16, out_addr);
     0
 }
 
 pub fn tls13_derive_iv(secret_addr: i64, out_addr: i64) -> i64 {
     let lbl: i64 = __mind_alloc(16);
-    __mind_store_i8(lbl + 0, 105); // 'i'
-    __mind_store_i8(lbl + 1, 118); // 'v'
+    __mind_store_i8(lbl + 0, 105);
+    // 'i'
+    __mind_store_i8(lbl + 1, 118);
+    // 'v'
     tls13_hkdf_expand_label(secret_addr, 32, lbl, 2, secret_addr, 0, 12, out_addr);
     0
 }
@@ -291,14 +292,22 @@ pub fn tls13_derive_iv(secret_addr: i64, out_addr: i64) -> i64 {
 
 pub fn tls13_finished_key(base_key_addr: i64, out_addr: i64) -> i64 {
     let lbl: i64 = __mind_alloc(16);
-    __mind_store_i8(lbl + 0, 102); // 'f'
-    __mind_store_i8(lbl + 1, 105); // 'i'
-    __mind_store_i8(lbl + 2, 110); // 'n'
-    __mind_store_i8(lbl + 3, 105); // 'i'
-    __mind_store_i8(lbl + 4, 115); // 's'
-    __mind_store_i8(lbl + 5, 104); // 'h'
-    __mind_store_i8(lbl + 6, 101); // 'e'
-    __mind_store_i8(lbl + 7, 100); // 'd'
+    __mind_store_i8(lbl + 0, 102);
+    // 'f'
+    __mind_store_i8(lbl + 1, 105);
+    // 'i'
+    __mind_store_i8(lbl + 2, 110);
+    // 'n'
+    __mind_store_i8(lbl + 3, 105);
+    // 'i'
+    __mind_store_i8(lbl + 4, 115);
+    // 's'
+    __mind_store_i8(lbl + 5, 104);
+    // 'h'
+    __mind_store_i8(lbl + 6, 101);
+    // 'e'
+    __mind_store_i8(lbl + 7, 100);
+    // 'd'
     tls13_hkdf_expand_label(base_key_addr, 32, lbl, 8, base_key_addr, 0, 32, out_addr);
     0
 }

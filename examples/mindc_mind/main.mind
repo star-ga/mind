@@ -21569,10 +21569,10 @@ pub fn nb_merge_zero_diverged(mt: i64, nmerged: i64, i: i64, then_falls: i64, el
         return 0;
     }
     if then_falls == 0 {
-        __mind_store_i64(mt + (i * 5 + 2) * 8, 0);
+        __mind_store_i64(mt + (i * 5 + 2) * 8, 0)
     }
     if else_falls == 0 {
-        __mind_store_i64(mt + (i * 5 + 3) * 8, 0);
+        __mind_store_i64(mt + (i * 5 + 3) * 8, 0)
     }
     nb_merge_zero_diverged(mt, nmerged, i + 1, then_falls, else_falls)
 }
@@ -22743,80 +22743,220 @@ pub fn nb_ssig1(x: i64) -> i64 {
 
 // K[0..63] — FIPS 180-4 §4.2.2 cube-root constants (Rust SHA256_K, decimal).
 pub fn nb_k_word(i: i64) -> i64 {
-    if i == 0 { return 1116352408; }
-    if i == 1 { return 1899447441; }
-    if i == 2 { return 3049323471; }
-    if i == 3 { return 3921009573; }
-    if i == 4 { return 961987163; }
-    if i == 5 { return 1508970993; }
-    if i == 6 { return 2453635748; }
-    if i == 7 { return 2870763221; }
-    if i == 8 { return 3624381080; }
-    if i == 9 { return 310598401; }
-    if i == 10 { return 607225278; }
-    if i == 11 { return 1426881987; }
-    if i == 12 { return 1925078388; }
-    if i == 13 { return 2162078206; }
-    if i == 14 { return 2614888103; }
-    if i == 15 { return 3248222580; }
-    if i == 16 { return 3835390401; }
-    if i == 17 { return 4022224774; }
-    if i == 18 { return 264347078; }
-    if i == 19 { return 604807628; }
-    if i == 20 { return 770255983; }
-    if i == 21 { return 1249150122; }
-    if i == 22 { return 1555081692; }
-    if i == 23 { return 1996064986; }
-    if i == 24 { return 2554220882; }
-    if i == 25 { return 2821834349; }
-    if i == 26 { return 2952996808; }
-    if i == 27 { return 3210313671; }
-    if i == 28 { return 3336571891; }
-    if i == 29 { return 3584528711; }
-    if i == 30 { return 113926993; }
-    if i == 31 { return 338241895; }
-    if i == 32 { return 666307205; }
-    if i == 33 { return 773529912; }
-    if i == 34 { return 1294757372; }
-    if i == 35 { return 1396182291; }
-    if i == 36 { return 1695183700; }
-    if i == 37 { return 1986661051; }
-    if i == 38 { return 2177026350; }
-    if i == 39 { return 2456956037; }
-    if i == 40 { return 2730485921; }
-    if i == 41 { return 2820302411; }
-    if i == 42 { return 3259730800; }
-    if i == 43 { return 3345764771; }
-    if i == 44 { return 3516065817; }
-    if i == 45 { return 3600352804; }
-    if i == 46 { return 4094571909; }
-    if i == 47 { return 275423344; }
-    if i == 48 { return 430227734; }
-    if i == 49 { return 506948616; }
-    if i == 50 { return 659060556; }
-    if i == 51 { return 883997877; }
-    if i == 52 { return 958139571; }
-    if i == 53 { return 1322822218; }
-    if i == 54 { return 1537002063; }
-    if i == 55 { return 1747873779; }
-    if i == 56 { return 1955562222; }
-    if i == 57 { return 2024104815; }
-    if i == 58 { return 2227730452; }
-    if i == 59 { return 2361852424; }
-    if i == 60 { return 2428436474; }
-    if i == 61 { return 2756734187; }
-    if i == 62 { return 3204031479; }
+    if i == 0 {
+        return 1116352408;
+    }
+    if i == 1 {
+        return 1899447441;
+    }
+    if i == 2 {
+        return 3049323471;
+    }
+    if i == 3 {
+        return 3921009573;
+    }
+    if i == 4 {
+        return 961987163;
+    }
+    if i == 5 {
+        return 1508970993;
+    }
+    if i == 6 {
+        return 2453635748;
+    }
+    if i == 7 {
+        return 2870763221;
+    }
+    if i == 8 {
+        return 3624381080;
+    }
+    if i == 9 {
+        return 310598401;
+    }
+    if i == 10 {
+        return 607225278;
+    }
+    if i == 11 {
+        return 1426881987;
+    }
+    if i == 12 {
+        return 1925078388;
+    }
+    if i == 13 {
+        return 2162078206;
+    }
+    if i == 14 {
+        return 2614888103;
+    }
+    if i == 15 {
+        return 3248222580;
+    }
+    if i == 16 {
+        return 3835390401;
+    }
+    if i == 17 {
+        return 4022224774;
+    }
+    if i == 18 {
+        return 264347078;
+    }
+    if i == 19 {
+        return 604807628;
+    }
+    if i == 20 {
+        return 770255983;
+    }
+    if i == 21 {
+        return 1249150122;
+    }
+    if i == 22 {
+        return 1555081692;
+    }
+    if i == 23 {
+        return 1996064986;
+    }
+    if i == 24 {
+        return 2554220882;
+    }
+    if i == 25 {
+        return 2821834349;
+    }
+    if i == 26 {
+        return 2952996808;
+    }
+    if i == 27 {
+        return 3210313671;
+    }
+    if i == 28 {
+        return 3336571891;
+    }
+    if i == 29 {
+        return 3584528711;
+    }
+    if i == 30 {
+        return 113926993;
+    }
+    if i == 31 {
+        return 338241895;
+    }
+    if i == 32 {
+        return 666307205;
+    }
+    if i == 33 {
+        return 773529912;
+    }
+    if i == 34 {
+        return 1294757372;
+    }
+    if i == 35 {
+        return 1396182291;
+    }
+    if i == 36 {
+        return 1695183700;
+    }
+    if i == 37 {
+        return 1986661051;
+    }
+    if i == 38 {
+        return 2177026350;
+    }
+    if i == 39 {
+        return 2456956037;
+    }
+    if i == 40 {
+        return 2730485921;
+    }
+    if i == 41 {
+        return 2820302411;
+    }
+    if i == 42 {
+        return 3259730800;
+    }
+    if i == 43 {
+        return 3345764771;
+    }
+    if i == 44 {
+        return 3516065817;
+    }
+    if i == 45 {
+        return 3600352804;
+    }
+    if i == 46 {
+        return 4094571909;
+    }
+    if i == 47 {
+        return 275423344;
+    }
+    if i == 48 {
+        return 430227734;
+    }
+    if i == 49 {
+        return 506948616;
+    }
+    if i == 50 {
+        return 659060556;
+    }
+    if i == 51 {
+        return 883997877;
+    }
+    if i == 52 {
+        return 958139571;
+    }
+    if i == 53 {
+        return 1322822218;
+    }
+    if i == 54 {
+        return 1537002063;
+    }
+    if i == 55 {
+        return 1747873779;
+    }
+    if i == 56 {
+        return 1955562222;
+    }
+    if i == 57 {
+        return 2024104815;
+    }
+    if i == 58 {
+        return 2227730452;
+    }
+    if i == 59 {
+        return 2361852424;
+    }
+    if i == 60 {
+        return 2428436474;
+    }
+    if i == 61 {
+        return 2756734187;
+    }
+    if i == 62 {
+        return 3204031479;
+    }
     3329325298
 }
 // H0..H7 — FIPS 180-4 §5.3.3 square-root constants (Rust SHA256_H0, decimal).
 pub fn nb_h_init(i: i64) -> i64 {
-    if i == 0 { return 1779033703; }
-    if i == 1 { return 3144134277; }
-    if i == 2 { return 1013904242; }
-    if i == 3 { return 2773480762; }
-    if i == 4 { return 1359893119; }
-    if i == 5 { return 2600822924; }
-    if i == 6 { return 528734635; }
+    if i == 0 {
+        return 1779033703;
+    }
+    if i == 1 {
+        return 3144134277;
+    }
+    if i == 2 {
+        return 1013904242;
+    }
+    if i == 3 {
+        return 2773480762;
+    }
+    if i == 4 {
+        return 1359893119;
+    }
+    if i == 5 {
+        return 2600822924;
+    }
+    if i == 6 {
+        return 528734635;
+    }
     1541459225
 }
 // W schedule helpers — 64 words stored stride-8 (like a Vec element).
@@ -23082,59 +23222,104 @@ pub fn nb_write_elf(code: String, entry_off: i64, note: String) -> String {
     let e7: String = nb_push(e6, 1);
     let e8: String = nb_push(e7, 0);
     let e9: String = nb_zeros(e8, 8);
-    let e10: String = nb_u16(e9, 2);          // ET_EXEC
-    let e11: String = nb_u16(e10, 62);        // EM_X86_64
-    let e12: String = nb_u32(e11, 1);         // e_version
-    let e13: String = nb_i64le(e12, entry);   // e_entry
-    let e14: String = nb_i64le(e13, 64);      // e_phoff
-    let e15: String = nb_i64le(e14, 0);       // e_shoff
-    let e16: String = nb_u32(e15, 0);         // e_flags
-    let e17: String = nb_u16(e16, 64);        // e_ehsize
-    let e18: String = nb_u16(e17, 56);        // e_phentsize
-    let e19: String = nb_u16(e18, 4);         // e_phnum = 4
-    let e20: String = nb_u16(e19, 0);         // e_shentsize
-    let e21: String = nb_u16(e20, 0);         // e_shnum
-    let e22: String = nb_u16(e21, 0);         // e_shstrndx
+    let e10: String = nb_u16(e9, 2);
+    // ET_EXEC
+    let e11: String = nb_u16(e10, 62);
+    // EM_X86_64
+    let e12: String = nb_u32(e11, 1);
+    // e_version
+    let e13: String = nb_i64le(e12, entry);
+    // e_entry
+    let e14: String = nb_i64le(e13, 64);
+    // e_phoff
+    let e15: String = nb_i64le(e14, 0);
+    // e_shoff
+    let e16: String = nb_u32(e15, 0);
+    // e_flags
+    let e17: String = nb_u16(e16, 64);
+    // e_ehsize
+    let e18: String = nb_u16(e17, 56);
+    // e_phentsize
+    let e19: String = nb_u16(e18, 4);
+    // e_phnum = 4
+    let e20: String = nb_u16(e19, 0);
+    // e_shentsize
+    let e21: String = nb_u16(e20, 0);
+    // e_shnum
+    let e22: String = nb_u16(e21, 0);
+    // e_shstrndx
 
     // --- phdr 1: PT_LOAD (R+X) over headers + code ---
-    let f1: String = nb_u32(e22, 1);              // PT_LOAD
-    let f2: String = nb_u32(f1, 5);               // R+X
-    let f3: String = nb_i64le(f2, 0);             // p_offset
-    let f4: String = nb_i64le(f3, load_addr);     // p_vaddr
-    let f5: String = nb_i64le(f4, load_addr);     // p_paddr
-    let f6: String = nb_i64le(f5, load_sz);       // p_filesz
-    let f7: String = nb_i64le(f6, load_sz);       // p_memsz
-    let f8: String = nb_i64le(f7, 4096);          // p_align
+    let f1: String = nb_u32(e22, 1);
+    // PT_LOAD
+    let f2: String = nb_u32(f1, 5);
+    // R+X
+    let f3: String = nb_i64le(f2, 0);
+    // p_offset
+    let f4: String = nb_i64le(f3, load_addr);
+    // p_vaddr
+    let f5: String = nb_i64le(f4, load_addr);
+    // p_paddr
+    let f6: String = nb_i64le(f5, load_sz);
+    // p_filesz
+    let f7: String = nb_i64le(f6, load_sz);
+    // p_memsz
+    let f8: String = nb_i64le(f7, 4096);
+    // p_align
 
     // --- phdr 2: PT_NOTE (trace-hash provenance) ---
-    let g1: String = nb_u32(f8, 4);                       // PT_NOTE
-    let g2: String = nb_u32(g1, 4);                       // R
-    let g3: String = nb_i64le(g2, note_off);             // p_offset
-    let g4: String = nb_i64le(g3, load_addr + note_off); // p_vaddr
-    let g5: String = nb_i64le(g4, load_addr + note_off); // p_paddr
-    let g6: String = nb_i64le(g5, note_len);             // p_filesz
-    let g7: String = nb_i64le(g6, note_len);             // p_memsz
-    let g8: String = nb_i64le(g7, 4);                    // p_align
+    let g1: String = nb_u32(f8, 4);
+    // PT_NOTE
+    let g2: String = nb_u32(g1, 4);
+    // R
+    let g3: String = nb_i64le(g2, note_off);
+    // p_offset
+    let g4: String = nb_i64le(g3, load_addr + note_off);
+    // p_vaddr
+    let g5: String = nb_i64le(g4, load_addr + note_off);
+    // p_paddr
+    let g6: String = nb_i64le(g5, note_len);
+    // p_filesz
+    let g7: String = nb_i64le(g6, note_len);
+    // p_memsz
+    let g8: String = nb_i64le(g7, 4);
+    // p_align
 
     // --- phdr 3: PT_LOAD (RW) — BSS bump-allocator arena ---
-    let h1: String = nb_u32(g8, 1);                  // PT_LOAD
-    let h2: String = nb_u32(h1, 6);                  // RW
-    let h3: String = nb_i64le(h2, 0);                // p_offset
-    let h4: String = nb_i64le(h3, nb_arena_addr());  // p_vaddr
-    let h5: String = nb_i64le(h4, nb_arena_addr());  // p_paddr
-    let h6: String = nb_i64le(h5, 0);                // p_filesz = 0 (BSS)
-    let h7: String = nb_i64le(h6, nb_arena_bytes()); // p_memsz
-    let h8: String = nb_i64le(h7, 4096);             // p_align
+    let h1: String = nb_u32(g8, 1);
+    // PT_LOAD
+    let h2: String = nb_u32(h1, 6);
+    // RW
+    let h3: String = nb_i64le(h2, 0);
+    // p_offset
+    let h4: String = nb_i64le(h3, nb_arena_addr());
+    // p_vaddr
+    let h5: String = nb_i64le(h4, nb_arena_addr());
+    // p_paddr
+    let h6: String = nb_i64le(h5, 0);
+    // p_filesz = 0 (BSS)
+    let h7: String = nb_i64le(h6, nb_arena_bytes());
+    // p_memsz
+    let h8: String = nb_i64le(h7, 4096);
+    // p_align
 
     // --- phdr 4: PT_LOAD (RW) — dedicated call-stack region (BSS) ---
-    let i1: String = nb_u32(h8, 1);                  // PT_LOAD
-    let i2: String = nb_u32(i1, 6);                  // RW
-    let i3: String = nb_i64le(i2, 0);                // p_offset
-    let i4: String = nb_i64le(i3, nb_stack_addr());  // p_vaddr
-    let i5: String = nb_i64le(i4, nb_stack_addr());  // p_paddr
-    let i6: String = nb_i64le(i5, 0);                // p_filesz = 0 (BSS)
-    let i7: String = nb_i64le(i6, nb_stack_bytes()); // p_memsz
-    let i8: String = nb_i64le(i7, 4096);             // p_align
+    let i1: String = nb_u32(h8, 1);
+    // PT_LOAD
+    let i2: String = nb_u32(i1, 6);
+    // RW
+    let i3: String = nb_i64le(i2, 0);
+    // p_offset
+    let i4: String = nb_i64le(i3, nb_stack_addr());
+    // p_vaddr
+    let i5: String = nb_i64le(i4, nb_stack_addr());
+    // p_paddr
+    let i6: String = nb_i64le(i5, 0);
+    // p_filesz = 0 (BSS)
+    let i7: String = nb_i64le(i6, nb_stack_bytes());
+    // p_memsz
+    let i8: String = nb_i64le(i7, 4096);
+    // p_align
 
     // --- code, then the (unmapped) note ---
     let j1: String = string_push_str(i8, code);
@@ -24160,9 +24345,9 @@ pub fn nb_emit_items_faildiag(src: i64, items_addr: i64, items_len: i64, strbuf:
         let fails: i64 = __mind_load_i64(out + 0);
         if fails < 128 {
             let nm: i64 = ast_child0(item);
-            __mind_store_i64(out + 40 + fails * 8, ast_span_lo(nm));
+            __mind_store_i64(out + 40 + fails * 8, ast_span_lo(nm))
         }
-        __mind_store_i64(out + 0, fails + 1);
+        __mind_store_i64(out + 0, fails + 1)
     }
     nb_emit_items_faildiag(src, items_addr, items_len, strbuf, offs, ncount, tconst, kept, n_kept, i + 1, out)
 }
@@ -24505,4 +24690,3 @@ pub fn nb_patch_all(code_addr: i64, calls: i64, total_calls: i64, call_owner: i6
     let _p: i64 = nb_patch_rel32(code_addr, abs_off, rel);
     nb_patch_all(code_addr, calls, total_calls, call_owner, starts, fn_names, n_fns, buf, c + 1)
 }
-
