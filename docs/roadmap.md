@@ -869,6 +869,22 @@ discipline already in force (a speedup never trips it).
    item 9 of Phase 10.6; restated here as a hard self-hosting
    prerequisite (a compiler is many files).
 
+### Deliverables — pure-MIND dogfooding (Stage 4)
+
+4b. **Pure-MIND MCP server over `mic@3` + evidence chain.** Reimplement the
+   MCP tool-serving surface (starting with mind-mem) in pure MIND — no Python —
+   using MIND's own protocols and formats end-to-end: `mic@3` canonical binary
+   as the wire transport and the MAP epilogue's signed evidence chain
+   (`trace_hash = sha256(emit_mic3(ir))`), so every tool call and response is
+   byte-canonical and cryptographically tamper-evident — the property no
+   JSON-RPC MCP has. A thin JSON-RPC↔`mic@3` bridge at the client edge keeps
+   standard-MCP interop. Blocked-by the pure-MIND IO/JSON/HTTP stack (TLS
+   client, HTTP semantics, evidence-chain HTTP layer) and the deterministic-IO
+   substrate. **Ships behind FULL security review** (`mind-security-reviewer`:
+   wire-format attacks, evidence-chain forgery, loader DoS, atomic ordering)
+   **plus features hardening** — fail-loud validation at every boundary, no
+   surface lands un-audited.
+
 ### Deliverables — AI-era efficiency surface
 
 5. **Token-efficiency as a first-class design constraint.** Every
