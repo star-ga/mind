@@ -1,0 +1,130 @@
+// std/x25519mlkem768.mind — X25519MLKEM768 post-quantum hybrid key exchange in
+// pure MIND (draft-kwiatkowski-tls-ecdhe-mlkem, IANA TLS NamedGroup 0x11EC).
+//
+// Built ON TOP of std/x25519.mind (RFC 7748 Curve25519 ECDH, #9) and
+// std/mlkem768.mind (FIPS 203 ML-KEM-768, #34).  Neither primitive is
+// reimplemented here: this module only composes their public entry points
+// (`x25519`, `mlkem768_keygen`, `mlkem768_encaps`, `mlkem768_decaps`) and
+// concatenates the two shared secrets per the hybrid combiner.
+//
+// Combiner (draft-kwiatkowski-tls-ecdhe-mlkem §3, "X25519MLKEM768"):
+//   The two shared secrets are CONCATENATED — no extra hash/KDF wrapper, since
+//   the TLS 1.3 key schedule (RFC 8446 §7.1) already runs the combined secret
+//   through HKDF.  For X25519MLKEM768 specifically the draft fixes the order as
+//   ML-KEM FIRST, X25519 SECOND (this is the intentional exception to the
+//   SecP*MLKEM* groups, which put the ECDHE share first):
+//
+//       shared_secret = ML-KEM-768_secret (32) || X25519_secret (32)   = 64 B
+//       client share  = ML-KEM-768_ek     (1184) || X25519_pubkey (32) = 1216 B
+//       server share  = ML-KEM-768_ct     (1088) || X25519_pubkey (32) = 1120 B
+//
+// Roles (TLS 1.3 §4.2.8): the client is the KEM key generator + decapsulator,
+// the server is the encapsulator.  The three public entry points below map
+// exactly onto that flow and take the randomness explicitly (deterministic
+// internal forms, matching std/mlkem768.mind) so known-answer tests are exact.
+//
+// Sizes (bytes):
+//   ML-KEM-768: ek=1184, dk=2400, ct=1088, ss=32   (FIPS 203 Table 2)
+//   X25519:     pubkey=32, scalar=32, ss=32         (RFC 7748)
+//   hybrid:     client_share=1216, client_priv=2432, server_share=1120, ss=64
+//
+// Determinism: pure composition of two deterministic primitives — no floats,
+// no clocks, no external calls.
+
+import std.x25519;
+import std.mlkem768;
+
+// ---------------------------------------------------------------------------
+// Byte-buffer helpers (module-local).
+// ---------------------------------------------------------------------------
+
+fn hyb_mem_copy(dst: i64, src: i64, len: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < len {
+        __mind_store_i8(dst + i, __mind_load_i8(src + i));
+        i = i + 1;
+    }
+    0
+}
+
+// hyb_x25519_base — write the Curve25519 base point u = 9 (RFC 7748 §4.1) into
+// a 32-byte little-endian buffer: byte 0 = 9, bytes 1..31 = 0.  Passing this as
+// the u-coordinate turns a private scalar into its X25519 public key.
+fn hyb_x25519_base(out32: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i8(out32 + i, 0);
+        i = i + 1;
+    }
+    __mind_store_i8(out32 + 0, 9);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Public API — X25519MLKEM768 hybrid KEM (deterministic internal forms).
+// ---------------------------------------------------------------------------
+
+// x25519mlkem768_keygen — CLIENT key generation.
+//   rand96  = d(32) || z(32) || x25519_scalar(32)
+//             (d||z is the ML-KEM-768 keygen randomness, FIPS 203 Alg 16;
+//              x25519_scalar is the raw 32-byte X25519 private key, RFC 7748.)
+//   out_share (1216) = ML-KEM-768 ek (1184) || X25519 public key (32)
+//                      — this is the client's TLS `key_share` entry.
+//   out_priv  (2432) = ML-KEM-768 dk (2400) || X25519 scalar (32)
+//                      — retained locally for decapsulation.
+pub fn x25519mlkem768_keygen(rand96: i64, out_share: i64, out_priv: i64) -> i64 {
+    // ML-KEM-768 keygen: ek -> out_share[0..1184], dk -> out_priv[0..2400].
+    mlkem768_keygen(rand96, out_share, out_priv);
+
+    // X25519 public key from the client scalar (rand96[64..96]).
+    let base: i64 = __mind_alloc(32);
+    hyb_x25519_base(base);
+    let scalar: i64 = rand96 + 64;
+    x25519(scalar, base, out_share + 1184);
+
+    // Keep the raw scalar in the private state for decapsulation.
+    hyb_mem_copy(out_priv + 2400, scalar, 32);
+    0
+}
+
+// x25519mlkem768_encaps — SERVER encapsulation against the client's key_share.
+//   peer_share (1216) = ML-KEM-768 ek (1184) || client X25519 public key (32)
+//   rand64  = m(32) || x25519_scalar(32)
+//             (m is the ML-KEM-768 encaps randomness, FIPS 203 Alg 17;
+//              x25519_scalar is the server's ephemeral X25519 private key.)
+//   out_share (1120) = ML-KEM-768 ct (1088) || server X25519 public key (32)
+//                      — this is the server's TLS `key_share` entry.
+//   out_ss    (64)   = ML-KEM-768 secret (32) || X25519 secret (32)
+pub fn x25519mlkem768_encaps(peer_share: i64, rand64: i64, out_share: i64, out_ss: i64) -> i64 {
+    // ML-KEM-768 encaps: ct -> out_share[0..1088], secret -> out_ss[0..32].
+    // (mlkem768_encaps reads only the first 32 bytes of rand64 as m.)
+    mlkem768_encaps(peer_share, rand64, out_share, out_ss);
+
+    // Server X25519 ephemeral public key (out_share[1088..1120]) from the
+    // server scalar (rand64[32..64]).
+    let base: i64 = __mind_alloc(32);
+    hyb_x25519_base(base);
+    let sscalar: i64 = rand64 + 32;
+    x25519(sscalar, base, out_share + 1088);
+
+    // X25519 shared secret (out_ss[32..64]) = X25519(server_scalar, client_pub).
+    x25519(sscalar, peer_share + 1184, out_ss + 32);
+    0
+}
+
+// x25519mlkem768_decaps — CLIENT decapsulation of the server's key_share.
+//   priv       (2432) = ML-KEM-768 dk (2400) || X25519 scalar (32)
+//   peer_share (1120) = ML-KEM-768 ct (1088) || server X25519 public key (32)
+//   out_ss     (64)   = ML-KEM-768 secret (32) || X25519 secret (32)
+// On a corrupted ML-KEM ciphertext the ML-KEM half is the FO implicit-reject
+// secret (fail-closed, handled inside mlkem768_decaps); the X25519 half is
+// unconditional, exactly as the hybrid combiner requires.
+pub fn x25519mlkem768_decaps(priv: i64, peer_share: i64, out_ss: i64) -> i64 {
+    // ML-KEM-768 decaps: dk = priv[0..2400], ct = peer_share[0..1088];
+    // secret -> out_ss[0..32].
+    mlkem768_decaps(priv, peer_share, out_ss);
+
+    // X25519 shared secret (out_ss[32..64]) = X25519(client_scalar, server_pub).
+    x25519(priv + 2400, peer_share + 1088, out_ss + 32);
+    0
+}
