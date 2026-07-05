@@ -825,7 +825,14 @@ fn collect_files(base: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) -> R
             .replace('\\', "/");
 
         if path.is_dir() {
-            collect_files(base, &path, out)?;
+            // Skip a subdir we cannot read (e.g. a root-owned `/tmp/systemd-private-*`
+            // sibling of a source file compiled from `/tmp`) instead of failing the
+            // whole build with EACCES — an unreadable sibling directory is never part
+            // of the MIND module tree, so silently excluding it is correct and keeps
+            // `mindc` usable from any working directory.
+            if let Err(e) = collect_files(base, &path, out) {
+                eprintln!("mindc: skipping unreadable dir {}: {e}", path.display());
+            }
         } else if path.is_file() {
             let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
             out.push((rel, bytes));
