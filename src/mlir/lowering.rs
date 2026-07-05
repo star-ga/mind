@@ -593,6 +593,253 @@ impl LoweringContext {
         writeln!(&mut self.body, "{line}").expect("write to string cannot fail");
     }
 
+    /// PINNED canonical-order scalar fold for f32/f64 tensor `sum` / `mean` —
+    /// the strict, cross-substrate-bit-identical reduction tier (the shipped
+    /// analogue of `emit_tensor_reduce_pinned` in `src/eval/mlir_export.rs`).
+    ///
+    /// Fully unrolls the reduction into a fixed left-to-right chain of scalar
+    /// `arith.addf` (never a `tensor.reduce` / `vector.reduction`, so no pass
+    /// can reassociate or width-tile it), with NO fastmath/contract flag. A
+    /// fixed-order chain of IEEE-754 round-to-nearest-even adds has no
+    /// reassociation freedom, so — exactly like the `scalar_f64_chain`
+    /// cross-substrate canary — the result is byte-identical across x86 avx2
+    /// and ARM neon AND run-to-run. Output elements are produced in row-major
+    /// order over the kept axes, exactly the order `tensor.from_elements`
+    /// expects; a full reduction (rank-0 result) is bound directly to a scalar
+    /// `f32`/`f64` SSA value so the C ABI stays scalar (no rank-0 tensor
+    /// boundary, no tensor-param ABI needed).
+    ///
+    /// Falls back to `UnsupportedOp` for the cases this minimal static fold
+    /// does not cover — dynamic/symbolic shapes, non-float dtypes, and
+    /// element counts over the unroll cap.
+    // deferred: dynamic/over-cap/integer reductions would use a pinned
+    // sequential `scf.for` fold (integer add is associative → any grouping is
+    // already bit-identical) — upgrade path when a non-static kernel needs it.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_tensor_reduce_pinned(
+        &mut self,
+        instr_index: usize,
+        dst: ValueId,
+        src: ValueId,
+        axes: &[i64],
+        keepdims: bool,
+        is_mean: bool,
+    ) -> Result<(), MlirLowerError> {
+        let op_name = if is_mean { "Mean" } else { "Sum" };
+        let (dtype, shape) = match self.values.get(&src) {
+            Some(ValueKind::Tensor { dtype, shape }) => (dtype.clone(), shape.clone()),
+            _ => {
+                return Err(MlirLowerError::UnsupportedOp {
+                    instr_index,
+                    op: format!("{op_name} over non-tensor value {src:?}"),
+                });
+            }
+        };
+        // Strict pinned fold is f32/f64 only (integer reductions are
+        // associative — a future tree/scf.for tier keeps them bit-identical).
+        if !matches!(dtype, DType::F32 | DType::F64) {
+            return Err(MlirLowerError::UnsupportedOp {
+                instr_index,
+                op: format!(
+                    "{op_name} pinned fold supports f32/f64 only, got {}",
+                    dtype.as_str()
+                ),
+            });
+        }
+        // Fully-static shapes only.
+        let mut dims: Vec<usize> = Vec::with_capacity(shape.len());
+        for d in &shape {
+            match d {
+                ShapeDim::Known(n) => dims.push(*n),
+                ShapeDim::Sym(_) => {
+                    return Err(MlirLowerError::UnsupportedOp {
+                        instr_index,
+                        op: format!(
+                            "{op_name} over dynamic-shape tensor (pinned static fold only)"
+                        ),
+                    });
+                }
+            }
+        }
+        const PINNED_FOLD_ELEM_CAP: usize = 4096;
+        let total: usize = dims.iter().product();
+        if total == 0 || total > PINNED_FOLD_ELEM_CAP {
+            return Err(MlirLowerError::UnsupportedOp {
+                instr_index,
+                op: format!(
+                    "{op_name} element count {total} outside pinned-fold cap 1..={PINNED_FOLD_ELEM_CAP}"
+                ),
+            });
+        }
+        let rank = dims.len();
+        // Reduced axes: empty means "all" (matches the type-checker's
+        // normalize_reduce_axes); negatives count from the end; sort + dedup.
+        let mut reduced: Vec<usize> = if axes.is_empty() {
+            (0..rank).collect()
+        } else {
+            let mut r = Vec::with_capacity(axes.len());
+            for &a in axes {
+                let idx = if a < 0 { a + rank as i64 } else { a };
+                if idx < 0 || idx as usize >= rank {
+                    return Err(MlirLowerError::UnsupportedOp {
+                        instr_index,
+                        op: format!("{op_name} axis {a} out of range for rank {rank}"),
+                    });
+                }
+                r.push(idx as usize);
+            }
+            r
+        };
+        reduced.sort_unstable();
+        reduced.dedup();
+        let keep: Vec<usize> = (0..rank).filter(|i| !reduced.contains(i)).collect();
+        let out_shape: Vec<ShapeDim> = if keepdims {
+            (0..rank)
+                .map(|i| {
+                    if reduced.contains(&i) {
+                        ShapeDim::Known(1)
+                    } else {
+                        ShapeDim::Known(dims[i])
+                    }
+                })
+                .collect()
+        } else {
+            keep.iter().map(|&a| ShapeDim::Known(dims[a])).collect()
+        };
+
+        let dtype_str = dtype.as_str();
+        let src_ty = tensor_type(&shape, dtype_str);
+        let out_ty = tensor_type(&out_shape, dtype_str);
+        let keep_sizes: Vec<usize> = keep.iter().map(|&a| dims[a]).collect();
+        let reduced_sizes: Vec<usize> = reduced.iter().map(|&a| dims[a]).collect();
+        let reduce_count: usize = reduced_sizes.iter().product::<usize>().max(1);
+        let out_elems: usize = keep_sizes.iter().product::<usize>().max(1);
+        let count_literal = format!("{:.1}", reduce_count as f64);
+        let scalar_result = out_shape.is_empty();
+
+        // `tensor.extract` indices are `index`-typed SSA values, so each
+        // distinct integer coordinate is materialised once as an
+        // `arith.constant N : index` and reused (deterministic CSE-friendly).
+        let mut index_consts: std::collections::HashMap<usize, String> =
+            std::collections::HashMap::new();
+        let mut idx_name = |ctx: &mut Self, v: usize| -> String {
+            if let Some(name) = index_consts.get(&v) {
+                return name.clone();
+            }
+            let name = format!("%rdi{}_{}", dst.0, v);
+            ctx.emit_line(&format!("    {name} = arith.constant {v} : index"));
+            index_consts.insert(v, name.clone());
+            name
+        };
+
+        let mut n: usize = 0;
+        let mut elements: Vec<String> = Vec::with_capacity(out_elems);
+        let mut out_coord = vec![0usize; keep.len()];
+        for e in 0..out_elems {
+            let is_last_elem = e + 1 == out_elems;
+            let mut acc = format!("%rd{}_{}", dst.0, n);
+            n += 1;
+            self.emit_line(&format!("    {acc} = arith.constant 0.0 : {dtype_str}"));
+            let mut red_coord = vec![0usize; reduced.len()];
+            for r in 0..reduce_count {
+                let is_last_reduce = r + 1 == reduce_count;
+                let mut full = vec![0usize; rank];
+                for (k, &ax) in keep.iter().enumerate() {
+                    full[ax] = out_coord[k];
+                }
+                for (ri, &ax) in reduced.iter().enumerate() {
+                    full[ax] = red_coord[ri];
+                }
+                let idx = full
+                    .iter()
+                    .map(|&v| idx_name(self, v))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let ext = format!("%rd{}_{}", dst.0, n);
+                n += 1;
+                self.emit_line(&format!(
+                    "    {ext} = tensor.extract %{}[{idx}] : {src_ty}",
+                    src.0
+                ));
+                // The very last add of the very last output element is the
+                // terminal op for a scalar (rank-0) `sum` — write it directly
+                // into `%dst` so `Return` uses the scalar f32/f64 ABI.
+                let terminal = scalar_result && is_last_elem && is_last_reduce && !is_mean;
+                let next = if terminal {
+                    format!("%{}", dst.0)
+                } else {
+                    let s = format!("%rd{}_{}", dst.0, n);
+                    n += 1;
+                    s
+                };
+                self.emit_line(&format!(
+                    "    {next} = arith.addf {acc}, {ext} : {dtype_str}"
+                ));
+                acc = next;
+                increment_odometer(&mut red_coord, &reduced_sizes);
+            }
+            if is_mean {
+                let divisor = format!("%rd{}_{}", dst.0, n);
+                n += 1;
+                self.emit_line(&format!(
+                    "    {divisor} = arith.constant {count_literal} : {dtype_str}"
+                ));
+                let terminal = scalar_result && is_last_elem;
+                let div = if terminal {
+                    format!("%{}", dst.0)
+                } else {
+                    let s = format!("%rd{}_{}", dst.0, n);
+                    n += 1;
+                    s
+                };
+                self.emit_line(&format!(
+                    "    {div} = arith.divf {acc}, {divisor} : {dtype_str}"
+                ));
+                acc = div;
+            }
+            elements.push(acc);
+            increment_odometer(&mut out_coord, &keep_sizes);
+        }
+
+        if scalar_result {
+            // The terminal fold op above already produced `%dst` as a scalar.
+            // The scalar-float `ValueKind`s only exist under `std-surface`; a
+            // fully-reduced float tensor therefore has no representable scalar
+            // result in a default/mlir-lowering-only build, so it falls back to
+            // `UnsupportedOp` there (never reached in the shipped std-surface
+            // build, so the strict cross-substrate fold stays byte-identical).
+            #[cfg(feature = "std-surface")]
+            {
+                let kind = match dtype {
+                    DType::F32 => ValueKind::ScalarF32,
+                    _ => ValueKind::ScalarF64,
+                };
+                self.values.insert(dst, kind);
+            }
+            #[cfg(not(feature = "std-surface"))]
+            {
+                return Err(MlirLowerError::UnsupportedOp {
+                    instr_index,
+                    op: format!("{op_name} reduced to scalar float requires std-surface"),
+                });
+            }
+        } else {
+            self.emit_line(&format!(
+                "    %{} = tensor.from_elements {} : {out_ty}",
+                dst.0,
+                elements.join(", ")
+            ));
+            self.values.insert(
+                dst,
+                ValueKind::Tensor {
+                    dtype,
+                    shape: out_shape,
+                },
+            );
+        }
+        Ok(())
+    }
+
     /// Propagate the ENCLOSING function's ABI context (callee signatures,
     /// param/return kinds, declared return slot) into a freshly-created
     /// branch/loop sub-context. Without this a narrow early `return` inside the
@@ -3032,6 +3279,28 @@ impl LoweringContext {
                         shape: shape.clone(),
                     },
                 );
+            }
+            // Tensor `sum` / `mean` reduction over a fully-static f32/f64 source
+            // (RFC 0012 tensor-RUNS track). Emits the PINNED canonical-order
+            // scalar fold — a fixed left-to-right chain of `arith.addf` with NO
+            // `tensor.reduce` / `vector.reduction` and NO fastmath — so the
+            // result is byte-identical across x86 avx2 / ARM neon and run-to-run
+            // (the strict cross-substrate tier). See `emit_tensor_reduce_pinned`.
+            Instr::Sum {
+                dst,
+                src,
+                axes,
+                keepdims,
+            } => {
+                self.emit_tensor_reduce_pinned(instr_index, *dst, *src, axes, *keepdims, false)?;
+            }
+            Instr::Mean {
+                dst,
+                src,
+                axes,
+                keepdims,
+            } => {
+                self.emit_tensor_reduce_pinned(instr_index, *dst, *src, axes, *keepdims, true)?;
             }
             // RFC 0005 Phase 6.2b Gap 2 — `arr[idx]` element load.
             // Lowers to an `tensor.extract` from the base tensor constant.
@@ -9500,6 +9769,20 @@ fn broadcast_binop_maps(
     let rhs_map = map_for(&rhs_d);
     let result_shape = result.into_iter().map(ShapeDim::Known).collect();
     Ok((result_shape, lhs_map, rhs_map))
+}
+
+/// Row-major odometer: increment the last coordinate fastest, carrying up.
+/// Wraps to all-zero after the final position (callers only iterate the exact
+/// element count, so the wrap is never observed). Used by the pinned tensor
+/// reduction fold to walk kept / reduced axes in canonical row-major order.
+fn increment_odometer(coord: &mut [usize], sizes: &[usize]) {
+    for i in (0..coord.len()).rev() {
+        coord[i] += 1;
+        if coord[i] < sizes[i] {
+            return;
+        }
+        coord[i] = 0;
+    }
 }
 
 fn tensor_type(shape: &[ShapeDim], dtype: &str) -> String {

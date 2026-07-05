@@ -17,5 +17,5 @@
 // The argument to the raw intrinsic is an unused placeholder matching the
 // auto-generated (i64) -> i64 extern shape.
 pub fn now_ns() -> i64 {
-    return __mind_now_ns(0)
+    return __mind_now_ns(0);
 }

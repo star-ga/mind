@@ -10,7 +10,10 @@
 # property — cross-LOWERING bit-identity, on top of cross-substrate.
 #
 #   avx2 — verified on x86_64 (CI job `cross_substrate_identity`, ubuntu-24.04).
-#   neon — enforced on aarch64 (CI job `cross_substrate_identity`,
+#   neon — VERIFIED byte-identical on real ARM64 (NEON) hardware 2026-07-05
+#          (GCP Ampere Altra aarch64, LLVM 20.1.8, MIND_BENCH_REQUIRE=1): this
+#          exact hash reproduced, matching the x86_64 reference. Continuously
+#          enforced on aarch64 (CI job `cross_substrate_identity`,
 #          ubuntu-24.04-arm) per RFC 0015 §3.1 / RFC 0020 §10. The exact Q16.16
 #          result is substrate-independent, so the same MLIR MUST reproduce the
 #          avx2 hash on aarch64; the ARM runner proves it.

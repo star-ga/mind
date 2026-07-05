@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Verified
+
+- **Cross-substrate byte-identity now proven on ARM64 hardware (2026-07-05).**
+  The `cross_substrate_identity` gate's 12 canary workloads — int/Q16.16
+  `dot`/`gemv`/`gemm`, det-i8 GEMM, a scalar-f64 arithmetic chain, and a chaotic
+  Lorenz–Euler integrator (1000 steps, sensitive to initial conditions) —
+  produced **byte-identical** outputs on a real ARM64 host (GCP Ampere Altra
+  aarch64, LLVM 20.1.8, `MIND_BENCH_REQUIRE=1`, 13/13 tests), matching the pinned
+  x86_64 (`avx2`) references. The **strict tier** — integers, Q16.16
+  fixed-point, and **scalar** IEEE-754 f64/f32 (no FMA contraction, no
+  reassociation) — is now verified byte-identical on **both x86_64 (AVX2) and
+  ARM64 (NEON) real hardware**, not x86-only. Float **vector** reductions
+  (tensor `sum`, broader vector), transcendentals, and GPU float determinism
+  remain the frontier (unchanged, still tolerance-gated / roadmap).
+
 ### Added
 
 - **Scalar IEEE-754 float64 on the strict deterministic path.** Scalar `f64`
@@ -16,8 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `f64` Lorenz–Euler integrator — runs **bit-exact against a reference** and is
   **run-to-run bit-identical**. Because scalar `+ − × ÷ √` are correctly-rounded
   IEEE-754 operations (identical on x86-SSE2 and ARM-NEON), cross-ISA
-  bit-identity follows on any conforming FPU; re-verification on ARM hardware we
-  control is in progress (the fleet is all-x86). This extends the
+  bit-identity follows on any conforming FPU, and is now **verified
+  byte-identical on real ARM64 (NEON) hardware** (2026-07-05, GCP Ampere Altra
+  aarch64, LLVM 20.1.8: all 12 `cross_substrate` canaries reproduced the x86_64
+  references). This extends the
   integer/Q16.16 wedge to scalar float on the strict path. **Not** yet
   deterministic and still on the roadmap: `f32`/`f64` **vector** reductions
   (documented ~1e-4 relative tolerance today → canonical reduction trees /

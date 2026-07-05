@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3006 | **Est. tokens:** ~7,234,820
-**Generated:** 2026-07-04 08:42 UTC
+**Files:** 3020 | **Est. tokens:** ~7,250,828
+**Generated:** 2026-07-05 13:09 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~27,212 |
+| `./` | 34 | ~27,393 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -40,32 +40,33 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,163 |
-| `docs/` | 30 | ~59,335 |
+| `docs/` | 31 | ~61,756 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
 | `docs/mindcraft/` | 3 | ~7,023 |
 | `docs/research/` | 1 | ~117 |
-| `docs/rfcs/` | 28 | ~118,353 |
+| `docs/rfcs/` | 28 | ~118,403 |
 | `docs/specs/` | 2 | ~976 |
-| `examples/` | 18 | ~35,192 |
+| `examples/` | 18 | ~35,272 |
 | `examples/c/` | 2 | ~400 |
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 29 | ~69,657 |
+| `examples/mindc_mind/` | 39 | ~75,957 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
+| `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~83 |
 | `examples/native/` | 2 | ~71 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
-| `examples/zoo/` | 6 | ~13,400 |
+| `examples/zoo/` | 6 | ~12,518 |
 | `experiments/global-vs-local/` | 7 | ~6,492 |
 | `.githooks/` | 1 | ~255 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 8 | ~8,905 |
+| `.github/workflows/` | 8 | ~8,975 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
-| `runtime-support/` | 1 | ~16,548 |
+| `runtime-support/` | 1 | ~16,661 |
 | `scripts/` | 7 | ~9,074 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
@@ -377,16 +378,16 @@
 | `src/build/` | 2 | ~11,359 |
 | `src/cache/` | 4 | ~3,525 |
 | `src/check/` | 3 | ~9,753 |
-| `src/deps/` | 1 | ~8,087 |
+| `src/deps/` | 1 | ~8,217 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,474 |
-| `src/eval/` | 12 | ~58,761 |
+| `src/eval/` | 12 | ~61,001 |
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~19,662 |
-| `src/ir/` | 5 | ~32,195 |
+| `src/ir/` | 5 | ~32,322 |
 | `src/ir/compact/` | 3 | ~15,194 |
 | `src/ir/compact/v2/` | 8 | ~37,885 |
 | `src/ir/compact/v3/` | 4 | ~45,526 |
@@ -397,7 +398,7 @@
 | `src/opt/` | 4 | ~9,649 |
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 1 | ~3,811 |
-| `src/project/` | 3 | ~27,918 |
+| `src/project/` | 3 | ~28,061 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -405,26 +406,26 @@
 | `src/type_checker/` | 1 | ~11,258 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 38 | ~179,983 |
-| `tests/` | 267 | ~448,229 |
+| `std/` | 38 | ~179,783 |
+| `tests/` | 269 | ~452,677 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
-| `tests/common/` | 1 | ~674 |
+| `tests/common/` | 1 | ~668 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
 | `tests/conformance/gpu_profile/` | 2 | ~11 |
 | `tests/cross_substrate_identity/` | 2 | ~4,052 |
-| `tests/cross_substrate_identity/dot-i16-4096/` | 2 | ~590 |
-| `tests/cross_substrate_identity/dot-l1-q16/` | 2 | ~305 |
-| `tests/cross_substrate_identity/dot-l2-q16/` | 2 | ~755 |
-| `tests/cross_substrate_identity/gemm-i8-64x64x64/` | 2 | ~649 |
-| `tests/cross_substrate_identity/gemm-q16-64x64x64/` | 2 | ~558 |
-| `tests/cross_substrate_identity/gemm-q16-fused-64x64x64/` | 2 | ~838 |
-| `tests/cross_substrate_identity/gemv-i16-256x256/` | 2 | ~536 |
-| `tests/cross_substrate_identity/gemv-q16-256x256/` | 2 | ~461 |
-| `tests/cross_substrate_identity/lorenz-q16/` | 2 | ~1,185 |
-| `tests/cross_substrate_identity/q16-arith-chain/` | 2 | ~730 |
-| `tests/cross_substrate_identity/scalar-float-f64/` | 2 | ~1,238 |
-| `tests/cross_substrate_identity/struct-handle-roundtrip/` | 2 | ~688 |
+| `tests/cross_substrate_identity/dot-i16-4096/` | 2 | ~648 |
+| `tests/cross_substrate_identity/dot-l1-q16/` | 2 | ~363 |
+| `tests/cross_substrate_identity/dot-l2-q16/` | 2 | ~813 |
+| `tests/cross_substrate_identity/gemm-i8-64x64x64/` | 2 | ~707 |
+| `tests/cross_substrate_identity/gemm-q16-64x64x64/` | 2 | ~616 |
+| `tests/cross_substrate_identity/gemm-q16-fused-64x64x64/` | 2 | ~896 |
+| `tests/cross_substrate_identity/gemv-i16-256x256/` | 2 | ~594 |
+| `tests/cross_substrate_identity/gemv-q16-256x256/` | 2 | ~519 |
+| `tests/cross_substrate_identity/lorenz-q16/` | 2 | ~1,243 |
+| `tests/cross_substrate_identity/q16-arith-chain/` | 2 | ~788 |
+| `tests/cross_substrate_identity/scalar-float-f64/` | 2 | ~1,310 |
+| `tests/cross_substrate_identity/struct-handle-roundtrip/` | 2 | ~746 |
 | `tests/fixtures/` | 6 | ~228 |
 | `tests/ir_verification/` | 2 | ~108 |
 | `tests/lexical/` | 3 | ~191 |
@@ -481,7 +482,7 @@
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
 - `Mind.toml` (~108 tok, small) — [package]
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
-- `README.md` (~5440 tok, huge) — MIND — Machine Intelligence Native Design
+- `README.md` (~5621 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~614 tok, large) — Security Policy
@@ -657,10 +658,11 @@
 - `v0.3.md` (~110 tok, small) — MIND Design v0.3 (Draft)
 ### `docs/`
 
-- `determinism.md` (~2744 tok, huge) — The Determinism Contract
+- `determinism.md` (~2784 tok, huge) — The Determinism Contract
 - `errors.md` (~701 tok, large) — MIND Core Error Model
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
 - `gpu.md` (~387 tok, medium) — GPU backend profile
+- `INDEPENDENCE_ROADMAP.md` (~2329 tok, huge) — MIND Rust-Independence Roadmap
 - `install.md` (~1012 tok, large) — Installing mindc
 - `ir.md` (~451 tok, medium) — MIND IR core
 - `ir-mlir.md` (~480 tok, medium) — IR & MLIR Integration
@@ -707,15 +709,15 @@
 - `0018-bare-metal-substrate.md` (~3799 tok, huge) — RFC 0018: Bare-Metal Substrate Lowering Tier
 - `0019-deterministic-agent-substrate.md` (~4131 tok, huge) — RFC 0019: Deterministic Agent Substrate
 - `0020-mind-bench-reproducibility-harness.md` (~4083 tok, huge) — RFC 0020: mind-bench Public Reproducibility Harness
-- `0021-canonical-ir-unification.md` (~4240 tok, huge) — RFC 0021: Canonical IR Unification — one IR, provenance as a versioned epilogue
+- `0021-canonical-ir-unification.md` (~4290 tok, huge) — RFC 0021: Canonical IR Unification — one IR, provenance as a versioned epilogue
 - `0022-deterministic-io-substrate.md` (~2108 tok, huge) — RFC 0022: Deterministic I/O Substrate — fastest async I/O with bit-identical replay
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
 
-- `roadmap.md` (~15232 tok, huge) — Roadmap
+- `roadmap.md` (~15272 tok, huge) — Roadmap
 - `runs-burndown-roadmap.md` (~3203 tok, huge) — MIND RUNS Burndown Roadmap
-- `security.md` (~1480 tok, large) — Security Guide
+- `security.md` (~1492 tok, large) — Security Guide
 - `self-host-trace-hash-port.md` (~1406 tok, large) — #17 — Self-compute the native PT_NOTE (pure-MIND trace-hash port)
 - `shapes.md` (~478 tok, medium) — Tensor shape semantics
 - `sparse-tensor-types.md` (~740 tok, large) — Sparse Tensor Types
@@ -774,6 +776,7 @@
 - `bootstrap_smoke.py` (~2329 tok, huge)
 - `collect_field_strings_smoke.py` (~1161 tok, large)
 - `cutover_coverage_measure.py` (~2238 tok, huge)
+- `_dump_pure_all.py` (~668 tok, large) — Dump pure-MIND nb_build_mic3 bytes + note for all native_elf fixtures + main,
 - `EXPECTED.md` (~773 tok, large) — Phase 6.5 Stage 5 — Expected IR Text (APEX)
 - `fast_keystone.sh` (~922 tok, large) — fast_keystone.sh — fast LOCAL front-end keystone gate for the pure-MIND self-host
 - `FIXED_POINT_REPORT.md` (~1770 tok, huge) — Phase 6.5 — Bootstrap Fixed-Point Report
@@ -791,9 +794,18 @@
 - `multi_let_smoke.py` (~1499 tok, large)
 - `now_ns_smoke.py` (~678 tok, large) — # Copyright 2025 STARGA Inc.
 - `param_types_smoke.py` (~1273 tok, large)
+- `_ref_add.note` (~16 tok, tiny) — e7bdbecdd47c736566c96f0ca4695499c81e0b6d087919959b99b543c67235e0
+- `_ref_if_ret.note` (~16 tok, tiny) — 72e8c82f9be032e5285fa76776e2fd2a4c7ea0d010ecb379d6a00c8498f92656
+- `_ref_main.note` (~16 tok, tiny) — 06880c14908822679e15a66a45995f5bc11ec75310b45738588ffcaf754b1621
+- `_ref_recursion.note` (~16 tok, tiny) — 04947ba7952c2360a23d5281d0a35204ce8461b7b3265bf73453c4af49dda251
+- `_ref_struct_field.note` (~16 tok, tiny) — 2cb2083c37be471776166a99580c7e98553a78ffd9a58d992c40f6e7310ffdb4
+- `_ref_value_if.note` (~16 tok, tiny) — b3b594d4d55dfc1360f8ad0fc873a8ba541da0c6b8e1e9d1a52a9446c40f4d64
+- `_regen_oracle.py` (~1249 tok, large) — Refresh the STALE frozen native_elf oracle notes.
 - `self_host_body_smoke.py` (~2995 tok, huge)
+- `selfhost_driver.mind` (~623 tok, large) — ===========================================================================
+- `self_host_loop_smoke.py` (~1834 tok, huge)
 - `self_host_mlir_smoke.py` (~1736 tok, huge)
-- `self_host_native_elf_smoke.py` (~8192 tok, huge)
+- `self_host_native_elf_smoke.py` (~10022 tok, huge)
 - `sha256_hash_smoke.py` (~732 tok, large) — # Copyright 2025 STARGA Inc.
 - `struct_fields_smoke.py` (~1076 tok, large)
 - `struct_lit_smoke.py` (~1923 tok, huge)
@@ -805,6 +817,9 @@
 - `recursion.elf` (~175 tok, small) — ELF> @@@8
 - `struct_field.elf` (~166 tok, small) — ELF> @@@8
 - `value_if.elf` (~147 tok, small) — ELF> @@@8
+### `examples/mindc_mind/testdata/selfhost_loop/`
+
+- `MANIFEST.txt` (~83 tok, small) — # Frozen self-host bootstrap ELF (A6): the driver-bearing native compiler that
 ### `examples/mindc_mind/`
 
 - `unified_dispatch_smoke.py` (~1553 tok, huge)
@@ -826,7 +841,7 @@
 - `README.md` (~2254 tok, huge) — RFC 0005 Phase 6.2 — Self-Host Parser Seed
 ### `examples/`
 
-- `policy.mind` (~1221 tok, large) — policy.mind — v0.1 Execution Boundary Kernel
+- `policy.mind` (~1301 tok, large) — policy.mind — v0.1 Execution Boundary Kernel
 - `README.md` (~2066 tok, huge) — MIND Examples
 - `remizov_benchmark.mind` (~6400 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
 - `remizov_feynman.mind` (~2894 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
@@ -844,12 +859,12 @@
 - `README.md` (~2612 tok, huge) — RFC 0005 Phase 6.3 — Self-Host Type-Checker Seed
 ### `examples/zoo/`
 
-- `conv_classifier.mind` (~2621 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
-- `linear_regression.mind` (~1423 tok, large) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
-- `logistic_classifier.mind` (~1624 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
-- `mlp_mnist.mind` (~2471 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
+- `conv_classifier.mind` (~2407 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
+- `linear_regression.mind` (~1347 tok, large) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
+- `logistic_classifier.mind` (~1517 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
+- `mlp_mnist.mind` (~2275 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
 - `README.md` (~1191 tok, large) — MIND Model Zoo
-- `transformer_block.mind` (~4070 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
+- `transformer_block.mind` (~3781 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
 ### `experiments/global-vs-local/`
 
 - `chern.py` (~1250 tok, large)
@@ -878,7 +893,7 @@
 
 - `bench-gate.yml` (~1432 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~222 tok, medium) — name: Cargo Deny
-- `ci.yml` (~4274 tok, huge) — name: CI
+- `ci.yml` (~4344 tok, huge) — name: CI
 - `docs-claims.yml` (~364 tok, medium) — name: Docs Claims
 - `link-check.yml` (~221 tok, medium) — name: Link Check
 - `mindcraft.yml` (~545 tok, large) — name: Mindcraft Check
@@ -892,7 +907,7 @@
 - `verification.mind` (~948 tok, large) — Verification plane for inference consistency (LCU)
 ### `runtime-support/`
 
-- `mind_intrinsics.c` (~16548 tok, huge) — Copyright 2025 STARGA Inc.
+- `mind_intrinsics.c` (~16661 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
 - `anatomy-hook.sh` (~258 tok, medium) — anatomy-hook.sh — Git pre-commit hook to refresh ANATOMY.md
@@ -3727,7 +3742,7 @@
 - `conformance.rs` (~1847 tok, huge) — The autodiff_pairwise conformance entry was removed 2026-05-20 — its
 ### `src/deps/`
 
-- `mod.rs` (~8087 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~8217 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/diagnostics/`
 
 - `mod.rs` (~2230 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3746,12 +3761,12 @@
 - `mod.rs` (~6874 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/`
 
-- `abi_gate.rs` (~7970 tok, huge) — Runnable-artifact ABI gate (release-readiness P1.1).
+- `abi_gate.rs` (~8412 tok, huge) — Runnable-artifact ABI gate (release-readiness P1.1).
 - `autodiff.rs` (~14268 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~3818 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_build.rs` (~8781 tok, huge) — Copyright 2025 STARGA Inc.
-- `mlir_export.rs` (~9665 tok, huge) — Copyright 2025 STARGA Inc.
+- `mlir_export.rs` (~11463 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_opt.rs` (~995 tok, large) — Copyright 2025 STARGA Inc.
@@ -3803,8 +3818,8 @@
 ### `src/ir/`
 
 - `evidence.rs` (~1913 tok, huge) — Copyright 2025 STARGA Inc.
-- `fp_mode.rs` (~3759 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
-- `mod.rs` (~12285 tok, huge) — Copyright 2025 STARGA Inc.
+- `fp_mode.rs` (~3878 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
+- `mod.rs` (~12293 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~10698 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -3854,7 +3869,7 @@
 - `pipeline.rs` (~4477 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `mod.rs` (~20623 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~20766 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~3629 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -3895,44 +3910,44 @@
 - `mod.rs` (~4906 tok, huge) — Copyright 2025 STARGA Inc.
 ### `std/`
 
-- `aes_gcm.mind` (~5431 tok, huge) — std/aes_gcm.mind — AES-128 (FIPS 197) + AES-128-GCM (NIST SP 800-38D) in
+- `aes_gcm.mind` (~5400 tok, huge) — std/aes_gcm.mind — AES-128 (FIPS 197) + AES-128-GCM (NIST SP 800-38D) in
 - `arena.mind` (~1323 tok, large) — std.arena — bump-pointer region allocator.
 - `async.mind` (~2460 tok, huge) — std/async.mind -- RFC 0011 Phase A: Scheduler injection + Sender/Receiver
 - `blas.mind` (~2518 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
 - `cli.mind` (~2781 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
-- `ecdsa_p256.mind` (~6619 tok, huge) — std/ecdsa_p256.mind — ECDSA signature VERIFICATION on NIST P-256
+- `ecdsa_p256.mind` (~6517 tok, huge) — std/ecdsa_p256.mind — ECDSA signature VERIFICATION on NIST P-256
 - `fs.mind` (~4326 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
-- `hkdf.mind` (~1555 tok, huge) — std/hkdf.mind — HMAC-SHA256 (RFC 2104) + HKDF (RFC 5869) in pure MIND.
-- `hpack.mind` (~9651 tok, huge) — std/hpack.mind — HPACK header-compression DECODING (RFC 7541) in pure MIND.
-- `http2_frame.mind` (~4183 tok, huge) — std/http2_frame.mind — HTTP/2 framing layer (RFC 9113 §3.4, §4.1, §6) in
+- `hkdf.mind` (~1547 tok, huge) — std/hkdf.mind — HMAC-SHA256 (RFC 2104) + HKDF (RFC 5869) in pure MIND.
+- `hpack.mind` (~9694 tok, huge) — std/hpack.mind — HPACK header-compression DECODING (RFC 7541) in pure MIND.
+- `http2_frame.mind` (~4191 tok, huge) — std/http2_frame.mind — HTTP/2 framing layer (RFC 9113 §3.4, §4.1, §6) in
 - `http.mind` (~6682 tok, huge) — std/http.mind — HTTP/1.1 client over std.net (task #XXX).
 - `io_canon.mind` (~2624 tok, huge) — std.io_canon — canonical completion ordering for deterministic I/O.
 - `io.mind` (~1688 tok, huge) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
 - `iouring.mind` (~18767 tok, huge) — std.iouring — minimal io_uring binding (Linux). The physical-I/O reap source
 - `json.mind` (~10267 tok, huge) — std/json.mind -- RFC 8259 / ECMA-404 subset parser (task #269, cargo-retirement track).
-- `keccak.mind` (~3941 tok, huge) — std/keccak.mind — Keccak / SHA-3 + SHAKE (FIPS 202) in pure MIND.
+- `keccak.mind` (~3926 tok, huge) — std/keccak.mind — Keccak / SHA-3 + SHAKE (FIPS 202) in pure MIND.
 - `llvm.mind` (~11108 tok, huge) — std/llvm.mind — RFC 0010 Phase F: hand-written MIND extern "C" bindings
 - `map.mind` (~1538 tok, huge) — std/map.mind — RFC 0005 Phase 2: pure-MIND insertion-ordered map.
 - `mlir.mind` (~11056 tok, huge) — std/mlir.mind — RFC 0010 Phase E: hand-written MIND extern "C" bindings
-- `mlkem768.mind` (~6462 tok, huge) — std/mlkem768.mind — ML-KEM-768 (FIPS 203, "Kyber") in pure MIND.
+- `mlkem768.mind` (~6449 tok, huge) — std/mlkem768.mind — ML-KEM-768 (FIPS 203, "Kyber") in pure MIND.
 - `net.mind` (~2381 tok, huge) — std/net.mind — Task #268: POSIX socket surface in pure MIND.
 - `process.mind` (~3072 tok, huge) — std/process.mind — Task #268: subprocess + process environment in pure MIND.
 - `reactor.mind` (~1420 tok, large) — std.reactor — deterministic per-connection request-id allocation.
 - `regex.mind` (~9536 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
 - `ring.mind` (~1407 tok, large) — std.ring — fixed-capacity byte ring buffer (FIFO).
-- `rsa_pss.mind` (~2461 tok, huge) — std/rsa_pss.mind — RSASSA-PSS signature VERIFICATION (RFC 8017 §8.1.2) with
-- `sha256.mind` (~3635 tok, huge) — std/sha256.mind — FIPS 180-4 SHA-256 in pure MIND.
+- `rsa_pss.mind` (~2453 tok, huge) — std/rsa_pss.mind — RSASSA-PSS signature VERIFICATION (RFC 8017 §8.1.2) with
+- `sha256.mind` (~3643 tok, huge) — std/sha256.mind — FIPS 180-4 SHA-256 in pure MIND.
 - `string.mind` (~2326 tok, huge) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
 - `time.mind` (~257 tok, medium) — std.time — wall-clock access for evidence / audit timestamps.
-- `tls13_finished.mind` (~1420 tok, large) — std/tls13_finished.mind — TLS 1.3 Finished-message MAC + transcript hash
-- `tls13_handshake.mind` (~5002 tok, huge) — std/tls13_handshake.mind — TLS 1.3 handshake CRYPTO ORCHESTRATION in pure
-- `tls13_keyschedule.mind` (~3219 tok, huge) — std/tls13_keyschedule.mind — TLS 1.3 key schedule (RFC 8446 §7.1) in pure MIND.
-- `tls13_record.mind` (~2220 tok, huge) — std/tls13_record.mind — TLS 1.3 record-layer protection (RFC 8446 §5.1-5.3)
+- `tls13_finished.mind` (~1409 tok, large) — std/tls13_finished.mind — TLS 1.3 Finished-message MAC + transcript hash
+- `tls13_handshake.mind` (~4988 tok, huge) — std/tls13_handshake.mind — TLS 1.3 handshake CRYPTO ORCHESTRATION in pure
+- `tls13_keyschedule.mind` (~3220 tok, huge) — std/tls13_keyschedule.mind — TLS 1.3 key schedule (RFC 8446 §7.1) in pure MIND.
+- `tls13_record.mind` (~2171 tok, huge) — std/tls13_record.mind — TLS 1.3 record-layer protection (RFC 8446 §5.1-5.3)
 - `toml.mind` (~10099 tok, huge) — std/toml.mind -- TOML 1.0 subset parser (task #258, cargo-retirement track).
 - `tui.mind` (~4815 tok, huge) — std/tui.mind — RFC 0013 Tier 1 (c): minimal pure-MIND TUI surface.
 - `vec.mind` (~1100 tok, large) — std/vec.mind — RFC 0005 Phase 2: pure-MIND growable vector.
 - `x25519.mind` (~4019 tok, huge) — std/x25519.mind — X25519 (RFC 7748 §5) Curve25519 Montgomery-ladder ECDH in
-- `x509.mind` (~6614 tok, huge) — std/x509.mind — minimal X.509v3 DER parsing + RSA PKCS#1 v1.5 (SHA-256)
+- `x509.mind` (~6605 tok, huge) — std/x509.mind — minimal X.509v3 DER parsing + RSA PKCS#1 v1.5 (SHA-256)
 ### `tests/`
 
 - `alias_miscompile_run.rs` (~1338 tok, large) — Copyright 2025 STARGA Inc.
@@ -3973,7 +3988,7 @@
 - `collection_mutation_expr_position_run.rs` (~1003 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/common/`
 
-- `mod.rs` (~674 tok, large) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~668 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/`
 
 - `compound_assign.rs` (~1034 tok, large) — Copyright 2025 STARGA Inc.
@@ -4009,43 +4024,43 @@
 ### `tests/cross_substrate_identity/dot-i16-4096/`
 
 - `manifest.toml` (~384 tok, medium) — version = "1"
-- `reference_hashes.toml` (~206 tok, medium) — avx2 = "af0fc3cf1b510f8f7306a5d7250ae25a52b35281a7cefff2a0ac94b0cd80a127"
+- `reference_hashes.toml` (~264 tok, medium) — avx2 = "af0fc3cf1b510f8f7306a5d7250ae25a52b35281a7cefff2a0ac94b0cd80a127"
 ### `tests/cross_substrate_identity/dot-l1-q16/`
 
 - `manifest.toml` (~157 tok, small) — version = "1"
-- `reference_hashes.toml` (~148 tok, small) — avx2 = "ce7e2a80515e123f5d4fbb77d841f0d6c56fcbc690bba2e2ff81e45765843b34"
+- `reference_hashes.toml` (~206 tok, medium) — avx2 = "ce7e2a80515e123f5d4fbb77d841f0d6c56fcbc690bba2e2ff81e45765843b34"
 ### `tests/cross_substrate_identity/dot-l2-q16/`
 
 - `manifest.toml` (~436 tok, medium) — version = "1"
-- `reference_hashes.toml` (~319 tok, medium) — avx2 = "1d7f272b85e5f0fd7cf473086fb1da558a723134ff02ef30a4323eb757209823"
+- `reference_hashes.toml` (~377 tok, medium) — avx2 = "1d7f272b85e5f0fd7cf473086fb1da558a723134ff02ef30a4323eb757209823"
 ### `tests/cross_substrate_identity/gemm-i8-64x64x64/`
 
 - `manifest.toml` (~437 tok, medium) — version = "1"
-- `reference_hashes.toml` (~212 tok, medium) — avx2 = "917d353b18fd7f5ea4dab7dd02b786f5ccc4a2d954f695084ca0a88214d699c7"
+- `reference_hashes.toml` (~270 tok, medium) — avx2 = "917d353b18fd7f5ea4dab7dd02b786f5ccc4a2d954f695084ca0a88214d699c7"
 ### `tests/cross_substrate_identity/gemm-q16-64x64x64/`
 
 - `manifest.toml` (~391 tok, medium) — version = "1"
-- `reference_hashes.toml` (~167 tok, small) — avx2 = "92e2cb75d74d83a4a398d78d9ac560f195279c31814972c892f856f675faea0f"
+- `reference_hashes.toml` (~225 tok, medium) — avx2 = "92e2cb75d74d83a4a398d78d9ac560f195279c31814972c892f856f675faea0f"
 ### `tests/cross_substrate_identity/gemm-q16-fused-64x64x64/`
 
 - `manifest.toml` (~529 tok, large) — version = "1"
-- `reference_hashes.toml` (~309 tok, medium) — avx2 = "92e2cb75d74d83a4a398d78d9ac560f195279c31814972c892f856f675faea0f"
+- `reference_hashes.toml` (~367 tok, medium) — avx2 = "92e2cb75d74d83a4a398d78d9ac560f195279c31814972c892f856f675faea0f"
 ### `tests/cross_substrate_identity/gemv-i16-256x256/`
 
 - `manifest.toml` (~375 tok, medium) — version = "1"
-- `reference_hashes.toml` (~161 tok, small) — avx2 = "3238e8c7e1e9ee9937503700f63eda350fcd10e7db28d470c3dbc26592d0a936"
+- `reference_hashes.toml` (~219 tok, medium) — avx2 = "3238e8c7e1e9ee9937503700f63eda350fcd10e7db28d470c3dbc26592d0a936"
 ### `tests/cross_substrate_identity/gemv-q16-256x256/`
 
 - `manifest.toml` (~310 tok, medium) — version = "1"
-- `reference_hashes.toml` (~151 tok, small) — avx2 = "dfdf890874472ee369da524955995889c39bc6da770e4e2b1d0d69315e17611a"
+- `reference_hashes.toml` (~209 tok, medium) — avx2 = "dfdf890874472ee369da524955995889c39bc6da770e4e2b1d0d69315e17611a"
 ### `tests/cross_substrate_identity/lorenz-q16/`
 
 - `manifest.toml` (~681 tok, large) — version = "1"
-- `reference_hashes.toml` (~504 tok, large) — avx2 = "04da6abc69e63314331e88a7a9670ce5c9e90ddaa2bf5f5dc53526f56477de80"
+- `reference_hashes.toml` (~562 tok, large) — avx2 = "04da6abc69e63314331e88a7a9670ce5c9e90ddaa2bf5f5dc53526f56477de80"
 ### `tests/cross_substrate_identity/q16-arith-chain/`
 
 - `manifest.toml` (~432 tok, medium) — version = "1"
-- `reference_hashes.toml` (~298 tok, medium) — avx2 = "ce93cdeb0e650c1c8e0cd05687ed986bbdbac691b6a8742e155b8ffd65997d78"
+- `reference_hashes.toml` (~356 tok, medium) — avx2 = "ce93cdeb0e650c1c8e0cd05687ed986bbdbac691b6a8742e155b8ffd65997d78"
 ### `tests/cross_substrate_identity/`
 
 - `README.md` (~1219 tok, large) — cross_substrate_identity — the internal mind-bench reproducibility gate
@@ -4055,18 +4070,18 @@
 ### `tests/cross_substrate_identity/scalar-float-f64/`
 
 - `manifest.toml` (~778 tok, large) — version = "1"
-- `reference_hashes.toml` (~460 tok, medium) — avx2 = "7592a52a5e10a2f24469765f71ce1f9f8ebd9efb51904cf9a18f310d33b3c92d"
+- `reference_hashes.toml` (~532 tok, large) — avx2 = "7592a52a5e10a2f24469765f71ce1f9f8ebd9efb51904cf9a18f310d33b3c92d"
 ### `tests/cross_substrate_identity/struct-handle-roundtrip/`
 
 - `manifest.toml` (~403 tok, medium) — version = "1"
-- `reference_hashes.toml` (~285 tok, medium) — avx2 = "018a335a0e9fc397c6f41cba4fc2617f0cf8d1326c5dbf77d53e27feacaeb64c"
+- `reference_hashes.toml` (~343 tok, medium) — avx2 = "018a335a0e9fc397c6f41cba4fc2617f0cf8d1326c5dbf77d53e27feacaeb64c"
 ### `tests/cross_substrate_identity/`
 
 - `xnode_driver.c` (~2833 tok, huge)
 ### `tests/`
 
 - `crypto_vectors_driver.py` (~2653 tok, huge) — # Official-vector driver for std/aes_gcm.mind + std/hkdf.mind (pure-MIND crypto).
-- `diagnostics_parse.rs` (~359 tok, medium) — Copyright 2025 STARGA Inc.
+- `diagnostics_parse.rs` (~810 tok, large) — Copyright 2025 STARGA Inc.
 - `diagnostics.rs` (~688 tok, large) — Copyright 2025 STARGA Inc.
 - `digit_separator_run.rs` (~651 tok, large) — Copyright 2025 STARGA Inc.
 - `dot_enum_variant_run.rs` (~806 tok, large) — Copyright 2025 STARGA Inc.
@@ -4096,16 +4111,16 @@
 ### `tests/`
 
 - `fmt_comment_placement.rs` (~2772 tok, huge) — Copyright 2025 STARGA Inc.
-- `fmt_idempotence.rs` (~2782 tok, huge) — Copyright 2025 STARGA Inc.
+- `fmt_idempotence.rs` (~2946 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_ir_preservation.rs` (~2030 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_module_block_item_preserved.rs` (~926 tok, large) — Regression: `mindc fmt` must not drop item declarations nested inside a
-- `fmt_stdlib_stability.rs` (~2693 tok, huge) — Copyright 2025 STARGA Inc.
+- `fmt_stdlib_stability.rs` (~2754 tok, huge) — Copyright 2025 STARGA Inc.
 - `fn_value_call_reject.rs` (~761 tok, large) — Copyright 2025 STARGA Inc.
 - `for_each_run.rs` (~859 tok, large) — Copyright 2025 STARGA Inc.
 - `g2_differential_mlir.rs` (~6203 tok, huge) — Copyright 2025 STARGA Inc.
 - `gather_preview.rs` (~288 tok, medium) — Copyright 2025 STARGA Inc.
 - `generics_lowering.rs` (~1384 tok, large) — Copyright 2026 STARGA Inc. Licensed under the Apache License, Version 2.0.
-- `genref_phase_jb.rs` (~3326 tok, huge) — Copyright 2025 STARGA Inc.
+- `genref_phase_jb.rs` (~3459 tok, huge) — Copyright 2025 STARGA Inc.
 - `grad_wrt_resolve.rs` (~737 tok, large) — Copyright 2025 STARGA Inc.
 - `hpack_driver.py` (~3027 tok, huge) — # Official-vector driver for std/hpack.mind (pure-MIND HPACK decoding,
 - `http2_frame_driver.py` (~4195 tok, huge) — # Reference-vector driver for std/http2_frame.mind (pure-MIND HTTP/2 framing,
@@ -4129,6 +4144,7 @@
 - `undefined_operand.mind` (~62 tok, small) — IR verification test: Undefined operand detection
 ### `tests/`
 
+- `issue_201_202_unary_not_const_ctx.rs` (~1149 tok, large) — Copyright 2025 STARGA Inc.
 - `keccak_driver.py` (~1507 tok, huge) — # Official-vector driver for std/keccak.mind (pure-MIND FIPS 202).
 ### `tests/lexical/`
 
@@ -4141,7 +4157,7 @@
 - `linalg_preview.rs` (~291 tok, medium) — Copyright 2025 STARGA Inc.
 - `lint_infrastructure.rs` (~2540 tok, huge) — Copyright 2025 STARGA Inc.
 - `loop_run.rs` (~764 tok, large) — Copyright 2025 STARGA Inc.
-- `loud_fail_non_i64.rs` (~745 tok, large) — Release-readiness P1.1 — the runnable-artifact ABI gate.
+- `loud_fail_non_i64.rs` (~852 tok, large) — Release-readiness P1.1 — the runnable-artifact ABI gate.
 - `map_get_inference_run.rs` (~713 tok, large) — Copyright 2025 STARGA Inc.
 - `map_runtime_run.rs` (~843 tok, large) — Copyright 2025 STARGA Inc.
 - `map_surface_run.rs` (~949 tok, large) — Copyright 2025 STARGA Inc.
@@ -4268,7 +4284,7 @@
 - `mlir_exec.rs` (~833 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_export_indexing.rs` (~414 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_export_linalg.rs` (~863 tok, large) — Copyright 2025 STARGA Inc.
-- `mlir_export_reductions.rs` (~610 tok, large) — Copyright 2025 STARGA Inc.
+- `mlir_export_reductions.rs` (~1066 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~328 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_export_shape.rs` (~348 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_file_and_lower.rs` (~639 tok, large) — Copyright 2025 STARGA Inc.
@@ -4299,13 +4315,14 @@
 - `reap_threshold.rs` (~2047 tok, huge) — Copyright 2025 STARGA Inc.
 - `reductions_grad.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
 - `reductions_preview.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
+- `_ref_mic3_dump.rs` (~1664 tok, huge) — Committed self-host reference generator (A9b): reconstruct
 - `region_phase_ja.rs` (~4228 tok, huge) — Copyright 2025 STARGA Inc.
 - `relu_exec.rs` (~472 tok, medium) — Copyright 2025 STARGA Inc.
 - `relu_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `repl_basic.rs` (~523 tok, large) — Copyright 2025 STARGA Inc.
 - `resolve_fn_body.rs` (~979 tok, large) — Copyright 2025 STARGA Inc.
 - `result_option_prelude_run.rs` (~910 tok, large) — Copyright 2025 STARGA Inc.
-- `return_cond_type_reject.rs` (~1498 tok, large) — Copyright 2025 STARGA Inc.
+- `return_cond_type_reject.rs` (~1572 tok, huge) — Copyright 2025 STARGA Inc.
 - `rfc0012_attribute_syntax.rs` (~1182 tok, large) — Copyright 2025 STARGA Inc.
 - `rfc0012_phase_a_shape_types.rs` (~6540 tok, huge) — Copyright 2025 STARGA Inc.
 - `rfc0012_phase_b_operators.rs` (~4514 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4475,7 +4492,7 @@
 - `tensor_broadcast.rs` (~1004 tok, large) — Copyright 2025 STARGA Inc.
 - `tensor_buffers.rs` (~517 tok, large) — Copyright 2025 STARGA Inc.
 - `tensor_eval.rs` (~457 tok, medium) — Copyright 2025 STARGA Inc.
-- `tensor_param_fail_loud_run.rs` (~1572 tok, huge) — Copyright 2025 STARGA Inc.
+- `tensor_param_fail_loud_run.rs` (~1693 tok, huge) — Copyright 2025 STARGA Inc.
 - `tensor_stdlib.rs` (~549 tok, large) — Copyright 2025 STARGA Inc.
 - `tensor_symbolic.rs` (~550 tok, large) — Copyright 2025 STARGA Inc.
 - `tls13_finished_driver.py` (~3085 tok, huge) — # Official-vector driver for std/tls13_finished.mind (pure-MIND TLS 1.3
@@ -4498,7 +4515,7 @@
 - `type_error_spans.rs` (~1064 tok, large) — Copyright 2025 STARGA Inc.
 - `type_infer.rs` (~344 tok, medium) — Copyright 2025 STARGA Inc.
 - `type_struct_run.rs` (~628 tok, large) — Copyright 2025 STARGA Inc.
-- `typo_reject.rs` (~1059 tok, large) — Copyright 2025 STARGA Inc.
+- `typo_reject.rs` (~1127 tok, large) — Copyright 2025 STARGA Inc.
 - `value_if_comparison.rs` (~813 tok, large) — Copyright 2025 STARGA Inc.
 - `value_if_f64_let.rs` (~1148 tok, large) — Copyright 2025 STARGA Inc.
 - `vars_assign.rs` (~260 tok, medium) — Copyright 2025 STARGA Inc.

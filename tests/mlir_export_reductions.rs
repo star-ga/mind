@@ -15,6 +15,12 @@
 use libmind::eval;
 use libmind::parser;
 
+// Static f32/f64 reductions under the element cap take the STRICT pinned
+// canonical-order fold (a fixed left-to-right `arith.addf` chain rebuilt with
+// `tensor.from_elements`, NO `tensor.reduce` / `vector.reduction` / fastmath),
+// so the result is byte-identical across substrates and run-to-run. The
+// tree-shaped `tensor.reduce` tier is retained only for dynamic / over-cap /
+// non-float reductions (see `over_cap_reduction_uses_treeshaped_reduce`).
 #[test]
 fn mlir_export_reductions_cover_sum_and_mean() {
     let src = r#"
@@ -26,18 +32,30 @@ fn mlir_export_reductions_cover_sum_and_mean() {
     let ir = eval::lower_to_ir(&module);
     let mlir = eval::to_mlir(&ir, "main");
 
+    // Pinned fold: unrolled scalar adds rebuilt with `tensor.from_elements`,
+    // never a reassociable `tensor.reduce`.
     assert!(
-        mlir.contains("tensor.reduce"),
-        "expected tensor.reduce in {mlir}"
+        !mlir.contains("tensor.reduce"),
+        "static f32 reduction must use the pinned fold, not tensor.reduce, in {mlir}"
+    );
+    assert!(
+        mlir.contains("tensor.from_elements"),
+        "expected tensor.from_elements (pinned fold) in {mlir}"
+    );
+    assert!(
+        mlir.contains("tensor.extract"),
+        "expected tensor.extract in {mlir}"
     );
     assert!(mlir.contains("arith.addf"), "expected arith.addf in {mlir}");
-    assert!(mlir.contains("arith.divf"), "expected arith.divf in {mlir}");
+    assert!(
+        mlir.contains("arith.divf"),
+        "expected arith.divf (mean) in {mlir}"
+    );
 }
 
 /// Regression (Phase B.2 `.sum()`): empty axes must reduce over ALL axes to a
-/// scalar, matching the type-checker. Before the fix, `emit_tensor_reduce`
-/// left empty axes un-normalized and emitted MLIR that reduced nothing,
-/// returning the full `tensor<2x3xf32>` instead of the scalar `tensor<f32>`.
+/// scalar. Under the pinned fold the whole tensor collapses to a single
+/// `tensor.from_elements` of `tensor<f32>` (rank-0), NOT the full `2x3` shape.
 #[test]
 fn reduce_all_axes_when_axes_empty_yields_scalar() {
     let src = r#"
@@ -48,15 +66,39 @@ fn reduce_all_axes_when_axes_empty_yields_scalar() {
     let ir = eval::lower_to_ir(&module);
     let mlir = eval::to_mlir(&ir, "main");
     assert!(
+        !mlir.contains("tensor.reduce"),
+        "static f32 reduction must use the pinned fold, not tensor.reduce, in {mlir}"
+    );
+    assert!(
+        mlir.contains("tensor.from_elements") && mlir.contains(": tensor<f32>"),
+        "empty axes must fold to a scalar tensor<f32> via from_elements; got:\n{mlir}"
+    );
+    assert!(
+        !mlir.contains("from_elements") || !mlir.contains("from_elements %0 : tensor<2x3xf32>"),
+        "pinned scalar result must be tensor<f32>, not the unreduced 2x3 shape; got:\n{mlir}"
+    );
+}
+
+/// Tree-tier coverage: a reduction whose source exceeds the pinned-fold unroll
+/// cap (4096 elements) must FALL BACK to the tree-shaped `tensor.reduce`
+/// (integer/associative-float approximate tier), never unroll into thousands
+/// of scalar adds.
+#[test]
+fn over_cap_reduction_uses_treeshaped_reduce() {
+    let src = r#"
+        let x: Tensor[f32,(100,100)] = 1;
+        tensor.sum(x, axes=[], keepdims=false)
+    "#;
+    let module = parser::parse(src).expect("parse over-cap reduction");
+    let ir = eval::lower_to_ir(&module);
+    let mlir = eval::to_mlir(&ir, "main");
+    assert!(
         mlir.contains("tensor.reduce"),
-        "expected a reduction in {mlir}"
+        "over-cap (10000-elem) reduction must use tree-shaped tensor.reduce, got:\n{}",
+        &mlir[..mlir.len().min(800)]
     );
     assert!(
-        mlir.contains("-> tensor<f32>") || mlir.contains(": tensor<f32>"),
-        "empty axes must reduce to scalar tensor<f32>, not the full shape; got:\n{mlir}"
-    );
-    assert!(
-        !mlir.contains("reduce ins(%0 : tensor<2x3xf32>) outs(%1 : tensor<2x3xf32>)"),
-        "reduction must not leave the shape unchanged; got:\n{mlir}"
+        !mlir.contains("tensor.from_elements"),
+        "over-cap reduction must not unroll into a pinned fold; got tree tier expected"
     );
 }

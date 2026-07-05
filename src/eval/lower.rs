@@ -1046,7 +1046,7 @@ fn lower_tensor_binding(
                 let expected: usize = shape
                     .iter()
                     .map(|d| match d {
-                        ShapeDim::Known(n) => *n as usize,
+                        ShapeDim::Known(n) => *n,
                         _ => 0,
                     })
                     .product();
@@ -7188,6 +7188,12 @@ fn lower_stmt_seq(
 /// `Node::Tuple` aggregate). Used by the if-then/else and while-body block loops
 /// where statements are otherwise routed through value-position `lower_expr`,
 /// which cannot mutate the caller's binding env.
+///
+/// Only the `std-surface` control-flow lowering (if/while block loops) calls
+/// this, so it is gated to that feature — a default build neither constructs
+/// the callers nor needs the helper, and an ungated definition would trip
+/// `dead_code` under clippy `-D warnings`.
+#[cfg(feature = "std-surface")]
 fn lower_lettuple_stmt(
     names: &[String],
     value: &ast::Node,

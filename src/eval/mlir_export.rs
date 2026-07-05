@@ -536,20 +536,209 @@ fn emit_tensor_reduce(
             shape: vec![],
         });
     let dtype = src_info.dtype.clone();
-    let dtype_str = dtype_to_mlir(&dtype);
-    let src_ty = tensor_type(&src_info.shape, dtype_str);
     // Empty axes means "reduce over ALL axes" (→ scalar), matching the
     // type-checker's `normalize_reduce_axes`. Without this, `a.sum()` /
     // `a.mean()` (which carry empty axes) would emit MLIR reducing nothing and
     // return the full tensor, contradicting the scalar result type.
-    let axes_norm = if axes.is_empty() {
+    let axes_norm: Vec<usize> = if axes.is_empty() {
         (0..src_info.shape.len()).collect()
     } else {
         normalize_axes(axes, src_info.shape.len())
     };
     let out_shape = reduce_shape(&src_info.shape, &axes_norm, keepdims);
-    let out_ty = tensor_type(&out_shape, dtype_str);
-    let dims_attr = format_dimensions(&axes_norm);
+
+    // STRICT / bit-identical tier (RFC 0015 §3.1): for f32 / f64 tensor
+    // `sum`/`mean` over a fully-static source shape under a size cap, emit a
+    // PINNED canonical-order scalar fold — a fixed left-to-right sequence of
+    // scalar `arith.addf`, with NO `tensor.reduce`, NO `vector.reduction` and
+    // NO fastmath/reassoc flag. A fixed-order chain of scalar IEEE-754 adds is
+    // round-to-nearest-even with no reassociation, so — exactly like the
+    // `scalar_f64_chain` cross-substrate canary — the result is byte-identical
+    // across x86 avx2 and ARM neon AND run-to-run, moving float tensor
+    // reductions off the tree-shaped (order-reordering, ~1e-4-tolerance) tier.
+    //
+    // Non-float dtypes stay on `tensor.reduce` (integer add is associative, so
+    // any grouping is already bit-identical). Dynamic shapes and over-cap
+    // tensors also fall back — they remain on the approximate float surface
+    // (documented, not silently claimed strict).
+    // upgrade: raise/replace the cap with a pinned sequential `scf.for` fold to
+    // cover dynamic + arbitrarily-large float reductions without unrolling.
+    const PINNED_FOLD_ELEM_CAP: usize = 4096;
+    let static_dims: Option<Vec<usize>> = src_info
+        .shape
+        .iter()
+        .map(|d| match d {
+            ShapeDim::Known(n) => Some(*n),
+            ShapeDim::Sym(_) => None,
+        })
+        .collect();
+    if matches!(dtype, DType::F32 | DType::F64) {
+        if let Some(dims) = static_dims {
+            let total: usize = dims.iter().product();
+            if (1..=PINNED_FOLD_ELEM_CAP).contains(&total) {
+                emit_tensor_reduce_pinned(
+                    emitter,
+                    dst,
+                    src,
+                    &src_info.shape,
+                    &dims,
+                    &axes_norm,
+                    &out_shape,
+                    &dtype,
+                    kind,
+                );
+                return;
+            }
+        }
+    }
+
+    emit_tensor_reduce_treeshaped(
+        emitter,
+        dst,
+        src,
+        &src_info.shape,
+        &axes_norm,
+        &out_shape,
+        &dtype,
+        kind,
+    );
+}
+
+/// PINNED canonical-order scalar fold for f32/f64 tensor `sum`/`mean` — the
+/// strict / cross-substrate-bit-identical tier. Fully unrolls the reduction
+/// into a fixed left-to-right chain of scalar `arith.addf` (never a
+/// `tensor.reduce` / `vector.reduction`, so no pass can reassociate or
+/// width-tile it), then rebuilds the result with `tensor.from_elements`.
+/// Output elements are produced in row-major order over the kept axes, which is
+/// exactly the order `tensor.from_elements` expects for `out_ty` (size-1
+/// keepdims axes contribute a single index and never reorder the sequence).
+#[allow(clippy::too_many_arguments)]
+fn emit_tensor_reduce_pinned(
+    emitter: &mut MlirEmitter,
+    dst: ValueId,
+    src: ValueId,
+    src_shape: &[ShapeDim],
+    dims: &[usize],
+    axes_norm: &[usize],
+    out_shape: &[ShapeDim],
+    dtype: &DType,
+    kind: ReduceKind,
+) {
+    let dtype_str = dtype_to_mlir(dtype);
+    let src_ty = tensor_type(src_shape, dtype_str);
+    let out_ty = tensor_type(out_shape, dtype_str);
+    let rank = dims.len();
+
+    // Reduced axes (ascending, deduped) and the kept axes (ascending).
+    let mut reduced: Vec<usize> = axes_norm.to_vec();
+    reduced.sort_unstable();
+    reduced.dedup();
+    let keep: Vec<usize> = (0..rank).filter(|i| !reduced.contains(i)).collect();
+
+    let keep_sizes: Vec<usize> = keep.iter().map(|&a| dims[a]).collect();
+    let reduced_sizes: Vec<usize> = reduced.iter().map(|&a| dims[a]).collect();
+    let reduce_count: usize = reduced_sizes.iter().product::<usize>().max(1);
+    let out_elems: usize = keep_sizes.iter().product::<usize>().max(1);
+
+    // Mean divisor literal (float, e.g. "6.0").
+    let count_literal = format!("{:.1}", reduce_count as f64);
+
+    let mut elements: Vec<String> = Vec::with_capacity(out_elems);
+    let mut out_coord = vec![0usize; keep.len()];
+    for _ in 0..out_elems {
+        // acc = 0.0 ; then a fixed left-to-right fold over the reduced axes in
+        // row-major (last reduced axis fastest) canonical order.
+        let mut acc = emitter.tmp();
+        emitter.write_fmt(format_args!(
+            "    {} = arith.constant 0.0 : {}\n",
+            acc, dtype_str
+        ));
+        let mut red_coord = vec![0usize; reduced.len()];
+        for _ in 0..reduce_count {
+            let mut full = vec![0usize; rank];
+            for (k, &ax) in keep.iter().enumerate() {
+                full[ax] = out_coord[k];
+            }
+            for (r, &ax) in reduced.iter().enumerate() {
+                full[ax] = red_coord[r];
+            }
+            let idx = full
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let ext = emitter.tmp();
+            emitter.write_fmt(format_args!(
+                "    {} = tensor.extract %{}[{}] : {}\n",
+                ext, src.0, idx, src_ty
+            ));
+            let next = emitter.tmp();
+            emitter.write_fmt(format_args!(
+                "    {} = arith.addf {}, {} : {}\n",
+                next, acc, ext, dtype_str
+            ));
+            acc = next;
+            increment_odometer(&mut red_coord, &reduced_sizes);
+        }
+        if matches!(kind, ReduceKind::Mean) {
+            let divisor = emitter.tmp();
+            emitter.write_fmt(format_args!(
+                "    {} = arith.constant {} : {}\n",
+                divisor, count_literal, dtype_str
+            ));
+            let div = emitter.tmp();
+            emitter.write_fmt(format_args!(
+                "    {} = arith.divf {}, {} : {}\n",
+                div, acc, divisor, dtype_str
+            ));
+            acc = div;
+        }
+        elements.push(acc);
+        increment_odometer(&mut out_coord, &keep_sizes);
+    }
+
+    emitter.write_fmt(format_args!(
+        "    %{} = tensor.from_elements {} : {}\n",
+        dst.0,
+        elements.join(", "),
+        out_ty
+    ));
+    emitter.record_tensor(dst, dtype.clone(), out_shape.to_vec());
+}
+
+/// Row-major odometer: increment the last coordinate fastest, carrying up.
+/// Wraps to all-zero after the final position (callers only iterate the exact
+/// element count, so the wrap is never observed).
+fn increment_odometer(coord: &mut [usize], sizes: &[usize]) {
+    for i in (0..coord.len()).rev() {
+        coord[i] += 1;
+        if coord[i] < sizes[i] {
+            return;
+        }
+        coord[i] = 0;
+    }
+}
+
+/// Tree-shaped `tensor.reduce` lowering — the associative-integer /
+/// approximate-float fallback. Kept for integer dtypes (bit-identical by
+/// associativity) and for dynamic / over-cap float reductions (approximate
+/// surface, NOT claimed strict). See `emit_tensor_reduce`.
+#[allow(clippy::too_many_arguments)]
+fn emit_tensor_reduce_treeshaped(
+    emitter: &mut MlirEmitter,
+    dst: ValueId,
+    src: ValueId,
+    src_shape: &[ShapeDim],
+    axes_norm: &[usize],
+    out_shape: &[ShapeDim],
+    dtype: &DType,
+    kind: ReduceKind,
+) {
+    let dtype = dtype.clone();
+    let dtype_str = dtype_to_mlir(&dtype);
+    let src_ty = tensor_type(src_shape, dtype_str);
+    let out_ty = tensor_type(out_shape, dtype_str);
+    let dims_attr = format_dimensions(axes_norm);
     let zero = match dtype {
         DType::F32 | DType::F16 | DType::BF16 => "0.0".to_string(),
         _ => "0".to_string(),
@@ -596,10 +785,10 @@ fn emit_tensor_reduce(
 
     match kind {
         ReduceKind::Sum => {
-            emitter.record_tensor(dst, dtype, out_shape);
+            emitter.record_tensor(dst, dtype, out_shape.to_vec());
         }
         ReduceKind::Mean => {
-            let count = element_count(&src_info.shape, &axes_norm).max(1);
+            let count = element_count(src_shape, axes_norm).max(1);
             let count_literal = match dtype {
                 DType::F32 | DType::F16 | DType::BF16 => format!("{:.1}", count as f64),
                 _ => count.to_string(),
@@ -640,7 +829,7 @@ fn emit_tensor_reduce(
                 out_ty,
                 div_name = div_name
             ));
-            emitter.record_tensor(dst, dtype, out_shape);
+            emitter.record_tensor(dst, dtype, out_shape.to_vec());
         }
     }
 }

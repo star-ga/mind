@@ -101,6 +101,12 @@ const STABILITY_SKIP_LIST: &[(&str, &str)] = &[
                  std-surface required for `while`. Idempotence enforced by \
                  idempotence_stdlib_sha256.",
     ),
+    (
+        "map",
+        "MAP-001: while-loop bodies (probe / resize scans); the default-build \
+                 formatter parser needs std-surface to parse `while`. Idempotence \
+                 enforced by idempotence_stdlib_map.",
+    ),
 ];
 
 fn stability_skip_reason(stem: &str) -> Option<&'static str> {

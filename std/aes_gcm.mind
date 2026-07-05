@@ -49,12 +49,15 @@ fn gf_mul(a: i64, b: i64) -> i64 {
     let mut i: i64 = 0;
     while i < 8 {
         // Add aa into p iff the low bit of bb is set (branchless).
-        let addmask: i64 = (0 - (bb & 1)) & 255;   // 0xFF iff bit set, else 0x00
+        let addmask: i64 = (0 - (bb & 1)) & 255;
+        // 0xFF iff bit set, else 0x00
         p = p ^ (aa & addmask);
-        let hi: i64 = (aa >> 7) & 1;                // top bit of aa (aa in 0..255)
+        let hi: i64 = (aa >> 7) & 1;
+        // top bit of aa (aa in 0..255)
         aa = (aa << 1) & 255;
         // Reduce by 0x1B iff a carry left bit 7 (branchless).
-        let redmask: i64 = (0 - hi) & 255;          // 0xFF iff carry, else 0x00
+        let redmask: i64 = (0 - hi) & 255;
+        // 0xFF iff carry, else 0x00
         aa = aa ^ (27 & redmask);
         bb = bb >> 1;
         i = i + 1;
@@ -121,9 +124,12 @@ fn aes_sbox_ct(sbox: i64, idx: i64) -> i64 {
     let mut acc: i64 = 0;
     let mut j: i64 = 0;
     while j < 256 {
-        let d: i64 = j ^ want;                    // 0 iff j == want
-        let nz: i64 = (d + 255) >> 8;             // 1 iff d != 0, else 0
-        let mask: i64 = (0 - (1 - nz)) & 255;     // 0xFF iff j == want, else 0x00
+        let d: i64 = j ^ want;
+        // 0 iff j == want
+        let nz: i64 = (d + 255) >> 8;
+        // 1 iff d != 0, else 0
+        let mask: i64 = (0 - (1 - nz)) & 255;
+        // 0xFF iff j == want, else 0x00
         acc = acc | (__mind_load_i8(sbox + j) & mask);
         j = j + 1;
     }
@@ -331,7 +337,7 @@ fn ghash_mul(x: i64, y: i64, out: i64) -> i64 {
             m = m + 1;
         }
         if carry != 0 {
-            __mind_store_i8(v + 0, __mind_load_i8(v + 0) ^ 225);
+            __mind_store_i8(v + 0, __mind_load_i8(v + 0) ^ 225)
         }
         i = i + 1;
     }
@@ -355,9 +361,9 @@ fn ghash_update(h: i64, x: i64, data: i64, data_len: i64) -> i64 {
         while i < 16 {
             let idx: i64 = off + i;
             if idx < data_len {
-                __mind_store_i8(blk + i, __mind_load_i8(data + idx));
+                __mind_store_i8(blk + i, __mind_load_i8(data + idx))
             } else {
-                __mind_store_i8(blk + i, 0);
+                __mind_store_i8(blk + i, 0)
             }
             i = i + 1;
         }
@@ -442,7 +448,7 @@ fn gcm_ctr_xor(rk: i64, sbox: i64, j0: i64, in_addr: i64, in_len: i64, out_addr:
         while b < 16 {
             let idx: i64 = off + b;
             if idx < in_len {
-                __mind_store_i8(out_addr + idx, __mind_load_i8(in_addr + idx) ^ __mind_load_i8(ks + b));
+                __mind_store_i8(out_addr + idx, __mind_load_i8(in_addr + idx) ^ __mind_load_i8(ks + b))
             }
             b = b + 1;
         }
@@ -453,17 +459,7 @@ fn gcm_ctr_xor(rk: i64, sbox: i64, j0: i64, in_addr: i64, in_len: i64, out_addr:
 
 // gcm_derive_tag — compute the 16-byte tag into tag_out:
 // T = AES_enc(J0) XOR GHASH(H, AAD, C).
-fn gcm_derive_tag(
-    rk: i64,
-    sbox: i64,
-    h: i64,
-    j0: i64,
-    aad: i64,
-    aad_len: i64,
-    ct: i64,
-    ct_len: i64,
-    tag_out: i64,
-) -> i64 {
+fn gcm_derive_tag(rk: i64, sbox: i64, h: i64, j0: i64, aad: i64, aad_len: i64, ct: i64, ct_len: i64, tag_out: i64) -> i64 {
     let s: i64 = __mind_alloc(16);
     let mut i: i64 = 0;
     while i < 16 {
@@ -518,16 +514,7 @@ fn gcm_setup_common(key_addr: i64, iv_addr: i64, sbox: i64, rk: i64, h_out: i64,
 // Writes pt_len ciphertext bytes to ct_out and a 16-byte tag to tag_out.
 // ---------------------------------------------------------------------------
 
-pub fn aes128_gcm_encrypt(
-    key_addr: i64,
-    iv_addr: i64,
-    pt_addr: i64,
-    pt_len: i64,
-    aad_addr: i64,
-    aad_len: i64,
-    ct_out: i64,
-    tag_out: i64,
-) -> i64 {
+pub fn aes128_gcm_encrypt(key_addr: i64, iv_addr: i64, pt_addr: i64, pt_len: i64, aad_addr: i64, aad_len: i64, ct_out: i64, tag_out: i64) -> i64 {
     let sbox: i64 = __mind_alloc(256);
     let rk: i64 = __mind_alloc(176);
     let h: i64 = __mind_alloc(16);
@@ -549,16 +536,7 @@ pub fn aes128_gcm_encrypt(
 // returns 1 — no unauthenticated plaintext ever escapes (fail closed).
 // ---------------------------------------------------------------------------
 
-pub fn aes128_gcm_decrypt(
-    key_addr: i64,
-    iv_addr: i64,
-    ct_addr: i64,
-    ct_len: i64,
-    aad_addr: i64,
-    aad_len: i64,
-    tag_addr: i64,
-    pt_out: i64,
-) -> i64 {
+pub fn aes128_gcm_decrypt(key_addr: i64, iv_addr: i64, ct_addr: i64, ct_len: i64, aad_addr: i64, aad_len: i64, tag_addr: i64, pt_out: i64) -> i64 {
     let sbox: i64 = __mind_alloc(256);
     let rk: i64 = __mind_alloc(176);
     let h: i64 = __mind_alloc(16);

@@ -108,11 +108,11 @@ thread_local! {
     /// and the keystone (which declares no module consts) stays byte-identical.
     static MODULE_CONSTS: std::cell::RefCell<
         std::collections::BTreeMap<String, crate::ast::Node>,
-    > = std::cell::RefCell::new(std::collections::BTreeMap::new());
+    > = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
     /// Names of consts currently being inlined — guards `const A = B; const B = A`
     /// from recursing forever (fail-loud at the use site instead).
     static RESOLVING_CONSTS: std::cell::RefCell<std::collections::BTreeSet<String>> =
-        std::cell::RefCell::new(std::collections::BTreeSet::new());
+        const { std::cell::RefCell::new(std::collections::BTreeSet::new()) };
 }
 
 thread_local! {
@@ -122,7 +122,7 @@ thread_local! {
     /// type. Lowering-time only; never serialised.
     static MODULE_CONST_TYPES: std::cell::RefCell<
         std::collections::BTreeMap<String, crate::ast::TypeAnn>,
-    > = std::cell::RefCell::new(std::collections::BTreeMap::new());
+    > = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
 }
 
 /// Install the declared types of module-level consts for the current pass.

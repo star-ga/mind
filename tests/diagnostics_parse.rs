@@ -40,3 +40,52 @@ fn shows_error_for_unclosed_paren() {
     assert!(s.contains("line 1"));
     assert!(s.contains("^"));
 }
+
+// Issue #200: an unsupported prefix token must be reported AT that token's own
+// span, naming the token — never unwound to an earlier expression checkpoint in
+// a different, well-formed function. The `@` below sits on line 6, column 5.
+#[test]
+fn unsupported_prefix_token_reports_at_token_span() {
+    let src = "fn aaa() -> i64 {\n    let a = 1\n    a\n}\nfn bbb() -> i64 {\n    @foo\n}\n";
+    let Err(diags) = parser::parse_with_diagnostics(src) else {
+        panic!("expected a parse error");
+    };
+    let span = diags[0]
+        .span
+        .as_ref()
+        .expect("diagnostic must carry a span");
+    assert_eq!(span.line, 6, "error must point at the `@` line, not unwind");
+    assert_eq!(span.column, 5, "error must point at the `@` column");
+    assert!(
+        diags[0].message.contains("unexpected `@`"),
+        "message should name the offending token, got: {}",
+        diags[0].message
+    );
+}
+
+// Issue #200: same guarantee inside a deeper `else if` block-expression — the
+// historical failure mode re-reported at an earlier `else if` checkpoint. The
+// `@` below is on line 7, column 9.
+#[test]
+fn unsupported_prefix_in_else_if_branch_reports_at_token() {
+    let src = concat!(
+        "fn f(n: i64) -> i64 {\n",
+        "    if n == 0 {\n",
+        "        10\n",
+        "    } else if n == 1 {\n",
+        "        20\n",
+        "    } else if n == 2 {\n",
+        "        @bad\n",
+        "    } else {\n",
+        "        40\n",
+        "    }\n",
+        "}\n",
+    );
+    let Err(diags) = parser::parse_with_diagnostics(src) else {
+        panic!("expected a parse error");
+    };
+    let span = diags[0].span.as_ref().expect("span");
+    assert_eq!(span.line, 7);
+    assert_eq!(span.column, 9);
+    assert!(diags[0].message.contains("unexpected `@`"));
+}

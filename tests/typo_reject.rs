@@ -84,7 +84,11 @@ fn valid_enum_variant_accepted() {
     );
 }
 
+// The typo'd assignment lives inside a `while` body, which is only parsed under
+// `std-surface`; without it the source fails at parse before the type-checker
+// can raise the undeclared-target E2009, so the test is gated to that feature.
 #[test]
+#[cfg(feature = "std-surface")]
 fn undeclared_assign_target_rejected() {
     let bad = write_tmp(
         "mind_typo_assign_bad.mind",
