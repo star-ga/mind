@@ -2,6 +2,26 @@
 // signature verification in pure MIND, for the HTTP-provable-stack Phase 0.3
 // (TLS 1.3 peer-certificate chain verification, RFC 8446 §4.4.2 / §4.4.3).
 //
+// ============================ SECURITY SCOPE ==============================
+// TEST-VECTOR / KAT USE ONLY -- THIS MODULE DOES **NOT** AUTHENTICATE A PEER.
+// It parses one DER certificate and can verify a *self-signed* RSA PKCS#1
+// v1.5 / SHA-256 signature (signature math only). It performs NONE of the
+// checks that make certificate verification MITM-safe:
+//   - NO chain building / path validation to a trust anchor (no is_ca, no
+//     BasicConstraints, no KeyUsage, no signer-vs-subject handling);
+//   - NO validity-window check: notBefore/notAfter are PARSED into out_fields
+//     but NEVER compared to a clock (this module is clockless by design);
+//   - NO hostname / SAN / dNSName match against an expected identity;
+//   - NO revocation (CRL/OCSP), NO name-constraints, NO policy checks.
+// A valid signature here means ONLY "these bytes were signed by the key
+// embedded in THIS certificate" -- it does NOT establish that the key is
+// trusted, unexpired, or bound to any hostname. Capability is exported
+// fail-closed as x509_peer_auth_supported() == 0 (defined below). DO NOT wire
+// this module to a live TLS socket as peer authentication: it is NOT
+// MITM-safe. Full path validation (RFC 5280 section 6) is deferred to a
+// later task; peer auth is UNSUPPORTED, not merely absent.
+// ==========================================================================
+//
 // Built ON TOP of std/sha256.mind — the SHA-256 compression is NOT reimplemented
 // here; this module calls the existing `sha256` entry point, exactly as
 // std/hkdf.mind reuses it (RFC 8017 EMSA-PKCS1-v1_5 hashes tbsCertificate).
@@ -53,6 +73,19 @@
 //     Returns 1 (valid) or 0 (invalid).
 
 import std.sha256;
+
+// ---------------------------------------------------------------------------
+// Capability flag (fail-closed honesty marker). 0 == false: this module does
+// NOT authenticate a TLS peer (no chain / validity / hostname -- see the
+// SECURITY SCOPE banner above). A caller that intends to authenticate a peer
+// MUST check this and REFUSE when it reads 0. There is deliberately no
+// x509_authenticate_peer / x509_verify_chain entry point in this module.
+// (i64-only std dialect: expressed as a nullary fn returning 0, the same
+// constant-fn shape as std/io.mind's sgr_* markers.)
+// ---------------------------------------------------------------------------
+pub fn x509_peer_auth_supported() -> i64 {
+    0
+}
 
 // ---------------------------------------------------------------------------
 // out_fields slot map (each slot is one i64 at out_fields + slot*8):

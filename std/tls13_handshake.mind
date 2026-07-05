@@ -4,6 +4,27 @@
 // (RFC 8446 §7.1 key schedule, §4.4.3 CertificateVerify, §4.4.4 Finished),
 // replay-verified against RFC 8448 §3 "Simple 1-RTT Handshake".
 //
+// ============================ SECURITY SCOPE ==============================
+// TEST-VECTOR / KAT USE ONLY -- THIS MODULE DOES **NOT** AUTHENTICATE A PEER.
+// tls13_hs_verify_cert_verify proves ONLY that the CertificateVerify signature
+// was produced by the private key matching the RSA public key (n,e) that the
+// CALLER passed in. It does NOT establish that (n,e) is trustworthy. This
+// module performs NONE of the peer-authentication checks RFC 8446 section
+// 4.4.2 requires:
+//   - NO certificate-chain building / path validation to a trust anchor
+//     ((n,e) is taken on faith from the caller / x509_parse, never chained);
+//   - NO validity-window (notBefore/notAfter) check;
+//   - NO SNI / hostname / SAN identity match;
+//   - NO revocation, name-constraint, or key-usage check.
+// A "1" from tls13_hs_verify_cert_verify / tls13_hs_verify_server_finished is
+// a CRYPTO-CORRECTNESS result over supplied inputs, NOT a statement that a
+// real server is authenticated. Capability is exported fail-closed as
+// tls13_peer_auth_supported() == 0. DO NOT wire this module to a live TLS
+// socket believing it is MITM-safe -- it is not. Peer authentication
+// (chain + validity + hostname) is deferred to a later task; it is
+// UNSUPPORTED, not merely absent.
+// ==========================================================================
+//
 // This is NOT a network state machine.  Driven by recorded/provided handshake
 // messages (their transcript hashes), it performs everything the CLIENT
 // computes cryptographically for TLS_AES_128_GCM_SHA256 + x25519 +
@@ -69,6 +90,17 @@ import std.x509;
 import std.tls13_keyschedule;
 import std.tls13_finished;
 import std.rsa_pss;
+
+// ---------------------------------------------------------------------------
+// Capability flag (fail-closed honesty marker). 0 == false: this module does
+// NOT authenticate a TLS peer (no chain / validity / hostname -- see the
+// SECURITY SCOPE banner above). A caller intending real server authentication
+// MUST check this and REFUSE on 0. There is deliberately no
+// tls13_hs_authenticate_server entry point in this module.
+// ---------------------------------------------------------------------------
+pub fn tls13_peer_auth_supported() -> i64 {
+    0
+}
 
 // ---------------------------------------------------------------------------
 // (1) Handshake-phase secrets (RFC 8446 §7.1, upper half of the diagram).
