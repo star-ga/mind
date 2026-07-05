@@ -60,19 +60,20 @@ const RELAXED_F32_INTRINSICS: &[&str] = &[];
 
 /// Opaque Track-A runtime BLAS externs (the non-`_v` C helpers in
 /// `runtime-support/mind_intrinsics.c`) that are KNOWN non-strict — objdump- and
-/// source-confirmed, NOT assumed. `__mind_blas_dot_f32` uses an explicit
-/// `_mm256_fmadd_ps` (FMA contraction that `-ffp-contract=off` does NOT
-/// neutralise) and dispatches an AVX2 lane-blocked reduction vs a scalar
-/// sequential one at load time, so the two paths sum in different orders →
-/// substrate-divergent. `__mind_blas_dot_l1_f32` has the same AVX2-vs-scalar
-/// reduction-order dispatch. A program calling either is therefore not strict-FP,
-/// even though the extern body is invisible to this IR-level scan. NOT listed:
-/// `__mind_blas_matmul_rmajor_f32` (uses the scalar sequential dot — strict) and
-/// `__mind_blas_dot_linf_f32` (associative max — strict).
-/// upgrade: the deeper fix is to make the Track-A f32 BLAS itself strict (unfuse
-/// the intrinsic FMA + pin ONE reduction order across both dispatch paths); once
-/// done, remove the affected name here. Prefer the strict Track-B `_v` surface.
-const RELAXED_RUNTIME_F32_EXTERNS: &[&str] = &["__mind_blas_dot_f32", "__mind_blas_dot_l1_f32"];
+/// source-confirmed, NOT assumed.
+/// EMPTY as of task #66: `__mind_blas_dot_f32` and `__mind_blas_dot_l1_f32` were
+/// made strict (Option C — strict-but-vectorized). Both the AVX2 and scalar
+/// paths now share ONE pinned reduction schedule (8-lane accumulation +
+/// left-to-right horizontal fold) with unfused (non-FMA) products — the explicit
+/// `_mm256_fmadd_ps` was replaced by `_mm256_mul_ps` + `_mm256_add_ps`, so the
+/// two dispatch paths sum in the identical order and return byte-identical f32
+/// bits at every length. `__mind_blas_matmul_rmajor_f32` (which fans out to the
+/// same dot dispatcher) and `__mind_blas_dot_linf_f32` (associative max) are
+/// strict for the same reason.
+/// upgrade: if a NEW non-strict f32 C helper is added, objdump-confirm the
+/// divergence (`objdump -d <fn>.so | grep vfmadd`, or an AVX2-vs-scalar order
+/// mismatch) and list it here. Prefer the strict Track-B `_v` surface.
+const RELAXED_RUNTIME_F32_EXTERNS: &[&str] = &[];
 
 /// Strict-FP contract mode of a module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -137,9 +138,10 @@ fn instr_taints(instr: &Instr) -> bool {
     // (not `std-surface`-gated), so this check compiles in every build.
     if let Instr::Call { name, .. } = instr {
         let n = name.as_str();
-        // Track-B `_v` intrinsics lowered to vector.fma / vector.reduction<add>,
-        // plus known-non-strict Track-A runtime BLAS externs (explicit FMA /
-        // AVX2-vs-scalar reduction-order dispatch). Either taints the module.
+        // Any relaxed intrinsic name taints the module. Both lists are EMPTY
+        // today (all f32 `_v` intrinsics and the Track-A dot/L1 externs are now
+        // strict), but the check stays so a future non-strict addition to either
+        // list is honoured without touching this scan.
         if RELAXED_F32_INTRINSICS.contains(&n) || RELAXED_RUNTIME_F32_EXTERNS.contains(&n) {
             return true;
         }
@@ -264,17 +266,19 @@ mod tests {
     }
 
     #[test]
-    fn track_a_fma_dispatch_externs_are_relaxed() {
-        // Objdump/source-confirmed non-strict Track-A runtime BLAS f32 helpers:
-        // explicit _mm256_fmadd_ps (dot_f32) and AVX2-vs-scalar reduction-order
-        // dispatch (both dot_f32 and dot_l1_f32). fp_mode must NOT report a
-        // program using them as strict (they'd falsely pass --require-strict-fp).
+    fn track_a_f32_dispatch_externs_are_strict() {
+        // task #66: the Track-A f32 dot / L1 C helpers were made strict-but-
+        // vectorized — AVX2 and scalar share one pinned 8-lane schedule +
+        // left-to-right fold with unfused (non-FMA) products, so both dispatch
+        // paths are byte-identical. They are no longer in RELAXED_RUNTIME_F32_
+        // EXTERNS, so a program calling them is strict-FP. Regression guard: if
+        // either is ever re-listed relaxed, this fails.
         for name in ["__mind_blas_dot_f32", "__mind_blas_dot_l1_f32"] {
             let m = module_with(vec![call(name)]);
             assert_eq!(
                 fp_contract_mode(&m),
-                FpMode::Relaxed,
-                "{name} must be relaxed"
+                FpMode::Strict,
+                "{name} must be strict"
             );
         }
     }

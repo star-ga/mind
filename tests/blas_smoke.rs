@@ -178,17 +178,45 @@ fn ptr_i64_mut<T>(slice: &mut [T]) -> i64 {
 // ── Scalar reference implementations (test-side oracle) ─────────────────────
 
 fn ref_dot_f32(a: &[f32], b: &[f32]) -> f32 {
-    // Sequential f32 accumulation — matches `mind_blas_dot_f32_scalar`
-    // bit-for-bit on every input (both sides use the C runtime's
-    // single-precision FMA-free order).  AVX2 reorders summation so its
-    // result diverges from this reference by reduction-reorder error;
-    // see `ref_dot_f32_f64` for the lower-error oracle used to compare
-    // AVX2 against the mathematical truth.
+    // Sequential f32 accumulation — the true-ish mathematical order used only
+    // as an approximate (1e-6) sanity check on short vectors.  The exact
+    // byte-identity oracle for the strict Track-A path is `ref_dot_f32_strict`
+    // below (the runtime uses the 8-lane schedule, NOT this naive order).
     let mut acc = 0.0_f32;
     for i in 0..a.len() {
         acc += a[i] * b[i];
     }
     acc
+}
+
+/// Exact byte-identity oracle for the strict Track-A f32 dot (task #66): the
+/// canonical 8-lane accumulation schedule (lane j sums positions j, j+8, … in
+/// increasing order), a pinned left-to-right horizontal fold over the 8 lane
+/// partials, then a sequential remainder tail.  Both the C scalar and the C
+/// AVX2 dispatch paths reproduce THIS f32 bit pattern exactly, as does the
+/// Track-B `dot_f32_v` intrinsic.  Products are an explicit mul then add (no
+/// FMA), mirroring the `-ffp-contract=off` C build.
+fn ref_dot_f32_strict(a: &[f32], b: &[f32]) -> f32 {
+    let lanes = 8usize;
+    let mut acc = [0.0_f32; 8];
+    let n = a.len();
+    let ve = (n / lanes) * lanes;
+    let mut i = 0usize;
+    while i < ve {
+        for j in 0..lanes {
+            acc[j] += a[i + j] * b[i + j];
+        }
+        i += lanes;
+    }
+    let mut s = acc[0];
+    for j in 1..lanes {
+        s += acc[j];
+    }
+    while i < n {
+        s += a[i] * b[i];
+        i += 1;
+    }
+    s
 }
 
 /// f64-accumulating reference — closer to the true mathematical sum than
@@ -366,7 +394,7 @@ fn dot_f32_scalar_byte_identical_to_reference_on_1024() {
     with_lib(|lib| {
         let saved = get_avx2(lib);
         let (a, b) = make_f32_pair(1024, 0xC0FFEE);
-        let ref_bits = ref_dot_f32(&a, &b).to_bits();
+        let ref_bits = ref_dot_f32_strict(&a, &b).to_bits();
         set_avx2(lib, 0);
         let scalar_bits = (call_dot(
             lib,
