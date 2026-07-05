@@ -50,8 +50,9 @@ for RFC 0019 to build on.
   RFC defines key *semantics*, not encoding.
 - **Not a new signer.** Signing is mic@2.1 §6 (Ed25519 via `mind_mem.model_signing`).
   One primitive across mind-mem / mic@2.1 / evidence-chain (anti-fragmentation; §7).
-- **Not a new hash chain.** `evidence_chain` reuses the IR canonical hash (mic@2.1
-  binary) and the RFC 0011 trace-hash. 512-mind's `proof_chain` and mind-mem's
+- **Not a new hash chain.** `evidence_chain` reuses the IR canonical hash
+  (**canonical mic@3 bytes** since the 2026-05-31 re-anchor — see §3.3; originally
+  the mic@2.1 binary) and the RFC 0011 trace-hash. 512-mind's `proof_chain` and mind-mem's
   governed-write **consume** evidence-chain hashes; they do not parallel them (§7).
 - **Not a network/consensus protocol.** No distributed ledger, no global ordering.
   An evidence chain is a local, per-artifact Merkle-DAG; trust is rooted in the
@@ -66,7 +67,7 @@ artifact. It records, for the graph it is attached to:
 
 | Key | Type | Meaning |
 |---|---|---|
-| `evidence_chain.trace_hash` | `bytes` (32) | The deterministic production hash of THIS artifact: **SHA-256** (FIPS 180-4) of the canonical mic@2.1 **binary** of the graph (MAP minus `signature.*` and minus `evidence_chain.trace_hash` itself — §3.2). SHA-256 is fixed (not BLAKE3) so the bootstrap's Rust hash and pure-MIND `std.sha256` are bit-identical (§10 Q1). For an *executed* artifact it additionally folds the RFC 0011 `ReplayScheduler` trace-hash (§3.3). |
+| `evidence_chain.trace_hash` | `bytes` (32) | The deterministic production hash of THIS artifact: **SHA-256** (FIPS 180-4) of the **canonical mic@3 bytes** of the IR (`emit_mic3(&IRModule)` — re-anchored from the mic@2.1 binary on 2026-05-31; see §3.2/§3.3). The `evidence_chain.*` MAP epilogue is appended *after* the hashed body, so `signature.*` and `evidence_chain.trace_hash` are excluded by construction. SHA-256 is fixed (not BLAKE3) so the bootstrap's Rust hash and pure-MIND `std.sha256` are bit-identical (§10 Q1). For an *executed* artifact it additionally folds the RFC 0011 `ReplayScheduler` trace-hash (§3.3). |
 | `evidence_chain.substrate` | `string` | The RFC 0014 canonical lowering-tier id this artifact was produced for/on (`x86_avx2`, `arm_neon`, `nvptx_sm80`, `portable_scalar`, …). The bit-identity claim is *per-substrate-set*; this names the member. |
 | `evidence_chain.parent` | `bytes` (32) | The `trace_hash` of the predecessor artifact in the transformation chain (source-parse → typecheck → IR → lowered → binary), or absent for a root. Forms the DAG (§4). |
 | `evidence_chain.determinism` | `string` | `"deterministic"` (default) or `"nondeterministic"`. Set by the §5 emission rule from the graph's determinism attribute (RFC 0012 Phase C / #289). A `nondeterministic` link is a *refusal-to-attest-identity* marker, not a silent omission. |
@@ -91,14 +92,27 @@ the artifact never self-certifies a property it cannot locally prove.
 
 ### 3.2 The self-reference rule
 
-`trace_hash` cannot hash itself. The bytes-to-hash are the canonical mic@2.1
-binary with **both** `signature.*` **and** `evidence_chain.trace_hash` removed
-(every other `evidence_chain.*` key IS hashed — substrate/parent/determinism/
-toolchain are part of what's attested). The verifier recomputes over
-MAP-minus-{`signature.*`, `evidence_chain.trace_hash`} and checks equality, then
-checks the §6 signature over MAP-minus-`signature.*` (which *includes* the
-now-populated `trace_hash`). Two nested exclusions, two checks — mirrors mic@2.1
-§6.1's signature-omits-itself discipline.
+> **Re-anchored to mic@3 (2026-05-31 — see §3.3).** The rule below originated in
+> the mic@2.1 MAP model (Phase A), where `trace_hash` hashed the MAP-bearing
+> binary and therefore had to explicitly strip the keys it could not hash. The
+> shipped mic@3 anchor satisfies the same discipline **by construction**, and the
+> mic@2.1 nested-exclusion mechanism is inherited by the deferred §6 signature.
+
+`trace_hash` cannot hash itself. In the shipped mic@3 layout this is structural:
+`trace_hash` is SHA-256 of the canonical mic@3 IR body (`emit_mic3(&IRModule)`,
+via [`ir::ir_trace_hash`](../../src/ir/evidence.rs)), which is emitted **before**
+the `evidence_chain.*` MAP epilogue. The hash therefore excludes the *entire*
+trailing MAP — `evidence_chain.trace_hash`, every other `evidence_chain.*` key,
+and any future `signature.*` — with no explicit key stripping. `trace_hash`
+attests the IR computation itself; the MAP's provenance fields
+(substrate/parent/determinism/toolchain) are carried alongside it and are covered,
+at Phase C, by the §6 signature rather than by `trace_hash`.
+
+That signature step recomputes over the canonical preimage — body **plus** MAP
+with **both** `signature.*` **and** `evidence_chain.trace_hash` removed (so the
+signature covers neither itself nor a redundant copy of the body hash) — and
+checks equality. Two nested exclusions, two checks — the signature-omits-itself
+discipline of mic@2.1 §6.1, inherited unchanged.
 
 ### 3.3 What `trace_hash` covers — the canonical mic@3 IR (GAP-1, re-anchored)
 
@@ -135,7 +149,7 @@ functions of source + toolchain), so `trace_hash = SHA-256(canonical mic@3 bytes
 via the FIPS-180-4 seam (§5.4). For an artifact that has been *executed* under
 the RFC 0011 `ReplayScheduler` (e.g. a mind-bench workload, an agent step), the
 executed trace-hash (`std.async.trace_hash`) is folded in:
-`trace_hash = H(mic1_ir_hash || replay_trace_hash)`. This is the seam where
+`trace_hash = H(mic3_ir_hash || replay_trace_hash)`. This is the seam where
 compile-time evidence meets runtime evidence — and where RFC 0019's `agent.*`
 links attach (§7).
 
@@ -195,9 +209,10 @@ language-native output (the 4/4 finding). Rules:
    via mic@2.1 §6. Unsigned local artifacts carry evidence; signed release artifacts
    carry evidence + `signature.*`.
    - **Codec-agnostic trace_hash (load-bearing — keeps the pure-MIND endpoint open).**
-     `trace_hash` is computed over the **canonical mic@2.1 binary serialization
-     bytes** (`emit_micb` of the graph with its MAP stripped of `signature.*` and
-     `evidence_chain.trace_hash` per §3.2), hashed as a flat byte string with the
+     `trace_hash` is computed over the **canonical mic@3 serialization bytes**
+     (`emit_mic3` of the `IRModule`; the `evidence_chain.*` MAP epilogue is appended
+     *after* these bytes, so `signature.*` and `evidence_chain.trace_hash` are
+     excluded by construction — §3.2/§3.3), hashed as a flat byte string with the
      FIPS-180-4 primitive. It is NEVER a walk of an in-memory codec struct. Because
      the input is canonical bytes and the hash is FIPS-180-4, the value is
      **bit-identical** whether computed by the bootstrap's Rust SHA-256

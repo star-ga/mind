@@ -74,6 +74,26 @@ Out of scope:
 - The proprietary `mind-runtime` (separate policy)
 - Example code and documentation
 
+## Threat Model
+
+`mindc` runs on a single operator's machine. The primary **untrusted inputs** are
+third-party MIND source and compiled artifacts (`mic@3` bundles + their embedded
+`evidence_chain` MAP). Those are the surfaces we harden and the ones we most want
+vulnerability reports about:
+
+- **Untrusted bundle / artifact parsing.** The `mic@3` reader and evidence-chain
+  verifier are bounds-checked and fail **closed** on malformed input; a parser DoS,
+  out-of-bounds read, or unbounded allocation on a crafted artifact is in scope.
+- **Evidence-chain integrity, not authenticity (yet).** The embedded evidence chain
+  (RFC 0016) is **tamper-evident**: `trace_hash` is a SHA-256 over the canonical
+  `mic@3` bytes, and `mindc verify <artifact>` recomputes and checks it. It is
+  **not** cryptographically signed yet — Ed25519 / ML-DSA signing is a pending
+  milestone (RFC 0016 Phase C). Do **not** rely on the chain as a signature or as
+  proof of *origin*; today it proves an artifact was not altered after emission
+  relative to its own recorded hash, nothing about *who* produced it.
+- **Not a sandbox.** Compiling or running third-party MIND does not sandbox it; run
+  untrusted programs in your own isolation (see Security Best Practices above).
+
 ## Contact
 
 - Security issues: `security@star.ga`
