@@ -49,9 +49,10 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
   computation — an `f64` Lorenz–Euler integrator — runs **bit-exact against a
   reference** and is **run-to-run bit-identical**. Because scalar `+ − × ÷ √`
   are correctly-rounded IEEE-754 operations (identical on x86-SSE2 and
-  ARM-NEON), cross-ISA bit-identity follows on any conforming FPU;
-  re-verification on ARM hardware we control is in progress (the fleet is
-  all-x86). The vector-reduction, transcendental, and GPU float tiers remain on
+  ARM-NEON), cross-ISA bit-identity follows on any conforming FPU; this is now
+  verified byte-identical on real ARM64 (NEON) hardware (2026-07-05), where the
+  `cross_substrate` gate's scalar-`f64` canaries reproduced the x86_64 references
+  byte-for-byte. The vector-reduction, transcendental, and GPU float tiers remain on
   the roadmap (see Phase 11 / Phase 13.6).
 
 ## Shipped (v0.7.1)
@@ -107,7 +108,8 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
   for int/Q16/f32 tensor results. The float-determinism tiers, stated explicitly:
   - **Scalar `f64`/`f32`** — ✅ done. Runs on the strict path, run-to-run
     bit-identical (fixed source order, no FMA-contraction, no reassociation);
-    cross-ISA re-verification on ARM hardware is in progress.
+    verified byte-identical across x86_64 (AVX2) + ARM64 (NEON) on real hardware
+    by the `cross_substrate` gate.
   - **Vector `f32`/`f64` reductions** — 🚧 roadmap. A documented ~1e-4 relative
     tolerance today, not bit-identity → canonical reduction trees /
     superaccumulators (see Phase 13.6).
