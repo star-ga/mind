@@ -904,9 +904,12 @@ MIND_EXPORT_WEAK int64_t string_from_utf8_bytes(int64_t v) {
 // cached flag — zero per-call overhead on the hot path.
 //
 // Numerical contract:
-//   * f32 path: AVX2 reduction reorders summation; tolerance ~1e-6 vs scalar
-//     on 1M-element vectors is documented and gated by `tests/blas_smoke.rs`.
-//     Byte-identical on lengths < 8 (no SIMD lanes used).
+//   * f32 dot / L1 path (task #66): STRICT — the AVX2 and scalar paths share
+//     one pinned 8-lane accumulation schedule + left-to-right horizontal fold
+//     and unfused (non-FMA) products, so the result is byte-identical
+//     AVX2-vs-scalar (and vs a non-AVX2 substrate) at every length. The Track-B
+//     `dot_f32_v` intrinsic uses the same schedule.
+//   * f32 Linf path: associative max reduce — order-independent result.
 //   * Q16.16 path: integer accumulation with explicit i64 widening per lane
 //     is associative; AVX2 result is byte-identical to scalar at every
 //     length — required by the cross-arch bit-identity gate (task #57).
@@ -1017,37 +1020,83 @@ static inline int64_t mind_blas_pack_f32(float v) {
     return (int64_t)(uint64_t)bits;
 }
 
-// ── f32: dot product (sum of element-wise products) ─────────────────────────
-
-static float mind_blas_dot_f32_scalar(const float *a, const float *b, int64_t len) {
-    float acc = 0.0f;
-    for (int64_t i = 0; i < len; ++i) {
-        acc += a[i] * b[i];
+// ── f32 STRICT reduction primitives (byte-identical across substrates) ──────
+//
+// Pinned left-to-right horizontal fold of 8 lane accumulators. Shared verbatim
+// by the scalar and AVX2 paths so both reduce in the IDENTICAL fixed order —
+// this is the load-bearing step that makes the two dispatch paths (and a non-
+// AVX2 substrate such as ARM) return the same f32 bits. Sequential adds only,
+// never a pairwise / hadd tree (whose grouping differs per ISA). No FMA — the
+// operands are already-summed lane partials.
+static inline float mind_blas_hfold8(const float lanes[8]) {
+    float s = lanes[0];
+    for (int j = 1; j < 8; ++j) {
+        s += lanes[j];
     }
-    return acc;
+    return s;
+}
+
+// Bit-exact |x| via clearing the IEEE-754 sign bit — the scalar twin of the
+// AVX2 `_mm256_and_ps(d, 0x7fffffff)` mask. Using the identical bit operation
+// (not a `d < 0 ? -d : d` branch) keeps the two paths byte-identical even for
+// -0.0 and NaN payloads.
+static inline float mind_blas_fabs_bits(float x) {
+    uint32_t bits;
+    memcpy(&bits, &x, sizeof(bits));
+    bits &= 0x7fffffffu;
+    float r;
+    memcpy(&r, &bits, sizeof(r));
+    return r;
+}
+
+// ── f32: dot product (sum of element-wise products) ─────────────────────────
+//
+// STRICT byte-identical contract (RFC 0006, task #66): the scalar and AVX2
+// paths carry the SAME 8-lane accumulation schedule — lane j sums positions
+// j, j+8, j+16, … in increasing order — the SAME pinned left-to-right
+// horizontal fold, and the SAME sequential remainder tail. Each product is an
+// explicit multiply THEN add (never a single-rounding FMA: `-ffp-contract=off`
+// keeps the scalar path unfused and the AVX2 path uses `_mm256_mul_ps` +
+// `_mm256_add_ps`, never `_mm256_fmadd_ps`). So `__mind_blas_dot_f32` returns
+// identical f32 bits on every substrate at every length — matching the Track-B
+// strict `dot_f32_v` schedule (src/mlir/lowering.rs emit_vec_dot_f32).
+static float mind_blas_dot_f32_scalar(const float *a, const float *b, int64_t len) {
+    float acc[8] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    int64_t i = 0;
+    for (; i + 8 <= len; i += 8) {
+        for (int j = 0; j < 8; ++j) {
+            acc[j] += a[i + j] * b[i + j];
+        }
+    }
+    float s = mind_blas_hfold8(acc);
+    for (; i < len; ++i) {
+        s += a[i] * b[i];
+    }
+    return s;
 }
 
 #if MIND_BLAS_X86_64
 MIND_TARGET_AVX2
 static float mind_blas_dot_f32_avx2(const float *a, const float *b, int64_t len) {
+    // Unfused multiply-add: explicit mul then add, NEVER _mm256_fmadd_ps, so
+    // the single-rounding FMA contraction cannot diverge from the scalar path.
     __m256 acc = _mm256_setzero_ps();
     int64_t i = 0;
     for (; i + 8 <= len; i += 8) {
         __m256 va = _mm256_loadu_ps(a + i);
         __m256 vb = _mm256_loadu_ps(b + i);
-        acc = _mm256_fmadd_ps(va, vb, acc);
+        acc = _mm256_add_ps(acc, _mm256_mul_ps(va, vb));
     }
-    // Horizontal reduce: two 128-bit halves -> 4-wide -> 2-wide -> scalar.
-    __m128 lo = _mm256_castps256_ps128(acc);
-    __m128 hi = _mm256_extractf128_ps(acc, 1);
-    __m128 sum = _mm_add_ps(lo, hi);
-    sum = _mm_hadd_ps(sum, sum);
-    sum = _mm_hadd_ps(sum, sum);
-    float tail = _mm_cvtss_f32(sum);
+    // Store the 8 lane accumulators and fold them in the SAME pinned order as
+    // the scalar path — lane j held positions j, j+8, … so both the per-lane
+    // schedule and the horizontal fold match bit-for-bit.
+    float lanes[8];
+    _mm256_storeu_ps(lanes, acc);
+    float s = mind_blas_hfold8(lanes);
     for (; i < len; ++i) {
-        tail += a[i] * b[i];
+        s += a[i] * b[i];
     }
-    return tail;
+    return s;
 }
 #endif
 
@@ -1070,20 +1119,31 @@ MIND_EXPORT int64_t __mind_blas_dot_f32(int64_t a_addr, int64_t b_addr, int64_t 
 
 // ── f32: L1 (Manhattan) — sum of |a[i] - b[i]| ──────────────────────────────
 
+// STRICT byte-identical contract (task #66): identical 8-lane schedule, pinned
+// fold, and sequential tail as dot_f32 above. |·| uses the SAME sign-bit clear
+// on both paths (mind_blas_fabs_bits ≡ `_mm256_and_ps(d, 0x7fffffff)`), and the
+// sums are unfused adds → byte-identical AVX2-vs-scalar at every length.
 static float mind_blas_dot_l1_f32_scalar(const float *a, const float *b, int64_t len) {
-    float acc = 0.0f;
-    for (int64_t i = 0; i < len; ++i) {
-        float d = a[i] - b[i];
-        acc += d < 0.0f ? -d : d;
+    float acc[8] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    int64_t i = 0;
+    for (; i + 8 <= len; i += 8) {
+        for (int j = 0; j < 8; ++j) {
+            acc[j] += mind_blas_fabs_bits(a[i + j] - b[i + j]);
+        }
     }
-    return acc;
+    float s = mind_blas_hfold8(acc);
+    for (; i < len; ++i) {
+        s += mind_blas_fabs_bits(a[i] - b[i]);
+    }
+    return s;
 }
 
 #if MIND_BLAS_X86_64
 MIND_TARGET_AVX2
 static float mind_blas_dot_l1_f32_avx2(const float *a, const float *b, int64_t len) {
     // Sign mask: all bits set except the IEEE-754 sign bit -> bitwise AND
-    // clears the sign and produces |x| in a single instruction.
+    // clears the sign and produces |x| in a single instruction (matches the
+    // scalar mind_blas_fabs_bits exactly).
     const __m256 abs_mask = _mm256_castsi256_ps(_mm256_set1_epi32(0x7fffffff));
     __m256 acc = _mm256_setzero_ps();
     int64_t i = 0;
@@ -1094,17 +1154,15 @@ static float mind_blas_dot_l1_f32_avx2(const float *a, const float *b, int64_t l
         d = _mm256_and_ps(d, abs_mask);
         acc = _mm256_add_ps(acc, d);
     }
-    __m128 lo = _mm256_castps256_ps128(acc);
-    __m128 hi = _mm256_extractf128_ps(acc, 1);
-    __m128 sum = _mm_add_ps(lo, hi);
-    sum = _mm_hadd_ps(sum, sum);
-    sum = _mm_hadd_ps(sum, sum);
-    float tail = _mm_cvtss_f32(sum);
+    // Pinned left-to-right fold over the 8 lane accumulators — same order as the
+    // scalar path.
+    float lanes[8];
+    _mm256_storeu_ps(lanes, acc);
+    float s = mind_blas_hfold8(lanes);
     for (; i < len; ++i) {
-        float d = a[i] - b[i];
-        tail += d < 0.0f ? -d : d;
+        s += mind_blas_fabs_bits(a[i] - b[i]);
     }
-    return tail;
+    return s;
 }
 #endif
 
