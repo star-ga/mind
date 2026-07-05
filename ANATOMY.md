@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3020 | **Est. tokens:** ~7,249,771
-**Generated:** 2026-07-05 07:43 UTC
+**Files:** 3020 | **Est. tokens:** ~7,250,598
+**Generated:** 2026-07-05 09:25 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~27,378 |
+| `./` | 34 | ~27,393 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -40,13 +40,13 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,163 |
-| `docs/` | 31 | ~61,664 |
+| `docs/` | 31 | ~61,716 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
 | `docs/mindcraft/` | 3 | ~7,023 |
 | `docs/research/` | 1 | ~117 |
-| `docs/rfcs/` | 28 | ~118,353 |
+| `docs/rfcs/` | 28 | ~118,403 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 18 | ~35,192 |
 | `examples/c/` | 2 | ~400 |
@@ -414,18 +414,18 @@
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
 | `tests/conformance/gpu_profile/` | 2 | ~11 |
 | `tests/cross_substrate_identity/` | 2 | ~4,052 |
-| `tests/cross_substrate_identity/dot-i16-4096/` | 2 | ~590 |
-| `tests/cross_substrate_identity/dot-l1-q16/` | 2 | ~305 |
-| `tests/cross_substrate_identity/dot-l2-q16/` | 2 | ~755 |
-| `tests/cross_substrate_identity/gemm-i8-64x64x64/` | 2 | ~649 |
-| `tests/cross_substrate_identity/gemm-q16-64x64x64/` | 2 | ~558 |
-| `tests/cross_substrate_identity/gemm-q16-fused-64x64x64/` | 2 | ~838 |
-| `tests/cross_substrate_identity/gemv-i16-256x256/` | 2 | ~536 |
-| `tests/cross_substrate_identity/gemv-q16-256x256/` | 2 | ~461 |
-| `tests/cross_substrate_identity/lorenz-q16/` | 2 | ~1,185 |
-| `tests/cross_substrate_identity/q16-arith-chain/` | 2 | ~730 |
-| `tests/cross_substrate_identity/scalar-float-f64/` | 2 | ~1,238 |
-| `tests/cross_substrate_identity/struct-handle-roundtrip/` | 2 | ~688 |
+| `tests/cross_substrate_identity/dot-i16-4096/` | 2 | ~648 |
+| `tests/cross_substrate_identity/dot-l1-q16/` | 2 | ~363 |
+| `tests/cross_substrate_identity/dot-l2-q16/` | 2 | ~813 |
+| `tests/cross_substrate_identity/gemm-i8-64x64x64/` | 2 | ~707 |
+| `tests/cross_substrate_identity/gemm-q16-64x64x64/` | 2 | ~616 |
+| `tests/cross_substrate_identity/gemm-q16-fused-64x64x64/` | 2 | ~896 |
+| `tests/cross_substrate_identity/gemv-i16-256x256/` | 2 | ~594 |
+| `tests/cross_substrate_identity/gemv-q16-256x256/` | 2 | ~519 |
+| `tests/cross_substrate_identity/lorenz-q16/` | 2 | ~1,243 |
+| `tests/cross_substrate_identity/q16-arith-chain/` | 2 | ~788 |
+| `tests/cross_substrate_identity/scalar-float-f64/` | 2 | ~1,310 |
+| `tests/cross_substrate_identity/struct-handle-roundtrip/` | 2 | ~746 |
 | `tests/fixtures/` | 6 | ~228 |
 | `tests/ir_verification/` | 2 | ~108 |
 | `tests/lexical/` | 3 | ~191 |
@@ -482,7 +482,7 @@
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
 - `Mind.toml` (~108 tok, small) — [package]
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
-- `README.md` (~5606 tok, huge) — MIND — Machine Intelligence Native Design
+- `README.md` (~5621 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~614 tok, large) — Security Policy
@@ -658,7 +658,7 @@
 - `v0.3.md` (~110 tok, small) — MIND Design v0.3 (Draft)
 ### `docs/`
 
-- `determinism.md` (~2744 tok, huge) — The Determinism Contract
+- `determinism.md` (~2784 tok, huge) — The Determinism Contract
 - `errors.md` (~701 tok, large) — MIND Core Error Model
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
 - `gpu.md` (~387 tok, medium) — GPU backend profile
@@ -709,7 +709,7 @@
 - `0018-bare-metal-substrate.md` (~3799 tok, huge) — RFC 0018: Bare-Metal Substrate Lowering Tier
 - `0019-deterministic-agent-substrate.md` (~4131 tok, huge) — RFC 0019: Deterministic Agent Substrate
 - `0020-mind-bench-reproducibility-harness.md` (~4083 tok, huge) — RFC 0020: mind-bench Public Reproducibility Harness
-- `0021-canonical-ir-unification.md` (~4240 tok, huge) — RFC 0021: Canonical IR Unification — one IR, provenance as a versioned epilogue
+- `0021-canonical-ir-unification.md` (~4290 tok, huge) — RFC 0021: Canonical IR Unification — one IR, provenance as a versioned epilogue
 - `0022-deterministic-io-substrate.md` (~2108 tok, huge) — RFC 0022: Deterministic I/O Substrate — fastest async I/O with bit-identical replay
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
@@ -717,7 +717,7 @@
 
 - `roadmap.md` (~15232 tok, huge) — Roadmap
 - `runs-burndown-roadmap.md` (~3203 tok, huge) — MIND RUNS Burndown Roadmap
-- `security.md` (~1480 tok, large) — Security Guide
+- `security.md` (~1492 tok, large) — Security Guide
 - `self-host-trace-hash-port.md` (~1406 tok, large) — #17 — Self-compute the native PT_NOTE (pure-MIND trace-hash port)
 - `shapes.md` (~478 tok, medium) — Tensor shape semantics
 - `sparse-tensor-types.md` (~740 tok, large) — Sparse Tensor Types
@@ -4024,43 +4024,43 @@
 ### `tests/cross_substrate_identity/dot-i16-4096/`
 
 - `manifest.toml` (~384 tok, medium) — version = "1"
-- `reference_hashes.toml` (~206 tok, medium) — avx2 = "af0fc3cf1b510f8f7306a5d7250ae25a52b35281a7cefff2a0ac94b0cd80a127"
+- `reference_hashes.toml` (~264 tok, medium) — avx2 = "af0fc3cf1b510f8f7306a5d7250ae25a52b35281a7cefff2a0ac94b0cd80a127"
 ### `tests/cross_substrate_identity/dot-l1-q16/`
 
 - `manifest.toml` (~157 tok, small) — version = "1"
-- `reference_hashes.toml` (~148 tok, small) — avx2 = "ce7e2a80515e123f5d4fbb77d841f0d6c56fcbc690bba2e2ff81e45765843b34"
+- `reference_hashes.toml` (~206 tok, medium) — avx2 = "ce7e2a80515e123f5d4fbb77d841f0d6c56fcbc690bba2e2ff81e45765843b34"
 ### `tests/cross_substrate_identity/dot-l2-q16/`
 
 - `manifest.toml` (~436 tok, medium) — version = "1"
-- `reference_hashes.toml` (~319 tok, medium) — avx2 = "1d7f272b85e5f0fd7cf473086fb1da558a723134ff02ef30a4323eb757209823"
+- `reference_hashes.toml` (~377 tok, medium) — avx2 = "1d7f272b85e5f0fd7cf473086fb1da558a723134ff02ef30a4323eb757209823"
 ### `tests/cross_substrate_identity/gemm-i8-64x64x64/`
 
 - `manifest.toml` (~437 tok, medium) — version = "1"
-- `reference_hashes.toml` (~212 tok, medium) — avx2 = "917d353b18fd7f5ea4dab7dd02b786f5ccc4a2d954f695084ca0a88214d699c7"
+- `reference_hashes.toml` (~270 tok, medium) — avx2 = "917d353b18fd7f5ea4dab7dd02b786f5ccc4a2d954f695084ca0a88214d699c7"
 ### `tests/cross_substrate_identity/gemm-q16-64x64x64/`
 
 - `manifest.toml` (~391 tok, medium) — version = "1"
-- `reference_hashes.toml` (~167 tok, small) — avx2 = "92e2cb75d74d83a4a398d78d9ac560f195279c31814972c892f856f675faea0f"
+- `reference_hashes.toml` (~225 tok, medium) — avx2 = "92e2cb75d74d83a4a398d78d9ac560f195279c31814972c892f856f675faea0f"
 ### `tests/cross_substrate_identity/gemm-q16-fused-64x64x64/`
 
 - `manifest.toml` (~529 tok, large) — version = "1"
-- `reference_hashes.toml` (~309 tok, medium) — avx2 = "92e2cb75d74d83a4a398d78d9ac560f195279c31814972c892f856f675faea0f"
+- `reference_hashes.toml` (~367 tok, medium) — avx2 = "92e2cb75d74d83a4a398d78d9ac560f195279c31814972c892f856f675faea0f"
 ### `tests/cross_substrate_identity/gemv-i16-256x256/`
 
 - `manifest.toml` (~375 tok, medium) — version = "1"
-- `reference_hashes.toml` (~161 tok, small) — avx2 = "3238e8c7e1e9ee9937503700f63eda350fcd10e7db28d470c3dbc26592d0a936"
+- `reference_hashes.toml` (~219 tok, medium) — avx2 = "3238e8c7e1e9ee9937503700f63eda350fcd10e7db28d470c3dbc26592d0a936"
 ### `tests/cross_substrate_identity/gemv-q16-256x256/`
 
 - `manifest.toml` (~310 tok, medium) — version = "1"
-- `reference_hashes.toml` (~151 tok, small) — avx2 = "dfdf890874472ee369da524955995889c39bc6da770e4e2b1d0d69315e17611a"
+- `reference_hashes.toml` (~209 tok, medium) — avx2 = "dfdf890874472ee369da524955995889c39bc6da770e4e2b1d0d69315e17611a"
 ### `tests/cross_substrate_identity/lorenz-q16/`
 
 - `manifest.toml` (~681 tok, large) — version = "1"
-- `reference_hashes.toml` (~504 tok, large) — avx2 = "04da6abc69e63314331e88a7a9670ce5c9e90ddaa2bf5f5dc53526f56477de80"
+- `reference_hashes.toml` (~562 tok, large) — avx2 = "04da6abc69e63314331e88a7a9670ce5c9e90ddaa2bf5f5dc53526f56477de80"
 ### `tests/cross_substrate_identity/q16-arith-chain/`
 
 - `manifest.toml` (~432 tok, medium) — version = "1"
-- `reference_hashes.toml` (~298 tok, medium) — avx2 = "ce93cdeb0e650c1c8e0cd05687ed986bbdbac691b6a8742e155b8ffd65997d78"
+- `reference_hashes.toml` (~356 tok, medium) — avx2 = "ce93cdeb0e650c1c8e0cd05687ed986bbdbac691b6a8742e155b8ffd65997d78"
 ### `tests/cross_substrate_identity/`
 
 - `README.md` (~1219 tok, large) — cross_substrate_identity — the internal mind-bench reproducibility gate
@@ -4070,11 +4070,11 @@
 ### `tests/cross_substrate_identity/scalar-float-f64/`
 
 - `manifest.toml` (~778 tok, large) — version = "1"
-- `reference_hashes.toml` (~460 tok, medium) — avx2 = "7592a52a5e10a2f24469765f71ce1f9f8ebd9efb51904cf9a18f310d33b3c92d"
+- `reference_hashes.toml` (~532 tok, large) — avx2 = "7592a52a5e10a2f24469765f71ce1f9f8ebd9efb51904cf9a18f310d33b3c92d"
 ### `tests/cross_substrate_identity/struct-handle-roundtrip/`
 
 - `manifest.toml` (~403 tok, medium) — version = "1"
-- `reference_hashes.toml` (~285 tok, medium) — avx2 = "018a335a0e9fc397c6f41cba4fc2617f0cf8d1326c5dbf77d53e27feacaeb64c"
+- `reference_hashes.toml` (~343 tok, medium) — avx2 = "018a335a0e9fc397c6f41cba4fc2617f0cf8d1326c5dbf77d53e27feacaeb64c"
 ### `tests/cross_substrate_identity/`
 
 - `xnode_driver.c` (~2833 tok, huge)
