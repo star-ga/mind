@@ -1,0 +1,435 @@
+// std/chacha20_poly1305.mind — ChaCha20-Poly1305 AEAD (RFC 8439) in pure MIND.
+// Self-contained: no imports, only the `__mind_*` byte-buffer intrinsics, matching
+// std/sha256.mind and std/aes_gcm.mind's low-level discipline.
+//
+// Scope (RFC 8446 §9.1 mandatory suite TLS_CHACHA20_POLY1305_SHA256):
+//   - ChaCha20 (RFC 8439 §2.4), 20 rounds, 256-bit key, 96-bit (12-byte) nonce,
+//     32-bit block counter — the TLS 1.3 / RFC 8439 §2.8 layout.
+//   - Poly1305 (RFC 8439 §2.5) one-time authenticator over the AEAD mac-data.
+//   - AEAD_CHACHA20_POLY1305 seal/open (RFC 8439 §2.8).
+//
+// Word arithmetic: ChaCha20 is 32-bit little-endian; u32 is emulated on i64 with
+// `& 4294967295` (= 0xFFFFFFFF) masking, exactly like std/sha256.mind. Poly1305's
+// 130-bit accumulator is held in five 26-bit limbs (base 2^26); each partial
+// product h*r fits well under 2^63, so all arithmetic stays in signed i64 range.
+//
+// Byte-buffer layout: one byte per offset (`__mind_store_i8` / `__mind_load_i8`);
+// the 16-word ChaCha state uses stride-8 i64 slots (`__mind_load_i64`).
+//
+// Public API:
+//   pub fn chacha20_poly1305_encrypt(key,nonce,pt,pt_len,aad,aad_len,ct_out,tag_out) -> i64
+//     AEAD seal: writes pt_len ciphertext bytes to ct_out + 16-byte tag. Returns 0.
+//   pub fn chacha20_poly1305_decrypt(key,nonce,ct,ct_len,aad,aad_len,tag,pt_out) -> i64
+//     AEAD open: verifies the 16-byte tag FIRST (constant-time); on match writes
+//     ct_len plaintext bytes and returns 0; on mismatch zeroes pt_out and returns 1
+//     (fail closed — never emits unauthenticated plaintext).
+//   key = 32 bytes, nonce = 12 bytes.
+//
+// Determinism: pure integer arithmetic, no floats, no clocks, no external calls.
+
+// ---------------------------------------------------------------------------
+// Little-endian byte <-> word helpers.
+// ---------------------------------------------------------------------------
+
+// load32le — read 4 bytes at addr as a little-endian u32 (result 0..2^32-1).
+fn load32le(a: i64) -> i64 {
+    (__mind_load_i8(a + 0)) | (__mind_load_i8(a + 1) << 8) | (__mind_load_i8(a + 2) << 16) | (__mind_load_i8(a + 3) << 24)
+}
+
+// store32le — write the low 32 bits of v as little-endian bytes.
+fn store32le(a: i64, v: i64) -> i64 {
+    __mind_store_i8(a + 0, v & 255);
+    __mind_store_i8(a + 1, (v >> 8) & 255);
+    __mind_store_i8(a + 2, (v >> 16) & 255);
+    __mind_store_i8(a + 3, (v >> 24) & 255);
+    0
+}
+
+// store64le — write the low 64 bits of v as little-endian bytes (length fields).
+fn store64le(a: i64, v: i64) -> i64 {
+    __mind_store_i8(a + 0, v & 255);
+    __mind_store_i8(a + 1, (v >> 8) & 255);
+    __mind_store_i8(a + 2, (v >> 16) & 255);
+    __mind_store_i8(a + 3, (v >> 24) & 255);
+    __mind_store_i8(a + 4, (v >> 32) & 255);
+    __mind_store_i8(a + 5, (v >> 40) & 255);
+    __mind_store_i8(a + 6, (v >> 48) & 255);
+    __mind_store_i8(a + 7, (v >> 56) & 255);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// ChaCha20 (RFC 8439 §2.1–2.4).
+// ---------------------------------------------------------------------------
+
+// rotl32 — left-rotate in the 32-bit domain. x is a non-negative u32, so the
+// `>>` is logical.
+fn rotl32(x: i64, n: i64) -> i64 {
+    ((x << n) | (x >> (32 - n))) & 4294967295
+}
+
+// chacha_qr — the quarter-round (RFC 8439 §2.1) applied in place to the four
+// state words at indices ia,ib,ic,id (each word held in a stride-8 i64 slot).
+fn chacha_qr(st: i64, ia: i64, ib: i64, ic: i64, id: i64) -> i64 {
+    let mut a: i64 = __mind_load_i64(st + ia * 8);
+    let mut b: i64 = __mind_load_i64(st + ib * 8);
+    let mut c: i64 = __mind_load_i64(st + ic * 8);
+    let mut d: i64 = __mind_load_i64(st + id * 8);
+
+    a = (a + b) & 4294967295;
+    d = rotl32(d ^ a, 16);
+    c = (c + d) & 4294967295;
+    b = rotl32(b ^ c, 12);
+    a = (a + b) & 4294967295;
+    d = rotl32(d ^ a, 8);
+    c = (c + d) & 4294967295;
+    b = rotl32(b ^ c, 7);
+
+    __mind_store_i64(st + ia * 8, a);
+    __mind_store_i64(st + ib * 8, b);
+    __mind_store_i64(st + ic * 8, c);
+    __mind_store_i64(st + id * 8, d);
+    0
+}
+
+// chacha20_block — produce one 64-byte keystream block (RFC 8439 §2.3) for the
+// given 32-bit counter into out (64 bytes). key = 32 bytes, nonce = 12 bytes.
+fn chacha20_block(key: i64, counter: i64, nonce: i64, out: i64) -> i64 {
+    let st: i64 = __mind_alloc(128);
+    let init: i64 = __mind_alloc(128);
+
+    // Constants "expand 32-byte k".
+    __mind_store_i64(st + 0 * 8, 1634760805);
+    __mind_store_i64(st + 1 * 8, 857760878);
+    __mind_store_i64(st + 2 * 8, 2036477234);
+    __mind_store_i64(st + 3 * 8, 1797285236);
+
+    // Key words 4..11 (little-endian).
+    let mut i: i64 = 0;
+    while i < 8 {
+        __mind_store_i64(st + (4 + i) * 8, load32le(key + i * 4));
+        i = i + 1;
+    }
+
+    // Counter word 12, nonce words 13..15.
+    __mind_store_i64(st + 12 * 8, counter & 4294967295);
+    __mind_store_i64(st + 13 * 8, load32le(nonce + 0));
+    __mind_store_i64(st + 14 * 8, load32le(nonce + 4));
+    __mind_store_i64(st + 15 * 8, load32le(nonce + 8));
+
+    // Snapshot the initial state for the final feed-forward add.
+    let mut k: i64 = 0;
+    while k < 16 {
+        __mind_store_i64(init + k * 8, __mind_load_i64(st + k * 8));
+        k = k + 1;
+    }
+
+    // 20 rounds = 10 column-round / diagonal-round pairs.
+    let mut r: i64 = 0;
+    while r < 10 {
+        chacha_qr(st, 0, 4, 8, 12);
+        chacha_qr(st, 1, 5, 9, 13);
+        chacha_qr(st, 2, 6, 10, 14);
+        chacha_qr(st, 3, 7, 11, 15);
+        chacha_qr(st, 0, 5, 10, 15);
+        chacha_qr(st, 1, 6, 11, 12);
+        chacha_qr(st, 2, 7, 8, 13);
+        chacha_qr(st, 3, 4, 9, 14);
+        r = r + 1;
+    }
+
+    // Add the initial state and serialize little-endian.
+    let mut j: i64 = 0;
+    while j < 16 {
+        let v: i64 = (__mind_load_i64(st + j * 8) + __mind_load_i64(init + j * 8)) & 4294967295;
+        store32le(out + j * 4, v);
+        j = j + 1;
+    }
+    0
+}
+
+// chacha20_xor — XOR the ChaCha20 keystream (counter starting at counter0) into
+// out for in_len bytes (RFC 8439 §2.4). Encryption and decryption are identical.
+fn chacha20_xor(key: i64, nonce: i64, counter0: i64, in_addr: i64, in_len: i64, out_addr: i64) -> i64 {
+    let ks: i64 = __mind_alloc(64);
+    let mut ctr: i64 = counter0;
+    let mut off: i64 = 0;
+    while off < in_len {
+        chacha20_block(key, ctr, nonce, ks);
+        let mut b: i64 = 0;
+        while b < 64 {
+            let idx: i64 = off + b;
+            if idx < in_len {
+                __mind_store_i8(out_addr + idx, __mind_load_i8(in_addr + idx) ^ __mind_load_i8(ks + b))
+            }
+            b = b + 1;
+        }
+        ctr = ctr + 1;
+        off = off + 64;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Poly1305 (RFC 8439 §2.5) — one-time authenticator.
+//
+// The 130-bit accumulator h and the clamped key r are held in five 26-bit limbs
+// (base 2^26). Multiply-accumulate uses the standard 5-limb schoolbook product
+// with the reduction folded in via s_i = 5 * r_i (2^130 ≡ 5 mod p), so each
+// column sum stays below 2^57 — safely inside signed i64.
+// ---------------------------------------------------------------------------
+
+// poly1305_mac — compute the 16-byte tag of msg[0..msglen] under the 32-byte
+// one-time key into out (16 bytes).
+fn poly1305_mac(key: i64, msg: i64, msglen: i64, out: i64) -> i64 {
+    // Clamp r (RFC 8439 §2.5.2) directly into 26-bit limbs.
+    let r0: i64 = load32le(key + 0) & 67108863;
+    let r1: i64 = (load32le(key + 3) >> 2) & 67108611;
+    let r2: i64 = (load32le(key + 6) >> 4) & 67092735;
+    let r3: i64 = (load32le(key + 9) >> 6) & 66076671;
+    let r4: i64 = (load32le(key + 12) >> 8) & 1048575;
+    let s1: i64 = r1 * 5;
+    let s2: i64 = r2 * 5;
+    let s3: i64 = r3 * 5;
+    let s4: i64 = r4 * 5;
+
+    let mut h0: i64 = 0;
+    let mut h1: i64 = 0;
+    let mut h2: i64 = 0;
+    let mut h3: i64 = 0;
+    let mut h4: i64 = 0;
+
+    let blk: i64 = __mind_alloc(16);
+    let mut off: i64 = 0;
+    while off < msglen {
+        let remaining: i64 = msglen - off;
+        // Assemble a 16-byte block, zero-padded past the message tail.
+        let mut i: i64 = 0;
+        while i < 16 {
+            if off + i < msglen {
+                __mind_store_i8(blk + i, __mind_load_i8(msg + off + i))
+            } else {
+                __mind_store_i8(blk + i, 0)
+            }
+            i = i + 1;
+        }
+        // Append the 1 bit above the block: 2^128 for a full block, or an
+        // explicit 0x01 byte for the final partial block.
+        let mut hibit: i64 = 16777216;
+        if remaining < 16 {
+            __mind_store_i8(blk + remaining, 1);
+            hibit = 0;
+        }
+
+        // h += block (as five 26-bit limbs, little-endian).
+        h0 = h0 + (load32le(blk + 0) & 67108863);
+        h1 = h1 + ((load32le(blk + 3) >> 2) & 67108863);
+        h2 = h2 + ((load32le(blk + 6) >> 4) & 67108863);
+        h3 = h3 + ((load32le(blk + 9) >> 6) & 67108863);
+        h4 = h4 + ((load32le(blk + 12) >> 8) | hibit);
+
+        // h *= r (mod 2^130 - 5), schoolbook with folded reduction.
+        let d0: i64 = h0 * r0 + h1 * s4 + h2 * s3 + h3 * s2 + h4 * s1;
+        let mut d1: i64 = h0 * r1 + h1 * r0 + h2 * s4 + h3 * s3 + h4 * s2;
+        let mut d2: i64 = h0 * r2 + h1 * r1 + h2 * r0 + h3 * s4 + h4 * s3;
+        let mut d3: i64 = h0 * r3 + h1 * r2 + h2 * r1 + h3 * r0 + h4 * s4;
+        let mut d4: i64 = h0 * r4 + h1 * r3 + h2 * r2 + h3 * r1 + h4 * r0;
+
+        // Partial carry propagation back into 26-bit limbs.
+        let mut c: i64 = d0 >> 26;
+        h0 = d0 & 67108863;
+        d1 = d1 + c;
+        c = d1 >> 26;
+        h1 = d1 & 67108863;
+        d2 = d2 + c;
+        c = d2 >> 26;
+        h2 = d2 & 67108863;
+        d3 = d3 + c;
+        c = d3 >> 26;
+        h3 = d3 & 67108863;
+        d4 = d4 + c;
+        c = d4 >> 26;
+        h4 = d4 & 67108863;
+        h0 = h0 + c * 5;
+        c = h0 >> 26;
+        h0 = h0 & 67108863;
+        h1 = h1 + c;
+
+        off = off + 16;
+    }
+
+    // Fully carry h.
+    let mut c: i64 = h1 >> 26;
+    h1 = h1 & 67108863;
+    h2 = h2 + c;
+    c = h2 >> 26;
+    h2 = h2 & 67108863;
+    h3 = h3 + c;
+    c = h3 >> 26;
+    h3 = h3 & 67108863;
+    h4 = h4 + c;
+    c = h4 >> 26;
+    h4 = h4 & 67108863;
+    h0 = h0 + c * 5;
+    c = h0 >> 26;
+    h0 = h0 & 67108863;
+    h1 = h1 + c;
+
+    // g = h + 5 - 2^130 (i.e. h - p); g4 >= 0 iff h >= p.
+    let mut g0: i64 = h0 + 5;
+    let mut cc: i64 = g0 >> 26;
+    g0 = g0 & 67108863;
+    let mut g1: i64 = h1 + cc;
+    cc = g1 >> 26;
+    g1 = g1 & 67108863;
+    let mut g2: i64 = h2 + cc;
+    cc = g2 >> 26;
+    g2 = g2 & 67108863;
+    let mut g3: i64 = h3 + cc;
+    cc = g3 >> 26;
+    g3 = g3 & 67108863;
+    let g4: i64 = h4 + cc - 67108864;
+
+    // Branchless select: mask = -1 (choose g, h >= p) or 0 (keep h, h < p).
+    // g4 in [-2^26, 0]; adding 2^26 puts the "h >= p" case at bit 26.
+    let sel: i64 = ((g4 + 67108864) >> 26) & 1;
+    let mask: i64 = 0 - sel;
+    h0 = h0 + ((g0 - h0) & mask);
+    h1 = h1 + ((g1 - h1) & mask);
+    h2 = h2 + ((g2 - h2) & mask);
+    h3 = h3 + ((g3 - h3) & mask);
+    h4 = h4 + ((g4 - h4) & mask);
+
+    // Collapse the five 26-bit limbs into four little-endian u32 words (mod 2^128).
+    let f0: i64 = (h0 | (h1 << 26)) & 4294967295;
+    let f1: i64 = ((h1 >> 6) | (h2 << 20)) & 4294967295;
+    let f2: i64 = ((h2 >> 12) | (h3 << 14)) & 4294967295;
+    let f3: i64 = ((h3 >> 18) | (h4 << 8)) & 4294967295;
+
+    // tag = (h + pad) mod 2^128, pad = key[16..32] little-endian.
+    let mut ff: i64 = f0 + load32le(key + 16);
+    let o0: i64 = ff & 4294967295;
+    ff = f1 + load32le(key + 20) + (ff >> 32);
+    let o1: i64 = ff & 4294967295;
+    ff = f2 + load32le(key + 24) + (ff >> 32);
+    let o2: i64 = ff & 4294967295;
+    ff = f3 + load32le(key + 28) + (ff >> 32);
+    let o3: i64 = ff & 4294967295;
+
+    store32le(out + 0, o0);
+    store32le(out + 4, o1);
+    store32le(out + 8, o2);
+    store32le(out + 12, o3);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// AEAD_CHACHA20_POLY1305 (RFC 8439 §2.8).
+// ---------------------------------------------------------------------------
+
+// pad16len — number of zero pad bytes to reach the next 16-byte boundary.
+fn pad16len(n: i64) -> i64 {
+    let r: i64 = n % 16;
+    if r == 0 {
+        0
+    } else {
+        16 - r
+    }
+}
+
+// aead_mac — derive the one-time Poly1305 key (ChaCha20 block, counter 0) and
+// authenticate AAD || pad16(AAD) || CT || pad16(CT) || len(AAD)_u64le ||
+// len(CT)_u64le into out (16 bytes).
+fn aead_mac(key: i64, nonce: i64, aad: i64, aad_len: i64, ct: i64, ct_len: i64, out: i64) -> i64 {
+    // One-time key = first 32 bytes of the counter-0 keystream block.
+    let blk0: i64 = __mind_alloc(64);
+    chacha20_block(key, 0, nonce, blk0);
+    let otk: i64 = __mind_alloc(32);
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i8(otk + i, __mind_load_i8(blk0 + i));
+        i = i + 1;
+    }
+
+    let aad_pad: i64 = pad16len(aad_len);
+    let ct_pad: i64 = pad16len(ct_len);
+    let mac_len: i64 = aad_len + aad_pad + ct_len + ct_pad + 16;
+    let md: i64 = __mind_alloc(mac_len);
+
+    // Zero the whole buffer so pad regions are 0 without special-casing.
+    let mut z: i64 = 0;
+    while z < mac_len {
+        __mind_store_i8(md + z, 0);
+        z = z + 1;
+    }
+
+    let mut p: i64 = 0;
+    let mut a: i64 = 0;
+    while a < aad_len {
+        __mind_store_i8(md + p, __mind_load_i8(aad + a));
+        a = a + 1;
+        p = p + 1;
+    }
+    p = p + aad_pad;
+    let mut cc: i64 = 0;
+    while cc < ct_len {
+        __mind_store_i8(md + p, __mind_load_i8(ct + cc));
+        cc = cc + 1;
+        p = p + 1;
+    }
+    p = p + ct_pad;
+    store64le(md + p, aad_len);
+    p = p + 8;
+    store64le(md + p, ct_len);
+    p = p + 8;
+
+    poly1305_mac(otk, md, mac_len, out);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Public: AEAD seal. Writes pt_len ciphertext bytes to ct_out and a 16-byte tag
+// to tag_out. Returns 0.
+// ---------------------------------------------------------------------------
+
+pub fn chacha20_poly1305_encrypt(key: i64, nonce: i64, pt: i64, pt_len: i64, aad: i64, aad_len: i64, ct_out: i64, tag_out: i64) -> i64 {
+    // Encrypt in ChaCha20 counter mode starting at block counter 1.
+    chacha20_xor(key, nonce, 1, pt, pt_len, ct_out);
+    // Authenticate over AAD + ciphertext.
+    aead_mac(key, nonce, aad, aad_len, ct_out, pt_len, tag_out);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Public: AEAD open. Verifies the tag BEFORE releasing plaintext. On success
+// writes ct_len plaintext bytes to pt_out and returns 0. On tag mismatch zeroes
+// pt_out and returns 1 — no unauthenticated plaintext ever escapes (fail closed).
+// ---------------------------------------------------------------------------
+
+pub fn chacha20_poly1305_decrypt(key: i64, nonce: i64, ct: i64, ct_len: i64, aad: i64, aad_len: i64, tag: i64, pt_out: i64) -> i64 {
+    // Recompute the expected tag over the received ciphertext.
+    let exp_tag: i64 = __mind_alloc(16);
+    aead_mac(key, nonce, aad, aad_len, ct, ct_len, exp_tag);
+
+    // Constant-time compare against the supplied tag.
+    let mut diff: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 16 {
+        diff = diff | (__mind_load_i8(exp_tag + i) ^ __mind_load_i8(tag + i));
+        i = i + 1;
+    }
+
+    if diff != 0 {
+        // Fail closed: zero the output region, release nothing.
+        let mut z: i64 = 0;
+        while z < ct_len {
+            __mind_store_i8(pt_out + z, 0);
+            z = z + 1;
+        }
+        return 1;
+    }
+
+    // Tag verified — release plaintext (CTR is symmetric).
+    chacha20_xor(key, nonce, 1, ct, ct_len, pt_out);
+    0
+}
