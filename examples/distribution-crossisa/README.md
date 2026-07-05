@@ -63,6 +63,37 @@ ladder because the executable subset used here has no array-load codegen yet
 (marked `// deferred:` in the source). The `a*b + c*d` numerator and the divide —
 the part that diverges — are reproduced verbatim.
 
+## Building the C++ originals
+
+Both programs use C++23 `import std;`, so they need a toolchain that ships the
+prebuilt `std` module. On GCC that is **GCC 15** (libstdc++'s `std` module unit
+lands in 15; g++-14 and earlier cannot resolve `import std;`). Precompile the
+module once, then build:
+
+```bash
+# GCC 15 — precompile the std module, then the exact recipe
+g++-15 -std=c++23 -fmodules -c /usr/include/c++/15/bits/std.cc -o std.o
+g++-15 -O2 -std=c++23 -static -fmodules -o distribution distribution.cpp std.o
+g++-15 -O2 -std=c++23 -static -fmodules -o afterkelly  afterkelly.cpp  std.o
+```
+
+The equivalent MSVC command uses the bundled `std.ixx`:
+
+```
+cl /O2 /GR /EHsc /std:c++latest /Fedistribution.exe distribution.cpp "%VCToolsInstallDir%\modules\std.ixx"
+```
+
+Run them against the sample data:
+
+```bash
+./distribution 10 < data1.txt     # four-model PDF/CDF table
+./afterkelly l l 10000 1234567 100000 6600 10 0.1 100 1 1.0 < data1.txt
+```
+
+To reproduce the cross-ISA split, build the **same** recipe on x86_64 and
+aarch64 and `diff` the `distribution` output; `afterkelly` stays byte-identical.
+Adding `-ffp-contract=off` to both makes `distribution` byte-identical too.
+
 ## Files
 
 | File | What |
