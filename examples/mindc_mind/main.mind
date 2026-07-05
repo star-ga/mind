@@ -15539,6 +15539,17 @@ pub fn emit_mlir_arith_op(s: EmitState, op: i64) -> EmitState {
         let s4: EmitState = es_push(s3, 105);
         return es_push(s4, ch_space());
     }
+    if op == op_mod() {
+        // "remsi " — signed remainder (arith.remsi), NOT arith.divsi. Without this
+        // arm an op_mod binop fell through to the divsi tail below and emitted
+        // integer DIVISION (quotient) for `a % b`.
+        let s1: EmitState = es_push(s, 114);
+        let s2: EmitState = es_push(s1, 101);
+        let s3: EmitState = es_push(s2, 109);
+        let s4: EmitState = es_push(s3, 115);
+        let s5: EmitState = es_push(s4, 105);
+        return es_push(s5, ch_space());
+    }
     // op_div(): "divsi "
     let s1: EmitState = es_push(s, 100);
     let s2: EmitState = es_push(s1, 105);
@@ -19495,10 +19506,17 @@ pub fn nb_arith_rax_mem(code: String, op: i64, disp: i64) -> String {
     // rax). Byte-for-byte src/native::emit_div_mod_guarded(is_mod=false): substitute
     // divisor 1 when rhs==0 OR (rax==INT_MIN && rcx==-1) so idiv never traps, then
     // force the result to 0 when rhs==0 — giving MIND's defined edges x/0=0,
-    // INT_MIN/-1=INT_MIN. (tk_to_op never yields op_mod, so the is_mod `mov rax,rdx`
-    // tail is unreachable in self-host; the self-host source uses `/` only.)
+    // INT_MIN/-1=INT_MIN. op_mod routes to the SAME guarded sequence with is_mod=1,
+    // which appends a `mov rax,rdx` tail (remainder, not quotient). tk_to_op DOES
+    // yield op_mod (the `%` operator), so the mod arm below is live.
     if op == op_div() {
-        return nb_div_guarded(code, disp);
+        return nb_div_guarded(code, disp, 0);
+    }
+    // op_mod(): the guarded signed remainder — byte-for-byte the div sequence plus a
+    // `mov rax,rdx` after idiv (the remainder is in rdx). Without this arm `a % b`
+    // fell through to the imul tail below and native-lowered to `a * b`.
+    if op == op_mod() {
+        return nb_div_guarded(code, disp, 1);
     }
     // op_shl/op_shr: x86 variable shift takes the count in cl (src/native 760-766).
     //   mov rcx, [rbp+disp32]   = 48 8B 8D <disp32>
@@ -19530,11 +19548,13 @@ pub fn nb_arith_rax_mem(code: String, op: i64, disp: i64) -> String {
     let c4: String = nb_push(c3, 133);
     nb_i32le_signed(c4, disp)
 }
-// Emit `emit_div_mod_guarded(is_mod=false, rhs=disp)` — the 60-byte branchless
-// guarded signed div with the dividend already in rax. Flat sequential `nb_push`
-// chain (one let per byte-group, no value-if-expr) to stay self-flip-clean.
-// INT_MIN is emitted as its raw 8 LE bytes (00*7, 0x80) so no i64 literal is needed.
-pub fn nb_div_guarded(code: String, disp: i64) -> String {
+// Emit `emit_div_mod_guarded(is_mod=?, rhs=disp)` — the branchless guarded signed
+// div/mod with the dividend already in rax. Flat sequential `nb_push` chain (one let
+// per byte-group, no value-if-expr) to stay self-flip-clean. INT_MIN is emitted as
+// its raw 8 LE bytes (00*7, 0x80) so no i64 literal is needed. When is_mod==1 the
+// idiv is followed by `mov rax,rdx` (48 89 D0) so the RESULT is the remainder (in
+// rdx), not the quotient (in rax) — 63 bytes for mod vs 60 for div.
+pub fn nb_div_guarded(code: String, disp: i64, is_mod: i64) -> String {
     // mov rcx, [rbp+rhs]  = 48 8B 8D <disp32>
     let a1: String = nb_push(code, 72);
     let a2: String = nb_push(a1, 139);
@@ -19614,8 +19634,22 @@ pub fn nb_div_guarded(code: String, disp: i64) -> String {
     let i3: String = nb_push(i2, 72);
     let i4: String = nb_push(i3, 247);
     let i5: String = nb_push(i4, 249);
-    // result = (rhs==0) ? 0 : result:
-    // xor r10,r10 = 4D 31 D2 ; test r8,r8 = 4D 85 C0 ; cmovnz rax,r10 = 49 0F 45 C2
+    // For mod (is_mod==1): the remainder is in rdx after idiv; move it into rax
+    // BEFORE the zero-guard so the guard zeroes the MOD result on rhs==0 too.
+    //   mov rax,rdx = 48 89 D0
+    if is_mod == 1 {
+        let m1: String = nb_push(i5, 72);
+        let m2: String = nb_push(m1, 137);
+        let m3: String = nb_push(m2, 208);
+        return nb_div_guard_tail(m3);
+    }
+    nb_div_guard_tail(i5)
+}
+// The shared zero-guard tail of nb_div_guarded (div and mod): force the result to 0
+// when rhs==0 (r8 was set to (rhs==0) earlier), giving MIND's defined edges x/0=0
+// and x%0=0. Extracted so div (is_mod=0) stays byte-identical to before the mod arm.
+//   xor r10,r10 = 4D 31 D2 ; test r8,r8 = 4D 85 C0 ; cmovnz rax,r10 = 49 0F 45 C2
+pub fn nb_div_guard_tail(i5: String) -> String {
     let j1: String = nb_push(i5, 77);
     let j2: String = nb_push(j1, 49);
     let j3: String = nb_push(j2, 210);
