@@ -592,6 +592,40 @@ fn emit_tensor_reduce(
         }
     }
 
+    // Determinism gate (determinism.md §4). We reach here for one of:
+    //   (a) an f32 / f64 reduction that is DYNAMIC-shaped or OVER the pinned
+    //       unroll cap, or
+    //   (b) a non-float (integer) reduction of any size / shape.
+    // A tree-shaped `tensor.reduce` over FLOAT is a REORDERING reduction — a
+    // pass may reassociate the `arith.addf` chain, so the result is only
+    // ~1e-4-tolerance equal, NOT bit-identical across substrates or run-to-run.
+    // determinism.md §4 requires any such reordering reduction to be EXPLICITLY
+    // labelled non-deterministic (the opt-in `fast` tier), so we must NOT take
+    // it silently. FAIL LOUD by default — this matches the native lowering
+    // (`src/mlir/lowering.rs::emit_tensor_reduce_pinned`, which refuses the same
+    // dynamic / over-cap float case with `MlirLowerError::UnsupportedOp`), so
+    // the interp and native backends AGREE: both refuse the non-deterministic
+    // path unless the operator opts in. Integer add is associative, so any
+    // grouping is already bit-identical — integer reductions stay on the tree
+    // tier unconditionally and are never gated.
+    // upgrade: the deferred deterministic tier for dynamic / over-cap float
+    // reductions is a PINNED sequential `scf.for` fold (a fixed reduction order
+    // without unrolling); until it lands, only the opt-in fast tier can lower
+    // these.
+    if matches!(dtype, DType::F32 | DType::F64) && !float_reduce_fast_optin() {
+        panic!(
+            "non-deterministic f32/f64 tensor reduction refused: the reduction is \
+             dynamic-shaped or exceeds the pinned-fold element cap ({cap}), and the \
+             fallback tree-shaped `tensor.reduce` REORDERS float additions (~1e-4 \
+             tolerance, NOT bit-identical — determinism.md \u{00A7}4). The interp \
+             backend refuses this by default so it agrees with the native lowering \
+             (which fails with UnsupportedOp on the same case). Deterministic upgrade \
+             path: a pinned sequential `scf.for` fold (deferred). To take the \
+             explicitly-non-deterministic fast tier, set MIND_FLOAT_REDUCE_FAST=1.",
+            cap = PINNED_FOLD_ELEM_CAP
+        );
+    }
+
     emit_tensor_reduce_treeshaped(
         emitter,
         dst,
@@ -602,6 +636,20 @@ fn emit_tensor_reduce(
         &dtype,
         kind,
     );
+}
+
+/// Explicit opt-in to the FAST, non-deterministic float-reduction tier
+/// (determinism.md §4 `fast` mode). OFF by default: a dynamic / over-cap f32 or
+/// f64 tensor reduction fails loud so the interp backend agrees with the native
+/// lowering — both refuse the reordering (`tensor.reduce`) float path unless the
+/// operator knowingly opts in. `MIND_FLOAT_REDUCE_FAST=1` (or `true`) enables it.
+/// This is a stopgap for the not-yet-plumbed source-level `mode = "fast"` toggle;
+/// it only ever RELAXES float determinism when set, and never affects the strict
+/// pinned-fold path or integer reductions.
+fn float_reduce_fast_optin() -> bool {
+    std::env::var("MIND_FLOAT_REDUCE_FAST")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
 }
 
 /// PINNED canonical-order scalar fold for f32/f64 tensor `sum`/`mean` — the
