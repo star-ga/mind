@@ -12889,11 +12889,30 @@ pub fn flatten_ast(node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: 
         // Additive — main.mind uses no `!` in a flattened trailing expression, so
         // the whole-module self-host gates stay byte-identical.
         let operand: i64 = ast_child0(node);
-        // deferred: lower.rs also has a `!Lit(Int(n))` fast path emitting a single
-        // CONST (n == 0) leaf. Omitted here — the general desugar below is byte-exact
-        // for the real `!<variable>` case (all that main.mind uses); a bare
-        // `!<int-literal>` would emit operand+zero+Eq instead of one CONST. Upgrade
-        // path: add the fast path once the self-host driver emits its guard/predicate.
+        // `!<int-literal>` fast path — mirrors src/eval/lower.rs Node::Not `!Lit(Int(n))`
+        // => a single ConstI64(id, (n == 0)). One const leaf, NOT operand+zero+Eq. This
+        // must match the oracle exactly: the count arm (count_nonparam_nodes ast_not)
+        // now activates the module driver for `!`, so a bare `!5` would otherwise emit
+        // 3 instrs where the oracle emits 1 (byte-divergence).
+        if ast_kind(operand) == ast_int_lit() {
+            let litv: i64 = if ast_child1(operand) == 1 {
+                ast_child0(operand)
+            } else {
+                parse_int_span(buf, ast_span_lo(operand), ast_span_hi(operand), 0)
+            };
+            let cval: i64 = if litv == 0 {
+                1
+            } else {
+                0
+            };
+            let cslot: i64 = __mind_load_i64(cursor);
+            __mind_store_i64(nodes + cslot * 32 + 0, 2);
+            __mind_store_i64(nodes + cslot * 32 + 8, cval);
+            __mind_store_i64(nodes + cslot * 32 + 16, 0);
+            __mind_store_i64(nodes + cslot * 32 + 24, 0);
+            __mind_store_i64(cursor, cslot + 1);
+            return cslot;
+        }
         let oslot: i64 = flatten_ast(operand, buf, params_addr, n_params, nodes, cursor);
         if oslot < 0 {
             return 0 - 1;
@@ -13123,6 +13142,44 @@ pub fn flatten_ast_le(node: i64, buf: i64, params_addr: i64, n_params: i64, node
         __mind_store_i64(cursor, slot + 1);
         return slot;
     }
+    if k == ast_not() {
+        // Unary logical NOT `!x` desugars to `x == 0` (operand, synth CONST 0, Eq
+        // binop LAST) — mirrors the base flatten_ast ast_not arm, byte-identical vs
+        // --emit-mic3. Additive: enables `!x` inside a multi-statement let body.
+        // `!<int-literal>` fast path — mirrors src/eval/lower.rs `!Lit(Int(n))` => a
+        // single ConstI64((n == 0)); one const leaf, NOT operand+zero+Eq.
+        let notop: i64 = ast_child0(node);
+        if ast_kind(notop) == ast_int_lit() {
+            let litv: i64 = if ast_child1(notop) == 1 {
+                ast_child0(notop)
+            } else {
+                parse_int_span(buf, ast_span_lo(notop), ast_span_hi(notop), 0)
+            };
+            let cval: i64 = if litv == 0 {
+                1
+            } else {
+                0
+            };
+            return desc_emit_const(nodes, cursor, cval);
+        }
+        let oslot: i64 = flatten_ast_le(ast_child0(node), buf, params_addr, n_params, nodes, cursor, lenv, lcount);
+        if oslot < 0 {
+            return 0 - 1;
+        }
+        let zslot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + zslot * 32 + 0, 2);
+        __mind_store_i64(nodes + zslot * 32 + 8, 0);
+        __mind_store_i64(nodes + zslot * 32 + 16, 0);
+        __mind_store_i64(nodes + zslot * 32 + 24, 0);
+        __mind_store_i64(cursor, zslot + 1);
+        let slot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + slot * 32 + 0, 1);
+        __mind_store_i64(nodes + slot * 32 + 8, binop_to_byte(op_eq()));
+        __mind_store_i64(nodes + slot * 32 + 16, oslot);
+        __mind_store_i64(nodes + slot * 32 + 24, zslot);
+        __mind_store_i64(cursor, slot + 1);
+        return slot;
+    }
     if k == ast_struct_lit() {
         // PARSE-ONLY frontier: reject struct-literal construction (fail closed).
         return 0 - 1;
@@ -13272,6 +13329,21 @@ pub fn count_nonparam_nodes(node: i64, buf: i64, params_addr: i64, n_params: i64
     }
     if k == ast_neg() {
         // `-x` -> CONST 0 (1 instr) + `sub` binop (1 instr) + the operand's own instrs.
+        let o: i64 = count_nonparam_nodes(ast_child0(node), buf, params_addr, n_params);
+        if o < 0 {
+            return 0 - 1;
+        }
+        return 2 + o;
+    }
+    if k == ast_not() {
+        // `!<int-literal>` fast path — the oracle collapses `!Lit(n)` to ONE ConstI64,
+        // so the pre-count must be 1 (not 2 + operand's 1). Mirror flatten_ast exactly.
+        if ast_kind(ast_child0(node)) == ast_int_lit() {
+            return 1;
+        }
+        // `!x` -> CONST 0 (1 instr) + `==` binop (1 instr) + the operand's own instrs.
+        // Parallels the ast_neg arm and the base flatten_ast ast_not desugar so the
+        // pre-count agrees with the flattener (no buffer under-allocation).
         let o: i64 = count_nonparam_nodes(ast_child0(node), buf, params_addr, n_params);
         if o < 0 {
             return 0 - 1;
@@ -13542,6 +13614,33 @@ pub fn flatten_ast_lv(node: i64, buf: i64, params_addr: i64, n_params: i64, node
         __mind_store_i64(nodes + slot * 32 + 24, first_cons);
         __mind_store_i64(cursor, slot + 1);
         return slot;
+    }
+    if k == ast_not() {
+        // Unary logical NOT `!x` desugars to `x == 0` (operand, synth CONST 0, Eq
+        // binop LAST) — mirrors the base flatten_ast ast_not arm, byte-identical vs
+        // --emit-mic3. Additive: enables `!x` inside a let-value / module body.
+        // `!<int-literal>` fast path — mirrors src/eval/lower.rs `!Lit(Int(n))` => a
+        // single ConstI64((n == 0)); one const leaf, NOT operand+zero+Eq.
+        let notop: i64 = ast_child0(node);
+        if ast_kind(notop) == ast_int_lit() {
+            let litv: i64 = if ast_child1(notop) == 1 {
+                ast_child0(notop)
+            } else {
+                parse_int_span(buf, ast_span_lo(notop), ast_span_hi(notop), 0)
+            };
+            let cval: i64 = if litv == 0 {
+                1
+            } else {
+                0
+            };
+            return desc_emit_const(nodes, cursor, cval);
+        }
+        let oslot: i64 = flatten_ast_lv(ast_child0(node), buf, params_addr, n_params, nodes, cursor, lvenv, nlv);
+        if oslot < 0 {
+            return 0 - 1;
+        }
+        let zslot: i64 = desc_emit_const(nodes, cursor, 0);
+        return desc_emit_binop(nodes, cursor, binop_to_byte(op_eq()), oslot, zslot);
     }
     if k == ast_struct_lit() {
         return flatten_struct_lit_lv(node, buf, params_addr, n_params, nodes, cursor, lvenv, nlv);
