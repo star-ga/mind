@@ -435,6 +435,71 @@ jobs:
             --features "mlir-build std-surface cross-module-imports" \
             --test phase_g_keystone_bootstrap -- --nocapture
 
+  executable_miscompile_gate:
+    name: Executable miscompile gate (compile + run + assert)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # Compile a tiny deterministic MIND kernel to a cdylib, dlopen it, call it,
+    # and ASSERT the one true integer result. The byte-identity keystone proves
+    # two builds AGREE; this gate proves the compiled code actually COMPUTES the
+    # right answer — it catches a silent miscompile that is self-consistent
+    # across substrates (e.g. a wrong operator lowering) and would otherwise ship
+    # green. MIND_BENCH_REQUIRE=1 makes a missing MLIR toolchain a hard failure
+    # so the gate can never pass vacuously.
+    env:
+      http_proxy: ""
+      https_proxy: ""
+      no_proxy: ""
+      MIND_BENCH_REQUIRE: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust (nightly)
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-exec-gate-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-exec-gate-
+
+      - name: Install MLIR toolchain (Ubuntu 24.04 LLVM 20)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mlir-20-tools clang-20
+          echo "/usr/lib/llvm-20/bin" >> "$GITHUB_PATH"
+
+      - name: Verify toolchain on PATH
+        run: |
+          mlir-opt --version | head -1
+          mlir-translate --version | head -1
+          clang --version | head -1
+
+      - name: Build mindc (MLIR backend)
+        run: |
+          cargo build --release --no-default-features \
+            --features "mlir-build std-surface cross-module-imports" --bin mindc
+
+      - name: Compile the deterministic kernel to a cdylib
+        run: |
+          ./target/release/mindc build examples/native/ci_kernel.mind \
+            --release --emit cdylib --out /tmp/libci_kernel.so
+        working-directory: ${{ github.workspace }}
+
+      - name: Run kernel + assert known output (285)
+        run: |
+          MINDC_SO=/tmp/libci_kernel.so \
+            python3 examples/native/ci_kernel_smoke.py
+        working-directory: ${{ github.workspace }}
+
   mindcraft_check:
     name: Mindcraft check (RFC 0007 Phase 6)
     runs-on: ubuntu-latest
