@@ -949,6 +949,60 @@ impl LoweringContext {
             ));
         }
 
+        // FLOAT ⨯ INTEGER mismatch on a merge edge. In a type-checked program a
+        // merge column is single-typed, so this only arises when ONE branch is
+        // empty and the lowering synthesized an integer ZERO placeholder
+        // (`ConstI64(0)`) for its absent edge while the other branch carries a
+        // real float value. (The lowering-side placeholder retyper cannot always
+        // see this — e.g. the changed edge is `x * hi` over f64 PARAMETERS, whose
+        // f64-ness is invisible to the branch-instr scan.) Here we have the
+        // ground-truth kinds, so re-emit the integer arm as a matching float
+        // ZERO constant and adopt the float type for the whole column. The
+        // integer arm is provably a `0` constant in this scenario; assert it and
+        // fail closed otherwise rather than silently bit-reinterpreting.
+        fn float_ty(k: &ValueKind) -> Option<&'static str> {
+            match k {
+                ValueKind::ScalarF64 => Some("f64"),
+                ValueKind::ScalarF32 => Some("f32"),
+                _ => None,
+            }
+        }
+        // Parse the `%N` operand back to a ValueId so we can confirm the integer
+        // arm is a known zero constant before rewriting it as a float zero.
+        let parse_vid = |v: &str| -> Option<ValueId> {
+            v.strip_prefix('%')
+                .and_then(|s| s.parse::<usize>().ok())
+                .map(ValueId)
+        };
+        match (float_ty(then_kind), float_ty(else_kind)) {
+            // then = float, else = integer zero placeholder → make else a float 0.
+            (Some(fty), None) if int_width(else_kind).is_some() => {
+                let is_zero = parse_vid(else_val).and_then(|v| self.const_i64_map.get(&v).copied())
+                    == Some(0);
+                if is_zero {
+                    let name = format!("%mfz_{lbl}_{col}_e");
+                    writeln!(e_buf, "    {name} = arith.constant 0.0 : {fty}")
+                        .expect("write to string cannot fail");
+                    return Ok((then_kind.clone(), then_val.to_string(), name));
+                }
+                // Not a recognizable zero placeholder — fall through to the i64
+                // fallback below (preserves prior shape; verify_module will catch
+                // a genuine ill-typed merge upstream).
+            }
+            // else = float, then = integer zero placeholder → make then a float 0.
+            (None, Some(fty)) if int_width(then_kind).is_some() => {
+                let is_zero = parse_vid(then_val).and_then(|v| self.const_i64_map.get(&v).copied())
+                    == Some(0);
+                if is_zero {
+                    let name = format!("%mfz_{lbl}_{col}_t");
+                    writeln!(t_buf, "    {name} = arith.constant 0.0 : {fty}")
+                        .expect("write to string cannot fail");
+                    return Ok((else_kind.clone(), name, else_val.to_string()));
+                }
+            }
+            _ => {}
+        }
+
         match (int_width(then_kind), int_width(else_kind)) {
             (Some(tw), Some(ew)) if tw != ew => {
                 // Widen the narrower arm to i64.
@@ -2013,6 +2067,20 @@ impl LoweringContext {
                     for a in args {
                         match self.values.get(a) {
                             Some(ValueKind::ScalarI64) => {}
+                            // RFC 0012 §5.1 — a scalar `f64` call argument is a
+                            // native MLIR scalar type, NOT an aggregate. The
+                            // generic `func.call` lowering below already threads
+                            // it through as `f64` (the callee param slot is typed
+                            // from `fn_signatures`, the value passes untouched
+                            // since `phys == target`, and the result is tracked
+                            // at the callee's `ScalarF64` return kind). It stays
+                            // on the STRICT float path — no FMA-contraction, no
+                            // reassociation — because a call only forwards the
+                            // value; the f64 arithmetic that produced it already
+                            // lowered to strict `arith.*f`. Tensor / struct /
+                            // aggregate args remain RFC 0005 phase 2+ and still
+                            // fail loud in the catch-all arm below.
+                            Some(ValueKind::ScalarF64) => {}
                             _ => {
                                 return Err(MlirLowerError::UnsupportedOp {
                                     instr_index,
@@ -3688,6 +3756,12 @@ impl LoweringContext {
                 for ec in then_sub.extern_calls {
                     self.extern_calls.insert(ec);
                 }
+                // Bubble up integer-constant values so the merge-kind resolver can
+                // recognise a synthesized ZERO placeholder on a branch edge and
+                // re-type it to a float when the other edge is a float column.
+                for (vid, v) in then_sub.const_i64_map {
+                    self.const_i64_map.insert(vid, v);
+                }
                 let then_ends_with_return = then_instrs
                     .last()
                     .map(instr_is_block_terminator)
@@ -3726,6 +3800,11 @@ impl LoweringContext {
                 // Bubble up extern_calls from the else sub-context.
                 for ec in else_sub.extern_calls {
                     self.extern_calls.insert(ec);
+                }
+                // Bubble up integer-constant values (see the then branch) so a
+                // synthesized zero placeholder on the else edge is recognisable.
+                for (vid, v) in else_sub.const_i64_map {
+                    self.const_i64_map.insert(vid, v);
                 }
                 let else_ends_with_return = else_instrs
                     .last()
