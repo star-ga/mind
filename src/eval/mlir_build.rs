@@ -314,7 +314,7 @@ fn run_mlir_translate(input: &str, tools: &BuildTools) -> Result<String, BuildEr
 /// `.symtab`/`.strtab`, making the keystone artifact non-deterministic and
 /// silently breaking the cross-substrate byte-identity claim.
 #[cfg(feature = "mlir-build")]
-fn compile_runtime_support_obj(tools: &BuildTools) -> Result<NamedTempFile, BuildError> {
+pub(crate) fn compile_runtime_support_obj(tools: &BuildTools) -> Result<NamedTempFile, BuildError> {
     let src_dir = tempfile::tempdir()?;
     let src_path = src_dir.path().join("mind_intrinsics.c");
     std::fs::write(&src_path, MIND_RUNTIME_SUPPORT_C.as_bytes())?;

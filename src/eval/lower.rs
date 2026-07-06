@@ -6216,10 +6216,97 @@ fn lower_expr(
             ir.instrs.push(Instr::ConstI64(id, 0));
             id
         }
-        // `print(...)` is NOT yet lowered in the compiled (codegen) path — the
-        // side effect is dropped (KNOWN GAP, tracked #54; the tree-walking
-        // interpreter DOES execute print). Emit the unit placeholder explicitly
-        // rather than via the silent catch-all. Byte-identical to the old path.
+        // `print(...)` — real lowering in the compiled (codegen) path (#54).
+        // Mirrors the `assert` desugar below: each argument is emitted as a
+        // runtime extern call collected through the standard `extern_calls`
+        // mechanism — NO new IR variant, MLIR arm, or wire-format change, so
+        // the keystone bytes are untouched (no bootstrap/gate program uses
+        // `print`). Three helpers already live in runtime-support/
+        // mind_intrinsics.c: `printI64(i64)` / `printNewline()` (the
+        // executable-print helpers) and `print_bytes(addr, len)` (raw fd-1
+        // byte writer). All three write through the same unbuffered fd-1 path,
+        // so output is deterministic and locale-independent.
+        //
+        // Each NON-string arg is printed via `printI64` FOLLOWED BY
+        // `printNewline`, so every numeric value lands on its OWN line and is
+        // unambiguously parseable (the DIGEST words w0..w3 must be recoverable
+        // separately, per #54 step 5). String-literal args (human-readable
+        // labels) are written INLINE via `print_bytes` (no trailing newline)
+        // using the existing String-literal lowering, so they prefix the value
+        // on the same line without breaking numeric parseability.
+        #[cfg(feature = "std-surface")]
+        ast::Node::Print { args, .. } => {
+            for arg in args {
+                match arg {
+                    // String label: reuse the tested String-literal lowering
+                    // (returns a 3-field `{addr,len,cap}` record), then write
+                    // its bytes with `print_bytes(addr, len)` — no newline, so
+                    // the next numeric arg stays parseable on its own line. No
+                    // pointer bits reach stdout: only the string BYTES and the
+                    // decimal i64 values are written.
+                    ast::Node::Lit(Literal::Str(_), _) => {
+                        let rec = lower_expr(arg, ir, env, struct_env, receiver_types);
+                        // addr = __mind_load_i64(rec + 0)
+                        let addr = ir.fresh();
+                        ir.instrs.push(Instr::Call {
+                            dst: addr,
+                            name: "__mind_load_i64".to_string(),
+                            args: vec![rec],
+                        });
+                        // len = __mind_load_i64(rec + 8)
+                        let off8 = ir.fresh();
+                        ir.instrs.push(Instr::ConstI64(off8, 8));
+                        let len_addr = ir.fresh();
+                        ir.instrs.push(Instr::BinOp {
+                            dst: len_addr,
+                            op: BinOp::Add,
+                            lhs: rec,
+                            rhs: off8,
+                        });
+                        let len = ir.fresh();
+                        ir.instrs.push(Instr::Call {
+                            dst: len,
+                            name: "__mind_load_i64".to_string(),
+                            args: vec![len_addr],
+                        });
+                        // print_bytes(addr, len) — result discarded.
+                        let sink = ir.fresh();
+                        ir.instrs.push(Instr::Call {
+                            dst: sink,
+                            name: "print_bytes".to_string(),
+                            args: vec![addr, len],
+                        });
+                    }
+                    // Numeric (i64) arg: printI64(v); printNewline() — one value
+                    // per line for unambiguous downstream parsing.
+                    _ => {
+                        let v = lower_expr(arg, ir, env, struct_env, receiver_types);
+                        let sink = ir.fresh();
+                        ir.instrs.push(Instr::Call {
+                            dst: sink,
+                            name: "printI64".to_string(),
+                            args: vec![v],
+                        });
+                        let nl = ir.fresh();
+                        ir.instrs.push(Instr::Call {
+                            dst: nl,
+                            name: "printNewline".to_string(),
+                            args: vec![],
+                        });
+                    }
+                }
+            }
+            // `print(...)` is a statement; its value is discarded. Return the
+            // explicit unit placeholder.
+            let id = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(id, 0));
+            id
+        }
+        // Without std-surface the runtime print helpers / extern-call
+        // declaration machinery are absent, so keep the historical drop:
+        // emit the unit placeholder explicitly (byte-identical to the old
+        // catch-all). #54 print lowering is a std-surface feature.
+        #[cfg(not(feature = "std-surface"))]
         ast::Node::Print { .. } => {
             let id = ir.fresh();
             ir.instrs.push(Instr::ConstI64(id, 0));
