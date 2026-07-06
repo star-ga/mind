@@ -78,7 +78,7 @@ pub use pipeline::{
     compile_to_mic_text,
 };
 #[cfg(any(feature = "mlir-lowering", feature = "mlir-build"))]
-pub use pipeline::{MlirProducts, lower_to_mlir};
+pub use pipeline::{MlirProducts, lower_to_mlir, lower_to_mlir_with_entry};
 pub use runtime::types::{BackendTarget, DeviceKind};
 
 #[cfg(any(feature = "mlir-lowering", feature = "mlir-build"))]

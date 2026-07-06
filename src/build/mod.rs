@@ -248,11 +248,29 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
         BuildError::Failed(format!("cannot read source {}: {e}", entry_path.display()))
     })?;
 
+    // The emit kind is part of the artifact identity: a `cdylib` shared object,
+    // a `binary` PIE executable, and a relocatable `object` are three distinct
+    // artifacts produced from the same source/target/optimize inputs, and must
+    // NEVER share a cache slot. Before this discriminator, a prior `cdylib`
+    // build seeded the cache under a key that a later `--emit=binary` build then
+    // hit, copying the shared object out as the "binary" (Type DYN, entry 0x0,
+    // no PT_INTERP → segfault on run). The discriminator is threaded through the
+    // existing `dep_hashes` preimage slot so no cache-key signature changes.
+    //
+    // `cdylib` intentionally contributes NO extra entry, keeping its cache key
+    // byte-identical to the historical value — that is what the Phase G warm-cache
+    // keystone probe (which recomputes the cdylib key with empty dep-hashes)
+    // continues to match. `binary` / `object` get distinct entries, so they no
+    // longer collide with `cdylib` or with each other.
+    let emit_discriminator: Vec<String> = match eff_emit {
+        EmitKind::Cdylib => Vec::new(),
+        other => vec![format!("emit={}", other.as_str())],
+    };
     let cache_key = module_cache_key(
         &source_bytes,
         eff_target,
         eff_optimize,
-        &[], // Phase A: no transitive dep hashes; Phase D/E deps extend this
+        &emit_discriminator, // artifact-kind discriminator (Phase D/E deps extend this)
         compiler_version,
         edition,
     );
@@ -293,6 +311,11 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
                         EmitKind::Object => ensure_object_extension(artifact_path),
                         EmitKind::Binary => artifact_path,
                     };
+                    // A cached artifact is restored by copying bytes out of the
+                    // cache store (0644); a `binary` must be executable to run,
+                    // so re-assert the executable bit on the warm-cache path.
+                    // The cold link path already yields a `+x` file from `cc`.
+                    ensure_executable_if_binary(&final_path, eff_emit);
                     let byte_count = fs::metadata(&final_path).map(|m| m.len()).unwrap_or(0);
                     return Ok(BuildOutput {
                         artifact_path: final_path,
@@ -388,6 +411,10 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
         EmitKind::Object => ensure_object_extension(final_path),
         EmitKind::Binary => final_path,
     };
+    // The cold link path yields a `+x` file from `cc`, but a move/copy to the
+    // requested `--out` path can land on a filesystem that drops the bit;
+    // re-assert it for `binary` so the fresh artifact is directly runnable.
+    ensure_executable_if_binary(&final_path, eff_emit);
 
     // -------------------------------------------------------------------------
     // Phase F — write compiled artifact to cache (always, even with --no-cache)
@@ -430,6 +457,36 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
 // ---------------------------------------------------------------------------
 // Phase F helpers
 // ---------------------------------------------------------------------------
+
+/// Ensure a `binary` artifact carries the owner/group/other execute bits.
+///
+/// A `cdylib`/`object` is never executed directly, so this is a no-op for them;
+/// only a `binary` (a PIE executable) needs `+x`. This is idempotent and covers
+/// both the warm-cache restore (bytes copied out of the 0644 cache store) and a
+/// cross-filesystem move of the freshly linked artifact.
+fn ensure_executable_if_binary(path: &Path, emit: EmitKind) {
+    if emit != EmitKind::Binary {
+        return;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = fs::metadata(path) {
+            let mut perms = meta.permissions();
+            let mode = perms.mode();
+            // Add execute wherever the matching read bit is set (0644 -> 0755).
+            let new_mode = mode | ((mode & 0o444) >> 2);
+            if new_mode != mode {
+                perms.set_mode(new_mode);
+                let _ = fs::set_permissions(path, perms);
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+}
 
 /// Copy `src` to `dest`, trying rename first (faster, same filesystem).
 fn copy_or_rename(src: &Path, dest: &Path) -> Result<(), std::io::Error> {

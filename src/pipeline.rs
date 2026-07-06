@@ -404,12 +404,30 @@ pub fn lower_to_mlir(
     ir: &ir::IRModule,
     grad: Option<&autodiff::GradientResult>,
 ) -> Result<MlirProducts, mlir::MlirLowerError> {
+    lower_to_mlir_with_entry(ir, grad, false)
+}
+
+/// Like [`lower_to_mlir`], but with an explicit `suppress_module_entry` control
+/// threaded into the primal lowering. When `true`, the module's synthetic
+/// `@main` is suppressed so it lowers to a pure LIBRARY object (used when
+/// compiling a non-entry substrate module for native cross-module linking).
+/// Every existing caller reaches this through the `false`-defaulting
+/// [`lower_to_mlir`] facade, so the default build stays byte-identical.
+#[cfg(all(
+    any(feature = "mlir-lowering", feature = "mlir-build"),
+    feature = "autodiff"
+))]
+pub fn lower_to_mlir_with_entry(
+    ir: &ir::IRModule,
+    grad: Option<&autodiff::GradientResult>,
+    suppress_module_entry: bool,
+) -> Result<MlirProducts, mlir::MlirLowerError> {
     let mut canonical_ir = ir.clone();
     ir::verify_module(&canonical_ir)?;
     opt::ir_canonical::canonicalize_module(&mut canonical_ir);
     ir::verify_module(&canonical_ir)?;
 
-    let primal_mlir = mlir::lower_ir_to_mlir(&canonical_ir)?.text;
+    let primal_mlir = mlir::lower_ir_to_mlir_with_entry(&canonical_ir, suppress_module_entry)?.text;
 
     let grad_mlir = if let Some(grad) = grad {
         let mut grad_ir = grad.gradient_module.clone();
@@ -438,12 +456,28 @@ pub fn lower_to_mlir(
     not(feature = "autodiff")
 ))]
 pub fn lower_to_mlir(ir: &ir::IRModule) -> Result<MlirProducts, mlir::MlirLowerError> {
+    lower_to_mlir_with_entry(ir, false)
+}
+
+/// Like [`lower_to_mlir`], but with an explicit `suppress_module_entry` control
+/// threaded into the primal lowering (see the autodiff-enabled variant for the
+/// full contract). Every existing caller reaches this through the
+/// `false`-defaulting [`lower_to_mlir`] facade, so the default build stays
+/// byte-identical.
+#[cfg(all(
+    any(feature = "mlir-lowering", feature = "mlir-build"),
+    not(feature = "autodiff")
+))]
+pub fn lower_to_mlir_with_entry(
+    ir: &ir::IRModule,
+    suppress_module_entry: bool,
+) -> Result<MlirProducts, mlir::MlirLowerError> {
     let mut canonical_ir = ir.clone();
     ir::verify_module(&canonical_ir)?;
     opt::ir_canonical::canonicalize_module(&mut canonical_ir);
     ir::verify_module(&canonical_ir)?;
 
-    let primal_mlir = mlir::lower_ir_to_mlir(&canonical_ir)?.text;
+    let primal_mlir = mlir::lower_ir_to_mlir_with_entry(&canonical_ir, suppress_module_entry)?.text;
 
     Ok(MlirProducts {
         primal_mlir,
