@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3037 | **Est. tokens:** ~7,283,038
-**Generated:** 2026-07-06 17:20 UTC
+**Files:** 3037 | **Est. tokens:** ~7,284,646
+**Generated:** 2026-07-06 17:24 UTC
 
 ## Token Budget Guide
 
@@ -373,7 +373,7 @@
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
 | `src/` | 7 | ~17,821 |
-| `src/ast/` | 1 | ~7,430 |
+| `src/ast/` | 1 | ~7,632 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 2 | ~25,459 |
 | `src/build/` | 2 | ~12,095 |
@@ -387,7 +387,7 @@
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
-| `src/fmt/` | 3 | ~19,662 |
+| `src/fmt/` | 3 | ~19,784 |
 | `src/ir/` | 5 | ~32,357 |
 | `src/ir/compact/` | 3 | ~15,194 |
 | `src/ir/compact/v2/` | 8 | ~37,885 |
@@ -399,12 +399,12 @@
 | `src/opt/` | 4 | ~9,649 |
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 1 | ~3,811 |
-| `src/project/` | 3 | ~30,329 |
+| `src/project/` | 3 | ~31,240 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,999 |
-| `src/type_checker/` | 1 | ~11,258 |
+| `src/type_checker/` | 1 | ~11,631 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 40 | ~186,313 |
@@ -3727,7 +3727,7 @@
 - `SKILL.md` (~6002 tok, huge) — Write MIND Code
 ### `src/ast/`
 
-- `mod.rs` (~7430 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~7632 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~3890 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3808,7 +3808,7 @@
 
 - `cli.rs` (~3873 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~15195 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~15317 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4693 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3885,7 +3885,7 @@
 ### `src/project/`
 
 - `mod.rs` (~23034 tok, huge) — Copyright 2025 STARGA Inc.
-- `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
+- `module_table.rs` (~4577 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~3629 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
@@ -3913,7 +3913,7 @@
 - `mod.rs` (~5999 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `resolve.rs` (~11258 tok, huge) — Copyright 2025 STARGA Inc.
+- `resolve.rs` (~11631 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
