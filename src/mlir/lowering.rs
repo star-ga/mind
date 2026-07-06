@@ -6451,6 +6451,7 @@ impl LoweringContext {
         mr: usize,
         pl: usize,
         acc_ty: &str,
+        acc_bits: usize,
     ) {
         use std::fmt::Write;
         let mut line = |s: &str| {
@@ -6531,9 +6532,6 @@ impl LoweringContext {
                     2 * nr,
                     2 * nr
                 ));
-                line(&format!(
-                    "                %{p}_pw{t} = arith.extsi %{p}_pm{t} : vector<{pl}xi32> to vector<{nr}xi64>"
-                ));
             } else {
                 // Non-x86 (aarch64): portable, exact-integer equivalent of the
                 // x86 `vpmaddwd` pairwise contraction (the intrinsic does not
@@ -6571,12 +6569,27 @@ impl LoweringContext {
                 line(&format!(
                     "                %{p}_pm{t} = arith.addi %{p}_ev{t}, %{p}_od{t} : vector<{nr}xi32>"
                 ));
+            }
+            // Accumulate the `vpmaddwd` i32 partials. For the AVX2 rung
+            // (acc_bits == 32) add them DIRECTLY in i32 (`vpaddd`) end-to-end:
+            // each output lane ≤ K·127·127 < 2³¹ (safe to K≈130k), so the
+            // per-K-pair sign-extend to i64 (8× `vpmovsxdq` + `vpaddq` +
+            // `vextracti128`, all port-5-bound on Haswell — a 5:1 overhead ratio)
+            // is pure waste. Integer add is associative, so i32-accumulate-then-
+            // widen-once ≡ widen-each-then-i64-sum, BIT-IDENTICAL (the same
+            // in-panel i32 bound the VNNI rung already relies on). The VNNI rung
+            // (acc_bits == 64) still widens once here because its bias-corrected
+            // partial (`main − 128·Σb`) is formed as i64 after the quad loop.
+            let src = if acc_bits == 64 {
                 line(&format!(
                     "                %{p}_pw{t} = arith.extsi %{p}_pm{t} : vector<{nr}xi32> to vector<{nr}xi64>"
                 ));
-            }
+                format!("%{p}_pw{t}")
+            } else {
+                format!("%{p}_pm{t}")
+            };
             line(&format!(
-                "                %{p}_na{t} = arith.addi %{p}_acc{t}, %{p}_pw{t} : vector<{nr}xi64>"
+                "                %{p}_na{t} = arith.addi %{p}_acc{t}, {src} : vector<{nr}xi{acc_bits}>"
             ));
             yields.push(format!("%{p}_na{t}"));
         }
@@ -7022,6 +7035,24 @@ impl LoweringContext {
         // output column consumes a (k,k+1) i16 pair, so a 2*NR=16-wide i16
         // multiply yields NR=8 i32 partials.
         let pl: usize = nr;
+        // Accumulator + C-scratch element width. The AVX2 `vpmaddwd` rung
+        // accumulates its i32 partials DIRECTLY in i32 (`vpaddd`) end-to-end and
+        // widens to the i32 C output only implicitly (the C-scratch IS i32): each
+        // output lane ≤ K·127·127 (K=512 → 8,258,048 ≪ 2³¹, safe to K≈130k), so
+        // the double-width i64 accumulate (per-K-pair `vpmovsxdq`+`vpaddq`,
+        // port-5-bound) is pure overhead. Integer add is associative ⇒ i32-
+        // accumulate-then-store ≡ widen-each-then-i64-sum-then-truncate,
+        // BIT-IDENTICAL (canary `917d353b` unchanged). The VNNI rung keeps the
+        // i64 C-scratch: its bias-corrected partial (`main − 128·Σb`) is formed
+        // as i64 after the quad loop, so it widens once in the microkernel.
+        let acc_bits: usize = match mode {
+            IntDotMode::Avx2 => 32,
+            IntDotMode::Vnni => 64,
+        };
+        let acc_bytes: i64 = (acc_bits / 8) as i64;
+        // C-scratch element type string (matches acc_bits): the GEP element and
+        // load/store type for the private per-panel accumulator.
+        let cty = format!("i{acc_bits}");
         let mut line = |s: &str| {
             writeln!(buf, "{s}").expect("write to string cannot fail");
         };
@@ -7037,7 +7068,7 @@ impl LoweringContext {
         line(&format!("    %{p}_cnc = arith.constant {nc} : index"));
         line(&format!("    %{p}_eb = arith.constant {eb} : i64"));
         line(&format!("    %{p}_ebs = arith.constant {eb_src} : i64"));
-        line(&format!("    %{p}_z0 = arith.constant 0 : i64"));
+        line(&format!("    %{p}_z0 = arith.constant 0 : {cty}"));
         // Zero in the packed-panel element type, for the zero-pad in packing.
         line(&format!("    %{p}_z0pty = arith.constant 0 : {pty}"));
         line(&format!("    %{p}_c2i = arith.constant 2 : i64"));
@@ -7046,11 +7077,12 @@ impl LoweringContext {
         line(&format!("    %{p}_cgrp = arith.constant {grp} : index"));
         line(&format!("    %{p}_cgrpi = arith.constant {grp} : i64"));
         line(&format!(
-            "    %{p}_zv = arith.constant dense<0> : vector<{nr}xi64>"
+            "    %{p}_zv = arith.constant dense<0> : vector<{nr}xi{acc_bits}>"
         ));
 
         // ── private scratch (heap malloc/free) ───────────────────────────────
-        // C-scratch: MC*NC i64.  Packed A: MC*KC {pty}.  Packed B: KC*NC {pty}.
+        // C-scratch: MC*NC {cty} (i32 for the AVX2 rung, i64 for VNNI).  Packed
+        // A: MC*KC {pty}.  Packed B: KC*NC {pty}.
         // (The interleaved K-pair layout reindexes the same MC*KC / KC*NC
         // element count — pair-count * 2 * MR = KC * MR, etc.)
         //
@@ -7060,8 +7092,8 @@ impl LoweringContext {
         // storage for the same computation in a different location — every GEP /
         // load / store below is byte-for-byte unchanged, so the lowering stays
         // byte-identical (the int8 AVX2 canary `917d353b` exercises this scratch).
-        // malloc takes a BYTE count: cs is i64 (8 B/elem), pa/pb are {pty}
-        // ({pty_bytes} B/elem).
+        // malloc takes a BYTE count: cs is {cty} ({acc_bytes} B/elem), pa/pb are
+        // {pty} ({pty_bytes} B/elem).
         let pty_bytes: i64 = match mode {
             IntDotMode::Avx2 => 2, // i16
             IntDotMode::Vnni => 1, // i8
@@ -7069,7 +7101,7 @@ impl LoweringContext {
         let cs_elems = (MC * nc) as i64;
         let pa_elems = (MC * KC) as i64;
         let pb_elems = (KC * nc) as i64;
-        let cs_bytes = cs_elems * 8;
+        let cs_bytes = cs_elems * acc_bytes;
         let pa_bytes = pa_elems * pty_bytes;
         let pb_bytes = pb_elems * pty_bytes;
         line(&format!(
@@ -7178,10 +7210,10 @@ impl LoweringContext {
         ));
         line(&format!(
             "            %{p}_zptr = llvm.getelementptr %{p}_cs[%{p}_zoff] : \
-             (!llvm.ptr, i64) -> !llvm.ptr, i64"
+             (!llvm.ptr, i64) -> !llvm.ptr, {cty}"
         ));
         line(&format!(
-            "            llvm.store %{p}_z0, %{p}_zptr : i64, !llvm.ptr"
+            "            llvm.store %{p}_z0, %{p}_zptr : {cty}, !llvm.ptr"
         ));
         line("          }");
         line("        }");
@@ -7483,8 +7515,9 @@ impl LoweringContext {
             "              %{p}_irbase = arith.muli %{p}_irb, %{p}_irpan : i64"
         ));
 
-        // ── microkernel: MR×NR i64 partial over this KC panel ────────────────
-        // Each A-row accumulator is vector<NRxi64> (NR=8 output columns). The
+        // ── microkernel: MR×NR i{acc_bits} partial over this KC panel ─────────
+        // Each A-row accumulator is vector<NRxi{acc_bits}> (NR=8 output columns);
+        // AVX2 accumulates in i32 (vpaddd) directly, VNNI in i64. The
         // K-contraction runs over K-GROUPS of `grp` steps (2 = pair for AVX2
         // vpmaddwd, 4 = quad for VNNI vpdpbusd); one int-dot instruction per
         // (row, group) contracts `grp` K-steps at once into NR=8 i32 partials.
@@ -7492,7 +7525,7 @@ impl LoweringContext {
         // the scalar oracle — byte-identical. The trailing <grp leftover K is a
         // scalar tail (shared by both rungs).
         let acc_ty = (0..mr)
-            .map(|_| format!("vector<{nr}xi64>"))
+            .map(|_| format!("vector<{nr}xi{acc_bits}>"))
             .collect::<Vec<_>>()
             .join(", ");
         line(&format!(
@@ -7504,7 +7537,7 @@ impl LoweringContext {
         let _ = line; // release the closure's &mut buf so the microkernel can write it
         match mode {
             IntDotMode::Avx2 => {
-                Self::emit_i8_microkernel_avx2(buf, p, nr, mr, pl, &acc_ty);
+                Self::emit_i8_microkernel_avx2(buf, p, nr, mr, pl, &acc_ty, acc_bits);
             }
             IntDotMode::Vnni => {
                 Self::emit_i8_microkernel_vnni(buf, p, nr, mr, &acc_ty);
@@ -7601,12 +7634,12 @@ impl LoweringContext {
                 format!("%{p}_tas{t}")
             };
             line(&format!(
-                "                %{p}_taw{t} = arith.extsi {tas_src} : {pty} to i64"
+                "                %{p}_taw{t} = arith.extsi {tas_src} : {pty} to i{acc_bits}"
             ));
             // Inner column loop over NR: scalar B[kk,n], product, scatter-add.
             line(&format!(
                 "                %{p}_tn{t} = scf.for %{p}_tj{t} = %{p}_c0 to %{p}_cnr \
-                 step %{p}_c1 iter_args(%{p}_tav{t} = %{p}_tacc{t}) -> (vector<{nr}xi64>) {{"
+                 step %{p}_c1 iter_args(%{p}_tav{t} = %{p}_tacc{t}) -> (vector<{nr}xi{acc_bits}>) {{"
             ));
             line(&format!(
                 "                  %{p}_tj{t}64 = arith.index_cast %{p}_tj{t} : index to i64"
@@ -7626,22 +7659,22 @@ impl LoweringContext {
                  !llvm.ptr -> {pty}"
             ));
             line(&format!(
-                "                  %{p}_tbw{t} = arith.extsi %{p}_tbs{t} : {pty} to i64"
+                "                  %{p}_tbw{t} = arith.extsi %{p}_tbs{t} : {pty} to i{acc_bits}"
             ));
             line(&format!(
-                "                  %{p}_tpp{t} = arith.muli %{p}_taw{t}, %{p}_tbw{t} : i64"
+                "                  %{p}_tpp{t} = arith.muli %{p}_taw{t}, %{p}_tbw{t} : i{acc_bits}"
             ));
             line(&format!(
-                "                  %{p}_told{t} = vector.extract %{p}_tav{t}[%{p}_tj{t}] : i64 from vector<{nr}xi64>"
+                "                  %{p}_told{t} = vector.extract %{p}_tav{t}[%{p}_tj{t}] : i{acc_bits} from vector<{nr}xi{acc_bits}>"
             ));
             line(&format!(
-                "                  %{p}_tnew{t} = arith.addi %{p}_told{t}, %{p}_tpp{t} : i64"
+                "                  %{p}_tnew{t} = arith.addi %{p}_told{t}, %{p}_tpp{t} : i{acc_bits}"
             ));
             line(&format!(
-                "                  %{p}_tins{t} = vector.insert %{p}_tnew{t}, %{p}_tav{t}[%{p}_tj{t}] : i64 into vector<{nr}xi64>"
+                "                  %{p}_tins{t} = vector.insert %{p}_tnew{t}, %{p}_tav{t}[%{p}_tj{t}] : i{acc_bits} into vector<{nr}xi{acc_bits}>"
             ));
             line(&format!(
-                "                  scf.yield %{p}_tins{t} : vector<{nr}xi64>"
+                "                  scf.yield %{p}_tins{t} : vector<{nr}xi{acc_bits}>"
             ));
             line("                }");
             tail_yields.push(format!("%{p}_tn{t}"));
@@ -7651,7 +7684,7 @@ impl LoweringContext {
             tail_yields.join(", ")
         ));
         line("              }");
-        // ── add the MR×NR i64 partial into the C-scratch tile ────────────────
+        // ── add the MR×NR i{acc_bits} partial into the C-scratch tile ────────
         for t in 0..mr {
             line(&format!(
                 "              %{p}_ct{t} = arith.constant {t} : i64"
@@ -7667,26 +7700,28 @@ impl LoweringContext {
             ));
             line(&format!(
                 "              %{p}_csp{t} = llvm.getelementptr %{p}_cs[%{p}_coff{t}] : \
-                 (!llvm.ptr, i64) -> !llvm.ptr, i64"
+                 (!llvm.ptr, i64) -> !llvm.ptr, {cty}"
             ));
             line(&format!(
-                "              %{p}_cold{t} = llvm.load %{p}_csp{t} {{alignment = 8 : i64}} : \
-                 !llvm.ptr -> vector<{nr}xi64>"
+                "              %{p}_cold{t} = llvm.load %{p}_csp{t} {{alignment = {acc_bytes} : i64}} : \
+                 !llvm.ptr -> vector<{nr}xi{acc_bits}>"
             ));
             line(&format!(
-                "              %{p}_cnew{t} = arith.addi %{p}_cold{t}, %{p}_vt#{t} : vector<{nr}xi64>"
+                "              %{p}_cnew{t} = arith.addi %{p}_cold{t}, %{p}_vt#{t} : vector<{nr}xi{acc_bits}>"
             ));
             line(&format!(
-                "              llvm.store %{p}_cnew{t}, %{p}_csp{t} {{alignment = 8 : i64}} : \
-                 vector<{nr}xi64>, !llvm.ptr"
+                "              llvm.store %{p}_cnew{t}, %{p}_csp{t} {{alignment = {acc_bytes} : i64}} : \
+                 vector<{nr}xi{acc_bits}>, !llvm.ptr"
             ));
         }
         line("            }"); // end ir
         line("          }"); // end jr
         line("        }"); // end pc
 
-        // ── after the K reduction: truncate the live MCe×NCe C-scratch to i32 ─
-        // and store to C[ic+r, jc+col] (C output element-byte = 4).
+        // ── after the K reduction: write the live MCe×NCe C-scratch out to
+        // C[ic+r, jc+col] (C output element-byte = 4). The VNNI rung's i64
+        // scratch truncates once to i32 here; the AVX2 rung's scratch is already
+        // i32 (it accumulated in i32 directly) so the store needs no trunc.
         line(&format!(
             "        %{p}_nmb = arith.divui %{p}_nce, %{p}_cnr : index"
         ));
@@ -7722,15 +7757,22 @@ impl LoweringContext {
         ));
         line(&format!(
             "            %{p}_csvp = llvm.getelementptr %{p}_cs[%{p}_csvi] : \
-             (!llvm.ptr, i64) -> !llvm.ptr, i64"
+             (!llvm.ptr, i64) -> !llvm.ptr, {cty}"
         ));
         line(&format!(
-            "            %{p}_csvv = llvm.load %{p}_csvp {{alignment = 8 : i64}} : \
-             !llvm.ptr -> vector<{nr}xi64>"
+            "            %{p}_csvv = llvm.load %{p}_csvp {{alignment = {acc_bytes} : i64}} : \
+             !llvm.ptr -> vector<{nr}xi{acc_bits}>"
         ));
-        line(&format!(
-            "            %{p}_csvt = arith.trunci %{p}_csvv : vector<{nr}xi64> to vector<{nr}xi32>"
-        ));
+        // i64 scratch (VNNI) truncates once to the i32 C output; the i32 scratch
+        // (AVX2) is already the C element type — store it directly.
+        let csv_store = if acc_bits == 64 {
+            line(&format!(
+                "            %{p}_csvt = arith.trunci %{p}_csvv : vector<{nr}xi64> to vector<{nr}xi32>"
+            ));
+            format!("%{p}_csvt")
+        } else {
+            format!("%{p}_csvv")
+        };
         line(&format!(
             "            %{p}_dvi = arith.addi %{p}_drb, %{p}_wc64 : i64"
         ));
@@ -7742,7 +7784,7 @@ impl LoweringContext {
              (!llvm.ptr, i64) -> !llvm.ptr, i8"
         ));
         line(&format!(
-            "            llvm.store %{p}_csvt, %{p}_dvp {{alignment = 4 : i64}} : \
+            "            llvm.store {csv_store}, %{p}_dvp {{alignment = 4 : i64}} : \
              vector<{nr}xi32>, !llvm.ptr"
         ));
         line("          }");
@@ -7758,14 +7800,21 @@ impl LoweringContext {
         ));
         line(&format!(
             "            %{p}_cstp = llvm.getelementptr %{p}_cs[%{p}_csti] : \
-             (!llvm.ptr, i64) -> !llvm.ptr, i64"
+             (!llvm.ptr, i64) -> !llvm.ptr, {cty}"
         ));
         line(&format!(
-            "            %{p}_cstv = llvm.load %{p}_cstp : !llvm.ptr -> i64"
+            "            %{p}_cstv = llvm.load %{p}_cstp : !llvm.ptr -> {cty}"
         ));
-        line(&format!(
-            "            %{p}_cstt = arith.trunci %{p}_cstv : i64 to i32"
-        ));
+        // As above: trunc the i64 (VNNI) scratch to i32; the i32 (AVX2) scratch
+        // is already the C element type.
+        let cst_store = if acc_bits == 64 {
+            line(&format!(
+                "            %{p}_cstt = arith.trunci %{p}_cstv : i64 to i32"
+            ));
+            format!("%{p}_cstt")
+        } else {
+            format!("%{p}_cstv")
+        };
         line(&format!(
             "            %{p}_dti = arith.addi %{p}_drb, %{p}_wt64 : i64"
         ));
@@ -7777,7 +7826,7 @@ impl LoweringContext {
              (!llvm.ptr, i64) -> !llvm.ptr, i8"
         ));
         line(&format!(
-            "            llvm.store %{p}_cstt, %{p}_dtp : i32, !llvm.ptr"
+            "            llvm.store {cst_store}, %{p}_dtp : i32, !llvm.ptr"
         ));
         line("          }");
         line("        }"); // end wr
