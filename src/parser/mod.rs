@@ -3344,6 +3344,23 @@ impl<'a> P<'a> {
                         };
                         continue;
                     } else {
+                        // Module-qualified value `mod.CONST` → bare cross-module
+                        // reference `CONST`: the namespace-access twin of the
+                        // `mod.fn(args)` → `fn(args)` normalisation above. When the
+                        // receiver is a bare identifier naming an imported MODULE,
+                        // `.CONST` selects a module-level export (a `const`, not a
+                        // value's field), and all module symbols share one global
+                        // link unit — so the bare reference resolves (the import
+                        // surface carries the name) and lowers directly, exactly as
+                        // the qualified-call form already does. A receiver that is
+                        // NOT an imported module keeps the normal FieldAccess path.
+                        if let Node::Lit(Literal::Ident(recv_name), _) = &node {
+                            if self.imports.iter().any(|s| s == recv_name) {
+                                let span = Span::new(node.span_start(), self.pos);
+                                node = Node::Lit(Literal::Ident(method), span);
+                                continue;
+                            }
+                        }
                         let span = Span::new(node.span_start(), self.pos);
                         node = Node::FieldAccess {
                             receiver: Box::new(node),

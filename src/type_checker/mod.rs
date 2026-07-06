@@ -3230,6 +3230,23 @@ fn cm_lookup_fn(name: &str) -> Option<crate::project::module_table::ExportedFn> 
     })
 }
 
+/// True iff ANY module in the active project table exports `name`. Unlike
+/// `cm_lookup_fn` (which resolves only typed `fn` signatures), this answers the
+/// bare resolvability question for EVERY exported symbol kind — `fn`, `const`,
+/// `type`, `struct` — so a cross-module const (`fixed_point.Q16_ONE`, which the
+/// parser has normalised to a bare `Q16_ONE` reference) or an explicitly
+/// `export`ed fn is not a genuinely-undefined reference. Empty on the
+/// default-feature / single-file (`mindc check`) path (table is `None`), so
+/// that path is byte-identical.
+#[cfg(feature = "cross-module-imports")]
+pub(crate) fn cm_symbol_exported(name: &str) -> bool {
+    CM_TABLE.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .is_some_and(|table| table.exports_symbol(name))
+    })
+}
+
 /// RFC 0005 Phase B — validate a call against an imported fn's
 /// signature.  Compares arity then per-arg types against the
 /// declared `param_types`; returns the declared `ret_type` as a
