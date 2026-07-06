@@ -1169,6 +1169,25 @@ fn compile_sources(
         objects.push(obj_path);
     }
 
+    // Native cross-module linking (executable path): compile every `std`
+    // substrate module transitively imported by the entry (std.sha256,
+    // std.arena, …) to its own native LIBRARY object and link it alongside the
+    // per-file objects, so the entry's external substrate symbols (`sha256`,
+    // `canon_*`, `ring_*`, …) resolve natively instead of staying undefined at
+    // link. Each substrate object lowers with `suppress_module_entry = true`,
+    // exporting its `pub fn` symbols but NO `@main` — no duplicate-`main`
+    // collision. An entry importing no substrate module yields an empty set,
+    // leaving the executable link byte-identical to the historical path. This
+    // runs before the project-table teardown so the substrate compiles still see
+    // the seeded stdlib table. Mirrors `build_cdylib_from_entry`'s extra-objects
+    // scan, but emits relocatable objects for the executable link path.
+    #[cfg(all(feature = "cross-module-imports", feature = "mlir-build"))]
+    {
+        let entry_src = fs::read_to_string(&entry_path).unwrap_or_default();
+        let mut subs = compile_substrate_objects(&entry_src, &obj_dir, backend, opts)?;
+        objects.append(&mut subs);
+    }
+
     #[cfg(feature = "cross-module-imports")]
     {
         crate::type_checker::cm_set_project_table(None);
@@ -1176,6 +1195,147 @@ fn compile_sources(
     }
 
     Ok(objects)
+}
+
+/// Compile every `std` substrate module transitively imported by `entry_src`
+/// to its own native relocatable LIBRARY object (no `@main`), returning the
+/// object paths to link alongside the entry object.
+///
+/// This is the executable-path counterpart to the substrate-object scan in
+/// [`build_cdylib_from_entry`]: it BFS-walks the substrate import graph (an
+/// entry importing `std.io_canon`, which itself imports `std.sha256`, pulls
+/// both), compiles each self-contained substrate module through the SAME rich
+/// canonical emitter, and lowers it with `suppress_module_entry = true` so the
+/// object exports its `pub fn` symbols globally but emits NO synthetic `@main`
+/// (a pure library object — no `objcopy` symbol-localisation needed). An entry
+/// importing no substrate module returns an empty vec, so the executable link
+/// stays byte-identical to the historical single-object path (the keystone
+/// imports no substrate module).
+#[cfg(all(feature = "cross-module-imports", feature = "mlir-build"))]
+fn compile_substrate_objects(
+    entry_src: &str,
+    obj_dir: &Path,
+    backend: &str,
+    opts: &BuildOptions,
+) -> Result<Vec<PathBuf>> {
+    use crate::eval::mlir_build;
+    use crate::pipeline::{CompileOptions, compile_source_with_name};
+    use crate::runtime::types::BackendTarget;
+    use std::collections::BTreeSet;
+
+    // Substrate modules whose `.o` we compile + link when imported. These are
+    // self-contained (they import nothing outside this set), so each object is
+    // complete on its own.
+    const SUBSTRATE: &[&str] = &[
+        "std.arena",
+        "std.io_canon",
+        "std.iouring",
+        "std.reactor",
+        "std.ring",
+        "std.sha256",
+        "std.time",
+    ];
+    fn scan_substrate_imports(src: &str) -> Vec<&'static str> {
+        let mut found = Vec::new();
+        if let Ok(ast) = crate::parser::parse(src) {
+            for item in &ast.items {
+                if let crate::ast::Node::Import { path, .. } = item {
+                    let key = path.join(".");
+                    for &name in SUBSTRATE {
+                        if key == name {
+                            found.push(name);
+                        }
+                    }
+                }
+            }
+        }
+        found
+    }
+
+    // BFS the substrate import graph (entry + transitive substrate deps).
+    let mut imported: BTreeSet<&'static str> = BTreeSet::new();
+    let mut worklist: Vec<&'static str> = scan_substrate_imports(entry_src);
+    while let Some(modname) = worklist.pop() {
+        if imported.insert(modname) {
+            if let Some((_, src)) = crate::project::stdlib::STDLIB_MIND_SOURCES
+                .iter()
+                .find(|(n, _)| *n == modname)
+            {
+                for dep in scan_substrate_imports(src) {
+                    if !imported.contains(dep) {
+                        worklist.push(dep);
+                    }
+                }
+            }
+        }
+    }
+    if imported.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let target = match backend {
+        "cuda" | "cuda-ampere" | "cuda-hopper" | "cuda-blackwell" | "cuda-rubin" | "rocm"
+        | "rocm-mi300" | "metal" | "metal-m4" | "webgpu" | "directx" | "oneapi" => {
+            BackendTarget::Gpu
+        }
+        "cerebras" | "wse" | "wse2" | "wse3" | "cs2" | "cs3" => BackendTarget::Cerebras,
+        _ => BackendTarget::Cpu,
+    };
+    let sub_opts = CompileOptions {
+        func: None,
+        enable_autodiff: false,
+        target,
+        manifest_exports: Vec::new(),
+        ..Default::default()
+    };
+
+    let tools =
+        mlir_build::resolve_tools().map_err(|e| anyhow!("MLIR build tools unavailable: {e}"))?;
+    let _ = opts;
+
+    let mut objs: Vec<PathBuf> = Vec::new();
+    for modname in imported {
+        if let Some((_, src)) = crate::project::stdlib::STDLIB_MIND_SOURCES
+            .iter()
+            .find(|(n, _)| *n == modname)
+        {
+            let prod = compile_source_with_name(src, Some(modname), &sub_opts).map_err(|e| {
+                let diags = e.into_diagnostics(Some(modname));
+                let rendered = diags
+                    .iter()
+                    .map(|d| crate::diagnostics::render(src, d))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if rendered.trim().is_empty() {
+                    anyhow!("substrate compile failed for {modname}")
+                } else {
+                    anyhow!("substrate compile failed for {modname}:\n{rendered}")
+                }
+            })?;
+            #[cfg(feature = "autodiff")]
+            let sub_mlir =
+                crate::pipeline::lower_to_mlir_with_entry(&prod.ir, prod.grad.as_ref(), true)
+                    .map_err(|e| anyhow!("substrate MLIR lowering for {modname}: {e}"))?;
+            #[cfg(not(feature = "autodiff"))]
+            let sub_mlir = crate::pipeline::lower_to_mlir_with_entry(&prod.ir, true)
+                .map_err(|e| anyhow!("substrate MLIR lowering for {modname}: {e}"))?;
+            let short = modname.rsplit('.').next().unwrap_or(modname);
+            let obj_path = obj_dir.join(format!("__std_{short}.o"));
+            let sub_bo = mlir_build::BuildOptions {
+                preset: mlir_build::preset_for_mlir(&sub_mlir.primal_mlir),
+                emit_mlir_file: None,
+                emit_llvm_file: None,
+                emit_obj_file: Some(&obj_path),
+                emit_shared: None,
+                opt_pipeline: None,
+                target_triple: None,
+            };
+            mlir_build::build_all(&sub_mlir.primal_mlir, &tools, &sub_bo)
+                .map_err(|e| anyhow!("substrate object build for {modname}: {e}"))?;
+            objs.push(obj_path);
+        }
+    }
+    Ok(objs)
 }
 
 /// Walk every parsed module's top-level `Node::EnumDef` items and build the
@@ -1292,8 +1452,6 @@ fn compile_single_source(
     opts: &BuildOptions,
     is_entry: bool, // true if this is the main entry point
 ) -> Result<()> {
-    use crate::eval;
-    use crate::parser;
     use crate::pipeline::{CompileOptions, compile_source_with_name};
     use crate::runtime::types::BackendTarget;
 
@@ -1325,7 +1483,7 @@ fn compile_single_source(
     };
 
     // Try to compile - if parser doesn't support all syntax, fall back to embedding
-    let _products = match compile_source_with_name(
+    let products = match compile_source_with_name(
         &source_code,
         Some(&source.to_string_lossy()),
         &compile_opts,
@@ -1343,24 +1501,6 @@ fn compile_single_source(
         }
     };
 
-    // Parse again to get AST for IR lowering
-    let module = match parser::parse_with_diagnostics(&source_code) {
-        Ok(m) => m,
-        Err(_) => {
-            warn_embedded_fallback(source, &source_code, &[], opts.verbose);
-            return compile_embedded_source(source, &source_code, output, backend, opts, is_entry);
-        }
-    };
-
-    // Lower AST to IR, then to MLIR
-    let ir_module = eval::lower_to_ir(&module);
-    let preset_str = if opts.release { "arith-linalg" } else { "core" };
-    let mlir_opts = eval::MlirEmitOptions {
-        lower_preset: Some(preset_str.to_string()),
-        mode: eval::MlirEmitMode::Executable,
-    };
-    let mlir = eval::emit_mlir_with_opts(&ir_module, &mlir_opts);
-
     // Use mlir-build if available
     #[cfg(feature = "mlir-build")]
     {
@@ -1368,8 +1508,33 @@ fn compile_single_source(
 
         match mlir_build::resolve_tools() {
             Ok(tools) => {
+                // Route the executable object through the SAME rich canonical
+                // emitter the cdylib branch uses (`pipeline::lower_to_mlir`) over
+                // the compiled `products.ir` — so calls / while / stores and the
+                // fused GEMM intrinsics lower for real, instead of the legacy
+                // Graph emitter that only handled tensor/graph ops and dropped
+                // the rest. A NON-entry object suppresses the synthetic
+                // module-level `@main` (`suppress_module_entry = !is_entry`) so it
+                // links as a pure library object with no duplicate `main`.
+                //
+                // A lowering failure is a HARD error here — it must never fall
+                // through to the launcher-stub, which would mask a real codegen
+                // gap as a false "build succeeded".
+                #[cfg(feature = "autodiff")]
+                let mlir_products = crate::pipeline::lower_to_mlir_with_entry(
+                    &products.ir,
+                    products.grad.as_ref(),
+                    !is_entry,
+                )
+                .map_err(|e| anyhow!("MLIR lowering failed: {e}"))?;
+                #[cfg(not(feature = "autodiff"))]
+                let mlir_products =
+                    crate::pipeline::lower_to_mlir_with_entry(&products.ir, !is_entry)
+                        .map_err(|e| anyhow!("MLIR lowering failed: {e}"))?;
+                let mlir = mlir_products.primal_mlir;
+
                 let build_opts = mlir_build::BuildOptions {
-                    preset: if opts.release { "arith-linalg" } else { "core" },
+                    preset: mlir_build::preset_for_mlir(&mlir),
                     emit_mlir_file: None,
                     emit_llvm_file: None,
                     emit_obj_file: Some(output),
@@ -1403,7 +1568,7 @@ fn compile_single_source(
 
     #[cfg(not(feature = "mlir-build"))]
     {
-        let _ = mlir; // Suppress unused variable warning
+        let _ = &products; // products.ir is only consumed by the mlir-build path
         compile_embedded_source(source, &source_code, output, backend, opts, is_entry)
     }
 }
@@ -1853,6 +2018,29 @@ fn native_link(
     let cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
 
     let mut cmd = Command::new(&cc);
+
+    // Compile the bundled runtime-support shim (runtime-support/mind_intrinsics.c:
+    // printI64 / printNewline / __mind_alloc / __mind_store_i8 / __mind_load_i64 …)
+    // to a temporary .o and link it into the executable, so those 72 MIND_EXPORT
+    // symbols resolve STATICALLY — exactly as the cdylib path already does via
+    // `build_all`'s `emit_shared` leg (`compile_runtime_support_obj`). Without
+    // this the exe link fails with `undefined reference to printI64` and falls
+    // back to a launcher stub — the documented executable-path false-green.
+    //
+    // The shim is compiled with the fixed `mind_intrinsics.c` basename +
+    // `-ffile-prefix-map` + no debug info (RFC 0015 bit-identity), so it does not
+    // perturb reproducibility. The returned NamedTempFile is bound for the whole
+    // function so the .o survives on disk until the link below finishes.
+    #[cfg(feature = "mlir-build")]
+    let _runtime_shim_obj = {
+        use crate::eval::mlir_build;
+        let tools = mlir_build::resolve_tools()
+            .map_err(|e| anyhow!("runtime-support shim: MLIR build tools unavailable: {e}"))?;
+        let shim = mlir_build::compile_runtime_support_obj(&tools)
+            .map_err(|e| anyhow!("runtime-support shim compile failed: {e}"))?;
+        cmd.arg(shim.path());
+        shim
+    };
 
     // Add object files
     for obj in objects {
