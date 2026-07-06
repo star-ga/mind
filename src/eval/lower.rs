@@ -6363,6 +6363,42 @@ fn lower_expr(
             ir.instrs.push(Instr::ConstI64(id, 0));
             id
         }
+        // An `export { … }` / `export fn f, g` DECLARATION reaches `lower_expr`
+        // only when it sits inside a `module { … }` block: the parser lowers a
+        // module block to a transparent `Node::Block`, which the top-level
+        // walker routes through `lower_expr` as a block-expression, so each
+        // contained item is lowered via the block statement loop. `export` is a
+        // module-level declaration in the SAME category as the `StructDef`/
+        // `EnumDef`/`Const` arms above — it yields NO runtime value — but it
+        // additionally carries the real side effect of recording the exported
+        // names, exactly as the top-level module-walker `Export` arm does
+        // (`ir.exports.extend(...)`). Record the names here so the export set is
+        // faithful (never a silent drop) and emit the unit placeholder for the
+        // (discarded) block value. `ir.exports` is a set serialised SORTED, so
+        // insertion order is irrelevant to determinism. Reached only by modules
+        // that use `module`-block exports — which previously PANICKED here — so
+        // no currently-compiling module (the keystone, every canary) reaches
+        // this arm and their emitted bytes stay byte-identical.
+        ast::Node::Export { names, .. } => {
+            ir.exports.extend(names.iter().cloned());
+            let id = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(id, 0));
+            id
+        }
+        // A `type X = Y` ALIAS is a pure compile-time declaration — it names an
+        // existing type and is resolved entirely by the type checker, carrying
+        // NO runtime value and NO lowering side effect. Like the `StructDef`/
+        // `EnumDef` arm above, it reaches `lower_expr` only when it sits inside a
+        // `module { … }` block (lowered as a block-expression through the
+        // statement loop), so emit the same unit placeholder. Reached only by
+        // modules using `module`-block type aliases — which previously PANICKED
+        // here — so no currently-compiling module reaches this arm and their
+        // emitted bytes stay byte-identical.
+        ast::Node::TypeAlias { .. } => {
+            let id = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(id, 0));
+            id
+        }
         // `break` / `continue` — emit a loop-control marker carrying a snapshot
         // of every in-scope var → its CURRENT ValueId at this point. The
         // `Instr::While` MLIR arm forwards each loop-carried var's current value
