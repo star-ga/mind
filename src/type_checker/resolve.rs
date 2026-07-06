@@ -463,6 +463,21 @@ fn suggest(name: &str, scopes: &Scopes, syms: &ModuleSyms) -> Option<String> {
     best.map(|(_, k)| k.to_string())
 }
 
+/// Feature-neutral shim over the cross-module export lookup. On a `mindc`
+/// built without `cross-module-imports` there is no project table, so this is a
+/// constant `false` and the resolver behaves byte-identically to the pre-change
+/// single-file path.
+#[cfg(feature = "cross-module-imports")]
+#[inline]
+fn cm_symbol_exported_res(name: &str) -> bool {
+    super::cm_symbol_exported(name)
+}
+#[cfg(not(feature = "cross-module-imports"))]
+#[inline]
+fn cm_symbol_exported_res(_name: &str) -> bool {
+    false
+}
+
 /// Resolver state threaded through the body walk.
 struct Resolver<'a> {
     syms: &'a ModuleSyms,
@@ -485,6 +500,11 @@ impl<'a> Resolver<'a> {
             // a separate type-resolution concern. Mirror `call_resolvable`'s `::`
             // treatment so a qualified value reference is never a bare-undefined.
             || name.contains("::")
+            // A symbol exported by a SIBLING project module (cross-module import).
+            // Covers module-qualified consts the parser normalised to bare names
+            // (`fixed_point.Q16_ONE` → `Q16_ONE`) and any other exported value.
+            // Empty (false) on the single-file / default path (no project table).
+            || cm_symbol_exported_res(name)
     }
 
     fn call_resolvable(&self, name: &str) -> bool {
@@ -537,6 +557,15 @@ impl<'a> Resolver<'a> {
         }
         #[cfg(feature = "cross-module-imports")]
         if super::cm_lookup_fn(name).is_some() {
+            return true;
+        }
+        // A name explicitly `export`ed by a sibling module (e.g. an
+        // `export fn q16_add` inside `module fixed_point { ... }`, which the
+        // parser normalises a `fixed_point.q16_add(...)` call down to). The
+        // explicit-export surface carries names for every kind, whereas
+        // `cm_lookup_fn` only sees typed fn signatures — so this catches the
+        // `export`-block fn form the signature table does not.
+        if cm_symbol_exported_res(name) {
             return true;
         }
         false
