@@ -325,6 +325,11 @@ fn emit_node(p: &mut Printer, node: &Node, _extra_indent: usize) {
         } => {
             emit_const(p, name, ty, value, attrs);
         }
+        Node::ExternConst {
+            name, ty, attrs, ..
+        } => {
+            emit_extern_const(p, name, ty, attrs);
+        }
         Node::TypeAlias {
             name,
             target,
@@ -604,6 +609,16 @@ fn emit_const(
     emit_expr(p, value);
 }
 
+fn emit_extern_const(p: &mut Printer, name: &str, ty: &TypeAnn, attrs: &[Attribute]) {
+    emit_attrs(p, attrs);
+    let ind = p.indent_str();
+    p.push(&ind);
+    p.push("extern const ");
+    p.push(name);
+    p.push(": ");
+    emit_type_ann(p, ty);
+}
+
 fn emit_type_alias(p: &mut Printer, name: &str, target: &TypeAnn, attrs: &[Attribute]) {
     emit_attrs(p, attrs);
     let ind = p.indent_str();
@@ -753,6 +768,7 @@ fn emit_body_stmts(p: &mut Printer, stmts: &[Node], close_line: usize) {
             // defines it (a fmt silent miscompile). `emit_node` dispatches each
             // kind to its full emitter; item decls take no trailing `;`.
             Node::Const { .. }
+            | Node::ExternConst { .. }
             | Node::StructDef { .. }
             | Node::EnumDef { .. }
             | Node::TypeAlias { .. }
@@ -1573,6 +1589,7 @@ fn emit_expr(p: &mut Printer, node: &Node) {
         Node::StructDef { name, .. } => p.push(name),
         Node::EnumDef { name, .. } => p.push(name),
         Node::Const { name, .. } => p.push(name),
+        Node::ExternConst { name, .. } => p.push(name),
         Node::TypeAlias { name, .. } => p.push(name),
         Node::Import { path, .. } => p.push(&path.join(".")),
         Node::Export { names, .. } => p.push(&names.join(", ")),

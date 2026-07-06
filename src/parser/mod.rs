@@ -477,6 +477,24 @@ impl<'a> P<'a> {
         after >= self.b.len() || !Self::is_ident_cont(self.b[after])
     }
 
+    /// Non-consuming lookahead: is `kw` the next keyword after `lead` (+ inter-
+    /// vening whitespace)? Used to disambiguate `extern const …` (an extern
+    /// constant) from an `extern "C" { … }` block without committing the cursor.
+    fn peek_keyword_after(&self, lead: &[u8], kw: &[u8]) -> bool {
+        if !self.at_keyword(lead) {
+            return false;
+        }
+        let mut i = self.pos + lead.len();
+        while i < self.b.len() && (self.b[i] == b' ' || self.b[i] == b'\t') {
+            i += 1;
+        }
+        if !self.b[i..].starts_with(kw) {
+            return false;
+        }
+        let after = i + kw.len();
+        after >= self.b.len() || !Self::is_ident_cont(self.b[after])
+    }
+
     /// Consume keyword if present, returning true.
     fn eat_keyword(&mut self, kw: &str) -> bool {
         if self.at_keyword(kw.as_bytes()) {
@@ -1125,7 +1143,13 @@ impl<'a> P<'a> {
             return self.parse_fn_def(is_pub);
         }
         // RFC 0010 Phase A: `extern "C" [callconv(.x)] { ... }` block.
+        // `extern const NAME: [T; N]` is a distinct form — an externally-provided
+        // constant (e.g. a Q16.16 LUT table supplied by the build system), NOT an
+        // `extern "C"` block. Disambiguate by peeking the word after `extern`.
         if self.at_keyword(b"extern") {
+            if self.peek_keyword_after(b"extern", b"const") {
+                return self.parse_extern_const(Vec::new());
+            }
             return self.parse_extern_block();
         }
         if self.at_keyword(b"assert") {
@@ -1517,6 +1541,41 @@ impl<'a> P<'a> {
             name,
             ty,
             value: Box::new(value),
+            attrs,
+            span,
+        })
+    }
+
+    /// Parse `extern const NAME: TYPE[;]` — an externally-provided constant
+    /// (typically a fixed-size Q16.16 LUT table, `extern const T: [E; N]`). The
+    /// type annotation is REQUIRED (there is no `= value` to infer from); the
+    /// value is supplied out-of-band by the build system. Produces a typed,
+    /// resolvable name so consumers that index the table type-check.
+    fn parse_extern_const(
+        &mut self,
+        attrs: Vec<crate::ast::Attribute>,
+    ) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += 6; // "extern"
+        self.skip_ws();
+        self.pos += 5; // "const" (guaranteed by peek_keyword_after)
+        self.skip_ws();
+        let name = self
+            .word()
+            .ok_or_else(|| self.err("expected name after `extern const`".into()))?
+            .to_string();
+        self.skip_ws();
+        if !self.eat(b':') {
+            return Err(self.err("expected `:` and a type in `extern const` declaration".into()));
+        }
+        self.skip_ws();
+        let ty = self.type_ann()?;
+        self.skip_ws();
+        self.eat(b';'); // optional trailing semicolon
+        let span = Span::new(start, self.pos);
+        Ok(Node::ExternConst {
+            name,
+            ty,
             attrs,
             span,
         })

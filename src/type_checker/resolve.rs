@@ -178,6 +178,7 @@ pub(crate) fn collect_decl_names(module: &Module, out: &mut BTreeSet<String>) {
         match item {
             Node::FnDef { name, .. }
             | Node::Const { name, .. }
+            | Node::ExternConst { name, .. }
             | Node::Let { name, .. }
             | Node::StructDef { name, .. }
             | Node::TypeAlias { name, .. } => {
@@ -1001,6 +1002,7 @@ impl<'a> Resolver<'a> {
             // references inside a fn body (or are handled at module level).
             Node::FnDef { .. }
             | Node::Const { .. }
+            | Node::ExternConst { .. }
             | Node::TypeAlias { .. }
             | Node::Export { .. }
             | Node::StructDef { .. }

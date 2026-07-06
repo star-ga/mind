@@ -1702,6 +1702,7 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
         // The module walker handles them; infer_expr is unreachable for them
         // but a clear error here keeps any internal misuse from compiling.
         Node::Const { span, .. }
+        | Node::ExternConst { span, .. }
         | Node::TypeAlias { span, .. }
         | Node::Export { span, .. }
         | Node::StructDef { span, .. }
@@ -3713,6 +3714,17 @@ pub fn check_module_types_in_file(
                         }
                     }
                     Err(e) => errs.push(diag_from_type_err(src, file, e)),
+                }
+            }
+            // `extern const NAME: TYPE` — record the name in the type env so
+            // consumers resolve it. An array/aggregate annotation has no direct
+            // ValueType (`valuetype_from_ann` returns None), so we only insert a
+            // scalar type when one is derivable; the name is already made
+            // resolvable by `collect_decl_names` in either case, and index use
+            // sites validate against the element type at the index arm.
+            Node::ExternConst { name, ty, .. } => {
+                if let Some(vt) = valuetype_from_ann(ty) {
+                    tenv.insert(name.clone(), vt);
                 }
             }
             Node::TypeAlias { .. }
