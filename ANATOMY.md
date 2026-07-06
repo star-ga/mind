@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3036 | **Est. tokens:** ~7,278,408
-**Generated:** 2026-07-05 19:44 UTC
+**Files:** 3037 | **Est. tokens:** ~7,283,038
+**Generated:** 2026-07-06 17:18 UTC
 
 ## Token Budget Guide
 
@@ -22,12 +22,12 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~27,393 |
+| `./` | 34 | ~27,708 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
 | `audits/` | 6 | ~607 |
-| `bench/` | 1 | ~693 |
+| `bench/` | 2 | ~1,772 |
 | `benches/` | 26 | ~79,398 |
 | `bench/fft/` | 8 | ~8,060 |
 | `benchmarks/` | 12 | ~20,415 |
@@ -46,15 +46,15 @@
 | `docs/design/` | 3 | ~8,181 |
 | `docs/mindcraft/` | 3 | ~7,023 |
 | `docs/research/` | 1 | ~117 |
-| `docs/rfcs/` | 28 | ~118,403 |
+| `docs/rfcs/` | 28 | ~118,706 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 18 | ~35,272 |
 | `examples/c/` | 2 | ~400 |
 | `examples/compliance/` | 3 | ~5,294 |
-| `examples/distribution-crossisa/` | 6 | ~6,232 |
+| `examples/distribution-crossisa/` | 7 | ~6,485 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 40 | ~78,057 |
+| `examples/mindc_mind/` | 38 | ~76,615 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~83 |
 | `examples/native/` | 4 | ~527 |
@@ -68,7 +68,7 @@
 | `.github/workflows/` | 9 | ~10,691 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~17,416 |
-| `scripts/` | 8 | ~10,825 |
+| `scripts/` | 9 | ~11,559 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `sdk/ts/mic-map/` | 6 | ~22,706 |
@@ -372,18 +372,18 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 7 | ~17,449 |
+| `src/` | 7 | ~17,821 |
 | `src/ast/` | 1 | ~7,430 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 2 | ~25,459 |
-| `src/build/` | 2 | ~11,359 |
+| `src/build/` | 2 | ~12,095 |
 | `src/cache/` | 4 | ~3,525 |
 | `src/check/` | 3 | ~9,753 |
 | `src/deps/` | 1 | ~8,217 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,474 |
-| `src/eval/` | 12 | ~61,758 |
+| `src/eval/` | 12 | ~61,760 |
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
@@ -394,12 +394,12 @@
 | `src/ir/compact/v3/` | 4 | ~45,526 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,211 |
-| `src/mlir/` | 3 | ~5,415 |
+| `src/mlir/` | 3 | ~5,425 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 4 | ~9,649 |
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 1 | ~3,811 |
-| `src/project/` | 3 | ~28,061 |
+| `src/project/` | 3 | ~30,329 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -486,7 +486,7 @@
 - `README.md` (~5621 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
-- `SECURITY.md` (~614 tok, large) — Security Policy
+- `SECURITY.md` (~929 tok, large) — Security Policy
 - `.sembleignore` (~72 tok, small) — # semble code-search ignore list
 - `STATUS.md` (~3819 tok, huge) — MIND Compiler Status
 - `test_real_compile_time.py` (~265 tok, medium) — Quick test of real MIND compilation time using Python bindings."""
@@ -621,6 +621,7 @@
 - `scientific_benchmark_raw.py` (~2485 tok, huge)
 ### `bench/`
 
+- `matmul_det_bench.mind` (~1079 tok, large) — bench/matmul_det_bench.mind — first pure-MIND runtime benchmark for the
 - `RESULTS-int8-2026-06-08.md` (~693 tok, large) — MIND int8 VNNI GEMM — single-core vs OpenBLAS f32 (2026-06-08)
 ### `.cargo/`
 
@@ -705,7 +706,7 @@
 - `0013-cli-agent-harness-stack.md` (~6781 tok, huge) — RFC 0013: CLI Agent Harness Stack
 - `0014-per-substrate-mlir-lowering-contracts.md` (~5412 tok, huge) — RFC 0014: Per-Substrate MLIR Lowering Pipeline Contracts
 - `0015-cross-substrate-bit-identity.md` (~5174 tok, huge) — RFC 0015: Cross-Substrate Bit-Identity Proof Obligation
-- `0016-evidence-chain-emission.md` (~6226 tok, huge) — RFC 0016: Compile-Time Evidence-Chain Emission
+- `0016-evidence-chain-emission.md` (~6529 tok, huge) — RFC 0016: Compile-Time Evidence-Chain Emission
 - `0017-mindc-verify.md` (~3745 tok, huge) — RFC 0017: `mindc verify` — Artifact Verification Surface
 - `0018-bare-metal-substrate.md` (~3799 tok, huge) — RFC 0018: Bare-Metal Substrate Lowering Tier
 - `0019-deterministic-agent-substrate.md` (~4131 tok, huge) — RFC 0019: Deterministic Agent Substrate
@@ -755,6 +756,7 @@
 - `distribution.cpp` (~1217 tok, large)
 - `distribution_interp_f64.mind` (~1127 tok, large) — Deterministic IEEE-754 float64 piecewise-LINEAR density interpolation kernel,
 - `README.md` (~1175 tok, large) — Cross-ISA determinism: a piecewise-linear density kernel
+- `_valerii_mind_check.mind` (~253 tok, medium) — harness: exercise the ported divergent kernel across the boundary grid
 ### `examples/emit_ir/`
 
 - `bootstrap_smoke.py` (~2890 tok, huge)
@@ -785,9 +787,8 @@
 - `bootstrap_smoke.py` (~2329 tok, huge)
 - `collect_field_strings_smoke.py` (~1161 tok, large)
 - `cutover_coverage_measure.py` (~2238 tok, huge)
-- `_dump_pure_all.py` (~668 tok, large) — Dump pure-MIND nb_build_mic3 bytes + note for all native_elf fixtures + main,
 - `EXPECTED.md` (~773 tok, large) — Phase 6.5 Stage 5 — Expected IR Text (APEX)
-- `fast_keystone.sh` (~922 tok, large) — fast_keystone.sh — fast LOCAL front-end keystone gate for the pure-MIND self-host
+- `fast_keystone.sh` (~1397 tok, large) — fast_keystone.sh — fast LOCAL front-end keystone gate for the pure-MIND self-host
 - `FIXED_POINT_REPORT.md` (~1770 tok, huge) — Phase 6.5 — Bootstrap Fixed-Point Report
 - `fixed_point_smoke.py` (~3275 tok, huge)
 - `fixture.mind` (~183 tok, small) — Phase 6.4 emit_ir smoke fixture.
@@ -810,7 +811,6 @@
 - `_ref_recursion.note` (~16 tok, tiny) — 04947ba7952c2360a23d5281d0a35204ce8461b7b3265bf73453c4af49dda251
 - `_ref_struct_field.note` (~16 tok, tiny) — 2cb2083c37be471776166a99580c7e98553a78ffd9a58d992c40f6e7310ffdb4
 - `_ref_value_if.note` (~16 tok, tiny) — b3b594d4d55dfc1360f8ad0fc873a8ba541da0c6b8e1e9d1a52a9446c40f4d64
-- `_regen_oracle.py` (~1249 tok, large) — Refresh the STALE frozen native_elf oracle notes.
 - `self_host_body_smoke.py` (~2995 tok, huge)
 - `selfhost_driver.mind` (~623 tok, large) — ===========================================================================
 - `self_host_loop_smoke.py` (~1834 tok, huge)
@@ -940,6 +940,7 @@
 ### `scripts/`
 
 - `preflight.sh` (~807 tok, large) — preflight.sh — local CI-parity gate. Run before pushing to avoid red CI.
+- `quick_perf.sh` (~734 tok, large) — quick_perf.sh — FAST one-sided compile-speed criterion gate.
 - `run_crypto_vectors.sh` (~1751 tok, huge) — Build every pure-MIND crypto/TLS std module to a shared object and run its
 ### `sdk/ts/mic-map/dist/`
 
@@ -3739,7 +3740,7 @@
 ### `src/build/`
 
 - `cache.rs` (~5282 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~6077 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~6813 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/cache/`
 
 - `entry.rs` (~820 tok, large) — Copyright 2025-2026 STARGA Inc.
@@ -3779,7 +3780,7 @@
 - `autodiff.rs` (~14268 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~3818 tok, huge) — Copyright 2025 STARGA Inc.
-- `mlir_build.rs` (~8781 tok, huge) — Copyright 2025 STARGA Inc.
+- `mlir_build.rs` (~8783 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~12220 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
@@ -3838,7 +3839,7 @@
 - `verify.rs` (~10698 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `lib.rs` (~938 tok, large) — Copyright 2025 STARGA Inc.
+- `lib.rs` (~944 tok, large) — Copyright 2025 STARGA Inc.
 - `linalg.rs` (~2025 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/lint/`
 
@@ -3859,7 +3860,7 @@
 
 - `c_export.rs` (~1685 tok, huge) — Copyright 2025 STARGA Inc.
 - `gemm_tuning.rs` (~3405 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `mod.rs` (~325 tok, medium) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~335 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/ops/`
 
 - `cerebras.rs` (~2713 tok, huge) — Copyright 2025-2026 STARGA Inc.
@@ -3880,10 +3881,10 @@
 - `trivia.rs` (~3811 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `pipeline.rs` (~4477 tok, huge) — Copyright 2025 STARGA Inc.
+- `pipeline.rs` (~4843 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `mod.rs` (~20766 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~23034 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~3629 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
