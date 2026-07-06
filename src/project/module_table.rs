@@ -118,6 +118,17 @@ impl ModuleTable {
             .is_some_and(|m| m.exported.iter().any(|e| e == symbol))
     }
 
+    /// True iff ANY module in the table exports `symbol` (any kind — fn,
+    /// const, type, struct). Answers the bare cross-module resolvability
+    /// question for the type-checker's undefined-reference pass; module
+    /// functions/consts share one global link unit, so an exported name
+    /// referenced from a sibling module is never genuinely-undefined.
+    pub fn exports_symbol(&self, symbol: &str) -> bool {
+        self.modules
+            .values()
+            .any(|m| m.exported.iter().any(|e| e == symbol))
+    }
+
     /// RFC 0005 Phase B — look up an imported fn's signature by name,
     /// searching every module in the table.  Returns the first match
     /// in deterministic (sorted-path) iteration order; in practice
@@ -180,18 +191,63 @@ pub fn module_path_of(file: &Path, src_root: &Path) -> String {
 ///      otherwise have an empty exported surface.
 ///
 /// Deterministic (sorted, deduped) in both branches.
+///
+/// The `module NAME { ... }` block form (used by whole-file `module` modules)
+/// parses to a transparent top-level `Node::Block` whose `stmts` are the real
+/// module items (`export` / `FnDef` / `StructDef` …). Flatten those blocks
+/// first — mirroring `resolve::collect_decl_names` — so a block-wrapped
+/// module's exports are collected rather than silently dropped (which left its
+/// public surface EMPTY and every cross-module call to it unresolved → E2003).
 pub fn collect_module_exports(module_path: &str, ast: &Module) -> ModuleExports {
+    // Flatten transparent `module { ... }` blocks into one item list.
+    let mut items: Vec<&Node> = Vec::new();
+    fn flatten<'a>(src: &'a [Node], out: &mut Vec<&'a Node>) {
+        for item in src {
+            match item {
+                Node::Block { stmts, .. } => flatten(stmts, out),
+                other => out.push(other),
+            }
+        }
+    }
+    flatten(&ast.items, &mut items);
+
     let mut exported: Vec<String> = Vec::new();
     let mut exported_fns: Vec<ExportedFn> = Vec::new();
     let mut has_explicit_export = false;
-    for item in &ast.items {
+    for item in &items {
         if let Node::Export { names, .. } = item {
             has_explicit_export = true;
             exported.extend(names.iter().cloned());
         }
     }
-    if !has_explicit_export {
-        for item in &ast.items {
+    if has_explicit_export {
+        // An `export { ... }` block declares NAMES only. Capture the full
+        // signature for every exported name that resolves to a module-local
+        // `fn` so `cm_lookup_fn` (call-site arity/type check + resolver
+        // `call_resolvable`) sees explicitly-exported fns, exactly as the
+        // auto-export path below already does for `pub fn`. Without this, a
+        // `module NAME { export fn f  fn f() {} }` file exported the NAME `f`
+        // but no signature, so a sibling's `f(...)` call stayed unresolved.
+        let exported_set: std::collections::BTreeSet<&String> = exported.iter().collect();
+        for item in &items {
+            if let Node::FnDef {
+                name,
+                params,
+                ret_type,
+                ..
+            } = item
+            {
+                if exported_set.contains(name) {
+                    exported_fns.push(ExportedFn {
+                        name: name.clone(),
+                        param_types: params.iter().map(|p| p.ty.clone()).collect(),
+                        ret_type: ret_type.clone(),
+                    });
+                }
+            }
+        }
+    } else {
+        for item in &items {
             match item {
                 // Phase B: capture the full signature alongside the
                 // name.  `params` is `Vec<Param>` and each `Param`
@@ -319,19 +375,37 @@ mod tests {
     }
 
     #[test]
-    fn explicit_export_block_leaves_exported_fns_empty() {
-        // The `export { ... }` block declares names only; signatures
-        // come from the source modules those names live in.  At this
-        // layer (single-AST collection), the block-bearing file's
-        // `exported_fns` stays empty by construction.
-        let src = "export { foo, bar }\nfn foo() {}\nfn bar() {}\n";
+    fn explicit_export_block_captures_local_fn_signatures() {
+        // An `export { ... }` block declares names; when an exported name
+        // resolves to a module-LOCAL `fn`, its signature is captured in
+        // `exported_fns` too — so a sibling module's call to that fn resolves
+        // (with arity/type info) instead of staying undefined (E2003). An
+        // exported name with no local `fn` (a re-exported symbol / const)
+        // contributes a NAME only, no signature.
+        let src = "export { foo, bar, aconst }\nfn foo() {}\nfn bar(x: i64) {}\n";
         let ast = parse(src).expect("parse");
         let ex = collect_module_exports("crate.x", &ast);
-        assert_eq!(ex.exported, vec!["bar", "foo"]);
-        assert!(
-            ex.exported_fns.is_empty(),
-            "explicit export-block surfaces must not auto-populate exported_fns"
-        );
+        assert_eq!(ex.exported, vec!["aconst", "bar", "foo"]);
+        // Both local fns get signatures; `aconst` (no local fn) does not.
+        assert_eq!(ex.exported_fns.len(), 2);
+        assert_eq!(ex.exported_fns[0].name, "bar");
+        assert_eq!(ex.exported_fns[0].param_types.len(), 1);
+        assert_eq!(ex.exported_fns[1].name, "foo");
+        assert!(ex.exported_fns[1].param_types.is_empty());
+    }
+
+    #[test]
+    fn module_block_form_exports_are_collected() {
+        // A `module NAME { export fn f  fn f() {} }` block parses to a
+        // transparent top-level `Node::Block`; its nested exports must be
+        // collected (previously dropped, leaving the surface empty → every
+        // cross-module call to `f` unresolved).
+        let src = "module m {\n  export fn f\n  fn f(x: i64) -> i64 { x }\n}\n";
+        let ast = parse(src).expect("parse");
+        let ex = collect_module_exports("crate.m", &ast);
+        assert_eq!(ex.exported, vec!["f"]);
+        assert_eq!(ex.exported_fns.len(), 1);
+        assert_eq!(ex.exported_fns[0].name, "f");
     }
 
     #[test]
