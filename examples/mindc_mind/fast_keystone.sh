@@ -39,11 +39,38 @@ if [ "${MINDC_REBUILD:-0}" = "1" ]; then
 fi
 [ -x "$MINDC" ] || { echo "ERROR: mindc not found at $MINDC (try MINDC_REBUILD=1)"; exit 2; }
 
+# Pre-flight: the smokes below need an mlir-build mindc (--emit-mlir / cdylib emit).
+# A prior `cargo bench` (e.g. scripts/quick_perf.sh) rebuilds target/release/mindc with
+# DEFAULT features — NO mlir-build — silently clobbering this binary. That would surface
+# as a misleading `mlir_smoke` FAIL ("--emit-mlir requires the mlir-lowering/mlir-build
+# feature"), reading like a front-end regression when it is only a stripped binary.
+# Detect it precisely and fail loud with the fix instead of reporting a false regression.
+_fk_probe="/tmp/fk_probe_$$.mind"
+printf 'fn __fk_probe(a: i64) -> i64 {\n    return a;\n}\n' > "$_fk_probe"
+if ! "$MINDC" "$_fk_probe" --emit-mlir >/dev/null 2>&1; then
+  rm -f "$_fk_probe"
+  echo "ERROR: $MINDC lacks mlir-build (--emit-mlir failed). A prior 'cargo bench' /"
+  echo "       scripts/quick_perf.sh likely rebuilt it with default features. Rebuild the"
+  echo "       gate binary before re-running the keystone:"
+  echo "         MINDC_REBUILD=1 $0"
+  echo "       or: cargo build --release --no-default-features \\"
+  echo "             --features \"mlir-build std-surface cross-module-imports\" --bin mindc"
+  exit 2
+fi
+rm -f "$_fk_probe"
+
 echo "== fast front-end keystone =="
-# 1. deterministic build: Mind.toml-driven vs direct must be byte-identical
-if ! "$MINDC" build "$ENTRY" --release --emit=cdylib --out="$DIR_SO" >/tmp/fk_step.log 2>&1; then
+# 1. deterministic build: Mind.toml-driven vs direct must be byte-identical.
+# --no-cache is LOAD-BEARING for this gate: the module cache key (src/build/cache.rs)
+# hashes source_bytes + target + optimize + compiler_version (semver, NOT a build hash),
+# so a compiler change with unchanged .mind source + unchanged semver is a CACHE HIT that
+# serves the PRE-change cdylib. Both build paths would then get the same stale bytes and
+# `cmp` passes trivially — defeating the self-consistency check and hiding a real drift.
+# Fresh compiles make this a true gate (a deterministic compiler still yields identical
+# bytes for the two paths; a non-deterministic one is caught).
+if ! "$MINDC" build "$ENTRY" --release --emit=cdylib --no-cache --out="$DIR_SO" >/tmp/fk_step.log 2>&1; then
   echo "  FAIL  direct cdylib build"; tail -6 /tmp/fk_step.log | sed 's/^/        /'; exit 1; fi
-if ! "$MINDC" build --release --emit=cdylib --out="$MT_SO" >/tmp/fk_step.log 2>&1; then
+if ! "$MINDC" build --release --emit=cdylib --no-cache --out="$MT_SO" >/tmp/fk_step.log 2>&1; then
   echo "  FAIL  Mind.toml cdylib build"; tail -6 /tmp/fk_step.log | sed 's/^/        /'; exit 1; fi
 if cmp -s "$DIR_SO" "$MT_SO"; then
   echo "  PASS  byte-identical build ($(stat -c%s "$MT_SO") B, sha=$(sha256sum "$MT_SO" | cut -c1-16))"; pass=$((pass+1))

@@ -1,0 +1,110 @@
+// bench/matmul_det_bench.mind — first pure-MIND runtime benchmark for the
+// `mindc bench` path. Times the deterministic fused int8 GEMM tier
+// (__mind_blas_matmul_mm_i8_v: C[MxN] i32 = A[MxK] i8 · B[KxN] i8, exact
+// integer reduction carried in i64 — the "det.igemm" surface) and gates the
+// output on an embedded SHA-256 byte-identity digest.
+//
+// Copyright 2025 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// Two axes:
+//   1. Performance — elapsed ns over ITERS matmuls + derived integer ops/s.
+//   2. Determinism — SHA-256 of the M*N*4 output bytes compared to an
+//      embedded 4-word (32-byte) constant; prints BYTE-IDENTITY PASS/FAIL and
+//      returns nonzero on FAIL so the bench harness records the regression.
+//
+// Fold safety: the GEMM is an opaque extern call over heap buffers, so
+// mlir-opt cannot constant-fold it nor hoist it out of the timing loop
+// (side-effecting store through an opaque pointer). The fill is a FIXED
+// deterministic pattern so the output digest is stable across runs; the
+// runtime-execution claim is proved by the timing scaling with ITERS.
+
+import std.sha256;
+
+// deterministic i8 fill: pattern in [-3, 3], stride-1 bytes.
+fn fill_i8(base: i64, count: i64, seed: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < count {
+        let v: i64 = ((i + seed) % 7) - 3;
+        let _ = __mind_store_i8(base + i, v);
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn main() -> i64 {
+    // ---- params (single-tier PoC) ----
+    // deferred: --iterations argv is passed by the bench harness but there is
+    // NO native argv-read intrinsic reachable from the .mind surface, so ITERS
+    // is a compile-time constant — upgrade path: add a __mind_argc/__mind_argv
+    // intrinsic (compiler gap, feeds #85). Fold-scaling is demonstrated by
+    // rebuilding with a different ITERS and confirming ns scales linearly.
+    let n: i64 = 256;
+    let iters: i64 = 50;
+
+    let m: i64 = n;
+    let k: i64 = n;
+    let a_bytes: i64 = m * k;       // i8
+    let b_bytes: i64 = k * n;       // i8
+    let c_bytes: i64 = m * n * 4;   // i32
+
+    let a: i64 = __mind_alloc(a_bytes);
+    let b: i64 = __mind_alloc(b_bytes);
+    let c: i64 = __mind_alloc(c_bytes);
+
+    let _fa: i64 = fill_i8(a, a_bytes, 1);
+    let _fb: i64 = fill_i8(b, b_bytes, 2);
+
+    // ---- timed loop ----
+    let t0: i64 = __mind_now_ns(0);
+    let mut it: i64 = 0;
+    while it < iters {
+        let _r: i64 = __mind_blas_matmul_mm_i8_v(a, b, c, m, k, n);
+        it = it + 1;
+    }
+    let t1: i64 = __mind_now_ns(0);
+    let elapsed_ns: i64 = t1 - t0;
+
+    // 2 flops per MAC * N^3 per matmul * iters
+    let ops: i64 = 2 * n * n * n * iters;
+    let safe_ns: i64 = if elapsed_ns > 0 {
+        elapsed_ns
+    } else {
+        1
+    };
+    let ops_per_s: i64 = ops * 1000000000 / safe_ns;
+
+    print("MIND int8-GEMM det.igemm  N=", n, " iters=", iters);
+    print("  elapsed_ns=", elapsed_ns);
+    print("  ops=", ops, " ops_per_s=", ops_per_s);
+
+    // ---- determinism gate ----
+    let out: i64 = __mind_alloc(32);
+    let _h: i64 = sha256(c, c_bytes, out);
+    let w0: i64 = __mind_load_i64(out + 0);
+    let w1: i64 = __mind_load_i64(out + 8);
+    let w2: i64 = __mind_load_i64(out + 16);
+    let w3: i64 = __mind_load_i64(out + 24);
+    print("  DIGEST ", w0, " ", w1, " ", w2, " ", w3);
+
+    // Embedded expected digest: SHA-256 of the M*N*4 (256*256*4 = 262144) output
+    // bytes of the deterministic int8 GEMM, as 4 little-endian i64 words. These
+    // were CAPTURED from a native-machine-code run of this bench (the exe emits
+    // them via the compiled print path) and are byte-identical run-to-run — that
+    // is the byte-identity property the wedge guarantees for the det.igemm tier.
+    // Regenerate (only if the kernel/fill intentionally changes) by running the
+    // built exe and copying the four DIGEST words printed below the timing.
+    let e0: i64 = -5166887539223853796;
+    let e1: i64 = 1662161345938971778;
+    let e2: i64 = -2462142684817726383;
+    let e3: i64 = 1886414469487107771;
+
+    if w0 == e0 && w1 == e1 && w2 == e2 && w3 == e3 {
+        print("BYTE-IDENTITY PASS");
+        return 0;
+    } else {
+        print("BYTE-IDENTITY FAIL");
+        return 1;
+    }
+}

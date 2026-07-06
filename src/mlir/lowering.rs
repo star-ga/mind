@@ -9532,6 +9532,22 @@ impl LoweringContext {
 /// The lowering does not mutate the input module and is deterministic:
 /// the same IR produces identical MLIR text.
 pub fn lower_ir_to_mlir(module: &IRModule) -> Result<MlirModule, MlirLowerError> {
+    lower_ir_to_mlir_with_entry(module, false)
+}
+
+/// Like [`lower_ir_to_mlir`], but with an explicit `suppress_module_entry`
+/// control. When `suppress_module_entry` is `true`, the synthetic
+/// module-level `func.func @main` is NOT emitted even when the module has no
+/// user `fn main` — the module lowers to a pure LIBRARY object (its `pub fn`
+/// symbols stay global; no `@main`). This lets a non-entry substrate module
+/// (e.g. `std.sha256`) link alongside an entry object without a duplicate
+/// `main` collision. Every existing caller passes `false` via the
+/// [`lower_ir_to_mlir`] facade, so the default build stays byte-identical
+/// (the guard reduces to `!has_user_main`, exactly as before).
+pub fn lower_ir_to_mlir_with_entry(
+    module: &IRModule,
+    suppress_module_entry: bool,
+) -> Result<MlirModule, MlirLowerError> {
     let mut ctx = LoweringContext::new();
 
     // RFC 0012 §5.1 — pre-resolve every fn's ABI signature (declared param /
@@ -9630,10 +9646,25 @@ pub fn lower_ir_to_mlir(module: &IRModule) -> Result<MlirModule, MlirLowerError>
     // (C-scratch / packed-A / packed-B). Emitted once, before any function body
     // that calls @malloc / @free, so the `llvm.call`s resolve. Declared only
     // when the blocked kernel was actually lowered.
+    // Declare @malloc/@free iff the assembled module actually references them.
+    // `needs_malloc` is a fast-path hint set where the int8 BLIS blocked kernel is
+    // lowered, but it can fail to propagate to this module-assembler ctx when the
+    // kernel is emitted inside a nested region (e.g. a `while` body) whose
+    // sub-context merge does not bubble the flag. So also scan the assembled
+    // function buffers for a real `@malloc(` call — authoritative and byte-neutral:
+    // the keystone/std modules emit zero `@malloc(`, so the fast_keystone
+    // self-consistency gate stays byte-identical; this only fires for a module
+    // that genuinely heap-allocates.
     #[cfg(feature = "std-surface")]
-    if ctx.needs_malloc {
-        out.push_str("  llvm.func @malloc(i64) -> !llvm.ptr\n");
-        out.push_str("  llvm.func @free(!llvm.ptr)\n");
+    {
+        let references_malloc = ctx.needs_malloc
+            || ctx.body.contains("@malloc(")
+            || ctx.user_fns.contains("@malloc(")
+            || ctx.mt_workers.contains("@malloc(");
+        if references_malloc {
+            out.push_str("  llvm.func @malloc(i64) -> !llvm.ptr\n");
+            out.push_str("  llvm.func @free(!llvm.ptr)\n");
+        }
     }
     #[cfg(feature = "std-surface")]
     out.push_str(&ctx.mt_workers);
@@ -9667,16 +9698,38 @@ pub fn lower_ir_to_mlir(module: &IRModule) -> Result<MlirModule, MlirLowerError>
         ));
     }
 
-    if ret_types.is_empty() {
-        out.push_str("  func.func @main() -> () {\n");
-    } else {
-        out.push_str(&format!(
-            "  func.func @main() -> ({}) {{\n",
-            ret_types.join(", ")
-        ));
+    // Suppress the synthetic module-level `@main` when the user already defined
+    // one: the module's fn-definition loop emits the user's `func.func @main`
+    // above, and this synthetic entry (whose body `ctx.body` is the throwaway
+    // top-level `ConstI64(0)` for a program with no top-level expression) would
+    // otherwise collide as a duplicate `@main` — mlir-opt rejects it with
+    // "redefinition of symbol named 'main'". This is byte-identical for every
+    // module with NO user `fn main` (has_user_main == false), which includes the
+    // keystone (examples/mindc_mind/main.mind: 0 `fn main`, 1124 `pub fn`) and all
+    // std substrate modules, so the wedge (fast_keystone self-consistency +
+    // cross_substrate byte-identity) is untouched. `defined_fns` is std-surface-gated, so the
+    // non-std-surface build (which has no user-fn tracking) keeps today's behavior.
+    //
+    // deferred: a program with BOTH a user `fn main` AND real top-level statements
+    // silently drops the top-level `ctx.body` here. Today that combination is a
+    // hard dup-`@main` error, so nothing relies on it — upgrade path: fail loud on
+    // the ambiguous combination rather than silently preferring `fn main`.
+    #[cfg(feature = "std-surface")]
+    let has_user_main = ctx.defined_fns.contains("main");
+    #[cfg(not(feature = "std-surface"))]
+    let has_user_main = false;
+    if !has_user_main && !suppress_module_entry {
+        if ret_types.is_empty() {
+            out.push_str("  func.func @main() -> () {\n");
+        } else {
+            out.push_str(&format!(
+                "  func.func @main() -> ({}) {{\n",
+                ret_types.join(", ")
+            ));
+        }
+        out.push_str(&ctx.body);
+        out.push_str("  }\n");
     }
-    out.push_str(&ctx.body);
-    out.push_str("  }\n");
 
     // RFC 0002 D2: append `mind_fn_<name>_invoke` C-ABI wrappers as
     // sibling top-level symbols, before the module-closing brace.
