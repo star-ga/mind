@@ -808,6 +808,29 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                 // `feature = "ffi-c-user"` together with the codegen pass.
                 ir.exports.extend(names.iter().cloned());
             }
+            // `extern const NAME: [T; N]` — an externally-provided constant whose
+            // data is supplied out-of-band (build-system `include_bytes!`), not in
+            // the source. Parse + type-check + name-resolution are wired (a
+            // consumer that indexes the table compiles); actual data lowering is
+            // NOT — there is no in-source blob to emit. Emitting a zero-filled
+            // ConstArray here would be a silent miscompile (the LUT would return
+            // wrong values), so FAIL LOUDLY per the fail-closed philosophy.
+            // deferred: real lowering must resolve the table bytes from the build
+            // system's data source (a `.bin`) and emit them as a named ConstArray
+            // (mirroring the `Node::Const { ty: Array, .. }` arm) — upgrade path is
+            // to thread the data-source binding through the lowering context and
+            // register the bytes in `ir.const_array_defs` under `name`.
+            #[cfg(feature = "std-surface")]
+            ast::Node::ExternConst { name, .. } => {
+                panic!(
+                    "lowering `extern const {name}` requires a wired data source \
+                     (the table bytes are supplied out-of-band via the build \
+                     system, not the source) — refusing to emit a zero-filled \
+                     table (that would be a silent miscompile). `mindc check` of \
+                     this module succeeds; producing a runnable artifact needs the \
+                     data-source binding. See the ExternConst arm in lower.rs."
+                );
+            }
             // RFC 0005 P0e Step 1 — record the struct's field-name order in
             // the schema registry so a later `StructLit` can reorder
             // literal fields into canonical order before emitting stores.
@@ -6596,6 +6619,23 @@ fn lower_expr(
             let id = ir.fresh();
             ir.instrs.push(Instr::ConstI64(id, 0));
             id
+        }
+        // `extern const NAME: [T; N]` reaching a value/block position (e.g. a
+        // module body lowered as a statement list). Parse + type-check + name
+        // resolution are wired; the table's DATA is supplied out-of-band by the
+        // build system and is NOT yet threaded into lowering. Emitting a zero
+        // placeholder would silently miscompile every index into the table, so
+        // FAIL LOUDLY with a precise message rather than the generic fail-closed
+        // panic below. deferred: resolve the table bytes from the build-system
+        // data source and emit a named ConstArray (mirror `Const { ty: Array }`).
+        ast::Node::ExternConst { name, .. } => {
+            panic!(
+                "lowering `extern const {name}` requires a wired data source \
+                 (the table bytes are supplied out-of-band via the build system, \
+                 not the source) — refusing to emit a zero-filled table (a silent \
+                 miscompile). `mindc check` succeeds; a runnable artifact needs \
+                 the data-source binding. See the ExternConst arms in lower.rs."
+            );
         }
         // Genuinely-unhandled value-position node. After the explicit Import /
         // Print arms above, std/ + examples/ no longer reach here (verified by

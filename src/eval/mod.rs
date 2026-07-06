@@ -1478,6 +1478,7 @@ pub(crate) fn eval_value_expr_mode(
         // evaluation means a misuse — return a zero so we don't crash, the
         // type checker catches the actual misuse.
         Node::Const { .. }
+        | Node::ExternConst { .. }
         | Node::TypeAlias { .. }
         | Node::Export { .. }
         | Node::StructDef { .. }
