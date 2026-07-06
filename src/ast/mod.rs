@@ -582,6 +582,21 @@ pub enum Node {
         attrs: Vec<Attribute>,
         span: Span,
     },
+    /// Externally-provided constant: `extern const NAME: [T; N]`.
+    /// A declaration whose value is supplied out-of-band by the build system
+    /// (e.g. a Q16.16 LUT table wired via `include_bytes!`), NOT inline in the
+    /// source. It introduces a resolvable, typed name (so consumers that index
+    /// it type-check) but carries no in-source value. Lowering a module that
+    /// references such a table to a runnable artifact requires the data source
+    /// to be wired (see the `ExternConst` arm in `lower.rs`) — until then it
+    /// fails LOUDLY at lowering rather than emitting a zero-filled (silently
+    /// wrong) table.
+    ExternConst {
+        name: String,
+        ty: TypeAnn,
+        attrs: Vec<Attribute>,
+        span: Span,
+    },
     /// Type alias: `type X = Y`
     /// Phase 10.5 Tier-1.
     TypeAlias {
@@ -875,6 +890,7 @@ impl Node {
             | Node::MethodCall { span, .. }
             | Node::FieldAccess { span, .. }
             | Node::Const { span, .. }
+            | Node::ExternConst { span, .. }
             | Node::TypeAlias { span, .. }
             | Node::Export { span, .. }
             | Node::StructDef { span, .. }
