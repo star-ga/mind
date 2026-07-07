@@ -9776,8 +9776,21 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
     }
     // BARE EXPRESSION STATEMENT (a call/expr emitted for side-effect; its result vid
     // is allocated then discarded, e.g. `__mind_store_i64(n, kind);` in ast_new_leaf).
-    // Flatten it like a let-init but bind NO name — Pass B/C treat it as a type-0
-    // segment (resolve the [start,end) range, emit its tree). Fails closed if
+    // Flatten it like a let-init but bind NO name. Type 11, NOT type 0: a real `let`
+    // segment (type 0) always pairs 1-for-1 with an `env` entry (name_lo/name_hi/slot)
+    // appended above; this bare statement binds no name, so it must NOT be counted as
+    // an env entry by seq_fix_deltas / emit_stmt_seq's envk / seq_lvenv_append_one —
+    // those walk `plan` and `env` in LOCKSTEP, incrementing their env-side cursor once
+    // per env-bearing plan entry. Reusing type 0 here desyncs that cursor the moment a
+    // bare-call statement follows a real let: every subsequent env read then lands one
+    // slot past the real (populated) entries into unzeroed __mind_alloc memory, whose
+    // content is whatever the process's prior allocation history left behind — silently
+    // wrong bytes on some runs, a wild-pointer-as-index SIGSEGV on others (the exact
+    // "ASLR-dependent flake" this type split fixes). seq_body_len / seq_assign_vids /
+    // emit_stmt_seq all carry an explicit type-11 arm (identical range-resolution to
+    // type 0, zero env/live-env bookkeeping); seq_fix_deltas / build_trail_env need NO
+    // type-11 arm — their existing "any other type" fallthrough already leaves
+    // nnames/env_k/tk untouched, which is exactly correct here. Fails closed if
     // flatten_expr_env rejects the stmt (then this fn / seq is unsupported).
     let bstart: i64 = __mind_load_i64(cursor);
     let broot: i64 = flatten_expr_env(stmt, src, params_addr, n_params, nodes, cursor, env, nlets);
@@ -9785,7 +9798,7 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
         return 0;
     }
     let bend: i64 = __mind_load_i64(cursor);
-    __mind_store_i64(plan + p * 64 + 0, 0);
+    __mind_store_i64(plan + p * 64 + 0, 11);
     __mind_store_i64(plan + p * 64 + 8, bstart);
     __mind_store_i64(plan + p * 64 + 16, bend);
     __mind_store_i64(nplan_cell, p + 1);
@@ -10031,6 +10044,9 @@ pub fn seq_fix_deltas(src: i64, plan: i64, nplan: i64, env: i64, names_buf: i64,
         __mind_store_i64(plan + i * 64 + 48, 0);
         return seq_fix_deltas(src, plan, nplan, env, names_buf, nnames, env_k, i + 1, nodes, cursor);
     }
+    // Tail: types 1/2 (if-return) and 11 (bare expression statement) all land here
+    // UNCHANGED (nnames/env_k pass through) — none of them binds a name, so none of
+    // them owns an `env` entry to consume or a position-aware name to publish.
     seq_fix_deltas(src, plan, nplan, env, names_buf, nnames, env_k, i + 1, nodes, cursor)
 }
 
@@ -10044,6 +10060,16 @@ pub fn seq_assign_vids(nodes: i64, vidbuf: i64, plan: i64, nplan: i64, base: i64
         let end: i64 = __mind_load_i64(plan + i * 64 + 16);
         let nb: i64 = seq_resolve_range(nodes, start, end, vidbuf, base);
         return seq_assign_vids(nodes, vidbuf, plan, nplan, nb, i + 1);
+    }
+    // (type 11) bare expression statement (no bound name) — identical vid-range
+    // resolution to type 0. MUST be its own arm: falling through to the implicit
+    // if-return (type 1) default below would read plan[+32]/[+40] as rstart/rend,
+    // fields this plan entry never wrote (unzeroed __mind_alloc garbage).
+    if ty == 11 {
+        let bstart: i64 = __mind_load_i64(plan + i * 64 + 8);
+        let bend: i64 = __mind_load_i64(plan + i * 64 + 16);
+        let bnb: i64 = seq_resolve_range(nodes, bstart, bend, vidbuf, base);
+        return seq_assign_vids(nodes, vidbuf, plan, nplan, bnb, i + 1);
     }
     if ty == 3 {
         // if-with-SEQ-then-block. The whole OP_IF (cond + segments + else + dst)
@@ -10230,6 +10256,9 @@ pub fn build_trail_env(plan: i64, nplan: i64, env: i64, tenv: i64, env_k: i64, t
     }
     // Only the divergent escaping types (4/5/6/8/9) carry rebind overlay slots at +48/+56;
     // other types never write those fields (unzeroed malloc), so guard before reading them.
+    // (type 11, bare expression statement, and type 1/2, if-return, all fall through to the
+    // unconditional tail below UNCHANGED — none of them bind a name, so none contributes an
+    // env entry or a rebind slot; env_k/tk must NOT advance for them.)
     if seq_ty_escapes(ty) == 1 {
         let rb_nb: i64 = __mind_load_i64(plan + i * 64 + 48);
         if rb_nb > 0 {
@@ -10300,6 +10329,18 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let s1: EmitState = emit_mic3_tree_body(s, nodes, end, vidbuf, src, strbuf, offs, ncount, start);
         let _ap0: i64 = seq_lvenv_append_one(seq_lvbuf, seq_nlv, seqr, envk);
         return emit_stmt_seq(s1, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, nb, i + 1, seq_lvbuf, seq_nlv + 1, seqr, envk + 1);
+    }
+    // (type 11) bare expression statement (no bound name) — emit its [start,end)
+    // tree exactly like type 0, but bind NO name: no seq_lvenv_append_one, seq_nlv
+    // and envk pass through UNCHANGED. This is the entire fix — type 0's env-cursor
+    // advance assumed every segment corresponds 1:1 with an `env`/`seqr` entry, which
+    // is false for a statement that binds nothing (see flatten_stmt_seq).
+    if ty == 11 {
+        let bstart: i64 = __mind_load_i64(plan + i * 64 + 8);
+        let bend: i64 = __mind_load_i64(plan + i * 64 + 16);
+        let bnb: i64 = seq_resolve_range(nodes, bstart, bend, vidbuf, base);
+        let bs1: EmitState = emit_mic3_tree_body(s, nodes, bend, vidbuf, src, strbuf, offs, ncount, bstart);
+        return emit_stmt_seq(bs1, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, bnb, i + 1, seq_lvbuf, seq_nlv, seqr, envk);
     }
     if ty == 3 {
         // if-with-SEQ-then-block -> ONE outer OP_IF whose then-branch is a sequence
@@ -10709,6 +10750,14 @@ pub fn seq_body_len(nodes: i64, plan: i64, nplan: i64, i: i64) -> i64 {
         let start: i64 = __mind_load_i64(plan + i * 64 + 8);
         let end: i64 = __mind_load_i64(plan + i * 64 + 16);
         return count_descriptor_nonparam_range(nodes, start, end) + seq_body_len(nodes, plan, nplan, i + 1);
+    }
+    // (type 11) bare expression statement (no bound name) — same [start,end) range
+    // instr-counting as type 0; see flatten_stmt_seq's BARE EXPRESSION STATEMENT arm
+    // for why this cannot share type 0's tag.
+    if ty == 11 {
+        let bstart: i64 = __mind_load_i64(plan + i * 64 + 8);
+        let bend: i64 = __mind_load_i64(plan + i * 64 + 16);
+        return count_descriptor_nonparam_range(nodes, bstart, bend) + seq_body_len(nodes, plan, nplan, i + 1);
     }
     // (type 10) top-level statement while: OP_WHILE + trailing unit ConstI64 = 2 instrs.
     if ty == 10 {
