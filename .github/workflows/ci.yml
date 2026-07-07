@@ -277,16 +277,80 @@ jobs:
 
       - name: Differential determinism fuzzer (issue #72)
         # Seeded generator (0xDEADBEEF) emits a bounded batch of valid MIND
-        # programs; each is proven a mic@3 byte fixed point AND its lowered ELF
-        # output is checked against a substrate-invariant interpreter oracle.
-        # Runs on BOTH matrix substrates: the same programs compile on avx2 and
-        # on real neon, and each runner prints the batch mic@3 digest (which is
-        # substrate-independent by construction, RFC 0015 §3.1) so x86 == ARM is
-        # inspectable across the two runners.
+        # programs over `+ - * / % << >> |` and `if/else`; each is proven a mic@3
+        # byte fixed point AND differentially executed through THREE oracles that
+        # must agree — native-ELF == in-test interpreter == mic@3 bytecode VM (the
+        # decoded mic@3 is RUN, not just hashed, so an operator correct in only
+        # one lowering path — the `%`-class silent miscompile — turns this RED).
+        # Runs on BOTH matrix substrates and writes the batch mic@3 digest (which
+        # is substrate-independent by construction, RFC 0015 §3.1) to a file so
+        # the dependent `mindfuzz_cross_runner_identity` job can ASSERT x86 == ARM
+        # across the two runners — not merely print it.
+        env:
+          MINDFUZZ_DIGEST_OUT: ${{ github.workspace }}/mindfuzz_digest_${{ matrix.substrate }}.txt
         run: |
           cargo test --no-default-features \
             --features "mlir-build std-surface cross-module-imports" \
             --test mindfuzz_cross_substrate -- --nocapture
+
+      - name: Upload fuzzer batch mic@3 digest (${{ matrix.substrate }})
+        # One artifact per substrate; the cross-runner job downloads both and
+        # byte-compares them. A per-substrate name keeps the two uploads distinct.
+        uses: actions/upload-artifact@v4
+        with:
+          name: mindfuzz-digest-${{ matrix.substrate }}
+          path: ${{ github.workspace }}/mindfuzz_digest_${{ matrix.substrate }}.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  mindfuzz_cross_runner_identity:
+    # RANK 1 (existential): make the fuzzer's cross-runner mic@3 digest a real
+    # ASSERTION, not a print. mic@3 is emitted before any substrate lowering and
+    # is substrate-independent by construction (RFC 0015 §3.1), so the batch
+    # digest the avx2 (x86_64) runner computes over the seeded corpus MUST equal
+    # the one the neon (real aarch64) runner computes. This job downloads both
+    # runners' digest artifacts and FAILS RED on any mismatch — a real x86 != ARM
+    # divergence in the fuzzed corpus can no longer ship green (MIND-CONSTITUTION
+    # §I.4). `needs:` gates it on both matrix legs producing their artifact.
+    name: Fuzzer cross-runner mic@3 identity (avx2 == neon)
+    needs: cross_substrate_identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Download avx2 digest
+        uses: actions/download-artifact@v4
+        with:
+          name: mindfuzz-digest-avx2
+          path: avx2
+
+      - name: Download neon digest
+        uses: actions/download-artifact@v4
+        with:
+          name: mindfuzz-digest-neon
+          path: neon
+
+      - name: Assert avx2 batch digest == neon batch digest
+        # Genuine cross-runner byte compare. mic@3 carries no machine bytes, so
+        # any difference here is a real cross-substrate divergence in the fuzzed
+        # corpus — a wedge break — and MUST fail the build.
+        run: |
+          set -euo pipefail
+          AVX2="$(cat avx2/mindfuzz_digest_avx2.txt)"
+          NEON="$(cat neon/mindfuzz_digest_neon.txt)"
+          echo "avx2 (x86_64) batch mic@3 digest = ${AVX2}"
+          echo "neon (aarch64) batch mic@3 digest = ${NEON}"
+          if [ -z "${AVX2}" ] || [ -z "${NEON}" ]; then
+            echo "FAIL: a batch digest is empty — the fuzzer did not run on a substrate"
+            exit 1
+          fi
+          if [ "${AVX2}" != "${NEON}" ]; then
+            echo "FAIL: fuzzer mic@3 batch digest DIVERGED across substrates."
+            echo "      mic@3 is substrate-independent by construction (RFC 0015 §3.1);"
+            echo "      a difference is a real x86 != ARM cross-substrate wedge break."
+            exit 1
+          fi
+          echo "PASS: avx2 == neon — fuzzed corpus is byte-identical mic@3 across substrates."
 
   format:
     name: Format Check
