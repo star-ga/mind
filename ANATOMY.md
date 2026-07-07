@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3039 | **Est. tokens:** ~7,299,428
-**Generated:** 2026-07-07 22:31 UTC
+**Files:** 3048 | **Est. tokens:** ~7,318,673
+**Generated:** 2026-07-07 23:48 UTC
 
 ## Token Budget Guide
 
@@ -65,7 +65,7 @@
 | `.githooks/` | 1 | ~255 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 9 | ~11,078 |
+| `.github/workflows/` | 9 | ~11,874 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~17,416 |
 | `scripts/` | 9 | ~11,559 |
@@ -388,7 +388,7 @@
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~19,784 |
-| `src/ir/` | 5 | ~32,357 |
+| `src/ir/` | 5 | ~35,145 |
 | `src/ir/compact/` | 3 | ~15,194 |
 | `src/ir/compact/v2/` | 8 | ~37,885 |
 | `src/ir/compact/v3/` | 4 | ~45,526 |
@@ -408,22 +408,26 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 40 | ~186,313 |
-| `tests/` | 273 | ~466,087 |
+| `tests/` | 273 | ~477,918 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
 | `tests/conformance/gpu_profile/` | 2 | ~11 |
 | `tests/cross_substrate_identity/` | 2 | ~4,052 |
+| `tests/cross_substrate_identity/dot-f32-v-4093/` | 2 | ~1,005 |
 | `tests/cross_substrate_identity/dot-i16-4096/` | 2 | ~648 |
 | `tests/cross_substrate_identity/dot-l1-q16/` | 2 | ~363 |
 | `tests/cross_substrate_identity/dot-l2-q16/` | 2 | ~813 |
 | `tests/cross_substrate_identity/gemm-i8-64x64x64/` | 2 | ~707 |
+| `tests/cross_substrate_identity/gemm-i8-mt-64x64x64/` | 2 | ~872 |
+| `tests/cross_substrate_identity/gemm-i8-vnni-64x64x64/` | 2 | ~921 |
 | `tests/cross_substrate_identity/gemm-q16-64x64x64/` | 2 | ~616 |
 | `tests/cross_substrate_identity/gemm-q16-fused-64x64x64/` | 2 | ~896 |
 | `tests/cross_substrate_identity/gemv-i16-256x256/` | 2 | ~594 |
 | `tests/cross_substrate_identity/gemv-q16-256x256/` | 2 | ~519 |
 | `tests/cross_substrate_identity/lorenz-q16/` | 2 | ~1,243 |
+| `tests/cross_substrate_identity/matmul-f32-v-64x64/` | 2 | ~894 |
 | `tests/cross_substrate_identity/q16-arith-chain/` | 2 | ~788 |
 | `tests/cross_substrate_identity/scalar-float-f64/` | 2 | ~1,310 |
 | `tests/cross_substrate_identity/struct-handle-roundtrip/` | 2 | ~746 |
@@ -439,7 +443,7 @@
 | `tests/mindcraft/lint/q16_overflow/` | 3 | ~191 |
 | `tests/mindcraft/lint/shadowing/` | 2 | ~87 |
 | `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
-| `tests/mindfuzz_cross_substrate/staged/` | 15 | ~2,832 |
+| `tests/mindfuzz_cross_substrate/staged/` | 16 | ~2,970 |
 | `tests/runtime/` | 2 | ~135 |
 | `tests/selfhost_gaps/` | 67 | ~5,301 |
 | `tests/shapes/` | 3 | ~260 |
@@ -906,7 +910,7 @@
 
 - `bench-gate.yml` (~1432 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~222 tok, medium) — name: Cargo Deny
-- `ci.yml` (~5354 tok, huge) — name: CI
+- `ci.yml` (~6150 tok, huge) — name: CI
 - `crypto-vectors.yml` (~1093 tok, large) — name: Crypto Vectors
 - `docs-claims.yml` (~364 tok, medium) — name: Docs Claims
 - `link-check.yml` (~221 tok, medium) — name: Link Check
@@ -3834,7 +3838,7 @@
 ### `src/ir/`
 
 - `evidence.rs` (~1913 tok, huge) — Copyright 2025 STARGA Inc.
-- `fp_mode.rs` (~3913 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
+- `fp_mode.rs` (~6701 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
 - `mod.rs` (~12293 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~10698 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4040,6 +4044,10 @@
 - `cross_module_enum_run.rs` (~1132 tok, large) — Copyright 2025 STARGA Inc.
 - `cross_module_field_access_run.rs` (~1504 tok, huge) — Copyright 2025 STARGA Inc.
 - `cross_module.rs` (~847 tok, large) — Copyright 2025 STARGA Inc.
+### `tests/cross_substrate_identity/dot-f32-v-4093/`
+
+- `manifest.toml` (~577 tok, large) — version = "1"
+- `reference_hashes.toml` (~428 tok, medium) — avx2 = "a132f7b970b647cd158f591d764c19ec41a8cf27c398c87758f74efb5a8a22c0"
 ### `tests/cross_substrate_identity/dot-i16-4096/`
 
 - `manifest.toml` (~384 tok, medium) — version = "1"
@@ -4056,6 +4064,14 @@
 
 - `manifest.toml` (~437 tok, medium) — version = "1"
 - `reference_hashes.toml` (~270 tok, medium) — avx2 = "917d353b18fd7f5ea4dab7dd02b786f5ccc4a2d954f695084ca0a88214d699c7"
+### `tests/cross_substrate_identity/gemm-i8-mt-64x64x64/`
+
+- `manifest.toml` (~481 tok, medium) — version = "1"
+- `reference_hashes.toml` (~391 tok, medium) — avx2 = "917d353b18fd7f5ea4dab7dd02b786f5ccc4a2d954f695084ca0a88214d699c7"
+### `tests/cross_substrate_identity/gemm-i8-vnni-64x64x64/`
+
+- `manifest.toml` (~536 tok, large) — version = "1"
+- `reference_hashes.toml` (~385 tok, medium) — avx2 = "917d353b18fd7f5ea4dab7dd02b786f5ccc4a2d954f695084ca0a88214d699c7"
 ### `tests/cross_substrate_identity/gemm-q16-64x64x64/`
 
 - `manifest.toml` (~391 tok, medium) — version = "1"
@@ -4076,6 +4092,10 @@
 
 - `manifest.toml` (~681 tok, large) — version = "1"
 - `reference_hashes.toml` (~562 tok, large) — avx2 = "04da6abc69e63314331e88a7a9670ce5c9e90ddaa2bf5f5dc53526f56477de80"
+### `tests/cross_substrate_identity/matmul-f32-v-64x64/`
+
+- `manifest.toml` (~461 tok, medium) — version = "1"
+- `reference_hashes.toml` (~433 tok, medium) — avx2 = "ec5adb991372fcfc16b964ba566f05fb44701fcf8bbde2a5453fed294e1d0175"
 ### `tests/cross_substrate_identity/q16-arith-chain/`
 
 - `manifest.toml` (~432 tok, medium) — version = "1"
@@ -4085,7 +4105,7 @@
 - `README.md` (~1219 tok, large) — cross_substrate_identity — the internal mind-bench reproducibility gate
 ### `tests/`
 
-- `cross_substrate_identity.rs` (~14166 tok, huge) — Copyright 2025 STARGA Inc.
+- `cross_substrate_identity.rs` (~21427 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/cross_substrate_identity/scalar-float-f64/`
 
 - `manifest.toml` (~778 tok, large) — version = "1"
@@ -4280,9 +4300,10 @@
 - `mindc.rs` (~1851 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_test_phase_b.rs` (~3525 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_workspace_phase_c.rs` (~4166 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindfuzz_cross_substrate.rs` (~6258 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindfuzz_cross_substrate.rs` (~10828 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/mindfuzz_cross_substrate/staged/`
 
+- `fuzz_repro_seed_deadbeef_prog000.mind` (~138 tok, small) — DIVERGENCE REPRODUCER (issue #72 fuzzer)
 - `manifest.tsv` (~357 tok, medium) — scalar_arith_step000	f	3735928559	64	5e39820a2a8325417e39057f19ba9bceec01bd2068c
 - `scalar_accum_step000.mind` (~154 tok, small) — MIND-Fuzz seed: scalar accumulator with a return-feeding literal.
 - `scalar_accum_step001.mind` (~162 tok, small) — MIND-Fuzz seed: scalar accumulator with a return-feeding literal.
