@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3036 | **Est. tokens:** ~7,285,540
-**Generated:** 2026-07-07 05:44 UTC
+**Files:** 3038 | **Est. tokens:** ~7,292,744
+**Generated:** 2026-07-07 21:49 UTC
 
 ## Token Budget Guide
 
@@ -40,7 +40,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,163 |
-| `docs/` | 31 | ~62,217 |
+| `docs/` | 32 | ~66,228 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
@@ -54,7 +54,7 @@
 | `examples/distribution-crossisa/` | 6 | ~6,334 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 38 | ~76,615 |
+| `examples/mindc_mind/` | 39 | ~79,613 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~83 |
 | `examples/native/` | 4 | ~527 |
@@ -65,7 +65,7 @@
 | `.githooks/` | 1 | ~255 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 9 | ~10,691 |
+| `.github/workflows/` | 9 | ~10,886 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~17,416 |
 | `scripts/` | 9 | ~11,559 |
@@ -631,6 +631,7 @@
 - `capabilities.toml` (~1163 tok, large) — [ir]
 ### `docs/`
 
+- `architecture_audit_fable5_2026-07-07.md` (~4011 tok, huge) — MIND Compiler — Architecture + Honesty Audit (Fable-5, 2026-07-07)
 - `architecture.md` (~965 tok, large) — Architecture
 - `autodiff.md` (~595 tok, large) — Static autodiff (public)
 ### `docs/backends/`
@@ -803,6 +804,7 @@
 - `mod_operator_smoke.py` (~2100 tok, huge)
 - `multi_let_smoke.py` (~1499 tok, large)
 - `now_ns_smoke.py` (~678 tok, large) — # Copyright 2025 STARGA Inc.
+- `oracle_parity_lint.py` (~2998 tok, huge)
 - `param_types_smoke.py` (~1273 tok, large)
 - `_ref_add.note` (~16 tok, tiny) — e7bdbecdd47c736566c96f0ca4695499c81e0b6d087919959b99b543c67235e0
 - `_ref_if_ret.note` (~16 tok, tiny) — 72e8c82f9be032e5285fa76776e2fd2a4c7ea0d010ecb379d6a00c8498f92656
@@ -904,7 +906,7 @@
 
 - `bench-gate.yml` (~1432 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~222 tok, medium) — name: Cargo Deny
-- `ci.yml` (~4967 tok, huge) — name: CI
+- `ci.yml` (~5162 tok, huge) — name: CI
 - `crypto-vectors.yml` (~1093 tok, large) — name: Crypto Vectors
 - `docs-claims.yml` (~364 tok, medium) — name: Docs Claims
 - `link-check.yml` (~221 tok, medium) — name: Link Check
