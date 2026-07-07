@@ -1,0 +1,23 @@
+# mind-bench reference hashes — RFC 0020 §5. See dot-l2-q16/reference_hashes.toml
+# for full provenance/signing notes.
+#
+# The VNNI (VPDPBUSD) int-dot rung. Its output is byte-for-byte identical to the
+# AVX2 vpmaddwd default BY CONSTRUCTION: VPDPBUSD is u8×s8→i32 and our inputs are
+# signed int8, so the kernel applies the exact integer bias identity
+# Σ aₛ·bₛ = Σ (aₛ+128)·bₛ − 128·Σ bₛ (all terms exact i32). The reduction is
+# exact integer arithmetic, so this hash is THE SAME as the committed
+# single-thread gemm-i8 reference (917d353b…); a divergence means the
+# signed-bias lowering is not exact (mind-det-gemm owns the fix), NOT a re-bless.
+#
+#   avx2 — DEFERRED on non-VNNI hosts (this dev box is Haswell / no AVX-512-VNNI):
+#          the compiled vpdpbusd kernel cannot RUN here, so the gate skips LOUDLY
+#          rather than falsely passing. On a VNNI-capable x86 runner the gate
+#          compiles with MIND_INTDOT=vnni, executes vpdpbusd, cross-checks the
+#          scalar int32 oracle, and asserts this exact hash byte-for-byte.
+#   neon — the ARM i8mm SDOT/SMMLA path already reproduces 917d353b… on real
+#          aarch64 (see gemm-i8-64x64x64); the VNNI rung is an x86-only encoding
+#          of the identical exact int32 sum, so the cross-substrate hash is the
+#          same value. Enforced on aarch64 via the gemm-i8 canary.
+
+avx2 = "917d353b18fd7f5ea4dab7dd02b786f5ccc4a2d954f695084ca0a88214d699c7"
+neon = "917d353b18fd7f5ea4dab7dd02b786f5ccc4a2d954f695084ca0a88214d699c7"

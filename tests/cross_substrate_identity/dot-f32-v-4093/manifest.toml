@@ -1,0 +1,37 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes.
+#
+# STRICT-FP f32 vector dot (__mind_blas_dot_f32_v), length 4093 (= 511*8 + 5, so
+# it exercises BOTH the 8-lane vector main loop AND the scalar tail). This is a
+# NEW bit-identity class: the strict-FP tier UNFUSES the multiply-add (separate
+# arith.mulf + arith.addf, two roundings, no single-rounding FMA contraction) and
+# replaces the target-defined horizontal `vector.reduction <add>` (whose
+# pairwise/tree fold order differs per ISA) with a PINNED left-to-right fold over
+# lanes 0..8, so the dot is bit-EXACT — not a 1e-4 tolerance path.
+#
+# Why this is a candidate for cross-substrate byte-identity: scalar IEEE mul/add
+# are round-to-nearest-even with a single fully-specified result, and the fold
+# ORDER is now fixed, so an IEEE-conformant FPU on any substrate evaluates the
+# identical operations on the identical bits. BUT unlike the integer tiers this
+# rests on strict-FP lowering (fp_mode = strict), so avx2 == neon MUST be blessed
+# on REAL aarch64, never asserted from x86 + the associativity argument — the
+# neon line here is DEFERRED pending that bless. The output is the f32 result;
+# canonical encoding is its IEEE-754 bit pattern as an i64, 8 LE bytes, sha256.
+
+version = "1"
+name = "dot-f32-v-4093"
+description = "STRICT-FP f32 vector dot a.b, len 4093 (dot_f32_v, FMA unfused + pinned fixed-order horizontal fold); bit-EXACT, not tolerance — the first strict-f32 cross-substrate byte-identity primitive (neon bless pending real aarch64)."
+weight = 1.0
+substrates = ["avx2", "neon"]
+
+[input]
+generator = "lcg"          # a (len f32) generated before b (len f32); sample = (u32/u32::MAX)*2-1 in [-1,1)
+seed = 3735928559          # 0xDEADBEEF
+length = 4093              # 511*8 + 5: exercises the 8-lane main loop AND the scalar tail
+dtype = "f32"              # a and b are each `length` row-major f32
+
+[kernel]
+symbol = "dotf32"          # direct: one call to __mind_blas_dot_f32_v (a, b, n)
+fp_mode = "strict"         # FMA unfused, pinned fixed-order fold; NO fastmath/reassoc/contract
+returns = "i64"            # f32 bits packed into the low 32 bits of an i64 (Option-C ABI)
+output_encoding = "f32_bits_i64_le"  # f32::to_bits() as i64, 8 LE bytes, then sha256
