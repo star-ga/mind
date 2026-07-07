@@ -118,11 +118,16 @@ fn return_type_threads_through_to_let_binding() {
 }
 
 #[test]
-fn phase_a_fallback_when_no_signature_available() {
-    // Build a table where the importing module surface is declared
-    // via an explicit `export { ... }` block — no `exported_fns`
-    // captured.  The Phase-B path then falls back to Phase-A loose
-    // typing and accepts the call.
+fn explicit_export_block_donor_enforces_arity() {
+    // An explicit `export { do_stuff }` block whose module ALSO defines
+    // `fn do_stuff` locally now captures that signature into `exported_fns`
+    // (RFC 0007 cross-module resolution), so a wrong-arity call across the
+    // module boundary is rejected — the same guarantee the `pub fn` path
+    // gives, and exactly what lets a sibling module's `q16_sub(a, b)`
+    // type-check against the real arity. (Historically this path fell back to
+    // Phase-A loose typing and accepted any arity; capturing the local
+    // signature is strictly more correct and consistent with the `pub fn`
+    // arity tests above.)
     let donor_src = "export { do_stuff }\nfn do_stuff(x: i64) -> i64 { x }\n";
     let donor_ast = parser::parse(donor_src).expect("donor must parse");
     let table = build_module_table(&[("crate.donor".to_string(), &donor_ast)]);
@@ -130,13 +135,14 @@ fn phase_a_fallback_when_no_signature_available() {
     let consumer_ast = parser::parse(consumer_src).expect("consumer must parse");
     let env = TypeEnv::new();
     let diags = check_module_types_with_modules(&consumer_ast, consumer_src, None, &env, &table);
-    // Under Phase-A fallback (no exported_fns to validate against),
-    // ANY arity/types pass.  This proves the Phase-B path doesn't
-    // mistakenly tighten the explicit-`export`-block path.
     assert!(
-        diags.is_empty(),
-        "explicit-export-block donor should still resolve via Phase-A loose typing; got {:?}",
-        diags
+        !diags.is_empty(),
+        "do_stuff(1,2,3,99) must error: the explicit-export donor declares arity 1"
+    );
+    let joined: String = diags.iter().map(|d| format!("{d:?}")).collect();
+    assert!(
+        joined.contains("expects 1 argument"),
+        "expected an arity-1 error for the explicit-export-block donor; got {joined}"
     );
 }
 
