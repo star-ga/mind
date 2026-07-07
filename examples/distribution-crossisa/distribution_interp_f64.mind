@@ -46,46 +46,67 @@ pub fn dl_pdf(x: f64) -> f64 {
     // histogram-shaped sample drawn from the real distribution.cpp data pattern.
     // b: -2.0  -1.0   0.0   1.0   2.0   3.0
     // r:  0.02  0.11  0.37  0.28  0.09  0.01
-    let b0: f64 = -2.0
-    let b1: f64 = -1.0
-    let b2: f64 = 0.0
-    let b3: f64 = 1.0
-    let b4: f64 = 2.0
-    let b5: f64 = 3.0
-    let r0: f64 = 0.02
-    let r1: f64 = 0.11
-    let r2: f64 = 0.37
-    let r3: f64 = 0.28
-    let r4: f64 = 0.09
-    let r5: f64 = 0.01
+    let b0: f64 = -2.0;
+    let b1: f64 = -1.0;
+    let b2: f64 = 0.0;
+    let b3: f64 = 1.0;
+    let b4: f64 = 2.0;
+    let b5: f64 = 3.0;
+    let r0: f64 = 0.02;
+    let r1: f64 = 0.11;
+    let r2: f64 = 0.37;
+    let r3: f64 = 0.28;
+    let r4: f64 = 0.09;
+    let r5: f64 = 0.01;
 
     // lower_bound over b[]: pick the bracketing pair (lo,ro)=(b[i-1],r[i-1]) and
     // (hi,rh)=(b[i],r[i]) for the interval containing x. Unrolled ladder; both arms
     // of every branch assign all four carried f64s so the block-arg edge types
     // uniformly as f64 (the strict f64 loop/branch discipline).
-    let mut lo: f64 = b0
-    let mut ro: f64 = r0
-    let mut hi: f64 = b1
-    let mut rh: f64 = r1
+    let mut lo: f64 = b0;
+    let mut ro: f64 = r0;
+    let mut hi: f64 = b1;
+    let mut rh: f64 = r1;
     if x < b1 {
         // clamp to the first interval [b0, b1] for the left tail
-        lo = b0  ro = r0  hi = b1  rh = r1
-    } else if x < b2 {
-        lo = b1  ro = r1  hi = b2  rh = r2
-    } else if x < b3 {
-        lo = b2  ro = r2  hi = b3  rh = r3
-    } else if x < b4 {
-        lo = b3  ro = r3  hi = b4  rh = r4
+        lo = b0;
+        ro = r0;
+        hi = b1;
+        rh = r1;
     } else {
-        // interval [b4, b5], also used for the right tail (x >= b5)
-        lo = b4  ro = r4  hi = b5  rh = r5
+        if x < b2 {
+            lo = b1;
+            ro = r1;
+            hi = b2;
+            rh = r2;
+        } else {
+            if x < b3 {
+                lo = b2;
+                ro = r2;
+                hi = b3;
+                rh = r3;
+            } else {
+                if x < b4 {
+                    lo = b3;
+                    ro = r3;
+                    hi = b4;
+                    rh = r4;
+                } else {
+                    // interval [b4, b5], also used for the right tail (x >= b5)
+                    lo = b4;
+                    ro = r4;
+                    hi = b5;
+                    rh = r5;
+                }
+            }
+        }
     }
 
     // The divergent expression, verbatim in source order:
     //   numerator = r[i-1]*(b[i]-x) + r[i]*(x-b[i-1])   == ro*(hi-x) + rh*(x-lo)
     //   result    = numerator / (b[i]-b[i-1])           == numerator / (hi-lo)
     // Strict lowering: two arith.mulf then one arith.addf, no contraction.
-    let num: f64 = ro * (hi - x) + rh * (x - lo)
-    let den: f64 = hi - lo
-    return num / den
+    let num: f64 = ro * (hi - x) + rh * (x - lo);
+    let den: f64 = hi - lo;
+    return num / den;
 }
