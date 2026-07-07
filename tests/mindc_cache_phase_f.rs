@@ -33,7 +33,7 @@ use std::process::Command;
 use libmind::build::cache::{
     BuildManifest, CacheProbe, cache_root, module_cache_key, object_path, probe,
 };
-use libmind::project::{BuildTarget, OptimizeLevel};
+use libmind::project::{BuildTarget, EmitKind, OptimizeLevel};
 
 // ---------------------------------------------------------------------------
 // Test infrastructure
@@ -84,11 +84,17 @@ fn probe_for_source(
     target: BuildTarget,
     optimize: OptimizeLevel,
 ) -> CacheProbe {
+    // `run_build` invokes `mindc build` with no `--emit`, whose default emit is
+    // `binary`. The build keys its cache entry on the `emit=binary` artifact-kind
+    // discriminator (see `run_build` in src/build/mod.rs — `cdylib` contributes no
+    // entry, `binary`/`object` do), so a probe MUST carry the same discriminator or
+    // it spuriously misses a freshly-built binary.
+    let emit_disc = [format!("emit={}", EmitKind::Binary.as_str())];
     let key = module_cache_key(
         source,
         target,
         optimize,
-        &[],
+        &emit_disc,
         env!("CARGO_PKG_VERSION"),
         2024,
     );
