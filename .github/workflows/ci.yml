@@ -275,6 +275,19 @@ jobs:
             --features "mlir-build std-surface cross-module-imports" \
             --test cross_substrate_identity -- --nocapture
 
+      - name: Differential determinism fuzzer (issue #72)
+        # Seeded generator (0xDEADBEEF) emits a bounded batch of valid MIND
+        # programs; each is proven a mic@3 byte fixed point AND its lowered ELF
+        # output is checked against a substrate-invariant interpreter oracle.
+        # Runs on BOTH matrix substrates: the same programs compile on avx2 and
+        # on real neon, and each runner prints the batch mic@3 digest (which is
+        # substrate-independent by construction, RFC 0015 §3.1) so x86 == ARM is
+        # inspectable across the two runners.
+        run: |
+          cargo test --no-default-features \
+            --features "mlir-build std-surface cross-module-imports" \
+            --test mindfuzz_cross_substrate -- --nocapture
+
   format:
     name: Format Check
     runs-on: ubuntu-latest
