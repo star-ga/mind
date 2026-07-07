@@ -100,6 +100,14 @@ fn build_runtime_support_so() -> Option<PathBuf> {
         src.to_str().unwrap(),
         "-shared",
         "-O2",
+        // Forbid multiply-add contraction so the scalar/vector f32 kernels are
+        // byte-identical to the strict Rust reference on EVERY host. Without it,
+        // an FMA-by-default target (macOS arm64/x86_64 clang) fuses `sum += a*b`
+        // into a single-rounding `fmadd`, diverging from the two-rounding
+        // reference; x86_64 Linux clang can't contract without FMA available, so
+        // it only passed by accident. Mirrors the production `-ffp-contract=off`
+        // C build (src/eval/mlir_build.rs) and this file's own numeric contract.
+        "-ffp-contract=off",
         "-o",
         so_path.to_str().unwrap(),
     ]);
