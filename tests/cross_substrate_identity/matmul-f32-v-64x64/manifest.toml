@@ -1,0 +1,32 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes.
+#
+# STRICT-FP row-major f32 matmul (__mind_blas_matmul_rmajor_f32_v): y = W . x
+# where W is a 64x64 row-major f32 matrix and x a 64-vector; the outer loop over
+# rows inlines the SAME strict-FP f32 dot fold (FMA unfused + pinned fixed-order
+# horizontal lane fold) per row, writing the 64-length f32 result buffer y. Same
+# NEW bit-identity class as dot-f32-v-4093: bit-EXACT, not a 1e-4 tolerance.
+#
+# As with dot-f32-v, cross-substrate identity rests on strict-FP lowering, so the
+# avx2 == neon claim MUST be blessed on REAL aarch64 — the neon line is DEFERRED
+# pending that bless, never asserted from x86. The output is the rows-length f32
+# result vector; canonical encoding is each f32's IEEE-754 bit pattern, LE, sha256.
+
+version = "1"
+name = "matmul-f32-v-64x64"
+description = "STRICT-FP row-major f32 matmul y = W.x, W 64x64 (matmul_rmajor_f32_v, per-row FMA-unfused pinned fixed-order fold); bit-EXACT, not tolerance — strict-f32 matmul cross-substrate byte-identity primitive (neon bless pending real aarch64)."
+weight = 1.0
+substrates = ["avx2", "neon"]
+
+[input]
+generator = "lcg"          # W (rows*cols f32) generated before x (cols f32); sample = (u32/u32::MAX)*2-1 in [-1,1)
+seed = 3735928559          # 0xDEADBEEF
+rows = 64
+cols = 64
+dtype = "f32"              # W is rows*cols row-major f32; x is cols f32; y is rows f32
+
+[kernel]
+symbol = "mmf32"           # direct: one call to __mind_blas_matmul_rmajor_f32_v (w, x, y, rows, cols)
+fp_mode = "strict"         # per-row FMA unfused, pinned fixed-order fold; NO fastmath/reassoc/contract
+returns = "i64"            # status (0 ok); result written to caller y buffer
+output_encoding = "f32_bits_le_vector"  # rows f32, each to_bits() little-endian, then sha256
