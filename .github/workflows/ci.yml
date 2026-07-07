@@ -416,6 +416,19 @@ jobs:
             python3 examples/mindc_mind/mic3_flip_smoke.py
         working-directory: ${{ github.workspace }}
 
+      - name: Per-arm oracle-parity linter (oracle_parity_lint.py)
+        # Localises which self-host ARM drifted from the Rust oracle. The
+        # whole-module FLIP above reports one byte offset on the full stream;
+        # this asserts each construct's mic@3 bytes are byte-identical to
+        # `mindc --emit-mic3` and prints the SHA-256 of both sides on any drift,
+        # so an emitter/oracle divergence is diagnosed per-construct and can
+        # never land silently. MINDC_SO is set, so it fails closed (never skips).
+        run: |
+          MINDC_SO=/tmp/libmindc_mind_self_host.so \
+          MINDC=${{ github.workspace }}/target/release/mindc \
+            python3 examples/mindc_mind/oracle_parity_lint.py
+        working-directory: ${{ github.workspace }}
+
       - name: Self-host gap-corpus integrity gate (gap_corpus_smoke.py)
         run: |
           MINDC_SO=/tmp/libmindc_mind_self_host.so \
