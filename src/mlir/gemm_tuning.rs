@@ -143,9 +143,20 @@ pub const I8_NC: usize = 128;
 /// int8 tier register-tile rows — mirrors `Q16_MR`. Pinned (accumulator shape).
 pub const I8_MR: usize = 4;
 
-/// int8 tier register-tile columns — mirrors `Q16_NR`. Pinned (accumulator
-/// vector width).
-pub const I8_NR: usize = 8;
+/// int8 tier AVX2 register-tile columns (logical NR = `COL_REGS`·8). Tuned to
+/// 16 (was 8): the AVX2 `vpmaddwd` microkernel is LOAD-PORT bound — at NR=8 each
+/// 2-K `vpmaddwd` needed its own memory-source A-broadcast (`vpbroadcastd ymm,
+/// m32`), and those broadcasts saturated Haswell's 2-load/cycle budget (objdump:
+/// per K-pair 1 B-load + 4 A-broadcasts + 4 vpmaddwd + 4 vpaddd → load-bound).
+/// NR=16 = COL_REGS=2 YMM column groups per row reuses ONE A-broadcast across two
+/// `vpmaddwd`, halving the A-load fraction and shifting the kernel toward
+/// vpmaddwd-bound. Register budget at MR=4: 8 sub-accumulators + 2 B tiles + 1
+/// broadcast ≈ 11 YMM ≤ 16 (no spill). NC (128) must stay a multiple of NR
+/// (128 = 8·16 ✓). BYTE-IDENTITY-SAFE: widening NR only groups more output
+/// columns under a shared broadcast — integer add is associative + commutative,
+/// so the exact int32 sum is unchanged and the pinned `917d353b` int8 canary
+/// holds (verified). The VNNI path keeps its own I8_VNNI_NR=32.
+pub const I8_NR: usize = 16;
 
 // ── int8 VNNI register-tile (mode-dependent, AVX-512 `vpdpbusd.512`) ─────────
 //
