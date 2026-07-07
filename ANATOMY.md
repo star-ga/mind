@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3038 | **Est. tokens:** ~7,292,744
-**Generated:** 2026-07-07 21:49 UTC
+**Files:** 3039 | **Est. tokens:** ~7,299,428
+**Generated:** 2026-07-07 22:13 UTC
 
 ## Token Budget Guide
 
@@ -65,7 +65,7 @@
 | `.githooks/` | 1 | ~255 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 9 | ~10,886 |
+| `.github/workflows/` | 9 | ~11,078 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~17,416 |
 | `scripts/` | 9 | ~11,559 |
@@ -394,7 +394,7 @@
 | `src/ir/compact/v3/` | 4 | ~45,526 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,211 |
-| `src/mlir/` | 3 | ~5,425 |
+| `src/mlir/` | 3 | ~5,659 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 4 | ~9,649 |
 | `src/package/` | 2 | ~1,877 |
@@ -408,7 +408,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 40 | ~186,313 |
-| `tests/` | 272 | ~459,829 |
+| `tests/` | 273 | ~466,087 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -906,7 +906,7 @@
 
 - `bench-gate.yml` (~1432 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~222 tok, medium) — name: Cargo Deny
-- `ci.yml` (~5162 tok, huge) — name: CI
+- `ci.yml` (~5354 tok, huge) — name: CI
 - `crypto-vectors.yml` (~1093 tok, large) — name: Crypto Vectors
 - `docs-claims.yml` (~364 tok, medium) — name: Docs Claims
 - `link-check.yml` (~221 tok, medium) — name: Link Check
@@ -3860,7 +3860,7 @@
 ### `src/mlir/`
 
 - `c_export.rs` (~1685 tok, huge) — Copyright 2025 STARGA Inc.
-- `gemm_tuning.rs` (~3405 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `gemm_tuning.rs` (~3639 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~335 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/ops/`
 
@@ -4280,6 +4280,7 @@
 - `mindc.rs` (~1851 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_test_phase_b.rs` (~3525 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_workspace_phase_c.rs` (~4166 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindfuzz_cross_substrate.rs` (~6258 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/mindfuzz_cross_substrate/staged/`
 
 - `manifest.tsv` (~357 tok, medium) — scalar_arith_step000	f	3735928559	64	5e39820a2a8325417e39057f19ba9bceec01bd2068c
