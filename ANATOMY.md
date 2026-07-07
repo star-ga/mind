@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3037 | **Est. tokens:** ~7,285,542
-**Generated:** 2026-07-07 00:59 UTC
+**Files:** 3036 | **Est. tokens:** ~7,285,540
+**Generated:** 2026-07-07 05:38 UTC
 
 ## Token Budget Guide
 
@@ -51,7 +51,7 @@
 | `examples/` | 18 | ~35,272 |
 | `examples/c/` | 2 | ~400 |
 | `examples/compliance/` | 3 | ~5,294 |
-| `examples/distribution-crossisa/` | 7 | ~6,485 |
+| `examples/distribution-crossisa/` | 6 | ~6,334 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
 | `examples/mindc_mind/` | 38 | ~76,615 |
@@ -408,7 +408,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 40 | ~186,313 |
-| `tests/` | 272 | ~459,680 |
+| `tests/` | 272 | ~459,829 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -754,9 +754,8 @@
 - `data1.txt` (~212 tok, medium) — 45.96
 - `data2.txt` (~223 tok, medium) — 107.50
 - `distribution.cpp` (~1217 tok, large)
-- `distribution_interp_f64.mind` (~1127 tok, large) — Deterministic IEEE-754 float64 piecewise-LINEAR density interpolation kernel,
+- `distribution_interp_f64.mind` (~1229 tok, large) — Deterministic IEEE-754 float64 piecewise-LINEAR density interpolation kernel,
 - `README.md` (~1175 tok, large) — Cross-ISA determinism: a piecewise-linear density kernel
-- `_valerii_mind_check.mind` (~253 tok, medium) — harness: exercise the ported divergent kernel across the boundary grid
 ### `examples/emit_ir/`
 
 - `bootstrap_smoke.py` (~2890 tok, huge)
@@ -3987,7 +3986,7 @@
 ### `tests/`
 
 - `bare_variant_ctor_run.rs` (~885 tok, large) — Copyright 2025 STARGA Inc.
-- `blas_smoke.rs` (~6113 tok, huge) — Copyright 2025 STARGA Inc.
+- `blas_smoke.rs` (~6262 tok, huge) — Copyright 2025 STARGA Inc.
 - `blas_vec_q16_smoke.rs` (~5639 tok, huge) — Copyright 2025 STARGA Inc.
 - `blas_vec_smoke.rs` (~2130 tok, huge) — Copyright 2025 STARGA Inc.
 - `bool_literal_value_run.rs` (~785 tok, large) — Copyright 2025 STARGA Inc.
