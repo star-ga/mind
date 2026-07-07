@@ -1,0 +1,35 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes.
+#
+# The MULTITHREADED "det.igemm" tier: the SAME square int8 GEMM as
+# gemm-i8-64x64x64 (C[M,N] = A[M,K] . B[K,N], M = K = N = 64, row-major, PURE
+# INTEGER), but driven through the multithreaded intrinsic
+# __mind_blas_matmul_mm_i8_mt_v. The M output rows are split into contiguous
+# owner-computes bands, one per POSIX thread (T = clamp(online-CPUs, 1, M)),
+# each running the SAME BLIS-blocked int8 macro-kernel over its band — NO
+# cross-thread reduction, NO atomic, NO shared accumulator. Because integer add
+# is associative + commutative, the thread-band partition is byte-for-byte
+# identical to the single-thread kernel REGARDLESS of the runtime thread count,
+# so this workload's output hash MUST equal the single-thread gemm-i8 reference
+# (917d353b…). avx2 == neon by the same construction (RFC 0015 §3.1). The output
+# is the M×N INT32 result matrix; canonical encoding is each i32 little-endian,
+# then sha256.
+
+version = "1"
+name = "gemm-i8-mt-64x64x64"
+description = "MULTITHREADED int8 square GEMM C = A.B (det.igemm matmul_mm_i8_mt_v); owner-computes M-row thread bands, byte-for-byte identical to the single-thread gemm-i8 kernel for any thread count — the thread-band-reduction byte-identity canary."
+weight = 2.0
+substrates = ["avx2", "neon"]
+
+[input]
+generator = "lcg"          # A (m*k i8) generated before B (k*n i8); sample = (x>>16 as i32) as i8
+seed = 3735928559          # 0xDEADBEEF
+m = 64
+k = 64
+n = 64
+dtype = "i8"               # A is m*k row-major i8; B is k*n row-major i8; C is m*n row-major i32
+
+[kernel]
+symbol = "gemmi8mt"        # direct: one call to __mind_blas_matmul_mm_i8_mt_v (a, b, c, m, k, n)
+returns = "i64"            # status (0 ok); result written to caller C buffer
+output_encoding = "i32_le_matrix"  # m*n i32, row-major, each little-endian, then sha256
