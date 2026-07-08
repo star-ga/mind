@@ -595,10 +595,12 @@ jobs:
     name: Mindcraft check (RFC 0007 Phase 6)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # Lint warnings should not block the compile+test CI matrix during the
-    # initial rollout.  Once the std/ and examples/ tree is fully clean this
-    # flag can be removed.
-    continue-on-error: true
+    # Blocking gate: `mindc check` over std/ + examples/ must be error-clean.
+    # Cross-module import resolution (see the build step) lets the project-level
+    # check see symbols declared in sibling std modules, so the tree now checks
+    # with zero error-severity diagnostics — the `continue-on-error` rollout flag
+    # is removed. Lint-level warnings remain non-fatal by design (the check exits
+    # non-zero only on error-severity diagnostics).
 
     steps:
       - name: Checkout
@@ -620,13 +622,17 @@ jobs:
 
       - name: Build mindc
         # std-surface enables the while/for/region parser arms used in std/ and
-        # examples/; without it the type-checker rejects valid MIND source files
-        # that use these constructs and the check exits non-zero.
-        run: cargo build --release --no-default-features --features std-surface --bin mindc
+        # examples/. cross-module-imports seeds the whole-project module table so
+        # the check resolves symbols declared in sibling modules (e.g. a file that
+        # does `import std.sha256`) instead of reporting spurious E2003
+        # undefined-call errors — a project-level check would otherwise be
+        # stricter than a build. Without either feature the check rejects valid
+        # MIND source and exits non-zero.
+        run: cargo build --release --no-default-features --features "std-surface cross-module-imports" --bin mindc
 
       - name: Run mindc check on std/ and examples/
         run: |
-          cargo run --release --no-default-features --features std-surface --bin mindc -- \
+          cargo run --release --no-default-features --features "std-surface cross-module-imports" --bin mindc -- \
             check std/ examples/
 
   # MSRV check temporarily disabled - ar_archive_writer 0.5.x requires nightly features
