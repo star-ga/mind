@@ -1497,7 +1497,10 @@ fn hex_encode(bytes: &[u8]) -> String {
 /// Decode a hex string (optional `0x` prefix, case-insensitive) into bytes.
 /// Returns `None` on odd length or a non-hex digit.
 fn hex_decode(s: &str) -> Option<Vec<u8>> {
-    let s = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).unwrap_or(s);
+    let s = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .unwrap_or(s);
     if s.is_empty() || s.len() % 2 != 0 {
         return None;
     }
@@ -1524,7 +1527,9 @@ fn collect_trusted_pubkeys(flags: &[String]) -> Result<Vec<Vec<u8>>, String> {
                 out.push(b);
                 Ok(())
             }
-            None => Err(format!("invalid --signer-pubkey / trusted-pubkey hex: {tok}")),
+            None => Err(format!(
+                "invalid --signer-pubkey / trusted-pubkey hex: {tok}"
+            )),
         }
     };
     for f in flags {
@@ -1759,8 +1764,7 @@ fn run_verify(artifact: &str, json: bool, require_strict_fp: bool, trusted: &[Ve
                         if let Some(pk) = &v.mldsa_pubkey {
                             present.push(pk.clone());
                         }
-                        let all_trusted =
-                            present.iter().all(|pk| trusted.iter().any(|t| t == pk));
+                        let all_trusted = present.iter().all(|pk| trusted.iter().any(|t| t == pk));
                         if !all_trusted {
                             eprintln!(
                                 "error[verify]: signer key is NOT in the trusted allowlist (--signer-pubkey / MIND_EVIDENCE_VERIFY_PUBKEYS) — refusing to report valid"
