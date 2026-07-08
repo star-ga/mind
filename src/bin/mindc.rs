@@ -1517,7 +1517,7 @@ fn hex_decode(s: &str) -> Option<Vec<u8>> {
 /// ML-DSA-65 = 1952 B) compared verbatim against the artifact's embedded key(s).
 fn collect_trusted_pubkeys(flags: &[String]) -> Result<Vec<Vec<u8>>, String> {
     let mut out: Vec<Vec<u8>> = Vec::new();
-    let mut add = |tok: &str, out: &mut Vec<Vec<u8>>| -> Result<(), String> {
+    let add = |tok: &str, out: &mut Vec<Vec<u8>>| -> Result<(), String> {
         let tok = tok.trim();
         if tok.is_empty() {
             return Ok(());
