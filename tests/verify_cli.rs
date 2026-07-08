@@ -268,3 +268,98 @@ fn verify_missing_file_exit_two() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+// ---------------------------------------------------------------------------
+// 6.  --require-strict-fp on an ATTESTED strict artifact → exit 0.
+//
+// `simple.mind` is integer/scalar-only, so its re-derived FP-contract mode is
+// `strict` (no FMA-contraction, no f32 reduction reassociation). The strict-FP
+// gate re-derives that mode as a pure function of the same mic@3 bytes the
+// trace_hash attests, so a strict attested artifact passes the opt-in gate.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn verify_require_strict_fp_passes_strict_attested_artifact() {
+    let bin = mindc_bin();
+    let tmp = tempfile_path("strict_attested.bin");
+    if !emit_evidence(&bin, &tmp) {
+        return;
+    }
+
+    let out = Command::new(&bin)
+        .args(["verify", &tmp, "--require-strict-fp"])
+        .output()
+        .expect("run mindc verify --require-strict-fp");
+
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "strict attested artifact must pass --require-strict-fp; stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("fp_mode:          strict"),
+        "report must confirm the strict FP-contract mode, got:\n{stdout}"
+    );
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+// ---------------------------------------------------------------------------
+// 7.  --require-strict-fp on an UNATTESTED artifact → exit 1 (fail-closed).
+//
+// An artifact with no evidence_chain has no trace_hash attesting its body, so
+// its FP-contract mode cannot be re-derived from *attested* bytes — it is
+// effectively `unknown`. The strict-FP gate must NEVER silently pass such an
+// artifact (task #61: fail closed on unknown). Contrast with test 4, where the
+// SAME unattested artifact PASSES a plain `verify` (attestation absent, not
+// failed) — only the opt-in strict-FP requirement rejects it.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn verify_require_strict_fp_rejects_unattested_artifact() {
+    let bin = mindc_bin();
+    if !bin.exists() {
+        eprintln!("Skipping: mindc binary not found");
+        return;
+    }
+
+    let tmp = tempfile_path("strict_unattested.bin");
+    let emit = Command::new(&bin)
+        .args([&fixture("simple.mind"), "--emit-mic3", &tmp])
+        .output()
+        .expect("run mindc --emit-mic3");
+    assert!(emit.status.success(), "--emit-mic3 must succeed");
+
+    // Sanity: without the flag, the unattested artifact still exits 0.
+    let plain = Command::new(&bin)
+        .args(["verify", &tmp])
+        .output()
+        .expect("run mindc verify (no flag)");
+    assert_eq!(
+        plain.status.code(),
+        Some(0),
+        "plain verify on an unattested artifact must still exit 0"
+    );
+
+    // With the flag, the unattested artifact fails closed.
+    let out = Command::new(&bin)
+        .args(["verify", &tmp, "--require-strict-fp"])
+        .output()
+        .expect("run mindc verify --require-strict-fp on unattested");
+
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "unattested artifact must FAIL --require-strict-fp (fail-closed); stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("unattested") && stderr.contains("fail-closed"),
+        "error must explain the fail-closed unattested rejection, got:\n{stderr}"
+    );
+
+    let _ = std::fs::remove_file(&tmp);
+}

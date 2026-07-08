@@ -311,7 +311,9 @@ enum Command {
         /// `strict` — i.e. it used no FMA-contraction / f32-reassociation op.
         /// Off by default so existing relaxed-but-untampered f32 artifacts still
         /// pass a plain `verify`; a consumer that requires bit-identical floats
-        /// opts in. Fail-closed: an `unknown` mode is rejected too.
+        /// opts in. Fail-closed: a `relaxed` mode, an `unknown` mode, AND an
+        /// unattested artifact (no evidence_chain, so no trace_hash attesting
+        /// the mode) are all rejected — the flag never silently passes.
         #[arg(long)]
         require_strict_fp: bool,
     },
@@ -1579,6 +1581,22 @@ fn run_verify(artifact: &str, json: bool, require_strict_fp: bool) -> i32 {
             eprintln!(
                 "note: {artifact} carries no evidence_chain — unattested artifact (trace_hash not checked)"
             );
+            // Fail-closed strict-FP gate on the UNATTESTED path. An artifact
+            // with no evidence chain has no `trace_hash` attesting its body, so
+            // its FP-contract mode cannot be re-derived from *attested* bytes —
+            // it is effectively `unknown`. `--require-strict-fp` must never
+            // silently pass such an artifact: the whole point of the flag is a
+            // build-host-independent, attested strict-FP guarantee, and an
+            // unattested artifact offers none. Reject it, mirroring the
+            // attested-path relaxed/unknown rejection above (both fail closed).
+            // Plain `verify` (no flag) still exits 0 here — attestation is
+            // absent, not failed (RFC 0017).
+            if require_strict_fp {
+                eprintln!(
+                    "error[verify]: --require-strict-fp on an unattested artifact — no evidence_chain to attest the FP-contract mode; strict-FP cannot be proven (fail-closed)"
+                );
+                return 1;
+            }
             0
         }
         Err(EvidenceError::MissingKey(k)) => {
