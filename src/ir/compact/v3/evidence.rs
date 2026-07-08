@@ -103,10 +103,14 @@ const KEY_TRACE_HASH_KIND: &str = "evidence_chain.trace_hash_kind";
 // OPTIONAL, additive layer emitted only when a signing key is supplied. They sort
 // lexicographically AFTER every `evidence_chain.*` key ('e' < 's'), so an unsigned
 // artifact is byte-identical to the pre-signing encoder and a verifier that
-// predates this layer ignores them. The signature covers the 32-byte
-// `evidence_chain.trace_hash` (the canonical mic@3 anchor) and therefore does NOT
-// feed back into `trace_hash` itself — adding it cannot change the anchor, keeping
-// the determinism gate green.
+// predates this layer ignores them. The signature covers the canonical PROVENANCE
+// PREIMAGE (`build_signature_preimage`): the 32-byte `evidence_chain.trace_hash`
+// (the canonical mic@3 anchor) PLUS a canonical serialization of every other
+// `evidence_chain.*` key (substrate, toolchain, determinism, parent, schema,
+// trace_hash_kind) — so provenance is authenticated, not just the code. The
+// `signature.*` keys are themselves excluded from the preimage (a signature never
+// covers itself), so the signature does NOT feed back into `trace_hash` — adding
+// it cannot change the anchor, keeping the determinism gate green.
 // The `signature.scheme` value is the crypto-agility `alg` tag (OMB M-26-15): a
 // verifier reads it to select which verifier(s) to run. Fail-closed on an
 // unrecognized value so a downgrade/unknown scheme can never be silently accepted.
@@ -199,16 +203,18 @@ pub fn emit_mic3_with_evidence(
 }
 
 /// Emit a mic@3 artifact with an `evidence_chain.*` MAP **and** an Ed25519
-/// signature over the canonical `trace_hash` (RFC 0021 §6).
+/// signature over the canonical provenance preimage (RFC 0021 §6).
 ///
-/// The signature is deterministic (RFC 8032): the `seed` plus the trace_hash
-/// fully determine the 64-byte signature, so this call is byte-reproducible.
+/// The signature is deterministic (RFC 8032): the `seed` plus the preimage fully
+/// determine the 64-byte signature, so this call is byte-reproducible.
 ///
 /// ## Anchor invariant (Constitution Article IV)
 ///
-/// The signature covers only the 32-byte `trace_hash` (the SHA-256 of the
-/// canonical mic@3 body).  It is emitted as `signature.*` MAP keys that sort
-/// after every `evidence_chain.*` key, so:
+/// The signature covers the canonical provenance preimage
+/// ([`build_signature_preimage`]): the 32-byte `trace_hash` (the SHA-256 of the
+/// canonical mic@3 body) plus every other `evidence_chain.*` key, so provenance
+/// (substrate/toolchain/determinism/parent) is authenticated too. It is emitted
+/// as `signature.*` MAP keys that sort after every `evidence_chain.*` key, so:
 ///   * `trace_hash` is unchanged versus the unsigned path — the anchor and the
 ///     determinism gate are untouched; and
 ///   * the unsigned prefix (body + `evidence_chain.*`) is byte-identical to the
@@ -239,9 +245,10 @@ pub fn emit_mic3_with_signed_evidence(
 /// The [`SigningKey`] selects the scheme — classical Ed25519, post-quantum
 /// ML-DSA-65 (FIPS-204), or the hybrid of both — and the artifact is tagged with
 /// the matching `signature.scheme` (`alg`) value so a verifier is crypto-agile
-/// (OMB M-26-15). Every scheme signs the SAME payload (the 32-byte mic@3 anchor),
-/// so the `trace_hash` — and therefore the determinism/keystone gate — is
-/// identical across all schemes and versus the unsigned path.
+/// (OMB M-26-15). Every scheme signs the SAME payload (the canonical provenance
+/// preimage: mic@3 anchor + all other `evidence_chain.*` keys), so the
+/// `trace_hash` — and therefore the determinism/keystone gate — is identical
+/// across all schemes and versus the unsigned path.
 ///
 /// # Determinism
 ///
@@ -263,7 +270,16 @@ pub fn emit_mic3_with_signed_evidence_scheme(
 ) -> Result<Vec<u8>, &'static str> {
     let body = super::emit_mic3(ir);
     let trace_hash = ir_trace_hash(ir);
-    let payload = compute_signature_payload(key, &trace_hash)?;
+    // Sign the CANONICAL PROVENANCE PREIMAGE, not just the anchor: trace_hash ||
+    // canonical serialization of every `evidence_chain.*` entry except the
+    // trace_hash itself (which is derived from the body it anchors). Building the
+    // preimage from the same `build_evidence_entries` the MAP is emitted from
+    // guarantees the signed bytes are byte-for-byte the provenance on the wire, so
+    // substrate/toolchain/determinism/parent are all authenticated — not just code.
+    let evidence_entries =
+        build_evidence_entries(substrate, parent.as_ref(), determinism, toolchain, &trace_hash);
+    let preimage = build_signature_preimage(&evidence_entries, &trace_hash);
+    let payload = compute_signature_payload(key, &preimage)?;
     let mut out = body;
     append_map_epilogue(
         &mut out,
@@ -285,14 +301,17 @@ struct SignaturePayload {
     mldsa: Option<(Vec<u8>, Vec<u8>)>,
 }
 
-/// Sign the 32-byte `trace_hash` under `key`, producing the embeddable payload.
+/// Sign the canonical provenance `preimage` under `key`, producing the embeddable
+/// payload. The preimage is `trace_hash || canonical(evidence_chain.* \ trace_hash)`
+/// (see [`build_signature_preimage`]) so the signature covers the whole provenance
+/// (substrate, toolchain, determinism, parent), not just the code anchor.
 /// Fail-closed when a PQC scheme is requested without the `evidence-mldsa` feature.
 fn compute_signature_payload(
     key: &SigningKey,
-    trace_hash: &[u8; 32],
+    preimage: &[u8],
 ) -> Result<SignaturePayload, &'static str> {
     let ed = |seed: &[u8; 32]| -> ([u8; 32], [u8; 64]) {
-        let sig = super::ed25519::sign(seed, trace_hash);
+        let sig = super::ed25519::sign(seed, preimage);
         let pubkey = super::ed25519::public_key(seed);
         (pubkey, sig)
     };
@@ -305,7 +324,7 @@ fn compute_signature_payload(
         }
         Ok((
             super::mldsa::public_key(seed),
-            super::mldsa::sign(seed, trace_hash),
+            super::mldsa::sign(seed, preimage),
         ))
     };
     match key {
@@ -404,8 +423,9 @@ pub struct VerifiedScheme {
 ///
 /// Returns [`SignatureStatus::Absent`] when the artifact carries no
 /// `signature.*` keys (back-compat: unsigned artifacts are legal).  When a
-/// signature is present it is verified against the embedded `evidence_chain.trace_hash`
-/// (the canonical mic@3 anchor) under the embedded `signature.pubkey`.
+/// signature is present it is verified against the canonical provenance preimage
+/// (the mic@3 anchor plus every other `evidence_chain.*` key —
+/// [`build_signature_preimage`]) under the embedded `signature.pubkey`.
 ///
 /// This does NOT recompute the trace_hash — use [`mic3_evidence_report`] for the
 /// body-tamper check.  A production `verify` should require BOTH
@@ -440,8 +460,26 @@ fn signature_status_from_entries(
         None => return Ok(SignatureStatus::Malformed("signature.scheme")),
     };
 
-    // The signed payload is the canonical mic@3 anchor stored in the MAP.
+    // Rebuild the canonical provenance preimage that was signed at emit time:
+    // trace_hash || canonical(evidence_chain.* \ trace_hash). Building it from the
+    // SAME serialization the emitter used means editing any provenance key
+    // (substrate, toolchain, determinism, parent) changes the preimage and the
+    // signature no longer verifies — the whole provenance is authenticated, not
+    // just the code anchor. `signature.*` keys are excluded (a signature never
+    // covers itself).
     let trace_hash = find_bytes32(entries, KEY_TRACE_HASH)?;
+    let view: Vec<(&str, MapEntryValue)> = entries
+        .iter()
+        .map(|e| {
+            let v = match &e.value {
+                ParsedValue::Str(s) => MapEntryValue::Str(s.as_str()),
+                ParsedValue::Int(i) => MapEntryValue::Int(*i),
+                ParsedValue::Bytes(b) => MapEntryValue::Bytes(b.as_slice()),
+            };
+            (e.key.as_str(), v)
+        })
+        .collect();
+    let preimage = build_signature_preimage(&view, &trace_hash);
 
     let want_ed = scheme == SIG_SCHEME_ED25519 || scheme == SIG_SCHEME_HYBRID;
     let want_mldsa = scheme == SIG_SCHEME_MLDSA65 || scheme == SIG_SCHEME_HYBRID;
@@ -461,7 +499,7 @@ fn signature_status_from_entries(
             Some(s) => s,
             None => return Ok(SignatureStatus::Malformed(KEY_SIG_ED25519)),
         };
-        if !super::ed25519::verify(&pubkey, &trace_hash, &sig) {
+        if !super::ed25519::verify(&pubkey, &preimage, &sig) {
             return Ok(SignatureStatus::Invalid);
         }
         ed_pubkey = Some(pubkey);
@@ -484,7 +522,7 @@ fn signature_status_from_entries(
                 "artifact requires ML-DSA verification; rebuild with --features evidence-mldsa",
             ));
         }
-        if !super::mldsa::verify(&pubkey, &trace_hash, &sig) {
+        if !super::mldsa::verify(&pubkey, &preimage, &sig) {
             return Ok(SignatureStatus::Invalid);
         }
         mldsa_pubkey = Some(pubkey);
@@ -530,6 +568,114 @@ fn find_bytes_opt_n<const N: usize>(
     }
 }
 
+// ─── Canonical provenance entries + signature preimage ─────────────────────────
+
+/// Build the canonical `evidence_chain.*` MAP entries, sorted lexicographically.
+///
+/// This is the SINGLE SOURCE OF TRUTH for the provenance entries: both the MAP
+/// emitter ([`append_map_epilogue`]) and the signature preimage
+/// ([`build_signature_preimage`]) derive from it, so the bytes covered by a
+/// signature are byte-for-byte the provenance that ends up on the wire.
+fn build_evidence_entries<'a>(
+    substrate: &'a str,
+    parent: Option<&'a [u8; 32]>,
+    determinism: Determinism,
+    toolchain: &'a str,
+    trace_hash: &'a [u8; 32],
+) -> Vec<(&'static str, MapEntryValue<'a>)> {
+    let mut entries: Vec<(&'static str, MapEntryValue<'a>)> = vec![
+        (
+            KEY_DETERMINISM,
+            MapEntryValue::Str(match determinism {
+                Determinism::Deterministic => "deterministic",
+                Determinism::Nondeterministic => "nondeterministic",
+            }),
+        ),
+        (KEY_SCHEMA, MapEntryValue::Int(1)),
+        (KEY_SUBSTRATE, MapEntryValue::Str(substrate)),
+        (KEY_TOOLCHAIN, MapEntryValue::Str(toolchain)),
+        (KEY_TRACE_HASH, MapEntryValue::Bytes(trace_hash)),
+        // In-band anchor descriptor: every artifact emitted here uses the mic@3
+        // bytes anchor (ir_trace_hash). Makes the artifact self-describing so a
+        // verifier need not infer the anchor from `schema`.
+        (
+            KEY_TRACE_HASH_KIND,
+            MapEntryValue::Str(TraceHashKind::Mic3Bytes.as_str()),
+        ),
+    ];
+    if let Some(p) = parent {
+        entries.push((KEY_PARENT, MapEntryValue::Bytes(p)));
+    }
+    // Lexicographic sort — the canonical-encoding invariant.
+    entries.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+    entries
+}
+
+/// Serialize one MAP entry value into `out` using the exact mic@3 MAP wire
+/// encoding (tag + length-prefixed payload). Shared by the MAP emitter and the
+/// signature preimage so both produce byte-identical entry encodings.
+fn push_map_value(out: &mut Vec<u8>, val: &MapEntryValue) {
+    match val {
+        MapEntryValue::Str(s) => {
+            out.push(TAG_STRING);
+            let sb = s.as_bytes();
+            uleb128_write(out, sb.len() as u64).unwrap();
+            out.extend_from_slice(sb);
+        }
+        MapEntryValue::Int(i) => {
+            out.push(TAG_INT);
+            uleb128_write(out, zigzag_encode(*i)).unwrap();
+        }
+        MapEntryValue::Bytes(b) => {
+            out.push(TAG_BYTES);
+            uleb128_write(out, b.len() as u64).unwrap();
+            out.extend_from_slice(b);
+        }
+    }
+}
+
+/// Build the canonical signature preimage — the bytes a signature actually covers.
+///
+/// ```text
+/// preimage = trace_hash (32 B)
+///          || ULEB128 selected_entry_count
+///          || for each selected entry (lexicographic key order):
+///               ULEB128 key_len || key_bytes || value_tag || value
+/// ```
+///
+/// "Selected" = every `evidence_chain.*` entry EXCEPT `evidence_chain.trace_hash`
+/// (that hash is derived from the body it anchors, so covering it again is
+/// redundant), and EXCLUDING every `signature.*` key (a signature never covers
+/// itself). Because both the emit path (over [`build_evidence_entries`]) and the
+/// verify path (over the parsed MAP entries) call this with the same logical
+/// entries, the two preimages are byte-identical — so editing `substrate`,
+/// `toolchain`, `determinism`, or `parent` on a signed artifact changes the
+/// preimage and the signature fails to verify (fail-closed).
+///
+/// The per-entry length prefixes plus the leading entry count make the encoding
+/// canonical and injective: no two distinct provenance sets can splice to the
+/// same preimage. The order is the same lexicographic key order used everywhere
+/// else in this module, so the preimage is substrate-independent and
+/// deterministic.
+fn build_signature_preimage(entries: &[(&str, MapEntryValue)], trace_hash: &[u8; 32]) -> Vec<u8> {
+    let mut selected: Vec<&(&str, MapEntryValue)> = entries
+        .iter()
+        .filter(|(k, _)| k.starts_with("evidence_chain.") && *k != KEY_TRACE_HASH)
+        .collect();
+    selected.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+
+    let mut out = Vec::new();
+    out.extend_from_slice(trace_hash);
+    uleb128_write(&mut out, selected.len() as u64).unwrap();
+    for (key, val) in selected {
+        let kb = key.as_bytes();
+        uleb128_write(&mut out, kb.len() as u64).unwrap();
+        out.extend_from_slice(kb);
+        push_map_value(&mut out, val);
+    }
+    out
+}
+
 // ─── Internal MAP emit ────────────────────────────────────────────────────────
 
 /// Build and append the MAP epilogue to `out`.
@@ -546,31 +692,9 @@ fn append_map_epilogue(
     trace_hash: [u8; 32],
     signature: Option<&SignaturePayload>,
 ) {
-    // Collect entries sorted by key.
-    let mut entries: Vec<(&str, MapEntryValue)> = vec![
-        (
-            KEY_DETERMINISM,
-            MapEntryValue::Str(match determinism {
-                Determinism::Deterministic => "deterministic",
-                Determinism::Nondeterministic => "nondeterministic",
-            }),
-        ),
-        (KEY_SCHEMA, MapEntryValue::Int(1)),
-        (KEY_SUBSTRATE, MapEntryValue::Str(substrate)),
-        (KEY_TOOLCHAIN, MapEntryValue::Str(toolchain)),
-        (KEY_TRACE_HASH, MapEntryValue::Bytes(&trace_hash)),
-        // In-band anchor descriptor: every artifact emitted here uses the mic@3
-        // bytes anchor (ir_trace_hash). Makes the artifact self-describing so a
-        // verifier need not infer the anchor from `schema`. Keys are sorted
-        // below, so insertion position is irrelevant.
-        (
-            KEY_TRACE_HASH_KIND,
-            MapEntryValue::Str(TraceHashKind::Mic3Bytes.as_str()),
-        ),
-    ];
-    if let Some(ref p) = parent {
-        entries.push((KEY_PARENT, MapEntryValue::Bytes(p)));
-    }
+    // Collect the canonical evidence_chain.* entries (single source of truth,
+    // shared with the signature preimage so what is signed == what is emitted).
+    let mut entries = build_evidence_entries(substrate, parent.as_ref(), determinism, toolchain, &trace_hash);
     // Optional signature layer (sorts after every evidence_chain.* key). Bound
     // to `signature` so the borrows live through the sort + emit below. The
     // `scheme` tag names which halves are present; a verifier dispatches on it.
@@ -595,23 +719,7 @@ fn append_map_epilogue(
         let kb = key.as_bytes();
         uleb128_write(out, kb.len() as u64).unwrap();
         out.write_all(kb).unwrap();
-        match val {
-            MapEntryValue::Str(s) => {
-                out.write_all(&[TAG_STRING]).unwrap();
-                let sb = s.as_bytes();
-                uleb128_write(out, sb.len() as u64).unwrap();
-                out.write_all(sb).unwrap();
-            }
-            MapEntryValue::Int(i) => {
-                out.write_all(&[TAG_INT]).unwrap();
-                uleb128_write(out, zigzag_encode(*i)).unwrap();
-            }
-            MapEntryValue::Bytes(b) => {
-                out.write_all(&[TAG_BYTES]).unwrap();
-                uleb128_write(out, b.len() as u64).unwrap();
-                out.write_all(b).unwrap();
-            }
-        }
+        push_map_value(out, val);
     }
 }
 
@@ -1906,5 +2014,189 @@ mod tests {
         )
         .unwrap();
         assert_eq!(a, b, "hybrid signed artifact must be byte-reproducible");
+    }
+
+    // -------------------------------------------------------------------------
+    // Provenance authenticity (HIGH fix): the signature now covers the whole
+    // canonical provenance preimage (trace_hash + every other evidence_chain.*
+    // key), so editing substrate / toolchain / determinism / parent on a
+    // validly-signed artifact must break signature verification (fail-closed).
+    // Regression against: "signature is valid" while parent/substrate forgeable.
+    // -------------------------------------------------------------------------
+
+    /// Sign `mod_binop` with the Ed25519 test seed and return the parsed MAP
+    /// entries (the exact structure the verifier consumes).
+    fn signed_ed25519_entries(parent: Option<[u8; 32]>) -> Vec<ParsedEntry> {
+        let ir = mod_binop();
+        let signed = emit_mic3_with_signed_evidence(
+            &ir,
+            "cpu",
+            parent,
+            Determinism::Deterministic,
+            "0.10.0",
+            &TEST_SEED,
+        );
+        let body_end = find_map_sentinel(&signed).unwrap();
+        parse_map_epilogue(&signed[body_end..]).unwrap()
+    }
+
+    /// The unmodified signed entries must verify (positive control for the four
+    /// tamper tests below).
+    fn assert_valid(entries: &[ParsedEntry], ctx: &str) {
+        match signature_status_from_entries(entries).unwrap() {
+            SignatureStatus::Valid(_) => {}
+            other => panic!("{ctx}: expected Valid before tamper, got {other:?}"),
+        }
+    }
+
+    // (ab) Editing `substrate` on a signed artifact breaks the signature.
+    #[test]
+    fn provenance_tamper_substrate_fails_closed() {
+        let mut entries = signed_ed25519_entries(None);
+        assert_valid(&entries, "substrate");
+        for e in entries.iter_mut() {
+            if e.key == "evidence_chain.substrate" {
+                e.value = ParsedValue::Str("gpu".to_string()); // cpu -> gpu
+            }
+        }
+        assert_eq!(
+            signature_status_from_entries(&entries).unwrap(),
+            SignatureStatus::Invalid,
+            "editing substrate (cpu->gpu) must invalidate the signature"
+        );
+    }
+
+    // (ac) Editing `toolchain` on a signed artifact breaks the signature.
+    #[test]
+    fn provenance_tamper_toolchain_fails_closed() {
+        let mut entries = signed_ed25519_entries(None);
+        assert_valid(&entries, "toolchain");
+        for e in entries.iter_mut() {
+            if e.key == "evidence_chain.toolchain" {
+                e.value = ParsedValue::Str("0.10.9".to_string()); // 0.10.0 -> 0.10.9
+            }
+        }
+        assert_eq!(
+            signature_status_from_entries(&entries).unwrap(),
+            SignatureStatus::Invalid,
+            "editing toolchain (0.10.0->0.10.9) must invalidate the signature"
+        );
+    }
+
+    // (ad) Editing `determinism` on a signed artifact breaks the signature.
+    #[test]
+    fn provenance_tamper_determinism_fails_closed() {
+        let mut entries = signed_ed25519_entries(None);
+        assert_valid(&entries, "determinism");
+        for e in entries.iter_mut() {
+            if e.key == "evidence_chain.determinism" {
+                e.value = ParsedValue::Str("nondeterministic".to_string());
+            }
+        }
+        assert_eq!(
+            signature_status_from_entries(&entries).unwrap(),
+            SignatureStatus::Invalid,
+            "flipping determinism deterministic->nondeterministic must invalidate the signature"
+        );
+    }
+
+    // (ae) Editing `parent` (chain linkage) on a signed artifact breaks the
+    //      signature — the whole reason provenance authenticity matters.
+    #[test]
+    fn provenance_tamper_parent_fails_closed() {
+        let mut entries = signed_ed25519_entries(Some([0x11u8; 32]));
+        assert_valid(&entries, "parent");
+        let mut tampered = false;
+        for e in entries.iter_mut() {
+            if e.key == "evidence_chain.parent" {
+                if let ParsedValue::Bytes(b) = &mut e.value {
+                    b[0] ^= 0xFF; // re-point the chain to a forged parent
+                    tampered = true;
+                }
+            }
+        }
+        assert!(tampered, "precondition: signed artifact must carry a parent");
+        assert_eq!(
+            signature_status_from_entries(&entries).unwrap(),
+            SignatureStatus::Invalid,
+            "re-pointing the parent link must invalidate the signature"
+        );
+    }
+
+    // (af) The preimage excludes `evidence_chain.trace_hash` (derived) and every
+    //      `signature.*` key (a signature never covers itself) — proven by
+    //      construction here so a future refactor cannot silently fold them in.
+    #[test]
+    fn signature_preimage_excludes_trace_hash_and_signature_keys() {
+        let th = [0x42u8; 32];
+        let entries: Vec<(&str, MapEntryValue)> = vec![
+            ("evidence_chain.substrate", MapEntryValue::Str("cpu")),
+            ("evidence_chain.trace_hash", MapEntryValue::Bytes(&th)),
+            ("signature.scheme", MapEntryValue::Str("ed25519")),
+        ];
+        let pre = build_signature_preimage(&entries, &th);
+        // Leading 32 bytes are the trace_hash; then ULEB count == 1 (only substrate
+        // survives the filter). trace_hash and signature.* are excluded.
+        assert_eq!(&pre[..32], &th, "preimage must lead with the trace_hash");
+        assert_eq!(pre[32], 1, "only one evidence_chain.* entry (substrate) survives the filter");
+    }
+
+    // -------------------------------------------------------------------------
+    // ML-DSA-65 (FIPS-204) crate-pinning regression vector.
+    //
+    // PROVENANCE (honest): this is NOT an authoritative NIST ACVP vector. It was
+    // generated ONCE with the vetted `fips204` crate under the deterministic
+    // FIPS-204 variant (all-zero keygen implied by the fixed seed ξ, all-zero
+    // signing rnd) and recorded verbatim. It pins ML-DSA-65 KeyGen+Sign output so
+    // a silent change in crate version / lattice params is caught, rather than
+    // trusting the dependency blindly.
+    // deferred: swap for an official FIPS-204 ML-DSA-65 ACVP KAT vector when an
+    //   authoritative source is wired into the test tree — upgrade path: replace
+    //   the recorded constants below with the ACVP (seed -> pk, seed+msg -> sig)
+    //   expected outputs and drop the crate-pinning caveat.
+    // -------------------------------------------------------------------------
+    // Recorded verbatim from the fips204 crate (ML-DSA-65, all-zero keygen seed ξ,
+    // deterministic all-zero signing rnd, message = [0xA5; 32]). See PROVENANCE
+    // note on the test below — crate-pinning vector, not a NIST ACVP KAT.
+    #[cfg(feature = "evidence-mldsa")]
+    const MLDSA65_PIN_PUBKEY_PREFIX: [u8; 16] = [
+        66, 75, 47, 38, 126, 88, 213, 179, 180, 77, 113, 172, 252, 106, 101, 107,
+    ];
+    #[cfg(feature = "evidence-mldsa")]
+    const MLDSA65_PIN_SIG_PREFIX: [u8; 16] = [
+        220, 200, 45, 112, 249, 251, 188, 27, 86, 255, 170, 16, 190, 20, 115, 186,
+    ];
+
+    #[cfg(feature = "evidence-mldsa")]
+    #[test]
+    fn mldsa65_crate_pinning_regression_vector() {
+        // Fixed keygen seed ξ (all-zero) and a fixed 32-byte message.
+        let seed = [0u8; 32];
+        let msg = [0xA5u8; 32];
+
+        let pk = super::super::mldsa::public_key(&seed);
+        let sig = super::super::mldsa::sign(&seed, &msg);
+
+        // Structural pins (FIPS-204 ML-DSA-65 fixed sizes).
+        assert_eq!(pk.len(), 1952, "ML-DSA-65 public key length");
+        assert_eq!(sig.len(), 3309, "ML-DSA-65 signature length");
+
+        // Value pins — recorded verbatim from the fips204 crate (see PROVENANCE).
+        assert_eq!(
+            &pk[..16],
+            &MLDSA65_PIN_PUBKEY_PREFIX,
+            "ML-DSA-65 pubkey prefix drifted from the pinned crate output"
+        );
+        assert_eq!(
+            &sig[..16],
+            &MLDSA65_PIN_SIG_PREFIX,
+            "ML-DSA-65 signature prefix drifted from the pinned crate output"
+        );
+
+        // Self-consistency: the pinned pubkey verifies the pinned signature.
+        assert!(
+            super::super::mldsa::verify(&pk, &msg, &sig),
+            "pinned ML-DSA-65 (pk, sig) must verify over the pinned message"
+        );
     }
 }
