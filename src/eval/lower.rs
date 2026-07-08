@@ -7174,10 +7174,23 @@ fn desugar_match_to_if(
                             // type (e.g. `f64`) so the binding has the right type.
                             let ty = field_types.and_then(|ts| ts.get(i));
                             let value = coerce_enum_field_from_bits(load_i64(field_addr), ty, span);
+                            // Propagate an `array<T>` payload field's declared type as
+                            // the binding annotation so the Let-lowering records the
+                            // vec-sentinel + element tracking. A later `<name>[i]` /
+                            // `.push` / `.length` then resolves to the std.vec runtime
+                            // (an i64 handle) instead of falling to the untyped
+                            // `Instr::ArrayLoad` tensor path — which registers no
+                            // ValueKind and is rejected at the i64 call ABI (RFC 0005
+                            // "non-i64 argument to call"). Non-array payload fields keep
+                            // `ann: None`, so their lowering is byte-identical.
+                            let arr_ann: Option<ast::TypeAnn> = match ty {
+                                Some(t) if is_array_surface_ty(t) => Some(t.clone()),
+                                _ => None,
+                            };
                             stmts.push(ast::Node::Let {
                                 name: name.clone(),
                                 mutable: false,
-                                ann: None,
+                                ann: arr_ann,
                                 value: Box::new(value),
                                 span,
                             });
