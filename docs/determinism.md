@@ -39,7 +39,10 @@ The verifier also re-derives the artifact's **floating-point contract mode**
 --require-strict-fp ./artifact` fails closed unless the artifact was lowered on
 the strict path (no FMA-contraction, no `f32` reduction reassociation). Because
 the mode is a pure function of bytes the `trace_hash` already attests, this is
-build-host-independent and adds no wire-format surface. ✅
+build-host-independent and adds no wire-format surface. The gate fails closed on
+`relaxed`, on an `unknown` mode, AND on an **unattested** artifact (no
+evidence_chain, hence no `trace_hash` attesting the mode) — it never silently
+passes. ✅
 
 ---
 
