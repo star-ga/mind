@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3049 | **Est. tokens:** ~7,321,497
-**Generated:** 2026-07-08 08:08 UTC
+**Files:** 3051 | **Est. tokens:** ~7,347,683
+**Generated:** 2026-07-08 12:53 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~27,708 |
+| `./` | 34 | ~27,977 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -46,7 +46,7 @@
 | `docs/design/` | 3 | ~8,181 |
 | `docs/mindcraft/` | 3 | ~7,023 |
 | `docs/research/` | 1 | ~117 |
-| `docs/rfcs/` | 28 | ~118,706 |
+| `docs/rfcs/` | 28 | ~119,219 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 19 | ~35,709 |
 | `examples/c/` | 2 | ~400 |
@@ -375,7 +375,7 @@
 | `src/` | 7 | ~17,821 |
 | `src/ast/` | 1 | ~7,632 |
 | `src/autodiff/` | 3 | ~6,624 |
-| `src/bin/` | 2 | ~25,763 |
+| `src/bin/` | 2 | ~29,030 |
 | `src/build/` | 2 | ~12,095 |
 | `src/cache/` | 4 | ~3,525 |
 | `src/check/` | 3 | ~10,433 |
@@ -389,9 +389,9 @@
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~19,784 |
 | `src/ir/` | 5 | ~35,145 |
-| `src/ir/compact/` | 3 | ~15,194 |
+| `src/ir/compact/` | 3 | ~15,235 |
 | `src/ir/compact/v2/` | 8 | ~37,885 |
-| `src/ir/compact/v3/` | 4 | ~45,526 |
+| `src/ir/compact/v3/` | 6 | ~67,622 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,211 |
 | `src/mlir/` | 3 | ~5,659 |
@@ -472,7 +472,7 @@
 - `.bench-pre-pratt.txt` (~32 tok, tiny) — === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
-- `Cargo.toml` (~1633 tok, huge) — [package]
+- `Cargo.toml` (~1902 tok, huge) — [package]
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -711,12 +711,12 @@
 - `0013-cli-agent-harness-stack.md` (~6781 tok, huge) — RFC 0013: CLI Agent Harness Stack
 - `0014-per-substrate-mlir-lowering-contracts.md` (~5412 tok, huge) — RFC 0014: Per-Substrate MLIR Lowering Pipeline Contracts
 - `0015-cross-substrate-bit-identity.md` (~5174 tok, huge) — RFC 0015: Cross-Substrate Bit-Identity Proof Obligation
-- `0016-evidence-chain-emission.md` (~6529 tok, huge) — RFC 0016: Compile-Time Evidence-Chain Emission
+- `0016-evidence-chain-emission.md` (~6944 tok, huge) — RFC 0016: Compile-Time Evidence-Chain Emission
 - `0017-mindc-verify.md` (~3745 tok, huge) — RFC 0017: `mindc verify` — Artifact Verification Surface
 - `0018-bare-metal-substrate.md` (~3799 tok, huge) — RFC 0018: Bare-Metal Substrate Lowering Tier
 - `0019-deterministic-agent-substrate.md` (~4131 tok, huge) — RFC 0019: Deterministic Agent Substrate
 - `0020-mind-bench-reproducibility-harness.md` (~4083 tok, huge) — RFC 0020: mind-bench Public Reproducibility Harness
-- `0021-canonical-ir-unification.md` (~4290 tok, huge) — RFC 0021: Canonical IR Unification — one IR, provenance as a versioned epilogue
+- `0021-canonical-ir-unification.md` (~4388 tok, huge) — RFC 0021: Canonical IR Unification — one IR, provenance as a versioned epilogue
 - `0022-deterministic-io-substrate.md` (~2108 tok, huge) — RFC 0022: Deterministic I/O Substrate — fastest async I/O with bit-identical replay
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
@@ -3742,7 +3742,7 @@
 ### `src/bin/`
 
 - `mind-ai.rs` (~9805 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~15958 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc.rs` (~19225 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
 - `cache.rs` (~5282 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3818,7 +3818,7 @@
 ### `src/ir/compact/`
 
 - `emit.rs` (~4693 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~2377 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~2418 tok, huge) — Copyright 2025 STARGA Inc.
 - `parse.rs` (~8124 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/v2/`
 
@@ -3832,9 +3832,11 @@
 - `varint.rs` (~1599 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/v3/`
 
+- `ed25519.rs` (~6051 tok, huge) — Copyright 2025 STARGA Inc.
 - `emit.rs` (~11036 tok, huge) — Copyright 2025 STARGA Inc.
-- `evidence.rs` (~10933 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~13622 tok, huge) — Copyright 2025 STARGA Inc.
+- `evidence.rs` (~25423 tok, huge) — Copyright 2025 STARGA Inc.
+- `mldsa.rs` (~1509 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~13668 tok, huge) — Copyright 2025 STARGA Inc.
 - `parse.rs` (~9935 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
