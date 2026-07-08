@@ -1283,6 +1283,46 @@ fn enter_narrow_scope(params: &[ast::Param]) -> NarrowLocalsGuard {
     })
 }
 
+thread_local! {
+    /// Task #88 facet 4 — the enclosing fn's DECLARED return type, so a
+    /// `return [ArrayLit]` in return position can be routed to
+    /// `lower_array_surface_lit` (the std.vec heap runtime) the way the
+    /// annotated-`Let` arms already are. A `Node::Return` carries no
+    /// annotation of its own, and returns nest arbitrarily (fn body, `if`
+    /// then/else, `match` arm, block), so threading the type through every
+    /// `lower_expr` call site would rewrite ~80 signatures. Instead we stash
+    /// it once per fn (set in the `FnDef` arm) and read it ONLY in the four
+    /// `Node::Return` lowering sites via `lower_return_array_lit` — mirroring
+    /// the existing `NARROW_LOCALS` thread-local pattern. Set/restored by
+    /// `RetTypeGuard`, so it never leaks across fns and nested fns restore
+    /// their parent's type on exit. Determinism-safe: a single scalar read of
+    /// a per-fn type, no HashMap iteration, no address-dependent state.
+    #[cfg(feature = "std-surface")]
+    static CURRENT_RET_TYPE: std::cell::RefCell<Option<TypeAnn>> = const { std::cell::RefCell::new(None) };
+}
+
+/// RAII guard restoring the previous `CURRENT_RET_TYPE` when a fn body's
+/// lowering scope ends, mirroring `NarrowLocalsGuard`.
+#[cfg(feature = "std-surface")]
+struct RetTypeGuard(Option<TypeAnn>);
+
+#[cfg(feature = "std-surface")]
+impl Drop for RetTypeGuard {
+    fn drop(&mut self) {
+        CURRENT_RET_TYPE.with(|r| *r.borrow_mut() = self.0.take());
+    }
+}
+
+/// Begin a fresh return-type scope for a fn body. Returns the restore guard.
+/// Cheap (one Option swap); records the declared `ret_type` verbatim.
+#[cfg(feature = "std-surface")]
+fn enter_ret_type_scope(ret_type: &Option<TypeAnn>) -> RetTypeGuard {
+    CURRENT_RET_TYPE.with(|r| {
+        let prev = std::mem::replace(&mut *r.borrow_mut(), ret_type.clone());
+        RetTypeGuard(prev)
+    })
+}
+
 /// Record a narrow-typed `let` so a later reassignment of `name` re-masks.
 /// No-op for non-narrow annotations (keeps the registry empty for i64 modules).
 #[cfg(feature = "std-surface")]
@@ -1483,6 +1523,41 @@ fn lower_array_surface_lit(
         handle = next;
     }
     handle
+}
+
+/// Task #88 facet 4 — return-type-directed array-literal lowering. When the
+/// enclosing fn's declared return type is `array<T>` (recorded in
+/// `CURRENT_RET_TYPE`) and `value` is an array literal in return position,
+/// lower it onto the std.vec heap runtime (`vec_new` + `vec_push`) — exactly
+/// like the annotated-`Let`, while-body, if/else-branch and struct-field arms.
+/// Otherwise returns `None`, so every non-array return (and every array-typed
+/// return whose value is NOT a literal, e.g. `return out`) lowers byte-
+/// identically through `lower_expr`. Without this, an `ArrayLit` in return
+/// position fell through to the const-array/tensor path and produced a
+/// `tensor<Nxi64>` where the i64 vec-handle ABI is required — the
+/// `'i64' vs 'tensor<1xi64>'` type-collision `mlir-opt` reported.
+#[cfg(feature = "std-surface")]
+fn lower_return_array_lit(
+    value: &ast::Node,
+    ir: &mut IRModule,
+    env: &HashMap<String, ValueId>,
+    struct_env: &HashMap<String, String>,
+    receiver_types: &HashMap<crate::ast::Span, String>,
+) -> Option<ValueId> {
+    let ret_is_array = CURRENT_RET_TYPE.with(|r| is_array_surface_type(&r.borrow()));
+    if !ret_is_array {
+        return None;
+    }
+    if let ast::Node::ArrayLit { elements, .. } = value {
+        return Some(lower_array_surface_lit(
+            elements,
+            ir,
+            env,
+            struct_env,
+            receiver_types,
+        ));
+    }
+    None
 }
 
 /// Lower a `StructLit` FIELD value. A field declared `array<T>` whose literal is
@@ -3690,6 +3765,14 @@ fn lower_expr(
             // the prior map on body-scope exit, so narrow types never leak across fns.
             #[cfg(feature = "std-surface")]
             let _narrow_guard = enter_narrow_scope(params);
+            // Task #88 facet 4 — record this fn's declared return type so a
+            // `return [ArrayLit]` in the body (at any nesting level) routes to
+            // the std.vec runtime via `lower_return_array_lit`. Guard restores
+            // the parent's type on body-scope exit (nested fns nest cleanly).
+            // No-op for a non-array return type: `lower_return_array_lit` then
+            // returns None and every return lowers byte-identically as before.
+            #[cfg(feature = "std-surface")]
+            let _ret_type_guard = enter_ret_type_scope(ret_type);
             // Whether the module declares generic templates (computed once):
             // gates the per-Let binding-type recording below so a non-generic
             // module records nothing on its byte-identity hot path.
@@ -3709,13 +3792,29 @@ fn lower_expr(
                 match stmt {
                     ast::Node::Return { value, .. } => {
                         if let Some(val) = value {
-                            ret_id = Some(lower_expr(
+                            // Task #88 facet 4: `return [ArrayLit]` where the fn
+                            // returns `array<T>` routes to the std.vec runtime;
+                            // otherwise lowers via `lower_expr` byte-identically.
+                            #[cfg(feature = "std-surface")]
+                            let lowered = lower_return_array_lit(
                                 val,
                                 &mut fn_ir,
                                 &fn_env,
                                 &fn_struct_env,
                                 receiver_types,
-                            ));
+                            )
+                            .unwrap_or_else(|| {
+                                lower_expr(val, &mut fn_ir, &fn_env, &fn_struct_env, receiver_types)
+                            });
+                            #[cfg(not(feature = "std-surface"))]
+                            let lowered = lower_expr(
+                                val,
+                                &mut fn_ir,
+                                &fn_env,
+                                &fn_struct_env,
+                                receiver_types,
+                            );
+                            ret_id = Some(lowered);
                         }
                         fn_ir.instrs.push(Instr::Return { value: ret_id });
                     }
@@ -3942,9 +4041,21 @@ fn lower_expr(
             id
         }
         ast::Node::Return { value, .. } => {
-            let ret_val = value
-                .as_ref()
-                .map(|v| lower_expr(v, ir, env, struct_env, receiver_types));
+            // Generic return path (match-arm bodies, blocks, any return that
+            // recurses through `lower_expr`). Task #88 facet 4: an `ArrayLit`
+            // returned from an `array<T>` fn routes to the std.vec runtime;
+            // every other return lowers via `lower_expr` byte-identically.
+            let ret_val = value.as_ref().map(|v| {
+                #[cfg(feature = "std-surface")]
+                {
+                    lower_return_array_lit(v, ir, env, struct_env, receiver_types)
+                        .unwrap_or_else(|| lower_expr(v, ir, env, struct_env, receiver_types))
+                }
+                #[cfg(not(feature = "std-surface"))]
+                {
+                    lower_expr(v, ir, env, struct_env, receiver_types)
+                }
+            });
             ir.instrs.push(Instr::Return { value: ret_val });
             let id = ir.fresh();
             ir.instrs.push(Instr::ConstI64(id, 0));
@@ -4160,8 +4271,39 @@ fn lower_expr(
             for stmt in then_branch {
                 match stmt {
                     ast::Node::Return { value, .. } => {
+                        // Task #88 facet 4: `return [ArrayLit]` inside a then-branch
+                        // of an `array<T>` fn routes to the std.vec runtime; every
+                        // other return lowers via `lower_expr` byte-identically.
                         let ret_val = value.as_ref().map(|v| {
-                            lower_expr(v, &mut then_ir, &then_env, &then_struct_env, receiver_types)
+                            #[cfg(feature = "std-surface")]
+                            {
+                                lower_return_array_lit(
+                                    v,
+                                    &mut then_ir,
+                                    &then_env,
+                                    &then_struct_env,
+                                    receiver_types,
+                                )
+                                .unwrap_or_else(|| {
+                                    lower_expr(
+                                        v,
+                                        &mut then_ir,
+                                        &then_env,
+                                        &then_struct_env,
+                                        receiver_types,
+                                    )
+                                })
+                            }
+                            #[cfg(not(feature = "std-surface"))]
+                            {
+                                lower_expr(
+                                    v,
+                                    &mut then_ir,
+                                    &then_env,
+                                    &then_struct_env,
+                                    receiver_types,
+                                )
+                            }
                         });
                         then_ir.instrs.push(Instr::Return { value: ret_val });
                         if let Some(rv) = ret_val {
@@ -4318,14 +4460,40 @@ fn lower_expr(
                 for stmt in else_stmts {
                     match stmt {
                         ast::Node::Return { value, .. } => {
+                            // Task #88 facet 4: `return [ArrayLit]` inside an
+                            // else-branch of an `array<T>` fn routes to the std.vec
+                            // runtime; every other return lowers via `lower_expr`
+                            // byte-identically.
                             let ret_val = value.as_ref().map(|v| {
-                                lower_expr(
-                                    v,
-                                    &mut else_ir,
-                                    &else_env,
-                                    &else_struct_env,
-                                    receiver_types,
-                                )
+                                #[cfg(feature = "std-surface")]
+                                {
+                                    lower_return_array_lit(
+                                        v,
+                                        &mut else_ir,
+                                        &else_env,
+                                        &else_struct_env,
+                                        receiver_types,
+                                    )
+                                    .unwrap_or_else(|| {
+                                        lower_expr(
+                                            v,
+                                            &mut else_ir,
+                                            &else_env,
+                                            &else_struct_env,
+                                            receiver_types,
+                                        )
+                                    })
+                                }
+                                #[cfg(not(feature = "std-surface"))]
+                                {
+                                    lower_expr(
+                                        v,
+                                        &mut else_ir,
+                                        &else_env,
+                                        &else_struct_env,
+                                        receiver_types,
+                                    )
+                                }
                             });
                             else_ir.instrs.push(Instr::Return { value: ret_val });
                             if let Some(rv) = ret_val {
