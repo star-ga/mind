@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3048 | **Est. tokens:** ~7,319,255
-**Generated:** 2026-07-08 02:17 UTC
+**Files:** 3048 | **Est. tokens:** ~7,320,499
+**Generated:** 2026-07-08 07:58 UTC
 
 ## Token Budget Guide
 
@@ -40,7 +40,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,163 |
-| `docs/` | 32 | ~66,228 |
+| `docs/` | 32 | ~66,274 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
@@ -375,7 +375,7 @@
 | `src/` | 7 | ~17,821 |
 | `src/ast/` | 1 | ~7,632 |
 | `src/autodiff/` | 3 | ~6,624 |
-| `src/bin/` | 2 | ~25,459 |
+| `src/bin/` | 2 | ~25,763 |
 | `src/build/` | 2 | ~12,095 |
 | `src/cache/` | 4 | ~3,525 |
 | `src/check/` | 3 | ~10,433 |
@@ -408,7 +408,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 40 | ~186,313 |
-| `tests/` | 273 | ~478,201 |
+| `tests/` | 273 | ~479,095 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -665,7 +665,7 @@
 - `v0.3.md` (~110 tok, small) — MIND Design v0.3 (Draft)
 ### `docs/`
 
-- `determinism.md` (~2784 tok, huge) — The Determinism Contract
+- `determinism.md` (~2830 tok, huge) — The Determinism Contract
 - `errors.md` (~701 tok, large) — MIND Core Error Model
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
 - `gpu.md` (~387 tok, medium) — GPU backend profile
@@ -3742,7 +3742,7 @@
 ### `src/bin/`
 
 - `mind-ai.rs` (~9805 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~15654 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc.rs` (~15958 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
 - `cache.rs` (~5282 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4562,7 +4562,7 @@
 - `value_if_f64_let.rs` (~1148 tok, large) — Copyright 2025 STARGA Inc.
 - `vars_assign.rs` (~260 tok, medium) — Copyright 2025 STARGA Inc.
 - `verify_audit.rs` (~2010 tok, huge) — Audit coverage tests for the IR verifier (C1: SSA verification, conv2d stride/axis validation).
-- `verify_cli.rs` (~2377 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify_cli.rs` (~3271 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify_ssa.rs` (~6339 tok, huge) — Copyright 2025 STARGA Inc.
 - `x25519mlkem768_driver.py` (~2378 tok, huge) — # Known-answer driver for std/x25519mlkem768.mind (pure-MIND X25519MLKEM768
 - `x25519_vectors_driver.py` (~1525 tok, huge) — # Official-vector driver for std/x25519.mind (pure-MIND Curve25519 ECDH).
