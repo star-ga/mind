@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3051 | **Est. tokens:** ~7,347,863
-**Generated:** 2026-07-08 13:45 UTC
+**Files:** 3053 | **Est. tokens:** ~7,354,679
+**Generated:** 2026-07-08 14:33 UTC
 
 ## Token Budget Guide
 
@@ -399,7 +399,7 @@
 | `src/opt/` | 4 | ~9,649 |
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 1 | ~3,811 |
-| `src/project/` | 3 | ~31,240 |
+| `src/project/` | 3 | ~31,267 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -407,8 +407,8 @@
 | `src/type_checker/` | 1 | ~11,631 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 40 | ~186,313 |
-| `tests/` | 274 | ~480,093 |
+| `std/` | 41 | ~191,413 |
+| `tests/` | 275 | ~481,782 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -3894,7 +3894,7 @@
 
 - `mod.rs` (~23034 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~4577 tok, huge) — Copyright 2025 STARGA Inc.
-- `stdlib.rs` (~3629 tok, huge) — Copyright 2025 STARGA Inc.
+- `stdlib.rs` (~3656 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `python.rs` (~1082 tok, large) — Copyright 2025 STARGA Inc.
@@ -3961,6 +3961,7 @@
 - `ring.mind` (~1407 tok, large) — std.ring — fixed-capacity byte ring buffer (FIFO).
 - `rsa_pss.mind` (~2453 tok, huge) — std/rsa_pss.mind — RSASSA-PSS signature VERIFICATION (RFC 8017 §8.1.2) with
 - `sha256.mind` (~3643 tok, huge) — std/sha256.mind — FIPS 180-4 SHA-256 in pure MIND.
+- `sha512.mind` (~5100 tok, huge) — std/sha512.mind — FIPS 180-4 SHA-512 and SHA-384 in pure MIND.
 - `string.mind` (~2326 tok, huge) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
 - `time.mind` (~257 tok, medium) — std.time — wall-clock access for evidence / audit timestamps.
 - `tls13_finished.mind` (~1409 tok, large) — std/tls13_finished.mind — TLS 1.3 Finished-message MAC + transcript hash
@@ -4453,6 +4454,7 @@
 
 - `set_surface_run.rs` (~931 tok, large) — Copyright 2025 STARGA Inc.
 - `sha256_smoke.rs` (~1555 tok, huge) — Copyright 2025 STARGA Inc.
+- `sha512_smoke.rs` (~1689 tok, huge) — Copyright 2025 STARGA Inc.
 - `shape_integration.rs` (~416 tok, medium)
 - `shape_ops_preview.rs` (~302 tok, medium) — Copyright 2025 STARGA Inc.
 ### `tests/shapes/`

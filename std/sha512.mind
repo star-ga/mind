@@ -1,0 +1,650 @@
+// std/sha512.mind — FIPS 180-4 SHA-512 and SHA-384 in pure MIND.
+//
+// Self-contained: no imports, only the `__mind_*` byte-buffer intrinsics,
+// matching std/sha256.mind's discipline. Where SHA-256 emulates u32 on i64 with
+// a `& 0xFFFFFFFF` mask, SHA-512 works in the full 64-bit word: i64 IS 64 bits,
+// so wrapping add / xor / and are already mod 2^64 and need no mask. The one
+// hazard is the RIGHT shift: `>>` is arithmetic (sign-extending) on i64, so any
+// value with bit 63 set would smear ones. `shr64u` masks the sign-extended bits
+// off, exactly like std/keccak.mind's keccak_rotl64 handles its logical part.
+//
+// 64-bit constants (K[0..79], the H init words) have bit 63 set for many
+// entries and so do not fit a positive i64 literal; each is written as
+// (hi32 << 32) | lo32 in decimal — the left shift lands hi32's top bit in the
+// sign bit, giving the exact 64-bit pattern (the std/keccak.mind convention).
+//
+// Memory layout (like std/sha256.mind):
+//   - message / digest byte buffers: one byte per offset.
+//   - W schedule (80 words) and H state (8 words): stride-8 i64 slots.
+//
+// Public API:
+//   pub fn sha512(in_addr, in_len, out_addr) -> i64   // 64-byte digest
+//   pub fn sha384(in_addr, in_len, out_addr) -> i64   // 48-byte digest
+//     Read in_len bytes at in_addr, write the big-endian digest to out_addr,
+//     return 0.
+//
+// Determinism: pure integer arithmetic, no floats, no clocks, no external calls.
+
+// ---------------------------------------------------------------------------
+// u64-on-i64 primitives.
+// ---------------------------------------------------------------------------
+
+// shr64u — logical (zero-fill) right shift of a 64-bit value by n (1<=n<=63).
+// (1 << (64 - n)) - 1 is the low-(64-n)-bit mask; for n=1 this is (1<<63)-1 =
+// 0x7fff...f, which clears the arithmetic sign extension.
+fn shr64u(x: i64, n: i64) -> i64 {
+    (x >> n) & ((1 << (64 - n)) - 1)
+}
+
+// rotr64 — right-rotate a 64-bit word by n (1<=n<=63). The high part is the
+// logical right shift; the low part `x << (64 - n)` wraps in i64 (drops the
+// bits above bit 63), giving the rotated-in low bits.
+fn rotr64(x: i64, n: i64) -> i64 {
+    shr64u(x, n) | (x << (64 - n))
+}
+
+// FIPS 180-4 §4.1.3 boolean functions, written to avoid an explicit NOT.
+// Ch(x,y,z) = (x&y) ^ (~x&z) = z ^ (x & (y ^ z)).
+fn sha512_ch(x: i64, y: i64, z: i64) -> i64 {
+    z ^ (x & (y ^ z))
+}
+
+// Maj(x,y,z) = (x&y) ^ (x&z) ^ (y&z) = (x&y) ^ (z & (x^y)).
+fn sha512_maj(x: i64, y: i64, z: i64) -> i64 {
+    (x & y) ^ (z & (x ^ y))
+}
+
+// Σ0(a) = ROTR28 ^ ROTR34 ^ ROTR39.
+fn sha512_bsig0(x: i64) -> i64 {
+    rotr64(x, 28) ^ rotr64(x, 34) ^ rotr64(x, 39)
+}
+
+// Σ1(e) = ROTR14 ^ ROTR18 ^ ROTR41.
+fn sha512_bsig1(x: i64) -> i64 {
+    rotr64(x, 14) ^ rotr64(x, 18) ^ rotr64(x, 41)
+}
+
+// σ0(w) = ROTR1 ^ ROTR8 ^ SHR7.
+fn sha512_ssig0(x: i64) -> i64 {
+    rotr64(x, 1) ^ rotr64(x, 8) ^ shr64u(x, 7)
+}
+
+// σ1(w) = ROTR19 ^ ROTR61 ^ SHR6.
+fn sha512_ssig1(x: i64) -> i64 {
+    rotr64(x, 19) ^ rotr64(x, 61) ^ shr64u(x, 6)
+}
+
+// ---------------------------------------------------------------------------
+// Round constants K[0..79] — FIPS 180-4 §4.2.3 (first 64 bits of the fractional
+// parts of the cube roots of the first 80 primes).
+// ---------------------------------------------------------------------------
+
+fn sha512_k(i: i64) -> i64 {
+    if i == 0 {
+        return (1116352408 << 32) | 3609767458;
+    }
+    // 0x428a2f98d728ae22
+    if i == 1 {
+        return (1899447441 << 32) | 602891725;
+    }
+    // 0x7137449123ef65cd
+    if i == 2 {
+        return (3049323471 << 32) | 3964484399;
+    }
+    // 0xb5c0fbcfec4d3b2f
+    if i == 3 {
+        return (3921009573 << 32) | 2173295548;
+    }
+    // 0xe9b5dba58189dbbc
+    if i == 4 {
+        return (961987163 << 32) | 4081628472;
+    }
+    // 0x3956c25bf348b538
+    if i == 5 {
+        return (1508970993 << 32) | 3053834265;
+    }
+    // 0x59f111f1b605d019
+    if i == 6 {
+        return (2453635748 << 32) | 2937671579;
+    }
+    // 0x923f82a4af194f9b
+    if i == 7 {
+        return (2870763221 << 32) | 3664609560;
+    }
+    // 0xab1c5ed5da6d8118
+    if i == 8 {
+        return (3624381080 << 32) | 2734883394;
+    }
+    // 0xd807aa98a3030242
+    if i == 9 {
+        return (310598401 << 32) | 1164996542;
+    }
+    // 0x12835b0145706fbe
+    if i == 10 {
+        return (607225278 << 32) | 1323610764;
+    }
+    // 0x243185be4ee4b28c
+    if i == 11 {
+        return (1426881987 << 32) | 3590304994;
+    }
+    // 0x550c7dc3d5ffb4e2
+    if i == 12 {
+        return (1925078388 << 32) | 4068182383;
+    }
+    // 0x72be5d74f27b896f
+    if i == 13 {
+        return (2162078206 << 32) | 991336113;
+    }
+    // 0x80deb1fe3b1696b1
+    if i == 14 {
+        return (2614888103 << 32) | 633803317;
+    }
+    // 0x9bdc06a725c71235
+    if i == 15 {
+        return (3248222580 << 32) | 3479774868;
+    }
+    // 0xc19bf174cf692694
+    if i == 16 {
+        return (3835390401 << 32) | 2666613458;
+    }
+    // 0xe49b69c19ef14ad2
+    if i == 17 {
+        return (4022224774 << 32) | 944711139;
+    }
+    // 0xefbe4786384f25e3
+    if i == 18 {
+        return (264347078 << 32) | 2341262773;
+    }
+    // 0x0fc19dc68b8cd5b5
+    if i == 19 {
+        return (604807628 << 32) | 2007800933;
+    }
+    // 0x240ca1cc77ac9c65
+    if i == 20 {
+        return (770255983 << 32) | 1495990901;
+    }
+    // 0x2de92c6f592b0275
+    if i == 21 {
+        return (1249150122 << 32) | 1856431235;
+    }
+    // 0x4a7484aa6ea6e483
+    if i == 22 {
+        return (1555081692 << 32) | 3175218132;
+    }
+    // 0x5cb0a9dcbd41fbd4
+    if i == 23 {
+        return (1996064986 << 32) | 2198950837;
+    }
+    // 0x76f988da831153b5
+    if i == 24 {
+        return (2554220882 << 32) | 3999719339;
+    }
+    // 0x983e5152ee66dfab
+    if i == 25 {
+        return (2821834349 << 32) | 766784016;
+    }
+    // 0xa831c66d2db43210
+    if i == 26 {
+        return (2952996808 << 32) | 2566594879;
+    }
+    // 0xb00327c898fb213f
+    if i == 27 {
+        return (3210313671 << 32) | 3203337956;
+    }
+    // 0xbf597fc7beef0ee4
+    if i == 28 {
+        return (3336571891 << 32) | 1034457026;
+    }
+    // 0xc6e00bf33da88fc2
+    if i == 29 {
+        return (3584528711 << 32) | 2466948901;
+    }
+    // 0xd5a79147930aa725
+    if i == 30 {
+        return (113926993 << 32) | 3758326383;
+    }
+    // 0x06ca6351e003826f
+    if i == 31 {
+        return (338241895 << 32) | 168717936;
+    }
+    // 0x142929670a0e6e70
+    if i == 32 {
+        return (666307205 << 32) | 1188179964;
+    }
+    // 0x27b70a8546d22ffc
+    if i == 33 {
+        return (773529912 << 32) | 1546045734;
+    }
+    // 0x2e1b21385c26c926
+    if i == 34 {
+        return (1294757372 << 32) | 1522805485;
+    }
+    // 0x4d2c6dfc5ac42aed
+    if i == 35 {
+        return (1396182291 << 32) | 2643833823;
+    }
+    // 0x53380d139d95b3df
+    if i == 36 {
+        return (1695183700 << 32) | 2343527390;
+    }
+    // 0x650a73548baf63de
+    if i == 37 {
+        return (1986661051 << 32) | 1014477480;
+    }
+    // 0x766a0abb3c77b2a8
+    if i == 38 {
+        return (2177026350 << 32) | 1206759142;
+    }
+    // 0x81c2c92e47edaee6
+    if i == 39 {
+        return (2456956037 << 32) | 344077627;
+    }
+    // 0x92722c851482353b
+    if i == 40 {
+        return (2730485921 << 32) | 1290863460;
+    }
+    // 0xa2bfe8a14cf10364
+    if i == 41 {
+        return (2820302411 << 32) | 3158454273;
+    }
+    // 0xa81a664bbc423001
+    if i == 42 {
+        return (3259730800 << 32) | 3505952657;
+    }
+    // 0xc24b8b70d0f89791
+    if i == 43 {
+        return (3345764771 << 32) | 106217008;
+    }
+    // 0xc76c51a30654be30
+    if i == 44 {
+        return (3516065817 << 32) | 3606008344;
+    }
+    // 0xd192e819d6ef5218
+    if i == 45 {
+        return (3600352804 << 32) | 1432725776;
+    }
+    // 0xd69906245565a910
+    if i == 46 {
+        return (4094571909 << 32) | 1467031594;
+    }
+    // 0xf40e35855771202a
+    if i == 47 {
+        return (275423344 << 32) | 851169720;
+    }
+    // 0x106aa07032bbd1b8
+    if i == 48 {
+        return (430227734 << 32) | 3100823752;
+    }
+    // 0x19a4c116b8d2d0c8
+    if i == 49 {
+        return (506948616 << 32) | 1363258195;
+    }
+    // 0x1e376c085141ab53
+    if i == 50 {
+        return (659060556 << 32) | 3750685593;
+    }
+    // 0x2748774cdf8eeb99
+    if i == 51 {
+        return (883997877 << 32) | 3785050280;
+    }
+    // 0x34b0bcb5e19b48a8
+    if i == 52 {
+        return (958139571 << 32) | 3318307427;
+    }
+    // 0x391c0cb3c5c95a63
+    if i == 53 {
+        return (1322822218 << 32) | 3812723403;
+    }
+    // 0x4ed8aa4ae3418acb
+    if i == 54 {
+        return (1537002063 << 32) | 2003034995;
+    }
+    // 0x5b9cca4f7763e373
+    if i == 55 {
+        return (1747873779 << 32) | 3602036899;
+    }
+    // 0x682e6ff3d6b2b8a3
+    if i == 56 {
+        return (1955562222 << 32) | 1575990012;
+    }
+    // 0x748f82ee5defb2fc
+    if i == 57 {
+        return (2024104815 << 32) | 1125592928;
+    }
+    // 0x78a5636f43172f60
+    if i == 58 {
+        return (2227730452 << 32) | 2716904306;
+    }
+    // 0x84c87814a1f0ab72
+    if i == 59 {
+        return (2361852424 << 32) | 442776044;
+    }
+    // 0x8cc702081a6439ec
+    if i == 60 {
+        return (2428436474 << 32) | 593698344;
+    }
+    // 0x90befffa23631e28
+    if i == 61 {
+        return (2756734187 << 32) | 3733110249;
+    }
+    // 0xa4506cebde82bde9
+    if i == 62 {
+        return (3204031479 << 32) | 2999351573;
+    }
+    // 0xbef9a3f7b2c67915
+    if i == 63 {
+        return (3329325298 << 32) | 3815920427;
+    }
+    // 0xc67178f2e372532b
+    if i == 64 {
+        return (3391569614 << 32) | 3928383900;
+    }
+    // 0xca273eceea26619c
+    if i == 65 {
+        return (3515267271 << 32) | 566280711;
+    }
+    // 0xd186b8c721c0c207
+    if i == 66 {
+        return (3940187606 << 32) | 3454069534;
+    }
+    // 0xeada7dd6cde0eb1e
+    if i == 67 {
+        return (4118630271 << 32) | 4000239992;
+    }
+    // 0xf57d4f7fee6ed178
+    if i == 68 {
+        return (116418474 << 32) | 1914138554;
+    }
+    // 0x06f067aa72176fba
+    if i == 69 {
+        return (174292421 << 32) | 2731055270;
+    }
+    // 0x0a637dc5a2c898a6
+    if i == 70 {
+        return (289380356 << 32) | 3203993006;
+    }
+    // 0x113f9804bef90dae
+    if i == 71 {
+        return (460393269 << 32) | 320620315;
+    }
+    // 0x1b710b35131c471b
+    if i == 72 {
+        return (685471733 << 32) | 587496836;
+    }
+    // 0x28db77f523047d84
+    if i == 73 {
+        return (852142971 << 32) | 1086792851;
+    }
+    // 0x32caab7b40c72493
+    if i == 74 {
+        return (1017036298 << 32) | 365543100;
+    }
+    // 0x3c9ebe0a15c9bebc
+    if i == 75 {
+        return (1126000580 << 32) | 2618297676;
+    }
+    // 0x431d67c49c100d4c
+    if i == 76 {
+        return (1288033470 << 32) | 3409855158;
+    }
+    // 0x4cc5d4becb3e42b6
+    if i == 77 {
+        return (1501505948 << 32) | 4234509866;
+    }
+    // 0x597f299cfc657e2a
+    if i == 78 {
+        return (1607167915 << 32) | 987167468;
+    }
+    // 0x5fcb6fab3ad6faec
+    (1816402316 << 32) | 1246189591
+    // 0x6c44198c4a475817
+}
+
+// ---------------------------------------------------------------------------
+// Initial hash values — FIPS 180-4 §5.3.4 (SHA-512) / §5.3.3 (SHA-384).
+// is384 selects the SHA-384 IV (fractional parts of square roots of the 9th..
+// 16th primes) instead of the SHA-512 IV.
+// ---------------------------------------------------------------------------
+fn sha512_hinit(i: i64, is384: i64) -> i64 {
+    if is384 == 1 {
+        if i == 0 {
+            return (3418070365 << 32) | 3238371032;
+        }
+        // 0xcbbb9d5dc1059ed8
+        if i == 1 {
+            return (1654270250 << 32) | 914150663;
+        }
+        // 0x629a292a367cd507
+        if i == 2 {
+            return (2438529370 << 32) | 812702999;
+        }
+        // 0x9159015a3070dd17
+        if i == 3 {
+            return (355462360 << 32) | 4144912697;
+        }
+        // 0x152fecd8f70e5939
+        if i == 4 {
+            return (1731405415 << 32) | 4290775857;
+        }
+        // 0x67332667ffc00b31
+        if i == 5 {
+            return (2394180231 << 32) | 1750603025;
+        }
+        // 0x8eb44a8768581511
+        if i == 6 {
+            return (3675008525 << 32) | 1694076839;
+        }
+        // 0xdb0c2e0d64f98fa7
+        return (1203062813 << 32) | 3204075428;
+    }
+    // 0x47b5481dbefa4fa4
+    if i == 0 {
+        return (1779033703 << 32) | 4089235720;
+    }
+    // 0x6a09e667f3bcc908
+    if i == 1 {
+        return (3144134277 << 32) | 2227873595;
+    }
+    // 0xbb67ae8584caa73b
+    if i == 2 {
+        return (1013904242 << 32) | 4271175723;
+    }
+    // 0x3c6ef372fe94f82b
+    if i == 3 {
+        return (2773480762 << 32) | 1595750129;
+    }
+    // 0xa54ff53a5f1d36f1
+    if i == 4 {
+        return (1359893119 << 32) | 2917565137;
+    }
+    // 0x510e527fade682d1
+    if i == 5 {
+        return (2600822924 << 32) | 725511199;
+    }
+    // 0x9b05688c2b3e6c1f
+    if i == 6 {
+        return (528734635 << 32) | 4215389547;
+    }
+    // 0x1f83d9abfb41bd6b
+    (1541459225 << 32) | 327033209
+    // 0x5be0cd19137e2179
+}
+
+// ---------------------------------------------------------------------------
+// W-schedule accessors — 80 words stored stride-8.
+// ---------------------------------------------------------------------------
+fn w512_get(w_addr: i64, i: i64) -> i64 {
+    __mind_load_i64(w_addr + i * 8)
+}
+
+fn w512_set(w_addr: i64, i: i64, v: i64) -> i64 {
+    __mind_store_i64(w_addr + i * 8, v)
+}
+
+// ---------------------------------------------------------------------------
+// compress_block512 — process one 128-byte block into the 8-word H state.
+// ---------------------------------------------------------------------------
+fn compress_block512(block_addr: i64, h_addr: i64) -> i64 {
+    // W schedule: 80 words, stride-8 -> 640 bytes.
+    let w_addr: i64 = __mind_alloc(640);
+
+    // W[0..15]: pack eight consecutive message bytes (big-endian) per 64-bit word.
+    let mut wi: i64 = 0;
+    while wi < 16 {
+        let base: i64 = wi * 8;
+        let b0: i64 = __mind_load_i8(block_addr + base + 0);
+        let b1: i64 = __mind_load_i8(block_addr + base + 1);
+        let b2: i64 = __mind_load_i8(block_addr + base + 2);
+        let b3: i64 = __mind_load_i8(block_addr + base + 3);
+        let b4: i64 = __mind_load_i8(block_addr + base + 4);
+        let b5: i64 = __mind_load_i8(block_addr + base + 5);
+        let b6: i64 = __mind_load_i8(block_addr + base + 6);
+        let b7: i64 = __mind_load_i8(block_addr + base + 7);
+        let word: i64 = (b0 << 56) | (b1 << 48) | (b2 << 40) | (b3 << 32) | (b4 << 24) | (b5 << 16) | (b6 << 8) | b7;
+        w512_set(w_addr, wi, word);
+        wi = wi + 1;
+    }
+
+    // W[16..79]: message schedule extension (wrapping add mod 2^64).
+    let mut wj: i64 = 16;
+    while wj < 80 {
+        let s0: i64 = sha512_ssig0(w512_get(w_addr, wj - 15));
+        let s1: i64 = sha512_ssig1(w512_get(w_addr, wj - 2));
+        let val: i64 = w512_get(w_addr, wj - 16) + s0 + w512_get(w_addr, wj - 7) + s1;
+        w512_set(w_addr, wj, val);
+        wj = wj + 1;
+    }
+
+    // Working variables from H.
+    let mut wa: i64 = __mind_load_i64(h_addr + 0 * 8);
+    let mut wb: i64 = __mind_load_i64(h_addr + 1 * 8);
+    let mut wc: i64 = __mind_load_i64(h_addr + 2 * 8);
+    let mut wd: i64 = __mind_load_i64(h_addr + 3 * 8);
+    let mut we: i64 = __mind_load_i64(h_addr + 4 * 8);
+    let mut wf: i64 = __mind_load_i64(h_addr + 5 * 8);
+    let mut wg: i64 = __mind_load_i64(h_addr + 6 * 8);
+    let mut wh: i64 = __mind_load_i64(h_addr + 7 * 8);
+
+    // 80-round compression loop (all additions wrap mod 2^64 in i64).
+    let mut rnd: i64 = 0;
+    while rnd < 80 {
+        let t1: i64 = wh + sha512_bsig1(we) + sha512_ch(we, wf, wg) + sha512_k(rnd) + w512_get(w_addr, rnd);
+        let t2: i64 = sha512_bsig0(wa) + sha512_maj(wa, wb, wc);
+        wh = wg;
+        wg = wf;
+        wf = we;
+        we = wd + t1;
+        wd = wc;
+        wc = wb;
+        wb = wa;
+        wa = t1 + t2;
+        rnd = rnd + 1;
+    }
+
+    // Add the compressed chunk back into H.
+    __mind_store_i64(h_addr + 0 * 8, __mind_load_i64(h_addr + 0 * 8) + wa);
+    __mind_store_i64(h_addr + 1 * 8, __mind_load_i64(h_addr + 1 * 8) + wb);
+    __mind_store_i64(h_addr + 2 * 8, __mind_load_i64(h_addr + 2 * 8) + wc);
+    __mind_store_i64(h_addr + 3 * 8, __mind_load_i64(h_addr + 3 * 8) + wd);
+    __mind_store_i64(h_addr + 4 * 8, __mind_load_i64(h_addr + 4 * 8) + we);
+    __mind_store_i64(h_addr + 5 * 8, __mind_load_i64(h_addr + 5 * 8) + wf);
+    __mind_store_i64(h_addr + 6 * 8, __mind_load_i64(h_addr + 6 * 8) + wg);
+    __mind_store_i64(h_addr + 7 * 8, __mind_load_i64(h_addr + 7 * 8) + wh);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// sha2_64_core — SHA-512 / SHA-384 shared driver. 128-byte blocks, 16-byte
+// (128-bit) big-endian length field. out_words = 8 for SHA-512 (64 bytes) or 6
+// for SHA-384 (48 bytes). is384 selects the IV.
+//
+// Padding (FIPS 180-4 §5.1.2): append 0x80, then zeros until the length is
+// congruent to 112 (mod 128), then the 128-bit big-endian bit length. Messages
+// here are < 2^61 bytes, so the top 64 bits of the length field are zero.
+// ---------------------------------------------------------------------------
+fn sha2_64_core(in_addr: i64, in_len: i64, out_addr: i64, out_words: i64, is384: i64) -> i64 {
+    let tail: i64 = in_len % 128;
+    let pad_zeros: i64 = if tail < 112 {
+        111 - tail
+    } else {
+        239 - tail
+    };
+    let padded_len: i64 = in_len + 1 + pad_zeros + 16;
+
+    let buf: i64 = __mind_alloc(padded_len);
+    let mut ci: i64 = 0;
+    while ci < in_len {
+        __mind_store_i8(buf + ci, __mind_load_i8(in_addr + ci));
+        ci = ci + 1;
+    }
+
+    // 0x80 terminator.
+    __mind_store_i8(buf + in_len, 128);
+
+    // Zero-fill padding (including the high 8 bytes of the 128-bit length).
+    let mut zi: i64 = in_len + 1;
+    while zi < padded_len - 8 {
+        __mind_store_i8(buf + zi, 0);
+        zi = zi + 1;
+    }
+
+    // Low 64 bits of the bit length, big-endian, in the final 8 bytes.
+    let bit_len: i64 = in_len * 8;
+    let len_off: i64 = padded_len - 8;
+    __mind_store_i8(buf + len_off + 0, shr64u(bit_len, 56) & 255);
+    __mind_store_i8(buf + len_off + 1, shr64u(bit_len, 48) & 255);
+    __mind_store_i8(buf + len_off + 2, shr64u(bit_len, 40) & 255);
+    __mind_store_i8(buf + len_off + 3, shr64u(bit_len, 32) & 255);
+    __mind_store_i8(buf + len_off + 4, (bit_len >> 24) & 255);
+    __mind_store_i8(buf + len_off + 5, (bit_len >> 16) & 255);
+    __mind_store_i8(buf + len_off + 6, (bit_len >> 8) & 255);
+    __mind_store_i8(buf + len_off + 7, bit_len & 255);
+
+    // Initialise the 8-word H state.
+    let h_addr: i64 = __mind_alloc(64);
+    let mut hi: i64 = 0;
+    while hi < 8 {
+        __mind_store_i64(h_addr + hi * 8, sha512_hinit(hi, is384));
+        hi = hi + 1;
+    }
+
+    // Process each 128-byte block.
+    let num_blocks: i64 = padded_len / 128;
+    let mut blk: i64 = 0;
+    while blk < num_blocks {
+        compress_block512(buf + blk * 128, h_addr);
+        blk = blk + 1;
+    }
+
+    // Serialise out_words words, 8 bytes big-endian each.
+    let mut di: i64 = 0;
+    while di < out_words {
+        let word: i64 = __mind_load_i64(h_addr + di * 8);
+        __mind_store_i8(out_addr + di * 8 + 0, shr64u(word, 56) & 255);
+        __mind_store_i8(out_addr + di * 8 + 1, shr64u(word, 48) & 255);
+        __mind_store_i8(out_addr + di * 8 + 2, shr64u(word, 40) & 255);
+        __mind_store_i8(out_addr + di * 8 + 3, shr64u(word, 32) & 255);
+        __mind_store_i8(out_addr + di * 8 + 4, (word >> 24) & 255);
+        __mind_store_i8(out_addr + di * 8 + 5, (word >> 16) & 255);
+        __mind_store_i8(out_addr + di * 8 + 6, (word >> 8) & 255);
+        __mind_store_i8(out_addr + di * 8 + 7, word & 255);
+        di = di + 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Public entry points.
+// ---------------------------------------------------------------------------
+
+// sha512 — 64-byte digest.
+pub fn sha512(in_addr: i64, in_len: i64, out_addr: i64) -> i64 {
+    sha2_64_core(in_addr, in_len, out_addr, 8, 0);
+    0
+}
+
+// sha384 — 48-byte digest (SHA-512 core, SHA-384 IV, first 6 words emitted).
+pub fn sha384(in_addr: i64, in_len: i64, out_addr: i64) -> i64 {
+    sha2_64_core(in_addr, in_len, out_addr, 6, 1);
+    0
+}
