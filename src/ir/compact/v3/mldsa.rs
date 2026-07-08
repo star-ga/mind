@@ -39,6 +39,7 @@
 //!   * `sign`: `try_sign_with_seed(&[0u8; 32], …)` — the all-zero rnd is the
 //!     FIPS-204 *deterministic* signing variant (§5.2), so the same seed + message
 //!     always yield byte-identical signature bytes on every substrate.
+//!
 //! The signature is metadata appended AFTER the mic@3 MAP sentinel; it never feeds
 //! back into `trace_hash`, so unsigned artifacts stay byte-identical and the
 //! keystone gate is untouched.
