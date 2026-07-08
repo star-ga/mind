@@ -24,6 +24,17 @@
 //!    the IR (mic@3 round-trip of a hand-built module; a future direct-emit
 //!    frontend). Their integer siblings `VecMulAddQ16` / `VecReduceAddI64` are
 //!    associative and byte-identical, so they are **not** taint.
+//! 3. **A tensor-level float reduction** — `Instr::Sum` / `Instr::Mean` over an
+//!    IEEE-float (`f32`/`f64`/`f16`/`bf16`) tensor. Such a reduction reassociates
+//!    at the linalg level (a `linalg.reduce` / tree fold is order-free), so the
+//!    result is bit-reproducible ONLY through a *specific* pinned lowering (the
+//!    MLIR `emit_tensor_reduce_pinned` fold) that this pre-lowering IR scan cannot
+//!    see — so it must NOT be labelled strict here, or the invariant would emit a
+//!    false `Strict` (a soundness break). Integer / Q16 reductions are associative
+//!    (MIND-CONSTITUTION §III) and stay strict; a reduction whose source dtype is
+//!    not statically provable in the scanned body fails closed to taint (never a
+//!    false strict). The source element type is recovered by a minimal forward
+//!    `ValueId -> DType` pass over literals and dtype-preserving ops.
 //!
 //! Why this is trustworthy without any wire-format change: `trace_hash =
 //! mini_sha256(emit_mic3(ir))` already covers the entire canonical body, taint
@@ -32,7 +43,9 @@
 //! in a "strict" body without changing the bytes and breaking the hash. The
 //! verifier attests strict-FP for free.
 
-use crate::ir::{IRModule, Instr};
+use crate::ir::{IRModule, Instr, ValueId};
+use crate::types::DType;
+use std::collections::HashMap;
 
 /// RFC 0006 Track B f32 vector intrinsics whose MLIR lowering emits a
 /// contracted (`vector.fma`) and/or reassociating (`vector.reduction <add>`)
@@ -114,83 +127,206 @@ impl FpMode {
 /// header + body, if condition + both branches, region body) — a taint op
 /// hidden inside a branch or a loop condition still taints the module.
 pub fn fp_contract_mode(module: &IRModule) -> FpMode {
-    if stream_has_taint(&module.instrs) {
+    let mut scan = FpScan::default();
+    if scan.stream_has_taint(&module.instrs) {
         FpMode::Relaxed
     } else {
         FpMode::Strict
     }
 }
 
-/// True iff `instrs` (or any nested sub-stream) contains an FP-contract taint op.
-fn stream_has_taint(instrs: &[Instr]) -> bool {
-    instrs.iter().any(instr_taints)
+/// Single forward pass over the (possibly nested) instruction streams. Carries a
+/// lightweight `ValueId -> DType` map so a tensor-level float reduction can be
+/// distinguished from an associative integer one: the map is populated in
+/// program order (SSA is defined-before-use), and each reduction is classified
+/// against the element type of its source that was recorded earlier in the walk.
+#[derive(Default)]
+struct FpScan {
+    /// Statically-recovered element type of each produced value. Only the subset
+    /// needed to classify a reduction source is tracked (tensor/scalar literals
+    /// plus dtype-preserving shape / elementwise ops); an entry is absent when
+    /// the dtype cannot be proven from the scanned body (e.g. an opaque param).
+    dtypes: HashMap<ValueId, DType>,
 }
 
-/// True iff `instr` is itself a taint op, or nests one.
-fn instr_taints(instr: &Instr) -> bool {
-    // PRIMARY taint representation: an intrinsic CALL. The RFC 0006 Track B f32
-    // vector intrinsics stay `Instr::Call { name: "__mind_blas_*_f32_v" }` in
-    // the serialized IR body and are intercepted only at the MLIR-lowering stage
-    // (src/mlir/lowering.rs), where they expand into `vector.fma` /
-    // `vector.reduction <add>`. So a real `dot_f32_v` artifact carries the Call,
-    // NOT an `Instr::VecFma` — the scan MUST match the intrinsic name or it
-    // would falsely report such an artifact strict. `Call` is a core variant
-    // (not `std-surface`-gated), so this check compiles in every build.
-    if let Instr::Call { name, .. } = instr {
-        let n = name.as_str();
-        // Any relaxed intrinsic name taints the module. Both lists are EMPTY
-        // today (all f32 `_v` intrinsics and the Track-A dot/L1 externs are now
-        // strict), but the check stays so a future non-strict addition to either
-        // list is honoured without touching this scan.
-        if RELAXED_F32_INTRINSICS.contains(&n) || RELAXED_RUNTIME_F32_EXTERNS.contains(&n) {
-            return true;
+impl FpScan {
+    /// True iff `instrs` (or any nested sub-stream) contains an FP-contract taint
+    /// op. Records value dtypes as it walks so later reductions resolve.
+    fn stream_has_taint(&mut self, instrs: &[Instr]) -> bool {
+        let mut tainted = false;
+        for instr in instrs {
+            if self.instr_taints(instr) {
+                tainted = true;
+            }
         }
+        tainted
     }
-    // SECONDARY taint representation: the `Instr::VecFma` / f32 `Instr::VecReduceAdd`
-    // variants themselves, for any path that carries them directly in the IR
-    // (mic@3 round-trip of a hand-built module, a future direct-emit frontend).
-    // Only exist under `std-surface`; absent in a build without it → pure Strict.
-    #[cfg(feature = "std-surface")]
-    {
-        if matches!(instr, Instr::VecFma { .. } | Instr::VecReduceAdd { .. }) {
-            return true;
-        }
-    }
-    // deferred: tensor-level float reductions (`OP_SUM` over an f32 tensor) may
-    // reassociate at the linalg level and are NOT yet in the taint set — needs
-    // mind-det-gemm numerical review; upgrade: add once measured.
-    // (The Track-A runtime BLAS externs are NO LONGER a blind spot: the
-    // non-strict ones are enumerated in RELAXED_RUNTIME_F32_EXTERNS above from
-    // objdump/source evidence, not assumed strict.)
 
-    // Recurse into ALL nested instruction streams (src/ir/mod.rs `Vec<Instr>`
-    // fields). Missing one would be a soundness hole: a taint op hidden in a
-    // loop/if condition would read as strict.
-    match instr {
-        Instr::FnDef { body, .. } => stream_has_taint(body),
-        // The While / If / Region control-flow variants only exist under
-        // `std-surface`; in a default build they are absent, so the recursion
-        // into their nested streams must be gated to keep the no-feature lib
-        // compiling. A default build never constructs them, so the `_ => false`
-        // fallthrough is complete there.
-        #[cfg(feature = "std-surface")]
-        Instr::While {
-            cond_instrs, body, ..
-        } => stream_has_taint(cond_instrs) || stream_has_taint(body),
-        #[cfg(feature = "std-surface")]
-        Instr::If {
-            cond_instrs,
-            then_instrs,
-            else_instrs,
-            ..
-        } => {
-            stream_has_taint(cond_instrs)
-                || stream_has_taint(then_instrs)
-                || stream_has_taint(else_instrs)
+    /// True iff `instr` is itself a taint op, or nests one. Also records the
+    /// dtype `instr` produces (before recursing) so downstream reductions in the
+    /// same stream can resolve their source element type.
+    fn instr_taints(&mut self, instr: &Instr) -> bool {
+        self.record_dtype(instr);
+
+        // PRIMARY taint representation: an intrinsic CALL. The RFC 0006 Track B
+        // f32 vector intrinsics stay `Instr::Call { name: "__mind_blas_*_f32_v" }`
+        // in the serialized IR body and are intercepted only at the MLIR-lowering
+        // stage (src/mlir/lowering.rs), where they expand into `vector.fma` /
+        // `vector.reduction <add>`. So a real `dot_f32_v` artifact carries the
+        // Call, NOT an `Instr::VecFma` — the scan MUST match the intrinsic name
+        // or it would falsely report such an artifact strict. `Call` is a core
+        // variant (not `std-surface`-gated), so this check compiles everywhere.
+        if let Instr::Call { name, .. } = instr {
+            let n = name.as_str();
+            // Any relaxed intrinsic name taints the module. Both lists are EMPTY
+            // today (all f32 `_v` intrinsics and the Track-A dot/L1 externs are
+            // now strict), but the check stays so a future non-strict addition to
+            // either list is honoured without touching this scan.
+            if RELAXED_F32_INTRINSICS.contains(&n) || RELAXED_RUNTIME_F32_EXTERNS.contains(&n) {
+                return true;
+            }
         }
+
+        // TAINT: a tensor-level float reduction. `sum` / `mean` over an IEEE-float
+        // tensor reassociates at the linalg level (`linalg.reduce` / a tree fold
+        // is order-free), so the total is not bit-reproducible by construction —
+        // any bit-exact guarantee comes only from a *specific* pinned lowering
+        // (currently the MLIR `emit_tensor_reduce_pinned` fold), which this
+        // pre-lowering IR scan cannot see. Claiming `Strict` here would be a false
+        // strict → a soundness break of the invariant itself. Integer / Q16
+        // reductions are associative + commutative (MIND-CONSTITUTION §III) and
+        // stay strict; a reduction whose source dtype is not statically provable
+        // fails closed to taint (never a false strict). See `reduction_reassoc`.
+        if let Instr::Sum { src, .. } | Instr::Mean { src, .. } = instr {
+            if self.reduction_reassoc(*src) {
+                return true;
+            }
+        }
+
+        // SECONDARY taint representation: the `Instr::VecFma` / f32
+        // `Instr::VecReduceAdd` variants themselves, for any path that carries
+        // them directly in the IR (mic@3 round-trip of a hand-built module, a
+        // future direct-emit frontend). Only exist under `std-surface`; absent in
+        // a build without it → pure Strict.
         #[cfg(feature = "std-surface")]
-        Instr::Region { body, .. } => stream_has_taint(body),
-        _ => false,
+        {
+            if matches!(instr, Instr::VecFma { .. } | Instr::VecReduceAdd { .. }) {
+                return true;
+            }
+        }
+
+        // Recurse into ALL nested instruction streams (src/ir/mod.rs `Vec<Instr>`
+        // fields). Missing one would be a soundness hole: a taint op hidden in a
+        // loop/if condition would read as strict.
+        match instr {
+            Instr::FnDef { body, .. } => self.stream_has_taint(body),
+            // The While / If / Region control-flow variants only exist under
+            // `std-surface`; in a default build they are absent, so the recursion
+            // into their nested streams must be gated to keep the no-feature lib
+            // compiling. A default build never constructs them, so the
+            // `_ => false` fallthrough is complete there.
+            #[cfg(feature = "std-surface")]
+            Instr::While {
+                cond_instrs, body, ..
+            } => {
+                let c = self.stream_has_taint(cond_instrs);
+                let b = self.stream_has_taint(body);
+                c || b
+            }
+            #[cfg(feature = "std-surface")]
+            Instr::If {
+                cond_instrs,
+                then_instrs,
+                else_instrs,
+                ..
+            } => {
+                let c = self.stream_has_taint(cond_instrs);
+                let t = self.stream_has_taint(then_instrs);
+                let e = self.stream_has_taint(else_instrs);
+                c || t || e
+            }
+            #[cfg(feature = "std-surface")]
+            Instr::Region { body, .. } => self.stream_has_taint(body),
+            _ => false,
+        }
+    }
+
+    /// Classify a reduction (`sum` / `mean`) by the element type of its source:
+    /// - integer / Q16 → associative + commutative → NOT reassociable → strict;
+    /// - IEEE float (f32/f64/f16/bf16) → reassociates at the linalg level → taint;
+    /// - dtype not statically resolvable in the scanned body → fail closed to
+    ///   taint (cannot PROVE the source is a non-reassociable integer, so never
+    ///   claim strict for it — soundness over precision).
+    fn reduction_reassoc(&self, src: ValueId) -> bool {
+        match self.dtypes.get(&src) {
+            Some(DType::I32) | Some(DType::I64) | Some(DType::Q16) => false,
+            Some(DType::F32) | Some(DType::F64) | Some(DType::F16) | Some(DType::BF16) => true,
+            None => true,
+        }
+    }
+
+    /// Record the element type produced by `instr`, when it can be recovered from
+    /// a literal or propagated from an already-tracked source. This is a minimal,
+    /// forward, best-effort recovery — enough to keep a *provably* integer
+    /// reduction strict without over-tainting it; any op not covered simply
+    /// leaves its result untracked, which fails closed at a downstream reduction.
+    fn record_dtype(&mut self, instr: &Instr) {
+        match instr {
+            // Literals carry their dtype directly.
+            Instr::ConstI64(dst, _) => {
+                self.dtypes.insert(*dst, DType::I64);
+            }
+            Instr::ConstF64(dst, _) => {
+                self.dtypes.insert(*dst, DType::F64);
+            }
+            Instr::ConstTensor(dst, dtype, _, _) => {
+                self.dtypes.insert(*dst, dtype.clone());
+            }
+            Instr::ConstDenseTensor { dst, dtype, .. } => {
+                self.dtypes.insert(*dst, dtype.clone());
+            }
+            // Dtype-preserving unary / shape / reduction / activation ops:
+            // the result element type equals the source element type.
+            Instr::Sum { dst, src, .. }
+            | Instr::Mean { dst, src, .. }
+            | Instr::Relu { dst, src }
+            | Instr::ReluGrad { dst, src, .. }
+            | Instr::Reshape { dst, src, .. }
+            | Instr::ExpandDims { dst, src, .. }
+            | Instr::Squeeze { dst, src, .. }
+            | Instr::Transpose { dst, src, .. }
+            | Instr::Index { dst, src, .. }
+            | Instr::Slice { dst, src, .. }
+            | Instr::Gather { dst, src, .. } => {
+                self.propagate(*dst, *src);
+            }
+            // Binary elementwise / contraction ops: both operands share the
+            // element type, so the result takes whichever operand is known.
+            Instr::BinOp { dst, lhs, rhs, .. } => {
+                self.propagate_from(*dst, &[*lhs, *rhs]);
+            }
+            Instr::Dot { dst, a, b } | Instr::MatMul { dst, a, b } => {
+                self.propagate_from(*dst, &[*a, *b]);
+            }
+            _ => {}
+        }
+    }
+
+    /// Copy the tracked dtype of `src` onto `dst`, if `src` is known.
+    fn propagate(&mut self, dst: ValueId, src: ValueId) {
+        if let Some(dt) = self.dtypes.get(&src).cloned() {
+            self.dtypes.insert(dst, dt);
+        }
+    }
+
+    /// Assign `dst` the dtype of the first known value in `srcs`.
+    fn propagate_from(&mut self, dst: ValueId, srcs: &[ValueId]) {
+        for s in srcs {
+            if let Some(dt) = self.dtypes.get(s).cloned() {
+                self.dtypes.insert(dst, dt);
+                return;
+            }
+        }
     }
 }
 
@@ -198,6 +334,7 @@ fn instr_taints(instr: &Instr) -> bool {
 mod tests {
     use super::*;
     use crate::ir::{IRModule, ValueId};
+    use crate::types::{DType, ShapeDim};
 
     fn module_with(instrs: Vec<Instr>) -> IRModule {
         let mut m = IRModule::new();
@@ -337,6 +474,126 @@ mod tests {
             reap_threshold: None,
         }]);
         assert_eq!(fp_contract_mode(&m), FpMode::Relaxed);
+    }
+
+    // --- Tensor-level float reduction soundness (the linalg reassociation path) ---
+
+    fn tensor(dst: ValueId, dt: DType) -> Instr {
+        Instr::ConstTensor(dst, dt, vec![ShapeDim::Known(64)], Some(0.0))
+    }
+
+    fn sum_over(dst: ValueId, src: ValueId) -> Instr {
+        Instr::Sum {
+            dst,
+            src,
+            axes: vec![],
+            keepdims: false,
+        }
+    }
+
+    #[test]
+    fn reassociable_f32_tensor_sum_is_relaxed() {
+        // SOUNDNESS FIX: a tensor `sum` / `mean` over an f32 tensor reassociates
+        // at the linalg level. `fp_contract_mode` scans the PRE-lowering IR and
+        // cannot see whether a given backend happens to pin the fold, so it must
+        // NOT claim strict — that would be a false `Strict` (a soundness break).
+        // (Pre-fix this returned `Strict`; this test is RED before the fix.)
+        let src = ValueId(0);
+        let red = ValueId(1);
+        let m_sum = module_with(vec![tensor(src, DType::F32), sum_over(red, src)]);
+        assert_eq!(
+            fp_contract_mode(&m_sum),
+            FpMode::Relaxed,
+            "f32 tensor sum reassociates → must be Relaxed"
+        );
+
+        // `mean` over f32 is the same reassociation class.
+        let m_mean = module_with(vec![
+            tensor(src, DType::F32),
+            Instr::Mean {
+                dst: red,
+                src,
+                axes: vec![],
+                keepdims: false,
+            },
+        ]);
+        assert_eq!(
+            fp_contract_mode(&m_mean),
+            FpMode::Relaxed,
+            "f32 tensor mean reassociates → must be Relaxed"
+        );
+
+        // f64 reduction reassociates too.
+        let m_f64 = module_with(vec![tensor(src, DType::F64), sum_over(red, src)]);
+        assert_eq!(fp_contract_mode(&m_f64), FpMode::Relaxed);
+
+        // Fail-closed: a reduction whose source dtype is NOT statically
+        // resolvable in the scanned body (e.g. an opaque tensor param) cannot be
+        // PROVEN integer/associative, so it must never be labelled strict.
+        let opaque = ValueId(9);
+        let m_opaque = module_with(vec![sum_over(ValueId(10), opaque)]);
+        assert_eq!(
+            fp_contract_mode(&m_opaque),
+            FpMode::Relaxed,
+            "unresolved-dtype reduction must fail closed to Relaxed"
+        );
+    }
+
+    #[test]
+    fn integer_tensor_reduction_stays_strict() {
+        // DO NOT over-taint: integer add is associative + commutative, so an
+        // integer / Q16 tensor reduction is byte-identical across substrates and
+        // MUST stay strict (MIND-CONSTITUTION §III).
+        let src = ValueId(0);
+        let red = ValueId(1);
+        for dt in [DType::I32, DType::I64, DType::Q16] {
+            let m = module_with(vec![tensor(src, dt.clone()), sum_over(red, src)]);
+            assert_eq!(
+                fp_contract_mode(&m),
+                FpMode::Strict,
+                "{} tensor reduction is associative → must stay Strict",
+                dt.as_str()
+            );
+        }
+
+        // Propagation through a shape-preserving op keeps the integer source
+        // integer (still strict), rather than degrading to unknown → Relaxed.
+        let reshaped = ValueId(2);
+        let m = module_with(vec![
+            tensor(src, DType::I32),
+            Instr::Reshape {
+                dst: reshaped,
+                src,
+                new_shape: vec![ShapeDim::Known(8), ShapeDim::Known(8)],
+            },
+            sum_over(red, reshaped),
+        ]);
+        assert_eq!(fp_contract_mode(&m), FpMode::Strict);
+    }
+
+    #[test]
+    fn scalar_float_chain_stays_strict() {
+        // Regression guard: the tensor-reduction taint must NOT leak onto plain
+        // scalar float arithmetic, which lowers to `arith.*f` with no reassoc /
+        // no fma-contract and is bit-identical by construction.
+        let a = ValueId(0);
+        let b = ValueId(1);
+        let c = ValueId(2);
+        let m = module_with(vec![
+            Instr::ConstF64(a, 1.0),
+            Instr::ConstF64(b, 2.0),
+            Instr::BinOp {
+                dst: c,
+                op: crate::ir::BinOp::Add,
+                lhs: a,
+                rhs: b,
+            },
+        ]);
+        assert_eq!(
+            fp_contract_mode(&m),
+            FpMode::Strict,
+            "scalar f64 chain must stay Strict"
+        );
     }
 
     #[cfg(feature = "std-surface")]
