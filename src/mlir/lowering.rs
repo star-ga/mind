@@ -6449,7 +6449,7 @@ impl LoweringContext {
         p: &str,
         nr: usize,
         mr: usize,
-        pl: usize,
+        _pl: usize,
         acc_ty: &str,
         acc_bits: usize,
     ) {
@@ -6457,18 +6457,31 @@ impl LoweringContext {
         let mut line = |s: &str| {
             writeln!(buf, "{s}").expect("write to string cannot fail");
         };
-        let acc_init = (0..mr)
-            .map(|t| format!("%{p}_acc{t} = %{p}_zv"))
-            .collect::<Vec<_>>()
-            .join(", ");
+        // COL_REGS = NR/8 YMM column groups; one vpmaddwd contracts a 2-K pair
+        // for 8 output columns → vector<8xi32>. The MR×COL_REGS sub-accumulators
+        // stay i32 (vpaddd) end-to-end (each lane ≤ K·127·127 < 2³¹, safe to
+        // K≈130k) and are concatenated + widened ONCE after the K loop.
+        let col_regs = nr / 8;
         line(&format!(
-            "              %{p}_va:{mr} = scf.for %{p}_kp = %{p}_c0 to %{p}_kpairs \
-             step %{p}_c1 iter_args({acc_init}) -> ({acc_ty}) {{"
+            "              %{p}_zi8 = arith.constant dense<0> : vector<8xi32>"
+        ));
+        let acc_init: Vec<String> = (0..mr)
+            .flat_map(|t| (0..col_regs).map(move |j| format!("%{p}_macc{t}_{j} = %{p}_zi8")))
+            .collect();
+        let n_acc = mr * col_regs;
+        let iter_ty: Vec<String> = (0..n_acc).map(|_| "vector<8xi32>".to_string()).collect();
+        let iter_ty = iter_ty.join(", ");
+        line(&format!(
+            "              %{p}_vi:{n_acc} = scf.for %{p}_kp = %{p}_c0 to %{p}_kpairs \
+             step %{p}_c1 iter_args({}) -> ({iter_ty}) {{",
+            acc_init.join(", ")
         ));
         line(&format!(
             "                %{p}_kp64 = arith.index_cast %{p}_kp : index to i64"
         ));
-        // B pairs vector: Bp[jrbase + kp*(NR*2) .. +16] as vector<16xi16>.
+        // ── Hoist the COL_REGS B-tile YMM loads BEFORE the MR row loop (B reused
+        //    across all MR rows). Base: Bp[jrbase + kp*(NR*2)] (i16 elements);
+        //    col-group j (columns 8j..8j+7) is the 16 interleaved i16 at +16j.
         line(&format!(
             "                %{p}_bnr2 = arith.muli %{p}_nrc, %{p}_cgrpi : i64"
         ));
@@ -6478,15 +6491,23 @@ impl LoweringContext {
         line(&format!(
             "                %{p}_bvi = arith.addi %{p}_jrbase, %{p}_bkr : i64"
         ));
-        line(&format!(
-            "                %{p}_bvp = llvm.getelementptr %{p}_pb[%{p}_bvi] : \
-             (!llvm.ptr, i64) -> !llvm.ptr, i16"
-        ));
-        line(&format!(
-            "                %{p}_bv = llvm.load %{p}_bvp {{alignment = 2 : i64}} : \
-             !llvm.ptr -> vector<{}xi16>",
-            2 * nr
-        ));
+        for j in 0..col_regs {
+            line(&format!(
+                "                %{p}_bo{j} = arith.constant {} : i64",
+                j * 16
+            ));
+            line(&format!(
+                "                %{p}_bvi{j} = arith.addi %{p}_bvi, %{p}_bo{j} : i64"
+            ));
+            line(&format!(
+                "                %{p}_bvp{j} = llvm.getelementptr %{p}_pb[%{p}_bvi{j}] : \
+                 (!llvm.ptr, i64) -> !llvm.ptr, i16"
+            ));
+            line(&format!(
+                "                %{p}_bv{j} = llvm.load %{p}_bvp{j} {{alignment = 2 : i64}} : \
+                 !llvm.ptr -> vector<16xi16>"
+            ));
+        }
         // A K-pairs base for this block: Ap[irbase + kp*(MR*2)].
         line(&format!(
             "                %{p}_amr2 = arith.muli %{p}_mrc, %{p}_cgrpi : i64"
@@ -6497,12 +6518,15 @@ impl LoweringContext {
         line(&format!(
             "                %{p}_abase = arith.addi %{p}_irbase, %{p}_akr : i64"
         ));
-        let mut yields = Vec::with_capacity(mr);
+        let mut yields = Vec::with_capacity(n_acc);
         for t in 0..mr {
             // A pair for row t: two contiguous i16 = [A[t,2kp], A[t,2kp+1]].
-            // Load as one i32, broadcast across NR output columns, bitcast back
-            // to vector<16xi16> = [a0,a1,a0,a1,...] so vpmaddwd pairs each
-            // output column's (k,k+1) with the corresponding B pair.
+            // Load as one i32 and broadcast across 8 output columns, bitcast to
+            // vector<16xi16> = [a0,a1,a0,a1,...] so vpmaddwd pairs each output
+            // column's (k,k+1) with the corresponding B pair. The load+broadcast
+            // folds to `vpbroadcastd ymm, m32` (load ports p2/p3, OFF port 5) and
+            // is issued ONCE per row, then reused across all COL_REGS vpmaddwd —
+            // the load-port amortisation that widening NR buys.
             line(&format!(
                 "                %{p}_at{t} = arith.constant {} : i64",
                 t * 2
@@ -6519,84 +6543,129 @@ impl LoweringContext {
                  !llvm.ptr -> i32"
             ));
             line(&format!(
-                "                %{p}_abc{t} = vector.broadcast %{p}_as{t} : i32 to vector<{nr}xi32>"
+                "                %{p}_abc{t} = vector.broadcast %{p}_as{t} : i32 to vector<8xi32>"
             ));
             line(&format!(
-                "                %{p}_aw{t} = vector.bitcast %{p}_abc{t} : vector<{nr}xi32> to vector<{}xi16>",
-                2 * nr
+                "                %{p}_aw{t} = vector.bitcast %{p}_abc{t} : vector<8xi32> to vector<16xi16>"
             ));
-            if HOST_IS_X86 {
+            for j in 0..col_regs {
+                if HOST_IS_X86 {
+                    line(&format!(
+                        "                %{p}_pm{t}_{j} = llvm.call_intrinsic \"llvm.x86.avx2.pmadd.wd\"(%{p}_aw{t}, %{p}_bv{j}) : \
+                         (vector<16xi16>, vector<16xi16>) -> vector<8xi32>"
+                    ));
+                } else {
+                    // Non-x86 (aarch64): portable, exact-integer equivalent of
+                    // the x86 `vpmaddwd` pairwise contraction (the intrinsic does
+                    // not legalise off x86). `_aw{t}` is the broadcast A pair
+                    // `[a0,a1,a0,a1,...]` and `_bv{j}` the B pairs, both
+                    // vector<16xi16>. Sign-extend both to i32, multiply, then form
+                    // the 8 pairwise sums by adding the even and odd lanes —
+                    // bit-identical integer result to `vpmaddwd`.
+                    let even: String = (0..8)
+                        .map(|i| (2 * i).to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let odd: String = (0..8)
+                        .map(|i| (2 * i + 1).to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    line(&format!(
+                        "                %{p}_awi{t}_{j} = arith.extsi %{p}_aw{t} : vector<16xi16> to vector<16xi32>"
+                    ));
+                    line(&format!(
+                        "                %{p}_bwi{t}_{j} = arith.extsi %{p}_bv{j} : vector<16xi16> to vector<16xi32>"
+                    ));
+                    line(&format!(
+                        "                %{p}_pr{t}_{j} = arith.muli %{p}_awi{t}_{j}, %{p}_bwi{t}_{j} : vector<16xi32>"
+                    ));
+                    line(&format!(
+                        "                %{p}_ev{t}_{j} = vector.shuffle %{p}_pr{t}_{j}, %{p}_pr{t}_{j} \
+                         [{even}] : vector<16xi32>, vector<16xi32>"
+                    ));
+                    line(&format!(
+                        "                %{p}_od{t}_{j} = vector.shuffle %{p}_pr{t}_{j}, %{p}_pr{t}_{j} \
+                         [{odd}] : vector<16xi32>, vector<16xi32>"
+                    ));
+                    line(&format!(
+                        "                %{p}_pm{t}_{j} = arith.addi %{p}_ev{t}_{j}, %{p}_od{t}_{j} : vector<8xi32>"
+                    ));
+                }
+                // Accumulate the vpmaddwd i32 partials DIRECTLY in i32 (vpaddd).
                 line(&format!(
-                    "                %{p}_pm{t} = llvm.call_intrinsic \"llvm.x86.avx2.pmadd.wd\"(%{p}_aw{t}, %{p}_bv) : \
-                     (vector<{}xi16>, vector<{}xi16>) -> vector<{pl}xi32>",
-                    2 * nr,
-                    2 * nr
+                    "                %{p}_na{t}_{j} = arith.addi %{p}_macc{t}_{j}, %{p}_pm{t}_{j} : vector<8xi32>"
                 ));
-            } else {
-                // Non-x86 (aarch64): portable, exact-integer equivalent of the
-                // x86 `vpmaddwd` pairwise contraction (the intrinsic does not
-                // legalise off x86). `_aw{t}` is the broadcast A pair
-                // `[a0,a1,a0,a1,...]` and `_bv` is the B pairs, both
-                // vector<2*NR xi16>. Sign-extend both to i32, multiply, then
-                // form the NR pairwise sums by adding the even and odd lanes —
-                // bit-identical integer result to `vpmaddwd`.
-                let w = 2 * nr;
-                let even: String = (0..nr)
-                    .map(|i| (2 * i).to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let odd: String = (0..nr)
-                    .map(|i| (2 * i + 1).to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                line(&format!(
-                    "                %{p}_awi{t} = arith.extsi %{p}_aw{t} : vector<{w}xi16> to vector<{w}xi32>"
-                ));
-                line(&format!(
-                    "                %{p}_bwi{t} = arith.extsi %{p}_bv : vector<{w}xi16> to vector<{w}xi32>"
-                ));
-                line(&format!(
-                    "                %{p}_pr{t} = arith.muli %{p}_awi{t}, %{p}_bwi{t} : vector<{w}xi32>"
-                ));
-                line(&format!(
-                    "                %{p}_ev{t} = vector.shuffle %{p}_pr{t}, %{p}_pr{t} \
-                     [{even}] : vector<{w}xi32>, vector<{w}xi32>"
-                ));
-                line(&format!(
-                    "                %{p}_od{t} = vector.shuffle %{p}_pr{t}, %{p}_pr{t} \
-                     [{odd}] : vector<{w}xi32>, vector<{w}xi32>"
-                ));
-                line(&format!(
-                    "                %{p}_pm{t} = arith.addi %{p}_ev{t}, %{p}_od{t} : vector<{nr}xi32>"
-                ));
+                yields.push(format!("%{p}_na{t}_{j}"));
             }
-            // Accumulate the `vpmaddwd` i32 partials. For the AVX2 rung
-            // (acc_bits == 32) add them DIRECTLY in i32 (`vpaddd`) end-to-end:
-            // each output lane ≤ K·127·127 < 2³¹ (safe to K≈130k), so the
-            // per-K-pair sign-extend to i64 (8× `vpmovsxdq` + `vpaddq` +
-            // `vextracti128`, all port-5-bound on Haswell — a 5:1 overhead ratio)
-            // is pure waste. Integer add is associative, so i32-accumulate-then-
-            // widen-once ≡ widen-each-then-i64-sum, BIT-IDENTICAL (the same
-            // in-panel i32 bound the VNNI rung already relies on). The VNNI rung
-            // (acc_bits == 64) still widens once here because its bias-corrected
-            // partial (`main − 128·Σb`) is formed as i64 after the quad loop.
-            let src = if acc_bits == 64 {
-                line(&format!(
-                    "                %{p}_pw{t} = arith.extsi %{p}_pm{t} : vector<{nr}xi32> to vector<{nr}xi64>"
-                ));
-                format!("%{p}_pw{t}")
-            } else {
-                format!("%{p}_pm{t}")
-            };
-            line(&format!(
-                "                %{p}_na{t} = arith.addi %{p}_acc{t}, {src} : vector<{nr}xi{acc_bits}>"
-            ));
-            yields.push(format!("%{p}_na{t}"));
         }
         line(&format!(
-            "                scf.yield {} : {acc_ty}",
+            "                scf.yield {} : {iter_ty}",
             yields.join(", ")
         ));
+        line("              }");
+        // ── Post-loop: per row, concat the COL_REGS 8-lane i32 groups into one
+        // vector<NR xi32> (col-group j → lanes 8j..8j+7). Integer add is
+        // associative, so concatenating the independent 8-column partials is
+        // bit-identical to computing NR columns as one accumulator. For the AVX2
+        // rung acc_bits == 32 (C-scratch is i32) so no widen; a hypothetical
+        // i64-scratch caller (acc_bits == 64) sign-extends once here.
+        let mut combined = Vec::with_capacity(mr);
+        for t in 0..mr {
+            let mut prev = format!("%{p}_vi#{}", t * col_regs);
+            let mut prev_w = 8usize;
+            if col_regs == 1 {
+                // Single group: rename via an identity shuffle so the value has a
+                // stable NR-wide SSA name (LLVM folds the identity shuffle away).
+                let idx: String = (0..nr)
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                line(&format!(
+                    "              %{p}_mcat{t} = vector.shuffle {prev}, {prev} [{idx}] : \
+                     vector<8xi32>, vector<8xi32>"
+                ));
+                prev = format!("%{p}_mcat{t}");
+            } else {
+                for j in 1..col_regs {
+                    let new_w = prev_w + 8;
+                    let idx: String = (0..new_w)
+                        .map(|i| i.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    line(&format!(
+                        "              %{p}_mcat{t}_{j} = vector.shuffle {prev}, %{p}_vi#{} [{idx}] : \
+                         vector<{prev_w}xi32>, vector<8xi32>",
+                        t * col_regs + j
+                    ));
+                    prev = format!("%{p}_mcat{t}_{j}");
+                    prev_w = new_w;
+                }
+            }
+            if acc_bits == 64 {
+                line(&format!(
+                    "              %{p}_vacomb{t} = arith.extsi {prev} : vector<{nr}xi32> to vector<{nr}xi64>"
+                ));
+                combined.push(format!("%{p}_vacomb{t}"));
+            } else {
+                combined.push(prev);
+            }
+        }
+        // Wrap the combined per-row values as the `%{p}_va:{MR}` multi-result the
+        // scalar K-tail / C-scratch epilogue consume (a trivial one-trip scf.for,
+        // matching the VNNI rung's binding shim — folded away by canonicalisation).
+        let va_init = (0..mr)
+            .map(|t| format!("%{p}_vaa{t} = {}", combined[t]))
+            .collect::<Vec<_>>()
+            .join(", ");
+        line(&format!(
+            "              %{p}_va:{mr} = scf.for %{p}_vdummy = %{p}_c0 to %{p}_c1 \
+             step %{p}_c1 iter_args({va_init}) -> ({acc_ty}) {{"
+        ));
+        let va_yields = (0..mr)
+            .map(|t| format!("%{p}_vaa{t}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        line(&format!("                scf.yield {va_yields} : {acc_ty}"));
         line("              }");
     }
 
@@ -6983,8 +7052,10 @@ impl LoweringContext {
             IntDotMode::Vnni => I8_VNNI_NC,
         };
         // Register-tile column width (NR). MODE-DEPENDENT: the AVX2 `vpmaddwd`
-        // path stays at the pinned I8_NR=8 (YMM, vector<8xi64> accumulators); the
-        // VNNI `vpdpbusd.512` path uses NR=32 = 2 ZMM B-columns (`colRegs=2`).
+        // path uses I8_NR=16 = COL_REGS=2 YMM column groups per row (8 i32 lanes
+        // each, reassembled to one vector<16xi32> after the K loop) so one
+        // A-broadcast amortises over two vpmaddwd; the VNNI `vpdpbusd.512` path
+        // uses NR=32 = 2 ZMM B-columns (`colRegs=2`).
         // The microkernel holds the 16 accumulators as an 8×2 grid of
         // `vector<16xi32>` (one ZMM per (row, col-group)) and reassembles each
         // row's two groups into one `vector<32xi64>` for the C-scratch — so the
