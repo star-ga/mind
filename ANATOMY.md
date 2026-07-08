@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3053 | **Est. tokens:** ~7,354,679
-**Generated:** 2026-07-08 14:33 UTC
+**Files:** 3052 | **Est. tokens:** ~7,351,794
+**Generated:** 2026-07-08 19:17 UTC
 
 ## Token Budget Guide
 
@@ -40,7 +40,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,163 |
-| `docs/` | 32 | ~66,274 |
+| `docs/` | 31 | ~63,389 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
@@ -635,7 +635,6 @@
 - `capabilities.toml` (~1163 tok, large) — [ir]
 ### `docs/`
 
-- `architecture_audit_fable5_2026-07-07.md` (~4011 tok, huge) — MIND Compiler — Architecture + Honesty Audit (Fable-5, 2026-07-07)
 - `architecture.md` (~965 tok, large) — Architecture
 - `autodiff.md` (~595 tok, large) — Static autodiff (public)
 ### `docs/backends/`
@@ -722,7 +721,7 @@
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
 
-- `roadmap.md` (~15733 tok, huge) — Roadmap
+- `roadmap.md` (~16859 tok, huge) — Roadmap
 - `runs-burndown-roadmap.md` (~3203 tok, huge) — MIND RUNS Burndown Roadmap
 - `security.md` (~1492 tok, large) — Security Guide
 - `self-host-trace-hash-port.md` (~1406 tok, large) — #17 — Self-compute the native PT_NOTE (pure-MIND trace-hash port)

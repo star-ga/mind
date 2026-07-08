@@ -352,7 +352,7 @@ Demonstrate performance, determinism, and flexibility. Introduce cloud-assisted 
   - Benchmark: quantize/dequantize 1M KV vectors at 3-bit, measure throughput vs Python
   - This is the first real-world mind-inference kernel that exercises struct, enum,
     const, bitwise ops, and tensor ops together — ideal Phase 10.5 integration test
-  - Ref: arXiv:2504.19874 (TurboQuant, ICLR 2026)
+  - Grounded in recent KV-cache quantization research.
 
 ---
 
@@ -701,6 +701,70 @@ MIND is evolving from a single-stack language focused on AI computation into a c
   - ONNX model import/export
   - TensorFlow SavedModel conversion
   - PyTorch model migration tools
+
+#### 6. Candidate Primitives — to be EVALUATED (not committed)
+
+Model-primitive leads parked here for a future scoping pass. Each is a
+*candidate* to be measured against the IFR (see TRIZ-Driven Direction) and the
+wedge gates (cross-substrate byte-identity, run-to-run determinism) before any
+commitment. Nothing here is planned work yet.
+
+**Deterministic Kolmogorov–Arnold Network (KAN) layer** — *evaluate (scoped)*.
+- **What:** a KAN layer (learnable univariate functions on edges instead of
+  fixed node activations) implemented as a MIND-native kernel. Mathematically
+  it is the Kolmogorov–Arnold superposition form: `f = Σq Φq(Σp ψqp(xp))` —
+  spline compositions over a *fixed* dataflow graph.
+- **Why it fits the wedge (the reason it's worth evaluating):** on a *fixed*
+  grid with a *division-free* basis the layer reduces to exactly the primitives
+  MIND already proves bit-identical — a per-edge univariate map (a Horner chain
+  of Q16.16 `mul(>>16)` + `add`, structurally the existing dtype-branched
+  elementwise lowering) feeding two pinned associative Q16.16 reductions (the
+  existing `emit_vec_dot_q16` machinery, frozen by its scalar C oracle and the
+  avx2 == neon canaries). No new determinism primitive is introduced, and a new
+  kernel enters with no new ABI (a `__mind_blas_kan_*_q16_v` extern + one
+  cross-substrate canary). A *deterministic* KAN — bit-identical across
+  x86/ARM/GPU with a signed trace — is something no incumbent ships. Splines
+  also sit inside the compiler-integrated-autodiff surface (US Provisional
+  63/947,737): `d/dx` and `d/dcoeff` of the basis are the same division-free
+  primitives, so the backward pass stays in-family.
+- **Wedge-safe SCOPE (load-bearing — outside this it fights the wedge):**
+  - *Inference on a FIXED / UNIFORM grid only.* Grid adaptivity during training
+    is data-dependent and breaks training determinism; non-uniform grids
+    (Cox–de Boor) need runtime knot-difference **division**, which is lossy and
+    round-divergent across avx2/neon — **forbid** it in the deterministic tier.
+  - *Division-free basis.* First-kind **Chebyshev** via the recurrence
+    `T_{k+1} = 2·x·T_k − T_{k-1}` (coefficients exactly 2 and −1 → zero
+    compile-time rounding, unlike Legendre/Jacobi rationals) with a fixed-point
+    **clamp to [-1,1]** (exact integer min/max — `T_n` grows exponentially in
+    degree outside the interval); **or** a uniform-grid B-spline pre-expanded to
+    piecewise-cubic Horner (co-equal — wins on Q16.16 coefficient dynamic range
+    and local features, costs one deterministic interval-select).
+  - *Drop the SiLU base term.* `x·sigmoid(x)` needs `exp` — MIND has no
+    deterministic Q16.16 transcendental; keep the basis only, or add a pinned
+    polynomial approximation that itself passes a canary.
+  - **Honest port note:** published Chebyshev-KAN code typically normalizes
+    inputs with `tanh` and evaluates `T_n` via `cos(n·arccos x)` — i.e. three
+    transcendentals. MIND's version is a determinism-hardened *re-derivation*
+    (clamp instead of `tanh`; forced recurrence/Clenshaw instead of `cos·arccos`),
+    **not** a drop-in port. So "no dynamic control flow" is only exact for the
+    global-recurrence basis; a B-spline basis carries one deterministic
+    interval-select branch.
+- **Falsifiable go/no-go (first experiment — the smallest thing that kills it
+  if it's wrong):** land a Q16.16 Chebyshev/Horner edge-eval as a
+  `cross_substrate_identity` canary and require avx2 == neon plus the 15-canary
+  run-to-run gate. *Status:* a standalone Q16.16 Chebyshev-recurrence eval
+  already passes run-to-run determinism + byte-exact vs an independent
+  fixed-point reference on x86; the remaining gate is the avx2 == neon canary on
+  real aarch64.
+- **Then measure (commit gates, not assumptions):** (2) approximation quality
+  vs the fixed-point quantum (1/65536) on a real task — fixed-point KANs trade
+  dynamic range for determinism, and the cost must be characterized, including
+  how quantization error accumulates under two-layer composition; (3)
+  autodiff-through-basis cost under the strict-FP / fixed-point tiers.
+- **Explicitly out of scope of this entry:** this is *function approximation*,
+  orthogonal to the execution-determinism / trace-anchor experiments — do not
+  conflate the two threads. Grounded in recent basis-function-design research;
+  superposition-theorem lineage (Kolmogorov / Arnold / Lorentz / Sprecher).
 
 **Data Pipeline Connectors:**
 - Seamless integration with data lakes and cloud platforms
