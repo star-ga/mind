@@ -2509,6 +2509,94 @@ impl LoweringContext {
                     );
                     return Ok(());
                 }
+                // Scalar `as i64` / `as u64` value conversion synthesised by the
+                // AST->IR `As` lowering (src/eval/lower.rs). This is the mirror of
+                // the `__mind_conv_f32`/`f64` block above for the FULL-width
+                // integer target — chosen by the SOURCE value's physical kind:
+                //   float (f64/f32)  -> arith.fptosi (`i64`) / arith.fptoui (`u64`)
+                //   integer/pointer  -> IDENTITY: same-type `arith.bitcast`,
+                //                       folded away by mlir-opt so the result is
+                //                       byte-identical to the historical `val`
+                //                       pass-through (integer/pointer `as i64` is
+                //                       a genuine no-op — this preserves that).
+                // Only float sources needed the fix (the silent drop `x as i64`
+                // on an `f64` `x`); the identity arm exists solely to keep every
+                // OTHER source byte-identical, since the intrinsic is synthesised
+                // for the i64/u64 target regardless of source. fptosi/fptoui
+                // truncate toward zero (IEEE, substrate-deterministic), so
+                // fp_mode stays `Strict`.
+                // deferred: out-of-range / NaN float inputs follow MLIR's default
+                // fptosi/fptoui semantics (target-defined / poison), NOT a
+                // saturating conversion — no fixture exercises a scalar float->int
+                // cast (keystone `main.mind` is cast-free; cross_substrate has no
+                // scalar-cast fixture). upgrade path: emit `llvm.fptosi.sat` /
+                // `arith` saturating intrinsics when a range-bounded contract is
+                // required, and add a cross-substrate saturation canary.
+                #[cfg(feature = "std-surface")]
+                if args.len() == 1 && (name == "__mind_conv_i64" || name == "__mind_conv_u64") {
+                    let src = args[0];
+                    let unsigned = name == "__mind_conv_u64";
+                    match self.values.get(&src) {
+                        // Float source: the case the fix targets — emit a real
+                        // fp->int conversion (was silently dropped).
+                        Some(ValueKind::ScalarF64) | Some(ValueKind::ScalarF32) => {
+                            let fty = if matches!(self.values.get(&src), Some(ValueKind::ScalarF32))
+                            {
+                                "f32"
+                            } else {
+                                "f64"
+                            };
+                            let op = if unsigned {
+                                "arith.fptoui"
+                            } else {
+                                "arith.fptosi"
+                            };
+                            self.emit_line(&format!(
+                                "    %{0} = {1} %{2} : {3} to i64",
+                                dst.0, op, src.0, fty
+                            ));
+                            self.values.insert(*dst, ValueKind::ScalarI64);
+                        }
+                        // Integer / pointer / unregistered source: IDENTITY. Emit
+                        // a same-type `arith.bitcast` (mlir-opt folds it to the
+                        // operand) and carry the SOURCE's exact kind forward so
+                        // the artifact is byte-identical to the historical `val`
+                        // pass-through — including for narrow (`i32`/`u32`/`i1`)
+                        // sources whose ABI reconciliation happens downstream.
+                        _ => {
+                            let (phys, is_i1) = if self.i1_values.contains(&src) {
+                                ("i1", true)
+                            } else {
+                                (
+                                    match self.values.get(&src) {
+                                        Some(ValueKind::ScalarI32) | Some(ValueKind::ScalarU32) => {
+                                            "i32"
+                                        }
+                                        _ => "i64",
+                                    },
+                                    false,
+                                )
+                            };
+                            self.emit_line(&format!(
+                                "    %{0} = arith.bitcast %{1} : {2} to {2}",
+                                dst.0, src.0, phys
+                            ));
+                            match self.values.get(&src) {
+                                Some(k) => {
+                                    let k = k.clone();
+                                    self.values.insert(*dst, k);
+                                }
+                                None => {
+                                    self.values.insert(*dst, ValueKind::ScalarI64);
+                                }
+                            }
+                            if is_i1 {
+                                self.i1_values.insert(*dst);
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
                 // RFC 0010 Phase A/B/C: if the callee was declared via an
                 // `extern "C"` block, emit `llvm.call` with the declared
                 // signature; otherwise fall back to the existing `func.call`

@@ -1178,6 +1178,40 @@ fn scalar_float_cast_width(ty: &TypeAnn) -> Option<u32> {
     }
 }
 
+/// Signedness of a scalar `as`-cast (or call-form) *target* type when the target
+/// is the FULL-width integer slot (`i64` / `u64`): `Some(true)` for `i64`,
+/// `Some(false)` for `u64`, `None` for every other target.
+///
+/// This is the sibling of the just-added `scalar_float_cast_width` for the
+/// mirror-image silent miscompile: a `float as i64` / `float as u64` cast.
+/// Full-width integer targets are the last remaining case that reaches the
+/// transparent `_ => val` pass-through of the `As` lowering — correct for an
+/// integer/pointer SOURCE (a true no-op), but a SILENT DROP when the source is
+/// a float (`x as i64` on an `f64` `x` returned the raw f64 SSA value with no
+/// `fptosi`, so f64 bits flowed on as i64). The caller wraps only these targets
+/// in a pure `__mind_conv_i64` / `__mind_conv_u64` intrinsic `Instr::Call`,
+/// expanded at the MLIR stage into `arith.fptosi`/`fptoui` for a float source
+/// and a same-type-`arith.bitcast` IDENTITY (folded away by mlir-opt) for an
+/// integer/pointer source — so integer-source casts stay byte-identical to the
+/// historical pass-through. No new IR opcode, no mic@1/mic@3 layout change, no
+/// version bump. Narrowing integer targets (`i8`/`i16`/`i32`, `u8`/`u16`/`u32`)
+/// never reach here — they are handled by the shift-pair / mask branches above
+/// and are left exactly as-is. `i64` arrives as `TypeAnn::ScalarI64` (postfix
+/// `as` + call form) and as `TypeAnn::Named("i64")`; `u64` only as
+/// `TypeAnn::Named("u64")` (there is no `ScalarU64` variant).
+#[cfg(feature = "std-surface")]
+fn scalar_int64_cast_signed(ty: &TypeAnn) -> Option<bool> {
+    match ty {
+        TypeAnn::ScalarI64 => Some(true),
+        TypeAnn::Named(name) => match name.as_str() {
+            "i64" => Some(true),
+            "u64" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// Truncate/sign-adjust the lowered init value `val` of a `let` binding to its
 /// declared narrow integer width, mirroring the `as`-cast scalar path.
 ///
@@ -5083,7 +5117,41 @@ fn lower_expr(
                             });
                             conv_id
                         }
-                        None => val,
+                        // Cast to the FULL-width integer slot (`as i64` / `as
+                        // u64`) — the last case reaching the transparent
+                        // pass-through. Correct for an integer/pointer source (a
+                        // true no-op), but a SILENT DROP for a FLOAT source:
+                        // `x as i64` on an `f64` `x` returned the raw f64 SSA
+                        // value with no `fptosi`, so f64 bits flowed on typed as
+                        // i64 (mirror of the `float as i64` miscompile — the
+                        // int->float direction was fixed alongside). Wrapped in a
+                        // pure `__mind_conv_i64`/`__mind_conv_u64` intrinsic
+                        // `Instr::Call` expanded at the MLIR stage into
+                        // `arith.fptosi`/`fptoui` for a float source and a
+                        // same-type `arith.bitcast` IDENTITY (folded away by
+                        // mlir-opt) for an integer/pointer source — so
+                        // integer-source casts stay byte-identical to the
+                        // historical pass-through. No new IR opcode, no
+                        // mic@1/mic@3 layout change, no version bump. Pointers,
+                        // aliases, structs, slices, generics (`scalar_int64_cast_signed`
+                        // -> None) keep the verbatim `val` pass-through.
+                        None => match scalar_int64_cast_signed(ty) {
+                            Some(signed) => {
+                                let conv_id = ir.fresh();
+                                let name = if signed {
+                                    "__mind_conv_i64"
+                                } else {
+                                    "__mind_conv_u64"
+                                };
+                                ir.instrs.push(Instr::Call {
+                                    dst: conv_id,
+                                    name: name.to_string(),
+                                    args: vec![val],
+                                });
+                                conv_id
+                            }
+                            None => val,
+                        },
                     },
                 },
             }
