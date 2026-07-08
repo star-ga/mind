@@ -562,6 +562,27 @@ pub fn sign(seed: &[u8; 32], msg: &[u8]) -> [u8; 64] {
     sig
 }
 
+/// RFC 8032 §5.1.7 canonical-`S` predicate: `true` iff the signature scalar
+/// `0 <= S < L` (little-endian). Used by [`verify`] to reject malleated
+/// signatures. `L` here is the same group order as the `L` scalar table above.
+fn s_is_canonical(s: &[u8; 32]) -> bool {
+    // Group order L, little-endian bytes (2^252 + 277423177...883648493).
+    const L_BYTES: [u8; 32] = [
+        0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde,
+        0x14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10,
+    ];
+    // Compare S < L from the most-significant byte down (little-endian storage).
+    for i in (0..32).rev() {
+        if s[i] < L_BYTES[i] {
+            return true;
+        }
+        if s[i] > L_BYTES[i] {
+            return false;
+        }
+    }
+    false // S == L is non-canonical.
+}
+
 /// Verify a 64-byte Ed25519 signature over `msg` under `pubkey` (RFC 8032 §5.1.7).
 /// Fail-closed: any malformed input or algebraic mismatch returns `false`.
 pub fn verify(pubkey: &[u8; 32], msg: &[u8], sig: &[u8; 64]) -> bool {
@@ -569,6 +590,15 @@ pub fn verify(pubkey: &[u8; 32], msg: &[u8], sig: &[u8; 64]) -> bool {
     big_r.copy_from_slice(&sig[..32]);
     let mut s = [0u8; 32];
     s.copy_from_slice(&sig[32..]);
+
+    // Malleability guard (RFC 8032 §5.1.7): reject a non-canonical scalar
+    // `S >= L`. Without this, adding L (or a multiple) to S yields a second,
+    // distinct-but-verifying signature over the same message — signature
+    // malleability. Honest signers always emit `S < L` (the signer reduces mod L),
+    // so this never rejects a genuine signature.
+    if !s_is_canonical(&s) {
+        return false;
+    }
 
     let neg_a = match unpack_neg(pubkey) {
         Some(p) => p,
@@ -712,5 +742,38 @@ mod tests {
         let seed = seed32();
         let m = b"deterministic";
         assert_eq!(sign(&seed, m), sign(&seed, m));
+    }
+
+    // Malleability guard (§5.1.7): a signature whose scalar S is pushed to >= L
+    // (here S + L, and S = L itself) must be rejected even though the underlying
+    // point equation could otherwise be satisfied.
+    #[test]
+    fn verify_rejects_non_canonical_s() {
+        let seed = seed32();
+        let pk = public_key(&seed);
+        let msg = b"malleability";
+        let sig = sign(&seed, msg);
+        assert!(verify(&pk, msg, &sig), "control: genuine sig verifies");
+
+        // L (little-endian) — same value as the module's L / L_BYTES.
+        const L_BYTES: [u8; 32] = [
+            0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9,
+            0xde, 0x14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10,
+        ];
+        // S' = S + L (mod 2^256, no carry out for a canonical S) — non-canonical.
+        let mut malleated = sig;
+        let mut carry = 0u16;
+        for i in 0..32 {
+            let sum = malleated[32 + i] as u16 + L_BYTES[i] as u16 + carry;
+            malleated[32 + i] = (sum & 0xff) as u8;
+            carry = sum >> 8;
+        }
+        assert!(
+            !verify(&pk, msg, &malleated),
+            "S + L (non-canonical scalar) must be rejected"
+        );
+
+        // S = L exactly is also non-canonical.
+        assert!(!s_is_canonical(&L_BYTES), "S == L must be non-canonical");
     }
 }
