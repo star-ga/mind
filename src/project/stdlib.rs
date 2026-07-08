@@ -57,6 +57,7 @@ pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.regex", include_str!("../../std/regex.mind")),
     ("std.ring", include_str!("../../std/ring.mind")),
     ("std.sha256", include_str!("../../std/sha256.mind")),
+    ("std.sha512", include_str!("../../std/sha512.mind")),
     ("std.string", include_str!("../../std/string.mind")),
     ("std.time", include_str!("../../std/time.mind")),
     ("std.toml", include_str!("../../std/toml.mind")),
@@ -165,6 +166,7 @@ mod tests {
         assert!(names.contains(&"std.net"));
         assert!(names.contains(&"std.process"));
         assert!(names.contains(&"std.sha256"));
+        assert!(names.contains(&"std.sha512"));
         assert!(names.contains(&"std.tui"));
     }
 
