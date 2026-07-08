@@ -2081,6 +2081,27 @@ impl LoweringContext {
                             // aggregate args remain RFC 0005 phase 2+ and still
                             // fail loud in the catch-all arm below.
                             Some(ValueKind::ScalarF64) => {}
+                            // Narrow-int (i32/u32) and f32 scalar call args are
+                            // native MLIR scalar types, NOT aggregates. The
+                            // `func.call` emission below ALREADY coerces these
+                            // physical widths (arith.extsi/extui/trunci, or a
+                            // pass-through when phys == target), so the guard was
+                            // over-strict — it rejected forwardable args the
+                            // emission path handles (`inner(a)` for `a: i32`/`f32`).
+                            // A call only forwards the value, so there is no
+                            // reassociation/precision concern: an f32 arg stays on
+                            // the strict float path (its arithmetic already lowered
+                            // to strict arith.*f). Tensor / vector / unregistered
+                            // args still fall to the loud reject below — the
+                            // emission path would silently mistype those as i64.
+                            // deferred: an f32 *literal* passed directly as an arg
+                            // (`f(1.5)`) still fails LOUD at mlir-opt — a separate
+                            // float-literal-typing bug emits `1.5` as f64 in an f32
+                            // slot; f32 *value/param* forwarding works. Upgrade path:
+                            // type float literals from the expected param type.
+                            Some(ValueKind::ScalarF32)
+                            | Some(ValueKind::ScalarI32)
+                            | Some(ValueKind::ScalarU32) => {}
                             _ => {
                                 return Err(MlirLowerError::UnsupportedOp {
                                     instr_index,
