@@ -84,13 +84,21 @@ vulnerability reports about:
 - **Untrusted bundle / artifact parsing.** The `mic@3` reader and evidence-chain
   verifier are bounds-checked and fail **closed** on malformed input; a parser DoS,
   out-of-bounds read, or unbounded allocation on a crafted artifact is in scope.
-- **Evidence-chain integrity, not authenticity (yet).** The embedded evidence chain
-  (RFC 0016) is **tamper-evident**: `trace_hash` is a SHA-256 over the canonical
-  `mic@3` bytes, and `mindc verify <artifact>` recomputes and checks it. It is
-  **not** cryptographically signed yet — Ed25519 / ML-DSA signing is a pending
-  milestone (RFC 0016 Phase C). Do **not** rely on the chain as a signature or as
-  proof of *origin*; today it proves an artifact was not altered after emission
-  relative to its own recorded hash, nothing about *who* produced it.
+- **Evidence-chain integrity + opt-in authenticity.** The embedded evidence chain
+  (RFC 0016) is **tamper-evident** by default: `trace_hash` is a SHA-256 over the
+  canonical `mic@3` bytes, and `mindc verify <artifact>` recomputes and checks it.
+  Authenticity is **opt-in** (RFC 0016 Phase C): an artifact may additionally carry
+  a `signature.*` block — Ed25519 (RFC 8032), ML-DSA-65 (FIPS-204 PQC), or the
+  hybrid — over the canonical provenance preimage. Signing is **never enabled by
+  default**, and the `signature.*` keys sort *after* the hashed body so an unsigned
+  artifact stays byte-identical. An **unsigned** artifact is tamper-evident but says
+  nothing about *who* produced it — do not treat the bare chain as proof of origin.
+  When a signature is present, verify it against a **trusted-key allowlist**
+  (`mindc verify --signer-pubkey <hex>` / `MIND_EVIDENCE_VERIFY_PUBKEYS`); without
+  an allowlist `mindc verify` reports the signature's presence and structural
+  validity but **refuses to report it as trusted** — a valid signature by an
+  unknown key is not authenticity. A crafted-signature forgery, PQC scheme-downgrade,
+  or trust-anchor bypass on a signed artifact is in scope.
 - **Not a sandbox.** Compiling or running third-party MIND does not sandbox it; run
   untrusted programs in your own isolation (see Security Best Practices above).
 
