@@ -4182,6 +4182,31 @@ fn lower_expr(
                                 &then_struct_env,
                                 receiver_types,
                             ),
+                            // `array<T>` binding with an array-literal RHS: lower
+                            // onto the std.vec heap runtime (vec_new + vec_push)
+                            // exactly like the top-level and while-body Let arms.
+                            // Without this arm an `array<T> = [..]` declared inside
+                            // an if/match-arm body silently fell to `_ => lower_expr`,
+                            // which lowers an ArrayLit via the const-array/tensor
+                            // path — yielding a `tensor<Nxi64>` value where an i64 vec
+                            // handle is required, so its first use as a vec handle
+                            // (e.g. `vec_push`) failed the i64 call ABI.
+                            #[cfg(feature = "std-surface")]
+                            _ if is_array_surface_type(ann)
+                                && matches!(value.as_ref(), ast::Node::ArrayLit { .. }) =>
+                            {
+                                let elements = match value.as_ref() {
+                                    ast::Node::ArrayLit { elements, .. } => elements.as_slice(),
+                                    _ => &[],
+                                };
+                                lower_array_surface_lit(
+                                    elements,
+                                    &mut then_ir,
+                                    &then_env,
+                                    &then_struct_env,
+                                    receiver_types,
+                                )
+                            }
                             _ => lower_expr(
                                 value,
                                 &mut then_ir,
@@ -4318,6 +4343,28 @@ fn lower_expr(
                                         value,
                                         dtype,
                                         dims,
+                                        &else_env,
+                                        &else_struct_env,
+                                        receiver_types,
+                                    )
+                                }
+                                // `array<T> = [..]` inside an else/match-arm body:
+                                // lower onto the std.vec heap runtime, mirroring the
+                                // then-branch and top-level arms. See the then-branch
+                                // comment — without this the ArrayLit fell to the
+                                // const-array/tensor path and failed as a non-i64 vec
+                                // handle at its first use.
+                                #[cfg(feature = "std-surface")]
+                                _ if is_array_surface_type(ann)
+                                    && matches!(value.as_ref(), ast::Node::ArrayLit { .. }) =>
+                                {
+                                    let elements = match value.as_ref() {
+                                        ast::Node::ArrayLit { elements, .. } => elements.as_slice(),
+                                        _ => &[],
+                                    };
+                                    lower_array_surface_lit(
+                                        elements,
+                                        &mut else_ir,
                                         &else_env,
                                         &else_struct_env,
                                         receiver_types,
