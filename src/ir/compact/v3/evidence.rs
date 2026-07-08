@@ -2259,7 +2259,11 @@ mod tests {
         // filter). trace_hash and signature.* are excluded.
         assert_eq!(&pre[..32], &th, "preimage must lead with the trace_hash");
         assert_eq!(pre[32], 7, "scheme length prefix (ed25519 = 7 bytes)");
-        assert_eq!(&pre[33..40], b"ed25519", "scheme tag bound into the preimage");
+        assert_eq!(
+            &pre[33..40],
+            b"ed25519",
+            "scheme tag bound into the preimage"
+        );
         assert_eq!(
             pre[40], 1,
             "only one evidence_chain.* entry (substrate) survives the filter"
