@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Evidence-chain signing (RFC 0016 Phase C) — additive, optional, opt-in.**
+  The `evidence_chain.*` MAP epilogue can now carry an authenticity signature
+  under `signature.*` keys, selected per-artifact for crypto-agility: classical
+  **Ed25519** (RFC 8032), post-quantum **ML-DSA-65** (FIPS-204, via the vetted
+  `fips204` crate behind the optional `evidence-mldsa` feature — fail-closed when
+  the feature is off), or the **hybrid** of both (both halves must verify). The
+  signature covers the **canonical provenance preimage**: the 32-byte mic@3
+  `trace_hash` plus a canonical, lexicographically-ordered serialization of every
+  other `evidence_chain.*` key (substrate, toolchain, determinism, parent,
+  schema, trace_hash_kind). So editing any provenance field — including the
+  `parent` chain link or the `substrate` label — on a signed artifact makes
+  `mindc verify` fail closed (exit 1, "signature does not verify"); provenance is
+  authenticated, not just the code anchor. `mindc verify` reports signature status
+  separately from `trace_hash_valid` (integrity vs authenticity are orthogonal).
+  **Signing is opt-in**, never on by default: it is enabled only when an operator
+  supplies a key seed out-of-band via `MIND_EVIDENCE_ED25519_KEY` /
+  `MIND_EVIDENCE_MLDSA_KEY`. **The wire stays additive** — `signature.*` keys sort
+  after every `evidence_chain.*` key and are absent when no key is supplied, so an
+  **unsigned artifact is byte-identical to the pre-signing encoder** (re-verified
+  by sha256) and the evidence `schema` stays **Int 1** with **no `mic@N` bump**.
+  The signature never feeds back into `trace_hash` (a signature never covers
+  itself), so the determinism/keystone gate is untouched (phase_g 7/7). ML-DSA-65
+  correctness is pinned by a deterministic (all-zero rnd) crate-pinning regression
+  vector. Determinism note: both Ed25519 and the FIPS-204 deterministic ML-DSA
+  variant are byte-reproducible, so a signed artifact is itself reproducible.
+
 - **Scalar IEEE-754 float64 on the strict deterministic path.** Scalar `f64`
   (and `f32`) arithmetic now compiles and runs through `arith.mulf` /
   `arith.addf` with **no `fmuladd`-contraction, no `fastmath` flag, and no
