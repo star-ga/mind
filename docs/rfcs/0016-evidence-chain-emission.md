@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0016 |
 | Title | Compile-Time Evidence-Chain Emission |
-| Status | **Partial** — Phase A shipped (Rust-bootstrap emit) + Phase B verifier core (lib) + **Phase B-CLI shipped** (`mindc <file> --emit-evidence <path>` emits an embedded, **unsigned but well-formed** `evidence_chain` MAP on a mic@3 artifact, with a built-in verifier-core self-check; `mindc verify <artifact>` recomputes + reports); Phases A.5 (pure-MIND emit) / C (Ed25519 signing) / D (#289 determinism-default) / E (agent + governance links) pending. The chain is **no longer inert** — it is reachable from the CLI and round-trip-verifiable; only the release-time signature is deferred (RFC 0020 §5.3 std-crypto). |
+| Status | **Partial** — Phase A shipped (Rust-bootstrap emit) + Phase B verifier core (lib) + **Phase B-CLI shipped** (`mindc <file> --emit-evidence <path>` emits an embedded, **unsigned but well-formed** `evidence_chain` MAP on a mic@3 artifact, with a built-in verifier-core self-check; `mindc verify <artifact>` recomputes + reports); **Phase C SHIPPED** (crypto-agile Ed25519 / ML-DSA-65 / hybrid signing over the canonical provenance preimage — additive, optional, **opt-in via a key-seed env var, never signed-by-default**; unsigned artifacts stay byte-identical, `schema` stays Int 1, no `mic@N` bump); Phases A.5 (pure-MIND emit) / D (#289 determinism-default) / E (agent + governance links) pending. The chain is **no longer inert** — it is reachable from the CLI, round-trip-verifiable, and optionally signed; only wiring signing into the release CI runner is deferred (RFC 0020 §5.3 std-crypto). |
 | Authors | STARGA Inc. |
 | Created | 2026-05-26 |
 | Task | #288 |
@@ -301,9 +301,27 @@ MAP and rooted in one signer.
   field (Phase C, below). Still pending on top: the cross-artifact chain *walk*
   (following `parent` across sibling artifacts) and the §6 signature check, which
   land with the RFC 0017 `mindc verify` certificate surface (#290).
-- **Phase C — sign (release path).** Wire mic@2.1 §6 signing into the RFC 0015
-  canonical CI runner; release artifacts ship signed evidence. The RFC 0020
-  wedge-score receipt becomes a sibling `verify.*` block.
+- **Phase C — sign (release path). SHIPPED (additive, optional, opt-in).**
+  `signature.*` keys are now emitted and verified as an **additive, optional**
+  layer, selected per-artifact for crypto-agility: Ed25519 (RFC 8032), ML-DSA-65
+  (FIPS-204, behind the optional `evidence-mldsa` feature, fail-closed when off),
+  or the hybrid of both (both halves must verify). The signature covers the
+  **canonical provenance preimage** — the 32-byte mic@3 `trace_hash` plus a
+  canonical, lexicographically-ordered serialization of every other
+  `evidence_chain.*` key (substrate, toolchain, determinism, parent, schema,
+  trace_hash_kind), with `signature.*` and `trace_hash` themselves excluded per
+  §3.2 / §6.1's sign-omits-itself discipline — so editing any provenance field
+  (including the `parent` chain link) fails `mindc verify` closed. **Opt-in
+  only:** signing runs solely when an operator supplies a key seed out-of-band
+  (`MIND_EVIDENCE_ED25519_KEY` / `MIND_EVIDENCE_MLDSA_KEY`); there is **no
+  "signed by default".** The wire is **additive** — `signature.*` keys sort after
+  every `evidence_chain.*` key and are absent when no key is supplied, so an
+  unsigned artifact is **byte-identical to the pre-signing encoder**, the evidence
+  `schema` stays **Int 1**, and there is **no `mic@N` bump**. The signature never
+  feeds back into `trace_hash`, so the determinism/keystone gate is untouched.
+  Still deferred on top: wiring signing into the RFC 0015 canonical CI runner for
+  release artifacts, and the RFC 0020 wedge-score receipt as a sibling `verify.*`
+  block.
 - **Phase D — determinism-default integration (#289).** Once `Tensor<f32>`
   requires explicit `#[nondeterministic]`, the §5.2 refusal-marker becomes the
   default-deny surface: an unmarked nondeterministic graph fails to emit a
