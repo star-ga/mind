@@ -211,7 +211,7 @@ pub fn emit_mic3_with_evidence(
 /// ## Anchor invariant (Constitution Article IV)
 ///
 /// The signature covers the canonical provenance preimage
-/// ([`build_signature_preimage`]): the 32-byte `trace_hash` (the SHA-256 of the
+/// (`build_signature_preimage`): the 32-byte `trace_hash` (the SHA-256 of the
 /// canonical mic@3 body) plus every other `evidence_chain.*` key, so provenance
 /// (substrate/toolchain/determinism/parent) is authenticated too. It is emitted
 /// as `signature.*` MAP keys that sort after every `evidence_chain.*` key, so:
@@ -326,7 +326,7 @@ struct SignaturePayload {
 
 /// Sign the canonical provenance `preimage` under `key`, producing the embeddable
 /// payload. The preimage is `trace_hash || canonical(evidence_chain.* \ trace_hash)`
-/// (see [`build_signature_preimage`]) so the signature covers the whole provenance
+/// (see `build_signature_preimage`) so the signature covers the whole provenance
 /// (substrate, toolchain, determinism, parent), not just the code anchor.
 /// Fail-closed when a PQC scheme is requested without the `evidence-mldsa` feature.
 fn compute_signature_payload(
@@ -448,7 +448,7 @@ pub struct VerifiedScheme {
 /// `signature.*` keys (back-compat: unsigned artifacts are legal).  When a
 /// signature is present it is verified against the canonical provenance preimage
 /// (the mic@3 anchor plus every other `evidence_chain.*` key —
-/// [`build_signature_preimage`]) under the embedded `signature.pubkey`.
+/// `build_signature_preimage`) under the embedded `signature.pubkey`.
 ///
 /// This does NOT recompute the trace_hash — use [`mic3_evidence_report`] for the
 /// body-tamper check.  A production `verify` should require BOTH
@@ -636,7 +636,7 @@ fn find_bytes_opt_n<const N: usize>(
 ///
 /// This is the SINGLE SOURCE OF TRUTH for the provenance entries: both the MAP
 /// emitter ([`append_map_epilogue`]) and the signature preimage
-/// ([`build_signature_preimage`]) derive from it, so the bytes covered by a
+/// (`build_signature_preimage`) derive from it, so the bytes covered by a
 /// signature are byte-for-byte the provenance that ends up on the wire.
 fn build_evidence_entries<'a>(
     substrate: &'a str,
