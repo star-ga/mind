@@ -314,6 +314,17 @@ enum Command {
         /// opts in. Fail-closed: an `unknown` mode is rejected too.
         #[arg(long)]
         require_strict_fp: bool,
+        /// Trust anchor: pin the expected signer public key(s) as hex (repeatable).
+        /// When set, a signed artifact's `signature.pubkey` / `signature.mldsa_pubkey`
+        /// MUST be in this allowlist or verify fails (exit 1) — this is what turns
+        /// "the embedded signature is internally consistent" into "signed by a key I
+        /// trust". Additional keys may be supplied via the
+        /// `MIND_EVIDENCE_VERIFY_PUBKEYS` env var (comma/space-separated hex). When
+        /// NO allowlist is given, verify still passes an internally-consistent
+        /// signature but prints the signer key(s) for out-of-band pinning and does
+        /// not claim authenticity.
+        #[arg(long = "signer-pubkey", value_name = "HEX", action = ArgAction::Append)]
+        signer_pubkey: Vec<String>,
     },
 }
 
@@ -544,8 +555,16 @@ fn main() {
             artifact,
             json,
             require_strict_fp,
+            signer_pubkey,
         }) => {
-            process::exit(run_verify(artifact, *json, *require_strict_fp));
+            let trusted = match collect_trusted_pubkeys(signer_pubkey) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("error[verify]: {e}");
+                    process::exit(2);
+                }
+            };
+            process::exit(run_verify(artifact, *json, *require_strict_fp, &trusted));
         }
         None => {}
     }
@@ -1473,6 +1492,50 @@ fn hex_encode(bytes: &[u8]) -> String {
     s
 }
 
+/// Decode a hex string (optional `0x` prefix, case-insensitive) into bytes.
+/// Returns `None` on odd length or a non-hex digit.
+fn hex_decode(s: &str) -> Option<Vec<u8>> {
+    let s = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).unwrap_or(s);
+    if s.is_empty() || s.len() % 2 != 0 {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+        .collect()
+}
+
+/// Build the signer-key trust allowlist for `mindc verify` from `--signer-pubkey`
+/// flags plus the `MIND_EVIDENCE_VERIFY_PUBKEYS` env var (comma/space-separated
+/// hex). An invalid hex entry is a hard error (fail-closed on operator input),
+/// never silently dropped. Returns the decoded key bytes (Ed25519 = 32 B,
+/// ML-DSA-65 = 1952 B) compared verbatim against the artifact's embedded key(s).
+fn collect_trusted_pubkeys(flags: &[String]) -> Result<Vec<Vec<u8>>, String> {
+    let mut out: Vec<Vec<u8>> = Vec::new();
+    let mut add = |tok: &str, out: &mut Vec<Vec<u8>>| -> Result<(), String> {
+        let tok = tok.trim();
+        if tok.is_empty() {
+            return Ok(());
+        }
+        match hex_decode(tok) {
+            Some(b) => {
+                out.push(b);
+                Ok(())
+            }
+            None => Err(format!("invalid --signer-pubkey / trusted-pubkey hex: {tok}")),
+        }
+    };
+    for f in flags {
+        add(f, &mut out)?;
+    }
+    if let Ok(env) = std::env::var("MIND_EVIDENCE_VERIFY_PUBKEYS") {
+        for tok in env.split(|c: char| c == ',' || c.is_whitespace()) {
+            add(tok, &mut out)?;
+        }
+    }
+    Ok(out)
+}
+
 /// Escape a string for embedding inside a hand-built JSON string literal.
 ///
 /// `--json` output is assembled by interpolation rather than via serde, so any
@@ -1508,7 +1571,7 @@ fn json_escape(s: &str) -> String {
 /// Returns the process exit code: 0 = valid (SSA well-formed, and — when
 /// attested — trace_hash intact); 1 = verification failed (SSA fault, tampered
 /// trace_hash, or malformed evidence chain); 2 = I/O error reading the artifact.
-fn run_verify(artifact: &str, json: bool, require_strict_fp: bool) -> i32 {
+fn run_verify(artifact: &str, json: bool, require_strict_fp: bool, trusted: &[Vec<u8>]) -> i32 {
     use libmind::ir::check_ssa_well_formed;
     use libmind::ir::compact::{
         Determinism, EvidenceError, TraceHashKind, mic3_evidence_report, parse_mic3,
@@ -1564,7 +1627,14 @@ fn run_verify(artifact: &str, json: bool, require_strict_fp: bool) -> i32 {
     // verifier(s) — ed25519 / ml-dsa-65 / hybrid. A present-but-bad signature, an
     // unknown scheme, or a required-but-uncompiled PQC verifier all fail closed.
     use libmind::ir::compact::{SignatureStatus, mic3_signature_status};
-    let sig_status = mic3_signature_status(&bytes).unwrap_or(SignatureStatus::Absent);
+    // Fail-closed (MED #4): a malformed/type-confused signature field yields `Err`
+    // from the signature layer. Coercing that to `Absent` would read as "unsigned
+    // but attested" (sig_ok = true) — a fail-OPEN. Map `Err` to a signature
+    // FAILURE instead; only a genuine `Ok(Absent)` is a true unsigned artifact.
+    let sig_status = match mic3_signature_status(&bytes) {
+        Ok(s) => s,
+        Err(_) => SignatureStatus::Malformed("signature"),
+    };
     // `sig_label` names the scheme when valid; the failure kind otherwise. The two
     // pubkey fields carry the keys the signature(s) were checked against.
     let (sig_label, sig_ed_pubkey, sig_mldsa_pubkey): (String, Option<String>, Option<String>) =
@@ -1673,12 +1743,61 @@ fn run_verify(artifact: &str, json: bool, require_strict_fp: bool) -> i32 {
                     );
                     return 1;
                 }
+                // Trust anchor (HIGH #3): a valid signature only proves the artifact
+                // was signed by the holder of the EMBEDDED key. Without a pinned
+                // allowlist that says nothing about WHO — an attacker self-signs
+                // their own artifact with their own key. When `trusted` is set, the
+                // signer key(s) MUST be in it or we refuse to report valid.
+                if let SignatureStatus::Valid(v) = &sig_status {
+                    if !trusted.is_empty() {
+                        let mut present: Vec<Vec<u8>> = Vec::new();
+                        if let Some(pk) = v.ed25519_pubkey {
+                            present.push(pk.to_vec());
+                        }
+                        if let Some(pk) = &v.mldsa_pubkey {
+                            present.push(pk.clone());
+                        }
+                        let all_trusted =
+                            present.iter().all(|pk| trusted.iter().any(|t| t == pk));
+                        if !all_trusted {
+                            eprintln!(
+                                "error[verify]: signer key is NOT in the trusted allowlist (--signer-pubkey / MIND_EVIDENCE_VERIFY_PUBKEYS) — refusing to report valid"
+                            );
+                            if let Some(pk) = v.ed25519_pubkey {
+                                eprintln!("  artifact ed25519 pubkey:   {}", hex_encode(&pk));
+                            }
+                            if let Some(pk) = &v.mldsa_pubkey {
+                                eprintln!("  artifact ml-dsa-65 pubkey: {}", hex_encode(pk));
+                            }
+                            return 1;
+                        }
+                    }
+                }
                 if !json {
                     eprintln!("verified: evidence chain is intact (untampered)");
                     eprintln!("verified: IR body is SSA well-formed");
                     match &sig_status {
                         SignatureStatus::Valid(v) => {
-                            eprintln!("verified: signature is valid (scheme: {})", v.scheme);
+                            if trusted.is_empty() {
+                                // No trust root supplied: do NOT claim authenticity.
+                                // Report internal consistency and print the signer
+                                // key(s) so a consumer can pin them out-of-band.
+                                eprintln!(
+                                    "verified: signature is internally consistent (scheme: {}) — verify the signer key out-of-band",
+                                    v.scheme
+                                );
+                                if let Some(pk) = v.ed25519_pubkey {
+                                    eprintln!("  signer ed25519 pubkey:   {}", hex_encode(&pk));
+                                }
+                                if let Some(pk) = &v.mldsa_pubkey {
+                                    eprintln!("  signer ml-dsa-65 pubkey: {}", hex_encode(pk));
+                                }
+                            } else {
+                                eprintln!(
+                                    "verified: signature is valid and signer key is trusted (scheme: {})",
+                                    v.scheme
+                                );
+                            }
                         }
                         SignatureStatus::Absent => {
                             eprintln!(

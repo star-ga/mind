@@ -283,7 +283,13 @@ pub fn emit_mic3_with_signed_evidence_scheme(
         toolchain,
         &trace_hash,
     );
-    let preimage = build_signature_preimage(&evidence_entries, &trace_hash);
+    // Bind the scheme (`alg`) tag into the signed preimage (see
+    // `build_signature_preimage`): the scheme is read from the SAME source the
+    // verifier uses (here the `SigningKey` variant), so a later downgrade that
+    // rewrites `signature.scheme` changes the preimage and the surviving half
+    // fails to verify (fail-closed).
+    let scheme = scheme_for_key(key);
+    let preimage = build_signature_preimage(&evidence_entries, &trace_hash, scheme);
     let payload = compute_signature_payload(key, &preimage)?;
     let mut out = body;
     append_map_epilogue(
@@ -296,6 +302,18 @@ pub fn emit_mic3_with_signed_evidence_scheme(
         Some(&payload),
     );
     Ok(out)
+}
+
+/// The `signature.scheme` (`alg`) tag a [`SigningKey`] variant emits. Read on the
+/// emit side so the SAME string that ends up in the MAP is bound into the signed
+/// preimage — a verify-time downgrade that rewrites the tag cannot then reproduce
+/// the preimage the genuine half was signed over.
+fn scheme_for_key(key: &SigningKey) -> &'static str {
+    match key {
+        SigningKey::Ed25519(_) => SIG_SCHEME_ED25519,
+        SigningKey::MlDsa65(_) => SIG_SCHEME_MLDSA65,
+        SigningKey::Hybrid { .. } => SIG_SCHEME_HYBRID,
+    }
 }
 
 /// Computed signature material ready to embed as `signature.*` MAP keys.
@@ -442,6 +460,23 @@ pub fn mic3_signature_status(bytes: &[u8]) -> Result<SignatureStatus, EvidenceEr
     let body_end = find_map_sentinel(bytes).ok_or(EvidenceError::Missing)?;
     let entries = parse_map_epilogue(&bytes[body_end..])
         .map_err(|_| EvidenceError::Malformed(KEY_SIG_ED25519))?;
+
+    // Bind the signature to the ACTUAL body (defense-in-depth for callers that
+    // check the signature layer in isolation, without also calling
+    // `mic3_evidence_report`): recompute the mic@3 anchor over the parsed body and
+    // reject if it disagrees with the stored `trace_hash` the signature covers. A
+    // body tamper that leaves the stored hash in place would otherwise let the
+    // (genuine, over-the-old-hash) signature still report Valid here.
+    if entries.iter().any(|e| e.key.starts_with("signature.")) {
+        let ir = super::parse_mic3(&bytes[..body_end])
+            .map_err(|_| EvidenceError::Malformed(KEY_TRACE_HASH))?;
+        let recomputed = ir_trace_hash(&ir);
+        let stored = find_bytes32(&entries, KEY_TRACE_HASH)?;
+        if recomputed != stored {
+            return Ok(SignatureStatus::Invalid);
+        }
+    }
+
     signature_status_from_entries(&entries)
 }
 
@@ -484,13 +519,35 @@ fn signature_status_from_entries(
             (e.key.as_str(), v)
         })
         .collect();
-    let preimage = build_signature_preimage(&view, &trace_hash);
+    // Bind the scheme tag into the preimage (anti-downgrade — see
+    // `build_signature_preimage`). Read it from the SAME parsed `signature.scheme`
+    // entry the dispatch below uses, so an untampered artifact reproduces the
+    // preimage the genuine half was signed over.
+    let preimage = build_signature_preimage(&view, &trace_hash, &scheme);
 
     let want_ed = scheme == SIG_SCHEME_ED25519 || scheme == SIG_SCHEME_HYBRID;
     let want_mldsa = scheme == SIG_SCHEME_MLDSA65 || scheme == SIG_SCHEME_HYBRID;
     if !want_ed && !want_mldsa {
         // Unknown `alg` — fail closed (never accept a scheme we do not understand).
         return Ok(SignatureStatus::Malformed("signature.scheme"));
+    }
+
+    // Reject an artifact that carries a signature half the scheme tag does NOT
+    // name (e.g. scheme=ed25519 but a `signature.mldsa` entry is present). This is
+    // the structural companion to the preimage scheme-binding above: a downgrade
+    // that flips the tag but forgets to strip the now-unnamed half is caught here
+    // as Malformed, and a stray/confusing half can never be silently ignored.
+    let has_ed_half = entries
+        .iter()
+        .any(|e| e.key == KEY_SIG_ED25519 || e.key == KEY_SIG_PUBKEY);
+    let has_mldsa_half = entries
+        .iter()
+        .any(|e| e.key == KEY_SIG_MLDSA || e.key == KEY_SIG_MLDSA_PUBKEY);
+    if has_ed_half && !want_ed {
+        return Ok(SignatureStatus::Malformed(KEY_SIG_SCHEME));
+    }
+    if has_mldsa_half && !want_mldsa {
+        return Ok(SignatureStatus::Malformed(KEY_SIG_SCHEME));
     }
 
     // ── Ed25519 half ──────────────────────────────────────────────────────────
@@ -643,10 +700,20 @@ fn push_map_value(out: &mut Vec<u8>, val: &MapEntryValue) {
 ///
 /// ```text
 /// preimage = trace_hash (32 B)
+///          || ULEB128 scheme_len || scheme_bytes   -- the `alg` tag (anti-downgrade)
 ///          || ULEB128 selected_entry_count
 ///          || for each selected entry (lexicographic key order):
 ///               ULEB128 key_len || key_bytes || value_tag || value
 /// ```
+///
+/// The `scheme` (`signature.scheme` / `alg` tag) is bound length-prefixed right
+/// after the anchor so a downgrade attack — take a hybrid artifact, delete one
+/// half, and rewrite `signature.scheme` to name only the surviving half — changes
+/// the preimage: the surviving genuine signature was made over the ORIGINAL
+/// scheme string and no longer verifies (fail-closed). The scheme is read from the
+/// same source on both sides (emit: the [`SigningKey`] variant via
+/// [`scheme_for_key`]; verify: the parsed `signature.scheme` entry), so an
+/// untampered artifact reproduces the identical preimage.
 ///
 /// "Selected" = every `evidence_chain.*` entry EXCEPT `evidence_chain.trace_hash`
 /// (that hash is derived from the body it anchors, so covering it again is
@@ -662,7 +729,11 @@ fn push_map_value(out: &mut Vec<u8>, val: &MapEntryValue) {
 /// same preimage. The order is the same lexicographic key order used everywhere
 /// else in this module, so the preimage is substrate-independent and
 /// deterministic.
-fn build_signature_preimage(entries: &[(&str, MapEntryValue)], trace_hash: &[u8; 32]) -> Vec<u8> {
+fn build_signature_preimage(
+    entries: &[(&str, MapEntryValue)],
+    trace_hash: &[u8; 32],
+    scheme: &str,
+) -> Vec<u8> {
     let mut selected: Vec<&(&str, MapEntryValue)> = entries
         .iter()
         .filter(|(k, _)| k.starts_with("evidence_chain.") && *k != KEY_TRACE_HASH)
@@ -671,6 +742,10 @@ fn build_signature_preimage(entries: &[(&str, MapEntryValue)], trace_hash: &[u8;
 
     let mut out = Vec::new();
     out.extend_from_slice(trace_hash);
+    // Anti-downgrade: bind the scheme tag (length-prefixed) into the signed bytes.
+    let scheme_bytes = scheme.as_bytes();
+    uleb128_write(&mut out, scheme_bytes.len() as u64).unwrap();
+    out.extend_from_slice(scheme_bytes);
     uleb128_write(&mut out, selected.len() as u64).unwrap();
     for (key, val) in selected {
         let kb = key.as_bytes();
@@ -804,13 +879,34 @@ pub(crate) fn parse_map_epilogue(bytes: &[u8]) -> Result<Vec<ParsedEntry>, Parse
     if bytes.is_empty() || bytes[0] != MAP_SENTINEL {
         return Err(ParseMapError::MissingSentinel);
     }
-    let mut r = std::io::Cursor::new(&bytes[1..]);
+    // DoS hardening (mirrors `parse::read_count` / `bounded_cap`): every ULEB
+    // length here (`count`, `key_len`, `val_len`, `blen`) is attacker-controlled
+    // and can encode up to 2^64 in a handful of bytes. A raw `Vec::with_capacity`
+    // / `vec![0u8; len]` on such a value SIGABRTs on a multi-terabyte allocation.
+    // Each MAP entry, and each length-prefixed field, needs at least that many
+    // backing bytes present in the epilogue — so any length exceeding the bytes
+    // still remaining can never be satisfied and is rejected up front, turning an
+    // allocation bomb into an immediate `Err` (fail-closed, never abort/panic).
+    let data = &bytes[1..];
+    let total = data.len();
+    let mut r = std::io::Cursor::new(data);
+    use std::io::Read;
+    let remaining =
+        |r: &std::io::Cursor<&[u8]>| -> usize { total.saturating_sub(r.position() as usize) };
+
     let count = uleb128_read(&mut r).map_err(|_| ParseMapError::Truncated)? as usize;
+    if count > remaining(&r) {
+        // Each entry occupies >= 1 byte; a count beyond the remaining input is
+        // unsatisfiable. Rejects the `Vec::with_capacity` bomb before allocating.
+        return Err(ParseMapError::Truncated);
+    }
     let mut entries = Vec::with_capacity(count);
     for _ in 0..count {
         let key_len = uleb128_read(&mut r).map_err(|_| ParseMapError::Truncated)? as usize;
+        if key_len > remaining(&r) {
+            return Err(ParseMapError::Truncated);
+        }
         let mut key_buf = vec![0u8; key_len];
-        use std::io::Read;
         r.read_exact(&mut key_buf)
             .map_err(|_| ParseMapError::Truncated)?;
         let key = String::from_utf8(key_buf).map_err(|_| ParseMapError::InvalidUtf8)?;
@@ -825,6 +921,9 @@ pub(crate) fn parse_map_epilogue(bytes: &[u8]) -> Result<Vec<ParsedEntry>, Parse
         let value = match tag_byte {
             TAG_STRING => {
                 let val_len = uleb128_read(&mut r).map_err(|_| ParseMapError::Truncated)? as usize;
+                if val_len > remaining(&r) {
+                    return Err(ParseMapError::Truncated);
+                }
                 let mut vb = vec![0u8; val_len];
                 r.read_exact(&mut vb)
                     .map_err(|_| ParseMapError::Truncated)?;
@@ -837,6 +936,9 @@ pub(crate) fn parse_map_epilogue(bytes: &[u8]) -> Result<Vec<ParsedEntry>, Parse
             }
             TAG_BYTES => {
                 let blen = uleb128_read(&mut r).map_err(|_| ParseMapError::Truncated)? as usize;
+                if blen > remaining(&r) {
+                    return Err(ParseMapError::Truncated);
+                }
                 let mut bb = vec![0u8; blen];
                 r.read_exact(&mut bb)
                     .map_err(|_| ParseMapError::Truncated)?;
@@ -2151,13 +2253,164 @@ mod tests {
             ("evidence_chain.trace_hash", MapEntryValue::Bytes(&th)),
             ("signature.scheme", MapEntryValue::Str("ed25519")),
         ];
-        let pre = build_signature_preimage(&entries, &th);
-        // Leading 32 bytes are the trace_hash; then ULEB count == 1 (only substrate
-        // survives the filter). trace_hash and signature.* are excluded.
+        let pre = build_signature_preimage(&entries, &th, "ed25519");
+        // Leading 32 bytes are the trace_hash; then the length-prefixed scheme tag
+        // ("ed25519", 7 bytes); then ULEB count == 1 (only substrate survives the
+        // filter). trace_hash and signature.* are excluded.
         assert_eq!(&pre[..32], &th, "preimage must lead with the trace_hash");
+        assert_eq!(pre[32], 7, "scheme length prefix (ed25519 = 7 bytes)");
+        assert_eq!(&pre[33..40], b"ed25519", "scheme tag bound into the preimage");
         assert_eq!(
-            pre[32], 1,
+            pre[40], 1,
             "only one evidence_chain.* entry (substrate) survives the filter"
+        );
+    }
+
+    // (ag) Scheme-downgrade attack (HIGH #1): take a hybrid-signed artifact, strip
+    //      the ML-DSA half, and rewrite `signature.scheme` -> "ed25519". The
+    //      genuine Ed25519 half was signed over the HYBRID preimage, so with the
+    //      scheme now bound into the preimage it no longer verifies. Must never
+    //      report Valid. Distinct from `hybrid_tamper_mldsa_half_fails_closed`
+    //      (which leaves scheme=hybrid and corrupts the ML-DSA bytes).
+    #[cfg(feature = "evidence-mldsa")]
+    #[test]
+    fn scheme_downgrade_strip_mldsa_half_fails_closed() {
+        let ir = mod_binop();
+        let signed = emit_mic3_with_signed_evidence_scheme(
+            &ir,
+            "x86_avx2",
+            None,
+            Determinism::Deterministic,
+            "0.8.0",
+            &SigningKey::Hybrid {
+                ed25519: TEST_SEED,
+                mldsa65: TEST_MLDSA_SEED,
+            },
+        )
+        .unwrap();
+        let body_end = find_map_sentinel(&signed).unwrap();
+        let mut entries = parse_map_epilogue(&signed[body_end..]).unwrap();
+        // Positive control: untouched hybrid verifies.
+        assert!(matches!(
+            signature_status_from_entries(&entries).unwrap(),
+            SignatureStatus::Valid(_)
+        ));
+        // The downgrade: drop BOTH ML-DSA keys and rename the scheme tag.
+        entries.retain(|e| e.key != "signature.mldsa" && e.key != "signature.mldsa_pubkey");
+        for e in entries.iter_mut() {
+            if e.key == "signature.scheme" {
+                e.value = ParsedValue::Str("ed25519".to_string());
+            }
+        }
+        let status = signature_status_from_entries(&entries).unwrap();
+        assert!(
+            matches!(status, SignatureStatus::Invalid),
+            "scheme downgrade (hybrid -> ed25519, ML-DSA stripped) must be Invalid, got {status:?}"
+        );
+        assert!(
+            !matches!(status, SignatureStatus::Valid(_)),
+            "downgrade must NEVER report Valid"
+        );
+    }
+
+    // (ah) Scheme/half mismatch (HIGH #1, structural companion): an artifact whose
+    //      `signature.scheme` does not name a half it carries is Malformed — a
+    //      downgrade that flips the tag but forgets to strip the now-unnamed half
+    //      cannot be silently accepted.
+    #[cfg(feature = "evidence-mldsa")]
+    #[test]
+    fn scheme_names_no_mldsa_but_mldsa_half_present_is_malformed() {
+        let ir = mod_binop();
+        let signed = emit_mic3_with_signed_evidence_scheme(
+            &ir,
+            "x86_avx2",
+            None,
+            Determinism::Deterministic,
+            "0.8.0",
+            &SigningKey::Hybrid {
+                ed25519: TEST_SEED,
+                mldsa65: TEST_MLDSA_SEED,
+            },
+        )
+        .unwrap();
+        let body_end = find_map_sentinel(&signed).unwrap();
+        let mut entries = parse_map_epilogue(&signed[body_end..]).unwrap();
+        // Flip the tag to ed25519 but LEAVE the ML-DSA half in place.
+        for e in entries.iter_mut() {
+            if e.key == "signature.scheme" {
+                e.value = ParsedValue::Str("ed25519".to_string());
+            }
+        }
+        assert_eq!(
+            signature_status_from_entries(&entries).unwrap(),
+            SignatureStatus::Malformed(KEY_SIG_SCHEME),
+            "scheme=ed25519 with a signature.mldsa half present must be Malformed"
+        );
+    }
+
+    // (ai) Allocation-bomb (HIGH #2): a crafted epilogue whose `blen` claims 2^47
+    //      bytes with no payload must fail-closed via `Err`, never SIGABRT/panic on
+    //      a multi-terabyte allocation.
+    #[test]
+    fn epilogue_alloc_bomb_blen_is_rejected() {
+        // Minimal real mic@3 body so `find_map_sentinel` locates the epilogue.
+        let ir = mod_binop();
+        let body = emit_mic3(&ir);
+        let mut art = body.clone();
+        // Epilogue: sentinel, count=1, key_len=17, "signature.ed25519", TAG_BYTES,
+        // blen = 2^47 (astronomically large ULEB), and NO payload bytes.
+        art.push(MAP_SENTINEL);
+        art.push(0x01); // count = 1
+        let key = b"signature.ed25519";
+        art.push(key.len() as u8);
+        art.extend_from_slice(key);
+        art.push(TAG_BYTES);
+        // ULEB128 of 2^47 = 140737488355328.
+        let mut n: u64 = 1u64 << 47;
+        loop {
+            let mut b = (n & 0x7f) as u8;
+            n >>= 7;
+            if n != 0 {
+                b |= 0x80;
+            }
+            art.push(b);
+            if n == 0 {
+                break;
+            }
+        }
+        // The low-level parser must Err, not allocate/panic.
+        assert_eq!(
+            parse_map_epilogue(&art[body.len()..]).err(),
+            Some(ParseMapError::Truncated),
+            "oversized blen must be rejected before allocation"
+        );
+        // And the public entry points must fail-closed (Err), never crash.
+        assert!(
+            mic3_signature_status(&art).is_err(),
+            "mic3_signature_status must fail-closed on the alloc bomb"
+        );
+        assert!(
+            mic3_evidence_report(&art).is_err(),
+            "mic3_evidence_report must fail-closed on the alloc bomb"
+        );
+    }
+
+    // (aj) Fail-open coercion guard (MED #4): a type-confused signature field
+    //      (`signature.ed25519` re-encoded as a String) must make the signature
+    //      layer return `Err` — the CLI maps that to a verification FAILURE, not to
+    //      `Absent`/"unsigned but attested".
+    #[test]
+    fn type_confused_ed25519_field_is_err() {
+        let mut entries = signed_ed25519_entries(None);
+        for e in entries.iter_mut() {
+            if e.key == "signature.ed25519" {
+                // Re-encode the 64-byte signature as a String (type confusion).
+                e.value = ParsedValue::Str("not-a-signature".to_string());
+            }
+        }
+        assert!(
+            signature_status_from_entries(&entries).is_err(),
+            "a type-confused signature.ed25519 must be Err (fail-closed), never Ok(Absent)"
         );
     }
 
