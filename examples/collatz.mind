@@ -1,0 +1,38 @@
+// Deterministic integer Collatz (3n+1) iterator — the integer sibling of the
+// Lorenz determinism proof, with ZERO floating-point attack surface.
+//
+// THE WEDGE (stated honestly): Collatz is fully DETERMINISTIC — a fixed integer
+// rule, n -> n/2 if even, 3n+1 if odd — yet its halting is famously
+// UNPREDICTABLE (open for ~90 years: does every start reach 1?). That is
+// "deterministic != predictable" in its purest form. Unlike the Lorenz f64
+// proof, there is no float here: no rounding, no FMA-contraction, no reduction
+// order, no -ffast-math. Every step is exact integer arithmetic, so the result
+// is BIT-IDENTICAL across x86 / ARM / GPU by construction, not by tuning.
+//
+// The falsifier is mechanical: compile, run it on your hardware, hash the
+// output. A different hash is a release-blocking bug, not a rounding artifact.
+//
+// ABI: collatz_hash(lo, hi) -> i64. Iterates Collatz for every seed in [lo, hi],
+// sums each seed's stopping time (steps to reach 1), and folds the running
+// total through a fixed multiply-mix into a single deterministic i64 hash.
+
+pub fn collatz_hash(lo: i64, hi: i64) -> i64 {
+    let mut acc: i64 = 0;
+    let mut n: i64 = lo;
+    while n <= hi {
+        let mut v: i64 = n;
+        let mut steps: i64 = 0;
+        while v > 1 {
+            // Even -> v/2 ; odd -> 3v+1. Exact integer arithmetic, fixed order.
+            let half: i64 = v / 2;
+            let is_even: i64 = v - (half * 2);
+            // 0 if even, 1 if odd
+            v = ((1 - is_even) * half) + (is_even * ((3 * v) + 1));
+            steps = steps + 1;
+        }
+        // Deterministic mix: fold stopping time into the running hash.
+        acc = ((acc * 1000003) + steps) + n;
+        n = n + 1;
+    }
+    acc
+}

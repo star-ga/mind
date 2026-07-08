@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3047 | **Est. tokens:** ~7,318,818
-**Generated:** 2026-07-08 01:49 UTC
+**Files:** 3048 | **Est. tokens:** ~7,319,255
+**Generated:** 2026-07-08 02:17 UTC
 
 ## Token Budget Guide
 
@@ -48,7 +48,7 @@
 | `docs/research/` | 1 | ~117 |
 | `docs/rfcs/` | 28 | ~118,706 |
 | `docs/specs/` | 2 | ~976 |
-| `examples/` | 18 | ~35,272 |
+| `examples/` | 19 | ~35,709 |
 | `examples/c/` | 2 | ~400 |
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/distribution-crossisa/` | 6 | ~6,334 |
@@ -748,6 +748,7 @@
 ### `examples/`
 
 - `cnn_classifier.mind` (~1060 tok, large) — CNN Classifier Example
+- `collatz.mind` (~437 tok, medium) — Deterministic integer Collatz (3n+1) iterator — the integer sibling of the
 ### `examples/compliance/`
 
 - `auditable_model.mind` (~1932 tok, huge) — auditable_model.mind -- Compliance-Ready MLP with Provenance Metadata
