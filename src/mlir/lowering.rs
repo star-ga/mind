@@ -2447,6 +2447,68 @@ impl LoweringContext {
                     self.values.insert(*dst, ValueKind::ScalarF64);
                     return Ok(());
                 }
+                // Scalar `as f32` / `as f64` value conversion synthesised by the
+                // AST->IR `As` lowering (src/eval/lower.rs). Scalars are carried
+                // full-width in i64 SSA, so an int->float (or f32<->f64) cast has
+                // to emit a real conversion here rather than a transparent i64
+                // pass-through (the bug this fixes: `(n as f64) / d` lowered to
+                // integer `arith.divsi` on operands the merge blocks typed `f64`).
+                // The op is chosen by the SOURCE value's physical kind — the same
+                // kind->phys mapping the narrow-int func.call ABI uses:
+                //   integer (i64/i32/i1)  -> arith.sitofp (signed) / uitofp (u32)
+                //   f32 -> f64            -> arith.extf
+                //   f64 -> f32            -> arith.truncf
+                //   same float width      -> arith.bitcast (identity reinterpret)
+                // Unhandled pairings emit no op and fail loud at mlir-opt (never a
+                // silent miscompile). The conversions are IEEE round-to-nearest-
+                // even (substrate-deterministic), so fp_mode stays `Strict`.
+                #[cfg(feature = "std-surface")]
+                if args.len() == 1 && (name == "__mind_conv_f32" || name == "__mind_conv_f64") {
+                    let target = if name == "__mind_conv_f32" {
+                        "f32"
+                    } else {
+                        "f64"
+                    };
+                    let src = args[0];
+                    let unsigned = matches!(self.values.get(&src), Some(ValueKind::ScalarU32));
+                    let phys = if self.i1_values.contains(&src) {
+                        "i1"
+                    } else {
+                        match self.values.get(&src) {
+                            Some(ValueKind::ScalarF64) => "f64",
+                            Some(ValueKind::ScalarF32) => "f32",
+                            Some(ValueKind::ScalarI32) | Some(ValueKind::ScalarU32) => "i32",
+                            _ => "i64",
+                        }
+                    };
+                    let op: &str = match (phys, target) {
+                        ("i64", _) | ("i32", _) | ("i1", _) => {
+                            if unsigned {
+                                "arith.uitofp"
+                            } else {
+                                "arith.sitofp"
+                            }
+                        }
+                        ("f32", "f64") => "arith.extf",
+                        ("f64", "f32") => "arith.truncf",
+                        // same float width: value-preserving reinterpret so the
+                        // `dst` SSA value is defined for downstream uses.
+                        _ => "arith.bitcast",
+                    };
+                    self.emit_line(&format!(
+                        "    %{0} = {1} %{2} : {3} to {4}",
+                        dst.0, op, src.0, phys, target
+                    ));
+                    self.values.insert(
+                        *dst,
+                        if target == "f32" {
+                            ValueKind::ScalarF32
+                        } else {
+                            ValueKind::ScalarF64
+                        },
+                    );
+                    return Ok(());
+                }
                 // RFC 0010 Phase A/B/C: if the callee was declared via an
                 // `extern "C"` block, emit `llvm.call` with the declared
                 // signature; otherwise fall back to the existing `func.call`
