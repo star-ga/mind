@@ -201,7 +201,12 @@ today; convergence is a tracked deliverable**, not a shipped fact.
    `--target` id, toolchain = mindc version, determinism = Deterministic w/ TODO(#289),
    trace_hash = `ir_trace_hash`). 6 CLI round-trip tests (emit → `mic3_evidence_report`
    verifies). Additive — default build + `--emit-mic`/`--emit-obj`/`--emit-shared`
-   byte-unchanged; bootstrap 7/7. (Ed25519 signing at release-tag time still pending §3.4.)
+   byte-unchanged; bootstrap 7/7. (Signing now SHIPS as an **additive, optional,
+   opt-in** layer — crypto-agile Ed25519 / ML-DSA-65 (FIPS-204) / hybrid over the
+   canonical provenance preimage (trace_hash + all other `evidence_chain.*` keys);
+   enabled only via an operator key-seed env var, **never signed-by-default**;
+   unsigned artifacts stay byte-identical, `schema` stays Int 1, **no `mic@N`
+   bump**. Only wiring it into the release-tag CI runner is still pending §3.4.)
 4. **`mindc verify --evidence`** reads a mic@3 artifact, recomputes `trace_hash` over its
    IR body, compares, validates the signature (shares the RFC 0017 surface, #290).
 5. **Demote** v2 `Graph` → `mind-model@2`. ⚠️ **This is a byte-preserving cross-repo
