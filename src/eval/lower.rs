@@ -1149,6 +1149,35 @@ fn scalar_uint_cast_width(ty: &TypeAnn) -> Option<u32> {
     }
 }
 
+/// Floating-point bit-width of a scalar `as`-cast (or call-form) *target* type
+/// (`f32`/`f64`), if the target is a float. `None` for every non-float target.
+///
+/// MIND scalars are carried full-width in i64 SSA, so a cast to a float target
+/// must emit a *real* int→float / float→float conversion — it cannot fall
+/// through to the transparent i64 pass-through, which silently drops the cast
+/// and leaves integer-typed bits flowing into float arithmetic (a silent
+/// miscompile: `(n as f64) / d` lowered to integer `arith.divsi` on operands
+/// the merge blocks type as `f64`). The caller synthesises the conversion as a
+/// pure `__mind_conv_f32` / `__mind_conv_f64` intrinsic `Instr::Call`, expanded
+/// at the MLIR stage into `arith.sitofp`/`uitofp`/`extf`/`truncf` chosen by the
+/// SOURCE value's kind (mirrors the `__mind_f64_to_bits` in-lowering intrinsic:
+/// no new IR opcode, no mic@1/mic@3 layout change, no version bump). `f32`/`f64`
+/// arrive both as `TypeAnn::ScalarF32`/`ScalarF64` (postfix `as` + call form)
+/// and as `TypeAnn::Named`.
+#[cfg(feature = "std-surface")]
+fn scalar_float_cast_width(ty: &TypeAnn) -> Option<u32> {
+    match ty {
+        TypeAnn::ScalarF32 => Some(32),
+        TypeAnn::ScalarF64 => Some(64),
+        TypeAnn::Named(name) => match name.as_str() {
+            "f32" => Some(32),
+            "f64" => Some(64),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// Truncate/sign-adjust the lowered init value `val` of a `let` binding to its
 /// declared narrow integer width, mirroring the `as`-cast scalar path.
 ///
@@ -5026,7 +5055,36 @@ fn lower_expr(
                         });
                         and_id
                     }
-                    _ => val,
+                    // Cast to a floating-point target (`as f32` / `as f64`).
+                    // Scalars are carried in i64 SSA, so this MUST emit a real
+                    // conversion — the pre-existing `_ => val` fall-through
+                    // dropped the cast entirely, a silent miscompile where e.g.
+                    // `(frac as f64) / scale` lowered to integer `arith.divsi`
+                    // on i64-typed operands the merge blocks then typed as
+                    // `f64`. Synthesised as a pure intrinsic `Instr::Call`
+                    // (`__mind_conv_f32`/`__mind_conv_f64`) expanded at the MLIR
+                    // stage into `arith.sitofp`/`uitofp`/`extf`/`truncf` chosen
+                    // by the SOURCE value's kind — mirrors `__mind_f64_to_bits`
+                    // (no new IR opcode, no mic@1/mic@3 layout change, no version
+                    // bump). The conversions are IEEE round-to-nearest-even, i.e.
+                    // substrate-deterministic, so the module stays `Strict`.
+                    _ => match scalar_float_cast_width(ty) {
+                        Some(fbits) => {
+                            let conv_id = ir.fresh();
+                            let name = if fbits == 32 {
+                                "__mind_conv_f32"
+                            } else {
+                                "__mind_conv_f64"
+                            };
+                            ir.instrs.push(Instr::Call {
+                                dst: conv_id,
+                                name: name.to_string(),
+                                args: vec![val],
+                            });
+                            conv_id
+                        }
+                        None => val,
+                    },
                 },
             }
         }
