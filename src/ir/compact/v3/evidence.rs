@@ -276,8 +276,13 @@ pub fn emit_mic3_with_signed_evidence_scheme(
     // preimage from the same `build_evidence_entries` the MAP is emitted from
     // guarantees the signed bytes are byte-for-byte the provenance on the wire, so
     // substrate/toolchain/determinism/parent are all authenticated — not just code.
-    let evidence_entries =
-        build_evidence_entries(substrate, parent.as_ref(), determinism, toolchain, &trace_hash);
+    let evidence_entries = build_evidence_entries(
+        substrate,
+        parent.as_ref(),
+        determinism,
+        toolchain,
+        &trace_hash,
+    );
     let preimage = build_signature_preimage(&evidence_entries, &trace_hash);
     let payload = compute_signature_payload(key, &preimage)?;
     let mut out = body;
@@ -694,7 +699,13 @@ fn append_map_epilogue(
 ) {
     // Collect the canonical evidence_chain.* entries (single source of truth,
     // shared with the signature preimage so what is signed == what is emitted).
-    let mut entries = build_evidence_entries(substrate, parent.as_ref(), determinism, toolchain, &trace_hash);
+    let mut entries = build_evidence_entries(
+        substrate,
+        parent.as_ref(),
+        determinism,
+        toolchain,
+        &trace_hash,
+    );
     // Optional signature layer (sorts after every evidence_chain.* key). Bound
     // to `signature` so the borrows live through the sort + emit below. The
     // `scheme` tag names which halves are present; a verifier dispatches on it.
@@ -1748,7 +1759,10 @@ mod tests {
                 }
             }
         }
-        assert!(found, "precondition: signed artifact carries signature.ed25519");
+        assert!(
+            found,
+            "precondition: signed artifact carries signature.ed25519"
+        );
         assert_eq!(
             signature_status_from_entries(&entries).unwrap(),
             SignatureStatus::Invalid,
@@ -2115,7 +2129,10 @@ mod tests {
                 }
             }
         }
-        assert!(tampered, "precondition: signed artifact must carry a parent");
+        assert!(
+            tampered,
+            "precondition: signed artifact must carry a parent"
+        );
         assert_eq!(
             signature_status_from_entries(&entries).unwrap(),
             SignatureStatus::Invalid,
@@ -2138,7 +2155,10 @@ mod tests {
         // Leading 32 bytes are the trace_hash; then ULEB count == 1 (only substrate
         // survives the filter). trace_hash and signature.* are excluded.
         assert_eq!(&pre[..32], &th, "preimage must lead with the trace_hash");
-        assert_eq!(pre[32], 1, "only one evidence_chain.* entry (substrate) survives the filter");
+        assert_eq!(
+            pre[32], 1,
+            "only one evidence_chain.* entry (substrate) survives the filter"
+        );
     }
 
     // -------------------------------------------------------------------------
