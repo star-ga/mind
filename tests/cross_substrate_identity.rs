@@ -95,6 +95,33 @@ pub fn gemmq(a: i64, bt: i64, c: i64, m: i64, k: i64, n: i64) -> i64 {
 pub fn gemmi8(a: i64, b: i64, c: i64, m: i64, k: i64, n: i64) -> i64 {
     __mind_blas_matmul_mm_i8_v(a, b, c, m, k, n)
 }
+// MULTITHREADED fused int8 GEMM (the "det.igemm" MT surface,
+// __mind_blas_matmul_mm_i8_mt_v). Same ABI + byte-for-byte output as the
+// single-thread `gemmi8` above: the M output rows are split into contiguous
+// owner-computes bands, one per POSIX thread, each running the SAME
+// BLIS-blocked int8 macro-kernel over its band — NO cross-thread reduction, NO
+// atomic, NO shared accumulator. Integer add is associative + commutative, so
+// the thread-band partition is byte-identical to the single-thread reduction
+// REGARDLESS of the runtime thread count T (= online CPUs). RANK 4 canary.
+pub fn gemmi8mt(a: i64, b: i64, c: i64, m: i64, k: i64, n: i64) -> i64 {
+    __mind_blas_matmul_mm_i8_mt_v(a, b, c, m, k, n)
+}
+// STRICT-FP f32 vector dot (__mind_blas_dot_f32_v): 8-lane accumulator with the
+// FMA UNFUSED (separate mulf+addf) and the horizontal reduction pinned to a
+// fixed left-to-right lane fold (NOT a target-defined `vector.reduction`), so
+// the dot is bit-exact — a strict-FP tier, not a tolerance path. Result is the
+// f32 bits packed into the low 32 bits of an i64 (Option-C ABI). RANK 7 canary:
+// avx2 blessed here; neon deferred pending a real-aarch64 bless.
+pub fn dotf32(a: i64, b: i64, n: i64) -> i64 {
+    __mind_blas_dot_f32_v(a, b, n)
+}
+// STRICT-FP row-major f32 matmul (__mind_blas_matmul_rmajor_f32_v): outer loop
+// over rows, the SAME pinned fixed-order f32 dot fold inlined per row, writing
+// the rows-length f32 result buffer y. Same strict-FP determinism contract as
+// `dotf32`. RANK 7 canary.
+pub fn mmf32(w: i64, x: i64, y: i64, rows: i64, cols: i64) -> i64 {
+    __mind_blas_matmul_rmajor_f32_v(w, x, y, rows, cols)
+}
 // Track #16 additions — broaden the cross-substrate canary set with
 // determinism-sensitive paths NOT covered by the kernels above.
 //
@@ -650,6 +677,193 @@ fn same_process_run_to_run_determinism() {
             );
         }
     }
+
+    // RANK 8 — extend run-to-run coverage from 4 canaries to EVERY buffer-
+    // writing / result-producing canary in the suite. Each closure runs its
+    // kernel and returns the canonical hash of its output; `stable` re-runs it
+    // DETERMINISM_RUNS times and asserts a byte-identical hash every time. This
+    // turns any latent run-to-run non-determinism (uninitialised padding, prior
+    // buffer state, allocation-order-dependent writes, a data race in the MT
+    // kernel) into a deterministic single-run failure instead of a CI flake.
+    let stable = |label: &str, run_once: &dyn Fn() -> String| {
+        let first = run_once();
+        for run in 1..DETERMINISM_RUNS {
+            assert_eq!(
+                run_once(),
+                first,
+                "{label}: run {run} diverged from run 0 in the same process \
+                 (run-to-run non-determinism)"
+            );
+        }
+    };
+
+    // Q16.16 L1 reduction (dot-l1-q16).
+    {
+        let dot: Symbol<DotFn> = unsafe { lib.get(b"dotl1q").expect("dotl1q symbol") };
+        let (a, b) = make_pair_q16(65536, 0xDEADBEEF);
+        stable("dot-l1-q16", &|| {
+            canonical_hash(unsafe { dot(a.as_ptr() as i64, b.as_ptr() as i64, a.len() as i64) })
+        });
+    }
+
+    // Bare int16 dot reduction (dot-i16).
+    {
+        let dot: Symbol<DotFn> = unsafe { lib.get(b"doti16").expect("doti16 symbol") };
+        let (a, b) = make_pair_i16(4096, 0xDEADBEEF);
+        stable("dot-i16", &|| {
+            canonical_hash(unsafe { dot(a.as_ptr() as i64, b.as_ptr() as i64, a.len() as i64) })
+        });
+    }
+
+    // int16 gemv buffer path (gemv-i16).
+    {
+        let mmi16: Symbol<MatmulFn> = unsafe { lib.get(b"mmi16").expect("mmi16 symbol") };
+        let (rows, cols) = (256usize, 256usize);
+        let (w, x) = make_gemv_i16(rows, cols, 0xDEADBEEF);
+        stable("gemv-i16", &|| {
+            let mut y = vec![0i32; rows];
+            let rc = unsafe {
+                mmi16(
+                    w.as_ptr() as i64,
+                    x.as_ptr() as i64,
+                    y.as_mut_ptr() as i64,
+                    rows as i64,
+                    cols as i64,
+                )
+            };
+            assert_eq!(rc, 0, "gemv-i16: kernel returned {rc} (expected 0)");
+            canonical_hash_i32s(&y)
+        });
+    }
+
+    // FUSED Q16.16 GEMM outer-product microkernel (gemm-q16-fused) — consumes the
+    // UN-transposed B (second return of make_gemm_q16).
+    {
+        let gemmqmm: Symbol<GemmFn> = unsafe { lib.get(b"gemmqmm").expect("gemmqmm symbol") };
+        let (m, k, n) = (64usize, 64usize, 64usize);
+        let (a, b, _bt) = make_gemm_q16(m, k, n, 0xDEADBEEF);
+        stable("gemm-q16-fused", &|| {
+            let mut c = vec![0i32; m * n];
+            let rc = unsafe {
+                gemmqmm(
+                    a.as_ptr() as i64,
+                    b.as_ptr() as i64,
+                    c.as_mut_ptr() as i64,
+                    m as i64,
+                    k as i64,
+                    n as i64,
+                )
+            };
+            assert_eq!(rc, 0, "gemm-q16-fused: kernel returned {rc} (expected 0)");
+            canonical_hash_i32s(&c)
+        });
+    }
+
+    // MULTITHREADED int8 GEMM (gemm-i8-mt) — the RANK 4 thread-band kernel. This
+    // is the canary MOST likely to expose run-to-run non-determinism (a data race
+    // across worker threads would surface as a run-to-run hash difference here),
+    // so re-running it N times in-process is load-bearing.
+    {
+        let gemmi8mt: Symbol<GemmFn> = unsafe { lib.get(b"gemmi8mt").expect("gemmi8mt symbol") };
+        let (m, k, n) = (64usize, 64usize, 64usize);
+        let (a, b) = make_gemm_i8(m, k, n, 0xDEADBEEF);
+        stable("gemm-i8-mt", &|| {
+            let mut c = vec![0i32; m * n];
+            let rc = unsafe {
+                gemmi8mt(
+                    a.as_ptr() as i64,
+                    b.as_ptr() as i64,
+                    c.as_mut_ptr() as i64,
+                    m as i64,
+                    k as i64,
+                    n as i64,
+                )
+            };
+            assert_eq!(rc, 0, "gemm-i8-mt: kernel returned {rc} (expected 0)");
+            canonical_hash_i32s(&c)
+        });
+    }
+
+    // Scalar Q16.16 arithmetic chain (q16-arith-chain).
+    {
+        let f: Symbol<Arith3Fn> =
+            unsafe { lib.get(b"q16_arith_chain").expect("q16_arith_chain symbol") };
+        let (a, b, c) = Q16_ARITH_INPUTS;
+        stable("q16-arith-chain", &|| canonical_hash(unsafe { f(a, b, c) }));
+    }
+
+    // Struct-by-handle round-trip (struct-handle-roundtrip).
+    {
+        let f: Symbol<Arith4Fn> = unsafe {
+            lib.get(b"struct_handle_roundtrip")
+                .expect("struct_handle_roundtrip symbol")
+        };
+        let (a, b, c, d) = STRUCT_HANDLE_INPUTS;
+        stable("struct-handle-roundtrip", &|| {
+            canonical_hash(unsafe { f(a, b, c, d) })
+        });
+    }
+
+    // Scalar IEEE-754 f64 chain (scalar-float-f64).
+    {
+        let f: Symbol<ScalarF64Fn> = unsafe {
+            lib.get(b"scalar_f64_chain")
+                .expect("scalar_f64_chain symbol")
+        };
+        let (a, b, c, d) = SCALAR_F64_INPUTS;
+        stable("scalar-float-f64", &|| {
+            canonical_hash(unsafe { f(a, b, c, d) }.to_bits() as i64)
+        });
+    }
+
+    // Strict-FP f32 dot (dot-f32-v) — RANK 7.
+    {
+        let dot: Symbol<DotFn> = unsafe { lib.get(b"dotf32").expect("dotf32 symbol") };
+        let (a, b) = make_pair_f32(4093, 0xDEADBEEF);
+        stable("dot-f32-v", &|| {
+            let packed = unsafe { dot(a.as_ptr() as i64, b.as_ptr() as i64, a.len() as i64) };
+            canonical_hash(f32_from_packed(packed).to_bits() as i64)
+        });
+    }
+
+    // Strict-FP f32 matmul buffer path (matmul-f32-v) — RANK 7.
+    {
+        let mm: Symbol<MatmulFn> = unsafe { lib.get(b"mmf32").expect("mmf32 symbol") };
+        let (rows, cols) = (64usize, 64usize);
+        let (w, x) = make_matvec_f32(rows, cols, 0xDEADBEEF);
+        stable("matmul-f32-v", &|| {
+            let mut y = vec![0.0f32; rows];
+            let rc = unsafe {
+                mm(
+                    w.as_ptr() as i64,
+                    x.as_ptr() as i64,
+                    y.as_mut_ptr() as i64,
+                    rows as i64,
+                    cols as i64,
+                )
+            };
+            assert_eq!(rc, 0, "matmul-f32-v: kernel returned {rc} (expected 0)");
+            let mut h = Sha256::new();
+            for v in &y {
+                h.update(v.to_bits().to_le_bytes());
+            }
+            format!("{:x}", h.finalize())
+        });
+    }
+
+    // Q16.16 Lorenz attractor (lorenz-q16) — lives in a SEPARATE .so (examples/
+    // tree), so load it independently. Fresh 3-cell state buffer per run.
+    if let Some(lso) = build_lorenz_so() {
+        let llib = unsafe { Library::new(lso).expect("dlopen lorenz workload .so") };
+        let lorenz: Symbol<LorenzFn> =
+            unsafe { llib.get(b"lorenz_q16").expect("lorenz_q16 symbol") };
+        let (x0, y0, z0) = LORENZ_INIT;
+        stable("lorenz-q16", &|| {
+            let mut state: [i64; 3] = [x0, y0, z0];
+            let r = unsafe { lorenz(state.as_mut_ptr() as i64, LORENZ_STEPS) };
+            canonical_hash(r)
+        });
+    }
 }
 
 // --- gemm-q16 workload (square matrix x matrix) ----------------------------
@@ -836,6 +1050,259 @@ fn gemm_i8_reproducibility_gate() {
         None => panic!(
             "{id}: no reference hash for substrate '{substrate}'. Computed {computed}; \
              bless with MIND_BENCH_BLESS=1 if this host is canonical."
+        ),
+    }
+}
+
+// --- gemm-i8-mt workload (MULTITHREADED int8 GEMM thread-band reduction) ----
+// RANK 4. The multithreaded fused int8 GEMM __mind_blas_matmul_mm_i8_mt_v splits
+// the M output rows into contiguous owner-computes bands, one per POSIX thread
+// (T = clamp(online-CPUs, 1, M)), each running the SAME BLIS-blocked int8
+// macro-kernel over its band. There is NO cross-thread reduction, NO atomic, NO
+// shared accumulator — every output element is written by exactly one thread —
+// so because integer add is associative + commutative the thread-band partition
+// is byte-for-byte identical to the single-thread `gemmi8` kernel REGARDLESS of
+// the runtime thread count. This canary PROVES that: it runs the MT kernel on a
+// genuinely multi-core host (T > 1 → real threads), cross-checks its output
+// buffer against BOTH the single-thread kernel AND the scalar int32 oracle
+// within the run, and pins the canonical hash to the committed single-thread
+// gemm-i8 reference (917d353b…) — MT output hash == ST output hash is the
+// invariant. avx2 == neon holds for the same reason it does single-thread.
+//
+// Thread-count coverage: T is read at runtime from sysconf(_SC_NPROCESSORS_ONLN)
+// and is NOT a compile-time MIND setting, so the canary exercises the real host
+// T (here nproc = the CI/dev box's core count, > 1). The output is T-invariant
+// by owner-computes construction; the same_process_run_to_run_determinism gate
+// additionally re-runs this kernel N times in-process and asserts a stable hash.
+// deferred: forcing a *specific* T (e.g. T=1 vs T=64) would require launching
+// the kernel in child processes under a restricted cpuset/`taskset` online mask
+// (sysconf reads online CPUs, not the affinity mask) — upgrade path: a
+// subprocess xnode driver invoked with varied `--cpu-online` cgroups asserting
+// the identical hash under each. The in-process MT==ST buffer equality below
+// already proves band-partition invariance for the host's real T.
+
+/// The committed single-thread gemm-i8 reference hash (RFC 0015 §3.1). The
+/// multithreaded kernel MUST reproduce this exact hash — that equality IS the
+/// thread-band-reduction byte-identity claim.
+const GEMM_I8_ST_REF: &str = "917d353b18fd7f5ea4dab7dd02b786f5ccc4a2d954f695084ca0a88214d699c7";
+
+#[test]
+fn gemm_i8_mt_reproducibility_gate() {
+    let id = "gemm-i8-mt-64x64x64";
+    let (m, k, n, seed) = (64usize, 64usize, 64usize, 0xDEADBEEFu64);
+
+    let Some(so) = build_dot_so() else {
+        return; // toolchain shadowed — self-skip
+    };
+    let lib = unsafe { Library::new(so).expect("dlopen workload .so") };
+    let gemmi8mt: Symbol<GemmFn> = unsafe { lib.get(b"gemmi8mt").expect("gemmi8mt symbol") };
+    let gemmi8: Symbol<GemmFn> = unsafe { lib.get(b"gemmi8").expect("gemmi8 symbol") };
+
+    let ncpu = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    println!("{id}: host online parallelism = {ncpu} (T = clamp(ncpu, 1, {m}))");
+
+    let (a, b) = make_gemm_i8(m, k, n, seed);
+
+    // Multithreaded kernel → fresh int32 output buffer.
+    let mut c_mt = vec![0i32; m * n];
+    let rc = unsafe {
+        gemmi8mt(
+            a.as_ptr() as i64,
+            b.as_ptr() as i64,
+            c_mt.as_mut_ptr() as i64,
+            m as i64,
+            k as i64,
+            n as i64,
+        )
+    };
+    assert_eq!(rc, 0, "{id}: MT kernel returned {rc} (expected 0)");
+
+    // 1a. Within-run exactness vs the SINGLE-THREAD kernel: the MT thread-band
+    //     partition must be byte-for-byte identical to the sequential kernel.
+    let mut c_st = vec![0i32; m * n];
+    let rc_st = unsafe {
+        gemmi8(
+            a.as_ptr() as i64,
+            b.as_ptr() as i64,
+            c_st.as_mut_ptr() as i64,
+            m as i64,
+            k as i64,
+            n as i64,
+        )
+    };
+    assert_eq!(rc_st, 0, "{id}: ST kernel returned {rc_st} (expected 0)");
+    assert_eq!(
+        c_mt, c_st,
+        "{id}: multithreaded int8 GEMM diverged from the single-thread kernel \
+         (thread-band reduction is NOT byte-identical — associativity violated)"
+    );
+
+    // 1b. Within-run exactness vs the independent scalar int32 oracle.
+    let oracle = ref_gemm_i8_scalar(&a, &b, m, k, n);
+    assert_eq!(
+        c_mt, oracle,
+        "{id}: multithreaded int8 GEMM diverged from the scalar int32 oracle"
+    );
+
+    // 2. Canonical hash pinned to the committed reference. It MUST equal the
+    //    single-thread gemm-i8 hash — the MT and ST kernels are byte-identical.
+    let computed = canonical_hash_i32s(&c_mt);
+    let substrate = host_substrate();
+    if std::env::var("MIND_BENCH_BLESS").is_ok() {
+        println!("BLESS {id} {substrate} {computed}");
+        return;
+    }
+    // The MT hash must equal the single-thread reference by construction.
+    assert_eq!(
+        computed, GEMM_I8_ST_REF,
+        "{id} [{substrate}]: multithreaded int8 GEMM hash != the committed \
+         single-thread gemm-i8 reference (917d353b…).\ncomputed={computed}\n\
+         A drift here means the thread-band partition changed the output — STOP: \
+         this is a determinism break, NOT a re-bless (mind-det-gemm owns the fix)."
+    );
+    match reference_hash(id, substrate) {
+        Some(expected) => assert_eq!(
+            computed, expected,
+            "{id} [{substrate}]: output hash drifted from the committed reference.\n\
+             computed={computed}\n expected={expected}\n\
+             Re-bless with MIND_BENCH_BLESS=1 only on an intentional lowering change (RFC 0020 §13)."
+        ),
+        None => panic!(
+            "{id}: no reference hash for substrate '{substrate}'. Computed {computed}; \
+             bless with MIND_BENCH_BLESS=1 if this host is canonical."
+        ),
+    }
+}
+
+// --- gemm-i8-vnni workload (VPDPBUSD int-dot rung, VNNI hardware only) -------
+// RANK 3. The VNNI int-dot rung compiles the int8 GEMM with MIND_INTDOT=vnni so
+// the kernel emits the explicit @llvm.x86.avx512.vpdpbusd.256 intrinsic (with
+// the signed-input bias correction Σ aₛ·bₛ = Σ(aₛ+128)·bₛ − 128·Σ bₛ, all exact
+// i32). By that identity the VPDPBUSD rung is byte-for-byte identical to the
+// AVX2 vpmaddwd default, so its output hash MUST equal the committed gemm-i8
+// reference (917d353b…). BUT the compiled kernel needs VNNI HARDWARE (Ice Lake /
+// Sapphire Rapids+, or an AVX-VNNI part) to RUN — on a non-VNNI host it would
+// SIGILL. This canary therefore GATES on runtime VNNI capability and DEFERS
+// LOUDLY (prints a skip reason and returns — never a stub-green) when the host
+// lacks avx512vnni, exactly as the constitution requires for a rung this
+// hardware cannot execute. It must land BEFORE any VNNI auto-select so the wedge
+// is guarded the moment the rung can fire. deferred: this box is Haswell (AVX2,
+// no VNNI) — upgrade path: run on an avx512vnni host (or CI runner) where the
+// gate compiles with MIND_INTDOT=vnni, executes vpdpbusd, and asserts the hash
+// equals 917d353b… byte-for-byte.
+
+/// Build SRC with `MIND_INTDOT=vnni` into a DISTINCT `.so`, so the int8 kernel
+/// emits the VPDPBUSD rung (and clang links the VNNI target features). Returns
+/// `None` on toolchain self-skip. Only called after a VNNI-capability gate.
+fn build_dot_so_vnni() -> Option<PathBuf> {
+    for tool in ["mlir-opt", "mlir-translate", "clang"] {
+        if which::which(tool).is_err() {
+            assert!(
+                std::env::var_os("MIND_BENCH_REQUIRE").is_none(),
+                "MIND_BENCH_REQUIRE is set but '{tool}' is not on PATH: the \
+                 cross-substrate gate cannot run."
+            );
+            println!("cross_substrate_identity: {tool} not on PATH; skipping");
+            return None;
+        }
+    }
+    let dir = std::env::temp_dir();
+    let src_path = dir.join("mind_xsi_dot_q16_vnni.mind");
+    let so_path = dir.join("mind_xsi_dot_q16_vnni.so");
+    std::fs::write(&src_path, SRC).expect("write vnni workload .mind source");
+    let status = Command::new(mindc_bin())
+        .env("MIND_INTDOT", "vnni")
+        .args([
+            src_path.to_str().unwrap(),
+            "--emit-shared",
+            so_path.to_str().unwrap(),
+        ])
+        .status()
+        .expect("spawn mindc --emit-shared (vnni)");
+    assert!(
+        status.success(),
+        "mindc --emit-shared failed for the VNNI int8 workload"
+    );
+    Some(so_path)
+}
+
+/// Runtime VNNI capability of the host. AVX-512-VNNI is the rung the build
+/// enables (`-mavx512vnni -mavx512vl`); anything else is a DEFER.
+fn host_has_vnni() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        std::is_x86_feature_detected!("avx512vnni")
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        false
+    }
+}
+
+#[test]
+fn gemm_i8_vnni_reproducibility_gate() {
+    let id = "gemm-i8-vnni-64x64x64";
+    let (m, k, n, seed) = (64usize, 64usize, 64usize, 0xDEADBEEFu64);
+
+    if !host_has_vnni() {
+        // DEFER LOUDLY — never a stub-green. This box cannot execute vpdpbusd.
+        println!(
+            "DEFER {id}: host lacks AVX-512-VNNI (vpdpbusd) — the VNNI int-dot rung \
+             cannot RUN here and MUST NOT be reported as passing. The rung is \
+             byte-identical to the committed gemm-i8 hash (917d353b…) by the signed \
+             bias identity; verify on VNNI hardware (Ice Lake / Sapphire Rapids+). \
+             This is an honest hardware-deferral, not a skip of a runnable gate."
+        );
+        return;
+    }
+
+    // VNNI-capable host: compile the VPDPBUSD rung and prove it is byte-identical.
+    let Some(so) = build_dot_so_vnni() else {
+        return; // toolchain shadowed — self-skip
+    };
+    let lib = unsafe { Library::new(&so).expect("dlopen vnni workload .so") };
+    let gemmi8: Symbol<GemmFn> = unsafe { lib.get(b"gemmi8").expect("gemmi8 symbol (vnni)") };
+
+    let (a, b) = make_gemm_i8(m, k, n, seed);
+    let mut c = vec![0i32; m * n];
+    let rc = unsafe {
+        gemmi8(
+            a.as_ptr() as i64,
+            b.as_ptr() as i64,
+            c.as_mut_ptr() as i64,
+            m as i64,
+            k as i64,
+            n as i64,
+        )
+    };
+    assert_eq!(rc, 0, "{id}: VNNI kernel returned {rc} (expected 0)");
+
+    let oracle = ref_gemm_i8_scalar(&a, &b, m, k, n);
+    assert_eq!(
+        c, oracle,
+        "{id}: VNNI (vpdpbusd) int8 GEMM diverged from the scalar int32 oracle"
+    );
+
+    let computed = canonical_hash_i32s(&c);
+    let substrate = host_substrate();
+    if std::env::var("MIND_BENCH_BLESS").is_ok() {
+        println!("BLESS {id} {substrate} {computed}");
+        return;
+    }
+    // The VNNI rung must reproduce the committed AVX2 gemm-i8 hash byte-for-byte.
+    assert_eq!(
+        computed, GEMM_I8_ST_REF,
+        "{id} [{substrate}]: VNNI vpdpbusd int8 GEMM hash != the committed AVX2 \
+         gemm-i8 reference (917d353b…).\ncomputed={computed}\n\
+         A drift here means the signed-bias VPDPBUSD lowering is not exact — STOP: \
+         hand to mind-det-gemm (likely a dropped −128·Σb term or a saturating sibling)."
+    );
+    match reference_hash(id, substrate) {
+        Some(expected) => assert_eq!(computed, expected, "{id} [{substrate}]: drift from committed reference."),
+        None => panic!(
+            "{id}: no reference hash for substrate '{substrate}'. Computed {computed}."
         ),
     }
 }
@@ -1347,4 +1814,205 @@ fn lorenz_q16_reproducibility_gate() {
     );
 
     pin_or_bless(id, &canonical_hash(result), result);
+}
+
+// ===========================================================================
+// RANK 7 — STRICT-FP f32 vector canaries (dot_f32_v + matmul_rmajor_f32_v).
+//
+// A NEW bit-identity class: as of the strict-FP tier the f32 `_v` kernels have
+// their FMA UNFUSED (separate mulf + addf) and their horizontal reduction
+// replaced by a PINNED fixed-order left-to-right lane fold, so f32 dot/matmul
+// are bit-exact — no 1e-4 tolerance. Because scalar IEEE mul/add are
+// round-to-nearest-even with a single fully-specified result and the fold ORDER
+// is now fixed (not a target-defined `vector.reduction` tree), the value is a
+// candidate for cross-substrate byte-identity — BUT unlike the integer tiers
+// this rests on strict-FP lowering, so avx2 == neon MUST be blessed on REAL
+// aarch64, never asserted from x86 + the associativity argument. This host is
+// x86_64 (avx2): the avx2 line is blessed here; the neon line is DEFERRED
+// pending a real-aarch64 bless (RFC 0020 §13) and reported LOUDLY, never a
+// stub-green. The within-run oracle below mirrors the kernel's exact fold
+// (8-lane accumulator, fixed 0..8 horizontal fold, scalar tail) so it is
+// bit-exact to the kernel on this substrate.
+//
+// deferred: neon cross-substrate identity for the strict-f32 tier is UNPROVEN
+// here — upgrade path: run this gate on a real aarch64 host with
+// MIND_BENCH_BLESS=1 and commit the neon line only if it reproduces the avx2
+// hash byte-for-byte (a divergence would be a real wedge break, not a bless).
+// ===========================================================================
+
+/// Number of f32 lanes the kernel accumulates over (matches VEC_DOT_F32_LANES).
+const F32_LANES: usize = 8;
+
+/// Unpack the Option-C f32 result: the kernel returns the f32 bits in the low
+/// 32 bits of an i64.
+fn f32_from_packed(bits_i64: i64) -> f32 {
+    f32::from_bits((bits_i64 as u64) as u32)
+}
+
+/// One deterministic f32 sample in [-1, 1) from the shared LCG window — the
+/// SAME construction as `blas_vec_q16_smoke.rs::next_f32_unit`, so the numeric
+/// distribution is shared and reproducible.
+fn next_f32_unit(g: &mut Lcg) -> f32 {
+    ((g.next_u32() as f32) / (u32::MAX as f32)) * 2.0 - 1.0
+}
+
+/// Regenerate an f32 vector pair from a seed (a before b), each in [-1, 1).
+fn make_pair_f32(len: usize, seed: u64) -> (Vec<f32>, Vec<f32>) {
+    let mut g = Lcg::new(seed);
+    let a: Vec<f32> = (0..len).map(|_| next_f32_unit(&mut g)).collect();
+    let b: Vec<f32> = (0..len).map(|_| next_f32_unit(&mut g)).collect();
+    (a, b)
+}
+
+/// Regenerate the f32 matmul inputs: a rows*cols row-major matrix W and a
+/// cols-length vector x, W generated before x (order is part of the seed
+/// contract).
+fn make_matvec_f32(rows: usize, cols: usize, seed: u64) -> (Vec<f32>, Vec<f32>) {
+    let mut g = Lcg::new(seed);
+    let w: Vec<f32> = (0..rows * cols).map(|_| next_f32_unit(&mut g)).collect();
+    let x: Vec<f32> = (0..cols).map(|_| next_f32_unit(&mut g)).collect();
+    (w, x)
+}
+
+/// Independent in-process oracle mirroring the kernel's EXACT strict-FP fold:
+/// an 8-lane accumulator (mulf then addf, `acc + a*b` per lane), a PINNED
+/// left-to-right horizontal fold over lanes 0..8, then a scalar tail. Rust f32
+/// `*`/`+` are strict IEEE round-to-nearest with NO auto-FMA, so this is
+/// bit-exact to the unfused kernel on a substrate whose FPU is IEEE-conformant.
+fn ref_dot_f32_strict(a: &[f32], b: &[f32]) -> f32 {
+    let n = a.len();
+    let ve = (n / F32_LANES) * F32_LANES;
+    let mut acc = [0.0f32; F32_LANES];
+    let mut i = 0;
+    while i < ve {
+        for (lane, slot) in acc.iter_mut().enumerate() {
+            *slot += a[i + lane] * b[i + lane];
+        }
+        i += F32_LANES;
+    }
+    // Fixed left-to-right horizontal fold, lane 0 through lane 7.
+    let mut hs = acc[0];
+    for &lane in acc.iter().skip(1) {
+        hs += lane;
+    }
+    // Scalar tail for the len % LANES remainder.
+    let mut s = hs;
+    let mut j = ve;
+    while j < n {
+        s += a[j] * b[j];
+        j += 1;
+    }
+    s
+}
+
+/// Pin a strict-FP canary's hash to the committed per-substrate reference, or —
+/// when the host substrate has NO committed hash and is `neon` — DEFER LOUDLY
+/// (strict-FP cross-substrate identity must be blessed on real aarch64, never
+/// asserted from x86). Under MIND_BENCH_BLESS it prints the bless line instead.
+fn pin_or_defer_strict_fp(id: &str, computed: &str, bits: u32) {
+    let substrate = host_substrate();
+    if std::env::var("MIND_BENCH_BLESS").is_ok() {
+        println!("BLESS {id} {substrate} {computed}");
+        return;
+    }
+    match reference_hash(id, substrate) {
+        Some(expected) => assert_eq!(
+            computed, expected,
+            "{id} [{substrate}]: strict-f32 output hash drifted from the committed reference.\n\
+             computed={computed}\n expected={expected}\n result_bits={bits:#010x}\n\
+             Re-bless with MIND_BENCH_BLESS=1 only on an intentional lowering change (RFC 0020 §13)."
+        ),
+        None if substrate == "neon" => {
+            // Honest hardware/strict-FP deferral — NEVER a stub-green.
+            println!(
+                "DEFER {id}: no committed neon reference for the strict-f32 tier. \
+                 Cross-substrate bit-identity of strict FP must be blessed on REAL \
+                 aarch64 (RFC 0020 §13), not asserted from x86. Computed here would \
+                 be {computed} (bits={bits:#010x}); bless it ONLY if it reproduces \
+                 the avx2 hash byte-for-byte on real ARM hardware."
+            );
+        }
+        None => panic!(
+            "{id}: no reference hash for substrate '{substrate}'. Computed {computed} \
+             (bits={bits:#010x}); bless with MIND_BENCH_BLESS=1 if this host is canonical."
+        ),
+    }
+}
+
+#[test]
+fn dot_f32_v_reproducibility_gate() {
+    let id = "dot-f32-v-4093";
+    // 4093 = 511*8 + 5 — exercises BOTH the 8-lane main loop AND the scalar tail.
+    let (len, seed) = (4093usize, 0xDEADBEEFu64);
+
+    let Some(so) = build_dot_so() else {
+        return; // toolchain shadowed — self-skip
+    };
+    let lib = unsafe { Library::new(so).expect("dlopen workload .so") };
+    let dot: Symbol<DotFn> = unsafe { lib.get(b"dotf32").expect("dotf32 symbol") };
+
+    let (a, b) = make_pair_f32(len, seed);
+    let packed = unsafe { dot(a.as_ptr() as i64, b.as_ptr() as i64, len as i64) };
+    let result = f32_from_packed(packed);
+
+    // Within-run exactness vs the strict-FP fold oracle (bit-exact, not tolerance).
+    let oracle = ref_dot_f32_strict(&a, &b);
+    assert_eq!(
+        result.to_bits(),
+        oracle.to_bits(),
+        "{id}: strict-f32 dot diverged from the fixed-order fold oracle within a run \
+         (kernel={result} bits={:#010x}, oracle={oracle} bits={:#010x})",
+        result.to_bits(),
+        oracle.to_bits()
+    );
+
+    // Canonical encoding: the f32 bits as an i64, 8 LE bytes → sha256.
+    let computed = canonical_hash(result.to_bits() as i64);
+    pin_or_defer_strict_fp(id, &computed, result.to_bits());
+}
+
+#[test]
+fn matmul_f32_v_reproducibility_gate() {
+    let id = "matmul-f32-v-64x64";
+    let (rows, cols, seed) = (64usize, 64usize, 0xDEADBEEFu64);
+
+    let Some(so) = build_dot_so() else {
+        return; // toolchain shadowed — self-skip
+    };
+    let lib = unsafe { Library::new(so).expect("dlopen workload .so") };
+    let mm: Symbol<MatmulFn> = unsafe { lib.get(b"mmf32").expect("mmf32 symbol") };
+
+    let (w, x) = make_matvec_f32(rows, cols, seed);
+    let mut y = vec![0.0f32; rows];
+    let rc = unsafe {
+        mm(
+            w.as_ptr() as i64,
+            x.as_ptr() as i64,
+            y.as_mut_ptr() as i64,
+            rows as i64,
+            cols as i64,
+        )
+    };
+    assert_eq!(rc, 0, "{id}: kernel returned {rc} (expected 0)");
+
+    // Within-run exactness: each row is the SAME strict-FP dot fold.
+    let oracle: Vec<f32> = (0..rows)
+        .map(|r| ref_dot_f32_strict(&w[r * cols..(r + 1) * cols], &x))
+        .collect();
+    let y_bits: Vec<u32> = y.iter().map(|v| v.to_bits()).collect();
+    let o_bits: Vec<u32> = oracle.iter().map(|v| v.to_bits()).collect();
+    assert_eq!(
+        y_bits, o_bits,
+        "{id}: strict-f32 matmul diverged from the per-row fixed-order fold oracle"
+    );
+
+    // Canonical encoding: each f32 result's bit pattern, LE, → sha256.
+    let mut h = Sha256::new();
+    for v in &y {
+        h.update(v.to_bits().to_le_bytes());
+    }
+    let computed = format!("{:x}", h.finalize());
+    // A stable per-buffer digest head for the DEFER/drift message.
+    let head_bits = y.first().map(|v| v.to_bits()).unwrap_or(0);
+    pin_or_defer_strict_fp(id, &computed, head_bits);
 }

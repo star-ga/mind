@@ -1,0 +1,28 @@
+# mind-bench reference hashes — RFC 0020 §5. See dot-l2-q16/reference_hashes.toml
+# for full provenance/signing notes.
+#
+# STRICT-FP f32 vector dot (dot_f32_v), a NEW bit-identity class. The strict-FP
+# tier unfuses the FMA and pins the horizontal reduction to a fixed left-to-right
+# lane fold, so the result is bit-EXACT (not a 1e-4 tolerance). The canonical
+# output is the f32 result's IEEE-754 bit pattern as an i64, serialised
+# little-endian, then sha256.
+#
+# Unlike the integer tiers, cross-substrate identity here rests on strict-FP
+# lowering, so the avx2 == neon claim MUST be blessed on REAL aarch64 — it is
+# NOT asserted from x86 + the associativity argument.
+#
+#   avx2 — blessed on x86_64 (this dev box, MIND_BENCH_REQUIRE=1): the kernel
+#          emits strict scalar vmulss/vaddss with no vfmadd and no reassociating
+#          reduction, cross-checked bit-for-bit against the fixed-order fold
+#          oracle within the run. Continuously enforced on x86 (CI job
+#          `cross_substrate_identity`, ubuntu-24.04).
+#   neon — DEFERRED pending a real-aarch64 bless (RFC 0020 §13). Strict-FP
+#          cross-substrate bit-identity is UNPROVEN on ARM here and MUST NOT be
+#          asserted from x86; the gate DEFERS LOUDLY on a neon host with no
+#          committed hash rather than falsely passing. Upgrade path: run this
+#          gate on real aarch64 with MIND_BENCH_BLESS=1 and commit a `neon` line
+#          ONLY if it reproduces the avx2 hash byte-for-byte (a divergence is a
+#          real wedge break, not a bless).
+
+avx2 = "a132f7b970b647cd158f591d764c19ec41a8cf27c398c87758f74efb5a8a22c0"
+# neon = deferred-pending-real-aarch64 (strict-FP; bless on real ARM only)
