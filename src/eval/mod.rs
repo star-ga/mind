@@ -1496,15 +1496,42 @@ pub(crate) fn eval_value_expr_mode(
         //   * narrow SIGNED (`i8`/`i16`/`i32`) → truncate + sign-extend, exactly
         //     the `(x << (64-W)) >> (64-W)` shift-pair codegen uses.
         //   * narrow UNSIGNED (`u8`/`u16`/`u32`) → zero-extend via `x & ((1<<W)-1)`.
-        //   * `i64`/`u64`/floats/pointers/aliases → transparent pass-through
-        //     (same as the codegen fall-through), so non-narrowing casts and the
-        //     keystone are unchanged.
+        //   * int → float (`f32`/`f64`) → IEEE round-to-nearest-even (`n as f64`
+        //     is exactly that), mirroring the `sitofp`/`uitofp` lowering. A bool
+        //     is `Int(0/1)` so `true as f64 == 1.0` (the compiled path treats i1
+        //     as unsigned for the same reason).
+        //   * float → int → SATURATING truncate-toward-zero (`f as iN`/`uN` in
+        //     Rust is saturating: NaN→0, ±ovf→MIN/MAX), the EXACT mirror of the
+        //     compiled `emit_saturating_fp_to_i64` — so the interpreter (the tier
+        //     `mind-runtime` executes) and the runnable artifact agree bit-for-bit
+        //     on every substrate. Without this the cast was a silent drop here.
+        //   * float → float (`f64`→`f32` rounds; `f32`→`f64` widens); other/`i64`
+        //     pass through unchanged so the keystone stays byte-identical.
         Node::As { expr, ty, .. } => {
             let inner = eval_value_expr_mode(expr, env, tensor_env, mode)?;
             match inner {
-                Value::Int(n) => Ok(Value::Int(apply_scalar_cast(n, ty))),
-                // Non-integer operands (floats, tensors, enums) keep the prior
-                // transparent behaviour — the cast checks live in typecheck.
+                Value::Int(n) => match float_cast_target(ty) {
+                    // int → f32: round to single precision, carried as f64.
+                    Some(32) => Ok(Value::Float(n as f32 as f64)),
+                    Some(_) => Ok(Value::Float(n as f64)),
+                    // int → int: existing narrowing (or i64 identity).
+                    None => Ok(Value::Int(apply_scalar_cast(n, ty))),
+                },
+                Value::Float(f) => {
+                    if let Some(bits) = float_to_int_cast_bits(f, ty) {
+                        // float → integer: saturating, mirrors the lowering.
+                        Ok(Value::Int(bits))
+                    } else {
+                        match float_cast_target(ty) {
+                            // float → f32: round to single precision.
+                            Some(32) => Ok(Value::Float(f as f32 as f64)),
+                            // float → f64 (or unknown): unchanged.
+                            _ => Ok(Value::Float(f)),
+                        }
+                    }
+                }
+                // Tensors / enums keep the prior transparent behaviour — the cast
+                // checks live in typecheck.
                 other => Ok(other),
             }
         }
@@ -2123,6 +2150,53 @@ fn apply_int_op(op: BinOp, left: i64, right: i64) -> Result<i64, EvalError> {
         BinOp::Ge => (left >= right) as i64,
         BinOp::Eq => (left == right) as i64,
         BinOp::Ne => (left != right) as i64,
+    })
+}
+
+/// Floating-point width of a scalar `as` target type (`f32`/`f64`), else `None`.
+/// Mirror of `lower.rs::scalar_float_cast_width` for the interpreter tier.
+fn float_cast_target(ty: &TypeAnn) -> Option<u32> {
+    match ty {
+        TypeAnn::ScalarF32 => Some(32),
+        TypeAnn::ScalarF64 => Some(64),
+        TypeAnn::Named(name) => match name.as_str() {
+            "f32" => Some(32),
+            "f64" => Some(64),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Interpreter-tier float→integer `as` cast — the EXACT mirror of the compiled
+/// lowering (`emit_saturating_fp_to_i64` + the narrowing branches), so the
+/// tree-walking evaluator (the path `mind-runtime` executes) and the runnable
+/// artifact agree bit-for-bit. Returns the target value as an i64 bit pattern,
+/// or `None` for a non-integer / unsupported target (caller keeps the float).
+///
+/// Rust's `f as T` is a SATURATING truncate-toward-zero conversion (NaN→0,
+/// ±overflow→`T::MIN`/`T::MAX`) — which is precisely the saturating semantics the
+/// compiled path now emits, so `f as i64` here == the lowered result on x86 and
+/// ARM. Narrow targets saturate to the TARGET range then sign/zero-extend to the
+/// i64 slot, matching `f as iN`/`uN` exactly.
+fn float_to_int_cast_bits(f: f64, ty: &TypeAnn) -> Option<i64> {
+    let name = match ty {
+        TypeAnn::ScalarI32 => "i32",
+        TypeAnn::ScalarI64 => "i64",
+        TypeAnn::ScalarU32 => "u32",
+        TypeAnn::Named(n) => n.as_str(),
+        _ => return None,
+    };
+    Some(match name {
+        "i8" => f as i8 as i64,
+        "i16" => f as i16 as i64,
+        "i32" => f as i32 as i64,
+        "i64" => f as i64,
+        "u8" => f as u8 as i64,
+        "u16" => f as u16 as i64,
+        "u32" => f as u32 as i64,
+        "u64" => f as u64 as i64,
+        _ => return None,
     })
 }
 

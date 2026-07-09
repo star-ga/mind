@@ -593,6 +593,106 @@ impl LoweringContext {
         writeln!(&mut self.body, "{line}").expect("write to string cannot fail");
     }
 
+    /// Emit a SATURATING, fully-defined float→i64/u64 conversion for a scalar
+    /// `as` cast, writing the result into `%{dst}` and registering it as
+    /// `ScalarI64`. `src_is_f32` selects the source float width; `unsigned`
+    /// selects `fptoui`/u64 bounds over `fptosi`/i64 bounds.
+    ///
+    /// WHY NOT A BARE `arith.fptosi`: MIND's core guarantee is bit-identical
+    /// output across substrates, and every edge case is pinned (no UB —
+    /// `docs/determinism.md`). A raw `fptosi`/`fptoui` on an out-of-range or NaN
+    /// operand is target-defined: x86 `cvttsd2si` yields `INT_MIN` ("indefinite")
+    /// for ALL out-of-range/NaN inputs, while ARM `fcvtzs` SATURATES
+    /// (`+ovf`→`INT_MAX`, `-ovf`→`INT_MIN`, `NaN`→`0`). Those disagree, so a bare
+    /// conversion would break byte-identity for `1e30 as i64` / `inf as i64` /
+    /// `nan as i64`. This sequence is built only from IEEE-defined ops
+    /// (`maxnumf`/`minnumf`/`cmpf`/`select` + an in-range `fptosi`/`fptoui`) so
+    /// it computes the SAME saturating result on every substrate — matching Rust
+    /// `as` and WASM `trunc_sat`:
+    ///   in-range   → truncate toward zero;  `x ≥ MAXf` → `INT_MAX`/`UINT_MAX`;
+    ///   `x ≤ MINf` → `INT_MIN`/`0`;         `NaN` → `0`.
+    ///
+    /// Bounds are exact hex float literals (no decimal round-trip ambiguity),
+    /// per (source width, signedness). `hi` is the largest float STRICTLY below
+    /// `2^63`/`2^64` — clamping to it is lossless (no representable float lies
+    /// between `hi` and the power of two), and keeps the `fptosi`/`fptoui`
+    /// operand in range so it is itself fully defined. The `x ≥ 2^N` compare then
+    /// lifts the top of the range to the exact `INT_MAX`/`UINT_MAX` (which is not
+    /// float-representable). All ops are scalar and reassociation-free, so
+    /// `fp_mode` stays `Strict`.
+    #[cfg(feature = "std-surface")]
+    fn emit_saturating_fp_to_i64(
+        &mut self,
+        dst: ValueId,
+        src: ValueId,
+        src_is_f32: bool,
+        unsigned: bool,
+    ) {
+        let fty = if src_is_f32 { "f32" } else { "f64" };
+        // (lo, hi, thr, sat_max) exact hex bounds per (source width, signedness).
+        // sat_max is the i64 const the compare saturates to: INT_MAX (signed) or
+        // UINT_MAX == -1 as an i64 bit pattern (unsigned).
+        let (lo, hi, thr, sat_max) = match (src_is_f32, unsigned) {
+            // f64 → i64: lo=-2^63, hi=nextbelow(2^63), thr=2^63
+            (false, false) => (
+                "0xC3E0000000000000",
+                "0x43DFFFFFFFFFFFFF",
+                "0x43E0000000000000",
+                "9223372036854775807",
+            ),
+            // f32 → i64
+            (true, false) => (
+                "0xDF000000",
+                "0x5EFFFFFF",
+                "0x5F000000",
+                "9223372036854775807",
+            ),
+            // f64 → u64: lo=0, hi=nextbelow(2^64), thr=2^64
+            (false, true) => (
+                "0x0000000000000000",
+                "0x43EFFFFFFFFFFFFF",
+                "0x43F0000000000000",
+                "-1",
+            ),
+            // f32 → u64
+            (true, true) => ("0x00000000", "0x5F7FFFFF", "0x5F800000", "-1"),
+        };
+        let fptoi = if unsigned {
+            "arith.fptoui"
+        } else {
+            "arith.fptosi"
+        };
+        let d = dst.0;
+        let s = src.0;
+        self.emit_line(&format!("    %sat{d}_lo = arith.constant {lo} : {fty}"));
+        self.emit_line(&format!("    %sat{d}_hi = arith.constant {hi} : {fty}"));
+        self.emit_line(&format!(
+            "    %sat{d}_c0 = arith.maxnumf %{s}, %sat{d}_lo : {fty}"
+        ));
+        self.emit_line(&format!(
+            "    %sat{d}_c1 = arith.minnumf %sat{d}_c0, %sat{d}_hi : {fty}"
+        ));
+        self.emit_line(&format!(
+            "    %sat{d}_base = {fptoi} %sat{d}_c1 : {fty} to i64"
+        ));
+        self.emit_line(&format!("    %sat{d}_thr = arith.constant {thr} : {fty}"));
+        self.emit_line(&format!(
+            "    %sat{d}_over = arith.cmpf oge, %{s}, %sat{d}_thr : {fty}"
+        ));
+        self.emit_line(&format!("    %sat{d}_max = arith.constant {sat_max} : i64"));
+        self.emit_line(&format!(
+            "    %sat{d}_r1 = arith.select %sat{d}_over, %sat{d}_max, %sat{d}_base : i64"
+        ));
+        self.emit_line(&format!(
+            "    %sat{d}_nan = arith.cmpf uno, %{s}, %{s} : {fty}"
+        ));
+        self.emit_line(&format!("    %sat{d}_zero = arith.constant 0 : i64"));
+        self.emit_line(&format!(
+            "    %{d} = arith.select %sat{d}_nan, %sat{d}_zero, %sat{d}_r1 : i64"
+        ));
+        self.values.insert(dst, ValueKind::ScalarI64);
+    }
+
     /// PINNED canonical-order scalar fold for f32/f64 tensor `sum` / `mean` —
     /// the strict, cross-substrate-bit-identical reduction tier (the shipped
     /// analogue of `emit_tensor_reduce_pinned` in `src/eval/mlir_export.rs`).
@@ -2470,7 +2570,12 @@ impl LoweringContext {
                         "f64"
                     };
                     let src = args[0];
-                    let unsigned = matches!(self.values.get(&src), Some(ValueKind::ScalarU32));
+                    // A `bool`/i1 source is UNSIGNED (values 0/1) — `sitofp` on a
+                    // 1-bit value reads the set bit as −1, so `true as f64` would
+                    // wrongly yield −1.0. Treat i1 and u32 as unsigned; every
+                    // other integer scalar (i8..i64) is signed.
+                    let unsigned = self.i1_values.contains(&src)
+                        || matches!(self.values.get(&src), Some(ValueKind::ScalarU32));
                     let phys = if self.i1_values.contains(&src) {
                         "i1"
                     } else {
@@ -2513,7 +2618,12 @@ impl LoweringContext {
                 // AST->IR `As` lowering (src/eval/lower.rs). This is the mirror of
                 // the `__mind_conv_f32`/`f64` block above for the FULL-width
                 // integer target — chosen by the SOURCE value's physical kind:
-                //   float (f64/f32)  -> arith.fptosi (`i64`) / arith.fptoui (`u64`)
+                //   float (f64/f32)  -> SATURATING fp->int (see
+                //                       `emit_saturating_fp_to_i64`): fully
+                //                       IEEE-defined so it is BYTE-IDENTICAL on
+                //                       x86 and ARM (a bare `fptosi`/`fptoui`
+                //                       would diverge on out-of-range/NaN — x86
+                //                       `INT_MIN`-indefinite vs ARM saturation).
                 //   integer/pointer  -> IDENTITY: same-type `arith.bitcast`,
                 //                       folded away by mlir-opt so the result is
                 //                       byte-identical to the historical `val`
@@ -2522,40 +2632,22 @@ impl LoweringContext {
                 // Only float sources needed the fix (the silent drop `x as i64`
                 // on an `f64` `x`); the identity arm exists solely to keep every
                 // OTHER source byte-identical, since the intrinsic is synthesised
-                // for the i64/u64 target regardless of source. fptosi/fptoui
-                // truncate toward zero (IEEE, substrate-deterministic), so
-                // fp_mode stays `Strict`.
-                // deferred: out-of-range / NaN float inputs follow MLIR's default
-                // fptosi/fptoui semantics (target-defined / poison), NOT a
-                // saturating conversion — no fixture exercises a scalar float->int
-                // cast (keystone `main.mind` is cast-free; cross_substrate has no
-                // scalar-cast fixture). upgrade path: emit `llvm.fptosi.sat` /
-                // `arith` saturating intrinsics when a range-bounded contract is
-                // required, and add a cross-substrate saturation canary.
+                // for the i64/u64 target regardless of source. The saturating
+                // sequence is scalar + reassociation-free, so fp_mode stays
+                // `Strict`.
                 #[cfg(feature = "std-surface")]
                 if args.len() == 1 && (name == "__mind_conv_i64" || name == "__mind_conv_u64") {
                     let src = args[0];
                     let unsigned = name == "__mind_conv_u64";
                     match self.values.get(&src) {
-                        // Float source: the case the fix targets — emit a real
-                        // fp->int conversion (was silently dropped).
+                        // Float source: the case the fix targets — emit a real,
+                        // saturating fp->int conversion (was silently dropped;
+                        // then a bare fptosi that broke cross-substrate identity
+                        // on out-of-range/NaN — this is the wedge-safe form).
                         Some(ValueKind::ScalarF64) | Some(ValueKind::ScalarF32) => {
-                            let fty = if matches!(self.values.get(&src), Some(ValueKind::ScalarF32))
-                            {
-                                "f32"
-                            } else {
-                                "f64"
-                            };
-                            let op = if unsigned {
-                                "arith.fptoui"
-                            } else {
-                                "arith.fptosi"
-                            };
-                            self.emit_line(&format!(
-                                "    %{0} = {1} %{2} : {3} to i64",
-                                dst.0, op, src.0, fty
-                            ));
-                            self.values.insert(*dst, ValueKind::ScalarI64);
+                            let src_is_f32 =
+                                matches!(self.values.get(&src), Some(ValueKind::ScalarF32));
+                            self.emit_saturating_fp_to_i64(*dst, src, src_is_f32, unsigned);
                         }
                         // Integer / pointer / unregistered source: IDENTITY. Emit
                         // a same-type `arith.bitcast` (mlir-opt folds it to the
