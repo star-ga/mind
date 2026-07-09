@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3052 | **Est. tokens:** ~7,353,867
-**Generated:** 2026-07-09 06:16 UTC
+**Files:** 3054 | **Est. tokens:** ~7,357,694
+**Generated:** 2026-07-09 07:02 UTC
 
 ## Token Budget Guide
 
@@ -408,7 +408,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~191,413 |
-| `tests/` | 275 | ~481,782 |
+| `tests/` | 275 | ~483,965 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -429,6 +429,7 @@
 | `tests/cross_substrate_identity/lorenz-q16/` | 2 | ~1,243 |
 | `tests/cross_substrate_identity/matmul-f32-v-64x64/` | 2 | ~894 |
 | `tests/cross_substrate_identity/q16-arith-chain/` | 2 | ~788 |
+| `tests/cross_substrate_identity/scalar-cast-conv/` | 2 | ~1,644 |
 | `tests/cross_substrate_identity/scalar-float-f64/` | 2 | ~1,310 |
 | `tests/cross_substrate_identity/struct-handle-roundtrip/` | 2 | ~746 |
 | `tests/fixtures/` | 6 | ~228 |
@@ -4108,7 +4109,11 @@
 - `README.md` (~1219 tok, large) — cross_substrate_identity — the internal mind-bench reproducibility gate
 ### `tests/`
 
-- `cross_substrate_identity.rs` (~21710 tok, huge) — Copyright 2025 STARGA Inc.
+- `cross_substrate_identity.rs` (~23893 tok, huge) — Copyright 2025 STARGA Inc.
+### `tests/cross_substrate_identity/scalar-cast-conv/`
+
+- `manifest.toml` (~1041 tok, large) — version = "1"
+- `reference_hashes.toml` (~603 tok, large) — avx2 = "a38aaa5196baad698f60edc9d2ffc44aac43540ae74aa3bcaf2687fd37a0b8c2"
 ### `tests/cross_substrate_identity/scalar-float-f64/`
 
 - `manifest.toml` (~778 tok, large) — version = "1"

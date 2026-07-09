@@ -1,0 +1,73 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes.
+#
+# The scalar int<->float `as`-cast conversion canary. This is the ONLY
+# cross-substrate fixture that exercises the scalar conversion lowering — it
+# closes the coverage hole that let a real float->int WEDGE BREAK ship: no
+# fixture ran a scalar cast, so the byte-identity gate never tested the
+# conversion. A bare `arith.fptosi` is target-defined out of range — x86
+# `cvttsd2si` yields INT64_MIN for every out-of-range/NaN input while ARM
+# `fcvtzs` SATURATES (+ovf->INT64_MAX, -ovf->INT64_MIN, NaN->0) — so
+# `1e30 as i64` / `inf as i64` / `nan as i64` produced DIFFERENT bytes on avx2
+# vs neon until `emit_saturating_fp_to_i64` replaced it with a fully
+# IEEE-defined clamp (maxnumf/minnumf -> in-range fptosi -> select on the >=2^N
+# overflow and the NaN predicate).
+#
+# The kernel `scalar_cast_conv(inr,povf,novf,nan,pinf,ninf,n)` takes the six
+# f64 edge operands as RUNTIME arguments (never in-kernel literals), so mlir-opt
+# cannot constant-fold the conversion away — the saturating path provably
+# executes at run time. It exercises int->f64 and int->f32 (sitofp), bool->f64
+# (i1->uitofp -> 1.0), and the float->i64 SATURATING edges, folding all nine
+# cast results in fixed source order into one i64 via a wrapping polynomial
+# (acc = acc*K + term, K = 1000003), so equal saturated values at different
+# positions do NOT cancel — a divergence in any single edge changes the byte.
+#
+# Why avx2 == neon here: the saturating result is built only from IEEE-defined
+# ops (maxnumf/minnumf/fptosi/cmpf/select), and `arith.muli`/`arith.addi` wrap
+# in two's complement — none of it is order- or target-sensitive, so both x86
+# and ARM compute the identical i64 by construction (RFC 0015 §3.1). This is
+# scoped to SCALAR conversion; float REDUCTIONS remain out of scope.
+
+version = "1"
+name = "scalar-cast-conv"
+description = "Scalar int<->float `as`-cast conversion with saturating float->int edges (in-range, +/-overflow, NaN, +/-inf) plus int->f64/f32 and bool->f64 — the byte-identity proof for the scalar conversion lowering that a real wedge break slipped through untested."
+weight = 1.0
+
+# Substrates this workload is defined for. Per RFC 0015 §3.1 every listed
+# substrate MUST share the same content hash — that shared hash IS the
+# cross-substrate bit-identity claim, made inspectable. The saturating
+# conversion is built only from IEEE-defined ops, so the result is
+# architecture-independent by construction.
+substrates = ["avx2", "neon"]
+
+# Deterministic input spec. Six fixed f64 edge operands supplied directly by the
+# harness (no array, no reduction) plus one i64 int->float source. The operands
+# are passed as RUNTIME arguments precisely so the conversion is not
+# constant-folded away — the saturating path runs.
+#   inr  =  9.7   -> in-range, truncates toward zero to 9
+#   povf =  1e30  -> +overflow, saturates to INT64_MAX
+#   novf = -1e30  -> -overflow, saturates to INT64_MIN
+#   nan  =  NaN   -> saturates to 0
+#   pinf = +inf   -> saturates to INT64_MAX
+#   ninf = -inf   -> saturates to INT64_MIN
+#   n    = 16777219 (= 2^24 + 3) -> NOT exact in f32 (ulp = 2 above 2^24), so
+#          `n as f32` rounds to 16777220 while `n as f64` stays 16777219, making
+#          the fold distinguish the int->f32 and int->f64 legs.
+[input]
+generator = "fixed"        # seven literal args, supplied by the harness
+inr = 9.7
+povf = 1e30
+novf = -1e30
+nan = "nan"                # f64::NAN (TOML has no NaN literal; harness supplies it)
+pinf = "inf"               # f64::INFINITY
+ninf = "-inf"              # f64::NEG_INFINITY
+n = 16777219
+dtype = "mixed-scalar"     # f64 edge operands + i64 source; i64 folded output
+
+# Kernel under test (mindc native scalar-cast lowering, no C shim).
+[kernel]
+symbol = "scalar_cast_conv"
+casts = "int->f64, int->f32, bool->f64, f64->i64 (saturating: in-range/+-ovf/NaN/+-inf)"
+fold = "acc = acc*1000003 + term, fixed source order, two's-complement wrapping"
+returns = "i64"                  # the folded i64
+output_encoding = "i64_le"       # i64 as 8 LE bytes, then sha256

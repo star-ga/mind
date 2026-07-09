@@ -1,0 +1,38 @@
+# mind-bench reference hashes — RFC 0020 §5. See dot-l2-q16/reference_hashes.toml
+# for full provenance/signing notes.
+#
+# The scalar int<->float `as`-cast conversion canary. The kernel
+# `scalar_cast_conv(inr,povf,novf,nan,pinf,ninf,n)` casts the six fixed f64 edge
+# operands to i64 (saturating: 9.7->9, 1e30->INT64_MAX, -1e30->INT64_MIN,
+# NaN->0, +inf->INT64_MAX, -inf->INT64_MIN) plus int->f64/f32 (16777219 /
+# 16777220) and bool->f64 (1.0), then folds all nine cast results in fixed
+# source order into one i64 via a wrapping polynomial (acc = acc*1000003 + term).
+# The result is 2989597108522883253; the canonical output is that i64 serialised
+# little-endian (manifest `output_encoding = "i64_le"`), then sha256.
+#
+# The saturating float->int result is built only from IEEE-defined ops
+# (maxnumf/minnumf/fptosi/cmpf/select) and the fold from two's-complement
+# `arith.muli`/`arith.addi` — none order- or target-sensitive — so unlike a
+# bare `arith.fptosi` (which x86 `cvttsd2si` and ARM `fcvtzs` disagree on for
+# out-of-range/NaN) the value is architecture-independent: avx2 == neon by
+# construction (RFC 0015 §3.1). Any divergence is a real lowering bug (a dropped
+# saturation clamp, a non-wrapping fold, a bare fptosi) and a release-blocker.
+#
+# Provenance:
+#   avx2 — computed on x86_64 (this reference), verified in CI job
+#          `cross_substrate_identity` (ubuntu-24.04): the saturating clamp
+#          lowers to maxsd/minsd + cvttsd2si + compares/selects, folded with
+#          wrapping imul/add. The in-run oracle assert additionally proves the
+#          compiled kernel matches Rust `as` saturating semantics bit-for-bit.
+#   neon — SAME hash by IEEE construction (RFC 0015 §3.1); continuously
+#          recomputed on real ARM hardware (CI job `cross_substrate_identity`,
+#          ubuntu-24.04-arm) per RFC 0020 §10, so a lowering divergence fails CI
+#          and blocks the release tag. The saturating clamp is exactly what makes
+#          the ARM `fcvtzs` path produce the SAME bytes as x86 here — this fixture
+#          is the standing regression test for that wedge fix.
+#
+# Re-bless only on an intentional lowering change (RFC 0020 §13): run the gate
+# with MIND_BENCH_BLESS=1 and commit the new hash.
+
+avx2 = "a38aaa5196baad698f60edc9d2ffc44aac43540ae74aa3bcaf2687fd37a0b8c2"
+neon = "a38aaa5196baad698f60edc9d2ffc44aac43540ae74aa3bcaf2687fd37a0b8c2"
