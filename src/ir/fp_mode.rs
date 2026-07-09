@@ -47,6 +47,44 @@
 //!    whose operand dtype is not statically provable fails closed to taint (never
 //!    a false strict).
 //!
+//! ## Scoped `Instr::Call` defense (#98 — three layers)
+//!
+//! The Call check historically matched only the two curated *relaxed* lists
+//! ([`RELAXED_F32_INTRINSICS`], [`RELAXED_RUNTIME_F32_EXTERNS`], both empty
+//! today), so any *other* Call name was silently non-taint. This is latent, not
+//! live — no float transcendental is emitted today (the full emitted-intrinsic
+//! inventory is `__mind_conv_*` / `__mind_bits_to_f64` / `__mind_f64_to_bits` /
+//! the strict `__mind_blas_*` set / alloc·load·store·region) — but two future
+//! paths reopen it: a transcendental intrinsic (`__mind_math_sin` → libm differs
+//! per platform → a false `Strict` attestation would be a soundness break of
+//! `--require-strict-fp`) and a user `extern "C" fn sin(x: f64) -> f64`.
+//!
+//! Blanket-tainting every unknown Call is WRONG and is deliberately rejected:
+//! user fns recurse through their `FnDef` bodies (so a taint inside is already
+//! seen), and `alloc` / `store` / runtime-bridge Calls are integer plumbing —
+//! tainting them would flip every real program to `Relaxed` and destroy the
+//! strict attestation. Instead the defense is scoped to exactly the float paths:
+//!
+//! - **Layer 1 — extern-decl-driven taint (the real defense, works today).**
+//!   `Instr::ExternFnDecl` carries `ret_type: Option<String>` (MLIR type
+//!   strings). The scan collects [`FpScan::extern_float_rets`] — every decl whose
+//!   `ret_type` is `"f32"` / `"f64"` — during the walk (decls precede calls in
+//!   program order; SSA is defined-before-use), and taints any `Instr::Call`
+//!   whose name is in that set. Float-*param*-only externs (e.g. `printf("%f",
+//!   …)`) do **NOT** taint: the float leaves the dataflow through the call, it
+//!   is not a reassociated result — considered and rejected as an over-taint.
+//! - **Layer 2 — emitter-enforced strict registry (build-breaks-until-classified).**
+//!   [`STRICT_FLOAT_INTRINSICS`] lists the `__mind_`-prefixed float-returning
+//!   intrinsics that are strict. The MLIR lowerer asserts (fail-loud, debug +
+//!   release) that any `__mind_` callee registering a `ScalarF32`/`ScalarF64`
+//!   result is in `STRICT_FLOAT_INTRINSICS ∪ RELAXED_F32_INTRINSICS` — so a
+//!   float-returning intrinsic CANNOT be added without classifying its
+//!   FP-contract behaviour: the build fails until the author lists the name.
+//! - **Layer 3 — dtype precision.** `record_dtype` records `DType::F32`/`F64`
+//!   for the conv/bits intrinsic dsts, so a float produced by a cast that feeds a
+//!   tensor reduction resolves precisely (today it fails closed to taint — sound,
+//!   just over-tainting; this is precision, not soundness).
+//!
 //! Why this is trustworthy without any wire-format change: `trace_hash =
 //! mini_sha256(emit_mic3(ir))` already covers the entire canonical body, taint
 //! ops included. So [`fp_contract_mode`] re-derived from the re-parsed body is
@@ -56,7 +94,7 @@
 
 use crate::ir::{IRModule, Instr, ValueId};
 use crate::types::DType;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 /// RFC 0006 Track B f32 vector intrinsics whose MLIR lowering emits a
 /// contracted (`vector.fma`) and/or reassociating (`vector.reduction <add>`)
@@ -80,7 +118,39 @@ use std::collections::HashMap;
 /// upgrade: if a NEW non-strict f32 `_v` intrinsic is ever added, classify it
 /// with `mindc <call>.mind --emit-mlir | grep -E 'vector.fma|reduction <add>'`
 /// and list it here.
-const RELAXED_F32_INTRINSICS: &[&str] = &[];
+pub(crate) const RELAXED_F32_INTRINSICS: &[&str] = &[];
+
+/// The `__mind_`-prefixed float-returning intrinsics that ARE strict-FP —
+/// scalar IEEE conversions / bit reinterprets and the strict Track-B f32 `_v`
+/// vector intrinsics (FMA unfused + a pinned left-to-right fold, byte-identical
+/// across substrates). This is the #98 layer-2 registry: the MLIR lowerer
+/// (`src/mlir/lowering.rs`) asserts that ANY `__mind_` callee registering a
+/// `ScalarF32`/`ScalarF64` result is in this set (or [`RELAXED_F32_INTRINSICS`]).
+/// So a float-returning intrinsic cannot be added without a deliberate
+/// classification here — the build breaks (debug AND release) until it is listed.
+/// This is "the plan for when transcendentals arrive": adding `__mind_math_sin`
+/// forces the author to classify it strict (proven bit-identical) or relaxed
+/// (list it in `RELAXED_F32_INTRINSICS`), never silently `Strict`.
+///
+/// The four `_f32_v` names return their f32 result packed into an i64 SSA slot
+/// (the "i64-packed-f32 ABI"), so the emitter assert never fires on them; they
+/// are listed here for registry completeness and are the same names the
+/// `all_f32_vector_intrinsics_are_strict` test pins.
+///
+/// Consumed by the MLIR emitter assert (src/mlir/lowering.rs), which is compiled
+/// only behind the `mlir-lowering`/`mlir-build` features; kept always-compiled
+/// (so the doc link and the classification registry stay stable) with
+/// `allow(dead_code)` for the `--no-default-features` build that has no emitter.
+#[allow(dead_code)]
+pub(crate) const STRICT_FLOAT_INTRINSICS: &[&str] = &[
+    "__mind_conv_f32",
+    "__mind_conv_f64",
+    "__mind_bits_to_f64",
+    "__mind_blas_dot_f32_v",
+    "__mind_blas_dot_l1_f32_v",
+    "__mind_blas_dot_linf_f32_v",
+    "__mind_blas_matmul_rmajor_f32_v",
+];
 
 /// Opaque Track-A runtime BLAS externs (the non-`_v` C helpers in
 /// `runtime-support/mind_intrinsics.c`) that are KNOWN non-strict — objdump- and
@@ -158,6 +228,15 @@ struct FpScan {
     /// plus dtype-preserving shape / elementwise ops); an entry is absent when
     /// the dtype cannot be proven from the scanned body (e.g. an opaque param).
     dtypes: HashMap<ValueId, DType>,
+    /// #98 layer 1 — names of `extern "C"` functions declared with an `f32`/`f64`
+    /// RETURN type. A `Call` to any of these is a taint: the result is a
+    /// platform-`libm`-defined float that is not byte-identical across
+    /// substrates. Populated from `Instr::ExternFnDecl` in program order (decls
+    /// precede their calls; SSA is defined-before-use), so a later `Call` in the
+    /// same or a nested stream resolves against it. Float-*param*-only externs
+    /// are deliberately absent (the float leaves the dataflow — no reassociated
+    /// result to attest).
+    extern_float_rets: BTreeSet<String>,
 }
 
 impl FpScan {
@@ -179,6 +258,27 @@ impl FpScan {
     fn instr_taints(&mut self, instr: &Instr) -> bool {
         self.record_dtype(instr);
 
+        // #98 layer 1: note an `extern "C"` declaration with a float RETURN type
+        // so a later `Call` to it taints. Decls precede their calls in program
+        // order (SSA is defined-before-use), so this set is complete by the time
+        // any referring `Call` is scanned. `ExternFnDecl` is `std-surface`-gated;
+        // a default build constructs none, so `extern_float_rets` stays empty and
+        // this layer is inert there.
+        #[cfg(feature = "std-surface")]
+        if let Instr::ExternFnDecl {
+            name,
+            ret_type: Some(rt),
+            ..
+        } = instr
+        {
+            // Float-PARAM-only externs (rt is not a float) do NOT taint: the
+            // float leaves the dataflow through the call rather than being a
+            // reassociated result. Only a float-RETURN decl is a taint source.
+            if rt == "f32" || rt == "f64" {
+                self.extern_float_rets.insert(name.clone());
+            }
+        }
+
         // PRIMARY taint representation: an intrinsic CALL. The RFC 0006 Track B
         // f32 vector intrinsics stay `Instr::Call { name: "__mind_blas_*_f32_v" }`
         // in the serialized IR body and are intercepted only at the MLIR-lowering
@@ -194,6 +294,14 @@ impl FpScan {
             // now strict), but the check stays so a future non-strict addition to
             // either list is honoured without touching this scan.
             if RELAXED_F32_INTRINSICS.contains(&n) || RELAXED_RUNTIME_F32_EXTERNS.contains(&n) {
+                return true;
+            }
+            // #98 layer 1: a Call to an `extern "C"` fn declared with an f32/f64
+            // return type taints — its result is a platform-libm float, not
+            // byte-identical across substrates. Scoped to float-RETURN externs
+            // ONLY (user fns, alloc/store, and float-param-only externs are NOT
+            // tainted — see the module header's considered-and-rejected scope).
+            if self.extern_float_rets.contains(n) {
                 return true;
             }
         }
@@ -369,6 +477,21 @@ impl FpScan {
             Instr::Dot { dst, a, b } | Instr::MatMul { dst, a, b } => {
                 self.propagate_from(*dst, &[*a, *b]);
             }
+            // #98 layer 3 (precision): the scalar `as f32`/`as f64` conversion and
+            // enum-payload bit-reinterpret intrinsics produce a value of a known
+            // float dtype. Recording it lets a downstream reduction over a
+            // cast-produced float resolve precisely instead of failing closed to
+            // an unknown-dtype taint. Sound either way (a float reduction still
+            // taints); this only sharpens the dtype map. `Call` is a core variant.
+            Instr::Call { dst, name, .. } => match name.as_str() {
+                "__mind_conv_f32" => {
+                    self.dtypes.insert(*dst, DType::F32);
+                }
+                "__mind_conv_f64" | "__mind_bits_to_f64" => {
+                    self.dtypes.insert(*dst, DType::F64);
+                }
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -479,6 +602,106 @@ mod tests {
                 "{name} must be strict"
             );
         }
+    }
+
+    // --- #98 layer 1: extern-decl-driven Call taint (scoped, not blanket) ---
+
+    #[cfg(feature = "std-surface")]
+    fn extern_decl(name: &str, param_types: &[&str], ret: Option<&str>) -> Instr {
+        Instr::ExternFnDecl {
+            name: name.into(),
+            param_types: param_types.iter().map(|s| s.to_string()).collect(),
+            ret_type: ret.map(String::from),
+            is_varargs: false,
+            vararg_hints: vec![],
+            callconv: crate::ast::CallConv::SysV,
+        }
+    }
+
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn extern_float_return_call_is_relaxed() {
+        // #98 layer 1: a Call to an `extern "C"` fn declared with a float RETURN
+        // type taints — the result is a platform-libm float, not byte-identical
+        // across substrates. The decl precedes the call in program order, so the
+        // scan resolves it (defined-before-use).
+        let m64 = module_with(vec![extern_decl("sin", &["f64"], Some("f64")), call("sin")]);
+        assert_eq!(
+            fp_contract_mode(&m64),
+            FpMode::Relaxed,
+            "call to `-> f64` extern must be Relaxed"
+        );
+
+        let m32 = module_with(vec![
+            extern_decl("sinf", &["f32"], Some("f32")),
+            call("sinf"),
+        ]);
+        assert_eq!(
+            fp_contract_mode(&m32),
+            FpMode::Relaxed,
+            "call to `-> f32` extern must be Relaxed"
+        );
+
+        // The taint resolves even when the call is nested inside a fn body, as
+        // long as the decl was scanned first at the top level.
+        let m_nested = module_with(vec![
+            extern_decl("cos", &["f64"], Some("f64")),
+            Instr::FnDef {
+                name: "f".into(),
+                params: vec![],
+                ret_id: None,
+                body: vec![call("cos")],
+                reap_threshold: None,
+            },
+        ]);
+        assert_eq!(
+            fp_contract_mode(&m_nested),
+            FpMode::Relaxed,
+            "nested call to `-> f64` extern must be Relaxed"
+        );
+    }
+
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn extern_int_return_call_stays_strict() {
+        // DO NOT over-taint: an integer-returning extern (`write(...) -> i64`) is
+        // integer plumbing and must stay Strict. This is the exact case a blanket
+        // "taint every unknown Call" fix would wrongly flip to Relaxed.
+        let m = module_with(vec![
+            extern_decl("write", &["i64", "i64", "i64"], Some("i64")),
+            call("write"),
+        ]);
+        assert_eq!(
+            fp_contract_mode(&m),
+            FpMode::Strict,
+            "call to `-> i64` extern must stay Strict"
+        );
+
+        // A void-return extern likewise does not taint.
+        let m_void = module_with(vec![extern_decl("puts", &["i64"], None), call("puts")]);
+        assert_eq!(
+            fp_contract_mode(&m_void),
+            FpMode::Strict,
+            "call to void extern must stay Strict"
+        );
+    }
+
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn extern_float_param_only_call_stays_strict() {
+        // Considered-and-rejected scope: `printf(fmt, f64) -> i64` takes a float
+        // PARAM but returns an integer. The float leaves the dataflow through the
+        // call; there is no reassociated float RESULT to attest, so a
+        // float-param-only extern must NOT taint.
+        let m = module_with(vec![
+            extern_decl("printf", &["i64", "f64"], Some("i64")),
+            call("printf"),
+        ]);
+        assert_eq!(
+            fp_contract_mode(&m),
+            FpMode::Strict,
+            "float-param-only extern must stay Strict"
+        );
     }
 
     #[cfg(feature = "std-surface")]

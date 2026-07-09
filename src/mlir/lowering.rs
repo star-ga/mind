@@ -298,6 +298,18 @@ pub enum MlirLowerError {
     #[cfg(feature = "ffi-c-user")]
     #[error("C-ABI export codegen: {0}")]
     CExportError(String),
+    /// #98 layer 2: a `__mind_`-prefixed intrinsic registered a scalar float
+    /// (`f32`/`f64`) result but is not classified in the FP-contract registry
+    /// (`fp_mode::STRICT_FLOAT_INTRINSICS ∪ RELAXED_F32_INTRINSICS`). A
+    /// float-returning intrinsic MUST be classified so its strict-vs-relaxed
+    /// FP-determinism is attested — the build fails loud (debug AND release)
+    /// until the author lists it.
+    #[error(
+        "unclassified float-returning intrinsic `{name}`: add it to \
+         fp_mode::STRICT_FLOAT_INTRINSICS (proven bit-identical) or \
+         RELAXED_F32_INTRINSICS (platform-divergent) before emitting it"
+    )]
+    UnclassifiedFloatIntrinsic { name: String },
 }
 
 /// A lowered MLIR module in textual form.
@@ -591,6 +603,37 @@ impl LoweringContext {
 
     fn emit_line(&mut self, line: &str) {
         writeln!(&mut self.body, "{line}").expect("write to string cannot fail");
+    }
+
+    /// Register the result `ValueKind` of an intrinsic/extern `Instr::Call`,
+    /// enforcing the #98 layer-2 float-intrinsic classification invariant.
+    ///
+    /// If `name` is `__mind_`-prefixed AND `kind` is a scalar float
+    /// (`ScalarF32`/`ScalarF64`), the callee MUST be classified in the FP-contract
+    /// registry (`fp_mode::STRICT_FLOAT_INTRINSICS ∪ RELAXED_F32_INTRINSICS`) — a
+    /// float-returning intrinsic cannot be lowered without a deliberate
+    /// strict-vs-relaxed classification, or the build fails loud (debug AND
+    /// release). Non-`__mind_` callees (user `extern "C"` fns) are out of scope
+    /// here: their FP-contract is derived at the IR level from the declared
+    /// return type (fp_mode.rs layer 1). Integer/pointer results are unaffected.
+    fn register_call_result(
+        &mut self,
+        name: &str,
+        dst: ValueId,
+        kind: ValueKind,
+    ) -> Result<(), MlirLowerError> {
+        #[cfg(feature = "std-surface")]
+        if matches!(kind, ValueKind::ScalarF32 | ValueKind::ScalarF64)
+            && name.starts_with("__mind_")
+            && !crate::ir::fp_mode::STRICT_FLOAT_INTRINSICS.contains(&name)
+            && !crate::ir::fp_mode::RELAXED_F32_INTRINSICS.contains(&name)
+        {
+            return Err(MlirLowerError::UnclassifiedFloatIntrinsic {
+                name: name.to_string(),
+            });
+        }
+        self.values.insert(dst, kind);
+        Ok(())
     }
 
     /// Emit a SATURATING, fully-defined float→i64/u64 conversion for a scalar
@@ -2544,7 +2587,8 @@ impl LoweringContext {
                         "    %{0} = arith.bitcast %{1} : i64 to f64",
                         dst.0, args[0].0
                     ));
-                    self.values.insert(*dst, ValueKind::ScalarF64);
+                    // #98 layer 2: classification-checked float-result register.
+                    self.register_call_result(name, *dst, ValueKind::ScalarF64)?;
                     return Ok(());
                 }
                 // Scalar `as f32` / `as f64` value conversion synthesised by the
@@ -2604,14 +2648,13 @@ impl LoweringContext {
                         "    %{0} = {1} %{2} : {3} to {4}",
                         dst.0, op, src.0, phys, target
                     ));
-                    self.values.insert(
-                        *dst,
-                        if target == "f32" {
-                            ValueKind::ScalarF32
-                        } else {
-                            ValueKind::ScalarF64
-                        },
-                    );
+                    // #98 layer 2: classification-checked float-result register.
+                    let kind = if target == "f32" {
+                        ValueKind::ScalarF32
+                    } else {
+                        ValueKind::ScalarF64
+                    };
+                    self.register_call_result(name, *dst, kind)?;
                     return Ok(());
                 }
                 // Scalar `as i64` / `as u64` value conversion synthesised by the
@@ -2872,7 +2915,13 @@ impl LoweringContext {
                         .get(name)
                         .cloned()
                         .unwrap_or(ValueKind::ScalarI64);
-                    self.values.insert(*dst, ret_kind);
+                    // #98 layer 2: a `__mind_`-prefixed callee reaching the generic
+                    // func.call path with a float return kind (e.g. a future
+                    // `extern`-declared float intrinsic) must be classified.
+                    // `fn_ret_kind` is populated only from user FnDefs (non-`__mind_`
+                    // names) today, so no existing `__mind_` call registers a float
+                    // here — this only guards future additions.
+                    self.register_call_result(name, *dst, ret_kind)?;
                     self.extern_calls.insert((name.clone(), args.len()));
                 }
             }
