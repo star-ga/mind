@@ -8,8 +8,18 @@ use super::fingerprint::ProfileTag;
 
 /// Cache lookup key. Two keys are equal iff every field matches — that means
 /// a compiler bump, profile change, or source/import edit all force a miss.
+///
+/// `compiler_version` must carry the compiler's **binary identity**, not just
+/// its semver: a dev rebuild of `mindc` at the same `CARGO_PKG_VERSION` emits
+/// potentially different IR, so callers must store the combined
+/// `"<version>+<binary-identity>"` string (see
+/// [`crate::build::cache::compiler_identity_string`]) — a bare
+/// `CARGO_PKG_VERSION` would silently serve a stale entry (issue #96).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CacheKey {
+    /// Combined compiler identity: `"<CARGO_PKG_VERSION>+<binary-identity>"`
+    /// (see [`crate::build::cache::compiler_identity_string`]). A bare semver
+    /// here reintroduces the issue #96 staleness bug.
     pub compiler_version: String,
     pub profile: ProfileTag,
     pub source_hash: String,

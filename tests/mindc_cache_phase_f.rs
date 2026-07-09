@@ -85,19 +85,21 @@ fn probe_for_source(
     optimize: OptimizeLevel,
 ) -> CacheProbe {
     // `run_build` invokes `mindc build` with no `--emit`, whose default emit is
-    // `binary`. The build keys its cache entry on the `emit=binary` artifact-kind
-    // discriminator (see `run_build` in src/build/mod.rs — `cdylib` contributes no
-    // entry, `binary`/`object` do), so a probe MUST carry the same discriminator or
-    // it spuriously misses a freshly-built binary.
-    let emit_disc = [format!("emit={}", EmitKind::Binary.as_str())];
-    let key = module_cache_key(
+    // `binary`. Recompute the key with the SAME helper the build path uses — it
+    // folds in the `emit=binary` discriminator AND the compiler/toolchain binary
+    // identity (issue #96), fingerprinting the mindc SUBPROCESS binary
+    // (`mindc_bin()` == CARGO_BIN_EXE_mindc), NOT this test executable. A bare
+    // `module_cache_key` with `CARGO_PKG_VERSION` would never match the
+    // subprocess-populated cache once the fingerprint is in the key.
+    let key = libmind::build::compile_cache_key(
         source,
         target,
         optimize,
-        &emit_disc,
-        env!("CARGO_PKG_VERSION"),
+        EmitKind::Binary,
+        &mindc_bin(),
         2024,
-    );
+    )
+    .expect("compiler identity for CARGO_BIN_EXE_mindc");
     let c_root = cache_root(project_root, target, optimize);
     probe(&c_root, &key)
 }
@@ -443,7 +445,8 @@ fn phase_f_08_clean_cache_preserves_binary() {
         cache_key: key.to_string(),
         target: "cpu".to_string(),
         optimize: "debug".to_string(),
-        compiler_version: "0.6.8".to_string(),
+        compiler_version: "0.6.8+/x|1|2|0.6.8".to_string(),
+        compiler_fingerprint: "/x|1|2|0.6.8".to_string(),
         dep_hashes: vec![],
     };
     write_object(&c_root, key, b"\x7fELF stub", &meta).unwrap();
@@ -594,14 +597,18 @@ fn phase_f_10_concurrent_builds_no_corruption() {
     // Regardless of which thread "won", the cache entry must be a valid, complete
     // object (not a half-written temp file).  We verify this by probing and
     // confirming the sidecar JSON is parseable.
-    let key = module_cache_key(
+    // Default emit is `binary`; recompute with the shared helper so the key
+    // carries the emit=binary discriminator AND the compiler/toolchain
+    // fingerprint (issue #96) — same binary the subprocess builds populated.
+    let key = libmind::build::compile_cache_key(
         SIMPLE_MIND.as_bytes(),
         BuildTarget::Cpu,
         OptimizeLevel::Debug,
-        &[],
-        env!("CARGO_PKG_VERSION"),
+        EmitKind::Binary,
+        &mindc,
         2024,
-    );
+    )
+    .expect("compiler identity for CARGO_BIN_EXE_mindc");
     let c_root = cache_root(dir, BuildTarget::Cpu, OptimizeLevel::Debug);
 
     let meta_p = libmind::build::cache::meta_path(&c_root, &key);
@@ -682,4 +689,81 @@ fn manifest_entries_are_sorted() {
     // BTreeMap iterates in sorted order.
     let keys: Vec<&str> = loaded.entries.keys().map(|s| s.as_str()).collect();
     assert_eq!(keys, vec!["src/a.mind", "src/z.mind"]);
+}
+
+// ---------------------------------------------------------------------------
+// Test 11 (issue #96): a rebuilt mindc binary invalidates the cache.
+//
+// The correctness bug: the cache key folded only `CARGO_PKG_VERSION`, which
+// does not change between dev rebuilds of `mindc` at the same version — so a
+// stale `.so` was served after a compiler change. The fix folds the compiler
+// BINARY IDENTITY (path|size|mtime) into the key. This test proves a
+// different mindc binary (fresh path + bumped mtime, identical version) keys
+// differently and MISSES a cache the real binary populated.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn phase_f_11_rebuilt_compiler_binary_invalidates_cache() {
+    let Some(bin) = require_mindc() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    make_project(dir, "fp_project", SIMPLE_MIND);
+
+    // Cold build populates the cache under the real mindc's fingerprint.
+    if !run_build(&bin, dir, &[]).success() {
+        eprintln!("SKIP: backend unavailable; cannot populate cache");
+        return;
+    }
+    let hit = probe_for_source(
+        dir,
+        SIMPLE_MIND.as_bytes(),
+        BuildTarget::Cpu,
+        OptimizeLevel::Debug,
+    );
+    assert!(
+        matches!(hit, CacheProbe::Hit { .. }),
+        "cold build must populate the cache under the real binary's key"
+    );
+
+    // Simulate a compiler rebuild: same version, different binary identity.
+    // Copy the mindc binary to a fresh path and stamp a later mtime.
+    let copied = dir.join("mindc-rebuilt");
+    std::fs::copy(&bin, &copied).unwrap();
+    let f = std::fs::File::options().write(true).open(&copied).unwrap();
+    f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(300))
+        .unwrap();
+    drop(f);
+
+    let key_real = libmind::build::compile_cache_key(
+        SIMPLE_MIND.as_bytes(),
+        BuildTarget::Cpu,
+        OptimizeLevel::Debug,
+        EmitKind::Binary,
+        &bin,
+        2024,
+    )
+    .unwrap();
+    let key_rebuilt = libmind::build::compile_cache_key(
+        SIMPLE_MIND.as_bytes(),
+        BuildTarget::Cpu,
+        OptimizeLevel::Debug,
+        EmitKind::Binary,
+        &copied,
+        2024,
+    )
+    .unwrap();
+    assert_ne!(
+        key_real, key_rebuilt,
+        "a rebuilt mindc binary (new path/mtime, same version) must key differently"
+    );
+
+    let c_root = cache_root(dir, BuildTarget::Cpu, OptimizeLevel::Debug);
+    assert!(
+        matches!(probe(&c_root, &key_rebuilt), CacheProbe::Miss { .. }),
+        "cache populated by the real binary must MISS for the rebuilt binary's key"
+    );
+    assert!(
+        matches!(probe(&c_root, &key_real), CacheProbe::Hit { .. }),
+        "the real binary's key must still hit its own cache entry"
+    );
 }
