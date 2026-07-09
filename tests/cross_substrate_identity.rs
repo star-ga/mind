@@ -189,6 +189,59 @@ pub fn struct_handle_roundtrip(a: i64, b: i64, c: i64, d: i64) -> i64 {
 pub fn scalar_f64_chain(a: f64, b: f64, c: f64, d: f64) -> f64 {
     a + b - c * d / a
 }
+// SCALAR int<->float `as`-cast conversion canary (#92/#93 follow-up). This is
+// the ONLY cross-substrate fixture that exercises the scalar conversion
+// lowering — the coverage hole that let a real float→int WEDGE BREAK ship: a
+// bare `arith.fptosi` is target-defined out of range (x86 `cvttsd2si` →
+// INT64_MIN for every out-of-range/NaN input; ARM `fcvtzs` SATURATES), so
+// `1e30 as i64` / `inf as i64` / `nan as i64` produced DIFFERENT bytes on avx2
+// vs neon until `emit_saturating_fp_to_i64` replaced it with a fully
+// IEEE-defined clamp (maxnumf/minnumf → in-range fptosi → select on the ≥2^N
+// overflow and the NaN predicate). The edge operands are passed in as RUNTIME
+// f64 arguments (never in-kernel literals) so mlir-opt cannot constant-fold the
+// conversion away — the saturating path provably executes at run time.
+//
+// Casts exercised: int→f64 (`n as f64`, sitofp) and int→f32 (`n as f32`,
+// sitofp+round), bool→f64 (`(inr < povf) as f64`, i1→uitofp → 1.0), and the
+// float→i64 SATURATING edges: in-range (9.7→9, truncate toward zero),
+// +overflow (1e30→INT64_MAX), −overflow (−1e30→INT64_MIN), NaN (→0), +inf
+// (→INT64_MAX), −inf (→INT64_MIN). Because the saturating result is built only
+// from IEEE-defined ops it is identical on avx2 and neon BY CONSTRUCTION
+// (RFC 0015 §3.1) — that is what this fixture pins. The nine cast results are
+// folded in a FIXED source order into one i64 via a wrapping polynomial
+// (`acc = acc*K + term`, K = 1000003) so that equal saturated values at
+// different positions do NOT cancel — a divergence in any single edge changes
+// the final byte. `arith.muli`/`arith.addi` wrap in two's complement (matching
+// Rust `wrapping_mul`/`wrapping_add`), so the fold itself is substrate-exact.
+pub fn scalar_cast_conv(
+    inr: f64,
+    povf: f64,
+    novf: f64,
+    nan: f64,
+    pinf: f64,
+    ninf: f64,
+    n: i64,
+) -> i64 {
+    let e0: i64 = inr as i64; // in-range 9.7 -> 9 (trunc toward zero)
+    let e1: i64 = povf as i64; // +overflow 1e30 -> INT64_MAX
+    let e2: i64 = novf as i64; // -overflow -1e30 -> INT64_MIN
+    let e3: i64 = nan as i64; // NaN -> 0
+    let e4: i64 = pinf as i64; // +inf -> INT64_MAX
+    let e5: i64 = ninf as i64; // -inf -> INT64_MIN
+    let b0: i64 = (n as f64) as i64; // int -> f64 -> i64 (round-trip)
+    let b1: i64 = (n as f32) as i64; // int -> f32 (distinct rounding) -> i64
+    let b2: i64 = (inr < povf) as f64 as i64; // bool -> f64 (1.0) -> i64
+    let k: i64 = 1000003;
+    // Fixed-order wrapping polynomial fold, starting acc = e0.
+    let a1: i64 = e0 * k + e1;
+    let a2: i64 = a1 * k + e2;
+    let a3: i64 = a2 * k + e3;
+    let a4: i64 = a3 * k + e4;
+    let a5: i64 = a4 * k + e5;
+    let a6: i64 = a5 * k + b0;
+    let a7: i64 = a6 * k + b1;
+    a7 * k + b2
+}
 "#;
 
 type DotFn = unsafe extern "C" fn(i64, i64, i64) -> i64;
@@ -196,6 +249,9 @@ type MatmulFn = unsafe extern "C" fn(i64, i64, i64, i64, i64) -> i64;
 type GemmFn = unsafe extern "C" fn(i64, i64, i64, i64, i64, i64) -> i64;
 /// The scalar-f64 chain: four f64 args in, one f64 result out (System V xmm ABI).
 type ScalarF64Fn = unsafe extern "C" fn(f64, f64, f64, f64) -> f64;
+/// The scalar int↔float cast conv kernel: six f64 edge operands (xmm0-5) + one
+/// i64 (rdi) in, one folded i64 out.
+type ScalarCastFn = unsafe extern "C" fn(f64, f64, f64, f64, f64, f64, i64) -> i64;
 /// Track #16: a 3-arg → i64 scalar kernel (the Q16.16 arithmetic chain).
 type Arith3Fn = unsafe extern "C" fn(i64, i64, i64) -> i64;
 /// Track #16: a 4-arg → i64 scalar kernel (the struct-by-handle round-trip).
@@ -813,6 +869,18 @@ fn same_process_run_to_run_determinism() {
         let (a, b, c, d) = SCALAR_F64_INPUTS;
         stable("scalar-float-f64", &|| {
             canonical_hash(unsafe { f(a, b, c, d) }.to_bits() as i64)
+        });
+    }
+
+    // Scalar int↔float `as`-cast conversion (scalar-cast-conv).
+    {
+        let f: Symbol<ScalarCastFn> = unsafe {
+            lib.get(b"scalar_cast_conv")
+                .expect("scalar_cast_conv symbol")
+        };
+        let (inr, povf, novf, nan, pinf, ninf, n) = SCALAR_CAST_INPUTS;
+        stable("scalar-cast-conv", &|| {
+            canonical_hash(unsafe { f(inr, povf, novf, nan, pinf, ninf, n) })
         });
     }
 
@@ -1502,6 +1570,124 @@ fn scalar_float_f64_reproducibility_gate() {
             "{id}: no reference hash for substrate '{substrate}'. Computed {computed} \
              (result_bits={:#018x}); bless with MIND_BENCH_BLESS=1 if this host is canonical.",
             result.to_bits()
+        ),
+    }
+}
+
+// --- scalar-cast-conv workload (scalar int↔float `as`-cast conversion) ------
+// The ONLY cross-substrate canary that exercises the scalar conversion
+// lowering. It closes the coverage hole that let a real float→int wedge break
+// ship (fixed in the saturating-cast commits): NO fixture ran a scalar cast, so
+// the byte-identity gate never tested the conversion. A bare `arith.fptosi` is
+// target-defined out of range — x86 `cvttsd2si` yields INT64_MIN for every
+// out-of-range/NaN input while ARM `fcvtzs` SATURATES — so `1e30 as i64` /
+// `inf as i64` / `nan as i64` produced DIFFERENT bytes on avx2 vs neon until the
+// fully-IEEE-defined saturating clamp (`emit_saturating_fp_to_i64`).
+//
+// The kernel `scalar_cast_conv(inr,povf,novf,nan,pinf,ninf,n)` takes the edge
+// operands as RUNTIME f64 arguments (never in-kernel literals), so mlir-opt
+// cannot constant-fold the conversion away — the saturating path provably runs.
+// It exercises int→f64 + int→f32 (sitofp), bool→f64 (i1→uitofp → 1.0), and the
+// float→i64 SATURATING edges (in-range 9.7→9, +ovf 1e30→INT64_MAX, −ovf
+// −1e30→INT64_MIN, NaN→0, +inf→INT64_MAX, −inf→INT64_MIN), folding all nine cast
+// results in fixed source order into one i64 via a wrapping polynomial. Because
+// the saturating result is built only from IEEE-defined ops, avx2 == neon BY
+// CONSTRUCTION (RFC 0015 §3.1).
+
+/// Deterministic scalar-cast inputs (manifest `[input]`): the six f64 edge
+/// operands + the int→float source `n`. `n = 16777219` (= 2^24 + 3) is NOT
+/// exactly representable in f32 (ulp = 2 above 2^24), so `n as f32` rounds to
+/// 16777220 while `n as f64` stays 16777219 — the fold therefore distinguishes
+/// the int→f32 and int→f64 legs, not merely a round-trip.
+const SCALAR_CAST_INPUTS: (f64, f64, f64, f64, f64, f64, i64) = (
+    9.7,
+    1e30,
+    -1e30,
+    f64::NAN,
+    f64::INFINITY,
+    f64::NEG_INFINITY,
+    16_777_219,
+);
+
+/// Independent in-process oracle: the identical cast+fold in Rust. Rust `as`
+/// float→int is saturating since 1.45 (NaN→0, ±ovf→MIN/MAX, truncate toward
+/// zero in range) — the exact semantics `emit_saturating_fp_to_i64` mirrors —
+/// so this is bit-exact to the compiled kernel within a run AND, being built
+/// only from IEEE-defined ops, identical on every substrate. `bool as f64` is
+/// spelled `as i64 as f64` here (Rust forbids the direct `bool as f64` the MIND
+/// frontend accepts); the value (1.0) and the final i64 are identical. The fold
+/// uses `wrapping_*` to match the two's-complement `arith.muli`/`arith.addi`.
+fn ref_scalar_cast_conv(
+    inr: f64,
+    povf: f64,
+    novf: f64,
+    nan: f64,
+    pinf: f64,
+    ninf: f64,
+    n: i64,
+) -> i64 {
+    let e0 = inr as i64;
+    let e1 = povf as i64;
+    let e2 = novf as i64;
+    let e3 = nan as i64;
+    let e4 = pinf as i64;
+    let e5 = ninf as i64;
+    let b0 = (n as f64) as i64;
+    let b1 = (n as f32) as i64;
+    let b2 = (inr < povf) as i64 as f64 as i64;
+    let k: i64 = 1_000_003;
+    let mut acc = e0;
+    for t in [e1, e2, e3, e4, e5, b0, b1, b2] {
+        acc = acc.wrapping_mul(k).wrapping_add(t);
+    }
+    acc
+}
+
+#[test]
+fn scalar_cast_conv_reproducibility_gate() {
+    let id = "scalar-cast-conv";
+
+    let Some(so) = build_dot_so() else {
+        return; // toolchain shadowed — self-skip
+    };
+    let lib = unsafe { Library::new(so).expect("dlopen workload .so") };
+    let conv: Symbol<ScalarCastFn> = unsafe {
+        lib.get(b"scalar_cast_conv")
+            .expect("scalar_cast_conv symbol")
+    };
+
+    let (inr, povf, novf, nan, pinf, ninf, n) = SCALAR_CAST_INPUTS;
+    let result = unsafe { conv(inr, povf, novf, nan, pinf, ninf, n) };
+
+    // 1. Within-run exactness vs the saturating oracle: the compiled kernel must
+    //    reproduce the identical i64 the Rust saturating-cast oracle computes.
+    //    This also proves the saturating EDGES fired (INT64_MAX/MIN/0), not a
+    //    trivial in-range-only path — the oracle bakes in every edge value.
+    let oracle = ref_scalar_cast_conv(inr, povf, novf, nan, pinf, ninf, n);
+    assert_eq!(
+        result, oracle,
+        "{id}: scalar-cast kernel diverged from the saturating IEEE oracle within a \
+         single run (kernel={result}, oracle={oracle})"
+    );
+
+    // 2. Canonical hash of the folded i64, pinned to the committed per-substrate
+    //    reference. avx2 == neon by IEEE construction (RFC 0015 §3.1).
+    let computed = canonical_hash(result);
+    let substrate = host_substrate();
+    if std::env::var("MIND_BENCH_BLESS").is_ok() {
+        println!("BLESS {id} {substrate} {computed}");
+        return;
+    }
+    match reference_hash(id, substrate) {
+        Some(expected) => assert_eq!(
+            computed, expected,
+            "{id} [{substrate}]: output hash drifted from the committed reference.\n\
+             computed={computed}\n expected={expected}\n result={result}\n\
+             Re-bless with MIND_BENCH_BLESS=1 only on an intentional lowering change (RFC 0020 §13).",
+        ),
+        None => panic!(
+            "{id}: no reference hash for substrate '{substrate}'. Computed {computed} \
+             (result={result}); bless with MIND_BENCH_BLESS=1 if this host is canonical."
         ),
     }
 }
