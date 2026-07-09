@@ -34,6 +34,100 @@ use cache::{
 };
 
 // ---------------------------------------------------------------------------
+// Cache-key construction (issue #96: compiler + toolchain binary identity)
+// ---------------------------------------------------------------------------
+
+/// Emit-kind discriminator entries folded into the module cache key. A
+/// `cdylib` shared object, a `binary` PIE, and a relocatable `object` are
+/// distinct artifacts from identical source/target/optimize inputs and must
+/// never share a slot. `cdylib` contributes NO entry (historical value);
+/// `binary` / `object` get a labelled `emit=` entry.
+fn emit_discriminator(emit: EmitKind) -> Vec<String> {
+    match emit {
+        EmitKind::Cdylib => Vec::new(),
+        other => vec![format!("emit={}", other.as_str())],
+    }
+}
+
+/// Toolchain-identity dep entries (clang / mlir-opt / mlir-translate). Each is
+/// `toolchain=<name>|<resolved-path>|<size>|<mtime-ns>|<--version banner>` so a
+/// toolchain swap — even one reporting an identical `--version` — invalidates
+/// the cache (scan-finding S4, sibling of the runtime-obj cache in
+/// `mlir_build::clang_identity_string`). Computed once per process. When the
+/// `mlir-build` feature is off (no real backend) this is empty.
+pub fn toolchain_dep_entries() -> Vec<String> {
+    #[cfg(feature = "mlir-build")]
+    {
+        use std::sync::OnceLock;
+        static ENTRIES: OnceLock<Vec<String>> = OnceLock::new();
+        return ENTRIES
+            .get_or_init(|| match crate::eval::mlir_build::resolve_tools() {
+                Ok(tools) => vec![
+                    format!(
+                        "toolchain=clang|{}",
+                        crate::eval::mlir_build::tool_identity_string(&tools.clang)
+                    ),
+                    format!(
+                        "toolchain=mlir-opt|{}",
+                        crate::eval::mlir_build::tool_identity_string(&tools.mlir_opt)
+                    ),
+                    format!(
+                        "toolchain=mlir-translate|{}",
+                        crate::eval::mlir_build::tool_identity_string(&tools.mlir_translate)
+                    ),
+                ],
+                // Tools unresolvable => the full compile would fail anyway and
+                // no cache is written, so an empty toolchain set is safe here.
+                Err(_) => Vec::new(),
+            })
+            .clone();
+    }
+    #[cfg(not(feature = "mlir-build"))]
+    {
+        Vec::new()
+    }
+}
+
+/// Full dep-hash entry set for a module cache key: emit-kind discriminator plus
+/// toolchain identity. `module_cache_key` sorts these, so order is irrelevant.
+pub fn cache_dep_entries(emit: EmitKind) -> Vec<String> {
+    let mut deps = emit_discriminator(emit);
+    deps.extend(toolchain_dep_entries());
+    deps
+}
+
+/// Compute the full module cache key for a compile of `source_bytes` produced
+/// by the `mindc` binary at `mindc_exe`, or `None` (fail-closed) when that
+/// binary's identity cannot be probed.
+///
+/// This is the single source of truth for the key shared by the build path
+/// (which passes `std::env::current_exe()`) and the integration tests (which
+/// pass `CARGO_BIN_EXE_mindc`): both MUST derive byte-identical keys or a
+/// subprocess-populated cache would spuriously miss on an in-process probe
+/// (issue #96 lockstep hazard). A `None` return MUST be treated as a cache MISS
+/// — the cache is neither read nor written under any sentinel key.
+pub fn compile_cache_key(
+    source_bytes: &[u8],
+    target: BuildTarget,
+    optimize: OptimizeLevel,
+    emit: EmitKind,
+    mindc_exe: &Path,
+    edition: u32,
+) -> Option<String> {
+    let identity = cache::compiler_identity_string(mindc_exe)?;
+    let compiler_version = format!("{}+{}", env!("CARGO_PKG_VERSION"), identity);
+    let deps = cache_dep_entries(emit);
+    Some(module_cache_key(
+        source_bytes,
+        target,
+        optimize,
+        &deps,
+        &compiler_version,
+        edition,
+    ))
+}
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
@@ -241,47 +335,57 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
     // to the output path and skip the entire compile + link pipeline.
     // -------------------------------------------------------------------------
 
-    let compiler_version = env!("CARGO_PKG_VERSION");
     let edition: u32 = 2024;
 
     let source_bytes = fs::read(&entry_path).map_err(|e| {
         BuildError::Failed(format!("cannot read source {}: {e}", entry_path.display()))
     })?;
 
-    // The emit kind is part of the artifact identity: a `cdylib` shared object,
-    // a `binary` PIE executable, and a relocatable `object` are three distinct
-    // artifacts produced from the same source/target/optimize inputs, and must
-    // NEVER share a cache slot. Before this discriminator, a prior `cdylib`
-    // build seeded the cache under a key that a later `--emit=binary` build then
-    // hit, copying the shared object out as the "binary" (Type DYN, entry 0x0,
-    // no PT_INTERP → segfault on run). The discriminator is threaded through the
-    // existing `dep_hashes` preimage slot so no cache-key signature changes.
+    // Cache key = source + build flags + emit-kind discriminator + compiler
+    // BINARY IDENTITY + toolchain identity (issue #96 / scan-finding S4).
     //
-    // `cdylib` intentionally contributes NO extra entry, keeping its cache key
-    // byte-identical to the historical value — that is what the Phase G warm-cache
-    // keystone probe (which recomputes the cdylib key with empty dep-hashes)
-    // continues to match. `binary` / `object` get distinct entries, so they no
-    // longer collide with `cdylib` or with each other.
-    let emit_discriminator: Vec<String> = match eff_emit {
-        EmitKind::Cdylib => Vec::new(),
-        other => vec![format!("emit={}", other.as_str())],
-    };
-    let cache_key = module_cache_key(
-        &source_bytes,
-        eff_target,
-        eff_optimize,
-        &emit_discriminator, // artifact-kind discriminator (Phase D/E deps extend this)
-        compiler_version,
-        edition,
-    );
+    // The compiler identity is derived from THIS process's own binary
+    // (`current_exe`): resolved path + size + mtime. A dev rebuild of `mindc`
+    // at the same `CARGO_PKG_VERSION` bumps the mtime, so the key changes and a
+    // stale cached `.so` is never served. If the identity cannot be probed we
+    // FAIL CLOSED — `cache_key` is `None`, the cache is neither read nor
+    // written, and the build recompiles rather than key on a stable sentinel
+    // (which would reintroduce exactly the staleness this fixes).
+    //
+    // The emit kind is part of the artifact identity: a `cdylib`, a `binary`
+    // PIE, and a relocatable `object` are three distinct artifacts from the
+    // same source/target/optimize inputs and must NEVER share a slot (a
+    // `cdylib` copied out as a "binary" is Type DYN, entry 0x0, no PT_INTERP →
+    // segfault). `cdylib` contributes NO emit entry; `binary` / `object` get a
+    // distinct `emit=` entry.
+    //
+    // Discriminator + compiler/toolchain identity are assembled by
+    // `compile_cache_key`, the single source of truth the Phase G warm-cache
+    // keystone probe (test 5) also calls against `CARGO_BIN_EXE_mindc` — so a
+    // subprocess-populated cache and an in-process probe derive byte-identical
+    // keys.
+    let current_exe = std::env::current_exe().ok();
+    let compiler_identity = current_exe
+        .as_deref()
+        .and_then(cache::compiler_identity_string);
+    let cache_key: Option<String> = current_exe.as_deref().and_then(|exe| {
+        compile_cache_key(
+            &source_bytes,
+            eff_target,
+            eff_optimize,
+            eff_emit,
+            exe,
+            edition,
+        )
+    });
 
     let c_root = cache_root(&project_root, eff_target, eff_optimize);
 
-    // Probe the cache (skipped when --no-cache is set).
-    let decision = if opts.no_cache {
-        BuildDecision::CacheMiss
-    } else {
-        match probe(&c_root, &cache_key) {
+    // Probe the cache (skipped when --no-cache is set, or when the compiler's
+    // own binary identity could not be probed — fail-closed: recompile rather
+    // than risk serving a stale hit).
+    let decision = match (opts.no_cache, cache_key.as_deref()) {
+        (false, Some(cache_key)) => match probe(&c_root, cache_key) {
             CacheProbe::Hit {
                 ref key,
                 ref object_path,
@@ -298,13 +402,7 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
                     BuildDecision::CacheMiss
                 } else {
                     // Update manifest.
-                    update_manifest(
-                        &c_root,
-                        &project_root,
-                        &entry_path,
-                        &cache_key,
-                        opts.verbose,
-                    );
+                    update_manifest(&c_root, &project_root, &entry_path, cache_key, opts.verbose);
 
                     let final_path = match eff_emit {
                         EmitKind::Cdylib => ensure_cdylib_extension(artifact_path),
@@ -327,7 +425,8 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
                 }
             }
             CacheProbe::Miss { .. } => BuildDecision::CacheMiss,
-        }
+        },
+        _ => BuildDecision::CacheMiss,
     };
 
     let _ = decision; // CacheMiss — fall through to full compile
@@ -419,27 +518,27 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
     // -------------------------------------------------------------------------
     // Phase F — write compiled artifact to cache (always, even with --no-cache)
     // -------------------------------------------------------------------------
-    if final_path.exists() {
-        if let Ok(artifact_bytes) = fs::read(&final_path) {
-            let mut dep_hashes_sorted: Vec<String> = vec![];
-            dep_hashes_sorted.sort();
-            let meta = ObjectMeta {
-                source_path: entry_rel.clone(),
-                cache_key: cache_key.clone(),
-                target: eff_target.as_str().to_string(),
-                optimize: eff_optimize.as_str().to_string(),
-                compiler_version: compiler_version.to_string(),
-                dep_hashes: dep_hashes_sorted,
-            };
-            // Best-effort: cache write failure does not fail the build.
-            let _ = write_object(&c_root, &cache_key, &artifact_bytes, &meta);
-            update_manifest(
-                &c_root,
-                &project_root,
-                &entry_path,
-                &cache_key,
-                opts.verbose,
-            );
+    if let Some(cache_key) = cache_key.as_deref() {
+        if final_path.exists() {
+            if let Ok(artifact_bytes) = fs::read(&final_path) {
+                // `cache_key` is `Some` only when the compiler identity probed
+                // successfully, so the fingerprint below is always populated.
+                let identity = compiler_identity.clone().unwrap_or_default();
+                let mut dep_hashes_sorted = cache_dep_entries(eff_emit);
+                dep_hashes_sorted.sort();
+                let meta = ObjectMeta {
+                    source_path: entry_rel.clone(),
+                    cache_key: cache_key.to_string(),
+                    target: eff_target.as_str().to_string(),
+                    optimize: eff_optimize.as_str().to_string(),
+                    compiler_version: format!("{}+{}", env!("CARGO_PKG_VERSION"), identity),
+                    compiler_fingerprint: identity,
+                    dep_hashes: dep_hashes_sorted,
+                };
+                // Best-effort: cache write failure does not fail the build.
+                let _ = write_object(&c_root, cache_key, &artifact_bytes, &meta);
+                update_manifest(&c_root, &project_root, &entry_path, cache_key, opts.verbose);
+            }
         }
     }
 
