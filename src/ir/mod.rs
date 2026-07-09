@@ -20,7 +20,7 @@ use std::fmt;
 
 pub mod compact;
 mod evidence;
-mod fp_mode;
+pub(crate) mod fp_mode;
 mod print;
 mod verify;
 
