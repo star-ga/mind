@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Scalar int↔float `as`-cast correctness and cross-substrate determinism.**
+  Float→integer conversions now **saturate** and are fully defined: in-range
+  values truncate toward zero, `±overflow` yields the target `MIN`/`MAX`, and
+  `NaN` yields `0` — built from IEEE-defined ops (`maxnumf`/`minnumf`/`fptosi`/
+  `select`) so a `f64 as i64` is **byte-identical on x86 (AVX2) and ARM (NEON)**.
+  A bare hardware conversion is target-defined (x86 `cvttsd2si` returns the
+  `INT64_MIN` indefinite for all out-of-range/NaN; ARM `fcvtzs` saturates), so it
+  diverged across substrates and is no longer emitted. `bool as f64` now yields
+  `1.0`/`0.0` (was `-1.0`, from a signed 1-bit conversion). The tree-walking
+  evaluator mirrors the compiled lowering for every cast, so the interpreter and
+  the runnable artifact agree bit-for-bit.
+- **Strict-FP classifier: float tensor contractions no longer falsely attest
+  strict.** `MatMul` / `Dot` / `Conv2d` / `Conv2dGrad{Input,Filter}` over float
+  operands lower to reassociating `linalg` contractions (order-sensitive, not
+  cross-substrate byte-reproducible), so they now taint `fp_mode` to `Relaxed` —
+  matching the existing treatment of `Sum`/`Mean` — and can no longer pass
+  `mindc verify --require-strict-fp`. Integer / Q16.16 contractions stay strict.
+- **Artifact cache no longer serves stale objects after a compiler change.** The
+  module cache key now folds the `mindc` binary identity (canonical path, size,
+  mtime, version) and the `clang` / `mlir-opt` / `mlir-translate` toolchain
+  identity, so a recompiled compiler or an upgraded toolchain invalidates prior
+  cache entries (was keyed on the crate version string only, which did not change
+  across dev rebuilds — a source of stale `.so` reuse). Cache format bumped to v2.
+
+### Added
+- **Cross-substrate byte-identity fixture for scalar `as` casts**
+  (`scalar-cast-conv`) — exercises int→f64/f32, bool→f64, and the saturating
+  float→int edge cases (`±overflow`, `NaN`, `±inf`, `−0.0`) combined into one
+  fixed-order result; `avx2 == neon` confirmed on real ARM64 hardware. Closes the
+  coverage gap that previously allowed a float→int cross-substrate divergence to
+  ship undetected (no fixture exercised a scalar cast).
+
 ## [0.10.1] - 2026-07-05
 
 ### Proven
