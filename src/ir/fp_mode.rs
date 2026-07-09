@@ -35,6 +35,17 @@
 //!    not statically provable in the scanned body fails closed to taint (never a
 //!    false strict). The source element type is recovered by a minimal forward
 //!    `ValueId -> DType` pass over literals and dtype-preserving ops.
+//! 4. **A tensor-level float CONTRACTION** — `Instr::MatMul` / `Instr::Dot` /
+//!    `Instr::Conv2d` / `Instr::Conv2dGradInput` / `Instr::Conv2dGradFilter` over
+//!    an IEEE-float tensor. A contraction is a *sum of products* — the exact same
+//!    reassociating float reduction as `sum`/`mean`, just expressed as a
+//!    contraction — and lowers to `linalg.matmul` / `linalg.conv_*`
+//!    (`src/eval/mlir_export.rs`), which the backend tiles and reassociates, so an
+//!    IEEE-float matmul/dot/conv is NOT byte-identical across substrates. By the
+//!    identical logic that taints `Sum`/`Mean` it must taint here. Integer / Q16
+//!    contractions are associative + commutative and stay strict; a contraction
+//!    whose operand dtype is not statically provable fails closed to taint (never
+//!    a false strict).
 //!
 //! Why this is trustworthy without any wire-format change: `trace_hash =
 //! mini_sha256(emit_mic3(ir))` already covers the entire canonical body, taint
@@ -203,6 +214,30 @@ impl FpScan {
             }
         }
 
+        // TAINT: a tensor-level float CONTRACTION. `dot` / `matmul` / `conv*` are
+        // each a *sum of products* — the SAME reassociating float reduction as
+        // `sum`/`mean`, just expressed as a contraction — and lower to
+        // `linalg.matmul` / `linalg.conv_*` (src/eval/mlir_export.rs), which the
+        // backend tiles and reassociates. So an IEEE-float matmul/dot/conv is NOT
+        // bit-reproducible across substrates and must taint, by the identical logic
+        // that taints `Sum`/`Mean`. Integer / Q16 contractions are associative +
+        // commutative (MIND-CONSTITUTION §III) and stay strict; a contraction whose
+        // operand dtype is not statically provable fails closed to taint (never a
+        // false strict). See `contraction_reassoc`. These are core IR variants (not
+        // `std-surface`-gated), so this check compiles everywhere.
+        let contraction_taint = match instr {
+            Instr::Dot { a, b, .. } | Instr::MatMul { a, b, .. } => {
+                self.contraction_reassoc(&[*a, *b])
+            }
+            Instr::Conv2d { input, filter, .. } => self.contraction_reassoc(&[*input, *filter]),
+            Instr::Conv2dGradInput { dy, filter, .. } => self.contraction_reassoc(&[*dy, *filter]),
+            Instr::Conv2dGradFilter { input, dy, .. } => self.contraction_reassoc(&[*input, *dy]),
+            _ => false,
+        };
+        if contraction_taint {
+            return true;
+        }
+
         // SECONDARY taint representation: the `Instr::VecFma` / f32
         // `Instr::VecReduceAdd` variants themselves, for any path that carries
         // them directly in the IR (mic@3 round-trip of a hand-built module, a
@@ -263,6 +298,32 @@ impl FpScan {
             Some(DType::F32) | Some(DType::F64) | Some(DType::F16) | Some(DType::BF16) => true,
             None => true,
         }
+    }
+
+    /// Classify a tensor CONTRACTION (`dot` / `matmul` / `conv*`) by the element
+    /// type of its operands — the same fail-closed, dtype-conditional rule as
+    /// [`Self::reduction_reassoc`], generalized over the (2+) operands a
+    /// contraction reduces over (a matmul's operands share their element type):
+    /// - any operand provably IEEE float (f32/f64/f16/bf16) → reassociates → taint;
+    /// - otherwise, an operand provably integer / Q16 → associative + commutative
+    ///   → NOT reassociable → strict;
+    /// - no operand statically resolvable in the scanned body → fail closed to
+    ///   taint (cannot PROVE the contraction is a non-reassociable integer, so
+    ///   never claim strict for it — soundness over precision).
+    fn contraction_reassoc(&self, operands: &[ValueId]) -> bool {
+        let mut proven_integer = false;
+        for v in operands {
+            match self.dtypes.get(v) {
+                Some(DType::F32) | Some(DType::F64) | Some(DType::F16) | Some(DType::BF16) => {
+                    return true;
+                }
+                Some(DType::I32) | Some(DType::I64) | Some(DType::Q16) => {
+                    proven_integer = true;
+                }
+                None => {}
+            }
+        }
+        !proven_integer
     }
 
     /// Record the element type produced by `instr`, when it can be recovered from
@@ -569,6 +630,121 @@ mod tests {
             sum_over(red, reshaped),
         ]);
         assert_eq!(fp_contract_mode(&m), FpMode::Strict);
+    }
+
+    // --- Tensor-level float CONTRACTION soundness (matmul / dot / conv) ---
+
+    #[test]
+    fn reassociable_f32_tensor_contraction_is_relaxed() {
+        // SOUNDNESS FIX: a tensor CONTRACTION (`matmul` / `dot` / `conv*`) is a
+        // sum of products — the same reassociating float reduction as `sum`/`mean`
+        // — and lowers to `linalg.matmul` / `linalg.conv_*`, which the backend
+        // tiles and reassociates. Over an f32 tensor the result is NOT byte-
+        // identical across substrates, so it must be Relaxed, NOT Strict.
+        // (Pre-fix a float matmul/dot/conv returned `Strict` — a false attestation
+        // of strict-FP determinism; these are RED before the fix.)
+        let a = ValueId(0);
+        let b = ValueId(1);
+        let out = ValueId(2);
+
+        // f32 matmul.
+        let m_matmul = module_with(vec![
+            tensor(a, DType::F32),
+            tensor(b, DType::F32),
+            Instr::MatMul { dst: out, a, b },
+        ]);
+        assert_eq!(
+            fp_contract_mode(&m_matmul),
+            FpMode::Relaxed,
+            "f32 matmul reassociates → must be Relaxed"
+        );
+
+        // f32 dot.
+        let m_dot = module_with(vec![
+            tensor(a, DType::F32),
+            tensor(b, DType::F32),
+            Instr::Dot { dst: out, a, b },
+        ]);
+        assert_eq!(
+            fp_contract_mode(&m_dot),
+            FpMode::Relaxed,
+            "f32 dot reassociates → must be Relaxed"
+        );
+
+        // f32 conv2d (operands: input, filter).
+        let m_conv = module_with(vec![
+            tensor(a, DType::F32),
+            tensor(b, DType::F32),
+            Instr::Conv2d {
+                dst: out,
+                input: a,
+                filter: b,
+                stride_h: 1,
+                stride_w: 1,
+                padding: crate::types::ConvPadding::Valid,
+            },
+        ]);
+        assert_eq!(
+            fp_contract_mode(&m_conv),
+            FpMode::Relaxed,
+            "f32 conv2d reassociates → must be Relaxed"
+        );
+
+        // f64 matmul reassociates too.
+        let m_f64 = module_with(vec![
+            tensor(a, DType::F64),
+            tensor(b, DType::F64),
+            Instr::MatMul { dst: out, a, b },
+        ]);
+        assert_eq!(fp_contract_mode(&m_f64), FpMode::Relaxed);
+
+        // Fail-closed: a contraction whose operand dtypes are NOT statically
+        // resolvable (opaque params) cannot be PROVEN integer/associative, so it
+        // must never be labelled strict.
+        let m_opaque = module_with(vec![Instr::MatMul {
+            dst: ValueId(10),
+            a: ValueId(8),
+            b: ValueId(9),
+        }]);
+        assert_eq!(
+            fp_contract_mode(&m_opaque),
+            FpMode::Relaxed,
+            "unresolved-dtype contraction must fail closed to Relaxed"
+        );
+    }
+
+    #[test]
+    fn integer_tensor_contraction_stays_strict() {
+        // DO NOT over-taint: integer add is associative + commutative, so an
+        // integer / Q16 matmul / dot is byte-identical across substrates and MUST
+        // stay strict (MIND-CONSTITUTION §III — the int8/int16/Q16 GEMM wedge).
+        let a = ValueId(0);
+        let b = ValueId(1);
+        let out = ValueId(2);
+        for dt in [DType::I32, DType::I64, DType::Q16] {
+            let m_matmul = module_with(vec![
+                tensor(a, dt.clone()),
+                tensor(b, dt.clone()),
+                Instr::MatMul { dst: out, a, b },
+            ]);
+            assert_eq!(
+                fp_contract_mode(&m_matmul),
+                FpMode::Strict,
+                "{} matmul is associative → must stay Strict",
+                dt.as_str()
+            );
+            let m_dot = module_with(vec![
+                tensor(a, dt.clone()),
+                tensor(b, dt.clone()),
+                Instr::Dot { dst: out, a, b },
+            ]);
+            assert_eq!(
+                fp_contract_mode(&m_dot),
+                FpMode::Strict,
+                "{} dot is associative → must stay Strict",
+                dt.as_str()
+            );
+        }
     }
 
     #[test]

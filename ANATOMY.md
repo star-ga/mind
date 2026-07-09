@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3052 | **Est. tokens:** ~7,351,940
-**Generated:** 2026-07-09 05:31 UTC
+**Files:** 3052 | **Est. tokens:** ~7,353,867
+**Generated:** 2026-07-09 06:16 UTC
 
 ## Token Budget Guide
 
@@ -388,7 +388,7 @@
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~19,784 |
-| `src/ir/` | 5 | ~35,145 |
+| `src/ir/` | 5 | ~37,072 |
 | `src/ir/compact/` | 3 | ~15,235 |
 | `src/ir/compact/v2/` | 8 | ~37,885 |
 | `src/ir/compact/v3/` | 6 | ~67,632 |
@@ -3840,7 +3840,7 @@
 ### `src/ir/`
 
 - `evidence.rs` (~1913 tok, huge) — Copyright 2025 STARGA Inc.
-- `fp_mode.rs` (~6701 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
+- `fp_mode.rs` (~8628 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
 - `mod.rs` (~12293 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~10698 tok, huge) — Copyright 2025 STARGA Inc.
