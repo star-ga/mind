@@ -24,8 +24,8 @@
 //!
 //! ```text
 //! SHA256(
-//!   "mindc-cache-v1\n"
-//!   "compiler=<version>\n"
+//!   "mindc-cache-v2\n"
+//!   "compiler=<version>+<binary-identity>\n"
 //!   "edition=<year>\n"
 //!   "target=<target-debug>\n"
 //!   "optimize=<level-debug>\n"
@@ -36,12 +36,22 @@
 //! )
 //! ```
 //!
-//! The `mindc-cache-v1\n` prefix is the **cache format version**. Bumping it
+//! The `mindc-cache-v2\n` prefix is the **cache format version**. Bumping it
 //! globally invalidates all on-disk cache entries (intentional for breaking
-//! changes to lowering or codegen output format).
+//! changes to lowering or codegen output format). It was bumped v1->v2 when the
+//! compiler key gained the binary-identity fingerprint (issue #96): a version
+//! string alone (`CARGO_PKG_VERSION`) does not change between dev rebuilds of
+//! `mindc` at the same version, so a cache keyed only on it silently served a
+//! stale `.so` after a compiler change.
 //!
-//! `compiler=<version>` invalidates per mindc release (different mindc may
-//! emit different IR / object code).
+//! `compiler=<version>+<binary-identity>` invalidates per mindc release AND per
+//! rebuilt `mindc` binary: the fingerprint is the resolved binary path, file
+//! size, and mtime (nanos) of the running compiler -- see
+//! [`compiler_identity_string`]. A rebuild bumps the mtime, so the key changes
+//! even when `CARGO_PKG_VERSION` is unchanged. The toolchain binaries
+//! (`clang` / `mlir-opt` / `mlir-translate`) contribute their own identity via
+//! labelled `toolchain=...` dep-hash entries, so a toolchain swap also
+//! invalidates the cache.
 //!
 //! ## Concurrency
 //!
@@ -54,6 +64,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -87,7 +98,7 @@ pub fn module_cache_key(
     let mut data: Vec<u8> = Vec::with_capacity(256 + source_bytes.len());
 
     // Format version prefix — bump this string to invalidate all caches.
-    data.extend_from_slice(b"mindc-cache-v1\n");
+    data.extend_from_slice(b"mindc-cache-v2\n");
 
     // Compiler version — different mindc releases may produce different objects.
     data.extend_from_slice(format!("compiler={}\n", compiler_version).as_bytes());
@@ -115,6 +126,67 @@ pub fn module_cache_key(
     data.extend_from_slice(source_bytes);
 
     sha256_hex(&data)
+}
+
+// ---------------------------------------------------------------------------
+// Compiler binary identity (issue #96)
+// ---------------------------------------------------------------------------
+
+/// Return a stable *binary-identity* string for the `mindc` compiler binary at
+/// `exe`: canonicalised path, file size, mtime (nanos since epoch) and
+/// `CARGO_PKG_VERSION`, joined by `|`. Folded into the module cache key so a
+/// different `mindc` binary — even one reporting an identical
+/// `CARGO_PKG_VERSION` (a dev rebuild at the same version, an in-place
+/// reinstall, or a copy to a new path) — yields a different key and is never
+/// reused from a stale cache. The version string alone is NOT a content hash of
+/// the compiler, so the path+size+mtime triple guards the realistic
+/// same-version-rebuild case (issue #96); a binary deliberately forged to
+/// identical path+size+mtime yet different codegen is an out-of-scope attack,
+/// not a determinism failure mode.
+///
+/// **Fails closed:** returns `None` if `exe` cannot be canonicalised or its
+/// metadata (size / mtime) cannot be read. Callers MUST treat `None` as a cache
+/// MISS and MUST NOT substitute a stable sentinel — a sentinel would
+/// reintroduce exactly the staleness this fingerprint exists to prevent.
+///
+/// The identity of the *running* compiler (`std::env::current_exe()`) is
+/// computed once and memoised; any other `exe` (e.g. a test probing the
+/// identity of a subprocess binary) is computed fresh.
+pub fn compiler_identity_string(exe: &Path) -> Option<String> {
+    static SELF_IDENTITY: OnceLock<Option<String>> = OnceLock::new();
+    let is_self = std::env::current_exe()
+        .ok()
+        .map(|c| c == exe)
+        .unwrap_or(false);
+    if is_self {
+        return SELF_IDENTITY
+            .get_or_init(|| compute_compiler_identity(exe))
+            .clone();
+    }
+    compute_compiler_identity(exe)
+}
+
+/// Uncached identity computation shared by [`compiler_identity_string`]. The
+/// `~us` cost is a `canonicalize` + `stat`; deliberately NOT a full hash of the
+/// multi-MB binary — mtime is the realistic staleness signal, not a forged
+/// same-mtime rebuild.
+fn compute_compiler_identity(exe: &Path) -> Option<String> {
+    let resolved = std::fs::canonicalize(exe).ok()?;
+    let meta = std::fs::metadata(&resolved).ok()?;
+    let size = meta.len();
+    let mtime_ns = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    Some(format!(
+        "{}|{}|{}|{}",
+        resolved.display(),
+        size,
+        mtime_ns,
+        env!("CARGO_PKG_VERSION")
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -165,8 +237,13 @@ pub struct ObjectMeta {
     pub target: String,
     /// Optimisation level.
     pub optimize: String,
-    /// Compiler version.
+    /// Combined compiler identity: `"<CARGO_PKG_VERSION>+<binary-identity>"`.
     pub compiler_version: String,
+    /// The compiler binary-identity fingerprint alone (path|size|mtime-ns|
+    /// version) — the `<binary-identity>` half of `compiler_version`. Recorded
+    /// so `--verbose` / `mindc clean --cache` can explain a fingerprint-driven
+    /// invalidation (issue #96). See [`compiler_identity_string`].
+    pub compiler_fingerprint: String,
     /// Dep hashes that were mixed into the key (sorted).
     pub dep_hashes: Vec<String>,
 }
@@ -541,6 +618,59 @@ mod tests {
     }
 
     #[test]
+    fn cache_key_differs_on_compiler_fingerprint_change() {
+        // Same semver, but a different binary identity (mtime component) — the
+        // exact issue #96 case a bare `CARGO_PKG_VERSION` key missed.
+        let k1 = module_cache_key(
+            b"fn main() {}",
+            BuildTarget::Cpu,
+            OptimizeLevel::Debug,
+            &[],
+            "0.6.8+/opt/mindc|5600000|111111111|0.6.8",
+            2024,
+        );
+        let k2 = module_cache_key(
+            b"fn main() {}",
+            BuildTarget::Cpu,
+            OptimizeLevel::Debug,
+            &[],
+            "0.6.8+/opt/mindc|5600000|222222222|0.6.8",
+            2024,
+        );
+        assert_ne!(
+            k1, k2,
+            "same version but different binary fingerprint must key differently"
+        );
+    }
+
+    #[test]
+    fn compiler_identity_present_for_existing_none_for_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let exe = tmp.path().join("mindc-fake");
+        std::fs::write(&exe, b"binary-v1").unwrap();
+        let id = compiler_identity_string(&exe).expect("identity for existing file");
+        assert!(id.contains('|'), "identity must be pipe-joined: {id}");
+        assert!(
+            compiler_identity_string(&tmp.path().join("does-not-exist")).is_none(),
+            "missing binary must fail closed (None), never a sentinel"
+        );
+    }
+
+    #[test]
+    fn compiler_identity_changes_with_mtime() {
+        let tmp = tempfile::tempdir().unwrap();
+        let exe = tmp.path().join("mindc-fake");
+        std::fs::write(&exe, b"binary-v1").unwrap();
+        let id1 = compiler_identity_string(&exe).unwrap();
+        let f = std::fs::File::options().write(true).open(&exe).unwrap();
+        f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(300))
+            .unwrap();
+        drop(f);
+        let id2 = compiler_identity_string(&exe).unwrap();
+        assert_ne!(id1, id2, "a bumped mtime must change the binary identity");
+    }
+
+    #[test]
     fn cache_key_dep_order_independent() {
         let k1 = module_cache_key(
             b"fn main() {}",
@@ -577,7 +707,8 @@ mod tests {
             cache_key: key.to_string(),
             target: "cpu".to_string(),
             optimize: "debug".to_string(),
-            compiler_version: "0.6.8".to_string(),
+            compiler_version: "0.6.8+/x|1|2|0.6.8".to_string(),
+            compiler_fingerprint: "/x|1|2|0.6.8".to_string(),
             dep_hashes: vec![],
         };
         write_object(tmp.path(), key, b"\x7fELF", &meta).unwrap();

@@ -512,35 +512,36 @@ fn write_runtime_obj_cache(dest: &Path, bytes: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Return clang's `--version` output as a single normalised string, or a
-/// stable sentinel if it cannot be queried. Used to invalidate the runtime
-/// `.o` cache (and the module cache) when the toolchain changes.
+/// Return a toolchain binary's `--version` output as a single normalised
+/// (trimmed) string, or a stable sentinel if it cannot be queried. Used to
+/// invalidate the runtime `.o` cache and the module cache when the toolchain
+/// (clang / mlir-opt / mlir-translate) changes.
 #[cfg(feature = "mlir-build")]
-pub fn clang_version_string(clang: &str) -> String {
-    match Command::new(clang).arg("--version").output() {
+pub fn tool_version_string(tool: &str) -> String {
+    match Command::new(tool).arg("--version").output() {
         Ok(out) if out.status.success() => decode_to_string(&out.stdout).trim().to_string(),
         _ => "unknown".to_string(),
     }
 }
 
-/// Return a stable *binary-identity* string for clang: resolved path, file
-/// size, mtime (nanos since epoch) and the `--version` banner, joined by
-/// `|`. Folded into the runtime-obj cache key so a different clang binary —
-/// even one reporting an identical `--version` (a vendor/distro rebuild, an
-/// in-place upgrade, or a `CLANG=` override to a same-banner binary) — yields
-/// a different key and is never reused from the machine-global cache. The
-/// `--version` banner alone is NOT a content hash of the compiler, so the
-/// path+size+mtime triple guards the realistic same-banner-swap cases; a
-/// binary deliberately forged to identical path+size+mtime yet different
-/// codegen is an out-of-scope attack, not a determinism failure mode.
+/// Return a stable *binary-identity* string for a toolchain binary: resolved
+/// path, file size, mtime (nanos since epoch) and the `--version` banner,
+/// joined by `|`. Folded into a cache key so a different binary — even one
+/// reporting an identical `--version` (a vendor/distro rebuild, an in-place
+/// upgrade, or a `TOOL=` override to a same-banner binary) — yields a
+/// different key and is never reused from a stale cache. The `--version`
+/// banner alone is NOT a content hash of the tool, so the path+size+mtime
+/// triple guards the realistic same-banner-swap cases; a binary deliberately
+/// forged to identical path+size+mtime yet different codegen is an
+/// out-of-scope attack, not a determinism failure mode.
 #[cfg(feature = "mlir-build")]
-pub fn clang_identity_string(clang: &str) -> String {
-    let version = clang_version_string(clang);
-    // clang may be a bare command name resolved via PATH; resolve to the
+pub fn tool_identity_string(tool: &str) -> String {
+    let version = tool_version_string(tool);
+    // A tool may be a bare command name resolved via PATH; resolve to the
     // real binary so the identity is path-stable.
-    let resolved = which::which(clang)
+    let resolved = which::which(tool)
         .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| clang.to_string());
+        .unwrap_or_else(|_| tool.to_string());
     let (size, mtime_ns) = std::fs::metadata(&resolved)
         .map(|m| {
             let mtime_ns = m
@@ -553,6 +554,21 @@ pub fn clang_identity_string(clang: &str) -> String {
         })
         .unwrap_or((0, 0));
     format!("{resolved}|{size}|{mtime_ns}|{version}")
+}
+
+/// clang `--version`, kept as a thin alias over [`tool_version_string`] for the
+/// existing runtime-obj cache call sites (byte-identical output).
+#[cfg(feature = "mlir-build")]
+pub fn clang_version_string(clang: &str) -> String {
+    tool_version_string(clang)
+}
+
+/// clang binary identity, kept as a thin alias over [`tool_identity_string`]
+/// for the existing runtime-obj cache call sites (byte-identical output — the
+/// runtime-obj cache key is unchanged).
+#[cfg(feature = "mlir-build")]
+pub fn clang_identity_string(clang: &str) -> String {
+    tool_identity_string(clang)
 }
 
 #[cfg(feature = "mlir-build")]

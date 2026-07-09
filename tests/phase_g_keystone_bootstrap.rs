@@ -490,8 +490,8 @@ fn phase_g_04_self_consistent_byte_identity() {
 
 #[test]
 fn phase_g_05_warm_cache_hit_after_mind_toml_build() {
-    use libmind::build::cache::{CacheProbe, cache_root, module_cache_key, probe};
-    use libmind::project::{BuildTarget, OptimizeLevel};
+    use libmind::build::cache::{CacheProbe, cache_root, probe};
+    use libmind::project::{BuildTarget, EmitKind, OptimizeLevel};
 
     let Some(bin) = require_mindc() else { return };
 
@@ -533,14 +533,20 @@ fn phase_g_05_warm_cache_hit_after_mind_toml_build() {
 
     // Probe the cache for the entry source.
     let source_bytes = fs::read(&src_path).expect("read main.mind");
-    let cache_key = module_cache_key(
+    // Recompute the key with the SAME helper the build path uses, fingerprinting
+    // the mindc SUBPROCESS binary (`bin` == CARGO_BIN_EXE_mindc), NOT this test
+    // executable — otherwise the compiler fingerprint (issue #96) would never
+    // match the subprocess-populated cache and this warm-cache probe would
+    // spuriously miss.
+    let cache_key = libmind::build::compile_cache_key(
         &source_bytes,
         BuildTarget::Cpu,
         OptimizeLevel::Release,
-        &[],
-        env!("CARGO_PKG_VERSION"),
+        EmitKind::Cdylib,
+        &bin,
         2024,
-    );
+    )
+    .expect("compiler identity for CARGO_BIN_EXE_mindc");
     let c_root = cache_root(&repo_root(), BuildTarget::Cpu, OptimizeLevel::Release);
 
     let probe_result = probe(&c_root, &cache_key);
