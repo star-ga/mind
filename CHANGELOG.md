@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- **JSON / TOML parsers had two untrusted-input defects.** (1) `std/json.mind`'s
+  `\uXXXX` escape decoding never combined UTF-16 surrogate pairs, so a non-BMP
+  escape (`"😀"` = 😀) was emitted as two lone-surrogate 3-byte
+  sequences (WTF-8/CESU-8, `ED A0 BD ED B8 80`) instead of the correct 4-byte
+  UTF-8 (`F0 9F 98 80`) — a silent wrong-result that downstream UTF-8 validators
+  reject. High+low surrogates are now combined and a lone/unpaired surrogate is
+  rejected fail-closed. (2) `std/json.mind` and `std/toml.mind`'s recursive-descent
+  parsers had no nesting-depth cap, so deeply-nested untrusted input (`[[[[…`)
+  drove unbounded native recursion → stack overflow (verified: SIGSEGV, rc=139).
+  A `MAX_DEPTH = 512` guard is now threaded through the value/array/object/inline-
+  table paths; over-nested input fails closed (returns the error handle). Neither
+  file is used by the keystone self-host, so byte-identity is unaffected.
 - **A pinned signer (`--signer-pubkey`) could be satisfied by an UNATTESTED
   artifact.** The `mindc verify` unattested (`Missing`) path gated
   `--require-strict-fp` / `--require-deterministic` but never the signer
