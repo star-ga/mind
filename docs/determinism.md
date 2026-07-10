@@ -206,19 +206,33 @@ index, parallel generation is reproducible regardless of execution order, and th
 result is identical across substrates. This is the basis of MIND's
 reproducible-across-hardware `randn` (Phase 11 deterministic intrinsic). 📋
 
-### The attestation cannot lie about determinism
+### Determinism is enforced; non-determinism never leaks untraced
 
-A program *may* use a genuinely non-deterministic operation — an unseeded PRNG
-draw (`random`, `rand_uniform`) or a wall-clock / stdin read (`now`, `read_line`).
-MIND does **not** refuse to compile it; the compiler can express anything. What it
-guarantees is that the artifact's evidence chain **declares that honestly**: the
-`evidence_chain.determinism` field is *derived from the IR*, so a module that calls
-such a builtin attests `determinism: nondeterministic`, while every other module
-(including seeded `randn(shape, seed)`) attests `deterministic`. The field can
-never forge `deterministic` for a program that isn't — non-determinism is always
-**opt-in and labelled, never by accident**. `mind verify` reports the declared
-mode; a consumer that requires reproducibility rejects a `nondeterministic`
-artifact. ✅
+MIND programs are **deterministic by default** — but as a systems language MIND
+can compile *anything*, including a genuinely non-deterministic operation (an
+unseeded PRNG draw `random` / `rand_uniform`, or a wall-clock / stdin read `now` /
+`read_line`). Such a program is not silently accepted, nor silently rejected;
+non-determinism is a **traced, attested opt-in** across three layers:
+
+1. **Build gate.** Producing a runnable (`--emit-obj` / `--emit-shared`) or
+   attested (`--emit-evidence`) artifact from a program that calls such a builtin
+   is **rejected fail-loud**, naming the offender and pointing at the seeded
+   `Random(seed = 42)` API — *unless* you pass `--allow-nondeterministic`. Hidden
+   non-determinism cannot slip into a shipped artifact by accident.
+2. **Honest attestation.** With `--allow-nondeterministic` the program compiles,
+   and its `evidence_chain.determinism` field — *derived from the IR* — declares
+   `nondeterministic`. Every other module (including seeded `randn(shape, seed)`)
+   declares `deterministic`. The flag authorises the *build*, never the *label*.
+3. **Verify re-derivation (tamper-proof).** The `determinism` field lives in the
+   MAP epilogue, outside the `trace_hash` anchor, so on an unsigned artifact it
+   would be forgeable. `mind verify` therefore **re-derives** the mode from the
+   hashed body (exactly as it re-derives `fp_mode`), reports that authoritative
+   value, and **fails closed** if the stored field disagrees — a forged
+   `deterministic` label cannot pass. `mind verify --require-deterministic` fails
+   closed for a consumer that requires reproducibility.
+
+The result: the attestation can never lie, and non-determinism is always
+**opt-in and labelled, never by accident**. ✅
 
 ---
 

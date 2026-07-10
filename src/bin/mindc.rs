@@ -327,6 +327,17 @@ enum Command {
         /// not claim authenticity.
         #[arg(long = "signer-pubkey", value_name = "HEX", action = ArgAction::Append)]
         signer_pubkey: Vec<String>,
+        /// Fail verification (exit 1) unless the artifact is `deterministic` — i.e.
+        /// it calls no PRNG / wall-clock / stdin builtin. The mode is RE-DERIVED
+        /// from the hashed mic@3 body (not read from the forgeable MAP field), so
+        /// this is fail-closed against a tampered `determinism` label on an
+        /// unsigned artifact: a `relaxed`/nondeterministic mode, an unattested
+        /// artifact, OR a stored label that disagrees with the re-derived truth
+        /// all fail. Off by default so a legitimately-labelled `nondeterministic`
+        /// artifact still passes a plain `verify`; a consumer that requires
+        /// reproducibility opts in.
+        #[arg(long)]
+        require_deterministic: bool,
     },
 }
 
@@ -376,6 +387,16 @@ struct CompileArgs {
     /// to verify the artifact offline.
     #[arg(long, value_name = "PATH")]
     emit_evidence: Option<String>,
+    /// Compile a NON-DETERMINISTIC program (one that calls a PRNG / wall-clock /
+    /// stdin builtin such as `random()` / `now()`). MIND programs are
+    /// deterministic by default — such a program is REJECTED fail-loud unless this
+    /// flag is passed, which points the author at the seeded `Random(seed=…)` API.
+    /// Non-determinism never leaks untraced: WITH the flag the program compiles,
+    /// and its evidence chain still honestly attests `nondeterministic` (the flag
+    /// authorises the build, it never touches the attestation). A whole-artifact
+    /// property — the artifact IS non-deterministic if any part of it is.
+    #[arg(long)]
+    allow_nondeterministic: bool,
     /// Emit object file (.o) to the specified path.
     #[arg(long, value_name = "PATH")]
     emit_obj: Option<String>,
@@ -558,6 +579,7 @@ fn main() {
             json,
             require_strict_fp,
             signer_pubkey,
+            require_deterministic,
         }) => {
             let trusted = match collect_trusted_pubkeys(signer_pubkey) {
                 Ok(t) => t,
@@ -566,7 +588,13 @@ fn main() {
                     process::exit(2);
                 }
             };
-            process::exit(run_verify(artifact, *json, *require_strict_fp, &trusted));
+            process::exit(run_verify(
+                artifact,
+                *json,
+                *require_strict_fp,
+                *require_deterministic,
+                &trusted,
+            ));
         }
         None => {}
     }
@@ -634,6 +662,32 @@ fn main() {
 
     if cli.compile.verify_only {
         return;
+    }
+
+    // Determinism-by-default gate (Option C): a program that calls a HARD
+    // non-deterministic builtin (PRNG / wall-clock / stdin, e.g. `random()` /
+    // `now()`) is REJECTED fail-loud when producing a runnable (`--emit-obj` /
+    // `--emit-shared`) or attested (`--emit-evidence`) artifact, unless
+    // `--allow-nondeterministic` authorises it. This gates SHIPPING, not
+    // inspecting — `--emit-ir` / `--emit-mlir` / `--emit-mic` / `check` still show
+    // the IR of a non-deterministic program. Non-determinism can never leak
+    // untraced: WITH the flag the artifact compiles AND still attests
+    // `nondeterministic` (the flag authorises the build, never the label). The
+    // check is whole-program (an artifact IS non-deterministic if any part is).
+    let produces_artifact = cli.compile.emit_obj.is_some()
+        || cli.compile.emit_shared.is_some()
+        || cli.compile.emit_evidence.is_some();
+    if produces_artifact && !cli.compile.allow_nondeterministic {
+        if let Some(offender) = libmind::ir::ir_first_nondeterministic_call(&products.ir) {
+            eprintln!("error[determinism]: `{offender}()` introduces unseeded nondeterminism");
+            eprintln!();
+            eprintln!("MIND programs are deterministic by default. Use a seeded generator such as");
+            eprintln!("`Random(seed = 42)`, or rebuild with `--allow-nondeterministic`.");
+            eprintln!(
+                "Artifacts built with `--allow-nondeterministic` are attested as `nondeterministic`."
+            );
+            process::exit(1);
+        }
     }
 
     let emit_ir = cli.compile.emit_ir
@@ -1590,7 +1644,13 @@ fn json_escape(s: &str) -> String {
 /// Returns the process exit code: 0 = valid (SSA well-formed, and — when
 /// attested — trace_hash intact); 1 = verification failed (SSA fault, tampered
 /// trace_hash, or malformed evidence chain); 2 = I/O error reading the artifact.
-fn run_verify(artifact: &str, json: bool, require_strict_fp: bool, trusted: &[Vec<u8>]) -> i32 {
+fn run_verify(
+    artifact: &str,
+    json: bool,
+    require_strict_fp: bool,
+    require_deterministic: bool,
+    trusted: &[Vec<u8>],
+) -> i32 {
     use libmind::ir::check_ssa_well_formed;
     use libmind::ir::compact::{
         Determinism, EvidenceError, TraceHashKind, mic3_evidence_report, parse_mic3,
@@ -1609,16 +1669,32 @@ fn run_verify(artifact: &str, json: bool, require_strict_fp: bool, trusted: &[Ve
     // define-before-use over the instruction tree. This is independent of the
     // evidence-chain trace_hash check below; `verify` fails if EITHER property
     // fails. A parse failure here is a malformed artifact, not an SSA fault.
-    let (ssa_valid, ssa_reason): (bool, Option<String>) = match parse_mic3(&bytes) {
-        Ok(module) => match check_ssa_well_formed(&module) {
-            Ok(()) => (true, None),
-            Err(v) => (false, Some(v.to_string())),
-        },
-        // Could not parse the IR body for the SSA check. The evidence path
-        // below produces the authoritative parse-error diagnostic; here we only
-        // record that SSA could not be established.
-        Err(_) => (false, Some("mic@3 body did not parse for SSA check".into())),
-    };
+    // Parse the mic@3 body ONCE and derive from it both (a) SSA well-formedness
+    // and (b) the determinism declaration RE-DERIVED from the hashed body. The
+    // re-derivation is the Risk-2 fix: the `evidence_chain.determinism` MAP field
+    // sits OUTSIDE the trace_hash anchor (like every MAP key), so on an unsigned
+    // artifact it is post-hoc forgeable while the trace_hash still matches. By
+    // recomputing `ir_declares_deterministic` from the same body the trace_hash
+    // authenticates — exactly as `fp_mode` is re-derived — the true mode is
+    // authenticated, and a stored MAP field that disagrees is a tamper indicator.
+    let (ssa_valid, ssa_reason, rederived_deterministic): (bool, Option<String>, Option<bool>) =
+        match parse_mic3(&bytes) {
+            Ok(module) => {
+                let det = libmind::ir::ir_declares_deterministic(&module);
+                match check_ssa_well_formed(&module) {
+                    Ok(()) => (true, None, Some(det)),
+                    Err(v) => (false, Some(v.to_string()), Some(det)),
+                }
+            }
+            // Could not parse the IR body for the SSA check. The evidence path
+            // below produces the authoritative parse-error diagnostic; here we only
+            // record that SSA could not be established.
+            Err(_) => (
+                false,
+                Some("mic@3 body did not parse for SSA check".into()),
+                None,
+            ),
+        };
 
     // SSA well-formedness is a property of the IR body alone — independent of,
     // and gated BEFORE, the evidence chain (which an artifact may legitimately
@@ -1675,9 +1751,18 @@ fn run_verify(artifact: &str, json: bool, require_strict_fp: bool, trusted: &[Ve
 
     match mic3_evidence_report(&bytes) {
         Ok(report) => {
-            let determinism = match report.determinism {
-                Determinism::Deterministic => "deterministic",
-                Determinism::Nondeterministic => "nondeterministic",
+            // Risk-2: REPORT the determinism RE-DERIVED from the hashed body — the
+            // authoritative value the trace_hash authenticates — not the forgeable
+            // stored MAP field. The evidence path is only reached when the body
+            // parsed (an SSA/parse fault returned 1 earlier), so `rederived_*` is
+            // `Some`. `stored_deterministic` is kept only to detect a tampered MAP
+            // field below.
+            let stored_deterministic = matches!(report.determinism, Determinism::Deterministic);
+            let effective_deterministic = rederived_deterministic.unwrap_or(stored_deterministic);
+            let determinism = if effective_deterministic {
+                "deterministic"
+            } else {
+                "nondeterministic"
             };
             let parent = report.parent.map(|p| hex_encode(&p));
             let trace_hash = hex_encode(&report.trace_hash);
@@ -1824,11 +1909,35 @@ fn run_verify(artifact: &str, json: bool, require_strict_fp: bool, trusted: &[Ve
                         }
                         _ => {}
                     }
-                    if matches!(report.determinism, Determinism::Nondeterministic) {
+                    if !effective_deterministic {
                         eprintln!(
-                            "note: artifact declares a nondeterministic build; trace_hash matches but reproducibility is not asserted"
+                            "note: artifact is nondeterministic (calls a PRNG / wall-clock / stdin builtin); trace_hash matches but reproducibility is not asserted"
                         );
                     }
+                }
+                // Risk-2 fail-closed: the stored `determinism` MAP field sits
+                // OUTSIDE the trace_hash anchor, so on this (trace_hash-VALID)
+                // artifact a field that disagrees with the value RE-DERIVED from
+                // the hashed body has been tampered with — the body genuinely
+                // calls (or does not call) a nondeterministic builtin, but the
+                // label says otherwise. Reject: the attestation cannot lie.
+                if rederived_deterministic.is_some()
+                    && stored_deterministic != effective_deterministic
+                {
+                    eprintln!(
+                        "error[verify]: determinism label TAMPERED — the evidence_chain.determinism field says `{}` but the hashed body is `{}`",
+                        if stored_deterministic {
+                            "deterministic"
+                        } else {
+                            "nondeterministic"
+                        },
+                        if effective_deterministic {
+                            "deterministic"
+                        } else {
+                            "nondeterministic"
+                        },
+                    );
+                    return 1;
                 }
                 // Opt-in strict-FP gate: an untampered artifact still fails
                 // verification if the consumer demanded strict-FP and the
@@ -1838,6 +1947,16 @@ fn run_verify(artifact: &str, json: bool, require_strict_fp: bool, trusted: &[Ve
                     eprintln!(
                         "error[verify]: fp_mode is {} — artifact used FMA-contraction / f32 reassociation (or was not scanned); strict-FP required",
                         report.fp_mode.as_str()
+                    );
+                    return 1;
+                }
+                // Opt-in determinism gate (mirrors --require-strict-fp): a consumer
+                // that requires reproducibility rejects a nondeterministic artifact.
+                // Uses the RE-DERIVED value (authoritative), so a forged
+                // `deterministic` label cannot slip past it.
+                if require_deterministic && !effective_deterministic {
+                    eprintln!(
+                        "error[verify]: artifact is nondeterministic (re-derived from the hashed body) — deterministic build required"
                     );
                     return 1;
                 }
@@ -1879,6 +1998,16 @@ fn run_verify(artifact: &str, json: bool, require_strict_fp: bool, trusted: &[Ve
             if require_strict_fp {
                 eprintln!(
                     "error[verify]: --require-strict-fp on an unattested artifact — no evidence_chain to attest the FP-contract mode; strict-FP cannot be proven (fail-closed)"
+                );
+                return 1;
+            }
+            // Same fail-closed shape for --require-deterministic: an unattested
+            // artifact carries no evidence chain to certify reproducibility, even
+            // though its body parsed. A consumer that DEMANDED determinism cannot
+            // accept an unattested build.
+            if require_deterministic {
+                eprintln!(
+                    "error[verify]: --require-deterministic on an unattested artifact — no evidence_chain to attest determinism (fail-closed)"
                 );
                 return 1;
             }

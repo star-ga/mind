@@ -1421,6 +1421,47 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
+    // Risk-2: a FORGED `determinism` MAP field is caught by re-derivation
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn forged_determinism_label_is_caught_by_rederivation() {
+        // The `determinism` MAP field sits OUTSIDE the trace_hash anchor, so on an
+        // unsigned artifact it is forgeable while the trace_hash still matches.
+        // Build an IR that GENUINELY calls a PRNG builtin, then emit it with a
+        // FORGED `Deterministic` label.
+        let mut ir = IRModule::new();
+        let seed = ir.fresh();
+        let r = ir.fresh();
+        ir.instrs.push(Instr::ConstI64(seed, 0));
+        ir.instrs.push(Instr::Call {
+            dst: r,
+            name: "random".to_string(),
+            args: vec![seed],
+        });
+        ir.instrs.push(Instr::Output(r));
+
+        let bytes =
+            emit_mic3_with_evidence(&ir, "x86_avx2", None, Determinism::Deterministic, "0.8.0");
+
+        // The stored MAP field carries the FORGED value...
+        let report = mic3_evidence_report(&bytes).expect("evidence report");
+        assert!(
+            matches!(report.determinism, Determinism::Deterministic),
+            "stored label carries the forged Deterministic value"
+        );
+
+        // ...but the value RE-DERIVED from the hashed body is the TRUTH.
+        let parsed = parse_mic3(&bytes).expect("parse mic@3 body");
+        assert!(
+            !crate::ir::ir_declares_deterministic(&parsed),
+            "re-derivation must see the random() call and report nondeterministic"
+        );
+        // stored (deterministic) != re-derived (nondeterministic) — exactly the
+        // mismatch `mindc verify` fails-closed on (Risk-2). The forge cannot pass.
+    }
+
+    // -------------------------------------------------------------------------
     // (f) Parent hash round-trips and changes trace_hash
     // -------------------------------------------------------------------------
 
