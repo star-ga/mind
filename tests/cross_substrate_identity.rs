@@ -289,6 +289,31 @@ pub fn scalar_cast_conv_narrow(
     let a7: i64 = a6 * k + e7;
     a7 * k + e8
 }
+
+// Unsigned `u64` sign-sensitive op canary (u64-ops). Pins issue #99 Stage 2:
+// first-class `ScalarU64` unsigned lowering, where `/ % >> < <= > >=` on a u64
+// operand select the UNSIGNED MLIR variants (`divui`/`remui`/`shrui`/`ult`/…)
+// instead of the signed ones a bare i64 would use. The inputs are u64 values
+// with the HIGH BIT SET, passed as runtime args (their i64 bit pattern), so the
+// signed-vs-unsigned choice is observable: as signed i64 `a` is negative, so
+// `a > b` / `a / b` / `a >> n` would all give the WRONG answer. Unsigned integer
+// ops are exact and order-independent, so avx2 == neon by construction
+// (RFC 0015 §3.1) — this canary is the regression pin that the u64 arm keeps
+// emitting the unsigned variants. The results fold in fixed source order via the
+// same wrapping polynomial (K = 1000003).
+pub fn u64_ops(a: u64, b: u64) -> i64 {
+    let s: u64 = a >> 3 // logical (unsigned) shift
+    let d: u64 = a / b // unsigned div
+    let m: u64 = a % b // unsigned rem
+    let g: i64 = if a > b { 1 } else { 0 } // unsigned compare
+    let l: i64 = if a <= b { 1 } else { 0 }
+    let k: i64 = 1000003
+    let f0: i64 = i64(s)
+    let f1: i64 = f0 * k + i64(d)
+    let f2: i64 = f1 * k + i64(m)
+    let f3: i64 = f2 * k + g
+    return f3 * k + l
+}
 "#;
 
 type DotFn = unsafe extern "C" fn(i64, i64, i64) -> i64;
@@ -302,6 +327,9 @@ type ScalarCastFn = unsafe extern "C" fn(f64, f64, f64, f64, f64, f64, i64) -> i
 /// The scalar float→narrow-int cast conv kernel: six f64 edge operands, one
 /// folded i64 out (no int source — pins the saturating-to-narrow float path).
 type ScalarCastNarrowFn = unsafe extern "C" fn(f64, f64, f64, f64, f64, f64) -> i64;
+/// The unsigned-u64 op kernel: two u64 operands (passed as their i64 bit
+/// patterns), one folded i64 out. Pins the first-class ScalarU64 unsigned lowering.
+type U64OpsFn = unsafe extern "C" fn(i64, i64) -> i64;
 /// Track #16: a 3-arg → i64 scalar kernel (the Q16.16 arithmetic chain).
 type Arith3Fn = unsafe extern "C" fn(i64, i64, i64) -> i64;
 /// Track #16: a 4-arg → i64 scalar kernel (the struct-by-handle round-trip).
@@ -1800,6 +1828,59 @@ fn scalar_cast_conv_narrow_reproducibility_gate() {
     );
 
     // 2. Canonical hash pinned to the committed per-substrate reference.
+    let computed = canonical_hash(result);
+    pin_or_bless(id, &computed, result);
+}
+
+/// Two u64 operands with the HIGH BIT SET, passed as their i64 bit patterns. As
+/// signed i64 `a` is negative, so a SIGNED lowering of `>`/`/`/`>>` would give
+/// the wrong answer — the canary catches a regression to signed u64 ops.
+const U64_OPS_INPUTS: (u64, u64) = (0x8000_0000_0000_0005, 3);
+
+/// Rust `u64` oracle for `u64_ops` — the compiled kernel must reproduce it
+/// bit-for-bit. Rust's native `u64` operators ARE the unsigned semantics
+/// (`divui`/`remui`/`shrui`/`ult`) the kernel lowers to, and the interpreter's
+/// `apply_int_op_u64` mirror uses the SAME Rust `u64` ops, so this one oracle
+/// pins artifact == Rust == interpreter.
+fn ref_u64_ops(a: u64, b: u64) -> i64 {
+    let s = a >> 3;
+    let d = a / b;
+    let m = a % b;
+    let g = if a > b { 1i64 } else { 0 };
+    let l = if a <= b { 1i64 } else { 0 };
+    let k: i64 = 1_000_003;
+    let mut acc = s as i64;
+    acc = acc.wrapping_mul(k).wrapping_add(d as i64);
+    acc = acc.wrapping_mul(k).wrapping_add(m as i64);
+    acc = acc.wrapping_mul(k).wrapping_add(g);
+    acc.wrapping_mul(k).wrapping_add(l)
+}
+
+#[test]
+fn u64_ops_reproducibility_gate() {
+    let id = "u64-ops";
+
+    let Some(so) = build_dot_so() else {
+        return; // toolchain shadowed — self-skip
+    };
+    let lib = unsafe { Library::new(so).expect("dlopen workload .so") };
+    let f: Symbol<U64OpsFn> = unsafe { lib.get(b"u64_ops").expect("u64_ops symbol") };
+
+    let (a, b) = U64_OPS_INPUTS;
+    let result = unsafe { f(a as i64, b as i64) };
+
+    // 1. Within-run exactness vs the Rust u64 oracle: proves the compiled kernel
+    //    used the UNSIGNED op variants (a>b => 1, a>>3 logical, a/b unsigned) —
+    //    a signed lowering would diverge because `a` has the high bit set.
+    let oracle = ref_u64_ops(a, b);
+    assert_eq!(
+        result, oracle,
+        "{id}: u64 kernel diverged from the Rust unsigned oracle within a single \
+         run (kernel={result}, oracle={oracle}) — a signed lowering regressed?"
+    );
+
+    // 2. Canonical hash pinned to the committed per-substrate reference. Unsigned
+    //    integer ops are exact and order-independent → avx2 == neon by construction.
     let computed = canonical_hash(result);
     pin_or_bless(id, &computed, result);
 }

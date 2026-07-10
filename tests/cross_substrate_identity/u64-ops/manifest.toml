@@ -1,0 +1,49 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the format notes.
+#
+# The unsigned-`u64` sign-sensitive op canary. Pins issue #99 Stage 2 —
+# first-class `ScalarU64` unsigned lowering: `/ % >> < <= > >=` on a u64 operand
+# select the UNSIGNED MLIR variants (`arith.divui`/`remui`/`shrui`/`cmpi ult`…)
+# instead of the signed ones a bare i64 uses. Before this, u64 sign-sensitive ops
+# were REJECTED fail-loud (E2014) because a signed lowering silently miscompiles
+# a u64 with the high bit set (treated as a negative i64).
+#
+# The kernel `u64_ops(a, b)` takes two u64 operands as RUNTIME arguments (their
+# i64 bit patterns), with `a = 0x8000_0000_0000_0005` (high bit set) so the
+# signed-vs-unsigned choice is OBSERVABLE: as signed i64, `a` is negative, so
+# `a > b`, `a / b`, and `a >> 3` would all give the WRONG answer under a signed
+# lowering. It computes `a>>3` (logical), `a/b`, `a%b` (unsigned), `a>b`, `a<=b`
+# (unsigned compares) and folds them in FIXED source order via a wrapping
+# polynomial (acc = acc*K + term, K = 1000003) into one i64.
+#
+# Why avx2 == neon: unsigned integer div/rem/shift/compare are exact and
+# order-independent (no reassociation, no rounding), and the fold wraps in two's
+# complement — none of it is target-sensitive, so both substrates compute the
+# identical i64 by construction (RFC 0015 §3.1). Any divergence is a real
+# regression (a signed op variant crept back in) and a release-blocker.
+
+version = "1"
+name = "u64-ops"
+description = "Unsigned u64 sign-sensitive ops (/ % >> < <= >) on a high-bit-set operand, folded to one i64 — the byte-identity + correctness pin for the first-class ScalarU64 unsigned lowering (issue #99 Stage 2). A signed regression flips the result."
+weight = 1.0
+
+# Both substrates share the hash (unsigned integer ops are architecture-
+# independent by construction, RFC 0015 §3.1).
+substrates = ["avx2", "neon"]
+
+# Deterministic input spec: two fixed u64 operands supplied by the harness as
+# runtime args so the ops are not constant-folded.
+#   a = 0x8000000000000005 (2^63 + 5, high bit set — negative as signed i64)
+#   b = 3
+[input]
+generator = "fixed"
+a = "0x8000000000000005"
+b = 3
+dtype = "u64-scalar"
+
+[kernel]
+symbol = "u64_ops"
+ops = "a>>3 (logical), a/b, a%b (unsigned), a>b, a<=b (unsigned compare)"
+fold = "acc = acc*1000003 + term, fixed source order, two's-complement wrapping"
+returns = "i64"                  # the folded i64
+output_encoding = "i64_le"       # i64 as 8 LE bytes, then sha256

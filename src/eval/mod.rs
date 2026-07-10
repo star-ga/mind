@@ -424,6 +424,9 @@ pub fn eval_module_value_with_env_mode(
     // Register all top-level functions so calls can dispatch to them (generic or
     // not). Restored after the module finishes so nested module evals don't leak.
     let _fn_prev = fn_table_install(m);
+    // issue #99: start with a clean u64-var set (restored below) so a nested
+    // module eval neither sees nor leaks the caller's u64 declarations.
+    let _u64_prev = u64_vars_take();
 
     let mut last = Value::Int(0_i64);
     for item in &m.items {
@@ -460,6 +463,10 @@ pub fn eval_module_value_with_env_mode(
                     | Some(TypeAnn::FnPtr { .. })
                     | None => rhs,
                 };
+                // issue #99: track (or clear, on a non-u64 shadow) the binding's
+                // declared u64-ness so a later `b > c` / `b >> n` on this name
+                // picks the UNSIGNED interpreter path (matching the artifact).
+                u64_vars_set(name, matches!(ann, Some(TypeAnn::Named(n)) if n == "u64"));
                 if let Value::Int(n) = stored {
                     env.insert(name.clone(), n);
                     venv.insert(name.clone(), Value::Int(n));
@@ -1285,6 +1292,13 @@ pub(crate) fn eval_value_expr_mode(
         } => {
             let lv = eval_value_expr_mode(left, env, tensor_env, mode.clone())?;
             let rv = eval_value_expr_mode(right, env, tensor_env, mode.clone())?;
+            // issue #99: a `u64` operand selects UNSIGNED scalar semantics so the
+            // interpreter matches the compiled artifact (`ult`/`divui`/…).
+            if let (Value::Int(a), Value::Int(b)) = (&lv, &rv) {
+                if interp_expr_is_u64(left) || interp_expr_is_u64(right) {
+                    return apply_int_op_u64(*op, *a, *b).map(Value::Int);
+                }
+            }
             apply_binary(*op, lv, rv, mode.clone())
         }
         Node::Let { value, .. } | Node::Assign { value, .. } | Node::LetTuple { value, .. } => {
@@ -1564,11 +1578,19 @@ pub(crate) fn eval_value_expr_mode(
             let r = eval_value_expr_mode(right, env, tensor_env, mode)?;
             match (l, r) {
                 (Value::Int(a), Value::Int(b)) => {
+                    // issue #99: `u64 >> n` is a LOGICAL shift (mask to width-1,
+                    // zero-fill) to match the compiled `arith.shrui`; a signed i64
+                    // `>>` stays ARITHMETIC. `<< & | ^` are sign-agnostic.
+                    let u64_shr = matches!(op, crate::ast::BitOp::Shr)
+                        && (interp_expr_is_u64(left) || interp_expr_is_u64(right));
                     let result = match op {
                         crate::ast::BitOp::Or => a | b,
                         crate::ast::BitOp::And => a & b,
                         crate::ast::BitOp::Xor => a ^ b,
                         crate::ast::BitOp::Shl => a.wrapping_shl(b as u32),
+                        crate::ast::BitOp::Shr if u64_shr => {
+                            (a as u64).wrapping_shr(b as u32) as i64
+                        }
                         crate::ast::BitOp::Shr => a.wrapping_shr(b as u32),
                     };
                     Ok(Value::Int(result))
@@ -2150,6 +2172,33 @@ fn apply_int_op(op: BinOp, left: i64, right: i64) -> Result<i64, EvalError> {
         BinOp::Ge => (left >= right) as i64,
         BinOp::Eq => (left == right) as i64,
         BinOp::Ne => (left != right) as i64,
+    })
+}
+
+/// issue #99 — UNSIGNED (`u64`) scalar op, the interpreter mirror of the
+/// compiled plain-i64 arm's `ScalarU64` path. Operands are the raw i64 bit
+/// patterns; they are reinterpreted as `u64` for the sign-sensitive ops
+/// (`/ % < <= > >=`), so a value with the high bit set behaves as an unsigned
+/// magnitude. Division / remainder by zero is the SAME deterministic total
+/// contract the codegen emits (`x/0 == 0`, `x%0 == 0`) rather than a trap — so
+/// interp == artifact. `+ − × == !=` are bit-identical to the signed path (they
+/// never inspect the operand as an ordered value), so they defer to
+/// `apply_int_op` for exact parity.
+fn apply_int_op_u64(op: BinOp, left: i64, right: i64) -> Result<i64, EvalError> {
+    let a = left as u64;
+    let b = right as u64;
+    Ok(match op {
+        // `x/0 == 0` / `x%0 == 0` — the deterministic total-division contract the
+        // codegen emits (no trap). `checked_div`/`checked_rem` yield `None` on a
+        // zero divisor, mapped to 0.
+        BinOp::Div => a.checked_div(b).unwrap_or(0) as i64,
+        BinOp::Mod => a.checked_rem(b).unwrap_or(0) as i64,
+        BinOp::Lt => (a < b) as i64,
+        BinOp::Le => (a <= b) as i64,
+        BinOp::Gt => (a > b) as i64,
+        BinOp::Ge => (a >= b) as i64,
+        // Sign-agnostic — identical to the signed path.
+        _ => return apply_int_op(op, left, right),
     })
 }
 
@@ -3057,6 +3106,60 @@ fn fn_table_restore(prev: HashMap<String, UserFn>) {
 /// Look up a user-defined function by callee name.
 fn fn_table_lookup(name: &str) -> Option<UserFn> {
     FN_TABLE.with(|t| t.borrow().get(name).cloned())
+}
+
+// issue #99: names of top-level bindings declared `u64`. The const-fold
+// interpreter carries scalars as untyped `Value::Int(i64)`, so signedness is
+// not on the value — it is recovered here from the DECLARED binding type (the
+// same source the type checker uses). Consulted by the `Binary`/`Bitwise` arms
+// to pick UNSIGNED semantics (`>`/`>=`/`<`/`<=`/`/`/`%`/`>>`) for u64 operands,
+// so the tree-walking evaluator agrees bit-for-bit with the compiled artifact.
+// Populated by the top-level eval loop's `Let` arm; snapshotted/restored per
+// module eval so nested evals do not leak. Empty for any u64-free program, so
+// its results are unchanged.
+thread_local! {
+    static U64_VARS: RefCell<std::collections::HashSet<String>> =
+        RefCell::new(std::collections::HashSet::new());
+}
+
+/// Record (or, for a shadowing non-u64 rebind, clear) a top-level binding's
+/// u64-ness by declared annotation.
+fn u64_vars_set(name: &str, is_u64: bool) {
+    U64_VARS.with(|s| {
+        if is_u64 {
+            s.borrow_mut().insert(name.to_string());
+        } else {
+            s.borrow_mut().remove(name);
+        }
+    });
+}
+
+/// Snapshot + clear the u64-var set (paired with `u64_vars_restore`) so a
+/// nested module eval starts clean and cannot leak into the caller.
+fn u64_vars_take() -> std::collections::HashSet<String> {
+    U64_VARS.with(|s| std::mem::take(&mut *s.borrow_mut()))
+}
+
+// Paired with `u64_vars_take`. Mirrors `fn_table_restore`: the install site
+// discards its snapshot (each module eval starts from a `take`-cleared slate,
+// which is the actual correctness property), so this restore half is kept for
+// the scoped-nested-eval slice without being wired yet.
+#[allow(dead_code)]
+fn u64_vars_restore(prev: std::collections::HashSet<String>) {
+    U64_VARS.with(|s| *s.borrow_mut() = prev);
+}
+
+/// Whether an expression is a declared-`u64` value in the interpreter: a
+/// `u64`-tracked ident, a `… as u64` cast, or either wrapped in parentheses.
+/// Mirror of `type_checker::expr_is_u64` — declaration/cast-driven only, so the
+/// unsigned-op selection it feeds never over-fires onto a genuine i64.
+fn interp_expr_is_u64(node: &Node) -> bool {
+    match node {
+        Node::Lit(Literal::Ident(name), _) => U64_VARS.with(|s| s.borrow().contains(name)),
+        Node::As { ty, .. } => matches!(ty, TypeAnn::Named(n) if n == "u64"),
+        Node::Paren(inner, _) => interp_expr_is_u64(inner),
+        _ => false,
+    }
 }
 
 thread_local! {

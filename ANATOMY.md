@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3056 | **Est. tokens:** ~7,369,539
-**Generated:** 2026-07-10 02:53 UTC
+**Files:** 3057 | **Est. tokens:** ~7,345,545
+**Generated:** 2026-07-10 03:42 UTC
 
 ## Token Budget Guide
 
@@ -408,7 +408,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~191,413 |
-| `tests/` | 275 | ~488,263 |
+| `tests/` | 274 | ~463,215 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -433,6 +433,7 @@
 | `tests/cross_substrate_identity/scalar-cast-conv-narrow/` | 2 | ~1,790 |
 | `tests/cross_substrate_identity/scalar-float-f64/` | 2 | ~1,310 |
 | `tests/cross_substrate_identity/struct-handle-roundtrip/` | 2 | ~746 |
+| `tests/cross_substrate_identity/u64-ops/` | 2 | ~1,054 |
 | `tests/fixtures/` | 6 | ~228 |
 | `tests/ir_verification/` | 2 | ~108 |
 | `tests/lexical/` | 3 | ~191 |
@@ -4108,9 +4109,6 @@
 ### `tests/cross_substrate_identity/`
 
 - `README.md` (~1219 tok, large) — cross_substrate_identity — the internal mind-bench reproducibility gate
-### `tests/`
-
-- `cross_substrate_identity.rs` (~25125 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/cross_substrate_identity/scalar-cast-conv/`
 
 - `manifest.toml` (~1041 tok, large) — version = "1"
@@ -4129,6 +4127,10 @@
 
 - `manifest.toml` (~403 tok, medium) — version = "1"
 - `reference_hashes.toml` (~343 tok, medium) — avx2 = "018a335a0e9fc397c6f41cba4fc2617f0cf8d1326c5dbf77d53e27feacaeb64c"
+### `tests/cross_substrate_identity/u64-ops/`
+
+- `manifest.toml` (~633 tok, large) — version = "1"
+- `reference_hashes.toml` (~421 tok, medium) — avx2 = "133eefad053de51b9ca57c8802f60814c8489e1acb21b74c3e549358199af7f3"
 ### `tests/cross_substrate_identity/`
 
 - `xnode_driver.c` (~2833 tok, huge)
@@ -4378,7 +4380,7 @@
 - `repl_basic.rs` (~523 tok, large) — Copyright 2025 STARGA Inc.
 - `resolve_fn_body.rs` (~979 tok, large) — Copyright 2025 STARGA Inc.
 - `result_option_prelude_run.rs` (~910 tok, large) — Copyright 2025 STARGA Inc.
-- `return_cond_type_reject.rs` (~3700 tok, huge) — Copyright 2025 STARGA Inc.
+- `return_cond_type_reject.rs` (~3777 tok, huge) — Copyright 2025 STARGA Inc.
 - `rfc0012_attribute_syntax.rs` (~1182 tok, large) — Copyright 2025 STARGA Inc.
 - `rfc0012_phase_a_shape_types.rs` (~6540 tok, huge) — Copyright 2025 STARGA Inc.
 - `rfc0012_phase_b_operators.rs` (~4514 tok, huge) — Copyright 2025 STARGA Inc.

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **First-class unsigned `u64` — sign-sensitive ops now work** (issue #99). A
+  `ValueKind::ScalarU64` (physically the signless `i64` MLIR type, no narrowing)
+  makes `u64` `/`, `%`, `>>`, `<`, `<=`, `>`, `>=` lower to the **unsigned** op
+  variants (`arith.divui`/`remui`/`shrui`/`cmpi ult…`), so a `u64` value with the
+  high bit set compares / divides / logical-shifts correctly instead of being
+  treated as a negative `i64`. These ops were previously **rejected fail-loud**
+  (E2014, "no deterministic signed lowering") — that guard is lifted for them. The
+  tree-walking evaluator mirrors the same unsigned semantics, so interpreter and
+  artifact agree bit-for-bit. Sign-agnostic ops (`+ − × == != << & | ^`) are
+  unchanged (identical signless MLIR), and the i64-only default/keystone build
+  never constructs the variant, so existing artifacts are byte-identical. A
+  `u64-ops` cross-substrate canary pins it. (`u64 as f32/f64` still lowers via
+  signed `sitofp` and stays E2014-rejected — a separate follow-up.)
+
 ### Fixed
 - **Scalar int↔float `as`-cast correctness and cross-substrate determinism.**
   Float→integer conversions now **saturate** and are fully defined: in-range
