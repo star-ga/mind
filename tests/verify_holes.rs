@@ -141,9 +141,9 @@ fn valid_while_module() -> IRModule {
     let init = ValueId(0);
     m.instrs.push(Instr::ConstI64(init, 0));
     m.instrs.push(Instr::While {
-        cond_id: ValueId(1),                          // produced by cond_instrs
+        cond_id: ValueId(1), // produced by cond_instrs
         cond_instrs: vec![Instr::ConstI64(ValueId(1), 1)],
-        body: vec![Instr::ConstI64(ValueId(2), 2)],   // back-edge value
+        body: vec![Instr::ConstI64(ValueId(2), 2)], // back-edge value
         live_vars: vec![("i".to_string(), ValueId(2))],
         init_ids: vec![init],
         exit_ids: vec![ValueId(3)],
@@ -181,12 +181,12 @@ fn while_dangling_cond_rejected() {
 fn valid_if_module() -> IRModule {
     let mut m = IRModule::new();
     m.instrs.push(Instr::If {
-        cond_id: ValueId(0),                              // produced by cond_instrs
+        cond_id: ValueId(0), // produced by cond_instrs
         cond_instrs: vec![Instr::ConstI64(ValueId(0), 1)],
         then_instrs: vec![Instr::ConstI64(ValueId(1), 2)],
-        then_result: ValueId(1),                          // in then scope
+        then_result: ValueId(1), // in then scope
         else_instrs: vec![Instr::ConstI64(ValueId(2), 3)],
-        else_result: ValueId(2),                          // in else scope
+        else_result: ValueId(2), // in else scope
         dst: ValueId(3),
         branch_bindings: vec![],
         merges: vec![],
