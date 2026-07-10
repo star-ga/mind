@@ -20,7 +20,7 @@ See [`docs/install.md`](docs/install.md) for all install options including manua
 
 ## Overview
 
-**MIND** is a deterministic compiler: its deterministic-integer and Q16.16 fixed-point lowering produces output that is bit-identical across CPU substrates (x86-`avx2` == ARM-`neon`), with a tamper-evident evidence chain embedded in the artifact itself (opt-in Ed25519 / ML-DSA cryptographic signing). Scalar IEEE-754 `float64` now compiles on the strict deterministic path — run-to-run bit-identical, and verified byte-identical across x86_64 (`avx2`) and ARM64 (`neon`) on real hardware (2026-07-05). Vector-reduction, transcendental, and GPU float determinism are on the roadmap.
+**MIND** is a deterministic compiler: its deterministic-integer and Q16.16 fixed-point lowering produces output that is bit-identical across CPU substrates (x86-`avx2` == ARM-`neon`), with a signed evidence chain embedded in the artifact itself. Scalar IEEE-754 `float64` now compiles on the strict deterministic path — run-to-run bit-identical, and verified byte-identical across x86_64 (`avx2`) and ARM64 (`neon`) on real hardware (2026-07-05). Vector-reduction, transcendental, and GPU float determinism are on the roadmap.
 
 It is also a Rust-first language and runtime for building intelligent systems with auditable foundations. It blends declarative tensor algebra, static shape inference, automatic differentiation, and MLIR/LLVM lowering in a compact toolchain that scales from research prototypes to production.
 
@@ -51,7 +51,7 @@ so byte-parity is needed for a compiler-independent anchor; (2) the **full-surfa
 
 ## Open-core vs proprietary runtime
 
-This repository contains the open-core stack: the MIND language, type system, compiler front-end, IR, and MLIR lowering passes. The **deterministic, production-grade CPU code path is this repo's MLIR lowering** (`src/mlir/lowering.rs`) — SIMD-vectorized, cache-blocked int8 / Q16.16 / strict-f32 GEMM lowered through `mlir-opt` → `clang -O3`, with the cross-substrate byte-identity gates that back the wedge. The open `src/exec/cpu.rs` is a separate **reference CPU interpreter** — naive, unoptimized implementations for learning, prototyping, and small workloads (gated behind the `cpu-exec` feature). GPU and accelerator throughput backends live in the private [`mind-runtime`](https://github.com/star-ga/mind-runtime) repository. A few operations the open interpreter does not cover (for example Conv2D in `src/exec/conv.rs`) return `ExecError::Unsupported`; these are architectural boundary markers that the proprietary backend fulfills.
+This repository contains the open-core stack: the MIND language, type system, compiler front-end, IR, and MLIR lowering passes. The open `src/exec/cpu.rs` ships a **reference CPU interpreter** — naive, unoptimized implementations that produce correct results for learning, prototyping, and small workloads (gated behind the `cpu-exec` feature). Production-grade runtime backends for CPU (SIMD, tiled matmul), GPU, and accelerators live in the private [`mind-runtime`](https://github.com/star-ga/mind-runtime) repository. A few operations the open interpreter does not cover (for example Conv2D in `src/exec/conv.rs`) return `ExecError::Unsupported`; these are architectural boundary markers that the proprietary backend fulfills.
 
 ## System Requirements
 
