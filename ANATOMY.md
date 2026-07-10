@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3066 | **Est. tokens:** ~7,349,767
-**Generated:** 2026-07-10 14:51 UTC
+**Files:** 3066 | **Est. tokens:** ~7,349,754
+**Generated:** 2026-07-10 15:04 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~28,317 |
+| `./` | 34 | ~28,304 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -490,7 +490,7 @@
 - `incompatible` (~0 tok, tiny)
 - `LICENSE` (~2573 tok, huge) —                                  Apache License
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
-- `Mind.toml` (~121 tok, small) — [package]
+- `Mind.toml` (~108 tok, small) — [package]
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
 - `README.md` (~5621 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)

@@ -7359,6 +7359,34 @@ fn desugar_match_to_if(
         };
         arms_owned.push(converted);
     }
+    // A catch-all arm (`_`, or an irrefutable bare-ident binding) matches EVERY
+    // scrutinee, so every arm AFTER it is unreachable. A non-final catch-all
+    // used to leave the wildcard/binding in a test-arm slot, hit the
+    // `_ => return None` bail when building the comparison RHS, and drop the
+    // WHOLE match into the scrutinee-ignoring sequential fallback — which
+    // returns the LAST arm's value for EVERY input (a silent miscompile:
+    // `match x { 0 => 100, _ => 200, 1 => 300 }` returned 300 for all x).
+    // Truncate at the first catch-all so it becomes the terminal `else` and the
+    // match lowers as the well-formed catch-all-last form (`0 => 100, _ =>
+    // 200`), yielding the correct FIRST-match result. A bare ident that names a
+    // known enum variant (`None`, a fieldless `Red`) is a VARIANT pattern, not
+    // a catch-all, so it is left untouched; a catch-all already in final
+    // position makes this a no-op (byte-identical for every valid match).
+    let is_catch_all = |p: &ast::Pattern| -> bool {
+        match p {
+            ast::Pattern::Wildcard => true,
+            ast::Pattern::Ident(name) => {
+                !enum_tags.contains_key(name)
+                    && !enum_tags
+                        .keys()
+                        .any(|k| k.rsplit_once("::").map(|(_, v)| v == name).unwrap_or(false))
+            }
+            _ => false,
+        }
+    };
+    if let Some(first_catch) = arms_owned.iter().position(|a| is_catch_all(&a.pattern)) {
+        arms_owned.truncate(first_catch + 1);
+    }
     let arms = &arms_owned[..];
     // An arm body written with braces (`1 => { x = 100 }`) parses to a single
     // `Node::Block` wrapping the arm's statements, whereas a parsed `if { … }`

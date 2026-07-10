@@ -118,6 +118,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   broadly.
 
 ### Fixed
+- **A non-final catch-all (`_` / binding) `match` arm made the built artifact
+  return the LAST arm's value for EVERY input.** `match x { 0 => 100, _ => 200,
+  1 => 300 }` compiled and ran (`--emit-shared`, `mindc build`/`run`) with no
+  diagnostic, but `classify(x)` returned `300` for all `x` — the non-final
+  catch-all bailed `desugar_match_to_if` to the scrutinee-ignoring sequential
+  fallback. The arm list is now truncated at the first catch-all (every later arm
+  is unreachable) and lowered as the well-formed catch-all-last form, so first-match
+  semantics hold (`classify(0)=100`, `classify(1)=classify(7)=200`). A no-op for a
+  catch-all-last or catch-all-free match, so byte-identity is unaffected.
+- **`mindc build` / `mindc run` shipped wrong-result rc=0 artifacts that
+  `--emit-shared` rejects.** The runnable-artifact ABI gate — the check that fails
+  loud on a construct the i64-scalar backend would silently miscompile — was
+  consulted ONLY on the single-file `--emit-obj` / `--emit-shared` path. The
+  primary `mindc build` / `mindc run` compile path never checked it, so a program
+  that `--emit-shared` fail-loud rejects built GREEN and ran WRONG. Both the
+  executable and cdylib build/run paths now consult `runnable_blockers` and refuse
+  to emit a silently-wrong build; a clean project is unaffected.
 - **Float/string-literal and tuple `match` arms silently returned the last arm.**
   A `match` whose arm pattern the runnable v1 lowering cannot desugar — a FLOAT or
   STRING literal (`match x { 1.0 => 10, 2.0 => 20 }`) or a top-level TUPLE
