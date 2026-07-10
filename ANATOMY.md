@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3064 | **Est. tokens:** ~7,347,168
-**Generated:** 2026-07-10 14:34 UTC
+**Files:** 3066 | **Est. tokens:** ~7,349,767
+**Generated:** 2026-07-10 14:51 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~28,304 |
+| `./` | 34 | ~28,317 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -400,7 +400,7 @@
 | `src/opt/` | 4 | ~9,649 |
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 1 | ~3,811 |
-| `src/project/` | 3 | ~31,267 |
+| `src/project/` | 3 | ~31,849 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -409,7 +409,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~191,413 |
-| `tests/` | 278 | ~470,115 |
+| `tests/` | 280 | ~472,119 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -490,7 +490,7 @@
 - `incompatible` (~0 tok, tiny)
 - `LICENSE` (~2573 tok, huge) —                                  Apache License
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
-- `Mind.toml` (~108 tok, small) — [package]
+- `Mind.toml` (~121 tok, small) — [package]
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
 - `README.md` (~5621 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
@@ -3901,7 +3901,7 @@
 - `pipeline.rs` (~4980 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `mod.rs` (~23034 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~23616 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~4577 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~3656 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -4009,6 +4009,7 @@
 - `blas_vec_q16_smoke.rs` (~5639 tok, huge) — Copyright 2025 STARGA Inc.
 - `blas_vec_smoke.rs` (~2130 tok, huge) — Copyright 2025 STARGA Inc.
 - `bool_literal_value_run.rs` (~785 tok, large) — Copyright 2025 STARGA Inc.
+- `build_run_runnable_blocker_gate.rs` (~1123 tok, large) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
 - `bytes_buffer_run.rs` (~715 tok, large) — Copyright 2025 STARGA Inc.
 - `bytes_fixed_into_vec_run.rs` (~1660 tok, huge) — Copyright 2025 STARGA Inc.
 - `bytes_zero_run.rs` (~889 tok, large) — Copyright 2025 STARGA Inc.
@@ -4373,6 +4374,7 @@
 - `narrow_unsigned_div_zero_run.rs` (~1228 tok, large) — Copyright 2025 STARGA Inc.
 - `nested_block_surface_run.rs` (~1036 tok, large) — Copyright 2025 STARGA Inc.
 - `nested_collection_run.rs` (~818 tok, large) — Copyright 2025 STARGA Inc.
+- `non_final_catch_all_match_run.rs` (~907 tok, large) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
 - `ops_registry.rs` (~114 tok, small)
 - `package_basic.rs` (~491 tok, medium) — Copyright 2025 STARGA Inc.
 - `package_traversal.rs` (~905 tok, large) — Copyright 2025 STARGA Inc.
@@ -4594,7 +4596,7 @@
 - `vars_assign.rs` (~260 tok, medium) — Copyright 2025 STARGA Inc.
 - `verify_audit.rs` (~2010 tok, huge) — Audit coverage tests for the IR verifier (C1: SSA verification, conv2d stride/axis validation).
 - `verify_cli.rs` (~3821 tok, huge) — Copyright 2025 STARGA Inc.
-- `verify_holes.rs` (~2650 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify_holes.rs` (~2624 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify_pinned_signer.rs` (~993 tok, large) — Copyright 2025 STARGA Inc.
 - `verify_ssa.rs` (~6339 tok, huge) — Copyright 2025 STARGA Inc.
 - `x25519mlkem768_driver.py` (~2378 tok, huge) — # Known-answer driver for std/x25519mlkem768.mind (pure-MIND X25519MLKEM768
