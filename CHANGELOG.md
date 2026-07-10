@@ -8,16 +8,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
-- **Evidence chain now attests `determinism` honestly, by derivation.** The
-  `evidence_chain.determinism` field was HARDCODED to `deterministic` for every
-  artifact, so a program calling a PRNG / wall-clock builtin (`random()`,
-  `rand_uniform()`, `now()`) attested `determinism: deterministic` — a forge of
-  the exact claim `mind verify` reports. The field is now derived from the IR: a
-  module that calls a non-deterministic builtin attests `nondeterministic`, every
-  other module (incl. seeded `randn(shape, seed)`) stays `deterministic`. The
-  compiler still compiles such programs (do anything); it just labels them
-  honestly (determinism perfectly). The field lives in the MAP epilogue, not the
-  `trace_hash`, so byte-identity is unaffected.
+- **Determinism is enforced by default; non-determinism can no longer leak
+  untraced.** MIND programs are deterministic by design, but as a systems language
+  MIND must compile anything — so non-determinism is supported as an *explicit,
+  attested* opt-in, never a silent leak. Three layers:
+  - **Honest attestation (by derivation).** The `evidence_chain.determinism` field
+    was HARDCODED to `deterministic`, so a `random()` / `now()` program forged
+    `determinism: deterministic` — the exact claim `mind verify` reports. It is now
+    derived from the IR: a module calling a PRNG / wall-clock / stdin builtin
+    attests `nondeterministic`; every other module (incl. seeded `randn(shape,
+    seed)`) stays `deterministic`.
+  - **Build gate.** Producing a runnable (`--emit-obj` / `--emit-shared`) or
+    attested (`--emit-evidence`) artifact from a program that calls such a builtin
+    is REJECTED fail-loud, naming the offender and pointing at the seeded
+    `Random(seed=…)` API — unless `--allow-nondeterministic` authorises it. With
+    that flag the program compiles AND still attests `nondeterministic` (the flag
+    authorises the build, never the label).
+  - **Verify re-derivation (tamper-proof).** The `determinism` field sits outside
+    the `trace_hash` anchor, so on an unsigned artifact it was forgeable. `mind
+    verify` now RE-DERIVES the mode from the hashed body (like `fp_mode`), reports
+    that authoritative value, and FAILS CLOSED if the stored MAP field disagrees —
+    a forged `deterministic` label cannot pass. New `--require-deterministic` flag
+    (mirrors `--require-strict-fp`) fails closed for a consumer that requires
+    reproducibility.
+
+  The `determinism` field lives in the MAP epilogue, not the `trace_hash`, so
+  byte-identity is unaffected.
 - **Bare transcendental / RNG builtins no longer forge a `strict` FP attestation.**
   `sin`/`cos`/`exp`/`log*`/`pow`/`sigmoid`/`log_softmax`, `fft`/`fft2d`/`ifft`, and
   `random`/`rand_*` lower to a plain `Instr::Call` (no `ExternFnDecl`, no `__mind_`
