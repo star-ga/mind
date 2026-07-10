@@ -347,6 +347,18 @@ enum ValueKind {
     /// default/keystone build.
     #[cfg(feature = "std-surface")]
     ScalarU32,
+    /// A scalar unsigned `u64` SSA value (issue #99). Physically the SAME
+    /// signless `i64` MLIR type as `ScalarI64` — there is NO narrowing / mask /
+    /// ext / trunc (unlike `ScalarU32`, which is i32-physical). Its ONLY effect
+    /// is to select the UNSIGNED op variants (`divui`/`remui`/`shrui`/`ult`…)
+    /// in the plain-i64 BinOp arm, so a `u64` value with the high bit set
+    /// compares / divides / logical-shifts correctly instead of being treated
+    /// as a negative `i64`. Sign-agnostic ops (`+ − × == != << & | ^`) emit the
+    /// exact same signless MLIR as `ScalarI64`, so they stay byte-identical.
+    /// Gated; the default + keystone artifacts are i64-only and never construct
+    /// this variant, so existing trace_hashes are unchanged.
+    #[cfg(feature = "std-surface")]
+    ScalarU64,
     /// A scalar `bool` SSA value (NARROW-INT ABI). Lowers to `i1` MLIR. Gated;
     /// never constructed in the default/keystone build. NOTE: the bool *return*
     /// ABI slot stays `i64` (cmpi+extui+ret-i64) — this variant is for
@@ -1156,6 +1168,9 @@ impl LoweringContext {
         fn int_width(k: &ValueKind) -> Option<u32> {
             match k {
                 ValueKind::ScalarI64 => Some(64),
+                // ScalarU64 is i64-physical (width 64) — never widened.
+                #[cfg(feature = "std-surface")]
+                ValueKind::ScalarU64 => Some(64),
                 #[cfg(feature = "std-surface")]
                 ValueKind::ScalarI32 | ValueKind::ScalarU32 => Some(32),
                 #[cfg(feature = "std-surface")]
@@ -1934,16 +1949,66 @@ impl LoweringContext {
                         }
                     }
                     _ => {
+                        // issue #99: an operand tracked `ScalarU64` selects the
+                        // UNSIGNED op variants (`divui`/`remui`/`shrui`/`ult`…)
+                        // for the sign-SENSITIVE ops (`/ % >> < <= > >=`), so a
+                        // u64 value with the high bit set is handled correctly
+                        // instead of as a negative i64. Sign-AGNOSTIC ops
+                        // (`+ − × == != << & | ^`) emit identical signless MLIR
+                        // either way. Const-false without `std-surface` (the
+                        // variant does not exist there), so the i64-only keystone
+                        // path is byte-identical.
+                        #[cfg(feature = "std-surface")]
+                        let u64_unsigned = matches!(lhs_kind, ValueKind::ScalarU64)
+                            || matches!(rhs_kind, ValueKind::ScalarU64);
+                        #[cfg(not(feature = "std-surface"))]
+                        let u64_unsigned = false;
                         let mlir_op = match op {
                             BinOp::Add => "arith.addi",
                             BinOp::Sub => "arith.subi",
                             BinOp::Mul => "arith.muli",
-                            BinOp::Div => "arith.divsi",
-                            BinOp::Mod => "arith.remsi",
-                            BinOp::Lt => "arith.cmpi \"slt\",",
-                            BinOp::Le => "arith.cmpi \"sle\",",
-                            BinOp::Gt => "arith.cmpi \"sgt\",",
-                            BinOp::Ge => "arith.cmpi \"sge\",",
+                            BinOp::Div => {
+                                if u64_unsigned {
+                                    "arith.divui"
+                                } else {
+                                    "arith.divsi"
+                                }
+                            }
+                            BinOp::Mod => {
+                                if u64_unsigned {
+                                    "arith.remui"
+                                } else {
+                                    "arith.remsi"
+                                }
+                            }
+                            BinOp::Lt => {
+                                if u64_unsigned {
+                                    "arith.cmpi \"ult\","
+                                } else {
+                                    "arith.cmpi \"slt\","
+                                }
+                            }
+                            BinOp::Le => {
+                                if u64_unsigned {
+                                    "arith.cmpi \"ule\","
+                                } else {
+                                    "arith.cmpi \"sle\","
+                                }
+                            }
+                            BinOp::Gt => {
+                                if u64_unsigned {
+                                    "arith.cmpi \"ugt\","
+                                } else {
+                                    "arith.cmpi \"sgt\","
+                                }
+                            }
+                            BinOp::Ge => {
+                                if u64_unsigned {
+                                    "arith.cmpi \"uge\","
+                                } else {
+                                    "arith.cmpi \"sge\","
+                                }
+                            }
                             BinOp::Eq => "arith.cmpi \"eq\",",
                             BinOp::Ne => "arith.cmpi \"ne\",",
                             // Phase 6.5 Stage 1a — bitwise ops on i64.
@@ -1955,9 +2020,17 @@ impl LoweringContext {
                             BinOp::BitXor => "arith.xori",
                             #[cfg(feature = "std-surface")]
                             BinOp::Shl => "arith.shli",
-                            // Arithmetic (signed) right-shift — matches Rust i64 >> i64.
+                            // Right-shift: LOGICAL (`shrui`) for a u64 operand
+                            // (matches Rust `u64 >> u64`), else ARITHMETIC
+                            // (`shrsi`, matches Rust `i64 >> i64`).
                             #[cfg(feature = "std-surface")]
-                            BinOp::Shr => "arith.shrsi",
+                            BinOp::Shr => {
+                                if u64_unsigned {
+                                    "arith.shrui"
+                                } else {
+                                    "arith.shrsi"
+                                }
+                            }
                         };
                         // Shift-count determinism (pure-i64 arm): a count >= 64 is
                         // poison in MLIR/LLVM and lowers divergently across substrates
@@ -1987,6 +2060,41 @@ impl LoweringContext {
                                 dst.0, rhs.0
                             ));
                             format!("%sha{}", dst.0)
+                        } else if u64_unsigned
+                            && matches!(op, BinOp::Div | BinOp::Mod)
+                            && !self.const_i64_map.get(rhs).is_some_and(|&v| v != 0)
+                        {
+                            // Unsigned i64 (u64) div/rem determinism — divisor-0
+                            // ONLY (issue #99). x86 `divq` raises #DE (SIGFPE) on a
+                            // zero divisor while AArch64 `udiv` returns 0 — a
+                            // cross-substrate divergence + a crash where the
+                            // deterministic contract (matching the signed i64 and
+                            // narrow arms) is `x/0 == 0`, `x%0 == 0`. Substitute
+                            // divisor 1 when it is 0 (never traps); the common emit
+                            // forces the result to 0 via `div_zero_guard`. Unsigned
+                            // division has NO INT_MIN/-1 overflow case, so unlike the
+                            // signed arm below this guards zero only. Elided for a
+                            // constant divisor known nonzero. Gated; an i64-only
+                            // program never constructs a `ScalarU64`, so this arm
+                            // never fires and keystone/canary bytes are unchanged.
+                            self.emit_line(&format!(
+                                "    %udone{0} = arith.constant 1 : i64",
+                                dst.0
+                            ));
+                            self.emit_line(&format!(
+                                "    %udzc{0} = arith.constant 0 : i64",
+                                dst.0
+                            ));
+                            self.emit_line(&format!(
+                                "    %udisz{0} = arith.cmpi \"eq\", %{1}, %udzc{0} : i64",
+                                dst.0, rhs.0
+                            ));
+                            self.emit_line(&format!(
+                                "    %udsf{0} = arith.select %udisz{0}, %udone{0}, %{1} : i64",
+                                dst.0, rhs.0
+                            ));
+                            div_zero_guard = Some(format!("%udisz{}", dst.0));
+                            format!("%udsf{}", dst.0)
                         } else if matches!(op, BinOp::Div | BinOp::Mod)
                             && !self
                                 .const_i64_map
@@ -2080,16 +2188,29 @@ impl LoweringContext {
                                 dst.0, mlir_op, lhs.0, rhs_ref
                             ));
                         }
-                        self.values.insert(*dst, ValueKind::ScalarI64);
-                        // A comparison op lowers to `arith.cmpi`, whose result
-                        // is `i1` (not the `: i64` operand type above). Record
-                        // it so the return sites can zero-extend an i1 that
-                        // flows into the `-> i64` ABI return slot.
-                        #[cfg(feature = "std-surface")]
-                        if matches!(
+                        // A comparison op lowers to `arith.cmpi`, whose result is
+                        // `i1` (i64-ABI-widened at the return site) — kind stays
+                        // `ScalarI64`. A non-comparison op on a `ScalarU64` operand
+                        // PROPAGATES u64-ness (issue #99) so a chained sign-
+                        // sensitive op (`(a << 3) / c`) still picks unsigned; a
+                        // plain-i64 program keeps `ScalarI64` (byte-identical).
+                        let is_cmp = matches!(
                             op,
                             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne
-                        ) {
+                        );
+                        #[cfg(feature = "std-surface")]
+                        let result_kind = if !is_cmp && u64_unsigned {
+                            ValueKind::ScalarU64
+                        } else {
+                            ValueKind::ScalarI64
+                        };
+                        #[cfg(not(feature = "std-surface"))]
+                        let result_kind = ValueKind::ScalarI64;
+                        self.values.insert(*dst, result_kind);
+                        // Record a comparison result so return sites zero-extend an
+                        // i1 that flows into the `-> i64` ABI return slot.
+                        #[cfg(feature = "std-surface")]
+                        if is_cmp {
                             self.i1_values.insert(*dst);
                         }
                     }
@@ -2335,6 +2456,12 @@ impl LoweringContext {
                             Some(ValueKind::ScalarF32)
                             | Some(ValueKind::ScalarI32)
                             | Some(ValueKind::ScalarU32) => {}
+                            // issue #99: a `ScalarU64` arg is i64-physical — the
+                            // `func.call` emission forwards it exactly like
+                            // `ScalarI64` (same MLIR type), and the identity
+                            // `__mind_conv_u64` marker also flows through here.
+                            #[cfg(feature = "std-surface")]
+                            Some(ValueKind::ScalarU64) => {}
                             _ => {
                                 return Err(MlirLowerError::UnsupportedOp {
                                     instr_index,
@@ -2781,13 +2908,24 @@ impl LoweringContext {
                             let src_is_f32 =
                                 matches!(self.values.get(&src), Some(ValueKind::ScalarF32));
                             self.emit_saturating_fp_to_i64(*dst, src, src_is_f32, unsigned);
+                            // `__mind_conv_u64` (issue #99): the fp->u64 result is a
+                            // u64 value — tag it `ScalarU64` so downstream sign-
+                            // sensitive ops pick the unsigned variants.
+                            if unsigned {
+                                self.values.insert(*dst, ValueKind::ScalarU64);
+                            }
                         }
                         // Integer / pointer / unregistered source: IDENTITY. Emit
                         // a same-type `arith.bitcast` (mlir-opt folds it to the
-                        // operand) and carry the SOURCE's exact kind forward so
-                        // the artifact is byte-identical to the historical `val`
-                        // pass-through — including for narrow (`i32`/`u32`/`i1`)
-                        // sources whose ABI reconciliation happens downstream.
+                        // operand). `__mind_conv_i64` carries the SOURCE's exact
+                        // kind forward (byte-identical to the historical `val`
+                        // pass-through). `__mind_conv_u64` (issue #99) instead tags
+                        // the result `ScalarU64` so a later `< / % >>` on the value
+                        // selects the UNSIGNED op — this is the marker the `u64`
+                        // `let`/param path uses to make u64 first-class. Both are
+                        // i64-physical, so a sign-AGNOSTIC use stays byte-identical;
+                        // no existing `as u64` result reached a sign-sensitive op
+                        // (E2014-rejected), so no artifact changes.
                         _ => {
                             let (phys, is_i1) = if self.i1_values.contains(&src) {
                                 ("i1", true)
@@ -2806,13 +2944,19 @@ impl LoweringContext {
                                 "    %{0} = arith.bitcast %{1} : {2} to {2}",
                                 dst.0, src.0, phys
                             ));
-                            match self.values.get(&src) {
-                                Some(k) => {
-                                    let k = k.clone();
-                                    self.values.insert(*dst, k);
-                                }
-                                None => {
-                                    self.values.insert(*dst, ValueKind::ScalarI64);
+                            if unsigned && !is_i1 {
+                                // u64 target: tag `ScalarU64` (unsigned op
+                                // selection) regardless of the integer source kind.
+                                self.values.insert(*dst, ValueKind::ScalarU64);
+                            } else {
+                                match self.values.get(&src) {
+                                    Some(k) => {
+                                        let k = k.clone();
+                                        self.values.insert(*dst, k);
+                                    }
+                                    None => {
+                                        self.values.insert(*dst, ValueKind::ScalarI64);
+                                    }
                                 }
                             }
                             if is_i1 {
@@ -10404,6 +10548,10 @@ fn type_ann_to_value_kind(ty: &crate::ast::TypeAnn) -> ValueKind {
         crate::ast::TypeAnn::ScalarI32 => ValueKind::ScalarI32,
         crate::ast::TypeAnn::ScalarU32 => ValueKind::ScalarU32,
         crate::ast::TypeAnn::ScalarBool => ValueKind::ScalarBool,
+        // issue #99: `u64` arrives ONLY as `Named("u64")` (there is no
+        // `TypeAnn::ScalarU64`). Seed the i64-physical, unsigned-op-selecting
+        // kind so `u64` params + returns pick `divui`/`ult`/… downstream.
+        crate::ast::TypeAnn::Named(n) if n == "u64" => ValueKind::ScalarU64,
         crate::ast::TypeAnn::Tensor { dtype, dims }
         | crate::ast::TypeAnn::DiffTensor { dtype, dims } => ValueKind::Tensor {
             dtype: dtype.parse::<DType>().unwrap_or(DType::F32),
@@ -10422,6 +10570,9 @@ fn mlir_type(kind: &ValueKind) -> Result<String, MlirLowerError> {
         ValueKind::ScalarF32 => Ok("f32".to_string()),
         #[cfg(feature = "std-surface")]
         ValueKind::ScalarI32 | ValueKind::ScalarU32 => Ok("i32".to_string()),
+        // ScalarU64 is physically i64 — unsignedness lives in the op only.
+        #[cfg(feature = "std-surface")]
+        ValueKind::ScalarU64 => Ok("i64".to_string()),
         #[cfg(feature = "std-surface")]
         ValueKind::ScalarBool => Ok("i1".to_string()),
         ValueKind::Tensor { dtype, shape } => Ok(tensor_type(shape, dtype.as_str())),
