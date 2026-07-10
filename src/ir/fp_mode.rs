@@ -169,6 +169,45 @@ pub(crate) const STRICT_FLOAT_INTRINSICS: &[&str] = &[
 /// mismatch) and list it here. Prefer the strict Track-B `_v` surface.
 const RELAXED_RUNTIME_F32_EXTERNS: &[&str] = &[];
 
+/// Bare math / RNG builtins (a subset of `type_checker::resolve.rs::BARE_BUILTINS`)
+/// whose result is NOT bit-reproducible across substrates, so a module that calls
+/// one CANNOT honestly attest `fp_mode: strict`. They lower to a plain
+/// `Instr::Call { name }` — no `ExternFnDecl` (so the float-return-extern layer
+/// misses them) and no `__mind_` prefix (so the intrinsic-registry layer misses
+/// them) — so without this list a `sin(x)` or `rand_uniform(s)` program forged a
+/// `strict` + `deterministic` attestation and passed `verify --require-strict-fp`.
+/// Three classes:
+///   * TRANSCENDENTALS lowered to host libm (`sin`/`cos`/`exp`/`log*`/`pow`/
+///     `sigmoid`/`log_softmax`) — not correctly-rounded, not byte-identical across
+///     libm implementations (glibc vs musl vs macOS).
+///   * FFTs (`fft`/`fft2d`/`ifft`) — reassociating float reductions.
+///   * RNG (`random`/`random_normal`/`rand_uniform`/`rand_normal`) — read a PRNG
+///     (`random` links libc `random@GLIBC`, platform-specific) — non-deterministic.
+///
+/// EXCLUDES the exact / correctly-rounded builtins that ARE strict-safe (`sqrt`
+/// = IEEE correctly-rounded, `floor`/`round`/`abs`/`max`/`argmax`) and the tensor
+/// reductions/contractions (`sum`/`mean`/`matmul`/`conv2d`/…) already tainted by
+/// the dedicated arms below. Over-tainting is fail-CLOSED (safe); the danger this
+/// closes is UNDER-tainting (a false `strict`).
+const NONSTRICT_BARE_BUILTINS: &[&str] = &[
+    "cos",
+    "exp",
+    "fft",
+    "fft2d",
+    "ifft",
+    "log",
+    "log10",
+    "log2",
+    "log_softmax",
+    "pow",
+    "rand_normal",
+    "rand_uniform",
+    "random",
+    "random_normal",
+    "sigmoid",
+    "sin",
+];
+
 /// Strict-FP contract mode of a module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FpMode {
@@ -302,6 +341,14 @@ impl FpScan {
             // ONLY (user fns, alloc/store, and float-param-only externs are NOT
             // tainted — see the module header's considered-and-rejected scope).
             if self.extern_float_rets.contains(n) {
+                return true;
+            }
+            // A bare transcendental / FFT / RNG builtin (`sin`, `pow`, `fft`,
+            // `random`, …) lowered to a plain `Instr::Call` — not byte-reproducible
+            // across substrates (host libm / PRNG), so it taints the module to
+            // `Relaxed` and fails `verify --require-strict-fp`. Without this, such
+            // a program forged a `strict` attestation (the wedge's core claim).
+            if NONSTRICT_BARE_BUILTINS.contains(&n) {
                 return true;
             }
         }
