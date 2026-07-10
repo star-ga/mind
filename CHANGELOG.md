@@ -19,8 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   artifact agree bit-for-bit. Sign-agnostic ops (`+ − × == != << & | ^`) are
   unchanged (identical signless MLIR), and the i64-only default/keystone build
   never constructs the variant, so existing artifacts are byte-identical. A
-  `u64-ops` cross-substrate canary pins it. (`u64 as f32/f64` still lowers via
-  signed `sitofp` and stays E2014-rejected — a separate follow-up.)
+  `u64-ops` cross-substrate canary pins it. `u64 as f32/f64` also lowers via
+  unsigned `uitofp`, so a `u64` value ≥ 2^63 converts to the correct float
+  (was a wrong signed `sitofp`). With every u64 context now deterministic, the
+  `E2014` fail-loud diagnostic (and its `ScalarU64`-tracking machinery) is fully
+  retired.
 
 ### Fixed
 - **Scalar int↔float `as`-cast correctness and cross-substrate determinism.**
