@@ -562,6 +562,68 @@ fn jv_encode_utf8(sb: i64, cp: i64) -> i64 {
 // Returns jvpr with [pos_after_close_quote, jv_string_handle].
 // Returns jvpr with [pos, 0] on error.
 
+// jv_decode_surrogate -- finish a JSON \uXXXX escape once its four hex
+// digits have parsed to scalar `cp`, with `pos` pointing just past them.
+// Emits the scalar's UTF-8 into `sb`. A high surrogate (\uD800..\uDBFF) is
+// combined with a following \uXXXX low surrogate (\uDC00..\uDFFF) into one
+// scalar per RFC 8259 sec 7, so valid UTF-8 is emitted (not WTF-8). Returns
+// the new buffer position (advanced past a consumed low-surrogate escape when
+// combined), or -1 on a lone/unpaired/invalid surrogate -- a hard parse error.
+// Extracted from jv_parse_string so its recursive-descent body stays shallow:
+// a deeply-nested inline pyramid overflows the compiler's lowering stack.
+fn jv_decode_surrogate(buf: i64, pos: i64, len: i64, cp: i64, sb: i64) -> i64 {
+    if cp < 55296 {
+        // Ordinary BMP scalar below the surrogate block.
+        let _ = jv_encode_utf8(sb, cp);
+        return pos;
+    }
+    if cp > 57343 {
+        // Ordinary BMP scalar above the surrogate block.
+        let _ = jv_encode_utf8(sb, cp);
+        return pos;
+    }
+    if cp > 56319 {
+        // 0xDC00..0xDFFF: a bare low surrogate is invalid.
+        return -1;
+    }
+    // High surrogate 0xD800..0xDBFF: require a following \uXXXX low surrogate.
+    if pos + 5 >= len {
+        return -1;
+    }
+    if jv_load_byte(buf, pos) != 92 {
+        return -1;
+    }
+    if jv_load_byte(buf, pos + 1) != 117 {
+        return -1;
+    }
+    let l0: i64 = jv_load_byte(buf, pos + 2);
+    let l1: i64 = jv_load_byte(buf, pos + 3);
+    let l2: i64 = jv_load_byte(buf, pos + 4);
+    let l3: i64 = jv_load_byte(buf, pos + 5);
+    if jv_is_hex(l0) == 0 {
+        return -1;
+    }
+    if jv_is_hex(l1) == 0 {
+        return -1;
+    }
+    if jv_is_hex(l2) == 0 {
+        return -1;
+    }
+    if jv_is_hex(l3) == 0 {
+        return -1;
+    }
+    let lo: i64 = jv_hex_val(l0) * 4096 + jv_hex_val(l1) * 256 + jv_hex_val(l2) * 16 + jv_hex_val(l3);
+    if lo < 56320 {
+        return -1;
+    }
+    if lo > 57343 {
+        return -1;
+    }
+    let comb: i64 = 65536 + (cp - 55296) * 1024 + (lo - 56320);
+    let _ = jv_encode_utf8(sb, comb);
+    return pos + 6;
+}
+
 fn jv_parse_string(buf: i64, i: i64, len: i64) -> i64 {
     let sb: i64 = jvsb_new();
     let mut pos: i64 = i;
@@ -637,73 +699,12 @@ fn jv_parse_string(buf: i64, i: i64, len: i64) -> i64 {
                                                                                 // followed by \uDC00..\uDFFF. Combine them into a
                                                                                 // single scalar so we emit valid UTF-8 (not WTF-8).
                                                                                 // A lone/unpaired surrogate is a hard parse error.
-                                                                                if cp >= 55296 {
-                                                                                    if cp <= 56319 {
-                                                                                        // High surrogate: require a following \uXXXX low surrogate.
-                                                                                        if pos + 5 < len {
-                                                                                            if jv_load_byte(buf, pos) == 92 {
-                                                                                                if jv_load_byte(buf, pos + 1) == 117 {
-                                                                                                    let l0: i64 = jv_load_byte(buf, pos + 2);
-                                                                                                    let l1: i64 = jv_load_byte(buf, pos + 3);
-                                                                                                    let l2: i64 = jv_load_byte(buf, pos + 4);
-                                                                                                    let l3: i64 = jv_load_byte(buf, pos + 5);
-                                                                                                    if jv_is_hex(l0) == 1 {
-                                                                                                        if jv_is_hex(l1) == 1 {
-                                                                                                            if jv_is_hex(l2) == 1 {
-                                                                                                                if jv_is_hex(l3) == 1 {
-                                                                                                                    let lo: i64 = jv_hex_val(l0) * 4096 + jv_hex_val(l1) * 256 + jv_hex_val(l2) * 16 + jv_hex_val(l3);
-                                                                                                                    if lo >= 56320 {
-                                                                                                                        if lo <= 57343 {
-                                                                                                                            let comb: i64 = 65536 + (cp - 55296) * 1024 + (lo - 56320);
-                                                                                                                            let _ = jv_encode_utf8(sb, comb);
-                                                                                                                            pos = pos + 6;
-                                                                                                                        } else {
-                                                                                                                            ok = 0;
-                                                                                                                            done = 1;
-                                                                                                                        }
-                                                                                                                    } else {
-                                                                                                                        ok = 0;
-                                                                                                                        done = 1;
-                                                                                                                    }
-                                                                                                                } else {
-                                                                                                                    ok = 0;
-                                                                                                                    done = 1;
-                                                                                                                }
-                                                                                                            } else {
-                                                                                                                ok = 0;
-                                                                                                                done = 1;
-                                                                                                            }
-                                                                                                        } else {
-                                                                                                            ok = 0;
-                                                                                                            done = 1;
-                                                                                                        }
-                                                                                                    } else {
-                                                                                                        ok = 0;
-                                                                                                        done = 1;
-                                                                                                    }
-                                                                                                } else {
-                                                                                                    ok = 0;
-                                                                                                    done = 1;
-                                                                                                }
-                                                                                            } else {
-                                                                                                ok = 0;
-                                                                                                done = 1;
-                                                                                            }
-                                                                                        } else {
-                                                                                            ok = 0;
-                                                                                            done = 1;
-                                                                                        }
-                                                                                    } else {
-                                                                                        // 0xDC00..0xDFFF: a bare low surrogate is invalid.
-                                                                                        if cp <= 57343 {
-                                                                                            ok = 0;
-                                                                                            done = 1;
-                                                                                        } else {
-                                                                                            let _ = jv_encode_utf8(sb, cp);
-                                                                                        }
-                                                                                    }
+                                                                                let np: i64 = jv_decode_surrogate(buf, pos, len, cp, sb);
+                                                                                if np < 0 {
+                                                                                    ok = 0;
+                                                                                    done = 1;
                                                                                 } else {
-                                                                                    let _ = jv_encode_utf8(sb, cp);
+                                                                                    pos = np;
                                                                                 }
                                                                             } else {
                                                                                 ok = 0;
