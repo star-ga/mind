@@ -778,7 +778,17 @@ fn git_cache_dir(entry: &LockEntry) -> Result<PathBuf> {
     // absolute (so `rev = "/home/<op>/.ssh"` would make the target that path
     // verbatim). The sink in `run_clean` also canonicalizes-and-contains.
     for comp in [hostname.as_str(), path_part, rev] {
-        if comp.contains("..") || comp.contains('\0') || std::path::Path::new(comp).is_absolute() {
+        // `is_absolute()` is platform-specific: on Windows a Unix-style
+        // "/home/…" is NOT absolute (no drive letter), yet `PathBuf::join` still
+        // lets a leading "/" or "\\" REPLACE the accumulated prefix. Reject a
+        // leading separator explicitly so a `/`-rooted `rev` is caught on every
+        // host — not only where `is_absolute()` happens to flag it.
+        if comp.contains("..")
+            || comp.contains('\0')
+            || comp.starts_with('/')
+            || comp.starts_with('\\')
+            || std::path::Path::new(comp).is_absolute()
+        {
             return Err(anyhow!(
                 "illegal path component in Mind.lock entry (possible cache-path traversal): {comp:?}"
             ));
