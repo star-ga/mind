@@ -18,6 +18,7 @@ use std::collections::BTreeSet;
 use std::collections::HashMap;
 
 use crate::ast::BinOp;
+use crate::ast::BitOp;
 
 use crate::ast::Literal;
 
@@ -72,6 +73,12 @@ struct IntraFnSig {
     /// growable-`bytes` mismatch check ONLY. The general per-arg type check
     /// stays disabled under the loose i64 ABI; see `check_intra_fn_call`.
     param_types: Vec<TypeAnn>,
+    /// Declared return TypeAnn (`None` when the fn omits `-> T`). Read by
+    /// `confident_scalar_class` so a `Call` to an intra-module fn resolves to
+    /// its *declared* return class — never the loose i64 default. Used only for
+    /// the RFC 0011 int↔float class checks; a `None`/non-scalar return keeps a
+    /// call opaque (class `None`), so untyped callees never false-positive.
+    ret_type: Option<TypeAnn>,
 }
 
 /// Maps an intra-module function name to its captured call signature.
@@ -144,6 +151,44 @@ const RETURN_TYPE_MISMATCH_CODE: &str = "E2010";
 /// the valid `if a > b` over floats. Fires only on a directly-float condition
 /// (`if 1.5`, `while fparam`), never on a comparison/logical/negation.
 const COND_TYPE_MISMATCH_CODE: &str = "E2011";
+
+/// A `Node::Binary` (arithmetic OR comparison) that mixes a confidently-Int
+/// operand with a confidently-Float operand (`1 + 2.0`, `i64param < f64param`).
+/// MIND has no implicit numeric coercion (RFC 0011); such an expression lowers
+/// to an ill-typed `arith` op and fails late/opaquely at `mlir-opt`. Fires ONLY
+/// when BOTH operand classes are annotation/literal-derived (see
+/// `confident_scalar_class`) — a loose-typed operand keeps the pair `None` and
+/// never triggers it. Closes the `i64 < f64` condition hole without touching
+/// `cond_is_boolean_intent`.
+const MIXED_CLASS_BINOP_CODE: &str = "E2013";
+
+/// A declared-`u64` value used in a context whose current lowering is signed
+/// and therefore wrong: `<u64> as f32|f64`, or as an operand of a sign-sensitive
+/// operator (`< <= > >= / % >>`). `u64` is not yet a first-class value kind, so
+/// these emit `sitofp`/`slt`/`divsi`/`shrsi` — a silent wrong result for values
+/// ≥ 2^63. Fail loud until the real `ScalarU64` kind lands (issue #99). Tracks
+/// declaration-driven u64-ness only (params + `let x: u64` + `… as u64`), so it
+/// never over-fires.
+const U64_UNSIGNED_CONTEXT_CODE: &str = "E2014";
+
+/// A `let`/assignment whose scalar-annotation class disagrees with the class of
+/// its value (`let x: f64 = 5`, `let y: i64 = 1.5`). No implicit int↔float
+/// conversion exists (RFC 0011). Fires ONLY when BOTH the annotation and the
+/// value classes are annotation/literal-derived.
+///
+/// NOTE: the design note proposed `E2012` for this diagnostic, but that code is
+/// already taken by `resolve.rs::FN_VALUE_CALL_CODE`; `E2015` is the free
+/// successor. The two plan-free codes (`E2013` mixed-binop, `E2014` u64) keep
+/// their proposed values.
+const LET_CLASS_MISMATCH_CODE: &str = "E2015";
+
+/// A numeric `as bool` cast (`3 as bool`). Casting a number to `bool` is not a
+/// defined conversion in MIND; the check phase rejected it here instead of
+/// letting the raw integer/float bits pass through unnormalised. Use `x != 0`.
+const AS_BOOL_CODE: &str = "E2016";
+
+/// Shared message for every `E2014` (u64 unsigned-context) diagnostic.
+const U64_UNSIGNED_MSG: &str = "u64 has no deterministic signed lowering for this operation yet; cast through `as i64` explicitly, or track issue #99";
 
 /// An `import std.X` line was parsed but this `mindc` binary was built
 /// WITHOUT the std surface compiled in (neither `std-surface` nor
@@ -2816,6 +2861,346 @@ fn check_return_and_cond_node(
     }
 }
 
+// ── Confidence-gated scalar-class checks (RFC 0011 — no implicit int↔float) ──
+//
+// A syntactic class checker that runs alongside the E2010/E2011 pass. It does
+// NOT use `infer_expr` (whose `ScalarI64`/`ScalarI32` results are polluted by
+// loose defaults: fn names, field access, loop vars). Instead it derives a
+// scalar CLASS *only* from literals, declared annotations, explicit `as`
+// targets, and intra-module callees' declared return annotations, so every
+// diagnostic fires on a fact — never a guess. Under-coverage (fields, methods,
+// untyped calls) is by design; zero over-coverage is the load-bearing property.
+
+/// Broad scalar CLASS: the two families that must never mix without an explicit
+/// `as` (RFC 0011). Coarser than `ValueType` and derived only from annotations
+/// and literals, so a `Some(_)` is always provable, never a loose default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScalarClass {
+    Int,
+    Float,
+}
+
+/// The scalar CLASS of a type annotation, or `None` for non-scalar / unknown
+/// annotations. `bool` and every integer width map to `Int`; `f32`/`f64` map to
+/// `Float`. Name-exact on the `Named` fallback (the parser emits `Named("u64")`,
+/// `Named("u8")`, `Named("i8")`, … for the widths without a dedicated variant).
+fn scalar_class_of_ann(ty: &TypeAnn) -> Option<ScalarClass> {
+    match ty {
+        TypeAnn::ScalarI32 | TypeAnn::ScalarI64 | TypeAnn::ScalarBool | TypeAnn::ScalarU32 => {
+            Some(ScalarClass::Int)
+        }
+        TypeAnn::ScalarF32 | TypeAnn::ScalarF64 => Some(ScalarClass::Float),
+        TypeAnn::Named(n) => match n.as_str() {
+            "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "isize" | "usize"
+            | "bool" => Some(ScalarClass::Int),
+            "f32" | "f64" => Some(ScalarClass::Float),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Whether an annotation declares the (not-yet-first-class) `u64` type, whose
+/// sign-sensitive operations have no deterministic lowering yet (issue #99).
+fn is_u64_ann(ty: &TypeAnn) -> bool {
+    matches!(ty, TypeAnn::Named(n) if n == "u64")
+}
+
+/// Whether an annotation names `bool` (dedicated variant or `Named("bool")`).
+fn is_bool_ann(ty: &TypeAnn) -> bool {
+    matches!(ty, TypeAnn::ScalarBool) || matches!(ty, TypeAnn::Named(n) if n == "bool")
+}
+
+/// Declared-scalar bindings in scope for the class checker. `classes` maps a
+/// binding name to its annotation-derived `ScalarClass`; `u64s` is the subset
+/// declared exactly `u64`. Both are seeded with the enclosing fn's params and
+/// grown at each annotated `let`. Names are only ever added from annotations —
+/// never the loose i64 default — so membership is always a fact. (The maps are
+/// point-lookup only; nothing iterates them into output, so ordering is moot.)
+#[derive(Debug, Clone, Default)]
+struct ClassCtx {
+    classes: HashMap<String, ScalarClass>,
+    u64s: std::collections::HashSet<String>,
+}
+
+/// Confidence-gated scalar class of an expression: `Some` ONLY when provable
+/// from a literal, a declared binding, an explicit `as` target, or an
+/// intra-module callee's declared return annotation. Returns `None` for every
+/// loose-typed construct (field/method/index access, untyped call, match,
+/// bitwise, comparison, …), so the checks it feeds can fire only on
+/// annotation/literal-derived mismatches — the exact programs that die at
+/// `mlir-opt` today.
+fn confident_scalar_class(node: &Node, ctx: &ClassCtx) -> Option<ScalarClass> {
+    match node {
+        Node::Lit(Literal::Int(_), _) => Some(ScalarClass::Int),
+        Node::Lit(Literal::Float(_), _) => Some(ScalarClass::Float),
+        Node::Lit(Literal::Ident(name), _) => ctx.classes.get(name).copied(),
+        Node::As { ty, .. } => scalar_class_of_ann(ty),
+        Node::Paren(inner, _) => confident_scalar_class(inner, ctx),
+        Node::Neg { operand, .. } => confident_scalar_class(operand, ctx),
+        Node::Binary {
+            op: BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod,
+            left,
+            right,
+            ..
+        } => {
+            let l = confident_scalar_class(left, ctx)?;
+            let r = confident_scalar_class(right, ctx)?;
+            (l == r).then_some(l)
+        }
+        Node::Call { callee, .. } => intra_lookup_fn(callee)
+            .and_then(|sig| sig.ret_type.as_ref().and_then(scalar_class_of_ann)),
+        _ => None,
+    }
+}
+
+/// Whether an expression is a declared-`u64` value: a `u64`-declared binding, a
+/// `… as u64` cast, or either wrapped in parentheses. Declaration/cast-driven
+/// only, so the E2014 checks it feeds never over-fire.
+fn expr_is_u64(node: &Node, ctx: &ClassCtx) -> bool {
+    match node {
+        Node::Lit(Literal::Ident(name), _) => ctx.u64s.contains(name),
+        Node::As { ty, .. } => is_u64_ann(ty),
+        Node::Paren(inner, _) => expr_is_u64(inner, ctx),
+        _ => false,
+    }
+}
+
+/// Entry point: run the confidence-gated scalar-class checks over a fn body.
+/// `ret_class` is the enclosing fn's declared-return class (drives the E2010
+/// new direction); `ctx` is pre-seeded with the fn's scalar params.
+fn check_scalar_classes(
+    stmts: &[Node],
+    ret_class: Option<ScalarClass>,
+    ctx: &mut ClassCtx,
+    src: &str,
+    file: Option<&str>,
+    errs: &mut Vec<Pretty>,
+) {
+    for stmt in stmts {
+        check_scalar_class_stmt(stmt, ret_class, ctx, src, file, errs);
+    }
+}
+
+fn check_scalar_class_stmt(
+    node: &Node,
+    ret_class: Option<ScalarClass>,
+    ctx: &mut ClassCtx,
+    src: &str,
+    file: Option<&str>,
+    errs: &mut Vec<Pretty>,
+) {
+    match node {
+        Node::Let {
+            name, ann, value, ..
+        } => {
+            walk_expr_class_checks(value, ctx, src, file, errs);
+            match ann
+                .as_ref()
+                .and_then(|a| scalar_class_of_ann(a).map(|c| (a, c)))
+            {
+                Some((ann_ty, ann_class)) => {
+                    if let Some(val_class) = confident_scalar_class(value, ctx) {
+                        if ann_class != val_class {
+                            errs.push(diag_from_span(
+                                src,
+                                file,
+                                "no implicit int↔float conversion (RFC 0011); write the value in the annotated type (e.g. `5.0`) or use an explicit `as` cast".to_string(),
+                                value.span(),
+                                LET_CLASS_MISMATCH_CODE,
+                            ));
+                        }
+                    }
+                    ctx.classes.insert(name.clone(), ann_class);
+                    if is_u64_ann(ann_ty) {
+                        ctx.u64s.insert(name.clone());
+                    } else {
+                        ctx.u64s.remove(name);
+                    }
+                }
+                None => {
+                    // A non-scalar / unannotated (or unknown) binding shadows any
+                    // same-named param: drop its tracked class so a later use
+                    // resolves to `None`, never a stale fact.
+                    ctx.classes.remove(name);
+                    ctx.u64s.remove(name);
+                }
+            }
+        }
+        Node::Assign { name, value, .. } => {
+            walk_expr_class_checks(value, ctx, src, file, errs);
+            if let Some(&ann_class) = ctx.classes.get(name) {
+                if let Some(val_class) = confident_scalar_class(value, ctx) {
+                    if ann_class != val_class {
+                        errs.push(diag_from_span(
+                            src,
+                            file,
+                            "no implicit int↔float conversion (RFC 0011); write the value in the declared type or use an explicit `as` cast".to_string(),
+                            value.span(),
+                            LET_CLASS_MISMATCH_CODE,
+                        ));
+                    }
+                }
+            }
+        }
+        Node::Return { value: Some(v), .. } => {
+            walk_expr_class_checks(v, ctx, src, file, errs);
+            // E2010, NEW direction: float-declared return + confident-Int value.
+            // The existing infer-based pass handles the float-value-into-int-fn
+            // direction; the loose-call case stays `None` here and never fires.
+            if ret_class == Some(ScalarClass::Float)
+                && confident_scalar_class(v, ctx) == Some(ScalarClass::Int)
+            {
+                errs.push(diag_from_span(
+                    src,
+                    file,
+                    "return type mismatch: function returns a float but this returns an integer value (RFC 0011 — no implicit int→float conversion; write `<value>.0` or use an explicit `as` cast)".to_string(),
+                    v.span(),
+                    RETURN_TYPE_MISMATCH_CODE,
+                ));
+            }
+        }
+        Node::If {
+            cond,
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            walk_expr_class_checks(cond, ctx, src, file, errs);
+            let mut inner = ctx.clone();
+            check_scalar_classes(then_branch, ret_class, &mut inner, src, file, errs);
+            if let Some(eb) = else_branch {
+                let mut inner2 = ctx.clone();
+                check_scalar_classes(eb, ret_class, &mut inner2, src, file, errs);
+            }
+        }
+        #[cfg(feature = "std-surface")]
+        Node::While { cond, body, .. } => {
+            walk_expr_class_checks(cond, ctx, src, file, errs);
+            let mut inner = ctx.clone();
+            check_scalar_classes(body, ret_class, &mut inner, src, file, errs);
+        }
+        Node::For { body, .. } | Node::ForEach { body, .. } => {
+            let mut inner = ctx.clone();
+            check_scalar_classes(body, ret_class, &mut inner, src, file, errs);
+        }
+        Node::Block { stmts, .. } => {
+            let mut inner = ctx.clone();
+            check_scalar_classes(stmts, ret_class, &mut inner, src, file, errs);
+        }
+        // Nested fns carry their own return type; the mini-module recursion
+        // checks them, and their diagnostics ride the body-filter whitelist.
+        Node::FnDef { .. } => {}
+        // Any other statement is an expression position (e.g. a bare call):
+        // walk it for the expression-level checks.
+        other => walk_expr_class_checks(other, ctx, src, file, errs),
+    }
+}
+
+/// Recursively check an expression for the mixed-class binop (E2013), u64
+/// unsigned-context (E2014), and `as bool` (E2016) diagnostics.
+fn walk_expr_class_checks(
+    node: &Node,
+    ctx: &ClassCtx,
+    src: &str,
+    file: Option<&str>,
+    errs: &mut Vec<Pretty>,
+) {
+    match node {
+        Node::Binary {
+            op,
+            left,
+            right,
+            span,
+        } => {
+            let l = confident_scalar_class(left, ctx);
+            let r = confident_scalar_class(right, ctx);
+            if matches!(
+                (l, r),
+                (Some(ScalarClass::Int), Some(ScalarClass::Float))
+                    | (Some(ScalarClass::Float), Some(ScalarClass::Int))
+            ) {
+                errs.push(diag_from_span(
+                    src,
+                    file,
+                    "no implicit int↔float conversion (RFC 0011): this operator mixes an integer and a float operand; convert one side with an explicit `as` cast".to_string(),
+                    *span,
+                    MIXED_CLASS_BINOP_CODE,
+                ));
+            }
+            if matches!(
+                op,
+                BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Div | BinOp::Mod
+            ) && (expr_is_u64(left, ctx) || expr_is_u64(right, ctx))
+            {
+                errs.push(diag_from_span(
+                    src,
+                    file,
+                    U64_UNSIGNED_MSG.to_string(),
+                    *span,
+                    U64_UNSIGNED_CONTEXT_CODE,
+                ));
+            }
+            walk_expr_class_checks(left, ctx, src, file, errs);
+            walk_expr_class_checks(right, ctx, src, file, errs);
+        }
+        Node::Bitwise {
+            op,
+            left,
+            right,
+            span,
+        } => {
+            if matches!(op, BitOp::Shr) && (expr_is_u64(left, ctx) || expr_is_u64(right, ctx)) {
+                errs.push(diag_from_span(
+                    src,
+                    file,
+                    U64_UNSIGNED_MSG.to_string(),
+                    *span,
+                    U64_UNSIGNED_CONTEXT_CODE,
+                ));
+            }
+            walk_expr_class_checks(left, ctx, src, file, errs);
+            walk_expr_class_checks(right, ctx, src, file, errs);
+        }
+        Node::As { expr, ty, span } => {
+            if is_bool_ann(ty) {
+                errs.push(diag_from_span(
+                    src,
+                    file,
+                    "cast to `bool` is not permitted; use `x != 0`".to_string(),
+                    *span,
+                    AS_BOOL_CODE,
+                ));
+            }
+            if matches!(scalar_class_of_ann(ty), Some(ScalarClass::Float)) && expr_is_u64(expr, ctx)
+            {
+                errs.push(diag_from_span(
+                    src,
+                    file,
+                    U64_UNSIGNED_MSG.to_string(),
+                    *span,
+                    U64_UNSIGNED_CONTEXT_CODE,
+                ));
+            }
+            walk_expr_class_checks(expr, ctx, src, file, errs);
+        }
+        Node::Paren(inner, _) => walk_expr_class_checks(inner, ctx, src, file, errs),
+        Node::Neg { operand, .. } | Node::Not { operand, .. } => {
+            walk_expr_class_checks(operand, ctx, src, file, errs)
+        }
+        Node::Logical { left, right, .. } => {
+            walk_expr_class_checks(left, ctx, src, file, errs);
+            walk_expr_class_checks(right, ctx, src, file, errs);
+        }
+        Node::Call { args, .. } => {
+            for a in args {
+                walk_expr_class_checks(a, ctx, src, file, errs);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Look up an enum's full variant-name list by enum name. Returns `None` when
 /// the registry isn't populated or `name` isn't a module-level enum.
 fn enum_variants_of(name: &str) -> Option<Vec<String>> {
@@ -3413,7 +3798,12 @@ pub fn check_module_types_in_file(
             {
                 repr_c_struct_names.insert(name.clone());
             }
-            Node::FnDef { name, params, .. } => {
+            Node::FnDef {
+                name,
+                params,
+                ret_type,
+                ..
+            } => {
                 has_fn = true;
                 // Pre-register name for intra-module call resolution.
                 tenv.entry(name.clone()).or_insert(ValueType::ScalarI64);
@@ -3437,6 +3827,7 @@ pub fn check_module_types_in_file(
                     IntraFnSig {
                         param_count: params.len(),
                         param_types: params.iter().map(|p| p.ty.clone()).collect(),
+                        ret_type: ret_type.clone(),
                     },
                 );
             }
@@ -3916,6 +4307,10 @@ pub fn check_module_types_in_file(
                         || d.code == FIXED_BYTES_INTO_VEC_CODE
                         || d.code == RETURN_TYPE_MISMATCH_CODE
                         || d.code == COND_TYPE_MISMATCH_CODE
+                        || d.code == MIXED_CLASS_BINOP_CODE
+                        || d.code == U64_UNSIGNED_CONTEXT_CODE
+                        || d.code == LET_CLASS_MISMATCH_CODE
+                        || d.code == AS_BOOL_CODE
                 }));
 
                 // Early check-phase diagnostics that fail closed LATE at
@@ -3928,6 +4323,24 @@ pub fn check_module_types_in_file(
                 // see RETURN_TYPE_MISMATCH_CODE / COND_TYPE_MISMATCH_CODE.
                 let ret_vt = ret_type.as_ref().and_then(valuetype_from_ann);
                 check_return_and_cond_types(body, ret_vt.as_ref(), &fn_env, src, file, &mut errs);
+
+                // Confidence-gated scalar-class checks (RFC 0011 — no implicit
+                // int↔float coercion): E2010 float-return + int-value direction,
+                // E2013 mixed-class binop, E2014 u64 unsigned-context, E2015
+                // let/assign class mismatch, E2016 numeric `as bool`. Purely
+                // syntactic (never `infer_expr`), seeded with the fn's scalar
+                // params — fires only on annotation/literal-derived mismatches.
+                let mut class_ctx = ClassCtx::default();
+                for param in params {
+                    if let Some(c) = scalar_class_of_ann(&param.ty) {
+                        class_ctx.classes.insert(param.name.clone(), c);
+                    }
+                    if is_u64_ann(&param.ty) {
+                        class_ctx.u64s.insert(param.name.clone());
+                    }
+                }
+                let ret_class = ret_type.as_ref().and_then(scalar_class_of_ann);
+                check_scalar_classes(body, ret_class, &mut class_ctx, src, file, &mut errs);
 
                 // Issue #23 — scoped name resolution for the fn body. Replaces
                 // the dropped unknown-identifier / undefined-call diagnostics
