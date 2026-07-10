@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3070 | **Est. tokens:** ~7,362,641
-**Generated:** 2026-07-10 17:32 UTC
+**Files:** 3071 | **Est. tokens:** ~7,364,736
+**Generated:** 2026-07-10 18:02 UTC
 
 ## Token Budget Guide
 
@@ -409,7 +409,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~193,950 |
-| `tests/` | 283 | ~480,158 |
+| `tests/` | 284 | ~482,253 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -4606,6 +4606,7 @@
 - `x25519mlkem768_driver.py` (~2378 tok, huge) — # Known-answer driver for std/x25519mlkem768.mind (pure-MIND X25519MLKEM768
 - `x25519_vectors_driver.py` (~1525 tok, huge) — # Official-vector driver for std/x25519.mind (pure-MIND Curve25519 ECDH).
 - `x509_vectors_driver.py` (~3593 tok, huge) — # Real-certificate driver for std/x509.mind (pure-MIND X.509 DER parsing + RSA
+- `zz_debug_prog006.rs` (~2095 tok, huge)
 ### `tools/`
 
 - `add_copyright_headers.py` (~1132 tok, large) — # Copyright 2025 STARGA Inc.
