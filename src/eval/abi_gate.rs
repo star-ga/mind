@@ -641,6 +641,150 @@ pub fn check_match_runnable(module: &Module, src: &str, file: Option<&str>) -> V
     out
 }
 
+const AMBIG_CTOR_HELP: &str = "a bare payload constructor `V(...)` resolves against every `Enum::V` in the \
+     program in deterministic map order, so when the SAME variant name carries a payload in TWO enums \
+     the bare form silently picks the first — a wrong-enum tag that then matches the wrong arm. Qualify \
+     it with the target enum: `Zeta::V(...)` instead of `V(...)`.";
+
+/// Flag a BARE payload constructor call `V(x)` whose short name `V` carries a
+/// payload in more than one declared enum. The lowering (`src/eval/lower.rs`
+/// bare-ctor resolution) resolves such a name to the FIRST `Enum::V` in
+/// deterministic BTreeMap order and stamps THAT enum's discriminant tag — so
+/// `let z: Zeta = V(7)` where `Alpha::V` sorts first gets Alpha's tag and then
+/// matches the WRONG arm in a `match z` (reproduced: returned 1007 for a correct
+/// answer of 7). This is a SILENT miscompile the type-checker's `mindc check`
+/// passes. Reject it fail-loud on the runnable path — the fix is to qualify the
+/// ctor (`Zeta::V(7)`). Inert (empty) unless a payload variant name collides
+/// across enums, so keystone byte-identity is unaffected.
+pub fn check_ambiguous_bare_ctor(
+    module: &Module,
+    src: &str,
+    file: Option<&str>,
+) -> Vec<Diagnostic> {
+    // short variant name -> count of DISTINCT enums that declare it with a payload.
+    let mut short_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for item in &module.items {
+        if let Node::EnumDef { variants, .. } = item {
+            for v in variants {
+                if !v.payload.is_empty() {
+                    *short_counts.entry(v.name.clone()).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+    // Ambiguous = a payload variant name declared in >= 2 enums.
+    let ambiguous: std::collections::HashSet<String> = short_counts
+        .into_iter()
+        .filter(|(_, n)| *n >= 2)
+        .map(|(name, _)| name)
+        .collect();
+    let mut out = Vec::new();
+    if ambiguous.is_empty() {
+        return out;
+    }
+    for item in &module.items {
+        if let Node::FnDef { body, .. } = item {
+            for stmt in body {
+                walk_ambiguous_ctor(stmt, &ambiguous, src, file, &mut out);
+            }
+        }
+    }
+    out
+}
+
+/// Full-expression walk flagging a bare payload ctor call whose short name is in
+/// `ambiguous`. Mirrors `walk_match_runnable`'s node coverage. A missed nesting
+/// only misses a rejection (fail-safe) — it can never produce a false positive.
+fn walk_ambiguous_ctor(
+    node: &Node,
+    ambiguous: &std::collections::HashSet<String>,
+    src: &str,
+    file: Option<&str>,
+    out: &mut Vec<Diagnostic>,
+) {
+    use Node as N;
+    let recur =
+        |n: &Node, out: &mut Vec<Diagnostic>| walk_ambiguous_ctor(n, ambiguous, src, file, out);
+    match node {
+        N::Call {
+            callee, args, span, ..
+        } => {
+            // A BARE (unqualified) callee with a payload whose short name collides.
+            if !callee.contains("::") && !args.is_empty() && ambiguous.contains(callee.as_str()) {
+                out.push(
+                    Diagnostic::error(
+                        PHASE,
+                        "lower::ambiguous_bare_ctor",
+                        format!(
+                            "bare constructor `{callee}` is ambiguous: the payload variant name \
+                             `{callee}` is declared in more than one enum, so the lowering would \
+                             resolve it to the wrong enum's discriminant and match the wrong arm"
+                        ),
+                    )
+                    .with_span(Span::from_offsets(src, span.start(), span.end(), file))
+                    .with_help(AMBIG_CTOR_HELP),
+                );
+            }
+            for a in args {
+                recur(a, out);
+            }
+        }
+        N::Match {
+            scrutinee, arms, ..
+        } => {
+            recur(scrutinee, out);
+            for a in arms {
+                recur(&a.body, out);
+            }
+        }
+        N::Let { value, .. }
+        | N::Const { value, .. }
+        | N::Assign { value, .. }
+        | N::Return {
+            value: Some(value), ..
+        } => recur(value, out),
+        N::As { expr, .. } => recur(expr, out),
+        N::Paren(inner, _) | N::Neg { operand: inner, .. } | N::Ref { inner, .. } => {
+            recur(inner, out)
+        }
+        N::Block { stmts, .. } => stmts.iter().for_each(|s| recur(s, out)),
+        N::If {
+            cond,
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            recur(cond, out);
+            then_branch.iter().for_each(|s| recur(s, out));
+            if let Some(e) = else_branch {
+                e.iter().for_each(|s| recur(s, out));
+            }
+        }
+        #[cfg(feature = "std-surface")]
+        N::While { cond, body, .. } => {
+            recur(cond, out);
+            body.iter().for_each(|s| recur(s, out));
+        }
+        N::Binary { left, right, .. } | N::Bitwise { left, right, .. } => {
+            recur(left, out);
+            recur(right, out);
+        }
+        N::MethodCall { receiver, args, .. } => {
+            recur(receiver, out);
+            args.iter().for_each(|a| recur(a, out));
+        }
+        N::FieldAccess { receiver, .. } => recur(receiver, out),
+        N::IndexAccess {
+            receiver, index, ..
+        } => {
+            recur(receiver, out);
+            recur(index, out);
+        }
+        _ => {}
+    }
+}
+
 /// Full-expression walk flagging unsupported enum construct/match shapes. Mirrors
 /// `walk_generic_calls`'s variant coverage so every nested position is visited.
 fn walk_match_runnable(node: &Node, src: &str, file: Option<&str>, out: &mut Vec<Diagnostic>) {
