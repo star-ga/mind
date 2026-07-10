@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3054 | **Est. tokens:** ~7,366,682
-**Generated:** 2026-07-10 01:43 UTC
+**Files:** 3054 | **Est. tokens:** ~7,366,585
+**Generated:** 2026-07-10 01:28 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~28,237 |
+| `./` | 34 | ~28,209 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -40,7 +40,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,163 |
-| `docs/` | 31 | ~63,458 |
+| `docs/` | 31 | ~63,389 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
@@ -493,7 +493,7 @@
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~1093 tok, large) — Security Policy
 - `.sembleignore` (~72 tok, small) — # semble code-search ignore list
-- `STATUS.md` (~3847 tok, huge) — MIND Compiler Status
+- `STATUS.md` (~3819 tok, huge) — MIND Compiler Status
 - `test_real_compile_time.py` (~265 tok, medium) — Quick test of real MIND compilation time using Python bindings."""
 ### `agents/`
 
@@ -665,7 +665,7 @@
 - `v0.3.md` (~110 tok, small) — MIND Design v0.3 (Draft)
 ### `docs/`
 
-- `determinism.md` (~2899 tok, huge) — The Determinism Contract
+- `determinism.md` (~2830 tok, huge) — The Determinism Contract
 - `errors.md` (~701 tok, large) — MIND Core Error Model
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
 - `gpu.md` (~387 tok, medium) — GPU backend profile

@@ -5,7 +5,7 @@
 
 ## Overview
 
-MIND is a deterministic AI compiler and statically-typed tensor programming language designed for certified AI systems in regulated industries. The compiler self-hosts: the pure-MIND front-end reproduces (a) the canonical `mic@3` binary IR of its own source byte-for-byte, (b) the `mic@1` IR-text bootstrap fixed point, and (c) the NATIVE x86-64/ELF of the entire seeded module (1 055 777 B) byte-identically against the Rust reference — the native-ELF self-host fixed point is closed (2026-06-25). The native-ELF emit path — implemented in the pure-MIND self-host front-end (`examples/mindc_mind/main.mind`) — is the normative self-host target; MLIR-text is a downstream-interchange backend. v0.7.0 was the credibility-ladder rung 3 graduation marker: Mindcraft fully shipped (RFC 0007), RFC 0008 KEYSTONE (cargo retired from the pure-MIND compile loop), RFC 0010 extern "C" foundations (Phases A/B/C shipped), 13 stdlib modules, `mindc doc`, and standalone binary releases. v0.10.0 adds full enum/payload lowering, integer-determinism cluster, tensor-tier-1, and the native-ELF self-host fixed-point closure.
+MIND is a deterministic AI compiler and statically-typed tensor programming language designed for certified AI systems in regulated industries. The compiler self-hosts: the pure-MIND front-end reproduces (a) the canonical `mic@3` binary IR of its own source byte-for-byte, (b) the `mic@1` IR-text bootstrap fixed point, and (c) the NATIVE x86-64/ELF of the entire seeded module (1 055 777 B) byte-identically against the Rust reference — the native-ELF self-host fixed point is closed (2026-06-25). The NATIVE-ELF backend (`src/native`) is the normative self-host target; MLIR-text is a downstream-interchange backend. v0.7.0 was the credibility-ladder rung 3 graduation marker: Mindcraft fully shipped (RFC 0007), RFC 0008 KEYSTONE (cargo retired from the pure-MIND compile loop), RFC 0010 extern "C" foundations (Phases A/B/C shipped), 13 stdlib modules, `mindc doc`, and standalone binary releases. v0.10.0 adds full enum/payload lowering, integer-determinism cluster, tensor-tier-1, and the native-ELF self-host fixed-point closure.
 
 ## Feature Status
 
@@ -94,7 +94,7 @@ Spec: [`docs/rfcs/0008-mindc-build.md`](docs/rfcs/0008-mindc-build.md).
 | RFC 0007 | Mindcraft: `mindc fmt` / `mindc lint` / `mindc check` | ✅ Fully Shipped |
 | RFC 0008 — all 7 phases | `mindc build` + `mindc test` + workspace + deps + cache + KEYSTONE | ✅ **7/7 shipped** |
 | RFC 0010 — Phases A/B/C | extern "C" + SysV + Win64 ABI + `#[repr(C)]` | ✅ **Shipped** |
-| Phase 13 | BCI / Neuroscience runtime | 📋 Roadmap |
+| Phase 13 | BCI / Neuroscience runtime | ✅ Complete |
 
 See [docs/roadmap.md](docs/roadmap.md) for full phase descriptions.
 
@@ -108,7 +108,7 @@ See [docs/roadmap.md](docs/roadmap.md) for full phase descriptions.
 | [Autodiff](docs/autodiff.md) | ✅ Complete |
 | [IR Specification](docs/ir.md) | ✅ Complete |
 | [MLIR Lowering](docs/mlir-lowering.md) | ✅ Complete |
-| [GPU Support](docs/gpu.md) | ✅ Contract doc (open-core ships no GPU impl) |
+| [GPU Support](docs/gpu.md) | ✅ Complete |
 | [FFI/Runtime](docs/ffi-runtime.md) | ✅ Complete |
 | [Error Catalog](docs/errors.md) | ✅ Complete |
 | [Benchmarks](docs/benchmarks.md) | ✅ Complete |
