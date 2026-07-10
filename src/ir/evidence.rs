@@ -73,11 +73,157 @@ pub fn ir_trace_hash(ir: &IRModule) -> [u8; 32] {
     mini_sha256(&emit_mic3(ir))
 }
 
+/// Bare non-deterministic builtins — PRNG draws that read hidden generator state
+/// and wall-clock / stdin reads. A compiled module that calls one is genuinely
+/// non-deterministic (its output is not a pure function of its inputs), so its
+/// evidence chain MUST honestly declare `nondeterministic` rather than forge
+/// `deterministic` (the claim `mind verify` reports). This is the determinism
+/// wedge's honesty invariant: the attestation can never lie.
+///
+/// Kept in sync with `type_checker::mod::NONDETERMINISTIC_BUILTINS` (the AST-side
+/// classifier used by the `#[deterministic]` call-graph check); the two lists
+/// describe the same set from two layers. The legitimate, DETERMINISTIC randomness
+/// API is the SEEDED counter-based form (`randn(shape, seed)`, `Random(seed=…)`,
+/// Philox/Threefry) — those are pure functions of `(seed, index)` and are NOT in
+/// this list. `randn` appears here as the BARE/unseeded draw; a seeded call is
+/// resolved to its explicit generator, not this implicit builtin.
+const NONDETERMINISTIC_BUILTINS: &[&str] = &[
+    "monotonic_now",
+    "now",
+    "rand",
+    "rand_bytes",
+    "rand_int",
+    "rand_normal",
+    "rand_range",
+    "rand_uniform",
+    "randn",
+    "random",
+    "read_input",
+    "read_line",
+    "shuffle",
+    "system_time",
+    "time_now",
+];
+
+/// Whether `callee` names a bare non-deterministic builtin (matched on the bare
+/// name or the last dotted/`::`-qualified path segment, so `std.rand.random` and
+/// `rng::rand_uniform` are caught too).
+fn callee_is_nondeterministic(callee: &str) -> bool {
+    let tail = callee.rsplit(['.', ':']).next().unwrap_or(callee);
+    NONDETERMINISTIC_BUILTINS.contains(&tail) || NONDETERMINISTIC_BUILTINS.contains(&callee)
+}
+
+/// Recursively true iff any `Instr::Call` anywhere in `instrs` (including nested
+/// function bodies, loop bodies, and if-branches) targets a non-deterministic
+/// builtin.
+fn stream_has_nondeterministic_call(instrs: &[crate::ir::Instr]) -> bool {
+    use crate::ir::Instr;
+    instrs.iter().any(|instr| match instr {
+        Instr::Call { name, .. } => callee_is_nondeterministic(name),
+        Instr::FnDef { body, .. } => stream_has_nondeterministic_call(body),
+        #[cfg(feature = "std-surface")]
+        Instr::While {
+            cond_instrs, body, ..
+        } => {
+            stream_has_nondeterministic_call(cond_instrs) || stream_has_nondeterministic_call(body)
+        }
+        #[cfg(feature = "std-surface")]
+        Instr::If {
+            cond_instrs,
+            then_instrs,
+            else_instrs,
+            ..
+        } => {
+            stream_has_nondeterministic_call(cond_instrs)
+                || stream_has_nondeterministic_call(then_instrs)
+                || stream_has_nondeterministic_call(else_instrs)
+        }
+        _ => false,
+    })
+}
+
+/// The evidence-chain determinism declaration for a compiled module: `true`
+/// (deterministic) UNLESS the module calls a PRNG / wall-clock / stdin builtin,
+/// in which case `false` (non-deterministic). This makes the
+/// `evidence_chain.determinism` field HONEST-BY-DERIVATION instead of a hardcoded
+/// optimistic default — a `random()` / `now()` program can no longer forge a
+/// `deterministic` attestation. Deterministic programs (the overwhelmingly common
+/// case, including seeded `randn(shape, seed)`) are unaffected.
+pub fn ir_declares_deterministic(module: &IRModule) -> bool {
+    !stream_has_nondeterministic_call(&module.instrs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ir::compact::parse_mic3;
     use crate::ir::{BinOp, Instr};
+
+    #[test]
+    fn determinism_declaration_is_honest_by_derivation() {
+        // A pure-arithmetic module is deterministic.
+        let mut det = IRModule::new();
+        let a = det.fresh();
+        let b = det.fresh();
+        let s = det.fresh();
+        det.instrs.push(Instr::ConstI64(a, 42));
+        det.instrs.push(Instr::ConstI64(b, 10));
+        det.instrs.push(Instr::BinOp {
+            dst: s,
+            op: BinOp::Add,
+            lhs: a,
+            rhs: b,
+        });
+        det.instrs.push(Instr::Output(s));
+        assert!(
+            ir_declares_deterministic(&det),
+            "pure arithmetic module must declare deterministic"
+        );
+
+        // A module that calls a PRNG builtin is NON-deterministic — the evidence
+        // chain must not forge `deterministic` (the honesty invariant).
+        for nondet_call in ["random", "rand_uniform", "now", "std.rand.rand_uniform"] {
+            let mut nd = IRModule::new();
+            let seed = nd.fresh();
+            let r = nd.fresh();
+            nd.instrs.push(Instr::ConstI64(seed, 0));
+            nd.instrs.push(Instr::Call {
+                dst: r,
+                name: nondet_call.to_string(),
+                args: vec![seed],
+            });
+            nd.instrs.push(Instr::Output(r));
+            assert!(
+                !ir_declares_deterministic(&nd),
+                "a module calling `{nondet_call}` must declare NON-deterministic \
+                 (evidence chain may not forge `deterministic`)"
+            );
+        }
+
+        // A nested (inside a fn body) PRNG call is still detected.
+        let mut nested = IRModule::new();
+        let p = nested.fresh();
+        let rr = nested.fresh();
+        nested.instrs.push(Instr::FnDef {
+            name: "g".to_string(),
+            params: vec![],
+            ret_id: Some(rr),
+            body: vec![
+                Instr::ConstI64(p, 0),
+                Instr::Call {
+                    dst: rr,
+                    name: "random".to_string(),
+                    args: vec![p],
+                },
+                Instr::Return { value: Some(rr) },
+            ],
+            reap_threshold: None,
+        });
+        assert!(
+            !ir_declares_deterministic(&nested),
+            "a PRNG call nested in a fn body must be detected"
+        );
+    }
 
     /// A small but non-trivial deterministic IR: `(42 + 10)` output.
     fn sample() -> IRModule {

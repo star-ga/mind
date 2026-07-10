@@ -1351,9 +1351,21 @@ fn emit_evidence_if_requested(cli: &CompileArgs, products: &libmind::pipeline::C
         None => return,
     };
     let substrate = cli.target.as_str();
-    // TODO(#289): flip to Nondeterministic when the #[nondeterministic] attr is
-    // propagated through the IR; for now the declaration defaults to Deterministic.
-    let determinism = libmind::ir::compact::Determinism::Deterministic;
+    // Honest-by-derivation determinism declaration (Option C, phase 1): the
+    // artifact attests `nondeterministic` iff its IR actually calls a PRNG /
+    // wall-clock / stdin builtin (`random`/`now`/…), else `deterministic`. This
+    // closes the forge where a `random()` program attested `deterministic` — the
+    // one claim `mind verify` reports. Deterministic programs (incl. seeded
+    // `randn(shape, seed)`) are unchanged. The `determinism` field lives in the
+    // MAP epilogue (not the trace_hash), so this never perturbs byte-identity.
+    // (Phase 2 — determinism-by-default with an explicit `#[nondeterministic]`
+    // opt-in that REJECTS hidden non-determinism — is tracked as the RFC 0012
+    // follow-up, superseding the old TODO(#289).)
+    let determinism = if libmind::ir::ir_declares_deterministic(&products.ir) {
+        libmind::ir::compact::Determinism::Deterministic
+    } else {
+        libmind::ir::compact::Determinism::Nondeterministic
+    };
     let toolchain = env!("CARGO_PKG_VERSION");
 
     // Optional crypto-agile signing (RFC 0021 §6), opt-in via env-supplied seeds
