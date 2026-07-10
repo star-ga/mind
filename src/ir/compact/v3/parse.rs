@@ -76,6 +76,31 @@ pub const MAX_MIC3_INPUT: usize = 10 * 1024 * 1024;
 /// failing long before native stack exhaustion (~8–12k frames).
 const MAX_MIC3_DEPTH: usize = 256;
 
+/// Cap on the total bytes of decoded string CLONES, as a multiple of the input
+/// length. `read_string` clones a string-table entry per wire reference (a
+/// 1-byte ULEB index), so a ≤10 MiB artifact that references a multi-MiB entry
+/// millions of times would otherwise expand into terabytes of retained heap — a
+/// decompression / allocation bomb (H2). A legitimate module re-references only
+/// short identifiers, so this generous factor (plus [`MIN_DECODE_BUDGET`] for
+/// tiny modules) never fires on valid input: pure additive hardening, and the
+/// byte-identity of every ACCEPTED parse is unchanged.
+const DECODE_AMPLIFICATION_FACTOR: usize = 64;
+
+/// Absolute floor for the per-parse decode budget so a small-but-legitimate
+/// module that re-references identifiers is never rejected, while still bounding
+/// the worst-case spike for a tiny crafted input to a non-OOM size.
+const MIN_DECODE_BUDGET: usize = 64 * 1024 * 1024;
+
+thread_local! {
+    /// Remaining decoded-string-clone budget (bytes) for the in-progress
+    /// `parse_mic3` on this thread. Set at each `parse_mic3` entry — so a prior
+    /// failed parse never contaminates the next — and charged down in
+    /// `read_string`. The parser is single-threaded per call and never
+    /// re-enters, so a thread-local counter suffices and avoids threading a
+    /// `&mut usize` through the whole recursive decoder.
+    static DECODE_BUDGET: std::cell::Cell<usize> = const { std::cell::Cell::new(usize::MAX) };
+}
+
 /// Bound an untrusted element count against the total input length so that a
 /// tiny crafted header cannot request a huge `Vec::with_capacity`. Every wire
 /// element occupies at least one byte, so a valid count never exceeds the input
@@ -143,13 +168,27 @@ fn read_bool<R: Read>(r: &mut R) -> Result<bool, Mic3Error> {
 
 fn read_string<R: Read>(r: &mut R, strings: &[String]) -> Result<String, Mic3Error> {
     let idx = read_uleb(r)? as usize;
-    strings.get(idx).cloned().ok_or_else(|| {
+    let s = strings.get(idx).cloned().ok_or_else(|| {
         err!(
             "string index {} out of bounds (table size {})",
             idx,
             strings.len()
         )
-    })
+    })?;
+    // H2: charge the clone against this parse's decode budget. A crafted
+    // artifact that references a large table entry many times is rejected here
+    // before it can amplify a bounded input into unbounded retained heap.
+    DECODE_BUDGET.with(|b| match b.get().checked_sub(s.len()) {
+        Some(rem) => {
+            b.set(rem);
+            Ok(())
+        }
+        None => Err(err!(
+            "decoded string output exceeds the amplification budget \
+             (possible mic@3 string-reference decompression bomb)"
+        )),
+    })?;
+    Ok(s)
 }
 
 fn read_opt_vid<R: Read>(r: &mut R) -> Result<Option<ValueId>, Mic3Error> {
@@ -970,6 +1009,17 @@ pub fn parse_mic3(data: &[u8]) -> Result<IRModule, Mic3Error> {
     // Every wire element occupies at least one byte; the input length is a hard
     // ceiling on any untrusted element count, used to bound pre-allocation.
     let limit = data.len();
+    // H2: (re)initialise this parse's decoded-string-clone budget. Reset on
+    // every call so a prior failed parse cannot contaminate this one. Generous
+    // relative to any legitimate module; a reference bomb that clones a large
+    // entry repeatedly trips it in `read_string` before it can exhaust memory.
+    DECODE_BUDGET.with(|b| {
+        b.set(
+            limit
+                .saturating_mul(DECODE_AMPLIFICATION_FACTOR)
+                .max(MIN_DECODE_BUDGET),
+        )
+    });
     let mut r = Cursor::new(data);
 
     // Magic
