@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tensor reductions/contractions already tainted elsewhere stay strict.
 
 ### Fixed
+- **Ambiguous bare payload constructor silently matched the wrong enum.** When the
+  same variant name carries a payload in two enums (`Alpha::Foo(i64)` +
+  `Zeta::Foo(i64)`), a bare `Foo(7)` resolved to the FIRST enum's discriminant tag
+  (deterministic map order), so `let z: Zeta = Foo(7)` got Alpha's tag and matched
+  the wrong `match` arm (reproduced: returned 1007 for a correct answer of 7) — a
+  silent miscompile `mindc check` passed. A new check-phase gate rejects a bare
+  payload ctor whose short name collides across enums, requiring qualification
+  (`Zeta::Foo(7)`). Inert unless a payload variant name collides, so keystone
+  byte-identity holds; unique bare ctors (`Some`/`Ok`) are unaffected.
 - **`EnumStruct` match arm with a literal/nested field silently miscompiled.**
   `check_match_runnable` inspected only `Pattern::EnumVariant`, so a struct-payload
   arm `E::V { x: 0 }` slipped past the gate; the desugar then dropped the literal to
