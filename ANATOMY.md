@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3058 | **Est. tokens:** ~7,349,855
-**Generated:** 2026-07-10 08:24 UTC
+**Files:** 3058 | **Est. tokens:** ~7,350,304
+**Generated:** 2026-07-10 08:40 UTC
 
 ## Token Budget Guide
 
@@ -383,7 +383,7 @@
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,474 |
-| `src/eval/` | 12 | ~63,656 |
+| `src/eval/` | 12 | ~64,105 |
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
@@ -3784,7 +3784,7 @@
 - `mod.rs` (~6874 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/`
 
-- `abi_gate.rs` (~10154 tok, huge) — Runnable-artifact ABI gate (release-readiness P1.1).
+- `abi_gate.rs` (~10603 tok, huge) — Runnable-artifact ABI gate (release-readiness P1.1).
 - `autodiff.rs` (~14268 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~3818 tok, huge) — Copyright 2025 STARGA Inc.

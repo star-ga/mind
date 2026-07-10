@@ -609,28 +609,20 @@ fn payload_subpattern_supported(args: &[crate::ast::Pattern]) -> bool {
     args.iter().all(|p| matches!(p, P::Ident(_) | P::Wildcard))
 }
 
-/// Flag enum construct/match shapes the runnable lowering would SILENTLY
-/// miscompile (multi-field constructor; multi-field/nested match arm). Inert for
-/// a program with no payload-carrying enum.
+/// Flag match shapes the runnable lowering would SILENTLY MISCOMPILE. Two
+/// classes: (a) an `EnumVariant`/`EnumStruct` arm with a nested or literal
+/// payload sub-pattern (`Some(Some(x))`, `E::V { x: 0 }`); (b) a whole-arm
+/// FLOAT / STRING literal pattern (`1.0 =>`, `"x" =>`) or a top-level TUPLE
+/// pattern (`(a, b) =>`). All of these bail `desugar_match_to_if` to a
+/// sequential fallback (`src/eval/lower.rs`) that IGNORES the scrutinee and
+/// returns the LAST arm's value — a silent wrong result (reproduced:
+/// `match x { 1.0 => 10, 2.0 => 20 }` returns 20 for every `x`;
+/// `match (1,2) { (a,b) => a+b, _ => 0 }` returns 0). Inert (empty) for a module
+/// whose matches use only int-literal / wildcard / ident / enum-variant arms
+/// with binding-or-wildcard payloads, so the mic@3 self-host fixed point stays
+/// byte-identical (keystone 7/7).
 pub fn check_match_runnable(module: &Module, src: &str, file: Option<&str>) -> Vec<Diagnostic> {
-    // Payload-carrying enum constructors, keyed exactly as the ctor `Call`
-    // callee. Empty (gate inert) for any program with no payload `enum`.
-    let mut payload_ctors: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for item in &module.items {
-        if let Node::EnumDef { name, variants, .. } = item {
-            for v in variants {
-                if !v.payload.is_empty() {
-                    payload_ctors.insert(format!("{name}::{}", v.name));
-                }
-            }
-        }
-    }
     let mut out = Vec::new();
-    // Inert (and byte-identity-safe) for a program with no payload-carrying enum:
-    // a nested/literal payload sub-pattern can only occur on such an enum.
-    if payload_ctors.is_empty() {
-        return out;
-    }
     for item in &module.items {
         if let Node::FnDef { body, .. } = item {
             for stmt in body {
@@ -840,6 +832,38 @@ fn walk_match_runnable(node: &Node, src: &str, file: Option<&str>, out: &mut Vec
                                  which v1 does not lower — only field bindings (`Ident`) and \
                                  wildcards (`_`) are supported; the match would otherwise silently \
                                  fall back to a sequential evaluation and return the wrong arm"
+                            ),
+                        )
+                        .with_span(Span::from_offsets(src, a.span.start(), a.span.end(), file))
+                        .with_help(MATCH_RUNNABLE_HELP),
+                    );
+                }
+                // A WHOLE-ARM pattern the desugar cannot lower — a FLOAT/STRING
+                // literal or a top-level TUPLE — bails `desugar_match_to_if` to the
+                // sequential fallback that ignores the scrutinee and returns the
+                // last arm (a silent wrong value). `desugar_match_to_if` lowers
+                // int-literal / wildcard / ident / enum-variant patterns only.
+                let unsupported_arm = match &a.pattern {
+                    crate::ast::Pattern::Literal(crate::ast::Literal::Float(_)) => {
+                        Some("a float-literal")
+                    }
+                    crate::ast::Pattern::Literal(crate::ast::Literal::Str(_)) => {
+                        Some("a string-literal")
+                    }
+                    crate::ast::Pattern::Tuple(_) => Some("a tuple-destructure"),
+                    _ => None,
+                };
+                if let Some(kind) = unsupported_arm {
+                    out.push(
+                        Diagnostic::error(
+                            PHASE,
+                            "lower::match_pattern_unsupported",
+                            format!(
+                                "match arm uses {kind} pattern, which the runnable v1 lowering does \
+                                 not support — the match would silently fall back to a sequential \
+                                 evaluation that ignores the scrutinee and returns the last arm (a \
+                                 wrong value). Match on an integer/enum discriminant, or run it with \
+                                 the `mind` interpreter"
                             ),
                         )
                         .with_span(Span::from_offsets(src, a.span.start(), a.span.end(), file))

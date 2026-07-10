@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tensor reductions/contractions already tainted elsewhere stay strict.
 
 ### Fixed
+- **Float/string-literal and tuple `match` arms silently returned the last arm.**
+  A `match` whose arm pattern the runnable v1 lowering cannot desugar — a FLOAT or
+  STRING literal (`match x { 1.0 => 10, 2.0 => 20 }`) or a top-level TUPLE
+  (`match (a, b) { (x, y) => x + y, _ => 0 }`) — bailed `desugar_match_to_if` to a
+  sequential fallback that IGNORES the scrutinee and returns the last arm's value
+  (reproduced: the float match returned 20 for every input; the tuple match
+  returned 0 for a correct answer of 3). The runnable gate now rejects these arm
+  patterns fail-loud (int-literal and enum-discriminant matches are unaffected).
 - **Ambiguous bare payload constructor silently matched the wrong enum.** When the
   same variant name carries a payload in two enums (`Alpha::Foo(i64)` +
   `Zeta::Foo(i64)`), a bare `Foo(7)` resolved to the FIRST enum's discriminant tag
