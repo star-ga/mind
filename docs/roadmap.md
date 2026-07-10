@@ -787,7 +787,7 @@ commitment. Nothing here is planned work yet.
   state, vocabulary). Both are structurally the fixed-dataflow, division-free
   primitives the cross-substrate byte-identity gate already covers. A *grammar
   compiler that emits a deterministic, cross-substrate-identical mask table with
-  a signed trace* is something no incumbent decoding stack ships — the mask logic
+  a tamper-evident evidence trace* is something no incumbent decoding stack ships — the mask logic
   today lives in engine-specific C++/CUDA with no provenance. This is the same
   moat move as the KAN entry: take a numerics/ML primitive and re-derive its
   hot path onto MIND's determinism substrate.
