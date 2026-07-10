@@ -659,9 +659,34 @@ fn walk_match_runnable(node: &Node, src: &str, file: Option<&str>, out: &mut Vec
         } => {
             walk_match_runnable(scrutinee, src, file, out);
             for a in arms {
-                if let crate::ast::Pattern::EnumVariant { path, args } = &a.pattern
-                    && !payload_subpattern_supported(args)
-                {
+                // Flag an arm whose payload sub-patterns v1 cannot lower (a nested
+                // or literal field pattern) — for BOTH tuple-payload variants
+                // (`EnumVariant`, `E::V(0)`) AND struct-payload variants
+                // (`EnumStruct`, `E::V { x: 0 }`). The `EnumStruct` case was
+                // previously UNCHECKED here: its desugar (`lower.rs` normalises the
+                // named fields to positional args, `.unwrap_or(Wildcard)`) drops a
+                // non-binding field sub-pattern to a wildcard, so `E::V { x: 0 }`
+                // matched a value with `x = 5` and returned a garbage value — a
+                // SILENT MISCOMPILE — instead of failing loud like the tuple form.
+                let unsupported_path = match &a.pattern {
+                    crate::ast::Pattern::EnumVariant { path, args }
+                        if !payload_subpattern_supported(args) =>
+                    {
+                        Some(path.as_str())
+                    }
+                    crate::ast::Pattern::EnumStruct { path, fields }
+                        if !fields.iter().all(|(_, p)| {
+                            matches!(
+                                p,
+                                crate::ast::Pattern::Ident(_) | crate::ast::Pattern::Wildcard
+                            )
+                        }) =>
+                    {
+                        Some(path.as_str())
+                    }
+                    _ => None,
+                };
+                if let Some(path) = unsupported_path {
                     out.push(
                         Diagnostic::error(
                             PHASE,
