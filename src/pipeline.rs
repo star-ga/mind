@@ -356,6 +356,17 @@ pub fn compile_source_with_name(
         source_name,
     ));
 
+    // Fail-closed on an ambiguous BARE payload constructor: when the same variant
+    // name carries a payload in >=2 enums, a bare `V(x)` resolves to the first
+    // enum's discriminant tag (deterministic map order) and then matches the WRONG
+    // arm in a later `match` — a SILENT miscompile. Require qualification
+    // (`Enum::V(x)`). Inert unless a payload variant name collides across enums.
+    runnable_blockers.extend(crate::eval::abi_gate::check_ambiguous_bare_ctor(
+        &module,
+        source,
+        source_name,
+    ));
+
     Ok(CompileProducts {
         ir,
         #[cfg(feature = "autodiff")]
