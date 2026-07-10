@@ -1283,6 +1283,23 @@ fn mask_narrow_let(ir: &mut IRModule, ann: &Option<TypeAnn>, val: ValueId) -> Va
             return and_id;
         }
     }
+    // Full-width `u64` (issue #99): no mask (already i64-wide), but tag the
+    // value `ScalarU64` at the MLIR stage via an identity `__mind_conv_u64`
+    // marker so later sign-sensitive ops (`< / % >>`) pick the UNSIGNED
+    // variants. `i64` (`scalar_int64_cast_signed(ty) == Some(true)`), pointers,
+    // handles, floats and aliases stay untagged — no marker, byte-identical.
+    // Additive: no existing compiling program has a `u64` let reaching a
+    // canary/keystone (all u64 sign-sensitive use was E2014-rejected), so no
+    // artifact gains this instruction.
+    if matches!(scalar_int64_cast_signed(ty), Some(false)) {
+        let conv_id = ir.fresh();
+        ir.instrs.push(Instr::Call {
+            dst: conv_id,
+            name: "__mind_conv_u64".to_string(),
+            args: vec![val],
+        });
+        return conv_id;
+    }
     val
 }
 

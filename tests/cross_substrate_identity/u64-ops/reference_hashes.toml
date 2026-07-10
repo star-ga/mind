@@ -1,0 +1,29 @@
+# mind-bench reference hashes — RFC 0020 §5. See dot-l2-q16/reference_hashes.toml
+# for provenance/signing notes.
+#
+# The unsigned-`u64` sign-sensitive op canary (issue #99 Stage 2). The kernel
+# `u64_ops(a=0x8000000000000005, b=3)` computes `a>>3` (logical), `a/b`, `a%b`
+# (unsigned), `a>b`, `a<=b` (unsigned compare) and folds them in fixed source
+# order via a wrapping polynomial. The canonical output is the folded i64
+# serialised little-endian (manifest `output_encoding = "i64_le"`), then sha256.
+#
+# Because `a` has the high bit set, a SIGNED lowering of any op (`sgt`/`divsi`/
+# `shrsi`/…) produces a different value — so this hash is the standing regression
+# pin that the u64 arm keeps emitting the UNSIGNED variants. Unsigned integer
+# div/rem/shift/compare are exact and order-independent, so avx2 == neon by
+# construction (RFC 0015 §3.1).
+#
+# Provenance:
+#   avx2 — computed on x86_64 (this reference), verified in CI job
+#          `cross_substrate_identity` (ubuntu-24.04). The in-run oracle assert
+#          additionally proves the compiled kernel matches Rust `u64` semantics
+#          (and, transitively, the interpreter's `apply_int_op_u64` mirror,
+#          which uses the same Rust `u64` ops) bit-for-bit.
+#   neon — SAME hash by construction; recomputed on real ARM hardware (CI job
+#          `cross_substrate_identity`, ubuntu-24.04-arm) per RFC 0020 §10.
+#
+# Re-bless only on an intentional lowering change (RFC 0020 §13): run the gate
+# with MIND_BENCH_BLESS=1 and commit the new hash.
+
+avx2 = "133eefad053de51b9ca57c8802f60814c8489e1acb21b74c3e549358199af7f3"
+neon = "133eefad053de51b9ca57c8802f60814c8489e1acb21b74c3e549358199af7f3"

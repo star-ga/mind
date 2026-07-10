@@ -356,18 +356,21 @@ fn u64_to_float_cast_rejected() {
 }
 
 #[test]
-fn u64_signed_comparison_rejected() {
-    // `u64 < u64` dispatches signed `cmpi slt` — takes the wrong branch.
-    let bad = write_tmp(
-        "mind_u64_cmp_bad.mind",
-        "pub fn bad(a: u64, b: u64) -> i64 {\n\
+fn u64_comparison_now_unsigned() {
+    // `u64 < u64` now lowers to UNSIGNED `cmpi ult` (issue #99 Stage 2: first-class
+    // `ScalarU64` unsigned lowering), so it is deterministic and no longer rejected.
+    // It must type-check clean — E2014 must NOT fire for the integer sign-sensitive
+    // ops (compare/div/rem/shr) now that they have a deterministic unsigned lowering.
+    let good = write_tmp(
+        "mind_u64_cmp_ok.mind",
+        "pub fn ok(a: u64, b: u64) -> i64 {\n\
          \x20   if a < b { return 1 } else { return 0 }\n\
          }\n",
     );
-    let out = check_out(&bad);
+    let out = check_out(&good);
     assert!(
-        out.contains("E2014"),
-        "`u64 < u64` not rejected; out: {out}"
+        !out.contains("E2014"),
+        "`u64 < u64` now has an unsigned lowering and must NOT be rejected; out: {out}"
     );
 }
 

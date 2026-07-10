@@ -18,7 +18,6 @@ use std::collections::BTreeSet;
 use std::collections::HashMap;
 
 use crate::ast::BinOp;
-use crate::ast::BitOp;
 
 use crate::ast::Literal;
 
@@ -3108,7 +3107,7 @@ fn walk_expr_class_checks(
 ) {
     match node {
         Node::Binary {
-            op,
+            op: _,
             left,
             right,
             span,
@@ -3128,37 +3127,21 @@ fn walk_expr_class_checks(
                     MIXED_CLASS_BINOP_CODE,
                 ));
             }
-            if matches!(
-                op,
-                BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Div | BinOp::Mod
-            ) && (expr_is_u64(left, ctx) || expr_is_u64(right, ctx))
-            {
-                errs.push(diag_from_span(
-                    src,
-                    file,
-                    U64_UNSIGNED_MSG.to_string(),
-                    *span,
-                    U64_UNSIGNED_CONTEXT_CODE,
-                ));
-            }
+            // issue #99 Stage 2: `u64` now has a deterministic UNSIGNED lowering
+            // for the sign-sensitive comparison / `/` / `%` operators (the plain-
+            // i64 BinOp arm selects `ult`/`ule`/`ugt`/`uge`/`divui`/`remui` when
+            // an operand is `ScalarU64`), so these no longer fail closed. The
+            // `<u64> as f32|f64` cast (unsigned int->float) is NOT yet implemented
+            // and stays E2014-rejected in the `As` arm below.
             walk_expr_class_checks(left, ctx, src, file, errs);
             walk_expr_class_checks(right, ctx, src, file, errs);
         }
         Node::Bitwise {
-            op,
-            left,
-            right,
-            span,
+            op: _, left, right, ..
         } => {
-            if matches!(op, BitOp::Shr) && (expr_is_u64(left, ctx) || expr_is_u64(right, ctx)) {
-                errs.push(diag_from_span(
-                    src,
-                    file,
-                    U64_UNSIGNED_MSG.to_string(),
-                    *span,
-                    U64_UNSIGNED_CONTEXT_CODE,
-                ));
-            }
+            // issue #99 Stage 2: `u64 >> n` now lowers to the LOGICAL shift
+            // (`arith.shrui`) when an operand is `ScalarU64`, so `>>` is no longer
+            // rejected. (`<< & | ^` were always sign-agnostic and never rejected.)
             walk_expr_class_checks(left, ctx, src, file, errs);
             walk_expr_class_checks(right, ctx, src, file, errs);
         }
