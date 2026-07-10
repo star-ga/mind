@@ -1,0 +1,640 @@
+// examples/grammar_mask/main.mind — structured / grammar-constrained decoding,
+// slice 1 (roadmap Phase 14 §6, go/no-go experiment).
+//
+// THE CLAIM UNDER TEST: the mask-generation state machine of guided generation
+// — grammar compiled to an automaton, per-state legal-token bitmask emitted as
+// a TABLE — is exactly the class of computation MIND already proves
+// bit-identical: integer state transitions, no floats, no clocks, no
+// data-dependent division.  This example builds that table in the runnable
+// integer subset and prints its bytes, so `mindc run` yields output an
+// operator (or a cross-substrate canary) can diff byte-for-byte.
+//
+// EXPLICITLY OUT OF SCOPE: the `-inf` logit mask application, softmax, and
+// sampling.  Those live in the model's float path, outside the determinism
+// claim.  This tier is ZERO-float by construction.
+//
+// Vocabulary — 12 fixed demonstrator tokens (fits one u64 mask word):
+//   0 LBRACE '{'   1 RBRACE '}'   2 LBRACKET '['  3 RBRACKET ']'
+//   4 COLON  ':'   5 COMMA  ','   6 STRING        7 NUMBER
+//   8 TRUE         9 FALSE       10 NULL          11 END (end of input)
+//
+// Artifact 1 — FSM (regular grammar, THE PRIMARY GO/NO-GO ARTIFACT).
+//   Flat JSON object:  '{' '}'  |  '{' pair (',' pair)* '}'
+//   where pair = STRING ':' value, value = STRING|NUMBER|TRUE|FALSE|NULL.
+//   7 states; a token is legal in a state iff fsm_next has a defined edge.
+//   Table = 7 states x 1 u64 word, serialized explicit little-endian
+//   = 56 bytes.  LBRACKET/RBRACKET have no FSM edge anywhere — the vocab
+//   is deliberately a superset of the grammar, so masks genuinely exclude.
+//
+// Artifact 2 (STRETCH, separate from the gate artifact) — PDA.
+//   Nested JSON value grammar with an explicit integer stack (push on
+//   '{'/'[', pop on the matching close).  The legal-token mask is a PURE
+//   function of (state, stack-top): 6 states x 3 stack symbols
+//   (0 BOTTOM, 1 OBJ, 2 ARR) x 1 word = 18 words = 144 bytes.  This is the
+//   mic@3-nesting angle: mic@3 framing is context-free, its emitter would be
+//   constrained by exactly this shape of table.
+//
+// Determinism contract: masks are built by ascending index iteration over
+// fixed integer transition functions — no hashmap, no clock, no RNG, no
+// float, no division.  Byte layout is explicit little-endian stores, so the
+// emitted bytes are independent of substrate endianness.  Output must be
+// byte-identical run-to-run and across substrates.
+//
+// Output (stdout):
+//   fsm=<112 hex chars>   the 56 FSM table bytes
+//   fnv=<8 hex chars>     FNV-1a 32-bit fold of those bytes
+//   walk=1                legal-sequence walk accepted + negative probes held
+//   pda=<288 hex chars>   the 144 PDA table bytes
+//   fnv=<8 hex chars>
+//   walk=1
+// Exit code 0 iff both walks pass.
+
+import std.io;
+
+// ---------------------------------------------------------------------------
+// Vocabulary + FSM (flat JSON object, regular grammar)
+// ---------------------------------------------------------------------------
+
+fn num_tokens() -> i64 {
+    return 12;
+}
+
+fn fsm_num_states() -> i64 {
+    return 7;
+}
+
+// fsm_next — transition table as a pure integer function.
+// Returns the next state, or -1 when the state has no edge for the token.
+// States: 0 start | 1 after '{' | 2 after key | 3 after ':' |
+//         4 after value | 5 object closed (ACCEPT) | 6 after ','.
+fn fsm_next(state: i64, tok: i64) -> i64 {
+    if state == 0 {
+        // start: only '{'
+        if tok == 0 {
+            return 1;
+        }
+        return 0 - 1;
+    }
+    if state == 1 {
+        // after '{': '}' (empty object) or a STRING key
+        if tok == 1 {
+            return 5;
+        }
+        if tok == 6 {
+            return 2;
+        }
+        return 0 - 1;
+    }
+    if state == 2 {
+        // after key: only ':'
+        if tok == 4 {
+            return 3;
+        }
+        return 0 - 1;
+    }
+    if state == 3 {
+        // after ':': any scalar value
+        if tok == 6 {
+            return 4;
+        }
+        if tok == 7 {
+            return 4;
+        }
+        if tok == 8 {
+            return 4;
+        }
+        if tok == 9 {
+            return 4;
+        }
+        if tok == 10 {
+            return 4;
+        }
+        return 0 - 1;
+    }
+    if state == 4 {
+        // after value: ',' (next pair) or '}' (close)
+        if tok == 5 {
+            return 6;
+        }
+        if tok == 1 {
+            return 5;
+        }
+        return 0 - 1;
+    }
+    if state == 5 {
+        // closed: only END (self-loop keeps END legal at accept)
+        if tok == 11 {
+            return 5;
+        }
+        return 0 - 1;
+    }
+    if state == 6 {
+        // after ',': the next STRING key
+        if tok == 6 {
+            return 2;
+        }
+        return 0 - 1;
+    }
+    return 0 - 1;
+}
+
+// fsm_accept — 1 iff `state` is accepting.
+fn fsm_accept(state: i64) -> i64 {
+    if state == 5 {
+        return 1;
+    }
+    return 0;
+}
+
+// fsm_legal_mask — bitset of legal next tokens for `state`.
+// DETERMINISTIC ascending-index iteration; bit t set iff an edge exists.
+fn fsm_legal_mask(state: i64) -> i64 {
+    let mut mask: i64 = 0;
+    let mut t: i64 = 0;
+    while t < num_tokens() {
+        if fsm_next(state, t) >= 0 {
+            mask = mask | (1 << t);
+        }
+        t = t + 1;
+    }
+    return mask;
+}
+
+// ---------------------------------------------------------------------------
+// PDA (nested JSON value grammar) — STRETCH artifact
+// ---------------------------------------------------------------------------
+// States: 0 V0 expect value | 1 A0 expect first array element or ']' |
+//         2 K0 expect first key or '}' | 3 K1 expect key | 4 C0 expect ':' |
+//         5 E0 end-of-value (mask depends on stack top; ACCEPT at BOTTOM).
+// Stack symbols: 0 BOTTOM | 1 OBJ | 2 ARR.
+// Stack ops: 0 none | 1 push OBJ | 2 push ARR | 3 pop.
+
+fn pda_num_states() -> i64 {
+    return 6;
+}
+
+fn pda_num_stack_syms() -> i64 {
+    return 3;
+}
+
+// pda_next — transition as a pure function of (state, stack-top, token).
+// Returns next_state * 4 + stack_op, or -1 when no edge is defined.
+fn pda_next(state: i64, stk: i64, tok: i64) -> i64 {
+    if state <= 1 {
+        // V0 and A0 share the value edges (independent of stack top).
+        if tok == 0 {
+            // '{' -> K0, push OBJ
+            return 2 * 4 + 1;
+        }
+        if tok == 2 {
+            // '[' -> A0, push ARR
+            return 1 * 4 + 2;
+        }
+        if tok >= 6 {
+            if tok <= 10 {
+                // scalar -> E0
+                return 5 * 4;
+            }
+        }
+        if state == 1 {
+            if tok == 3 {
+                if stk == 2 {
+                    // ']' closes the empty array -> E0, pop
+                    return 5 * 4 + 3;
+                }
+            }
+        }
+        return 0 - 1;
+    }
+    if state == 2 {
+        // K0: first key, or '}' closing the empty object
+        if tok == 6 {
+            return 4 * 4;
+        }
+        if tok == 1 {
+            if stk == 1 {
+                return 5 * 4 + 3;
+            }
+        }
+        return 0 - 1;
+    }
+    if state == 3 {
+        // K1: key after ','
+        if tok == 6 {
+            return 4 * 4;
+        }
+        return 0 - 1;
+    }
+    if state == 4 {
+        // C0: only ':'
+        if tok == 4 {
+            return 0;
+        }
+        return 0 - 1;
+    }
+    if state == 5 {
+        // E0: continuation depends on what encloses the finished value.
+        if stk == 1 {
+            if tok == 5 {
+                // ',' -> next key
+                return 3 * 4;
+            }
+            if tok == 1 {
+                // '}' -> pop OBJ
+                return 5 * 4 + 3;
+            }
+            return 0 - 1;
+        }
+        if stk == 2 {
+            if tok == 5 {
+                // ',' -> next array element
+                return 0;
+            }
+            if tok == 3 {
+                // ']' -> pop ARR
+                return 5 * 4 + 3;
+            }
+            return 0 - 1;
+        }
+        if tok == 11 {
+            // BOTTOM: only END
+            return 5 * 4;
+        }
+        return 0 - 1;
+    }
+    return 0 - 1;
+}
+
+// pda_accept — 1 iff the machine may stop: end-of-value at stack BOTTOM.
+fn pda_accept(state: i64, stk: i64) -> i64 {
+    if state == 5 {
+        if stk == 0 {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// pda_legal_mask — bitset of legal next tokens, PURE in (state, stack-top).
+fn pda_legal_mask(state: i64, stk: i64) -> i64 {
+    let mut mask: i64 = 0;
+    let mut t: i64 = 0;
+    while t < num_tokens() {
+        if pda_next(state, stk, t) >= 0 {
+            mask = mask | (1 << t);
+        }
+        t = t + 1;
+    }
+    return mask;
+}
+
+// ---------------------------------------------------------------------------
+// Table emission — flat little-endian u64 words (THE gate artifact bytes)
+// ---------------------------------------------------------------------------
+
+// emit_word_le — store one u64 word as 8 explicit little-endian bytes.
+// Explicit per-byte stores keep the layout substrate-endianness-independent.
+fn emit_word_le(out: i64, pos: i64, w: i64) -> i64 {
+    let mut b: i64 = 0;
+    while b < 8 {
+        __mind_store_i8(out + pos + b, (w >> (b * 8)) & 255);
+        b = b + 1;
+    }
+    return pos + 8;
+}
+
+// fsm_emit_table — 7 words (state-major), returns byte length (56).
+fn fsm_emit_table(out: i64) -> i64 {
+    let mut pos: i64 = 0;
+    let mut s: i64 = 0;
+    while s < fsm_num_states() {
+        pos = emit_word_le(out, pos, fsm_legal_mask(s));
+        s = s + 1;
+    }
+    return pos;
+}
+
+// pda_emit_table — 18 words (state-major, stack-symbol-minor), 144 bytes.
+fn pda_emit_table(out: i64) -> i64 {
+    let mut pos: i64 = 0;
+    let mut s: i64 = 0;
+    while s < pda_num_states() {
+        let mut k: i64 = 0;
+        while k < pda_num_stack_syms() {
+            pos = emit_word_le(out, pos, pda_legal_mask(s, k));
+            k = k + 1;
+        }
+        s = s + 1;
+    }
+    return pos;
+}
+
+// fnv32 — FNV-1a 32-bit fold of `len` bytes at `buf`.  The 32-bit domain
+// (mask 4294967295 after multiply, sha256.mind discipline) keeps every
+// intermediate below 2^57 — no i64 overflow, no wrap-semantics dependence.
+fn fnv32(buf: i64, len: i64) -> i64 {
+    let mut h: i64 = 2166136261;
+    let mut i: i64 = 0;
+    while i < len {
+        let b = __mind_load_i8(buf + i);
+        h = ((h ^ b) * 16777619) & 4294967295;
+        i = i + 1;
+    }
+    return h;
+}
+
+// grammar_mask_fold — the cross-substrate canary symbol.  Emits the FSM table
+// (56 bytes) then the PDA table (144 bytes) contiguously and returns their
+// FNV-1a 32-bit fold over all 200 bytes.  Every operation is integer with a
+// fixed dataflow — no float, no clock, no division, no reassociation — so the
+// returned i64 is identical on avx2 and neon by construction (RFC 0015 §3.1).
+// The dual-arch cross-substrate harness dlopens this and pins the hash.
+fn grammar_mask_fold() -> i64 {
+    let buf: i64 = __mind_alloc(256);
+    let fsm_len = fsm_emit_table(buf);
+    let pda_len = pda_emit_table(buf + fsm_len);
+    let total = fsm_len + pda_len;
+    let h = fnv32(buf, total);
+    __mind_free(buf);
+    return h;
+}
+
+// ---------------------------------------------------------------------------
+// Walk self-checks — falsifiers baked into the demo
+// ---------------------------------------------------------------------------
+
+// fsm_demo_tok — token i of the legal sequence
+//   { STRING : NUMBER , STRING : TRUE } END        (10 tokens)
+fn fsm_demo_tok(i: i64) -> i64 {
+    if i == 0 {
+        return 0;
+    }
+    if i == 1 {
+        return 6;
+    }
+    if i == 2 {
+        return 4;
+    }
+    if i == 3 {
+        return 7;
+    }
+    if i == 4 {
+        return 5;
+    }
+    if i == 5 {
+        return 6;
+    }
+    if i == 6 {
+        return 4;
+    }
+    if i == 7 {
+        return 8;
+    }
+    if i == 8 {
+        return 1;
+    }
+    return 11;
+}
+
+// fsm_walk — drive the legal sequence through the mask + transition pair,
+// requiring every token to be mask-legal BEFORE stepping; then negative
+// probes: '}' must be illegal at start, '[' must be illegal everywhere here.
+fn fsm_walk() -> i64 {
+    if ((fsm_legal_mask(0) >> 1) & 1) == 1 {
+        return 0;
+    }
+    if ((fsm_legal_mask(3) >> 2) & 1) == 1 {
+        return 0;
+    }
+    let mut state: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 10 {
+        let tok = fsm_demo_tok(i);
+        if ((fsm_legal_mask(state) >> tok) & 1) == 0 {
+            return 0;
+        }
+        state = fsm_next(state, tok);
+        if state < 0 {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return fsm_accept(state);
+}
+
+// pda_demo_tok — token i of the nested value
+//   { STRING : [ NUMBER , { STRING : NUMBER } ] , STRING : NULL } END
+// i.e. the shape of {"a":[1,{"b":2}],"c":null} — 18 tokens.
+fn pda_demo_tok(i: i64) -> i64 {
+    if i == 0 {
+        return 0;
+    }
+    if i == 1 {
+        return 6;
+    }
+    if i == 2 {
+        return 4;
+    }
+    if i == 3 {
+        return 2;
+    }
+    if i == 4 {
+        return 7;
+    }
+    if i == 5 {
+        return 5;
+    }
+    if i == 6 {
+        return 0;
+    }
+    if i == 7 {
+        return 6;
+    }
+    if i == 8 {
+        return 4;
+    }
+    if i == 9 {
+        return 7;
+    }
+    if i == 10 {
+        return 1;
+    }
+    if i == 11 {
+        return 3;
+    }
+    if i == 12 {
+        return 5;
+    }
+    if i == 13 {
+        return 6;
+    }
+    if i == 14 {
+        return 4;
+    }
+    if i == 15 {
+        return 10;
+    }
+    if i == 16 {
+        return 1;
+    }
+    return 11;
+}
+
+// pda_walk — drive the nested sequence with an EXPLICIT integer stack
+// (push on '{'/'[', pop on close), checking mask-legality of every token
+// against (state, stack-top) before stepping; then negative probes:
+// ']' may not close an object, '}' may not fire at stack BOTTOM.
+fn pda_walk() -> i64 {
+    let stack: i64 = __mind_alloc(16 * 8);
+    __mind_store_i64(stack, 0);
+    let mut sp: i64 = 0;
+    let mut state: i64 = 0;
+    let mut ok: i64 = 1;
+    let mut i: i64 = 0;
+    while i < 18 {
+        let tok = pda_demo_tok(i);
+        let top = __mind_load_i64(stack + sp * 8);
+        if ((pda_legal_mask(state, top) >> tok) & 1) == 0 {
+            ok = 0;
+        }
+        let packed = pda_next(state, top, tok);
+        if packed < 0 {
+            ok = 0;
+        }
+        if ok == 1 {
+            let op = packed & 3;
+            state = packed >> 2;
+            if op == 1 {
+                sp = sp + 1;
+                __mind_store_i64(stack + sp * 8, 1)
+            }
+            if op == 2 {
+                sp = sp + 1;
+                __mind_store_i64(stack + sp * 8, 2)
+            }
+            if op == 3 {
+                sp = sp - 1;
+            }
+        }
+        i = i + 1;
+    }
+    if ((pda_legal_mask(5, 1) >> 3) & 1) == 1 {
+        ok = 0;
+    }
+    if ((pda_legal_mask(5, 0) >> 1) & 1) == 1 {
+        ok = 0;
+    }
+    let top = __mind_load_i64(stack + sp * 8);
+    let acc = pda_accept(state, top);
+    __mind_free(stack);
+    if ok == 0 {
+        return 0;
+    }
+    return acc;
+}
+
+// ---------------------------------------------------------------------------
+// Output formatting — hex over an explicit byte buffer, printed once
+// ---------------------------------------------------------------------------
+
+// hex_digit — 0..15 -> ASCII '0'..'9','a'..'f'.
+fn hex_digit(d: i64) -> i64 {
+    if d < 10 {
+        return 48 + d;
+    }
+    return 87 + d;
+}
+
+fn emit_ch(out: i64, pos: i64, c: i64) -> i64 {
+    __mind_store_i8(out + pos, c);
+    return pos + 1;
+}
+
+// emit_hex_bytes — two lowercase hex digits per source byte, in address order.
+fn emit_hex_bytes(out: i64, pos: i64, src: i64, n: i64) -> i64 {
+    let mut p: i64 = pos;
+    let mut i: i64 = 0;
+    while i < n {
+        let b = __mind_load_i8(src + i);
+        p = emit_ch(out, p, hex_digit((b >> 4) & 15));
+        p = emit_ch(out, p, hex_digit(b & 15));
+        i = i + 1;
+    }
+    return p;
+}
+
+// emit_u32_hex — 8 hex digits, most significant nibble first.
+fn emit_u32_hex(out: i64, pos: i64, v: i64) -> i64 {
+    let mut p: i64 = pos;
+    let mut k: i64 = 0;
+    while k < 8 {
+        p = emit_ch(out, p, hex_digit((v >> ((7 - k) * 4)) & 15));
+        k = k + 1;
+    }
+    return p;
+}
+
+// emit_section — "<3-char label>=" + hex(table) + "\n" +
+//                "fnv="  + fnv32   + "\n" +
+//                "walk=" + walk_ok + "\n".
+// Labels are stored as byte codes ("fsm" / "pda" / "fnv" / "walk") — string
+// literals are outside the runnable subset, per examples/mindc_mind style.
+fn emit_section(out: i64, pos: i64, c0: i64, c1: i64, c2: i64, tbl: i64, len: i64, walk_ok: i64) -> i64 {
+    let mut p: i64 = pos;
+    p = emit_ch(out, p, c0);
+    p = emit_ch(out, p, c1);
+    p = emit_ch(out, p, c2);
+    p = emit_ch(out, p, 61);
+    p = emit_hex_bytes(out, p, tbl, len);
+    p = emit_ch(out, p, 10);
+    // "fnv=" — 102 110 118 61
+    p = emit_ch(out, p, 102);
+    p = emit_ch(out, p, 110);
+    p = emit_ch(out, p, 118);
+    p = emit_ch(out, p, 61);
+    p = emit_u32_hex(out, p, fnv32(tbl, len));
+    p = emit_ch(out, p, 10);
+    // "walk=" — 119 97 108 107 61
+    p = emit_ch(out, p, 119);
+    p = emit_ch(out, p, 97);
+    p = emit_ch(out, p, 108);
+    p = emit_ch(out, p, 107);
+    p = emit_ch(out, p, 61);
+    p = emit_ch(out, p, 48 + walk_ok);
+    p = emit_ch(out, p, 10);
+    return p;
+}
+
+fn main() -> i64 {
+    let tbl: i64 = __mind_alloc(256);
+    let out: i64 = __mind_alloc(1024);
+    let mut pos: i64 = 0;
+
+    // FSM — the primary go/no-go artifact: 7 states x 1 word = 56 bytes.
+    let fsm_len = fsm_emit_table(tbl);
+    let fsm_ok = fsm_walk();
+    // "fsm" = 102 115 109
+    pos = emit_section(out, pos, 102, 115, 109, tbl, fsm_len, fsm_ok);
+
+    // PDA (stretch) — 6 states x 3 stack symbols = 18 words = 144 bytes.
+    let pda_tbl = tbl + 64;
+    let pda_len = pda_emit_table(pda_tbl);
+    let pda_ok = pda_walk();
+    // "pda" = 112 100 97
+    pos = emit_section(out, pos, 112, 100, 97, pda_tbl, pda_len, pda_ok);
+
+    let n = print_bytes(out, pos);
+    __mind_free(out);
+    __mind_free(tbl);
+
+    if fsm_ok == 0 {
+        return 1;
+    }
+    if pda_ok == 0 {
+        return 1;
+    }
+    if n < 0 {
+        return 1;
+    }
+    return 0;
+}

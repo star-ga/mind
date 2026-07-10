@@ -1,0 +1,26 @@
+# mind-bench reference hashes — RFC 0020 §5. See u64-ops/reference_hashes.toml
+# for provenance/signing notes.
+#
+# Structured / grammar-constrained decoding mask-table canary (roadmap Phase 14
+# §6). The kernel `grammar_mask_fold` folds the 200-byte FSM+PDA legal-token
+# mask tables to one i64 (FNV-1a 32-bit), serialised little-endian (manifest
+# `output_encoding = "i64_le"`), then sha256.
+#
+# The table build and the fold are pure integer with a fixed dataflow, so
+# avx2 == neon by construction (RFC 0015 §3.1). The in-run oracle
+# (`ref_grammar_mask_fold`) additionally proves the compiled mask table matches
+# the grammar semantics reconstructed independently in Rust — not just that it
+# is self-consistent run-to-run.
+#
+# Provenance:
+#   avx2 — computed on x86_64 (this reference), verified in CI job
+#          `cross_substrate_identity` (ubuntu-24.04). grammar_mask_fold() =
+#          0x941c01e5.
+#   neon — SAME hash by construction; recomputed on real ARM hardware (CI job
+#          `cross_substrate_identity`, ubuntu-24.04-arm) per RFC 0020 §10.
+#
+# Re-bless only on an intentional grammar/table change (RFC 0020 §13): run the
+# gate with MIND_BENCH_BLESS=1 and commit the new hash.
+
+avx2 = "4d46a747338253886a91b02f4b832dc8675dd315b9500490493b0b977295627b"
+neon = "4d46a747338253886a91b02f4b832dc8675dd315b9500490493b0b977295627b"
