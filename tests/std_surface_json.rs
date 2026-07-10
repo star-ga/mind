@@ -443,6 +443,40 @@ pub fn smoke_jv_n_is_int(h: i64) -> i64 {{ jv_n_is_int(h) }}
             let src5 = b"// comment\n{\"x\":1}";
             let root5 = parse_fn(src5.as_ptr() as i64, src5.len() as i64);
             assert_eq!(root5, 0, "fixture 5: comment before JSON must return 0");
+
+            // Fixture 6: JSON escape for the surrogate pair encoding U+1F600.
+            // Bytes are numeric to dodge escape ambiguity: 0x22 quote,
+            // 0x5C 0x75 = the u-escape intro, hex D8 3D then again DE 00,
+            // closing 0x22. Exercises jv_decode_surrogate: a high+low surrogate
+            // combine into one scalar emitted as 4-byte UTF-8 (F0 9F 98 80).
+            let src6: &[u8] = &[
+                0x22, 0x5C, 0x75, 0x44, 0x38, 0x33, 0x44, 0x5C, 0x75, 0x44, 0x45, 0x30, 0x30, 0x22,
+            ];
+            let root6 = parse_fn(src6.as_ptr() as i64, src6.len() as i64);
+            assert!(root6 != 0, "fixture 6: surrogate-pair string must parse");
+            assert_eq!(kind_fn(root6), 3, "fixture 6: root must be string (kind=3)");
+            assert_eq!(s_len_fn(root6), 4, "fixture 6: U+1F600 is 4 UTF-8 bytes");
+            let emoji_bytes = std::slice::from_raw_parts(s_addr_fn(root6) as *const u8, 4);
+            assert_eq!(
+                emoji_bytes,
+                &[0xF0u8, 0x9F, 0x98, 0x80],
+                "fixture 6: surrogate pair must decode to U+1F600 UTF-8"
+            );
+
+            // Fixture 7: JSON escape for a lone high surrogate D83D with no low
+            // surrogate following -- unpaired, a hard parse error.
+            let src7: &[u8] = &[0x22, 0x5C, 0x75, 0x44, 0x38, 0x33, 0x44, 0x22];
+            let root7 = parse_fn(src7.as_ptr() as i64, src7.len() as i64);
+            assert_eq!(root7, 0, "fixture 7: lone high surrogate must return 0");
+
+            // Fixture 8: JSON escape for U+0041 -> "A" (non-surrogate helper path).
+            let src8: &[u8] = &[0x22, 0x5C, 0x75, 0x30, 0x30, 0x34, 0x31, 0x22];
+            let root8 = parse_fn(src8.as_ptr() as i64, src8.len() as i64);
+            assert!(root8 != 0, "fixture 8: BMP escape string must parse");
+            assert_eq!(kind_fn(root8), 3, "fixture 8: root must be string");
+            assert_eq!(s_len_fn(root8), 1, "fixture 8: 'A' is 1 byte");
+            let a_bytes = std::slice::from_raw_parts(s_addr_fn(root8) as *const u8, 1);
+            assert_eq!(a_bytes, b"A", "fixture 8: BMP escape must decode to 'A'");
         }
     }
 }
