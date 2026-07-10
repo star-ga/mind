@@ -161,15 +161,6 @@ const COND_TYPE_MISMATCH_CODE: &str = "E2011";
 /// `cond_is_boolean_intent`.
 const MIXED_CLASS_BINOP_CODE: &str = "E2013";
 
-/// A declared-`u64` value used in a context whose current lowering is signed
-/// and therefore wrong: `<u64> as f32|f64`, or as an operand of a sign-sensitive
-/// operator (`< <= > >= / % >>`). `u64` is not yet a first-class value kind, so
-/// these emit `sitofp`/`slt`/`divsi`/`shrsi` — a silent wrong result for values
-/// ≥ 2^63. Fail loud until the real `ScalarU64` kind lands (issue #99). Tracks
-/// declaration-driven u64-ness only (params + `let x: u64` + `… as u64`), so it
-/// never over-fires.
-const U64_UNSIGNED_CONTEXT_CODE: &str = "E2014";
-
 /// A `let`/assignment whose scalar-annotation class disagrees with the class of
 /// its value (`let x: f64 = 5`, `let y: i64 = 1.5`). No implicit int↔float
 /// conversion exists (RFC 0011). Fires ONLY when BOTH the annotation and the
@@ -177,17 +168,13 @@ const U64_UNSIGNED_CONTEXT_CODE: &str = "E2014";
 ///
 /// NOTE: the design note proposed `E2012` for this diagnostic, but that code is
 /// already taken by `resolve.rs::FN_VALUE_CALL_CODE`; `E2015` is the free
-/// successor. The two plan-free codes (`E2013` mixed-binop, `E2014` u64) keep
-/// their proposed values.
+/// successor. (`E2013` mixed-binop keeps its proposed value.)
 const LET_CLASS_MISMATCH_CODE: &str = "E2015";
 
 /// A numeric `as bool` cast (`3 as bool`). Casting a number to `bool` is not a
 /// defined conversion in MIND; the check phase rejected it here instead of
 /// letting the raw integer/float bits pass through unnormalised. Use `x != 0`.
 const AS_BOOL_CODE: &str = "E2016";
-
-/// Shared message for every `E2014` (u64 unsigned-context) diagnostic.
-const U64_UNSIGNED_MSG: &str = "u64 has no deterministic signed lowering for this operation yet; cast through `as i64` explicitly, or track issue #99";
 
 /// An `import std.X` line was parsed but this `mindc` binary was built
 /// WITHOUT the std surface compiled in (neither `std-surface` nor
@@ -2899,27 +2886,19 @@ fn scalar_class_of_ann(ty: &TypeAnn) -> Option<ScalarClass> {
     }
 }
 
-/// Whether an annotation declares the (not-yet-first-class) `u64` type, whose
-/// sign-sensitive operations have no deterministic lowering yet (issue #99).
-fn is_u64_ann(ty: &TypeAnn) -> bool {
-    matches!(ty, TypeAnn::Named(n) if n == "u64")
-}
-
 /// Whether an annotation names `bool` (dedicated variant or `Named("bool")`).
 fn is_bool_ann(ty: &TypeAnn) -> bool {
     matches!(ty, TypeAnn::ScalarBool) || matches!(ty, TypeAnn::Named(n) if n == "bool")
 }
 
 /// Declared-scalar bindings in scope for the class checker. `classes` maps a
-/// binding name to its annotation-derived `ScalarClass`; `u64s` is the subset
-/// declared exactly `u64`. Both are seeded with the enclosing fn's params and
-/// grown at each annotated `let`. Names are only ever added from annotations —
-/// never the loose i64 default — so membership is always a fact. (The maps are
-/// point-lookup only; nothing iterates them into output, so ordering is moot.)
+/// binding name to its annotation-derived `ScalarClass`, seeded with the
+/// enclosing fn's params and grown at each annotated `let`. Names are only ever
+/// added from annotations — never the loose i64 default — so membership is
+/// always a fact. (Point-lookup only; nothing iterates it into output.)
 #[derive(Debug, Clone, Default)]
 struct ClassCtx {
     classes: HashMap<String, ScalarClass>,
-    u64s: std::collections::HashSet<String>,
 }
 
 /// Confidence-gated scalar class of an expression: `Some` ONLY when provable
@@ -2953,18 +2932,6 @@ fn confident_scalar_class(node: &Node, ctx: &ClassCtx) -> Option<ScalarClass> {
     }
 }
 
-/// Whether an expression is a declared-`u64` value: a `u64`-declared binding, a
-/// `… as u64` cast, or either wrapped in parentheses. Declaration/cast-driven
-/// only, so the E2014 checks it feeds never over-fire.
-fn expr_is_u64(node: &Node, ctx: &ClassCtx) -> bool {
-    match node {
-        Node::Lit(Literal::Ident(name), _) => ctx.u64s.contains(name),
-        Node::As { ty, .. } => is_u64_ann(ty),
-        Node::Paren(inner, _) => expr_is_u64(inner, ctx),
-        _ => false,
-    }
-}
-
 /// Entry point: run the confidence-gated scalar-class checks over a fn body.
 /// `ret_class` is the enclosing fn's declared-return class (drives the E2010
 /// new direction); `ctx` is pre-seeded with the fn's scalar params.
@@ -2994,11 +2961,8 @@ fn check_scalar_class_stmt(
             name, ann, value, ..
         } => {
             walk_expr_class_checks(value, ctx, src, file, errs);
-            match ann
-                .as_ref()
-                .and_then(|a| scalar_class_of_ann(a).map(|c| (a, c)))
-            {
-                Some((ann_ty, ann_class)) => {
+            match ann.as_ref().and_then(scalar_class_of_ann) {
+                Some(ann_class) => {
                     if let Some(val_class) = confident_scalar_class(value, ctx) {
                         if ann_class != val_class {
                             errs.push(diag_from_span(
@@ -3011,18 +2975,12 @@ fn check_scalar_class_stmt(
                         }
                     }
                     ctx.classes.insert(name.clone(), ann_class);
-                    if is_u64_ann(ann_ty) {
-                        ctx.u64s.insert(name.clone());
-                    } else {
-                        ctx.u64s.remove(name);
-                    }
                 }
                 None => {
                     // A non-scalar / unannotated (or unknown) binding shadows any
                     // same-named param: drop its tracked class so a later use
                     // resolves to `None`, never a stale fact.
                     ctx.classes.remove(name);
-                    ctx.u64s.remove(name);
                 }
             }
         }
@@ -3127,21 +3085,19 @@ fn walk_expr_class_checks(
                     MIXED_CLASS_BINOP_CODE,
                 ));
             }
-            // issue #99 Stage 2: `u64` now has a deterministic UNSIGNED lowering
-            // for the sign-sensitive comparison / `/` / `%` operators (the plain-
-            // i64 BinOp arm selects `ult`/`ule`/`ugt`/`uge`/`divui`/`remui` when
-            // an operand is `ScalarU64`), so these no longer fail closed. The
-            // `<u64> as f32|f64` cast (unsigned int->float) is NOT yet implemented
-            // and stays E2014-rejected in the `As` arm below.
+            // issue #99: `u64` is a first-class value kind — the sign-sensitive
+            // comparison / `/` / `%` operators lower to the UNSIGNED variants
+            // (`ult`/`ule`/`ugt`/`uge`/`divui`/`remui`) when an operand is
+            // `ScalarU64`, and `<u64> as f32|f64` lowers via `uitofp`, so u64 no
+            // longer needs a fail-closed reject in any of these contexts.
             walk_expr_class_checks(left, ctx, src, file, errs);
             walk_expr_class_checks(right, ctx, src, file, errs);
         }
         Node::Bitwise {
             op: _, left, right, ..
         } => {
-            // issue #99 Stage 2: `u64 >> n` now lowers to the LOGICAL shift
-            // (`arith.shrui`) when an operand is `ScalarU64`, so `>>` is no longer
-            // rejected. (`<< & | ^` were always sign-agnostic and never rejected.)
+            // issue #99: `u64 >> n` lowers to the LOGICAL shift (`arith.shrui`)
+            // when an operand is `ScalarU64`. (`<< & | ^` are sign-agnostic.)
             walk_expr_class_checks(left, ctx, src, file, errs);
             walk_expr_class_checks(right, ctx, src, file, errs);
         }
@@ -3153,16 +3109,6 @@ fn walk_expr_class_checks(
                     "cast to `bool` is not permitted; use `x != 0`".to_string(),
                     *span,
                     AS_BOOL_CODE,
-                ));
-            }
-            if matches!(scalar_class_of_ann(ty), Some(ScalarClass::Float)) && expr_is_u64(expr, ctx)
-            {
-                errs.push(diag_from_span(
-                    src,
-                    file,
-                    U64_UNSIGNED_MSG.to_string(),
-                    *span,
-                    U64_UNSIGNED_CONTEXT_CODE,
                 ));
             }
             walk_expr_class_checks(expr, ctx, src, file, errs);
@@ -4291,7 +4237,6 @@ pub fn check_module_types_in_file(
                         || d.code == RETURN_TYPE_MISMATCH_CODE
                         || d.code == COND_TYPE_MISMATCH_CODE
                         || d.code == MIXED_CLASS_BINOP_CODE
-                        || d.code == U64_UNSIGNED_CONTEXT_CODE
                         || d.code == LET_CLASS_MISMATCH_CODE
                         || d.code == AS_BOOL_CODE
                 }));
@@ -4309,17 +4254,14 @@ pub fn check_module_types_in_file(
 
                 // Confidence-gated scalar-class checks (RFC 0011 — no implicit
                 // int↔float coercion): E2010 float-return + int-value direction,
-                // E2013 mixed-class binop, E2014 u64 unsigned-context, E2015
-                // let/assign class mismatch, E2016 numeric `as bool`. Purely
-                // syntactic (never `infer_expr`), seeded with the fn's scalar
-                // params — fires only on annotation/literal-derived mismatches.
+                // E2013 mixed-class binop, E2015 let/assign class mismatch,
+                // E2016 numeric `as bool`. Purely syntactic (never `infer_expr`),
+                // seeded with the fn's scalar params — fires only on
+                // annotation/literal-derived mismatches.
                 let mut class_ctx = ClassCtx::default();
                 for param in params {
                     if let Some(c) = scalar_class_of_ann(&param.ty) {
                         class_ctx.classes.insert(param.name.clone(), c);
-                    }
-                    if is_u64_ann(&param.ty) {
-                        class_ctx.u64s.insert(param.name.clone());
                     }
                 }
                 let ret_class = ret_type.as_ref().and_then(scalar_class_of_ann);

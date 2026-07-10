@@ -2833,10 +2833,15 @@ impl LoweringContext {
                     let src = args[0];
                     // A `bool`/i1 source is UNSIGNED (values 0/1) — `sitofp` on a
                     // 1-bit value reads the set bit as −1, so `true as f64` would
-                    // wrongly yield −1.0. Treat i1 and u32 as unsigned; every
-                    // other integer scalar (i8..i64) is signed.
+                    // wrongly yield −1.0. Treat i1, u32 AND u64 as unsigned so a
+                    // `u64` value ≥ 2^63 converts via `uitofp` (issue #99: signed
+                    // `sitofp` would read it as a large negative and yield the
+                    // wrong float); every other integer scalar (i8..i64) is signed.
                     let unsigned = self.i1_values.contains(&src)
-                        || matches!(self.values.get(&src), Some(ValueKind::ScalarU32));
+                        || matches!(
+                            self.values.get(&src),
+                            Some(ValueKind::ScalarU32) | Some(ValueKind::ScalarU64)
+                        );
                     let phys = if self.i1_values.contains(&src) {
                         "i1"
                     } else {
