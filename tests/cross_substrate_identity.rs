@@ -2413,3 +2413,125 @@ fn matmul_f32_v_reproducibility_gate() {
     let head_bits = y.first().map(|v| v.to_bits()).unwrap_or(0);
     pin_or_defer_strict_fp(id, &computed, head_bits);
 }
+
+// ===========================================================================
+// grammar-mask — structured / grammar-constrained decoding canary (roadmap
+// Phase 14 §6, slice-1 go/no-go). Source: examples/grammar_mask/main.mind.
+//
+// The kernel `grammar_mask_fold` compiles two grammars to automata and emits
+// their per-state legal-token bitmask TABLES in the runnable integer subset —
+// FSM (flat JSON object, 7 states x 1 word = 56 bytes) then PDA (nested JSON
+// value, 6 states x 3 stack symbols = 144 bytes) — and folds all 200 bytes with
+// FNV-1a 32-bit. This is the DETERMINISTIC tier of guided decoding: the mask is
+// a pure integer function of (grammar, vocabulary), with no float, no clock, no
+// division, no reassociation, so avx2 == neon by construction (RFC 0015 §3.1).
+// The -inf logit mask, softmax, and sampler are OUT of scope (the model's float
+// path). A drift here means the mask table or fold picked up a target-sensitive
+// or nondeterministic op — a release-blocker.
+// ===========================================================================
+
+type GrammarMaskFoldFn = unsafe extern "C" fn() -> i64;
+
+/// Compile `examples/grammar_mask/main.mind` to a temp `.so` once for the whole
+/// test binary. Same toolchain guard / self-skip discipline as
+/// `build_lorenz_so`: `None` when the MLIR toolchain is shadowed, but a hard
+/// failure under `MIND_BENCH_REQUIRE` so the gate can never pass vacuously.
+fn build_grammar_mask_so() -> Option<&'static PathBuf> {
+    static SO: OnceLock<Option<PathBuf>> = OnceLock::new();
+    SO.get_or_init(|| {
+        for tool in ["mlir-opt", "mlir-translate", "clang"] {
+            if which::which(tool).is_err() {
+                assert!(
+                    std::env::var_os("MIND_BENCH_REQUIRE").is_none(),
+                    "MIND_BENCH_REQUIRE is set but '{tool}' is not on PATH: the \
+                     cross-substrate gate cannot run. Install the MLIR toolchain \
+                     (mlir-opt / mlir-translate / clang) on this runner."
+                );
+                println!("cross_substrate_identity: {tool} not on PATH; skipping");
+                return None;
+            }
+        }
+        let src_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("examples")
+            .join("grammar_mask")
+            .join("main.mind");
+        let so_path = std::env::temp_dir().join("mind_xsi_grammar_mask.so");
+        let status = Command::new(mindc_bin())
+            .args([
+                src_path.to_str().unwrap(),
+                "--emit-shared",
+                so_path.to_str().unwrap(),
+            ])
+            .status()
+            .expect("spawn mindc --emit-shared for grammar_mask");
+        assert!(
+            status.success(),
+            "mindc --emit-shared failed for the grammar-mask workload"
+        );
+        Some(so_path)
+    })
+    .as_ref()
+}
+
+/// Independent Rust oracle for `grammar_mask_fold`. The mask words are derived
+/// from the grammar semantics ALONE (not read back from the .mind): the FSM
+/// legal-token bitmask per state, then the PDA legal-token bitmask per
+/// (state, stack-top). Vocabulary bit order:
+///   0 `{`  1 `}`  2 `[`  3 `]`  4 `:`  5 `,`  6 STRING  7 NUMBER
+///   8 TRUE 9 FALSE 10 NULL 11 END.
+/// Serialised exactly as the kernel does — 8 little-endian bytes per u64 word,
+/// FSM table then PDA table — and folded with FNV-1a 32-bit over UNSIGNED bytes
+/// (matching `__mind_load_i8`'s zero-extend). If the compiled table drifts from
+/// the grammar this fires before the hash pin.
+fn ref_grammar_mask_fold() -> i64 {
+    const FSM: [u64; 7] = [0x001, 0x042, 0x010, 0x7c0, 0x022, 0x800, 0x040];
+    const PDA: [u64; 18] = [
+        0x7c5, 0x7c5, 0x7c5, // V0: value start (`{` `[` scalars)
+        0x7c5, 0x7c5, 0x7cd, // A0: + `]` when ARR is on top (empty array)
+        0x040, 0x042, 0x040, // K0: STRING key, + `}` when OBJ on top (empty object)
+        0x040, 0x040, 0x040, // K1: STRING key after `,`
+        0x010, 0x010, 0x010, // C0: `:`
+        0x800, 0x022, 0x028, // E0: END at BOTTOM, `,`/`}` under OBJ, `,`/`]` under ARR
+    ];
+    let mut bytes: Vec<u8> = Vec::with_capacity(200);
+    for w in FSM.iter().chain(PDA.iter()) {
+        bytes.extend_from_slice(&w.to_le_bytes());
+    }
+    // FNV-1a 32-bit in the sha256.mind mask-32 discipline: h < 2^32 and b < 256
+    // keep every product < 2^57, so the fold never overflows i64.
+    let mut h: i64 = 2166136261;
+    for b in bytes {
+        h = (h ^ b as i64).wrapping_mul(16777619) & 4294967295;
+    }
+    h
+}
+
+#[test]
+fn grammar_mask_reproducibility_gate() {
+    let id = "grammar-mask";
+
+    let Some(so) = build_grammar_mask_so() else {
+        return; // toolchain shadowed — self-skip
+    };
+    let lib = unsafe { Library::new(so).expect("dlopen workload .so") };
+    let f: Symbol<GrammarMaskFoldFn> = unsafe {
+        lib.get(b"grammar_mask_fold")
+            .expect("grammar_mask_fold symbol")
+    };
+
+    let result = unsafe { f() };
+
+    // 1. Within-run oracle: the compiled legal-token mask table reproduces the
+    //    grammar semantics reconstructed independently in Rust.
+    let oracle = ref_grammar_mask_fold();
+    assert_eq!(
+        result, oracle,
+        "{id}: compiled legal-token mask table diverged from the grammar oracle \
+         within a single run (kernel={result:#x}, oracle={oracle:#x})"
+    );
+
+    // 2. Canonical hash pinned to the committed per-substrate reference.
+    //    Integer-only fold → avx2 == neon by construction (RFC 0015 §3.1).
+    let computed = canonical_hash(result);
+    pin_or_bless(id, &computed, result);
+}

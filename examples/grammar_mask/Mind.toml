@@ -1,0 +1,10 @@
+[package]
+name = "grammar_mask"
+version = "0.1.0"
+authors = ["STARGA Inc."]
+license = "Apache-2.0"
+description = "Grammar-constrained decoding slice 1: deterministic legal-token mask table"
+
+[build]
+target = "cpu"
+entry = "main.mind"
