@@ -76,6 +76,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the v2 verifier-core doc implied the CLI walks `parent` back-links — it does not:
   `parent` is decoded and reported but not yet traversed or authenticated (now
   stated honestly, with a deferred-work marker).
+- **Documented: `trace_hash` covers the type-erased canonical IR.** Two source
+  programs that differ *only* in a scalar type they never observe (a pass-through
+  `f(x: i64)` vs `f(x: f64)`, whose bodies carry no type-dependent instruction)
+  encode to identical `mic@3` and so share a `trace_hash` — a
+  canonicalization-completeness boundary, NOT a tamper-detection failure (a given
+  artifact's bytes cannot be altered without changing its hash; any program that
+  actually uses the scalar emits type-distinct instructions and does not collide).
+  Closing it would invalidate every existing evidence hash across the ecosystem for
+  a narrow, low-exploitability gap, so the proportionate response is precise
+  documentation (SECURITY.md); an additive typed-fn opcode remains the
+  backward-compatible upgrade path if future IR makes scalar types observable more
+  broadly.
 
 ### Fixed
 - **Float/string-literal and tuple `match` arms silently returned the last arm.**
