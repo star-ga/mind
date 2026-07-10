@@ -42,6 +42,18 @@ import std.string;
 
 // --- TomlValue kind constants ---
 
+// Maximum recursive-descent nesting depth for untrusted input. parse_value /
+// parse_array / parse_inline_table fail closed (return a handle-0 result) once
+// nesting exceeds this cap, bounding native stack growth so a hostile
+// deeply-nested document ([[[[... or {a={a={... ) cannot drive a
+// stack-overflow SIGSEGV. 512 leaves ample native-stack headroom.
+const MAX_DEPTH: i64 = 512
+
+// toml_max_depth -- exported nesting-depth cap enforced by the value parser.
+pub fn toml_max_depth() -> i64 {
+    MAX_DEPTH
+}
+
 pub fn tv_kind_str() -> i64 {
     0
 }
@@ -837,8 +849,14 @@ fn parse_dotted_key(buf: i64, i: i64, len: i64, tbl: i64) -> Vec {
 
 // parse_value -- parse a single TOML value at position `i`.
 // Returns Vec [pos_after, tv_handle] (handle = 0 means parse failed / unknown).
-fn parse_value(buf: i64, i: i64, len: i64) -> Vec {
+fn parse_value(buf: i64, i: i64, len: i64, depth: i64) -> Vec {
     let pos: i64 = skip_ws(buf, i, len);
+    // Depth guard: fail closed on over-nested untrusted input (no SIGSEGV).
+    if depth > MAX_DEPTH {
+        let d: Vec = vec_new();
+        let d1: Vec = vec_push(d, pos);
+        return vec_push(d1, 0);
+    }
     if pos >= len {
         let r: Vec = vec_new();
         let r1: Vec = vec_push(r, pos);
@@ -875,10 +893,10 @@ fn parse_value(buf: i64, i: i64, len: i64) -> Vec {
         return vec_push(out1, tv);
     }
     if b == 91 {
-        return parse_array(buf, pos + 1, len);
+        return parse_array(buf, pos + 1, len, depth);
     }
     if b == 123 {
-        return parse_inline_table(buf, pos + 1, len);
+        return parse_inline_table(buf, pos + 1, len, depth);
     }
     // true
     if b == 116 {
@@ -943,7 +961,7 @@ fn parse_value(buf: i64, i: i64, len: i64) -> Vec {
 }
 
 // parse_array -- parse elements from `i` (after `[`).
-fn parse_array(buf: i64, i: i64, len: i64) -> Vec {
+fn parse_array(buf: i64, i: i64, len: i64, depth: i64) -> Vec {
     let arr: i64 = tv_make_arr();
     let mut pos: i64 = skip_ws_nl(buf, i, len);
     let mut done: i64 = 0;
@@ -959,7 +977,7 @@ fn parse_array(buf: i64, i: i64, len: i64) -> Vec {
                 if b == 44 {
                     pos = skip_ws_nl(buf, pos + 1, len);
                 } else {
-                    let r: Vec = parse_value(buf, pos, len);
+                    let r: Vec = parse_value(buf, pos, len, depth + 1);
                     let p2: i64 = vec_get(r, 0);
                     let tv: i64 = vec_get(r, 1);
                     if tv == 0 {
@@ -978,7 +996,7 @@ fn parse_array(buf: i64, i: i64, len: i64) -> Vec {
 }
 
 // parse_inline_table -- parse entries from `i` (after `{`).
-fn parse_inline_table(buf: i64, i: i64, len: i64) -> Vec {
+fn parse_inline_table(buf: i64, i: i64, len: i64, depth: i64) -> Vec {
     let tbl: i64 = tv_make_tbl();
     let mut pos: i64 = skip_ws(buf, i, len);
     let mut done: i64 = 0;
@@ -1007,7 +1025,7 @@ fn parse_inline_table(buf: i64, i: i64, len: i64) -> Vec {
                     } else {
                         ep
                     };
-                    let vr: Vec = parse_value(buf, vstart, len);
+                    let vr: Vec = parse_value(buf, vstart, len, depth + 1);
                     let vp: i64 = vec_get(vr, 0);
                     let vh: i64 = vec_get(vr, 1);
                     if vh == 0 {
@@ -1180,7 +1198,7 @@ fn parse_keyval(buf: i64, i: i64, len: i64, tbl: i64) -> i64 {
     } else {
         ep
     };
-    let vr: Vec = parse_value(buf, vstart, len);
+    let vr: Vec = parse_value(buf, vstart, len, 0);
     let vp: i64 = vec_get(vr, 0);
     let vh: i64 = vec_get(vr, 1);
     if vh == 0 {
