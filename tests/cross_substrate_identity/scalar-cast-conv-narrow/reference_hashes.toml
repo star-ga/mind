@@ -1,0 +1,38 @@
+# mind-bench reference hashes — RFC 0020 §5. See scalar-cast-conv/reference_hashes.toml
+# for the full-width sibling and dot-l2-q16/reference_hashes.toml for provenance/
+# signing notes.
+#
+# The scalar float→NARROW-int `as`-cast conversion canary. The kernel
+# `scalar_cast_conv_narrow(inr,povf,novf,nan,pinf,ninf)` casts the six fixed f64
+# edge operands to a spread of narrow widths, SATURATING to the NARROW target
+# range (9.7->i8 9, 1e30->i8 127 / i16 32767, -1e30->u8 0 / i32 INT32_MIN,
+# NaN->i16 0, +inf->i32 INT32_MAX, -inf->u16 0), then folds all nine narrow
+# results in fixed source order into one i64 via a wrapping polynomial
+# (acc = acc*1000003 + term). The canonical output is that i64 serialised
+# little-endian (manifest `output_encoding = "i64_le"`), then sha256.
+#
+# The saturating-to-narrow result is built only from IEEE-defined ops
+# (maxnumf/minnumf/fptosi/cmpf/select) plus a two's-complement integer clamp
+# (arith.maxsi/minsi) and a wrapping `arith.muli`/`arith.addi` fold — none order-
+# or target-sensitive — so unlike a bare `arith.fptosi` (which x86 `cvttsd2si`
+# and ARM `fcvtzs` disagree on for out-of-range/NaN) the value is architecture-
+# independent: avx2 == neon by construction (RFC 0015 §3.1). Any divergence is a
+# real lowering bug (a dropped narrow clamp, a bare fptosi, integer-wrap instead
+# of saturate, a non-wrapping fold) and a release-blocker.
+#
+# Provenance:
+#   avx2 — computed on x86_64 (this reference), verified in CI job
+#          `cross_substrate_identity` (ubuntu-24.04). The in-run oracle assert
+#          additionally proves the compiled kernel matches Rust `f as iN`/`uN`
+#          saturating semantics bit-for-bit.
+#   neon — SAME hash by IEEE construction (RFC 0015 §3.1); continuously
+#          recomputed on real ARM hardware (CI job `cross_substrate_identity`,
+#          ubuntu-24.04-arm) per RFC 0020 §10, so a lowering divergence fails CI
+#          and blocks the release tag. The saturating clamp is exactly what makes
+#          the ARM `fcvtzs` path produce the SAME bytes as x86 here.
+#
+# Re-bless only on an intentional lowering change (RFC 0020 §13): run the gate
+# with MIND_BENCH_BLESS=1 and commit the new hash.
+
+avx2 = "9e8e4278dbb52705a12c06c2e5ec59f8f994c7f0227617f5f0884cba0608976b"
+neon = "9e8e4278dbb52705a12c06c2e5ec59f8f994c7f0227617f5f0884cba0608976b"
