@@ -869,6 +869,12 @@ fn build_cdylib_from_entry(
         }
     })?;
 
+    // #54: the cdylib is a runnable artifact too — reject runnable-artifact
+    // blockers here (mirroring the mindc.rs `--emit-shared` gate) before lowering
+    // the entry to a shared object, so `mindc build --emit cdylib` never ships a
+    // silently-wrong `.so`.
+    reject_runnable_blockers(&products.runnable_blockers, &source_code, entry_path)?;
+
     // Backend compile waterfall (feature `compile-timings`, `MIND_TIMINGS=1`).
     // The frontend phases already printed via `compile_source_with_name`; this
     // captures the backend cost — MLIR emit and the mlir-opt/translate/clang
@@ -1443,6 +1449,40 @@ fn warn_embedded_fallback(
     }
 }
 
+/// Fail loud on runnable-artifact ABI blockers before lowering to a native
+/// object (#54).
+///
+/// The single-file emit path (`mindc --emit-obj` / `--emit-shared`, handled in
+/// `src/bin/mindc.rs`) already rejects `products.runnable_blockers` — the
+/// constructs the shipped i64-scalar backend would SILENTLY MISCOMPILE (an
+/// unresolvable generic call, an enum-handle scalar return, an unsupported match
+/// payload, an ambiguous bare ctor, a tensor/narrow-int signature). The
+/// `mindc build` / `mindc run` path reached the native lowering WITHOUT this
+/// check, so a program that `--emit-shared` fail-loud REJECTS built green and
+/// ran WRONG (a wrong-result rc=0 artifact from the primary commands). This
+/// mirrors the mindc.rs gate: render the same file:line diagnostics and return
+/// an error (propagated as a non-zero build exit) before any object is emitted
+/// or linked. Empty `runnable_blockers` (every keystone / std / all-i64 program)
+/// is a no-op, so the byte-identical build path is unchanged.
+fn reject_runnable_blockers(
+    blockers: &[crate::diagnostics::Diagnostic],
+    source_code: &str,
+    source_display: &Path,
+) -> Result<()> {
+    if blockers.is_empty() {
+        return Ok(());
+    }
+    use crate::diagnostics::{ColorChoice, DiagnosticEmitter, DiagnosticFormat};
+    DiagnosticEmitter::new(DiagnosticFormat::Human, ColorChoice::Auto)
+        .emit_all(blockers, Some(source_code));
+    Err(anyhow!(
+        "{}: {} construct(s) cannot be lowered to a correct runnable artifact \
+         (see diagnostics above); refusing to emit a silently-wrong build",
+        source_display.display(),
+        blockers.len()
+    ))
+}
+
 /// Compile a single source file to native object code
 #[allow(clippy::needless_return)]
 fn compile_single_source(
@@ -1500,6 +1540,11 @@ fn compile_single_source(
             return compile_embedded_source(source, &source_code, output, backend, opts, is_entry);
         }
     };
+
+    // #54: fail loud on runnable-artifact blockers BEFORE lowering to a native
+    // object — the build/run path must never emit a silently-wrong object where
+    // the `--emit-shared` single-file path fails loud.
+    reject_runnable_blockers(&products.runnable_blockers, &source_code, source)?;
 
     // Use mlir-build if available
     #[cfg(feature = "mlir-build")]
