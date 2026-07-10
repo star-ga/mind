@@ -60,7 +60,7 @@ pub fn toolchain_dep_entries() -> Vec<String> {
     {
         use std::sync::OnceLock;
         static ENTRIES: OnceLock<Vec<String>> = OnceLock::new();
-        return ENTRIES
+        ENTRIES
             .get_or_init(|| match crate::eval::mlir_build::resolve_tools() {
                 Ok(tools) => vec![
                     format!(
@@ -80,7 +80,7 @@ pub fn toolchain_dep_entries() -> Vec<String> {
                 // no cache is written, so an empty toolchain set is safe here.
                 Err(_) => Vec::new(),
             })
-            .clone();
+            .clone()
     }
     #[cfg(not(feature = "mlir-build"))]
     {
