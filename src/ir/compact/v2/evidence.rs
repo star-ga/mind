@@ -335,8 +335,16 @@ fn map_get<'a>(map: &'a Map, key: &str) -> Option<&'a MapValue> {
 /// and records whether it matches — a single flipped byte anywhere in the
 /// attested graph flips `trace_hash_valid` to `false`.
 ///
-/// This is the verifier core; the chain *walk* (following `parent` across
-/// artifacts) and signature checks (§6) are layered on top by the CLI.
+/// This is the verifier core. Signature checks (§6) are layered on top by the
+/// CLI. The chain *walk* (resolving each `parent` back-link against an artifact
+/// store and re-verifying it) is NOT yet implemented: `parent` is decoded and
+/// printed but is currently unauthenticated and unenforced — a forged or absent
+/// `parent` does not affect `trace_hash_valid` or the exit code.
+// deferred: cross-artifact lineage verification — would resolve each `parent`
+// hash against an artifact store and re-verify the ancestor, rejecting a
+// broken/forged back-link. Stubbed because single-artifact `verify` has no
+// ancestor store to resolve against. upgrade path: a `mindc verify --chain
+// <dir>` mode that walks `parent` links across the store.
 pub fn verify_evidence_chain(graph: &Graph) -> Result<EvidenceReport, EvidenceError> {
     // An artifact with no evidence_chain.* keys is unattested, not invalid.
     let has_any = graph

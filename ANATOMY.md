@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3057 | **Est. tokens:** ~7,329,032
-**Generated:** 2026-07-10 10:25 UTC
+**Files:** 3058 | **Est. tokens:** ~7,332,890
+**Generated:** 2026-07-10 10:49 UTC
 
 ## Token Budget Guide
 
@@ -375,11 +375,11 @@
 | `src/` | 7 | ~17,958 |
 | `src/ast/` | 1 | ~7,632 |
 | `src/autodiff/` | 3 | ~6,624 |
-| `src/bin/` | 2 | ~31,032 |
+| `src/bin/` | 2 | ~31,465 |
 | `src/build/` | 2 | ~14,758 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 3 | ~10,433 |
-| `src/deps/` | 1 | ~8,217 |
+| `src/deps/` | 1 | ~9,221 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,474 |
@@ -390,11 +390,11 @@
 | `src/fmt/` | 3 | ~19,784 |
 | `src/ir/` | 5 | ~42,116 |
 | `src/ir/compact/` | 3 | ~15,235 |
-| `src/ir/compact/v2/` | 8 | ~37,885 |
-| `src/ir/compact/v3/` | 5 | ~42,200 |
+| `src/ir/compact/v2/` | 8 | ~38,037 |
+| `src/ir/compact/v3/` | 5 | ~42,842 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,211 |
-| `src/mlir/` | 3 | ~5,659 |
+| `src/mlir/` | 3 | ~5,905 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 4 | ~9,649 |
 | `src/package/` | 2 | ~1,877 |
@@ -408,7 +408,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~191,413 |
-| `tests/` | 275 | ~465,091 |
+| `tests/` | 276 | ~466,472 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -3744,7 +3744,7 @@
 ### `src/bin/`
 
 - `mind-ai.rs` (~9805 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~21227 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc.rs` (~21660 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
 - `cache.rs` (~6766 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3765,7 +3765,7 @@
 - `conformance.rs` (~1847 tok, huge) — The autodiff_pairwise conformance entry was removed 2026-05-20 — its
 ### `src/deps/`
 
-- `mod.rs` (~8217 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~9221 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/diagnostics/`
 
 - `mod.rs` (~2230 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3826,7 +3826,7 @@
 
 - `binary.rs` (~6314 tok, huge) — Copyright 2025 STARGA Inc.
 - `emit.rs` (~2445 tok, huge) — Copyright 2025 STARGA Inc.
-- `evidence.rs` (~10005 tok, huge) — Copyright 2025 STARGA Inc.
+- `evidence.rs` (~10157 tok, huge) — Copyright 2025 STARGA Inc.
 - `map_tests.rs` (~5702 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~1310 tok, large) — Copyright 2025 STARGA Inc.
 - `parse.rs` (~5746 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3838,7 +3838,7 @@
 - `emit.rs` (~11036 tok, huge) — Copyright 2025 STARGA Inc.
 - `mldsa.rs` (~1510 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~13668 tok, huge) — Copyright 2025 STARGA Inc.
-- `parse.rs` (~9935 tok, huge) — Copyright 2025 STARGA Inc.
+- `parse.rs` (~10577 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
 - `evidence.rs` (~3605 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3867,7 +3867,7 @@
 - `main.rs` (~6507 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/mlir/`
 
-- `c_export.rs` (~1685 tok, huge) — Copyright 2025 STARGA Inc.
+- `c_export.rs` (~1931 tok, huge) — Copyright 2025 STARGA Inc.
 - `gemm_tuning.rs` (~3639 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~335 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/ops/`
@@ -4222,6 +4222,7 @@
 - `mic3_break_continue_string_roundtrip.rs` (~1616 tok, huge) — Copyright 2026 STARGA Inc.
 - `mic3_cli_emit.rs` (~2431 tok, huge) — Copyright 2025 STARGA Inc.
 - `mic3_const_dense_tensor_roundtrip.rs` (~842 tok, large) — Copyright 2026 STARGA Inc.
+- `mic3_parser_dos.rs` (~831 tok, large) — Copyright 2025 STARGA Inc.
 - `micb_dos_reject.rs` (~2341 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_build_phase_a.rs` (~4566 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_cache_phase_f.rs` (~6231 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4580,7 +4581,7 @@
 - `value_if_f64_let.rs` (~1148 tok, large) — Copyright 2025 STARGA Inc.
 - `vars_assign.rs` (~260 tok, medium) — Copyright 2025 STARGA Inc.
 - `verify_audit.rs` (~2010 tok, huge) — Audit coverage tests for the IR verifier (C1: SSA verification, conv2d stride/axis validation).
-- `verify_cli.rs` (~3271 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify_cli.rs` (~3821 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify_ssa.rs` (~6339 tok, huge) — Copyright 2025 STARGA Inc.
 - `x25519mlkem768_driver.py` (~2378 tok, huge) — # Known-answer driver for std/x25519mlkem768.mind (pure-MIND X25519MLKEM768
 - `x25519_vectors_driver.py` (~1525 tok, huge) — # Official-vector driver for std/x25519.mind (pure-MIND Curve25519 ECDH).

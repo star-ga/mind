@@ -363,3 +363,56 @@ fn verify_require_strict_fp_rejects_unattested_artifact() {
 
     let _ = std::fs::remove_file(&tmp);
 }
+
+// ---------------------------------------------------------------------------
+// 8.  Signature-stripping downgrade (HIGH #3): pinning a signer key makes a
+//     signature REQUIRED. An attested-but-UNSIGNED artifact — which a plain
+//     verify accepts — must FAIL under --signer-pubkey. An attacker cannot
+//     bypass a pinned key by simply emitting their own body attested-but-
+//     unsigned (no private key needed).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn verify_pinned_signer_rejects_unsigned_attested_artifact() {
+    let bin = mindc_bin();
+    let tmp = tempfile_path("unsigned_pinned.bin");
+    if !emit_evidence(&bin, &tmp) {
+        return;
+    }
+
+    // Control: emit_evidence signs nothing, so this artifact is attested but
+    // UNSIGNED. Without a pin it still verifies (internally consistent, exit 0).
+    let plain = Command::new(&bin)
+        .args(["verify", &tmp])
+        .output()
+        .expect("run mindc verify (no pin)");
+    assert_eq!(
+        plain.status.code(),
+        Some(0),
+        "plain verify on an unsigned-but-attested artifact must still exit 0; stderr:\n{}",
+        String::from_utf8_lossy(&plain.stderr)
+    );
+
+    // Attack: pin a trusted signer key. The unsigned body must be REJECTED
+    // fail-closed — an absent signature under a pin is a stripping downgrade.
+    // The key value is irrelevant: there is no signature to match it against.
+    let pin = "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737";
+    let out = Command::new(&bin)
+        .args(["verify", &tmp, "--signer-pubkey", pin])
+        .output()
+        .expect("run mindc verify --signer-pubkey on unsigned artifact");
+
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "an unsigned artifact must FAIL a pinned --signer-pubkey (fail-closed); stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("pinned") && stderr.contains("fail-closed"),
+        "error must explain the pinned-signer fail-closed rejection, got:\n{stderr}"
+    );
+
+    let _ = std::fs::remove_file(&tmp);
+}

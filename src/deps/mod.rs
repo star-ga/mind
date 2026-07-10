@@ -325,9 +325,27 @@ pub fn run_clean(project_root: &Path, opts: &CleanOpts) -> Result<(), DepError> 
                 for entry in &lock.dependencies {
                     if entry.source.starts_with("git+") {
                         if let Ok(cache_dir) = git_cache_dir(entry) {
+                            // H1 fail-closed: `cache_dir` is derived from
+                            // attacker-controlled lockfile fields. Even with the
+                            // component sanitisation in `git_cache_dir`,
+                            // canonicalize the target and REQUIRE it to live
+                            // strictly under the cache root before a recursive
+                            // delete — a crafted `Mind.lock` must never make
+                            // `mindc clean --cache` remove a directory outside
+                            // `~/.mindenv/cache` (e.g. `~/.ssh`).
                             if cache_dir.exists() {
-                                let _ = fs::remove_dir_all(&cache_dir);
-                                println!("   Removed cache for {}", entry.name);
+                                let root = mindenv_cache_root();
+                                match (cache_dir.canonicalize(), root.canonicalize()) {
+                                    (Ok(cd), Ok(r)) if cd.starts_with(&r) && cd != r => {
+                                        let _ = fs::remove_dir_all(&cd);
+                                        println!("   Removed cache for {}", entry.name);
+                                    }
+                                    _ => eprintln!(
+                                        "warning[clean]: refusing to remove out-of-cache path for `{}` — lockfile entry resolves outside {}",
+                                        entry.name,
+                                        root.display()
+                                    ),
+                                }
                             }
                         }
                     }
@@ -752,6 +770,20 @@ fn git_cache_dir(entry: &LockEntry) -> Result<PathBuf> {
     } else {
         &entry.rev
     };
+    // H1: `hostname` / `path_part` / `rev` come verbatim from an untrusted
+    // `Mind.lock`. Reject any component that could escape the cache root BEFORE
+    // it is joined into a `remove_dir_all` target: `..` traversal, an embedded
+    // NUL, or an absolute path — the last is critical because `PathBuf::join`
+    // silently DISCARDS the accumulated prefix when the joined component is
+    // absolute (so `rev = "/home/<op>/.ssh"` would make the target that path
+    // verbatim). The sink in `run_clean` also canonicalizes-and-contains.
+    for comp in [hostname.as_str(), path_part, rev] {
+        if comp.contains("..") || comp.contains('\0') || std::path::Path::new(comp).is_absolute() {
+            return Err(anyhow!(
+                "illegal path component in Mind.lock entry (possible cache-path traversal): {comp:?}"
+            ));
+        }
+    }
     Ok(mindenv_cache_root()
         .join("git")
         .join(hostname)
@@ -956,4 +988,63 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod h1_cache_traversal_tests {
+    use super::*;
+
+    fn entry(source: &str, rev: &str) -> LockEntry {
+        LockEntry {
+            name: "victim".into(),
+            source: source.into(),
+            rev: rev.into(),
+            tree_sha256: String::new(),
+            source_resolved: String::new(),
+        }
+    }
+
+    // H1: a crafted `Mind.lock` must not let `git_cache_dir` build a
+    // `remove_dir_all` target that escapes the cache root. An absolute `rev`
+    // (PathBuf::join would discard the cache-root prefix), a `..`-traversal
+    // component, or `..` smuggled through the git URL are all rejected.
+    #[test]
+    fn git_cache_dir_rejects_absolute_rev() {
+        let e = entry("git+https://github.com/o/r", "/home/victim/.ssh");
+        assert!(
+            git_cache_dir(&e).is_err(),
+            "absolute rev must be rejected as cache-path traversal"
+        );
+    }
+
+    #[test]
+    fn git_cache_dir_rejects_dotdot_rev() {
+        let e = entry("git+https://github.com/o/r", "../../../../victim");
+        assert!(
+            git_cache_dir(&e).is_err(),
+            "..-traversal rev must be rejected as cache-path traversal"
+        );
+    }
+
+    #[test]
+    fn git_cache_dir_rejects_dotdot_in_git_path() {
+        let e = entry("git+https://github.com/../../../etc", "abcdef");
+        assert!(
+            git_cache_dir(&e).is_err(),
+            ".. in the git path must be rejected"
+        );
+    }
+
+    #[test]
+    fn git_cache_dir_accepts_benign_entry() {
+        let e = entry(
+            "git+https://github.com/star-ga/mind",
+            "0123456789abcdef0123456789abcdef01234567",
+        );
+        let p = git_cache_dir(&e).expect("benign entry must resolve");
+        assert!(
+            p.starts_with(mindenv_cache_root()),
+            "benign cache dir must live under the cache root"
+        );
+    }
 }

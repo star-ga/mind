@@ -298,8 +298,13 @@ enum Command {
     /// consumer-side half of the wedge: generation without verification is
     /// security theatre (RFC 0021 §4 / #288 / #290 / #309).
     ///
-    /// Exit code 0 = trace_hash valid (artifact untampered);
-    /// 1 = tampered, unattested, or malformed; 2 = I/O or CLI error.
+    /// Exit code 0 = SSA well-formed and — when the artifact is attested — the
+    /// trace_hash is valid (untampered). An unattested-but-SSA-valid artifact
+    /// ALSO exits 0 with `attested: false`: attestation is opt-in (RFC 0017), so
+    /// a consumer that requires a guarantee must fail closed with
+    /// `--require-strict-fp`, `--require-deterministic`, or `--signer-pubkey`.
+    /// 1 = tampered/forged chain, malformed artifact, SSA fault, or a failed
+    /// `--require-*` / pinned-signer gate; 2 = I/O or CLI error.
     Verify {
         /// Path to the mic@3 evidence artifact to verify.
         #[arg(value_name = "ARTIFACT")]
@@ -321,10 +326,13 @@ enum Command {
         /// MUST be in this allowlist or verify fails (exit 1) — this is what turns
         /// "the embedded signature is internally consistent" into "signed by a key I
         /// trust". Additional keys may be supplied via the
-        /// `MIND_EVIDENCE_VERIFY_PUBKEYS` env var (comma/space-separated hex). When
-        /// NO allowlist is given, verify still passes an internally-consistent
-        /// signature but prints the signer key(s) for out-of-band pinning and does
-        /// not claim authenticity.
+        /// `MIND_EVIDENCE_VERIFY_PUBKEYS` env var (comma/space-separated hex).
+        /// Pinning a key makes a signature REQUIRED: an unsigned (or
+        /// signature-stripped) artifact is rejected fail-closed even if its
+        /// trace_hash is intact, so the pin cannot be bypassed by simply not
+        /// signing. When NO allowlist is given, verify still passes an
+        /// internally-consistent signature but prints the signer key(s) for
+        /// out-of-band pinning and does not claim authenticity.
         #[arg(long = "signer-pubkey", value_name = "HEX", action = ArgAction::Append)]
         signer_pubkey: Vec<String>,
         /// Fail verification (exit 1) unless the artifact is `deterministic` — i.e.
@@ -1847,9 +1855,23 @@ fn run_verify(
                     );
                     return 1;
                 }
-                // Trust anchor (HIGH #3): a valid signature only proves the artifact
-                // was signed by the holder of the EMBEDDED key. Without a pinned
-                // allowlist that says nothing about WHO — an attacker self-signs
+                // Trust anchor, part 1 — signature-stripping downgrade: pinning a
+                // signer key (--signer-pubkey / MIND_EVIDENCE_VERIFY_PUBKEYS) makes a
+                // signature REQUIRED. An `Absent` signature — stripped from a real
+                // artifact, or simply never signed — passes the `!sig_ok` gate above
+                // and would otherwise skip the key-allowlist check below and be
+                // reported valid. An attacker therefore emits their OWN body
+                // attested-but-UNSIGNED (no private key needed) and it satisfies the
+                // pin. A pinned key with no signature is a downgrade; refuse it.
+                if !trusted.is_empty() && !matches!(sig_status, SignatureStatus::Valid(_)) {
+                    eprintln!(
+                        "error[verify]: a signer key is pinned (--signer-pubkey / MIND_EVIDENCE_VERIFY_PUBKEYS) but the artifact signature is {sig_label} — a pinned signer requires a valid signature (fail-closed)"
+                    );
+                    return 1;
+                }
+                // Trust anchor, part 2 (HIGH #3): a valid signature only proves the
+                // artifact was signed by the holder of the EMBEDDED key. Without a
+                // pinned allowlist that says nothing about WHO — an attacker self-signs
                 // their own artifact with their own key. When `trusted` is set, the
                 // signer key(s) MUST be in it or we refuse to report valid.
                 if let SignatureStatus::Valid(v) = &sig_status {
