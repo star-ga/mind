@@ -19,6 +19,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `1.0`/`0.0` (was `-1.0`, from a signed 1-bit conversion). The tree-walking
   evaluator mirrors the compiled lowering for every cast, so the interpreter and
   the runnable artifact agree bit-for-bit.
+- **Float→narrow-int `as` casts now compile and saturate correctly.** `f64`/`f32`
+  `as i8`/`i16`/`i32`/`u8`/`u16`/`u32` previously dispatched on the target type
+  alone and emitted an integer shift/mask on the **float** SSA value, which
+  `mlir-opt` rejects (`i64 vs f64`) — so a legal program the interpreter evaluated
+  correctly **failed to compile** (a uniformity break in the determinism
+  contract, one width tier below the `f64 as i64` fix above). Narrow casts now
+  route through source-kind-dispatched `__mind_conv_i{W}`/`u{W}` intrinsics: a
+  **float** source **saturates to the narrow target range** (`300.9 as u8` → 255,
+  `1e30 as i32` → `i32::MAX`, `-inf as u8` → 0, `NaN` → 0) — matching Rust `as`
+  and the interpreter — while an **integer** source keeps the byte-identical
+  truncate/wrap. Built only from IEEE-defined ops plus a two's-complement integer
+  clamp, so `f64 as i32` is byte-identical on x86 (AVX2) and ARM (NEON).
 - **Strict-FP classifier: float tensor contractions no longer falsely attest
   strict.** `MatMul` / `Dot` / `Conv2d` / `Conv2dGrad{Input,Filter}` over float
   operands lower to reassociating `linalg` contractions (order-sensitive, not
@@ -39,6 +51,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fixed-order result; `avx2 == neon` confirmed on real ARM64 hardware. Closes the
   coverage gap that previously allowed a float→int cross-substrate divergence to
   ship undetected (no fixture exercised a scalar cast).
+- **Cross-substrate byte-identity fixture for float→narrow-int casts**
+  (`scalar-cast-conv-narrow`) — the width-tier sibling of `scalar-cast-conv`,
+  exercising `f64 as i8/i16/i32/u8/u16/u32` with saturation edges pinned at the
+  **narrow** bound (`1e30 as i8` → 127, `+inf as i32` → `i32::MAX`, `-1e30 as i32`
+  → `i32::MIN`, `NaN`/`-inf` → 0) folded into one fixed-order result;
+  `avx2 == neon` by IEEE construction. Closes the coverage gap that let the
+  narrow-cast compile-failure ship untested.
 
 ## [0.10.1] - 2026-07-05
 

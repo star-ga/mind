@@ -242,6 +242,53 @@ pub fn scalar_cast_conv(
     let a7: i64 = a6 * k + b1;
     a7 * k + b2
 }
+
+// Scalar float→NARROW-int `as`-cast conversion canary (scalar-cast-conv-narrow).
+// The width-tier sibling of `scalar_cast_conv`: it pins the float→`i8`/`i16`/
+// `i32`/`u8`/`u16`/`u32` lowering, which SATURATES to the NARROW target range
+// (`emit_saturating_fp_to_narrow`) — distinct from the full-width float→i64 the
+// kernel above pins, and distinct from integer narrowing (which WRAPS). The
+// six f64 edge operands arrive as RUNTIME args (no const-fold) and are cast to a
+// spread of narrow widths, exercising every saturation edge AT THE NARROW BOUND:
+//   inr  9.7   → i8 9,  u32 9            (in-range trunc toward zero)
+//   povf 1e30  → i8 127, i16 32767       (+overflow saturates to iN::MAX)
+//   novf -1e30 → u8 0,  i32 -2147483648  (−overflow → 0 / iN::MIN)
+//   nan  NaN   → i16 0                    (NaN → 0)
+//   pinf +inf  → i32 2147483647          (+inf → iN::MAX)
+//   ninf -inf  → u16 0                    (−inf → 0 for unsigned)
+// Emitting integer shifts on a float SSA value (the historical bug) failed to
+// COMPILE (mlir-opt `i64 vs f64`); the saturating clamp is built only from
+// IEEE-defined ops (maxnumf/minnumf/fptosi/cmpf/select) + a two's-complement
+// integer clamp (maxsi/minsi), so avx2 == neon BY CONSTRUCTION (RFC 0015 §3.1).
+// The nine narrow results fold in FIXED source order via the same wrapping
+// polynomial (K = 1000003) so a divergence in any single edge changes the byte.
+pub fn scalar_cast_conv_narrow(
+    inr: f64,
+    povf: f64,
+    novf: f64,
+    nan: f64,
+    pinf: f64,
+    ninf: f64,
+) -> i64 {
+    let e0: i64 = (inr as i8) as i64; // 9.7 -> 9
+    let e1: i64 = (povf as i8) as i64; // 1e30 -> 127 (i8::MAX)
+    let e2: i64 = (novf as u8) as i64; // -1e30 -> 0
+    let e3: i64 = (nan as i16) as i64; // NaN -> 0
+    let e4: i64 = (pinf as i32) as i64; // +inf -> 2147483647 (i32::MAX)
+    let e5: i64 = (ninf as u16) as i64; // -inf -> 0
+    let e6: i64 = (inr as u32) as i64; // 9.7 -> 9
+    let e7: i64 = (povf as i16) as i64; // 1e30 -> 32767 (i16::MAX)
+    let e8: i64 = (novf as i32) as i64; // -1e30 -> -2147483648 (i32::MIN)
+    let k: i64 = 1000003;
+    let a1: i64 = e0 * k + e1;
+    let a2: i64 = a1 * k + e2;
+    let a3: i64 = a2 * k + e3;
+    let a4: i64 = a3 * k + e4;
+    let a5: i64 = a4 * k + e5;
+    let a6: i64 = a5 * k + e6;
+    let a7: i64 = a6 * k + e7;
+    a7 * k + e8
+}
 "#;
 
 type DotFn = unsafe extern "C" fn(i64, i64, i64) -> i64;
@@ -252,6 +299,9 @@ type ScalarF64Fn = unsafe extern "C" fn(f64, f64, f64, f64) -> f64;
 /// The scalar int↔float cast conv kernel: six f64 edge operands (xmm0-5) + one
 /// i64 (rdi) in, one folded i64 out.
 type ScalarCastFn = unsafe extern "C" fn(f64, f64, f64, f64, f64, f64, i64) -> i64;
+/// The scalar float→narrow-int cast conv kernel: six f64 edge operands, one
+/// folded i64 out (no int source — pins the saturating-to-narrow float path).
+type ScalarCastNarrowFn = unsafe extern "C" fn(f64, f64, f64, f64, f64, f64) -> i64;
 /// Track #16: a 3-arg → i64 scalar kernel (the Q16.16 arithmetic chain).
 type Arith3Fn = unsafe extern "C" fn(i64, i64, i64) -> i64;
 /// Track #16: a 4-arg → i64 scalar kernel (the struct-by-handle round-trip).
@@ -1690,6 +1740,68 @@ fn scalar_cast_conv_reproducibility_gate() {
              (result={result}); bless with MIND_BENCH_BLESS=1 if this host is canonical."
         ),
     }
+}
+
+/// Rust saturating float→narrow oracle for `scalar_cast_conv_narrow`. Rust `f as
+/// iN`/`uN` has been SATURATING (NaN→0, ±ovf→iN::MIN/MAX) since 1.45 — exactly
+/// the MIND `emit_saturating_fp_to_narrow` contract — so this is bit-exact to the
+/// compiled kernel within a run AND identical on every substrate (IEEE-defined
+/// ops only). The fold uses `wrapping_*` to match `arith.muli`/`arith.addi`.
+fn ref_scalar_cast_conv_narrow(
+    inr: f64,
+    povf: f64,
+    novf: f64,
+    nan: f64,
+    pinf: f64,
+    ninf: f64,
+) -> i64 {
+    let e0 = (inr as i8) as i64;
+    let e1 = (povf as i8) as i64;
+    let e2 = (novf as u8) as i64;
+    let e3 = (nan as i16) as i64;
+    let e4 = (pinf as i32) as i64;
+    let e5 = (ninf as u16) as i64;
+    let e6 = (inr as u32) as i64;
+    let e7 = (povf as i16) as i64;
+    let e8 = (novf as i32) as i64;
+    let k: i64 = 1_000_003;
+    let mut acc = e0;
+    for t in [e1, e2, e3, e4, e5, e6, e7, e8] {
+        acc = acc.wrapping_mul(k).wrapping_add(t);
+    }
+    acc
+}
+
+#[test]
+fn scalar_cast_conv_narrow_reproducibility_gate() {
+    let id = "scalar-cast-conv-narrow";
+
+    let Some(so) = build_dot_so() else {
+        return; // toolchain shadowed — self-skip
+    };
+    let lib = unsafe { Library::new(so).expect("dlopen workload .so") };
+    let conv: Symbol<ScalarCastNarrowFn> = unsafe {
+        lib.get(b"scalar_cast_conv_narrow")
+            .expect("scalar_cast_conv_narrow symbol")
+    };
+
+    let (inr, povf, novf, nan, pinf, ninf, _n) = SCALAR_CAST_INPUTS;
+    let result = unsafe { conv(inr, povf, novf, nan, pinf, ninf) };
+
+    // 1. Within-run exactness vs the saturating-to-narrow oracle: proves the
+    //    compiled kernel reproduces Rust `f as iN`/`uN` bit-for-bit, and that the
+    //    narrow saturation EDGES fired (i8::MAX/i16::MAX/i32::MIN/0), not a
+    //    trivial in-range path.
+    let oracle = ref_scalar_cast_conv_narrow(inr, povf, novf, nan, pinf, ninf);
+    assert_eq!(
+        result, oracle,
+        "{id}: float→narrow kernel diverged from the saturating IEEE oracle within a \
+         single run (kernel={result}, oracle={oracle})"
+    );
+
+    // 2. Canonical hash pinned to the committed per-substrate reference.
+    let computed = canonical_hash(result);
+    pin_or_bless(id, &computed, result);
 }
 
 // ===========================================================================
