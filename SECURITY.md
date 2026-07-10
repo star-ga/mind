@@ -87,6 +87,14 @@ vulnerability reports about:
 - **Evidence-chain integrity + opt-in authenticity.** The embedded evidence chain
   (RFC 0016) is **tamper-evident** by default: `trace_hash` is a SHA-256 over the
   canonical `mic@3` bytes, and `mindc verify <artifact>` recomputes and checks it.
+  `trace_hash` authenticates those **canonical (type-erased) IR bytes**: two source
+  programs that differ *only* in a scalar type they never observe — e.g. a
+  pass-through `fn f(x: i64) -> i64 { x }` vs `fn f(x: f64) -> f64 { x }`, whose
+  bodies carry no type-dependent instruction — encode to identical `mic@3` and so
+  share a `trace_hash`. This is a **canonicalization-completeness boundary, not a
+  tamper-detection failure**: a *given* artifact's bytes still cannot be altered
+  without changing its hash, and any program that actually uses a scalar (arithmetic
+  or width-sensitive ops) emits type-distinct instructions and does not collide.
   Authenticity is **opt-in** (RFC 0016 Phase C): an artifact may additionally carry
   a `signature.*` block — Ed25519 (RFC 8032), ML-DSA-65 (FIPS-204 PQC), or the
   hybrid — over the canonical provenance preimage. Signing is **never enabled by
