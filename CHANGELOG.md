@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Bare transcendental / RNG builtins no longer forge a `strict` FP attestation.**
+  `sin`/`cos`/`exp`/`log*`/`pow`/`sigmoid`/`log_softmax`, `fft`/`fft2d`/`ifft`, and
+  `random`/`rand_*` lower to a plain `Instr::Call` (no `ExternFnDecl`, no `__mind_`
+  prefix), so `fp_mode` never tainted them — a `sin(x)` or `rand_uniform(s)` program
+  passed `mindc verify --require-strict-fp` with `fp_mode: strict` +
+  `determinism: deterministic` (and `random` links a libc PRNG). They now taint the
+  module to `Relaxed`, so such a program correctly FAILS `--require-strict-fp`. The
+  exact / correctly-rounded builtins (`sqrt`/`floor`/`round`/`abs`/`max`) and the
+  tensor reductions/contractions already tainted elsewhere stay strict.
+
+### Fixed
+- **`EnumStruct` match arm with a literal/nested field silently miscompiled.**
+  `check_match_runnable` inspected only `Pattern::EnumVariant`, so a struct-payload
+  arm `E::V { x: 0 }` slipped past the gate; the desugar then dropped the literal to
+  a wildcard, so it matched a value with `x = 5` and returned garbage (reproduced:
+  returned 0 for a correct answer of 5). The gate now also rejects `EnumStruct` arms
+  whose field sub-patterns are not all `Ident`/`Wildcard` (fail loud, like the tuple
+  form).
+- **Interpreter `u64`→float used a signed cast** (interp ≠ artifact for `u64 ≥ 2^63`).
+  The tree-walking evaluator's `As` int→float arm did signed `n as f64`, while the
+  compiled path lowers `arith.uitofp` (#105) — so `1u64<<63 as f64` gave the
+  interpreter −9.22e18 but the artifact +9.22e18. The interpreter now converts
+  unsigned for a `u64` source.
+
 ### Added
 - **First-class unsigned `u64` — sign-sensitive ops now work** (issue #99). A
   `ValueKind::ScalarU64` (physically the signless `i64` MLIR type, no narrowing)
