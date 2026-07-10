@@ -339,19 +339,22 @@ fn cast_to_bool_rejected() {
 }
 
 #[test]
-fn u64_to_float_cast_rejected() {
-    // `<u64> as f64` lowers to signed `sitofp` today — wrong for values ≥ 2^63.
-    let bad = write_tmp(
-        "mind_u64_as_float_bad.mind",
-        "pub fn bad(x: u64) -> i64 {\n\
+fn u64_to_float_cast_now_unsigned() {
+    // `<u64> as f32|f64` now lowers via UNSIGNED `uitofp` (issue #99: first-class
+    // `ScalarU64`), so a `u64` value ≥ 2^63 converts correctly instead of via a
+    // wrong signed `sitofp`. It must type-check clean — no E2014 (that diagnostic
+    // is fully retired now that u64 has a deterministic lowering everywhere).
+    let good = write_tmp(
+        "mind_u64_as_float_ok.mind",
+        "pub fn ok(x: u64) -> i64 {\n\
          \x20   let y = x as f64\n\
          \x20   return 0\n\
          }\n",
     );
-    let out = check_out(&bad);
+    let out = check_out(&good);
     assert!(
-        out.contains("E2014"),
-        "`(u64) as f64` not rejected; out: {out}"
+        !out.contains("E2014"),
+        "`(u64) as f64` now has an unsigned lowering and must NOT be rejected; out: {out}"
     );
 }
 
