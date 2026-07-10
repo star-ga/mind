@@ -3155,26 +3155,17 @@ impl<'a> P<'a> {
         Ok(Node::Lit(Literal::Int(val), span))
     }
 
-    fn parse_string_lit(&mut self) -> Result<Node, ParseError> {
-        let start = self.pos;
-        self.expect(b'"')?;
-        // Escape-aware scan that DECODES escapes into their byte values, so the
-        // stored `Literal::Str` carries the same bytes the program observes at
-        // runtime (string_len / string_get_byte read these bytes verbatim via
-        // the `__mind_alloc` + `__mind_store_i8` lowering in eval/lower.rs).
-        //
-        // The escape table is identical to `parse_char_lit` so `'\n'` and the
-        // `"\n"` inside a string agree on the byte (10) — the prior verbatim
-        // retention produced the 2-byte sequence `\` `n`, a SILENT MISCOMPILE
-        // (`"\n".len()` returned 2, `string_get_byte("\n",0)` returned 92).
-        // A `\` still escapes the following byte during the scan so `\"`
-        // (escaped quote) and `\\` (escaped backslash) do not prematurely
-        // terminate the literal. Unknown escapes keep the literal following
-        // byte (`other => other`), matching `parse_char_lit`.
-        //
-        // Keystone byte-identity: the bootstrap source uses no string-literal
-        // escapes (every `\` in main.mind is in a `//` comment), so this branch
-        // never decodes anything for it and its emit stays byte-identical.
+    /// Decode a string body — the opening `"` already consumed, `self.pos` at
+    /// the first body byte — up to but NOT including the closing `"` (the caller
+    /// consumes it). Applies the ONE escape table (`\n`→0x0A, `\t`, `\r`, `\0`,
+    /// `\\`, `\'`, `\"`; unknown escape keeps the literal byte) so string
+    /// LITERALS and string PATTERNS decode identically. A `\` still escapes the
+    /// next byte during the scan so `\"` / `\\` never prematurely terminate.
+    /// Shared because the pattern arm previously copied the RAW slice — a
+    /// `"\n"` pattern stored the 2 bytes `\` `n` and so never matched a decoded
+    /// scrutinee (a latent silent-miscompile if string patterns become runnable;
+    /// today the runnable lowering rejects string patterns fail-loud).
+    fn decode_string_body(&mut self) -> String {
         let mut decoded: Vec<u8> = Vec::new();
         while self.pos < self.b.len() && self.b[self.pos] != b'"' {
             if self.b[self.pos] == b'\\' && self.pos + 1 < self.b.len() {
@@ -3195,13 +3186,34 @@ impl<'a> P<'a> {
                 self.pos += 1;
             }
         }
-        // Decoded bytes are a UTF-8-valid byte sequence: the source was UTF-8,
-        // every escape maps to a single ASCII byte, and non-escaped multi-byte
-        // UTF-8 scalars are copied byte-for-byte. `from_utf8` therefore never
-        // errors here; fall back to a lossy decode rather than panic if a
-        // future escape extension ever breaks that invariant.
-        let s = String::from_utf8(decoded)
-            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
+        // Decoded bytes are UTF-8-valid (source was UTF-8; each escape maps to a
+        // single ASCII byte; non-escaped multi-byte scalars are copied verbatim);
+        // fall back to a lossy decode rather than panic if that ever breaks.
+        String::from_utf8(decoded)
+            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
+    }
+
+    fn parse_string_lit(&mut self) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.expect(b'"')?;
+        // Escape-aware scan that DECODES escapes into their byte values, so the
+        // stored `Literal::Str` carries the same bytes the program observes at
+        // runtime (string_len / string_get_byte read these bytes verbatim via
+        // the `__mind_alloc` + `__mind_store_i8` lowering in eval/lower.rs).
+        //
+        // The escape table is identical to `parse_char_lit` so `'\n'` and the
+        // `"\n"` inside a string agree on the byte (10) — the prior verbatim
+        // retention produced the 2-byte sequence `\` `n`, a SILENT MISCOMPILE
+        // (`"\n".len()` returned 2, `string_get_byte("\n",0)` returned 92).
+        // A `\` still escapes the following byte during the scan so `\"`
+        // (escaped quote) and `\\` (escaped backslash) do not prematurely
+        // terminate the literal. Unknown escapes keep the literal following
+        // byte (`other => other`), matching `parse_char_lit`.
+        //
+        // Keystone byte-identity: the bootstrap source uses no string-literal
+        // escapes (every `\` in main.mind is in a `//` comment), so the decoder
+        // never rewrites anything for it and its emit stays byte-identical.
+        let s = self.decode_string_body();
         self.expect(b'"')?;
         let span = Span::new(start, self.pos);
         Ok(Node::Lit(Literal::Str(s), span))
@@ -4870,17 +4882,11 @@ impl<'a> P<'a> {
         }
         if self.at(b'"') {
             self.pos += 1;
-            let str_start = self.pos;
-            while self.pos < self.b.len() && self.b[self.pos] != b'"' {
-                if self.b[self.pos] == b'\\' && self.pos + 1 < self.b.len() {
-                    self.pos += 2;
-                } else {
-                    self.pos += 1;
-                }
-            }
-            let s = std::str::from_utf8(&self.b[str_start..self.pos])
-                .unwrap()
-                .to_string();
+            // DECODE escapes (shared with `parse_string_lit`) so a `"\n"` pattern
+            // stores the single byte 0x0A — matching how the scrutinee's string
+            // literal was decoded. The prior raw-slice copy stored `\` `n`
+            // (2 bytes) and so never matched a decoded newline.
+            let s = self.decode_string_body();
             if !self.eat(b'"') {
                 return Err(self.err("unterminated string pattern".into()));
             }

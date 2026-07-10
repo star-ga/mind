@@ -118,6 +118,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   broadly.
 
 ### Fixed
+- **String-literal `match` patterns stored escapes RAW instead of decoding
+  them.** `parse_string_lit` decodes `"\n"` to the single byte `0x0A`, but the
+  pattern parser copied the raw slice, so a `match s { "\n" => … }` arm stored
+  the two bytes `\` `n` and could never match a scrutinee built from the `"\n"`
+  literal. The runnable lowering rejects string patterns fail-loud today (so this
+  was a LATENT rather than shipping miscompile), but both parsers now route
+  through one shared `decode_string_body`, so a pattern and a literal always
+  carry identical bytes. No compiled module uses string patterns, so byte-identity
+  (keystone/self-host) is unaffected.
 - **`continue` inside a `for` / `for-each` loop spun forever (infinite loop).**
   `for`/`for-each` desugar to a `while` whose counter increment sits at the body
   TAIL; a `continue` lowers to a jump straight to the loop header, SKIPPING that
