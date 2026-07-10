@@ -1045,7 +1045,11 @@ discipline already in force (a speedup never trips it).
    substrate. **Ships behind FULL security review** (`mind-security-reviewer`:
    wire-format attacks, evidence-chain forgery, loader DoS, atomic ordering)
    **plus features hardening** — fail-loud validation at every boundary, no
-   surface lands un-audited.
+   surface lands un-audited. The security bar for this surface is
+   **perfect-hardened**: zero holes on the untrusted-artifact + JSON-RPC edge,
+   gated by `mind-security-reviewer` plus independent external security scanning,
+   and it lands only once the MIND core + deterministic-IO stack are
+   production-complete.
 
 4c. **`mic@4` — autoresearch/alg-inv-evolved successor wire format.** Once
    `mic@3` is stable, turn the autoresearch + alg-inv (AB-MCTS) engine on the
