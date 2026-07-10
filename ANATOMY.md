@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3058 | **Est. tokens:** ~7,350,304
-**Generated:** 2026-07-10 08:40 UTC
+**Files:** 3058 | **Est. tokens:** ~7,352,170
+**Generated:** 2026-07-10 09:26 UTC
 
 ## Token Budget Guide
 
@@ -40,7 +40,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,163 |
-| `docs/` | 31 | ~63,389 |
+| `docs/` | 31 | ~63,608 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
@@ -375,7 +375,7 @@
 | `src/` | 7 | ~17,958 |
 | `src/ast/` | 1 | ~7,632 |
 | `src/autodiff/` | 3 | ~6,624 |
-| `src/bin/` | 2 | ~29,036 |
+| `src/bin/` | 2 | ~29,225 |
 | `src/build/` | 2 | ~14,760 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 3 | ~10,433 |
@@ -388,7 +388,7 @@
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~19,784 |
-| `src/ir/` | 5 | ~40,408 |
+| `src/ir/` | 5 | ~41,866 |
 | `src/ir/compact/` | 3 | ~15,235 |
 | `src/ir/compact/v2/` | 8 | ~37,885 |
 | `src/ir/compact/v3/` | 6 | ~67,632 |
@@ -667,7 +667,7 @@
 - `v0.3.md` (~110 tok, small) — MIND Design v0.3 (Draft)
 ### `docs/`
 
-- `determinism.md` (~2830 tok, huge) — The Determinism Contract
+- `determinism.md` (~3049 tok, huge) — The Determinism Contract
 - `errors.md` (~701 tok, large) — MIND Core Error Model
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
 - `gpu.md` (~387 tok, medium) — GPU backend profile
@@ -3744,7 +3744,7 @@
 ### `src/bin/`
 
 - `mind-ai.rs` (~9805 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~19231 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc.rs` (~19420 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
 - `cache.rs` (~6766 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3842,9 +3842,9 @@
 - `parse.rs` (~9935 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
-- `evidence.rs` (~1913 tok, huge) — Copyright 2025 STARGA Inc.
+- `evidence.rs` (~3363 tok, huge) — Copyright 2025 STARGA Inc.
 - `fp_mode.rs` (~11962 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
-- `mod.rs` (~12295 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~12303 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~10698 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`

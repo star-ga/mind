@@ -206,6 +206,20 @@ index, parallel generation is reproducible regardless of execution order, and th
 result is identical across substrates. This is the basis of MIND's
 reproducible-across-hardware `randn` (Phase 11 deterministic intrinsic). 📋
 
+### The attestation cannot lie about determinism
+
+A program *may* use a genuinely non-deterministic operation — an unseeded PRNG
+draw (`random`, `rand_uniform`) or a wall-clock / stdin read (`now`, `read_line`).
+MIND does **not** refuse to compile it; the compiler can express anything. What it
+guarantees is that the artifact's evidence chain **declares that honestly**: the
+`evidence_chain.determinism` field is *derived from the IR*, so a module that calls
+such a builtin attests `determinism: nondeterministic`, while every other module
+(including seeded `randn(shape, seed)`) attests `deterministic`. The field can
+never forge `deterministic` for a program that isn't — non-determinism is always
+**opt-in and labelled, never by accident**. `mind verify` reports the declared
+mode; a consumer that requires reproducibility rejects a `nondeterministic`
+artifact. ✅
+
 ---
 
 ## Summary
