@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3069 | **Est. tokens:** ~7,353,666
-**Generated:** 2026-07-10 16:29 UTC
+**Files:** 3070 | **Est. tokens:** ~7,361,469
+**Generated:** 2026-07-10 17:14 UTC
 
 ## Token Budget Guide
 
@@ -389,7 +389,7 @@
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~19,784 |
-| `src/ir/` | 5 | ~44,666 |
+| `src/ir/` | 5 | ~46,392 |
 | `src/ir/compact/` | 3 | ~15,235 |
 | `src/ir/compact/v2/` | 8 | ~38,037 |
 | `src/ir/compact/v3/` | 5 | ~42,842 |
@@ -408,8 +408,8 @@
 | `src/type_checker/` | 1 | ~11,631 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 41 | ~191,413 |
-| `tests/` | 283 | ~476,031 |
+| `std/` | 41 | ~193,950 |
+| `tests/` | 283 | ~479,233 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -448,7 +448,7 @@
 | `tests/mindcraft/lint/q16_overflow/` | 3 | ~191 |
 | `tests/mindcraft/lint/shadowing/` | 2 | ~87 |
 | `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
-| `tests/mindfuzz_cross_substrate/staged/` | 15 | ~2,832 |
+| `tests/mindfuzz_cross_substrate/staged/` | 16 | ~3,170 |
 | `tests/runtime/` | 2 | ~135 |
 | `tests/selfhost_gaps/` | 67 | ~5,301 |
 | `tests/shapes/` | 3 | ~260 |
@@ -3849,7 +3849,7 @@
 - `parse.rs` (~10577 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
-- `evidence.rs` (~3605 tok, huge) — Copyright 2025 STARGA Inc.
+- `evidence.rs` (~5331 tok, huge) — Copyright 2025 STARGA Inc.
 - `fp_mode.rs` (~13657 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
 - `mod.rs` (~12311 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3957,7 +3957,7 @@
 - `io_canon.mind` (~2624 tok, huge) — std.io_canon — canonical completion ordering for deterministic I/O.
 - `io.mind` (~1688 tok, huge) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
 - `iouring.mind` (~18767 tok, huge) — std.iouring — minimal io_uring binding (Linux). The physical-I/O reap source
-- `json.mind` (~10267 tok, huge) — std/json.mind -- RFC 8259 / ECMA-404 subset parser (task #269, cargo-retirement track).
+- `json.mind` (~12602 tok, huge) — std/json.mind -- RFC 8259 / ECMA-404 subset parser (task #269, cargo-retirement track).
 - `keccak.mind` (~3926 tok, huge) — std/keccak.mind — Keccak / SHA-3 + SHAKE (FIPS 202) in pure MIND.
 - `llvm.mind` (~11108 tok, huge) — std/llvm.mind — RFC 0010 Phase F: hand-written MIND extern "C" bindings
 - `map.mind` (~1538 tok, huge) — std/map.mind — RFC 0005 Phase 2: pure-MIND insertion-ordered map.
@@ -3977,7 +3977,7 @@
 - `tls13_handshake.mind` (~5466 tok, huge) — std/tls13_handshake.mind — TLS 1.3 handshake CRYPTO ORCHESTRATION in pure
 - `tls13_keyschedule.mind` (~3220 tok, huge) — std/tls13_keyschedule.mind — TLS 1.3 key schedule (RFC 8446 §7.1) in pure MIND.
 - `tls13_record.mind` (~2171 tok, huge) — std/tls13_record.mind — TLS 1.3 record-layer protection (RFC 8446 §5.1-5.3)
-- `toml.mind` (~10099 tok, huge) — std/toml.mind -- TOML 1.0 subset parser (task #258, cargo-retirement track).
+- `toml.mind` (~10301 tok, huge) — std/toml.mind -- TOML 1.0 subset parser (task #258, cargo-retirement track).
 - `tui.mind` (~4815 tok, huge) — std/tui.mind — RFC 0013 Tier 1 (c): minimal pure-MIND TUI surface.
 - `vec.mind` (~1100 tok, large) — std/vec.mind — RFC 0005 Phase 2: pure-MIND growable vector.
 - `x25519.mind` (~4019 tok, huge) — std/x25519.mind — X25519 (RFC 7748 §5) Curve25519 Montgomery-ladder ECDH in
@@ -4332,9 +4332,10 @@
 - `mindc.rs` (~1851 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_test_phase_b.rs` (~3525 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_workspace_phase_c.rs` (~4166 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindfuzz_cross_substrate.rs` (~10828 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindfuzz_cross_substrate.rs` (~14030 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/mindfuzz_cross_substrate/staged/`
 
+- `fuzz_repro_seed_deadbeef_prog006.mind` (~338 tok, medium) — DIVERGENCE REPRODUCER (issue #72 fuzzer)
 - `manifest.tsv` (~357 tok, medium) — scalar_arith_step000	f	3735928559	64	5e39820a2a8325417e39057f19ba9bceec01bd2068c
 - `scalar_accum_step000.mind` (~154 tok, small) — MIND-Fuzz seed: scalar accumulator with a return-feeding literal.
 - `scalar_accum_step001.mind` (~162 tok, small) — MIND-Fuzz seed: scalar accumulator with a return-feeding literal.
