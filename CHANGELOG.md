@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- **Evidence chain now attests `determinism` honestly, by derivation.** The
+  `evidence_chain.determinism` field was HARDCODED to `deterministic` for every
+  artifact, so a program calling a PRNG / wall-clock builtin (`random()`,
+  `rand_uniform()`, `now()`) attested `determinism: deterministic` — a forge of
+  the exact claim `mind verify` reports. The field is now derived from the IR: a
+  module that calls a non-deterministic builtin attests `nondeterministic`, every
+  other module (incl. seeded `randn(shape, seed)`) stays `deterministic`. The
+  compiler still compiles such programs (do anything); it just labels them
+  honestly (determinism perfectly). The field lives in the MAP epilogue, not the
+  `trace_hash`, so byte-identity is unaffected.
 - **Bare transcendental / RNG builtins no longer forge a `strict` FP attestation.**
   `sin`/`cos`/`exp`/`log*`/`pow`/`sigmoid`/`log_softmax`, `fft`/`fft2d`/`ifft`, and
   `random`/`rand_*` lower to a plain `Instr::Call` (no `ExternFnDecl`, no `__mind_`
