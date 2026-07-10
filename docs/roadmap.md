@@ -766,6 +766,104 @@ commitment. Nothing here is planned work yet.
   conflate the two threads. Grounded in recent basis-function-design research;
   superposition-theorem lineage (Kolmogorov / Arnold / Lorentz / Sprecher).
 
+**Structured / grammar-constrained decoding (guided generation)** — *evaluate (scoped)*.
+- **What:** compile a target format (JSON schema, regex, or a full grammar) into
+  a state machine, then at each generation step intersect the machine's currently
+  legal token set with the model's logits — invalid tokens get a `-inf` mask so
+  their softmax probability is exactly zero. Regular grammars → a finite-state
+  machine mapped onto the tokenizer vocabulary; context-free grammars (JSON,
+  most wire formats) → a pushdown automaton whose stack tracks nesting. Turns an
+  LLM from an unpredictable text generator that's ~35% reliable at complex JSON
+  into one with 100% *structural* compliance — no parse-retry latency, no missing
+  brackets. High-throughput engines (vLLM V1 + XGrammar-style backends) already
+  do this natively with scheduler-level mask broadcast; the interesting question
+  for MIND is whether the *mask-generation state machine itself* becomes a
+  MIND-native, deterministic, evidence-carrying artifact.
+- **Why it fits the wedge (the reason it's worth evaluating):** a compiled
+  FSM/PDA + a per-step legal-token bitmask is exactly the class of computation
+  MIND already proves bit-identical — integer state transitions, no floats, no
+  clocks, no data-dependent division. The grammar→automaton compile is a pure
+  function of the schema; the per-step mask is a pure function of (automaton
+  state, vocabulary). Both are structurally the fixed-dataflow, division-free
+  primitives the cross-substrate byte-identity gate already covers. A *grammar
+  compiler that emits a deterministic, cross-substrate-identical mask table with
+  a signed trace* is something no incumbent decoding stack ships — the mask logic
+  today lives in engine-specific C++/CUDA with no provenance. This is the same
+  moat move as the KAN entry: take a numerics/ML primitive and re-derive its
+  hot path onto MIND's determinism substrate.
+- **Directly useful for the mic@1 / mic@3 wire formats:** the mic@3 binary IR
+  is a context-free grammar (MIC3 header →
+  opcode table 0x01–0x2A → string-table → MAP epilogue; nesting tracked by a
+  stack — see `mind-ir-codec`). mic@1 is its text projection. A grammar-decoding
+  front-end compiled *from the mic@3 opcode/string-table grammar itself* would
+  let any generator (or a MIND-native model) emit **only parseable mic@3/mic@1
+  bytes by construction** — the emitter can't produce a malformed opcode,
+  mis-framed MAP block, or out-of-table string ref, because the mask forbids the
+  token before it's sampled. That collapses the "emit → parse → reject → retry"
+  loop the codec's fixed-point round-trip currently guards *after the fact* into
+  a *can't-go-wrong-by-construction* guarantee *during* generation. Same idea
+  generalizes to the evidence-chain MAP keys and the RFC-0021 canonical byte
+  layout. **Check first whether we already have any of this** — grep the codec +
+  parser surface for an existing grammar/mask/legal-token path before scoping
+  new work; today the codec *validates* structure, it does not *constrain
+  generation* to structure, so this is (almost certainly) a genuine gap.
+- **Wedge-safe SCOPE (load-bearing):**
+  - *The automaton + mask are the deterministic tier; the sampler is not.* The
+    `-inf` mask and the FSM/PDA transitions must be integer / bit-exact and pass
+    a cross-substrate canary. Whatever samples from the *masked* distribution
+    (temperature, top-p) is the model's own float path and stays outside the
+    determinism claim — we constrain the *legal set*, we don't claim a
+    bit-identical *sample* unless the sampler is itself pinned (greedy/argmax is,
+    top-p is not).
+  - *Grammar compile is ahead-of-time and pure.* No runtime schema mutation in
+    the deterministic tier — a fixed schema compiles to a fixed automaton, same
+    as a fixed grid compiles to a fixed KAN kernel.
+  - *Vocabulary-dependent, so the canary pins (grammar, tokenizer) together.* The
+    legal-token bitmask is defined over a specific vocab; the reference hash must
+    fix both, or a tokenizer swap silently changes the "identical" output.
+- **Falsifiable go/no-go (smallest thing that kills it):** compile the mic@3
+  opcode-table grammar (or a minimal JSON-object grammar) to a MIND automaton,
+  emit the per-state legal-token bitmask as a table, and require avx2 == neon
+  byte-identity + the 15-canary run-to-run gate on the mask-generation path. If
+  the mask table can't be made cross-substrate-identical (e.g. it smuggles in a
+  float score or a hash-order-dependent set iteration), the determinism angle is
+  dead and this stays a plain engine-side feature we don't own.
+- **Explicitly out of scope of this entry:** the neural sampler, KV-cache, and
+  throughput/batching engineering (vLLM's scheduler-level broadcast is prior art,
+  not our contribution) — MIND's angle is *only* the deterministic, provenance-
+  carrying grammar→mask artifact and its natural fit as a correct-by-construction
+  emitter for our own mic@1/mic@3 wire formats. Grounded in recent
+  constrained-decoding research (FSM/PDA logit-masking; grammar-compilation
+  backends). Do not conflate with the execution-determinism / trace-anchor
+  threads — this is *generation-time structural constraint*, a distinct lane.
+- **Mechanism reference (the "how", pinned so the entry stays checkable):**
+  1. *Mask step.* `logits + mask → masked → softmax`, where the mask is `0` for a
+     legal token and `-inf` for an illegal one, so illegal-token probability is
+     driven to exactly `0` after softmax (e.g. logits `[2.5, -1.2, 3.8, 0.4]` +
+     mask `[0, -inf, 0, -inf]` → `[0.21, 0, 0.79, 0]`). This is the whole
+     intervention — a per-step bitmask over the vocabulary, no model change.
+  2. *Grammar compilation (Chomsky tiers).* Type-3 (regular) → a **finite-state
+     machine** over the tokenizer vocab; Type-2 (context-free — JSON, most wire
+     formats) → a **pushdown automaton** with explicit **stack memory** tracking
+     nesting (`push '{'`, `push '['`, pop on close). This is exactly the mic@3
+     framing above.
+  3. *Engine placement.* Naive engines run the mask as a per-request **logit
+     processor** (synchronous, serializes the batch — vLLM V0). vLLM **V1**
+     broadcasts masks at the **scheduler level** and offloads mask generation to a
+     compiled backend (**Outlines** = FSM, **XGrammar** = PDA), reported ~**100×**
+     faster mask generation. For MIND this is prior art we *use*, not own; our lane
+     is the deterministic, evidence-carrying mask artifact (see wedge note above).
+  4. *Why it's worth it (the claimed payoff to validate, not assert).* Complex-JSON
+     reliability jumps from ~**35.9%** (plain prompting) to **100%** *structural*
+     compliance; **0%** parse-retry overhead; a reported **~98.2%** RAG-accuracy
+     lift from suppressing unnatural token repetition. Downstream: guaranteed-valid
+     JSON tool-calls, SQL for ETL, ASTs for codegen, and UI props. These are the
+     *incumbent* numbers from the source material — MIND would need to reproduce
+     the structural-compliance guarantee under the byte-identity gate before we
+     publish any of them as ours. These figures come from recent
+     constrained-decoding write-ups — third-party and unverified; treat them as
+     leads to reproduce, not benchmarks or our own results.
+
 **Data Pipeline Connectors:**
 - Seamless integration with data lakes and cloud platforms
 - Connectors for popular databases (PostgreSQL, MongoDB, ClickHouse)
