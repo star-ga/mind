@@ -118,6 +118,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   broadly.
 
 ### Fixed
+- **`continue` inside a `for` / `for-each` loop spun forever (infinite loop).**
+  `for`/`for-each` desugar to a `while` whose counter increment sits at the body
+  TAIL; a `continue` lowers to a jump straight to the loop header, SKIPPING that
+  increment — so the counter never advanced and the loop hung (NET-verified:
+  `for i in 0..5 { if i == 2 { continue; } … }` timed out). The desugar now
+  splices the loop step (`VAR = VAR + 1` / `idx = idx + 1`) directly before every
+  in-scope `continue`, so both the fall-through and continue paths increment
+  exactly once. An exhaustive AST walk finds the `continue` however deeply it is
+  wrapped — inside an `if`/`else`, a `match` arm, a `region { }`, a bare `{ … }`
+  block (which parses as a set literal), or any other expression — while treating
+  a nested `while`/`for`/`for-each` body (and a nested `fn`) as a boundary so an
+  inner `continue` keeps targeting the inner loop and gets its OWN step. `break`
+  is untouched. Loops without a `continue` are unchanged, so byte-identity
+  (keystone/self-host) is unaffected.
 - **A non-final catch-all (`_` / binding) `match` arm made the built artifact
   return the LAST arm's value for EVERY input.** `match x { 0 => 100, _ => 200,
   1 => 300 }` compiled and ran (`--emit-shared`, `mindc build`/`run`) with no

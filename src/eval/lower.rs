@@ -2799,6 +2799,241 @@ fn rewrite_collection_mutations(
     }
 }
 
+/// Inject a loop's step (the counter/index increment) directly before every
+/// `continue` that targets THIS loop, so the desugared `while` advances on the
+/// continue path too.
+///
+/// `for`/`for-each` desugar to a `while` whose counter increment sits at the
+/// body TAIL (`VAR = VAR + 1` for range-`for`; `idx = idx + 1` for `for-each`).
+/// A `continue` lowers to a jump straight to the `while` header — it *skips* the
+/// tail increment, so the counter never advances and the loop spins forever
+/// (an infinite loop, NET-verified). Real `for` semantics run the step on every
+/// path back to the header, including `continue`; this restores that by
+/// rewriting each in-scope `continue` to `{ STEP; continue; }`.
+///
+/// Both paths then increment exactly once: the fall-through path hits the
+/// original tail increment; the continue path runs the injected `STEP` and
+/// jumps (never reaching the tail). `break` is left untouched (it exits the
+/// loop — no re-test, no step).
+///
+/// The traversal ([`descend_for_continue`]) reaches a `continue` however deeply
+/// it is wrapped by expressions (`{ if … { continue } }` parses as a `SetLit`
+/// holding an `if`; a `continue` can sit inside a `region`, a nested `match`
+/// arm, a `Binary` operand, etc.) but treats a nested `while`/`for`/`for-each`
+/// BODY and a nested `fn` body as boundaries — a `continue` there targets a
+/// different loop/scope and is stepped when THAT loop is lowered; descending
+/// would wrongly graft the outer step onto an inner `continue`.
+#[cfg(feature = "std-surface")]
+fn inject_step_before_continue(body: &mut Vec<ast::Node>, step: &ast::Node) {
+    let mut i = 0;
+    while i < body.len() {
+        // A `continue` in THIS statement Vec targets this loop → SPLICE `step`
+        // (an `Assign`) in front of it as a sibling statement. The parser only
+        // ever produces `Node::Continue` in a statement position (`parse_stmt` /
+        // `parse_match_arm_body`), so every loop-targeting `continue` is a direct
+        // element of some statement Vec reached here — splicing an `Assign` here
+        // lowers correctly (a value-position `Block` wrap would panic, no `Assign`
+        // arm). The snapshot is captured AFTER the step rebinds the counter, so
+        // the incremented value is forwarded to the loop header.
+        if matches!(body[i], ast::Node::Continue { .. }) {
+            body.insert(i, step.clone());
+            i += 2; // past the inserted step AND the continue
+            continue;
+        }
+        // Otherwise recurse into the statement's children to reach nested
+        // statement Vecs (the `continue` may hide behind any expression wrapper —
+        // `{ if … { continue } }` parses as a `SetLit` holding an `if`, etc.).
+        descend_for_continue(&mut body[i], step);
+        i += 1;
+    }
+}
+
+/// Recurse into a node's children looking for statement Vecs that hold a
+/// `continue` targeting the enclosing loop, splicing the loop `step` before each
+/// (via [`inject_step_before_continue`]). The match is EXHAUSTIVE (no silent
+/// catch-all) so a future `ast::Node` variant forces a compile error here rather
+/// than silently re-opening the infinite-loop hazard. Boundaries that are NOT
+/// descended: a nested `while`/`for`/`for-each` BODY (its `continue`s target the
+/// inner loop, stepped when that loop is lowered) and a nested `fn` body (a
+/// different scope). A nested loop's header/range/collection expression IS
+/// descended — a `continue` there still targets THIS loop.
+#[cfg(feature = "std-surface")]
+fn descend_for_continue(node: &mut ast::Node, step: &ast::Node) {
+    use ast::Node as N;
+    match node {
+        // ---- statement-Vec holders: splice-check inside ------------------
+        N::If {
+            cond,
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            descend_for_continue(cond, step);
+            inject_step_before_continue(then_branch, step);
+            if let Some(eb) = else_branch {
+                inject_step_before_continue(eb, step);
+            }
+        }
+        N::Match {
+            scrutinee, arms, ..
+        } => {
+            descend_for_continue(scrutinee, step);
+            for arm in arms.iter_mut() {
+                inject_step_before_continue_arm(&mut arm.body, step);
+            }
+        }
+        N::Region { body, .. } => inject_step_before_continue(body, step),
+        N::Block { stmts, .. } => inject_step_before_continue(stmts, step),
+        // ---- nested loops: header IS ours, BODY is a boundary ------------
+        N::While { cond, .. } => descend_for_continue(cond, step),
+        N::For { start, end, .. } => {
+            descend_for_continue(start, step);
+            descend_for_continue(end, step);
+        }
+        N::ForEach { collection, .. } => descend_for_continue(collection, step),
+        // ---- pure expression wrappers: recurse into operands -------------
+        N::Binary { left, right, .. }
+        | N::Logical { left, right, .. }
+        | N::Bitwise { left, right, .. } => {
+            descend_for_continue(left, step);
+            descend_for_continue(right, step);
+        }
+        N::Paren(inner, _) => descend_for_continue(inner, step),
+        N::Neg { operand, .. } | N::Not { operand, .. } => descend_for_continue(operand, step),
+        N::As { expr, .. } => descend_for_continue(expr, step),
+        N::Ref { inner, .. } => descend_for_continue(inner, step),
+        N::Tuple { elements, .. } | N::ArrayLit { elements, .. } | N::SetLit { elements, .. } => {
+            for e in elements.iter_mut() {
+                descend_for_continue(e, step);
+            }
+        }
+        N::MapLit { entries, .. } => {
+            for (k, v) in entries.iter_mut() {
+                descend_for_continue(k, step);
+                descend_for_continue(v, step);
+            }
+        }
+        N::StructLit { fields, .. } => {
+            for f in fields.iter_mut() {
+                descend_for_continue(&mut f.value, step);
+            }
+        }
+        N::Call { args, .. } | N::Print { args, .. } => {
+            for a in args.iter_mut() {
+                descend_for_continue(a, step);
+            }
+        }
+        N::MethodCall { receiver, args, .. } => {
+            descend_for_continue(receiver, step);
+            for a in args.iter_mut() {
+                descend_for_continue(a, step);
+            }
+        }
+        N::FieldAccess { receiver, .. } => descend_for_continue(receiver, step),
+        N::IndexAccess {
+            receiver, index, ..
+        } => {
+            descend_for_continue(receiver, step);
+            descend_for_continue(index, step);
+        }
+        N::Let { value, .. }
+        | N::LetTuple { value, .. }
+        | N::Assign { value, .. }
+        | N::Const { value, .. } => descend_for_continue(value, step),
+        N::FieldAssign {
+            receiver, value, ..
+        } => {
+            descend_for_continue(receiver, step);
+            descend_for_continue(value, step);
+        }
+        N::IndexAssign {
+            receiver,
+            index,
+            value,
+            ..
+        } => {
+            descend_for_continue(receiver, step);
+            descend_for_continue(index, step);
+            descend_for_continue(value, step);
+        }
+        N::Return { value, .. } => {
+            if let Some(v) = value {
+                descend_for_continue(v, step);
+            }
+        }
+        N::Assert { cond, .. } => descend_for_continue(cond, step),
+        // ---- tensor / autodiff call wrappers (Box<Node> operands) --------
+        N::CallGrad { loss, .. } => descend_for_continue(loss, step),
+        N::CallTensorSum { x, .. }
+        | N::CallTensorMean { x, .. }
+        | N::CallReshape { x, .. }
+        | N::CallExpandDims { x, .. }
+        | N::CallSqueeze { x, .. }
+        | N::CallTranspose { x, .. }
+        | N::CallIndex { x, .. }
+        | N::CallSlice { x, .. }
+        | N::CallSliceStride { x, .. }
+        | N::CallTensorRelu { x, .. } => descend_for_continue(x, step),
+        N::CallGather { x, idx, .. } => {
+            descend_for_continue(x, step);
+            descend_for_continue(idx, step);
+        }
+        N::CallDot { a, b, .. } | N::CallMatMul { a, b, .. } => {
+            descend_for_continue(a, step);
+            descend_for_continue(b, step);
+        }
+        N::TensorMatmul { lhs, rhs, .. } | N::TensorElemwise { lhs, rhs, .. } => {
+            descend_for_continue(lhs, step);
+            descend_for_continue(rhs, step);
+        }
+        N::CallTensorConv2d { x, w, .. } => {
+            descend_for_continue(x, step);
+            descend_for_continue(w, step);
+        }
+        // ---- leaves / boundaries: nothing to descend --------------------
+        // `Break`/`Continue` (Continue handled by the caller's splice), literals,
+        // imports, declarations, a nested `fn` body (different scope), and
+        // childless tensor ops carry no loop-targeting `continue`.
+        N::Continue { .. }
+        | N::Break { .. }
+        | N::Lit(..)
+        | N::Import { .. }
+        | N::FnDef { .. }
+        | N::StructDef { .. }
+        | N::EnumDef { .. }
+        | N::TypeAlias { .. }
+        | N::Export { .. }
+        | N::ExternConst { .. }
+        | N::ExternBlock { .. }
+        | N::CallTensorRand { .. } => {}
+    }
+}
+
+/// A `match` arm body is a single `Node`, not a statement `Vec`. Route each
+/// shape to the same in-scope-`continue` rewrite (see [`inject_step_before_continue`]).
+#[cfg(feature = "std-surface")]
+fn inject_step_before_continue_arm(arm_body: &mut ast::Node, step: &ast::Node) {
+    match arm_body {
+        // Braced arm `A => { … }`: splice within its stmts (`flatten_body` keeps
+        // them in statement position).
+        ast::Node::Block { stmts, .. } => inject_step_before_continue(stmts, step),
+        // Bare `A => continue`: wrap as `{ step; continue }` — `flatten_body`
+        // unwraps the block into the if-branch's statement Vec, so the `Assign`
+        // step lowers as a statement (NOT a value-block expr).
+        ast::Node::Continue { span } => {
+            let sp = *span;
+            let cont = std::mem::replace(arm_body, ast::Node::Lit(Literal::Int(0), sp));
+            *arm_body = ast::Node::Block {
+                stmts: vec![step.clone(), cont],
+                span: sp,
+            };
+        }
+        // Any other arm body (bare `if`, bare nested `match`, an expression
+        // wrapping an `if`/`match`): recurse to reach its statement Vecs.
+        other => descend_for_continue(other, step),
+    }
+}
+
 /// Cheap bool pre-scan: does the module declare ANY `array<T>` / `map<K,V>`
 /// binding or parameter? If not, there is nothing to rewrite and the expensive
 /// module clone in [`preprocess_collection_mutations`] is skipped entirely. An
@@ -6856,6 +7091,10 @@ fn lower_expr(
                 span: *span,
             };
             let mut while_body = body.clone();
+            // A `continue` in the body jumps to the header and would SKIP the
+            // tail increment below — inject `VAR = VAR + 1` before each in-scope
+            // continue so the loop still advances (else: infinite loop).
+            inject_step_before_continue(&mut while_body, &incr);
             while_body.push(incr);
 
             // Condition `VAR < END`.
@@ -6949,9 +7188,14 @@ fn lower_expr(
                 }),
                 span: *span,
             };
-            let mut while_body = Vec::with_capacity(body.len() + 2);
+            // Rewrite the USER body's in-scope `continue`s to run the index
+            // step first (same infinite-loop hazard as range-`for`); the
+            // synthesized `elem_bind`/`incr` carry no continue of their own.
+            let mut user_body: Vec<ast::Node> = body.iter().cloned().collect();
+            inject_step_before_continue(&mut user_body, &incr);
+            let mut while_body = Vec::with_capacity(user_body.len() + 2);
             while_body.push(elem_bind);
-            while_body.extend(body.iter().cloned());
+            while_body.extend(user_body);
             while_body.push(incr);
 
             // Condition `idx < len`.
