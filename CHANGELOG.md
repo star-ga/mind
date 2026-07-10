@@ -8,6 +8,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- **A pinned signer (`--signer-pubkey`) could be satisfied by an UNATTESTED
+  artifact.** The `mindc verify` unattested (`Missing`) path gated
+  `--require-strict-fp` / `--require-deterministic` but never the signer
+  allowlist, so `mindc verify --signer-pubkey KEY evil.mic3` exited 0 on a fully
+  attacker-authored, unsigned artifact (no `evidence_chain` at all) — a CI gate of
+  the form `verify --signer-pubkey KEY && deploy` would ship attacker code. The
+  `Missing` arm now fails closed when a signer is pinned (an unattested artifact
+  has no signature to verify), mirroring the attested-path pinned-signer
+  rejection. Only fires when a signer is pinned; no byte-identity impact.
+- **An `extern "C"` float-return decl placed AFTER its caller forged a `strict`
+  FP attestation.** `fp_mode` collected extern-float-return taint sources during
+  the same forward walk that read them, so a `Call` classified before its
+  `ExternFnDecl` was seen stayed untainted — a libm-calling artifact attested
+  `fp_mode: strict` and passed `--require-strict-fp` (a soundness break of the
+  byte-identical strict-FP claim). Taint collection is now a completed PRE-PASS
+  over the full nested instruction tree before any call is classified, so
+  decl-vs-call order is irrelevant. Analysis only; no wire/byte-identity change.
+- **The SSA verifiers accepted malformed IR.** (1) `verify_module` — THE
+  in-pipeline gate feeding autodiff/MLIR/lowering — exposed a straight-line op's
+  own result id *before* checking its operands, so a self-referential /
+  use-before-def body op (`%5 = add %5, …`) and duplicate definitions passed.
+  (2) `mindc verify`'s consumer path (`check_ssa_well_formed`) never validated
+  `OP_WHILE` / `OP_IF` condition and branch-result operands, so a crafted mic@3
+  with a dangling condition verified clean. Both now reject: straight-line
+  operands are checked against the pre-instruction scope (with a
+  duplicate-definition guard), and dangling While/If cond / branch-result
+  operands are validated in their correct sub-scope. Verifier-only — adds
+  rejections, touches no emit path, byte-identity unaffected.
 - **Determinism is enforced by default; non-determinism can no longer leak
   untraced.** MIND programs are deterministic by design, but as a systems language
   MIND must compile anything — so non-determinism is supported as an *explicit,

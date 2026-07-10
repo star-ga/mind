@@ -2017,6 +2017,24 @@ fn run_verify(
             // attested-path relaxed/unknown rejection above (both fail closed).
             // Plain `verify` (no flag) still exits 0 here — attestation is
             // absent, not failed (RFC 0017).
+            //
+            // Pinned-signer gate (fail-closed) — SECURITY (audit rank 1). A
+            // pinned signer (`--signer-pubkey` / `MIND_EVIDENCE_VERIFY_PUBKEYS`)
+            // is an explicit demand for a valid, trusted signature. An
+            // UNATTESTED artifact carries no evidence_chain and therefore no
+            // signature at all, so it can never satisfy a pinned signer. Without
+            // this the `Missing` arm returned 0 for
+            // `verify --signer-pubkey KEY evil.mic3` on a fully attacker-authored,
+            // unsigned artifact, so a CI gate `verify --signer-pubkey KEY &&
+            // deploy` would deploy attacker code. Mirrors the attested-path
+            // pinned-signer rejection (mindc.rs ~1866/1887) — a stripped
+            // evidence_chain must never be a silent downgrade-to-benign path.
+            if !trusted.is_empty() {
+                eprintln!(
+                    "error[verify]: a signer key is pinned (--signer-pubkey / MIND_EVIDENCE_VERIFY_PUBKEYS) but {artifact} carries no evidence_chain — an unattested artifact has no signature to verify; a pinned signer requires a valid, trusted signature (fail-closed)"
+                );
+                return 1;
+            }
             if require_strict_fp {
                 eprintln!(
                     "error[verify]: --require-strict-fp on an unattested artifact — no evidence_chain to attest the FP-contract mode; strict-FP cannot be proven (fail-closed)"

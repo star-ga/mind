@@ -67,12 +67,17 @@
 //!
 //! - **Layer 1 — extern-decl-driven taint (the real defense, works today).**
 //!   `Instr::ExternFnDecl` carries `ret_type: Option<String>` (MLIR type
-//!   strings). The scan collects [`FpScan::extern_float_rets`] — every decl whose
-//!   `ret_type` is `"f32"` / `"f64"` — during the walk (decls precede calls in
-//!   program order; SSA is defined-before-use), and taints any `Instr::Call`
-//!   whose name is in that set. Float-*param*-only externs (e.g. `printf("%f",
-//!   …)`) do **NOT** taint: the float leaves the dataflow through the call, it
-//!   is not a reassociated result — considered and rejected as an over-taint.
+//!   strings). A dedicated PRE-PASS ([`FpScan::collect_extern_float_rets`])
+//!   collects [`FpScan::extern_float_rets`] — every decl whose `ret_type` is
+//!   `"f32"` / `"f64"` — across the ENTIRE nested tree before any `Call` is
+//!   classified, and the taint walk then taints any `Instr::Call` whose name is
+//!   in that set. The pre-pass is load-bearing: callee references are by name and
+//!   order-independent, so populating the set during the same forward walk that
+//!   reads it left a call untainted whenever its extern decl appeared textually
+//!   AFTER it — a false `Strict` (soundness break). Float-*param*-only externs
+//!   (e.g. `printf("%f", …)`) do **NOT** taint: the float leaves the dataflow
+//!   through the call, it is not a reassociated result — considered and rejected
+//!   as an over-taint.
 //! - **Layer 2 — emitter-enforced strict registry (build-breaks-until-classified).**
 //!   [`STRICT_FLOAT_INTRINSICS`] lists the `__mind_`-prefixed float-returning
 //!   intrinsics that are strict. The MLIR lowerer asserts (fail-loud, debug +
@@ -248,6 +253,16 @@ impl FpMode {
 /// hidden inside a branch or a loop condition still taints the module.
 pub fn fp_contract_mode(module: &IRModule) -> FpMode {
     let mut scan = FpScan::default();
+    // #98 layer 1 pre-pass (audit rank 2): collect EVERY extern float-return
+    // decl across the full nested instruction tree BEFORE any `Call` is
+    // classified. Callee references are by NAME and order-independent, so a
+    // single forward walk that both populated and read `extern_float_rets` was
+    // order-fragile — an `extern "C" fn f() -> f64` block placed textually AFTER
+    // its caller left `f` untainted at the Call site, forging `Strict` and
+    // passing `--require-strict-fp` (a soundness break of the byte-identical /
+    // strict-FP-across-substrate claim). The pre-pass makes the taint set
+    // complete regardless of decl-vs-call order.
+    scan.collect_extern_float_rets(&module.instrs);
     if scan.stream_has_taint(&module.instrs) {
         FpMode::Relaxed
     } else {
@@ -270,10 +285,12 @@ struct FpScan {
     /// #98 layer 1 — names of `extern "C"` functions declared with an `f32`/`f64`
     /// RETURN type. A `Call` to any of these is a taint: the result is a
     /// platform-`libm`-defined float that is not byte-identical across
-    /// substrates. Populated from `Instr::ExternFnDecl` in program order (decls
-    /// precede their calls; SSA is defined-before-use), so a later `Call` in the
-    /// same or a nested stream resolves against it. Float-*param*-only externs
-    /// are deliberately absent (the float leaves the dataflow — no reassociated
+    /// substrates. Populated by the `collect_extern_float_rets` PRE-PASS over the
+    /// full nested instruction tree BEFORE any `Call` is classified, so a decl
+    /// resolves a call by NAME regardless of decl-vs-call textual order (the set
+    /// is order-independent — a single populate-and-read forward walk was
+    /// order-fragile and forged a false `Strict`). Float-*param*-only externs are
+    /// deliberately absent (the float leaves the dataflow — no reassociated
     /// result to attest).
     extern_float_rets: BTreeSet<String>,
 }
@@ -291,32 +308,71 @@ impl FpScan {
         tainted
     }
 
+    /// PRE-PASS (audit rank 2) — recursively collect the NAME of every
+    /// `extern "C"` declaration with an `f32`/`f64` RETURN type across the entire
+    /// nested instruction tree, so `instr_taints` can taint any `Call` to such an
+    /// extern regardless of whether the decl appears before or after the call in
+    /// program order. `extern_float_rets` is name-keyed and a callee reference is
+    /// resolved by name (NOT by SSA define-before-use), so the set MUST be
+    /// complete before the first `Call` classification — a single
+    /// populate-and-read forward walk was order-fragile and forged a false
+    /// `Strict`. Mirrors the nested-stream recursion in `instr_taints`.
+    fn collect_extern_float_rets(&mut self, instrs: &[Instr]) {
+        for instr in instrs {
+            #[cfg(feature = "std-surface")]
+            if let Instr::ExternFnDecl {
+                name,
+                ret_type: Some(rt),
+                ..
+            } = instr
+            {
+                // Only a float-RETURN decl is a taint source; float-param-only
+                // externs do NOT taint (the float leaves via the call, it is not
+                // a reassociated result).
+                if rt == "f32" || rt == "f64" {
+                    self.extern_float_rets.insert(name.clone());
+                }
+            }
+            match instr {
+                Instr::FnDef { body, .. } => self.collect_extern_float_rets(body),
+                #[cfg(feature = "std-surface")]
+                Instr::While {
+                    cond_instrs, body, ..
+                } => {
+                    self.collect_extern_float_rets(cond_instrs);
+                    self.collect_extern_float_rets(body);
+                }
+                #[cfg(feature = "std-surface")]
+                Instr::If {
+                    cond_instrs,
+                    then_instrs,
+                    else_instrs,
+                    ..
+                } => {
+                    self.collect_extern_float_rets(cond_instrs);
+                    self.collect_extern_float_rets(then_instrs);
+                    self.collect_extern_float_rets(else_instrs);
+                }
+                #[cfg(feature = "std-surface")]
+                Instr::Region { body, .. } => self.collect_extern_float_rets(body),
+                _ => {}
+            }
+        }
+    }
+
     /// True iff `instr` is itself a taint op, or nests one. Also records the
     /// dtype `instr` produces (before recursing) so downstream reductions in the
     /// same stream can resolve their source element type.
     fn instr_taints(&mut self, instr: &Instr) -> bool {
         self.record_dtype(instr);
 
-        // #98 layer 1: note an `extern "C"` declaration with a float RETURN type
-        // so a later `Call` to it taints. Decls precede their calls in program
-        // order (SSA is defined-before-use), so this set is complete by the time
-        // any referring `Call` is scanned. `ExternFnDecl` is `std-surface`-gated;
-        // a default build constructs none, so `extern_float_rets` stays empty and
-        // this layer is inert there.
-        #[cfg(feature = "std-surface")]
-        if let Instr::ExternFnDecl {
-            name,
-            ret_type: Some(rt),
-            ..
-        } = instr
-        {
-            // Float-PARAM-only externs (rt is not a float) do NOT taint: the
-            // float leaves the dataflow through the call rather than being a
-            // reassociated result. Only a float-RETURN decl is a taint source.
-            if rt == "f32" || rt == "f64" {
-                self.extern_float_rets.insert(name.clone());
-            }
-        }
+        // #98 layer 1: an extern-`"C"` decl with an f32/f64 RETURN type is a
+        // taint SOURCE for any `Call` to it. `extern_float_rets` is populated by
+        // the `collect_extern_float_rets` PRE-PASS (run in `fp_contract_mode`
+        // before this walk), NOT here: callee references are by NAME and
+        // order-independent, so a decl textually AFTER its caller must still
+        // taint the call (audit rank 2). This layer is inert in a non-std build
+        // (no `ExternFnDecl` is ever constructed).
 
         // PRIMARY taint representation: an intrinsic CALL. The RFC 0006 Track B
         // f32 vector intrinsics stay `Instr::Call { name: "__mind_blas_*_f32_v" }`
@@ -1062,5 +1118,96 @@ mod tests {
             exit_ids: vec![],
         }]);
         assert_eq!(fp_contract_mode(&m), FpMode::Relaxed);
+    }
+
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn extern_float_ret_decl_after_caller_is_relaxed() {
+        // Audit rank 2 regression: a Call to an `extern "C" fn -> f64` must taint
+        // even when the extern DECL appears AFTER the call in program order. The
+        // old single populate-and-read forward walk had not yet inserted the decl
+        // when it classified the Call, so it forged a false `Strict` (a soundness
+        // break of `--require-strict-fp`). The `collect_extern_float_rets`
+        // pre-pass makes the taint set order-independent.
+        let m = module_with(vec![
+            Instr::Call {
+                dst: ValueId(2),
+                name: "libm_pow".to_string(),
+                args: vec![ValueId(0), ValueId(1)],
+            },
+            Instr::ExternFnDecl {
+                name: "libm_pow".to_string(),
+                param_types: vec!["f64".to_string(), "f64".to_string()],
+                ret_type: Some("f64".to_string()),
+                is_varargs: false,
+                vararg_hints: vec![],
+                callconv: crate::ast::CallConv::SysV,
+            },
+        ]);
+        assert_eq!(
+            fp_contract_mode(&m),
+            FpMode::Relaxed,
+            "extern f64-return decl AFTER its caller must still taint (no false Strict)"
+        );
+    }
+
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn extern_float_ret_decl_after_caller_in_loop_is_relaxed() {
+        // Same order-fragility across a nesting boundary: the caller is in a loop
+        // body and the extern decl is a later top-level sibling. The pre-pass
+        // recurses into the loop body AND collects the later sibling decl before
+        // the taint walk classifies the nested Call.
+        let m = module_with(vec![
+            Instr::While {
+                cond_id: ValueId(9),
+                cond_instrs: vec![],
+                body: vec![Instr::Call {
+                    dst: ValueId(3),
+                    name: "libm_pow".to_string(),
+                    args: vec![ValueId(0), ValueId(1)],
+                }],
+                live_vars: vec![],
+                init_ids: vec![],
+                exit_ids: vec![],
+            },
+            Instr::ExternFnDecl {
+                name: "libm_pow".to_string(),
+                param_types: vec!["f64".to_string()],
+                ret_type: Some("f64".to_string()),
+                is_varargs: false,
+                vararg_hints: vec![],
+                callconv: crate::ast::CallConv::SysV,
+            },
+        ]);
+        assert_eq!(fp_contract_mode(&m), FpMode::Relaxed);
+    }
+
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn extern_int_ret_decl_after_caller_stays_strict() {
+        // No over-taint: an extern with a NON-float return (float PARAM only) is
+        // not a taint source even when declared after its caller — the pre-pass
+        // must collect only f32/f64-RETURN decls, exactly like the old walk.
+        let m = module_with(vec![
+            Instr::Call {
+                dst: ValueId(2),
+                name: "print_f64".to_string(),
+                args: vec![ValueId(0)],
+            },
+            Instr::ExternFnDecl {
+                name: "print_f64".to_string(),
+                param_types: vec!["f64".to_string()],
+                ret_type: Some("i64".to_string()),
+                is_varargs: false,
+                vararg_hints: vec![],
+                callconv: crate::ast::CallConv::SysV,
+            },
+        ]);
+        assert_eq!(
+            fp_contract_mode(&m),
+            FpMode::Strict,
+            "float-param-only extern (non-float return) must NOT taint"
+        );
     }
 }

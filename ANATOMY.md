@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3062 | **Est. tokens:** ~7,340,662
-**Generated:** 2026-07-10 13:19 UTC
+**Files:** 3064 | **Est. tokens:** ~7,347,168
+**Generated:** 2026-07-10 14:34 UTC
 
 ## Token Budget Guide
 
@@ -28,7 +28,7 @@
 | `.arch-mind/` | 2 | ~644 |
 | `audits/` | 6 | ~607 |
 | `bench/` | 2 | ~1,772 |
-| `benches/` | 26 | ~79,398 |
+| `benches/` | 26 | ~79,399 |
 | `bench/fft/` | 8 | ~8,060 |
 | `benchmarks/` | 12 | ~20,415 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
@@ -376,7 +376,7 @@
 | `src/` | 7 | ~17,958 |
 | `src/ast/` | 1 | ~7,632 |
 | `src/autodiff/` | 3 | ~6,624 |
-| `src/bin/` | 2 | ~31,465 |
+| `src/bin/` | 2 | ~31,777 |
 | `src/build/` | 2 | ~14,758 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 3 | ~10,433 |
@@ -389,7 +389,7 @@
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~19,784 |
-| `src/ir/` | 5 | ~42,116 |
+| `src/ir/` | 5 | ~44,666 |
 | `src/ir/compact/` | 3 | ~15,235 |
 | `src/ir/compact/v2/` | 8 | ~38,037 |
 | `src/ir/compact/v3/` | 5 | ~42,842 |
@@ -409,7 +409,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~191,413 |
-| `tests/` | 276 | ~466,472 |
+| `tests/` | 278 | ~470,115 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -522,7 +522,7 @@
 - `autodiff.rs` (~1661 tok, huge) — Simple linear function
 - `bench_aes_gcm.rs` (~2590 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `bench_ecdsa_p256.rs` (~2786 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `bench_hkdf.rs` (~4423 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `bench_hkdf.rs` (~4424 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `bench_hpack.rs` (~3926 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `bench_http2_frame.rs` (~5035 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `bench_keccak.rs` (~2576 tok, huge) — Copyright 2025-2026 STARGA Inc.
@@ -3752,7 +3752,7 @@
 ### `src/bin/`
 
 - `mind-ai.rs` (~9805 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~21660 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc.rs` (~21972 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
 - `cache.rs` (~6766 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3850,10 +3850,10 @@
 ### `src/ir/`
 
 - `evidence.rs` (~3605 tok, huge) — Copyright 2025 STARGA Inc.
-- `fp_mode.rs` (~11962 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
+- `fp_mode.rs` (~13657 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
 - `mod.rs` (~12311 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
-- `verify.rs` (~10698 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify.rs` (~11553 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `lib.rs` (~944 tok, large) — Copyright 2025 STARGA Inc.
@@ -4594,6 +4594,8 @@
 - `vars_assign.rs` (~260 tok, medium) — Copyright 2025 STARGA Inc.
 - `verify_audit.rs` (~2010 tok, huge) — Audit coverage tests for the IR verifier (C1: SSA verification, conv2d stride/axis validation).
 - `verify_cli.rs` (~3821 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify_holes.rs` (~2650 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify_pinned_signer.rs` (~993 tok, large) — Copyright 2025 STARGA Inc.
 - `verify_ssa.rs` (~6339 tok, huge) — Copyright 2025 STARGA Inc.
 - `x25519mlkem768_driver.py` (~2378 tok, huge) — # Known-answer driver for std/x25519mlkem768.mind (pure-MIND X25519MLKEM768
 - `x25519_vectors_driver.py` (~1525 tok, huge) — # Official-vector driver for std/x25519.mind (pure-MIND Curve25519 ECDH).
