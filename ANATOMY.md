@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3058 | **Est. tokens:** ~7,335,033
-**Generated:** 2026-07-10 12:16 UTC
+**Files:** 3062 | **Est. tokens:** ~7,340,590
+**Generated:** 2026-07-10 12:40 UTC
 
 ## Token Budget Guide
 
@@ -40,7 +40,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,163 |
-| `docs/` | 31 | ~65,703 |
+| `docs/` | 31 | ~65,708 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
@@ -53,6 +53,7 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/distribution-crossisa/` | 6 | ~6,334 |
 | `examples/emit_ir/` | 5 | ~13,648 |
+| `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/lexer/` | 6 | ~8,888 |
 | `examples/mindc_mind/` | 39 | ~79,613 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
@@ -426,6 +427,7 @@
 | `tests/cross_substrate_identity/gemm-q16-fused-64x64x64/` | 2 | ~896 |
 | `tests/cross_substrate_identity/gemv-i16-256x256/` | 2 | ~594 |
 | `tests/cross_substrate_identity/gemv-q16-256x256/` | 2 | ~519 |
+| `tests/cross_substrate_identity/grammar-mask/` | 2 | ~916 |
 | `tests/cross_substrate_identity/lorenz-q16/` | 2 | ~1,243 |
 | `tests/cross_substrate_identity/matmul-f32-v-64x64/` | 2 | ~894 |
 | `tests/cross_substrate_identity/q16-arith-chain/` | 2 | ~788 |
@@ -724,7 +726,7 @@
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
 
-- `roadmap.md` (~18715 tok, huge) — Roadmap
+- `roadmap.md` (~18720 tok, huge) — Roadmap
 - `runs-burndown-roadmap.md` (~3203 tok, huge) — MIND RUNS Burndown Roadmap
 - `security.md` (~1492 tok, large) — Security Guide
 - `self-host-trace-hash-port.md` (~1406 tok, large) — #17 — Self-compute the native PT_NOTE (pure-MIND trace-hash port)
@@ -775,6 +777,12 @@
 
 - `fft_q16.mind` (~1248 tok, large) — Deterministic Q16.16 fixed-point radix-2 DIT FFT, N=256 (complex).
 - `fft_signal.mind` (~533 tok, large) — FFT Signal Processing Example for MIND
+### `examples/grammar_mask/`
+
+- `main.mind` (~4577 tok, huge) — examples/grammar_mask/main.mind — structured / grammar-constrained decoding,
+- `Mind.toml` (~59 tok, small) — [package]
+### `examples/`
+
 - `hello_stdlib.mind` (~271 tok, medium) — Hello, std.vec — minimal RFC 0005 cookbook example.
 - `hello_tensor.mind` (~141 tok, small) — Hello, MIND — scalar smoke that flows through every stage of the
 ### `examples/lexer/`
@@ -4093,6 +4101,10 @@
 
 - `manifest.toml` (~310 tok, medium) — version = "1"
 - `reference_hashes.toml` (~209 tok, medium) — avx2 = "dfdf890874472ee369da524955995889c39bc6da770e4e2b1d0d69315e17611a"
+### `tests/cross_substrate_identity/grammar-mask/`
+
+- `manifest.toml` (~575 tok, large) — version = "1"
+- `reference_hashes.toml` (~341 tok, medium) — avx2 = "4d46a747338253886a91b02f4b832dc8675dd315b9500490493b0b977295627b"
 ### `tests/cross_substrate_identity/lorenz-q16/`
 
 - `manifest.toml` (~681 tok, large) — version = "1"

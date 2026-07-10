@@ -1,0 +1,44 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See u64-ops/manifest.toml for
+# the format notes.
+#
+# Structured / grammar-constrained decoding canary (roadmap Phase 14 §6,
+# slice-1 go/no-go). Source: examples/grammar_mask/main.mind.
+#
+# The kernel `grammar_mask_fold()` compiles two grammars to automata and emits
+# their per-state legal-token bitmask TABLES in the runnable integer subset:
+#   * FSM (flat JSON object, regular grammar): 7 states x 1 u64 word = 56 bytes.
+#     Token t is legal in a state iff the transition function has a defined edge.
+#   * PDA (nested JSON value, context-free): 6 states x 3 stack symbols
+#     (BOTTOM/OBJ/ARR) = 18 words = 144 bytes; the mask is a pure function of
+#     (state, stack-top).
+# Masks are built by ascending-index iteration over fixed integer transition
+# functions — no hashmap, no float, no clock, no RNG, no division. It returns
+# the FNV-1a 32-bit fold over all 200 table bytes.
+#
+# This is the mask-generation state machine of guided decoding — the
+# DETERMINISTIC tier. The `-inf` logit mask, softmax, and sampler are OUT of
+# scope (the model's float path). Being pure integer with a fixed dataflow, the
+# fold is exact and order-independent, so avx2 == neon by construction (RFC 0015
+# §3.1). Any divergence means the mask table or fold picked up a target-sensitive
+# or nondeterministic operation and is a release-blocker.
+
+version = "1"
+name = "grammar-mask"
+description = "Legal-token bitmask table for grammar-constrained decoding (FSM 7-state + PDA 6-state x 3-stack), folded to one i64 — the byte-identity pin for the deterministic mask-generation tier (roadmap Phase 14 §6)."
+weight = 1.0
+
+# Both substrates share the hash (the table build + fold are architecture-
+# independent integer ops by construction, RFC 0015 §3.1).
+substrates = ["avx2", "neon"]
+
+# No runtime input: the tables are a pure function of the fixed grammar +
+# vocabulary, so the kernel takes no arguments.
+[input]
+generator = "none"
+dtype = "none"
+
+[kernel]
+symbol = "grammar_mask_fold"
+ops = "FSM legal-token masks (7 states) ++ PDA legal-token masks (6 states x 3 stack syms), FNV-1a 32-bit fold over 200 little-endian bytes"
+returns = "i64"                  # the folded i64
+output_encoding = "i64_le"       # i64 as 8 LE bytes, then sha256
