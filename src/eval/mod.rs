@@ -1525,8 +1525,16 @@ pub(crate) fn eval_value_expr_mode(
             let inner = eval_value_expr_mode(expr, env, tensor_env, mode)?;
             match inner {
                 Value::Int(n) => match float_cast_target(ty) {
-                    // int → f32: round to single precision, carried as f64.
+                    // int → float: a `u64` source converts UNSIGNED, mirroring the
+                    // compiled `arith.uitofp` (issue #99/#105). A signed `n as f64`
+                    // would give the wrong sign for a u64 ≥ 2^63 (`1u64<<63` →
+                    // −9.22e18 in the interpreter vs +9.22e18 in the artifact) — an
+                    // interp-vs-artifact divergence. Non-u64 ints stay signed.
+                    Some(32) if interp_expr_is_u64(expr) => {
+                        Ok(Value::Float((n as u64) as f32 as f64))
+                    }
                     Some(32) => Ok(Value::Float(n as f32 as f64)),
+                    Some(_) if interp_expr_is_u64(expr) => Ok(Value::Float((n as u64) as f64)),
                     Some(_) => Ok(Value::Float(n as f64)),
                     // int → int: existing narrowing (or i64 identity).
                     None => Ok(Value::Int(apply_scalar_cast(n, ty))),
