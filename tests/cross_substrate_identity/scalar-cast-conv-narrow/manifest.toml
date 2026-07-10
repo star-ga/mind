@@ -1,0 +1,77 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See scalar-cast-conv/manifest.toml
+# for the full-width sibling and dot-l2-q16/manifest.toml for the format notes.
+#
+# The scalar float→NARROW-int `as`-cast conversion canary. It is the width-tier
+# sibling of `scalar-cast-conv`: that fixture pins float→i64 (full-width
+# saturating); THIS one pins float→i8/i16/i32/u8/u16/u32, which SATURATES to the
+# NARROW target range — a distinct operation from both the full-width float→i64
+# conversion and from integer narrowing (which WRAPS). It closes a real coverage
+# hole: no fixture exercised float→narrow, and a live defect shipped through it —
+# the narrow `As` lowering dispatched on the TARGET type only and emitted integer
+# `arith.shli`/`arith.shrsi` on the FLOAT SSA value, which mlir-opt rejects
+# (`i64 vs f64`), so a legal program the interpreter evaluated correctly failed
+# to COMPILE (a uniformity break in the determinism contract). The fix routes
+# narrow casts through `__mind_conv_i{W}`/`u{W}` intrinsics, expanded by SOURCE
+# kind: float → `emit_saturating_fp_to_narrow` (saturating fp→i64 base + integer
+# clamp to `[nMIN, nMAX]`), integer → the historical byte-identical shift/mask.
+#
+# The kernel `scalar_cast_conv_narrow(inr,povf,novf,nan,pinf,ninf)` takes the six
+# f64 edge operands as RUNTIME arguments (never in-kernel literals), so mlir-opt
+# cannot constant-fold the conversion away — the saturating path provably runs.
+# It exercises every saturation edge AT THE NARROW BOUND:
+#   inr  9.7   -> i8 9,  u32 9            (in-range, truncate toward zero)
+#   povf 1e30  -> i8 127, i16 32767       (+overflow -> iN::MAX)
+#   novf -1e30 -> u8 0,  i32 -2147483648  (-overflow -> 0 / iN::MIN)
+#   nan  NaN   -> i16 0                    (NaN -> 0)
+#   pinf +inf  -> i32 2147483647          (+inf -> iN::MAX)
+#   ninf -inf  -> u16 0                    (-inf -> 0 for unsigned)
+# The nine narrow cast results are folded in FIXED source order into one i64 via
+# a wrapping polynomial (acc = acc*K + term, K = 1000003), so equal saturated
+# values at different positions do NOT cancel — a divergence in any single edge
+# changes the byte.
+#
+# Why avx2 == neon here: the saturating narrow result is built only from
+# IEEE-defined ops (maxnumf/minnumf/fptosi/cmpf/select) plus a two's-complement
+# integer clamp (arith.maxsi/minsi) and the wrapping fold (arith.muli/addi) —
+# none order- or target-sensitive — so both x86 and ARM compute the identical
+# i64 by construction (RFC 0015 §3.1). This is scoped to SCALAR conversion;
+# float REDUCTIONS remain out of scope.
+
+version = "1"
+name = "scalar-cast-conv-narrow"
+description = "Scalar float→narrow-int `as`-cast conversion with saturating-to-narrow-range edges (in-range, +/-overflow at the narrow bound, NaN, +/-inf) across i8/i16/i32/u8/u16/u32 — the byte-identity proof for the narrow float-conversion lowering that a real wedge break (compile failure on legal code) slipped through untested."
+weight = 1.0
+
+# Substrates this workload is defined for. Per RFC 0015 §3.1 every listed
+# substrate MUST share the same content hash — that shared hash IS the
+# cross-substrate bit-identity claim, made inspectable. The saturating narrow
+# conversion is built only from IEEE-defined ops + two's-complement integer
+# clamp, so the result is architecture-independent by construction.
+substrates = ["avx2", "neon"]
+
+# Deterministic input spec. Six fixed f64 edge operands supplied directly by the
+# harness (shared with scalar-cast-conv's SCALAR_CAST_INPUTS, minus the int
+# source), passed as RUNTIME arguments so the conversion is not constant-folded.
+#   inr  =  9.7    -> in-range, truncates toward zero
+#   povf =  1e30   -> +overflow, saturates to the narrow iN::MAX
+#   novf = -1e30   -> -overflow, saturates to 0 (unsigned) / iN::MIN (signed)
+#   nan  =  NaN    -> saturates to 0
+#   pinf = +inf    -> saturates to the narrow iN::MAX
+#   ninf = -inf    -> saturates to 0 (unsigned) / iN::MIN (signed)
+[input]
+generator = "fixed"        # six literal f64 args, supplied by the harness
+inr = 9.7
+povf = 1e30
+novf = -1e30
+nan = "nan"                # f64::NAN (TOML has no NaN literal; harness supplies it)
+pinf = "inf"               # f64::INFINITY
+ninf = "-inf"              # f64::NEG_INFINITY
+dtype = "f64-edge-scalar"  # six f64 edge operands; i64 folded output
+
+# Kernel under test (mindc native scalar float→narrow lowering, no C shim).
+[kernel]
+symbol = "scalar_cast_conv_narrow"
+casts = "f64->i8/i16/i32/u8/u16/u32 (saturating to the NARROW range: in-range/+-ovf-at-bound/NaN/+-inf)"
+fold = "acc = acc*1000003 + term, fixed source order, two's-complement wrapping"
+returns = "i64"                  # the folded i64
+output_encoding = "i64_le"       # i64 as 8 LE bytes, then sha256

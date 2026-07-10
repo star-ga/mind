@@ -5040,54 +5040,60 @@ fn lower_expr(
         ast::Node::As { expr, ty, .. } => {
             let val = lower_expr(expr, ir, env, struct_env, receiver_types);
             match scalar_int_cast_width(ty) {
-                // Narrowing to a known signed integer narrower than 64 bits:
-                // truncate to the low `width` bits and sign-extend via the
-                // arithmetic shift pair. Same-width (i64) and unknown types
-                // (pointers, floats, aliases, u32/u64 widening, etc.) fall
-                // through to the transparent pass-through below.
+                // Narrowing to a known signed integer narrower than 64 bits
+                // (`i8`/`i16`/`i32`, in `as` and call form). The operation is
+                // SOURCE-KIND-DEPENDENT and cannot be decided here — the AST->IR
+                // stage has no value-kind info (it fully defers to the MLIR
+                // stage, exactly like the full-width `__mind_conv_i64` path):
+                //   integer source → TRUNCATE (wrap): keep the low `width` bits
+                //     and sign-extend — the historical `(x<<(64-W))>>(64-W)`
+                //     arithmetic shift pair.
+                //   float source   → SATURATE to the *narrow* target range
+                //     (`3.7 as i32`→3, `300.9 as i8`→127, `NaN`→0) — Rust `as` /
+                //     WASM `trunc_sat` semantics; integer wrap would give the
+                //     WRONG value (`300.9 as i8` must be 127, not 44).
+                // Emitting the inline shift pair on a FLOAT `val` was a real
+                // defect: `arith.shli` on an `f64` SSA value is rejected by
+                // mlir-opt (`i64 vs f64`), so a legal program the interpreter
+                // evaluates correctly failed to COMPILE — a uniformity break in
+                // the determinism contract, one width tier below the just-fixed
+                // full-width `float as i64` drop. Both source kinds are now
+                // routed through a pure `__mind_conv_i{width}` intrinsic
+                // `Instr::Call`, expanded at the MLIR stage by the SOURCE value's
+                // kind (`src/mlir/lowering.rs`): float → saturating fp→i64 then an
+                // integer clamp to `[iN_MIN, iN_MAX]`; integer → the identical
+                // shift-pair. No new IR opcode, no mic@1/mic@3 layout change, no
+                // version bump. Same-width (i64) / pointers / aliases fall through
+                // to the transparent pass-through below.
                 Some(width) if width < 64 => {
-                    let shift = 64 - width as i64;
-                    let shift_id = ir.fresh();
-                    ir.instrs.push(Instr::ConstI64(shift_id, shift));
-                    let shl_id = ir.fresh();
-                    ir.instrs.push(Instr::BinOp {
-                        dst: shl_id,
-                        op: BinOp::Shl,
-                        lhs: val,
-                        rhs: shift_id,
+                    let conv_id = ir.fresh();
+                    let name = format!("__mind_conv_i{width}");
+                    ir.instrs.push(Instr::Call {
+                        dst: conv_id,
+                        name,
+                        args: vec![val],
                     });
-                    let shr_id = ir.fresh();
-                    ir.instrs.push(Instr::BinOp {
-                        dst: shr_id,
-                        op: BinOp::Shr,
-                        lhs: shl_id,
-                        rhs: shift_id,
-                    });
-                    shr_id
+                    conv_id
                 }
                 // Narrowing to a known unsigned integer narrower than 64 bits
-                // (`u8`/`u16`/`u32`, in `as` and call form): ZERO-extend by
-                // masking off the high bits with `val & ((1 << width) - 1)`.
-                // Unlike the signed path this must NOT sign-extend, so it uses a
-                // single `BitAnd` against an i64 const mask (no new IR opcode, no
-                // mic@1/mic@3 layout change). `u64`/full-width stays transparent.
+                // (`u8`/`u16`/`u32`, in `as` and call form). SOURCE-KIND-DEPENDENT
+                // (see the signed arm above): integer source → ZERO-extend by
+                // masking the low `width` bits (`val & ((1<<width)-1)`); float
+                // source → SATURATE to `[0, uN_MAX]` (`300.9 as u8`→255, negative
+                // and `NaN`→0). Routed through `__mind_conv_u{width}` and expanded
+                // by source kind at the MLIR stage — the integer arm reproduces
+                // the historical `BitAnd` mask byte-for-byte. `u64`/full-width
+                // stays transparent.
                 _ => match scalar_uint_cast_width(ty) {
                     Some(width) if width < 64 => {
-                        let mask: i64 = if width == 32 {
-                            0xFFFF_FFFF
-                        } else {
-                            (1i64 << width) - 1
-                        };
-                        let mask_id = ir.fresh();
-                        ir.instrs.push(Instr::ConstI64(mask_id, mask));
-                        let and_id = ir.fresh();
-                        ir.instrs.push(Instr::BinOp {
-                            dst: and_id,
-                            op: BinOp::BitAnd,
-                            lhs: val,
-                            rhs: mask_id,
+                        let conv_id = ir.fresh();
+                        let name = format!("__mind_conv_u{width}");
+                        ir.instrs.push(Instr::Call {
+                            dst: conv_id,
+                            name,
+                            args: vec![val],
                         });
-                        and_id
+                        conv_id
                     }
                     // Cast to a floating-point target (`as f32` / `as f64`).
                     // Scalars are carried in i64 SSA, so this MUST emit a real

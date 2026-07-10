@@ -736,6 +736,96 @@ impl LoweringContext {
         self.values.insert(dst, ValueKind::ScalarI64);
     }
 
+    /// SATURATING float→NARROW-int (`i8`/`i16`/`i32`/`u8`/`u16`/`u32`) `as` cast —
+    /// the width-tier sibling of `emit_saturating_fp_to_i64`. Rust `f as iN`/`uN`
+    /// (and WASM `trunc_sat`) SATURATE to the *target* range then truncate toward
+    /// zero: `3.7 as i32`→3, `-3.7 as i8`→-3, `300.9 as u8`→255, `1e30 as i32`→
+    /// i32::MAX, `-inf as u8`→0, `NaN`→0. Integer wrap (`(f as i64) & 0xFF`) would
+    /// give the WRONG value for out-of-range floats (`300.9 as u8` must be 255,
+    /// not 44) — this is why float narrowing is a distinct op from integer
+    /// narrowing and must dispatch on source kind.
+    ///
+    /// Built by COMPOSITION from the already-canary-verified saturating fp→i64
+    /// SIGNED base (identical bound constants to `emit_saturating_fp_to_i64`,
+    /// `unsigned=false`: NaN→0, +ovf→i64::MAX, −ovf→i64::MIN) followed by an
+    /// INTEGER clamp to `[nmin, nmax]`. Correct because every narrow target range
+    /// is a subrange of i64: a negative float for an unsigned target clamps up to
+    /// 0; an over-range float clamps down to nMAX; every in-range value passes
+    /// through unchanged. `arith.maxsi`/`minsi` and the saturating base are all
+    /// IEEE / two's-complement-defined and reassociation-free, so the result is
+    /// byte-identical across substrates and `fp_mode` stays `Strict`. The narrow
+    /// result is carried sign/zero-extended in the i64 slot and registered
+    /// `ScalarI64` — matching the historical inline shift-pair result so downstream
+    /// ABI is unchanged. Emitted into fresh `%nb{dst}_*` named temps (no new IR
+    /// ValueId), writing `%{dst}`.
+    #[cfg(feature = "std-surface")]
+    fn emit_saturating_fp_to_narrow(
+        &mut self,
+        dst: ValueId,
+        src: ValueId,
+        src_is_f32: bool,
+        width: u32,
+        unsigned: bool,
+    ) {
+        let fty = if src_is_f32 { "f32" } else { "f64" };
+        // Signed base bounds — IDENTICAL constants to `emit_saturating_fp_to_i64`
+        // (`unsigned=false`) so the base is the same proven saturating fp→i64.
+        let (lo, hi, thr) = if src_is_f32 {
+            ("0xDF000000", "0x5EFFFFFF", "0x5F000000")
+        } else {
+            (
+                "0xC3E0000000000000",
+                "0x43DFFFFFFFFFFFFF",
+                "0x43E0000000000000",
+            )
+        };
+        let d = dst.0;
+        let s = src.0;
+        self.emit_line(&format!("    %nb{d}_lo = arith.constant {lo} : {fty}"));
+        self.emit_line(&format!("    %nb{d}_hi = arith.constant {hi} : {fty}"));
+        self.emit_line(&format!(
+            "    %nb{d}_c0 = arith.maxnumf %{s}, %nb{d}_lo : {fty}"
+        ));
+        self.emit_line(&format!(
+            "    %nb{d}_c1 = arith.minnumf %nb{d}_c0, %nb{d}_hi : {fty}"
+        ));
+        self.emit_line(&format!(
+            "    %nb{d}_base = arith.fptosi %nb{d}_c1 : {fty} to i64"
+        ));
+        self.emit_line(&format!("    %nb{d}_thr = arith.constant {thr} : {fty}"));
+        self.emit_line(&format!(
+            "    %nb{d}_over = arith.cmpf oge, %{s}, %nb{d}_thr : {fty}"
+        ));
+        self.emit_line(&format!(
+            "    %nb{d}_imax = arith.constant 9223372036854775807 : i64"
+        ));
+        self.emit_line(&format!(
+            "    %nb{d}_r1 = arith.select %nb{d}_over, %nb{d}_imax, %nb{d}_base : i64"
+        ));
+        self.emit_line(&format!(
+            "    %nb{d}_nan = arith.cmpf uno, %{s}, %{s} : {fty}"
+        ));
+        self.emit_line(&format!("    %nb{d}_zero = arith.constant 0 : i64"));
+        self.emit_line(&format!(
+            "    %nb{d}_i64 = arith.select %nb{d}_nan, %nb{d}_zero, %nb{d}_r1 : i64"
+        ));
+        // Integer clamp to the NARROW range [nmin, nmax] (all fit in i64).
+        let (nmin, nmax): (i64, i64) = if unsigned {
+            (0, (1i64 << width) - 1)
+        } else {
+            (-(1i64 << (width - 1)), (1i64 << (width - 1)) - 1)
+        };
+        self.emit_line(&format!("    %nb{d}_nlo = arith.constant {nmin} : i64"));
+        self.emit_line(&format!("    %nb{d}_nhi = arith.constant {nmax} : i64"));
+        self.emit_line(&format!(
+            "    %nb{d}_cl = arith.maxsi %nb{d}_i64, %nb{d}_nlo : i64"
+        ));
+        self.emit_line(&format!(
+            "    %{d} = arith.minsi %nb{d}_cl, %nb{d}_nhi : i64"
+        ));
+        self.values.insert(dst, ValueKind::ScalarI64);
+    }
+
     /// PINNED canonical-order scalar fold for f32/f64 tensor `sum` / `mean` —
     /// the strict, cross-substrate-bit-identical reduction tier (the shipped
     /// analogue of `emit_tensor_reduce_pinned` in `src/eval/mlir_export.rs`).
@@ -2728,6 +2818,99 @@ impl LoweringContext {
                             if is_i1 {
                                 self.i1_values.insert(*dst);
                             }
+                        }
+                    }
+                    return Ok(());
+                }
+                // Scalar `as i8/i16/i32` / `as u8/u16/u32` narrowing conversion
+                // synthesised by the AST->IR `As` lowering (src/eval/lower.rs) — the
+                // width-tier sibling of the `__mind_conv_i64`/`u64` block above,
+                // dispatched by the SOURCE value's kind:
+                //   float (f64/f32) → SATURATE to the narrow target range
+                //     (`emit_saturating_fp_to_narrow`): `300.9 as u8`→255,
+                //     `-3.7 as i8`→-3, `NaN`→0. Emitting integer shifts on a float
+                //     SSA value (the historical inline path) was a real defect —
+                //     `arith.shli` on `f64` is rejected by mlir-opt, so a legal
+                //     program the interpreter evaluates correctly failed to COMPILE.
+                //   integer/pointer → TRUNCATE (wrap): the historical inline
+                //     shift-pair (signed: `(x<<(64-W))>>(64-W)`) / mask (unsigned:
+                //     `x & ((1<<W)-1)`), reproduced here so integer narrow casts
+                //     stay byte-identical (the keystone-seeded `std/io.mind`
+                //     `f.fd as i32` is one). A physically-narrow (i32/u32/i1) source
+                //     is sign/zero-extended to the i64 slot first, exactly as the
+                //     BinOp legaliser does. Result carried in i64, registered
+                //     `ScalarI64` (matches the inline shift result). All ops are
+                //     scalar + reassociation-free, so `fp_mode` stays `Strict`.
+                #[cfg(feature = "std-surface")]
+                if args.len() == 1
+                    && (name == "__mind_conv_i8"
+                        || name == "__mind_conv_i16"
+                        || name == "__mind_conv_i32"
+                        || name == "__mind_conv_u8"
+                        || name == "__mind_conv_u16"
+                        || name == "__mind_conv_u32")
+                {
+                    let src = args[0];
+                    let unsigned = name.as_bytes()[12] == b'u';
+                    let width: u32 = name[13..].parse().unwrap_or(32);
+                    let d = dst.0;
+                    match self.values.get(&src) {
+                        // FLOAT source — saturate to the narrow target range.
+                        Some(ValueKind::ScalarF64) | Some(ValueKind::ScalarF32) => {
+                            let is_f32 =
+                                matches!(self.values.get(&src), Some(ValueKind::ScalarF32));
+                            self.emit_saturating_fp_to_narrow(*dst, src, is_f32, width, unsigned);
+                        }
+                        // INTEGER / pointer source — truncate (wrap), byte-identical
+                        // to the historical inline shift-pair / mask.
+                        _ => {
+                            let src_ref = match self.values.get(&src) {
+                                Some(ValueKind::ScalarI32) => {
+                                    self.emit_line(&format!(
+                                        "    %nx{d} = arith.extsi %{0} : i32 to i64",
+                                        src.0
+                                    ));
+                                    format!("%nx{d}")
+                                }
+                                Some(ValueKind::ScalarU32) => {
+                                    self.emit_line(&format!(
+                                        "    %nx{d} = arith.extui %{0} : i32 to i64",
+                                        src.0
+                                    ));
+                                    format!("%nx{d}")
+                                }
+                                _ if self.i1_values.contains(&src) => {
+                                    self.emit_line(&format!(
+                                        "    %nx{d} = arith.extui %{0} : i1 to i64",
+                                        src.0
+                                    ));
+                                    format!("%nx{d}")
+                                }
+                                _ => format!("%{}", src.0),
+                            };
+                            if unsigned {
+                                let mask: i64 = if width == 32 {
+                                    0xFFFF_FFFF
+                                } else {
+                                    (1i64 << width) - 1
+                                };
+                                self.emit_line(&format!(
+                                    "    %nm{d} = arith.constant {mask} : i64"
+                                ));
+                                self.emit_line(&format!(
+                                    "    %{d} = arith.andi {src_ref}, %nm{d} : i64"
+                                ));
+                            } else {
+                                let sh = 64 - width as i64;
+                                self.emit_line(&format!("    %ns{d} = arith.constant {sh} : i64"));
+                                self.emit_line(&format!(
+                                    "    %nl{d} = arith.shli {src_ref}, %ns{d} : i64"
+                                ));
+                                self.emit_line(&format!(
+                                    "    %{d} = arith.shrsi %nl{d}, %ns{d} : i64"
+                                ));
+                            }
+                            self.values.insert(*dst, ValueKind::ScalarI64);
                         }
                     }
                     return Ok(());
