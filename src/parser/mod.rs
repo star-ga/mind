@@ -1861,8 +1861,8 @@ impl<'a> P<'a> {
             } else if self.b.get(self.pos) == Some(&b'/') && self.b.get(self.pos + 1) == Some(&b'*')
             {
                 self.pos += 2;
-                while !self.at_end()
-                    && !(self.b[self.pos] == b'*' && self.b.get(self.pos + 1) == Some(&b'/'))
+                while !(self.at_end()
+                    || self.b[self.pos] == b'*' && self.b.get(self.pos + 1) == Some(&b'/'))
                 {
                     self.pos += 1;
                 }
@@ -1923,8 +1923,8 @@ impl<'a> P<'a> {
                         }
                         b'/' if self.b.get(self.pos + 1) == Some(&b'*') => {
                             self.pos += 2;
-                            while !self.at_end()
-                                && !(self.b[self.pos] == b'*'
+                            while !(self.at_end()
+                                || self.b[self.pos] == b'*'
                                     && self.b.get(self.pos + 1) == Some(&b'/'))
                             {
                                 self.pos += 1;

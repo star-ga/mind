@@ -2357,10 +2357,8 @@ fn collect_assign_targets(stmts: &[ast::Node], out: &mut Vec<String>) {
     use ast::Node as N;
     for stmt in stmts {
         match stmt {
-            N::Assign { name, .. } => {
-                if !out.contains(name) {
-                    out.push(name.clone());
-                }
+            N::Assign { name, .. } if !out.contains(name) => {
+                out.push(name.clone());
             }
             N::If {
                 then_branch,
@@ -2830,19 +2828,17 @@ fn module_declares_collection(module: &ast::Module) -> bool {
                 ast::Node::For { body, .. }
                 | ast::Node::ForEach { body, .. }
                 | ast::Node::While { body, .. }
-                | ast::Node::Block { stmts: body, .. } => {
-                    if walk(body) {
-                        return true;
-                    }
+                | ast::Node::Block { stmts: body, .. }
+                    if walk(body) =>
+                {
+                    return true;
                 }
                 ast::Node::If {
                     then_branch,
                     else_branch,
                     ..
-                } => {
-                    if walk(then_branch) || else_branch.as_deref().is_some_and(walk) {
-                        return true;
-                    }
+                } if (walk(then_branch) || else_branch.as_deref().is_some_and(walk)) => {
+                    return true;
                 }
                 ast::Node::Match { arms, .. } => {
                     for arm in arms {
@@ -5781,7 +5777,7 @@ fn lower_expr(
                 {
                     let len_fn = match receiver_collection_sentinel(
                         receiver,
-                        &ir,
+                        ir,
                         struct_env,
                         receiver_types,
                     ) {
@@ -6070,7 +6066,7 @@ fn lower_expr(
             // FIELD of `array<T>` (`b.items[i]`) — `receiver_collection_sentinel`
             // resolves both. A const-array Ident keeps the `ArrayLoad` path below.
             #[cfg(feature = "std-surface")]
-            if receiver_collection_sentinel(receiver, &ir, struct_env, receiver_types)
+            if receiver_collection_sentinel(receiver, ir, struct_env, receiver_types)
                 == Some(ARRAY_VEC_SENTINEL)
             {
                 let base = lower_expr(receiver, ir, env, struct_env, receiver_types);
@@ -6105,7 +6101,7 @@ fn lower_expr(
             // `vec_set`. A const array stays read-only (placeholder), preserving
             // the prior IR shape for the non-array path.
             #[cfg(feature = "std-surface")]
-            if receiver_collection_sentinel(receiver, &ir, struct_env, receiver_types)
+            if receiver_collection_sentinel(receiver, ir, struct_env, receiver_types)
                 == Some(ARRAY_VEC_SENTINEL)
             {
                 let base = lower_expr(receiver, ir, env, struct_env, receiver_types);
@@ -6331,7 +6327,7 @@ fn lower_expr(
             #[cfg(feature = "std-surface")]
             {
                 let sentinel =
-                    receiver_collection_sentinel(receiver, &ir, struct_env, receiver_types);
+                    receiver_collection_sentinel(receiver, ir, struct_env, receiver_types);
                 if sentinel == Some(MAP_SENTINEL) || sentinel == Some(MAP_STR_SENTINEL) {
                     let is_str = sentinel == Some(MAP_STR_SENTINEL);
                     let fname = match method.as_str() {
@@ -6368,7 +6364,7 @@ fn lower_expr(
             #[cfg(feature = "std-surface")]
             {
                 let sentinel =
-                    receiver_collection_sentinel(receiver, &ir, struct_env, receiver_types);
+                    receiver_collection_sentinel(receiver, ir, struct_env, receiver_types);
                 if sentinel == Some(SET_SENTINEL) || sentinel == Some(SET_STR_SENTINEL) {
                     let is_str = sentinel == Some(SET_STR_SENTINEL);
                     let recv_id = lower_expr(receiver, ir, env, struct_env, receiver_types);
@@ -6444,7 +6440,7 @@ fn lower_expr(
                 }
             }
             #[cfg(feature = "std-surface")]
-            if receiver_is_string(receiver, &ir, struct_env, receiver_types) {
+            if receiver_is_string(receiver, ir, struct_env, receiver_types) {
                 let recv_id = lower_expr(receiver, ir, env, struct_env, receiver_types);
                 let mut call_args = vec![recv_id];
                 for a in args {
@@ -6479,7 +6475,7 @@ fn lower_expr(
                     #[cfg(feature = "std-surface")]
                     {
                         let sentinel =
-                            receiver_collection_sentinel(receiver, &ir, struct_env, receiver_types)
+                            receiver_collection_sentinel(receiver, ir, struct_env, receiver_types)
                                 .map(|s| s.to_string());
                         (sentinel.or_else(|| receiver_types.get(span).cloned()), None)
                     }
@@ -6924,8 +6920,7 @@ fn lower_expr(
             // so methods on it resolve — `for d in flow.decorators` makes `d` a
             // Decorator, `for part in s.split(...)` makes `part` a String.
             #[cfg(feature = "std-surface")]
-            if let Some(elem) =
-                foreach_element_sentinel(collection, &ir, struct_env, receiver_types)
+            if let Some(elem) = foreach_element_sentinel(collection, ir, struct_env, receiver_types)
             {
                 fe_struct_env.insert(var.clone(), elem);
             }

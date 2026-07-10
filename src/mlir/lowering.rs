@@ -1870,7 +1870,7 @@ impl LoweringContext {
                         } else if unsigned
                             && matches!(op, BinOp::Div | BinOp::Mod)
                             && ity != "i1"
-                            && !self.const_i64_map.get(rhs).is_some_and(|&v| v != 0)
+                            && self.const_i64_map.get(rhs).is_none_or(|&v| v == 0)
                         {
                             // Unsigned narrow div/rem determinism — divisor-0.
                             // x86 `divl`/`divq` raise #DE on a zero divisor
@@ -2062,7 +2062,7 @@ impl LoweringContext {
                             format!("%sha{}", dst.0)
                         } else if u64_unsigned
                             && matches!(op, BinOp::Div | BinOp::Mod)
-                            && !self.const_i64_map.get(rhs).is_some_and(|&v| v != 0)
+                            && self.const_i64_map.get(rhs).is_none_or(|&v| v == 0)
                         {
                             // Unsigned i64 (u64) div/rem determinism — divisor-0
                             // ONLY (issue #99). x86 `divq` raises #DE (SIGFPE) on a
