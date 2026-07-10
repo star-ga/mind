@@ -43,6 +43,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   module to `Relaxed`, so such a program correctly FAILS `--require-strict-fp`. The
   exact / correctly-rounded builtins (`sqrt`/`floor`/`round`/`abs`/`max`) and the
   tensor reductions/contractions already tainted elsewhere stay strict.
+- **`mindc clean --cache` could delete directories OUTSIDE the cache root via a
+  crafted `Mind.lock`.** The git-cache path was built from unvalidated lockfile
+  fields (`rev` / `source`) and `remove_dir_all`'d with no containment check, so an
+  absolute `rev` (which `PathBuf::join` lets REPLACE the whole prefix) or a `../`
+  component let an untrusted lockfile — e.g. from a cloned repo — target any
+  directory the operator's uid can unlink (up to `~/.ssh`). Fixed fail-closed:
+  `git_cache_dir` rejects any `..` / NUL / absolute component, and the delete site
+  canonicalizes the target and requires it to live strictly under `~/.mindenv/cache`
+  before removing it.
+- **mic@3 string-reference decompression bomb (parser DoS).** `parse_mic3` cloned a
+  string-table entry per wire reference with no bound on total decoded output, so a
+  ≤10 MiB artifact that referenced a multi-MiB entry millions of times expanded into
+  terabytes of retained heap and OOM-killed `mind verify`. The parser now charges
+  every string clone against a generous per-parse decode budget (64× input, ≥64 MiB
+  floor) and fails closed on a reference bomb; legitimate modules that re-reference
+  short identifiers are unaffected (accepted-parse byte-identity preserved).
+- **Pinning a signer key no longer accepts an unsigned artifact.** `mind verify
+  --signer-pubkey <key>` (a trust allowlist) enforced the allowlist only inside the
+  `Valid` signature arm, so an artifact with the `signature.*` fields stripped — or
+  simply never signed — passed the pin: an attacker could emit their own body
+  attested-but-unsigned (no private key needed) and satisfy `--signer-pubkey`. A
+  pinned signer now REQUIRES a valid signature; an absent signature fails closed.
+- **C-ABI export stub returned `MIND_OK` without dispatching.** The
+  `ffi-c-user`-gated `mind_fn_<name>_v1_invoke` wrapper returned `0` (success) while
+  dispatch (RFC 0003) is still deferred, so a `dlsym` caller would read its
+  uninitialised out-params as a successful call. It now returns `38` (ENOSYS) until
+  real dispatch lands.
+- **Verify docs corrected to match behavior.** The `verify` exit-code help wrongly
+  claimed unattested artifacts exit `1` (they exit `0` with `attested: false` by the
+  RFC-0017 opt-in design; use `--require-*` / `--signer-pubkey` to fail closed), and
+  the v2 verifier-core doc implied the CLI walks `parent` back-links — it does not:
+  `parent` is decoded and reported but not yet traversed or authenticated (now
+  stated honestly, with a deferred-work marker).
 
 ### Fixed
 - **Float/string-literal and tuple `match` arms silently returned the last arm.**

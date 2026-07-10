@@ -93,7 +93,14 @@ pub fn emit_c_export_wrappers(out: &mut String, module: &IRModule) -> Result<(),
             "  llvm.func @mind_fn_{name}_v1_invoke(%inputs: !llvm.ptr, %in_count: i64, \
              %outputs: !llvm.ptr, %out_count: i64) -> i32 {{\n"
         ));
-        out.push_str("    %rc = llvm.mlir.constant(0 : i32) : i32\n");
+        // M3: D3 dispatch (unpack `%inputs`, call the user body, populate
+        // `%outputs`) is not yet emitted (deferred to RFC 0003). Until it lands
+        // this wrapper must NOT return `0` (`MIND_OK`): a `dlsym` caller would
+        // read its uninitialised, caller-allocated out-params as if the call
+        // succeeded. Return `38` (ENOSYS / "function not implemented") so the
+        // un-dispatched stub is a loud, checkable failure instead of a silent
+        // fail-open. deferred: emit real dispatch here — upgrade path RFC 0003.
+        out.push_str("    %rc = llvm.mlir.constant(38 : i32) : i32\n");
         out.push_str("    llvm.return %rc : i32\n");
         out.push_str("  }\n");
     }
@@ -135,6 +142,13 @@ mod tests {
         assert!(out.contains("%inputs: !llvm.ptr, %in_count: i64"));
         assert!(out.contains("-> i32"));
         assert!(out.contains("llvm.return %rc : i32"));
+        // M3: until D3 dispatch is emitted, the un-dispatched stub must return a
+        // non-zero "not implemented" code (38 = ENOSYS), never 0 (MIND_OK), so a
+        // caller cannot mistake it for a real success and read stale out-params.
+        assert!(
+            out.contains("llvm.mlir.constant(38 : i32)"),
+            "stub wrapper must return ENOSYS (38), not MIND_OK (0), while dispatch is deferred"
+        );
     }
 
     #[test]
