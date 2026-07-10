@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- **A nondeterministic call hidden inside `region { }` forged a `deterministic`
+  attestation.** `find_nondeterministic_call` — the classifier `mindc verify`
+  re-derives the determinism label from — recursed into `FnDef`/`While`/`If`
+  bodies but a blanket `_ => None` swallowed `Instr::Region`, so a `now()`/`rand()`
+  inside a `region { }` was invisible → `ir_declares_deterministic` returned
+  `true` for a genuinely nondeterministic module and `mindc verify
+  --require-deterministic` exited 0 on it (a trusted signer would even sign the
+  false claim, breaking the "attestation can never lie" invariant). The `Region`
+  body is now scanned, and the match is EXHAUSTIVE (no blanket `_`) so a future
+  nested-body variant is a compile error rather than a silent attestation escape —
+  matching the `Region` recursion already in the SSA verifier (`verify.rs`) and the
+  fp-mode taint scan (`fp_mode.rs`). Classifier-only fix; the `trace_hash` anchor is
+  untouched and there is no byte-identity impact.
 - **JSON / TOML parsers had two untrusted-input defects.** (1) `std/json.mind`'s
   `\uXXXX` escape decoding never combined UTF-16 surrogate pairs, so a non-BMP
   escape (`"😀"` = 😀) was emitted as two lone-surrogate 3-byte

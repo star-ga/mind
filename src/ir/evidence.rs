@@ -105,6 +105,29 @@ const NONDETERMINISTIC_BUILTINS: &[&str] = &[
     "time_now",
 ];
 
+// deferred: the raw-memory intrinsics `__mind_load_i{8,16,32,64}` /
+// `__mind_store_i{8,16,32,64}` are NOT in NONDETERMINISTIC_BUILTINS, so a
+// source-level `__mind_load_i64(arbitrary_addr)` reading uninitialized/OOB
+// memory is attested `deterministic`. This is a DELIBERATE non-taint, not an
+// oversight — reason: (1) every compiler-GENERATED use lowers only against a
+// `__mind_alloc`-returned arena base with a prior deterministic store (RFC 0005
+// P0c: `vec.push`/struct-field/`std.string`/`std.sha256` bottom out here), so
+// the load result IS a pure function of program inputs; (2) tainting the names
+// would attest EVERY std-surface program (Vec/String/Map/sha256) as
+// `nondeterministic` — a false-positive that breaks the honesty invariant in
+// the OTHER direction (over-tainting is as dishonest as under-tainting); (3) the
+// AST-side classifier already deliberately maps `__mind_*` to deterministic
+// (`type_checker::mod` ~line 5131, `Some(true)`), so tainting here would
+// contradict it and diverge the two layers this list is kept in sync with. The
+// residual risk is a hand-written source calling these `__`-internal intrinsics
+// on an attacker-chosen address; that is a MEMORY-SAFETY (OOB/uninit-read)
+// violation for the bounds/SSA layer to catch, not a name-match the determinism
+// classifier can soundly distinguish from a legitimate arena load (both are
+// syntactically `Call { name: "__mind_load_i64", args: [addr] }`). Upgrade path:
+// if `__mind_load/store` ever become a public source API, gate them behind a
+// pointer-provenance analysis that proves the address is arena-relative and
+// in-range, and taint only the un-provable case — NOT a blanket name match.
+
 /// Whether `callee` names a bare non-deterministic builtin (matched on the bare
 /// name or the last dotted/`::`-qualified path segment, so `std.rand.random` and
 /// `rng::rand_uniform` are caught too).
@@ -141,7 +164,59 @@ fn find_nondeterministic_call(instrs: &[crate::ir::Instr]) -> Option<String> {
             } => find_nondeterministic_call(cond_instrs)
                 .or_else(|| find_nondeterministic_call(then_instrs))
                 .or_else(|| find_nondeterministic_call(else_instrs)),
-            _ => None,
+            // RFC 0010 Phase J-A region body carries a FULL nested instruction
+            // stream (`src/ir/mod.rs`). A nondeterministic `now()`/`rand()` call
+            // inside `region { }` must NOT be invisible to the attestation
+            // classifier, or a genuinely nondeterministic module could forge a
+            // `deterministic` label (the honesty invariant). Mirrors the
+            // `Instr::Region { body, .. }` recursion already in `verify.rs` (SSA)
+            // and `fp_mode.rs` (strict-FP taint).
+            #[cfg(feature = "std-surface")]
+            Instr::Region { body, .. } => find_nondeterministic_call(body),
+            // Remaining instructions carry NO nested instruction stream and are
+            // not themselves a builtin call, so they cannot introduce a
+            // nondeterministic callee. Enumerated EXHAUSTIVELY (no blanket `_`)
+            // so that a FUTURE variant carrying a nested body becomes a COMPILE
+            // ERROR here — a forced review point — rather than a silent
+            // attestation escape (the exact class of bug this arm replaces).
+            Instr::ConstI64(..)
+            | Instr::ConstF64(..)
+            | Instr::ConstTensor(..)
+            | Instr::ConstDenseTensor { .. }
+            | Instr::BinOp { .. }
+            | Instr::Sum { .. }
+            | Instr::Mean { .. }
+            | Instr::Relu { .. }
+            | Instr::ReluGrad { .. }
+            | Instr::Reshape { .. }
+            | Instr::ExpandDims { .. }
+            | Instr::Squeeze { .. }
+            | Instr::Transpose { .. }
+            | Instr::Dot { .. }
+            | Instr::MatMul { .. }
+            | Instr::Conv2d { .. }
+            | Instr::Conv2dGradInput { .. }
+            | Instr::Conv2dGradFilter { .. }
+            | Instr::Index { .. }
+            | Instr::Slice { .. }
+            | Instr::Gather { .. }
+            | Instr::Output(..)
+            | Instr::SparseAttr { .. }
+            | Instr::Return { .. }
+            | Instr::Param { .. } => None,
+            #[cfg(feature = "std-surface")]
+            Instr::ConstArray { .. }
+            | Instr::ArrayLoad { .. }
+            | Instr::Break { .. }
+            | Instr::Continue { .. }
+            | Instr::VecLoad { .. }
+            | Instr::VecFma { .. }
+            | Instr::VecReduceAdd { .. }
+            | Instr::VecStore { .. }
+            | Instr::VecLoadI32 { .. }
+            | Instr::VecMulAddQ16 { .. }
+            | Instr::VecReduceAddI64 { .. }
+            | Instr::ExternFnDecl { .. } => None,
         };
         if hit.is_some() {
             return hit;
@@ -241,6 +316,131 @@ mod tests {
             !ir_declares_deterministic(&nested),
             "a PRNG call nested in a fn body must be detected"
         );
+    }
+
+    /// A module whose ONLY nondeterministic call lives inside a `region { }`
+    /// body. Exercises the RFC 0010 `Instr::Region` recursion path of the
+    /// determinism classifier.
+    #[cfg(feature = "std-surface")]
+    fn region_module_with_call(callee: &str) -> IRModule {
+        let mut m = IRModule::new();
+        let c = m.fresh();
+        let r = m.fresh();
+        let enter = m.fresh();
+        let exit = m.fresh();
+        m.instrs.push(Instr::Region {
+            body: vec![
+                Instr::ConstI64(c, 0),
+                Instr::Call {
+                    dst: r,
+                    name: callee.to_string(),
+                    args: vec![c],
+                },
+            ],
+            result: r,
+            enter_id: enter,
+            exit_id: exit,
+            alloc_ids: vec![],
+        });
+        m.instrs.push(Instr::Output(r));
+        m
+    }
+
+    /// Regression (attestation-honesty): a nondeterministic `now()`/`rand()`
+    /// call buried in a `region { }` body MUST be seen by the classifier — it
+    /// cannot forge a `deterministic` attestation. This is the fix for the
+    /// `Instr::Region`-blind-spot: before the fix the blanket `_ => None`
+    /// swallowed the region body and this module verified as deterministic.
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn region_nested_nondeterministic_call_is_detected() {
+        for callee in ["now", "rand"] {
+            let m = region_module_with_call(callee);
+            assert_eq!(
+                ir_first_nondeterministic_call(&m).as_deref(),
+                Some(callee),
+                "region-nested `{callee}()` must be named by the classifier"
+            );
+            assert!(
+                !ir_declares_deterministic(&m),
+                "a module calling `{callee}()` inside a region must declare NON-deterministic"
+            );
+        }
+    }
+
+    /// Positive control: a Region whose body is PURE arithmetic stays
+    /// deterministic — the fix does not over-taint region-carrying modules.
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn deterministic_region_body_stays_deterministic() {
+        let mut m = IRModule::new();
+        let a = m.fresh();
+        let b = m.fresh();
+        let s = m.fresh();
+        let enter = m.fresh();
+        let exit = m.fresh();
+        m.instrs.push(Instr::Region {
+            body: vec![
+                Instr::ConstI64(a, 42),
+                Instr::ConstI64(b, 10),
+                Instr::BinOp {
+                    dst: s,
+                    op: BinOp::Add,
+                    lhs: a,
+                    rhs: b,
+                },
+            ],
+            result: s,
+            enter_id: enter,
+            exit_id: exit,
+            alloc_ids: vec![],
+        });
+        m.instrs.push(Instr::Output(s));
+        assert!(
+            ir_declares_deterministic(&m),
+            "a region with a pure-arithmetic body must stay deterministic"
+        );
+        assert_eq!(ir_first_nondeterministic_call(&m), None);
+    }
+
+    /// Control (unchanged behavior): a top-level `now()` and an FnDef-nested
+    /// `now()` were already detected before the fix and must still be.
+    #[test]
+    fn top_level_and_fndef_nested_nondeterministic_still_detected() {
+        // Top-level.
+        let mut top = IRModule::new();
+        let s = top.fresh();
+        let r = top.fresh();
+        top.instrs.push(Instr::ConstI64(s, 0));
+        top.instrs.push(Instr::Call {
+            dst: r,
+            name: "now".to_string(),
+            args: vec![s],
+        });
+        top.instrs.push(Instr::Output(r));
+        assert_eq!(ir_first_nondeterministic_call(&top).as_deref(), Some("now"));
+        assert!(!ir_declares_deterministic(&top));
+
+        // FnDef-nested.
+        let mut nested = IRModule::new();
+        let p = nested.fresh();
+        let rr = nested.fresh();
+        nested.instrs.push(Instr::FnDef {
+            name: "g".to_string(),
+            params: vec![],
+            ret_id: Some(rr),
+            body: vec![
+                Instr::ConstI64(p, 0),
+                Instr::Call {
+                    dst: rr,
+                    name: "now".to_string(),
+                    args: vec![p],
+                },
+                Instr::Return { value: Some(rr) },
+            ],
+            reap_threshold: None,
+        });
+        assert!(!ir_declares_deterministic(&nested));
     }
 
     /// A small but non-trivial deterministic IR: `(42 + 10)` output.
