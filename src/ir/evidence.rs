@@ -113,44 +113,62 @@ fn callee_is_nondeterministic(callee: &str) -> bool {
     NONDETERMINISTIC_BUILTINS.contains(&tail) || NONDETERMINISTIC_BUILTINS.contains(&callee)
 }
 
-/// Recursively true iff any `Instr::Call` anywhere in `instrs` (including nested
-/// function bodies, loop bodies, and if-branches) targets a non-deterministic
-/// builtin.
-fn stream_has_nondeterministic_call(instrs: &[crate::ir::Instr]) -> bool {
+/// The NAME of the first non-deterministic builtin an instruction stream calls
+/// (searching nested function bodies, loop bodies, and if-branches in
+/// deterministic instruction order), or `None` if the stream is deterministic.
+/// Returning the offender's name — not just a bool — lets the build gate NAME it
+/// in a fail-loud diagnostic and lets `verify` re-derive the label from the
+/// hashed body.
+fn find_nondeterministic_call(instrs: &[crate::ir::Instr]) -> Option<String> {
     use crate::ir::Instr;
-    instrs.iter().any(|instr| match instr {
-        Instr::Call { name, .. } => callee_is_nondeterministic(name),
-        Instr::FnDef { body, .. } => stream_has_nondeterministic_call(body),
-        #[cfg(feature = "std-surface")]
-        Instr::While {
-            cond_instrs, body, ..
-        } => {
-            stream_has_nondeterministic_call(cond_instrs) || stream_has_nondeterministic_call(body)
+    for instr in instrs {
+        let hit = match instr {
+            Instr::Call { name, .. } if callee_is_nondeterministic(name) => Some(name.clone()),
+            Instr::Call { .. } => None,
+            Instr::FnDef { body, .. } => find_nondeterministic_call(body),
+            #[cfg(feature = "std-surface")]
+            Instr::While {
+                cond_instrs, body, ..
+            } => {
+                find_nondeterministic_call(cond_instrs).or_else(|| find_nondeterministic_call(body))
+            }
+            #[cfg(feature = "std-surface")]
+            Instr::If {
+                cond_instrs,
+                then_instrs,
+                else_instrs,
+                ..
+            } => find_nondeterministic_call(cond_instrs)
+                .or_else(|| find_nondeterministic_call(then_instrs))
+                .or_else(|| find_nondeterministic_call(else_instrs)),
+            _ => None,
+        };
+        if hit.is_some() {
+            return hit;
         }
-        #[cfg(feature = "std-surface")]
-        Instr::If {
-            cond_instrs,
-            then_instrs,
-            else_instrs,
-            ..
-        } => {
-            stream_has_nondeterministic_call(cond_instrs)
-                || stream_has_nondeterministic_call(then_instrs)
-                || stream_has_nondeterministic_call(else_instrs)
-        }
-        _ => false,
-    })
+    }
+    None
+}
+
+/// The first non-deterministic builtin (`random` / `now` / …) a compiled module
+/// calls, or `None` when the module is deterministic. THE single derivation used
+/// by three consumers so they can never disagree: the emit-side evidence label
+/// (`mindc.rs`), the build-time fail-loud gate (which names this offender), and
+/// the verify-side re-derivation that re-computes the label from the hashed mic@3
+/// body — so the `evidence_chain.determinism` MAP field cannot be forged even on
+/// an unsigned artifact.
+pub fn ir_first_nondeterministic_call(module: &IRModule) -> Option<String> {
+    find_nondeterministic_call(&module.instrs)
 }
 
 /// The evidence-chain determinism declaration for a compiled module: `true`
 /// (deterministic) UNLESS the module calls a PRNG / wall-clock / stdin builtin,
-/// in which case `false` (non-deterministic). This makes the
-/// `evidence_chain.determinism` field HONEST-BY-DERIVATION instead of a hardcoded
-/// optimistic default — a `random()` / `now()` program can no longer forge a
-/// `deterministic` attestation. Deterministic programs (the overwhelmingly common
-/// case, including seeded `randn(shape, seed)`) are unaffected.
+/// in which case `false` (non-deterministic). Honest-by-derivation, not a
+/// hardcoded default — a `random()` / `now()` program cannot forge a
+/// `deterministic` attestation. Deterministic programs (including seeded
+/// `randn(shape, seed)`) are unaffected.
 pub fn ir_declares_deterministic(module: &IRModule) -> bool {
-    !stream_has_nondeterministic_call(&module.instrs)
+    find_nondeterministic_call(&module.instrs).is_none()
 }
 
 #[cfg(test)]
