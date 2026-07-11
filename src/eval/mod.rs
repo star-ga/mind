@@ -2159,9 +2159,12 @@ fn apply_binary(op: BinOp, left: Value, right: Value, mode: ExecMode) -> Result<
 
 fn apply_int_op(op: BinOp, left: i64, right: i64) -> Result<i64, EvalError> {
     Ok(match op {
-        BinOp::Add => left + right,
-        BinOp::Sub => left - right,
-        BinOp::Mul => left * right,
+        // MIND integer overflow = defined two's-complement wraparound (== the MLIR
+        // artifact's `arith.addi`, no nsw/nuw); use explicit wrapping so debug and
+        // release mindc agree with the shipped .so and never panic on overflow.
+        BinOp::Add => left.wrapping_add(right),
+        BinOp::Sub => left.wrapping_sub(right),
+        BinOp::Mul => left.wrapping_mul(right),
         BinOp::Div => {
             if right == 0 {
                 return Err(EvalError::DivZero);

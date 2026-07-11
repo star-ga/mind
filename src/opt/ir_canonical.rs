@@ -217,9 +217,24 @@ fn constant_fold(instrs: &mut [Instr]) {
                     constants.get(&rhs_id).copied(),
                 ) {
                     let folded = match op_kind {
-                        BinOp::Add => l.saturating_add(r),
-                        BinOp::Sub => l.saturating_sub(r),
-                        BinOp::Mul => l.saturating_mul(r),
+                        // Exact-or-skip: fold only when representable. Defined-wrap is the
+                        // runtime semantics, but a compile-time fold must not wrap OR saturate
+                        // — saturating here silently disagreed with the runtime's wrap (an
+                        // overflowing const folded to i64::MAX while the same runtime expr
+                        // wrapped to i64::MIN). On overflow leave the BinOp unfolded (same bail
+                        // as Div below).
+                        BinOp::Add => match l.checked_add(r) {
+                            Some(v) => v,
+                            None => continue,
+                        },
+                        BinOp::Sub => match l.checked_sub(r) {
+                            Some(v) => v,
+                            None => continue,
+                        },
+                        BinOp::Mul => match l.checked_mul(r) {
+                            Some(v) => v,
+                            None => continue,
+                        },
                         BinOp::Div => {
                             if r == 0 || (l == i64::MIN && r == -1) {
                                 continue;
