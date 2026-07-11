@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3070 | **Est. tokens:** ~7,361,868
-**Generated:** 2026-07-10 18:40 UTC
+**Files:** 3071 | **Est. tokens:** ~7,368,860
+**Generated:** 2026-07-11 00:03 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~28,304 |
+| `./` | 34 | ~28,336 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -40,15 +40,14 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,163 |
-| `docs/` | 31 | ~65,780 |
+| `docs/` | 31 | ~70,294 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
 | `docs/mindcraft/` | 3 | ~7,023 |
-| `docs/research/` | 1 | ~117 |
 | `docs/rfcs/` | 28 | ~119,219 |
 | `docs/specs/` | 2 | ~976 |
-| `examples/` | 19 | ~35,709 |
+| `examples/` | 21 | ~38,272 |
 | `examples/c/` | 2 | ~400 |
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/distribution-crossisa/` | 6 | ~6,334 |
@@ -486,7 +485,7 @@
 - `.editorconfig` (~51 tok, small) — root = true
 - `.gitattributes` (~130 tok, small) — # Enforce LF line endings for all text so byte-exact tests (fmt idempotence,
 - `GITHUB_SETUP_INSTRUCTIONS.md` (~240 tok, medium) — GitHub Setup (Quick)
-- `.gitignore` (~502 tok, large) — # Rust
+- `.gitignore` (~534 tok, large) — # Rust
 - `incompatible` (~0 tok, tiny)
 - `LICENSE` (~2573 tok, huge) —                                  Apache License
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
@@ -669,7 +668,7 @@
 - `v0.3.md` (~110 tok, small) — MIND Design v0.3 (Draft)
 ### `docs/`
 
-- `determinism.md` (~3288 tok, huge) — The Determinism Contract
+- `determinism.md` (~3400 tok, huge) — The Determinism Contract
 - `errors.md` (~701 tok, large) — MIND Core Error Model
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
 - `gpu.md` (~387 tok, medium) — GPU backend profile
@@ -691,9 +690,6 @@
 - `performance.md` (~880 tok, large) — Performance Guide
 - `README.md` (~162 tok, small) — MIND Documentation
 - `reap-pruning.md` (~901 tok, large) — REAP Expert Pruning
-### `docs/research/`
-
-- `README.md` (~117 tok, small) — Research notes
 ### `docs/rfcs/`
 
 - `0000-template.md` (~627 tok, large) — RFC 0000: [Title]
@@ -726,7 +722,7 @@
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
 
-- `roadmap.md` (~18792 tok, huge) — Roadmap
+- `roadmap.md` (~23194 tok, huge) — Roadmap
 - `runs-burndown-roadmap.md` (~3203 tok, huge) — MIND RUNS Burndown Roadmap
 - `security.md` (~1492 tok, large) — Security Guide
 - `self-host-trace-hash-port.md` (~1406 tok, large) — #17 — Self-compute the native PT_NOTE (pure-MIND trace-hash port)
@@ -752,7 +748,7 @@
 ### `examples/`
 
 - `cnn_classifier.mind` (~1060 tok, large) — CNN Classifier Example
-- `collatz.mind` (~437 tok, medium) — Deterministic integer Collatz (3n+1) iterator — the integer sibling of the
+- `collatz.mind` (~495 tok, medium) — Deterministic integer Collatz (3n+1) iterator — the integer sibling of the
 ### `examples/compliance/`
 
 - `auditable_model.mind` (~1932 tok, huge) — auditable_model.mind -- Compliance-Ready MLP with Provenance Metadata
@@ -777,6 +773,7 @@
 
 - `fft_q16.mind` (~1248 tok, large) — Deterministic Q16.16 fixed-point radix-2 DIT FFT, N=256 (complex).
 - `fft_signal.mind` (~533 tok, large) — FFT Signal Processing Example for MIND
+- `galperin_pi.mind` (~1486 tok, large) — Galperin's billiard-π: count elastic collisions of two balls + a wall to
 ### `examples/grammar_mask/`
 
 - `main.mind` (~4577 tok, huge) — examples/grammar_mask/main.mind — structured / grammar-constrained decoding,
@@ -797,6 +794,7 @@
 
 - `lorenz_f64.mind` (~230 tok, medium) — Deterministic IEEE-754 float64 Lorenz-attractor integrator (forward Euler).
 - `lorenz_q16.mind` (~1091 tok, large) — Deterministic Q16.16 fixed-point Lorenz-attractor integrator (forward Euler).
+- `mandelbrot.mind` (~1019 tok, large) — Deterministic IEEE-754 float64 Mandelbrot escape-count renderer.
 ### `examples/mindc_mind/`
 
 - `bootstrap_smoke.py` (~2329 tok, huge)

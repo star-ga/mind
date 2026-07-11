@@ -1,0 +1,88 @@
+// Deterministic IEEE-754 float64 Mandelbrot escape-count renderer.
+//
+// The iteral z ↦ z² + c over the complex plane, rendered as an escape-count
+// grid hash. Every step is pure scalar f64 on MIND's STRICT lowering path:
+// arith.mulf/addf/subf with NO fmuladd, NO fastmath, NO reassociation, fixed
+// source order. z² + c uses only multiply/add/subtract and a magnitude compare
+// against the radius-2 bailout — no transcendental, so it lowers to the strict
+// FP tier and is BIT-IDENTICAL across x86 / ARM / GPU by construction.
+//
+// THE WEDGE (stated honestly): the Mandelbrot set is the classic "the picture is
+// knowable but membership is only semi-decidable" iteral — no closed form, you
+// MUST run z_{n+1}=z_n²+c to a fixed iteration cap. It rounds every step, yet the
+// escape count is reproducible to the exact integer on every substrate because
+// the strict-FP tier pins the reduction tree and rounding mode into the mic@3
+// evidence contract. A -ffast-math renderer would drift the boundary cells
+// (fractal detail lives exactly where the escape count is most sensitive), so a
+// different escape-hash on your hardware is a release-blocking bug, not aliasing.
+//
+// HONEST CAVEAT: this is a strict-f64 escape count, NOT a proof of set
+// membership — points that never escape within `maxit` are counted as `maxit`
+// (interior + slow-boundary points alike). The determinism claim is over the
+// COMPUTED escape count for a fixed (grid, maxit), not over true membership.
+//
+// Mathematical background: the "iteral" iteration notation from recent research.
+//   Provenance in internal research notes.
+// See docs/research/iteration-operator-and-deterministic-folding.md.
+//
+// ABI: mandelbrot_escape(cx, cy, maxit) -> i64  — escape count for a single c.
+//      mandelbrot_grid_hash(w, h, maxit) -> i64 — deterministic hash over a
+//      w×h grid spanning the classic view [-2, 1] × [-1.5, 1.5].
+
+// Escape count for a single complex parameter c = cx + i·cy.
+// Iterates z ↦ z² + c from z₀ = 0 until |z|² > 4.0 or `maxit` iterations elapse.
+pub fn mandelbrot_escape(cx: f64, cy: f64, maxit: i64) -> i64 {
+    let mut zr: f64 = 0.0;
+    let mut zi: f64 = 0.0;
+    let mut it: i64 = 0;
+    while it < maxit {
+        let r2: f64 = zr * zr;
+        let i2: f64 = zi * zi;
+        // Bailout at radius 2: |z|² > 4 means the orbit provably escapes.
+        if r2 + i2 > 4.0 {
+            return it;
+        }
+        // z² + c, real and imaginary parts, strict fixed source order.
+        let nzr: f64 = (r2 - i2) + cx;
+        let nzi: f64 = ((2.0 * zr) * zi) + cy;
+        zr = nzr;
+        zi = nzi;
+        it = it + 1;
+    }
+    return it;
+}
+
+// Deterministic escape-count hash over a w×h grid of the classic Mandelbrot
+// view [-2, 1] × [-1.5, 1.5]. Folds each cell's escape count through a fixed
+// multiply-mix into a single i64. Bit-identical across substrates ⇒ same hash.
+pub fn mandelbrot_grid_hash(w: i64, h: i64, maxit: i64) -> i64 {
+    let mut acc: i64 = 0;
+    // Grid extents as f64 constants (classic view).
+    let x_min: f64 = -2.0;
+    let x_span: f64 = 3.0;
+    let y_min: f64 = -1.5;
+    let y_span: f64 = 3.0;
+    // Denominators for the linear map px/(w-1), py/(h-1). Caller guards w,h >= 2.
+    let denom_x: f64 = int_to_f64(w - 1);
+    let denom_y: f64 = int_to_f64(h - 1);
+    let mut py: i64 = 0;
+    while py < h {
+        let mut px: i64 = 0;
+        while px < w {
+            // Map integer pixel to f64 coordinate in the classic view.
+            let cx: f64 = x_min + (x_span * (int_to_f64(px) / denom_x));
+            let cy: f64 = y_min + (y_span * (int_to_f64(py) / denom_y));
+            let n: i64 = mandelbrot_escape(cx, cy, maxit);
+            // Deterministic mix: fold the escape count into the running hash.
+            acc = ((acc * 1000003) + n) + (py * w + px);
+            px = px + 1;
+        }
+        py = py + 1;
+    }
+    return acc;
+}
+
+// Exact integer-to-f64 widening (values within f64's 53-bit mantissa are exact).
+fn int_to_f64(n: i64) -> f64 {
+    return n as f64;
+}

@@ -1,0 +1,128 @@
+// Galperin's billiard-π: count elastic collisions of two balls + a wall to
+// recover the digits of π — with ZERO floating-point in the loop. The sharpest
+// "deterministic != predictable" demo: π (unpredictable digit-to-digit) falls
+// out of counting integer collisions, so the trace is BIT-IDENTICAL across
+// x86 / ARM / GPU by construction, not by tuning.
+//
+// Mathematical background: billiard-π collision-count identity + the "iteral"
+//   iteration notation, from recent research. Provenance in internal research notes.
+//
+// THE SETUP. A small ball (mass m = 1) sits between a wall (on the left) and a
+// big ball (mass M = 100^(N-1)) that starts moving left toward it. Every impact
+// is a perfectly elastic collision. Galperin's theorem: the total number of
+// collisions is exactly floor(π · 10^(N-1)) — i.e. 3, 31, 314, 3141, 31415 for
+// N = 1..5. The mass ratio 100^(N-1) makes each extra factor of 100 in mass
+// reveal one more decimal digit of π.
+//
+// THE FLOAT-FREE TRICK (why this is a STRICT-path demo). Conservation of kinetic
+// energy m·v1² + M·v2²... written in phase coordinates u = √M·v1, w = √m·v2,
+// keeps the point (u, w) on a circle of constant radius. Because M = 100^(N-1) is
+// a perfect square, √M = 10^(N-1) =: K is an EXACT INTEGER (and √m = 1). So the
+// two collision types are exact reflections of the integer vector (u, w):
+//   * wall impact  ->  w -> -w                       (reflect across the u-axis)
+//   * ball-ball    ->  reflect across direction (1, K), the orthogonal matrix
+//                        [ K²-1   2K  ]
+//                        [  2K   1-K² ] / (K²+1)
+// The reflections strictly alternate (ball-ball, wall, ball-ball, wall, ...); the
+// process ends when the big ball is no longer catching the small one. Every step
+// is exact integer arithmetic — no rounding mode, no FMA-contraction, no
+// reduction order to break — so the collision count is deterministic to the bit.
+//
+// FIXED-POINT SCALE. The reflection matrix has denominator (K²+1), so we carry
+// (u, w) scaled by a fixed integer SCALE = 1_000_000 and round-to-nearest after
+// each reflection (truncating integer division, C/MIND semantics). SCALE = 1e6 is
+// the sweet spot: large enough to reproduce the exact counts for N = 1..5, small
+// enough that every intermediate stays inside i64 (worst product ≈ 2·10^18 <
+// 9.22·10^18 = i64::MAX). N = 6 (314159) needs an i128 / bignum intermediate tier
+// (roadmap P1) and is deferred — the mass ratio 100^5 = 10^10 still fits i64, but
+// the fixed-point reflection precision at K = 10^5 does not. This is exactly the
+// doc's "needs no bignum until the mass ratio exceeds i64" boundary, made precise.
+//
+// The falsifier is mechanical: compile, run, hash the output. A different count on
+// your hardware is a release-blocking determinism bug, not a rounding artifact.
+//
+// ABI: galperin_collisions(n) -> i64. Returns the collision count for mass ratio
+// 100^(n-1). Valid for n in 1..=5; returns -1 for out-of-range n.
+
+// deferred: N=6 (314159) needs i128/bignum intermediates — the fixed-point
+// reflection at K=1e5 overflows i64 at SCALE=1e6, and a smaller scale is not
+// exact — upgrade path: roadmap P1 wide-integer tier, then raise the n<=5 bound.
+
+// Round-to-nearest signed integer divide of x by d, using truncating (toward-zero)
+// integer division (C / MIND semantics). Round-to-nearest of x/d is (2x ± d)/(2d):
+// add +d before the divide for x >= 0, subtract d for x < 0, so the truncation
+// lands on the nearest integer rather than toward zero. The doubled numerator 2x
+// stays inside i64 for the supported range (worst |2x| ~ 4e18 < i64::MAX at n=5).
+fn round_div_d(x: i64, d: i64) -> i64 {
+    if x >= 0 {
+        return ((2 * x) + d) / (2 * d);
+    }
+    return ((2 * x) - d) / (2 * d);
+}
+
+pub fn galperin_collisions(n: i64) -> i64 {
+    if n < 1 {
+        return -1;
+    }
+    if n > 5 {
+        // n=6 and beyond require i128/bignum intermediates (deferred, see header).
+        return -1;
+    }
+
+    // K = 10^(n-1) = sqrt(M), an exact integer because M = 100^(n-1).
+    let mut k: i64 = 1;
+    let mut e: i64 = 1;
+    while e < n {
+        k = k * 10;
+        e = e + 1;
+    }
+
+    let scale: i64 = 1000000;
+    let dd: i64 = (k * k) + 1;
+
+    // Phase-space vector (u, w) scaled by `scale`. Start: big ball moving left at
+    // v1 = -1, small ball at rest v2 = 0  =>  u = K*v1 = -K, w = v2 = 0.
+    let mut u: i64 = (0 - k) * scale;
+    let mut w: i64 = 0;
+
+    let mut count: i64 = 0;
+    // turn: 1 = next event is ball-ball, 0 = next event is wall. Collisions strictly
+    // alternate, and the first event is always ball-ball.
+    let mut turn: i64 = 1;
+
+    // Bounded loop: the process terminates in floor(pi*10^(n-1)) < 4_000_000 steps
+    // for n <= 5. The cap is a determinism guard, never reached on valid input.
+    let mut guard: i64 = 0;
+    while guard < 4000000 {
+        if turn == 1 {
+            // Ball-ball collision only while the big ball is still catching the
+            // small one: v1 < v2  <=>  u/K < w  <=>  u < w*K (K > 0).
+            if u < (w * k) {
+                let a: i64 = ((k * k) - 1) * u;
+                let b: i64 = (2 * k) * w;
+                let nu: i64 = a + b;
+                let c: i64 = (2 * k) * u;
+                let d2: i64 = (1 - (k * k)) * w;
+                let nw: i64 = c + d2;
+                u = round_div_d(nu, dd);
+                w = round_div_d(nw, dd);
+                count = count + 1;
+                turn = 0;
+            } else {
+                guard = 4000000;
+            }
+        } else {
+            // Wall collision only while the small ball is moving left (w < 0).
+            if w < 0 {
+                w = 0 - w;
+                count = count + 1;
+                turn = 1;
+            } else {
+                guard = 4000000;
+            }
+        }
+        guard = guard + 1;
+    }
+
+    return count;
+}

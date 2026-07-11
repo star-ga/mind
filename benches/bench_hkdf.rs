@@ -54,6 +54,7 @@
 //!     L = 42), and
 //!   * an independent from-scratch Rust HMAC/HKDF oracle (built only on
 //!     `sha2::Sha256`) over the exact benched inputs.
+//!
 //! Any mismatch panics the bench run — mirroring the byte-identity gate in
 //! `det_matmul_q16.rs`.
 //!
