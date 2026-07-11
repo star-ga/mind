@@ -15,6 +15,10 @@
 // ABI: collatz_hash(lo, hi) -> i64. Iterates Collatz for every seed in [lo, hi],
 // sums each seed's stopping time (steps to reach 1), and folds the running
 // total through a fixed multiply-mix into a single deterministic i64 hash.
+//
+// Mathematical background: the "iteral" iteration notation from recent research —
+//   the compressed-map (3x+1)/2 iteral and its closed-form orbit from the Mersenne
+//   seed 2^101-1. Provenance in internal research notes.
 
 pub fn collatz_hash(lo: i64, hi: i64) -> i64 {
     let mut acc: i64 = 0;
