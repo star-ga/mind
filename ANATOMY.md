@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3071 | **Est. tokens:** ~7,370,887
-**Generated:** 2026-07-11 01:09 UTC
+**Files:** 3071 | **Est. tokens:** ~7,371,084
+**Generated:** 2026-07-11 01:21 UTC
 
 ## Token Budget Guide
 
@@ -408,7 +408,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~192,637 |
-| `tests/` | 283 | ~481,122 |
+| `tests/` | 283 | ~481,319 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -4189,7 +4189,7 @@
 - `g2_differential_mlir.rs` (~6203 tok, huge) — Copyright 2025 STARGA Inc.
 - `gather_preview.rs` (~288 tok, medium) — Copyright 2025 STARGA Inc.
 - `generics_lowering.rs` (~1384 tok, large) — Copyright 2026 STARGA Inc. Licensed under the Apache License, Version 2.0.
-- `genref_phase_jb.rs` (~3459 tok, huge) — Copyright 2025 STARGA Inc.
+- `genref_phase_jb.rs` (~3673 tok, huge) — Copyright 2025 STARGA Inc.
 - `grad_wrt_resolve.rs` (~737 tok, large) — Copyright 2025 STARGA Inc.
 - `hpack_driver.py` (~3027 tok, huge) — # Official-vector driver for std/hpack.mind (pure-MIND HPACK decoding,
 - `http2_frame_driver.py` (~4195 tok, huge) — # Reference-vector driver for std/http2_frame.mind (pure-MIND HTTP/2 framing,
@@ -4330,7 +4330,7 @@
 - `mindc.rs` (~1851 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_test_phase_b.rs` (~3525 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_workspace_phase_c.rs` (~4166 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindfuzz_cross_substrate.rs` (~14955 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindfuzz_cross_substrate.rs` (~14938 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/mindfuzz_cross_substrate/staged/`
 
 - `fuzz_repro_seed_deadbeef_prog006.mind` (~157 tok, small) — DIVERGENCE REPRODUCER (issue #72 fuzzer)
