@@ -866,11 +866,9 @@ mod mic3vm {
                     loop {
                         guard_iters += 1;
                         if guard_iters > 1_000_000 {
-                            return Err(
-                                "mic@3-VM: While exceeded 1e6 iterations — a \
+                            return Err("mic@3-VM: While exceeded 1e6 iterations — a \
                                  non-advancing loop-carried value (lowering bug)"
-                                    .into(),
-                            );
+                                .into());
                         }
                         for (k, id) in init_ids.iter().enumerate() {
                             env.insert(id.0, carried[k]);
