@@ -1,5 +1,5 @@
 // Deterministic IEEE-754 float64 piecewise-LINEAR density interpolation kernel,
-// ported from a third-party author's third-party quant program `distribution.cpp`.
+// ported from a third-party quant program `distribution.cpp` (recent research).
 //
 // WHAT IT PORTS
 // The divergent line of distribution.cpp (its `dlPDF` piecewise-linear density):
@@ -9,7 +9,7 @@
 // between the two densities bracketing x, normalized by the interval width.
 //
 // THE DIVERGENCE IT DEMONSTRATES
-// the author's distribution.cpp produced ULP-level DIVERGENT output between x86_64 and
+// The reference distribution.cpp produced ULP-level DIVERGENT output between x86_64 and
 // native aarch64 (confirmed on real Graviton silicon). The numerator has the exact
 // `a*b + c*d` shape (`r[i-1]*(b[i]-x) + r[i]*(x-b[i-1])`). aarch64 g++ CONTRACTS
 // that into a single fused multiply-add (one rounding); x86 g++ emits separate
