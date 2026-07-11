@@ -29,9 +29,44 @@ pub fn fold(node: &Node) -> Node {
             let r = fold(right);
             if let (Node::Lit(Literal::Int(a), _), Node::Lit(Literal::Int(b), _)) = (&l, &r) {
                 let v = match op {
-                    BinOp::Add => a + b,
-                    BinOp::Sub => a - b,
-                    BinOp::Mul => a * b,
+                    // Defined-wrap is the language semantics (== the MLIR artifact), but a
+                    // compile-time fold must be EXACT or not happen: fold only when the result
+                    // is representable, else leave the subtree unfolded so the runtime wraps it
+                    // identically (same bail shape as Div-by-0 below). Never emit a wrapped or
+                    // saturated constant — that is a silent const-vs-runtime miscompile.
+                    BinOp::Add => match a.checked_add(*b) {
+                        Some(v) => v,
+                        None => {
+                            return Node::Binary {
+                                op: *op,
+                                left: Box::new(l),
+                                right: Box::new(r),
+                                span: *span,
+                            };
+                        }
+                    },
+                    BinOp::Sub => match a.checked_sub(*b) {
+                        Some(v) => v,
+                        None => {
+                            return Node::Binary {
+                                op: *op,
+                                left: Box::new(l),
+                                right: Box::new(r),
+                                span: *span,
+                            };
+                        }
+                    },
+                    BinOp::Mul => match a.checked_mul(*b) {
+                        Some(v) => v,
+                        None => {
+                            return Node::Binary {
+                                op: *op,
+                                left: Box::new(l),
+                                right: Box::new(r),
+                                span: *span,
+                            };
+                        }
+                    },
                     BinOp::Div => {
                         if *b == 0 {
                             return Node::Binary {
@@ -131,5 +166,48 @@ pub fn fold(node: &Node) -> Node {
             Node::Paren(Box::new(f), *span)
         }
         other => other.clone(),
+    }
+}
+
+#[cfg(test)]
+mod overflow_tests {
+    use super::*;
+    use crate::ast::Span;
+
+    fn int(n: i64) -> Node {
+        Node::Lit(Literal::Int(n), Span::new(0, 0))
+    }
+    fn bin(op: BinOp, a: i64, b: i64) -> Node {
+        Node::Binary {
+            op,
+            left: Box::new(int(a)),
+            right: Box::new(int(b)),
+            span: Span::new(0, 0),
+        }
+    }
+
+    // Non-overflowing constants still fold exactly — no behavior change, no canary drift.
+    #[test]
+    fn nonoverflowing_folds_exactly() {
+        assert!(matches!(fold(&bin(BinOp::Add, 2, 3)), Node::Lit(Literal::Int(5), _)));
+        assert!(matches!(fold(&bin(BinOp::Sub, 10, 4)), Node::Lit(Literal::Int(6), _)));
+        assert!(matches!(fold(&bin(BinOp::Mul, -6, 7)), Node::Lit(Literal::Int(-42), _)));
+    }
+
+    // Overflowing const folds are REFUSED (left unfolded) — never a wrapped or saturated
+    // constant. Running under `cargo test` (debug) also proves mindc no longer PANICS on an
+    // overflowing const expression.
+    #[test]
+    fn overflowing_add_left_unfolded() {
+        assert!(matches!(fold(&bin(BinOp::Add, i64::MAX, 1)), Node::Binary { .. }));
+    }
+    #[test]
+    fn overflowing_sub_left_unfolded() {
+        assert!(matches!(fold(&bin(BinOp::Sub, i64::MIN, 1)), Node::Binary { .. }));
+    }
+    #[test]
+    fn overflowing_mul_left_unfolded() {
+        assert!(matches!(fold(&bin(BinOp::Mul, i64::MIN, -1)), Node::Binary { .. }));
+        assert!(matches!(fold(&bin(BinOp::Mul, i64::MAX, 2)), Node::Binary { .. }));
     }
 }
