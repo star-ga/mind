@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3071 | **Est. tokens:** ~7,369,889
-**Generated:** 2026-07-11 00:21 UTC
+**Files:** 3071 | **Est. tokens:** ~7,370,516
+**Generated:** 2026-07-11 00:27 UTC
 
 ## Token Budget Guide
 
@@ -40,7 +40,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,163 |
-| `docs/` | 31 | ~70,294 |
+| `docs/` | 31 | ~70,435 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
@@ -50,7 +50,7 @@
 | `examples/` | 21 | ~38,272 |
 | `examples/c/` | 2 | ~400 |
 | `examples/compliance/` | 3 | ~5,294 |
-| `examples/distribution-crossisa/` | 6 | ~6,334 |
+| `examples/distribution-crossisa/` | 6 | ~6,336 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/lexer/` | 6 | ~8,888 |
@@ -396,7 +396,7 @@
 | `src/lint/rules/` | 6 | ~9,211 |
 | `src/mlir/` | 3 | ~5,905 |
 | `src/ops/` | 3 | ~4,764 |
-| `src/opt/` | 4 | ~10,678 |
+| `src/opt/` | 4 | ~10,738 |
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 1 | ~3,811 |
 | `src/project/` | 3 | ~31,849 |
@@ -408,7 +408,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~192,637 |
-| `tests/` | 283 | ~480,698 |
+| `tests/` | 283 | ~481,122 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -668,7 +668,7 @@
 - `v0.3.md` (~110 tok, small) — MIND Design v0.3 (Draft)
 ### `docs/`
 
-- `determinism.md` (~3400 tok, huge) — The Determinism Contract
+- `determinism.md` (~3541 tok, huge) — The Determinism Contract
 - `errors.md` (~701 tok, large) — MIND Core Error Model
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
 - `gpu.md` (~387 tok, medium) — GPU backend profile
@@ -760,7 +760,7 @@
 - `data1.txt` (~212 tok, medium) — 45.96
 - `data2.txt` (~223 tok, medium) — 107.50
 - `distribution.cpp` (~1217 tok, large)
-- `distribution_interp_f64.mind` (~1229 tok, large) — Deterministic IEEE-754 float64 piecewise-LINEAR density interpolation kernel,
+- `distribution_interp_f64.mind` (~1231 tok, large) — Deterministic IEEE-754 float64 piecewise-LINEAR density interpolation kernel,
 - `README.md` (~1175 tok, large) — Cross-ISA determinism: a piecewise-linear density kernel
 ### `examples/emit_ir/`
 
@@ -3883,7 +3883,7 @@
 - `mod.rs` (~228 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/opt/`
 
-- `fold.rs` (~1986 tok, huge) — Copyright 2025 STARGA Inc.
+- `fold.rs` (~2046 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_canonical.rs` (~4402 tok, huge) — Copyright 2025 STARGA Inc.
 - `memory_layout.rs` (~4110 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~180 tok, small) — Copyright 2025 STARGA Inc.
@@ -4202,7 +4202,7 @@
 - `int_suffix_literal.rs` (~930 tok, large) — Copyright 2025 STARGA Inc.
 - `invariant_block_run.rs` (~720 tok, large) — Copyright 2025 STARGA Inc.
 - `invariant_check_run.rs` (~695 tok, large) — Copyright 2025 STARGA Inc.
-- `ir_core.rs` (~1265 tok, large) — Ensure the unused const is kept alive in the SSA namespace but removed from code.
+- `ir_core.rs` (~1689 tok, huge) — Ensure the unused const is kept alive in the SSA namespace but removed from code.
 - `ir_load_save.rs` (~1257 tok, large) — Copyright 2025 STARGA Inc.
 - `ir_lower.rs` (~1331 tok, large) — Copyright 2025 STARGA Inc.
 - `ir_negative_literals.rs` (~1722 tok, huge) — Copyright 2025 STARGA Inc.
