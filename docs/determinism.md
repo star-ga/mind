@@ -59,6 +59,14 @@ Integer arithmetic is fully deterministic and byte-identical across substrates.
 | Oversized shift (`count ≥ bit-width`) | given a defined result (never UB) |
 | Condition truthiness (`if c`) | tests `c != 0` — the whole value, not the low bit |
 
+The normative overflow rule (defined two's-complement wraparound) is honored at
+**every** layer: the interpreter, the MLIR/native artifact (plain `arith.addi`, no
+`nsw`/`nuw`), **and** compile-time constant folding. Const-folding is **exact-or-skip** —
+a constant subtree is folded only when the result is representable; on overflow the
+expression is left unfolded so the runtime wraps it identically. It never emits a wrapped
+*or* saturated constant, so a const-position expression and the identical runtime-position
+expression always produce the same bytes.
+
 The narrow-integer call ABI (`i32`/`u32` across call boundaries) and struct
 narrow-field ABI are sound. Gated by the keystone and `cross_substrate` suites.
 

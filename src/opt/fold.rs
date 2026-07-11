@@ -189,9 +189,18 @@ mod overflow_tests {
     // Non-overflowing constants still fold exactly — no behavior change, no canary drift.
     #[test]
     fn nonoverflowing_folds_exactly() {
-        assert!(matches!(fold(&bin(BinOp::Add, 2, 3)), Node::Lit(Literal::Int(5), _)));
-        assert!(matches!(fold(&bin(BinOp::Sub, 10, 4)), Node::Lit(Literal::Int(6), _)));
-        assert!(matches!(fold(&bin(BinOp::Mul, -6, 7)), Node::Lit(Literal::Int(-42), _)));
+        assert!(matches!(
+            fold(&bin(BinOp::Add, 2, 3)),
+            Node::Lit(Literal::Int(5), _)
+        ));
+        assert!(matches!(
+            fold(&bin(BinOp::Sub, 10, 4)),
+            Node::Lit(Literal::Int(6), _)
+        ));
+        assert!(matches!(
+            fold(&bin(BinOp::Mul, -6, 7)),
+            Node::Lit(Literal::Int(-42), _)
+        ));
     }
 
     // Overflowing const folds are REFUSED (left unfolded) — never a wrapped or saturated
@@ -199,15 +208,27 @@ mod overflow_tests {
     // overflowing const expression.
     #[test]
     fn overflowing_add_left_unfolded() {
-        assert!(matches!(fold(&bin(BinOp::Add, i64::MAX, 1)), Node::Binary { .. }));
+        assert!(matches!(
+            fold(&bin(BinOp::Add, i64::MAX, 1)),
+            Node::Binary { .. }
+        ));
     }
     #[test]
     fn overflowing_sub_left_unfolded() {
-        assert!(matches!(fold(&bin(BinOp::Sub, i64::MIN, 1)), Node::Binary { .. }));
+        assert!(matches!(
+            fold(&bin(BinOp::Sub, i64::MIN, 1)),
+            Node::Binary { .. }
+        ));
     }
     #[test]
     fn overflowing_mul_left_unfolded() {
-        assert!(matches!(fold(&bin(BinOp::Mul, i64::MIN, -1)), Node::Binary { .. }));
-        assert!(matches!(fold(&bin(BinOp::Mul, i64::MAX, 2)), Node::Binary { .. }));
+        assert!(matches!(
+            fold(&bin(BinOp::Mul, i64::MIN, -1)),
+            Node::Binary { .. }
+        ));
+        assert!(matches!(
+            fold(&bin(BinOp::Mul, i64::MAX, 2)),
+            Node::Binary { .. }
+        ));
     }
 }
