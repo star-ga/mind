@@ -1727,6 +1727,11 @@ impl LoweringContext {
                         };
                         let lhs_ref = legalize(self, *lhs, &lhs_kind, "ntl")?;
                         let rhs_ref = legalize(self, *rhs, &rhs_kind, "ntr")?;
+                        // INVARIANT: never emit `nsw`/`nuw` on these — MIND integer overflow
+                        // is DEFINED two's-complement wraparound, so plain arith.addi/subi/muli
+                        // (defined wrap) is the ground truth the interpreter (wrapping_*) and
+                        // both const-folders (exact-or-skip) are aligned to. `nsw`/`nuw` would
+                        // introduce UB where MIND defines wrap and could diverge across backends.
                         let mlir_op = match op {
                             BinOp::Add => "arith.addi".to_string(),
                             BinOp::Sub => "arith.subi".to_string(),

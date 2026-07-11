@@ -162,3 +162,55 @@ fn canonicalization_keeps_value_used_only_as_call_arg() {
         format_ir_module(&module)
     );
 }
+
+// --- P1-A: IR-canonical const-fold must be EXACT-OR-SKIP, never saturate (live-miscompile) ---
+
+#[test]
+fn overflowing_const_binop_is_not_saturate_folded() {
+    // i64::MAX + 1 in const position previously SATURATED to i64::MAX, silently disagreeing
+    // with the runtime's two's-complement wrap to i64::MIN. It must now stay a BinOp so the
+    // runtime computes the (wrapping) value — exact-or-skip.
+    let mut module = IRModule::new();
+    let a = scalar_const(&mut module, i64::MAX);
+    let b = scalar_const(&mut module, 1);
+    let dst = module.fresh();
+    module.instrs.push(Instr::BinOp {
+        dst,
+        op: BinOp::Add,
+        lhs: a,
+        rhs: b,
+    });
+    module.instrs.push(Instr::Output(dst));
+    canonicalize_module(&mut module);
+    assert!(
+        module
+            .instrs
+            .iter()
+            .any(|i| matches!(i, Instr::BinOp { op: BinOp::Add, .. })),
+        "overflowing const Add must remain a BinOp, not saturate-fold to i64::MAX"
+    );
+}
+
+#[test]
+fn nonoverflowing_const_binop_still_folds() {
+    // No behavior change for representable results: 2 + 3 folds away as before.
+    let mut module = IRModule::new();
+    let a = scalar_const(&mut module, 2);
+    let b = scalar_const(&mut module, 3);
+    let dst = module.fresh();
+    module.instrs.push(Instr::BinOp {
+        dst,
+        op: BinOp::Add,
+        lhs: a,
+        rhs: b,
+    });
+    module.instrs.push(Instr::Output(dst));
+    canonicalize_module(&mut module);
+    assert!(
+        !module
+            .instrs
+            .iter()
+            .any(|i| matches!(i, Instr::BinOp { op: BinOp::Add, .. })),
+        "representable const Add (2+3) must still fold away"
+    );
+}
