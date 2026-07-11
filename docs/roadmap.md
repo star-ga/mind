@@ -723,7 +723,8 @@ commitment. Nothing here is planned work yet.
   avx2 == neon canaries). No new determinism primitive is introduced, and a new
   kernel enters with no new ABI (a `__mind_blas_kan_*_q16_v` extern + one
   cross-substrate canary). A *deterministic* KAN — bit-identical across
-  x86/ARM/GPU with a signed trace — is something no incumbent ships. Splines
+  x86/ARM with a hash-anchored (tamper-evident) trace — is something no incumbent
+  ships. Splines
   also sit inside the compiler-integrated-autodiff surface (US Provisional
   63/947,737): `d/dx` and `d/dcoeff` of the basis are the same division-free
   primitives, so the backward pass stays in-family.
@@ -863,6 +864,229 @@ commitment. Nothing here is planned work yet.
      publish any of them as ours. These figures come from recent
      constrained-decoding write-ups — third-party and unverified; treat them as
      leads to reproduce, not benchmarks or our own results.
+
+**Deterministic iteration under a hash-anchored contract — the rounding cases are the moat; the exact case is the foil** — *evaluate (scoped)*.
+  (Full source-grounded write-up + reproduction script + bundled prior-art papers
+  kept in internal research notes.)
+  One iteration operator (`Иⁿ_{x₀} f` — apply `f` n times from x₀; the "iteral"
+  iteration notation from recent research), several verdicts. The **valuable** cases are the *float*
+  ones that round/truncate every step and are *still* bit-identical across
+  substrates because the reduction tree + rounding mode are pinned into a
+  hash-anchored contract. The exact-integer Collatz case is included only as the **foil** —
+  the easy, provable end of the spectrum that shows where the moat is *not*.
+  ► **Collatz is deliberately NOT the headline ("do not do Collatz").** The
+  compressed map `T(x) = (3x+1)/2` iterated 101× from `2^101 − 1`
+  lands on exactly `3^101 − 1` (`T(2^n−1) = 3·2^{n-1} − 1`, so k steps give
+  `3^k·2^{n-k} − 1`). Three reasons it is the *wrong* demo for this primitive, and
+  each one points at what the moat actually is:
+    - **It needs no rounding or truncation.** `3x+1` is always even for odd `x`,
+      so `/2` is *exact* — there is no float, no FMA-contraction, no reduction
+      order to break. It would compile bit-identically on every substrate
+      *trivially*, because there is nothing to round. It therefore does NOT
+      exercise the wedge (determinism *despite* rounding), which is the whole
+      point.
+    - **It is provable, so folding it is just constant-propagation of a math
+      fact** — a closed-form identity supplied as a premise, not where MIND's
+      value lives.
+    - **Its numbers are big, not hard** — `3^101` is ~161-bit, a *bignum-width*
+      demo (P1 prerequisite below), orthogonal to determinism-under-rounding.
+  1. *Why the FLOAT cases fit the wedge (the moat).* The interesting iterations —
+     `cos → Dottie`, `sin → 0`, Lorenz-RK2, Mandelbrot — round every step, yet
+     stay bit-identical across x86/ARM/GPU because the strict-FP tier pins the
+     reduction tree, rounding mode, and (per the cos case) the angle mode into
+     the hash-anchored mic@3 body bytes that `trace_hash` covers (NOT a separate
+     evidence-MAP field — there is none; the chain is tamper-evident but unsigned
+     by default, `SECURITY.md:98-102`). No mainstream compiler
+     ships that guarantee — it is the MIND-only artifact, same family as the
+     guided-decoding entry above (a deterministic, evidence-carrying transform,
+     not a black-box optimization). The *optional* fold-to-constant sub-case (an
+     exact-integer loop with a supplied, checkable identity → collapse with a
+     `folded-constant == loop-run` proof) is a real but *secondary* capability;
+     it is NOT `-O3` loop-unroll (LLVM/GCC fold only when they auto-derive the
+     induction variable; a number-theoretic identity must be *supplied*), but it
+     is the foil's capability, not the headline's.
+  2. *Scope / safety boundary.* Applies ONLY to integer / exact-arithmetic loops
+     (no float — no rounding, FMA-contraction, or reduction-order to break
+     byte-identity; this is the class the cross-substrate gate already covers).
+     The closed form is an *external, verifiable premise* the operator supplies;
+     the compiler proves the *fold matches the run* on a bounded witness set +
+     records the identity, it does NOT attempt to *discover* the closed form (that
+     would be the open Collatz conjecture — out of scope).
+  3. *Falsifiable go/no-go.* (a) `examples/collatz_closed_form.mind` emits the
+     folded constant AND the loop, and both hash-identical across x86/ARM under
+     the byte-identity gate. (b) The `2^101 − 1 → 3^101 − 1` identity round-trips
+     through the >64-bit exact-integer path with zero silent overflow. (c) The
+     evidence chain carries the `folded == run` equivalence and `mindc verify`
+     rejects a tampered fold. Any leg red → the primitive stays un-shipped.
+  4. *Two independent prerequisites — both net-new (verified against `src/` 2026-07-10).*
+     This is not a small extension of an existing pass; a code audit confirms **both**
+     the values *and* the loop-analysis machinery are missing today:
+     - **(P1) A big-integer tier — the hard blocker.** `3^101` / `2^101 − 1` are
+       ~101–161-bit, past i64. There is NO compiler-native integer wider than i64:
+       `DType` tops out at `I64` (`src/types/mod.rs:31-47`), the IR dtype enum too
+       (`src/ir/compact/v2/types.rs:10-24`), the interpreter scalar is `Value::Int(i64)`
+       (`src/eval/value.rs:110`), and an integer *literal* past the u64 range is a hard
+       `"integer overflow"` parse error (`src/parser/mod.rs:3921-3923`) — so `2^101−1`
+       cannot even be *written*. Worse, runtime `*`/`+` lower to bare `arith.muli`/`addi`
+       with no `nsw`/`nuw` and no trap (`src/mlir/lowering.rs:1731-1733`), so they
+       *silently wrap*; the only `checked_mul` in the tree is tensor-shape element-count
+       math (`src/shapes/mod.rs`, `autodiff.rs`), never user arithmetic. A naive fold
+       today would emit a *wrapped, wrong* constant with zero diagnostic. This is the
+       mind-auditor "bare `*` on a wide type" silent-overflow class. **One genuine
+       adjacency:** exact wide-integer arithmetic *is* already hand-rolled in `.mind` as
+       radix-2^16 multi-limb crypto (`std/x509.mind`, `std/ecdsa_p256.mind`,
+       `std/rsa_pss.mind`) — a reusable limb reference, but fixed-modulus and not wired
+       into the type system, folder, or any loop analysis.
+     - **(P2) A loop-recognition / scalar-evolution pass — also net-new.** There is
+       NO SCEV / induction-variable / trip-count / loop-to-constant infrastructure:
+       a grep for `scev|induction|loop.?collapse|closed.?form` across `src/` is empty;
+       `src/opt/` is four files and `fold.rs` (135 lines) does leaf literal-constant
+       folding only — it can't see a `while`. The sole `unroll` is determinism-driven
+       reduction-kernel lowering (`src/mlir/lowering.rs:845`), orthogonal to this. And
+       `examples/collatz.mind` is a naive runtime double-`while` (all i64, `:19-38`) —
+       a *determinism demo*, the philosophical opposite of a collapsible loop; nothing
+       there bootstraps the recognizer.
+     Net ordering: **P1 (big-integer + exact-overflow) first**, then P2 (recognizer)
+     on top. A `>64-bit exact-integer (bignum) tier` is therefore a prerequisite
+     candidate primitive in its own right.
+  *Companion runnable proof.* `examples/collatz.mind` already ships the *naive*
+  deterministic iterator (the `deterministic ≠ predictable` LinkedIn anchor, float-
+  free, bit-identical by construction). The closed-form example is the sibling that
+  proves the *fold*: same orbit, computed as a constant, byte-identical to the run —
+  the exact "verify to the last digit" story, now for a collapsed loop.
+  *Boundary case — the Mandelbrot counter-example (why this primitive is NOT a
+  "solve the loop" claim).* The Mandelbrot set is `M = {c ∈ ℂ : |zₙ₊₁ = zₙ²+c|
+  stays bounded as n→∞}` — the SAME iteration-operator shape (iterate a map, ask
+  about the orbit), but the opposite verdict. Three reasons it must be explicitly
+  *out of scope*, and each one tightens the go/no-go above:
+    (a) **No closed form, and provably so for membership** — `zₙ²+c` has no
+        `3ᵏ·2ⁿ⁻ᵏ−1`-style algebraic collapse; boundedness is semi-decidable
+        (escape is confirmable, membership is not). The loop-collapse primitive
+        fires ONLY when a *proven* identity is supplied as a checkable rule; it
+        never *searches* for one. Mandelbrot is the canonical case where no such
+        rule exists — the fold correctly refuses.
+    (b) **The iteration is over ℂ / floats** — squaring is `re²−im²+cᵣ, 2·re·im+cᵢ`,
+        i.e. real multiplies. That puts it in the *Relaxed* FP tier, outside the
+        integer/exact class the byte-identity gate covers. The Collatz orbit collapses
+        *because* it is exact-integer; Mandelbrot's does not *because* it is float —
+        a clean illustration of exactly where the wedge boundary sits.
+    (c) **The honest product is the DEMO, not the fold** — a deterministic,
+        fixed-iteration Mandelbrot escape-count renderer (`examples/mandelbrot.mind`,
+        strict-`n`, strict tile bounds) is the *same species as `lorenz_f64.mind`*:
+        a chaotic/complex map with a **hash-anchored (tamper-evident) trace** —
+        the "deterministic ≠ predictable" anchor, one more public runnable proof.
+        (Honesty: as a *strict-f64* example it pins on avx2 + run-to-run today; the
+        neon leg DEFERS under `pin_or_defer_strict_fp` until a real-aarch64 bless,
+        same class as `dot-f32-v` — do NOT claim x86==ARM==GPU byte-identity for it
+        until that lands. The integer `galperin_pi` demo, by contrast, is
+        avx2==neon by construction.) That is buildable today and worth doing; the
+        closed-form *fold* is not, and claiming otherwise would be the open-problem
+        overreach this entry exists to fence off.
+
+  *Paired boundary case — Lorenz / RK2 (the float integrator that CANNOT fold, but
+  DOES anchor the strict-reduction canary).* The Lorenz system, written in the same
+  iteration-operator notation, is an explicit integrator step
+  `xₙ₊₁ = xₙ + Δτ · A(xₙ)·xₙ` (explicit Euler, classifiable as Runge–Kutta order 2 —
+  the two-stage `И²` correction term). It is the second, sharper example of the
+  Mandelbrot class, and it adds one thing Mandelbrot does not:
+    (i) **Same no-fold verdict, same reason** — chaotic orbit over ℝ/float, no
+        closed form, so the loop-collapse primitive correctly refuses. Collatz folds
+        *because* it is exact-integer with a proven identity; Lorenz does not,
+        *because* it is float and chaotic. Determinism ≠ predictability: the orbit is
+        unpredictable, yet the *computation* is bit-identical across x86/ARM/GPU under
+        strict lowering (contraction off, pinned reduction order).
+    (ii) **It pins the strict-reduction-order canary concretely** — unlike Mandelbrot
+        (`z²+c`, no integrator), Lorenz is an *integrator with a fixed stage count*.
+        The number of `+`/`*` in the per-step reduction tree is exactly what the
+        strict-FP tier must pin; **RK2 vs RK4 = different fixed reduction trees →
+        different, but each individually byte-identical, canary hashes**. That makes
+        it the clean illustration of "the fold refuses, but the *step* is still
+        gated." `examples/lorenz_f64.mind` already exists (the public LinkedIn
+        determinism anchor); this entry just names *why* it is the paired float
+        example next to Mandelbrot. (Recent research independently arrived at the same
+        example, noting C++ templates suit these "iteral" formulations — the same idea as
+        our strict lowering: the iteration form fixes the reduction tree.)
+  *Third paired boundary case — convergent iteration (cos → the Dottie fixed
+  point; the case where the answer is KNOWABLE yet still un-foldable).* Iterating
+  `x ↦ cos(x)` in the same operator notation converges, from **any** starting value,
+  to the unique root of `cos(x) = x` — the **Dottie number 0.7390851332151607…**
+  (Python-verified: starts 0, 1, 42, −100, 1e6, π all freeze to the same 17 digits;
+  the start only changes how many steps to freeze, never the limit). It is a genuine
+  attractor because the map is a *contraction* near the fixed point:
+  `|cos′(0.739)| = |−sin(0.739)| ≈ 0.674 < 1`, so by the Banach fixed-point theorem
+  the whole line is pulled to one point. It sharpens the boundary in two ways
+  Mandelbrot/Lorenz do not:
+    (i) **Knowable-but-not-foldable.** Unlike chaotic Lorenz, the limit here is
+        *provably* determined (Banach) — yet the loop-collapse primitive **still**
+        correctly refuses, because the fixed point is a *transcendental* value with
+        no exact algebraic closed form to fold over. Determinism-of-the-orbit ≠
+        closed-form: convergence is guaranteed, but there is no `3¹⁰¹−1`-style
+        constant to substitute. Sharpens the go/no-go: the fold needs an *exact,
+        representable* value **and** a proven identity — Banach convergence alone is
+        not enough.
+    (ii) **The cleanest angle-mode / environment-as-contract demo of all four.**
+        The *same* `cos` iteration in **degrees** converges to a **different** fixed
+        point — `0.9998477415310881…` (solving `cos(x°) = x`, Python-verified). Same
+        operator, same "iterate to convergence," two different bit-exact limits,
+        decided entirely by an angle-mode flag the environment usually leaves
+        *implicit*. This is the concrete case for "the iteration form is a
+        hash-anchored contract": angle mode, FP mode, and reduction order must be pinned **into the
+        same hash** as the result, or "reproducible to the last digit" is a lie. RAD
+        vs DEG = two contracts → two limits, each individually byte-identical. (A
+        deterministic fixed-iteration `cos`-convergence demo, mode pinned into the
+        trace, is buildable today — same species as `lorenz_f64.mind`.)
+  *Fourth paired boundary case — Galperin's billiard-π (a DISCRETE exact-integer
+  count that computes a transcendental — the bridge between the fold and render
+  ends).* Two elastic balls on a half-line, big mass `M`, small mass `m` bouncing
+  it against a wall; count the elastic collisions. Galperin's theorem (Regular &
+  Chaotic Dynamics, 2003): with mass ratio
+  `M/m = 100^(N−1)`, the total number of collisions is **exactly `⌊π · 10^(N−1)⌋`**
+  — the first `N` digits of π. Python-verified here: ratios `1, 100, 10⁴, 10⁶, 10⁸,
+  10¹⁰` give collision counts `3, 31, 314, 3141, 31415, 314159`. It is the sharpest
+  case of the whole set because it sits *between* the two ends the other four split:
+    (i) **The state transitions are exact integers (a collision count), yet the
+        emergent quantity is transcendental (π).** Unlike Collatz (exact integer →
+        exact integer), the *observable* is a rational-arithmetic simulation of a
+        billiard whose collision total *encodes* π — the map is exact, the answer is
+        not algebraically closed. So it is **foldable in spirit but not to a
+        constant**: there is no `3¹⁰¹−1`-style closed form for "collisions at ratio
+        R"; you must *run* the counter. The compiler can, however, prove the count is
+        an exact integer computation (no rounding, phase-space unfolding = reflections)
+        and hash-anchor that the run is substrate-invariant (tamper-evident, not
+        cryptographically signed until RFC 0016 Phase C) — a determinism claim strictly
+        stronger than Lorenz's, because there is *zero* float in the loop.
+    (ii) **It is the public credibility anchor of the "deterministic ≠ predictable"
+        wedge** — π is famously not predictable digit-to-digit yet fully
+        deterministic, and here it *emerges from counting integer collisions*, the
+        most tangible possible demonstration. Same family as `countpi.com` (STARGA's
+        10-yr-old Pi-digit anchor) and `lorenz_f64.mind`. ⚠ **Correction (2026-07-10,
+        mind-dev-verified):** an *exact-velocity* billiard sim is NOT i64-safe — exact
+        elastic velocities are irreducible rationals whose denominator compounds to
+        bignum (N=4 → 31313 bits), so only N=1 stays in i64. The exact sim is therefore
+        **P1-blocked**; the closed form `⌊π/atan(1/k)⌋` needs `atan` (absent from std,
+        `Relaxed`/libm even if added). So Galperin is the strongest *story* but is NOT
+        buildable-today after all. The one clean strict-path demo today is
+        `examples/mandelbrot.mind` (scaffolded, `mindc check` clean) alongside the
+        already-shipped `lorenz_f64.mind`.
+  Placement: Galperin bridges the foil and the headline — exact-integer like Collatz
+  (no rounding), un-foldable-to-a-constant like the float cases (must run the loop),
+  and the strongest public "determinism ≠ predictability" story of the five because
+  the transcendental falls out of a pure integer count.
+
+  Net (ordering reflects the "do not do Collatz" guidance): the **headline** is the
+  float/rounding cases — Mandelbrot (`z²+c`, no integrator) and Lorenz/RK2
+  (chaotic integrator, fixed stage count) anchor the strict-reduction canary;
+  cos-convergence (contraction → Banach fixed point) anchors the
+  environment-as-contract (angle/FP-mode-in-the-hash) requirement. Each rounds
+  every step and is *still* bit-identical across substrates — that is the moat.
+  Collatz-101 (exact integer, proven identity → optional fold-to-constant +
+  hash-anchored `folded==run` equivalence) is the **foil**: the easy provable end that needs no rounding, has
+  no reduction order to break, and would compile identically everywhere trivially
+  — so it shows where the wedge is *not*, and doubles as the motivating example
+  for the *secondary* fold capability + the P1 bignum prerequisite. Shipping the
+  float cases as the demo and Collatz as the labelled foil is the honest story;
+  presenting Collatz as the flagship would advertise the one case that does not
+  exercise determinism-under-rounding at all.
 
 **Data Pipeline Connectors:**
 - Seamless integration with data lakes and cloud platforms

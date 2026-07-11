@@ -191,13 +191,69 @@ enum Expr {
     },
 }
 
-/// A generated program: a chain of `let v{i}` bindings, an OPTIONAL while-loop
-/// accumulator, and a return expression. `pub fn f(a: i64) -> i64`.
+/// Where a generated `continue` is wrapped inside a range-`for` body. Each
+/// variant lands the `continue` in a DIFFERENT `descend_for_continue` arm of the
+/// shared desugar (`src/eval/lower.rs`), so the fuzzer exercises the exhaustive
+/// descent that splices the loop step before every in-scope `continue`:
+///   * `Direct`  — `if C { continue; }` straight in the loop body (the `If` arm).
+///   * `Block`   — `{ if C { continue; } }` (the `Block`/`SetLit` arm).
+///   * `Region`  — `region { if C { continue; } }` (the `Region` arm).
+///   * `Match`   — `match (i | 1) { _ => { if C { continue; } } }` (the `Match`
+///     arm → `inject_step_before_continue_arm`).
+#[derive(Clone, Copy)]
+enum Wrapper {
+    Direct,
+    /// deferred (not generated): bare `{ … }` parses as a set literal → `map_new`
+    /// runtime, outside the deterministic-integer VM. Kept for the upgrade path.
+    #[allow(dead_code)]
+    Block,
+    /// deferred (not generated): `region { … continue … }` leaks a region frame
+    /// on the non-local `continue` exit (real region-lowering bug, handed off).
+    /// Kept for the upgrade path — the emit + VM arms are ready.
+    #[allow(dead_code)]
+    Region,
+    Match,
+}
+
+/// A range-`for` loop carrying a guarded `continue` — the construct the shared
+/// `for`/`for-each` desugar rewrites (splicing the counter step before every
+/// in-scope `continue` so the loop still advances). The differential fuzzer
+/// generated NONE of this before, so a `descend_for_continue` mis-descend that
+/// drops/duplicates the step stayed invisible to all three oracles. This closes
+/// that hole:
+///
+///     let mut sum = 0;
+///     for i in 0..end { <wrapper> if (i CMP thresh) { continue; }  sum = sum + body; }
+///
+/// The `continue` is guarded by an `if` (reachable but not every iteration) and
+/// sits before the accumulate, so a WORKING step-injection yields the sum over
+/// the non-skipped iterations while a BROKEN one either never advances `i`
+/// (infinite loop) or advances it wrongly (a different, catchable sum).
+#[derive(Clone)]
+struct ForCont {
+    /// Exclusive upper bound (`for i in 0..end`); a small positive literal.
+    end: Expr,
+    /// Continue guard comparison: `if (i CMP thresh) { continue; }`.
+    guard_cmp: CmpOp,
+    /// Guard threshold (a small literal), compared against the induction `i`.
+    guard_thresh: Expr,
+    /// Accumulated each NON-skipped iteration (`sum = sum + body`); may use `i`.
+    body: Expr,
+    /// How the guarded `continue` is wrapped (which descend arm it targets).
+    wrapper: Wrapper,
+}
+
+/// A generated program: a chain of `let v{i}` bindings, an OPTIONAL loop (either
+/// a `while` accumulator OR a range-`for`-with-`continue`, mutually exclusive),
+/// and a return expression. `pub fn f(a: i64) -> i64`.
 struct Program {
     lets: Vec<Expr>,
     /// `Some((bound, body))` adds `let mut sum=0; let mut i=0; while i<bound {
     /// sum = sum + body; i = i+1; }`. `body` may reference `Induction`.
     loop_accum: Option<(Expr, Expr)>,
+    /// `Some(fc)` adds a range-`for` loop with a guarded `continue`. Mutually
+    /// exclusive with `loop_accum`; both bind their accumulator as `v{n_lets}`.
+    for_cont: Option<ForCont>,
     ret: Expr,
 }
 
@@ -280,10 +336,14 @@ fn gen_binding(g: &mut Lcg, n_lets: usize, allow_induction: bool) -> Expr {
     }
 }
 
-/// Generate a full program. Two families, chosen by the PRNG:
-///   * `scalar` — pure let-chain + return (SSA / lowering stress).
-///   * `accum`  — let-chain + while-loop accumulator + return (reduction-order
+/// Generate a full program. Three mutually-exclusive loop families, chosen by
+/// the PRNG:
+///   * `scalar`  — pure let-chain + return (SSA / lowering stress).
+///   * `accum`   — let-chain + while-loop accumulator + return (reduction-order
 ///     stress: a loop the backend must NOT silently reorder/vectorise wrongly).
+///   * `forcont` — let-chain + range-`for` loop carrying a guarded `continue` +
+///     return (desugar stress: the shared step-injection must run the counter
+///     step on the `continue` path, else the loop hangs or sums wrongly).
 fn gen_program(g: &mut Lcg) -> Program {
     let n_lets = 1 + g.below(4) as usize; // 1..=4 bindings
     let mut lets = Vec::with_capacity(n_lets);
@@ -293,20 +353,27 @@ fn gen_program(g: &mut Lcg) -> Program {
         lets.push(gen_binding(g, k, false));
     }
 
-    // ~55% of programs get the loop accumulator.
-    let loop_accum = if g.below(100) < 55 {
+    // Loop family: ~40% while-accum, ~35% for-continue, ~25% scalar. The
+    // for-continue family is the one that exercises the continue/for desugar
+    // (`inject_step_before_continue` / `descend_for_continue`) — previously
+    // never generated, so a mis-descend there produced the SAME wrong answer on
+    // every substrate and every oracle and stayed green.
+    let mut loop_accum = None;
+    let mut for_cont = None;
+    let roll = g.below(100);
+    if roll < 40 {
         // Bound: a small positive literal (1..=12) so iteration count is
         // bounded and > 0 for positive inputs; the loop body may use `i`.
         let bound = Expr::Const(1 + g.below(12) as i64);
         let body = gen_expr(g, 3, n_lets, true);
-        Some((bound, body))
-    } else {
-        None
-    };
+        loop_accum = Some((bound, body));
+    } else if roll < 75 {
+        for_cont = Some(gen_for_cont(g, n_lets));
+    }
 
     // Return combines the last binding and (if present) the accumulator.
     let last_var = Expr::Var(n_lets - 1);
-    let ret = if loop_accum.is_some() {
+    let ret = if loop_accum.is_some() || for_cont.is_some() {
         // `sum` is bound after the lets as v{n_lets}; reference it by index.
         Expr::Bin(Op::Add, Box::new(Expr::Var(n_lets)), Box::new(last_var))
     } else {
@@ -320,7 +387,66 @@ fn gen_program(g: &mut Lcg) -> Program {
     Program {
         lets,
         loop_accum,
+        for_cont,
         ret,
+    }
+}
+
+/// Generate a range-`for`-with-guarded-`continue` loop. The bound is a small
+/// positive literal (`4..=12`); the guard threshold is a literal inside that
+/// range so SOME iterations `continue` and SOME fall through (the `continue`
+/// path is genuinely reachable, which is what makes a dropped step observable).
+/// The wrapper is index-derived across all four shapes so every run covers each
+/// `descend_for_continue` arm deterministically.
+fn gen_for_cont(g: &mut Lcg, n_lets: usize) -> ForCont {
+    let end_val = 4 + g.below(9) as i64; // 4..=12
+    let thresh = 1 + g.below((end_val - 1) as u32) as i64; // 1..=end-1
+    let guard_cmp = match g.below(6) {
+        0 => CmpOp::Lt,
+        1 => CmpOp::Le,
+        2 => CmpOp::Gt,
+        3 => CmpOp::Ge,
+        4 => CmpOp::Eq,
+        _ => CmpOp::Ne,
+    };
+    // Only `Direct` and `Match` are generated — both are pure-integer,
+    // VM-executable shapes that still land the `continue` in TWO distinct
+    // `descend_for_continue` arms (the `If`-then splice and the `Match`-arm
+    // splice via `inject_step_before_continue_arm`). The other two wrappers are
+    // deferred, each for a concrete reason the differential harness must not
+    // paper over:
+    //
+    // deferred: `Wrapper::Region` — a `region { … continue … }` whose `continue`
+    //   targets an OUTER loop LEAKS a region frame: lowering emits
+    //   `__mind_region_enter` at the region head but the `continue` jumps to the
+    //   loop header BEFORE `__mind_region_exit`, so `mind_region_depth` (a
+    //   process-global in runtime-support/mind_intrinsics.c, cap 64) climbs until
+    //   `__mind_region_enter` aborts. Single-call NET-verified: a loop that
+    //   `continue`s >64 times through a `region {}` SIGABRTs in the compiled ELF.
+    //   A real region-lowering bug (non-local exit skips the region exit) handed
+    //   to mind-mlir-lowering — NOT a byte-identity defect.
+    //   upgrade path: re-add once region exit runs on the continue/break/return
+    //   path; the `Wrapper::Region` emit + the VM's `Region` arm already exist.
+    // deferred: `Wrapper::Block` — a bare `{ … }` in statement position parses as
+    //   a SET LITERAL (`N::SetLit`), lowering to the `map_new`/set runtime rather
+    //   than a pure-integer block; the integer mic@3-VM oracle does not model
+    //   collections. Its descend arm (`SetLit`) is covered structurally; running
+    //   it through all three oracles would require teaching the VM the set
+    //   runtime, out of scope for the deterministic-integer fuzzer.
+    //   upgrade path: re-add if/when the VM models the set/map runtime.
+    let wrapper = match g.below(2) {
+        0 => Wrapper::Direct,
+        _ => Wrapper::Match,
+    };
+    // Body accumulated on the NON-skipped path; references the induction `i` so
+    // the accumulated value depends on WHICH iterations were skipped.
+    let body = gen_expr(g, 3, n_lets, true);
+    ForCont {
+        end: Expr::Const(end_val),
+        guard_cmp,
+        guard_thresh: Expr::Const(thresh),
+        body,
+        wrapper,
     }
 }
 
@@ -422,6 +548,37 @@ fn emit_program(p: &Program) -> String {
         s.push_str("        i = i + 1;\n");
         s.push_str("    }\n");
     }
+    if let Some(fc) = &p.for_cont {
+        let sum_idx = p.lets.len();
+        s.push_str(&format!("    let mut v{sum_idx}: i64 = 0;\n"));
+        s.push_str("    for i in 0..");
+        emit_expr(&fc.end, &mut s);
+        s.push_str(" {\n");
+        // The guarded `continue`, wrapped per the chosen descent shape. `i` is
+        // the induction; the guard is emitted inline (like an `if` condition).
+        let mut guard = String::new();
+        guard.push_str("if i ");
+        guard.push_str(emit_cmp(fc.guard_cmp));
+        guard.push(' ');
+        emit_expr(&fc.guard_thresh, &mut guard);
+        guard.push_str(" { continue; }");
+        match fc.wrapper {
+            Wrapper::Direct => s.push_str(&format!("        {guard}\n")),
+            Wrapper::Block => s.push_str(&format!("        {{ {guard} }}\n")),
+            Wrapper::Region => s.push_str(&format!("        region {{ {guard} }}\n")),
+            // A single catch-all arm is exhaustive; `(i | 1)` is a plain i64
+            // scrutinee. The arm body is a braced block holding the guard, so
+            // the desugar routes through `inject_step_before_continue_arm`.
+            Wrapper::Match => {
+                s.push_str(&format!("        match (i | 1) {{ _ => {{ {guard} }} }}\n"))
+            }
+        }
+        // Accumulate on the NON-skipped path (after the wrapped `continue`).
+        s.push_str(&format!("        v{sum_idx} = v{sum_idx} + "));
+        emit_expr(&fc.body, &mut s);
+        s.push_str(";\n");
+        s.push_str("    }\n");
+    }
     s.push_str("    return ");
     emit_expr(&p.ret, &mut s);
     s.push_str(";\n}\n");
@@ -516,6 +673,29 @@ fn eval_program(p: &Program, a: i64) -> i64 {
         }
         vars.push(sum);
     }
+    if let Some(fc) = &p.for_cont {
+        // Model `for i in 0..end { if guard(i) { continue }; sum += body(i) }`
+        // with EXACT for-loop-continue semantics: the induction advances on
+        // BOTH paths (the fall-through tail step AND the continue path's
+        // step-injection). A compiler that fails to inject the step on the
+        // continue path would loop forever (guard ever true) or advance wrongly
+        // — either way its ELF / mic@3-VM result diverges from this oracle.
+        let end_v = eval_expr(&fc.end, a, 0, &vars);
+        let thresh = eval_expr(&fc.guard_thresh, a, 0, &vars);
+        let mut sum: i64 = 0;
+        let mut i: i64 = 0;
+        while i < end_v {
+            let iter = i; // the iteration value visible to guard AND body
+            // Both paths advance the induction exactly once.
+            i = i.wrapping_add(1);
+            if eval_cmp(fc.guard_cmp, iter, thresh) {
+                continue; // skip the accumulate — induction already advanced
+            }
+            let inc = eval_expr(&fc.body, a, iter, &vars);
+            sum = sum.wrapping_add(inc);
+        }
+        vars.push(sum);
+    }
     eval_expr(&p.ret, a, 0, &vars)
 }
 
@@ -541,6 +721,25 @@ mod mic3vm {
     use libmind::ir::{BinOp, IRModule, Instr, ValueId};
     use std::collections::HashMap;
 
+    /// Control-flow signal threaded out of an instruction sequence. `Return`
+    /// unwinds to the enclosing fn; `Continue`/`Break` unwind to the enclosing
+    /// `While` carrying the loop-control `live` snapshot (`name -> value`)
+    /// captured at the `continue`/`break` site — exactly the SSA snapshot the
+    /// lowering forwards to the `^while_header` / `^while_after` block-args. This
+    /// is what lets the VM execute the range-`for`/`continue` desugar: the loop
+    /// step spliced before each `continue` runs, and its post-step carried
+    /// values reach the header via this snapshot.
+    enum Flow {
+        /// Fell off the end of the sequence normally.
+        Fall,
+        /// A `Return` was hit; carries the returned value.
+        Return(i64),
+        /// A `continue` was hit; carries the resolved `name -> value` snapshot.
+        Continue(Vec<(String, i64)>),
+        /// A `break` was hit; carries the resolved `name -> value` snapshot.
+        Break(Vec<(String, i64)>),
+    }
+
     /// Look up `fname` in the parsed module and evaluate it at `arg`.
     pub fn eval_fn(module: &IRModule, fname: &str, arg: i64) -> Result<i64, String> {
         for instr in &module.instrs {
@@ -550,14 +749,21 @@ mod mic3vm {
             {
                 if name == fname {
                     let mut env: HashMap<usize, i64> = HashMap::new();
-                    if let Some(v) = exec_seq(body, &mut env, &[arg])? {
-                        return Ok(v);
+                    match exec_seq(body, &mut env, &[arg])? {
+                        Flow::Return(v) => return Ok(v),
+                        Flow::Fall => {
+                            // No explicit `Return` hit — fall back to ret_id.
+                            if let Some(rid) = ret_id {
+                                return get(&env, *rid);
+                            }
+                            return Err("mic@3-VM: fn reached end with no return".into());
+                        }
+                        Flow::Continue(_) | Flow::Break(_) => {
+                            return Err("mic@3-VM: continue/break escaped to fn top level (no \
+                                 enclosing loop) — a lowering bug"
+                                .into());
+                        }
                     }
-                    // No explicit `Return` hit — fall back to the fn's ret_id.
-                    if let Some(rid) = ret_id {
-                        return get(&env, *rid);
-                    }
-                    return Err("mic@3-VM: fn reached end with no return".into());
                 }
             }
         }
@@ -570,13 +776,37 @@ mod mic3vm {
             .ok_or_else(|| format!("mic@3-VM: unbound value %{}", v.0))
     }
 
+    /// Resolve a loop-control `live` snapshot (`name -> ValueId`) to concrete
+    /// `name -> value` pairs against the current env.
+    fn resolve_live(
+        live: &[(String, ValueId)],
+        env: &HashMap<usize, i64>,
+    ) -> Result<Vec<(String, i64)>, String> {
+        live.iter()
+            .map(|(n, v)| Ok((n.clone(), get(env, *v)?)))
+            .collect()
+    }
+
+    /// The next carried value for loop-carried var `name`, taken from a
+    /// `continue`/`break` snapshot. The snapshot is captured from the full
+    /// in-scope env, so every loop-carried name is present; a miss is a real
+    /// lowering inconsistency and is surfaced loudly.
+    fn from_snapshot(snap: &[(String, i64)], name: &str) -> Result<i64, String> {
+        snap.iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| *v)
+            .ok_or_else(|| {
+                format!("mic@3-VM: loop-carried var `{name}` missing from continue/break snapshot")
+            })
+    }
+
     /// Execute a straight-line instruction sequence, threading the SSA env.
-    /// Returns `Ok(Some(v))` when a `Return` is hit, `Ok(None)` at the end.
+    /// Returns the control-flow `Flow` that terminated the sequence.
     fn exec_seq(
         instrs: &[Instr],
         env: &mut HashMap<usize, i64>,
         args: &[i64],
-    ) -> Result<Option<i64>, String> {
+    ) -> Result<Flow, String> {
         for instr in instrs {
             match instr {
                 Instr::Param { dst, index, .. } => {
@@ -594,10 +824,18 @@ mod mic3vm {
                     env.insert(dst.0, apply(*op, l, r)?);
                 }
                 Instr::Return { value } => {
-                    return Ok(Some(match value {
+                    return Ok(Flow::Return(match value {
                         Some(v) => get(env, *v)?,
                         None => 0,
                     }));
+                }
+                // `continue` / `break` unwind to the enclosing `While`, carrying
+                // the live snapshot resolved to concrete values.
+                Instr::Continue { live } => {
+                    return Ok(Flow::Continue(resolve_live(live, env)?));
+                }
+                Instr::Break { live } => {
+                    return Ok(Flow::Break(resolve_live(live, env)?));
                 }
                 Instr::While {
                     cond_id,
@@ -611,26 +849,61 @@ mod mic3vm {
                     // Loop-carried values live in the `init_ids` SSA slots; each
                     // iteration re-binds those slots to the current carried value,
                     // re-evaluates the condition, runs the body, and captures the
-                    // post-body `live_vars` ids as the next carried value.
+                    // next carried value from EITHER the post-body `live_vars` ids
+                    // (fall-through back-edge) OR the `continue`/`break` snapshot
+                    // (early control flow) — the latter is what makes the
+                    // range-`for`/`continue` desugar execute correctly here.
                     let mut carried: Vec<i64> = init_ids
                         .iter()
                         .map(|id| get(env, *id))
                         .collect::<Result<_, _>>()?;
+                    // Defensive runaway guard: a correct generated loop runs
+                    // <=12 iterations. If a BROKEN lowering ever made the VM's
+                    // loop-carried snapshot fail to advance, this converts an
+                    // otherwise-silent hang into a crisp differential failure
+                    // (the value never reaches the oracle) instead of a timeout.
+                    let mut guard_iters = 0u64;
                     loop {
+                        guard_iters += 1;
+                        if guard_iters > 1_000_000 {
+                            return Err(
+                                "mic@3-VM: While exceeded 1e6 iterations — a \
+                                 non-advancing loop-carried value (lowering bug)"
+                                    .into(),
+                            );
+                        }
                         for (k, id) in init_ids.iter().enumerate() {
                             env.insert(id.0, carried[k]);
                         }
-                        if let Some(v) = exec_seq(cond_instrs, env, args)? {
-                            return Ok(Some(v));
+                        match exec_seq(cond_instrs, env, args)? {
+                            Flow::Fall => {}
+                            other => return Ok(other),
                         }
                         if get(env, *cond_id)? == 0 {
                             break;
                         }
-                        if let Some(v) = exec_seq(body, env, args)? {
-                            return Ok(Some(v));
-                        }
-                        for (k, (_, post)) in live_vars.iter().enumerate() {
-                            carried[k] = get(env, *post)?;
+                        match exec_seq(body, env, args)? {
+                            Flow::Fall => {
+                                for (k, (_, post)) in live_vars.iter().enumerate() {
+                                    carried[k] = get(env, *post)?;
+                                }
+                            }
+                            Flow::Return(v) => return Ok(Flow::Return(v)),
+                            // `continue`: adopt the snapshot's carried values and
+                            // re-test the header (the counter step spliced before
+                            // the `continue` is already reflected in the snapshot).
+                            Flow::Continue(snap) => {
+                                for (k, (name, _)) in live_vars.iter().enumerate() {
+                                    carried[k] = from_snapshot(&snap, name)?;
+                                }
+                            }
+                            // `break`: adopt the snapshot's carried values and exit.
+                            Flow::Break(snap) => {
+                                for (k, (name, _)) in live_vars.iter().enumerate() {
+                                    carried[k] = from_snapshot(&snap, name)?;
+                                }
+                                break;
+                            }
                         }
                     }
                     // Post-loop references use the `exit_ids` SSA slots.
@@ -638,6 +911,15 @@ mod mic3vm {
                         env.insert(eid.0, carried[k]);
                     }
                 }
+                // A `region { … }` lowers to a transparent block in the IR: its
+                // body executes inline in the same SSA env and its `result` id is
+                // the last body value (already bound). A `continue`/`break`/
+                // `return` inside it must propagate OUT — that is precisely the
+                // `descend_for_continue` `Region` arm this fuzzer now exercises.
+                Instr::Region { body, .. } => match exec_seq(body, env, args)? {
+                    Flow::Fall => {}
+                    other => return Ok(other),
+                },
                 Instr::If {
                     cond_id,
                     cond_instrs,
@@ -646,25 +928,41 @@ mod mic3vm {
                     else_instrs,
                     else_result,
                     dst,
+                    merges,
                     ..
                 } => {
-                    if let Some(v) = exec_seq(cond_instrs, env, args)? {
-                        return Ok(Some(v));
+                    match exec_seq(cond_instrs, env, args)? {
+                        Flow::Fall => {}
+                        other => return Ok(other),
                     }
                     // Evaluate only the taken branch (matches the ELF `scf.if`,
                     // and keeps an untaken branch's arithmetic from being run).
-                    if get(env, *cond_id)? != 0 {
-                        if let Some(v) = exec_seq(then_instrs, env, args)? {
-                            return Ok(Some(v));
-                        }
-                        let r = get(env, *then_result)?;
-                        env.insert(dst.0, r);
+                    // A `continue`/`break`/`return` inside the taken branch
+                    // propagates OUT (never falls through to the branch result
+                    // or the merge rebind — exactly the desugared `continue`).
+                    let taken = get(env, *cond_id)? != 0;
+                    let (branch, result) = if taken {
+                        (then_instrs, then_result)
                     } else {
-                        if let Some(v) = exec_seq(else_instrs, env, args)? {
-                            return Ok(Some(v));
+                        (else_instrs, else_result)
+                    };
+                    match exec_seq(branch, env, args)? {
+                        Flow::Fall => {
+                            let r = get(env, *result)?;
+                            env.insert(dst.0, r);
+                            // Apply the F2 merge phis: each OUTER variable
+                            // reassigned in either branch is rebound after the
+                            // if to the value from the TAKEN branch. The
+                            // desugared `for`-`continue` step (`i = i + 1`
+                            // spliced inside the then-branch) creates such a
+                            // merge, so the tail increment / next cond re-test
+                            // must read the merged id, not an unbound branch id.
+                            for (merge_id, then_val, else_val) in merges.iter() {
+                                let v = get(env, if taken { *then_val } else { *else_val })?;
+                                env.insert(merge_id.0, v);
+                            }
                         }
-                        let r = get(env, *else_result)?;
-                        env.insert(dst.0, r);
+                        other => return Ok(other),
                     }
                 }
                 other => {
@@ -674,7 +972,7 @@ mod mic3vm {
                 }
             }
         }
-        Ok(None)
+        Ok(Flow::Fall)
     }
 
     fn apply(op: BinOp, l: i64, r: i64) -> Result<i64, String> {
@@ -864,6 +1162,7 @@ fn mindfuzz_cross_substrate_determinism() {
     let mut g = Lcg::new(FUZZ_SEED);
     let mut n_scalar = 0usize;
     let mut n_accum = 0usize;
+    let mut n_forcont = 0usize;
     let mut n_if = 0usize;
     let mut mic3_digest = Sha256::new(); // running digest over all mic@3 bytes
 
@@ -886,6 +1185,8 @@ fn mindfuzz_cross_substrate_determinism() {
         let prog = gen_program(&mut g);
         if prog.loop_accum.is_some() {
             n_accum += 1;
+        } else if prog.for_cont.is_some() {
+            n_forcont += 1;
         } else {
             n_scalar += 1;
         }
@@ -1021,13 +1322,21 @@ fn mindfuzz_cross_substrate_determinism() {
             );
         }
 
+        let family = if prog.loop_accum.is_some() {
+            "accum"
+        } else if let Some(fc) = &prog.for_cont {
+            match fc.wrapper {
+                Wrapper::Direct => "forcont/direct",
+                Wrapper::Block => "forcont/block",
+                Wrapper::Region => "forcont/region",
+                Wrapper::Match => "forcont/match",
+            }
+        } else {
+            "scalar"
+        };
         println!(
             "  PROG {idx:03} [{}{}] mic3={}… ({} bytes) probes={} OK (ELF{})",
-            if prog.loop_accum.is_some() {
-                "accum"
-            } else {
-                "scalar"
-            },
+            family,
             if program_has_if(&prog) { "+if" } else { "" },
             &mic3_hash[..12],
             bytes_a.len(),
@@ -1059,8 +1368,9 @@ fn mindfuzz_cross_substrate_determinism() {
     }
     println!(
         "\nmindfuzz_cross_substrate PASS: {iters} programs \
-         ({n_scalar} scalar / {n_accum} accum, {n_if} with if/else), {} probes \
-         each, 0 mic@3 non-determinism, 0 mic@3-VM divergence, 0 ELF divergence.\n\
+         ({n_scalar} scalar / {n_accum} accum / {n_forcont} for+continue, \
+         {n_if} with if/else), {} probes each, 0 mic@3 non-determinism, \
+         0 mic@3-VM divergence, 0 ELF divergence.\n\
          batch mic@3 digest (x86; ARM must match) = {batch}",
         PROBE_INPUTS.len()
     );

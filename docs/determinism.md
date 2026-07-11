@@ -121,12 +121,18 @@ Two execution tiers; the contract is **bit-identity**, never "within tolerance"
 (tolerance-equal is a correctness-testing notion, not a determinism guarantee).
 
 - **Strict tier (default).** Integer and Q16.16 results are byte-identical across
-  substrates (x86 == ARM), gated by `cross_substrate` (12/12). ✅ **Scalar**
-  `f64`/`f32` arithmetic runs on the strict path today — fixed source order, no
-  FMA-contraction, no reassociation — and is run-to-run bit-identical. This is
-  verified **cross-substrate on hardware**: the same `f64` Lorenz–Euler
-  integrator produces results identical to the last bit on an x86 CPU and on an
-  NVIDIA GPU (CUDA, `sm_86`), because the same no-FMA-contraction contract
+  substrates (x86 == ARM), gated by the `cross_substrate` suite (17 gates /
+  21 `#[test]` fns). ✅ **Scalar** `f64`/`f32` arithmetic runs on the strict path
+  today — fixed source order, no FMA-contraction, no reassociation — and is
+  run-to-run bit-identical. The `cross_substrate` suite enforces x86(avx2) ==
+  ARM(neon) for the **integer/Q16.16** canaries by construction; the strict
+  *scalar-float* legs pin on avx2 + run-to-run and DEFER the neon assertion until
+  a real-aarch64 bless (`pin_or_defer_strict_fp`), so float byte-identity is a
+  contract we hold, not yet a suite-gated one for every substrate. Separately, and
+  **outside** the `cross_substrate` suite (which has no GPU arm), the same `f64`
+  Lorenz–Euler integrator has been verified by hand to produce results identical
+  to the last bit on an x86 CPU and on an NVIDIA GPU (CUDA, `sm_86`), because the
+  same no-FMA-contraction contract
   (`-ffp-contract=off` on the CPU, `--fmad=false` on the GPU) forbids the fused
   multiply-add the hardware would otherwise apply — with FMA fusion left on, the
   chaotic trajectory diverges, worse the longer it runs. Because scalar
