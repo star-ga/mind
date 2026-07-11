@@ -203,6 +203,12 @@ const RUNTIME_SUPPORT_REL: &str = "runtime-support/mind_intrinsics.c";
 
 static GENREF_SO: OnceLock<Option<PathBuf>> = OnceLock::new();
 
+// Serialize the genref *runtime* tests: they all dlopen the same smoke .so and
+// thus share its process-global genref_table, which realloc-moves as it grows.
+// Running them on parallel test threads is a data race (a concurrent gen_alloc
+// realloc under a gen_deref/gen_free read) -- the source of the Windows flake.
+static GENREF_RUNTIME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 type GenAllocFn = unsafe extern "C" fn(i64) -> i64;
 type GenDerefFn = unsafe extern "C" fn(i64) -> i64;
 type GenFreeFn = unsafe extern "C" fn(i64) -> i64;
@@ -295,6 +301,9 @@ fn genref_runtime_alloc_then_deref_returns_live_ptr() {
         println!("clang not found — skipping genref C-shim smoke test");
         return;
     };
+    let _serial = GENREF_RUNTIME_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let lib = open_genref_lib(so_path);
 
     let handle = call_gen_alloc(&lib, 64);
@@ -315,6 +324,9 @@ fn genref_runtime_free_makes_deref_return_zero() {
         println!("clang not found — skipping genref C-shim smoke test");
         return;
     };
+    let _serial = GENREF_RUNTIME_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let lib = open_genref_lib(so_path);
 
     let handle = call_gen_alloc(&lib, 32);
@@ -343,6 +355,9 @@ fn genref_runtime_stale_handle_returns_zero_after_slot_reuse() {
         println!("clang not found — skipping genref C-shim smoke test");
         return;
     };
+    let _serial = GENREF_RUNTIME_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let lib = open_genref_lib(so_path);
 
     // Alloc + free to create a free slot with generation 1.
@@ -369,6 +384,9 @@ fn genref_runtime_null_handle_returns_zero() {
         println!("clang not found — skipping genref C-shim smoke test");
         return;
     };
+    let _serial = GENREF_RUNTIME_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let lib = open_genref_lib(so_path);
 
     // gen_alloc with non-positive bytes → handle 0.
