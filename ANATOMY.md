@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3071 | **Est. tokens:** ~7,370,516
-**Generated:** 2026-07-11 00:31 UTC
+**Files:** 3071 | **Est. tokens:** ~7,370,887
+**Generated:** 2026-07-11 01:09 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~28,336 |
+| `./` | 34 | ~28,329 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -383,7 +383,7 @@
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,474 |
-| `src/eval/` | 12 | ~64,105 |
+| `src/eval/` | 12 | ~64,483 |
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
@@ -485,7 +485,7 @@
 - `.editorconfig` (~51 tok, small) — root = true
 - `.gitattributes` (~130 tok, small) — # Enforce LF line endings for all text so byte-exact tests (fmt idempotence,
 - `GITHUB_SETUP_INSTRUCTIONS.md` (~240 tok, medium) — GitHub Setup (Quick)
-- `.gitignore` (~534 tok, large) — # Rust
+- `.gitignore` (~527 tok, large) — # Rust
 - `incompatible` (~0 tok, tiny)
 - `LICENSE` (~2573 tok, huge) —                                  Apache License
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
@@ -3806,7 +3806,7 @@
 - `tensor.rs` (~8360 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/`
 
-- `struct_resolver.rs` (~6527 tok, huge) — Copyright 2025 STARGA Inc.
+- `struct_resolver.rs` (~6905 tok, huge) — Copyright 2025 STARGA Inc.
 - `value.rs` (~2003 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/exec/`
 

@@ -93,5 +93,5 @@ examples/**/*.html
 # build artifacts must not be committed (unprotected .so)
 examples/**/*.so
 
-# Iteration-operator research + prior-art papers name a design-partner — keep in mind-internal, never public
+# Internal research notes + prior-art papers — keep in mind-internal, never public
 docs/research/
