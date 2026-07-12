@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3077 | **Est. tokens:** ~7,393,852
-**Generated:** 2026-07-12 04:44 UTC
+**Files:** 3077 | **Est. tokens:** ~7,395,452
+**Generated:** 2026-07-12 05:03 UTC
 
 ## Token Budget Guide
 
@@ -49,7 +49,7 @@
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 21 | ~38,272 |
 | `examples/c/` | 2 | ~400 |
-| `examples/columnar/` | 4 | ~5,985 |
+| `examples/columnar/` | 4 | ~7,585 |
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/distribution-crossisa/` | 6 | ~6,336 |
 | `examples/emit_ir/` | 5 | ~13,648 |
@@ -754,10 +754,10 @@
 - `collatz.mind` (~495 tok, medium) — Deterministic integer Collatz (3n+1) iterator — the integer sibling of the
 ### `examples/columnar/`
 
-- `structural_scan_json.mind` (~1481 tok, large) — examples/columnar/structural_scan_json.mind
-- `structural_scan_test.py` (~1037 tok, large) — Runnable verification for examples/columnar/structural_scan_json.mind.
-- `tiled_fold.mind` (~1522 tok, huge) — examples/columnar/tiled_fold.mind
-- `tiled_fold_test.py` (~1945 tok, huge) — Runnable verification for examples/columnar/tiled_fold.mind.
+- `structural_scan_json.mind` (~1703 tok, huge) — examples/columnar/structural_scan_json.mind
+- `structural_scan_test.py` (~1541 tok, huge) — Runnable verification for examples/columnar/structural_scan_json.mind.
+- `tiled_fold.mind` (~1784 tok, huge) — examples/columnar/tiled_fold.mind
+- `tiled_fold_test.py` (~2557 tok, huge) — Runnable verification for examples/columnar/tiled_fold.mind.
 ### `examples/compliance/`
 
 - `auditable_model.mind` (~1932 tok, huge) — auditable_model.mind -- Compliance-Ready MLP with Provenance Metadata

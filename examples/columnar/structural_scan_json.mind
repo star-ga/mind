@@ -73,6 +73,12 @@ fn is_structural(b: i64) -> i64 {
     }
 }
 
+// LOCKSTEP TWIN of structural_index_checksum below: both run the IDENTICAL
+// string-aware state machine (in-string toggle + backslash escape-skip); this
+// one folds a COUNT, the other an order-sensitive offset checksum. Any edit to
+// the scan logic here MUST be applied verbatim to structural_index_checksum —
+// the harness asserts BOTH against the same independent scalar reference, so a
+// drift between the twins fails the byte-identity gate.
 // Count of string-aware structural characters in buf[0, len).
 pub fn structural_scan(buf: i64, len: i64) -> i64 {
     let mut i: i64 = 0;
@@ -106,6 +112,12 @@ pub fn structural_scan(buf: i64, len: i64) -> i64 {
     count
 }
 
+// LOCKSTEP TWIN of structural_scan above: both run the IDENTICAL string-aware
+// state machine (in-string toggle + backslash escape-skip); this one folds an
+// order-sensitive offset checksum, the other a count. Any edit to the scan
+// logic here MUST be applied verbatim to structural_scan — the harness asserts
+// BOTH against the same independent scalar reference, so a drift between the
+// twins fails the byte-identity gate.
 // Order-sensitive checksum of the derived structural index (offsets in order).
 // Fold: acc = acc*1000003 + offset. Same string-aware scan as structural_scan;
 // two i64 outputs (count + this) pin both the size and the order of the index.
