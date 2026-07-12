@@ -93,13 +93,29 @@ def ints_1_to_n(n: int) -> list[float]:
 CASES = [
     ("N=1        (1 tile)",            ints_1_to_n(1)),
     ("N=4096     (1 full tile)",       ints_1_to_n(4096)),
+    ("N=4097     (2 tiles 4096+1, ragged tail 1)", ints_1_to_n(4097)),
+    ("N=8192     (2 exact full tiles)", ints_1_to_n(8192)),
     ("N=10000    (3 tiles 4096+4096+1808)", ints_1_to_n(10000)),
 ]
+
+# Supported domain of tiled_fold_sum: n <= 4096*4096 (see tiled_fold.mind). This
+# harness MUST NOT exercise beyond it — above the domain the single-pass partial
+# fold is a different association than the (deferred) level-3 radix-4096
+# recursion, so any such result would be out-of-contract, not ground truth.
+MAX_N = TILE * TILE  # 16_777_216
 
 # Fractional case where the radix-4096 tiled association differs OBSERVABLY from
 # a flat sum: 10000 copies of 0.1 (not exactly representable), so the grouping
 # imposed by the tile boundaries changes the accumulated rounding.
 FRAC = ("N=10000    frac 0.1x  (tiled != flat)", [0.1] * 10000)
+
+# All-`-0.0` case: the `0.0` accumulator seed is POSITIVE zero, so
+# `0.0 + -0.0 = +0.0` under IEEE-754 RNE for every add — an all-negative-zero
+# column folds to +0.0 (bit pattern 0x0000000000000000), matching the shipped
+# pinned fold's seed. Two full tiles ensure the tile-partial fold also seeds at
+# +0.0. Pins that the seed is +0.0, not a `-0.0 + 0.0` padding edge.
+NEG_ZERO = ("N=8192     all -0.0  (seed pins +0.0)", [-0.0] * 8192)
+POS_ZERO_BITS = "0000000000000000"
 
 
 def main() -> int:
@@ -107,6 +123,16 @@ def main() -> int:
     if not mindc.exists():
         print(f"mindc not found: {mindc}", file=sys.stderr)
         return 2
+
+    # F-0.5-2 domain fence: tiled_fold_sum is only valid for n <= 4096*4096.
+    # Never exercise the oracle beyond its supported domain (the level-3 tier is
+    # deferred), or the compared reference would not be the shipped association.
+    all_inputs = [vals for _, vals in CASES] + [FRAC[1], NEG_ZERO[1]]
+    for vals in all_inputs:
+        assert len(vals) <= MAX_N, (
+            f"test case N={len(vals)} exceeds supported domain MAX_N={MAX_N} "
+            f"(4096*4096); level-3 radix-4096 recursion is deferred"
+        )
 
     with tempfile.TemporaryDirectory() as td:
         so = Path(td) / "tiled_fold.so"
@@ -188,6 +214,28 @@ def main() -> int:
         print(f"  determinism (2nd run): {tiled_det}")
         print(f"  tiled != flat (association is PINNED, not accidental): "
               f"{assoc_distinct}")
+        print(f"  -> {'OK' if good else 'FAIL'}")
+
+        # ---- Seed pinning: all-(-0.0) tile folds to +0.0 (positive-zero seed)
+        print("\n== seed pinning: all -0.0 input folds to +0.0 ==")
+        label, vals = NEG_ZERO
+        n = len(vals)
+        buf, addr = make_buf(vals)
+        z_mind = lib.tiled_fold_sum(addr, n)
+        z_ref = tiled_reference(vals)
+        del buf
+        z_bits = bits(z_mind)
+        z_ref_bits = bits(z_ref)
+        z_match = z_bits == z_ref_bits
+        z_pos = z_bits == POS_ZERO_BITS       # exactly +0.0, not -0.0
+        ref_pos = z_ref_bits == POS_ZERO_BITS
+        good = z_match and z_pos and ref_pos
+        ok = ok and good
+        print(f"{label}")
+        print(f"  MIND tiled_fold_sum  = {z_mind!r}  bits={z_bits}")
+        print(f"  ref  tiled           = {z_ref!r}  bits={z_ref_bits}  "
+              f"match={z_match}")
+        print(f"  +0.0 bit pattern ({POS_ZERO_BITS}): MIND={z_pos} ref={ref_pos}")
         print(f"  -> {'OK' if good else 'FAIL'}")
 
     print("\nALL_MATCH" if ok else "\nMISMATCH")
