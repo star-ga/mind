@@ -24926,3 +24926,83 @@ pub fn nb_patch_all(code_addr: i64, calls: i64, total_calls: i64, call_owner: i6
     let _p: i64 = nb_patch_rel32(code_addr, abs_off, rel);
     nb_patch_all(code_addr, calls, total_calls, call_owner, starts, fn_names, n_fns, buf, c + 1)
 }
+
+// ---- RI-B1: scalar-f64 SSE2 emitters (zero MLIR/LLVM) ----------------------
+// The native-ELF path is otherwise i64-only. These emit x86-64 SSE2 scalar-double
+// machine code directly. This first slice covers the register-form arithmetic and
+// convert (the value-in-xmm forms), which need no rbp frame — sufficient to prove
+// MIND emits correct scalar-f64 float code natively. Defined at the END of the file
+// so the whole-compiler emission layout (source-order fn placement + inter-fn rel32
+// patches) of every existing fn is unperturbed and stays byte-identical to the frozen
+// oracle. The memory-operand spill forms (movsd [rbp+d],xmm0 = F2 0F 11 85 <d32> /
+// movsd xmm0,[rbp+d] = F2 0F 10 85 <d32> / addsd xmm0,[rbp+d] = F2 0F 58 85 <d32> /
+// ucomisd = 66 0F 2E 85 <d32> / cvtsi2sd = F2 48 0F 2A 85 <d32>) plus a per-SSA dtype
+// tag threaded through nb_expr are the upgrade path to fold floats into the existing
+// spill model; f32 mirrors these with the F2->F3 prefix swap and 66 dropped on convert.
+
+// Load a 64-bit double bit-pattern into xmm{which} (which: 0->xmm0, 1->xmm1) via a
+// gpr bridge:  movabs rax, bits (48 B8 <imm64>) ; movq xmm{which}, rax (66 48 0F 6E /r).
+pub fn nb_fp_const_xmm(code: String, bits: i64, which: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 184);
+    let c3: String = nb_i64le(c2, bits);
+    let c4: String = nb_push(c3, 102);
+    let c5: String = nb_push(c4, 72);
+    let c6: String = nb_push(c5, 15);
+    let c7: String = nb_push(c6, 110);
+    let modrm: i64 = if which == 0 {
+        192
+    } else {
+        200
+    };
+    nb_push(c7, modrm)
+}
+
+// Scalar-double arith:  xmm0 = xmm0 OP xmm1.  F2 0F <opc> C1.
+//   op_sel 0->addsd(0x58) 1->subsd(0x5C) 2->mulsd(0x59) 3->divsd(0x5E).
+pub fn nb_fp_binop_xmm01(code: String, op_sel: i64) -> String {
+    let opc: i64 = if op_sel == 0 {
+        88
+    } else {
+        if op_sel == 1 {
+            92
+        } else {
+            if op_sel == 2 {
+                89
+            } else {
+                94
+            }
+        }
+    };
+    let c1: String = nb_push(code, 242);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, opc);
+    nb_push(c3, 193)
+}
+
+// Truncating convert f64->i64:  cvttsd2si rax, xmm0 = F2 48 0F 2C C0.
+pub fn nb_fp_trunc_rax_xmm0(code: String) -> String {
+    let c1: String = nb_push(code, 242);
+    let c2: String = nb_push(c1, 72);
+    let c3: String = nb_push(c2, 15);
+    let c4: String = nb_push(c3, 44);
+    nb_push(c4, 192)
+}
+
+// Standalone runnable-ELF entry that computes `trunc(a OP b)` in scalar f64 and
+// exits with it, emitting ZERO MLIR/LLVM. `a_bits`/`b_bits` are the IEEE-754
+// double bit-patterns; op_sel selects add/sub/mul/div. Wraps the code via the same
+// nb_write_elf scaffold the integer path uses, so the produced bytes are a real,
+// directly-executable x86-64 ELF. The gate runs it and checks the exit code — the
+// CPU is the oracle (no frozen float oracle exists; Rust native never emitted f64).
+pub fn selftest_native_elf_fp(a_bits: i64, b_bits: i64, op_sel: i64) -> EmitState {
+    let c1: String = nb_fp_const_xmm(string_new(), a_bits, 0);
+    let c2: String = nb_fp_const_xmm(c1, b_bits, 1);
+    let c3: String = nb_fp_binop_xmm01(c2, op_sel);
+    let c4: String = nb_fp_trunc_rax_xmm0(c3);
+    let code: String = nb_emit_return(c4, 1);
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}

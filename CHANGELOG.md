@@ -23,6 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hardened with backslash-run-parity and chunk-straddle cases. The GPU rung
   stays behind the open-core `GPUBackend` contract (concrete kernel is
   commercial-runtime work).
+- **Rust-independence RI-B1 — native-ELF `f64` scalar emission (zero MLIR/LLVM).**
+  The pure-MIND native-ELF backend (`examples/mindc_mind/main.mind`, `nb_fp_*`
+  family) now emits scalar `f64` arithmetic — const load, `addsd`/`subsd`/
+  `mulsd`/`divsd`, and `cvttsd2si` truncation — as hand-written x86-64 SSE2
+  machine code, with no MLIR/LLVM anywhere in the path. New execution-correctness
+  gate `examples/mindc_mind/self_host_native_fp_smoke.py`: no frozen float oracle
+  can exist (the removed Rust native backend rejected `ConstF64`), so the CPU is
+  the oracle — the emitted ELF's exit code must equal the truncated float result.
+  Opens the float column of the native-ELF self-host surface (previously
+  integer/control-flow only); keystone 7/7 and the native-ELF integer surface
+  are unaffected.
 
 ### Security
 - **A nondeterministic call hidden inside `region { }` forged a `deterministic`
