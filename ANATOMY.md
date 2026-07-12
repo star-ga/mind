@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3073 | **Est. tokens:** ~7,387,867
-**Generated:** 2026-07-12 04:00 UTC
+**Files:** 3075 | **Est. tokens:** ~7,390,385
+**Generated:** 2026-07-12 04:19 UTC
 
 ## Token Budget Guide
 
@@ -49,6 +49,7 @@
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 21 | ~38,272 |
 | `examples/c/` | 2 | ~400 |
+| `examples/columnar/` | 2 | ~2,518 |
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/distribution-crossisa/` | 6 | ~6,336 |
 | `examples/emit_ir/` | 5 | ~13,648 |
@@ -751,6 +752,10 @@
 
 - `cnn_classifier.mind` (~1060 tok, large) — CNN Classifier Example
 - `collatz.mind` (~495 tok, medium) — Deterministic integer Collatz (3n+1) iterator — the integer sibling of the
+### `examples/columnar/`
+
+- `structural_scan_json.mind` (~1481 tok, large) — examples/columnar/structural_scan_json.mind
+- `structural_scan_test.py` (~1037 tok, large) — Runnable verification for examples/columnar/structural_scan_json.mind.
 ### `examples/compliance/`
 
 - `auditable_model.mind` (~1932 tok, huge) — auditable_model.mind -- Compliance-Ready MLP with Provenance Metadata

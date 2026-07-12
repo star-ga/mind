@@ -1,0 +1,152 @@
+// examples/columnar/structural_scan_json.mind
+//
+// Deterministic multi-format columnar front-end — PHASE 1: the SCALAR
+// STRUCTURAL ORACLE for JSON (RFC DRAFT-deterministic-format-frontend §3, §8).
+//
+// WHAT THIS IS
+//   A deterministic scalar scan over a raw byte buffer that identifies the
+//   JSON STRUCTURAL characters
+//         {  }  [  ]  :  ,
+//   producing the DERIVED STRUCTURAL INDEX (RFC §3): the ordered byte-offsets
+//   of those characters, EXCLUDING any that sit INSIDE a JSON string.
+//
+//   In-string state is tracked exactly per RFC 8259:
+//     - an UNESCAPED double-quote (0x22) toggles in-string on/off,
+//     - a backslash (0x5C) inside a string escapes the following byte, so a
+//       `\"` does NOT close the string.
+//
+//   This scalar oracle is the alg-invent FITNESS REFERENCE and the fail-closed
+//   ground truth that the future SIMD/NEON structural-pack kernel (Phase 2)
+//   must match BYTE-FOR-BYTE. It is NOT a shipped fast path: correctness and
+//   determinism are the only goals. There is no clock and no rand — the output
+//   is a pure function of the input bytes, identical on every substrate.
+//
+// RUNNABLE ABI
+//   Implemented in the runnable pure-MIND subset (i64 arithmetic + byte reads
+//   via __mind_load_i8(buf + i), exactly like std/json.mind:220). `buf` is a
+//   raw data pointer passed through the runtime C-ABI as an i64 — the same
+//   integer-handle convention std/json.mind::jv_parse(buf, len) already uses,
+//   so the two entry points below are directly callable from a ctypes harness
+//   with buf = ctypes.addressof(buffer).
+//
+//   Because returning a growable offset list would exceed the runnable subset,
+//   the index is delivered in two VERIFIABLE-BY-SCALAR forms:
+//     - structural_scan            -> COUNT of true structural chars,
+//     - structural_index_checksum  -> order-sensitive fold of the offsets,
+//                                     acc = acc*1000003 + offset (in order),
+//   so both the SIZE and the ORDER of the derived index are verifiable through
+//   a single i64 each.
+//
+// deferred: growable offset-list return (the literal ordered index) exceeds the
+// runnable i64/pointer subset — stubbed as the count + order-sensitive checksum
+// above. upgrade path: an out-param i64 buffer (caller-allocated, ptr+cap)
+// written by the scan, once the columnar materialisation ABI (RFC §Stage 3)
+// lands; the checksum here is the byte-identity canary line until then.
+
+// --- JSON structural-character set: { } [ ] : , ---
+// ASCII: '{'=123  '}'=125  '['=91  ']'=93  ':'=58  ','=44
+fn is_structural(b: i64) -> i64 {
+    if b == 123 {
+        1
+    } else {
+        if b == 125 {
+            1
+        } else {
+            if b == 91 {
+                1
+            } else {
+                if b == 93 {
+                    1
+                } else {
+                    if b == 58 {
+                        1
+                    } else {
+                        if b == 44 {
+                            1
+                        } else {
+                            0
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Count of string-aware structural characters in buf[0, len).
+pub fn structural_scan(buf: i64, len: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut in_str: i64 = 0;
+    let mut count: i64 = 0;
+    while i < len {
+        let b: i64 = __mind_load_i8(buf + i);
+        if in_str == 1 {
+            if b == 92 {
+                // backslash escapes the next byte: skip both
+                i = i + 2;
+            } else {
+                if b == 34 {
+                    // unescaped quote closes the string
+                    in_str = 0;
+                }
+                i = i + 1;
+            }
+        } else {
+            if b == 34 {
+                // unescaped quote opens a string
+                in_str = 1;
+            } else {
+                if is_structural(b) == 1 {
+                    count = count + 1;
+                }
+            }
+            i = i + 1;
+        }
+    }
+    count
+}
+
+// Order-sensitive checksum of the derived structural index (offsets in order).
+// Fold: acc = acc*1000003 + offset. Same string-aware scan as structural_scan;
+// two i64 outputs (count + this) pin both the size and the order of the index.
+pub fn structural_index_checksum(buf: i64, len: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut in_str: i64 = 0;
+    let mut acc: i64 = 0;
+    while i < len {
+        let b: i64 = __mind_load_i8(buf + i);
+        if in_str == 1 {
+            if b == 92 {
+                i = i + 2;
+            } else {
+                if b == 34 {
+                    in_str = 0;
+                }
+                i = i + 1;
+            }
+        } else {
+            if b == 34 {
+                in_str = 1;
+            } else {
+                if is_structural(b) == 1 {
+                    acc = acc * 1000003 + i;
+                }
+            }
+            i = i + 1;
+        }
+    }
+    acc
+}
+
+// --- Verification ------------------------------------------------------------
+// These two entry points read memory through the runtime intrinsics
+// __mind_load_i8 / (the tree-walking `mindc test` interpreter does not model
+// those intrinsics, exactly as std/json.mind's jv_parse cannot be unit-tested
+// in-interpreter). They are therefore verified by construction on the compiled
+// shared library: examples/columnar/structural_scan_test.py compiles this file
+// with `mindc --emit-shared` and drives both functions through ctypes over a
+// hand-verified corpus — plain object/array, an adversarial doc with { , }
+// INSIDE a string, and one with a backslash-escaped quote — asserting the count
+// and the order-sensitive checksum against an independent scalar reference
+// (i64 two's-complement wrap). That corpus is the fail-closed byte-identity
+// line the Phase-2 SIMD/NEON structural pack must reproduce.
