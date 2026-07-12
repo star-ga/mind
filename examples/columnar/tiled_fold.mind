@@ -1,0 +1,118 @@
+// examples/columnar/tiled_fold.mind
+//
+// Deterministic multi-format columnar front-end — PHASE 0.5: the RADIX-4096
+// TILED FOLD (RFC DRAFT-deterministic-format-frontend §2e, §8).
+//
+// WHAT THIS IS
+//   A runnable pure-MIND function that sums N f64 values (N MAY exceed 4096) by
+//   a FIXED, documented hierarchical association — the radix-4096 tiled fold —
+//   so a bulk column can be reduced deterministically even though the shipped
+//   pinned tensor-reduce fold hard-rejects any single reduction over
+//   PINNED_FOLD_ELEM_CAP = 4096 (src/mlir/lowering.rs:909-911).
+//
+// THE PINNED ASSOCIATION (radix-4096, 2-level)
+//   1. Split [0, N) into ceil(N / 4096) TILES of <= 4096 elements. The last
+//      tile is RAGGED — it keeps its exact length (end = min(base + 4096, N)),
+//      with NO zero-padding, so there is no `-0.0 + 0.0 = +0.0` identity edge.
+//   2. Sum each tile by a fixed LEFT-TO-RIGHT fold (`tile_sum = tile_sum + x`).
+//      A fixed-order IEEE-754 round-to-nearest-even add chain has NO
+//      reassociation freedom, so it is byte-identical across x86 avx2 / ARM
+//      neon — the same property the shipped `emit_tensor_reduce_pinned` fold
+//      relies on (a fully-unrolled fixed L->R `arith.addf` chain, no fastmath).
+//   3. Fold the tile-partials, in document (tile) order, by the SAME fixed
+//      LEFT-TO-RIGHT rule (`partial_acc = partial_acc + tile_sum`).
+//
+//   The whole tree shape is a PURE FUNCTION of N (tile boundaries derive from N
+//   only), never of the data, the substrate, or any thread count. It is
+//   DELIBERATELY NOT the flat left-to-right order over N elements: the tile
+//   boundaries reset the accumulation grouping, so for fractional f64 inputs the
+//   tiled result differs OBSERVABLY (in the low bits) from a flat sum. That is
+//   the point — this is a DOCUMENTED PINNED association (stated, not hidden),
+//   the honesty rail in RFC §2e. For exactly-representable integer-valued inputs
+//   (all partials < 2^53) there is no rounding, so tiled == flat exactly.
+//
+//   Level 2 (this file) covers N up to 4096^2 ~= 16.8M elements: a single L->R
+//   partial fold of <= 4096 tile-partials is itself within the pinned-fold cap.
+//
+// deferred: the level-3 tier (N > 4096^2 ~= 16.8M elements, i.e. more than 4096
+// tile-partials) would recurse the SAME radix-4096 rule one level higher —
+// fold the partials in groups of 4096 into second-order partials, then fold
+// those. Stubbed here because the runnable proof (N up to 10000, 3 tiles)
+// exercises exactly the 2-level shape; upgrade path: wrap the partial fold in
+// an outer 4096-stride loop identical in structure to the tile loop below, once
+// bulk (>16.8M-element) corpora are wired through the streaming chunker
+// (RFC §Stage 5). The association at every level stays fixed L->R radix-4096.
+//
+// RUNNABLE ABI
+//   Implemented in the runnable pure-MIND subset. `buf` is a raw data pointer
+//   passed through the runtime C-ABI as an i64 — the same integer-handle
+//   convention std/json.mind::jv_parse(buf, len) and
+//   examples/columnar/structural_scan_json.mind already use. Each f64 element is
+//   read from its 8-byte little-endian slot as an i64 bit pattern via
+//   __mind_load_i64(buf + i * 8) and reinterpreted with __mind_bits_to_f64 (a
+//   same-width bitcast — NO numeric int->float conversion), so the f64 value is
+//   a pure function of the stored bytes, identical on every substrate. There is
+//   no clock and no rand. Verified by construction on the compiled shared
+//   library: examples/columnar/tiled_fold_test.py drives these entry points
+//   through ctypes and compares raw f64 bit patterns against an independent
+//   reference computing the IDENTICAL radix-4096 tiled association.
+
+// Number of radix-4096 tiles for a column of `n` elements: ceil(n / 4096).
+// The fold-tree shape is a pure function of this count (and of n, for the
+// ragged last tile), never of the data. n <= 0 yields 0 tiles.
+pub fn tile_count(n: i64) -> i64 {
+    if n <= 0 {
+        0
+    } else {
+        (n + 4095) / 4096
+    }
+}
+
+// The RADIX-4096 TILED FOLD: deterministic sum of buf[0, n) of f64 values.
+// Per-tile L->R fold, then L->R fold of the tile-partials (see header).
+pub fn tiled_fold_sum(buf: i64, n: i64) -> f64 {
+    // Level-2 accumulator: folds tile-partials in document order, L->R.
+    let mut partial_acc: f64 = 0.0;
+    // `base` is the element offset of the current tile's first element.
+    let mut base: i64 = 0;
+    while base < n {
+        // Ragged last tile keeps its exact length: end = min(base + 4096, n).
+        // No zero-padding, so no -0.0 + 0.0 identity edge.
+        let mut end: i64 = base + 4096;
+        if end > n {
+            end = n;
+        }
+        // Per-tile pinned fold: fixed LEFT-TO-RIGHT over <= 4096 elements —
+        // the same association the shipped tensor-reduce pinned fold emits.
+        let mut tile_sum: f64 = 0.0;
+        let mut i: i64 = base;
+        while i < end {
+            let bits: i64 = __mind_load_i64(buf + i * 8);
+            let x: f64 = __mind_bits_to_f64(bits);
+            tile_sum = tile_sum + x;
+            i = i + 1;
+        }
+        // Fold this tile's partial into the running level-2 accumulator, L->R.
+        partial_acc = partial_acc + tile_sum;
+        base = base + 4096;
+    }
+    partial_acc
+}
+
+// Contrast reference: the FLAT left-to-right fold over all n elements (no
+// tiling). Present ONLY to demonstrate — on the compiled artifact itself —
+// that the tiled association above is a distinct, pinned reduction order: for
+// fractional f64 inputs `flat_fold_sum` and `tiled_fold_sum` produce different
+// low bits, while for exactly-representable integer-valued inputs they agree.
+// This is NOT a shipped path; it exists for the byte-difference proof.
+pub fn flat_fold_sum(buf: i64, n: i64) -> f64 {
+    let mut acc: f64 = 0.0;
+    let mut i: i64 = 0;
+    while i < n {
+        let bits: i64 = __mind_load_i64(buf + i * 8);
+        let x: f64 = __mind_bits_to_f64(bits);
+        acc = acc + x;
+        i = i + 1;
+    }
+    acc
+}
