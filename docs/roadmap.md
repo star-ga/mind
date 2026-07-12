@@ -90,13 +90,19 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
 - **Ed25519-signed evidence chain** – cryptographic signing of the
   already-emitted evidence chain.
 - **GPU / accelerator backends** – the open-source `mindc` compiler in this repo
-  emits for the **CPU**. GPU and accelerator execution (CUDA, Metal, ROCm,
-  WebGPU, and the broader chip-target set) ships today in the commercial
+  emits for the **CPU**. GPU and accelerator execution across the broader
+  chip-target set ships today in the commercial
   `mind-runtime`, available to consumers under a commercial license. What is on
   the roadmap is **bit-identical determinism** across those substrates.
 - **Deterministic distributed runtime** – the commercial runtime ships NCCL/Gloo
   collectives, RingAllReduce, and pipeline parallelism today; making them
   bit-identical by fixed reduction order is the active work (see Phase 13.6).
+- **Deterministic multi-format columnar ingest** – JSON/CSV/NDJSON/TOON/TOML →
+  `tensor<f64[4096]>` column tiles feeding the shipped pinned tensor-reduce
+  fold (`emit_tensor_reduce_pinned`), byte-identical x86/ARM with the
+  hash-anchored mic@3 trace; GPU rung behind the open-core `GPUBackend`
+  contract. See Phase 11.5 +
+  [`docs/rfcs/DRAFT-deterministic-format-frontend.md`](rfcs/DRAFT-deterministic-format-frontend.md).
 - **Deployment & Serving** – HTTP/gRPC inference, dynamic batching, metrics.
 - **Package Manager** – PubGrub resolver, SLSA provenance, SBOM, sparse registry.
 
@@ -356,6 +362,68 @@ Demonstrate performance, determinism, and flexibility. Introduce cloud-assisted 
 
 ---
 
+## Phase 11.5 — Deterministic Multi-Format Columnar Ingest Front-End
+
+> **Full design: [`docs/rfcs/DRAFT-deterministic-format-frontend.md`](rfcs/DRAFT-deterministic-format-frontend.md)**
+> (Draft; consolidates and supersedes the JSON-only draft). This section is the
+> roadmap surface; the determinism argument, the resolved NEON bit-order
+> construction, and the tiled-fold spec live in the RFC.
+
+### Goals
+
+Feed the shipped Jul-4 deterministic tensor-reduction back-half
+(`emit_tensor_reduce_pinned`, `src/mlir/lowering.rs:864`; runtime-fed memref
+C-ABI via `param_non_i64`, `src/eval/abi_gate.rs:112`) with a **bulk,
+format-agnostic columnar front-end** (JSON / TOON / CSV / TSV / NDJSON / TOML)
+whose column output is **byte-identical across x86 / ARM** (GPU rung behind
+the open-core `GPUBackend` contract, concrete impl in the commercial runtime),
+anchored by the existing hash-anchored — tamper-evident, NOT signed (RFC 0016
+Phase C pending) — mic@3 `trace_hash` (`src/ir/evidence.rs:72-74`). This is
+**not a parse-faster race**: the pipeline is I/O-bound by design and no
+MIND-vs-X GB/s number goes on any public surface. The claim is the property
+simdjson / pandas structurally cannot make.
+
+### Architecture (one line)
+
+Per-format SIMD **stage-1 structural classifier** (lane-local classify, zero
+cross-lane accumulation — "classify, don't reduce") → **shared** stage-2 index
+→ **shared** stage-3 columnar materialisation into `tensor<f64[4096]>` tiles
+(4096 = `PINNED_FOLD_ELEM_CAP`, `src/mlir/lowering.rs:909`) → shipped pinned
+fold per tile + radix-4096 tiled fold across tiles (fold tree a pure function
+of static N). Adding a format = 1 stage-1 classifier + ARM sibling + 1 canary.
+The cross-substrate canary artifact is the **derived structural index** (pin
+the value, not the instruction — the int-dot ladder discipline; raw movemask
+width is substrate-dependent, the index is not).
+
+### Critical path (every phase gates on keystone 7/7 + cross_substrate + criterion)
+
+| Phase | Deliverable | Gate | Owner |
+|---|---|---|---|
+| 0 | CPU fitness harness: scalar decode → `tensor<f64[4096]>` → shipped fold → mic@3 (pure reuse, zero new SIMD; runnable today) | `format-col-sum` canary | mind-dev |
+| 0.5 | Radix-4096 tiled fold (bulk scale over the 4096 cap) | `format-col-sum-tiled`, avx2==neon | mind-mlir-lowering |
+| 1 | Scalar structural oracle per format (derived-index reference + adversarial-tail fuzz corpus) | oracle parity vs `std/json.mind` on the JSON subset | mind-dev |
+| 2 | alg-invent (AB-MCTS) on the ONE hard kernel — the structural pack; fitness = (oracle-identity ∧ cross-substrate index-hash-equal ∧ objdump-pure) hard gates × internal GB/s | x86 `format-structural-index` blessed | mind-det-gemm + alg-invent |
+| 3 | Shared stage-2 index + stage-3 materialisation, multi-column, MT==ST | `format-multicol` | mind-dev / mind-mlir-lowering |
+| 4 | Remaining stage-1 classifiers (JSON, TOON, TOML-int) | per-format canary | mind-det-gemm |
+| 5 | Streaming chunker + cross-chunk straddle carry-buffer | boundary canary (split == unsplit) | mind-dev |
+| 6 | ARM bless of the neon index line on real aarch64 | canary bless ceremony | mind-cross-substrate |
+| 7 | GPU rung — behind the open-core `GPUBackend` contract; concrete impl in the commercial runtime (mind-runtime) | tracked privately | commercial runtime |
+
+### Rails
+
+- Evidence chain stays **hash-anchored, tamper-evident, NOT signed** (RFC 0016
+  Phase C pending). `trace_hash` is over pre-backend mic@3 IR — it attests
+  provenance; numeric output identity is the separate per-substrate canary
+  proof (do not conflate the two).
+- No public MIND GB/s / rec/s numbers — determinism is the claim, not speed.
+- `std/json.mind` / `std/toml.mind` scalar parsers stay unchanged; no gate is
+  redefined, weakened, or bypassed.
+- The GPU rung is behind the open-core `GPUBackend` contract
+  (`src/runtime/gpu.rs:15`); the concrete kernel and device
+  runtime are commercial-runtime work, tracked privately (mind-runtime).
+
+---
+
 ## Phase 12 — Enterprise Runtime & Edge Deployments
 
 ### Goals  
@@ -545,7 +613,7 @@ Exposed types:
 Six to eight weeks of focused work, scoped for paper-validation:
 
 1. **`mind.distributed.shard` + `allreduce` + `allgather`** (~3 weeks)
-   - Direct CUDA P2P for proof-of-concept (no NCCL needed initially)
+   - Direct device-to-device transport for proof-of-concept
    - Or shared-memory IPC for single-machine multi-process validation
    - Lexicographic-order all-reduce + all-gather primitives
 2. **`mind.distributed.pipeline` with `[pipeline_stage(N)]`** (~2 weeks)
@@ -676,7 +744,7 @@ MIND is evolving from a single-stack language focused on AI computation into a c
 **Containerization:**
 - Pre-configured Docker images for training and serving MIND models
 - Multi-stage builds optimized for minimal production footprint
-- NVIDIA CUDA and ROCm base images for GPU workloads
+- Accelerator base images for GPU workloads
 
 **CI/CD Pipelines:**
 - Continuous integration and deployment pipelines for automatic testing, training, and deployment
@@ -789,7 +857,7 @@ commitment. Nothing here is planned work yet.
   primitives the cross-substrate byte-identity gate already covers. A *grammar
   compiler that emits a deterministic, cross-substrate-identical mask table with
   a tamper-evident evidence trace* is something no incumbent decoding stack ships — the mask logic
-  today lives in engine-specific C++/CUDA with no provenance. This is the same
+  today lives in engine-specific native GPU code with no provenance. This is the same
   moat move as the KAN entry: take a numerics/ML primitive and re-derive its
   hot path onto MIND's determinism substrate.
 - **Directly useful for the mic@1 / mic@3 wire formats:** the mic@3 binary IR
@@ -1344,8 +1412,8 @@ MIND programs and the AI-era efficiency claim.
 ### Goals
 
 Bring the MIND stdlib + runtime to the point where a Rust-class CLI
-agent harness (claw-code / OpenClaw / claude-code class — streaming
-LLM client, MCP protocol, tool execution, terminal UI) can be built
+agent harness (streaming inference client, MCP protocol, tool
+execution, terminal UI) can be built
 in pure MIND end-to-end. This is a credibility target like the
 mindc self-host: a non-tensor system that exercises general-purpose
 capability the way Rust+tokio+reqwest+ratatui does today.
@@ -1403,7 +1471,7 @@ MCP impl are independent and parallelizable once those land.
 **Tier 3 — HTTP client (~2–3 weeks after TLS):**
 - `std.http` — HTTP/1.1 request builder, response parser, header handling, **chunked transfer-encoding decoder** (SSE rides on this)
 - `std.http.sse` — `text/event-stream` parser sitting on chunked transfer; deterministic event emission
-- Acceptance: streams a chunked response (e.g., an Anthropic/OpenAI-compatible `chat/completions` with `stream:true`) end-to-end without buffering the full body
+- Acceptance: streams a chunked response (e.g., a streaming `chat/completions`-style API with `stream:true`) end-to-end without buffering the full body
 
 **Tier 4 — Async I/O (RFC 0011 Phases B–D, the actual blocker behind Tier 2/3):**
 - Phase B — real executor (work-stealing or fixed-pool), still under the `Scheduler` first-class-value model from Phase A
@@ -1417,7 +1485,7 @@ MCP impl are independent and parallelizable once those land.
 - Acceptance: a MIND CLI calls a stdio MCP server (claudeai-flavored), invokes a tool, and parses results — round-trip in pure MIND
 
 **Tier 6 — Demo target: `mindcraft-agent`:**
-- A claw-code-class CLI: streaming LLM client (HTTPS + SSE), MCP client, tool execution (`std.process` sandbox + `std.fs` scoped to a workdir), terminal UI, `--replay` flag using `ReplayScheduler` for deterministic playback
+- A Rust-class agent CLI: streaming inference client (HTTPS + SSE), MCP client, tool execution (`std.process` sandbox + `std.fs` scoped to a workdir), terminal UI, `--replay` flag using `ReplayScheduler` for deterministic playback
 - Acceptance: byte-identical transcript across machines under `ReplayScheduler`; loads a remote LLM endpoint and an MCP server; works on Linux/macOS/Windows from the shipped cross-platform binaries
 
 ### Sequencing
