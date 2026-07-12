@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Deterministic multi-format columnar ingest front-end — RFC + Phases 0/0.5/1.**
+  New `docs/rfcs/DRAFT-deterministic-format-frontend.md` (consolidates and
+  supersedes the JSON-only draft) + roadmap Phase 11.5: a byte-identical
+  x86/ARM columnar ingest pipeline feeding the shipped pinned tensor-reduce
+  fold (`emit_tensor_reduce_pinned`). **Phase 0** — `colsum(tensor<f64[4096]>)`
+  proven runnable (objdump = 4096 `addsd`/0 FMA; exact through the runtime-fed
+  memref C-ABI). **Phase 0.5** — `examples/columnar/tiled_fold.mind`: radix-4096
+  tiled f64 fold for bulk columns (N > 4096) with a documented pinned
+  hierarchical association, byte-identical run-to-run. **Phase 1** —
+  `examples/columnar/structural_scan_json.mind`: the JSON scalar structural
+  oracle (string- and backslash-escape-aware), the fail-closed byte-identity
+  ground truth the SIMD structural-pack kernel must match. Oracle corpus
+  hardened with backslash-run-parity and chunk-straddle cases. The GPU rung
+  stays behind the open-core `GPUBackend` contract (concrete kernel is
+  commercial-runtime work).
+
 ### Security
 - **A nondeterministic call hidden inside `region { }` forged a `deterministic`
   attestation.** `find_nondeterministic_call` — the classifier `mindc verify`
