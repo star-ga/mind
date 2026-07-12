@@ -14,6 +14,10 @@
 //   1. Split [0, N) into ceil(N / 4096) TILES of <= 4096 elements. The last
 //      tile is RAGGED — it keeps its exact length (end = min(base + 4096, N)),
 //      with NO zero-padding, so there is no `-0.0 + 0.0 = +0.0` identity edge.
+//      (That padding claim is about the RAGGED TAIL only, not the seed: the
+//      `0.0` accumulator seed is `+0.0`, so an all-`-0.0` tile folds to `+0.0`
+//      via `0.0 + -0.0 = +0.0` — the SAME positive-zero seed the shipped pinned
+//      tensor-reduce fold uses, so the seed behaviour is matched, not an edge.)
 //   2. Sum each tile by a fixed LEFT-TO-RIGHT fold (`tile_sum = tile_sum + x`).
 //      A fixed-order IEEE-754 round-to-nearest-even add chain has NO
 //      reassociation freedom, so it is byte-identical across x86 avx2 / ARM
@@ -70,6 +74,16 @@ pub fn tile_count(n: i64) -> i64 {
 
 // The RADIX-4096 TILED FOLD: deterministic sum of buf[0, n) of f64 values.
 // Per-tile L->R fold, then L->R fold of the tile-partials (see header).
+//
+// SUPPORTED DOMAIN: n <= 4096*4096 (= 16_777_216). Within it there are at most
+// 4096 tile-partials, so the single L->R partial fold is itself within the
+// pinned-fold cap and the association is the documented 2-level radix-4096 tree.
+// deferred: n > 4096*4096 is OUT OF DOMAIN — this flat single-pass partial fold
+// would silently fold >4096 partials in one chain, a DIFFERENT association than
+// the documented radix-4096 recursion, so results above 16.8M elements would
+// change once the level-3 tier lands. Not implemented here; upgrade path is the
+// outer 4096-stride partial loop described in the header (RFC §Stage 5). Callers
+// must keep n <= 4096*4096; the harness asserts it never tests beyond that.
 pub fn tiled_fold_sum(buf: i64, n: i64) -> f64 {
     // Level-2 accumulator: folds tile-partials in document order, L->R.
     let mut partial_acc: f64 = 0.0;

@@ -59,6 +59,27 @@ def reference(bs: bytes) -> tuple[int, int]:
     return count, s64(acc)
 
 
+def straddle_doc(min_len: int) -> bytes:
+    """Build a JSON array whose structural bytes land on and ACROSS every
+    16/32/64-byte chunk seam — the Phase-2 SIMD kernel's chunk boundaries.
+
+    Each repeat unit is a string element carrying structural chars that MUST NOT
+    count ({ } [ ] : ,) followed by a bare integer element and a REAL structural
+    comma that MUST count. The units are dense and the string elements cross
+    chunk seams, so an in-string structural byte sits astride every 16/32/64-byte
+    boundary: the SIMD in-string mask has to survive a chunk-boundary carry to
+    reproduce reference(). Deterministic: a pure function of min_len.
+    """
+    parts = [b"["]
+    total = 1
+    while total < min_len:
+        for chunk in (b'"a{b}c:d,e[f]g",', b"1234567890,"):
+            parts.append(chunk)
+            total += len(chunk)
+    parts.append(b"0]")
+    return b"".join(parts)
+
+
 CORPUS = [
     ("obj plain",            b'{"a":1,"b":2}'),
     ("arr plain",            b'[1,2,3]'),
@@ -66,6 +87,23 @@ CORPUS = [
     ("adversarial esc \\\"", b'{"x":"a\\"b","y":9}'),
     ("nested",               b'{"o":{"p":[1,2]},"q":3}'),
     ("empty",                b''),
+    # --- F-1-1 hardening: backslash-run parity + chunk-straddle -------------
+    # (a) EVEN backslash run (one escaped backslash) then a REAL close-quote,
+    #     then structural chars that MUST count.
+    ("even bslash run",      b'{"x":"a\\\\","y":1}'),
+    # (b) ODD run: escaped-backslash + escaped-quote — the string stays open
+    #     through the middle quote and closes only on the real trailing quote.
+    ("odd bslash run",       b'{"k":"\\\\\\"","z":[1]}'),
+    # (c) trailing backslash as the FINAL byte: the escape-skip must step i past
+    #     the buffer end without over-reading.
+    ("trailing bslash",      b'{"k":"abc\\'),
+    # (d) a \uXXXX escape whose hex spells a structural char (0x7d = '}') — the
+    #     literal escape bytes are non-structural and MUST NOT count.
+    ("uXXXX structural hex", b'{"u":"\\u007d","v":2}'),
+    # (e) chunk-seam straddle: one doc >64 bytes, one >4096 bytes, structural
+    #     chars (in- and out-of-string) crossing every 16/32/64-byte seam.
+    (">64B straddle",        straddle_doc(80)),
+    (">4096B straddle",      straddle_doc(4200)),
 ]
 
 
