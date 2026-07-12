@@ -424,6 +424,99 @@ width is substrate-dependent, the index is not).
 
 ---
 
+## Phase 11.6 — Exact-Arithmetic Tier (`std/bignum.mind` + a second π path)
+
+### Motivation — the hole in `std/`
+
+`std/` ships 41 modules (crypto, TLS, HTTP/2, BLAS, JSON, regex, io_uring) and
+**not one arithmetic module.** Today MIND has exactly two numeric tiers:
+
+- **Q16.16 fixed-point** — deterministic by construction, but bounded range and
+  fixed precision.
+- **`f32`/`f64`** — full range, but determinism only holds under the strict-FP
+  discipline (no FMA contraction, no reassociation, fixed source order).
+
+There is **no exact tier** — no arbitrary-precision integer, no exact rational.
+That is a real gap, and it is embarrassing for a language whose entire wedge is
+*"the answer is what the procedure computes, not what the arithmetic approximates."*
+Exact rational arithmetic is the one numeric tier where determinism is *free*: no
+rounding mode to pin, no reduction order to fix, no FMA to disable. It is
+deterministic the way integers are deterministic.
+
+This phase is **not** motivated by any single algorithm — it closes the `std/` hole.
+The π kernels below are the acceptance test that proves the tier works, not the goal.
+
+### Deliverables
+
+**D1 — `std/bignum.mind`** (the actual work)
+- Arbitrary-precision integer over an `i64`-limb vector: `add`/`sub`/`mul`/`divmod`,
+  comparison, shift, parse/format (base 10 + hex).
+- Exact rational `p/q` on top of it, normalized via `gcd` (Euclid — integer-only,
+  no float anywhere in the module).
+- Zero clocks, zero rand, zero float — same rails as every deterministic path.
+  Byte-identity is trivially inherited (integer ops are associativity-safe), but it
+  is still gated, not assumed.
+- Tests: known factorials, known GCDs, and the first N digits of π (D2) as the
+  end-to-end oracle.
+
+**D2 — `examples/chudnovsky_pi.mind`** (the exhibit)
+- π via the Chudnovsky series (built on Ramanujan's modular equation) — the
+  fastest known series for π, ~14 correct digits per term:
+
+  ```
+  1/π = 12 · Σ (−1)^k (6k)! (13591409 + 545140134k)
+                ────────────────────────────────────
+                (3k)! (k!)³ · 640320^(3k + 3/2)
+  ```
+- Computed in **exact rational arithmetic** on D1 — no float in the series, the
+  single square root taken once at the end at a pinned precision.
+- Pairs with the already-shipped `examples/galperin_pi.mind` (π by counting integer
+  elastic collisions — no float in the loop at all). Two structurally unrelated
+  algorithms, two different arithmetics, **the same bytes on x86 / ARM / GPU.**
+
+### Why the two-π-path exhibit is worth building
+
+`galperin_pi.mind` alone demonstrates *"a chaotic-looking process can be computed
+exactly."* Adding Chudnovsky demonstrates the stronger, harder-to-dismiss claim:
+**agreement between independent deterministic procedures**, byte-for-byte, on a
+constant that is famously non-repeating. That is a demonstration no
+statistics-based system can produce, and it costs one example file once D1 exists.
+
+(STARGA ran `countpi.com` a decade ago for exactly this reason — π is the cleanest
+public anchor for *"fully deterministic, famously unpredictable."* The exhibit is a
+callback to a proof we already believed in.)
+
+### Explicitly NOT in scope
+
+Ramanujan's τ-function, partition function, mock theta functions, magic squares.
+Beautiful, publishable, and they buy us **zero** properties we do not already have.
+We are in the business of checkable properties, not of pretty mathematics. Skipped
+deliberately, recorded here so nobody re-proposes them.
+
+### Sequencing & gates
+
+| # | Step | Gate | Owner |
+|---|------|------|-------|
+| 1 | `std/bignum.mind` — bigint core (add/sub/mul/divmod/gcd) | unit tests vs known factorials/GCDs; `mindc check` | mind-dev |
+| 2 | Exact rational layer + normalization | round-trip + reduction tests | mind-dev |
+| 3 | `examples/chudnovsky_pi.mind` | first 1000 digits of π match the published value | mind-dev |
+| 4 | Cross-substrate bless of both π paths | `cross_substrate_identity` canary: galperin-hash == chudnovsky-hash-of-digits, x86 == ARM | mind-cross-substrate |
+
+### Rails
+
+- Integer/rational only. **No float enters `std/bignum.mind`** — if a float appears
+  in a bignum path, the tier has failed its own premise.
+- Compile-speed invariant holds (a new std module must not regress `mindc` compile
+  time — see Phase 10.6).
+- No public GB/s or digits/sec numbers. **Determinism is the claim, not speed** —
+  GMP is faster and we will not pretend otherwise.
+- The Ramanujan-summation *argument* (a divergent series gets a finite value from a
+  stated **procedure**, not from convergence) is positioning prose, documented in
+  naestro's `docs/ANTI-MODE-COLLAPSE.md` §C4. It is **not** a compiler feature and
+  must not be implied to be one.
+
+---
+
 ## Phase 12 — Enterprise Runtime & Edge Deployments
 
 ### Goals  
