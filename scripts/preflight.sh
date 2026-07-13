@@ -29,7 +29,7 @@ if cargo build --quiet 2>/tmp/preflight-build.err; then echo "ok"; else
 fi
 
 step "mindc check std/ examples/  [ci.yml mindcraft_check — error-severity incl. fmt::drift]"
-if cargo build --release --no-default-features --features std-surface --bin mindc --quiet 2>/dev/null; then
+if cargo build --release --no-default-features --features "std-surface cross-module-imports" --bin mindc --quiet 2>/dev/null; then
   errs=$(./target/release/mindc check std/ examples/ 2>&1 | grep -E ': error:' || true)
   if [ -z "$errs" ]; then echo "ok (warnings allowed)"; else
     bad "mindc check error-severity diagnostics (fmt::drift → mindc fmt <file>; tuple-return → #[repr(C)] struct):"

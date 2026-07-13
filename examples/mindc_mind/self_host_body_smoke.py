@@ -20,8 +20,13 @@ import sys
 # Default to the locally-built .so next to this script; CI points MINDC_SO at
 # the artifact it builds (e.g. /tmp/libmindc_mind_self_host.so) so the real-body
 # emitter is gated in CI, not just locally.
-_DEFAULT_SO = pathlib.Path(__file__).parent / "libmindc_mind.so"
-SO = pathlib.Path(os.environ.get("MINDC_SO", str(_DEFAULT_SO)))
+_DEFAULT_SO = pathlib.Path(__file__).parent / "libmindc_mind.so"  # legacy fallback
+# MINDC_SO (CI) verbatim; else build the self-host .so FRESH — never trust a
+# stale in-tree libmindc_mind.so (a cargo build does not regenerate it).
+sys.path.insert(0, str(pathlib.Path(__file__).parent.resolve()))
+from _selfhost_so import resolve_so  # noqa: E402
+
+SO = resolve_so()
 
 CASES = [
     (b"pub fn add(a: i64, b: i64) -> i64 { a + b }\n",

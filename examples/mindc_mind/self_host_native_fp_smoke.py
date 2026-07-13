@@ -24,6 +24,9 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, str(pathlib.Path(__file__).parent.resolve()))
+from _selfhost_so import resolve_so  # noqa: E402
+
 
 def dbits(x: float) -> int:
     return struct.unpack("<q", struct.pack("<d", x))[0]
@@ -47,7 +50,7 @@ def run_elf(elf: bytes, tmp: pathlib.Path) -> int:
 
 
 def main() -> int:
-    so = os.environ.get("MINDC_SO")
+    so = str(resolve_so())  # MINDC_SO verbatim, else fresh build (never stale)
     if not so or not os.path.exists(so):
         print(f"FAIL  MINDC_SO not set or missing: {so!r}")
         return 1
