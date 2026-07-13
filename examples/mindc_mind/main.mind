@@ -149,6 +149,9 @@ pub fn tk_shr() -> i64 {
 pub fn tk_percent() -> i64 {
     35
 }
+pub fn tk_float() -> i64 {
+    36
+}
 
 // ===== Byte loads =====
 
@@ -626,6 +629,22 @@ pub fn scan(buf: i64, i: i64, buf_len: i64, toks: Vec) -> Vec {
     }
     if is_digit(b) == 1 {
         let hi: i64 = scan_int_end(buf, i + 1, buf_len);
+        // Float literal: <digits> '.' <digits>. Fire only when a '.' (46) is
+        // immediately followed by a digit, so `x.0` (ident-dot-int), `0..n`
+        // (range) and a trailing `.` stay int-DOT paths. `hi + 1 < buf_len`
+        // guarantees both `hi` and `hi + 1` are valid indices.
+        // deferred: exponent form `<digits>.<digits>(e|E)[+|-]<digits>` — the
+        // parser float-lit AST kind + dtype threading are separate follow-up
+        // constructs; upgrade path: add a scan_float_exp tail after the frac scan.
+        if hi + 1 < buf_len {
+            if load_byte(buf, hi) == 46 {
+                if is_digit(load_byte(buf, hi + 1)) == 1 {
+                    let fhi: i64 = scan_int_end(buf, hi + 1, buf_len);
+                    let ftoks: Vec = push_token(toks, tk_float(), i, fhi);
+                    return scan(buf, fhi, buf_len, ftoks);
+                }
+            }
+        }
         let next_toks: Vec = push_token(toks, tk_int(), i, hi);
         return scan(buf, hi, buf_len, next_toks);
     }
