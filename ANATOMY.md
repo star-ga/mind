@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3079 | **Est. tokens:** ~7,400,356
-**Generated:** 2026-07-13 02:00 UTC
+**Files:** 3079 | **Est. tokens:** ~7,400,647
+**Generated:** 2026-07-13 06:17 UTC
 
 ## Token Budget Guide
 
@@ -55,7 +55,7 @@
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 40 | ~80,424 |
+| `examples/mindc_mind/` | 40 | ~80,715 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~83 |
 | `examples/native/` | 4 | ~527 |
@@ -840,7 +840,7 @@
 - `self_host_loop_smoke.py` (~1834 tok, huge)
 - `self_host_mlir_smoke.py` (~1736 tok, huge)
 - `self_host_native_elf_smoke.py` (~10022 tok, huge)
-- `self_host_native_fp_smoke.py` (~811 tok, large) — RI-B1 native-ELF scalar-f64 gate (zero MLIR/LLVM).
+- `self_host_native_fp_smoke.py` (~1102 tok, large) — RI-B1 native-ELF scalar-f64 gate (zero MLIR/LLVM).
 - `sha256_hash_smoke.py` (~732 tok, large) — # Copyright 2025 STARGA Inc.
 - `struct_fields_smoke.py` (~1076 tok, large)
 - `struct_lit_smoke.py` (~1923 tok, huge)

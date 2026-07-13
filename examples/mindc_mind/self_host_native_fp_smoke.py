@@ -29,10 +29,11 @@ def dbits(x: float) -> int:
     return struct.unpack("<q", struct.pack("<d", x))[0]
 
 
-def mind_fp_elf(lib, a: float, b: float, op_sel: int) -> bytes:
-    lib.selftest_native_elf_fp.restype = ctypes.c_int64
-    lib.selftest_native_elf_fp.argtypes = [ctypes.c_int64, ctypes.c_int64, ctypes.c_int64]
-    es = lib.selftest_native_elf_fp(dbits(a), dbits(b), op_sel)
+def mind_fp_elf(lib, a: float, b: float, op_sel: int, entry: str = "selftest_native_elf_fp") -> bytes:
+    fn = getattr(lib, entry)
+    fn.restype = ctypes.c_int64
+    fn.argtypes = [ctypes.c_int64, ctypes.c_int64, ctypes.c_int64]
+    es = fn(dbits(a), dbits(b), op_sel)
     rd = lambda addr, o=0: ctypes.cast(addr + o, ctypes.POINTER(ctypes.c_int64))[0]
     sh = rd(es, 0)  # buf: String handle (addr/len/cap)
     return ctypes.string_at(rd(sh, 0), rd(sh, 8))
@@ -77,8 +78,32 @@ def main() -> int:
                 f"trunc({a} op {b}) exit={got} expected={expected} "
                 f"(elf {len(elf)}B, SSE2 native, zero MLIR/LLVM)"
             )
+
+        # Memory-operand (stack-slot) forms: every value round-trips through an
+        # [rbp+disp32] slot (movsd-load/store F2 0F 10/11 85 + binop-mem F2 0F <opc> 85).
+        if not hasattr(lib, "selftest_native_elf_fp_mem"):
+            print("  FAIL  selftest_native_elf_fp_mem: symbol absent (encoder not built)")
+            all_ok = False
+        else:
+            for a, b, op, name, expected in cases:
+                elf = mind_fp_elf(lib, a, b, op, entry="selftest_native_elf_fp_mem")
+                if not (len(elf) > 120 and elf[:4] == b"\x7fELF"):
+                    print(f"  FAIL  mem-{name}: not a runnable ELF (len={len(elf)})")
+                    all_ok = False
+                    continue
+                got = run_elf(elf, tmp)
+                ok = got == expected
+                all_ok = all_ok and ok
+                print(
+                    f"  {'PASS' if ok else 'FAIL'}  mem-{name}: "
+                    f"trunc({a} op {b}) exit={got} expected={expected} "
+                    f"(elf {len(elf)}B, SSE2 mem-operand [rbp+d32], zero MLIR/LLVM)"
+                )
     if all_ok:
-        print("ALL PASS  native-ELF scalar-f64 (const/add/sub/mul/div/trunc) — zero MLIR/LLVM")
+        print(
+            "ALL PASS  native-ELF scalar-f64 "
+            "(reg-form + mem-operand stack-slot: const/add/sub/mul/div/trunc) — zero MLIR/LLVM"
+        )
         return 0
     print("FAIL  native-ELF scalar-f64 gate")
     return 1
