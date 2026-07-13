@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3078 | **Est. tokens:** ~7,397,099
-**Generated:** 2026-07-12 14:42 UTC
+**Files:** 3079 | **Est. tokens:** ~7,400,356
+**Generated:** 2026-07-13 02:00 UTC
 
 ## Token Budget Guide
 
@@ -47,7 +47,7 @@
 | `docs/mindcraft/` | 3 | ~7,023 |
 | `docs/rfcs/` | 30 | ~134,901 |
 | `docs/specs/` | 2 | ~976 |
-| `examples/` | 21 | ~38,272 |
+| `examples/` | 22 | ~41,529 |
 | `examples/c/` | 2 | ~400 |
 | `examples/columnar/` | 4 | ~7,585 |
 | `examples/compliance/` | 3 | ~5,294 |
@@ -743,6 +743,7 @@
 - `whitepaper.md` (~2788 tok, huge) — MIND: The Native Language for Intelligent Systems
 ### `examples/`
 
+- `anthropobrot.mind` (~3257 tok, huge) — Anthropobrot: depth-selected orbit-density multisets of the Fatou-Julia iteral.
 - `autodiff_demo.mind` (~1715 tok, huge) — Autodiff Demonstration
 ### `examples/c/`
 
