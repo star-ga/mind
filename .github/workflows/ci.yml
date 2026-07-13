@@ -546,6 +546,21 @@ jobs:
             python3 examples/mindc_mind/self_host_native_elf_smoke.py
         working-directory: ${{ github.workspace }}
 
+      - name: Native-ELF float end-to-end gate (self_host_native_fp_expr_smoke.py)
+        # RI-B1 CAPSTONE (roadmap C1): nb_expr now routes an ast_float_lit's value
+        # through the SSE2 scalar-double encoders (nb_fp_const_xmm + movsd-store to the
+        # value's [rbp+d32] slot), NOT the GP-integer const path. A REAL float source
+        # literal is lexed + parsed + lowered THROUGH nb_expr, then loaded back to xmm0
+        # and cvttsd2si -> exit(trunc(value)). No frozen float byte-oracle can exist
+        # (the deleted Rust native backend rejected ConstF64), so the CPU is the oracle:
+        # a wrong SSE encoding or wrong IEEE-754 bits faults or returns the wrong integer
+        # — non-fakeable execution-correctness. main.mind's own source stays float-free,
+        # so this arm is never taken during self-compile (integer byte-identity holds).
+        run: |
+          MINDC_SO=/tmp/libmindc_mind_self_host.so \
+            python3 examples/mindc_mind/self_host_native_fp_expr_smoke.py
+        working-directory: ${{ github.workspace }}
+
       - name: Run Phase G integration tests
         run: |
           cargo test --release --no-default-features \

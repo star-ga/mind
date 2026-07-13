@@ -20663,6 +20663,26 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let c4: String = nb_store_rax(c3, nb_slot_disp(id));
         return NbState { code: c4, next_id: id + 1, last_id: id, ncalls: st.ncalls };
     }
+    if k == ast_float_lit() {
+        // RI-B1 float-scalar path (roadmap C1): a FLOAT literal lowers through the
+        // SSE2 scalar-double encoders, NOT the GP-integer const path above. The arm
+        // gate `k == ast_float_lit()` IS the dtype classification (== nb_node_dtype's
+        // nb_dtype_float branch). Compute the IEEE-754 bits integer-only (main.mind
+        // stays float-free — a float op in its own source would break self-host
+        // byte-identity), load them into xmm0 (movabs + movq bridge) and spill to the
+        // value's [rbp+disp32] stack slot with movsd — mirroring the integer arm's
+        // movabs + mov [slot],rax, one register file over. main.mind's OWN source
+        // contains NO float literals, so this arm is NEVER taken during self-compile;
+        // every integer SSA value classifies INT and the integer native-ELF oracle is
+        // byte-identical. (Float-op propagation FLOAT<op>FLOAT -> nb_fp_binop, which
+        // needs the per-SSA dtype table threaded through NbState so a slot's dtype is
+        // known at the consumer, is the follow-up slice.)
+        let bits: i64 = nb_float_lit_bits(buf, ast_span_lo(node), ast_span_hi(node));
+        let id: i64 = st.next_id;
+        let cx: String = nb_fp_const_xmm(st.code, bits, 0);
+        let cs: String = nb_fp_movsd_store_xmm0(cx, nb_slot_disp(id));
+        return NbState { code: cs, next_id: id + 1, last_id: id, ncalls: st.ncalls };
+    }
     if k == ast_ident() {
         let idx: i64 = resolve_param(params_addr, n_params, buf, ast_span_lo(node), ast_span_hi(node));
         if idx >= 0 {
@@ -25224,4 +25244,117 @@ pub fn selftest_dtype_tag(src_addr: i64, src_len: i64) -> i64 {
     let tbl: i64 = nb_dtype_table_new(4);
     let _s: i64 = nb_dtype_set(tbl, 0, dt);
     nb_dtype_get(tbl, 0)
+}
+
+// ---- RI-B1: float-literal decimal span -> IEEE-754 f64 bits (integer-only) -----
+// nb_expr's float arm needs the 64-bit double bit-pattern of a `<int>.<frac>`
+// source literal, computed with INTEGER arithmetic only so main.mind stays
+// float-free (a float op in main.mind's own source would break self-host
+// byte-identity). value = num/den, den = 10^fdigits = 2^k * 5^k; strip the 5^k
+// factor (exact for a dyadic / exactly-representable literal) to leave q * 2^(-k),
+// then normalise q into a 53-bit mantissa. EXACT for the exactly-representable
+// dyadic case (0.5, 1.5, 2.5, 3.0, ...).
+// deferred: general correctly-rounded decimal->f64 (round-to-nearest-even over
+// arbitrary precision) is a follow-up — stubbed to the exact dyadic case; upgrade
+// path: a bignum long-division producing the guard/round/sticky bits.
+
+// 10^n (n>=0) via recursion (self-host subset: no while).
+pub fn nb_pow10(n: i64) -> i64 {
+    if n <= 0 {
+        return 1;
+    }
+    nb_pow10(n - 1) * 10
+}
+
+// Divide `q` by 5 exactly, `k` times (strips the 5^k factor of den = 10^k).
+pub fn nb_strip_pow5(q: i64, k: i64) -> i64 {
+    if k <= 0 {
+        return q;
+    }
+    nb_strip_pow5(q / 5, k - 1)
+}
+
+// Index of the highest set bit of q>0 (q in [2^b, 2^(b+1)) -> returns b).
+pub fn nb_msb_index(q: i64) -> i64 {
+    if q <= 1 {
+        return 0;
+    }
+    nb_msb_index(q / 2) + 1
+}
+
+// IEEE-754 f64 bits for q * 2^(-k), q>0, sign 0. q normalises to a 53-bit mantissa
+// (implicit leading 1 at bit 52); biased exponent = 1023 + (b - k). Shifts are
+// native-ELF-supported (nb_arith_rax_mem shl/shr), so this self-compiles.
+pub fn nb_ratio_to_f64_bits(q: i64, k: i64) -> i64 {
+    if q <= 0 {
+        return 0;
+    }
+    let b: i64 = nb_msb_index(q);
+    let mant: i64 = if b <= 52 {
+        q << (52 - b)
+    } else {
+        q >> (b - 52)
+    };
+    let frac: i64 = mant - (1 << 52);
+    let biased: i64 = 1023 + (b - k);
+    (biased << 52) | frac
+}
+
+// Index of the '.' (byte 46) in [lo,hi); returns hi when absent (no fractional part).
+pub fn nb_find_dot(buf: i64, lo: i64, hi: i64) -> i64 {
+    if lo >= hi {
+        return hi;
+    }
+    if load_byte(buf, lo) == 46 {
+        return lo;
+    }
+    nb_find_dot(buf, lo + 1, hi)
+}
+
+// Parse a `<intdigits>.<fracdigits>` span into IEEE-754 f64 bits (see block header).
+pub fn nb_float_lit_bits(buf: i64, lo: i64, hi: i64) -> i64 {
+    let dot: i64 = nb_find_dot(buf, lo, hi);
+    let ipart: i64 = parse_int_span(buf, lo, dot, 0);
+    let fdigits: i64 = hi - (dot + 1);
+    let fk: i64 = if fdigits < 0 {
+        0
+    } else {
+        fdigits
+    };
+    let fpart: i64 = parse_int_span(buf, dot + 1, hi, 0);
+    let den: i64 = nb_pow10(fk);
+    let num: i64 = ipart * den + fpart;
+    let q: i64 = nb_strip_pow5(num, fk);
+    nb_ratio_to_f64_bits(q, fk)
+}
+
+// End-to-end proof of the nb_expr float-selection arm: lex + parse a REAL float
+// literal source, lower it through nb_expr (which now routes FLOAT through
+// nb_fp_const_xmm + movsd-store to the value's stack slot), then load the slot back
+// to xmm0 and cvttsd2si -> exit(trunc(value)). Driven through the REAL nb_expr path,
+// not the fp encoders directly. Emits ZERO MLIR/LLVM; the CPU exit code is the
+// oracle (no frozen float oracle can exist — the deleted Rust native rejected
+// ConstF64). A bare float literal touches none of nb_expr's calls/lets/param
+// scratch, so minimal empty allocations suffice.
+pub fn selftest_native_elf_fp_expr(src_addr: i64, src_len: i64) -> EmitState {
+    let toks: Vec = lex(src_addr, src_len);
+    let pr: ParseResult = parse_primary(toks, 0, src_addr);
+    let node: i64 = pr_node(pr);
+    // rbp frame so [rbp+disp32] slots are addressable (the movsd store/load target).
+    let p: String = nb_fp_prologue_frame(string_new(), 64);
+    let params: i64 = __mind_alloc(8);
+    let calls: i64 = __mind_alloc(8);
+    let lets: i64 = __mind_alloc(512 * 4 * 8);
+    let lcell: i64 = __mind_alloc(8);
+    __mind_store_i64(lcell, 0);
+    let st0: NbState = NbState { code: p, next_id: 0, last_id: 0 - 1, ncalls: 0 };
+    let s1: NbState = nb_expr(st0, src_addr, node, params, 0, calls, lets, lcell);
+    // Read the float back out of its slot and truncate to i64 for exit(rax).
+    let c1: String = nb_fp_movsd_load_xmm0(s1.code, nb_slot_disp(s1.last_id));
+    let c2: String = nb_fp_trunc_rax_xmm0(c1);
+    let code: String = nb_emit_return(c2, 1);
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
 }

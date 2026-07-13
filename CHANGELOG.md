@@ -43,13 +43,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     digit (with `hi+1 < buf_len`) scans the fractional part and emits `tk_float`;
     guards preserve `x.0` (ident-dot-int), `0..n` (range) and a trailing `.` as
     their existing int-DOT paths, so real float literals now tokenize.
+  - **Parser float-literal AST node** (`c72f645`) — `tk_float` now parses to a
+    distinct `ast_float_lit()` node (not the integer-const node), carrying the raw
+    decimal span so the consumer can reconstruct the IEEE-754 bits.
+  - **Per-SSA dtype tag** (`1b9a64d`) — a float/int classifier + per-SSA dtype table
+    so a value's dtype is known at the point nb_expr selects its lowering: an
+    `ast_float_lit` classifies FLOAT, every self-compile SSA value classifies INT.
+  - **`nb_expr` float-scalar routing — end-to-end CAPSTONE** (this release) — the
+    connecting slice: `nb_expr`'s new `k == ast_float_lit()` arm routes a float
+    literal's value through the SSE2 encoders (`nb_fp_const_xmm` + `movsd`-store to
+    the value's `[rbp+disp32]` slot), NOT the GP-integer const path, with the
+    IEEE-754 bits computed integer-only (`nb_float_lit_bits`/`nb_pow10`/
+    `nb_strip_pow5`/`nb_ratio_to_f64_bits`) so `main.mind`'s own source stays
+    float-free. A **real** float source literal now lexes → parses → lowers through
+    the real `nb_expr` path to a runnable native-ELF (`selftest_native_elf_fp_expr`),
+    exiting `trunc(value)` — a float program compiles to native-ELF end to end with
+    zero MLIR/LLVM.
 
   New execution-correctness gate `examples/mindc_mind/self_host_native_fp_smoke.py`
   (reg-form + mem-operand): no frozen float oracle can exist (the removed Rust
   native backend rejected `ConstF64`), so the CPU is the oracle — the emitted ELF's
-  exit code must equal the truncated float result. Opens the float column of the
-  native-ELF self-host surface (previously integer/control-flow only); keystone 7/7
-  and the native-ELF integer surface are unaffected.
+  exit code must equal the truncated float result. The end-to-end capstone adds
+  `examples/mindc_mind/self_host_native_fp_expr_smoke.py` (real float source through
+  `nb_expr`, CPU-as-oracle, `1.5→exit1 … 12.25→exit12`), wired into the KEYSTONE
+  `mindcraft_self_host` job. This is **execution-correctness gated, not
+  byte-identity** (no float byte-oracle exists); the integer self-host stays
+  byte-identity (keystone 7/7, loop `stage1==stage2==stage3`, parity 23/23 all
+  unaffected). Opens the float column of the native-ELF self-host surface
+  (previously integer/control-flow only).
 - **CI: self-host execution-correctness smokes wired into the KEYSTONE job.**
   `self_host_native_fp_smoke.py` (RI-B1 float column, above) and
   `self_host_native_elf_smoke.py` (per-fixture native-ELF integer byte-identity
