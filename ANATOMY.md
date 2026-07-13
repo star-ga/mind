@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3083 | **Est. tokens:** ~7,406,305
-**Generated:** 2026-07-13 11:45 UTC
+**Files:** 3084 | **Est. tokens:** ~7,407,470
+**Generated:** 2026-07-13 12:18 UTC
 
 ## Token Budget Guide
 
@@ -55,7 +55,7 @@
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 44 | ~85,485 |
+| `examples/mindc_mind/` | 45 | ~86,650 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~83 |
 | `examples/native/` | 4 | ~527 |
@@ -845,6 +845,7 @@
 - `self_host_native_fp_expr_smoke.py` (~983 tok, large) — RI-B1 nb_expr float-scalar routing gate (zero MLIR/LLVM).
 - `self_host_native_fp_let_smoke.py` (~1208 tok, large) — RI-B1 (#107 follow-up) FLOAT dtype propagation ACROSS a LET binding (zero MLIR/LLVM).
 - `self_host_native_fp_smoke.py` (~1102 tok, large) — RI-B1 native-ELF scalar-f64 gate (zero MLIR/LLVM).
+- `self_host_native_intdot_smoke.py` (~1165 tok, large) — RI-B2-S1 (#108) scalar i64 DOT-PRODUCT reduction native-ELF (zero MLIR/LLVM).
 - `sha256_hash_smoke.py` (~732 tok, large) — # Copyright 2025 STARGA Inc.
 - `struct_fields_smoke.py` (~1076 tok, large)
 - `struct_lit_smoke.py` (~1923 tok, huge)
