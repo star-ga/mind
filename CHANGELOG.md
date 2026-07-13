@@ -24,16 +24,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stays behind the open-core `GPUBackend` contract (concrete kernel is
   commercial-runtime work).
 - **Rust-independence RI-B1 — native-ELF `f64` scalar emission (zero MLIR/LLVM).**
-  The pure-MIND native-ELF backend (`examples/mindc_mind/main.mind`, `nb_fp_*`
-  family) now emits scalar `f64` arithmetic — const load, `addsd`/`subsd`/
-  `mulsd`/`divsd`, and `cvttsd2si` truncation — as hand-written x86-64 SSE2
-  machine code, with no MLIR/LLVM anywhere in the path. New execution-correctness
-  gate `examples/mindc_mind/self_host_native_fp_smoke.py`: no frozen float oracle
-  can exist (the removed Rust native backend rejected `ConstF64`), so the CPU is
-  the oracle — the emitted ELF's exit code must equal the truncated float result.
-  Opens the float column of the native-ELF self-host surface (previously
-  integer/control-flow only); keystone 7/7 and the native-ELF integer surface
-  are unaffected.
+  *(Roadmap **C1** — native-ELF float codegen; the informal "RI-B1" work label is
+  disambiguated from roadmap phase B1 (pure-MIND type-checker) in
+  `docs/INDEPENDENCE_ROADMAP.md`.)* The pure-MIND native-ELF backend
+  (`examples/mindc_mind/main.mind`, `nb_fp_*` family) now emits scalar `f64`
+  arithmetic as hand-written x86-64 SSE2 machine code, with no MLIR/LLVM anywhere
+  in the path. Three additive slices landed:
+  - **Reg-form encoders** (`6179153`) — const load (movabs/movq bridge),
+    `addsd`/`subsd`/`mulsd`/`divsd`, and `cvttsd2si` truncation, exercised by
+    `selftest_native_elf_fp`.
+  - **Memory-operand (stack-slot) encoders** (`c914529`) — `nb_fp_movsd_load_xmm0`
+    / `nb_fp_movsd_store_xmm0` (`F2 0F 10/11 85` disp32, `xmm0`↔`[rbp+disp32]`),
+    `nb_fp_binop_xmm0_mem` (`F2 0F <opc> 85` disp32 against a stack slot), and
+    `nb_fp_prologue_frame` — scalar-f64 SSE2 folded into the integer `rbp`-frame
+    spill model, exercised by `selftest_native_elf_fp_mem`.
+  - **Lexer float-literal token** (`720570e`) — token kind `tk_float()` = 36 plus a
+    guarded `scan()` branch: after `scan_int_end`, a `.` immediately followed by a
+    digit (with `hi+1 < buf_len`) scans the fractional part and emits `tk_float`;
+    guards preserve `x.0` (ident-dot-int), `0..n` (range) and a trailing `.` as
+    their existing int-DOT paths, so real float literals now tokenize.
+
+  New execution-correctness gate `examples/mindc_mind/self_host_native_fp_smoke.py`
+  (reg-form + mem-operand): no frozen float oracle can exist (the removed Rust
+  native backend rejected `ConstF64`), so the CPU is the oracle — the emitted ELF's
+  exit code must equal the truncated float result. Opens the float column of the
+  native-ELF self-host surface (previously integer/control-flow only); keystone 7/7
+  and the native-ELF integer surface are unaffected.
+- **CI: self-host execution-correctness smokes wired into the KEYSTONE job.**
+  `self_host_native_fp_smoke.py` (RI-B1 float column, above) and
+  `self_host_native_elf_smoke.py` (per-fixture native-ELF integer byte-identity
+  vs the frozen Rust `mind-native` oracle — fed + no-feed self-computed PT_NOTE +
+  pure-MIND SHA-256 leg) now run in `ci.yml`'s `mindcraft_self_host` job, so an
+  encoder regression can no longer land silently green. The pinned Rust
+  `emit_mic3` reference notes (`_ref_*.note`) are refreshed to the current stdlib.
+  The elf smoke's whole-module `main.mind`-vs-frozen-`main.elf` rungs are **deferred**
+  (that oracle is unregenerable since `src/native` was deleted, #15, and `main.mind`
+  has grown) — the smoke names the deferral loudly (opt-in `MIND_SELFHOST_ELF_SEEDED=1`);
+  the per-fixture byte-identity checks stay gated. The elf smoke's mismatch message
+  is now provenance-aware (a pinned-cache mismatch reports "real divergence OR stale
+  cache — regenerate", never a bare "REAL mic@3 divergence").
 
 ### Security
 - **A nondeterministic call hidden inside `region { }` forged a `deterministic`

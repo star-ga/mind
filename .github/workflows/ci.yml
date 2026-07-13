@@ -519,6 +519,33 @@ jobs:
             python3 examples/mindc_mind/self_host_loop_smoke.py
         working-directory: ${{ github.workspace }}
 
+      - name: Native-ELF scalar-f64 execution gate (self_host_native_fp_smoke.py)
+        # RI-B1 native-ELF float column (roadmap C1). No frozen float byte-oracle
+        # can exist (the deleted Rust native backend rejected ConstF64), so the CPU
+        # is the oracle: emit the pure-MIND SSE2 ELF, run it, assert the exit code
+        # equals trunc(a OP b) for reg-form AND mem-operand [rbp+d32] encoders. A
+        # wrong SSE encoding faults or returns the wrong integer — non-fakeable.
+        run: |
+          MINDC_SO=/tmp/libmindc_mind_self_host.so \
+            python3 examples/mindc_mind/self_host_native_fp_smoke.py
+        working-directory: ${{ github.workspace }}
+
+      - name: Native-ELF integer byte-identity gate (self_host_native_elf_smoke.py)
+        # Per-fixture byte-identity of the pure-MIND native-ELF emitter vs the frozen
+        # Rust `mind-native` oracle (add/if_ret/value_if/recursion/struct_field), FED
+        # and NO-FEED (self-computed PT_NOTE == pinned Rust emit_mic3 reference), plus
+        # the pure-MIND SHA-256 leg. MIND_SELFHOST_SKIP_REF_REGEN=1 pins the committed
+        # _ref cache (refreshed in-tree via dump_ref) instead of a nested cargo build.
+        # The whole-module main.mind rungs are DEFERRED (the frozen main.elf oracle is
+        # unregenerable since src/native was deleted, and main.mind has grown) — the
+        # smoke names that deferral loudly; the per-fixture byte-identity stays gated.
+        env:
+          MIND_SELFHOST_SKIP_REF_REGEN: "1"
+        run: |
+          MINDC_SO=/tmp/libmindc_mind_self_host.so \
+            python3 examples/mindc_mind/self_host_native_elf_smoke.py
+        working-directory: ${{ github.workspace }}
+
       - name: Run Phase G integration tests
         run: |
           cargo test --release --no-default-features \
