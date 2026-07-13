@@ -19993,6 +19993,23 @@ pub fn nb_emit_load_i32_sx(code: String, addr_disp: i64) -> String {
     nb_push(c6, 0)
 }
 
+// Sign-extending 8-bit memory load (the int8 SIGNED sibling of the zero-extend
+// nb_emit_load_i8 and the WORD/DWORD nb_emit_load_i16_sx/nb_emit_load_i32_sx). The
+// slot at [rbp+addr] holds the element's absolute runtime address; deref it as a
+// signed BYTE. The int8 GEMM (#108 RI-B2-S7) movsx-byte-loads each int8 element
+// through this before the i64 product (pure integer, no fixed-point rescale).
+//   mov rax,[rbp+addr] = 48 8B 85 <disp32> ; movsx rax,byte [rax] = 48 0F BE 00.
+pub fn nb_emit_load_i8_sx(code: String, addr_disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 139);
+    let c3: String = nb_push(c2, 133);
+    let c4: String = nb_i32le_signed(c3, addr_disp);
+    let c5: String = nb_push(c4, 72);
+    let c6: String = nb_push(c5, 15);
+    let c7: String = nb_push(c6, 190);
+    nb_push(c7, 0)
+}
+
 // emit_write(fd_disp, buf_disp, count_disp): raw write(2) syscall, NO libc
 // (mirror src/native::emit_write). The print path's offset arg is the -1 sentinel
 // that write(2) already implements, so it is intentionally unused here.
@@ -26366,6 +26383,252 @@ pub fn selftest_native_elf_gemv_q16(m: i64, n: i64) -> EmitState {
     let rows: String = nb_gemv_row_loop(gens, 1, jmps, jcell);
     // exit(0).
     let e1: String = nb_intdot_movimm(rows, 0, 0 - 1048752);
+    let e2: String = nb_load_rax(e1, 0 - 1048752);
+    let code: String = nb_emit_return(e2, 1);
+    let njmps: i64 = __mind_load_i64(jcell);
+    let _px: i64 = nb_patch_jmps(string_addr(code), jmps, njmps, 0);
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
+
+// ---- RI-B2-S7 (#108): scalar fused GEMM (matrix x matrix) ----
+// C[M,N] = A[M,K] . B[K,N], byte-identical to the MLIR canaries gemm-q16 and
+// gemm-i8. The triple loop composes the proven i64-MAC dot: for each (i,j),
+// acc = Sum_k f(A[i*K+k] * B[k*N+j]) with a full i64 accumulator, narrowed ONCE
+// to i32 (movsxd — the canary's `acc as i32`), then the 4 LE bytes are written to
+// stdout in row-major (i,j) order (== canonical_hash_i32s of the M*N i32 matrix,
+// M*N*4 bytes). A is generated before B via the SAME LCG the canary uses; the
+// per-element narrowing (q16: next_q16; i8: (next_u32>>16) as i8) is realised by
+// the shl/sar amounts in nb_gemm_consts. B is the UN-transposed K*N operand,
+// indexed B[k*N+j] (column j, stride N*8) — mathematically identical to the
+// canary's dot over B-transpose rows.
+
+// Set the shared LCG + shape + write constants for a gemm kernel. shl_amt/sar_amt
+// select the per-element narrowing in the shared gen body (q16: 16/44 realises
+// ((state>>16 as u32 as i32)>>12); i8: 24/56 realises (next_u32>>16) as i8).
+pub fn nb_gemm_consts(code: String, m: i64, n: i64, k: i64, shl_amt: i64, sar_amt: i64) -> String {
+    let k1: String = nb_intdot_movimm(code, 1664525, 0 - 1048592);
+    let k2: String = nb_intdot_movimm(k1, 1013904223, 0 - 1048600);
+    let k3: String = nb_intdot_movimm(k2, 8, 0 - 1048616);
+    let k4: String = nb_intdot_movimm(k3, 1, 0 - 1048648);
+    let k5: String = nb_intdot_movimm(k4, shl_amt, 0 - 1048704);
+    let k6: String = nb_intdot_movimm(k5, sar_amt, 0 - 1048712);
+    let k7: String = nb_intdot_movimm(k6, 3735928559, 0 - 1048584);
+    let k8: String = nb_intdot_movimm(k7, m, 0 - 1048768);
+    let k9: String = nb_intdot_movimm(k8, n, 0 - 1048624);
+    let k10: String = nb_intdot_movimm(k9, k, 0 - 1048824);
+    let k11: String = nb_intdot_movimm(k10, k * 8, 0 - 1048832);
+    let k12: String = nb_intdot_movimm(k11, n * 8, 0 - 1048776);
+    let k13: String = nb_intdot_movimm(k12, m * k, 0 - 1048848);
+    let k14: String = nb_intdot_movimm(k13, k * n, 0 - 1048856);
+    let k15: String = nb_intdot_movimm(k14, 1, 0 - 1048728);
+    let k16: String = nb_intdot_movimm(k15, 4, 0 - 1048744);
+    // Runtime base addresses: A (const region), B (const region), &result (write buf).
+    let ba: String = nb_intdot_lea(k16, 0 - 1048576, 0 - 1048784);
+    let bb: String = nb_intdot_lea(ba, 0 - 524288, 0 - 1048664);
+    nb_intdot_lea(bb, 0 - 1048720, 0 - 1048736)
+}
+
+// Emit the two gen loops A[0..M*K] then B[0..K*N] (LCG state continues) into the
+// two in-frame arrays. Reuses the proven Q16 gen body — the shl/sar const slots
+// (set by nb_gemm_consts) select q16 vs i8 narrowing, so ONE body serves both.
+pub fn nb_gemm_gen_loops(code_in: String, jmps: i64, jcell: i64) -> String {
+    // --- generate A[0..M*K] (base slot -1048784), count = M*K (-1048848) ---
+    let ga0: String = nb_intdot_movimm(code_in, 0, 0 - 1048608);
+    let ga_hdr: i64 = string_len(ga0);
+    let gac1: String = nb_load_rax(ga0, 0 - 1048608);
+    let gac2: String = nb_cmp_rax_mem(gac1, nb_setcc_opcode(op_lt()), 0 - 1048848);
+    let gac3: String = nb_store_rax(gac2, 0 - 1048640);
+    let gacj: String = nb_emit_cmp_je_zero(gac3, 0 - 1048640, jmps, jcell);
+    let ga_je: i64 = __mind_load_i64(jcell) - 1;
+    let gab: String = nb_q16gen_body(gacj, 0 - 1048784);
+    let gajb: String = nb_emit_jmp(gab, jmps, jcell);
+    let ga_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _gp1: i64 = nb_jmp_set_target(jmps, jcell, ga_bk, ga_hdr);
+    let ga_end: i64 = string_len(gajb);
+    let _gp2: i64 = nb_jmp_set_target(jmps, jcell, ga_je, ga_end);
+    // --- generate B[0..K*N] (base slot -1048664), count = K*N (-1048856) ---
+    let gb0: String = nb_intdot_movimm(gajb, 0, 0 - 1048608);
+    let gb_hdr: i64 = string_len(gb0);
+    let gbc1: String = nb_load_rax(gb0, 0 - 1048608);
+    let gbc2: String = nb_cmp_rax_mem(gbc1, nb_setcc_opcode(op_lt()), 0 - 1048856);
+    let gbc3: String = nb_store_rax(gbc2, 0 - 1048640);
+    let gbcj: String = nb_emit_cmp_je_zero(gbc3, 0 - 1048640, jmps, jcell);
+    let gb_je: i64 = __mind_load_i64(jcell) - 1;
+    let gbb: String = nb_q16gen_body(gbcj, 0 - 1048664);
+    let gbjb: String = nb_emit_jmp(gbb, jmps, jcell);
+    let gb_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _hp1: i64 = nb_jmp_set_target(jmps, jcell, gb_bk, gb_hdr);
+    let gb_end: i64 = string_len(gbjb);
+    let _hp2: i64 = nb_jmp_set_target(jmps, jcell, gb_je, gb_end);
+    gbjb
+}
+
+// The per-product step: prod = aval*bval, with an extra SAR (Q16 rescale) for q16.
+// Early-return statement form (avoids the struct-valued if-expr mis-lower trap).
+pub fn nb_gemm_prod(code: String, is_q16: i64) -> String {
+    let c1: String = nb_load_rax(code, 0 - 1048680);
+    let c2: String = nb_arith_rax_mem(c1, op_mul(), 0 - 1048688);
+    if is_q16 == 1 {
+        let c3: String = nb_arith_rax_mem(c2, op_shr(), 0 - 1048704);
+        return nb_store_rax(c3, 0 - 1048696);
+    }
+    nb_store_rax(c2, 0 - 1048696)
+}
+
+// Sign-extending narrow load for one gemm element: movsxd DWORD for q16, movsx
+// BYTE for i8. Early-return statement form.
+pub fn nb_gemm_load_sx(code: String, is_q16: i64, addr_disp: i64) -> String {
+    if is_q16 == 1 {
+        return nb_emit_load_i32_sx(code, addr_disp);
+    }
+    nb_emit_load_i8_sx(code, addr_disp)
+}
+
+// One inner-K dot body: aval = A[baseA_row + k*8]; bval = B[baseB_col + k*(N*8)];
+// prod = f(aval*bval); acc += prod; k += 1. A is contiguous (stride 8); B is the
+// UN-transposed K*N operand read down column j (stride N*8, slot -1048776).
+pub fn nb_gemm_dot_body(code: String, is_q16: i64) -> String {
+    let a1: String = nb_load_rax(code, 0 - 1048608);
+    let a2: String = nb_arith_rax_mem(a1, op_mul(), 0 - 1048616);
+    let a3: String = nb_arith_rax_mem(a2, op_add(), 0 - 1048656);
+    let a4: String = nb_store_rax(a3, 0 - 1048672);
+    let a5: String = nb_gemm_load_sx(a4, is_q16, 0 - 1048672);
+    let a6: String = nb_store_rax(a5, 0 - 1048680);
+    let b1: String = nb_load_rax(a6, 0 - 1048608);
+    let b2: String = nb_arith_rax_mem(b1, op_mul(), 0 - 1048776);
+    let b3: String = nb_arith_rax_mem(b2, op_add(), 0 - 1048816);
+    let b4: String = nb_store_rax(b3, 0 - 1048672);
+    let b5: String = nb_gemm_load_sx(b4, is_q16, 0 - 1048672);
+    let b6: String = nb_store_rax(b5, 0 - 1048688);
+    let cc: String = nb_gemm_prod(b6, is_q16);
+    let d1: String = nb_load_rax(cc, 0 - 1048632);
+    let d2: String = nb_arith_rax_mem(d1, op_add(), 0 - 1048696);
+    let d3: String = nb_store_rax(d2, 0 - 1048632);
+    let e1: String = nb_load_rax(d3, 0 - 1048608);
+    let e2: String = nb_arith_rax_mem(e1, op_add(), 0 - 1048648);
+    nb_store_rax(e2, 0 - 1048608)
+}
+
+// Emit the triple loop (i over M, j over N, k over K) + per-output narrow + write.
+// baseA_row = baseA0 + i*(K*8); baseB_col = baseB0 + j*8; acc over K; result =
+// acc as i32; write(1,&result,4). Row-major (i,j) output order.
+pub fn nb_gemm_triple_loop(code_in: String, is_q16: i64, jmps: i64, jcell: i64) -> String {
+    // --- outer i loop ---
+    let o0: String = nb_intdot_movimm(code_in, 0, 0 - 1048760);
+    let o_hdr: i64 = string_len(o0);
+    let oc1: String = nb_load_rax(o0, 0 - 1048760);
+    let oc2: String = nb_cmp_rax_mem(oc1, nb_setcc_opcode(op_lt()), 0 - 1048768);
+    let oc3: String = nb_store_rax(oc2, 0 - 1048640);
+    let ocj: String = nb_emit_cmp_je_zero(oc3, 0 - 1048640, jmps, jcell);
+    let o_je: i64 = __mind_load_i64(jcell) - 1;
+    // baseA_row = baseA0 + i*(K*8).
+    let p1: String = nb_load_rax(ocj, 0 - 1048760);
+    let p2: String = nb_arith_rax_mem(p1, op_mul(), 0 - 1048832);
+    let p3: String = nb_arith_rax_mem(p2, op_add(), 0 - 1048784);
+    let p4: String = nb_store_rax(p3, 0 - 1048656);
+    // --- middle j loop ---
+    let m0: String = nb_intdot_movimm(p4, 0, 0 - 1048808);
+    let m_hdr: i64 = string_len(m0);
+    let mc1: String = nb_load_rax(m0, 0 - 1048808);
+    let mc2: String = nb_cmp_rax_mem(mc1, nb_setcc_opcode(op_lt()), 0 - 1048624);
+    let mc3: String = nb_store_rax(mc2, 0 - 1048640);
+    let mcj: String = nb_emit_cmp_je_zero(mc3, 0 - 1048640, jmps, jcell);
+    let m_je: i64 = __mind_load_i64(jcell) - 1;
+    // baseB_col = baseB0 + j*8.
+    let q1: String = nb_load_rax(mcj, 0 - 1048808);
+    let q2: String = nb_arith_rax_mem(q1, op_mul(), 0 - 1048616);
+    let q3: String = nb_arith_rax_mem(q2, op_add(), 0 - 1048664);
+    let q4: String = nb_store_rax(q3, 0 - 1048816);
+    // acc = 0.
+    let q5: String = nb_intdot_movimm(q4, 0, 0 - 1048632);
+    // --- inner k loop over K ---
+    let d0: String = nb_intdot_movimm(q5, 0, 0 - 1048608);
+    let d_hdr: i64 = string_len(d0);
+    let dc1: String = nb_load_rax(d0, 0 - 1048608);
+    let dc2: String = nb_cmp_rax_mem(dc1, nb_setcc_opcode(op_lt()), 0 - 1048824);
+    let dc3: String = nb_store_rax(dc2, 0 - 1048640);
+    let dcj: String = nb_emit_cmp_je_zero(dc3, 0 - 1048640, jmps, jcell);
+    let d_je: i64 = __mind_load_i64(jcell) - 1;
+    let db: String = nb_gemm_dot_body(dcj, is_q16);
+    let djb: String = nb_emit_jmp(db, jmps, jcell);
+    let d_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _dp1: i64 = nb_jmp_set_target(jmps, jcell, d_bk, d_hdr);
+    let d_end: i64 = string_len(djb);
+    let _dp2: i64 = nb_jmp_set_target(jmps, jcell, d_je, d_end);
+    // Narrow acc ONCE to i32 (movsxd — the canary's `acc as i32`) into result.
+    let t1: String = nb_load_rax(djb, 0 - 1048632);
+    let t2: String = nb_movsxd_rax_eax(t1);
+    let t3: String = nb_store_rax(t2, 0 - 1048720);
+    // write(1, &result, 4).
+    let w1: String = nb_emit_write(t3, 0 - 1048728, 0 - 1048736, 0 - 1048744);
+    // j += 1.
+    let u1: String = nb_load_rax(w1, 0 - 1048808);
+    let u2: String = nb_arith_rax_mem(u1, op_add(), 0 - 1048648);
+    let u3: String = nb_store_rax(u2, 0 - 1048808);
+    // back edge to the middle header.
+    let mjb: String = nb_emit_jmp(u3, jmps, jcell);
+    let m_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _mp1: i64 = nb_jmp_set_target(jmps, jcell, m_bk, m_hdr);
+    let m_end: i64 = string_len(mjb);
+    let _mp2: i64 = nb_jmp_set_target(jmps, jcell, m_je, m_end);
+    // i += 1.
+    let v1: String = nb_load_rax(mjb, 0 - 1048760);
+    let v2: String = nb_arith_rax_mem(v1, op_add(), 0 - 1048648);
+    let v3: String = nb_store_rax(v2, 0 - 1048760);
+    // back edge to the outer header.
+    let ojb: String = nb_emit_jmp(v3, jmps, jcell);
+    let o_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _op1: i64 = nb_jmp_set_target(jmps, jcell, o_bk, o_hdr);
+    let o_end: i64 = string_len(ojb);
+    let _op2: i64 = nb_jmp_set_target(jmps, jcell, o_je, o_end);
+    ojb
+}
+
+// Emit a runnable ET_EXEC for scalar Q16.16 GEMM: LCG-generate A[M*K] then B[K*N]
+// as Q16.16, then C[i,j] = (i32)( Sum_k (A[i,k]*B[k,j]) >> 16 ), i64 MAC with
+// per-product Q16 rescale, narrowed once to i32, M*N i32 output row-major to
+// stdout. Byte-identical to the MLIR canary gemm-q16 (64x64x64, seed 0xDEADBEEF).
+// NEW export never reached during self-compile — integer native oracle stays
+// byte-identical.
+pub fn selftest_native_elf_gemm_q16(m: i64, n: i64, k: i64) -> EmitState {
+    let p0: String = nb_fp_prologue_frame(string_new(), 1052672);
+    let kc: String = nb_gemm_consts(p0, m, n, k, 16, 44);
+    let jmps: i64 = __mind_alloc(64 * 4 * 8);
+    let jcell: i64 = __mind_alloc(8);
+    __mind_store_i64(jcell, 0);
+    let gens: String = nb_gemm_gen_loops(kc, jmps, jcell);
+    let loops: String = nb_gemm_triple_loop(gens, 1, jmps, jcell);
+    // exit(0).
+    let e1: String = nb_intdot_movimm(loops, 0, 0 - 1048752);
+    let e2: String = nb_load_rax(e1, 0 - 1048752);
+    let code: String = nb_emit_return(e2, 1);
+    let njmps: i64 = __mind_load_i64(jcell);
+    let _px: i64 = nb_patch_jmps(string_addr(code), jmps, njmps, 0);
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
+
+// Emit a runnable ET_EXEC for scalar int8 GEMM (the det.igemm tier): LCG-generate
+// A[M*K] then B[K*N] as int8 ((next_u32>>16) as i8), then C[i,j] =
+// (i32)( Sum_k A[i,k]*B[k,j] ), PURE INTEGER i64 MAC (movsx-byte loads, NO
+// fixed-point shift), narrowed once to i32, M*N i32 output row-major to stdout.
+// Byte-identical to the MLIR canary gemm-i8 (64x64x64, seed 0xDEADBEEF). NEW
+// export never reached during self-compile.
+pub fn selftest_native_elf_gemm_i8(m: i64, n: i64, k: i64) -> EmitState {
+    let p0: String = nb_fp_prologue_frame(string_new(), 1052672);
+    let kc: String = nb_gemm_consts(p0, m, n, k, 24, 56);
+    let jmps: i64 = __mind_alloc(64 * 4 * 8);
+    let jcell: i64 = __mind_alloc(8);
+    __mind_store_i64(jcell, 0);
+    let gens: String = nb_gemm_gen_loops(kc, jmps, jcell);
+    let loops: String = nb_gemm_triple_loop(gens, 0, jmps, jcell);
+    // exit(0).
+    let e1: String = nb_intdot_movimm(loops, 0, 0 - 1048752);
     let e2: String = nb_load_rax(e1, 0 - 1048752);
     let code: String = nb_emit_return(e2, 1);
     let njmps: i64 = __mind_load_i64(jcell);
