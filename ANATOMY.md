@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3079 | **Est. tokens:** ~7,401,973
-**Generated:** 2026-07-13 08:17 UTC
+**Files:** 3080 | **Est. tokens:** ~7,402,753
+**Generated:** 2026-07-13 08:52 UTC
 
 ## Token Budget Guide
 
@@ -55,7 +55,7 @@
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 40 | ~81,419 |
+| `examples/mindc_mind/` | 41 | ~82,199 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~83 |
 | `examples/native/` | 4 | ~527 |
@@ -837,6 +837,7 @@
 - `_ref_value_if.note` (~16 tok, tiny) — feda26da58086987f08706db25419bce5a3d721e42282c1086c2aced739fd6be
 - `self_host_body_smoke.py` (~2995 tok, huge)
 - `selfhost_driver.mind` (~623 tok, large) — ===========================================================================
+- `self_host_dtype_tag_smoke.py` (~780 tok, large) — RI-B1 per-SSA dtype-tag gate (parser <-> nb_fp_* encoder connecting construct).
 - `self_host_loop_smoke.py` (~1834 tok, huge)
 - `self_host_mlir_smoke.py` (~1736 tok, huge)
 - `self_host_native_elf_smoke.py` (~10726 tok, huge)
