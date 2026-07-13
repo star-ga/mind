@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3081 | **Est. tokens:** ~7,411,428
-**Generated:** 2026-07-13 07:42 UTC
+**Files:** 3079 | **Est. tokens:** ~7,401,973
+**Generated:** 2026-07-13 08:17 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 35 | ~30,325 |
+| `./` | 34 | ~28,329 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -45,7 +45,7 @@
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
 | `docs/mindcraft/` | 3 | ~7,023 |
-| `docs/rfcs/` | 31 | ~142,360 |
+| `docs/rfcs/` | 30 | ~134,901 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 22 | ~41,529 |
 | `examples/c/` | 2 | ~400 |
@@ -495,7 +495,6 @@
 - `README.md` (~5621 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
-- `scoping_outline.md` (~1996 tok, huge) — Scoping Outline for Task #69: Pure-MIND MCP Server over mic@3 + Evidence Chain
 - `SECURITY.md` (~1256 tok, large) — Security Policy
 - `.sembleignore` (~72 tok, small) — # semble code-search ignore list
 - `STATUS.md` (~3819 tok, huge) — MIND Compiler Status
@@ -722,7 +721,6 @@
 - `0022-deterministic-io-substrate.md` (~2108 tok, huge) — RFC 0022: Deterministic I/O Substrate — fastest async I/O with bit-identical replay
 - `DRAFT-deterministic-format-frontend.md` (~10507 tok, huge) — RFC DRAFT: Deterministic Multi-Format Ingest Front-End (JSON / TOON / CSV / TSV / NDJSON / TOML)
 - `DRAFT-deterministic-json-frontend.md` (~5175 tok, huge) — RFC DRAFT: Deterministic Streaming SIMD JSON Structural Front-End
-- `DRAFT-evidence-chain-http-layer.md` (~7459 tok, huge) — RFC DRAFT: Provable / Evidence-Chain HTTP Layer
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`

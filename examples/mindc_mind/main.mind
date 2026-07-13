@@ -807,6 +807,15 @@ pub fn ast_break() -> i64 {
 pub fn ast_continue() -> i64 {
     23
 }
+// `<digits>.<digits>` float literal (the tk_float token, kind 36). PARSE-ONLY
+// for now: the parser builds this leaf and its [lo, hi) span captures the raw
+// float-literal source text (the bits are re-derived from that span at lower
+// time). flatten_ast / the emitters do not yet lower it — dtype threading
+// through nb_expr -> the SSE2 encoders is a separate follow-up construct.
+// Mirrors the Rust front-end's ast::Node::FloatLit.
+pub fn ast_float_lit() -> i64 {
+    24
+}
 
 // ===== Binop operator tags =====
 
@@ -1423,6 +1432,14 @@ pub fn parse_primary_ns(toks: Vec, pos: i64, buf: i64, no_struct: i64) -> ParseR
     if k == tk_int() {
         let n: i64 = ast_new_leaf(ast_int_lit(), lo, hi);
         return pr_new(pos + 1, n);
+    }
+
+    if k == tk_float() {
+        // Float literal leaf: [lo, hi) spans the raw `<digits>.<digits>` source
+        // text. Lowering is deferred (see ast_float_lit): the parser only
+        // produces the node this pass.
+        let fnode: i64 = ast_new_leaf(ast_float_lit(), lo, hi);
+        return pr_new(pos + 1, fnode);
     }
 
     if k == tk_lparen() {
