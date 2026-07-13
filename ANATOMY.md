@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3087 | **Est. tokens:** ~7,410,425
-**Generated:** 2026-07-13 13:37 UTC
+**Files:** 3089 | **Est. tokens:** ~7,412,506
+**Generated:** 2026-07-13 14:17 UTC
 
 ## Token Budget Guide
 
@@ -55,7 +55,7 @@
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 48 | ~89,605 |
+| `examples/mindc_mind/` | 50 | ~91,686 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~83 |
 | `examples/native/` | 4 | ~527 |
@@ -845,6 +845,8 @@
 - `self_host_native_fp_expr_smoke.py` (~983 tok, large) — RI-B1 nb_expr float-scalar routing gate (zero MLIR/LLVM).
 - `self_host_native_fp_let_smoke.py` (~1208 tok, large) — RI-B1 (#107 follow-up) FLOAT dtype propagation ACROSS a LET binding (zero MLIR/LLVM).
 - `self_host_native_fp_smoke.py` (~1102 tok, large) — RI-B1 native-ELF scalar-f64 gate (zero MLIR/LLVM).
+- `self_host_native_gemv_i16_smoke.py` (~1044 tok, large) — RI-B2-S6 (#108) — native-ELF scalar GEMV int16 (matrix x vector), byte-identity rung.
+- `self_host_native_gemv_q16_smoke.py` (~1037 tok, large) — RI-B2-S6 (#108) — native-ELF scalar GEMV Q16.16 (matrix x vector), byte-identity rung.
 - `self_host_native_intdot_i16_smoke.py` (~1018 tok, large) — RI-B2-S2 (#108) — native-ELF scalar int16 DOT-PRODUCT, FIRST byte-identity rung.
 - `self_host_native_intdot_q16_smoke.py` (~1008 tok, large) — RI-B2-S4 (#108) — native-ELF scalar Q16.16 DOT-PRODUCT, byte-identity rung.
 - `self_host_native_intdot_smoke.py` (~1165 tok, large) — RI-B2-S1 (#108) scalar i64 DOT-PRODUCT reduction native-ELF (zero MLIR/LLVM).
