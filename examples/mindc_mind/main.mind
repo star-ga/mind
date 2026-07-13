@@ -27053,3 +27053,146 @@ pub fn selftest_native_elf_dot_f32(n: i64) -> EmitState {
     let elf: String = nb_write_elf(code, 0, note);
     EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
 }
+
+// ---------------------------------------------------------------------------
+// RI-B2-S9 (#108) — native-ELF scalar STRICT-FP f32 GEMV (matmul-f32-v). The
+// f32 analog of the integer gemv (S6): an OUTER row loop over the ALREADY-PROVEN
+// S8 strict-FP f32 dot INNER (nb_f32dot_main_body + nb_f32dot_fold, reused
+// VERBATIM), with a VECTOR output. Per row r: y[r] = strict-FP dot of
+// W[r,:] . x, written as its 4 IEEE-754 bit-bytes to stdout in row-major order.
+// Byte-identical to the MLIR canary matmul-f32-v (64x64, seed 0xDEADBEEF). No
+// new encoder — reuses the S8 f32 SSE family + the S6 row-loop pattern.
+//
+// Frame reuses the S8 dot slot map (frame 131072): W array base -131072
+// (m*n f32), x array base -98304 (n f32), the 8-lane accumulator -152..-208,
+// sslot -216, result -224. cols=64 so ve=(64/8)*8=64 — NO scalar tail. New
+// slots: Wbase -272 (const addr), rowstride -280 (n*8), r -288, m -296.
+
+// Set the constant slots for the f32 gemv (LCG + f32-bit consts + shape +
+// write). W gen count -48 = m*n; ve -264 = (n/8)*8; rowstride -280 = n*8; rows
+// -296 = m; write is 4 bytes/element (count -248 = 4). lea the two array bases
+// (-96 = W for gen, -272 = W for the per-row address calc, -104 = x) and the
+// result buffer (-240 = &result).
+pub fn nb_f32matmul_consts(code: String, m: i64, n: i64) -> String {
+    let k1: String = nb_intdot_movimm(code, 1664525, 0 - 16);
+    let k2: String = nb_intdot_movimm(k1, 1013904223, 0 - 24);
+    let k3: String = nb_intdot_movimm(k2, 8, 0 - 40);
+    let k4: String = nb_intdot_movimm(k3, m * n, 0 - 48);
+    let k5: String = nb_intdot_movimm(k4, 16, 0 - 56);
+    let k6: String = nb_intdot_movimm(k5, 4294967295, 0 - 64);
+    let k7: String = nb_intdot_movimm(k6, 1, 0 - 88);
+    let k8: String = nb_intdot_movimm(k7, 1333788672, 0 - 128);
+    let k9: String = nb_intdot_movimm(k8, 1073741824, 0 - 136);
+    let k10: String = nb_intdot_movimm(k9, 1065353216, 0 - 144);
+    let k11: String = nb_intdot_movimm(k10, 3735928559, 0 - 8);
+    let k12: String = nb_intdot_movimm(k11, (n / 8) * 8, 0 - 264);
+    let k13: String = nb_intdot_movimm(k12, n * 8, 0 - 280);
+    let k14: String = nb_intdot_movimm(k13, m, 0 - 296);
+    let k15: String = nb_intdot_movimm(k14, 1, 0 - 232);
+    let k16: String = nb_intdot_movimm(k15, 4, 0 - 248);
+    // Runtime base addresses: W (into -96 for gen AND -272 for row calc), x
+    // (into -104, kept as baseB for the dot), &result (into -240 = bufaddr).
+    let ba: String = nb_intdot_lea(k16, 0 - 131072, 0 - 96);
+    let bb: String = nb_intdot_lea(ba, 0 - 131072, 0 - 272);
+    let bc: String = nb_intdot_lea(bb, 0 - 98304, 0 - 104);
+    nb_intdot_lea(bc, 0 - 224, 0 - 240)
+}
+
+// Emit the two f32 gen loops: W[0..m*n] into base slot -96 (count -48 = m*n set
+// in consts), then x[0..n] into base slot -104 (count reset to n between). LCG
+// state continues across both — the SAME make_matvec_f32 order (W before x).
+pub fn nb_f32matmul_gen_loops(code_in: String, n: i64, jmps: i64, jcell: i64) -> String {
+    let ga: String = nb_f32_gen_loop(code_in, 0 - 96, jmps, jcell);
+    let sc: String = nb_intdot_movimm(ga, n, 0 - 48);
+    nb_f32_gen_loop(sc, 0 - 104, jmps, jcell)
+}
+
+// Emit the outer row loop over r<m. For each row: baseA(-96) = Wbase(-272) +
+// r*rowstride(-280) ; zero the 8-lane accumulator ; run the S8 f32 dot main loop
+// over ve(-264) cols (no tail, cols is a multiple of 8) ; pinned horizontal fold
+// -> sslot(-216) ; movss/movd the result f32 bits -> result(-224) ; write 4 LE
+// bytes ; r += 1.
+pub fn nb_f32matmul_row_loop(code_in: String, jmps: i64, jcell: i64) -> String {
+    // --- outer row loop header (r=-288, m=-296) ---
+    let o0: String = nb_intdot_movimm(code_in, 0, 0 - 288);
+    let o_hdr: i64 = string_len(o0);
+    let oc1: String = nb_load_rax(o0, 0 - 288);
+    let oc2: String = nb_cmp_rax_mem(oc1, nb_setcc_opcode(op_lt()), 0 - 296);
+    let oc3: String = nb_store_rax(oc2, 0 - 80);
+    let ocj: String = nb_emit_cmp_je_zero(oc3, 0 - 80, jmps, jcell);
+    let o_je: i64 = __mind_load_i64(jcell) - 1;
+    // baseA(-96) = Wbase(-272) + r*rowstride(-280).
+    let p1: String = nb_load_rax(ocj, 0 - 288);
+    let p2: String = nb_arith_rax_mem(p1, op_mul(), 0 - 280);
+    let p3: String = nb_arith_rax_mem(p2, op_add(), 0 - 272);
+    let p4: String = nb_store_rax(p3, 0 - 96);
+    // acc[0..8] = 0.0f (bit pattern 0).
+    let z0: String = nb_intdot_movimm(p4, 0, 0 - 152);
+    let z1: String = nb_intdot_movimm(z0, 0, 0 - 160);
+    let z2: String = nb_intdot_movimm(z1, 0, 0 - 168);
+    let z3: String = nb_intdot_movimm(z2, 0, 0 - 176);
+    let z4: String = nb_intdot_movimm(z3, 0, 0 - 184);
+    let z5: String = nb_intdot_movimm(z4, 0, 0 - 192);
+    let z6: String = nb_intdot_movimm(z5, 0, 0 - 200);
+    let z7: String = nb_intdot_movimm(z6, 0, 0 - 208);
+    // --- inner main dot loop over i in 0..ve(-264) step 8 ---
+    let m0: String = nb_intdot_movimm(z7, 0, 0 - 32);
+    let m_hdr: i64 = string_len(m0);
+    let mc1: String = nb_load_rax(m0, 0 - 32);
+    let mc2: String = nb_cmp_rax_mem(mc1, nb_setcc_opcode(op_lt()), 0 - 264);
+    let mc3: String = nb_store_rax(mc2, 0 - 80);
+    let mcj: String = nb_emit_cmp_je_zero(mc3, 0 - 80, jmps, jcell);
+    let m_je: i64 = __mind_load_i64(jcell) - 1;
+    let mb: String = nb_f32dot_main_body(mcj);
+    let mjb: String = nb_emit_jmp(mb, jmps, jcell);
+    let m_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _mp1: i64 = nb_jmp_set_target(jmps, jcell, m_bk, m_hdr);
+    let m_end: i64 = string_len(mjb);
+    let _mp2: i64 = nb_jmp_set_target(jmps, jcell, m_je, m_end);
+    // Pinned left-to-right horizontal fold -> sslot(-216).
+    let fld: String = nb_f32dot_fold(mjb);
+    // result bits: movss xmm0,[sslot] ; movd eax,xmm0 ; store rax -> result.
+    let r0: String = nb_fp_movss_load_xmm0(fld, 0 - 216);
+    let r1: String = nb_fp_movd_eax_xmm0(r0);
+    let r2: String = nb_store_rax(r1, 0 - 224);
+    // write(1, &result, 4) — fd/bufaddr/count set in consts.
+    let w1: String = nb_emit_write(r2, 0 - 232, 0 - 240, 0 - 248);
+    // r += 1.
+    let u1: String = nb_load_rax(w1, 0 - 288);
+    let u2: String = nb_arith_rax_mem(u1, op_add(), 0 - 88);
+    let u3: String = nb_store_rax(u2, 0 - 288);
+    // back edge to the outer header.
+    let ojb: String = nb_emit_jmp(u3, jmps, jcell);
+    let o_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _op1: i64 = nb_jmp_set_target(jmps, jcell, o_bk, o_hdr);
+    let o_end: i64 = string_len(ojb);
+    let _op2: i64 = nb_jmp_set_target(jmps, jcell, o_je, o_end);
+    ojb
+}
+
+// STEP: emit an ET_EXEC that (1) LCG-generates W[m*n] then x[n] as f32 (fresh
+// seed 0xDEADBEEF, the SAME make_matvec_f32 the canary uses), (2) for each row r
+// computes y[r] = strict-FP dot of W[r,:] . x with the S8 pinned 8-lane fold,
+// (3) writes each y[r]'s 4 LE bit-bytes to stdout in row-major order. Byte-
+// identical to the MLIR canary matmul-f32-v (64x64, seed 0xDEADBEEF). NEW export
+// never reached during self-compile — the integer+float native-ELF oracle stays
+// byte-identical.
+pub fn selftest_native_elf_matmul_f32_v(m: i64, n: i64) -> EmitState {
+    let p0: String = nb_fp_prologue_frame(string_new(), 131072);
+    let kc: String = nb_f32matmul_consts(p0, m, n);
+    let jmps: i64 = __mind_alloc(64 * 8 * 8);
+    let jcell: i64 = __mind_alloc(8);
+    __mind_store_i64(jcell, 0);
+    let gens: String = nb_f32matmul_gen_loops(kc, n, jmps, jcell);
+    let rows: String = nb_f32matmul_row_loop(gens, jmps, jcell);
+    // exit(0).
+    let e1: String = nb_intdot_movimm(rows, 0, 0 - 256);
+    let e2: String = nb_load_rax(e1, 0 - 256);
+    let code: String = nb_emit_return(e2, 1);
+    let njmps: i64 = __mind_load_i64(jcell);
+    let _px: i64 = nb_patch_jmps(string_addr(code), jmps, njmps, 0);
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
