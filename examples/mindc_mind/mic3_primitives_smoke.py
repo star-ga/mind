@@ -19,7 +19,9 @@ import pathlib
 import sys
 
 _HERE = pathlib.Path(__file__).resolve().parent
-_DEFAULT_SO = _HERE / "libmindc_mind.so"
+_DEFAULT_SO = _HERE / "libmindc_mind.so"  # legacy in-tree path (fallback only)
+sys.path.insert(0, str(_HERE))
+from _selfhost_so import resolve_so  # noqa: E402
 _Int64Ptr = ctypes.POINTER(ctypes.c_int64)
 
 
@@ -54,7 +56,7 @@ def ref_uleb128(n: int) -> bytes:
 
 
 def main() -> int:
-    so = os.environ.get("MINDC_SO", str(_DEFAULT_SO))
+    so = str(resolve_so())  # MINDC_SO verbatim, else fresh build (never stale)
     if not pathlib.Path(so).exists():
         if "MINDC_SO" in os.environ:
             raise SystemExit(f"FAIL: MINDC_SO set but missing: {so}")

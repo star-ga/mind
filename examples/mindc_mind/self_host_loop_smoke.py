@@ -40,8 +40,13 @@ import tempfile
 
 _HERE = pathlib.Path(__file__).parent.resolve()
 _REPO = _HERE.parents[1]
-_DEFAULT_SO = _HERE / "libmindc_mind.so"
-SO = pathlib.Path(os.environ.get("MINDC_SO", str(_DEFAULT_SO)))
+_DEFAULT_SO = _HERE / "libmindc_mind.so"  # legacy in-tree path (fallback only)
+# MINDC_SO (CI) verbatim; else build the self-host .so FRESH — never trust a
+# stale in-tree libmindc_mind.so (a cargo build does not regenerate it).
+sys.path.insert(0, str(_HERE))
+from _selfhost_so import resolve_so  # noqa: E402
+
+SO = resolve_so()
 
 _STDLIB_MODULES = [
     "arena", "async", "blas", "cli", "fs", "io", "io_canon", "iouring",
