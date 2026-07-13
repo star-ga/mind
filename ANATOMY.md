@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3079 | **Est. tokens:** ~7,400,647
-**Generated:** 2026-07-13 06:59 UTC
+**Files:** 3081 | **Est. tokens:** ~7,411,428
+**Generated:** 2026-07-13 07:42 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~28,329 |
+| `./` | 35 | ~30,325 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -40,12 +40,12 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,163 |
-| `docs/` | 31 | ~72,750 |
+| `docs/` | 31 | ~72,944 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
 | `docs/mindcraft/` | 3 | ~7,023 |
-| `docs/rfcs/` | 30 | ~134,901 |
+| `docs/rfcs/` | 31 | ~142,360 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 22 | ~41,529 |
 | `examples/c/` | 2 | ~400 |
@@ -55,7 +55,7 @@
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 40 | ~80,715 |
+| `examples/mindc_mind/` | 40 | ~81,419 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~83 |
 | `examples/native/` | 4 | ~527 |
@@ -66,7 +66,7 @@
 | `.githooks/` | 1 | ~255 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 9 | ~12,020 |
+| `.github/workflows/` | 9 | ~12,448 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~17,416 |
 | `scripts/` | 9 | ~11,559 |
@@ -495,6 +495,7 @@
 - `README.md` (~5621 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
+- `scoping_outline.md` (~1996 tok, huge) — Scoping Outline for Task #69: Pure-MIND MCP Server over mic@3 + Evidence Chain
 - `SECURITY.md` (~1256 tok, large) — Security Policy
 - `.sembleignore` (~72 tok, small) — # semble code-search ignore list
 - `STATUS.md` (~3819 tok, huge) — MIND Compiler Status
@@ -673,7 +674,7 @@
 - `errors.md` (~701 tok, large) — MIND Core Error Model
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
 - `gpu.md` (~387 tok, medium) — GPU backend profile
-- `INDEPENDENCE_ROADMAP.md` (~2329 tok, huge) — MIND Rust-Independence Roadmap
+- `INDEPENDENCE_ROADMAP.md` (~2523 tok, huge) — MIND Rust-Independence Roadmap
 - `install.md` (~1012 tok, large) — Installing mindc
 - `ir.md` (~451 tok, medium) — MIND IR core
 - `ir-mlir.md` (~480 tok, medium) — IR & MLIR Integration
@@ -721,6 +722,7 @@
 - `0022-deterministic-io-substrate.md` (~2108 tok, huge) — RFC 0022: Deterministic I/O Substrate — fastest async I/O with bit-identical replay
 - `DRAFT-deterministic-format-frontend.md` (~10507 tok, huge) — RFC DRAFT: Deterministic Multi-Format Ingest Front-End (JSON / TOON / CSV / TSV / NDJSON / TOML)
 - `DRAFT-deterministic-json-frontend.md` (~5175 tok, huge) — RFC DRAFT: Deterministic Streaming SIMD JSON Structural Front-End
+- `DRAFT-evidence-chain-http-layer.md` (~7459 tok, huge) — RFC DRAFT: Provable / Evidence-Chain HTTP Layer
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
@@ -829,17 +831,17 @@
 - `now_ns_smoke.py` (~678 tok, large) — # Copyright 2025 STARGA Inc.
 - `oracle_parity_lint.py` (~2998 tok, huge)
 - `param_types_smoke.py` (~1273 tok, large)
-- `_ref_add.note` (~16 tok, tiny) — e7bdbecdd47c736566c96f0ca4695499c81e0b6d087919959b99b543c67235e0
-- `_ref_if_ret.note` (~16 tok, tiny) — 72e8c82f9be032e5285fa76776e2fd2a4c7ea0d010ecb379d6a00c8498f92656
-- `_ref_main.note` (~16 tok, tiny) — 06880c14908822679e15a66a45995f5bc11ec75310b45738588ffcaf754b1621
-- `_ref_recursion.note` (~16 tok, tiny) — 04947ba7952c2360a23d5281d0a35204ce8461b7b3265bf73453c4af49dda251
-- `_ref_struct_field.note` (~16 tok, tiny) — 2cb2083c37be471776166a99580c7e98553a78ffd9a58d992c40f6e7310ffdb4
-- `_ref_value_if.note` (~16 tok, tiny) — b3b594d4d55dfc1360f8ad0fc873a8ba541da0c6b8e1e9d1a52a9446c40f4d64
+- `_ref_add.note` (~16 tok, tiny) — 662375cc532fd67d71573f28449b774a45a41a6f61ae72055e2af9be3f5da1fa
+- `_ref_if_ret.note` (~16 tok, tiny) — 78b3d21a4b87a312851aa18317a06e622957bbb337a48a1cf4ac69f5308e61c9
+- `_ref_main.note` (~16 tok, tiny) — 03c48351420a7b05e2b686cd12627b00f9ad3de17a7956cfbe4f4a3d1af4364d
+- `_ref_recursion.note` (~16 tok, tiny) — 331516380eb10abacad717ca059460a62f3ecdb40d9f4f6979407a23e5d2e009
+- `_ref_struct_field.note` (~16 tok, tiny) — 549c20975f486c39827bc62032291a483ade1da5463edbb386d78137b6e6503f
+- `_ref_value_if.note` (~16 tok, tiny) — feda26da58086987f08706db25419bce5a3d721e42282c1086c2aced739fd6be
 - `self_host_body_smoke.py` (~2995 tok, huge)
 - `selfhost_driver.mind` (~623 tok, large) — ===========================================================================
 - `self_host_loop_smoke.py` (~1834 tok, huge)
 - `self_host_mlir_smoke.py` (~1736 tok, huge)
-- `self_host_native_elf_smoke.py` (~10022 tok, huge)
+- `self_host_native_elf_smoke.py` (~10726 tok, huge)
 - `self_host_native_fp_smoke.py` (~1102 tok, large) — RI-B1 native-ELF scalar-f64 gate (zero MLIR/LLVM).
 - `sha256_hash_smoke.py` (~732 tok, large) — # Copyright 2025 STARGA Inc.
 - `struct_fields_smoke.py` (~1076 tok, large)
@@ -930,7 +932,7 @@
 
 - `bench-gate.yml` (~1432 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~222 tok, medium) — name: Cargo Deny
-- `ci.yml` (~6296 tok, huge) — name: CI
+- `ci.yml` (~6724 tok, huge) — name: CI
 - `crypto-vectors.yml` (~1093 tok, large) — name: Crypto Vectors
 - `docs-claims.yml` (~364 tok, medium) — name: Docs Claims
 - `link-check.yml` (~221 tok, medium) — name: Link Check

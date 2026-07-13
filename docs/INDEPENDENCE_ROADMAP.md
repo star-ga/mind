@@ -80,7 +80,14 @@ itself byte-identically with zero Rust & zero LLVM in the loop"* (integer/contro
 
 ## PHASE C — Full-surface native backend (drop MLIR/LLVM)  ·  6–18 months → multi-year
 Native-ELF covers only scalar i64/ptr/struct/control-flow. To drop the 12,753-LOC MLIR path + LLVM:
-- [ ] **C1** Float codegen (f32/f64 strict-FP tier) in native-ELF — carries the determinism/ISA-selection work
+- [~] **C1** Float codegen (f32/f64 strict-FP tier) in native-ELF — carries the determinism/ISA-selection work.
+  **Partial (in progress):** scalar `f64` emission landed in pure MIND (zero MLIR/LLVM) — reg-form SSE2 encoders
+  `addsd`/`subsd`/`mulsd`/`divsd` + `cvttsd2si` (`6179153`), mem-operand `[rbp+disp32]` stack-slot encoders
+  (`c914529`), and a lexer `tk_float` literal token (`720570e`), gated by `self_host_native_fp_smoke.py`
+  (CPU-as-oracle execution correctness — no float byte-oracle can exist since the deleted Rust native backend
+  rejected `ConstF64`). **Still open:** the f32/strict-FP tier, ISA-selection, and a byte-identity oracle for the
+  float path. *(Commit/CHANGELOG history labels this increment **"RI-B1"** — that is roadmap **C1** here, NOT
+  roadmap B1 (pure-MIND type-checker below); the "RI-B" tag was a work-tracking name, not a roadmap phase.)*
 - [ ] **C2** Narrow ints (i8/i16/i32/u*)   ·   **C3** division / shift / compare
 - [ ] **C4** Tensor/linalg lowering — matmul, reductions, broadcast, indexing *(currently MLIR-only)*
 - [ ] **C5** Vectorization (AVX2/NEON SIMD) for performance parity
