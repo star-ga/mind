@@ -2768,9 +2768,25 @@ pub fn emit_byte_range(s: EmitState, buf: i64, lo: i64, hi: i64) -> EmitState {
 // Additive + isolated from the canary mic@1 emit path (these are not yet wired
 // into the keystone fixed-point; they are exercised by selftest_mic3_uleb below
 // until Phase 2 builds the mic@3 section emitter on top of them).
+// Logical (unsigned) right-shift by 7 of the 64-bit pattern of `n`, matching the
+// Rust codec's `value >>= 7` on u64 (src/ir/compact/v2/varint.rs uleb128_write).
+// MIND's `/` truncates toward zero, so for a negative i64 (bit 63 set) `n / 128`
+// diverges from the u64 logical shift. Here we clear bit 63, shift the low 63
+// bits, then re-insert the top bit shifted down (2^63 >> 7 == 2^56) so the full
+// 64-bit value uleb128-encodes byte-identically to the Rust oracle (up to 10
+// bytes). For non-negative `n` this is exactly `n / 128`, so every existing
+// (length/index/zigzag) caller is unchanged.
+pub fn emit_uleb128_rest(n: i64) -> i64 {
+    if n < 0 {
+        let low63: i64 = n & 9223372036854775807;
+        return low63 / 128 + 72057594037927936;
+    }
+    n / 128
+}
+
 pub fn emit_uleb128(s: EmitState, n: i64) -> EmitState {
     let low: i64 = n & 127;
-    let rest: i64 = n / 128;
+    let rest: i64 = emit_uleb128_rest(n);
     if rest == 0 {
         return es_push(s, low);
     }

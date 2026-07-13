@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3098 | **Est. tokens:** ~7,422,992
-**Generated:** 2026-07-13 18:25 UTC
+**Files:** 3099 | **Est. tokens:** ~7,424,644
+**Generated:** 2026-07-13 19:21 UTC
 
 ## Token Budget Guide
 
@@ -55,7 +55,7 @@
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 59 | ~102,172 |
+| `examples/mindc_mind/` | 60 | ~103,824 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~83 |
 | `examples/native/` | 4 | ~527 |
@@ -823,7 +823,7 @@
 - `method_calls_smoke.py` (~1294 tok, large)
 - `mic3_flip_smoke.py` (~1093 tok, large)
 - `mic3_oracle_smoke.py` (~764 tok, large) — mic@3 self-host convergence — Phase 0 gate: the Rust oracle.
-- `mic3_primitives_smoke.py` (~22299 tok, huge) — mic@3 self-host convergence — Phase 1 gate: pure-MIND ULEB128 / zigzag.
+- `mic3_primitives_smoke.py` (~22465 tok, huge) — mic@3 self-host convergence — Phase 1 gate: pure-MIND ULEB128 / zigzag.
 - `mod_operator_smoke.py` (~2100 tok, huge)
 - `multi_let_smoke.py` (~1499 tok, large)
 - `now_ns_smoke.py` (~678 tok, large) — # Copyright 2025 STARGA Inc.
@@ -858,6 +858,7 @@
 - `self_host_native_intdot_smoke.py` (~1165 tok, large) — RI-B2-S1 (#108) scalar i64 DOT-PRODUCT reduction native-ELF (zero MLIR/LLVM).
 - `self_host_native_matmul_f32_v_smoke.py` (~1611 tok, huge) — RI-B2-S9 (#108) — native-ELF scalar STRICT-FP f32 GEMV (matmul-f32-v).
 - `self_host_native_scalar_f64_smoke.py` (~1201 tok, large) — RI-B2 f64 rung (#108) — native-ELF scalar STRICT-FP f64 CHAIN.
+- `self_host_native_simd_dot_q16_smoke.py` (~1486 tok, large) — RI-B2-S10 (#108) — native-ELF PACKED-SIMD Q16.16 DOT-PRODUCT, byte-identity rung.
 - `self_host_native_write8_smoke.py` (~929 tok, large) — RI-B2-S2 STEP A (#108) — de-risk the C1 "emit 8 LE bytes to stdout + hash" gate.
 - `self_host_native_write_f32_smoke.py` (~815 tok, large) — RI-B2-S8 STEP A (#108) — de-risk the raw-f32-bytes harness on a KNOWN f32.
 - `sha256_hash_smoke.py` (~732 tok, large) — # Copyright 2025 STARGA Inc.
