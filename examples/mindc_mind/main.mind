@@ -25137,3 +25137,91 @@ pub fn selftest_native_elf_fp_mem(a_bits: i64, b_bits: i64, op_sel: i64) -> Emit
     let elf: String = nb_write_elf(code, 0, note);
     EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
 }
+
+// ---- RI-B1: per-SSA dtype tag (int vs float) — the connecting construct ------
+// The native-ELF backend is otherwise i64-only: every SSA value is spilled to a
+// GP-integer stack slot and consumed with rax/imul/idiv. To lower real floats it
+// must know, per SSA id, whether a value is a 64-bit integer or a scalar f64, so
+// nb_expr can route an ast_float_lit's value (and later arithmetic over float SSA
+// values) to the SSE2 f64 encoders (nb_fp_const_xmm / nb_fp_movsd_* /
+// nb_fp_binop_xmm0_mem) with xmm registers instead of the integer path.
+//
+// This FIRST slice lands the TAG itself — the connecting construct between the
+// parser's ast_float_lit (commit c72f645) and the nb_fp_* encoders (c914529):
+// the two dtype constants, the AST-node -> dtype classifier nb_expr will consult,
+// and the SSA-id-keyed dtype table (new/set/get). It is purely ADDITIVE and
+// FLOAT-ONLY: main.mind's OWN source contains no float literals, so nb_node_dtype
+// classifies every integer SSA value as INT (0) and nothing about the existing
+// integer lowering changes — the integer self-host stays byte-identical.
+//
+// FOLLOW-UP (next construct, NOT this one): the nb_expr SSE-selection arm that
+// allocates one nb_dtype_table per fn body, tags each ast_float_lit's dst slot
+// FLOAT, propagates FLOAT through a binop whose operands are FLOAT, and reads
+// nb_dtype_get(id) to pick the nb_fp_* xmm encoders vs the GP-integer ops.
+
+// dtype tags: an SSA value is either a 64-bit integer or a scalar f64.
+pub fn nb_dtype_int() -> i64 {
+    0
+}
+pub fn nb_dtype_float() -> i64 {
+    1
+}
+
+// Classify the dtype of the SSA value an AST expression node produces. In this
+// first slice only a float LITERAL is float-typed; arithmetic-result inference
+// (a float op over float operands stays float) lands with the nb_expr SSE arm.
+// Every other node -> INT, so the integer path is entirely unperturbed.
+pub fn nb_node_dtype(node: i64) -> i64 {
+    if ast_kind(node) == ast_float_lit() {
+        return nb_dtype_float();
+    }
+    nb_dtype_int()
+}
+
+// A per-SSA dtype table: `n` i64 slots indexed by SSA id, all initialised to INT
+// (0). nb_expr will allocate one per function body and consult it when lowering
+// each expression, exactly as it already consults the let-env for slot ids.
+pub fn nb_dtype_table_new(n: i64) -> i64 {
+    let tbl: i64 = __mind_alloc(n * 8);
+    let _z: i64 = nb_dtype_table_init(tbl, n, 0);
+    tbl
+}
+
+// Zero (= INT) every slot, so an un-tagged SSA id reads back INT by default.
+// Recursion (mirrors nb_call_args) keeps this in the self-host subset — no while.
+pub fn nb_dtype_table_init(tbl: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return tbl;
+    }
+    __mind_store_i64(tbl + i * 8, nb_dtype_int());
+    nb_dtype_table_init(tbl, n, i + 1)
+}
+
+// Tag SSA id `id` with dtype `dt`; returns the table (immutable-threading style).
+pub fn nb_dtype_set(tbl: i64, id: i64, dt: i64) -> i64 {
+    __mind_store_i64(tbl + id * 8, dt);
+    tbl
+}
+
+// Read the dtype tag of SSA id `id` (default INT for an un-tagged slot).
+pub fn nb_dtype_get(tbl: i64, id: i64) -> i64 {
+    __mind_load_i64(tbl + id * 8)
+}
+
+// Demonstrable slice: lex + parse ONE primary expression from `src`, classify its
+// SSA value's dtype, round-trip that tag through the SSA dtype table, and return
+// the tag. Proves the whole tiny chain end to end with a REAL parsed AST node:
+//   `1.5` (an ast_float_lit from the parser) -> nb_dtype_float() (1)
+//   `42`  (an ast_int_lit)                   -> nb_dtype_int()   (0)
+// This is the parser<->encoder connecting construct's first observable behaviour;
+// the nb_expr SSE-selection arm is the follow-up. Emits nothing — pure dtype
+// threading — so it cannot perturb any byte-identity oracle.
+pub fn selftest_dtype_tag(src_addr: i64, src_len: i64) -> i64 {
+    let toks: Vec = lex(src_addr, src_len);
+    let pr: ParseResult = parse_primary(toks, 0, src_addr);
+    let node: i64 = pr_node(pr);
+    let dt: i64 = nb_node_dtype(node);
+    let tbl: i64 = nb_dtype_table_new(4);
+    let _s: i64 = nb_dtype_set(tbl, 0, dt);
+    nb_dtype_get(tbl, 0)
+}
