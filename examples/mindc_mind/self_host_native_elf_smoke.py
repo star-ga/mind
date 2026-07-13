@@ -270,8 +270,29 @@ def expected_note(name: str, ref_notes: dict[str, bytes] | None) -> tuple[bytes 
         return ref_notes[name], "rust-ref (regenerated from live stdlib)"
     cached = committed_ref_note(name)
     if cached is not None:
-        return cached, "committed _ref cache (NOT regenerated — may be stale)"
+        return cached, "pinned _ref cache (refresh via dump_ref --ignored on std/main edits)"
     return None, "unavailable"
+
+
+def note_mismatch_verdict(prov: str) -> str:
+    """One TRUE sentence for a PT_NOTE mismatch, keyed on where the expected note
+    came from. A freshly-DERIVED Rust reference reflows with the live stdlib, so a
+    mismatch against it is unambiguously a real mic@3 divergence. The PINNED cache
+    can go stale after a std/main edit, so a mismatch against it is EITHER a real
+    divergence OR a stale cache — never assert one when it could be the other."""
+    if prov.startswith("rust-ref"):
+        return (
+            "REAL mic@3 divergence: expected note was freshly derived from the live "
+            "stdlib, so this is a genuine emit_mic3 mismatch (fails closed; SHA-256 "
+            "flips on any wrong byte)"
+        )
+    return (
+        "note mismatch vs the PINNED _ref cache — this is EITHER a real mic@3 "
+        "divergence OR a stale cache after a std/main.mind edit; regenerate the "
+        "cache (`cargo test --release --features 'std-surface cross-module-imports' "
+        "--test _ref_mic3_dump dump_ref -- --ignored --nocapture`) and re-run to "
+        "disambiguate (SHA-256 flips on any wrong byte, so a fresh cache proves it)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -557,8 +578,8 @@ def no_feed_seeded_main_rung(lib, ref_notes: dict[str, bytes] | None) -> int:
     if got[-32:] != exp_note:
         print(
             f"  FAIL  no-feed seeded main.mind: self-computed PT_NOTE {got[-32:].hex()[:16]} "
-            f"!= Rust emit_mic3 reference {exp_note.hex()[:16]} [{prov}] — REAL mic@3 "
-            f"divergence (fails closed)"
+            f"!= Rust emit_mic3 reference {exp_note.hex()[:16]} [{prov}] — "
+            f"{note_mismatch_verdict(prov)}"
         )
         return 1
     print(
@@ -719,8 +740,8 @@ def no_feed_native_rung(lib, ref_notes: dict[str, bytes] | None) -> int:
         if got[-32:] != exp_note:
             print(
                 f"  FAIL  no-feed {name}: self-computed PT_NOTE {got[-32:].hex()[:16]} != "
-                f"Rust emit_mic3 reference {exp_note.hex()[:16]} [{prov}] — REAL mic@3 "
-                f"divergence (fails closed; SHA-256 flips on any wrong byte)"
+                f"Rust emit_mic3 reference {exp_note.hex()[:16]} [{prov}] — "
+                f"{note_mismatch_verdict(prov)}"
             )
             return 1
         print(
@@ -805,21 +826,43 @@ def main() -> int:
         if no_feed_native_rung(lib, ref_notes) != 0:
             return 1
 
-        # SEEDED whole-module rung: compile main.mind WITH the bundled stdlib
-        # seeded (same set+order as Rust mind-native) and diff vs the oracle.
-        print("\n[seeded whole-module rung: main.mind + bundled stdlib]")
-        if seeded_main_rung(lib) != 0:
-            return 1
-
-        # NO-FEED FULL-SCALE rung: same whole-module main.mind, but via the NO-HASH
-        # entry so the 32-byte PT_NOTE is SELF-COMPUTED (nb_trace_hash) — zero feeding.
-        print("\n[no-feed full-scale rung: main.mind + bundled stdlib, self-computed note]")
-        if no_feed_seeded_main_rung(lib, ref_notes) != 0:
-            return 1
+        # SEEDED whole-module rungs: compile the WHOLE current main.mind WITH the
+        # bundled stdlib seeded and diff vs the frozen main.elf oracle.
+        #
+        # deferred: these two whole-module rungs diff the CURRENT main.mind's
+        # pure-MIND native ELF against the FROZEN Rust `mind-native` oracle
+        # testdata/native_elf_oracle/main.elf. src/native was DELETED (#15, 56935ce),
+        # so that oracle can no longer be regenerated, and main.mind has grown many
+        # commits since capture (2026-07-05, 510a988) — the current main.mind
+        # legitimately diverges from the frozen snapshot. They are therefore DEFERRED
+        # by default (opt-in MIND_SELFHOST_ELF_SEEDED=1 for a dev who has re-captured
+        # a matching main.elf from a reinstated native oracle). This defers ONLY the
+        # whole-module-vs-frozen-main.elf rungs; the per-fixture byte-identity oracle
+        # checks above (add/if_ret/value_if/recursion/struct_field, FED + NO-FEED, on
+        # stable fixtures) stay FULLY GATED — the real integer-subset self-host proof.
+        # Upgrade path: reinstate a native oracle, re-capture main.elf from the current
+        # main.mind, then set MIND_SELFHOST_ELF_SEEDED=1.
+        if os.environ.get("MIND_SELFHOST_ELF_SEEDED"):
+            print("\n[seeded whole-module rung: main.mind + bundled stdlib]")
+            if seeded_main_rung(lib) != 0:
+                return 1
+            # NO-FEED FULL-SCALE rung: same whole-module main.mind, NO-HASH entry so
+            # the 32-byte PT_NOTE is SELF-COMPUTED (nb_trace_hash) — zero feeding.
+            print("\n[no-feed full-scale rung: main.mind + bundled stdlib, self-computed note]")
+            if no_feed_seeded_main_rung(lib, ref_notes) != 0:
+                return 1
+        else:
+            print(
+                "\n[seeded whole-module rungs: DEFERRED — frozen main.elf oracle "
+                "unregenerable (src/native deleted #15), main.mind grown since 2026-07-05]"
+                "\n  deferred: opt in with MIND_SELFHOST_ELF_SEEDED=1 after re-capturing "
+                "testdata/native_elf_oracle/main.elf from the current main.mind via a "
+                "reinstated native oracle. Per-fixture byte-identity (fed + no-feed) stays gated."
+            )
 
     print(
-        "\nALL PASS  (byte-identical to Rust mind-native + runs for every fixture; "
-        "seeded whole-module rung past the stdlib-seeding blocker)"
+        "\nALL PASS  (per-fixture byte-identical to Rust mind-native + runs for every "
+        "fixture, fed + no-feed; whole-module seeded rungs deferred — see marker above)"
     )
     return 0
 
