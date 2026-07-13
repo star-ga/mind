@@ -28137,6 +28137,244 @@ pub fn selftest_native_elf_simd_dot_f32(n: i64) -> EmitState {
 }
 
 // ============================================================================
+// RI-B2-S13 (#108) — native-ELF PACKED-f32 SIMD via 256-bit AVX2 (VEX/YMM),
+// STRICT-FP DOT-PRODUCT, byte-identical to the SAME MLIR canary dot-f32-v =
+// a132f7b9 that the scalar S8 and SSE 2x-XMM S11 rungs hit (len 4093, seed
+// 0xDEADBEEF). The 256-bit float SIMD rung: the pure-MIND native-ELF backend
+// now emits VEX-encoded 8-lane YMM packed-f32 SIMD whose f32 result is
+// byte-identical to the scalar/SSE/MLIR value. Deterministic strict-FP AVX2,
+// zero MLIR/LLVM.
+//
+// WHY it is byte-identical (the SAME argument as S11, one YMM instead of 2 XMM):
+// f32 add is NOT associative, so byte-identity rests on reproducing
+// ref_dot_f32_strict's fold BIT-FOR-BIT. That fold is an 8-LANE accumulator:
+// acc[lane] += a[i+lane]*b[i+lane] for lane 0..8, per block of 8, in increasing
+// block order; then a PINNED left-to-right horizontal fold hs=acc[0];
+// hs+=acc[1]..acc[7]; then a scalar tail. YMM has 8 f32 lanes NATURALLY, so one
+// vmulps/vaddps applies the SAME per-lane IEEE round-to-nearest single mul/add as
+// scalar mulss/addss, UNFUSED, with NO cross-lane interaction — per lane the value
+// stream is IDENTICAL to S8's scalar and S11's 2x-XMM 8-lane accumulate.
+//
+// 8 LANES -> 1 YMM (AVX = 8 f32/YMM): acc(ymm6)=lanes0..7. Per block of 8:
+// vmovups a[i..i+8]->ymm0, vmovups b[i..i+8]->ymm1, vmulps ymm0,ymm0,ymm1,
+// vaddps acc,acc,ymm0. vmovups is UNALIGNED (any address). YMM lane 0 = lowest
+// address (little-endian) = a[i+0], lane 1 = a[i+1], ... — the lane map matches ref.
+//
+// LAYOUT: same PACKED (stride 4) arrays as S11 — one vmovups reads 8 CONTIGUOUS
+// f32 (32 bytes). The S8 LCG gen (nb_f32gen_body) is reused VERBATIM with stride
+// slot -40 = 4. The scalar tail (nb_f32dot_tail_body) is reused VERBATIM.
+//
+// HORIZONTAL FOLD: store acc's low 128 (xmm6 = lanes0..3) to [-320..-308] with a
+// legacy movups store, vextractf128 the hi 128 (lanes4..7) into xmm0 and store to
+// [-304..-292], then read the 8 contiguous f32 back with movss/addss left-to-right
+// lane 0..7 (== ref's hs=acc[0]; hs+=acc[1]..acc[7]) — reuses S11's proven fold
+// tail. Then the scalar tail (i in ve..n). Result f32's 8 LE bit-bytes to stdout.
+// n=4093 -> ve=(4093/8)*8=4088, tail = elements 4088..4093.
+//
+// NEW VEX-PREFIX EMITTER: nb_vex2 (2-byte C5, for 0F-escape with no X/B/W) and
+// nb_vex3 (3-byte C4, for 0F38/0F3A or when W/X/B needed), plus 256-bit YMM forms
+// vxorps (VEX.256.0F.WIG 57), vmovups load (VEX.256.0F.WIG 10), vmulps
+// (VEX.NDS.256.0F.WIG 59), vaddps (VEX.NDS.256.0F.WIG 58), vextractf128
+// (VEX.256.0F3A.W0 19 ib). All ymm regs are 0..7 so R/X/B extension bits are 0.
+// Reuses the S11 legacy movups store + S8 F3-prefix scalar-single family for the
+// fold + tail. NEW export, never reached during self-compile: the integer +
+// scalar/SSE-float native-ELF oracle stays byte-identical (additivity).
+// ============================================================================
+
+// 2-byte VEX prefix (C5): 0F-escape map, no X/B/W. r = R-extension bit (0/1),
+// vvvv = src1 register number (0..15; pass 0 when the op has NO vvvv operand ->
+// stored 1111), l = 1 for 256-bit YMM, pp = 00/01/10/11 (mandatory-prefix code).
+//   byte1 = (~R<<7)|(~vvvv<<3)|(L<<2)|pp  where ~R=(1-R) as 1 bit, ~vvvv=(15-vvvv)
+//   as 4 bits (15 - x == 4-bit bitwise NOT for x in 0..15).
+pub fn nb_vex2(code: String, r: i64, vvvv: i64, l: i64, pp: i64) -> String {
+    let c1: String = nb_push(code, 197);
+    nb_push(c1, (1 - r) * 128 + (15 - vvvv) * 8 + l * 4 + pp)
+}
+
+// 3-byte VEX prefix (C4): for the 0F38/0F3A opcode maps or when W/X/B is needed.
+//   byte1 = (~R<<7)|(~X<<6)|(~B<<5)|mmmmm  (mmmmm: 0F=1, 0F38=2, 0F3A=3)
+//   byte2 = (W<<7)|(~vvvv<<3)|(L<<2)|pp.
+pub fn nb_vex3(code: String, r: i64, x: i64, b: i64, mmmmm: i64, w: i64, vvvv: i64, l: i64, pp: i64) -> String {
+    let c1: String = nb_push(code, 196);
+    let c2: String = nb_push(c1, (1 - r) * 128 + (1 - x) * 64 + (1 - b) * 32 + mmmmm);
+    nb_push(c2, w * 128 + (15 - vvvv) * 8 + l * 4 + pp)
+}
+
+// vxorps ymm{d}, ymm{s1}, ymm{s2} = VEX.NDS.256.0F.WIG 57 /r  (zero an accumulator
+// with d=s1=s2). byte sequence for ymm6,ymm6,ymm6 = C5 CC 57 F6 (objdump-verified).
+pub fn nb_avx_vxorps(code: String, d: i64, s1: i64, s2: i64) -> String {
+    let c1: String = nb_vex2(code, 0, s1, 1, 0);
+    let c2: String = nb_push(c1, 87);
+    nb_push(c2, 192 + d * 8 + s2)
+}
+
+// vmovups ymm{r}, [rax] = VEX.256.0F.WIG 10 /r  (256-bit UNALIGNED packed-f32 load,
+// reg-indirect). No vvvv operand -> pass 0. ymm0,[rax] = C5 FC 10 00 (objdump-verified).
+pub fn nb_avx_vmovups_ld_rax(code: String, r: i64) -> String {
+    let c1: String = nb_vex2(code, 0, 0, 1, 0);
+    let c2: String = nb_push(c1, 16);
+    nb_push(c2, r * 8)
+}
+
+// vmulps ymm{d}, ymm{s1}, ymm{s2} = VEX.NDS.256.0F.WIG 59 /r  (packed-f32 per-lane
+// multiply, unfused). ymm0,ymm0,ymm1 = C5 FC 59 C1 (objdump-verified).
+pub fn nb_avx_vmulps(code: String, d: i64, s1: i64, s2: i64) -> String {
+    let c1: String = nb_vex2(code, 0, s1, 1, 0);
+    let c2: String = nb_push(c1, 89);
+    nb_push(c2, 192 + d * 8 + s2)
+}
+
+// vaddps ymm{d}, ymm{s1}, ymm{s2} = VEX.NDS.256.0F.WIG 58 /r  (packed-f32 per-lane
+// add). ymm6,ymm6,ymm0 = C5 CC 58 F0 (objdump-verified).
+pub fn nb_avx_vaddps(code: String, d: i64, s1: i64, s2: i64) -> String {
+    let c1: String = nb_vex2(code, 0, s1, 1, 0);
+    let c2: String = nb_push(c1, 88);
+    nb_push(c2, 192 + d * 8 + s2)
+}
+
+// vextractf128 xmm{d}, ymm{s}, imm8 = VEX.256.0F3A.W0 19 /r ib  (extract a 128-bit
+// lane; reg field = source ymm, rm = dest xmm). xmm0,ymm6,1 = C4 E3 7D 19 F0 01
+// (objdump-verified). 0F3A map -> 3-byte VEX, pp=01 (implied 66).
+pub fn nb_avx_vextractf128(code: String, d: i64, s: i64, imm: i64) -> String {
+    let c1: String = nb_vex3(code, 0, 0, 0, 3, 0, 0, 1, 1);
+    let c2: String = nb_push(c1, 25);
+    let c3: String = nb_push(c2, 192 + s * 8 + d);
+    nb_push(c3, imm)
+}
+
+// One 256-bit AVX2 SIMD main-loop iteration over 8 elements (i..i+8):
+//   acc(ymm6) += a[i..i+8]*b[i..i+8]   (all 8 lanes in one YMM)
+//   i += 8.  Stride slot -40 = 4 (packed f32); baseA=-96, baseB=-104, i=-32, +8=-280.
+pub fn nb_avx_f32dot_body(code: String) -> String {
+    // rax = i*4 + baseA ; vmovups ymm0,[rax]  (a[i..i+8])
+    let a1: String = nb_load_rax(code, 0 - 32);
+    let a2: String = nb_arith_rax_mem(a1, op_mul(), 0 - 40);
+    let a3: String = nb_arith_rax_mem(a2, op_add(), 0 - 96);
+    let a4: String = nb_avx_vmovups_ld_rax(a3, 0);
+    // rax = i*4 + baseB ; vmovups ymm1,[rax]  (b[i..i+8])
+    let b1: String = nb_load_rax(a4, 0 - 32);
+    let b2: String = nb_arith_rax_mem(b1, op_mul(), 0 - 40);
+    let b3: String = nb_arith_rax_mem(b2, op_add(), 0 - 104);
+    let b4: String = nb_avx_vmovups_ld_rax(b3, 1);
+    // ymm0 = a*b (per-lane, unfused) ; acc(ymm6) += ymm0
+    let m1: String = nb_avx_vmulps(b4, 0, 0, 1);
+    let ac: String = nb_avx_vaddps(m1, 6, 6, 0);
+    // i += 8
+    let e1: String = nb_load_rax(ac, 0 - 32);
+    let e2: String = nb_arith_rax_mem(e1, op_add(), 0 - 280);
+    nb_store_rax(e2, 0 - 32)
+}
+
+// Horizontal fold: store acc low 128 (xmm6 = lanes 0..3) -> [-320..-308], extract
+// acc hi 128 (lanes 4..7) into xmm0 and store -> [-304..-292], then hs = f[0];
+// hs += f[1] .. f[7] left-to-right -> sslot -216. Matches ref_dot_f32_strict's
+// pinned lane 0..7 fold exactly (movss + 7x addss). Reuses S11's fold tail; the
+// only difference vs S11 is the hi 4 lanes come from vextractf128 (not xmm7).
+pub fn nb_avx_f32dot_fold(code: String) -> String {
+    let l1: String = nb_intdot_lea(code, 0 - 320, 0 - 112);
+    let s1: String = nb_simd_movups_st_rax(l1, 6);
+    let ex: String = nb_avx_vextractf128(s1, 0, 6, 1);
+    let l2: String = nb_intdot_lea(ex, 0 - 304, 0 - 112);
+    let s2: String = nb_simd_movups_st_rax(l2, 0);
+    let h0: String = nb_fp_movss_load_xmm0(s2, 0 - 320);
+    let h1: String = nb_fp_ss_binop_mem(h0, 0, 0 - 316);
+    let h2: String = nb_fp_ss_binop_mem(h1, 0, 0 - 312);
+    let h3: String = nb_fp_ss_binop_mem(h2, 0, 0 - 308);
+    let h4: String = nb_fp_ss_binop_mem(h3, 0, 0 - 304);
+    let h5: String = nb_fp_ss_binop_mem(h4, 0, 0 - 300);
+    let h6: String = nb_fp_ss_binop_mem(h5, 0, 0 - 296);
+    let h7: String = nb_fp_ss_binop_mem(h6, 0, 0 - 292);
+    nb_fp_movss_store_xmm0(h7, 0 - 216)
+}
+
+// STEP C: emit an ET_EXEC that (1) LCG-generates a[0..n] then b[0..n] as PACKED f32
+// (stride 4, fresh seed 0xDEADBEEF — the SAME next_f32_unit as the canary), (2)
+// computes the strict-FP dot with a 1x-YMM 256-bit AVX2 8-lane accumulate (vmovups/
+// vmulps/vaddps), the pinned left-to-right horizontal fold (vextractf128 + movss/
+// addss), and the scalar tail, (3) writes the result f32's 8 LE bit-bytes to stdout.
+// Byte-identical to the MLIR canary dot-f32-v (n=4093, seed 0xDEADBEEF). Frame
+// 131072: A base -131072 (packed), B base -98304 (packed); fold scratch -320..-288;
+// sslot -216; result -224.
+pub fn selftest_native_elf_avx2_dot_f32(n: i64) -> EmitState {
+    let ve: i64 = (n / 8) * 8;
+    let p0: String = nb_fp_prologue_frame(string_new(), 131072);
+    // Integer + f32-bit constants (identical to S8/S11; stride -40 = 4 for packed f32).
+    let k1: String = nb_intdot_movimm(p0, 1664525, 0 - 16);
+    let k2: String = nb_intdot_movimm(k1, 1013904223, 0 - 24);
+    let k3: String = nb_intdot_movimm(k2, 4, 0 - 40);
+    let k4: String = nb_intdot_movimm(k3, n, 0 - 48);
+    let k5: String = nb_intdot_movimm(k4, 16, 0 - 56);
+    let k6: String = nb_intdot_movimm(k5, 4294967295, 0 - 64);
+    let k7: String = nb_intdot_movimm(k6, 1, 0 - 88);
+    let k8: String = nb_intdot_movimm(k7, 1333788672, 0 - 128);
+    let k9: String = nb_intdot_movimm(k8, 1073741824, 0 - 136);
+    let k10: String = nb_intdot_movimm(k9, 1065353216, 0 - 144);
+    let k11: String = nb_intdot_movimm(k10, 3735928559, 0 - 8);
+    let k12: String = nb_intdot_movimm(k11, ve, 0 - 264);
+    // SIMD main-loop stride (i += 8 per packed iteration of 8 lanes).
+    let k13: String = nb_intdot_movimm(k12, 8, 0 - 280);
+    // Runtime base addresses of the two in-frame PACKED f32 arrays.
+    let ba: String = nb_intdot_lea(k13, 0 - 131072, 0 - 96);
+    let bb: String = nb_intdot_lea(ba, 0 - 98304, 0 - 104);
+    let jmps: i64 = __mind_alloc(64 * 4 * 8);
+    let jcell: i64 = __mind_alloc(8);
+    __mind_store_i64(jcell, 0);
+    // Generate a (base slot -96) then b (base slot -104); LCG state continues.
+    let ga: String = nb_f32_gen_loop(bb, 0 - 96, jmps, jcell);
+    let gb: String = nb_f32_gen_loop(ga, 0 - 104, jmps, jcell);
+    // Zero the single 8-lane YMM accumulator (ymm6) with vxorps (0.0f bits == 0).
+    let pz: String = nb_avx_vxorps(gb, 6, 6, 6);
+    // 256-bit AVX2 packed-SIMD main loop: i in 0..ve step 8, 8-lane YMM accumulate.
+    let m0: String = nb_intdot_movimm(pz, 0, 0 - 32);
+    let m_hdr: i64 = string_len(m0);
+    let mc1: String = nb_load_rax(m0, 0 - 32);
+    let mc2: String = nb_cmp_rax_mem(mc1, nb_setcc_opcode(op_lt()), 0 - 264);
+    let mc3: String = nb_store_rax(mc2, 0 - 80);
+    let mcj: String = nb_emit_cmp_je_zero(mc3, 0 - 80, jmps, jcell);
+    let m_je: i64 = __mind_load_i64(jcell) - 1;
+    let mb: String = nb_avx_f32dot_body(mcj);
+    let mjb: String = nb_emit_jmp(mb, jmps, jcell);
+    let m_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _mp1: i64 = nb_jmp_set_target(jmps, jcell, m_bk, m_hdr);
+    let m_end: i64 = string_len(mjb);
+    let _mp2: i64 = nb_jmp_set_target(jmps, jcell, m_je, m_end);
+    // Horizontal fold -> sslot (i is left == ve, reused as the tail counter).
+    let fld: String = nb_avx_f32dot_fold(mjb);
+    // Scalar tail: i in ve..n (reuses the S8 scalar tail body verbatim; stride -40 = 4).
+    let t_hdr: i64 = string_len(fld);
+    let tc1: String = nb_load_rax(fld, 0 - 32);
+    let tc2: String = nb_cmp_rax_mem(tc1, nb_setcc_opcode(op_lt()), 0 - 48);
+    let tc3: String = nb_store_rax(tc2, 0 - 80);
+    let tcj: String = nb_emit_cmp_je_zero(tc3, 0 - 80, jmps, jcell);
+    let t_je: i64 = __mind_load_i64(jcell) - 1;
+    let tb: String = nb_f32dot_tail_body(tcj);
+    let tjb: String = nb_emit_jmp(tb, jmps, jcell);
+    let t_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _tp1: i64 = nb_jmp_set_target(jmps, jcell, t_bk, t_hdr);
+    let t_end: i64 = string_len(tjb);
+    let _tp2: i64 = nb_jmp_set_target(jmps, jcell, t_je, t_end);
+    // result bits: movss xmm0,[sslot] ; movd eax,xmm0 ; store rax -> result.
+    let r0: String = nb_fp_movss_load_xmm0(tjb, 0 - 216);
+    let r1f: String = nb_fp_movd_eax_xmm0(r0);
+    let r2f: String = nb_store_rax(r1f, 0 - 224);
+    // write(1, &result, 8).
+    let w0: String = nb_intdot_lea(r2f, 0 - 224, 0 - 240);
+    let w1: String = nb_intdot_movimm(w0, 1, 0 - 232);
+    let w2: String = nb_intdot_movimm(w1, 8, 0 - 248);
+    let w3: String = nb_emit_write(w2, 0 - 232, 0 - 240, 0 - 248);
+    // exit(0).
+    let ee1: String = nb_intdot_movimm(w3, 0, 0 - 256);
+    let ee2: String = nb_load_rax(ee1, 0 - 256);
+    let code: String = nb_emit_return(ee2, 1);
+    let njmps: i64 = __mind_load_i64(jcell);
+    let _px: i64 = nb_patch_jmps(string_addr(code), jmps, njmps, 0);
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
+
+// ============================================================================
 // RI-B2-S12 (#108) — native-ELF PACKED-int16 SIMD (SSE2, 128-bit) DOT-PRODUCT
 // via the pmaddwd idiom, byte-identical to the SAME MLIR canary dot-i16-4096 =
 // af0fc3cf the scalar S2 rung hit (len 4096, seed 0xDEADBEEF). The int16 SIMD
