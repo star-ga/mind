@@ -67,7 +67,17 @@ def main() -> int:
 
     # Spread of values: single-byte, the 0x7F/0x80 boundary, the classic
     # multi-byte cases, and a large value that exercises several continuations.
-    cases = [0, 1, 2, 63, 127, 128, 129, 300, 16384, 624485, 1 << 28, 1 << 35]
+    # The final block pins the bit-63 / negative-i64 class: the Rust codec encodes
+    # the u64 bit-pattern with a LOGICAL >>7 (up to 10 bytes), so a negative i64
+    # must NOT use signed division. -8664925683060834304 (== u64 0x87C0000000000000)
+    # is the exact mask constant whose 10th uleb byte the pure-MIND emitter used to
+    # drop — regressing the whole-module mic@3 flip. -1 exercises the full 10-byte
+    # 0xFF*9,0x01 maximum. These are passed as signed i64 (ctypes c_int64) and the
+    # reference masks to u64, matching selftest_mic3_uleb's i64 argument ABI.
+    cases = [
+        0, 1, 2, 63, 127, 128, 129, 300, 16384, 624485, 1 << 28, 1 << 35,
+        -1, -128, 1 << 62, -8664925683060834304,
+    ]
 
     print("mic@3 self-host Phase 1 — pure-MIND ULEB128 byte-exactness gate")
     print(f"  .so: {so}")
@@ -75,7 +85,7 @@ def main() -> int:
     for n in cases:
         es = lib.selftest_mic3_uleb(n)
         got = read_string_handle(read_i64_at(es, 0))
-        want = ref_uleb128(n)
+        want = ref_uleb128(n & 0xFFFFFFFFFFFFFFFF)
         ok = got == want
         failures += not ok
         tag = "OK" if ok else f"FAIL (want {want.hex()})"
