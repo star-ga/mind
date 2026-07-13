@@ -25594,3 +25594,138 @@ pub fn selftest_native_elf_fp_let(src_addr: i64, src_len: i64) -> EmitState {
     let elf: String = nb_write_elf(code, 0, note);
     EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
 }
+
+// ---- RI-B2-S1 (#108): scalar i64 dot-product reduction native-ELF ----
+// The first rung of the tensor/BLAS native-ELF ladder — the RI-B2 analogue of
+// RI-B1's "float literal before a float binop": it proves the streaming-
+// reduction-OVER-MEMORY path end to end (a counted `while i < n` loop that
+// indexes two in-memory i64 arrays, multiplies element-wise, and accumulates)
+// with PURE REUSE — it COMPOSES the existing nb_* emitters and adds NO new
+// encoder. The two length-`n` arrays are baked into the entry stack frame as
+// movabs immediates (the fixtures are known at emit time); the loop then
+// re-derives each element ADDRESS at runtime (`base + i*8`) so the actual
+// per-element memory load/index/reduce is exercised, not folded away. The final
+// accumulator is returned as the process exit code (fixtures are chosen so the
+// dot fits in a byte, 0..255).
+//
+// ADDITIVITY: this is a NEW export, NEVER reached during self-compile (main.mind
+// does not call it), so every self-host fixture lowers exactly as before and the
+// integer native-ELF oracle stays byte-identical. There is NO frozen byte oracle
+// for this path yet — the deleted Rust native backend never emitted a dot-product
+// entry, and byte-identity vs the MLIR canary is a LATER slice (RI-B2-S3). The
+// gate here is EXECUTION CORRECTNESS: emit the ELF, run it, assert exit == the
+// exact Sum a[i]*b[i]. A wrong index/mul/accumulate/loop-bound faults or returns a
+// wrong exit, so a correct exit is a non-fakeable proof the reduction lowered.
+
+// movabs rax, val ; mov [rbp+disp], rax  (materialize an i64 immediate into a slot).
+pub fn nb_intdot_movimm(code: String, val: i64, disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 184);
+    let c3: String = nb_i64le(c2, val);
+    nb_store_rax(c3, disp)
+}
+
+// Bake array `vals_addr[0..n]` into the frame ascending from `base_disp`
+// (element i at [rbp + base_disp + 8*i]). Recursive (self-host subset), one
+// movabs+store per element. Values are read at EMIT time from the caller's
+// in-memory fixture array.
+pub fn nb_intdot_store_arr(code: String, vals_addr: i64, base_disp: i64, i: i64, n: i64) -> String {
+    if i >= n {
+        return code;
+    }
+    let v: i64 = __mind_load_i64(vals_addr + i * 8);
+    let c1: String = nb_intdot_movimm(code, v, base_disp + 8 * i);
+    nb_intdot_store_arr(c1, vals_addr, base_disp, i + 1, n)
+}
+
+// lea rax, [rbp+src_disp] ; mov [rbp+dst_disp], rax  (materialize the RUNTIME
+// absolute base address of an in-frame array into a pointer slot, so the loop can
+// form `base + i*8`).
+pub fn nb_intdot_lea(code: String, src_disp: i64, dst_disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 141);
+    let c3: String = nb_push(c2, 133);
+    let c4: String = nb_i32le_signed(c3, src_disp);
+    nb_store_rax(c4, dst_disp)
+}
+
+// One element load: addr = i*8 + base ; ptr_slot = addr ; out_slot = *addr.
+// EXPLICIT per-element addressing — nb_emit_load_i64 is register-indirect [rax]
+// only (it does NOT index), so the element address is computed first with the
+// existing integer mul+add memory-operand ops into `ptr_disp`, loaded back as the
+// pointer, then dereferenced.
+pub fn nb_intdot_load_elem(code: String, base_disp: i64, ptr_disp: i64, out_disp: i64, i_disp: i64, eight_disp: i64) -> String {
+    let c1: String = nb_load_rax(code, i_disp);
+    let c2: String = nb_arith_rax_mem(c1, op_mul(), eight_disp);
+    let c3: String = nb_arith_rax_mem(c2, op_add(), base_disp);
+    let c4: String = nb_store_rax(c3, ptr_disp);
+    let c5: String = nb_emit_load_i64(c4, ptr_disp);
+    nb_store_rax(c5, out_disp)
+}
+
+// selftest_native_elf_intdot(a_addr, b_addr, n): emit a runnable ET_EXEC that
+// computes acc = Sum a[i]*b[i] over the two length-`n` i64 fixture arrays (baked
+// in from a_addr/b_addr) and exit(acc). a_addr/b_addr point at the caller's
+// in-memory i64 arrays; n is the shared length.
+pub fn selftest_native_elf_intdot(a_addr: i64, b_addr: i64, n: i64) -> EmitState {
+    // Frame slot map (all rbp-relative, within a 4096-byte frame):
+    //   i=-8  eight=-16  n=-24  acc=-32  ptr=-40  aval=-48  bval=-56
+    //   prod=-64  one=-72  cond=-80  baseA=-88  baseB=-96
+    //   array A region base = -1024 (A[i] at -1024+8i), array B base = -512.
+    let p0: String = nb_fp_prologue_frame(string_new(), 4096);
+    // Bake both fixture arrays into the frame (ascending, so base + i*8 indexes them).
+    let p1: String = nb_intdot_store_arr(p0, a_addr, 0 - 1024, 0, n);
+    let p2: String = nb_intdot_store_arr(p1, b_addr, 0 - 512, 0, n);
+    // Constants: eight=8, n, i=0, acc=0, one=1.
+    let k1: String = nb_intdot_movimm(p2, 8, 0 - 16);
+    let k2: String = nb_intdot_movimm(k1, n, 0 - 24);
+    let k3: String = nb_intdot_movimm(k2, 0, 0 - 8);
+    let k4: String = nb_intdot_movimm(k3, 0, 0 - 32);
+    let k5: String = nb_intdot_movimm(k4, 1, 0 - 72);
+    // Runtime base addresses of the two in-frame arrays.
+    let ba: String = nb_intdot_lea(k5, 0 - 1024, 0 - 88);
+    let bb: String = nb_intdot_lea(ba, 0 - 512, 0 - 96);
+    // Loop scaffold (mirror nb_emit_while's byte-level structure).
+    let jmps: i64 = __mind_alloc(64 * 2 * 8);
+    let jcell: i64 = __mind_alloc(8);
+    __mind_store_i64(jcell, 0);
+    // header = back-edge target.
+    let header: i64 = string_len(bb);
+    // cond: rax=i ; (i < n) -> 0/1 ; store cond.
+    let cc1: String = nb_load_rax(bb, 0 - 8);
+    let cc2: String = nb_cmp_rax_mem(cc1, nb_setcc_opcode(op_lt()), 0 - 24);
+    let cc3: String = nb_store_rax(cc2, 0 - 80);
+    // cmp qword [cond],0 ; je exit(rel32 patched).
+    let cj: String = nb_emit_cmp_je_zero(cc3, 0 - 80, jmps, jcell);
+    let je_which: i64 = __mind_load_i64(jcell) - 1;
+    // body: aval = a[i] ; bval = b[i] ; prod = aval*bval ; acc += prod ; i += 1.
+    let bd1: String = nb_intdot_load_elem(cj, 0 - 88, 0 - 40, 0 - 48, 0 - 8, 0 - 16);
+    let bd2: String = nb_intdot_load_elem(bd1, 0 - 96, 0 - 40, 0 - 56, 0 - 8, 0 - 16);
+    let bd3: String = nb_load_rax(bd2, 0 - 48);
+    let bd4: String = nb_arith_rax_mem(bd3, op_mul(), 0 - 56);
+    let bd5: String = nb_store_rax(bd4, 0 - 64);
+    let bd6: String = nb_load_rax(bd5, 0 - 32);
+    let bd7: String = nb_arith_rax_mem(bd6, op_add(), 0 - 64);
+    let bd8: String = nb_store_rax(bd7, 0 - 32);
+    let bd9: String = nb_load_rax(bd8, 0 - 8);
+    let bd10: String = nb_arith_rax_mem(bd9, op_add(), 0 - 72);
+    let bd11: String = nb_store_rax(bd10, 0 - 8);
+    // back-edge: jmp header (target known now, patched below).
+    let jb: String = nb_emit_jmp(bd11, jmps, jcell);
+    let back_which: i64 = __mind_load_i64(jcell) - 1;
+    let _pb: i64 = nb_jmp_set_target(jmps, jcell, back_which, header);
+    // end: patch the je-exit here.
+    let end_at: i64 = string_len(jb);
+    let _pj: i64 = nb_jmp_set_target(jmps, jcell, je_which, end_at);
+    // load acc into rax ; exit(acc).
+    let r1: String = nb_load_rax(jb, 0 - 32);
+    let code: String = nb_emit_return(r1, 1);
+    // Patch every recorded intra-fn jump in place before wrapping (entry_off = 0,
+    // so fn-relative sites == code-relative).
+    let njmps: i64 = __mind_load_i64(jcell);
+    let _px: i64 = nb_patch_jmps(string_addr(code), jmps, njmps, 0);
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
