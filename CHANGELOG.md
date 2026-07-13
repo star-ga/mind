@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance
+- **Evidence-path `emit_mic3` dedup (mic@4 Slice-0, byte-identical).**
+  `emit_mic3_with_evidence` computed `trace_hash` via `ir_trace_hash(ir)` —
+  literally `mini_sha256(&emit_mic3(ir))` — after already emitting the same
+  canonical mic@3 body into `body`, running `emit_mic3` twice on the attest
+  path. It now hashes the bytes in hand (`mini_sha256(&body)`), so `emit_mic3`
+  runs exactly once. The Article IV anchor is unchanged: the emitted
+  `trace_hash` and every artifact byte are bit-identical (proven by
+  `parent_hash_round_trips_and_changes_trace_hash`, which pins the stored
+  `trace_hash == ir_trace_hash(&ir)`, and `plain_emit_mic3_unchanged_no_sentinel`).
+  No wire-format or schema change.
+
 ### Added
 - **Deterministic multi-format columnar ingest front-end — RFC + Phases 0/0.5/1.**
   New `docs/rfcs/DRAFT-deterministic-format-frontend.md` (consolidates and

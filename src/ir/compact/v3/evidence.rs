@@ -67,6 +67,7 @@
 
 use std::io::Write;
 
+use crate::deps::mini_sha256;
 use crate::ir::IRModule;
 use crate::ir::compact::v2::{uleb128_read, uleb128_write, zigzag_decode, zigzag_encode};
 use crate::ir::evidence::ir_trace_hash;
@@ -188,7 +189,11 @@ pub fn emit_mic3_with_evidence(
     toolchain: &str,
 ) -> Vec<u8> {
     let body = super::emit_mic3(ir);
-    let trace_hash = ir_trace_hash(ir);
+    // Dedup (Slice-0, task #70): `ir_trace_hash(ir)` is `mini_sha256(&emit_mic3(ir))`,
+    // and `body` already holds those exact canonical mic@3 bytes — so hash the bytes
+    // in hand instead of re-running `emit_mic3`. Byte-identical trace_hash (Article
+    // IV anchor unchanged); `emit_mic3` now runs once on this path instead of twice.
+    let trace_hash = mini_sha256(&body);
     let mut out = body;
     append_map_epilogue(
         &mut out,
