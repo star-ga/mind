@@ -2,4 +2,4 @@
 # reproduces itself byte-identically (stage1==stage2==stage3). Regenerate via
 # self_host_loop_smoke.py with MINDC_SO set. NOT skippable in CI.
 # name	size_bytes	sha256
-stage1.elf	1181487	ef31aaa36a2bfc9b471fc8b39e475dea07f0035556c6d858402ea3b69b55b62d
+stage1.elf	1186354	9a9a5d7d1502a5672d0ead3a88fe8fba965644cf3abb2055bbdbed94e3a0e803
