@@ -19497,13 +19497,24 @@ pub fn nb_push(code: String, b: i64) -> String {
 }
 
 // Append `n` low bytes of `v`, least-significant first (two's-complement i64).
-// `n` in 1..8. Uses arithmetic / 256 right-shift; & 255 isolates the low byte.
+// `n` in 1..8. `& 255` isolates the low byte (bitwise, correct for any sign); the
+// shift MUST be a floor/arithmetic >>8 (not the language's trunc-toward-zero `/`),
+// else a NEGATIVE i64 whose bit-magnitude is < 2^56 loses its sign bytes — e.g. the
+// f64 bit pattern -inf = 0xFFF0000000000000 (small-magnitude signed i64) truncated
+// to 0x00F0000000000000, so `x as i64` of -inf mis-emitted. For v>=0 floor == trunc
+// (every ELF-header/disp32 caller is unaffected, byte-identical); for v<0 use
+// (v-255)/256 == floor(v/256) == an arithmetic 8-bit right shift.
 pub fn nb_le(code: String, v: i64, n: i64) -> String {
     if n <= 0 {
         return code;
     }
     let c1: String = string_push_byte(code, v & 255);
-    nb_le(c1, v / 256, n - 1)
+    let next: i64 = if v < 0 {
+        (v - 255) / 256
+    } else {
+        v / 256
+    };
+    nb_le(c1, next, n - 1)
 }
 
 // 16-bit / 32-bit / 64-bit little-endian helpers (e_type, e_phoff, disp32, etc.).
@@ -27254,6 +27265,336 @@ pub fn selftest_native_elf_scalar_f64(a_bits: i64, b_bits: i64, c_bits: i64, d_b
     let z0: String = nb_intdot_movimm(w3, 0, 0 - 96);
     let z1: String = nb_load_rax(z0, 0 - 96);
     let code: String = nb_emit_return(z1, 1);
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
+
+// ============================================================================
+// RI-B2 scalar-cast-conv rung (#108) — native-ELF int<->float `as`-cast chain,
+// byte-identical to the MLIR canary scalar-cast-conv. Reproduces ref_scalar_cast_conv:
+// six SATURATING float->i64 edges (9.7->9, 1e30->INT64_MAX, -1e30->INT64_MIN,
+// NaN->0, +inf->INT64_MAX, -inf->INT64_MIN), int->f64->i64 (b0), int->f32->i64 (b1,
+// the f32 rounding: 16777219 -> 16777220), bool->f64->i64 (b2 = (inr<povf) -> 1),
+// folded in FIXED source order into one i64 via the wrapping polynomial
+// acc = acc*1000003 + term (two's-complement imul/add), then its 8 LE bytes written.
+//
+// SATURATING float->i64 is BRANCHLESS SSE2 (nb_sat_f64_to_i64): raw = cvttsd2si(x)
+// (INT64_MIN sentinel for +ovf/-ovf/+inf/-inf/NaN; note -ovf and -inf ALREADY give
+// the correct INT64_MIN). Two masks fix the rest: mpos = (2^63 <= x) ? -1 : 0
+// (cmplesd, ordered -> false for NaN, true for +inf) and mnan = (x unord x) ? -1 : 0
+// (cmpunordsd). result = raw ^ ((raw ^ INT64_MAX) & mpos) then & ~mnan (spelled
+// result ^ (result & mnan)) -> NaN->0, +ovf/+inf->INT64_MAX, -ovf/-inf->INT64_MIN,
+// in-range->raw. Built only from IEEE-defined ops, so byte-identical to the MLIR
+// canary result. b1 widens f32->f64 (cvtss2sd) then reuses the SAME f64 saturator
+// (widening is exact, value in range). NEW export, never reached during self-compile:
+// the integer+float native-ELF oracle stays byte-identical.
+// Slot map (frame 512): inr=-8 povf=-16 novf=-24 nan=-32 pinf=-40 ninf=-48
+//   n_int=-56 INT64_MAX=-72 K=-80 ONE=-88 raw=-96 mpos=-104 mnan=-112 term=-120
+//   acc=-128 result=-136 bufaddr=-144 fd=-152 count=-160 exit=-168 tmp_f64=-176.
+// ============================================================================
+
+// cvtsi2sd xmm0, qword [rbp+disp32] = F2 48 0F 2A 85 <disp32> (signed i64 -> f64).
+pub fn nb_fp_cvtsi2sd_mem(code: String, disp: i64) -> String {
+    let c1: String = nb_push(code, 242);
+    let c2: String = nb_push(c1, 72);
+    let c3: String = nb_push(c2, 15);
+    let c4: String = nb_push(c3, 42);
+    let c5: String = nb_push(c4, 133);
+    nb_i32le_signed(c5, disp)
+}
+
+// cvtss2sd xmm0, xmm0 = F3 0F 5A C0 (widen f32 -> f64, exact).
+pub fn nb_fp_cvtss2sd_xmm0(code: String) -> String {
+    let c1: String = nb_push(code, 243);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, 90);
+    nb_push(c3, 192)
+}
+
+// cmpsd xmm{which}, [rbp+disp32], imm8 = F2 0F C2 <modrm> <disp32> <imm8>.
+// modrm 0x85 (xmm0) / 0x8D (xmm1); pred 1=LT 2=LE 3=UNORD (SSE2 ordered set).
+// Result lane = all-ones (predicate true) or 0 — the branchless select mask.
+pub fn nb_fp_cmpsd_mem(code: String, which: i64, disp: i64, pred: i64) -> String {
+    let c1: String = nb_push(code, 242);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, 194);
+    let modrm: i64 = if which == 0 {
+        133
+    } else {
+        141
+    };
+    let c4: String = nb_push(c3, modrm);
+    let c5: String = nb_i32le_signed(c4, disp);
+    nb_push(c5, pred)
+}
+
+// movq rax, xmm1 = 66 48 0F 7E C8 (lift the mask lane from xmm1 to a gpr).
+pub fn nb_fp_movq_rax_xmm1(code: String) -> String {
+    let c1: String = nb_push(code, 102);
+    let c2: String = nb_push(c1, 72);
+    let c3: String = nb_push(c2, 15);
+    let c4: String = nb_push(c3, 126);
+    nb_push(c4, 200)
+}
+
+// Branchless SATURATING f64->i64 (Rust `as` / LLVM fptosi.sat semantics) of the
+// double in slot x_disp, writing the i64 to out_disp. Scratch: raw=-96 mpos=-104
+// mnan=-112 (reused each call); consts INT64_MAX=-72 + the 2^63 f64 immediate.
+pub fn nb_sat_f64_to_i64(code: String, x_disp: i64, out_disp: i64) -> String {
+    // raw = cvttsd2si(x)  (INT64_MIN sentinel on overflow/nan).
+    let a1: String = nb_fp_movsd_load_xmm0(code, x_disp);
+    let a2: String = nb_fp_trunc_rax_xmm0(a1);
+    let a3: String = nb_store_rax(a2, 0 - 96);
+    // mpos = (2^63 <= x) ? -1 : 0   [xmm1 = 2^63 ; cmplesd xmm1, [x]].
+    let b1: String = nb_fp_const_xmm(a3, 4890909195324358656, 1);
+    let b2: String = nb_fp_cmpsd_mem(b1, 1, x_disp, 2);
+    let b3: String = nb_fp_movq_rax_xmm1(b2);
+    let b4: String = nb_store_rax(b3, 0 - 104);
+    // mnan = (x unord x) ? -1 : 0   [cmpunordsd xmm0, [x]].
+    let c1: String = nb_fp_movsd_load_xmm0(b4, x_disp);
+    let c2: String = nb_fp_cmpsd_mem(c1, 0, x_disp, 3);
+    let c3: String = nb_fp_movq_rax_xmm0(c2);
+    let c4: String = nb_store_rax(c3, 0 - 112);
+    // result = raw ^ ((raw ^ INT64_MAX) & mpos).
+    let d1: String = nb_load_rax(c4, 0 - 96);
+    let d2: String = nb_arith_rax_mem(d1, op_bitxor(), 0 - 72);
+    let d3: String = nb_arith_rax_mem(d2, op_bitand(), 0 - 104);
+    let d4: String = nb_arith_rax_mem(d3, op_bitxor(), 0 - 96);
+    let d5: String = nb_store_rax(d4, out_disp);
+    // result = result & ~mnan   (spelled result ^ (result & mnan)).
+    let e1: String = nb_load_rax(d5, out_disp);
+    let e2: String = nb_arith_rax_mem(e1, op_bitand(), 0 - 112);
+    let e3: String = nb_store_rax(e2, 0 - 96);
+    let e4: String = nb_load_rax(e3, out_disp);
+    let e5: String = nb_arith_rax_mem(e4, op_bitxor(), 0 - 96);
+    nb_store_rax(e5, out_disp)
+}
+
+// One wrapping-polynomial fold step: acc = acc*K + term  (K=-80, term=-120,
+// acc=-128). imul/add wrap in two's complement, matching arith.muli/arith.addi.
+pub fn nb_cast_fold(code: String) -> String {
+    let a1: String = nb_load_rax(code, 0 - 128);
+    let a2: String = nb_arith_rax_mem(a1, op_mul(), 0 - 80);
+    let a3: String = nb_arith_rax_mem(a2, op_add(), 0 - 120);
+    nb_store_rax(a3, 0 - 128)
+}
+
+// Emit an ET_EXEC that reproduces ref_scalar_cast_conv over the six f64 edge bit
+// patterns + the int source n (all emit-time args, spilled to runtime slots so the
+// conversions provably execute), folds the nine cast results in fixed source order,
+// and writes the 8 LE bytes of the folded i64 to stdout. n baked at emit time.
+pub fn selftest_native_elf_scalar_cast_conv(inr_bits: i64, povf_bits: i64, novf_bits: i64, nan_bits: i64, pinf_bits: i64, ninf_bits: i64, n: i64) -> EmitState {
+    let p0: String = nb_fp_prologue_frame(string_new(), 512);
+    // Spill the six edge f64 bit patterns to slots -8..-48.
+    let s0: String = nb_fp_const_xmm(p0, inr_bits, 0);
+    let s1: String = nb_fp_movsd_store_xmm0(s0, 0 - 8);
+    let s2: String = nb_fp_const_xmm(s1, povf_bits, 0);
+    let s3: String = nb_fp_movsd_store_xmm0(s2, 0 - 16);
+    let s4: String = nb_fp_const_xmm(s3, novf_bits, 0);
+    let s5: String = nb_fp_movsd_store_xmm0(s4, 0 - 24);
+    let s6: String = nb_fp_const_xmm(s5, nan_bits, 0);
+    let s7: String = nb_fp_movsd_store_xmm0(s6, 0 - 32);
+    let s8: String = nb_fp_const_xmm(s7, pinf_bits, 0);
+    let s9: String = nb_fp_movsd_store_xmm0(s8, 0 - 40);
+    let s10: String = nb_fp_const_xmm(s9, ninf_bits, 0);
+    let s11: String = nb_fp_movsd_store_xmm0(s10, 0 - 48);
+    // n integer + constants (INT64_MAX, K, ONE).
+    let k0: String = nb_intdot_movimm(s11, n, 0 - 56);
+    let k1: String = nb_intdot_movimm(k0, 9223372036854775807, 0 - 72);
+    let k2: String = nb_intdot_movimm(k1, 1000003, 0 - 80);
+    let k3: String = nb_intdot_movimm(k2, 1, 0 - 88);
+    // e0 = sat(inr) -> acc (fold seed).
+    let e0: String = nb_sat_f64_to_i64(k3, 0 - 8, 0 - 128);
+    // e1..e5 = sat(edge) -> term ; fold.
+    let e1a: String = nb_sat_f64_to_i64(e0, 0 - 16, 0 - 120);
+    let e1b: String = nb_cast_fold(e1a);
+    let e2a: String = nb_sat_f64_to_i64(e1b, 0 - 24, 0 - 120);
+    let e2b: String = nb_cast_fold(e2a);
+    let e3a: String = nb_sat_f64_to_i64(e2b, 0 - 32, 0 - 120);
+    let e3b: String = nb_cast_fold(e3a);
+    let e4a: String = nb_sat_f64_to_i64(e3b, 0 - 40, 0 - 120);
+    let e4b: String = nb_cast_fold(e4a);
+    let e5a: String = nb_sat_f64_to_i64(e4b, 0 - 48, 0 - 120);
+    let e5b: String = nb_cast_fold(e5a);
+    // b0 = (n as f64) as i64 ; fold.
+    let b0a: String = nb_fp_cvtsi2sd_mem(e5b, 0 - 56);
+    let b0b: String = nb_fp_movsd_store_xmm0(b0a, 0 - 176);
+    let b0c: String = nb_sat_f64_to_i64(b0b, 0 - 176, 0 - 120);
+    let b0d: String = nb_cast_fold(b0c);
+    // b1 = (n as f32) as i64 ; fold. cvtsi2ss -> widen f32->f64 -> sat.
+    let b1a: String = nb_fp_cvtsi2ss_mem(b0d, 0 - 56);
+    let b1b: String = nb_fp_cvtss2sd_xmm0(b1a);
+    let b1c: String = nb_fp_movsd_store_xmm0(b1b, 0 - 176);
+    let b1d: String = nb_sat_f64_to_i64(b1c, 0 - 176, 0 - 120);
+    let b1e: String = nb_cast_fold(b1d);
+    // b2 = (inr < povf) as f64 as i64 ; fold. cmpltsd -> mask & 1 (bool round-trips).
+    let b2a: String = nb_fp_movsd_load_xmm0(b1e, 0 - 8);
+    let b2b: String = nb_fp_cmpsd_mem(b2a, 0, 0 - 16, 1);
+    let b2c: String = nb_fp_movq_rax_xmm0(b2b);
+    let b2d: String = nb_arith_rax_mem(b2c, op_bitand(), 0 - 88);
+    let b2e: String = nb_store_rax(b2d, 0 - 120);
+    let b2f: String = nb_cast_fold(b2e);
+    // result = acc -> write(1, &result, 8) ; exit(0).
+    let r0: String = nb_load_rax(b2f, 0 - 128);
+    let r1: String = nb_store_rax(r0, 0 - 136);
+    let w0: String = nb_intdot_lea(r1, 0 - 136, 0 - 144);
+    let w1: String = nb_intdot_movimm(w0, 1, 0 - 152);
+    let w2: String = nb_intdot_movimm(w1, 8, 0 - 160);
+    let w3: String = nb_emit_write(w2, 0 - 152, 0 - 144, 0 - 160);
+    let z0: String = nb_intdot_movimm(w3, 0, 0 - 168);
+    let z1: String = nb_load_rax(z0, 0 - 168);
+    let code: String = nb_emit_return(z1, 1);
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
+
+// ============================================================================
+// RI-B2 L1-Q16 rung (#108) — native-ELF Q16.16 L1 distance, byte-identical to the
+// MLIR canary dot-l1-q16 (len 65536, seed 0xDEADBEEF). Shares the S4 Q16 LCG
+// generator (nb_q16gen_body VERBATIM — identical a[]/b[] i32 element streams) and
+// the whole intdot_q16 driver; the ONLY change is the reduction body: instead of
+// per-product `(sext a * sext b) >> 16`, each term is `|sext(a[i]) - sext(b[i])|`
+// summed into a full i64 accumulator, then narrowed ONCE to i32 (movsxd — the
+// canary's `acc as i32`) and the 8 LE bytes written to stdout.
+//
+// ABS is BRANCHLESS integer, reusing the existing single-instruction encoders (no
+// new opcode): d = a - b (48 2B, op_sub) ; t = d SAR 63 (op_shr IS arithmetic sar
+// rax,cl — the sign mask, 0 for d>=0, -1 for d<0) ; abs = (d ^ t) - t (op_bitxor
+// 48 33, then op_sub). For d>=0: t=0 -> abs=d; for d<0: t=-1 -> (~d)+1 = -d. Exact
+// integer add is associative/commutative so the sum is grouping-/substrate-
+// independent (RFC 0015 §3.1), byte-identical to the MLIR canary.
+// Slots reuse the S4 Q16 map; two NEW scratch slots below the exit slot:
+//   sixty_three = -1048760 (SAR count constant) ; t_mask = -1048768 (sign mask).
+// ============================================================================
+
+// One L1-Q16 reduction body: aval = movsxd dword a[baseA + i*8] ; bval = movsxd
+// dword b[baseB + i*8] ; d = aval - bval ; t = d SAR 63 ; abs = (d ^ t) - t ;
+// acc += abs ; i += 1. NO >>16 rescale (L1 is |a-b|, not a Q16 product).
+pub fn nb_q16l1_body(code: String) -> String {
+    let a1: String = nb_load_rax(code, 0 - 1048608);
+    let a2: String = nb_arith_rax_mem(a1, op_mul(), 0 - 1048616);
+    let a3: String = nb_arith_rax_mem(a2, op_add(), 0 - 1048656);
+    let a4: String = nb_store_rax(a3, 0 - 1048672);
+    let a5: String = nb_emit_load_i32_sx(a4, 0 - 1048672);
+    let a6: String = nb_store_rax(a5, 0 - 1048680);
+    let b1: String = nb_load_rax(a6, 0 - 1048608);
+    let b2: String = nb_arith_rax_mem(b1, op_mul(), 0 - 1048616);
+    let b3: String = nb_arith_rax_mem(b2, op_add(), 0 - 1048664);
+    let b4: String = nb_store_rax(b3, 0 - 1048672);
+    let b5: String = nb_emit_load_i32_sx(b4, 0 - 1048672);
+    let b6: String = nb_store_rax(b5, 0 - 1048688);
+    // d = aval - bval  ->  prod slot -1048696.
+    let c1: String = nb_load_rax(b6, 0 - 1048680);
+    let c2: String = nb_arith_rax_mem(c1, op_sub(), 0 - 1048688);
+    let c3: String = nb_store_rax(c2, 0 - 1048696);
+    // t = d SAR 63  ->  t_mask slot -1048768.
+    let m1: String = nb_load_rax(c3, 0 - 1048696);
+    let m2: String = nb_arith_rax_mem(m1, op_shr(), 0 - 1048760);
+    let m3: String = nb_store_rax(m2, 0 - 1048768);
+    // abs = (d ^ t) - t  ->  prod slot -1048696.
+    let x1: String = nb_load_rax(m3, 0 - 1048696);
+    let x2: String = nb_arith_rax_mem(x1, op_bitxor(), 0 - 1048768);
+    let x3: String = nb_arith_rax_mem(x2, op_sub(), 0 - 1048768);
+    let x4: String = nb_store_rax(x3, 0 - 1048696);
+    // acc += abs.
+    let d1: String = nb_load_rax(x4, 0 - 1048632);
+    let d2: String = nb_arith_rax_mem(d1, op_add(), 0 - 1048696);
+    let d3: String = nb_store_rax(d2, 0 - 1048632);
+    // i += 1.
+    let e1: String = nb_load_rax(d3, 0 - 1048608);
+    let e2: String = nb_arith_rax_mem(e1, op_add(), 0 - 1048648);
+    nb_store_rax(e2, 0 - 1048608)
+}
+
+// Emit an ET_EXEC that generates a[0..n]/b[0..n] via the EXACT Q16.16 LCG (shared
+// with intdot_q16), computes acc = Sum |sext(a[i]) - sext(b[i])| in a full i64
+// accumulator, narrows ONCE to i32 (the canary's `acc as i32`), and writes the 8
+// LE bytes of the result to stdout. n baked at emit time (canary uses 65536).
+// NEW export, never reached during self-compile: the integer+float native-ELF
+// oracle stays byte-identical.
+pub fn selftest_native_elf_dot_l1_q16(n: i64) -> EmitState {
+    let p0: String = nb_fp_prologue_frame(string_new(), 1052672);
+    // Constants.
+    let k1: String = nb_intdot_movimm(p0, 1664525, 0 - 1048592);
+    let k2: String = nb_intdot_movimm(k1, 1013904223, 0 - 1048600);
+    let k3: String = nb_intdot_movimm(k2, 8, 0 - 1048616);
+    let k4: String = nb_intdot_movimm(k3, 1, 0 - 1048648);
+    let k5: String = nb_intdot_movimm(k4, 16, 0 - 1048704);
+    let k5b: String = nb_intdot_movimm(k5, 44, 0 - 1048712);
+    let k6: String = nb_intdot_movimm(k5b, 3735928559, 0 - 1048584);
+    let k7: String = nb_intdot_movimm(k6, 0, 0 - 1048632);
+    let k8: String = nb_intdot_movimm(k7, n, 0 - 1048624);
+    // SAR count constant for the branchless abs.
+    let k9: String = nb_intdot_movimm(k8, 63, 0 - 1048760);
+    // Runtime base addresses of the two in-frame arrays.
+    let ba: String = nb_intdot_lea(k9, 0 - 1048576, 0 - 1048656);
+    let bb: String = nb_intdot_lea(ba, 0 - 524288, 0 - 1048664);
+    // Jump scaffold buffer shared by all three loops.
+    let jmps: i64 = __mind_alloc(64 * 2 * 8);
+    let jcell: i64 = __mind_alloc(8);
+    __mind_store_i64(jcell, 0);
+    // --- generate A[0..n] (base slot -1048656) ---
+    let ga0: String = nb_intdot_movimm(bb, 0, 0 - 1048608);
+    let ga_hdr: i64 = string_len(ga0);
+    let gac1: String = nb_load_rax(ga0, 0 - 1048608);
+    let gac2: String = nb_cmp_rax_mem(gac1, nb_setcc_opcode(op_lt()), 0 - 1048624);
+    let gac3: String = nb_store_rax(gac2, 0 - 1048640);
+    let gacj: String = nb_emit_cmp_je_zero(gac3, 0 - 1048640, jmps, jcell);
+    let ga_je: i64 = __mind_load_i64(jcell) - 1;
+    let gab: String = nb_q16gen_body(gacj, 0 - 1048656);
+    let gajb: String = nb_emit_jmp(gab, jmps, jcell);
+    let ga_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _gp1: i64 = nb_jmp_set_target(jmps, jcell, ga_bk, ga_hdr);
+    let ga_end: i64 = string_len(gajb);
+    let _gp2: i64 = nb_jmp_set_target(jmps, jcell, ga_je, ga_end);
+    // --- generate B[0..n] (base slot -1048664), LCG state continues ---
+    let gb0: String = nb_intdot_movimm(gajb, 0, 0 - 1048608);
+    let gb_hdr: i64 = string_len(gb0);
+    let gbc1: String = nb_load_rax(gb0, 0 - 1048608);
+    let gbc2: String = nb_cmp_rax_mem(gbc1, nb_setcc_opcode(op_lt()), 0 - 1048624);
+    let gbc3: String = nb_store_rax(gbc2, 0 - 1048640);
+    let gbcj: String = nb_emit_cmp_je_zero(gbc3, 0 - 1048640, jmps, jcell);
+    let gb_je: i64 = __mind_load_i64(jcell) - 1;
+    let gbb: String = nb_q16gen_body(gbcj, 0 - 1048664);
+    let gbjb: String = nb_emit_jmp(gbb, jmps, jcell);
+    let gb_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _hp1: i64 = nb_jmp_set_target(jmps, jcell, gb_bk, gb_hdr);
+    let gb_end: i64 = string_len(gbjb);
+    let _hp2: i64 = nb_jmp_set_target(jmps, jcell, gb_je, gb_end);
+    // --- L1 loop: acc = Sum |sext(a[i]) - sext(b[i])| ---
+    let d0: String = nb_intdot_movimm(gbjb, 0, 0 - 1048608);
+    let d_hdr: i64 = string_len(d0);
+    let dc1: String = nb_load_rax(d0, 0 - 1048608);
+    let dc2: String = nb_cmp_rax_mem(dc1, nb_setcc_opcode(op_lt()), 0 - 1048624);
+    let dc3: String = nb_store_rax(dc2, 0 - 1048640);
+    let dcj: String = nb_emit_cmp_je_zero(dc3, 0 - 1048640, jmps, jcell);
+    let d_je: i64 = __mind_load_i64(jcell) - 1;
+    let db: String = nb_q16l1_body(dcj);
+    let djb: String = nb_emit_jmp(db, jmps, jcell);
+    let d_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _dp1: i64 = nb_jmp_set_target(jmps, jcell, d_bk, d_hdr);
+    let d_end: i64 = string_len(djb);
+    let _dp2: i64 = nb_jmp_set_target(jmps, jcell, d_je, d_end);
+    // Narrow ONCE to i32 and sign-extend to i64 (the canary's `acc as i32`).
+    let t1: String = nb_load_rax(djb, 0 - 1048632);
+    let t2: String = nb_movsxd_rax_eax(t1);
+    let t3: String = nb_store_rax(t2, 0 - 1048720);
+    // write(1, &result, 8).
+    let t4: String = nb_intdot_lea(t3, 0 - 1048720, 0 - 1048736);
+    let t5: String = nb_intdot_movimm(t4, 1, 0 - 1048728);
+    let t6: String = nb_intdot_movimm(t5, 8, 0 - 1048744);
+    let t7: String = nb_emit_write(t6, 0 - 1048728, 0 - 1048736, 0 - 1048744);
+    // exit(0).
+    let t8: String = nb_intdot_movimm(t7, 0, 0 - 1048752);
+    let t9: String = nb_load_rax(t8, 0 - 1048752);
+    let code: String = nb_emit_return(t9, 1);
+    // Patch every recorded intra-fn jump (entry_off = 0).
+    let njmps: i64 = __mind_load_i64(jcell);
+    let _px: i64 = nb_patch_jmps(string_addr(code), jmps, njmps, 0);
     let hbuf: i64 = __mind_alloc(32);
     let note: String = nb_build_note(string_new(), hbuf);
     let elf: String = nb_write_elf(code, 0, note);
