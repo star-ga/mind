@@ -20813,8 +20813,14 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
     // parent binop consuming it routes float too. main.mind's OWN source contains no
     // float literals, so every operand here classifies INT during self-compile, this
     // branch is never taken, and the integer native-ELF emission stays byte-identical.
-    let lhs_dt: i64 = nb_node_dtype(ast_child0(node));
-    let rhs_dt: i64 = nb_node_dtype(ast_child1(node));
+    // RI-B1 FOLLOW-UP: consult the per-fn dtype table (threaded at lcell+8, see
+    // nb_lower_fn) so a FLOAT let-bound operand is classified FLOAT. A null table
+    // (lcell+8 == 0 on the bare-expr fp selftests) makes nb_node_dtype_tbl fall back
+    // to the pure-AST nb_node_dtype, and main.mind's float-free source keeps every
+    // slot INT during self-compile, so the integer path stays byte-identical.
+    let dtbl: i64 = __mind_load_i64(lcell + 8);
+    let lhs_dt: i64 = nb_node_dtype_tbl(ast_child0(node), dtbl, lets, lcell, buf);
+    let rhs_dt: i64 = nb_node_dtype_tbl(ast_child1(node), dtbl, lets, lcell, buf);
     let fsel: i64 = nb_fp_opsel(op);
     if lhs_dt == nb_dtype_float() {
         if rhs_dt == nb_dtype_float() {
@@ -21594,7 +21600,16 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // annotation, else 0) so a later `name.field` read recovers the field's
         // declared index (8*index byte offset). The pick is a helper (if-statement
         // chain), not a value-if-let phi.
+        // RI-B1 FOLLOW-UP: propagate the init's dtype onto X's SSA slot in the per-fn
+        // table, so a later `x + 2.5` sees `x` as FLOAT and routes the SSE2 path.
+        // Classify BEFORE binding X (X cannot reference itself; the env still holds the
+        // prior bindings init's free idents resolve against). Tagging writes only to the
+        // heap table (no machine code), and main.mind's float-free source makes every
+        // init INT, so this is byte-identical for the integer native-ELF oracle.
+        let dtbl: i64 = __mind_load_i64(lcell + 8);
+        let init_dt: i64 = nb_node_dtype_tbl(init, dtbl, lets, lcell, buf);
         let _b: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), s1.last_id, nb_let_descriptor(init, ast_child1(node), buf, srt));
+        let _dt: i64 = nb_dtype_tag_slot(dtbl, s1.last_id, init_dt);
         return s1;
     }
     if k == ast_if() {
@@ -22914,11 +22929,19 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     __mind_store_i64(jcell, 0);
 
     // Per-fn let-env: name span -> (frame slot, struct-lit node), for `let`
-    // bindings (up to 512, 4 i64 words each; lcell = a 1-i64 count, zeroed).
+    // bindings (up to 512, 4 i64 words each; lcell = a 2-i64 cell: word0 = count,
+    // word1 = the per-fn dtype table, both threaded together like the count).
     // Empty for the scalar fixtures.
     let lets: i64 = __mind_alloc(512 * 4 * 8);
-    let lcell: i64 = __mind_alloc(8);
+    let lcell: i64 = __mind_alloc(16);
     __mind_store_i64(lcell, 0);
+    // RI-B1 FOLLOW-UP: per-fn SSA dtype table (nb_dtype_table_new, all-INT default),
+    // threaded through the EXISTING lets/lcell plumbing at lcell+8 — nb_expr's binop
+    // arm reads it, the `let` arm tags it. Sized nslots+64 (all SSA ids < nslots; the
+    // +64 slack absorbs any residual frame-count drift so no read is ever OOB). Every
+    // slot defaults INT, and main.mind's float-free source never tags one FLOAT, so the
+    // integer native-ELF oracle stays byte-identical.
+    __mind_store_i64(lcell + 8, nb_dtype_table_new(nslots + 64));
     // Register struct-typed params FIRST (before body lets append, so a same-name
     // let shadows last-match-wins), mirroring the count-lets registration above so
     // the emitted offsets match the counted frame size exactly.
@@ -25243,6 +25266,65 @@ pub fn nb_node_dtype(node: i64) -> i64 {
     nb_dtype_int()
 }
 
+// RI-B1 (#107) FOLLOW-UP: FLOAT dtype propagation across a LET binding. The pure-AST
+// nb_node_dtype above cannot see through an ident (`let x = 1.5; x + 2.5` — `x` is an
+// ast_ident, classified INT by the AST alone). This TABLE-aware classifier resolves an
+// ident to its bound SSA slot (via the SAME let-env nb_expr consults) and reads the
+// per-SSA dtype the `let` recorded, so a float-let-bound operand is seen as FLOAT and
+// the nb_expr binop arm routes the SSE2 path. For every non-ident node it mirrors
+// nb_node_dtype's AST rule but recurses through THIS classifier so nested idents
+// resolve too. Guard: `tbl == 0` (no per-fn table on this path) falls back to the
+// pure-AST nb_node_dtype, so any caller without a table is byte-for-byte unchanged.
+// main.mind's OWN source is float-free, so the table stays all-INT during self-compile
+// (no `let` ever tags a slot FLOAT), every ident resolves to INT, and the integer
+// native-ELF emission is byte-identical.
+pub fn nb_node_dtype_tbl(node: i64, tbl: i64, lets: i64, lcell: i64, buf: i64) -> i64 {
+    if tbl == 0 {
+        return nb_node_dtype(node);
+    }
+    let k: i64 = ast_kind(node);
+    if k == ast_ident() {
+        // Resolve the name to its bound let-slot and read the recorded dtype. A param
+        // (or any name not in the let-env) is not tagged, so it reads back INT.
+        let lslot: i64 = nb_lets_lookup(lets, lcell, buf, ast_span_lo(node), ast_span_hi(node));
+        if lslot >= 0 {
+            return nb_dtype_get(tbl, lslot);
+        }
+        return nb_dtype_int();
+    }
+    if k == ast_float_lit() {
+        return nb_dtype_float();
+    }
+    if k == ast_paren() {
+        return nb_node_dtype_tbl(ast_child0(node), tbl, lets, lcell, buf);
+    }
+    if k == ast_binop() {
+        if nb_fp_opsel(ast_aux(node)) >= 0 {
+            if nb_node_dtype_tbl(ast_child0(node), tbl, lets, lcell, buf) == nb_dtype_float() {
+                if nb_node_dtype_tbl(ast_child1(node), tbl, lets, lcell, buf) == nb_dtype_float() {
+                    return nb_dtype_float();
+                }
+            }
+        }
+        return nb_dtype_int();
+    }
+    nb_dtype_int()
+}
+
+// Tag SSA slot `id` with dtype `dt` in the per-fn table, guarded: a null table (a
+// caller with no dtype table threaded) or an unresolved slot (id < 0) is a no-op, so
+// this is inert on every path that does not opt in. Returns 0.
+pub fn nb_dtype_tag_slot(tbl: i64, id: i64, dt: i64) -> i64 {
+    if tbl == 0 {
+        return 0;
+    }
+    if id < 0 {
+        return 0;
+    }
+    let _s: i64 = nb_dtype_set(tbl, id, dt);
+    0
+}
+
 // Map a binop operator tag to the SSE2 scalar-double op_sel used by
 // nb_fp_binop_xmm0_mem: + -> addsd(0), - -> subsd(1), * -> mulsd(2), / -> divsd(3).
 // Returns -1 for any non-arithmetic operator (comparisons, bitwise, shifts) — those
@@ -25411,8 +25493,11 @@ pub fn selftest_native_elf_fp_expr(src_addr: i64, src_len: i64) -> EmitState {
     let params: i64 = __mind_alloc(8);
     let calls: i64 = __mind_alloc(8);
     let lets: i64 = __mind_alloc(512 * 4 * 8);
-    let lcell: i64 = __mind_alloc(8);
+    let lcell: i64 = __mind_alloc(16);
     __mind_store_i64(lcell, 0);
+    // RI-B1 FOLLOW-UP: no per-fn dtype table on the bare-expr path — store 0 at lcell+8
+    // so nb_expr's binop arm falls back to the pure-AST classifier (behaviour unchanged).
+    __mind_store_i64(lcell + 8, 0);
     let st0: NbState = NbState { code: p, next_id: 0, last_id: 0 - 1, ncalls: 0 };
     let s1: NbState = nb_expr(st0, src_addr, node, params, 0, calls, lets, lcell);
     // Read the float back out of its slot and truncate to i64 for exit(rax).
@@ -25445,12 +25530,63 @@ pub fn selftest_native_elf_fp_binop(src_addr: i64, src_len: i64) -> EmitState {
     let params: i64 = __mind_alloc(8);
     let calls: i64 = __mind_alloc(8);
     let lets: i64 = __mind_alloc(512 * 4 * 8);
-    let lcell: i64 = __mind_alloc(8);
+    let lcell: i64 = __mind_alloc(16);
     __mind_store_i64(lcell, 0);
+    // RI-B1 FOLLOW-UP: no per-fn dtype table on the bare-expr path — store 0 at lcell+8
+    // so nb_expr's binop arm falls back to the pure-AST classifier (behaviour unchanged).
+    __mind_store_i64(lcell + 8, 0);
     let st0: NbState = NbState { code: p, next_id: 0, last_id: 0 - 1, ncalls: 0 };
     let s1: NbState = nb_expr(st0, src_addr, node, params, 0, calls, lets, lcell);
     // Read the float result back out of its slot and truncate to i64 for exit(rax).
     let c1: String = nb_fp_movsd_load_xmm0(s1.code, nb_slot_disp(s1.last_id));
+    let c2: String = nb_fp_trunc_rax_xmm0(c1);
+    let code: String = nb_emit_return(c2, 1);
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
+
+// End-to-end proof of FLOAT dtype propagation ACROSS a LET binding (RI-B1 #107
+// follow-up): lex + parse a REAL statement block (e.g. `{ let x = 1.5; x + 2.5 }`)
+// with parse_block, then lower the WHOLE block through nb_block_stmts / nb_stmt /
+// nb_expr with a REAL per-fn dtype table threaded at lcell+8 — exactly the plumbing
+// nb_lower_fn uses. The `let` arm tags x's SSA slot FLOAT (its init `1.5` classifies
+// FLOAT); the trailing `x + 2.5` binop then resolves `x` through the let-env, reads
+// tbl[x_slot] = FLOAT, sees rhs `2.5` FLOAT, and routes the SSE2 f64 memory-operand
+// encoders. The harness reads the result slot back to xmm0 and cvttsd2si ->
+// exit(trunc(value)). Driven through the REAL statement-lowering path, not the fp
+// encoders directly. Emits ZERO MLIR/LLVM; the CPU exit code is the oracle (no frozen
+// float oracle can exist — the deleted Rust native rejected ConstF64). WITHOUT the
+// dtype-table threading `x` would classify INT and the binop would take the GP-integer
+// path, faulting or returning the wrong integer — so a correct exit is a non-fakeable
+// proof the float dtype crossed the let.
+pub fn selftest_native_elf_fp_let(src_addr: i64, src_len: i64) -> EmitState {
+    let toks: Vec = lex(src_addr, src_len);
+    let pr: ParseResult = parse_block(toks, 0, src_addr);
+    let blk: i64 = pr_node(pr);
+    let stmts_addr: i64 = ast_child0(blk);
+    let stmts_len: i64 = ast_aux(blk);
+    // rbp frame so [rbp+disp32] slots are addressable (the movsd store/load target).
+    let p: String = nb_fp_prologue_frame(string_new(), 256);
+    let params: i64 = __mind_alloc(8);
+    let calls: i64 = __mind_alloc(8);
+    let jmps: i64 = __mind_alloc(512 * 2 * 8);
+    let jcell: i64 = __mind_alloc(8);
+    __mind_store_i64(jcell, 0);
+    // Per-fn let-env + real dtype table at lcell+8 (the nb_lower_fn plumbing).
+    let lets: i64 = __mind_alloc(512 * 4 * 8);
+    let lcell: i64 = __mind_alloc(16);
+    __mind_store_i64(lcell, 0);
+    __mind_store_i64(lcell + 8, nb_dtype_table_new(128));
+    let srt: i64 = srt_build(src_addr, src_len);
+    let loops: i64 = __mind_alloc(256 * 3 * 8);
+    let lpcell: i64 = __mind_alloc(8);
+    __mind_store_i64(lpcell, 0);
+    let st0: NbState = NbState { code: p, next_id: 0, last_id: 0 - 1, ncalls: 0 };
+    let sb: NbState = nb_block_stmts(st0, src_addr, stmts_addr, stmts_len, 0, params, 0, calls, 0, jmps, jcell, lets, lcell, srt, loops, lpcell);
+    // Read the float result of the tail expr back out of its slot and truncate.
+    let c1: String = nb_fp_movsd_load_xmm0(sb.code, nb_slot_disp(sb.last_id));
     let c2: String = nb_fp_trunc_rax_xmm0(c1);
     let code: String = nb_emit_return(c2, 1);
     let hbuf: i64 = __mind_alloc(32);
