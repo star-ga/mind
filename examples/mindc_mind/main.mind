@@ -27196,3 +27196,66 @@ pub fn selftest_native_elf_matmul_f32_v(m: i64, n: i64) -> EmitState {
     let elf: String = nb_write_elf(code, 0, note);
     EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
 }
+
+// movq rax, xmm0 = 66 48 0F 7E C0 (f64 bits -> rax, all 64 bits; the REX.W=0x48
+// widens the movd form 66 0F 7E C0 to a full quadword, so the 8-LE-byte store ==
+// `to_bits() as i64` of the scalar double — u64 pattern reinterpreted, no zero-ext).
+pub fn nb_fp_movq_rax_xmm0(code: String) -> String {
+    let c1: String = nb_push(code, 102);
+    let c2: String = nb_push(c1, 72);
+    let c3: String = nb_push(c2, 15);
+    let c4: String = nb_push(c3, 126);
+    nb_push(c4, 192)
+}
+
+// STEP (RI-B2 f64 rung, #108): emit a runnable x86-64 ET_EXEC that reproduces the
+// cross-substrate canary scalar-float-f64 — the strict-IEEE scalar chain
+// `a + b - c * d / a` (ref_scalar_f64_chain), fixed source precedence, NO
+// contraction: the operation tree is t1=a+b, t2=c*d, t3=t2/a, t4=t1-t3. Each of
+// a,b,c,d is a compile-time f64 bit-pattern spilled to a stack slot; the chain runs
+// entirely through the RI-B1 memory-operand SSE2 f64 encoders (movsd load/store,
+// addsd/mulsd/divsd/subsd on [rbp+disp]), then movq rax,xmm0 lifts the result's
+// 64-bit pattern and writes its 8 LE bit-bytes (`to_bits() as i64`) to stdout.
+// The Python oracle sha256's those 8 bytes and asserts == the committed canary
+// scalar-float-f64 hash — byte-identity to the MLIR canary, unfused, zero MLIR/LLVM.
+// NEW export, never reached during self-compile: the integer+float native-ELF
+// oracle stays byte-identical. Slots: a=0 b=1 c=2 d=3 t1=4 t3=5 (nb_slot_disp);
+// result=-64 bufaddr=-72 fd=-80 count=-88 exit=-96.
+pub fn selftest_native_elf_scalar_f64(a_bits: i64, b_bits: i64, c_bits: i64, d_bits: i64) -> EmitState {
+    let p0: String = nb_fp_prologue_frame(string_new(), 256);
+    // Spill the four constants to slots 0..3.
+    let s0: String = nb_fp_const_xmm(p0, a_bits, 0);
+    let s1: String = nb_fp_movsd_store_xmm0(s0, nb_slot_disp(0));
+    let s2: String = nb_fp_const_xmm(s1, b_bits, 0);
+    let s3: String = nb_fp_movsd_store_xmm0(s2, nb_slot_disp(1));
+    let s4: String = nb_fp_const_xmm(s3, c_bits, 0);
+    let s5: String = nb_fp_movsd_store_xmm0(s4, nb_slot_disp(2));
+    let s6: String = nb_fp_const_xmm(s5, d_bits, 0);
+    let s7: String = nb_fp_movsd_store_xmm0(s6, nb_slot_disp(3));
+    // t1 = a + b  ->  slot4.
+    let a0: String = nb_fp_movsd_load_xmm0(s7, nb_slot_disp(0));
+    let a1: String = nb_fp_binop_xmm0_mem(a0, 0, nb_slot_disp(1));
+    let a2: String = nb_fp_movsd_store_xmm0(a1, nb_slot_disp(4));
+    // t3 = (c * d) / a  ->  slot5.
+    let m0: String = nb_fp_movsd_load_xmm0(a2, nb_slot_disp(2));
+    let m1: String = nb_fp_binop_xmm0_mem(m0, 2, nb_slot_disp(3));
+    let m2: String = nb_fp_binop_xmm0_mem(m1, 3, nb_slot_disp(0));
+    let m3: String = nb_fp_movsd_store_xmm0(m2, nb_slot_disp(5));
+    // t4 = t1 - t3  (result in xmm0).
+    let r0: String = nb_fp_movsd_load_xmm0(m3, nb_slot_disp(4));
+    let r1: String = nb_fp_binop_xmm0_mem(r0, 1, nb_slot_disp(5));
+    // movq rax,xmm0 ; store ; write(1, &result, 8) ; exit(0).
+    let q0: String = nb_fp_movq_rax_xmm0(r1);
+    let q1: String = nb_store_rax(q0, 0 - 64);
+    let w0: String = nb_intdot_lea(q1, 0 - 64, 0 - 72);
+    let w1: String = nb_intdot_movimm(w0, 1, 0 - 80);
+    let w2: String = nb_intdot_movimm(w1, 8, 0 - 88);
+    let w3: String = nb_emit_write(w2, 0 - 80, 0 - 72, 0 - 88);
+    let z0: String = nb_intdot_movimm(w3, 0, 0 - 96);
+    let z1: String = nb_load_rax(z0, 0 - 96);
+    let code: String = nb_emit_return(z1, 1);
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
