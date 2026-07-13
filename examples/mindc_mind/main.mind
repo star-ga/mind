@@ -27616,3 +27616,312 @@ pub fn selftest_native_elf_dot_l1_q16(n: i64) -> EmitState {
     let elf: String = nb_write_elf(code, 0, note);
     EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
 }
+
+// ============================================================================
+// RI-B2-S10 (#108) — native-ELF PACKED-SIMD (SSE2/SSE4.1, 128-bit) Q16.16
+// DOT-PRODUCT, byte-identical to the SAME MLIR canary dot-l2-q16 = 1d7f272b the
+// scalar S4 rung hit. Opens the SIMD tier: the pure-MIND native-ELF backend emits
+// VECTOR SIMD whose i64 result is byte-identical to the scalar/MLIR value —
+// deterministic SIMD, zero LLVM.
+//
+// WHY it is byte-identical: integer add is associative/commutative (mod 2^64) and
+// the per-product Q16 rescale `>>16` is arithmetic (SAR) applied PER PRODUCT — the
+// SAME per-product as scalar. So a 2-wide lane-accumulate (paddq) followed by a
+// horizontal reduce (pshufd 0x4E + paddq) yields the IDENTICAL i64 as the scalar
+// sequential accumulate, then `acc as i32` (movsxd) narrows identically. No specific
+// MLIR SIMD idiom is matched instruction-for-instruction — only the i64 VALUE.
+//
+// LAYOUT TRICK: the S4 Q16 generator (nb_q16gen_body, reused VERBATIM) stores each
+// i32 element SIGN-EXTENDED to a full 8-byte cell (base + i*8). So one movdqu of 16
+// bytes loads TWO consecutive cells = [elem_i(i64), elem_{i+1}(i64)] with the two
+// elements already in dword lanes 0 and 2. PMULDQ (SSE4.1, 66 0F 38 28) reads
+// exactly signed dword lanes 0 and 2, sign-extends and multiplies -> two i64
+// products [a_i*b_i, a_{i+1}*b_{i+1}] in one instruction (each element fits i32, so
+// dword-lane sign == cell sign). No repack, no separate widening load.
+//
+// ARITHMETIC >>16 on 64-bit lanes: SSE2/4.1 has no psraq. Emulated per lane as
+// (x >>_logical 16) | (signmask << 48): movdqa copy ; pshufd 0xF5 (broadcast each
+// qword's high dword into both its halves) ; psrad 31 (each 64-bit lane -> all-ones
+// iff negative) ; psrlq 16 on x (logical) ; psllq 48 on the mask (top 16 bits set
+// iff negative) ; por. Verified equal to the signed arithmetic shift for every sign.
+//
+// Slots reuse the S4 Q16 map; ONE new scratch slot below the exit slot:
+//   two = -1048768 (loop stride, i += 2 per SIMD iteration).
+// n=65536 is divisible by 2, so no scalar remainder is needed.
+// NEW export, never reached during self-compile: the integer+float native-ELF
+// oracle stays byte-identical.
+// ============================================================================
+
+// ---- packed-int SSE encoders (all 66/F3-prefix; xmm reg number args) ----------
+
+// movdqu xmm{r}, [rax]  =  F3 0F 6F <(r<<3)|0>   (128-bit unaligned load, reg-indirect).
+pub fn nb_simd_movdqu_ld_rax(code: String, r: i64) -> String {
+    let c1: String = nb_push(code, 243);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, 111);
+    nb_push(c3, r * 8)
+}
+
+// pxor xmm{d}, xmm{s}  =  66 0F EF <0xC0|(d<<3)|s>   (zero an accumulator: pxor r,r).
+pub fn nb_simd_pxor(code: String, d: i64, s: i64) -> String {
+    let c1: String = nb_push(code, 102);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, 239);
+    nb_push(c3, 192 + d * 8 + s)
+}
+
+// movdqa xmm{d}, xmm{s}  =  66 0F 6F <0xC0|(d<<3)|s>   (reg-reg 128-bit copy).
+pub fn nb_simd_movdqa(code: String, d: i64, s: i64) -> String {
+    let c1: String = nb_push(code, 102);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, 111);
+    nb_push(c3, 192 + d * 8 + s)
+}
+
+// pmuldq xmm{d}, xmm{s}  =  66 0F 38 28 <0xC0|(d<<3)|s>   (SSE4.1 3-byte escape:
+// signed 32x32->64 of dword lanes 0 and 2 -> two i64 in lanes 0 and 1).
+pub fn nb_simd_pmuldq(code: String, d: i64, s: i64) -> String {
+    let c1: String = nb_push(code, 102);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, 56);
+    let c4: String = nb_push(c3, 40);
+    nb_push(c4, 192 + d * 8 + s)
+}
+
+// paddq xmm{d}, xmm{s}  =  66 0F D4 <0xC0|(d<<3)|s>   (packed i64 add, per 64-bit lane).
+pub fn nb_simd_paddq(code: String, d: i64, s: i64) -> String {
+    let c1: String = nb_push(code, 102);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, 212);
+    nb_push(c3, 192 + d * 8 + s)
+}
+
+// por xmm{d}, xmm{s}  =  66 0F EB <0xC0|(d<<3)|s>   (bitwise OR, 128-bit).
+pub fn nb_simd_por(code: String, d: i64, s: i64) -> String {
+    let c1: String = nb_push(code, 102);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, 235);
+    nb_push(c3, 192 + d * 8 + s)
+}
+
+// pshufd xmm{d}, xmm{s}, imm8  =  66 0F 70 <0xC0|(d<<3)|s> <imm8>   (dword shuffle).
+pub fn nb_simd_pshufd(code: String, d: i64, s: i64, imm: i64) -> String {
+    let c1: String = nb_push(code, 102);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, 112);
+    let c4: String = nb_push(c3, 192 + d * 8 + s);
+    nb_push(c4, imm)
+}
+
+// psrad xmm{r}, imm8  =  66 0F 72 /4 <0xE0|r> <imm8>   (per-32-bit arithmetic shift right).
+pub fn nb_simd_psrad(code: String, r: i64, imm: i64) -> String {
+    let c1: String = nb_push(code, 102);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, 114);
+    let c4: String = nb_push(c3, 224 + r);
+    nb_push(c4, imm)
+}
+
+// psrlq xmm{r}, imm8  =  66 0F 73 /2 <0xD0|r> <imm8>   (per-64-bit LOGICAL shift right).
+pub fn nb_simd_psrlq(code: String, r: i64, imm: i64) -> String {
+    let c1: String = nb_push(code, 102);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, 115);
+    let c4: String = nb_push(c3, 208 + r);
+    nb_push(c4, imm)
+}
+
+// psllq xmm{r}, imm8  =  66 0F 73 /6 <0xF0|r> <imm8>   (per-64-bit shift left).
+pub fn nb_simd_psllq(code: String, r: i64, imm: i64) -> String {
+    let c1: String = nb_push(code, 102);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, 115);
+    let c4: String = nb_push(c3, 240 + r);
+    nb_push(c4, imm)
+}
+
+// movq rax, xmm{r}  =  66 48 0F 7E <0xC0|(r<<3)>   (lift a 64-bit lane to rax).
+pub fn nb_simd_movq_rax_xmm(code: String, r: i64) -> String {
+    let c1: String = nb_push(code, 102);
+    let c2: String = nb_push(c1, 72);
+    let c3: String = nb_push(c2, 15);
+    let c4: String = nb_push(c3, 126);
+    nb_push(c4, 192 + r * 8)
+}
+
+// Arithmetic >>16 of the two signed i64 lanes in xmm0 (scratch xmm2), result -> xmm0.
+// (x >>_logical 16) | (per-lane-signmask << 48). See section header for the proof.
+pub fn nb_simd_asr16_xmm0(code: String) -> String {
+    let c1: String = nb_simd_movdqa(code, 2, 0);
+    let c2: String = nb_simd_pshufd(c1, 2, 2, 245);
+    let c3: String = nb_simd_psrad(c2, 2, 31);
+    let c4: String = nb_simd_psrlq(c3, 0, 16);
+    let c5: String = nb_simd_psllq(c4, 2, 48);
+    nb_simd_por(c5, 0, 2)
+}
+
+// One packed-SIMD dot iteration over 2 elements (i, i+1) of the S4 stride-8 layout:
+//   aptr = baseA + i*8 -> rax ; va = movdqu[rax]  (2 sign-ext i64 cells)
+//   bptr = baseB + i*8 -> rax ; vb = movdqu[rax]
+//   prod = pmuldq(va, vb)     ([a_i*b_i, a_{i+1}*b_{i+1}] as two i64)
+//   prod = asr16(prod)        (per-product Q16 rescale, arithmetic)
+//   acc(xmm7) += prod (paddq) ; i += 2.
+pub fn nb_simd_q16dot_body(code: String) -> String {
+    let a1: String = nb_load_rax(code, 0 - 1048608);
+    let a2: String = nb_arith_rax_mem(a1, op_mul(), 0 - 1048616);
+    let a3: String = nb_arith_rax_mem(a2, op_add(), 0 - 1048656);
+    let a4: String = nb_simd_movdqu_ld_rax(a3, 0);
+    let b1: String = nb_load_rax(a4, 0 - 1048608);
+    let b2: String = nb_arith_rax_mem(b1, op_mul(), 0 - 1048616);
+    let b3: String = nb_arith_rax_mem(b2, op_add(), 0 - 1048664);
+    let b4: String = nb_simd_movdqu_ld_rax(b3, 1);
+    let p1: String = nb_simd_pmuldq(b4, 0, 1);
+    let p2: String = nb_simd_asr16_xmm0(p1);
+    let p3: String = nb_simd_paddq(p2, 7, 0);
+    let e1: String = nb_load_rax(p3, 0 - 1048608);
+    let e2: String = nb_arith_rax_mem(e1, op_add(), 0 - 1048768);
+    nb_store_rax(e2, 0 - 1048608)
+}
+
+// STEP A (de-risk): emit an ET_EXEC that runs the FULL packed-SIMD arithmetic core
+// on a KNOWN 2-element input (no LCG, no loop): bake a=[100000,-30000], b=[-50000,
+// -7000] as sign-extended 8-byte cells, movdqu-load both, pmuldq -> two i64
+// products, asr16 per lane, paddq into a pxor-zeroed acc, horizontal reduce
+// (pshufd 0x4E + paddq), movq to rax, narrow `as i32` (movsxd), write the 8 LE
+// bytes. Proves movdqu-load, pmuldq, asr16 (movdqa/pshufd/psrad/psrlq/psllq/por),
+// paddq/pxor, the horizontal reduce, and movq extract — everything Step B needs
+// except the generation loop. The Python oracle recomputes ((a0*b0)>>16 +
+// (a1*b1)>>16) as i32 and asserts byte-equality.
+pub fn selftest_native_elf_simd_probe() -> EmitState {
+    let p0: String = nb_fp_prologue_frame(string_new(), 256);
+    // a-cells contiguous at [rbp-32]=a0, [rbp-24]=a1 ; b-cells [rbp-64]=b0, [rbp-56]=b1.
+    let s0: String = nb_intdot_movimm(p0, 100000, 0 - 32);
+    let s1: String = nb_intdot_movimm(s0, 0 - 30000, 0 - 24);
+    let s2: String = nb_intdot_movimm(s1, 0 - 50000, 0 - 64);
+    let s3: String = nb_intdot_movimm(s2, 0 - 7000, 0 - 56);
+    // acc = 0.
+    let z0: String = nb_simd_pxor(s3, 7, 7);
+    // va = movdqu [rbp-32] ; vb = movdqu [rbp-64]  (lea leaves the address in rax).
+    let l1: String = nb_intdot_lea(z0, 0 - 32, 0 - 72);
+    let m1: String = nb_simd_movdqu_ld_rax(l1, 0);
+    let l2: String = nb_intdot_lea(m1, 0 - 64, 0 - 72);
+    let m2: String = nb_simd_movdqu_ld_rax(l2, 1);
+    // prod = asr16(pmuldq(va, vb)) ; acc += prod.
+    let q1: String = nb_simd_pmuldq(m2, 0, 1);
+    let q2: String = nb_simd_asr16_xmm0(q1);
+    let q3: String = nb_simd_paddq(q2, 7, 0);
+    // horizontal reduce lane0+lane1 -> rax ; narrow as i32.
+    let h1: String = nb_simd_pshufd(q3, 2, 7, 78);
+    let h2: String = nb_simd_paddq(h1, 7, 2);
+    let h3: String = nb_simd_movq_rax_xmm(h2, 7);
+    let h4: String = nb_movsxd_rax_eax(h3);
+    let h5: String = nb_store_rax(h4, 0 - 80);
+    // write(1, &result, 8) ; exit(0).
+    let w0: String = nb_intdot_lea(h5, 0 - 80, 0 - 88);
+    let w1: String = nb_intdot_movimm(w0, 1, 0 - 96);
+    let w2: String = nb_intdot_movimm(w1, 8, 0 - 104);
+    let w3: String = nb_emit_write(w2, 0 - 96, 0 - 88, 0 - 104);
+    let e0: String = nb_intdot_movimm(w3, 0, 0 - 112);
+    let e1: String = nb_load_rax(e0, 0 - 112);
+    let code: String = nb_emit_return(e1, 1);
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
+
+// STEP B: emit an ET_EXEC that (1) generates a[0..n] then b[0..n] via the EXACT S4
+// Q16.16 LCG (nb_q16gen_body VERBATIM — identical i32 element streams, stride-8
+// sign-extended cells), (2) computes acc = Sum (sext(a[i]) * sext(b[i])) >> 16 with
+// a PACKED-SIMD 2-wide i64 lane accumulator (movdqu/pmuldq/asr16/paddq), (3)
+// horizontally reduces the 2 lanes, narrows ONCE to i32 (movsxd — the canary's
+// `acc as i32`), (4) writes the 8 LE bytes to stdout. Byte-identical to the MLIR
+// canary dot-l2-q16. n baked at emit time (the canary uses 65536, divisible by 2).
+pub fn selftest_native_elf_simd_dot_q16(n: i64) -> EmitState {
+    let p0: String = nb_fp_prologue_frame(string_new(), 1052672);
+    // Constants (identical to S4).
+    let k1: String = nb_intdot_movimm(p0, 1664525, 0 - 1048592);
+    let k2: String = nb_intdot_movimm(k1, 1013904223, 0 - 1048600);
+    let k3: String = nb_intdot_movimm(k2, 8, 0 - 1048616);
+    let k4: String = nb_intdot_movimm(k3, 1, 0 - 1048648);
+    let k5: String = nb_intdot_movimm(k4, 16, 0 - 1048704);
+    let k5b: String = nb_intdot_movimm(k5, 44, 0 - 1048712);
+    let k6: String = nb_intdot_movimm(k5b, 3735928559, 0 - 1048584);
+    let k7: String = nb_intdot_movimm(k6, 0, 0 - 1048632);
+    let k8: String = nb_intdot_movimm(k7, n, 0 - 1048624);
+    // SIMD loop stride (i += 2 per packed iteration).
+    let k9: String = nb_intdot_movimm(k8, 2, 0 - 1048768);
+    // Runtime base addresses of the two in-frame arrays.
+    let ba: String = nb_intdot_lea(k9, 0 - 1048576, 0 - 1048656);
+    let bb: String = nb_intdot_lea(ba, 0 - 524288, 0 - 1048664);
+    // Jump scaffold buffer shared by all three loops.
+    let jmps: i64 = __mind_alloc(64 * 2 * 8);
+    let jcell: i64 = __mind_alloc(8);
+    __mind_store_i64(jcell, 0);
+    // --- generate A[0..n] (base slot -1048656) ---
+    let ga0: String = nb_intdot_movimm(bb, 0, 0 - 1048608);
+    let ga_hdr: i64 = string_len(ga0);
+    let gac1: String = nb_load_rax(ga0, 0 - 1048608);
+    let gac2: String = nb_cmp_rax_mem(gac1, nb_setcc_opcode(op_lt()), 0 - 1048624);
+    let gac3: String = nb_store_rax(gac2, 0 - 1048640);
+    let gacj: String = nb_emit_cmp_je_zero(gac3, 0 - 1048640, jmps, jcell);
+    let ga_je: i64 = __mind_load_i64(jcell) - 1;
+    let gab: String = nb_q16gen_body(gacj, 0 - 1048656);
+    let gajb: String = nb_emit_jmp(gab, jmps, jcell);
+    let ga_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _gp1: i64 = nb_jmp_set_target(jmps, jcell, ga_bk, ga_hdr);
+    let ga_end: i64 = string_len(gajb);
+    let _gp2: i64 = nb_jmp_set_target(jmps, jcell, ga_je, ga_end);
+    // --- generate B[0..n] (base slot -1048664), LCG state continues ---
+    let gb0: String = nb_intdot_movimm(gajb, 0, 0 - 1048608);
+    let gb_hdr: i64 = string_len(gb0);
+    let gbc1: String = nb_load_rax(gb0, 0 - 1048608);
+    let gbc2: String = nb_cmp_rax_mem(gbc1, nb_setcc_opcode(op_lt()), 0 - 1048624);
+    let gbc3: String = nb_store_rax(gbc2, 0 - 1048640);
+    let gbcj: String = nb_emit_cmp_je_zero(gbc3, 0 - 1048640, jmps, jcell);
+    let gb_je: i64 = __mind_load_i64(jcell) - 1;
+    let gbb: String = nb_q16gen_body(gbcj, 0 - 1048664);
+    let gbjb: String = nb_emit_jmp(gbb, jmps, jcell);
+    let gb_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _hp1: i64 = nb_jmp_set_target(jmps, jcell, gb_bk, gb_hdr);
+    let gb_end: i64 = string_len(gbjb);
+    let _hp2: i64 = nb_jmp_set_target(jmps, jcell, gb_je, gb_end);
+    // Zero the packed i64 accumulator (xmm7) before the dot loop.
+    let pz: String = nb_simd_pxor(gbjb, 7, 7);
+    // --- packed-SIMD dot loop: acc(xmm7) += [asr16(a_i*b_i), asr16(a_{i+1}*b_{i+1})] ---
+    let d0: String = nb_intdot_movimm(pz, 0, 0 - 1048608);
+    let d_hdr: i64 = string_len(d0);
+    let dc1: String = nb_load_rax(d0, 0 - 1048608);
+    let dc2: String = nb_cmp_rax_mem(dc1, nb_setcc_opcode(op_lt()), 0 - 1048624);
+    let dc3: String = nb_store_rax(dc2, 0 - 1048640);
+    let dcj: String = nb_emit_cmp_je_zero(dc3, 0 - 1048640, jmps, jcell);
+    let d_je: i64 = __mind_load_i64(jcell) - 1;
+    let db: String = nb_simd_q16dot_body(dcj);
+    let djb: String = nb_emit_jmp(db, jmps, jcell);
+    let d_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _dp1: i64 = nb_jmp_set_target(jmps, jcell, d_bk, d_hdr);
+    let d_end: i64 = string_len(djb);
+    let _dp2: i64 = nb_jmp_set_target(jmps, jcell, d_je, d_end);
+    // Horizontal reduce the 2 i64 lanes -> rax, then narrow ONCE to i32.
+    let r1: String = nb_simd_pshufd(djb, 2, 7, 78);
+    let r2: String = nb_simd_paddq(r1, 7, 2);
+    let r3: String = nb_simd_movq_rax_xmm(r2, 7);
+    let t2: String = nb_movsxd_rax_eax(r3);
+    let t3: String = nb_store_rax(t2, 0 - 1048720);
+    // write(1, &result, 8).
+    let t4: String = nb_intdot_lea(t3, 0 - 1048720, 0 - 1048736);
+    let t5: String = nb_intdot_movimm(t4, 1, 0 - 1048728);
+    let t6: String = nb_intdot_movimm(t5, 8, 0 - 1048744);
+    let t7: String = nb_emit_write(t6, 0 - 1048728, 0 - 1048736, 0 - 1048744);
+    // exit(0).
+    let t8: String = nb_intdot_movimm(t7, 0, 0 - 1048752);
+    let t9: String = nb_load_rax(t8, 0 - 1048752);
+    let code: String = nb_emit_return(t9, 1);
+    // Patch every recorded intra-fn jump (entry_off = 0).
+    let njmps: i64 = __mind_load_i64(jcell);
+    let _px: i64 = nb_patch_jmps(string_addr(code), jmps, njmps, 0);
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
