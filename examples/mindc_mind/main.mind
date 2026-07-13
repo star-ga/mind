@@ -20804,6 +20804,28 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
     let rhs_id: i64 = s2.last_id;
     let id: i64 = s2.next_id;
     let op: i64 = ast_aux(node);
+    // RI-B1 FLOAT-op-FLOAT arm: when BOTH operands classify FLOAT (nb_node_dtype,
+    // which propagates float through paren + scalar-arith binops) and the operator
+    // is scalar arithmetic (+ - * /, nb_fp_opsel >= 0), route through the SSE2 f64
+    // encoders instead of the GP-integer path: load lhs slot -> xmm0 (movsd), apply
+    // <op>sd xmm0,[rhs slot] (memory-operand binop), spill xmm0 -> dst slot (movsd).
+    // The dst is thereby FLOAT-typed (nb_node_dtype classifies this node FLOAT), so a
+    // parent binop consuming it routes float too. main.mind's OWN source contains no
+    // float literals, so every operand here classifies INT during self-compile, this
+    // branch is never taken, and the integer native-ELF emission stays byte-identical.
+    let lhs_dt: i64 = nb_node_dtype(ast_child0(node));
+    let rhs_dt: i64 = nb_node_dtype(ast_child1(node));
+    let fsel: i64 = nb_fp_opsel(op);
+    if lhs_dt == nb_dtype_float() {
+        if rhs_dt == nb_dtype_float() {
+            if fsel >= 0 {
+                let f1: String = nb_fp_movsd_load_xmm0(s2.code, nb_slot_disp(lhs_id));
+                let f2: String = nb_fp_binop_xmm0_mem(f1, fsel, nb_slot_disp(rhs_id));
+                let f3: String = nb_fp_movsd_store_xmm0(f2, nb_slot_disp(id));
+                return NbState { code: f3, next_id: id + 1, last_id: id, ncalls: s2.ncalls };
+            }
+        }
+    }
     // mov rax,[lhs] ; OP rax,[rhs] ; mov [dst],rax. A comparison op routes through
     // cmp+setcc+movzx (-> 0/1); Add/Sub/Mul through the in-place arith form.
     let c1: String = nb_load_rax(s2.code, nb_slot_disp(lhs_id));
@@ -25192,10 +25214,54 @@ pub fn nb_dtype_float() -> i64 {
 // (a float op over float operands stays float) lands with the nb_expr SSE arm.
 // Every other node -> INT, so the integer path is entirely unperturbed.
 pub fn nb_node_dtype(node: i64) -> i64 {
-    if ast_kind(node) == ast_float_lit() {
+    let k: i64 = ast_kind(node);
+    if k == ast_float_lit() {
         return nb_dtype_float();
     }
+    // A parenthesised expr has the dtype of its inner expr (nb_expr passes paren
+    // straight through to child0, so the dtype must too).
+    if k == ast_paren() {
+        return nb_node_dtype(ast_child0(node));
+    }
+    // FLOAT-op-FLOAT propagation (the minimal rule): a scalar-arithmetic binop
+    // (+ - * /) over two FLOAT operands is itself FLOAT, so a nested float
+    // expression stays float-typed through its consumers. A comparison op
+    // (nb_fp_opsel < 0) produces an i64 bool -> INT even over float operands, and
+    // any operand that is not float bottoms the result out to INT. main.mind's own
+    // source contains no float literals, so every binop here recurses to INT and
+    // this branch never fires during self-compile.
+    if k == ast_binop() {
+        if nb_fp_opsel(ast_aux(node)) >= 0 {
+            if nb_node_dtype(ast_child0(node)) == nb_dtype_float() {
+                if nb_node_dtype(ast_child1(node)) == nb_dtype_float() {
+                    return nb_dtype_float();
+                }
+            }
+        }
+        return nb_dtype_int();
+    }
     nb_dtype_int()
+}
+
+// Map a binop operator tag to the SSE2 scalar-double op_sel used by
+// nb_fp_binop_xmm0_mem: + -> addsd(0), - -> subsd(1), * -> mulsd(2), / -> divsd(3).
+// Returns -1 for any non-arithmetic operator (comparisons, bitwise, shifts) — those
+// have no scalar-double form, so a FLOAT-op-FLOAT node with such an operator stays
+// INT and routes the GP-integer path.
+pub fn nb_fp_opsel(op: i64) -> i64 {
+    if op == op_add() {
+        return 0;
+    }
+    if op == op_sub() {
+        return 1;
+    }
+    if op == op_mul() {
+        return 2;
+    }
+    if op == op_div() {
+        return 3;
+    }
+    0 - 1
 }
 
 // A per-SSA dtype table: `n` i64 slots indexed by SSA id, all initialised to INT
@@ -25350,6 +25416,40 @@ pub fn selftest_native_elf_fp_expr(src_addr: i64, src_len: i64) -> EmitState {
     let st0: NbState = NbState { code: p, next_id: 0, last_id: 0 - 1, ncalls: 0 };
     let s1: NbState = nb_expr(st0, src_addr, node, params, 0, calls, lets, lcell);
     // Read the float back out of its slot and truncate to i64 for exit(rax).
+    let c1: String = nb_fp_movsd_load_xmm0(s1.code, nb_slot_disp(s1.last_id));
+    let c2: String = nb_fp_trunc_rax_xmm0(c1);
+    let code: String = nb_emit_return(c2, 1);
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
+
+// End-to-end proof of the nb_expr FLOAT-op-FLOAT arm: lex + parse a REAL float
+// ARITHMETIC source (`1.5 + 2.5`) with parse_expr (pratt), then lower the WHOLE
+// binop AST through nb_expr. Each float-literal operand routes the SSE2 const path
+// into its own stack slot; the binop arm then loads lhs -> xmm0 (movsd), applies
+// <op>sd xmm0,[rhs slot] (memory-operand binop, op selected by the arith operator),
+// and spills the result -> the dst slot (movsd). The harness reads the dst slot back
+// to xmm0 and cvttsd2si -> exit(trunc(a OP b)). Driven through the REAL nb_expr binop
+// path, not the fp encoders directly. Emits ZERO MLIR/LLVM; the CPU exit code is the
+// oracle (no frozen float oracle can exist — the deleted Rust native rejected
+// ConstF64). A bare float arith expr touches none of nb_expr's calls/lets/param
+// scratch, so minimal empty allocations suffice.
+pub fn selftest_native_elf_fp_binop(src_addr: i64, src_len: i64) -> EmitState {
+    let toks: Vec = lex(src_addr, src_len);
+    let pr: ParseResult = parse_expr(toks, 0, src_addr);
+    let node: i64 = pr_node(pr);
+    // rbp frame so [rbp+disp32] slots are addressable (the movsd store/load target).
+    let p: String = nb_fp_prologue_frame(string_new(), 64);
+    let params: i64 = __mind_alloc(8);
+    let calls: i64 = __mind_alloc(8);
+    let lets: i64 = __mind_alloc(512 * 4 * 8);
+    let lcell: i64 = __mind_alloc(8);
+    __mind_store_i64(lcell, 0);
+    let st0: NbState = NbState { code: p, next_id: 0, last_id: 0 - 1, ncalls: 0 };
+    let s1: NbState = nb_expr(st0, src_addr, node, params, 0, calls, lets, lcell);
+    // Read the float result back out of its slot and truncate to i64 for exit(rax).
     let c1: String = nb_fp_movsd_load_xmm0(s1.code, nb_slot_disp(s1.last_id));
     let c2: String = nb_fp_trunc_rax_xmm0(c1);
     let code: String = nb_emit_return(c2, 1);
