@@ -26638,3 +26638,418 @@ pub fn selftest_native_elf_gemm_i8(m: i64, n: i64, k: i64) -> EmitState {
     let elf: String = nb_write_elf(code, 0, note);
     EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
 }
+
+// ============================================================================
+// RI-B2-S8 (#108) — native-ELF scalar STRICT-FP f32 DOT-PRODUCT, byte-identical
+// to the MLIR canary dot-f32-v (len 4093, seed 0xDEADBEEF). The FLOAT tier
+// opener. Because f32 add is NOT associative, byte-identity rests on an
+// EXACTLY-pinned fold order + exact f32 rounding. The reference fold
+// (tests/cross_substrate_identity.rs::ref_dot_f32_strict) is an 8-LANE
+// accumulator, NOT a plain sequential sum:
+//   ve = (n/8)*8 ; acc[0..8] = 0.0f
+//   for i in (0,8,..,ve-8): for lane 0..8: acc[lane] += a[i+lane]*b[i+lane]
+//   hs = acc[0]; hs += acc[1] .. += acc[7]   (fixed left-to-right fold)
+//   s = hs; for j in ve..n: s += a[j]*b[j]    (scalar tail)
+// mulss THEN addss, UNFUSED (no FMA), each lane strictly k=0,1,.. in order.
+// IEEE add is commutative so `acc + prod` == `prod + acc` bitwise (we keep the
+// running acc as the addss memory operand). f32 elements are stored one per
+// 8-byte slot (movss touches the low 4); n baked at emit time.
+// NEW exports, never reached during self-compile -> the integer + f64 native-ELF
+// oracle stays byte-identical (additivity). The F3-prefix scalar-single family
+// mirrors the RI-B1 f64 F2 encoders (nb_fp_movsd_* / nb_fp_binop_xmm0_mem).
+// ============================================================================
+
+// movss xmm0, [rbp+disp32]  =  F3 0F 10 85 <disp32>   (load slot low-4 -> xmm0)
+pub fn nb_fp_movss_load_xmm0(code: String, disp: i64) -> String {
+    let c1: String = nb_push(code, 243);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, 16);
+    let c4: String = nb_push(c3, 133);
+    nb_i32le_signed(c4, disp)
+}
+
+// movss [rbp+disp32], xmm0  =  F3 0F 11 85 <disp32>   (store xmm0 -> slot low-4)
+pub fn nb_fp_movss_store_xmm0(code: String, disp: i64) -> String {
+    let c1: String = nb_push(code, 243);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, 17);
+    let c4: String = nb_push(c3, 133);
+    nb_i32le_signed(c4, disp)
+}
+
+// <op>ss xmm0, [rbp+disp32]  =  F3 0F <opc> 85 <disp32>   (xmm0 = xmm0 OP slot).
+//   op_sel 0->addss(0x58) 1->subss(0x5C) 2->mulss(0x59) 3->divss(0x5E).
+pub fn nb_fp_ss_binop_mem(code: String, op_sel: i64, disp: i64) -> String {
+    let opc: i64 = if op_sel == 0 {
+        88
+    } else {
+        if op_sel == 1 {
+            92
+        } else {
+            if op_sel == 2 {
+                89
+            } else {
+                94
+            }
+        }
+    };
+    let c1: String = nb_push(code, 243);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, opc);
+    let c4: String = nb_push(c3, 133);
+    nb_i32le_signed(c4, disp)
+}
+
+// cvtsi2ss xmm0, qword [rbp+disp32] = F3 48 0F 2A 85 <disp32> (signed i64 -> f32;
+// the u32 sample is masked to [0,2^32) so signed == unsigned conversion).
+pub fn nb_fp_cvtsi2ss_mem(code: String, disp: i64) -> String {
+    let c1: String = nb_push(code, 243);
+    let c2: String = nb_push(c1, 72);
+    let c3: String = nb_push(c2, 15);
+    let c4: String = nb_push(c3, 42);
+    let c5: String = nb_push(c4, 133);
+    nb_i32le_signed(c5, disp)
+}
+
+// movd eax, xmm0 = 66 0F 7E C0 (f32 bits -> eax; writing eax zeroes rax[63:32],
+// so the subsequent 8-LE-byte store == `to_bits() as i64` zero-extension).
+pub fn nb_fp_movd_eax_xmm0(code: String) -> String {
+    let c1: String = nb_push(code, 102);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, 126);
+    nb_push(c3, 192)
+}
+
+// movss xmm0, [rax]  via a pointer slot:  mov rax,[rbp+ptr] ; F3 0F 10 00.
+pub fn nb_fp_movss_load_ind(code: String, ptr_disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 139);
+    let c3: String = nb_push(c2, 133);
+    let c4: String = nb_i32le_signed(c3, ptr_disp);
+    let c5: String = nb_push(c4, 243);
+    let c6: String = nb_push(c5, 15);
+    let c7: String = nb_push(c6, 16);
+    nb_push(c7, 0)
+}
+
+// mulss xmm0, [rax]  via a pointer slot:  mov rax,[rbp+ptr] ; F3 0F 59 00.
+pub fn nb_fp_mulss_ind(code: String, ptr_disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 139);
+    let c3: String = nb_push(c2, 133);
+    let c4: String = nb_i32le_signed(c3, ptr_disp);
+    let c5: String = nb_push(c4, 243);
+    let c6: String = nb_push(c5, 15);
+    let c7: String = nb_push(c6, 89);
+    nb_push(c7, 0)
+}
+
+// movss [rax], xmm0  via a pointer slot:  mov rax,[rbp+ptr] ; F3 0F 11 00.
+pub fn nb_fp_movss_store_ind(code: String, ptr_disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 139);
+    let c3: String = nb_push(c2, 133);
+    let c4: String = nb_i32le_signed(c3, ptr_disp);
+    let c5: String = nb_push(c4, 243);
+    let c6: String = nb_push(c5, 15);
+    let c7: String = nb_push(c6, 17);
+    nb_push(c7, 0)
+}
+
+// add rax, imm32  =  48 05 <imm32>  (fold a compile-time lane byte-offset into an
+// address; imm is a small non-negative multiple of 8).
+pub fn nb_fp_add_rax_imm(code: String, imm: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 5);
+    nb_u32(c2, imm)
+}
+
+// STEP A: emit an ET_EXEC that routes a KNOWN f32 (its IEEE bits) through xmm via
+// movss-load + movd, then writes its 8 LE bit-bytes to stdout and exit(0). Proves
+// movss-load + movd(eax<-xmm0) + the f32->bits->stdout path the dot gate relies
+// on. Slots: bits=-16 result=-24 bufaddr=-32 fd=-40 count=-48 exit=-56.
+pub fn selftest_native_elf_write_f32(bits: i64) -> EmitState {
+    let p0: String = nb_fp_prologue_frame(string_new(), 256);
+    let k1: String = nb_intdot_movimm(p0, bits, 0 - 16);
+    let m1: String = nb_fp_movss_load_xmm0(k1, 0 - 16);
+    let m2: String = nb_fp_movd_eax_xmm0(m1);
+    let m3: String = nb_store_rax(m2, 0 - 24);
+    let w0: String = nb_intdot_lea(m3, 0 - 24, 0 - 32);
+    let w1: String = nb_intdot_movimm(w0, 1, 0 - 40);
+    let w2: String = nb_intdot_movimm(w1, 8, 0 - 48);
+    let w3: String = nb_emit_write(w2, 0 - 40, 0 - 32, 0 - 48);
+    let z1: String = nb_intdot_movimm(w3, 0, 0 - 56);
+    let r1: String = nb_load_rax(z1, 0 - 56);
+    let code: String = nb_emit_return(r1, 1);
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
+
+// One LCG f32 draw, leaving the sample in xmm0 (does NOT store to an array):
+//   state = state*1664525 + 1013904223 ; u32 = (state>>16) & 0xFFFFFFFF ;
+//   xmm0 = ((f32)u32 / 4294967296.0f) * 2.0f - 1.0f.
+// Shared scratch slots: state=-8 mul=-16 addc=-24 sh16=-56 mask32=-64 u32s=-72
+//   divisor=-128 twof=-136 onef=-144.
+pub fn nb_f32_draw_xmm0(code: String) -> String {
+    let a1: String = nb_load_rax(code, 0 - 8);
+    let a2: String = nb_arith_rax_mem(a1, op_mul(), 0 - 16);
+    let a3: String = nb_arith_rax_mem(a2, op_add(), 0 - 24);
+    let a4: String = nb_store_rax(a3, 0 - 8);
+    let b1: String = nb_load_rax(a4, 0 - 8);
+    let b2: String = nb_arith_rax_mem(b1, op_shr(), 0 - 56);
+    let b3: String = nb_arith_rax_mem(b2, op_bitand(), 0 - 64);
+    let b4: String = nb_store_rax(b3, 0 - 72);
+    let c1: String = nb_fp_cvtsi2ss_mem(b4, 0 - 72);
+    let c2: String = nb_fp_ss_binop_mem(c1, 3, 0 - 128);
+    let c3: String = nb_fp_ss_binop_mem(c2, 2, 0 - 136);
+    nb_fp_ss_binop_mem(c3, 1, 0 - 144)
+}
+
+// STEP B: emit an ET_EXEC that draws the first `n` LCG f32 samples (fresh seed
+// 0xDEADBEEF, the `a`-vector prefix) and writes each sample's 8 LE bit-bytes to
+// stdout, isolating the u32->f32 / div / mul / sub rounding BEFORE the dot. The
+// Python oracle recomputes next_f32_unit for the same n draws and compares
+// sha256(stdout). Slots add: i=-32 n=-48 one_i=-88 result=-224 fd=-232
+// bufaddr=-240 count=-248.
+pub fn selftest_native_elf_genf32(n: i64) -> EmitState {
+    let p0: String = nb_fp_prologue_frame(string_new(), 65536);
+    let k1: String = nb_intdot_movimm(p0, 1664525, 0 - 16);
+    let k2: String = nb_intdot_movimm(k1, 1013904223, 0 - 24);
+    let k3: String = nb_intdot_movimm(k2, 16, 0 - 56);
+    let k4: String = nb_intdot_movimm(k3, 4294967295, 0 - 64);
+    let k5: String = nb_intdot_movimm(k4, 1333788672, 0 - 128);
+    let k6: String = nb_intdot_movimm(k5, 1073741824, 0 - 136);
+    let k7: String = nb_intdot_movimm(k6, 1065353216, 0 - 144);
+    let k8: String = nb_intdot_movimm(k7, 3735928559, 0 - 8);
+    let k9: String = nb_intdot_movimm(k8, n, 0 - 48);
+    let k10: String = nb_intdot_movimm(k9, 1, 0 - 88);
+    let k11: String = nb_intdot_movimm(k10, 1, 0 - 232);
+    let k12: String = nb_intdot_movimm(k11, 8, 0 - 248);
+    let la: String = nb_intdot_lea(k12, 0 - 224, 0 - 240);
+    let jmps: i64 = __mind_alloc(64 * 2 * 8);
+    let jcell: i64 = __mind_alloc(8);
+    __mind_store_i64(jcell, 0);
+    let g0: String = nb_intdot_movimm(la, 0, 0 - 32);
+    let g_hdr: i64 = string_len(g0);
+    let gc1: String = nb_load_rax(g0, 0 - 32);
+    let gc2: String = nb_cmp_rax_mem(gc1, nb_setcc_opcode(op_lt()), 0 - 48);
+    let gc3: String = nb_store_rax(gc2, 0 - 80);
+    let gcj: String = nb_emit_cmp_je_zero(gc3, 0 - 80, jmps, jcell);
+    let g_je: i64 = __mind_load_i64(jcell) - 1;
+    // body: draw -> xmm0 ; movd eax ; store result ; write(1,&result,8) ; i += 1.
+    let d1: String = nb_f32_draw_xmm0(gcj);
+    let d2: String = nb_fp_movd_eax_xmm0(d1);
+    let d3: String = nb_store_rax(d2, 0 - 224);
+    let d4: String = nb_emit_write(d3, 0 - 232, 0 - 240, 0 - 248);
+    let d5: String = nb_load_rax(d4, 0 - 32);
+    let d6: String = nb_arith_rax_mem(d5, op_add(), 0 - 88);
+    let d7: String = nb_store_rax(d6, 0 - 32);
+    let gjb: String = nb_emit_jmp(d7, jmps, jcell);
+    let g_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _gp1: i64 = nb_jmp_set_target(jmps, jcell, g_bk, g_hdr);
+    let g_end: i64 = string_len(gjb);
+    let _gp2: i64 = nb_jmp_set_target(jmps, jcell, g_je, g_end);
+    let z1: String = nb_intdot_movimm(gjb, 0, 0 - 256);
+    let r1: String = nb_load_rax(z1, 0 - 256);
+    let code: String = nb_emit_return(r1, 1);
+    let njmps: i64 = __mind_load_i64(jcell);
+    let _px: i64 = nb_patch_jmps(string_addr(code), jmps, njmps, 0);
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
+
+// One generation-loop body: draw one LCG f32 into xmm0 and movss-store it to
+// memory[base + i*8], then i += 1. base_d is a slot holding the array runtime base.
+pub fn nb_f32gen_body(code: String, base_d: i64) -> String {
+    let s1: String = nb_f32_draw_xmm0(code);
+    let p1: String = nb_load_rax(s1, 0 - 32);
+    let p2: String = nb_arith_rax_mem(p1, op_mul(), 0 - 40);
+    let p3: String = nb_arith_rax_mem(p2, op_add(), base_d);
+    let p4: String = nb_store_rax(p3, 0 - 112);
+    let p5: String = nb_fp_movss_store_ind(p4, 0 - 112);
+    let e1: String = nb_load_rax(p5, 0 - 32);
+    let e2: String = nb_arith_rax_mem(e1, op_add(), 0 - 88);
+    nb_store_rax(e2, 0 - 32)
+}
+
+// One dot-loop LANE (compile-time unrolled j in 0..8): acc[j] += a[i+j]*b[i+j].
+//   a addr = baseA + i*8 + j*8 -> ptr_a ; b addr = baseB + i*8 + j*8 -> ptr_b ;
+//   xmm0 = a ; xmm0 = mulss xmm0,b ; xmm0 = addss xmm0,acc[j] ; acc[j] = xmm0.
+// acc0=-152 acc1=-160 .. acc7=-208 ; ptr_a=-112 ptr_b=-120 baseA=-96 baseB=-104.
+pub fn nb_f32dot_lane(code: String, lane: i64) -> String {
+    let off: i64 = lane * 8;
+    let accd: i64 = 0 - 152 - lane * 8;
+    let a1: String = nb_load_rax(code, 0 - 32);
+    let a2: String = nb_arith_rax_mem(a1, op_mul(), 0 - 40);
+    let a3: String = nb_arith_rax_mem(a2, op_add(), 0 - 96);
+    let a4: String = nb_fp_add_rax_imm(a3, off);
+    let a5: String = nb_store_rax(a4, 0 - 112);
+    let b1: String = nb_load_rax(a5, 0 - 32);
+    let b2: String = nb_arith_rax_mem(b1, op_mul(), 0 - 40);
+    let b3: String = nb_arith_rax_mem(b2, op_add(), 0 - 104);
+    let b4: String = nb_fp_add_rax_imm(b3, off);
+    let b5: String = nb_store_rax(b4, 0 - 120);
+    let c1: String = nb_fp_movss_load_ind(b5, 0 - 112);
+    let c2: String = nb_fp_mulss_ind(c1, 0 - 120);
+    let c3: String = nb_fp_ss_binop_mem(c2, 0, accd);
+    nb_fp_movss_store_xmm0(c3, accd)
+}
+
+// One main-loop iteration: 8 unrolled lanes then i += 8.
+pub fn nb_f32dot_main_body(code: String) -> String {
+    let l0: String = nb_f32dot_lane(code, 0);
+    let l1: String = nb_f32dot_lane(l0, 1);
+    let l2: String = nb_f32dot_lane(l1, 2);
+    let l3: String = nb_f32dot_lane(l2, 3);
+    let l4: String = nb_f32dot_lane(l3, 4);
+    let l5: String = nb_f32dot_lane(l4, 5);
+    let l6: String = nb_f32dot_lane(l5, 6);
+    let l7: String = nb_f32dot_lane(l6, 7);
+    let e1: String = nb_load_rax(l7, 0 - 32);
+    let e2: String = nb_arith_rax_mem(e1, op_add(), 0 - 40);
+    nb_store_rax(e2, 0 - 32)
+}
+
+// One scalar-tail iteration: s += a[i]*b[i] ; i += 1.  s lives in sslot=-216.
+pub fn nb_f32dot_tail_body(code: String) -> String {
+    let a1: String = nb_load_rax(code, 0 - 32);
+    let a2: String = nb_arith_rax_mem(a1, op_mul(), 0 - 40);
+    let a3: String = nb_arith_rax_mem(a2, op_add(), 0 - 96);
+    let a4: String = nb_store_rax(a3, 0 - 112);
+    let b1: String = nb_load_rax(a4, 0 - 32);
+    let b2: String = nb_arith_rax_mem(b1, op_mul(), 0 - 40);
+    let b3: String = nb_arith_rax_mem(b2, op_add(), 0 - 104);
+    let b4: String = nb_store_rax(b3, 0 - 120);
+    let c1: String = nb_fp_movss_load_ind(b4, 0 - 112);
+    let c2: String = nb_fp_mulss_ind(c1, 0 - 120);
+    let c3: String = nb_fp_ss_binop_mem(c2, 0, 0 - 216);
+    let c4: String = nb_fp_movss_store_xmm0(c3, 0 - 216);
+    let e1: String = nb_load_rax(c4, 0 - 32);
+    let e2: String = nb_arith_rax_mem(e1, op_add(), 0 - 88);
+    nb_store_rax(e2, 0 - 32)
+}
+
+// The 8-lane horizontal fold: hs = acc0 ; hs += acc1 .. += acc7 ; store hs -> sslot.
+pub fn nb_f32dot_fold(code: String) -> String {
+    let h0: String = nb_fp_movss_load_xmm0(code, 0 - 152);
+    let h1: String = nb_fp_ss_binop_mem(h0, 0, 0 - 160);
+    let h2: String = nb_fp_ss_binop_mem(h1, 0, 0 - 168);
+    let h3: String = nb_fp_ss_binop_mem(h2, 0, 0 - 176);
+    let h4: String = nb_fp_ss_binop_mem(h3, 0, 0 - 184);
+    let h5: String = nb_fp_ss_binop_mem(h4, 0, 0 - 192);
+    let h6: String = nb_fp_ss_binop_mem(h5, 0, 0 - 200);
+    let h7: String = nb_fp_ss_binop_mem(h6, 0, 0 - 208);
+    nb_fp_movss_store_xmm0(h7, 0 - 216)
+}
+
+// Emit one LCG-gen loop over i in 0..n with `body(code, base_d)`, returning the
+// grown code. Mirrors the i16/q16 loop scaffold (header/cond/je/body/jmp/patch).
+pub fn nb_f32_gen_loop(code: String, base_d: i64, jmps: i64, jcell: i64) -> String {
+    let g0: String = nb_intdot_movimm(code, 0, 0 - 32);
+    let g_hdr: i64 = string_len(g0);
+    let gc1: String = nb_load_rax(g0, 0 - 32);
+    let gc2: String = nb_cmp_rax_mem(gc1, nb_setcc_opcode(op_lt()), 0 - 48);
+    let gc3: String = nb_store_rax(gc2, 0 - 80);
+    let gcj: String = nb_emit_cmp_je_zero(gc3, 0 - 80, jmps, jcell);
+    let g_je: i64 = __mind_load_i64(jcell) - 1;
+    let gb: String = nb_f32gen_body(gcj, base_d);
+    let gjb: String = nb_emit_jmp(gb, jmps, jcell);
+    let g_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _gp1: i64 = nb_jmp_set_target(jmps, jcell, g_bk, g_hdr);
+    let g_end: i64 = string_len(gjb);
+    let _gp2: i64 = nb_jmp_set_target(jmps, jcell, g_je, g_end);
+    gjb
+}
+
+// STEP C: emit an ET_EXEC that (1) LCG-generates a[0..n] then b[0..n] as f32 into
+// two in-frame arrays, (2) computes the strict-FP 8-lane dot with the pinned
+// left-to-right horizontal fold + scalar tail, (3) writes the result's 8 LE
+// bit-bytes to stdout. Byte-identical to the MLIR canary dot-f32-v (n=4093, seed
+// 0xDEADBEEF). Frame 131072: A base -131072, B base -98304, scratch shallow.
+pub fn selftest_native_elf_dot_f32(n: i64) -> EmitState {
+    let ve: i64 = (n / 8) * 8;
+    let p0: String = nb_fp_prologue_frame(string_new(), 131072);
+    // Integer + f32-bit constants.
+    let k1: String = nb_intdot_movimm(p0, 1664525, 0 - 16);
+    let k2: String = nb_intdot_movimm(k1, 1013904223, 0 - 24);
+    let k3: String = nb_intdot_movimm(k2, 8, 0 - 40);
+    let k4: String = nb_intdot_movimm(k3, n, 0 - 48);
+    let k5: String = nb_intdot_movimm(k4, 16, 0 - 56);
+    let k6: String = nb_intdot_movimm(k5, 4294967295, 0 - 64);
+    let k7: String = nb_intdot_movimm(k6, 1, 0 - 88);
+    let k8: String = nb_intdot_movimm(k7, 1333788672, 0 - 128);
+    let k9: String = nb_intdot_movimm(k8, 1073741824, 0 - 136);
+    let k10: String = nb_intdot_movimm(k9, 1065353216, 0 - 144);
+    let k11: String = nb_intdot_movimm(k10, 3735928559, 0 - 8);
+    let k12: String = nb_intdot_movimm(k11, ve, 0 - 264);
+    // acc[0..8] = 0.0f (bit pattern 0).
+    let z0: String = nb_intdot_movimm(k12, 0, 0 - 152);
+    let z1: String = nb_intdot_movimm(z0, 0, 0 - 160);
+    let z2: String = nb_intdot_movimm(z1, 0, 0 - 168);
+    let z3: String = nb_intdot_movimm(z2, 0, 0 - 176);
+    let z4: String = nb_intdot_movimm(z3, 0, 0 - 184);
+    let z5: String = nb_intdot_movimm(z4, 0, 0 - 192);
+    let z6: String = nb_intdot_movimm(z5, 0, 0 - 200);
+    let z7: String = nb_intdot_movimm(z6, 0, 0 - 208);
+    // Runtime base addresses of the two in-frame f32 arrays.
+    let ba: String = nb_intdot_lea(z7, 0 - 131072, 0 - 96);
+    let bb: String = nb_intdot_lea(ba, 0 - 98304, 0 - 104);
+    let jmps: i64 = __mind_alloc(64 * 4 * 8);
+    let jcell: i64 = __mind_alloc(8);
+    __mind_store_i64(jcell, 0);
+    // Generate a (base slot -96) then b (base slot -104); LCG state continues.
+    let ga: String = nb_f32_gen_loop(bb, 0 - 96, jmps, jcell);
+    let gb: String = nb_f32_gen_loop(ga, 0 - 104, jmps, jcell);
+    // Main dot loop: i in 0..ve step 8, 8-lane accumulate.
+    let m0: String = nb_intdot_movimm(gb, 0, 0 - 32);
+    let m_hdr: i64 = string_len(m0);
+    let mc1: String = nb_load_rax(m0, 0 - 32);
+    let mc2: String = nb_cmp_rax_mem(mc1, nb_setcc_opcode(op_lt()), 0 - 264);
+    let mc3: String = nb_store_rax(mc2, 0 - 80);
+    let mcj: String = nb_emit_cmp_je_zero(mc3, 0 - 80, jmps, jcell);
+    let m_je: i64 = __mind_load_i64(jcell) - 1;
+    let mb: String = nb_f32dot_main_body(mcj);
+    let mjb: String = nb_emit_jmp(mb, jmps, jcell);
+    let m_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _mp1: i64 = nb_jmp_set_target(jmps, jcell, m_bk, m_hdr);
+    let m_end: i64 = string_len(mjb);
+    let _mp2: i64 = nb_jmp_set_target(jmps, jcell, m_je, m_end);
+    // Horizontal fold -> sslot (i is left == ve, reused as the tail counter).
+    let fld: String = nb_f32dot_fold(mjb);
+    // Scalar tail: i in ve..n.
+    let t_hdr: i64 = string_len(fld);
+    let tc1: String = nb_load_rax(fld, 0 - 32);
+    let tc2: String = nb_cmp_rax_mem(tc1, nb_setcc_opcode(op_lt()), 0 - 48);
+    let tc3: String = nb_store_rax(tc2, 0 - 80);
+    let tcj: String = nb_emit_cmp_je_zero(tc3, 0 - 80, jmps, jcell);
+    let t_je: i64 = __mind_load_i64(jcell) - 1;
+    let tb: String = nb_f32dot_tail_body(tcj);
+    let tjb: String = nb_emit_jmp(tb, jmps, jcell);
+    let t_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _tp1: i64 = nb_jmp_set_target(jmps, jcell, t_bk, t_hdr);
+    let t_end: i64 = string_len(tjb);
+    let _tp2: i64 = nb_jmp_set_target(jmps, jcell, t_je, t_end);
+    // result bits: movss xmm0,[sslot] ; movd eax,xmm0 ; store rax -> result.
+    let r0: String = nb_fp_movss_load_xmm0(tjb, 0 - 216);
+    let r1: String = nb_fp_movd_eax_xmm0(r0);
+    let r2: String = nb_store_rax(r1, 0 - 224);
+    // write(1, &result, 8).
+    let w0: String = nb_intdot_lea(r2, 0 - 224, 0 - 240);
+    let w1: String = nb_intdot_movimm(w0, 1, 0 - 232);
+    let w2: String = nb_intdot_movimm(w1, 8, 0 - 248);
+    let w3: String = nb_emit_write(w2, 0 - 232, 0 - 240, 0 - 248);
+    // exit(0).
+    let e1: String = nb_intdot_movimm(w3, 0, 0 - 256);
+    let e2: String = nb_load_rax(e1, 0 - 256);
+    let code: String = nb_emit_return(e2, 1);
+    let njmps: i64 = __mind_load_i64(jcell);
+    let _px: i64 = nb_patch_jmps(string_addr(code), jmps, njmps, 0);
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
