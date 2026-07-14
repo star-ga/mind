@@ -1302,10 +1302,14 @@ impl<'a> P<'a> {
                     span: Span::new(start, self.pos),
                 });
             }
-            // `pub` (already consumed above and re-recognised, so it cannot reach
-            // here), any keyword whose feature gate is off in this build, and every
-            // non-keyword word fall through to the expression/assignment path — the
-            // same behaviour the ladder had when no `at_keyword` probe matched.
+            // `pub` has no arm here by design: the modifier was consumed above and
+            // any real item keyword after it was already dispatched. A degenerate
+            // second `pub` (`pub pub …`) does re-recognise as `Some(StmtKw::Pub)` and
+            // reaches this arm — it then falls through to the expression/assignment
+            // path exactly as the old ladder did (which had no post-modifier `pub`
+            // probe). Likewise any keyword whose feature gate is off in this build,
+            // and every non-keyword word, fall through here — the same behaviour the
+            // ladder had when no `at_keyword` probe matched.
             _ => {}
         }
         // Expression or assignment
