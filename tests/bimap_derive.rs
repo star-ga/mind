@@ -56,7 +56,10 @@ fn generated_functions_are_pub() {
     for it in &m.items {
         if let Node::FnDef { name, is_pub, .. } = it {
             if name.starts_with("currency_") {
-                assert!(*is_pub, "generated `{name}` must be pub (cross-module exportable)");
+                assert!(
+                    *is_pub,
+                    "generated `{name}` must be pub (cross-module exportable)"
+                );
             }
         }
     }
@@ -84,7 +87,11 @@ fn non_bimap_enum_is_untouched() {
     // No `#[bimap]` ⇒ zero synthesised fns, byte-for-byte the old behaviour.
     let src = "enum Currency { AUD, JPY, USD }\n";
     let m = parse(src).expect("parse");
-    assert!(fn_names(&m).is_empty(), "no fns should be synthesised: {:?}", fn_names(&m));
+    assert!(
+        fn_names(&m).is_empty(),
+        "no fns should be synthesised: {:?}",
+        fn_names(&m)
+    );
 }
 
 // ── Coexistence (incremental adoption) ─────────────────────────────────────
@@ -115,25 +122,37 @@ fn e2017_duplicate_key_rejected_via_dup_variant_guard() {
 #[test]
 fn e2018_duplicate_value_rejected() {
     let src = "#[bimap]\nenum E { A = \"X\", B = \"X\" }\n";
-    assert!(reject_codes(src).contains(&"E2018".to_string()), "expected E2018");
+    assert!(
+        reject_codes(src).contains(&"E2018".to_string()),
+        "expected E2018"
+    );
 }
 
 #[test]
 fn e2019_non_total_payload_variant_rejected() {
     let src = "#[bimap]\nenum E { A, B(i64) }\n";
-    assert!(reject_codes(src).contains(&"E2019".to_string()), "expected E2019");
+    assert!(
+        reject_codes(src).contains(&"E2019".to_string()),
+        "expected E2019"
+    );
 }
 
 #[test]
 fn e2019_empty_enum_rejected() {
     let src = "#[bimap]\nenum E {}\n";
-    assert!(reject_codes(src).contains(&"E2019".to_string()), "expected E2019");
+    assert!(
+        reject_codes(src).contains(&"E2019".to_string()),
+        "expected E2019"
+    );
 }
 
 #[test]
 fn e2020_non_string_discriminant_rejected() {
     let src = "#[bimap]\nenum E { A = 5, B }\n";
-    assert!(reject_codes(src).contains(&"E2020".to_string()), "expected E2020");
+    assert!(
+        reject_codes(src).contains(&"E2020".to_string()),
+        "expected E2020"
+    );
 }
 
 #[test]
@@ -142,7 +161,10 @@ fn e2021_generated_name_collision_rejected() {
                #[bimap]\n\
                enum Currency { AUD, JPY, USD }\n\
                fn currency_to_str(k: i64) -> String { return \"nope\"; }\n";
-    assert!(reject_codes(src).contains(&"E2021".to_string()), "expected E2021");
+    assert!(
+        reject_codes(src).contains(&"E2021".to_string()),
+        "expected E2021"
+    );
 }
 
 // ── Escape parity (checker compares DECODED bytes, one shared unescape) ─────
@@ -153,7 +175,10 @@ fn escape_collision_is_a_duplicate_value() {
     // source spellings, SAME bytes ⇒ E2018. Proves the value check compares
     // decoded `Literal::Str` bytes, not raw source text.
     let src = "#[bimap]\nenum E { A = \"a\tb\", B = \"a\\tb\" }\n";
-    assert!(reject_codes(src).contains(&"E2018".to_string()), "expected E2018 on decoded-byte collision");
+    assert!(
+        reject_codes(src).contains(&"E2018".to_string()),
+        "expected E2018 on decoded-byte collision"
+    );
 }
 
 // ── Two-module: importer resolves the generated fns ────────────────────────
@@ -175,10 +200,58 @@ fn generated_fns_resolve_across_modules() {
     let b = parse(b_src).expect("parse B");
 
     let table = build_module_table(&[("crate.a".to_string(), &a)]);
-    let errs =
-        check_module_types_with_modules(&b, b_src, Some("b.mind"), &HashMap::new(), &table);
+    let errs = check_module_types_with_modules(&b, b_src, Some("b.mind"), &HashMap::new(), &table);
     assert!(
-        !errs.iter().any(|e| format!("{e:?}").contains("currency_to_str")),
+        !errs
+            .iter()
+            .any(|e| format!("{e:?}").contains("currency_to_str")),
         "importer must resolve the derived `currency_to_str`; got: {errs:?}"
+    );
+}
+
+// ── Formatter round-trip ────────────────────────────────────────────────────
+
+/// The `= "string"` variant pairing MUST survive `mindc fmt`. The formatter runs
+/// on the un-expanded module (via `parse_with_trivia`), so it sees the enum with
+/// its `paired` values, not the synthesised functions — and it has to re-emit the
+/// pairing or the bijection table is silently dropped and the file no longer
+/// carries the bimap. This covers the whole-string decode→re-escape path
+/// (`\t` must round-trip as the two chars `\t`, never a raw tab byte).
+#[test]
+fn formatter_round_trips_string_pairing() {
+    use libmind::fmt::format_source;
+    use libmind::project::MindcraftFormatConfig;
+
+    // `Euro`'s pairing carries an escaped tab; the printer must re-escape it.
+    let src = "#[bimap]\nenum Money {\n    Aud = \"aud\",\n    Euro = \"e\\tu\",\n}\n\nfn main() -> i64 {\n    return 0;\n}\n";
+    let cfg = MindcraftFormatConfig::default();
+
+    let once = format_source(src, &cfg).expect("bimap source must format");
+    assert!(
+        once.contains("= \"aud\""),
+        "plain pairing dropped by formatter:\n{once}"
+    );
+    assert!(
+        once.contains("= \"e\\tu\""),
+        "escaped pairing not re-escaped by formatter:\n{once}"
+    );
+    assert!(
+        !once.contains("e\tu"),
+        "a RAW tab byte leaked into the formatted pairing (escape lost):\n{once}"
+    );
+
+    // Idempotent: formatting the formatted output is a fixed point.
+    let twice = format_source(&once, &cfg).expect("re-format");
+    assert_eq!(once, twice, "formatter is not idempotent on bimap pairings");
+
+    // The formatted output is still valid MIND that expands (parse runs the pass).
+    let m = parse(&once).expect("formatted bimap source must re-parse+expand");
+    assert!(
+        has_fn(&m, "money_to_str"),
+        "derived fn lost after round-trip"
+    );
+    assert!(
+        has_fn(&m, "money_from_str"),
+        "derived fn lost after round-trip"
     );
 }

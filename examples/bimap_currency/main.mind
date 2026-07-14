@@ -25,7 +25,7 @@
 //   pub fn currency_to_str(k: i64)   -> String   // forward:  ordinal -> string
 //   pub fn currency_from_str(s)      -> i64      // inverse:  string  -> ordinal
 //
-// Build & run:  cd examples/salov_bijection && mindc run
+// Build & run:  cd examples/bimap_currency && mindc run
 //
 // Expected output (the worked example from the proposal, verbatim):
 //   0 AUD
@@ -62,7 +62,7 @@ fn main() -> i64 {
         let name = currency_to_str(j);
         // … and the string back through the DERIVED inverse.
         let idx = currency_from_str(name);
-        print_pair_line(idx, name);
+        print_pair_line(idx, name)
     }
     return 0;
 }
