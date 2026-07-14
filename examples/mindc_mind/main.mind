@@ -21326,7 +21326,29 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
                 let f1: String = nb_fp_movsd_load_xmm0(s2.code, nb_slot_disp(lhs_id));
                 let f2: String = nb_fp_binop_xmm0_mem(f1, fsel, nb_slot_disp(rhs_id));
                 let f3: String = nb_fp_movsd_store_xmm0(f2, nb_slot_disp(id));
+                // FIX #167: TAG the fp-binop dst slot FLOAT, so a later ident read of this
+                // result (e.g. via a `let`/assign rebind, then a call arg) classifies FLOAT
+                // and marshals in the SSE pool. dtbl (lcell+8) is loaded above. Inert for
+                // main.mind's float-free source (this arm is never taken during self-compile).
+                let _tg167: i64 = nb_dtype_tag_slot(dtbl, id, nb_dtype_float());
                 return NbState { code: f3, next_id: id + 1, last_id: id, ncalls: s2.ncalls };
+            }
+            // FIX #168: FLOAT-operand COMPARISON. The SSE guard above only covers scalar
+            // arithmetic (nb_fp_opsel >= 0); a relational/equality op over two FLOAT operands
+            // fell through to the GP path (nb_load_rax + nb_cmp_rax_mem) — a SIGNED-INTEGER
+            // compare of the raw IEEE-754 bits, which is INVERTED for two negatives (IEEE-754
+            // is sign-magnitude) and wrong for -0.0/+0.0 and NaN. Route it through ucomisd +
+            // an UNSIGNED setcc (comisd sets CF/ZF like an unsigned compare), materializing
+            // the same i64 0/1 boolean the rest of the pipeline consumes. Correct for all
+            // FINITE operands; deferred: NaN-ordering edge cases (see nb_fp_setcc_opcode).
+            // main.mind is float-free, so this arm never fires during self-compile — the
+            // integer native-ELF emission stays byte-identical.
+            let fcc: i64 = nb_fp_setcc_opcode(op);
+            if fcc >= 0 {
+                let g1: String = nb_fp_movsd_load_xmm0(s2.code, nb_slot_disp(lhs_id));
+                let g2: String = nb_fp_cmp_xmm0_mem(g1, fcc, nb_slot_disp(rhs_id));
+                let g3: String = nb_store_rax(g2, nb_slot_disp(id));
+                return NbState { code: g3, next_id: id + 1, last_id: id, ncalls: s2.ncalls };
             }
         }
     }
@@ -22224,7 +22246,19 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
     let k: i64 = ast_kind(node);
     if k == ast_return() {
         let s1: NbState = nb_expr(st, buf, ast_child0(node), params_addr, n_params, calls, lets, lcell);
-        let c1: String = nb_load_rax(s1.code, nb_slot_disp(s1.last_id));
+        // FIX #166: SysV return-register selection by the RETURNED VALUE's dtype. An
+        // explicit `return <float>` must place its result in xmm0 (movsd), NOT rax — the
+        // implicit tail-return path (nb_finish_body) already does this, and an explicit
+        // return that loads rax leaves a stale xmm0 so the caller's xmm0 spill reads
+        // garbage. Classify the return operand off the per-fn dtype table (lcell+8);
+        // an INT/pointer return keeps the rax path unchanged. main.mind's fns all return
+        // INT (float-free source), so ret_dt166 is always INT here and this is byte-identical.
+        let ret_dt166: i64 = nb_node_dtype_tbl(ast_child0(node), __mind_load_i64(lcell + 8), lets, lcell, buf, params_addr, n_params);
+        let c1: String = if ret_dt166 == nb_dtype_float() {
+            nb_fp_movsd_load_xmm0(s1.code, nb_slot_disp(s1.last_id))
+        } else {
+            nb_load_rax(s1.code, nb_slot_disp(s1.last_id))
+        };
         let c2: String = nb_emit_return(c1, is_entry);
         return NbState { code: c2, next_id: s1.next_id, last_id: s1.last_id, ncalls: s1.ncalls };
     }
@@ -22279,7 +22313,17 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // through from the RHS lowering.
         let name_leaf: i64 = ast_child0(node);
         let s1: NbState = nb_expr(st, buf, ast_child2(node), params_addr, n_params, calls, lets, lcell);
+        // FIX #167: propagate the RHS dtype onto the REBOUND slot, mirroring the let-INIT
+        // arm (22258-22260). Without this a `y = 3.0 * 2.0` rebind leaves y's slot reading
+        // INT (nb_dtype_get defaults INT), so a later `g(y)` marshals the float arg in the
+        // GP pool (rdi) while the callee (nb_param_is_float) reads xmm — wrong register
+        // file. Classify the RHS via the per-fn table; the rebind env already holds the
+        // prior bindings the RHS resolves against. main.mind's source is float-free, so the
+        // RHS is always INT here and the slot tag stays INT — byte-identical.
+        let dtbl167: i64 = __mind_load_i64(lcell + 8);
+        let rhs_dt167: i64 = nb_node_dtype_tbl(ast_child2(node), dtbl167, lets, lcell, buf, params_addr, n_params);
         let _b: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), s1.last_id, 0);
+        let _dt167: i64 = nb_dtype_tag_slot(dtbl167, s1.last_id, rhs_dt167);
         return s1;
     }
     if k == ast_break() {
@@ -25968,6 +26012,25 @@ pub fn nb_fp_binop_xmm0_mem(code: String, op_sel: i64, disp: i64) -> String {
     nb_i32le_signed(c4, disp)
 }
 
+// FIX #168 encoder: `ucomisd xmm0, [rbp+disp32] ; set<cc> al ; movzx eax, al` — lhs
+// already in xmm0. Leaves the i64 0/1 boolean in rax (mirror of nb_cmp_rax_mem, but the
+// unordered-compare SSE form + an UNSIGNED setcc since comisd/ucomisd set CF/ZF like an
+// unsigned compare). Correct for all FINITE operands.
+//   ucomisd = 66 0F 2E 85 <disp32> ; set<cc> al = 0F <setcc> C0 ; movzx eax,al = 0F B6 C0
+pub fn nb_fp_cmp_xmm0_mem(code: String, setcc: i64, rhs_disp: i64) -> String {
+    let c1: String = nb_push(code, 102);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, 46);
+    let c4: String = nb_push(c3, 133);
+    let c5: String = nb_i32le_signed(c4, rhs_disp);
+    let c6: String = nb_push(c5, 15);
+    let c7: String = nb_push(c6, setcc);
+    let c8: String = nb_push(c7, 192);
+    let c9: String = nb_push(c8, 15);
+    let c10: String = nb_push(c9, 182);
+    nb_push(c10, 192)
+}
+
 // push rbp ; mov rbp,rsp ; sub rsp,frame(imm32)  =  55 48 89 E5 48 81 EC <imm32>
 // Sets up the rbp frame so [rbp+disp32] stack slots are addressable. (movsd is
 // scalar/unaligned, so no 16-byte alignment fixup is required.)
@@ -26196,9 +26259,13 @@ pub fn nb_tag_float_params(tbl: i64, buf: i64, params_addr: i64, n_params: i64, 
 
 // Map a binop operator tag to the SSE2 scalar-double op_sel used by
 // nb_fp_binop_xmm0_mem: + -> addsd(0), - -> subsd(1), * -> mulsd(2), / -> divsd(3).
-// Returns -1 for any non-arithmetic operator (comparisons, bitwise, shifts) — those
-// have no scalar-double form, so a FLOAT-op-FLOAT node with such an operator stays
-// INT and routes the GP-integer path.
+// Returns -1 for any non-ARITHMETIC operator (comparisons, bitwise, shifts) — these have
+// no scalar-double ARITHMETIC form. A FLOAT-op-FLOAT COMPARISON is NOT routed to the
+// GP-integer path (that would be a signed compare of raw IEEE-754 bits, inverted for
+// negatives — #168): nb_expr routes it through nb_fp_setcc_opcode + the ucomisd SSE
+// compare instead; only bitwise/shift operators over float operands (which the surface
+// grammar does not admit) would fall through. The result of a float comparison is an i64
+// 0/1 boolean, hence itself INT.
 pub fn nb_fp_opsel(op: i64) -> i64 {
     if op == op_add() {
         return 0;
@@ -26211,6 +26278,38 @@ pub fn nb_fp_opsel(op: i64) -> i64 {
     }
     if op == op_div() {
         return 3;
+    }
+    0 - 1
+}
+
+// FIX #168: map a FLOAT-operand relational/equality operator to the UNSIGNED set<cc>
+// opcode byte used after ucomisd (comisd/ucomisd set CF/ZF like an unsigned compare, so
+// the GP SIGNED setcc of nb_setcc_opcode would be wrong). For xmm0 <op> mem:
+//   >  -> seta  (0x97 = 151, CF=0 & ZF=0)   >= -> setae (0x93 = 147, CF=0)
+//   <  -> setb  (0x92 = 146, CF=1)          <= -> setbe (0x96 = 150, CF=1 | ZF=1)
+//   == -> sete  (0x94 = 148, ZF=1)          != -> setne (0x95 = 149, ZF=0)
+// These are exact for FINITE operands. deferred: NaN edge cases — an unordered ucomisd
+// sets CF=ZF=PF=1, so setb/setbe/sete read TRUE for a NaN operand; a fully NaN-aware
+// predicate (parity-flag masking for ==/!=, swapped-operand seta/setae for </<=) is the
+// upgrade path. main.mind is float-free so this arm never fires during self-compile.
+pub fn nb_fp_setcc_opcode(op: i64) -> i64 {
+    if op == op_gt() {
+        return 151;
+    }
+    if op == op_ge() {
+        return 147;
+    }
+    if op == op_lt() {
+        return 146;
+    }
+    if op == op_le() {
+        return 150;
+    }
+    if op == op_eq() {
+        return 148;
+    }
+    if op == op_ne() {
+        return 149;
     }
     0 - 1
 }
