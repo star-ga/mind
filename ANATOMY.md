@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3116 | **Est. tokens:** ~7,461,224
-**Generated:** 2026-07-14 22:27 UTC
+**Files:** 3115 | **Est. tokens:** ~7,458,023
+**Generated:** 2026-07-14 22:51 UTC
 
 ## Token Budget Guide
 
@@ -40,7 +40,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,163 |
-| `docs/` | 32 | ~77,316 |
+| `docs/` | 31 | ~73,353 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
@@ -48,6 +48,7 @@
 | `docs/rfcs/` | 30 | ~134,901 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 22 | ~41,529 |
+| `examples/bimap_currency/` | 3 | ~765 |
 | `examples/c/` | 2 | ~400 |
 | `examples/columnar/` | 4 | ~7,585 |
 | `examples/compliance/` | 3 | ~5,294 |
@@ -60,7 +61,6 @@
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
 | `examples/native/` | 4 | ~527 |
 | `examples/parser/` | 5 | ~17,923 |
-| `examples/salov_bijection/` | 3 | ~766 |
 | `examples/typecheck/` | 5 | ~14,553 |
 | `examples/zoo/` | 6 | ~12,518 |
 | `experiments/global-vs-local/` | 7 | ~6,492 |
@@ -389,7 +389,7 @@
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
-| `src/fmt/` | 3 | ~19,784 |
+| `src/fmt/` | 3 | ~19,898 |
 | `src/ir/` | 5 | ~46,820 |
 | `src/ir/compact/` | 3 | ~15,235 |
 | `src/ir/compact/v2/` | 8 | ~38,037 |
@@ -400,7 +400,7 @@
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 4 | ~10,738 |
 | `src/package/` | 2 | ~1,877 |
-| `src/parser/` | 2 | ~8,570 |
+| `src/parser/` | 2 | ~8,639 |
 | `src/project/` | 3 | ~31,849 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
@@ -410,7 +410,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~192,637 |
-| `tests/` | 285 | ~485,922 |
+| `tests/` | 285 | ~486,502 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -729,7 +729,6 @@
 
 - `roadmap.md` (~25509 tok, huge) — Roadmap
 - `runs-burndown-roadmap.md` (~3203 tok, huge) — MIND RUNS Burndown Roadmap
-- `salov-bijection-note.md` (~3963 tok, huge) — Single-source bijection over a nice set — built and run in MIND
 - `security.md` (~1492 tok, large) — Security Guide
 - `self-host-trace-hash-port.md` (~1406 tok, large) — #17 — Self-compute the native PT_NOTE (pure-MIND trace-hash port)
 - `shapes.md` (~478 tok, medium) — Tensor shape semantics
@@ -748,6 +747,11 @@
 
 - `anthropobrot.mind` (~3257 tok, huge) — Anthropobrot: depth-selected orbit-density multisets of the Fatou-Julia iteral.
 - `autodiff_demo.mind` (~1715 tok, huge) — Autodiff Demonstration
+### `examples/bimap_currency/`
+
+- `.gitignore` (~2 tok, tiny) — target/
+- `main.mind` (~701 tok, large) — Single-source bijective map over a "nice set" — ONE declaration, both
+- `Mind.toml` (~62 tok, small) — [package]
 ### `examples/c/`
 
 - `min.c` (~82 tok, small)
@@ -918,13 +922,6 @@
 - `remizov_inverse.mind` (~2614 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
 - `remizov_solver.mind` (~3802 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
 - `remizov_verify.mind` (~3721 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
-### `examples/salov_bijection/`
-
-- `.gitignore` (~2 tok, tiny) — target/
-- `main.mind` (~701 tok, large) — Single-source bijective map over a "nice set" — ONE declaration, both
-- `Mind.toml` (~63 tok, small) — [package]
-### `examples/`
-
 - `tiny_edge_model.mind` (~1876 tok, huge) — Tiny Edge Model Example
 ### `examples/typecheck/`
 
@@ -3872,7 +3869,7 @@
 
 - `cli.rs` (~3873 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~15317 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~15431 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4693 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3943,7 +3940,7 @@
 - `mod.rs` (~1567 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/parser/`
 
-- `expand_bimap.rs` (~4759 tok, huge) — An `#[bimap]` attribute on an `enum` declares a one-to-one correspondence
+- `expand_bimap.rs` (~4828 tok, huge) — An `#[bimap]` attribute on an `enum` declares a one-to-one correspondence
 - `trivia.rs` (~3811 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
@@ -4054,7 +4051,7 @@
 ### `tests/`
 
 - `bare_variant_ctor_run.rs` (~885 tok, large) — Copyright 2025 STARGA Inc.
-- `bimap_derive.rs` (~1828 tok, huge) — Copyright 2025 STARGA Inc.
+- `bimap_derive.rs` (~2408 tok, huge) — Copyright 2025 STARGA Inc.
 - `blas_smoke.rs` (~6262 tok, huge) — Copyright 2025 STARGA Inc.
 - `blas_vec_q16_smoke.rs` (~5639 tok, huge) — Copyright 2025 STARGA Inc.
 - `blas_vec_smoke.rs` (~2130 tok, huge) — Copyright 2025 STARGA Inc.

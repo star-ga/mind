@@ -581,6 +581,16 @@ fn emit_enum_def(
             }
             p.push(")");
         }
+        // #[bimap] single-source pairing: a variant's `= "string"` value is
+        // captured in `paired` and MUST be printed to round-trip
+        // (parse(fmt(src)) == parse(src)) — otherwise the formatter silently
+        // drops the bimap table. A non-string `= …` discriminant is not stored
+        // (historically parsed-and-discarded; an E2020 error under `#[bimap]`),
+        // so there is nothing to round-trip for it.
+        if let Some(paired) = &v.paired {
+            p.push(" = ");
+            push_str_lit(p, paired);
+        }
         p.push(",\n");
     }
     p.indent -= 1;
@@ -1668,35 +1678,36 @@ fn emit_literal(p: &mut Printer, lit: &Literal) {
                 p.push(".0");
             }
         }
-        Literal::Str(s) => {
-            // The parser now DECODES escapes into raw bytes (so runtime byte
-            // values are correct), so the printer must RE-ESCAPE the control
-            // bytes and the two structural bytes (`\` and `"`) to round-trip:
-            // `parse(fmt(parse(src))) == parse(src)`. The escape spellings
-            // mirror `parser::parse_string_lit` / `parse_char_lit` exactly.
-            // Sources with no escapes (e.g. the keystone) contain none of these
-            // bytes, so the emit is unchanged and fmt stays byte-identical.
-            p.push("\"");
-            // Iterate over `char`s (not bytes) so multi-byte UTF-8 scalars are
-            // copied intact; only the ASCII control/structural bytes get an
-            // escape spelling.
-            let mut esc = String::with_capacity(s.len());
-            for c in s.chars() {
-                match c {
-                    '\n' => esc.push_str("\\n"),
-                    '\t' => esc.push_str("\\t"),
-                    '\r' => esc.push_str("\\r"),
-                    '\0' => esc.push_str("\\0"),
-                    '\\' => esc.push_str("\\\\"),
-                    '"' => esc.push_str("\\\""),
-                    other => esc.push(other),
-                }
-            }
-            p.push(&esc);
-            p.push("\"");
-        }
+        Literal::Str(s) => push_str_lit(p, s),
         Literal::Ident(name) => p.push(name),
     }
+}
+
+/// Emit a decoded string as a quoted, re-escaped string literal so that
+/// `parse(fmt(parse(src))) == parse(src)`. The parser DECODES escapes into raw
+/// bytes, so the control + structural bytes (`\` and `"`) must be re-escaped;
+/// the spellings mirror `parser::parse_string_lit` / `parse_char_lit` exactly.
+/// Sources with no escapes contain none of these bytes, so the emit is
+/// unchanged and fmt stays byte-identical. Shared by the string-literal arm and
+/// the `#[bimap]` enum-pair emitter so the two escapings cannot drift apart.
+fn push_str_lit(p: &mut Printer, s: &str) {
+    p.push("\"");
+    // Iterate over `char`s (not bytes) so multi-byte UTF-8 scalars are copied
+    // intact; only the ASCII control/structural bytes get an escape spelling.
+    let mut esc = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\n' => esc.push_str("\\n"),
+            '\t' => esc.push_str("\\t"),
+            '\r' => esc.push_str("\\r"),
+            '\0' => esc.push_str("\\0"),
+            '\\' => esc.push_str("\\\\"),
+            '"' => esc.push_str("\\\""),
+            other => esc.push(other),
+        }
+    }
+    p.push(&esc);
+    p.push("\"");
 }
 
 fn emit_binary(p: &mut Printer, op: &BinOp, left: &Node, right: &Node) {
