@@ -11,18 +11,27 @@
 # lowering, so the avx2 == neon claim MUST be blessed on REAL aarch64 — it is
 # NOT asserted from x86 + the associativity argument.
 #
-#   avx2 — blessed on x86_64 (this dev box, MIND_BENCH_REQUIRE=1): the kernel
+#   avx2 — blessed on x86_64 (MIND_BENCH_REQUIRE=1, LLVM 20): the kernel
 #          emits strict scalar vmulss/vaddss with no vfmadd and no reassociating
 #          reduction, cross-checked bit-for-bit against the fixed-order fold
 #          oracle within the run. Continuously enforced on x86 (CI job
 #          `cross_substrate_identity`, ubuntu-24.04).
-#   neon — DEFERRED pending a real-aarch64 bless (RFC 0020 §13). Strict-FP
-#          cross-substrate bit-identity is UNPROVEN on ARM here and MUST NOT be
-#          asserted from x86; the gate DEFERS LOUDLY on a neon host with no
-#          committed hash rather than falsely passing. Upgrade path: run this
-#          gate on real aarch64 with MIND_BENCH_BLESS=1 and commit a `neon` line
-#          ONLY if it reproduces the avx2 hash byte-for-byte (a divergence is a
-#          real wedge break, not a bless).
+#   neon — BLESSED on REAL aarch64 (2026-07-14). Harvested from the
+#          `cross_substrate_identity (neon)` CI job on the GitHub-hosted
+#          `ubuntu-24.04-arm` runner (host: aarch64-unknown-linux-gnu, LLVM 20,
+#          MIND_BENCH_REQUIRE=1) — real ARM silicon, NOT emulation, NOT derived
+#          from x86. The kernel's own strict-FP fold ran on ARM, cross-checked
+#          bit-for-bit against the fixed-order fold oracle within the run, and
+#          produced the IDENTICAL sha256 as avx2. Reproduced across FOUR
+#          independent ARM runs / four commits before blessing:
+#            job 86996917253 (e342698), 86990556888 (4086fd7),
+#            86984729367 (c8b3526), 86980091885 (1382c5c)
+#          all → a132f7b9…, result bits 0x41f9713f.
+#          This closes the strict-FP ARM leg of the wedge: bit-identity here
+#          rests on the strict lowering (FMA unfused, pinned fixed-order fold),
+#          not on integer associativity, so it could only ever be proven by
+#          execution on real ARM — and now has been. A future divergence on
+#          either line is a WEDGE BREAK, not a re-bless.
 
 avx2 = "a132f7b970b647cd158f591d764c19ec41a8cf27c398c87758f74efb5a8a22c0"
-# neon = deferred-pending-real-aarch64 (strict-FP; bless on real ARM only)
+neon = "a132f7b970b647cd158f591d764c19ec41a8cf27c398c87758f74efb5a8a22c0"
