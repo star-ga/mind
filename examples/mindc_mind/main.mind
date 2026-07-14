@@ -20867,9 +20867,14 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let callee: i64 = ast_child0(node);
         let args_addr: i64 = ast_child1(node);
         let args_len: i64 = ast_aux(node);
-        // Lower each arg expr (advancing SSA ids), recording each arg's slot id.
+        // Lower each arg expr (advancing SSA ids), recording each arg's slot id AND
+        // its classified dtype (arg_dts, parallel to ids). Both buffers are bounded by
+        // the arg count (no full-source alloc) — arg_dts drives the two-pool arg ABI in
+        // nb_emit_argregs (RI-D2 S-C2): a FLOAT arg is marshalled in the SSE pool
+        // (xmm0..7) while int/ptr args keep the GP pool, mirroring nb_emit_params.
         let ids: i64 = __mind_alloc((args_len + 1) * 8);
-        let sa: NbState = nb_call_args(st, buf, args_addr, args_len, 0, params_addr, n_params, calls, ids, lets, lcell);
+        let arg_dts: i64 = __mind_alloc((args_len + 1) * 8);
+        let sa: NbState = nb_call_args(st, buf, args_addr, args_len, 0, params_addr, n_params, calls, ids, arg_dts, lets, lcell);
         let id: i64 = sa.next_id;
         // Inlined __mind_* intrinsics (mirror src/native/mod.rs:784-918): name-match
         // the callee and emit the inline syscall/alloc/store/load sequence BEFORE the
@@ -20894,7 +20899,7 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // (pad/push/cleanup all no-op).
         let c_pad: String = nb_emit_stack_pad(sa.code, args_len);
         let c_stk: String = nb_emit_stackargs(c_pad, ids, args_len - 1);
-        let c_args: String = nb_emit_argregs(c_stk, ids, args_len, 0);
+        let c_args: String = nb_emit_argregs(c_stk, ids, arg_dts, args_len, 0, 0, 0);
         // call rel32 (placeholder 0; linker-patched). Record the rel32 offset.
         let c_e8: String = nb_push(c_args, 232);
         let rel_off: i64 = string_len(c_e8);
@@ -20967,15 +20972,22 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
     NbState { code: c3, next_id: id + 1, last_id: id, ncalls: s2.ncalls }
 }
 
-// Lower each call arg in order, storing each arg's resulting slot id into ids[i].
-pub fn nb_call_args(st: NbState, buf: i64, args_addr: i64, args_len: i64, i: i64, params_addr: i64, n_params: i64, calls: i64, ids: i64, lets: i64, lcell: i64) -> NbState {
+// Lower each call arg in order, storing each arg's resulting slot id into ids[i] and
+// its classified dtype into arg_dts[i]. The dtype is resolved AFTER the arg is lowered
+// (nb_expr may have tagged its dst slot FLOAT, e.g. a float-returning call), via
+// nb_node_dtype_tbl over the per-fn dtype table at lcell+8. arg_dts drives the SysV
+// two-pool arg ABI in nb_emit_argregs (RI-D2 S-C2). No lex, no full-source alloc.
+pub fn nb_call_args(st: NbState, buf: i64, args_addr: i64, args_len: i64, i: i64, params_addr: i64, n_params: i64, calls: i64, ids: i64, arg_dts: i64, lets: i64, lcell: i64) -> NbState {
     if i >= args_len {
         return st;
     }
     let arg_node: i64 = __mind_load_i64(args_addr + i * 8);
     let s1: NbState = nb_expr(st, buf, arg_node, params_addr, n_params, calls, lets, lcell);
     __mind_store_i64(ids + i * 8, s1.last_id);
-    nb_call_args(s1, buf, args_addr, args_len, i + 1, params_addr, n_params, calls, ids, lets, lcell)
+    let dtbl: i64 = __mind_load_i64(lcell + 8);
+    let adt: i64 = nb_node_dtype_tbl(arg_node, dtbl, lets, lcell, buf, params_addr, n_params);
+    __mind_store_i64(arg_dts + i * 8, adt);
+    nb_call_args(s1, buf, args_addr, args_len, i + 1, params_addr, n_params, calls, ids, arg_dts, lets, lcell)
 }
 
 // The struct-literal node if `init` is one, else 0 — for the let-env's slit slot.
@@ -21111,19 +21123,37 @@ pub fn nb_struct_field_store_off(code: String, next_id: i64, ptr_id: i64, val_id
     NbState { code: c_st, next_id: store_dst + 1, last_id: store_dst, ncalls: ncalls }
 }
 
-// Emit `load_argreg(i, slot_disp(ids[i]))` for i = 0..min(n,6)-1.
-pub fn nb_emit_argregs(code: String, ids: i64, n: i64, i: i64) -> String {
+// Load each call arg 0..n-1 into its SysV argument register, drawing from two
+// INDEPENDENT register pools keyed by the arg's classified dtype (arg_dts[i]):
+//   * FLOAT arg -> load slot into SSE reg xmm{sse_k} (movsd); advances sse_k only.
+//   * int/ptr arg -> load slot into GP reg gp_k (nb_load_argreg); advances gp_k only.
+// The 7th+ GP arg (gp_k >= 6) is stack-passed (push) by nb_emit_stackargs at the CALL
+// SITE, not register-loaded here — so it advances gp_k without emitting. This mirrors
+// nb_emit_params' incoming-param two-pool ABI (S-B) on the caller side (S-C2).
+//
+// INT-PRESERVATION (load-bearing): main.mind's own source has ZERO float call-args, so
+// every arg takes the GP branch and gp_k == i for all i. In that case the register
+// selection (nb_load_argreg(gp_k, ...)) and the >6-arg skip (gp_k >= 6) are IDENTICAL
+// to the prior `i`-keyed code, so the all-integer emission is byte-for-byte unchanged.
+// The float branch is reached only when arg_dts[i] == nb_dtype_float().
+pub fn nb_emit_argregs(code: String, ids: i64, arg_dts: i64, n: i64, i: i64, gp_k: i64, sse_k: i64) -> String {
     if i >= n {
         return code;
     }
-    if i >= 6 {
-        // 7th+ CALL args are stack-passed (push) by nb_emit_stackargs at the CALL
-        // SITE (mirrors src/native/mod.rs Call arm), not register-loaded here.
-        return code;
-    }
     let slot: i64 = __mind_load_i64(ids + i * 8);
-    let c1: String = nb_load_argreg(code, i, nb_slot_disp(slot));
-    nb_emit_argregs(c1, ids, n, i + 1)
+    let dt: i64 = __mind_load_i64(arg_dts + i * 8);
+    if dt == nb_dtype_float() {
+        // FLOAT arg: load slot -> xmm{sse_k} via movsd. Advances sse_k only.
+        let cf: String = nb_fp_movsd_load_xmmk(code, sse_k, nb_slot_disp(slot));
+        return nb_emit_argregs(cf, ids, arg_dts, n, i + 1, gp_k, sse_k + 1);
+    }
+    if gp_k >= 6 {
+        // 7th+ GP CALL args are stack-passed (push) by nb_emit_stackargs at the CALL
+        // SITE, not register-loaded here. Advances gp_k only (no bytes emitted).
+        return nb_emit_argregs(code, ids, arg_dts, n, i + 1, gp_k + 1, sse_k);
+    }
+    let c1: String = nb_load_argreg(code, gp_k, nb_slot_disp(slot));
+    nb_emit_argregs(c1, ids, arg_dts, n, i + 1, gp_k + 1, sse_k)
 }
 
 // Caller-side System-V stack-arg PAD (mirror src/native/mod.rs Call arm 935-939):
@@ -25325,6 +25355,20 @@ pub fn nb_fp_movsd_load_xmm0(code: String, disp: i64) -> String {
     let c2: String = nb_push(c1, 15);
     let c3: String = nb_push(c2, 16);
     let c4: String = nb_push(c3, 133);
+    nb_i32le_signed(c4, disp)
+}
+
+// movsd xmm{k}, [rbp+disp32]  =  F2 0F 10 (0x80 | (k&7)<<3 | 0x05) <disp32>
+// Load a stack slot into SSE arg register xmm{k}. This is nb_fp_movsd_load_xmm0 with
+// k folded into the ModRM.reg field (mirror of nb_store_sse_argreg, but the store
+// opcode 0x11 -> the load opcode 0x10). k in 0..7 (the 8 SysV SSE arg registers) needs
+// no REX; k==0 is byte-identical to nb_fp_movsd_load_xmm0.
+pub fn nb_fp_movsd_load_xmmk(code: String, k: i64, disp: i64) -> String {
+    let modrm: i64 = 128 + (k & 7) * 8 + 5;
+    let c1: String = nb_push(code, 242);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, 16);
+    let c4: String = nb_push(c3, modrm);
     nb_i32le_signed(c4, disp)
 }
 
