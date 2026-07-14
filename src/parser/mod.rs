@@ -115,6 +115,108 @@ enum CompoundOp {
     Bit(crate::ast::BitOp),
 }
 
+/// The closed set of statement-leading keywords `parse_stmt` dispatches on.
+///
+/// The set is fixed at compile time and every member is spelled here exactly
+/// once — the recogniser below is the single place a statement keyword is
+/// matched, replacing the old sequential `at_keyword(b"…")` ladder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StmtKw {
+    Pub,
+    Import,
+    Use,
+    Const,
+    Type,
+    Module,
+    Export,
+    Invariant,
+    Struct,
+    Enum,
+    Fn,
+    Extern,
+    Assert,
+    Return,
+    For,
+    Print,
+    Let,
+    If,
+    While,
+    Loop,
+    Region,
+    Break,
+    Continue,
+}
+
+/// Recognise a statement-leading keyword from the identifier run at the cursor.
+///
+/// This is a **compile-time perfect-hash keyword recogniser** in the classic
+/// (gperf) shape: the discriminator `(len, word[0])` maps the 23-keyword set to
+/// at most TWO candidates — `(6, b'e')` = {export, extern} and `(6, b'r')` =
+/// {region, return} are the only pairs; every other `(len, byte0)` cell holds a
+/// single candidate. The candidate is then confirmed with ONE full-slice
+/// equality. Worst case: one integer switch + two byte compares + one `memcmp`;
+/// the old ladder averaged ~12 failed byte-prefix probes before a hit and paid
+/// the FULL ~23 probes for the common case (a plain expression / assignment
+/// statement, which matches no keyword at all) — that case now costs a single
+/// switch miss.
+///
+/// **Determinism.** The discriminator is a fixed structural function of the key
+/// — `(slice length, first byte, third byte)` — with NO seed, NO search, NO
+/// randomness, and no dependence on host `HashMap` iteration order, pointer
+/// values, time, or `-march`. It is textually pinned in this source, so it is
+/// byte-for-byte the same decision on x86 and ARM. It also emits no IR: it only
+/// picks which existing `parse_*` routine runs, exactly as the ladder did.
+///
+/// The trailing full-slice compare is **load-bearing, not belt-and-braces**: the
+/// discriminator alone is not injective over arbitrary identifiers (e.g. the
+/// ident `expand` lands in the `(6, b'e')` cell). The word is the whole
+/// identifier run, so its end is precisely the `at_keyword` word boundary and a
+/// prefix such as `letx` can never be mistaken for `let`.
+#[inline]
+fn stmt_keyword(w: &[u8]) -> Option<StmtKw> {
+    // `(len, first byte)` — one dense integer switch. `w` is never empty when a
+    // candidate exists, so `w[0]` is in bounds inside every arm.
+    let (cand, kw): (&[u8], StmtKw) = match (w.len(), *w.first()?) {
+        (2, b'f') => (b"fn", StmtKw::Fn),
+        (2, b'i') => (b"if", StmtKw::If),
+        (3, b'f') => (b"for", StmtKw::For),
+        (3, b'l') => (b"let", StmtKw::Let),
+        (3, b'p') => (b"pub", StmtKw::Pub),
+        (3, b'u') => (b"use", StmtKw::Use),
+        (4, b'e') => (b"enum", StmtKw::Enum),
+        (4, b'l') => (b"loop", StmtKw::Loop),
+        (4, b't') => (b"type", StmtKw::Type),
+        (5, b'b') => (b"break", StmtKw::Break),
+        (5, b'c') => (b"const", StmtKw::Const),
+        (5, b'p') => (b"print", StmtKw::Print),
+        (5, b'w') => (b"while", StmtKw::While),
+        (6, b'a') => (b"assert", StmtKw::Assert),
+        // The only two ambiguous cells; `w[2]` separates them (`export`/`extern`
+        // agree on bytes 0..2, differ at 2 — `p` vs `t`).
+        (6, b'e') => {
+            if w[2] == b'p' {
+                (b"export", StmtKw::Export)
+            } else {
+                (b"extern", StmtKw::Extern)
+            }
+        }
+        (6, b'i') => (b"import", StmtKw::Import),
+        (6, b'm') => (b"module", StmtKw::Module),
+        (6, b'r') => {
+            if w[2] == b'g' {
+                (b"region", StmtKw::Region)
+            } else {
+                (b"return", StmtKw::Return)
+            }
+        }
+        (6, b's') => (b"struct", StmtKw::Struct),
+        (8, b'c') => (b"continue", StmtKw::Continue),
+        (9, b'i') => (b"invariant", StmtKw::Invariant),
+        _ => return None,
+    };
+    if w == cand { Some(kw) } else { None }
+}
+
 impl<'a> P<'a> {
     /// Construct a parser, capturing the active cross-module enum registry as an
     /// explicit snapshot. The snapshot is taken ONCE here (not re-read per
@@ -475,6 +577,24 @@ impl<'a> P<'a> {
         }
         let after = self.pos + kw.len();
         after >= self.b.len() || !Self::is_ident_cont(self.b[after])
+    }
+
+    /// The identifier run at the cursor, WITHOUT advancing. Empty when the cursor
+    /// is not on an identifier start (an operator, a literal, EOF). The word ends
+    /// at the first non-`is_ident_cont` byte, which is exactly the boundary
+    /// `at_keyword` tests — so `stmt_keyword(self.cur_word())` is semantically
+    /// identical to a chain of `at_keyword(b"…")` probes, but scans the run once.
+    #[inline]
+    fn cur_word(&self) -> &'a [u8] {
+        let start = self.pos;
+        if start >= self.b.len() || !Self::is_ident_start(self.b[start]) {
+            return &[];
+        }
+        let mut end = start;
+        while end < self.b.len() && Self::is_ident_cont(self.b[end]) {
+            end += 1;
+        }
+        &self.b[start..end]
     }
 
     /// Non-consuming lookahead: is `kw` the next keyword after `lead` (+ inter-
@@ -1096,116 +1216,97 @@ impl<'a> P<'a> {
         // Phase 10.6: optional `pub` visibility marker before struct/enum/fn/
         // type/const. Captured as `is_pub` and propagated into the AST node
         // so the formatter can round-trip the keyword faithfully.
-        let is_pub = if self.at_keyword(b"pub") {
+        //
+        // Statement dispatch: ONE `stmt_keyword` recognition of the identifier run
+        // at the cursor replaces the old sequential `at_keyword(b"…")` ladder over
+        // the 23 statement-leading keywords. Semantics are unchanged — the keywords
+        // are pairwise distinct under the word-boundary rule, so at most one ladder
+        // arm could ever fire and the ladder's ORDER was never load-bearing. The
+        // recogniser is a pure, seedless structural function of the word (see
+        // `stmt_keyword`): it selects which existing `parse_*` routine runs and
+        // emits no IR, so every artifact stays byte-identical.
+        let mut kw = stmt_keyword(self.cur_word());
+        let is_pub = if kw == Some(StmtKw::Pub) {
             self.pos += 3;
             self.skip_ws_and_newlines();
+            kw = stmt_keyword(self.cur_word());
             true
         } else {
             false
         };
-        if self.at_keyword(b"import") {
-            return self.parse_import();
-        }
-        if self.at_keyword(b"use") {
-            return self.parse_use();
-        }
-        if self.at_keyword(b"const") {
-            return self.parse_const(Vec::new());
-        }
-        if self.at_keyword(b"type") {
-            return self.parse_type_alias(Vec::new());
-        }
-        if self.at_keyword(b"module") {
-            return self.parse_module_block(Vec::new());
-        }
-        if self.at_keyword(b"export") {
-            return self.parse_export_block();
-        }
-        // `invariant NAME { ... }` — a governance/DIFC contract declaration (512-mind
-        // invariant system). It produces NO executable code: the native compiler
-        // accepts it as a transparent marker and the governance tooling (arch-mind /
-        // the 512-mind runtime) consumes the body. std-surface-gated; the keystone
-        // source has no invariants, so its emit stays byte-identical.
-        // deferred: the `check(...)` body is currently skipped, not lowered — upgrade
-        // path is to register invariant checks with the governance pass so they can
-        // be verified at runtime, rather than dropped here.
-        #[cfg(feature = "std-surface")]
-        if self.at_keyword(b"invariant") {
-            return self.parse_invariant_block();
-        }
-        if self.at_keyword(b"struct") {
-            return self.parse_struct(Vec::new(), is_pub);
-        }
-        if self.at_keyword(b"enum") {
-            return self.parse_enum(Vec::new(), is_pub);
-        }
-        if self.at_keyword(b"fn") {
-            return self.parse_fn_def(is_pub);
-        }
-        // RFC 0010 Phase A: `extern "C" [callconv(.x)] { ... }` block.
-        // `extern const NAME: [T; N]` is a distinct form — an externally-provided
-        // constant (e.g. a Q16.16 LUT table supplied by the build system), NOT an
-        // `extern "C"` block. Disambiguate by peeking the word after `extern`.
-        if self.at_keyword(b"extern") {
-            if self.peek_keyword_after(b"extern", b"const") {
-                return self.parse_extern_const(Vec::new());
+        match kw {
+            Some(StmtKw::Import) => return self.parse_import(),
+            Some(StmtKw::Use) => return self.parse_use(),
+            Some(StmtKw::Const) => return self.parse_const(Vec::new()),
+            Some(StmtKw::Type) => return self.parse_type_alias(Vec::new()),
+            Some(StmtKw::Module) => return self.parse_module_block(Vec::new()),
+            Some(StmtKw::Export) => return self.parse_export_block(),
+            // `invariant NAME { ... }` — a governance/DIFC contract declaration
+            // (512-mind invariant system). It produces NO executable code: the
+            // native compiler accepts it as a transparent marker and the governance
+            // tooling (arch-mind / the 512-mind runtime) consumes the body.
+            // std-surface-gated; the keystone source has no invariants, so its emit
+            // stays byte-identical.
+            // deferred: the `check(...)` body is currently skipped, not lowered —
+            // upgrade path is to register invariant checks with the governance pass
+            // so they can be verified at runtime, rather than dropped here.
+            #[cfg(feature = "std-surface")]
+            Some(StmtKw::Invariant) => return self.parse_invariant_block(),
+            Some(StmtKw::Struct) => return self.parse_struct(Vec::new(), is_pub),
+            Some(StmtKw::Enum) => return self.parse_enum(Vec::new(), is_pub),
+            Some(StmtKw::Fn) => return self.parse_fn_def(is_pub),
+            // RFC 0010 Phase A: `extern "C" [callconv(.x)] { ... }` block.
+            // `extern const NAME: [T; N]` is a distinct form — an externally-provided
+            // constant (e.g. a Q16.16 LUT table supplied by the build system), NOT an
+            // `extern "C"` block. Disambiguate by peeking the word after `extern`.
+            Some(StmtKw::Extern) => {
+                if self.peek_keyword_after(b"extern", b"const") {
+                    return self.parse_extern_const(Vec::new());
+                }
+                return self.parse_extern_block();
             }
-            return self.parse_extern_block();
-        }
-        if self.at_keyword(b"assert") {
-            return self.parse_assert();
-        }
-        if self.at_keyword(b"return") {
-            return self.parse_return();
-        }
-        if self.at_keyword(b"for") {
-            return self.parse_for();
-        }
-        if self.at_keyword(b"print") {
-            return self.parse_print();
-        }
-        if self.at_keyword(b"let") {
-            return self.parse_let();
-        }
-        if self.at_keyword(b"if") {
-            return self.parse_if_expr();
-        }
-        // RFC 0005 Gap 1: `while` statement — gated to std-surface so the
-        // default-build hot path stays byte-identical.
-        #[cfg(feature = "std-surface")]
-        if self.at_keyword(b"while") {
-            return self.parse_while();
-        }
-        // `loop { body }` — unconditional loop, desugared to `while 1 { body }`
-        // so it reuses the while machinery (break/continue, region-scoped exit
-        // SSA) verbatim. Gated to std-surface like `while`.
-        #[cfg(feature = "std-surface")]
-        if self.at_keyword(b"loop") {
-            return self.parse_loop();
-        }
-        // RFC 0010 Phase J-A: `region { }` block — gated to std-surface so
-        // the default-build hot path stays byte-identical.
-        #[cfg(feature = "std-surface")]
-        if self.at_keyword(b"region") {
-            return self.parse_region();
-        }
-        // Loop control: `break` / `continue`. Intercepted here, before the
-        // expr/assign fallthrough, so they do not parse as `Node::Lit(Ident)`.
-        #[cfg(feature = "std-surface")]
-        if self.at_keyword(b"break") {
-            let start = self.pos;
-            self.pos += 5; // "break"
-            return Ok(Node::Break {
-                span: Span::new(start, self.pos),
-            });
-        }
-        #[cfg(feature = "std-surface")]
-        if self.at_keyword(b"continue") {
-            let start = self.pos;
-            self.pos += 8; // "continue"
-            return Ok(Node::Continue {
-                span: Span::new(start, self.pos),
-            });
+            Some(StmtKw::Assert) => return self.parse_assert(),
+            Some(StmtKw::Return) => return self.parse_return(),
+            Some(StmtKw::For) => return self.parse_for(),
+            Some(StmtKw::Print) => return self.parse_print(),
+            Some(StmtKw::Let) => return self.parse_let(),
+            Some(StmtKw::If) => return self.parse_if_expr(),
+            // RFC 0005 Gap 1: `while` statement — gated to std-surface so the
+            // default-build hot path stays byte-identical.
+            #[cfg(feature = "std-surface")]
+            Some(StmtKw::While) => return self.parse_while(),
+            // `loop { body }` — unconditional loop, desugared to `while 1 { body }`
+            // so it reuses the while machinery (break/continue, region-scoped exit
+            // SSA) verbatim. Gated to std-surface like `while`.
+            #[cfg(feature = "std-surface")]
+            Some(StmtKw::Loop) => return self.parse_loop(),
+            // RFC 0010 Phase J-A: `region { }` block — gated to std-surface so
+            // the default-build hot path stays byte-identical.
+            #[cfg(feature = "std-surface")]
+            Some(StmtKw::Region) => return self.parse_region(),
+            // Loop control: `break` / `continue`. Intercepted here, before the
+            // expr/assign fallthrough, so they do not parse as `Node::Lit(Ident)`.
+            #[cfg(feature = "std-surface")]
+            Some(StmtKw::Break) => {
+                let start = self.pos;
+                self.pos += 5; // "break"
+                return Ok(Node::Break {
+                    span: Span::new(start, self.pos),
+                });
+            }
+            #[cfg(feature = "std-surface")]
+            Some(StmtKw::Continue) => {
+                let start = self.pos;
+                self.pos += 8; // "continue"
+                return Ok(Node::Continue {
+                    span: Span::new(start, self.pos),
+                });
+            }
+            // `pub` (already consumed above and re-recognised, so it cannot reach
+            // here), any keyword whose feature gate is off in this build, and every
+            // non-keyword word fall through to the expression/assignment path — the
+            // same behaviour the ladder had when no `at_keyword` probe matched.
+            _ => {}
         }
         // Expression or assignment
         let start = self.pos;

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3107 | **Est. tokens:** ~7,443,864
-**Generated:** 2026-07-14 09:48 UTC
+**Files:** 3110 | **Est. tokens:** ~7,445,611
+**Generated:** 2026-07-14 12:28 UTC
 
 ## Token Budget Guide
 
@@ -22,13 +22,13 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~28,329 |
+| `./` | 34 | ~28,537 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
 | `audits/` | 6 | ~607 |
 | `bench/` | 2 | ~1,772 |
-| `benches/` | 26 | ~79,399 |
+| `benches/` | 27 | ~80,315 |
 | `bench/fft/` | 8 | ~8,060 |
 | `benchmarks/` | 12 | ~20,415 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
@@ -45,7 +45,7 @@
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
 | `docs/mindcraft/` | 3 | ~7,023 |
-| `docs/rfcs/` | 31 | ~139,513 |
+| `docs/rfcs/` | 30 | ~134,901 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 22 | ~41,529 |
 | `examples/c/` | 2 | ~400 |
@@ -66,7 +66,7 @@
 | `.githooks/` | 1 | ~255 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 9 | ~12,714 |
+| `.github/workflows/` | 9 | ~13,175 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~17,416 |
 | `scripts/` | 9 | ~11,565 |
@@ -409,14 +409,14 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~192,637 |
-| `tests/` | 282 | ~479,515 |
+| `tests/` | 284 | ~483,694 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
 | `tests/conformance/gpu_profile/` | 2 | ~11 |
 | `tests/cross_substrate_identity/` | 2 | ~4,052 |
-| `tests/cross_substrate_identity/dot-f32-v-4093/` | 2 | ~1,005 |
+| `tests/cross_substrate_identity/dot-f32-v-4093/` | 2 | ~1,222 |
 | `tests/cross_substrate_identity/dot-i16-4096/` | 2 | ~648 |
 | `tests/cross_substrate_identity/dot-l1-q16/` | 2 | ~363 |
 | `tests/cross_substrate_identity/dot-l2-q16/` | 2 | ~813 |
@@ -429,7 +429,7 @@
 | `tests/cross_substrate_identity/gemv-q16-256x256/` | 2 | ~519 |
 | `tests/cross_substrate_identity/grammar-mask/` | 2 | ~916 |
 | `tests/cross_substrate_identity/lorenz-q16/` | 2 | ~1,243 |
-| `tests/cross_substrate_identity/matmul-f32-v-64x64/` | 2 | ~894 |
+| `tests/cross_substrate_identity/matmul-f32-v-64x64/` | 2 | ~1,115 |
 | `tests/cross_substrate_identity/q16-arith-chain/` | 2 | ~788 |
 | `tests/cross_substrate_identity/scalar-cast-conv/` | 2 | ~1,644 |
 | `tests/cross_substrate_identity/scalar-cast-conv-narrow/` | 2 | ~1,790 |
@@ -448,7 +448,7 @@
 | `tests/mindcraft/lint/q16_overflow/` | 3 | ~191 |
 | `tests/mindcraft/lint/shadowing/` | 2 | ~87 |
 | `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
-| `tests/mindfuzz_cross_substrate/staged/` | 15 | ~2,832 |
+| `tests/mindfuzz_cross_substrate/staged/` | 16 | ~2,989 |
 | `tests/runtime/` | 2 | ~135 |
 | `tests/selfhost_gaps/` | 67 | ~5,301 |
 | `tests/shapes/` | 3 | ~260 |
@@ -477,7 +477,7 @@
 - `.bench-pre-pratt.txt` (~32 tok, tiny) — === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
-- `Cargo.toml` (~1902 tok, huge) — [package]
+- `Cargo.toml` (~2110 tok, huge) — [package]
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -542,6 +542,7 @@
 - `fft_q16.rs` (~5352 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mindcraft_fmt.rs` (~908 tok, large) — File readers
 - `operations.rs` (~1076 tok, large) — Element-wise operations
+- `parser_throughput.rs` (~916 tok, large) — Copyright 2025 STARGA Inc.
 - `shapes.rs` (~1208 tok, large) — Simple broadcasting scenarios
 - `simple_benchmarks.rs` (~643 tok, large) — Benchmark source programs that are known to work
 - `std_surface.rs` (~1067 tok, large) — Copyright 2025 STARGA Inc.
@@ -719,7 +720,6 @@
 - `0020-mind-bench-reproducibility-harness.md` (~4083 tok, huge) — RFC 0020: mind-bench Public Reproducibility Harness
 - `0021-canonical-ir-unification.md` (~4388 tok, huge) — RFC 0021: Canonical IR Unification — one IR, provenance as a versioned epilogue
 - `0022-deterministic-io-substrate.md` (~2108 tok, huge) — RFC 0022: Deterministic I/O Substrate — fastest async I/O with bit-identical replay
-- `DRAFT-0023-nice-sets.md` (~4612 tok, huge) — RFC 0023 (DRAFT) — `#[nice]`: compile-time-verified perfect projections over statically-known finite sets
 - `DRAFT-deterministic-format-frontend.md` (~10507 tok, huge) — RFC DRAFT: Deterministic Multi-Format Ingest Front-End (JSON / TOON / CSV / TSV / NDJSON / TOML)
 - `DRAFT-deterministic-json-frontend.md` (~5175 tok, huge) — RFC DRAFT: Deterministic Streaming SIMD JSON Structural Front-End
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
@@ -960,7 +960,7 @@
 
 - `bench-gate.yml` (~1432 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~222 tok, medium) — name: Cargo Deny
-- `ci.yml` (~6990 tok, huge) — name: CI
+- `ci.yml` (~7451 tok, huge) — name: CI
 - `crypto-vectors.yml` (~1093 tok, large) — name: Crypto Vectors
 - `docs-claims.yml` (~364 tok, medium) — name: Docs Claims
 - `link-check.yml` (~221 tok, medium) — name: Link Check
@@ -4099,8 +4099,8 @@
 - `cross_module.rs` (~847 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/cross_substrate_identity/dot-f32-v-4093/`
 
-- `manifest.toml` (~577 tok, large) — version = "1"
-- `reference_hashes.toml` (~428 tok, medium) — avx2 = "a132f7b970b647cd158f591d764c19ec41a8cf27c398c87758f74efb5a8a22c0"
+- `manifest.toml` (~638 tok, large) — version = "1"
+- `reference_hashes.toml` (~584 tok, large) — neon = "a132f7b970b647cd158f591d764c19ec41a8cf27c398c87758f74efb5a8a22c0"
 ### `tests/cross_substrate_identity/dot-i16-4096/`
 
 - `manifest.toml` (~384 tok, medium) — version = "1"
@@ -4151,8 +4151,8 @@
 - `reference_hashes.toml` (~562 tok, large) — avx2 = "04da6abc69e63314331e88a7a9670ce5c9e90ddaa2bf5f5dc53526f56477de80"
 ### `tests/cross_substrate_identity/matmul-f32-v-64x64/`
 
-- `manifest.toml` (~461 tok, medium) — version = "1"
-- `reference_hashes.toml` (~433 tok, medium) — avx2 = "ec5adb991372fcfc16b964ba566f05fb44701fcf8bbde2a5453fed294e1d0175"
+- `manifest.toml` (~523 tok, large) — version = "1"
+- `reference_hashes.toml` (~592 tok, large) — avx2 = "ec5adb991372fcfc16b964ba566f05fb44701fcf8bbde2a5453fed294e1d0175"
 ### `tests/cross_substrate_identity/q16-arith-chain/`
 
 - `manifest.toml` (~432 tok, medium) — version = "1"
@@ -4374,6 +4374,7 @@
 - `mindfuzz_cross_substrate.rs` (~14938 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/mindfuzz_cross_substrate/staged/`
 
+- `fuzz_repro_seed_deadbeef_prog006.mind` (~157 tok, small) — DIVERGENCE REPRODUCER (issue #72 fuzzer)
 - `manifest.tsv` (~357 tok, medium) — scalar_arith_step000	f	3735928559	64	5e39820a2a8325417e39057f19ba9bceec01bd2068c
 - `scalar_accum_step000.mind` (~154 tok, small) — MIND-Fuzz seed: scalar accumulator with a return-feeding literal.
 - `scalar_accum_step001.mind` (~162 tok, small) — MIND-Fuzz seed: scalar accumulator with a return-feeding literal.
@@ -4433,6 +4434,7 @@
 - `relu_exec.rs` (~472 tok, medium) — Copyright 2025 STARGA Inc.
 - `relu_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `repl_basic.rs` (~523 tok, large) — Copyright 2025 STARGA Inc.
+- `repro_audit_cycle2.rs` (~1804 tok, huge) — Craft a mic@3 artifact whose total length is N bytes, but whose last
 - `resolve_fn_body.rs` (~979 tok, large) — Copyright 2025 STARGA Inc.
 - `result_option_prelude_run.rs` (~910 tok, large) — Copyright 2025 STARGA Inc.
 - `return_cond_type_reject.rs` (~3849 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4590,6 +4592,7 @@
 - `std_surface_vec_module.rs` (~1805 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_vec_zeroed.rs` (~1077 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_while_statement.rs` (~3201 tok, huge) — Copyright 2025 STARGA Inc.
+- `stmt_keyword_recognizer.rs` (~2375 tok, huge) — Copyright 2025 STARGA Inc.
 - `stride_gather_grad.rs` (~312 tok, medium) — Copyright 2025 STARGA Inc.
 - `stride_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `stride_types.rs` (~250 tok, medium) — Copyright 2025 STARGA Inc.
