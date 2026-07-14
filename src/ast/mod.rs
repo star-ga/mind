@@ -842,6 +842,21 @@ pub struct EnumVariant {
     /// f: x }` or a match `E.V { f, g }` resolves each name to its declared slot
     /// via this list (enum_match #9 struct variants).
     pub field_names: Vec<String>,
+    /// The string captured from an explicit `= "literal"` discriminant slot.
+    /// `None` for the common case (no `= …`, or a non-`#[bimap]` enum whose
+    /// discriminant is not a string). Additive for the `#[bimap]` derive
+    /// (`expand_bimap`): under that attribute a variant's paired value defaults
+    /// to its own name and is overridden by this captured literal. Every
+    /// non-`#[bimap]` consumer ignores it, so existing enums are unchanged.
+    pub paired: Option<String>,
+    /// `true` when an explicit `= …` discriminant was present but was NOT a
+    /// string literal (e.g. `= 5`). For an ordinary enum this is still ignored
+    /// (the value was always discarded); under `#[bimap]` it is the E2020
+    /// "non-nice pair value" trigger — a degenerate discriminant is loudly
+    /// inexpressible for a bijection enum. Recorded (rather than detected at
+    /// parse time) because the `#[bimap]` attribute lives on the `EnumDef`, not
+    /// the variant, so the desugar pass is where the two facts meet.
+    pub paired_is_nonstring: bool,
     pub span: Span,
 }
 
