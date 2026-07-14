@@ -9050,6 +9050,54 @@ pub fn is_any_value_if_expr(node: i64) -> i64 {
     is_mixed_value_if_expr(node)
 }
 
+// A value-if with ONE DIVERGING branch (`if c { return X; } else { V }`, or the
+// mirror). branch_is_value_block REJECTS a return-terminated block, so
+// is_any_value_if_expr misses this shape and the native let-init/return/assign
+// routing would send it to nb_expr — whose in-expression ast_if arm fail-closes to a
+// single const-0 (1 id). The COUNT side (nb_count_stmt's generic ast_if arm) always
+// counts the full if (cond+then+else+merge+dst, many ids), so that const-0 emit
+// DESYNCS next_id and every downstream slot is wrong. nb_if_value produces the SAME
+// id progression the count side expects and (with the divergence handling in
+// nb_if_value_simple/merged) lowers the live branch's value to dst. Accept exactly the
+// one-branch-diverges shape: the other branch must be a value block; both-diverge is
+// unreachable-valued and not accepted. Native-ELF-only routing; main.mind never binds
+// a diverging value-if, so this is inert during self-compile (byte-identical oracle).
+pub fn is_diverging_value_if(node: i64) -> i64 {
+    if ast_kind(node) != ast_if() {
+        return 0;
+    }
+    let else_blk: i64 = ast_child2(node);
+    if else_blk == 0 {
+        return 0;
+    }
+    let then_blk: i64 = ast_child1(node);
+    let then_sa: i64 = ast_child0(then_blk);
+    let then_sl: i64 = ast_aux(then_blk);
+    let else_sa: i64 = ast_child0(else_blk);
+    let else_sl: i64 = ast_aux(else_blk);
+    let then_div: i64 = nb_block_diverges(then_sa, then_sl);
+    let else_div: i64 = nb_block_diverges(else_sa, else_sl);
+    if then_div == 1 {
+        if else_div == 1 {
+            return 0;
+        }
+        return branch_is_value_block(else_blk);
+    }
+    if else_div == 1 {
+        return branch_is_value_block(then_blk);
+    }
+    0
+}
+
+// True for any if-expr the native-ELF value path must route through nb_if_value: a
+// plain value-if OR a one-diverging-branch value-if.
+pub fn is_native_if_value(node: i64) -> i64 {
+    if is_any_value_if_expr(node) == 1 {
+        return 1;
+    }
+    is_diverging_value_if(node)
+}
+
 // `vbind`/`vnb` (may be 0): when the value is itself a value if-expr, expose ITS escaped
 // merge bindings so the enclosing block's merge tail re-merges them (the value's branch lets
 // stay live past the value). A plain expression value escapes nothing -> vnb := 0.
@@ -22241,7 +22289,11 @@ pub fn nb_merge_ids_rest(buf: i64, then_sa: i64, then_sl: i64, else_sa: i64, els
 // `let s = if c { structA } else { structB }` then reading `s.last_id` mis-reads
 // the field (value-if-bound struct projection), so we never form that shape.
 pub fn nb_lower_let_init(st: NbState, buf: i64, init: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64, srt: i64, loops: i64, lpcell: i64) -> NbState {
-    if is_any_value_if_expr(init) == 1 {
+    // is_native_if_value also accepts a one-diverging-branch value-if
+    // (`let r = if c { return X; } else { V }`) so it routes to nb_if_value (which
+    // matches the count side's generic ast_if id progression) instead of nb_expr's
+    // fail-closed const-0 (which desyncs next_id — the diverging-branch mis-lower).
+    if is_native_if_value(init) == 1 {
         return nb_if_value(st, buf, init, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
     }
     nb_expr(st, buf, init, params_addr, n_params, calls, lets, lcell)
@@ -22847,10 +22899,19 @@ pub fn nb_if_value_simple(st: NbState, buf: i64, node: i64, params_addr: i64, n_
     let s_je: NbState = NbState { code: c_je, next_id: sc.next_id, last_id: sc.last_id, ncalls: sc.ncalls };
 
     // then-block: leading const0, then the then value-expr (its trailing slot is
-    // the then_result). A value block always falls through.
+    // the then_result). A value block usually falls through; but a value-if branch
+    // may DIVERGE (`if c { return 0.0; } else { 2.5 }`) — its last statement is a
+    // `return` that exits the fn, contributing NO merge value. FIX (diverging-branch
+    // value-if): mirror nb_if_stmt_simple's divergence handling — a diverging branch
+    // emits no dst-copy/join-jmp, and the non-diverging branch's value flows to dst.
+    // Without this the join hardcoded then_diverges=0, laying dead dst-copy/jmp after
+    // the `ret` and (worse) patching a join jmp that was never the live edge, so dst
+    // read a stale/wrong slot. main.mind's value-ifs never diverge a branch, so both
+    // diverges are 0 there and this is byte-identical to the integer native-ELF oracle.
     let s_t0: NbState = nb_emit_const0(s_je);
     let s_tb: NbState = nb_block_stmts(s_t0, buf, then_sa, then_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
     let then_result: i64 = s_tb.last_id;
+    let then_diverges: i64 = nb_block_diverges(then_sa, then_sl);
 
     // dst id is fresh AFTER the whole else-block is laid out; pre-walk to find it
     // (a pure function of the IR id-numbering, independent of emitted bytes). next
@@ -22862,9 +22923,10 @@ pub fn nb_if_value_simple(st: NbState, buf: i64, node: i64, params_addr: i64, n_
     __mind_store_i64(lcell, prewalk_n_vs);
     let dst_id: i64 = after_else;
 
-    // then fall-through: load then_result; store dst; jmp(join).
-    let s_tj: NbState = nb_if_then_join(s_tb, 0, then_result, dst_id, jmps, jcell);
-    let jmp_which: i64 = __mind_load_i64(jcell) - 1;
+    // then fall-through: load then_result; store dst; jmp(join) — skipped when the
+    // then-branch diverges (nb_if_then_join passes through, no join jmp is recorded).
+    let s_tj: NbState = nb_if_then_join(s_tb, then_diverges, then_result, dst_id, jmps, jcell);
+    let jmp_which: i64 = nb_last_jmp_which(then_diverges, jcell);
 
     // else target = current length: patch the je.
     let s_tj_code: String = s_tj.code;
@@ -22875,13 +22937,15 @@ pub fn nb_if_value_simple(st: NbState, buf: i64, node: i64, params_addr: i64, n_
     let s_e0: NbState = nb_emit_const0(s_tj);
     let s_eb: NbState = nb_block_stmts(s_e0, buf, else_sa, else_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
     let else_result: i64 = s_eb.last_id;
-    // else fall-through: load else_result; store dst (no jmp; it falls to end).
-    let s_ej: NbState = nb_if_else_join(s_eb, 0, else_result, dst_id);
+    let else_diverges: i64 = nb_block_diverges(else_sa, else_sl);
+    // else fall-through: load else_result; store dst (no jmp; it falls to end) —
+    // skipped when the else-branch diverges (its `return` already exited the fn).
+    let s_ej: NbState = nb_if_else_join(s_eb, else_diverges, else_result, dst_id);
 
-    // end target = current length: patch the join jmp.
+    // end target = current length: patch the join jmp (if one was emitted).
     let s_ej_code: String = s_ej.code;
     let end_at: i64 = string_len(s_ej_code);
-    let _pe: i64 = nb_jmp_set_target(jmps, jcell, jmp_which, end_at);
+    let _pe: i64 = nb_maybe_set_jmp(jmp_which, jmps, jcell, end_at);
     // The if's value lives in dst_id; advance next_id past dst.
     NbState { code: s_ej.code, next_id: dst_id + 1, last_id: dst_id, ncalls: s_ej.ncalls }
 }
