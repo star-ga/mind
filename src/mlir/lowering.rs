@@ -2365,15 +2365,27 @@ impl LoweringContext {
                 // (`P { x: a }` for `a: i32`) lowers instead of failing here.
                 // `__mind_f64_to_bits` likewise takes an `f64` arg by design
                 // (it bitcasts an enum payload field into the i64 record slot).
+                // ONE classification of the callee against the closed 33-name
+                // intrinsic set, hoisted to the top of the arm so the narrow-mem
+                // exemption here and the intrinsic dispatch further down share a
+                // SINGLE spelling — a future rename routed through
+                // `classify_intrinsic` can no longer silently miss a hardcoded name
+                // list. `classify_intrinsic` fast-rejects on the shared `__mind_`
+                // prefix, so an ordinary user call costs one seven-byte compare.
+                // Pure dispatch: no emitted op changes, so the mic@3 digest is
+                // unmoved.
+                let ikind = classify_intrinsic(name);
                 let is_narrow_mem = matches!(
-                    name.as_str(),
-                    "__mind_store_i32"
-                        | "__mind_store_i16"
-                        | "__mind_store_i8"
-                        | "__mind_load_i32"
-                        | "__mind_load_i16"
-                        | "__mind_load_i8"
-                        | "__mind_f64_to_bits"
+                    ikind,
+                    Some(
+                        IntrinsicKind::StoreI32
+                            | IntrinsicKind::StoreI16
+                            | IntrinsicKind::StoreI8
+                            | IntrinsicKind::LoadI32
+                            | IntrinsicKind::LoadI16
+                            | IntrinsicKind::LoadI8
+                            | IntrinsicKind::F64ToBits
+                    )
                 );
                 if !is_narrow_mem {
                     for a in args {
@@ -2432,18 +2444,12 @@ impl LoweringContext {
                         }
                     }
                 }
-                // ONE classification of the callee against the closed 33-name
-                // intrinsic set, replacing the ~25-guard `name == "__mind_…"`
-                // ladder below. `classify_intrinsic` fast-rejects on the shared
-                // `__mind_` prefix, so the COMMON case — an ordinary user function
-                // call, which matches no intrinsic — now costs a single seven-byte
-                // compare instead of walking every guard (the ladder could not
-                // short-circuit early precisely because all 33 names share that
-                // prefix). Each guard keeps its own `args.len() == N` test, so an
-                // intrinsic name arriving with the wrong arity still falls through
-                // to the generic call path exactly as before. Pure dispatch: no
-                // emitted op changes, so the mic@3 digest is unmoved.
-                let ikind = classify_intrinsic(name);
+                // `ikind` (the closed 33-name intrinsic classification) was computed
+                // once at the top of this arm, replacing the ~25-guard
+                // `name == "__mind_…"` ladder below. Each guard keeps its own
+                // `args.len() == N` test, so an intrinsic name arriving with the
+                // wrong arity still falls through to the generic call path exactly
+                // as before.
                 // RFC 0006 Track B (increment 1) — the `dot_f32_v` surface
                 // fn lowers to a *native* MLIR `vector`-dialect reduction
                 // loop instead of a `func.call` to the Track A
@@ -2995,9 +3001,17 @@ impl LoweringContext {
                         Some(IntrinsicKind::ConvI32) => (false, 32),
                         Some(IntrinsicKind::ConvU8) => (true, 8),
                         Some(IntrinsicKind::ConvU16) => (true, 16),
-                        // The `matches!` guard admits exactly the six kinds above,
-                        // so this is `ConvU32`.
-                        _ => (true, 32),
+                        Some(IntrinsicKind::ConvU32) => (true, 32),
+                        // Every narrow-conv kind is spelled above. A `_ => (true,32)`
+                        // fallthrough would silently lower a future 7th narrow-conv
+                        // kind as unsigned-32 — the exact silent-default class this
+                        // dispatch was written to kill. The enclosing `matches!`
+                        // guard already excludes all other kinds, so this arm is
+                        // genuinely unreachable; make that loud, not silent.
+                        other => unreachable!(
+                            "narrow-conv width table reached with non-narrow-conv \
+                             kind {other:?} — guard and table are out of sync"
+                        ),
                     };
                     let d = dst.0;
                     match self.values.get(&src) {

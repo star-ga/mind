@@ -62,6 +62,16 @@ const KEYWORD_STMTS: &[(&str, &str)] = &[
         "break/continue",
         "fn f() -> i64 { let mut i: i64 = 0; while i < 9 { i = i + 1; if i > 3 { break; } continue; } i }\n",
     ),
+    (
+        "for",
+        "fn f() -> i64 { let mut s: i64 = 0; for i in 0..6 { s = s + i; } s }\n",
+    ),
+    ("print", "fn f() -> i64 { print(\"x\"); 1 }\n"),
+    ("module", "module m { fn f() -> i64 { 1 } }\n"),
+    ("export", "export { checked }\n"),
+    ("extern", "extern \"C\" { }\n"),
+    ("region", "fn f() -> i64 { region { } 1 }\n"),
+    ("invariant", "invariant my_inv { }\n"),
 ];
 
 #[test]
