@@ -8,13 +8,16 @@
 # NEW bit-identity class as dot-f32-v-4093: bit-EXACT, not a 1e-4 tolerance.
 #
 # As with dot-f32-v, cross-substrate identity rests on strict-FP lowering, so the
-# avx2 == neon claim MUST be blessed on REAL aarch64 — the neon line is DEFERRED
-# pending that bless, never asserted from x86. The output is the rows-length f32
-# result vector; canonical encoding is each f32's IEEE-754 bit pattern, LE, sha256.
+# avx2 == neon claim MUST be blessed on REAL aarch64, never asserted from x86.
+# That bless is DONE (2026-07-14): the kernel was executed on the ubuntu-24.04-arm
+# CI runner (real aarch64 silicon) and produced a hash byte-for-byte identical to
+# avx2, reproduced across four independent runs — so BOTH substrate lines are
+# committed and the gate is fail-closed. The output is the rows-length f32 result
+# vector; canonical encoding is each f32's IEEE-754 bit pattern, LE, sha256.
 
 version = "1"
 name = "matmul-f32-v-64x64"
-description = "STRICT-FP row-major f32 matmul y = W.x, W 64x64 (matmul_rmajor_f32_v, per-row FMA-unfused pinned fixed-order fold); bit-EXACT, not tolerance — strict-f32 matmul cross-substrate byte-identity primitive (neon bless pending real aarch64)."
+description = "STRICT-FP row-major f32 matmul y = W.x, W 64x64 (matmul_rmajor_f32_v, per-row FMA-unfused pinned fixed-order fold); bit-EXACT, not tolerance — strict-f32 matmul cross-substrate byte-identity primitive (avx2 == neon, both blessed on real hardware)."
 weight = 1.0
 substrates = ["avx2", "neon"]
 

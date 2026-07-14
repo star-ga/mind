@@ -6,7 +6,7 @@
 
 **Project:** `mind`
 **Files:** 3110 | **Est. tokens:** ~7,445,709
-**Generated:** 2026-07-14 12:56 UTC
+**Generated:** 2026-07-14 13:47 UTC
 
 ## Token Budget Guide
 
@@ -4100,7 +4100,7 @@
 ### `tests/cross_substrate_identity/dot-f32-v-4093/`
 
 - `manifest.toml` (~638 tok, large) — version = "1"
-- `reference_hashes.toml` (~584 tok, large) — neon = "a132f7b970b647cd158f591d764c19ec41a8cf27c398c87758f74efb5a8a22c0"
+- `reference_hashes.toml` (~584 tok, large) — avx2 = "a132f7b970b647cd158f591d764c19ec41a8cf27c398c87758f74efb5a8a22c0"
 ### `tests/cross_substrate_identity/dot-i16-4096/`
 
 - `manifest.toml` (~384 tok, medium) — version = "1"

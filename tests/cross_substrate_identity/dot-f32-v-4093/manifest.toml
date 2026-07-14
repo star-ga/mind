@@ -14,13 +14,16 @@
 # ORDER is now fixed, so an IEEE-conformant FPU on any substrate evaluates the
 # identical operations on the identical bits. BUT unlike the integer tiers this
 # rests on strict-FP lowering (fp_mode = strict), so avx2 == neon MUST be blessed
-# on REAL aarch64, never asserted from x86 + the associativity argument — the
-# neon line here is DEFERRED pending that bless. The output is the f32 result;
-# canonical encoding is its IEEE-754 bit pattern as an i64, 8 LE bytes, sha256.
+# on REAL aarch64, never asserted from x86 + the associativity argument. That
+# bless is DONE (2026-07-14): the kernel was executed on the ubuntu-24.04-arm CI
+# runner (real aarch64 silicon) and produced a hash byte-for-byte identical to
+# avx2, reproduced across four independent runs — so BOTH substrate lines are
+# committed and the gate is fail-closed. The output is the f32 result; canonical
+# encoding is its IEEE-754 bit pattern as an i64, 8 LE bytes, sha256.
 
 version = "1"
 name = "dot-f32-v-4093"
-description = "STRICT-FP f32 vector dot a.b, len 4093 (dot_f32_v, FMA unfused + pinned fixed-order horizontal fold); bit-EXACT, not tolerance — the first strict-f32 cross-substrate byte-identity primitive (neon bless pending real aarch64)."
+description = "STRICT-FP f32 vector dot a.b, len 4093 (dot_f32_v, FMA unfused + pinned fixed-order horizontal fold); bit-EXACT, not tolerance — the first strict-f32 cross-substrate byte-identity primitive (avx2 == neon, both blessed on real hardware)."
 weight = 1.0
 substrates = ["avx2", "neon"]
 

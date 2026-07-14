@@ -275,6 +275,40 @@ jobs:
             --features "mlir-build std-surface cross-module-imports" \
             --test cross_substrate_identity -- --nocapture
 
+      - name: Harvest per-substrate canary hashes (bless manifest)
+        # NOT a gate — the gate above already ran and had to pass. This is a
+        # BLESS-mode replay whose only product is a durable artifact listing the
+        # hash this substrate's REAL hardware computed for every canary.
+        #
+        # Why it exists: the strict-f32 `neon` lines went unblessed for months
+        # even though the ubuntu-24.04-arm runner (real aarch64) had been
+        # computing the correct hashes on every single CI run — and discarding
+        # them into a job log that expires. Closing that hole required scraping
+        # an old log. With this step, blessing a canary on a substrate we do not
+        # own locally is a `gh run download`, not archaeology.
+        #
+        # Fail-safe by construction: MIND_BENCH_BLESS makes the run assert
+        # NOTHING, so this step can neither turn a red gate green nor weaken the
+        # gate above. It only records what the hardware said.
+        env:
+          MIND_BENCH_BLESS: "1"
+          MIND_BENCH_HASHES_OUT: ${{ github.workspace }}/canary_hashes_${{ matrix.substrate }}.txt
+        run: |
+          cargo test --no-default-features \
+            --features "mlir-build std-surface cross-module-imports" \
+            --test cross_substrate_identity -- --nocapture
+          echo "--- harvested (${{ matrix.substrate }}, $(uname -m)) ---"
+          sort -o "$MIND_BENCH_HASHES_OUT" "$MIND_BENCH_HASHES_OUT"
+          cat "$MIND_BENCH_HASHES_OUT"
+
+      - name: Upload per-substrate canary hashes (${{ matrix.substrate }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: canary-hashes-${{ matrix.substrate }}
+          path: ${{ github.workspace }}/canary_hashes_${{ matrix.substrate }}.txt
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Differential determinism fuzzer (issue #72)
         # Seeded generator (0xDEADBEEF) emits a bounded batch of valid MIND
         # programs over `+ - * / % << >> |` and `if/else`; each is proven a mic@3
