@@ -21313,6 +21313,24 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let ndtbl: i64 = __mind_load_i64(lcell + 8);
         let op_dt: i64 = nb_node_dtype_tbl(ast_child0(node), ndtbl, lets, lcell, buf, params_addr, n_params);
         if op_dt == nb_dtype_float() {
+            // FIX #173: a FLOAT LITERAL operand constant-folds to true IEEE-754 negation
+            // (sign-bit flip -> ConstF64(-f)), matching the oracle (src/eval/lower.rs folds
+            // Neg(float lit) to ConstF64(-f)). The runtime `0.0 - operand` path below is
+            // WRONG for -0.0: 0.0 - 0.0 = +0.0 (round-to-nearest), losing the sign bit, so
+            // `1.0 / -0.0` gave +inf instead of -inf. Flip bit 63 of the literal's magnitude
+            // bits directly. The operand was already lowered into op_id (a dead store, kept
+            // so the slot count matches nb_count_expr's ast_neg arm = operand + 1); we
+            // materialize the negated const into nid. main.mind is float-free so this never
+            // fires during self-compile.
+            if ast_kind(ast_child0(node)) == ast_float_lit() {
+                let obits: i64 = nb_float_lit_bits(buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node)));
+                let sign_mask: i64 = (0 - 9223372036854775807) - 1;
+                let neg_bits: i64 = obits ^ sign_mask;
+                let cf0: String = nb_fp_const_xmm(ns1.code, neg_bits, 0);
+                let cf1: String = nb_fp_movsd_store_xmm0(cf0, nb_slot_disp(nid));
+                let _ftg: i64 = nb_dtype_tag_slot(ndtbl, nid, nb_dtype_float());
+                return NbState { code: cf1, next_id: nid + 1, last_id: nid, ncalls: ns1.ncalls };
+            }
             let nf1: String = nb_fp_const_xmm(ns1.code, 0, 0);
             let nf2: String = nb_fp_binop_xmm0_mem(nf1, 1, nb_slot_disp(op_id));
             let nf3: String = nb_fp_movsd_store_xmm0(nf2, nb_slot_disp(nid));
@@ -21326,6 +21344,30 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let ni4: String = nb_push(ni3, 216);
         let ni5: String = nb_store_rax(ni4, nb_slot_disp(nid));
         return NbState { code: ni5, next_id: nid + 1, last_id: nid, ncalls: ns1.ncalls };
+    }
+    if k == ast_not() {
+        // FIX #172: unary logical NOT `!x` desugars to `x == 0` — exactly how the Rust
+        // front-end lowers it (src/eval/lower.rs Node::Not) and the flatten_ast/mic@3 arm
+        // already does. Pre-fix nb_expr had NO ast_not arm, so `!EXPR` fell through to the
+        // binop tail below, which read ast_child1(node) == 0 and recursed into a NULL node
+        // -> ast_kind(0) null-deref SIGSEGV. Lower the operand, materialize a const-0, and
+        // emit the integer Eq (cmp/setcc-e/movzx -> i64 0/1). The result is INT (a boolean).
+        // Slot count: operand ids + 1 (zero) + 1 (eq result) — matches nb_count_expr's arm.
+        // main.mind's native-emitted source has no `!` in a natively-lowered body (it would
+        // already have crashed here), so this arm never fires during self-compile and the
+        // integer native-ELF oracle stays byte-identical.
+        let nn1: NbState = nb_expr(st, buf, ast_child0(node), params_addr, n_params, calls, lets, lcell);
+        let nn_op: i64 = nn1.last_id;
+        let nn_zid: i64 = nn1.next_id;
+        let z1: String = nb_push(nn1.code, 72);
+        let z2: String = nb_push(z1, 184);
+        let z3: String = nb_i64le(z2, 0);
+        let z4: String = nb_store_rax(z3, nb_slot_disp(nn_zid));
+        let nn_rid: i64 = nn_zid + 1;
+        let e1: String = nb_load_rax(z4, nb_slot_disp(nn_op));
+        let e2: String = nb_cmp_rax_mem(e1, nb_setcc_opcode(op_eq()), nb_slot_disp(nn_zid));
+        let e3: String = nb_store_rax(e2, nb_slot_disp(nn_rid));
+        return NbState { code: e3, next_id: nn_rid + 1, last_id: nn_rid, ncalls: nn1.ncalls };
     }
     if k == ast_if() {
         // A value-if used in EXPRESSION position (a call argument, a binop operand, a
@@ -21991,6 +22033,23 @@ pub fn nb_while_copyin(code: String, carry: i64, ncarry: i64, i: i64, buf: i64, 
     // Rebind the var's let-env to post_id (loop_remap.insert(init_id, post_id)) so
     // cond+body reads resolve to the working slot.
     let _b: i64 = nb_lets_bind(lets, lcell, lo, hi, post_id, 0);
+    // FIX #174 (loop form): inherit the carried var's FLOAT dtype onto its working post_id
+    // slot, so a float accumulator (`let a: f64 = 0.0; while .. { a = a + 1.5; }`) is seen
+    // as FLOAT inside the loop body and routes the SSE2 path (pre-fix post_id read INT, so
+    // `a + 1.5` took the GP-integer path and returned a wrong value). init_slot is the pre-
+    // loop binding; when it carries a float dtype, tag post_id with it. main.mind's carried
+    // vars are all INT, so post_id stays INT (the table default) — byte-identical.
+    let dtbl: i64 = __mind_load_i64(lcell + 8);
+    let src_dt: i64 = if dtbl != 0 {
+        if init_slot >= 0 {
+            nb_dtype_get(dtbl, init_slot)
+        } else {
+            nb_dtype_int()
+        }
+    } else {
+        nb_dtype_int()
+    };
+    let _dt: i64 = nb_dtype_tag_slot(dtbl, post_id, src_dt);
     nb_while_copyin(c1, carry, ncarry, i + 1, buf, lets, lcell)
 }
 
@@ -22295,7 +22354,27 @@ pub fn nb_while_patch_breaks(loops: i64, lpcell: i64, jmps: i64, jcell: i64, end
 pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64, srt: i64, loops: i64, lpcell: i64) -> NbState {
     let k: i64 = ast_kind(node);
     if k == ast_return() {
-        let s1: NbState = nb_expr(st, buf, ast_child0(node), params_addr, n_params, calls, lets, lcell);
+        // FIX #175: a value-if in RETURN position (`return if c { A } else { B }`) must
+        // lower through the real branch/merge path — nb_if_value has the jmp table — NOT
+        // nb_expr, whose in-expression ast_if arm fail-closes to a silent const-0 (#171), a
+        // SILENT WRONG ANSWER (0 for every input, even for integers). Route it exactly as
+        // nb_lower_let_init does, then apply the same dtype-keyed return-register selection
+        // (#166). Early-return statement form (both branches would be NbState struct calls,
+        // the mis-lower trap). main.mind's fns never `return` a value-if, so this branch is
+        // inert during self-compile and the integer native-ELF oracle is byte-identical.
+        let ret_operand: i64 = ast_child0(node);
+        if is_any_value_if_expr(ret_operand) == 1 {
+            let sv: NbState = nb_if_value(st, buf, ret_operand, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
+            let rvdt: i64 = nb_node_dtype_tbl(ret_operand, __mind_load_i64(lcell + 8), lets, lcell, buf, params_addr, n_params);
+            let cv: String = if rvdt == nb_dtype_float() {
+                nb_fp_movsd_load_xmm0(sv.code, nb_slot_disp(sv.last_id))
+            } else {
+                nb_load_rax(sv.code, nb_slot_disp(sv.last_id))
+            };
+            let cv2: String = nb_emit_return(cv, is_entry);
+            return NbState { code: cv2, next_id: sv.next_id, last_id: sv.last_id, ncalls: sv.ncalls };
+        }
+        let s1: NbState = nb_expr(st, buf, ret_operand, params_addr, n_params, calls, lets, lcell);
         // FIX #166: SysV return-register selection by the RETURNED VALUE's dtype. An
         // explicit `return <float>` must place its result in xmm0 (movsd), NOT rax — the
         // implicit tail-return path (nb_finish_body) already does this, and an explicit
@@ -22339,7 +22418,27 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // heap table (no machine code), and main.mind's float-free source makes every
         // init INT, so this is byte-identical for the integer native-ELF oracle.
         let dtbl: i64 = __mind_load_i64(lcell + 8);
-        let init_dt: i64 = nb_node_dtype_tbl(init, dtbl, lets, lcell, buf, params_addr, n_params);
+        // FIX #176: prefer the let's DECLARED type annotation (child1) for the slot dtype.
+        // The init was lowered then the let-env RESTORED (pre_init_n) above, so re-deriving
+        // a value-if init's dtype from its then-branch tail (`if c { let t: f64 = ..; t }`)
+        // FAILS — the tail ident `t` is a branch-local no longer in the env, classifying INT
+        // — and a later `r + 1.0` then took the wrong GP-integer path. The annotation is
+        // authoritative: an f64/f32 declaration tags the slot FLOAT directly. Fall back to
+        // the init-derived dtype when there is no float annotation (an un-annotated or
+        // non-float let). main.mind declares no f64/f32 lets, so ann_dt is always INT there
+        // and init_dt is used unchanged — byte-identical.
+        let type_leaf: i64 = ast_child1(node);
+        let ann_dt: i64 = if type_leaf != 0 {
+            nb_param_is_float(buf, type_leaf)
+        } else {
+            nb_dtype_int()
+        };
+        let init_dt_raw: i64 = nb_node_dtype_tbl(init, dtbl, lets, lcell, buf, params_addr, n_params);
+        let init_dt: i64 = if ann_dt == nb_dtype_float() {
+            nb_dtype_float()
+        } else {
+            init_dt_raw
+        };
         let _b: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), s1.last_id, nb_let_descriptor(init, ast_child1(node), buf, srt));
         let _dt: i64 = nb_dtype_tag_slot(dtbl, s1.last_id, init_dt);
         return s1;
@@ -22362,6 +22461,21 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // no new id (mirrors body_env.insert @lower.rs 4724). next_id/last_id pass
         // through from the RHS lowering.
         let name_leaf: i64 = ast_child0(node);
+        // FIX #175: a value-if RHS (`x = if c { A } else { B }`) must lower through the real
+        // branch/merge path (nb_if_value has the jmp table), NOT nb_expr, whose in-expression
+        // ast_if arm fail-closes to a silent const-0 (#171) — a SILENT WRONG ANSWER. Route it
+        // as nb_lower_let_init does, then rebind NAME to the if's dst slot with its inherited
+        // dtype. Early-return statement form (the mis-lower trap). main.mind never assigns a
+        // value-if, so this branch is inert during self-compile — byte-identical.
+        let rhs_node: i64 = ast_child2(node);
+        if is_any_value_if_expr(rhs_node) == 1 {
+            let sv: NbState = nb_if_value(st, buf, rhs_node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
+            let dtblv: i64 = __mind_load_i64(lcell + 8);
+            let rhsdtv: i64 = nb_node_dtype_tbl(rhs_node, dtblv, lets, lcell, buf, params_addr, n_params);
+            let _bv: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), sv.last_id, 0);
+            let _dtv: i64 = nb_dtype_tag_slot(dtblv, sv.last_id, rhsdtv);
+            return sv;
+        }
         let s1: NbState = nb_expr(st, buf, ast_child2(node), params_addr, n_params, calls, lets, lcell);
         // FIX #167: propagate the RHS dtype onto the REBOUND slot, mirroring the let-INIT
         // arm (22258-22260). Without this a `y = 3.0 * 2.0` rebind leaves y's slot reading
@@ -22629,7 +22743,7 @@ pub fn nb_if_stmt_merged(st: NbState, buf: i64, node: i64, params_addr: i64, n_p
     // Prevents a later sibling if's `in_outer` from seeing this if's branch-local
     // names (which would elide the oracle's ConstI64(0) placeholders).
     __mind_store_i64(lcell, outer_n);
-    let _rb: i64 = nb_rebind_merges(mt, nmerged, 0, lets, lcell);
+    let _rb: i64 = nb_rebind_merges(mt, nmerged, 0, lets, lcell, buf);
     NbState { code: c_ej, next_id: merge_base + nmerged, last_id: dst_id, ncalls: s_eb.ncalls }
 }
 
@@ -22886,7 +23000,7 @@ pub fn nb_if_value_merged(st: NbState, buf: i64, node: i64, params_addr: i64, n_
     // the ConstI64(0) placeholders the oracle emits. The merge stores above already
     // consumed the branch-exit slots, so truncating here is safe.
     __mind_store_i64(lcell, outer_n);
-    let _rb: i64 = nb_rebind_merges(mt, nmerged, 0, lets, lcell);
+    let _rb: i64 = nb_rebind_merges(mt, nmerged, 0, lets, lcell, buf);
 
     // The value-if's VALUE is dst_id, but the frame also holds the nmerged merge
     // slots (merge_base..merge_base+nmerged), which sit ABOVE dst in physical order.
@@ -23042,15 +23156,35 @@ pub fn nb_emit_merge_stores(code: String, buf: i64, mt: i64, nmerged: i64, i: i6
 }
 
 // Rebind each merged name's let-env to its merge slot (post-if dominating value).
-pub fn nb_rebind_merges(mt: i64, nmerged: i64, i: i64, lets: i64, lcell: i64) -> i64 {
+pub fn nb_rebind_merges(mt: i64, nmerged: i64, i: i64, lets: i64, lcell: i64, buf: i64) -> i64 {
     if i >= nmerged {
         return 0;
     }
     let lo: i64 = __mind_load_i64(mt + (i * 5 + 0) * 8);
     let hi: i64 = __mind_load_i64(mt + (i * 5 + 1) * 8);
     let merge_slot: i64 = __mind_load_i64(mt + (i * 5 + 4) * 8);
+    // FIX #174: propagate the merged variable's FLOAT dtype onto its fresh merge slot.
+    // An if-statement branch merge binds the name to a NEW slot (merge_slot); without
+    // inheriting the pre-branch dtype the merged var classifies INT, so a later float op
+    // over it (`x + 1.0` after `let x: f64 = 1.5; if c { x = 2.5; }`) takes the GP-integer
+    // path and returns a wrong value. The outer let-env has been restored to its pre-if
+    // size BEFORE this rebind (see nb_if_value_merged / nb_if_stmt_merged), so the lookup
+    // resolves the PRE-branch binding; tag merge_slot with its dtype. main.mind's source is
+    // float-free, so every merged slot stays INT (the table default) and the integer
+    // native-ELF emission is byte-identical.
+    let dtbl: i64 = __mind_load_i64(lcell + 8);
+    let prior: i64 = if dtbl != 0 {
+        nb_lets_lookup(lets, lcell, buf, lo, hi)
+    } else {
+        0 - 1
+    };
+    let _dt: i64 = if prior >= 0 {
+        nb_dtype_tag_slot(dtbl, merge_slot, nb_dtype_get(dtbl, prior))
+    } else {
+        0
+    };
     let _b: i64 = nb_lets_bind(lets, lcell, lo, hi, merge_slot, 0);
-    nb_rebind_merges(mt, nmerged, i + 1, lets, lcell)
+    nb_rebind_merges(mt, nmerged, i + 1, lets, lcell, buf)
 }
 
 // then-branch join tail: on fall-through, copy then_result -> dst and emit the
@@ -23182,6 +23316,14 @@ pub fn nb_count_expr(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
     if k == ast_neg() {
         let after_op: i64 = nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params, clets, clcell);
         return after_op + 1;
+    }
+    // FIX #172: `!x` lowers to operand ; const-0 ; Eq — so it consumes the operand's ids
+    // + 2 (the zero slot and the Eq-result slot), matching nb_expr's ast_not arm. Pre-fix
+    // this fell to the binop tail and null-deref'd on ast_child1 == 0. main.mind's native
+    // source has no `!` here, so this never fires during self-compile.
+    if k == ast_not() {
+        let nafter_op: i64 = nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params, clets, clcell);
+        return nafter_op + 2;
     }
     // A value-if in EXPRESSION position is lowered fail-closed as a single const-0 slot
     // by nb_expr's ast_if arm (in-expression value-if lowering is deferred — see there),
@@ -23457,6 +23599,12 @@ pub fn nb_ccount_expr(buf: i64, node: i64, ccell: i64) -> i64 {
     // faulting the call-table sizing walker on any `-EXPR`. main.mind's native source has
     // no unary minus, so this never fires during self-compile.
     if k == ast_neg() {
+        return nb_ccount_expr(buf, ast_child0(node), ccell);
+    }
+    // FIX #172: `!x` — walk the operand for call sites (a negated call is still a call).
+    // Pre-fix this fell to the binop tail and recursed into ast_child1 == 0 (null),
+    // faulting the call-table sizing walker on any `!EXPR`. Never fires during self-compile.
+    if k == ast_not() {
         return nb_ccount_expr(buf, ast_child0(node), ccell);
     }
     // FIX #171: a value-if in EXPRESSION position — walk cond + both branch blocks for
@@ -24698,6 +24846,12 @@ pub fn nb_reach_expr(buf: i64, fns: i64, n_fns: i64, reach: i64, node: i64, chan
     // reachability pass walked a `-EXPR` or a nested value-if. Inert for main.mind's
     // float-free source (no such nodes reach here during self-compile).
     if k == ast_neg() {
+        return nb_reach_expr(buf, fns, n_fns, reach, ast_child0(node), changed);
+    }
+    // FIX #172: `!x` — walk the operand to mark reachable callees. Pre-fix this fell to the
+    // binop tail and null-deref'd on ast_child1 == 0 when the call-graph reachability pass
+    // walked a `!EXPR`. Inert for main.mind's `!`-free natively-emitted source.
+    if k == ast_not() {
         return nb_reach_expr(buf, fns, n_fns, reach, ast_child0(node), changed);
     }
     if k == ast_if() {
@@ -26254,6 +26408,10 @@ pub fn nb_node_dtype(node: i64) -> i64 {
     if k == ast_neg() {
         return nb_node_dtype(ast_child0(node));
     }
+    // FIX #172: `!x` (`x == 0`) yields an i64 boolean -> INT, regardless of operand dtype.
+    if k == ast_not() {
+        return nb_dtype_int();
+    }
     // FIX #171: a value-if (`if C { A } else { B }`) has the dtype of its branch values,
     // classified off the then-branch's tail expression. This lets a `let r = if C {2.0}
     // else {3.0}; r + 1.0` binding tag r's slot FLOAT (nb_stmt's let arm reads this),
@@ -26350,6 +26508,10 @@ pub fn nb_node_dtype_tbl(node: i64, tbl: i64, lets: i64, lcell: i64, buf: i64, p
     // float-let-bound `x` classifies FLOAT). main.mind's source is float-free -> INT.
     if k == ast_neg() {
         return nb_node_dtype_tbl(ast_child0(node), tbl, lets, lcell, buf, params_addr, n_params);
+    }
+    // FIX #172: `!x` (`x == 0`) yields an i64 boolean -> INT, regardless of operand dtype.
+    if k == ast_not() {
+        return nb_dtype_int();
     }
     // FIX #171: a value-if classifies as its then-branch tail dtype (table-aware). Lets a
     // `let r = if C {float} else {float}` binding tag r FLOAT so a later `r + 1.0` routes
