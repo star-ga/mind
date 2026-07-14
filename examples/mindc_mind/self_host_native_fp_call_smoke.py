@@ -188,6 +188,51 @@ def main() -> int:
         ("fn f() -> f64 { let c: i64 = 0; if c == 1 { 2.0 } else { 3.0 } }", 3),   # else branch
         ("fn f() -> f64 { let c: i64 = 1; let r: f64 = if c == 1 { 2.0 } else { 3.0 }; "
          "r + 1.0 }", 3),                                                          # dst FLOAT-tagged
+        # ---- audit regression batch (cross-family Fable-5 audit, 2026-07-14): float dtype
+        # must survive CONTROL-FLOW rebinds; value-ifs in return/assign position must lower
+        # (not silently const-0); -0.0 must fold to true IEEE negation; `!x` must not crash.
+        # ---- #174: an if-STATEMENT branch merge (`if c { x = 2.5; }`) rebinds the merged var
+        # to a FRESH slot; it must INHERIT the pre-branch FLOAT dtype, else `x + 1.0` takes the
+        # GP-integer path and returns a wrong value. c=0 -> x=1.5 -> 2.5; c=1 -> x=2.5 -> 3.5.
+        ("fn f(c: i64) -> f64 { let mut x: f64 = 1.5; if c == 1 { x = 2.5; } return x + 1.0; } "
+         "fn caller() -> f64 { f(0) }", 2),
+        ("fn f(c: i64) -> f64 { let mut x: f64 = 1.5; if c == 1 { x = 2.5; } return x + 1.0; } "
+         "fn caller() -> f64 { f(1) }", 3),
+        # ---- #174 (loop form): a while-carried float accumulator keeps its FLOAT dtype on the
+        # loop working slot, so `a = a + 1.5` in the body routes SSE2. n=3 -> 4.5 -> 4.
+        ("fn s(n: i64) -> f64 { let mut a: f64 = 0.0; let mut i: i64 = 0; "
+         "while i < n { a = a + 1.5; i = i + 1; } return a; } fn caller() -> f64 { s(3) }", 4),
+        # ---- #175: a value-if in RETURN position must lower through the real branch/merge
+        # path (nb_if_value), NOT nb_expr's fail-closed const-0 (which silently returned 0 for
+        # EVERY input, even integers). Float branches here; the int form hits the same arm.
+        ("fn f(c: i64) -> f64 { return if c == 1 { 10.0 } else { 20.0 }; } "
+         "fn caller() -> f64 { f(0) }", 20),
+        ("fn f(c: i64) -> f64 { return if c == 1 { 10.0 } else { 20.0 }; } "
+         "fn caller() -> f64 { f(1) }", 10),
+        # ---- #175: a value-if in ASSIGN position, same root cause + slot re-tag FLOAT.
+        ("fn f(c: i64) -> f64 { let mut x: f64 = 0.0; x = if c == 1 { 10.0 } else { 20.0 }; "
+         "return x; } fn caller() -> f64 { f(0) }", 20),
+        ("fn f(c: i64) -> f64 { let mut x: f64 = 0.0; x = if c == 1 { 10.0 } else { 20.0 }; "
+         "return x; } fn caller() -> f64 { f(1) }", 10),
+        # ---- #176: a value-if let-INIT with a branch-LOCAL float binding — the slot dtype
+        # must come from the DECLARED annotation (`let r: f64`), because the then-tail ident
+        # `t` is scoped OUT after the let-env restore and would classify INT. c=0 -> 2.5+1=3.5;
+        # c=1 -> (t=1.5)+1 = 2.5.
+        ("fn f(c: i64) -> f64 { let r: f64 = if c == 1 { let t: f64 = 1.5; t } else { 2.5 }; "
+         "return r + 1.0; } fn caller() -> f64 { f(0) }", 3),
+        ("fn f(c: i64) -> f64 { let r: f64 = if c == 1 { let t: f64 = 1.5; t } else { 2.5 }; "
+         "return r + 1.0; } fn caller() -> f64 { f(1) }", 2),
+        # ---- #173: a negative float LITERAL folds to true IEEE-754 negation (sign-bit flip),
+        # so -0.0 stays -0.0 and 1.0 / -0.0 = -inf (< 0 -> 1). The prior `0.0 - x` path gave
+        # +0.0 (round-to-nearest), so 1.0 / +0.0 = +inf (>= 0 -> 2), the wrong sign.
+        ("fn f() -> f64 { let a: f64 = -0.0; let b: f64 = 1.0 / a; "
+         "if b < 0.0 { return 1.0; } return 2.0; } fn caller() -> f64 { f() }", 1),
+        # ---- #172: logical NOT `!x` desugars to `x == 0` and must lower in ALL native walkers
+        # (nb_expr / nb_count_expr / nb_ccount_expr / nb_reach_expr); pre-fix it fell to the
+        # binop tail and null-deref SIGSEGV'd. `!x` bare ident and `!(x == 1)` over a compare.
+        ("fn g(x: i64) -> f64 { if !x { 7.0 } else { 9.0 } } fn caller() -> f64 { g(0) }", 7),
+        ("fn g(x: i64) -> f64 { if !x { 7.0 } else { 9.0 } } fn caller() -> f64 { g(1) }", 9),
+        ("fn g(x: i64) -> f64 { if !(x == 1) { 7.0 } else { 9.0 } } fn caller() -> f64 { g(0) }", 7),
     ]
     all_ok = True
     with tempfile.TemporaryDirectory() as td:
