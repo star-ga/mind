@@ -17,7 +17,7 @@
 //! hand-written drifting inverse (the classic `X -> 125` / `125 -> Y` desync)
 //! is structurally impossible, not merely discouraged. Phase 1 uses
 //! statement-form `if … { return …; }` chains only — exactly the constructs the
-//! shipped `examples/salov_bijection` already runs on both backends — avoiding
+//! shipped `examples/bimap_currency` already runs on both backends — avoiding
 //! the native-ELF value-if defect family. The Phase-2 canonical seedless
 //! perfect-hash inverse swaps only the `from_str` body.
 //!
@@ -200,7 +200,10 @@ pub(crate) fn expand_bimap(
                     enum_diags.push(
                         err(
                             "E2017",
-                            format!("bimap duplicate key: ordinal {} appears more than once", r.ordinal),
+                            format!(
+                                "bimap duplicate key: ordinal {} appears more than once",
+                                r.ordinal
+                            ),
                         )
                         .with_span(span_of(source, r.span, file)),
                     );
@@ -259,9 +262,16 @@ pub(crate) fn expand_bimap(
         }
 
         let enum_span = *span;
-        let pairs: Vec<(i64, String)> =
-            rows.iter().map(|r| (r.ordinal, r.literal.clone())).collect();
-        synthesized.push(make_count_fn(&count_fn, &base, pairs.len() as i64, enum_span));
+        let pairs: Vec<(i64, String)> = rows
+            .iter()
+            .map(|r| (r.ordinal, r.literal.clone()))
+            .collect();
+        synthesized.push(make_count_fn(
+            &count_fn,
+            &base,
+            pairs.len() as i64,
+            enum_span,
+        ));
         synthesized.push(make_to_str_fn(&to_str_fn, &base, &pairs, enum_span));
         synthesized.push(make_from_str_fn(&from_str_fn, &base, &pairs, enum_span));
 
@@ -277,7 +287,12 @@ pub(crate) fn expand_bimap(
 
     // Deterministic emission: all violations across the module sorted by span
     // start offset (unique usize — no tie ambiguity), byte-identical x86/ARM.
-    diags.sort_by_key(|d| d.span.as_ref().map(|s| (s.line, s.column)).unwrap_or((0, 0)));
+    diags.sort_by_key(|d| {
+        d.span
+            .as_ref()
+            .map(|s| (s.line, s.column))
+            .unwrap_or((0, 0))
+    });
     diags
 }
 
@@ -306,7 +321,14 @@ fn make_to_str_fn(name: &str, base: &str, pairs: &[(i64, String)], span: Span) -
     }
     body.push(ret(Node::Lit(Literal::Str(String::new()), span), span));
     let params = vec![param("k", TypeAnn::ScalarI64, span)];
-    fn_def(name, base, params, TypeAnn::Named("String".to_string()), body, span)
+    fn_def(
+        name,
+        base,
+        params,
+        TypeAnn::Named("String".to_string()),
+        body,
+        span,
+    )
 }
 
 /// `pub fn <enum>_from_str(s: String) -> i64 {
@@ -318,10 +340,7 @@ fn make_from_str_fn(name: &str, base: &str, pairs: &[(i64, String)], span: Span)
     for (ord, lit) in pairs {
         let call = Node::Call {
             callee: "string_eq".to_string(),
-            args: vec![
-                ident("s", span),
-                Node::Lit(Literal::Str(lit.clone()), span),
-            ],
+            args: vec![ident("s", span), Node::Lit(Literal::Str(lit.clone()), span)],
             span,
         };
         let cond = binary(BinOp::Eq, call, Node::Lit(Literal::Int(1), span), span);
@@ -459,7 +478,10 @@ mod tests {
         assert_eq!(count_named(&m, "currency_to_str"), 1);
 
         let diags = expand_bimap(&mut m, src, None);
-        assert!(diags.is_empty(), "second expansion must not diagnose: {diags:?}");
+        assert!(
+            diags.is_empty(),
+            "second expansion must not diagnose: {diags:?}"
+        );
         assert_eq!(m.items.len(), before, "second expansion must add no items");
         assert_eq!(
             count_named(&m, "currency_to_str"),

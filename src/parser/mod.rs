@@ -5307,11 +5307,7 @@ pub fn parse_with_diagnostics_in_file(
         // message string, `ParseError` having no code field).
         Ok(mut m) => {
             let diags = expand_bimap::expand_bimap(&mut m, src, file);
-            if diags.is_empty() {
-                Ok(m)
-            } else {
-                Err(diags)
-            }
+            if diags.is_empty() { Ok(m) } else { Err(diags) }
         }
         Err(e) => {
             let diag = PrettyDiagnostic {
