@@ -17635,6 +17635,15 @@ pub fn srt_build(src_addr: i64, src_len: i64) -> i64 {
     srt_collect(tokens, src_addr, 0, t)
 }
 
+// RI-D2 S-C1 fix: struct registry from an ALREADY-lexed token stream (the srt twin of
+// frt_build_from_tokens). Lets the whole-compiler native path (selftest_native_elf_hb)
+// build BOTH registries from the single token Vec it already lexed, instead of two more
+// full-source lexes into the fixed 1 GiB native bump arena. Byte-identical registry.
+pub fn srt_build_from_tokens(tokens: Vec, src_addr: i64) -> i64 {
+    let t: i64 = srt_alloc();
+    srt_collect(tokens, src_addr, 0, t)
+}
+
 // Find the struct index whose NAME span equals src[tlo..thi), or -1. This is the
 // multi-struct key: the receiver's declared type name selects the right struct.
 pub fn srt_find_by_name(t: i64, src: i64, tlo: i64, thi: i64, k: i64) -> i64 {
@@ -20893,6 +20902,19 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let nc: i64 = nb_calls_push(calls, sa.ncalls, rel_off, ast_span_lo(callee), ast_span_hi(callee));
         // Pop the stack args + alignment pad before reading the result.
         let c_clean: String = nb_emit_stack_cleanup(c_rel, args_len);
+        // RI-D2 S-C1: spill the call result per the callee's DECLARED return dtype (frt,
+        // at lcell+16). A FLOAT-returning callee returns in xmm0 (SysV), so spill xmm0 ->
+        // dst slot (movsd) and TAG the dst slot FLOAT in the per-fn dtype table (at
+        // lcell+8) so a downstream expr / let sees the call result as float. An INT/pointer
+        // callee returns in rax — the UNCHANGED nb_store_rax path. Every callee in
+        // main.mind's float-free source registers INT (frt all-INT), so every call here
+        // takes the rax branch and the emission is byte-for-byte identical.
+        let callee_dt: i64 = frt_lookup_dtype(__mind_load_i64(lcell + 16), buf, ast_span_lo(callee), ast_span_hi(callee));
+        if callee_dt == nb_dtype_float() {
+            let c_fres: String = nb_fp_movsd_store_xmm0(c_clean, nb_slot_disp(id));
+            let _tg: i64 = nb_dtype_tag_slot(__mind_load_i64(lcell + 8), id, nb_dtype_float());
+            return NbState { code: c_fres, next_id: id + 1, last_id: id, ncalls: nc };
+        }
         // Spill the result (rax) into the call's dst slot.
         let c_res: String = nb_store_rax(c_clean, nb_slot_disp(id));
         return NbState { code: c_res, next_id: id + 1, last_id: id, ncalls: nc };
@@ -22475,6 +22497,15 @@ pub fn nb_count_expr(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
     if k == ast_int_lit() {
         return next_id + 1;
     }
+    // RI-D2 S-C1: a float literal consumes exactly ONE SSA slot, identical to an int
+    // literal (nb_expr's ast_float_lit arm emits const+movsd-store into slot `id` and
+    // returns id+1). Without this arm a float lit falls to the binop arm and walks a
+    // leaf's absent children, faulting; and the frame slot-count would be off. main.mind
+    // has no float literals, so this never fires during self-compile — frame sizes and
+    // the integer native-ELF emission stay byte-identical.
+    if k == ast_float_lit() {
+        return next_id + 1;
+    }
     if k == ast_ident() {
         return next_id;
     }
@@ -22741,6 +22772,14 @@ pub fn nb_ccount_expr(buf: i64, node: i64, ccell: i64) -> i64 {
     if k == ast_int_lit() {
         return 0;
     }
+    // RI-D2 S-C1: a float literal is a call-free LEAF (like an int literal). Without
+    // this arm it falls through to the binop arm and recurses into a leaf's absent
+    // children, faulting on any float-bearing body. main.mind's source has no float
+    // literals, so this arm never fires during self-compile; it emits nothing (this
+    // walker only SIZES the calls table), so it cannot perturb any byte oracle.
+    if k == ast_float_lit() {
+        return 0;
+    }
     if k == ast_ident() {
         return 0;
     }
@@ -22868,11 +22907,24 @@ pub fn nb_round16(x: i64) -> i64 {
 // IS the FnDef's ret_id: emit `mov rax,[ret_id]` then the epilogue. A tail-return
 // helper (each arm `return`s the NbState directly) so it stays in the self-host
 // mic@3 subset — NOT a struct-typed value-if (which mis-lowers).
-pub fn nb_finish_body(st0: NbState, is_entry: i64, stmts_addr: i64, stmts_len: i64) -> NbState {
+pub fn nb_finish_body(st0: NbState, is_entry: i64, stmts_addr: i64, stmts_len: i64, ret_dt: i64) -> NbState {
     if nb_last_emits_return(stmts_addr, stmts_len) == 1 {
         return st0;
     }
-    let r1: String = nb_load_rax(st0.code, nb_slot_disp(st0.last_id));
+    // RI-D2 S-C1: return-register selection by the fn's declared return dtype. A
+    // FLOAT-returning fn (ret_dt == nb_dtype_float(), i.e. its declared return type is
+    // f64/f32 per the frt registry) loads its tail-expr result into xmm0 (movsd), per
+    // the SysV AMD64 float-return-in-xmm0 convention — so a caller's call-site xmm0
+    // spill (the nb_expr call arm below) reads the value from the right register file.
+    // An INT/pointer return loads rax (the UNCHANGED path). main.mind's fns all return
+    // INT (frt classifies every fn INT — its float-returning matches are comments the
+    // lexer strips, and std externs are `;`-terminated with no body), so ret_dt is
+    // always INT during self-compile and this stays byte-for-byte identical.
+    let r1: String = if ret_dt == nb_dtype_float() {
+        nb_fp_movsd_load_xmm0(st0.code, nb_slot_disp(st0.last_id))
+    } else {
+        nb_load_rax(st0.code, nb_slot_disp(st0.last_id))
+    };
     let r2: String = nb_emit_return(r1, is_entry);
     NbState { code: r2, next_id: st0.next_id, last_id: st0.last_id, ncalls: st0.ncalls }
 }
@@ -22950,7 +23002,7 @@ pub fn nb_register_struct_params(srt: i64, src: i64, params_addr: i64, n_params:
 // Returns NbState{code = this fn's bytes, ncalls = updated count}. `srt` is the
 // whole-module struct registry, used to give struct-typed params a field-offset
 // descriptor in the let-env (the Step-2 FieldAccess path).
-pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64, srt: i64) -> NbState {
+pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64, srt: i64, frt: i64) -> NbState {
     let params_addr: i64 = ast_child1(node);
     let n_params: i64 = ast_aux(node) / 2;
     let body: i64 = ast_child2(node);
@@ -23035,7 +23087,7 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // word1 = the per-fn dtype table, both threaded together like the count).
     // Empty for the scalar fixtures.
     let lets: i64 = __mind_alloc(512 * 4 * 8);
-    let lcell: i64 = __mind_alloc(16);
+    let lcell: i64 = __mind_alloc(24);
     __mind_store_i64(lcell, 0);
     // RI-B1 FOLLOW-UP: per-fn SSA dtype table (nb_dtype_table_new, all-INT default),
     // threaded through the EXISTING lets/lcell plumbing at lcell+8 — nb_expr's binop
@@ -23044,6 +23096,12 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // slot defaults INT, and main.mind's float-free source never tags one FLOAT, so the
     // integer native-ELF oracle stays byte-identical.
     __mind_store_i64(lcell + 8, nb_dtype_table_new(nslots + 64));
+    // RI-D2 S-C1: stash the whole-module return-type registry (frt) at lcell+16, so the
+    // body-lowering path (which already threads lcell) can classify a CALL by its callee's
+    // declared return dtype without a separate frt parameter: nb_node_dtype_tbl's ast_call
+    // arm and nb_expr's call-result spill both read lcell+16. frt classifies every fn in
+    // main.mind's float-free source INT, so the value read here is inert for self-compile.
+    __mind_store_i64(lcell + 16, frt);
     // RI-D2 S-B classifier half: tag each FLOAT (f64/f32) param's SSA slot FLOAT in the
     // per-fn dtype table (param i occupies SSA slot i). A later `x + 2.5` binop over a
     // float param then resolves `x` FLOAT (nb_node_dtype_tbl's resolve_param branch) and
@@ -23069,7 +23127,11 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // Implicit tail-return (mirror src/native::lower_fn:1155-1162). Routed through a
     // tail-return helper (NOT a `let s: NbState = if {..} else {..}` value-if — that
     // struct-typed value-if shape is outside the self-host subset and mis-lowers).
-    let st_body: NbState = nb_finish_body(st_body0, is_entry, stmts_addr, stmts_len);
+    // RI-D2 S-C1: this fn's own declared return dtype (FLOAT for f64/f32, else INT),
+    // looked up by name in the frt registry, drives the return-register selection in
+    // nb_finish_body (xmm0 for a float return, rax otherwise). INT for every main.mind fn.
+    let ret_dt: i64 = frt_lookup_dtype(frt, buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node)));
+    let st_body: NbState = nb_finish_body(st_body0, is_entry, stmts_addr, stmts_len, ret_dt);
 
     // Patch every recorded forward jump into this fn's assembled code IN PLACE
     // (string_addr) before nb_lower_all concatenates it into the image. Intra-fn
@@ -24974,9 +25036,19 @@ pub fn selftest_native_elf_hb(src_addr: i64, src_len: i64, hash_addr: i64, user_
     // Whole-module struct registry (type-name -> field-name list), built once and
     // threaded through nb_lower_all so each fn's struct-typed params resolve their
     // field offsets (the Step-2 FieldAccess path) without re-lexing per fn.
-    let srt: i64 = srt_build(src_addr, src_len);
+    // RI-D2 S-C1 fix: build BOTH whole-module registries from the `tokens` already lexed
+    // above (line ~24984), NOT via two more full-source lexes. Each extra full-source lex
+    // permanently occupies the fixed 1 GiB native bump arena (no free); the redundant srt+
+    // frt lexes overflowed it on the whole-compiler source (native stage1 segfault while
+    // the unlimited-heap .so passed). Reusing `tokens` yields byte-identical registries.
+    let srt: i64 = srt_build_from_tokens(tokens, src_addr);
+    // RI-D2 S-C1: whole-module return-type registry (fn name -> declared-return-dtype),
+    // built once and threaded through nb_lower_all like srt, so a call is spilled from the
+    // right register file (xmm0 for a float-returning callee) and classified by its
+    // callee's return dtype. Every fn in main.mind's float-free source registers INT.
+    let frt: i64 = frt_build_from_tokens(tokens, src_addr);
     let acc0: NbState = NbState { code: string_new(), next_id: 0, last_id: 0, ncalls: 0 };
-    let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, entry_idx, srt);
+    let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, entry_idx, srt, frt);
     let image0: String = lr.code;
     let total_calls: i64 = lr.ncalls;
 
@@ -25113,7 +25185,7 @@ pub fn nb_is_entry(k: i64, entry_idx: i64) -> i64 {
 // The guard returns the param `acc` (NOT a struct literal) so the body stays
 // inside the self-host nfn-emittable seq subset (a struct-literal guard-return in
 // a multi-statement recursive struct fn is outside it — verified empirically).
-pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, calls: i64, starts: i64, call_owner: i64, entry_idx: i64, srt: i64) -> NbState {
+pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, calls: i64, starts: i64, call_owner: i64, entry_idx: i64, srt: i64, frt: i64) -> NbState {
     if k >= n_fns {
         return acc;
     }
@@ -25122,12 +25194,12 @@ pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, ca
     let ncalls0: i64 = acc.ncalls;
     let image: String = acc.code;
     __mind_store_i64(starts + k * 8, string_len(image));
-    let fr: NbState = nb_lower_fn(buf, node, is_entry, calls, ncalls0, srt);
+    let fr: NbState = nb_lower_fn(buf, node, is_entry, calls, ncalls0, srt, frt);
     // Record owner for each newly-added call.
     let _o: i64 = nb_set_owners(call_owner, ncalls0, fr.ncalls, k);
     let image2: String = string_push_str(image, fr.code);
     let acc2: NbState = NbState { code: image2, next_id: 0, last_id: 0, ncalls: fr.ncalls };
-    nb_lower_all(acc2, buf, ordered, n_fns, k + 1, calls, starts, call_owner, entry_idx, srt)
+    nb_lower_all(acc2, buf, ordered, n_fns, k + 1, calls, starts, call_owner, entry_idx, srt, frt)
 }
 pub fn nb_set_owners(call_owner: i64, c0: i64, c1: i64, k: i64) -> i64 {
     if c0 >= c1 {
@@ -25431,6 +25503,15 @@ pub fn nb_node_dtype_tbl(node: i64, tbl: i64, lets: i64, lcell: i64, buf: i64, p
     }
     if k == ast_float_lit() {
         return nb_dtype_float();
+    }
+    // RI-D2 S-C1: a CALL classifies as its callee's DECLARED return dtype, read from the
+    // frt registry (stashed at lcell+16 by nb_lower_fn). This lets an immediate binop over
+    // a call — `g() + 1.5` where `g` returns f64 — see the call operand as FLOAT and route
+    // the SSE2 arm. frt_lookup_dtype returns INT for a null registry or an unregistered
+    // callee, and every callee in main.mind's float-free source registers INT, so a call
+    // node here classifies INT during self-compile exactly as the prior fall-through did.
+    if k == ast_call() {
+        return frt_lookup_dtype(__mind_load_i64(lcell + 16), buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node)));
     }
     if k == ast_paren() {
         return nb_node_dtype_tbl(ast_child0(node), tbl, lets, lcell, buf, params_addr, n_params);
@@ -25870,6 +25951,244 @@ pub fn selftest_native_elf_fp_param(src_addr: i64, src_len: i64) -> EmitState {
     let hbuf: i64 = __mind_alloc(32);
     let note: String = nb_build_note(string_new(), hbuf);
     let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
+
+// ---- RI-D2 S-C1: fn return-type registry (frt) ----------------------------------
+// A whole-module registry mapping each `fn NAME ( ... ) -> RETTYPE {` to its declared
+// return dtype (FLOAT for f64/f32, else INT), built by re-lexing the source exactly
+// like srt_build builds the struct registry. It answers ONE question at a call site:
+// "does the callee return a float?" — so a call's result is spilled from the correct
+// SysV register file (xmm0 for float, rax otherwise) and classified for downstream
+// float propagation. Requiring the trailing body `{` after RETTYPE means `;`-terminated
+// extern declarations (e.g. std's `unsafe fn ...-> f64;`) are NOT recorded as float —
+// they have no body and are never lowered on the native path. main.mind's own source
+// has zero float-returning fns (its `-> f64` matches are all in `//` comments the lexer
+// strips), so every fn registers INT and this registry is inert for self-compile.
+
+pub fn frt_cap() -> i64 {
+    4096
+}
+
+// Words per fn slot: name_lo + name_hi + ret_is_float.
+pub fn frt_slot_words() -> i64 {
+    3
+}
+
+pub fn frt_alloc() -> i64 {
+    let t: i64 = __mind_alloc((1 + frt_cap() * frt_slot_words()) * 8);
+    __mind_store_i64(t + 0, 0);
+    t
+}
+
+pub fn frt_count(t: i64) -> i64 {
+    __mind_load_i64(t + 0)
+}
+
+pub fn frt_slot_base(k: i64) -> i64 {
+    1 + k * frt_slot_words()
+}
+
+pub fn frt_name_lo(t: i64, k: i64) -> i64 {
+    __mind_load_i64(t + (frt_slot_base(k) + 0) * 8)
+}
+
+pub fn frt_name_hi(t: i64, k: i64) -> i64 {
+    __mind_load_i64(t + (frt_slot_base(k) + 1) * 8)
+}
+
+pub fn frt_ret(t: i64, k: i64) -> i64 {
+    __mind_load_i64(t + (frt_slot_base(k) + 2) * 8)
+}
+
+// Append a fn with name span (nlo, nhi) and return-dtype `ret_dt`. Overflow no-ops.
+pub fn frt_push(t: i64, nlo: i64, nhi: i64, ret_dt: i64) -> i64 {
+    let n: i64 = frt_count(t);
+    if n >= frt_cap() {
+        return n;
+    }
+    __mind_store_i64(t + (frt_slot_base(n) + 0) * 8, nlo);
+    __mind_store_i64(t + (frt_slot_base(n) + 1) * 8, nhi);
+    __mind_store_i64(t + (frt_slot_base(n) + 2) * 8, ret_dt);
+    __mind_store_i64(t + 0, n + 1);
+    n
+}
+
+// Classify a return-type span (lo, hi) as FLOAT (f64/f32) or INT, span-keyed (the
+// value-side twin of nb_param_is_float, which takes a type-leaf AST node). bytes
+// f=102, 6=54, 4=52, 3=51, 2=50, so "f64"=[102,54,52] and "f32"=[102,51,50].
+pub fn frt_ret_is_float(buf: i64, lo: i64, hi: i64) -> i64 {
+    let f64_buf: i64 = make_byte_buf_3(102, 54, 52);
+    if bytes_eq(buf, lo, hi, f64_buf, 0, 3) == 1 {
+        return nb_dtype_float();
+    }
+    let f32_buf: i64 = make_byte_buf_3(102, 51, 50);
+    if bytes_eq(buf, lo, hi, f32_buf, 0, 3) == 1 {
+        return nb_dtype_float();
+    }
+    nb_dtype_int()
+}
+
+// From the token AFTER a fn's name, scan forward to the signature's return-type. Stops
+// at the first `{` (a body brace with no preceding `->` = a unit return -> INT) or the
+// first `->` (arrow). At the arrow: RETTYPE is the next token and the body `{` must
+// follow it — `-> f64 {` records FLOAT; `-> TYPE ;` (extern, no body) or a multi-token
+// type (RETTYPE not immediately followed by `{`) records INT. Params in this subset are
+// `name: type` pairs with no braces/arrows, so the first arrow/brace found is the
+// signature's. Tail-recursive (self-host subset, no while).
+pub fn frt_scan_ret(toks: Vec, buf: i64, pos: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return nb_dtype_int();
+    }
+    let k: i64 = tok_kind(toks, pos);
+    if k == tk_lbrace() {
+        return nb_dtype_int();
+    }
+    if k == tk_arrow() {
+        if tok_kind(toks, pos + 2) == tk_lbrace() {
+            return frt_ret_is_float(buf, tok_lo(toks, pos + 1), tok_hi(toks, pos + 1));
+        }
+        return nb_dtype_int();
+    }
+    frt_scan_ret(toks, buf, pos + 1)
+}
+
+// Scan the token stream, recording every `fn NAME (...) -> RETTYPE {` def and its
+// return dtype. `fn` is a dedicated keyword token (tk_kw_fn), and the name is always the
+// next token (`pub fn NAME` yields kw_pub, kw_fn, NAME, so pos+1 is the name in both the
+// `fn` and `pub fn` forms). Advancing one token at a time is safe — a fn keyword only
+// appears at a def. Tail-recursive.
+pub fn frt_collect(toks: Vec, buf: i64, pos: i64, t: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return t;
+    }
+    if tok_kind(toks, pos) == tk_kw_fn() {
+        let ret_dt: i64 = frt_scan_ret(toks, buf, pos + 2);
+        let _p: i64 = frt_push(t, tok_lo(toks, pos + 1), tok_hi(toks, pos + 1), ret_dt);
+        return frt_collect(toks, buf, pos + 1, t);
+    }
+    frt_collect(toks, buf, pos + 1, t)
+}
+
+// Build (and return) a fresh return-type registry covering every fn def in `src`.
+pub fn frt_build(src_addr: i64, src_len: i64) -> i64 {
+    let tokens: Vec = lex(src_addr, src_len);
+    let t: i64 = frt_alloc();
+    frt_collect(tokens, src_addr, 0, t)
+}
+
+// RI-D2 S-C1 fix: build the registry from an ALREADY-lexed token stream, avoiding a
+// redundant full-source lex. The native-ELF program's heap is a FIXED 1 GiB bump arena
+// with no free (nb_arena_bytes), so each full-source lex of the ~1.75 MB self-host source
+// permanently retains its (doubling-reallocated) token Vec. Re-lexing in frt_build was the
+// 4th such lex on the whole-compiler path and tipped the arena past 1 GiB, so the native
+// stage1 segfaulted while compiling the full source (the .so, on the unlimited system
+// allocator, never hits the cap — which is why the LLVM gates stayed green). Reusing the
+// caller's tokens yields the byte-identical registry (same struct/return content) with one
+// fewer arena-resident lex. src_addr is still the byte source the spans key into.
+pub fn frt_build_from_tokens(tokens: Vec, src_addr: i64) -> i64 {
+    let t: i64 = frt_alloc();
+    frt_collect(tokens, src_addr, 0, t)
+}
+
+// Find the fn whose NAME span equals src[lo..hi), or -1. Tail-recursive.
+pub fn frt_find(t: i64, src: i64, lo: i64, hi: i64, k: i64) -> i64 {
+    if k >= frt_count(t) {
+        return 0 - 1;
+    }
+    if span_bytes_equal(src, lo, hi, frt_name_lo(t, k), frt_name_hi(t, k)) == 1 {
+        return k;
+    }
+    frt_find(t, src, lo, hi, k + 1)
+}
+
+// The callee's declared return dtype for the name span src[lo..hi): FLOAT iff the fn is
+// registered f64/f32-returning, else INT. A null registry (t == 0) or an unregistered
+// callee (e.g. an intrinsic, or a fn defined outside the scanned buffer) resolves to
+// INT — the safe default that keeps the integer/pointer call path unchanged.
+pub fn frt_lookup_dtype(t: i64, src: i64, lo: i64, hi: i64) -> i64 {
+    if t == 0 {
+        return nb_dtype_int();
+    }
+    let k: i64 = frt_find(t, src, lo, hi, 0);
+    if k < 0 {
+        return nb_dtype_int();
+    }
+    frt_ret(t, k)
+}
+
+// ---- RI-D2 S-C1 selftest: FLOAT call-RETURN dtype through native-ELF -------------
+// Proves a call to an f64-returning fn spills its result from xmm0 (SysV) and tags it
+// FLOAT so a downstream expr routes the SSE2 path — end to end through the GENERAL
+// nb_expr call arm + nb_lower_all + inter-fn rel32 patching (not a hand-emitted fp
+// stub). The fixture source declares >=2 fns (a float-returning callee `g` plus a
+// caller that consumes `g()` in a float expr); the LAST fn is the caller. A synthesized
+// entry stub sets rsp, calls the caller (rel32), truncates its xmm0 result to rax, and
+// exits — so the process exit code == trunc(value), the non-fakeable execution oracle
+// (a wrong rax-vs-xmm0 spill, a missing tag, or a wrong callee-return register faults or
+// returns the wrong integer). No frozen byte oracle exists for native-ELF float — the
+// deleted Rust native backend rejected ConstF64 — so the CPU exit code is the oracle.
+pub fn selftest_native_elf_fp_call(src_addr: i64, src_len: i64) -> EmitState {
+    let tokens: Vec = lex(src_addr, src_len);
+    let ast_root: i64 = parse(tokens, src_addr);
+    let items_addr: i64 = ast_child0(ast_root);
+    let items_len: i64 = ast_aux(ast_root);
+
+    // Collect every fn in source order (single file -> every fn is a root, no prune).
+    let ordered: i64 = __mind_alloc((items_len + 1) * 8);
+    let n_fns: i64 = nb_collect_fns(items_addr, items_len, 0, ordered, 0);
+
+    // Whole-module registries (struct-field + return-type).
+    let srt: i64 = srt_build(src_addr, src_len);
+    let frt: i64 = frt_build(src_addr, src_len);
+
+    // calls scratch table (one 3-i64 record per call site; +2 slack for our entry call).
+    let ccell: i64 = __mind_alloc(8);
+    __mind_store_i64(ccell, 0);
+    let n_calls: i64 = nb_count_all_calls(src_addr, ordered, n_fns, 0, ccell);
+    let calls: i64 = __mind_alloc((n_calls + 2) * 3 * 8);
+    let starts: i64 = __mind_alloc((n_fns + 1) * 8);
+    let call_owner: i64 = __mind_alloc((n_calls + 2) * 8);
+
+    // Lower every fn as NON-entry (entry_idx = -1) into one image; f -> g calls recorded.
+    let acc0: NbState = NbState { code: string_new(), next_id: 0, last_id: 0, ncalls: 0 };
+    let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, 0 - 1, srt, frt);
+    let body_image: String = lr.code;
+    let total_calls: i64 = lr.ncalls;
+
+    // Synthesized runnable entry at image offset 0:
+    //   movabs rsp, STACK_TOP ; call <caller> (rel32 placeholder) ; cvttsd2si rax,xmm0 ;
+    //   mov rdi,rax ; mov rax,60 ; syscall  (exit(trunc(caller's float result))).
+    let e0: String = string_new();
+    let e1: String = nb_push(e0, 72);
+    let e2: String = nb_push(e1, 188);
+    let e3: String = nb_i64le(e2, nb_stack_top());
+    let e4: String = nb_push(e3, 232);
+    let entry_call_site: i64 = string_len(e4);
+    let e5: String = nb_u32(e4, 0);
+    let e6: String = nb_fp_trunc_rax_xmm0(e5);
+    let entry: String = nb_emit_return(e6, 1);
+    let entry_len: i64 = string_len(entry);
+
+    // image = [entry][fn0..fnN]; shift each fn start past the entry stub, then link.
+    let _sh: i64 = nb_shift_starts(starts, n_fns, entry_len, 0);
+    let image: String = string_push_str(entry, body_image);
+    let code_addr: i64 = string_addr(image);
+
+    // fn_names for callee resolution, then patch every inter-fn rel32 (f -> g).
+    let fn_names: i64 = __mind_alloc((n_fns + 1) * 2 * 8);
+    let _fn: i64 = nb_fill_names(ordered, n_fns, 0, fn_names);
+    let _p: i64 = nb_patch_all(code_addr, calls, total_calls, call_owner, starts, fn_names, n_fns, src_addr, 0);
+
+    // Patch the entry's `call <caller>` rel32: the caller is the LAST fn (it consumes g()).
+    let caller_idx: i64 = n_fns - 1;
+    let caller_start: i64 = __mind_load_i64(starts + caller_idx * 8);
+    let rel: i64 = caller_start - (entry_call_site + 4);
+    let _pe: i64 = nb_patch_rel32(code_addr, entry_call_site, rel);
+
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(image, 0, note);
     EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
 }
 
