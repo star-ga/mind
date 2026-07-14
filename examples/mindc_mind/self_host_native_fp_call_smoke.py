@@ -85,6 +85,15 @@ def main() -> int:
         ("fn g() -> f64 { 3.0 } fn h() -> f64 { let r: f64 = g(); r + 1.5 }", 4),  # 4.5
         # extra op/value coverage: subtraction of the call result.
         ("fn g() -> f64 { 9.0 } fn f() -> f64 { g() - 2.5 }", 6),   # 9.0 - 2.5 = 6.5 -> 6
+        # ---- RI-D2 S-C2: FLOAT call-ARGUMENTS marshalled in the SSE arg pool ----
+        # single float arg: 3.0 flows into g's xmm0 (S-C2 arg), spilled to g's param
+        # slot (S-B param), returned via xmm0 (S-C1 return). Non-fakeable end to end.
+        ("fn g(x: f64) -> f64 { x * 2.0 } fn f() -> f64 { g(3.0) }", 6),  # 3.0*2.0=6.0
+        # MIXED two-pool proof: n->GP rdi, x->SSE xmm0 on INDEPENDENT counters. A single-
+        # pool ABI would put x in rsi (GP) or fault; only a correct two-pool split exits 4.
+        ("fn g(n: i64, x: f64) -> f64 { x + 1.0 } fn f() -> f64 { g(5, 3.0) }", 4),  # 3+1=4
+        # two float args: a->xmm0, b->xmm1 (sse_k advances 0->1 while gp_k stays 0).
+        ("fn g(a: f64, b: f64) -> f64 { a - b } fn f() -> f64 { g(9.0, 2.5) }", 6),  # 9-2.5=6.5
     ]
     all_ok = True
     with tempfile.TemporaryDirectory() as td:
@@ -110,7 +119,10 @@ def main() -> int:
             "float fn's result in xmm0 (SysV), nb_expr's call arm spills a float-returning "
             "callee from xmm0 and tags the dst slot FLOAT, and nb_node_dtype_tbl's ast_call "
             "arm classifies a call by its callee's return dtype, native-ELF end to end with "
-            "zero MLIR/LLVM (RI-D2 S-C1)"
+            "zero MLIR/LLVM (RI-D2 S-C1); AND FLOAT call-ARGUMENTS marshalled in the SSE arg "
+            "pool (nb_call_args records each arg's dtype, nb_emit_argregs loads a float arg "
+            "into xmm{sse_k} on an independent counter while int/ptr args keep the GP pool — "
+            "the SysV two-pool caller ABI mirroring nb_emit_params, RI-D2 S-C2)"
         )
         return 0
     print("FAIL  float call-return dtype gate")
