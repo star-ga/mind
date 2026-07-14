@@ -2241,6 +2241,15 @@ impl<'a> P<'a> {
         if !self.eat(b'}') {
             return Err(self.err("expected `}` to close enum".into()));
         }
+        // Reject duplicate variant names. The resolver collects variants into a
+        // `BTreeSet`, which would SILENTLY absorb a duplicate — leaving the enum
+        // with fewer distinct tags than written and deferring the error to a
+        // runtime non-dense-keys failure (a fail-open). Fail loud at parse.
+        for (i, v) in variants.iter().enumerate() {
+            if variants[..i].iter().any(|prev| prev.name == v.name) {
+                return Err(self.err(format!("duplicate enum variant `{}`", v.name)));
+            }
+        }
         // Record the enum name so a later `Name.Variant` reference normalises to
         // `Name::Variant` instead of parsing as a struct field access.
         if !self.enum_names.iter().any(|n| n == &name) {

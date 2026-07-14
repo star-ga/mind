@@ -89,3 +89,34 @@ fn unsupported_prefix_in_else_if_branch_reports_at_token() {
     assert_eq!(span.column, 9);
     assert!(diags[0].message.contains("unexpected `@`"));
 }
+
+// A duplicate enum variant name must be rejected loud at parse. Without this the
+// resolver collects variants into a `BTreeSet`, which silently absorbs the dup —
+// leaving the enum with fewer distinct tags than written (a fail-open the
+// downstream discriminant / niceness machinery can only catch at runtime).
+#[test]
+fn rejects_duplicate_enum_variant() {
+    let src = "enum Currency {\n    AUD,\n    JPY,\n    AUD,\n    USD,\n}\n";
+    let Err(diags) = parser::parse_with_diagnostics(src) else {
+        panic!("expected a parse error for the duplicate variant");
+    };
+    let joined = diags
+        .iter()
+        .map(|d| d.message.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        joined.contains("duplicate enum variant") && joined.contains("AUD"),
+        "expected a duplicate-variant diagnostic naming `AUD`, got: {joined}"
+    );
+}
+
+// A well-formed enum with distinct variant names must still parse cleanly.
+#[test]
+fn accepts_distinct_enum_variants() {
+    let src = "enum Currency {\n    AUD,\n    JPY,\n    USD,\n}\n";
+    assert!(
+        parser::parse_with_diagnostics(src).is_ok(),
+        "a distinct-variant enum must parse without error"
+    );
+}
