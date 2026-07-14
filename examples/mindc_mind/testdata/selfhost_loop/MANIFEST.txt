@@ -1,5 +1,6 @@
-# Frozen self-host bootstrap ELF (A6): the driver-bearing native compiler that
-# reproduces itself byte-identically (stage1==stage2==stage3). Regenerate via
-# self_host_loop_smoke.py with MINDC_SO set. NOT skippable in CI.
+# Frozen self-host bootstrap ELF (A6/RI-E1): the checked-in pure-MIND stage0
+# compiler that reproduces itself byte-identically (stage1==stage2==stage3)
+# and seeds the PRIMARY reproduction-independence loop. Regenerate via
+# self_host_loop_smoke.py --reseed with MINDC_SO set. NOT skippable in CI.
 # name	size_bytes	sha256
-stage1.elf	1337651	ad8ebe9e7312d55ef7528578c2b9cb8a3ee56d56eb6a0685901297451631537d
+stage1.elf	1345538	f03b2d4700d0b4153c8d400761793e2ef895041f05d3cefecbae0a56038a5905

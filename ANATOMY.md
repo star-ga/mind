@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3103 | **Est. tokens:** ~7,432,135
-**Generated:** 2026-07-13 23:20 UTC
+**Files:** 3104 | **Est. tokens:** ~7,433,557
+**Generated:** 2026-07-14 00:13 UTC
 
 ## Token Budget Guide
 
@@ -55,9 +55,9 @@
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 64 | ~110,900 |
+| `examples/mindc_mind/` | 65 | ~112,303 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
-| `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~83 |
+| `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
 | `examples/native/` | 4 | ~527 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
@@ -848,6 +848,7 @@
 - `self_host_native_fp_binop_smoke.py` (~1095 tok, large) — RI-B1 nb_expr FLOAT-op-FLOAT arithmetic routing gate (zero MLIR/LLVM).
 - `self_host_native_fp_expr_smoke.py` (~1020 tok, large) — RI-B1 nb_expr float-scalar routing gate (zero MLIR/LLVM).
 - `self_host_native_fp_let_smoke.py` (~1208 tok, large) — RI-B1 (#107 follow-up) FLOAT dtype propagation ACROSS a LET binding (zero MLIR/LLVM).
+- `self_host_native_fp_param_smoke.py` (~1403 tok, large) — RI-D2 S-B: FLOAT fn-param dtype classification + SysV SSE-spill ABI (zero MLIR/LLVM).
 - `self_host_native_fp_smoke.py` (~1142 tok, large) — RI-B1 native-ELF scalar-f64 gate (zero MLIR/LLVM).
 - `self_host_native_gemm_i8_smoke.py` (~1051 tok, large) — RI-B2-S7 (#108) — native-ELF scalar int8 GEMM (matrix x matrix), byte-identity rung.
 - `self_host_native_gemm_q16_smoke.py` (~1053 tok, large) — RI-B2-S7 (#108) — native-ELF scalar GEMM Q16.16 (matrix x matrix), byte-identity rung.
@@ -878,7 +879,7 @@
 - `value_if.elf` (~147 tok, small) — ELF> @@@8
 ### `examples/mindc_mind/testdata/selfhost_loop/`
 
-- `MANIFEST.txt` (~83 tok, small) — # Frozen self-host bootstrap ELF (A6): the driver-bearing native compiler that
+- `MANIFEST.txt` (~102 tok, small) — # Frozen self-host bootstrap ELF (A6/RI-E1): the checked-in pure-MIND stage0
 ### `examples/mindc_mind/`
 
 - `unified_dispatch_smoke.py` (~1553 tok, huge)

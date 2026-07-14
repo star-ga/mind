@@ -20509,6 +20509,20 @@ pub fn nb_store_argreg(code: String, i: i64, disp: i64) -> String {
     nb_i32le_signed(c3, disp)
 }
 
+// store_sse_argreg(k, disp): spill incoming SSE param reg xmm{k} to its slot via
+// movsd. F2 0F 11 (0x80 | (k&7)<<3 | 0x05) <disp32>. ModRM reg=k selects xmm{k};
+// k in 0..7 (the 8 SysV SSE arg registers) needs no REX. k==0 is byte-identical to
+// nb_fp_movsd_store_xmm0. The GP arg path (nb_store_argreg) is untouched, so the
+// all-integer param case (all of main.mind's own source) is byte-for-byte unchanged.
+pub fn nb_store_sse_argreg(code: String, k: i64, disp: i64) -> String {
+    let modrm: i64 = 128 + (k & 7) * 8 + 5;
+    let c1: String = nb_push(code, 242);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, 17);
+    let c4: String = nb_push(c3, modrm);
+    nb_i32le_signed(c4, disp)
+}
+
 // load_argreg(i, disp): load slot into incoming param reg i.
 //   (0x48 | ext<<2) 0x8B (0x80 | (reg&7)<<3 | 0x05) <disp32>
 pub fn nb_load_argreg(code: String, i: i64, disp: i64) -> String {
@@ -20905,8 +20919,8 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
     // to the pure-AST nb_node_dtype, and main.mind's float-free source keeps every
     // slot INT during self-compile, so the integer path stays byte-identical.
     let dtbl: i64 = __mind_load_i64(lcell + 8);
-    let lhs_dt: i64 = nb_node_dtype_tbl(ast_child0(node), dtbl, lets, lcell, buf);
-    let rhs_dt: i64 = nb_node_dtype_tbl(ast_child1(node), dtbl, lets, lcell, buf);
+    let lhs_dt: i64 = nb_node_dtype_tbl(ast_child0(node), dtbl, lets, lcell, buf, params_addr, n_params);
+    let rhs_dt: i64 = nb_node_dtype_tbl(ast_child1(node), dtbl, lets, lcell, buf, params_addr, n_params);
     let fsel: i64 = nb_fp_opsel(op);
     if lhs_dt == nb_dtype_float() {
         if rhs_dt == nb_dtype_float() {
@@ -21693,7 +21707,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // heap table (no machine code), and main.mind's float-free source makes every
         // init INT, so this is byte-identical for the integer native-ELF oracle.
         let dtbl: i64 = __mind_load_i64(lcell + 8);
-        let init_dt: i64 = nb_node_dtype_tbl(init, dtbl, lets, lcell, buf);
+        let init_dt: i64 = nb_node_dtype_tbl(init, dtbl, lets, lcell, buf, params_addr, n_params);
         let _b: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), s1.last_id, nb_let_descriptor(init, ast_child1(node), buf, srt));
         let _dt: i64 = nb_dtype_tag_slot(dtbl, s1.last_id, init_dt);
         return s1;
@@ -23005,8 +23019,10 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     let p8: String = nb_i32le_signed(p7, frame);
 
     // Spill incoming params into their slots (Param arms): store_argreg(i, slot i).
+    // gp_k / sse_k are the SysV GP and SSE arg-register counters (both 0 to start);
+    // an integer/pointer param consumes a GP register, a float param an SSE register.
     let st_params: NbState = NbState { code: p8, next_id: n_params, last_id: 0 - 1, ncalls: ncalls0 };
-    let st_p: NbState = nb_emit_params(st_params, buf, params_addr, n_params, 0);
+    let st_p: NbState = nb_emit_params(st_params, buf, params_addr, n_params, 0, 0, 0);
 
     // Per-fn intra-function forward-jump scratch (je/jmp sites recorded relative
     // to THIS fn's code String; up to 512 jumps; jcell = a 1-i64 count, zeroed).
@@ -23028,6 +23044,13 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // slot defaults INT, and main.mind's float-free source never tags one FLOAT, so the
     // integer native-ELF oracle stays byte-identical.
     __mind_store_i64(lcell + 8, nb_dtype_table_new(nslots + 64));
+    // RI-D2 S-B classifier half: tag each FLOAT (f64/f32) param's SSA slot FLOAT in the
+    // per-fn dtype table (param i occupies SSA slot i). A later `x + 2.5` binop over a
+    // float param then resolves `x` FLOAT (nb_node_dtype_tbl's resolve_param branch) and
+    // routes the SSE2 encoders. Non-float params tag INT (the default), which writes no
+    // machine code — so main.mind's float-free source leaves the table all-INT and the
+    // integer native-ELF emission byte-identical.
+    let _tfp: i64 = nb_tag_float_params(__mind_load_i64(lcell + 8), buf, params_addr, n_params, 0);
     // Register struct-typed params FIRST (before body lets append, so a same-name
     // let shadows last-match-wins), mirroring the count-lets registration above so
     // the emitted offsets match the counted frame size exactly.
@@ -23058,24 +23081,43 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     st_body
 }
 
-// Spill params 0..n_params-1 into their slots (store_argreg(i, slot_disp(i))).
-pub fn nb_emit_params(st: NbState, buf: i64, params_addr: i64, n_params: i64, i: i64) -> NbState {
+// Spill params 0..n_params-1 into their slots, classifying each per SysV AMD64:
+// integer/pointer params draw from the GP register pool (rdi/rsi/rdx/rcx/r8/r9,
+// counted by gp_k), FLOAT params from the SSE pool (xmm0..7, counted by sse_k). The
+// two counters are INDEPENDENT — a float param does not advance gp_k and vice versa.
+// Each param i always spills into slot i (nb_slot_disp(i)); only the SOURCE register
+// file/index differs by class.
+//
+// INT-PRESERVATION (load-bearing): main.mind's own source has ZERO float params, so
+// every param takes the GP branch and gp_k == i for all i. In that case the GP-register
+// selection (nb_store_argreg(gp_k, ...)), the >6-arg stack detection (gp_k >= 6), and
+// the stack offset (16 + 8*(gp_k-6)) are ALL identical to the prior `i`-keyed code —
+// the all-integer emission is byte-for-byte unchanged, keeping the integer native-ELF
+// oracle stable. The float branch is reached only when nb_param_is_float == nb_dtype_float().
+pub fn nb_emit_params(st: NbState, buf: i64, params_addr: i64, n_params: i64, i: i64, gp_k: i64, sse_k: i64) -> NbState {
     if i >= n_params {
         return st;
     }
-    // Spill param i into slot i. Args 0..5 come from their SysV registers
-    // (store_argreg); args 6+ arrive on the stack at `[rbp + 16 + 8*(i-6)]` (above
-    // the saved rbp + return address) and are copied via rax — mirror
-    // src/native::lower_fn's Instr::Param arm (mod.rs 740-744): off = 16 + 8*(i-6),
-    // `load_rax(off); store_rax(slot)`.
-    let c1: String = if i >= 6 {
-        let load_stack: String = nb_load_rax(st.code, 16 + 8 * (i - 6));
+    let pnode: i64 = __mind_load_i64(params_addr + i * 8);
+    let is_float: i64 = nb_param_is_float(buf, ast_child1(pnode));
+    if is_float == nb_dtype_float() {
+        // FLOAT param: spill xmm{sse_k} into slot i via movsd. Advances sse_k only.
+        let cf: String = nb_store_sse_argreg(st.code, sse_k, nb_slot_disp(i));
+        let sf: NbState = NbState { code: cf, next_id: st.next_id, last_id: st.last_id, ncalls: st.ncalls };
+        return nb_emit_params(sf, buf, params_addr, n_params, i + 1, gp_k, sse_k + 1);
+    }
+    // GP/pointer param (the unchanged path, now keyed on gp_k). Args 0..5 come from
+    // their SysV registers (store_argreg); args 6+ arrive on the stack at
+    // `[rbp + 16 + 8*(gp_k-6)]` (above the saved rbp + return address) and are copied
+    // via rax — mirror src/native::lower_fn's Instr::Param arm (mod.rs 740-744).
+    let c1: String = if gp_k >= 6 {
+        let load_stack: String = nb_load_rax(st.code, 16 + 8 * (gp_k - 6));
         nb_store_rax(load_stack, nb_slot_disp(i))
     } else {
-        nb_store_argreg(st.code, i, nb_slot_disp(i))
+        nb_store_argreg(st.code, gp_k, nb_slot_disp(i))
     };
     let s1: NbState = NbState { code: c1, next_id: st.next_id, last_id: st.last_id, ncalls: st.ncalls };
-    nb_emit_params(s1, buf, params_addr, n_params, i + 1)
+    nb_emit_params(s1, buf, params_addr, n_params, i + 1, gp_k + 1, sse_k)
 }
 
 // synth library entry stub (no `main`): xor edi,edi ; mov eax,60 ; syscall.
@@ -25364,14 +25406,23 @@ pub fn nb_node_dtype(node: i64) -> i64 {
 // main.mind's OWN source is float-free, so the table stays all-INT during self-compile
 // (no `let` ever tags a slot FLOAT), every ident resolves to INT, and the integer
 // native-ELF emission is byte-identical.
-pub fn nb_node_dtype_tbl(node: i64, tbl: i64, lets: i64, lcell: i64, buf: i64) -> i64 {
+pub fn nb_node_dtype_tbl(node: i64, tbl: i64, lets: i64, lcell: i64, buf: i64, params_addr: i64, n_params: i64) -> i64 {
     if tbl == 0 {
         return nb_node_dtype(node);
     }
     let k: i64 = ast_kind(node);
     if k == ast_ident() {
-        // Resolve the name to its bound let-slot and read the recorded dtype. A param
-        // (or any name not in the let-env) is not tagged, so it reads back INT.
+        // Resolve the name exactly as nb_expr's ident arm does: a PARAM first (its SSA
+        // slot == its index), else a `let`-bound slot. Read the recorded dtype off the
+        // resolved slot. RI-D2 S-B: a float param's slot was tagged FLOAT by
+        // nb_tag_float_params in nb_lower_fn, so a param ident now classifies FLOAT
+        // instead of falling through to INT. main.mind's params are all INT, so every
+        // param ident here still reads INT (tag default) — classification unchanged, GP
+        // path byte-identical.
+        let pidx: i64 = resolve_param(params_addr, n_params, buf, ast_span_lo(node), ast_span_hi(node));
+        if pidx >= 0 {
+            return nb_dtype_get(tbl, pidx);
+        }
         let lslot: i64 = nb_lets_lookup(lets, lcell, buf, ast_span_lo(node), ast_span_hi(node));
         if lslot >= 0 {
             return nb_dtype_get(tbl, lslot);
@@ -25382,12 +25433,12 @@ pub fn nb_node_dtype_tbl(node: i64, tbl: i64, lets: i64, lcell: i64, buf: i64) -
         return nb_dtype_float();
     }
     if k == ast_paren() {
-        return nb_node_dtype_tbl(ast_child0(node), tbl, lets, lcell, buf);
+        return nb_node_dtype_tbl(ast_child0(node), tbl, lets, lcell, buf, params_addr, n_params);
     }
     if k == ast_binop() {
         if nb_fp_opsel(ast_aux(node)) >= 0 {
-            if nb_node_dtype_tbl(ast_child0(node), tbl, lets, lcell, buf) == nb_dtype_float() {
-                if nb_node_dtype_tbl(ast_child1(node), tbl, lets, lcell, buf) == nb_dtype_float() {
+            if nb_node_dtype_tbl(ast_child0(node), tbl, lets, lcell, buf, params_addr, n_params) == nb_dtype_float() {
+                if nb_node_dtype_tbl(ast_child1(node), tbl, lets, lcell, buf, params_addr, n_params) == nb_dtype_float() {
                     return nb_dtype_float();
                 }
             }
@@ -25409,6 +25460,41 @@ pub fn nb_dtype_tag_slot(tbl: i64, id: i64, dt: i64) -> i64 {
     }
     let _s: i64 = nb_dtype_set(tbl, id, dt);
     0
+}
+
+// Classify a param's declared type (its type-leaf span) as FLOAT or INT. A param node
+// is (name_leaf at child0, type_leaf at child1); the type leaf's span is the type name
+// text. Returns nb_dtype_float() for `f64`/`f32`, else nb_dtype_int(). Only these two
+// scalar-float type names route the SSE ABI/encoder; every other type (i64, bool,
+// String, a struct name, ...) stays INT and takes the GP-integer path unchanged. bytes
+// f=102, 6=54, 4=52, 3=51, 2=50, so "f64"=[102,54,52] and "f32"=[102,51,50].
+pub fn nb_param_is_float(buf: i64, type_leaf: i64) -> i64 {
+    let lo: i64 = ast_span_lo(type_leaf);
+    let hi: i64 = ast_span_hi(type_leaf);
+    let f64_buf: i64 = make_byte_buf_3(102, 54, 52);
+    if bytes_eq(buf, lo, hi, f64_buf, 0, 3) == 1 {
+        return nb_dtype_float();
+    }
+    let f32_buf: i64 = make_byte_buf_3(102, 51, 50);
+    if bytes_eq(buf, lo, hi, f32_buf, 0, 3) == 1 {
+        return nb_dtype_float();
+    }
+    nb_dtype_int()
+}
+
+// Tag every FLOAT param's SSA slot (param i -> slot i) in the per-fn dtype table, so a
+// float param ident classifies FLOAT at its consumers. Recursion (self-host subset, no
+// while). nb_dtype_tag_slot is a no-op for a null table or id<0; tagging a non-float
+// param writes INT (the table default), emitting no code — so this is inert for the
+// all-integer param case (all of main.mind), preserving byte-identity.
+pub fn nb_tag_float_params(tbl: i64, buf: i64, params_addr: i64, n_params: i64, i: i64) -> i64 {
+    if i >= n_params {
+        return 0;
+    }
+    let pnode: i64 = __mind_load_i64(params_addr + i * 8);
+    let dt: i64 = nb_param_is_float(buf, ast_child1(pnode));
+    let _s: i64 = nb_dtype_tag_slot(tbl, i, dt);
+    nb_tag_float_params(tbl, buf, params_addr, n_params, i + 1)
 }
 
 // Map a binop operator tag to the SSE2 scalar-double op_sel used by
@@ -25671,6 +25757,112 @@ pub fn selftest_native_elf_fp_let(src_addr: i64, src_len: i64) -> EmitState {
     __mind_store_i64(lpcell, 0);
     let st0: NbState = NbState { code: p, next_id: 0, last_id: 0 - 1, ncalls: 0 };
     let sb: NbState = nb_block_stmts(st0, src_addr, stmts_addr, stmts_len, 0, params, 0, calls, 0, jmps, jcell, lets, lcell, srt, loops, lpcell);
+    // Read the float result of the tail expr back out of its slot and truncate.
+    let c1: String = nb_fp_movsd_load_xmm0(sb.code, nb_slot_disp(sb.last_id));
+    let c2: String = nb_fp_trunc_rax_xmm0(c1);
+    let code: String = nb_emit_return(c2, 1);
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
+
+// ---- RI-D2 S-B harness: FLOAT fn-param dtype + SysV SSE-spill ABI ----------
+// These prove a FLOAT parameter flows through general nb_expr lowering (not a
+// hand-emitted fp selftest): a real parsed `fn f(x: f64) -> f64 { x + 2.5 }` is
+// lowered through nb_emit_params (the two-pool SSE/GP spill ABI) + nb_block_stmts
+// / nb_expr (the classifier resolves the param ident FLOAT and routes the SSE2
+// encoders). All NEW exports, never reached during self-compile.
+
+// movabs into the gp_k-th SysV GP arg register (rdi/rsi/rdx/rcx/r8/r9): a known
+// int, staging the caller side of an integer param so nb_emit_params has a defined
+// value to spill. (0x48 | REX.B) (0xB8 + reg&7) <imm64>.
+pub fn nb_fp_stage_gp(code: String, gp_k: i64, val: i64) -> String {
+    let reg: i64 = nb_argreg_field(gp_k);
+    let ext: i64 = nb_argreg_ext(gp_k);
+    let rex: i64 = 72 + ext;
+    let op: i64 = 184 + (reg & 7);
+    let c1: String = nb_push(code, rex);
+    let c2: String = nb_push(c1, op);
+    nb_i64le(c2, val)
+}
+
+// Known IEEE-754 double bit-patterns staged into the SSE arg registers, keyed by SSE
+// index: sse0 -> 3.5 (0x400C000000000000), sse1 -> 2.0 (0x4000000000000000). Chosen so
+// every fixture's result is an exactly-representable dyadic whose trunc fits a byte.
+pub fn nb_fp_known_double(sse_k: i64) -> i64 {
+    if sse_k == 0 {
+        return 4615063718147915776;
+    }
+    4611686018427387904
+}
+
+// Stage the SysV arg registers with KNOWN fixture values (the caller side): float
+// params -> xmm{sse_k} (known double), int params -> the gp_k-th GP arg reg (known
+// int). Walks the SAME gp_k/sse_k progression nb_emit_params uses, so the two agree on
+// which register each param arrives in — a wrong-pool ABI split then reads a garbage
+// register and the run faults / returns a wrong exit (non-fakeable).
+pub fn nb_fp_param_stage(code: String, buf: i64, params_addr: i64, n_params: i64, i: i64, gp_k: i64, sse_k: i64) -> String {
+    if i >= n_params {
+        return code;
+    }
+    let pnode: i64 = __mind_load_i64(params_addr + i * 8);
+    if nb_param_is_float(buf, ast_child1(pnode)) == nb_dtype_float() {
+        let cf: String = nb_fp_const_xmm(code, nb_fp_known_double(sse_k), sse_k);
+        return nb_fp_param_stage(cf, buf, params_addr, n_params, i + 1, gp_k, sse_k + 1);
+    }
+    let ci: String = nb_fp_stage_gp(code, gp_k, 42);
+    nb_fp_param_stage(ci, buf, params_addr, n_params, i + 1, gp_k + 1, sse_k)
+}
+
+// End-to-end proof of a FLOAT fn-param through GENERAL lowering (RI-D2 S-B). Parse a
+// real `fn f(x: f64) -> f64 { x + 2.5 }` (first item), stage its args into the SysV
+// registers, spill them via nb_emit_params (the two-pool SSE/GP ABI half), tag the
+// float param slots FLOAT via nb_tag_float_params (the classifier half), then lower the
+// body through nb_block_stmts / nb_expr — where the binop arm consults the dtype table,
+// sees the param FLOAT (nb_node_dtype_tbl's resolve_param branch), and routes the SSE2
+// encoders. Read the result slot back to xmm0 and cvttsd2si -> exit(trunc). Emits ZERO
+// MLIR/LLVM; the CPU exit code is the oracle (no frozen float oracle exists — Rust
+// native rejected ConstF64). A wrong register-file/pool choice or a mis-classified param
+// faults or returns the wrong integer, so a correct exit is non-fakeable.
+pub fn selftest_native_elf_fp_param(src_addr: i64, src_len: i64) -> EmitState {
+    let toks: Vec = lex(src_addr, src_len);
+    let ast_root: i64 = parse(toks, src_addr);
+    let items_addr: i64 = ast_child0(ast_root);
+    let fndef: i64 = __mind_load_i64(items_addr);
+    let params_addr: i64 = ast_child1(fndef);
+    let n_params: i64 = ast_aux(fndef) / 2;
+    let body: i64 = ast_child2(fndef);
+    let stmts_addr: i64 = ast_child0(body);
+    let stmts_len: i64 = ast_aux(body);
+
+    // rbp frame so [rbp+disp32] slots are addressable (movsd store/load target).
+    let p: String = nb_fp_prologue_frame(string_new(), 256);
+    // Caller side: place the known arg values into the SysV registers ...
+    let staged: String = nb_fp_param_stage(p, src_addr, params_addr, n_params, 0, 0, 0);
+    // ... ABI half: spill each arg register into its param slot (two-pool split).
+    let st_params: NbState = NbState { code: staged, next_id: n_params, last_id: 0 - 1, ncalls: 0 };
+    let st_p: NbState = nb_emit_params(st_params, src_addr, params_addr, n_params, 0, 0, 0);
+
+    // Per-fn let-env + dtype table (the nb_lower_fn plumbing). Classifier half: tag
+    // each float param slot FLOAT so a param ident routes the SSE2 path.
+    let calls: i64 = __mind_alloc(8);
+    let jmps: i64 = __mind_alloc(512 * 2 * 8);
+    let jcell: i64 = __mind_alloc(8);
+    __mind_store_i64(jcell, 0);
+    let lets: i64 = __mind_alloc(512 * 4 * 8);
+    let lcell: i64 = __mind_alloc(16);
+    __mind_store_i64(lcell, 0);
+    let dtbl: i64 = nb_dtype_table_new(128);
+    __mind_store_i64(lcell + 8, dtbl);
+    let _tfp: i64 = nb_tag_float_params(dtbl, src_addr, params_addr, n_params, 0);
+    let srt: i64 = srt_build(src_addr, src_len);
+    let loops: i64 = __mind_alloc(256 * 3 * 8);
+    let lpcell: i64 = __mind_alloc(8);
+    __mind_store_i64(lpcell, 0);
+
+    // Lower the body through the REAL statement-lowering path.
+    let sb: NbState = nb_block_stmts(st_p, src_addr, stmts_addr, stmts_len, 0, params_addr, n_params, calls, 0, jmps, jcell, lets, lcell, srt, loops, lpcell);
     // Read the float result of the tail expr back out of its slot and truncate.
     let c1: String = nb_fp_movsd_load_xmm0(sb.code, nb_slot_disp(sb.last_id));
     let c2: String = nb_fp_trunc_rax_xmm0(c1);
