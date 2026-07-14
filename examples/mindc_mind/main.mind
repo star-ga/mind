@@ -20861,6 +20861,18 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // exactly one return (a dual-return branch lowers to an extra leading
         // const0 in the self-host subset, breaking the mic@3 flip).
         let off: i64 = nb_field_offset(recv, node, buf, lets, lcell);
+        // RI-D2 S-D: an f64/f32 struct field READ returns a FLOAT-tagged value. Classify
+        // the field's dtype from the struct binding (nb_field_dtype, value-node based for
+        // a struct-literal binding); a FLOAT field loads through the SSE register file
+        // (movsd) and tags its result slot FLOAT so it flows into float expressions, while
+        // an INT/pointer field takes the UNCHANGED integer load. main.mind's own structs
+        // have ZERO float fields, so every field read here classifies INT and emits the
+        // byte-identical integer path during self-compile. Early-return statement form (no
+        // struct-valued if-expr — the mis-lower trap).
+        let fdt: i64 = nb_field_dtype(recv, node, buf, lets, lcell);
+        if fdt == nb_dtype_float() {
+            return nb_field_read_fp(s_recv.code, s_recv.next_id, ptr_id, off, s_recv.ncalls, __mind_load_i64(lcell + 8));
+        }
         return nb_field_read(s_recv.code, s_recv.next_id, ptr_id, off, s_recv.ncalls);
     }
     if k == ast_call() {
@@ -21070,6 +21082,73 @@ pub fn nb_field_offset(recv: i64, field_node: i64, buf: i64, lets: i64, lcell: i
         return 0;
     }
     fidx * 8
+}
+
+// RI-D2 S-D: classify a field READ `recv.field`'s dtype (FLOAT for an f64/f32 field,
+// else INT). The native backend tracks structs by the LITERAL binding, not srt, so the
+// field's dtype is read off the struct-literal's value node at the resolved field index
+// (the value the field was constructed with — a float literal `3.5` classifies FLOAT via
+// nb_node_dtype). A SYNTHETIC struct-decl descriptor (a struct-typed let/param bound to a
+// call/param, built by nb_struct_decl_descriptor) stores value slot 0, so value_node==0
+// falls back to INT — safe (no ast_kind(0) deref) and correct: main.mind's struct-typed
+// lets are ALL these decl descriptors over float-free structs, so every self-compile
+// field read classifies INT and the integer field path stays byte-identical. (Declared-
+// dtype for the decl-descriptor case would extend the srt schema with per-field dtype —
+// a larger follow-up, not needed for the struct-literal float-field READ this proves.)
+// An if-STATEMENT chain (no value-if-let phis) so it stays in the self-host subset.
+pub fn nb_field_dtype(recv: i64, field_node: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
+    if ast_kind(recv) != ast_ident() {
+        return nb_dtype_int();
+    }
+    let slit: i64 = nb_lets_lookup_slit(lets, lcell, buf, ast_span_lo(recv), ast_span_hi(recv));
+    if slit == 0 {
+        return nb_dtype_int();
+    }
+    let fidx: i64 = nb_slit_field_index(slit, buf, ast_child1(field_node), ast_child2(field_node));
+    if fidx < 0 {
+        return nb_dtype_int();
+    }
+    let fields_addr: i64 = ast_child1(slit);
+    let value_node: i64 = __mind_load_i64(fields_addr + (fidx * 3 + 2) * 8);
+    if value_node == 0 {
+        return nb_dtype_int();
+    }
+    nb_node_dtype(value_node)
+}
+
+// Emit a FLOAT field READ at byte offset `off` through the base-pointer slot `ptr_id`,
+// TAGGING the result slot FLOAT in the per-fn dtype table `dtbl` so downstream float
+// exprs route the SSE2 encoders. Byte-for-byte the SAME address computation and SSA-id
+// consumption as nb_field_read (off==0 -> one id ; off>0 -> off+add+ld = three ids), but
+// the final value load uses the SSE register file: mov rax,[rbp+addr] (the pointer) ;
+// movsd xmm0,[rax] ; movsd [rbp+dst],xmm0. Only reached when nb_field_dtype classifies
+// the field FLOAT — never during main.mind's float-free self-compile. A standalone
+// tail-return helper (two returns are fine at fn scope; the dual-return hazard is INSIDE
+// a value-producing if-arm).
+pub fn nb_field_read_fp(code: String, next_id: i64, ptr_id: i64, off: i64, ncalls: i64, dtbl: i64) -> NbState {
+    if off == 0 {
+        let ld_id: i64 = next_id;
+        let l1: String = nb_load_rax(code, nb_slot_disp(ptr_id));
+        let l2: String = nb_fp_movsd_load_xmm0_rax(l1);
+        let l3: String = nb_fp_movsd_store_xmm0(l2, nb_slot_disp(ld_id));
+        let _tg: i64 = nb_dtype_tag_slot(dtbl, ld_id, nb_dtype_float());
+        return NbState { code: l3, next_id: ld_id + 1, last_id: ld_id, ncalls: ncalls };
+    }
+    let off_id: i64 = next_id;
+    let o1: String = nb_push(code, 72);
+    let o2: String = nb_push(o1, 184);
+    let o3: String = nb_i64le(o2, off);
+    let o4: String = nb_store_rax(o3, nb_slot_disp(off_id));
+    let add_id: i64 = off_id + 1;
+    let d1: String = nb_load_rax(o4, nb_slot_disp(ptr_id));
+    let d2: String = nb_arith_rax_mem(d1, op_add(), nb_slot_disp(off_id));
+    let d3: String = nb_store_rax(d2, nb_slot_disp(add_id));
+    let ld_id: i64 = add_id + 1;
+    let e1: String = nb_load_rax(d3, nb_slot_disp(add_id));
+    let e2: String = nb_fp_movsd_load_xmm0_rax(e1);
+    let e3: String = nb_fp_movsd_store_xmm0(e2, nb_slot_disp(ld_id));
+    let _tg: i64 = nb_dtype_tag_slot(dtbl, ld_id, nb_dtype_float());
+    NbState { code: e3, next_id: ld_id + 1, last_id: ld_id, ncalls: ncalls }
 }
 
 // Emit each struct-literal field's store, in SOURCE order. For field i: emit the
@@ -25372,6 +25451,17 @@ pub fn nb_fp_movsd_load_xmmk(code: String, k: i64, disp: i64) -> String {
     nb_i32le_signed(c4, disp)
 }
 
+// movsd xmm0, [rax]  =  F2 0F 10 00   (load the 8 bytes AT the address in rax into xmm0)
+// The register-indirect movsd form (ModRM 00: mod=00 reg=xmm0 rm=rax) used by the FLOAT
+// field READ: after `mov rax,[rbp+addr]` puts the field's byte address in rax, this loads
+// its f64 value into the SSE register file. RI-D2 S-D.
+pub fn nb_fp_movsd_load_xmm0_rax(code: String) -> String {
+    let c1: String = nb_push(code, 242);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, 16);
+    nb_push(c3, 0)
+}
+
 // movsd [rbp+disp32], xmm0  =  F2 0F 11 85 <disp32>   (store xmm0 -> slot)
 pub fn nb_fp_movsd_store_xmm0(code: String, disp: i64) -> String {
     let c1: String = nb_push(code, 242);
@@ -25556,6 +25646,14 @@ pub fn nb_node_dtype_tbl(node: i64, tbl: i64, lets: i64, lcell: i64, buf: i64, p
     // node here classifies INT during self-compile exactly as the prior fall-through did.
     if k == ast_call() {
         return frt_lookup_dtype(__mind_load_i64(lcell + 16), buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node)));
+    }
+    if k == ast_field() {
+        // RI-D2 S-D: a field READ `recv.field` classifies as its field's dtype (FLOAT for
+        // an f64/f32 field), resolved off the receiver's struct binding — so an immediate
+        // binop over a float field (`p.x + 1.0`) sees the field operand FLOAT and routes
+        // the SSE2 arm. Every field in main.mind's float-free structs classifies INT, so
+        // this is byte-identical during self-compile.
+        return nb_field_dtype(ast_child0(node), node, buf, lets, lcell);
     }
     if k == ast_paren() {
         return nb_node_dtype_tbl(ast_child0(node), tbl, lets, lcell, buf, params_addr, n_params);
@@ -25883,6 +25981,53 @@ pub fn selftest_native_elf_fp_let(src_addr: i64, src_len: i64) -> EmitState {
     let st0: NbState = NbState { code: p, next_id: 0, last_id: 0 - 1, ncalls: 0 };
     let sb: NbState = nb_block_stmts(st0, src_addr, stmts_addr, stmts_len, 0, params, 0, calls, 0, jmps, jcell, lets, lcell, srt, loops, lpcell);
     // Read the float result of the tail expr back out of its slot and truncate.
+    let c1: String = nb_fp_movsd_load_xmm0(sb.code, nb_slot_disp(sb.last_id));
+    let c2: String = nb_fp_trunc_rax_xmm0(c1);
+    let code: String = nb_emit_return(c2, 1);
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
+
+// End-to-end proof of a FLOAT struct-FIELD READ through GENERAL lowering (RI-D2 S-D).
+// Parse a REAL statement block that constructs a struct with an f64 field via a struct
+// literal, binds it to a typed let, then reads the field into a float expression:
+//   `{ let p: P = P { x: 3.5 }; p.x + 1.0 }` -> 4.5 -> exit(trunc)=4.
+// Lower the WHOLE block through nb_block_stmts / nb_stmt / nb_expr (not a hand-emitted fp
+// encoder): the `let` binds `p` to its struct-literal descriptor (nb_slit path), and the
+// `p.x` field read hits nb_expr's ast_field arm where nb_field_dtype classifies the field
+// FLOAT (its literal value `3.5`), so nb_field_read_fp loads it via movsd and tags the
+// result slot FLOAT — nb_node_dtype_tbl's ast_field arm then sees `p.x` FLOAT and the
+// binop `p.x + 1.0` routes the SSE2 f64 encoders. Read the tail result slot back to xmm0
+// and cvttsd2si -> exit(trunc). Emits ZERO MLIR/LLVM; the CPU exit code is the oracle (no
+// frozen float oracle exists — Rust native rejected ConstF64). Without the S-D field-dtype
+// classification `p.x` would classify INT, take the GP-integer field load, and the trunc
+// of the mis-interpreted bits would fault or return the wrong exit — so a correct exit is
+// non-fakeable. A MIXED struct (int + float fields) reading its float field proves the
+// per-field dtype + offset. Same nb_block_stmts / lcell+8 dtype-table plumbing as fp_let.
+pub fn selftest_native_elf_fp_field(src_addr: i64, src_len: i64) -> EmitState {
+    let toks: Vec = lex(src_addr, src_len);
+    let pr: ParseResult = parse_block(toks, 0, src_addr);
+    let blk: i64 = pr_node(pr);
+    let stmts_addr: i64 = ast_child0(blk);
+    let stmts_len: i64 = ast_aux(blk);
+    let p: String = nb_fp_prologue_frame(string_new(), 256);
+    let params: i64 = __mind_alloc(8);
+    let calls: i64 = __mind_alloc(8);
+    let jmps: i64 = __mind_alloc(512 * 2 * 8);
+    let jcell: i64 = __mind_alloc(8);
+    __mind_store_i64(jcell, 0);
+    let lets: i64 = __mind_alloc(512 * 4 * 8);
+    let lcell: i64 = __mind_alloc(16);
+    __mind_store_i64(lcell, 0);
+    __mind_store_i64(lcell + 8, nb_dtype_table_new(128));
+    let srt: i64 = srt_build(src_addr, src_len);
+    let loops: i64 = __mind_alloc(256 * 3 * 8);
+    let lpcell: i64 = __mind_alloc(8);
+    __mind_store_i64(lpcell, 0);
+    let st0: NbState = NbState { code: p, next_id: 0, last_id: 0 - 1, ncalls: 0 };
+    let sb: NbState = nb_block_stmts(st0, src_addr, stmts_addr, stmts_len, 0, params, 0, calls, 0, jmps, jcell, lets, lcell, srt, loops, lpcell);
     let c1: String = nb_fp_movsd_load_xmm0(sb.code, nb_slot_disp(sb.last_id));
     let c2: String = nb_fp_trunc_rax_xmm0(c1);
     let code: String = nb_emit_return(c2, 1);
