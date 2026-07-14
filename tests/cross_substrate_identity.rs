@@ -111,7 +111,9 @@ pub fn gemmi8mt(a: i64, b: i64, c: i64, m: i64, k: i64, n: i64) -> i64 {
 // fixed left-to-right lane fold (NOT a target-defined `vector.reduction`), so
 // the dot is bit-exact — a strict-FP tier, not a tolerance path. Result is the
 // f32 bits packed into the low 32 bits of an i64 (Option-C ABI). RANK 7 canary:
-// avx2 blessed here; neon deferred pending a real-aarch64 bless.
+// avx2 AND neon BOTH blessed on real hardware — the neon line was harvested from
+// the ubuntu-24.04-arm CI runner (real aarch64) and reproduces the avx2 hash
+// byte-for-byte. The gate is fail-closed; see `pin_strict_fp`.
 pub fn dotf32(a: i64, b: i64, n: i64) -> i64 {
     __mind_blas_dot_f32_v(a, b, n)
 }
@@ -515,6 +517,36 @@ fn reference_hash(id: &str, substrate: &str) -> Option<String> {
     None
 }
 
+/// Emit a bless line for `id` on the host substrate (RFC 0020 §13).
+///
+/// Prints `BLESS <id> <substrate> <hash>` to stdout AND — when
+/// `MIND_BENCH_HASHES_OUT` names a file — appends the same line to it, so a
+/// bless run on a substrate we do not own locally (the real-aarch64 CI runner)
+/// leaves a DURABLE artifact instead of a hash buried in a log that expires.
+///
+/// This is the mechanism the strict-f32 neon bless needed and did not have: the
+/// ARM runner had been computing the correct neon hashes on every CI run and
+/// throwing them away into an ephemeral job log, which is precisely why that
+/// hole stayed open long after the hardware to close it was already in the
+/// matrix. The harvest is now a file download, not log archaeology.
+///
+/// Writing the sink is strictly NON-load-bearing: a failed write cannot turn a
+/// red gate green (it is only reachable under MIND_BENCH_BLESS, which asserts
+/// nothing), and its absence changes no assertion.
+fn emit_bless(id: &str, substrate: &str, computed: &str) {
+    println!("BLESS {id} {substrate} {computed}");
+    if let Some(path) = std::env::var_os("MIND_BENCH_HASHES_OUT") {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            let _ = writeln!(f, "{id} {substrate} {computed}");
+        }
+    }
+}
+
 /// Canonical output encoding (manifest `output_encoding = "i64_le"`): the 8
 /// little-endian bytes of the result, then sha256 → lowercase hex.
 fn canonical_hash(result: i64) -> String {
@@ -550,7 +582,7 @@ fn run_dot_workload(w: &DotWorkload) {
     let substrate = host_substrate();
 
     if std::env::var("MIND_BENCH_BLESS").is_ok() {
-        println!("BLESS {} {substrate} {computed}", w.id);
+        emit_bless(w.id, substrate, &computed);
         return;
     }
 
@@ -658,7 +690,7 @@ fn gemv_q16_reproducibility_gate() {
     let computed = canonical_hash_i32s(&y);
     let substrate = host_substrate();
     if std::env::var("MIND_BENCH_BLESS").is_ok() {
-        println!("BLESS {id} {substrate} {computed}");
+        emit_bless(id, substrate, &computed);
         return;
     }
     match reference_hash(id, substrate) {
@@ -1090,7 +1122,7 @@ fn gemm_q16_reproducibility_gate() {
     let computed = canonical_hash_i32s(&c);
     let substrate = host_substrate();
     if std::env::var("MIND_BENCH_BLESS").is_ok() {
-        println!("BLESS {id} {substrate} {computed}");
+        emit_bless(id, substrate, &computed);
         return;
     }
     match reference_hash(id, substrate) {
@@ -1183,7 +1215,7 @@ fn gemm_i8_reproducibility_gate() {
     let computed = canonical_hash_i32s(&c);
     let substrate = host_substrate();
     if std::env::var("MIND_BENCH_BLESS").is_ok() {
-        println!("BLESS {id} {substrate} {computed}");
+        emit_bless(id, substrate, &computed);
         return;
     }
     match reference_hash(id, substrate) {
@@ -1297,7 +1329,7 @@ fn gemm_i8_mt_reproducibility_gate() {
     let computed = canonical_hash_i32s(&c_mt);
     let substrate = host_substrate();
     if std::env::var("MIND_BENCH_BLESS").is_ok() {
-        println!("BLESS {id} {substrate} {computed}");
+        emit_bless(id, substrate, &computed);
         return;
     }
     // The MT hash must equal the single-thread reference by construction.
@@ -1451,7 +1483,7 @@ fn gemm_i8_vnni_reproducibility_gate() {
     let computed = canonical_hash_i32s(&c);
     let substrate = host_substrate();
     if std::env::var("MIND_BENCH_BLESS").is_ok() {
-        println!("BLESS {id} {substrate} {computed}");
+        emit_bless(id, substrate, &computed);
         return;
     }
     // The VNNI rung must reproduce the committed AVX2 gemm-i8 hash byte-for-byte.
@@ -1544,7 +1576,7 @@ fn gemv_i16_reproducibility_gate() {
     let computed = canonical_hash_i32s(&y);
     let substrate = host_substrate();
     if std::env::var("MIND_BENCH_BLESS").is_ok() {
-        println!("BLESS {id} {substrate} {computed}");
+        emit_bless(id, substrate, &computed);
         return;
     }
     match reference_hash(id, substrate) {
@@ -1632,7 +1664,7 @@ fn scalar_float_f64_reproducibility_gate() {
     let computed = canonical_hash(result.to_bits() as i64);
     let substrate = host_substrate();
     if std::env::var("MIND_BENCH_BLESS").is_ok() {
-        println!("BLESS {id} {substrate} {computed}");
+        emit_bless(id, substrate, &computed);
         return;
     }
     match reference_hash(id, substrate) {
@@ -1753,7 +1785,7 @@ fn scalar_cast_conv_reproducibility_gate() {
     let computed = canonical_hash(result);
     let substrate = host_substrate();
     if std::env::var("MIND_BENCH_BLESS").is_ok() {
-        println!("BLESS {id} {substrate} {computed}");
+        emit_bless(id, substrate, &computed);
         return;
     }
     match reference_hash(id, substrate) {
@@ -1904,7 +1936,7 @@ fn u64_ops_reproducibility_gate() {
 fn pin_or_bless(id: &str, computed: &str, result: i64) {
     let substrate = host_substrate();
     if std::env::var("MIND_BENCH_BLESS").is_ok() {
-        println!("BLESS {id} {substrate} {computed}");
+        emit_bless(id, substrate, &computed);
         return;
     }
     match reference_hash(id, substrate) {
@@ -2022,7 +2054,7 @@ fn gemm_q16_fused_reproducibility_gate() {
     let computed = canonical_hash_i32s(&c);
     let substrate = host_substrate();
     if std::env::var("MIND_BENCH_BLESS").is_ok() {
-        println!("BLESS {id} {substrate} {computed}");
+        emit_bless(id, substrate, &computed);
         return;
     }
     match reference_hash(id, substrate) {
@@ -2224,17 +2256,21 @@ fn lorenz_q16_reproducibility_gate() {
 // is now fixed (not a target-defined `vector.reduction` tree), the value is a
 // candidate for cross-substrate byte-identity — BUT unlike the integer tiers
 // this rests on strict-FP lowering, so avx2 == neon MUST be blessed on REAL
-// aarch64, never asserted from x86 + the associativity argument. This host is
-// x86_64 (avx2): the avx2 line is blessed here; the neon line is DEFERRED
-// pending a real-aarch64 bless (RFC 0020 §13) and reported LOUDLY, never a
-// stub-green. The within-run oracle below mirrors the kernel's exact fold
-// (8-lane accumulator, fixed 0..8 horizontal fold, scalar tail) so it is
-// bit-exact to the kernel on this substrate.
+// aarch64, never asserted from x86 + the associativity argument.
 //
-// deferred: neon cross-substrate identity for the strict-f32 tier is UNPROVEN
-// here — upgrade path: run this gate on a real aarch64 host with
-// MIND_BENCH_BLESS=1 and commit the neon line only if it reproduces the avx2
-// hash byte-for-byte (a divergence would be a real wedge break, not a bless).
+// That bless is DONE (2026-07-14): both canaries were executed on the
+// GitHub-hosted `ubuntu-24.04-arm` runner (real aarch64 silicon, LLVM 20,
+// MIND_BENCH_REQUIRE=1) by the `cross_substrate_identity (neon)` CI job and
+// produced hashes byte-for-byte IDENTICAL to the avx2 references, reproduced
+// across four independent runs. Both `neon` lines are now committed, and
+// `pin_strict_fp` is FAIL-CLOSED: the old self-passing DEFER arm is gone, so a
+// substrate without a committed strict-FP hash can no longer green this gate.
+// The strict-f32 leg of "bit-identical across CPU and ARM" is therefore proven
+// by execution, not argued.
+//
+// The within-run oracle below mirrors the kernel's exact fold (8-lane
+// accumulator, fixed 0..8 horizontal fold, scalar tail) so it is bit-exact to
+// the kernel on whichever substrate runs it.
 // ===========================================================================
 
 /// Number of f32 lanes the kernel accumulates over (matches VEC_DOT_F32_LANES).
@@ -2302,14 +2338,33 @@ fn ref_dot_f32_strict(a: &[f32], b: &[f32]) -> f32 {
     s
 }
 
-/// Pin a strict-FP canary's hash to the committed per-substrate reference, or —
-/// when the host substrate has NO committed hash and is `neon` — DEFER LOUDLY
-/// (strict-FP cross-substrate identity must be blessed on real aarch64, never
-/// asserted from x86). Under MIND_BENCH_BLESS it prints the bless line instead.
-fn pin_or_defer_strict_fp(id: &str, computed: &str, bits: u32) {
+/// Pin a strict-FP canary's hash to the committed per-substrate reference.
+///
+/// FAIL-CLOSED (2026-07-14). This function used to carry a `None if substrate ==
+/// "neon"` arm that printed a loud DEFER and *passed* the test, because the
+/// strict-FP neon line was unblessed: bit-identity here rests on the strict
+/// lowering (FMA unfused + pinned fixed-order fold), NOT on integer
+/// associativity, so it could only ever be proven by execution on real ARM and
+/// must never be asserted from x86.
+///
+/// That bless has now HAPPENED: the `cross_substrate_identity (neon)` CI job on
+/// the GitHub-hosted `ubuntu-24.04-arm` runner (real aarch64 silicon, LLVM 20,
+/// MIND_BENCH_REQUIRE=1) reproduced the avx2 hash byte-for-byte for BOTH
+/// strict-f32 canaries across four independent runs, and both `neon` lines are
+/// committed (see each fixture's reference_hashes.toml provenance block).
+///
+/// With both substrates blessed, the deferral arm is DEAD — and keeping it would
+/// be actively dangerous: it was a self-passing branch that turned a missing
+/// reference into a green test. A missing reference on ANY substrate is now a
+/// hard failure, exactly like every other canary in this suite. If a new
+/// substrate (e.g. a GPU tier) is added later, it must earn its hash by running
+/// on its own real hardware — it does NOT get to self-pass its way in.
+///
+/// Under MIND_BENCH_BLESS it prints the bless line instead (RFC 0020 §13).
+fn pin_strict_fp(id: &str, computed: &str, bits: u32) {
     let substrate = host_substrate();
     if std::env::var("MIND_BENCH_BLESS").is_ok() {
-        println!("BLESS {id} {substrate} {computed}");
+        emit_bless(id, substrate, &computed);
         return;
     }
     match reference_hash(id, substrate) {
@@ -2317,21 +2372,19 @@ fn pin_or_defer_strict_fp(id: &str, computed: &str, bits: u32) {
             computed, expected,
             "{id} [{substrate}]: strict-f32 output hash drifted from the committed reference.\n\
              computed={computed}\n expected={expected}\n result_bits={bits:#010x}\n\
-             Re-bless with MIND_BENCH_BLESS=1 only on an intentional lowering change (RFC 0020 §13)."
+             Both avx2 and neon are BLESSED on real hardware and carry the SAME hash, so a \
+             drift here is a strict-FP WEDGE BREAK (an FMA got contracted, or the horizontal \
+             fold stopped being a pinned fixed-order left-to-right lane fold), NOT a re-bless. \
+             Re-bless with MIND_BENCH_BLESS=1 ONLY for a deliberate, reviewed lowering change \
+             (RFC 0020 §13) — and then only on BOTH substrates, on real hardware each."
         ),
-        None if substrate == "neon" => {
-            // Honest hardware/strict-FP deferral — NEVER a stub-green.
-            println!(
-                "DEFER {id}: no committed neon reference for the strict-f32 tier. \
-                 Cross-substrate bit-identity of strict FP must be blessed on REAL \
-                 aarch64 (RFC 0020 §13), not asserted from x86. Computed here would \
-                 be {computed} (bits={bits:#010x}); bless it ONLY if it reproduces \
-                 the avx2 hash byte-for-byte on real ARM hardware."
-            );
-        }
         None => panic!(
-            "{id}: no reference hash for substrate '{substrate}'. Computed {computed} \
-             (bits={bits:#010x}); bless with MIND_BENCH_BLESS=1 if this host is canonical."
+            "{id}: no reference hash for substrate '{substrate}' — FAIL-CLOSED. Computed \
+             {computed} (bits={bits:#010x}). A substrate without a committed strict-FP hash \
+             CANNOT pass this gate: strict-FP bit-identity rests on the lowering, not on \
+             integer associativity, so it must be earned by execution on that substrate's \
+             REAL hardware and blessed with MIND_BENCH_BLESS=1 — never asserted from another \
+             substrate, never emulated, never self-skipped into green."
         ),
     }
 }
@@ -2365,7 +2418,7 @@ fn dot_f32_v_reproducibility_gate() {
 
     // Canonical encoding: the f32 bits as an i64, 8 LE bytes → sha256.
     let computed = canonical_hash(result.to_bits() as i64);
-    pin_or_defer_strict_fp(id, &computed, result.to_bits());
+    pin_strict_fp(id, &computed, result.to_bits());
 }
 
 #[test]
@@ -2411,7 +2464,7 @@ fn matmul_f32_v_reproducibility_gate() {
     let computed = format!("{:x}", h.finalize());
     // A stable per-buffer digest head for the DEFER/drift message.
     let head_bits = y.first().map(|v| v.to_bits()).unwrap_or(0);
-    pin_or_defer_strict_fp(id, &computed, head_bits);
+    pin_strict_fp(id, &computed, head_bits);
 }
 
 // ===========================================================================
