@@ -21,195 +21,18 @@ use crate::mlir::gemm_tuning::*;
 use crate::opt::ir_canonical::canonicalize_module;
 use crate::types::{ConvPadding, DType, ShapeDim};
 
-/// RFC 0006 Track B (increment 1) — the pure-MIND surface name whose
-/// `Instr::Call` lowers to a native MLIR `vector`-dialect reduction loop
-/// instead of a `func.call` to the Track A runtime-support C bridge.
-/// Declared unconditionally so the default-build catch-all stays
-/// byte-identical; only the gated `Instr::Call` arm ever compares it.
-#[cfg(feature = "std-surface")]
-const VEC_DOT_F32_INTRINSIC: &str = "__mind_blas_dot_f32_v";
-
 /// RFC 0006 Track B — the statically-known SIMD lane count emitted by the
 /// `dot_f32_v` lowering. Eight f32 lanes is the AVX2 / NEON-pair width;
 /// LLVM legalises wider/narrower targets from the same `vector<8xf32>`.
+///
+/// (The intrinsic *names* these vector kernels intercept are no longer
+/// carried as standalone `VEC_*_INTRINSIC` consts: the `Instr::Call` arm now
+/// dispatches through the single injective `classify_intrinsic` lookup keyed
+/// on the byte-suffix after `__mind_`. The per-kernel determinism proofs that
+/// used to sit on those consts live on their emitters — `emit_vec_dot_q16`,
+/// `emit_vec_dot_i16`, `emit_mm_q16_blocked`, `emit_mm_i8_blocked`, etc.)
 #[cfg(feature = "std-surface")]
 const VEC_DOT_F32_LANES: usize = 8;
-
-/// RFC 0006 Track B (increment 2) — the pure-MIND surface name whose
-/// `Instr::Call` lowers to a native MLIR `vector`-dialect Q16.16
-/// reduction. Byte-identical to the Track A scalar oracle
-/// `__mind_blas_dot_q16` at every length (task #57 — integer reduction
-/// is associative, the per-element arithmetic `>> 16` is replicated
-/// exactly in `vector<8xi64>` lanes).
-#[cfg(feature = "std-surface")]
-const VEC_DOT_Q16_INTRINSIC: &str = "__mind_blas_dot_q16_v";
-
-/// RFC 0006 Track B (increment 2) — native MLIR vector-dialect f32
-/// L1 (Manhattan, sum of `|a-b|`) reduction surface name.
-#[cfg(feature = "std-surface")]
-const VEC_DOT_L1_F32_INTRINSIC: &str = "__mind_blas_dot_l1_f32_v";
-
-/// RFC 0006 Track B (increment 3) — native MLIR vector-dialect Q16.16
-/// L1 (Manhattan, sum of `|a-b|`) reduction surface name. Byte-identical
-/// to the Track A scalar oracle `__mind_blas_dot_l1_q16` at every length
-/// (task #57 — integer reduction is associative, and per-element
-/// `|sext64(a) - sext64(b)|` is exact; this completes the Q16.16
-/// vector-path metric parity left open in increment 2, RFC 0006 §9.3).
-#[cfg(feature = "std-surface")]
-const VEC_DOT_L1_Q16_INTRINSIC: &str = "__mind_blas_dot_l1_q16_v";
-
-/// RFC 0006 Track B (increment 2) — native MLIR vector-dialect f32
-/// L∞ (Chebyshev, max of `|a-b|`) reduction surface name.
-#[cfg(feature = "std-surface")]
-const VEC_DOT_LINF_F32_INTRINSIC: &str = "__mind_blas_dot_linf_f32_v";
-
-/// RFC 0006 Track B (increment 3b) — native MLIR vector-dialect
-/// row-major f32 matrix-vector multiply surface name.
-///
-/// Signature: `(w_addr, x_addr, y_addr, rows, cols) -> i64` (returns 0).
-/// W is a rows×cols row-major f32 matrix (pointer packed as i64),
-/// x is a cols-element f32 vector, y is a caller-allocated rows-element
-/// f32 output vector.  The kernel computes `y[r] = dot(W[r,:], x)` for
-/// each row r using the proven vectorised f32 dot structure (eight-lane
-/// FMA accumulation + scalar tail) so numerical results are within 1e-4
-/// relative of an f64 oracle, matching the `dot_f32_v` contract.
-#[cfg(feature = "std-surface")]
-const VEC_MATMUL_RMAJOR_F32_INTRINSIC: &str = "__mind_blas_matmul_rmajor_f32_v";
-
-/// RFC 0006 Track B (increment 4) — native MLIR vector-dialect
-/// row-major Q16.16 matrix-vector multiply surface name.
-///
-/// Signature: `(w_addr, x_addr, y_addr, rows, cols) -> i64` (returns 0).
-/// W is a rows×cols row-major Q16.16 matrix (i32 elements, pointer packed
-/// as i64), x is a cols-element Q16.16 vector (i32), y is a
-/// caller-allocated rows-element Q16.16 output (i32).  The kernel
-/// computes `y[r] = dot_q16(W[r,:], x)` for each row r — identically to
-/// calling `__mind_blas_dot_q16_v` on each row — using the proven Q16.16
-/// reduction from `emit_vec_dot_q16` (widen i32→i64, multiply, arith
-/// `>> 16`, i64-lane accumulate, associative `vector.reduction <add>`,
-/// scalar tail, `trunc i64→i32` + `extsi i32→i64`).  Byte-identical to
-/// the Track A scalar oracle `__mind_blas_dot_q16` applied per row.
-#[cfg(feature = "std-surface")]
-const VEC_MATMUL_RMAJOR_Q16_INTRINSIC: &str = "__mind_blas_matmul_rmajor_q16_v";
-
-/// RFC 0006 Track B — fused outer-product Q16.16 GEMM surface name.
-///
-/// Signature: `(a_addr, b_addr, c_addr, m, k, n) -> i64` (returns 0).
-/// `a` is M×K row-major Q16.16 (i32 elements, base packed i64), `b` is
-/// **K×N row-major** Q16.16 (i32), `c` is M×N row-major Q16.16 (i32),
-/// caller-allocated. Computes
-/// `C[i,j] = trunc_i32( Σ_k ((A[i,k]*B[k,j]) >> 16) )`.
-///
-/// Unlike the gemv-composed `__mind_blas_matmul_rmajor_q16_v` (which
-/// re-streams Bᵀ for every output row), this is an outer-product
-/// register-tiled microkernel: an `NR`-wide `vector<NRxi64>` accumulator
-/// runs over output **columns** j, fed by a broadcast A scalar and a
-/// `vector<NRxi32>` B-row slice — no horizontal reduction. Each product
-/// term `(A[i,k]*B[k,j])` is `arith.shrsi`-shifted by 16 individually
-/// before being added into the i64 accumulator, and the i64→i32 truncation
-/// happens exactly once at the store. Because each term is shifted to a
-/// fixed i64 value before accumulation and i64 add is associative and
-/// commutative, the sum is byte-identical to the per-element scalar oracle
-/// `Σ_k (A[i,k]*B[k,j])>>16` under any k-order, tiling or lane grouping.
-#[cfg(feature = "std-surface")]
-const VEC_MATMUL_MM_Q16_INTRINSIC: &str = "__mind_blas_matmul_mm_q16_v";
-
-/// Multithreaded fused outer-product Q16.16 GEMM surface name.
-///
-/// Signature: `(a_addr, b_addr, c_addr, m, k, n) -> i64` (returns 0). ABI
-/// and semantics are byte-for-byte identical to the single-thread
-/// `__mind_blas_matmul_mm_q16_v`; the kernel is internally parallelised with
-/// raw POSIX threads (no libomp, no extra runtime dependency — the schedule
-/// is baked into the emitted artifact).
-///
-/// Determinism (the wedge): the output rows `[0, M)` are split into `T`
-/// **contiguous owner-computes bands** (`band = ceildiv(M, T)`), and each
-/// thread computes `C[row_start:row_end, 0:N]` ENTIRELY with the SAME fused
-/// outer-product math as the single-thread kernel. Every output element is
-/// written by exactly one thread — there is NO cross-thread reduction, NO
-/// atomic, NO shared accumulator — so the result is byte-for-byte identical
-/// to the single-thread kernel REGARDLESS of the thread count `T`. The
-/// runtime thread count therefore does not enter the output: it may be read
-/// from `sysconf(_SC_NPROCESSORS_ONLN)` at runtime (and is, here) without
-/// affecting cross-substrate bit-identity.
-#[cfg(feature = "std-surface")]
-const VEC_MATMUL_MM_Q16_MT_INTRINSIC: &str = "__mind_blas_matmul_mm_q16_mt_v";
-
-/// "det.igemm" tier — fused int8 GEMM surface name.
-///
-/// Signature: `(a_addr, b_addr, c_addr, m, k, n) -> i64` (returns 0).
-/// `a` is M×K row-major **int8** (1-byte elements, base packed i64), `b` is
-/// **K×N row-major** int8, `c` is M×N row-major **int32** (4-byte elements),
-/// caller-allocated. Computes the pure integer
-/// `C[i,j] = (i32) Σ_k ((i32)A[i,k] * (i32)B[k,j])` — int8 is integer, not
-/// fixed-point, so there is NO `>> 16` shift.
-///
-/// Lowering reuses the EXACT BLIS-blocked macro-kernel of
-/// `__mind_blas_matmul_mm_q16_v` (`emit_mm_i8_blocked` mirrors
-/// `emit_mm_q16_blocked` term-for-term) with two surgical differences: the
-/// A/B source loads are i8 + `arith.extsi` to i32 during the pack (the packed
-/// panels stay i32, identical extent to the Q16 panels), and the microkernel
-/// multiply-accumulates WITHOUT the per-term shift. The C-tile accumulates in
-/// i64; the i64→i32 truncation happens exactly once at the store.
-///
-/// Determinism / overflow: each product `(i32)a*(i32)b` has magnitude ≤ 2^14
-/// (|a|,|b| ≤ 128); accumulation is carried in i64 throughout (the C-scratch is
-/// i64), so the full-K reduction is exact for any realistic K and i64 add is
-/// associative + commutative ⇒ any tiling / lane order yields the identical
-/// int32 result. At `-march=x86-64-v3` the i32 widen-multiply-accumulate inner
-/// loop legalises to the AVX2 `vpmaddwd` (`_mm256_madd_epi16`) idiom — exact,
-/// NEVER the saturating `vpmaddubsw`; on aarch64 the same MLIR lowers to
-/// `SDOT`/`SMMLA`. Both produce the identical exact int32 sum, so cross-substrate
-/// bit-identity is automatic.
-#[cfg(feature = "std-surface")]
-const VEC_MATMUL_MM_I8_INTRINSIC: &str = "__mind_blas_matmul_mm_i8_v";
-
-/// "det.igemm" tier — multithreaded fused int8 GEMM surface name.
-///
-/// Same ABI (arity 6: `a, b, c, m, k, n`; i64; returns 0) and byte-for-byte
-/// output as `__mind_blas_matmul_mm_i8_v`. The output rows `[0, M)` are split
-/// into `T` **contiguous owner-computes bands** (`band = ceildiv(M, T)`,
-/// `T = clamp(sysconf(_SC_NPROCESSORS_ONLN), 1, M)`); each raw POSIX thread
-/// computes `C[row_start:row_end, 0:N]` ENTIRELY with the SAME BLIS-blocked
-/// int8 macro-kernel (`emit_mm_i8_blocked`) the single-thread kernel uses.
-/// Every output element is written by exactly one thread — NO cross-thread
-/// reduction, NO atomic, NO shared accumulator — and each worker's i64
-/// C-scratch + i32 packed-A / packed-B panels are private stack `alloca`s
-/// (emitted inside the worker `llvm.func`, one set per call frame), so there
-/// is no shared mutable state and the result is byte-for-byte identical to the
-/// single-thread kernel REGARDLESS of `T`. The runtime thread count therefore
-/// does not enter the output, so cross-substrate bit-identity holds.
-#[cfg(feature = "std-surface")]
-const VEC_MATMUL_MM_I8_MT_INTRINSIC: &str = "__mind_blas_matmul_mm_i8_mt_v";
-
-/// "int-dot" tier (RFC 0006 Track B) — the pure-MIND surface name whose
-/// `Instr::Call` lowers to a native MLIR `vector`-dialect **int16** dot
-/// product. Inputs are i16 row-major; the kernel computes the scalar oracle
-/// `c = (i32) sum_k ((i32)a[k] * (i32)b[k])` exactly: sign-extend each i16
-/// to i64, multiply, accumulate in i64 lanes (no shift, no saturation, no
-/// early narrowing), associative `vector.reduction <add>`, then a final
-/// `trunci i64->i32` + `extsi i32->i64` (the oracle's `(i32)acc`). Integer
-/// add is associative, so lane grouping is irrelevant — byte-identical to
-/// the sequential scalar oracle on **all** int16 inputs. At
-/// `-march=x86-64-v3` the i16 widen-multiply-accumulate inner loop is the
-/// `vpmaddwd` (`_mm256_madd_epi16`) idiom (16 i16 -> 8 i32 pairwise sums),
-/// the fast deterministic int GEMM tier.
-#[cfg(feature = "std-surface")]
-const VEC_DOT_I16_INTRINSIC: &str = "__mind_blas_dot_i16_v";
-
-/// "int-dot" tier — native MLIR vector-dialect **int16** row-major
-/// matrix-vector multiply surface name.
-///
-/// Signature: `(w_addr, x_addr, y_addr, rows, cols) -> i64` (returns 0).
-/// W is a rows×cols row-major i16 matrix (base address packed as i64),
-/// x is a cols-element i16 vector, y is a caller-allocated rows-element
-/// **i32** output (the exact accumulator narrowed once at the end). The
-/// kernel computes `y[r] = dot_i16(W[r,:], x)` for each row r — identically
-/// to calling `__mind_blas_dot_i16_v` on each row — using the proven int16
-/// reduction from `emit_vec_dot_i16`. Byte-identical to the scalar oracle
-/// applied per row, for all int16 inputs.
-#[cfg(feature = "std-surface")]
-const VEC_MATMUL_RMAJOR_I16_INTRINSIC: &str = "__mind_blas_matmul_rmajor_i16_v";
 
 /// "int-dot" tier — int16 vector lane count. The AVX2 `vpmaddwd`
 /// (`_mm256_madd_epi16`) idiom consumes 16 i16 per 256-bit register; this
@@ -236,6 +59,136 @@ const VEC_I16_PMADD_LANES: usize = 8;
 /// LLVM legalises both metrics from a single tile shape.
 #[cfg(feature = "std-surface")]
 const VEC_Q16_LANES: usize = 8;
+
+/// The shared namespace prefix of EVERY intrinsic `Instr::Call` intercepts.
+/// This is the fast-reject the old guard ladder could not do: because all 33
+/// intercepted names start with these seven bytes, a chain of `name == "__mind_…"`
+/// comparisons can never short-circuit early on a non-intrinsic callee — every
+/// one of them re-compares the same seven-byte prefix before failing. One check
+/// here retires all 33 at once for the common case (a plain user function call).
+#[cfg(feature = "std-surface")]
+const MIND_INTRINSIC_PREFIX: &str = "__mind_";
+
+/// The closed set of `__mind_*` intrinsics the `Instr::Call` arm lowers inline
+/// (as opposed to emitting a generic `func.call` / `llvm.call` to the
+/// runtime-support bridge).
+///
+/// Counted from the source, not from a prior claim: **33 names** — 13
+/// `__mind_blas_*_v` vector kernels, 4 `__mind_load_i*`, 4 `__mind_store_i*`,
+/// the 2 enum-payload bitcasts (`__mind_f64_to_bits` / `__mind_bits_to_f64`) and
+/// the 10 `__mind_conv_*` scalar casts.
+#[cfg(feature = "std-surface")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IntrinsicKind {
+    // --- RFC 0006 Track B vector kernels (13) ---
+    DotF32V,
+    DotQ16V,
+    DotI16V,
+    DotL1F32V,
+    DotL1Q16V,
+    DotLinfF32V,
+    MatmulRmajorF32V,
+    MatmulRmajorQ16V,
+    MatmulRmajorI16V,
+    MatmulMmQ16V,
+    MatmulMmQ16MtV,
+    MatmulMmI8V,
+    MatmulMmI8MtV,
+    // --- native-memory load/store (8) ---
+    LoadI64,
+    LoadI32,
+    LoadI16,
+    LoadI8,
+    StoreI64,
+    StoreI32,
+    StoreI16,
+    StoreI8,
+    // --- enum-payload bit coercion (2) ---
+    F64ToBits,
+    BitsToF64,
+    // --- scalar `as` conversions (10) ---
+    ConvF32,
+    ConvF64,
+    ConvI64,
+    ConvU64,
+    ConvI8,
+    ConvI16,
+    ConvI32,
+    ConvU8,
+    ConvU16,
+    ConvU32,
+}
+
+/// Classify a callee name against the closed intrinsic set — the single lookup
+/// that replaced the ~25-guard `if name == "__mind_…" && args.len() == N` ladder.
+///
+/// Two stages, both exact and both seedless:
+///
+///  1. **Prefix fast-reject.** Every intercepted name begins `__mind_`. A callee
+///     that does not is retired in ONE seven-byte compare instead of paying the
+///     full fall-through of the ladder. This is the common case — every ordinary
+///     user function call in every compiled program — and it is where the ladder
+///     spent its time, precisely *because* the shared prefix defeated early
+///     short-circuiting in `str ==`.
+///  2. **Suffix match.** The remainder is matched against the closed set of
+///     literals. `rustc` lowers a `match` over string literals to a
+///     length-switch + byte-discriminated decision tree with one final `memcmp`
+///     on the surviving candidate — the classic keyword-recogniser shape, and
+///     the same machine code a hand-rolled perfect hash would produce, but
+///     auditable literal-by-literal instead of resting on a magic constant.
+///
+/// **Determinism.** The classification is a pure function of the callee's bytes.
+/// No seed, no search, no RNG, no clock, no host `HashMap` iteration order, no
+/// pointer values, no `-march` / host-arch conditioning. Same name ⇒ same
+/// `IntrinsicKind` on x86 and on ARM. It selects WHICH existing emitter runs and
+/// changes no emitted op, so the mic@3 digest and every pinned cross-substrate
+/// canary hash are unmoved by construction.
+///
+/// Arity is deliberately NOT checked here: each call site still pairs its kind
+/// with its own `args.len() == N` test, exactly as the ladder did, so an
+/// intrinsic name reaching lowering with the wrong arity still falls through to
+/// the generic call path rather than being silently mis-lowered.
+#[cfg(feature = "std-surface")]
+#[inline]
+fn classify_intrinsic(name: &str) -> Option<IntrinsicKind> {
+    let suffix = name.strip_prefix(MIND_INTRINSIC_PREFIX)?;
+    Some(match suffix {
+        "blas_dot_f32_v" => IntrinsicKind::DotF32V,
+        "blas_dot_q16_v" => IntrinsicKind::DotQ16V,
+        "blas_dot_i16_v" => IntrinsicKind::DotI16V,
+        "blas_dot_l1_f32_v" => IntrinsicKind::DotL1F32V,
+        "blas_dot_l1_q16_v" => IntrinsicKind::DotL1Q16V,
+        "blas_dot_linf_f32_v" => IntrinsicKind::DotLinfF32V,
+        "blas_matmul_rmajor_f32_v" => IntrinsicKind::MatmulRmajorF32V,
+        "blas_matmul_rmajor_q16_v" => IntrinsicKind::MatmulRmajorQ16V,
+        "blas_matmul_rmajor_i16_v" => IntrinsicKind::MatmulRmajorI16V,
+        "blas_matmul_mm_q16_v" => IntrinsicKind::MatmulMmQ16V,
+        "blas_matmul_mm_q16_mt_v" => IntrinsicKind::MatmulMmQ16MtV,
+        "blas_matmul_mm_i8_v" => IntrinsicKind::MatmulMmI8V,
+        "blas_matmul_mm_i8_mt_v" => IntrinsicKind::MatmulMmI8MtV,
+        "load_i64" => IntrinsicKind::LoadI64,
+        "load_i32" => IntrinsicKind::LoadI32,
+        "load_i16" => IntrinsicKind::LoadI16,
+        "load_i8" => IntrinsicKind::LoadI8,
+        "store_i64" => IntrinsicKind::StoreI64,
+        "store_i32" => IntrinsicKind::StoreI32,
+        "store_i16" => IntrinsicKind::StoreI16,
+        "store_i8" => IntrinsicKind::StoreI8,
+        "f64_to_bits" => IntrinsicKind::F64ToBits,
+        "bits_to_f64" => IntrinsicKind::BitsToF64,
+        "conv_f32" => IntrinsicKind::ConvF32,
+        "conv_f64" => IntrinsicKind::ConvF64,
+        "conv_i64" => IntrinsicKind::ConvI64,
+        "conv_u64" => IntrinsicKind::ConvU64,
+        "conv_i8" => IntrinsicKind::ConvI8,
+        "conv_i16" => IntrinsicKind::ConvI16,
+        "conv_i32" => IntrinsicKind::ConvI32,
+        "conv_u8" => IntrinsicKind::ConvU8,
+        "conv_u16" => IntrinsicKind::ConvU16,
+        "conv_u32" => IntrinsicKind::ConvU32,
+        _ => return None,
+    })
+}
 
 /// True when the host this `mindc` runs on is x86_64, so the int16/int8
 /// "int-dot" paths may emit the explicit `llvm.x86.avx2.pmadd.wd` (`vpmaddwd`)
@@ -2479,6 +2432,18 @@ impl LoweringContext {
                         }
                     }
                 }
+                // ONE classification of the callee against the closed 33-name
+                // intrinsic set, replacing the ~25-guard `name == "__mind_…"`
+                // ladder below. `classify_intrinsic` fast-rejects on the shared
+                // `__mind_` prefix, so the COMMON case — an ordinary user function
+                // call, which matches no intrinsic — now costs a single seven-byte
+                // compare instead of walking every guard (the ladder could not
+                // short-circuit early precisely because all 33 names share that
+                // prefix). Each guard keeps its own `args.len() == N` test, so an
+                // intrinsic name arriving with the wrong arity still falls through
+                // to the generic call path exactly as before. Pure dispatch: no
+                // emitted op changes, so the mic@3 digest is unmoved.
+                let ikind = classify_intrinsic(name);
                 // RFC 0006 Track B (increment 1) — the `dot_f32_v` surface
                 // fn lowers to a *native* MLIR `vector`-dialect reduction
                 // loop instead of a `func.call` to the Track A
@@ -2486,7 +2451,7 @@ impl LoweringContext {
                 // extern path is untouched and remains the scalar/AVX2
                 // fallback; this is purely additive.  Any other callee
                 // keeps the generic `func.call` lowering below.
-                if name == VEC_DOT_F32_INTRINSIC && args.len() == 3 {
+                if ikind == Some(IntrinsicKind::DotF32V) && args.len() == 3 {
                     self.emit_vec_dot_f32(*dst, args[0], args[1], args[2]);
                     self.values.insert(*dst, ValueKind::ScalarI64);
                     return Ok(());
@@ -2498,7 +2463,7 @@ impl LoweringContext {
                 // `>> 16` -> i64-lane accumulate -> associative lane sum
                 // -> truncate-low-32 + sign-extend. Track A's
                 // `__mind_blas_dot_q16` extern path is untouched.
-                if name == VEC_DOT_Q16_INTRINSIC && args.len() == 3 {
+                if ikind == Some(IntrinsicKind::DotQ16V) && args.len() == 3 {
                     self.emit_vec_dot_q16(*dst, args[0], args[1], args[2]);
                     self.values.insert(*dst, ValueKind::ScalarI64);
                     return Ok(());
@@ -2511,7 +2476,7 @@ impl LoweringContext {
                 // widen-multiply-accumulate inner loop is the AVX2 `vpmaddwd`
                 // idiom at `-march=x86-64-v3`, the fast deterministic int
                 // GEMM tier. Additive: no Track A extern is touched.
-                if name == VEC_DOT_I16_INTRINSIC && args.len() == 3 {
+                if ikind == Some(IntrinsicKind::DotI16V) && args.len() == 3 {
                     self.emit_vec_dot_i16(*dst, args[0], args[1], args[2]);
                     self.values.insert(*dst, ValueKind::ScalarI64);
                     return Ok(());
@@ -2521,7 +2486,7 @@ impl LoweringContext {
                 // ABI and ~1e-4-relative numerical contract as the f32 L2
                 // `dot_f32_v` path; Track A's scalar/AVX2 L1/L∞ externs
                 // are untouched.
-                if name == VEC_DOT_L1_F32_INTRINSIC && args.len() == 3 {
+                if ikind == Some(IntrinsicKind::DotL1F32V) && args.len() == 3 {
                     self.emit_vec_dot_metric_f32(*dst, args[0], args[1], args[2], VecMetric::L1);
                     self.values.insert(*dst, ValueKind::ScalarI64);
                     return Ok(());
@@ -2536,12 +2501,12 @@ impl LoweringContext {
                 // vector-path metric parity left open in increment 2
                 // (RFC 0006 §9.3). Track A's `__mind_blas_dot_l1_q16` extern
                 // path is untouched and remains the scalar/AVX2 fallback.
-                if name == VEC_DOT_L1_Q16_INTRINSIC && args.len() == 3 {
+                if ikind == Some(IntrinsicKind::DotL1Q16V) && args.len() == 3 {
                     self.emit_vec_dot_l1_q16(*dst, args[0], args[1], args[2]);
                     self.values.insert(*dst, ValueKind::ScalarI64);
                     return Ok(());
                 }
-                if name == VEC_DOT_LINF_F32_INTRINSIC && args.len() == 3 {
+                if ikind == Some(IntrinsicKind::DotLinfF32V) && args.len() == 3 {
                     self.emit_vec_dot_metric_f32(*dst, args[0], args[1], args[2], VecMetric::Linf);
                     self.values.insert(*dst, ValueKind::ScalarI64);
                     return Ok(());
@@ -2551,7 +2516,7 @@ impl LoweringContext {
                 // the proven vectorised `dot_f32_v` reduction (8-lane FMA +
                 // scalar tail) inlined per row.  Track A's scalar/AVX2
                 // `__mind_blas_matmul_rmajor_f32` extern path is untouched.
-                if name == VEC_MATMUL_RMAJOR_F32_INTRINSIC && args.len() == 5 {
+                if ikind == Some(IntrinsicKind::MatmulRmajorF32V) && args.len() == 5 {
                     self.emit_vec_matmul_rmajor_f32(
                         *dst, args[0], args[1], args[2], args[3], args[4],
                     );
@@ -2567,7 +2532,7 @@ impl LoweringContext {
                 // `__mind_blas_dot_q16` applied to each row independently.
                 // Track A's `__mind_blas_matmul_rmajor_q16` extern path is
                 // untouched.
-                if name == VEC_MATMUL_RMAJOR_Q16_INTRINSIC && args.len() == 5 {
+                if ikind == Some(IntrinsicKind::MatmulRmajorQ16V) && args.len() == 5 {
                     self.emit_vec_matmul_rmajor_q16(
                         *dst, args[0], args[1], args[2], args[3], args[4],
                     );
@@ -2584,7 +2549,7 @@ impl LoweringContext {
                 // the store — byte-identical to the per-element scalar oracle
                 // for all shapes. Additive: the gemv-composed
                 // `__mind_blas_matmul_rmajor_q16_v` path is untouched.
-                if name == VEC_MATMUL_MM_Q16_INTRINSIC && args.len() == 6 {
+                if ikind == Some(IntrinsicKind::MatmulMmQ16V) && args.len() == 6 {
                     self.emit_vec_matmul_mm_q16(
                         *dst, args[0], args[1], args[2], args[3], args[4], args[5],
                     );
@@ -2599,7 +2564,7 @@ impl LoweringContext {
                 // shared accumulator), so the result is byte-for-byte identical
                 // to the single-thread kernel regardless of `T`. Additive: the
                 // single-thread path above is untouched.
-                if name == VEC_MATMUL_MM_Q16_MT_INTRINSIC && args.len() == 6 {
+                if ikind == Some(IntrinsicKind::MatmulMmQ16MtV) && args.len() == 6 {
                     self.emit_vec_matmul_mm_q16_mt(
                         *dst, args[0], args[1], args[2], args[3], args[4], args[5],
                     );
@@ -2616,7 +2581,7 @@ impl LoweringContext {
                 // `(i32) Σ_k (i32)A[i,k]*(i32)B[k,j]` for all shapes. The same
                 // MLIR lowers to vpmaddwd (AVX2) / SDOT (aarch64) — both yield
                 // the identical exact int32 sum. Additive.
-                if name == VEC_MATMUL_MM_I8_INTRINSIC && args.len() == 6 {
+                if ikind == Some(IntrinsicKind::MatmulMmI8V) && args.len() == 6 {
                     self.emit_vec_matmul_mm_i8(
                         *dst, args[0], args[1], args[2], args[3], args[4], args[5],
                     );
@@ -2633,7 +2598,7 @@ impl LoweringContext {
                 // private stack allocas, so the result is byte-for-byte identical
                 // to the single-thread kernel regardless of `T`. Additive: the
                 // single-thread path above is untouched.
-                if name == VEC_MATMUL_MM_I8_MT_INTRINSIC && args.len() == 6 {
+                if ikind == Some(IntrinsicKind::MatmulMmI8MtV) && args.len() == 6 {
                     self.emit_vec_matmul_mm_i8_mt(
                         *dst, args[0], args[1], args[2], args[3], args[4], args[5],
                     );
@@ -2646,7 +2611,7 @@ impl LoweringContext {
                 // `vector.reduction <add>`, scalar tail, trunc+store i32)
                 // inlined per row. Byte-identical to the scalar oracle
                 // applied per row, for all int16 inputs. Additive.
-                if name == VEC_MATMUL_RMAJOR_I16_INTRINSIC && args.len() == 5 {
+                if ikind == Some(IntrinsicKind::MatmulRmajorI16V) && args.len() == 5 {
                     self.emit_vec_matmul_rmajor_i16(
                         *dst, args[0], args[1], args[2], args[3], args[4],
                     );
@@ -2679,17 +2644,19 @@ impl LoweringContext {
                 #[cfg(feature = "std-surface")]
                 if args.len() == 1
                     && matches!(
-                        name.as_str(),
-                        "__mind_load_i64"
-                            | "__mind_load_i32"
-                            | "__mind_load_i16"
-                            | "__mind_load_i8"
+                        ikind,
+                        Some(
+                            IntrinsicKind::LoadI64
+                                | IntrinsicKind::LoadI32
+                                | IntrinsicKind::LoadI16
+                                | IntrinsicKind::LoadI8
+                        )
                     )
                 {
-                    let (load_ty, zext): (&str, bool) = match name.as_str() {
-                        "__mind_load_i64" => ("i64", false),
-                        "__mind_load_i32" => ("i32", true),
-                        "__mind_load_i16" => ("i16", true),
+                    let (load_ty, zext): (&str, bool) = match ikind {
+                        Some(IntrinsicKind::LoadI64) => ("i64", false),
+                        Some(IntrinsicKind::LoadI32) => ("i32", true),
+                        Some(IntrinsicKind::LoadI16) => ("i16", true),
                         _ => ("i8", true),
                     };
                     self.emit_line(&format!(
@@ -2719,17 +2686,19 @@ impl LoweringContext {
                 #[cfg(feature = "std-surface")]
                 if args.len() == 2
                     && matches!(
-                        name.as_str(),
-                        "__mind_store_i64"
-                            | "__mind_store_i32"
-                            | "__mind_store_i16"
-                            | "__mind_store_i8"
+                        ikind,
+                        Some(
+                            IntrinsicKind::StoreI64
+                                | IntrinsicKind::StoreI32
+                                | IntrinsicKind::StoreI16
+                                | IntrinsicKind::StoreI8
+                        )
                     )
                 {
-                    let store_ty: &str = match name.as_str() {
-                        "__mind_store_i64" => "i64",
-                        "__mind_store_i32" => "i32",
-                        "__mind_store_i16" => "i16",
+                    let store_ty: &str = match ikind {
+                        Some(IntrinsicKind::StoreI64) => "i64",
+                        Some(IntrinsicKind::StoreI32) => "i32",
+                        Some(IntrinsicKind::StoreI16) => "i16",
                         _ => "i8",
                     };
                     self.emit_line(&format!(
@@ -2795,7 +2764,7 @@ impl LoweringContext {
                 // record slot bit-exactly (deterministic — only a type
                 // reinterpret, never a value change).
                 #[cfg(feature = "std-surface")]
-                if args.len() == 1 && name == "__mind_f64_to_bits" {
+                if args.len() == 1 && ikind == Some(IntrinsicKind::F64ToBits) {
                     self.emit_line(&format!(
                         "    %{0} = arith.bitcast %{1} : f64 to i64",
                         dst.0, args[0].0
@@ -2804,7 +2773,7 @@ impl LoweringContext {
                     return Ok(());
                 }
                 #[cfg(feature = "std-surface")]
-                if args.len() == 1 && name == "__mind_bits_to_f64" {
+                if args.len() == 1 && ikind == Some(IntrinsicKind::BitsToF64) {
                     self.emit_line(&format!(
                         "    %{0} = arith.bitcast %{1} : i64 to f64",
                         dst.0, args[0].0
@@ -2829,8 +2798,10 @@ impl LoweringContext {
                 // silent miscompile). The conversions are IEEE round-to-nearest-
                 // even (substrate-deterministic), so fp_mode stays `Strict`.
                 #[cfg(feature = "std-surface")]
-                if args.len() == 1 && (name == "__mind_conv_f32" || name == "__mind_conv_f64") {
-                    let target = if name == "__mind_conv_f32" {
+                if args.len() == 1
+                    && matches!(ikind, Some(IntrinsicKind::ConvF32 | IntrinsicKind::ConvF64))
+                {
+                    let target = if ikind == Some(IntrinsicKind::ConvF32) {
                         "f32"
                     } else {
                         "f64"
@@ -2906,9 +2877,11 @@ impl LoweringContext {
                 // sequence is scalar + reassociation-free, so fp_mode stays
                 // `Strict`.
                 #[cfg(feature = "std-surface")]
-                if args.len() == 1 && (name == "__mind_conv_i64" || name == "__mind_conv_u64") {
+                if args.len() == 1
+                    && matches!(ikind, Some(IntrinsicKind::ConvI64 | IntrinsicKind::ConvU64))
+                {
                     let src = args[0];
-                    let unsigned = name == "__mind_conv_u64";
+                    let unsigned = ikind == Some(IntrinsicKind::ConvU64);
                     match self.values.get(&src) {
                         // Float source: the case the fix targets — emit a real,
                         // saturating fp->int conversion (was silently dropped;
@@ -2997,16 +2970,35 @@ impl LoweringContext {
                 //     scalar + reassociation-free, so `fp_mode` stays `Strict`.
                 #[cfg(feature = "std-surface")]
                 if args.len() == 1
-                    && (name == "__mind_conv_i8"
-                        || name == "__mind_conv_i16"
-                        || name == "__mind_conv_i32"
-                        || name == "__mind_conv_u8"
-                        || name == "__mind_conv_u16"
-                        || name == "__mind_conv_u32")
+                    && matches!(
+                        ikind,
+                        Some(
+                            IntrinsicKind::ConvI8
+                                | IntrinsicKind::ConvI16
+                                | IntrinsicKind::ConvI32
+                                | IntrinsicKind::ConvU8
+                                | IntrinsicKind::ConvU16
+                                | IntrinsicKind::ConvU32
+                        )
+                    )
                 {
                     let src = args[0];
-                    let unsigned = name.as_bytes()[12] == b'u';
-                    let width: u32 = name[13..].parse().unwrap_or(32);
+                    // Signedness + target width read from the classified kind rather
+                    // than from magic byte offsets into the callee string
+                    // (`name.as_bytes()[12]` / `name[13..].parse()`), which were
+                    // correct only because every narrow-conv name happens to be
+                    // exactly `__mind_conv_<s><width>`. Same values, no positional
+                    // assumption, no parse fallback that could silently pick 32.
+                    let (unsigned, width): (bool, u32) = match ikind {
+                        Some(IntrinsicKind::ConvI8) => (false, 8),
+                        Some(IntrinsicKind::ConvI16) => (false, 16),
+                        Some(IntrinsicKind::ConvI32) => (false, 32),
+                        Some(IntrinsicKind::ConvU8) => (true, 8),
+                        Some(IntrinsicKind::ConvU16) => (true, 16),
+                        // The `matches!` guard admits exactly the six kinds above,
+                        // so this is `ConvU32`.
+                        _ => (true, 32),
+                    };
                     let d = dst.0;
                     match self.values.get(&src) {
                         // FLOAT source — saturate to the narrow target range.

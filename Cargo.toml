@@ -59,6 +59,16 @@ path = "src/main.rs"
 name = "mindc"
 path = "src/bin/mindc.rs"
 
+# The statement-keyword recogniser equivalence/determinism gate exercises the
+# std-surface-gated statements (while / loop / region / break / continue), so it
+# only builds meaningfully with `std-surface`. Declared explicitly with
+# `required-features` so `cargo test --no-default-features` (a CI job) skips it
+# instead of compiling a build where those keywords fall through to the
+# expression path and the equivalence assertions fail.
+[[test]]
+name = "stmt_keyword_recognizer"
+required-features = ["std-surface"]
+
 [[bench]]
 name = "compiler"
 harness = false
@@ -89,6 +99,14 @@ required-features = ["std-surface", "mlir-lowering"]
 [[bench]]
 name = "simple_benchmarks"
 harness = false
+
+# Parse-only throughput over the real self-host source. Separate target from
+# `compiler` on purpose: tools/bench_gate.py freezes `--bench compiler`, so a
+# new measurement instrument here cannot perturb the frozen baseline.
+[[bench]]
+name = "parser_throughput"
+harness = false
+required-features = ["std-surface"]
 
 [[bench]]
 name = "cerebras_stencil"
