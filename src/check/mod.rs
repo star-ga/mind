@@ -29,7 +29,6 @@ use std::path::{Path, PathBuf};
 use crate::fmt::format_source;
 use crate::lint::rules::register_defaults;
 use crate::lint::{check_source as lint_source, rule::RuleRegistry};
-use crate::parser::parse_with_trivia;
 use crate::project::{MindcraftConfig, RuleSeverity, find_project_root, load_manifest};
 use crate::type_checker::check_module_types_in_file;
 
@@ -823,9 +822,15 @@ fn check_lint(
 
 /// Type-check pass: parse + type-check; emit any type errors.
 fn check_types(path: &Path, source: &str, out: &mut Vec<CheckDiagnostic>) {
-    let parse_result = parse_with_trivia(source);
-    let (module, _trivia) = match parse_result {
-        Ok(pair) => pair,
+    // Parse through `parse` (not `parse_with_trivia`) so the `#[bimap]` derive
+    // runs on the check path exactly as it does on build/eval — the single
+    // expansion chokepoint. `check_types` discards trivia anyway, so this only
+    // adds the desugar (and surfaces E2017-E2020 as parse-phase diagnostics with
+    // the E-code embedded in the message). fmt/doc/lint keep `parse_with_trivia`
+    // and never see the synthesised fns.
+    let parse_result = crate::parser::parse(source);
+    let module = match parse_result {
+        Ok(m) => m,
         Err(errors) => {
             // Surface parse errors as type_check phase diagnostics.
             for e in errors {

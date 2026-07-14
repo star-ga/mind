@@ -26,6 +26,7 @@ use crate::ast::{
 use crate::diagnostics::{Diagnostic as PrettyDiagnostic, Span as DiagnosticSpan};
 use crate::types::ConvPadding;
 
+mod expand_bimap;
 mod trivia;
 pub use trivia::{Trivia, TriviaKind, TriviaStream};
 use trivia::{TriviaCollector, strip_comments_with_trivia};
@@ -2218,10 +2219,24 @@ impl<'a> P<'a> {
                 }
                 self.skip_ws();
             }
-            // Optional `= discriminant` — ignore the value but consume it
+            // Optional `= discriminant`. Historically parsed-and-discarded. Now
+            // additively CAPTURED: a string literal becomes `paired` (the
+            // `#[bimap]` derive's single-source pair value); any other
+            // expression sets `paired_is_nonstring` (the E2020 trigger under
+            // `#[bimap]`). Behaviour for ordinary enums is unchanged — both
+            // fields are simply ignored when the enum carries no `bimap` attr.
+            let mut paired: Option<String> = None;
+            let mut paired_is_nonstring = false;
             if self.eat(b'=') {
                 self.skip_ws();
-                let _ = self.parse_expr();
+                if let Ok(discr) = self.parse_expr() {
+                    match discr {
+                        crate::ast::Node::Lit(crate::ast::Literal::Str(s), _) => {
+                            paired = Some(s);
+                        }
+                        _ => paired_is_nonstring = true,
+                    }
+                }
                 self.skip_ws();
             }
             let v_span = Span::new(v_start, self.pos);
@@ -2229,6 +2244,8 @@ impl<'a> P<'a> {
                 name: v_name,
                 payload,
                 field_names,
+                paired,
+                paired_is_nonstring,
                 span: v_span,
             });
             if self.eat(b',') {
@@ -5232,7 +5249,32 @@ pub fn parse(input: &str) -> Result<Module, Vec<ParseError>> {
     };
     let mut p = P::new(src);
     match p.parse_module() {
-        Ok(m) => Ok(m),
+        // Single expansion chokepoint (raw-error adapter). Every
+        // module-CONSUMING front-end that takes raw `ParseError`s — the project
+        // module loaders, the stdlib loader, the `mindc test` runner, and the
+        // `mindc check` type-check + cross-module-table paths — parses here, so
+        // `#[bimap]` derives land uniformly. The pretty-diagnostic adapter
+        // `parse_with_diagnostics_in_file` shares the SAME `expand_bimap`
+        // implementation; `parse_with_trivia` deliberately opts OUT so
+        // `fmt`/`doc`/`lint` see the raw (un-expanded) attribute, never
+        // synthesised fns re-emitted into user source (the excluded
+        // source-mutation hazard). Rejected alternative — wiring each front-end
+        // (build/run_eval_once/REPL/check/lower_to_ir) individually — is the
+        // two-sources-of-truth smell one level up.
+        Ok(mut m) => {
+            let diags = expand_bimap::expand_bimap(&mut m, src, None);
+            if diags.is_empty() {
+                Ok(m)
+            } else {
+                Err(diags
+                    .into_iter()
+                    .map(|d| ParseError {
+                        offset: 0,
+                        message: format!("{}: {}", d.code, d.message),
+                    })
+                    .collect())
+            }
+        }
         Err(e) => Err(vec![e]),
     }
 }
@@ -5255,7 +5297,22 @@ pub fn parse_with_diagnostics_in_file(
     };
     let mut p = P::new(src);
     match p.parse_module() {
-        Ok(m) => Ok(m),
+        // Single expansion chokepoint (pretty-diagnostic adapter). Every
+        // module-CONSUMING front-end that takes `PrettyDiagnostic`s — the build
+        // pipeline, `run_eval_once`, the REPL, and the project single-module
+        // load path — parses here. Shares the SAME `expand_bimap`
+        // implementation as the raw-error adapter `parse`; `parse_with_trivia`
+        // opts OUT (fmt/doc/lint). The E2017-E2020 bijectivity diagnostics carry
+        // their real E-code + span here (the raw adapter folds the code into the
+        // message string, `ParseError` having no code field).
+        Ok(mut m) => {
+            let diags = expand_bimap::expand_bimap(&mut m, src, file);
+            if diags.is_empty() {
+                Ok(m)
+            } else {
+                Err(diags)
+            }
+        }
         Err(e) => {
             let diag = PrettyDiagnostic {
                 phase: "parse",
