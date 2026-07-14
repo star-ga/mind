@@ -116,6 +116,54 @@ def main() -> int:
          "i0: i64, i1: i64, i2: i64, i3: i64, i4: i64, i5: i64, i6: i64) -> f64 "
          "{ if i6 == 77 { return 42.0; } return 7.0; } "
          "fn caller() -> f64 { q(1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,42.0, 10,20,30,40,50,60,77) }", 42),
+        # ---- #166: explicit `return <float>` must place the result in xmm0 (SysV), not
+        # rax. Pre-fix nb_stmt's ast_return arm unconditionally loaded rax; the callee then
+        # left a STALE xmm0 and the caller's xmm0 spill read garbage. `return b` (not the
+        # xmm0-resident `a`) discriminates: pre-fix returned trunc(stale xmm0=a=4), fix
+        # returns 9. A wrong register file here flips the exit.
+        ("fn g(a: f64, b: f64) -> f64 { return b; } fn f() -> f64 { g(4.0, 9.0) }", 9),
+        # #166 stack-passed 9th float param: params 0..7 in xmm0..7, s (idx 8) on the stack.
+        # Pre-fix `return s` via rax left xmm0 = p0 = 1.0 (stale), so exit was 1; fix returns
+        # s = 42.0 in xmm0 -> exit 42.
+        ("fn g(a: f64, b: f64, c: f64, d: f64, e: f64, p: f64, q: f64, r: f64, s: f64) -> f64 "
+         "{ return s; } fn caller() -> f64 { g(1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,42.0) }", 42),
+        # ---- #167: an assign/rebind (`y = <float expr>`) must re-tag the rebound slot FLOAT,
+        # and the fp-binop producer must tag its dst FLOAT. Pre-fix the rebound slot read INT,
+        # so `g(y)` marshalled the float arg in the GP pool (rdi) while the callee read xmm.
+        # The intervening `let z = <float>` clobbers xmm0 AFTER y is set, exposing the wrong
+        # register file: pre-fix returned trunc(stale xmm0=z), fix marshals y correctly.
+        ("fn g(x: f64) -> f64 { x } "
+         "fn f() -> f64 { let mut y: f64 = 0.0; y = 3.0 * 2.0; let z: f64 = 1.0 + 1.0; g(y) }", 6),
+        # #167 accumulator variant (`acc = acc + 5.0`): pre-fix returned trunc(stale xmm0 = z
+        # = 3+4 = 7); fix marshals acc = 6.0 in the SSE pool -> exit 6.
+        ("fn g(x: f64) -> f64 { x } "
+         "fn f() -> f64 { let mut acc: f64 = 1.0; acc = acc + 5.0; let z: f64 = 3.0 + 4.0; g(acc) }", 6),
+        # ---- #168: a FLOAT-operand COMPARISON must lower via ucomisd + an UNSIGNED setcc, not
+        # a signed-integer compare of the raw IEEE-754 bits (which is INVERTED for two negative
+        # operands — IEEE-754 is sign-magnitude). Negatives are formed by `0.0 - x` (a plain
+        # negative float literal is a separate, unrelated emitter bug). a=-1.0, b=-2.0:
+        #   a >  b is TRUE (1)  — pre-fix signed-bit compare gave 0 (inverted).
+        ("fn f() -> f64 { let a: f64 = 0.0 - 1.0; let b: f64 = 0.0 - 2.0; "
+         "if a > b { return 1.0; } return 0.0; }", 1),
+        #   a <  b is FALSE (0) — pre-fix gave 1 (inverted).
+        ("fn f() -> f64 { let a: f64 = 0.0 - 1.0; let b: f64 = 0.0 - 2.0; "
+         "if a < b { return 1.0; } return 0.0; }", 0),
+        #   a >= b is TRUE (1)  — pre-fix gave 0 (inverted).
+        ("fn f() -> f64 { let a: f64 = 0.0 - 1.0; let b: f64 = 0.0 - 2.0; "
+         "if a >= b { return 1.0; } return 0.0; }", 1),
+        #   a <= b at equality (-2.0 <= -2.0) is TRUE (1) — boundary/ZF predicate.
+        ("fn f() -> f64 { let a: f64 = 0.0 - 2.0; let b: f64 = 0.0 - 2.0; "
+         "if a <= b { return 1.0; } return 0.0; }", 1),
+        #   a != b is TRUE (1) — inequality over negatives.
+        ("fn f() -> f64 { let a: f64 = 0.0 - 1.0; let b: f64 = 0.0 - 2.0; "
+         "if a != b { return 1.0; } return 0.0; }", 1),
+        #   positive-operand control: a=2.0 > b=1.0 is TRUE (1) — the case that was already
+        #   correct as an integer-bit compare, must stay correct.
+        ("fn f() -> f64 { let a: f64 = 2.0; let b: f64 = 1.0; "
+         "if a > b { return 1.0; } return 0.0; }", 1),
+        #   equality of equal positives (2.0 == 2.0) is TRUE (1).
+        ("fn f() -> f64 { let a: f64 = 2.0; let b: f64 = 2.0; "
+         "if a == b { return 1.0; } return 0.0; }", 1),
     ]
     all_ok = True
     with tempfile.TemporaryDirectory() as td:
@@ -144,7 +192,11 @@ def main() -> int:
             "zero MLIR/LLVM (RI-D2 S-C1); AND FLOAT call-ARGUMENTS marshalled in the SSE arg "
             "pool (nb_call_args records each arg's dtype, nb_emit_argregs loads a float arg "
             "into xmm{sse_k} on an independent counter while int/ptr args keep the GP pool — "
-            "the SysV two-pool caller ABI mirroring nb_emit_params, RI-D2 S-C2)"
+            "the SysV two-pool caller ABI mirroring nb_emit_params, RI-D2 S-C2); AND the "
+            "native-ELF float-ABI fixes: #166 explicit `return <float>` in xmm0 (not rax), "
+            "#167 assign/rebind + fp-binop dst re-tag FLOAT (so a reassigned float arg keeps "
+            "the SSE pool), #168 float comparison via ucomisd + unsigned setcc (not a signed "
+            "IEEE-754-bits compare, which inverts for negative operands)"
         )
         return 0
     print("FAIL  float call-return dtype gate")
