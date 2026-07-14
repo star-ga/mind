@@ -164,6 +164,30 @@ def main() -> int:
         #   equality of equal positives (2.0 == 2.0) is TRUE (1).
         ("fn f() -> f64 { let a: f64 = 2.0; let b: f64 = 2.0; "
          "if a == b { return 1.0; } return 0.0; }", 1),
+        # ---- #170: a NEGATIVE float LITERAL (unary minus over a float literal) must
+        # lower in the native-ELF emitter, not SIGSEGV. Pre-fix nb_expr / nb_count_expr /
+        # nb_ccount_expr / nb_reach_expr had no ast_neg arm, so `-1.0` fell to the binop
+        # tail and null-deref'd on ast_child1 == 0. nb_expr now negates a FLOAT operand via
+        # `0.0 - operand` (subsd) and tags the result FLOAT; nb_node_dtype[_tbl] classify a
+        # neg by its operand dtype so a later float op/compare over `-x` routes the SSE2
+        # path (a signed compare of negated IEEE-754 bits would invert, #168).
+        ("fn f() -> f64 { let a: f64 = -1.0; a + 3.0 }", 2),            # -1.0 + 3.0 = 2.0
+        ("fn f() -> f64 { let a: f64 = -2.5; a }", 254),               # trunc(-2.5) = -2 -> exit 254
+        ("fn g(x: f64) -> f64 { x } fn f() -> f64 { g(-2.0) }", 254),  # -2.0 float arg -> -2
+        # negative float operand in a comparison, result routed as a float (1.0/0.0):
+        ("fn f() -> f64 { let a: f64 = -1.0; let b: f64 = 1.0; "
+         "if a < b { return 1.0; } return 0.0; }", 1),                 # -1.0 < 1.0 TRUE
+        ("fn f() -> f64 { let a: f64 = -1.0; let b: f64 = 1.0; "
+         "if a > b { return 1.0; } return 0.0; }", 0),                 # -1.0 > 1.0 FALSE
+        # ---- #171: a FLOAT-typed value-if (`if C { A } else { B }` with float branches)
+        # must (a) not SIGSEGV and (b) tag its merged dst slot FLOAT so a downstream float
+        # op routes the SSE2 path. Pre-fix `let r = if..; r + 1.0` returned a wrong value
+        # (dst read INT). nb_node_dtype[_tbl]'s ast_if arm classifies a value-if by its
+        # then-branch tail dtype, so nb_stmt's let arm tags r FLOAT.
+        ("fn f() -> f64 { let c: i64 = 1; if c == 1 { 2.0 } else { 3.0 } }", 2),   # tail value-if
+        ("fn f() -> f64 { let c: i64 = 0; if c == 1 { 2.0 } else { 3.0 } }", 3),   # else branch
+        ("fn f() -> f64 { let c: i64 = 1; let r: f64 = if c == 1 { 2.0 } else { 3.0 }; "
+         "r + 1.0 }", 3),                                                          # dst FLOAT-tagged
     ]
     all_ok = True
     with tempfile.TemporaryDirectory() as td:

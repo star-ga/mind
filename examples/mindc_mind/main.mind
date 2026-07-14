@@ -21295,6 +21295,56 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let c_res: String = nb_store_rax(c_clean, nb_slot_disp(id));
         return NbState { code: c_res, next_id: id + 1, last_id: id, ncalls: nc };
     }
+    if k == ast_neg() {
+        // FIX #170: unary minus. Pre-fix nb_expr had NO ast_neg arm, so a `-EXPR`
+        // node (e.g. a negative float literal `-1.0`) fell through to the binop tail
+        // below, which read ast_child1(node) == 0 and recursed into a NULL node ->
+        // ast_kind(0) null-deref SIGSEGV in the emitter. Lower the operand, then negate
+        // it in its own register file: a FLOAT operand via `0.0 - operand` (xmm0 = 0.0
+        // const, subsd xmm0,[operand]) which is exact for all finite values and yields a
+        // FLOAT-tagged result; an INT operand via `neg rax`. One SSA id for the negated
+        // result (matching nb_count_expr's ast_neg arm: count(operand)+1). main.mind's
+        // native-emitted source has no unary-minus node (it would already have crashed
+        // here), so this arm never fires during self-compile and the integer native-ELF
+        // oracle stays byte-identical.
+        let ns1: NbState = nb_expr(st, buf, ast_child0(node), params_addr, n_params, calls, lets, lcell);
+        let op_id: i64 = ns1.last_id;
+        let nid: i64 = ns1.next_id;
+        let ndtbl: i64 = __mind_load_i64(lcell + 8);
+        let op_dt: i64 = nb_node_dtype_tbl(ast_child0(node), ndtbl, lets, lcell, buf, params_addr, n_params);
+        if op_dt == nb_dtype_float() {
+            let nf1: String = nb_fp_const_xmm(ns1.code, 0, 0);
+            let nf2: String = nb_fp_binop_xmm0_mem(nf1, 1, nb_slot_disp(op_id));
+            let nf3: String = nb_fp_movsd_store_xmm0(nf2, nb_slot_disp(nid));
+            let _ntg: i64 = nb_dtype_tag_slot(ndtbl, nid, nb_dtype_float());
+            return NbState { code: nf3, next_id: nid + 1, last_id: nid, ncalls: ns1.ncalls };
+        }
+        // INT: mov rax,[operand] ; neg rax (48 F7 D8) ; mov [dst],rax.
+        let ni1: String = nb_load_rax(ns1.code, nb_slot_disp(op_id));
+        let ni2: String = nb_push(ni1, 72);
+        let ni3: String = nb_push(ni2, 247);
+        let ni4: String = nb_push(ni3, 216);
+        let ni5: String = nb_store_rax(ni4, nb_slot_disp(nid));
+        return NbState { code: ni5, next_id: nid + 1, last_id: nid, ncalls: ns1.ncalls };
+    }
+    if k == ast_if() {
+        // A value-if used in EXPRESSION position (a call argument, a binop operand, a
+        // nested initializer feeding a further op) reaches nb_expr, which — unlike
+        // nb_stmt — has no jump table (jmps/jcell) threaded through, so it cannot lay
+        // down the branch/merge control flow the value-if needs. Pre-fix this node fell
+        // through to the binop tail and null-deref SIGSEGV'd on ast_child1 of the block
+        // children. Fail CLOSED with a single deterministic const-0 slot (no crash)
+        // rather than emit corrupt control flow. A value-if as a fn TAIL or a bare
+        // STATEMENT is handled correctly by nb_stmt/nb_if_value (which do have the jump
+        // table); only the deeply-nested-expression position is unsupported.
+        // deferred: full in-expression value-if lowering needs the jmp table threaded
+        // into nb_expr (a wide signature change) — upgrade path: give nb_expr jmps/jcell
+        // and route ast_if to a jump-emitting merge, mirroring nb_if_value. main.mind's
+        // native-emitted source never nests a value-if in expression position (it would
+        // already have crashed here), so this arm is inert for self-compile byte-identity.
+        let s_fc: NbState = nb_emit_const0(st);
+        return s_fc;
+    }
     // ast_binop(): lower both operands, then the in-place op.
     let s1: NbState = nb_expr(st, buf, ast_child0(node), params_addr, n_params, calls, lets, lcell);
     let lhs_id: i64 = s1.last_id;
@@ -23124,6 +23174,22 @@ pub fn nb_count_expr(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         }
         return after_args + 1;
     }
+    // FIX #170: unary minus consumes the operand's ids + 1 for the negated result,
+    // matching nb_expr's ast_neg arm (recurse operand, then a single neg/subsd result).
+    // Without this arm nb_count_expr fell to the binop tail and walked ast_child1 == 0
+    // (a null node) -> the frame slot-count would be wrong (or fault). main.mind has no
+    // unary-minus node in its native-emitted source, so this never fires there.
+    if k == ast_neg() {
+        let after_op: i64 = nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params, clets, clcell);
+        return after_op + 1;
+    }
+    // A value-if in EXPRESSION position is lowered fail-closed as a single const-0 slot
+    // by nb_expr's ast_if arm (in-expression value-if lowering is deferred — see there),
+    // so it consumes exactly one id here too. Matching emit/count keeps the frame sizing
+    // consistent so surrounding slots stay correct.
+    if k == ast_if() {
+        return next_id + 1;
+    }
     // binop
     let l: i64 = nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params, clets, clcell);
     let r: i64 = nb_count_expr(l, buf, ast_child1(node), params_addr, n_params, clets, clcell);
@@ -23385,6 +23451,36 @@ pub fn nb_ccount_expr(buf: i64, node: i64, ccell: i64) -> i64 {
         let _a: i64 = nb_ccount_args(buf, args_addr, args_len, 0, ccell);
         __mind_store_i64(ccell, __mind_load_i64(ccell) + 1);
         return 0;
+    }
+    // FIX #170: unary minus — walk the operand for call sites (a negated call is a call).
+    // Pre-fix this fell to the binop tail and recursed into ast_child1 == 0 (null),
+    // faulting the call-table sizing walker on any `-EXPR`. main.mind's native source has
+    // no unary minus, so this never fires during self-compile.
+    if k == ast_neg() {
+        return nb_ccount_expr(buf, ast_child0(node), ccell);
+    }
+    // FIX #171: a value-if in EXPRESSION position — walk cond + both branch blocks for
+    // call sites (over-counting is safe: it only enlarges the calls-table capacity, and
+    // nb_expr fail-closes this node so it emits none). Pre-fix it fell to the binop tail
+    // and null-deref'd on the block children. Never fires during self-compile (main.mind
+    // nests no value-if in expression position).
+    if k == ast_if() {
+        let ic_cond: i64 = ast_child0(node);
+        let _ic: i64 = nb_ccount_expr(buf, ic_cond, ccell);
+        let it_blk: i64 = ast_child1(node);
+        let _it: i64 = nb_ccount_stmts(buf, ast_child0(it_blk), ast_aux(it_blk), 0, ccell);
+        let ie_blk: i64 = ast_child2(node);
+        let ie_sa: i64 = if ie_blk == 0 {
+            0
+        } else {
+            ast_child0(ie_blk)
+        };
+        let ie_sl: i64 = if ie_blk == 0 {
+            0
+        } else {
+            ast_aux(ie_blk)
+        };
+        return nb_ccount_stmts(buf, ie_sa, ie_sl, 0, ccell);
     }
     // binop: walk both operands.
     let _l: i64 = nb_ccount_expr(buf, ast_child0(node), ccell);
@@ -24565,6 +24661,15 @@ pub fn nb_reach_expr(buf: i64, fns: i64, n_fns: i64, reach: i64, node: i64, chan
     if k == ast_int_lit() {
         return 0;
     }
+    // A float literal is a call-free LEAF (like an int literal) — it references no fn.
+    // Pre-fix nb_reach_expr had no float-lit arm, so a float literal (e.g. under a
+    // `-1.0` unary-minus) fell to the binop tail and recursed into the leaf's absent
+    // children -> null-deref SIGSEGV in the whole-module reachability pass (the fp-call
+    // selftest does not run reachability, which is why only the whole-module native path
+    // faulted). main.mind is float-free, so this arm never fires during self-compile.
+    if k == ast_float_lit() {
+        return 0;
+    }
     if k == ast_ident() {
         return 0;
     }
@@ -24586,6 +24691,32 @@ pub fn nb_reach_expr(buf: i64, fns: i64, n_fns: i64, reach: i64, node: i64, chan
         let _a: i64 = nb_reach_args(buf, fns, n_fns, reach, args_addr, args_len, 0, changed);
         let _c: i64 = nb_reach_callee(buf, fns, n_fns, reach, callee, changed);
         return 0;
+    }
+    // FIX #170/#171: unary minus and expression-position value-if — walk the operand /
+    // the cond+both branches to mark callees, mirroring nb_reach_stmt's ast_if. Pre-fix
+    // these fell to the binop tail and null-deref'd on absent children when the call-graph
+    // reachability pass walked a `-EXPR` or a nested value-if. Inert for main.mind's
+    // float-free source (no such nodes reach here during self-compile).
+    if k == ast_neg() {
+        return nb_reach_expr(buf, fns, n_fns, reach, ast_child0(node), changed);
+    }
+    if k == ast_if() {
+        let rc_cond: i64 = ast_child0(node);
+        let _rc: i64 = nb_reach_expr(buf, fns, n_fns, reach, rc_cond, changed);
+        let rt_blk: i64 = ast_child1(node);
+        let _rt: i64 = nb_reach_stmts(buf, fns, n_fns, reach, ast_child0(rt_blk), ast_aux(rt_blk), 0, changed);
+        let re_blk: i64 = ast_child2(node);
+        let re_sa: i64 = if re_blk == 0 {
+            0
+        } else {
+            ast_child0(re_blk)
+        };
+        let re_sl: i64 = if re_blk == 0 {
+            0
+        } else {
+            ast_aux(re_blk)
+        };
+        return nb_reach_stmts(buf, fns, n_fns, reach, re_sa, re_sl, 0, changed);
     }
     let _l: i64 = nb_reach_expr(buf, fns, n_fns, reach, ast_child0(node), changed);
     nb_reach_expr(buf, fns, n_fns, reach, ast_child1(node), changed)
@@ -26117,6 +26248,26 @@ pub fn nb_node_dtype(node: i64) -> i64 {
     if k == ast_paren() {
         return nb_node_dtype(ast_child0(node));
     }
+    // FIX #170: unary minus preserves the operand's dtype — `-1.0` is FLOAT, so a
+    // downstream float op/compare over it routes the SSE2 path (a signed-bit compare of
+    // negated IEEE-754 bits would be wrong, #168). main.mind is float-free so this is INT.
+    if k == ast_neg() {
+        return nb_node_dtype(ast_child0(node));
+    }
+    // FIX #171: a value-if (`if C { A } else { B }`) has the dtype of its branch values,
+    // classified off the then-branch's tail expression. This lets a `let r = if C {2.0}
+    // else {3.0}; r + 1.0` binding tag r's slot FLOAT (nb_stmt's let arm reads this),
+    // so the downstream float op routes the SSE2 path instead of the GP-integer path
+    // (which returned a wrong value pre-fix). main.mind's value-ifs are all INT-branched,
+    // so this classifies INT during self-compile — byte-identical.
+    if k == ast_if() {
+        let tt_blk: i64 = ast_child1(node);
+        let tt_sl: i64 = ast_aux(tt_blk);
+        if tt_sl >= 1 {
+            return nb_node_dtype(__mind_load_i64(ast_child0(tt_blk) + (tt_sl - 1) * 8));
+        }
+        return nb_dtype_int();
+    }
     // FLOAT-op-FLOAT propagation (the minimal rule): a scalar-arithmetic binop
     // (+ - * /) over two FLOAT operands is itself FLOAT, so a nested float
     // expression stays float-typed through its consumers. A comparison op
@@ -26194,6 +26345,22 @@ pub fn nb_node_dtype_tbl(node: i64, tbl: i64, lets: i64, lcell: i64, buf: i64, p
     }
     if k == ast_paren() {
         return nb_node_dtype_tbl(ast_child0(node), tbl, lets, lcell, buf, params_addr, n_params);
+    }
+    // FIX #170: unary minus preserves the operand's dtype (table-aware, so a `-x` over a
+    // float-let-bound `x` classifies FLOAT). main.mind's source is float-free -> INT.
+    if k == ast_neg() {
+        return nb_node_dtype_tbl(ast_child0(node), tbl, lets, lcell, buf, params_addr, n_params);
+    }
+    // FIX #171: a value-if classifies as its then-branch tail dtype (table-aware). Lets a
+    // `let r = if C {float} else {float}` binding tag r FLOAT so a later `r + 1.0` routes
+    // the SSE2 path. main.mind's value-ifs are INT-branched -> INT, byte-identical.
+    if k == ast_if() {
+        let tt_blk: i64 = ast_child1(node);
+        let tt_sl: i64 = ast_aux(tt_blk);
+        if tt_sl >= 1 {
+            return nb_node_dtype_tbl(__mind_load_i64(ast_child0(tt_blk) + (tt_sl - 1) * 8), tbl, lets, lcell, buf, params_addr, n_params);
+        }
+        return nb_dtype_int();
     }
     if k == ast_binop() {
         if nb_fp_opsel(ast_aux(node)) >= 0 {
