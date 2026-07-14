@@ -3,4 +3,4 @@
 # and seeds the PRIMARY reproduction-independence loop. Regenerate via
 # self_host_loop_smoke.py --reseed with MINDC_SO set. NOT skippable in CI.
 # name	size_bytes	sha256
-stage1.elf	1386026	6d266e507efff8f701602d4e038208780dc4ec3d1ce833209740a80f3d4f839a
+stage1.elf	1389468	94803d72db13ad191a88aea976ce2914a383365ee288af1ae9ae77794be8a786
