@@ -20648,6 +20648,173 @@ pub fn nb_emit_blas_dot_q16(code: String, a_slot: i64, b_slot: i64, len_slot: i6
     r3
 }
 
+// RI-D2 S-E2 — recognise the `__mind_blas_dot_i16_v` BLAS extern by exact name
+// (21 bytes: `_ _ m i n d _ b l a s _ d o t _ i 1 6 _ v`). Identical byte pattern
+// to nb_is_blas_dot_q16_v except lo+16 is `i` (105) not `q` (113). The int16 sibling
+// of S-E1's Q16 dispatch: this extern is NOT a linked C kernel — nb_expr INLINES the
+// int16 MAC loop (nb_emit_blas_dot_i16 below) so the call lowers to native x86-64 with
+// zero MLIR/LLVM and no external symbol. Returns 1 on an exact match, else 0. main.mind
+// never calls this extern, so the branch is not self-taken and the integer native-ELF
+// fixture oracles stay byte-identical.
+pub fn nb_is_blas_dot_i16_v(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo != 21 {
+        return 0;
+    }
+    if load_byte(buf, lo + 0) != 95 {
+        return 0;
+    }
+    if load_byte(buf, lo + 1) != 95 {
+        return 0;
+    }
+    if load_byte(buf, lo + 2) != 109 {
+        return 0;
+    }
+    if load_byte(buf, lo + 3) != 105 {
+        return 0;
+    }
+    if load_byte(buf, lo + 4) != 110 {
+        return 0;
+    }
+    if load_byte(buf, lo + 5) != 100 {
+        return 0;
+    }
+    if load_byte(buf, lo + 6) != 95 {
+        return 0;
+    }
+    if load_byte(buf, lo + 7) != 98 {
+        return 0;
+    }
+    if load_byte(buf, lo + 8) != 108 {
+        return 0;
+    }
+    if load_byte(buf, lo + 9) != 97 {
+        return 0;
+    }
+    if load_byte(buf, lo + 10) != 115 {
+        return 0;
+    }
+    if load_byte(buf, lo + 11) != 95 {
+        return 0;
+    }
+    if load_byte(buf, lo + 12) != 100 {
+        return 0;
+    }
+    if load_byte(buf, lo + 13) != 111 {
+        return 0;
+    }
+    if load_byte(buf, lo + 14) != 116 {
+        return 0;
+    }
+    if load_byte(buf, lo + 15) != 95 {
+        return 0;
+    }
+    if load_byte(buf, lo + 16) != 105 {
+        return 0;
+    }
+    if load_byte(buf, lo + 17) != 49 {
+        return 0;
+    }
+    if load_byte(buf, lo + 18) != 54 {
+        return 0;
+    }
+    if load_byte(buf, lo + 19) != 95 {
+        return 0;
+    }
+    if load_byte(buf, lo + 20) != 118 {
+        return 0;
+    }
+    1
+}
+
+// RI-D2 S-E2 — the CALLABLE int16 dot-product, inlined at a `__mind_blas_dot_i16_v`
+// call site. The int16 sibling of nb_emit_blas_dot_q16 (S-E1): same immediate->slot
+// operand adaptation and exit-code->result-slot ABI, same nb_i16dot_body reduction
+// model. For each i in 0..len: aval = movsx WORD sext16(a[i]), bval = movsx WORD
+// sext16(b[i]), prod = aval * bval (i64, NO Q16 rescale — the DELTA vs S-E1 is exactly
+// (1) movsx WORD loads via nb_emit_load_i16_sx not movsxd DWORD, and (2) no per-product
+// `>> 16` SAR), acc(i64) += prod; the final acc is narrowed ONCE to i32 (movsxd) — the
+// dot-i16-4096 canary's `acc as i32` (ref_dot_i16_scalar). Element stride is 8 bytes
+// with the value in the low i16 (movsx-word loaded), matching the frozen dot-i16 canary
+// layout. Because there is no Q16 shift constant this reserves ONE fewer scratch slot
+// than S-E1 (10 total, not 11) — nb_count_expr's matching arm reserves the same 10.
+//
+// Slot layout (SSA ids reserved by nb_count_expr's matching arm; base_id = result):
+//   base_id result | +1 const8 | +2 const1 | +3 i | +4 acc | +5 ptr
+//   +6 aval | +7 bval | +8 prod | +9 cmpflag  (10 ids total).
+// The loop's je/jmp use a LOCAL jump scaffold patched in place immediately (an intra-
+// fn rel32 is position-independent, so the fn-relative patch is exact — mirrors S-E1),
+// so nb_expr needs no threaded jmps table.
+pub fn nb_emit_blas_dot_i16(code: String, a_slot: i64, b_slot: i64, len_slot: i64, base_id: i64) -> String {
+    let c8: i64 = base_id + 1;
+    let c1v: i64 = base_id + 2;
+    let iv: i64 = base_id + 3;
+    let accv: i64 = base_id + 4;
+    let ptrv: i64 = base_id + 5;
+    let avalv: i64 = base_id + 6;
+    let bvalv: i64 = base_id + 7;
+    let prodv: i64 = base_id + 8;
+    let cmpv: i64 = base_id + 9;
+    // Constants (element stride 8, loop step 1). No Q16 rescale constant — the int16
+    // reduction is a straight i64 MAC (no per-product shift).
+    let k1: String = nb_intdot_movimm(code, 8, nb_slot_disp(c8));
+    let k2: String = nb_intdot_movimm(k1, 1, nb_slot_disp(c1v));
+    // acc = 0 ; i = 0.
+    let k3: String = nb_intdot_movimm(k2, 0, nb_slot_disp(accv));
+    let k4: String = nb_intdot_movimm(k3, 0, nb_slot_disp(iv));
+    // Local forward/back jump scaffold (je-exit + back-edge = 2 records).
+    let jmps: i64 = __mind_alloc(4 * 2 * 8);
+    let jcell: i64 = __mind_alloc(8);
+    __mind_store_i64(jcell, 0);
+    // --- loop header: cmpflag = (i < len) ; je exit when 0 ---
+    let hdr: i64 = string_len(k4);
+    let c1: String = nb_load_rax(k4, nb_slot_disp(iv));
+    let c2: String = nb_cmp_rax_mem(c1, nb_setcc_opcode(op_lt()), nb_slot_disp(len_slot));
+    let c3: String = nb_store_rax(c2, nb_slot_disp(cmpv));
+    let c4: String = nb_emit_cmp_je_zero(c3, nb_slot_disp(cmpv), jmps, jcell);
+    let je_which: i64 = __mind_load_i64(jcell) - 1;
+    // ptr_a = a + i*8 ; aval = movsx word [ptr_a].
+    let a1: String = nb_load_rax(c4, nb_slot_disp(iv));
+    let a2: String = nb_arith_rax_mem(a1, op_mul(), nb_slot_disp(c8));
+    let a3: String = nb_arith_rax_mem(a2, op_add(), nb_slot_disp(a_slot));
+    let a4: String = nb_store_rax(a3, nb_slot_disp(ptrv));
+    let a5: String = nb_emit_load_i16_sx(a4, nb_slot_disp(ptrv));
+    let a6: String = nb_store_rax(a5, nb_slot_disp(avalv));
+    // ptr_b = b + i*8 ; bval = movsx word [ptr_b].
+    let b1: String = nb_load_rax(a6, nb_slot_disp(iv));
+    let b2: String = nb_arith_rax_mem(b1, op_mul(), nb_slot_disp(c8));
+    let b3: String = nb_arith_rax_mem(b2, op_add(), nb_slot_disp(b_slot));
+    let b4: String = nb_store_rax(b3, nb_slot_disp(ptrv));
+    let b5: String = nb_emit_load_i16_sx(b4, nb_slot_disp(ptrv));
+    let b6: String = nb_store_rax(b5, nb_slot_disp(bvalv));
+    // prod = aval * bval  (i64, NO Q16 shift).
+    let p1: String = nb_load_rax(b6, nb_slot_disp(avalv));
+    let p2: String = nb_arith_rax_mem(p1, op_mul(), nb_slot_disp(bvalv));
+    let p3: String = nb_store_rax(p2, nb_slot_disp(prodv));
+    // acc += prod.
+    let d1: String = nb_load_rax(p3, nb_slot_disp(accv));
+    let d2: String = nb_arith_rax_mem(d1, op_add(), nb_slot_disp(prodv));
+    let d3: String = nb_store_rax(d2, nb_slot_disp(accv));
+    // i += 1.
+    let e1: String = nb_load_rax(d3, nb_slot_disp(iv));
+    let e2: String = nb_arith_rax_mem(e1, op_add(), nb_slot_disp(c1v));
+    let e3: String = nb_store_rax(e2, nb_slot_disp(iv));
+    // back-edge jmp -> header.
+    let jb: String = nb_emit_jmp(e3, jmps, jcell);
+    let jmp_which: i64 = __mind_load_i64(jcell) - 1;
+    let _sb: i64 = nb_jmp_set_target(jmps, jcell, jmp_which, hdr);
+    // exit target = first byte after the loop.
+    let exit_off: i64 = string_len(jb);
+    let _se: i64 = nb_jmp_set_target(jmps, jcell, je_which, exit_off);
+    // result = (acc as i32) sign-extended -> the call's result slot.
+    let r1: String = nb_load_rax(jb, nb_slot_disp(accv));
+    let r2: String = nb_movsxd_rax_eax(r1);
+    let r3: String = nb_store_rax(r2, nb_slot_disp(base_id));
+    // Patch the two local jumps in place (fn-relative rel32).
+    let njmps: i64 = __mind_load_i64(jcell);
+    let _px: i64 = nb_patch_jmps(string_addr(r3), jmps, njmps, 0);
+    r3
+}
+
 // System-V integer arg registers (index 0..5): (modrm_reg_field, needs_rex).
 //   0 rdi(7,F) 1 rsi(6,F) 2 rdx(2,F) 3 rcx(1,F) 4 r8(0,T) 5 r9(1,T)
 pub fn nb_argreg_field(i: i64) -> i64 {
@@ -21079,6 +21246,17 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         if nb_is_blas_dot_q16_v(buf, ast_span_lo(callee), ast_span_hi(callee)) == 1 {
             let c_bd: String = nb_emit_blas_dot_q16(sa.code, __mind_load_i64(ids + 0 * 8), __mind_load_i64(ids + 1 * 8), __mind_load_i64(ids + 2 * 8), id);
             return NbState { code: c_bd, next_id: id + 11, last_id: id, ncalls: sa.ncalls };
+        }
+        // RI-D2 S-E2: the `__mind_blas_dot_i16_v` BLAS extern INLINES the int16 MAC loop
+        // (nb_emit_blas_dot_i16), the int16 sibling of the S-E1 Q16 dispatch — no C kernel,
+        // no MLIR/LLVM. The three args are the already-lowered slots ids[0..3] (a_addr,
+        // b_addr, len); the result is stored into slot `id`. The SSA counter advances by 10
+        // (result + 9 scratch — one fewer than Q16, which needs a rescale constant), exactly
+        // the count nb_count_expr's matching arm reserved. main.mind never calls this extern,
+        // so the branch is not self-taken and the integer oracles are unchanged.
+        if nb_is_blas_dot_i16_v(buf, ast_span_lo(callee), ast_span_hi(callee)) == 1 {
+            let c_bi: String = nb_emit_blas_dot_i16(sa.code, __mind_load_i64(ids + 0 * 8), __mind_load_i64(ids + 1 * 8), __mind_load_i64(ids + 2 * 8), id);
+            return NbState { code: c_bi, next_id: id + 10, last_id: id, ncalls: sa.ncalls };
         }
         // Caller-side System-V sequence for args_len args (mirror src/native/mod.rs
         // Call arm, lines 929-955), in EXACT byte order:
@@ -22833,6 +23011,14 @@ pub fn nb_count_expr(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         // the inline body's scratch would overrun the frame — so reserve 11 here too.
         if nb_is_blas_dot_q16_v(buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node))) == 1 {
             return after_args + 11;
+        }
+        // RI-D2 S-E2: a `__mind_blas_dot_i16_v` call INLINES the int16 MAC loop (nb_expr
+        // ast_call), consuming 10 SSA slots (result + 9 scratch — one fewer than Q16, which
+        // needs a rescale constant) rather than the single result slot a normal call takes.
+        // The frame count MUST match emission exactly or the inline body's scratch would
+        // overrun the frame — so reserve 10 here too.
+        if nb_is_blas_dot_i16_v(buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node))) == 1 {
+            return after_args + 10;
         }
         return after_args + 1;
     }
