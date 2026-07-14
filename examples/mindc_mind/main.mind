@@ -21268,8 +21268,8 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         //   6. spill the result (rax) into the call's dst slot.
         // For <=6 args this is byte-identical to the prior register-only path
         // (pad/push/cleanup all no-op).
-        let c_pad: String = nb_emit_stack_pad(sa.code, args_len);
-        let c_stk: String = nb_emit_stackargs(c_pad, ids, args_len - 1);
+        let c_pad: String = nb_emit_stack_pad(sa.code, arg_dts, args_len);
+        let c_stk: String = nb_emit_stackargs(c_pad, ids, arg_dts, args_len, args_len - 1);
         let c_args: String = nb_emit_argregs(c_stk, ids, arg_dts, args_len, 0, 0, 0);
         // call rel32 (placeholder 0; linker-patched). Record the rel32 offset.
         let c_e8: String = nb_push(c_args, 232);
@@ -21277,7 +21277,7 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let c_rel: String = nb_u32(c_e8, 0);
         let nc: i64 = nb_calls_push(calls, sa.ncalls, rel_off, ast_span_lo(callee), ast_span_hi(callee));
         // Pop the stack args + alignment pad before reading the result.
-        let c_clean: String = nb_emit_stack_cleanup(c_rel, args_len);
+        let c_clean: String = nb_emit_stack_cleanup(c_rel, arg_dts, args_len);
         // RI-D2 S-C1: spill the call result per the callee's DECLARED return dtype (frt,
         // at lcell+16). A FLOAT-returning callee returns in xmm0 (SysV), so spill xmm0 ->
         // dst slot (movsd) and TAG the dst slot FLOAT in the per-fn dtype table (at
@@ -21581,6 +21581,14 @@ pub fn nb_emit_argregs(code: String, ids: i64, arg_dts: i64, n: i64, i: i64, gp_
     let slot: i64 = __mind_load_i64(ids + i * 8);
     let dt: i64 = __mind_load_i64(arg_dts + i * 8);
     if dt == nb_dtype_float() {
+        if sse_k >= 8 {
+            // 9th+ SSE arg is stack-passed (pushed by nb_emit_stackargs at the CALL
+            // SITE), not xmm-loaded here — the movsd encoders mask k & 7 with no REX.R
+            // and cannot address xmm8..15, and SysV never passes args past xmm7. Advance
+            // sse_k only (no bytes emitted) so it is counted as a stack arg, mirroring the
+            // gp_k >= 6 skip below.
+            return nb_emit_argregs(code, ids, arg_dts, n, i + 1, gp_k, sse_k + 1);
+        }
         // FLOAT arg: load slot -> xmm{sse_k} via movsd. Advances sse_k only.
         let cf: String = nb_fp_movsd_load_xmmk(code, sse_k, nb_slot_disp(slot));
         return nb_emit_argregs(cf, ids, arg_dts, n, i + 1, gp_k, sse_k + 1);
@@ -21594,16 +21602,63 @@ pub fn nb_emit_argregs(code: String, ids: i64, arg_dts: i64, n: i64, i: i64, gp_
     nb_emit_argregs(c1, ids, arg_dts, n, i + 1, gp_k + 1, sse_k)
 }
 
+// SysV AMD64 two-pool stack classification. An arg is REGISTER-passed iff ITS
+// class's pool is not yet exhausted AT ITS POSITION (GP pool 6: rdi/rsi/rdx/rcx/
+// r8/r9 ; SSE pool 8: xmm0..7), on INDEPENDENT counters; otherwise it is a stack
+// arg. `nb_argstk_at` answers "is arg `t` stack-passed?" by walking 0..=t while
+// advancing only the counter of each arg's class. INT-PRESERVATION: with every arg
+// INT (main.mind's own source), gp advances 1:1 with position and sse stays 0, so
+// nb_argstk_at(t) == (t >= 6) — byte-identical to the prior positional `j >= 6`.
+pub fn nb_argstk_at(arg_dts: i64, t: i64, k: i64, gp: i64, sse: i64) -> i64 {
+    let d: i64 = __mind_load_i64(arg_dts + k * 8);
+    if d == nb_dtype_float() {
+        if k == t {
+            if sse >= 8 {
+                return 1;
+            }
+            return 0;
+        }
+        return nb_argstk_at(arg_dts, t, k + 1, gp, sse + 1);
+    }
+    if k == t {
+        if gp >= 6 {
+            return 1;
+        }
+        return 0;
+    }
+    nb_argstk_at(arg_dts, t, k + 1, gp + 1, sse)
+}
+
+// Count stack-passed args in [0,n) under the SysV two-pool rule (int gp>=6 or
+// float sse>=8). n_stack = max(n_int-6,0) + max(n_float-8,0). All-int -> max(n-6,0).
+pub fn nb_count_argstk(arg_dts: i64, n: i64, k: i64, gp: i64, sse: i64, acc: i64) -> i64 {
+    if k >= n {
+        return acc;
+    }
+    let d: i64 = __mind_load_i64(arg_dts + k * 8);
+    if d == nb_dtype_float() {
+        let naf: i64 = if sse >= 8 {
+            acc + 1
+        } else {
+            acc
+        };
+        return nb_count_argstk(arg_dts, n, k + 1, gp, sse + 1, naf);
+    }
+    let nai: i64 = if gp >= 6 {
+        acc + 1
+    } else {
+        acc
+    };
+    nb_count_argstk(arg_dts, n, k + 1, gp + 1, sse, nai)
+}
+
 // Caller-side System-V stack-arg PAD (mirror src/native/mod.rs Call arm 935-939):
-//   n_stack = max(n-6, 0) ; pad = (n_stack % 2) * 8.
+//   n_stack = SysV two-pool overflow count ; pad = (n_stack % 2) * 8.
 // When pad>0 the 7th+ pushes would leave rsp 8-off-16; emit `sub rsp,8`
 // (48 83 EC 08) FIRST to keep rsp 16-aligned at the `call`. n_stack even -> no-op.
-pub fn nb_emit_stack_pad(code: String, n: i64) -> String {
-    let n_stack: i64 = if n > 6 {
-        n - 6
-    } else {
-        0
-    };
+// All-int -> n_stack == max(n-6,0), byte-identical to the prior positional path.
+pub fn nb_emit_stack_pad(code: String, arg_dts: i64, n: i64) -> String {
+    let n_stack: i64 = nb_count_argstk(arg_dts, n, 0, 0, 0, 0);
     if n_stack - (n_stack / 2) * 2 == 0 {
         return code;
     }
@@ -21613,29 +21668,32 @@ pub fn nb_emit_stack_pad(code: String, n: i64) -> String {
     nb_push(c3, 8)
 }
 
-// Push the 7th+ args RIGHT-TO-LEFT (mirror src/native Call arm 940-943:
-// `for a in args.iter().skip(6).rev()`), so [rsp]=arg6 at the call. Each push is
-// `mov rax,[slot]` (load_rax) + `push rax` (0x50). `j` walks DOWN from n-1 to 6;
-// an if-STATEMENT recursion (no value-if phi) keeps it in the self-host subset.
-pub fn nb_emit_stackargs(code: String, ids: i64, j: i64) -> String {
-    if j < 6 {
+// Push ONLY the SysV overflow args (int once gp>=6, float once sse>=8) RIGHT-TO-LEFT
+// (mirror src/native Call arm 940-943), so the leftmost overflow arg ends at [rsp]
+// (lowest addr) and the callee reads it at [rbp+16]. Each push is `mov rax,[slot]`
+// (load_rax) + `push rax` (0x50). `j` walks DOWN from n-1 to 0; non-overflow args are
+// skipped (no bytes). All-int: nb_argstk_at(j) == (j>=6), so exactly positions n-1..6
+// are pushed — byte-identical to the prior positional loop. An if-STATEMENT recursion
+// (no value-if phi) keeps it in the self-host subset.
+pub fn nb_emit_stackargs(code: String, ids: i64, arg_dts: i64, n: i64, j: i64) -> String {
+    if j < 0 {
         return code;
+    }
+    if nb_argstk_at(arg_dts, j, 0, 0, 0) == 0 {
+        return nb_emit_stackargs(code, ids, arg_dts, n, j - 1);
     }
     let slot: i64 = __mind_load_i64(ids + j * 8);
     let c1: String = nb_load_rax(code, nb_slot_disp(slot));
     let c2: String = nb_push(c1, 80);
-    nb_emit_stackargs(c2, ids, j - 1)
+    nb_emit_stackargs(c2, ids, arg_dts, n, j - 1)
 }
 
 // Caller-side stack cleanup AFTER the call (mirror src/native Call arm 950-954):
 //   cleanup = 8*n_stack + pad ; if cleanup>0 emit `add rsp,imm32` (48 81 C4 <le32>).
-// pad = (n_stack % 2) * 8. n<=6 -> n_stack=0 -> no-op (byte-identical to today).
-pub fn nb_emit_stack_cleanup(code: String, n: i64) -> String {
-    let n_stack: i64 = if n > 6 {
-        n - 6
-    } else {
-        0
-    };
+// pad = (n_stack % 2) * 8, n_stack = SysV two-pool overflow count. All-int -> no-op
+// for n<=6 and byte-identical to today otherwise.
+pub fn nb_emit_stack_cleanup(code: String, arg_dts: i64, n: i64) -> String {
+    let n_stack: i64 = nb_count_argstk(arg_dts, n, 0, 0, 0, 0);
     if n_stack <= 0 {
         return code;
     }
@@ -23626,6 +23684,34 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     st_body
 }
 
+// Count stack-passed params in [0,t) under the SysV two-pool rule (int gp>=6 or
+// float sse>=8) — the callee twin of nb_count_argstk. A stack param's frame offset is
+// [rbp + 16 + 8*stack_rank], stack args laid out in arg order at increasing addresses.
+// INT-PRESERVATION: with every param INT, gp advances 1:1 with position and sse stays
+// 0, so for the param at position t (gp_k==t) this returns t-6 == gp_k-6 — byte-
+// identical to the prior `16 + 8*(gp_k-6)` offset.
+pub fn nb_param_stk_rank(buf: i64, params_addr: i64, t: i64, k: i64, gp: i64, sse: i64, acc: i64) -> i64 {
+    if k >= t {
+        return acc;
+    }
+    let pnode: i64 = __mind_load_i64(params_addr + k * 8);
+    let isf: i64 = nb_param_is_float(buf, ast_child1(pnode));
+    if isf == nb_dtype_float() {
+        let naf: i64 = if sse >= 8 {
+            acc + 1
+        } else {
+            acc
+        };
+        return nb_param_stk_rank(buf, params_addr, t, k + 1, gp, sse + 1, naf);
+    }
+    let nai: i64 = if gp >= 6 {
+        acc + 1
+    } else {
+        acc
+    };
+    nb_param_stk_rank(buf, params_addr, t, k + 1, gp + 1, sse, nai)
+}
+
 // Spill params 0..n_params-1 into their slots, classifying each per SysV AMD64:
 // integer/pointer params draw from the GP register pool (rdi/rsi/rdx/rcx/r8/r9,
 // counted by gp_k), FLOAT params from the SSE pool (xmm0..7, counted by sse_k). The
@@ -23646,17 +23732,31 @@ pub fn nb_emit_params(st: NbState, buf: i64, params_addr: i64, n_params: i64, i:
     let pnode: i64 = __mind_load_i64(params_addr + i * 8);
     let is_float: i64 = nb_param_is_float(buf, ast_child1(pnode));
     if is_float == nb_dtype_float() {
-        // FLOAT param: spill xmm{sse_k} into slot i via movsd. Advances sse_k only.
-        let cf: String = nb_store_sse_argreg(st.code, sse_k, nb_slot_disp(i));
+        // FLOAT param. xmm0..7 (sse_k<8) spill via movsd; a 9th+ float (sse_k>=8) was
+        // stack-passed by the caller (the movsd encoders cannot address xmm8..15), so it
+        // arrives on the stack at [rbp + 16 + 8*stack_rank] — the SHARED stack region
+        // (int and float overflow interleaved in arg order). Its 8 raw bytes are byte-
+        // copied into the float slot via rax (a float slot is just memory; downstream
+        // uses re-load it with movsd). Advances sse_k only.
+        let cf: String = if sse_k >= 8 {
+            let rank: i64 = nb_param_stk_rank(buf, params_addr, i, 0, 0, 0, 0);
+            let ldf: String = nb_load_rax(st.code, 16 + 8 * rank);
+            nb_store_rax(ldf, nb_slot_disp(i))
+        } else {
+            nb_store_sse_argreg(st.code, sse_k, nb_slot_disp(i))
+        };
         let sf: NbState = NbState { code: cf, next_id: st.next_id, last_id: st.last_id, ncalls: st.ncalls };
         return nb_emit_params(sf, buf, params_addr, n_params, i + 1, gp_k, sse_k + 1);
     }
-    // GP/pointer param (the unchanged path, now keyed on gp_k). Args 0..5 come from
-    // their SysV registers (store_argreg); args 6+ arrive on the stack at
-    // `[rbp + 16 + 8*(gp_k-6)]` (above the saved rbp + return address) and are copied
-    // via rax — mirror src/native::lower_fn's Instr::Param arm (mod.rs 740-744).
+    // GP/pointer param. Args 0..5 come from their SysV registers (store_argreg); a 7th+
+    // GP arg (gp_k>=6) arrives on the stack at `[rbp + 16 + 8*stack_rank]` (above the
+    // saved rbp + return address) and is copied via rax — mirror src/native::lower_fn's
+    // Instr::Param arm (mod.rs 740-744). `stack_rank` = the count of stack-passed params
+    // (either class) before this one; with no float overflow (n_float<=8) it equals
+    // gp_k-6, so the all-integer emission is byte-for-byte unchanged.
     let c1: String = if gp_k >= 6 {
-        let load_stack: String = nb_load_rax(st.code, 16 + 8 * (gp_k - 6));
+        let rank: i64 = nb_param_stk_rank(buf, params_addr, i, 0, 0, 0, 0);
+        let load_stack: String = nb_load_rax(st.code, 16 + 8 * rank);
         nb_store_rax(load_stack, nb_slot_disp(i))
     } else {
         nb_store_argreg(st.code, gp_k, nb_slot_disp(i))

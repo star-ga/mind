@@ -94,6 +94,28 @@ def main() -> int:
         ("fn g(n: i64, x: f64) -> f64 { x + 1.0 } fn f() -> f64 { g(5, 3.0) }", 4),  # 3+1=4
         # two float args: a->xmm0, b->xmm1 (sse_k advances 0->1 while gp_k stays 0).
         ("fn g(a: f64, b: f64) -> f64 { a - b } fn f() -> f64 { g(9.0, 2.5) }", 6),  # 9-2.5=6.5
+        # ---- #152: SysV two-pool STACK-ARG classification (caller must not push by
+        # position). A leading f64 shifts INT positions: the 7th int (i, gp_k=6) is a
+        # stack arg. The buggy positional caller pushed args[6:] (h,i,j) and mis-padded,
+        # so the callee's gp_k-keyed read of i saw h; the fix pushes ONLY true overflow
+        # args (int gp>=6 / float sse>=8) by class counter. i==100 selects 42.0 vs 7.0,
+        # so a wrong stack value flips the exit. All-int sibling (below) proves the
+        # byte-identical path is intact.
+        ("fn f(a: f64, b: i64, c: i64, d: i64, e: i64, g: i64, h: i64, i: i64, j: i64) -> f64 "
+         "{ if i == 100 { return 42.0; } return 7.0; } "
+         "fn caller() -> f64 { f(1.0, 11, 22, 33, 44, 55, 66, 100, 142) }", 42),
+        # all-int control (no leading float): position == gp index, exercises the
+        # byte-identical all-int stack path — must stay correct.
+        ("fn f(b: i64, c: i64, d: i64, e: i64, g: i64, h: i64, i: i64, j: i64) -> f64 "
+         "{ if i == 100 { return 42.0; } return 7.0; } "
+         "fn caller() -> f64 { f(11, 22, 33, 44, 55, 66, 100, 142) }", 42),
+        # interleaved GP+SSE overflow: 9 floats (f8 -> sse overflow, stack) + 7 ints
+        # (i6 -> gp overflow, stack) share the stack region in arg order; i6 selects
+        # 42.0 vs 7.0. Proves caller push order + callee shared stack-rank agree.
+        ("fn q(f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64, f8: f64, "
+         "i0: i64, i1: i64, i2: i64, i3: i64, i4: i64, i5: i64, i6: i64) -> f64 "
+         "{ if i6 == 77 { return 42.0; } return 7.0; } "
+         "fn caller() -> f64 { q(1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,42.0, 10,20,30,40,50,60,77) }", 42),
     ]
     all_ok = True
     with tempfile.TemporaryDirectory() as td:
