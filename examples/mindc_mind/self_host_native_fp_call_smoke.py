@@ -233,6 +233,35 @@ def main() -> int:
         ("fn g(x: i64) -> f64 { if !x { 7.0 } else { 9.0 } } fn caller() -> f64 { g(0) }", 7),
         ("fn g(x: i64) -> f64 { if !x { 7.0 } else { 9.0 } } fn caller() -> f64 { g(1) }", 9),
         ("fn g(x: i64) -> f64 { if !(x == 1) { 7.0 } else { 9.0 } } fn caller() -> f64 { g(0) }", 7),
+        # ---- diverging-branch value-if in let-INIT: `let r = if c { return X; } else { V }`.
+        # branch_is_value_block REJECTS a return-terminated block, so is_any_value_if_expr
+        # missed this shape and nb_lower_let_init routed it to nb_expr's fail-closed const-0
+        # (1 id) while the COUNT side counted the full if (many ids) — a next_id DESYNC that
+        # returned a wrong value for EVERY input (float returned 1, int form 0). The narrow
+        # is_diverging_value_if recognizer now routes it to nb_if_value, whose simple path
+        # detects the diverging branch (nb_block_diverges) and flows the LIVE branch's value
+        # to dst. then-diverges: c=1 -> return 0.0 (exit 0); c=0 -> else 2.5, r+1.0 = 3.5 (3).
+        ("fn f(c: i64) -> f64 { let r: f64 = if c == 1 { return 0.0; } else { 2.5 }; "
+         "return r + 1.0; } fn caller() -> f64 { f(0) }", 3),
+        ("fn f(c: i64) -> f64 { let r: f64 = if c == 1 { return 0.0; } else { 2.5 }; "
+         "return r + 1.0; } fn caller() -> f64 { f(1) }", 0),
+        # else-diverges (mirror order): c=1 -> then 2.5, r+1.0 = 3.5 (3); c=0 -> return 0.0 (0).
+        ("fn f(c: i64) -> f64 { let r: f64 = if c == 1 { 2.5 } else { return 0.0; }; "
+         "return r + 1.0; } fn caller() -> f64 { f(1) }", 3),
+        ("fn f(c: i64) -> f64 { let r: f64 = if c == 1 { 2.5 } else { return 0.0; }; "
+         "return r + 1.0; } fn caller() -> f64 { f(0) }", 0),
+        # int-branch form (same nb_if_value_simple arm, int slot plumbing): the value-if binds
+        # an i64 `r`; a frame desync would corrupt the later `s: f64` slot. Verified via a float
+        # wrapper (the harness reads xmm0): c=0 -> else r=3, s=2.0 returned (exit 2); c=1 ->
+        # then returns 42.0 (exit 42). Proves the diverging arm is dtype-agnostic.
+        ("fn f(c: i64) -> f64 { let r: i64 = if c == 1 { return 42.0; } else { 3 }; "
+         "let s: f64 = 2.0; return s; } fn caller() -> f64 { f(0) }", 2),
+        ("fn f(c: i64) -> f64 { let r: i64 = if c == 1 { return 42.0; } else { 3 }; "
+         "let s: f64 = 2.0; return s; } fn caller() -> f64 { f(1) }", 42),
+        ("fn f(c: i64) -> f64 { let r: i64 = if c == 1 { 3 } else { return 42.0; }; "
+         "let s: f64 = 2.0; return s; } fn caller() -> f64 { f(1) }", 2),
+        ("fn f(c: i64) -> f64 { let r: i64 = if c == 1 { 3 } else { return 42.0; }; "
+         "let s: f64 = 2.0; return s; } fn caller() -> f64 { f(0) }", 42),
     ]
     all_ok = True
     with tempfile.TemporaryDirectory() as td:
