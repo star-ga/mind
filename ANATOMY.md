@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3118 | **Est. tokens:** ~7,479,013
-**Generated:** 2026-07-15 07:36 UTC
+**Files:** 3120 | **Est. tokens:** ~7,480,431
+**Generated:** 2026-07-15 10:04 UTC
 
 ## Token Budget Guide
 
@@ -419,6 +419,7 @@
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
 | `tests/conformance/gpu_profile/` | 2 | ~11 |
 | `tests/cross_substrate_identity/` | 2 | ~4,052 |
+| `tests/cross_substrate_identity/bimap-phf/` | 2 | ~1,418 |
 | `tests/cross_substrate_identity/dot-f32-v-4093/` | 2 | ~1,222 |
 | `tests/cross_substrate_identity/dot-i16-4096/` | 2 | ~648 |
 | `tests/cross_substrate_identity/dot-l1-q16/` | 2 | ~363 |
@@ -4114,6 +4115,10 @@
 - `cross_module_enum_run.rs` (~1132 tok, large) — Copyright 2025 STARGA Inc.
 - `cross_module_field_access_run.rs` (~1504 tok, huge) — Copyright 2025 STARGA Inc.
 - `cross_module.rs` (~847 tok, large) — Copyright 2025 STARGA Inc.
+### `tests/cross_substrate_identity/bimap-phf/`
+
+- `manifest.toml` (~780 tok, large) — version = "1"
+- `reference_hashes.toml` (~638 tok, large) — avx2 = "782396add7bdc58d94606442b44f2e67cd7b3bf6772976f51577f8c53ffd75ed"
 ### `tests/cross_substrate_identity/dot-f32-v-4093/`
 
 - `manifest.toml` (~638 tok, large) — version = "1"

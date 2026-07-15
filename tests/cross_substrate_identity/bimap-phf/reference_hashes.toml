@@ -1,0 +1,40 @@
+# mind-bench reference hashes — RFC 0020 §5. See dot-l2-q16/reference_hashes.toml
+# for full provenance/signing notes.
+#
+# This is the phf-v1 O(1) `#[bimap]` from_str CONSTRUCTION fingerprint for
+# examples/bimap_currency/main.mind — the artifact `trace_hash`, i.e. the
+# SHA-256 of the canonical mic@3 IR bytes (`trace_hash_kind = mic3-bytes`,
+# MIND-CONSTITUTION §IV). The `#[bimap]` derive emits `currency_from_str` as a
+# seedless-CHD perfect hash (src/phf/mod.rs; emitter src/parser/expand_bimap.rs
+# `make_from_str_phf`); the emitted disp/meta/pool table literals and the
+# from_str body are exactly what this hash pins.
+#
+# The canonical mic@3 encoding is substrate-independent BY DESIGN, so the two
+# lines below carry ONE identical hash — that shared value IS the
+# cross-substrate table-byte-identity claim made inspectable (RFC 0015 §3.1).
+# This is stronger than a runtime-output hash: a different-but-correct PHF table
+# would still answer currency_from_str correctly (a runtime hash would pass) but
+# would produce different mic@3 bytes and fail HERE. Any divergence is a real
+# construction bug (a substrate-dependent table literal) and a release-blocker —
+# NEVER auto-blessed. Enforced per RFC 0015 §3.1 / RFC 0020 §10.
+#
+# Provenance:
+#   avx2 — verified on x86_64 (this workstation + CI job `cross_substrate_identity`,
+#          ubuntu-24.04): `mindc --emit-evidence` then `mindc verify` reports this
+#          exact trace_hash, trace_hash_valid: yes, fp_mode: strict, run-to-run
+#          stable with the artifact cache busted.
+#   neon — VERIFIED byte-identical on native ARM hardware (real aarch64, NEON):
+#          the enum-form `#[bimap]` PHF construction was proven to reproduce this
+#          exact trace_hash byte-for-byte on aarch64. Because the trace_hash is
+#          the canonical mic@3 bytes (substrate-independent by design), the same
+#          value is the committed neon line; the ubuntu-24.04-arm CI runner
+#          recomputes it on real ARM hardware every run per RFC 0015 §3.1 /
+#          RFC 0020 §10, so a construction divergence fails CI and blocks the tag.
+#
+# Re-bless only on an intentional #[bimap]/phf-v1 lowering change (RFC 0020 §13):
+# run the gate with MIND_BENCH_BLESS=1 and commit the new trace_hash. The
+# artifact is attested but UNSIGNED (Ed25519 signing is RFC 0016 Phase C,
+# pending — `signature: absent` today).
+
+avx2 = "782396add7bdc58d94606442b44f2e67cd7b3bf6772976f51577f8c53ffd75ed"
+neon = "782396add7bdc58d94606442b44f2e67cd7b3bf6772976f51577f8c53ffd75ed"
