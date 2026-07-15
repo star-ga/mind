@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3118 | **Est. tokens:** ~7,479,021
-**Generated:** 2026-07-15 07:25 UTC
+**Files:** 3118 | **Est. tokens:** ~7,479,013
+**Generated:** 2026-07-15 07:36 UTC
 
 ## Token Budget Guide
 
@@ -49,7 +49,7 @@
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 22 | ~41,529 |
 | `examples/bimap_currency/` | 3 | ~765 |
-| `examples/bimap_pairs/` | 2 | ~809 |
+| `examples/bimap_pairs/` | 2 | ~801 |
 | `examples/c/` | 2 | ~400 |
 | `examples/columnar/` | 4 | ~7,585 |
 | `examples/compliance/` | 3 | ~5,294 |
@@ -756,7 +756,7 @@
 - `Mind.toml` (~62 tok, small) — [package]
 ### `examples/bimap_pairs/`
 
-- `main.mind` (~740 tok, large) — Single-source bijective const pair-tables — ONE declaration, both directions
+- `main.mind` (~732 tok, large) — Single-source bijective const pair-tables — ONE declaration, both directions
 - `Mind.toml` (~69 tok, small) — [package]
 ### `examples/c/`
 

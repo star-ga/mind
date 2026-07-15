@@ -32,18 +32,10 @@ import std.io;
 // ===== Single sources of truth — each written EXACTLY ONCE ==============
 
 #[bimap]
-const COUNTRY = [
-    ("US", "United States"),
-    ("JP", "Japan"),
-    ("GB", "United Kingdom"),
-];
+const COUNTRY = [("US", "United States"), ("JP", "Japan"), ("GB", "United Kingdom")]
 
 #[bimap]
-const HTTP_STATUS = [
-    (200, "OK"),
-    (404, "Not Found"),
-    (500, "Server Error"),
-];
+const HTTP_STATUS = [(200, "OK"), (404, "Not Found"), (500, "Server Error")]
 
 fn print_kv(a: String, b: String) -> i64 {
     let line = string_new();
