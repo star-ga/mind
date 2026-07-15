@@ -3705,6 +3705,29 @@ pub fn check_module_types_in_file(
     let mut errs = Vec::new();
     let mut tenv = env.clone();
 
+    // E2023 — the `__mind_` prefix is reserved for compiler intrinsics (RFC 0005
+    // i64-ABI surface: `__mind_alloc` / `__mind_load_i8` / …). A user `fn` with
+    // that prefix would shadow the intrinsic on the interpreter fn-table oracle
+    // (a silent miscompile), so it is rejected fail-loud here on `check`/`build`,
+    // and defensively refused again in the interpreter fn-table install and in
+    // lowering (never merely skipped). Fires for ALL modules, independent of
+    // `#[bimap]`.
+    for item in &module.items {
+        if let Node::FnDef { name, span, .. } = item {
+            if name.starts_with("__mind_") {
+                errs.push(diag_from_span(
+                    src,
+                    file,
+                    format!(
+                        "reserved intrinsic prefix: a user function may not be named `{name}`; the `__mind_` prefix is reserved for compiler intrinsics"
+                    ),
+                    *span,
+                    "E2023",
+                ));
+            }
+        }
+    }
+
     // Single prologue pass: classify + collect all per-category data in one
     // walk instead of four separate passes (repr_c_struct_names, fn_tensor_sigs,
     // has_fn any(), has_enum any()) plus a conditional FnDef pre-register walk.
