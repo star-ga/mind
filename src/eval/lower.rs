@@ -3925,6 +3925,15 @@ fn lower_expr(
             reap_threshold,
             ..
         } => {
+            // E2023 defence-in-depth: a user `fn __mind_*` must never be emitted
+            // as an `Instr::FnDef` (it would define a symbol colliding with the
+            // reserved intrinsic call). The type checker rejects such a module
+            // fail-loud (E2023); this guard keeps lowering honest regardless.
+            if name.starts_with("__mind_") {
+                let id = ir.fresh();
+                ir.instrs.push(Instr::ConstI64(id, 0));
+                return id;
+            }
             // Codegen monomorphization: a generic fn is a TEMPLATE, never
             // emitted as an `Instr::FnDef` here. It was registered in the
             // pre-pass; concrete instances are emitted after the module body

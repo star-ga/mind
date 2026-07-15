@@ -3092,6 +3092,13 @@ fn fn_table_install(m: &Module) -> HashMap<String, UserFn> {
             name, params, body, ..
         } = item
         {
+            // E2023 defence-in-depth: never let a user `fn __mind_*` shadow a
+            // reserved intrinsic on the interpreter oracle. The type checker
+            // rejects such a module fail-loud (E2023); this guard keeps the
+            // fn-table honest even if an install path bypasses the checker.
+            if name.starts_with("__mind_") {
+                continue;
+            }
             table.insert(
                 name.clone(),
                 UserFn {

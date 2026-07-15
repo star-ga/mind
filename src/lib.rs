@@ -55,6 +55,7 @@ pub mod mlir;
 pub mod ops;
 pub mod opt;
 pub mod parser;
+pub mod phf;
 pub mod pipeline;
 pub mod runtime;
 pub mod runtime_interface;
