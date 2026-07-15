@@ -581,15 +581,18 @@ fn emit_enum_def(
             }
             p.push(")");
         }
-        // #[bimap] single-source pairing: a variant's `= "string"` value is
-        // captured in `paired` and MUST be printed to round-trip
-        // (parse(fmt(src)) == parse(src)) — otherwise the formatter silently
-        // drops the bimap table. A non-string `= …` discriminant is not stored
-        // (historically parsed-and-discarded; an E2020 error under `#[bimap]`),
-        // so there is nothing to round-trip for it.
+        // A variant's `= …` discriminant MUST round-trip (parse(fmt(src)) ==
+        // parse(src)): a string literal lives (decoded) in `paired` and is
+        // re-escaped; any other discriminant lives verbatim in `paired_raw` and
+        // is re-emitted as-is. Dropping either would silently rewrite the table —
+        // for `#[bimap]` that laundered an E2020-invalid table into a valid one.
+        // The two are mutually exclusive (a discriminant is a string XOR not).
         if let Some(paired) = &v.paired {
             p.push(" = ");
             push_str_lit(p, paired);
+        } else if let Some(raw) = &v.paired_raw {
+            p.push(" = ");
+            p.push(raw);
         }
         p.push(",\n");
     }

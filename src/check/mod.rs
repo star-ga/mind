@@ -822,26 +822,29 @@ fn check_lint(
 
 /// Type-check pass: parse + type-check; emit any type errors.
 fn check_types(path: &Path, source: &str, out: &mut Vec<CheckDiagnostic>) {
-    // Parse through `parse` (not `parse_with_trivia`) so the `#[bimap]` derive
-    // runs on the check path exactly as it does on build/eval — the single
-    // expansion chokepoint. `check_types` discards trivia anyway, so this only
-    // adds the desugar (and surfaces E2017-E2020 as parse-phase diagnostics with
-    // the E-code embedded in the message). fmt/doc/lint keep `parse_with_trivia`
-    // and never see the synthesised fns.
-    let parse_result = crate::parser::parse(source);
-    let module = match parse_result {
+    // Parse through the pretty-diagnostic adapter (not `parse` / not
+    // `parse_with_trivia`) so the `#[bimap]` derive runs on the check path — the
+    // single expansion chokepoint — AND each parse/expansion diagnostic keeps its
+    // real span + E-code. The raw `parse` adapter folds every diagnostic to
+    // `offset 0`, so E2017-E2022 would point at file start (1:1) instead of the
+    // offending variant. `check_types` discards trivia anyway; fmt/doc/lint keep
+    // `parse_with_trivia` and never see the synthesised fns.
+    let file_name = path.to_str();
+    let module = match crate::parser::parse_with_diagnostics_in_file(source, file_name) {
         Ok(m) => m,
-        Err(errors) => {
-            // Surface parse errors as type_check phase diagnostics.
-            for e in errors {
-                let (line, col) = offset_to_line_col(source, e.offset);
+        Err(diags) => {
+            for d in diags {
+                let (line, col) = match &d.span {
+                    Some(s) => (s.line, s.column),
+                    None => offset_to_line_col(source, 0),
+                };
                 out.push(CheckDiagnostic {
                     file: path.to_path_buf(),
                     line,
                     col,
                     severity: CheckSeverity::Error,
-                    message: e.message.clone(),
-                    rule_id: "type_check::parse_error".to_string(),
+                    message: d.message.clone(),
+                    rule_id: format!("type_check::{}", d.code),
                     phase: CheckPhase::TypeCheck,
                     help: None,
                     auto_fix: None,
@@ -851,7 +854,6 @@ fn check_types(path: &Path, source: &str, out: &mut Vec<CheckDiagnostic>) {
         }
     };
 
-    let file_name = path.to_str();
     let type_diags = check_module_types_in_file(&module, source, file_name, &HashMap::new());
 
     for d in type_diags {

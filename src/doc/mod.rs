@@ -242,6 +242,13 @@ fn collect_mind_files(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
 fn extract_file_doc(path: &Path) -> Result<FileDoc, String> {
     let source = fs::read_to_string(path).map_err(|e| format!("cannot read: {e}"))?;
 
+    // deferred: `parse_with_trivia` opts OUT of the `#[bimap]` derive (correct for
+    // fmt/lint round-tripping), so `mindc doc` never sees the three synthesised
+    // pub fns (`<enum>_count`/`_to_str`/`_from_str`) — real cross-module API that
+    // `mindc check` treats as present. Docs are therefore incomplete for a
+    // `#[bimap]` enum (not wrong — a coherence gap). Upgrade path: after parsing,
+    // run `expand_bimap` on a CLONE of `module` and drive item extraction from the
+    // expanded clone, leaving the trivia/round-trip view untouched.
     let (module, trivia) =
         parse_with_trivia(&source).map_err(|errs| format!("parse error: {}", errs[0].message))?;
 
