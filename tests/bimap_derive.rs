@@ -212,6 +212,50 @@ fn e2021_same_snake_base_second_enum_rejected() {
     );
 }
 
+// ── Inverse mode stamps (Phase 2, std-surface) ──────────────────────────────
+
+/// The second marker-attribute arg of `<base>_from_str` — the stamped inverse
+/// strategy (`phf-v1` / `binsearch-v1`).
+#[cfg(feature = "std-surface")]
+fn from_str_mode(m: &Module, fn_name: &str) -> Option<String> {
+    m.items.iter().find_map(|it| match it {
+        Node::FnDef { name, attrs, .. } if name == fn_name => {
+            attrs.first().and_then(|a| a.args.get(1).cloned())
+        }
+        _ => None,
+    })
+}
+
+#[cfg(feature = "std-surface")]
+#[test]
+fn in_envelope_from_str_stamps_phf_mode() {
+    let src = "#[bimap]\nenum Currency { AUD, JPY, USD }\n";
+    let m = parse(src).expect("parse");
+    assert_eq!(
+        from_str_mode(&m, "currency_from_str").as_deref(),
+        Some("phf-v1"),
+        "in-envelope key set must take the perfect-hash inverse"
+    );
+}
+
+#[cfg(feature = "std-surface")]
+#[test]
+fn out_of_envelope_130_keys_stamps_binsearch_mode() {
+    // 130 keys exceeds the PHF envelope (MAX_KEYS = 128), so the derive must
+    // fall back to the O(log n) sorted-binary-search inverse — and say so.
+    let mut src = String::from("#[bimap]\nenum Big {\n");
+    for i in 0..130 {
+        src.push_str(&format!("    V{i:03},\n"));
+    }
+    src.push_str("}\n");
+    let m = parse(&src).expect("130-key bimap enum must parse+expand");
+    assert_eq!(
+        from_str_mode(&m, "big_from_str").as_deref(),
+        Some("binsearch-v1"),
+        "out-of-envelope key set must take the binary-search inverse"
+    );
+}
+
 // ── E2023: reserved `__mind_` intrinsic prefix ─────────────────────────────
 
 #[test]

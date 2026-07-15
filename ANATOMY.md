@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3116 | **Est. tokens:** ~7,469,029
-**Generated:** 2026-07-15 05:14 UTC
+**Files:** 3116 | **Est. tokens:** ~7,471,256
+**Generated:** 2026-07-15 06:07 UTC
 
 ## Token Budget Guide
 
@@ -400,7 +400,7 @@
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 4 | ~10,738 |
 | `src/package/` | 2 | ~1,877 |
-| `src/parser/` | 2 | ~13,383 |
+| `src/parser/` | 2 | ~15,211 |
 | `src/phf/` | 1 | ~4,955 |
 | `src/project/` | 3 | ~31,849 |
 | `src/runtime/` | 3 | ~1,485 |
@@ -411,7 +411,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~192,637 |
-| `tests/` | 285 | ~487,463 |
+| `tests/` | 285 | ~487,862 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -3941,7 +3941,7 @@
 - `mod.rs` (~1567 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/parser/`
 
-- `expand_bimap.rs` (~9572 tok, huge) — An `#[bimap]` attribute on an `enum` declares a one-to-one correspondence
+- `expand_bimap.rs` (~11400 tok, huge) — An `#[bimap]` attribute on an `enum` declares a one-to-one correspondence
 - `trivia.rs` (~3811 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/phf/`
 
@@ -4055,7 +4055,7 @@
 ### `tests/`
 
 - `bare_variant_ctor_run.rs` (~885 tok, large) — Copyright 2025 STARGA Inc.
-- `bimap_derive.rs` (~3369 tok, huge) — Copyright 2025 STARGA Inc.
+- `bimap_derive.rs` (~3768 tok, huge) — Copyright 2025 STARGA Inc.
 - `blas_smoke.rs` (~6262 tok, huge) — Copyright 2025 STARGA Inc.
 - `blas_vec_q16_smoke.rs` (~5639 tok, huge) — Copyright 2025 STARGA Inc.
 - `blas_vec_smoke.rs` (~2130 tok, huge) — Copyright 2025 STARGA Inc.
