@@ -394,3 +394,222 @@ fn malformed_discriminant_is_a_parse_error() {
         "malformed discriminant must be a parse error"
     );
 }
+
+// ── Phase 3: const pair-table forms (string<->string / number<->string) ─────
+
+const SS_TABLE: &str =
+    "#[bimap]\nconst COUNTRY = [(\"US\", \"United States\"), (\"JP\", \"Japan\")];\n";
+const NS_TABLE: &str = "#[bimap]\nconst HTTP_STATUS = [(200, \"OK\"), (404, \"Not Found\")];\n";
+
+#[test]
+fn string_string_derives_count_value_key() {
+    let m = parse(SS_TABLE).expect("string<->string const table must parse+expand");
+    assert!(has_fn(&m, "country_count"), "missing country_count");
+    assert!(
+        has_fn(&m, "country_value"),
+        "missing country_value (forward)"
+    );
+    assert!(has_fn(&m, "country_key"), "missing country_key (inverse)");
+    // The hidden per-direction index fns carry the reused PHF/binsearch machinery.
+    assert!(
+        has_fn(&m, "__bimap_country_key_idx"),
+        "missing key index fn"
+    );
+    assert!(
+        has_fn(&m, "__bimap_country_value_idx"),
+        "missing value index fn"
+    );
+}
+
+#[test]
+fn number_string_derives_count_to_str_from_str() {
+    let m = parse(NS_TABLE).expect("number<->string const table must parse+expand");
+    assert!(has_fn(&m, "http_status_count"), "missing http_status_count");
+    assert!(
+        has_fn(&m, "http_status_to_str"),
+        "missing http_status_to_str (forward)"
+    );
+    assert!(
+        has_fn(&m, "http_status_from_str"),
+        "missing http_status_from_str (inverse)"
+    );
+}
+
+#[test]
+fn const_table_is_consumed_by_the_derive() {
+    // A validated `#[bimap]` const has no independent lowering; the expansion
+    // removes it from the item list so lowering never sees an array-of-tuples
+    // const that would otherwise fail to lower.
+    let m = parse(SS_TABLE).expect("parse");
+    assert!(
+        !m.items
+            .iter()
+            .any(|it| matches!(it, Node::Const { name, .. } if name == "COUNTRY")),
+        "validated #[bimap] const must be consumed (removed) after expansion"
+    );
+}
+
+#[test]
+fn const_form_generated_fns_are_pub() {
+    let m = parse(SS_TABLE).expect("parse");
+    for it in &m.items {
+        if let Node::FnDef { name, is_pub, .. } = it {
+            if name == "country_count" || name == "country_value" || name == "country_key" {
+                assert!(*is_pub, "generated `{name}` must be pub");
+            }
+        }
+    }
+}
+
+#[test]
+fn ss_duplicate_key_rejected() {
+    let src = "#[bimap]\nconst C = [(\"US\", \"a\"), (\"US\", \"b\")];\n";
+    assert!(
+        reject_codes(src).contains(&"E2017".to_string()),
+        "string<->string dup key must be E2017; got: {:?}",
+        reject_codes(src)
+    );
+}
+
+#[test]
+fn ss_duplicate_value_rejected() {
+    let src = "#[bimap]\nconst C = [(\"US\", \"same\"), (\"GB\", \"same\")];\n";
+    assert!(
+        reject_codes(src).contains(&"E2018".to_string()),
+        "string<->string dup value must be E2018; got: {:?}",
+        reject_codes(src)
+    );
+}
+
+#[test]
+fn ns_duplicate_key_rejected() {
+    let src = "#[bimap]\nconst H = [(404, \"a\"), (404, \"b\")];\n";
+    assert!(
+        reject_codes(src).contains(&"E2017".to_string()),
+        "number<->string dup key must be E2017; got: {:?}",
+        reject_codes(src)
+    );
+}
+
+#[test]
+fn ns_duplicate_value_rejected() {
+    let src = "#[bimap]\nconst H = [(404, \"same\"), (410, \"same\")];\n";
+    assert!(
+        reject_codes(src).contains(&"E2018".to_string()),
+        "number<->string dup value must be E2018; got: {:?}",
+        reject_codes(src)
+    );
+}
+
+#[test]
+fn const_mixed_keys_rejected() {
+    // A table that mixes a string key and a number key has no single derived
+    // signature — reject E2020, do not silently pick one form.
+    let src = "#[bimap]\nconst M = [(\"US\", \"a\"), (200, \"b\")];\n";
+    assert!(
+        reject_codes(src).contains(&"E2020".to_string()),
+        "mixed-key table must be E2020; got: {:?}",
+        reject_codes(src)
+    );
+}
+
+#[test]
+fn const_negative_number_key_rejected() {
+    // Negative keys fall outside the 0..=2^32-1 field the emitted tables encode
+    // ordinals in — reject loudly rather than silently truncate.
+    let src = "#[bimap]\nconst H = [(0 - 1, \"a\"), (2, \"b\")];\n";
+    assert!(
+        !reject_codes(src).is_empty(),
+        "negative number key must be rejected; got no diagnostics"
+    );
+}
+
+#[test]
+fn const_non_string_value_rejected() {
+    let src = "#[bimap]\nconst C = [(\"US\", 5)];\n";
+    assert!(
+        reject_codes(src).contains(&"E2020".to_string()),
+        "non-string value column must be E2020; got: {:?}",
+        reject_codes(src)
+    );
+}
+
+#[test]
+fn const_empty_table_rejected() {
+    let src = "#[bimap]\nconst C = [];\n";
+    assert!(
+        reject_codes(src).contains(&"E2019".to_string()),
+        "empty const table must be E2019; got: {:?}",
+        reject_codes(src)
+    );
+}
+
+#[test]
+fn const_and_enum_same_base_collides() {
+    // An enum and a const that normalise to the same base both claim
+    // `<base>_count`; the second is an E2021 collision, not a silent drop.
+    let src = "#[bimap]\nenum Country { US, JP }\n#[bimap]\nconst COUNTRY = [(\"US\", \"a\")];\n";
+    assert!(
+        reject_codes(src).contains(&"E2021".to_string()),
+        "enum+const same-base must be E2021; got: {:?}",
+        reject_codes(src)
+    );
+}
+
+#[test]
+fn non_bimap_const_is_untouched() {
+    // A const WITHOUT `#[bimap]` is not a table — it is left exactly as authored
+    // and no fns are synthesised.
+    let src = "const C = [(\"US\", \"a\")];\n";
+    let m = parse(src).expect("parse");
+    assert!(
+        m.items
+            .iter()
+            .any(|it| matches!(it, Node::Const { name, .. } if name == "C")),
+        "non-#[bimap] const must be preserved"
+    );
+    assert!(!has_fn(&m, "c_value"), "no derive on a plain const");
+}
+
+#[cfg(feature = "std-surface")]
+#[test]
+fn const_form_inverse_reuses_the_phf_ladder() {
+    // The const-form inverses reuse the enum-form `make_from_str_fn` ladder, so
+    // they stamp one of the two real inverse strategies — never a bespoke path.
+    // string<->string: both hidden index fns hash over their column's byte keys
+    // (ordinals are the dense 0..n-1 row indices, in the PHF one-byte envelope),
+    // so a small table lands on the O(1) perfect hash.
+    let ss = parse(SS_TABLE).expect("parse ss");
+    assert_eq!(
+        from_str_mode(&ss, "__bimap_country_key_idx").as_deref(),
+        Some("phf-v1"),
+        "string<->string key-index inverse must reuse phf-v1"
+    );
+    assert_eq!(
+        from_str_mode(&ss, "__bimap_country_value_idx").as_deref(),
+        Some("phf-v1"),
+        "string<->string value-index inverse must reuse phf-v1"
+    );
+
+    // number<->string: the inverse's ordinals ARE the authored number keys.
+    // Keys 200/404 exceed the PHF single-byte ordinal envelope (ORD_EMPTY=255),
+    // so construction correctly falls to the O(log n) binary search whose
+    // 4-byte little-endian ordinal field carries the wide keys — a deterministic
+    // pure function of the table, proven by the example's inverse returning 500.
+    let ns = parse(NS_TABLE).expect("parse ns");
+    assert_eq!(
+        from_str_mode(&ns, "http_status_from_str").as_deref(),
+        Some("binsearch-v1"),
+        "wide-ordinal number<->string inverse must fall to binsearch-v1"
+    );
+
+    // A number<->string table whose keys fit the one-byte ordinal envelope
+    // lands on the O(1) perfect hash, same ladder.
+    let small = parse("#[bimap]\nconst K = [(1, \"a\"), (2, \"bb\"), (3, \"ccc\")];\n")
+        .expect("parse small ns");
+    assert_eq!(
+        from_str_mode(&small, "k_from_str").as_deref(),
+        Some("phf-v1"),
+        "in-envelope number<->string inverse must reuse phf-v1"
+    );
+}

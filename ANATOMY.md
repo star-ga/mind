@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3116 | **Est. tokens:** ~7,471,256
-**Generated:** 2026-07-15 06:07 UTC
+**Files:** 3118 | **Est. tokens:** ~7,479,021
+**Generated:** 2026-07-15 07:25 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~28,537 |
+| `./` | 34 | ~28,558 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -49,6 +49,7 @@
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 22 | ~41,529 |
 | `examples/bimap_currency/` | 3 | ~765 |
+| `examples/bimap_pairs/` | 2 | ~809 |
 | `examples/c/` | 2 | ~400 |
 | `examples/columnar/` | 4 | ~7,585 |
 | `examples/compliance/` | 3 | ~5,294 |
@@ -400,7 +401,7 @@
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 4 | ~10,738 |
 | `src/package/` | 2 | ~1,877 |
-| `src/parser/` | 2 | ~15,211 |
+| `src/parser/` | 2 | ~20,229 |
 | `src/phf/` | 1 | ~4,955 |
 | `src/project/` | 3 | ~31,849 |
 | `src/runtime/` | 3 | ~1,485 |
@@ -411,7 +412,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~192,637 |
-| `tests/` | 285 | ~487,862 |
+| `tests/` | 285 | ~489,779 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -488,7 +489,7 @@
 - `.editorconfig` (~51 tok, small) — root = true
 - `.gitattributes` (~130 tok, small) — # Enforce LF line endings for all text so byte-exact tests (fmt idempotence,
 - `GITHUB_SETUP_INSTRUCTIONS.md` (~240 tok, medium) — GitHub Setup (Quick)
-- `.gitignore` (~527 tok, large) — # Rust
+- `.gitignore` (~548 tok, large) — # Rust
 - `incompatible` (~0 tok, tiny)
 - `LICENSE` (~2573 tok, huge) —                                  Apache License
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
@@ -753,6 +754,10 @@
 - `.gitignore` (~2 tok, tiny) — target/
 - `main.mind` (~701 tok, large) — Single-source bijective map over a "nice set" — ONE declaration, both
 - `Mind.toml` (~62 tok, small) — [package]
+### `examples/bimap_pairs/`
+
+- `main.mind` (~740 tok, large) — Single-source bijective const pair-tables — ONE declaration, both directions
+- `Mind.toml` (~69 tok, small) — [package]
 ### `examples/c/`
 
 - `min.c` (~82 tok, small)
@@ -3941,7 +3946,7 @@
 - `mod.rs` (~1567 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/parser/`
 
-- `expand_bimap.rs` (~11400 tok, huge) — An `#[bimap]` attribute on an `enum` declares a one-to-one correspondence
+- `expand_bimap.rs` (~16418 tok, huge) — An `#[bimap]` attribute on an `enum` declares a one-to-one correspondence
 - `trivia.rs` (~3811 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/phf/`
 
@@ -4055,7 +4060,7 @@
 ### `tests/`
 
 - `bare_variant_ctor_run.rs` (~885 tok, large) — Copyright 2025 STARGA Inc.
-- `bimap_derive.rs` (~3768 tok, huge) — Copyright 2025 STARGA Inc.
+- `bimap_derive.rs` (~5685 tok, huge) — Copyright 2025 STARGA Inc.
 - `blas_smoke.rs` (~6262 tok, huge) — Copyright 2025 STARGA Inc.
 - `blas_vec_q16_smoke.rs` (~5639 tok, huge) — Copyright 2025 STARGA Inc.
 - `blas_vec_smoke.rs` (~2130 tok, huge) — Copyright 2025 STARGA Inc.
