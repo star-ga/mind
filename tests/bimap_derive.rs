@@ -212,6 +212,40 @@ fn e2021_same_snake_base_second_enum_rejected() {
     );
 }
 
+// ── E2023: reserved `__mind_` intrinsic prefix ─────────────────────────────
+
+#[test]
+fn e2023_user_mind_prefixed_fn_rejected() {
+    // A user `fn __mind_*` would shadow a reserved intrinsic on the interpreter
+    // fn-table oracle; it is rejected fail-loud at check time.
+    use libmind::type_checker::check_module_types;
+    use std::collections::HashMap;
+    let src = "fn __mind_load_i8(a: i64) -> i64 { return 7 }\n";
+    let m = parse(src).expect("parse");
+    let diags = check_module_types(&m, src, &HashMap::new());
+    assert!(
+        diags.iter().any(|d| d.code == "E2023"),
+        "expected E2023 for `__mind_`-prefixed fn; got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn e2023_ordinary_name_is_fine() {
+    // The prefix guard must not fire for a normal name that merely contains
+    // `mind` or a single leading underscore.
+    use libmind::type_checker::check_module_types;
+    use std::collections::HashMap;
+    let src = "fn _helper() -> i64 { return 1 }\nfn remind_me() -> i64 { return 2 }\n";
+    let m = parse(src).expect("parse");
+    let diags = check_module_types(&m, src, &HashMap::new());
+    assert!(
+        !diags.iter().any(|d| d.code == "E2023"),
+        "E2023 must not fire on ordinary names; got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
 // ── Two-module: importer resolves the generated fns ────────────────────────
 
 #[cfg(feature = "cross-module-imports")]

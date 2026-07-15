@@ -387,23 +387,43 @@ fn make_to_str_fn(name: &str, base: &str, pairs: &[(i64, String)], span: Span) -
     )
 }
 
-/// `pub fn <enum>_from_str(s: String) -> i64 {
-///     if string_eq(s, "<lit>") == 1 { return <ord>; } …   // declaration order
-///     return -1;
-/// }`
+/// Synthesise `<enum>_from_str`.
+///
+/// Phase 2: under `std-surface` the inverse is a canonical **seedless
+/// minimal-perfect-hash** O(1) lookup ([`crate::phf`]) when the key set is
+/// in-envelope, or a deterministic byte-compare linear fallback when it is not.
+/// BOTH std-surface bodies decode key bytes through the unshadowable
+/// `__mind_load_i8` intrinsic — never the stdlib `string_eq` — so the
+/// user-fn-shadowing miscompile (#177) is closed in every path. The chosen mode
+/// (`phf-v1` / `linear-v1`) is stamped in the marker attribute args for
+/// inspectability. Without `std-surface` (no `while` / no String-record heap
+/// primitives) the Phase-1 statement-`if` `string_eq` chain is retained
+/// verbatim so that low-level builds are byte-identical to Phase 1.
 fn make_from_str_fn(name: &str, base: &str, pairs: &[(i64, String)], span: Span) -> Node {
+    #[cfg(feature = "std-surface")]
+    {
+        let keys: Vec<(i64, Vec<u8>)> = pairs
+            .iter()
+            .map(|(o, l)| (*o, l.as_bytes().to_vec()))
+            .collect();
+        match crate::phf::build(&keys) {
+            crate::phf::PhfOutcome::Built(plan) => make_from_str_phf(name, base, &plan, span),
+            crate::phf::PhfOutcome::Fallback => make_from_str_linear_bytes(name, base, pairs, span),
+        }
+    }
+    #[cfg(not(feature = "std-surface"))]
+    {
+        make_from_str_string_eq(name, base, pairs, span)
+    }
+}
+
+/// Phase-1 body — retained ONLY for non-`std-surface` builds (where `while` and
+/// the String-record heap primitives are unavailable). Byte-identical to the
+/// shipped Phase-1 emission.
+#[cfg(not(feature = "std-surface"))]
+fn make_from_str_string_eq(name: &str, base: &str, pairs: &[(i64, String)], span: Span) -> Node {
     let mut body: Vec<Node> = Vec::with_capacity(pairs.len() + 1);
     for (ord, lit) in pairs {
-        // deferred: the generated inverse calls the stdlib `string_eq` by bare
-        // name, and user-fn resolution precedes stdlib (eval/mod.rs:902) — so a
-        // user `fn string_eq` shadows it and the compiled from_str returns wrong
-        // ordinals (audit: confirmed compiled miscompile). This is one instance
-        // of a general stdlib-shadowing hygiene gap, not bimap-specific. Upgrade
-        // path: emit a reserved, non-shadowable byte-compare helper
-        // (`__mind_bimap_str_eq`, rejected as a user fn name like the E2022
-        // marker) implemented via the unshadowable `string_get_byte`/`.len`
-        // builtins — a stdlib edit that requires a self-host re-freeze, so it
-        // ships as its own gated commit.
         let call = Node::Call {
             callee: "string_eq".to_string(),
             args: vec![ident("s", span), Node::Lit(Literal::Str(lit.clone()), span)],
@@ -413,17 +433,374 @@ fn make_from_str_fn(name: &str, base: &str, pairs: &[(i64, String)], span: Span)
         let then = vec![ret(Node::Lit(Literal::Int(*ord), span), span)];
         body.push(if_stmt(cond, then, span));
     }
-    // `-1` on miss (documented policy). Emitted as `0 - 1` to mirror the shipped
-    // example and keep the native-ELF path on the plain-binary form.
-    let miss = binary(
-        BinOp::Sub,
-        Node::Lit(Literal::Int(0), span),
-        Node::Lit(Literal::Int(1), span),
-        span,
-    );
-    body.push(ret(miss, span));
+    body.push(ret(miss_neg1(span), span));
     let params = vec![param("s", TypeAnn::Named("String".to_string()), span)];
-    fn_def(name, base, params, TypeAnn::ScalarI64, body, span)
+    fn_def_mode(
+        name,
+        base,
+        params,
+        TypeAnn::ScalarI64,
+        body,
+        span,
+        "linear-v1",
+    )
+}
+
+/// The canonical seedless perfect-hash inverse (Slice 1). The three PHF tables
+/// (`disp` / `meta` / `pool`) are emitted as pure-ASCII string-literal constants
+/// (build-time `.rodata`, decoded once from the [`crate::phf::PhfPlan`]); the
+/// lookup reads them via `__mind_load_i8` and hashes with the same twin 31-bit
+/// mixers the plan was built with. Miss returns `0 - 1`.
+#[cfg(feature = "std-surface")]
+fn make_from_str_phf(name: &str, base: &str, plan: &crate::phf::PhfPlan, span: Span) -> Node {
+    use crate::ast::BinOp::{Add, Eq, Lt, Mod, Mul, Ne};
+    let m = plan.m as i64;
+    let np = plan.np as i64;
+    let base65 = crate::phf::NIBBLE_BASE;
+
+    let mut body: Vec<Node> = Vec::new();
+
+    // Table constants + their byte-buffer base addresses (String record field 0)
+    // + the query string's address / length (record fields 0 / 1).
+    body.push(let_(
+        "__bm_d",
+        Node::Lit(Literal::Str(plan.disp_table()), span),
+        span,
+    ));
+    body.push(let_(
+        "__bm_m",
+        Node::Lit(Literal::Str(plan.meta_table()), span),
+        span,
+    ));
+    body.push(let_(
+        "__bm_p",
+        Node::Lit(Literal::Str(plan.pool_table()), span),
+        span,
+    ));
+    // A String value IS its `{ addr, len, cap }` record address; `as i64` is the
+    // identity handle-cast (unshadowable, needs no `struct String` in scope), so
+    // `load_i64(rec)` reads the byte-buffer address (field 0) and `load_i64(rec +
+    // 8)` reads the length (field 1). This avoids depending on the imported
+    // `String` struct being registered in the user module's schema.
+    body.push(let_(
+        "__bm_da",
+        load_i64(as_i64(ident("__bm_d", span), span), span),
+        span,
+    ));
+    body.push(let_(
+        "__bm_ma",
+        load_i64(as_i64(ident("__bm_m", span), span), span),
+        span,
+    ));
+    body.push(let_(
+        "__bm_pa",
+        load_i64(as_i64(ident("__bm_p", span), span), span),
+        span,
+    ));
+    body.push(let_("__bm_sr", as_i64(ident("s", span), span), span));
+    body.push(let_(
+        "__bm_sa",
+        load_i64(ident("__bm_sr", span), span),
+        span,
+    ));
+    body.push(let_(
+        "__bm_n",
+        load_i64(
+            bin(
+                crate::ast::BinOp::Add,
+                ident("__bm_sr", span),
+                int(8, span),
+                span,
+            ),
+            span,
+        ),
+        span,
+    ));
+
+    // Twin 31-bit mixers over the query bytes.
+    body.push(let_mut("__bm_ha", int(0, span), span));
+    body.push(let_mut("__bm_hb", int(0, span), span));
+    body.push(let_mut("__bm_i", int(0, span), span));
+    let hash_body = vec![
+        let_(
+            "__bm_b",
+            call(
+                "__mind_load_i8",
+                vec![bin(
+                    Add,
+                    ident("__bm_sa", span),
+                    ident("__bm_i", span),
+                    span,
+                )],
+                span,
+            ),
+            span,
+        ),
+        assign(
+            "__bm_ha",
+            bin(
+                Mod,
+                bin(
+                    Add,
+                    bin(
+                        Mul,
+                        ident("__bm_ha", span),
+                        int(crate::phf::MULT_A, span),
+                        span,
+                    ),
+                    ident("__bm_b", span),
+                    span,
+                ),
+                int(crate::phf::MOD31, span),
+                span,
+            ),
+            span,
+        ),
+        assign(
+            "__bm_hb",
+            bin(
+                Mod,
+                bin(
+                    Add,
+                    bin(
+                        Mul,
+                        ident("__bm_hb", span),
+                        int(crate::phf::MULT_B, span),
+                        span,
+                    ),
+                    ident("__bm_b", span),
+                    span,
+                ),
+                int(crate::phf::MOD31, span),
+                span,
+            ),
+            span,
+        ),
+        assign(
+            "__bm_i",
+            bin(Add, ident("__bm_i", span), int(1, span), span),
+            span,
+        ),
+    ];
+    body.push(while_(
+        bin(Lt, ident("__bm_i", span), ident("__bm_n", span), span),
+        hash_body,
+        span,
+    ));
+
+    // bucket = hA % m; disp = LE16 at disp[bucket]; slot = (hB + disp) % np.
+    body.push(let_(
+        "__bm_bucket",
+        bin(Mod, ident("__bm_ha", span), int(m, span), span),
+        span,
+    ));
+    let bx2 = bin(Mul, ident("__bm_bucket", span), int(2, span), span);
+    body.push(let_(
+        "__bm_dlo",
+        dec("__bm_da", bx2.clone(), base65, span),
+        span,
+    ));
+    body.push(let_(
+        "__bm_dhi",
+        dec("__bm_da", bin(Add, bx2, int(1, span), span), base65, span),
+        span,
+    ));
+    body.push(let_(
+        "__bm_disp",
+        bin(
+            Add,
+            ident("__bm_dlo", span),
+            bin(Mul, ident("__bm_dhi", span), int(256, span), span),
+            span,
+        ),
+        span,
+    ));
+    body.push(let_(
+        "__bm_slot",
+        bin(
+            Mod,
+            bin(Add, ident("__bm_hb", span), ident("__bm_disp", span), span),
+            int(np, span),
+            span,
+        ),
+        span,
+    ));
+
+    // meta[slot] = { ord, len, off_lo, off_hi } at logical base slot*4.
+    let sx4 = bin(Mul, ident("__bm_slot", span), int(4, span), span);
+    body.push(let_(
+        "__bm_ord",
+        dec("__bm_ma", sx4.clone(), base65, span),
+        span,
+    ));
+    body.push(if_stmt(
+        bin(
+            Eq,
+            ident("__bm_ord", span),
+            int(crate::phf::ORD_EMPTY, span),
+            span,
+        ),
+        vec![ret(miss_neg1(span), span)],
+        span,
+    ));
+    body.push(let_(
+        "__bm_len",
+        dec(
+            "__bm_ma",
+            bin(Add, sx4.clone(), int(1, span), span),
+            base65,
+            span,
+        ),
+        span,
+    ));
+    body.push(if_stmt(
+        bin(Ne, ident("__bm_len", span), ident("__bm_n", span), span),
+        vec![ret(miss_neg1(span), span)],
+        span,
+    ));
+    body.push(let_(
+        "__bm_olo",
+        dec(
+            "__bm_ma",
+            bin(Add, sx4.clone(), int(2, span), span),
+            base65,
+            span,
+        ),
+        span,
+    ));
+    body.push(let_(
+        "__bm_ohi",
+        dec("__bm_ma", bin(Add, sx4, int(3, span), span), base65, span),
+        span,
+    ));
+    body.push(let_(
+        "__bm_off",
+        bin(
+            Add,
+            ident("__bm_olo", span),
+            bin(Mul, ident("__bm_ohi", span), int(256, span), span),
+            span,
+        ),
+        span,
+    ));
+
+    // Byte-compare the query against the pooled key at the resolved slot.
+    body.push(let_mut("__bm_j", int(0, span), span));
+    let cmp_body = vec![
+        let_(
+            "__bm_pb",
+            dec(
+                "__bm_pa",
+                bin(Add, ident("__bm_off", span), ident("__bm_j", span), span),
+                base65,
+                span,
+            ),
+            span,
+        ),
+        let_(
+            "__bm_qb",
+            call(
+                "__mind_load_i8",
+                vec![bin(
+                    Add,
+                    ident("__bm_sa", span),
+                    ident("__bm_j", span),
+                    span,
+                )],
+                span,
+            ),
+            span,
+        ),
+        if_stmt(
+            bin(Ne, ident("__bm_qb", span), ident("__bm_pb", span), span),
+            vec![ret(miss_neg1(span), span)],
+            span,
+        ),
+        assign(
+            "__bm_j",
+            bin(Add, ident("__bm_j", span), int(1, span), span),
+            span,
+        ),
+    ];
+    body.push(while_(
+        bin(Lt, ident("__bm_j", span), ident("__bm_n", span), span),
+        cmp_body,
+        span,
+    ));
+
+    body.push(ret(ident("__bm_ord", span), span));
+    let params = vec![param("s", TypeAnn::Named("String".to_string()), span)];
+    fn_def_mode(name, base, params, TypeAnn::ScalarI64, body, span, "phf-v1")
+}
+
+/// Deterministic byte-compare linear fallback for out-of-envelope /
+/// construction-resistant key sets. Byte-pure: each variant's decoded literal
+/// bytes are compared against the query via `__mind_load_i8` (no `string_eq`, so
+/// #177 stays closed here too). Declaration order preserved; miss returns
+/// `0 - 1`.
+#[cfg(feature = "std-surface")]
+fn make_from_str_linear_bytes(name: &str, base: &str, pairs: &[(i64, String)], span: Span) -> Node {
+    use crate::ast::BinOp::{Add, Eq, Ne};
+    let mut body: Vec<Node> = Vec::new();
+    body.push(let_("__bm_sr", as_i64(ident("s", span), span), span));
+    body.push(let_(
+        "__bm_sa",
+        load_i64(ident("__bm_sr", span), span),
+        span,
+    ));
+    body.push(let_(
+        "__bm_n",
+        load_i64(bin(Add, ident("__bm_sr", span), int(8, span), span), span),
+        span,
+    ));
+    for (ord, lit) in pairs {
+        let bytes = lit.as_bytes();
+        let llen = bytes.len() as i64;
+        let mut inner: Vec<Node> = Vec::new();
+        inner.push(let_mut("__bm_ok", int(1, span), span));
+        for (i, &b) in bytes.iter().enumerate() {
+            inner.push(if_stmt(
+                bin(
+                    Ne,
+                    call(
+                        "__mind_load_i8",
+                        vec![bin(
+                            crate::ast::BinOp::Add,
+                            ident("__bm_sa", span),
+                            int(i as i64, span),
+                            span,
+                        )],
+                        span,
+                    ),
+                    int(b as i64, span),
+                    span,
+                ),
+                vec![assign("__bm_ok", int(0, span), span)],
+                span,
+            ));
+        }
+        inner.push(if_stmt(
+            bin(Eq, ident("__bm_ok", span), int(1, span), span),
+            vec![ret(int(*ord, span), span)],
+            span,
+        ));
+        body.push(if_stmt(
+            bin(Eq, ident("__bm_n", span), int(llen, span), span),
+            inner,
+            span,
+        ));
+    }
+    body.push(ret(miss_neg1(span), span));
+    let params = vec![param("s", TypeAnn::Named("String".to_string()), span)];
+    fn_def_mode(
+        name,
+        base,
+        params,
+        TypeAnn::ScalarI64,
+        body,
+        span,
+        "linear-v1",
+    )
 }
 
 fn fn_def(
@@ -450,6 +827,162 @@ fn fn_def(
         }],
         span,
     }
+}
+
+/// Like [`fn_def`] but stamps a second marker arg naming the inverse strategy
+/// (`phf-v1` / `linear-v1`) for inspectability. `has_attr` only checks marker
+/// presence, so the extra arg is inert to E2022 and never reaches the formatter
+/// (fmt opts out of expansion).
+fn fn_def_mode(
+    name: &str,
+    base: &str,
+    params: Vec<Param>,
+    ret_type: TypeAnn,
+    body: Vec<Node>,
+    span: Span,
+    mode: &str,
+) -> Node {
+    Node::FnDef {
+        is_pub: true,
+        is_test: false,
+        name: name.to_string(),
+        type_params: Vec::new(),
+        params,
+        ret_type: Some(ret_type),
+        body,
+        reap_threshold: None,
+        attrs: vec![Attribute {
+            name: GENERATED_MARKER.to_string(),
+            args: vec![base.to_string(), mode.to_string()],
+            span,
+        }],
+        span,
+    }
+}
+
+/// `0 - 1` — the documented miss sentinel, emitted as a plain subtraction to
+/// keep the native-ELF path on the plain-binary form (mirrors the shipped
+/// example).
+fn miss_neg1(span: Span) -> Node {
+    binary(
+        BinOp::Sub,
+        Node::Lit(Literal::Int(0), span),
+        Node::Lit(Literal::Int(1), span),
+        span,
+    )
+}
+
+// ── Phase-2 statement/expression builders (std-surface only) ───────────────
+
+#[cfg(feature = "std-surface")]
+fn int(v: i64, span: Span) -> Node {
+    Node::Lit(Literal::Int(v), span)
+}
+
+#[cfg(feature = "std-surface")]
+fn bin(op: BinOp, left: Node, right: Node, span: Span) -> Node {
+    binary(op, left, right, span)
+}
+
+#[cfg(feature = "std-surface")]
+fn call(callee: &str, args: Vec<Node>, span: Span) -> Node {
+    Node::Call {
+        callee: callee.to_string(),
+        args,
+        span,
+    }
+}
+
+/// `expr as i64` — the identity handle-cast used to read a String value as its
+/// record address without a `struct String` in scope.
+#[cfg(feature = "std-surface")]
+fn as_i64(expr: Node, span: Span) -> Node {
+    Node::As {
+        expr: Box::new(expr),
+        ty: TypeAnn::ScalarI64,
+        span,
+    }
+}
+
+/// `__mind_load_i64(addr)` — an 8-byte load via the unshadowable intrinsic.
+#[cfg(feature = "std-surface")]
+fn load_i64(addr: Node, span: Span) -> Node {
+    call("__mind_load_i64", vec![addr], span)
+}
+
+#[cfg(feature = "std-surface")]
+fn let_(name: &str, value: Node, span: Span) -> Node {
+    Node::Let {
+        name: name.to_string(),
+        mutable: false,
+        ann: None,
+        value: Box::new(value),
+        span,
+    }
+}
+
+#[cfg(feature = "std-surface")]
+fn let_mut(name: &str, value: Node, span: Span) -> Node {
+    Node::Let {
+        name: name.to_string(),
+        mutable: true,
+        ann: None,
+        value: Box::new(value),
+        span,
+    }
+}
+
+#[cfg(feature = "std-surface")]
+fn assign(name: &str, value: Node, span: Span) -> Node {
+    Node::Assign {
+        name: name.to_string(),
+        value: Box::new(value),
+        span,
+    }
+}
+
+#[cfg(feature = "std-surface")]
+fn while_(cond: Node, body: Vec<Node>, span: Span) -> Node {
+    Node::While {
+        cond: Box::new(cond),
+        body,
+        span,
+    }
+}
+
+/// Decode one logical table byte at logical index `off` from the ASCII buffer at
+/// address variable `addr_var`: `(load_i8(addr + 2*off) - 'A') * 16 +
+/// (load_i8(addr + 2*off + 1) - 'A')`. Mirror of [`crate::phf::enc_byte`].
+#[cfg(feature = "std-surface")]
+fn dec(addr_var: &str, off: Node, base65: i64, span: Span) -> Node {
+    use crate::ast::BinOp::{Add, Mul, Sub};
+    let two_off = bin(Mul, int(2, span), off, span);
+    let hi = bin(
+        Sub,
+        call(
+            "__mind_load_i8",
+            vec![bin(Add, ident(addr_var, span), two_off.clone(), span)],
+            span,
+        ),
+        int(base65, span),
+        span,
+    );
+    let lo = bin(
+        Sub,
+        call(
+            "__mind_load_i8",
+            vec![bin(
+                Add,
+                ident(addr_var, span),
+                bin(Add, two_off, int(1, span), span),
+                span,
+            )],
+            span,
+        ),
+        int(base65, span),
+        span,
+    );
+    bin(Add, bin(Mul, hi, int(16, span), span), lo, span)
 }
 
 fn param(name: &str, ty: TypeAnn, span: Span) -> Param {
