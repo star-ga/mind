@@ -95,3 +95,6 @@ examples/**/*.so
 
 # Internal research notes + prior-art papers — keep in mind-internal, never public
 docs/research/
+
+# example build artifacts (each example builds its own target/)
+examples/*/target/

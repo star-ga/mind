@@ -21,28 +21,59 @@
 //! the native-ELF value-if defect family. The Phase-2 canonical seedless
 //! perfect-hash inverse swaps only the `from_str` body.
 //!
+//! ## Phase 3 — const pair-table forms (string↔string / number↔string).
+//! `#[bimap]` on a module-level `const` whose value is an array literal of
+//! 2-tuples derives both directions from the one table, closing the two
+//! frequent lifting cases beyond enum↔string:
+//!
+//! ```text
+//! #[bimap] const COUNTRY = [("US", "United States"), ("JP", "Japan")];
+//!   pub fn country_count()            -> i64     // cardinality
+//!   pub fn country_value(s: String)   -> String  // forward:  key   -> value ("" on miss)
+//!   pub fn country_key(s: String)     -> String  // inverse:  value -> key   ("" on miss)
+//!
+//! #[bimap] const HTTP_STATUS = [(200, "OK"), (404, "Not Found")];
+//!   pub fn http_status_count()             -> i64    // cardinality
+//!   pub fn http_status_to_str(k: i64)      -> String // forward:  n     -> value ("" on miss)
+//!   pub fn http_status_from_str(s: String) -> i64    // inverse:  value -> n     (-1 on miss)
+//! ```
+//!
+//! Both inverses reuse the SAME [`crate::phf`] ladder as the enum form (O(1)
+//! seedless perfect hash in-envelope, O(log n) binary search otherwise); the
+//! string↔string form derives two hidden `__bimap_<base>_*_idx` index fns (one
+//! per direction, each a `make_from_str_fn` body over the shared row order) and
+//! two thin public wrappers, so no second lookup machinery exists. A validated
+//! `#[bimap]` const is CONSUMED by the expansion (removed from the item list):
+//! its only purpose is to feed the derive, and an array-of-tuples const has no
+//! independent lowering. `fmt`/`doc`/`lint` parse via `parse_with_trivia`
+//! (which opts out of expansion) and keep seeing the declaration verbatim.
+//!
 //! ## The pass that synthesises is the pass that refuses.
 //! Whole-table bijectivity / niceness validation lives HERE, not in a separate
 //! type-checker pass: an invalid table never expands (fail-closed ordering), so
 //! lowering never sees it, and there is exactly one owner of the fact "this
 //! table is a bijection over a nice set". Diagnostics (sorted by span start):
 //!   - E2017 `bimap duplicate key`   — subsumed by the #165 parse-time
-//!     dup-variant guard for the enum form; allocated + defensively checked
-//!     here for the Phase-3 const-table form.
+//!     dup-variant guard for the enum form; REAL for the Phase-3 const-table
+//!     forms, whose keys are authored (a duplicated string or number key).
 //!   - E2018 `bimap duplicate value` — two variants map to the same string.
 //!     Byte-exact over the DECODED literal bytes (one shared unescape with
 //!     codegen — the values are the parser's own `Literal::Str`), via a
 //!     `BTreeMap<Vec<u8>, Span>` of first occurrences.
 //!   - E2019 `bimap non-total table` — a variant that cannot pair to a string
-//!     (a payload-carrying variant, or an empty enum): no total ordinal->string
-//!     map exists.
+//!     (a payload-carrying variant, or an empty enum), or a const table with no
+//!     rows: no total mapping exists.
 //!   - E2020 `bimap non-nice pair value` — a non-string-literal in the `=` slot
 //!     under `#[bimap]` (e.g. `= 5`); the degenerate discriminants
-//!     (negative / INT_MAX / bitmask) are loudly inexpressible.
+//!     (negative / INT_MAX / bitmask) are loudly inexpressible. For the const
+//!     forms this also covers every non-nice table shape: a value that is not
+//!     an array of 2-tuples, a non-literal key or value, mixed string/number
+//!     keys in one table, and a number key outside `0..=4294967295` (the 4-byte
+//!     little-endian field the emitted tables encode ordinals in).
 //!   - E2021 `bimap generated-name collision` — a generated name clashes with a
-//!     user-defined function, OR with the derive of an earlier `#[bimap]` enum
-//!     that snake_case-normalises to the same base; fail-loud (no silent-override
-//!     path, no silent-skip path).
+//!     user-defined function, OR with the derive of an earlier `#[bimap]`
+//!     declaration that normalises to the same base; fail-loud (no
+//!     silent-override path, no silent-skip path).
 //!   - E2022 `reserved marker attribute` — the compiler-only `__bimap_generated`
 //!     stamp was written in input source (a forgery, or an impossible
 //!     re-expansion). Trusting it would let a one-line attribute skip the enum
@@ -83,14 +114,14 @@ pub(crate) fn expand_bimap(
     source: &str,
     file: Option<&str>,
 ) -> Vec<PrettyDiagnostic> {
-    // Cheap fast-path: modules without a single `#[bimap]` enum pay only this
-    // scan (the same cost class as the shipped per-fn `is_test` scan). No
-    // allocation, no synthesis, byte-identical emission for every non-user.
-    if !module
-        .items
-        .iter()
-        .any(|it| matches!(it, Node::EnumDef { attrs, .. } if has_attr(attrs, BIMAP_ATTR)))
-    {
+    // Cheap fast-path: modules without a single `#[bimap]` enum or const pay
+    // only this scan (the same cost class as the shipped per-fn `is_test`
+    // scan). No allocation, no synthesis, byte-identical emission for every
+    // non-user.
+    if !module.items.iter().any(|it| {
+        matches!(it, Node::EnumDef { attrs, .. } if has_attr(attrs, BIMAP_ATTR))
+            || matches!(it, Node::Const { attrs, .. } if has_attr(attrs, BIMAP_ATTR))
+    }) {
         return Vec::new();
     }
 
@@ -145,8 +176,45 @@ pub(crate) fn expand_bimap(
 
     let mut diags: Vec<PrettyDiagnostic> = Vec::new();
     let mut synthesized: Vec<Node> = Vec::new();
+    // Item indices of successfully-expanded `#[bimap]` consts. A validated
+    // const pair-table is CONSUMED by the expansion (its only purpose is to
+    // feed the derive; an array-of-tuples const has no independent lowering).
+    // A table that fails validation is kept — the returned diagnostics abort
+    // the compile before lowering ever sees it (fail-closed).
+    let mut expanded_const_idx: Vec<usize> = Vec::new();
 
-    for item in &module.items {
+    for (item_idx, item) in module.items.iter().enumerate() {
+        // Phase 3 — `#[bimap]` const pair-table (string↔string / number↔string).
+        if let Node::Const {
+            name,
+            ty,
+            value,
+            attrs,
+            span,
+        } = item
+        {
+            if !has_attr(attrs, BIMAP_ATTR) {
+                continue;
+            }
+            match expand_const_table(
+                name,
+                ty.is_some(),
+                value,
+                *span,
+                source,
+                file,
+                &user_fn_names,
+                &mut generated_fn_names,
+            ) {
+                Ok(mut fns) => {
+                    synthesized.append(&mut fns);
+                    expanded_const_idx.push(item_idx);
+                }
+                Err(mut ds) => diags.append(&mut ds),
+            }
+            continue;
+        }
+
         let Node::EnumDef {
             name,
             variants,
@@ -167,17 +235,17 @@ pub(crate) fn expand_bimap(
         let from_str_fn = format!("{base}_from_str");
 
         // `generated_fn_names` holds only THIS run's output (input markers are
-        // rejected as E2022 above), so a hit here means a second `#[bimap]` enum
-        // snake_case-normalises to a base an earlier enum already claimed (e.g.
-        // `enum E` and `enum e` both → `e`). That is a real generated-name
-        // collision — fail-loud with E2021 rather than silently dropping the
-        // second enum's derive.
+        // rejected as E2022 above), so a hit here means a second `#[bimap]`
+        // declaration normalises to a base an earlier one already claimed (e.g.
+        // `enum E` and `enum e` both → `e`, or an enum and a const sharing a
+        // base). That is a real generated-name collision — fail-loud with
+        // E2021 rather than silently dropping the second derive.
         if generated_fn_names.contains(&count_fn) {
             diags.push(
                 err(
                     "E2021",
                     format!(
-                        "bimap generated function `{count_fn}` collides with the derive of an earlier `#[bimap]` enum that snake_case-normalises to the same base `{base}`"
+                        "bimap generated function `{count_fn}` collides with the derive of an earlier `#[bimap]` declaration that normalises to the same base `{base}`"
                     ),
                 )
                 .with_span(span_of(source, *span, file)),
@@ -339,6 +407,17 @@ pub(crate) fn expand_bimap(
         generated_fn_names.insert(from_str_fn.clone());
     }
 
+    // Consume the successfully-expanded const tables (declaration order is a
+    // pure function of the source, so the retained item order is too).
+    if !expanded_const_idx.is_empty() {
+        let mut idx = 0usize;
+        module.items.retain(|_| {
+            let keep = !expanded_const_idx.contains(&idx);
+            idx += 1;
+            keep
+        });
+    }
+
     module.items.append(&mut synthesized);
 
     // Deterministic emission: all violations across the module sorted by span
@@ -350,6 +429,459 @@ pub(crate) fn expand_bimap(
             .unwrap_or((0, 0))
     });
     diags
+}
+
+// ── Phase 3: const pair-table forms ────────────────────────────────────────
+
+/// The key column of a validated const pair-table row.
+enum ConstKey {
+    /// string↔string form: `("KEY", "VALUE")`.
+    Str(String),
+    /// number↔string form: `(N, "VALUE")`.
+    Num(i64),
+}
+
+/// Largest number key the const number↔string form accepts. The emitted
+/// lookup tables encode ordinals in a 4-byte little-endian field (both the
+/// PHF meta table via its envelope gate and the binsearch meta table via
+/// `enc_le4`/`dec4`), so `0..=2^32-1` is the honest bound; a negative or
+/// wider key would be silently truncated — reject it loudly instead.
+const MAX_NUM_KEY: i64 = 0xFFFF_FFFF;
+
+/// Validate ONE `#[bimap]` const pair-table and synthesise its derived
+/// functions, or return the collected violations (fail-closed: any violation
+/// ⇒ nothing is synthesised). The same pass both refuses and synthesises —
+/// exactly the enum-form discipline.
+#[allow(clippy::too_many_arguments)]
+fn expand_const_table(
+    name: &str,
+    has_type_ann: bool,
+    value: &Node,
+    span: Span,
+    source: &str,
+    file: Option<&str>,
+    user_fn_names: &std::collections::BTreeSet<String>,
+    generated_fn_names: &mut std::collections::BTreeSet<String>,
+) -> Result<Vec<Node>, Vec<PrettyDiagnostic>> {
+    let mut diags: Vec<PrettyDiagnostic> = Vec::new();
+
+    // A type annotation has no meaning on a table the derive consumes; accepting
+    // one would silently drop it. Refuse loudly.
+    if has_type_ann {
+        diags.push(
+            err(
+                "E2020",
+                format!(
+                    "bimap const table `{name}` takes no type annotation; the table is consumed by the derive"
+                ),
+            )
+            .with_span(span_of(source, span, file)),
+        );
+    }
+
+    // Shape: the value must be an array literal of 2-tuples of literals.
+    let Node::ArrayLit { elements, .. } = value else {
+        diags.push(
+            err(
+                "E2020",
+                format!(
+                    "bimap const table: the value of `{name}` must be an array literal of (key, \"value\") pairs"
+                ),
+            )
+            .with_span(span_of(source, value.span(), file)),
+        );
+        return Err(diags);
+    };
+
+    // E2019 — an empty table has no bijection to derive.
+    if elements.is_empty() {
+        diags.push(
+            err(
+                "E2019",
+                format!(
+                    "bimap non-total table: const `{name}` has no rows — there is no key->value mapping to derive"
+                ),
+            )
+            .with_span(span_of(source, span, file)),
+        );
+    }
+
+    struct CRow {
+        key: ConstKey,
+        value: String,
+        span: Span,
+    }
+    let mut rows: Vec<CRow> = Vec::with_capacity(elements.len());
+    for el in elements {
+        let Node::Tuple {
+            elements: pair,
+            span: pspan,
+        } = el
+        else {
+            diags.push(
+                err(
+                    "E2020",
+                    format!(
+                        "bimap const table: each row of `{name}` must be a 2-tuple `(key, \"value\")`"
+                    ),
+                )
+                .with_span(span_of(source, el.span(), file)),
+            );
+            continue;
+        };
+        if pair.len() != 2 {
+            diags.push(
+                err(
+                    "E2020",
+                    format!(
+                        "bimap const table: each row of `{name}` must be a 2-tuple `(key, \"value\")`, found a {}-tuple",
+                        pair.len()
+                    ),
+                )
+                .with_span(span_of(source, *pspan, file)),
+            );
+            continue;
+        }
+        // The pair VALUE must be a string literal (same niceness rule as the
+        // enum form's `= "…"` slot).
+        let val = match &pair[1] {
+            Node::Lit(Literal::Str(s), _) => s.clone(),
+            other => {
+                diags.push(
+                    err(
+                        "E2020",
+                        format!(
+                            "bimap non-nice pair value: the value column of `{name}` must be a string literal"
+                        ),
+                    )
+                    .with_span(span_of(source, other.span(), file)),
+                );
+                continue;
+            }
+        };
+        // The KEY must be a string literal (string↔string) or a non-negative
+        // integer literal (number↔string).
+        let key = match &pair[0] {
+            Node::Lit(Literal::Str(s), _) => ConstKey::Str(s.clone()),
+            Node::Lit(Literal::Int(n), ksp) => {
+                if *n < 0 || *n > MAX_NUM_KEY {
+                    diags.push(
+                        err(
+                            "E2020",
+                            format!(
+                                "bimap non-nice key: {n} is outside the supported 0..=4294967295 number-key envelope of `{name}`"
+                            ),
+                        )
+                        .with_span(span_of(source, *ksp, file)),
+                    );
+                    continue;
+                }
+                ConstKey::Num(*n)
+            }
+            other => {
+                diags.push(
+                    err(
+                        "E2020",
+                        format!(
+                            "bimap non-nice key: the key column of `{name}` must be a string literal or a non-negative integer literal"
+                        ),
+                    )
+                    .with_span(span_of(source, other.span(), file)),
+                );
+                continue;
+            }
+        };
+        rows.push(CRow {
+            key,
+            value: val,
+            span: *pspan,
+        });
+    }
+
+    // One form per table: the FIRST row's key column decides, every other row
+    // must agree (mixed keys have no single derived signature).
+    let str_form = matches!(rows.first(), Some(r) if matches!(r.key, ConstKey::Str(_)));
+    for r in &rows {
+        let is_str = matches!(r.key, ConstKey::Str(_));
+        if is_str != str_form {
+            diags.push(
+                err(
+                    "E2020",
+                    format!(
+                        "bimap const table `{name}` mixes string and number keys; a table derives one form only"
+                    ),
+                )
+                .with_span(span_of(source, r.span, file)),
+            );
+        }
+    }
+
+    // E2017 — duplicate KEY (authored keys, so this is REAL here). Byte-exact
+    // for string keys; i64 equality for number keys.
+    {
+        let mut seen_str: std::collections::BTreeMap<Vec<u8>, Span> =
+            std::collections::BTreeMap::new();
+        let mut seen_num: std::collections::BTreeMap<i64, Span> = std::collections::BTreeMap::new();
+        for r in &rows {
+            match &r.key {
+                ConstKey::Str(k) => {
+                    if let Some(prev) = seen_str.get(k.as_bytes()) {
+                        diags.push(
+                            err(
+                                "E2017",
+                                format!(
+                                    "bimap duplicate key: {k:?} appears more than once in const table `{name}`"
+                                ),
+                            )
+                            .with_span(span_of(source, r.span, file))
+                            .with_note(format!(
+                                "first bound at line {}",
+                                span_of(source, *prev, file).line
+                            )),
+                        );
+                    } else {
+                        seen_str.insert(k.as_bytes().to_vec(), r.span);
+                    }
+                }
+                ConstKey::Num(n) => {
+                    if let Some(prev) = seen_num.get(n) {
+                        diags.push(
+                            err(
+                                "E2017",
+                                format!(
+                                    "bimap duplicate key: {n} appears more than once in const table `{name}`"
+                                ),
+                            )
+                            .with_span(span_of(source, r.span, file))
+                            .with_note(format!(
+                                "first bound at line {}",
+                                span_of(source, *prev, file).line
+                            )),
+                        );
+                    } else {
+                        seen_num.insert(*n, r.span);
+                    }
+                }
+            }
+        }
+    }
+
+    // E2018 — duplicate VALUE. Byte-exact over decoded literal bytes, exactly
+    // the enum-form check.
+    {
+        let mut first: std::collections::BTreeMap<Vec<u8>, Span> =
+            std::collections::BTreeMap::new();
+        for r in &rows {
+            let key = r.value.as_bytes().to_vec();
+            if let Some(prev) = first.get(&key) {
+                diags.push(
+                    err(
+                        "E2018",
+                        format!(
+                            "bimap duplicate value: {:?} is paired by more than one row of const table `{name}`",
+                            r.value
+                        ),
+                    )
+                    .with_span(span_of(source, r.span, file))
+                    .with_note(format!(
+                        "first bound at line {}",
+                        span_of(source, *prev, file).line
+                    )),
+                );
+            } else {
+                first.insert(key, r.span);
+            }
+        }
+    }
+
+    // Generated names. The number↔string form mirrors the enum derive exactly
+    // (`_count` / `_to_str` / `_from_str`); the string↔string form derives
+    // `_count` / `_value` / `_key` plus two hidden per-direction index fns.
+    let base = const_snake_case(name);
+    let count_fn = format!("{base}_count");
+    let gen_names: Vec<String> = if str_form {
+        vec![
+            count_fn.clone(),
+            format!("{base}_value"),
+            format!("{base}_key"),
+            format!("__bimap_{base}_key_idx"),
+            format!("__bimap_{base}_value_idx"),
+        ]
+    } else {
+        vec![
+            count_fn.clone(),
+            format!("{base}_to_str"),
+            format!("{base}_from_str"),
+        ]
+    };
+
+    // E2021 — an earlier `#[bimap]` declaration (enum or const) already
+    // claimed this base.
+    if generated_fn_names.contains(&count_fn) {
+        diags.push(
+            err(
+                "E2021",
+                format!(
+                    "bimap generated function `{count_fn}` collides with the derive of an earlier `#[bimap]` declaration that normalises to the same base `{base}`"
+                ),
+            )
+            .with_span(span_of(source, span, file)),
+        );
+    }
+    // E2021 — collision with a user-defined function. Fail-loud, no override.
+    for gen_name in &gen_names {
+        if user_fn_names.contains(gen_name) {
+            diags.push(
+                err(
+                    "E2021",
+                    format!(
+                        "bimap generated function `{gen_name}` collides with a user-defined function of the same name"
+                    ),
+                )
+                .with_span(span_of(source, span, file)),
+            );
+        }
+    }
+
+    // Fail-closed: a table with ANY violation is never synthesised.
+    if !diags.is_empty() {
+        return Err(diags);
+    }
+
+    let mut fns: Vec<Node> = Vec::with_capacity(gen_names.len());
+    fns.push(make_count_fn(&count_fn, &base, rows.len() as i64, span));
+    if str_form {
+        // Row order is declaration order; the row index is the shared ordinal
+        // both hidden index fns and both wrappers agree on, so the forward and
+        // inverse directions cannot drift.
+        let key_col: Vec<String> = rows
+            .iter()
+            .map(|r| match &r.key {
+                ConstKey::Str(k) => k.clone(),
+                ConstKey::Num(_) => unreachable!("mixed forms rejected above"),
+            })
+            .collect();
+        let val_col: Vec<String> = rows.iter().map(|r| r.value.clone()).collect();
+        let key_pairs: Vec<(i64, String)> = key_col
+            .iter()
+            .enumerate()
+            .map(|(i, k)| (i as i64, k.clone()))
+            .collect();
+        let val_pairs: Vec<(i64, String)> = val_col
+            .iter()
+            .enumerate()
+            .map(|(i, v)| (i as i64, v.clone()))
+            .collect();
+        let kidx_fn = format!("__bimap_{base}_key_idx");
+        let vidx_fn = format!("__bimap_{base}_value_idx");
+        // The two hidden index fns ARE the enum-form inverse machinery
+        // (PHF-or-binsearch via the shared `make_from_str_fn`), one per
+        // direction over the same rows.
+        fns.push(make_from_str_fn(&kidx_fn, &base, &key_pairs, span));
+        fns.push(make_from_str_fn(&vidx_fn, &base, &val_pairs, span));
+        fns.push(make_pair_wrapper_fn(
+            &format!("{base}_value"),
+            &base,
+            &kidx_fn,
+            &val_col,
+            span,
+        ));
+        fns.push(make_pair_wrapper_fn(
+            &format!("{base}_key"),
+            &base,
+            &vidx_fn,
+            &key_col,
+            span,
+        ));
+    } else {
+        let pairs: Vec<(i64, String)> = rows
+            .iter()
+            .map(|r| match &r.key {
+                ConstKey::Num(n) => (*n, r.value.clone()),
+                ConstKey::Str(_) => unreachable!("mixed forms rejected above"),
+            })
+            .collect();
+        fns.push(make_to_str_fn(
+            &format!("{base}_to_str"),
+            &base,
+            &pairs,
+            span,
+        ));
+        fns.push(make_from_str_fn(
+            &format!("{base}_from_str"),
+            &base,
+            &pairs,
+            span,
+        ));
+    }
+
+    for gen_name in gen_names {
+        generated_fn_names.insert(gen_name);
+    }
+    Ok(fns)
+}
+
+/// `pub fn <name>(s: String) -> String {
+///     let __bm_x = <idx_fn>(s);
+///     if __bm_x == 0 { return "<out_col[0]>"; } …
+///     return "";
+/// }`
+///
+/// The thin public wrapper of the string↔string form: resolve the query to its
+/// row index through the hidden PHF/binsearch index fn, then return the
+/// opposite column of that row (statement-`if` chain — the same shape as the
+/// enum `to_str`). Miss (`-1`) matches no row and falls through to `""`.
+fn make_pair_wrapper_fn(
+    name: &str,
+    base: &str,
+    idx_fn: &str,
+    out_col: &[String],
+    span: Span,
+) -> Node {
+    let mut body: Vec<Node> = Vec::with_capacity(out_col.len() + 2);
+    body.push(let_(
+        "__bm_x",
+        call(idx_fn, vec![ident("s", span)], span),
+        span,
+    ));
+    for (i, lit) in out_col.iter().enumerate() {
+        let cond = binary(BinOp::Eq, ident("__bm_x", span), int(i as i64, span), span);
+        body.push(if_stmt(
+            cond,
+            vec![ret(Node::Lit(Literal::Str(lit.clone()), span), span)],
+            span,
+        ));
+    }
+    body.push(ret(Node::Lit(Literal::Str(String::new()), span), span));
+    let params = vec![param("s", TypeAnn::Named("String".to_string()), span)];
+    fn_def(
+        name,
+        base,
+        params,
+        TypeAnn::Named("String".to_string()),
+        body,
+        span,
+    )
+}
+
+/// `COUNTRY` -> `country`, `HTTP_STATUS` -> `http_status`,
+/// `CountryCode` -> `country_code`. Lowercase throughout; an underscore is
+/// inserted only at a lowercase→uppercase camel boundary (SCREAMING_CASE
+/// already carries its own underscores). Deterministic, ASCII-only.
+fn const_snake_case(name: &str) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    let mut out = String::with_capacity(name.len() + 4);
+    for (i, &ch) in chars.iter().enumerate() {
+        if ch.is_ascii_uppercase() {
+            if i > 0 && chars[i - 1].is_ascii_lowercase() {
+                out.push('_');
+            }
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }
 
 // ── AST builders (statement-form only — no value-if) ──────────────────────
@@ -1034,9 +1566,9 @@ fn miss_neg1(span: Span) -> Node {
     )
 }
 
-// ── Phase-2 statement/expression builders (std-surface only) ───────────────
+// ── Statement/expression builders (`int`/`call`/`let_` are shared by the
+//    const-form wrapper on every build; the rest are std-surface-only) ──────
 
-#[cfg(feature = "std-surface")]
 fn int(v: i64, span: Span) -> Node {
     Node::Lit(Literal::Int(v), span)
 }
@@ -1046,7 +1578,6 @@ fn bin(op: BinOp, left: Node, right: Node, span: Span) -> Node {
     binary(op, left, right, span)
 }
 
-#[cfg(feature = "std-surface")]
 fn call(callee: &str, args: Vec<Node>, span: Span) -> Node {
     Node::Call {
         callee: callee.to_string(),
@@ -1072,7 +1603,6 @@ fn load_i64(addr: Node, span: Span) -> Node {
     call("__mind_load_i64", vec![addr], span)
 }
 
-#[cfg(feature = "std-surface")]
 fn let_(name: &str, value: Node, span: Span) -> Node {
     Node::Let {
         name: name.to_string(),
