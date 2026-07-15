@@ -2588,3 +2588,151 @@ fn grammar_mask_reproducibility_gate() {
     let computed = canonical_hash(result);
     pin_or_bless(id, &computed, result);
 }
+
+// bimap-phf — the #[bimap] perfect-hash CONSTRUCTION byte-identity canary.
+// Source: examples/bimap_currency/main.mind. Task #182.
+// ===========================================================================
+//
+// Distinct in KIND from every other workload in this suite: the others hash a
+// kernel's RUNTIME OUTPUT; this one hashes the COMPILER'S CONSTRUCTION of the
+// `#[bimap]` derive. The `#[bimap] enum Currency` derive
+// (src/parser/expand_bimap.rs `make_from_str_phf`, over the seedless-CHD
+// perfect hash in src/phf/mod.rs, phf-v1) synthesises `currency_from_str` as an
+// O(1) perfect-hash inverse; the emitted disp/meta/pool table literals plus the
+// from_str body ARE the construction under test.
+//
+// The measured fingerprint is the artifact `trace_hash` — the SHA-256 of the
+// canonical mic@3 IR bytes (`trace_hash_kind = mic3-bytes`, MIND-CONSTITUTION
+// §IV). That encoding is substrate-independent BY DESIGN, so a substrate-
+// dependent construction bug (a table literal emitted differently on ARM vs
+// x86) surfaces as a trace_hash mismatch. This is STRICTLY STRONGER than a
+// runtime-output hash: two different-but-both-correct PHF tables would answer
+// currency_from_str identically (a runtime hash would pass) yet produce
+// different mic@3 bytes (this gate fails). The trace_hash pins the TABLE, not
+// merely the answers — which is exactly the wedge claim `#[bimap]` rests on.
+//
+// This is a compile-time gate: it runs the REAL mindc compile of the example
+// (no stub, no self-skip — mic@3 emission is the frontend/IR path, so unlike
+// the `.so` gates it does not need the MLIR toolchain and therefore NEVER
+// self-skips). Fail-closed by other means: a failed compile, a stub/short
+// artifact, a missing/invalid trace_hash, or a non-strict fp_mode is a hard
+// failure. Pins the trace_hash to the committed per-substrate reference; a
+// drift is a hard failure pointing at the RFC 0020 §13 re-bless protocol, and
+// there is NO auto-bless path.
+
+/// Compile examples/bimap_currency with `mindc --emit-evidence`, run
+/// `mindc verify`, and return the parsed `(trace_hash, trace_hash_valid,
+/// fp_mode)`. Fails hard (never self-skips) if the compile fails, the artifact
+/// is a stub/short blob, or verify does not report a valid trace_hash — the
+/// construction gate is worthless if it did not actually construct.
+fn bimap_trace_hash() -> (String, String, String) {
+    let src_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .join("bimap_currency")
+        .join("main.mind");
+    // Unique per-process artifact path so parallel test binaries never collide.
+    let ev_path =
+        std::env::temp_dir().join(format!("mind_xsi_bimap_ev_{}.json", std::process::id()));
+
+    let emit = Command::new(mindc_bin())
+        .args([
+            src_path.to_str().unwrap(),
+            "--emit-evidence",
+            ev_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn mindc --emit-evidence for bimap_currency");
+    assert!(
+        emit.status.success(),
+        "bimap-phf: mindc --emit-evidence failed for examples/bimap_currency/main.mind\n\
+         stdout: {}\n stderr: {}",
+        String::from_utf8_lossy(&emit.stdout),
+        String::from_utf8_lossy(&emit.stderr),
+    );
+
+    // The artifact must be a real mic@3 evidence blob, not a stub. The genuine
+    // artifact is ~4 KB (self-check ok); the #306 launcher-stub failure mode is
+    // ~1.2 KB. A short file means the construction did not really happen — that
+    // would make the gate vacuous, so reject it loudly.
+    let ev_bytes = std::fs::read(&ev_path).expect("read bimap evidence artifact");
+    assert!(
+        ev_bytes.len() >= 2048,
+        "bimap-phf: evidence artifact is only {} bytes — suspected stub/short blob, \
+         the construction gate would be vacuous (expected a ~4 KB mic@3 artifact)",
+        ev_bytes.len()
+    );
+
+    let verify = Command::new(mindc_bin())
+        .args(["verify", ev_path.to_str().unwrap()])
+        .output()
+        .expect("spawn mindc verify for bimap_currency");
+    assert!(
+        verify.status.success(),
+        "bimap-phf: mindc verify failed for the bimap evidence artifact\n\
+         stdout: {}\n stderr: {}",
+        String::from_utf8_lossy(&verify.stdout),
+        String::from_utf8_lossy(&verify.stderr),
+    );
+    let out = String::from_utf8_lossy(&verify.stdout);
+
+    let field = |key: &str| -> Option<String> {
+        out.lines().find_map(|l| {
+            let l = l.trim();
+            l.strip_prefix(key).map(|rest| rest.trim().to_string())
+        })
+    };
+    let trace_hash =
+        field("trace_hash:").expect("bimap-phf: `mindc verify` printed no trace_hash line");
+    let valid = field("trace_hash_valid:")
+        .expect("bimap-phf: `mindc verify` printed no trace_hash_valid line");
+    let fp_mode = field("fp_mode:").expect("bimap-phf: `mindc verify` printed no fp_mode line");
+
+    let _ = std::fs::remove_file(&ev_path);
+    (trace_hash, valid, fp_mode)
+}
+
+#[test]
+fn bimap_phf_construction_identity_gate() {
+    let id = "bimap-phf";
+    let (trace_hash, valid, fp_mode) = bimap_trace_hash();
+
+    // 1. The construction must be intact and strict: an unverifiable or
+    //    non-strict artifact means the fingerprint is not trustworthy.
+    assert_eq!(
+        valid, "yes",
+        "{id}: mindc verify reports trace_hash_valid={valid} (expected yes) — \
+         the #[bimap] construction artifact is not self-consistent"
+    );
+    assert_eq!(
+        fp_mode, "strict",
+        "{id}: mindc verify reports fp_mode={fp_mode} (expected strict) — the \
+         #[bimap] enum-form construction must classify strict"
+    );
+
+    // 2. Pin the trace_hash (canonical mic@3 bytes) to the committed
+    //    per-substrate reference. Substrate-independent by design, so avx2 ==
+    //    neon (RFC 0015 §3.1); a drift is a real construction change and a hard
+    //    failure — re-bless only per RFC 0020 §13, never automatically.
+    let substrate = host_substrate();
+    if std::env::var("MIND_BENCH_BLESS").is_ok() {
+        emit_bless(id, substrate, &trace_hash);
+        return;
+    }
+    match reference_hash(id, substrate) {
+        Some(expected) => assert_eq!(
+            trace_hash, expected,
+            "{id} [{substrate}]: #[bimap] construction trace_hash drifted from the \
+             committed reference.\n computed={trace_hash}\n expected={expected}\n\
+             This is the phf-v1 O(1) from_str construction fingerprint (canonical \
+             mic@3 bytes). A change means the emitted PHF table/body moved. If this \
+             is an intentional #[bimap]/phf-v1 lowering change (RFC 0020 §13), \
+             re-bless with MIND_BENCH_BLESS=1 on BOTH substrates and commit the new \
+             reference_hashes.toml; otherwise it is a construction regression — STOP."
+        ),
+        None => panic!(
+            "{id}: no reference hash for substrate '{substrate}' in \
+             reference_hashes.toml. Computed trace_hash is {trace_hash}; bless with \
+             MIND_BENCH_BLESS=1 if this host is canonical."
+        ),
+    }
+}

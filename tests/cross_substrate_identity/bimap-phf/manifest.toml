@@ -1,0 +1,53 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes.
+#
+# THE #[bimap] PERFECT-HASH CONSTRUCTION canary — a COMPILE-TIME byte-identity
+# gate, distinct in kind from the runtime-kernel workloads in this suite. The
+# other fixtures hash a kernel's RUNTIME OUTPUT; this one hashes the compiler's
+# CONSTRUCTION of the `#[bimap]` derive itself.
+#
+# Source: examples/bimap_currency/main.mind. The `#[bimap] enum Currency` derive
+# (src/parser/expand_bimap.rs `make_from_str_phf`, over the seedless-CHD perfect
+# hash built in src/phf/mod.rs, phf-v1) synthesises `currency_from_str` as an
+# O(1) perfect-hash inverse: the emitted disp/meta/pool table literals plus the
+# from_str body ARE the construction under test. The load-bearing claim is that
+# those table bytes are byte-identical regardless of the compile host.
+#
+# The measured fingerprint is the artifact's `trace_hash` — the SHA-256 of the
+# canonical mic@3 IR bytes (`trace_hash_kind = mic3-bytes`, MIND-CONSTITUTION
+# §IV). The canonical mic@3 encoding is substrate-independent BY DESIGN, so any
+# substrate-dependent construction bug (a table literal that came out different
+# on ARM vs x86) surfaces here as a trace_hash mismatch. This is STRICTLY
+# STRONGER than a runtime-output hash: two different-but-both-correct PHF tables
+# would produce the same currency_from_str answers (a runtime hash would pass)
+# yet different mic@3 bytes (this gate fails). The trace_hash pins the TABLE, not
+# merely the answers.
+#
+# The harness compiles the example with `mindc --emit-evidence`, runs
+# `mindc verify`, and asserts the parsed `trace_hash` equals the committed
+# per-substrate reference; it also asserts `trace_hash_valid: yes` and
+# `fp_mode: strict`. This is a real mindc compile (no stub, no self-skip);
+# MIND_BENCH_REQUIRE=1 makes a missing MLIR toolchain a hard failure.
+
+version = "1"
+name = "bimap-phf"
+description = "#[bimap] enum Currency perfect-hash (phf-v1 seedless-CHD) from_str construction fingerprint — the compile-time trace_hash (canonical mic@3 bytes) of examples/bimap_currency, pinning table-byte-identity of the synthesised O(1) inverse across substrates."
+weight = 1.0
+substrates = ["avx2", "neon"]
+
+# The input is the example source itself — no LCG, no runtime operands. The
+# construction is a pure function of the source + the derive, so the artifact is
+# byte-identical run-to-run and host-to-host.
+[input]
+generator = "source"
+source = "examples/bimap_currency/main.mind"
+
+# Compile-time construction under test. `output_encoding = "trace_hash"` marks
+# this as the trace_hash workload kind: the measured value is the artifact's
+# `trace_hash` (canonical mic@3 SHA-256), not a runtime kernel output.
+[kernel]
+derive = "#[bimap]"
+symbol = "currency_from_str"     # the O(1) perfect-hash inverse the derive emits
+phf = "phf-v1 (seedless-CHD)"    # src/phf/mod.rs; emitter src/parser/expand_bimap.rs
+measure = "mindc --emit-evidence <p> && mindc verify <p> -> trace_hash"
+output_encoding = "trace_hash"   # SHA-256 of canonical mic@3 bytes (trace_hash_kind = mic3-bytes)
