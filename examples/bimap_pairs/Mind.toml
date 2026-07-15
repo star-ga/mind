@@ -1,0 +1,10 @@
+[package]
+name = "bimap_pairs"
+version = "0.1.0"
+authors = ["STARGA Inc."]
+license = "Apache-2.0"
+description = "Single-source bijective const pair-tables: string<->string and number<->string, both directions from one declaration"
+
+[build]
+target = "cpu"
+entry = "main.mind"
