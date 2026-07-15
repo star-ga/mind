@@ -2221,20 +2221,30 @@ impl<'a> P<'a> {
             }
             // Optional `= discriminant`. Historically parsed-and-discarded. Now
             // additively CAPTURED: a string literal becomes `paired` (the
-            // `#[bimap]` derive's single-source pair value); any other
-            // expression sets `paired_is_nonstring` (the E2020 trigger under
-            // `#[bimap]`). Behaviour for ordinary enums is unchanged — both
-            // fields are simply ignored when the enum carries no `bimap` attr.
+            // `#[bimap]` derive's single-source pair value); any other expression
+            // is preserved VERBATIM in `paired_raw` (the E2020 trigger under
+            // `#[bimap]`, and re-emitted by the formatter so `mindc fmt`
+            // round-trips it — dropping it would launder an invalid table into a
+            // valid one). Behaviour for ordinary enums is unchanged: both fields
+            // are ignored when the enum carries no `bimap` attr. A consumed `=`
+            // whose expression fails to parse is a hard error (was silently
+            // swallowed), so `A = ,` no longer parses as a bare `A`.
             let mut paired: Option<String> = None;
-            let mut paired_is_nonstring = false;
+            let mut paired_raw: Option<String> = None;
             if self.eat(b'=') {
                 self.skip_ws();
-                if let Ok(discr) = self.parse_expr() {
-                    match discr {
-                        crate::ast::Node::Lit(crate::ast::Literal::Str(s), _) => {
-                            paired = Some(s);
-                        }
-                        _ => paired_is_nonstring = true,
+                let raw_start = self.pos;
+                let discr = self.parse_expr()?;
+                match discr {
+                    crate::ast::Node::Lit(crate::ast::Literal::Str(s), _) => {
+                        paired = Some(s);
+                    }
+                    _ => {
+                        paired_raw = Some(
+                            String::from_utf8_lossy(&self.b[raw_start..self.pos])
+                                .trim()
+                                .to_string(),
+                        );
                     }
                 }
                 self.skip_ws();
@@ -2245,7 +2255,7 @@ impl<'a> P<'a> {
                 payload,
                 field_names,
                 paired,
-                paired_is_nonstring,
+                paired_raw,
                 span: v_span,
             });
             if self.eat(b',') {

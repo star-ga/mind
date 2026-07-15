@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3115 | **Est. tokens:** ~7,458,023
-**Generated:** 2026-07-14 22:51 UTC
+**Files:** 3115 | **Est. tokens:** ~7,459,932
+**Generated:** 2026-07-15 00:45 UTC
 
 ## Token Budget Guide
 
@@ -375,21 +375,21 @@
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
 | `src/` | 7 | ~17,958 |
-| `src/ast/` | 1 | ~7,900 |
+| `src/ast/` | 1 | ~8,032 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 2 | ~31,777 |
 | `src/build/` | 2 | ~14,758 |
 | `src/cache/` | 4 | ~3,682 |
-| `src/check/` | 3 | ~10,531 |
+| `src/check/` | 3 | ~10,563 |
 | `src/deps/` | 1 | ~9,345 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
-| `src/doc/` | 3 | ~10,474 |
+| `src/doc/` | 3 | ~10,615 |
 | `src/eval/` | 12 | ~64,105 |
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
-| `src/fmt/` | 3 | ~19,898 |
+| `src/fmt/` | 3 | ~19,935 |
 | `src/ir/` | 5 | ~46,820 |
 | `src/ir/compact/` | 3 | ~15,235 |
 | `src/ir/compact/v2/` | 8 | ~38,037 |
@@ -400,7 +400,7 @@
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 4 | ~10,738 |
 | `src/package/` | 2 | ~1,877 |
-| `src/parser/` | 2 | ~8,639 |
+| `src/parser/` | 2 | ~9,599 |
 | `src/project/` | 3 | ~31,849 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
@@ -410,7 +410,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~192,637 |
-| `tests/` | 285 | ~486,502 |
+| `tests/` | 285 | ~487,109 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -3788,7 +3788,7 @@
 - `SKILL.md` (~6002 tok, huge) — Write MIND Code
 ### `src/ast/`
 
-- `mod.rs` (~7900 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~8032 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~3890 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3811,7 +3811,7 @@
 ### `src/check/`
 
 - `gitignore.rs` (~2345 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~7812 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~7844 tok, huge) — Copyright 2025 STARGA Inc.
 - `reporter.rs` (~374 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/`
 
@@ -3834,7 +3834,7 @@
 
 - `html.rs` (~956 tok, large) — Copyright 2025 STARGA Inc.
 - `markdown.rs` (~2644 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~6874 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~7015 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/`
 
 - `abi_gate.rs` (~10603 tok, huge) — Runnable-artifact ABI gate (release-readiness P1.1).
@@ -3869,7 +3869,7 @@
 
 - `cli.rs` (~3873 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~15431 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~15468 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4693 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3940,7 +3940,7 @@
 - `mod.rs` (~1567 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/parser/`
 
-- `expand_bimap.rs` (~4828 tok, huge) — An `#[bimap]` attribute on an `enum` declares a one-to-one correspondence
+- `expand_bimap.rs` (~5788 tok, huge) — An `#[bimap]` attribute on an `enum` declares a one-to-one correspondence
 - `trivia.rs` (~3811 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
@@ -4051,7 +4051,7 @@
 ### `tests/`
 
 - `bare_variant_ctor_run.rs` (~885 tok, large) — Copyright 2025 STARGA Inc.
-- `bimap_derive.rs` (~2408 tok, huge) — Copyright 2025 STARGA Inc.
+- `bimap_derive.rs` (~3015 tok, huge) — Copyright 2025 STARGA Inc.
 - `blas_smoke.rs` (~6262 tok, huge) — Copyright 2025 STARGA Inc.
 - `blas_vec_q16_smoke.rs` (~5639 tok, huge) — Copyright 2025 STARGA Inc.
 - `blas_vec_smoke.rs` (~2130 tok, huge) — Copyright 2025 STARGA Inc.

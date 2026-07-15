@@ -181,6 +181,37 @@ fn escape_collision_is_a_duplicate_value() {
     );
 }
 
+// ── Marker forgery + same-base collision (audit remediation) ───────────────
+
+#[test]
+fn e2022_forged_marker_does_not_suppress_derive() {
+    // A user-authored `#[__bimap_generated]` marker on a `<base>_count` fn must
+    // NOT make expansion skip the enum (which would suppress the whole derive
+    // with no E2021, no synthesis). The reserved marker is rejected fail-loud.
+    let src = "#[bimap]\n\
+               enum Currency { AUD, JPY, USD }\n\
+               #[__bimap_generated]\n\
+               fn currency_count() -> i64 { return 999; }\n";
+    assert!(
+        reject_codes(src).contains(&"E2022".to_string()),
+        "forged marker must be rejected E2022; got: {:?}",
+        reject_codes(src)
+    );
+}
+
+#[test]
+fn e2021_same_snake_base_second_enum_rejected() {
+    // `E` and `e` both snake_case-normalise to base `e`, so both derives want
+    // `e_count`/`e_to_str`/`e_from_str`. The second is a generated-name collision
+    // (E2021), NOT a silent skip that drops its derive.
+    let src = "#[bimap]\nenum E { A, B }\n#[bimap]\nenum e { X, Y, Z }\n";
+    assert!(
+        reject_codes(src).contains(&"E2021".to_string()),
+        "same-base second enum must be rejected E2021; got: {:?}",
+        reject_codes(src)
+    );
+}
+
 // ── Two-module: importer resolves the generated fns ────────────────────────
 
 #[cfg(feature = "cross-module-imports")]
@@ -253,5 +284,35 @@ fn formatter_round_trips_string_pairing() {
     assert!(
         has_fn(&m, "money_from_str"),
         "derived fn lost after round-trip"
+    );
+}
+
+#[test]
+fn fmt_does_not_launder_invalid_bimap_table() {
+    // `A = 5` is an E2020-invalid `#[bimap]` table. The formatter MUST re-emit the
+    // non-string discriminant verbatim, otherwise `mindc fmt` drops the `= 5`,
+    // turning an erroring program into a passing one (invalid → valid different).
+    use libmind::fmt::format_source;
+    use libmind::project::MindcraftFormatConfig;
+    let src = "#[bimap]\nenum E {\n    A = 5,\n    B,\n}\n";
+    let out = format_source(src, &MindcraftFormatConfig::default()).expect("format");
+    assert!(
+        out.contains("A = 5"),
+        "fmt dropped the non-string discriminant:\n{out}"
+    );
+    assert!(
+        reject_codes(&out).contains(&"E2020".to_string()),
+        "fmt laundered an E2020-invalid table into a valid one: {:?}",
+        reject_codes(&out)
+    );
+}
+
+#[test]
+fn malformed_discriminant_is_a_parse_error() {
+    // A consumed `=` whose expression fails to parse must error, not silently
+    // swallow — `A = ,` previously parsed as a bare `A`.
+    assert!(
+        parse("enum E { A = , B }\n").is_err(),
+        "malformed discriminant must be a parse error"
     );
 }
