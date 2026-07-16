@@ -95,8 +95,17 @@ jobs:
 
       - name: Install MLIR toolchain (Ubuntu 24.04 LLVM 20)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y mlir-20-tools clang-20
+          # ports.ubuntu.com (arm64 mirror) has transient outages that red the
+          # ARM leg on an UPSTREAM issue, not a code defect. Retry up to 5x with
+          # backoff + --fix-missing before failing.
+          ok=0
+          for attempt in 1 2 3 4 5; do
+            sudo apt-get update || true
+            if sudo apt-get install -y --fix-missing mlir-20-tools clang-20; then ok=1; break; fi
+            echo "apt attempt $attempt failed (mirror outage?); retry in $((attempt * 20))s"
+            sleep $((attempt * 20))
+          done
+          [ "$ok" = 1 ] || { echo "MLIR toolchain unavailable after 5 attempts (upstream apt mirror outage)"; exit 1; }
           echo "/usr/lib/llvm-20/bin" >> "$GITHUB_PATH"
 
       - name: Verify toolchain on PATH
