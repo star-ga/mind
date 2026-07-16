@@ -47,14 +47,20 @@ use crate::ast::BinOp;
 use crate::ast::Literal;
 use crate::ast::Node;
 use crate::ast::Span;
+use crate::ast::TypeAnn;
 use crate::diagnostics::Diagnostic;
 use crate::diagnostics::Span as DiagSpan;
 
 use super::comptime::eval_const_i64;
-use super::scev::{AffineSum, closed_form_i64, recognize_for};
+use super::scev::{
+    AffineSum, GeometricPow, closed_form_i64, geometric_pow_i64, recognize_for, recognize_geometric,
+};
 
 const COLLAPSE_ATTR: &str = "collapse";
+/// Affine-sum reject (Slice S1).
 const E_COLLAPSE: &str = "E2201";
+/// Geometric-powering reject (Slice S2).
+const E_COLLAPSE_GEO: &str = "E2202";
 
 /// Rewrite every `#[collapse]`-annotated affine loop in `module` to its closed
 /// form. Returns `E2201` diagnostics for any annotated loop that cannot be
@@ -95,22 +101,62 @@ fn rewrite_node(node: &mut Node, ctx: &mut Ctx) {
     } = node
     {
         if attrs.iter().any(|a| a.name == COLLAPSE_ATTR) {
-            // recognize_for validates the shape; build_closed_form additionally
-            // rejects a const range whose span overflows i64 (the ring-exact Σi
-            // division would be inexact). Both surface as E2201 — prove-or-fail.
-            let outcome = recognize_for(var, start, end, body, *span)
-                .and_then(|affine| build_closed_form(&affine));
-            match outcome {
-                Ok(replacement) => {
-                    *node = replacement;
+            // Two recognised shapes, tried in order:
+            //   S1 affine sum       `acc = acc + (A*i + B)`  -> E2201 on reject
+            //   S2 geometric power   `acc = acc * R`          -> E2202 on reject
+            // Each is prove-or-fail: an annotated loop matching neither shape
+            // (or matching but unprovable, e.g. an overflowing const span) is a
+            // compile error, never a silent pass-through.
+            match recognize_for(var, start, end, body, *span) {
+                Ok(affine) => {
+                    match build_closed_form(&affine) {
+                        Ok(replacement) => *node = replacement,
+                        Err(reason) => ctx.diags.push(collapse_error(
+                            ctx.source, ctx.file, *span, E_COLLAPSE, reason,
+                        )),
+                    }
+                    return;
                 }
-                Err(reason) => {
-                    ctx.diags
-                        .push(collapse_error(ctx.source, ctx.file, *span, reason));
-                    // Leave the loop intact; compilation fails on the diagnostic.
+                Err(affine_reject) => {
+                    // Not an affine sum — try the S2 geometric-powering shape.
+                    match recognize_geometric(var, start, end, body, *span) {
+                        Ok(geo) => match build_geometric(&geo) {
+                            Ok(replacement) => *node = replacement,
+                            Err(reason) => ctx.diags.push(collapse_error(
+                                ctx.source,
+                                ctx.file,
+                                *span,
+                                E_COLLAPSE_GEO,
+                                reason,
+                            )),
+                        },
+                        Err(geo_reject) => {
+                            // Neither shape. Surface the reject for the family
+                            // the body most resembles: a `*` accumulation is a
+                            // geometric attempt (E2202), everything else affine
+                            // (E2201). Keeps `acc = acc * acc` a specific E2202.
+                            if body_is_mul_accumulation(body) {
+                                ctx.diags.push(collapse_error(
+                                    ctx.source,
+                                    ctx.file,
+                                    *span,
+                                    E_COLLAPSE_GEO,
+                                    geo_reject,
+                                ));
+                            } else {
+                                ctx.diags.push(collapse_error(
+                                    ctx.source,
+                                    ctx.file,
+                                    *span,
+                                    E_COLLAPSE,
+                                    affine_reject,
+                                ));
+                            }
+                        }
+                    }
+                    return;
                 }
             }
-            return;
         }
     }
     for list in child_stmt_lists(node) {
@@ -270,17 +316,183 @@ fn build_symbolic_sum(affine: &AffineSum, sp: Span) -> Node {
     )
 }
 
-fn collapse_error(source: &str, file: Option<&str>, span: Span, reason: &str) -> Diagnostic {
+/// Build the closed-form replacement for a recognised geometric-powering loop
+/// (Slice S2): `for i in LO..HI { acc = acc * R }` -> `acc = acc * R^n`,
+/// `n = HI - LO` the trip count.
+///
+/// - **Fully-const** `R`/`LO`/`HI` -> a single `acc = acc * ConstI64`, the const
+///   factor computed by [`geometric_pow_i64`] (which yields `R^0 = 1` for a
+///   reversed/empty range, leaving `acc` unchanged).
+/// - **Symbolic** -> a statement-level `if LO < HI { <64-step ladder>; acc = acc * pow }`.
+///   The `LO < HI` guard mirrors the loop's own semantics exactly: `for i in
+///   LO..HI` runs iff `LO < HI`, so `LO >= HI` skips the update and leaves `acc`
+///   untouched — matching the zero-iteration loop. Inside the guard the exponent
+///   `HI - LO >= 1`, so the ladder's signed `%2`/`/2` never see a negative
+///   exponent (which would corrupt the masked multiply).
+fn build_geometric(geo: &GeometricPow) -> Result<Node, super::scev::Reject> {
+    let sp = geo.span;
+    let acc = geo.acc.clone();
+
+    match (
+        eval_const_i64(&geo.r),
+        eval_const_i64(&geo.lo),
+        eval_const_i64(&geo.hi),
+    ) {
+        (Some(r), Some(lo), Some(hi)) => {
+            // Feasibility: a forward range whose span `HI - LO` overflows i64
+            // iterates more than 2^63 times (non-terminating); we cannot prove
+            // a finite closed form, so reject (E2202) rather than fold a value
+            // computed from a wrapped, wrong trip count.
+            if hi > lo && hi.checked_sub(lo).is_none() {
+                return Err(
+                    "loop bound span overflows i64 (range too large to prove an exact closed form)",
+                );
+            }
+            Ok(assign_acc_mul(
+                &acc,
+                int(geometric_pow_i64(r, lo, hi), sp),
+                sp,
+            ))
+        }
+        _ => Ok(build_symbolic_pow(geo, sp)),
+    }
+}
+
+/// `acc = acc * <factor>`.
+fn assign_acc_mul(acc: &str, factor: Node, sp: Span) -> Node {
+    Node::Assign {
+        name: acc.to_string(),
+        value: Box::new(bin(
+            BinOp::Mul,
+            Node::Lit(Literal::Ident(acc.to_string()), sp),
+            factor,
+            sp,
+        )),
+        span: sp,
+    }
+}
+
+/// The fixed 64-step square-and-multiply ladder, guarded by `LO < HI`, computing
+/// `R^(HI-LO)` into a fresh local and multiplying it into `acc`. Constant
+/// iteration count (no data-dependent branch count) → deterministic and
+/// constant-time; the per-step multiply is BRANCHLESS
+/// (`pow * (1 + bit*(base-1))`), mirroring [`geometric_pow_i64`]'s op structure
+/// exactly, so the emitted code and the const-fold agree by construction. Ring-
+/// exact in `Z/2^64`, no float, byte-identical across substrates.
+fn build_symbolic_pow(geo: &GeometricPow, sp: Span) -> Node {
+    // Fresh, span-disambiguated locals so multiple collapsed loops in one fn
+    // never collide.
+    let disc = sp.start();
+    let base = format!("__mind_collapse_base_{disc}");
+    let exp = format!("__mind_collapse_exp_{disc}");
+    let pow = format!("__mind_collapse_pow_{disc}");
+    let kvar = format!("__mind_collapse_k_{disc}");
+
+    // pow = pow * (1 + (exp % 2) * (base - 1))
+    let bit = bin(BinOp::Mod, ident(&exp, sp), int(2, sp), sp);
+    let masked = bin(
+        BinOp::Add,
+        int(1, sp),
+        bin(
+            BinOp::Mul,
+            bit,
+            bin(BinOp::Sub, ident(&base, sp), int(1, sp), sp),
+            sp,
+        ),
+        sp,
+    );
+    let step_pow = assign(&pow, bin(BinOp::Mul, ident(&pow, sp), masked, sp), sp);
+    // base = base * base
+    let step_base = assign(
+        &base,
+        bin(BinOp::Mul, ident(&base, sp), ident(&base, sp), sp),
+        sp,
+    );
+    // exp = exp / 2
+    let step_exp = assign(&exp, bin(BinOp::Div, ident(&exp, sp), int(2, sp), sp), sp);
+
+    let ladder = Node::For {
+        var: kvar,
+        start: Box::new(int(0, sp)),
+        end: Box::new(int(64, sp)),
+        body: vec![step_pow, step_base, step_exp],
+        attrs: Vec::new(),
+        span: sp,
+    };
+
+    let stmts = vec![
+        // let mut base = R
+        let_i64(&base, geo.r.clone(), sp),
+        // let mut exp = HI - LO   (>= 1 inside the `LO < HI` guard)
+        let_i64(
+            &exp,
+            bin(BinOp::Sub, geo.hi.clone(), geo.lo.clone(), sp),
+            sp,
+        ),
+        // let mut pow = 1
+        let_i64(&pow, int(1, sp), sp),
+        ladder,
+        // acc = acc * pow
+        assign_acc_mul(&geo.acc, ident(&pow, sp), sp),
+    ];
+
+    Node::If {
+        cond: Box::new(bin(BinOp::Lt, geo.lo.clone(), geo.hi.clone(), sp)),
+        then_branch: stmts,
+        else_branch: None,
+        span: sp,
+    }
+}
+
+fn ident(name: &str, sp: Span) -> Node {
+    Node::Lit(Literal::Ident(name.to_string()), sp)
+}
+fn assign(name: &str, value: Node, sp: Span) -> Node {
+    Node::Assign {
+        name: name.to_string(),
+        value: Box::new(value),
+        span: sp,
+    }
+}
+fn let_i64(name: &str, value: Node, sp: Span) -> Node {
+    Node::Let {
+        name: name.to_string(),
+        mutable: true,
+        ann: Some(TypeAnn::ScalarI64),
+        value: Box::new(value),
+        span: sp,
+    }
+}
+
+/// Does the loop body look like a `*` accumulation (`acc = <expr> * <expr>`)?
+/// Used only to route a total-recognition failure to the E2202 (geometric)
+/// diagnostic instead of E2201 (affine).
+fn body_is_mul_accumulation(body: &[Node]) -> bool {
+    matches!(
+        body,
+        [Node::Assign { value, .. }]
+            if matches!(**value, Node::Binary { op: BinOp::Mul, .. })
+    )
+}
+
+fn collapse_error(
+    source: &str,
+    file: Option<&str>,
+    span: Span,
+    code: &'static str,
+    reason: &str,
+) -> Diagnostic {
     let dspan = DiagSpan::from_offsets(source, span.start(), span.end(), file);
     Diagnostic::error(
         "collapse",
-        E_COLLAPSE,
+        code,
         format!("`#[collapse]` cannot prove a closed form: {reason}"),
     )
     .with_span(dspan)
     .with_help(
-        "`#[collapse]` requires `for i in LO..HI { acc = acc + (A*i + B) }` \
-         with loop-invariant A/B and pure bounds LO/HI",
+        "`#[collapse]` requires `for i in LO..HI { acc = acc + (A*i + B) }` (affine sum) \
+         or `for i in LO..HI { acc = acc * R }` (geometric) with loop-invariant \
+         coefficients/multiplier and pure bounds LO/HI",
     )
 }
 
@@ -345,6 +557,103 @@ mod tests {
                 "emitted-vs-closed_form mismatch a={a} b={b} lo={lo} hi={hi}"
             );
         }
+    }
+
+    // ---- S2 geometric powering -------------------------------------------
+
+    #[test]
+    fn geometric_const_folds_to_acc_times_pow() {
+        // for i in 0..10 { acc = acc * 2 }  -> acc = acc * 1024
+        let geo = GeometricPow {
+            acc: "acc".into(),
+            r: lit(2),
+            lo: lit(0),
+            hi: lit(10),
+            span: Span::new(0, 0),
+        };
+        let node = build_geometric(&geo).expect("const geometric must collapse");
+        let Node::Assign { value, .. } = node else {
+            panic!("expected `acc = acc * <const>`");
+        };
+        let Node::Binary {
+            op: BinOp::Mul,
+            right,
+            ..
+        } = *value
+        else {
+            panic!("expected a `* <const>` factor");
+        };
+        assert_eq!(*right, lit(1024));
+    }
+
+    #[test]
+    fn geometric_reversed_range_folds_to_identity() {
+        // for i in 10..3 { acc = acc * 7 } -> 0 iterations -> acc = acc * 1.
+        let geo = GeometricPow {
+            acc: "acc".into(),
+            r: lit(7),
+            lo: lit(10),
+            hi: lit(3),
+            span: Span::new(0, 0),
+        };
+        let node = build_geometric(&geo).expect("empty geometric must collapse");
+        let Node::Assign { value, .. } = node else {
+            panic!("expected `acc = acc * 1`");
+        };
+        let Node::Binary { right, .. } = *value else {
+            panic!("expected factor");
+        };
+        assert_eq!(*right, lit(1));
+    }
+
+    #[test]
+    fn geometric_const_span_overflow_is_rejected() {
+        // for i in i64::MIN..i64::MAX { acc = acc * 2 } — span overflows i64.
+        let geo = GeometricPow {
+            acc: "acc".into(),
+            r: lit(2),
+            lo: lit(i64::MIN),
+            hi: lit(i64::MAX),
+            span: Span::new(0, 0),
+        };
+        assert!(
+            build_geometric(&geo).is_err(),
+            "overflowing span must be rejected"
+        );
+    }
+
+    #[test]
+    fn geometric_symbolic_emits_guarded_ladder() {
+        // for i in 0..n { acc = acc * r } -> `if 0 < n { <lets><for 0..64>acc=acc*pow }`.
+        let geo = GeometricPow {
+            acc: "acc".into(),
+            r: ident("r"),
+            lo: lit(0),
+            hi: ident("n"),
+            span: Span::new(0, 0),
+        };
+        let node = build_geometric(&geo).expect("symbolic geometric must collapse");
+        let Node::If {
+            cond,
+            then_branch,
+            else_branch,
+            ..
+        } = node
+        else {
+            panic!("expected a guarded `if LO < HI {{ ... }}`");
+        };
+        assert!(
+            matches!(&*cond, Node::Binary { op: BinOp::Lt, .. }),
+            "guard must be `LO < HI`"
+        );
+        assert!(else_branch.is_none());
+        // 3 lets + the 64-step ladder for-loop + the final `acc = acc * pow`.
+        assert_eq!(then_branch.len(), 5);
+        let Node::For { start, end, .. } = &then_branch[3] else {
+            panic!("4th stmt must be the ladder for-loop");
+        };
+        assert_eq!(**start, lit(0));
+        assert_eq!(**end, lit(64), "ladder must be a fixed 64-step loop");
     }
 
     #[test]

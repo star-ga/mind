@@ -1,0 +1,75 @@
+// Salov loop-collapse — geometric powering closed forms (Slice S2).
+//
+// Design partner: Valerii Salov. The loop-collapse primitive (recognising an
+// accumulation over a counted loop and replacing it with its exact closed form)
+// is his contribution to the MIND roadmap — the same exact-arithmetic,
+// closed-form-orbit thinking behind the Collatz / Galperin determinism demos.
+// S1 collapses an affine SUM; S2 collapses a geometric PRODUCT.
+//
+// A `#[collapse]` annotation on a range `for` loop that multiplies an
+// accumulator by a loop-invariant constant `R` each iteration is rewritten,
+// BEFORE lowering, to the ring-exact closed form
+//
+//     acc  *=  R^n            n = hi - lo   (the trip count)
+//
+// computed by a FIXED 64-step square-and-multiply ladder (constant iteration
+// count → no data-dependent branch count → deterministic and constant-time).
+// Multiplication is associative/commutative in Z/2^64, so R^n by
+// square-and-multiply equals R multiplied n times — byte-identical to the
+// un-annotated loop, wrap boundary included. No float, ever. `#[collapse]` is
+// prove-or-fail: a loop that is not a provable geometric product is a compile
+// error (E2202), never a silent pass-through.
+
+// ---------------------------------------------------------------------------
+// Const R and const bounds: the whole loop collapses to a SINGLE ConstI64
+// factor. `acc0 = 3`, `R = 7`, `n = 13`:  acc = 3 * 7^13.
+// ---------------------------------------------------------------------------
+pub fn geo_pow_const() -> i64 {
+    let mut acc: i64 = 3;
+    #[collapse]
+    for i in 0..13 {
+        acc = acc * 7;
+    }
+    acc
+}
+
+// ---------------------------------------------------------------------------
+// Symbolic seed / ratio / trip count: collapses to the branchless ring-exact
+// 64-step ladder, guarded by `lo < hi` so a reversed/empty range leaves `acc`
+// unchanged exactly as the zero-iteration loop would.
+// ---------------------------------------------------------------------------
+pub fn geo_pow(seed: i64, r: i64, n: i64) -> i64 {
+    let mut acc: i64 = seed;
+    #[collapse]
+    for i in 0..n {
+        acc = acc * r;
+    }
+    acc
+}
+
+// ---------------------------------------------------------------------------
+// The un-annotated O(n) reference loop — identical body, no `#[collapse]`. It
+// is left INTACT by the compiler (collapse is opt-in) and is the witness the
+// gate compares the collapsed forms against: `geo_pow(seed, r, n)` is bit-for-
+// bit `geo_pow_loop(seed, r, n)` for every witness — including n <= 0 (reversed
+// / empty → acc unchanged via the `0 < n` guard), n = 64 / n = 65 (at and past
+// the ladder width), negative R, R = 0, R = 1, R near i64::MAX, and the i64
+// wrap boundary.
+// ---------------------------------------------------------------------------
+pub fn geo_pow_loop(seed: i64, r: i64, n: i64) -> i64 {
+    let mut acc: i64 = seed;
+    for i in 0..n {
+        acc = acc * r;
+    }
+    acc
+}
+
+// The un-annotated twin of `geo_pow_const`, so the const-fold path is also
+// checked against a real loop (3 * 7^13).
+pub fn geo_pow_const_loop() -> i64 {
+    let mut acc: i64 = 3;
+    for i in 0..13 {
+        acc = acc * 7;
+    }
+    acc
+}
