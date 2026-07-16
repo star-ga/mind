@@ -7204,7 +7204,7 @@ fn lower_expr(
             // Rewrite the USER body's in-scope `continue`s to run the index
             // step first (same infinite-loop hazard as range-`for`); the
             // synthesized `elem_bind`/`incr` carry no continue of their own.
-            let mut user_body: Vec<ast::Node> = body.iter().cloned().collect();
+            let mut user_body: Vec<ast::Node> = body.to_vec();
             inject_step_before_continue(&mut user_body, &incr);
             let mut while_body = Vec::with_capacity(user_body.len() + 2);
             while_body.push(elem_bind);
