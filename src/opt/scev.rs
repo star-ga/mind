@@ -330,6 +330,100 @@ pub fn recognize_geometric(
     })
 }
 
+/// A recognised Q16.16 fixed-point ITERATION map (Slice S3).
+///
+/// ```text
+/// for i in LO..HI { x = f(x) }
+/// ```
+///
+/// where `f` is a pure scalar map of the accumulator `x` — the ONLY variable, so
+/// `f` must not reference the loop variable `i`. When `LO`/`HI` and the seed of
+/// `x` are all compile-time constants, the collapse pass iterates `f` AT COMPILE
+/// TIME to its bit-exact period-1 fixed point and replaces the whole loop with
+/// that constant.
+///
+/// SOUNDNESS: `f` is the RAW RHS expression, folded by evaluating the user's
+/// ACTUAL function bodies (see
+/// [`iterate_user_fixed_point`](crate::opt::comptime::iterate_user_fixed_point))
+/// — NOT a compiler-assumed model keyed off a function name — so collapse == loop
+/// by construction for ANY user map. This is the marquee slice: a contraction in
+/// Q16.16 fixed point (integer, 16 fractional bits) whose orbit is bit-identical
+/// across substrates, no float compiler can fold it.
+#[derive(Debug, Clone)]
+pub struct Q16Map {
+    /// Name of the accumulator local updated as `x = f(x)`.
+    pub acc: String,
+    /// The map `f` — the RAW RHS expression, evaluated at fold time over the
+    /// user's real function bodies.
+    pub f: Node,
+    /// Lower bound `LO` (inclusive, pure). S3 requires it to be const.
+    pub lo: Node,
+    /// Upper bound `HI` (exclusive, pure). S3 requires it to be const.
+    pub hi: Node,
+    /// Span of the originating `for` loop (for diagnostics).
+    pub span: Span,
+}
+
+/// Attempt to recognise `for var in start..end { x = f(x) }` as a [`Q16Map`]
+/// (Slice S3). Fails (leaving the loop for the E2201/E2202 routing) if the body
+/// is not a single `acc = <expr>` assignment, if the map does not reference the
+/// accumulator (not an iteration), or if it references the loop variable (the
+/// fixed point would depend on `i`). The map is stored RAW; whether it is
+/// actually comptime-evaluable is decided at fold time by running the user's
+/// bodies (surfaced as `E2214` on failure).
+pub fn recognize_q16_map(
+    var: &str,
+    start: &Node,
+    end: &Node,
+    body: &[Node],
+    span: Span,
+) -> Result<Q16Map, Reject> {
+    if body.len() != 1 {
+        return Err("loop body is not a single accumulator assignment");
+    }
+    let (acc, value) = match &body[0] {
+        Node::Assign { name, value, .. } => (name.clone(), value.as_ref()),
+        _ => return Err("loop body is not an assignment"),
+    };
+    // Must be an `x = f(x)` iteration: the RHS has to read the accumulator. A map
+    // that never mentions `x` is a constant, not a fixed-point iteration.
+    if !scalar_refs_ident(value, &acc) {
+        return Err("map does not reference the accumulator (not an `x = f(x)` iteration)");
+    }
+    // The map must be loop-INVARIANT in `i`: a reference to the induction
+    // variable (`x = f(x, i)`) makes the fixed point depend on `i`. Reject.
+    if scalar_refs_ident(value, var) {
+        return Err("map references the loop variable (the fixed point would depend on i)");
+    }
+    Ok(Q16Map {
+        acc,
+        f: value.clone(),
+        lo: start.clone(),
+        hi: end.clone(),
+        span,
+    })
+}
+
+/// Does the scalar expression `node` reference the identifier `name` anywhere?
+/// Complete over the scalar expression shapes the comptime evaluator handles
+/// (literals, idents, parens, unary neg, binary/bitwise/logical ops, and calls
+/// — recursing into call arguments so `f(i)` is detected).
+fn scalar_refs_ident(node: &Node, name: &str) -> bool {
+    match node {
+        Node::Lit(Literal::Ident(x), _) => x == name,
+        Node::Lit(_, _) => false,
+        Node::Paren(inner, _) => scalar_refs_ident(inner, name),
+        Node::Neg { operand, .. } => scalar_refs_ident(operand, name),
+        Node::Binary { left, right, .. }
+        | Node::Bitwise { left, right, .. }
+        | Node::Logical { left, right, .. } => {
+            scalar_refs_ident(left, name) || scalar_refs_ident(right, name)
+        }
+        Node::Call { args, .. } => args.iter().any(|a| scalar_refs_ident(a, name)),
+        _ => false,
+    }
+}
+
 fn is_ident(node: &Node, name: &str) -> bool {
     matches!(node, Node::Lit(Literal::Ident(x), _) if x == name)
 }
@@ -714,5 +808,62 @@ mod tests {
             assign("t", ident("i")),
         ];
         assert!(recognize_for("i", &lit(0), &ident("n"), &body, Span::new(0, 0)).is_err());
+    }
+
+    // ---- S3 Q16.16 fixed-point map recognition ---------------------------
+
+    fn call(callee: &str, args: Vec<Node>) -> Node {
+        Node::Call {
+            callee: callee.into(),
+            args,
+            span: Span::new(0, 0),
+        }
+    }
+
+    #[test]
+    fn recognizes_cos_q16_map() {
+        // for i in 0..1000 { x = cos_q16(x) } — stored RAW (the RHS call).
+        let body = vec![assign("x", call("cos_q16", vec![ident("x")]))];
+        let m = recognize_q16_map("i", &lit(0), &lit(1000), &body, Span::new(0, 0)).unwrap();
+        assert_eq!(m.acc, "x");
+        assert!(matches!(m.f, Node::Call { .. }));
+    }
+
+    #[test]
+    fn recognizes_nested_primitive_map() {
+        // for i in 0..n { x = qadd(qmul(x, x), 4096) } — recognised (refs x, not i).
+        let body = vec![assign(
+            "x",
+            call(
+                "qadd",
+                vec![call("qmul", vec![ident("x"), ident("x")]), lit(4096)],
+            ),
+        )];
+        let m = recognize_q16_map("i", &lit(0), &ident("n"), &body, Span::new(0, 0)).unwrap();
+        assert!(matches!(m.f, Node::Call { .. }));
+    }
+
+    #[test]
+    fn rejects_map_referencing_ivar() {
+        // for i in 0..n { x = qadd(x, i) } — f reads the loop variable (would make
+        // the fixed point depend on i). Rejected at recognition.
+        let body = vec![assign("x", call("qadd", vec![ident("x"), ident("i")]))];
+        assert!(recognize_q16_map("i", &lit(0), &ident("n"), &body, Span::new(0, 0)).is_err());
+    }
+
+    #[test]
+    fn accepts_unknown_call_defers_comptime_check_to_fold() {
+        // for i in 0..n { x = mystery(x) } — recognised (refs x, not i); whether
+        // `mystery` is comptime-evaluable is decided at FOLD time (E2214), not by
+        // trusting/blacklisting a name. This is the no-name-trust contract.
+        let body = vec![assign("x", call("mystery", vec![ident("x")]))];
+        assert!(recognize_q16_map("i", &lit(0), &ident("n"), &body, Span::new(0, 0)).is_ok());
+    }
+
+    #[test]
+    fn rejects_map_without_accumulator() {
+        // for i in 0..n { x = cos_q16(4096) } — f never reads x (constant map).
+        let body = vec![assign("x", call("cos_q16", vec![lit(4096)]))];
+        assert!(recognize_q16_map("i", &lit(0), &ident("n"), &body, Span::new(0, 0)).is_err());
     }
 }

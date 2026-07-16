@@ -1,0 +1,115 @@
+// Salov loop-collapse — Q16.16 fixed-point ITERATION collapse (Slice S3).
+//
+// Design partner: Valerii Salov. The loop-collapse primitive (recognising an
+// accumulation over a counted loop and replacing it with its exact closed form)
+// is his contribution to the MIND roadmap — the same exact-arithmetic,
+// closed-form-orbit thinking behind the Collatz / Galperin determinism demos.
+// S1 collapses an affine SUM; S2 a geometric PRODUCT; S3 an ITERATED CONTRACTION.
+//
+// THE MARQUEE SLICE (no float compiler can do this): a `#[collapse]` annotation
+// on a range `for` loop of the shape
+//
+//     for i in LO..HI { x = f(x) }
+//
+// where `f` is a contractive map in Q16.16 fixed point (a signed 32-bit value
+// stored in an i64, with 16 fractional bits) built from the pinned Q16.16
+// primitives below, is rewritten BEFORE lowering by iterating `f` AT COMPILE
+// TIME to its bit-exact period-1 fixed point and replacing the whole loop with
+// that single constant. Because every primitive is integer-exact (no float,
+// ever) the compile-time orbit is byte-identical to the runtime orbit on every
+// substrate — x86, ARM, GPU. `#[collapse]` is prove-or-fail: a map that cycles,
+// diverges, or does not reach a fixed point within N is a compile error
+// (E2210..E2215), never a silent pass-through.
+//
+// The map here is the cosine contraction x_{n+1} = cos(x_n), whose orbit
+// converges to the Dottie number (the unique real root of cos(x) = x). In
+// Q16.16 the orbit from x0 = 0 lands on the fixed point 0x0000BD35 = 48437
+// (= 0.73908997) and stays there.
+
+// ---------------------------------------------------------------------------
+// The pinned Q16.16 primitives. These implementations are the cross-substrate
+// PINS: the compiler recognises the calls by name and folds the loop using the
+// SAME bit-exact semantics, so the collapsed constant equals this loop run to N.
+// ---------------------------------------------------------------------------
+
+// Q16.16 multiply with round-to-nearest-even, MAGNITUDE-BASED. The 64-bit
+// product is reduced with `>> 16` on its magnitude, then rounded half-to-even.
+// (Deliberately NOT `(p + 0x8000) >> 16`: arithmetic shift rounds half-UP for
+// negatives, which would break cross-substrate bit-identity on negative ties.)
+fn qmul(a: i64, b: i64) -> i64 {
+    let p: i64 = a * b;
+    let neg: bool = p < 0;
+    let mut m: i64 = p;
+    if neg {
+        m = 0 - p;
+    }
+    let mut q: i64 = m >> 16;
+    let rem: i64 = m & 65535;
+    if rem > 32768 {
+        q = q + 1;
+    } else {
+        if rem == 32768 {
+            if (q & 1) == 1 {
+                q = q + 1;
+            }
+        }
+    }
+    if neg {
+        return 0 - q;
+    }
+    return q;
+}
+
+// Q16.16 cosine via a fixed degree-8 Horner Taylor in even powers of x:
+//   1 - x^2/2 + x^4/24 - x^6/720 + x^8/40320
+// with each factorial coefficient baked as a nearest-Q16.16 literal. Domain
+// [-1, 1] needs no range reduction for the cos orbit. Uses `qmul` (RNE) so the
+// runtime orbit matches the compile-time fold bit-for-bit.
+fn cos_q16(x: i64) -> i64 {
+    let x2: i64 = qmul(x, x);
+    let mut acc: i64 = 2;
+    // 1/40320
+    acc = qmul(acc, x2) - 91;
+    // -1/720
+    acc = qmul(acc, x2) + 2731;
+    // 1/24
+    acc = qmul(acc, x2) - 32768;
+    // -1/2
+    acc = qmul(acc, x2) + 65536;
+    // 1.0
+    return acc;
+}
+
+// ---------------------------------------------------------------------------
+// The `#[collapse]` iteration. The compiler folds this whole loop to the single
+// constant `x = 48437` (the Q16.16 Dottie fixed point) at compile time.
+// ---------------------------------------------------------------------------
+pub fn dottie_collapse() -> i64 {
+    let mut x: i64 = 0;
+    #[collapse]
+    for i in 0..1000 {
+        x = cos_q16(x);
+    }
+    x
+}
+
+// ---------------------------------------------------------------------------
+// The un-annotated O(N) reference loop — identical body, no `#[collapse]`. Left
+// INTACT by the compiler (collapse is opt-in) and the witness the differential
+// gate compares against: `dottie_collapse()` is bit-for-bit `dottie_loop()`,
+// both landing 0x0000BD35 = 48437.
+// ---------------------------------------------------------------------------
+pub fn dottie_loop() -> i64 {
+    let mut x: i64 = 0;
+    for i in 0..1000 {
+        x = cos_q16(x);
+    }
+    x
+}
+
+fn main() {
+    let collapsed: i64 = dottie_collapse();
+    let looped: i64 = dottie_loop();
+    print("cos-Dottie Q16.16 fixed point (collapsed):", collapsed);
+    print("cos-Dottie Q16.16 fixed point (loop):", looped);
+}
