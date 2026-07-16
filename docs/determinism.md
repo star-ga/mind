@@ -202,6 +202,27 @@ already realises `strict_math` end-to-end: `arith.mulf`/`arith.addf` lower with
 computation is bit-identical run-to-run. ✅ The full `strict_math` / `fast_math`
 opt-in surface (the `fast`-tier toggle) is being finalised. 📋
 
+### `#[collapse]` — an optimization that *proves* it preserves behaviour ✅
+
+The sharpest form of "an optimization cannot change observable behaviour" is one
+that carries its own proof. A `#[collapse]` annotation on a counted `for` loop
+replaces the whole loop with its exact closed form *at compile time* — O(n) becomes
+O(1) — and the result is **bit-identical to running the loop** (RFC 0024). It is a
+**prove-or-fail** contract: a loop the compiler cannot prove collapsible is a
+compile error (`E2201`–`E2215`), **never** a silent constant.
+
+- **`acc = acc + (A*i + B)`** → the ring-exact Gauss sum in `Z/2^64` (S1). ✅
+- **`acc = acc * R`** → `acc * Rⁿ` via a fixed 64-step square-and-multiply (S2). ✅
+- **`x = f(x)`** → the bit-exact fixed point of a Q16.16 contraction, e.g. `x = cos(x)`
+  folds to the Dottie constant `0x0000BD35`; the fold evaluates the program's **own**
+  function bodies, so `collapse == loop` holds by construction — a program that
+  redefines the map differently is rejected, not miscompiled (S3). ✅
+
+Because every collapse is exact integer / Q16.16 arithmetic (no float reassociation),
+the folded constant is byte-identical across x86, ARM, and `mic@3` — it moves no
+cross-substrate canary and is a no-op on the keystone self-host hash. No float
+compiler can do this: it requires a determinism contract on the arithmetic itself.
+
 ---
 
 ## 6. Randomness must be explicit
