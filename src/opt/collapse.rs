@@ -51,9 +51,10 @@ use crate::ast::TypeAnn;
 use crate::diagnostics::Diagnostic;
 use crate::diagnostics::Span as DiagSpan;
 
-use super::comptime::eval_const_i64;
+use super::comptime::{CtFnTable, Q16Outcome, eval_const_i64, iterate_user_fixed_point};
 use super::scev::{
-    AffineSum, GeometricPow, closed_form_i64, geometric_pow_i64, recognize_for, recognize_geometric,
+    AffineSum, GeometricPow, Q16Map, closed_form_i64, geometric_pow_i64, recognize_for,
+    recognize_geometric, recognize_q16_map,
 };
 
 const COLLAPSE_ATTR: &str = "collapse";
@@ -61,6 +62,20 @@ const COLLAPSE_ATTR: &str = "collapse";
 const E_COLLAPSE: &str = "E2201";
 /// Geometric-powering reject (Slice S2).
 const E_COLLAPSE_GEO: &str = "E2202";
+/// Q16.16 fixed-point iteration rejects (Slice S3).
+/// No period-1 fixed point within fuel.
+const E_Q16_NOFIX: &str = "E2210";
+/// A cycle of length `k >= 2` (value depends on `N mod k`).
+const E_Q16_CYCLE: &str = "E2211";
+/// Divergence / overflow (rejected, never saturated).
+const E_Q16_DIVERGE: &str = "E2212";
+/// Fixed point depends on `N` (stabilisation step `M > N`).
+const E_Q16_DEPENDS_N: &str = "E2213";
+/// Map is not purely comptime-expressible (unknown call / references `i` /
+/// division by zero).
+const E_Q16_NONCOMPTIME: &str = "E2214";
+/// Non-constant seed or bounds.
+const E_Q16_NONCONST: &str = "E2215";
 
 /// Rewrite every `#[collapse]`-annotated affine loop in `module` to its closed
 /// form. Returns `E2201` diagnostics for any annotated loop that cannot be
@@ -70,10 +85,20 @@ pub fn collapse_module(
     source: &str,
     file: Option<&str>,
 ) -> Vec<Diagnostic> {
+    // Snapshot the module's user-defined scalar functions so the S3 Q16.16 fold
+    // can run the user's REAL bodies (collapse == loop by construction). Only
+    // paid when a `#[collapse]` loop is actually present — the clone is skipped
+    // for every ordinary source, so the bit-identity hot path is unmoved.
+    let fns = if module_has_collapse(&module.items) {
+        build_fn_table(&module.items)
+    } else {
+        CtFnTable::new()
+    };
     let mut ctx = Ctx {
         source,
         file,
         diags: Vec::new(),
+        fns,
     };
     for item in &mut module.items {
         rewrite_node(item, &mut ctx);
@@ -85,83 +110,162 @@ struct Ctx<'a> {
     source: &'a str,
     file: Option<&'a str>,
     diags: Vec<Diagnostic>,
+    /// User function bodies for the S3 comptime fold (empty unless a
+    /// `#[collapse]` loop is present).
+    fns: CtFnTable,
+}
+
+/// Does any node in `items` contain a `#[collapse]`-annotated `for` loop?
+fn module_has_collapse(items: &[Node]) -> bool {
+    fn scan(node: &Node) -> bool {
+        if is_collapse_for(node) {
+            return true;
+        }
+        // Immutable mirror of `child_stmt_lists`.
+        match node {
+            Node::FnDef { body, .. }
+            | Node::Block { stmts: body, .. }
+            | Node::For { body, .. }
+            | Node::ForEach { body, .. } => body.iter().any(scan),
+            Node::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                then_branch.iter().any(scan)
+                    || else_branch.as_ref().is_some_and(|eb| eb.iter().any(scan))
+            }
+            #[cfg(feature = "std-surface")]
+            Node::While { body, .. } | Node::Region { body, .. } => body.iter().any(scan),
+            _ => false,
+        }
+    }
+    items.iter().any(scan)
+}
+
+/// Snapshot every top-level `fn name(params) { body }` as `(param names, body)`
+/// for the comptime evaluator.
+fn build_fn_table(items: &[Node]) -> CtFnTable {
+    let mut table = CtFnTable::new();
+    for item in items {
+        if let Node::FnDef {
+            name, params, body, ..
+        } = item
+        {
+            let pnames = params.iter().map(|p| p.name.clone()).collect();
+            table.insert(name.clone(), (pnames, body.clone()));
+        }
+    }
+    table
 }
 
 /// Recurse into a node's statement lists, collapsing annotated `for` loops.
+///
+/// A non-collapse node just forwards into its child statement lists (via
+/// `rewrite_stmt_list`, which is index-aware so the S3 Q16.16 path can read a
+/// loop's preceding siblings for the constant seed).
 fn rewrite_node(node: &mut Node, ctx: &mut Ctx) {
-    // A `#[collapse]` range-for is handled here (replaced or diagnosed); every
-    // other node just forwards into its child statement lists.
-    if let Node::For {
+    for list in child_stmt_lists(node) {
+        rewrite_stmt_list(list, ctx);
+    }
+}
+
+/// Walk a statement list left-to-right, collapsing each `#[collapse]` `for`
+/// loop. Iterating by index (rather than mapping over the nodes) lets the S3
+/// Q16.16 path scan the loop's preceding siblings for the accumulator's
+/// compile-time seed.
+fn rewrite_stmt_list(list: &mut [Node], ctx: &mut Ctx) {
+    for idx in 0..list.len() {
+        if is_collapse_for(&list[idx]) {
+            // `try_collapse` reads `list[..idx]` (immutable) for the S3 seed and
+            // `list[idx]` for the loop; on success it returns the replacement,
+            // on reject it pushes a diagnostic and leaves the loop intact.
+            if let Some(replacement) = try_collapse(list, idx, ctx) {
+                list[idx] = replacement;
+            }
+        } else {
+            rewrite_node(&mut list[idx], ctx);
+        }
+    }
+}
+
+/// Is `node` a `#[collapse]`-annotated `for` loop?
+fn is_collapse_for(node: &Node) -> bool {
+    matches!(node, Node::For { attrs, .. } if attrs.iter().any(|a| a.name == COLLAPSE_ATTR))
+}
+
+/// Attempt to collapse the `#[collapse]` `for` loop at `list[idx]`, trying the
+/// three recognised shapes IN ORDER:
+///   - S1 affine sum      `acc = acc + (A*i + B)`   -> E2201 on reject
+///   - S2 geometric power  `acc = acc * R`           -> E2202 on reject
+///   - S3 Q16.16 map       `x = f(x)`                -> E2210..E2215 on reject
+///
+/// Each is prove-or-fail: an annotated loop matching no shape (or matching but
+/// unprovable) is a compile error, never a silent pass-through. Returns the
+/// closed-form replacement on success, or `None` after pushing a diagnostic.
+fn try_collapse(list: &[Node], idx: usize, ctx: &mut Ctx) -> Option<Node> {
+    let Node::For {
         var,
         start,
         end,
         body,
-        attrs,
         span,
-    } = node
-    {
-        if attrs.iter().any(|a| a.name == COLLAPSE_ATTR) {
-            // Two recognised shapes, tried in order:
-            //   S1 affine sum       `acc = acc + (A*i + B)`  -> E2201 on reject
-            //   S2 geometric power   `acc = acc * R`          -> E2202 on reject
-            // Each is prove-or-fail: an annotated loop matching neither shape
-            // (or matching but unprovable, e.g. an overflowing const span) is a
-            // compile error, never a silent pass-through.
-            match recognize_for(var, start, end, body, *span) {
-                Ok(affine) => {
-                    match build_closed_form(&affine) {
-                        Ok(replacement) => *node = replacement,
-                        Err(reason) => ctx.diags.push(collapse_error(
-                            ctx.source, ctx.file, *span, E_COLLAPSE, reason,
-                        )),
+        ..
+    } = &list[idx]
+    else {
+        return None;
+    };
+    let span = *span;
+
+    match recognize_for(var, start, end, body, span) {
+        Ok(affine) => match build_closed_form(&affine) {
+            Ok(replacement) => Some(replacement),
+            Err(reason) => {
+                ctx.diags.push(collapse_error(
+                    ctx.source, ctx.file, span, E_COLLAPSE, reason,
+                ));
+                None
+            }
+        },
+        Err(affine_reject) => {
+            // Not an affine sum — try the S2 geometric-powering shape.
+            match recognize_geometric(var, start, end, body, span) {
+                Ok(geo) => match build_geometric(&geo) {
+                    Ok(replacement) => Some(replacement),
+                    Err(reason) => {
+                        ctx.diags.push(collapse_error(
+                            ctx.source,
+                            ctx.file,
+                            span,
+                            E_COLLAPSE_GEO,
+                            reason,
+                        ));
+                        None
                     }
-                    return;
-                }
-                Err(affine_reject) => {
-                    // Not an affine sum — try the S2 geometric-powering shape.
-                    match recognize_geometric(var, start, end, body, *span) {
-                        Ok(geo) => match build_geometric(&geo) {
-                            Ok(replacement) => *node = replacement,
-                            Err(reason) => ctx.diags.push(collapse_error(
-                                ctx.source,
-                                ctx.file,
-                                *span,
-                                E_COLLAPSE_GEO,
-                                reason,
-                            )),
-                        },
-                        Err(geo_reject) => {
-                            // Neither shape. Surface the reject for the family
-                            // the body most resembles: a `*` accumulation is a
-                            // geometric attempt (E2202), everything else affine
-                            // (E2201). Keeps `acc = acc * acc` a specific E2202.
-                            if body_is_mul_accumulation(body) {
-                                ctx.diags.push(collapse_error(
-                                    ctx.source,
-                                    ctx.file,
-                                    *span,
-                                    E_COLLAPSE_GEO,
-                                    geo_reject,
-                                ));
+                },
+                Err(geo_reject) => {
+                    // Not geometric — try the S3 Q16.16 fixed-point map.
+                    match recognize_q16_map(var, start, end, body, span) {
+                        Ok(map) => build_q16_collapse(&map, &list[..idx], ctx),
+                        Err(q16_reject) => {
+                            // No shape matched. Route to the family the body most
+                            // resembles: a call-RHS body is a Q16.16 attempt
+                            // (E2214), a `*` accumulation is geometric (E2202),
+                            // everything else affine (E2201).
+                            let (code, reason) = if body_is_q16_map_attempt(body) {
+                                (E_Q16_NONCOMPTIME, q16_reject)
+                            } else if body_is_mul_accumulation(body) {
+                                (E_COLLAPSE_GEO, geo_reject)
                             } else {
-                                ctx.diags.push(collapse_error(
-                                    ctx.source,
-                                    ctx.file,
-                                    *span,
-                                    E_COLLAPSE,
-                                    affine_reject,
-                                ));
-                            }
+                                (E_COLLAPSE, affine_reject)
+                            };
+                            ctx.diags
+                                .push(collapse_error(ctx.source, ctx.file, span, code, reason));
+                            None
                         }
                     }
-                    return;
                 }
             }
-        }
-    }
-    for list in child_stmt_lists(node) {
-        for child in list.iter_mut() {
-            rewrite_node(child, ctx);
         }
     }
 }
@@ -464,6 +568,164 @@ fn let_i64(name: &str, value: Node, sp: Span) -> Node {
     }
 }
 
+/// Build the closed-form replacement for a recognised Q16.16 fixed-point map
+/// (Slice S3): `for i in LO..HI { x = f(x) }` -> `x = <fixed point>`.
+///
+/// S3 requires the whole fixed point to be determined at COMPILE TIME: `LO`/`HI`
+/// must be constants (E2215 otherwise) and the accumulator's seed must be a
+/// compile-time constant found in the loop's preceding siblings (E2215
+/// otherwise). The map is then iterated over the user's real function bodies
+/// (see `iterate_user_fixed_point`) to its bit-exact period-1 fixed point; each
+/// non-fixed outcome is a specific reject:
+///
+/// - `Cycle` (period `k >= 2`) -> E2211 (value depends on `N`)
+/// - `Diverged` (`|x| > 2^30` / overflow) -> E2212 (reject, never saturate)
+/// - `DependsOnN` (no fixed point within `N` iters) -> E2213
+/// - `NonComptime` (unresolved/looping call, unsupported construct, div-by-zero) -> E2214
+/// - `NoFixedPoint` (fuel exhausted) -> E2210
+///
+/// A reversed/empty range collapses to the seed (the map is iterated zero
+/// times, so `x` is unchanged — bug-class 1).
+fn build_q16_collapse(map: &Q16Map, preceding: &[Node], ctx: &mut Ctx) -> Option<Node> {
+    let sp = map.span;
+
+    // Bounds must be compile-time constants (S3 determines the fixed point at
+    // compile time).
+    let (lo, hi) = match (eval_const_i64(&map.lo), eval_const_i64(&map.hi)) {
+        (Some(lo), Some(hi)) => (lo, hi),
+        _ => {
+            ctx.diags.push(collapse_error(
+                ctx.source,
+                ctx.file,
+                sp,
+                E_Q16_NONCONST,
+                "loop bounds are not compile-time constants \
+                 (S3 requires const LO/HI to determine the fixed point at compile time)",
+            ));
+            return None;
+        }
+    };
+
+    // The seed is the nearest preceding constant binding of the accumulator.
+    let seed = match find_const_seed(preceding, &map.acc) {
+        Some(v) => v,
+        None => {
+            ctx.diags.push(collapse_error(
+                ctx.source,
+                ctx.file,
+                sp,
+                E_Q16_NONCONST,
+                "accumulator seed is not a compile-time constant \
+                 (S3 requires a `let <acc> = <const>` before the loop)",
+            ));
+            return None;
+        }
+    };
+
+    // Trip count = iterations of `for i in lo..hi` (0 for a reversed/empty
+    // range). `saturating_sub` avoids an i64 overflow for a huge const span;
+    // the iteration then caps at the fuel and rejects if no fixed point is
+    // reached (E2210).
+    let trip = if hi > lo { hi.saturating_sub(lo) } else { 0 };
+
+    // Fold by evaluating the user's REAL function bodies (collapse == loop by
+    // construction — no name-trust). `ctx.fns` holds the module's fn bodies.
+    match iterate_user_fixed_point(&map.f, &map.acc, &ctx.fns, seed, trip) {
+        Q16Outcome::Fixed(v) => Some(assign_const(&map.acc, v, sp)),
+        Q16Outcome::Cycle(_) => {
+            ctx.diags.push(collapse_error(
+                ctx.source,
+                ctx.file,
+                sp,
+                E_Q16_CYCLE,
+                "map enters a cycle of length >= 2 (the value depends on N mod k, not a fixed point)",
+            ));
+            None
+        }
+        Q16Outcome::Diverged => {
+            ctx.diags.push(collapse_error(
+                ctx.source,
+                ctx.file,
+                sp,
+                E_Q16_DIVERGE,
+                "map diverges / overflows the Q16.16 range (rejected, never saturated)",
+            ));
+            None
+        }
+        Q16Outcome::DependsOnN => {
+            ctx.diags.push(collapse_error(
+                ctx.source,
+                ctx.file,
+                sp,
+                E_Q16_DEPENDS_N,
+                "map does not reach a fixed point within the N iterations (the result depends on N)",
+            ));
+            None
+        }
+        Q16Outcome::NonComptime => {
+            ctx.diags.push(collapse_error(
+                ctx.source,
+                ctx.file,
+                sp,
+                E_Q16_NONCOMPTIME,
+                "map is not purely comptime-evaluable \
+                 (an unresolved/looping call, an unsupported construct, or a division by zero)",
+            ));
+            None
+        }
+        Q16Outcome::NoFixedPoint => {
+            ctx.diags.push(collapse_error(
+                ctx.source,
+                ctx.file,
+                sp,
+                E_Q16_NOFIX,
+                "map does not reach a fixed point within the iteration fuel",
+            ));
+            None
+        }
+    }
+}
+
+/// `acc = <const>` — the S3 fixed-point replacement.
+fn assign_const(acc: &str, v: i64, sp: Span) -> Node {
+    Node::Assign {
+        name: acc.to_string(),
+        value: Box::new(int(v, sp)),
+        span: sp,
+    }
+}
+
+/// Find the accumulator's compile-time seed: the nearest PRECEDING `let`/assign
+/// of `acc` whose value is a constant. Returns `None` if no binding is found or
+/// the nearest binding is non-constant (both -> E2215).
+fn find_const_seed(preceding: &[Node], acc: &str) -> Option<i64> {
+    for node in preceding.iter().rev() {
+        match node {
+            Node::Let { name, value, .. } if name == acc => return eval_const_i64(value),
+            Node::Assign { name, value, .. } if name == acc => return eval_const_i64(value),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Does the loop body look like a Q16.16 map attempt (`acc = <call-expr>`)?
+/// Used only to route a total-recognition failure to the S3 `E2214` diagnostic
+/// (rather than the affine E2201) when the body's RHS is a function call.
+fn body_is_q16_map_attempt(body: &[Node]) -> bool {
+    matches!(body, [Node::Assign { value, .. }] if rhs_is_call(value))
+}
+
+/// Is `node` (after unwrapping parens / unary negation) a function call?
+fn rhs_is_call(node: &Node) -> bool {
+    match node {
+        Node::Call { .. } => true,
+        Node::Paren(inner, _) => rhs_is_call(inner),
+        Node::Neg { operand, .. } => rhs_is_call(operand),
+        _ => false,
+    }
+}
+
 /// Does the loop body look like a `*` accumulation (`acc = <expr> * <expr>`)?
 /// Used only to route a total-recognition failure to the E2202 (geometric)
 /// diagnostic instead of E2201 (affine).
@@ -490,9 +752,10 @@ fn collapse_error(
     )
     .with_span(dspan)
     .with_help(
-        "`#[collapse]` requires `for i in LO..HI { acc = acc + (A*i + B) }` (affine sum) \
-         or `for i in LO..HI { acc = acc * R }` (geometric) with loop-invariant \
-         coefficients/multiplier and pure bounds LO/HI",
+        "`#[collapse]` requires `for i in LO..HI { acc = acc + (A*i + B) }` (affine sum), \
+         `for i in LO..HI { acc = acc * R }` (geometric), or `for i in LO..HI { x = f(x) }` \
+         where f is a Q16.16 contraction over qmul/qadd/qsub/qdiv/cos_q16 with const bounds \
+         and a const seed (fixed-point iteration)",
     )
 }
 
@@ -735,5 +998,177 @@ mod tests {
         };
         assert!(matches!(**right, Node::Binary { .. }));
         assert!(eval_const_i64(right).is_none());
+    }
+
+    // ---- S3 Q16.16 fixed-point collapse ----------------------------------
+    //
+    // The fold runs the USER'S real function bodies (option B), so every test
+    // installs a fn table via `ctx_with_fns` — collapse == loop by construction.
+
+    /// The canonical Q16.16 cos map bodies (== the `dottie_collapse.mind` example).
+    const CANON_COS: &str = r#"
+fn qmul(a: i64, b: i64) -> i64 {
+    let p: i64 = a * b;
+    let neg: bool = p < 0;
+    let mut m: i64 = p;
+    if neg { m = 0 - p; }
+    let mut q: i64 = m >> 16;
+    let rem: i64 = m & 65535;
+    if rem > 32768 { q = q + 1; } else { if rem == 32768 { if (q & 1) == 1 { q = q + 1; } } }
+    if neg { return 0 - q; }
+    return q;
+}
+fn cos_q16(x: i64) -> i64 {
+    let x2: i64 = qmul(x, x);
+    let mut acc: i64 = 2;
+    acc = qmul(acc, x2) - 91;
+    acc = qmul(acc, x2) + 2731;
+    acc = qmul(acc, x2) - 32768;
+    acc = qmul(acc, x2) + 65536;
+    return acc;
+}
+"#;
+
+    fn ctx_with_fns(src: &str) -> Ctx<'static> {
+        let module = crate::parser::parse(src).expect("parse fn table source");
+        Ctx {
+            source: "",
+            file: None,
+            diags: Vec::new(),
+            fns: build_fn_table(&module.items),
+        }
+    }
+
+    fn let_const(name: &str, v: i64) -> Node {
+        Node::Let {
+            name: name.into(),
+            mutable: true,
+            ann: Some(TypeAnn::ScalarI64),
+            value: Box::new(lit(v)),
+            span: Span::new(0, 0),
+        }
+    }
+
+    /// `x = <callee>(x)` as a raw RHS map.
+    fn call_map(callee: &str, lo: i64, hi: i64) -> Q16Map {
+        Q16Map {
+            acc: "x".into(),
+            f: Node::Call {
+                callee: callee.into(),
+                args: vec![ident("x")],
+                span: Span::new(0, 0),
+            },
+            lo: lit(lo),
+            hi: lit(hi),
+            span: Span::new(0, 0),
+        }
+    }
+
+    #[test]
+    fn q16_cos_collapse_folds_to_dottie_constant() {
+        // `let mut x = 0; #[collapse] for i in 0..1000 { x = cos_q16(x) }`
+        // -> `x = 48437` (the Q16.16 Dottie fixed point, 0x0000BD35), computed by
+        // running the user's REAL cos_q16.
+        let preceding = [let_const("x", 0)];
+        let mut ctx = ctx_with_fns(CANON_COS);
+        let node = build_q16_collapse(&call_map("cos_q16", 0, 1000), &preceding, &mut ctx)
+            .expect("cos map must collapse to a constant");
+        assert!(ctx.diags.is_empty());
+        let Node::Assign { name, value, .. } = node else {
+            panic!("expected `x = <const>`");
+        };
+        assert_eq!(name, "x");
+        assert_eq!(*value, lit(48437));
+    }
+
+    #[test]
+    fn q16_redefined_cos_never_folds_to_dottie_constant() {
+        // THE hole-is-closed proof at the collapse layer: a module that redefines
+        // `cos_q16(x) = x + 1` must NOT fold to 48437. x+1 has no Q16.16 fixed
+        // point within N -> E2213, never the compiler's cos constant.
+        let preceding = [let_const("x", 0)];
+        let mut ctx = ctx_with_fns("fn cos_q16(x: i64) -> i64 { return x + 1; }");
+        let folded = build_q16_collapse(&call_map("cos_q16", 0, 1000), &preceding, &mut ctx);
+        assert!(folded.is_none(), "must NOT fold a non-contraction");
+        assert_eq!(ctx.diags[0].code, E_Q16_DEPENDS_N);
+        // And prove it is never the cos-Dottie constant.
+        assert!(!matches!(folded, Some(Node::Assign { value, .. }) if *value == lit(48437)));
+    }
+
+    #[test]
+    fn q16_non_const_seed_is_rejected() {
+        // Seed comes from `let mut x = seed` (a non-const identifier) -> E2215.
+        let preceding = [Node::Let {
+            name: "x".into(),
+            mutable: true,
+            ann: Some(TypeAnn::ScalarI64),
+            value: Box::new(ident("seed")),
+            span: Span::new(0, 0),
+        }];
+        let mut ctx = ctx_with_fns(CANON_COS);
+        assert!(build_q16_collapse(&call_map("cos_q16", 0, 1000), &preceding, &mut ctx).is_none());
+        assert_eq!(ctx.diags.len(), 1);
+        assert_eq!(ctx.diags[0].code, E_Q16_NONCONST);
+    }
+
+    #[test]
+    fn q16_non_const_bound_is_rejected() {
+        // Symbolic upper bound -> E2215.
+        let preceding = [let_const("x", 0)];
+        let mut map = call_map("cos_q16", 0, 0);
+        map.hi = ident("n");
+        let mut ctx = ctx_with_fns(CANON_COS);
+        assert!(build_q16_collapse(&map, &preceding, &mut ctx).is_none());
+        assert_eq!(ctx.diags[0].code, E_Q16_NONCONST);
+    }
+
+    #[test]
+    fn q16_reversed_range_folds_to_seed() {
+        // Reversed range -> 0 iterations -> x stays the seed (bug-class 1).
+        let preceding = [let_const("x", 12345)];
+        let mut ctx = ctx_with_fns(CANON_COS);
+        let node = build_q16_collapse(&call_map("cos_q16", 10, 3), &preceding, &mut ctx)
+            .expect("reversed range collapses to the seed");
+        let Node::Assign { value, .. } = node else {
+            panic!("expected `x = <seed>`");
+        };
+        assert_eq!(*value, lit(12345));
+    }
+
+    #[test]
+    fn q16_two_cycle_map_is_rejected() {
+        // `x = negate(x)` -> 2-cycle -> E2211.
+        let preceding = [let_const("x", 0x1_0000)];
+        let mut ctx = ctx_with_fns("fn negate(x: i64) -> i64 { return 0 - x; }");
+        assert!(build_q16_collapse(&call_map("negate", 0, 1000), &preceding, &mut ctx).is_none());
+        assert_eq!(ctx.diags[0].code, E_Q16_CYCLE);
+    }
+
+    #[test]
+    fn q16_divergent_map_is_rejected() {
+        // `x = grow(x)` (x + 0.5) diverges -> E2212 (reject, never saturate).
+        let preceding = [let_const("x", 0x2000_0000)];
+        let mut ctx = ctx_with_fns("fn grow(x: i64) -> i64 { return x + 536870912; }");
+        let map = call_map("grow", 0, 1000);
+        assert!(build_q16_collapse(&map, &preceding, &mut ctx).is_none());
+        assert_eq!(ctx.diags[0].code, E_Q16_DIVERGE);
+    }
+
+    #[test]
+    fn q16_unresolved_call_is_non_comptime() {
+        // A call to a function absent from the module cannot be folded -> E2214.
+        let preceding = [let_const("x", 0)];
+        let mut ctx = ctx_with_fns("fn other(x: i64) -> i64 { return x; }");
+        assert!(build_q16_collapse(&call_map("missing", 0, 1000), &preceding, &mut ctx).is_none());
+        assert_eq!(ctx.diags[0].code, E_Q16_NONCOMPTIME);
+    }
+
+    #[test]
+    fn q16_too_few_iters_depends_on_n_is_rejected() {
+        // cos converges at ~step 30; N=5 doesn't reach it -> E2213.
+        let preceding = [let_const("x", 0)];
+        let mut ctx = ctx_with_fns(CANON_COS);
+        assert!(build_q16_collapse(&call_map("cos_q16", 0, 5), &preceding, &mut ctx).is_none());
+        assert_eq!(ctx.diags[0].code, E_Q16_DEPENDS_N);
     }
 }
