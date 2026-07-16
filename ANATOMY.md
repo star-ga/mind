@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3132 | **Est. tokens:** ~7,488,613
-**Generated:** 2026-07-16 07:59 UTC
+**Files:** 3133 | **Est. tokens:** ~7,490,766
+**Generated:** 2026-07-16 08:11 UTC
 
 ## Token Budget Guide
 
@@ -376,7 +376,7 @@
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
 | `src/` | 7 | ~18,111 |
-| `src/ast/` | 1 | ~8,131 |
+| `src/ast/` | 1 | ~8,291 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 2 | ~31,777 |
 | `src/build/` | 2 | ~15,368 |
@@ -386,11 +386,11 @@
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~11,003 |
-| `src/eval/` | 12 | ~64,105 |
+| `src/eval/` | 12 | ~64,344 |
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
-| `src/fmt/` | 3 | ~20,063 |
+| `src/fmt/` | 3 | ~20,091 |
 | `src/ir/` | 5 | ~46,820 |
 | `src/ir/compact/` | 3 | ~15,235 |
 | `src/ir/compact/v2/` | 8 | ~38,037 |
@@ -408,11 +408,11 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,999 |
-| `src/type_checker/` | 1 | ~11,631 |
+| `src/type_checker/` | 1 | ~11,681 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~192,637 |
-| `tests/` | 286 | ~491,688 |
+| `tests/` | 287 | ~493,364 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -3804,7 +3804,7 @@
 - `SKILL.md` (~6002 tok, huge) — Write MIND Code
 ### `src/ast/`
 
-- `mod.rs` (~8131 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~8291 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~3890 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3853,7 +3853,7 @@
 - `mod.rs` (~7403 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/`
 
-- `abi_gate.rs` (~10603 tok, huge) — Runnable-artifact ABI gate (release-readiness P1.1).
+- `abi_gate.rs` (~10842 tok, huge) — Runnable-artifact ABI gate (release-readiness P1.1).
 - `autodiff.rs` (~14268 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~3818 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3885,7 +3885,7 @@
 
 - `cli.rs` (~3873 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~15596 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~15624 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4693 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3997,7 +3997,7 @@
 - `mod.rs` (~5999 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `resolve.rs` (~11631 tok, huge) — Copyright 2025 STARGA Inc.
+- `resolve.rs` (~11681 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
@@ -4280,7 +4280,7 @@
 - `index_slice_preview.rs` (~376 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_types.rs` (~248 tok, medium) — Copyright 2025 STARGA Inc.
 - `int_determinism.rs` (~1226 tok, large) — Copyright 2025 STARGA Inc.
-- `intra_module_call_arity.rs` (~2603 tok, huge) — Copyright 2025 STARGA Inc.
+- `intra_module_call_arity.rs` (~3083 tok, huge) — Copyright 2025 STARGA Inc.
 - `int_suffix_literal.rs` (~930 tok, large) — Copyright 2025 STARGA Inc.
 - `invariant_block_run.rs` (~720 tok, large) — Copyright 2025 STARGA Inc.
 - `invariant_check_run.rs` (~695 tok, large) — Copyright 2025 STARGA Inc.
@@ -4461,10 +4461,11 @@
 - `ops_registry.rs` (~114 tok, small)
 - `package_basic.rs` (~491 tok, medium) — Copyright 2025 STARGA Inc.
 - `package_traversal.rs` (~905 tok, large) — Copyright 2025 STARGA Inc.
-- `parse_match_and_ref.rs` (~2780 tok, huge) — Copyright 2025 STARGA Inc.
+- `parse_match_and_ref.rs` (~3031 tok, huge) — Copyright 2025 STARGA Inc.
 - `parse_phase10_surface.rs` (~4815 tok, huge) — Parse-target tests for Phase 10.5 / 10.6 surface-syntax acceptance.
 - `parser_trivia.rs` (~2706 tok, huge) — Copyright 2025 STARGA Inc.
 - `parser_unsigned_i64_literals.rs` (~1544 tok, huge) — Copyright 2025 STARGA Inc.
+- `pattern_guard_run.rs` (~945 tok, large) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
 - `phase_g_keystone_bootstrap.rs` (~6353 tok, huge) — Copyright 2025 STARGA Inc.
 - `pipeline.rs` (~1476 tok, large) — Copyright 2025 STARGA Inc.
 - `reap_threshold.rs` (~2047 tok, huge) — Copyright 2025 STARGA Inc.

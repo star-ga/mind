@@ -164,11 +164,13 @@ mod enum_value_tests {
                         path: "Result::Ok".to_string(),
                         args: vec![Pattern::Ident("x".to_string())],
                     },
+                    guard: None,
                     body: Node::Lit(Literal::Ident("x".to_string()), sp()),
                     span: sp(),
                 },
                 MatchArm {
                     pattern: Pattern::Wildcard,
+                    guard: None,
                     body: Node::Lit(Literal::Int(0), sp()),
                     span: sp(),
                 },
@@ -195,11 +197,13 @@ mod enum_value_tests {
                         path: "Result::Ok".to_string(),
                         args: vec![Pattern::Ident("x".to_string())],
                     },
+                    guard: None,
                     body: Node::Lit(Literal::Ident("x".to_string()), sp()),
                     span: sp(),
                 },
                 MatchArm {
                     pattern: Pattern::Wildcard,
+                    guard: None,
                     body: Node::Lit(Literal::Int(0), sp()),
                     span: sp(),
                 },
@@ -1763,6 +1767,15 @@ pub(crate) fn eval_value_expr_mode(
                     let mut arm_env = env.clone();
                     for (name, bound) in bindings {
                         arm_env.insert(name, bound);
+                    }
+                    // Pattern-guards W1.5a: a guarded arm matches only when its
+                    // guard (evaluated with the pattern's bindings in scope) is
+                    // truthy; a false guard falls through to the next arm.
+                    if let Some(guard) = &arm.guard {
+                        let g = eval_value_expr_mode(guard, &arm_env, tensor_env, mode.clone())?;
+                        if matches!(g, Value::Int(0)) {
+                            continue;
+                        }
                     }
                     return eval_value_expr_mode(&arm.body, &arm_env, tensor_env, mode);
                 }

@@ -4932,6 +4932,20 @@ impl<'a> P<'a> {
             let arm_start = self.pos;
             let pattern = self.parse_pattern()?;
             self.skip_ws_and_newlines();
+            // Optional pattern guard: `<pattern> if <bool-expr> => …`. The guard
+            // is a full boolean expression evaluated (with the pattern's bindings
+            // in scope) only when the pattern matches; a false guard falls through
+            // to the next arm. `if` here is unambiguous — a match arm never begins
+            // an `if` expression before `=>`.
+            let guard = if self.at_keyword(b"if") {
+                self.pos += 2; // "if"
+                self.skip_ws_and_newlines();
+                let g = self.parse_expr()?;
+                self.skip_ws_and_newlines();
+                Some(g)
+            } else {
+                None
+            };
             if !self.starts_with(b"=>") {
                 return Err(self.err("expected `=>` after match pattern".into()));
             }
@@ -4941,6 +4955,7 @@ impl<'a> P<'a> {
             let arm_span = Span::new(arm_start, self.pos);
             arms.push(MatchArm {
                 pattern,
+                guard,
                 body,
                 span: arm_span,
             });
