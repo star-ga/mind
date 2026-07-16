@@ -20,6 +20,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   No wire-format or schema change.
 
 ### Added
+- **`#[collapse]` loop-collapse — the full Salov slice suite (S1/S2/S3).** A
+  `#[collapse]` annotation on a counted `for` loop is rewritten BEFORE lowering
+  to its exact closed form, turning O(n) into O(1) while staying byte-identical
+  across substrates (no float, exact in Z/2^64 or Q16.16). Prove-or-fail: a loop
+  that is not provably collapsible is a compile error (E2201..E2215), never a
+  silent pass. **S1** affine sum `acc = acc + (A*i + B)` → `A*Σi + B*n`
+  (ring-exact `Σi`, even-factor halving). **S2** geometric `acc = acc * R` →
+  `acc * R^n` (fixed 64-step branchless square-and-multiply). **S3** Q16.16
+  fixed-point iteration `x = f(x)` → the bit-exact converged constant (cos-Dottie
+  folds to `0x0000BD35` = 48437); the fold evaluates the user's ACTUAL function
+  bodies through a comptime i64 evaluator with backend-identical semantics, so
+  `collapse == loop` by construction — a program that redefines the map
+  differently rejects rather than miscompiles. Every change is keystone
+  byte-identical (a no-op on unannotated code) and cross-substrate 24/24.
+  New: `src/opt/{scev,collapse,comptime}.rs`,
+  `examples/{gauss,geometric,dottie}_collapse.mind`. RFC 0024.
+- **Match pattern guards `pat if cond`.** Match arms accept an optional boolean
+  guard: `Pattern if <cond> => body` matches only when the pattern matches AND
+  the guard is true. Pure front-end desugar into the existing if-else-chain
+  machinery (no new IR opcode, keystone byte-identical). A guarded arm is
+  correctly NOT treated as a catch-all by exhaustiveness checking or the
+  fail-closed `abi_gate`.
+- **Strict-f64 determinism demos.** `examples/{cos_dottie,mandelbrot_strict}.mind`
+  — the cos-Dottie fixed point and a Mandelbrot escape checksum, byte-identical
+  run-to-run and `fp_mode = strict` under `mindc verify --require-strict-fp`.
 - **Deterministic multi-format columnar ingest front-end — RFC + Phases 0/0.5/1.**
   New `docs/rfcs/DRAFT-deterministic-format-frontend.md` (consolidates and
   supersedes the JSON-only draft) + roadmap Phase 11.5: a byte-identical
