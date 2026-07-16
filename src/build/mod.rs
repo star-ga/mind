@@ -25,7 +25,7 @@ use anyhow::{Context, Result};
 
 use crate::project::{
     BuildOptions as LegacyBuildOptions, BuildTarget, EmitKind, OptimizeLevel, build_project,
-    find_project_root, load_manifest,
+    find_project_root, find_project_root_for_file, load_manifest,
 };
 
 use cache::{
@@ -231,41 +231,68 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
     use crate::project::ProjectManifest;
 
     // 1. Locate the project root and load the manifest.
-    let (project_root, manifest) = match find_project_root() {
-        Ok(root) => {
-            let m = load_manifest(&root)
-                .map_err(|e| BuildError::Invalid(format!("manifest error: {e}")))?;
-            (root, m)
+    //
+    // Explicit-file builds (`mindc build <file>`) resolve the root with the
+    // BOUNDED, git-aware `find_project_root_for_file` so a stray ancestor
+    // `Mind.toml` (e.g. a leftover `/tmp/Mind.toml`) can never hijack the build
+    // into walking a foreign tree — that hijack was a >30× compile-latency
+    // regression (a one-file build under a poisoned `/tmp` walked all 116k dirs
+    // of `/tmp`, ~2.3s vs ~60ms). No-explicit-path project builds keep the
+    // classic cwd-anchored ancestor scan (`find_project_root`), unchanged.
+    let (project_root, manifest) = if !opts.paths.is_empty() {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let first_path = if opts.paths[0].is_absolute() {
+            opts.paths[0].clone()
+        } else {
+            cwd.join(&opts.paths[0])
+        };
+        let entry_dir = first_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| cwd.clone());
+        match find_project_root_for_file(&entry_dir) {
+            Some(root) => {
+                let m = load_manifest(&root)
+                    .map_err(|e| BuildError::Invalid(format!("manifest error: {e}")))?;
+                (root, m)
+            }
+            None => {
+                // No governing manifest in-bounds — synthesise a single-file
+                // manifest rooted at the entry file's OWN directory (never cwd
+                // nor a distant ancestor), so source collection stays scoped to
+                // it rather than to whatever tree happens to sit above.
+                let stem = first_path
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .replace('-', "_");
+                let pkg_name = if stem
+                    .chars()
+                    .next()
+                    .map(|c| c.is_ascii_alphabetic())
+                    .unwrap_or(false)
+                {
+                    stem
+                } else {
+                    format!("pkg_{}", stem)
+                };
+                let toml_src = format!("[package]\nname = \"{}\"\nversion = \"0.1.0\"\n", pkg_name);
+                let m: ProjectManifest = toml::from_str(&toml_src)
+                    .map_err(|e| BuildError::Invalid(format!("synthetic manifest: {e}")))?;
+                (entry_dir, m)
+            }
         }
-        Err(_) if !opts.paths.is_empty() => {
-            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            let first_path = if opts.paths[0].is_absolute() {
-                opts.paths[0].clone()
-            } else {
-                cwd.join(&opts.paths[0])
-            };
-            let root = cwd;
-            let stem = first_path
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .replace('-', "_");
-            let pkg_name = if stem
-                .chars()
-                .next()
-                .map(|c| c.is_ascii_alphabetic())
-                .unwrap_or(false)
-            {
-                stem
-            } else {
-                format!("pkg_{}", stem)
-            };
-            let toml_src = format!("[package]\nname = \"{}\"\nversion = \"0.1.0\"\n", pkg_name);
-            let m: ProjectManifest = toml::from_str(&toml_src)
-                .map_err(|e| BuildError::Invalid(format!("synthetic manifest: {e}")))?;
-            (root, m)
+    } else {
+        match find_project_root() {
+            Ok(root) => {
+                let m = load_manifest(&root)
+                    .map_err(|e| BuildError::Invalid(format!("manifest error: {e}")))?;
+                (root, m)
+            }
+            Err(e) => {
+                return Err(BuildError::Invalid(format!("cannot locate Mind.toml: {e}")));
+            }
         }
-        Err(e) => return Err(BuildError::Invalid(format!("cannot locate Mind.toml: {e}"))),
     };
 
     // Validate [package].name per RFC 0008 §3.
@@ -443,6 +470,7 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
         &entry_path,
         &artifact_path,
         opts.verbose,
+        &project_root,
     );
 
     let manifest_path = project_root.join("Mind.toml");
@@ -663,12 +691,20 @@ fn resolve_entry(
     manifest_entry: &str,
     eff_emit: EmitKind,
 ) -> Result<PathBuf, BuildError> {
-    // a) Explicit CLI paths take priority.
+    // a) Explicit CLI paths take priority. A relative path is resolved against
+    //    the CURRENT DIRECTORY (where the user typed it), never `project_root`:
+    //    the bounded root may be an ancestor (git repo root) or a synthesised
+    //    entry dir, and joining a cwd-relative path onto it would resolve the
+    //    file in the wrong place (e.g. `mindc build t.mind` from a subdir whose
+    //    governing Mind.toml sits at the repo root would look for
+    //    `<repo>/t.mind`). Absolute paths are used verbatim.
     if let Some(first) = opts.paths.first() {
         let p = if first.is_absolute() {
             first.clone()
         } else {
-            project_root.join(first)
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(first)
         };
         if !p.exists() {
             return Err(BuildError::Failed(format!(
@@ -733,6 +769,7 @@ fn default_artifact_path(
 }
 
 /// Build the `LegacyBuildOptions` used to call the existing `build_project`.
+#[allow(clippy::too_many_arguments)]
 fn legacy_opts_from(
     target: BuildTarget,
     emit: EmitKind,
@@ -741,6 +778,7 @@ fn legacy_opts_from(
     _entry_path: &Path,
     artifact_path: &Path,
     verbose: bool,
+    project_root: &Path,
 ) -> LegacyBuildOptions {
     let target_str = match target {
         BuildTarget::Cpu => None,
@@ -764,6 +802,11 @@ fn legacy_opts_from(
         // the final path — no shared `target/<profile>/<name>` intermediary
         // for concurrent builds to collide on.
         out_path: Some(artifact_path.to_path_buf()),
+        // Thread the ALREADY-resolved (bounded) project root so `build_project`
+        // reuses it instead of re-running the unbounded `find_project_root()`
+        // from cwd — otherwise the legacy path could re-ascend to a stray
+        // ancestor `Mind.toml` and reintroduce the foreign-tree walk.
+        project_root: Some(project_root.to_path_buf()),
     }
 }
 
