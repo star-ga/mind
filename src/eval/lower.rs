@@ -7075,6 +7075,10 @@ fn lower_expr(
             start,
             end,
             body,
+            // `#[collapse]` is consumed by `opt::collapse` before lowering, so a
+            // `For` reaching here is always uncollapsed (either unannotated or
+            // already-rewritten). Lowering ignores the attribute channel.
+            attrs: _,
             span,
         } => {
             // `let VAR = START;` — lower START into the parent IR and bind VAR

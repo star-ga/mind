@@ -504,11 +504,18 @@ pub enum Node {
         span: Span,
     },
     /// For loop: `for i in 0..N { body }`
+    ///
+    /// `attrs` carries any statement-level attributes written before the loop
+    /// (`#[collapse]`, RFC "Salov loop-collapse" S1). Empty for every loop that
+    /// carries no annotation, so existing sources lower byte-identically — the
+    /// affine-sum collapse pass (`opt::collapse`) fires ONLY on a loop whose
+    /// `attrs` contains `collapse`.
     For {
         var: String,
         start: Box<Node>,
         end: Box<Node>,
         body: Vec<Node>,
+        attrs: Vec<Attribute>,
         span: Span,
     },
     /// For-each loop: `for x in collection { body }` over an `array<T>` (a

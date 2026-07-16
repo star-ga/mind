@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3124 | **Est. tokens:** ~7,467,763
-**Generated:** 2026-07-16 05:58 UTC
+**Files:** 3128 | **Est. tokens:** ~7,478,912
+**Generated:** 2026-07-16 07:03 UTC
 
 ## Token Budget Guide
 
@@ -47,7 +47,7 @@
 | `docs/mindcraft/` | 3 | ~7,023 |
 | `docs/rfcs/` | 31 | ~142,417 |
 | `docs/specs/` | 2 | ~976 |
-| `examples/` | 22 | ~41,529 |
+| `examples/` | 23 | ~42,201 |
 | `examples/bimap_currency/` | 3 | ~780 |
 | `examples/bimap_pairs/` | 2 | ~801 |
 | `examples/c/` | 2 | ~400 |
@@ -375,13 +375,13 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 7 | ~17,962 |
-| `src/ast/` | 1 | ~8,032 |
+| `src/` | 7 | ~18,111 |
+| `src/ast/` | 1 | ~8,131 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 2 | ~31,777 |
 | `src/build/` | 2 | ~15,368 |
 | `src/cache/` | 4 | ~3,682 |
-| `src/check/` | 3 | ~10,563 |
+| `src/check/` | 3 | ~10,774 |
 | `src/deps/` | 1 | ~9,345 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
@@ -390,7 +390,7 @@
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
-| `src/fmt/` | 3 | ~19,935 |
+| `src/fmt/` | 3 | ~20,063 |
 | `src/ir/` | 5 | ~46,820 |
 | `src/ir/compact/` | 3 | ~15,235 |
 | `src/ir/compact/v2/` | 8 | ~38,037 |
@@ -399,7 +399,7 @@
 | `src/lint/rules/` | 6 | ~9,211 |
 | `src/mlir/` | 3 | ~5,905 |
 | `src/ops/` | 3 | ~4,764 |
-| `src/opt/` | 4 | ~10,738 |
+| `src/opt/` | 7 | ~20,628 |
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 2 | ~20,229 |
 | `src/phf/` | 1 | ~4,955 |
@@ -801,6 +801,7 @@
 - `fft_q16.mind` (~1248 tok, large) — Deterministic Q16.16 fixed-point radix-2 DIT FFT, N=256 (complex).
 - `fft_signal.mind` (~533 tok, large) — FFT Signal Processing Example for MIND
 - `galperin_pi.mind` (~1486 tok, large) — Galperin's billiard-π: count elastic collisions of two balls + a wall to
+- `gauss_collapse.mind` (~672 tok, large) — Salov loop-collapse — closed-form affine sums (Slice S1).
 ### `examples/grammar_mask/`
 
 - `main.mind` (~4577 tok, huge) — examples/grammar_mask/main.mind — structured / grammar-constrained decoding,
@@ -3798,7 +3799,7 @@
 - `SKILL.md` (~6002 tok, huge) — Write MIND Code
 ### `src/ast/`
 
-- `mod.rs` (~8032 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~8131 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~3890 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3821,7 +3822,7 @@
 ### `src/check/`
 
 - `gitignore.rs` (~2345 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~7844 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~8055 tok, huge) — Copyright 2025 STARGA Inc.
 - `reporter.rs` (~374 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/`
 
@@ -3879,7 +3880,7 @@
 
 - `cli.rs` (~3873 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~15468 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~15596 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4693 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3940,10 +3941,13 @@
 - `mod.rs` (~228 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/opt/`
 
+- `collapse.rs` (~3910 tok, huge) — Copyright 2025 STARGA Inc.
+- `comptime.rs` (~1160 tok, large) — Copyright 2025 STARGA Inc.
 - `fold.rs` (~2046 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_canonical.rs` (~4402 tok, huge) — Copyright 2025 STARGA Inc.
 - `memory_layout.rs` (~4110 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `mod.rs` (~180 tok, small) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~192 tok, small) — Copyright 2025 STARGA Inc.
+- `scev.rs` (~4808 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/package/`
 
 - `manifest.rs` (~310 tok, medium) — Copyright 2025 STARGA Inc.
@@ -3957,7 +3961,7 @@
 - `mod.rs` (~4955 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `pipeline.rs` (~4980 tok, huge) — Copyright 2025 STARGA Inc.
+- `pipeline.rs` (~5129 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
 - `module_table.rs` (~4577 tok, huge) — Copyright 2025 STARGA Inc.
