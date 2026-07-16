@@ -105,6 +105,73 @@ pub fn closed_form_i64(a: i64, b: i64, lo: i64, hi: i64) -> i64 {
     a.wrapping_mul(sum_i).wrapping_add(b.wrapping_mul(n))
 }
 
+/// A recognised geometric-powering loop (Slice S2).
+///
+/// ```text
+/// for i in LO..HI { acc = acc * R }
+/// ```
+///
+/// where `R` is loop-invariant (ivar-free AND acc-free — see `recognize_geometric`)
+/// and `LO`/`HI` are pure, duplicable bounds. The collapse pass rewrites it to the
+/// closed form `acc = acc * R^n` (`n = HI - LO`, the trip count), computed by a
+/// fixed 64-step square-and-multiply ladder that is EXACT in `Z/2^64` (multiplication
+/// is associative/commutative in the ring, so `R^n` by square-and-multiply equals
+/// `R` multiplied `n` times — byte-identical to the un-annotated loop).
+#[derive(Debug, Clone)]
+pub struct GeometricPow {
+    /// Name of the accumulator local updated as `acc = acc * R`.
+    pub acc: String,
+    /// Loop-invariant multiplier `R` (ivar-free, acc-free, pure).
+    pub r: Node,
+    /// Lower bound `LO` (inclusive, pure, duplicable).
+    pub lo: Node,
+    /// Upper bound `HI` (exclusive, pure, duplicable).
+    pub hi: Node,
+    /// Span of the originating `for` loop (for diagnostics).
+    pub span: Span,
+}
+
+/// Ring-exact `R^n mod 2^64` via a FIXED 64-step square-and-multiply ladder,
+/// where `n` is the trip count of `for i in lo..hi` (0 for a reversed/empty
+/// range, so the factor is `R^0 = 1` and `acc` is unchanged).
+///
+/// THIS IS THE SINGLE SOURCE OF TRUTH for the S2 collapse factor: the comptime
+/// const-fold path calls it, and the emitted symbolic ladder (`build_symbolic_pow`
+/// in `crate::opt::collapse`) mirrors its exact op structure (branchless masked
+/// multiply `pow * (1 + bit*(base-1))`, `%2` / `/2`), so the two are equal by
+/// construction. Constant iteration count (64) means no
+/// data-dependent branch count → deterministic and constant-time.
+#[inline]
+pub fn geometric_pow_i64(r: i64, lo: i64, hi: i64) -> i64 {
+    // Trip count MUST equal MIND's `for i in lo..hi` iteration count: a reversed
+    // or empty range (`hi <= lo`) runs zero iterations, so the factor is R^0 = 1.
+    if hi <= lo {
+        return 1;
+    }
+    let n = hi.wrapping_sub(lo); // caller (opt::collapse) rejects a const span that overflows.
+    pow_wrap(r, n)
+}
+
+/// `R^n mod 2^64` for `n >= 1` via the fixed 64-step ladder. Uses the SAME
+/// branchless masked-multiply and `%2`/`/2` op structure as the emitted AST, so
+/// the const-fold and the symbolic ladder produce byte-identical values.
+fn pow_wrap(r: i64, n: i64) -> i64 {
+    let mut result: i64 = 1;
+    let mut base: i64 = r;
+    let mut e: i64 = n; // n >= 1, and `e/2` keeps it non-negative through all 64 steps.
+    let mut k: i64 = 0;
+    while k < 64 {
+        // bit = e % 2 (0 or 1 since e >= 0). result *= (bit==1 ? base : 1),
+        // written branchlessly as result * (1 + bit*(base-1)).
+        let bit = e.wrapping_rem(2);
+        result = result.wrapping_mul(1i64.wrapping_add(bit.wrapping_mul(base.wrapping_sub(1))));
+        base = base.wrapping_mul(base);
+        e = e.wrapping_div(2);
+        k += 1;
+    }
+    result
+}
+
 /// Reject reason for a `#[collapse]`-annotated loop that is not a provable
 /// affine sum. Carried into the `E2201` diagnostic verbatim.
 pub type Reject = &'static str;
@@ -185,6 +252,78 @@ pub fn recognize_for(
         acc,
         a,
         b,
+        lo: start.clone(),
+        hi: end.clone(),
+        span,
+    })
+}
+
+/// Attempt to recognise `for var in start..end { acc = acc * R }` as a
+/// [`GeometricPow`] (Slice S2). Mirrors [`recognize_for`]'s validation exactly.
+pub fn recognize_geometric(
+    var: &str,
+    start: &Node,
+    end: &Node,
+    body: &[Node],
+    span: Span,
+) -> Result<GeometricPow, Reject> {
+    if !is_pure_dupable(start) || !is_pure_dupable(end) {
+        return Err("loop bounds are not a pure, duplicable expression");
+    }
+    if body.len() != 1 {
+        return Err("loop body is not a single accumulator assignment");
+    }
+    let (acc, value) = match &body[0] {
+        Node::Assign { name, value, .. } => (name.clone(), value.as_ref()),
+        _ => return Err("loop body is not an assignment"),
+    };
+    // value must be `acc * R` or `R * acc`.
+    let r = match value {
+        Node::Binary {
+            op: BinOp::Mul,
+            left,
+            right,
+            ..
+        } => {
+            if is_ident(left, &acc) {
+                right.as_ref()
+            } else if is_ident(right, &acc) {
+                left.as_ref()
+            } else {
+                return Err("accumulator update is not `acc = acc * R`");
+            }
+        }
+        _ => return Err("accumulator update is not `acc = acc * R`"),
+    };
+    if !is_pure_dupable(r) {
+        return Err("multiplier R is not a pure expression");
+    }
+    // R must be a CONSTANT ratio across the loop. `acc = acc * acc` (R references
+    // the accumulator) is a double-exponential recurrence (acc^(2^n)), NOT a
+    // constant-ratio geometric — collapsing it to acc*R^n would silently
+    // miscompile. `acc = acc * i` (R references the ivar) is a factorial-like
+    // varying ratio, also not geometric. Reject both.
+    if references_ident(r, &acc) {
+        return Err(
+            "multiplier references the accumulator (double-exponential recurrence, not a constant-ratio geometric)",
+        );
+    }
+    if references_ident(r, var) {
+        return Err("multiplier references the induction variable (not a constant ratio)");
+    }
+    // Bounds must be loop-invariant (same reasoning as the affine recogniser).
+    if references_ident(start, &acc)
+        || references_ident(end, &acc)
+        || references_ident(start, var)
+        || references_ident(end, var)
+    {
+        return Err(
+            "loop bound references the accumulator or induction variable (not loop-invariant)",
+        );
+    }
+    Ok(GeometricPow {
+        acc,
+        r: r.clone(),
         lo: start.clone(),
         hi: end.clone(),
         span,
@@ -423,6 +562,89 @@ mod tests {
             value: Box::new(value),
             span: Span::new(0, 0),
         }
+    }
+
+    // ---- S2 geometric powering ladder (ring-exactness) -------------------
+
+    /// i128 oracle: R multiplied `n` times, reduced mod 2^64 (== the
+    /// un-annotated loop's wrapping semantics). `n` kept small enough to loop.
+    fn pow_oracle_i128(r: i64, n: i64) -> i64 {
+        let mut acc: i128 = 1;
+        let modulus: i128 = 1i128 << 64;
+        let mut k = 0i64;
+        while k < n {
+            acc = (acc * (r as i128)).rem_euclid(modulus);
+            k += 1;
+        }
+        // rem_euclid keeps acc in [0, 2^64); reinterpret the low 64 bits as i64.
+        acc as u64 as i64
+    }
+
+    #[test]
+    fn geometric_pow_matches_repeated_multiply_oracle() {
+        // Includes n=0 (empty), n=1, n=64 (== ladder width), n=65 (past width),
+        // negative R, R=0, R=1, R near i64::MAX, and a larger n so the product
+        // genuinely wraps (proving the ladder is ring-exact, not just small-n).
+        let cases = [
+            (2i64, 0i64),
+            (2, 1),
+            (2, 64),
+            (2, 65),
+            (2, 200),
+            (-3, 7),
+            (-3, 64),
+            (0, 5),
+            (0, 0),
+            (1, 1_000_000),
+            (i64::MAX, 3),
+            (i64::MAX - 1, 5),
+            (i64::MIN, 4),
+            (7, 130), // > 2*width
+            (-1, 63),
+            (-1, 64),
+        ];
+        for (r, n) in cases {
+            // geometric_pow_i64 with lo=0, hi=n exercises the trip-count path.
+            assert_eq!(
+                geometric_pow_i64(r, 0, n),
+                pow_oracle_i128(r, n.max(0)),
+                "ladder mismatch for r={r} n={n}"
+            );
+        }
+    }
+
+    #[test]
+    fn geometric_pow_reversed_range_is_identity() {
+        // hi <= lo -> 0 iterations -> factor R^0 = 1 (acc unchanged).
+        assert_eq!(geometric_pow_i64(7, 10, 3), 1);
+        assert_eq!(geometric_pow_i64(7, 5, 5), 1);
+        assert_eq!(geometric_pow_i64(-9, 0, -4), 1);
+    }
+
+    #[test]
+    fn recognizes_geometric_pow() {
+        // for i in 0..n { acc = acc * r }
+        let body = vec![assign("acc", mul(ident("acc"), ident("r")))];
+        let g = recognize_geometric("i", &lit(0), &ident("n"), &body, Span::new(0, 0)).unwrap();
+        assert_eq!(g.acc, "acc");
+        assert!(is_ident(&g.r, "r"));
+        // Commuted form `r * acc` is recognised too.
+        let body2 = vec![assign("acc", mul(ident("r"), ident("acc")))];
+        assert!(recognize_geometric("i", &lit(0), &ident("n"), &body2, Span::new(0, 0)).is_ok());
+    }
+
+    #[test]
+    fn rejects_multiplier_referencing_accumulator() {
+        // for i in 0..n { acc = acc * acc } — double-exponential, NOT geometric.
+        let body = vec![assign("acc", mul(ident("acc"), ident("acc")))];
+        assert!(recognize_geometric("i", &lit(0), &ident("n"), &body, Span::new(0, 0)).is_err());
+    }
+
+    #[test]
+    fn rejects_multiplier_referencing_ivar() {
+        // for i in 0..n { acc = acc * i } — factorial-like varying ratio.
+        let body = vec![assign("acc", mul(ident("acc"), ident("i")))];
+        assert!(recognize_geometric("i", &lit(0), &ident("n"), &body, Span::new(0, 0)).is_err());
     }
 
     #[test]
