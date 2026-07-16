@@ -397,6 +397,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   → `i32::MIN`, `NaN`/`-inf` → 0) folded into one fixed-order result;
   `avx2 == neon` by IEEE construction. Closes the coverage gap that let the
   narrow-cast compile-failure ship untested.
+- `libmind::cache` — content-addressed compilation cache with
+  `CompilationCache`, `CacheKey`, `CacheEntry`, `CacheStats`,
+  `ProfileTag`, and an in-memory `MemoryStore` backend. Cache key
+  includes compiler version + profile tag + source hash + imports
+  hash so cross-mode rebuilds never hit a stale entry. Foundation
+  for sub-µs warm-start frontend latency. 17 unit tests.
+- `tools/pytorch_bridge/` — PyTorch / JAX → MIND transpiler tooling.
+  ONNX-driven PyTorch path, XLA-HLO-driven JAX path, and a
+  deterministic prompt builder for AI-assisted UNSAT proof resolution.
+  Pure Python, no torch / jax import at module load. 11 unit tests.
+- `libmind::distributed` — IR-layer primitives for tensor and pipeline
+  parallelism: `ShardSpec` / `ShardLayout` (replicated / split /
+  split-2D), `AllReduceOp` with lexicographic / tree / arrival
+  reduction orders, `AllGatherOp` with lexicographic / arrival gather
+  orders, `PipelineGraph` / `PipelineStage` / `StageBoundary`, and
+  `DistributedInvariant` enforcement (`deterministic_all_reduce`,
+  `reduction_order_lexicographic`, `gather_order_lexicographic`,
+  `evidence_chain_continuous`). 31 unit tests.
+  See `docs/roadmap.md` Phase 13.6 for the design rationale and the
+  speed-preservation discipline that keeps the 1.8–15.5 µs frontend
+  baseline locked when these primitives are not imported.
 
 ## [0.10.1] - 2026-07-05
 
@@ -2987,46 +3008,6 @@ sequential arm evaluation; &expr is a no-op metadata wrapper).
   `&expr` / `&mut expr` accepted with `ScalarI32` placeholder type.
 - **Corpus watermark**: bumped from 14 to 21 (7 newly unblocked `.mind`
   files in `rfn-mind/src`).
-
-## [Unreleased]
-
-## [0.10.1] - 2026-07-05
-
-### Proven
-- x86_64 (AVX2) == ARM64 (NEON) byte-identity PROVEN on real hardware (GCP Ampere Altra aarch64, LLVM 20.1.8): cross_substrate_identity 13/13, all 12 canaries byte-identical incl. a chaotic Q16.16 Lorenz integrator.
-- Native-ELF self-host loop closed (stage1==stage2==stage3 byte-identical, fail-closed gate).
-### Added
-- Tensor sum/mean pinned canonical fold + 1-D tensor-parameter ABI.
-- PQC ML-DSA (FIPS-204) hybrid signing direction.
-### Fixed
-- mindc import-walk hardening; Windows-portable __mind_now_ns (POSIX byte-identity unchanged).
-### Docs
-- Full docs/spec/site truth-alignment: scalar int/Q16.16/f64-f32 x86+ARM verified; float-vector + GPU scoped frontier/commercial-roadmap.
-
-Infrastructure landed on `main` but not yet attached to a tag.
-
-### Added
-- `libmind::cache` — content-addressed compilation cache with
-  `CompilationCache`, `CacheKey`, `CacheEntry`, `CacheStats`,
-  `ProfileTag`, and an in-memory `MemoryStore` backend. Cache key
-  includes compiler version + profile tag + source hash + imports
-  hash so cross-mode rebuilds never hit a stale entry. Foundation
-  for sub-µs warm-start frontend latency. 17 unit tests.
-- `tools/pytorch_bridge/` — PyTorch / JAX → MIND transpiler tooling.
-  ONNX-driven PyTorch path, XLA-HLO-driven JAX path, and a
-  deterministic prompt builder for AI-assisted UNSAT proof resolution.
-  Pure Python, no torch / jax import at module load. 11 unit tests.
-- `libmind::distributed` — IR-layer primitives for tensor and pipeline
-  parallelism: `ShardSpec` / `ShardLayout` (replicated / split /
-  split-2D), `AllReduceOp` with lexicographic / tree / arrival
-  reduction orders, `AllGatherOp` with lexicographic / arrival gather
-  orders, `PipelineGraph` / `PipelineStage` / `StageBoundary`, and
-  `DistributedInvariant` enforcement (`deterministic_all_reduce`,
-  `reduction_order_lexicographic`, `gather_order_lexicographic`,
-  `evidence_chain_continuous`). 31 unit tests.
-  See `docs/roadmap.md` Phase 13.6 for the design rationale and the
-  speed-preservation discipline that keeps the 1.8–15.5 µs frontend
-  baseline locked when these primitives are not imported.
 
 ## [0.2.10] — 2026-05-17
 
