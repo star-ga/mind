@@ -43,6 +43,8 @@ The harness is `tests/cross_substrate_identity.rs`.
 | `gemm-q16-fused-64x64x64` | fused matrix×matrix, 64×64×64 | `__mind_blas_matmul_mm_q16_v` | 64×64 matrix |
 | `q16-arith-chain` | scalar Q16.16 arith chain | `q16_arith_chain` (`(x*y)>>16`) | scalar i64 |
 | `struct-handle-roundtrip` | alloc/store/load round-trip | `struct_handle_roundtrip` | scalar i64 |
+| `collatz` | integer Collatz (3n+1) hash over [1, 1000] | `collatz_hash` (examples/collatz.mind) | scalar i64 |
+| `galperin-pi` | billiard-π collision count, n=5 → 31415 | `galperin_collisions` (examples/galperin_pi.mind) | scalar i64 |
 
 The GEMM is the first matmul-MATMUL workload; it composes the proven gemv
 intrinsic (`C[i,:] = gemv(Bᵀ, A[i,:])`), so its byte-identity is inherited from
