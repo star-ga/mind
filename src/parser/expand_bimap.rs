@@ -991,6 +991,9 @@ fn make_from_str_phf(name: &str, base: &str, plan: &crate::phf::PhfPlan, span: S
     let np = plan.np as i64;
     let base65 = crate::phf::NIBBLE_BASE;
 
+    // Assembled incrementally over many following statements (table consts,
+    // mixer setup, hash loop) — not a tight init-then-push sequence.
+    #[allow(clippy::vec_init_then_push)]
     let mut body: Vec<Node> = Vec::new();
 
     // Table constants + their byte-buffer base addresses (String record field 0)

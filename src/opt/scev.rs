@@ -78,10 +78,9 @@ pub struct AffineSum {
 /// Ring-exact closed form for `Σ_{i=lo}^{hi-1} (a*i + b)` in `Z/2^64`.
 ///
 /// THIS IS THE SINGLE SOURCE OF TRUTH for the collapse formula: the comptime
-/// const-fold path calls it, and the emitted symbolic AST
-/// ([`crate::opt::collapse::build_closed_form`]) mirrors its exact op structure,
-/// so the two are equal by construction (gate #3). Valid for a forward range
-/// `lo <= hi`.
+/// const-fold path calls it, and the emitted symbolic AST (`build_closed_form`
+/// in `crate::opt::collapse`) mirrors its exact op structure, so the two are
+/// equal by construction (gate #3). Valid for a forward range `lo <= hi`.
 #[inline]
 pub fn closed_form_i64(a: i64, b: i64, lo: i64, hi: i64) -> i64 {
     // Trip count MUST equal MIND's `for i in lo..hi` iteration count: a SIGNED
