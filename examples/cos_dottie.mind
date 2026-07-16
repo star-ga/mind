@@ -1,0 +1,65 @@
+// Cosine-map iteration toward the Dottie fixed point (x* ≈ 0.7390851332151607),
+// the unique real root of cos(x) = x. A determinism-wedge demo on STRICT f64.
+//
+// Design partner: Valerii Salov — the cos-Dottie fixed point is his
+// determinism-demo primitive (exact-arithmetic iteration of a contraction map).
+//
+// THE WEDGE (stated honestly): the map x_{n+1} = cos(x_n) is a contraction on
+// [0, 1] (|cos'(x)| = |sin(x)| < 1 there), so from any seed x_0 it converges to
+// the Dottie number. We evaluate cos NOT via the host libm intrinsic — that
+// lowers to the RELAXED tier (glibc vs musl vs macOS libm differ bit-for-bit, so
+// a libm `cos` would forge a false Strict attestation) — but via a fixed-order
+// Maclaurin series in +, -, *, / only. Those four ops are IEEE-754
+// correctly-rounded and bit-identical across x86 / ARM / GPU, so the whole
+// iteration stays on MIND's STRICT lowering path and the converged value is
+// reproducible to the exact bit on every substrate.
+//
+// After the first step the argument stays in [cos(1), 1] ⊂ [0, 1], where the
+// degree-16 Maclaurin series for cos is accurate to well under the f64
+// unit-in-the-last-place, so no range reduction is needed.
+//
+// ABI: dottie_bits(iters) -> i64 — a deterministic fixed-point checksum of the
+// converged value: x* scaled by 1e15 and truncated (≈ 739085133215160). A true
+// IEEE-754 reinterpret (bitcast<i64>(f64)) is not yet in the MIND float surface
+// (std/blas.mind notes the pending bitcast op), so we emit a scaled-integer
+// checksum instead of a raw bit reinterpret — deterministic either way.
+
+// Strict-f64 cosine via a fixed degree-16 Maclaurin series, evaluated in Horner
+// form on x² from the innermost term outward. Uses only +, -, *, / (each
+// correctly-rounded per IEEE-754 ⇒ cross-substrate bit-identical). Every
+// factorial constant is < 2^53, so it is exactly representable in f64. Accurate
+// to < 1 ulp for |x| <= 1, which covers the entire cos-map orbit.
+fn cos_strict(x: f64) -> f64 {
+    let x2: f64 = x * x;
+    let mut acc: f64 = 1.0 / 20922789888000.0;
+    acc = (-1.0 / 87178291200.0) + x2 * acc;
+    acc = (1.0 / 479001600.0) + x2 * acc;
+    acc = (-1.0 / 3628800.0) + x2 * acc;
+    acc = (1.0 / 40320.0) + x2 * acc;
+    acc = (-1.0 / 720.0) + x2 * acc;
+    acc = (1.0 / 24.0) + x2 * acc;
+    acc = (-1.0 / 2.0) + x2 * acc;
+    acc = 1.0 + x2 * acc;
+    return acc;
+}
+
+// Iterate x_{n+1} = cos(x_n) from x_0 = 1.0 for a fixed number of steps, then
+// fold the converged value into a deterministic integer checksum.
+pub fn dottie_bits(iters: i64) -> i64 {
+    let mut x: f64 = 1.0;
+    let mut i: i64 = 0;
+    while i < iters {
+        x = cos_strict(x);
+        i = i + 1;
+    }
+    // Fixed-point checksum: scale by 1e15 (exact in f64) and truncate. The
+    // multiply is correctly rounded and the f64 -> i64 truncation is exact, so
+    // the result is bit-stable across substrates.
+    let scaled: f64 = x * 1000000000000000.0;
+    return scaled as i64;
+}
+
+fn main() {
+    let bits: i64 = dottie_bits(100);
+    print("cos-Dottie fixed-point checksum (x* * 1e15):", bits);
+}

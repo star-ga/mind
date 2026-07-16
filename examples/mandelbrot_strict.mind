@@ -1,0 +1,90 @@
+// Strict-f64 Mandelbrot escape-count checksum — a determinism-wedge demo.
+//
+// Design partner: Valerii Salov — deterministic/exact iteration of maps is his
+// determinism-demo methodology; the cos-Dottie sibling example (cos_dottie.mind)
+// credits the same collaboration.
+//
+// THE WEDGE (stated honestly): the iteral z ↦ z² + c is iterated over a
+// width×height grid of the classic view [-2, 1] × [-1.5, 1.5]. Every step is
+// pure scalar f64 using only *, +, - and a magnitude compare against the
+// radius-2 bailout — NO transcendental, NO fmuladd, NO fastmath, NO
+// reassociation, fixed source order — so it lowers to MIND's STRICT FP tier and
+// the per-cell escape count is BIT-IDENTICAL across x86 / ARM / GPU by
+// construction. Escape counts are accumulated as INTEGERS, so the returned
+// checksum is an i64 that is trivially cross-substrate-stable while the inner
+// math is strict f64. A -ffast-math renderer would drift the boundary cells
+// (fractal detail lives exactly where the escape count is most sensitive), so a
+// different checksum on your hardware is a release-blocking bug, not aliasing.
+//
+// HONEST CAVEAT: this is a strict-f64 escape count, NOT a proof of set
+// membership — points that never escape within `max_iter` are counted as
+// `max_iter` (interior and slow-boundary points alike). The determinism claim is
+// over the COMPUTED escape count for a fixed (grid, max_iter), not membership.
+//
+// ABI: mandelbrot_checksum(width, height, max_iter) -> i64 — deterministic
+//      integer checksum over the escape counts of every grid cell.
+
+// Escape count for a single complex parameter c = cx + i·cy. Iterates
+// z ↦ z² + c from z₀ = 0 until |z|² > 4.0 or `max_iter` iterations elapse.
+// Strict fixed source order; only multiply/add/subtract and one compare.
+fn escape_count(cx: f64, cy: f64, max_iter: i64) -> i64 {
+    let mut zr: f64 = 0.0;
+    let mut zi: f64 = 0.0;
+    let mut it: i64 = 0;
+    while it < max_iter {
+        let r2: f64 = zr * zr;
+        let i2: f64 = zi * zi;
+        // Bailout at radius 2: |z|² > 4 means the orbit provably escapes.
+        if r2 + i2 > 4.0 {
+            return it;
+        }
+        // z² + c, real and imaginary parts, strict fixed source order.
+        let nzr: f64 = (r2 - i2) + cx;
+        let nzi: f64 = ((2.0 * zr) * zi) + cy;
+        zr = nzr;
+        zi = nzi;
+        it = it + 1;
+    }
+    return it;
+}
+
+// Deterministic escape-count checksum over a width×height grid of the classic
+// Mandelbrot view [-2, 1] × [-1.5, 1.5]. Folds each cell's escape count through
+// a fixed multiply-mix into a single i64. Bit-identical inner f64 ⇒ same i64.
+pub fn mandelbrot_checksum(width: i64, height: i64, max_iter: i64) -> i64 {
+    // Guard: the linear pixel map divides by (width-1)/(height-1).
+    if width < 2 {
+        return 0;
+    }
+    if height < 2 {
+        return 0;
+    }
+    // Grid extents as f64 constants (classic view).
+    let x_min: f64 = -2.0;
+    let x_span: f64 = 3.0;
+    let y_min: f64 = -1.5;
+    let y_span: f64 = 3.0;
+    let denom_x: f64 = (width - 1) as f64;
+    let denom_y: f64 = (height - 1) as f64;
+    let mut acc: i64 = 0;
+    let mut py: i64 = 0;
+    while py < height {
+        let mut px: i64 = 0;
+        while px < width {
+            // Map integer pixel to f64 coordinate in the classic view.
+            let cx: f64 = x_min + (x_span * ((px as f64) / denom_x));
+            let cy: f64 = y_min + (y_span * ((py as f64) / denom_y));
+            let n: i64 = escape_count(cx, cy, max_iter);
+            // Deterministic mix: fold the escape count into the running checksum.
+            acc = ((acc * 1000003) + n) + ((py * width) + px);
+            px = px + 1;
+        }
+        py = py + 1;
+    }
+    return acc;
+}
+
+fn main() {
+    let checksum: i64 = mandelbrot_checksum(64, 64, 256);
+    print("Mandelbrot strict-f64 escape checksum (64x64, 256 iter):", checksum);
+}
