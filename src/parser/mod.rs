@@ -26,7 +26,7 @@ use crate::ast::{
 use crate::diagnostics::{Diagnostic as PrettyDiagnostic, Span as DiagnosticSpan};
 use crate::types::ConvPadding;
 
-mod expand_bimap;
+pub(crate) mod expand_bimap;
 mod trivia;
 pub use trivia::{Trivia, TriviaKind, TriviaStream};
 use trivia::{TriviaCollector, strip_comments_with_trivia};
