@@ -50,6 +50,7 @@ use crate::ast::Span;
 use crate::ast::TypeAnn;
 use crate::diagnostics::Diagnostic;
 use crate::diagnostics::Span as DiagSpan;
+use crate::ir::compact::v3::collapse_receipt::CollapseReceipt;
 
 use super::comptime::{CtFnTable, Q16Outcome, eval_const_i64, iterate_user_fixed_point};
 use super::scev::{
@@ -78,13 +79,15 @@ const E_Q16_NONCOMPTIME: &str = "E2214";
 const E_Q16_NONCONST: &str = "E2215";
 
 /// Rewrite every `#[collapse]`-annotated affine loop in `module` to its closed
-/// form. Returns `E2201` diagnostics for any annotated loop that cannot be
-/// proven (empty on success). Mutates `module` in place.
+/// form. Returns the reject diagnostics for any annotated loop that cannot be
+/// proven (empty on success) AND the collapse RECEIPTS (S4) for every loop that
+/// folded to a single constant — the O(1) re-derivation proof a consumer embeds
+/// in the evidence chain. Mutates `module` in place.
 pub fn collapse_module(
     module: &mut crate::ast::Module,
     source: &str,
     file: Option<&str>,
-) -> Vec<Diagnostic> {
+) -> (Vec<Diagnostic>, Vec<CollapseReceipt>) {
     // Snapshot the module's user-defined scalar functions so the S3 Q16.16 fold
     // can run the user's REAL bodies (collapse == loop by construction). Only
     // paid when a `#[collapse]` loop is actually present — the clone is skipped
@@ -98,18 +101,22 @@ pub fn collapse_module(
         source,
         file,
         diags: Vec::new(),
+        receipts: Vec::new(),
         fns,
     };
     for item in &mut module.items {
         rewrite_node(item, &mut ctx);
     }
-    ctx.diags
+    (ctx.diags, ctx.receipts)
 }
 
 struct Ctx<'a> {
     source: &'a str,
     file: Option<&'a str>,
     diags: Vec<Diagnostic>,
+    /// Collapse receipts (S4) for every loop that folded to a single constant —
+    /// the O(1) re-derivation proof the evidence chain records.
+    receipts: Vec<CollapseReceipt>,
     /// User function bodies for the S3 comptime fold (empty unless a
     /// `#[collapse]` loop is present).
     fns: CtFnTable,
@@ -219,7 +226,10 @@ fn try_collapse(list: &[Node], idx: usize, ctx: &mut Ctx) -> Option<Node> {
 
     match recognize_for(var, start, end, body, span) {
         Ok(affine) => match build_closed_form(&affine) {
-            Ok(replacement) => Some(replacement),
+            Ok(replacement) => {
+                record_affine_receipt(&affine, ctx);
+                Some(replacement)
+            }
             Err(reason) => {
                 ctx.diags.push(collapse_error(
                     ctx.source, ctx.file, span, E_COLLAPSE, reason,
@@ -231,7 +241,10 @@ fn try_collapse(list: &[Node], idx: usize, ctx: &mut Ctx) -> Option<Node> {
             // Not an affine sum — try the S2 geometric-powering shape.
             match recognize_geometric(var, start, end, body, span) {
                 Ok(geo) => match build_geometric(&geo) {
-                    Ok(replacement) => Some(replacement),
+                    Ok(replacement) => {
+                        record_geometric_receipt(&geo, ctx);
+                        Some(replacement)
+                    }
                     Err(reason) => {
                         ctx.diags.push(collapse_error(
                             ctx.source,
@@ -267,6 +280,49 @@ fn try_collapse(list: &[Node], idx: usize, ctx: &mut Ctx) -> Option<Node> {
                 }
             }
         }
+    }
+}
+
+/// Record an S4 collapse receipt for an affine sum that folded to a single
+/// constant. Only fires when `A`/`B`/`LO`/`HI` are ALL compile-time constants
+/// (the exact case `build_closed_form` emits `acc = acc + ConstI64(closed_form)`)
+/// so the recorded `constant` is byte-for-byte the literal materialised in the
+/// mic@3 body. Symbolic-bound collapses (which emit a runtime expression, not a
+/// constant) record nothing.
+fn record_affine_receipt(affine: &AffineSum, ctx: &mut Ctx) {
+    if let (Some(a), Some(b), Some(lo), Some(hi)) = (
+        eval_const_i64(&affine.a),
+        eval_const_i64(&affine.b),
+        eval_const_i64(&affine.lo),
+        eval_const_i64(&affine.hi),
+    ) {
+        ctx.receipts.push(CollapseReceipt::AffineSum {
+            a,
+            b,
+            lo,
+            hi,
+            constant: closed_form_i64(a, b, lo, hi),
+        });
+    }
+}
+
+/// Record an S4 collapse receipt for a geometric power that folded to a single
+/// factor. Only fires when `R`/`LO`/`HI` are ALL compile-time constants (the
+/// exact case `build_geometric` emits `acc = acc * ConstI64(R^n)`), so the
+/// recorded `constant` (the factor `R^(HI-LO)`) is byte-for-byte the literal in
+/// the mic@3 body.
+fn record_geometric_receipt(geo: &GeometricPow, ctx: &mut Ctx) {
+    if let (Some(r), Some(lo), Some(hi)) = (
+        eval_const_i64(&geo.r),
+        eval_const_i64(&geo.lo),
+        eval_const_i64(&geo.hi),
+    ) {
+        ctx.receipts.push(CollapseReceipt::GeometricPow {
+            r,
+            lo,
+            hi,
+            constant: geometric_pow_i64(r, lo, hi),
+        });
     }
 }
 
@@ -1035,6 +1091,7 @@ fn cos_q16(x: i64) -> i64 {
             source: "",
             file: None,
             diags: Vec::new(),
+            receipts: Vec::new(),
             fns: build_fn_table(&module.items),
         }
     }

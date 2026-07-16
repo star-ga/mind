@@ -113,16 +113,19 @@
 //! | 0x26 | Relu |
 //! | 0x27 | ReluGrad |
 
+pub mod collapse_receipt;
 pub mod ed25519;
 mod emit;
 pub mod evidence;
 pub mod mldsa;
 mod parse;
 
+pub use collapse_receipt::{CollapseReceipt, CollapseReceiptError};
 pub use emit::emit_mic3;
 pub use evidence::{
-    SignatureStatus, SigningKey, VerifiedScheme, emit_mic3_with_evidence,
-    emit_mic3_with_signed_evidence, emit_mic3_with_signed_evidence_scheme, mic3_evidence_report,
+    CollapseVerifyStatus, SignatureStatus, SigningKey, VerifiedScheme, emit_mic3_with_evidence,
+    emit_mic3_with_evidence_and_receipts, emit_mic3_with_signed_evidence,
+    emit_mic3_with_signed_evidence_scheme, mic3_collapse_verify, mic3_evidence_report,
     mic3_signature_status,
 };
 pub use parse::{Mic3Error, parse_mic3};
