@@ -839,6 +839,10 @@ impl<'a> Resolver<'a> {
                 for arm in arms {
                     self.scopes.push();
                     self.bind_pattern(&arm.pattern);
+                    // A guard resolves names with the pattern bindings in scope.
+                    if let Some(guard) = &arm.guard {
+                        self.walk(guard);
+                    }
                     self.walk(&arm.body);
                     self.scopes.pop();
                 }

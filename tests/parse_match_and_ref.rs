@@ -69,6 +69,36 @@ fn match_on_integer_literals() {
 }
 
 #[test]
+fn match_arm_with_pattern_guard_parses() {
+    // Pattern guards W1.5a: `<pattern> if <bool-expr> => <body>`. A guarded
+    // catch-all binding plus a real wildcard is exhaustive, so this compiles.
+    let src = "module m {\n\
+                 fn f(x: i32) -> i32 {\n\
+                   match x {\n\
+                     n if n > 0 => 1,\n\
+                     _ => 0,\n\
+                   }\n\
+                 }\n\
+               }\n";
+    assert!(parses(src), "a match arm with a pattern guard must parse");
+}
+
+#[test]
+fn match_guard_on_enum_variant_parses() {
+    let src = "module m {\n\
+                 enum Mode { On, Off }\n\
+                 fn f(mode: Mode, flag: i32) -> i32 {\n\
+                   match mode {\n\
+                     Mode::On if flag > 0 => 2,\n\
+                     Mode::On => 1,\n\
+                     _ => 0,\n\
+                   }\n\
+                 }\n\
+               }\n";
+    assert!(parses(src), "a guard on an enum-variant arm must parse");
+}
+
+#[test]
 fn match_with_string_literal_arm() {
     let src = "module m {\n\
                  fn f(s: i32) -> i32 {\n\
