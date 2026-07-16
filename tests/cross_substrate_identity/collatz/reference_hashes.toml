@@ -1,0 +1,28 @@
+# mind-bench reference hashes — RFC 0020 §5. See dot-l2-q16/reference_hashes.toml
+# for full provenance/signing notes.
+#
+# A deterministic integer Collatz (3n+1) hash over seeds [1, 1000]. Every step is
+# exact integer arithmetic (i64 divide/multiply/add/sub with a two's-complement
+# wrapping multiply-mix fold) — no float, no rounding mode, no FMA contraction, no
+# reduction order, no reassociation — so the folded hash is architecture-
+# independent: avx2 == neon by construction (RFC 0015 §3.1). Any divergence is a
+# real integer-lowering bug (a dropped wrap, a reordered op, an i64 truncation)
+# and a release-blocker.
+#
+# Output = 8 little-endian bytes of the returned i64 hash, then sha256. Generated
+# from the native symbol `collatz_hash` in examples/collatz.mind, built with
+# `mindc --emit-shared`, executed via the libloading/dlopen harness.
+#
+#   avx2 — verified on x86_64 (CI job `cross_substrate_identity`, ubuntu-24.04):
+#          lowers to i64 idiv / imul / add / sub.
+#   neon — set equal to avx2 by INTEGER-EXACTNESS: the kernel is pure i64 with no
+#          float and no reassociation, so exact integer arithmetic is associativity-
+#          exact and the ARM (neon) integer idiv/imul/add/sub reproduce the identical
+#          bytes BY CONSTRUCTION (RFC 0015 §3.1) — the same footing as lorenz-q16 /
+#          q16-arith-chain, whose neon lines were confirmed byte-identical on real
+#          aarch64. Continuously enforced on aarch64 (CI job
+#          `cross_substrate_identity`, ubuntu-24.04-arm, MIND_BENCH_REQUIRE=1); to
+#          be re-blessed on real ARM hardware there — a divergence would fail CI.
+
+avx2 = "87fbc45b398c9d752a438cbcffd4a34076fce3d37556db30eb18fbbc55cc849a"
+neon = "87fbc45b398c9d752a438cbcffd4a34076fce3d37556db30eb18fbbc55cc849a"

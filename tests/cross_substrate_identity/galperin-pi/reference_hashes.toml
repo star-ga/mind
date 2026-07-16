@@ -1,0 +1,30 @@
+# mind-bench reference hashes — RFC 0020 §5. See dot-l2-q16/reference_hashes.toml
+# for full provenance/signing notes.
+#
+# Galperin's billiard-π collision count for mass ratio 100^4 (n = 5). The whole
+# process is exact integer phase-space reflection (perfect-square mass ratio =>
+# sqrt(M) = 10^(n-1) is an exact integer; fixed-point SCALE = 1e6 with round-to-
+# nearest integer division) — no float, no rounding mode, no FMA contraction, no
+# reduction order, no reassociation — so the collision count is architecture-
+# independent: avx2 == neon by construction (RFC 0015 §3.1). The count is exactly
+# floor(π·10^4) = 31415; any divergence is a real integer-lowering bug and a
+# release-blocker.
+#
+# Output = 8 little-endian bytes of the returned i64 count (31415 = 0x7ab7,
+# i64_le = b77a000000000000), then sha256. Generated from the native symbol
+# `galperin_collisions` in examples/galperin_pi.mind, built with
+# `mindc --emit-shared`, executed via the libloading/dlopen harness.
+#
+#   avx2 — verified on x86_64 (CI job `cross_substrate_identity`, ubuntu-24.04):
+#          lowers to i64 imul / idiv / add / sub / cmp.
+#   neon — set equal to avx2 by INTEGER-EXACTNESS: the kernel is pure i64 with no
+#          float and no reassociation, so exact integer arithmetic is associativity-
+#          exact and the ARM (neon) integer imul/idiv/add/sub reproduce the identical
+#          bytes BY CONSTRUCTION (RFC 0015 §3.1) — the same footing as lorenz-q16 /
+#          struct-handle-roundtrip, whose neon lines were confirmed byte-identical on
+#          real aarch64. Continuously enforced on aarch64 (CI job
+#          `cross_substrate_identity`, ubuntu-24.04-arm, MIND_BENCH_REQUIRE=1); to be
+#          re-blessed on real ARM hardware there — a divergence would fail CI.
+
+avx2 = "59dfa3f2abe4d71fdc42a54b49da2526f002c8e84a777184fe6a08d25adeca04"
+neon = "59dfa3f2abe4d71fdc42a54b49da2526f002c8e84a777184fe6a08d25adeca04"

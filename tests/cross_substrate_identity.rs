@@ -1042,6 +1042,29 @@ fn same_process_run_to_run_determinism() {
             canonical_hash(r)
         });
     }
+
+    // Collatz (3n+1) hash (collatz) — SEPARATE .so (examples/ tree), pure i64,
+    // scalar return; fixed [lo, hi] input, must hash identically every run.
+    if let Some(cso) = build_collatz_so() {
+        let clib = unsafe { Library::new(cso).expect("dlopen collatz workload .so") };
+        let collatz: Symbol<CollatzFn> =
+            unsafe { clib.get(b"collatz_hash").expect("collatz_hash symbol") };
+        let (lo, hi) = COLLATZ_INPUTS;
+        stable("collatz", &|| canonical_hash(unsafe { collatz(lo, hi) }));
+    }
+
+    // Galperin billiard-π collision count (galperin-pi) — SEPARATE .so, pure i64,
+    // scalar return; fixed n, must hash identically every run.
+    if let Some(gso) = build_galperin_so() {
+        let glib = unsafe { Library::new(gso).expect("dlopen galperin workload .so") };
+        let galperin: Symbol<GalperinFn> = unsafe {
+            glib.get(b"galperin_collisions")
+                .expect("galperin_collisions symbol")
+        };
+        stable("galperin-pi", &|| {
+            canonical_hash(unsafe { galperin(GALPERIN_INPUT) })
+        });
+    }
 }
 
 // --- gemm-q16 workload (square matrix x matrix) ----------------------------
@@ -2735,4 +2758,260 @@ fn bimap_phf_construction_identity_gate() {
              MIND_BENCH_BLESS=1 if this host is canonical."
         ),
     }
+}
+
+// ===========================================================================
+// collatz + galperin-pi — the two "deterministic != predictable" DEMO canaries
+// (Salov C1 / roadmap W0.4). Both are shipped demos in examples/, PURE i64 with
+// ZERO floating point: no rounding mode, no FMA contraction, no reduction order
+// and no reassociation to differ across substrates, so avx2 == neon BY
+// CONSTRUCTION (exact integer arithmetic; RFC 0015 §3.1) — the same footing as
+// lorenz-q16, and the whole point of these demos ("compile, run, hash; a
+// different hash is a release-blocking bug, not a rounding artifact"). Each
+// compiles to its OWN .so (examples/ tree, like lorenz-q16 / grammar-mask), is
+// cross-checked within a run against an INDEPENDENT Rust port of the identical
+// integer algorithm, and pins its canonical i64_le output hash to the committed
+// per-substrate reference.
+// ===========================================================================
+
+/// The Collatz hash kernel: (lo, hi) → folded i64 hash of the [lo, hi] orbits.
+type CollatzFn = unsafe extern "C" fn(i64, i64) -> i64;
+/// The Galperin billiard-π kernel: n → collision count (floor(π·10^(n-1))).
+type GalperinFn = unsafe extern "C" fn(i64) -> i64;
+
+/// Compile `examples/collatz.mind` to a temp `.so` once for the whole test
+/// binary. Separate .so (examples/ tree, also a shipped demo), same toolchain
+/// guard / self-skip discipline as `build_lorenz_so`: `None` when the MLIR
+/// toolchain is shadowed, a hard failure under `MIND_BENCH_REQUIRE` so the gate
+/// can never pass vacuously (RFC 0020 §10).
+fn build_collatz_so() -> Option<&'static PathBuf> {
+    static SO: OnceLock<Option<PathBuf>> = OnceLock::new();
+    SO.get_or_init(|| {
+        for tool in ["mlir-opt", "mlir-translate", "clang"] {
+            if which::which(tool).is_err() {
+                assert!(
+                    std::env::var_os("MIND_BENCH_REQUIRE").is_none(),
+                    "MIND_BENCH_REQUIRE is set but '{tool}' is not on PATH: the \
+                     cross-substrate gate cannot run. Install the MLIR toolchain \
+                     (mlir-opt / mlir-translate / clang) on this runner."
+                );
+                println!("cross_substrate_identity: {tool} not on PATH; skipping");
+                return None;
+            }
+        }
+        let src_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("examples")
+            .join("collatz.mind");
+        let so_path = std::env::temp_dir().join("mind_xsi_collatz.so");
+        let status = Command::new(mindc_bin())
+            .args([
+                src_path.to_str().unwrap(),
+                "--emit-shared",
+                so_path.to_str().unwrap(),
+            ])
+            .status()
+            .expect("spawn mindc --emit-shared for collatz");
+        assert!(
+            status.success(),
+            "mindc --emit-shared failed for the collatz workload"
+        );
+        Some(so_path)
+    })
+    .as_ref()
+}
+
+/// Compile `examples/galperin_pi.mind` to a temp `.so` once for the whole test
+/// binary. Separate .so, same toolchain guard / self-skip discipline as
+/// `build_lorenz_so`.
+fn build_galperin_so() -> Option<&'static PathBuf> {
+    static SO: OnceLock<Option<PathBuf>> = OnceLock::new();
+    SO.get_or_init(|| {
+        for tool in ["mlir-opt", "mlir-translate", "clang"] {
+            if which::which(tool).is_err() {
+                assert!(
+                    std::env::var_os("MIND_BENCH_REQUIRE").is_none(),
+                    "MIND_BENCH_REQUIRE is set but '{tool}' is not on PATH: the \
+                     cross-substrate gate cannot run. Install the MLIR toolchain \
+                     (mlir-opt / mlir-translate / clang) on this runner."
+                );
+                println!("cross_substrate_identity: {tool} not on PATH; skipping");
+                return None;
+            }
+        }
+        let src_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("examples")
+            .join("galperin_pi.mind");
+        let so_path = std::env::temp_dir().join("mind_xsi_galperin.so");
+        let status = Command::new(mindc_bin())
+            .args([
+                src_path.to_str().unwrap(),
+                "--emit-shared",
+                so_path.to_str().unwrap(),
+            ])
+            .status()
+            .expect("spawn mindc --emit-shared for galperin_pi");
+        assert!(
+            status.success(),
+            "mindc --emit-shared failed for the galperin-pi workload"
+        );
+        Some(so_path)
+    })
+    .as_ref()
+}
+
+/// Fixed Collatz input range (manifest `[input]`): sum + fold the stopping times
+/// of every seed in [1, 1000]. Non-trivial (1000 orbits, some reaching ~250504)
+/// yet fully in-range; the fold `acc = acc*1000003 + steps + n` wraps in two's
+/// complement, matching `arith.muli`/`arith.addi`.
+const COLLATZ_INPUTS: (i64, i64) = (1, 1000);
+
+/// Independent in-process oracle for `collatz_hash` — the identical integer
+/// Collatz iteration + multiply-mix fold, in the identical source order. Exact
+/// integer arithmetic with a two's-complement wrapping fold, so it is bit-exact
+/// within a run and (being float-free) the same on every substrate. The inner
+/// `v` arithmetic never overflows (|v| stays well under i64 for seeds ≤ 1000);
+/// only the `acc` fold wraps, mirrored here with `wrapping_*`.
+fn ref_collatz_hash(lo: i64, hi: i64) -> i64 {
+    let mut acc: i64 = 0;
+    let mut n: i64 = lo;
+    while n <= hi {
+        let mut v: i64 = n;
+        let mut steps: i64 = 0;
+        while v > 1 {
+            let half = v / 2;
+            let is_even = v - half * 2; // 0 if even, 1 if odd
+            v = (1 - is_even) * half + is_even * (3 * v + 1);
+            steps += 1;
+        }
+        acc = acc
+            .wrapping_mul(1000003)
+            .wrapping_add(steps)
+            .wrapping_add(n);
+        n += 1;
+    }
+    acc
+}
+
+/// Fixed Galperin input (manifest `[input]`): n = 5 → mass ratio 100^4, collision
+/// count floor(π·10^4) = 31415. The largest supported non-bignum case (n ≤ 5).
+const GALPERIN_INPUT: i64 = 5;
+
+/// Round-to-nearest signed integer divide, byte-for-byte the .mind `round_div_d`.
+fn ref_round_div_d(x: i64, d: i64) -> i64 {
+    if x >= 0 {
+        (2 * x + d) / (2 * d)
+    } else {
+        (2 * x - d) / (2 * d)
+    }
+}
+
+/// Independent in-process oracle for `galperin_collisions` — the identical
+/// integer phase-space reflection process in the identical source/control-flow
+/// order (including the `guard = 4_000_000` termination sentinel). All products
+/// stay inside i64 for n ≤ 5 (worst ≈ 2e18 < i64::MAX), so plain i64 ops match
+/// the kernel exactly; being float-free it is identical on every substrate.
+fn ref_galperin_collisions(n: i64) -> i64 {
+    if n < 1 {
+        return -1;
+    }
+    if n > 5 {
+        return -1;
+    }
+    let mut k: i64 = 1;
+    let mut e: i64 = 1;
+    while e < n {
+        k *= 10;
+        e += 1;
+    }
+    let scale: i64 = 1_000_000;
+    let dd: i64 = k * k + 1;
+    let mut u: i64 = (0 - k) * scale;
+    let mut w: i64 = 0;
+    let mut count: i64 = 0;
+    let mut turn: i64 = 1;
+    let mut guard: i64 = 0;
+    while guard < 4_000_000 {
+        if turn == 1 {
+            if u < w * k {
+                let a = (k * k - 1) * u;
+                let b = (2 * k) * w;
+                let nu = a + b;
+                let c = (2 * k) * u;
+                let d2 = (1 - k * k) * w;
+                let nw = c + d2;
+                u = ref_round_div_d(nu, dd);
+                w = ref_round_div_d(nw, dd);
+                count += 1;
+                turn = 0;
+            } else {
+                guard = 4_000_000;
+            }
+        } else if w < 0 {
+            w = 0 - w;
+            count += 1;
+            turn = 1;
+        } else {
+            guard = 4_000_000;
+        }
+        guard += 1;
+    }
+    count
+}
+
+#[test]
+fn collatz_reproducibility_gate() {
+    let id = "collatz";
+
+    let Some(so) = build_collatz_so() else {
+        return; // toolchain shadowed — self-skip
+    };
+    let lib = unsafe { Library::new(so).expect("dlopen collatz workload .so") };
+    let collatz: Symbol<CollatzFn> =
+        unsafe { lib.get(b"collatz_hash").expect("collatz_hash symbol") };
+
+    let (lo, hi) = COLLATZ_INPUTS;
+    let result = unsafe { collatz(lo, hi) };
+
+    // Within-run exactness vs the independent Rust Collatz oracle.
+    let oracle = ref_collatz_hash(lo, hi);
+    assert_eq!(
+        result, oracle,
+        "{id}: Collatz hash diverged from the in-process oracle within a run \
+         (kernel={result}, oracle={oracle})"
+    );
+
+    pin_or_bless(id, &canonical_hash(result), result);
+}
+
+#[test]
+fn galperin_pi_reproducibility_gate() {
+    let id = "galperin-pi";
+
+    let Some(so) = build_galperin_so() else {
+        return; // toolchain shadowed — self-skip
+    };
+    let lib = unsafe { Library::new(so).expect("dlopen galperin workload .so") };
+    let galperin: Symbol<GalperinFn> = unsafe {
+        lib.get(b"galperin_collisions")
+            .expect("galperin_collisions symbol")
+    };
+
+    let result = unsafe { galperin(GALPERIN_INPUT) };
+
+    // Within-run exactness vs the independent Rust billiard-π oracle. n=5 must
+    // recover floor(π·10^4) = 31415 — proves the reflection process actually ran,
+    // not a trivial early return.
+    let oracle = ref_galperin_collisions(GALPERIN_INPUT);
+    assert_eq!(
+        result, oracle,
+        "{id}: Galperin collision count diverged from the in-process oracle within \
+         a run (kernel={result}, oracle={oracle})"
+    );
+    assert_eq!(
+        result, 31415,
+        "{id}: galperin_collisions(5) = {result}, expected 31415 (floor(π·10^4)) — \
+         the demo's headline identity broke"
+    );
+
+    pin_or_bless(id, &canonical_hash(result), result);
 }
