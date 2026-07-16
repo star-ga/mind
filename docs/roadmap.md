@@ -1110,6 +1110,15 @@ commitment. Nothing here is planned work yet.
      Net ordering: **P1 (big-integer + exact-overflow) first**, then P2 (recognizer)
      on top. A `>64-bit exact-integer (bignum) tier` is therefore a prerequisite
      candidate primitive in its own right.
+     > **Update — P2 recognizer SHIPPED (RFC 0024, `#[collapse]`).** The scalar-
+     > evolution / loop-recognition pass described above is now built:
+     > `src/opt/{scev,collapse,comptime}.rs` recognise and fold three loop shapes —
+     > affine sums (S1), geometric powers (S2), and Q16.16 fixed-point iterations
+     > (S3, e.g. cos→Dottie `0x0000BD35`) — each exact in `Z/2^64` or Q16.16,
+     > byte-identical across substrates, prove-or-fail (`E2201`–`E2215`). The `>64-bit`
+     > bignum tier remains out of scope (Collatz-`3^101` stays `E2205`), exactly as the
+     > P1-first ordering anticipated. So the present-tense "grep is empty" note above is
+     > the state *before* this landed, kept for the design record.
   *Companion runnable proof.* `examples/collatz.mind` already ships the *naive*
   deterministic iterator (the `deterministic ≠ predictable` LinkedIn anchor, float-
   free, bit-identical by construction). The closed-form example is the sibling that
