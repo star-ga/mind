@@ -7565,6 +7565,7 @@ fn desugar_match_to_if(
                     .collect();
                 ast::MatchArm {
                     pattern: ast::Pattern::EnumVariant { path: key, args },
+                    guard: arm.guard.clone(),
                     body: arm.body.clone(),
                     span: arm.span,
                 }
@@ -7587,6 +7588,7 @@ fn desugar_match_to_if(
                         path: key,
                         args: args.clone(),
                     },
+                    guard: arm.guard.clone(),
                     body: arm.body.clone(),
                     span: arm.span,
                 }
@@ -7605,6 +7607,7 @@ fn desugar_match_to_if(
                             path: dotted,
                             args: Vec::new(),
                         },
+                        guard: arm.guard.clone(),
                         body: arm.body.clone(),
                         span: arm.span,
                     }
@@ -7641,7 +7644,14 @@ fn desugar_match_to_if(
             _ => false,
         }
     };
-    if let Some(first_catch) = arms_owned.iter().position(|a| is_catch_all(&a.pattern)) {
+    // A GUARDED `_`/ident arm is NOT a catch-all — its guard can fail, so arms
+    // after it remain reachable and must not be truncated (pattern-guards
+    // W1.5a / drift #131). Only an UNGUARDED irrefutable arm terminates the
+    // match.
+    if let Some(first_catch) = arms_owned
+        .iter()
+        .position(|a| a.guard.is_none() && is_catch_all(&a.pattern))
+    {
         arms_owned.truncate(first_catch + 1);
     }
     let arms = &arms_owned[..];
@@ -7663,9 +7673,12 @@ fn desugar_match_to_if(
     // Only the FINAL arm may be a catch-all (`_` / bare ident); a catch-all
     // in a non-final position would shadow the rest — leave such (malformed)
     // matches to the fallback path.
+    // A GUARDED irrefutable final arm is refutable (the guard may fail), so it
+    // is NOT the terminal `else` — it flows into the test-arm chain below and
+    // the match has no unconditional catch-all (pattern-guards W1.5a).
     let mut else_branch: Option<Vec<ast::Node>> = None;
     let mut last_idx = arms.len();
-    if let Some(last) = arms.last() {
+    if let Some(last) = arms.last().filter(|a| a.guard.is_none()) {
         match &last.pattern {
             ast::Pattern::Wildcard => {
                 else_branch = Some(flatten_body(last.body.clone()));
@@ -7737,61 +7750,69 @@ fn desugar_match_to_if(
     // (unknown variant path, non-int literal) bails the whole match to the
     // fallback.
     let test_arms = &arms[..last_idx];
-    let mut rhs_nodes: Vec<ast::Node> = Vec::with_capacity(test_arms.len());
-    for arm in test_arms {
-        let rhs = match &arm.pattern {
-            ast::Pattern::Literal(Literal::Int(_)) => {
-                let lit = match &arm.pattern {
-                    ast::Pattern::Literal(l) => l.clone(),
-                    _ => unreachable!(),
-                };
-                ast::Node::Lit(lit, span)
-            }
-            // Step 2/5: enum-discriminant arm. Fieldless variants compare the
-            // bare scrutinee against the tag; payload variants compare the
-            // loaded tag and bind their payload (handled below when the arm
-            // body is assembled).
-            ast::Pattern::EnumVariant { path, .. } => {
-                let tag = enum_tags.get(path).copied()?;
-                ast::Node::Lit(Literal::Int(tag), span)
-            }
-            _ => return None,
-        };
-        rhs_nodes.push(rhs);
-    }
     // Need at least one test arm to form a branch; a lone catch-all is
     // already handled fine by the fallback (and has no comparison to make).
     if test_arms.is_empty() {
         return None;
     }
 
-    // Build the chain from the tail backwards so the first arm ends up
-    // outermost. `else_stmts` is the body of the current innermost `else`:
-    // the terminal catch-all arm initially, then each enclosing `If`.
-    let mut else_stmts: Option<Vec<ast::Node>> = else_branch;
-    for (arm, rhs) in test_arms.iter().zip(rhs_nodes.iter()).rev() {
-        let cond = ast::Node::Binary {
-            op: ast::BinOp::Eq,
-            left: Box::new(cmp_lhs.clone()),
-            right: Box::new(rhs.clone()),
-            span,
-        };
-        // Step 5: for a payload-binding arm, PREPEND a synthetic
-        // `let <name> = __mind_load_i64(scrutinee + 8*(i+1))` for each `Ident`
-        // sub-pattern (so `Pair::P(a, b)` binds `a` from `+8` and `b` from
-        // `+16`); a `Wildcard` sub-pattern binds nothing (the tag comparison
-        // already discriminates). Field offsets are POSITIONAL — `i` is the
-        // sub-pattern's index — so a `_` does not shift later fields. A nested /
-        // literal sub-pattern is unsupported: it bails the whole match to `None`
-        // and `check_match_runnable` turns that into a loud fail-closed error on
-        // the emit path (never a silent sequential miscompile).
-        let then_branch: Vec<ast::Node> = match &arm.pattern {
+    // The discriminant TEST for an arm's pattern: `Some(cond)` for a refutable
+    // pattern (int literal / enum-variant tag), or `None` when the pattern is
+    // irrefutable (`_` / bare ident) and matching is decided solely by the
+    // guard. Any pattern kind the desugar cannot lower bails the whole match to
+    // `None` (loud fail-closed downstream). A bare `Wildcard`/`Ident` reaching a
+    // TEST slot only happens when the arm is GUARDED — an unguarded catch-all
+    // was already truncated to the terminal `else` above.
+    let pattern_test = |pat: &ast::Pattern| -> Option<Option<ast::Node>> {
+        match pat {
+            ast::Pattern::Wildcard | ast::Pattern::Ident(_) => Some(None),
+            ast::Pattern::Literal(Literal::Int(_)) => {
+                let lit = match pat {
+                    ast::Pattern::Literal(l) => l.clone(),
+                    _ => unreachable!(),
+                };
+                Some(Some(ast::Node::Binary {
+                    op: ast::BinOp::Eq,
+                    left: Box::new(cmp_lhs.clone()),
+                    right: Box::new(ast::Node::Lit(lit, span)),
+                    span,
+                }))
+            }
+            // Step 2/5: enum-discriminant arm. Fieldless variants compare the
+            // bare scrutinee against the tag; payload variants compare the
+            // loaded tag and bind their payload (handled by `build_binds`).
+            ast::Pattern::EnumVariant { path, .. } => {
+                let tag = enum_tags.get(path).copied()?;
+                Some(Some(ast::Node::Binary {
+                    op: ast::BinOp::Eq,
+                    left: Box::new(cmp_lhs.clone()),
+                    right: Box::new(ast::Node::Lit(Literal::Int(tag), span)),
+                    span,
+                }))
+            }
+            _ => None,
+        }
+    };
+    // Build the binding `let`s a pattern introduces, in scope for BOTH the guard
+    // and the arm body: the whole scrutinee for a bare `Ident`, or each payload
+    // field for a variant. Step 5: a payload-binding arm loads
+    // `__mind_load_i64(scrutinee + 8*(i+1))` for each `Ident` sub-pattern (a
+    // `Wildcard` binds nothing; offsets are POSITIONAL so a `_` does not shift
+    // later fields). Returns `None` for an unsupported nested/literal
+    // sub-pattern — bailing the whole match to the loud fail-closed fallback,
+    // never a silent sequential miscompile.
+    let build_binds = |arm: &ast::MatchArm| -> Option<Vec<ast::Node>> {
+        match &arm.pattern {
+            ast::Pattern::Ident(name) => Some(vec![ast::Node::Let {
+                name: name.clone(),
+                mutable: false,
+                ann: None,
+                value: Box::new(scrutinee.clone()),
+                span,
+            }]),
             ast::Pattern::EnumVariant { path, args } if !args.is_empty() => {
                 // Each payload sub-pattern must be an `Ident`, a `Wildcard`, or a
-                // single-level `Tuple` of Idents/Wildcards (`Ok((a, b))`). A
-                // nested struct/literal/deeper-tuple sub-pattern bails the whole
-                // match to `None` (loud fail-closed downstream), never a silent
-                // sequential miscompile.
+                // single-level `Tuple` of Idents/Wildcards (`Ok((a, b))`).
                 let sub_ok = |p: &ast::Pattern| {
                     matches!(p, ast::Pattern::Ident(_) | ast::Pattern::Wildcard)
                         || matches!(p, ast::Pattern::Tuple(inner)
@@ -7820,13 +7841,8 @@ fn desugar_match_to_if(
                             let value = coerce_enum_field_from_bits(load_i64(field_addr), ty, span);
                             // Propagate an `array<T>` payload field's declared type as
                             // the binding annotation so the Let-lowering records the
-                            // vec-sentinel + element tracking. A later `<name>[i]` /
-                            // `.push` / `.length` then resolves to the std.vec runtime
-                            // (an i64 handle) instead of falling to the untyped
-                            // `Instr::ArrayLoad` tensor path — which registers no
-                            // ValueKind and is rejected at the i64 call ABI (RFC 0005
-                            // "non-i64 argument to call"). Non-array payload fields keep
-                            // `ann: None`, so their lowering is byte-identical.
+                            // vec-sentinel + element tracking. Non-array payload fields
+                            // keep `ann: None`, so their lowering is byte-identical.
                             let arr_ann: Option<ast::TypeAnn> = match ty {
                                 Some(t) if is_array_surface_ty(t) => Some(t.clone()),
                                 _ => None,
@@ -7883,22 +7899,105 @@ fn desugar_match_to_if(
                         _ => {}
                     }
                 }
-                stmts.extend(flatten_body(arm.body.clone()));
-                stmts
+                Some(stmts)
             }
-            _ => flatten_body(arm.body.clone()),
+            // Wildcard / int-literal / fieldless-variant — no bindings.
+            _ => Some(Vec::new()),
+        }
+    };
+
+    // Build the chain from the tail backwards so the first arm ends up
+    // outermost. `else_stmts` is the body of the current innermost `else`:
+    // the terminal catch-all arm initially, then each enclosing `If`.
+    let mut else_stmts: Option<Vec<ast::Node>> = else_branch;
+    for arm in test_arms.iter().rev() {
+        let cond = pattern_test(&arm.pattern)?;
+        let binds = build_binds(arm)?;
+        let body_stmts = flatten_body(arm.body.clone());
+        let next = else_stmts.take();
+        // Assemble the arm's contribution. Four shapes, chosen so that unguarded
+        // matches stay byte-identical (the first arm) and guards fall through to
+        // the rest of the chain when they fail:
+        let level: Vec<ast::Node> = match (&cond, &arm.guard) {
+            // Unguarded refutable arm (int literal / enum variant) — the prior
+            // lowering verbatim: `if <cond> { binds; body } else { REST }`.
+            (Some(c), None) => {
+                let mut then_branch = binds;
+                then_branch.extend(body_stmts);
+                vec![ast::Node::If {
+                    cond: Box::new(c.clone()),
+                    then_branch,
+                    else_branch: next,
+                    span,
+                }]
+            }
+            // Guarded irrefutable arm (`_ if g`, `n if g`): the pattern always
+            // matches, so the bindings are unconditional and the guard alone
+            // decides. `REST` appears once (the guard's `else`).
+            (None, Some(g)) => {
+                let mut level = binds;
+                level.push(ast::Node::If {
+                    cond: Box::new(g.clone()),
+                    then_branch: body_stmts,
+                    else_branch: next,
+                    span,
+                });
+                level
+            }
+            // Guarded refutable arm with NO bindings (int literal / fieldless
+            // variant): fold `pattern && guard` with short-circuit `&&`, so the
+            // guard runs only when the pattern matches. `REST` appears once.
+            (Some(c), Some(g)) if binds.is_empty() => {
+                let cond = ast::Node::Logical {
+                    op: ast::LogicalOp::And,
+                    left: Box::new(c.clone()),
+                    right: Box::new(g.clone()),
+                    span,
+                };
+                vec![ast::Node::If {
+                    cond: Box::new(cond),
+                    then_branch: body_stmts,
+                    else_branch: next,
+                    span,
+                }]
+            }
+            // Guarded refutable arm WITH bindings (payload variant): the guard
+            // may reference a payload binding, so the pattern must be tested
+            // first. A failed guard re-dispatches to the rest of the chain, so
+            // `REST` is cloned into both the inner guard-`else` and the outer
+            // pattern-`else`.
+            (Some(c), Some(g)) => {
+                let mut then_branch = binds;
+                then_branch.push(ast::Node::If {
+                    cond: Box::new(g.clone()),
+                    then_branch: body_stmts,
+                    else_branch: next.clone(),
+                    span,
+                });
+                vec![ast::Node::If {
+                    cond: Box::new(c.clone()),
+                    then_branch,
+                    else_branch: next,
+                    span,
+                }]
+            }
+            // An irrefutable pattern with NO guard reaching a TEST slot is
+            // impossible (an unguarded catch-all is the terminal `else`). Bail
+            // defensively rather than silently mislower.
+            (None, None) => return None,
         };
-        let if_node = ast::Node::If {
-            cond: Box::new(cond),
-            then_branch,
-            else_branch: else_stmts.take(),
-            span,
-        };
-        else_stmts = Some(vec![if_node]);
+        else_stmts = Some(level);
     }
-    // `else_stmts` now holds the single outermost `If` (test_arms is
-    // non-empty, so exactly one node).
-    else_stmts.and_then(|mut v| v.pop())
+    // `else_stmts` now holds the outermost level. It is a single node for every
+    // unguarded match (byte-identical to before) and for a guarded refutable
+    // outermost arm; a guarded irrefutable outermost arm (`n if g`) prepends its
+    // binding `let`, so wrap the two statements in a `Block` (an expression that
+    // yields its last statement's value — the match result).
+    match else_stmts {
+        Some(mut v) if v.len() == 1 => v.pop(),
+        Some(v) if !v.is_empty() => Some(ast::Node::Block { stmts: v, span }),
+        _ => None,
+    }
 }
 
 /// Lower a sequence of `Let` / `Assign` / expression body statements into

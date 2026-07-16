@@ -349,8 +349,15 @@ fn walk_generic_calls(node: &Node, ctx: &GenCtx, out: &mut Vec<Diagnostic>) {
             scrutinee, arms, ..
         } => {
             walk_generic_calls(scrutinee, ctx, out);
-            arms.iter()
-                .for_each(|a| walk_generic_calls(&a.body, ctx, out));
+            arms.iter().for_each(|a| {
+                // A guard is a full expression evaluated on the runnable path;
+                // walk it too so an unsupported construct in `pat if <guard>`
+                // is still flagged (pattern-guards W1.5a).
+                if let Some(g) = &a.guard {
+                    walk_generic_calls(g, ctx, out);
+                }
+                walk_generic_calls(&a.body, ctx, out);
+            });
         }
         N::Return { value: Some(v), .. } => walk_generic_calls(v, ctx, out),
         N::Assign { value, .. } => walk_generic_calls(value, ctx, out),
@@ -727,6 +734,9 @@ fn walk_ambiguous_ctor(
         } => {
             recur(scrutinee, out);
             for a in arms {
+                if let Some(g) = &a.guard {
+                    recur(g, out);
+                }
                 recur(&a.body, out);
             }
         }
@@ -869,6 +879,14 @@ fn walk_match_runnable(node: &Node, src: &str, file: Option<&str>, out: &mut Vec
                         .with_span(Span::from_offsets(src, a.span.start(), a.span.end(), file))
                         .with_help(MATCH_RUNNABLE_HELP),
                     );
+                }
+                // Walk the guard expression too — its lowering is subject to the
+                // same runnable constraints as the arm body (pattern-guards
+                // W1.5a). A guarded `_`/ident arm is a refutable TEST arm, not a
+                // catch-all (drift #131), and the desugar routes it correctly, so
+                // no extra whole-arm flag is needed here.
+                if let Some(g) = &a.guard {
+                    walk_match_runnable(g, src, file, out);
                 }
                 walk_match_runnable(&a.body, src, file, out);
             }

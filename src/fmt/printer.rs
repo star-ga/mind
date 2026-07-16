@@ -1178,6 +1178,10 @@ fn emit_match_inline(p: &mut Printer, scrutinee: &Node, arms: &[MatchArm]) {
         let ind = p.indent_str();
         p.push(&ind);
         emit_pattern(p, &arm.pattern);
+        if let Some(guard) = &arm.guard {
+            p.push(" if ");
+            emit_expr(p, guard);
+        }
         p.push(" => ");
         // arm body: if it's a block, inline it; otherwise expression
         match &arm.body {

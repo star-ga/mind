@@ -289,6 +289,84 @@ fn name_of(c: i64) -> i64 {
     );
 }
 
+// ── Pattern guards W1.5a / drift #131: a guarded arm is NOT a catch-all ──────
+
+#[test]
+fn guarded_variant_only_catch_is_non_exhaustive() {
+    // `Color::Blue if …` is the ONLY arm that could match Blue, but its guard
+    // can fail — so Blue is uncovered and the match is non-exhaustive (the Rust
+    // rule). A guarded variant arm must not count toward exhaustiveness.
+    let src = r#"
+enum Color {
+    Red,
+    Blue,
+}
+
+fn classify(c: Color, flag: i64) -> i64 {
+    match c {
+        Color::Red => 1,
+        Color::Blue if flag > 0 => 2,
+    }
+}
+"#;
+    assert!(
+        has_code(src, "match::non_exhaustive"),
+        "a guarded-only variant catch must emit match::non_exhaustive; got {:?}",
+        check_codes(src)
+    );
+}
+
+#[test]
+fn guarded_variant_plus_wildcard_is_exhaustive() {
+    // The guarded variant arm plus a REAL wildcard `_` is exhaustive: the `_`
+    // catches the case where the guard fails.
+    let src = r#"
+enum Color {
+    Red,
+    Blue,
+}
+
+fn classify(c: Color, flag: i64) -> i64 {
+    match c {
+        Color::Red => 1,
+        Color::Blue if flag > 0 => 2,
+        _ => 0,
+    }
+}
+"#;
+    assert!(
+        !has_code(src, "match::non_exhaustive"),
+        "a guarded arm plus a real wildcard must be exhaustive; got {:?}",
+        check_codes(src)
+    );
+}
+
+#[test]
+fn fully_covered_but_last_variant_guarded_is_non_exhaustive() {
+    // Every variant named, but the LAST is guarded — the guard can fail, so the
+    // match is still non-exhaustive without a wildcard.
+    let src = r#"
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+fn classify(c: Color, flag: i64) -> i64 {
+    match c {
+        Color::Red => 1,
+        Color::Green => 2,
+        Color::Blue if flag > 0 => 3,
+    }
+}
+"#;
+    assert!(
+        has_code(src, "match::non_exhaustive"),
+        "a guarded final variant must not satisfy exhaustiveness; got {:?}",
+        check_codes(src)
+    );
+}
+
 #[test]
 fn integer_match_without_wildcard_is_not_flagged() {
     // Integer matches cannot be "exhaustive" without a wildcard and must NOT be

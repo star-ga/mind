@@ -755,11 +755,21 @@ pub enum Node {
     },
 }
 
-/// One arm of a `match` expression: `pattern => body`.
-/// Phase 10.7.
+/// One arm of a `match` expression: `pattern [if guard] => body`.
+/// Phase 10.7; pattern guards W1.5a.
+///
+/// A `guard` (the optional `if <bool-expr>` between the pattern and `=>`) makes
+/// the arm match only when the pattern matches AND the guard evaluates truthy.
+/// A guarded arm is REFUTABLE even when its pattern is irrefutable (`_` / a bare
+/// ident): a guarded `_`/ident arm never satisfies exhaustiveness (the Rust
+/// rule), and the desugar routes it through the if-else chain rather than
+/// treating it as the terminal catch-all. See `check_match_exhaustiveness` and
+/// `desugar_match_to_if`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchArm {
     pub pattern: Pattern,
+    /// Optional `if <bool-expr>` guard. `None` for an unguarded arm.
+    pub guard: Option<Node>,
     pub body: Node,
     pub span: Span,
 }

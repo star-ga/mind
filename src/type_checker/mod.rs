@@ -1841,6 +1841,13 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
             span,
         } => {
             let (scrutinee_ty, _) = infer_expr(scrutinee, env)?;
+            // Exhaustiveness is a PURELY STRUCTURAL property of the arm patterns
+            // + guards, independent of arm-body / guard types. Check it FIRST so
+            // a later guard/body inference error can never abort the arm loop
+            // before it runs (which would silently drop the load-bearing
+            // non-exhaustive diagnostic — drift #131). A guarded arm never counts
+            // toward exhaustiveness; see `check_match_exhaustiveness`.
+            check_match_exhaustiveness(arms)?;
             let mut result_ty: Option<ValueType> = None;
             for arm in arms {
                 match &arm.pattern {
@@ -1891,6 +1898,13 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                         }
                     }
                 }
+                // Pattern-guards W1.5a: a guard is a boolean expression evaluated
+                // with the arm's pattern bindings in scope. Type-check it in
+                // `arm_env` so an ill-typed / undefined-name guard surfaces; the
+                // loose i64 ABI carries bools as i64, so no class assertion here.
+                if let Some(guard) = &arm.guard {
+                    infer_expr(guard, &arm_env)?;
+                }
                 match infer_expr(&arm.body, &arm_env) {
                     Ok((arm_ty, _)) => match &result_ty {
                         None => result_ty = Some(arm_ty),
@@ -1918,12 +1932,9 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                     Err(e) => return Err(e),
                 }
             }
-            // Exhaustiveness: a `match` on a sum/enum type must cover every
-            // variant or carry a wildcard/binding catch-all. Enforced only for
-            // enum-variant matches of a known enum (integer/literal matches are
-            // never flagged — they legitimately rely on a `_` arm and main.mind
-            // uses 51 such tag-matches). See `check_match_exhaustiveness`.
-            check_match_exhaustiveness(arms)?;
+            // Exhaustiveness was checked up-front (see the note after the
+            // scrutinee inference above) so it can never be skipped by an arm
+            // inference error.
             Ok((result_ty.unwrap_or(ValueType::ScalarI32), *span))
         }
         // Phase 10.7: `&expr` / `&mut expr` reference-taking.
@@ -3225,10 +3236,13 @@ impl Drop for EnumVariantsGuard {
 /// This keeps the check sound and false-positive-free on the existing corpus.
 fn check_match_exhaustiveness(arms: &[crate::ast::MatchArm]) -> Result<(), TypeErrSpan> {
     use crate::ast::Pattern;
-    // A wildcard or bare-ident arm makes any match exhaustive.
+    // An UNGUARDED wildcard or bare-ident arm makes any match exhaustive. A
+    // GUARDED irrefutable arm (`_ if g`, `x if g`) does NOT: its guard can fail,
+    // leaving the value uncovered (the Rust rule; pattern-guards W1.5a / drift
+    // #131). So a guarded arm never satisfies exhaustiveness.
     let has_catch_all = arms
         .iter()
-        .any(|a| matches!(a.pattern, Pattern::Wildcard | Pattern::Ident(_)));
+        .any(|a| a.guard.is_none() && matches!(a.pattern, Pattern::Wildcard | Pattern::Ident(_)));
     if has_catch_all {
         return Ok(());
     }
@@ -3252,7 +3266,12 @@ fn check_match_exhaustiveness(arms: &[crate::ast::MatchArm]) -> Result<(), TypeE
                     Some(existing) if *existing != e => return Ok(()),
                     _ => {}
                 }
-                covered.insert(v);
+                // A GUARDED variant arm does NOT cover its variant — the guard
+                // can fail, leaving that variant unmatched (drift #131). Only an
+                // unguarded variant arm marks the variant covered.
+                if arm.guard.is_none() {
+                    covered.insert(v);
+                }
             }
             // Any non-enum, non-catch-all pattern (a literal) -> not enforced.
             _ => return Ok(()),
