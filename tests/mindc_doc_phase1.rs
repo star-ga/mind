@@ -287,6 +287,46 @@ fn doc_std_vec_mind_produces_vec_html() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Test 8: `#[bimap]`-derived pub fns are surfaced by `mindc doc` (task #178)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn doc_surfaces_bimap_derived_pub_fns() {
+    // A `#[bimap]` enum synthesises three pub fns (`<enum>_count` / `_to_str`
+    // / `_from_str`). `parse_with_trivia` opts out of the derive, so doc
+    // extraction must re-expand on a clone or these are invisible in the docs.
+    let dir = tempdir().expect("tempdir");
+    let src_file = dir.path().join("currency.mind");
+    let out_dir = dir.path().join("doc_bimap");
+
+    fs::write(&src_file, "#[bimap]\nenum Currency { AUD, JPY, USD }\n").expect("write source");
+
+    let status = mindc()
+        .arg("doc")
+        .arg(src_file.to_str().unwrap())
+        .arg(format!("--out={}", out_dir.display()))
+        .status()
+        .expect("spawn mindc doc");
+
+    assert!(status.success(), "mindc doc on a #[bimap] enum failed");
+
+    let html = fs::read_to_string(out_dir.join("currency.html")).expect("read currency.html");
+
+    // All three derived pub fns must appear...
+    for derived in ["currency_count", "currency_to_str", "currency_from_str"] {
+        assert!(
+            html.contains(derived),
+            "expected derived fn '{derived}' in currency.html"
+        );
+    }
+    // ...with their `#[bimap]` provenance rendered.
+    assert!(
+        html.contains("Derived by"),
+        "expected the '#[bimap]' provenance note on the derived fns"
+    );
+}
+
 /// Walk `dir` recursively; return the path of the first `.html` file containing `needle`.
 fn find_html_containing(dir: &std::path::Path, needle: &str) -> Option<PathBuf> {
     for entry in fs::read_dir(dir).ok()? {
