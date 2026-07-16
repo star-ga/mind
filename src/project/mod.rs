@@ -539,6 +539,14 @@ pub struct BuildOptions {
     /// keystone test suite runs four `mindc build` processes in parallel).
     /// `None` falls back to the manifest-derived `target/<profile>/<name>`.
     pub out_path: Option<PathBuf>,
+    /// Pre-resolved project root. When set, `build_project` uses it verbatim
+    /// instead of re-deriving via [`find_project_root`]. The orchestrator
+    /// (`run_build`) resolves the root ONCE — with the bounded, git-aware
+    /// [`find_project_root_for_file`] for explicit-file builds — and threads it
+    /// here so the legacy path never re-ascends to a different (stray-ancestor)
+    /// root than the one the manifest was written under. `None` preserves the
+    /// legacy `find_project_root()` behaviour for direct callers.
+    pub project_root: Option<PathBuf>,
 }
 
 /// Build result
@@ -561,6 +569,78 @@ pub fn find_project_root() -> Result<PathBuf> {
             return Err(anyhow!(
                 "Could not find Mind.toml in current directory or any parent"
             ));
+        }
+    }
+}
+
+/// Resolve the project root that GOVERNS an explicit source file, bounded so a
+/// stray ancestor `Mind.toml` can never hijack a one-off `mindc build <file>`.
+///
+/// The plain [`find_project_root`] ascends from the current directory to the
+/// *first* `Mind.toml` in **any** ancestor. For a one-off single-file build that
+/// is a latency landmine: a leftover `/tmp/Mind.toml` (e.g. a killed build that
+/// never cleaned up its synthetic manifest) makes every `mindc build x.mind`
+/// beneath `/tmp` adopt `/tmp` as the root and walk the entire `/tmp` tree
+/// (observed: 233k `getdents64`, ~2.3s vs ~60ms — a >30× regression).
+///
+/// The bound is the enclosing **git repository**, which is the natural project
+/// boundary:
+///  - If the file is inside a git repo, adopt the nearest `Mind.toml` at or
+///    above the file's directory but never above the repo root — a manifest
+///    *outside* the repo does not govern files inside it.
+///  - If the file is **not** inside any repo (a scratch file under `/tmp`), only
+///    a `Mind.toml` sitting directly next to it governs it; never ascend, so a
+///    stray distant manifest is inert.
+///
+/// Returns `None` when no governing manifest exists in-bounds; the caller then
+/// synthesises a single-file manifest rooted at the file's own directory.
+///
+/// deferred: a non-git project laid out as `<proj>/Mind.toml` + `<proj>/src/x.mind`
+/// and built via an explicit `mindc build src/x.mind` will synthesise (losing the
+/// manifest's `[exports]`) instead of adopting `<proj>/Mind.toml`, because there
+/// is no repo boundary to bound the ascent — `git init` or `mindc build` (no
+/// explicit path, which still uses [`find_project_root`]) both resolve it.
+/// upgrade path: add a `[workspace]`/manifest-root sentinel so a non-git project
+/// declares its own boundary without a stray ancestor being adoptable.
+pub fn find_project_root_for_file(entry_dir: &Path) -> Option<PathBuf> {
+    // 1. Locate the enclosing git repository, if any (`.git` may be a dir for a
+    //    normal repo or a file for a worktree/submodule — `exists()` covers both).
+    let mut git_root: Option<PathBuf> = None;
+    let mut probe = entry_dir.to_path_buf();
+    loop {
+        if probe.join(".git").exists() {
+            git_root = Some(probe.clone());
+            break;
+        }
+        if !probe.pop() {
+            break;
+        }
+    }
+
+    match git_root {
+        // 2. Inside a repo: adopt the nearest `Mind.toml` from the file's dir up
+        //    to (and including) the repo root. Never look above the repo root.
+        Some(root) => {
+            let mut current = entry_dir.to_path_buf();
+            loop {
+                if current.join("Mind.toml").exists() {
+                    return Some(current);
+                }
+                if current == root {
+                    return None;
+                }
+                if !current.pop() {
+                    return None;
+                }
+            }
+        }
+        // 3. Not in any repo: only a co-located manifest governs the file.
+        None => {
+            if entry_dir.join("Mind.toml").exists() {
+                Some(entry_dir.to_path_buf())
+            } else {
+                None
+            }
         }
     }
 }
@@ -603,6 +683,19 @@ pub fn collect_sources(project_root: &Path, entry: &str) -> Result<Vec<PathBuf>>
             for entry in rd.flatten() {
                 let path = entry.path();
                 if path.is_dir() {
+                    // Prune non-source subtrees: the build output dir (`target/`),
+                    // version control (`.git/`) and any hidden `.dir` never hold
+                    // importable MIND modules. Descending them only inflates the
+                    // walk — the `.git` of a repo alone can be tens of thousands of
+                    // objects. Defense-in-depth alongside the bounded root: even a
+                    // legitimately large project dir stays cheap to collect.
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    if name == "target" || name.starts_with('.') {
+                        continue;
+                    }
                     collect_recursive(&path, sources)?;
                 } else if path.extension().map(|e| e == "mind").unwrap_or(false) {
                     sources.push(path);
@@ -618,7 +711,14 @@ pub fn collect_sources(project_root: &Path, entry: &str) -> Result<Vec<PathBuf>>
 
 /// Build a MIND project
 pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
-    let project_root = find_project_root()?;
+    // Prefer the orchestrator's pre-resolved (bounded) root; only fall back to
+    // the unbounded ancestor scan when a direct caller supplied none. This keeps
+    // the manifest-write root and the source-collection root identical, so an
+    // explicit-file build can never re-ascend to a stray ancestor `Mind.toml`.
+    let project_root = match &opts.project_root {
+        Some(root) => root.clone(),
+        None => find_project_root()?,
+    };
     let manifest = load_manifest(&project_root)?;
 
     // Determine target
@@ -2475,4 +2575,97 @@ pub fn bench_project(opts: &BenchOptions) -> Result<i32> {
     println!("================================================================================");
 
     Ok(if any_fail { 1 } else { 0 })
+}
+
+#[cfg(test)]
+mod root_bound_tests {
+    //! Regression gate for the bounded, git-aware explicit-file project-root
+    //! resolution (`find_project_root_for_file`). A stray ancestor `Mind.toml`
+    //! (e.g. a leftover `/tmp/Mind.toml` from a killed build) must never be
+    //! adopted by a one-off `mindc build <file>` — that hijack turned a single
+    //! file build into a full-tree walk (233k `getdents64`, ~2.3s vs ~60ms).
+    use super::find_project_root_for_file;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn touch_manifest(dir: &std::path::Path) {
+        fs::create_dir_all(dir).unwrap();
+        fs::write(
+            dir.join("Mind.toml"),
+            "[package]\nname = \"p\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+    }
+
+    fn canon(p: &std::path::Path) -> std::path::PathBuf {
+        fs::canonicalize(p).unwrap()
+    }
+
+    /// A manifest sitting next to the file governs it (no repo required).
+    #[test]
+    fn colocated_manifest_is_adopted() {
+        let td = TempDir::new().unwrap();
+        let proj = td.path().join("proj");
+        touch_manifest(&proj);
+        let got = find_project_root_for_file(&proj).expect("co-located manifest");
+        assert_eq!(canon(&got), canon(&proj));
+    }
+
+    /// Inside a git repo, an ancestor manifest up to the repo root is adopted.
+    #[test]
+    fn in_repo_ancestor_manifest_is_adopted() {
+        let td = TempDir::new().unwrap();
+        let root = td.path();
+        fs::create_dir_all(root.join(".git")).unwrap();
+        touch_manifest(root);
+        let entry_dir = root.join("src");
+        fs::create_dir_all(&entry_dir).unwrap();
+        let got = find_project_root_for_file(&entry_dir).expect("repo-root manifest");
+        assert_eq!(canon(&got), canon(root));
+    }
+
+    /// THE hijack case: a stray ancestor manifest with NO enclosing git repo is
+    /// NOT adopted — the file's dir has no manifest, so `None` (→ synth root).
+    #[test]
+    fn stray_ancestor_without_repo_is_not_adopted() {
+        let td = TempDir::new().unwrap();
+        // Manifest high up, file deep below, no `.git` anywhere between them.
+        touch_manifest(td.path());
+        let entry_dir = td.path().join("a").join("b");
+        fs::create_dir_all(&entry_dir).unwrap();
+        assert!(
+            find_project_root_for_file(&entry_dir).is_none(),
+            "a stray ancestor Mind.toml with no repo boundary must not be adopted"
+        );
+    }
+
+    /// A manifest ABOVE the repo root is not adopted — the ascent is bounded by
+    /// the enclosing repo, so a manifest outside the repo cannot govern it.
+    #[test]
+    fn manifest_above_repo_root_is_not_adopted() {
+        let td = TempDir::new().unwrap();
+        touch_manifest(td.path()); // stray, ABOVE the repo
+        let repo = td.path().join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let entry_dir = repo.join("pkg");
+        fs::create_dir_all(&entry_dir).unwrap();
+        assert!(
+            find_project_root_for_file(&entry_dir).is_none(),
+            "manifest above the repo root must not be adopted"
+        );
+    }
+
+    /// The repo-root manifest is adopted, NOT a stray one above the repo.
+    #[test]
+    fn repo_root_manifest_wins_over_stray_above() {
+        let td = TempDir::new().unwrap();
+        touch_manifest(td.path()); // stray, ABOVE the repo — must be ignored
+        let repo = td.path().join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        touch_manifest(&repo); // the real manifest
+        let entry_dir = repo.join("pkg");
+        fs::create_dir_all(&entry_dir).unwrap();
+        let got = find_project_root_for_file(&entry_dir).expect("repo-root manifest");
+        assert_eq!(canon(&got), canon(&repo));
+    }
 }

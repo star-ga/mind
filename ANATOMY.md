@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3120 | **Est. tokens:** ~7,480,431
-**Generated:** 2026-07-15 10:04 UTC
+**Files:** 3119 | **Est. tokens:** ~7,457,440
+**Generated:** 2026-07-16 04:54 UTC
 
 ## Token Budget Guide
 
@@ -48,7 +48,7 @@
 | `docs/rfcs/` | 30 | ~134,901 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 22 | ~41,529 |
-| `examples/bimap_currency/` | 3 | ~765 |
+| `examples/bimap_currency/` | 3 | ~780 |
 | `examples/bimap_pairs/` | 2 | ~801 |
 | `examples/c/` | 2 | ~400 |
 | `examples/columnar/` | 4 | ~7,585 |
@@ -379,7 +379,7 @@
 | `src/ast/` | 1 | ~8,032 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 2 | ~31,777 |
-| `src/build/` | 2 | ~14,758 |
+| `src/build/` | 2 | ~15,368 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 3 | ~10,563 |
 | `src/deps/` | 1 | ~9,345 |
@@ -403,7 +403,7 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 2 | ~20,229 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 3 | ~31,849 |
+| `src/project/` | 2 | ~8,233 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -753,7 +753,7 @@
 ### `examples/bimap_currency/`
 
 - `.gitignore` (~2 tok, tiny) — target/
-- `main.mind` (~701 tok, large) — Single-source bijective map over a "nice set" — ONE declaration, both
+- `main.mind` (~716 tok, large) — Single-source bijective map over a "nice set" — ONE declaration, both
 - `Mind.toml` (~62 tok, small) — [package]
 ### `examples/bimap_pairs/`
 
@@ -3808,7 +3808,7 @@
 ### `src/build/`
 
 - `cache.rs` (~6766 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~7992 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~8602 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/cache/`
 
 - `entry.rs` (~977 tok, large) — Copyright 2025-2026 STARGA Inc.
@@ -3957,7 +3957,6 @@
 - `pipeline.rs` (~4980 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `mod.rs` (~23616 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~4577 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~3656 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
