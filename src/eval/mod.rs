@@ -357,6 +357,15 @@ pub enum EvalError {
     },
     #[error("out of bounds")]
     OutOfBounds,
+    /// Control-flow signal — NOT a real error. Carries the value of an early
+    /// `return X` so the enclosing function-body evaluation short-circuits.
+    /// The `?` operator propagates it up through `Block`/`If`/`For`/`While`
+    /// (stopping any enclosing loop) until the `Node::Call` boundary catches it
+    /// and unwraps the value. This mirrors the compiled/native path, where an
+    /// early `return` correctly stops evaluation. It never escapes a function
+    /// body: a bare `return` outside a function is rejected by the type checker.
+    #[error("internal: unhandled return control-flow signal")]
+    ReturnFlow(Box<Value>),
 }
 
 pub fn eval_module_value_with_env_mode(
@@ -913,9 +922,35 @@ pub(crate) fn eval_value_expr_mode(
                     let v = eval_value_expr_mode(a, env, tensor_env, mode.clone())?;
                     call_env.insert(p.clone(), v);
                 }
+                // Salov C3 (#179): the function-body boundary is where an early
+                // `return` is caught. A `ReturnFlow` signal raised anywhere in the
+                // body (directly, or bubbled up through `?` from a nested
+                // `if`/`for`/`while`) short-circuits here and yields its value;
+                // otherwise the last statement's value wins (implicit return).
+                //
+                // `let`/`assign` statements at the body's top level are threaded
+                // into `call_env` so a later statement (e.g. a `while` condition
+                // reading a loop counter declared just above it) sees the update —
+                // the same binding-propagation the module / `For` / `While` body
+                // loops already perform. Without it a body with a top-level
+                // counter could not be const-evaluated at all.
                 let mut result = Value::Int(0);
                 for stmt in &func.body {
-                    result = eval_value_expr_mode(stmt, &call_env, tensor_env, mode.clone())?;
+                    match stmt {
+                        Node::Let { name, value, .. } | Node::Assign { name, value, .. } => {
+                            let v =
+                                eval_value_expr_mode(value, &call_env, tensor_env, mode.clone())?;
+                            call_env.insert(name.clone(), v.clone());
+                            result = v;
+                        }
+                        _ => {
+                            match eval_value_expr_mode(stmt, &call_env, tensor_env, mode.clone()) {
+                                Ok(v) => result = v,
+                                Err(EvalError::ReturnFlow(v)) => return Ok(*v),
+                                Err(e) => return Err(e),
+                            }
+                        }
+                    }
                 }
                 return Ok(result);
             }
@@ -1306,16 +1341,23 @@ pub(crate) fn eval_value_expr_mode(
         }
         // Function definitions and control flow - placeholder implementation
         Node::FnDef { .. } => Ok(Value::Int(0)), // Functions are not executed as expressions
+        // Salov C3 (#179): an early `return X` must STOP the enclosing function
+        // body and yield `X`, matching the compiled/native path. We evaluate the
+        // operand then raise the `ReturnFlow` control-flow signal; `?` carries it
+        // up through any enclosing `Block`/`If`/`For`/`While` (stopping the loop)
+        // to the `Node::Call` boundary, which unwraps it. A bare `return;` yields
+        // the unit placeholder `Value::Int(0)`.
         Node::Return { value, .. } => {
-            if let Some(v) = value {
-                eval_value_expr_mode(v, env, tensor_env, mode.clone())
+            let v = if let Some(v) = value {
+                eval_value_expr_mode(v, env, tensor_env, mode.clone())?
             } else {
-                Ok(Value::Int(0))
-            }
+                Value::Int(0)
+            };
+            Err(EvalError::ReturnFlow(Box::new(v)))
         }
-        // Best-effort only: the const-fold evaluator has no control-flow
-        // signal (Node::Return above does not early-exit either). Mid-iteration
-        // break/continue semantics are honored solely by the MLIR codegen path.
+        // Best-effort only: the const-fold evaluator has no `break`/`continue`
+        // control-flow signal. Mid-iteration break/continue semantics are
+        // honored solely by the MLIR codegen path.
         #[cfg(feature = "std-surface")]
         Node::Break { .. } | Node::Continue { .. } => Ok(Value::Int(0)),
         Node::Block { stmts, .. } => {
@@ -3050,6 +3092,86 @@ mod tests {
         );
         // A non-narrowing cast (i64, u64, pointer-width) stays transparent.
         assert_eq!(eval_int("300 as i64"), 300, "300 as i64 is unchanged");
+    }
+
+    /// Salov C3 (#179): an early `return X` must STOP the enclosing function
+    /// body and yield `X`, exactly like the compiled/native path. Before the
+    /// fix the tree evaluator ran the body straight-line, so a later statement
+    /// clobbered the returned value (an `if`-branch return was ignored, and a
+    /// loop return did not stop the loop or the fn).
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn early_return_short_circuits_function_body() {
+        // Const-eval `<fn>(<arg>)` by binding it at top level and reading the
+        // module's last value (Preview / const-eval mode).
+        let call = |defs: &str, expr: &str| -> i64 {
+            let src = format!("{defs}\nlet __probe: i64 = {expr}\n");
+            let module = parser::parse(&src).unwrap();
+            let mut env = HashMap::new();
+            match eval_module_value_with_env(&module, &mut env, Some(&src)).unwrap() {
+                Value::Int(n) => n,
+                other => panic!("expected Int for `{expr}`, got {other:?}"),
+            }
+        };
+
+        // [A] return inside an `if` branch — a dispatch chain. A regression
+        // falls through to the trailing `return 1`.
+        let classify = "pub fn classify(x: i64) -> i64 { \
+            if x < 0 { return -1 } if x == 0 { return 0 } return 1 }";
+        assert_eq!(call(classify, "classify(0 - 5)"), -1, "return-in-if (neg)");
+        assert_eq!(call(classify, "classify(0)"), 0, "return-in-if (zero)");
+        assert_eq!(call(classify, "classify(7)"), 1, "return-in-if (pos)");
+
+        // [B] return inside a `while` loop — must stop the loop AND the fn.
+        // A regression runs the loop to its cap and returns the trailing -1.
+        let first_ge = "pub fn first_ge(limit: i64) -> i64 { \
+            let mut i: i64 = 0 while i < 1000 { if i * i >= limit { return i } i = i + 1 } \
+            return -1 }";
+        assert_eq!(
+            call(first_ge, "first_ge(50)"),
+            8,
+            "return-in-loop stops loop+fn"
+        );
+        assert_eq!(
+            call(first_ge, "first_ge(0)"),
+            0,
+            "return-in-loop first iter"
+        );
+
+        // [C] return as the last statement — the normal implicit-return path,
+        // must not regress.
+        let double = "pub fn double(x: i64) -> i64 { let y: i64 = x * 2 return y }";
+        assert_eq!(call(double, "double(21)"), 42, "return-last-stmt");
+
+        // [D] return BEFORE a side-effecting statement — the early exit must
+        // skip the later mutation. A regression returns 120 for guarded(20).
+        let guarded = "pub fn guarded(x: i64) -> i64 { \
+            let mut acc: i64 = x if x > 10 { return acc } acc = acc + 100 return acc }";
+        assert_eq!(
+            call(guarded, "guarded(20)"),
+            20,
+            "return-before-side-effect"
+        );
+        assert_eq!(
+            call(guarded, "guarded(5)"),
+            105,
+            "no-return runs side effect"
+        );
+    }
+
+    /// A bare `return;` (no operand) yields the unit placeholder and still
+    /// short-circuits the body.
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn bare_return_short_circuits_with_unit() {
+        let src = "pub fn f(x: i64) -> i64 { if x > 0 { return } let y: i64 = 99 return y }\n\
+                   let __probe: i64 = f(1)\n";
+        let module = parser::parse(src).unwrap();
+        let mut env = HashMap::new();
+        match eval_module_value_with_env(&module, &mut env, Some(src)).unwrap() {
+            Value::Int(n) => assert_eq!(n, 0, "bare `return;` yields unit (0) and skips the rest"),
+            other => panic!("expected Int, got {other:?}"),
+        }
     }
 }
 
