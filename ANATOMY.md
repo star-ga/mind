@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3119 | **Est. tokens:** ~7,457,440
-**Generated:** 2026-07-16 05:07 UTC
+**Files:** 3124 | **Est. tokens:** ~7,467,763
+**Generated:** 2026-07-16 05:54 UTC
 
 ## Token Budget Guide
 
@@ -45,7 +45,7 @@
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
 | `docs/mindcraft/` | 3 | ~7,023 |
-| `docs/rfcs/` | 30 | ~134,901 |
+| `docs/rfcs/` | 31 | ~142,417 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 22 | ~41,529 |
 | `examples/bimap_currency/` | 3 | ~780 |
@@ -385,7 +385,7 @@
 | `src/deps/` | 1 | ~9,345 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
-| `src/doc/` | 3 | ~10,615 |
+| `src/doc/` | 3 | ~11,003 |
 | `src/eval/` | 12 | ~64,105 |
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
@@ -412,18 +412,20 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~192,637 |
-| `tests/` | 285 | ~489,779 |
+| `tests/` | 285 | ~490,171 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
 | `tests/conformance/gpu_profile/` | 2 | ~11 |
-| `tests/cross_substrate_identity/` | 2 | ~4,052 |
+| `tests/cross_substrate_identity/` | 2 | ~4,113 |
 | `tests/cross_substrate_identity/bimap-phf/` | 2 | ~1,418 |
+| `tests/cross_substrate_identity/collatz/` | 2 | ~962 |
 | `tests/cross_substrate_identity/dot-f32-v-4093/` | 2 | ~1,222 |
 | `tests/cross_substrate_identity/dot-i16-4096/` | 2 | ~648 |
 | `tests/cross_substrate_identity/dot-l1-q16/` | 2 | ~363 |
 | `tests/cross_substrate_identity/dot-l2-q16/` | 2 | ~813 |
+| `tests/cross_substrate_identity/galperin-pi/` | 2 | ~1,004 |
 | `tests/cross_substrate_identity/gemm-i8-64x64x64/` | 2 | ~707 |
 | `tests/cross_substrate_identity/gemm-i8-mt-64x64x64/` | 2 | ~872 |
 | `tests/cross_substrate_identity/gemm-i8-vnni-64x64x64/` | 2 | ~921 |
@@ -724,6 +726,7 @@
 - `0020-mind-bench-reproducibility-harness.md` (~4083 tok, huge) — RFC 0020: mind-bench Public Reproducibility Harness
 - `0021-canonical-ir-unification.md` (~4388 tok, huge) — RFC 0021: Canonical IR Unification — one IR, provenance as a versioned epilogue
 - `0022-deterministic-io-substrate.md` (~2108 tok, huge) — RFC 0022: Deterministic I/O Substrate — fastest async I/O with bit-identical replay
+- `0024-loop-collapse.md` (~7516 tok, huge) — RFC 0024: Loop Collapse — prove-or-fail closed-form replacement of counted loops (`#[collapse]`)
 - `DRAFT-deterministic-format-frontend.md` (~10507 tok, huge) — RFC DRAFT: Deterministic Multi-Format Ingest Front-End (JSON / TOON / CSV / TSV / NDJSON / TOML)
 - `DRAFT-deterministic-json-frontend.md` (~5175 tok, huge) — RFC DRAFT: Deterministic Streaming SIMD JSON Structural Front-End
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
@@ -3841,7 +3844,7 @@
 
 - `html.rs` (~956 tok, large) — Copyright 2025 STARGA Inc.
 - `markdown.rs` (~2644 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~7015 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~7403 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/`
 
 - `abi_gate.rs` (~10603 tok, huge) — Runnable-artifact ABI gate (release-readiness P1.1).
@@ -4118,6 +4121,10 @@
 
 - `manifest.toml` (~780 tok, large) — version = "1"
 - `reference_hashes.toml` (~638 tok, large) — avx2 = "782396add7bdc58d94606442b44f2e67cd7b3bf6772976f51577f8c53ffd75ed"
+### `tests/cross_substrate_identity/collatz/`
+
+- `manifest.toml` (~511 tok, large) — version = "1"
+- `reference_hashes.toml` (~451 tok, medium) — avx2 = "87fbc45b398c9d752a438cbcffd4a34076fce3d37556db30eb18fbbc55cc849a"
 ### `tests/cross_substrate_identity/dot-f32-v-4093/`
 
 - `manifest.toml` (~638 tok, large) — version = "1"
@@ -4134,6 +4141,10 @@
 
 - `manifest.toml` (~436 tok, medium) — version = "1"
 - `reference_hashes.toml` (~377 tok, medium) — avx2 = "1d7f272b85e5f0fd7cf473086fb1da558a723134ff02ef30a4323eb757209823"
+### `tests/cross_substrate_identity/galperin-pi/`
+
+- `manifest.toml` (~516 tok, large) — version = "1"
+- `reference_hashes.toml` (~488 tok, medium) — avx2 = "59dfa3f2abe4d71fdc42a54b49da2526f002c8e84a777184fe6a08d25adeca04"
 ### `tests/cross_substrate_identity/gemm-i8-64x64x64/`
 
 - `manifest.toml` (~437 tok, medium) — version = "1"
@@ -4180,7 +4191,7 @@
 - `reference_hashes.toml` (~356 tok, medium) — avx2 = "ce93cdeb0e650c1c8e0cd05687ed986bbdbac691b6a8742e155b8ffd65997d78"
 ### `tests/cross_substrate_identity/`
 
-- `README.md` (~1219 tok, large) — cross_substrate_identity — the internal mind-bench reproducibility gate
+- `README.md` (~1280 tok, large) — cross_substrate_identity — the internal mind-bench reproducibility gate
 ### `tests/cross_substrate_identity/scalar-cast-conv/`
 
 - `manifest.toml` (~1041 tok, large) — version = "1"
@@ -4302,7 +4313,7 @@
 - `mindc_build_phase_a.rs` (~4566 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_cache_phase_f.rs` (~6231 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_deps_phase_de.rs` (~6823 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc_doc_phase1.rs` (~2565 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc_doc_phase1.rs` (~2957 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/mindcraft/check/`
 
 - `clean.mind` (~11 tok, tiny) — fn add(a: i64, b: i64) -> i64 {

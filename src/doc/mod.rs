@@ -23,13 +23,14 @@
 pub mod html;
 pub mod markdown;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command as OsCommand;
 
 use crate::ast::{Node, Param, TypeAnn};
+use crate::parser::expand_bimap::expand_bimap;
 use crate::parser::parse_with_trivia;
 use crate::parser::{Trivia, TriviaKind};
 
@@ -242,13 +243,6 @@ fn collect_mind_files(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
 fn extract_file_doc(path: &Path) -> Result<FileDoc, String> {
     let source = fs::read_to_string(path).map_err(|e| format!("cannot read: {e}"))?;
 
-    // deferred: `parse_with_trivia` opts OUT of the `#[bimap]` derive (correct for
-    // fmt/lint round-tripping), so `mindc doc` never sees the three synthesised
-    // pub fns (`<enum>_count`/`_to_str`/`_from_str`) — real cross-module API that
-    // `mindc check` treats as present. Docs are therefore incomplete for a
-    // `#[bimap]` enum (not wrong — a coherence gap). Upgrade path: after parsing,
-    // run `expand_bimap` on a CLONE of `module` and drive item extraction from the
-    // expanded clone, leaving the trivia/round-trip view untouched.
     let (module, trivia) =
         parse_with_trivia(&source).map_err(|errs| format!("parse error: {}", errs[0].message))?;
 
@@ -265,6 +259,52 @@ fn extract_file_doc(path: &Path) -> Result<FileDoc, String> {
     for node in &module.items {
         if let Some(item) = extract_item(node, &doc_trivia, &source) {
             items.push(item);
+        }
+    }
+
+    // `parse_with_trivia` intentionally opts OUT of the `#[bimap]` derive (correct
+    // for fmt/lint round-tripping), so the loop above never sees the synthesised
+    // pub fns (`<enum>_count` / `<enum>_to_str` / `<enum>_from_str`) — real
+    // cross-module API that `mindc check` treats as present. Expand the derive on
+    // a CLONE and append the synthesised fns, leaving the trivia/round-trip view
+    // untouched. Non-`#[bimap]` modules hit `expand_bimap`'s cheap fast-path and
+    // the clone is left unchanged, so their docs are byte-identical.
+    let mut expanded = module.clone();
+    let _ = expand_bimap(&mut expanded, &source, None);
+    if expanded.items.len() > module.items.len() {
+        // Names already documented from the un-expanded module — anything the
+        // expansion adds beyond these is a derived fn.
+        let original: HashSet<&str> = module
+            .items
+            .iter()
+            .filter_map(|n| match n {
+                Node::FnDef { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        for node in &expanded.items {
+            if let Node::FnDef {
+                is_pub: true,
+                name,
+                params,
+                ret_type,
+                span,
+                ..
+            } = node
+            {
+                if !original.contains(name.as_str()) {
+                    // A synthesised fn carries the enum's span, so the offset-based
+                    // doc-comment lookup would bleed the enum's comment onto it;
+                    // give it a generated provenance line instead.
+                    items.push(DocItem {
+                        kind: ItemKind::Fn,
+                        name: name.clone(),
+                        signature: render_fn_sig(name, params, ret_type.as_ref()),
+                        doc: "Derived by `#[bimap]`.".to_string(),
+                        line: offset_to_line(&source, span.start()),
+                    });
+                }
+            }
         }
     }
 
