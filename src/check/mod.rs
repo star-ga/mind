@@ -830,7 +830,7 @@ fn check_types(path: &Path, source: &str, out: &mut Vec<CheckDiagnostic>) {
     // offending variant. `check_types` discards trivia anyway; fmt/doc/lint keep
     // `parse_with_trivia` and never see the synthesised fns.
     let file_name = path.to_str();
-    let module = match crate::parser::parse_with_diagnostics_in_file(source, file_name) {
+    let mut module = match crate::parser::parse_with_diagnostics_in_file(source, file_name) {
         Ok(m) => m,
         Err(diags) => {
             for d in diags {
@@ -853,6 +853,28 @@ fn check_types(path: &Path, source: &str, out: &mut Vec<CheckDiagnostic>) {
             return;
         }
     };
+
+    // Salov loop-collapse S1: run the `#[collapse]` rewrite on the check path
+    // too, so an annotated-but-unprovable affine loop surfaces its `E2201`
+    // during `mindc check` (not only at build time).
+    let collapse_diags = crate::opt::collapse::collapse_module(&mut module, source, file_name);
+    for d in &collapse_diags {
+        let (line, col) = match &d.span {
+            Some(span) => (span.line, span.column),
+            None => (1, 1),
+        };
+        out.push(CheckDiagnostic {
+            file: path.to_path_buf(),
+            line,
+            col,
+            severity: CheckSeverity::Error,
+            message: d.message.clone(),
+            rule_id: format!("type_check::{}", d.code),
+            phase: CheckPhase::TypeCheck,
+            help: d.help.clone(),
+            auto_fix: None,
+        });
+    }
 
     let type_diags = check_module_types_in_file(&module, source, file_name, &HashMap::new());
 

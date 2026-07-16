@@ -1268,7 +1268,7 @@ impl<'a> P<'a> {
             }
             Some(StmtKw::Assert) => return self.parse_assert(),
             Some(StmtKw::Return) => return self.parse_return(),
-            Some(StmtKw::For) => return self.parse_for(),
+            Some(StmtKw::For) => return self.parse_for(Vec::new()),
             Some(StmtKw::Print) => return self.parse_print(),
             Some(StmtKw::Let) => return self.parse_let(),
             Some(StmtKw::If) => return self.parse_if_expr(),
@@ -1579,6 +1579,12 @@ impl<'a> P<'a> {
         attrs: Vec<crate::ast::Attribute>,
     ) -> Result<Node, ParseError> {
         self.skip_ws_and_newlines();
+        // Statement-level attribute on a range `for` loop (`#[collapse]`, Salov
+        // loop-collapse S1). A `for` is never `pub`, so intercept it before the
+        // `pub`/item ladder and forward the attribute list into the loop node.
+        if self.at_keyword(b"for") {
+            return self.parse_for(attrs);
+        }
         // Optional `pub` after an attribute list: `[attr] pub fn foo() { }`.
         let is_pub = if self.at_keyword(b"pub") {
             self.pos += 3;
@@ -2834,7 +2840,7 @@ impl<'a> P<'a> {
         })
     }
 
-    fn parse_for(&mut self) -> Result<Node, ParseError> {
+    fn parse_for(&mut self, attrs: Vec<crate::ast::Attribute>) -> Result<Node, ParseError> {
         let start = self.pos;
         self.pos += 3; // "for"
         self.skip_ws_and_newlines();
@@ -2862,6 +2868,10 @@ impl<'a> P<'a> {
             self.skip_ws_and_newlines();
             self.expect(b'}')?;
             let span = Span::new(start, self.pos);
+            // deferred: a `#[collapse]` on a for-each (`for x in coll`) drops
+            // `attrs` here — for-each is not an affine range, so S1 never
+            // collapses it. Upgrade path: reject `collapse` on for-each with a
+            // dedicated E22xx once for-each induction analysis lands.
             return Ok(Node::ForEach {
                 var,
                 collection: Box::new(start_expr),
@@ -2883,6 +2893,7 @@ impl<'a> P<'a> {
             start: Box::new(start_expr),
             end: Box::new(end_expr),
             body,
+            attrs,
             span,
         })
     }
