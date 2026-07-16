@@ -1,0 +1,36 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes.
+#
+# A deterministic integer Collatz (3n+1) hash — the integer sibling of the
+# Lorenz determinism proof, with ZERO floating-point attack surface. Collatz is
+# fully DETERMINISTIC (n -> n/2 if even, 3n+1 if odd) yet famously UNPREDICTABLE
+# (its halting is open), so it is "deterministic != predictable" in its purest
+# form. The kernel iterates Collatz for every seed in [lo, hi], sums each seed's
+# stopping time, and folds the running total through a fixed multiply-mix
+# (acc = acc*1000003 + steps + n) into a single i64. Every step is exact integer
+# arithmetic — i64 divide / multiply / add / sub, no float, no rounding mode, no
+# FMA contraction, no reduction order — so the result is byte-identical on x86
+# avx2 and ARM neon BY CONSTRUCTION (RFC 0015 §3.1). The falsifier is mechanical:
+# compile, run, hash the output; a different hash is a release-blocking lowering
+# bug, not a rounding artifact. Source: examples/collatz.mind (a shipped demo).
+
+version = "1"
+name = "collatz"
+description = "Deterministic integer Collatz (3n+1) hash over seeds [1, 1000]: sum each seed's stopping time, fold through acc = acc*1000003 + steps + n. Exact i64 arithmetic, no float — reproducible across substrates where the halting itself is unpredictable."
+weight = 1.0
+substrates = ["avx2", "neon"]
+
+# Fixed seed range (inclusive). 1000 orbits, some reaching ~250504 mid-flight;
+# every intermediate stays well inside i64. The multiply-mix fold wraps in two's
+# complement (matching arith.muli/arith.addi), which is part of the spec.
+[input]
+generator = "fixed"
+lo = 1
+hi = 1000
+dtype = "i64"
+
+[kernel]
+symbol = "collatz_hash"
+op_order = "for n in [lo,hi]: iterate v=(1-is_even)*half + is_even*(3v+1) to v==1 counting steps; acc = (acc*1000003 + steps) + n — fixed source precedence, two's-complement wrap"
+returns = "i64"            # the folded hash
+output_encoding = "i64_le" # 8 little-endian bytes of the result, then sha256

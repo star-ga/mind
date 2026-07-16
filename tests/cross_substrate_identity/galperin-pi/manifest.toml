@@ -1,0 +1,35 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes.
+#
+# Galperin's billiard-π: count elastic collisions of two balls + a wall to
+# recover the digits of π — with ZERO floating-point in the loop. The sharpest
+# "deterministic != predictable" demo: π (unpredictable digit-to-digit) falls
+# out of counting integer collisions. Because the big-ball mass M = 100^(n-1) is
+# a perfect square, sqrt(M) = 10^(n-1) = K is an EXACT INTEGER, so both collision
+# types are exact integer reflections of the phase-space vector (u, w) carried at
+# a fixed integer SCALE = 1e6 with round-to-nearest integer division. Every step
+# is exact integer arithmetic — no rounding mode, no FMA contraction, no
+# reduction order — so the collision count is deterministic to the bit and
+# byte-identical on x86 avx2 and ARM neon BY CONSTRUCTION (RFC 0015 §3.1).
+# Galperin's theorem: the count is exactly floor(π·10^(n-1)) = 3, 31, 314, 3141,
+# 31415 for n = 1..5. Source: examples/galperin_pi.mind (a shipped demo).
+
+version = "1"
+name = "galperin-pi"
+description = "Galperin billiard-π collision count for mass ratio 100^(n-1) via exact integer phase-space reflections (fixed-point SCALE=1e6, round-to-nearest). floor(π·10^(n-1)); n=5 -> 31415. No float in the loop — deterministic to the bit across substrates."
+weight = 1.0
+substrates = ["avx2", "neon"]
+
+# Fixed input n = 5 (the largest non-bignum case; n>=6 needs an i128 tier,
+# deferred). Returns floor(π·10^4) = 31415. All intermediates stay inside i64
+# (worst product ~2e18 < i64::MAX). n outside 1..=5 returns -1.
+[input]
+generator = "fixed"
+n = 5
+dtype = "i64"
+
+[kernel]
+symbol = "galperin_collisions"
+op_order = "alternating exact-integer reflections: ball-ball via matrix [[K^2-1,2K],[2K,1-K^2]]/(K^2+1) then wall w->-w, round-to-nearest integer divide, until the big ball no longer catches the small one"
+returns = "i64"            # the collision count (31415 for n=5)
+output_encoding = "i64_le" # 8 little-endian bytes of the result, then sha256
