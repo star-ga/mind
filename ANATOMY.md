@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3128 | **Est. tokens:** ~7,478,960
-**Generated:** 2026-07-16 07:23 UTC
+**Files:** 3131 | **Est. tokens:** ~7,487,096
+**Generated:** 2026-07-16 07:46 UTC
 
 ## Token Budget Guide
 
@@ -47,7 +47,7 @@
 | `docs/mindcraft/` | 3 | ~7,023 |
 | `docs/rfcs/` | 31 | ~142,417 |
 | `docs/specs/` | 2 | ~976 |
-| `examples/` | 23 | ~42,201 |
+| `examples/` | 26 | ~44,771 |
 | `examples/bimap_currency/` | 3 | ~780 |
 | `examples/bimap_pairs/` | 2 | ~801 |
 | `examples/c/` | 2 | ~400 |
@@ -68,7 +68,7 @@
 | `.githooks/` | 1 | ~255 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 9 | ~13,175 |
+| `.github/workflows/` | 9 | ~13,801 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~17,416 |
 | `scripts/` | 9 | ~11,565 |
@@ -399,7 +399,7 @@
 | `src/lint/rules/` | 6 | ~9,211 |
 | `src/mlir/` | 3 | ~5,905 |
 | `src/ops/` | 3 | ~4,764 |
-| `src/opt/` | 7 | ~20,628 |
+| `src/opt/` | 7 | ~25,568 |
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 2 | ~20,277 |
 | `src/phf/` | 1 | ~4,955 |
@@ -781,6 +781,9 @@
 - `auditable_model.mind` (~1932 tok, huge) — auditable_model.mind -- Compliance-Ready MLP with Provenance Metadata
 - `audit_report.mind` (~2289 tok, huge) — audit_report.mind -- Compliance Artifact Generation
 - `README.md` (~1073 tok, large) — Compliance Example
+### `examples/`
+
+- `cos_dottie.mind` (~781 tok, large) — Cosine-map iteration toward the Dottie fixed point (x* ≈ 0.7390851332151607),
 ### `examples/distribution-crossisa/`
 
 - `afterkelly.cpp` (~2278 tok, huge) — Command line arguments. ____________________________________________
@@ -802,6 +805,7 @@
 - `fft_signal.mind` (~533 tok, large) — FFT Signal Processing Example for MIND
 - `galperin_pi.mind` (~1486 tok, large) — Galperin's billiard-π: count elastic collisions of two balls + a wall to
 - `gauss_collapse.mind` (~672 tok, large) — Salov loop-collapse — closed-form affine sums (Slice S1).
+- `geometric_collapse.mind` (~807 tok, large) — Salov loop-collapse — geometric powering closed forms (Slice S2).
 ### `examples/grammar_mask/`
 
 - `main.mind` (~4577 tok, huge) — examples/grammar_mask/main.mind — structured / grammar-constrained decoding,
@@ -823,6 +827,7 @@
 - `lorenz_f64.mind` (~230 tok, medium) — Deterministic IEEE-754 float64 Lorenz-attractor integrator (forward Euler).
 - `lorenz_q16.mind` (~1091 tok, large) — Deterministic Q16.16 fixed-point Lorenz-attractor integrator (forward Euler).
 - `mandelbrot.mind` (~1019 tok, large) — Deterministic IEEE-754 float64 Mandelbrot escape-count renderer.
+- `mandelbrot_strict.mind` (~982 tok, large) — Strict-f64 Mandelbrot escape-count checksum — a determinism-wedge demo.
 ### `examples/mindc_mind/`
 
 - `bootstrap_smoke.py` (~2329 tok, huge)
@@ -977,8 +982,8 @@
 
 - `bench-gate.yml` (~1432 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~222 tok, medium) — name: Cargo Deny
-- `ci.yml` (~7451 tok, huge) — name: CI
-- `crypto-vectors.yml` (~1093 tok, large) — name: Crypto Vectors
+- `ci.yml` (~7932 tok, huge) — name: CI
+- `crypto-vectors.yml` (~1238 tok, large) — name: Crypto Vectors
 - `docs-claims.yml` (~364 tok, medium) — name: Docs Claims
 - `link-check.yml` (~221 tok, medium) — name: Link Check
 - `mindcraft.yml` (~545 tok, large) — name: Mindcraft Check
@@ -3941,13 +3946,13 @@
 - `mod.rs` (~228 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/opt/`
 
-- `collapse.rs` (~3910 tok, huge) — Copyright 2025 STARGA Inc.
+- `collapse.rs` (~6686 tok, huge) — Copyright 2025 STARGA Inc.
 - `comptime.rs` (~1160 tok, large) — Copyright 2025 STARGA Inc.
 - `fold.rs` (~2046 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_canonical.rs` (~4402 tok, huge) — Copyright 2025 STARGA Inc.
 - `memory_layout.rs` (~4110 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~192 tok, small) — Copyright 2025 STARGA Inc.
-- `scev.rs` (~4808 tok, huge) — Copyright 2025 STARGA Inc.
+- `scev.rs` (~6972 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/package/`
 
 - `manifest.rs` (~310 tok, medium) — Copyright 2025 STARGA Inc.
