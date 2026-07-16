@@ -857,7 +857,10 @@ fn check_types(path: &Path, source: &str, out: &mut Vec<CheckDiagnostic>) {
     // Salov loop-collapse S1: run the `#[collapse]` rewrite on the check path
     // too, so an annotated-but-unprovable affine loop surfaces its `E2201`
     // during `mindc check` (not only at build time).
-    let collapse_diags = crate::opt::collapse::collapse_module(&mut module, source, file_name);
+    // `mindc check` only surfaces reject diagnostics; the collapse receipts (S4)
+    // are consumed by the `--emit-evidence` build path, not the check path.
+    let (collapse_diags, _collapse_receipts) =
+        crate::opt::collapse::collapse_module(&mut module, source, file_name);
     for d in &collapse_diags {
         let (line, col) = match &d.span {
             Some(span) => (span.line, span.column),

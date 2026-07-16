@@ -1458,28 +1458,23 @@ fn emit_evidence_if_requested(cli: &CompileArgs, products: &libmind::pipeline::C
         None => "",
     };
 
-    let bytes = match &signing_key {
-        Some(key) => match libmind::ir::compact::emit_mic3_with_signed_evidence_scheme(
-            &products.ir,
-            substrate,
-            None,
-            determinism,
-            toolchain,
-            key,
-        ) {
-            Ok(b) => b,
-            Err(msg) => {
-                eprintln!("error[emit-evidence]: {msg}");
-                process::exit(1);
-            }
-        },
-        None => libmind::ir::compact::emit_mic3_with_evidence(
-            &products.ir,
-            substrate,
-            None,
-            determinism,
-            toolchain,
-        ),
+    // Emit body + evidence MAP, carrying the Salov loop-collapse receipts (S4)
+    // the pipeline produced (empty for a source with no constant-folding
+    // collapse — then byte-identical to the pre-S4 encoder, trace_hash unchanged).
+    let bytes = match libmind::ir::compact::emit_mic3_with_evidence_and_receipts(
+        &products.ir,
+        substrate,
+        None,
+        determinism,
+        toolchain,
+        signing_key.as_ref(),
+        &products.collapse_receipts,
+    ) {
+        Ok(b) => b,
+        Err(msg) => {
+            eprintln!("error[emit-evidence]: {msg}");
+            process::exit(1);
+        }
     };
     // Built-in self-check (RFC 0016 Phase B verifier-core round-trip): peel the
     // freshly-emitted MAP, recompute the canonical mic@3 `trace_hash` over the
@@ -1518,12 +1513,28 @@ fn emit_evidence_if_requested(cli: &CompileArgs, products: &libmind::pipeline::C
             }
         }
     }
+    // Collapse-receipt self-check (S4): re-derive every embedded receipt in O(1)
+    // and confirm it re-derives + binds to the body before shipping. Generation
+    // without verification is security theatre; catch an emitter regression here.
+    let collapse_note = match libmind::ir::compact::mic3_collapse_verify(&bytes) {
+        Ok(libmind::ir::compact::CollapseVerifyStatus::Verified(n)) => {
+            format!(", {n} collapse receipt(s) re-derived")
+        }
+        Ok(libmind::ir::compact::CollapseVerifyStatus::Absent) => String::new(),
+        other => {
+            eprintln!(
+                "error[emit-evidence]: collapse-receipt self-check failed ({other:?}) \
+                 (internal emitter bug, not your input)"
+            );
+            process::exit(1);
+        }
+    };
     if let Err(err) = fs::write(path, &bytes) {
         eprintln!("error[emit-evidence]: failed to write {path}: {err}");
         process::exit(1);
     }
     eprintln!(
-        "Wrote mic@3 evidence artifact: {path} ({} bytes, self-check ok{sig_label})",
+        "Wrote mic@3 evidence artifact: {path} ({} bytes, self-check ok{sig_label}{collapse_note})",
         bytes.len(),
     );
 }
@@ -1661,7 +1672,8 @@ fn run_verify(
 ) -> i32 {
     use libmind::ir::check_ssa_well_formed;
     use libmind::ir::compact::{
-        Determinism, EvidenceError, TraceHashKind, mic3_evidence_report, parse_mic3,
+        CollapseVerifyStatus, Determinism, EvidenceError, TraceHashKind, mic3_evidence_report,
+        parse_mic3,
     };
 
     let bytes = match fs::read(artifact) {
@@ -1981,6 +1993,50 @@ fn run_verify(
                         "error[verify]: artifact is nondeterministic (re-derived from the hashed body) — deterministic build required"
                     );
                     return 1;
+                }
+                // Salov loop-collapse receipts (S4): independently RE-DERIVE every
+                // folded constant in O(1) (the loop is never re-run) and confirm it
+                // (a) matches the receipt's recorded value and (b) is materialised
+                // in the hashed body. A tampered constant/parameter fails closed.
+                match libmind::ir::compact::mic3_collapse_verify(&bytes) {
+                    Ok(CollapseVerifyStatus::Verified(n)) => {
+                        if !json {
+                            eprintln!(
+                                "verified: {n} loop-collapse receipt(s) re-derived (O(1) closed form, loop not re-run)"
+                            );
+                        }
+                    }
+                    Ok(CollapseVerifyStatus::Absent) => {}
+                    Ok(CollapseVerifyStatus::Rederivation { rederived, claimed }) => {
+                        eprintln!(
+                            "error[verify]: collapse-receipt FORGERY — recorded constant {claimed} but the loop parameters re-derive to {rederived} (fail-closed)"
+                        );
+                        return 1;
+                    }
+                    Ok(CollapseVerifyStatus::NotInBody { constant }) => {
+                        eprintln!(
+                            "error[verify]: collapse-receipt constant {constant} is not materialised in the hashed body (fail-closed)"
+                        );
+                        return 1;
+                    }
+                    Ok(CollapseVerifyStatus::Malformed) => {
+                        eprintln!(
+                            "error[verify]: collapse-receipt blob is malformed (fail-closed)"
+                        );
+                        return 1;
+                    }
+                    Ok(CollapseVerifyStatus::NonCanonical) => {
+                        eprintln!(
+                            "error[verify]: collapse-receipt blob is not in canonical form (fail-closed)"
+                        );
+                        return 1;
+                    }
+                    Err(_) => {
+                        eprintln!(
+                            "error[verify]: collapse-receipt layer could not be parsed (fail-closed)"
+                        );
+                        return 1;
+                    }
                 }
                 0
             } else {

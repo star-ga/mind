@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3133 | **Est. tokens:** ~7,477,250
-**Generated:** 2026-07-16 10:01 UTC
+**Files:** 3134 | **Est. tokens:** ~7,483,988
+**Generated:** 2026-07-16 11:14 UTC
 
 ## Token Budget Guide
 
@@ -375,13 +375,13 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 7 | ~18,111 |
+| `src/` | 7 | ~18,240 |
 | `src/ast/` | 1 | ~8,291 |
 | `src/autodiff/` | 3 | ~6,624 |
-| `src/bin/` | 2 | ~31,777 |
+| `src/bin/` | 2 | ~32,573 |
 | `src/build/` | 2 | ~15,368 |
 | `src/cache/` | 4 | ~3,682 |
-| `src/check/` | 3 | ~10,774 |
+| `src/check/` | 3 | ~10,821 |
 | `src/deps/` | 1 | ~9,345 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
@@ -392,14 +392,14 @@
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~20,091 |
 | `src/ir/` | 5 | ~46,820 |
-| `src/ir/compact/` | 3 | ~15,235 |
+| `src/ir/compact/` | 3 | ~15,267 |
 | `src/ir/compact/v2/` | 8 | ~38,037 |
-| `src/ir/compact/v3/` | 5 | ~42,842 |
+| `src/ir/compact/v3/` | 6 | ~47,996 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,211 |
 | `src/mlir/` | 3 | ~5,905 |
 | `src/ops/` | 3 | ~4,764 |
-| `src/opt/` | 7 | ~36,071 |
+| `src/opt/` | 7 | ~36,651 |
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 2 | ~20,277 |
 | `src/phf/` | 1 | ~4,955 |
@@ -3815,7 +3815,7 @@
 ### `src/bin/`
 
 - `mind-ai.rs` (~9805 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~21972 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc.rs` (~22768 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
 - `cache.rs` (~6766 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3829,7 +3829,7 @@
 ### `src/check/`
 
 - `gitignore.rs` (~2345 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~8055 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~8102 tok, huge) — Copyright 2025 STARGA Inc.
 - `reporter.rs` (~374 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/`
 
@@ -3891,7 +3891,7 @@
 ### `src/ir/compact/`
 
 - `emit.rs` (~4693 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~2418 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~2450 tok, huge) — Copyright 2025 STARGA Inc.
 - `parse.rs` (~8124 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/v2/`
 
@@ -3905,10 +3905,11 @@
 - `varint.rs` (~1599 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/v3/`
 
+- `collapse_receipt.rs` (~5109 tok, huge) — Copyright 2025 STARGA Inc.
 - `ed25519.rs` (~6051 tok, huge) — Copyright 2025 STARGA Inc.
 - `emit.rs` (~11036 tok, huge) — Copyright 2025 STARGA Inc.
 - `mldsa.rs` (~1510 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~13668 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~13713 tok, huge) — Copyright 2025 STARGA Inc.
 - `parse.rs` (~10577 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
@@ -3948,7 +3949,7 @@
 - `mod.rs` (~228 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/opt/`
 
-- `collapse.rs` (~10866 tok, huge) — Copyright 2025 STARGA Inc.
+- `collapse.rs` (~11446 tok, huge) — Copyright 2025 STARGA Inc.
 - `comptime.rs` (~5881 tok, huge) — Copyright 2025 STARGA Inc.
 - `fold.rs` (~2046 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_canonical.rs` (~4402 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3968,7 +3969,7 @@
 - `mod.rs` (~4955 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `pipeline.rs` (~5129 tok, huge) — Copyright 2025 STARGA Inc.
+- `pipeline.rs` (~5258 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
 - `module_table.rs` (~4577 tok, huge) — Copyright 2025 STARGA Inc.

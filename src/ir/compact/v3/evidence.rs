@@ -70,6 +70,9 @@ use std::io::Write;
 use crate::deps::mini_sha256;
 use crate::ir::IRModule;
 use crate::ir::compact::v2::{uleb128_read, uleb128_write, zigzag_decode, zigzag_encode};
+use crate::ir::compact::v3::collapse_receipt::{
+    CollapseReceipt, decode_collapse_receipts, encode_collapse_receipts,
+};
 use crate::ir::evidence::ir_trace_hash;
 
 // Re-export the canonical evidence vocabulary from v2 — one set of types for
@@ -90,6 +93,7 @@ const TAG_BYTES: u8 = 0x02;
 
 // ─── Evidence-chain key constants ─────────────────────────────────────────────
 
+const KEY_COLLAPSE_RECEIPTS: &str = "evidence_chain.collapse_receipts";
 const KEY_DETERMINISM: &str = "evidence_chain.determinism";
 const KEY_PARENT: &str = "evidence_chain.parent";
 const KEY_SCHEMA: &str = "evidence_chain.schema";
@@ -203,8 +207,87 @@ pub fn emit_mic3_with_evidence(
         toolchain,
         trace_hash,
         None,
+        None,
     );
     out
+}
+
+/// Emit a mic@3 artifact with an `evidence_chain.*` MAP that ALSO carries
+/// Salov loop-collapse receipts (S4), plus an optional crypto-agile signature.
+///
+/// This is the CLI's `--emit-evidence` entry point: it threads the receipts the
+/// collapse pass produced (empty for any source with no `#[collapse]` fold) into
+/// the epilogue under `evidence_chain.collapse_receipts`.
+///
+/// ## Anchor invariant (Constitution Article IV)
+///
+/// The receipts live in the epilogue, OUTSIDE the `trace_hash` preimage, so the
+/// anchor (`trace_hash = SHA-256(canonical mic@3 body)`) is BYTE-IDENTICAL to
+/// [`emit_mic3_with_evidence`] on the same `ir` — a receipt-bearing build and a
+/// no-receipt build agree on both the code bytes and the `trace_hash`. When
+/// `receipts` is empty the `collapse_receipts` key is omitted entirely, so the
+/// epilogue is byte-identical to the no-receipt encoder (full back-compat).
+///
+/// Being an `evidence_chain.*` key, the receipt blob IS folded into the
+/// signature preimage, so on a signed artifact the receipts are authenticated
+/// (not strippable/swappable). Unsigned, the chain is tamper-EVIDENT.
+///
+/// # Errors
+///
+/// Returns `Err` only when a PQC signature scheme is requested on a build
+/// compiled WITHOUT the `evidence-mldsa` feature (fail-closed).
+pub fn emit_mic3_with_evidence_and_receipts(
+    ir: &IRModule,
+    substrate: &str,
+    parent: Option<[u8; 32]>,
+    determinism: Determinism,
+    toolchain: &str,
+    signing: Option<&SigningKey>,
+    receipts: &[CollapseReceipt],
+) -> Result<Vec<u8>, &'static str> {
+    let body = super::emit_mic3(ir);
+    let trace_hash = mini_sha256(&body);
+    // Encode the canonical receipt blob; `None` (omit the key) when there is
+    // nothing to attest, so the empty-receipt path stays byte-identical.
+    let blob = if receipts.is_empty() {
+        None
+    } else {
+        Some(encode_collapse_receipts(receipts))
+    };
+    let blob_ref = blob.as_deref();
+
+    let payload = match signing {
+        Some(key) => {
+            // Sign the canonical provenance preimage built from the SAME entries
+            // the MAP emits (incl. the collapse-receipt blob), so what is signed
+            // is byte-for-byte what ships.
+            let evidence_entries = build_evidence_entries(
+                substrate,
+                parent.as_ref(),
+                determinism,
+                toolchain,
+                &trace_hash,
+                blob_ref,
+            );
+            let scheme = scheme_for_key(key);
+            let preimage = build_signature_preimage(&evidence_entries, &trace_hash, scheme);
+            Some(compute_signature_payload(key, &preimage)?)
+        }
+        None => None,
+    };
+
+    let mut out = body;
+    append_map_epilogue(
+        &mut out,
+        substrate,
+        parent,
+        determinism,
+        toolchain,
+        trace_hash,
+        payload.as_ref(),
+        blob_ref,
+    );
+    Ok(out)
 }
 
 /// Emit a mic@3 artifact with an `evidence_chain.*` MAP **and** an Ed25519
@@ -287,6 +370,7 @@ pub fn emit_mic3_with_signed_evidence_scheme(
         determinism,
         toolchain,
         &trace_hash,
+        None,
     );
     // Bind the scheme (`alg`) tag into the signed preimage (see
     // `build_signature_preimage`): the scheme is read from the SAME source the
@@ -305,6 +389,7 @@ pub fn emit_mic3_with_signed_evidence_scheme(
         toolchain,
         trace_hash,
         Some(&payload),
+        None,
     );
     Ok(out)
 }
@@ -403,6 +488,142 @@ pub fn mic3_evidence_report(bytes: &[u8]) -> Result<EvidenceReport, EvidenceErro
         .map_err(|_| EvidenceError::Malformed("evidence_chain.trace_hash"))?;
 
     decode_evidence_report(&ir, &entries)
+}
+
+// ─── Collapse-receipt verification (S4) ────────────────────────────────────────
+
+/// Outcome of verifying the Salov loop-collapse receipts (S4) embedded in a
+/// mic@3 artifact. Every non-`Verified` variant except `Absent` is a
+/// verification FAILURE the CLI maps to a non-zero exit — fail-closed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CollapseVerifyStatus {
+    /// No `evidence_chain.collapse_receipts` key — nothing to re-derive.
+    Absent,
+    /// Every receipt re-derived to its claimed constant (O(1), loop not re-run)
+    /// AND that constant is materialised as a `ConstI64` in the hashed body.
+    /// Carries the number of receipts verified.
+    Verified(usize),
+    /// The receipt blob could not be decoded (truncated / unknown kind /
+    /// trailing bytes).
+    Malformed,
+    /// The blob decoded but is not in canonical form (re-encoding it yields
+    /// different bytes) — a malleability/tamper indicator.
+    NonCanonical,
+    /// A receipt's recorded `constant` is NOT the O(1) re-derivation of its
+    /// recorded parameters — the load-bearing forgery reject.
+    Rederivation {
+        /// The constant re-derived from the recorded loop parameters.
+        rederived: i64,
+        /// The (forged) constant the receipt claimed.
+        claimed: i64,
+    },
+    /// A receipt's constant re-derives consistently but is not materialised in
+    /// the hashed mic@3 body — the receipt describes a value the program does
+    /// not use (fail-closed: a receipt must bind to the attested body).
+    NotInBody {
+        /// The re-derived-and-claimed constant absent from the body.
+        constant: i64,
+    },
+}
+
+/// Verify the loop-collapse receipts (S4) in a mic@3 artifact.
+///
+/// For each receipt this RE-DERIVES the folded constant from the recorded loop
+/// parameters in O(1) (NEVER re-running the loop, ring-exact `Z/2^64`), demands
+/// bitwise equality with the claimed constant, and confirms that constant is
+/// materialised as a `ConstI64` in the mic@3 body the `trace_hash` authenticates.
+/// The blob is also re-encoded and byte-compared to reject a non-canonical form.
+///
+/// This is orthogonal to [`mic3_evidence_report`]: a caller should first confirm
+/// `trace_hash_valid` (the body is untampered), then use this to confirm the
+/// folded constants are the correct closed forms of their declared loops.
+pub fn mic3_collapse_verify(bytes: &[u8]) -> Result<CollapseVerifyStatus, EvidenceError> {
+    if bytes.len() > super::parse::MAX_MIC3_INPUT {
+        return Err(EvidenceError::Malformed(KEY_COLLAPSE_RECEIPTS));
+    }
+    // No MAP epilogue ⇒ no receipts (an unattested / plain artifact).
+    let body_end = match find_map_sentinel(bytes) {
+        Some(e) => e,
+        None => return Ok(CollapseVerifyStatus::Absent),
+    };
+    let entries = parse_map_epilogue(&bytes[body_end..])
+        .map_err(|_| EvidenceError::Malformed(KEY_COLLAPSE_RECEIPTS))?;
+
+    let blob = match find_entry(&entries, KEY_COLLAPSE_RECEIPTS) {
+        Some(ParsedValue::Bytes(b)) => b.clone(),
+        // Wrong-typed value is a tamper indicator (fail-closed).
+        Some(_) => return Err(EvidenceError::Malformed(KEY_COLLAPSE_RECEIPTS)),
+        None => return Ok(CollapseVerifyStatus::Absent),
+    };
+
+    let receipts = match decode_collapse_receipts(&blob) {
+        Ok(r) => r,
+        Err(_) => return Ok(CollapseVerifyStatus::Malformed),
+    };
+    // Canonical-encoding guard: re-encode and byte-compare (never trust the
+    // received bytes' ordering/padding).
+    if encode_collapse_receipts(&receipts) != blob {
+        return Ok(CollapseVerifyStatus::NonCanonical);
+    }
+
+    // Parse the body ONCE and collect its ConstI64 pool for the body-binding
+    // check. A parse failure here means the whole artifact is malformed — the
+    // trace_hash path reports it authoritatively; here we fail closed.
+    let ir = super::parse_mic3(&bytes[..body_end])
+        .map_err(|_| EvidenceError::Malformed(KEY_COLLAPSE_RECEIPTS))?;
+    let mut body_consts: std::collections::BTreeSet<i64> = std::collections::BTreeSet::new();
+    collect_const_i64(&ir.instrs, &mut body_consts);
+
+    for rec in &receipts {
+        // (1) Self-consistency: recorded constant == O(1) re-derivation.
+        let rederived = rec.rederive();
+        let claimed = rec.constant();
+        if rederived != claimed {
+            return Ok(CollapseVerifyStatus::Rederivation { rederived, claimed });
+        }
+        // (2) Body binding: the constant is materialised in the hashed body.
+        if !body_consts.contains(&claimed) {
+            return Ok(CollapseVerifyStatus::NotInBody { constant: claimed });
+        }
+    }
+    Ok(CollapseVerifyStatus::Verified(receipts.len()))
+}
+
+/// Recursively collect every `ConstI64` value defined anywhere in `instrs`
+/// (including inside function bodies and control-flow regions), so the
+/// collapse-receipt body-binding check can confirm a folded constant is actually
+/// materialised in the hashed body.
+fn collect_const_i64(instrs: &[crate::ir::Instr], out: &mut std::collections::BTreeSet<i64>) {
+    use crate::ir::Instr;
+    for instr in instrs {
+        if let Instr::ConstI64(_, v) = instr {
+            out.insert(*v);
+        }
+        match instr {
+            Instr::FnDef { body, .. } => collect_const_i64(body, out),
+            #[cfg(feature = "std-surface")]
+            Instr::While {
+                cond_instrs, body, ..
+            } => {
+                collect_const_i64(cond_instrs, out);
+                collect_const_i64(body, out);
+            }
+            #[cfg(feature = "std-surface")]
+            Instr::If {
+                cond_instrs,
+                then_instrs,
+                else_instrs,
+                ..
+            } => {
+                collect_const_i64(cond_instrs, out);
+                collect_const_i64(then_instrs, out);
+                collect_const_i64(else_instrs, out);
+            }
+            #[cfg(feature = "std-surface")]
+            Instr::Region { body, .. } => collect_const_i64(body, out),
+            _ => {}
+        }
+    }
 }
 
 // ─── Signature verification (RFC 0021 §6) ──────────────────────────────────────
@@ -649,6 +870,7 @@ fn build_evidence_entries<'a>(
     determinism: Determinism,
     toolchain: &'a str,
     trace_hash: &'a [u8; 32],
+    collapse_blob: Option<&'a [u8]>,
 ) -> Vec<(&'static str, MapEntryValue<'a>)> {
     let mut entries: Vec<(&'static str, MapEntryValue<'a>)> = vec![
         (
@@ -672,6 +894,16 @@ fn build_evidence_entries<'a>(
     ];
     if let Some(p) = parent {
         entries.push((KEY_PARENT, MapEntryValue::Bytes(p)));
+    }
+    // Collapse receipts (S4): the canonical TLV blob is emitted ONLY when the
+    // build actually collapsed a `#[collapse]` loop to a constant. An empty
+    // blob is never added, so a no-collapse (or no-receipt) build omits the key
+    // and is byte-identical elsewhere. The blob sits in the epilogue — OUTSIDE
+    // the trace_hash preimage — so it never moves the anchor; being an
+    // `evidence_chain.*` key it IS folded into the signature preimage, so a
+    // signed artifact's receipts cannot be stripped/swapped.
+    if let Some(blob) = collapse_blob {
+        entries.push((KEY_COLLAPSE_RECEIPTS, MapEntryValue::Bytes(blob)));
     }
     // Lexicographic sort — the canonical-encoding invariant.
     entries.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
@@ -776,6 +1008,7 @@ fn append_map_epilogue(
     toolchain: &str,
     trace_hash: [u8; 32],
     signature: Option<&SignaturePayload>,
+    collapse_blob: Option<&[u8]>,
 ) {
     // Collect the canonical evidence_chain.* entries (single source of truth,
     // shared with the signature preimage so what is signed == what is emitted).
@@ -785,6 +1018,7 @@ fn append_map_epilogue(
         determinism,
         toolchain,
         &trace_hash,
+        collapse_blob,
     );
     // Optional signature layer (sorts after every evidence_chain.* key). Bound
     // to `signature` so the borrows live through the sort + emit below. The
@@ -1756,6 +1990,230 @@ mod tests {
         assert!(
             report.trace_hash_valid,
             "untampered legacy artifact must still verify under the default anchor"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Collapse receipts (S4) — byte-identity + O(1) re-derivation + forgery
+    // -------------------------------------------------------------------------
+
+    use crate::ir::compact::v3::collapse_receipt::CollapseReceipt;
+
+    /// A `#[collapse]`-fold constant materialised in a body: `s = ConstI64(4950)`.
+    fn mod_with_const(v: i64) -> IRModule {
+        let mut m = IRModule::new();
+        let c = m.fresh();
+        m.instrs.push(Instr::ConstI64(c, v));
+        m.instrs.push(Instr::Output(c));
+        m
+    }
+
+    // (S4-a) THE byte-identity proof: receipts live in the epilogue, so they move
+    // NEITHER the mic@3 body NOR the trace_hash, and an empty-receipt emit is
+    // byte-identical to the no-receipt encoder.
+    #[test]
+    fn receipts_do_not_perturb_body_or_trace_hash() {
+        let ir = mod_with_const(4950);
+        let receipts = vec![CollapseReceipt::AffineSum {
+            a: 1,
+            b: 0,
+            lo: 0,
+            hi: 100,
+            constant: 4950,
+        }];
+        let no_r = emit_mic3_with_evidence(&ir, "cpu", None, Determinism::Deterministic, "0.10.1");
+        let with_r = emit_mic3_with_evidence_and_receipts(
+            &ir,
+            "cpu",
+            None,
+            Determinism::Deterministic,
+            "0.10.1",
+            None,
+            &receipts,
+        )
+        .unwrap();
+
+        // The mic@3 BODY prefix is byte-identical.
+        let be_n = find_map_sentinel(&no_r).unwrap();
+        let be_w = find_map_sentinel(&with_r).unwrap();
+        assert_eq!(
+            &no_r[..be_n],
+            &with_r[..be_w],
+            "collapse receipts must NOT move the mic@3 body"
+        );
+        // The trace_hash anchor is identical.
+        assert_eq!(
+            mic3_evidence_report(&no_r).unwrap().trace_hash,
+            mic3_evidence_report(&with_r).unwrap().trace_hash,
+            "collapse receipts must NOT change the trace_hash"
+        );
+        // An EMPTY receipt list is byte-identical to `emit_mic3_with_evidence`.
+        let empty = emit_mic3_with_evidence_and_receipts(
+            &ir,
+            "cpu",
+            None,
+            Determinism::Deterministic,
+            "0.10.1",
+            None,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            empty, no_r,
+            "empty receipts must be byte-identical to the no-receipt encoder"
+        );
+    }
+
+    // (S4-b) Round-trip: an emitted receipt re-derives + binds to the body.
+    #[test]
+    fn collapse_receipt_verifies_when_present_in_body() {
+        let ir = mod_with_const(4950);
+        let receipts = vec![CollapseReceipt::AffineSum {
+            a: 1,
+            b: 0,
+            lo: 0,
+            hi: 100,
+            constant: 4950,
+        }];
+        let bytes = emit_mic3_with_evidence_and_receipts(
+            &ir,
+            "cpu",
+            None,
+            Determinism::Deterministic,
+            "0.10.1",
+            None,
+            &receipts,
+        )
+        .unwrap();
+        assert_eq!(
+            mic3_collapse_verify(&bytes).unwrap(),
+            CollapseVerifyStatus::Verified(1)
+        );
+    }
+
+    // (S4-c) FORGERY: editing the receipt's claimed constant (in the epilogue,
+    // OUTSIDE the trace_hash) leaves trace_hash VALID but must be caught by O(1)
+    // re-derivation. The load-bearing soundness proof.
+    #[test]
+    fn collapse_receipt_forged_constant_fails_rederivation() {
+        let ir = mod_with_const(4950);
+        // Emit with an already-forged receipt (constant lies: 9999, real = 4950).
+        let receipts = vec![CollapseReceipt::AffineSum {
+            a: 1,
+            b: 0,
+            lo: 0,
+            hi: 100,
+            constant: 9999,
+        }];
+        let bytes = emit_mic3_with_evidence_and_receipts(
+            &ir,
+            "cpu",
+            None,
+            Determinism::Deterministic,
+            "0.10.1",
+            None,
+            &receipts,
+        )
+        .unwrap();
+        // trace_hash is still VALID (the epilogue is outside the anchor)...
+        assert!(mic3_evidence_report(&bytes).unwrap().trace_hash_valid);
+        // ...but the receipt layer fails closed on the re-derivation mismatch.
+        assert_eq!(
+            mic3_collapse_verify(&bytes).unwrap(),
+            CollapseVerifyStatus::Rederivation {
+                rederived: 4950,
+                claimed: 9999,
+            }
+        );
+    }
+
+    // (S4-d) A self-consistent receipt whose constant is NOT in the body fails
+    // closed (the receipt must bind to a value the program actually materialises).
+    #[test]
+    fn collapse_receipt_absent_from_body_fails_closed() {
+        let ir = mod_with_const(4950); // body has 4950, not 5050
+        let receipts = vec![CollapseReceipt::AffineSum {
+            a: 1,
+            b: 0,
+            lo: 0,
+            hi: 101, // Σ 0..100 = 5050 (self-consistent) but NOT in the body
+            constant: 5050,
+        }];
+        let bytes = emit_mic3_with_evidence_and_receipts(
+            &ir,
+            "cpu",
+            None,
+            Determinism::Deterministic,
+            "0.10.1",
+            None,
+            &receipts,
+        )
+        .unwrap();
+        assert!(receipts[0].is_self_consistent());
+        assert_eq!(
+            mic3_collapse_verify(&bytes).unwrap(),
+            CollapseVerifyStatus::NotInBody { constant: 5050 }
+        );
+    }
+
+    // (S4-e) An artifact with NO receipts reports Absent (back-compat), never a
+    // failure.
+    #[test]
+    fn no_receipts_reports_absent() {
+        let ir = mod_with_const(1);
+        let bytes = emit_mic3_with_evidence(&ir, "cpu", None, Determinism::Deterministic, "0.10.1");
+        assert_eq!(
+            mic3_collapse_verify(&bytes).unwrap(),
+            CollapseVerifyStatus::Absent
+        );
+    }
+
+    // (S4-f) A signed artifact's receipts are covered by the signature preimage:
+    // editing the receipt blob under a valid signature breaks the signature.
+    #[test]
+    fn signed_receipt_edit_breaks_signature() {
+        let ir = mod_with_const(4950);
+        let receipts = vec![CollapseReceipt::AffineSum {
+            a: 1,
+            b: 0,
+            lo: 0,
+            hi: 100,
+            constant: 4950,
+        }];
+        let signed = emit_mic3_with_evidence_and_receipts(
+            &ir,
+            "cpu",
+            None,
+            Determinism::Deterministic,
+            "0.10.1",
+            Some(&SigningKey::Ed25519(TEST_SEED)),
+            &receipts,
+        )
+        .unwrap();
+        // Untampered: signature valid.
+        assert!(matches!(
+            mic3_signature_status(&signed).unwrap(),
+            SignatureStatus::Valid(_)
+        ));
+        // Swap the receipt blob to a different (self-consistent) receipt.
+        let forged = vec![CollapseReceipt::GeometricPow {
+            r: 7,
+            lo: 0,
+            hi: 13,
+            constant: 96_889_010_407,
+        }];
+        let body_end = find_map_sentinel(&signed).unwrap();
+        let mut entries = parse_map_epilogue(&signed[body_end..]).unwrap();
+        let new_blob = crate::ir::compact::v3::collapse_receipt::encode_collapse_receipts(&forged);
+        for e in entries.iter_mut() {
+            if e.key == "evidence_chain.collapse_receipts" {
+                e.value = ParsedValue::Bytes(new_blob.clone());
+            }
+        }
+        assert_eq!(
+            signature_status_from_entries(&entries).unwrap(),
+            SignatureStatus::Invalid,
+            "editing the receipt blob under a valid signature must break the signature"
         );
     }
 
