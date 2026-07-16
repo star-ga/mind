@@ -388,8 +388,10 @@ fn emit_node(p: &mut Printer, node: &Node, _extra_indent: usize) {
             start,
             end,
             body,
+            attrs,
             span,
         } => {
+            emit_attrs(p, attrs);
             emit_for(p, var, start, end, body, *span);
         }
         Node::ForEach {
@@ -704,8 +706,15 @@ fn emit_body_stmts(p: &mut Printer, stmts: &[Node], close_line: usize) {
                 start,
                 end,
                 body,
+                attrs,
                 span,
             } => {
+                // A `#[collapse]` loop is ALWAYS a body statement, so the
+                // formatter MUST round-trip its attrs here or fmt silently
+                // strips the annotation (making the whole feature a no-op in any
+                // fmt-checked repo). `emit_attrs` prints each attr at the current
+                // indent on its own line, before the `for`.
+                emit_attrs(p, attrs);
                 let ind = p.indent_str();
                 p.push(&ind);
                 emit_for_inline(p, var, start, end, body, *span);
@@ -1640,6 +1649,7 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             start,
             end,
             body,
+            attrs: _,
             span,
         } => {
             emit_for_inline(p, var, start, end, body, *span);

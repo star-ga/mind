@@ -1,0 +1,63 @@
+// Salov loop-collapse — closed-form affine sums (Slice S1).
+//
+// Design partner: Valerii Salov. The loop-collapse primitive (recognising an
+// affine accumulation over a counted loop and replacing it with its exact
+// closed form) is his contribution to the MIND roadmap — the same
+// exact-arithmetic, closed-form-orbit thinking behind the Collatz / Galperin
+// determinism demos.
+//
+// A `#[collapse]` annotation on a range `for` loop that accumulates an affine
+// function of the loop variable is rewritten, BEFORE lowering, to the ring-exact
+// closed form
+//
+//     Σ_{i=lo}^{hi-1} (a*i + b)  =  a * (n·p / 2)  +  b * n
+//         n = hi - lo,  p = lo + (hi - 1),  Σi = (n/2)*p + (n%2)*(p/2)
+//
+// The `/2` is done on the EVEN factor (exactly one of n, p is even), so the
+// result is exact in Z/2^64 (wrapping i64) and byte-identical across x86 / ARM /
+// GPU — no float, ever. `#[collapse]` is prove-or-fail: a loop that is not a
+// provable affine sum is a compile error (E2201), never a silent pass-through.
+
+// ---------------------------------------------------------------------------
+// Const-bounds affine sum. Both bounds and coefficients are compile-time
+// constants, so the whole loop collapses to a SINGLE ConstI64:
+//   Σ_{i=0}^{99} i  =  99*100/2  =  4950.
+// ---------------------------------------------------------------------------
+pub fn gauss_const() -> i64 {
+    let mut s: i64 = 0;
+    #[collapse]
+    for i in 0..100 {
+        s = s + i;
+    }
+    s
+}
+
+// ---------------------------------------------------------------------------
+// Symbolic-bounds affine sum. The upper bound `n` is a parameter, so the loop
+// collapses to the branchless ring-exact closed form in `n`:
+//   Σ_{i=0}^{n-1} (3*i + 5).
+// ---------------------------------------------------------------------------
+pub fn affine_sum(n: i64) -> i64 {
+    let mut s: i64 = 0;
+    #[collapse]
+    for i in 0..n {
+        s = s + (3 * i + 5);
+    }
+    s
+}
+
+// ---------------------------------------------------------------------------
+// The un-annotated O(n) reference loop — identical body, no `#[collapse]`. It
+// is left INTACT by the compiler (collapse is opt-in) and is the witness the
+// gate compares the collapsed form against: `affine_sum(n) == affine_sum_loop(n)`
+// bit-for-bit for every n, including the i64 wrap boundary AND a reversed/empty
+// range (n <= 0), where the collapsed form's `0 < n` guard yields 0 exactly as
+// the zero-iteration loop does.
+// ---------------------------------------------------------------------------
+pub fn affine_sum_loop(n: i64) -> i64 {
+    let mut s: i64 = 0;
+    for i in 0..n {
+        s = s + (3 * i + 5);
+    }
+    s
+}

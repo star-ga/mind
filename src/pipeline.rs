@@ -254,10 +254,20 @@ pub fn compile_source_with_name(
     #[cfg(feature = "compile-timings")]
     let mut _tm = timings::Timings::start();
 
-    let module = parser::parse_with_diagnostics_in_file(source, source_name)
+    let mut module = parser::parse_with_diagnostics_in_file(source, source_name)
         .map_err(CompileError::ParseError)?;
     #[cfg(feature = "compile-timings")]
     _tm.mark("parse");
+
+    // Salov loop-collapse S1: rewrite `#[collapse]` affine `for` loops to their
+    // O(1) closed form BEFORE lowering. Opt-in only (fires on the annotation
+    // alone), so unannotated sources lower byte-identically and the keystone /
+    // cross-substrate canaries are unmoved. An annotated-but-unprovable loop
+    // fails here with a specific `E2201` (surfaced as a type-error diagnostic).
+    let collapse_diags = opt::collapse::collapse_module(&mut module, source, source_name);
+    if !collapse_diags.is_empty() {
+        return Err(CompileError::TypeError(collapse_diags));
+    }
 
     let type_diags =
         type_checker::check_module_types_in_file(&module, source, source_name, &HashMap::new());

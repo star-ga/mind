@@ -12,6 +12,9 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
+pub mod collapse;
+pub mod comptime;
 pub mod fold;
 pub mod ir_canonical;
 pub mod memory_layout;
+pub mod scev;
