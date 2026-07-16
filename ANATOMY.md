@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3133 | **Est. tokens:** ~7,490,766
-**Generated:** 2026-07-16 08:11 UTC
+**Files:** 3134 | **Est. tokens:** ~7,502,413
+**Generated:** 2026-07-16 09:16 UTC
 
 ## Token Budget Guide
 
@@ -47,7 +47,7 @@
 | `docs/mindcraft/` | 3 | ~7,023 |
 | `docs/rfcs/` | 31 | ~142,417 |
 | `docs/specs/` | 2 | ~976 |
-| `examples/` | 26 | ~44,771 |
+| `examples/` | 27 | ~45,915 |
 | `examples/bimap_currency/` | 3 | ~780 |
 | `examples/bimap_pairs/` | 2 | ~801 |
 | `examples/c/` | 2 | ~400 |
@@ -399,7 +399,7 @@
 | `src/lint/rules/` | 6 | ~9,211 |
 | `src/mlir/` | 3 | ~5,905 |
 | `src/ops/` | 3 | ~4,764 |
-| `src/opt/` | 7 | ~25,568 |
+| `src/opt/` | 7 | ~36,071 |
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 2 | ~20,277 |
 | `src/phf/` | 1 | ~4,955 |
@@ -792,6 +792,9 @@
 - `distribution.cpp` (~1217 tok, large)
 - `distribution_interp_f64.mind` (~1231 tok, large) — Deterministic IEEE-754 float64 piecewise-LINEAR density interpolation kernel,
 - `README.md` (~1175 tok, large) — Cross-ISA determinism: a piecewise-linear density kernel
+### `examples/`
+
+- `dottie_collapse.mind` (~1144 tok, large) — Salov loop-collapse — Q16.16 fixed-point ITERATION collapse (Slice S3).
 ### `examples/emit_ir/`
 
 - `bootstrap_smoke.py` (~2890 tok, huge)
@@ -3946,13 +3949,13 @@
 - `mod.rs` (~228 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/opt/`
 
-- `collapse.rs` (~6686 tok, huge) — Copyright 2025 STARGA Inc.
-- `comptime.rs` (~1160 tok, large) — Copyright 2025 STARGA Inc.
+- `collapse.rs` (~10866 tok, huge) — Copyright 2025 STARGA Inc.
+- `comptime.rs` (~5881 tok, huge) — Copyright 2025 STARGA Inc.
 - `fold.rs` (~2046 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_canonical.rs` (~4402 tok, huge) — Copyright 2025 STARGA Inc.
 - `memory_layout.rs` (~4110 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~192 tok, small) — Copyright 2025 STARGA Inc.
-- `scev.rs` (~6972 tok, huge) — Copyright 2025 STARGA Inc.
+- `scev.rs` (~8574 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/package/`
 
 - `manifest.rs` (~310 tok, medium) — Copyright 2025 STARGA Inc.
