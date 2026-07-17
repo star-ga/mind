@@ -3083,19 +3083,58 @@ impl LoweringContext {
                         // no existing `as u64` result reached a sign-sensitive op
                         // (E2014-rejected), so no artifact changes.
                         _ => {
-                            let (phys, is_i1) = if self.i1_values.contains(&src) {
-                                ("i1", true)
+                            let src_kind = self.values.get(&src).cloned();
+                            let is_i1 = self.i1_values.contains(&src);
+                            let phys = if is_i1 {
+                                "i1"
                             } else {
-                                (
-                                    match self.values.get(&src) {
-                                        Some(ValueKind::ScalarI32) | Some(ValueKind::ScalarU32) => {
-                                            "i32"
-                                        }
-                                        _ => "i64",
-                                    },
-                                    false,
-                                )
+                                match &src_kind {
+                                    Some(ValueKind::ScalarI32) | Some(ValueKind::ScalarU32) => {
+                                        "i32"
+                                    }
+                                    _ => "i64",
+                                }
                             };
+                            // A PHYSICALLY-NARROW i32/u32 source (a narrow-int
+                            // param/field or a narrow-arm result — those are the
+                            // only values carried as physical i32; the mask-based
+                            // `as u32`/`as i32` truncation registers `ScalarI64`
+                            // and is physically i64) makes `as i64`/`as u64` a
+                            // genuine WIDENING, not an identity reinterpret. Emit a
+                            // real extension to i64 so the 64-bit-kind `dst` is
+                            // physically i64: a same-type `arith.bitcast %v : i32
+                            // to i32` left the value 32-bit while `as u64` tagged it
+                            // `ScalarU64`, so a downstream i64 op consumed a 32-bit
+                            // SSA value — the `'i64' vs 'i32'` width mismatch
+                            // mlir-opt rejects (mind-flow build blocker). Extension
+                            // signedness follows the SOURCE kind — `extsi` for a
+                            // signed i32, `extui` for an unsigned u32 (a u32 value
+                            // widens value-preserving to a non-negative i64) — never
+                            // silently truncating or sign-flipping. The result kind
+                            // follows the 64-bit TARGET (`ScalarU64` for `as u64`,
+                            // `ScalarI64` for `as i64`). A source that was never
+                            // 32-bit physical (i64/u64/pointer/None, or i1) keeps the
+                            // historical identity same-type bitcast below, so its
+                            // emitted bytes are byte-identical.
+                            if phys == "i32" {
+                                let src_signed = matches!(src_kind, Some(ValueKind::ScalarI32));
+                                let ext = if src_signed {
+                                    "arith.extsi"
+                                } else {
+                                    "arith.extui"
+                                };
+                                self.emit_line(&format!(
+                                    "    %{0} = {1} %{2} : i32 to i64",
+                                    dst.0, ext, src.0
+                                ));
+                                let kind = if unsigned {
+                                    ValueKind::ScalarU64
+                                } else {
+                                    ValueKind::ScalarI64
+                                };
+                                self.values.insert(*dst, kind);
+                                return Ok(());
+                            }
                             self.emit_line(&format!(
                                 "    %{0} = arith.bitcast %{1} : {2} to {2}",
                                 dst.0, src.0, phys
@@ -3105,7 +3144,7 @@ impl LoweringContext {
                                 // selection) regardless of the integer source kind.
                                 self.values.insert(*dst, ValueKind::ScalarU64);
                             } else {
-                                match self.values.get(&src) {
+                                match &src_kind {
                                     Some(k) => {
                                         let k = k.clone();
                                         self.values.insert(*dst, k);
