@@ -1346,6 +1346,49 @@ fn is_narrow_scalar_ty(ty: &TypeAnn) -> bool {
         || matches!(scalar_uint_cast_width(ty), Some(w) if w < 64)
 }
 
+/// True when `ty` is a sub-i64 integer that reaches a fn SIGNATURE as
+/// `TypeAnn::Named` (`i8`/`u8`/`i16`/`u16`) — the widths lowered by the
+/// i64-SLOT narrow-signature ABI: the MLIR `func.func` signature stays
+/// i64-typed (`type_ann_to_abi_mlir` maps `Named` to `"i64"`), a PARAM is
+/// materialised at its declared width on fn entry (sext shift-pair for
+/// signed, zext mask for unsigned — same forms as `mask_narrow_let`), and a
+/// RETURN value is masked to its declared width at every return site
+/// (`mask_narrow_ret`). `i32`/`u32` are EXCLUDED: they lower via the
+/// dedicated PHYSICAL-i32 MLIR ABI (`ScalarI32`/`ScalarU32` ValueKinds) and
+/// masking them here would change the byte-identical i32 artifact stream.
+/// Both value halves stay exact in the i64 slot for 8/16-bit widths (an i8
+/// sign-extends to a genuinely-negative i64; a u8/u16 zero-extends to a
+/// small positive i64), so the ordinary SIGNED i64 op selection downstream
+/// is correct with no unsigned-op special-casing.
+#[cfg(feature = "std-surface")]
+fn is_named_narrow_sig_ty(ty: &TypeAnn) -> bool {
+    matches!(ty, TypeAnn::Named(n) if matches!(n.as_str(), "i8" | "u8" | "i16" | "u16"))
+}
+
+/// Mask/sign-adjust a RETURN value to the enclosing fn's declared narrow
+/// signature width (`-> i8/u8/i16/u16`), reading the per-fn
+/// `CURRENT_RET_TYPE` scope. The i64-slot narrow-signature ABI requires the
+/// callee to hand back the canonical extended representation (zero-extended
+/// unsigned / sign-extended signed), so `fn add_u8(..) -> u8` returning a
+/// 300 sum yields 44, and an i8 return of 200 yields -56 in the i64 slot.
+/// A no-op (value returned verbatim, zero extra IR) for every fn whose
+/// declared return is not a Named 8/16-bit integer — i64/i32/u32/float/
+/// handle/array returns and the keystone are byte-identical.
+#[cfg(feature = "std-surface")]
+fn mask_narrow_ret(ir: &mut IRModule, val: ValueId) -> ValueId {
+    let ann = CURRENT_RET_TYPE.with(|r| {
+        r.borrow()
+            .as_ref()
+            .filter(|t| is_named_narrow_sig_ty(t))
+            .cloned()
+    });
+    if ann.is_some() {
+        mask_narrow_let(ir, &ann, val)
+    } else {
+        val
+    }
+}
+
 thread_local! {
     /// Per-fn registry of NARROW-typed locals/params (`name -> declared TypeAnn`).
     /// A `let c: u8 = …` masks its initializer to 8 bits (`mask_narrow_let`), but a
@@ -4146,6 +4189,27 @@ fn lower_expr(
                 }
             }
 
+            // NARROW-SIGNATURE ABI: an `i8`/`u8`/`i16`/`u16` param arrives in an
+            // i64 SLOT (the `func.func` signature stays i64-typed). Materialise
+            // it at its declared width ON ENTRY — zext `BitAnd` mask for
+            // unsigned, sext shift-pair for signed, the exact forms
+            // `mask_narrow_let` gives a narrow `let`'s initializer — and rebind
+            // the name to the masked value, so every use in the body sees the
+            // canonical narrow representation regardless of what the caller put
+            // in the slot (`add_u8(300, 1)` sees 44). The raw `Instr::Param`
+            // keeps the ABI-slot value; `param_pairs` records it unchanged.
+            // Emits ZERO instructions for a fn without a Named narrow param
+            // (the keystone included), so the byte-identity hot path is
+            // untouched. i32/u32 params are excluded — they lower via the
+            // dedicated physical-i32 MLIR ABI (see `is_named_narrow_sig_ty`).
+            #[cfg(feature = "std-surface")]
+            for (prm, (pname, pid)) in params.iter().zip(param_pairs.iter()) {
+                if is_named_narrow_sig_ty(&prm.ty) {
+                    let masked = mask_narrow_let(&mut fn_ir, &Some(prm.ty.clone()), *pid);
+                    fn_env.insert(pname.clone(), masked);
+                }
+            }
+
             // Part 1 (generics): expose this fn's params as inferable concrete
             // types so a generic call `id(p)` over a scalar param monomorphizes.
             // No-op (no allocation) unless the module declares templates; the
@@ -4207,6 +4271,10 @@ fn lower_expr(
                                 &fn_struct_env,
                                 receiver_types,
                             );
+                            // Narrow-signature ABI: mask a `-> i8/u8/i16/u16`
+                            // return to its declared width (no-op otherwise).
+                            #[cfg(feature = "std-surface")]
+                            let lowered = mask_narrow_ret(&mut fn_ir, lowered);
                             ret_id = Some(lowered);
                         }
                         fn_ir.instrs.push(Instr::Return { value: ret_id });
@@ -4418,6 +4486,16 @@ fn lower_expr(
                 }
             }
 
+            // Narrow-signature ABI: the IMPLICIT tail-expression return of a
+            // `-> i8/u8/i16/u16` fn masks to the declared width too. Skipped
+            // when the last statement is an explicit `Return` (already masked
+            // above — avoids emitting a redundant second mask). No-op for a
+            // non-narrow return type.
+            #[cfg(feature = "std-surface")]
+            if !matches!(body.last(), Some(ast::Node::Return { .. })) {
+                ret_id = ret_id.map(|v| mask_narrow_ret(&mut fn_ir, v));
+            }
+
             // Add function definition to IR, propagating the REAP threshold
             // from the AST attribute if present.
             ir.instrs.push(Instr::FnDef {
@@ -4449,6 +4527,10 @@ fn lower_expr(
                     lower_expr(v, ir, env, struct_env, receiver_types)
                 }
             });
+            // Narrow-signature ABI: mask a `-> i8/u8/i16/u16` return to its
+            // declared width (no-op for every other return type).
+            #[cfg(feature = "std-surface")]
+            let ret_val = ret_val.map(|v| mask_narrow_ret(ir, v));
             ir.instrs.push(Instr::Return { value: ret_val });
             let id = ir.fresh();
             ir.instrs.push(Instr::ConstI64(id, 0));
@@ -4698,6 +4780,10 @@ fn lower_expr(
                                 )
                             }
                         });
+                        // Narrow-signature ABI: mask a `-> i8/u8/i16/u16`
+                        // return to its declared width (no-op otherwise).
+                        #[cfg(feature = "std-surface")]
+                        let ret_val = ret_val.map(|v| mask_narrow_ret(&mut then_ir, v));
                         then_ir.instrs.push(Instr::Return { value: ret_val });
                         if let Some(rv) = ret_val {
                             then_result = rv;
@@ -4888,6 +4974,10 @@ fn lower_expr(
                                     )
                                 }
                             });
+                            // Narrow-signature ABI: mask a `-> i8/u8/i16/u16`
+                            // return to its declared width (no-op otherwise).
+                            #[cfg(feature = "std-surface")]
+                            let ret_val = ret_val.map(|v| mask_narrow_ret(&mut else_ir, v));
                             else_ir.instrs.push(Instr::Return { value: ret_val });
                             if let Some(rv) = ret_val {
                                 else_result = rv;
