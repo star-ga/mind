@@ -17,7 +17,7 @@ use common::mindc_bin;
 use std::path::PathBuf;
 use std::process::Command;
 
-/// Get the path to the mindc binary from the cargo target directory
+// Get the path to the mindc binary from the cargo target directory
 // mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
 /// Check if the mindc binary exists, skip test if not

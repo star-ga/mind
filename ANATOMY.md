@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3136 | **Est. tokens:** ~7,486,716
-**Generated:** 2026-07-17 05:24 UTC
+**Files:** 3136 | **Est. tokens:** ~7,486,713
+**Generated:** 2026-07-17 05:29 UTC
 
 ## Token Budget Guide
 
@@ -28,7 +28,7 @@
 | `.arch-mind/` | 2 | ~644 |
 | `audits/` | 6 | ~607 |
 | `bench/` | 2 | ~1,772 |
-| `benches/` | 27 | ~80,315 |
+| `benches/` | 27 | ~80,318 |
 | `bench/fft/` | 8 | ~8,060 |
 | `benchmarks/` | 12 | ~20,415 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
@@ -412,7 +412,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~192,637 |
-| `tests/` | 289 | ~495,668 |
+| `tests/` | 289 | ~495,662 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -529,14 +529,14 @@
 - `bench_aes_gcm.rs` (~2590 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `bench_ecdsa_p256.rs` (~2786 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `bench_hkdf.rs` (~4424 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `bench_hpack.rs` (~3926 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `bench_hpack.rs` (~3927 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `bench_http2_frame.rs` (~5035 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `bench_keccak.rs` (~2576 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `bench_mlkem768.rs` (~3700 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `bench_rsa_pss.rs` (~3317 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `bench_sha256.rs` (~2594 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `bench_tls13_record.rs` (~6120 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `bench_x25519.rs` (~2468 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `bench_tls13_record.rs` (~6121 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `bench_x25519.rs` (~2469 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `bench_x509.rs` (~3990 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `cerebras_stencil.rs` (~831 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `compiler.rs` (~3782 tok, huge) — Small program: Simple matrix multiplication
@@ -4121,7 +4121,7 @@
 - `conformance.rs` (~129 tok, small)
 - `CONFORMANCE_TESTS.md` (~1225 tok, large) — MIND Conformance Test Corpus
 - `const_folding.rs` (~246 tok, medium) — Copyright 2025 STARGA Inc.
-- `continue_in_match_arm_run.rs` (~1221 tok, large) — Copyright 2025 STARGA Inc.
+- `continue_in_match_arm_run.rs` (~1222 tok, large) — Copyright 2025 STARGA Inc.
 - `conv2d_exec.rs` (~620 tok, large) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~3194 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_types.rs` (~366 tok, medium) — Copyright 2025 STARGA Inc.
@@ -4468,7 +4468,7 @@
 - `parse_phase10_surface.rs` (~4815 tok, huge) — Parse-target tests for Phase 10.5 / 10.6 surface-syntax acceptance.
 - `parser_trivia.rs` (~2706 tok, huge) — Copyright 2025 STARGA Inc.
 - `parser_unsigned_i64_literals.rs` (~1544 tok, huge) — Copyright 2025 STARGA Inc.
-- `parse_try_operator.rs` (~1196 tok, large) — Copyright 2025 STARGA Inc.
+- `parse_try_operator.rs` (~1193 tok, large) — Copyright 2025 STARGA Inc.
 - `pattern_guard_run.rs` (~945 tok, large) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
 - `phase_g_keystone_bootstrap.rs` (~6353 tok, huge) — Copyright 2025 STARGA Inc.
 - `pipeline.rs` (~1476 tok, large) — Copyright 2025 STARGA Inc.
@@ -4480,7 +4480,7 @@
 - `relu_exec.rs` (~472 tok, medium) — Copyright 2025 STARGA Inc.
 - `relu_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `repl_basic.rs` (~523 tok, large) — Copyright 2025 STARGA Inc.
-- `repro_audit_cycle2.rs` (~1804 tok, huge) — Craft a mic@3 artifact whose total length is N bytes, but whose last
+- `repro_audit_cycle2.rs` (~1800 tok, huge) — Craft a mic@3 artifact whose total length is N bytes, but whose last
 - `resolve_fn_body.rs` (~979 tok, large) — Copyright 2025 STARGA Inc.
 - `result_option_prelude_run.rs` (~910 tok, large) — Copyright 2025 STARGA Inc.
 - `return_cond_type_reject.rs` (~3849 tok, huge) — Copyright 2025 STARGA Inc.
