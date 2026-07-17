@@ -6557,6 +6557,20 @@ fn lower_expr(
         // does not grow the Rust call-stack linearly.
         #[cfg(feature = "std-surface")]
         ast::Node::ArrayLit { elements, .. } => {
+            // A literal with any NON-const element cannot be represented by the
+            // const-array path at all — `extract_const_i64(e).unwrap_or(0)`
+            // coerced every such element to 0, a silent miscompile (mind-flow's
+            // `let args = [ Expr.StringLit { .. } ]` lowered to a zeroed
+            // `ConstArray` whose value then tripped the MLIR "non-i64 argument
+            // to call `decorator_new`" guard when passed to an `array<Expr>`
+            // param). Route it onto the std.vec heap runtime (vec_new +
+            // vec_push of each properly-lowered element → an opaque i64
+            // handle), matching the annotated-`Let`, call-argument and
+            // return-position routings. All-const literals (genuine LUTs) and
+            // the empty literal keep the ConstArray path byte-identically.
+            if !elements.is_empty() && elements.iter().any(|e| extract_const_i64(e).is_none()) {
+                return lower_array_surface_lit(elements, ir, env, struct_env, receiver_types);
+            }
             let values: Vec<i64> = elements
                 .iter()
                 .map(|e| extract_const_i64(e).unwrap_or(0))
