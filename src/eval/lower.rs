@@ -1640,6 +1640,27 @@ type FieldPlacement = (i64, i64, bool);
 #[cfg(feature = "std-surface")]
 type StructLayout = (Vec<FieldPlacement>, i64, bool);
 
+/// Resolve a (possibly module-qualified) struct-literal / receiver type name to
+/// the key under which its schema is actually registered in
+/// `struct_defs`/`struct_field_types`. Those tables are keyed by the bare
+/// `StructDef.name` (both the per-module `StructDef` arm and the whole-project
+/// `build_global_enums` merge use the unqualified name), but a CROSS-MODULE
+/// reference names the type by its module path (`contract.DispatchResult`). A
+/// same-file name has no `.` and is already a key, so this is the identity for
+/// single-module lowering (the keystone stays byte-identical). Mirrors the
+/// enum-variant dotnorm used for `StructLit` enum variants.
+#[cfg(feature = "std-surface")]
+fn struct_key_for<'a>(ir: &IRModule, name: &'a str) -> &'a str {
+    if ir.struct_defs.contains_key(name) {
+        name
+    } else {
+        match name.rsplit_once('.') {
+            Some((_, tail)) if ir.struct_defs.contains_key(tail) => tail,
+            _ => name,
+        }
+    }
+}
+
 #[cfg(feature = "std-surface")]
 fn struct_layout(ir: &IRModule, name: &str) -> Option<StructLayout> {
     let field_types = ir.struct_field_types.get(name)?;
@@ -2047,9 +2068,10 @@ fn receiver_collection_sentinel(
                 .get(span)
                 .cloned()
                 .or_else(|| receiver_struct_type(base, ir, struct_env))?;
-            let fields = ir.struct_defs.get(&sname)?;
+            let sname = struct_key_for(ir, &sname);
+            let fields = ir.struct_defs.get(sname)?;
             let idx = fields.iter().position(|f| f == field)?;
-            let field_ty = ir.struct_field_types.get(&sname)?.get(idx)?;
+            let field_ty = ir.struct_field_types.get(sname)?.get(idx)?;
             collection_sentinel_for_ty(field_ty)
         }
         // `coll[i]` — the sentinel of the ELEMENT type of `coll`. Resolves a
@@ -2067,9 +2089,10 @@ fn receiver_collection_sentinel(
                     .get(span)
                     .cloned()
                     .or_else(|| receiver_struct_type(obj, ir, struct_env))?;
-                let fields = ir.struct_defs.get(&sname)?;
+                let sname = struct_key_for(ir, &sname);
+                let fields = ir.struct_defs.get(sname)?;
                 let idx = fields.iter().position(|f| f == field)?;
-                let field_ty = ir.struct_field_types.get(&sname)?.get(idx)?;
+                let field_ty = ir.struct_field_types.get(sname)?.get(idx)?;
                 let elem = match field_ty {
                     TypeAnn::Generic { name, args } if name == "array" => args.first(),
                     _ => None,
@@ -2095,8 +2118,9 @@ fn receiver_struct_type(
     match receiver {
         ast::Node::Lit(Literal::Ident(v), _) => {
             let s = struct_env.get(v)?;
-            if ir.struct_defs.contains_key(s) {
-                Some(s.clone())
+            let key = struct_key_for(ir, s);
+            if ir.struct_defs.contains_key(key) {
+                Some(key.to_string())
             } else {
                 None
             }
@@ -2107,10 +2131,13 @@ fn receiver_struct_type(
             ..
         } => {
             let sname = receiver_struct_type(base, ir, struct_env)?;
-            let fields = ir.struct_defs.get(&sname)?;
+            let sname = struct_key_for(ir, &sname);
+            let fields = ir.struct_defs.get(sname)?;
             let idx = fields.iter().position(|f| f == field)?;
-            match ir.struct_field_types.get(&sname)?.get(idx)? {
-                TypeAnn::Named(n) if ir.struct_defs.contains_key(n) => Some(n.clone()),
+            match ir.struct_field_types.get(sname)?.get(idx)? {
+                TypeAnn::Named(n) if ir.struct_defs.contains_key(struct_key_for(ir, n)) => {
+                    Some(struct_key_for(ir, n).to_string())
+                }
                 _ => None,
             }
         }
@@ -6132,8 +6159,27 @@ fn lower_expr(
                     }
                 }
             }
+            // Resolve the schema key. A CROSS-MODULE struct literal names the
+            // type by its module-qualified path (`contract.DispatchResult`),
+            // but `struct_defs`/`struct_field_types` are keyed by the bare
+            // `StructDef.name` (`DispatchResult`) — both from the per-module
+            // `StructDef` arm and the whole-project `build_global_enums` merge.
+            // Without normalizing, the canonical field order, the width-aware
+            // layout, AND the array-field detection in `lower_struct_field_value`
+            // all miss for an imported struct — the last of which stores a
+            // non-i64 aggregate (ConstArray/tensor) into an i64 field slot and
+            // trips the `non-i64 argument to call __mind_store_i64` blocker. A
+            // same-file struct name has no `.` and is already a `struct_defs`
+            // key, so `struct_key == name` and single-module lowering (the
+            // keystone) is byte-identical. Mirrors the enum-variant dotnorm at
+            // the top of this arm.
+            #[cfg(feature = "std-surface")]
+            let struct_key: &str = struct_key_for(ir, name.as_str());
+            #[cfg(not(feature = "std-surface"))]
+            let struct_key: &str = name.as_str();
+
             // Canonical field order, if the schema is known.
-            let canonical = ir.struct_defs.get(name).cloned();
+            let canonical = ir.struct_defs.get(struct_key).cloned();
             let order: Vec<&ast::StructLitField> = match canonical {
                 Some(names) => names
                     .iter()
@@ -6147,7 +6193,7 @@ fn lower_expr(
             // knows this struct. `all_i64 == true` (every field 8 bytes, tightly
             // packed at 8*i) routes to the IDENTICAL legacy IR below so the
             // self-host records (all i64) stay byte-identical.
-            let layout = struct_layout(ir, name).filter(|(l, _, _)| l.len() == order.len());
+            let layout = struct_layout(ir, struct_key).filter(|(l, _, _)| l.len() == order.len());
             let all_i64 = layout.as_ref().map(|(_, _, a)| *a).unwrap_or(true);
 
             if all_i64 {
@@ -6178,7 +6224,7 @@ fn lower_expr(
                 for (i, f) in order.iter().enumerate() {
                     #[cfg(feature = "std-surface")]
                     let value = lower_struct_field_value(
-                        name,
+                        struct_key,
                         &f.name,
                         &f.value,
                         ir,
@@ -6228,7 +6274,7 @@ fn lower_expr(
             for (i, f) in order.iter().enumerate() {
                 #[cfg(feature = "std-surface")]
                 let value = lower_struct_field_value(
-                    name,
+                    struct_key,
                     &f.name,
                     &f.value,
                     ir,
@@ -6330,13 +6376,20 @@ fn lower_expr(
                 }
             }
             // ── Step 1: cheap Ident-bound lookup ─────────────────────
+            // `struct_key_for` normalizes a module-qualified receiver type
+            // (`contract.DispatchResult`) to the bare key its schema is
+            // registered under, so a cross-module struct's field offset
+            // resolves (else the receiver falls to a null-address placeholder
+            // and any collection field read segfaults). Identity for same-file
+            // names — the keystone is byte-identical.
             let step1 = match receiver.as_ref() {
                 ast::Node::Lit(Literal::Ident(var_name), _) => {
                     struct_env.get(var_name).and_then(|struct_name| {
+                        let key = struct_key_for(ir, struct_name);
                         ir.struct_defs
-                            .get(struct_name)
+                            .get(key)
                             .and_then(|fields| fields.iter().position(|f| f == field))
-                            .map(|idx| (Some(var_name.clone()), idx, struct_name.clone()))
+                            .map(|idx| (Some(var_name.clone()), idx, key.to_string()))
                     })
                 }
                 _ => None,
@@ -6345,10 +6398,11 @@ fn lower_expr(
             // Only consulted when Step 1 fast-path failed.
             let step2 = if step1.is_none() {
                 receiver_types.get(span).and_then(|struct_name| {
+                    let key = struct_key_for(ir, struct_name);
                     ir.struct_defs
-                        .get(struct_name)
+                        .get(key)
                         .and_then(|fields| fields.iter().position(|f| f == field))
-                        .map(|idx| (None::<String>, idx, struct_name.clone()))
+                        .map(|idx| (None::<String>, idx, key.to_string()))
                 })
             } else {
                 None
@@ -6471,13 +6525,20 @@ fn lower_expr(
             span,
         } => {
             // ── Step 1: cheap Ident-bound lookup ─────────────────────
+            // `struct_key_for` normalizes a module-qualified receiver type
+            // (`contract.DispatchResult`) to the bare key its schema is
+            // registered under, so a cross-module struct's field offset
+            // resolves (else the receiver falls to a null-address placeholder
+            // and any collection field read segfaults). Identity for same-file
+            // names — the keystone is byte-identical.
             let step1 = match receiver.as_ref() {
                 ast::Node::Lit(Literal::Ident(var_name), _) => {
                     struct_env.get(var_name).and_then(|struct_name| {
+                        let key = struct_key_for(ir, struct_name);
                         ir.struct_defs
-                            .get(struct_name)
+                            .get(key)
                             .and_then(|fields| fields.iter().position(|f| f == field))
-                            .map(|idx| (Some(var_name.clone()), idx, struct_name.clone()))
+                            .map(|idx| (Some(var_name.clone()), idx, key.to_string()))
                     })
                 }
                 _ => None,
@@ -6486,10 +6547,11 @@ fn lower_expr(
             // Only consulted when Step 1 fast-path failed.
             let step2 = if step1.is_none() {
                 receiver_types.get(span).and_then(|struct_name| {
+                    let key = struct_key_for(ir, struct_name);
                     ir.struct_defs
-                        .get(struct_name)
+                        .get(key)
                         .and_then(|fields| fields.iter().position(|f| f == field))
-                        .map(|idx| (None::<String>, idx, struct_name.clone()))
+                        .map(|idx| (None::<String>, idx, key.to_string()))
                 })
             } else {
                 None
