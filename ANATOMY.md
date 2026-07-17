@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3134 | **Est. tokens:** ~7,483,988
-**Generated:** 2026-07-16 11:14 UTC
+**Files:** 3136 | **Est. tokens:** ~7,486,716
+**Generated:** 2026-07-17 05:24 UTC
 
 ## Token Budget Guide
 
@@ -376,7 +376,7 @@
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
 | `src/` | 7 | ~18,240 |
-| `src/ast/` | 1 | ~8,291 |
+| `src/ast/` | 1 | ~8,619 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 2 | ~32,573 |
 | `src/build/` | 2 | ~15,368 |
@@ -390,7 +390,7 @@
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
-| `src/fmt/` | 3 | ~20,091 |
+| `src/fmt/` | 3 | ~20,152 |
 | `src/ir/` | 5 | ~46,820 |
 | `src/ir/compact/` | 3 | ~15,267 |
 | `src/ir/compact/v2/` | 8 | ~38,037 |
@@ -408,11 +408,11 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,999 |
-| `src/type_checker/` | 1 | ~11,681 |
+| `src/type_checker/` | 1 | ~11,716 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~192,637 |
-| `tests/` | 287 | ~493,364 |
+| `tests/` | 289 | ~495,668 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -3806,7 +3806,7 @@
 - `SKILL.md` (~6002 tok, huge) — Write MIND Code
 ### `src/ast/`
 
-- `mod.rs` (~8291 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~8619 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~3890 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3887,7 +3887,7 @@
 
 - `cli.rs` (~3873 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~15624 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~15685 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4693 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4000,7 +4000,7 @@
 - `mod.rs` (~5999 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `resolve.rs` (~11681 tok, huge) — Copyright 2025 STARGA Inc.
+- `resolve.rs` (~11716 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
@@ -4468,6 +4468,7 @@
 - `parse_phase10_surface.rs` (~4815 tok, huge) — Parse-target tests for Phase 10.5 / 10.6 surface-syntax acceptance.
 - `parser_trivia.rs` (~2706 tok, huge) — Copyright 2025 STARGA Inc.
 - `parser_unsigned_i64_literals.rs` (~1544 tok, huge) — Copyright 2025 STARGA Inc.
+- `parse_try_operator.rs` (~1196 tok, large) — Copyright 2025 STARGA Inc.
 - `pattern_guard_run.rs` (~945 tok, large) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
 - `phase_g_keystone_bootstrap.rs` (~6353 tok, huge) — Copyright 2025 STARGA Inc.
 - `pipeline.rs` (~1476 tok, large) — Copyright 2025 STARGA Inc.
@@ -4665,6 +4666,7 @@
 - `tls13_keyschedule_driver.py` (~2863 tok, huge) — # Official-vector driver for std/tls13_keyschedule.mind (pure-MIND TLS 1.3 key
 - `tls13_record_driver.py` (~3051 tok, huge) — # Official-vector driver for std/tls13_record.mind (pure-MIND TLS 1.3 record
 - `transpose_preview.rs` (~269 tok, medium) — Copyright 2025 STARGA Inc.
+- `try_operator_run.rs` (~1108 tok, large) — Copyright 2025 STARGA Inc.
 - `tuple_destructure_run.rs` (~1162 tok, large) — Copyright 2025 STARGA Inc.
 - `type_ann_check.rs` (~330 tok, medium) — Copyright 2025 STARGA Inc.
 - `type_ann_parse.rs` (~584 tok, large) — Copyright 2025 STARGA Inc.

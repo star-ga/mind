@@ -2962,6 +2962,9 @@ fn descend_for_continue(node: &mut ast::Node, step: &ast::Node) {
             }
         }
         N::Assert { cond, .. } => descend_for_continue(cond, step),
+        // W1.5f: postfix `?` wraps a single operand expression — descend into
+        // it (a loop-targeting `continue` may hide behind `f(if c {continue})?`).
+        N::Try { inner, .. } => descend_for_continue(inner, step),
         // ---- tensor / autodiff call wrappers (Box<Node> operands) --------
         N::CallGrad { loss, .. } => descend_for_continue(loss, step),
         N::CallTensorSum { x, .. }
@@ -5217,6 +5220,19 @@ fn lower_expr(
             });
             dst
         }
+        // W1.5f: postfix `?` (`Node::Try`) — desugar to the SAME `match`
+        // W1.5a already lowers, then recurse. No new IR opcode: `?` is byte-for-
+        // byte the hand-written `match inner { Ok(v) => v, Err(e) => return
+        // Err(e) }` (or the `Some`/`None` twin), so it inherits the keystone-
+        // stable match/return machinery verbatim. The `is_option` family was
+        // fixed by the parser from the enclosing fn's return type, so this arm
+        // is feature-config-independent.
+        ast::Node::Try {
+            inner, is_option, ..
+        } => {
+            let desugared = build_try_desugar(inner, *is_option);
+            lower_expr(&desugared, ir, env, struct_env, receiver_types)
+        }
         // Phase 10.7 / "finish MIND" Step 1: `match scrutinee { arms }` —
         // DESUGAR to a right-nested chain of `Instr::If`. Each integer/bool
         // (`Literal::Int`) arm becomes `if scrutinee == <lit> { body } else
@@ -7435,6 +7451,76 @@ fn emit_boxed_enum_record(
 /// are handled by later steps.
 ///
 /// The result is a pure AST rewrite: it constructs standard `Node::If` /
+/// Build the `match` a postfix `?` (`Node::Try`, W1.5f) desugars to. Returns
+/// the AST the `Node::Try` lowering arm recurses into — never lowered directly.
+///
+///   Result (`is_option == false`):  match inner {
+///                                        Ok(v)  => v,
+///                                        Err(e) => return Err(e),
+///                                    }
+///   Option (`is_option == true`):   match inner {
+///                                        Some(v) => v,
+///                                        None    => return None,
+///                                    }
+///
+/// The two payload bindings are named from the operator's source position so
+/// two `?` in one expression never share a binding name; the names are
+/// position-derived (deterministic) and never reach the SSA / mic@3 artifact
+/// (lowering keys on value numbers, not identifiers). This is byte-for-byte the
+/// hand-written form, so `?` adds no soundness surface over an explicit `match`.
+fn build_try_desugar(inner: &ast::Node, is_option: bool) -> ast::Node {
+    let span = inner.span();
+    let ok_bind = format!("__try_ok_{}", span.start());
+    let err_bind = format!("__try_err_{}", span.start());
+    let ok_variant = if is_option { "Some" } else { "Ok" };
+    // `Ok(v) => v` / `Some(v) => v`
+    let ok_arm = ast::MatchArm {
+        pattern: ast::Pattern::EnumVariant {
+            path: ok_variant.to_string(),
+            args: vec![ast::Pattern::Ident(ok_bind.clone())],
+        },
+        guard: None,
+        body: ast::Node::Lit(Literal::Ident(ok_bind), span),
+        span,
+    };
+    // `Err(e) => return Err(e)` / `None => return None`
+    let (err_pattern, err_value) = if is_option {
+        (
+            ast::Pattern::EnumVariant {
+                path: "None".to_string(),
+                args: Vec::new(),
+            },
+            ast::Node::Lit(Literal::Ident("None".to_string()), span),
+        )
+    } else {
+        (
+            ast::Pattern::EnumVariant {
+                path: "Err".to_string(),
+                args: vec![ast::Pattern::Ident(err_bind.clone())],
+            },
+            ast::Node::Call {
+                callee: "Err".to_string(),
+                args: vec![ast::Node::Lit(Literal::Ident(err_bind), span)],
+                span,
+            },
+        )
+    };
+    let err_arm = ast::MatchArm {
+        pattern: err_pattern,
+        guard: None,
+        body: ast::Node::Return {
+            value: Some(Box::new(err_value)),
+            span,
+        },
+        span,
+    };
+    ast::Node::Match {
+        scrutinee: Box::new(inner.clone()),
+        arms: vec![ok_arm, err_arm],
+        span,
+    }
+}
+
 /// `Node::Binary(Eq)` nodes and is lowered through the unchanged
 /// `ast::Node::If` arm, so none of the dominance/merge machinery is touched.
 #[cfg(feature = "std-surface")]

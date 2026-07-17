@@ -714,6 +714,28 @@ pub enum Node {
         arms: Vec<MatchArm>,
         span: Span,
     },
+    /// Postfix `?` error-propagation operator: `inner?` (W1.5f).
+    ///
+    /// On a `Result<T, E>` / `Option<T>` value it evaluates to the unwrapped
+    /// `T` on the `Ok`/`Some` path and performs an early `return Err(e)` /
+    /// `return None` on the `Err`/`None` path. It is a FRONT-END sugar: the
+    /// lowering desugars it into the existing `match` machinery (W1.5a) — no
+    /// new IR opcode. It is kept as its own AST node (rather than desugared at
+    /// parse time) so `mindc fmt` round-trips the `?` sugar instead of
+    /// rewriting it into a multi-line `match`. The parser only admits `?`
+    /// inside a fn whose declared return type is `Result`/`Option`, so the
+    /// enclosing return family is always known by lowering. `mindc check`
+    /// therefore accepts and re-emits `inner?` unchanged.
+    Try {
+        inner: Box<Node>,
+        /// `true` when the enclosing fn returns `Option<T>` (desugar family
+        /// `Some`/`None`); `false` for `Result<T, E>` (family `Ok`/`Err`).
+        /// Resolved by the parser from the enclosing fn's declared return type,
+        /// so the lowering needs no return-type thread-local and the desugar is
+        /// identical across all feature configs.
+        is_option: bool,
+        span: Span,
+    },
     /// Reference-taking expression: `&expr` or `&mut expr` (Phase 10.7).
     ///
     /// Symmetric with the `&T` / `&mut T` type annotations already in
@@ -943,6 +965,7 @@ impl Node {
             | Node::Logical { span, .. }
             | Node::Bitwise { span, .. }
             | Node::Match { span, .. }
+            | Node::Try { span, .. }
             | Node::Ref { span, .. }
             | Node::ExternBlock { span, .. } => *span,
             #[cfg(feature = "std-surface")]

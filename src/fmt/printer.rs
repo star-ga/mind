@@ -1344,6 +1344,12 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             p.push(" as ");
             emit_type_ann(p, ty);
         }
+        // W1.5f: postfix `?` — re-emit the sugar verbatim so `mindc fmt`
+        // round-trips it (it is NOT desugared until lowering).
+        Node::Try { inner, .. } => {
+            emit_expr(p, inner);
+            p.push("?");
+        }
         Node::Ref { mutable, inner, .. } => {
             if *mutable {
                 p.push("&mut ");

@@ -20,6 +20,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   No wire-format or schema change.
 
 ### Added
+- **Postfix `?` error-propagation operator (W1.5f).** `expr?` in a
+  `Result`/`Option`-returning fn desugars — before lowering — to the existing
+  `match` machinery: `x?` is `match x { Ok(v) => v, Err(e) => return Err(e) }`
+  (and the `Some`/`None` twin), so it adds no new IR opcode and inherits the
+  keystone-stable match/return path verbatim. The family is fixed by the parser
+  from the enclosing fn's return type; `?` in a fn that returns neither is a hard
+  parse error (never a silent wrong lowering). Byte-identity holds (unannotated
+  code unchanged). Pinned by `parse_try_operator.rs` (parse + type-rejection) and
+  the `try_operator_run.rs` runtime gate (dlopen-called exports prove Ok/Some
+  unwrap AND Err/None early-return for both families).
+- **`#[collapse]` evidence receipt + `mindc verify` re-derivation (S4).** Every
+  `#[collapse]` fold now records a `CollapseReceipt` (`AffineSum`/`GeometricPow`
+  closed-form params) into the mic@3 MAP epilogue under
+  `evidence_chain.collapse_receipts` — OUTSIDE the `trace_hash` preimage, so
+  `trace_hash` and keystone byte-identity are unchanged. `mindc verify`
+  INDEPENDENTLY re-derives the constant by exact integer arithmetic (never re-runs
+  the O(n) loop, never modular-wraps) and fails on a forged constant or tampered
+  params. Fixed-width big-endian TLV, order-independent canonical. Honestly scoped:
+  attests the arithmetic correctness of the recorded params, not that they came
+  from the source loop (signing's job, RFC 0016 Phase C — tamper-evident, not
+  signed). The S3 fixed-point receipt is deferred (in-source marker). Gated by the
+  `collapse_receipt`/`evidence` unit tests incl. forgery-reject.
 - **`#[collapse]` loop-collapse — the full Salov slice suite (S1/S2/S3).** A
   `#[collapse]` annotation on a counted `for` loop is rewritten BEFORE lowering
   to its exact closed form, turning O(n) into O(1) while staying byte-identical
