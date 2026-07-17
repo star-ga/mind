@@ -2144,6 +2144,12 @@ fn receiver_is_string(
 fn element_type_sentinel(ty: &TypeAnn) -> Option<String> {
     match ty {
         TypeAnn::Named(n) if n == "string" || n == "String" => Some("String".to_string()),
+        // Dynamic `bytes` is physically the SAME growable std.vec u8 record as
+        // `array<u8>` (see `is_growable_bytes_ty`). Track it as the vec sentinel
+        // so a `let ca = f()` bound to a `-> bytes` call resolves `ca[i]` /
+        // `ca.length` onto the vec runtime — NOT the ConstArray `tensor.extract`
+        // fallthrough, which neither types its result nor is valid MLIR.
+        _ if is_growable_bytes_ty(ty) => Some(ARRAY_VEC_SENTINEL.to_string()),
         _ if is_map_surface_ty(ty) => Some(map_sentinel_for(ty).to_string()),
         _ if is_set_surface_ty(ty) => Some(set_sentinel_for(ty).to_string()),
         _ if is_array_surface_ty(ty) => Some(ARRAY_VEC_SENTINEL.to_string()),
