@@ -1508,12 +1508,31 @@ thread_local! {
 /// lowering path byte-identical.
 #[cfg(feature = "std-surface")]
 fn callee_array_lit_param(callee: &str, idx: usize) -> bool {
-    ARRAY_PARAM_FNS.with(|m| {
+    // The per-module pre-pass registry only records THIS file's fns, so a
+    // callee found here is authoritative. `None` means the callee is not a
+    // local array-param fn — which includes an IMPORTED callee defined in a
+    // sibling module (mind-flow's `ast.decorator_new`): its `array<T>` param
+    // is invisible to the single-file pre-pass, so its array-literal argument
+    // fell through to the const-array path and tripped the MLIR "non-i64
+    // argument to call" phase-2 reject. Fall back to the whole-project module
+    // table's captured signature to close that cross-module gap.
+    if let Some(hit) = ARRAY_PARAM_FNS.with(|m| {
         m.borrow()
             .get(callee)
             .map(|mask| mask.get(idx).copied().unwrap_or(false))
-            .unwrap_or(false)
-    })
+    }) {
+        return hit;
+    }
+    #[cfg(feature = "cross-module-imports")]
+    {
+        if let Some(param_types) = crate::type_checker::cm_imported_fn_param_types(callee) {
+            return param_types
+                .get(idx)
+                .map(is_array_surface_ty)
+                .unwrap_or(false);
+        }
+    }
+    false
 }
 
 /// Record a narrow-typed `let` so a later reassignment of `name` re-masks.

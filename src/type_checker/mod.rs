@@ -3575,6 +3575,20 @@ fn cm_lookup_fn(name: &str) -> Option<crate::project::module_table::ExportedFn> 
     })
 }
 
+/// RFC 0005 phase 2 — cross-module array-param recognition. Returns the
+/// declared parameter types of an imported `pub fn` (by name) from the active
+/// whole-project module table, so the lowering pre-pass can route an
+/// array-literal argument passed to a SIBLING-module callee (e.g. mind-flow's
+/// `ast.decorator_new(name, [expr], span)`) through the std.vec i64-handle ABI
+/// instead of the const-array path that trips the MLIR "non-i64 argument to
+/// call" phase-2 reject. Returns `None` when the table is empty (single-file /
+/// default-feature build) or the name resolves only to a struct/const/enum, so
+/// the byte-identical single-file path is untouched.
+#[cfg(feature = "cross-module-imports")]
+pub fn cm_imported_fn_param_types(name: &str) -> Option<Vec<crate::ast::TypeAnn>> {
+    cm_lookup_fn(name).map(|f| f.param_types)
+}
+
 /// True iff ANY module in the active project table exports `name`. Unlike
 /// `cm_lookup_fn` (which resolves only typed `fn` signatures), this answers the
 /// bare resolvability question for EVERY exported symbol kind — `fn`, `const`,
