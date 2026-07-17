@@ -1066,6 +1066,11 @@ impl LoweringContext {
     ///     `arith.extsi` (signed: i32/i64) or `arith.extui` (unsigned/bool:
     ///     u32/i1) emitted INSIDE that arm's body buffer just before its
     ///     `cf.br`; the merge kind is then `ScalarI64`.
+    ///   * genuine float ⨯ integer (a `match` binding the same arm-binder name
+    ///     with different payload types — the column is dead outside its arm)
+    ///     → `arith.bitcast` the float edge to its exact bit pattern, widen a
+    ///     narrow integer edge, merge as `ScalarI64`; if one branch `return`s
+    ///     (no `cf.br` edge), adopt the live edge's kind unchanged instead.
     ///
     /// `t_buf`/`e_buf` are the then/else branch body buffers (extensions are
     /// appended there). `lbl`/`col` form the fresh widened-value SSA name so it
@@ -1102,7 +1107,12 @@ impl LoweringContext {
     // Gated on `std-surface`: its only callers are the std-surface value-`if`
     // merge column + phi loop (which also reference `i1_values`), so without the
     // surface this helper is dead. The wide arg list is the merge context
-    // (two kinds, two values, two branch buffers, label, column) threaded in.
+    // (two kinds, two values, two branch buffers, branch-returns flags, label,
+    // column) threaded in. `then_returns`/`else_returns` say whether that
+    // branch ends in a `return` (so no `cf.br` edge is emitted for it): the
+    // genuine float⨯integer mixed-column path both (a) must not append
+    // conversion ops after a `return` terminator and (b) may adopt the live
+    // edge's kind unchanged when the other edge is never taken.
     #[cfg(feature = "std-surface")]
     #[allow(clippy::too_many_arguments)]
     fn unify_merge_kind(
@@ -1113,6 +1123,8 @@ impl LoweringContext {
         else_val: &str,
         t_buf: &mut String,
         e_buf: &mut String,
+        then_returns: bool,
+        else_returns: bool,
         lbl: usize,
         col: usize,
     ) -> Result<(ValueKind, String, String), MlirLowerError> {
@@ -1175,31 +1187,124 @@ impl LoweringContext {
                 .and_then(|s| s.parse::<usize>().ok())
                 .map(ValueId)
         };
+        // GENUINE mixed float⨯integer column (both edges real, non-placeholder
+        // values). Legal source reaches here: a `match` whose arms bind the
+        // SAME binder name with DIFFERENT payload types (`value: i64` in one
+        // arm, `value: f64` in another) desugars to nested ifs whose F2 merge
+        // phi carries an i64 on one edge and an f64 on the other. Such a
+        // column is dead outside its own arm (the binder is arm-scoped), but
+        // the merge block-arg still has to type-check. Canonicalize the column
+        // to the i64 payload carrier: `arith.bitcast` the float edge to its
+        // exact bit pattern (value-preserving reinterpret — the same transport
+        // the enum payload slot itself uses) and widen a narrow integer edge
+        // to i64. A LIVE float column can never take this path: the type
+        // checker keeps a live merged variable single-typed, so both its edges
+        // are float and the same-type fast path above already handled it.
+        // A branch that ends in `return` emits no `cf.br` edge, so its value
+        // is never read: adopt the OTHER edge's kind unchanged and emit
+        // nothing into the returning branch's buffer (an op appended after
+        // its `return` terminator would itself be invalid MLIR).
+        //
+        // Emits the float→bits reinterpret into the float edge's branch
+        // buffer; ordered before the branch's `cf.br`, deterministic names
+        // (`%mfb_{lbl}_{col}_{t|e}`), no fastmath — byte-identical output for
+        // every program that never merges mixed-type columns.
+        let mixed_float_int = |fty: &str,
+                               fval: &str,
+                               f_buf: &mut String,
+                               ftag: &str,
+                               ikind: &ValueKind,
+                               ival: &str,
+                               i_buf: &mut String,
+                               itag: &str|
+         -> Result<(String, String), MlirLowerError> {
+            // Float edge → exact bit pattern in i64.
+            let fnew = format!("%mfb_{lbl}_{col}_{ftag}");
+            if fty == "f64" {
+                writeln!(f_buf, "    {fnew} = arith.bitcast {fval} : f64 to i64")
+                    .expect("write to string cannot fail");
+            } else {
+                let bits = format!("%mfbw_{lbl}_{col}_{ftag}");
+                writeln!(f_buf, "    {bits} = arith.bitcast {fval} : f32 to i32")
+                    .expect("write to string cannot fail");
+                writeln!(f_buf, "    {fnew} = arith.extui {bits} : i32 to i64")
+                    .expect("write to string cannot fail");
+            }
+            // Integer edge → widen to i64 if narrower (same op choice as the
+            // int⨯int merge path below).
+            let inew = if int_width(ikind) < Some(64) {
+                let op = if is_unsigned(ikind) { "extui" } else { "extsi" };
+                let src_ty = mlir_type(ikind)?;
+                let name = format!("%mwide_{lbl}_{col}_{itag}");
+                writeln!(i_buf, "    {name} = arith.{op} {ival} : {src_ty} to i64")
+                    .expect("write to string cannot fail");
+                name
+            } else {
+                ival.to_string()
+            };
+            Ok((fnew, inew))
+        };
         match (float_ty(then_kind), float_ty(else_kind)) {
             // then = float, else = integer zero placeholder → make else a float 0.
             (Some(fty), None) if int_width(else_kind).is_some() => {
                 let is_zero = parse_vid(else_val).and_then(|v| self.const_i64_map.get(&v).copied())
                     == Some(0);
-                if is_zero {
+                if is_zero && !else_returns {
                     let name = format!("%mfz_{lbl}_{col}_e");
                     writeln!(e_buf, "    {name} = arith.constant 0.0 : {fty}")
                         .expect("write to string cannot fail");
                     return Ok((then_kind.clone(), then_val.to_string(), name));
                 }
-                // Not a recognizable zero placeholder — fall through to the i64
-                // fallback below (preserves prior shape; verify_module will catch
-                // a genuine ill-typed merge upstream).
+                // Not a zero placeholder → genuine mixed column (see above).
+                if then_returns {
+                    // Float edge never br'd: the else (integer) kind rules.
+                    return Ok((
+                        else_kind.clone(),
+                        then_val.to_string(),
+                        else_val.to_string(),
+                    ));
+                }
+                if else_returns {
+                    // Integer edge never br'd: the then (float) kind rules.
+                    return Ok((
+                        then_kind.clone(),
+                        then_val.to_string(),
+                        else_val.to_string(),
+                    ));
+                }
+                let (tnew, enew) =
+                    mixed_float_int(fty, then_val, t_buf, "t", else_kind, else_val, e_buf, "e")?;
+                return Ok((ValueKind::ScalarI64, tnew, enew));
             }
             // else = float, then = integer zero placeholder → make then a float 0.
             (None, Some(fty)) if int_width(then_kind).is_some() => {
                 let is_zero = parse_vid(then_val).and_then(|v| self.const_i64_map.get(&v).copied())
                     == Some(0);
-                if is_zero {
+                if is_zero && !then_returns {
                     let name = format!("%mfz_{lbl}_{col}_t");
                     writeln!(t_buf, "    {name} = arith.constant 0.0 : {fty}")
                         .expect("write to string cannot fail");
                     return Ok((else_kind.clone(), name, else_val.to_string()));
                 }
+                if else_returns {
+                    // Float edge never br'd: the then (integer) kind rules.
+                    return Ok((
+                        then_kind.clone(),
+                        then_val.to_string(),
+                        else_val.to_string(),
+                    ));
+                }
+                if then_returns {
+                    // Integer edge never br'd: the else (float) kind rules.
+                    return Ok((
+                        else_kind.clone(),
+                        then_val.to_string(),
+                        else_val.to_string(),
+                    ));
+                }
+                let (enew, tnew) =
+                    mixed_float_int(fty, else_val, e_buf, "e", then_kind, then_val, t_buf, "t")?;
+                return Ok((ValueKind::ScalarI64, tnew, enew));
             }
             _ => {}
         }
@@ -4561,6 +4666,8 @@ impl LoweringContext {
                         &col_else[0],
                         &mut then_body,
                         &mut else_body,
+                        then_ends_with_return,
+                        else_ends_with_return,
                         lbl,
                         0,
                     )?;
@@ -4604,6 +4711,8 @@ impl LoweringContext {
                         &col_else[idx],
                         &mut then_body,
                         &mut else_body,
+                        then_ends_with_return,
+                        else_ends_with_return,
                         lbl,
                         idx,
                     )?;
