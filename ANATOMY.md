@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3137 | **Est. tokens:** ~7,489,314
-**Generated:** 2026-07-17 14:42 UTC
+**Files:** 3138 | **Est. tokens:** ~7,486,825
+**Generated:** 2026-07-17 15:05 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~28,558 |
+| `./` | 34 | ~24,888 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -386,7 +386,7 @@
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~11,003 |
-| `src/eval/` | 12 | ~65,390 |
+| `src/eval/` | 12 | ~65,360 |
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
@@ -412,7 +412,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~192,637 |
-| `tests/` | 289 | ~495,660 |
+| `tests/` | 290 | ~496,871 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -471,7 +471,7 @@
 
 ### `./`
 
-- `a.out` (~3774 tok, huge) — ELF>@x4@8
+- `a.out` (~104 tok, small) — ELF>`@@.shstrtab.text
 - `ARCHITECTURE.md` (~300 tok, medium) — MIND Architecture (high level)
 - `AUDIT_REPORT.md` (~1151 tok, large) — Audit Report
 - `.bench-baseline-2026-04-27.txt` (~531 tok, large) —    Compiling mind v0.2.3 (.)
@@ -3856,7 +3856,7 @@
 - `mod.rs` (~7403 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/`
 
-- `abi_gate.rs` (~11888 tok, huge) — Runnable-artifact ABI gate (release-readiness P1.1).
+- `abi_gate.rs` (~11858 tok, huge) — Runnable-artifact ABI gate (release-readiness P1.1).
 - `autodiff.rs` (~14268 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~3818 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4458,6 +4458,7 @@
 - `narrow_local_mask_run.rs` (~838 tok, large) — Copyright 2025 STARGA Inc.
 - `narrow_reassign_mask_run.rs` (~1342 tok, large) — Copyright 2025 STARGA Inc.
 - `narrow_reassign_run.rs` (~733 tok, large) — Copyright 2026 STARGA Inc.
+- `narrow_sig_abi_run.rs` (~1211 tok, large) — Copyright 2025 STARGA Inc.
 - `narrow_unsigned_div_zero_run.rs` (~1228 tok, large) — Copyright 2025 STARGA Inc.
 - `nested_block_surface_run.rs` (~1036 tok, large) — Copyright 2025 STARGA Inc.
 - `nested_collection_run.rs` (~818 tok, large) — Copyright 2025 STARGA Inc.

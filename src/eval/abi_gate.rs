@@ -24,12 +24,13 @@
 //! e.g. float struct fields, unsupported tensor ops — are left to the existing
 //! lowering errors). Sub-i64 struct *fields* are no longer gated: the
 //! width-aware struct ABI lowers them with a canonical offset table + typed
-//! store/load. The remaining gated constructs:
+//! store/load. Sub-i64 integer function params/returns are no longer gated
+//! either: `i32`/`u32` lower via the physical-i32 MLIR ABI, and
+//! `i8`/`u8`/`i16`/`u16` via the i64-SLOT narrow-signature ABI (entry mask +
+//! per-return-site mask in `src/eval/lower.rs`). The remaining gated
+//! constructs:
 //!   * a `tensor` / `diff tensor` function parameter or return: erases to the
 //!     i64 ABI and is silently treated as a scalar integer.
-//!   * a function parameter or return declared at a sub-i64 integer width
-//!     (`i32`/`u32`/`i8`/`u8`/`i16`/`u16`): the width and, for unsigned types,
-//!     the semantics are silently lost.
 //!
 //! `extern "C"` blocks are EXEMPT — the C-ABI boundary legitimately declares
 //! narrow ints and maps them to the platform contract.
@@ -139,20 +140,14 @@ fn sig_non_i64(ty: &TypeAnn) -> Option<&'static str> {
              integer",
         ),
         TypeAnn::DiffTensor { .. } => Some("a diff-tensor parameter/return erases to the i64 ABI"),
-        // i8/u8/i16/u16 (as `Named`) still widen to i64 in a signature — they have
-        // no dedicated ValueKind yet, so the i32 ABI does not cover them.
-        TypeAnn::Named(n) if is_narrow_int_name(n) => {
-            Some("a sub-i64 integer type silently widens to `i64`")
-        }
+        // i8/u8/i16/u16 (as `Named`) params + returns now lower correctly via
+        // the i64-SLOT narrow-signature ABI (`src/eval/lower.rs`): a param is
+        // materialised at its declared width on fn entry (zext mask / sext
+        // shift-pair) and a return is masked to its declared width at every
+        // return site, so the width and unsigned semantics are preserved —
+        // they are no longer gated.
         _ => None,
     }
-}
-
-/// Narrow integer type names that may reach the AST as `TypeAnn::Named`
-/// (the lexer maps `i32`/`u32` to dedicated scalars; `i8`/`u8`/`i16`/`u16`
-/// can arrive as named scalars). `u64`/`i64` are full-width and lower fine.
-fn is_narrow_int_name(n: &str) -> bool {
-    matches!(n, "i8" | "u8" | "i16" | "u16")
 }
 
 fn mk(src: &str, file: Option<&str>, span: AstSpan, code: &'static str, msg: String) -> Diagnostic {
