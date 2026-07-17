@@ -7269,7 +7269,23 @@ fn lower_expr(
                     } else {
                         method.as_str()
                     };
-                    let fn_name = format!("{}_{}", t.to_lowercase(), method_lc);
+                    // A module-qualified receiver type (`v: expr.ExprValue`)
+                    // must mangle from the BARE type name: function
+                    // definitions are always emitted under bare symbols (the
+                    // module qualifier is a source-level namespace, never part
+                    // of a link name), so a mangled name that retains the
+                    // qualifier (`expr.exprvalue_is_int`) can NEVER resolve at
+                    // link. `struct_key_for` is not enough here — it strips
+                    // only when the bare tail is a REGISTERED struct, and an
+                    // opaque cross-module receiver type has no local
+                    // registration. Collection sentinels and same-file type
+                    // names contain no `.`, so this is the identity for
+                    // single-module lowering (keystone byte-identical).
+                    let bare_t: &str = match t.rsplit_once('.') {
+                        Some((_, tail)) => tail,
+                        None => t.as_str(),
+                    };
+                    let fn_name = format!("{}_{}", bare_t.to_lowercase(), method_lc);
                     let dst = ir.fresh();
                     ir.instrs.push(Instr::Call {
                         dst,
