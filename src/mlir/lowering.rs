@@ -1051,6 +1051,18 @@ impl LoweringContext {
         sub.fn_param_kinds = self.fn_param_kinds.clone();
         sub.fn_ret_kind = self.fn_ret_kind.clone();
         sub.fn_ret_abi = self.fn_ret_abi.clone();
+        // BOOL-ABI i1 TRACKING: seed the sub-context with the enclosing
+        // context's physically-i1 set. The sub-contexts inherit `values`
+        // (kinds) from the enclosing scope, but without this an OUTER
+        // let-bound comparison consumed INSIDE the branch/loop/condition
+        // (`let b = x == y; if b != 0 {..}`) loses its i1-ness — the
+        // sub-context then emits an `: i64`-annotated op over the i1 SSA
+        // value, which mlir-opt rejects ("'i64' vs 'i1'"). ADDITIVE: any
+        // program whose sub-context consumed an outer i1 value as i64
+        // previously FAILED verification, so no compiling artifact's bytes
+        // change (keystone/canary unaffected). Sub-context discoveries still
+        // bubble UP via the existing per-arm merge loops.
+        sub.i1_values = self.i1_values.clone();
     }
 
     /// NARROW-INT control-flow merge typing. Given the two branch yields of a
@@ -2026,6 +2038,41 @@ impl LoweringContext {
                             || matches!(rhs_kind, ValueKind::ScalarU64);
                         #[cfg(not(feature = "std-surface"))]
                         let u64_unsigned = false;
+                        // BOOL-ABI i1 WIDEN (pure-i64 arm): an operand that is
+                        // PHYSICALLY i1 (a prior comparison result — tracked as
+                        // `ScalarI64` but recorded in `i1_values`, e.g.
+                        // `let b = x == y; if b != 0 {..}` or `b + 1`) cannot be
+                        // consumed by an `: i64`-annotated op — mlir-opt rejects
+                        // it ("use of value expects different type than prior
+                        // uses: 'i64' vs 'i1'"). Zero-extend it into the i64
+                        // bool-ABI slot at the use site (`arith.extui i1 to
+                        // i64`), the same convention as the return-site widen,
+                        // the call-arg widen, and the narrow arm's `legalize`.
+                        // ADDITIVE: a non-i1 operand keeps its bare `%N`
+                        // reference (byte-identical emission), and a program
+                        // with an i1 operand reaching this arm previously FAILED
+                        // mlir-opt verification, so no compiling artifact's
+                        // bytes change (keystone/canary unaffected).
+                        #[cfg(feature = "std-surface")]
+                        let widen_i1 = |this: &mut Self, id: &ValueId, tmp: &str| -> String {
+                            if this.i1_values.contains(id) {
+                                this.emit_line(&format!(
+                                    "    %{tmp}{0} = arith.extui %{1} : i1 to i64",
+                                    dst.0, id.0
+                                ));
+                                format!("%{tmp}{}", dst.0)
+                            } else {
+                                format!("%{}", id.0)
+                            }
+                        };
+                        #[cfg(feature = "std-surface")]
+                        let lhs_ref = widen_i1(self, lhs, "bwl");
+                        #[cfg(feature = "std-surface")]
+                        let rhs_base = widen_i1(self, rhs, "bwr");
+                        #[cfg(not(feature = "std-surface"))]
+                        let lhs_ref = format!("%{}", lhs.0);
+                        #[cfg(not(feature = "std-surface"))]
+                        let rhs_base = format!("%{}", rhs.0);
                         let mlir_op = match op {
                             BinOp::Add => "arith.addi",
                             BinOp::Sub => "arith.subi",
@@ -2119,8 +2166,8 @@ impl LoweringContext {
                                 dst.0
                             ));
                             self.emit_line(&format!(
-                                "    %sha{0} = arith.andi %{1}, %shm{0} : i64",
-                                dst.0, rhs.0
+                                "    %sha{0} = arith.andi {1}, %shm{0} : i64",
+                                dst.0, rhs_base
                             ));
                             format!("%sha{}", dst.0)
                         } else if u64_unsigned
@@ -2149,12 +2196,12 @@ impl LoweringContext {
                                 dst.0
                             ));
                             self.emit_line(&format!(
-                                "    %udisz{0} = arith.cmpi \"eq\", %{1}, %udzc{0} : i64",
-                                dst.0, rhs.0
+                                "    %udisz{0} = arith.cmpi \"eq\", {1}, %udzc{0} : i64",
+                                dst.0, rhs_base
                             ));
                             self.emit_line(&format!(
-                                "    %udsf{0} = arith.select %udisz{0}, %udone{0}, %{1} : i64",
-                                dst.0, rhs.0
+                                "    %udsf{0} = arith.select %udisz{0}, %udone{0}, {1} : i64",
+                                dst.0, rhs_base
                             ));
                             div_zero_guard = Some(format!("%udisz{}", dst.0));
                             format!("%udsf{}", dst.0)
@@ -2203,33 +2250,33 @@ impl LoweringContext {
                             ));
                             self.emit_line(&format!("    %dzc{0} = arith.constant 0 : i64", dst.0));
                             self.emit_line(&format!(
-                                "    %dism{0} = arith.cmpi \"eq\", %{1}, %dmin{0} : i64",
-                                dst.0, lhs.0
+                                "    %dism{0} = arith.cmpi \"eq\", {1}, %dmin{0} : i64",
+                                dst.0, lhs_ref
                             ));
                             self.emit_line(&format!(
-                                "    %disn{0} = arith.cmpi \"eq\", %{1}, %dn1{0} : i64",
-                                dst.0, rhs.0
+                                "    %disn{0} = arith.cmpi \"eq\", {1}, %dn1{0} : i64",
+                                dst.0, rhs_base
                             ));
                             self.emit_line(&format!(
                                 "    %dovf{0} = arith.andi %dism{0}, %disn{0} : i1",
                                 dst.0
                             ));
                             self.emit_line(&format!(
-                                "    %disz{0} = arith.cmpi \"eq\", %{1}, %dzc{0} : i64",
-                                dst.0, rhs.0
+                                "    %disz{0} = arith.cmpi \"eq\", {1}, %dzc{0} : i64",
+                                dst.0, rhs_base
                             ));
                             self.emit_line(&format!(
                                 "    %dsub{0} = arith.ori %dovf{0}, %disz{0} : i1",
                                 dst.0
                             ));
                             self.emit_line(&format!(
-                                "    %dsf{0} = arith.select %dsub{0}, %done{0}, %{1} : i64",
-                                dst.0, rhs.0
+                                "    %dsf{0} = arith.select %dsub{0}, %done{0}, {1} : i64",
+                                dst.0, rhs_base
                             ));
                             div_zero_guard = Some(format!("%disz{}", dst.0));
                             format!("%dsf{}", dst.0)
                         } else {
-                            format!("%{}", rhs.0)
+                            rhs_base.clone()
                         };
                         if let Some(disz) = &div_zero_guard {
                             // Force the result to 0 when the original divisor was 0
@@ -2237,8 +2284,8 @@ impl LoweringContext {
                             // trap, which would otherwise give x/1 == x). Net:
                             // `x / 0 == 0`, `x % 0 == 0`, deterministic everywhere.
                             self.emit_line(&format!(
-                                "    %ddt{0} = {1} %{2}, {3} : i64",
-                                dst.0, mlir_op, lhs.0, rhs_ref
+                                "    %ddt{0} = {1} {2}, {3} : i64",
+                                dst.0, mlir_op, lhs_ref, rhs_ref
                             ));
                             self.emit_line(&format!("    %ddz{0} = arith.constant 0 : i64", dst.0));
                             self.emit_line(&format!(
@@ -2247,8 +2294,8 @@ impl LoweringContext {
                             ));
                         } else {
                             self.emit_line(&format!(
-                                "    %{} = {} %{}, {} : i64",
-                                dst.0, mlir_op, lhs.0, rhs_ref
+                                "    %{} = {} {}, {} : i64",
+                                dst.0, mlir_op, lhs_ref, rhs_ref
                             ));
                         }
                         // A comparison op lowers to `arith.cmpi`, whose result is
@@ -3785,12 +3832,30 @@ impl LoweringContext {
 
                 // Entry branch: carry initial values into the header, each
                 // operand typed by its loop-carried kind (f64/f32/i64).
+                // BOOL-ABI loop carry: an initial value that is PHYSICALLY i1
+                // (a let-bound comparison, e.g. `let mut go = x < y`) cannot
+                // flow raw into the i64 header block arg — widen it into the
+                // i64 bool-ABI slot first. ADDITIVE: a raw-i1 entry edge
+                // previously failed mlir-opt verification, so no compiling
+                // artifact's bytes change.
                 {
-                    let init_items: Vec<(String, String)> = loop_args
-                        .iter()
-                        .zip(&loop_types)
-                        .map(|(a, t)| (format!("%{}", a.init_id), (*t).to_string()))
-                        .collect();
+                    let mut init_items: Vec<(String, String)> = Vec::new();
+                    for (k, (a, t)) in loop_args.iter().zip(&loop_types).enumerate() {
+                        #[cfg(feature = "std-surface")]
+                        let init_i1 = self.i1_values.contains(&ValueId(a.init_id));
+                        #[cfg(not(feature = "std-surface"))]
+                        let init_i1 = false;
+                        let v = if init_i1 {
+                            self.emit_line(&format!(
+                                "    %wbw_{lbl}_{k} = arith.extui %{} : i1 to i64",
+                                a.init_id
+                            ));
+                            format!("%wbw_{lbl}_{k}")
+                        } else {
+                            format!("%{}", a.init_id)
+                        };
+                        init_items.push((v, (*t).to_string()));
+                    }
                     let arg_pass = fmt_block_args_typed(&init_items);
                     self.emit_line(&format!("    cf.br ^while_header_{lbl}{arg_pass}"));
                 }
@@ -3830,6 +3895,20 @@ impl LoweringContext {
                 // declaration of the same symbol (RFC 0010).
                 cond_sub.extern_c_fns = self.extern_c_fns.clone();
                 self.inherit_fn_abi(&mut cond_sub);
+                // BOOL-ABI loop carry: a loop-carried variable whose PRE-LOOP
+                // value was physically i1 (e.g. `let mut go = x < y`) is
+                // widened to i64 at the entry edge and carried in an i64 header
+                // block arg (`%wbl_*`). Inside the header, references to its
+                // init_id are `substitute_ids`-rewritten to that i64 block arg,
+                // so it is NO LONGER physically i1 here — drop it from the
+                // inherited i1 set, or a consuming op (`go != 0`) would emit a
+                // spurious `arith.extui %wbl_* : i1 to i64` over the already-i64
+                // block arg ("'i1' vs 'i64'"). ADDITIVE: only affects a carried
+                // i1 value, which could not compile before.
+                #[cfg(feature = "std-surface")]
+                for a in &loop_args {
+                    cond_sub.i1_values.remove(&ValueId(a.init_id));
+                }
                 // Thread the function-global while-label counter so any nested
                 // loop in the condition gets a unique label, and pull the
                 // advanced value back afterward.
@@ -3952,6 +4031,13 @@ impl LoweringContext {
                 // declaration of the same symbol (RFC 0010).
                 body_sub.extern_c_fns = self.extern_c_fns.clone();
                 self.inherit_fn_abi(&mut body_sub);
+                // BOOL-ABI loop carry (same rationale as the cond sub-context):
+                // inside the body a carried variable's init_id resolves to the
+                // i64 `%wbod_*` block arg, so it is no longer physically i1.
+                #[cfg(feature = "std-surface")]
+                for a in &loop_args {
+                    body_sub.i1_values.remove(&ValueId(a.init_id));
+                }
                 // Thread the function-global while-label counter into the body
                 // so nested loops get unique labels; pull it back afterward.
                 body_sub.while_label = self.while_label;
