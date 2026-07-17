@@ -102,8 +102,7 @@ fn question_mark_rejected_outside_result_or_option_fn() {
                  let v = g(x)?\n\
                  v + 1\n\
                }\n";
-    let err = parse(src)
-        .expect_err("`?` in an i64-returning fn must be rejected");
+    let err = parse(src).expect_err("`?` in an i64-returning fn must be rejected");
     let msg = format!("{err:?}");
     assert!(
         msg.contains("`?`") && msg.contains("Result") && msg.contains("Option"),
