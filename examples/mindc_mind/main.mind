@@ -21418,22 +21418,39 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         return NbState { code: e3, next_id: nn_rid + 1, last_id: nn_rid, ncalls: nn1.ncalls };
     }
     if k == ast_if() {
-        // A value-if used in EXPRESSION position (a call argument, a binop operand, a
-        // nested initializer feeding a further op) reaches nb_expr, which — unlike
-        // nb_stmt — has no jump table (jmps/jcell) threaded through, so it cannot lay
-        // down the branch/merge control flow the value-if needs. Pre-fix this node fell
-        // through to the binop tail and null-deref SIGSEGV'd on ast_child1 of the block
-        // children. Fail CLOSED with a single deterministic const-0 slot (no crash)
-        // rather than emit corrupt control flow. A value-if as a fn TAIL or a bare
-        // STATEMENT is handled correctly by nb_stmt/nb_if_value (which do have the jump
-        // table); only the deeply-nested-expression position is unsupported.
-        // deferred: full in-expression value-if lowering needs the jmp table threaded
-        // into nb_expr (a wide signature change) — upgrade path: give nb_expr jmps/jcell
-        // and route ast_if to a jump-emitting merge, mirroring nb_if_value. main.mind's
-        // native-emitted source never nests a value-if in expression position (it would
-        // already have crashed here), so this arm is inert for self-compile byte-identity.
-        let s_fc: NbState = nb_emit_const0(st);
-        return s_fc;
+        // FIX #173: a value-if used in DEEP EXPRESSION position (a call argument, a binop
+        // operand, a nested initializer feeding a further op) now lowers through the real
+        // branch/merge path. nb_expr has no jump-table params, so the per-fn jump/loop/
+        // struct state is read from the lcell side-channel that nb_lower_fn stashed at
+        // lcell+24..+64 (srt/is_entry/jmps/jcell/loops/lpcell), alongside the dtype table
+        // (+8) and frt (+16). This is the exact state nb_stmt/nb_lower_let_init already
+        // pass to nb_if_value for a value-if at let-init / return / assign / statement
+        // position — the only gap was the deeply-nested-expression case, which structurally
+        // could not reach nb_if_value.
+        //
+        // Fail CLOSED to a const-0 slot when no jump table is present (jmps==0 — e.g. the
+        // bare-expr fp selftests' 16-byte lcell), preserving the old no-crash behaviour for
+        // callers that lower an expression without a per-fn jump table. main.mind's own
+        // source never nests a value-if in expression position, so this arm is never taken
+        // during self-compile and the integer native-ELF oracle stays byte-identical.
+        let jmps: i64 = __mind_load_i64(lcell + 40);
+        if jmps == 0 {
+            return nb_emit_const0(st);
+        }
+        let srt: i64 = __mind_load_i64(lcell + 24);
+        let is_entry: i64 = __mind_load_i64(lcell + 32);
+        let jcell: i64 = __mind_load_i64(lcell + 48);
+        let loops: i64 = __mind_load_i64(lcell + 56);
+        let lpcell: i64 = __mind_load_i64(lcell + 64);
+        // Snapshot the let-env count and restore it after the value-if, dropping any
+        // internal merge-phi bindings the merged path would rebind — an if-EXPRESSION
+        // threads NONE of its branch bindings into the enclosing env (only the dst slot
+        // escapes, via last_id), exactly as nb_stmt's let-init arm restores lcell. The
+        // simple (no-merge) path binds nothing, so the restore is a no-op there.
+        let pre_if_n: i64 = __mind_load_i64(lcell);
+        let sv: NbState = nb_if_value(st, buf, node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
+        __mind_store_i64(lcell, pre_if_n);
+        return sv;
     }
     // ast_binop(): lower both operands, then the in-place op.
     let s1: NbState = nb_expr(st, buf, ast_child0(node), params_addr, n_params, calls, lets, lcell);
@@ -23389,12 +23406,50 @@ pub fn nb_count_expr(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         let nafter_op: i64 = nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params, clets, clcell);
         return nafter_op + 2;
     }
-    // A value-if in EXPRESSION position is lowered fail-closed as a single const-0 slot
-    // by nb_expr's ast_if arm (in-expression value-if lowering is deferred — see there),
-    // so it consumes exactly one id here too. Matching emit/count keeps the frame sizing
-    // consistent so surrounding slots stay correct.
+    // FIX #173: a value-if in DEEP EXPRESSION position now lowers through nb_if_value
+    // (nb_expr's ast_if arm), so its SSA-id consumption here must MATCH that emit exactly:
+    // cond ids ; +1 then-const0 ; then-stmt ids ; +1 else-const0 ; else-stmt ids ;
+    // merge-phi ids ; +1 dst — identical to nb_count_stmt's ast_if arm. Unlike a
+    // STATEMENT-if, an if-EXPRESSION threads NONE of its internal merged names into the
+    // enclosing env (only dst escapes), so snapshot/restore clcell around the count to
+    // drop the leak WITHOUT rebinding merged names (mirrors nb_count_stmt's let-init arm).
+    // srt is read from clcell+24 (nb_count_expr has no srt param — nb_lower_fn stashes it
+    // there, matching the emit lcell). main.mind never nests a value-if in expression
+    // position, so this arm is never taken during self-compile — frame sizing byte-identical.
     if k == ast_if() {
-        return next_id + 1;
+        let srt: i64 = __mind_load_i64(clcell + 24);
+        let cond: i64 = ast_child0(node);
+        let outer_n: i64 = __mind_load_i64(clcell);
+        let after_cond: i64 = nb_count_expr(next_id, buf, cond, params_addr, n_params, clets, clcell);
+        let then_blk: i64 = ast_child1(node);
+        let after_then: i64 = nb_count_stmts(after_cond + 1, buf, ast_child0(then_blk), ast_aux(then_blk), 0, params_addr, n_params, clets, clcell, srt);
+        let else_blk: i64 = ast_child2(node);
+        let else_sa: i64 = if else_blk == 0 {
+            0
+        } else {
+            ast_child0(else_blk)
+        };
+        let else_sl: i64 = if else_blk == 0 {
+            0
+        } else {
+            ast_aux(else_blk)
+        };
+        let after_else: i64 = nb_count_stmts(after_then + 1, buf, else_sa, else_sl, 0, params_addr, n_params, clets, clcell, srt);
+        let then_sa: i64 = ast_child0(then_blk);
+        let then_sl: i64 = ast_aux(then_blk);
+        let then_falls: i64 = if nb_block_diverges(then_sa, then_sl) == 1 {
+            0
+        } else {
+            1
+        };
+        let else_falls: i64 = if nb_block_diverges(else_sa, else_sl) == 1 {
+            0
+        } else {
+            1
+        };
+        let merge_ids: i64 = nb_merge_ids_count(buf, then_sa, then_sl, else_sa, else_sl, then_falls, else_falls, clets, outer_n);
+        __mind_store_i64(clcell, outer_n);
+        return after_else + merge_ids + 1;
     }
     // binop
     let l: i64 = nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params, clets, clcell);
@@ -23935,8 +23990,14 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // (3) div/mod/shift binops still fall through to imul in nb_arith_rax_mem (the
     // marker there spells out the emit_div_mod_guarded + cl-shift port).
     let clets0: i64 = __mind_alloc(512 * 4 * 8);
-    let clcell0: i64 = __mind_alloc(8);
+    // clcell0 mirrors the emit lcell's srt slot at +24 (FIX #173): nb_count_expr's
+    // value-if-in-expression arm calls nb_count_stmts, which needs srt, but
+    // nb_count_expr has no srt param. Read it from clcell+24 — the SAME offset the
+    // emit lcell uses — so both the normal count path (clcell0) and the pre-walk
+    // paths that alias the emit lcell as clcell resolve srt identically. Grown 8 -> 32.
+    let clcell0: i64 = __mind_alloc(32);
     __mind_store_i64(clcell0, 0);
+    __mind_store_i64(clcell0 + 24, srt);
     // Register struct-typed params into the count-lets FIRST, so the field-access
     // count recovers the same 8*declared-index offset the emission does (the extra
     // CONST+ADD ids for a nonzero-offset field read must be counted into nslots).
@@ -23980,7 +24041,13 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // word1 = the per-fn dtype table, both threaded together like the count).
     // Empty for the scalar fixtures.
     let lets: i64 = __mind_alloc(512 * 4 * 8);
-    let lcell: i64 = __mind_alloc(24);
+    // lcell is the per-fn side-channel: word0 = let count, +8 = dtype table,
+    // +16 = frt registry, and (FIX #173) +24 = srt, +32 = is_entry, +40 = jmps,
+    // +48 = jcell, +56 = loops, +64 = lpcell — the jump/loop/struct state a value-if
+    // in DEEP EXPRESSION position needs. nb_expr has no jump-table params, so its
+    // ast_if arm reads them from here instead of a wide signature change threaded
+    // through nb_expr's ~20 call sites. Grown 24 -> 72 to hold the six new words.
+    let lcell: i64 = __mind_alloc(72);
     __mind_store_i64(lcell, 0);
     // RI-B1 FOLLOW-UP: per-fn SSA dtype table (nb_dtype_table_new, all-INT default),
     // threaded through the EXISTING lets/lcell plumbing at lcell+8 — nb_expr's binop
@@ -24013,6 +24080,20 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     let loops: i64 = __mind_alloc(256 * 3 * 8);
     let lpcell: i64 = __mind_alloc(8);
     __mind_store_i64(lpcell, 0);
+
+    // FIX #173: stash the per-fn jump/loop/struct state onto the lcell side-channel so
+    // nb_expr's ast_if arm (a value-if in DEEP EXPRESSION position) can route to
+    // nb_if_value without threading six params through nb_expr's ~20 call sites. srt is
+    // placed at +24 to MATCH the count-side clcell0 (+24), since nb_while_carry and the
+    // dst-id pre-walks alias the emit lcell as the count clcell. main.mind's own source
+    // never nests a value-if in expression position, so this stash is only READ on a
+    // construct main.mind lacks — the integer native-ELF oracle stays byte-identical.
+    __mind_store_i64(lcell + 24, srt);
+    __mind_store_i64(lcell + 32, is_entry);
+    __mind_store_i64(lcell + 40, jmps);
+    __mind_store_i64(lcell + 48, jcell);
+    __mind_store_i64(lcell + 56, loops);
+    __mind_store_i64(lcell + 64, lpcell);
 
     // Body.
     let st_body0: NbState = nb_block_stmts(st_p, buf, stmts_addr, stmts_len, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);

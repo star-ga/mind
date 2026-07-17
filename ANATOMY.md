@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3136 | **Est. tokens:** ~7,486,711
-**Generated:** 2026-07-17 05:46 UTC
+**Files:** 3137 | **Est. tokens:** ~7,488,268
+**Generated:** 2026-07-17 12:04 UTC
 
 ## Token Budget Guide
 
@@ -57,7 +57,7 @@
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 69 | ~123,490 |
+| `examples/mindc_mind/` | 70 | ~125,047 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
 | `examples/native/` | 4 | ~527 |
@@ -895,6 +895,7 @@
 - `self_host_native_write8_smoke.py` (~929 tok, large) — RI-B2-S2 STEP A (#108) — de-risk the C1 "emit 8 LE bytes to stdout + hash" gate.
 - `self_host_native_write_f32_smoke.py` (~815 tok, large) — RI-B2-S8 STEP A (#108) — de-risk the raw-f32-bytes harness on a KNOWN f32.
 - `_selfhost_so.py` (~919 tok, large) — Shared self-host `.so` resolver for the examples/mindc_mind smokes.
+- `self_host_value_if_expr_smoke.py` (~1557 tok, huge)
 - `sha256_hash_smoke.py` (~732 tok, large) — # Copyright 2025 STARGA Inc.
 - `struct_fields_smoke.py` (~1076 tok, large)
 - `struct_lit_smoke.py` (~1923 tok, huge)
