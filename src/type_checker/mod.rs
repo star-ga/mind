@@ -813,6 +813,17 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
             let (ty, _) = infer_expr(inner, env)?;
             Ok((ty, *span))
         }
+        // W1.5f: postfix `?`. The PARSER is the enforcement point for "?
+        // outside a Result/Option-returning fn" — it rejects that BEFORE
+        // type-check with a clear parse error (no broken artifact is ever
+        // emitted), because `?` is only produced when the enclosing fn's
+        // declared return type is `Result`/`Option`. Here we type-check `inner`
+        // (surfacing any error in the operand) and type the unwrapped Ok/Some
+        // value as the loose i64 ABI every enum payload lowers to.
+        Node::Try { inner, span, .. } => {
+            let _ = infer_expr(inner, env)?;
+            Ok((ValueType::ScalarI64, *span))
+        }
         Node::Tuple { elements, span } => {
             // Infer type from the last element (matches lowering semantics).
             if let Some(last) = elements.last() {

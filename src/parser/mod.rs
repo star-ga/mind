@@ -80,6 +80,16 @@ struct P<'a> {
     /// Empty on the single-file / no-project path, so those parses pay zero
     /// per-dotted-ident registry cost and stay byte-identical.
     global_enums: Vec<String>,
+    /// The DECLARED return type of the fn body currently being parsed (`None`
+    /// at module level, and for a fn with no `-> T`). Set by
+    /// `parse_fn_def_with_attrs` around the body and restored on exit (nested
+    /// fns save/restore the parent's value). Read ONLY by the postfix `?`
+    /// desugar (W1.5f) to pick the Result (`Ok`/`Err`) vs Option
+    /// (`Some`/`None`) match family and to reject `?` outside a
+    /// Result/Option-returning fn. A single `Option<TypeAnn>` swap per fn — no
+    /// effect on any non-`?` program, so all existing parses stay
+    /// byte-identical.
+    current_fn_ret: Option<TypeAnn>,
 }
 
 /// Operator-token kind used by the Pratt expression parser
@@ -241,6 +251,7 @@ impl<'a> P<'a> {
             invariants: Vec::new(),
             enum_names: Vec::new(),
             global_enums,
+            current_fn_ret: None,
         }
     }
 
@@ -2492,9 +2503,15 @@ impl<'a> P<'a> {
             None
         };
         self.skip_ws_and_newlines();
-        // Body
+        // Body. Record this fn's declared return type for the duration of the
+        // body parse so the postfix `?` desugar (W1.5f) can pick its match
+        // family and reject `?` outside a Result/Option-returning fn; restore
+        // the enclosing value afterwards (nested fns nest correctly).
+        let prev_ret = std::mem::replace(&mut self.current_fn_ret, ret_type.clone());
         self.expect(b'{')?;
-        let body = self.parse_fn_body_stmts()?;
+        let body = self.parse_fn_body_stmts();
+        self.current_fn_ret = prev_ret;
+        let body = body?;
         self.skip_ws_and_newlines();
         self.expect(b'}')?;
         let span = Span::new(start, self.pos);
@@ -3617,9 +3634,71 @@ impl<'a> P<'a> {
                 };
                 continue;
             }
+            // W1.5f: postfix `?` error-propagation operator. `inner?` on a
+            // Result/Option-typed value becomes a first-class `Node::Try`,
+            // which the LOWERING desugars into the existing `match` machinery
+            // (W1.5a) — no new IR opcode:
+            //
+            //   Result-returning fn:  inner?  ->  match inner {
+            //                                          Ok(v)  => v,
+            //                                          Err(e) => return Err(e),
+            //                                      }
+            //   Option-returning fn:  inner?  ->  match inner {
+            //                                          Some(v) => v,
+            //                                          None    => return None,
+            //                                      }
+            //
+            // The `?` is admitted ONLY inside a fn whose declared return type
+            // (`current_fn_ret`) is `Result<..>`/`Option<..>`; anywhere else is
+            // a hard parse error, so no broken artifact is ever emitted. Keeping
+            // `?` as its own node (rather than desugaring here) lets `mindc fmt`
+            // round-trip the sugar instead of rewriting it into a `match`, which
+            // is what makes a `?` program pass `mindc check`. Left-associates
+            // with `.`/`[]` via the trailer loop, so `a()?.b()?` parses as
+            // `((a()?).b())?`.
+            if self.at(b'?') {
+                // deferred: `?` verifies the ENCLOSING fn returns Result/Option
+                // (below) but NOT that the OPERAND is a Result/Option value —
+                // under the loose all-i64 enum ABI a `Result<i64,i64>` value and
+                // a bare `i64` share one `ValueType` (ScalarI64), so the operand
+                // family is not recoverable at type-check. `x?` on a scalar
+                // therefore desugars to `match x { Ok(v)=>v, … }`, which is
+                // BYTE-IDENTICAL to the hand-written form and inherits its
+                // behaviour verbatim (a boxed-tag load on a scalar → runtime
+                // fault) — no NEW divergence over `match`. upgrade path: once the
+                // type system tracks enum types (a real `Result`/`Option`
+                // ValueType), reject a `?` whose operand is not that family.
+                let is_option = self.try_family()?;
+                self.pos += 1;
+                let span = Span::new(node.span_start(), self.pos);
+                node = Node::Try {
+                    inner: Box::new(node),
+                    is_option,
+                    span,
+                };
+                continue;
+            }
             break;
         }
         Ok(node)
+    }
+
+    /// Resolve the desugar family of a postfix `?` from the enclosing fn's
+    /// declared return type (W1.5f), or reject it. Returns `Ok(true)` for an
+    /// `Option<..>`-returning fn (`Some`/`None` family), `Ok(false)` for a
+    /// `Result<..>`-returning fn (`Ok`/`Err` family), and a parse error for any
+    /// other return type (including a fn with no `-> T`). Runs BEFORE the `?`
+    /// byte is consumed so the diagnostic points at the operator.
+    fn try_family(&self) -> Result<bool, ParseError> {
+        match &self.current_fn_ret {
+            Some(TypeAnn::Generic { name, .. }) if name == "Result" => Ok(false),
+            Some(TypeAnn::Generic { name, .. }) if name == "Option" => Ok(true),
+            _ => Err(self.err(
+                "the `?` operator can only be used inside a function whose return \
+                 type is `Result<T, E>` or `Option<T>`"
+                    .into(),
+            )),
+        }
     }
 
     /// Parse a generic-type STATIC CONSTRUCTOR `Type<args>.method(args)` after the
