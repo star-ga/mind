@@ -2426,6 +2426,21 @@ impl LoweringContext {
                             Some(ValueKind::ScalarF32)
                             | Some(ValueKind::ScalarI32)
                             | Some(ValueKind::ScalarU32) => {}
+                            // issue #88: a `bool` call arg is a native scalar, NOT
+                            // an aggregate — the guard was over-strict (it rejected
+                            // `pick(b)` for a `b: bool` param, blocking mind-flow's
+                            // from-source build). Both physical forms are already
+                            // handled by the `func.call` emission below: an
+                            // i1-tracked value (compare / bitwise-bool result, in
+                            // `i1_values`) coerces via `("i1", _) => arith.extui`
+                            // into the callee's i64 bool ABI slot, and an
+                            // i64-backed bool (a bool *param* is `ScalarBool` in an
+                            // i64 slot — see the `i1_values` invariant in the BinOp
+                            // widen path) is phys == target pass-through. Struct /
+                            // enum / String aggregates already flow as Option-C i64
+                            // record addresses; tensor / unregistered args still
+                            // fail loud below (true RFC 0005 phase 2+ territory).
+                            Some(ValueKind::ScalarBool) => {}
                             // issue #99: a `ScalarU64` arg is i64-physical — the
                             // `func.call` emission forwards it exactly like
                             // `ScalarI64` (same MLIR type), and the identity
