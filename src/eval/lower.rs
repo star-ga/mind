@@ -7521,6 +7521,72 @@ fn build_try_desugar(inner: &ast::Node, is_option: bool) -> ast::Node {
     }
 }
 
+/// Build the TEST expression for a STRING-LITERAL match arm (string-match v1):
+/// `match s { "lit" => … }` tests
+/// `load_i64(rec + 8) == LEN && load_i8(load_i64(rec) + i) == BYTE_i && …`
+/// where `rec = s as i64` — the identity handle-cast (a String value IS the
+/// address of its `{ addr, len, cap }` record), the same unshadowable decode
+/// shape as the `#[bimap]` `from_str` bodies. Every read goes through the
+/// `__mind_load_i64` / `__mind_load_i8` intrinsics (`load_i8` zero-extends, so
+/// non-ASCII UTF-8 bytes compare 0–255), NEVER the shadowable stdlib
+/// `string_eq` — a user fn of that name cannot hijack arm dispatch (#177 stays
+/// closed here). Pattern bytes come pre-decoded from the parser's escape-aware
+/// `Literal::Str`, so `"\n"` compares the single byte 0x0A.
+///
+/// The result is a pure expression (no lets, no loops), so it drops into the
+/// existing arm-test slot and short-circuits (`&&`) exactly like an int-literal
+/// test: a length mismatch skips every byte load (the empty pattern `""` is a
+/// bare `len == 0` test), and a first differing byte skips the rest. The
+/// scrutinee node is cloned per read, mirroring the established
+/// `cmp_lhs.clone()`-per-arm shape (scrutinees are idents/field reads in
+/// practice).
+#[cfg(feature = "std-surface")]
+fn string_pattern_test(scrutinee: &ast::Node, lit: &str, span: crate::ast::Span) -> ast::Node {
+    let rec = || ast::Node::As {
+        expr: Box::new(scrutinee.clone()),
+        ty: TypeAnn::ScalarI64,
+        span,
+    };
+    let int = |v: i64| ast::Node::Lit(Literal::Int(v), span);
+    let call1 = |name: &str, arg: ast::Node| ast::Node::Call {
+        callee: name.to_string(),
+        args: vec![arg],
+        span,
+    };
+    let add = |l: ast::Node, r: ast::Node| ast::Node::Binary {
+        op: ast::BinOp::Add,
+        left: Box::new(l),
+        right: Box::new(r),
+        span,
+    };
+    let eq = |l: ast::Node, r: ast::Node| ast::Node::Binary {
+        op: ast::BinOp::Eq,
+        left: Box::new(l),
+        right: Box::new(r),
+        span,
+    };
+    // len(s) == LEN — record field 1 at rec+8.
+    let len_load = call1("__mind_load_i64", add(rec(), int(8)));
+    let mut test = eq(len_load, int(lit.len() as i64));
+    // && byte_i(s) == BYTE_i — the data address is record field 0 at rec+0.
+    for (i, b) in lit.as_bytes().iter().enumerate() {
+        let base = call1("__mind_load_i64", rec());
+        let addr = if i == 0 {
+            base
+        } else {
+            add(base, int(i as i64))
+        };
+        let byte_eq = eq(call1("__mind_load_i8", addr), int(i64::from(*b)));
+        test = ast::Node::Logical {
+            op: ast::LogicalOp::And,
+            left: Box::new(test),
+            right: Box::new(byte_eq),
+            span,
+        };
+    }
+    test
+}
+
 /// `Node::Binary(Eq)` nodes and is lowered through the unchanged
 /// `ast::Node::If` arm, so none of the dominance/merge machinery is touched.
 #[cfg(feature = "std-surface")]
@@ -7863,6 +7929,15 @@ fn desugar_match_to_if(
                     right: Box::new(ast::Node::Lit(lit, span)),
                     span,
                 }))
+            }
+            // String-match v1: a string-literal arm tests unshadowable
+            // length + per-byte equality against the RAW scrutinee (a String
+            // handle — never `cmp_lhs`, which is for enum-tag loads). The
+            // abi gate enforces the structural preconditions fail-closed
+            // (catch-all required over the infinite String domain; no mixing
+            // with int/float/enum arms) before this lowering runs.
+            ast::Pattern::Literal(Literal::Str(lit)) => {
+                Some(Some(string_pattern_test(scrutinee, lit, span)))
             }
             // Step 2/5: enum-discriminant arm. Fieldless variants compare the
             // bare scrutinee against the tag; payload variants compare the
