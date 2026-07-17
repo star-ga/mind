@@ -564,6 +564,37 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
             }
         }
     });
+    // RFC 0005 phase 2 (first slice) — array-param signature pre-pass: record
+    // which param positions of each top-level NON-generic fn are `array<T>`,
+    // so an `ArrayLit` in argument position routes to the std.vec runtime
+    // (see `ARRAY_PARAM_FNS`). Reset at entry (mirrors the MONO reset above)
+    // so a prior `lower_to_ir` on this thread can never leak entries into
+    // this module's lowering. Only array-param fns are registered, so an
+    // array-free module (the keystone) populates nothing.
+    #[cfg(feature = "std-surface")]
+    ARRAY_PARAM_FNS.with(|cell| {
+        let mut m = cell.borrow_mut();
+        m.clear();
+        for item in &module.items {
+            if let ast::Node::FnDef {
+                name,
+                params,
+                type_params,
+                ..
+            } = item
+            {
+                if !type_params.is_empty() {
+                    continue;
+                }
+                if params.iter().any(|p| is_array_surface_ty(&p.ty)) {
+                    m.insert(
+                        name.clone(),
+                        params.iter().map(|p| is_array_surface_ty(&p.ty)).collect(),
+                    );
+                }
+            }
+        }
+    });
     // Generic-arg inference pre-pass (0-fail-closed): record each NON-generic
     // fn's declared scalar return type so a generic call over a NESTED call
     // (`id(g(3))`) resolves to `g`'s return type. Reset each call (like MONO).
@@ -1400,6 +1431,45 @@ fn enter_ret_type_scope(ret_type: &Option<TypeAnn>) -> RetTypeGuard {
     CURRENT_RET_TYPE.with(|r| {
         let prev = std::mem::replace(&mut *r.borrow_mut(), ret_type.clone());
         RetTypeGuard(prev)
+    })
+}
+
+thread_local! {
+    /// RFC 0005 phase 2, first slice — per-module registry of the ARRAY-typed
+    /// parameter positions of every top-level non-generic fn
+    /// (`name -> [is_array<T> per param position]`), so an `ArrayLit` in CALL-
+    /// ARGUMENT position (`f([1, 2, 3])`, `mind_type_struct(raw, [])`) can be
+    /// routed to `lower_array_surface_lit` (the std.vec heap runtime, an opaque
+    /// i64 vec handle) exactly like the annotated-`Let`, return-position
+    /// (task #88 facet 4) and struct-field arms already are. Without this, an
+    /// argument-position literal fell through to the const-array/tensor path
+    /// and tripped the MLIR guard's loud "non-i64 argument to call" reject —
+    /// the value level is NOT the gap (an `array<T>` VARIABLE already flows as
+    /// an Option-C i64 vec handle and passes the call ABI unchanged); only the
+    /// literal's lowering route was. Populated by a `lower_to_ir` pre-pass over
+    /// the whole module (order-independent, so a call above its callee's
+    /// definition still resolves) and RESET at entry so state never leaks
+    /// across modules. ONLY fns with at least one `array<T>` param get an
+    /// entry, so an array-free module (the keystone) leaves it empty and every
+    /// lookup misses — byte-identical. Cross-MODULE callees are not yet
+    /// registered (no global fn-signature registry exists); such a call keeps
+    /// the loud phase-2 reject — an honest, visible gap, never a miscompile.
+    #[cfg(feature = "std-surface")]
+    static ARRAY_PARAM_FNS: std::cell::RefCell<std::collections::HashMap<String, Vec<bool>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Whether `callee`'s parameter at `idx` is declared `array<T>` (per the
+/// [`ARRAY_PARAM_FNS`] pre-pass registry). Misses — unknown callee, generic
+/// callee, out-of-range position — return `false`, keeping the existing
+/// lowering path byte-identical.
+#[cfg(feature = "std-surface")]
+fn callee_array_lit_param(callee: &str, idx: usize) -> bool {
+    ARRAY_PARAM_FNS.with(|m| {
+        m.borrow()
+            .get(callee)
+            .map(|mask| mask.get(idx).copied().unwrap_or(false))
+            .unwrap_or(false)
     })
 }
 
@@ -5202,6 +5272,38 @@ fn lower_expr(
                     return emit_boxed_enum_record(ir, tag, &payloads, total_slots);
                 }
             }
+            // RFC 0005 phase 2 (first slice) — param-type-directed array-literal
+            // ARGUMENT lowering. When the callee's declared param at this
+            // position is `array<T>` (per the `ARRAY_PARAM_FNS` pre-pass) and
+            // the argument is an array literal (`f([1, 2, 3])`, `[]` included),
+            // lower it onto the std.vec heap runtime — the SAME opaque i64 vec
+            // handle an `array<T>` VARIABLE argument already passes — instead
+            // of the const-array/tensor path whose non-i64 result tripped the
+            // MLIR "non-i64 argument to call" phase-2 reject (the mind-flow
+            // `mind_type_struct(raw, [])` blocker). Every non-matching arg
+            // (unknown callee, non-array position, non-literal value) lowers
+            // byte-identically through `lower_expr` as before; the default
+            // (non-std-surface) build is cfg'd to the exact prior code.
+            #[cfg(feature = "std-surface")]
+            let arg_ids: Vec<ValueId> = args
+                .iter()
+                .enumerate()
+                .map(|(i, a)| {
+                    if let ast::Node::ArrayLit { elements, .. } = a {
+                        if callee_array_lit_param(callee, i) {
+                            return lower_array_surface_lit(
+                                elements,
+                                ir,
+                                env,
+                                struct_env,
+                                receiver_types,
+                            );
+                        }
+                    }
+                    lower_expr(a, ir, env, struct_env, receiver_types)
+                })
+                .collect();
+            #[cfg(not(feature = "std-surface"))]
             let arg_ids: Vec<ValueId> = args
                 .iter()
                 .map(|a| lower_expr(a, ir, env, struct_env, receiver_types))
