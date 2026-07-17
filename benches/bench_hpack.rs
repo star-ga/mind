@@ -34,6 +34,7 @@
 //!   - C.2.2  `04 …`  Literal Header Field *without* Indexing (§6.2.2)
 //!   - C.2.3  `10 …`  Literal Header Field *Never* Indexed   (§6.2.3)
 //!   - C.2.4  `82`     Indexed Header Field, static entry 2   (§6.1)
+//!
 //! None of these insert into, evict from, or resize the dynamic table, so a
 //! single `hpack_dyn_init`'d state buffer stays byte-for-byte constant and the
 //! decode is idempotent — every timed iteration decodes identical input from an

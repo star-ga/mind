@@ -65,6 +65,7 @@
 //!     leaks plaintext (fail-closed), and
 //!   * `nonce(seq=1) != nonce(seq=0)`, both matching the RFC 8446 §5.3
 //!     construction (`iv XOR left-padded seq_be8`, only the low 8 bytes vary).
+//!
 //! Any mismatch panics the bench run — mirroring the byte-identity gate in
 //! `det_matmul_q16.rs` and the KAT gates in the sibling crypto benches.
 //!

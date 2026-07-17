@@ -66,6 +66,7 @@ use libloading::{Library, Symbol};
 /// `x25519(scalar_addr, u_addr, out_addr) -> 0`.
 ///   - `scalar_addr`, `u_addr`: 32-byte little-endian input buffers.
 ///   - `out_addr`: 32-byte output buffer (shared secret / public key).
+///
 /// Byte-for-byte the ctypes signature the `x25519_vectors_driver.py` reference
 /// driver binds (`restype=c_int64`, `argtypes=[c_int64]*3`).
 type X25519Fn = unsafe extern "C" fn(i64, i64, i64) -> i64;

@@ -17,9 +17,10 @@
 //!      `Continue`/`Break`), the MLIR if-lowering's terminator check
 //!      (`instr_is_block_terminator(.last())`, which DOES recognize
 //!      Break/Continue) missed and appended a second `cf.br ^if_after`.
+//!
 //! That yielded a block with a mid-block `cf.br` plus a trailing `cf.br`, which
 //! `mlir-opt` rejects:
-//!   `error: operation with block successors must terminate its parent block`.
+//! `error: operation with block successors must terminate its parent block`.
 //!
 //! This is a FAILS-TO-BUILD gap (not a silent miscompile): pre-fix the
 //! `--emit-shared` subprocess errors out; post-fix it compiles and the
