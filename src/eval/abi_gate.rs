@@ -601,19 +601,28 @@ fn flag_enum_return(
 // LOUD with a span instead of silently miscompiling. Inert (empty,
 // byte-identity-safe) for any program with no payload-carrying enum.
 
-const MATCH_RUNNABLE_HELP: &str = "v1 enum match lowers a payload sub-pattern only when each field is a binding (`Ident`) or a \
-     wildcard (`_`) — e.g. `Some(v)`, `Pair::P(a, b)`, `Pair::P(a, _)`. A nested or literal \
-     sub-pattern (`Some(Some(x))`, `Some(0)`) is not yet lowerable: the match would fall back to a \
-     sequential evaluation that returns the wrong arm. Match the field with a binding and test it in \
-     the arm body, or run it with the `mind` interpreter.";
+const MATCH_RUNNABLE_HELP: &str = "v1 enum match lowers a payload sub-pattern only when each field is a binding (`Ident`), a \
+     wildcard (`_`), or a single-level tuple of bindings/wildcards — e.g. `Some(v)`, \
+     `Pair::P(a, b)`, `Pair::P(a, _)`, `Ok((a, b))`. A deeper-nested or literal sub-pattern \
+     (`Some(Some(x))`, `Some(0)`, `Ok(((a, b), c))`) is not yet lowerable: the match would fall \
+     back to a sequential evaluation that returns the wrong arm. Match the field with a binding \
+     and test it in the arm body, or run it with the `mind` interpreter.";
 
 /// `true` when a match arm's payload sub-patterns are all ones the v1 desugar
-/// lowers correctly: each field is an `Ident` (bind it from its slot) or a
-/// `Wildcard` (skip it). A NESTED or LITERAL sub-pattern (`Some(Some(x))`,
-/// `Some(0)`) bails `desugar_match_to_if` to the silent sequential fallback.
+/// lowers correctly: each field is an `Ident` (bind it from its slot), a
+/// `Wildcard` (skip it), or a single-level `Tuple` of Idents/Wildcards
+/// (`Ok((a, b))` — the payload slot holds the tuple aggregate's handle; the
+/// desugar binds the handle then loads each element). MUST mirror `sub_ok` in
+/// `desugar_match_to_if`'s `build_binds` (`src/eval/lower.rs`) exactly: a
+/// DEEPER-nested or LITERAL sub-pattern (`Some(Some(x))`, `Some(0)`) bails
+/// the desugar, so it must stay rejected here (loud, fail-closed).
 fn payload_subpattern_supported(args: &[crate::ast::Pattern]) -> bool {
     use crate::ast::Pattern as P;
-    args.iter().all(|p| matches!(p, P::Ident(_) | P::Wildcard))
+    args.iter().all(|p| match p {
+        P::Ident(_) | P::Wildcard => true,
+        P::Tuple(inner) => inner.iter().all(|q| matches!(q, P::Ident(_) | P::Wildcard)),
+        _ => false,
+    })
 }
 
 /// Flag match shapes the runnable lowering would SILENTLY MISCOMPILE. Two
@@ -839,8 +848,9 @@ fn walk_match_runnable(node: &Node, src: &str, file: Option<&str>, out: &mut Vec
                             "lower::enum_match_unsupported_payload",
                             format!(
                                 "match arm `{path}` binds a nested or literal payload sub-pattern, \
-                                 which v1 does not lower — only field bindings (`Ident`) and \
-                                 wildcards (`_`) are supported; the match would otherwise silently \
+                                 which v1 does not lower — only field bindings (`Ident`), \
+                                 wildcards (`_`), and single-level tuples of bindings \
+                                 (`Ok((a, b))`) are supported; the match would otherwise silently \
                                  fall back to a sequential evaluation and return the wrong arm"
                             ),
                         )
