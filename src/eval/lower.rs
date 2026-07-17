@@ -1661,6 +1661,64 @@ fn struct_key_for<'a>(ir: &IRModule, name: &'a str) -> &'a str {
     }
 }
 
+/// Resolve a method-call RECEIVER that names a TYPE (not a value) to that
+/// type's bare registry key — the static/associated-method generalization of
+/// the hardcoded `string.from_utf8_bytes` receiver check. Two spellings:
+/// a bare `Type` identifier (`MindTypeRef.memory_of(x)` — the parser's
+/// `mod.CONST` namespace rewrite already stripped an import qualifier), or a
+/// pure ident chain `mod.Type` whose base was NOT rewritten (not an import).
+/// `None` unless (a) the chain is pure identifiers (an indexed/called/literal
+/// link is a VALUE expression), (b) the BASE identifier is not bound as a
+/// value in `env`/`struct_env` (a local shadowing the type name keeps the
+/// value path, mirroring the `string`/`String` block), and (c) the terminal
+/// segment names a registered struct (`struct_defs`, via `struct_key_for` for
+/// a qualified spelling) or enum (per-module variant tags / the global
+/// registry). Callers use it ONLY on the previously-panicking unresolved
+/// with-args path, so every program that compiled before is byte-identical.
+#[cfg(feature = "std-surface")]
+fn static_type_receiver_key<'a>(
+    receiver: &'a ast::Node,
+    ir: &IRModule,
+    env: &HashMap<String, ValueId>,
+    struct_env: &HashMap<String, String>,
+) -> Option<&'a str> {
+    let (base, terminal): (&str, &str) = match receiver {
+        ast::Node::Lit(Literal::Ident(tn), _) => (tn.as_str(), tn.as_str()),
+        ast::Node::FieldAccess {
+            receiver: chain,
+            field,
+            ..
+        } => {
+            let mut cur = chain.as_ref();
+            loop {
+                match cur {
+                    ast::Node::Lit(Literal::Ident(b), _) => break (b.as_str(), field.as_str()),
+                    ast::Node::FieldAccess { receiver: r, .. } => cur = r.as_ref(),
+                    _ => return None,
+                }
+            }
+        }
+        _ => return None,
+    };
+    if env.contains_key(base) || struct_env.contains_key(base) {
+        return None;
+    }
+    let key = struct_key_for(ir, terminal);
+    if ir.struct_defs.contains_key(key) {
+        return Some(key);
+    }
+    let enum_prefix = format!("{terminal}::");
+    if ir
+        .enum_variant_tags
+        .keys()
+        .any(|k| k.starts_with(&enum_prefix))
+        || crate::ir::with_global_enums(|g| g.names.iter().any(|n| n == terminal))
+    {
+        return Some(terminal);
+    }
+    None
+}
+
 #[cfg(feature = "std-surface")]
 fn struct_layout(ir: &IRModule, name: &str) -> Option<StructLayout> {
     let field_types = ir.struct_field_types.get(name)?;
@@ -7221,6 +7279,38 @@ fn lower_expr(
                     dst
                 }
                 None => {
+                    // Static/associated TYPE method: `Type.method(args…)` (or a
+                    // module-qualified `mod.Type.method(args…)` chain) where the
+                    // receiver names a registered struct/enum and is NOT a value
+                    // binding. Desugars to `{lowercase(Type)}_{method}(args…)`
+                    // with NO receiver arg — the user-type generalization of the
+                    // hardcoded `string.from_utf8_bytes` → `string_from_utf8_bytes`
+                    // block above (mind-flow's `ir.MindTypeRef.memory_of(x)` →
+                    // `mindtyperef_memory_of(x)`). Placed INSIDE the unresolved
+                    // with-args arm so it fires only where lowering previously
+                    // PANICKED — no program that compiled before can reach it, so
+                    // existing artifacts (and the keystone) are byte-identical by
+                    // construction. The zero-arg unresolved path below is
+                    // untouched (historical const-0 placeholder).
+                    #[cfg(feature = "std-surface")]
+                    if !args.is_empty() {
+                        if let Some(type_key) =
+                            static_type_receiver_key(receiver, ir, env, struct_env)
+                        {
+                            let fn_name = format!("{}_{}", type_key.to_lowercase(), method);
+                            let mut call_args = Vec::with_capacity(args.len());
+                            for a in args {
+                                call_args.push(lower_expr(a, ir, env, struct_env, receiver_types));
+                            }
+                            let dst = ir.fresh();
+                            ir.instrs.push(Instr::Call {
+                                dst,
+                                name: fn_name,
+                                args: call_args,
+                            });
+                            return dst;
+                        }
+                    }
                     // Receiver type unresolved. A zero-arg unresolved call could
                     // be a never-defined accessor; a with-args unresolved call is
                     // a guaranteed silent miscompile under the old const-0
