@@ -55,6 +55,17 @@ struct P<'a> {
     /// `RandomState` hasher init — import lists are tiny, so linear `contains`
     /// is faster and keeps `compile_small` at its nanosecond floor.
     imports: Vec<String>,
+    /// FULL dotted paths of multi-segment imports (`import bridge.mcp` →
+    /// `"bridge.mcp"`). `imports` above records only the LAST segment (the
+    /// qualifier), so a call spelled through the full path
+    /// (`bridge.mcp.call(x)`) parses its receiver into a FieldAccess chain the
+    /// single-segment rewrite cannot see — it then reaches lowering as a UFCS
+    /// MethodCall with no resolvable receiver type and trips the #306
+    /// fail-closed guard. A call trailer whose receiver chain spells one of
+    /// these paths is the SAME namespace access, desugared to the same bare
+    /// cross-module call. Empty unless a multi-segment import exists (the
+    /// keystone and all of std), so those parses stay byte-identical.
+    import_paths: Vec<String>,
     /// Invariant block names declared in this module (`invariant NAME { … }`).
     /// A dotted call `NAME.pred(args)` whose receiver is one of these is a
     /// namespace access onto the predicate free function `NAME_pred`, not a
@@ -248,6 +259,7 @@ impl<'a> P<'a> {
             b: src.as_bytes(),
             pos: 0,
             imports: Vec::new(),
+            import_paths: Vec::new(),
             invariants: Vec::new(),
             enum_names: Vec::new(),
             global_enums,
@@ -1480,6 +1492,15 @@ impl<'a> P<'a> {
                 self.imports.push(last.clone());
             }
         }
+        // A multi-segment import ALSO records its full dotted path so a call
+        // spelled through the whole path (`bridge.mcp.call(x)`) desugars the
+        // same way as the qualifier form (`mcp.call(x)`).
+        if path.len() > 1 {
+            let dotted = path.join(".");
+            if !self.import_paths.iter().any(|s| s == &dotted) {
+                self.import_paths.push(dotted);
+            }
+        }
         let span = Span::new(start, self.pos);
         Ok(Node::Import { path, span })
     }
@@ -1504,6 +1525,13 @@ impl<'a> P<'a> {
         if let Some(last) = path.last() {
             if !self.imports.iter().any(|s| s == last) {
                 self.imports.push(last.clone());
+            }
+        }
+        // Full-dotted-path twin of the qualifier record — see parse_import.
+        if path.len() > 1 {
+            let dotted = path.join(".");
+            if !self.import_paths.iter().any(|s| s == &dotted) {
+                self.import_paths.push(dotted);
             }
         }
         let span = Span::new(start, self.pos);
@@ -3564,6 +3592,38 @@ impl<'a> P<'a> {
                                 continue;
                             }
                         }
+                        // Multi-segment module-qualified call
+                        // `bridge.mcp.call(args)` → bare cross-module call
+                        // `call(args)`: the receiver is a pure Ident/FieldAccess
+                        // CHAIN spelling the FULL dotted path of an imported
+                        // module (`import bridge.mcp`). Only the last segment is
+                        // a registered qualifier, so the single-segment rewrite
+                        // above cannot see the fully-qualified spelling — it
+                        // would fall through to a UFCS MethodCall whose receiver
+                        // has no struct type and trip the #306 fail-closed
+                        // lowering guard. Matching the WHOLE dotted path against
+                        // the recorded multi-segment imports keeps a real value
+                        // chain (`p.lexer.pos(x)`) on the MethodCall path — it
+                        // can only misfire if a local shadows a full import
+                        // path, the same inherent namespace/value ambiguity the
+                        // single-segment rewrite already accepts. Empty
+                        // `import_paths` (no multi-segment imports — the
+                        // keystone and all of std) short-circuits before any
+                        // allocation, so those parses stay byte-identical.
+                        if !self.import_paths.is_empty()
+                            && matches!(&node, Node::FieldAccess { .. })
+                        {
+                            if let Some(dotted) = ident_chain_dotted(&node) {
+                                if self.import_paths.iter().any(|s| s == &dotted) {
+                                    node = Node::Call {
+                                        callee: method,
+                                        args,
+                                        span,
+                                    };
+                                    continue;
+                                }
+                            }
+                        }
                         node = Node::MethodCall {
                             receiver: Box::new(node),
                             method,
@@ -5330,6 +5390,20 @@ impl<'a> P<'a> {
 /// Threshold must be a float literal in `[0.0, 1.0)`. Values outside that
 /// range or unparseable values are ignored. When multiple `reap_threshold`
 /// attributes are present, the last one wins.
+/// Flatten a pure `Ident`/`FieldAccess` chain (`bridge.mcp`) into its dotted
+/// spelling. `None` as soon as any link is not a bare identifier — an indexed,
+/// called, or literal link means the chain is a VALUE expression and can never
+/// be a module path.
+fn ident_chain_dotted(node: &Node) -> Option<String> {
+    match node {
+        Node::Lit(Literal::Ident(n), _) => Some(n.clone()),
+        Node::FieldAccess {
+            receiver, field, ..
+        } => Some(format!("{}.{}", ident_chain_dotted(receiver)?, field)),
+        _ => None,
+    }
+}
+
 fn extract_reap_threshold(attrs: &[crate::ast::Attribute]) -> Option<f64> {
     let mut result: Option<f64> = None;
     for attr in attrs {
