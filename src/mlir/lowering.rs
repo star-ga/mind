@@ -1107,7 +1107,21 @@ impl LoweringContext {
         kind: &mut ValueKind,
         buf: &mut String,
         tag: &str,
+        branch_returns: bool,
     ) {
+        // A branch that ends in `return` (or any block terminator) emits no
+        // `cf.br ^if_after` edge, so its merge-column value is never read.
+        // Appending an `arith.extui` widening op into that branch's buffer
+        // would land AFTER the `return` terminator — an op after a block
+        // terminator is illegal MLIR ("'func.return' op must be the last
+        // operation in the parent block"). Same guard `unify_merge_kind`
+        // already applies via its `then_returns`/`else_returns` flags. Skip
+        // the widening entirely for a returning branch: the (unwidened) value
+        // is dead and the column type is decided by the live (non-returning)
+        // edge.
+        if branch_returns {
+            return;
+        }
         if self.i1_values.contains(id) {
             let name = format!("%i1w_{tag}");
             let _ = writeln!(buf, "    {name} = arith.extui {val} : i1 to i64");
@@ -1324,24 +1338,37 @@ impl LoweringContext {
         match (int_width(then_kind), int_width(else_kind)) {
             (Some(tw), Some(ew)) if tw != ew => {
                 // Widen the narrower arm to i64.
+                //
+                // Terminator guard: a branch that ends in `return` (or any block
+                // terminator) emits no `cf.br ^if_after` edge, so its merge-column
+                // value is never read. Appending the `arith.extui`/`extsi` widening
+                // op into that branch's buffer would land AFTER its `return` — an
+                // op after a block terminator is illegal MLIR ("'func.return' op
+                // must be the last operation in the parent block"). Skip the
+                // widening for a returning branch; its (unwidened, dead) value is
+                // dropped with the branch, and the merge type is still i64 (the
+                // live edge governs, exactly as the float/int paths above already
+                // do via their `then_returns`/`else_returns` guards).
                 let mut tv = then_val.to_string();
                 let mut ev = else_val.to_string();
                 let src_ty_t = mlir_type(then_kind)?;
                 let src_ty_e = mlir_type(else_kind)?;
                 if tw < ew {
-                    let op = if is_unsigned(then_kind) {
-                        "extui"
-                    } else {
-                        "extsi"
-                    };
-                    let name = format!("%mwide_{lbl}_{col}_t");
-                    writeln!(
-                        t_buf,
-                        "    {name} = arith.{op} {then_val} : {src_ty_t} to i64"
-                    )
-                    .expect("write to string cannot fail");
-                    tv = name;
-                } else {
+                    if !then_returns {
+                        let op = if is_unsigned(then_kind) {
+                            "extui"
+                        } else {
+                            "extsi"
+                        };
+                        let name = format!("%mwide_{lbl}_{col}_t");
+                        writeln!(
+                            t_buf,
+                            "    {name} = arith.{op} {then_val} : {src_ty_t} to i64"
+                        )
+                        .expect("write to string cannot fail");
+                        tv = name;
+                    }
+                } else if !else_returns {
                     let op = if is_unsigned(else_kind) {
                         "extui"
                     } else {
@@ -4776,6 +4803,7 @@ impl LoweringContext {
                         &mut tk,
                         &mut then_body,
                         &format!("{lbl}_0_t"),
+                        then_ends_with_return,
                     );
                     self.widen_i1_merge_branch(
                         else_result,
@@ -4783,6 +4811,7 @@ impl LoweringContext {
                         &mut ek,
                         &mut else_body,
                         &format!("{lbl}_0_e"),
+                        else_ends_with_return,
                     );
                     let (mk, tnew, enew) = self.unify_merge_kind(
                         &tk,
@@ -4821,6 +4850,7 @@ impl LoweringContext {
                         &mut tk,
                         &mut then_body,
                         &format!("{lbl}_{idx}_t"),
+                        then_ends_with_return,
                     );
                     self.widen_i1_merge_branch(
                         else_val,
@@ -4828,6 +4858,7 @@ impl LoweringContext {
                         &mut ek,
                         &mut else_body,
                         &format!("{lbl}_{idx}_e"),
+                        else_ends_with_return,
                     );
                     let (mk, tnew, enew) = self.unify_merge_kind(
                         &tk,
