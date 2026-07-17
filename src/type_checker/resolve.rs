@@ -891,6 +891,8 @@ impl<'a> Resolver<'a> {
                 self.walk(inner);
             }
             Node::As { expr, .. } => self.walk(expr),
+            // W1.5f: postfix `?` binds nothing of its own — resolve `inner`.
+            Node::Try { inner, .. } => self.walk(inner),
             Node::Tuple { elements, .. } | Node::ArrayLit { elements, .. } => {
                 for e in elements {
                     self.walk(e);

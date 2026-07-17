@@ -1789,6 +1789,21 @@ pub(crate) fn eval_value_expr_mode(
         // position is simply a READ of the inner expression: `&x` (and
         // `&mut x`) evaluates the inner expression and yields its value.
         Node::Ref { inner, .. } => eval_value_expr_mode(inner, env, tensor_env, mode.clone()),
+        // W1.5f: postfix `?`. FAIL-CLOSED — a `?`-using fn is excluded from
+        // compile-time tree-walking evaluation (const-eval / #[collapse]) this
+        // slice. Bailing here (rather than folding a wrong value) makes any
+        // attempt to const-fold a `?`-using fn a clean, loud error; the native
+        // lowering path handles `?` correctly.
+        // deferred: const-eval of `?` — upgrade path: evaluate `inner`, then on
+        // the Ok/Some tag yield the payload and on the Err/None tag raise the
+        // early-return via the #179 ReturnFlow signal the tree evaluator now
+        // carries, mirroring the native `build_try_desugar` lowering.
+        Node::Try { .. } => Err(EvalError::UnsupportedMsg(
+            "postfix `?` is lowered by the native compiler into the `match` \
+             error-propagation machinery; the tree-walking eval fallback does \
+             not interpret it (a `?`-using fn is excluded from const-eval)"
+                .into(),
+        )),
         // RFC 0005 Gap 1: while loop. Mirrors the `For`-loop interpreter
         // contract — a fresh loop scope inheriting the outer env, with
         // `let`/`assign` statements in the body propagated back into that scope
