@@ -1650,6 +1650,35 @@ fn struct_layout(ir: &IRModule, name: &str) -> Option<StructLayout> {
 #[cfg(feature = "std-surface")]
 const ARRAY_VEC_SENTINEL: &str = "vec";
 
+/// Sentinel recorded in `struct_env` for a fixed-size `bytes[N]` buffer
+/// binding/param (the parser renders the type `Named("bytes[N]")`). The value
+/// is a raw STRIDE-1 byte buffer behind an i64 address (`bytes[N].zero()` →
+/// `__mind_calloc(N)`; `std.sha256.hash` → `__mind_alloc(32)`), NOT the
+/// growable std.vec `[addr|len|cap]` record — so `v[i]` must lower to
+/// `__mind_load_i8(v + i)`, never `vec_get` and never the const-array
+/// `ArrayLoad`/`tensor.extract` path. Like `ARRAY_VEC_SENTINEL` it is not a
+/// real struct name, so the field-accessor fast path never matches it.
+#[cfg(feature = "std-surface")]
+const FIXED_BYTES_SENTINEL: &str = "bytesfixed";
+
+/// True when `ty` is the growable `bytes` surface type (`Named("bytes")`) —
+/// physically the SAME std.vec `[addr|len|cap]` u8 record as `array<u8>`
+/// (see std/sha256.mind `hash(input: bytes)`, which reads the record fields
+/// directly). Distinct from the fixed `bytes[N]` buffer (`is_fixed_bytes_ty`);
+/// the type checker's bug-#38 gate rejects mixing the two at call sites.
+#[cfg(feature = "std-surface")]
+fn is_growable_bytes_ty(ty: &TypeAnn) -> bool {
+    matches!(ty, TypeAnn::Named(n) if n == "bytes")
+}
+
+/// True when `ty` is a fixed-size buffer type `bytes[N]` (the parser renders
+/// it `Named("bytes[N]")` — the `[` suffix is the sole discriminator,
+/// mirroring the type checker's `typeann_is_fixed_bytes`).
+#[cfg(feature = "std-surface")]
+fn is_fixed_bytes_ty(ty: &TypeAnn) -> bool {
+    matches!(ty, TypeAnn::Named(n) if n.starts_with("bytes["))
+}
+
 /// True when `ann` is the dynamic-array surface type `array<T>` (RFC 0005 vec
 /// surface). Parsed as `TypeAnn::Generic { name: "array", .. }`. The fixed-size
 /// `[T; N]` LUT type (`TypeAnn::Array`) and the slice `[T]` (`TypeAnn::Slice`)
@@ -1948,6 +1977,13 @@ fn collection_sentinel_for_ty(ty: &TypeAnn) -> Option<&'static str> {
         Some(map_sentinel_for(ty))
     } else if is_set_surface_ty(ty) {
         Some(set_sentinel_for(ty))
+    } else if is_growable_bytes_ty(ty) {
+        // Growable `bytes` = the std.vec u8 record → the vec sentinel, so a
+        // `buf: bytes` struct FIELD resolves `.push`/`[i]`/`.length` to the
+        // vec runtime exactly like a `bytes`-typed param/let.
+        Some(ARRAY_VEC_SENTINEL)
+    } else if is_fixed_bytes_ty(ty) {
+        Some(FIXED_BYTES_SENTINEL)
     } else {
         None
     }
@@ -1975,6 +2011,7 @@ fn receiver_collection_sentinel(
             Some(MAP_STR_SENTINEL) => Some(MAP_STR_SENTINEL),
             Some(SET_SENTINEL) => Some(SET_SENTINEL),
             Some(SET_STR_SENTINEL) => Some(SET_STR_SENTINEL),
+            Some(FIXED_BYTES_SENTINEL) => Some(FIXED_BYTES_SENTINEL),
             // Not a local/param — may be a module-level `const` of collection
             // type (`BACKEND_AVAILABILITY.get(p)` where `const … : map<…>`).
             _ => crate::ir::module_const_type(v).and_then(|t| collection_sentinel_for_ty(&t)),
@@ -4163,6 +4200,23 @@ fn lower_expr(
                     if let Some(__e) = array_element_track(&param.ty) {
                         fn_struct_env.insert(format!("__elem__{}", param.name), __e);
                     }
+                }
+                // Growable `bytes` param → vec sentinel: a `bytes` value is the
+                // same std.vec [addr|len|cap] u8 record as `array<u8>`, so
+                // `out.push(b)` / `out[i]` / `out.length` in the body resolve
+                // to the std.vec runtime. Without this, `out.push(v)` in e.g.
+                // mind-flow `fn write_u8(out: bytes, v: u8)` desugared to a
+                // call to the NONEXISTENT free function `bytes_push`.
+                #[cfg(feature = "std-surface")]
+                if is_growable_bytes_ty(&param.ty) {
+                    fn_struct_env.insert(param.name.clone(), ARRAY_VEC_SENTINEL.to_string());
+                }
+                // Fixed `bytes[N]` param → fixed-bytes sentinel so `v[i]` in
+                // the body lowers to the raw stride-1 byte load
+                // (`__mind_load_i8`), not the const-array LUT path.
+                #[cfg(feature = "std-surface")]
+                if is_fixed_bytes_ty(&param.ty) {
+                    fn_struct_env.insert(param.name.clone(), FIXED_BYTES_SENTINEL.to_string());
                 }
                 // `map<K, V>` param → map sentinel (str-key vs i64-key).
                 #[cfg(feature = "std-surface")]
@@ -6531,6 +6585,33 @@ fn lower_expr(
                 });
                 return dst;
             }
+            // `v[i]` on a fixed `bytes[N]` buffer (a raw stride-1 byte buffer
+            // behind an i64 address) → `__mind_load_i8(base + i)` (zero-extends
+            // the byte to i64). The `ArrayLoad` fallthrough below would emit
+            // `tensor.extract` on the i64 handle — a non-i64 value the call ABI
+            // rejects (mind-flow `write_bytes32`: `out.push(v[i])` with
+            // `v: bytes[32]`).
+            #[cfg(feature = "std-surface")]
+            if receiver_collection_sentinel(receiver, ir, struct_env, receiver_types)
+                == Some(FIXED_BYTES_SENTINEL)
+            {
+                let base = lower_expr(receiver, ir, env, struct_env, receiver_types);
+                let index_id = lower_expr(index, ir, env, struct_env, receiver_types);
+                let addr = ir.fresh();
+                ir.instrs.push(Instr::BinOp {
+                    dst: addr,
+                    op: BinOp::Add,
+                    lhs: base,
+                    rhs: index_id,
+                });
+                let dst = ir.fresh();
+                ir.instrs.push(Instr::Call {
+                    dst,
+                    name: "__mind_load_i8".to_string(),
+                    args: vec![addr],
+                });
+                return dst;
+            }
             let base = lower_expr(receiver, ir, env, struct_env, receiver_types);
             let index_id = lower_expr(index, ir, env, struct_env, receiver_types);
             let dst = ir.fresh();
@@ -6564,6 +6645,31 @@ fn lower_expr(
                     dst,
                     name: "vec_set".to_string(),
                     args: vec![base, index_id, val_id],
+                });
+                return dst;
+            }
+            // `v[i] = x` on a fixed `bytes[N]` buffer → `__mind_store_i8(base
+            // + i, x)` (stores the low byte). Without this route the const-0
+            // placeholder below silently DROPPED the store.
+            #[cfg(feature = "std-surface")]
+            if receiver_collection_sentinel(receiver, ir, struct_env, receiver_types)
+                == Some(FIXED_BYTES_SENTINEL)
+            {
+                let base = lower_expr(receiver, ir, env, struct_env, receiver_types);
+                let index_id = lower_expr(index, ir, env, struct_env, receiver_types);
+                let val_id = lower_expr(value, ir, env, struct_env, receiver_types);
+                let addr = ir.fresh();
+                ir.instrs.push(Instr::BinOp {
+                    dst: addr,
+                    op: BinOp::Add,
+                    lhs: base,
+                    rhs: index_id,
+                });
+                let dst = ir.fresh();
+                ir.instrs.push(Instr::Call {
+                    dst,
+                    name: "__mind_store_i8".to_string(),
+                    args: vec![addr, val_id],
                 });
                 return dst;
             }

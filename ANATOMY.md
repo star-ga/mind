@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3138 | **Est. tokens:** ~7,486,825
-**Generated:** 2026-07-17 15:05 UTC
+**Files:** 3138 | **Est. tokens:** ~7,490,495
+**Generated:** 2026-07-17 15:32 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~24,888 |
+| `./` | 34 | ~28,558 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -471,7 +471,7 @@
 
 ### `./`
 
-- `a.out` (~104 tok, small) — ELF>`@@.shstrtab.text
+- `a.out` (~3774 tok, huge) — ELF>@x4@8
 - `ARCHITECTURE.md` (~300 tok, medium) — MIND Architecture (high level)
 - `AUDIT_REPORT.md` (~1151 tok, large) — Audit Report
 - `.bench-baseline-2026-04-27.txt` (~531 tok, large) —    Compiling mind v0.2.3 (.)
