@@ -3899,27 +3899,51 @@ impl LoweringContext {
                 //
                 // Mapping: if post_id[k] == init_id[j], use body_name[j].
                 // Otherwise (post_id is a fresh computation), use %post_id.
+                //
+                // Terminator guard: if the body's final block already ended in
+                // a terminator — a tail `break`/`continue` (cf.br to
+                // ^while_after/^while_header) or a tail `return` — appending
+                // the back-edge would put a second successor-carrying op in the
+                // same block, which mlir-opt rejects with "operation with block
+                // successors must terminate its parent block" (the mind-flow
+                // `loop { match { return .. } .. break }` shape). Same
+                // last-non-empty-line check as the fn-epilogue synthetic-return
+                // guard above; bodies that fall through are unaffected, so the
+                // emitted text for every previously-building program is
+                // byte-identical.
                 {
-                    let post_items: Vec<(String, String)> = loop_args
-                        .iter()
-                        .zip(&loop_types)
-                        .map(|(a, t)| {
-                            // Check if this post_id matches the init_id of
-                            // another (or the same) loop arg.
-                            let v = if let Some(src) =
-                                loop_args.iter().find(|other| other.init_id == a.post_id)
-                            {
-                                // Pass the body-block arg for that source variable.
-                                format!("%{}", src.body_name)
-                            } else {
-                                // Fresh computation in the body — pass directly.
-                                format!("%{}", a.post_id)
-                            };
-                            (v, (*t).to_string())
-                        })
-                        .collect();
-                    let back_pass = fmt_block_args_typed(&post_items);
-                    self.emit_line(&format!("    cf.br ^while_header_{lbl}{back_pass}"));
+                    let last_body_line = body_text
+                        .lines()
+                        .rev()
+                        .find(|l| !l.trim().is_empty())
+                        .unwrap_or("")
+                        .trim();
+                    let body_terminated = last_body_line.starts_with("return")
+                        || last_body_line.starts_with("llvm.return")
+                        || last_body_line.starts_with("cf.br ")
+                        || last_body_line.starts_with("cf.cond_br ");
+                    if !body_terminated {
+                        let post_items: Vec<(String, String)> = loop_args
+                            .iter()
+                            .zip(&loop_types)
+                            .map(|(a, t)| {
+                                // Check if this post_id matches the init_id of
+                                // another (or the same) loop arg.
+                                let v = if let Some(src) =
+                                    loop_args.iter().find(|other| other.init_id == a.post_id)
+                                {
+                                    // Pass the body-block arg for that source variable.
+                                    format!("%{}", src.body_name)
+                                } else {
+                                    // Fresh computation in the body — pass directly.
+                                    format!("%{}", a.post_id)
+                                };
+                                (v, (*t).to_string())
+                            })
+                            .collect();
+                        let back_pass = fmt_block_args_typed(&post_items);
+                        self.emit_line(&format!("    cf.br ^while_header_{lbl}{back_pass}"));
+                    }
                 }
 
                 // After block: block args carry the loop-variable values from
