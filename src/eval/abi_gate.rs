@@ -813,6 +813,74 @@ fn walk_match_runnable(node: &Node, src: &str, file: Option<&str>, out: &mut Vec
             scrutinee, arms, ..
         } => {
             walk_match_runnable(scrutinee, src, file, out);
+            // String-match v1: string-literal arms now LOWER (unshadowable
+            // length + per-byte equality desugar in `lower.rs`), under two
+            // STRUCTURAL preconditions enforced here fail-closed:
+            //   1. `String` is an infinite domain, so the match MUST carry an
+            //      unguarded catch-all (`_` / bare-ident) arm — no finite set
+            //      of literals is exhaustive, and without a terminal `else` a
+            //      non-matching scrutinee would silently yield the If-chain's
+            //      unit merge value.
+            //   2. String arms must not MIX with int/float-literal, enum, or
+            //      tuple arms in one match — one scrutinee cannot be both a
+            //      String record and an integer/discriminant, and the loose
+            //      i64 ABI (strings are opaque handles to the type checker)
+            //      cannot catch the ill-typed mix, so an int compare against a
+            //      record address would "work" and silently take a wrong arm.
+            let has_str_arm = arms.iter().any(|a| {
+                matches!(
+                    &a.pattern,
+                    crate::ast::Pattern::Literal(crate::ast::Literal::Str(_))
+                )
+            });
+            if has_str_arm {
+                let has_catch_all = arms.iter().any(|a| {
+                    a.guard.is_none()
+                        && matches!(
+                            &a.pattern,
+                            crate::ast::Pattern::Wildcard | crate::ast::Pattern::Ident(_)
+                        )
+                });
+                if !has_catch_all {
+                    let m_span = node.span();
+                    out.push(
+                        Diagnostic::error(
+                            PHASE,
+                            "lower::match_string_not_exhaustive",
+                            "match on a String scrutinee has string-literal arms but no \
+                             unguarded catch-all — `String` is an infinite domain, so no set \
+                             of literal arms is exhaustive; add a final `_ => …` (or bare \
+                             binding) arm"
+                                .to_string(),
+                        )
+                        .with_span(Span::from_offsets(src, m_span.start(), m_span.end(), file))
+                        .with_help(MATCH_RUNNABLE_HELP),
+                    );
+                }
+                for a in arms {
+                    let mixes = !matches!(
+                        &a.pattern,
+                        crate::ast::Pattern::Literal(crate::ast::Literal::Str(_))
+                            | crate::ast::Pattern::Wildcard
+                            | crate::ast::Pattern::Ident(_)
+                    );
+                    if mixes {
+                        out.push(
+                            Diagnostic::error(
+                                PHASE,
+                                "lower::match_string_mixed_patterns",
+                                "match mixes a string-literal arm with a non-string test arm \
+                                 — a scrutinee is either a String (every test arm a string \
+                                 literal) or a scalar/enum (no string-literal arms); split \
+                                 the match or fix the arm"
+                                    .to_string(),
+                            )
+                            .with_span(Span::from_offsets(src, a.span.start(), a.span.end(), file))
+                            .with_help(MATCH_RUNNABLE_HELP),
+                        );
+                    }
+                }
+            }
             for a in arms {
                 // Flag an arm whose payload sub-patterns v1 cannot lower (a nested
                 // or literal field pattern) — for BOTH tuple-payload variants
@@ -858,17 +926,15 @@ fn walk_match_runnable(node: &Node, src: &str, file: Option<&str>, out: &mut Vec
                         .with_help(MATCH_RUNNABLE_HELP),
                     );
                 }
-                // A WHOLE-ARM pattern the desugar cannot lower — a FLOAT/STRING
+                // A WHOLE-ARM pattern the desugar cannot lower — a FLOAT
                 // literal or a top-level TUPLE — bails `desugar_match_to_if` to the
                 // sequential fallback that ignores the scrutinee and returns the
                 // last arm (a silent wrong value). `desugar_match_to_if` lowers
-                // int-literal / wildcard / ident / enum-variant patterns only.
+                // int-literal / STRING-literal / wildcard / ident / enum-variant
+                // patterns (string-match v1 preconditions checked above).
                 let unsupported_arm = match &a.pattern {
                     crate::ast::Pattern::Literal(crate::ast::Literal::Float(_)) => {
                         Some("a float-literal")
-                    }
-                    crate::ast::Pattern::Literal(crate::ast::Literal::Str(_)) => {
-                        Some("a string-literal")
                     }
                     crate::ast::Pattern::Tuple(_) => Some("a tuple-destructure"),
                     _ => None,
