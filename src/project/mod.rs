@@ -466,6 +466,15 @@ pub struct TargetConfig {
     pub arch: Option<String>,
     #[serde(default)]
     pub output: Option<String>,
+    /// Explicit source list for this target, each path relative to the
+    /// project root, in declared order. When present it REPLACES the default
+    /// entry-parent directory walk of [`collect_sources`] — which only sees
+    /// the entry file's own subtree and silently excludes modules living
+    /// outside it (e.g. an entry at `src/backends/x.mind` excluding
+    /// `src/*.mind` and `bridge/*.mind`). When absent, the walk default is
+    /// unchanged.
+    #[serde(default)]
+    pub sources: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -709,6 +718,70 @@ pub fn collect_sources(project_root: &Path, entry: &str) -> Result<Vec<PathBuf>>
     Ok(sources)
 }
 
+/// Resolve a target's explicitly declared `sources = [...]` list against the
+/// project root, preserving DECLARED order (no sorting — the manifest order is
+/// the author's contract). Every declared path must exist: a missing declared
+/// source fails the build loudly, because a silently dropped module is exactly
+/// the class of bug an explicit source list exists to prevent. The manifest
+/// entry is appended when the list omits it, so the entry is always a
+/// translation unit of the build (the compile loop keys `is_entry` off it).
+fn resolve_declared_sources(
+    project_root: &Path,
+    declared: &[String],
+    entry: &str,
+) -> Result<Vec<PathBuf>> {
+    let mut sources: Vec<PathBuf> = Vec::with_capacity(declared.len() + 1);
+    for decl in declared {
+        // Contract: project-root-relative, inside the root, no duplicates.
+        // An absolute or `..`-escaping path would fall outside the
+        // project-root-relative keying downstream (module keys and object
+        // names would silently derive from machine-dependent absolute paths),
+        // and a duplicate would compile twice into ONE object name — both are
+        // author errors worth failing loudly at the boundary.
+        let decl_path = Path::new(decl);
+        if decl_path.is_absolute()
+            || decl_path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(anyhow!(
+                "declared source \"{}\" in Mind.toml [targets.*].sources must be a \
+                 project-root-relative path without \"..\" components",
+                decl
+            ));
+        }
+        let path = project_root.join(decl);
+        if !path.is_file() {
+            return Err(anyhow!(
+                "declared source not found: {} (listed as \"{}\" in Mind.toml [targets.*].sources)",
+                path.display(),
+                decl
+            ));
+        }
+        if sources.contains(&path) {
+            return Err(anyhow!(
+                "declared source \"{}\" appears more than once in Mind.toml [targets.*].sources",
+                decl
+            ));
+        }
+        sources.push(path);
+    }
+    let entry_path = project_root.join(entry);
+    if !entry_path.is_file() {
+        return Err(anyhow!("Entry file not found: {}", entry_path.display()));
+    }
+    let entry_canonical = entry_path
+        .canonicalize()
+        .unwrap_or_else(|_| entry_path.clone());
+    let entry_listed = sources
+        .iter()
+        .any(|s| s.canonicalize().unwrap_or_else(|_| s.clone()) == entry_canonical);
+    if !entry_listed {
+        sources.push(entry_path);
+    }
+    Ok(sources)
+}
+
 /// Build a MIND project
 pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
     // Prefer the orchestrator's pre-resolved (bounded) root; only fall back to
@@ -741,8 +814,21 @@ pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
 
     let output_path = target_dir.join(&output_name);
 
-    // Collect sources
-    let sources = collect_sources(&project_root, &manifest.build.entry)?;
+    // Collect sources. A target that DECLARES `sources = [...]` gets exactly
+    // that list (resolved against the project root, declared order preserved,
+    // every path validated) — the walk default only sees the entry file's own
+    // subtree, which silently excludes modules outside it. A target without a
+    // declared list keeps the entry-parent walk EXACTLY as before.
+    let (sources, explicit_sources) = match target_config.and_then(|cfg| cfg.sources.as_deref()) {
+        Some(declared) => (
+            resolve_declared_sources(&project_root, declared, &manifest.build.entry)?,
+            true,
+        ),
+        None => (
+            collect_sources(&project_root, &manifest.build.entry)?,
+            false,
+        ),
+    };
 
     if opts.verbose {
         println!(
@@ -827,7 +913,7 @@ pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
     }
 
     // Build each source file and link
-    let compiled = compile_sources(&project_root, &sources, &backend, opts)?;
+    let compiled = compile_sources(&project_root, &sources, &backend, opts, explicit_sources)?;
 
     // Link into final binary
     link_binary(&compiled, &output_path, &backend, opts)?;
@@ -1194,11 +1280,20 @@ fn build_cdylib_from_entry(
 }
 
 /// Compile source files to object files
+///
+/// `explicit_sources` marks a build whose source set came from a declared
+/// `[targets.*].sources` list rather than the entry-parent directory walk.
+/// Such a set can span sibling subtrees (`src/`, `src/backends/`, `bridge/`),
+/// so both the cross-module key and the object filename are derived from the
+/// PROJECT-ROOT-relative path — stable and collision-free across subdirs.
+/// The walk/default case keeps the historical entry-parent keying and
+/// stem-named objects byte-unchanged (self-host + std depend on it).
 fn compile_sources(
     project_root: &Path,
     sources: &[PathBuf],
     backend: &str,
     opts: &BuildOptions,
+    explicit_sources: bool,
 ) -> Result<Vec<PathBuf>> {
     let obj_dir = project_root.join("target").join("obj");
     fs::create_dir_all(&obj_dir)?;
@@ -1224,8 +1319,18 @@ fn compile_sources(
     // The per-file compile signature is unchanged (moat held).
     #[cfg(feature = "cross-module-imports")]
     {
-        let src_root = project_root.join(&manifest.build.entry);
-        let src_root = src_root.parent().unwrap_or(project_root);
+        // Module-key root: an explicit-sources set can span subtrees OUTSIDE
+        // the entry's parent (entry-parent keying would fail `strip_prefix`
+        // for those files and fall back to keying off the ABSOLUTE path —
+        // unstable and machine-dependent). Key such builds off the project
+        // root instead. The walk/default case keeps the entry-parent root
+        // byte-unchanged.
+        let entry_parent = project_root.join(&manifest.build.entry);
+        let src_root = if explicit_sources {
+            project_root
+        } else {
+            entry_parent.parent().unwrap_or(project_root)
+        };
         // RFC 0005 Phase C — seed the parsed-modules list with the
         // bundled stdlib (`std.vec` / `std.string` / `std.map` /
         // `std.io`) before walking the project's own src tree. This
@@ -1267,10 +1372,30 @@ fn compile_sources(
     let mut objects = Vec::new();
 
     for source in sources {
-        let source_name = source
-            .file_stem()
-            .ok_or_else(|| anyhow!("Invalid source file: {}", source.display()))?
-            .to_string_lossy();
+        // Object filename. The walk/default case keeps the historical
+        // stem-only name (byte-identical for self-host + std). An
+        // explicit-sources set can hold same-stem files in different subdirs
+        // (`src/util.mind` + `bridge/util.mind`), where stem-only names would
+        // silently overwrite one object with the other — derive the name from
+        // the project-root-relative path instead (separators flattened to
+        // `_`), which is stable and collision-free by construction.
+        let source_name: String = if explicit_sources {
+            let rel = source.strip_prefix(project_root).unwrap_or(source);
+            rel.with_extension("")
+                .components()
+                .filter_map(|c| c.as_os_str().to_str().map(str::to_owned))
+                .collect::<Vec<_>>()
+                .join("_")
+        } else {
+            source
+                .file_stem()
+                .ok_or_else(|| anyhow!("Invalid source file: {}", source.display()))?
+                .to_string_lossy()
+                .into_owned()
+        };
+        if source_name.is_empty() {
+            return Err(anyhow!("Invalid source file: {}", source.display()));
+        }
 
         let obj_path = obj_dir.join(format!("{}.o", source_name));
 
