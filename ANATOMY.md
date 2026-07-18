@@ -6,7 +6,7 @@
 
 **Project:** `mind`
 **Files:** 3139 | **Est. tokens:** ~7,493,639
-**Generated:** 2026-07-18 07:59 UTC
+**Generated:** 2026-07-18 08:18 UTC
 
 ## Token Budget Guide
 
@@ -854,12 +854,12 @@
 - `now_ns_smoke.py` (~678 tok, large) — # Copyright 2025 STARGA Inc.
 - `oracle_parity_lint.py` (~3034 tok, huge)
 - `param_types_smoke.py` (~1273 tok, large)
-- `_ref_add.note` (~16 tok, tiny) — 662375cc532fd67d71573f28449b774a45a41a6f61ae72055e2af9be3f5da1fa
-- `_ref_if_ret.note` (~16 tok, tiny) — 78b3d21a4b87a312851aa18317a06e622957bbb337a48a1cf4ac69f5308e61c9
-- `_ref_main.note` (~16 tok, tiny) — 03c48351420a7b05e2b686cd12627b00f9ad3de17a7956cfbe4f4a3d1af4364d
-- `_ref_recursion.note` (~16 tok, tiny) — 331516380eb10abacad717ca059460a62f3ecdb40d9f4f6979407a23e5d2e009
-- `_ref_struct_field.note` (~16 tok, tiny) — 549c20975f486c39827bc62032291a483ade1da5463edbb386d78137b6e6503f
-- `_ref_value_if.note` (~16 tok, tiny) — feda26da58086987f08706db25419bce5a3d721e42282c1086c2aced739fd6be
+- `_ref_add.note` (~16 tok, tiny) — 498be8038474e5debd09576ca86f8e3b7ac7523f0dc583440cc39dab5c2e59d7
+- `_ref_if_ret.note` (~16 tok, tiny) — 6ee10774e01837cbba6c89d3aefd552aa90f0dc7b659f5fca9786f40616c962d
+- `_ref_main.note` (~16 tok, tiny) — 24ab25b85f724337a92e033372b1ef9826828dfc46dfaea3af9dd833a856b18f
+- `_ref_recursion.note` (~16 tok, tiny) — f157a17885367e0f30f21ccb8fe737b2b782f9719a4cadebbda20ffa1279319e
+- `_ref_struct_field.note` (~16 tok, tiny) — 5932b6704e4afaa13abef5204cb9d748fd452598887e945672d89662d1341abe
+- `_ref_value_if.note` (~16 tok, tiny) — 8ac4c54aacbb8b7b769be703b4410dc1a8fe343186ed70d065e00a507e4cdbd7
 - `self_host_body_smoke.py` (~3055 tok, huge)
 - `selfhost_driver.mind` (~623 tok, large) — ===========================================================================
 - `self_host_dtype_tag_smoke.py` (~780 tok, large) — RI-B1 per-SSA dtype-tag gate (parser <-> nb_fp_* encoder connecting construct).
