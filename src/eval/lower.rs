@@ -2292,6 +2292,9 @@ fn foreach_element_sentinel(
         if method == "split" {
             return Some("String".to_string());
         }
+        if method == "to_utf8_bytes" {
+            return Some("i64".to_string());
+        }
     }
     if let ast::Node::Lit(Literal::Ident(v), _) = collection {
         if let Some(elem) = struct_env.get(&format!("__elem__{v}")) {
@@ -2352,6 +2355,7 @@ fn let_rhs_collection_track(
                 "split" | "split_whitespace" | "lines" => {
                     Some(("vec".to_string(), Some("String".to_string())))
                 }
+                "to_utf8_bytes" => Some(("vec".to_string(), Some("i64".to_string()))),
                 _ => None,
             };
         }

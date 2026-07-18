@@ -405,6 +405,38 @@ MIND_EXPORT_WEAK int64_t vec_push(int64_t v, int64_t value) {
     return v;
 }
 
+// vec_pop — remove and return the last element (8-byte i64 stride). An empty
+// vec clamps to 0 (mandatory: never underflow len or OOB-read at index -1).
+// Mutates the length in place; the Vec handle is stable (no rebind).
+MIND_EXPORT_WEAK int64_t vec_pop(int64_t v) {
+    int64_t len = __mind_load_i64(v + 8);
+    if (len <= 0) {
+        return 0;
+    }
+    int64_t base = __mind_load_i64(v);
+    int64_t e = __mind_load_i64(base + (len - 1) * 8);
+    __mind_store_i64(v + 8, len - 1);
+    return e;
+}
+
+// vec_remove — remove and return element `i`, shifting the tail down by one.
+// Out-of-range `i` (< 0 or >= len) returns 0 without mutating (mandatory OOB
+// guard). The forward ASCENDING shift order is load-bearing: it yields an
+// identical store trace on every run. The Vec handle is stable (no rebind).
+MIND_EXPORT_WEAK int64_t vec_remove(int64_t v, int64_t i) {
+    int64_t len = __mind_load_i64(v + 8);
+    if (i < 0 || i >= len) {
+        return 0;
+    }
+    int64_t base = __mind_load_i64(v);
+    int64_t e = __mind_load_i64(base + i * 8);
+    for (int64_t j = i; j <= len - 2; j++) {
+        __mind_store_i64(base + j * 8, __mind_load_i64(base + (j + 1) * 8));
+    }
+    __mind_store_i64(v + 8, len - 1);
+    return e;
+}
+
 // vec_zeroed — allocate a backing store of `n` zeroed i64 elements and
 // return its i64 base address (issue #204). Mirrors std/vec.mind's pure-MIND
 // definition: `__mind_alloc` hands back uninitialised memory, so this clears
@@ -595,6 +627,31 @@ MIND_EXPORT_WEAK int64_t map_contains_key_str(int64_t m, int64_t key) {
     return 0;
 }
 
+// map_keys_vec — shared helper: collect every key into a fresh std.vec in
+// INSERTION order. std/map.mind is an insertion-ordered linear table (not a
+// hash), so this order is deterministic by construction — load-bearing for
+// evidence determinism. Key handles are aliased as-is (std.string is
+// non-mutating); no dedup (an inherited Map property). Empty map -> empty vec.
+static int64_t map_keys_vec(int64_t m) {
+    int64_t keys = __mind_load_i64(m);
+    int64_t len  = __mind_load_i64(m + 16);
+    int64_t out  = vec_new();
+    for (int64_t i = 0; i < len; i++) {
+        out = vec_push(out, __mind_load_i64(keys + i * 8));
+    }
+    return out;
+}
+
+// mapstr_keys — vec of String key handles in insertion order (map<string, _>).
+MIND_EXPORT_WEAK int64_t mapstr_keys(int64_t m) {
+    return map_keys_vec(m);
+}
+
+// map_keys — vec of i64 key values in insertion order (map<i64, _>).
+MIND_EXPORT_WEAK int64_t map_keys(int64_t m) {
+    return map_keys_vec(m);
+}
+
 // ---------------------------------------------------------------------------
 // std.string surface — RFC 0005 Option C heap-record layout.
 //
@@ -630,9 +687,16 @@ MIND_EXPORT_WEAK int64_t string_addr(int64_t s) {
 }
 
 // string_get_byte — single byte read (lower 8 bits, no bounds check).
+// Uses an honest 1-byte __mind_load_i8 load (task #306 call-site migration):
+// a masked 8-byte load over-reads up to 7 bytes past an unpadded string
+// literal buffer (lower.rs __mind_alloc(n), cap=n) — safe only if the
+// compiler narrows the masked load, i.e. optimizer-dependent. The 1-byte
+// read is memory-safe by construction and matches the pure-MIND std.string
+// twin (std/string.mind string_get_byte), removing the C/twin drift.
+// string_to_utf8_bytes is the first C caller to walk [0..len) through this.
 MIND_EXPORT_WEAK int64_t string_get_byte(int64_t s, int64_t i) {
     int64_t base = __mind_load_i64(s);
-    return __mind_load_i64(base + i) & 0xFF;
+    return __mind_load_i8(base + i);
 }
 
 // string_validate_utf8 — mirrors the current pure-MIND std.string contract:
@@ -720,6 +784,47 @@ MIND_EXPORT_WEAK int64_t string_starts_with(int64_t haystack, int64_t needle) {
                   (size_t)nlen) == 0
                ? 1
                : 0;
+}
+
+// string_contains — 1 if `needle` occurs as a byte-substring of `haystack`,
+// else 0. An empty needle always matches (returns 1); a needle longer than the
+// haystack returns 0; an empty haystack with a non-empty needle returns 0. No
+// allocation.
+MIND_EXPORT_WEAK int64_t string_contains(int64_t haystack, int64_t needle) {
+    int64_t hlen = __mind_load_i64(haystack + 8);
+    int64_t nlen = __mind_load_i64(needle + 8);
+    if (nlen <= 0) return 1;
+    if (nlen > hlen) return 0;
+    int64_t haddr = __mind_load_i64(haystack);
+    int64_t naddr = __mind_load_i64(needle);
+    const unsigned char *hp = (const unsigned char *)(uintptr_t)haddr;
+    const unsigned char *np = (const unsigned char *)(uintptr_t)naddr;
+    for (int64_t i = 0; i + nlen <= hlen; i++) {
+        if (memcmp(hp + i, np, (size_t)nlen) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// string_slice — byte-indexed zero-copy view of [start, end). Clamps start<0
+// to 0 and end>len to len; an empty or reversed range (end<=start), or a start
+// at/after the end, returns an empty String (string_new(), addr 0). cap MUST be
+// 0 so a later append allocates instead of clobbering the parent's live buffer
+// (see std/string.mind slice-cap hazard). No allocation on the happy path.
+MIND_EXPORT_WEAK int64_t string_slice(int64_t s, int64_t start, int64_t end) {
+    int64_t len = __mind_load_i64(s + 8);
+    if (start < 0) start = 0;
+    if (end > len) end = len;
+    if (end <= start || start >= len) {
+        return string_new();
+    }
+    int64_t base = __mind_load_i64(s);
+    int64_t rec = __mind_alloc(24);
+    __mind_store_i64(rec, base + start);
+    __mind_store_i64(rec + 8, end - start);
+    __mind_store_i64(rec + 16, 0);
+    return rec;
 }
 
 // string_slice_from — zero-copy view with cap=0 so subsequent appends allocate.
@@ -884,6 +989,19 @@ MIND_EXPORT_WEAK int64_t string_from_utf8_bytes(int64_t v) {
         s = string_push_byte(s, vec_get(v, i));
     }
     return s;
+}
+
+// string_to_utf8_bytes(s) -> bytes. Exact inverse of string_from_utf8_bytes:
+// a std.vec holding one i64 byte value (0..255) per byte of `s`, stored at
+// 8-byte i64 STRIDE (matches string_from_utf8_bytes and sha256.hash's
+// `__mind_load_i64(data + ci*8) & 255`), NOT packed bytes. Empty -> empty vec.
+MIND_EXPORT_WEAK int64_t string_to_utf8_bytes(int64_t s) {
+    int64_t v = vec_new();
+    int64_t n = __mind_load_i64(s + 8);
+    for (int64_t i = 0; i < n; i++) {
+        v = vec_push(v, string_get_byte(s, i));
+    }
+    return v;
 }
 
 // ---------------------------------------------------------------------------
