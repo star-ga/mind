@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3138 | **Est. tokens:** ~7,492,148
-**Generated:** 2026-07-18 07:27 UTC
+**Files:** 3139 | **Est. tokens:** ~7,493,639
+**Generated:** 2026-07-18 07:58 UTC
 
 ## Token Budget Guide
 
@@ -412,7 +412,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~193,036 |
-| `tests/` | 290 | ~496,871 |
+| `tests/` | 291 | ~498,362 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -4655,6 +4655,7 @@
 - `struct_field_collection_run.rs` (~854 tok, large) — Copyright 2025 STARGA Inc.
 - `struct_field_in_loop_run.rs` (~1089 tok, large) — Copyright 2025 STARGA Inc.
 - `struct_narrow_field.rs` (~821 tok, large) — Copyright 2025 STARGA Inc.
+- `substrate_nonentry_import_link.rs` (~1491 tok, large) — Copyright 2025 STARGA Inc.
 - `target_cerebras.rs` (~340 tok, medium) — Cerebras backend target — first-class surface tests.
 - `tensor_broadcast.rs` (~1004 tok, large) — Copyright 2025 STARGA Inc.
 - `tensor_buffers.rs` (~517 tok, large) — Copyright 2025 STARGA Inc.
