@@ -1376,8 +1376,8 @@ pub fn jv_get_path(h: i64, path_addr: i64, path_len: i64) -> i64 {
 //
 // A thin, typed layer over the jv_* handle primitives above. `Value` wraps
 // the opaque JsonValue handle; `h == 0` is the error sentinel (the same
-// 0-on-error contract jv_parse / jv_get already speak). `Field` is the
-// key/value pair consumed by `object`.
+// 0-on-error contract jv_parse / jv_get already speak). Objects are built with
+// the `object_new()` + `insert` chain and arrays with `array_new()` + `push`.
 //
 // Physical contracts this layer glues together (all verified in-tree):
 //   - native `string`  = ptr to [addr|len|cap] record, data at STRIDE 1
@@ -1397,11 +1397,6 @@ pub fn jv_get_path(h: i64, path_addr: i64, path_len: i64) -> i64 {
 
 pub struct Value {
     h: i64,
-}
-
-pub struct Field {
-    key: string,
-    val: Value,
 }
 
 // --- Internal marshalling helpers (jv_ prefix keeps the link unit clean) ---
@@ -1542,43 +1537,45 @@ pub fn null() -> Value {
     Value { h: jv_make_null() }
 }
 
-// field — key/value pair for `object`. Plain constructor, no copying here;
-// `object` copies the key bytes when it builds the table.
-pub fn field(key: string, value: Value) -> Field {
-    Field { key: key, val: value }
+// object_new — an empty JSON object; build it up with the immutable `insert`
+// chain: `insert(insert(object_new(), "a", int(1)), "b", int(2))`. This builder
+// form replaces the former `object(array<Field>)` constructor: a fn that BOTH
+// takes a generic `array<T>` parameter AND returns a struct by value is a
+// distinct self-host codegen shape (#212) that the pure-MIND bootstrap emitter
+// mis-lowers, so the typed API is built entirely from scalar/struct-param +
+// struct-return fns (which the self-host path handles). `insert` preserves
+// declared order (merge existing pairs, then set the new key), so the compact
+// `encode` byte stream is identical to the old array-of-Fields construction.
+pub fn object_new() -> Value {
+    Value { h: jv_make_object() }
 }
 
-// object — build a JSON object from an array of Fields. Duplicate keys are
-// last-write-wins (the jv_tbl_set contract). Key bytes are copied.
-pub fn object(fields: array<Field>) -> Value {
-    let obj: i64 = jv_make_object();
-    let data: i64 = __mind_load_i64(fields + 0);
-    let n: i64 = __mind_load_i64(fields + 8);
-    let mut i: i64 = 0;
-    while i < n {
-        let f: i64 = __mind_load_i64(data + i * 8);
-        let key_rec: i64 = __mind_load_i64(f + 0);
-        let val_rec: i64 = __mind_load_i64(f + 8);
-        let key_sh: i64 = jvstr_alloc(__mind_load_i64(key_rec + 0), __mind_load_i64(key_rec + 8));
-        let _ = jv_tbl_set(obj, key_sh, __mind_load_i64(val_rec + 0));
-        i = i + 1;
-    }
-    Value { h: obj }
+// array_new — an empty JSON array; append with the immutable `push` chain:
+// `push(push(array_new(), int(10)), int(20))`. Builder replacement for the
+// former `array(array<Value>)` constructor (same #212 self-host shape).
+pub fn array_new() -> Value {
+    Value { h: jv_make_array() }
 }
 
-// array — build a JSON array from an array of Values (handles shared, the
-// JSON layer never mutates a stored value).
-pub fn array(items: array<Value>) -> Value {
-    let arr: i64 = jv_make_array();
-    let data: i64 = __mind_load_i64(items + 0);
-    let n: i64 = __mind_load_i64(items + 8);
+// push — immutable copy-and-append: a NEW array holding every element of `arr`
+// followed by `value`. Non-array / error receiver yields the error Value.
+// Element handles are shared (the JSON layer never mutates a stored value).
+pub fn push(arr: Value, value: Value) -> Value {
+    if arr.h == 0 {
+        return Value { h: 0 };
+    }
+    if jv_kind(arr.h) != jv_kind_array() {
+        return Value { h: 0 };
+    }
+    let out: i64 = jv_make_array();
+    let n: i64 = jv_arr_len(arr.h);
     let mut i: i64 = 0;
     while i < n {
-        let v_rec: i64 = __mind_load_i64(data + i * 8);
-        let _ = jv_arr_push(arr, __mind_load_i64(v_rec + 0));
+        let _ = jv_arr_push(out, jv_arr_get(arr.h, i));
         i = i + 1;
     }
-    Value { h: arr }
+    let _ = jv_arr_push(out, value.h);
+    Value { h: out }
 }
 
 // --- Serialise / parse ---
