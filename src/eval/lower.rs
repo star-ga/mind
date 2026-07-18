@@ -4450,6 +4450,11 @@ fn lower_expr(
                     ast::Node::Let {
                         name, ann, value, ..
                     } => {
+                        // Bug #209: remember where this statement's instructions
+                        // start so a value-position `if` in the initializer can
+                        // thread its outer-var mutations back (below).
+                        #[cfg(feature = "std-surface")]
+                        let value_start = fn_ir.instrs.len();
                         let id = match ann {
                             Some(TypeAnn::Tensor { dtype, dims })
                             | Some(TypeAnn::DiffTensor { dtype, dims }) => lower_tensor_binding(
@@ -4496,6 +4501,18 @@ fn lower_expr(
                         // reassignment (incl. the desugared `c += …`) re-masks.
                         #[cfg(feature = "std-surface")]
                         record_narrow_let(name, ann);
+                        // Bug #209: a value-position `if` in this initializer may
+                        // mutate an OUTER var (`let neg = if c { pos = pos + 1; 7 }
+                        // else { 0 }`). Thread its dominating merge ids back into
+                        // fn_env BEFORE binding `name` (a rebinding of `name`
+                        // itself — a shadowing let — is overwritten by the
+                        // let-binding just below, matching evaluation order).
+                        #[cfg(feature = "std-surface")]
+                        for (nm, eid) in
+                            value_region_outer_rebindings(&fn_ir.instrs, value_start, &fn_env)
+                        {
+                            fn_env.insert(nm, eid);
+                        }
                         fn_env.insert(name.clone(), id);
                         // Generic-arg inference: record this top-level Let's
                         // scalar type so a later `id(z)` over `z` monomorphizes.
@@ -4598,8 +4615,21 @@ fn lower_expr(
                         }
                     }
                     ast::Node::Assign { name, value, .. } => {
+                        // Bug #209: statement-start marker for value-position-if
+                        // outer-mutation threading (see the Let arm above).
+                        #[cfg(feature = "std-surface")]
+                        let value_start = fn_ir.instrs.len();
                         let id =
                             lower_expr(value, &mut fn_ir, &fn_env, &fn_struct_env, receiver_types);
+                        // Bug #209: thread a value-position `if`'s outer-var
+                        // mutations back; the assignment target's own binding
+                        // below wins for `name` (the RHS value is what's assigned).
+                        #[cfg(feature = "std-surface")]
+                        for (nm, eid) in
+                            value_region_outer_rebindings(&fn_ir.instrs, value_start, &fn_env)
+                        {
+                            fn_env.insert(nm, eid);
+                        }
                         // Reassigning a narrow local/param re-masks to its declared
                         // width (no-op for non-narrow names — the all-i64 hot path).
                         #[cfg(feature = "std-surface")]
@@ -4960,6 +4990,9 @@ fn lower_expr(
                     ast::Node::Let {
                         name, ann, value, ..
                     } => {
+                        // Bug #209: statement-start marker for value-position-if
+                        // outer-mutation threading (see the fn-body Let arm).
+                        let value_start = then_ir.instrs.len();
                         let id = match ann {
                             Some(TypeAnn::Tensor { dtype, dims })
                             | Some(TypeAnn::DiffTensor { dtype, dims }) => lower_tensor_binding(
@@ -5007,6 +5040,16 @@ fn lower_expr(
                         // Narrow-typed branch-local: mask/sign-adjust to width.
                         #[cfg(feature = "std-surface")]
                         let id = mask_narrow_let(&mut then_ir, ann, id);
+                        // Bug #209: a value-position `if` in this initializer may
+                        // mutate an outer var; thread its merge ids into then_env
+                        // and the merge set BEFORE binding `name` (a shadowing
+                        // rebind of `name` is overwritten just below).
+                        for (nm, eid) in
+                            value_region_outer_rebindings(&then_ir.instrs, value_start, &then_env)
+                        {
+                            then_env.insert(nm.clone(), eid);
+                            record_then_write(&nm, &mut then_writes);
+                        }
                         then_env.insert(name.clone(), id);
                         #[cfg(feature = "std-surface")]
                         record_narrow_let(name, ann);
@@ -5041,6 +5084,9 @@ fn lower_expr(
                         then_result = id;
                     }
                     ast::Node::Assign { name, value, .. } => {
+                        // Bug #209: statement-start marker for value-position-if
+                        // outer-mutation threading.
+                        let value_start = then_ir.instrs.len();
                         let id = lower_expr(
                             value,
                             &mut then_ir,
@@ -5048,6 +5094,15 @@ fn lower_expr(
                             &then_struct_env,
                             receiver_types,
                         );
+                        // Bug #209: thread a value-position `if`'s outer-var
+                        // mutations back; the assignment target's own binding
+                        // below wins for `name`.
+                        for (nm, eid) in
+                            value_region_outer_rebindings(&then_ir.instrs, value_start, &then_env)
+                        {
+                            then_env.insert(nm.clone(), eid);
+                            record_then_write(&nm, &mut then_writes);
+                        }
                         // Re-mask a narrow local reassigned inside the then-branch.
                         #[cfg(feature = "std-surface")]
                         let id = mask_narrow_assign(&mut then_ir, name, id);
@@ -5154,6 +5209,9 @@ fn lower_expr(
                         ast::Node::Let {
                             name, ann, value, ..
                         } => {
+                            // Bug #209: statement-start marker for value-position-if
+                            // outer-mutation threading (see the fn-body Let arm).
+                            let value_start = else_ir.instrs.len();
                             let id = match ann {
                                 Some(TypeAnn::Tensor { dtype, dims })
                                 | Some(TypeAnn::DiffTensor { dtype, dims }) => {
@@ -5200,6 +5258,18 @@ fn lower_expr(
                             // Narrow-typed branch-local: mask/sign-adjust to width.
                             #[cfg(feature = "std-surface")]
                             let id = mask_narrow_let(&mut else_ir, ann, id);
+                            // Bug #209: thread a value-position `if`'s outer-var
+                            // mutations into else_env and the merge set BEFORE
+                            // binding `name` (a shadowing rebind of `name` is
+                            // overwritten just below).
+                            for (nm, eid) in value_region_outer_rebindings(
+                                &else_ir.instrs,
+                                value_start,
+                                &else_env,
+                            ) {
+                                else_env.insert(nm.clone(), eid);
+                                record_else_write(&nm, &mut else_writes);
+                            }
                             else_env.insert(name.clone(), id);
                             #[cfg(feature = "std-surface")]
                             record_narrow_let(name, ann);
@@ -5234,6 +5304,9 @@ fn lower_expr(
                             else_result = id;
                         }
                         ast::Node::Assign { name, value, .. } => {
+                            // Bug #209: statement-start marker for value-position-if
+                            // outer-mutation threading.
+                            let value_start = else_ir.instrs.len();
                             let id = lower_expr(
                                 value,
                                 &mut else_ir,
@@ -5241,6 +5314,17 @@ fn lower_expr(
                                 &else_struct_env,
                                 receiver_types,
                             );
+                            // Bug #209: thread a value-position `if`'s outer-var
+                            // mutations back; the assignment target's own binding
+                            // below wins for `name`.
+                            for (nm, eid) in value_region_outer_rebindings(
+                                &else_ir.instrs,
+                                value_start,
+                                &else_env,
+                            ) {
+                                else_env.insert(nm.clone(), eid);
+                                record_else_write(&nm, &mut else_writes);
+                            }
                             // Re-mask a narrow local reassigned inside the else-branch.
                             #[cfg(feature = "std-surface")]
                             let id = mask_narrow_assign(&mut else_ir, name, id);
@@ -5954,6 +6038,10 @@ fn lower_expr(
                         // subsequent body statements can reference the binding.
                         // These are NOT live_vars (they don't survive across the
                         // back-edge) unless a later Assign overwrites them.
+                        //
+                        // Bug #209: statement-start marker for value-position-if
+                        // outer-mutation threading (below).
+                        let value_start = body_ir.instrs.len();
                         let new_id = lower_expr(
                             value,
                             &mut body_ir,
@@ -5964,6 +6052,22 @@ fn lower_expr(
                         // Narrow-typed loop-body local: mask/sign-adjust to width.
                         #[cfg(feature = "std-surface")]
                         let new_id = mask_narrow_let(&mut body_ir, ann, new_id);
+                        // Bug #209: a value-position `if` in this initializer may
+                        // mutate a var visible in the body scope. Thread the merge
+                        // id into body_env, and record genuine outer vars as
+                        // loop-carried so the back-edge passes the dominating
+                        // value — mirroring the nested-region (`other =>`) arm.
+                        // Applied BEFORE binding `name` (a shadowing rebind of
+                        // `name` is overwritten just below).
+                        for (nm, eid) in
+                            value_region_outer_rebindings(&body_ir.instrs, value_start, &body_env)
+                        {
+                            let pre_init = body_env.get(nm.as_str()).copied();
+                            body_env.insert(nm.clone(), eid);
+                            if env.contains_key(&nm) {
+                                record_loop_mut(&nm, eid, &mut mutated, &mut init_ids, pre_init);
+                            }
+                        }
                         body_env.insert(name.clone(), new_id);
                         #[cfg(feature = "std-surface")]
                         record_narrow_let(name, ann);
@@ -9055,6 +9159,46 @@ fn last_region_exit_rebindings(instrs: &[Instr]) -> Vec<(String, ValueId)> {
         }
     }
     Vec::new()
+}
+
+/// Bug #209 — value-position `if` outer-mutation propagation.
+///
+/// A statement-position `if` is threaded back into the enclosing scope by each
+/// body loop's `other =>` arm (via `last_region_exit_rebindings`). A
+/// VALUE-position `if` — the initializer of a `let x = if c { outer = outer +
+/// 1; a } else { b }` or the RHS of an `x = if …` — lowers through the same
+/// `lower_expr` If arm, so the outer mutation IS captured as a dominating
+/// merge id in `Instr::If.branch_bindings`; but the Let/Assign statement arms
+/// never read it back, so the mutation was silently dropped (surfaced via
+/// std/json `jv_parse_number`, where the negative-sign `pos = pos + 1` inside
+/// a value-position `if` was lost).
+///
+/// Scan the instructions this statement pushed (from `start`) and collect, in
+/// statement order, every region rebinding whose name ALREADY exists in the
+/// enclosing env — outer vars only: a branch-local `let` does not leak out of
+/// a value-position `if`. Later rebindings of the same name overwrite earlier
+/// ones. Emits no instructions, so code without this shape lowers
+/// byte-identically.
+#[cfg(feature = "std-surface")]
+fn value_region_outer_rebindings(
+    instrs: &[Instr],
+    start: usize,
+    env: &HashMap<String, ValueId>,
+) -> Vec<(String, ValueId)> {
+    let mut out: Vec<(String, ValueId)> = Vec::new();
+    for instr in &instrs[start..] {
+        for (nm, eid) in region_exit_rebindings(instr) {
+            if !env.contains_key(&nm) {
+                continue;
+            }
+            if let Some(slot) = out.iter_mut().find(|(n, _)| *n == nm) {
+                slot.1 = eid;
+            } else {
+                out.push((nm, eid));
+            }
+        }
+    }
+    out
 }
 
 fn parse_tensor_ann(dtype: &str, dims: &[String]) -> Option<(DType, Vec<ShapeDim>)> {
