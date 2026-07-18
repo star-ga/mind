@@ -492,7 +492,7 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
     };
 
     let need_write = match &orig_manifest_text {
-        Some(text) => entry_rel != manifest.build.entry || text.find("entry = ").is_none(),
+        Some(text) => entry_rel != manifest.build.entry || !manifest_has_entry_key(text),
         None => true,
     };
 
@@ -821,16 +821,49 @@ fn build_synthetic_manifest(pkg_name: &str, entry: &str) -> String {
 
 /// Patch a raw `Mind.toml` text to change `entry = "..."`.
 /// If no `entry =` line is present, appends the field under `[build]`.
+/// True when `toml_text` declares an `entry` key on some line, tolerating any
+/// amount of whitespace around `=` — aligned manifests write
+/// `entry         = "..."`. The previous single-space textual probe
+/// (`"entry = "`) missed those, so `run_build` "patched" a second `entry`
+/// key into a `[build]` section that already had one; the duplicate TOML key
+/// then made `build_project`'s re-parse fail with an opaque
+/// `Failed to parse Mind.toml` (#85 — mind-nerve's aligned manifest).
+fn manifest_has_entry_key(toml_text: &str) -> bool {
+    toml_text.lines().any(is_entry_key_line)
+}
+
+/// Line-level test: optional leading whitespace, the key `entry`, then `=`
+/// after optional whitespace. Never matches `entrypoint = ...`,
+/// `entry_file = ...`, or a `# entry = ...` comment line. Like the previous
+/// textual probe, this matches an `entry` key in ANY section — by contract
+/// the key lives only in `[build]`.
+fn is_entry_key_line(line: &str) -> bool {
+    line.trim_start()
+        .strip_prefix("entry")
+        .map(|rest| rest.trim_start().starts_with('='))
+        .unwrap_or(false)
+}
+
 fn patch_manifest_entry(toml_text: &str, new_entry: &str) -> String {
-    // Try to replace an existing `entry = "..."` line.
-    let entry_pattern = "entry = \"";
-    if let Some(start) = toml_text.find(entry_pattern) {
-        let after = &toml_text[start + entry_pattern.len()..];
-        if let Some(end_quote) = after.find('"') {
-            let prefix = &toml_text[..start];
-            let suffix = &toml_text[start + entry_pattern.len() + end_quote + 1..];
-            return format!("{}entry = \"{}\"{}", prefix, new_entry, suffix);
+    // Replace an existing `entry` key line, tolerating aligned padding and
+    // either quote style. Line-based: the first matching line is replaced
+    // wholesale, so a padded or single-quoted key can never end up
+    // double-declared (duplicate TOML keys are a parse error).
+    if manifest_has_entry_key(toml_text) {
+        let mut out = String::with_capacity(toml_text.len() + new_entry.len() + 16);
+        let mut replaced = false;
+        for line in toml_text.lines() {
+            if !replaced && is_entry_key_line(line) {
+                out.push_str("entry = \"");
+                out.push_str(new_entry);
+                out.push('"');
+                replaced = true;
+            } else {
+                out.push_str(line);
+            }
+            out.push('\n');
         }
+        return out;
     }
     // No existing entry = line; append under [build].
     if let Some(pos) = toml_text.find("[build]") {
@@ -874,4 +907,69 @@ fn ensure_object_extension(path: PathBuf) -> PathBuf {
         return path;
     }
     path.with_extension("o")
+}
+
+#[cfg(test)]
+mod manifest_patch_tests {
+    use super::{is_entry_key_line, manifest_has_entry_key, patch_manifest_entry};
+
+    /// Parse helper: the patched text must be valid TOML (a duplicate `entry`
+    /// key is a parse error — the exact #85 failure mode) and carry the
+    /// expected `[build].entry` value.
+    fn assert_entry(patched: &str, expected: &str) {
+        let v: toml::Value = toml::from_str(patched)
+            .unwrap_or_else(|e| panic!("patched manifest is invalid TOML: {e}\n---\n{patched}"));
+        let entry = v
+            .get("build")
+            .and_then(|b| b.get("entry"))
+            .and_then(|e| e.as_str())
+            .expect("patched manifest has no [build].entry");
+        assert_eq!(entry, expected);
+    }
+
+    #[test]
+    fn detects_aligned_entry_key() {
+        // The #85 shape: aligned padding defeats a single-space textual probe.
+        assert!(manifest_has_entry_key(
+            "[build]\nentry         = \"cli/main.mind\"\n"
+        ));
+        assert!(manifest_has_entry_key("[build]\nentry=\"x.mind\"\n"));
+        assert!(manifest_has_entry_key("[build]\nentry = 'x.mind'\n"));
+    }
+
+    #[test]
+    fn rejects_lookalike_keys_and_comments() {
+        assert!(!manifest_has_entry_key("[build]\nentrypoint = \"x\"\n"));
+        assert!(!manifest_has_entry_key("[build]\nentry_file = \"x\"\n"));
+        assert!(!manifest_has_entry_key("[build]\n# entry = \"x\"\n"));
+        assert!(!is_entry_key_line("entry"));
+    }
+
+    #[test]
+    fn patch_replaces_aligned_entry_without_duplicating() {
+        let src = "[package]\nname = \"n\"\nversion = \"0.1.0\"\n\n[build]\nentry         = \"cli/main.mind\"\noutput        = \"n\"\n\n[targets.cpu]\nbackend = \"cpu\"\n";
+        let patched = patch_manifest_entry(src, "cli/main.mind");
+        assert_entry(&patched, "cli/main.mind");
+    }
+
+    #[test]
+    fn patch_replaces_no_space_and_single_quoted_entry() {
+        let patched = patch_manifest_entry("[build]\nentry=\"old.mind\"\n", "new.mind");
+        assert_entry(&patched, "new.mind");
+        let patched = patch_manifest_entry("[build]\nentry = 'old.mind'\n", "new.mind");
+        assert_entry(&patched, "new.mind");
+    }
+
+    #[test]
+    fn patch_appends_when_build_section_has_no_entry() {
+        let patched = patch_manifest_entry("[build]\noutput = \"n\"\n\n[test]\n", "m.mind");
+        assert_entry(&patched, "m.mind");
+    }
+
+    #[test]
+    fn patch_appends_build_section_when_absent() {
+        let patched =
+            patch_manifest_entry("[package]\nname = \"n\"\nversion = \"0.1.0\"\n", "m.mind");
+        assert_entry(&patched, "m.mind");
+    }
 }
