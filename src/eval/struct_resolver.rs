@@ -341,9 +341,7 @@ fn walk_expr(
         // type is scalar-only surface and never a struct value, so only the
         // operand is walked; `infer_struct` correctly keeps returning `None`
         // for the cast expression itself.
-        Node::As { expr, .. } => {
-            walk_expr(expr, vars, fn_returns, struct_defs, field_types, types)
-        }
+        Node::As { expr, .. } => walk_expr(expr, vars, fn_returns, struct_defs, field_types, types),
         Node::Call { args, .. } => {
             for a in args {
                 walk_expr(a, vars, fn_returns, struct_defs, field_types, types);
