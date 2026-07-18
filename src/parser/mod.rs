@@ -101,6 +101,17 @@ struct P<'a> {
     /// effect on any non-`?` program, so all existing parses stay
     /// byte-identical.
     current_fn_ret: Option<TypeAnn>,
+    /// Reserved scalar type names (`u64`, `u32`, …) that THIS source also
+    /// declares as `fn` items — a user fn SHADOWS the call-form cast sugar
+    /// (`u64(x)` → `x as u64`), so `parse_generic_call` must emit a real
+    /// `Node::Call` for these instead of hijacking the call into a cast (the
+    /// std/json `pub fn u64` silent-miscompile: the "cast" produced a scalar
+    /// where a struct record pointer was expected, and the field load
+    /// SEGFAULTed). Lazily computed by `scan_fn_shadowed_cast_names` on the
+    /// FIRST scalar-named one-arg call the parse meets (a whole-source scan is
+    /// needed because the fn may be declared after its first call site), so
+    /// sources that never spell `u64(x)`/`u32(x)`/… pay nothing.
+    call_cast_shadows: Option<Vec<String>>,
 }
 
 /// Operator-token kind used by the Pratt expression parser
@@ -264,6 +275,7 @@ impl<'a> P<'a> {
             enum_names: Vec::new(),
             global_enums,
             current_fn_ret: None,
+            call_cast_shadows: None,
         }
     }
 
@@ -4465,6 +4477,10 @@ impl<'a> P<'a> {
         // to `x as <type>`, reusing the existing cast typecheck/codegen path (no
         // new IR). mind-flow writes `u32(i + 1)`. Only the reserved scalar type
         // names with exactly one argument convert; everything else is a call.
+        // A `fn` the source itself declares with one of these names SHADOWS the
+        // sugar (std/json's `pub fn u64` — hijacking that call into a cast fed a
+        // scalar where a struct record pointer was expected and SEGFAULTed), so
+        // the desugar applies only when no same-named fn exists in this source.
         if args.len() == 1 {
             let cast_ty = match callee.as_str() {
                 "u32" => Some(TypeAnn::ScalarU32),
@@ -4477,15 +4493,33 @@ impl<'a> P<'a> {
                 _ => None,
             };
             if let Some(ty) = cast_ty {
-                let expr = args.pop().unwrap();
-                return Ok(Node::As {
-                    expr: Box::new(expr),
-                    ty,
-                    span,
-                });
+                if !self.call_cast_name_shadowed(&callee) {
+                    let expr = args.pop().unwrap();
+                    return Ok(Node::As {
+                        expr: Box::new(expr),
+                        ty,
+                        span,
+                    });
+                }
             }
         }
         Ok(Node::Call { callee, args, span })
+    }
+
+    /// Does THIS source declare a `fn` named `name` (one of the reserved
+    /// scalar type names)? If so, the user fn shadows the call-form cast
+    /// sugar and `parse_generic_call` keeps the call a real `Node::Call`.
+    /// The whole-source scan runs lazily, at most once per parse, and only
+    /// when a scalar-named one-arg call is actually met.
+    fn call_cast_name_shadowed(&mut self, name: &str) -> bool {
+        if self.call_cast_shadows.is_none() {
+            self.call_cast_shadows = Some(scan_fn_shadowed_cast_names(self.b));
+        }
+        self.call_cast_shadows
+            .as_ref()
+            .expect("just populated")
+            .iter()
+            .any(|s| s == name)
     }
 
     /// Parse a call argument, handling `name=expr` keyword syntax by skipping the name.
@@ -5418,6 +5452,93 @@ fn extract_reap_threshold(attrs: &[crate::ast::Attribute]) -> Option<f64> {
         }
     }
     result
+}
+
+/// The reserved scalar type names whose one-arg CALL form (`u64(x)`) desugars
+/// to a cast (`x as u64`) in `parse_generic_call` — kept in one place so the
+/// shadow scan below and the desugar match arm can never drift apart.
+const CALL_CAST_NAMES: &[&str] = &[
+    "u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64", "usize", "f32", "f64",
+];
+
+/// Scan raw source for `fn <scalar-name> (` declarations — the set of reserved
+/// scalar type names this source declares as fns, which SHADOW the call-form
+/// cast sugar. A lexical scan (not a parse) is enough because only the token
+/// sequence `fn` IDENT `(` can declare a fn; string literals, char literals,
+/// and `//` comments are skipped so their contents can't fake a declaration.
+/// Over-approximation is deliberately fail-loud: a name wrongly kept as a Call
+/// dies at resolution with "unknown function", never as a silent miscompile.
+fn scan_fn_shadowed_cast_names(b: &[u8]) -> Vec<String> {
+    fn is_ident(c: u8) -> bool {
+        c.is_ascii_alphanumeric() || c == b'_'
+    }
+    let mut found: Vec<String> = Vec::new();
+    let n = b.len();
+    let mut i = 0usize;
+    while i < n {
+        match b[i] {
+            b'"' => {
+                // String literal: skip to the unescaped closing quote.
+                i += 1;
+                while i < n {
+                    match b[i] {
+                        b'\\' => i += 2,
+                        b'"' => {
+                            i += 1;
+                            break;
+                        }
+                        _ => i += 1,
+                    }
+                }
+            }
+            b'\'' => {
+                // Char literal ('x', '\n', multi-byte UTF-8): closing quote is
+                // within a few bytes. No close nearby ⇒ not a char literal
+                // (treat as a stray byte and move on).
+                let close = (i + 2..n.min(i + 8)).find(|&j| b[j] == b'\'');
+                i = match close {
+                    Some(j) => j + 1,
+                    None => i + 1,
+                };
+            }
+            b'/' if i + 1 < n && b[i + 1] == b'/' => {
+                while i < n && b[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'f' if i + 1 < n
+                && b[i + 1] == b'n'
+                && (i == 0 || !is_ident(b[i - 1]))
+                && (i + 2 >= n || !is_ident(b[i + 2])) =>
+            {
+                // Word `fn`: read the following ident and require `(` next.
+                let mut j = i + 2;
+                while j < n && b[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                let s = j;
+                while j < n && is_ident(b[j]) {
+                    j += 1;
+                }
+                if j > s {
+                    let mut k = j;
+                    while k < n && (b[k] == b' ' || b[k] == b'\t') {
+                        k += 1;
+                    }
+                    if k < n && b[k] == b'(' {
+                        if let Ok(id) = std::str::from_utf8(&b[s..j]) {
+                            if CALL_CAST_NAMES.contains(&id) && !found.iter().any(|f| f == id) {
+                                found.push(id.to_string());
+                            }
+                        }
+                    }
+                }
+                i += 2;
+            }
+            _ => i += 1,
+        }
+    }
+    found
 }
 
 /// Return `true` when the attribute list contains a `[test]` attribute.

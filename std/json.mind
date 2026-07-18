@@ -768,16 +768,19 @@ fn jv_parse_string(buf: i64, i: i64, len: i64) -> i64 {
 
 fn jv_parse_number(buf: i64, i: i64, len: i64) -> i64 {
     let mut pos: i64 = i;
-    let neg: i64 = if pos < len {
+    // Consume a leading '-'. This MUST be an if-STATEMENT, not an if-expression:
+    // a `let neg = if ... { pos = pos + 1; 1 } else { 0 }` value-if silently
+    // dropped the `pos = pos + 1` on the enclosing `let mut pos` (an outer-var
+    // mutation inside a value-position if is not reflected after the expr), so
+    // the digit loop then re-read the '-' and every negative number failed to
+    // parse. Underlying compiler codegen bug — see the KAT report repro.
+    let mut neg: i64 = 0;
+    if pos < len {
         if jv_load_byte(buf, pos) == 45 {
             pos = pos + 1;
-            1
-        } else {
-            0
+            neg = 1;
         }
-    } else {
-        0
-    };
+    }
     if pos >= len {
         return jvpr_new(pos, 0);
     }
@@ -1221,11 +1224,12 @@ fn jv_dump_value(sb: i64, h: i64, pretty: i64, depth: i64) -> i64 {
                         while ai < alen {
                             if ai > 0 {
                                 let _ = jvsb_push(sb, 44);
+                                // Compact (pretty==0) is CANONICAL and
+                                // whitespace-free — these bytes are sha256-hashed
+                                // into evidence, so no space follows the comma.
                                 if pretty == 1 {
                                     let _ = jvsb_push(sb, 10);
                                     let _ = jv_dump_indent(sb, depth + 1);
-                                } else {
-                                    let _ = jvsb_push(sb, 32);
                                 }
                             } else {
                                 if pretty == 1 {
@@ -1255,11 +1259,11 @@ fn jv_dump_value(sb: i64, h: i64, pretty: i64, depth: i64) -> i64 {
                         while ti < tlen {
                             if ti > 0 {
                                 let _ = jvsb_push(sb, 44);
+                                // Compact (pretty==0) is CANONICAL and
+                                // whitespace-free — no space after the comma.
                                 if pretty == 1 {
                                     let _ = jvsb_push(sb, 10);
                                     let _ = jv_dump_indent(sb, depth + 1);
-                                } else {
-                                    let _ = jvsb_push(sb, 32);
                                 }
                             } else {
                                 if pretty == 1 {
@@ -1520,7 +1524,13 @@ pub fn int(v: i64) -> Value {
 // are unrepresentable in the jv number record: fail closed with the error
 // Value (h == 0) rather than silently emitting a wrong number (D4).
 pub fn u64(v: u64) -> Value {
-    if (v as i64) < 0 {
+    // Reject values above i64::MAX (unrepresentable in the jv number record):
+    // fail closed with the error Value (h == 0). The high-bit test is an
+    // UNSIGNED threshold compare `v > i64::MAX`, NOT `(v as i64) < 0` — the
+    // latter compiled to an unsigned compare of the cast result (always false),
+    // so the guard never fired. Underlying compiler codegen bug (cast-to-signed
+    // does not make the `<` signed) — see the KAT report repro.
+    if v > 9223372036854775807 {
         return Value { h: 0 };
     }
     Value { h: jv_make_number(v as i64, 0, 1, 0, 1) }
