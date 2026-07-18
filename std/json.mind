@@ -1366,3 +1366,405 @@ pub fn jv_get_path(h: i64, path_addr: i64, path_len: i64) -> i64 {
     }
     cur
 }
+
+// ===========================================================================
+// Typed Value API (mind-flow surface) — RFC 0005 std-surface layer.
+//
+// A thin, typed layer over the jv_* handle primitives above. `Value` wraps
+// the opaque JsonValue handle; `h == 0` is the error sentinel (the same
+// 0-on-error contract jv_parse / jv_get already speak). `Field` is the
+// key/value pair consumed by `object`.
+//
+// Physical contracts this layer glues together (all verified in-tree):
+//   - native `string`  = ptr to [addr|len|cap] record, data at STRIDE 1
+//     (std/string.mind string_get_byte; the string-literal lowering)
+//   - growable `bytes` = ptr to [addr|len|cap] record, u8 elements at
+//     STRIDE 8 — one element per 8-byte slot (std/sha256.mind hash)
+//   - jv string payloads (jv_s_addr / jvsb / jvstr) are STRIDE-1 buffers
+//
+// One distinct name per operation — MIND has no overloading and pub fn
+// names share a single link-unit namespace. The object lookup is named
+// `get_field` (NOT `get`) to avoid colliding with other bare `get` fns
+// (e.g. an HTTP client's `get`).
+//
+// Every constructor COPIES its input bytes (immutable style): a Value
+// never aliases caller-owned string storage.
+// ===========================================================================
+
+pub struct Value {
+    h: i64,
+}
+
+pub struct Field {
+    key: string,
+    val: Value,
+}
+
+// --- Internal marshalling helpers (jv_ prefix keeps the link unit clean) ---
+
+// jv_str_rec_from — build a fresh native-string record [addr|len|cap]
+// from `len` STRIDE-1 bytes at `addr` (copied). len<=0 yields the empty
+// string record [0|0|0].
+fn jv_str_rec_from(addr: i64, len: i64) -> i64 {
+    let copy: i64 = if len <= 0 {
+        0
+    } else {
+        let d: i64 = __mind_alloc(len);
+        let _ = jv_copy_bytes(addr, d, len);
+        d
+    };
+    let n: i64 = if len <= 0 {
+        0
+    } else {
+        len
+    };
+    let rec: i64 = __mind_alloc(24);
+    __mind_store_i64(rec + 0, copy);
+    __mind_store_i64(rec + 8, n);
+    __mind_store_i64(rec + 16, n);
+    rec
+}
+
+// jv_bytes_rec_from — build a fresh growable-`bytes` record from `len`
+// STRIDE-1 bytes at `addr`: each source byte is re-spread into its own
+// 8-byte element slot (the std.vec u8 contract). len<=0 yields [0|0|0].
+fn jv_bytes_rec_from(addr: i64, len: i64) -> i64 {
+    let n: i64 = if len <= 0 {
+        0
+    } else {
+        len
+    };
+    let data: i64 = if n == 0 {
+        0
+    } else {
+        __mind_alloc(n * 8)
+    };
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i64(data + i * 8, __mind_load_i8(addr + i));
+        i = i + 1;
+    }
+    let rec: i64 = __mind_alloc(24);
+    __mind_store_i64(rec + 0, data);
+    __mind_store_i64(rec + 8, n);
+    __mind_store_i64(rec + 16, n);
+    rec
+}
+
+// jv_copy_str_payload — copy a native string's STRIDE-1 bytes into a fresh
+// jv-owned buffer and return a jv string-value handle over the copy.
+fn jv_string_value_from_native(s_rec: i64) -> i64 {
+    let addr: i64 = __mind_load_i64(s_rec + 0);
+    let len: i64 = __mind_load_i64(s_rec + 8);
+    let copy: i64 = if len <= 0 {
+        0
+    } else {
+        let d: i64 = __mind_alloc(len);
+        let _ = jv_copy_bytes(addr, d, len);
+        d
+    };
+    let n: i64 = if len <= 0 {
+        0
+    } else {
+        len
+    };
+    jv_make_string(copy, n, n)
+}
+
+// jv_merge_pairs_into — copy every key/value pair of `src_h` (when it is a
+// live object handle) into object `obj`. Non-object / error src contributes
+// zero pairs (D5 fail-soft merge semantics). jv_tbl_set is last-write-wins,
+// so a later source overrides duplicate keys.
+fn jv_merge_pairs_into(obj: i64, src_h: i64) -> i64 {
+    if src_h == 0 {
+        return 0;
+    }
+    if jv_kind(src_h) != jv_kind_object() {
+        return 0;
+    }
+    let n: i64 = jv_tbl_len(src_h);
+    let mut i: i64 = 0;
+    while i < n {
+        let _ = jv_tbl_set(obj, jv_tbl_key(src_h, i), jv_tbl_val(src_h, i));
+        i = i + 1;
+    }
+    0
+}
+
+// --- Constructors ---
+
+// string — wrap a native string as a JSON string value (bytes copied).
+pub fn string(s: string) -> Value {
+    Value { h: jv_string_value_from_native(s) }
+}
+
+// bool — wrap a native bool as a JSON true/false value.
+pub fn bool(v: bool) -> Value {
+    if v {
+        return Value { h: jv_make_bool(1) };
+    }
+    Value { h: jv_make_bool(0) }
+}
+
+// int — wrap a signed integer as a JSON number. The sign lives in n_neg;
+// n_int is kept non-negative (i64::MIN wraps two's-complement — callers
+// hashing evidence never emit it, and the dump is still deterministic).
+pub fn int(v: i64) -> Value {
+    if v < 0 {
+        return Value { h: jv_make_number(0 - v, 0, 1, 1, 1) };
+    }
+    Value { h: jv_make_number(v, 0, 1, 0, 1) }
+}
+
+// u64 — wrap an unsigned integer as a JSON number. Values above i64::MAX
+// are unrepresentable in the jv number record: fail closed with the error
+// Value (h == 0) rather than silently emitting a wrong number (D4).
+pub fn u64(v: u64) -> Value {
+    if (v as i64) < 0 {
+        return Value { h: 0 };
+    }
+    Value { h: jv_make_number(v as i64, 0, 1, 0, 1) }
+}
+
+// null — the JSON null value. The handle is a real allocation (non-zero),
+// so json.null() is NOT is_error().
+pub fn null() -> Value {
+    Value { h: jv_make_null() }
+}
+
+// field — key/value pair for `object`. Plain constructor, no copying here;
+// `object` copies the key bytes when it builds the table.
+pub fn field(key: string, value: Value) -> Field {
+    Field { key: key, val: value }
+}
+
+// object — build a JSON object from an array of Fields. Duplicate keys are
+// last-write-wins (the jv_tbl_set contract). Key bytes are copied.
+pub fn object(fields: array<Field>) -> Value {
+    let obj: i64 = jv_make_object();
+    let data: i64 = __mind_load_i64(fields + 0);
+    let n: i64 = __mind_load_i64(fields + 8);
+    let mut i: i64 = 0;
+    while i < n {
+        let f: i64 = __mind_load_i64(data + i * 8);
+        let key_rec: i64 = __mind_load_i64(f + 0);
+        let val_rec: i64 = __mind_load_i64(f + 8);
+        let key_sh: i64 = jvstr_alloc(__mind_load_i64(key_rec + 0), __mind_load_i64(key_rec + 8));
+        let _ = jv_tbl_set(obj, key_sh, __mind_load_i64(val_rec + 0));
+        i = i + 1;
+    }
+    Value { h: obj }
+}
+
+// array — build a JSON array from an array of Values (handles shared, the
+// JSON layer never mutates a stored value).
+pub fn array(items: array<Value>) -> Value {
+    let arr: i64 = jv_make_array();
+    let data: i64 = __mind_load_i64(items + 0);
+    let n: i64 = __mind_load_i64(items + 8);
+    let mut i: i64 = 0;
+    while i < n {
+        let v_rec: i64 = __mind_load_i64(data + i * 8);
+        let _ = jv_arr_push(arr, __mind_load_i64(v_rec + 0));
+        i = i + 1;
+    }
+    Value { h: arr }
+}
+
+// --- Serialise / parse ---
+
+// encode — compact serialisation (jv_dump pretty=0) as growable `bytes`.
+// Compact is load-bearing: these bytes are sha256-hashed into evidence
+// records, so the byte stream must be canonical and whitespace-free.
+// The error Value encodes to empty bytes (fail-soft; callers that care
+// check is_error() first).
+pub fn encode(v: Value) -> bytes {
+    if v.h == 0 {
+        return jv_bytes_rec_from(0, 0);
+    }
+    let sh: i64 = jv_dump(v.h, 0);
+    jv_bytes_rec_from(__mind_load_i64(sh + 0), __mind_load_i64(sh + 8))
+}
+
+// decode — parse growable `bytes` (stride-8 u8 elements) as JSON.
+// Any parse error yields the error Value (h == 0).
+pub fn decode(b: bytes) -> Value {
+    let data: i64 = __mind_load_i64(b + 0);
+    let len: i64 = __mind_load_i64(b + 8);
+    if len <= 0 {
+        return Value { h: 0 };
+    }
+    let scratch: i64 = __mind_alloc(len);
+    let mut i: i64 = 0;
+    while i < len {
+        __mind_store_i8(scratch + i, __mind_load_i64(data + i * 8) & 255);
+        i = i + 1;
+    }
+    Value { h: jv_parse(scratch, len) }
+}
+
+// decode_string — parse a native string (stride-1 bytes) as JSON.
+// jv_parse only reads the buffer, so no copy is needed.
+pub fn decode_string(s: string) -> Value {
+    Value { h: jv_parse(__mind_load_i64(s + 0), __mind_load_i64(s + 8)) }
+}
+
+// --- Object / array access ---
+
+// get_field — object key lookup. Named get_field (not `get`) to keep the
+// single link-unit fn namespace collision-free. Miss, non-object receiver,
+// or error receiver all yield the error Value.
+pub fn get_field(v: Value, key: string) -> Value {
+    if v.h == 0 {
+        return Value { h: 0 };
+    }
+    Value { h: jv_get(v.h, __mind_load_i64(key + 0), __mind_load_i64(key + 8)) }
+}
+
+// has — is `key` present on object `v`? A stored JSON null counts as
+// present (it is a live non-zero handle) — intended.
+pub fn has(v: Value, key: string) -> bool {
+    let f: Value = get_field(v, key);
+    f.h != 0
+}
+
+// get_string — string field with default. Non-string / missing / error
+// yields `default` unchanged.
+pub fn get_string(v: Value, key: string, default: string) -> string {
+    let f: Value = get_field(v, key);
+    if f.h == 0 {
+        return default;
+    }
+    if jv_kind(f.h) != jv_kind_string() {
+        return default;
+    }
+    jv_str_rec_from(jv_s_addr(f.h), jv_s_len(f.h))
+}
+
+// get_u64 — unsigned-integer field with default. Fail-closed: missing,
+// non-number, fractional, or negative all yield `default`.
+pub fn get_u64(v: Value, key: string, default: u64) -> u64 {
+    let f: Value = get_field(v, key);
+    if f.h == 0 {
+        return default;
+    }
+    if jv_kind(f.h) != jv_kind_number() {
+        return default;
+    }
+    if jv_n_is_int(f.h) != 1 {
+        return default;
+    }
+    if jv_n_neg(f.h) == 1 {
+        return default;
+    }
+    jv_n_int(f.h) as u64
+}
+
+// insert — immutable copy-and-add: a NEW object with every pair of `v`
+// plus (key, value); `value` wins over an existing `key`. Non-object /
+// error receiver yields the error Value. Existing key records and value
+// handles are shared (no API mutates them); the new key's bytes are copied.
+pub fn insert(v: Value, key: string, value: Value) -> Value {
+    if v.h == 0 {
+        return Value { h: 0 };
+    }
+    if jv_kind(v.h) != jv_kind_object() {
+        return Value { h: 0 };
+    }
+    let obj: i64 = jv_make_object();
+    let _ = jv_merge_pairs_into(obj, v.h);
+    let key_sh: i64 = jvstr_alloc(__mind_load_i64(key + 0), __mind_load_i64(key + 8));
+    let _ = jv_tbl_set(obj, key_sh, value.h);
+    Value { h: obj }
+}
+
+// index — bounds-checked array element access (jv_arr_get itself is an
+// unchecked raw load). Out-of-range / non-array yields the error Value.
+pub fn index(v: Value, i: i64) -> Value {
+    if v.h == 0 {
+        return Value { h: 0 };
+    }
+    if jv_kind(v.h) != jv_kind_array() {
+        return Value { h: 0 };
+    }
+    if i < 0 {
+        return Value { h: 0 };
+    }
+    if i >= jv_arr_len(v.h) {
+        return Value { h: 0 };
+    }
+    Value { h: jv_arr_get(v.h, i) }
+}
+
+// merge_objects — a NEW object holding a's pairs then b's pairs; b wins
+// duplicate keys (jv_tbl_set last-write-wins). A non-object side simply
+// contributes zero pairs (D5), so the result is ALWAYS an object.
+pub fn merge_objects(a: Value, b: Value) -> Value {
+    let obj: i64 = jv_make_object();
+    let _ = jv_merge_pairs_into(obj, a.h);
+    let _ = jv_merge_pairs_into(obj, b.h);
+    Value { h: obj }
+}
+
+// --- Method accessors (desugar targets: v.as_string() -> value_as_string(v)) ---
+
+// value_as_string — native string copy of a JSON string value; every
+// non-string (or error) receiver yields the empty string.
+pub fn value_as_string(v: Value) -> string {
+    if v.h == 0 {
+        return jv_str_rec_from(0, 0);
+    }
+    if jv_kind(v.h) != jv_kind_string() {
+        return jv_str_rec_from(0, 0);
+    }
+    jv_str_rec_from(jv_s_addr(v.h), jv_s_len(v.h))
+}
+
+// value_is_error — the 0-handle error sentinel test.
+pub fn value_is_error(v: Value) -> bool {
+    v.h == 0
+}
+
+// value_is_array — live array test (error handle is never an array).
+pub fn value_is_array(v: Value) -> bool {
+    if v.h == 0 {
+        return 0;
+    }
+    jv_kind(v.h) == jv_kind_array()
+}
+
+// value_array_len — element count of a JSON array; 0 for any non-array.
+pub fn value_array_len(v: Value) -> i64 {
+    if v.h == 0 {
+        return 0;
+    }
+    if jv_kind(v.h) != jv_kind_array() {
+        return 0;
+    }
+    jv_arr_len(v.h)
+}
+
+// value_as_array — the elements of a JSON array as array<Value> (handles
+// shared with the parent — the JSON layer never mutates stored values).
+// Non-array / error receiver yields the empty array. The returned record
+// is laid out exactly as std.vec builds it: [addr|len|cap], one element
+// (a Value record pointer) per 8-byte slot.
+pub fn value_as_array(v: Value) -> array<Value> {
+    let n: i64 = value_array_len(v);
+    let data: i64 = if n == 0 {
+        0
+    } else {
+        __mind_alloc(n * 8)
+    };
+    let mut i: i64 = 0;
+    while i < n {
+        let item: Value = Value { h: jv_arr_get(v.h, i) };
+        __mind_store_i64(data + i * 8, item);
+        i = i + 1;
+    }
+    let rec: i64 = __mind_alloc(24);
+    __mind_store_i64(rec + 0, data);
+    __mind_store_i64(rec + 8, n);
+    __mind_store_i64(rec + 16, n);
+    rec
+}

@@ -1,0 +1,89 @@
+// std/base64.mind — RFC 4648 §4 base64 encoding (module std.base64).
+//
+// Standard alphabet (A-Z a-z 0-9 + /), '=' padding, no line wrapping.
+// Pure MIND: only the __mind_* intrinsics, no externs, deterministic
+// forward pass — the output byte trace is identical across runs and
+// substrates.
+//
+// Input is growable `bytes` (ptr to [addr|len|cap], u8 elements one per
+// 8-byte slot — the std.vec contract); output is a native string (ptr to
+// [addr|len|cap], data at stride 1).
+//
+// deferred: base64_decode omitted — zero call sites today; add it here
+// (same alphabet, reject non-canonical padding) when a consumer lands.
+
+// b64_char — sextet value 0..63 to alphabet byte. Range arithmetic only
+// (no string indexing): 0-25 'A'.., 26-51 'a'.., 52-61 '0'.., 62 '+',
+// 63 '/'. Out-of-range inputs cannot occur (callers mask with & 63 or
+// divide 18-bit groups); the final arm returns '/' for exactly 63.
+fn b64_char(v: i64) -> i64 {
+    if v < 26 {
+        return 65 + v;
+    }
+    if v < 52 {
+        return 97 + (v - 26);
+    }
+    if v < 62 {
+        return 48 + (v - 52);
+    }
+    if v == 62 {
+        return 43;
+    }
+    47
+}
+
+// base64_encode — encode `data` and return the base64 text as a native
+// string. Empty input yields the empty string.
+pub fn base64_encode(data: bytes) -> string {
+    let src: i64 = __mind_load_i64(data + 0);
+    let n: i64 = __mind_load_i64(data + 8);
+    let groups: i64 = if n <= 0 {
+        0
+    } else {
+        (n + 2) / 3
+    };
+    let out_len: i64 = groups * 4;
+    let buf: i64 = if out_len == 0 {
+        0
+    } else {
+        __mind_alloc(out_len)
+    };
+    let mut gi: i64 = 0;
+    let mut oi: i64 = 0;
+    while gi < groups {
+        let i0: i64 = gi * 3;
+        let b0: i64 = __mind_load_i64(src + i0 * 8) & 255;
+        let b1: i64 = if i0 + 1 < n {
+            __mind_load_i64(src + (i0 + 1) * 8) & 255
+        } else {
+            0
+        };
+        let b2: i64 = if i0 + 2 < n {
+            __mind_load_i64(src + (i0 + 2) * 8) & 255
+        } else {
+            0
+        };
+        // 24-bit group; /262144 = >>18, /4096 = >>12, /64 = >>6.
+        let triple: i64 = b0 * 65536 + b1 * 256 + b2;
+        __mind_store_i8(buf + oi, b64_char(triple / 262144));
+        __mind_store_i8(buf + oi + 1, b64_char((triple / 4096) & 63));
+        if i0 + 1 < n {
+            __mind_store_i8(buf + oi + 2, b64_char((triple / 64) & 63))
+        } else {
+            // '=' padding
+            __mind_store_i8(buf + oi + 2, 61)
+        }
+        if i0 + 2 < n {
+            __mind_store_i8(buf + oi + 3, b64_char(triple & 63))
+        } else {
+            __mind_store_i8(buf + oi + 3, 61)
+        }
+        oi = oi + 4;
+        gi = gi + 1;
+    }
+    let rec: i64 = __mind_alloc(24);
+    __mind_store_i64(rec + 0, buf);
+    __mind_store_i64(rec + 8, out_len);
+    __mind_store_i64(rec + 16, out_len);
+    rec
+}

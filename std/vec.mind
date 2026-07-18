@@ -115,3 +115,80 @@ pub fn vec_zeroed(n: i64) -> i64 {
 pub fn vec_free(v: Vec) -> i64 {
     __mind_free(v.addr)
 }
+
+// ---------------------------------------------------------------------------
+// Growable-`bytes` helpers (mind-flow surface).
+//
+// A growable `bytes` value is physically this module's record — an i64
+// pointer to [addr | len | cap] whose u8 elements live one per 8-byte
+// slot (see std/sha256.mind `hash(input: bytes)`, which reads the record
+// directly). A fixed `bytes[N]` buffer is DIFFERENT: a raw stride-1 byte
+// buffer behind an i64 address. The two converters below bridge fixed
+// buffers into the growable world so `concat` composes with sha256
+// digests (`bytes[32]`) and trace-span ids (`bytes[8]`) without silent
+// digest corruption.
+// ---------------------------------------------------------------------------
+
+// concat — pure byte-sequence concatenation: a fresh [addr|len|cap]
+// record holding every element of `a` then every element of `b`.
+// Neither input is mutated (immutable style). Deterministic forward
+// copy, exact-fit allocation (cap == len).
+pub fn concat(a: bytes, b: bytes) -> bytes {
+    let la: i64 = __mind_load_i64(a + 8);
+    let lb: i64 = __mind_load_i64(b + 8);
+    let n: i64 = la + lb;
+    let data: i64 = if n == 0 {
+        0
+    } else {
+        __mind_alloc(n * 8)
+    };
+    let aa: i64 = __mind_load_i64(a + 0);
+    let mut i: i64 = 0;
+    while i < la {
+        __mind_store_i64(data + i * 8, __mind_load_i64(aa + i * 8));
+        i = i + 1;
+    }
+    let ba: i64 = __mind_load_i64(b + 0);
+    let mut j: i64 = 0;
+    while j < lb {
+        __mind_store_i64(data + (la + j) * 8, __mind_load_i64(ba + j * 8));
+        j = j + 1;
+    }
+    let rec: i64 = __mind_alloc(24);
+    __mind_store_i64(rec + 0, data);
+    __mind_store_i64(rec + 8, n);
+    __mind_store_i64(rec + 16, n);
+    rec
+}
+
+// bytes_from32 — copy a fixed 32-byte buffer (stride-1, e.g. a sha256
+// digest) into a fresh growable `bytes` record (stride-8 elements).
+pub fn bytes_from32(d: bytes[32]) -> bytes {
+    let data: i64 = __mind_alloc(256);
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i64(data + i * 8, __mind_load_i8(d + i));
+        i = i + 1;
+    }
+    let rec: i64 = __mind_alloc(24);
+    __mind_store_i64(rec + 0, data);
+    __mind_store_i64(rec + 8, 32);
+    __mind_store_i64(rec + 16, 32);
+    rec
+}
+
+// bytes_from8 — copy a fixed 8-byte buffer (stride-1, e.g. a trace-span
+// id) into a fresh growable `bytes` record (stride-8 elements).
+pub fn bytes_from8(d: bytes[8]) -> bytes {
+    let data: i64 = __mind_alloc(64);
+    let mut i: i64 = 0;
+    while i < 8 {
+        __mind_store_i64(data + i * 8, __mind_load_i8(d + i));
+        i = i + 1;
+    }
+    let rec: i64 = __mind_alloc(24);
+    __mind_store_i64(rec + 0, data);
+    __mind_store_i64(rec + 8, 8);
+    __mind_store_i64(rec + 16, 8);
+    rec
+}

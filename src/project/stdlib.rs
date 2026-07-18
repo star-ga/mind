@@ -42,8 +42,10 @@ use crate::ast::Module;
 pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.arena", include_str!("../../std/arena.mind")),
     ("std.async", include_str!("../../std/async.mind")),
+    ("std.base64", include_str!("../../std/base64.mind")),
     ("std.blas", include_str!("../../std/blas.mind")),
     ("std.cli", include_str!("../../std/cli.mind")),
+    ("std.env", include_str!("../../std/env.mind")),
     ("std.fs", include_str!("../../std/fs.mind")),
     ("std.http", include_str!("../../std/http.mind")),
     ("std.io", include_str!("../../std/io.mind")),
@@ -154,6 +156,8 @@ mod tests {
         );
         let names: Vec<&str> = mods.iter().map(|(p, _)| p.as_str()).collect();
         assert!(names.contains(&"std.async"));
+        assert!(names.contains(&"std.base64"));
+        assert!(names.contains(&"std.env"));
         assert!(names.contains(&"std.vec"));
         assert!(names.contains(&"std.string"));
         assert!(names.contains(&"std.map"));
