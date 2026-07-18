@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3139 | **Est. tokens:** ~7,496,153
-**Generated:** 2026-07-18 15:18 UTC
+**Files:** 3139 | **Est. tokens:** ~7,496,148
+**Generated:** 2026-07-18 15:34 UTC
 
 ## Token Budget Guide
 
@@ -386,7 +386,7 @@
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~11,003 |
-| `src/eval/` | 12 | ~65,578 |
+| `src/eval/` | 12 | ~65,573 |
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
@@ -3872,7 +3872,7 @@
 - `tensor.rs` (~8360 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/`
 
-- `struct_resolver.rs` (~6745 tok, huge) — Copyright 2025 STARGA Inc.
+- `struct_resolver.rs` (~6740 tok, huge) — Copyright 2025 STARGA Inc.
 - `value.rs` (~2003 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/exec/`
 
