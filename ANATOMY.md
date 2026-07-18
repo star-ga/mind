@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3139 | **Est. tokens:** ~7,496,148
-**Generated:** 2026-07-18 15:34 UTC
+**Files:** 3140 | **Est. tokens:** ~7,498,045
+**Generated:** 2026-07-18 22:44 UTC
 
 ## Token Budget Guide
 
@@ -379,7 +379,7 @@
 | `src/ast/` | 1 | ~8,619 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 2 | ~32,573 |
-| `src/build/` | 2 | ~15,368 |
+| `src/build/` | 2 | ~16,388 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 3 | ~10,821 |
 | `src/deps/` | 1 | ~9,345 |
@@ -412,7 +412,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~193,198 |
-| `tests/` | 291 | ~500,496 |
+| `tests/` | 292 | ~501,373 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -3820,7 +3820,7 @@
 ### `src/build/`
 
 - `cache.rs` (~6766 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~8602 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~9622 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/cache/`
 
 - `entry.rs` (~977 tok, large) — Copyright 2025-2026 STARGA Inc.
@@ -4686,6 +4686,7 @@
 - `type_infer.rs` (~344 tok, medium) — Copyright 2025 STARGA Inc.
 - `type_struct_run.rs` (~628 tok, large) — Copyright 2025 STARGA Inc.
 - `typo_reject.rs` (~1127 tok, large) — Copyright 2025 STARGA Inc.
+- `u64_cast_signed_compare_run.rs` (~877 tok, large) — Copyright 2025 STARGA Inc.
 - `value_if_comparison.rs` (~813 tok, large) — Copyright 2025 STARGA Inc.
 - `value_if_f64_let.rs` (~1148 tok, large) — Copyright 2025 STARGA Inc.
 - `vars_assign.rs` (~260 tok, medium) — Copyright 2025 STARGA Inc.
