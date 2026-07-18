@@ -479,4 +479,196 @@ pub fn smoke_jv_n_is_int(h: i64) -> i64 {{ jv_n_is_int(h) }}
             assert_eq!(a_bytes, b"A", "fixture 8: BMP escape must decode to 'A'");
         }
     }
+
+    /// KATs for integer-zero serialisation: `jv_dump` of the number 0 must emit
+    /// the byte `"0"`, never an empty string. Regression test for the
+    /// `jv_dump_value` number branch calling the recursive digit helper
+    /// directly (whose base case emits nothing for 0), which made `0` dump as
+    /// `""` and `{"n":0}` dump as the invalid `{"n":}`.
+    #[test]
+    fn json_dump_integer_zero_kats() {
+        let mindc = mindc_bin();
+        if !mindc.exists() {
+            println!("json_dump_integer_zero_kats: mindc not found; skipping");
+            return;
+        }
+
+        let out_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("std_surface_json_zero");
+        std::fs::create_dir_all(&out_dir).expect("create output dir");
+
+        let json_src = include_str!("../std/json.mind");
+        let driver_src = format!(
+            r#"{json_src}
+
+pub fn smoke_jv_parse(buf: i64, buf_len: i64) -> i64 {{ jv_parse(buf, buf_len) }}
+pub fn smoke_jv_dump(h: i64, pretty: i64) -> i64 {{ jv_dump(h, pretty) }}
+pub fn smoke_jv_str_addr(r: i64) -> i64 {{ __mind_load_i64(r + 0) }}
+pub fn smoke_jv_str_len(r: i64) -> i64 {{ __mind_load_i64(r + 8) }}
+pub fn smoke_jv_make_number(n_int: i64, n_frac: i64, n_frac_d: i64, n_neg: i64, n_is_int: i64) -> i64 {{
+    jv_make_number(n_int, n_frac, n_frac_d, n_neg, n_is_int)
+}}
+"#
+        );
+        let driver_path = out_dir.join("json_zero_kat.mind");
+        let so_path = out_dir.join("libjson_zero_kat.so");
+        std::fs::write(&driver_path, &driver_src).expect("write driver MIND");
+
+        let status = Command::new(&mindc)
+            .args([
+                driver_path.to_str().unwrap(),
+                "--emit-shared",
+                so_path.to_str().unwrap(),
+            ])
+            .status()
+            .expect("run mindc");
+
+        if !status.success() {
+            println!("json_dump_integer_zero_kats: mindc compile failed; skipping");
+            return;
+        }
+
+        unsafe {
+            let lib = libloading::Library::new(&so_path).expect("dlopen json_zero_kat.so");
+            type ParseFn = unsafe extern "C" fn(i64, i64) -> i64;
+            type DumpFn = unsafe extern "C" fn(i64, i64) -> i64;
+            type StrAddrFn = unsafe extern "C" fn(i64) -> i64;
+            type StrLenFn = unsafe extern "C" fn(i64) -> i64;
+            type MakeNumFn = unsafe extern "C" fn(i64, i64, i64, i64, i64) -> i64;
+
+            let parse_fn: libloading::Symbol<ParseFn> = lib.get(b"smoke_jv_parse\0").unwrap();
+            let dump_fn: libloading::Symbol<DumpFn> = lib.get(b"smoke_jv_dump\0").unwrap();
+            let str_addr_fn: libloading::Symbol<StrAddrFn> =
+                lib.get(b"smoke_jv_str_addr\0").unwrap();
+            let str_len_fn: libloading::Symbol<StrLenFn> = lib.get(b"smoke_jv_str_len\0").unwrap();
+            let make_num_fn: libloading::Symbol<MakeNumFn> =
+                lib.get(b"smoke_jv_make_number\0").unwrap();
+
+            let dump_bytes = |h: i64| -> Vec<u8> {
+                let rec = dump_fn(h, 0);
+                let len = str_len_fn(rec);
+                if len == 0 {
+                    return Vec::new();
+                }
+                std::slice::from_raw_parts(str_addr_fn(rec) as *const u8, len as usize).to_vec()
+            };
+            let parse = |src: &[u8]| -> i64 { parse_fn(src.as_ptr() as i64, src.len() as i64) };
+
+            // KAT 1: dump of integer 0 -> "0" (byte-exact).
+            let zero = parse(b"0");
+            assert!(zero != 0, "KAT 1: `0` must parse");
+            assert_eq!(dump_bytes(zero), b"0", "KAT 1: dump of 0 must be \"0\"");
+
+            // KAT 2: parse("0") then dump then reparse -> "0" (round-trip
+            // fixed point: dump output is itself valid JSON for the same value).
+            let dumped = dump_bytes(zero);
+            let reparsed = parse(&dumped);
+            assert!(reparsed != 0, "KAT 2: dump of 0 must reparse");
+            assert_eq!(
+                dump_bytes(reparsed),
+                b"0",
+                "KAT 2: 0 round-trip must be a fixed point"
+            );
+
+            // KAT 3: object with a 0 value keeps the value (was `{"n":}`).
+            let obj = parse(br#"{"n":0}"#);
+            assert!(obj != 0, "KAT 3: `{{\"n\":0}}` must parse");
+            assert_eq!(
+                dump_bytes(obj),
+                br#"{"n":0}"#,
+                "KAT 3: zero object value must survive dump"
+            );
+
+            // KAT 4: negative zero. A constructed -0 number handle
+            // (n_int=0, n_neg=1) dumps as "-0" -- the sign byte is emitted from
+            // n_neg before the digits, and the zero integer part now emits "0".
+            // Documented behavior: "-0", not "0", and never "".
+            let neg_zero = make_num_fn(0, 0, 1, 1, 1);
+            assert_eq!(
+                dump_bytes(neg_zero),
+                b"-0",
+                "KAT 4: constructed -0 must dump as \"-0\""
+            );
+            // parse("-0") is exercised leniently: if the parser accepts it the
+            // dump must be "-0" (never empty); acceptance itself is covered by
+            // the parser's own tests.
+            let parsed_neg_zero = parse(b"-0");
+            if parsed_neg_zero != 0 {
+                assert_eq!(
+                    dump_bytes(parsed_neg_zero),
+                    b"-0",
+                    "KAT 4: parsed -0 must dump as \"-0\""
+                );
+            }
+
+            // KAT 5: non-zero regression guard -- byte-identical to pre-fix.
+            let pos = parse(b"12345");
+            assert!(pos != 0, "KAT 5: `12345` must parse");
+            assert_eq!(dump_bytes(pos), b"12345", "KAT 5: 12345 must be unchanged");
+            let neg = make_num_fn(678, 0, 1, 1, 1);
+            assert_eq!(
+                dump_bytes(neg),
+                b"-678",
+                "KAT 5: constructed -678 must dump as \"-678\""
+            );
+
+            // KAT 6: zeros inside an array (compact separators unchanged).
+            let arr = parse(b"[0, 1, 0]");
+            assert!(arr != 0, "KAT 6: `[0, 1, 0]` must parse");
+            assert_eq!(
+                dump_bytes(arr),
+                b"[0, 1, 0]",
+                "KAT 6: array zeros must survive dump"
+            );
+
+            // KAT 7: zero integer part of a fraction ("0.5" dumped ".5" pre-fix).
+            let half = parse(b"0.5");
+            assert!(half != 0, "KAT 7: `0.5` must parse");
+            assert_eq!(
+                dump_bytes(half),
+                b"0.5",
+                "KAT 7: 0.5 must keep its leading zero"
+            );
+
+            // KAT 8: zero fractional part ("1.0" dumped "1." pre-fix). The
+            // sibling zero bug in the fractional branch: frac=0, frac_d=10 ->
+            // needed_zeros=0 -> a "0" digit must be emitted so "1.0" -> "1.0".
+            let one_dot_zero = parse(b"1.0");
+            assert!(one_dot_zero != 0, "KAT 8: `1.0` must parse");
+            assert_eq!(
+                dump_bytes(one_dot_zero),
+                b"1.0",
+                "KAT 8: 1.0 must dump as \"1.0\", not \"1.\""
+            );
+
+            // KAT 9: two-digit zero fraction regression guard. "1.00" -> frac=0,
+            // frac_d=100 -> needed_zeros=1 -> the padding supplies the digit and
+            // the new branch takes the else (emits nothing), so output stays
+            // "1.0" exactly as pre-fix. Proves the fix does not add a digit here.
+            let one_dot_zero_zero = parse(b"1.00");
+            assert!(one_dot_zero_zero != 0, "KAT 9: `1.00` must parse");
+            assert_eq!(
+                dump_bytes(one_dot_zero_zero),
+                b"1.0",
+                "KAT 9: 1.00 must stay \"1.0\" (unchanged regression guard)"
+            );
+
+            // KAT 10: non-zero fraction with a leading zero ("1.05"). frac=5,
+            // frac_d=100 -> needed_zeros=1 (padding "0") + jv_dump_pos_digits(5),
+            // so "1.05" -> "1.05" (else branch, unchanged).
+            let one_dot_zero_five = parse(b"1.05");
+            assert!(one_dot_zero_five != 0, "KAT 10: `1.05` must parse");
+            assert_eq!(
+                dump_bytes(one_dot_zero_five),
+                b"1.05",
+                "KAT 10: 1.05 must dump as \"1.05\""
+            );
+
+            // KAT 11: plain non-zero fraction regression guard.
+            let pi = parse(b"3.14");
+            assert!(pi != 0, "KAT 11: `3.14` must parse");
+            assert_eq!(dump_bytes(pi), b"3.14", "KAT 11: 3.14 must be unchanged");
+        }
+    }
 }

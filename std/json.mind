@@ -1180,7 +1180,10 @@ fn jv_dump_value(sb: i64, h: i64, pretty: i64, depth: i64) -> i64 {
                 if jv_n_neg(h) == 1 {
                     let _ = jvsb_push(sb, 45);
                 }
-                let _ = jv_dump_pos_digits(sb, jv_n_int(h));
+                // jv_dump_digits (not jv_dump_pos_digits) so an integer part of
+                // zero emits "0" rather than nothing; n_int is always >= 0 (the
+                // sign lives in n_neg), so output is unchanged for non-zero.
+                let _ = jv_dump_digits(sb, jv_n_int(h));
                 if jv_n_is_int(h) == 0 {
                     let _ = jvsb_push(sb, 46);
                     // dump fractional digits: n_frac with leading zeros based on n_frac_d
@@ -1196,7 +1199,14 @@ fn jv_dump_value(sb: i64, h: i64, pretty: i64, depth: i64) -> i64 {
                         let _ = jvsb_push(sb, 48);
                         zi = zi + 1;
                     }
-                    let _ = jv_dump_pos_digits(sb, frac);
+                    // frac == 0 with no padding digit emitted would give "1." —
+                    // emit a "0" so "1.0" dumps "1.0". When needed_zeros > 0 the
+                    // padding already supplied the digit(s), so "1.00" stays "1.0".
+                    if frac == 0 && needed_zeros <= 0 {
+                        let _ = jvsb_push(sb, 48);
+                    } else {
+                        let _ = jv_dump_pos_digits(sb, frac);
+                    }
                 }
             } else {
                 if k == jv_kind_string() {
