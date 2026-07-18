@@ -331,6 +331,17 @@ fn walk_expr(
         Node::Ref { inner, .. } => {
             walk_expr(inner, vars, fn_returns, struct_defs, field_types, types)
         }
+        // A cast `<expr> as <ty>` is transparent to field-access resolution:
+        // walk the operand so any FieldAccess nested under the cast (e.g. the
+        // `jv_n_int(f.h) as u64` tail of std/json's `get_u64`) records its
+        // span. Without this arm the catch-all skipped the whole subtree, the
+        // lowering's Step-2 side-table lookup missed, and the read fell to the
+        // `ConstI64(0)` placeholder — a NULL receiver address whose field load
+        // SEGFAULTs at runtime (`__mind_load_i64(0 + off)`). The cast target
+        // type is scalar-only surface and never a struct value, so only the
+        // operand is walked; `infer_struct` correctly keeps returning `None`
+        // for the cast expression itself.
+        Node::As { expr, .. } => walk_expr(expr, vars, fn_returns, struct_defs, field_types, types),
         Node::Call { args, .. } => {
             for a in args {
                 walk_expr(a, vars, fn_returns, struct_defs, field_types, types);
