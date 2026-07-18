@@ -145,6 +145,59 @@ pub fn string_starts_with(haystack: String, needle: String) -> i64 {
     return 1;
 }
 
+// string_contains — does `haystack` contain `needle` as a byte-substring?
+// Returns 1 if so, 0 otherwise. An empty `needle` matches every String
+// (returns 1); a needle longer than haystack always returns 0.
+pub fn string_contains(haystack: String, needle: String) -> i64 {
+    if needle.len <= 0 {
+        return 1;
+    }
+    if needle.len > haystack.len {
+        return 0;
+    }
+    let mut i: i64 = 0;
+    while i + needle.len <= haystack.len {
+        let mut j: i64 = 0;
+        let mut matched: i64 = 1;
+        while j < needle.len {
+            if string_get_byte(haystack, i + j) != string_get_byte(needle, j) {
+                matched = 0;
+                j = needle.len;
+            } else {
+                j = j + 1;
+            }
+        }
+        if matched == 1 {
+            return 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// string_slice — byte-indexed zero-copy view of the range [start, end).
+// Clamps `start < 0` to 0 and `end > len` to len; an empty or reversed range
+// (end <= start), or a start at/after the end, returns an empty String. cap=0
+// so a later push against the slice allocates a fresh buffer instead of
+// clobbering the parent's backing store (see string_slice_from's note).
+pub fn string_slice(s: String, start: i64, end: i64) -> String {
+    let mut a: i64 = start;
+    let mut b: i64 = end;
+    if a < 0 {
+        a = 0;
+    }
+    if b > s.len {
+        b = s.len;
+    }
+    if b <= a {
+        return string_new();
+    }
+    if a >= s.len {
+        return string_new();
+    }
+    String { addr: s.addr + a, len: b - a, cap: 0 }
+}
+
 // string_slice_from — substring view starting at byte index `start`.
 // Returns a String that shares the underlying buffer (zero-copy view)
 // with cap=0 so any subsequent push_byte / push_str / push_i64 against
