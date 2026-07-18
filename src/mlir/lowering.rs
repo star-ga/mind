@@ -3170,6 +3170,18 @@ impl LoweringContext {
                                 // u64 target: tag `ScalarU64` (unsigned op
                                 // selection) regardless of the integer source kind.
                                 self.values.insert(*dst, ValueKind::ScalarU64);
+                            } else if !is_i1 && matches!(src_kind, Some(ValueKind::ScalarU64)) {
+                                // issue #210: `u64 as i64` — the SIGNED target must
+                                // re-tag the value `ScalarI64`, mirroring the `as u64`
+                                // arm above. Carrying the source's `ScalarU64` forward
+                                // made a downstream sign-sensitive op pick the
+                                // UNSIGNED variant (`(x as i64) < 0` emitted `ult` —
+                                // always false), a silent miscompile. Physically an
+                                // identity (same bitcast bytes); only op SELECTION on
+                                // the cast result changes, and every such program was
+                                // previously miscompiled, so no correct artifact's
+                                // bytes change.
+                                self.values.insert(*dst, ValueKind::ScalarI64);
                             } else {
                                 match &src_kind {
                                     Some(k) => {
