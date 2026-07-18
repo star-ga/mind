@@ -809,7 +809,8 @@ pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
             }
             crate::ir::set_global_enums(build_global_enums(&parsed));
         }
-        let cdylib_result = build_cdylib_from_entry(&entry_path, &cdylib_out, &backend, opts);
+        let cdylib_result =
+            build_cdylib_from_entry(&entry_path, &sources, &cdylib_out, &backend, opts);
         #[cfg(feature = "cross-module-imports")]
         crate::ir::clear_global_enums();
         cdylib_result?;
@@ -864,6 +865,7 @@ pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
 #[cfg(feature = "mlir-build")]
 fn build_cdylib_from_entry(
     entry_path: &Path,
+    sources: &[PathBuf],
     output: &Path,
     backend: &str,
     opts: &BuildOptions,
@@ -1055,7 +1057,17 @@ fn build_cdylib_from_entry(
             // symbols. An empty set still leaves the link byte-identical to the
             // single-entry path (the keystone imports no substrate module).
             let mut imported: BTreeSet<&'static str> = BTreeSet::new();
-            let mut worklist: Vec<&'static str> = scan_substrate_imports(&source_code);
+            // Seed from the UNION of every project source's substrate imports,
+            // not just the entry: a non-entry module importing a substrate
+            // module (e.g. `sha256.hash(x)` rewritten to a bare `hash` symbol)
+            // needs that module's `.o` linked even when the entry never imports
+            // it. Empty set ⇒ byte-identical single-entry link (keystone-safe).
+            let mut worklist: Vec<&'static str> = Vec::new();
+            for src_path in sources {
+                if let Ok(text) = fs::read_to_string(src_path) {
+                    worklist.extend(scan_substrate_imports(&text));
+                }
+            }
             while let Some(modname) = worklist.pop() {
                 if imported.insert(modname) {
                     if let Some((_, src)) = crate::project::stdlib::STDLIB_MIND_SOURCES
@@ -1169,6 +1181,7 @@ fn build_cdylib_from_entry(
 #[cfg(not(feature = "mlir-build"))]
 fn build_cdylib_from_entry(
     _entry_path: &Path,
+    _sources: &[PathBuf],
     _output: &Path,
     _backend: &str,
     _opts: &BuildOptions,
@@ -1289,8 +1302,15 @@ fn compile_sources(
     // scan, but emits relocatable objects for the executable link path.
     #[cfg(all(feature = "cross-module-imports", feature = "mlir-build"))]
     {
-        let entry_src = fs::read_to_string(&entry_path).unwrap_or_default();
-        let mut subs = compile_substrate_objects(&entry_src, &obj_dir, backend, opts)?;
+        // Seed the substrate BFS from EVERY project source, not just the entry:
+        // a non-entry module importing a substrate module (e.g. `src/ir.mind`
+        // doing `import std.sha256; sha256.hash(x)`) needs that module's `.o`
+        // linked even when the entry itself never imports it.
+        let source_texts: Vec<String> = sources
+            .iter()
+            .map(|s| fs::read_to_string(s).unwrap_or_default())
+            .collect();
+        let mut subs = compile_substrate_objects(&source_texts, &obj_dir, backend, opts)?;
         objects.append(&mut subs);
     }
 
@@ -1303,9 +1323,9 @@ fn compile_sources(
     Ok(objects)
 }
 
-/// Compile every `std` substrate module transitively imported by `entry_src`
-/// to its own native relocatable LIBRARY object (no `@main`), returning the
-/// object paths to link alongside the entry object.
+/// Compile every `std` substrate module transitively imported by ANY project
+/// source to its own native relocatable LIBRARY object (no `@main`), returning
+/// the object paths to link alongside the per-file objects.
 ///
 /// This is the executable-path counterpart to the substrate-object scan in
 /// [`build_cdylib_from_entry`]: it BFS-walks the substrate import graph (an
@@ -1313,13 +1333,20 @@ fn compile_sources(
 /// both), compiles each self-contained substrate module through the SAME rich
 /// canonical emitter, and lowers it with `suppress_module_entry = true` so the
 /// object exports its `pub fn` symbols globally but emits NO synthetic `@main`
-/// (a pure library object — no `objcopy` symbol-localisation needed). An entry
-/// importing no substrate module returns an empty vec, so the executable link
-/// stays byte-identical to the historical single-object path (the keystone
-/// imports no substrate module).
+/// (a pure library object — no `objcopy` symbol-localisation needed).
+///
+/// The BFS seed is the UNION of the substrate imports of EVERY project source,
+/// not just the entry: a non-entry module (e.g. `src/ir.mind` doing
+/// `import std.sha256; sha256.hash(x)`) whose module-qualified call the parser
+/// rewrites to a bare `hash`/`sha256` symbol needs `__std_sha256.o` linked even
+/// when the entry never imports `std.sha256`. Seeding from the entry alone left
+/// that symbol undefined at native link. When NO project source imports any
+/// substrate module the seed set is empty and the executable link stays
+/// byte-identical to the historical single-object path (the keystone imports no
+/// substrate module in any of its sources).
 #[cfg(all(feature = "cross-module-imports", feature = "mlir-build"))]
 fn compile_substrate_objects(
-    entry_src: &str,
+    source_texts: &[String],
     obj_dir: &Path,
     backend: &str,
     opts: &BuildOptions,
@@ -1358,9 +1385,13 @@ fn compile_substrate_objects(
         found
     }
 
-    // BFS the substrate import graph (entry + transitive substrate deps).
+    // BFS the substrate import graph (union of every project source's substrate
+    // imports + their transitive substrate deps).
     let mut imported: BTreeSet<&'static str> = BTreeSet::new();
-    let mut worklist: Vec<&'static str> = scan_substrate_imports(entry_src);
+    let mut worklist: Vec<&'static str> = Vec::new();
+    for text in source_texts {
+        worklist.extend(scan_substrate_imports(text));
+    }
     while let Some(modname) = worklist.pop() {
         if imported.insert(modname) {
             if let Some((_, src)) = crate::project::stdlib::STDLIB_MIND_SOURCES
