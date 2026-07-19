@@ -106,7 +106,7 @@ fn count_to(n: i64) -> i64 {
         module
             .items
             .iter()
-            .any(|n| matches!(n, libmind::ast::Node::FnDef { .. })),
+            .any(|n| matches!(n, libmind::ast::Node::FnDef(..))),
         "FnDef not found in module items"
     );
 

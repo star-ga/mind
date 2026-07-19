@@ -1,0 +1,15 @@
+// DIVERGENCE REPRODUCER (issue #72 fuzzer)
+// mic@3-VM error: mic@3-VM: While exceeded 1e6 iterations — a non-advancing loop-carried value (lowering bug)
+// MIND-Fuzz #72 generated program — deterministic, seed 0xDEADBEEF.
+// One AST, three consumers: this source, the in-test oracle, the mic@3 VM.
+pub fn f(a: i64) -> i64 {
+    let v0: i64 = if ((a % (a | 1)) / (a | 1)) < a { ((a / (a | 1)) >> 2) } else { a };
+    let v1: i64 = 1;
+    let v2: i64 = (((a + 4) % ((v0 + a) | 1)) | (v0 >> 0));
+    let mut v3: i64 = 0;
+    for i in 0..6 {
+        if i <= 4 { continue; }
+        v3 = v3 + v1;
+    }
+    return (v3 + v2);
+}

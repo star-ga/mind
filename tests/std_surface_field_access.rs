@@ -24,7 +24,7 @@
 
 #![cfg(feature = "std-surface")]
 
-use libmind::ast::{Field, Literal, Module, Node, Span, StructLitField, TypeAnn};
+use libmind::ast::{Field, FnDefData, Literal, Module, Node, Span, StructLitField, TypeAnn};
 use libmind::eval::lower::lower_to_ir;
 use libmind::ir::Instr;
 
@@ -322,25 +322,27 @@ fn field_access_module_scope_binding_visible_inside_fn_body() {
                 }),
                 span: sp(),
             },
-            Node::FnDef {
-                is_pub: false,
-                is_test: false,
-                name: "read".to_string(),
-                type_params: vec![],
-                params: vec![],
-                ret_type: None,
-                body: vec![Node::Return {
-                    value: Some(Box::new(Node::FieldAccess {
-                        receiver: Box::new(ident("cfg")),
-                        field: "max".to_string(),
+            Node::FnDef(
+                Box::new(FnDefData {
+                    is_pub: false,
+                    is_test: false,
+                    name: "read".to_string(),
+                    type_params: vec![],
+                    params: vec![],
+                    ret_type: None,
+                    body: vec![Node::Return {
+                        value: Some(Box::new(Node::FieldAccess {
+                            receiver: Box::new(ident("cfg")),
+                            field: "max".to_string(),
+                            span: sp(),
+                        })),
                         span: sp(),
-                    })),
-                    span: sp(),
-                }],
-                reap_threshold: None,
-                attrs: Vec::new(),
-                span: sp(),
-            },
+                    }],
+                    reap_threshold: None,
+                    attrs: Vec::new(),
+                }),
+                sp(),
+            ),
         ],
     };
 

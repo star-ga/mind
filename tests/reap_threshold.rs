@@ -30,11 +30,9 @@ fn parse_reap_threshold_on_fn() {
     let m = parser::parse(src).expect("parse failed");
     assert_eq!(m.items.len(), 1);
     match &m.items[0] {
-        Node::FnDef {
-            name,
-            reap_threshold,
-            ..
-        } => {
+        Node::FnDef(fd, _) => {
+            let name = &fd.name;
+            let reap_threshold = &fd.reap_threshold;
             assert_eq!(name, "expert_a");
             assert!(
                 reap_threshold.is_some(),
@@ -55,7 +53,8 @@ fn parse_reap_threshold_zero() {
     "#;
     let m = parser::parse(src).expect("parse failed");
     match &m.items[0] {
-        Node::FnDef { reap_threshold, .. } => {
+        Node::FnDef(fd, _) => {
+            let reap_threshold = &fd.reap_threshold;
             let t = reap_threshold.expect("should be Some(0.0)");
             assert!((t - 0.0).abs() < 1e-9);
         }
@@ -71,7 +70,8 @@ fn parse_reap_threshold_high_value() {
     "#;
     let m = parser::parse(src).expect("parse failed");
     match &m.items[0] {
-        Node::FnDef { reap_threshold, .. } => {
+        Node::FnDef(fd, _) => {
+            let reap_threshold = &fd.reap_threshold;
             let t = reap_threshold.expect("should be Some(0.9)");
             assert!((t - 0.9).abs() < 1e-9, "expected ~0.9, got {t}");
         }
@@ -85,7 +85,8 @@ fn parse_fn_without_reap_threshold() {
     let src = "fn plain(x: i32) -> i32 { return x; }";
     let m = parser::parse(src).expect("parse failed");
     match &m.items[0] {
-        Node::FnDef { reap_threshold, .. } => {
+        Node::FnDef(fd, _) => {
+            let reap_threshold = &fd.reap_threshold;
             assert!(
                 reap_threshold.is_none(),
                 "plain fn should have no reap_threshold"
@@ -104,7 +105,8 @@ fn parse_reap_threshold_out_of_range_rejected() {
     "#;
     let m = parser::parse(src).expect("parse succeeded (attribute is syntactically valid)");
     match &m.items[0] {
-        Node::FnDef { reap_threshold, .. } => {
+        Node::FnDef(fd, _) => {
+            let reap_threshold = &fd.reap_threshold;
             assert!(
                 reap_threshold.is_none(),
                 "threshold >=1.0 should be None, got {reap_threshold:?}"

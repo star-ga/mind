@@ -29,7 +29,7 @@
 
 #![cfg(feature = "std-surface")]
 
-use libmind::ast::{Field, Literal, Module, Node, Param, Span, StructLitField, TypeAnn};
+use libmind::ast::{Field, FnDefData, Literal, Module, Node, Param, Span, StructLitField, TypeAnn};
 use libmind::eval::lower::lower_to_ir;
 use libmind::ir::Instr;
 
@@ -101,29 +101,31 @@ fn step2_struct_typed_parameter_resolves_field_access() {
                 attrs: vec![],
                 span: sp(),
             },
-            Node::FnDef {
-                type_params: vec![],
-                is_pub: false,
-                is_test: false,
-                name: "read".to_string(),
-                params: vec![Param {
-                    name: "c".to_string(),
-                    ty: TypeAnn::Named("Cfg".to_string()),
-                    span: sp(),
-                }],
-                ret_type: Some(TypeAnn::Named("i64".to_string())),
-                body: vec![Node::Return {
-                    value: Some(Box::new(Node::FieldAccess {
-                        receiver: Box::new(ident("c")),
-                        field: "max".to_string(),
+            Node::FnDef(
+                Box::new(FnDefData {
+                    type_params: vec![],
+                    is_pub: false,
+                    is_test: false,
+                    name: "read".to_string(),
+                    params: vec![Param {
+                        name: "c".to_string(),
+                        ty: TypeAnn::Named("Cfg".to_string()),
                         span: sp(),
-                    })),
-                    span: sp(),
-                }],
-                reap_threshold: None,
-                attrs: Vec::new(),
-                span: sp(),
-            },
+                    }],
+                    ret_type: Some(TypeAnn::Named("i64".to_string())),
+                    body: vec![Node::Return {
+                        value: Some(Box::new(Node::FieldAccess {
+                            receiver: Box::new(ident("c")),
+                            field: "max".to_string(),
+                            span: sp(),
+                        })),
+                        span: sp(),
+                    }],
+                    reap_threshold: None,
+                    attrs: Vec::new(),
+                }),
+                sp(),
+            ),
         ],
     };
 
@@ -156,25 +158,27 @@ fn step2_fn_return_receiver_resolves_field_access() {
                 attrs: vec![],
                 span: sp(),
             },
-            Node::FnDef {
-                type_params: vec![],
-                is_pub: false,
-                is_test: false,
-                name: "make".to_string(),
-                params: vec![],
-                ret_type: Some(TypeAnn::Named("Cfg".to_string())),
-                body: vec![Node::Return {
-                    value: Some(Box::new(Node::StructLit {
-                        name: "Cfg".to_string(),
-                        fields: vec![struct_lit_field("max", lit_int(99))],
+            Node::FnDef(
+                Box::new(FnDefData {
+                    type_params: vec![],
+                    is_pub: false,
+                    is_test: false,
+                    name: "make".to_string(),
+                    params: vec![],
+                    ret_type: Some(TypeAnn::Named("Cfg".to_string())),
+                    body: vec![Node::Return {
+                        value: Some(Box::new(Node::StructLit {
+                            name: "Cfg".to_string(),
+                            fields: vec![struct_lit_field("max", lit_int(99))],
+                            span: sp(),
+                        })),
                         span: sp(),
-                    })),
-                    span: sp(),
-                }],
-                reap_threshold: None,
-                attrs: Vec::new(),
-                span: sp(),
-            },
+                    }],
+                    reap_threshold: None,
+                    attrs: Vec::new(),
+                }),
+                sp(),
+            ),
             Node::Let {
                 name: "v".to_string(),
                 mutable: false,
@@ -212,21 +216,23 @@ fn step2_fn_with_non_struct_return_does_not_pollute_side_table() {
     // to the placeholder.
     let module = Module {
         items: vec![
-            Node::FnDef {
-                type_params: vec![],
-                is_pub: false,
-                is_test: false,
-                name: "raw".to_string(),
-                params: vec![],
-                ret_type: Some(TypeAnn::Named("i64".to_string())),
-                body: vec![Node::Return {
-                    value: Some(Box::new(lit_int(7))),
-                    span: sp(),
-                }],
-                reap_threshold: None,
-                attrs: Vec::new(),
-                span: sp(),
-            },
+            Node::FnDef(
+                Box::new(FnDefData {
+                    type_params: vec![],
+                    is_pub: false,
+                    is_test: false,
+                    name: "raw".to_string(),
+                    params: vec![],
+                    ret_type: Some(TypeAnn::Named("i64".to_string())),
+                    body: vec![Node::Return {
+                        value: Some(Box::new(lit_int(7))),
+                        span: sp(),
+                    }],
+                    reap_threshold: None,
+                    attrs: Vec::new(),
+                }),
+                sp(),
+            ),
             Node::Let {
                 name: "v".to_string(),
                 mutable: false,

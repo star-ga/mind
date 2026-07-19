@@ -50,7 +50,9 @@ fn test_simple() {
     let module = libmind::parser::parse(src).expect("parse ok");
     let fndef = module.items.first().expect("one item");
     match fndef {
-        libmind::ast::Node::FnDef { is_test, name, .. } => {
+        libmind::ast::Node::FnDef(fd, _) => {
+            let is_test = &fd.is_test;
+            let name = &fd.name;
             assert_eq!(name, "test_simple");
             assert!(*is_test, "is_test should be true");
         }
@@ -64,7 +66,8 @@ fn parse_fn_without_test_attr_has_is_test_false() {
     let module = libmind::parser::parse(src).expect("parse ok");
     let fndef = module.items.first().expect("one item");
     match fndef {
-        libmind::ast::Node::FnDef { is_test, .. } => {
+        libmind::ast::Node::FnDef(fd, _) => {
+            let is_test = &fd.is_test;
             assert!(!*is_test, "is_test should be false for unannotated fn");
         }
         _ => panic!("expected FnDef"),
@@ -109,9 +112,9 @@ pub fn test_pub_fn() {
 "#;
     let module = libmind::parser::parse(src).expect("parse ok");
     match module.items.first() {
-        Some(libmind::ast::Node::FnDef {
-            is_test, is_pub, ..
-        }) => {
+        Some(libmind::ast::Node::FnDef(fd, _)) => {
+            let is_test = &fd.is_test;
+            let is_pub = &fd.is_pub;
             assert!(*is_test);
             assert!(*is_pub);
         }
@@ -125,9 +128,9 @@ fn is_pub_field_preserved_on_non_test_fn() {
     let src = r#"pub fn exported() -> i64 { 1 }"#;
     let module = libmind::parser::parse(src).expect("parse ok");
     match module.items.first() {
-        Some(libmind::ast::Node::FnDef {
-            is_pub, is_test, ..
-        }) => {
+        Some(libmind::ast::Node::FnDef(fd, _)) => {
+            let is_pub = &fd.is_pub;
+            let is_test = &fd.is_test;
             assert!(*is_pub, "pub fn should have is_pub=true");
             assert!(!*is_test, "non-test fn should have is_test=false");
         }
@@ -401,11 +404,9 @@ fn expert_fn() -> i64 { 1 }
 "#;
     let module = libmind::parser::parse(src).expect("parse ok");
     match module.items.first() {
-        Some(libmind::ast::Node::FnDef {
-            reap_threshold,
-            is_test,
-            ..
-        }) => {
+        Some(libmind::ast::Node::FnDef(fd, _)) => {
+            let reap_threshold = &fd.reap_threshold;
+            let is_test = &fd.is_test;
             assert!(reap_threshold.is_some(), "reap_threshold should be set");
             assert!(!*is_test, "is_test should be false");
         }

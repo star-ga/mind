@@ -126,7 +126,7 @@ fn ref_ir(user_src: &str) -> IRModule {
         .items
         .iter()
         .filter_map(|item| match item {
-            Node::FnDef { name, .. } => Some(name.clone()),
+            Node::FnDef(fd, _) => Some(fd.name.clone()),
             _ => None,
         })
         .collect();

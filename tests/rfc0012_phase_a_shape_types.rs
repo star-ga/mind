@@ -34,7 +34,7 @@
 //!   7. Lowering unchanged: a `Tensor<f32,[4,8]>` annotation does not alter the
 //!      `ValueType::Tensor` produced; the shape type is a compile-time lens only.
 
-use libmind::ast::{Literal, Module, Node, Param, Span, TypeAnn};
+use libmind::ast::{FnDefData, Literal, Module, Node, Param, Span, TypeAnn};
 use libmind::parser;
 use libmind::type_checker::{TypeEnv, check_module_types_in_file};
 use libmind::types::{DType, ShapeDim, TensorType, ValueType};
@@ -337,38 +337,40 @@ fn q16_compatible_binding_no_diag() {
 #[test]
 fn symbolic_dim_same_n_no_conflict() {
     // Build the module AST directly: FnDef + two let + call.
-    let fn_node = Node::FnDef {
-        type_params: vec![],
-        is_pub: false,
-        is_test: false,
-        name: "f".to_string(),
-        params: vec![
-            Param {
-                name: "a".to_string(),
-                ty: TypeAnn::Tensor {
-                    dtype: "f32".to_string(),
-                    dims: vec!["N".to_string(), "K".to_string()],
+    let fn_node = Node::FnDef(
+        Box::new(FnDefData {
+            type_params: vec![],
+            is_pub: false,
+            is_test: false,
+            name: "f".to_string(),
+            params: vec![
+                Param {
+                    name: "a".to_string(),
+                    ty: TypeAnn::Tensor {
+                        dtype: "f32".to_string(),
+                        dims: vec!["N".to_string(), "K".to_string()],
+                    },
+                    span: sp(),
                 },
-                span: sp(),
-            },
-            Param {
-                name: "b".to_string(),
-                ty: TypeAnn::Tensor {
-                    dtype: "f32".to_string(),
-                    dims: vec!["N".to_string(), "M".to_string()],
+                Param {
+                    name: "b".to_string(),
+                    ty: TypeAnn::Tensor {
+                        dtype: "f32".to_string(),
+                        dims: vec!["N".to_string(), "M".to_string()],
+                    },
+                    span: sp(),
                 },
+            ],
+            ret_type: Some(TypeAnn::ScalarI32),
+            body: vec![Node::Return {
+                value: Some(Box::new(Node::Lit(Literal::Int(0), sp()))),
                 span: sp(),
-            },
-        ],
-        ret_type: Some(TypeAnn::ScalarI32),
-        body: vec![Node::Return {
-            value: Some(Box::new(Node::Lit(Literal::Int(0), sp()))),
-            span: sp(),
-        }],
-        reap_threshold: None,
-        attrs: Vec::new(),
-        span: sp(),
-    };
+            }],
+            reap_threshold: None,
+            attrs: Vec::new(),
+        }),
+        sp(),
+    );
     // Let x = Tensor<f32,[4,8]>, y = Tensor<f32,[4,16]> — N matches (4 == 4)
     let let_x = Node::Let {
         name: "x".to_string(),
@@ -425,38 +427,40 @@ fn symbolic_dim_same_n_no_conflict() {
 /// x: Tensor<f32,[4,8]> and y: Tensor<f32,[8,16]> — N=4 vs N=8 → symbolic_conflict.
 #[test]
 fn symbolic_dim_mismatch_n_conflict() {
-    let fn_node = Node::FnDef {
-        type_params: vec![],
-        is_pub: false,
-        is_test: false,
-        name: "f".to_string(),
-        params: vec![
-            Param {
-                name: "a".to_string(),
-                ty: TypeAnn::Tensor {
-                    dtype: "f32".to_string(),
-                    dims: vec!["N".to_string(), "K".to_string()],
+    let fn_node = Node::FnDef(
+        Box::new(FnDefData {
+            type_params: vec![],
+            is_pub: false,
+            is_test: false,
+            name: "f".to_string(),
+            params: vec![
+                Param {
+                    name: "a".to_string(),
+                    ty: TypeAnn::Tensor {
+                        dtype: "f32".to_string(),
+                        dims: vec!["N".to_string(), "K".to_string()],
+                    },
+                    span: sp(),
                 },
-                span: sp(),
-            },
-            Param {
-                name: "b".to_string(),
-                ty: TypeAnn::Tensor {
-                    dtype: "f32".to_string(),
-                    dims: vec!["N".to_string(), "M".to_string()],
+                Param {
+                    name: "b".to_string(),
+                    ty: TypeAnn::Tensor {
+                        dtype: "f32".to_string(),
+                        dims: vec!["N".to_string(), "M".to_string()],
+                    },
+                    span: sp(),
                 },
+            ],
+            ret_type: Some(TypeAnn::ScalarI32),
+            body: vec![Node::Return {
+                value: Some(Box::new(Node::Lit(Literal::Int(0), sp()))),
                 span: sp(),
-            },
-        ],
-        ret_type: Some(TypeAnn::ScalarI32),
-        body: vec![Node::Return {
-            value: Some(Box::new(Node::Lit(Literal::Int(0), sp()))),
-            span: sp(),
-        }],
-        reap_threshold: None,
-        attrs: Vec::new(),
-        span: sp(),
-    };
+            }],
+            reap_threshold: None,
+            attrs: Vec::new(),
+        }),
+        sp(),
+    );
     // x: Tensor<f32,[4,8]>, y: Tensor<f32,[8,16]> — N=4 from x, N=8 from y → conflict
     let let_x = Node::Let {
         name: "x".to_string(),
@@ -556,24 +560,26 @@ fn shape_diag_channel_verification() {
 fn shape_check_inside_fn_body() {
     // Build a fn body with a mismatched let binding.
     let body_let = let_tensor("x", "f32", &["4", "16"], "body_src");
-    let fn_node = Node::FnDef {
-        type_params: vec![],
-        is_pub: false,
-        is_test: false,
-        name: "check_body".to_string(),
-        params: vec![],
-        ret_type: Some(TypeAnn::ScalarI32),
-        body: vec![
-            body_let,
-            Node::Return {
-                value: Some(Box::new(Node::Lit(Literal::Int(0), sp()))),
-                span: sp(),
-            },
-        ],
-        reap_threshold: None,
-        attrs: Vec::new(),
-        span: sp(),
-    };
+    let fn_node = Node::FnDef(
+        Box::new(FnDefData {
+            type_params: vec![],
+            is_pub: false,
+            is_test: false,
+            name: "check_body".to_string(),
+            params: vec![],
+            ret_type: Some(TypeAnn::ScalarI32),
+            body: vec![
+                body_let,
+                Node::Return {
+                    value: Some(Box::new(Node::Lit(Literal::Int(0), sp()))),
+                    span: sp(),
+                },
+            ],
+            reap_threshold: None,
+            attrs: Vec::new(),
+        }),
+        sp(),
+    );
     let module = Module {
         items: vec![fn_node],
     };
