@@ -12,7 +12,7 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use crate::ir::{BinOp, IRModule, Instr, ValueId, instruction_dst};
 
@@ -41,7 +41,7 @@ pub fn canonicalize_module(module: &mut IRModule) {
     let n = module.next_id;
     prune_dead(&mut instrs, n);
     reorder_commutative_ops(&mut instrs);
-    constant_fold(&mut instrs);
+    constant_fold(&mut instrs, n);
     prune_dead(&mut instrs, n);
 
     module.instrs = instrs;
@@ -199,12 +199,19 @@ fn reorder_commutative_ops(instrs: &mut [Instr]) {
     }
 }
 
-fn constant_fold(instrs: &mut [Instr]) {
-    let mut constants: BTreeMap<ValueId, i64> = BTreeMap::new();
+fn constant_fold(instrs: &mut [Instr], n: usize) {
+    // Dense `Vec<Option<i64>>` keyed by the contiguous (`fresh()`-minted 0..n)
+    // ValueId, replacing a `BTreeMap<ValueId, i64>`: O(1) get/set, zero per-key
+    // node allocation. The table is lookup-only (get/set/clear by key, never
+    // iterated), so fold decisions are pointwise identical and emitted bytes are
+    // unchanged — byte-identity is preserved.
+    let mut constants: Vec<Option<i64>> = vec![None; n];
     for instr in instrs.iter_mut() {
         match instr {
             Instr::ConstI64(id, value) => {
-                constants.insert(*id, *value);
+                if let Some(slot) = constants.get_mut(id.0) {
+                    *slot = Some(*value);
+                }
             }
             Instr::BinOp { dst, op, lhs, rhs } => {
                 let dst_id = *dst;
@@ -213,8 +220,8 @@ fn constant_fold(instrs: &mut [Instr]) {
                 let op_kind = *op;
 
                 if let (Some(l), Some(r)) = (
-                    constants.get(&lhs_id).copied(),
-                    constants.get(&rhs_id).copied(),
+                    constants.get(lhs_id.0).copied().flatten(),
+                    constants.get(rhs_id.0).copied().flatten(),
                 ) {
                     let folded = match op_kind {
                         // Exact-or-skip: fold only when representable. Defined-wrap is the
@@ -266,15 +273,21 @@ fn constant_fold(instrs: &mut [Instr]) {
                         BinOp::Shr => l >> r,
                     };
                     *instr = Instr::ConstI64(dst_id, folded);
-                    constants.insert(dst_id, folded);
+                    if let Some(slot) = constants.get_mut(dst_id.0) {
+                        *slot = Some(folded);
+                    }
                     continue;
                 }
 
-                constants.remove(&dst_id);
+                if let Some(slot) = constants.get_mut(dst_id.0) {
+                    *slot = None;
+                }
             }
             _ => {
                 if let Some(dst) = instruction_dst(instr) {
-                    constants.remove(&dst);
+                    if let Some(slot) = constants.get_mut(dst.0) {
+                        *slot = None;
+                    }
                 }
             }
         }
