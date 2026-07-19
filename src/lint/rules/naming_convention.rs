@@ -27,7 +27,7 @@
 //!   (they are typically intentionally unused, e.g. `_result`).
 //! - `fn` names starting with `__` (intrinsic/FFI convention in MIND stdlib).
 
-use crate::ast::Node;
+use crate::ast::{FnDefData, Node};
 use crate::lint::rule::{LintCtx, LintRule};
 use crate::lint::{Diagnostic, SourceSpan};
 use crate::project::RuleSeverity;
@@ -59,9 +59,8 @@ impl LintRule for NamingConvention {
 
 fn check_node(node: &Node, ctx: &LintCtx<'_>, out: &mut Vec<Diagnostic>) {
     match node {
-        Node::FnDef {
-            name, body, span, ..
-        } => {
+        Node::FnDef(fd, span) => {
+            let FnDefData { name, body, .. } = &**fd;
             if !is_exempt(name) && !name.starts_with("__") && !is_lower_snake(name) {
                 emit(out, ctx, name, "lower_snake_case", span.start(), span.end());
             }

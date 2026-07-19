@@ -176,8 +176,10 @@ struct ModuleSyms {
 pub(crate) fn collect_decl_names(module: &Module, out: &mut BTreeSet<String>) {
     for item in &module.items {
         match item {
-            Node::FnDef { name, .. }
-            | Node::Const { name, .. }
+            Node::FnDef(fd, _) => {
+                out.insert(fd.name.clone());
+            }
+            Node::Const { name, .. }
             | Node::ExternConst { name, .. }
             | Node::Let { name, .. }
             | Node::StructDef { name, .. }
@@ -1006,7 +1008,7 @@ impl<'a> Resolver<'a> {
             // ── Leaf / non-reference nodes ────────────────────────────────
             // Declarations and constructs that introduce no resolvable
             // references inside a fn body (or are handled at module level).
-            Node::FnDef { .. }
+            Node::FnDef(..)
             | Node::Const { .. }
             | Node::ExternConst { .. }
             | Node::TypeAlias { .. }

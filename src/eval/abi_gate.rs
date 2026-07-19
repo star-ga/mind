@@ -56,16 +56,10 @@ pub fn check_runnable_lowerable(module: &Module, src: &str, file: Option<&str>) 
     // declarations and every other item are exempt — no other top-level item
     // reaches the runnable path with a silently-miscompiled non-i64 signature.
     for item in &module.items {
-        let Node::FnDef {
-            name,
-            params,
-            ret_type,
-            span,
-            ..
-        } = item
-        else {
+        let Node::FnDef(fd, span) = item else {
             continue;
         };
+        let (name, params, ret_type) = (&fd.name, &fd.params, &fd.ret_type);
         for p in params {
             if let Some(reason) = param_non_i64(&p.ty) {
                 out.push(mk(
@@ -203,7 +197,7 @@ pub fn check_generic_resolvable(module: &Module, src: &str, file: Option<&str>) 
     let has_templates = module
         .items
         .iter()
-        .any(|item| matches!(item, Node::FnDef { type_params, .. } if !type_params.is_empty()));
+        .any(|item| matches!(item, Node::FnDef(fd, _) if !fd.type_params.is_empty()));
     if !has_templates {
         return Vec::new();
     }
@@ -217,31 +211,20 @@ pub fn check_generic_resolvable(module: &Module, src: &str, file: Option<&str>) 
     let mut fn_returns: std::collections::HashMap<String, TypeAnn> =
         std::collections::HashMap::new();
     for item in &module.items {
-        if let Node::FnDef {
-            name,
-            type_params,
-            ret_type,
-            ..
-        } = item
-        {
-            if !type_params.is_empty() {
-                templates.insert(name.as_str());
-            } else if let Some(rt) = ret_type
+        if let Node::FnDef(fd, _) = item {
+            if !fd.type_params.is_empty() {
+                templates.insert(fd.name.as_str());
+            } else if let Some(rt) = &fd.ret_type
                 && crate::eval::lower::mangle_suffix(rt).is_some()
             {
-                fn_returns.insert(name.clone(), rt.clone());
+                fn_returns.insert(fd.name.clone(), rt.clone());
             }
         }
     }
     let mut out = Vec::new();
     for item in &module.items {
-        if let Node::FnDef {
-            params,
-            body,
-            type_params,
-            ..
-        } = item
-        {
+        if let Node::FnDef(fd, _) = item {
+            let (params, body, type_params) = (&fd.params, &fd.body, &fd.type_params);
             // A generic TEMPLATE is never lowered directly — only its concrete
             // instances are (synthesized post-typecheck, lowered via the FnDef
             // path where the type-params are concrete and the same Part-1
@@ -459,7 +442,8 @@ pub fn check_enum_handle_scalar_return(
         return out;
     }
     for item in &module.items {
-        if let Node::FnDef { ret_type, body, .. } = item {
+        if let Node::FnDef(fd, _) = item {
+            let (ret_type, body) = (&fd.ret_type, &fd.body);
             if !ret_type.as_ref().is_some_and(is_bare_scalar_ann) {
                 continue;
             }
@@ -635,8 +619,8 @@ fn payload_subpattern_supported(args: &[crate::ast::Pattern]) -> bool {
 pub fn check_match_runnable(module: &Module, src: &str, file: Option<&str>) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     for item in &module.items {
-        if let Node::FnDef { body, .. } = item {
-            for stmt in body {
+        if let Node::FnDef(fd, _) = item {
+            for stmt in &fd.body {
                 walk_match_runnable(stmt, src, file, &mut out);
             }
         }
@@ -687,8 +671,8 @@ pub fn check_ambiguous_bare_ctor(
         return out;
     }
     for item in &module.items {
-        if let Node::FnDef { body, .. } = item {
-            for stmt in body {
+        if let Node::FnDef(fd, _) = item {
+            for stmt in &fd.body {
                 walk_ambiguous_ctor(stmt, &ambiguous, src, file, &mut out);
             }
         }
