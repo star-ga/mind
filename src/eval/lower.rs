@@ -435,6 +435,33 @@ fn node_mentions_type_name(node: &ast::Node, tp: &str) -> bool {
     }
 }
 
+/// Conservative predicate: returns `false` ONLY for AST nodes that PROVABLY
+/// cannot reference the built-in Result/Option prelude — pure literal/arith
+/// scalar expressions with no identifier, call, `match`, or binding sub-node.
+/// Anything that could name a bare constructor (`Ok`/`Err`/`Some`/`None`), a
+/// `match`, a call, or a binding defaults to `true`.
+///
+/// Used to skip installing the prelude side-tables for pure-scalar modules
+/// (the `scalar_math` bench) where they are never consulted. The design already
+/// guarantees an UNUSED prelude is output-invariant, so skipping it is
+/// byte-identical. A false-negative (skip-when-needed) is impossible: a `false`
+/// result is only produced for fully-understood literal/arith shapes, and such
+/// a tree contains no node that can read the prelude tables.
+#[cfg(feature = "std-surface")]
+fn may_reference_enum_prelude(n: &ast::Node) -> bool {
+    use ast::Node as N;
+    match n {
+        N::Lit(Literal::Int(_), _) | N::Lit(Literal::Float(_), _) | N::Lit(Literal::Str(_), _) => {
+            false
+        }
+        N::Binary { left, right, .. } | N::Bitwise { left, right, .. } => {
+            may_reference_enum_prelude(left) || may_reference_enum_prelude(right)
+        }
+        N::Paren(inner, _) | N::Neg { operand: inner, .. } => may_reference_enum_prelude(inner),
+        _ => true,
+    }
+}
+
 pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     // Pre-pass: rewrite statement-position collection mutations (`m.insert(k,v)`,
     // `v.push(x)`) into assignments so the non-mutating std handle is rebound.
@@ -480,21 +507,30 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     // `EnumDef` arm below.
     #[cfg(feature = "std-surface")]
     {
-        use crate::ast::TypeAnn::ScalarI64;
-        ir.enum_variant_tags.insert("Result::Ok".to_string(), 0);
-        ir.enum_variant_tags.insert("Result::Err".to_string(), 1);
-        ir.enum_variant_tags.insert("Option::Some".to_string(), 0);
-        ir.enum_variant_tags.insert("Option::None".to_string(), 1);
-        ir.boxed_enums.insert("Result".to_string());
-        ir.boxed_enums.insert("Option".to_string());
-        ir.enum_payload_slots.insert("Result".to_string(), 2);
-        ir.enum_payload_slots.insert("Option".to_string(), 2);
-        ir.enum_payload_types
-            .insert("Result::Ok".to_string(), vec![ScalarI64]);
-        ir.enum_payload_types
-            .insert("Result::Err".to_string(), vec![ScalarI64]);
-        ir.enum_payload_types
-            .insert("Option::Some".to_string(), vec![ScalarI64]);
+        // Install the built-in Result/Option base entries ONLY when the module
+        // could actually reference them. A pure-scalar module (the `scalar_math`
+        // bench) provably never consults these side-tables, and an unused
+        // prelude is byte-identical by design — so skipping the ~14 string/vec
+        // allocations is output-invariant while removing them from the
+        // nanosecond-floor hot path. The cross-module merge below stays
+        // unconditional (it is a no-op when the global enum registry is empty).
+        if module.items.iter().any(may_reference_enum_prelude) {
+            use crate::ast::TypeAnn::ScalarI64;
+            ir.enum_variant_tags.insert("Result::Ok".to_string(), 0);
+            ir.enum_variant_tags.insert("Result::Err".to_string(), 1);
+            ir.enum_variant_tags.insert("Option::Some".to_string(), 0);
+            ir.enum_variant_tags.insert("Option::None".to_string(), 1);
+            ir.boxed_enums.insert("Result".to_string());
+            ir.boxed_enums.insert("Option".to_string());
+            ir.enum_payload_slots.insert("Result".to_string(), 2);
+            ir.enum_payload_slots.insert("Option".to_string(), 2);
+            ir.enum_payload_types
+                .insert("Result::Ok".to_string(), vec![ScalarI64]);
+            ir.enum_payload_types
+                .insert("Result::Err".to_string(), vec![ScalarI64]);
+            ir.enum_payload_types
+                .insert("Option::Some".to_string(), vec![ScalarI64]);
+        }
         // Cross-module enum propagation: merge the whole-project enum registry
         // (collected by the project builder from EVERY parsed source) so a
         // variant defined in a SIBLING module — e.g. `TokKind::Eof` from another
