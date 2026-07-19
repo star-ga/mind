@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Performance
+- **Boxed `FnDef` AST payload — `Node` shrunk 216 → 128 bytes (byte-identical).**
+  The `FnDef` variant's ~9 inline fields made it the fattest `ast::Node`
+  variant, and every `parse_pratt`/`parse_atom` return memmoves the full
+  max-variant width even for a tiny literal. Moving those fields into a boxed
+  `FnDefData` (`FnDef(Box<FnDefData>, Span)`, `Span` kept inline for the
+  span-only fast path) cuts the by-value-return and `Vec<Node>`-growth memmove
+  traffic the profiler pinned as the largest remaining compile-time cost.
+  Purely an internal memory-layout change — no emitter serializes AST layout —
+  so mic@3/MLIR are unchanged: keystone 7/7, cross_substrate 24/24, mlir_export
+  all green.
 - **Small-object primary allocator on the compile hot path (byte-identical).**
   A per-thread size-class free-list + 64 KiB bump `#[global_allocator]`
   (`SmallHeapAlloc`) serves every request ≤1024 B / ≤16-align; `System`
