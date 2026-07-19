@@ -155,7 +155,26 @@ thread_local! {
 
 /// Primary allocator for small (≤1024 B, ≤16-align) requests; `System`
 /// verbatim for everything else. See the design/soundness block above.
-struct SmallHeapAlloc;
+///
+/// NOT registered as the library's `#[global_allocator]`: doing so in the
+/// `rlib` would force every downstream `cargo add mind` consumer and every
+/// long-running embedder (LSP, daemon) onto a heap tuned for short-lived
+/// compiler processes, and collide with a consumer's own allocator. Instead,
+/// each STARGA binary that wants it opts in explicitly — the rustc pattern:
+///
+/// ```ignore
+/// #[global_allocator]
+/// static GLOBAL: libmind::SmallHeapAlloc = libmind::SmallHeapAlloc;
+/// ```
+///
+/// declared in `src/bin/mindc.rs`, `src/bin/mind-ai.rs`, and the compile-speed
+/// bench. CONSTRAINT: the per-thread free lists never reclaim a block freed on
+/// a different thread than it was allocated on — memory grows with total
+/// cross-thread-migrated traffic, not peak live bytes. Sound and bounded for
+/// the current short-lived compiler threads (one-shot pipe readers whose
+/// buffers migrate once to the main thread); revisit before adding any
+/// long-running producer/consumer pipeline.
+pub struct SmallHeapAlloc;
 
 impl SmallHeapAlloc {
     #[inline]
@@ -310,6 +329,12 @@ unsafe impl GlobalAlloc for SmallHeapAlloc {
             layout.size() > 0,
             "SmallHeapAlloc: zero-size realloc is caller-UB"
         );
+        // `new_size == 0` is equally caller-UB (GlobalAlloc contract) and would
+        // take the class-0 aliasing path; guard it too. Release-inert.
+        debug_assert!(
+            new_size > 0,
+            "SmallHeapAlloc: realloc to zero size is caller-UB"
+        );
         let old_small = Self::is_small(layout.size(), layout.align());
         let new_small = Self::is_small(new_size, layout.align());
         match (old_small, new_small) {
@@ -383,8 +408,8 @@ unsafe impl GlobalAlloc for SmallHeapAlloc {
     }
 }
 
-#[global_allocator]
-static GLOBAL_SMALL_HEAP: SmallHeapAlloc = SmallHeapAlloc;
+// The `#[global_allocator]` registration lives in each binary crate that opts
+// in (see the `SmallHeapAlloc` doc comment), never here in the library.
 
 // ---------------------------------------------------------------------------
 // Codegen monomorphization (bounded slice) — generic fns reach the IR backend.

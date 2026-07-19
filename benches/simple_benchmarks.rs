@@ -1,6 +1,11 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use libmind::{CompileOptions, compile_source};
 
+// Mirror mindc's allocator so this compile-speed bench measures the same heap
+// mindc actually ships with (the library no longer registers it globally).
+#[global_allocator]
+static GLOBAL_SMALL_HEAP: libmind::SmallHeapAlloc = libmind::SmallHeapAlloc;
+
 /// Benchmark source programs that are known to work
 const PROGRAMS: &[(&str, &str)] = &[
     ("scalar_math", "1 + 2 * 3 - 4 / 2"),

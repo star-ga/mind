@@ -16,6 +16,11 @@
 //!
 //! A compiler-in-the-loop server for AI agents to interact with the MIND compiler.
 //! Implements RFC-0002: Mind AI Protocol.
+
+// Deliberately NOT registering `libmind::SmallHeapAlloc` here: MAP is a
+// long-running server, and that allocator never returns memory to the OS and
+// ratchets on cross-thread frees — correct for the short-lived `mindc` process,
+// wrong for a daemon. MAP uses the System allocator.
 //!
 //! # Usage
 //!

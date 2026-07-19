@@ -24,6 +24,7 @@ on:
       - 'src/ir/**'
       - 'src/ast/**'
       - 'src/eval/**'
+      - 'src/opt/**'
       - 'benches/**'
       - 'Cargo.toml'
   pull_request:
@@ -33,6 +34,7 @@ on:
       - 'src/ir/**'
       - 'src/ast/**'
       - 'src/eval/**'
+      - 'src/opt/**'
       - 'benches/**'
       - 'Cargo.toml'
   workflow_dispatch:

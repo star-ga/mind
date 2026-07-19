@@ -200,11 +200,19 @@ fn reorder_commutative_ops(instrs: &mut [Instr]) {
 }
 
 fn constant_fold(instrs: &mut [Instr], n: usize) {
-    // Dense `Vec<Option<i64>>` keyed by the contiguous (`fresh()`-minted 0..n)
-    // ValueId, replacing a `BTreeMap<ValueId, i64>`: O(1) get/set, zero per-key
-    // node allocation. The table is lookup-only (get/set/clear by key, never
-    // iterated), so fold decisions are pointwise identical and emitted bytes are
-    // unchanged — byte-identity is preserved.
+    // Dense `Vec<Option<i64>>` keyed by ValueId, replacing a
+    // `BTreeMap<ValueId, i64>`: O(1) get/set, zero per-key node allocation.
+    // BYTE-IDENTITY INVARIANT (load-bearing): the immediately-preceding
+    // `prune_dead(instrs, n)` in canonicalize_module has already deleted every
+    // instruction whose dst.0 >= n (its `used` bitset is also sized n and treats
+    // out-of-range ids as unused). So every key this pass writes (all
+    // `instruction_dst` values) is < n and the table covers it exactly — no
+    // registration or invalidation is ever silently dropped. Out-of-range
+    // operand lookups return None, matching BTreeMap::get (which could only ever
+    // hold dst keys, all < n). The table is lookup-only (never iterated), so
+    // fold decisions are pointwise identical and emitted mic3/MLIR bytes are
+    // unchanged. NB: correctness depends on this pass staying AFTER prune_dead
+    // with the same n — not on fresh()-density alone.
     let mut constants: Vec<Option<i64>> = vec![None; n];
     for instr in instrs.iter_mut() {
         match instr {
