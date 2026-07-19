@@ -1066,8 +1066,21 @@ pub fn parse_mic3(data: &[u8]) -> Result<IRModule, Mic3Error> {
         strings.push(s);
     }
 
-    // next_id
+    // next_id. Bound it against the input size like every count above: it sizes
+    // the `vec![_; next_id]` dense side tables in ir_canonical (prune_dead's
+    // `used`, constant_fold's constants), so an unbounded wire value is an
+    // allocation bomb (~30-byte file, next_id = 2^40 → multi-TB abort) the day
+    // any tool parses then re-canonicalizes an untrusted artifact. 1024 ids per
+    // input byte is absurdly generous — no real module approaches 1 id/byte
+    // after uleb encoding — so this false-rejects nothing legitimate.
     let next_id = read_uleb(&mut r)? as usize;
+    if next_id > limit.saturating_mul(1024) {
+        return Err(err!(
+            "next_id {} implausibly exceeds input size {} (alloc-bomb guard)",
+            next_id,
+            limit
+        ));
+    }
 
     // Exports
     let n_exports = read_count(&mut r, limit)?;

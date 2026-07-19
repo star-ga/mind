@@ -15,6 +15,12 @@
 //! MIND command-line compiler: parse, type-check, lower to IR/MLIR, and
 //! optionally run autodiff.
 
+// Small-object primary allocator, opted in per-binary (not registered by the
+// library — see `libmind::SmallHeapAlloc`). Cuts allocation overhead on the
+// compile hot path; produces no values, so emitted artifacts are unaffected.
+#[global_allocator]
+static GLOBAL_SMALL_HEAP: libmind::SmallHeapAlloc = libmind::SmallHeapAlloc;
+
 use std::fs;
 use std::process;
 

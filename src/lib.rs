@@ -82,6 +82,11 @@ pub use pipeline::{
 pub use pipeline::{MlirProducts, lower_to_mlir, lower_to_mlir_with_entry};
 pub use runtime::types::{BackendTarget, DeviceKind};
 
+/// Small-object primary allocator. Binaries opt in via
+/// `#[global_allocator] static _: libmind::SmallHeapAlloc = libmind::SmallHeapAlloc;`
+/// (never registered by the library itself — see the type's doc comment).
+pub use eval::lower::SmallHeapAlloc;
+
 #[cfg(any(feature = "mlir-lowering", feature = "mlir-build"))]
 pub use mlir::{MlirLowerError, compile_ir_to_mlir_text};
 
