@@ -38,7 +38,7 @@ fn bare_slice_parses_identically_to_borrowed_slice() {
     fn first_param_ty(src: &str) -> libmind::ast::TypeAnn {
         let m = parser::parse(src).unwrap();
         match &m.items[0] {
-            libmind::ast::Node::FnDef { params, .. } => params[0].ty.clone(),
+            libmind::ast::Node::FnDef(fd, _) => fd.params[0].ty.clone(),
             other => panic!("expected a fn item, got {other:?}"),
         }
     }

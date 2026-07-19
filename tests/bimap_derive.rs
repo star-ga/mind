@@ -20,7 +20,7 @@ fn fn_names(m: &Module) -> Vec<String> {
     m.items
         .iter()
         .filter_map(|it| match it {
-            Node::FnDef { name, .. } => Some(name.clone()),
+            Node::FnDef(fd, _) => Some(fd.name.clone()),
             _ => None,
         })
         .collect()
@@ -54,7 +54,9 @@ fn generated_functions_are_pub() {
     let src = "#[bimap]\nenum Currency { AUD, JPY, USD }\n";
     let m = parse(src).expect("parse");
     for it in &m.items {
-        if let Node::FnDef { name, is_pub, .. } = it {
+        if let Node::FnDef(fd, _) = it {
+            let name = &fd.name;
+            let is_pub = &fd.is_pub;
             if name.starts_with("currency_") {
                 assert!(
                     *is_pub,
@@ -219,7 +221,9 @@ fn e2021_same_snake_base_second_enum_rejected() {
 #[cfg(feature = "std-surface")]
 fn from_str_mode(m: &Module, fn_name: &str) -> Option<String> {
     m.items.iter().find_map(|it| match it {
-        Node::FnDef { name, attrs, .. } if name == fn_name => {
+        Node::FnDef(fd, _) if fd.name == fn_name => {
+            let name = &fd.name;
+            let attrs = &fd.attrs;
             attrs.first().and_then(|a| a.args.get(1).cloned())
         }
         _ => None,
@@ -453,7 +457,9 @@ fn const_table_is_consumed_by_the_derive() {
 fn const_form_generated_fns_are_pub() {
     let m = parse(SS_TABLE).expect("parse");
     for it in &m.items {
-        if let Node::FnDef { name, is_pub, .. } = it {
+        if let Node::FnDef(fd, _) = it {
+            let name = &fd.name;
+            let is_pub = &fd.is_pub;
             if name == "country_count" || name == "country_value" || name == "country_key" {
                 assert!(*is_pub, "generated `{name}` must be pub");
             }

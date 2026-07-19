@@ -60,7 +60,8 @@ fn build() -> i64 {
 
     // Walk all nodes and find at least one Node::Region.
     let found = module.items.iter().any(|item| {
-        if let Node::FnDef { body, .. } = item {
+        if let Node::FnDef(fd, _) = item {
+            let body = &fd.body;
             body.iter().any(|stmt| matches!(stmt, Node::Region { .. }))
         } else {
             false

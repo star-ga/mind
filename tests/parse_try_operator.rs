@@ -29,9 +29,8 @@ use libmind::parser::parse;
 fn find_try(node: &Node) -> Option<bool> {
     match node {
         Node::Try { is_option, .. } => Some(*is_option),
-        Node::FnDef { body, .. } | Node::Block { stmts: body, .. } => {
-            body.iter().find_map(find_try)
-        }
+        Node::FnDef(fd, _) => fd.body.iter().find_map(find_try),
+        Node::Block { stmts: body, .. } => body.iter().find_map(find_try),
         Node::Let { value, .. } => find_try(value),
         Node::Return {
             value: Some(inner), ..

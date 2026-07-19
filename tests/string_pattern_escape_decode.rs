@@ -21,9 +21,8 @@ fn first_match_arms(node: &Node) -> Option<&Vec<libmind::ast::MatchArm>> {
     match node {
         Node::Match { arms, .. } => Some(arms),
         Node::Return { value: Some(v), .. } => first_match_arms(v),
-        Node::FnDef { body, .. } | Node::Block { stmts: body, .. } => {
-            body.iter().find_map(first_match_arms)
-        }
+        Node::FnDef(fd, _) => fd.body.iter().find_map(first_match_arms),
+        Node::Block { stmts: body, .. } => body.iter().find_map(first_match_arms),
         _ => None,
     }
 }
@@ -79,9 +78,8 @@ fn string_pattern_matches_string_literal_bytes() {
                 | Node::Return {
                     value: Some(value), ..
                 } => find_str_lit(value),
-                Node::FnDef { body, .. } | Node::Block { stmts: body, .. } => {
-                    body.iter().find_map(find_str_lit)
-                }
+                Node::FnDef(fd, _) => fd.body.iter().find_map(find_str_lit),
+                Node::Block { stmts: body, .. } => body.iter().find_map(find_str_lit),
                 _ => None,
             }
         }

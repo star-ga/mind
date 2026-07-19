@@ -27,7 +27,8 @@ fn parse_sparse_csr_fn_param() {
     let m = parser::parse(src).expect("parse failed");
     assert_eq!(m.items.len(), 1);
     match &m.items[0] {
-        Node::FnDef { params, .. } => {
+        Node::FnDef(fd, _) => {
+            let params = &fd.params;
             assert_eq!(params.len(), 1);
             assert!(
                 matches!(
@@ -51,7 +52,8 @@ fn parse_sparse_csr_return_type() {
     let m = parser::parse(src).expect("parse failed");
     assert_eq!(m.items.len(), 1);
     match &m.items[0] {
-        Node::FnDef { ret_type, .. } => {
+        Node::FnDef(fd, _) => {
+            let ret_type = &fd.ret_type;
             assert!(
                 matches!(
                     ret_type,
@@ -72,7 +74,8 @@ fn parse_sparse_csc_layout() {
     let src = "fn f(x: tensor<sparse[csc], f32>) -> i32 { return 0; }";
     let m = parser::parse(src).expect("parse failed");
     match &m.items[0] {
-        Node::FnDef { params, .. } => {
+        Node::FnDef(fd, _) => {
+            let params = &fd.params;
             assert!(matches!(
                 &params[0].ty,
                 TypeAnn::SparseTensor {
@@ -90,7 +93,8 @@ fn parse_sparse_coo_layout() {
     let src = "fn f(x: tensor<sparse[coo], f32>) -> i32 { return 0; }";
     let m = parser::parse(src).expect("parse failed");
     match &m.items[0] {
-        Node::FnDef { params, .. } => {
+        Node::FnDef(fd, _) => {
+            let params = &fd.params;
             assert!(matches!(
                 &params[0].ty,
                 TypeAnn::SparseTensor {
@@ -108,7 +112,8 @@ fn parse_sparse_bsr_layout() {
     let src = "fn f(x: tensor<sparse[bsr], f32>) -> i32 { return 0; }";
     let m = parser::parse(src).expect("parse failed");
     match &m.items[0] {
-        Node::FnDef { params, .. } => {
+        Node::FnDef(fd, _) => {
+            let params = &fd.params;
             assert!(matches!(
                 &params[0].ty,
                 TypeAnn::SparseTensor {
@@ -127,7 +132,7 @@ fn parse_sparse_with_shape() {
     let src = "fn f(x: tensor<sparse[csr], i32[128, 256]>) -> i32 { return 0; }";
     let m = parser::parse(src).expect("parse failed");
     match &m.items[0] {
-        Node::FnDef { params, .. } => match &params[0].ty {
+        Node::FnDef(fd, _) => match &fd.params[0].ty {
             TypeAnn::SparseTensor { layout, shape, .. } => {
                 assert_eq!(*layout, SparseLayout::Csr);
                 assert_eq!(shape.len(), 2);
@@ -217,7 +222,8 @@ fn dense_tensor_parse_unaffected() {
     let src = "fn f(x: tensor<f32[32, 64]>) -> i32 { return 0; }";
     let m = parser::parse(src).expect("parse failed");
     match &m.items[0] {
-        Node::FnDef { params, .. } => {
+        Node::FnDef(fd, _) => {
+            let params = &fd.params;
             assert!(
                 matches!(&params[0].ty, TypeAnn::Tensor { .. }),
                 "expected dense Tensor, got {:?}",
