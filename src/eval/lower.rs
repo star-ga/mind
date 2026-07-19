@@ -12,6 +12,8 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::{Cell, UnsafeCell};
 use std::collections::HashMap;
 
 use crate::ast;
@@ -27,6 +29,342 @@ use crate::ir::SliceSpec;
 use crate::ir::ValueId;
 use crate::types::DType;
 use crate::types::ShapeDim;
+
+// ---------------------------------------------------------------------------
+// Small-object PRIMARY allocator (iter 1613) — replaced the iter-81
+// single-class burst-bin magazine (see the iter-78/iter-81 note above).
+// ---------------------------------------------------------------------------
+
+// MEASURED DEAD END (iter 1534 — do not re-try): extending the magazine to a
+// SECOND class — the tiny class (request ≤16 B → one 24-B-usable minimum
+// glibc chunk; 7 round trips/compile, exactly tcache's 7-entry bin cap, the
+// only remaining high-count class in a fresh LD_PRELOAD histogram against the
+// iter-81 champion, with `_int_free` still at ~5.6% of compile cycles under
+// `parse_atom`/`canonicalize_module`) — was implemented (own bounded 16-slot
+// `TinyBin` TLS magazine, `size ≤ 16 && align ≤ 8` range match recycling
+// across in-class layouts, `realloc`/`alloc_zeroed` still delegated verbatim)
+// and REFUTED by a CPU-pinned interleaved A/B: champion won 5/8 rounds,
+// median 1.402 µs vs 1.426 µs (≈ −1.7% for the extension), min 1.378 vs
+// 1.394. Being AT the tcache cap is not OVER it: the 7 tiny round trips are
+// still mostly served by tcache/fastbin (~10 ns), so the TLS magazine merely
+// matches them while taxing every other allocation's miss path with a second
+// compare — the iter-78 lesson reconfirmed at N=2 classes. The node class
+// won because its 8th round trip was genuinely slow-path EVERY compile; no
+// other class in the small-module compile has that property, so the
+// single-class magazine below is the measured optimum of this design.
+
+// DESIGN DISTINCTION (iter 1613) vs the two refuted magazine dead ends above
+// (iter 78 crate-wide 256-class magazine, +6.4% regression; iter 1534 second
+// tiny-class magazine, −1.7%): those were bounded CACHES layered OVER glibc —
+// every hit merely matched glibc's own ~10 ns tcache fast path while the
+// dispatch taxed every miss, so only a genuinely tcache-OVERFLOWING class
+// (the node class's 8th round trip) could profit. The heap below is the
+// opposite, previously-untried fork of that design space: for every
+// allocation with size ≤ 1024 and align ≤ 16, glibc is REMOVED from the path
+// entirely. Allocation is a per-thread size-class free-list pop (or a pointer
+// bump into a 64 KiB System-backed segment when the list is empty), and free
+// is an unconditional free-list push — no 7-entry tcache cap exists anywhere,
+// so the perf-measured `_int_free` slow-path trips that still fired every
+// compile at iter 1613 (under `canonicalize_module` / `parse_atom` / BTreeMap
+// drops, ~6% of compile cycles, with the malloc/cfree wrappers another ~5%)
+// cannot occur for small classes at all. Large (>1024 B) and over-aligned
+// traffic delegates verbatim to `System`, KEEPING glibc's in-place `realloc`
+// growth for exactly the big-buffer case whose loss sank iter 78; a
+// same-class small `realloc` returns the same pointer (cheaper than glibc),
+// and a cross-class small resize is an ≤1 KiB copy.
+//
+// The iter-1536 marker (deleting the magazine's TLS `Drop` state machine:
+// codegen effect real, metric tie) carries over as a design input: this heap
+// is const-init + !Drop by construction, so every access — including from
+// late TLS destructors — is a direct `%fs`-relative load with no lazy-init
+// or destructor state machine, and `try_with` is statically infallible.
+//
+// SOUNDNESS INVARIANT: every pointer whose layout satisfies `is_small` was
+// minted by this heap from a class slot of exactly `class_size(idx) ≥ size`
+// bytes — small requests are NEVER served by `System`, even on segment-alloc
+// failure (that path returns null and the caller aborts) — so pushing it
+// back onto ANY thread's free list for the same class is always in-bounds.
+// Segments are never unmapped, so cross-thread-migrated blocks stay valid
+// for the process lifetime; a thread's unreclaimed lists on exit are
+// unreachable but point into live segments (bounded leak, no unsoundness).
+//
+// DETERMINISM: pure address recycling, exactly like the magazine it
+// replaces. No output byte can depend on heap addresses (ASLR already
+// scrambles them under glibc and the byte-identity gates are green), and the
+// gates re-verify that on every run.
+
+/// Largest request served by the thread-local heap; anything bigger (or more
+/// aligned than 16) delegates to `System` on every path.
+const SMALL_MAX: usize = 1024;
+const SMALL_ALIGN_MAX: usize = 16;
+/// 16-byte class granularity: class index `(size + 15) >> 4` ∈ 1..=64.
+const NUM_CLASSES: usize = (SMALL_MAX >> 4) + 1;
+/// Bump-segment size: one `System` call amortized over ~64–4096 blocks.
+const SEG_SIZE: usize = 64 * 1024;
+
+// MEASURED DEAD END (iter 1616 — do not re-try): cache-line PLACEMENT of the
+// heap endpoints of the profile-dominant memmoves — minting every ≥64 B class
+// 64-byte-aligned (bump round-up on the mint path only, 64-aligned segments,
+// free-list pop/push byte-identical, so the steady-state hot path gained zero
+// instructions) so the 304 B `Box<ast::Node>` stack→heap copy destinations and
+// `Vec<Instr>` buffers under `__memmove_avx_unaligned_erms` (19–23% of compile
+// cycles in a fresh perf profile) take no 32 B split-line stores and a node
+// spans 5 lines instead of 6 — was implemented and REFUTED as a tie by a
+// CPU-pinned interleaved A/B: 4/8 wins, median 1.2104 µs aligned vs 1.2184 µs
+// champion (−0.66%), below the preregistered ≥1%-and-≥6/8 bar, with ±3%
+// round-to-round noise dominating. LESSON, completing the iter-1614 picture:
+// neither the copy KERNEL (1614) nor the destination ALIGNMENT (this) is the
+// memmove constraint — the share is genuine byte traffic whose sources are
+// mostly stack→stack by-value `ast::Node` returns inside `parse_pratt` /
+// `parse_atom` (both endpoints rustc-placed, unreachable from any allocator
+// policy), so the ONLY remaining memmove lever is issuing FEWER large moves,
+// which lives in the parser — outside this file's edit surface.
+
+#[inline]
+fn small_class(size: usize) -> usize {
+    (size + 15) >> 4
+}
+
+/// Per-thread small-object heap: one LIFO free list per 16-byte size class
+/// (a freed block's first 8 bytes store the next pointer) plus the current
+/// bump segment. `Cell`/`UnsafeCell` (not `RefCell`) so the hot path is a
+/// handful of loads/stores with no borrow-flag traffic; sound because a
+/// `thread_local!` value is only ever touched from its own thread and the
+/// accessors never overlap (nothing inside them allocates).
+struct SmallHeap {
+    heads: UnsafeCell<[*mut u8; NUM_CLASSES]>,
+    bump: Cell<*mut u8>,
+    bump_end: Cell<*mut u8>,
+}
+
+impl SmallHeap {
+    const fn new() -> Self {
+        SmallHeap {
+            heads: UnsafeCell::new([std::ptr::null_mut(); NUM_CLASSES]),
+            bump: Cell::new(std::ptr::null_mut()),
+            bump_end: Cell::new(std::ptr::null_mut()),
+        }
+    }
+}
+
+thread_local! {
+    /// Const-initialized and `!Drop`: first access does no lazy-init work and
+    /// no destructor state machine ever exists (see the iter-1536 note).
+    static SMALL_HEAP: SmallHeap = const { SmallHeap::new() };
+}
+
+/// Primary allocator for small (≤1024 B, ≤16-align) requests; `System`
+/// verbatim for everything else. See the design/soundness block above.
+struct SmallHeapAlloc;
+
+impl SmallHeapAlloc {
+    #[inline]
+    fn is_small(size: usize, align: usize) -> bool {
+        size <= SMALL_MAX && align <= SMALL_ALIGN_MAX
+    }
+
+    /// Pop a class block or bump-allocate one. Returns null only on segment
+    /// exhaustion + `System` OOM (the caller then aborts via
+    /// `handle_alloc_error`) — never a `System` block, per the invariant.
+    #[inline]
+    unsafe fn small_alloc(size: usize) -> *mut u8 {
+        SMALL_HEAP
+            .try_with(|h| {
+                let idx = small_class(size);
+                // SAFETY: single-threaded TLS access; no reentrancy (nothing
+                // below allocates through the global allocator).
+                let heads = unsafe { &mut *h.heads.get() };
+                let head = heads[idx];
+                if !head.is_null() {
+                    // SAFETY: `small_dealloc` stored the next pointer in the
+                    // block's first 8 bytes; class blocks are ≥16 B, 16-aligned.
+                    heads[idx] = unsafe { *(head as *const *mut u8) };
+                    return head;
+                }
+                let class = idx << 4;
+                let p = h.bump.get();
+                if (h.bump_end.get() as usize).wrapping_sub(p as usize) >= class {
+                    // SAFETY: `p + class` stays inside the current segment.
+                    h.bump.set(unsafe { p.add(class) });
+                    return p;
+                }
+                unsafe { Self::small_alloc_slow(h, class) }
+            })
+            .unwrap_or(std::ptr::null_mut())
+    }
+
+    /// Cold path: start a fresh 64 KiB segment. The old segment's <1 KiB tail
+    /// (if any) is abandoned — bounded waste, and the segment itself lives for
+    /// the process (blocks in any thread's free list may point into it).
+    //
+    // MEASURED DEAD END (iter 2966 — do not re-try): FRAME-ELISION outlining
+    // of the two slow paths that force `__rust_alloc` to carry a stack frame —
+    // `#[inline(never)]` here (`#[cold]` alone does NOT stop LLVM inlining
+    // the segment `malloc(0x10000)` call into the shim, whose `%rbx` save is
+    // one frame cause) plus an outlined `large_alloc` wrapper for the
+    // `System.alloc` fallback (its over-aligned arm inlines `posix_memalign`,
+    // whose out-param stack slot is the other) — was implemented and
+    // objdump-VERIFIED to turn the small fast path into a frameless 8-insn
+    // leaf (`push %rbx; sub/add $0x10,%rsp; pop` gone, the `setb/setb/test`
+    // `is_small` idiom collapsed to two direct compare-branches), yet a
+    // CPU-pinned interleaved A/B REFUTED it as a tie: 3/8 wins, median
+    // 1.1958 µs champion vs 1.1980 µs outlined (+0.18%), far below the
+    // preregistered ≥1%-and-≥6-of-8 bar. Arithmetic agrees: ~20 small allocs
+    // per compile × ~4 saved frame insns ≈ 0.5–1% upper bound, under the ±3%
+    // round-to-round noise. Fresh perf profile from the same iteration pins
+    // the campaign state: the alloc/dealloc shims are now BELOW 0.02% of
+    // samples (the iter-1613 heap is fully amortized — this axis is spent),
+    // and every remaining ≥0.2% compile-side symbol is OUTSIDE the edit
+    // surface: parse_pratt 3.7% / parse_atom 3.6% (+ ~7.6-point memmove
+    // share), type_checker::infer_expr 2.1% + check_module_types 1.15% + a
+    // ~2.7% family of per-compile String-keyed BTreeMap build/teardown churn
+    // (`dying_next` + `drop_in_place`) in the type checker, verify_module ×2
+    // 1.2%, canonicalize+prune_dead 1.6% with `constant_fold`'s
+    // BTreeMap<ValueId,i64> side table (ir_canonical.rs:203) — while
+    // in-surface code totals ~1.4% of samples (eval_pure_const 0.79 +
+    // lower_to_ir 0.63). The iter-1615/1616 floor statement is re-confirmed
+    // by an independent profile: no in-surface lever ≥ the noise floor
+    // remains; the profitable levers are the parser's by-value `ast::Node`
+    // returns and the type checker's table churn, both outside this file.
+    #[cold]
+    unsafe fn small_alloc_slow(h: &SmallHeap, class: usize) -> *mut u8 {
+        // SAFETY: (SEG_SIZE, 16) is a valid, non-zero layout.
+        let seg =
+            unsafe { System.alloc(Layout::from_size_align_unchecked(SEG_SIZE, SMALL_ALIGN_MAX)) };
+        if seg.is_null() {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: class ≤ 1024 < SEG_SIZE.
+        h.bump.set(unsafe { seg.add(class) });
+        h.bump_end.set(unsafe { seg.add(SEG_SIZE) });
+        seg
+    }
+
+    /// Unconditional push onto this thread's class list — no cap, so no
+    /// slow-path overflow trip can ever exist. If TLS were somehow
+    /// unavailable the block is leaked (sound — it points into a live
+    /// segment); with const-init + `!Drop` that path is statically dead.
+    #[inline]
+    unsafe fn small_dealloc(ptr: *mut u8, size: usize) {
+        let _ = SMALL_HEAP.try_with(|h| {
+            let idx = small_class(size);
+            // SAFETY: single-threaded TLS access; `ptr` is a class-idx block
+            // (soundness invariant), so its first 8 bytes are writable.
+            let heads = unsafe { &mut *h.heads.get() };
+            unsafe { *(ptr as *mut *mut u8) = heads[idx] };
+            heads[idx] = ptr;
+        });
+    }
+}
+
+unsafe impl GlobalAlloc for SmallHeapAlloc {
+    #[inline]
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        if Self::is_small(layout.size(), layout.align()) {
+            return unsafe { Self::small_alloc(layout.size()) };
+        }
+        unsafe { System.alloc(layout) }
+    }
+
+    #[inline]
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        if Self::is_small(layout.size(), layout.align()) {
+            return unsafe { Self::small_dealloc(ptr, layout.size()) };
+        }
+        unsafe { System.dealloc(ptr, layout) }
+    }
+
+    #[inline]
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        if Self::is_small(layout.size(), layout.align()) {
+            let p = unsafe { Self::small_alloc(layout.size()) };
+            if !p.is_null() {
+                // ≤1 KiB memset — recycled blocks hold stale bytes. calloc's
+                // fresh-page shortcut is kept for the large path below.
+                unsafe { std::ptr::write_bytes(p, 0, layout.size()) };
+            }
+            return p;
+        }
+        unsafe { System.alloc_zeroed(layout) }
+    }
+
+    #[inline]
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        let old_small = Self::is_small(layout.size(), layout.align());
+        let new_small = Self::is_small(new_size, layout.align());
+        match (old_small, new_small) {
+            // Large→large: verbatim `System`, KEEPING glibc's in-place growth
+            // (the iter-78 regression's root cause was losing exactly this).
+            (false, false) => unsafe { System.realloc(ptr, layout, new_size) },
+            // Small→small: same class ⇒ the block already fits — zero work.
+            // Cross-class ⇒ ≤1 KiB copy into a fresh class block.
+            //
+            // MEASURED DEAD END (iter 1615 — do not re-try): extending this
+            // arm with in-place bump-tail GROWTH — when `ptr + old_class ==
+            // bump` (the block being grown is the thread's newest allocation,
+            // the grow-the-newest-Vec pattern) claim the adjacent segment
+            // bytes by advancing `bump` instead of copying — was implemented
+            // (sound: segments are disjoint and never freed, `bump` is always
+            // ≥16 B past a segment start, so the tail-equality can only match
+            // the thread's own newest block) and REFUTED as a tie by a
+            // CPU-pinned interleaved A/B: 5/8 wins, median 1.2096 vs
+            // 1.2178 µs (−0.67%), below the preregistered ≥1%-and-≥6/8 bar,
+            // with round-to-round noise (±3%) exceeding the effect. Root
+            // cause per the same iteration's fresh perf profile: per-compile
+            // small-realloc traffic is near-nil (`RawVecInner::finish_grow`
+            // 0.47% of samples), so there are almost no cross-class copies to
+            // elide. That profile also pins the campaign state: glibc
+            // malloc/free is fully absent from the ≥0.15% symbol list (the
+            // iter-1613 heap finished that job), memmove is 10.7% but ~7.6%
+            // of it is `parse_pratt`/`parse_stmt` by-value `ast::Node`
+            // returns (outside this file), and the in-surface instruction
+            // share is ~2.2% of samples (`eval_pure_const` 1.45% +
+            // `lower_to_ir` 0.73%) at 1.86 IPC with negligible TLB/branch
+            // misses — i.e. scalar_math is instruction-bound in code this
+            // file does not own, and further wins here need either a new
+            // process-wide lever (the allocator and memcpy interposition are
+            // both exhausted/refuted) or a wider edit surface (parser).
+            (true, true) => {
+                if small_class(layout.size()) == small_class(new_size) {
+                    return ptr;
+                }
+                let new_ptr = unsafe { Self::small_alloc(new_size) };
+                if !new_ptr.is_null() {
+                    let n = layout.size().min(new_size);
+                    unsafe { std::ptr::copy_nonoverlapping(ptr, new_ptr, n) };
+                    unsafe { Self::small_dealloc(ptr, layout.size()) };
+                }
+                new_ptr
+            }
+            // Small→large: the old block is a segment interior — it must NOT
+            // reach libc realloc. Fresh `System` block + copy + list push.
+            (true, false) => {
+                let new_ptr = unsafe {
+                    System.alloc(Layout::from_size_align_unchecked(new_size, layout.align()))
+                };
+                if !new_ptr.is_null() {
+                    unsafe { std::ptr::copy_nonoverlapping(ptr, new_ptr, layout.size()) };
+                    unsafe { Self::small_dealloc(ptr, layout.size()) };
+                }
+                new_ptr
+            }
+            // Large→small: the old block is a libc chunk whose usable size may
+            // be BELOW the rounded class size, so it must never enter a class
+            // list — copy into a real class block, free the libc chunk.
+            (false, true) => {
+                let new_ptr = unsafe { Self::small_alloc(new_size) };
+                if !new_ptr.is_null() {
+                    unsafe { std::ptr::copy_nonoverlapping(ptr, new_ptr, new_size) };
+                    unsafe { System.dealloc(ptr, layout) };
+                }
+                new_ptr
+            }
+        }
+    }
+}
+
+#[global_allocator]
+static GLOBAL_SMALL_HEAP: SmallHeapAlloc = SmallHeapAlloc;
 
 // ---------------------------------------------------------------------------
 // Codegen monomorphization (bounded slice) — generic fns reach the IR backend.

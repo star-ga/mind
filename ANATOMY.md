@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3141 | **Est. tokens:** ~7,501,013
-**Generated:** 2026-07-19 07:48 UTC
+**Files:** 3140 | **Est. tokens:** ~7,503,268
+**Generated:** 2026-07-19 11:57 UTC
 
 ## Token Budget Guide
 
@@ -47,7 +47,7 @@
 | `docs/mindcraft/` | 3 | ~7,023 |
 | `docs/rfcs/` | 31 | ~142,417 |
 | `docs/specs/` | 2 | ~976 |
-| `examples/` | 28 | ~48,847 |
+| `examples/` | 28 | ~52,902 |
 | `examples/bimap_currency/` | 3 | ~780 |
 | `examples/bimap_pairs/` | 2 | ~801 |
 | `examples/c/` | 2 | ~400 |
@@ -412,7 +412,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~193,198 |
-| `tests/` | 292 | ~501,373 |
+| `tests/` | 291 | ~499,573 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -763,7 +763,7 @@
 - `Mind.toml` (~69 tok, small) — [package]
 ### `examples/`
 
-- `cholesky_q16.mind` (~2932 tok, huge) — Deterministic Q16.16 fixed-point Cholesky solve (A = L·Lᵀ, then A·x = b)
+- `cholesky_q16.mind` (~6987 tok, huge) — Deterministic Q16.16 fixed-point Cholesky solve (A = L·Lᵀ, then A·x = b)
 ### `examples/c/`
 
 - `min.c` (~82 tok, small)
@@ -4485,7 +4485,6 @@
 - `relu_exec.rs` (~472 tok, medium) — Copyright 2025 STARGA Inc.
 - `relu_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `repl_basic.rs` (~523 tok, large) — Copyright 2025 STARGA Inc.
-- `repro_audit_cycle2.rs` (~1800 tok, huge) — Craft a mic@3 artifact whose total length is N bytes, but whose last
 - `resolve_fn_body.rs` (~979 tok, large) — Copyright 2025 STARGA Inc.
 - `result_option_prelude_run.rs` (~910 tok, large) — Copyright 2025 STARGA Inc.
 - `return_cond_type_reject.rs` (~3849 tok, huge) — Copyright 2025 STARGA Inc.
