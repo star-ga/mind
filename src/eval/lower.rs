@@ -260,6 +260,14 @@ impl SmallHeapAlloc {
 unsafe impl GlobalAlloc for SmallHeapAlloc {
     #[inline]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        // GlobalAlloc's contract makes a zero-size request caller-UB, and nothing in
+        // this codebase constructs a zero-size Layout (all traffic is Box/Vec/String,
+        // which intercept ZSTs before the allocator). Class 0 would otherwise alias, so
+        // encode the precondition: inert in release, a loud panic if that ever changes.
+        debug_assert!(
+            layout.size() > 0,
+            "SmallHeapAlloc: zero-size alloc is caller-UB"
+        );
         if Self::is_small(layout.size(), layout.align()) {
             return unsafe { Self::small_alloc(layout.size()) };
         }
@@ -268,6 +276,10 @@ unsafe impl GlobalAlloc for SmallHeapAlloc {
 
     #[inline]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        debug_assert!(
+            layout.size() > 0,
+            "SmallHeapAlloc: zero-size dealloc is caller-UB"
+        );
         if Self::is_small(layout.size(), layout.align()) {
             return unsafe { Self::small_dealloc(ptr, layout.size()) };
         }
@@ -276,6 +288,10 @@ unsafe impl GlobalAlloc for SmallHeapAlloc {
 
     #[inline]
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        debug_assert!(
+            layout.size() > 0,
+            "SmallHeapAlloc: zero-size alloc_zeroed is caller-UB"
+        );
         if Self::is_small(layout.size(), layout.align()) {
             let p = unsafe { Self::small_alloc(layout.size()) };
             if !p.is_null() {
@@ -290,6 +306,10 @@ unsafe impl GlobalAlloc for SmallHeapAlloc {
 
     #[inline]
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        debug_assert!(
+            layout.size() > 0,
+            "SmallHeapAlloc: zero-size realloc is caller-UB"
+        );
         let old_small = Self::is_small(layout.size(), layout.align());
         let new_small = Self::is_small(new_size, layout.align());
         match (old_small, new_small) {
