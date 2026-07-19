@@ -1963,6 +1963,38 @@ pub fn parse_fn_def(toks: Vec, pos: i64, buf: i64, is_pub: i64) -> ParseResult {
     pr_new(pr_pos(body_res), fn_node)
 }
 
+// Skip a generic argument list `<...>` while balancing nested brackets, so a
+// generic param/return TYPE consumes the right number of tokens. `pos` points AT
+// the token to consume next; `depth` is the count of still-open `<`. A closing
+// `>>` of a doubly-nested generic (`Vec<Vec<i64>>`) lexes as ONE tk_shr, so it
+// closes two levels; likewise a `<<` opens two (never appears in a type, handled
+// for completeness). Commas inside the list are consumed like any other token.
+// Returns the position of the first token AFTER the balanced list.
+pub fn skip_generic_args(toks: Vec, pos: i64, depth: i64) -> i64 {
+    if depth <= 0 {
+        return pos;
+    }
+    let k: i64 = tok_kind(toks, pos);
+    let nd: i64 = if k == tk_lt() {
+        depth + 1
+    } else {
+        if k == tk_shl() {
+            depth + 2
+        } else {
+            if k == tk_gt() {
+                depth - 1
+            } else {
+                if k == tk_shr() {
+                    depth - 2
+                } else {
+                    depth
+                }
+            }
+        }
+    };
+    skip_generic_args(toks, pos + 1, nd)
+}
+
 pub fn parse_params_rest(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult {
     if tok_kind(toks, pos) == tk_rparen() {
         let s: i64 = ast_new_block(0, 0, vec_addr(acc), vec_len(acc));
@@ -1976,7 +2008,18 @@ pub fn parse_params_rest(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult
     let n_ty: i64 = ast_new_leaf(ast_ident(), t_lo, t_hi);
     let p: i64 = ast_new_param(n_lo, t_hi, n_name, n_ty);
     let new_acc: Vec = vec_push(acc, p);
-    let after_param: i64 = pos + 3;
+    // A generic param type (`xs: array<i64>`, `m: map<i64, Value>`) spans more than
+    // one token: the base type is at pos+2 and, when the next token is `<`, the
+    // `<...>` list must be skipped with nested balancing so the token stream does
+    // NOT desync (a desync mis-parses the fn body from inside the angle brackets and
+    // crashes the downstream struct-lit desugar / field-prefold pass). Non-generic
+    // types (every param in main.mind and std today) take the pos+3 path unchanged,
+    // so the canary / seeded self-host stay byte-identical.
+    let after_param: i64 = if tok_kind(toks, pos + 3) == tk_lt() {
+        skip_generic_args(toks, pos + 4, 1)
+    } else {
+        pos + 3
+    };
     if tok_kind(toks, after_param) == tk_comma() {
         return parse_params_rest(toks, after_param + 1, buf, new_acc);
     }

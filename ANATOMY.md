@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3140 | **Est. tokens:** ~7,498,081
-**Generated:** 2026-07-19 00:34 UTC
+**Files:** 3141 | **Est. tokens:** ~7,501,013
+**Generated:** 2026-07-19 07:48 UTC
 
 ## Token Budget Guide
 
@@ -47,7 +47,7 @@
 | `docs/mindcraft/` | 3 | ~7,023 |
 | `docs/rfcs/` | 31 | ~142,417 |
 | `docs/specs/` | 2 | ~976 |
-| `examples/` | 27 | ~45,915 |
+| `examples/` | 28 | ~48,847 |
 | `examples/bimap_currency/` | 3 | ~780 |
 | `examples/bimap_pairs/` | 2 | ~801 |
 | `examples/c/` | 2 | ~400 |
@@ -761,6 +761,9 @@
 
 - `main.mind` (~732 tok, large) — Single-source bijective const pair-tables — ONE declaration, both directions
 - `Mind.toml` (~69 tok, small) — [package]
+### `examples/`
+
+- `cholesky_q16.mind` (~2932 tok, huge) — Deterministic Q16.16 fixed-point Cholesky solve (A = L·Lᵀ, then A·x = b)
 ### `examples/c/`
 
 - `min.c` (~82 tok, small)
