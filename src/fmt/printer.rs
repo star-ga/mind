@@ -16,8 +16,8 @@
 //! from the [`TriviaStream`].
 
 use crate::ast::{
-    Attribute, BinOp, BitOp, CallConv, EnumVariant, ExternFn, Field, Literal, LogicalOp, MatchArm,
-    Module, Node, Param, Pattern, Span, SparseLayout, StructLitField, TypeAnn,
+    Attribute, BinOp, BitOp, CallConv, EnumVariant, ExternFn, Field, FnDefData, Literal, LogicalOp,
+    MatchArm, Module, Node, Param, Pattern, Span, SparseLayout, StructLitField, TypeAnn,
 };
 use crate::parser::{TriviaKind, TriviaStream};
 use crate::project::MindcraftFormatConfig;
@@ -286,16 +286,16 @@ fn strip_for_lines(src: &str) -> String {
 
 fn emit_node(p: &mut Printer, node: &Node, _extra_indent: usize) {
     match node {
-        Node::FnDef {
-            is_pub,
-            name,
-            params,
-            ret_type,
-            body,
-            attrs,
-            span,
-            ..
-        } => {
+        Node::FnDef(fd, span) => {
+            let FnDefData {
+                is_pub,
+                name,
+                params,
+                ret_type,
+                body,
+                attrs,
+                ..
+            } = &**fd;
             emit_fn_def(p, *is_pub, name, params, ret_type, body, attrs, *span);
         }
         Node::StructDef {
@@ -766,16 +766,16 @@ fn emit_body_stmts(p: &mut Printer, stmts: &[Node], close_line: usize) {
                 p.push("}\n");
             }
             // FnDef nested inside a body (uncommon but valid in MIND)
-            Node::FnDef {
-                is_pub,
-                name,
-                params,
-                ret_type,
-                body,
-                attrs,
-                span,
-                ..
-            } => {
+            Node::FnDef(fd, span) => {
+                let FnDefData {
+                    is_pub,
+                    name,
+                    params,
+                    ret_type,
+                    body,
+                    attrs,
+                    ..
+                } = &**fd;
                 emit_fn_def(p, *is_pub, name, params, ret_type, body, attrs, *span);
                 p.push("\n");
             }
@@ -1617,7 +1617,7 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             }
         }
         // Items that shouldn't appear as expressions; emit placeholder
-        Node::FnDef { name, .. } => p.push(name),
+        Node::FnDef(fd, _) => p.push(&fd.name),
         Node::StructDef { name, .. } => p.push(name),
         Node::EnumDef { name, .. } => p.push(name),
         Node::Const { name, .. } => p.push(name),

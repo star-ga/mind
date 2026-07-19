@@ -23,6 +23,7 @@ use crate::ast::Literal;
 
 use crate::ast::Module;
 
+use crate::ast::FnDefData;
 use crate::ast::Node;
 
 use crate::ast::Span as AstSpan;
@@ -1616,7 +1617,7 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
             infer_expr(value, env)
         }
         // Function definitions don't have a value type in expression context
-        Node::FnDef { span, .. } => Ok((ValueType::ScalarI32, *span)), // Placeholder
+        Node::FnDef(_, span) => Ok((ValueType::ScalarI32, *span)), // Placeholder
         Node::Return { value, span } => {
             if let Some(v) = value {
                 infer_expr(v, env)
@@ -3069,7 +3070,7 @@ fn check_scalar_class_stmt(
         }
         // Nested fns carry their own return type; the mini-module recursion
         // checks them, and their diagnostics ride the body-filter whitelist.
-        Node::FnDef { .. } => {}
+        Node::FnDef(..) => {}
         // Any other statement is an expression position (e.g. a bare call):
         // walk it for the expression-level checks.
         other => walk_expr_class_checks(other, ctx, src, file, errs),
@@ -3757,7 +3758,8 @@ pub fn check_module_types_in_file(
     // lowering (never merely skipped). Fires for ALL modules, independent of
     // `#[bimap]`.
     for item in &module.items {
-        if let Node::FnDef { name, span, .. } = item {
+        if let Node::FnDef(fd, span) = item {
+            let name = &fd.name;
             if name.starts_with("__mind_") {
                 errs.push(diag_from_span(
                     src,
@@ -3794,12 +3796,13 @@ pub fn check_module_types_in_file(
             {
                 repr_c_struct_names.insert(name.clone());
             }
-            Node::FnDef {
-                name,
-                params,
-                ret_type,
-                ..
-            } => {
+            Node::FnDef(fd, _) => {
+                let FnDefData {
+                    name,
+                    params,
+                    ret_type,
+                    ..
+                } = &**fd;
                 has_fn = true;
                 // Pre-register name for intra-module call resolution.
                 tenv.entry(name.clone()).or_insert(ValueType::ScalarI64);
@@ -4223,14 +4226,14 @@ pub fn check_module_types_in_file(
             // annotations and recurse into the body with a param-extended env
             // so that `let` bindings inside the function body get the same
             // `shape::*` diagnostics as module-level bindings.
-            Node::FnDef {
-                params,
-                body,
-                ret_type,
-                type_params,
-                span: fn_span,
-                ..
-            } => {
+            Node::FnDef(fd, fn_span) => {
+                let FnDefData {
+                    params,
+                    body,
+                    ret_type,
+                    type_params,
+                    ..
+                } = &**fd;
                 // Run the symbolic-conflict scan on the parameter list.
                 check_fn_param_shape_conflicts(params, *fn_span, src, file, &mut errs);
 
@@ -4515,7 +4518,8 @@ fn check_region_escapes_in_node(
             }
         }
         // Recurse into fn bodies.
-        Node::FnDef { body, .. } => {
+        Node::FnDef(fd, _) => {
+            let body = &fd.body;
             for stmt in body {
                 check_region_escapes_in_node(stmt, src, file, errs);
             }
@@ -4585,7 +4589,8 @@ fn check_genref_unchecked_deref(
 ) {
     match node {
         // Walk function bodies: analyse each statement sequence then recurse.
-        Node::FnDef { body, .. } => {
+        Node::FnDef(fd, _) => {
+            let body = &fd.body;
             check_genref_in_stmt_seq(body, src, file, errs);
             for stmt in body {
                 check_genref_unchecked_deref(stmt, src, file, errs);
@@ -4985,7 +4990,8 @@ fn walk_calls_for_symbolic_check(
                 walk_calls_for_symbolic_check(a, fn_sigs, env, src, file, errs);
             }
         }
-        Node::FnDef { body, .. } => {
+        Node::FnDef(fd, _) => {
+            let body = &fd.body;
             for stmt in body {
                 walk_calls_for_symbolic_check(stmt, fn_sigs, env, src, file, errs);
             }
@@ -5214,7 +5220,7 @@ fn implicit_external_determinism(callee: &str) -> Option<bool> {
 fn collect_module_fndefs<'a>(items: &'a [Node], out: &mut Vec<&'a Node>) {
     for item in items {
         match item {
-            Node::FnDef { .. } => out.push(item),
+            Node::FnDef(..) => out.push(item),
             Node::Block { stmts, .. } => collect_module_fndefs(stmts, out),
             _ => {}
         }
@@ -5257,24 +5263,25 @@ fn check_determinism_annotations(
     // determinism call-graph check can resolve callees within this module.
     let mut annots: HashMap<&str, FnAnnot> = HashMap::new();
     for item in &fndefs {
-        if let Node::FnDef { name, attrs, .. } = item {
+        if let Node::FnDef(fd, _) = item {
+            let name = &fd.name;
+            let attrs = &fd.attrs;
             annots.insert(name.as_str(), fn_annot(attrs));
         }
     }
 
     for item in &fndefs {
-        let Node::FnDef {
+        let Node::FnDef(fd, span) = item else {
+            continue;
+        };
+        let FnDefData {
             name,
             params,
             ret_type,
             body,
             attrs,
-            span,
             ..
-        } = item
-        else {
-            continue;
-        };
+        } = &**fd;
         let a = fn_annot(attrs);
 
         // Check 0 — float-bearing tuple return fail-loud. An all-i64 tuple is a

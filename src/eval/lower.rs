@@ -680,19 +680,18 @@ fn instantiate_template(
     mangled: &str,
     concrete: &TypeAnn,
 ) -> Option<ast::Node> {
-    if let ast::Node::FnDef {
-        is_pub,
-        is_test,
-        type_params,
-        params,
-        ret_type,
-        body,
-        reap_threshold,
-        attrs,
-        span,
-        ..
-    } = template
-    {
+    if let ast::Node::FnDef(fd, span) = template {
+        let ast::FnDefData {
+            is_pub,
+            is_test,
+            type_params,
+            params,
+            ret_type,
+            body,
+            reap_threshold,
+            attrs,
+            ..
+        } = fd.as_ref();
         // Bounded slice: a single type parameter.
         let tp = type_params.first()?.clone();
         let new_params: Vec<ast::Param> = params
@@ -717,18 +716,20 @@ fn instantiate_template(
                 r.clone()
             }
         });
-        Some(ast::Node::FnDef {
-            is_pub: *is_pub,
-            is_test: *is_test,
-            name: mangled.to_string(),
-            type_params: Vec::new(),
-            params: new_params,
-            ret_type: new_ret,
-            body: body.clone(),
-            reap_threshold: *reap_threshold,
-            attrs: attrs.clone(),
-            span: *span,
-        })
+        Some(ast::Node::FnDef(
+            Box::new(ast::FnDefData {
+                is_pub: *is_pub,
+                is_test: *is_test,
+                name: mangled.to_string(),
+                type_params: Vec::new(),
+                params: new_params,
+                ret_type: new_ret,
+                body: body.clone(),
+                reap_threshold: *reap_threshold,
+                attrs: attrs.clone(),
+            }),
+            *span,
+        ))
     } else {
         None
     }
@@ -973,12 +974,9 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
         let mut ctx = cell.borrow_mut();
         *ctx = MonoCtx::default();
         for item in &module.items {
-            if let ast::Node::FnDef {
-                name, type_params, ..
-            } = item
-            {
-                if !type_params.is_empty() {
-                    ctx.templates.insert(name.clone(), item.clone());
+            if let ast::Node::FnDef(fd, _) = item {
+                if !fd.type_params.is_empty() {
+                    ctx.templates.insert(fd.name.clone(), item.clone());
                 }
             }
         }
@@ -995,20 +993,17 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
         let mut m = cell.borrow_mut();
         m.clear();
         for item in &module.items {
-            if let ast::Node::FnDef {
-                name,
-                params,
-                type_params,
-                ..
-            } = item
-            {
-                if !type_params.is_empty() {
+            if let ast::Node::FnDef(fd, _) = item {
+                if !fd.type_params.is_empty() {
                     continue;
                 }
-                if params.iter().any(|p| is_array_surface_ty(&p.ty)) {
+                if fd.params.iter().any(|p| is_array_surface_ty(&p.ty)) {
                     m.insert(
-                        name.clone(),
-                        params.iter().map(|p| is_array_surface_ty(&p.ty)).collect(),
+                        fd.name.clone(),
+                        fd.params
+                            .iter()
+                            .map(|p| is_array_surface_ty(&p.ty))
+                            .collect(),
                     );
                 }
             }
@@ -1024,18 +1019,12 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
         m.clear();
         if MONO.with(|c| !c.borrow().templates.is_empty()) {
             for item in &module.items {
-                if let ast::Node::FnDef {
-                    name,
-                    ret_type,
-                    type_params,
-                    ..
-                } = item
-                {
-                    if type_params.is_empty()
-                        && let Some(rt) = ret_type
+                if let ast::Node::FnDef(fd, _) = item {
+                    if fd.type_params.is_empty()
+                        && let Some(rt) = &fd.ret_type
                         && mangle_suffix(rt).is_some()
                     {
-                        m.insert(name.clone(), rt.clone());
+                        m.insert(fd.name.clone(), rt.clone());
                     }
                 }
             }
@@ -1432,9 +1421,9 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
         // wrong body. The current literal-inferred slice never produces such a
         // body, so this only guards future, out-of-subset shapes.
         // deferred: full body type-substitution is a later monomorphization slice.
-        if let ast::Node::FnDef { type_params, .. } = template {
-            if let (Some(tp), ast::Node::FnDef { body, .. }) = (type_params.first(), &instance) {
-                if body.iter().any(|n| node_mentions_type_name(n, tp)) {
+        if let ast::Node::FnDef(tfd, _) = template {
+            if let (Some(tp), ast::Node::FnDef(ifd, _)) = (tfd.type_params.first(), &instance) {
+                if ifd.body.iter().any(|n| node_mentions_type_name(n, tp)) {
                     continue;
                 }
             }
@@ -3684,7 +3673,7 @@ fn descend_for_continue(node: &mut ast::Node, step: &ast::Node) {
         | N::Break { .. }
         | N::Lit(..)
         | N::Import { .. }
-        | N::FnDef { .. }
+        | N::FnDef(..)
         | N::StructDef { .. }
         | N::EnumDef { .. }
         | N::TypeAlias { .. }
@@ -3734,15 +3723,15 @@ fn module_declares_collection(module: &ast::Module) -> bool {
         for s in stmts {
             match s {
                 ast::Node::Let { ann, .. } if ann_is_collection(ann) => return true,
-                ast::Node::FnDef { params, body, .. } => {
-                    if params.iter().any(|p| {
+                ast::Node::FnDef(fd, _) => {
+                    if fd.params.iter().any(|p| {
                         is_array_surface_ty(&p.ty)
                             || is_map_surface_ty(&p.ty)
                             || is_set_surface_ty(&p.ty)
                     }) {
                         return true;
                     }
-                    if walk(body) {
+                    if walk(&fd.body) {
                         return true;
                     }
                 }
@@ -3839,12 +3828,12 @@ fn preprocess_collection_mutations(module: &ast::Module) -> Option<ast::Module> 
         }
     }
     for item in m.items.iter_mut() {
-        if let ast::Node::FnDef { params, body, .. } = item {
+        if let ast::Node::FnDef(fd, _) = item {
             let mut collections = std::collections::HashSet::new();
             // var -> struct-type name, so `obj.field` can resolve `obj`'s struct.
             let mut var_types: std::collections::HashMap<String, String> =
                 std::collections::HashMap::new();
-            for p in params.iter() {
+            for p in fd.params.iter() {
                 if is_array_surface_ty(&p.ty)
                     || is_map_surface_ty(&p.ty)
                     || is_set_surface_ty(&p.ty)
@@ -3856,7 +3845,7 @@ fn preprocess_collection_mutations(module: &ast::Module) -> Option<ast::Module> 
                 }
             }
             rewrite_collection_mutations(
-                body,
+                &mut fd.body,
                 &collections,
                 &struct_collection_fields,
                 &struct_collection_element_fields,
@@ -4602,15 +4591,16 @@ fn lower_expr(
             }
             addr
         }
-        ast::Node::FnDef {
-            name,
-            type_params,
-            params,
-            ret_type,
-            body,
-            reap_threshold,
-            ..
-        } => {
+        ast::Node::FnDef(fd, _) => {
+            let ast::FnDefData {
+                name,
+                type_params,
+                params,
+                ret_type,
+                body,
+                reap_threshold,
+                ..
+            } = fd.as_ref();
             // E2023 defence-in-depth: a user `fn __mind_*` must never be emitted
             // as an `Instr::FnDef` (it would define a symbol colliding with the
             // reserved intrinsic call). The type checker rejects such a module

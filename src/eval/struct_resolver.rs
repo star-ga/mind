@@ -105,11 +105,9 @@ pub fn build_field_access_types(module: &Module) -> FieldAccessTypes {
                     }
                 }
             }
-            Node::FnDef {
-                name,
-                ret_type: Some(ret),
-                ..
-            } => {
+            Node::FnDef(fd, _) if fd.ret_type.is_some() => {
+                let name = &fd.name;
+                let ret = fd.ret_type.as_ref().unwrap();
                 // Peel `&T` / `&mut T` / `[T]` / `&[T]` to the inner
                 // `Named(T)` so a `-> &Cfg` return type resolves its
                 // struct just like a `-> Cfg` one. Defer the "is this t
@@ -227,7 +225,8 @@ pub fn build_field_access_types(module: &Module) -> FieldAccessTypes {
                     }
                 }
             }
-            Node::FnDef { params, body, .. } => {
+            Node::FnDef(fd, _) => {
+                let (params, body) = (&fd.params, &fd.body);
                 // Seed fn scope with module-level bindings, then add params.
                 let mut fn_vars = var_to_struct.clone();
                 for p in params {

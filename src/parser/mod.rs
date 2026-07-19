@@ -1969,18 +1969,20 @@ impl<'a> P<'a> {
                 self.skip_ws_and_newlines();
                 self.expect(b'}')?;
                 let span = Span::new(field_start, self.pos);
-                fndefs.push(Node::FnDef {
-                    is_pub: true,
-                    is_test: false,
-                    name: format!("{name}_{ident}"),
-                    type_params: Vec::new(),
-                    params,
-                    ret_type,
-                    body,
-                    reap_threshold: None,
-                    attrs: Vec::new(),
+                fndefs.push(Node::FnDef(
+                    Box::new(crate::ast::FnDefData {
+                        is_pub: true,
+                        is_test: false,
+                        name: format!("{name}_{ident}"),
+                        type_params: Vec::new(),
+                        params,
+                        ret_type,
+                        body,
+                        reap_threshold: None,
+                        attrs: Vec::new(),
+                    }),
                     span,
-                });
+                ));
             } else if self.eat(b':') {
                 // Metadata field (`description: "…"`): consume one value and
                 // drop it — invariant metadata produces no executable code.
@@ -2543,18 +2545,20 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         self.expect(b'}')?;
         let span = Span::new(start, self.pos);
-        Ok(Node::FnDef {
-            is_pub,
-            is_test,
-            name,
-            type_params,
-            params,
-            ret_type,
-            body,
-            reap_threshold,
-            attrs,
+        Ok(Node::FnDef(
+            Box::new(crate::ast::FnDefData {
+                is_pub,
+                is_test,
+                name,
+                type_params,
+                params,
+                ret_type,
+                body,
+                reap_threshold,
+                attrs,
+            }),
             span,
-        })
+        ))
     }
 
     /// Kept for back-compat with call sites that do not pass `is_test`.

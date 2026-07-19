@@ -1662,13 +1662,10 @@ fn build_global_enums(parsed: &[(String, crate::ast::Module)]) -> crate::ir::Glo
             // Every fn → its declared return type, for `let x = f(...)` RHS type
             // inference (`let raw = decorator_arg_string(d); raw.split(…)`).
             #[cfg(feature = "std-surface")]
-            if let crate::ast::Node::FnDef {
-                name,
-                ret_type: Some(rt),
-                ..
-            } = item
+            if let crate::ast::Node::FnDef(fd, _) = item
+                && let Some(rt) = &fd.ret_type
             {
-                enums.fn_returns.insert(name.clone(), rt.clone());
+                enums.fn_returns.insert(fd.name.clone(), rt.clone());
             }
         }
     }

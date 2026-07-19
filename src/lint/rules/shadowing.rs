@@ -66,7 +66,8 @@ impl LintRule for Shadowing {
 /// Walk a node, checking for shadowing inside function/block scopes.
 fn check_node(node: &Node, ctx: &LintCtx<'_>, out: &mut Vec<Diagnostic>) {
     match node {
-        Node::FnDef { body, .. } => {
+        Node::FnDef(fd, _) => {
+            let body = &fd.body;
             check_scope(body, ctx, out);
             // No need to recurse into body here: check_scope recurses into
             // nested blocks for the sub-scopes already.

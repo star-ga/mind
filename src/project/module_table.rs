@@ -230,13 +230,8 @@ pub fn collect_module_exports(module_path: &str, ast: &Module) -> ModuleExports 
         // but no signature, so a sibling's `f(...)` call stayed unresolved.
         let exported_set: std::collections::BTreeSet<&String> = exported.iter().collect();
         for item in &items {
-            if let Node::FnDef {
-                name,
-                params,
-                ret_type,
-                ..
-            } = item
-            {
+            if let Node::FnDef(fd, _) = item {
+                let (name, params, ret_type) = (&fd.name, &fd.params, &fd.ret_type);
                 if exported_set.contains(name) {
                     exported_fns.push(ExportedFn {
                         name: name.clone(),
@@ -253,12 +248,8 @@ pub fn collect_module_exports(module_path: &str, ast: &Module) -> ModuleExports 
                 // name.  `params` is `Vec<Param>` and each `Param`
                 // already carries its declared `ty: TypeAnn` (or a
                 // synthesized one for untyped params).
-                Node::FnDef {
-                    name,
-                    params,
-                    ret_type,
-                    ..
-                } => {
+                Node::FnDef(fd, _) => {
+                    let (name, params, ret_type) = (&fd.name, &fd.params, &fd.ret_type);
                     exported.push(name.clone());
                     exported_fns.push(ExportedFn {
                         name: name.clone(),

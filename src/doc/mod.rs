@@ -278,20 +278,15 @@ fn extract_file_doc(path: &Path) -> Result<FileDoc, String> {
             .items
             .iter()
             .filter_map(|n| match n {
-                Node::FnDef { name, .. } => Some(name.as_str()),
+                Node::FnDef(fd, _) => Some(fd.name.as_str()),
                 _ => None,
             })
             .collect();
         for node in &expanded.items {
-            if let Node::FnDef {
-                is_pub: true,
-                name,
-                params,
-                ret_type,
-                span,
-                ..
-            } = node
+            if let Node::FnDef(fd, span) = node
+                && fd.is_pub
             {
+                let (name, params, ret_type) = (&fd.name, &fd.params, &fd.ret_type);
                 if !original.contains(name.as_str()) {
                     // A synthesised fn carries the enum's span, so the offset-based
                     // doc-comment lookup would bleed the enum's comment onto it;
@@ -317,14 +312,8 @@ fn extract_file_doc(path: &Path) -> Result<FileDoc, String> {
 /// Extract a [`DocItem`] from an AST node if it is a `pub` item.
 fn extract_item(node: &Node, doc_trivia: &[&Trivia], source: &str) -> Option<DocItem> {
     match node {
-        Node::FnDef {
-            is_pub: true,
-            name,
-            params,
-            ret_type,
-            span,
-            ..
-        } => {
+        Node::FnDef(fd, span) if fd.is_pub => {
+            let (name, params, ret_type) = (&fd.name, &fd.params, &fd.ret_type);
             let (kind, sig) = (ItemKind::Fn, render_fn_sig(name, params, ret_type.as_ref()));
             let line = offset_to_line(source, span.start());
             let doc = collect_doc_comments(doc_trivia, span.start(), source);

@@ -130,8 +130,8 @@ fn module_has_collapse(items: &[Node]) -> bool {
         }
         // Immutable mirror of `child_stmt_lists`.
         match node {
-            Node::FnDef { body, .. }
-            | Node::Block { stmts: body, .. }
+            Node::FnDef(fd, _) => fd.body.iter().any(scan),
+            Node::Block { stmts: body, .. }
             | Node::For { body, .. }
             | Node::ForEach { body, .. } => body.iter().any(scan),
             Node::If {
@@ -155,12 +155,9 @@ fn module_has_collapse(items: &[Node]) -> bool {
 fn build_fn_table(items: &[Node]) -> CtFnTable {
     let mut table = CtFnTable::new();
     for item in items {
-        if let Node::FnDef {
-            name, params, body, ..
-        } = item
-        {
-            let pnames = params.iter().map(|p| p.name.clone()).collect();
-            table.insert(name.clone(), (pnames, body.clone()));
+        if let Node::FnDef(fd, _) = item {
+            let pnames = fd.params.iter().map(|p| p.name.clone()).collect();
+            table.insert(fd.name.clone(), (pnames, fd.body.clone()));
         }
     }
     table
@@ -329,7 +326,7 @@ fn record_geometric_receipt(geo: &GeometricPow, ctx: &mut Ctx) {
 /// Mutable references to every statement list a node owns.
 fn child_stmt_lists(node: &mut Node) -> Vec<&mut Vec<Node>> {
     match node {
-        Node::FnDef { body, .. } => vec![body],
+        Node::FnDef(fd, _) => vec![&mut fd.body],
         Node::Block { stmts, .. } => vec![stmts],
         Node::For { body, .. } | Node::ForEach { body, .. } => vec![body],
         Node::If {

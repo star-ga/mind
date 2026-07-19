@@ -1344,7 +1344,7 @@ pub(crate) fn eval_value_expr_mode(
             eval_value_expr_mode(value, env, tensor_env, mode.clone())
         }
         // Function definitions and control flow - placeholder implementation
-        Node::FnDef { .. } => Ok(Value::Int(0)), // Functions are not executed as expressions
+        Node::FnDef(..) => Ok(Value::Int(0)), // Functions are not executed as expressions
         // Salov C3 (#179): an early `return X` must STOP the enclosing function
         // body and yield `X`, matching the compiled/native path. We evaluate the
         // operand then raise the `ReturnFlow` control-flow signal; `?` carries it
@@ -3238,10 +3238,8 @@ thread_local! {
 fn fn_table_install(m: &Module) -> HashMap<String, UserFn> {
     let mut table: HashMap<String, UserFn> = HashMap::new();
     for item in &m.items {
-        if let Node::FnDef {
-            name, params, body, ..
-        } = item
-        {
+        if let Node::FnDef(fd, _) = item {
+            let (name, params, body) = (&fd.name, &fd.params, &fd.body);
             // E2023 defence-in-depth: never let a user `fn __mind_*` shadow a
             // reserved intrinsic on the interpreter oracle. The type checker
             // rejects such a module fail-loud (E2023); this guard keeps the

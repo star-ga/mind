@@ -79,7 +79,8 @@ fn is_lit_16(node: &Node) -> bool {
 /// Scan a top-level module item, looking for fn bodies to descend into.
 fn scan_top(node: &Node, ret_is_i32: bool, ctx: &LintCtx<'_>, out: &mut Vec<Diagnostic>) {
     match node {
-        Node::FnDef { ret_type, body, .. } => {
+        Node::FnDef(fd, _) => {
+            let (ret_type, body) = (&fd.ret_type, &fd.body);
             let fn_ret_i32 = matches!(ret_type, Some(TypeAnn::ScalarI32));
             for stmt in body {
                 scan_stmt(stmt, fn_ret_i32, ctx, out);
@@ -108,7 +109,8 @@ fn scan_stmt(node: &Node, fn_ret_i32: bool, ctx: &LintCtx<'_>, out: &mut Vec<Dia
             scan_expr(value, fn_ret_i32, ctx, out);
         }
         // Propagate into blocks and control flow.
-        Node::FnDef { ret_type, body, .. } => {
+        Node::FnDef(fd, _) => {
+            let (ret_type, body) = (&fd.ret_type, &fd.body);
             let inner_ret_i32 = matches!(ret_type, Some(TypeAnn::ScalarI32));
             for s in body {
                 scan_stmt(s, inner_ret_i32, ctx, out);
@@ -168,7 +170,8 @@ fn scan_stmt(node: &Node, fn_ret_i32: bool, ctx: &LintCtx<'_>, out: &mut Vec<Dia
 /// Light scan of an expression for nested fn-def or block scopes.
 fn scan_expr(node: &Node, fn_ret_i32: bool, ctx: &LintCtx<'_>, out: &mut Vec<Diagnostic>) {
     match node {
-        Node::FnDef { ret_type, body, .. } => {
+        Node::FnDef(fd, _) => {
+            let (ret_type, body) = (&fd.ret_type, &fd.body);
             let inner = matches!(ret_type, Some(TypeAnn::ScalarI32));
             for s in body {
                 scan_stmt(s, inner, ctx, out);

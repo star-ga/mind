@@ -442,12 +442,9 @@ mod tests {
         let module = crate::parser::parse(src).expect("parse");
         let mut table = CtFnTable::new();
         for item in &module.items {
-            if let Node::FnDef {
-                name, params, body, ..
-            } = item
-            {
-                let pnames = params.iter().map(|p| p.name.clone()).collect();
-                table.insert(name.clone(), (pnames, body.clone()));
+            if let Node::FnDef(fd, _) = item {
+                let pnames = fd.params.iter().map(|p| p.name.clone()).collect();
+                table.insert(fd.name.clone(), (pnames, fd.body.clone()));
             }
         }
         table

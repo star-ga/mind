@@ -293,20 +293,17 @@ pub fn discover_tests_in_source(path: &Path, source: &str) -> Result<Vec<TestEnt
 
     let mut entries = Vec::new();
     for item in &module.items {
-        if let Node::FnDef {
-            is_test: true,
-            name,
-            span,
-            ..
-        } = item
-        {
-            let source_line = line_number_at(source, span.start());
-            entries.push(TestEntry {
-                name: format!("{}::{}", file_stem, name),
-                source_file: path.to_path_buf(),
-                source_line,
-                source_text: source.to_string(),
-            });
+        if let Node::FnDef(fd, span) = item {
+            if fd.is_test {
+                let name = &fd.name;
+                let source_line = line_number_at(source, span.start());
+                entries.push(TestEntry {
+                    name: format!("{}::{}", file_stem, name),
+                    source_file: path.to_path_buf(),
+                    source_line,
+                    source_text: source.to_string(),
+                });
+            }
         }
     }
     Ok(entries)
@@ -488,15 +485,9 @@ fn eval_test_fn(entry: &TestEntry) -> Result<(), String> {
         .items
         .iter()
         .find_map(|item| {
-            if let Node::FnDef {
-                name,
-                is_test: true,
-                body,
-                ..
-            } = item
-            {
-                if name == fn_name {
-                    return Some(body.clone());
+            if let Node::FnDef(fd, _) = item {
+                if fd.is_test && fd.name == fn_name {
+                    return Some(fd.body.clone());
                 }
             }
             None
@@ -508,7 +499,7 @@ fn eval_test_fn(entry: &TestEntry) -> Result<(), String> {
     let mut synthetic_items: Vec<Node> = module
         .items
         .iter()
-        .filter(|item| !matches!(item, Node::FnDef { .. }))
+        .filter(|item| !matches!(item, Node::FnDef(..)))
         .cloned()
         .collect();
     synthetic_items.extend(body_items.clone());

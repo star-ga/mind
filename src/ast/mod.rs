@@ -263,6 +263,44 @@ pub struct Param {
     pub span: Span,
 }
 
+/// Payload for [`Node::FnDef`], boxed to keep the `Node` enum small.
+///
+/// Holds every field of a function definition except `span`, which stays
+/// inline on the `Node::FnDef(Box<FnDefData>, Span)` tuple so that the many
+/// span-only fast-path reads (e.g. `Node::span`) do not have to chase the box.
+/// This is purely an internal memory-layout change: lowering/codegen read the
+/// same field values, so no emitted byte changes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FnDefData {
+    /// Whether the `pub` visibility modifier was present in source.
+    pub is_pub: bool,
+    /// Whether the `[test]` attribute was present (RFC 0008 Phase B).
+    pub is_test: bool,
+    pub name: String,
+    /// Generic type-parameter names declared as `fn name<T, U>(...)`.
+    ///
+    /// Empty for every non-generic function, so existing functions are
+    /// unchanged and lowering/codegen for them stays byte-identical. The
+    /// interpreter treats each name as an opaque type that binds to the
+    /// concrete argument `Value` at the call site; real codegen
+    /// monomorphization is a later slice.
+    pub type_params: Vec<String>,
+    pub params: Vec<Param>,
+    pub ret_type: Option<TypeAnn>,
+    pub body: Vec<Node>,
+    /// `[reap_threshold(t)]` annotation — `None` when absent.
+    pub reap_threshold: Option<f64>,
+    /// Raw attribute list as written in source (RFC 0012 Phase C).
+    ///
+    /// Phase C.0 records the attributes verbatim so later phases can
+    /// interpret `[deterministic]`, `[target(...)]`, and `[q16]` without
+    /// another AST change. `is_test`/`reap_threshold` remain the typed
+    /// fast-path for their respective attributes; this list is the full
+    /// record. Empty when no attributes were present. Recording these does
+    /// not change lowering — the byte-identity oracle is unaffected.
+    pub attrs: Vec<Attribute>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
     Lit(Literal, Span),
@@ -430,36 +468,7 @@ pub enum Node {
     /// `is_test` is set when the function carries a `[test]` attribute
     /// (RFC 0008 Phase B). A test function must have zero parameters and return
     /// type `()` or `bool`. The test runner collects all `is_test = true` fns.
-    FnDef {
-        /// Whether the `pub` visibility modifier was present in source.
-        is_pub: bool,
-        /// Whether the `[test]` attribute was present (RFC 0008 Phase B).
-        is_test: bool,
-        name: String,
-        /// Generic type-parameter names declared as `fn name<T, U>(...)`.
-        ///
-        /// Empty for every non-generic function, so existing functions are
-        /// unchanged and lowering/codegen for them stays byte-identical. The
-        /// interpreter treats each name as an opaque type that binds to the
-        /// concrete argument `Value` at the call site; real codegen
-        /// monomorphization is a later slice.
-        type_params: Vec<String>,
-        params: Vec<Param>,
-        ret_type: Option<TypeAnn>,
-        body: Vec<Node>,
-        /// `[reap_threshold(t)]` annotation — `None` when absent.
-        reap_threshold: Option<f64>,
-        /// Raw attribute list as written in source (RFC 0012 Phase C).
-        ///
-        /// Phase C.0 records the attributes verbatim so later phases can
-        /// interpret `[deterministic]`, `[target(...)]`, and `[q16]` without
-        /// another AST change. `is_test`/`reap_threshold` remain the typed
-        /// fast-path for their respective attributes; this list is the full
-        /// record. Empty when no attributes were present. Recording these does
-        /// not change lowering — the byte-identity oracle is unaffected.
-        attrs: Vec<Attribute>,
-        span: Span,
-    },
+    FnDef(Box<FnDefData>, Span),
     /// Return statement: `return expr`
     Return {
         value: Option<Box<Node>>,
@@ -935,7 +944,7 @@ impl Node {
             | Node::Let { span, .. }
             | Node::Assign { span, .. }
             | Node::LetTuple { span, .. }
-            | Node::FnDef { span, .. }
+            | Node::FnDef(_, span)
             | Node::Return { span, .. }
             | Node::Block { span, .. }
             | Node::If { span, .. }

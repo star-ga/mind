@@ -141,14 +141,11 @@ pub(crate) fn expand_bimap(
     // fail-loud rather than route it into `generated_fn_names`.
     let mut forged: Vec<(String, Span)> = Vec::new();
     for it in &module.items {
-        if let Node::FnDef {
-            name, attrs, span, ..
-        } = it
-        {
-            if has_attr(attrs, GENERATED_MARKER) {
-                forged.push((name.clone(), *span));
+        if let Node::FnDef(fd, span) = it {
+            if has_attr(&fd.attrs, GENERATED_MARKER) {
+                forged.push((fd.name.clone(), *span));
             } else {
-                user_fn_names.insert(name.clone());
+                user_fn_names.insert(fd.name.clone());
             }
         }
     }
@@ -1510,22 +1507,24 @@ fn fn_def(
     body: Vec<Node>,
     span: Span,
 ) -> Node {
-    Node::FnDef {
-        is_pub: true,
-        is_test: false,
-        name: name.to_string(),
-        type_params: Vec::new(),
-        params,
-        ret_type: Some(ret_type),
-        body,
-        reap_threshold: None,
-        attrs: vec![Attribute {
-            name: GENERATED_MARKER.to_string(),
-            args: vec![base.to_string()],
-            span,
-        }],
+    Node::FnDef(
+        Box::new(crate::ast::FnDefData {
+            is_pub: true,
+            is_test: false,
+            name: name.to_string(),
+            type_params: Vec::new(),
+            params,
+            ret_type: Some(ret_type),
+            body,
+            reap_threshold: None,
+            attrs: vec![Attribute {
+                name: GENERATED_MARKER.to_string(),
+                args: vec![base.to_string()],
+                span,
+            }],
+        }),
         span,
-    }
+    )
 }
 
 /// Like [`fn_def`] but stamps a second marker arg naming the inverse strategy
@@ -1541,22 +1540,24 @@ fn fn_def_mode(
     span: Span,
     mode: &str,
 ) -> Node {
-    Node::FnDef {
-        is_pub: true,
-        is_test: false,
-        name: name.to_string(),
-        type_params: Vec::new(),
-        params,
-        ret_type: Some(ret_type),
-        body,
-        reap_threshold: None,
-        attrs: vec![Attribute {
-            name: GENERATED_MARKER.to_string(),
-            args: vec![base.to_string(), mode.to_string()],
-            span,
-        }],
+    Node::FnDef(
+        Box::new(crate::ast::FnDefData {
+            is_pub: true,
+            is_test: false,
+            name: name.to_string(),
+            type_params: Vec::new(),
+            params,
+            ret_type: Some(ret_type),
+            body,
+            reap_threshold: None,
+            attrs: vec![Attribute {
+                name: GENERATED_MARKER.to_string(),
+                args: vec![base.to_string(), mode.to_string()],
+                span,
+            }],
+        }),
         span,
-    }
+    )
 }
 
 /// `0 - 1` — the documented miss sentinel, emitted as a plain subtraction to
@@ -1800,7 +1801,7 @@ mod tests {
     fn count_named(m: &Module, name: &str) -> usize {
         m.items
             .iter()
-            .filter(|it| matches!(it, Node::FnDef { name: n, .. } if n == name))
+            .filter(|it| matches!(it, Node::FnDef(fd, _) if fd.name == name))
             .count()
     }
 
