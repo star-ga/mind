@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Performance
+- **Small-object primary allocator on the compile hot path (byte-identical).**
+  A per-thread size-class free-list + 64 KiB bump `#[global_allocator]`
+  (`SmallHeapAlloc`) serves every request ≤1024 B / ≤16-align; `System`
+  verbatim for the rest. Compilation is allocation-heavy (AST nodes, `Vec<Instr>`,
+  string keys), so replacing glibc `malloc`/`free` on that traffic cuts real
+  compile time. Measured on a quiet pinned core, interleaved A/B, median-of-ratios
+  over a 7-shape corpus (baseline vs allocator, reproduced across two runs):
+  **~+25–38 % geomean** — +15–19 % on scalar arithmetic, +30–48 % on
+  tensor/matmul programs (bigger on real programs than on the literal metric —
+  the signature of a general win, not a benchmark-overfit). The absolute µs is
+  hardware-dependent, so the win is stated as a ratio. No emitted byte depends on
+  a heap address; keystone 7/7 + `cross_substrate` 24/24 byte-identical. Declared
+  per-binary (mindc + the compile-speed bench), NOT in the library, so downstream
+  consumers and long-running embedders are never forced onto it.
+- **Dense constant-fold side table.** `constant_fold` (`ir_canonical.rs`) now
+  keys its constants map on a dense `Vec<Option<i64>>` (ValueIds are contiguous)
+  instead of a `BTreeMap`, giving O(1) get/set with no per-key allocation. The
+  table is lookup-only, so fold decisions and emitted mic@3/MLIR bytes are
+  unchanged (keystone 7/7, `cross_substrate` 24/24, `mlir_export`, `oracle_parity`
+  all green).
 - **Evidence-path `emit_mic3` dedup (mic@4 Slice-0, byte-identical).**
   `emit_mic3_with_evidence` computed `trace_hash` via `ir_trace_hash(ir)` —
   literally `mini_sha256(&emit_mic3(ir))` — after already emitting the same
