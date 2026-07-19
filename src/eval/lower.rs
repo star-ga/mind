@@ -14,46 +14,6 @@
 
 use std::collections::HashMap;
 
-// MEASURED DEAD END (iter 78 — do not re-try): a crate-wide bounded
-// thread-local size-class magazine allocator (`#[global_allocator]` layered
-// over `System`; 256×16B classes ≤4 KiB, 16 blocks/class, passthrough
-// otherwise) was implemented and A/B'd against the profiled ~30% glibc
-// malloc/free share of the small-module compile. It REGRESSED scalar_math
-// +6.4% (1.578 → 1.676 µs): the per-call TLS + class-dispatch overhead on
-// every allocation outweighs the `_int_malloc`/`_int_free` slow-path hits it
-// eliminates (glibc's own tcache already covers the fast path), and routing
-// in-range `realloc` through alloc+copy forfeits glibc's in-place growth
-// (memmove share rose 15% → 18%). Upgrade path if ever revisited: bin ONLY
-// the burst-freed size classes that overflow tcache's 7-entry bins, keep
-// `realloc` delegated to `System` for every in-place-growable case.
-//
-// iter 81 — that upgrade path, now executed as measured (NOT a re-try of the
-// refuted 256-class magazine). An LD_PRELOAD size histogram of the scalar_math
-// bench shows exactly ONE class round-tripping more blocks per compile than
-// glibc tcache's 7-entry bin can hold: the `Box<ast::Node>` class (8 alloc+free
-// per compile — the parsed expression tree), so every compile pays one
-// `_int_malloc` + one `_int_free` slow-path trip in that class while every
-// other class (≤16 B ×5, 96 B ×2, 192/304/864 B ×1) stays tcache-resident.
-// The allocator below therefore bins ONLY `size_of::<ast::Node>()` with the
-// node's exact align: any other (size, align) pays one inlined compare and
-// falls straight to `System` — no TLS touch, no class dispatch — and
-// `realloc` / `alloc_zeroed` delegate verbatim to `System`, preserving glibc's
-// in-place growth (the two failure modes that sank iter 78). Blocks in the
-// magazine all originate from `System` (libc malloc), so cross-thread
-// free-into-a-different-magazine and final `System.dealloc` on thread exit are
-// both sound; the magazine is bounded (32 slots ≈ 6.5 KiB/thread) and drained
-// by `Drop` on thread teardown. Purely an address-recycling change: no output
-// byte can depend on it (the byte-identity gates verify this each run).
-//
-// iter 1613 — the iter-81 single-class magazine was SUPERSEDED by the
-// small-object primary heap below (see the DESIGN DISTINCTION block): with
-// glibc removed from the whole ≤1 KiB path, the node class no longer needs
-// special-casing — its 8 round trips are ordinary free-list hits like every
-// other class's.
-
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::cell::{Cell, UnsafeCell};
-
 use crate::ast;
 use crate::ast::Literal;
 use crate::ast::TensorElemOp;
@@ -67,362 +27,6 @@ use crate::ir::SliceSpec;
 use crate::ir::ValueId;
 use crate::types::DType;
 use crate::types::ShapeDim;
-
-// ---------------------------------------------------------------------------
-// Small-object PRIMARY allocator (iter 1613) — replaced the iter-81
-// single-class burst-bin magazine (see the iter-78/iter-81 note above).
-// ---------------------------------------------------------------------------
-
-// MEASURED DEAD END (iter 1534 — do not re-try): extending the magazine to a
-// SECOND class — the tiny class (request ≤16 B → one 24-B-usable minimum
-// glibc chunk; 7 round trips/compile, exactly tcache's 7-entry bin cap, the
-// only remaining high-count class in a fresh LD_PRELOAD histogram against the
-// iter-81 champion, with `_int_free` still at ~5.6% of compile cycles under
-// `parse_atom`/`canonicalize_module`) — was implemented (own bounded 16-slot
-// `TinyBin` TLS magazine, `size ≤ 16 && align ≤ 8` range match recycling
-// across in-class layouts, `realloc`/`alloc_zeroed` still delegated verbatim)
-// and REFUTED by a CPU-pinned interleaved A/B: champion won 5/8 rounds,
-// median 1.402 µs vs 1.426 µs (≈ −1.7% for the extension), min 1.378 vs
-// 1.394. Being AT the tcache cap is not OVER it: the 7 tiny round trips are
-// still mostly served by tcache/fastbin (~10 ns), so the TLS magazine merely
-// matches them while taxing every other allocation's miss path with a second
-// compare — the iter-78 lesson reconfirmed at N=2 classes. The node class
-// won because its 8th round trip was genuinely slow-path EVERY compile; no
-// other class in the small-module compile has that property, so the
-// single-class magazine below is the measured optimum of this design.
-
-// DESIGN DISTINCTION (iter 1613) vs the two refuted magazine dead ends above
-// (iter 78 crate-wide 256-class magazine, +6.4% regression; iter 1534 second
-// tiny-class magazine, −1.7%): those were bounded CACHES layered OVER glibc —
-// every hit merely matched glibc's own ~10 ns tcache fast path while the
-// dispatch taxed every miss, so only a genuinely tcache-OVERFLOWING class
-// (the node class's 8th round trip) could profit. The heap below is the
-// opposite, previously-untried fork of that design space: for every
-// allocation with size ≤ 1024 and align ≤ 16, glibc is REMOVED from the path
-// entirely. Allocation is a per-thread size-class free-list pop (or a pointer
-// bump into a 64 KiB System-backed segment when the list is empty), and free
-// is an unconditional free-list push — no 7-entry tcache cap exists anywhere,
-// so the perf-measured `_int_free` slow-path trips that still fired every
-// compile at iter 1613 (under `canonicalize_module` / `parse_atom` / BTreeMap
-// drops, ~6% of compile cycles, with the malloc/cfree wrappers another ~5%)
-// cannot occur for small classes at all. Large (>1024 B) and over-aligned
-// traffic delegates verbatim to `System`, KEEPING glibc's in-place `realloc`
-// growth for exactly the big-buffer case whose loss sank iter 78; a
-// same-class small `realloc` returns the same pointer (cheaper than glibc),
-// and a cross-class small resize is an ≤1 KiB copy.
-//
-// The iter-1536 marker (deleting the magazine's TLS `Drop` state machine:
-// codegen effect real, metric tie) carries over as a design input: this heap
-// is const-init + !Drop by construction, so every access — including from
-// late TLS destructors — is a direct `%fs`-relative load with no lazy-init
-// or destructor state machine, and `try_with` is statically infallible.
-//
-// SOUNDNESS INVARIANT: every pointer whose layout satisfies `is_small` was
-// minted by this heap from a class slot of exactly `class_size(idx) ≥ size`
-// bytes — small requests are NEVER served by `System`, even on segment-alloc
-// failure (that path returns null and the caller aborts) — so pushing it
-// back onto ANY thread's free list for the same class is always in-bounds.
-// Segments are never unmapped, so cross-thread-migrated blocks stay valid
-// for the process lifetime; a thread's unreclaimed lists on exit are
-// unreachable but point into live segments (bounded leak, no unsoundness).
-//
-// DETERMINISM: pure address recycling, exactly like the magazine it
-// replaces. No output byte can depend on heap addresses (ASLR already
-// scrambles them under glibc and the byte-identity gates are green), and the
-// gates re-verify that on every run.
-
-/// Largest request served by the thread-local heap; anything bigger (or more
-/// aligned than 16) delegates to `System` on every path.
-const SMALL_MAX: usize = 1024;
-const SMALL_ALIGN_MAX: usize = 16;
-/// 16-byte class granularity: class index `(size + 15) >> 4` ∈ 1..=64.
-const NUM_CLASSES: usize = (SMALL_MAX >> 4) + 1;
-/// Bump-segment size: one `System` call amortized over ~64–4096 blocks.
-const SEG_SIZE: usize = 64 * 1024;
-
-// MEASURED DEAD END (iter 1616 — do not re-try): cache-line PLACEMENT of the
-// heap endpoints of the profile-dominant memmoves — minting every ≥64 B class
-// 64-byte-aligned (bump round-up on the mint path only, 64-aligned segments,
-// free-list pop/push byte-identical, so the steady-state hot path gained zero
-// instructions) so the 304 B `Box<ast::Node>` stack→heap copy destinations and
-// `Vec<Instr>` buffers under `__memmove_avx_unaligned_erms` (19–23% of compile
-// cycles in a fresh perf profile) take no 32 B split-line stores and a node
-// spans 5 lines instead of 6 — was implemented and REFUTED as a tie by a
-// CPU-pinned interleaved A/B: 4/8 wins, median 1.2104 µs aligned vs 1.2184 µs
-// champion (−0.66%), below the preregistered ≥1%-and-≥6/8 bar, with ±3%
-// round-to-round noise dominating. LESSON, completing the iter-1614 picture:
-// neither the copy KERNEL (1614) nor the destination ALIGNMENT (this) is the
-// memmove constraint — the share is genuine byte traffic whose sources are
-// mostly stack→stack by-value `ast::Node` returns inside `parse_pratt` /
-// `parse_atom` (both endpoints rustc-placed, unreachable from any allocator
-// policy), so the ONLY remaining memmove lever is issuing FEWER large moves,
-// which lives in the parser — outside this file's edit surface.
-
-#[inline]
-fn small_class(size: usize) -> usize {
-    (size + 15) >> 4
-}
-
-/// Per-thread small-object heap: one LIFO free list per 16-byte size class
-/// (a freed block's first 8 bytes store the next pointer) plus the current
-/// bump segment. `Cell`/`UnsafeCell` (not `RefCell`) so the hot path is a
-/// handful of loads/stores with no borrow-flag traffic; sound because a
-/// `thread_local!` value is only ever touched from its own thread and the
-/// accessors never overlap (nothing inside them allocates).
-struct SmallHeap {
-    heads: UnsafeCell<[*mut u8; NUM_CLASSES]>,
-    bump: Cell<*mut u8>,
-    bump_end: Cell<*mut u8>,
-}
-
-impl SmallHeap {
-    const fn new() -> Self {
-        SmallHeap {
-            heads: UnsafeCell::new([std::ptr::null_mut(); NUM_CLASSES]),
-            bump: Cell::new(std::ptr::null_mut()),
-            bump_end: Cell::new(std::ptr::null_mut()),
-        }
-    }
-}
-
-thread_local! {
-    /// Const-initialized and `!Drop`: first access does no lazy-init work and
-    /// no destructor state machine ever exists (see the iter-1536 note).
-    static SMALL_HEAP: SmallHeap = const { SmallHeap::new() };
-}
-
-/// Primary allocator for small (≤1024 B, ≤16-align) requests; `System`
-/// verbatim for everything else. See the design/soundness block above.
-struct SmallHeapAlloc;
-
-impl SmallHeapAlloc {
-    #[inline]
-    fn is_small(size: usize, align: usize) -> bool {
-        size <= SMALL_MAX && align <= SMALL_ALIGN_MAX
-    }
-
-    /// Pop a class block or bump-allocate one. Returns null only on segment
-    /// exhaustion + `System` OOM (the caller then aborts via
-    /// `handle_alloc_error`) — never a `System` block, per the invariant.
-    #[inline]
-    unsafe fn small_alloc(size: usize) -> *mut u8 {
-        SMALL_HEAP
-            .try_with(|h| {
-                let idx = small_class(size);
-                // SAFETY: single-threaded TLS access; no reentrancy (nothing
-                // below allocates through the global allocator).
-                let heads = unsafe { &mut *h.heads.get() };
-                let head = heads[idx];
-                if !head.is_null() {
-                    // SAFETY: `small_dealloc` stored the next pointer in the
-                    // block's first 8 bytes; class blocks are ≥16 B, 16-aligned.
-                    heads[idx] = unsafe { *(head as *const *mut u8) };
-                    return head;
-                }
-                let class = idx << 4;
-                let p = h.bump.get();
-                if (h.bump_end.get() as usize).wrapping_sub(p as usize) >= class {
-                    // SAFETY: `p + class` stays inside the current segment.
-                    h.bump.set(unsafe { p.add(class) });
-                    return p;
-                }
-                unsafe { Self::small_alloc_slow(h, class) }
-            })
-            .unwrap_or(std::ptr::null_mut())
-    }
-
-    /// Cold path: start a fresh 64 KiB segment. The old segment's <1 KiB tail
-    /// (if any) is abandoned — bounded waste, and the segment itself lives for
-    /// the process (blocks in any thread's free list may point into it).
-    //
-    // MEASURED DEAD END (iter 2966 — do not re-try): FRAME-ELISION outlining
-    // of the two slow paths that force `__rust_alloc` to carry a stack frame —
-    // `#[inline(never)]` here (`#[cold]` alone does NOT stop LLVM inlining
-    // the segment `malloc(0x10000)` call into the shim, whose `%rbx` save is
-    // one frame cause) plus an outlined `large_alloc` wrapper for the
-    // `System.alloc` fallback (its over-aligned arm inlines `posix_memalign`,
-    // whose out-param stack slot is the other) — was implemented and
-    // objdump-VERIFIED to turn the small fast path into a frameless 8-insn
-    // leaf (`push %rbx; sub/add $0x10,%rsp; pop` gone, the `setb/setb/test`
-    // `is_small` idiom collapsed to two direct compare-branches), yet a
-    // CPU-pinned interleaved A/B REFUTED it as a tie: 3/8 wins, median
-    // 1.1958 µs champion vs 1.1980 µs outlined (+0.18%), far below the
-    // preregistered ≥1%-and-≥6-of-8 bar. Arithmetic agrees: ~20 small allocs
-    // per compile × ~4 saved frame insns ≈ 0.5–1% upper bound, under the ±3%
-    // round-to-round noise. Fresh perf profile from the same iteration pins
-    // the campaign state: the alloc/dealloc shims are now BELOW 0.02% of
-    // samples (the iter-1613 heap is fully amortized — this axis is spent),
-    // and every remaining ≥0.2% compile-side symbol is OUTSIDE the edit
-    // surface: parse_pratt 3.7% / parse_atom 3.6% (+ ~7.6-point memmove
-    // share), type_checker::infer_expr 2.1% + check_module_types 1.15% + a
-    // ~2.7% family of per-compile String-keyed BTreeMap build/teardown churn
-    // (`dying_next` + `drop_in_place`) in the type checker, verify_module ×2
-    // 1.2%, canonicalize+prune_dead 1.6% with `constant_fold`'s
-    // BTreeMap<ValueId,i64> side table (ir_canonical.rs:203) — while
-    // in-surface code totals ~1.4% of samples (eval_pure_const 0.79 +
-    // lower_to_ir 0.63). The iter-1615/1616 floor statement is re-confirmed
-    // by an independent profile: no in-surface lever ≥ the noise floor
-    // remains; the profitable levers are the parser's by-value `ast::Node`
-    // returns and the type checker's table churn, both outside this file.
-    #[cold]
-    unsafe fn small_alloc_slow(h: &SmallHeap, class: usize) -> *mut u8 {
-        // SAFETY: (SEG_SIZE, 16) is a valid, non-zero layout.
-        let seg =
-            unsafe { System.alloc(Layout::from_size_align_unchecked(SEG_SIZE, SMALL_ALIGN_MAX)) };
-        if seg.is_null() {
-            return std::ptr::null_mut();
-        }
-        // SAFETY: class ≤ 1024 < SEG_SIZE.
-        h.bump.set(unsafe { seg.add(class) });
-        h.bump_end.set(unsafe { seg.add(SEG_SIZE) });
-        seg
-    }
-
-    /// Unconditional push onto this thread's class list — no cap, so no
-    /// slow-path overflow trip can ever exist. If TLS were somehow
-    /// unavailable the block is leaked (sound — it points into a live
-    /// segment); with const-init + `!Drop` that path is statically dead.
-    #[inline]
-    unsafe fn small_dealloc(ptr: *mut u8, size: usize) {
-        let _ = SMALL_HEAP.try_with(|h| {
-            let idx = small_class(size);
-            // SAFETY: single-threaded TLS access; `ptr` is a class-idx block
-            // (soundness invariant), so its first 8 bytes are writable.
-            let heads = unsafe { &mut *h.heads.get() };
-            unsafe { *(ptr as *mut *mut u8) = heads[idx] };
-            heads[idx] = ptr;
-        });
-    }
-}
-
-unsafe impl GlobalAlloc for SmallHeapAlloc {
-    #[inline]
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if Self::is_small(layout.size(), layout.align()) {
-            return unsafe { Self::small_alloc(layout.size()) };
-        }
-        unsafe { System.alloc(layout) }
-    }
-
-    #[inline]
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        if Self::is_small(layout.size(), layout.align()) {
-            return unsafe { Self::small_dealloc(ptr, layout.size()) };
-        }
-        unsafe { System.dealloc(ptr, layout) }
-    }
-
-    #[inline]
-    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        if Self::is_small(layout.size(), layout.align()) {
-            let p = unsafe { Self::small_alloc(layout.size()) };
-            if !p.is_null() {
-                // ≤1 KiB memset — recycled blocks hold stale bytes. calloc's
-                // fresh-page shortcut is kept for the large path below.
-                unsafe { std::ptr::write_bytes(p, 0, layout.size()) };
-            }
-            return p;
-        }
-        unsafe { System.alloc_zeroed(layout) }
-    }
-
-    #[inline]
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        let old_small = Self::is_small(layout.size(), layout.align());
-        let new_small = Self::is_small(new_size, layout.align());
-        match (old_small, new_small) {
-            // Large→large: verbatim `System`, KEEPING glibc's in-place growth
-            // (the iter-78 regression's root cause was losing exactly this).
-            (false, false) => unsafe { System.realloc(ptr, layout, new_size) },
-            // Small→small: same class ⇒ the block already fits — zero work.
-            // Cross-class ⇒ ≤1 KiB copy into a fresh class block.
-            //
-            // MEASURED DEAD END (iter 1615 — do not re-try): extending this
-            // arm with in-place bump-tail GROWTH — when `ptr + old_class ==
-            // bump` (the block being grown is the thread's newest allocation,
-            // the grow-the-newest-Vec pattern) claim the adjacent segment
-            // bytes by advancing `bump` instead of copying — was implemented
-            // (sound: segments are disjoint and never freed, `bump` is always
-            // ≥16 B past a segment start, so the tail-equality can only match
-            // the thread's own newest block) and REFUTED as a tie by a
-            // CPU-pinned interleaved A/B: 5/8 wins, median 1.2096 vs
-            // 1.2178 µs (−0.67%), below the preregistered ≥1%-and-≥6/8 bar,
-            // with round-to-round noise (±3%) exceeding the effect. Root
-            // cause per the same iteration's fresh perf profile: per-compile
-            // small-realloc traffic is near-nil (`RawVecInner::finish_grow`
-            // 0.47% of samples), so there are almost no cross-class copies to
-            // elide. That profile also pins the campaign state: glibc
-            // malloc/free is fully absent from the ≥0.15% symbol list (the
-            // iter-1613 heap finished that job), memmove is 10.7% but ~7.6%
-            // of it is `parse_pratt`/`parse_stmt` by-value `ast::Node`
-            // returns (outside this file), and the in-surface instruction
-            // share is ~2.2% of samples (`eval_pure_const` 1.45% +
-            // `lower_to_ir` 0.73%) at 1.86 IPC with negligible TLB/branch
-            // misses — i.e. scalar_math is instruction-bound in code this
-            // file does not own, and further wins here need either a new
-            // process-wide lever (the allocator and memcpy interposition are
-            // both exhausted/refuted) or a wider edit surface (parser).
-            (true, true) => {
-                if small_class(layout.size()) == small_class(new_size) {
-                    return ptr;
-                }
-                let new_ptr = unsafe { Self::small_alloc(new_size) };
-                if !new_ptr.is_null() {
-                    let n = layout.size().min(new_size);
-                    unsafe { std::ptr::copy_nonoverlapping(ptr, new_ptr, n) };
-                    unsafe { Self::small_dealloc(ptr, layout.size()) };
-                }
-                new_ptr
-            }
-            // Small→large: the old block is a segment interior — it must NOT
-            // reach libc realloc. Fresh `System` block + copy + list push.
-            (true, false) => {
-                let new_ptr = unsafe {
-                    System.alloc(Layout::from_size_align_unchecked(new_size, layout.align()))
-                };
-                if !new_ptr.is_null() {
-                    unsafe { std::ptr::copy_nonoverlapping(ptr, new_ptr, layout.size()) };
-                    unsafe { Self::small_dealloc(ptr, layout.size()) };
-                }
-                new_ptr
-            }
-            // Large→small: the old block is a libc chunk whose usable size may
-            // be BELOW the rounded class size, so it must never enter a class
-            // list — copy into a real class block, free the libc chunk.
-            (false, true) => {
-                let new_ptr = unsafe { Self::small_alloc(new_size) };
-                if !new_ptr.is_null() {
-                    unsafe { std::ptr::copy_nonoverlapping(ptr, new_ptr, new_size) };
-                    unsafe { System.dealloc(ptr, layout) };
-                }
-                new_ptr
-            }
-        }
-    }
-}
-
-#[global_allocator]
-static GLOBAL_SMALL_HEAP: SmallHeapAlloc = SmallHeapAlloc;
-
-// MEASURED DEAD END (iter 1614 — do not re-try): interposing local strong
-// `memcpy`/`memmove` symbols from this file (the process-level companion to
-// the primary heap above: static-link binding to kill PLT + ifunc + glibc's
-// size-dispatch ladder, tiered SSE2/AVX copies with a branch-lean 10-register
-// load-all-then-store-all YMM tier sized to the profile-dominant 304-byte
-// `ast::Node` / 320-byte `Instr` moves, preloaded-tail/head loop paths beyond
-// 320 B, exact C overlap semantics throughout) was implemented, verified
-// byte-identical on 5 probe programs (--emit-ir/--emit-mic3) with 490 lib
-// tests green — and REFUTED 8/8 by a CPU-pinned interleaved A/B: champion
-// median ~1.21 µs vs ~1.30 µs (≈ +8%). perf attribution: the local kernels
-// took 23.1% of compile cycles (copy_33_320_avx 12.7% + entry dispatch
-// 10.4%) doing the work glibc's ifunc-resolved `__memmove_avx_unaligned_erms`
-// did in 18.4% — i.e. the mid-size copy path is already AT hardware speed
-// (FSRM `rep movsb` / unrolled `vmovdqu` with zero register pressure), and
-// the PLT + ifunc + size-ladder per-call overhead the interposition removes
-// is ~free on a predicted hot path. LESSON: the 18.4% memmove share is
-// genuine byte-moving, so the only real lever is issuing FEWER large moves
-// (the parser's by-value `ast::Node` returns — outside this file's edit
-// surface), not making each move cheaper from here.
 
 // ---------------------------------------------------------------------------
 // Codegen monomorphization (bounded slice) — generic fns reach the IR backend.
@@ -831,630 +435,34 @@ fn node_mentions_type_name(node: &ast::Node, tp: &str) -> bool {
     }
 }
 
-/// The EXACT i64 fold `opt::ir_canonical::constant_fold` applies to a `BinOp`
-/// whose operands are both known constants — replicated literally (same
-/// checked-or-bail arithmetic, same Div/Mod guards, same shift expressions) so
-/// the fast lane below may pre-apply it at lowering time. `None` = the fold
-/// BAILS (overflow / div-by-zero / MIN÷-1), matching `constant_fold`'s
-/// `continue`: the `BinOp` is emitted unfolded and the pipeline's own pass
-/// reproduces today's bytes on it verbatim. Under-folding here is FAIL-CLOSED
-/// by confluence — `canonicalize_module` still runs on the returned module and
-/// finishes any fold we skip with identical arithmetic — but over-folding
-/// (folding what `constant_fold` would not, or with different semantics) would
-/// change output bytes, so every arm must stay in lockstep with
-/// `constant_fold`'s.
+/// Conservative predicate: returns `false` ONLY for AST nodes that PROVABLY
+/// cannot reference the built-in Result/Option prelude — pure literal/arith
+/// scalar expressions with no identifier, call, `match`, or binding sub-node.
+/// Anything that could name a bare constructor (`Ok`/`Err`/`Some`/`None`), a
+/// `match`, a call, or a binding defaults to `true`.
+///
+/// Used to skip installing the prelude side-tables for pure-scalar modules
+/// (the `scalar_math` bench) where they are never consulted. The design already
+/// guarantees an UNUSED prelude is output-invariant, so skipping it is
+/// byte-identical. A false-negative (skip-when-needed) is impossible: a `false`
+/// result is only produced for fully-understood literal/arith shapes, and such
+/// a tree contains no node that can read the prelude tables.
 #[cfg(feature = "std-surface")]
-#[inline]
-fn fold_pure_binop(op: BinOp, l: i64, r: i64) -> Option<i64> {
-    Some(match op {
-        BinOp::Add => l.checked_add(r)?,
-        BinOp::Sub => l.checked_sub(r)?,
-        BinOp::Mul => l.checked_mul(r)?,
-        BinOp::Div => {
-            if r == 0 || (l == i64::MIN && r == -1) {
-                return None;
-            }
-            l / r
+fn may_reference_enum_prelude(n: &ast::Node) -> bool {
+    use ast::Node as N;
+    match n {
+        N::Lit(Literal::Int(_), _) | N::Lit(Literal::Float(_), _) | N::Lit(Literal::Str(_), _) => {
+            false
         }
-        BinOp::Mod => {
-            if r == 0 || (l == i64::MIN && r == -1) {
-                return None;
-            }
-            l % r
+        N::Binary { left, right, .. } | N::Bitwise { left, right, .. } => {
+            may_reference_enum_prelude(left) || may_reference_enum_prelude(right)
         }
-        BinOp::Lt => (l < r) as i64,
-        BinOp::Le => (l <= r) as i64,
-        BinOp::Gt => (l > r) as i64,
-        BinOp::Ge => (l >= r) as i64,
-        BinOp::Eq => (l == r) as i64,
-        BinOp::Ne => (l != r) as i64,
-        BinOp::BitAnd => l & r,
-        BinOp::BitOr => l | r,
-        BinOp::BitXor => l ^ r,
-        BinOp::Shl => l.wrapping_shl(r as u32),
-        BinOp::Shr => l >> r,
-    })
-}
-
-/// SPECULATIVE single-walk emitter for the pure-expression fast lane —
-/// whitelist test, lowering AND canonicalization fused into one AST
-/// traversal. The lane now emits the module's POST-`canonicalize_module`
-/// form directly: each `BinOp` over two known i64 constants is pre-folded
-/// via `fold_pure_binop` (the literal replica of `constant_fold`'s arm) and
-/// its operand-const instructions are truncated away (exactly the instrs
-/// `prune_dead` would drop — in a pure expression tree every SSA value is
-/// consumed exactly once, by its parent, so a folded parent's operands are
-/// provably dead). PROFILED: the downstream readonly passes (`verify_module`
-/// ×2 + `canonicalize_module`'s prune/reorder/fold/prune) dominated the
-/// small-module compile (~25% combined) walking the ~10-instr unfolded
-/// stream; handing them the ~2-instr canonical stream makes them near-no-ops.
-///
-/// BYTE-IDENTITY by confluence: value ids are minted in the ORIGINAL order
-/// (`ir.fresh()` runs for truncated instrs too, so surviving ids and
-/// `next_id` match the unfolded numbering — the same ids `constant_fold`'s
-/// in-place `*instr = ConstI64(dst, folded)` keeps), the fold arithmetic and
-/// bail guards are `constant_fold`'s verbatim, truncation removes only
-/// single-use operand consts (`prune_dead`'s exact victim set), and the
-/// pipeline still runs the full `canonicalize_module` afterwards, so any
-/// fold this lane declines is completed downstream with identical results:
-/// canonicalize(fast_stream) == canonicalize(general_stream) instruction-
-/// for-instruction. Float expressions never fold (matching `constant_fold`'s
-/// i64-only side-table) and emit verbatim. The acceptance set is EXACTLY the
-/// old whitelist: integer / float literals, `Binary`, `Bitwise`, unary
-/// `Neg`, `Paren`. Every other node kind — in particular anything that could
-/// consult the enum/struct/const side-tables (`Call`, `Match`, `Lit(Ident)`,
-/// `FieldAccess`, `MethodCall`, `StructLit`, …) — returns `None`, and the
-/// CALLER rolls the speculation back by dropping the partially-filled module
-/// and re-lowering through the untouched general path (the arms here mutate
-/// nothing but `ir.next_id` + `ir.instrs`, so dropping the speculative
-/// `IRModule` discards ALL speculative state). Pure structural recursion
-/// over the AST: no seed, no host state, no iteration-order dependence —
-/// same module ⇒ same answer on x86 and ARM.
-///
-/// Returns `(value id, folded i64 value if the subtree lowered to a single
-/// known `ConstI64`)` — the second component mirrors membership in
-/// `constant_fold`'s `constants` map at this stream position.
-///
-/// DEFERRED MATERIALIZATION (profiled: the push-then-truncate protocol was
-/// the lane's own hot spot — ~8 pushes + 3 truncate-drops of the large
-/// `Instr` enum for scalar_math, where only 2 instrs survive): a subtree
-/// returning `(id, Some(v))` has emitted NOTHING — the single surviving
-/// `ConstI64(id, v)` is materialized by whichever ancestor first fails to
-/// fold (or by `try_lower_pure_module` at the item root). A subtree
-/// returning `(id, None)` has its full surviving stream already pushed.
-/// Stream-position equivalence with the old truncate protocol: a folded
-/// subtree's surviving const belongs at the subtree's start offset, and
-/// between a subtree's start and its parent's next operand there are no
-/// other surviving instrs, so `insert(len0, ..)` / ordered pushes reproduce
-/// the identical final instruction sequence (ids are minted by `ir.fresh()`
-/// in the exact original recursion order either way, so surviving ids and
-/// `next_id` are unchanged).
-#[cfg(feature = "std-surface")]
-fn try_lower_pure_expr(node: &ast::Node, ir: &mut IRModule) -> Option<(ValueId, Option<i64>)> {
-    Some(match node {
-        ast::Node::Lit(Literal::Int(n), _) => {
-            // Deferred: no push — the parent (or module loop) materializes
-            // `ConstI64(id, *n)` only if this const survives folding.
-            (ir.fresh(), Some(*n))
-        }
-        ast::Node::Lit(Literal::Float(f), _) => {
-            let id = ir.fresh();
-            ir.instrs.push(Instr::ConstF64(id, *f));
-            (id, None)
-        }
-        ast::Node::Neg { operand, .. } => match operand.as_ref() {
-            ast::Node::Lit(Literal::Int(n), _) => {
-                // `wrapping_neg` keeps INT64_MIN well-defined — mirrors the
-                // `Neg` arm of `lower_expr` exactly. Deferred: no push.
-                (ir.fresh(), Some(n.wrapping_neg()))
-            }
-            ast::Node::Lit(Literal::Float(f), _) => {
-                let id = ir.fresh();
-                ir.instrs.push(Instr::ConstF64(id, -*f));
-                (id, None)
-            }
-            other => {
-                // General negation lowers as `0 - operand`; the fold is the
-                // `Sub` arm (`0.checked_sub(r)`, bailing only on r == MIN).
-                let len0 = ir.instrs.len();
-                let zero = ir.fresh();
-                ir.instrs.push(Instr::ConstI64(zero, 0));
-                let (rhs, rk) = try_lower_pure_expr(other, ir)?;
-                let dst = ir.fresh();
-                match rk.and_then(|r| fold_pure_binop(BinOp::Sub, 0, r)) {
-                    Some(v) => {
-                        // Full fold: only the zero const was pushed (the rhs
-                        // subtree deferred) — drop it and defer `dst` upward.
-                        ir.instrs.truncate(len0);
-                        (dst, Some(v))
-                    }
-                    None => {
-                        // Fold bailed (r == i64::MIN) or rhs unfoldable:
-                        // materialize a deferred rhs const AFTER the zero,
-                        // exactly its original stream slot.
-                        if let Some(r) = rk {
-                            ir.instrs.push(Instr::ConstI64(rhs, r));
-                        }
-                        ir.instrs.push(Instr::BinOp {
-                            dst,
-                            op: BinOp::Sub,
-                            lhs: zero,
-                            rhs,
-                        });
-                        (dst, None)
-                    }
-                }
-            }
-        },
-        ast::Node::Paren(inner, _) => try_lower_pure_expr(inner, ir)?,
-        ast::Node::Binary {
-            op, left, right, ..
-        } => {
-            let len0 = ir.instrs.len();
-            let (lhs, lk) = try_lower_pure_expr(left, ir)?;
-            let (rhs, rk) = try_lower_pure_expr(right, ir)?;
-            let dst = ir.fresh();
-            let op = match op {
-                ast::BinOp::Add => BinOp::Add,
-                ast::BinOp::Sub => BinOp::Sub,
-                ast::BinOp::Mul => BinOp::Mul,
-                ast::BinOp::Div => BinOp::Div,
-                ast::BinOp::Mod => BinOp::Mod,
-                ast::BinOp::Lt => BinOp::Lt,
-                ast::BinOp::Le => BinOp::Le,
-                ast::BinOp::Gt => BinOp::Gt,
-                ast::BinOp::Ge => BinOp::Ge,
-                ast::BinOp::Eq => BinOp::Eq,
-                ast::BinOp::Ne => BinOp::Ne,
-            };
-            match (lk, rk) {
-                (Some(l), Some(r)) => match fold_pure_binop(op, l, r) {
-                    // Full fold: neither operand emitted anything — defer.
-                    Some(v) => (dst, Some(v)),
-                    None => {
-                        // Fold bailed: materialize both deferred operand
-                        // consts in original (lhs-then-rhs) stream order.
-                        ir.instrs.push(Instr::ConstI64(lhs, l));
-                        ir.instrs.push(Instr::ConstI64(rhs, r));
-                        ir.instrs.push(Instr::BinOp { dst, op, lhs, rhs });
-                        (dst, None)
-                    }
-                },
-                (Some(l), None) => {
-                    // rhs's stream is already pushed starting at `len0` (the
-                    // folded lhs emitted nothing) — the lhs const's original
-                    // slot is BEFORE it.
-                    ir.instrs.insert(len0, Instr::ConstI64(lhs, l));
-                    ir.instrs.push(Instr::BinOp { dst, op, lhs, rhs });
-                    (dst, None)
-                }
-                (None, Some(r)) => {
-                    ir.instrs.push(Instr::ConstI64(rhs, r));
-                    ir.instrs.push(Instr::BinOp { dst, op, lhs, rhs });
-                    (dst, None)
-                }
-                (None, None) => {
-                    ir.instrs.push(Instr::BinOp { dst, op, lhs, rhs });
-                    (dst, None)
-                }
-            }
-        }
-        ast::Node::Bitwise {
-            op, left, right, ..
-        } => {
-            let len0 = ir.instrs.len();
-            let (lhs, lk) = try_lower_pure_expr(left, ir)?;
-            let (rhs, rk) = try_lower_pure_expr(right, ir)?;
-            let dst = ir.fresh();
-            let ir_op = match op {
-                ast::BitOp::And => BinOp::BitAnd,
-                ast::BitOp::Or => BinOp::BitOr,
-                ast::BitOp::Xor => BinOp::BitXor,
-                ast::BitOp::Shl => BinOp::Shl,
-                ast::BitOp::Shr => BinOp::Shr,
-            };
-            match (lk, rk) {
-                (Some(l), Some(r)) => match fold_pure_binop(ir_op, l, r) {
-                    // Full fold: neither operand emitted anything — defer.
-                    Some(v) => (dst, Some(v)),
-                    None => {
-                        // Fold bailed: materialize both deferred operand
-                        // consts in original (lhs-then-rhs) stream order.
-                        ir.instrs.push(Instr::ConstI64(lhs, l));
-                        ir.instrs.push(Instr::ConstI64(rhs, r));
-                        ir.instrs.push(Instr::BinOp {
-                            dst,
-                            op: ir_op,
-                            lhs,
-                            rhs,
-                        });
-                        (dst, None)
-                    }
-                },
-                (Some(l), None) => {
-                    // rhs's stream is already pushed starting at `len0` (the
-                    // folded lhs emitted nothing) — the lhs const's original
-                    // slot is BEFORE it.
-                    ir.instrs.insert(len0, Instr::ConstI64(lhs, l));
-                    ir.instrs.push(Instr::BinOp {
-                        dst,
-                        op: ir_op,
-                        lhs,
-                        rhs,
-                    });
-                    (dst, None)
-                }
-                (None, Some(r)) => {
-                    ir.instrs.push(Instr::ConstI64(rhs, r));
-                    ir.instrs.push(Instr::BinOp {
-                        dst,
-                        op: ir_op,
-                        lhs,
-                        rhs,
-                    });
-                    (dst, None)
-                }
-                (None, None) => {
-                    ir.instrs.push(Instr::BinOp {
-                        dst,
-                        op: ir_op,
-                        lhs,
-                        rhs,
-                    });
-                    (dst, None)
-                }
-            }
-        }
-        _ => return None,
-    })
-}
-
-/// CONST-ONLY SUB-LANE evaluator — the full-fold specialization of
-/// [`try_lower_pure_expr`] for the module shape where EVERY subtree folds to
-/// one known i64 (the compile-speed bench's `scalar_math` and most pure
-/// probe programs). Walks the AST with NOTHING but an id counter: no
-/// `IRModule`, no speculative pushes, no `len0` bookkeeping, no tuple-of-
-/// `Option` threading — the counter replicates `ir.fresh()`'s post-increment
-/// stream exactly (only the COUNT and the LAST id matter: in every arm the
-/// surviving root id is the arm's dst, which is minted last), so the caller
-/// can materialize the identical `ConstI64(root, v)` with
-/// `root == ValueId(n_ids - 1)` and set `next_id = n_ids` without ever
-/// running the speculative walk. Arithmetic and bail guards are
-/// `fold_pure_binop` — the verbatim `constant_fold` replica the speculative
-/// lane already uses — so acceptance here implies the speculative lane would
-/// have produced byte-identical instrs. ANY reject (non-whitelisted node,
-/// float literal — emit-only in this lane — or a fold bail like div-by-zero
-/// / overflow / MIN÷-1) returns `None` and the caller falls back to the
-/// speculative lane on a fresh module, which reproduces today's bytes
-/// verbatim (fail-closed; the discarded counter leaves no state). Pure
-/// structural recursion: no seed, no host state — same module ⇒ same answer
-/// on x86 and ARM.
-///
-/// MEASURED DEAD END (iter 1535 — do not re-try): threading the id counter
-/// BY VALUE (`ids: usize` in, updated count out via `Option<(i64, usize)>`)
-/// to kill the perf-annotate-hot `inc qword [mem]` was A/B'd and REFUTED
-/// (4/8 interleaved wins, median 1.410 vs 1.398 µs ≈ +0.9%; measured
-/// bundled with the caller-side emplacement change, which a separate
-/// emplacement-only A/B then showed to be a pure tie — so the regression
-/// attributes here): the 24-byte tuple return leaves the two-word
-/// `Option<i64>` register ABI for a hidden sret pointer, taxing every
-/// recursion more than the removed memory increment saved.
-/// Leaf-inlined entry for `eval_pure_const` (iter 2965): an `Int` literal —
-/// the majority of the nodes in a folded arithmetic tree (5 of scalar_math's
-/// 9) — is handled here with the VERBATIM body of `eval_pure_const`'s `Lit`
-/// arm (`*ids += 1; Some(*n)`), skipping the full recursive call whose
-/// 5-push prologue + jump-table dispatch + ret the perf profile shows the
-/// walk's samples clustering on. Any non-leaf node falls through to the
-/// unchanged recursive walk, so acceptance/rejection, the id stream, and the
-/// fold order are byte-for-byte identical on every input by construction —
-/// this moves WHERE the leaf arm's two instructions execute, not what they
-/// compute. Non-leaf children pay one extra predicted discriminant compare.
-#[cfg(feature = "std-surface")]
-#[inline(always)]
-fn eval_pure_const_child(node: &ast::Node, ids: &mut usize) -> Option<i64> {
-    if let ast::Node::Lit(Literal::Int(n), _) = node {
-        *ids += 1;
-        return Some(*n);
+        N::Paren(inner, _) | N::Neg { operand: inner, .. } => may_reference_enum_prelude(inner),
+        _ => true,
     }
-    eval_pure_const(node, ids)
-}
-
-#[cfg(feature = "std-surface")]
-fn eval_pure_const(node: &ast::Node, ids: &mut usize) -> Option<i64> {
-    match node {
-        ast::Node::Lit(Literal::Int(n), _) => {
-            *ids += 1;
-            Some(*n)
-        }
-        ast::Node::Neg { operand, .. } => match operand.as_ref() {
-            ast::Node::Lit(Literal::Int(n), _) => {
-                *ids += 1;
-                Some(n.wrapping_neg())
-            }
-            // General negation lowers as `0 - operand`: the speculative walk
-            // mints zero-const, then the operand subtree, then dst — two ids
-            // on top of the subtree's. A float-literal operand recurses and
-            // rejects here (Float never folds), exactly like a fold bail.
-            other => {
-                *ids += 1;
-                let r = eval_pure_const_child(other, ids)?;
-                *ids += 1;
-                fold_pure_binop(BinOp::Sub, 0, r)
-            }
-        },
-        ast::Node::Paren(inner, _) => eval_pure_const_child(inner, ids),
-        ast::Node::Binary {
-            op, left, right, ..
-        } => {
-            let l = eval_pure_const_child(left, ids)?;
-            let r = eval_pure_const_child(right, ids)?;
-            *ids += 1;
-            let op = match op {
-                ast::BinOp::Add => BinOp::Add,
-                ast::BinOp::Sub => BinOp::Sub,
-                ast::BinOp::Mul => BinOp::Mul,
-                ast::BinOp::Div => BinOp::Div,
-                ast::BinOp::Mod => BinOp::Mod,
-                ast::BinOp::Lt => BinOp::Lt,
-                ast::BinOp::Le => BinOp::Le,
-                ast::BinOp::Gt => BinOp::Gt,
-                ast::BinOp::Ge => BinOp::Ge,
-                ast::BinOp::Eq => BinOp::Eq,
-                ast::BinOp::Ne => BinOp::Ne,
-            };
-            fold_pure_binop(op, l, r)
-        }
-        ast::Node::Bitwise {
-            op, left, right, ..
-        } => {
-            let l = eval_pure_const_child(left, ids)?;
-            let r = eval_pure_const_child(right, ids)?;
-            *ids += 1;
-            let op = match op {
-                ast::BitOp::And => BinOp::BitAnd,
-                ast::BitOp::Or => BinOp::BitOr,
-                ast::BitOp::Xor => BinOp::BitXor,
-                ast::BitOp::Shl => BinOp::Shl,
-                ast::BitOp::Shr => BinOp::Shr,
-            };
-            fold_pure_binop(op, l, r)
-        }
-        _ => None,
-    }
-}
-
-/// Speculatively lower the whole module through the pure-expression fast lane:
-/// `true` iff EVERY top-level item was whitelisted and emitted (each item's
-/// expression instructions plus its one `Instr::Output`, exactly the general
-/// loop's `other =>` arm stream). `false` = at least one item rejected — the
-/// caller must DISCARD `ir` (partial speculative output) and take the general
-/// path on a fresh module, which reproduces today's bytes verbatim.
-#[cfg(feature = "std-surface")]
-fn try_lower_pure_module(module: &ast::Module, ir: &mut IRModule) -> bool {
-    for item in &module.items {
-        match try_lower_pure_expr(item, ir) {
-            // Item folded to a single const: the walk deferred its emission
-            // (nothing pushed) — materialize it here, at the item root.
-            Some((id, Some(v))) => {
-                ir.instrs.push(Instr::ConstI64(id, v));
-                ir.instrs.push(Instr::Output(id));
-            }
-            Some((id, None)) => ir.instrs.push(Instr::Output(id)),
-            None => return false,
-        }
-    }
-    true
 }
 
 pub fn lower_to_ir(module: &ast::Module) -> IRModule {
-    // RETURN-SLOT DISCIPLINE (profiled, exp80): this function used to build a
-    // DIFFERENT `IRModule` local per lane (const sub-lane `fast`, speculative
-    // `fast`, general `ir`) and return whichever won. With three distinct
-    // stack locals feeding the by-value return, the optimizer cannot place
-    // any of them in the caller's sret slot: perf annotate showed every
-    // fast-lane compile paying a full ~300-byte stack→sret `memcpy` at the
-    // final return PLUS the redundant zero-construction of a second module on
-    // the lane-reject path. All three lanes now fill the ONE `ir` local
-    // declared here, so every `return ir` returns the same alloca and the
-    // struct can be constructed directly in the return slot. Lane-reject
-    // resets are provably equivalent to the old drop-and-reconstruct: the
-    // lane arms mutate NOTHING but `ir.instrs` + `ir.next_id` (documented on
-    // `try_lower_pure_expr`; `eval_pure_const` runs against a local counter
-    // and touches `ir` only on full acceptance), and `IRModule::new()` is
-    // pure empty-init, so `instrs.clear()` + `next_id = 0` restores exactly
-    // the state a fresh module would have for every field a lane can touch.
-    // Retained Vec CAPACITY across a reset is a non-observable allocation
-    // detail — instruction content, ids and `next_id` are byte-identical.
-    // exp2967 amendment: disassembly proved the shared local STILL pays a
-    // 320-byte stack→sret `memcpy` at the single-return epilogue (rustc
-    // performs no NRVO), so the const sub-lane no longer uses `ir` at all —
-    // it returns a struct literal, which MIR builds directly in the return
-    // slot. The speculative + general lanes keep the shared-local flow.
-    // ── Pure-expression FAST LANE (speculative single walk) ────────────────
-    // PROFILED HOT PATH: for a whitelisted pure-expression module the general
-    // path below is all overhead — TLS guard/borrow traffic, empty-BTreeMap
-    // install/drop churn (consts install, prelude + global-enum merge, MONO
-    // reset, FN_RETURNS clear, mono drain, the struct-resolver gate) — and
-    // every read site of that state lives in arms the whitelist excludes
-    // (`Lit(Ident)` / `Call` / `FnDef` / `FieldAccess` / `MethodCall` /
-    // struct arms). Earlier iterations gated those blocks behind a SEPARATE
-    // whitelist pre-scan and then emitted in a second walk; this fuses the
-    // two traversals — SPECULATE by lowering straight through
-    // `try_lower_pure_expr`, and on the first out-of-whitelist node reset
-    // the partial `IRModule` (the arms touch nothing but `next_id`/`instrs`,
-    // so clearing those two erases all speculative state) and fall through to
-    // the general path on the ORIGINAL module, which reproduces today's bytes
-    // verbatim. The `first_item_pure` pre-filter keeps the old scan's
-    // fail-fast property: a real program (whose first item is a `fn`, `let`,
-    // `const`, …) pays ONE discriminant check and allocates nothing.
-    // Speculation runs BEFORE `preprocess_collection_mutations`, exactly
-    // like the old pre-scan: a whitelisted module declares no collections,
-    // and a preprocessed module can never newly PASS the whitelist (the
-    // rewrite fires only inside `FnDef` bodies, which already fail it).
-    // Fail-closed: any other module takes the pre-existing path verbatim, so
-    // keystone/canary bytes are unchanged.
-    #[cfg(feature = "std-surface")]
-    let first_item_pure = module.items.first().is_none_or(|it| {
-        matches!(
-            it,
-            ast::Node::Lit(Literal::Int(_), _)
-                | ast::Node::Lit(Literal::Float(_), _)
-                | ast::Node::Binary { .. }
-                | ast::Node::Bitwise { .. }
-                | ast::Node::Neg { .. }
-                | ast::Node::Paren(_, _)
-        )
-    });
-    // exp2967 — sret-DIRECT const-lane return. Perf callchains + disassembly
-    // on the iter-2965 champion showed rustc never applied NRVO to this
-    // function: every const-lane compile paid a 320-byte stack→sret `memcpy`
-    // at the shared single-return epilogue (the hottest in-scope memmove call
-    // site, ~0.9% of compile cycles) — the exp80 single-local discipline
-    // removed the per-lane duplicate constructions but NOT this final copy.
-    // The const sub-lane therefore now runs BEFORE the shared return-slot
-    // local `ir` exists, accumulating into a bare `Vec<Instr>`, and full
-    // acceptance returns an IRModule struct LITERAL — the one shape MIR
-    // builds field-by-field directly in the caller's return slot (no epilogue
-    // memcpy, and the accept path no longer zero-constructs `IRModule::new()`
-    // at all). The literal is field-for-field the exact `IRModule::new()`
-    // value with `instrs`/`next_id` filled, so the returned VALUE — and every
-    // output byte — is identical by construction. On reject the buffer is
-    // handed to `ir.instrs` below, preserving the old single-buffer
-    // capacity-reuse flow verbatim.
-    #[cfg(feature = "std-surface")]
-    let mut const_lane_instrs: Vec<Instr> = Vec::new();
-    #[cfg(feature = "std-surface")]
-    {
-        if first_item_pure {
-            // ── Const-only sub-lane (full-fold specialization) ─────────────
-            // The whole walk runs against a register-resident id counter —
-            // no `IRModule`, no speculative pushes, no rollback protocol —
-            // and only on FULL acceptance materializes the exact final
-            // stream: `ConstI64(root_i, v_i)` + `Output(root_i)` per item,
-            // `root_i == ValueId(ids_so_far - 1)` (each arm's dst is minted
-            // last), `next_id == n_ids` — the byte-identical module the
-            // speculative lane below would have emitted for this shape.
-            // `reserve_exact(2·items)` is the exact final length, a fresh
-            // measurement context distinct from the speculative lane's
-            // pinned `.max(16)` floor (that A/B kept the walk mutating the
-            // reserved buffer; here the buffer is allocated exactly and
-            // never grows). MEASURED DEAD END (do not re-try): porting the
-            // speculative lane's 16-slot floor HERE (`reserve(...max(16))`)
-            // lost a pinned interleaved A/B 3/4 rounds, by up to −17% —
-            // the size-class/free-list-reuse effect does not transfer to a
-            // buffer that is allocated once at final size and never grows,
-            // so the exact fit stays. Any reject falls through with all speculative
-            // state discarded (fail-closed) — floats, unfoldable ops,
-            // fold bails, and every non-pure module land in the lanes
-            // below verbatim, so keystone/canary bytes are unchanged.
-            let mut n_ids: usize = 0;
-            const_lane_instrs.reserve_exact(module.items.len().saturating_mul(2));
-            let mut all_const = true;
-            for item in &module.items {
-                match eval_pure_const_child(item, &mut n_ids) {
-                    Some(v) => {
-                        let root = ValueId(n_ids - 1);
-                        // MEASURED DEAD END (iter 1535 — do not re-try):
-                        // replacing these two `push`es with spare-capacity
-                        // emplacement (`ptr::write` through
-                        // `as_mut_ptr().add(len)` + `set_len`) to kill the
-                        // perf-annotate-hot pattern of building each
-                        // 320-byte `Instr` in a stack temp and `memcpy`ing
-                        // it in WAS effective at the codegen level (objdump:
-                        // 82 → 80 `memcpy@GLIBC` call sites in
-                        // `lower_to_ir`, fn 172 B smaller) but did NOT
-                        // resolve into a metric win: 28 interleaved rounds
-                        // across three series (8 free-run: 5/8 wins,
-                        // −1.16% median; +4 confirm: diluted to 6/12,
-                        // −0.42%; 8 CPU-pinned: 4/8, +0.85%) — a tie. Two
-                        // ~320-byte store-forwarded copies per compile are
-                        // below the 1.4 µs bench's noise floor, and the
-                        // unsafe block buys nothing measurable, so the
-                        // plain `push` stays.
-                        const_lane_instrs.push(Instr::ConstI64(root, v));
-                        const_lane_instrs.push(Instr::Output(root));
-                    }
-                    None => {
-                        all_const = false;
-                        break;
-                    }
-                }
-            }
-            if all_const {
-                // Exactly the `IRModule::new()` field values with `instrs` +
-                // `next_id` filled — any future `IRModule` field addition is
-                // a loud compile error here, never a silent divergence.
-                return IRModule {
-                    instrs: const_lane_instrs,
-                    next_id: n_ids,
-                    exports: std::collections::HashSet::new(),
-                    struct_defs: std::collections::BTreeMap::new(),
-                    const_array_defs: std::collections::BTreeMap::new(),
-                    repr_c_structs: std::collections::BTreeMap::new(),
-                    enum_variant_tags: std::collections::BTreeMap::new(),
-                    boxed_enums: std::collections::BTreeSet::new(),
-                    enum_payload_slots: std::collections::BTreeMap::new(),
-                    enum_payload_types: std::collections::BTreeMap::new(),
-                    enum_struct_field_names: std::collections::BTreeMap::new(),
-                    fn_signatures: std::collections::BTreeMap::new(),
-                    struct_field_types: std::collections::BTreeMap::new(),
-                };
-            }
-            // Reject: only the local buffer was touched (`n_ids` is a local
-            // counter) — clear it; it is handed to `ir.instrs` below so the
-            // speculative lane reuses the same allocation, exactly like the
-            // old single-local flow.
-            const_lane_instrs.clear();
-        }
-    }
-    let mut ir = IRModule::new();
-    #[cfg(feature = "std-surface")]
-    {
-        if first_item_pure {
-            // Hand the (possibly capacity-bearing) const-lane buffer to the
-            // shared return-slot local — a three-word move; the empty `Vec`
-            // it displaces owns no allocation.
-            ir.instrs = const_lane_instrs;
-            // ── Speculative single-walk lane ───────────────────────────────
-            // Same heuristic reserve the general path uses — a CAPACITY hint
-            // only, never content-bearing. The `.max(16)` floor is MEASURED
-            // load-bearing: an interleaved A/B that dropped it (exact 8-slot
-            // reserve for the 1-item case) regressed scalar_math +5% both
-            // directions (2.2356µs floor-on vs 2.3507µs floor-off, rebuilt and
-            // re-benched each way) — the 16-slot allocation's malloc
-            // size-class/free-list reuse beats the smaller exact fit. Do not
-            // shrink it again without a fresh paired measurement.
-            ir.instrs
-                .reserve(module.items.len().saturating_mul(8).max(16));
-            if try_lower_pure_module(module, &mut ir) {
-                return ir;
-            }
-            // Reject: the speculative arms mutate nothing but `ir.instrs` +
-            // `ir.next_id` — reset both so the general path below starts from
-            // exactly the state a fresh `IRModule::new()` would give it (the
-            // retained buffer capacity is a non-observable allocation detail).
-            ir.instrs.clear();
-            ir.next_id = 0;
-        }
-    }
-    // MEASURED DEAD END (iter 79 — do not re-try): splitting everything below
-    // this comment into a separate `#[inline(never)] fn lower_to_ir_general`
-    // (pure code motion) so the fast lane above runs in a small entry function
-    // was implemented and A/B'd. Rationale looked strong — the monolithic
-    // `lower_to_ir` compiles to ~56 KB of code with a 2.4 KB stack frame + six
-    // callee-saved pushes paid on every fast-lane compile — but a 10-round
-    // interleaved A/B REFUTED it: base median 1.536 µs vs split 1.550 µs
-    // (split lost 6/10, including 4/4 of the final low-noise rounds), all 10
-    // probe programs byte-identical across --emit-ir/--emit-mic/--emit-mic3.
-    // The big `sub rsp` is one instruction (~1 ns) and the frame's pages stay
-    // resident under criterion, while the split adds a real call/return +
-    // argument shuffle and forfeits cross-path layout. Profile context for
-    // future iterations: `lower_to_ir` inclusive is only ~4.3% of the compile;
-    // the remaining time is the parser (~40%, `parse_pratt` by-value Node
-    // memmoves) + glibc malloc/free/memmove (~30%) — both OUTSIDE this file's
-    // edit surface, so further wins here must come from shrinking allocation
-    // traffic the lowering itself causes, not from code layout.
-    // ── General path (speculation rejected or not attempted) ───────────────
     // Pre-pass: rewrite statement-position collection mutations (`m.insert(k,v)`,
     // `v.push(x)`) into assignments so the non-mutating std handle is rebound.
     // A no-op (byte-identical) for any module with no collection-mutation
@@ -1486,10 +494,7 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
         crate::ir::set_module_consts(consts);
         crate::ir::set_module_const_types(const_types);
     }
-    // (The general path fills the same return-slot `ir` local declared at
-    // function entry — see RETURN-SLOT DISCIPLINE above. It is empty here:
-    // either the fast lanes never ran, or their reject reset restored the
-    // fresh-module state for every field they can touch.)
+    let mut ir = IRModule::new();
     // Built-in Result/Option PRELUDE. MIND has no source-level prelude, but
     // Rust-style code expects `Result<T,E>` / `Option<T>` with bare `Ok`/`Err`/
     // `Some`/`None`. Register them in the boxed-enum side-tables (NOT as emitted
@@ -1500,42 +505,32 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     // Result/Option, so its emit is byte-identical. A user module that DEFINES
     // its own `Result`/`Option` overwrites these via last-write-wins in the
     // `EnumDef` arm below.
-    //
-    // PROFILED HOT PATH: installing the prelude + merging the global enum
-    // registry costs ~13 `String` allocations, three `Vec` allocations and the
-    // matching B-tree node churn on EVERY compile — build AND drop both land
-    // inside the compile, and for a tiny module they are a measurable slice of
-    // the whole `compile_source` (perf: `drop_in_place<BTreeMap<String,
-    // Vec<TypeAnn>>>` alone ≈1.5% flat, plus its share of the dominant
-    // malloc/free churn). Every read of these side-tables happens in lowering
-    // arms a pure-expression module never reaches (Call / Match / EnumDef /
-    // StructLit / FieldAccess / MethodCall / Ident …), so a module whose items
-    // are ONLY simple arithmetic expressions (the fail-closed whitelist in
-    // `try_lower_pure_expr`) provably never probes them, and the tables can be
-    // left empty — such modules returned from the fast lane above and never
-    // reach this install. The tables never serialise into mic@1/mic@3
-    // (`ir/mod.rs`, `ir/compact/v3/parse.rs` reconstruct them empty), so the
-    // emitted bytes — and every pinned cross-substrate canary — are unchanged
-    // by construction. Any module containing ANY other node kind takes the
-    // exact pre-existing path (whitelist is fail-closed), so the keystone,
-    // the narrow-int corpus and every project build are byte-identical.
     #[cfg(feature = "std-surface")]
     {
-        use crate::ast::TypeAnn::ScalarI64;
-        ir.enum_variant_tags.insert("Result::Ok".to_string(), 0);
-        ir.enum_variant_tags.insert("Result::Err".to_string(), 1);
-        ir.enum_variant_tags.insert("Option::Some".to_string(), 0);
-        ir.enum_variant_tags.insert("Option::None".to_string(), 1);
-        ir.boxed_enums.insert("Result".to_string());
-        ir.boxed_enums.insert("Option".to_string());
-        ir.enum_payload_slots.insert("Result".to_string(), 2);
-        ir.enum_payload_slots.insert("Option".to_string(), 2);
-        ir.enum_payload_types
-            .insert("Result::Ok".to_string(), vec![ScalarI64]);
-        ir.enum_payload_types
-            .insert("Result::Err".to_string(), vec![ScalarI64]);
-        ir.enum_payload_types
-            .insert("Option::Some".to_string(), vec![ScalarI64]);
+        // Install the built-in Result/Option base entries ONLY when the module
+        // could actually reference them. A pure-scalar module (the `scalar_math`
+        // bench) provably never consults these side-tables, and an unused
+        // prelude is byte-identical by design — so skipping the ~14 string/vec
+        // allocations is output-invariant while removing them from the
+        // nanosecond-floor hot path. The cross-module merge below stays
+        // unconditional (it is a no-op when the global enum registry is empty).
+        if module.items.iter().any(may_reference_enum_prelude) {
+            use crate::ast::TypeAnn::ScalarI64;
+            ir.enum_variant_tags.insert("Result::Ok".to_string(), 0);
+            ir.enum_variant_tags.insert("Result::Err".to_string(), 1);
+            ir.enum_variant_tags.insert("Option::Some".to_string(), 0);
+            ir.enum_variant_tags.insert("Option::None".to_string(), 1);
+            ir.boxed_enums.insert("Result".to_string());
+            ir.boxed_enums.insert("Option".to_string());
+            ir.enum_payload_slots.insert("Result".to_string(), 2);
+            ir.enum_payload_slots.insert("Option".to_string(), 2);
+            ir.enum_payload_types
+                .insert("Result::Ok".to_string(), vec![ScalarI64]);
+            ir.enum_payload_types
+                .insert("Result::Err".to_string(), vec![ScalarI64]);
+            ir.enum_payload_types
+                .insert("Option::Some".to_string(), vec![ScalarI64]);
+        }
         // Cross-module enum propagation: merge the whole-project enum registry
         // (collected by the project builder from EVERY parsed source) so a
         // variant defined in a SIBLING module — e.g. `TokKind::Eof` from another
@@ -1591,27 +586,20 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     // call on this thread can never leak templates/requests into this one
     // (which would perturb `emit_mic3`/`trace_hash`). Functions with empty
     // `type_params` are never registered, so the non-generic path is untouched.
-    // Whitelisted pure-expression modules skip the reset (paired with skipping
-    // the drain below) by returning from the fast lane above: they contain no
-    // `FnDef`/`Call`, so neither templates nor requests — stale or fresh — are
-    // ever read or drained, and every compile reaching THIS point still resets
-    // at entry.
-    {
-        MONO.with(|cell| {
-            let mut ctx = cell.borrow_mut();
-            *ctx = MonoCtx::default();
-            for item in &module.items {
-                if let ast::Node::FnDef {
-                    name, type_params, ..
-                } = item
-                {
-                    if !type_params.is_empty() {
-                        ctx.templates.insert(name.clone(), item.clone());
-                    }
+    MONO.with(|cell| {
+        let mut ctx = cell.borrow_mut();
+        *ctx = MonoCtx::default();
+        for item in &module.items {
+            if let ast::Node::FnDef {
+                name, type_params, ..
+            } = item
+            {
+                if !type_params.is_empty() {
+                    ctx.templates.insert(name.clone(), item.clone());
                 }
             }
-        });
-    }
+        }
+    });
     // RFC 0005 phase 2 (first slice) — array-param signature pre-pass: record
     // which param positions of each top-level NON-generic fn are `array<T>`,
     // so an `ArrayLit` in argument position routes to the std.vec runtime
@@ -1647,33 +635,29 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     // fn's declared scalar return type so a generic call over a NESTED call
     // (`id(g(3))`) resolves to `g`'s return type. Reset each call (like MONO).
     // Gated behind templates-present so a non-generic module never builds it —
-    // the byte-identity hot path executes zero extra work. Whitelisted
-    // pure-expression modules skip even the clear (fast-lane early return
-    // above): the map is read only in the `Call` arm, which they cannot reach.
-    {
-        FN_RETURNS.with(|fr| {
-            let mut m = fr.borrow_mut();
-            m.clear();
-            if MONO.with(|c| !c.borrow().templates.is_empty()) {
-                for item in &module.items {
-                    if let ast::Node::FnDef {
-                        name,
-                        ret_type,
-                        type_params,
-                        ..
-                    } = item
+    // the byte-identity hot path executes zero extra work.
+    FN_RETURNS.with(|fr| {
+        let mut m = fr.borrow_mut();
+        m.clear();
+        if MONO.with(|c| !c.borrow().templates.is_empty()) {
+            for item in &module.items {
+                if let ast::Node::FnDef {
+                    name,
+                    ret_type,
+                    type_params,
+                    ..
+                } = item
+                {
+                    if type_params.is_empty()
+                        && let Some(rt) = ret_type
+                        && mangle_suffix(rt).is_some()
                     {
-                        if type_params.is_empty()
-                            && let Some(rt) = ret_type
-                            && mangle_suffix(rt).is_some()
-                        {
-                            m.insert(name.clone(), rt.clone());
-                        }
+                        m.insert(name.clone(), rt.clone());
                     }
                 }
             }
-        });
-    }
+        }
+    });
     let mut env: HashMap<String, ValueId> = HashMap::new();
     // RFC 0005 P0f Step 1 — track `let x = Foo { ... }` so a later
     // `x.field` can resolve `Foo`'s canonical field-name order from
@@ -1718,11 +702,6 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     // BOTH disjuncts are false for a struct-less module and the walk is skipped
     // exactly as before, so emitted mic@1/mic@3 bytes + cross-substrate identity
     // are byte-for-byte unchanged.
-    // Whitelisted pure-expression modules short-circuit the whole gate — they
-    // have no `StructDef` AND no `FieldAccess`/`MethodCall`/`FieldAssign` read
-    // site, so even with a populated global registry the resolver's map would
-    // be keyed on spans this module cannot contain (provably empty + unread) —
-    // and skip the registry TLS probe entirely via the fast-lane early return.
     #[cfg(feature = "std-surface")]
     let receiver_types_owned: HashMap<crate::ast::Span, String> = if module
         .items
@@ -2043,12 +1022,6 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     // the cross-substrate canaries — is byte-identical. Instances drain in
     // BTreeMap mangled-name (lexicographic) order: deterministic, with no
     // HashMap iteration / clock / rng / address bits, so avx2 == neon.
-    // Paired with the skipped MONO reset at entry: a whitelisted
-    // pure-expression module has no `Call` arm to register a request, so it
-    // drains nothing — and any STALE prior-compile requests left in the TLS
-    // must NOT be drained by it (they belong to a compile that already drained
-    // its own). The fast lane's early return keeps them untouched and
-    // unobserved; every module reaching THIS drain also ran the entry reset.
     let (templates, mut pending) = MONO.with(|cell| {
         let ctx = cell.borrow();
         (ctx.templates.clone(), ctx.requests.clone())
