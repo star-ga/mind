@@ -985,15 +985,17 @@ fn make_from_str_string_eq(name: &str, base: &str, pairs: &[(i64, String)], span
 /// lookup reads them via `__mind_load_i8` and hashes with the same twin 31-bit
 /// mixers the plan was built with. Miss returns `0 - 1`.
 #[cfg(feature = "std-surface")]
+// `body` is assembled incrementally across many statements below (table consts,
+// mixer setup, hash loop) — not a tight init-then-push. clippy 1.95 changed the
+// `vec_init_then_push` span so the old statement-level `#[allow]` no longer
+// suppresses it; the allow therefore lives on the fn.
+#[allow(clippy::vec_init_then_push)]
 fn make_from_str_phf(name: &str, base: &str, plan: &crate::phf::PhfPlan, span: Span) -> Node {
     use crate::ast::BinOp::{Add, Eq, Lt, Mod, Mul, Ne};
     let m = plan.m as i64;
     let np = plan.np as i64;
     let base65 = crate::phf::NIBBLE_BASE;
 
-    // Assembled incrementally over many following statements (table consts,
-    // mixer setup, hash loop) — not a tight init-then-push sequence.
-    #[allow(clippy::vec_init_then_push)]
     let mut body: Vec<Node> = Vec::new();
 
     // Table constants + their byte-buffer base addresses (String record field 0)
