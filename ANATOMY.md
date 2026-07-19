@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3140 | **Est. tokens:** ~7,498,045
-**Generated:** 2026-07-19 00:14 UTC
+**Files:** 3140 | **Est. tokens:** ~7,498,081
+**Generated:** 2026-07-19 00:34 UTC
 
 ## Token Budget Guide
 
@@ -401,7 +401,7 @@
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 7 | ~36,651 |
 | `src/package/` | 2 | ~1,877 |
-| `src/parser/` | 2 | ~20,277 |
+| `src/parser/` | 2 | ~20,313 |
 | `src/phf/` | 1 | ~4,955 |
 | `src/project/` | 2 | ~8,233 |
 | `src/runtime/` | 3 | ~1,485 |
@@ -3963,7 +3963,7 @@
 - `mod.rs` (~1567 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/parser/`
 
-- `expand_bimap.rs` (~16466 tok, huge) — An `#[bimap]` attribute on an `enum` declares a one-to-one correspondence
+- `expand_bimap.rs` (~16502 tok, huge) — An `#[bimap]` attribute on an `enum` declares a one-to-one correspondence
 - `trivia.rs` (~3811 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/phf/`
 
