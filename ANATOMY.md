@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3144 | **Est. tokens:** ~7,513,244
-**Generated:** 2026-07-20 16:24 UTC
+**Files:** 3145 | **Est. tokens:** ~7,516,189
+**Generated:** 2026-07-20 17:04 UTC
 
 ## Token Budget Guide
 
@@ -57,7 +57,7 @@
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 74 | ~131,397 |
+| `examples/mindc_mind/` | 75 | ~133,793 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
 | `examples/native/` | 4 | ~527 |
@@ -411,7 +411,7 @@
 | `src/type_checker/` | 1 | ~12,223 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 41 | ~193,628 |
+| `std/` | 41 | ~194,177 |
 | `tests/` | 291 | ~500,296 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
@@ -836,7 +836,7 @@
 ### `examples/mindc_mind/`
 
 - `bootstrap_smoke.py` (~2329 tok, huge)
-- `check_driver.mind` (~2462 tok, huge) — ===========================================================================
+- `check_driver.mind` (~3134 tok, huge) — ===========================================================================
 - `collect_field_strings_smoke.py` (~1161 tok, large)
 - `cutover_coverage_measure.py` (~2238 tok, huge)
 - `EXPECTED.md` (~773 tok, large) — Phase 6.5 Stage 5 — Expected IR Text (APEX)
@@ -858,16 +858,16 @@
 - `now_ns_smoke.py` (~678 tok, large) — # Copyright 2025 STARGA Inc.
 - `oracle_parity_lint.py` (~3034 tok, huge)
 - `param_types_smoke.py` (~1273 tok, large)
-- `_ref_add.note` (~16 tok, tiny) — 43e94e222db7697ee39d835db60b4cc41abb5085eb3b662c738f5222d3fb87f9
-- `_ref_if_ret.note` (~16 tok, tiny) — 8da3221a49862dd0e29b39be182894c316cfb8927428cd838dfe7004a7200d1b
-- `_ref_main.note` (~16 tok, tiny) — ca6bd3736b8835f56e0d9676be58f9ab077eb68871045ca46d208f9d62fb663a
-- `_ref_recursion.note` (~16 tok, tiny) — 713ccff8513133cde6e525cdec775f683d95f2f673a6e91e3523ea103146e8c8
-- `_ref_struct_field.note` (~16 tok, tiny) — a4f59b3722cd337ea46da853babbf0e1da7347dbfcf4102c3cabf35051ab1129
-- `_ref_value_if.note` (~16 tok, tiny) — 8268a290c9ffc54e0494ec20225b1d89a6f71c64f1db10d73f499153d8ca490d
+- `_ref_add.note` (~16 tok, tiny) — 757f339973d282495a5d15f72a761b6baf3a6b38dc08deb95400e03318bc5de0
+- `_ref_if_ret.note` (~16 tok, tiny) — d042c5006591bd69365074c242559b25d031bb550f0d282255a57f3563c1ff45
+- `_ref_main.note` (~16 tok, tiny) — 52d6b1210f0b294848c30b4f7a96c4b203e2d560126f31efde31de931da34b50
+- `_ref_recursion.note` (~16 tok, tiny) — 320e76629d23b18074bd73d2a0849074be06099452bb530ed19e0657f32c6fc5
+- `_ref_struct_field.note` (~16 tok, tiny) — 062dd03998de380436f501819bf8ee1e05901d427a2f0ed3614310d020aa0e1b
+- `_ref_value_if.note` (~16 tok, tiny) — 5abd28b3622a896e51617f2bbe0f6976231cb607664c0471c4a3dbebfc5e72d5
 - `self_host_args_from_os_smoke.py` (~1356 tok, large)
 - `self_host_argv_smoke.py` (~1136 tok, large)
 - `self_host_body_smoke.py` (~3055 tok, huge)
-- `self_host_check_driver_smoke.py` (~1396 tok, large)
+- `self_host_check_driver_smoke.py` (~1810 tok, huge)
 - `selfhost_driver.mind` (~623 tok, large) — ===========================================================================
 - `self_host_dtype_tag_smoke.py` (~780 tok, large) — RI-B1 per-SSA dtype-tag gate (parser <-> nb_fp_* encoder connecting construct).
 - `self_host_loop_smoke.py` (~3420 tok, huge)
@@ -901,6 +901,7 @@
 - `self_host_native_simd_dot_q16_smoke.py` (~1486 tok, large) — RI-B2-S10 (#108) — native-ELF PACKED-SIMD Q16.16 DOT-PRODUCT, byte-identity rung.
 - `self_host_native_write8_smoke.py` (~929 tok, large) — RI-B2-S2 STEP A (#108) — de-risk the C1 "emit 8 LE bytes to stdout + hash" gate.
 - `self_host_native_write_f32_smoke.py` (~815 tok, large) — RI-B2-S8 STEP A (#108) — de-risk the raw-f32-bytes harness on a KNOWN f32.
+- `self_host_open_smoke.py` (~1310 tok, large)
 - `_selfhost_so.py` (~919 tok, large) — Shared self-host `.so` resolver for the examples/mindc_mind smokes.
 - `self_host_value_if_expr_smoke.py` (~1557 tok, huge)
 - `sha256_hash_smoke.py` (~732 tok, large) — # Copyright 2025 STARGA Inc.
@@ -4027,7 +4028,7 @@
 - `chacha20_poly1305.mind` (~3972 tok, huge) — std/chacha20_poly1305.mind — ChaCha20-Poly1305 AEAD (RFC 8439) in pure MIND.
 - `cli.mind` (~3211 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
 - `ecdsa_p256.mind` (~6517 tok, huge) — std/ecdsa_p256.mind — ECDSA signature VERIFICATION on NIST P-256
-- `fs.mind` (~4326 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
+- `fs.mind` (~4875 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
 - `hkdf.mind` (~1547 tok, huge) — std/hkdf.mind — HMAC-SHA256 (RFC 2104) + HKDF (RFC 5869) in pure MIND.
 - `hpack.mind` (~9694 tok, huge) — std/hpack.mind — HPACK header-compression DECODING (RFC 7541) in pure MIND.
 - `http2_frame.mind` (~4191 tok, huge) — std/http2_frame.mind — HTTP/2 framing layer (RFC 9113 §3.4, §4.1, §6) in

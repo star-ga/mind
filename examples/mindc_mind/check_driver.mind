@@ -12,10 +12,11 @@
 // (the last uses the pure-MIND Map/env). Reuses args_from_os() (std/cli) for real
 // argv, and __mind_read/__mind_write (raw syscalls, no libc) for I/O.
 //
-// HONEST LIMITATION (this slice): the source is read from STDIN (fd 0), NOT from
-// the positional path arguments. Reading a file BY PATH needs the 7th intrinsic
-// __mind_open (RFC 0005), which is not yet wired — that is the dedicated follow-up
-// (task #228). The path arguments and flags are still PARSED and reported here.
+// SOURCE INPUT: BY PATH via the __mind_open intrinsic (RI-C task #228) when a
+// positional path argument is given — std.fs read_file_native turns the path into
+// source bytes with zero libc (open(2) + read, no lseek/close). If NO positional
+// path is given, it falls back to reading STDIN (fd 0), so the earlier stdin mode
+// still works. An unreadable path reports "cannot open path" and exits 1.
 //
 // Flags mirrored from src/bin/mindc.rs Command::Check:
 //   paths: Vec<String>          — recognized + counted (source still from stdin)
@@ -38,6 +39,63 @@ pub fn ckd_read_stdin(buf: i64, cap: i64, got: i64) -> i64 {
         return got;
     }
     ckd_read_stdin(buf, cap, got + n)
+}
+
+// ckd_find_path — the first positional PATH argument: an argv entry (index >= 1)
+// that does NOT start with '-' and is NOT the value consumed by `--reporter`.
+// Returns argv[i]'s raw i64 pointer (a NUL-terminated C string, ready for
+// __mind_open), or 0 if there is no positional path. RECURSIVE + immutable — does
+// NOT use cli's args_first_positional_idx, which hits the loop-carry native
+// miscompile (task #230). `reporter_flag` is the pre-built "--reporter" String.
+fn ckd_find_path(a: Args, i: i64, n: i64, reporter_flag: String) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    let s: String = args_get(a, i);
+    if s.len > 0 {
+        if string_get_byte(s, 0) == 45 {
+            return ckd_find_path(a, i + 1, n, reporter_flag);
+        }
+    }
+    if i > 1 {
+        let prev: String = args_get(a, i - 1);
+        if string_eq(prev, reporter_flag) == 1 {
+            return ckd_find_path(a, i + 1, n, reporter_flag);
+        }
+    }
+    __mind_argv(i)
+}
+
+// ckd_read_src — read the source to check into `src` (up to `cap`). By-path
+// (RI-C task #228, __mind_open) if a positional path arg is present; otherwise the
+// stdin fallback. Statement-form (no struct-valued value-if). Returns bytes read,
+// or -1 if a path was given but could not be opened.
+fn ckd_read_src(a: Args, src: i64, cap: i64) -> i64 {
+    let path_ptr: i64 = ckd_find_path(a, 1, args_len(a), ckd_s_reporter());
+    if path_ptr != 0 {
+        return read_file_native(path_ptr, src, cap);
+    }
+    ckd_read_stdin(src, cap, 0)
+}
+
+// "check: cannot open path" note label ("cannot open path").
+pub fn ckd_msg_openerr() -> String {
+    let a: String = string_push_byte(string_new(), 99);
+    let b: String = string_push_byte(a, 97);
+    let c: String = string_push_byte(b, 110);
+    let d: String = string_push_byte(c, 110);
+    let e: String = string_push_byte(d, 111);
+    let f: String = string_push_byte(e, 116);
+    let g: String = string_push_byte(f, 32);
+    let h: String = string_push_byte(g, 111);
+    let i: String = string_push_byte(h, 112);
+    let j: String = string_push_byte(i, 101);
+    let k: String = string_push_byte(j, 110);
+    let l: String = string_push_byte(k, 32);
+    let m: String = string_push_byte(l, 112);
+    let nn: String = string_push_byte(m, 97);
+    let o: String = string_push_byte(nn, 116);
+    string_push_byte(o, 104)
 }
 
 // Does the report contain the 6-byte marker "ERROR:" (push_kw_error, main.mind)
@@ -205,10 +263,16 @@ pub fn main() -> i64 {
         }
     }
 
-    // Read the source to check from stdin.
+    // Read the source to check: BY PATH (RI-C task #228, __mind_open) if a
+    // positional path arg is given, else the stdin fallback.
     let cap: i64 = 4194304;
     let src: i64 = __mind_alloc(cap + 16);
-    let src_len: i64 = ckd_read_stdin(src, cap, 0);
+    let src_len: i64 = ckd_read_src(a, src, cap);
+    // A path was given but could not be opened -> report + exit 1.
+    if src_len < 0 {
+        let _e: i64 = ckd_note(ckd_msg_openerr());
+        return 1;
+    }
 
     // --no-typecheck gates the (only) self-hosted pass: emit nothing, report clean.
     if no_tc == 1 {

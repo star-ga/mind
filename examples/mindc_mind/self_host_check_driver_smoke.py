@@ -66,9 +66,20 @@ def build_check_elf(lib) -> bytes:
 
 
 def run_check(elf_path: pathlib.Path, source: str, extra_args: list[str]) -> tuple[int, str]:
+    """stdin-fallback mode: no positional path, source piped on stdin."""
     proc = subprocess.run(
         [str(elf_path), *extra_args],
         input=source.encode(),
+        capture_output=True,
+    )
+    return proc.returncode, proc.stdout.decode(errors="replace")
+
+
+def run_check_path(elf_path: pathlib.Path, src_file, extra_args: list[str]) -> tuple[int, str]:
+    """BY-PATH mode (RI-C #228): pass a real file path as a positional arg, no stdin."""
+    proc = subprocess.run(
+        [str(elf_path), *extra_args, str(src_file)],
+        input=b"",
         capture_output=True,
     )
     return proc.returncode, proc.stdout.decode(errors="replace")
@@ -101,37 +112,62 @@ def main() -> int:
         p.write_bytes(elf)
         p.chmod(p.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
-        # (1) clean source on stdin -> exit 0
-        code, out = run_check(p, CLEAN_SRC, ["clean.mind"])
+        clean_f = pathlib.Path(td) / "clean.mind"
+        clean_f.write_text(CLEAN_SRC)
+        bad_f = pathlib.Path(td) / "bad.mind"
+        bad_f.write_text(ERROR_SRC)
+
+        # (1) BY-PATH clean file -> exit 0 (RI-C #228: reads the real file via __mind_open)
+        code, out = run_check_path(p, clean_f, [])
         good = code == 0
         ok = ok and good
-        print(f"  {'PASS' if good else 'FAIL'}  clean source -> exit {code} (expected 0)")
+        print(f"  {'PASS' if good else 'FAIL'}  BY-PATH clean file -> exit {code} (expected 0)")
         print(f"          stdout: {out.strip()!r}")
 
-        # (2) type-error source on stdin -> exit 1, and stdout contains ERROR:
-        code, out = run_check(p, ERROR_SRC, ["bad.mind"])
+        # (2) BY-PATH type-error file -> exit 1, stdout contains ERROR:
+        code, out = run_check_path(p, bad_f, [])
         good = code == 1 and "ERROR:" in out
         ok = ok and good
-        print(f"  {'PASS' if good else 'FAIL'}  error source -> exit {code} (expected 1), "
+        print(f"  {'PASS' if good else 'FAIL'}  BY-PATH error file -> exit {code} (expected 1), "
               f"'ERROR:' in stdout: {'ERROR:' in out}")
         print(f"          stdout: {out.strip()!r}")
 
-        # (3) --no-typecheck gates the pass: even the error source is 'clean' -> exit 0
-        code, out = run_check(p, ERROR_SRC, ["--no-typecheck", "bad.mind"])
+        # (3) --no-typecheck gates the pass: error file reported clean -> exit 0
+        code, out = run_check_path(p, bad_f, ["--no-typecheck"])
         good = code == 0
         ok = ok and good
-        print(f"  {'PASS' if good else 'FAIL'}  --no-typecheck on error source -> exit {code} (expected 0)")
+        print(f"  {'PASS' if good else 'FAIL'}  --no-typecheck BY-PATH error file -> exit {code} (expected 0)")
 
-        # (4) --fix + --reporter json are recognized and surfaced as stubs on stdout
-        code, out = run_check(p, CLEAN_SRC, ["--fix", "--reporter", "json", "x.mind"])
+        # (4) --fix + --reporter json recognized + stubbed (path arg not swallowed as the value)
+        code, out = run_check_path(p, clean_f, ["--fix", "--reporter", "json"])
         good = code == 0 and "note:" in out
         ok = ok and good
-        print(f"  {'PASS' if good else 'FAIL'}  --fix/--reporter json stubs surfaced "
+        print(f"  {'PASS' if good else 'FAIL'}  --fix/--reporter json stubs surfaced BY-PATH "
               f"(exit {code}, 'note:' in stdout: {'note:' in out})")
         print(f"          stdout: {out.strip()!r}")
 
+        # (5) nonexistent path -> "cannot open path" + exit 1, no crash
+        code, out = run_check_path(p, pathlib.Path(td) / "does_not_exist.mind", [])
+        good = code == 1 and "open" in out
+        ok = ok and good
+        print(f"  {'PASS' if good else 'FAIL'}  nonexistent path -> exit {code} (expected 1), "
+              f"'open' note: {'open' in out}")
+        print(f"          stdout: {out.strip()!r}")
+
+        # (6) STDIN fallback (no positional path): clean source on stdin -> exit 0
+        code, out = run_check(p, CLEAN_SRC, [])
+        good = code == 0
+        ok = ok and good
+        print(f"  {'PASS' if good else 'FAIL'}  STDIN-fallback clean -> exit {code} (expected 0)")
+
+        # (7) STDIN fallback: error source on stdin -> exit 1
+        code, out = run_check(p, ERROR_SRC, [])
+        good = code == 1 and "ERROR:" in out
+        ok = ok and good
+        print(f"  {'PASS' if good else 'FAIL'}  STDIN-fallback error -> exit {code} (expected 1)")
+
     if ok:
-        print("\nALL PASS  (self-hosted lex+parse+TYPECHECK run in native ELF; exit-code contract holds)")
+        print("\nALL PASS  (by-path __mind_open read + stdin fallback; self-hosted lex+parse+TYPECHECK in native ELF)")
         return 0
     print("\nFAIL  check driver smoke")
     return 1
