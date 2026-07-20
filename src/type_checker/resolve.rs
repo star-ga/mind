@@ -169,6 +169,16 @@ struct ModuleSyms {
     enums: BTreeMap<String, BTreeSet<String>>,
 }
 
+impl ModuleSyms {
+    /// A name is module-resolvable iff it is a per-module declaration/import name
+    /// OR a std-surface export. The std set is checked separately (not copied
+    /// into `names`) so building `ModuleSyms` stays O(module decls), not
+    /// O(module decls + whole std surface), on every recursive check call.
+    fn name_resolvable(&self, name: &str) -> bool {
+        self.names.contains(name) || stdlib_export_names().contains(name)
+    }
+}
+
 /// Collect the top-level declaration names a module defines (fn / const / let /
 /// struct / enum / type-alias / extern), recursing into the `Block` that a
 /// `module NAME { ... }` body unwraps into. Pure: it does NOT resolve imports,
@@ -270,6 +280,30 @@ fn stdlib_exports() -> &'static BTreeMap<String, BTreeSet<String>> {
     })
 }
 
+/// The flattened set of every std-surface export name, built once.
+///
+/// The std surface is constant across a compile, so its (large) name set must
+/// NOT be copied into every per-module `ModuleSyms::names` — `collect_module_syms`
+/// is run once per `check_module_types_in_file` invocation, and that function
+/// recurses per top-level item / block / fn body, so re-`extend`-ing thousands of
+/// std names into a fresh `BTreeSet` each call was O(items x std_names) — the
+/// dominant cost of `mindc check main.mind`. Instead cache the flat set here and
+/// check membership against it separately (see `ModuleSyms::name_resolvable` and
+/// the `suggest` candidate chain). Diagnostics are unchanged: a name is resolvable
+/// iff it is in the per-module set OR this std set (same union as before), and the
+/// suggestion candidate set is the same (`closest_identifier` tie-breaks
+/// lexicographically, so iteration order never reaches output).
+fn stdlib_export_names() -> &'static BTreeSet<String> {
+    static CACHE: OnceLock<BTreeSet<String>> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        let mut s = BTreeSet::new();
+        for exports in stdlib_exports().values() {
+            s.extend(exports.iter().cloned());
+        }
+        s
+    })
+}
+
 /// Collect the module-level resolvable-name set. `injected` carries any symbol
 /// names the cross-module resolver already merged into the type env (so a
 /// populated project table resolves imports precisely). On top of that we
@@ -288,18 +322,19 @@ fn collect_module_syms(module: &Module, injected: &BTreeSet<String>) -> ModuleSy
     for v in ["Result", "Option", "Ok", "Err", "Some", "None"] {
         names.insert(v.to_string());
     }
-    let std_exports = stdlib_exports();
     // The std-surface is the language standard library: its public names are
     // always resolvable. std modules reference each other WITHOUT explicit
     // imports (they are compiled as one bundle — e.g. std/io.mind calls
     // std.string's `string_push_byte` with no import line), and a std-surface
-    // function is never a *genuinely-undefined* reference. So make the whole
-    // surface visible rather than per-import. (Whether a user module should be
-    // forced to `import std.X` before calling it is a separate "missing import"
-    // lint, not the undefined-reference question issue #23 owns.)
-    for exports in std_exports.values() {
-        names.extend(exports.iter().cloned());
-    }
+    // function is never a *genuinely-undefined* reference. So the whole surface
+    // is visible rather than per-import. (Whether a user module should be forced
+    // to `import std.X` before calling it is a separate "missing import" lint,
+    // not the undefined-reference question issue #23 owns.)
+    //
+    // The std name set is CONSTANT across the compile, so it is NOT copied into
+    // this per-module `names` — that copy was O(items x std_names), the dominant
+    // cost of `mindc check main.mind`. It is checked separately via
+    // `stdlib_export_names()` in `name_resolvable` and the `suggest` chain.
     let mut enums: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     collect_enum_variants(module, &mut enums);
     ModuleSyms { names, enums }
@@ -449,7 +484,8 @@ fn suggest(name: &str, scopes: &Scopes, syms: &ModuleSyms) -> Option<String> {
         .iter()
         .flat_map(|f| f.iter())
         .map(String::as_str)
-        .chain(syms.names.iter().map(String::as_str));
+        .chain(syms.names.iter().map(String::as_str))
+        .chain(stdlib_export_names().iter().map(String::as_str));
     for known in candidates {
         let d = super::levenshtein(name, known);
         if d == 0 || d > max_dist {
@@ -491,7 +527,7 @@ struct Resolver<'a> {
 impl<'a> Resolver<'a> {
     fn ident_resolvable(&self, name: &str) -> bool {
         self.scopes.contains(name)
-            || self.syms.names.contains(name)
+            || self.syms.name_resolvable(name)
             // `bytes` is a builtin fixed-byte-buffer type usable as a value base
             // for `bytes[N].zero()` (a zeroed N-byte buffer). A user binding named
             // `bytes` shadows it via the `scopes` check above.
@@ -597,7 +633,7 @@ impl<'a> Resolver<'a> {
         if !self.scopes.contains(name) {
             return false;
         }
-        if self.syms.names.contains(name)
+        if self.syms.name_resolvable(name)
             || name.contains("::")
             || name == "bytes"
             || name.starts_with("__mind_")
@@ -791,7 +827,7 @@ impl<'a> Resolver<'a> {
                 // injected cross-module symbols). Forward-declared module state
                 // is a module-level name, so it still resolves — when in doubt
                 // (any known name), we keep accepting.
-                if !self.scopes.contains(name) && !self.syms.names.contains(name) {
+                if !self.scopes.contains(name) && !self.syms.name_resolvable(name) {
                     let suggestion = suggest(name, &self.scopes, self.syms);
                     self.out.push(Unresolved {
                         name: name.clone(),
