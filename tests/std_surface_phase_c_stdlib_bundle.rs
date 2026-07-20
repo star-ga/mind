@@ -54,7 +54,7 @@ fn bundled_stdlib_resolves_use_std_vec_end_to_end() {
                     let v2 = vec_push(v, 42)\n\
                     let n = vec_len(v2)\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         diags.is_empty(),
@@ -80,7 +80,7 @@ fn bundled_stdlib_resolves_all_four_modules() {
                     let m = map_new()\n\
                     let out = stdout()\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         diags.is_empty(),
@@ -99,7 +99,7 @@ fn bundled_stdlib_phase_b_rejects_wrong_arity() {
     // the extra arg even though Phase A would have accepted it.
     let consumer = "use std.vec\nlet v = vec_new(99)\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         !diags.is_empty(),

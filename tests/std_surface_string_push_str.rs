@@ -35,7 +35,7 @@ fn string_push_str_resolves_against_bundled_stdlib() {
                     let c = string_push_str(a, b)\n\
                     let n = string_len(c)\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         diags.is_empty(),
@@ -60,7 +60,7 @@ fn string_push_str_composes_with_push_i64_and_ansi() {
                     let l4 = string_push_ansi_sgr(l3, sgr_reset())\n\
                     let n = string_len(l4)\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         diags.is_empty(),
@@ -76,7 +76,7 @@ fn string_push_str_phase_b_rejects_wrong_arity() {
                     let s = string_new()\n\
                     let bad = string_push_str(s)\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         !diags.is_empty(),

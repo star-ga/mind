@@ -12,8 +12,6 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
-use std::collections::HashMap;
-
 use libmind::parser;
 use libmind::type_checker;
 use libmind::types::DType;
@@ -24,7 +22,7 @@ use libmind::types::ValueType;
 fn tensor_plus_tensor_same_shape() {
     let src = "a + b";
     let m = parser::parse(src).unwrap();
-    let mut env: HashMap<String, ValueType> = HashMap::new();
+    let mut env = libmind::type_checker::TypeEnv::default();
     env.insert(
         "a".to_string(),
         ValueType::Tensor(TensorType::new(
@@ -47,7 +45,7 @@ fn tensor_plus_tensor_same_shape() {
 fn tensor_plus_tensor_broadcast_tail() {
     let src = "a + b";
     let m = parser::parse(src).unwrap();
-    let mut env: HashMap<String, ValueType> = HashMap::new();
+    let mut env = libmind::type_checker::TypeEnv::default();
     env.insert(
         "a".to_string(),
         ValueType::Tensor(TensorType::new(
@@ -70,7 +68,7 @@ fn tensor_plus_tensor_broadcast_tail() {
 fn tensor_plus_scalar_promote_i32_to_f32() {
     let src = "a + 1";
     let m = parser::parse(src).unwrap();
-    let mut env: HashMap<String, ValueType> = HashMap::new();
+    let mut env = libmind::type_checker::TypeEnv::default();
     env.insert(
         "a".to_string(),
         ValueType::Tensor(TensorType::new(
@@ -86,7 +84,7 @@ fn tensor_plus_scalar_promote_i32_to_f32() {
 fn dtype_mismatch_rejected() {
     let src = "a + b";
     let m = parser::parse(src).unwrap();
-    let mut env: HashMap<String, ValueType> = HashMap::new();
+    let mut env = libmind::type_checker::TypeEnv::default();
     env.insert(
         "a".to_string(),
         ValueType::Tensor(TensorType::new(
@@ -109,7 +107,7 @@ fn dtype_mismatch_rejected() {
 fn shape_mismatch_rejected() {
     let src = "a + b";
     let m = parser::parse(src).unwrap();
-    let mut env: HashMap<String, ValueType> = HashMap::new();
+    let mut env = libmind::type_checker::TypeEnv::default();
     env.insert(
         "a".to_string(),
         ValueType::Tensor(TensorType::new(

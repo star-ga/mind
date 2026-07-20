@@ -71,7 +71,7 @@ fn std_cli_consumer_resolves_full_public_surface() {
                     let v = args_flag_value(a1, s, empty)\n\
                     let pos = args_first_positional_idx(a1)\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         diags.is_empty(),
@@ -88,7 +88,7 @@ fn std_cli_phase_b_rejects_wrong_arity() {
     // resolve by name.
     let consumer = "use std.cli\nlet n = args_len()\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         !diags.is_empty(),

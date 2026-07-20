@@ -60,7 +60,7 @@ fn tensor_vt(dtype: DType, shape: Vec<ShapeDim>) -> ValueType {
 /// Build an env pre-populated with named tensors so tests can use
 /// `Literal::Ident("name")` as the RHS without needing the `tensor.zeros` builtin.
 fn env_with(entries: &[(&str, DType, &[usize])]) -> TypeEnv {
-    let mut env = TypeEnv::new();
+    let mut env = TypeEnv::default();
     for (name, dtype, dims) in entries {
         let shape = dims.iter().copied().map(ShapeDim::Known).collect();
         env.insert(name.to_string(), tensor_vt(dtype.clone(), shape));
@@ -399,7 +399,7 @@ fn symbolic_dim_same_n_no_conflict() {
         items: vec![fn_node, let_x, let_y, call_node],
     };
 
-    let mut env = TypeEnv::new();
+    let mut env = TypeEnv::default();
     env.insert(
         "x_src".to_string(),
         tensor_vt(DType::F32, vec![ShapeDim::Known(4), ShapeDim::Known(8)]),
@@ -488,7 +488,7 @@ fn symbolic_dim_mismatch_n_conflict() {
         items: vec![fn_node, let_x, let_y, call_node],
     };
 
-    let mut env = TypeEnv::new();
+    let mut env = TypeEnv::default();
     env.insert(
         "x_src".to_string(),
         tensor_vt(DType::F32, vec![ShapeDim::Known(4), ShapeDim::Known(8)]),
@@ -611,7 +611,7 @@ fn shape_annotation_does_not_change_value_type() {
     let module_annotated = Module {
         items: vec![let_tensor("x", "f32", &["4", "8"], "src")],
     };
-    let mut env = TypeEnv::new();
+    let mut env = TypeEnv::default();
     env.insert("src".to_string(), expected_vt.clone());
     let src = "let x: Tensor<f32, [4, 8]> = src";
     let diags_annotated = check_module(&module_annotated, src, &env);

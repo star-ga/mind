@@ -41,7 +41,7 @@ use libmind::type_checker::check_module_types;
 /// diagnostic codes produced (in order).
 fn check_codes(src: &str) -> Vec<&'static str> {
     let module = parser::parse(src).unwrap_or_else(|e| panic!("parse error: {e:?}"));
-    let env = std::collections::HashMap::new();
+    let env = libmind::type_checker::TypeEnv::default();
     check_module_types(&module, src, &env)
         .iter()
         .map(|d| d.code)

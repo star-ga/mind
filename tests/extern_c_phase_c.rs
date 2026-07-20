@@ -334,7 +334,7 @@ fn end_to_end_win64_struct_lower_to_ir() {
     let module = parser::parse(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
 
     // Type-check: must succeed (struct is repr(C)).
-    let diags = check_module_types_in_file(&module, src, None, &TypeEnv::new());
+    let diags = check_module_types_in_file(&module, src, None, &TypeEnv::default());
     assert!(
         diags.is_empty(),
         "type-check must succeed for Win64 repr(C) extern block; diags: {diags:?}"

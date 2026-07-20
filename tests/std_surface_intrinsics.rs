@@ -54,7 +54,7 @@ fn scalar(m: &mut IRModule, v: i64) -> ValueId {
 #[test]
 fn alloc_one_i64_arg_typechecks() {
     let module = module_of(vec![call("__mind_alloc", vec![lit_int(64)])]);
-    let env = HashMap::new();
+    let env = libmind::type_checker::TypeEnv::default();
     let diags = check_module_types(&module, "", &env);
     assert!(
         diags.is_empty(),
@@ -68,7 +68,7 @@ fn realloc_two_i64_args_typechecks() {
         "__mind_realloc",
         vec![lit_int(0xdead_beef), lit_int(128)],
     )]);
-    let env = HashMap::new();
+    let env = libmind::type_checker::TypeEnv::default();
     let diags = check_module_types(&module, "", &env);
     assert!(
         diags.is_empty(),
@@ -79,7 +79,7 @@ fn realloc_two_i64_args_typechecks() {
 #[test]
 fn free_one_i64_arg_typechecks() {
     let module = module_of(vec![call("__mind_free", vec![lit_int(42)])]);
-    let env = HashMap::new();
+    let env = libmind::type_checker::TypeEnv::default();
     let diags = check_module_types(&module, "", &env);
     assert!(
         diags.is_empty(),
@@ -93,7 +93,7 @@ fn read_four_i64_args_typechecks() {
         "__mind_read",
         vec![lit_int(1), lit_int(2), lit_int(3), lit_int(4)],
     )]);
-    let env = HashMap::new();
+    let env = libmind::type_checker::TypeEnv::default();
     let diags = check_module_types(&module, "", &env);
     assert!(
         diags.is_empty(),
@@ -107,7 +107,7 @@ fn write_four_i64_args_typechecks() {
         "__mind_write",
         vec![lit_int(1), lit_int(2), lit_int(3), lit_int(4)],
     )]);
-    let env = HashMap::new();
+    let env = libmind::type_checker::TypeEnv::default();
     let diags = check_module_types(&module, "", &env);
     assert!(
         diags.is_empty(),
@@ -120,7 +120,7 @@ fn write_four_i64_args_typechecks() {
 #[test]
 fn load_i64_one_i64_arg_typechecks() {
     let module = module_of(vec![call("__mind_load_i64", vec![lit_int(0xdead_beef)])]);
-    let env = HashMap::new();
+    let env = libmind::type_checker::TypeEnv::default();
     let diags = check_module_types(&module, "", &env);
     assert!(
         diags.is_empty(),
@@ -134,7 +134,7 @@ fn store_i64_two_i64_args_typechecks() {
         "__mind_store_i64",
         vec![lit_int(0xdead_beef), lit_int(42)],
     )]);
-    let env = HashMap::new();
+    let env = libmind::type_checker::TypeEnv::default();
     let diags = check_module_types(&module, "", &env);
     assert!(
         diags.is_empty(),
@@ -147,7 +147,7 @@ fn store_i64_two_i64_args_typechecks() {
 #[test]
 fn load_i8_one_i64_arg_typechecks() {
     let module = module_of(vec![call("__mind_load_i8", vec![lit_int(0xdead_beef)])]);
-    let env = HashMap::new();
+    let env = libmind::type_checker::TypeEnv::default();
     let diags = check_module_types(&module, "", &env);
     assert!(
         diags.is_empty(),
@@ -161,7 +161,7 @@ fn store_i8_two_i64_args_typechecks() {
         "__mind_store_i8",
         vec![lit_int(0xdead_beef), lit_int(0x42)],
     )]);
-    let env = HashMap::new();
+    let env = libmind::type_checker::TypeEnv::default();
     let diags = check_module_types(&module, "", &env);
     assert!(
         diags.is_empty(),
@@ -175,7 +175,7 @@ fn store_i8_two_i64_args_typechecks() {
 fn alloc_wrong_arity_is_a_clear_error() {
     // alloc takes one arg — give it two
     let module = module_of(vec![call("__mind_alloc", vec![lit_int(1), lit_int(2)])]);
-    let env = HashMap::new();
+    let env = libmind::type_checker::TypeEnv::default();
     let diags = check_module_types(&module, "", &env);
     assert!(!diags.is_empty(), "wrong arity must produce a diagnostic");
     let msg = &diags[0].message;
@@ -192,7 +192,7 @@ fn write_wrong_arity_is_a_clear_error() {
         "__mind_write",
         vec![lit_int(1), lit_int(2), lit_int(3)],
     )]);
-    let env = HashMap::new();
+    let env = libmind::type_checker::TypeEnv::default();
     let diags = check_module_types(&module, "", &env);
     assert!(!diags.is_empty());
     let msg = &diags[0].message;
@@ -219,7 +219,7 @@ fn tensor_arg_to_intrinsic_is_rejected_with_phase_2_pointer() {
         span: Span::new(0, 0),
     };
     let module = module_of(vec![call("__mind_alloc", vec![tensor_expr])]);
-    let env = HashMap::new();
+    let env = libmind::type_checker::TypeEnv::default();
     let diags = check_module_types(&module, "", &env);
     assert!(!diags.is_empty(), "tensor arg must be rejected");
     let msg = &diags[0].message;
@@ -235,7 +235,7 @@ fn tensor_arg_to_intrinsic_is_rejected_with_phase_2_pointer() {
 #[test]
 fn unknown_mind_intrinsic_still_errors() {
     let module = module_of(vec![call("__mind_NOT_REAL", vec![lit_int(1)])]);
-    let env = HashMap::new();
+    let env = libmind::type_checker::TypeEnv::default();
     let diags = check_module_types(&module, "", &env);
     assert!(
         !diags.is_empty(),

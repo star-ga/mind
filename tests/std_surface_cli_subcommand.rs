@@ -34,7 +34,7 @@ fn args_subcommand_resolves_against_bundled_stdlib() {
                     let sub = args_subcommand(a)\n\
                     let n = string_len(sub)\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         diags.is_empty(),
@@ -58,7 +58,7 @@ fn args_subcommand_eq_realistic_dispatch_shape() {
                     let is_run = args_subcommand_eq(a, v_run)\n\
                     let is_test = args_subcommand_eq(a, v_test)\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         diags.is_empty(),
@@ -72,7 +72,7 @@ fn args_subcommand_phase_b_rejects_wrong_arity() {
     let table = build_table_with_stdlib();
     let consumer = "use std.cli\nlet sub = args_subcommand()\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         !diags.is_empty(),

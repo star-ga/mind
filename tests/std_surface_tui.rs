@@ -48,7 +48,7 @@ fn tui_cursor_and_screen_composers_resolve() {
                     let s8 = tui_scroll_up(s7, 4)\n\
                     let s9 = tui_leave_alt_screen(s8)\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         diags.is_empty(),
@@ -94,7 +94,7 @@ fn tui_phase_b_rejects_wrong_arity() {
                     let s0 = string_new()\n\
                     let bad = tui_cursor_to(s0)\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         !diags.is_empty(),
@@ -117,7 +117,7 @@ fn tui_terminal_size_resolves_and_carries_accessors() {
                     let c = tui_term_cols(ts)\n\
                     let req = tui_tiocgwinsz()\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         diags.is_empty(),
@@ -158,7 +158,7 @@ fn tui_box_widget_constructs_and_renders() {
                     let w = tui_box_width(b)\n\
                     let h = tui_box_height(b)\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         diags.is_empty(),
@@ -205,7 +205,7 @@ fn tui_text_widget_renders_with_and_without_style() {
                     let frame1 = tui_text_render(frame0, red, payload.addr, payload.len)\n\
                     let sgr = tui_text_sgr(red)\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         diags.is_empty(),

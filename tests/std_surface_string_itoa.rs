@@ -39,7 +39,7 @@ fn string_push_i64_resolves_against_bundled_stdlib() {
                     let s3 = string_push_i64(s2, 0 - 7)\n\
                     let n = string_len(s3)\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         diags.is_empty(),
@@ -59,7 +59,7 @@ fn string_push_ansi_sgr_composes_itoa_with_escape_framing() {
                     let s3 = string_push_ansi_sgr(s2, sgr_reset())\n\
                     let n = string_len(s3)\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         diags.is_empty(),
@@ -80,7 +80,7 @@ fn string_push_i64_phase_b_rejects_wrong_arity() {
                     let s = string_new()\n\
                     let bad = string_push_i64(s)\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         !diags.is_empty(),

@@ -413,7 +413,7 @@ fn direct_escape() -> i64 {
 }
 "#;
     let module = parse(src).expect("parse should succeed");
-    let diags = check_module_types(&module, src, &TypeEnv::new());
+    let diags = check_module_types(&module, src, &TypeEnv::default());
 
     // There must be at least one safety::region_escape diagnostic.
     assert!(
@@ -438,7 +438,7 @@ fn inline_escape() -> i64 {
 }
 "#;
     let module = parse(src).expect("parse should succeed");
-    let diags = check_module_types(&module, src, &TypeEnv::new());
+    let diags = check_module_types(&module, src, &TypeEnv::default());
 
     assert!(
         !diags.is_empty(),
@@ -463,7 +463,7 @@ fn scalar_ok() -> i64 {
 }
 "#;
     let module = parse(src).expect("parse should succeed");
-    let diags = check_module_types(&module, src, &TypeEnv::new());
+    let diags = check_module_types(&module, src, &TypeEnv::default());
 
     let escape_diags: Vec<_> = diags
         .iter()
@@ -487,7 +487,7 @@ fn vec_escape() -> i64 {
 }
 "#;
     let module = parse(src).expect("parse should succeed");
-    let diags = check_module_types(&module, src, &TypeEnv::new());
+    let diags = check_module_types(&module, src, &TypeEnv::default());
 
     assert!(
         !diags.is_empty(),

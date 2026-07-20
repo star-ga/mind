@@ -36,7 +36,7 @@ fn io_isatty_resolves_against_bundled_stdlib() {
                     let out = stdout()\n\
                     let tty = io_isatty(out)\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         diags.is_empty(),
@@ -57,7 +57,7 @@ fn sgr_constants_resolve_and_are_i64() {
                     let fd = sgr_fg_default()\n\
                     let bd = sgr_bg_default()\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         diags.is_empty(),
@@ -71,7 +71,7 @@ fn io_isatty_phase_b_rejects_wrong_arity() {
     let table = build_table_with_stdlib();
     let consumer = "use std.io\nlet t = io_isatty()\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         !diags.is_empty(),

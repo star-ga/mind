@@ -119,7 +119,7 @@ fn use_std_vec_resolves_vec_new_call() {
     // accepts it.
     let consumer_src = "use std.vec\nlet x = vec_new()\n";
     let ast = parser::parse(consumer_src).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer_src, None, &env, &table);
     assert!(
         diags.is_empty(),
@@ -133,7 +133,7 @@ fn use_std_io_resolves_print_bytes_call() {
     let table = build_stdlib_table();
     let consumer_src = "use std.io\nlet n = print_bytes(0, 0)\n";
     let ast = parser::parse(consumer_src).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer_src, None, &env, &table);
     assert!(
         diags.is_empty(),
@@ -150,7 +150,7 @@ fn unimported_module_does_not_pollute_consumer_env() {
     // `Node::Import` arm running.
     let consumer_src = "let x = vec_new()\n";
     let ast = parser::parse(consumer_src).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer_src, None, &env, &table);
     assert!(
         !diags.is_empty(),
@@ -165,7 +165,7 @@ fn wrong_module_path_does_not_resolve() {
     // no entry in the table); calls to `vec_new` must still fail.
     let consumer_src = "use std.does_not_exist\nlet x = vec_new()\n";
     let ast = parser::parse(consumer_src).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer_src, None, &env, &table);
     assert!(
         !diags.is_empty(),

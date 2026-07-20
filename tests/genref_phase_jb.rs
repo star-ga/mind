@@ -62,7 +62,7 @@ fn alloc_handle() -> i64 {
 "#;
     let module = parse(src).expect("parse should succeed");
     // No type-check errors for a valid gen_alloc usage that returns the handle.
-    let diags = check_module_types(&module, src, &TypeEnv::new());
+    let diags = check_module_types(&module, src, &TypeEnv::default());
     // The only expected diagnostic would be genref_unchecked_deref if the
     // handle were used — but here we just return the i64 handle, which is safe.
     let genref_errs: Vec<_> = diags
@@ -91,7 +91,7 @@ fn use_without_guard() -> i64 {
 "#;
     // `let p = gen_deref(r)` followed by `p` (not a match/if) → diagnostic.
     let module = parse(src).expect("parse should succeed");
-    let diags = check_module_types(&module, src, &TypeEnv::new());
+    let diags = check_module_types(&module, src, &TypeEnv::default());
     assert!(
         !diags.is_empty(),
         "expected at least one diagnostic for unguarded gen_deref; got none"
@@ -119,7 +119,7 @@ fn use_with_guard(r: i64) -> i64 {
 }
 "#;
     let module = parse(src).expect("parse should succeed");
-    let diags = check_module_types(&module, src, &TypeEnv::new());
+    let diags = check_module_types(&module, src, &TypeEnv::default());
     let genref_errs: Vec<_> = diags
         .iter()
         .filter(|d| format!("{d:?}").contains("genref_unchecked_deref"))
@@ -148,7 +148,7 @@ fn use_with_if_guard(r: i64) -> i64 {
 }
 "#;
     let module = parse(src).expect("parse should succeed");
-    let diags = check_module_types(&module, src, &TypeEnv::new());
+    let diags = check_module_types(&module, src, &TypeEnv::default());
     let genref_errs: Vec<_> = diags
         .iter()
         .filter(|d| format!("{d:?}").contains("genref_unchecked_deref"))
@@ -174,7 +174,7 @@ fn bare_deref(r: i64) -> i64 {
 "#;
     // gen_deref as a bare expression — result discarded, no guard possible.
     let module = parse(src).expect("parse should succeed");
-    let diags = check_module_types(&module, src, &TypeEnv::new());
+    let diags = check_module_types(&module, src, &TypeEnv::default());
     assert!(
         !diags.is_empty(),
         "expected at least one diagnostic for bare gen_deref expression; got none"
