@@ -30,6 +30,9 @@ fn has_e2003(errs: &[String]) -> bool {
 fn has_e2002(errs: &[String]) -> bool {
     errs.iter().any(|e| e.contains("E2002"))
 }
+fn has_e2024(errs: &[String]) -> bool {
+    errs.iter().any(|e| e.contains("E2024"))
+}
 
 #[test]
 fn undefined_call_is_reported_e2003() {
@@ -87,6 +90,50 @@ fn generic_type_param_resolves_in_body() {
     assert!(
         !has_e2002(&errs),
         "a generic fn's type param must resolve in its body (no E2002); got {errs:?}"
+    );
+}
+
+#[test]
+fn unregistered_mind_intrinsic_warns_e2024_but_still_checks_clean() {
+    // A `__mind_*`-prefixed call that is NOT a registered
+    // STD_SURFACE_INTRINSICS entry (a real self-host-only intrinsic, or a
+    // genuine typo) used to have ZERO diagnostic coverage: `call_resolvable`'s
+    // blanket prefix acceptance silently passed it through. It must now warn
+    // (E2024) — but the call is still "resolvable" so it must NOT be flagged
+    // E2003, and the severity must be Warning (never blocks `mindc check`).
+    let src = "fn f() -> i64 {\n    let x = __mind_totally_bogus_xyz(1, 2, 3);\n    x\n}\n";
+    let errs = diagnostics(src);
+    assert!(
+        has_e2024(&errs),
+        "an unregistered __mind_* call must warn E2024; got {errs:?}"
+    );
+    assert!(
+        !has_e2003(&errs),
+        "an unregistered __mind_* call still resolves via call_resolvable's \
+         blanket prefix acceptance — it must never ALSO be E2003; got {errs:?}"
+    );
+    let module = parse(src).expect("parse");
+    let diags =
+        check_module_types_in_file(&module, src, Some("t.mind"), &Default::default());
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == "E2024" && d.severity == libmind::diagnostics::Severity::Warning),
+        "E2024 must be emitted at Warning severity, not Error; got {diags:?}"
+    );
+}
+
+#[test]
+fn registered_mind_intrinsic_does_not_warn_e2024() {
+    // A REGISTERED STD_SURFACE_INTRINSICS entry (`__mind_load_i8`, arity 1)
+    // must not trip the new self-host-only-call warning — only unregistered
+    // `__mind_*` names should.
+    let errs = diagnostics(
+        "fn f(p: i64) -> i64 {\n    let x = __mind_load_i8(p);\n    x\n}\n",
+    );
+    assert!(
+        !has_e2024(&errs),
+        "a registered __mind_* intrinsic must not warn E2024; got {errs:?}"
     );
 }
 

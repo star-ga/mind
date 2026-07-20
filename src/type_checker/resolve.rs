@@ -134,6 +134,17 @@ pub const UNDECLARED_ASSIGN_CODE: &str = "E2009";
 /// COMPILE instead of at link.
 pub const FN_VALUE_CALL_CODE: &str = "E2012";
 
+/// Self-host-only-intrinsic diagnostic code. A call whose callee resolves
+/// (via `call_resolvable`'s blanket `__mind_*` acceptance) but is NOT one of
+/// the arity-checked, cross-backend `STD_SURFACE_INTRINSICS` entries. Advisory
+/// only — `mindc check` still passes (this is a Warning, not an Error), but it
+/// tells the user `mindc build`'s Rust/MLIR backends cannot emit this call.
+/// Before this code existed, such a call was silently accepted with zero
+/// diagnostic at check-time, then either failed to link or (via the
+/// launcher-script fallback in `src/project/mod.rs`) produced a script instead
+/// of a native binary while `mindc build` still reported "Finished" exit 0.
+pub const SELF_HOST_ONLY_CALL_CODE: &str = "E2024";
+
 /// An unresolved reference found by the pass, with the kind that selects the
 /// diagnostic code/message. Spans are AST byte-offset spans; the caller renders
 /// them through the same `diag_from_span` localization as every other code.
@@ -154,6 +165,17 @@ pub struct Unresolved {
     /// binding (a function value) and to nothing emittable — selects the
     /// `FN_VALUE_CALL_CODE` diagnostic.
     pub fn_value_call: bool,
+}
+
+/// A call that resolves (never blocks `mindc check`) but whose callee is only
+/// accepted through `call_resolvable`'s blanket `__mind_*` acceptance rather
+/// than a registered, arity-checked `STD_SURFACE_INTRINSICS` entry — today
+/// that's the native-ELF self-host-only intrinsics (`__mind_argc`/
+/// `__mind_argv`/`__mind_open`), but it also catches a genuinely-misspelled
+/// `__mind_*` name, which otherwise had zero diagnostic coverage at all.
+pub struct SelfHostOnlyCall {
+    pub name: String,
+    pub span: crate::ast::Span,
 }
 
 /// The module-level resolution context, built once per module.
@@ -522,6 +544,7 @@ struct Resolver<'a> {
     syms: &'a ModuleSyms,
     scopes: Scopes,
     out: Vec<Unresolved>,
+    self_host_only: Vec<SelfHostOnlyCall>,
 }
 
 impl<'a> Resolver<'a> {
@@ -749,6 +772,24 @@ impl<'a> Resolver<'a> {
             }
             Node::Lit(_, _) => {}
             Node::Call { callee, args, span } => {
+                // Advisory, orthogonal to the resolvable/unresolved decision
+                // below: a callee that resolves ONLY through the blanket
+                // `__mind_*` acceptance in `call_resolvable` (not a registered
+                // `STD_SURFACE_INTRINSICS` entry) gets zero arity/existence
+                // checking from either this pass or the type-checker's
+                // `check_std_surface_intrinsic`. Flag it as a Warning so
+                // `mindc check` stays green (no behavior change for legitimate
+                // self-host-only callers like `std/cli.mind`/`std/fs.mind`)
+                // but the gap is no longer silent.
+                #[cfg(feature = "std-surface")]
+                if callee.starts_with("__mind_")
+                    && super::std_surface_intrinsic_arity(callee).is_none()
+                {
+                    self.self_host_only.push(SelfHostOnlyCall {
+                        name: callee.clone(),
+                        span: *span,
+                    });
+                }
                 // A payload-variant constructor typo (`Color::Rde(x)`) is the
                 // call-position twin of the value-position case above: head is a
                 // local enum, variant is unknown → silent fold to tag 0.
@@ -1060,13 +1101,15 @@ impl<'a> Resolver<'a> {
 
 /// Resolve undefined references inside one fn body. `params` are pre-bound into
 /// the base frame; `injected` is the set of cross-module symbol names already
-/// merged into the type env (empty in the single-file check path).
+/// merged into the type env (empty in the single-file check path). Returns the
+/// genuinely-unresolved references alongside advisory self-host-only-intrinsic
+/// call sites (see `SelfHostOnlyCall`) — the latter never blocks `mindc check`.
 pub fn resolve_fn_body(
     body: &[Node],
     param_names: &[String],
     module: &Module,
     injected: &BTreeSet<String>,
-) -> Vec<Unresolved> {
+) -> (Vec<Unresolved>, Vec<SelfHostOnlyCall>) {
     debug_assert!(
         BARE_BUILTINS.windows(2).all(|w| w[0] < w[1]),
         "BARE_BUILTINS must be sorted ascending and unique for binary_search"
@@ -1080,9 +1123,10 @@ pub fn resolve_fn_body(
         syms: &syms,
         scopes,
         out: Vec::new(),
+        self_host_only: Vec::new(),
     };
     for stmt in body {
         resolver.walk(stmt);
     }
-    resolver.out
+    (resolver.out, resolver.self_host_only)
 }

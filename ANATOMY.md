@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3145 | **Est. tokens:** ~7,517,171
-**Generated:** 2026-07-20 17:58 UTC
+**Files:** 3145 | **Est. tokens:** ~7,518,331
+**Generated:** 2026-07-20 22:59 UTC
 
 ## Token Budget Guide
 
@@ -57,7 +57,7 @@
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 75 | ~133,793 |
+| `examples/mindc_mind/` | 75 | ~133,812 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
 | `examples/native/` | 4 | ~527 |
@@ -408,11 +408,11 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,979 |
-| `src/type_checker/` | 1 | ~12,223 |
+| `src/type_checker/` | 1 | ~12,882 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~194,177 |
-| `tests/` | 291 | ~500,755 |
+| `tests/` | 291 | ~501,237 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -836,7 +836,7 @@
 ### `examples/mindc_mind/`
 
 - `bootstrap_smoke.py` (~2329 tok, huge)
-- `check_driver.mind` (~3134 tok, huge) — ===========================================================================
+- `check_driver.mind` (~3153 tok, huge) — ===========================================================================
 - `collect_field_strings_smoke.py` (~1161 tok, large)
 - `cutover_coverage_measure.py` (~2238 tok, huge)
 - `EXPECTED.md` (~773 tok, large) — Phase 6.5 Stage 5 — Expected IR Text (APEX)
@@ -4009,7 +4009,7 @@
 - `mod.rs` (~5979 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `resolve.rs` (~12223 tok, huge) — Copyright 2025 STARGA Inc.
+- `resolve.rs` (~12882 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
@@ -4490,7 +4490,7 @@
 - `relu_exec.rs` (~472 tok, medium) — Copyright 2025 STARGA Inc.
 - `relu_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `repl_basic.rs` (~523 tok, large) — Copyright 2025 STARGA Inc.
-- `resolve_fn_body.rs` (~973 tok, large) — Copyright 2025 STARGA Inc.
+- `resolve_fn_body.rs` (~1455 tok, large) — Copyright 2025 STARGA Inc.
 - `result_option_prelude_run.rs` (~910 tok, large) — Copyright 2025 STARGA Inc.
 - `return_cond_type_reject.rs` (~3849 tok, huge) — Copyright 2025 STARGA Inc.
 - `return_flow_tree_eval_run.rs` (~1517 tok, huge) — Copyright 2025 STARGA Inc.
