@@ -17,12 +17,29 @@ use libmind::parser;
 
 #[test]
 fn mlir_export_basic() {
+    // Const-fold trap (byte-identity canary). Pure-literal arithmetic is the one
+    // shape a compile-speed optimization can silently break emission on without
+    // changing runtime output: folding `1 + 2 * 3` to a literal `7` at lowering
+    // keeps the program's result identical (7 == 7), so an OUTPUT-hash gate
+    // (cross_substrate_identity) is blind to it — only an EMISSION-side check
+    // sees the bytes move. A fast-lane const-fold trialled exactly this and broke
+    // self-host byte-identity; this test is the fast, diagnostic tripwire.
+    //
+    // Pin that BOTH arithmetic ops survive lowering unfolded — guarding the add
+    // alone let a partial fold of `2 * 3` -> `6` slip through.
     let src = "1 + 2 * 3";
     let m = parser::parse(src).unwrap();
     let ir = eval::lower_to_ir(&m);
     let mlir = eval::to_mlir(&ir, "main");
     assert!(mlir.contains("func.func @main"));
-    assert!(mlir.contains("arith.addi"));
+    assert!(
+        mlir.contains("arith.muli"),
+        "the `2 * 3` multiply must survive lowering unfolded (const-fold canary); MLIR:\n{mlir}"
+    );
+    assert!(
+        mlir.contains("arith.addi"),
+        "the outer `+` add must survive lowering unfolded (const-fold canary); MLIR:\n{mlir}"
+    );
     assert!(mlir.contains("return"));
 }
 
