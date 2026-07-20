@@ -16,7 +16,8 @@
 // positional path argument is given — std.fs read_file_native turns the path into
 // source bytes with zero libc (open(2) + read, no lseek/close). If NO positional
 // path is given, it falls back to reading STDIN (fd 0), so the earlier stdin mode
-// still works. An unreadable path reports "cannot open path" and exits 1.
+// still works. A source that could not be fully read (open(2) OR read(2)
+// failure) reports "cannot read source" and exits 1.
 //
 // Flags mirrored from src/bin/mindc.rs Command::Check:
 //   paths: Vec<String>          — recognized + counted (source still from stdin)
@@ -29,14 +30,20 @@
 // ===========================================================================
 
 // Read stdin (fd 0) into `buf` up to `cap` bytes; a pipe read may return short,
-// so loop until EOF/error (n <= 0). Returns the total bytes read.
+// so loop until a clean EOF (n == 0, returns the total bytes read) or a read(2)
+// error (n < 0, returns -1 — a mid-stream failure must not be silently reported
+// as "read the whole input, got `got` bytes", same distinction as fs_read_fd_all
+// in std/fs.mind).
 pub fn ckd_read_stdin(buf: i64, cap: i64, got: i64) -> i64 {
     if got >= cap {
         return got;
     }
     let n: i64 = __mind_read(0, buf + got, cap - got, 0 - 1);
-    if n <= 0 {
+    if n == 0 {
         return got;
+    }
+    if n < 0 {
+        return 0 - 1;
     }
     ckd_read_stdin(buf, cap, got + n)
 }
@@ -69,7 +76,9 @@ fn ckd_find_path(a: Args, i: i64, n: i64, reporter_flag: String) -> i64 {
 // ckd_read_src — read the source to check into `src` (up to `cap`). By-path
 // (RI-C task #228, __mind_open) if a positional path arg is present; otherwise the
 // stdin fallback. Statement-form (no struct-valued value-if). Returns bytes read,
-// or -1 if a path was given but could not be opened.
+// or -1 if the path could not be opened OR a read(2) call failed partway
+// through (see fs_read_fd_all / ckd_read_stdin — a mid-read error is never
+// silently reported as a complete, successful read).
 fn ckd_read_src(a: Args, src: i64, cap: i64) -> i64 {
     let path_ptr: i64 = ckd_find_path(a, 1, args_len(a), ckd_s_reporter());
     if path_ptr != 0 {
@@ -78,24 +87,51 @@ fn ckd_read_src(a: Args, src: i64, cap: i64) -> i64 {
     ckd_read_stdin(src, cap, 0)
 }
 
-// "check: cannot open path" note label ("cannot open path").
+// "check: cannot read source" note label ("cannot read source") — reported for
+// EITHER an open(2) failure (no path could be opened) OR a read(2) failure
+// partway through (see ckd_read_src / ckd_read_stdin / read_file_native): both
+// mean the caller did not get the complete source and must not proceed.
 pub fn ckd_msg_openerr() -> String {
-    let a: String = string_push_byte(string_new(), 99);
-    let b: String = string_push_byte(a, 97);
-    let c: String = string_push_byte(b, 110);
-    let d: String = string_push_byte(c, 110);
-    let e: String = string_push_byte(d, 111);
-    let f: String = string_push_byte(e, 116);
-    let g: String = string_push_byte(f, 32);
-    let h: String = string_push_byte(g, 111);
-    let i: String = string_push_byte(h, 112);
-    let j: String = string_push_byte(i, 101);
-    let k: String = string_push_byte(j, 110);
-    let l: String = string_push_byte(k, 32);
-    let m: String = string_push_byte(l, 112);
-    let nn: String = string_push_byte(m, 97);
-    let o: String = string_push_byte(nn, 116);
-    string_push_byte(o, 104)
+    let s1: String = string_push_byte(string_new(), 99);
+    let s2: String = string_push_byte(s1, 97);
+    let s3: String = string_push_byte(s2, 110);
+    let s4: String = string_push_byte(s3, 110);
+    let s5: String = string_push_byte(s4, 111);
+    let s6: String = string_push_byte(s5, 116);
+    let s7: String = string_push_byte(s6, 32);
+    let s8: String = string_push_byte(s7, 114);
+    let s9: String = string_push_byte(s8, 101);
+    let s10: String = string_push_byte(s9, 97);
+    let s11: String = string_push_byte(s10, 100);
+    let s12: String = string_push_byte(s11, 32);
+    let s13: String = string_push_byte(s12, 115);
+    let s14: String = string_push_byte(s13, 111);
+    let s15: String = string_push_byte(s14, 117);
+    let s16: String = string_push_byte(s15, 114);
+    let s17: String = string_push_byte(s16, 99);
+    string_push_byte(s17, 101)
+}
+
+// "check: source too large" note label ("source too large") — reported when
+// the source exceeds the fixed read cap (see main's overflow probe: reads one
+// byte past the real cap and rejects rather than silently truncating).
+pub fn ckd_msg_toolarge() -> String {
+    let t1: String = string_push_byte(string_new(), 115);
+    let t2: String = string_push_byte(t1, 111);
+    let t3: String = string_push_byte(t2, 117);
+    let t4: String = string_push_byte(t3, 114);
+    let t5: String = string_push_byte(t4, 99);
+    let t6: String = string_push_byte(t5, 101);
+    let t7: String = string_push_byte(t6, 32);
+    let t8: String = string_push_byte(t7, 116);
+    let t9: String = string_push_byte(t8, 111);
+    let t10: String = string_push_byte(t9, 111);
+    let t11: String = string_push_byte(t10, 32);
+    let t12: String = string_push_byte(t11, 108);
+    let t13: String = string_push_byte(t12, 97);
+    let t14: String = string_push_byte(t13, 114);
+    let t15: String = string_push_byte(t14, 103);
+    string_push_byte(t15, 101)
 }
 
 // Does the report contain the 6-byte marker "ERROR:" (push_kw_error, main.mind)
@@ -265,13 +301,24 @@ pub fn main() -> i64 {
     }
 
     // Read the source to check: BY PATH (RI-C task #228, __mind_open) if a
-    // positional path arg is given, else the stdin fallback.
+    // positional path arg is given, else the stdin fallback. Ask for ONE byte
+    // beyond `cap` (into the existing +16 pad) so a source that fills the
+    // whole cap and a source LARGER than the cap are distinguishable: if the
+    // probe byte was read too (src_len > cap), the real input didn't fit and
+    // was about to be silently truncated — reject it instead.
     let cap: i64 = 4194304;
     let src: i64 = __mind_alloc(cap + 16);
-    let src_len: i64 = ckd_read_src(a, src, cap);
-    // A path was given but could not be opened -> report + exit 1.
+    let src_len: i64 = ckd_read_src(a, src, cap + 1);
+    // The path could not be opened, OR opened but a read(2) call failed
+    // partway through -> report + exit 1 (never proceed on a partial read).
     if src_len < 0 {
         let _e: i64 = ckd_note(ckd_msg_openerr());
+        return 1;
+    }
+    // The source did not fit in `cap` bytes -> report + exit 1 rather than
+    // silently typechecking only the first `cap` bytes.
+    if src_len > cap {
+        let _t: i64 = ckd_note(ckd_msg_toolarge());
         return 1;
     }
 

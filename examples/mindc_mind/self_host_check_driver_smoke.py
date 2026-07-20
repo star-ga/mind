@@ -146,12 +146,14 @@ def main() -> int:
               f"(exit {code}, 'note:' in stdout: {'note:' in out})")
         print(f"          stdout: {out.strip()!r}")
 
-        # (5) nonexistent path -> "cannot open path" + exit 1, no crash
+        # (5) nonexistent path -> "cannot read source" + exit 1, no crash. The
+        # message covers BOTH an open(2) failure and a mid-read failure (see
+        # fs_read_fd_all / ckd_read_stdin) — no longer "cannot open path".
         code, out = run_check_path(p, pathlib.Path(td) / "does_not_exist.mind", [])
-        good = code == 1 and "open" in out
+        good = code == 1 and "cannot read source" in out
         ok = ok and good
         print(f"  {'PASS' if good else 'FAIL'}  nonexistent path -> exit {code} (expected 1), "
-              f"'open' note: {'open' in out}")
+              f"'cannot read source' note: {'cannot read source' in out}")
         print(f"          stdout: {out.strip()!r}")
 
         # (6) STDIN fallback (no positional path): clean source on stdin -> exit 0
@@ -165,6 +167,19 @@ def main() -> int:
         good = code == 1 and "ERROR:" in out
         ok = ok and good
         print(f"  {'PASS' if good else 'FAIL'}  STDIN-fallback error -> exit {code} (expected 1)")
+
+        # (8) Oversized source (> the driver's 4 MiB read cap) BY-PATH -> exit 1,
+        # "source too large" note. Before the overflow probe, this silently
+        # truncated to the first 4 MiB and typechecked a partial file with no
+        # diagnostic at all.
+        big_f = pathlib.Path(td) / "big.mind"
+        big_f.write_bytes(b"// x\n" * ((4 * 1024 * 1024) // 5 + 1))
+        code, out = run_check_path(p, big_f, [])
+        good = code == 1 and "source too large" in out
+        ok = ok and good
+        print(f"  {'PASS' if good else 'FAIL'}  oversized source BY-PATH -> exit {code} (expected 1), "
+              f"'source too large' note: {'source too large' in out}")
+        print(f"          stdout: {out.strip()!r}")
 
     if ok:
         print("\nALL PASS  (by-path __mind_open read + stdin fallback; self-hosted lex+parse+TYPECHECK in native ELF)")

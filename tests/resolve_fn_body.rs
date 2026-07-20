@@ -113,8 +113,7 @@ fn unregistered_mind_intrinsic_warns_e2024_but_still_checks_clean() {
          blanket prefix acceptance — it must never ALSO be E2003; got {errs:?}"
     );
     let module = parse(src).expect("parse");
-    let diags =
-        check_module_types_in_file(&module, src, Some("t.mind"), &Default::default());
+    let diags = check_module_types_in_file(&module, src, Some("t.mind"), &Default::default());
     assert!(
         diags
             .iter()
@@ -128,9 +127,7 @@ fn registered_mind_intrinsic_does_not_warn_e2024() {
     // A REGISTERED STD_SURFACE_INTRINSICS entry (`__mind_load_i8`, arity 1)
     // must not trip the new self-host-only-call warning — only unregistered
     // `__mind_*` names should.
-    let errs = diagnostics(
-        "fn f(p: i64) -> i64 {\n    let x = __mind_load_i8(p);\n    x\n}\n",
-    );
+    let errs = diagnostics("fn f(p: i64) -> i64 {\n    let x = __mind_load_i8(p);\n    x\n}\n");
     assert!(
         !has_e2024(&errs),
         "a registered __mind_* intrinsic must not warn E2024; got {errs:?}"
