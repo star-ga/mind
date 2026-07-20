@@ -266,6 +266,49 @@ pub fn try_read_to_string(path_addr: i64) -> i64 {
     read_to_string(path_addr)
 }
 
+// ---------------------------------------------------------------------------
+// Native-ELF-safe file read (RI-C task #228).
+//
+// read_to_string above uses libc `extern "C"` open/lseek/close/read, which are
+// UNAVAILABLE in a freestanding native-ELF program (no libc linked). The two
+// helpers below use ONLY raw syscalls, via the `__mind_open` (open(2), O_RDONLY)
+// and `__mind_read` intrinsics — no lseek (the read loops to EOF instead of
+// stat-ing the size) and no close (a single-shot reader relies on process exit to
+// reclaim the fd; there is no `__mind_close` intrinsic yet). The path MUST be a
+// NUL-terminated C string — an argv[i] pointer from `__mind_argv` already is; a
+// std.string String's backing bytes are not, so NUL-terminate before passing one.
+// This module is NOT imported by the self-hosted compiler (main.mind imports only
+// vec/map/string/io), so adding `__mind_open` calls here does not require the
+// Rust type-checker's intrinsic table to know it — the native-ELF emitter
+// (main.mind nb_intrinsic_id) recognises it directly.
+// deferred: add a `__mind_close` intrinsic + close here for long-running readers
+// that open many files (upgrade path: mirror __mind_open with SYS_close=3).
+// ---------------------------------------------------------------------------
+
+// Read from `fd` into `buf_addr` up to `cap` bytes, looping until EOF/error (a
+// single read(2) may return short). Sequential (offset -1). Returns total read.
+fn fs_read_fd_all(fd: i64, buf_addr: i64, cap: i64, got: i64) -> i64 {
+    if got >= cap {
+        return got;
+    }
+    let n: i64 = __mind_read(fd, buf_addr + got, cap - got, 0 - 1);
+    if n <= 0 {
+        return got;
+    }
+    fs_read_fd_all(fd, buf_addr, cap, got + n)
+}
+
+// read_file_native — open the NUL-terminated C-string path read-only and read its
+// contents into `buf_addr` (up to `cap` bytes). Returns the byte count (0 for an
+// empty file), or -1 if the path could not be opened. Pure syscalls, no libc.
+pub fn read_file_native(path_addr: i64, buf_addr: i64, cap: i64) -> i64 {
+    let fd: i64 = __mind_open(path_addr);
+    if fd < 0 {
+        return 0 - 1;
+    }
+    fs_read_fd_all(fd, buf_addr, cap, 0)
+}
+
 // write_string — write buf_len bytes at buf_addr to path (create or truncate).
 // Returns 1 on success, 0 on error.
 pub fn write_string(path_addr: i64, buf_addr: i64, buf_len: i64) -> i64 {

@@ -20200,6 +20200,37 @@ pub fn nb_emit_read(code: String, fd_disp: i64, buf_disp: i64, count_disp: i64) 
     nb_push(c20, 5)
 }
 
+// emit_open(path_disp): raw open(2) syscall, NO libc (RI-C task #228). Opens the
+// NUL-terminated C string at [rbp+path] read-only. flags = O_RDONLY (0), mode = 0
+// (unused for reading). Returns the fd (or a negative errno) in rax. The path must
+// already be NUL-terminated — argv[i] pointers (from __mind_argv) are C strings, so
+// they need no terminator; a String's backing bytes are NOT guaranteed terminated,
+// so a caller passing a String must NUL-terminate it first (see io.mind io_open).
+//   mov rdi,[rbp+path] = 48 8B BD <disp32>
+//   xor esi,esi        = 31 F6            (flags = O_RDONLY)
+//   xor edx,edx        = 31 D2            (mode = 0)
+//   mov rax,2          = 48 C7 C0 02 00 00 00   (SYS_open)
+//   syscall            = 0F 05
+pub fn nb_emit_open(code: String, path_disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 139);
+    let c3: String = nb_push(c2, 189);
+    let c4: String = nb_i32le_signed(c3, path_disp);
+    let c5: String = nb_push(c4, 49);
+    let c6: String = nb_push(c5, 246);
+    let c7: String = nb_push(c6, 49);
+    let c8: String = nb_push(c7, 210);
+    let c9: String = nb_push(c8, 72);
+    let c10: String = nb_push(c9, 199);
+    let c11: String = nb_push(c10, 192);
+    let c12: String = nb_push(c11, 2);
+    let c13: String = nb_push(c12, 0);
+    let c14: String = nb_push(c13, 0);
+    let c15: String = nb_push(c14, 0);
+    let c16: String = nb_push(c15, 15);
+    nb_push(c16, 5)
+}
+
 // emit_free: the no-free bump arena (mirror src/native::__mind_free arm). The ptr
 // arg is intentionally unread; the contract value is 0.
 //   xor rax,rax = 48 31 C0
@@ -20476,6 +20507,7 @@ pub fn nb_is_argv_name(buf: i64, lo: i64, hi: i64) -> i64 {
 //   1 __mind_alloc   2 __mind_store_i64  3 __mind_load_i64  4 __mind_store_i8
 //   5 __mind_load_i8 6 __mind_realloc    7 __mind_free      8 __mind_write
 //   9 __mind_read   10 __mind_argc      11 __mind_argv (RI-C: OS argc/argv)
+//  12 __mind_open (RI-C #228: open(2) O_RDONLY by path -> fd)
 // Length-first then byte-by-byte (like is_struct_kw) so it stays in the self-host
 // mic@3 subset and lowers byte-identically. All names share the "__mind_" prefix
 // (95 95 109 105 110 100 95); only the suffix is matched per length.
@@ -20563,6 +20595,16 @@ pub fn nb_intrinsic_id(buf: i64, lo: i64, hi: i64) -> i64 {
                     }
                     if load_byte(buf, lo + 10) == 118 {
                         return 11;
+                    }
+                }
+            }
+        }
+        // __mind_open (12): o p e n (RI-C task #228)
+        if load_byte(buf, lo + 7) == 111 {
+            if load_byte(buf, lo + 8) == 112 {
+                if load_byte(buf, lo + 9) == 101 {
+                    if load_byte(buf, lo + 10) == 110 {
+                        return 12;
                     }
                 }
             }
@@ -20735,6 +20777,12 @@ pub fn nb_emit_intrinsic(code: String, kind: i64, ids: i64, dst_id: i64) -> Stri
         // __mind_argv(i) -> raw i64 pointer to argv[i] (RI-C)
         let av0: i64 = __mind_load_i64(ids + 0 * 8);
         return nb_emit_argv(code, nb_slot_disp(av0), nb_slot_disp(dst_id));
+    }
+    if kind == 12 {
+        // __mind_open(path) -> fd (RI-C task #228; O_RDONLY, path = NUL-term C string)
+        let op0: i64 = __mind_load_i64(ids + 0 * 8);
+        let coo: String = nb_emit_open(code, nb_slot_disp(op0));
+        return nb_store_rax(coo, nb_slot_disp(dst_id));
     }
     // kind == 9: __mind_read(fd, buf, count, offset) -> i64 (offset unused)
     let a0: i64 = __mind_load_i64(ids + 0 * 8);
