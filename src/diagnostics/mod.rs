@@ -322,7 +322,7 @@ impl DiagnosticEmitter {
             let _ = write!(out, "\n  --> {loc}");
             if let Some(src) = source {
                 if let Some(line_str) = source_line(src, span.line) {
-                    let indicator = caret_line(span.column, span.length);
+                    let indicator = caret_line(&line_str, span.column, span.length);
                     let _ = write!(out, "\n   | {line_str}\n   | {indicator}");
                 }
             }
@@ -356,12 +356,37 @@ fn source_line(src: &str, line: usize) -> Option<String> {
         .map(|l| l.to_string())
 }
 
-fn caret_line(col: usize, len: usize) -> String {
+/// Render the `^^^` indicator line under a diagnostic span.
+///
+/// `col` is a 1-based CHAR column (matching `Span`'s column convention), but
+/// `byte_len` is the span's length in BYTES (`Span::from_offsets` computes it
+/// from raw byte offsets). Drawing `byte_len` carets directly over-counts on
+/// any span covering non-ASCII text — e.g. a 3-char/9-byte identifier drew 9
+/// carets instead of 3. Convert to a char count by locating the span's byte
+/// range within `line` (via its char boundaries) and counting the chars in
+/// that slice; the line:col numbers themselves were always correct, only the
+/// caret width was wrong.
+fn caret_line(line: &str, col: usize, byte_len: usize) -> String {
+    let byte_start = line
+        .char_indices()
+        .nth(col.saturating_sub(1))
+        .map(|(i, _)| i)
+        .unwrap_or(line.len());
+    let mut byte_end = (byte_start + byte_len).min(line.len());
+    while byte_end < line.len() && !line.is_char_boundary(byte_end) {
+        byte_end += 1;
+    }
+    let char_len = if byte_end <= byte_start {
+        1
+    } else {
+        line[byte_start..byte_end].chars().count()
+    };
+
     let mut out = String::new();
     for _ in 1..col {
         out.push(' ');
     }
-    for _ in 0..len.max(1) {
+    for _ in 0..char_len.max(1) {
         out.push('^');
     }
     out
@@ -371,4 +396,33 @@ fn caret_line(col: usize, len: usize) -> String {
 pub fn render(source: &str, diag: &Diagnostic) -> String {
     DiagnosticEmitter::new(DiagnosticFormat::Human, ColorChoice::Never)
         .render_human(diag, Some(source))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::caret_line;
+
+    #[test]
+    fn caret_line_counts_chars_not_bytes_on_ascii() {
+        // 3-char/3-byte span at column 5 ("abc" in "let abc = 1"): 3 carets.
+        let line = "let abc = 1";
+        assert_eq!(caret_line(line, 5, 3), "    ^^^");
+    }
+
+    #[test]
+    fn caret_line_counts_chars_not_bytes_on_non_ascii() {
+        // "héllo" starting at column 1: 'h' (1B) + 'é' (2B) + "llo" (3B) = 6 bytes
+        // but 5 CHARS. Before the fix this drew 6 carets (over-counting on the
+        // 2-byte 'é'); it must draw exactly 5.
+        let line = "héllo world";
+        assert_eq!(caret_line(line, 1, 6), "^^^^^");
+    }
+
+    #[test]
+    fn caret_line_non_ascii_span_not_starting_at_column_1() {
+        // "wörld" starts at char column 7 in "hello wörld"; its span is 6 bytes
+        // (w=1 + ö=2 + r=1 + l=1 + d=1) but 5 chars.
+        let line = "hello wörld";
+        assert_eq!(caret_line(line, 7, 6), "      ^^^^^");
+    }
 }
