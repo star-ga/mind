@@ -286,21 +286,29 @@ pub fn try_read_to_string(path_addr: i64) -> i64 {
 // ---------------------------------------------------------------------------
 
 // Read from `fd` into `buf_addr` up to `cap` bytes, looping until EOF/error (a
-// single read(2) may return short). Sequential (offset -1). Returns total read.
+// single read(2) may return short). Sequential (offset -1). Returns total read
+// on a clean EOF (n == 0), or -1 if a read(2) call itself fails (n < 0, a raw
+// negative-errno return) — the two are NOT the same outcome: an error mid-read
+// must not be silently reported as "read the whole file, got `got` bytes".
 fn fs_read_fd_all(fd: i64, buf_addr: i64, cap: i64, got: i64) -> i64 {
     if got >= cap {
         return got;
     }
     let n: i64 = __mind_read(fd, buf_addr + got, cap - got, 0 - 1);
-    if n <= 0 {
+    if n == 0 {
         return got;
+    }
+    if n < 0 {
+        return 0 - 1;
     }
     fs_read_fd_all(fd, buf_addr, cap, got + n)
 }
 
 // read_file_native — open the NUL-terminated C-string path read-only and read its
 // contents into `buf_addr` (up to `cap` bytes). Returns the byte count (0 for an
-// empty file), or -1 if the path could not be opened. Pure syscalls, no libc.
+// empty file), or -1 if the path could not be opened OR a read(2) call failed
+// partway through (see fs_read_fd_all) — either way, the caller did not get the
+// complete file and must not treat the returned buffer as valid.
 pub fn read_file_native(path_addr: i64, buf_addr: i64, cap: i64) -> i64 {
     let fd: i64 = __mind_open(path_addr);
     if fd < 0 {
