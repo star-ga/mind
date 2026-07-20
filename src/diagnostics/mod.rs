@@ -60,6 +60,31 @@ impl Span {
     }
 }
 
+thread_local! {
+    // (src.as_ptr() as usize, src.len(), line_start_byte_offsets)
+    static LINE_INDEX: std::cell::RefCell<Option<(usize, usize, Vec<usize>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Force the next `offset_to_line_col` call to rebuild its line-start index.
+///
+/// The cache below is validated by `(src.as_ptr(), src.len())`, a fast but
+/// address-based check: it is sound ONLY as long as no two DIFFERENT source
+/// strings ever share both an address and a length while both are live
+/// candidates for lookup. Within the recursive type-check of ONE source that
+/// invariant holds trivially (the same `&str` is threaded through unchanged).
+/// Across DIFFERENT top-level sources — `mindc check std/ examples/` type-checks
+/// many files in one process; test binaries type-check many small sources on
+/// one thread — the previous source's `String` is dropped and a new one can be
+/// allocated at the SAME address with the SAME length (especially likely with
+/// `mindc`'s pooled `SmallHeapAlloc`), which would silently serve the WRONG
+/// line:col for the new source. Callers MUST call this once at every genuine
+/// "new top-level source" boundary — see `type_checker::check_module_types_in_file`,
+/// the sole public entry point all such boundaries route through.
+pub(crate) fn reset_line_index_cache() {
+    LINE_INDEX.with(|cell| *cell.borrow_mut() = None);
+}
+
 /// Byte offset → 1-based (line, char-column).
 ///
 /// A naive left-to-right `src.chars()` scan is O(offset) per call, and the type
@@ -73,13 +98,9 @@ impl Span {
 /// Diagnostics-only: this feeds error/warning `line:col`, never emitted bytes, so
 /// it is outside the byte-identity wedge. The result is bit-for-bit the same
 /// (line, col) the old scan produced (char-based columns), which the type-error
-/// span tests pin.
+/// span tests pin. See `reset_line_index_cache` for the address-reuse caveat this
+/// cache's callers must respect.
 fn offset_to_line_col(src: &str, offset: usize) -> (usize, usize) {
-    thread_local! {
-        // (src.as_ptr() as usize, src.len(), line_start_byte_offsets)
-        static LINE_INDEX: std::cell::RefCell<Option<(usize, usize, Vec<usize>)>> =
-            const { std::cell::RefCell::new(None) };
-    }
     LINE_INDEX.with(|cell| {
         let mut cell = cell.borrow_mut();
         let key = (src.as_ptr() as usize, src.len());

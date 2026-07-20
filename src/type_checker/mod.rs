@@ -3783,7 +3783,30 @@ pub fn check_module_types_with_modules(
     result
 }
 
+/// The sole public entry point for module type-checking with a source string.
+///
+/// Resets the diagnostics line-index cache (`diagnostics::reset_line_index_cache`)
+/// before delegating to the recursive implementation. That cache is validated by
+/// `(src.as_ptr(), src.len())` — sound only within the recursive check of ONE
+/// source (the same `&str` is threaded through unchanged), NOT across two
+/// different top-level sources, which can share an address+length after the
+/// first is dropped and freed (especially likely with `mindc`'s pooled
+/// `SmallHeapAlloc`). `check_module_types` / `check_module_types_with_modules`
+/// and every external caller (the CLI `check`/`build` paths, the interpreter)
+/// route through this one function, so resetting here — and NOT in the
+/// recursive `_impl` self-calls below — closes that hole for every caller at
+/// its one true entry point without paying an extra rebuild per recursive step.
 pub fn check_module_types_in_file(
+    module: &Module,
+    src: &str,
+    file: Option<&str>,
+    env: &TypeEnv,
+) -> Vec<Pretty> {
+    crate::diagnostics::reset_line_index_cache();
+    check_module_types_in_file_impl(module, src, file, env)
+}
+
+fn check_module_types_in_file_impl(
     module: &Module,
     src: &str,
     file: Option<&str>,
@@ -4230,7 +4253,12 @@ pub fn check_module_types_in_file(
                         let inner_module = Module {
                             items: vec![inner.clone()],
                         };
-                        errs.extend(check_module_types_in_file(&inner_module, src, file, env));
+                        errs.extend(check_module_types_in_file_impl(
+                            &inner_module,
+                            src,
+                            file,
+                            env,
+                        ));
                     }
                 } else {
                     let mut sibling_decls: std::collections::BTreeSet<String> =
@@ -4250,7 +4278,7 @@ pub fn check_module_types_in_file(
                             items: vec![inner.clone()],
                         };
                         let inner_errs =
-                            check_module_types_in_file(&inner_module, src, file, &inner_env);
+                            check_module_types_in_file_impl(&inner_module, src, file, &inner_env);
                         errs.extend(inner_errs);
                     }
                 }
@@ -4303,7 +4331,7 @@ pub fn check_module_types_in_file(
                     collect_fixed_bytes_locals(body, &mut locals);
                     (!locals.is_empty()).then(|| FixedBytesLocalsGuard::install(locals))
                 };
-                let body_errs = check_module_types_in_file(&body_module, src, file, &fn_env);
+                let body_errs = check_module_types_in_file_impl(&body_module, src, file, &fn_env);
                 // RFC 0012 Phase A is PURELY ADDITIVE: this recursion exists
                 // solely to fire `shape::*` diagnostics on tensor `let`
                 // bindings inside fn bodies. It must NOT contribute generic
