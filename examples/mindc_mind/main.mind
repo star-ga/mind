@@ -20317,12 +20317,174 @@ pub fn nb_emit_realloc(code: String, addr_disp: i64, bytes_disp: i64) -> String 
     c69
 }
 
+// ===========================================================================
+// RI-C — OS argc/argv access for native-ELF programs.
+//
+// At `_start` the SysV AMD64 initial stack holds `[rsp]=argc`, then argv[0..argc]
+// (8-byte pointers), a NULL, envp, NULL, auxv. main.mind's native entry immediately
+// switches rsp to STACK_TOP (`movabs rsp,STACK_TOP` = 48 BC) and abandons that
+// stack, so argc/argv must be captured BEFORE that switch (the literal first bytes)
+// or they are lost. We stash them in two reserved header slots of the fixed BSS
+// arena — argc at ARENA_ADDR+8, &argv[0] at ARENA_ADDR+16 (the two 8-byte words
+// just above the bump cursor at ARENA_ADDR+0) — and pre-seed the cursor to 16 so the
+// bump allocator never hands out those 16 reserved bytes. Two intrinsics read them:
+//   __mind_argc()  -> i64 argc
+//   __mind_argv(i) -> i64 raw pointer to argv[i] (a NUL-terminated C string)
+// The capture is emitted ONLY for an entry whose module references argv (see
+// nb_tokens_use_argv), so every argv-free program — main.mind itself and every
+// frozen native-ELF oracle fixture — is byte-identical to before this feature.
+
+// argc capture reader: movabs rax,ARENA_ADDR+8 ; mov rax,[rax] ; store rax -> dst.
+pub fn nb_emit_argc(code: String, dst_disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 184);
+    let c3: String = nb_i64le(c2, nb_arena_addr() + 8);
+    let c4: String = nb_push(c3, 72);
+    let c5: String = nb_push(c4, 139);
+    let c6: String = nb_push(c5, 0);
+    nb_store_rax(c6, dst_disp)
+}
+
+// argv[i] reader: argv_base = [ARENA_ADDR+16]; result = *(argv_base + i*8).
+//   movabs rax,ARENA_ADDR+16 = 48 B8 <imm64> ; mov rax,[rax] = 48 8B 00 ;
+//   mov rcx,[rbp+idx] = 48 8B 8D <disp32> ; mov rax,[rax+rcx*8] = 48 8B 04 C8 ;
+//   store rax -> dst.
+pub fn nb_emit_argv(code: String, idx_disp: i64, dst_disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 184);
+    let c3: String = nb_i64le(c2, nb_arena_addr() + 16);
+    let c4: String = nb_push(c3, 72);
+    let c5: String = nb_push(c4, 139);
+    let c6: String = nb_push(c5, 0);
+    let c7: String = nb_push(c6, 72);
+    let c8: String = nb_push(c7, 139);
+    let c9: String = nb_push(c8, 141);
+    let c10: String = nb_i32le_signed(c9, idx_disp);
+    let c11: String = nb_push(c10, 72);
+    let c12: String = nb_push(c11, 139);
+    let c13: String = nb_push(c12, 4);
+    let c14: String = nb_push(c13, 200);
+    nb_store_rax(c14, dst_disp)
+}
+
+// The argc/argv CAPTURE — the literal first instructions of an argv-using entry,
+// emitted BEFORE the STACK_TOP rsp switch (which abandons the OS stack). At _start
+// rsp -> [argc][argv0..]. Stash argc at ARENA_ADDR+8 and &argv[0] at ARENA_ADDR+16,
+// then set the bump cursor (ARENA_ADDR+0) to 16 so those 16 reserved header bytes
+// are never allocated. 34 bytes:
+//   mov rax,[rsp]        = 48 8B 04 24
+//   movabs rcx,ARENA_ADDR= 48 B9 <imm64>
+//   mov [rcx+8],rax      = 48 89 41 08
+//   lea rax,[rsp+8]      = 48 8D 44 24 08
+//   mov [rcx+16],rax     = 48 89 41 10
+//   mov qword [rcx],16   = 48 C7 01 10 00 00 00
+pub fn nb_emit_argv_capture(code: String) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 139);
+    let c3: String = nb_push(c2, 4);
+    let c4: String = nb_push(c3, 36);
+    let c5: String = nb_push(c4, 72);
+    let c6: String = nb_push(c5, 185);
+    let c7: String = nb_i64le(c6, nb_arena_addr());
+    let c8: String = nb_push(c7, 72);
+    let c9: String = nb_push(c8, 137);
+    let c10: String = nb_push(c9, 65);
+    let c11: String = nb_push(c10, 8);
+    let c12: String = nb_push(c11, 72);
+    let c13: String = nb_push(c12, 141);
+    let c14: String = nb_push(c13, 68);
+    let c15: String = nb_push(c14, 36);
+    let c16: String = nb_push(c15, 8);
+    let c17: String = nb_push(c16, 72);
+    let c18: String = nb_push(c17, 137);
+    let c19: String = nb_push(c18, 65);
+    let c20: String = nb_push(c19, 16);
+    let c21: String = nb_push(c20, 72);
+    let c22: String = nb_push(c21, 199);
+    let c23: String = nb_push(c22, 1);
+    let c24: String = nb_push(c23, 16);
+    let c25: String = nb_push(c24, 0);
+    let c26: String = nb_push(c25, 0);
+    nb_push(c26, 0)
+}
+
+// Statement-form (Rule-4-safe: no struct-valued if-expr with a call branch) gate:
+// prepend the argc/argv capture iff this fn is the entry AND the module uses argv.
+pub fn nb_entry_prefix(code: String, is_entry: i64, uses_argv: i64) -> String {
+    if is_entry == 1 {
+        if uses_argv == 1 {
+            return nb_emit_argv_capture(code);
+        }
+    }
+    code
+}
+
+// 1 iff buf[lo..hi) spells exactly "__mind_argc" or "__mind_argv" (both 11 bytes).
+pub fn nb_is_argv_name(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo != 11 {
+        return 0;
+    }
+    if load_byte(buf, lo + 0) != 95 {
+        return 0;
+    }
+    if load_byte(buf, lo + 1) != 95 {
+        return 0;
+    }
+    if load_byte(buf, lo + 2) != 109 {
+        return 0;
+    }
+    if load_byte(buf, lo + 3) != 105 {
+        return 0;
+    }
+    if load_byte(buf, lo + 4) != 110 {
+        return 0;
+    }
+    if load_byte(buf, lo + 5) != 100 {
+        return 0;
+    }
+    if load_byte(buf, lo + 6) != 95 {
+        return 0;
+    }
+    if load_byte(buf, lo + 7) != 97 {
+        return 0;
+    }
+    if load_byte(buf, lo + 8) != 114 {
+        return 0;
+    }
+    if load_byte(buf, lo + 9) != 103 {
+        return 0;
+    }
+    if load_byte(buf, lo + 10) == 99 {
+        return 1;
+    }
+    if load_byte(buf, lo + 10) == 118 {
+        return 1;
+    }
+    0
+}
+
+// Does the module reference __mind_argc/__mind_argv anywhere? A per-token scan of
+// the already-lexed stream (reuses `tokens`, allocates NOTHING — no extra full-source
+// lex, Rule-2c-safe; same recursion shape as srt_collect). Gates the entry capture
+// so an argv-free module gets ZERO extra bytes.
+pub fn nb_tokens_use_argv(toks: Vec, buf: i64, pos: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0;
+    }
+    if tok_kind(toks, pos) == tk_ident() {
+        if nb_is_argv_name(buf, tok_lo(toks, pos), tok_hi(toks, pos)) == 1 {
+            return 1;
+        }
+    }
+    nb_tokens_use_argv(toks, buf, pos + 1)
+}
+
 // nb_intrinsic_id(buf, lo, hi): name-match the callee span [lo,hi) in buf against
 // the inlined __mind_* intrinsic set (mirror the Rust Instr::Intrinsic dispatch at
 // src/native/mod.rs:784-918). Returns a small code, or -1 for a regular call:
 //   1 __mind_alloc   2 __mind_store_i64  3 __mind_load_i64  4 __mind_store_i8
 //   5 __mind_load_i8 6 __mind_realloc    7 __mind_free      8 __mind_write
-//   9 __mind_read
+//   9 __mind_read   10 __mind_argc      11 __mind_argv (RI-C: OS argc/argv)
 // Length-first then byte-by-byte (like is_struct_kw) so it stays in the self-host
 // mic@3 subset and lowers byte-identically. All names share the "__mind_" prefix
 // (95 95 109 105 110 100 95); only the suffix is matched per length.
@@ -20397,6 +20559,19 @@ pub fn nb_intrinsic_id(buf: i64, lo: i64, hi: i64) -> i64 {
                 if load_byte(buf, lo + 9) == 97 {
                     if load_byte(buf, lo + 10) == 100 {
                         return 9;
+                    }
+                }
+            }
+        }
+        // __mind_argc (10) / __mind_argv (11): a r g {c,v} (RI-C)
+        if load_byte(buf, lo + 7) == 97 {
+            if load_byte(buf, lo + 8) == 114 {
+                if load_byte(buf, lo + 9) == 103 {
+                    if load_byte(buf, lo + 10) == 99 {
+                        return 10;
+                    }
+                    if load_byte(buf, lo + 10) == 118 {
+                        return 11;
                     }
                 }
             }
@@ -20560,6 +20735,15 @@ pub fn nb_emit_intrinsic(code: String, kind: i64, ids: i64, dst_id: i64) -> Stri
         let a2: i64 = __mind_load_i64(ids + 2 * 8);
         let c1: String = nb_emit_write(code, nb_slot_disp(a0), nb_slot_disp(a1), nb_slot_disp(a2));
         return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 10 {
+        // __mind_argc() -> argc (RI-C; 0 args, reads reserved arena slot)
+        return nb_emit_argc(code, nb_slot_disp(dst_id));
+    }
+    if kind == 11 {
+        // __mind_argv(i) -> raw i64 pointer to argv[i] (RI-C)
+        let av0: i64 = __mind_load_i64(ids + 0 * 8);
+        return nb_emit_argv(code, nb_slot_disp(av0), nb_slot_disp(dst_id));
     }
     // kind == 9: __mind_read(fd, buf, count, offset) -> i64 (offset unused)
     let a0: i64 = __mind_load_i64(ids + 0 * 8);
@@ -23993,7 +24177,7 @@ pub fn nb_register_struct_params(srt: i64, src: i64, params_addr: i64, n_params:
 // Returns NbState{code = this fn's bytes, ncalls = updated count}. `srt` is the
 // whole-module struct registry, used to give struct-typed params a field-offset
 // descriptor in the let-env (the Step-2 FieldAccess path).
-pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64, srt: i64, frt: i64) -> NbState {
+pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64, srt: i64, frt: i64, uses_argv: i64) -> NbState {
     let params_addr: i64 = ast_child1(node);
     let n_params: i64 = ast_aux(node) / 2;
     let body: i64 = ast_child2(node);
@@ -24049,13 +24233,17 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     let frame: i64 = nb_round16(8 * nslots);
 
     let code0: String = string_new();
+    // RI-C: an argv-using entry captures OS argc/argv as the LITERAL first bytes,
+    // BEFORE the STACK_TOP rsp switch abandons the OS stack. Statement-form gate
+    // (nb_entry_prefix) so an argv-free entry gets code0 unchanged — byte-identical.
+    let codecap: String = nb_entry_prefix(code0, is_entry, uses_argv);
     // Entry-only stack switch: movabs rsp, STACK_TOP = 48 BC <imm64>
     let code1: String = if is_entry == 1 {
-        let a1: String = nb_push(code0, 72);
+        let a1: String = nb_push(codecap, 72);
         let a2: String = nb_push(a1, 188);
         nb_i64le(a2, nb_stack_top())
     } else {
-        code0
+        codecap
     };
     // Prologue: 55 48 89 E5 48 81 EC <frame32>
     let p1: String = nb_push(code1, 85);
@@ -26147,8 +26335,11 @@ pub fn selftest_native_elf_hb(src_addr: i64, src_len: i64, hash_addr: i64, user_
     // right register file (xmm0 for a float-returning callee) and classified by its
     // callee's return dtype. Every fn in main.mind's float-free source registers INT.
     let frt: i64 = frt_build_from_tokens(tokens, src_addr);
+    // RI-C: does this module reference argv? Gates the entry argc/argv capture so an
+    // argv-free module (main.mind itself, every frozen fixture) is byte-identical.
+    let uses_argv: i64 = nb_tokens_use_argv(tokens, src_addr, 0);
     let acc0: NbState = NbState { code: string_new(), next_id: 0, last_id: 0, ncalls: 0 };
-    let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, entry_idx, srt, frt);
+    let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, entry_idx, srt, frt, uses_argv);
     let image0: String = lr.code;
     let total_calls: i64 = lr.ncalls;
 
@@ -26285,7 +26476,7 @@ pub fn nb_is_entry(k: i64, entry_idx: i64) -> i64 {
 // The guard returns the param `acc` (NOT a struct literal) so the body stays
 // inside the self-host nfn-emittable seq subset (a struct-literal guard-return in
 // a multi-statement recursive struct fn is outside it — verified empirically).
-pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, calls: i64, starts: i64, call_owner: i64, entry_idx: i64, srt: i64, frt: i64) -> NbState {
+pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, calls: i64, starts: i64, call_owner: i64, entry_idx: i64, srt: i64, frt: i64, uses_argv: i64) -> NbState {
     if k >= n_fns {
         return acc;
     }
@@ -26294,12 +26485,12 @@ pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, ca
     let ncalls0: i64 = acc.ncalls;
     let image: String = acc.code;
     __mind_store_i64(starts + k * 8, string_len(image));
-    let fr: NbState = nb_lower_fn(buf, node, is_entry, calls, ncalls0, srt, frt);
+    let fr: NbState = nb_lower_fn(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv);
     // Record owner for each newly-added call.
     let _o: i64 = nb_set_owners(call_owner, ncalls0, fr.ncalls, k);
     let image2: String = string_push_str(image, fr.code);
     let acc2: NbState = NbState { code: image2, next_id: 0, last_id: 0, ncalls: fr.ncalls };
-    nb_lower_all(acc2, buf, ordered, n_fns, k + 1, calls, starts, call_owner, entry_idx, srt, frt)
+    nb_lower_all(acc2, buf, ordered, n_fns, k + 1, calls, starts, call_owner, entry_idx, srt, frt, uses_argv)
 }
 pub fn nb_set_owners(call_owner: i64, c0: i64, c1: i64, k: i64) -> i64 {
     if c0 >= c1 {
@@ -27431,7 +27622,7 @@ pub fn selftest_native_elf_fp_call(src_addr: i64, src_len: i64) -> EmitState {
 
     // Lower every fn as NON-entry (entry_idx = -1) into one image; f -> g calls recorded.
     let acc0: NbState = NbState { code: string_new(), next_id: 0, last_id: 0, ncalls: 0 };
-    let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, 0 - 1, srt, frt);
+    let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, 0 - 1, srt, frt, 0);
     let body_image: String = lr.code;
     let total_calls: i64 = lr.ncalls;
 
