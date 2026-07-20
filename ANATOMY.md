@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3141 | **Est. tokens:** ~7,507,600
-**Generated:** 2026-07-20 14:49 UTC
+**Files:** 3142 | **Est. tokens:** ~7,509,386
+**Generated:** 2026-07-20 15:45 UTC
 
 ## Token Budget Guide
 
@@ -57,7 +57,7 @@
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 71 | ~126,183 |
+| `examples/mindc_mind/` | 72 | ~127,539 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
 | `examples/native/` | 4 | ~527 |
@@ -411,7 +411,7 @@
 | `src/type_checker/` | 1 | ~12,223 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 41 | ~193,198 |
+| `std/` | 41 | ~193,628 |
 | `tests/` | 291 | ~500,296 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
@@ -857,12 +857,13 @@
 - `now_ns_smoke.py` (~678 tok, large) — # Copyright 2025 STARGA Inc.
 - `oracle_parity_lint.py` (~3034 tok, huge)
 - `param_types_smoke.py` (~1273 tok, large)
-- `_ref_add.note` (~16 tok, tiny) — 498be8038474e5debd09576ca86f8e3b7ac7523f0dc583440cc39dab5c2e59d7
-- `_ref_if_ret.note` (~16 tok, tiny) — 6ee10774e01837cbba6c89d3aefd552aa90f0dc7b659f5fca9786f40616c962d
-- `_ref_main.note` (~16 tok, tiny) — 24ab25b85f724337a92e033372b1ef9826828dfc46dfaea3af9dd833a856b18f
-- `_ref_recursion.note` (~16 tok, tiny) — f157a17885367e0f30f21ccb8fe737b2b782f9719a4cadebbda20ffa1279319e
-- `_ref_struct_field.note` (~16 tok, tiny) — 5932b6704e4afaa13abef5204cb9d748fd452598887e945672d89662d1341abe
-- `_ref_value_if.note` (~16 tok, tiny) — 8ac4c54aacbb8b7b769be703b4410dc1a8fe343186ed70d065e00a507e4cdbd7
+- `_ref_add.note` (~16 tok, tiny) — 43e94e222db7697ee39d835db60b4cc41abb5085eb3b662c738f5222d3fb87f9
+- `_ref_if_ret.note` (~16 tok, tiny) — 8da3221a49862dd0e29b39be182894c316cfb8927428cd838dfe7004a7200d1b
+- `_ref_main.note` (~16 tok, tiny) — ca6bd3736b8835f56e0d9676be58f9ab077eb68871045ca46d208f9d62fb663a
+- `_ref_recursion.note` (~16 tok, tiny) — 713ccff8513133cde6e525cdec775f683d95f2f673a6e91e3523ea103146e8c8
+- `_ref_struct_field.note` (~16 tok, tiny) — a4f59b3722cd337ea46da853babbf0e1da7347dbfcf4102c3cabf35051ab1129
+- `_ref_value_if.note` (~16 tok, tiny) — 8268a290c9ffc54e0494ec20225b1d89a6f71c64f1db10d73f499153d8ca490d
+- `self_host_args_from_os_smoke.py` (~1356 tok, large)
 - `self_host_argv_smoke.py` (~1136 tok, large)
 - `self_host_body_smoke.py` (~3055 tok, huge)
 - `selfhost_driver.mind` (~623 tok, large) — ===========================================================================
@@ -4022,7 +4023,7 @@
 - `async.mind` (~2460 tok, huge) — std/async.mind -- RFC 0011 Phase A: Scheduler injection + Sender/Receiver
 - `blas.mind` (~2518 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
 - `chacha20_poly1305.mind` (~3972 tok, huge) — std/chacha20_poly1305.mind — ChaCha20-Poly1305 AEAD (RFC 8439) in pure MIND.
-- `cli.mind` (~2781 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
+- `cli.mind` (~3211 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
 - `ecdsa_p256.mind` (~6517 tok, huge) — std/ecdsa_p256.mind — ECDSA signature VERIFICATION on NIST P-256
 - `fs.mind` (~4326 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
 - `hkdf.mind` (~1547 tok, huge) — std/hkdf.mind — HMAC-SHA256 (RFC 2104) + HKDF (RFC 5869) in pure MIND.

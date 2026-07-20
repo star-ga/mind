@@ -20330,9 +20330,11 @@ pub fn nb_emit_realloc(code: String, addr_disp: i64, bytes_disp: i64) -> String 
 // bump allocator never hands out those 16 reserved bytes. Two intrinsics read them:
 //   __mind_argc()  -> i64 argc
 //   __mind_argv(i) -> i64 raw pointer to argv[i] (a NUL-terminated C string)
-// The capture is emitted ONLY for an entry whose module references argv (see
-// nb_tokens_use_argv), so every argv-free program — main.mind itself and every
-// frozen native-ELF oracle fixture — is byte-identical to before this feature.
+// The capture is emitted ONLY for an entry whose REACHABLE (pruned) fn set
+// references argv (see nb_fns_use_argv), so every argv-free program — main.mind
+// itself and every frozen native-ELF oracle fixture — is byte-identical to before
+// this feature, EVEN when std.cli (whose args_from_os names the intrinsic) is
+// seeded ahead of it but pruned away.
 
 // argc capture reader: movabs rax,ARENA_ADDR+8 ; mov rax,[rax] ; store rax -> dst.
 pub fn nb_emit_argc(code: String, dst_disp: i64) -> String {
@@ -20463,21 +20465,10 @@ pub fn nb_is_argv_name(buf: i64, lo: i64, hi: i64) -> i64 {
     0
 }
 
-// Does the module reference __mind_argc/__mind_argv anywhere? A per-token scan of
-// the already-lexed stream (reuses `tokens`, allocates NOTHING — no extra full-source
-// lex, Rule-2c-safe; same recursion shape as srt_collect). Gates the entry capture
-// so an argv-free module gets ZERO extra bytes.
-pub fn nb_tokens_use_argv(toks: Vec, buf: i64, pos: i64) -> i64 {
-    if at_eof(toks, pos) == 1 {
-        return 0;
-    }
-    if tok_kind(toks, pos) == tk_ident() {
-        if nb_is_argv_name(buf, tok_lo(toks, pos), tok_hi(toks, pos)) == 1 {
-            return 1;
-        }
-    }
-    nb_tokens_use_argv(toks, buf, pos + 1)
-}
+// (The entry argc/argv-capture gate now scans only the pruned/reachable fn set —
+// see nb_fns_use_argv near nb_count_all_calls — so a seeded-but-unreachable std.cli
+// mention of the intrinsic never false-triggers the capture. nb_is_argv_name above
+// is shared by that reachability walk.)
 
 // nb_intrinsic_id(buf, lo, hi): name-match the callee span [lo,hi) in buf against
 // the inlined __mind_* intrinsic set (mirror the Rust Instr::Intrinsic dispatch at
@@ -24066,6 +24057,175 @@ pub fn nb_count_all_calls(buf: i64, ordered: i64, n_fns: i64, k: i64, ccell: i64
     nb_count_all_calls(buf, ordered, n_fns, k + 1, ccell)
 }
 
+// RI-C: does any REACHABLE (pruned/emitted) fn body call __mind_argc/__mind_argv?
+// The entry argc/argv capture must be emitted iff an EMITTED fn actually references
+// argv — NOT merely because a seeded-but-pruned std module (std.cli's args_from_os)
+// mentions the intrinsic. Scanning only the pruned `ordered` fn set keeps every
+// argv-free program byte-identical even when std.cli is seeded ahead of it (a raw
+// whole-buffer token scan would false-trigger on the seeded-but-unreachable mention
+// and shift every seeded ELF by the 34-byte capture). Mirrors the nb_ccount_* body
+// walk arm-for-arm; returns 1 on the FIRST argv call (short-circuit OR).
+pub fn nb_argv_expr(buf: i64, node: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_int_lit() {
+        return 0;
+    }
+    if k == ast_float_lit() {
+        return 0;
+    }
+    if k == ast_ident() {
+        return 0;
+    }
+    if k == ast_paren() {
+        return nb_argv_expr(buf, ast_child0(node));
+    }
+    if k == ast_struct_lit() {
+        let fields_addr: i64 = ast_child1(node);
+        let nfields: i64 = ast_aux(node);
+        return nb_argv_struct_fields(buf, fields_addr, nfields, 0);
+    }
+    if k == ast_field() {
+        return nb_argv_expr(buf, ast_child0(node));
+    }
+    if k == ast_call() {
+        let callee: i64 = ast_child0(node);
+        if nb_is_argv_name(buf, ast_span_lo(callee), ast_span_hi(callee)) == 1 {
+            return 1;
+        }
+        let args_addr: i64 = ast_child1(node);
+        let args_len: i64 = ast_aux(node);
+        return nb_argv_args(buf, args_addr, args_len, 0);
+    }
+    if k == ast_neg() {
+        return nb_argv_expr(buf, ast_child0(node));
+    }
+    if k == ast_not() {
+        return nb_argv_expr(buf, ast_child0(node));
+    }
+    if k == ast_if() {
+        let ic_cond: i64 = ast_child0(node);
+        if nb_argv_expr(buf, ic_cond) == 1 {
+            return 1;
+        }
+        let it_blk: i64 = ast_child1(node);
+        if nb_argv_stmts(buf, ast_child0(it_blk), ast_aux(it_blk), 0) == 1 {
+            return 1;
+        }
+        let ie_blk: i64 = ast_child2(node);
+        let ie_sa: i64 = if ie_blk == 0 {
+            0
+        } else {
+            ast_child0(ie_blk)
+        };
+        let ie_sl: i64 = if ie_blk == 0 {
+            0
+        } else {
+            ast_aux(ie_blk)
+        };
+        return nb_argv_stmts(buf, ie_sa, ie_sl, 0);
+    }
+    if nb_argv_expr(buf, ast_child0(node)) == 1 {
+        return 1;
+    }
+    nb_argv_expr(buf, ast_child1(node))
+}
+pub fn nb_argv_struct_fields(buf: i64, fields_addr: i64, nfields: i64, i: i64) -> i64 {
+    if i >= nfields {
+        return 0;
+    }
+    let value_node: i64 = __mind_load_i64(fields_addr + (i * 3 + 2) * 8);
+    if nb_argv_expr(buf, value_node) == 1 {
+        return 1;
+    }
+    nb_argv_struct_fields(buf, fields_addr, nfields, i + 1)
+}
+pub fn nb_argv_args(buf: i64, args_addr: i64, args_len: i64, i: i64) -> i64 {
+    if i >= args_len {
+        return 0;
+    }
+    let arg_node: i64 = __mind_load_i64(args_addr + i * 8);
+    if nb_argv_expr(buf, arg_node) == 1 {
+        return 1;
+    }
+    nb_argv_args(buf, args_addr, args_len, i + 1)
+}
+pub fn nb_argv_stmt(buf: i64, node: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_return() {
+        return nb_argv_expr(buf, ast_child0(node));
+    }
+    if k == ast_let() {
+        return nb_argv_stmt(buf, ast_child2(node));
+    }
+    if k == ast_if() {
+        let cond: i64 = ast_child0(node);
+        if nb_argv_expr(buf, cond) == 1 {
+            return 1;
+        }
+        let then_blk: i64 = ast_child1(node);
+        if nb_argv_stmts(buf, ast_child0(then_blk), ast_aux(then_blk), 0) == 1 {
+            return 1;
+        }
+        let else_blk: i64 = ast_child2(node);
+        let else_sa: i64 = if else_blk == 0 {
+            0
+        } else {
+            ast_child0(else_blk)
+        };
+        let else_sl: i64 = if else_blk == 0 {
+            0
+        } else {
+            ast_aux(else_blk)
+        };
+        return nb_argv_stmts(buf, else_sa, else_sl, 0);
+    }
+    if k == ast_while() {
+        let cond: i64 = ast_child0(node);
+        if nb_argv_expr(buf, cond) == 1 {
+            return 1;
+        }
+        let body_blk: i64 = ast_child1(node);
+        return nb_argv_stmts(buf, ast_child0(body_blk), ast_aux(body_blk), 0);
+    }
+    if k == ast_assign() {
+        return nb_argv_expr(buf, ast_child2(node));
+    }
+    if k == ast_break() {
+        return 0;
+    }
+    if k == ast_continue() {
+        return 0;
+    }
+    nb_argv_expr(buf, node)
+}
+pub fn nb_argv_stmts(buf: i64, stmts_addr: i64, stmts_len: i64, i: i64) -> i64 {
+    if i >= stmts_len {
+        return 0;
+    }
+    let stmt_node: i64 = __mind_load_i64(stmts_addr + i * 8);
+    if nb_argv_stmt(buf, stmt_node) == 1 {
+        return 1;
+    }
+    nb_argv_stmts(buf, stmts_addr, stmts_len, i + 1)
+}
+pub fn nb_argv_fn(buf: i64, node: i64) -> i64 {
+    let body: i64 = ast_child2(node);
+    let stmts_addr: i64 = ast_child0(body);
+    let stmts_len: i64 = ast_aux(body);
+    nb_argv_stmts(buf, stmts_addr, stmts_len, 0)
+}
+// 1 iff any of the `n_fns` pruned/emitted fns in `ordered` references argv.
+pub fn nb_fns_use_argv(buf: i64, ordered: i64, n_fns: i64, k: i64) -> i64 {
+    if k >= n_fns {
+        return 0;
+    }
+    let node: i64 = __mind_load_i64(ordered + k * 8);
+    if nb_argv_fn(buf, node) == 1 {
+        return 1;
+    }
+    nb_fns_use_argv(buf, ordered, n_fns, k + 1)
+}
+
 // round_up(x, 16)
 pub fn nb_round16(x: i64) -> i64 {
     let r: i64 = x - (x / 16) * 16;
@@ -26335,9 +26495,11 @@ pub fn selftest_native_elf_hb(src_addr: i64, src_len: i64, hash_addr: i64, user_
     // right register file (xmm0 for a float-returning callee) and classified by its
     // callee's return dtype. Every fn in main.mind's float-free source registers INT.
     let frt: i64 = frt_build_from_tokens(tokens, src_addr);
-    // RI-C: does this module reference argv? Gates the entry argc/argv capture so an
-    // argv-free module (main.mind itself, every frozen fixture) is byte-identical.
-    let uses_argv: i64 = nb_tokens_use_argv(tokens, src_addr, 0);
+    // RI-C: does any REACHABLE (pruned) fn reference argv? Gates the entry argc/argv
+    // capture so an argv-free program is byte-identical EVEN when std.cli (whose
+    // args_from_os mentions the intrinsic) is seeded ahead of it — the scan is scoped
+    // to the emitted `ordered` set, not the raw combined token buffer.
+    let uses_argv: i64 = nb_fns_use_argv(src_addr, ordered, n_fns, 0);
     let acc0: NbState = NbState { code: string_new(), next_id: 0, last_id: 0, ncalls: 0 };
     let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, entry_idx, srt, frt, uses_argv);
     let image0: String = lr.code;
