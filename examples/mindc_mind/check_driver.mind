@@ -1,0 +1,231 @@
+// ===========================================================================
+// SELF-HOSTED `check` DRIVER (Rust-independence RI-C, task #109 slice B)
+//
+// A thin CLI shim mirroring the real Rust mindc `check` subcommand, kept SEPARATE
+// from main.mind (the compiler library) on purpose — appended as source to the
+// native backend only, never built via `mindc --emit-shared` — so main.mind stays
+// byte-identical to HEAD and there is no collision with mindc's reserved `@main`
+// symbol (main.mind defines no `main`; this file does, only in the combined
+// self-host source). Same pattern as selfhost_driver.mind.
+//
+// Reuses the ALREADY self-hosted front-end in main.mind: lex -> parse -> typecheck
+// (the last uses the pure-MIND Map/env). Reuses args_from_os() (std/cli) for real
+// argv, and __mind_read/__mind_write (raw syscalls, no libc) for I/O.
+//
+// HONEST LIMITATION (this slice): the source is read from STDIN (fd 0), NOT from
+// the positional path arguments. Reading a file BY PATH needs the 7th intrinsic
+// __mind_open (RFC 0005), which is not yet wired — that is the dedicated follow-up
+// (task #228). The path arguments and flags are still PARSED and reported here.
+//
+// Flags mirrored from src/bin/mindc.rs Command::Check:
+//   paths: Vec<String>          — recognized + counted (source still from stdin)
+//   --reporter human|json|lsp   — human implemented; json/lsp recognized + STUBBED
+//   --no-typecheck              — gates the (only) self-hosted pass -> clean
+//   --no-fmt / --no-lint        — recognized; no fmt/lint pass is self-hosted yet
+//   --fix                       — recognized + STUBBED (no rewrite performed)
+// Exit: 0 if the typecheck report has no "ERROR:", else 1 (via `return`, NOT
+// proc_exit — libc exit is unavailable in the freestanding native ELF).
+// ===========================================================================
+
+// Read stdin (fd 0) into `buf` up to `cap` bytes; a pipe read may return short,
+// so loop until EOF/error (n <= 0). Returns the total bytes read.
+pub fn ckd_read_stdin(buf: i64, cap: i64, got: i64) -> i64 {
+    if got >= cap {
+        return got;
+    }
+    let n: i64 = __mind_read(0, buf + got, cap - got, 0 - 1);
+    if n <= 0 {
+        return got;
+    }
+    ckd_read_stdin(buf, cap, got + n)
+}
+
+// Does the report contain the 6-byte marker "ERROR:" (push_kw_error, main.mind)
+// at any offset? Byte scan; returns 1 on the first hit.
+pub fn ckd_report_has_error(addr: i64, len: i64, i: i64) -> i64 {
+    if i + 6 > len {
+        return 0;
+    }
+    if __mind_load_i8(addr + i) == 69 {
+        if __mind_load_i8(addr + i + 1) == 82 {
+            if __mind_load_i8(addr + i + 2) == 82 {
+                if __mind_load_i8(addr + i + 3) == 79 {
+                    if __mind_load_i8(addr + i + 4) == 82 {
+                        if __mind_load_i8(addr + i + 5) == 58 {
+                            return 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    ckd_report_has_error(addr, len, i + 1)
+}
+
+// Print `s` to stdout (fd 1) via the raw write syscall (no libc).
+pub fn ckd_puts(s: String) -> i64 {
+    __mind_write(1, string_addr(s), string_len(s), 0 - 1)
+}
+
+// ---- flag-name String builders (byte-by-byte; no string literals in the subset) ----
+pub fn ckd_s_reporter() -> String {
+    // "--reporter"
+    let a: String = string_push_byte(string_new(), 45);
+    let b: String = string_push_byte(a, 45);
+    let c: String = string_push_byte(b, 114);
+    let d: String = string_push_byte(c, 101);
+    let e: String = string_push_byte(d, 112);
+    let f: String = string_push_byte(e, 111);
+    let g: String = string_push_byte(f, 114);
+    let h: String = string_push_byte(g, 116);
+    let i: String = string_push_byte(h, 101);
+    string_push_byte(i, 114)
+}
+pub fn ckd_s_no_tc() -> String {
+    // "--no-typecheck"
+    let a: String = string_push_byte(string_new(), 45);
+    let b: String = string_push_byte(a, 45);
+    let c: String = string_push_byte(b, 110);
+    let d: String = string_push_byte(c, 111);
+    let e: String = string_push_byte(d, 45);
+    let f: String = string_push_byte(e, 116);
+    let g: String = string_push_byte(f, 121);
+    let h: String = string_push_byte(g, 112);
+    let i: String = string_push_byte(h, 101);
+    let j: String = string_push_byte(i, 99);
+    let k: String = string_push_byte(j, 104);
+    let l: String = string_push_byte(k, 101);
+    let m: String = string_push_byte(l, 99);
+    string_push_byte(m, 107)
+}
+pub fn ckd_s_no_fmt() -> String {
+    // "--no-fmt"
+    let a: String = string_push_byte(string_new(), 45);
+    let b: String = string_push_byte(a, 45);
+    let c: String = string_push_byte(b, 110);
+    let d: String = string_push_byte(c, 111);
+    let e: String = string_push_byte(d, 45);
+    let f: String = string_push_byte(e, 102);
+    let g: String = string_push_byte(f, 109);
+    string_push_byte(g, 116)
+}
+pub fn ckd_s_no_lint() -> String {
+    // "--no-lint"
+    let a: String = string_push_byte(string_new(), 45);
+    let b: String = string_push_byte(a, 45);
+    let c: String = string_push_byte(b, 110);
+    let d: String = string_push_byte(c, 111);
+    let e: String = string_push_byte(d, 45);
+    let f: String = string_push_byte(e, 108);
+    let g: String = string_push_byte(f, 105);
+    let h: String = string_push_byte(g, 110);
+    string_push_byte(h, 116)
+}
+pub fn ckd_s_fix() -> String {
+    // "--fix"
+    let a: String = string_push_byte(string_new(), 45);
+    let b: String = string_push_byte(a, 45);
+    let c: String = string_push_byte(b, 102);
+    let d: String = string_push_byte(c, 105);
+    string_push_byte(d, 120)
+}
+pub fn ckd_s_empty() -> String {
+    string_new()
+}
+
+// ckd_arg_after — the String value immediately following the first argv entry
+// equal to `flag`, or empty if `flag` is absent / is the last entry. RECURSIVE
+// + immutable on purpose: the cli.mind args_flag_value/_idx helpers use a `let mut`
+// local declared INSIDE their `while` body (a conditional flag), which currently
+// MISCOMPILES in the native-ELF backend (SIGILL). args_has_flag (no in-loop mut)
+// works, and this recursive form sidesteps the buggy pattern entirely. See the
+// smoke report — this is a separate native-codegen gap, not a check-driver bug.
+pub fn ckd_arg_after(a: Args, flag: String, i: i64, n: i64) -> String {
+    if i + 1 >= n {
+        return string_new();
+    }
+    let s: String = args_get(a, i);
+    if string_eq(s, flag) == 1 {
+        return args_get(a, i + 1);
+    }
+    ckd_arg_after(a, flag, i + 1, n)
+}
+
+// Print a one-line "note: <label> <text>" where label/text are pre-built Strings.
+// Used to surface STUBBED flags explicitly rather than dropping them silently.
+// "note: " = 110 111 116 101 58 32
+pub fn ckd_note(body: String) -> i64 {
+    let a: String = string_push_byte(string_new(), 110);
+    let b: String = string_push_byte(a, 111);
+    let c: String = string_push_byte(b, 116);
+    let d: String = string_push_byte(c, 101);
+    let e: String = string_push_byte(d, 58);
+    let f: String = string_push_byte(e, 32);
+    let g: String = string_push_str(f, body);
+    let h: String = string_push_byte(g, 10);
+    ckd_puts(h)
+}
+// "--fix stubbed (no rewrite)"  — label String for the --fix stub note.
+pub fn ckd_msg_fix() -> String {
+    let a: String = string_push_byte(string_new(), 45);
+    let b: String = string_push_byte(a, 45);
+    let c: String = string_push_byte(b, 102);
+    let d: String = string_push_byte(c, 105);
+    let e: String = string_push_byte(d, 120);
+    let f: String = string_push_byte(e, 32);
+    let g: String = string_push_byte(f, 115);
+    let h: String = string_push_byte(g, 116);
+    let i: String = string_push_byte(h, 117);
+    let j: String = string_push_byte(i, 98);
+    let k: String = string_push_byte(j, 98);
+    let l: String = string_push_byte(k, 101);
+    string_push_byte(l, 100)
+}
+
+pub fn main() -> i64 {
+    // Real OS argv (proven self-hosted in task #225). Flags are recognized here;
+    // the source itself is read from stdin this slice (path read = task #228).
+    let a: Args = args_from_os();
+    let no_tc: i64 = args_has_flag(a, ckd_s_no_tc(), ckd_s_empty());
+    let has_fix: i64 = args_has_flag(a, ckd_s_fix(), ckd_s_empty());
+    let _nofmt: i64 = args_has_flag(a, ckd_s_no_fmt(), ckd_s_empty());
+    let _nolint: i64 = args_has_flag(a, ckd_s_no_lint(), ckd_s_empty());
+    // --reporter <value>: human is the only implemented reporter; json/lsp are stubs.
+    // Uses the recursive ckd_arg_after (NOT cli's args_flag_value, which hits the
+    // in-loop-mut native miscompile above).
+    let reporter: String = ckd_arg_after(a, ckd_s_reporter(), 0, args_len(a));
+    // Surface the --fix stub explicitly (recognized, not implemented this slice).
+    if has_fix == 1 {
+        let _n: i64 = ckd_note(ckd_msg_fix());
+    }
+    // A non-human reporter is recognized but stubbed -> note it and fall back to human.
+    if reporter.len > 0 {
+        if string_get_byte(reporter, 0) != 104 {
+            let _r: i64 = ckd_note(reporter);
+        }
+    }
+
+    // Read the source to check from stdin.
+    let cap: i64 = 4194304;
+    let src: i64 = __mind_alloc(cap + 16);
+    let src_len: i64 = ckd_read_stdin(src, cap, 0);
+
+    // --no-typecheck gates the (only) self-hosted pass: emit nothing, report clean.
+    if no_tc == 1 {
+        return 0;
+    }
+
+    // Front-end: lex -> parse -> typecheck (all already self-hosted in main.mind).
+    let toks: Vec = lex(src, src_len);
+    let ast_root: i64 = parse(toks, src);
+    let report: String = typecheck(ast_root, src);
+
+    // Human reporter: print the diagnostic report to stdout.
+    let _w: i64 = ckd_puts(report);
+
+    // Exit code: 1 if any "ERROR:" diagnostic, else 0.
+    if ckd_report_has_error(string_addr(report), string_len(report), 0) == 1 {
+        return 1;
+    }
+    0
+}
