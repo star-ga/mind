@@ -379,7 +379,7 @@ pub fn eval_module_value_with_env_mode(
     mode: ExecMode,
 ) -> Result<Value, EvalError> {
     if let Some(src) = src_for_types {
-        let mut tenv: HashMap<String, ValueType> = HashMap::new();
+        let mut tenv: crate::type_checker::TypeEnv = crate::type_checker::TypeEnv::default();
         for name in env.keys() {
             tenv.insert(name.clone(), ValueType::ScalarI32);
         }

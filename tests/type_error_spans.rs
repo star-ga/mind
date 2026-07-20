@@ -12,8 +12,6 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
-use std::collections::HashMap;
-
 use libmind::diagnostics;
 
 use libmind::parser;
@@ -24,7 +22,7 @@ use libmind::type_checker;
 fn unknown_ident_points_to_name() {
     let src = "let n: i32 = x + 1";
     let module = parser::parse_with_diagnostics(src).expect("parse failed");
-    let diags = type_checker::check_module_types(&module, src, &HashMap::new());
+    let diags = type_checker::check_module_types(&module, src, &Default::default());
     assert!(!diags.is_empty(), "expected type error diagnostic");
     let rendered = diagnostics::render(src, &diags[0]);
     assert!(
@@ -65,7 +63,7 @@ fn byte_to_line_col(src: &str, offset: usize) -> (usize, usize) {
 /// `let` keyword.
 fn assert_narrowing_points_at_value(src: &str) {
     let module = parser::parse_with_diagnostics(src).expect("parse failed");
-    let diags = type_checker::check_module_types(&module, src, &HashMap::new());
+    let diags = type_checker::check_module_types(&module, src, &Default::default());
     let narrowing = diags
         .iter()
         .find(|d| d.code == "E2004")

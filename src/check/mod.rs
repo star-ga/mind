@@ -21,7 +21,6 @@
 pub mod gitignore;
 pub mod reporter;
 
-use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -879,7 +878,12 @@ fn check_types(path: &Path, source: &str, out: &mut Vec<CheckDiagnostic>) {
         });
     }
 
-    let type_diags = check_module_types_in_file(&module, source, file_name, &HashMap::new());
+    let type_diags = check_module_types_in_file(
+        &module,
+        source,
+        file_name,
+        &crate::type_checker::TypeEnv::default(),
+    );
 
     for d in type_diags {
         let (line, col) = match &d.span {

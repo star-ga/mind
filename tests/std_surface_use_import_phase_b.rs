@@ -56,7 +56,7 @@ fn correct_arity_and_types_pass() {
     // Named("Vec") maps to ScalarI64 too (Option-C heap ABI).
     let consumer_src = "use std.vec\nlet x = vec_get(0, 1)\n";
     let ast = parser::parse(consumer_src).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer_src, None, &env, &table);
     assert!(
         diags.is_empty(),
@@ -71,7 +71,7 @@ fn wrong_arity_errors_at_call_site() {
     // vec_new() takes zero args; passing one must fail.
     let consumer_src = "use std.vec\nlet x = vec_new(42)\n";
     let ast = parser::parse(consumer_src).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer_src, None, &env, &table);
     assert!(
         !diags.is_empty(),
@@ -91,7 +91,7 @@ fn too_many_args_errors_with_specific_message() {
     // vec_get(v, i) takes 2 args; passing 3 must fail.
     let consumer_src = "use std.vec\nlet x = vec_get(0, 1, 2)\n";
     let ast = parser::parse(consumer_src).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer_src, None, &env, &table);
     assert!(
         !diags.is_empty(),
@@ -108,7 +108,7 @@ fn return_type_threads_through_to_let_binding() {
     // round-trip — if the call succeeds, the return type was used.
     let consumer_src = "use std.io\nlet n: i64 = file_read(0, 0, 64, 0)\n";
     let ast = parser::parse(consumer_src).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer_src, None, &env, &table);
     assert!(
         diags.is_empty(),
@@ -133,7 +133,7 @@ fn explicit_export_block_donor_enforces_arity() {
     let table = build_module_table(&[("crate.donor".to_string(), &donor_ast)]);
     let consumer_src = "use crate.donor\nlet r = do_stuff(1, 2, 3, 99)\n";
     let consumer_ast = parser::parse(consumer_src).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&consumer_ast, consumer_src, None, &env, &table);
     assert!(
         !diags.is_empty(),
@@ -155,7 +155,7 @@ fn imported_fn_with_no_return_type_defaults_to_i64() {
     let table = build_module_table(&[("crate.donor".to_string(), &donor_ast)]);
     let consumer_src = "use crate.donor\nlet _r = noisy()\n";
     let consumer_ast = parser::parse(consumer_src).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&consumer_ast, consumer_src, None, &env, &table);
     assert!(
         diags.is_empty(),
@@ -188,7 +188,7 @@ fn phase_d2_named_struct_param_named_in_arity_error() {
                         let t: tensor<f32[3]> = zeros([3])\n\
                         let r = vec_set(t, 0, 99)\n";
     let consumer_ast = parser::parse(consumer_src).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&consumer_ast, consumer_src, None, &env, &table);
     let combined = diags
         .iter()

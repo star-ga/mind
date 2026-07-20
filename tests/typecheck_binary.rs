@@ -12,16 +12,13 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
-use std::collections::HashMap;
-
 use libmind::parser;
 use libmind::type_checker;
-use libmind::types::ValueType;
 #[test]
 fn scalars_ok() {
     let src = "1 + 2 * 3";
     let module = parser::parse(src).unwrap();
-    let env: HashMap<String, ValueType> = HashMap::new();
+    let env = libmind::type_checker::TypeEnv::default();
     let diags = type_checker::check_module_types(&module, src, &env);
     assert!(diags.is_empty());
 }
@@ -30,7 +27,7 @@ fn scalars_ok() {
 fn unknown_ident_reports_error() {
     let src = "y + 1";
     let module = parser::parse(src).unwrap();
-    let env: HashMap<String, ValueType> = HashMap::new();
+    let env = libmind::type_checker::TypeEnv::default();
     let diags = type_checker::check_module_types(&module, src, &env);
     assert!(!diags.is_empty());
 }

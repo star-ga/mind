@@ -19,8 +19,6 @@
 //! can lower the resulting IR into MLIR text when the `mlir-lowering` feature
 //! is enabled.
 
-use std::collections::HashMap;
-
 use crate::diagnostics::Diagnostic;
 use crate::eval;
 use crate::ir;
@@ -276,8 +274,12 @@ pub fn compile_source_with_name(
         return Err(CompileError::TypeError(collapse_diags));
     }
 
-    let type_diags =
-        type_checker::check_module_types_in_file(&module, source, source_name, &HashMap::new());
+    let type_diags = type_checker::check_module_types_in_file(
+        &module,
+        source,
+        source_name,
+        &crate::type_checker::TypeEnv::default(),
+    );
     if !type_diags.is_empty() {
         return Err(CompileError::TypeError(type_diags));
     }

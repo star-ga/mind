@@ -22,14 +22,12 @@
 
 #![cfg(feature = "std-surface")]
 
-use std::collections::HashMap;
-
 use libmind::parser::parse;
 use libmind::type_checker::check_module_types_in_file;
 
 fn diagnostics(src: &str) -> Vec<String> {
     let module = parse(src).expect("parse");
-    check_module_types_in_file(&module, src, Some("t.mind"), &HashMap::new())
+    check_module_types_in_file(&module, src, Some("t.mind"), &Default::default())
         .iter()
         .map(|e| format!("{e:?}"))
         .collect()

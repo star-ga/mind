@@ -91,7 +91,7 @@ fn typecheck_accepts_named_type_in_extern_signature() {
         }
     "#;
     let module = parser::parse(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
-    let diags = check_module_types_in_file(&module, src, None, &TypeEnv::new());
+    let diags = check_module_types_in_file(&module, src, None, &TypeEnv::default());
     // A repr(C)-annotated struct must be accepted; no diagnostic expected.
     assert!(
         diags.is_empty(),
@@ -307,7 +307,7 @@ fn typecheck_accepts_fn_ptr_in_extern_signature() {
             span: sp(),
         }],
     };
-    let diags = check_module_types_in_file(&module, "", None, &TypeEnv::new());
+    let diags = check_module_types_in_file(&module, "", None, &TypeEnv::default());
     assert!(
         diags.is_empty(),
         "FnPtr param must be accepted in extern \"C\" signature; got diags: {diags:?}"
@@ -459,7 +459,7 @@ fn end_to_end_repr_c_struct_lower_to_ir() {
     let module = parser::parse(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
 
     // Type-check: must produce no errors.
-    let diags = check_module_types_in_file(&module, src, None, &TypeEnv::new());
+    let diags = check_module_types_in_file(&module, src, None, &TypeEnv::default());
     assert!(
         diags.is_empty(),
         "type-check of repr(C) struct in extern signature must succeed; diags: {diags:?}"
@@ -627,7 +627,7 @@ fn non_repr_c_named_struct_in_extern_signature_emits_diagnostic() {
     "#;
     let module = parser::parse(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
 
-    let diags = check_module_types_in_file(&module, src, None, &TypeEnv::new());
+    let diags = check_module_types_in_file(&module, src, None, &TypeEnv::default());
     assert!(
         !diags.is_empty(),
         "using a non-repr(C) struct in an extern \"C\" signature must produce \

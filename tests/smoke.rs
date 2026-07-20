@@ -19,7 +19,7 @@ use libmind::types::ValueType;
 #[test]
 fn parse_check_minimal() {
     let m = parser::parse("x 123").expect("parse");
-    let mut env = std::collections::HashMap::new();
+    let mut env = libmind::type_checker::TypeEnv::default();
     env.insert("x".to_string(), ValueType::ScalarI32);
     let diags = type_checker::check_module_types(&m, "x 123", &env);
     assert!(diags.is_empty());

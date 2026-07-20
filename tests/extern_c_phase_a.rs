@@ -208,7 +208,7 @@ fn typecheck_rejects_tensor_in_extern_signature() {
         }],
     };
 
-    let diags = check_module_types_in_file(&module, "", None, &TypeEnv::new());
+    let diags = check_module_types_in_file(&module, "", None, &TypeEnv::default());
     assert!(
         !diags.is_empty(),
         "expected at least one diagnostic for a Tensor param in extern fn"

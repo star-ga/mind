@@ -258,7 +258,7 @@ fn bundled_stdlib_resolves_use_std_regex() {
 
     let consumer = "use std.regex\nlet rx = rx_compile(0, 0)\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         diags.is_empty(),

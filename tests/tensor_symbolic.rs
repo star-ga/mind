@@ -12,8 +12,6 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
-use std::collections::HashMap;
-
 use libmind::parser;
 use libmind::type_checker;
 use libmind::types::DType;
@@ -24,7 +22,7 @@ use libmind::types::ValueType;
 fn broadcast_with_symbols_equal_symbols_ok() {
     let src = "a + b";
     let m = parser::parse(src).unwrap();
-    let mut env: HashMap<String, ValueType> = HashMap::new();
+    let mut env = libmind::type_checker::TypeEnv::default();
     env.insert(
         "a".to_string(),
         ValueType::Tensor(TensorType::new(
@@ -47,7 +45,7 @@ fn broadcast_with_symbols_equal_symbols_ok() {
 fn broadcast_with_symbols_mismatch_fails() {
     let src = "a + b";
     let m = parser::parse(src).unwrap();
-    let mut env: HashMap<String, ValueType> = HashMap::new();
+    let mut env = libmind::type_checker::TypeEnv::default();
     env.insert(
         "a".to_string(),
         ValueType::Tensor(TensorType::new(

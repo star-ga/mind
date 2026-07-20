@@ -37,7 +37,7 @@ fn string_starts_with_and_slice_from_resolve() {
                     let r = string_starts_with(h, n)\n\
                     let sv = string_slice_from(h, 5)\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         diags.is_empty(),
@@ -61,7 +61,7 @@ fn args_flag_value_equals_form_consumer_resolves() {
                     let v = args_flag_value(a, long, short)\n\
                     let n = string_len(v)\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         diags.is_empty(),
@@ -77,7 +77,7 @@ fn string_starts_with_phase_b_rejects_wrong_arity() {
                     let s = string_new()\n\
                     let bad = string_starts_with(s)\n";
     let ast = parser::parse(consumer).expect("consumer must parse");
-    let env = TypeEnv::new();
+    let env = TypeEnv::default();
     let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
     assert!(
         !diags.is_empty(),

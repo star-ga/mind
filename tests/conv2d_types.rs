@@ -20,7 +20,7 @@ fn conv2d_channel_mismatch_errors() {
         tensor.conv2d(x, w)
     "#;
     let module = libmind::parser::parse(src).unwrap();
-    let diags = libmind::type_checker::check_module_types(&module, src, &HashMap::new());
+    let diags = libmind::type_checker::check_module_types(&module, src, &Default::default());
     assert!(!diags.is_empty());
 }
 
@@ -32,7 +32,6 @@ fn conv2d_same_padding_symbolic_shapes() {
         tensor.conv2d(x, w, stride_h=2, stride_w=2, padding="same")
     "#;
     let module = libmind::parser::parse(src).unwrap();
-    let diags = libmind::type_checker::check_module_types(&module, src, &HashMap::new());
+    let diags = libmind::type_checker::check_module_types(&module, src, &Default::default());
     assert!(diags.is_empty());
 }
-use std::collections::HashMap;

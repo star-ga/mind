@@ -15,7 +15,6 @@
 use libmind::ast::{Node, SparseLayout, TypeAnn};
 use libmind::parser;
 use libmind::type_checker::check_module_types;
-use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // Parser: SparseTensor type surface
@@ -200,7 +199,7 @@ fn typecheck_sparse_fn_param_no_crash() {
     // None in valuetype_from_ann, which is the documented v1 behaviour.
     let src = "fn route(w: tensor<sparse[csr], i32>) -> i32 { return 0; }";
     let m = parser::parse(src).expect("parse failed");
-    let diags = check_module_types(&m, src, &HashMap::new());
+    let diags = check_module_types(&m, src, &Default::default());
     // No type errors expected (the param just passes through as opaque).
     assert!(diags.is_empty(), "unexpected type diags: {diags:?}");
 }
@@ -209,7 +208,7 @@ fn typecheck_sparse_fn_param_no_crash() {
 fn typecheck_sparse_return_type_no_crash() {
     let src = "fn make_sparse() -> tensor<sparse[csr], i32> { return 0; }";
     let m = parser::parse(src).expect("parse failed");
-    let diags = check_module_types(&m, src, &HashMap::new());
+    let diags = check_module_types(&m, src, &Default::default());
     assert!(diags.is_empty(), "unexpected type diags: {diags:?}");
 }
 

@@ -17,6 +17,48 @@ mod resolve;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 
+/// Fast, deterministic non-cryptographic hasher (the FxHash algorithm from
+/// rustc/Firefox) for the type checker's hot per-compile maps. It is markedly
+/// faster than the std SipHash on the short identifier keys these maps use, and
+/// — unlike std `RandomState` — deterministic, so it cannot introduce a
+/// nondeterministic iteration order. These maps are lookup-only w.r.t. emission
+/// anyway (the sole `keys()` walk, `closest_identifier`, breaks ties
+/// lexicographically), so this changes no emitted byte. No new dependency.
+#[derive(Default)]
+pub struct FxHasher {
+    hash: u64,
+}
+impl FxHasher {
+    const SEED: u64 = 0x51_7c_c1_b7_27_22_0a_95;
+    #[inline]
+    fn add(&mut self, i: u64) {
+        self.hash = (self.hash.rotate_left(5) ^ i).wrapping_mul(Self::SEED);
+    }
+}
+impl std::hash::Hasher for FxHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        let mut b = bytes;
+        while b.len() >= 8 {
+            self.add(u64::from_le_bytes(b[..8].try_into().unwrap()));
+            b = &b[8..];
+        }
+        if b.len() >= 4 {
+            self.add(u32::from_le_bytes(b[..4].try_into().unwrap()) as u64);
+            b = &b[4..];
+        }
+        for &byte in b {
+            self.add(byte as u64);
+        }
+    }
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.hash
+    }
+}
+/// `BuildHasher` for the type checker's hot maps (see `FxHasher`).
+pub type FxBuild = std::hash::BuildHasherDefault<FxHasher>;
+
 use crate::ast::BinOp;
 
 use crate::ast::Literal;
@@ -45,7 +87,7 @@ pub struct TypeErrSpan {
     pub span: AstSpan,
 }
 
-pub type TypeEnv = HashMap<String, ValueType>;
+pub type TypeEnv = HashMap<String, ValueType, FxBuild>;
 
 /// A tensor parameter signature: `(arg_position, param_name, dims, dtype)`.
 /// `arg_position` is the 0-based index in the full param list so call arguments
@@ -54,7 +96,7 @@ type TensorParamSig = (usize, String, Vec<String>, String);
 
 /// Maps a function name to its tensor-param signatures, used by call-site
 /// symbolic-dim checks without a second module walk.
-type FnTensorSigs = HashMap<String, Vec<TensorParamSig>>;
+type FnTensorSigs = HashMap<String, Vec<TensorParamSig>, FxBuild>;
 
 /// RFC 0005 Phase B — an intra-module function's call signature, captured
 /// from its `Node::FnDef` so call sites can validate arity.
@@ -82,7 +124,7 @@ struct IntraFnSig {
 }
 
 /// Maps an intra-module function name to its captured call signature.
-type IntraFnSigs = HashMap<String, IntraFnSig>;
+type IntraFnSigs = HashMap<String, IntraFnSig, FxBuild>;
 
 const TYPE_ERR_CODE: &str = "E2001";
 const SHAPE_BROADCAST_CODE: &str = "E2101";
@@ -2680,13 +2722,13 @@ fn intra_lookup_fn(name: &str) -> Option<IntraFnSig> {
 // into the parent during the FnDef-body recursion, so a body's match still sees
 // the module's enums). Maps `enum name -> Vec<variant name>` (Vec for stable,
 // deterministic ordering of any "missing variants" list).
-type EnumVariantTable = HashMap<String, Vec<String>>;
+type EnumVariantTable = HashMap<String, Vec<String>, FxBuild>;
 
 /// Finding-19 soundness: each variant's declared PAYLOAD types, keyed by the
 /// bare `"Enum::Variant"` path (matching `split_enum_variant_path` output). Lets
 /// a match arm bind a payload sub-pattern at its declared type instead of the
 /// scrutinee/enum type, so `E::A(x) => x` checks at the payload type.
-type EnumPayloadTable = HashMap<String, Vec<crate::ast::TypeAnn>>;
+type EnumPayloadTable = HashMap<String, Vec<crate::ast::TypeAnn>, FxBuild>;
 
 thread_local! {
     static ENUM_VARIANTS: std::cell::RefCell<Option<EnumVariantTable>> =
@@ -2703,7 +2745,7 @@ fn variant_payload_of(enum_name: &str, variant: &str) -> Option<Vec<crate::ast::
 
 /// Build the payload registry from a module's `Node::EnumDef` items.
 fn build_enum_payloads(module: &Module) -> EnumPayloadTable {
-    let mut table = EnumPayloadTable::new();
+    let mut table = EnumPayloadTable::default();
     for item in &module.items {
         if let Node::EnumDef { name, variants, .. } = item {
             for v in variants {
@@ -3161,7 +3203,7 @@ fn enum_variants_of(name: &str) -> Option<Vec<String>> {
 
 /// Build the enum-variant registry from a module's `Node::EnumDef` items.
 fn build_enum_variants(module: &Module) -> EnumVariantTable {
-    let mut table = EnumVariantTable::new();
+    let mut table = EnumVariantTable::default();
     for item in &module.items {
         if let Node::EnumDef { name, variants, .. } = item {
             table.insert(
@@ -3782,8 +3824,8 @@ pub fn check_module_types_in_file(
     // overhead even on a one-item list. Insertion order within each container is
     // identical to the original (module.items order) → byte-identical output.
     let mut repr_c_struct_names = std::collections::BTreeSet::<String>::new();
-    let mut fn_tensor_sigs: FnTensorSigs = FnTensorSigs::new();
-    let mut intra_fn_sigs: IntraFnSigs = IntraFnSigs::new();
+    let mut fn_tensor_sigs: FnTensorSigs = FnTensorSigs::default();
+    let mut intra_fn_sigs: IntraFnSigs = IntraFnSigs::default();
     let mut has_fn = false;
     let mut has_enum = false;
 
@@ -5542,7 +5584,7 @@ mod did_you_mean_tests {
 
     #[test]
     fn closest_identifier_suggests_near_typo() {
-        let mut env: TypeEnv = HashMap::new();
+        let mut env: TypeEnv = TypeEnv::default();
         env.insert("count".to_string(), ValueType::ScalarI32);
         env.insert("amount".to_string(), ValueType::ScalarI32);
         // one-char typo -> the close name
@@ -5555,7 +5597,7 @@ mod did_you_mean_tests {
     fn closest_identifier_is_deterministic_on_ties() {
         // Two equidistant candidates: the suggestion must be the lexicographically
         // smaller one regardless of HashMap iteration order (wedge: deterministic).
-        let mut env: TypeEnv = HashMap::new();
+        let mut env: TypeEnv = TypeEnv::default();
         env.insert("bat".to_string(), ValueType::ScalarI32);
         env.insert("cat".to_string(), ValueType::ScalarI32);
         // "aat" is distance 1 from both "bat" and "cat"; "bat" < "cat".

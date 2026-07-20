@@ -66,7 +66,7 @@ fn tensor_vt(dtype: DType, dims: &[usize]) -> ValueType {
 
 /// TypeEnv pre-populated with named tensors.
 fn env_with(entries: &[(&str, DType, &[usize])]) -> TypeEnv {
-    let mut env = TypeEnv::new();
+    let mut env = TypeEnv::default();
     for (name, dtype, dims) in entries {
         env.insert(name.to_string(), tensor_vt(dtype.clone(), dims));
     }
