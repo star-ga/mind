@@ -3767,8 +3767,12 @@ fn cm_arg_compatible(expected: &ValueType, actual: &ValueType) -> bool {
 }
 
 /// Gated entrypoint: type-check `module` with cross-module symbol
-/// resolution against `table`. Sets the thread-local for the duration
-/// of the check and clears it afterward (no leakage across calls).
+/// resolution against `table`. Installs the thread-local for the duration
+/// of the check via `CmTableGuard`, which restores whatever was there
+/// before (not unconditionally `None`) on drop — including on an unwind,
+/// so a panic inside the check can't leak the table into later calls on
+/// the same thread, and a table set with `cm_set_project_table` before
+/// this call isn't silently clobbered to `None` afterward.
 #[cfg(feature = "cross-module-imports")]
 pub fn check_module_types_with_modules(
     module: &Module,
@@ -3777,10 +3781,32 @@ pub fn check_module_types_with_modules(
     env: &TypeEnv,
     table: &crate::project::module_table::ModuleTable,
 ) -> Vec<Pretty> {
-    CM_TABLE.with(|cell| *cell.borrow_mut() = Some(table.clone()));
-    let result = check_module_types_in_file(module, src, file, env);
-    CM_TABLE.with(|cell| *cell.borrow_mut() = None);
-    result
+    let _guard = CmTableGuard::install(table.clone());
+    check_module_types_in_file(module, src, file, env)
+}
+
+/// RAII guard for `CM_TABLE`: installs `table` for the guard's lifetime and
+/// restores the previous value on drop (including on panic-unwind), matching
+/// the save-prev/restore-on-drop discipline `IntraSigGuard`/`EnumVariantsGuard`
+/// already use for their thread-locals in this file.
+#[cfg(feature = "cross-module-imports")]
+struct CmTableGuard {
+    prev: Option<crate::project::module_table::ModuleTable>,
+}
+
+#[cfg(feature = "cross-module-imports")]
+impl CmTableGuard {
+    fn install(table: crate::project::module_table::ModuleTable) -> Self {
+        let prev = CM_TABLE.with(|cell| cell.borrow_mut().replace(table));
+        CmTableGuard { prev }
+    }
+}
+
+#[cfg(feature = "cross-module-imports")]
+impl Drop for CmTableGuard {
+    fn drop(&mut self) {
+        CM_TABLE.with(|cell| *cell.borrow_mut() = self.prev.take());
+    }
 }
 
 /// The sole public entry point for module type-checking with a source string.

@@ -16,7 +16,9 @@
 
 use libmind::parser::parse;
 use libmind::project::module_table::build_module_table;
-use libmind::type_checker::{check_module_types_in_file, check_module_types_with_modules};
+use libmind::type_checker::{
+    check_module_types_in_file, check_module_types_with_modules, cm_set_project_table,
+};
 
 /// Module B references `helper`, which is only declared+exported by A.
 const MODULE_B_SRC: &str = "use crate.a\nlet x = helper\n";
@@ -74,6 +76,46 @@ fn wrong_module_path_does_not_resolve() {
         errs.iter().any(|e| format!("{e:?}").contains("helper")),
         "import path `crate.a` must not resolve a symbol registered under `crate.other`"
     );
+}
+
+#[test]
+fn with_modules_restores_prior_project_table_not_none() {
+    // Regression for the CM_TABLE panic-unsafety/clobber fix: a project-scope
+    // table installed via `cm_set_project_table` (the whole-project pattern
+    // documented on that function) must survive a `check_module_types_with_modules`
+    // call that installs its OWN table for the duration — the guard restores
+    // whatever was there before, not an unconditional `None`.
+    let a = parse("export { helper }").expect("parse A");
+    let project_table = build_module_table(&[("crate.a".to_string(), &a)]);
+    cm_set_project_table(Some(project_table));
+
+    let b = parse(MODULE_B_SRC).expect("parse B");
+    // A different, unrelated per-file table (registers nothing useful) —
+    // `helper` must NOT resolve during this call.
+    let unrelated = build_module_table(&[]);
+    let during = check_module_types_with_modules(
+        &b,
+        MODULE_B_SRC,
+        Some("b.mind"),
+        &Default::default(),
+        &unrelated,
+    );
+    assert!(
+        during.iter().any(|e| format!("{e:?}").contains("helper")),
+        "the per-file table passed to check_module_types_with_modules must be in \
+         effect DURING the call, not the pre-set project table"
+    );
+
+    // After the call, the project table set by `cm_set_project_table` must be
+    // back in effect (restored, not cleared to `None`).
+    let after = check_module_types_in_file(&b, MODULE_B_SRC, Some("b.mind"), &Default::default());
+    assert!(
+        !after.iter().any(|e| format!("{e:?}").contains("helper")),
+        "the project-scope table must be RESTORED after check_module_types_with_modules \
+         returns, not clobbered to None; got: {after:?}"
+    );
+
+    cm_set_project_table(None); // clean up the thread-local for other tests
 }
 
 #[test]

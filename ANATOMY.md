@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3145 | **Est. tokens:** ~7,516,189
-**Generated:** 2026-07-20 17:04 UTC
+**Files:** 3145 | **Est. tokens:** ~7,517,171
+**Generated:** 2026-07-20 17:58 UTC
 
 ## Token Budget Guide
 
@@ -383,7 +383,7 @@
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 3 | ~10,829 |
 | `src/deps/` | 1 | ~9,345 |
-| `src/diagnostics/` | 1 | ~3,196 |
+| `src/diagnostics/` | 1 | ~3,719 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,986 |
 | `src/eval/` | 12 | ~65,572 |
@@ -412,7 +412,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~194,177 |
-| `tests/` | 291 | ~500,296 |
+| `tests/` | 291 | ~500,755 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -3848,7 +3848,7 @@
 - `mod.rs` (~9345 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/diagnostics/`
 
-- `mod.rs` (~3196 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~3719 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/distributed/`
 
 - `allgather.rs` (~813 tok, large) — Copyright 2025-2026 STARGA Inc.
@@ -4137,7 +4137,7 @@
 - `cross_module_cdylib_compose.rs` (~4112 tok, huge) — Copyright 2025 STARGA Inc.
 - `cross_module_enum_run.rs` (~1132 tok, large) — Copyright 2025 STARGA Inc.
 - `cross_module_field_access_run.rs` (~1504 tok, huge) — Copyright 2025 STARGA Inc.
-- `cross_module.rs` (~873 tok, large) — Copyright 2025 STARGA Inc.
+- `cross_module.rs` (~1332 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/cross_substrate_identity/bimap-phf/`
 
 - `manifest.toml` (~780 tok, large) — version = "1"
