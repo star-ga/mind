@@ -4466,7 +4466,9 @@ fn check_module_types_in_file_impl(
                     injected.insert(tp.clone());
                 }
                 let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
-                for u in resolve::resolve_fn_body(body, &param_names, module, &injected) {
+                let (unresolved, self_host_only_calls) =
+                    resolve::resolve_fn_body(body, &param_names, module, &injected);
+                for u in unresolved {
                     let (msg, code) = if let Some(enum_name) = &u.variant_of {
                         // Unknown variant of a locally-declared enum. `u.name` is
                         // the full `Enum::Variant` path; show just the variant.
@@ -4515,6 +4517,23 @@ fn check_module_types_in_file_impl(
                         (msg, resolve::UNKNOWN_IDENT_CODE)
                     };
                     errs.push(diag_from_span(src, file, msg, u.span, code));
+                }
+                for c in self_host_only_calls {
+                    let span = Span::from_offsets(src, c.span.start(), c.span.end(), file);
+                    errs.push(Pretty {
+                        phase: "type-check",
+                        code: resolve::SELF_HOST_ONLY_CALL_CODE,
+                        severity: Severity::Warning,
+                        message: format!(
+                            "`{}` is not registered in mindc's Rust/MLIR intrinsic table \
+                             (STD_SURFACE_INTRINSICS) — mindc build's default backends cannot \
+                             emit this call (native-ELF self-host only, if implemented at all)",
+                            c.name
+                        ),
+                        span: Some(span),
+                        notes: Vec::new(),
+                        help: None,
+                    });
                 }
 
                 // RFC 0010 Phase J-A/B: safety passes over the fn node.

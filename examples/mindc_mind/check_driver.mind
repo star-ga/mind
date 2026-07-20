@@ -242,7 +242,8 @@ pub fn ckd_msg_fix() -> String {
 
 pub fn main() -> i64 {
     // Real OS argv (proven self-hosted in task #225). Flags are recognized here;
-    // the source itself is read from stdin this slice (path read = task #228).
+    // the source is read BY PATH (task #228, __mind_open) when a positional
+    // path arg is given, else the stdin fallback — see ckd_read_src below.
     let a: Args = args_from_os();
     let no_tc: i64 = args_has_flag(a, ckd_s_no_tc(), ckd_s_empty());
     let has_fix: i64 = args_has_flag(a, ckd_s_fix(), ckd_s_empty());
