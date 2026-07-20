@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3140 | **Est. tokens:** ~7,504,734
-**Generated:** 2026-07-20 07:23 UTC
+**Files:** 3140 | **Est. tokens:** ~7,504,759
+**Generated:** 2026-07-20 07:24 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~28,558 |
+| `./` | 34 | ~28,583 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -492,7 +492,7 @@
 - `.editorconfig` (~51 tok, small) — root = true
 - `.gitattributes` (~130 tok, small) — # Enforce LF line endings for all text so byte-exact tests (fmt idempotence,
 - `GITHUB_SETUP_INSTRUCTIONS.md` (~240 tok, medium) — GitHub Setup (Quick)
-- `.gitignore` (~548 tok, large) — # Rust
+- `.gitignore` (~573 tok, large) — # Rust
 - `incompatible` (~0 tok, tiny)
 - `LICENSE` (~2573 tok, huge) —                                  Apache License
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)

@@ -98,3 +98,6 @@ docs/research/
 
 # example build artifacts (each example builds its own target/)
 examples/*/target/
+
+# Orchestrator session/state DB — never commit to the public compiler repo
+.orchestrator_memory/
