@@ -60,23 +60,67 @@ impl Span {
     }
 }
 
+/// Byte offset → 1-based (line, char-column).
+///
+/// A naive left-to-right `src.chars()` scan is O(offset) per call, and the type
+/// checker calls this once per diagnostic span. On a large source (the ~25k-line
+/// self-host `main.mind`) that made `mindc check` quadratic — ~83% of a 6.5s
+/// check was spent here. Instead cache a line-start byte-offset index (one entry
+/// per `\n`) in a thread-local, keyed by the source's (ptr, len) so it is built
+/// once per file and reused for every span, then binary-search the line and count
+/// only the chars within that one line. O(log lines + line_len) per call.
+///
+/// Diagnostics-only: this feeds error/warning `line:col`, never emitted bytes, so
+/// it is outside the byte-identity wedge. The result is bit-for-bit the same
+/// (line, col) the old scan produced (char-based columns), which the type-error
+/// span tests pin.
 fn offset_to_line_col(src: &str, offset: usize) -> (usize, usize) {
-    let mut line = 1usize;
-    let mut col = 1usize;
-    let mut count = 0usize;
-    for ch in src.chars() {
-        if count >= offset {
-            break;
-        }
-        if ch == '\n' {
-            line += 1;
-            col = 1;
-        } else {
-            col += 1;
-        }
-        count += ch.len_utf8();
+    thread_local! {
+        // (src.as_ptr() as usize, src.len(), line_start_byte_offsets)
+        static LINE_INDEX: std::cell::RefCell<Option<(usize, usize, Vec<usize>)>> =
+            const { std::cell::RefCell::new(None) };
     }
-    (line, col)
+    LINE_INDEX.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        let key = (src.as_ptr() as usize, src.len());
+        if cell.as_ref().map(|(p, l, _)| (*p, *l)) != Some(key) {
+            // starts[0] = 0; starts[k] = byte offset just past the k-th '\n'.
+            let mut starts = Vec::with_capacity(src.len() / 24 + 1);
+            starts.push(0usize);
+            for (i, b) in src.bytes().enumerate() {
+                if b == b'\n' {
+                    starts.push(i + 1);
+                }
+            }
+            *cell = Some((key.0, key.1, starts));
+        }
+        let starts = &cell.as_ref().unwrap().2;
+        // Line containing `offset` (1-based). Mirrors the old scan: an offset that
+        // lands exactly on a line start belongs to that new line.
+        let line = match starts.binary_search(&offset) {
+            Ok(i) => i + 1,
+            Err(i) => i,
+        };
+        let line_start = starts[line - 1];
+        // Column = 1 + chars from the line start up to `offset` (char-based, as
+        // before). Clamp to a valid char boundary to stay panic-free on a span
+        // that (defensively) lands mid-char.
+        let end = offset.min(src.len());
+        let col = if end <= line_start {
+            1
+        } else {
+            // The old left-to-right scan counted a char as soon as its START byte
+            // was < offset, so a mid-char offset includes the char containing it.
+            // Round `end` UP to the next char boundary to reproduce that exactly
+            // (a no-op for the real, always-char-aligned span offsets).
+            let mut e = end;
+            while e < src.len() && !src.is_char_boundary(e) {
+                e += 1;
+            }
+            src[line_start..e].chars().count() + 1
+        };
+        (line, col)
+    })
 }
 
 /// Machine-readable diagnostic emitted by the compiler.
