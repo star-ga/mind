@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3140 | **Est. tokens:** ~7,506,464
-**Generated:** 2026-07-20 12:48 UTC
+**Files:** 3141 | **Est. tokens:** ~7,507,600
+**Generated:** 2026-07-20 14:49 UTC
 
 ## Token Budget Guide
 
@@ -57,7 +57,7 @@
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 70 | ~125,047 |
+| `examples/mindc_mind/` | 71 | ~126,183 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
 | `examples/native/` | 4 | ~527 |
@@ -863,6 +863,7 @@
 - `_ref_recursion.note` (~16 tok, tiny) — f157a17885367e0f30f21ccb8fe737b2b782f9719a4cadebbda20ffa1279319e
 - `_ref_struct_field.note` (~16 tok, tiny) — 5932b6704e4afaa13abef5204cb9d748fd452598887e945672d89662d1341abe
 - `_ref_value_if.note` (~16 tok, tiny) — 8ac4c54aacbb8b7b769be703b4410dc1a8fe343186ed70d065e00a507e4cdbd7
+- `self_host_argv_smoke.py` (~1136 tok, large)
 - `self_host_body_smoke.py` (~3055 tok, huge)
 - `selfhost_driver.mind` (~623 tok, large) — ===========================================================================
 - `self_host_dtype_tag_smoke.py` (~780 tok, large) — RI-B1 per-SSA dtype-tag gate (parser <-> nb_fp_* encoder connecting construct).
