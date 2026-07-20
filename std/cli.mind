@@ -71,6 +71,45 @@ pub fn args_get(a: Args, i: i64) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// args_from_os — snapshot the real process argv (RI-C).
+//
+// Reads the OS argument vector via the two native-ELF intrinsics landed in
+// task #222: `__mind_argc()` for the count and `__mind_argv(i)` for the raw
+// i64 pointer to argv[i] (a NUL-terminated C string). Each pointer is decoded
+// into a borrowed String view — addr = the argv pointer, len = the C-string
+// length, cap = 0 (unowned, exactly like string_slice). The argv strings live
+// in the kernel-provided initial-stack region, which stays mapped for the whole
+// process lifetime, so a borrowed view is stable without a heap copy. Each view
+// is pushed into a fresh Args in argv order, so the result is a normal Args
+// value indistinguishable from one built by hand with args_push.
+// ---------------------------------------------------------------------------
+
+// cli_cstr_len — length of the NUL-terminated C string at `addr` (bytes before
+// the terminating NUL). Recursive; argv entries are short so depth is tiny.
+fn cli_cstr_len(addr: i64, i: i64) -> i64 {
+    if __mind_load_i8(addr + i) == 0 {
+        return i;
+    }
+    cli_cstr_len(addr, i + 1)
+}
+
+// args_from_os_rec — push argv[i..argc) into `a` as borrowed String views.
+fn args_from_os_rec(a: Args, i: i64, argc: i64) -> Args {
+    if i >= argc {
+        return a;
+    }
+    let ptr: i64 = __mind_argv(i);
+    let n: i64 = cli_cstr_len(ptr, 0);
+    let s: String = String { addr: ptr, len: n, cap: 0 };
+    args_from_os_rec(args_push(a, s), i + 1, argc)
+}
+
+// args_from_os — the real OS argv as an Args value.
+pub fn args_from_os() -> Args {
+    args_from_os_rec(args_new(), 0, __mind_argc())
+}
+
+// ---------------------------------------------------------------------------
 // Flag query helpers.
 //
 // Internally these scan argv linearly, stopping at the `--` separator
