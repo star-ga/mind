@@ -32177,3 +32177,376 @@ pub fn selftest_native_elf_tensor_dot_i64(n: i64) -> EmitState {
     let elf: String = nb_write_elf(code, 0, note);
     EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
 }
+
+// ============================================================================
+// C4-T3 — native-ELF TENSOR MATMUL (i64), the nested-loop 2-D addressing rung.
+// `selftest_native_elf_tensor_matmul_i64(m, k, n)` emits a runnable ET_EXEC
+// that (1) materializes A (MxK) and B (KxN) row-major in the frame with
+// deterministic self-seeding A[r*K+c] = r+c+1, B[p*N+j] = p*j+1 (both nonzero
+// at every index, so every shape discriminates), (2) computes C = A @ B as the
+// canonical triple nest — for i in M: for j in N: acc = 0; for p in K:
+// acc += A[i*K+p] * B[p*N+j]; C[i*N+j] = acc — all three 2-D row-major element
+// addresses formed at runtime as ((a*dim)+b)*8 + base, (3) reduces
+// sum = Sum C[t] over the M*N result elements via a fourth counted loop,
+// (4) writes the 8 LE bytes of `sum` to stdout (full-width observable, checked
+// by a Python smoke against an independent pure-Python matmul), and (5) exits
+// (sum == expected)*41 + 1 — 42 only on an EXACT i64 match against the
+// emit-time-baked expected total (movabs-baked, full-width past imm32), 1
+// otherwise. `expected` is computed HOST-side by exact i64 recursion over the
+// same closed seeds (the Python smoke is the independent oracle). This proves
+// nested loops with 2-D row-major addressing (i*K+p, p*N+j, i*N+j) — the core
+// of real linalg — lower to native-ELF with zero MLIR/LLVM.
+//
+// SHAPE GUARD (the T1/T2 audit hazard, fixed by construction): the frame holds
+// three 4096-element i64 arrays (A base -131072, B base -98304, C base -65536,
+// 32768 B each). The driver FAILS CLOSED — returns an empty-buf EmitState —
+// unless 1 <= m,k,n AND m*k <= 4096 AND k*n <= 4096 AND m*n <= 4096, so no
+// shape can overrun A, B, or C.
+//
+// ADDITIVITY: a NEW export never reached during self-compile (main.mind does
+// not call it), so every self-host fixture lowers exactly as before and the
+// integer native-ELF oracle stays byte-identical. No frozen byte oracle exists
+// for this path (the deleted Rust native backend had no tensor entry); the
+// gate is EXECUTION CORRECTNESS — emit, run, assert stdout+exit.
+//
+// Frame (T1/T2 map + matmul slots):
+//   A base = -131072, B base = -98304, C base = -65536 (4096 i64 each).
+//   t=-131080 mn=-131088 eight=-131096 one=-131104 cmpflag=-131120
+//   baseA=-131128 baseB=-131136 baseC=-131144 ptr=-131152 aval=-131160
+//   bval=-131168 acc=-131184 expected=-131192 result=-131200 fd=-131208
+//   bufaddr=-131216 count=-131224 exitcode=-131232 fortyone=-131240
+//   m=-131256 kdim=-131264 ndim=-131272 sum=-131288 ri=-131296 cj=-131304
+//   pp=-131312.
+// ============================================================================
+
+// HOST-side expected C[i][j] for the fixed seeds: Sum_{p<k} (i+p+1)*(p*j+1),
+// by exact i64 recursion over p (self-host subset — no loops needed).
+pub fn nb_tmm_cell(i: i64, j: i64, k: i64, p: i64) -> i64 {
+    if p >= k {
+        return 0;
+    }
+    (i + p + 1) * (p * j + 1) + nb_tmm_cell(i, j, k, p + 1)
+}
+
+// HOST-side Sum_{j<n} C[i][j].
+pub fn nb_tmm_rowsum(i: i64, k: i64, n: i64, j: i64) -> i64 {
+    if j >= n {
+        return 0;
+    }
+    nb_tmm_cell(i, j, k, 0) + nb_tmm_rowsum(i, k, n, j + 1)
+}
+
+// HOST-side grand total Sum_{i<m} Sum_{j<n} C[i][j] — the baked `expected`.
+pub fn nb_tmm_total(m: i64, k: i64, n: i64, i: i64) -> i64 {
+    if i >= m {
+        return 0;
+    }
+    nb_tmm_rowsum(i, k, n, 0) + nb_tmm_total(m, k, n, i + 1)
+}
+
+// 2-D row-major element address: ptr = (([a]*[dim]) + [b]) * 8 + [base], into
+// the shared ptr slot (-131152). The one addressing shape all three matmul
+// operands use (A: (ri*kdim)+pp, B: (pp*ndim)+cj, C: (ri*ndim)+cj).
+pub fn nb_tmm_idx2_ptr(code: String, a_disp: i64, dim_disp: i64, b_disp: i64, base_disp: i64) -> String {
+    let c1: String = nb_load_rax(code, a_disp);
+    let c2: String = nb_arith_rax_mem(c1, op_mul(), dim_disp);
+    let c3: String = nb_arith_rax_mem(c2, op_add(), b_disp);
+    let c4: String = nb_arith_rax_mem(c3, op_mul(), 0 - 131096);
+    let c5: String = nb_arith_rax_mem(c4, op_add(), base_disp);
+    nb_store_rax(c5, 0 - 131152)
+}
+
+// Inner seed-A loop: for cj in 0..kdim { A[ri*kdim+cj] = ri+cj+1 }. Emitted
+// INSIDE the outer row body, so cj re-inits to 0 each outer iteration.
+pub fn nb_tmm_seed_a_inner(code: String, jmps: i64, jcell: i64) -> String {
+    let w0: String = nb_intdot_movimm(code, 0, 0 - 131304);
+    let w_hdr: i64 = string_len(w0);
+    let wc1: String = nb_load_rax(w0, 0 - 131304);
+    let wc2: String = nb_cmp_rax_mem(wc1, nb_setcc_opcode(op_lt()), 0 - 131264);
+    let wc3: String = nb_store_rax(wc2, 0 - 131120);
+    let wcj: String = nb_emit_cmp_je_zero(wc3, 0 - 131120, jmps, jcell);
+    let w_je: i64 = __mind_load_i64(jcell) - 1;
+    // aval = ri + cj + 1
+    let b1: String = nb_load_rax(wcj, 0 - 131296);
+    let b2: String = nb_arith_rax_mem(b1, op_add(), 0 - 131304);
+    let b3: String = nb_arith_rax_mem(b2, op_add(), 0 - 131104);
+    let b4: String = nb_store_rax(b3, 0 - 131160);
+    // A[ri*kdim + cj] = aval
+    let p1: String = nb_tmm_idx2_ptr(b4, 0 - 131296, 0 - 131264, 0 - 131304, 0 - 131128);
+    let s1: String = nb_emit_store_i64(p1, 0 - 131152, 0 - 131160);
+    // cj += 1
+    let e1: String = nb_load_rax(s1, 0 - 131304);
+    let e2: String = nb_arith_rax_mem(e1, op_add(), 0 - 131104);
+    let e3: String = nb_store_rax(e2, 0 - 131304);
+    let wjb: String = nb_emit_jmp(e3, jmps, jcell);
+    let w_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _w1: i64 = nb_jmp_set_target(jmps, jcell, w_bk, w_hdr);
+    let w_end: i64 = string_len(wjb);
+    let _w2: i64 = nb_jmp_set_target(jmps, jcell, w_je, w_end);
+    wjb
+}
+
+// Outer seed-A loop: for ri in 0..m { inner }.
+pub fn nb_tmm_seed_a(code: String, jmps: i64, jcell: i64) -> String {
+    let g0: String = nb_intdot_movimm(code, 0, 0 - 131296);
+    let g_hdr: i64 = string_len(g0);
+    let gc1: String = nb_load_rax(g0, 0 - 131296);
+    let gc2: String = nb_cmp_rax_mem(gc1, nb_setcc_opcode(op_lt()), 0 - 131256);
+    let gc3: String = nb_store_rax(gc2, 0 - 131120);
+    let gcj: String = nb_emit_cmp_je_zero(gc3, 0 - 131120, jmps, jcell);
+    let g_je: i64 = __mind_load_i64(jcell) - 1;
+    let body: String = nb_tmm_seed_a_inner(gcj, jmps, jcell);
+    // ri += 1
+    let e1: String = nb_load_rax(body, 0 - 131296);
+    let e2: String = nb_arith_rax_mem(e1, op_add(), 0 - 131104);
+    let e3: String = nb_store_rax(e2, 0 - 131296);
+    let gjb: String = nb_emit_jmp(e3, jmps, jcell);
+    let g_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _g1: i64 = nb_jmp_set_target(jmps, jcell, g_bk, g_hdr);
+    let g_end: i64 = string_len(gjb);
+    let _g2: i64 = nb_jmp_set_target(jmps, jcell, g_je, g_end);
+    gjb
+}
+
+// Inner seed-B loop: for cj in 0..ndim { B[ri*ndim+cj] = ri*cj+1 }.
+pub fn nb_tmm_seed_b_inner(code: String, jmps: i64, jcell: i64) -> String {
+    let w0: String = nb_intdot_movimm(code, 0, 0 - 131304);
+    let w_hdr: i64 = string_len(w0);
+    let wc1: String = nb_load_rax(w0, 0 - 131304);
+    let wc2: String = nb_cmp_rax_mem(wc1, nb_setcc_opcode(op_lt()), 0 - 131272);
+    let wc3: String = nb_store_rax(wc2, 0 - 131120);
+    let wcj: String = nb_emit_cmp_je_zero(wc3, 0 - 131120, jmps, jcell);
+    let w_je: i64 = __mind_load_i64(jcell) - 1;
+    // bval = ri * cj + 1
+    let b1: String = nb_load_rax(wcj, 0 - 131296);
+    let b2: String = nb_arith_rax_mem(b1, op_mul(), 0 - 131304);
+    let b3: String = nb_arith_rax_mem(b2, op_add(), 0 - 131104);
+    let b4: String = nb_store_rax(b3, 0 - 131168);
+    // B[ri*ndim + cj] = bval
+    let p1: String = nb_tmm_idx2_ptr(b4, 0 - 131296, 0 - 131272, 0 - 131304, 0 - 131136);
+    let s1: String = nb_emit_store_i64(p1, 0 - 131152, 0 - 131168);
+    // cj += 1
+    let e1: String = nb_load_rax(s1, 0 - 131304);
+    let e2: String = nb_arith_rax_mem(e1, op_add(), 0 - 131104);
+    let e3: String = nb_store_rax(e2, 0 - 131304);
+    let wjb: String = nb_emit_jmp(e3, jmps, jcell);
+    let w_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _w1: i64 = nb_jmp_set_target(jmps, jcell, w_bk, w_hdr);
+    let w_end: i64 = string_len(wjb);
+    let _w2: i64 = nb_jmp_set_target(jmps, jcell, w_je, w_end);
+    wjb
+}
+
+// Outer seed-B loop: for ri in 0..kdim { inner } (B has kdim rows).
+pub fn nb_tmm_seed_b(code: String, jmps: i64, jcell: i64) -> String {
+    let g0: String = nb_intdot_movimm(code, 0, 0 - 131296);
+    let g_hdr: i64 = string_len(g0);
+    let gc1: String = nb_load_rax(g0, 0 - 131296);
+    let gc2: String = nb_cmp_rax_mem(gc1, nb_setcc_opcode(op_lt()), 0 - 131264);
+    let gc3: String = nb_store_rax(gc2, 0 - 131120);
+    let gcj: String = nb_emit_cmp_je_zero(gc3, 0 - 131120, jmps, jcell);
+    let g_je: i64 = __mind_load_i64(jcell) - 1;
+    let body: String = nb_tmm_seed_b_inner(gcj, jmps, jcell);
+    // ri += 1
+    let e1: String = nb_load_rax(body, 0 - 131296);
+    let e2: String = nb_arith_rax_mem(e1, op_add(), 0 - 131104);
+    let e3: String = nb_store_rax(e2, 0 - 131296);
+    let gjb: String = nb_emit_jmp(e3, jmps, jcell);
+    let g_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _g1: i64 = nb_jmp_set_target(jmps, jcell, g_bk, g_hdr);
+    let g_end: i64 = string_len(gjb);
+    let _g2: i64 = nb_jmp_set_target(jmps, jcell, g_je, g_end);
+    gjb
+}
+
+// Innermost MAC loop: for pp in 0..kdim { acc += A[ri*kdim+pp] * B[pp*ndim+cj] }
+// — T2's multiply-accumulate kernel nested under the (ri, cj) result loops,
+// with BOTH element addresses formed by 2-D row-major arithmetic.
+pub fn nb_tmm_mac_inner(code: String, jmps: i64, jcell: i64) -> String {
+    let w0: String = nb_intdot_movimm(code, 0, 0 - 131312);
+    let w_hdr: i64 = string_len(w0);
+    let wc1: String = nb_load_rax(w0, 0 - 131312);
+    let wc2: String = nb_cmp_rax_mem(wc1, nb_setcc_opcode(op_lt()), 0 - 131264);
+    let wc3: String = nb_store_rax(wc2, 0 - 131120);
+    let wcj: String = nb_emit_cmp_je_zero(wc3, 0 - 131120, jmps, jcell);
+    let w_je: i64 = __mind_load_i64(jcell) - 1;
+    // aval = A[ri*kdim + pp]
+    let a1: String = nb_tmm_idx2_ptr(wcj, 0 - 131296, 0 - 131264, 0 - 131312, 0 - 131128);
+    let a2: String = nb_emit_load_i64(a1, 0 - 131152);
+    let a3: String = nb_store_rax(a2, 0 - 131160);
+    // bval = B[pp*ndim + cj]
+    let b1: String = nb_tmm_idx2_ptr(a3, 0 - 131312, 0 - 131272, 0 - 131304, 0 - 131136);
+    let b2: String = nb_emit_load_i64(b1, 0 - 131152);
+    let b3: String = nb_store_rax(b2, 0 - 131168);
+    // acc += aval * bval
+    let c1: String = nb_load_rax(b3, 0 - 131160);
+    let c2: String = nb_arith_rax_mem(c1, op_mul(), 0 - 131168);
+    let c3: String = nb_arith_rax_mem(c2, op_add(), 0 - 131184);
+    let c4: String = nb_store_rax(c3, 0 - 131184);
+    // pp += 1
+    let e1: String = nb_load_rax(c4, 0 - 131312);
+    let e2: String = nb_arith_rax_mem(e1, op_add(), 0 - 131104);
+    let e3: String = nb_store_rax(e2, 0 - 131312);
+    let wjb: String = nb_emit_jmp(e3, jmps, jcell);
+    let w_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _w1: i64 = nb_jmp_set_target(jmps, jcell, w_bk, w_hdr);
+    let w_end: i64 = string_len(wjb);
+    let _w2: i64 = nb_jmp_set_target(jmps, jcell, w_je, w_end);
+    wjb
+}
+
+// Middle column loop: for cj in 0..ndim { acc = 0; MAC over pp; C[ri*ndim+cj]
+// = acc }.
+pub fn nb_tmm_col_loop(code: String, jmps: i64, jcell: i64) -> String {
+    let w0: String = nb_intdot_movimm(code, 0, 0 - 131304);
+    let w_hdr: i64 = string_len(w0);
+    let wc1: String = nb_load_rax(w0, 0 - 131304);
+    let wc2: String = nb_cmp_rax_mem(wc1, nb_setcc_opcode(op_lt()), 0 - 131272);
+    let wc3: String = nb_store_rax(wc2, 0 - 131120);
+    let wcj: String = nb_emit_cmp_je_zero(wc3, 0 - 131120, jmps, jcell);
+    let w_je: i64 = __mind_load_i64(jcell) - 1;
+    // acc = 0 for this (ri, cj) result element
+    let z0: String = nb_intdot_movimm(wcj, 0, 0 - 131184);
+    let mac: String = nb_tmm_mac_inner(z0, jmps, jcell);
+    // C[ri*ndim + cj] = acc
+    let p1: String = nb_tmm_idx2_ptr(mac, 0 - 131296, 0 - 131272, 0 - 131304, 0 - 131144);
+    let s1: String = nb_emit_store_i64(p1, 0 - 131152, 0 - 131184);
+    // cj += 1
+    let e1: String = nb_load_rax(s1, 0 - 131304);
+    let e2: String = nb_arith_rax_mem(e1, op_add(), 0 - 131104);
+    let e3: String = nb_store_rax(e2, 0 - 131304);
+    let wjb: String = nb_emit_jmp(e3, jmps, jcell);
+    let w_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _w1: i64 = nb_jmp_set_target(jmps, jcell, w_bk, w_hdr);
+    let w_end: i64 = string_len(wjb);
+    let _w2: i64 = nb_jmp_set_target(jmps, jcell, w_je, w_end);
+    wjb
+}
+
+// Outer row loop: for ri in 0..m { column loop }. The full triple nest.
+pub fn nb_tmm_row_loop(code: String, jmps: i64, jcell: i64) -> String {
+    let g0: String = nb_intdot_movimm(code, 0, 0 - 131296);
+    let g_hdr: i64 = string_len(g0);
+    let gc1: String = nb_load_rax(g0, 0 - 131296);
+    let gc2: String = nb_cmp_rax_mem(gc1, nb_setcc_opcode(op_lt()), 0 - 131256);
+    let gc3: String = nb_store_rax(gc2, 0 - 131120);
+    let gcj: String = nb_emit_cmp_je_zero(gc3, 0 - 131120, jmps, jcell);
+    let g_je: i64 = __mind_load_i64(jcell) - 1;
+    let body: String = nb_tmm_col_loop(gcj, jmps, jcell);
+    // ri += 1
+    let e1: String = nb_load_rax(body, 0 - 131296);
+    let e2: String = nb_arith_rax_mem(e1, op_add(), 0 - 131104);
+    let e3: String = nb_store_rax(e2, 0 - 131296);
+    let gjb: String = nb_emit_jmp(e3, jmps, jcell);
+    let g_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _g1: i64 = nb_jmp_set_target(jmps, jcell, g_bk, g_hdr);
+    let g_end: i64 = string_len(gjb);
+    let _g2: i64 = nb_jmp_set_target(jmps, jcell, g_je, g_end);
+    gjb
+}
+
+// Reduction loop: sum = Sum_{t < m*n} C[t] (linear over the result buffer, the
+// T1 horizontal-reduction shape; bound m*n baked in slot -131088).
+pub fn nb_tmm_reduce(code: String, jmps: i64, jcell: i64) -> String {
+    let s0: String = nb_intdot_movimm(code, 0, 0 - 131080);
+    let s_hdr: i64 = string_len(s0);
+    let sc1: String = nb_load_rax(s0, 0 - 131080);
+    let sc2: String = nb_cmp_rax_mem(sc1, nb_setcc_opcode(op_lt()), 0 - 131088);
+    let sc3: String = nb_store_rax(sc2, 0 - 131120);
+    let scj: String = nb_emit_cmp_je_zero(sc3, 0 - 131120, jmps, jcell);
+    let s_je: i64 = __mind_load_i64(jcell) - 1;
+    let r1: String = nb_intdot_load_elem(scj, 0 - 131144, 0 - 131152, 0 - 131160, 0 - 131080, 0 - 131096);
+    let r2: String = nb_load_rax(r1, 0 - 131288);
+    let r3: String = nb_arith_rax_mem(r2, op_add(), 0 - 131160);
+    let r4: String = nb_store_rax(r3, 0 - 131288);
+    let e1: String = nb_load_rax(r4, 0 - 131080);
+    let e2: String = nb_arith_rax_mem(e1, op_add(), 0 - 131104);
+    let e3: String = nb_store_rax(e2, 0 - 131080);
+    let sjb: String = nb_emit_jmp(e3, jmps, jcell);
+    let s_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _s1: i64 = nb_jmp_set_target(jmps, jcell, s_bk, s_hdr);
+    let s_end: i64 = string_len(sjb);
+    let _s2: i64 = nb_jmp_set_target(jmps, jcell, s_je, s_end);
+    sjb
+}
+
+// Fail-closed empty artifact for rejected matmul shapes (covered tail-literal
+// shape — the same final-expression form every selftest driver ends with).
+pub fn nb_tmm_empty() -> EmitState {
+    EmitState { buf: string_new(), next_id: 0, last_id: 0, lets: env_new() }
+}
+
+// The C4-T3 driver. m/k/n are baked at emit time; FAILS CLOSED (empty buf) on
+// any shape whose A (m*k), B (k*n) or C (m*n) would overrun its 4096-element
+// frame array — the emitted code can never index past a buffer.
+pub fn selftest_native_elf_tensor_matmul_i64(m: i64, k: i64, n: i64) -> EmitState {
+    if m < 1 {
+        return nb_tmm_empty();
+    }
+    if k < 1 {
+        return nb_tmm_empty();
+    }
+    if n < 1 {
+        return nb_tmm_empty();
+    }
+    let mk: i64 = m * k;
+    if mk > 4096 {
+        return nb_tmm_empty();
+    }
+    let kn: i64 = k * n;
+    if kn > 4096 {
+        return nb_tmm_empty();
+    }
+    let mn: i64 = m * n;
+    if mn > 4096 {
+        return nb_tmm_empty();
+    }
+    let expected: i64 = nb_tmm_total(m, k, n, 0);
+    let p0: String = nb_fp_prologue_frame(string_new(), 135168);
+    // Constants + dims + the baked expected total.
+    let k1: String = nb_intdot_movimm(p0, 8, 0 - 131096);
+    let k2: String = nb_intdot_movimm(k1, 1, 0 - 131104);
+    let k3: String = nb_intdot_movimm(k2, 41, 0 - 131240);
+    let k4: String = nb_intdot_movimm(k3, m, 0 - 131256);
+    let k5: String = nb_intdot_movimm(k4, k, 0 - 131264);
+    let k6: String = nb_intdot_movimm(k5, n, 0 - 131272);
+    let k7: String = nb_intdot_movimm(k6, mn, 0 - 131088);
+    let k8: String = nb_intdot_movimm(k7, 0, 0 - 131288);
+    let k9: String = nb_intdot_movimm(k8, expected, 0 - 131192);
+    // Runtime base addresses of the three in-frame arrays.
+    let ba: String = nb_intdot_lea(k9, 0 - 131072, 0 - 131128);
+    let bb: String = nb_intdot_lea(ba, 0 - 98304, 0 - 131136);
+    let bc: String = nb_intdot_lea(bb, 0 - 65536, 0 - 131144);
+    // Jump scaffold shared by all 8 loops (16 records; capacity 64).
+    let jmps: i64 = __mind_alloc(64 * 2 * 8);
+    let jcell: i64 = __mind_alloc(8);
+    __mind_store_i64(jcell, 0);
+    let sa: String = nb_tmm_seed_a(bc, jmps, jcell);
+    let sb: String = nb_tmm_seed_b(sa, jmps, jcell);
+    let mm: String = nb_tmm_row_loop(sb, jmps, jcell);
+    let rd: String = nb_tmm_reduce(mm, jmps, jcell);
+    // result = sum ; write(1, &result, 8) — the full-width stdout observable.
+    let t1: String = nb_load_rax(rd, 0 - 131288);
+    let t2: String = nb_store_rax(t1, 0 - 131200);
+    let t3: String = nb_intdot_lea(t2, 0 - 131200, 0 - 131216);
+    let t4: String = nb_intdot_movimm(t3, 1, 0 - 131208);
+    let t5: String = nb_intdot_movimm(t4, 8, 0 - 131224);
+    let t6: String = nb_emit_write(t5, 0 - 131208, 0 - 131216, 0 - 131224);
+    // exitcode = (sum == expected)*41 + 1 — 42 only on an exact i64 match.
+    let u1: String = nb_load_rax(t6, 0 - 131288);
+    let u2: String = nb_cmp_rax_mem(u1, nb_setcc_opcode(op_eq()), 0 - 131192);
+    let u3: String = nb_store_rax(u2, 0 - 131120);
+    let u4: String = nb_load_rax(u3, 0 - 131120);
+    let u5: String = nb_arith_rax_mem(u4, op_mul(), 0 - 131240);
+    let u6: String = nb_arith_rax_mem(u5, op_add(), 0 - 131104);
+    let u7: String = nb_store_rax(u6, 0 - 131232);
+    let u8: String = nb_load_rax(u7, 0 - 131232);
+    let code: String = nb_emit_return(u8, 1);
+    // Patch every recorded intra-fn jump (entry_off = 0).
+    let njmps: i64 = __mind_load_i64(jcell);
+    let _px: i64 = nb_patch_jmps(string_addr(code), jmps, njmps, 0);
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
