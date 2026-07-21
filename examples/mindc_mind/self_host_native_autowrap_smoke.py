@@ -90,6 +90,75 @@ SRC = f"""fn main() -> i64 {{
 """
 
 
+# C2 param/return width driver: narrow-int PARAMS wrap at fn entry (in place in the
+# param's home slot, after the SysV spill) and narrow-int RETURN types wrap rax at the
+# declared width before the epilogue — with NO explicit __mind_wrap_* in the source.
+# Discrimination is a FULL-64-bit err==0 compare BEFORE exit truncation (every wrong
+# delta is a multiple of 256, which a mod-256 exit-sum check would mask):
+#   e1 = wadd(INT32_MAX) + 2^31 where wadd(x: i32) -> i32 { x + 1 } — the 64-bit sum
+#        2^31 must movsxd-wrap to INT32_MIN at the RETURN (delta 2^32 if not).
+#   e2 = pw32(2^32)  where pw32(x: i32) -> i64 { x } — 2^32 must wrap to 0 at ENTRY;
+#        the i64 return adds no wrap, so a missing PARAM wrap leaks the full 2^32.
+#   e3 = pw16(65536) where pw16(x: i16) -> i64 { x } — the i16 twin (delta 2^16).
+#   e4 = ret8(200) + 56 where ret8(v: i64) -> i8 { v } — the full-width param passes
+#        200 through untouched; the i8 RETURN must wrap it to -56 (delta 2^8).
+SRC_PARAM_RET = f"""fn wadd(x: i32) -> i32 {{
+    x + 1
+}}
+fn pw32(x: i32) -> i64 {{
+    x
+}}
+fn pw16(x: i16) -> i64 {{
+    x
+}}
+fn ret8(v: i64) -> i8 {{
+    v
+}}
+fn main() -> i64 {{
+    let r: i64 = wadd(2147483647);
+    let e1: i64 = r + 2147483648;
+    let e2: i64 = pw32(4294967296);
+    let e3: i64 = pw16(65536);
+    let t: i64 = ret8(200);
+    let e4: i64 = t + 56;
+    let err: i64 = e1 + e2 + e3 + e4;
+    if err == 0 {{
+        {MARKER}
+    }} else {{
+        43
+    }}
+}}
+"""
+
+# The once-latent count/emit if-merge width asymmetry, now FIXED and emittable: a
+# narrow-declared w is assigned in BOTH branches of an `if` (so the merge machinery
+# rebinds it), then REASSIGNED after the if. nb_count_bind_merged now inherits w's
+# true declared width (8) into the count-lets — mirroring nb_rebind_merges — so the
+# post-if `w = w + 0` counts the SAME +1 wrap slot the emit side emits (previously
+# count +0 vs emit +1: a one-slot frame undercount). Loop once: w=100 -> +100 wraps
+# to -56 (then-branch), merge, `w + 0` re-wraps -56, exit-carry; ew = w + 56 == 0.
+SRC_MERGE_ASSIGN = f"""fn main() -> i64 {{
+    let w: i8 = 100;
+    let i: i64 = 0;
+    while i < 1 {{
+        if i < 1 {{
+            w = w + 100;
+        }} else {{
+            w = w + 1;
+        }}
+        w = w + 0;
+        i = i + 1;
+    }}
+    let ew: i64 = w + 56;
+    if ew == 0 {{
+        {MARKER}
+    }} else {{
+        43
+    }}
+}}
+"""
+
+
 def mind_autowrap_elf(lib, src: str) -> bytes:
     fn = lib.selftest_native_elf
     fn.restype = ctypes.c_int64
@@ -122,31 +191,54 @@ def main() -> int:
         print("FAIL  selftest_native_elf: symbol absent")
         return 1
 
+    cases = [
+        (
+            "let+assign",
+            SRC,
+            "i8/i16/i32 let+assign wrap with NO explicit intrinsic",
+        ),
+        (
+            "param+return",
+            SRC_PARAM_RET,
+            "narrow-int PARAM wraps at entry, narrow-int RETURN wraps rax at the "
+            "declared width",
+        ),
+        (
+            "if-merge-narrow-assign",
+            SRC_MERGE_ASSIGN,
+            "post-if reassign of an if-merged narrow var (count inherits the true "
+            "width — the fixed count/emit symmetry)",
+        ),
+    ]
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
-        elf = mind_autowrap_elf(lib, SRC)
-        if not (len(elf) > 120 and elf[:4] == b"\x7fELF"):
-            print(f"  FAIL  autowrap: not a runnable ELF (len={len(elf)})")
-            return 1
-        got = run_elf(elf, tmp)
-        ok = got == MARKER
-        print(
-            f"  {'PASS' if ok else 'FAIL'}  narrow-int AUTO-wrap exit={got} "
-            f"expected={MARKER}  (elf {len(elf)}B, declared-width driver: i8/i16/i32 "
-            f"let+assign wrap with NO explicit intrinsic, zero MLIR/LLVM)"
-        )
-        if ok:
+        all_ok = True
+        for name, src, what in cases:
+            elf = mind_autowrap_elf(lib, src)
+            if not (len(elf) > 120 and elf[:4] == b"\x7fELF"):
+                print(f"  FAIL  {name}: not a runnable ELF (len={len(elf)})")
+                all_ok = False
+                continue
+            got = run_elf(elf, tmp)
+            ok = got == MARKER
+            all_ok = all_ok and ok
+            print(
+                f"  {'PASS' if ok else 'FAIL'}  {name} AUTO-wrap exit={got} "
+                f"expected={MARKER}  (elf {len(elf)}B, {what}, zero MLIR/LLVM)"
+            )
+        if all_ok:
             print(
                 "ALL PASS  per-binding declared width (native let-env word 5, default "
-                "64) auto-emits the movsx/movsxd wrap at narrow `let` bindings and "
-                "reassignments — `let x: i32 = a + 1` at INT32_MAX wraps to INT32_MIN "
-                "with no __mind_wrap_* call (roadmap C2 declared-width driver rung)"
+                "64) auto-emits the movsx/movsxd wrap at narrow `let` bindings, "
+                "reassignments, fn ENTRY (narrow params, in place in the home slot), "
+                "and fn RETURN (narrow return types, in rax before the epilogue) — "
+                "with no __mind_wrap_* call (roadmap C2 declared-width driver rungs)"
             )
             return 0
         print(
-            "FAIL  declared-width driver: exit != 42 means a narrow let/assign did not "
-            "auto-wrap (i64-widened), wrapped at the wrong width, or corrupted an "
-            "in-range value — do NOT guess (report the native exit above)."
+            "FAIL  declared-width driver: exit != 42 means a narrow let/assign/param/"
+            "return did not auto-wrap (i64-widened), wrapped at the wrong width, or "
+            "corrupted an in-range value — do NOT guess (report the native exit above)."
         )
         return 1
 
