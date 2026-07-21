@@ -1821,12 +1821,44 @@ fn emit_type_ann(p: &mut Printer, ty: &TypeAnn) {
         TypeAnn::ScalarBool => p.push("bool"),
         TypeAnn::ScalarU32 => p.push("u32"),
         TypeAnn::Named(name) => p.push(name),
-        TypeAnn::Tensor { dtype, dims } => {
-            p.push("tensor<");
-            p.push(dtype);
-            p.push("[");
-            p.push(&dims.join(", "));
-            p.push("]>");
+        TypeAnn::Tensor {
+            dtype,
+            dims,
+            angle_bracket_form,
+        } => {
+            if *angle_bracket_form {
+                // RFC 0012 §3.5 canonical form: `Tensor<dtype, [dims]>`.
+                // No-dims case (`Tensor<f32>`, e.g. a scalar-typed tensor
+                // handle) omits the comma + empty bracket pair entirely.
+                p.push("Tensor<");
+                p.push(dtype);
+                if !dims.is_empty() {
+                    p.push(", [");
+                    p.push(&dims.join(", "));
+                    p.push("]");
+                }
+                p.push(">");
+            } else {
+                // NOTE (audit, 2026-07-21): this arm always emits the `[...]`
+                // bracket pair even when `dims` is empty (`tensor<f32[]>`,
+                // matching `TypeAnn::DiffTensor`'s identical unconditional
+                // form just below and 12+ real corpus files, e.g.
+                // examples/tiny_edge_model.mind, examples/autodiff_demo.mind).
+                // A `!dims.is_empty()` guard here (to instead print bracket-less
+                // `tensor<f32>`) was tried and reverted: it regressed those
+                // already-clean committed files against the pre-fix baseline.
+                // The bracket-less `tensor<f32>` spelling is real accepted
+                // syntax (see the parser's `tensor<...>` branch) but has no
+                // live corpus user in std/examples today — deferred, not
+                // fixed, to avoid the regression. Upgrade path: thread a
+                // spelling-preserving flag the same way `angle_bracket_form`
+                // does above, mirrored into `TypeAnn::DiffTensor`.
+                p.push("tensor<");
+                p.push(dtype);
+                p.push("[");
+                p.push(&dims.join(", "));
+                p.push("]>");
+            }
         }
         TypeAnn::DiffTensor { dtype, dims } => {
             p.push("diff tensor<");

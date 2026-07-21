@@ -58,6 +58,16 @@ runtime     = ["Native CPU Execution"]
 # 11 days (README claimed "signed" while SECURITY.md, two files away, correctly
 # said "tamper-evident... signing is never enabled by default"). Never again.
 evidence    = ["signed evidence chain"]
+# Mindcraft (RFC 0007) audit, 2026-07-21: README.md documented a standalone
+# `mindc lint` subcommand with worked example invocations that have never
+# existed — `mindc --help` lists no `lint` subcommand; lint only runs
+# embedded inside `mindc check`. Fixed in README.md/STATUS.md/CHANGELOG.md
+# and disclosed in docs/rfcs/0007-mindcraft.md §0 alongside the
+# self-hosted-front-end and `.mind`-rule-file claims (those two are NOT
+# forbidden-phrase-gated: the RFC body intentionally preserves the original
+# design-intent wording as historical record with a correction callout
+# above it, so a literal-substring gate would trip on the RFC itself).
+mindcraft   = ["mindc lint src/", "mindc lint --rule"]
 
 # ---------------------------------------------------------------------------
 # Auto-derived counts (OPTIONAL gate, conservative + advisory).

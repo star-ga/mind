@@ -76,6 +76,7 @@ fn let_tensor(name: &str, ann_dtype: &str, ann_dims: &[&str], rhs_ident: &str) -
         ann: Some(TypeAnn::Tensor {
             dtype: ann_dtype.to_string(),
             dims: ann_dims.iter().map(|s| s.to_string()).collect(),
+            angle_bracket_form: false,
         }),
         value: Box::new(Node::Lit(Literal::Ident(rhs_ident.to_string()), sp())),
         span: sp(),
@@ -93,7 +94,7 @@ fn parse_tensor_f32_concrete_dims() {
         panic!("expected Let node");
     };
     match ann.as_ref().expect("annotation present") {
-        TypeAnn::Tensor { dtype, dims } => {
+        TypeAnn::Tensor { dtype, dims, .. } => {
             assert_eq!(dtype, "f32", "dtype must be f32");
             assert_eq!(dims, &["4", "8"], "dims must be [4, 8]");
         }
@@ -112,7 +113,7 @@ fn parse_tensor_q16_dtype() {
         panic!("expected Let node");
     };
     match ann.as_ref().expect("annotation present") {
-        TypeAnn::Tensor { dtype, dims } => {
+        TypeAnn::Tensor { dtype, dims, .. } => {
             assert_eq!(dtype, "q16", "dtype must be q16");
             assert_eq!(dims, &["16"], "dims must be [16]");
         }
@@ -131,7 +132,7 @@ fn parse_tensor_rank_zero() {
         panic!("expected Let node");
     };
     match ann.as_ref().expect("annotation present") {
-        TypeAnn::Tensor { dtype, dims } => {
+        TypeAnn::Tensor { dtype, dims, .. } => {
             assert_eq!(dtype, "f32");
             assert!(dims.is_empty(), "rank-0 tensor must have empty dims list");
         }
@@ -150,7 +151,7 @@ fn parse_tensor_symbolic_dims() {
         panic!("expected Let node");
     };
     match ann.as_ref().expect("annotation present") {
-        TypeAnn::Tensor { dtype, dims } => {
+        TypeAnn::Tensor { dtype, dims, .. } => {
             assert_eq!(dtype, "f32");
             assert_eq!(dims, &["N", "K"]);
         }
@@ -169,7 +170,7 @@ fn parse_tensor_i64_dtype() {
         panic!("expected Let node");
     };
     match ann.as_ref().expect("annotation present") {
-        TypeAnn::Tensor { dtype, dims } => {
+        TypeAnn::Tensor { dtype, dims, .. } => {
             assert_eq!(dtype, "i64");
             assert_eq!(dims, &["8"]);
         }
@@ -349,6 +350,7 @@ fn symbolic_dim_same_n_no_conflict() {
                     ty: TypeAnn::Tensor {
                         dtype: "f32".to_string(),
                         dims: vec!["N".to_string(), "K".to_string()],
+                        angle_bracket_form: false,
                     },
                     span: sp(),
                 },
@@ -357,6 +359,7 @@ fn symbolic_dim_same_n_no_conflict() {
                     ty: TypeAnn::Tensor {
                         dtype: "f32".to_string(),
                         dims: vec!["N".to_string(), "M".to_string()],
+                        angle_bracket_form: false,
                     },
                     span: sp(),
                 },
@@ -439,6 +442,7 @@ fn symbolic_dim_mismatch_n_conflict() {
                     ty: TypeAnn::Tensor {
                         dtype: "f32".to_string(),
                         dims: vec!["N".to_string(), "K".to_string()],
+                        angle_bracket_form: false,
                     },
                     span: sp(),
                 },
@@ -447,6 +451,7 @@ fn symbolic_dim_mismatch_n_conflict() {
                     ty: TypeAnn::Tensor {
                         dtype: "f32".to_string(),
                         dims: vec!["N".to_string(), "M".to_string()],
+                        angle_bracket_form: false,
                     },
                     span: sp(),
                 },

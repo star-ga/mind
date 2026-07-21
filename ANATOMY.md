@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3152 | **Est. tokens:** ~7,541,399
-**Generated:** 2026-07-21 04:27 UTC
+**Files:** 3152 | **Est. tokens:** ~7,543,124
+**Generated:** 2026-07-21 05:36 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 39 | ~37,295 |
+| `./` | 39 | ~37,494 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -39,13 +39,13 @@
 | `benchmarks/mojo/` | 8 | ~4,300 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
-| `config/` | 1 | ~1,273 |
+| `config/` | 1 | ~1,450 |
 | `docs/` | 30 | ~48,276 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
-| `docs/mindcraft/` | 3 | ~7,023 |
-| `docs/rfcs/` | 31 | ~142,429 |
+| `docs/mindcraft/` | 3 | ~7,086 |
+| `docs/rfcs/` | 31 | ~143,431 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 29 | ~56,867 |
 | `examples/bimap_currency/` | 3 | ~780 |
@@ -69,7 +69,7 @@
 | `.githooks/` | 1 | ~255 |
 | `.github/` | 3 | ~149 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 9 | ~13,811 |
+| `.github/workflows/` | 9 | ~13,981 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~18,670 |
 | `scripts/` | 9 | ~11,565 |
@@ -391,7 +391,7 @@
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
-| `src/fmt/` | 3 | ~20,498 |
+| `src/fmt/` | 3 | ~20,612 |
 | `src/ir/` | 5 | ~46,820 |
 | `src/ir/compact/` | 3 | ~15,267 |
 | `src/ir/compact/v2/` | 8 | ~38,037 |
@@ -503,12 +503,12 @@
 - `p3` (~4022 tok, huge) — ELF>�@7@8@@
 - `p3.c` (~102 tok, small)
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
-- `README.md` (~5635 tok, huge) — MIND — Machine Intelligence Native Design
+- `README.md` (~5710 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~1256 tok, large) — Security Policy
 - `.sembleignore` (~72 tok, small) — # semble code-search ignore list
-- `STATUS.md` (~3847 tok, huge) — MIND Compiler Status
+- `STATUS.md` (~3971 tok, huge) — MIND Compiler Status
 - `test_real_compile_time.py` (~265 tok, medium) — Quick test of real MIND compilation time using Python bindings."""
 ### `agents/`
 
@@ -649,7 +649,7 @@
 - `config.toml` (~130 tok, small) — [registries]
 ### `config/`
 
-- `capabilities.toml` (~1273 tok, large) — [ir]
+- `capabilities.toml` (~1450 tok, large) — [ir]
 ### `docs/`
 
 - `architecture.md` (~965 tok, large) — Architecture
@@ -692,7 +692,7 @@
 - `ir-stability.md` (~1485 tok, large) — IR stability contract
 ### `docs/mindcraft/`
 
-- `fmt.md` (~2239 tok, huge) — `mindc fmt` — Canonical Formatter Reference
+- `fmt.md` (~2302 tok, huge) — `mindc fmt` — Canonical Formatter Reference
 - `phase2-implementation-plan.md` (~2209 tok, huge) — Mindcraft Phase 2 — Implementation Plan
 - `rfc0010-phase-ghi-migration-plan.md` (~2575 tok, huge) — RFC 0010 Phase G/H/I — Migration Plan (corrected against real architecture)
 ### `docs/`
@@ -714,7 +714,7 @@
 - `0005-phase-d2b-design-note.md` (~1518 tok, huge) — RFC 0005 Phase D₂b — Cross-arg Named-struct identity matching
 - `0005-pure-mind-std-surface.md` (~5516 tok, huge) — RFC 0005: Pure-MIND Standard Surface
 - `0006-mind-blas.md` (~5743 tok, huge) — RFC 0006: mind-blas — native BLAS surface for MIND
-- `0007-mindcraft.md` (~3497 tok, huge) — RFC 0007: Mindcraft — the pure-MIND format / lint / check toolchain
+- `0007-mindcraft.md` (~4499 tok, huge) — RFC 0007: Mindcraft — the pure-MIND format / lint / check toolchain
 - `0008-mindc-build.md` (~10964 tok, huge) — RFC 0008: mindc build + mindc test — retiring cargo from the build path
 - `0009-federation-package-layer.md` (~6976 tok, huge) — RFC 0009: Federation-First MIND Package Layer
 - `000-template.md` (~1 tok, tiny)
@@ -1011,7 +1011,7 @@
 - `crypto-vectors.yml` (~1238 tok, large) — name: Crypto Vectors
 - `docs-claims.yml` (~364 tok, medium) — name: Docs Claims
 - `link-check.yml` (~221 tok, medium) — name: Link Check
-- `mindcraft.yml` (~545 tok, large) — name: Mindcraft Check
+- `mindcraft.yml` (~715 tok, large) — name: Mindcraft Check
 - `release-drafter.yml` (~91 tok, small) — name: Release Drafter
 - `release.yml` (~1756 tok, huge) — name: Release
 ### `mind/std/cognitive/`
@@ -3910,7 +3910,7 @@
 
 - `cli.rs` (~3873 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~16031 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~16145 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4693 tok, huge) — Copyright 2025 STARGA Inc.

@@ -24,7 +24,7 @@ MIND is a deterministic AI compiler and statically-typed tensor programming lang
 | Pure-MIND standard library RFC 0005 (std.vec/string/map/io) | ✅ Complete | v0.4.0–v0.4.4 | [`docs/rfcs/0005-pure-mind-stdlib.md`](docs/rfcs/) |
 | Self-hosted compiler — **native-ELF fixed-point closed** (mic@3 binary-IR flip + mic@1 text fixed point + native x86-64/ELF of full seeded module 1 055 777 B, byte-identical to Rust reference; front-end byte-exact on 66/66 gap corpus; CI-gated; what remains: ir_trace_hash PT\_NOTE wiring + Rust src/native removal) | ✅ Complete | v0.10.0 | `examples/mindc_mind/` |
 | mind-blas (RFC 0006) Track A + Track B inc 1–4 | ✅ Complete | v0.6.3–v0.6.7 | [`docs/rfcs/0006-mind-blas.md`](docs/rfcs/0006-mind-blas.md) |
-| **Mindcraft RFC 0007 — all 6 phases + MINDCRAFT-001** | ✅ **Fully Shipped** | **v0.6.8** | [`docs/rfcs/0007-mindcraft.md`](docs/rfcs/0007-mindcraft.md) |
+| **Mindcraft RFC 0007 — all 6 phases + MINDCRAFT-001** | ✅ fmt/lint/check behavior shipped; ⚠️ self-hosted-front-end + `.mind`-rule-file + rule-hash claims in the RFC do not match the implementation — see RFC §0 | **v0.6.8** | [`docs/rfcs/0007-mindcraft.md`](docs/rfcs/0007-mindcraft.md) |
 | **RFC 0008 — all 7 phases shipped (`mindc build` + `mindc test` + KEYSTONE)** | ✅ **7/7 phases** | **v0.7.0** | [`docs/rfcs/0008-mindc-build.md`](docs/rfcs/0008-mindc-build.md) |
 | Rust edition | ✅ 2024 | v0.6.8 | `Cargo.toml` |
 | Windows-MSVC SIMD port (RFC 0006 #225) | ✅ Complete | v0.6.8 | `runtime-support/mind_intrinsics.c` |
@@ -34,9 +34,9 @@ MIND is a deterministic AI compiler and statically-typed tensor programming lang
 | **Standalone binary release pipeline** (linux-musl + macos-universal + windows-msvc) | ✅ Complete | **v0.7.0** | `.github/workflows/release.yml` |
 | RFCs 0009/0011 specifications | ✅ Drafted | **v0.7.0** | `docs/rfcs/` |
 
-## Mindcraft (RFC 0007) — Fully Shipped in v0.6.8
+## Mindcraft (RFC 0007) — fmt/check shipped in v0.6.8
 
-`mindc fmt`, `mindc lint`, and `mindc check` are first-party subcommands in the `mindc` binary. No external dependencies.
+`mindc fmt` and `mindc check` are first-party subcommands in the `mindc` binary. No external dependencies. There is no standalone `mindc lint` subcommand — lint runs embedded inside `mindc check` (`--no-fmt --no-typecheck` to isolate it); see [`docs/rfcs/0007-mindcraft.md`](docs/rfcs/0007-mindcraft.md) §0 for this and the self-hosted-front-end / `.mind`-rule-file / rule-hash corrections.
 
 | Phase | Description | Commit |
 |-------|-------------|--------|
@@ -91,7 +91,7 @@ Spec: [`docs/rfcs/0008-mindc-build.md`](docs/rfcs/0008-mindc-build.md).
 | Phase 10.7 | Match expressions + `&expr` reference-taking | ✅ Complete |
 | RFC 0005 | Pure-MIND standard library | ✅ Complete |
 | RFC 0006 | mind-blas dense-vector surface | ✅ Complete (Track A + B) |
-| RFC 0007 | Mindcraft: `mindc fmt` / `mindc lint` / `mindc check` | ✅ Fully Shipped |
+| RFC 0007 | Mindcraft: `mindc fmt` / `mindc check` (lint embedded in `check`, no standalone `lint` subcommand) | ✅ fmt/check shipped, doc caveats — see RFC §0 |
 | RFC 0008 — all 7 phases | `mindc build` + `mindc test` + workspace + deps + cache + KEYSTONE | ✅ **7/7 shipped** |
 | RFC 0010 — Phases A/B/C | extern "C" + SysV + Win64 ABI + `#[repr(C)]` | ✅ **Shipped** |
 | Phase 13 | BCI / Neuroscience runtime | 📋 Roadmap |

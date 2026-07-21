@@ -193,6 +193,7 @@ fn typecheck_rejects_tensor_in_extern_signature() {
             ty: TypeAnn::Tensor {
                 dtype: "f32".to_string(),
                 dims: vec![],
+                angle_bracket_form: false,
             },
             span: sp(),
         }],

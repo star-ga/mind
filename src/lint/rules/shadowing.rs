@@ -24,7 +24,7 @@
 //! - The top-level body of a `fn` definition.
 //! - A `Block` expression body (`{ stmts }`).
 //! - The `then` or `else` branch of an `if` expression.
-//! - The body of a `for` loop.
+//! - The body of a `for`, `for-each`, `while`, or `region` block.
 //!
 //! A `let x` introduced in an outer scope and a `let x` introduced in a
 //! nested scope (e.g. an `if` body inside a `fn`) are in **different scopes**
@@ -93,6 +93,21 @@ fn check_node(node: &Node, ctx: &LintCtx<'_>, out: &mut Vec<Diagnostic>) {
         } => {
             check_node(start, ctx, out);
             check_node(end, ctx, out);
+            check_scope(body, ctx, out);
+        }
+        Node::ForEach {
+            collection, body, ..
+        } => {
+            check_node(collection, ctx, out);
+            check_scope(body, ctx, out);
+        }
+        #[cfg(feature = "std-surface")]
+        Node::While { cond, body, .. } => {
+            check_node(cond, ctx, out);
+            check_scope(body, ctx, out);
+        }
+        #[cfg(feature = "std-surface")]
+        Node::Region { body, .. } => {
             check_scope(body, ctx, out);
         }
         Node::Let { value, .. } => {

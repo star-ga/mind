@@ -429,7 +429,7 @@ pub fn render_type(ty: &TypeAnn) -> String {
         TypeAnn::ScalarBool => "bool".to_string(),
         TypeAnn::ScalarU32 => "u32".to_string(),
         TypeAnn::Named(n) => n.clone(),
-        TypeAnn::Tensor { dtype, dims } => {
+        TypeAnn::Tensor { dtype, dims, .. } => {
             let dims_str = dims.join(", ");
             format!("tensor<{dtype}[{dims_str}]>")
         }

@@ -343,7 +343,18 @@ fn read_type_ann<R: Read>(
                 dims.push(read_string(r, strings)?);
             }
             if tag == 0x07 {
-                Ok(TypeAnn::Tensor { dtype, dims })
+                // mic@3 binary IR does not carry the source surface-spelling
+                // distinction (RFC 0012 §3.5 canonical `Tensor<...>` vs. the
+                // pre-existing `tensor<...>` form) — it is cosmetic-only and
+                // irrelevant to the semantic wire format. Decoding always
+                // yields the pre-existing spelling; a value that round-trips
+                // through mic@3 and is later reformatted prints in that form
+                // regardless of how it was originally written.
+                Ok(TypeAnn::Tensor {
+                    dtype,
+                    dims,
+                    angle_bracket_form: false,
+                })
             } else {
                 Ok(TypeAnn::DiffTensor { dtype, dims })
             }

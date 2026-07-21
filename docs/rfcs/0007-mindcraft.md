@@ -4,12 +4,55 @@
 |---|---|
 | RFC | 0007 |
 | Title | Mindcraft — pure-MIND format / lint / check toolchain |
-| Status | **FULLY SHIPPED** — Phase 6 complete (2026-05-20); milestone v0.7.0 |
+| Status | **Phases 1–6 shipped** (2026-05-20, milestone v0.7.0) — three of the load-bearing claims below (§1/§6/§7 self-hosted-front-end + `.mind`-file rule model, §8 rule-pack content hash) do not match the shipped implementation; see §0. Phase 2B (soft line-wrap) is deferred, not shipped. |
 | Authors | STARGA Inc. |
 | Created | 2026-05-19 |
 | Supersedes | — |
 | Superseded by | — |
 | Related | RFC 0005 (pure-MIND std surface), RFC 0006 (mind-blas) |
+
+## 0. Implementation-reality corrections (audit, 2026-07-21)
+
+A Mindcraft-vs-language-surface audit (post-v0.10.1) found that the text
+below in §1, §6, §7, and §8 describes a design that was **never actually
+implemented this way**, not a regression — these claims were inaccurate from
+Phase 2A onward. Corrected here rather than silently rewritten in place, so
+the original design intent stays legible:
+
+- **§1/§7 "Mindcraft's front-end IS the self-hosted pure-MIND front-end
+  (`examples/mindc_mind`)"** — false. `src/fmt/mod.rs`, `src/lint/mod.rs`,
+  and `src/check/mod.rs` all parse through `crate::parser::parse_with_trivia`
+  (the Rust front-end `src/parser/`). `examples/mindc_mind/main.mind` is
+  never invoked by `mindc fmt`/`lint`/`check` — it is a separate, independently
+  gated self-hosting *proof* (the bootstrap byte-identity fixture), not
+  Mindcraft's runtime front-end. §7's "MUST be the self-hosted pure-MIND
+  front-end" has been unmet since Phase 2A shipped (`bfeffbe`, 2026-05-20)
+  and needs a real RI-C-era front-end swap to become true, not a doc fix.
+- **§6 "A rule is a `.mind` file"** — false. All five shipped rules
+  (`src/lint/rules/{naming_convention,q16_overflow,shadowing,
+  trailing_whitespace,unused_import}.rs`) are Rust. No `.mind` rule file
+  exists anywhere in the repository. Adding a rule today means writing Rust
+  and recompiling `mindc`, not dropping in a `.mind` file — the opposite of
+  §6's "no plugin ABI needed" claim.
+- **§8 "rule-pack content hash, verifiable in CI"** — no such hash exists in
+  `src/`, `tests/`, or `.github/`.
+- **There is no `mindc lint` subcommand** — `mindc --help` lists `build`,
+  `run`, `test`, `bench`, `conformance`, `check`, `fmt`, `ops`, `lock`,
+  `fetch`, `doc`, `clean`, `verify`; no `lint`. `mindc lint --help` silently
+  falls through to the top-level help (clap parses `lint` as the `[FILE]`
+  positional); `mindc lint` alone errors
+  `failed to read lint: No such file or directory`. Lint only runs embedded
+  inside `mindc check` (or `mindc check --no-fmt --no-typecheck` to isolate
+  it). CHANGELOG.md's claim that fmt/lint/check are all first-party
+  subcommands, and README.md's now-removed example invocations of a
+  standalone lint command with a `--rule` flag, are corrected alongside
+  this RFC (see `config/capabilities.toml` `[forbidden_phrases.mindcraft]`
+  for the regression guard).
+
+None of this reduces what genuinely shipped — canonical formatting, the
+5-rule lint pack (run via `check`), and the fmt-check + lint + type-check
+project walker are real and pass their test suites. The corrections above
+are about what the *architecture* is, not whether the *behavior* exists.
 
 ## 1. Summary
 
@@ -128,6 +171,12 @@ external tool's configuration format.
 
 ## 6. Rule model
 
+> **Not as shipped — see §0.** The design below (`.mind` rule files, no
+> plugin ABI) was never implemented. All 5 shipped rules are Rust
+> (`src/lint/rules/*.rs`); adding a rule requires editing Rust and
+> recompiling `mindc`. The design is left below as record of the original
+> intent, not a description of `mindc` v0.10.1's actual extension model.
+
 A rule is a `.mind` file exporting a pattern function over the typed AST
 and a diagnostic constructor. The engine walks the AST once, dispatches
 matching nodes to active rules, and collects diagnostics. Because rules
@@ -145,6 +194,12 @@ machine-applicable fix) is shared verbatim with `mindc check` and is the
 stable contract for the `--reporter json` output.
 
 ## 7. Self-hosting constraint (load-bearing)
+
+> **Unmet since Phase 2A — see §0.** `mindc fmt`/`lint`/`check` parse
+> through `crate::parser` (Rust, `src/parser/`), never through
+> `examples/mindc_mind/main.mind`. The constraint below has been aspirational
+> since the formatter first shipped (`bfeffbe`, 2026-05-20); closing it is an
+> RI-C-era front-end swap, not a documentation fix.
 
 Mindcraft's parser/AST/type-checker **MUST** be the self-hosted pure-MIND
 front-end. It **MUST NOT** be a re-implementation of a MIND front-end in
@@ -165,7 +220,7 @@ new foreign-language MIND parser is not, at any phase.
 |---|---|
 | Build (already normative for the compiler) | `mindc fmt` output is byte-identical for a fixed (source, Mindcraft version). |
 | Lint reproducibility | `mindc lint` / `mindc check` emit a byte-identical diagnostic stream for a fixed (source, rule set, config). |
-| Rule-set integrity | The default rule pack carries a content hash; a given hash + source ⇒ a given diagnostic set, verifiable in CI. |
+| Rule-set integrity | The default rule pack carries a content hash; a given hash + source ⇒ a given diagnostic set, verifiable in CI. **Not implemented — see §0**; no such hash exists in `src/`, `tests/`, or `.github/` as of v0.10.1. |
 
 `mindc fmt` is idempotent: formatting already-formatted source is a
 no-op, byte-for-byte. `mindc fmt --check` in CI is therefore a total,
@@ -238,7 +293,7 @@ Mindcraft is now complete. All six deliverables landed in a single commit:
 | A. `mindc fmt --fix` | Explicit alias for default write mode; prints `Formatted N files, M unchanged.` summary. |
 | B. `mindc check --fix` | Applies fmt::drift fixes + lint auto-fixes iteratively (up to 5 rounds); prints `Fixed N files, M unfixable diagnostics remaining.` |
 | C. `mindc check --reporter lsp` | Emits LSP-compatible Diagnostic JSON array (uri, range, severity, message, source, code). |
-| D. CI workflows | `.github/workflows/mindcraft.yml` (reusable) + `mindcraft_check` job in `ci.yml` (`continue-on-error: true` for first rollout). |
+| D. CI workflows | `.github/workflows/mindcraft.yml` (reusable) + `mindcraft_check` job in `ci.yml`. As shipped this carried a `continue-on-error: true` rollout flag; it has since been **removed** (`ci.yml`'s `mindcraft_check` job is now a hard-blocking gate — see the job's own comment) once cross-module import resolution closed the spurious-E2003 gap. Stricter than originally documented, not stale in the risky direction. |
 | E. RFC 0007 status | This document — Mindcraft FULLY SHIPPED. |
 | F. Tests | `tests/mindcraft_fmt_fix.rs` (5 tests), `tests/mindcraft_check_fix.rs` (5 tests), `tests/mindcraft_check_lsp_reporter.rs` (5 tests). All pass. |
 

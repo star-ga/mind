@@ -146,6 +146,27 @@ fn scan_stmt(node: &Node, fn_ret_i32: bool, ctx: &LintCtx<'_>, out: &mut Vec<Dia
                 scan_stmt(s, fn_ret_i32, ctx, out);
             }
         }
+        Node::ForEach {
+            collection, body, ..
+        } => {
+            scan_expr(collection, fn_ret_i32, ctx, out);
+            for s in body {
+                scan_stmt(s, fn_ret_i32, ctx, out);
+            }
+        }
+        #[cfg(feature = "std-surface")]
+        Node::While { cond, body, .. } => {
+            scan_expr(cond, fn_ret_i32, ctx, out);
+            for s in body {
+                scan_stmt(s, fn_ret_i32, ctx, out);
+            }
+        }
+        #[cfg(feature = "std-surface")]
+        Node::Region { body, .. } => {
+            for s in body {
+                scan_stmt(s, fn_ret_i32, ctx, out);
+            }
+        }
         Node::Return { value, .. } if fn_ret_i32 => {
             if let Some(v) = value {
                 if let Some(mul_span) = find_unshifted_mul(v) {
@@ -203,6 +224,27 @@ fn scan_expr(node: &Node, fn_ret_i32: bool, ctx: &LintCtx<'_>, out: &mut Vec<Dia
         } => {
             scan_expr(start, fn_ret_i32, ctx, out);
             scan_expr(end, fn_ret_i32, ctx, out);
+            for s in body {
+                scan_stmt(s, fn_ret_i32, ctx, out);
+            }
+        }
+        Node::ForEach {
+            collection, body, ..
+        } => {
+            scan_expr(collection, fn_ret_i32, ctx, out);
+            for s in body {
+                scan_stmt(s, fn_ret_i32, ctx, out);
+            }
+        }
+        #[cfg(feature = "std-surface")]
+        Node::While { cond, body, .. } => {
+            scan_expr(cond, fn_ret_i32, ctx, out);
+            for s in body {
+                scan_stmt(s, fn_ret_i32, ctx, out);
+            }
+        }
+        #[cfg(feature = "std-surface")]
+        Node::Region { body, .. } => {
             for s in body {
                 scan_stmt(s, fn_ret_i32, ctx, out);
             }

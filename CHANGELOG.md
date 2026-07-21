@@ -1547,6 +1547,14 @@ The MIND toolchain self-hosts its own source-quality toolchain.
 subcommands that ship in the `mindc` binary with no external
 dependencies. Spec: `docs/rfcs/0007-mindcraft.md`.
 
+> **Correction (2026-07-21):** "`mindc lint`" above was never accurate —
+> there has never been a standalone `mindc lint` subcommand; `mindc --help`
+> does not list one, and `mindc lint` errors out. Lint has always run
+> embedded inside `mindc check` (`mindc check --no-fmt --no-typecheck` to
+> isolate it). See `docs/rfcs/0007-mindcraft.md` §0 for the full
+> implementation-vs-doc reconciliation. Left uncorrected in place above per
+> changelog-entry-is-historical-record convention.
+
 **Phase 1** (`6526029`) — `MindcraftConfig` manifest type. The
 `[mindcraft]`, `[mindcraft.format]`, and `[mindcraft.lint]` tables
 are parsed from `Mind.toml` and validated against the struct surface.

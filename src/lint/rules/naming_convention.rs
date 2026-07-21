@@ -126,6 +126,27 @@ fn check_node(node: &Node, ctx: &LintCtx<'_>, out: &mut Vec<Diagnostic>) {
                 check_node(s, ctx, out);
             }
         }
+        Node::ForEach {
+            collection, body, ..
+        } => {
+            check_node(collection, ctx, out);
+            for s in body {
+                check_node(s, ctx, out);
+            }
+        }
+        #[cfg(feature = "std-surface")]
+        Node::While { cond, body, .. } => {
+            check_node(cond, ctx, out);
+            for s in body {
+                check_node(s, ctx, out);
+            }
+        }
+        #[cfg(feature = "std-surface")]
+        Node::Region { body, .. } => {
+            for s in body {
+                check_node(s, ctx, out);
+            }
+        }
         Node::Return { value: Some(v), .. } => {
             check_node(v, ctx, out);
         }

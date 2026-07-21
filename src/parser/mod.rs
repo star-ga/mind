@@ -982,7 +982,11 @@ impl<'a> P<'a> {
                     Vec::new()
                 };
                 self.expect(b'>')?;
-                return Ok(TypeAnn::Tensor { dtype: dt, dims });
+                return Ok(TypeAnn::Tensor {
+                    dtype: dt,
+                    dims,
+                    angle_bracket_form: true,
+                });
             }
             self.expect(b'[')?;
             let dt = self.dtype()?;
@@ -991,7 +995,11 @@ impl<'a> P<'a> {
             let dims = self.dim_list_parens()?;
             self.skip_ws();
             self.expect(b']')?;
-            return Ok(TypeAnn::Tensor { dtype: dt, dims });
+            return Ok(TypeAnn::Tensor {
+                dtype: dt,
+                dims,
+                angle_bracket_form: false,
+            });
         }
         // diff tensor<f32[dims]> or diff tensor<f32>
         if self.at_keyword(b"diff") {
@@ -1034,7 +1042,11 @@ impl<'a> P<'a> {
             };
             self.skip_ws();
             self.expect(b'>')?;
-            return Ok(TypeAnn::Tensor { dtype: dt, dims });
+            return Ok(TypeAnn::Tensor {
+                dtype: dt,
+                dims,
+                angle_bracket_form: false,
+            });
         }
         // Scalar types
         if self.at_keyword(b"i32") {

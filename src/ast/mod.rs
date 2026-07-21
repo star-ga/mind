@@ -140,6 +140,18 @@ pub enum TypeAnn {
     Tensor {
         dtype: String,
         dims: Vec<String>,
+        /// `true` when the source spelled this type with RFC 0012 §3.5's
+        /// decided canonical surface form, `Tensor<dtype, [dims]>` (capital
+        /// `Tensor`, angle brackets, dtype and the dims-bracket separated by
+        /// a comma). `false` for the pre-existing `tensor<dtype[dims]>`
+        /// lowercase form (used throughout std/ and examples/ since before
+        /// RFC 0012 existed) and for the legacy `Tensor[dtype,(dims)]`
+        /// bracket-paren form. `mindc fmt` reprints whichever form was
+        /// parsed so both round-trip losslessly instead of the formatter
+        /// silently rewriting one accepted spelling into the other on every
+        /// run (RFC 0007 Mindcraft gap: printer had only one spelling for
+        /// two accepted parses).
+        angle_bracket_form: bool,
     },
     /// Differentiable tensor: `diff tensor<f32[N, M]>`
     DiffTensor {
