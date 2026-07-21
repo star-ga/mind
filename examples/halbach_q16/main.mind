@@ -144,7 +144,6 @@
 //     (+0.51% on k at y = 0.75, measured). This is the measurement behind
 //     the 0.06% decay-constant and sqrt(2) UUDD-ratio claims above.
 
-import std.io;
 
 // floor(sqrt(v)) for v >= 0 by the classic bit method: exact, deterministic,
 // no float. sqrt of a Q32.32 value yields Q16.16.
@@ -451,11 +450,11 @@ pub fn halbach_sweep_q16(out: i64, n: i64, halbach: i64, y0_q16: i64, dy_q16: i6
 // Single source of truth for the derived constants above — both the checks
 // and the diagnostic print use these, so a printed exp/tol can never drift
 // from the value actually enforced.
-const DECAY_EXPECT: i64 = 97057;
-const DECAY_TOL: i64 = 95;
-const RATIO_EXPECT: i64 = 92682;
-const RATIO_TOL: i64 = 278;
-const RATIO_FLOOR: i64 = 65536;
+const DECAY_EXPECT: i64 = 97057
+const DECAY_TOL: i64 = 95
+const RATIO_EXPECT: i64 = 92682
+const RATIO_TOL: i64 = 278
+const RATIO_FLOOR: i64 = 65536
 
 // gap_y — the reference GAP_RANGE y values (binary-exact Q16.16):
 // 0.625, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0 pitch for t = 0..6.
