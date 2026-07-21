@@ -217,8 +217,8 @@ fn ref_dot_f32_strict(a: &[f32], b: &[f32]) -> f32 {
         i += lanes;
     }
     let mut s = acc[0];
-    for j in 1..lanes {
-        s += acc[j];
+    for a in acc.iter().take(lanes).skip(1) {
+        s += *a;
     }
     while i < n {
         s += a[i] * b[i];

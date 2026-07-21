@@ -39,7 +39,7 @@ fn string_bomb(l: usize, m: usize) -> Vec<u8> {
     b.push(0x02); // version
     uleb(1, &mut b); // string-table count = 1
     uleb(l as u64, &mut b); // entry length
-    b.extend(std::iter::repeat(b'a').take(l));
+    b.extend(std::iter::repeat_n(b'a', l));
     uleb(0, &mut b); // next_id
     uleb(0, &mut b); // exports count
     uleb(1, &mut b); // instruction count = 1

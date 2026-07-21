@@ -18,7 +18,6 @@
 #![cfg(feature = "std-surface")]
 
 mod common;
-use common::mindc_bin;
 
 use libmind::ir::compact::emit_mic3;
 use libmind::{CompileOptions, compile_source};

@@ -271,14 +271,6 @@ mod mlir_tests {
         Some(so_path)
     }
 
-    /// Load a symbol from the .so as an extern "C" fn.
-    macro_rules! load_sym {
-        ($lib:expr, $sym:literal, $ty:ty) => {{
-            let raw = unsafe { $lib.get::<$ty>($sym) };
-            raw.expect(concat!("symbol not found: ", $sym))
-        }};
-    }
-
     #[test]
     fn sync_scheduler_submit_run_returns_work_value() {
         let dir = std::env::temp_dir().join("mind_async_test_7");

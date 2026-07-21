@@ -16,7 +16,6 @@
 #![cfg(feature = "std-surface")]
 
 mod common;
-use common::mindc_bin;
 
 use libmind::eval::lower::lower_to_ir;
 use libmind::ir::Instr;

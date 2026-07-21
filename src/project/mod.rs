@@ -951,7 +951,7 @@ pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
 #[cfg(feature = "mlir-build")]
 fn build_cdylib_from_entry(
     entry_path: &Path,
-    sources: &[PathBuf],
+    _sources: &[PathBuf],
     output: &Path,
     backend: &str,
     opts: &BuildOptions,
