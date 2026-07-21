@@ -259,7 +259,7 @@ pub(super) fn encode_type_ann<W: Write>(
         | TypeAnn::ScalarF64
         | TypeAnn::ScalarBool
         | TypeAnn::ScalarU32 => {}
-        TypeAnn::Tensor { dtype, dims } | TypeAnn::DiffTensor { dtype, dims } => {
+        TypeAnn::Tensor { dtype, dims, .. } | TypeAnn::DiffTensor { dtype, dims } => {
             uleb128_write(w, st.get(dtype) as u64)?;
             uleb128_write(w, dims.len() as u64)?;
             for d in dims {
@@ -656,7 +656,7 @@ fn collect_repr_c_strings(
 fn collect_type_ann_strings(ann: &crate::ast::TypeAnn, st: &mut StringTable) {
     use crate::ast::TypeAnn;
     match ann {
-        TypeAnn::Tensor { dtype, dims } | TypeAnn::DiffTensor { dtype, dims } => {
+        TypeAnn::Tensor { dtype, dims, .. } | TypeAnn::DiffTensor { dtype, dims } => {
             st.intern(dtype);
             for d in dims {
                 st.intern(d);

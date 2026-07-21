@@ -2644,7 +2644,7 @@ fn valuetype_from_ann(ann: &crate::ast::TypeAnn) -> Option<ValueType> {
         crate::ast::TypeAnn::ScalarF32 => Some(ValueType::ScalarF32),
         crate::ast::TypeAnn::ScalarF64 => Some(ValueType::ScalarF64),
         crate::ast::TypeAnn::ScalarBool => Some(ValueType::ScalarBool),
-        crate::ast::TypeAnn::Tensor { dtype, dims }
+        crate::ast::TypeAnn::Tensor { dtype, dims, .. }
         | crate::ast::TypeAnn::DiffTensor { dtype, dims } => {
             let dt = dtype_from_str(dtype)?;
             let shape = shape_from_dims(dims);
@@ -3902,7 +3902,8 @@ fn check_module_types_in_file_impl(
                     .iter()
                     .enumerate()
                     .filter_map(|(idx, p)| match &p.ty {
-                        TypeAnn::Tensor { dims, dtype } | TypeAnn::DiffTensor { dims, dtype } => {
+                        TypeAnn::Tensor { dims, dtype, .. }
+                        | TypeAnn::DiffTensor { dims, dtype } => {
                             Some((idx, p.name.clone(), dims.clone(), dtype.clone()))
                         }
                         _ => None,

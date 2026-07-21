@@ -132,10 +132,14 @@ mindc bench --target cuda            # GPU benchmarks
 mindc bench --filter throughput      # specific benchmark
 ```
 
-### Mindcraft Source Toolchain (RFC 0007 — fully shipped in v0.6.8)
+### Mindcraft Source Toolchain (RFC 0007 — fmt/check shipped in v0.6.8; see note)
 
-`mindc fmt`, `mindc lint`, and `mindc check` are first-party source-quality
-subcommands shipping in the same `mindc` binary. No external dependencies.
+`mindc fmt` and `mindc check` are first-party source-quality subcommands
+shipping in the same `mindc` binary. No external dependencies. **There is no
+standalone `mindc lint` subcommand** — `mindc --help` does not list one, and
+`mindc lint` errors `failed to read lint: No such file or directory` (clap
+parses `lint` as the `[FILE]` positional). Lint runs embedded inside
+`mindc check`; use `--no-fmt --no-typecheck` to isolate it.
 
 ```bash
 # Format: rewrite .mind files to canonical form (idempotent, deterministic)
@@ -144,18 +148,16 @@ mindc fmt --check src/               # CI gate: exit non-zero if any file would 
 mindc fmt --diff src/                # show unified diff without writing
 mindc fmt --stdin < file.mind        # read from stdin
 
-# Lint: emit diagnostics for named rule violations
-mindc lint src/                      # check with project rules from Mind.toml
-mindc lint --rule q16_overflow src/  # run one rule only
-
-# Check: fmt idempotence + lint + typecheck in one pass
+# Check: fmt idempotence + lint + typecheck in one pass (lint has no separate subcommand)
 mindc check                          # full project check (VCS-aware, only dirty files)
+mindc check --no-fmt --no-typecheck  # lint only
 mindc check --fix                    # auto-fix all fixable lint suggestions
 mindc check --reporter=json          # machine-readable output
 ```
 
-Named lint rules in v0.6.8: `q16_overflow`, `unused_import`,
-`naming_convention`, `shadowing`, `trailing_whitespace`.
+Named lint rules in v0.6.8 (all implemented in Rust, `src/lint/rules/*.rs` —
+not `.mind` files, see `docs/rfcs/0007-mindcraft.md` §0): `q16_overflow`,
+`unused_import`, `naming_convention`, `shadowing`, `trailing_whitespace`.
 
 CI integration ships as a reusable GitHub Actions workflow at
 `.github/workflows/mindcraft.yml`. Spec: [`docs/rfcs/0007-mindcraft.md`](docs/rfcs/0007-mindcraft.md).

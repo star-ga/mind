@@ -11,9 +11,13 @@ For a given (source, Mindcraft version) pair the output is byte-identical on
 every machine, every run, forever. `mindc fmt --check` is the CI gate: exit 1
 if any file deviates from the canonical form, zero writes.
 
-`mindc fmt` operates on the MIND compiler's own self-hosted front-end (the same
-lexer/parser/AST that `mindc` uses to compile programs). It does not implement a
-second MIND parser; the formatter's parse step is the compiler's parse step.
+`mindc fmt` operates on `mindc`'s own Rust front-end (`src/parser/`, via
+`parse_with_trivia`) — the same lexer/parser/AST that `mindc build`/`check`
+use. It does not implement a second MIND parser. **Note:** this is *not* the
+same thing as RFC 0007 §7's separately-tracked "self-hosted pure-MIND
+front-end" claim (`examples/mindc_mind/main.mind`) — that is a distinct,
+independently-gated bootstrap proof that `mindc fmt` does not route through;
+see `docs/rfcs/0007-mindcraft.md` §0.
 
 Phase 2A ships all Phase 2A formatting rules. Soft line-wrapping at
 `max_line_length` is deferred to Phase 2B.

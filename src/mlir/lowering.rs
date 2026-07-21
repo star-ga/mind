@@ -10840,7 +10840,7 @@ fn type_ann_to_abi_mlir(ty: &crate::ast::TypeAnn) -> String {
         // converts the by-value tensor boundary to a memref out-param at the C
         // ABI, so a tensor-param/returning fn links. Q16.16 stores as i32 at the
         // MLIR layer.
-        crate::ast::TypeAnn::Tensor { dtype, dims }
+        crate::ast::TypeAnn::Tensor { dtype, dims, .. }
         | crate::ast::TypeAnn::DiffTensor { dtype, dims } => {
             let elem = if dtype == "q16" {
                 "i32"
@@ -10884,7 +10884,7 @@ fn type_ann_to_value_kind(ty: &crate::ast::TypeAnn) -> ValueKind {
         // `TypeAnn::ScalarU64`). Seed the i64-physical, unsigned-op-selecting
         // kind so `u64` params + returns pick `divui`/`ult`/… downstream.
         crate::ast::TypeAnn::Named(n) if n == "u64" => ValueKind::ScalarU64,
-        crate::ast::TypeAnn::Tensor { dtype, dims }
+        crate::ast::TypeAnn::Tensor { dtype, dims, .. }
         | crate::ast::TypeAnn::DiffTensor { dtype, dims } => ValueKind::Tensor {
             dtype: dtype.parse::<DType>().unwrap_or(DType::F32),
             shape: tensor_ann_shape(dims),

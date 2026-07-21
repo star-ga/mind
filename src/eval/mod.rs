@@ -449,7 +449,7 @@ pub fn eval_module_value_with_env_mode(
             } => {
                 let rhs = eval_value_expr_mode(value, &venv, &tensor_env, mode.clone())?;
                 let stored = match ann {
-                    Some(TypeAnn::Tensor { dtype, dims })
+                    Some(TypeAnn::Tensor { dtype, dims, .. })
                     | Some(TypeAnn::DiffTensor { dtype, dims }) => {
                         let (dtype, shape) = parse_tensor_ann(dtype, dims)?;
                         let fill = match rhs {

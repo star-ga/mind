@@ -1121,7 +1121,7 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                 name, ann, value, ..
             } => {
                 let id = match ann {
-                    Some(TypeAnn::Tensor { dtype, dims }) => lower_tensor_binding(
+                    Some(TypeAnn::Tensor { dtype, dims, .. }) => lower_tensor_binding(
                         &mut ir,
                         value,
                         dtype,
@@ -4865,7 +4865,7 @@ fn lower_expr(
                         #[cfg(feature = "std-surface")]
                         let value_start = fn_ir.instrs.len();
                         let id = match ann {
-                            Some(TypeAnn::Tensor { dtype, dims })
+                            Some(TypeAnn::Tensor { dtype, dims, .. })
                             | Some(TypeAnn::DiffTensor { dtype, dims }) => lower_tensor_binding(
                                 &mut fn_ir,
                                 value,
@@ -5165,7 +5165,7 @@ fn lower_expr(
                 } = stmt
                 {
                     let id = match ann {
-                        Some(TypeAnn::Tensor { dtype, dims })
+                        Some(TypeAnn::Tensor { dtype, dims, .. })
                         | Some(TypeAnn::DiffTensor { dtype, dims }) => lower_tensor_binding(
                             ir,
                             value,
@@ -5403,7 +5403,7 @@ fn lower_expr(
                         // outer-mutation threading (see the fn-body Let arm).
                         let value_start = then_ir.instrs.len();
                         let id = match ann {
-                            Some(TypeAnn::Tensor { dtype, dims })
+                            Some(TypeAnn::Tensor { dtype, dims, .. })
                             | Some(TypeAnn::DiffTensor { dtype, dims }) => lower_tensor_binding(
                                 &mut then_ir,
                                 value,
@@ -5622,7 +5622,7 @@ fn lower_expr(
                             // outer-mutation threading (see the fn-body Let arm).
                             let value_start = else_ir.instrs.len();
                             let id = match ann {
-                                Some(TypeAnn::Tensor { dtype, dims })
+                                Some(TypeAnn::Tensor { dtype, dims, .. })
                                 | Some(TypeAnn::DiffTensor { dtype, dims }) => {
                                     lower_tensor_binding(
                                         &mut else_ir,
@@ -9213,7 +9213,7 @@ fn lower_stmt_seq(
                 name, ann, value, ..
             } => {
                 let id = match ann {
-                    Some(TypeAnn::Tensor { dtype, dims })
+                    Some(TypeAnn::Tensor { dtype, dims, .. })
                     | Some(TypeAnn::DiffTensor { dtype, dims }) => lower_tensor_binding(
                         ir,
                         value,
