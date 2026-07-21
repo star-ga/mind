@@ -74,7 +74,11 @@ itself byte-identically with zero Rust & zero LLVM in the loop"* (integer/contro
 
 ## PHASE B — Full-surface front-end / middle-end self-host  ·  3–6 months
 `main.mind` covers only the subset its own source uses. To compile **arbitrary** MIND programs:
-- [ ] **B1** Full type-checker in pure MIND (Rust `type_checker/mod.rs`, 5,125 LOC) — floats, tensors, narrow ints, enums, shapes
+- [~] **B1** Full type-checker in pure MIND (Rust `type_checker/mod.rs`, 5,125 LOC) — floats, tensors, narrow ints, enums, shapes.
+  **First slice LANDED (2026-07-21, `1372c4c`):** the E2004 i64→i32 implicit-narrowing rule ported to pure MIND
+  (`i32` arm in `resolve_type_ident` + width fn), byte-for-byte matching the Rust oracle over all {i32,i64,f64,bool}
+  pairs, gated by `self_host_tc_narrowing_smoke.py` (isolated `selftest_tc_*` export). The remaining ~5,100 LOC
+  (float/tensor/enum/shape rules) is the bulk still open.
 - [ ] **B2** Full parser + AST→IR lowering (`parser` 5,109 + `eval/lower.rs` 7,818) for every construct
 - [ ] **B3** Autodiff in pure MIND
 - [ ] **B4** Optimizer / analysis passes in pure MIND
@@ -86,15 +90,36 @@ Native-ELF covers only scalar i64/ptr/struct/control-flow. To drop the 12,753-LO
   `addsd`/`subsd`/`mulsd`/`divsd` + `cvttsd2si` (`6179153`), mem-operand `[rbp+disp32]` stack-slot encoders
   (`c914529`), and a lexer `tk_float` literal token (`720570e`), gated by `self_host_native_fp_smoke.py`
   (CPU-as-oracle execution correctness — no float byte-oracle can exist since the deleted Rust native backend
-  rejected `ConstF64`). **Still open:** the f32/strict-FP tier, ISA-selection, and a byte-identity oracle for the
-  float path. *(Commit/CHANGELOG history labels this increment **"RI-B1"** — that is roadmap **C1** here, NOT
-  roadmap B1 (pure-MIND type-checker below); the "RI-B" tag was a work-tracking name, not a roadmap phase.)*
-- [ ] **C2** Narrow ints (i8/i16/i32/u*)   ·   **C3** division / shift / compare
+  rejected `ConstF64`). **f32 scalar tier LANDED (2026-07-21, `1372c4c`):** general single-precision emission —
+  `addss`/`subss`/`mulss`/`divss`, `cvtss2sd`/`cvtsd2ss` round-trip, `cvttss2si`, `movss` load/store — via the
+  general nb_expr path (not just kernel emitters), gated by `self_host_native_scalar_f32_smoke.py` (CPU-as-oracle,
+  exact-bit vs single-precision reference). The f64 canary stays byte-identical. **Still open:** ISA-selection,
+  a byte-identity oracle for the float path, and wiring f32 into the general dtype registry (currently a
+  dedicated selftest export, not the default nb_expr dtype). *(Commit/CHANGELOG history labels the earlier f64
+  increment **"RI-B1"** — that is roadmap **C1** here, NOT roadmap B1 (pure-MIND type-checker below).)*
+- [~] **C2** Narrow ints (i8/i16/i32/u*) — **store/load LANDED (2026-07-21, `1372c4c`):** user-reachable
+  `__mind_{store,load}_{i8,i16,i32}` (truncating stores, zero-extend loads) via the general nb_emit_intrinsic
+  path, gated by `self_host_native_narrowint_smoke.py` (non-fakeable neighbour/high-bit probes). **Still open:**
+  narrow-width wrap-around ARITHMETIC (needs a narrow-int type + per-op width masking) and unsigned surface types.
+  · **C3** division / shift / compare — **COMPLETE:** `idiv`+`cqo` with zero & INT_MIN/-1 guards, `sar`/`shl`,
+  all 6 signed `setcc`; 16 edge-case tests added (`div_shift_cmp_edge_smoke.py`). Logical-`shr`/unsigned-`setcc`
+  unreachable until C2 unsigned types (correctly deferred, no oracle).
 - [ ] **C4** Tensor/linalg lowering — matmul, reductions, broadcast, indexing *(currently MLIR-only)*
 - [ ] **C5** Vectorization (AVX2/NEON SIMD) for performance parity
 - [ ] **C6** ⚠️ **Optimizing backend** — register allocation + instruction scheduling (today LLVM `-O3`). *The multi-year item*; without it native codegen is correct but slow
 - [ ] **C7** GPU codegen (CUDA/ROCm/Metal) — *commercial mind-runtime territory, hardest*
 - [ ] **C8** Linker + fuller syscall surface (open/close/mmap) for general/multi-object programs
+
+### Open follow-ups (2026-07-21, from the `1372c4c` audit)
+- [ ] Wire the new native-ELF smokes (`self_host_native_narrowint_smoke.py`, `self_host_native_scalar_f32_smoke.py`,
+  `self_host_tc_narrowing_smoke.py`, `div_shift_cmp_edge_smoke.py`) into `fast_keystone.sh` / CI — today they only
+  guard when run manually (consistent with sibling rung smokes, but they should be enforced).
+- [ ] Port `self_host_native_scalar_f32_smoke.py` + `div_shift_cmp_edge_smoke.py` to `resolve_so()` — they currently
+  SKIP (exit 0) when `MINDC_SO` is unset instead of building the `.so`, a vacuity risk if wired into CI bare.
+- [ ] SOTA-speed method (this is where **mind-lab on s1** comes in): point the autoresearch + alg-inv evolutionary
+  search at the perf-critical parts (deterministic reduction schedule #58, GEMM/int-dot tiling #47, register
+  allocation for C6) with fitness = speed GATED by keystone byte-identity — the novel edge is *codegen optimized by
+  evolutionary search under a hard determinism constraint*. Compile-speed campaign is live on s1 from mind-lab-latest.
 
 ## PHASE D — Remove the external toolchain
 - [ ] **D1** Delete the 12,753-LOC MLIR Rust + the LLVM 17/18 + clang dependency (after C)
