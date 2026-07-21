@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3150 | **Est. tokens:** ~7,532,318
-**Generated:** 2026-07-21 01:19 UTC
+**Files:** 3152 | **Est. tokens:** ~7,540,179
+**Generated:** 2026-07-21 01:41 UTC
 
 ## Token Budget Guide
 
@@ -56,6 +56,7 @@
 | `examples/distribution-crossisa/` | 6 | ~6,336 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/grammar_mask/` | 2 | ~4,636 |
+| `examples/halbach_q16/` | 2 | ~7,861 |
 | `examples/lexer/` | 6 | ~8,888 |
 | `examples/mindc_mind/` | 75 | ~134,832 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
@@ -819,9 +820,17 @@
 
 - `main.mind` (~4577 tok, huge) — examples/grammar_mask/main.mind — structured / grammar-constrained decoding,
 - `Mind.toml` (~59 tok, small) — [package]
+### `examples/halbach_q16/`
+
+- `main.mind` (~7798 tok, huge) — examples/halbach_q16/main.mind — standalone, SELF-VERIFYING project build of
 ### `examples/`
 
 - `halbach_q16.mind` (~3965 tok, huge) — Deterministic Q16.16 2D Halbach-vs-uniform magnet-array field model.
+### `examples/halbach_q16/`
+
+- `Mind.toml` (~63 tok, small) — [package]
+### `examples/`
+
 - `hello_stdlib.mind` (~271 tok, medium) — Hello, std.vec — minimal RFC 0005 cookbook example.
 - `hello_tensor.mind` (~141 tok, small) — Hello, MIND — scalar smoke that flows through every stage of the
 ### `examples/lexer/`

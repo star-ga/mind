@@ -1,0 +1,10 @@
+[package]
+name = "halbach_q16"
+version = "0.1.0"
+authors = ["STARGA Inc."]
+license = "Apache-2.0"
+description = "Deterministic Q16.16 Halbach-array field model with a self-verifying pure-MIND proof harness"
+
+[build]
+target = "cpu"
+entry = "main.mind"
