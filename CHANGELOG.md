@@ -160,6 +160,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   byte-identity (keystone 7/7, loop `stage1==stage2==stage3`, parity 23/23 all
   unaffected). Opens the float column of the native-ELF self-host surface
   (previously integer/control-flow only).
+- **Rust-independence native-ELF Phase-C rungs — f32 scalar tier, narrow-int
+  store/load, C3 confirmed complete, first B1 slice (`1372c4c`).** Four additive
+  advances on the pure-MIND native-ELF backend (`examples/mindc_mind/main.mind`),
+  all unreferenced during self-compile (`main.mind` stays float-free and uses only
+  i8/i64 store/load), so per-fixture native-ELF byte-identity is preserved:
+  - **C1-remainder — f32 scalar tier.** General single-precision emission
+    (`addss`/`subss`/`mulss`/`divss`, `cvtss2sd`/`cvtsd2ss` round-trip,
+    `cvttss2si`, `movss` load/store) through the general `nb_expr` path, zero
+    MLIR/LLVM. CPU-as-oracle (no byte-oracle can exist — the deleted Rust native
+    backend rejected `ConstF64`); the existing f64 canary stays **byte-identical**.
+    Gated by `self_host_native_scalar_f32_smoke.py`. Still open: ISA-selection, a
+    float byte-identity oracle, and wiring f32 into the default dtype registry
+    (today a dedicated selftest export).
+  - **C2 — narrow-int store/load.** User-reachable `__mind_{store,load}_{i8,i16,i32}`
+    lowered through the general `nb_emit_intrinsic` path (truncating byte/word/dword
+    stores that don't clobber neighbours; narrow loads zero-extend). Negative
+    controls (wrong-width store/load → wrong exit) prove the smoke is non-fakeable.
+    Gated by `self_host_native_narrowint_smoke.py`. Still open: narrow-width
+    wrap-around ARITHMETIC (needs a narrow-int type + per-op width masking) and
+    unsigned surface types.
+  - **C3 — division / shift / compare confirmed complete.** `idiv`+`cqo` with zero
+    & `INT_MIN`/-1 guards, `sar`/`shl`, all six signed `setcc`; 16 edge-case
+    CPU-oracle tests added (`div_shift_cmp_edge_smoke.py`). Logical-`shr` /
+    unsigned-`setcc` correctly deferred (unreachable until C2 unsigned types).
+  - **B1 first slice — E2004 i64→i32 implicit-narrowing type rule** ported to pure
+    MIND (`i32` arm in `resolve_type_ident` + width fn), byte-for-byte matching the
+    Rust type-checker oracle over all {i32,i64,f64,bool} pairs, gated by
+    `self_host_tc_narrowing_smoke.py` via an isolated `selftest_tc_*` export (never
+    reached through `mindc_compile`, so self-host output is unchanged). The bulk of
+    the ~5,100-LOC checker (float/tensor/enum/shape rules) remains open.
+
+  These are **increments on the native backend**, not full-language
+  Rust-independence: the MLIR/LLVM path still carries float/tensor/GPU codegen.
+  Gates green: 4 new smokes pass, `self_host_native_elf` per-fixture byte-identity
+  passes, keystone 6/6 (deterministic 798944 B), self-host loop PRIMARY+ORACLE
+  byte-identical at the new fixed point (RI-E1 seed re-frozen since `main.mind`
+  source grew). See [`docs/INDEPENDENCE_ROADMAP.md`](docs/INDEPENDENCE_ROADMAP.md)
+  Phase C.
 - **CI: self-host execution-correctness smokes wired into the KEYSTONE job.**
   `self_host_native_fp_smoke.py` (RI-B1 float column, above) and
   `self_host_native_elf_smoke.py` (per-fixture native-ELF integer byte-identity

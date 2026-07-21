@@ -1,7 +1,7 @@
 # MIND Compiler Status
 
-> **Last Updated:** 2026-06-25
-> **Version:** 0.10.0
+> **Last Updated:** 2026-07-21
+> **Version:** 0.10.1
 
 ## Overview
 
@@ -33,6 +33,25 @@ MIND is a deterministic AI compiler and statically-typed tensor programming lang
 | **`mindc doc`** — rustdoc-style HTML documentation generator | ✅ Phase 1 shipped | **v0.7.0** | `src/doc/` |
 | **Standalone binary release pipeline** (linux-musl + macos-universal + windows-msvc) | ✅ Complete | **v0.7.0** | `.github/workflows/release.yml` |
 | RFCs 0009/0011 specifications | ✅ Drafted | **v0.7.0** | `docs/rfcs/` |
+
+## Native-ELF backend — Phase-C increments (unreleased, post-0.10.1)
+
+The pure-MIND native-ELF backend (`examples/mindc_mind/main.mind`) is being
+extended toward a full-surface, MLIR/LLVM-free code path (INDEPENDENCE_ROADMAP
+Phase C). These are **increments on the native backend, not full-language
+Rust-independence** — the self-compile itself still runs on the integer/
+control-flow subset, and the MLIR/LLVM path still carries float/tensor/GPU
+codegen. Landed 2026-07-21 (`1372c4c`):
+
+| Rung | Status | Gate |
+|------|--------|------|
+| C1-remainder — scalar `f32` tier (`addss`/`subss`/`mulss`/`divss`, `cvtss2sd`/`cvtsd2ss`, `cvttss2si`, `movss`), zero MLIR/LLVM | ⏳ landed (CPU-as-oracle; f64 canary stays byte-identical) | `self_host_native_scalar_f32_smoke.py` |
+| C2 — narrow-int store/load (`__mind_{store,load}_{i8,i16,i32}`, truncating stores / zero-extend loads) | ⏳ store/load landed; wrap-around arithmetic + unsigned types still open | `self_host_native_narrowint_smoke.py` |
+| C3 — division / shift / signed compare (`idiv`+`cqo` with zero & INT_MIN/-1 guards, `sar`/`shl`, all 6 signed `setcc`) | ✅ complete (+16 edge tests) | `div_shift_cmp_edge_smoke.py` |
+| B1 — first pure-MIND type-checker slice (E2004 i64→i32 implicit narrowing) | ⏳ 1 rule of ~5,100 LOC; byte-for-byte vs Rust oracle | `self_host_tc_narrowing_smoke.py` |
+
+Keystone stays byte-identical (6/6, 798944 B) and the native-ELF self-host loop
+is byte-identical at the new fixed point. Detail: [`docs/INDEPENDENCE_ROADMAP.md`](docs/INDEPENDENCE_ROADMAP.md) Phase C.
 
 ## Mindcraft (RFC 0007) — fmt/check shipped in v0.6.8
 

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3156 | **Est. tokens:** ~7,549,586
-**Generated:** 2026-07-21 09:51 UTC
+**Files:** 3156 | **Est. tokens:** ~7,550,106
+**Generated:** 2026-07-21 10:07 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 39 | ~37,494 |
+| `./` | 39 | ~38,014 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -503,12 +503,12 @@
 - `p3` (~4022 tok, huge) — ELF>�@7@8@@
 - `p3.c` (~102 tok, small)
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
-- `README.md` (~5710 tok, huge) — MIND — Machine Intelligence Native Design
+- `README.md` (~5837 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~1256 tok, large) — Security Policy
 - `.sembleignore` (~72 tok, small) — # semble code-search ignore list
-- `STATUS.md` (~3971 tok, huge) — MIND Compiler Status
+- `STATUS.md` (~4364 tok, huge) — MIND Compiler Status
 - `test_real_compile_time.py` (~265 tok, medium) — Quick test of real MIND compilation time using Python bindings."""
 ### `agents/`
 

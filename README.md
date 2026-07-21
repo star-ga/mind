@@ -46,7 +46,12 @@ exotic-chip-reach backend — demoted from the self-host path, still load-bearin
 What remains toward full Rust-independence: (1) **mic@3 canonicality** — the pure-MIND `emit_mic3`
 self-computed `trace_hash` still diverges from the Rust `--emit-mic3` oracle on the pruned-combined IR,
 so byte-parity is needed for a compiler-independent anchor; (2) the **full-surface native backend**
-(floats/tensors/GPU) that would let MLIR/LLVM be dropped. See
+(floats/tensors/GPU) that would let MLIR/LLVM be dropped. That native backend is being extended
+incrementally on the pure-MIND emit path (Phase C): scalar `f32` arithmetic, narrow-int (i8/i16/i32)
+store/load, and the full div/shift/signed-compare set now emit directly, and the first pure-MIND
+type-checker rule (i64→i32 narrowing) is ported — these are increments on the native backend, **not**
+Rust-freedom for the full language (the MLIR/LLVM path still carries float/tensor/GPU codegen, and the
+self-compile itself stays on the integer/control-flow subset). See
 [`docs/INDEPENDENCE_ROADMAP.md`](docs/INDEPENDENCE_ROADMAP.md) and [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Open-core vs proprietary runtime
