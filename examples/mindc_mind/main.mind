@@ -2414,6 +2414,142 @@ pub fn selftest_tc_class_mismatch(to_sel: i64, from_sel: i64) -> i64 {
     tc_is_class_mismatch(to_ty, from_ty)
 }
 
+// ===== Return/cond/binop/cast class rules (E2010/E2011/E2013/E2016) =====
+//
+// Pure-MIND ports of the remaining scalar-class diagnostics from
+// src/type_checker/mod.rs. All four are ADDITIVE: defined + exported via the
+// isolated selftest_* wrappers below, never reached through mindc_compile, so
+// the mic@1 canary / self-host loop stay byte-identical.
+
+// True (1) for an integer-family scalar tag (i32/i64/bool) — twin of Rust
+// `is_int_scalar` (ScalarI32 | ScalarI64 | ScalarBool).
+pub fn tc_is_int_scalar(ty: i64) -> i64 {
+    if ty == ty_i32() {
+        return 1;
+    }
+    if ty == ty_i64() {
+        return 1;
+    }
+    if ty == ty_bool() {
+        return 1;
+    }
+    0
+}
+
+// True (1) for a float-family scalar tag — twin of Rust `is_float_scalar`
+// (ScalarF32 | ScalarF64; only f64 exists in this tag universe).
+pub fn tc_is_float_scalar(ty: i64) -> i64 {
+    if ty == ty_f64() {
+        return 1;
+    }
+    0
+}
+
+// E2010: return-type mismatch. Two directions, exactly as the Rust oracle:
+//   1. int-declared return + float value (the infer-based pass:
+//      `is_int_scalar(rt)` + `is_float_scalar(vt)` in check_return_and_cond_node);
+//   2. float-declared return + Int-class value (the confidence-gated NEW
+//      direction: `ret_class == Float && class(v) == Int` in the Return arm of
+//      check_scalar_class_stmt).
+// Returns 1 when `return <val_ty>` inside a fn declared `-> ret_ty` mismatches.
+pub fn tc_is_return_mismatch(ret_ty: i64, val_ty: i64) -> i64 {
+    if tc_is_int_scalar(ret_ty) == 1 {
+        return tc_is_float_scalar(val_ty);
+    }
+    if tc_is_float_scalar(ret_ty) == 0 {
+        return 0;
+    }
+    if tc_scalar_class(val_ty) == 1 {
+        return 1;
+    }
+    0
+}
+
+// E2011: float used directly as an if/while condition. Twin of Rust
+// check_cond_type: a boolean-intent condition (comparison / logical / `!`) is
+// exempt (`cond_is_boolean_intent` early return); otherwise the diagnostic
+// fires iff the condition's type is a float scalar. `bool_intent` is 1 when
+// the condition node is a comparison/logical/negation, else 0.
+pub fn tc_is_cond_mismatch(cond_ty: i64, bool_intent: i64) -> i64 {
+    if bool_intent == 1 {
+        return 0;
+    }
+    tc_is_float_scalar(cond_ty)
+}
+
+// E2013: mixed-class binary op (`1 + 2.0`). Twin of the Rust Node::Binary arm
+// in walk_expr_class_checks: fires iff the operand classes are exactly
+// (Int, Float) or (Float, Int) — both confidently known; any None class keeps
+// the pair silent.
+pub fn tc_is_mixed_binop(lhs_ty: i64, rhs_ty: i64) -> i64 {
+    let lc: i64 = tc_scalar_class(lhs_ty);
+    if lc == 0 {
+        return 0;
+    }
+    let rc: i64 = tc_scalar_class(rhs_ty);
+    if rc == 0 {
+        return 0;
+    }
+    if lc != rc {
+        return 1;
+    }
+    0
+}
+
+// E2016: `as bool` cast reject. Twin of the Rust Node::As arm in
+// walk_expr_class_checks: the rule is TARGET-driven and source-agnostic —
+// `is_bool_ann(ty)` alone decides ("cast to `bool` is not permitted; use
+// `x != 0`"); the source expression's class is never consulted.
+pub fn tc_is_as_bool_reject(target_ty: i64) -> i64 {
+    if target_ty == ty_bool() {
+        return 1;
+    }
+    0
+}
+
+// Isolated selftest entries (ADDITIVE — never reached through mindc_compile).
+// Selectors: 0=i32, 1=i64, 2=f64, 3=bool (tc_name_by_sel/tc_len_by_sel).
+
+// E2010: 1 iff `fn f() -> RET { return <VAL>; }` is a return-type mismatch.
+pub fn selftest_tc_return_mismatch(ret_sel: i64, val_sel: i64) -> i64 {
+    let ret_buf: i64 = tc_name_by_sel(ret_sel);
+    let ret_len: i64 = tc_len_by_sel(ret_sel);
+    let val_buf: i64 = tc_name_by_sel(val_sel);
+    let val_len: i64 = tc_len_by_sel(val_sel);
+    let ret_ty: i64 = resolve_type_ident(ret_buf, 0, ret_len);
+    let val_ty: i64 = resolve_type_ident(val_buf, 0, val_len);
+    tc_is_return_mismatch(ret_ty, val_ty)
+}
+
+// E2011: 1 iff a condition of type COND (bool_intent: 1 = comparison/logical/
+// negation node, 0 = direct value) is rejected in if/while position.
+pub fn selftest_tc_cond_mismatch(cond_sel: i64, bool_intent: i64) -> i64 {
+    let cond_buf: i64 = tc_name_by_sel(cond_sel);
+    let cond_len: i64 = tc_len_by_sel(cond_sel);
+    let cond_ty: i64 = resolve_type_ident(cond_buf, 0, cond_len);
+    tc_is_cond_mismatch(cond_ty, bool_intent)
+}
+
+// E2013: 1 iff `<LHS> op <RHS>` mixes the int and float scalar classes.
+pub fn selftest_tc_mixed_binop(lhs_sel: i64, rhs_sel: i64) -> i64 {
+    let lhs_buf: i64 = tc_name_by_sel(lhs_sel);
+    let lhs_len: i64 = tc_len_by_sel(lhs_sel);
+    let rhs_buf: i64 = tc_name_by_sel(rhs_sel);
+    let rhs_len: i64 = tc_len_by_sel(rhs_sel);
+    let lhs_ty: i64 = resolve_type_ident(lhs_buf, 0, lhs_len);
+    let rhs_ty: i64 = resolve_type_ident(rhs_buf, 0, rhs_len);
+    tc_is_mixed_binop(lhs_ty, rhs_ty)
+}
+
+// E2016: 1 iff `<expr> as TARGET` is the rejected bool-cast (target-driven;
+// the Rust rule never consults the source class, so neither does this).
+pub fn selftest_tc_as_bool(target_sel: i64) -> i64 {
+    let target_buf: i64 = tc_name_by_sel(target_sel);
+    let target_len: i64 = tc_len_by_sel(target_sel);
+    let target_ty: i64 = resolve_type_ident(target_buf, 0, target_len);
+    tc_is_as_bool_reject(target_ty)
+}
+
 // ===== Name hashing (DJB2) =====
 
 pub fn djb2_seed() -> i64 {

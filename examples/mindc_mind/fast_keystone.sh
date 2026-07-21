@@ -90,6 +90,7 @@ chk "tc_narrowing (E2004 i64->i32 rule)"   python3 examples/mindc_mind/self_host
 chk "div_shift_cmp (C3 signed edges)"      python3 examples/mindc_mind/div_shift_cmp_edge_smoke.py
 chk "narrowwrap (i8/i16/i32 wrap arith)"   python3 examples/mindc_mind/self_host_native_narrowwrap_smoke.py
 chk "tc_class (E2015 int/float class)"     python3 examples/mindc_mind/self_host_tc_class_mismatch_smoke.py
+chk "tc_class_rules (E2010/11/13/16)"      python3 examples/mindc_mind/self_host_tc_class_rules_smoke.py
 
 rm -f "$DIR_SO" "$MT_SO"
 echo "== $pass passed, $fail failed in $(($(date +%s)-t0))s =="
