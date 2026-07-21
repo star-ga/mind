@@ -2174,6 +2174,13 @@ pub fn ty_string() -> i64 {
 pub fn ty_unit() -> i64 {
     6
 }
+// Narrow signed-int scalar (i32). Ported to mirror the Rust type-checker's
+// ScalarI32 (src/type_checker/mod.rs int_scalar_bits: i32=32, i64=64). Distinct
+// tag so the E2004 implicit-narrowing rule (i64 -> i32) can be modelled in pure
+// MIND; main.mind's own source uses no i32 annotations, so this is additive.
+pub fn ty_i32() -> i64 {
+    7
+}
 
 // ===== Fn-def aux unpacking =====
 
@@ -2236,6 +2243,9 @@ pub fn make_byte_buf_6(b0: i64, b1: i64, b2: i64, b3: i64, b4: i64, b5: i64) -> 
 pub fn name_buf_i64() -> i64 {
     make_byte_buf_3(105, 54, 52)
 }
+pub fn name_buf_i32() -> i64 {
+    make_byte_buf_3(105, 51, 50)
+}
 pub fn name_buf_f64() -> i64 {
     make_byte_buf_3(102, 54, 52)
 }
@@ -2254,6 +2264,10 @@ pub fn resolve_type_ident(buf: i64, lo: i64, hi: i64) -> i64 {
     if bytes_eq(buf, lo, hi, i64_buf, 0, 3) == 1 {
         return ty_i64();
     }
+    let i32_buf: i64 = name_buf_i32();
+    if bytes_eq(buf, lo, hi, i32_buf, 0, 3) == 1 {
+        return ty_i32();
+    }
     let f64_buf: i64 = name_buf_f64();
     if bytes_eq(buf, lo, hi, f64_buf, 0, 3) == 1 {
         return ty_f64();
@@ -2271,6 +2285,82 @@ pub fn resolve_type_ident(buf: i64, lo: i64, hi: i64) -> i64 {
         return ty_string();
     }
     ty_unknown()
+}
+
+// ===== Narrow-int type rules (E2004 implicit-narrowing) =====
+//
+// Pure-MIND port of src/type_checker/mod.rs {int_scalar_bits, is_implicit_narrowing}.
+// The Rust reference models exactly two int-scalar widths (i32=32, i64=64;
+// bool/float are NOT int scalars) and flags an ASSIGNMENT `let x: TO = <FROM>`
+// as an implicit integer narrowing (E2004) iff both TO and FROM are int scalars
+// and TO is strictly narrower than FROM. Widening (i32 -> i64) and same-width
+// are value-preserving and NOT flagged. No literal-fits-width / mixed-width
+// result-type rules are ported: those do not exist in the Rust oracle (the
+// parser routes u8/u16/u64/i8/i16 to opaque Named strings with no width), so
+// porting them would invent semantics rather than replicate the oracle.
+
+// Bit-width of an int-scalar type tag; 0 means "not an int scalar" (mirrors the
+// Rust `Option<u32>` None arm: bool/f64/vec/string/unit -> 0).
+pub fn tc_int_scalar_bits(ty: i64) -> i64 {
+    if ty == ty_i32() {
+        return 32;
+    }
+    if ty == ty_i64() {
+        return 64;
+    }
+    0
+}
+
+// E2004: true (1) when assigning a value of type `from_ty` into a slot declared
+// `to_ty` is an implicit integer narrowing (both int scalars, dest strictly
+// narrower than source). Byte-exact twin of Rust `is_implicit_narrowing`.
+pub fn tc_is_implicit_narrowing(to_ty: i64, from_ty: i64) -> i64 {
+    let tb: i64 = tc_int_scalar_bits(to_ty);
+    if tb == 0 {
+        return 0;
+    }
+    let fb: i64 = tc_int_scalar_bits(from_ty);
+    if fb == 0 {
+        return 0;
+    }
+    if tb < fb {
+        return 1;
+    }
+    0
+}
+
+// Isolated selftest entry (ADDITIVE — never reached through mindc_compile, so
+// the mic@1 canary / self-host loop are untouched by its logic). Resolves two
+// type NAMES chosen by selector through the real resolve_type_ident path, then
+// applies the narrowing rule — exercising name -> tag -> width -> E2004 verdict
+// end to end. Selectors: 0=i32, 1=i64, 2=f64, 3=bool. Returns 1 if the pair
+// (let dst: TO = <FROM>) is an implicit narrowing, else 0.
+pub fn tc_name_by_sel(sel: i64) -> i64 {
+    if sel == 0 {
+        return name_buf_i32();
+    }
+    if sel == 1 {
+        return name_buf_i64();
+    }
+    if sel == 2 {
+        return name_buf_f64();
+    }
+    name_buf_bool()
+}
+pub fn tc_len_by_sel(sel: i64) -> i64 {
+    if sel == 3 {
+        return 4;
+    }
+    3
+}
+pub fn selftest_tc_narrowing(to_sel: i64, from_sel: i64) -> i64 {
+    let to_buf: i64 = tc_name_by_sel(to_sel);
+    let to_len: i64 = tc_len_by_sel(to_sel);
+    let from_buf: i64 = tc_name_by_sel(from_sel);
+    let from_len: i64 = tc_len_by_sel(from_sel);
+    let to_ty: i64 = resolve_type_ident(to_buf, 0, to_len);
+    let from_ty: i64 = resolve_type_ident(from_buf, 0, from_len);
+    tc_is_implicit_narrowing(to_ty, from_ty)
 }
 
 // ===== Name hashing (DJB2) =====
@@ -2349,6 +2439,11 @@ pub fn push_type_name(s: String, ty: i64) -> String {
         let s1: String = string_push_byte(s, 105);
         let s2: String = string_push_byte(s1, 54);
         return string_push_byte(s2, 52);
+    }
+    if ty == ty_i32() {
+        let s1: String = string_push_byte(s, 105);
+        let s2: String = string_push_byte(s1, 51);
+        return string_push_byte(s2, 50);
     }
     if ty == ty_f64() {
         let s1: String = string_push_byte(s, 102);
@@ -20137,6 +20232,57 @@ pub fn nb_emit_load_i8_sx(code: String, addr_disp: i64) -> String {
     nb_push(c7, 0)
 }
 
+// emit_store_i32(addr_disp, val_disp): write the LOW 32 BITS of val only (the
+// narrow-int C2 dword sibling of nb_emit_store_i8/nb_emit_store_i16). The dword
+// store must NOT clobber the adjacent 4 bytes of the 8-byte slot. NEW user-
+// reachable intrinsic surface (__mind_store_i32); never self-taken during
+// self-compile, so the integer native-ELF oracle stays byte-identical.
+//   mov rax,[rbp+addr] = 48 8B 85 <disp32> ; mov rcx,[rbp+val] = 48 8B 8D
+//   <disp32> ; mov dword [rax],ecx = 89 08.
+pub fn nb_emit_store_i32(code: String, addr_disp: i64, val_disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 139);
+    let c3: String = nb_push(c2, 133);
+    let c4: String = nb_i32le_signed(c3, addr_disp);
+    let c5: String = nb_push(c4, 72);
+    let c6: String = nb_push(c5, 139);
+    let c7: String = nb_push(c6, 141);
+    let c8: String = nb_i32le_signed(c7, val_disp);
+    let c9: String = nb_push(c8, 137);
+    nb_push(c9, 8)
+}
+
+// emit_load_i16_zx(addr_disp): load ONE 16-bit word, ZERO-extend to i64 (the
+// UNSIGNED narrow-load sibling of nb_emit_load_i8's byte version; the signed
+// counterpart is nb_emit_load_i16_sx). NEW user-reachable intrinsic surface
+// (__mind_load_i16). Result in rax.
+//   mov rax,[rbp+addr] = 48 8B 85 <disp32> ; movzx rax,word [rax] = 48 0F B7 00.
+pub fn nb_emit_load_i16_zx(code: String, addr_disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 139);
+    let c3: String = nb_push(c2, 133);
+    let c4: String = nb_i32le_signed(c3, addr_disp);
+    let c5: String = nb_push(c4, 72);
+    let c6: String = nb_push(c5, 15);
+    let c7: String = nb_push(c6, 183);
+    nb_push(c7, 0)
+}
+
+// emit_load_i32_zx(addr_disp): load ONE 32-bit dword, ZERO-extend to i64 (the
+// UNSIGNED narrow-load sibling of nb_emit_load_i16_zx; the signed counterpart is
+// nb_emit_load_i32_sx). A 32-bit mov to a 32-bit register implicitly zeroes the
+// upper 32 bits of the 64-bit register, so no REX.W / movzx is needed. NEW user-
+// reachable intrinsic surface (__mind_load_i32). Result in rax.
+//   mov rax,[rbp+addr] = 48 8B 85 <disp32> ; mov eax,[rax] = 8B 00.
+pub fn nb_emit_load_i32_zx(code: String, addr_disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 139);
+    let c3: String = nb_push(c2, 133);
+    let c4: String = nb_i32le_signed(c3, addr_disp);
+    let c5: String = nb_push(c4, 139);
+    nb_push(c5, 0)
+}
+
 // emit_write(fd_disp, buf_disp, count_disp): raw write(2) syscall, NO libc
 // (mirror src/native::emit_write). The print path's offset arg is the -1 sentinel
 // that write(2) already implements, so it is intentionally unused here.
@@ -20673,6 +20819,18 @@ pub fn nb_intrinsic_id(buf: i64, lo: i64, hi: i64) -> i64 {
                                             return 2;
                                         }
                                     }
+                                    // __mind_store_i16 (16): ...i 1 6 (narrow-int C2)
+                                    if load_byte(buf, lo + 14) == 49 {
+                                        if load_byte(buf, lo + 15) == 54 {
+                                            return 13;
+                                        }
+                                    }
+                                    // __mind_store_i32 (16): ...i 3 2 (narrow-int C2)
+                                    if load_byte(buf, lo + 14) == 51 {
+                                        if load_byte(buf, lo + 15) == 50 {
+                                            return 15;
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -20693,6 +20851,18 @@ pub fn nb_intrinsic_id(buf: i64, lo: i64, hi: i64) -> i64 {
                                 if load_byte(buf, lo + 13) == 54 {
                                     if load_byte(buf, lo + 14) == 52 {
                                         return 3;
+                                    }
+                                }
+                                // __mind_load_i16 (15): ...i 1 6 (narrow-int C2)
+                                if load_byte(buf, lo + 13) == 49 {
+                                    if load_byte(buf, lo + 14) == 54 {
+                                        return 14;
+                                    }
+                                }
+                                // __mind_load_i32 (15): ...i 3 2 (narrow-int C2)
+                                if load_byte(buf, lo + 13) == 51 {
+                                    if load_byte(buf, lo + 14) == 50 {
+                                        return 16;
                                     }
                                 }
                             }
@@ -20794,6 +20964,30 @@ pub fn nb_emit_intrinsic(code: String, kind: i64, ids: i64, dst_id: i64) -> Stri
         let op0: i64 = __mind_load_i64(ids + 0 * 8);
         let coo: String = nb_emit_open(code, nb_slot_disp(op0));
         return nb_store_rax(coo, nb_slot_disp(dst_id));
+    }
+    if kind == 13 {
+        // __mind_store_i16(addr, val) — truncating word store, no dst store (C2)
+        let a0: i64 = __mind_load_i64(ids + 0 * 8);
+        let a1: i64 = __mind_load_i64(ids + 1 * 8);
+        return nb_emit_store_i16(code, nb_slot_disp(a0), nb_slot_disp(a1));
+    }
+    if kind == 14 {
+        // __mind_load_i16(addr) -> val (zero-extend word to i64, C2)
+        let a0: i64 = __mind_load_i64(ids + 0 * 8);
+        let c1: String = nb_emit_load_i16_zx(code, nb_slot_disp(a0));
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 15 {
+        // __mind_store_i32(addr, val) — truncating dword store, no dst store (C2)
+        let a0: i64 = __mind_load_i64(ids + 0 * 8);
+        let a1: i64 = __mind_load_i64(ids + 1 * 8);
+        return nb_emit_store_i32(code, nb_slot_disp(a0), nb_slot_disp(a1));
+    }
+    if kind == 16 {
+        // __mind_load_i32(addr) -> val (zero-extend dword to i64, C2)
+        let a0: i64 = __mind_load_i64(ids + 0 * 8);
+        let c1: String = nb_emit_load_i32_zx(code, nb_slot_disp(a0));
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
     }
     // kind == 9: __mind_read(fd, buf, count, offset) -> i64 (offset unused)
     let a0: i64 = __mind_load_i64(ids + 0 * 8);
@@ -29504,6 +29698,72 @@ pub fn selftest_native_elf_scalar_f64(a_bits: i64, b_bits: i64, c_bits: i64, d_b
     EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
 }
 
+// Phase C1-remainder f32 scalar rung — native-ELF SINGLE-precision scalar chain.
+// `selftest_native_elf_scalar_f32(a_bits,b_bits,c_bits,d_bits)` (each arg carries a
+// 32-bit f32 pattern zero-extended into i64) emits a runnable x86-64 ET_EXEC that
+// computes the strict-source-precedence, unfused chain `a + b - c * d / a` entirely
+// in SINGLE precision via the F3-prefix scalar-single encoders:
+//   movss load/store (nb_fp_movss_*), addss/subss/mulss/divss (nb_fp_ss_binop_mem),
+//   each intermediate rounded to f32. The result is then round-tripped f32->f64->f32
+//   (cvtss2sd ; cvtsd2ss) — value-preserving, so it exercises the new narrowing
+//   nb_fp_cvtsd2ss_xmm0 while leaving the single-rounded result unchanged — and
+//   truncated to a signed i64 (nb_fp_cvttss2si_rax). Output is 12 bytes:
+//     [0..8]  = (i64) trunc(result)          (LE, cvttss2si)
+//     [8..12] = result.to_bits()             (LE, movd eax,xmm0)
+// CPU-as-oracle only: the deleted Rust native backend rejected ConstF64, so there is
+// NO byte-oracle for scalar float native emission (unlike the int/control-flow path);
+// the smoke checks execution-correctness against numpy.float32 single-precision.
+// NEW export, never reached during self-compile (main.mind is float-free) -> the
+// integer + f64 native-ELF oracle stays byte-identical (additivity).
+// Slot map (frame 256): a=slot0(-8) b=slot1(-16) c=slot2(-24) d=slot3(-32)
+//   t1=slot4(-40) t3=slot5(-48) ; buffer: trunc_i64=[rbp-64] f32_bits=[rbp-56]
+//   ; scratch bufptr=-72 fd=-80 count=-88 exit=-96.
+pub fn selftest_native_elf_scalar_f32(a_bits: i64, b_bits: i64, c_bits: i64, d_bits: i64) -> EmitState {
+    let p0: String = nb_fp_prologue_frame(string_new(), 256);
+    // Spill the four f32 constants to slots 0..3 (movss writes the low 4 bytes).
+    let s0: String = nb_fp_const_xmm(p0, a_bits, 0);
+    let s1: String = nb_fp_movss_store_xmm0(s0, nb_slot_disp(0));
+    let s2: String = nb_fp_const_xmm(s1, b_bits, 0);
+    let s3: String = nb_fp_movss_store_xmm0(s2, nb_slot_disp(1));
+    let s4: String = nb_fp_const_xmm(s3, c_bits, 0);
+    let s5: String = nb_fp_movss_store_xmm0(s4, nb_slot_disp(2));
+    let s6: String = nb_fp_const_xmm(s5, d_bits, 0);
+    let s7: String = nb_fp_movss_store_xmm0(s6, nb_slot_disp(3));
+    // t1 = a + b  ->  slot4.
+    let a0: String = nb_fp_movss_load_xmm0(s7, nb_slot_disp(0));
+    let a1: String = nb_fp_ss_binop_mem(a0, 0, nb_slot_disp(1));
+    let a2: String = nb_fp_movss_store_xmm0(a1, nb_slot_disp(4));
+    // t3 = (c * d) / a  ->  slot5.
+    let m0: String = nb_fp_movss_load_xmm0(a2, nb_slot_disp(2));
+    let m1: String = nb_fp_ss_binop_mem(m0, 2, nb_slot_disp(3));
+    let m2: String = nb_fp_ss_binop_mem(m1, 3, nb_slot_disp(0));
+    let m3: String = nb_fp_movss_store_xmm0(m2, nb_slot_disp(5));
+    // t4 = t1 - t3  (single-rounded result in xmm0).
+    let r0: String = nb_fp_movss_load_xmm0(m3, nb_slot_disp(4));
+    let r1: String = nb_fp_ss_binop_mem(r0, 1, nb_slot_disp(5));
+    // Round-trip f32->f64->f32 (exercises the new cvtsd2ss; value preserved).
+    let rt0: String = nb_fp_cvtss2sd_xmm0(r1);
+    let rt1: String = nb_fp_cvtsd2ss_xmm0(rt0);
+    // Store the f32 result bits into the buffer high 4 bytes ([rbp-56]).
+    let b0: String = nb_fp_movss_store_xmm0(rt1, 0 - 56);
+    // Truncate f32 -> i64 (new cvttss2si); store into buffer low 8 bytes ([rbp-64]).
+    let tc0: String = nb_fp_movss_load_xmm0(b0, 0 - 56);
+    let tc1: String = nb_fp_cvttss2si_rax(tc0);
+    let tc2: String = nb_store_rax(tc1, 0 - 64);
+    // write(1, &buf, 12) ; exit(0).
+    let w0: String = nb_intdot_lea(tc2, 0 - 64, 0 - 72);
+    let w1: String = nb_intdot_movimm(w0, 1, 0 - 80);
+    let w2: String = nb_intdot_movimm(w1, 12, 0 - 88);
+    let w3: String = nb_emit_write(w2, 0 - 80, 0 - 72, 0 - 88);
+    let z0: String = nb_intdot_movimm(w3, 0, 0 - 96);
+    let z1: String = nb_load_rax(z0, 0 - 96);
+    let code: String = nb_emit_return(z1, 1);
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
+
 // ============================================================================
 // RI-B2 scalar-cast-conv rung (#108) — native-ELF int<->float `as`-cast chain,
 // byte-identical to the MLIR canary scalar-cast-conv. Reproduces ref_scalar_cast_conv:
@@ -29544,6 +29804,26 @@ pub fn nb_fp_cvtss2sd_xmm0(code: String) -> String {
     let c2: String = nb_push(c1, 15);
     let c3: String = nb_push(c2, 90);
     nb_push(c3, 192)
+}
+
+// cvtsd2ss xmm0, xmm0 = F2 0F 5A C0 (narrow f64 -> f32, single-rounded). Mirrors
+// the widening nb_fp_cvtss2sd_xmm0 with the F2 (double-src) prefix. Used to
+// materialize an f32 value from an f64 const and for an `x as f32` cast.
+pub fn nb_fp_cvtsd2ss_xmm0(code: String) -> String {
+    let c1: String = nb_push(code, 242);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, 90);
+    nb_push(c3, 192)
+}
+
+// cvttss2si rax, xmm0 = F3 48 0F 2C C0 (truncate f32 -> signed i64, toward zero).
+// The scalar-single counterpart of cvttsd2si; used for an `f32 as i64` cast.
+pub fn nb_fp_cvttss2si_rax(code: String) -> String {
+    let c1: String = nb_push(code, 243);
+    let c2: String = nb_push(c1, 72);
+    let c3: String = nb_push(c2, 15);
+    let c4: String = nb_push(c3, 44);
+    nb_push(c4, 192)
 }
 
 // cmpsd xmm{which}, [rbp+disp32], imm8 = F2 0F C2 <modrm> <disp32> <imm8>.
