@@ -2363,6 +2363,57 @@ pub fn selftest_tc_narrowing(to_sel: i64, from_sel: i64) -> i64 {
     tc_is_implicit_narrowing(to_ty, from_ty)
 }
 
+// E2015 (RFC 0011 — no implicit int<->float conversion): scalar CLASS of a
+// type tag. 1 = Int (i32/i64/bool), 2 = Float (f64), 0 = None. Byte-exact twin
+// of Rust `scalar_class_of_ann` (bool is Int-class here, unlike E2004 where
+// bool has width 0).
+pub fn tc_scalar_class(ty: i64) -> i64 {
+    if ty == ty_i32() {
+        return 1;
+    }
+    if ty == ty_i64() {
+        return 1;
+    }
+    if ty == ty_bool() {
+        return 1;
+    }
+    if ty == ty_f64() {
+        return 2;
+    }
+    0
+}
+
+// E2015: true (1) when `let dst: to_ty = <value: from_ty>` crosses the int/float
+// class boundary (both classes known and different). Twin of the Rust
+// `ann_class != val_class` guard in the Node::Let class-check arm.
+pub fn tc_is_class_mismatch(to_ty: i64, from_ty: i64) -> i64 {
+    let tc: i64 = tc_scalar_class(to_ty);
+    if tc == 0 {
+        return 0;
+    }
+    let fc: i64 = tc_scalar_class(from_ty);
+    if fc == 0 {
+        return 0;
+    }
+    if tc != fc {
+        return 1;
+    }
+    0
+}
+
+// Isolated selftest entry (ADDITIVE — never reached through mindc_compile).
+// Selectors: 0=i32, 1=i64, 2=f64, 3=bool. Returns 1 if the pair
+// (let dst: TO = <FROM>) is an int<->float class mismatch, else 0.
+pub fn selftest_tc_class_mismatch(to_sel: i64, from_sel: i64) -> i64 {
+    let to_buf: i64 = tc_name_by_sel(to_sel);
+    let to_len: i64 = tc_len_by_sel(to_sel);
+    let from_buf: i64 = tc_name_by_sel(from_sel);
+    let from_len: i64 = tc_len_by_sel(from_sel);
+    let to_ty: i64 = resolve_type_ident(to_buf, 0, to_len);
+    let from_ty: i64 = resolve_type_ident(from_buf, 0, from_len);
+    tc_is_class_mismatch(to_ty, from_ty)
+}
+
 // ===== Name hashing (DJB2) =====
 
 pub fn djb2_seed() -> i64 {
@@ -20200,6 +20251,35 @@ pub fn nb_movsxd_rax_eax(code: String) -> String {
     nb_push(c2, 192)
 }
 
+// movsx rax, ax = 48 0F BF C0 — narrow rax to its low 16 bits, then sign-extend
+// back to i64 (`(x as i16) as i64`). The reg-to-reg WORD sibling of the DWORD
+// nb_movsxd_rax_eax (48 63 C0) and BYTE nb_movsx_rax_al (48 0F BE C0). This is the
+// two's-complement WRAP-TO-WIDTH primitive for narrow-int arithmetic: after an i16
+// add/sub/mul computed in full 64-bit registers, applying this masks off the high
+// 48 bits and re-signs bit 15, so INT16_MAX+1 wraps to INT16_MIN (not i64-widens).
+// C2 narrow-int wrap rung — user-reachable via __mind_wrap_i16 (nb_emit_intrinsic
+// kind 18); never self-taken during self-compile, so the integer oracle is unchanged.
+pub fn nb_movsx_rax_ax(code: String) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, 191);
+    nb_push(c3, 192)
+}
+
+// movsx rax, al = 48 0F BE C0 — narrow rax to its low 8 bits, then sign-extend back
+// to i64 (`(x as i8) as i64`). The reg-to-reg BYTE sibling of nb_movsx_rax_ax /
+// nb_movsxd_rax_eax. The two's-complement wrap primitive for i8 arithmetic: after an
+// i8 add/sub/mul in full registers, this masks the high 56 bits and re-signs bit 7,
+// so INT8_MAX+1 (0x80) wraps to -128 (not the i64 value 128). C2 narrow-int wrap
+// rung — user-reachable via __mind_wrap_i8 (nb_emit_intrinsic kind 17); never
+// self-taken during self-compile, so the integer native-ELF oracle is unchanged.
+pub fn nb_movsx_rax_al(code: String) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, 190);
+    nb_push(c3, 192)
+}
+
 // Sign-extending 32-bit memory load (the Q16.16 i32 sibling of nb_emit_load_i16_sx,
 // which does the WORD version). The slot at [rbp+addr] holds the element's absolute
 // runtime address; deref it as a signed DWORD. The Q16.16 dot (#108 RI-B2-S4)
@@ -20803,6 +20883,22 @@ pub fn nb_intrinsic_id(buf: i64, lo: i64, hi: i64) -> i64 {
                 }
             }
         }
+        // __mind_wrap_i8 (14): w r a p _ i 8 (narrow-int C2 wrap arithmetic)
+        if load_byte(buf, lo + 7) == 119 {
+            if load_byte(buf, lo + 8) == 114 {
+                if load_byte(buf, lo + 9) == 97 {
+                    if load_byte(buf, lo + 10) == 112 {
+                        if load_byte(buf, lo + 11) == 95 {
+                            if load_byte(buf, lo + 12) == 105 {
+                                if load_byte(buf, lo + 13) == 56 {
+                                    return 17;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         return 0 - 1;
     }
     // __mind_store_i64 (16): s t o r e _ i 6 4
@@ -20881,6 +20977,30 @@ pub fn nb_intrinsic_id(buf: i64, lo: i64, hi: i64) -> i64 {
                                 if load_byte(buf, lo + 13) == 105 {
                                     if load_byte(buf, lo + 14) == 56 {
                                         return 4;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // __mind_wrap_i16 (18) / __mind_wrap_i32 (19): w r a p _ i {1 6 | 3 2}
+        // (narrow-int C2 wrap arithmetic — reg-to-reg movsx wrap-to-width)
+        if load_byte(buf, lo + 7) == 119 {
+            if load_byte(buf, lo + 8) == 114 {
+                if load_byte(buf, lo + 9) == 97 {
+                    if load_byte(buf, lo + 10) == 112 {
+                        if load_byte(buf, lo + 11) == 95 {
+                            if load_byte(buf, lo + 12) == 105 {
+                                if load_byte(buf, lo + 13) == 49 {
+                                    if load_byte(buf, lo + 14) == 54 {
+                                        return 18;
+                                    }
+                                }
+                                if load_byte(buf, lo + 13) == 51 {
+                                    if load_byte(buf, lo + 14) == 50 {
+                                        return 19;
                                     }
                                 }
                             }
@@ -20988,6 +21108,33 @@ pub fn nb_emit_intrinsic(code: String, kind: i64, ids: i64, dst_id: i64) -> Stri
         let a0: i64 = __mind_load_i64(ids + 0 * 8);
         let c1: String = nb_emit_load_i32_zx(code, nb_slot_disp(a0));
         return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 17 {
+        // __mind_wrap_i8(x) -> (x as i8) as i64 — narrow-int C2 two's-complement
+        // wrap-to-width. Load the arg value into rax, movsx rax,al (48 0F BE C0)
+        // masks the high 56 bits and re-signs bit 7, then store the wrapped result.
+        let a0: i64 = __mind_load_i64(ids + 0 * 8);
+        let c1: String = nb_load_rax(code, nb_slot_disp(a0));
+        let c2: String = nb_movsx_rax_al(c1);
+        return nb_store_rax(c2, nb_slot_disp(dst_id));
+    }
+    if kind == 18 {
+        // __mind_wrap_i16(x) -> (x as i16) as i64 — narrow-int C2 wrap-to-width.
+        // Load arg into rax, movsx rax,ax (48 0F BF C0) masks high 48 bits and
+        // re-signs bit 15, then store the wrapped result.
+        let a0: i64 = __mind_load_i64(ids + 0 * 8);
+        let c1: String = nb_load_rax(code, nb_slot_disp(a0));
+        let c2: String = nb_movsx_rax_ax(c1);
+        return nb_store_rax(c2, nb_slot_disp(dst_id));
+    }
+    if kind == 19 {
+        // __mind_wrap_i32(x) -> (x as i32) as i64 — narrow-int C2 wrap-to-width.
+        // Load arg into rax, movsxd rax,eax (48 63 C0) masks high 32 bits and
+        // re-signs bit 31, then store the wrapped result.
+        let a0: i64 = __mind_load_i64(ids + 0 * 8);
+        let c1: String = nb_load_rax(code, nb_slot_disp(a0));
+        let c2: String = nb_movsxd_rax_eax(c1);
+        return nb_store_rax(c2, nb_slot_disp(dst_id));
     }
     // kind == 9: __mind_read(fd, buf, count, offset) -> i64 (offset unused)
     let a0: i64 = __mind_load_i64(ids + 0 * 8);

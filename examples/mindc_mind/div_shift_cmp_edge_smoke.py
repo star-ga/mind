@@ -37,8 +37,11 @@ import sys
 import tempfile
 
 _HERE = pathlib.Path(__file__).parent
-_DEFAULT_SO = _HERE / "libmindc_mind.so"
-SO = pathlib.Path(os.environ.get("MINDC_SO", str(_DEFAULT_SO)))
+_DEFAULT_SO = _HERE / "libmindc_mind.so"  # legacy in-tree path (fallback only)
+sys.path.insert(0, str(_HERE))
+from _selfhost_so import resolve_so  # noqa: E402
+
+SO = resolve_so()  # MINDC_SO verbatim, else fresh build (never stale)
 
 
 def _read_es_buf(es: int) -> bytes:
