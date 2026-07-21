@@ -130,11 +130,14 @@ Native-ELF covers only scalar i64/ptr/struct/control-flow. To drop the 12,753-LO
 - [ ] **Top-level straight-line assign fails-closed even for i64** — `let w: i64 = 100; w = w + 100;` (no loop) returns empty EmitState in the no-feed `selftest_native_elf` path; pre-existing, not width-driver-specific. See [[reference_native_elf_toplevel_assign_gap_2026_07_21]]. Fix in the nb assign-statement lowering.
 
 ### Open follow-ups (2026-07-21, from the `1372c4c` audit)
-- [ ] Wire the new native-ELF smokes (`self_host_native_narrowint_smoke.py`, `self_host_native_scalar_f32_smoke.py`,
-  `self_host_tc_narrowing_smoke.py`, `div_shift_cmp_edge_smoke.py`) into `fast_keystone.sh` / CI — today they only
-  guard when run manually (consistent with sibling rung smokes, but they should be enforced).
-- [ ] Port `self_host_native_scalar_f32_smoke.py` + `div_shift_cmp_edge_smoke.py` to `resolve_so()` — they currently
-  SKIP (exit 0) when `MINDC_SO` is unset instead of building the `.so`, a vacuity risk if wired into CI bare.
+- [x] **DONE (2026-07-21):** all 14 additive selftest smokes (the C4 tensor ops + type-checker rule ports +
+  narrow-int/f32/div/mod/arena-headroom) are now enforced in **BOTH** `fast_keystone.sh` (18 `chk` lines) AND the
+  CI `mindcraft_self_host` job (new "Self-host ADDITIVE selftest gates" step, `MINDC_SO` set → fail-closed, never
+  SKIPs). Closes the gap where these additive `selftest_*` exports (not reached during self-compile, so uncovered by
+  the LOOP / native-ELF byte-identity gates) could regress CI-green.
+- [ ] Nice-to-have: port `self_host_native_scalar_f32_smoke.py` + `div_shift_cmp_edge_smoke.py` to `resolve_so()` so
+  they BUILD the `.so` when `MINDC_SO` is unset instead of soft-SKIPping — no longer a live vacuity (both CI and
+  fast_keystone always set `MINDC_SO`), just robustness for a bare manual run.
 - [ ] SOTA-speed method (this is where **mind-lab on s1** comes in): point the autoresearch + alg-inv evolutionary
   search at the perf-critical parts (deterministic reduction schedule #58, GEMM/int-dot tiling #47, register
   allocation for C6) with fitness = speed GATED by keystone byte-identity — the novel edge is *codegen optimized by

@@ -615,6 +615,41 @@ jobs:
             python3 examples/mindc_mind/self_host_native_fp_expr_smoke.py
         working-directory: ${{ github.workspace }}
 
+      - name: Self-host ADDITIVE selftest gates (C4 tensor ops + type-checker rules + narrow/f32/div)
+        # These smokes exercise ADDITIVE selftest_* exports (the C4 native-ELF
+        # tensor ops ewadd/dot/matmul; the pure-MIND type-checker rule ports
+        # E2004/E2005/E2010/E2011/E2013/E2016/E2023/E2101/E2102/E2103; narrow-int
+        # store/load + wrap + declared-width driver; scalar f32; div/shift/cmp
+        # edges; % operator; and the self-host arena-headroom canary). They are
+        # reached ONLY via the selftest_* exports, never through mindc_compile,
+        # so the self-host LOOP + native-ELF byte-identity gates above do NOT
+        # cover their correctness — a regression in an additive emitter/rule
+        # would otherwise land CI-green. MINDC_SO is set, so every smoke fails
+        # closed (never SKIPs). fast_keystone.sh runs the SAME set locally; when
+        # adding a new additive selftest smoke, wire it into BOTH.
+        run: |
+          set -e
+          for s in \
+            self_host_native_tensor_ewadd_smoke \
+            self_host_native_tensor_dot_smoke \
+            self_host_native_tensor_matmul_smoke \
+            self_host_native_narrowint_smoke \
+            self_host_native_narrowwrap_smoke \
+            self_host_native_autowrap_smoke \
+            self_host_native_scalar_f32_smoke \
+            div_shift_cmp_edge_smoke \
+            mod_operator_smoke \
+            self_host_arena_growth_smoke \
+            self_host_tc_narrowing_smoke \
+            self_host_tc_class_mismatch_smoke \
+            self_host_tc_class_rules_smoke \
+            self_host_tc_shape_rules_smoke; do
+            echo "=== $s ==="
+            MINDC_SO=/tmp/libmindc_mind_self_host.so \
+              python3 "examples/mindc_mind/$s.py"
+          done
+        working-directory: ${{ github.workspace }}
+
       - name: Run Phase G integration tests
         run: |
           cargo test --release --no-default-features \
