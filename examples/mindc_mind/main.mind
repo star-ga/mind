@@ -31534,3 +31534,183 @@ pub fn selftest_native_elf_simd_dot_i16(n: i64) -> EmitState {
     let elf: String = nb_write_elf(code, 0, note);
     EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
 }
+
+// ============================================================================
+// C4-T1 — native-ELF TENSOR ELEMENT-WISE ADD (i64), the first tensor/linalg
+// rung that drops MLIR for one tensor op. `selftest_native_elf_tensor_ewadd_i64(n)`
+// emits a runnable ET_EXEC that (1) materializes two length-n i64 buffers in the
+// frame with deterministic self-seeding a[i]=i+1, b[i]=2*i, (2) computes the
+// element-wise sum c[i] = a[i] + b[i] via an emitted counted loop over the C2
+// element load/store primitives (base + i*8 indexing), (3) horizontally reduces
+// sum = Sum c[i] via a second emitted loop, (4) writes the 8 LE bytes of `sum`
+// to stdout (the FULL-width observable — a Python smoke asserts them against the
+// closed-form Sum(3i+1) = 3n(n-1)/2 + n), and (5) exits with the discriminating
+// code (sum == expected)*41 + 1 — 42 only on an EXACT i64 match against the
+// emit-time-baked closed form, 1 otherwise (not a mod-256-maskable residue).
+// This introduces the reusable tensor-value shape (base pointer + length +
+// element loop) later C4 rungs (broadcast, axis reductions, matmul) build on.
+//
+// ADDITIVITY: a NEW export never reached during self-compile (main.mind does not
+// call it), so every self-host fixture lowers exactly as before and the integer
+// native-ELF oracle stays byte-identical. No frozen byte oracle exists for this
+// path (the deleted Rust native backend had no tensor entry); the gate is
+// EXECUTION CORRECTNESS — emit, run, assert stdout+exit. n is capped at 4096 by
+// the frame layout (three 32768-byte arrays).
+//
+// Frame: A base = -131072 (A[i] at -131072+8i), B base = -98304, C base = -65536
+// (each 32768 bytes = 4096 elements). Scratch below the arrays:
+//   i=-131080 n=-131088 eight=-131096 one=-131104 two=-131112 cmpflag=-131120
+//   baseA=-131128 baseB=-131136 baseC=-131144 ptr=-131152 aval=-131160
+//   bval=-131168 cval=-131176 sum=-131184 expected=-131192 result=-131200
+//   fd=-131208 bufaddr=-131216 count=-131224 exitcode=-131232 fortyone=-131240.
+// ============================================================================
+
+// One materialization-loop body: a[i] = i+1 ; b[i] = 2*i ; i += 1. Element
+// addresses re-derived at runtime as base + i*8 (the C2 addressing shape).
+pub fn nb_ewadd_gen_body(code: String) -> String {
+    // a[i] = i + 1
+    let a1: String = nb_load_rax(code, 0 - 131080);
+    let a2: String = nb_arith_rax_mem(a1, op_add(), 0 - 131104);
+    let a3: String = nb_store_rax(a2, 0 - 131160);
+    let a4: String = nb_load_rax(a3, 0 - 131080);
+    let a5: String = nb_arith_rax_mem(a4, op_mul(), 0 - 131096);
+    let a6: String = nb_arith_rax_mem(a5, op_add(), 0 - 131128);
+    let a7: String = nb_store_rax(a6, 0 - 131152);
+    let a8: String = nb_emit_store_i64(a7, 0 - 131152, 0 - 131160);
+    // b[i] = 2 * i
+    let b1: String = nb_load_rax(a8, 0 - 131080);
+    let b2: String = nb_arith_rax_mem(b1, op_mul(), 0 - 131112);
+    let b3: String = nb_store_rax(b2, 0 - 131168);
+    let b4: String = nb_load_rax(b3, 0 - 131080);
+    let b5: String = nb_arith_rax_mem(b4, op_mul(), 0 - 131096);
+    let b6: String = nb_arith_rax_mem(b5, op_add(), 0 - 131136);
+    let b7: String = nb_store_rax(b6, 0 - 131152);
+    let b8: String = nb_emit_store_i64(b7, 0 - 131152, 0 - 131168);
+    // i += 1
+    let e1: String = nb_load_rax(b8, 0 - 131080);
+    let e2: String = nb_arith_rax_mem(e1, op_add(), 0 - 131104);
+    nb_store_rax(e2, 0 - 131080)
+}
+
+// One element-wise-add-loop body: aval = a[i] ; bval = b[i] ; c[i] = aval+bval ;
+// i += 1. Loads go through nb_intdot_load_elem (ptr = base + i*8, then the
+// register-indirect i64 deref); the store re-derives C's element address.
+pub fn nb_ewadd_add_body(code: String) -> String {
+    let a1: String = nb_intdot_load_elem(code, 0 - 131128, 0 - 131152, 0 - 131160, 0 - 131080, 0 - 131096);
+    let b1: String = nb_intdot_load_elem(a1, 0 - 131136, 0 - 131152, 0 - 131168, 0 - 131080, 0 - 131096);
+    // cval = aval + bval
+    let c1: String = nb_load_rax(b1, 0 - 131160);
+    let c2: String = nb_arith_rax_mem(c1, op_add(), 0 - 131168);
+    let c3: String = nb_store_rax(c2, 0 - 131176);
+    // ptr = i*8 + baseC ; *ptr = cval
+    let d1: String = nb_load_rax(c3, 0 - 131080);
+    let d2: String = nb_arith_rax_mem(d1, op_mul(), 0 - 131096);
+    let d3: String = nb_arith_rax_mem(d2, op_add(), 0 - 131144);
+    let d4: String = nb_store_rax(d3, 0 - 131152);
+    let d5: String = nb_emit_store_i64(d4, 0 - 131152, 0 - 131176);
+    // i += 1
+    let e1: String = nb_load_rax(d5, 0 - 131080);
+    let e2: String = nb_arith_rax_mem(e1, op_add(), 0 - 131104);
+    nb_store_rax(e2, 0 - 131080)
+}
+
+// One reduction-loop body: sum += c[i] ; i += 1.
+pub fn nb_ewadd_sum_body(code: String) -> String {
+    let a1: String = nb_intdot_load_elem(code, 0 - 131144, 0 - 131152, 0 - 131176, 0 - 131080, 0 - 131096);
+    let b1: String = nb_load_rax(a1, 0 - 131184);
+    let b2: String = nb_arith_rax_mem(b1, op_add(), 0 - 131176);
+    let b3: String = nb_store_rax(b2, 0 - 131184);
+    let e1: String = nb_load_rax(b3, 0 - 131080);
+    let e2: String = nb_arith_rax_mem(e1, op_add(), 0 - 131104);
+    nb_store_rax(e2, 0 - 131080)
+}
+
+// The C4-T1 driver. n is baked at emit time (n <= 4096 by the frame layout);
+// the closed-form expected sum Sum_{i=0..n-1}((i+1) + 2i) = 3n(n-1)/2 + n is
+// computed HOST-side and baked as the full-width comparison operand.
+pub fn selftest_native_elf_tensor_ewadd_i64(n: i64) -> EmitState {
+    let expected: i64 = (3 * n * (n - 1)) / 2 + n;
+    let p0: String = nb_fp_prologue_frame(string_new(), 135168);
+    // Constants.
+    let k1: String = nb_intdot_movimm(p0, n, 0 - 131088);
+    let k2: String = nb_intdot_movimm(k1, 8, 0 - 131096);
+    let k3: String = nb_intdot_movimm(k2, 1, 0 - 131104);
+    let k4: String = nb_intdot_movimm(k3, 2, 0 - 131112);
+    let k5: String = nb_intdot_movimm(k4, 0, 0 - 131184);
+    let k6: String = nb_intdot_movimm(k5, expected, 0 - 131192);
+    let k7: String = nb_intdot_movimm(k6, 41, 0 - 131240);
+    // Runtime base addresses of the three in-frame arrays.
+    let ba: String = nb_intdot_lea(k7, 0 - 131072, 0 - 131128);
+    let bb: String = nb_intdot_lea(ba, 0 - 98304, 0 - 131136);
+    let bc: String = nb_intdot_lea(bb, 0 - 65536, 0 - 131144);
+    // Jump scaffold buffer shared by all three loops.
+    let jmps: i64 = __mind_alloc(64 * 2 * 8);
+    let jcell: i64 = __mind_alloc(8);
+    __mind_store_i64(jcell, 0);
+    // --- loop 1: materialize a[i]=i+1, b[i]=2*i ---
+    let g0: String = nb_intdot_movimm(bc, 0, 0 - 131080);
+    let g_hdr: i64 = string_len(g0);
+    let gc1: String = nb_load_rax(g0, 0 - 131080);
+    let gc2: String = nb_cmp_rax_mem(gc1, nb_setcc_opcode(op_lt()), 0 - 131088);
+    let gc3: String = nb_store_rax(gc2, 0 - 131120);
+    let gcj: String = nb_emit_cmp_je_zero(gc3, 0 - 131120, jmps, jcell);
+    let g_je: i64 = __mind_load_i64(jcell) - 1;
+    let gb: String = nb_ewadd_gen_body(gcj);
+    let gjb: String = nb_emit_jmp(gb, jmps, jcell);
+    let g_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _gp1: i64 = nb_jmp_set_target(jmps, jcell, g_bk, g_hdr);
+    let g_end: i64 = string_len(gjb);
+    let _gp2: i64 = nb_jmp_set_target(jmps, jcell, g_je, g_end);
+    // --- loop 2: c[i] = a[i] + b[i] (the tensor element-wise op) ---
+    let w0: String = nb_intdot_movimm(gjb, 0, 0 - 131080);
+    let w_hdr: i64 = string_len(w0);
+    let wc1: String = nb_load_rax(w0, 0 - 131080);
+    let wc2: String = nb_cmp_rax_mem(wc1, nb_setcc_opcode(op_lt()), 0 - 131088);
+    let wc3: String = nb_store_rax(wc2, 0 - 131120);
+    let wcj: String = nb_emit_cmp_je_zero(wc3, 0 - 131120, jmps, jcell);
+    let w_je: i64 = __mind_load_i64(jcell) - 1;
+    let wb: String = nb_ewadd_add_body(wcj);
+    let wjb: String = nb_emit_jmp(wb, jmps, jcell);
+    let w_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _wp1: i64 = nb_jmp_set_target(jmps, jcell, w_bk, w_hdr);
+    let w_end: i64 = string_len(wjb);
+    let _wp2: i64 = nb_jmp_set_target(jmps, jcell, w_je, w_end);
+    // --- loop 3: sum = Sum c[i] (horizontal reduction) ---
+    let s0: String = nb_intdot_movimm(wjb, 0, 0 - 131080);
+    let s_hdr: i64 = string_len(s0);
+    let sc1: String = nb_load_rax(s0, 0 - 131080);
+    let sc2: String = nb_cmp_rax_mem(sc1, nb_setcc_opcode(op_lt()), 0 - 131088);
+    let sc3: String = nb_store_rax(sc2, 0 - 131120);
+    let scj: String = nb_emit_cmp_je_zero(sc3, 0 - 131120, jmps, jcell);
+    let s_je: i64 = __mind_load_i64(jcell) - 1;
+    let sb: String = nb_ewadd_sum_body(scj);
+    let sjb: String = nb_emit_jmp(sb, jmps, jcell);
+    let s_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _sp1: i64 = nb_jmp_set_target(jmps, jcell, s_bk, s_hdr);
+    let s_end: i64 = string_len(sjb);
+    let _sp2: i64 = nb_jmp_set_target(jmps, jcell, s_je, s_end);
+    // result = sum ; write(1, &result, 8) — the full-width stdout observable.
+    let t1: String = nb_load_rax(sjb, 0 - 131184);
+    let t2: String = nb_store_rax(t1, 0 - 131200);
+    let t3: String = nb_intdot_lea(t2, 0 - 131200, 0 - 131216);
+    let t4: String = nb_intdot_movimm(t3, 1, 0 - 131208);
+    let t5: String = nb_intdot_movimm(t4, 8, 0 - 131224);
+    let t6: String = nb_emit_write(t5, 0 - 131208, 0 - 131216, 0 - 131224);
+    // exitcode = (sum == expected)*41 + 1 — 42 only on an exact i64 match.
+    let u1: String = nb_load_rax(t6, 0 - 131184);
+    let u2: String = nb_cmp_rax_mem(u1, nb_setcc_opcode(op_eq()), 0 - 131192);
+    let u3: String = nb_store_rax(u2, 0 - 131120);
+    let u4: String = nb_load_rax(u3, 0 - 131120);
+    let u5: String = nb_arith_rax_mem(u4, op_mul(), 0 - 131240);
+    let u6: String = nb_arith_rax_mem(u5, op_add(), 0 - 131104);
+    let u7: String = nb_store_rax(u6, 0 - 131232);
+    let u8: String = nb_load_rax(u7, 0 - 131232);
+    let code: String = nb_emit_return(u8, 1);
+    // Patch every recorded intra-fn jump (entry_off = 0).
+    let njmps: i64 = __mind_load_i64(jcell);
+    let _px: i64 = nb_patch_jmps(string_addr(code), jmps, njmps, 0);
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
