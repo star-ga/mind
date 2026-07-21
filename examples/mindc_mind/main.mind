@@ -21810,19 +21810,27 @@ struct NbState {
 // (24 bytes each) plus a 1-i64 count cell `lcell`. For the scalar fixtures (add,
 // if_ret) the buffer stays empty, so nb_expr's ident resolution is unchanged and
 // their ELFs stay byte-identical.
-// Each let-env entry is 4 i64 words: (name_lo, name_hi, slot, slit_node). The
-// 4th word is the struct-LITERAL AST node the name was bound to (0 for a non-
+// Each let-env entry is 5 i64 words: (name_lo, name_hi, slot, slit_node, width).
+// The 4th word is the struct-LITERAL AST node the name was bound to (0 for a non-
 // struct binding), so a later `p.field` read can recover the field-name ->
 // declared-index mapping (offset = 8*index) without a separate struct registry.
+// The 5th word is the binding's DECLARED int bit-width (C2 driver; 64 default).
 // The scalar/value_if fixtures bind no struct, so slit_node stays 0 and the
 // extra word never changes their emitted bytes — the 4-word stride is only a
 // wider step over an otherwise-identical (lo, hi, slot) prefix.
-pub fn nb_lets_bind(lets: i64, lcell: i64, name_lo: i64, name_hi: i64, slot: i64, slit_node: i64) -> i64 {
+// C2 declared-width driver: each entry carries a 5th word, the binding's DECLARED
+// bit-width (64 for i64/unannotated/non-int — the universal default; 8/16/32 only
+// for an explicit i8/i16/i32 annotation, via nb_width_of_ann). The width is a
+// heap-table word only — recording 64 emits no machine code, so every all-i64
+// module (all of main.mind) lowers byte-identically; the wrap fires only when a
+// consumer reads back a narrow width.
+pub fn nb_lets_bind(lets: i64, lcell: i64, name_lo: i64, name_hi: i64, slot: i64, slit_node: i64, width: i64) -> i64 {
     let n: i64 = __mind_load_i64(lcell);
-    __mind_store_i64(lets + (n * 4 + 0) * 8, name_lo);
-    __mind_store_i64(lets + (n * 4 + 1) * 8, name_hi);
-    __mind_store_i64(lets + (n * 4 + 2) * 8, slot);
-    __mind_store_i64(lets + (n * 4 + 3) * 8, slit_node);
+    __mind_store_i64(lets + (n * 5 + 0) * 8, name_lo);
+    __mind_store_i64(lets + (n * 5 + 1) * 8, name_hi);
+    __mind_store_i64(lets + (n * 5 + 2) * 8, slot);
+    __mind_store_i64(lets + (n * 5 + 3) * 8, slit_node);
+    __mind_store_i64(lets + (n * 5 + 4) * 8, width);
     __mind_store_i64(lcell, n + 1);
     0
 }
@@ -21837,10 +21845,10 @@ pub fn nb_lets_lookup_rest(lets: i64, n: i64, buf: i64, lo: i64, hi: i64, i: i64
     if i >= n {
         return best;
     }
-    let nlo: i64 = __mind_load_i64(lets + (i * 4 + 0) * 8);
-    let nhi: i64 = __mind_load_i64(lets + (i * 4 + 1) * 8);
+    let nlo: i64 = __mind_load_i64(lets + (i * 5 + 0) * 8);
+    let nhi: i64 = __mind_load_i64(lets + (i * 5 + 1) * 8);
     let new_best: i64 = if span_bytes_equal(buf, lo, hi, nlo, nhi) == 1 {
-        __mind_load_i64(lets + (i * 4 + 2) * 8)
+        __mind_load_i64(lets + (i * 5 + 2) * 8)
     } else {
         best
     };
@@ -21858,14 +21866,79 @@ pub fn nb_lets_lookup_slit_rest(lets: i64, n: i64, buf: i64, lo: i64, hi: i64, i
     if i >= n {
         return best;
     }
-    let nlo: i64 = __mind_load_i64(lets + (i * 4 + 0) * 8);
-    let nhi: i64 = __mind_load_i64(lets + (i * 4 + 1) * 8);
+    let nlo: i64 = __mind_load_i64(lets + (i * 5 + 0) * 8);
+    let nhi: i64 = __mind_load_i64(lets + (i * 5 + 1) * 8);
     let new_best: i64 = if span_bytes_equal(buf, lo, hi, nlo, nhi) == 1 {
-        __mind_load_i64(lets + (i * 4 + 3) * 8)
+        __mind_load_i64(lets + (i * 5 + 3) * 8)
     } else {
         best
     };
     nb_lets_lookup_slit_rest(lets, n, buf, lo, hi, i + 1, new_best)
+}
+
+// Resolve a name span to its bound DECLARED width, or 64 if unbound (an unbound
+// name — a param, a temp — is full-width by definition). LAST-match wins,
+// mirroring nb_lets_lookup. The assign arm reads this so `x = x + 1` on a
+// narrow-declared x re-wraps at x's width; every all-i64 lookup returns 64 and
+// emits nothing (C2 declared-width driver).
+pub fn nb_lets_lookup_width(lets: i64, lcell: i64, buf: i64, lo: i64, hi: i64) -> i64 {
+    let n: i64 = __mind_load_i64(lcell);
+    nb_lets_lookup_width_rest(lets, n, buf, lo, hi, 0, 64)
+}
+pub fn nb_lets_lookup_width_rest(lets: i64, n: i64, buf: i64, lo: i64, hi: i64, i: i64, best: i64) -> i64 {
+    if i >= n {
+        return best;
+    }
+    let nlo: i64 = __mind_load_i64(lets + (i * 5 + 0) * 8);
+    let nhi: i64 = __mind_load_i64(lets + (i * 5 + 1) * 8);
+    let new_best: i64 = if span_bytes_equal(buf, lo, hi, nlo, nhi) == 1 {
+        __mind_load_i64(lets + (i * 5 + 4) * 8)
+    } else {
+        best
+    };
+    nb_lets_lookup_width_rest(lets, n, buf, lo, hi, i + 1, new_best)
+}
+
+// Classify a let's TYPE-annotation span as a declared int bit-width: "i8" -> 8,
+// "i16" -> 16, "i32" -> 32; anything else — i64, f64/f32, bool, String, a struct
+// name, or no annotation at all (type_leaf == 0) — is 64, the full-width default.
+// Only these three narrow spellings ever trigger the auto-wrap; main.mind's own
+// source declares no narrow-int lets (verified: zero i8/i16/i32 let annotations),
+// so during self-compile this always returns 64 and the emission is byte-identical.
+// bytes: i=105, 8=56, 1=49, 6=54, 3=51, 2=50.
+pub fn nb_width_of_ann(buf: i64, type_leaf: i64) -> i64 {
+    if type_leaf == 0 {
+        return 64;
+    }
+    let lo: i64 = ast_span_lo(type_leaf);
+    let hi: i64 = ast_span_hi(type_leaf);
+    let i8_buf: i64 = make_byte_buf_3(105, 56, 0);
+    if bytes_eq(buf, lo, hi, i8_buf, 0, 2) == 1 {
+        return 8;
+    }
+    let i16_buf: i64 = make_byte_buf_3(105, 49, 54);
+    if bytes_eq(buf, lo, hi, i16_buf, 0, 3) == 1 {
+        return 16;
+    }
+    let i32_buf: i64 = make_byte_buf_3(105, 51, 50);
+    if bytes_eq(buf, lo, hi, i32_buf, 0, 3) == 1 {
+        return 32;
+    }
+    64
+}
+
+// Emit the reg-to-reg wrap-to-width for rax at declared width w: movsx rax,al (8),
+// movsx rax,ax (16), movsxd rax,eax (32). Early-return statement form (the
+// struct-valued if-expr mis-lower trap — Rule: never a value-if over String calls).
+// Callers gate on w < 64, so the 32 fall-through is only ever reached for w == 32.
+pub fn nb_wrap_rax_w(code: String, w: i64) -> String {
+    if w == 8 {
+        return nb_movsx_rax_al(code);
+    }
+    if w == 16 {
+        return nb_movsx_rax_ax(code);
+    }
+    nb_movsxd_rax_eax(code)
 }
 
 // The declared index of the field named buf[flo..fhi) among a struct-literal's
@@ -22851,7 +22924,13 @@ pub fn nb_while_copyin(code: String, carry: i64, ncarry: i64, i: i64, buf: i64, 
     };
     // Rebind the var's let-env to post_id (loop_remap.insert(init_id, post_id)) so
     // cond+body reads resolve to the working slot.
-    let _b: i64 = nb_lets_bind(lets, lcell, lo, hi, post_id, 0);
+    // C2 declared-width driver: inherit the carried var's DECLARED width onto its
+    // working post_id rebind (last-match-wins means the in-body assign arm's width
+    // lookup resolves THIS binding — a 64 here would silently disable the narrow
+    // re-wrap inside the loop). All-i64 carried vars (all of main.mind) look up 64
+    // and the rebind is exactly what it was — heap-table only, byte-identical.
+    let carryw: i64 = nb_lets_lookup_width(lets, lcell, buf, lo, hi);
+    let _b: i64 = nb_lets_bind(lets, lcell, lo, hi, post_id, 0, carryw);
     // FIX #174 (loop form): inherit the carried var's FLOAT dtype onto its working post_id
     // slot, so a float accumulator (`let a: f64 = 0.0; while .. { a = a + 1.5; }`) is seen
     // as FLOAT inside the loop body and routes the SSE2 path (pre-fix post_id read INT, so
@@ -22989,7 +23068,7 @@ pub fn nb_count_bind_merged(clets: i64, clcell: i64, names: i64, n: i64, i: i64)
     }
     let lo: i64 = __mind_load_i64(names + (i * 2 + 0) * 8);
     let hi: i64 = __mind_load_i64(names + (i * 2 + 1) * 8);
-    let _b: i64 = nb_lets_bind(clets, clcell, lo, hi, 0, 0);
+    let _b: i64 = nb_lets_bind(clets, clcell, lo, hi, 0, 0, 64);
     nb_count_bind_merged(clets, clcell, names, n, i + 1)
 }
 
@@ -23277,7 +23356,29 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         } else {
             init_dt_raw
         };
-        let _b: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), s1.last_id, nb_let_descriptor(init, ast_child1(node), buf, srt));
+        // C2 declared-width AUTO-WRAP driver: a narrow-int annotation (i8/i16/i32)
+        // wraps the init's full-64-bit result to its declared width AT THE BINDING —
+        // load the init slot, movsx/movsxd (nb_wrap_rax_w), store to a FRESH slot
+        // (never in place: an ident init aliases the source binding's slot, and an
+        // in-place wrap would corrupt that binding for later readers). X binds to
+        // the wrapped slot with its width recorded, so every later read sees the
+        // two's-complement-wrapped value and a later `X = ...` re-wraps (assign
+        // arm). The fresh id is mirrored in nb_count_stmt's let arm (+1 iff narrow)
+        // so the frame is sized for it. declw == 64 for every unannotated / i64 /
+        // float / struct let — the entire path below is skipped and the emission is
+        // byte-for-byte what it was; main.mind declares no narrow lets, so its
+        // self-compile is unchanged. Early-return statement form (mis-lower trap).
+        let declw: i64 = nb_width_of_ann(buf, ast_child1(node));
+        if declw < 64 {
+            let wid: i64 = s1.next_id;
+            let cw1: String = nb_load_rax(s1.code, nb_slot_disp(s1.last_id));
+            let cw2: String = nb_wrap_rax_w(cw1, declw);
+            let cw3: String = nb_store_rax(cw2, nb_slot_disp(wid));
+            let _bw: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), wid, nb_let_descriptor(init, ast_child1(node), buf, srt), declw);
+            let _dtw: i64 = nb_dtype_tag_slot(dtbl, wid, init_dt);
+            return NbState { code: cw3, next_id: wid + 1, last_id: wid, ncalls: s1.ncalls };
+        }
+        let _b: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), s1.last_id, nb_let_descriptor(init, ast_child1(node), buf, srt), declw);
         let _dt: i64 = nb_dtype_tag_slot(dtbl, s1.last_id, init_dt);
         return s1;
     }
@@ -23310,7 +23411,22 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
             let sv: NbState = nb_if_value(st, buf, rhs_node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
             let dtblv: i64 = __mind_load_i64(lcell + 8);
             let rhsdtv: i64 = nb_node_dtype_tbl(rhs_node, dtblv, lets, lcell, buf, params_addr, n_params);
-            let _bv: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), sv.last_id, 0);
+            // C2 declared-width driver: a value-if RHS assigned to a narrow-declared
+            // NAME wraps the merged dst to NAME's width, exactly like the plain-RHS
+            // arm below (count side adds the id unconditionally for narrow assigns,
+            // so both RHS shapes stay frame-consistent). pwv == 64 for every
+            // all-i64 module -> the block is skipped, byte-identical.
+            let pwv: i64 = nb_lets_lookup_width(lets, lcell, buf, ast_span_lo(name_leaf), ast_span_hi(name_leaf));
+            if pwv < 64 {
+                let widv: i64 = sv.next_id;
+                let cv1: String = nb_load_rax(sv.code, nb_slot_disp(sv.last_id));
+                let cv2: String = nb_wrap_rax_w(cv1, pwv);
+                let cv3: String = nb_store_rax(cv2, nb_slot_disp(widv));
+                let _bwv: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), widv, 0, pwv);
+                let _dtwv: i64 = nb_dtype_tag_slot(dtblv, widv, rhsdtv);
+                return NbState { code: cv3, next_id: widv + 1, last_id: widv, ncalls: sv.ncalls };
+            }
+            let _bv: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), sv.last_id, 0, 64);
             let _dtv: i64 = nb_dtype_tag_slot(dtblv, sv.last_id, rhsdtv);
             return sv;
         }
@@ -23324,7 +23440,24 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // RHS is always INT here and the slot tag stays INT — byte-identical.
         let dtbl167: i64 = __mind_load_i64(lcell + 8);
         let rhs_dt167: i64 = nb_node_dtype_tbl(ast_child2(node), dtbl167, lets, lcell, buf, params_addr, n_params);
-        let _b: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), s1.last_id, 0);
+        // C2 declared-width AUTO-WRAP driver (assign form): `X = VALUE` on a
+        // narrow-DECLARED X (its let recorded width 8/16/32) re-wraps the RHS to
+        // X's width into a fresh slot before the rebind — so `x = x + 1` on an i8
+        // wraps two's-complement each iteration. Looked up BEFORE the rebind (the
+        // pre-assign binding holds the declared width; the rebind re-records it).
+        // pw == 64 for every unannotated/i64 name -> skipped, byte-identical.
+        // Mirrored in nb_count_stmt's assign arm (+1 iff narrow). Early-return form.
+        let pw: i64 = nb_lets_lookup_width(lets, lcell, buf, ast_span_lo(name_leaf), ast_span_hi(name_leaf));
+        if pw < 64 {
+            let wida: i64 = s1.next_id;
+            let ca1: String = nb_load_rax(s1.code, nb_slot_disp(s1.last_id));
+            let ca2: String = nb_wrap_rax_w(ca1, pw);
+            let ca3: String = nb_store_rax(ca2, nb_slot_disp(wida));
+            let _bwa: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), wida, 0, pw);
+            let _dtwa: i64 = nb_dtype_tag_slot(dtbl167, wida, rhs_dt167);
+            return NbState { code: ca3, next_id: wida + 1, last_id: wida, ncalls: s1.ncalls };
+        }
+        let _b: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), s1.last_id, 0, 64);
         let _dt167: i64 = nb_dtype_tag_slot(dtbl167, s1.last_id, rhs_dt167);
         return s1;
     }
@@ -24033,7 +24166,12 @@ pub fn nb_rebind_merges(mt: i64, nmerged: i64, i: i64, lets: i64, lcell: i64, bu
     } else {
         0
     };
-    let _b: i64 = nb_lets_bind(lets, lcell, lo, hi, merge_slot, 0);
+    // C2 declared-width driver: inherit the merged var's DECLARED width onto the
+    // merge_slot rebind (last-match-wins — a 64 here would disable narrow re-wrap
+    // on any assign AFTER the if). All-i64 merges look up 64: heap-table only,
+    // byte-identical.
+    let mergew: i64 = nb_lets_lookup_width(lets, lcell, buf, lo, hi);
+    let _b: i64 = nb_lets_bind(lets, lcell, lo, hi, merge_slot, 0, mergew);
     nb_rebind_merges(mt, nmerged, i + 1, lets, lcell, buf)
 }
 
@@ -24327,7 +24465,16 @@ pub fn nb_count_stmt(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         __mind_store_i64(clcell, pre_init_n);
         let name_leaf: i64 = ast_child0(node);
         let init: i64 = ast_child2(node);
-        let _b: i64 = nb_lets_bind(clets, clcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), 0, nb_let_descriptor(init, ast_child1(node), buf, srt));
+        // C2 declared-width driver (count side): a narrow-int (i8/i16/i32) let
+        // consumes ONE extra id at emit (the fresh wrapped slot) — count it here so
+        // the frame is sized for it, and record the declared width in the count-lets
+        // so the assign arm's count-side lookup agrees with emission. declw == 64
+        // for every i64/unannotated let -> identical count, byte-identical frame.
+        let declw: i64 = nb_width_of_ann(buf, ast_child1(node));
+        let _b: i64 = nb_lets_bind(clets, clcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), 0, nb_let_descriptor(init, ast_child1(node), buf, srt), declw);
+        if declw < 64 {
+            return after_init + 1;
+        }
         return after_init;
     }
     if k == ast_if() {
@@ -24411,13 +24558,19 @@ pub fn nb_count_stmt(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         return after_body + ncarry + 1;
     }
     if k == ast_assign() {
-        // `NAME = VALUE`: VALUE's RHS ids only; the rebind is env-only (no new id),
-        // exactly like `let` (body_env.insert @lower.rs 4724 emits no instr). On the
-        // all-i64 hot path mask_narrow_assign is a no-op (0 ids).
-        // deferred: a narrow-typed (i32/u32/...) loop-carried local would add the
-        // mask_narrow_assign BinOp/Const ids here — upgrade path: guard on the
-        // declared width via srt and add the mask id cost, mirroring lower.rs 4723.
-        return nb_count_expr(next_id, buf, ast_child2(node), params_addr, n_params, clets, clcell);
+        // `NAME = VALUE`: VALUE's RHS ids; the rebind is env-only (no new id) —
+        // EXCEPT a narrow-DECLARED NAME (C2 declared-width driver), whose emit-side
+        // re-wrap consumes one fresh slot: count it via the count-lets width lookup
+        // (recorded by the let arm above). Counted for BOTH RHS shapes (plain and
+        // value-if) — the value-if emit arm wraps identically. pw == 64 on the
+        // all-i64 hot path -> id count unchanged, byte-identical.
+        let after_rhs: i64 = nb_count_expr(next_id, buf, ast_child2(node), params_addr, n_params, clets, clcell);
+        let aname_leaf: i64 = ast_child0(node);
+        let pw: i64 = nb_lets_lookup_width(clets, clcell, buf, ast_span_lo(aname_leaf), ast_span_hi(aname_leaf));
+        if pw < 64 {
+            return after_rhs + 1;
+        }
+        return after_rhs;
     }
     if k == ast_break() {
         // `break`/`continue` emit a leading ConstI64(unit,0) (1 fresh id); the
@@ -24878,7 +25031,7 @@ pub fn nb_register_struct_params(srt: i64, src: i64, params_addr: i64, n_params:
     } else {
         nb_struct_decl_descriptor(srt, src, sk)
     };
-    let _b: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), i, desc);
+    let _b: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), i, desc, 64);
     nb_register_struct_params(srt, src, params_addr, n_params, lets, lcell, i + 1)
 }
 
@@ -24927,7 +25080,7 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // upgrade path: diff nb_count_stmt vs the fn's actual emitted slot walk.
     // (3) div/mod/shift binops still fall through to imul in nb_arith_rax_mem (the
     // marker there spells out the emit_div_mod_guarded + cl-shift port).
-    let clets0: i64 = __mind_alloc(512 * 4 * 8);
+    let clets0: i64 = __mind_alloc(512 * 5 * 8);
     // clcell0 mirrors the emit lcell's srt slot at +24 (FIX #173): nb_count_expr's
     // value-if-in-expression arm calls nb_count_stmts, which needs srt, but
     // nb_count_expr has no srt param. Read it from clcell+24 — the SAME offset the
@@ -24978,11 +25131,11 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     let jcell: i64 = __mind_alloc(8);
     __mind_store_i64(jcell, 0);
 
-    // Per-fn let-env: name span -> (frame slot, struct-lit node), for `let`
-    // bindings (up to 512, 4 i64 words each; lcell = a 2-i64 cell: word0 = count,
-    // word1 = the per-fn dtype table, both threaded together like the count).
-    // Empty for the scalar fixtures.
-    let lets: i64 = __mind_alloc(512 * 4 * 8);
+    // Per-fn let-env: name span -> (frame slot, struct-lit node, declared width),
+    // for `let` bindings (up to 512, 5 i64 words each; lcell = a 2-i64 cell:
+    // word0 = count, word1 = the per-fn dtype table, both threaded together like
+    // the count). Empty for the scalar fixtures.
+    let lets: i64 = __mind_alloc(512 * 5 * 8);
     // lcell is the per-fn side-channel: word0 = let count, +8 = dtype table,
     // +16 = frt registry, and (FIX #173) +24 = srt, +32 = is_entry, +40 = jmps,
     // +48 = jcell, +56 = loops, +64 = lpcell — the jump/loop/struct state a value-if
@@ -27881,7 +28034,7 @@ pub fn selftest_native_elf_fp_expr(src_addr: i64, src_len: i64) -> EmitState {
     let p: String = nb_fp_prologue_frame(string_new(), 64);
     let params: i64 = __mind_alloc(8);
     let calls: i64 = __mind_alloc(8);
-    let lets: i64 = __mind_alloc(512 * 4 * 8);
+    let lets: i64 = __mind_alloc(512 * 5 * 8);
     let lcell: i64 = __mind_alloc(16);
     __mind_store_i64(lcell, 0);
     // RI-B1 FOLLOW-UP: no per-fn dtype table on the bare-expr path — store 0 at lcell+8
@@ -27918,7 +28071,7 @@ pub fn selftest_native_elf_fp_binop(src_addr: i64, src_len: i64) -> EmitState {
     let p: String = nb_fp_prologue_frame(string_new(), 64);
     let params: i64 = __mind_alloc(8);
     let calls: i64 = __mind_alloc(8);
-    let lets: i64 = __mind_alloc(512 * 4 * 8);
+    let lets: i64 = __mind_alloc(512 * 5 * 8);
     let lcell: i64 = __mind_alloc(16);
     __mind_store_i64(lcell, 0);
     // RI-B1 FOLLOW-UP: no per-fn dtype table on the bare-expr path — store 0 at lcell+8
@@ -27964,7 +28117,7 @@ pub fn selftest_native_elf_fp_let(src_addr: i64, src_len: i64) -> EmitState {
     let jcell: i64 = __mind_alloc(8);
     __mind_store_i64(jcell, 0);
     // Per-fn let-env + real dtype table at lcell+8 (the nb_lower_fn plumbing).
-    let lets: i64 = __mind_alloc(512 * 4 * 8);
+    let lets: i64 = __mind_alloc(512 * 5 * 8);
     let lcell: i64 = __mind_alloc(16);
     __mind_store_i64(lcell, 0);
     __mind_store_i64(lcell + 8, nb_dtype_table_new(128));
@@ -28012,7 +28165,7 @@ pub fn selftest_native_elf_fp_field(src_addr: i64, src_len: i64) -> EmitState {
     let jmps: i64 = __mind_alloc(512 * 2 * 8);
     let jcell: i64 = __mind_alloc(8);
     __mind_store_i64(jcell, 0);
-    let lets: i64 = __mind_alloc(512 * 4 * 8);
+    let lets: i64 = __mind_alloc(512 * 5 * 8);
     let lcell: i64 = __mind_alloc(16);
     __mind_store_i64(lcell, 0);
     __mind_store_i64(lcell + 8, nb_dtype_table_new(128));
@@ -28114,7 +28267,7 @@ pub fn selftest_native_elf_fp_param(src_addr: i64, src_len: i64) -> EmitState {
     let jmps: i64 = __mind_alloc(512 * 2 * 8);
     let jcell: i64 = __mind_alloc(8);
     __mind_store_i64(jcell, 0);
-    let lets: i64 = __mind_alloc(512 * 4 * 8);
+    let lets: i64 = __mind_alloc(512 * 5 * 8);
     let lcell: i64 = __mind_alloc(16);
     __mind_store_i64(lcell, 0);
     let dtbl: i64 = nb_dtype_table_new(128);
