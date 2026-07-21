@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3152 | **Est. tokens:** ~7,533,858
-**Generated:** 2026-07-21 00:10 UTC
+**Files:** 3152 | **Est. tokens:** ~7,534,017
+**Generated:** 2026-07-21 00:15 UTC
 
 ## Token Budget Guide
 
@@ -57,7 +57,7 @@
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 75 | ~134,673 |
+| `examples/mindc_mind/` | 75 | ~134,832 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
 | `examples/native/` | 4 | ~527 |
@@ -843,7 +843,7 @@
 ### `examples/mindc_mind/`
 
 - `bootstrap_smoke.py` (~2329 tok, huge)
-- `check_driver.mind` (~3779 tok, huge) — ===========================================================================
+- `check_driver.mind` (~3938 tok, huge) — ===========================================================================
 - `collect_field_strings_smoke.py` (~1161 tok, large)
 - `cutover_coverage_measure.py` (~2238 tok, huge)
 - `EXPECTED.md` (~773 tok, large) — Phase 6.5 Stage 5 — Expected IR Text (APEX)

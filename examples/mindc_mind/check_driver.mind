@@ -136,6 +136,14 @@ pub fn ckd_msg_toolarge() -> String {
 
 // Does the report contain the 6-byte marker "ERROR:" (push_kw_error, main.mind)
 // at any offset? Byte scan; returns 1 on the first hit.
+// deferred: this is a substring scan over the human-readable report text, not a
+// structured error count — a diagnostic MESSAGE that happens to embed the exact
+// byte sequence "ERROR:" (no separator) would false-positive. No real diagnostic
+// format in main.mind currently produces that (names are always wrapped in
+// backticks or followed by other punctuation before a colon), so it isn't live,
+// but it isn't proven closed either. Upgrade path: typecheck() (main.mind) should
+// return a (report: String, error_count: i64) pair instead of only embedding the
+// marker in text, so this driver checks a count, not report bytes.
 pub fn ckd_report_has_error(addr: i64, len: i64, i: i64) -> i64 {
     if i + 6 > len {
         return 0;
