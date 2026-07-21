@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3163 | **Est. tokens:** ~7,561,301
-**Generated:** 2026-07-21 20:02 UTC
+**Files:** 3164 | **Est. tokens:** ~7,562,811
+**Generated:** 2026-07-21 20:09 UTC
 
 ## Token Budget Guide
 
@@ -58,7 +58,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 86 | ~151,222 |
+| `examples/mindc_mind/` | 87 | ~152,732 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
 | `examples/native/` | 4 | ~527 |
@@ -855,7 +855,7 @@
 - `cutover_coverage_measure.py` (~2238 tok, huge)
 - `div_shift_cmp_edge_smoke.py` (~1846 tok, huge)
 - `EXPECTED.md` (~773 tok, large) — Phase 6.5 Stage 5 — Expected IR Text (APEX)
-- `fast_keystone.sh` (~1689 tok, huge) — fast_keystone.sh — fast LOCAL front-end keystone gate for the pure-MIND self-host
+- `fast_keystone.sh` (~1715 tok, huge) — fast_keystone.sh — fast LOCAL front-end keystone gate for the pure-MIND self-host
 - `FIXED_POINT_REPORT.md` (~1770 tok, huge) — Phase 6.5 — Bootstrap Fixed-Point Report
 - `fixed_point_smoke.py` (~3275 tok, huge)
 - `fixture.mind` (~183 tok, small) — Phase 6.4 emit_ir smoke fixture.
@@ -928,6 +928,7 @@
 - `self_host_tc_class_mismatch_smoke.py` (~840 tok, large) — CPU-as-oracle smoke for the pure-MIND E2015 int<->float class-mismatch rule.
 - `self_host_tc_class_rules_smoke.py` (~1560 tok, huge) — CPU-as-oracle smoke for the pure-MIND E2010/E2011/E2013/E2016 class rules.
 - `self_host_tc_narrowing_smoke.py` (~1042 tok, large)
+- `self_host_tc_shape_rules_smoke.py` (~1484 tok, large) — CPU-as-oracle smoke for the pure-MIND E2005/E2101/E2102/E2103 shape rules (E2023 deferred — blocked native-emitter/are
 - `self_host_value_if_expr_smoke.py` (~1557 tok, huge)
 - `sha256_hash_smoke.py` (~732 tok, large) — # Copyright 2025 STARGA Inc.
 - `struct_fields_smoke.py` (~1076 tok, large)
