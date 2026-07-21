@@ -633,6 +633,7 @@ jobs:
             self_host_native_tensor_ewadd_smoke \
             self_host_native_tensor_dot_smoke \
             self_host_native_tensor_matmul_smoke \
+            self_host_param_mutation_smoke \
             self_host_native_narrowint_smoke \
             self_host_native_narrowwrap_smoke \
             self_host_native_autowrap_smoke \
