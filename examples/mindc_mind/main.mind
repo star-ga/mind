@@ -27218,7 +27218,15 @@ pub fn selftest_native_elf_u(src_addr: i64, src_len: i64, user_lo: i64) -> EmitS
         // empty EmitState so the smoke's no-feed rung fails LOUD (no fake win).
         return es_new();
     }
-    selftest_native_elf_hb(src_addr, src_len, h32, user_lo)
+    // ARENA (Rule-2c dedup, 2026-07-21): thread the tokens ALREADY lexed above into
+    // the _hb body instead of letting it re-lex the full source. Each full-source
+    // lex() permanently occupies ~65 MB of the fixed 1 GiB bump arena (Vec doubling,
+    // no free); with the u -> trace_hash -> hb chain at three lexes the whole-compiler
+    // self-compile sat ~150 KB under the arena cap, so ANY source growth (e.g. adding
+    // a handful of fns) tripped the nb_arena ud2 capacity guard mid-compile (SIGILL,
+    // `stage1.elf exited -4` in self_host_loop_smoke.py). Token reuse is byte-exact:
+    // same (src_addr, src_len) => identical token stream => identical emitted ELF.
+    selftest_native_elf_hb_from_tokens(tokens, src_addr, h32, user_lo)
 }
 
 // 4-arg form: `user_lo` is the offset in `src_addr` where the USER file begins
@@ -27228,6 +27236,15 @@ pub fn selftest_native_elf_u(src_addr: i64, src_len: i64, user_lo: i64) -> EmitS
 // user call graph, last-write-wins dedup) so the two emitters lay the SAME fn set.
 pub fn selftest_native_elf_hb(src_addr: i64, src_len: i64, hash_addr: i64, user_lo: i64) -> EmitState {
     let tokens: Vec = lex(src_addr, src_len);
+    selftest_native_elf_hb_from_tokens(tokens, src_addr, hash_addr, user_lo)
+}
+
+// Token-reuse variant of selftest_native_elf_hb (Rule-2c arena dedup): identical
+// body except the full-source lex is hoisted to the caller, so the u -> hb chain
+// lexes the whole source once instead of twice. Byte-exact: the token stream for
+// (src_addr, src_len) is deterministic, so every downstream registry/lowering/
+// patch step sees identical inputs and the emitted ELF is unchanged.
+pub fn selftest_native_elf_hb_from_tokens(tokens: Vec, src_addr: i64, hash_addr: i64, user_lo: i64) -> EmitState {
     let ast_root: i64 = parse(tokens, src_addr);
     let items_addr: i64 = ast_child0(ast_root);
     let items_len: i64 = ast_aux(ast_root);
