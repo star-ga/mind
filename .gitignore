@@ -101,3 +101,7 @@ examples/*/target/
 
 # Orchestrator session/state DB — never commit to the public compiler repo
 .orchestrator_memory/
+
+# Stray local build artifacts / tool caches — never belong in the compiler repo
+/a.out
+.wrangler/

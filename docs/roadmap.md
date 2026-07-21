@@ -87,8 +87,8 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
   `src/native` backend (Phase 15) has been deleted. See the README for what
   remains on the broader Rust-independence effort (MLIR/mindc itself is still
   Rust — this closes the native-ELF track specifically).
-- **Ed25519-signed evidence chain** – cryptographic signing of the
-  already-emitted evidence chain.
+- **Ed25519/ML-DSA signing (opt-in)** – cryptographic signing of the
+  already-emitted, tamper-evident evidence chain.
 - **GPU / accelerator backends** – the open-source `mindc` compiler in this repo
   emits for the **CPU**. GPU and accelerator execution across the broader
   chip-target set ships today in the commercial
@@ -1430,7 +1430,7 @@ discipline already in force (a speedup never trips it).
 4b. **Pure-MIND MCP server over `mic@3` + evidence chain.** Reimplement the
    MCP tool-serving surface (starting with mind-mem) in pure MIND — no Python —
    using MIND's own protocols and formats end-to-end: `mic@3` canonical binary
-   as the wire transport and the MAP epilogue's signed evidence chain
+   as the wire transport and the MAP epilogue's tamper-evident evidence chain
    (`trace_hash = sha256(emit_mic3(ir))`), so every tool call and response is
    byte-canonical and cryptographically tamper-evident — the property no
    JSON-RPC MCP has. A thin JSON-RPC↔`mic@3` bridge at the client edge keeps

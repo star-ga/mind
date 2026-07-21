@@ -12,7 +12,8 @@
 ## 1. Problem — the runtime I/O path is the last non-deterministic frontier
 
 MIND's artifact layer is already the most efficient and the most auditable: a
-canonical binary IR with an embedded, signed evidence chain (RFC 0016) whose
+canonical binary IR with an embedded, tamper-evident evidence chain (RFC 0016;
+cryptographic signing is opt-in, Phase C) whose
 deterministic-integer / Q16.16 lowering is byte-identical across CPU substrates —
 x86-`avx2` and ARM-`neon` (RFC 0015; GPU float determinism is on the roadmap).
 The remaining gap
