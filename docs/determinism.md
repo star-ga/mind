@@ -98,7 +98,7 @@ values.
 | `limit_form(0^0)` | indeterminate — symbolic/calculus context, not a number | 📋 |
 | NaN comparisons | all comparisons `false` except `!=`; `min`/`max`/`sort` use a defined total order (NaN sorts last) so results are deterministic | 📋 |
 | Rounding | round-to-nearest-even (IEEE default), fixed | 📋 |
-| Scalar `f64`/`f32` arithmetic (`+ − × ÷`, fixed source order, no FMA-contraction) | strict path — run-to-run bit-identical; verified bit-identical across an x86 CPU and an NVIDIA GPU (CUDA, `sm_86`) via the no-FMA-contraction contract (`-ffp-contract=off` ≡ `--fmad=false`) | ✅ |
+| Scalar `f64`/`f32` arithmetic (`+ − × ÷`, fixed source order, no FMA-contraction) | strict path — run-to-run bit-identical; **CI-gated** bit-identical across x86 (`avx2`) and ARM64 (`neon`) on real hardware (the `cross_substrate_identity` gate). A single `f64` workload was additionally verified bit-identical against an NVIDIA GPU (CUDA, `sm_86`) under the no-FMA-contraction contract (`-ffp-contract=off` ≡ `--fmad=false`) — a one-off demonstration, **not** CI-gated; general GPU float determinism is roadmap. | ✅ CPU (x86+ARM); GPU one-off/roadmap |
 | Vector `f32` BLAS reductions (`dot` / `L1` / `matmul`, the `*_v` kernels) | strict tier — FMA unfused to separate `mulf`+`addf`, horizontal sum a pinned fixed-order fold, so bit-exact (no `vector.fma` / `vector.reduction <add>`); run-to-run bit-identical, verified `objdump`-clean (0 fused FMA) on x86 | ✅ (x86; ARM re-verify pending) |
 | Other vector `f32`/`f64` reductions (tensor `sum`, GPU, `f64`) | ordered reduction trees / superaccumulators — still a documented ~1e-4 relative tolerance, not yet bit-identity | 📋 |
 | Transcendentals (`sin`, `exp`, …) | vendored correctly-rounded libm (not host libm) | 📋 |

@@ -52,6 +52,12 @@ high_assurance = "commercial"
 ir          = ["anchored on mic@1 trace hash", "mic@2 (Current)", "MIC-B v2 (Binary)"]
 autodiff    = ["autodiff support is experimental", "autodiff is experimental"]
 runtime     = ["Native CPU Execution"]
+# Signing (RFC 0016 Phase C: Ed25519/ML-DSA) is opt-in and off by default — the
+# evidence chain is tamper-evident, not signed, until Phase C ships. A 2026-07-09
+# doc fix saying so was reverted the same day and silently never re-landed for
+# 11 days (README claimed "signed" while SECURITY.md, two files away, correctly
+# said "tamper-evident... signing is never enabled by default"). Never again.
+evidence    = ["signed evidence chain"]
 
 # ---------------------------------------------------------------------------
 # Auto-derived counts (OPTIONAL gate, conservative + advisory).
