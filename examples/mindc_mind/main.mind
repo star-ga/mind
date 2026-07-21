@@ -2550,6 +2550,129 @@ pub fn selftest_tc_as_bool(target_sel: i64) -> i64 {
     tc_is_as_bool_reject(target_ty)
 }
 
+// ===== Arity / shape rules (E2005/E2101/E2102/E2103) =====
+//
+// Pure-MIND ports of the remaining oracle-backed type-checker guards that are
+// reachable without AST context. All ADDITIVE: defined + exported via the
+// isolated selftest_* wrappers below, never reached through mindc_compile, so
+// the mic@1 canary / self-host loop stay byte-identical. The shape guards take
+// concrete ranks/dims hoisted to scalar inputs (the same hoisting E2011 uses
+// for its syntactic bool_intent flag); the predicates themselves are exact
+// twins of the Rust bodies.
+// deferred: E2023 (`__mind_` reserved-prefix, mod.rs starts_with guard) was
+// ported and Rust-.so-verified but DROPPED: its byte-table + bytes_eq prefix
+// cluster crashes the frozen pure-MIND native stage1 self-compile (SIGILL/
+// SIGSEGV) in three different statement shapes while every other new fn passes
+// — upgrade path: isolate the unsupported nb_* construct shape with a minimal
+// fixture, extend the native emitter, then re-add the E2023 port.
+
+// E2005: intra-module call arity mismatch. Twin of the Rust guard in
+// check_intra_fn_call: `args.len() != sig.param_count` alone decides (arity is
+// always knowable from the AST regardless of the loose i64 ABI).
+pub fn tc_is_arity_mismatch(expected: i64, got: i64) -> i64 {
+    if expected != got {
+        return 1;
+    }
+    0
+}
+
+// E2101: one right-aligned dim pair under numpy-style broadcasting. Twin of
+// the src/shapes/engine.rs broadcast_shapes loop body: dims must be equal or
+// 1 (`a == b || a == 1` -> b, `b == 1` -> a); returns the broadcast dim, or
+// -1 for the BroadcastError arm.
+pub fn tc_broadcast_dim(a: i64, b: i64) -> i64 {
+    if a == b {
+        return b;
+    }
+    if a == 1 {
+        return b;
+    }
+    if b == 1 {
+        return a;
+    }
+    0 - 1
+}
+
+// E2101: rank-2 x rank-2 elementwise broadcast. Equal ranks right-align
+// positionally: pairs (a1,b1) then (a0,b0) — the engine loop unrolled for
+// max_rank == 2. 1 iff any pair hits the BroadcastError arm.
+pub fn tc_is_broadcast_mismatch_2x2(a0: i64, a1: i64, b0: i64, b1: i64) -> i64 {
+    let d1: i64 = tc_broadcast_dim(a1, b1);
+    if d1 < 0 {
+        return 1;
+    }
+    let d0: i64 = tc_broadcast_dim(a0, b0);
+    if d0 < 0 {
+        return 1;
+    }
+    0
+}
+
+// E2101: rank-2 x rank-1 broadcast. The rhs's missing leading dim reads as 1
+// (the engine's `.unwrap_or(1)`), so the pairs are (a1,b0) then (a0,1).
+pub fn tc_is_broadcast_mismatch_2x1(a0: i64, a1: i64, b0: i64) -> i64 {
+    let d1: i64 = tc_broadcast_dim(a1, b0);
+    if d1 < 0 {
+        return 1;
+    }
+    let d0: i64 = tc_broadcast_dim(a0, 1);
+    if d0 < 0 {
+        return 1;
+    }
+    0
+}
+
+// E2102 (matmul rank guard): MatMul2D requires two rank-2 tensors. Twin of
+// the engine `lhs.len() != 2 || rhs.len() != 2` RankMismatch arm.
+pub fn tc_is_matmul_rank_mismatch(lhs_rank: i64, rhs_rank: i64) -> i64 {
+    if lhs_rank != 2 {
+        return 1;
+    }
+    if rhs_rank != 2 {
+        return 1;
+    }
+    0
+}
+
+// E2103: matmul inner-dimension mismatch. Twin of the engine `lhs[1] != rhs[0]`
+// arm (surfaced by the `@` guard in mod.rs as lhs inner dim vs rhs outer dim).
+pub fn tc_is_matmul_inner_mismatch(lhs_k: i64, rhs_k: i64) -> i64 {
+    if lhs_k != rhs_k {
+        return 1;
+    }
+    0
+}
+
+// Isolated selftest entries (ADDITIVE — never reached through mindc_compile).
+
+// E2005: 1 iff a call passing GOT args to a fn declared with EXPECTED params
+// is an arity mismatch.
+pub fn selftest_tc_arity_mismatch(expected: i64, got: i64) -> i64 {
+    tc_is_arity_mismatch(expected, got)
+}
+
+// E2101: 1 iff elementwise [a0,a1] .op [b0,b1] cannot broadcast.
+pub fn selftest_tc_broadcast_2x2(a0: i64, a1: i64, b0: i64, b1: i64) -> i64 {
+    tc_is_broadcast_mismatch_2x2(a0, a1, b0, b1)
+}
+
+// E2101: 1 iff elementwise [a0,a1] .op [b0] cannot broadcast.
+pub fn selftest_tc_broadcast_2x1(a0: i64, a1: i64, b0: i64) -> i64 {
+    tc_is_broadcast_mismatch_2x1(a0, a1, b0)
+}
+
+// E2102/E2103 combined, in engine order: 1 = rank mismatch (E2102, checked
+// first), 2 = inner-dimension mismatch (E2103), 0 = shapes accepted.
+pub fn selftest_tc_matmul_shape(lhs_rank: i64, lhs_k: i64, rhs_rank: i64, rhs_k: i64) -> i64 {
+    if tc_is_matmul_rank_mismatch(lhs_rank, rhs_rank) == 1 {
+        return 1;
+    }
+    if tc_is_matmul_inner_mismatch(lhs_k, rhs_k) == 1 {
+        return 2;
+    }
+    0
+}
+
 // ===== Name hashing (DJB2) =====
 
 pub fn djb2_seed() -> i64 {
