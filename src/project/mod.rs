@@ -960,6 +960,13 @@ fn build_cdylib_from_entry(
     use crate::pipeline::{CompileOptions, compile_source_with_name, lower_to_mlir};
     use crate::runtime::types::BackendTarget;
 
+    // `sources` is consumed only by the cross-module-imports transitive
+    // substrate-link walk further down; without that feature the cdylib is a
+    // single-entry emit and the parameter is legitimately unused (keeps the
+    // signature stable across feature combinations).
+    #[cfg(not(feature = "cross-module-imports"))]
+    let _ = sources;
+
     let source_code = fs::read_to_string(entry_path)
         .with_context(|| format!("Failed to read entry source: {}", entry_path.display()))?;
 
