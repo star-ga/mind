@@ -95,6 +95,7 @@ chk "tc_shape_rules (E2005/2101/2/3)"     python3 examples/mindc_mind/self_host_
 chk "autowrap (declared-width driver)"     python3 examples/mindc_mind/self_host_native_autowrap_smoke.py
 chk "tensor_ewadd (C4 native tensor)"       python3 examples/mindc_mind/self_host_native_tensor_ewadd_smoke.py
 chk "tensor_dot (C4-T2 native MAC)"        python3 examples/mindc_mind/self_host_native_tensor_dot_smoke.py
+chk "tensor_matmul (C4-T3 nested 2-D)"    python3 examples/mindc_mind/self_host_native_tensor_matmul_smoke.py
 chk "arena_growth (self-host cap headroom)" python3 examples/mindc_mind/self_host_arena_growth_smoke.py
 
 rm -f "$DIR_SO" "$MT_SO"

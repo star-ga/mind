@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3164 | **Est. tokens:** ~7,562,811
-**Generated:** 2026-07-21 20:09 UTC
+**Files:** 3165 | **Est. tokens:** ~7,564,432
+**Generated:** 2026-07-21 20:45 UTC
 
 ## Token Budget Guide
 
@@ -58,7 +58,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 87 | ~152,732 |
+| `examples/mindc_mind/` | 88 | ~154,353 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
 | `examples/native/` | 4 | ~527 |
@@ -855,7 +855,7 @@
 - `cutover_coverage_measure.py` (~2238 tok, huge)
 - `div_shift_cmp_edge_smoke.py` (~1846 tok, huge)
 - `EXPECTED.md` (~773 tok, large) — Phase 6.5 Stage 5 — Expected IR Text (APEX)
-- `fast_keystone.sh` (~1715 tok, huge) — fast_keystone.sh — fast LOCAL front-end keystone gate for the pure-MIND self-host
+- `fast_keystone.sh` (~1742 tok, huge) — fast_keystone.sh — fast LOCAL front-end keystone gate for the pure-MIND self-host
 - `FIXED_POINT_REPORT.md` (~1770 tok, huge) — Phase 6.5 — Bootstrap Fixed-Point Report
 - `fixed_point_smoke.py` (~3275 tok, huge)
 - `fixture.mind` (~183 tok, small) — Phase 6.4 emit_ir smoke fixture.
@@ -921,6 +921,7 @@
 - `self_host_native_simd_dot_q16_smoke.py` (~1486 tok, large) — RI-B2-S10 (#108) — native-ELF PACKED-SIMD Q16.16 DOT-PRODUCT, byte-identity rung.
 - `self_host_native_tensor_dot_smoke.py` (~1197 tok, large) — C4-T2 — native-ELF tensor DOT PRODUCT (i64), zero MLIR/LLVM.
 - `self_host_native_tensor_ewadd_smoke.py` (~1118 tok, large) — C4-T1 — native-ELF tensor ELEMENT-WISE ADD (i64), zero MLIR/LLVM.
+- `self_host_native_tensor_matmul_smoke.py` (~1594 tok, huge) — C4-T3 — native-ELF tensor MATMUL (i64), zero MLIR/LLVM.
 - `self_host_native_write8_smoke.py` (~929 tok, large) — RI-B2-S2 STEP A (#108) — de-risk the C1 "emit 8 LE bytes to stdout + hash" gate.
 - `self_host_native_write_f32_smoke.py` (~815 tok, large) — RI-B2-S8 STEP A (#108) — de-risk the raw-f32-bytes harness on a KNOWN f32.
 - `self_host_open_smoke.py` (~1310 tok, large)
