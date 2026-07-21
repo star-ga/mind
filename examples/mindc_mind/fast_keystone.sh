@@ -94,6 +94,7 @@ chk "tc_class_rules (E2010/11/13/16)"      python3 examples/mindc_mind/self_host
 chk "autowrap (declared-width driver)"     python3 examples/mindc_mind/self_host_native_autowrap_smoke.py
 chk "tensor_ewadd (C4 native tensor)"       python3 examples/mindc_mind/self_host_native_tensor_ewadd_smoke.py
 chk "tensor_dot (C4-T2 native MAC)"        python3 examples/mindc_mind/self_host_native_tensor_dot_smoke.py
+chk "arena_growth (self-host cap headroom)" python3 examples/mindc_mind/self_host_arena_growth_smoke.py
 
 rm -f "$DIR_SO" "$MT_SO"
 echo "== $pass passed, $fail failed in $(($(date +%s)-t0))s =="
