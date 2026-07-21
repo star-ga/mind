@@ -22210,14 +22210,24 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         return NbState { code: cs, next_id: id + 1, last_id: id, ncalls: st.ncalls };
     }
     if k == ast_ident() {
-        let idx: i64 = resolve_param(params_addr, n_params, buf, ast_span_lo(node), ast_span_hi(node));
-        if idx >= 0 {
-            return NbState { code: st.code, next_id: st.next_id, last_id: idx, ncalls: st.ncalls };
-        }
-        // Not a param: a let binding. Resolve via the let-env (its bound slot).
+        // Resolve the let-env FIRST, then fall back to the param home slot. A param
+        // that is REASSIGNED (loop-carried `x = x + 1`, or an if-branch merge) gets a
+        // let-env binding at its live post-slot via nb_lets_bind — its home slot is
+        // then STALE. Consulting resolve_param first read that stale home slot and
+        // silently dropped the mutation (e.g. `fn f(x){ while.. x=x+1 } return x` for
+        // f(10) returned 10, not 13 — a wrong value with no fail-closed signal). The
+        // let-env holds the current slot for any reassigned OR let-shadowed name, so
+        // it must win; a name with NO let-env binding (an unmutated param) falls
+        // through to resolve_param unchanged. Byte-identical for main.mind's own
+        // self-compile: it never reassigns or shadows a param, so every ident misses
+        // the let-env here exactly as before and resolves to the same param slot.
         let lslot: i64 = nb_lets_lookup(lets, lcell, buf, ast_span_lo(node), ast_span_hi(node));
         if lslot >= 0 {
             return NbState { code: st.code, next_id: st.next_id, last_id: lslot, ncalls: st.ncalls };
+        }
+        let idx: i64 = resolve_param(params_addr, n_params, buf, ast_span_lo(node), ast_span_hi(node));
+        if idx >= 0 {
+            return NbState { code: st.code, next_id: st.next_id, last_id: idx, ncalls: st.ncalls };
         }
         // Out of the supported subset: fail loud by returning -1 last_id; the
         // caller's emit produces a deterministic but wrong slot, which the
