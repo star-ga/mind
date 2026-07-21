@@ -77,8 +77,12 @@ itself byte-identically with zero Rust & zero LLVM in the loop"* (integer/contro
 - [~] **B1** Full type-checker in pure MIND (Rust `type_checker/mod.rs`, 5,125 LOC) — floats, tensors, narrow ints, enums, shapes.
   **First slice LANDED (2026-07-21, `1372c4c`):** the E2004 i64→i32 implicit-narrowing rule ported to pure MIND
   (`i32` arm in `resolve_type_ident` + width fn), byte-for-byte matching the Rust oracle over all {i32,i64,f64,bool}
-  pairs, gated by `self_host_tc_narrowing_smoke.py` (isolated `selftest_tc_*` export). The remaining ~5,100 LOC
-  (float/tensor/enum/shape rules) is the bulk still open.
+  pairs, gated by `self_host_tc_narrowing_smoke.py` (isolated `selftest_tc_*` export). **Extended (2026-07-21):**
+  the scalar-class rules E2010/E2011/E2013/E2016 (`self_host_tc_class_rules_smoke.py`), the shape rules E2005
+  (call-arity) / E2101 (broadcast) / E2102 (matmul-rank) / E2103 (matmul-inner-dim), and E2023 (reserved `__mind_`
+  prefix — `name.starts_with("__mind_")`) — each an additive `selftest_tc_*` export byte-for-byte matching its Rust
+  oracle over positive+negative cases, all gated in `fast_keystone.sh` (`tc_class_rules`, `tc_shape_rules`). The
+  remaining ~5,000 LOC (float/tensor/enum + AST-context-dependent rules) is the bulk still open.
 - [ ] **B2** Full parser + AST→IR lowering (`parser` 5,109 + `eval/lower.rs` 7,818) for every construct
 - [ ] **B3** Autodiff in pure MIND
 - [ ] **B4** Optimizer / analysis passes in pure MIND
@@ -104,7 +108,13 @@ Native-ELF covers only scalar i64/ptr/struct/control-flow. To drop the 12,753-LO
   · **C3** division / shift / compare — **COMPLETE:** `idiv`+`cqo` with zero & INT_MIN/-1 guards, `sar`/`shl`,
   all 6 signed `setcc`; 16 edge-case tests added (`div_shift_cmp_edge_smoke.py`). Logical-`shr`/unsigned-`setcc`
   unreachable until C2 unsigned types (correctly deferred, no oracle).
-- [ ] **C4** Tensor/linalg lowering — matmul, reductions, broadcast, indexing *(currently MLIR-only)*
+- [~] **C4** Tensor/linalg lowering — matmul, reductions, broadcast, indexing. **Native-ELF i64 ops LANDED
+  (2026-07-21, zero MLIR/LLVM):** elementwise-add (`selftest_native_elf_tensor_ewadd_i64`, C4-T1), dot/MAC
+  reduction (`_dot_i64`, C4-T2), and 2-D matmul (`_matmul_i64`, C4-T3, `f468e02`/`24699d0`) — each emits a runnable
+  native x86-64 ELF with 2-D row-major addressing + a fail-closed frame-bound guard (dims bounded before products,
+  so no i64-overflow shape overruns), verified against an independent Python reference AND the native-ELF byte-oracle.
+  **Still open:** broadcast/transpose/general N-D indexing, f-typed tensors (needs C1 float-in-registry), and the
+  optimizing backend (C6, MLIR still owns performance today).
 - [ ] **C5** Vectorization (AVX2/NEON SIMD) for performance parity
 - [ ] **C6** ⚠️ **Optimizing backend** — register allocation + instruction scheduling (today LLVM `-O3`). *The multi-year item*; without it native codegen is correct but slow
 - [ ] **C7** GPU codegen (CUDA/ROCm/Metal) — *commercial mind-runtime territory, hardest*
