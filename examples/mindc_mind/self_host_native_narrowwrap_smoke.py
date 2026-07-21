@@ -20,8 +20,10 @@ No frozen byte-oracle exists for this construct (the deleted Rust src/native bac
 no narrow-wrap smoke, and rejected ConstF64/narrow codegen). The oracle is EXECUTION
 CORRECTNESS on the CPU: a real user MIND `main` compiled to native ELF via
 `selftest_native_elf` exercises every wrap and returns 42 IFF each behaves correctly.
-The check is non-fakeable — a value that i64-widens instead of wrapping makes the err
-term huge and mangles the exit code:
+The check is non-fakeable — every `e*` term is exactly 0 iff its wrap is correct, and
+`main` returns 42 IFF the FULL 64-bit `err == 0` (compared before the exit-code mod-256
+truncation, so a wrong lowering whose error delta happens to be a multiple of 256 — e.g.
+a no-op or zero-extend leaving 2^32 — still yields err != 0 -> exit 43, not a masked 42):
 
   * wrap at overflow    — INT32_MAX+1, INT16_MAX+1, INT8_MAX+1 must yield the NEGATIVE
     INT_N_MIN (a non-wrapping i64 would stay positive: 2147483648 / 32768 / 128).
@@ -70,7 +72,11 @@ SRC = f"""fn main() -> i64 {{
     let s: i64 = 2147483647 + 1;
     let ea: i64 = __mind_wrap_i32(s) + 2147483648;
     let err: i64 = e32 + e16 + e8 + en8 + ep + ep16 + ea;
-    err + {MARKER}
+    if err == 0 {{
+        {MARKER}
+    }} else {{
+        43
+    }}
 }}
 """
 

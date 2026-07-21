@@ -88,6 +88,8 @@ chk "narrowint (i8/i16/i32 store/load)"    python3 examples/mindc_mind/self_host
 chk "scalar_f32 (native SSE f32 chain)"    python3 examples/mindc_mind/self_host_native_scalar_f32_smoke.py
 chk "tc_narrowing (E2004 i64->i32 rule)"   python3 examples/mindc_mind/self_host_tc_narrowing_smoke.py
 chk "div_shift_cmp (C3 signed edges)"      python3 examples/mindc_mind/div_shift_cmp_edge_smoke.py
+chk "narrowwrap (i8/i16/i32 wrap arith)"   python3 examples/mindc_mind/self_host_native_narrowwrap_smoke.py
+chk "tc_class (E2015 int/float class)"     python3 examples/mindc_mind/self_host_tc_class_mismatch_smoke.py
 
 rm -f "$DIR_SO" "$MT_SO"
 echo "== $pass passed, $fail failed in $(($(date +%s)-t0))s =="
