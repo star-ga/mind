@@ -22626,7 +22626,22 @@ pub fn nb_emit_while(st: NbState, buf: i64, node: i64, params_addr: i64, n_param
     let carry: i64 = __mind_alloc(256 * 4 * 8);
     let ccell: i64 = __mind_alloc(8);
     __mind_store_i64(ccell, 0);
+    // FIX #229: the carry pre-walk shares `lets`/`lcell` as its COUNT env (clets),
+    // and nb_count_stmt's if-arm rebinds a nested if's merged names (e.g. a
+    // `let value_idx` in a diverging `if matched == 1 { .. }` branch — the
+    // args_flag_value_idx class in std/cli.mind) into that env. Those bindings are
+    // COUNT-ONLY and must be transient: if they leak into the real emit let-env,
+    // the subsequent body-emit's nb_merge_fill_defs `in_outer` test wrongly sees
+    // the branch-local name as carried-from-outer and elides its else-side
+    // ConstI64(0) placeholder (n_else_ph 1 -> 0). That desyncs the emitted if's
+    // dst/merge ids from the carry pre-walk's post_id count by one, so the
+    // loop-carried var's `i = i + 1` stores to a slot the cond never re-reads —
+    // an INFINITE LOOP. Snapshot/restore lcell around the pre-walk exactly like the
+    // dst-id pre-walks at nb_if_stmt_(simple|merged) already do; the carry table is
+    // fully populated by nb_while_carry, only the env growth is discarded.
+    let prewalk_lcell: i64 = __mind_load_i64(lcell);
     let _w: i64 = nb_while_carry(carry, ccell, after_cond_count, buf, body_sa, body_sl, 0, params_addr, n_params, lets, lcell, srt, lets, lcell);
+    __mind_store_i64(lcell, prewalk_lcell);
     let ncarry: i64 = __mind_load_i64(ccell);
 
     // Copy-in each carried var (init_slot -> post_slot) + rebind its let-env to the
