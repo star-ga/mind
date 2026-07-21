@@ -2240,6 +2240,18 @@ pub fn make_byte_buf_6(b0: i64, b1: i64, b2: i64, b3: i64, b4: i64, b5: i64) -> 
     h
 }
 
+pub fn make_byte_buf_7(b0: i64, b1: i64, b2: i64, b3: i64, b4: i64, b5: i64, b6: i64) -> i64 {
+    let h: i64 = __mind_alloc(16);
+    __mind_store_i64(h + 0, b0);
+    __mind_store_i64(h + 1, b1);
+    __mind_store_i64(h + 2, b2);
+    __mind_store_i64(h + 3, b3);
+    __mind_store_i64(h + 4, b4);
+    __mind_store_i64(h + 5, b5);
+    __mind_store_i64(h + 6, b6);
+    h
+}
+
 pub fn name_buf_i64() -> i64 {
     make_byte_buf_3(105, 54, 52)
 }
@@ -2559,12 +2571,30 @@ pub fn selftest_tc_as_bool(target_sel: i64) -> i64 {
 // concrete ranks/dims hoisted to scalar inputs (the same hoisting E2011 uses
 // for its syntactic bool_intent flag); the predicates themselves are exact
 // twins of the Rust bodies.
-// deferred: E2023 (`__mind_` reserved-prefix, mod.rs starts_with guard) was
-// ported and Rust-.so-verified but DROPPED: its byte-table + bytes_eq prefix
-// cluster crashes the frozen pure-MIND native stage1 self-compile (SIGILL/
-// SIGSEGV) in three different statement shapes while every other new fn passes
-// — upgrade path: isolate the unsupported nb_* construct shape with a minimal
-// fixture, extend the native emitter, then re-add the E2023 port.
+// E2023: the `__mind_` prefix is reserved for compiler intrinsics — a user `fn`
+// with that prefix would shadow the intrinsic on the interpreter fn-table oracle
+// (a silent miscompile), so it is rejected fail-loud. Twin of the Rust guard in
+// src/type_checker/mod.rs (`name.starts_with("__mind_")`, exact 7-byte prefix
+// 95 95 109 105 110 100 95 = "__mind_"). starts_with is: len >= 7 AND the first
+// 7 bytes equal the prefix. (Earlier dropped when the frozen stage1 self-compile
+// hit the shared arena cliff; re-landed on the lex-dedup headroom — the byte-
+// table + 6-arg-bytes_eq-behind-if shape is the SAME one resolve_type_ident
+// already uses at HEAD, so it was never the crash cause. Additive: reached only
+// through selftest_tc_reserved_name, never mindc_compile, so byte-identity holds.)
+pub fn tc_reserved_prefix_buf() -> i64 {
+    make_byte_buf_7(95, 95, 109, 105, 110, 100, 95)
+}
+
+pub fn tc_is_reserved_intrinsic_name(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo < 7 {
+        return 0;
+    }
+    let pfx: i64 = tc_reserved_prefix_buf();
+    if bytes_eq(buf, lo, lo + 7, pfx, 0, 7) == 1 {
+        return 1;
+    }
+    0
+}
 
 // E2005: intra-module call arity mismatch. Twin of the Rust guard in
 // check_intra_fn_call: `args.len() != sig.param_count` alone decides (arity is
@@ -2671,6 +2701,16 @@ pub fn selftest_tc_matmul_shape(lhs_rank: i64, lhs_k: i64, rhs_rank: i64, rhs_k:
         return 2;
     }
     0
+}
+
+// E2023: 1 iff a fn name (first 7 bytes b0..b6, true byte-length `len`) starts
+// with the reserved "__mind_" prefix. The Python oracle recomputes the exact
+// Rust rule name.starts_with("__mind_"). Only the first 7 name bytes matter to
+// starts_with, so passing them + the true length faithfully models it (a name
+// shorter than 7 bytes can never start with the 7-byte prefix -> the len gate).
+pub fn selftest_tc_reserved_name(b0: i64, b1: i64, b2: i64, b3: i64, b4: i64, b5: i64, b6: i64, len: i64) -> i64 {
+    let buf: i64 = make_byte_buf_7(b0, b1, b2, b3, b4, b5, b6);
+    tc_is_reserved_intrinsic_name(buf, 0, len)
 }
 
 // ===== Name hashing (DJB2) =====

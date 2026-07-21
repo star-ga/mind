@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CPU-as-oracle smoke for the pure-MIND E2005/E2101/E2102/E2103 shape rules (E2023 deferred — blocked native-emitter/arena work).
+"""CPU-as-oracle smoke for the pure-MIND E2005/E2101/E2102/E2103 shape rules + E2023 reserved-prefix rule.
 
 Builds main.mind -> .so via `mindc --emit-shared`, ctypes-calls the additive
 selftest exports, and asserts each verdict byte-for-byte equals the Rust
@@ -30,8 +30,18 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAIN_MIND = os.path.join(HERE, "main.mind")
 
-# E2023 selector -> fn name (exactly the names the .mind byte tables encode)
-RP_NAME = {0: "__mind_alloc", 1: "main", 2: "__mind_", 3: "__min", 4: "__mindx"}
+# E2023 test names: 2 reserved (positive) + 6 not (negative controls). Covers
+# the exact-prefix hit, a longer name that still starts with it, a 6-byte near
+# miss (too short for the 7-byte prefix), a 7th-byte mismatch, a shifted prefix,
+# and plain names. Encoded to (first 7 bytes, true length) for the .mind export.
+RP_NAMES = ["__mind_", "__mind_alloc", "__mind", "__mindx", "foobar_", "x__mind", "main", "__min"]
+
+
+def name_to_args(name):
+    """Encode a fn name as (b0..b6, len): first 7 bytes zero-padded + true length.
+    Only the first 7 bytes matter to starts_with; len<7 can never match."""
+    b = [ord(c) for c in name[:7]] + [0] * 7
+    return tuple(b[:7]) + (len(name),)
 
 
 def rust_e2005(expected, got):
@@ -153,6 +163,28 @@ def main():
             print(f"FAIL: {label} vacuous (no negative control)")
             sys.exit(1)
         grand_fails += fails
+
+    # E2023: name.starts_with("__mind_"). fn takes (b0..b6, len); the oracle
+    # takes the name string, so it doesn't fit the uniform tuple loop above.
+    rp_fn = export("selftest_tc_reserved_name", 8)
+    rp_total = rp_pos = rp_fails = 0
+    for nm in RP_NAMES:
+        got = rp_fn(*name_to_args(nm))
+        exp = rust_e2023(nm)
+        rp_total += 1
+        if exp != 0:
+            rp_pos += 1
+        if got != exp:
+            rp_fails += 1
+        print(f"  {'ok ' if got == exp else 'DIFF'} E2023 {nm!r} got={got} exp={exp}")
+    print(f"E2023: names={rp_total} positives={rp_pos} fails={rp_fails}")
+    if rp_pos < 1:
+        print("FAIL: E2023 vacuous (no reserved name)")
+        sys.exit(1)
+    if rp_total - rp_pos < 1:
+        print("FAIL: E2023 vacuous (no negative control)")
+        sys.exit(1)
+    grand_fails += rp_fails
 
     if grand_fails:
         print("FAIL: pure-MIND arity/shape/prefix rules diverge from Rust oracle")
