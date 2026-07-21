@@ -20382,6 +20382,17 @@ pub fn nb_emit_argc(code: String, dst_disp: i64) -> String {
 //   movabs rax,ARENA_ADDR+16 = 48 B8 <imm64> ; mov rax,[rax] = 48 8B 00 ;
 //   mov rcx,[rbp+idx] = 48 8B 8D <disp32> ; mov rax,[rax+rcx*8] = 48 8B 04 C8 ;
 //   store rax -> dst.
+//
+// Contract: NO bounds check against argc, same as every other raw __mind_*
+// intrinsic (__mind_load_i8 et al.) — the caller must ensure `i < argc` before
+// calling. `i == argc` reads the SysV NULL argv terminator; `i > argc` walks
+// into envp/auxv, reading whatever pointer is stored there. The only
+// production call site, cli.mind's args_from_os_rec, already guards `i < argc`
+// before every call; a direct caller that skips that guard gets undefined
+// (but not memory-unsafe to EMIT — the read itself never faults, only a
+// dereference of a returned envp/auxv value as if it were a C string could)
+// behavior. Bounds-checking here would depart from the raw-intrinsic contract
+// every sibling __mind_* emitter shares — this documents it instead.
 pub fn nb_emit_argv(code: String, idx_disp: i64, dst_disp: i64) -> String {
     let c1: String = nb_push(code, 72);
     let c2: String = nb_push(c1, 184);
