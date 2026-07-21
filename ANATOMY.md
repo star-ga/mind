@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3150 | **Est. tokens:** ~7,530,499
-**Generated:** 2026-07-21 00:27 UTC
+**Files:** 3150 | **Est. tokens:** ~7,532,318
+**Generated:** 2026-07-21 01:19 UTC
 
 ## Token Budget Guide
 
@@ -47,7 +47,7 @@
 | `docs/mindcraft/` | 3 | ~7,023 |
 | `docs/rfcs/` | 31 | ~142,429 |
 | `docs/specs/` | 2 | ~976 |
-| `examples/` | 29 | ~55,048 |
+| `examples/` | 29 | ~56,867 |
 | `examples/bimap_currency/` | 3 | ~780 |
 | `examples/bimap_pairs/` | 2 | ~801 |
 | `examples/c/` | 2 | ~400 |
@@ -821,7 +821,7 @@
 - `Mind.toml` (~59 tok, small) — [package]
 ### `examples/`
 
-- `halbach_q16.mind` (~2146 tok, huge) — Deterministic Q16.16 2D Halbach-vs-uniform magnet-array field model.
+- `halbach_q16.mind` (~3965 tok, huge) — Deterministic Q16.16 2D Halbach-vs-uniform magnet-array field model.
 - `hello_stdlib.mind` (~271 tok, medium) — Hello, std.vec — minimal RFC 0005 cookbook example.
 - `hello_tensor.mind` (~141 tok, small) — Hello, MIND — scalar smoke that flows through every stage of the
 ### `examples/lexer/`

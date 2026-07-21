@@ -1,0 +1,377 @@
+// Deterministic Q16.16 2D Halbach-vs-uniform magnet-array field model.
+//
+// Pure executable-subset MIND: heap store via the i64 ABI intrinsic, integer
+// multiply, arithmetic shift for the Q16.16 scale, truncating i64 division,
+// and `while` loops. NO float, NO builtins that lack codegen — every product
+// is an i64 multiply followed by exactly one truncating `>> 16` (and every
+// quotient one `(a << 16) / b`), in fixed source order. That is what makes
+// the field sums BIT-IDENTICAL across substrates.
+//
+// PHYSICS — WHAT THE MODEL IS. A Halbach array cross-section is a 2D
+// magnetostatics problem (magnets long in z), so each magnetised element is a
+// 2D LINE dipole, kernel B = [2(m.rhat)rhat - m] / r^2 — NOT the 3D point
+// dipole [3(m.rhat)rhat - m] / r^3. Using the 3D kernel in this geometry
+// provably breaks the decay law (drifting k instead of k = 2*pi/lambda).
+// Each block: 15/16 x 15/16 (exact in Q16.16) on a unit-pitch row, split into
+// 8x8 sub-line-dipoles with unit moments. Magnetisation patterns (mode arg):
+//   1 = Halbach (strong face +y):
+//       m_i = (0,1), (-1,0), (0,-1), (1,0), ...  (90-degree rotation per block)
+//   0 = uniform: m_i = (0,1) for every block.
+//   2 = UUDD comparison array: m_i = (0,1), (0,1), (0,-1), (0,-1), ... — the
+//       classic up-up-down-down array a Halbach array is measured against
+//       (same lambda = 4*pitch, zero net moment per period).
+// lambda = 4*pitch.
+//
+// VALIDATED against analytic theory by the float + integer reference
+// (/tmp/halbach_correct.py, all criteria fixed up front — 21/21 PASS):
+//   - decay (DFT fundamental of By+i*Bx — the m=1 mode, halbach_dft1_q16):
+//     k within 0.06% of 2*pi/lambda = pi/2 over y = 0.75..3.0, n = 64
+//     (float 32-sample DFT: k in [1.5700, 1.5708], max err 0.050%; Q16.16
+//     16-sample DFT: k in [1.5699, 1.5708], max err 0.059%);
+//   - decay (point |B|, local log-slope): within 3.3% only — point |B| mixes
+//     spatial harmonics m = 1,5,9,..., so its local slope reads high near the
+//     array; the DFT figure above is the physical decay constant;
+//   - Halbach/UUDD fundamental ratio: 1.4140..1.4142 vs sqrt(2) = 1.4142
+//     (max err 0.013%, float AND Q16.16, n = 64, y = 0.625..2.0), no
+//     inversion; at n = 16 finite-array edge leakage drifts it
+//     1.4128 -> 1.4058 (still > 1 everywhere) — the sqrt(2) claim is made
+//     at n = 64;
+//   - front/back asymmetry 10.55x at y = 1.0 (65x at y = 1.5), n = 16;
+//   - Halbach/uniform point-|B| ratio 16.2 -> 1.78 over y = 0.625..2.0 at
+//     n = 16, no inversion there — SEGMENT-COUNT-DEPENDENT, see caveat;
+//   - discretisation converged (8x8 vs 12x12 sub-dipoles: <0.01%);
+//   - pitch-scale invariant (k*pitch constant, ratio identical under x2).
+//
+// ============================ HONEST CAVEAT ============================
+// THIS IS AN IDEALISED SCALING MODEL, NOT A DESIGN TOOL.
+//   - 2D only: infinitely long magnets in z; no end effects in z.
+//   - Linear magnetostatics in air: rigid magnetisation, mu_r = 1 exactly.
+//     No demagnetisation, permeability, saturation, hysteresis, temperature.
+//   - Each block is a lattice of ideal line dipoles (8x8), not a solved
+//     boundary-value problem; fields INSIDE or within ~a sub-cell of a block
+//     surface are not meaningful. Keep observation points >= ~0.25 pitch
+//     above the block face (the validated range starts at y = 0.625 from the
+//     row axis; block face is at 0.469).
+//   - Unit-moment normalisation: absolute outputs are NOT tesla. Only ratios
+//     (Halbach/uniform, front/back) and the decay constant are physical.
+//   - Finite-n edge effects are real and included: a finite uniform array
+//     keeps an algebraic ~1/n edge field, so far enough out it overtakes the
+//     exponentially decaying Halbach field and the Halbach/uniform point-|B|
+//     ratio INVERTS (drops below 1). The crossover gap is SEGMENT-COUNT-
+//     DEPENDENT — measured (first gap with ratio < 1, 0.05 steps):
+//       n=8 -> y~2.0   n=16 -> y~2.4   n=32 -> y~2.8   n=64 -> y~3.2
+//     and for n = 7/8/9 the minimum ratio INSIDE y = 0.625..2.0 is already
+//     0.993 / 0.954 / 0.994 — i.e. small n invert inside the validated gap
+//     range. The stated no-inversion guarantee therefore holds for n >= 16
+//     over y = 0.625..2.0 ONLY; use n >= 16 when relying on it. The ABI
+//     still accepts small n — the FIELD values stay correct; it is the
+//     ratio guarantee that needs n >= 16. (The Halbach/UUDD FUNDAMENTAL
+//     ratio from halbach_dft1_q16 does not invert even at n = 16; inversion
+//     is a property of the uniform-array point-|B| comparison.) The
+//     crossover receding with n (ratio at y = 2.5: 0.81 -> 1.58 -> 3.12 for
+//     n = 16/32/64) is end-effect physics, not a defect. Anyone sizing real
+//     hardware needs FEA, not this file.
+// The determinism is a property of the COMPUTATION, not evidence that the
+// PHYSICS captures more than stated above. Those are separate claims.
+// =======================================================================
+//
+// Q16.16 conventions (scale = 65536):
+//   qmul(a,b) = (a*b) >> 16      qdiv(a,b) = (a << 16) / b   (truncating)
+//   Geometry constants are binary-exact: pitch = 65536, block = 15/16 pitch,
+//   sub-dipole x/y offsets = 3840*(2t-7) raw for t = 0..7, sample-point x
+//   offsets = {-16384, -8192, 0, 8192, 16384} (+/-1/4, +/-1/8 pitch).
+//
+// OUTPUT SCALE: halbach_field_q16 returns the SUM over the 5 sample points of
+// |B|, with unit sub-dipole moments (so each block carries total moment 64).
+// That is 5*64 = 320x the per-block-unit-moment mean field. halbach_dft1_q16
+// returns the m=1 fundamental amplitude in per-sample raw units (the 16-sample
+// accumulator is divided by 16 via >>4 BEFORE the magnitude, so it shares the
+// per-sample 64x-block-moment scale). Ratios, front/back asymmetry and decay
+// constants are unaffected by the fixed scales.
+//
+// RANGE: with n <= 64 and unit pitch, |dx|,|dy| <= ~64 (raw <= ~4.2e6). The
+// largest intermediates are dx*dx (~1.8e13), (2*m.d) << 16 (~5.5e14) and
+// c*dx (~1.6e15) — all >= 5.7e3x under i64 max (~9.2e18). Per-sample field
+// components stay < ~2^24 raw, so bx*bx + by*by < ~2^49 fits isqrt64. In the
+// DFT path each product (component * trig) <= 2^24 * 2^16 >> 16 = 2^24, the
+// 32 accumulated terms bound |re|,|im| < 2^29 pre-shift and < 2^25 after the
+// >>4, so re*re + im*im < 2^51 also fits isqrt64. No overflow for the shipped
+// parameter envelope (n <= 64, |y| <= 3 pitch).
+//
+// ABI:
+//   halbach_field_q16(n, halbach, y_q16) -> i64
+//     n blocks; halbach = 1 (Halbach pattern), 0 (uniform +y), or 2 (UUDD);
+//     y_q16 = observation height above the row axis, Q16.16, negative = back
+//     face. Returns the 5-sample |B| sum, Q16.16, scale as above.
+//   halbach_sweep_q16(out, n, halbach, y0_q16, dy_q16, count) -> i64
+//     Stores halbach_field_q16(n, halbach, y0 + k*dy) into out[k] (i64 cells,
+//     8 bytes) for k = 0..count-1 via __mind_store_i64; returns the last
+//     value. One call produces a whole decay profile.
+//   halbach_dft1_q16(n, mode, y_q16) -> i64
+//     |first DFT harmonic| of the complex field (By + i*Bx) sampled at 16
+//     points across one wavelength (spacing pitch/4 = 16384 raw, exact),
+//     window centred on the array. mode as halbach above. By + i*Bx is
+//     analytic in x + i*y for sources below the line, so its spectrum is
+//     one-sided and the first alias is m = 17 (e^{-16ky}, negligible); a
+//     16-point DFT was chosen because 8 points leak the m = 9 alias
+//     (+0.51% on k at y = 0.75, measured). This is the measurement behind
+//     the 0.06% decay-constant and sqrt(2) UUDD-ratio claims above.
+
+// floor(sqrt(v)) for v >= 0 by the classic bit method: exact, deterministic,
+// no float. sqrt of a Q32.32 value yields Q16.16.
+fn isqrt64(v: i64) -> i64 {
+    if v <= 0 {
+        return 0;
+    }
+    let mut res: i64 = 0;
+    let mut rem: i64 = v;
+    // Highest power of 4 <= v (start one bit below the sign bit).
+    let mut bit: i64 = 4611686018427387904;
+    while bit > rem {
+        bit = bit >> 2;
+    }
+    while bit != 0 {
+        if rem >= res + bit {
+            rem = rem - (res + bit);
+            res = (res >> 1) + bit;
+        } else {
+            res = res >> 1;
+        }
+        bit = bit >> 2;
+    }
+    res
+}
+
+pub fn halbach_field_q16(n: i64, halbach: i64, y_q16: i64) -> i64 {
+    // Array centre x in Q16.16: (n-1)/2 * pitch — exact (65536 is even).
+    let cxq: i64 = ((n - 1) * 65536) / 2;
+
+    let mut total: i64 = 0;
+    let mut s: i64 = 0;
+    // 5 sample x-offsets: (s-2) * 8192 = -16384..16384 raw.
+    while s < 5 {
+        let sxq: i64 = cxq + (s - 2) * 8192;
+        let mut bxq: i64 = 0;
+        let mut byq: i64 = 0;
+
+        let mut i: i64 = 0;
+        while i < n {
+            // Block magnetisation (integer components, unit magnitude).
+            let mut ex: i64 = 0;
+            let mut ey: i64 = 1;
+            if halbach == 1 {
+                // phase = i mod 4 without `%`: i - (i/4)*4.
+                let p: i64 = i - (i / 4) * 4;
+                if p == 1 {
+                    ex = 0 - 1;
+                    ey = 0;
+                } else {
+                    if p == 2 {
+                        ex = 0;
+                        ey = 0 - 1;
+                    } else {
+                        if p == 3 {
+                            ex = 1;
+                            ey = 0;
+                        }
+                    }
+                }
+            }
+            if halbach == 2 {
+                // UUDD: up, up, down, down per 4-block period.
+                let p2: i64 = i - (i / 4) * 4;
+                if p2 >= 2 {
+                    ey = 0 - 1;
+                }
+            }
+
+            let bx0: i64 = i * 65536;
+            // 8x8 sub-dipoles; offsets 3840*(2t-7) raw = 15*(2t-7)/256 pitch.
+            let mut a: i64 = 0;
+            while a < 8 {
+                let dxq: i64 = sxq - (bx0 + 3840 * (2 * a - 7));
+                let mut b: i64 = 0;
+                while b < 8 {
+                    let dyq: i64 = y_q16 - 3840 * (2 * b - 7);
+                    // r^2 in Q16.16 (dx*dx is Q32.32; one >>16 rescales).
+                    let r2q: i64 = (dxq * dxq + dyq * dyq) >> 16;
+                    if r2q > 0 {
+                        // 2D line-dipole kernel, staged to stay in range:
+                        //   c  = 2 (m.d) / r^2                    (Q16.16)
+                        //   B += (c*d - m) / r^2   componentwise  (Q16.16)
+                        let mdq: i64 = ex * dxq + ey * dyq;
+                        let cq: i64 = ((2 * mdq) << 16) / r2q;
+                        let nx: i64 = ((cq * dxq) >> 16) - (ex << 16);
+                        let ny: i64 = ((cq * dyq) >> 16) - (ey << 16);
+                        bxq = bxq + (nx << 16) / r2q;
+                        byq = byq + (ny << 16) / r2q;
+                    }
+                    b = b + 1;
+                }
+                a = a + 1;
+            }
+            i = i + 1;
+        }
+
+        // |B| for this sample: bx,by are Q16.16, squares sum to Q32.32,
+        // isqrt64 returns Q16.16.
+        total = total + isqrt64(bxq * bxq + byq * byq);
+        s = s + 1;
+    }
+    total
+}
+
+// |first DFT harmonic| of the complex field (By + i*Bx) over one wavelength:
+// 16 samples at spacing pitch/4 (16384 raw, exact), window centred on the
+// array (|c1| is invariant under window translation, so centring only buys
+// edge distance). The inner per-sample field loop is the exact kernel of
+// halbach_field_q16; the DFT weights are round(cos/sin(pi*j/8) * 65536),
+// identical to the Python emulation table. Every product is one i64 multiply
+// + one truncating `>> 16`; the `>> 4` divides out the 16 samples BEFORE
+// squaring so the isqrt64 argument keeps the |B|-path headroom (see RANGE).
+pub fn halbach_dft1_q16(n: i64, mode: i64, y_q16: i64) -> i64 {
+    let cxq: i64 = ((n - 1) * 65536) / 2;
+    let mut re: i64 = 0;
+    let mut im: i64 = 0;
+    let mut j: i64 = 0;
+    while j < 16 {
+        let sxq: i64 = cxq - 131072 + 16384 * j;
+        let mut bxq: i64 = 0;
+        let mut byq: i64 = 0;
+
+        let mut i: i64 = 0;
+        while i < n {
+            // Block magnetisation — same selector as halbach_field_q16.
+            let mut ex: i64 = 0;
+            let mut ey: i64 = 1;
+            if mode == 1 {
+                let p: i64 = i - (i / 4) * 4;
+                if p == 1 {
+                    ex = 0 - 1;
+                    ey = 0;
+                } else {
+                    if p == 2 {
+                        ex = 0;
+                        ey = 0 - 1;
+                    } else {
+                        if p == 3 {
+                            ex = 1;
+                            ey = 0;
+                        }
+                    }
+                }
+            }
+            if mode == 2 {
+                let p2: i64 = i - (i / 4) * 4;
+                if p2 >= 2 {
+                    ey = 0 - 1;
+                }
+            }
+
+            let bx0: i64 = i * 65536;
+            let mut a: i64 = 0;
+            while a < 8 {
+                let dxq: i64 = sxq - (bx0 + 3840 * (2 * a - 7));
+                let mut b: i64 = 0;
+                while b < 8 {
+                    let dyq: i64 = y_q16 - 3840 * (2 * b - 7);
+                    let r2q: i64 = (dxq * dxq + dyq * dyq) >> 16;
+                    if r2q > 0 {
+                        let mdq: i64 = ex * dxq + ey * dyq;
+                        let cq: i64 = ((2 * mdq) << 16) / r2q;
+                        let nx: i64 = ((cq * dxq) >> 16) - (ex << 16);
+                        let ny: i64 = ((cq * dyq) >> 16) - (ey << 16);
+                        bxq = bxq + (nx << 16) / r2q;
+                        byq = byq + (ny << 16) / r2q;
+                    }
+                    b = b + 1;
+                }
+                a = a + 1;
+            }
+            i = i + 1;
+        }
+
+        // e^(-2*pi*i*j/16) weight, Q16.16 = round(cos/sin(pi*j/8)*65536).
+        let mut c: i64 = 65536;
+        let mut sn: i64 = 0;
+        if j == 1 {
+            c = 60547;
+            sn = 25080;
+        }
+        if j == 2 {
+            c = 46341;
+            sn = 46341;
+        }
+        if j == 3 {
+            c = 25080;
+            sn = 60547;
+        }
+        if j == 4 {
+            c = 0;
+            sn = 65536;
+        }
+        if j == 5 {
+            c = 0 - 25080;
+            sn = 60547;
+        }
+        if j == 6 {
+            c = 0 - 46341;
+            sn = 46341;
+        }
+        if j == 7 {
+            c = 0 - 60547;
+            sn = 25080;
+        }
+        if j == 8 {
+            c = 0 - 65536;
+            sn = 0;
+        }
+        if j == 9 {
+            c = 0 - 60547;
+            sn = 0 - 25080;
+        }
+        if j == 10 {
+            c = 0 - 46341;
+            sn = 0 - 46341;
+        }
+        if j == 11 {
+            c = 0 - 25080;
+            sn = 0 - 60547;
+        }
+        if j == 12 {
+            c = 0;
+            sn = 0 - 65536;
+        }
+        if j == 13 {
+            c = 25080;
+            sn = 0 - 60547;
+        }
+        if j == 14 {
+            c = 46341;
+            sn = 0 - 46341;
+        }
+        if j == 15 {
+            c = 60547;
+            sn = 0 - 25080;
+        }
+
+        re = re + ((byq * c) >> 16) + ((bxq * sn) >> 16);
+        im = im + ((bxq * c) >> 16) - ((byq * sn) >> 16);
+        j = j + 1;
+    }
+    re = re >> 4;
+    im = im >> 4;
+    isqrt64(re * re + im * im)
+}
+
+pub fn halbach_sweep_q16(out: i64, n: i64, halbach: i64, y0_q16: i64, dy_q16: i64, count: i64) -> i64 {
+    let mut last: i64 = 0;
+    let mut k: i64 = 0;
+    while k < count {
+        let v: i64 = halbach_field_q16(n, halbach, y0_q16 + k * dy_q16);
+        __mind_store_i64(out + k * 8, v);
+        last = v;
+        k = k + 1;
+    }
+    last
+}
