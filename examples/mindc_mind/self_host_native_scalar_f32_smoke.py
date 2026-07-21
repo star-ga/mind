@@ -30,7 +30,9 @@ import sys
 import tempfile
 
 _HERE = pathlib.Path(__file__).parent
-_DEFAULT_SO = _HERE / "libmindc_mind.so"
+_DEFAULT_SO = _HERE / "libmindc_mind.so"  # legacy in-tree path (fallback only)
+sys.path.insert(0, str(_HERE))
+from _selfhost_so import resolve_so  # noqa: E402
 
 # Single-precision inputs (mirror the f64 rung's SCALAR_F64_INPUTS).
 INPUTS = (1.5, 2.25, 0.5, 3.125)
@@ -76,7 +78,7 @@ def run_elf_capture(elf: bytes, tmp: pathlib.Path) -> bytes:
 
 
 def main() -> int:
-    so = os.environ.get("MINDC_SO", str(_DEFAULT_SO))
+    so = str(resolve_so())  # MINDC_SO verbatim, else fresh build (never stale)
     if not os.path.exists(so):
         if os.environ.get("MINDC_SO"):
             print(f"FAIL  MINDC_SO set but missing: {so!r}")
