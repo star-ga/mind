@@ -110,6 +110,11 @@ Native-ELF covers only scalar i64/ptr/struct/control-flow. To drop the 12,753-LO
 - [ ] **C7** GPU codegen (CUDA/ROCm/Metal) — *commercial mind-runtime territory, hardest*
 - [ ] **C8** Linker + fuller syscall surface (open/close/mmap) for general/multi-object programs
 
+### Open follow-ups (2026-07-21, from the width-driver `ae3bfdf` audit)
+- [ ] **Latent narrow-only count/emit asymmetry** (Fable-flagged, currently UNREACHABLE — fails-closed today, zero i64 impact): `nb_count_bind_merged` (main.mind ~23071) hardcodes width **64** for if-merged rebinds, while emit-side `nb_rebind_merges` inherits the true declared width. A narrow var assigned in an `if` branch then reassigned later would count +0 but emit +1 → frame undercount by one slot. The if-statement-with-assign-branches shape fails closed in `selftest_native_elf` on both this commit and its parent, so it's not emittable yet. FIX before that shape becomes emittable: inherit width via a clets lookup in `nb_count_bind_merged`. (While-carry is already safe.)
+- [ ] **Narrow-int params + return types don't auto-wrap yet** — the `ae3bfdf` width-driver covers `let` + assign bindings only; params/returns default to width 64. Add explicit `// deferred:` markers at `nb_lets_lookup_width` and the param/return sites when extending.
+- [ ] **Top-level straight-line assign fails-closed even for i64** — `let w: i64 = 100; w = w + 100;` (no loop) returns empty EmitState in the no-feed `selftest_native_elf` path; pre-existing, not width-driver-specific. See [[reference_native_elf_toplevel_assign_gap_2026_07_21]]. Fix in the nb assign-statement lowering.
+
 ### Open follow-ups (2026-07-21, from the `1372c4c` audit)
 - [ ] Wire the new native-ELF smokes (`self_host_native_narrowint_smoke.py`, `self_host_native_scalar_f32_smoke.py`,
   `self_host_tc_narrowing_smoke.py`, `div_shift_cmp_edge_smoke.py`) into `fast_keystone.sh` / CI — today they only
