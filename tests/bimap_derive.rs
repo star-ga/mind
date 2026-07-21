@@ -222,7 +222,6 @@ fn e2021_same_snake_base_second_enum_rejected() {
 fn from_str_mode(m: &Module, fn_name: &str) -> Option<String> {
     m.items.iter().find_map(|it| match it {
         Node::FnDef(fd, _) if fd.name == fn_name => {
-            let name = &fd.name;
             let attrs = &fd.attrs;
             attrs.first().and_then(|a| a.args.get(1).cloned())
         }
