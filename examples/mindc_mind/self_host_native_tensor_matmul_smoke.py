@@ -123,8 +123,17 @@ def main() -> int:
             )
 
         # Shape guard: out-of-frame and degenerate shapes must FAIL CLOSED
-        # (empty buffer) — the T1/T2 frame-overrun audit hazard.
-        for (m, k, n) in [(65, 64, 1), (1, 1, 4097), (0, 1, 1), (1, -3, 1)]:
+        # (empty buffer) — the T1/T2 frame-overrun audit hazard. The last two
+        # are i64-overflow shapes: every product wraps to 0 (mod 2^64), so the
+        # `m*k/k*n/m*n > 4096` product checks alone would pass them through — the
+        # per-dim `> 4096` bound (applied before the products) is what refuses
+        # them. Without that bound the emitted seed/MAC loops march off the
+        # frame (SIGSEGV). 2^32=4294967296, 2^33=8589934592.
+        for (m, k, n) in [
+            (65, 64, 1), (1, 1, 4097), (0, 1, 1), (1, -3, 1),
+            (4294967296, 4294967296, 4294967296),
+            (8589934592, 8589934592, 8589934592),
+        ]:
             elf = mind_matmul_elf(lib, m, k, n)
             ok = len(elf) == 0
             all_ok = all_ok and ok

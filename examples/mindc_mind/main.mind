@@ -32478,7 +32478,9 @@ pub fn nb_tmm_empty() -> EmitState {
 
 // The C4-T3 driver. m/k/n are baked at emit time; FAILS CLOSED (empty buf) on
 // any shape whose A (m*k), B (k*n) or C (m*n) would overrun its 4096-element
-// frame array — the emitted code can never index past a buffer.
+// frame array. Each dim is bounded <= 4096 BEFORE the products are formed, so
+// the products cannot i64-overflow-wrap past the `> 4096` checks — the emitted
+// code can never index past a buffer, for any (m,k,n) including 2^32-class dims.
 pub fn selftest_native_elf_tensor_matmul_i64(m: i64, k: i64, n: i64) -> EmitState {
     if m < 1 {
         return nb_tmm_empty();
@@ -32487,6 +32489,22 @@ pub fn selftest_native_elf_tensor_matmul_i64(m: i64, k: i64, n: i64) -> EmitStat
         return nb_tmm_empty();
     }
     if n < 1 {
+        return nb_tmm_empty();
+    }
+    // Bound each dim <= 4096 BEFORE forming products, so m*k / k*n / m*n cannot
+    // exceed 4096*4096 (16.7M) and can never wrap the i64 product past the
+    // `> 4096` checks below. Without this, a shape like (2^32,2^32,2^32) wraps
+    // every product to 0 mod 2^64, slips the product guards, and the emitted
+    // seed/MAC loops march off the frame. Any valid shape already needs each
+    // dim <= 4096 (a single row/col fills a 4096-element array), so this only
+    // rejects shapes that were already out of range.
+    if m > 4096 {
+        return nb_tmm_empty();
+    }
+    if k > 4096 {
+        return nb_tmm_empty();
+    }
+    if n > 4096 {
         return nb_tmm_empty();
     }
     let mk: i64 = m * k;
