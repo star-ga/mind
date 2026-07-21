@@ -21941,6 +21941,48 @@ pub fn nb_wrap_rax_w(code: String, w: i64) -> String {
     nb_movsxd_rax_eax(code)
 }
 
+// C2 param/return width driver: wrap rax at the fn's DECLARED return width just
+// before the epilogue load's ret. FAIL-SAFE gating: only an EXACT narrow spelling
+// (8/16/32) wraps — 64, or any other value (e.g. an uninitialized side-channel
+// word on a hand-rolled driver path), is full-width and emits NOTHING. That
+// no-emit default is what keeps every i64/float/unit-returning fn (all of
+// main.mind) byte-identical.
+pub fn nb_wrap_ret_w(code: String, retw: i64) -> String {
+    if retw == 8 {
+        return nb_movsx_rax_al(code);
+    }
+    if retw == 16 {
+        return nb_movsx_rax_ax(code);
+    }
+    if retw == 32 {
+        return nb_movsxd_rax_eax(code);
+    }
+    code
+}
+
+// C2 param-width driver: after the SysV spill (nb_emit_params), wrap each
+// narrow-declared (i8/i16/i32) param IN PLACE in its home slot i — load rax,
+// movsx/movsxd, store back. Slot i is the param's exclusive home at entry
+// (register AND stack-passed params are both copied there by nb_emit_params;
+// nothing aliases it yet), so the in-place wrap is safe and consumes NO SSA id —
+// the frame count is unchanged, so no count-side mirror is needed. A width-64
+// param (every param in main.mind's own source: i64/String/struct/float) emits
+// NOTHING — the self-compile stays byte-for-byte identical.
+pub fn nb_wrap_params_w(code: String, buf: i64, params_addr: i64, n_params: i64, i: i64) -> String {
+    if i >= n_params {
+        return code;
+    }
+    let pnode: i64 = __mind_load_i64(params_addr + i * 8);
+    let w: i64 = nb_width_of_ann(buf, ast_child1(pnode));
+    if w < 64 {
+        let c1: String = nb_load_rax(code, nb_slot_disp(i));
+        let c2: String = nb_wrap_rax_w(c1, w);
+        let c3: String = nb_store_rax(c2, nb_slot_disp(i));
+        return nb_wrap_params_w(c3, buf, params_addr, n_params, i + 1);
+    }
+    nb_wrap_params_w(code, buf, params_addr, n_params, i + 1)
+}
+
 // The declared index of the field named buf[flo..fhi) among a struct-literal's
 // fields (3-i64 triples at fields_addr: name_lo, name_hi, value-node), in SOURCE
 // order — which for the supported fixtures equals declaration order, so the
@@ -23062,14 +23104,22 @@ pub fn nb_merged_names(buf: i64, then_sa: i64, then_sl: i64, else_sa: i64, else_
 // outer env + branch_bindings: each merged name becomes visible (slot 0 / desc 0 —
 // only its PRESENCE matters for an enclosing merge's `in_outer` prefix test; the
 // dst-id count is independent of the bound slot/descriptor).
-pub fn nb_count_bind_merged(clets: i64, clcell: i64, names: i64, n: i64, i: i64) -> i64 {
+// C2 declared-width driver: the rebind INHERITS the merged name's true declared
+// width via the count-lets lookup — the exact mirror of the emit side
+// (nb_rebind_merges), which runs its lookup after the same pre-if env restore.
+// Hardcoding 64 here was a latent count/emit asymmetry: a narrow var rebound by
+// an if-merge then reassigned would count +0 (width 64) but emit +1 (inherited
+// narrow width) — a one-slot frame undercount. Every i64 name looks up 64, so
+// the count-side ids are unchanged for all-i64 modules — byte-identical.
+pub fn nb_count_bind_merged(clets: i64, clcell: i64, names: i64, n: i64, i: i64, buf: i64) -> i64 {
     if i >= n {
         return 0;
     }
     let lo: i64 = __mind_load_i64(names + (i * 2 + 0) * 8);
     let hi: i64 = __mind_load_i64(names + (i * 2 + 1) * 8);
-    let _b: i64 = nb_lets_bind(clets, clcell, lo, hi, 0, 0, 64);
-    nb_count_bind_merged(clets, clcell, names, n, i + 1)
+    let mw: i64 = nb_lets_lookup_width(clets, clcell, buf, lo, hi);
+    let _b: i64 = nb_lets_bind(clets, clcell, lo, hi, 0, 0, mw);
+    nb_count_bind_merged(clets, clcell, names, n, i + 1, buf)
 }
 
 // Does a branch block DEFINE (let/assign/while-carry) the name at [lo,hi)?
@@ -23288,7 +23338,10 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
             } else {
                 nb_load_rax(sv.code, nb_slot_disp(sv.last_id))
             };
-            let cv2: String = nb_emit_return(cv, is_entry);
+            // C2 return-width driver: wrap at the enclosing fn's declared return
+            // width (lcell+72; 64 = no-op for every main.mind fn -> byte-identical).
+            let cvw: String = nb_wrap_ret_w(cv, __mind_load_i64(lcell + 72));
+            let cv2: String = nb_emit_return(cvw, is_entry);
             return NbState { code: cv2, next_id: sv.next_id, last_id: sv.last_id, ncalls: sv.ncalls };
         }
         let s1: NbState = nb_expr(st, buf, ret_operand, params_addr, n_params, calls, lets, lcell);
@@ -23305,7 +23358,13 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         } else {
             nb_load_rax(s1.code, nb_slot_disp(s1.last_id))
         };
-        let c2: String = nb_emit_return(c1, is_entry);
+        // C2 return-width driver: an explicit `return E` in a narrow-int-returning
+        // fn (`-> i8/i16/i32 {`) wraps rax at the declared width from lcell+72
+        // (stashed by nb_lower_fn). A narrow width only comes from an int
+        // spelling, so it never coexists with the float branch above. 64 for every
+        // main.mind fn -> nb_wrap_ret_w emits nothing, byte-identical.
+        let c1w: String = nb_wrap_ret_w(c1, __mind_load_i64(lcell + 72));
+        let c2: String = nb_emit_return(c1w, is_entry);
         return NbState { code: c2, next_id: s1.next_id, last_id: s1.last_id, ncalls: s1.ncalls };
     }
     if k == ast_let() {
@@ -24533,7 +24592,7 @@ pub fn nb_count_stmt(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         __mind_store_i64(clcell, outer_n);
         let cmn: i64 = __mind_alloc(256 * 2 * 8);
         let ncmn: i64 = nb_merged_names(buf, then_sa, then_sl, else_sa, else_sl, cmn);
-        let _rb: i64 = nb_count_bind_merged(clets, clcell, cmn, ncmn, 0);
+        let _rb: i64 = nb_count_bind_merged(clets, clcell, cmn, ncmn, 0, buf);
         return after_else + merge_ids + 1;
     }
     if k == ast_while() {
@@ -24946,7 +25005,7 @@ pub fn nb_round16(x: i64) -> i64 {
 // IS the FnDef's ret_id: emit `mov rax,[ret_id]` then the epilogue. A tail-return
 // helper (each arm `return`s the NbState directly) so it stays in the self-host
 // mic@3 subset — NOT a struct-typed value-if (which mis-lowers).
-pub fn nb_finish_body(st0: NbState, is_entry: i64, stmts_addr: i64, stmts_len: i64, ret_dt: i64) -> NbState {
+pub fn nb_finish_body(st0: NbState, is_entry: i64, stmts_addr: i64, stmts_len: i64, ret_dt: i64, retw: i64) -> NbState {
     if nb_last_emits_return(stmts_addr, stmts_len) == 1 {
         return st0;
     }
@@ -24964,7 +25023,13 @@ pub fn nb_finish_body(st0: NbState, is_entry: i64, stmts_addr: i64, stmts_len: i
     } else {
         nb_load_rax(st0.code, nb_slot_disp(st0.last_id))
     };
-    let r2: String = nb_emit_return(r1, is_entry);
+    // C2 param/return width driver: a narrow-int-returning fn (`-> i8/i16/i32 {`)
+    // wraps its implicit tail-return value in rax at the declared width. A narrow
+    // width only ever comes from an int spelling, so it never coexists with the
+    // float (xmm0) branch above — wrapping rax unconditionally is safe. retw is 64
+    // for every main.mind fn -> nb_wrap_ret_w emits nothing, byte-identical.
+    let r1w: String = nb_wrap_ret_w(r1, retw);
+    let r2: String = nb_emit_return(r1w, is_entry);
     NbState { code: r2, next_id: st0.next_id, last_id: st0.last_id, ncalls: st0.ncalls }
 }
 
@@ -25031,7 +25096,15 @@ pub fn nb_register_struct_params(srt: i64, src: i64, params_addr: i64, n_params:
     } else {
         nb_struct_decl_descriptor(srt, src, sk)
     };
-    let _b: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), i, desc, 64);
+    // C2 param-width driver: record the param's DECLARED width (8/16/32 for an
+    // i8/i16/i32 annotation, else 64) in the let-env, so the assign arm's width
+    // lookup re-wraps a narrow param exactly like a narrow let. This runs on BOTH
+    // the count-lets and the emit-lets (the two nb_lower_fn call sites), so the
+    // count and emit assign arms always agree (+1 iff narrow — frame-consistent).
+    // Every param in main.mind's own source is width 64 — heap-word only there,
+    // byte-identical self-compile.
+    let pw: i64 = nb_width_of_ann(src, ty_leaf);
+    let _b: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), i, desc, pw);
     nb_register_struct_params(srt, src, params_addr, n_params, lets, lcell, i + 1)
 }
 
@@ -25123,7 +25196,12 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // gp_k / sse_k are the SysV GP and SSE arg-register counters (both 0 to start);
     // an integer/pointer param consumes a GP register, a float param an SSE register.
     let st_params: NbState = NbState { code: p8, next_id: n_params, last_id: 0 - 1, ncalls: ncalls0 };
-    let st_p: NbState = nb_emit_params(st_params, buf, params_addr, n_params, 0, 0, 0);
+    let st_p0: NbState = nb_emit_params(st_params, buf, params_addr, n_params, 0, 0, 0);
+    // C2 param-width driver: wrap each narrow-declared (i8/i16/i32) param in place
+    // in its home slot right after the SysV spill, so every later read of the
+    // param sees its two's-complement-wrapped value. Zero bytes emitted for a
+    // width-64 param — all of main.mind — so the self-compile is byte-identical.
+    let st_p: NbState = NbState { code: nb_wrap_params_w(st_p0.code, buf, params_addr, n_params, 0), next_id: st_p0.next_id, last_id: st_p0.last_id, ncalls: st_p0.ncalls };
 
     // Per-fn intra-function forward-jump scratch (je/jmp sites recorded relative
     // to THIS fn's code String; up to 512 jumps; jcell = a 1-i64 count, zeroed).
@@ -25141,8 +25219,10 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // +48 = jcell, +56 = loops, +64 = lpcell — the jump/loop/struct state a value-if
     // in DEEP EXPRESSION position needs. nb_expr has no jump-table params, so its
     // ast_if arm reads them from here instead of a wide signature change threaded
-    // through nb_expr's ~20 call sites. Grown 24 -> 72 to hold the six new words.
-    let lcell: i64 = __mind_alloc(72);
+    // through nb_expr's ~20 call sites. Grown 24 -> 72 to hold the six new words,
+    // then 72 -> 80 for the C2 declared return width at +72 (read by nb_stmt's
+    // return arm; 64 = full-width no-op for every main.mind fn).
+    let lcell: i64 = __mind_alloc(80);
     __mind_store_i64(lcell, 0);
     // RI-B1 FOLLOW-UP: per-fn SSA dtype table (nb_dtype_table_new, all-INT default),
     // threaded through the EXISTING lets/lcell plumbing at lcell+8 — nb_expr's binop
@@ -25189,6 +25269,11 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     __mind_store_i64(lcell + 48, jcell);
     __mind_store_i64(lcell + 56, loops);
     __mind_store_i64(lcell + 64, lpcell);
+    // C2 param/return width driver: stash THIS fn's declared return width (frt
+    // registry, 64 unless `-> i8/i16/i32 {`) at lcell+72 so nb_stmt's explicit-
+    // return arm can wrap rax at the declared width without a signature change.
+    // 64 for every main.mind fn -> nb_wrap_ret_w emits nothing, byte-identical.
+    __mind_store_i64(lcell + 72, frt_lookup_width(frt, buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node))));
 
     // Body.
     let st_body0: NbState = nb_block_stmts(st_p, buf, stmts_addr, stmts_len, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
@@ -25200,7 +25285,7 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // looked up by name in the frt registry, drives the return-register selection in
     // nb_finish_body (xmm0 for a float return, rax otherwise). INT for every main.mind fn.
     let ret_dt: i64 = frt_lookup_dtype(frt, buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node)));
-    let st_body: NbState = nb_finish_body(st_body0, is_entry, stmts_addr, stmts_len, ret_dt);
+    let st_body: NbState = nb_finish_body(st_body0, is_entry, stmts_addr, stmts_len, ret_dt, __mind_load_i64(lcell + 72));
 
     // Patch every recorded forward jump into this fn's assembled code IN PLACE
     // (string_addr) before nb_lower_all concatenates it into the image. Intra-fn
@@ -28035,8 +28120,12 @@ pub fn selftest_native_elf_fp_expr(src_addr: i64, src_len: i64) -> EmitState {
     let params: i64 = __mind_alloc(8);
     let calls: i64 = __mind_alloc(8);
     let lets: i64 = __mind_alloc(512 * 5 * 8);
-    let lcell: i64 = __mind_alloc(16);
+    let lcell: i64 = __mind_alloc(80);
     __mind_store_i64(lcell, 0);
+    // C2 return-width word (+72): full-width 64 on this hand-rolled driver path,
+    // so nb_stmt's return arm reads a DEFINED no-op width, never adjacent-alloc
+    // garbage (the lcell layout matches nb_lower_fn's 80-byte cell).
+    __mind_store_i64(lcell + 72, 64);
     // RI-B1 FOLLOW-UP: no per-fn dtype table on the bare-expr path — store 0 at lcell+8
     // so nb_expr's binop arm falls back to the pure-AST classifier (behaviour unchanged).
     __mind_store_i64(lcell + 8, 0);
@@ -28072,8 +28161,12 @@ pub fn selftest_native_elf_fp_binop(src_addr: i64, src_len: i64) -> EmitState {
     let params: i64 = __mind_alloc(8);
     let calls: i64 = __mind_alloc(8);
     let lets: i64 = __mind_alloc(512 * 5 * 8);
-    let lcell: i64 = __mind_alloc(16);
+    let lcell: i64 = __mind_alloc(80);
     __mind_store_i64(lcell, 0);
+    // C2 return-width word (+72): full-width 64 on this hand-rolled driver path,
+    // so nb_stmt's return arm reads a DEFINED no-op width, never adjacent-alloc
+    // garbage (the lcell layout matches nb_lower_fn's 80-byte cell).
+    __mind_store_i64(lcell + 72, 64);
     // RI-B1 FOLLOW-UP: no per-fn dtype table on the bare-expr path — store 0 at lcell+8
     // so nb_expr's binop arm falls back to the pure-AST classifier (behaviour unchanged).
     __mind_store_i64(lcell + 8, 0);
@@ -28118,8 +28211,12 @@ pub fn selftest_native_elf_fp_let(src_addr: i64, src_len: i64) -> EmitState {
     __mind_store_i64(jcell, 0);
     // Per-fn let-env + real dtype table at lcell+8 (the nb_lower_fn plumbing).
     let lets: i64 = __mind_alloc(512 * 5 * 8);
-    let lcell: i64 = __mind_alloc(16);
+    let lcell: i64 = __mind_alloc(80);
     __mind_store_i64(lcell, 0);
+    // C2 return-width word (+72): full-width 64 on this hand-rolled driver path,
+    // so nb_stmt's return arm reads a DEFINED no-op width, never adjacent-alloc
+    // garbage (the lcell layout matches nb_lower_fn's 80-byte cell).
+    __mind_store_i64(lcell + 72, 64);
     __mind_store_i64(lcell + 8, nb_dtype_table_new(128));
     let srt: i64 = srt_build(src_addr, src_len);
     let loops: i64 = __mind_alloc(256 * 3 * 8);
@@ -28166,8 +28263,12 @@ pub fn selftest_native_elf_fp_field(src_addr: i64, src_len: i64) -> EmitState {
     let jcell: i64 = __mind_alloc(8);
     __mind_store_i64(jcell, 0);
     let lets: i64 = __mind_alloc(512 * 5 * 8);
-    let lcell: i64 = __mind_alloc(16);
+    let lcell: i64 = __mind_alloc(80);
     __mind_store_i64(lcell, 0);
+    // C2 return-width word (+72): full-width 64 on this hand-rolled driver path,
+    // so nb_stmt's return arm reads a DEFINED no-op width, never adjacent-alloc
+    // garbage (the lcell layout matches nb_lower_fn's 80-byte cell).
+    __mind_store_i64(lcell + 72, 64);
     __mind_store_i64(lcell + 8, nb_dtype_table_new(128));
     let srt: i64 = srt_build(src_addr, src_len);
     let loops: i64 = __mind_alloc(256 * 3 * 8);
@@ -28268,8 +28369,12 @@ pub fn selftest_native_elf_fp_param(src_addr: i64, src_len: i64) -> EmitState {
     let jcell: i64 = __mind_alloc(8);
     __mind_store_i64(jcell, 0);
     let lets: i64 = __mind_alloc(512 * 5 * 8);
-    let lcell: i64 = __mind_alloc(16);
+    let lcell: i64 = __mind_alloc(80);
     __mind_store_i64(lcell, 0);
+    // C2 return-width word (+72): full-width 64 on this hand-rolled driver path,
+    // so nb_stmt's return arm reads a DEFINED no-op width, never adjacent-alloc
+    // garbage (the lcell layout matches nb_lower_fn's 80-byte cell).
+    __mind_store_i64(lcell + 72, 64);
     let dtbl: i64 = nb_dtype_table_new(128);
     __mind_store_i64(lcell + 8, dtbl);
     let _tfp: i64 = nb_tag_float_params(dtbl, src_addr, params_addr, n_params, 0);
@@ -28306,9 +28411,10 @@ pub fn frt_cap() -> i64 {
     4096
 }
 
-// Words per fn slot: name_lo + name_hi + ret_is_float.
+// Words per fn slot: name_lo + name_hi + ret_is_float + ret_width (C2 driver;
+// 64 default, 8/16/32 only for a declared `-> i8/i16/i32 {` return).
 pub fn frt_slot_words() -> i64 {
-    3
+    4
 }
 
 pub fn frt_alloc() -> i64 {
@@ -28337,8 +28443,15 @@ pub fn frt_ret(t: i64, k: i64) -> i64 {
     __mind_load_i64(t + (frt_slot_base(k) + 2) * 8)
 }
 
-// Append a fn with name span (nlo, nhi) and return-dtype `ret_dt`. Overflow no-ops.
-pub fn frt_push(t: i64, nlo: i64, nhi: i64, ret_dt: i64) -> i64 {
+// The fn's declared return WIDTH (C2 driver): 64 for i64/unit/float/anything
+// else, 8/16/32 only for an explicit narrow-int return annotation.
+pub fn frt_retw(t: i64, k: i64) -> i64 {
+    __mind_load_i64(t + (frt_slot_base(k) + 3) * 8)
+}
+
+// Append a fn with name span (nlo, nhi), return-dtype `ret_dt`, and declared
+// return width `retw`. Overflow no-ops.
+pub fn frt_push(t: i64, nlo: i64, nhi: i64, ret_dt: i64, retw: i64) -> i64 {
     let n: i64 = frt_count(t);
     if n >= frt_cap() {
         return n;
@@ -28346,6 +28459,7 @@ pub fn frt_push(t: i64, nlo: i64, nhi: i64, ret_dt: i64) -> i64 {
     __mind_store_i64(t + (frt_slot_base(n) + 0) * 8, nlo);
     __mind_store_i64(t + (frt_slot_base(n) + 1) * 8, nhi);
     __mind_store_i64(t + (frt_slot_base(n) + 2) * 8, ret_dt);
+    __mind_store_i64(t + (frt_slot_base(n) + 3) * 8, retw);
     __mind_store_i64(t + 0, n + 1);
     n
 }
@@ -28389,6 +28503,47 @@ pub fn frt_scan_ret(toks: Vec, buf: i64, pos: i64) -> i64 {
     frt_scan_ret(toks, buf, pos + 1)
 }
 
+// Classify a return-type span (lo, hi) as a declared int bit-width: "i8" -> 8,
+// "i16" -> 16, "i32" -> 32, anything else -> 64 (the full-width default) — the
+// span-keyed twin of nb_width_of_ann (which takes a type-leaf AST node). bytes:
+// i=105, 8=56, 1=49, 6=54, 3=51, 2=50.
+pub fn frt_ret_width(buf: i64, lo: i64, hi: i64) -> i64 {
+    let i8_buf: i64 = make_byte_buf_3(105, 56, 0);
+    if bytes_eq(buf, lo, hi, i8_buf, 0, 2) == 1 {
+        return 8;
+    }
+    let i16_buf: i64 = make_byte_buf_3(105, 49, 54);
+    if bytes_eq(buf, lo, hi, i16_buf, 0, 3) == 1 {
+        return 16;
+    }
+    let i32_buf: i64 = make_byte_buf_3(105, 51, 50);
+    if bytes_eq(buf, lo, hi, i32_buf, 0, 3) == 1 {
+        return 32;
+    }
+    64
+}
+
+// The width twin of frt_scan_ret: from the token AFTER a fn's name, scan to the
+// signature's return type and classify its declared int WIDTH. Same stop rules —
+// a body `{` with no `->` (unit return), an extern `;`, or a multi-token type all
+// record 64, the full-width default that emits nothing. Tail-recursive.
+pub fn frt_scan_retw(toks: Vec, buf: i64, pos: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 64;
+    }
+    let k: i64 = tok_kind(toks, pos);
+    if k == tk_lbrace() {
+        return 64;
+    }
+    if k == tk_arrow() {
+        if tok_kind(toks, pos + 2) == tk_lbrace() {
+            return frt_ret_width(buf, tok_lo(toks, pos + 1), tok_hi(toks, pos + 1));
+        }
+        return 64;
+    }
+    frt_scan_retw(toks, buf, pos + 1)
+}
+
 // Scan the token stream, recording every `fn NAME (...) -> RETTYPE {` def and its
 // return dtype. `fn` is a dedicated keyword token (tk_kw_fn), and the name is always the
 // next token (`pub fn NAME` yields kw_pub, kw_fn, NAME, so pos+1 is the name in both the
@@ -28400,7 +28555,8 @@ pub fn frt_collect(toks: Vec, buf: i64, pos: i64, t: i64) -> i64 {
     }
     if tok_kind(toks, pos) == tk_kw_fn() {
         let ret_dt: i64 = frt_scan_ret(toks, buf, pos + 2);
-        let _p: i64 = frt_push(t, tok_lo(toks, pos + 1), tok_hi(toks, pos + 1), ret_dt);
+        let retw: i64 = frt_scan_retw(toks, buf, pos + 2);
+        let _p: i64 = frt_push(t, tok_lo(toks, pos + 1), tok_hi(toks, pos + 1), ret_dt, retw);
         return frt_collect(toks, buf, pos + 1, t);
     }
     frt_collect(toks, buf, pos + 1, t)
@@ -28451,6 +28607,20 @@ pub fn frt_lookup_dtype(t: i64, src: i64, lo: i64, hi: i64) -> i64 {
         return nb_dtype_int();
     }
     frt_ret(t, k)
+}
+
+// The fn's declared return WIDTH for the name span src[lo..hi): 8/16/32 for a
+// narrow-int-returning fn, else 64. A null registry or an unregistered name
+// resolves to 64 — the safe full-width default that emits nothing.
+pub fn frt_lookup_width(t: i64, src: i64, lo: i64, hi: i64) -> i64 {
+    if t == 0 {
+        return 64;
+    }
+    let k: i64 = frt_find(t, src, lo, hi, 0);
+    if k < 0 {
+        return 64;
+    }
+    frt_retw(t, k)
 }
 
 // ---- RI-D2 S-C1 selftest: FLOAT call-RETURN dtype through native-ELF -------------

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3161 | **Est. tokens:** ~7,557,593
-**Generated:** 2026-07-21 18:23 UTC
+**Files:** 3161 | **Est. tokens:** ~7,558,386
+**Generated:** 2026-07-21 18:28 UTC
 
 ## Token Budget Guide
 
@@ -58,7 +58,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 84 | ~147,797 |
+| `examples/mindc_mind/` | 84 | ~148,590 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
 | `examples/native/` | 4 | ~527 |
@@ -887,7 +887,7 @@
 - `self_host_dtype_tag_smoke.py` (~780 tok, large) — RI-B1 per-SSA dtype-tag gate (parser <-> nb_fp_* encoder connecting construct).
 - `self_host_loop_smoke.py` (~3420 tok, huge)
 - `self_host_mlir_smoke.py` (~1736 tok, huge)
-- `self_host_native_autowrap_smoke.py` (~1649 tok, huge) — Roadmap C2 declared-width AUTO-WRAP driver — narrow-int (i8/i16/i32) `let` and
+- `self_host_native_autowrap_smoke.py` (~2442 tok, huge) — Roadmap C2 declared-width AUTO-WRAP driver — narrow-int (i8/i16/i32) `let` and
 - `self_host_native_avx2_dot_f32_smoke.py` (~1559 tok, huge) — RI-B2-S13 (#108) — native-ELF PACKED-f32 SIMD via 256-bit AVX2 (VEX/YMM) STRICT-FP DOT.
 - `self_host_native_blas_dot_i16_smoke.py` (~2879 tok, huge)
 - `self_host_native_blas_dot_q16_smoke.py` (~1774 tok, huge)
