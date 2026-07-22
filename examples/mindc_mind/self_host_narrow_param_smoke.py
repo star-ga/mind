@@ -23,11 +23,22 @@ when the enclosing if is not taken. Gated by nb_region_while_carries_narrow, whi
 permits a top-level OR if-nested narrow carry but deliberately does NOT descend into
 a `while` body — so the genuinely-broken shapes below stay fail-closed.
 
-Two sub-shapes remain genuinely broken and MUST still fail closed (empty ELF):
-  * a narrow param REASSIGNED by a while NESTED inside ANOTHER while (nested loops
-    mutating an OUTER carried var) — the still-open F2 last_region_exit_rebindings
-    case (empirically miscompiles: the outer carry desyncs — inner loop runs but the
-    outer re-entry drops the carried value). Refused (loud, no silent miscompile).
+F2 FIXED: a narrow param REASSIGNED by a while NESTED inside ANOTHER while (nested
+loops mutating an OUTER carried var) now lowers CORRECTLY. nb_while_carry descends
+into the inner while, computes each inner-carried var's post_id (its inner-loop exit
+slot), and PROMOTES every one that is an OUTER (pre-loop) var into the OUTER carry
+table with that inner post_id — the native analogue of lower.rs
+last_region_exit_rebindings + record_loop_mut over `env`. The outer copy-in then
+seeds the inner-exit slot ONCE before the header (so the value accumulates across
+outer iterations) and the inner copy-in becomes a no-op. nb_count_carried descends
+identically so the exit_id frame slots stay in lockstep with the emit (a mismatch
+would corrupt the exact runtime value — proven below by while{while{}} 3x4=12,
+triple-nest 2x2x2=8, i8/i16/i32/i64 + overflow wrap). The bug was width-independent
+(i64 miscompiled too — returned 2 for a 2x2 loop, want 4); it is now correct for
+every width. Body-local `let mut` counters (bound after the outer loop) are NOT
+promoted (they reset each iteration), matching lower.rs's `env.contains_key` guard.
+
+One sub-shape remains genuinely broken and MUST still fail closed (empty ELF):
   * a narrow read-only param CARRIED ACROSS a top-level loop then returned — the
     narrow-param loop-carry machinery only records a REASSIGNED carry slot; a
     read-only narrow param read post-loop (with or without a trailing cast/binop)
@@ -161,11 +172,39 @@ NESTED_CARRY = [
     ("i8 param while-in-IF, enclosing if NOT taken, f(10) -> unchanged", _carry_ref(10, 0, 8),
      "fn f(x: i8) -> i64 {\n    let mut c: i64 = 5;\n    if c < 1 {\n        while c < 4 {\n            x = x + 1;\n            c = c + 1;\n        }\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(10); }\n"),
 ]
-# REFUSE: the two genuinely-broken sub-shapes must emit an EMPTY ELF.
-REFUSE = [
-    ("i8 param reassigned in a WHILE-nested-in-WHILE (nested loops, F2 outer-var "
-     "region carry — still unrecorded, empirically miscompiles)",
+# EMIT + RUN correct (F2 FIXED): a var REASSIGNED by a while NESTED inside another
+# while (nested loops mutating an OUTER carried var). `exp` is the independent Python
+# carry reference. Covers i8/i16/i32/i64, multiple iteration counts, overflow wrap,
+# and a triple-nested loop. Formerly REFUSED (and, unguarded for i64, MISCOMPILED to
+# 2 instead of 4). Now emits + runs to the reference value at every width.
+def _nested_ref(iters_outer: int, iters_inner: int, start: int, bits: int) -> int:
+    x = start
+    for _ in range(iters_outer):
+        for _ in range(iters_inner):
+            x = wrap(x + 1, bits)
+    return wrap(x, bits)
+
+
+NESTED_LOOP = [
+    ("i64 while-in-while 2x2 x+=1 -> 4", _nested_ref(2, 2, 0, 64),
+     "fn f() -> i64 {\n    let mut x: i64 = 0;\n    let mut a: i64 = 0;\n    while a < 2 {\n        let mut c: i64 = 0;\n        while c < 2 { x = x + 1; c = c + 1; }\n        a = a + 1;\n    }\n    return x;\n}\nfn main() -> i64 { return f(); }\n"),
+    ("i64 while-in-while 3x4 -> 12", _nested_ref(3, 4, 0, 64),
+     "fn f() -> i64 {\n    let mut x: i64 = 0;\n    let mut a: i64 = 0;\n    while a < 3 {\n        let mut c: i64 = 0;\n        while c < 4 { x = x + 1; c = c + 1; }\n        a = a + 1;\n    }\n    return x;\n}\nfn main() -> i64 { return f(); }\n"),
+    ("i8 param while-in-while carry, f(0) 2x2 -> 4", _nested_ref(2, 2, 0, 8),
      "fn f(x: i8) -> i64 {\n    let mut c: i64 = 0;\n    while c < 2 {\n        let mut d: i64 = 0;\n        while d < 2 {\n            x = x + 1;\n            d = d + 1;\n        }\n        c = c + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
+    ("i8 param while-in-while OVERFLOW two's-complement wrap, f(126) 2x2", _nested_ref(2, 2, 126, 8),
+     "fn f(x: i8) -> i64 {\n    let mut c: i64 = 0;\n    while c < 2 {\n        let mut d: i64 = 0;\n        while d < 2 {\n            x = x + 1;\n            d = d + 1;\n        }\n        c = c + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(126); }\n"),
+    ("i16 param while-in-while 3x3=+9, f(100) -> 109", _nested_ref(3, 3, 100, 16),
+     "fn f(x: i16) -> i64 {\n    let mut c: i64 = 0;\n    while c < 3 {\n        let mut d: i64 = 0;\n        while d < 3 {\n            x = x + 1;\n            d = d + 1;\n        }\n        c = c + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(100); }\n"),
+    ("i32 param while-in-while 2x5=+10, f(40) -> 50", _nested_ref(2, 5, 40, 32),
+     "fn f(x: i32) -> i64 {\n    let mut c: i64 = 0;\n    while c < 2 {\n        let mut d: i64 = 0;\n        while d < 5 {\n            x = x + 1;\n            d = d + 1;\n        }\n        c = c + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(40); }\n"),
+    ("i64 TRIPLE-nested while 2x2x2 -> 8", 8,
+     "fn f() -> i64 {\n    let mut x: i64 = 0;\n    let mut a: i64 = 0;\n    while a < 2 {\n        let mut b: i64 = 0;\n        while b < 2 {\n            let mut c: i64 = 0;\n            while c < 2 { x = x + 1; c = c + 1; }\n            b = b + 1;\n        }\n        a = a + 1;\n    }\n    return x;\n}\nfn main() -> i64 { return f(); }\n"),
+    ("i8 param while-in-while, outer reset of inner counter each iter, f(10) 3x2 -> 16", _nested_ref(3, 2, 10, 8),
+     "fn f(x: i8) -> i64 {\n    let mut c: i64 = 0;\n    while c < 3 {\n        let mut d: i64 = 0;\n        while d < 2 {\n            x = x + 1;\n            d = d + 1;\n        }\n        c = c + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(10); }\n"),
+]
+# REFUSE: the remaining genuinely-broken sub-shape must emit an EMPTY ELF.
+REFUSE = [
     ("i8 read-only param carried across a top-level loop then (x as i64)+c "
      "(narrow read-only loop-carry gap — NOT the cast, which now composes; "
      "even `return x as i64` w/ a loop is refused)",
@@ -229,6 +268,7 @@ def main() -> int:
     narrow_cast_ok = 0
     narrow_local_ok = 0
     nested_ok = 0
+    nested_loop_ok = 0
     refused = 0
     ran = 0
     with tempfile.TemporaryDirectory() as td:
@@ -310,6 +350,20 @@ def main() -> int:
             print(f"  {'PASS' if ok else 'FAIL'}  narrow param carried by if-nested loop: {label} "
                   f"-> exit {rc} (python-ref {exp} -> byte {want})")
 
+        for label, exp, src in NESTED_LOOP:
+            elf = emit(src)
+            if not elf:
+                print(f"  FAIL  nested-loop carry OVER-REJECTED: {label} (emit 0B, want run)")
+                all_ok = False
+                continue
+            want = exp & 0xFF
+            rc = run_elf(elf)
+            ok = rc == want
+            all_ok = all_ok and ok
+            nested_loop_ok += 1 if ok else 0
+            print(f"  {'PASS' if ok else 'FAIL'}  var carried by while-nested-in-while (F2 fixed): {label} "
+                  f"-> exit {rc} (python-ref {exp} -> byte {want})")
+
         for label, src in REFUSE:
             elf = emit(src)
             ok = len(elf) == 0
@@ -345,6 +399,9 @@ def main() -> int:
     if nested_ok < 1:
         print("FAIL: vacuous (no narrow-param if-nested-loop carry emitted + ran)")
         return 1
+    if nested_loop_ok < 1:
+        print("FAIL: vacuous (no while-nested-in-while carry emitted + ran)")
+        return 1
     if refused < 1:
         print("FAIL: vacuous (no broken sub-shape refused)")
         return 1
@@ -357,9 +414,10 @@ def main() -> int:
               "untaken) emit + run correct (two's-complement wrap, no stale/hang) vs an "
               "independent Python ref, the widening cast-in-binop `(x as i64)+c` "
               "composes, NARROWING casts `(y as i8/i16/i32)` in a binop truncate "
-              "two's-complement (movsx) + compose, while the WHILE-in-WHILE nested-loop "
-              "outer carry + narrow read-only loop-carry sub-shapes stay fail-closed "
-              "and i64 fns are unaffected")
+              "two's-complement (movsx) + compose, a var carried by a while NESTED in "
+              "another while (any width, overflow, triple-nest) now emits + runs correct "
+              "(F2 fixed), while the narrow read-only loop-carry sub-shape stays "
+              "fail-closed and i64 fns are unaffected")
         return 0
     print("FAIL  narrow-param carry smoke mis-behaved")
     return 1

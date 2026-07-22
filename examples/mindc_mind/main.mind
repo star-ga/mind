@@ -9651,7 +9651,7 @@ pub fn emit_if_expr_any_lv(s: EmitState, if_node: i64, buf: i64, params_addr: i6
             let c: i64 = ast_child0(if_node);
             let t: i64 = branch_single_expr(then_blk);
             let e: i64 = branch_single_expr(else_blk);
-            return emit_if_expr_lv(s, c, t, e, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, okcell, lvenv, nlv, strbuf, offs, ncount);
+            return emit_if_expr_lv(s, c, t, e, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, okcell, lvenv, nlv, strbuf, offs, ncount, bindout, nbind_cell);
         }
     }
     emit_if_expr_block_lv(s, if_node, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, okcell, lvenv, nlv, strbuf, offs, ncount, bindout, nbind_cell)
@@ -9851,7 +9851,7 @@ pub fn block_init_escape_probe(stmts_addr: i64, nlets: i64, base0: i64, buf: i64
 // branch-value escapes via the two-sided F2 block-merge tail (then-escape -> placeholder on the
 // else side; else-escape -> placeholder on the then side), reusing fill_binds_block /
 // emit_block_ph / emit_block_bindings / emit_block_merges (the fall-through merge helpers).
-pub fn emit_if_expr_lv_bubble(s: EmitState, cond_expr: i64, then_expr: i64, else_expr: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64, then_en: i64, else_en: i64) -> EmitState {
+pub fn emit_if_expr_lv_bubble(s: EmitState, cond_expr: i64, then_expr: i64, else_expr: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64, then_en: i64, else_en: i64, bindout: i64, nbind_cell: i64) -> EmitState {
     let cond_id: i64 = flatten_branch_lv(cond_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, lvenv, nlv);
     if cond_id < 0 {
         __mind_store_i64(okcell, 0 - 1);
@@ -9927,18 +9927,30 @@ pub fn emit_if_expr_lv_bubble(s: EmitState, cond_expr: i64, then_expr: i64, else
     let s17: EmitState = emit_block_bindings(s16, bb, n_merged, strbuf, offs, ncount, buf, 0);
     let s18: EmitState = emit_uleb128(s17, n_merged);
     let s19: EmitState = emit_block_merges(s18, bb, n_merged, 0);
+    // Expose this level's escaping bindings upward so an ENCLOSING if-expr re-merges
+    // them (lower.rs F2 branch-binding propagation through nested value-ifs). Without
+    // this, a `let` buried in a doubly-nested branch (e.g. nb_count_carried_nested's
+    // `_s`) is dropped at the outermost value-if and the merge set undercounts.
+    if bindout != 0 {
+        let _bo: i64 = bb_to_bindout(bb, bindout, n_merged, 0);
+        __mind_store_i64(nbind_cell, n_merged)
+    }
     __mind_store_i64(okcell, dst);
     s19
 }
 
-pub fn emit_if_expr_lv(s: EmitState, cond_expr: i64, then_expr: i64, else_expr: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64) -> EmitState {
+pub fn emit_if_expr_lv(s: EmitState, cond_expr: i64, then_expr: i64, else_expr: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64, bindout: i64, nbind_cell: i64) -> EmitState {
+    if nbind_cell != 0 {
+        __mind_store_i64(nbind_cell, 0)
+    }
     // If a branch VALUE is itself a value if-expr that escapes bindings, re-merge them via the
-    // bubble path. Otherwise (the common case — and everything main.mind uses) the merge is
-    // empty and the original layout is byte-identical.
+    // bubble path (which now ALSO bubbles those escapes upward via bindout). Otherwise (the
+    // common case — a leaf both-single-expr if) the merge is empty, nbind stays 0, and the
+    // original layout is byte-identical.
     let then_en: i64 = branch_escape_count(then_expr, buf, params_addr, n_params, base0 + 1, lvenv, nlv, strbuf, offs, ncount);
     let else_en: i64 = branch_escape_count(else_expr, buf, params_addr, n_params, base0 + 1, lvenv, nlv, strbuf, offs, ncount);
     if then_en + else_en > 0 {
-        return emit_if_expr_lv_bubble(s, cond_expr, then_expr, else_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, okcell, lvenv, nlv, strbuf, offs, ncount, then_en, else_en);
+        return emit_if_expr_lv_bubble(s, cond_expr, then_expr, else_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, okcell, lvenv, nlv, strbuf, offs, ncount, then_en, else_en, bindout, nbind_cell);
     }
     let cond_id: i64 = flatten_branch_lv(cond_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, lvenv, nlv);
     if cond_id < 0 {
@@ -23314,7 +23326,7 @@ pub fn nb_carry_record(carry: i64, ccell: i64, buf: i64, lo: i64, hi: i64, post_
 // string_push_str's carried vars are all top-level body assigns. upgrade path:
 // after counting a nested if/while, scan its tail for an Assign to a name already
 // in the carry/let-env and record it, mirroring last_region_exit_rebindings.
-pub fn nb_while_carry(carry: i64, ccell: i64, next_id: i64, buf: i64, body_sa: i64, body_sl: i64, i: i64, params_addr: i64, n_params: i64, clets: i64, clcell: i64, srt: i64, lets: i64, lcell: i64) -> i64 {
+pub fn nb_while_carry(carry: i64, ccell: i64, next_id: i64, buf: i64, body_sa: i64, body_sl: i64, i: i64, params_addr: i64, n_params: i64, clets: i64, clcell: i64, srt: i64, lets: i64, lcell: i64, entry_n: i64) -> i64 {
     if i >= body_sl {
         return next_id;
     }
@@ -23341,9 +23353,77 @@ pub fn nb_while_carry(carry: i64, ccell: i64, next_id: i64, buf: i64, body_sa: i
             arhs
         }
     } else {
-        nb_count_stmt(next_id, buf, stmt, params_addr, n_params, clets, clcell, srt)
+        // A flat 3-way `else if` value-let is NOT in the mic@3 note-emit subset
+        // (nb_build_mic3 fails closed on it); keep this a 2-way value-if and push the
+        // while-vs-other decision into an early-return helper (the proven subset).
+        nb_while_carry_nonassign(carry, ccell, next_id, buf, stmt, params_addr, n_params, clets, clcell, srt, lets, lcell, entry_n)
     };
-    nb_while_carry(carry, ccell, after, buf, body_sa, body_sl, i + 1, params_addr, n_params, clets, clcell, srt, lets, lcell)
+    nb_while_carry(carry, ccell, after, buf, body_sa, body_sl, i + 1, params_addr, n_params, clets, clcell, srt, lets, lcell, entry_n)
+}
+
+// Non-assign statement in a loop-carry pre-walk: a nested `while` descends into the
+// F2 nested-carry promotion (nb_while_carry_wnest); anything else just threads
+// next_id via nb_count_stmt. Early-return form so nb_while_carry's value-if stays
+// 2-way (mic@3 note-emittable).
+pub fn nb_while_carry_nonassign(carry: i64, ccell: i64, next_id: i64, buf: i64, stmt: i64, params_addr: i64, n_params: i64, clets: i64, clcell: i64, srt: i64, lets: i64, lcell: i64, entry_n: i64) -> i64 {
+    if ast_kind(stmt) == ast_while() {
+        return nb_while_carry_wnest(carry, ccell, next_id, buf, stmt, params_addr, n_params, clets, clcell, srt, lets, lcell, entry_n);
+    }
+    nb_count_stmt(next_id, buf, stmt, params_addr, n_params, clets, clcell, srt)
+}
+
+// F2 nested-loop outer-var carry (mirror lower.rs last_region_exit_rebindings +
+// record_loop_mut over `env`): a nested `while` may reassign an OUTER (pre-loop)
+// variable only inside its body. Descend into the inner while, compute each
+// inner-carried var's post_id (the slot it lands in after the inner loop), and
+// PROMOTE every one that is an OUTER var (bound in this loop's pre-loop scope
+// [0, entry_n)) into the OUTER carry table with that inner post_id. Then the outer
+// copy-in seeds the inner-exit slot ONCE before the header (so the value accumulates
+// across outer iterations), and the inner copy-in becomes a no-op (init_slot ==
+// post_id). Returns next_id threaded EXACTLY as nb_count_stmt's while arm (after_cond
+// ; body ids ; +ncarry_inner exit_ids ; +1 unit) so the emit stays in lockstep with
+// the frame count. Extracted to its own fn so nb_while_carry's while arm is a plain
+// call (the native self-host emitter lowers a value-if branch that is a single call,
+// not a deep let-block). Body-local `let mut` counters (bound at index >= entry_n)
+// fail the outer test and are NOT promoted, matching lower.rs's `env.contains_key`.
+pub fn nb_while_carry_wnest(carry: i64, ccell: i64, next_id: i64, buf: i64, stmt: i64, params_addr: i64, n_params: i64, clets: i64, clcell: i64, srt: i64, lets: i64, lcell: i64, entry_n: i64) -> i64 {
+    let iw_cond: i64 = ast_child0(stmt);
+    let after_iwcond: i64 = nb_count_expr(next_id, buf, iw_cond, params_addr, n_params, clets, clcell);
+    let iw_body: i64 = ast_child1(stmt);
+    let iw_bsa: i64 = ast_child0(iw_body);
+    let iw_bsl: i64 = ast_aux(iw_body);
+    let icarry: i64 = __mind_alloc(256 * 4 * 8);
+    let iccell: i64 = __mind_alloc(8);
+    __mind_store_i64(iccell, 0);
+    // The inner loop's own pre-loop scope bound = the let-env size at THIS point
+    // (params + every let bound before the inner while, incl. an outer body-local).
+    let inner_entry_n: i64 = __mind_load_i64(lcell);
+    let after_ibody: i64 = nb_while_carry(icarry, iccell, after_iwcond, buf, iw_bsa, iw_bsl, 0, params_addr, n_params, clets, clcell, srt, lets, lcell, inner_entry_n);
+    let incarry: i64 = __mind_load_i64(iccell);
+    let _pr: i64 = nb_carry_promote_inner(carry, ccell, icarry, incarry, 0, buf, lets, lcell, entry_n);
+    after_ibody + incarry + 1
+}
+
+// Promote each OUTER-scope var carried by a nested inner while (icarry[0..incarry))
+// into the enclosing loop's carry table (mirror record_loop_mut over the nested
+// region's last_region_exit_rebindings). A var is OUTER iff its name is bound in the
+// enclosing loop's pre-loop scope [0, entry_n) of the emit let-env (a body-local
+// `let mut` bound at index >= entry_n fails and is skipped). post_id is the inner
+// carried post_id (the inner-loop exit slot); nb_carry_record dedups by name and
+// captures the pre-loop init_slot, so the outer copy-in seeds the inner-exit slot.
+pub fn nb_carry_promote_inner(carry: i64, ccell: i64, icarry: i64, incarry: i64, k: i64, buf: i64, lets: i64, lcell: i64, entry_n: i64) -> i64 {
+    if k >= incarry {
+        return 0;
+    }
+    let lo: i64 = __mind_load_i64(icarry + (k * 4 + 0) * 8);
+    let hi: i64 = __mind_load_i64(icarry + (k * 4 + 1) * 8);
+    let post: i64 = __mind_load_i64(icarry + (k * 4 + 3) * 8);
+    let outer_slot: i64 = nb_lets_lookup_rest(lets, entry_n, buf, lo, hi, 0, 0 - 1);
+    if outer_slot >= 0 {
+        let _r: i64 = nb_carry_record(carry, ccell, buf, lo, hi, post, lets, lcell);
+        return nb_carry_promote_inner(carry, ccell, icarry, incarry, k + 1, buf, lets, lcell, entry_n);
+    }
+    nb_carry_promote_inner(carry, ccell, icarry, incarry, k + 1, buf, lets, lcell, entry_n)
 }
 
 // ---- loop-frame stack (header offset + break-site list) ----
@@ -23701,7 +23781,7 @@ pub fn nb_emit_while(st: NbState, buf: i64, node: i64, params_addr: i64, n_param
     // dst-id pre-walks at nb_if_stmt_(simple|merged) already do; the carry table is
     // fully populated by nb_while_carry, only the env growth is discarded.
     let prewalk_lcell: i64 = __mind_load_i64(lcell);
-    let _w: i64 = nb_while_carry(carry, ccell, after_cond_count, buf, body_sa, body_sl, 0, params_addr, n_params, lets, lcell, srt, lets, lcell);
+    let _w: i64 = nb_while_carry(carry, ccell, after_cond_count, buf, body_sa, body_sl, 0, params_addr, n_params, lets, lcell, srt, lets, lcell, prewalk_lcell);
     __mind_store_i64(lcell, prewalk_lcell);
     let ncarry: i64 = __mind_load_i64(ccell);
 
@@ -24924,16 +25004,17 @@ pub fn nb_count_args(next_id: i64, buf: i64, args_addr: i64, args_len: i64, i: i
 // deferred: nested-region (if/while-in-body) mutations of an OUTER carried var
 // (lower.rs F2 4737-4777) are not counted — string_push_str's carried vars are
 // all top-level body assigns. upgrade path: recurse into nested if/while tails.
-pub fn nb_count_carried(buf: i64, body_sa: i64, body_sl: i64) -> i64 {
+pub fn nb_count_carried(buf: i64, body_sa: i64, body_sl: i64, clets: i64, clcell: i64, entry_n: i64) -> i64 {
     let names: i64 = __mind_alloc(256 * 2 * 8);
-    nb_count_carried_rest(buf, body_sa, body_sl, 0, names, 0)
+    nb_count_carried_rest(buf, body_sa, body_sl, 0, names, 0, clets, clcell, entry_n)
 }
-pub fn nb_count_carried_rest(buf: i64, body_sa: i64, body_sl: i64, i: i64, names: i64, n: i64) -> i64 {
+pub fn nb_count_carried_rest(buf: i64, body_sa: i64, body_sl: i64, i: i64, names: i64, n: i64, clets: i64, clcell: i64, entry_n: i64) -> i64 {
     if i >= body_sl {
         return n;
     }
     let stmt: i64 = __mind_load_i64(body_sa + i * 8);
-    let new_n: i64 = if ast_kind(stmt) == ast_assign() {
+    let sk: i64 = ast_kind(stmt);
+    let new_n: i64 = if sk == ast_assign() {
         let nm: i64 = ast_child0(stmt);
         let lo: i64 = ast_span_lo(nm);
         let hi: i64 = ast_span_hi(nm);
@@ -24944,9 +25025,63 @@ pub fn nb_count_carried_rest(buf: i64, body_sa: i64, body_sl: i64, i: i64, names
             n + 1
         }
     } else {
-        n
+        // 2-way value-if (mic@3 note-emittable): the non-assign case (nested while
+        // descent) is an early-return helper, not a flat `else if`.
+        nb_count_carried_other(buf, stmt, names, n, clets, clcell, entry_n)
     };
-    nb_count_carried_rest(buf, body_sa, body_sl, i + 1, names, new_n)
+    nb_count_carried_rest(buf, body_sa, body_sl, i + 1, names, new_n, clets, clcell, entry_n)
+}
+// F2: count the OUTER (pre-loop) vars a nested while reassigns only inside its body —
+// each gets an exit_id (frame slot) in THIS loop, exactly as nb_carry_promote_inner
+// records them on the emit side (lockstep). Any non-while statement contributes 0.
+pub fn nb_count_carried_other(buf: i64, stmt: i64, names: i64, n: i64, clets: i64, clcell: i64, entry_n: i64) -> i64 {
+    if ast_kind(stmt) == ast_while() {
+        let iw_body: i64 = ast_child1(stmt);
+        return nb_count_carried_nested(buf, ast_child0(iw_body), ast_aux(iw_body), 0, names, n, clets, clcell, entry_n);
+    }
+    n
+}
+// Descend a nested loop region, counting each OUTER-scope var it reassigns (bounded
+// membership test over the enclosing loop's pre-loop scope [0, entry_n)), deduped
+// against `names`. Recurses through deeper nested whiles so a doubly-nested outer
+// mutation is counted once. Mirrors nb_carry_promote_inner's promoted set exactly so
+// the frame count and the emit carry table stay in lockstep on while{while{}}.
+pub fn nb_count_carried_nested(buf: i64, sa: i64, sl: i64, i: i64, names: i64, n: i64, clets: i64, clcell: i64, entry_n: i64) -> i64 {
+    if i >= sl {
+        return n;
+    }
+    let stmt: i64 = __mind_load_i64(sa + i * 8);
+    let sk: i64 = ast_kind(stmt);
+    let new_n: i64 = if sk == ast_assign() {
+        let nm: i64 = ast_child0(stmt);
+        let lo: i64 = ast_span_lo(nm);
+        let hi: i64 = ast_span_hi(nm);
+        let os: i64 = nb_lets_lookup_rest(clets, entry_n, buf, lo, hi, 0, 0 - 1);
+        if os >= 0 {
+            if nb_name_seen(buf, names, n, lo, hi, 0) == 1 {
+                n
+            } else {
+                let _s: i64 = nb_name_record(names, n, lo, hi);
+                n + 1
+            }
+        } else {
+            n
+        }
+    } else {
+        // 2-way value-if (mic@3 note-emittable): a deeper nested while recurses via an
+        // early-return helper rather than a flat `else if`.
+        nb_count_carried_nested_other(buf, stmt, names, n, clets, clcell, entry_n)
+    };
+    nb_count_carried_nested(buf, sa, sl, i + 1, names, new_n, clets, clcell, entry_n)
+}
+// Recurse through a deeper nested while (a doubly-nested outer mutation); any other
+// statement contributes 0. Early-return so the caller's value-if stays 2-way.
+pub fn nb_count_carried_nested_other(buf: i64, stmt: i64, names: i64, n: i64, clets: i64, clcell: i64, entry_n: i64) -> i64 {
+    if ast_kind(stmt) == ast_while() {
+        let iw_body: i64 = ast_child1(stmt);
+        return nb_count_carried_nested(buf, ast_child0(iw_body), ast_aux(iw_body), 0, names, n, clets, clcell, entry_n);
+    }
+    n
 }
 // True if name span [lo,hi) is already in the names table (0..n).
 pub fn nb_name_seen(buf: i64, names: i64, n: i64, lo: i64, hi: i64, i: i64) -> i64 {
@@ -25076,8 +25211,13 @@ pub fn nb_count_stmt(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         let body_blk: i64 = ast_child1(node);
         let body_sa: i64 = ast_child0(body_blk);
         let body_sl: i64 = ast_aux(body_blk);
+        // Snapshot the count-lets size BEFORE the body count grows it — this loop's
+        // pre-loop scope bound, the outer-membership frontier for the F2 nested-carry
+        // count (== the emit pre-walk's prewalk_lcell). Body-local lets appended during
+        // after_body are >= this bound and so are never miscounted as outer-carried.
+        let pre_body_n: i64 = __mind_load_i64(clcell);
         let after_body: i64 = nb_count_stmts(after_cond, buf, body_sa, body_sl, 0, params_addr, n_params, clets, clcell, srt);
-        let ncarry: i64 = nb_count_carried(buf, body_sa, body_sl);
+        let ncarry: i64 = nb_count_carried(buf, body_sa, body_sl, clets, clcell, pre_body_n);
         return after_body + ncarry + 1;
     }
     if k == ast_assign() {
@@ -25600,6 +25740,13 @@ pub fn nb_region_while_carries_narrow(buf: i64, stmts_addr: i64, stmts_len: i64,
     if k == ast_while() {
         let body_blk: i64 = ast_child1(stmt);
         if nb_while_assigns_narrow_param(buf, ast_child0(body_blk), ast_aux(body_blk), 0, params_addr, n_params) == 1 {
+            return 1;
+        }
+        // F2 FIXED: a while NESTED inside this while whose body reassigns a narrow
+        // param now carries correctly (nb_while_carry / nb_count_carried promote the
+        // outer var through the nested region). Recurse into the while body so the
+        // while{while{ x = x + 1 }} narrow shape is PERMITTED, not fail-closed.
+        if nb_region_while_carries_narrow(buf, ast_child0(body_blk), ast_aux(body_blk), 0, params_addr, n_params) == 1 {
             return 1;
         }
     }
