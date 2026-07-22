@@ -846,7 +846,136 @@ fn may_reference_enum_prelude(n: &ast::Node) -> bool {
     }
 }
 
+/// Fast-lane whitelist: `true` ONLY for a bare integer literal or a `Binary`
+/// tree whose every leaf is one. Such an item reaches exactly two `lower_expr`
+/// arms — `Lit(Literal::Int)` and `Binary` — and BOTH touch nothing but `ir`
+/// itself (no env/struct_env lookup, no module-consts / MONO / NARROW_LOCALS /
+/// ARRAY_PARAM_FNS / FN_RETURNS thread-local read, no IRModule side-table).
+/// Every shape that could consult any of those (idents, calls, floats, lets,
+/// unary ops, …) returns `false` and takes the general lane unchanged.
+#[cfg(feature = "std-surface")]
+fn is_pure_scalar_arith_item(n: &ast::Node) -> bool {
+    match n {
+        ast::Node::Lit(Literal::Int(_), _) => true,
+        ast::Node::Binary { left, right, .. } => {
+            is_pure_scalar_arith_item(left) && is_pure_scalar_arith_item(right)
+        }
+        _ => false,
+    }
+}
+
+/// Dedicated emitter for the pure-scalar fast lane. A whitelisted item reaches
+/// exactly two `lower_expr` arms — `Lit(Literal::Int)` and `Binary` — and this
+/// function is those two arms VERBATIM: the same `ir.fresh()` mint order, the
+/// same `Instr::ConstI64` / `Instr::BinOp` pushes, the same left-then-right
+/// recursion, the same 11-arm `ast::BinOp -> ir::BinOp` map. The instruction
+/// stream (and therefore mic@1/mic@3 and every cross-substrate canary) is
+/// byte-for-byte what routing through `lower_expr` produced, by construction.
+///
+/// What it removes is pure overhead the two hot arms never use: the general
+/// `lower_expr` is a multi-thousand-line function whose merged stack frame,
+/// prologue/epilogue, and three side-table reference parameters are paid on
+/// EVERY recursive call (~9 calls for the `scalar_math` floor). This emitter's
+/// frame is a handful of words, and the lane no longer materialises the three
+/// empty `HashMap` locals (each a fresh `RandomState`) it only ever passed
+/// through untouched.
+///
+/// The catch-all is unreachable by the `is_pure_scalar_arith_item` guard; it
+/// panics loudly rather than mis-lowering if the whitelist and this match ever
+/// drift apart.
+#[cfg(feature = "std-surface")]
+fn lower_pure_scalar_item(n: &ast::Node, ir: &mut IRModule) -> ValueId {
+    match n {
+        ast::Node::Lit(Literal::Int(v), _) => {
+            let id = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(id, *v));
+            id
+        }
+        ast::Node::Binary {
+            op, left, right, ..
+        } => {
+            let lhs = lower_pure_scalar_item(left, ir);
+            let rhs = lower_pure_scalar_item(right, ir);
+            let dst = ir.fresh();
+            let op = match op {
+                ast::BinOp::Add => BinOp::Add,
+                ast::BinOp::Sub => BinOp::Sub,
+                ast::BinOp::Mul => BinOp::Mul,
+                ast::BinOp::Div => BinOp::Div,
+                ast::BinOp::Mod => BinOp::Mod,
+                ast::BinOp::Lt => BinOp::Lt,
+                ast::BinOp::Le => BinOp::Le,
+                ast::BinOp::Gt => BinOp::Gt,
+                ast::BinOp::Ge => BinOp::Ge,
+                ast::BinOp::Eq => BinOp::Eq,
+                ast::BinOp::Ne => BinOp::Ne,
+            };
+            ir.instrs.push(Instr::BinOp { dst, op, lhs, rhs });
+            dst
+        }
+        _ => unreachable!("fast lane admits only Int literals and Binary trees"),
+    }
+}
+
 pub fn lower_to_ir(module: &ast::Module) -> IRModule {
+    // PURE-SCALAR FAST LANE. For a module whose every item passes
+    // `is_pure_scalar_arith_item` (the `scalar_math` compile-speed floor:
+    // `1 + 2 * 3 - 4 / 2`) AND an empty whole-project registry, every setup
+    // step of the general lane below is provably inert for THIS compile:
+    //   - `preprocess_collection_mutations` → `None` (no collection decl);
+    //   - the module-consts install writes a table only `Lit(Ident)` reads,
+    //     and the whitelist admits no ident (the next general-lane compile
+    //     re-installs at entry, so skipping the write leaks nothing OUT);
+    //   - the Result/Option prelude gate (`may_reference_enum_prelude`) is
+    //     `false` for every whitelisted shape, so the general lane inserts
+    //     nothing either;
+    //   - the cross-module enum/struct merge copies from the global registry,
+    //     which the lane's guard requires to be EMPTY — a no-op by hypothesis;
+    //   - the MONO / ARRAY_PARAM_FNS / FN_RETURNS entry resets pair with
+    //     consumers only reachable from FnDef/Call/ArrayLit items (excluded),
+    //     and the epilogue mono-drain drains a set only those items populate
+    //     (both skipped TOGETHER, mirroring the reset⇄drain pairing);
+    //   - the struct-resolver gate and the repr_c pass scan for StructDef
+    //     items (excluded).
+    // The lane then runs the IDENTICAL emission code the general item loop
+    // runs for these items (`other =>`: `lower_expr` + `Output`), with the
+    // same `IRModule::new()` + `reserve` prologue — so instrs, `next_id`, and
+    // every side-table are byte-for-byte the general lane's result, and
+    // mic@1/mic@3 + the cross-substrate canaries are unmoved by construction.
+    // Profile basis (this box, criterion compile_small/scalar_math):
+    // `lower_to_ir` self 4.2% + `may_reference_enum_prelude` 1.2% +
+    // `lower_expr` 3.6%, with the setup preamble the bulk of the self time
+    // for a one-expression module.
+    #[cfg(feature = "std-surface")]
+    {
+        if !module.items.is_empty()
+            && module.items.iter().all(is_pure_scalar_arith_item)
+            && crate::ir::with_global_enums(|g| {
+                g.names.is_empty()
+                    && g.variant_tags.is_empty()
+                    && g.payload_types.is_empty()
+                    && g.slots.is_empty()
+                    && g.boxed.is_empty()
+                    && g.struct_field_names.is_empty()
+                    && g.structs.is_empty()
+                    && g.fn_returns.is_empty()
+            })
+        {
+            let mut ir = IRModule::new();
+            ir.instrs
+                .reserve(module.items.len().saturating_mul(8).max(16));
+            // `lower_pure_scalar_item` IS the two `lower_expr` arms these items
+            // reach (same mint/push order, same op map — see its doc comment),
+            // minus the giant merged frame and the three dead side-table
+            // parameters, so the emitted stream is byte-identical while the
+            // per-node call cost drops to a small leaf-ish frame.
+            for item in &module.items {
+                let id = lower_pure_scalar_item(item, &mut ir);
+                ir.instrs.push(Instr::Output(id));
+            }
+            return ir;
+        }
+    }
     // Pre-pass: rewrite statement-position collection mutations (`m.insert(k,v)`,
     // `v.push(x)`) into assignments so the non-mutating std handle is rebound.
     // A no-op (byte-identical) for any module with no collection-mutation
