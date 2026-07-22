@@ -1,0 +1,91 @@
+// ===========================================================================
+// SELF-HOST STANDALONE mindc DRIVER (Rust-independence #14 — C8: "no Python driver")
+//
+// A pure-MIND CLI shim that turns the self-host compiler into a STANDALONE binary:
+// it reads a .mind source image FROM A FILE named on argv, compiles it with the
+// existing pure-MIND front-end (selftest_native_elf_u), and writes the emitted
+// native ELF out — using ONLY MIND + raw syscalls (open/read/write/exit via the
+// __mind_* intrinsics). ZERO Python, zero libc, zero Rust in the run loop.
+//
+// This is the argv/file-IO twin of selfhost_driver.mind (which reads the SAME image
+// from stdin fd 0). Like that file it is kept SEPARATE from main.mind (the compiler
+// library) and is fed to the native backend only as APPENDED SOURCE — never built
+// via `mindc --emit-shared` — so main.mind stays byte-identical to HEAD and the
+// mic@1 fixed-point / mic@3-flip / self-host-loop gates are all untouched. main.mind
+// defines no `main`; this file does, only in the combined self-host source, so
+// nb_find_main lays THIS `main` as the emitted-ELF entry.
+//
+// CLI:   ./driver <input_image_path>            (ELF -> stdout fd 1)
+//   e.g. ./driver seed.image > out.elf
+//
+// INPUT IMAGE (argv[1], the SAME wire protocol selfhost_driver.mind reads on fd 0):
+//     [8-byte user_lo LE][8-byte src_len LE][src bytes]
+//   src = 21 std/*.mind sources concatenated, then main.mind, then a driver file;
+//   user_lo = byte length of the std prefix (the reachability-prune seam). The
+//   16-byte header carries user_lo so the standalone binary reproduces the loop's
+//   exact (src, src_len, user_lo) call WITHOUT re-deriving the std seam — feeding
+//   selftest_native_elf_u user_lo=0 instead would keep ALL std fns as prune roots
+//   (main.mind:27560) and emit a DIFFERENT, larger ELF, so the header is load-bearing
+//   for byte-identity with the frozen stage1.elf.
+//
+// OUTPUT: the emitted static native ELF is written to stdout (fd 1) via raw
+//   __mind_write. The freestanding native backend's only open(2) intrinsic is
+//   __mind_open (O_RDONLY, main.mind nb_emit_open) — there is no open-for-write
+//   intrinsic, and adding one would change main.mind and force a re-freeze of the
+//   checked-in stage1.elf seed. Writing to the inherited stdout fd (exactly as
+//   selfhost_driver.mind does) keeps main.mind byte-identical and the frozen seed
+//   untouched; the caller redirects stdout to the output path (`> out.elf`).
+//   deferred: a true `./driver <in> <out.elf>` that opens argv[2] for writing needs
+//   an additive __mind_openw (O_WRONLY|O_CREAT|O_TRUNC) intrinsic in main.mind's
+//   native backend + a self-host-loop re-freeze — upgrade path: mirror nb_emit_open
+//   with rsi=O_WRONLY|O_CREAT|O_TRUNC(577), rdx=mode(0644), add its nb_intrinsic_id
+//   + emit-dispatch arms, then `self_host_loop_smoke.py --reseed`.
+//
+// Exit codes: 0 ok; 2 missing input-path arg; 3 open failed; 4 short header read;
+//   5 short source read (truncated image).
+// ===========================================================================
+
+// Read exactly `want` bytes from `fd` into `buf` (a read(2) may return short).
+// Stops early on EOF/error (n <= 0); returns bytes actually read. Distinct name
+// from selfhost_driver.mind's nb_read_fully so the two shims can never collide.
+pub fn adrv_read_fully(fd: i64, buf: i64, want: i64, got: i64) -> i64 {
+    if got >= want {
+        return got;
+    }
+    let n: i64 = __mind_read(fd, buf + got, want - got, 0 - 1);
+    if n <= 0 {
+        return got;
+    }
+    adrv_read_fully(fd, buf, want, got + n)
+}
+
+pub fn main() -> i64 {
+    // argv[0] is the program path; argv[1] is the input image path.
+    if __mind_argc() < 2 {
+        return 2;
+    }
+    let path: i64 = __mind_argv(1);
+    let fd: i64 = __mind_open(path);
+    if fd < 0 {
+        return 3;
+    }
+    // Header: [8B user_lo LE][8B src_len LE], read from the file (offset now at 16).
+    let hdr: i64 = __mind_alloc(16);
+    let hn: i64 = adrv_read_fully(fd, hdr, 16, 0);
+    if hn < 16 {
+        return 4;
+    }
+    let user_lo: i64 = __mind_load_i64(hdr);
+    let src_len: i64 = __mind_load_i64(hdr + 8);
+    // Source bytes follow the header; +16 slack matches selfhost_driver.mind.
+    let src: i64 = __mind_alloc(src_len + 16);
+    let rn: i64 = adrv_read_fully(fd, src, src_len, 0);
+    if rn < src_len {
+        return 5;
+    }
+    // Compile with the exact (src, src_len, user_lo) the self-host loop uses.
+    let es: EmitState = selftest_native_elf_u(src, src_len, user_lo);
+    // Emit the native ELF to stdout (fd 1), raw write, no libc.
+    let _w: i64 = __mind_write(1, string_addr(es.buf), string_len(es.buf), 0 - 1);
+    0
+}
