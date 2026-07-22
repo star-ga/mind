@@ -134,6 +134,7 @@ See [docs/roadmap.md](docs/roadmap.md) for full phase descriptions.
 | [Roadmap](docs/roadmap.md) | ✅ Complete |
 | [Optimization Frontier](docs/optimization-frontier.md) | ✅ Roadmap — Pareto-optimal deterministic compiler |
 | [RUNS Burndown Roadmap](docs/runs-burndown-roadmap.md) | ✅ Roadmap — 62%→100% executable-subset path |
+| [Migration Roadmap](docs/migration-roadmap.md) | ✅ Roadmap — any language → pure executing byte-identical MIND (symbol-level queue, behavioral referee, gap inventory) |
 | [RFC 0007 Mindcraft](docs/rfcs/0007-mindcraft.md) | ✅ Normative |
 | [RFC 0008 mindc build](docs/rfcs/0008-mindc-build.md) | ✅ Spec complete — impl 7/7 |
 | [RFC 0010 memory safety + C ABI](docs/rfcs/0010-memory-safety-and-c-abi.md) | ✅ Phases A/B/C shipped; E/F scaffolded |
