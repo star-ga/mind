@@ -97,7 +97,14 @@ Native-ELF covers only scalar i64/ptr/struct/control-flow. To drop the 12,753-LO
   rejected `ConstF64`). **f32 scalar tier LANDED (2026-07-21, `1372c4c`):** general single-precision emission —
   `addss`/`subss`/`mulss`/`divss`, `cvtss2sd`/`cvtsd2ss` round-trip, `cvttss2si`, `movss` load/store — via the
   general nb_expr path (not just kernel emitters), gated by `self_host_native_scalar_f32_smoke.py` (CPU-as-oracle,
-  exact-bit vs single-precision reference). The f64 canary stays byte-identical. **Still open:** ISA-selection,
+  exact-bit vs single-precision reference). The f64 canary stays byte-identical. **Exactness guard LANDED
+  (2026-07-21):** the integer-only decimal->IEEE-754 path (`nb_float_lit_bits` -> `nb_strip_pow5`) is exact only
+  for a DYADIC literal (5^fk divides num); a non-dyadic literal (`0.1`, `3.14`) truncated in `nb_strip_pow5`'s
+  integer `/5` and emitted SILENT wrong bits (`0.1` -> `0.0`). `nb_expr`'s float arm now calls
+  `nb_float_lit_is_dyadic` and FAILS CLOSED on a non-dyadic literal instead of miscompiling, gated by
+  `self_host_float_lit_exact_smoke.py` (10 dyadic accept + 10 non-dyadic reject, vs the `mod 5^fk` oracle — a
+  trunc-based test can't catch it since `trunc(3.0)==trunc(3.14)`). Full correctly-rounded dec2flt (arbitrary-
+  precision round-to-nearest-even) stays the deferred upgrade. **Still open:** ISA-selection,
   a byte-identity oracle for the float path, and wiring f32 into the general dtype registry (currently a
   dedicated selftest export, not the default nb_expr dtype). *(Commit/CHANGELOG history labels the earlier f64
   increment **"RI-B1"** — that is roadmap **C1** here, NOT roadmap B1 (pure-MIND type-checker below).)*
