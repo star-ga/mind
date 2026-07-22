@@ -212,6 +212,33 @@ NESTED_LOOP = [
      "fn f(x: i8) -> i64 {\n    let mut c: i64 = 0;\n    while c < 3 {\n        let mut d: i64 = 0;\n        while d < 2 {\n            x = x + 1;\n            d = d + 1;\n        }\n        c = c + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(10); }\n"),
 ]
 # REFUSE: the remaining genuinely-broken sub-shape must emit an EMPTY ELF.
+# EMIT + RUN correct (SUB-STEP B): a var DIRECTLY assigned inside an `if` INSIDE a loop
+# body (`while{ if{ x += 1 } }`) now carries across the loop. nb_while_carry_ifnest records
+# the branch-assigned OUTER var with post_id = the if's merge slot (pulled from the SHARED
+# nb_count_stmt total, NOT re-derived), so the loop copy-in/exit thread it. Covers i8/i16/
+# i32/i64 (+ overflow), always-taken and cond-selective. `exp` is the independent Python
+# carry reference (x increments only on iterations where the inner if is taken). This is the
+# fix for the former I64 `while{ if{ x+=1 } }` gap (Finding #2, single-branch part).
+IF_IN_LOOP_CARRY = [
+    ("i8 param while{ if(a<10, taken){ x+=1 } } x3, f(10) -> 13", _carry_ref(10, 3, 8),
+     "fn f(x: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 3 {\n        if a < 10 { x = x + 1; }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(10); }\n"),
+    ("i8 param while{ if(taken){ x+=1 } } OVERFLOW f(126) x3 -> -127", _carry_ref(126, 3, 8),
+     "fn f(x: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 3 {\n        if a < 10 { x = x + 1; }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(126); }\n"),
+    ("i16 param while{ if(taken){ x+=1 } } x5 f(100) -> 105", _carry_ref(100, 5, 16),
+     "fn f(x: i16) -> i64 {\n    let mut a: i64 = 0;\n    while a < 5 {\n        if a < 10 { x = x + 1; }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(100); }\n"),
+    ("i32 param while{ if(taken){ x+=1 } } x4 f(40) -> 44", _carry_ref(40, 4, 32),
+     "fn f(x: i32) -> i64 {\n    let mut a: i64 = 0;\n    while a < 4 {\n        if a < 10 { x = x + 1; }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(40); }\n"),
+    # two DIFFERENT narrow params, each written in EXACTLY ONE branch (x in then, y in else) —
+    # each is a genuine single-branch carry (the sibling does not write it), so both carry
+    # correctly. x=2 (a=0,1), y=2 (a=2,3) -> x*10+y = 22. (The write-aware per-param check
+    # permits this precisely; a coarse "any narrow assign per branch" count would over-refuse.)
+    ("i8 two-diff-params while{ if{ x+=1 } else { y+=1 } } 4 iters -> 22", 22,
+     "fn f(x: i8, y: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 4 {\n        if a < 2 { x = x + 1; } else { y = y + 1; }\n        a = a + 1;\n    }\n    return (x as i64) * 10 + (y as i64);\n}\nfn main() -> i64 { return f(0, 0); }\n"),
+    ("i8 param while{ if(a<2, selective){ x+=1 } } 5 iters f(10) -> 12", _carry_ref(10, 2, 8),
+     "fn f(x: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 5 {\n        if a < 2 { x = x + 1; }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(10); }\n"),
+    ("i64 param while{ if(taken){ x+=1 } } x3, f(10) -> 13 (I64 gap Finding #2 FIXED)", 13,
+     "fn f(x: i64) -> i64 {\n    let mut a: i64 = 0;\n    while a < 3 {\n        if a < 10 { x = x + 1; }\n        a = a + 1;\n    }\n    return x;\n}\nfn main() -> i64 { return f(10); }\n"),
+]
 REFUSE = [
     ("i8 read-only param carried across a top-level loop then (x as i64)+c "
      "(narrow read-only loop-carry gap — NOT the cast, which now composes; "
@@ -239,20 +266,44 @@ IF_WRAPPED_WHILE = [
      "fail-closed)",
      "fn f(x: i32) -> i64 {\n    let mut a: i64 = 0;\n    while a < 3 {\n        let mut d: i64 = 0;\n        if a < 10 {\n            while d < 2 { x = x + 1; d = d + 1; }\n        }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
 ]
-# DOCUMENTED PRE-EXISTING GAP (Finding #2, NOT fixed here — follow-up's job): the i64
-# `while{ if{ x += 1 } }` shape (a plain if-wrapped assign inside a loop, no narrow
-# param) miscompiles on the GENERIC native-ELF loop path — the if-region merge does not
-# thread the conditional assign's carry out through the outer loop, so f() returns 1
-# instead of 3 (independently confirmed via probe2.py). This has NOTHING to do with the
-# narrow-param guard (an all-i64 fn never enters nb_fns_reassign_narrow_param), so this
-# fix does not — and cannot — address it; it needs a separate generic-path carry fix.
-# The same class also miscompiles the i64 `while{ if{ while{ x+=1 } } }` shape (got=2
-# want=6, probe.py). Recorded here so the gap is visible + tracked, NOT hidden. Not run
-# as an assertion below (it is a known-wrong shape awaiting the follow-up), only noted:
+# REFUSE (blind-review XN class, regression guard for the UNCOMMITTED Sub-step B): a narrow
+# param assigned TOP-LEVEL in one if branch while the SIBLING branch ALSO writes it via
+# NESTED control (`else { if{ x+=5 } }` / `else { while{ x+=1 } }`). A non-recursive
+# "single-branch" check misclassified these as clean single-branch and carried x while
+# DROPPING the sibling's nested write — a running ELF with the WRONG value (XN1 emitted
+# exit 7 want 12). The sibling-write check is now RECURSIVE (nb_block_writes_rec), so any
+# sibling write at any depth fails these closed. MUST emit an EMPTY ELF for every width.
+XN_SIBLING_NESTED_WRITE = [
+    ("i8 while{ if{ x+=1 } else { if{ x+=5 } } } — else writes x via nested if (must "
+     "fail-closed, was leaking exit 7 want 12)",
+     "fn f(x: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 4 {\n        if a < 2 { x = x + 1; } else { if a < 10 { x = x + 5; } }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
+    ("i8 while{ if{ if{ x+=5 } } else { x+=1 } } — then writes x via nested if (mirror, "
+     "must fail-closed)",
+     "fn f(x: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 4 {\n        if a < 2 { if a < 10 { x = x + 5; } } else { x = x + 1; }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
+    ("i8 while{ if{ x+=1 } else { while{ x+=1 } } } — else writes x via nested while (must "
+     "fail-closed)",
+     "fn f(x: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 4 {\n        let mut d: i64 = 0;\n        if a < 2 { x = x + 1; } else { while d < 3 { x = x + 1; d = d + 1; } }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
+    ("i8 while{ if{ x+=1 } else { if{ while{ x+=1 } } } } — else writes x via if>while "
+     "(deep, must fail-closed)",
+     "fn f(x: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 4 {\n        if a < 2 { x = x + 1; } else { if a < 10 { let mut d: i64 = 0; while d < 2 { x = x + 1; d = d + 1; } } }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
+]
+# SUB-STEP B FIXED the single-branch part of Finding #2: i64/narrow `while{ if{ x+=1 } }`
+# now carries correct (returns 3, asserted in IF_IN_LOOP_CARRY above). Two related shapes
+# remain, tracked as follow-ups, NOT asserted correct here:
+#   * Sub-step C: i64/narrow `while{ if{ while{ x+=1 } } }` (if-WRAPPED inner while) still
+#     drops the carry (got=2 want=6) — the inner while is not promoted to the outer loop.
+#     Stays fail-closed for narrow (IF_WRAPPED_WHILE below); the i64 form is a known gap.
+#   * A separate, pre-existing nb_if_stmt_merged merge-read bug: a var assigned in BOTH
+#     branches of an if (`if{ x+=1 } else { x+=2 }`) mis-reads on the else side (reproduces
+#     standalone: `let mut x=5; if 1<0 {x=x+1} else {x=x+2}` -> 2 not 7). nb_while_carry_ifnest
+#     deliberately does NOT promote a both-branch-same-var (XOR filter), so that shape is
+#     unchanged (not newly miscompiled). Awaits a merge-read fix; out of Sub-step B scope.
 I64_IF_IN_WHILE_GAP_NOTE = (
-    "i64 while{ if{ x+=1 } } returns 1 not 3, and i64 while{ if{ while{ x+=1 } } } "
-    "returns 2 not 6 — pre-existing generic-path if-in-loop carry-drop gap (Finding #2, "
-    "follow-up)"
+    "REMAINING (not this fix, pre-existing gaps): i64 while{ if{ while{ x+=1 } } } returns "
+    "2 not 6 (Sub-step C, if-wrapped inner while); i64 while{ if{ if{ x+=1 } } } returns 1 "
+    "not 3 (if-in-if — x written only via nested if in ONE branch, not a top-level "
+    "single-branch carry, unpromoted); both-branch-same-var if merge-read bug "
+    "(if{x+=1}else{x+=2}) — all tracked as follow-ups"
 )
 # WORK controls: i64 loops are unaffected; a narrow param with NO loop lowers via the
 # entry width-wrap driver (must NOT be over-rejected).
@@ -313,6 +364,8 @@ def main() -> int:
     narrow_local_ok = 0
     nested_ok = 0
     nested_loop_ok = 0
+    if_in_loop_ok = 0
+    xn_refused = 0
     refused = 0
     if_wrapped_refused = 0
     ran = 0
@@ -409,6 +462,20 @@ def main() -> int:
             print(f"  {'PASS' if ok else 'FAIL'}  var carried by while-nested-in-while (F2 fixed): {label} "
                   f"-> exit {rc} (python-ref {exp} -> byte {want})")
 
+        for label, exp, src in IF_IN_LOOP_CARRY:
+            elf = emit(src)
+            if not elf:
+                print(f"  FAIL  if-in-loop carry OVER-REJECTED: {label} (emit 0B, want run)")
+                all_ok = False
+                continue
+            want = exp & 0xFF
+            rc = run_elf(elf)
+            ok = rc == want
+            all_ok = all_ok and ok
+            if_in_loop_ok += 1 if ok else 0
+            print(f"  {'PASS' if ok else 'FAIL'}  var carried by if-in-loop (Sub-step B): {label} "
+                  f"-> exit {rc} (python-ref {exp} -> byte {want})")
+
         for label, src in REFUSE:
             elf = emit(src)
             ok = len(elf) == 0
@@ -424,6 +491,15 @@ def main() -> int:
             if_wrapped_refused += 1 if ok else 0
             print(f"  {'PASS' if ok else 'FAIL'}  if-wrapped inner while refused "
                   f"(0b5f489 regression guard): {label} (emit {len(elf)}B, want 0 — "
+                  f"fail-closed, NOT run)")
+
+        for label, src in XN_SIBLING_NESTED_WRITE:
+            elf = emit(src)
+            ok = len(elf) == 0
+            all_ok = all_ok and ok
+            xn_refused += 1 if ok else 0
+            print(f"  {'PASS' if ok else 'FAIL'}  sibling-nested-write refused "
+                  f"(XN silent-miscompile guard): {label} (emit {len(elf)}B, want 0 — "
                   f"fail-closed, NOT run)")
 
         print(f"  NOTE  documented pre-existing gap (NOT fixed here): {I64_IF_IN_WHILE_GAP_NOTE}")
@@ -458,12 +534,19 @@ def main() -> int:
     if nested_loop_ok < 1:
         print("FAIL: vacuous (no while-nested-in-while carry emitted + ran)")
         return 1
+    if if_in_loop_ok < len(IF_IN_LOOP_CARRY):
+        print("FAIL: vacuous/incomplete (a Sub-step B if-in-loop carry did not run correct)")
+        return 1
     if refused < 1:
         print("FAIL: vacuous (no broken sub-shape refused)")
         return 1
     if if_wrapped_refused < len(IF_WRAPPED_WHILE):
         print("FAIL: an if-wrapped inner-while shape was PERMITTED (0b5f489 regression "
               "— must be fail-closed for every narrow width)")
+        return 1
+    if xn_refused < len(XN_SIBLING_NESTED_WRITE):
+        print("FAIL: a sibling-nested-write shape was PERMITTED (XN silent-miscompile "
+              "regression — the sibling branch writes the carried var, must be fail-closed)")
         return 1
     if ran < 1:
         print("FAIL: vacuous (no i64 control ran)")

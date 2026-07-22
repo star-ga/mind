@@ -75,6 +75,21 @@ SHAPES = [
      "fn main() -> i64 {\n    let mut x: i64 = 0;\n    let mut a: i64 = 0;\n    while a < 2 {\n        let mut b: i64 = 0;\n        while b < 2 {\n            let mut c: i64 = 0;\n            while c < 2 { x = x + 1; c = c + 1; }\n            b = b + 1;\n        }\n        a = a + 1;\n    }\n    return x;\n}\n"),
     ("while{ while{ while{ x+=1 } } } 2x3x2 -> 12 (triple-nest, asym)", _nest3_ref(2, 3, 2),
      "fn main() -> i64 {\n    let mut x: i64 = 0;\n    let mut a: i64 = 0;\n    while a < 2 {\n        let mut b: i64 = 0;\n        while b < 3 {\n            let mut c: i64 = 0;\n            while c < 2 { x = x + 1; c = c + 1; }\n            b = b + 1;\n        }\n        a = a + 1;\n    }\n    return x;\n}\n"),
+    # SUB-STEP B: an OUTER var directly assigned inside an `if` in a loop body is now
+    # carried (nb_while_carry_ifnest; post_id = the if merge slot from the SHARED total).
+    # A count!=emit desync on the merge-slot derivation manifests as a wrong value here.
+    ("while{ if{ x+=1 } } always-taken x3 -> 3 (if-in-loop carry, I64 gap fixed)", 3,
+     "fn main() -> i64 {\n    let mut x: i64 = 0;\n    let mut a: i64 = 0;\n    while a < 3 {\n        if a < 10 { x = x + 1; }\n        a = a + 1;\n    }\n    return x;\n}\n"),
+    ("while{ if{ x+=1 } } cond-selective (x incremented iff a<2) 5 iters -> 2", 2,
+     "fn main() -> i64 {\n    let mut x: i64 = 0;\n    let mut a: i64 = 0;\n    while a < 5 {\n        if a < 2 { x = x + 1; }\n        a = a + 1;\n    }\n    return x;\n}\n"),
+    # both-branch DIFFERENT vars (x in then, y in else) — each var written on exactly one
+    # branch, so both carry correctly (the XOR-safe case). NB both-branch SAME var
+    # (if{x+=1}else{x+=2}) is deliberately NOT promoted: it hits a pre-existing
+    # nb_if_stmt_merged merge-read bug (else reads the then's slot), out of Sub-step B scope.
+    ("while{ if{ x+=1 } else { y+=1 } } 4 iters -> x=2,y=2 -> 10x+y=22", 22,
+     "fn main() -> i64 {\n    let mut x: i64 = 0;\n    let mut y: i64 = 0;\n    let mut a: i64 = 0;\n    while a < 4 {\n        if a < 2 { x = x + 1; } else { y = y + 1; }\n        a = a + 1;\n    }\n    return x * 10 + y;\n}\n"),
+    ("while{ if{ x+=1 } } enclosing if NEVER taken -> x stays 0", 0,
+     "fn main() -> i64 {\n    let mut x: i64 = 0;\n    let mut a: i64 = 0;\n    while a < 3 {\n        if a > 10 { x = x + 1; }\n        a = a + 1;\n    }\n    return x;\n}\n"),
 ]
 
 
