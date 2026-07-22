@@ -92,7 +92,11 @@ itself byte-identically with zero Rust & zero LLVM in the loop"* (integer/contro
   the scalar-class rules E2010/E2011/E2013/E2016 (`self_host_tc_class_rules_smoke.py`), the shape rules E2005
   (call-arity) / E2101 (broadcast) / E2102 (matmul-rank) / E2103 (matmul-inner-dim), and E2023 (reserved `__mind_`
   prefix — `name.starts_with("__mind_")`) — each an additive `selftest_tc_*` export byte-for-byte matching its Rust
-  oracle over positive+negative cases, all gated in `fast_keystone.sh` (`tc_class_rules`, `tc_shape_rules`). The
+  oracle over positive+negative cases, all gated in `fast_keystone.sh` (`tc_class_rules`, `tc_shape_rules`).
+  **Batch (2026-07-21, parallel-ported):** E2015 (let/assign class mismatch), E2006 (fixed-`bytes[N]` into growable
+  `bytes`/Vec), the tensor shape-annotation dtype/rank/dim compat guard, and the order-sensitive
+  `classify_error_code` router — four more additive `selftest_tc_*` exports, each byte-identical to its Rust oracle
+  and gated (`tc_let_class`/`tc_fixed_bytes`/`tc_shape_annot`/`tc_classify`). The
   remaining ~5,000 LOC (float/tensor/enum + AST-context-dependent rules) is the bulk still open.
 - [ ] **B2** Full parser + AST→IR lowering (`parser` ~5,563 portable of 7,782 total — the `#[bimap]` + trivia
   ~2,219 LOC are descoped from the self-host target — + `eval/lower.rs` 9,966) for every construct. The self-host

@@ -32787,3 +32787,191 @@ pub fn selftest_native_elf_tensor_matmul_i64(m: i64, k: i64, n: i64) -> EmitStat
     let elf: String = nb_write_elf(code, 0, note);
     EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
 }
+
+
+// ===== Batch-ported type-checker rules (E2015/E2006/shape-annot/classify) — additive selftest exports =====
+
+// ---- E2015_LET_CLASS_MISMATCH ----
+// E2015 LET_CLASS_MISMATCH (let/assign arm): true (1) when a binding
+// `let dst: ANN = <value>` or a reassignment `dst = <value>` crosses the
+// int/float scalar-class boundary — i.e. the annotated/declared class and the
+// value's confident class are both known scalar classes and differ. Byte-exact
+// twin of the Rust `ann_class != val_class` guard in the Node::Let / Node::Assign
+// arms of check_scalar_class_stmt (src/type_checker/mod.rs). The class-comparison
+// kernel is shared with the landed generic mismatch predicate — reused here, not
+// re-derived, so the let/assign framing adds no duplicate logic.
+pub fn tc_is_let_class_mismatch(ann_ty: i64, val_ty: i64) -> i64 {
+    tc_is_class_mismatch(ann_ty, val_ty)
+}
+
+// Isolated selftest entry (ADDITIVE — never reached through mindc_compile).
+// Selectors: 0=i32, 1=i64, 2=f64, 3=bool. Returns 1 iff the let/assign pair
+// (dst: ANN = <VAL>) is an int<->float class mismatch, else 0.
+pub fn selftest_tc_let_class_mismatch(ann_sel: i64, val_sel: i64) -> i64 {
+    let ann_buf: i64 = tc_name_by_sel(ann_sel);
+    let ann_len: i64 = tc_len_by_sel(ann_sel);
+    let val_buf: i64 = tc_name_by_sel(val_sel);
+    let val_len: i64 = tc_len_by_sel(val_sel);
+    let ann_ty: i64 = resolve_type_ident(ann_buf, 0, ann_len);
+    let val_ty: i64 = resolve_type_ident(val_buf, 0, val_len);
+    tc_is_let_class_mismatch(ann_ty, val_ty)
+}
+
+// ---- E2006 ----
+// "bytes[" — bytes 98 121 116 101 115 91 ("bytes" is the leading 5-byte prefix).
+pub fn tc_fixed_bytes_name_buf() -> i64 {
+    make_byte_buf_6(98, 121, 116, 101, 115, 91)
+}
+
+// True (1) iff the type name [lo,hi) is EXACTLY "bytes" (the growable vec) —
+// twin of the Rust param guard `matches!(param, TypeAnn::Named(n) if n == "bytes")`.
+// Exact-length equality: a `bytes[N]` name (len >= 6) can never match.
+pub fn tc_name_is_growable_bytes(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo != 5 {
+        return 0;
+    }
+    let ref: i64 = tc_fixed_bytes_name_buf();
+    if bytes_eq(buf, lo, lo + 5, ref, 0, 5) == 1 {
+        return 1;
+    }
+    0
+}
+
+// True (1) iff the type name [lo,hi) starts with "bytes[" (a fixed-size buffer
+// type) — twin of the Rust `typeann_is_fixed_bytes`: `n.starts_with("bytes[")`.
+// starts_with is: len >= 6 AND the first 6 bytes equal the prefix.
+pub fn tc_name_is_fixed_bytes(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo < 6 {
+        return 0;
+    }
+    let ref: i64 = tc_fixed_bytes_name_buf();
+    if bytes_eq(buf, lo, lo + 6, ref, 0, 6) == 1 {
+        return 1;
+    }
+    0
+}
+
+// E2006: 1 iff binding an argument of type-name ARG into a parameter of
+// type-name PARAM is the Bug #38 fixed-`bytes[N]`-into-growable-`bytes`
+// miscompile — i.e. PARAM is exactly "bytes" AND ARG starts with "bytes[".
+pub fn tc_is_fixed_bytes_into_vec(param_buf: i64, plo: i64, phi: i64, arg_buf: i64, alo: i64, ahi: i64) -> i64 {
+    if tc_name_is_growable_bytes(param_buf, plo, phi) == 0 {
+        return 0;
+    }
+    if tc_name_is_fixed_bytes(arg_buf, alo, ahi) == 1 {
+        return 1;
+    }
+    0
+}
+
+// Isolated selftest entry (ADDITIVE — never reached through mindc_compile).
+pub fn selftest_tc_fixed_bytes_into_vec(pb0: i64, pb1: i64, pb2: i64, pb3: i64, pb4: i64, pb5: i64, pb6: i64, plen: i64, ab0: i64, ab1: i64, ab2: i64, ab3: i64, ab4: i64, ab5: i64, ab6: i64, alen: i64) -> i64 {
+    let param_buf: i64 = make_byte_buf_7(pb0, pb1, pb2, pb3, pb4, pb5, pb6);
+    let arg_buf: i64 = make_byte_buf_7(ab0, ab1, ab2, ab3, ab4, ab5, ab6);
+    tc_is_fixed_bytes_into_vec(param_buf, 0, plen, arg_buf, 0, alen)
+}
+
+// ---- shape_annot_compat ----
+// RFC-0012 Phase A shape annotation-compat guard. Twin of the three ordered
+// checks in `check_tensor_shape_compat` (src/type_checker/mod.rs ~4952-5014),
+// which compares a declared `Tensor<...>` annotation against the inferred
+// tensor type at a `let x: Tensor<...> = rhs` site. The Rust order is: dtype
+// mismatch first (shape::dtype_mismatch), then rank mismatch (shape::rank_mismatch,
+// before individual dims), then per-axis dim mismatch (shape::dim_mismatch) but
+// ONLY for pairs where both sides are `ShapeDim::Known` — symbolic dims are
+// always compatible at a single binding site.
+
+// shape::dtype_mismatch — 1 iff annotation dtype selector != inferred dtype
+// selector (the `ann.dtype != inferred.dtype` guard; only equality matters).
+pub fn tc_is_shape_dtype_mismatch(ann_dtype: i64, inf_dtype: i64) -> i64 {
+    if ann_dtype != inf_dtype {
+        return 1;
+    }
+    0
+}
+
+// shape::rank_mismatch — 1 iff annotation rank != inferred rank (the
+// `ann.shape.len() != inferred.shape.len()` guard).
+pub fn tc_is_shape_rank_mismatch(ann_rank: i64, inf_rank: i64) -> i64 {
+    if ann_rank != inf_rank {
+        return 1;
+    }
+    0
+}
+
+// shape::dim_mismatch — one right-aligned/positional axis pair. Twin of the
+// `if let (ShapeDim::Known(an), ShapeDim::Known(inf)) = (adim, idim) { if an != inf }`
+// loop body: a symbolic dim is encoded as a negative value (< 0) and is always
+// compatible (the pattern gate skips it); 1 iff BOTH dims are concrete (>= 0)
+// and differ.
+pub fn tc_is_shape_dim_mismatch(adim: i64, idim: i64) -> i64 {
+    if adim < 0 {
+        return 0;
+    }
+    if idim < 0 {
+        return 0;
+    }
+    if adim != idim {
+        return 1;
+    }
+    0
+}
+
+// Combined shape annotation-compat verdict in Rust guard order: 1 = dtype
+// mismatch (shape::dtype_mismatch), 2 = rank mismatch (shape::rank_mismatch),
+// 3 = at least one concrete-dim mismatch (shape::dim_mismatch — the `pushed`
+// bool the Rust returns), 0 = compatible. Supports up to rank 2 (axes a0/a1 vs
+// i0/i1); an axis absent at the current rank is passed symbolic (-1) by the
+// smoke so it can never manufacture a mismatch, exactly like the loop only
+// iterating over the shared, equal-length axes after the rank check passes.
+pub fn selftest_tc_shape_annot_compat(ann_dtype: i64, inf_dtype: i64, ann_rank: i64, inf_rank: i64, a0: i64, i0: i64, a1: i64, i1: i64) -> i64 {
+    if tc_is_shape_dtype_mismatch(ann_dtype, inf_dtype) == 1 {
+        return 1;
+    }
+    if tc_is_shape_rank_mismatch(ann_rank, inf_rank) == 1 {
+        return 2;
+    }
+    if tc_is_shape_dim_mismatch(a0, i0) == 1 {
+        return 3;
+    }
+    if tc_is_shape_dim_mismatch(a1, i1) == 1 {
+        return 3;
+    }
+    0
+}
+
+// ---- classify_error_code ----
+pub fn tc_classify_error_code(c1: i64, c2: i64, c3: i64, c4: i64, c5: i64, c6: i64, c7: i64, c8: i64, c9: i64) -> i64 {
+    if c1 == 1 {
+        return 0;
+    }
+    if c2 == 1 {
+        return 1;
+    }
+    if c3 == 1 {
+        return 2;
+    }
+    if c4 == 1 {
+        return 3;
+    }
+    if c5 == 1 {
+        return 4;
+    }
+    if c6 == 1 {
+        return 5;
+    }
+    if c7 == 1 {
+        return 6;
+    }
+    if c8 == 1 {
+        return 7;
+    }
+    if c9 == 1 {
+        return 8;
+    }
+    9
+}
+
+pub fn selftest_tc_classify_error_code(c1: i64, c2: i64, c3: i64, c4: i64, c5: i64, c6: i64, c7: i64, c8: i64, c9: i64) -> i64 {
+    tc_classify_error_code(c1, c2, c3, c4, c5, c6, c7, c8, c9)
+}

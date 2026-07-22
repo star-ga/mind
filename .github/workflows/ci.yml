@@ -637,6 +637,10 @@ jobs:
             self_host_float_lit_exact_smoke \
             self_host_carry_cap_smoke \
             self_host_narrow_param_smoke \
+            self_host_tc_let_class_mismatch_smoke \
+            self_host_tc_fixed_bytes_into_vec_smoke \
+            self_host_tc_shape_annot_compat_smoke \
+            self_host_tc_classify_error_code_smoke \
             self_host_native_narrowint_smoke \
             self_host_native_narrowwrap_smoke \
             self_host_native_autowrap_smoke \
