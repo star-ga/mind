@@ -117,6 +117,7 @@ chk "tc_fixed_bytes (E2006 bytes->vec)" python3 examples/mindc_mind/self_host_tc
 chk "tc_shape_annot (dtype/rank/dim compat)" python3 examples/mindc_mind/self_host_tc_shape_annot_compat_smoke.py
 chk "tc_classify (error-code router)" python3 examples/mindc_mind/self_host_tc_classify_error_code_smoke.py
 chk "arena_growth (self-host cap headroom)" python3 examples/mindc_mind/self_host_arena_growth_smoke.py
+chk "toplevel_assign (C: straight-line i64 reassign)" python3 examples/mindc_mind/self_host_native_toplevel_assign_smoke.py
 
 rm -f "$DIR_SO" "$MT_SO"
 echo "== $pass passed, $fail failed in $(($(date +%s)-t0))s =="
