@@ -2252,6 +2252,19 @@ pub fn make_byte_buf_7(b0: i64, b1: i64, b2: i64, b3: i64, b4: i64, b5: i64, b6:
     h
 }
 
+pub fn make_byte_buf_8(b0: i64, b1: i64, b2: i64, b3: i64, b4: i64, b5: i64, b6: i64, b7: i64) -> i64 {
+    let h: i64 = __mind_alloc(16);
+    __mind_store_i64(h + 0, b0);
+    __mind_store_i64(h + 1, b1);
+    __mind_store_i64(h + 2, b2);
+    __mind_store_i64(h + 3, b3);
+    __mind_store_i64(h + 4, b4);
+    __mind_store_i64(h + 5, b5);
+    __mind_store_i64(h + 6, b6);
+    __mind_store_i64(h + 7, b7);
+    h
+}
+
 pub fn name_buf_i64() -> i64 {
     make_byte_buf_3(105, 54, 52)
 }
@@ -22203,6 +22216,17 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // byte-identical. (Float-op propagation FLOAT<op>FLOAT -> nb_fp_binop, which
         // needs the per-SSA dtype table threaded through NbState so a slot's dtype is
         // known at the consumer, is the follow-up slice.)
+        // Exactness guard (roadmap C1): nb_float_lit_bits is exact ONLY for a dyadic
+        // decimal (5^fk | num). A non-dyadic literal (0.1, 3.14, ...) truncates in
+        // nb_strip_pow5's integer /5 and would emit SILENT wrong IEEE-754 bits
+        // (0.1 -> 0.0). Refuse it loudly — fail-closed -1 last_id, caught by the
+        // byte-diff / CPU-oracle gate — instead of a silent miscompile. Full
+        // correctly-rounded dec2flt is the deferred L upgrade (nb_float_lit_bits
+        // header). main.mind is float-free, so this arm is never taken during
+        // self-compile and the integer native-ELF oracle stays byte-identical.
+        if nb_float_lit_is_dyadic(buf, ast_span_lo(node), ast_span_hi(node)) == 0 {
+            return NbState { code: st.code, next_id: st.next_id, last_id: 0 - 1, ncalls: st.ncalls };
+        }
         let bits: i64 = nb_float_lit_bits(buf, ast_span_lo(node), ast_span_hi(node));
         let id: i64 = st.next_id;
         let cx: String = nb_fp_const_xmm(st.code, bits, 0);
@@ -28291,6 +28315,47 @@ pub fn nb_float_lit_bits(buf: i64, lo: i64, hi: i64) -> i64 {
     let num: i64 = ipart * den + fpart;
     let q: i64 = nb_strip_pow5(num, fk);
     nb_ratio_to_f64_bits(q, fk)
+}
+
+// 1 iff 5^k divides `num` (num >= 0). Each step requires num divisible by 5; a
+// single non-multiple means 5^k (k>=1) does not divide num. `num - (num/5)*5` is
+// the integer remainder (no `%` dependency, matching nb_strip_pow5's `/` style).
+pub fn nb_pow5_divides(num: i64, k: i64) -> i64 {
+    if k <= 0 {
+        return 1;
+    }
+    if num - (num / 5) * 5 != 0 {
+        return 0;
+    }
+    nb_pow5_divides(num / 5, k - 1)
+}
+
+// 1 iff the decimal literal in [lo,hi) is EXACTLY a dyadic rational q * 2^-fk —
+// i.e. 5^fk divides num = ipart*10^fk + fpart. nb_float_lit_bits is exact ONLY in
+// that case; a non-dyadic literal (0.1, 3.14, 0.7 ...) truncates in
+// nb_strip_pow5's integer /5 and yields SILENT wrong IEEE-754 bits (0.1 -> 0.0,
+// 3.14 -> 3.0). Same parse as nb_float_lit_bits.
+pub fn nb_float_lit_is_dyadic(buf: i64, lo: i64, hi: i64) -> i64 {
+    let dot: i64 = nb_find_dot(buf, lo, hi);
+    let ipart: i64 = parse_int_span(buf, lo, dot, 0);
+    let fdigits: i64 = hi - (dot + 1);
+    let fk: i64 = if fdigits < 0 {
+        0
+    } else {
+        fdigits
+    };
+    let fpart: i64 = parse_int_span(buf, dot + 1, hi, 0);
+    let den: i64 = nb_pow10(fk);
+    let num: i64 = ipart * den + fpart;
+    nb_pow5_divides(num, fk)
+}
+
+// C1 exactness guard, isolated selftest export: 1 iff the decimal literal (first 8
+// bytes b0..b7, true byte length `len`) is exactly dyadic. Python oracle recomputes
+// (ipart*10^fk + fpart) mod 5^fk == 0.
+pub fn selftest_float_lit_dyadic(b0: i64, b1: i64, b2: i64, b3: i64, b4: i64, b5: i64, b6: i64, b7: i64, len: i64) -> i64 {
+    let buf: i64 = make_byte_buf_8(b0, b1, b2, b3, b4, b5, b6, b7);
+    nb_float_lit_is_dyadic(buf, 0, len)
 }
 
 // End-to-end proof of the nb_expr float-selection arm: lex + parse a REAL float
