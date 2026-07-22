@@ -102,6 +102,11 @@ chk "tensor_ewmul (C4-T5 elementwise mul)" python3 examples/mindc_mind/self_host
 chk "tensor_colsum (C4-T5 col reduction)"  python3 examples/mindc_mind/self_host_native_tensor_colsum_smoke.py
 chk "tensor_bcastadd (C4-T5 broadcast add)" python3 examples/mindc_mind/self_host_native_tensor_bcastadd_smoke.py
 chk "standalone_driver (C8 no-Python mindc)" python3 examples/mindc_mind/self_host_standalone_driver_smoke.py
+chk "tensor_maxrowmax (C4-T6 max-reduce)"  python3 examples/mindc_mind/self_host_native_tensor_maxrowmax_smoke.py
+chk "tensor_relu (C4-T6 relu)"             python3 examples/mindc_mind/self_host_native_tensor_relu_smoke.py
+chk "narrow_add_i8 (C2 wrap arithmetic)"   python3 examples/mindc_mind/self_host_native_narrow_add_i8_smoke.py
+chk "tensor_batchsum (C4-T6 3-D N-D idx)"  python3 examples/mindc_mind/self_host_native_tensor_batchsum_smoke.py
+chk "tensor_rowmin (C4-T6 min-reduce)"     python3 examples/mindc_mind/self_host_native_tensor_rowmin_smoke.py
 chk "param_mutation (reassigned-param live slot)" python3 examples/mindc_mind/self_host_param_mutation_smoke.py
 chk "float_lit_exact (dyadic-only C1 guard)" python3 examples/mindc_mind/self_host_float_lit_exact_smoke.py
 chk "carry_cap (256-cap scratch-table guard)" python3 examples/mindc_mind/self_host_carry_cap_smoke.py

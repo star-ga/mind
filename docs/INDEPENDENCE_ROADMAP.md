@@ -131,7 +131,7 @@ Native-ELF covers only scalar i64/ptr/struct/control-flow. To drop the 12,753-LO
 - [~] **C2** Narrow ints (i8/i16/i32/u*) — **store/load LANDED (2026-07-21, `1372c4c`):** user-reachable
   `__mind_{store,load}_{i8,i16,i32}` (truncating stores, zero-extend loads) via the general nb_emit_intrinsic
   path, gated by `self_host_native_narrowint_smoke.py` (non-fakeable neighbour/high-bit probes). **Still open:**
-  narrow-width wrap-around ARITHMETIC (needs a narrow-int type + per-op width masking) and unsigned surface types.
+  narrow-width wrap-around ARITHMETIC — first slice landed as an additive selftest (`selftest_native_elf_narrow_add_i8`, i8 two's-complement wrap 100+100->-56 via nb_wrap_rax_w after the add); a narrow-int TYPE + per-op width masking on the general path, and unsigned surface types, remain open.
   · **C3** division / shift / compare — **COMPLETE:** `idiv`+`cqo` with zero & INT_MIN/-1 guards, `sar`/`shl`,
   all 6 signed `setcc`; 16 edge-case tests added (`div_shift_cmp_edge_smoke.py`). Logical-`shr`/unsigned-`setcc`
   unreachable until C2 unsigned types (correctly deferred, no oracle).
@@ -141,7 +141,7 @@ Native-ELF covers only scalar i64/ptr/struct/control-flow. To drop the 12,753-LO
   (`_rowsum_i64`, C4-T4 — squared-row-sum checksum, layout-discriminating) and 2-D transpose (`_transpose_i64`,
   C4-T4 — opposite-stride `i*n+j`->`j*m+i` with a position-weighted checksum), elementwise-multiply (`_ewmul_i64`,
   C4-T5), 2-D column reduction (`_colsum_i64`, C4-T5 — the axis-transpose of rowsum), and row-vector broadcast-add
-  (`_bcastadd_i64`, C4-T5 — `C[i,j]=A[i,j]+B[j]`, B stride-0 across rows) — each emits a runnable native x86-64
+  (`_bcastadd_i64`, C4-T5 — `C[i,j]=A[i,j]+B[j]`, B stride-0 across rows), row max/min-reduction (`_maxrowmax_i64`/`_rowmin_i64`, C4-T6 — cmp+cmovl running-select), 1-D ReLU (`_relu_i64`, C4-T6 — signed cmp+conditional-zero), and 3-D batched-sum (`_batchsum_i64`, C4-T6 — the first N-D `k*m*n+i*n+j` indexing) — each emits a runnable native x86-64
   ELF with 2-D row-major addressing + a fail-closed frame-bound guard (dims bounded before products, so no
   i64-overflow shape overruns), verified against an independent Python reference AND the native-ELF byte-oracle.
   **Still open:** general N-D indexing, f-typed tensors (needs C1 float-in-registry), and the
