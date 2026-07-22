@@ -25206,6 +25206,75 @@ pub fn nb_fns_use_argv(buf: i64, ordered: i64, n_fns: i64, k: i64) -> i64 {
     nb_fns_use_argv(buf, ordered, n_fns, k + 1)
 }
 
+// 1 iff any param in [i, n_params) is narrow-declared (nb_width_of_ann < 64).
+pub fn nb_fn_has_narrow_param(buf: i64, params_addr: i64, n_params: i64, i: i64) -> i64 {
+    if i >= n_params {
+        return 0;
+    }
+    let pnode: i64 = __mind_load_i64(params_addr + i * 8);
+    if nb_width_of_ann(buf, ast_child1(pnode)) < 64 {
+        return 1;
+    }
+    nb_fn_has_narrow_param(buf, params_addr, n_params, i + 1)
+}
+
+// 1 iff any statement in [i, n) IS or CONTAINS (inside an if branch) a while loop.
+pub fn nb_stmts_have_while(buf: i64, stmts_addr: i64, stmts_len: i64, i: i64) -> i64 {
+    if i >= stmts_len {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let k: i64 = ast_kind(stmt);
+    if k == ast_while() {
+        return 1;
+    }
+    if k == ast_if() {
+        let then_blk: i64 = ast_child1(stmt);
+        if nb_stmts_have_while(buf, ast_child0(then_blk), ast_aux(then_blk), 0) == 1 {
+            return 1;
+        }
+        let else_blk: i64 = ast_child2(stmt);
+        if else_blk != 0 {
+            if nb_stmts_have_while(buf, ast_child0(else_blk), ast_aux(else_blk), 0) == 1 {
+                return 1;
+            }
+        }
+    }
+    nb_stmts_have_while(buf, stmts_addr, stmts_len, i + 1)
+}
+
+// 1 iff any BODY-having fn in the pruned `ordered` set declares a narrow-width
+// (i8/i16/i32) param AND its body contains a while loop — the BROKEN
+// narrow-param-in-loop shape. In that shape the loop-carry + width interaction
+// desyncs the frame/slot count, so the emitted ELF HANGS (`fn f(x: i8){ while c<3
+// {x=x+1;c=c+1;} return x }`) or reads a stale carried value. A narrow param that
+// is only READ/RETURNED with no loop lowers CORRECTLY (the entry width-wrap driver
+// handles it — self_host_native_autowrap_smoke.py's pw32/wadd cases pass), so it is
+// NOT flagged; and narrow LOCALS (not params) in a loop are fine too. Rather than
+// emit the hanging ELF, the whole native emit FAILS CLOSED (empty es_new()) — loud
+// refusal until narrow-param-carry support lands (roadmap C2). Body-having fns only
+// (the 48 narrow-typed std sigs are extern `unsafe fn`, no body). No self-host fn
+// has a narrow param in a loop, so this never fires during self-compile and the
+// loop stays byte-identical. (The separate narrow-param `x as i64` cast wrong-value
+// bug — no loop — is documented as a C2 follow-up, not caught here.)
+pub fn nb_fns_reassign_narrow_param(buf: i64, ordered: i64, n_fns: i64, k: i64) -> i64 {
+    if k >= n_fns {
+        return 0;
+    }
+    let node: i64 = __mind_load_i64(ordered + k * 8);
+    if ast_child2(node) != 0 {
+        let params_addr: i64 = ast_child1(node);
+        let n_params: i64 = ast_aux(node) / 2;
+        if nb_fn_has_narrow_param(buf, params_addr, n_params, 0) == 1 {
+            let body: i64 = ast_child2(node);
+            if nb_stmts_have_while(buf, ast_child0(body), ast_aux(body), 0) == 1 {
+                return 1;
+            }
+        }
+    }
+    nb_fns_reassign_narrow_param(buf, ordered, n_fns, k + 1)
+}
+
 // round_up(x, 16)
 pub fn nb_round16(x: i64) -> i64 {
     let r: i64 = x - (x / 16) * 16;
@@ -27523,6 +27592,18 @@ pub fn selftest_native_elf_hb_from_tokens(tokens: Vec, src_addr: i64, hash_addr:
     // args_from_os mentions the intrinsic) is seeded ahead of it — the scan is scoped
     // to the emitted `ordered` set, not the raw combined token buffer.
     let uses_argv: i64 = nb_fns_use_argv(src_addr, ordered, n_fns, 0);
+    // FAIL CLOSED when a narrow-width (i8/i16/i32) param is REASSIGNED in the fn
+    // body: the loop-carry + width interaction desyncs the frame/slot count so the
+    // carried loop var never updates -> the emitted ELF HANGS (infinite loop). A
+    // narrow param that is only READ/RETURNED lowers correctly (the entry width-
+    // wrap driver handles it — see self_host_native_autowrap_smoke.py), so ONLY the
+    // reassigned shape is refused. Refuse loudly rather than emit a hanging ELF
+    // (roadmap C2 narrow-param-carry support is the real fix). Never fires during
+    // self-compile (no body-having self-host fn reassigns a narrow param), so the
+    // loop stays byte-identical.
+    if nb_fns_reassign_narrow_param(src_addr, ordered, n_fns, 0) == 1 {
+        return es_new();
+    }
     let acc0: NbState = NbState { code: string_new(), next_id: 0, last_id: 0, ncalls: 0 };
     let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, entry_idx, srt, frt, uses_argv);
     let image0: String = lr.code;

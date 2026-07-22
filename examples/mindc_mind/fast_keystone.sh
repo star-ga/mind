@@ -99,6 +99,7 @@ chk "tensor_matmul (C4-T3 nested 2-D)"    python3 examples/mindc_mind/self_host_
 chk "param_mutation (reassigned-param live slot)" python3 examples/mindc_mind/self_host_param_mutation_smoke.py
 chk "float_lit_exact (dyadic-only C1 guard)" python3 examples/mindc_mind/self_host_float_lit_exact_smoke.py
 chk "carry_cap (256-cap scratch-table guard)" python3 examples/mindc_mind/self_host_carry_cap_smoke.py
+chk "narrow_param (i8/i16/i32 param fail-closed)" python3 examples/mindc_mind/self_host_narrow_param_smoke.py
 chk "arena_growth (self-host cap headroom)" python3 examples/mindc_mind/self_host_arena_growth_smoke.py
 
 rm -f "$DIR_SO" "$MT_SO"
