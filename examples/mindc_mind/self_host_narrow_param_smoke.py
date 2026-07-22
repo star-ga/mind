@@ -293,18 +293,47 @@ XN_SIBLING_NESTED_WRITE = [
 #   * Sub-step C: i64/narrow `while{ if{ while{ x+=1 } } }` (if-WRAPPED inner while) still
 #     drops the carry (got=2 want=6) — the inner while is not promoted to the outer loop.
 #     Stays fail-closed for narrow (IF_WRAPPED_WHILE below); the i64 form is a known gap.
-#   * A separate, pre-existing nb_if_stmt_merged merge-read bug: a var assigned in BOTH
-#     branches of an if (`if{ x+=1 } else { x+=2 }`) mis-reads on the else side (reproduces
-#     standalone: `let mut x=5; if 1<0 {x=x+1} else {x=x+2}` -> 2 not 7). nb_while_carry_ifnest
-#     deliberately does NOT promote a both-branch-same-var (XOR filter), so that shape is
-#     unchanged (not newly miscompiled). Awaits a merge-read fix; out of Sub-step B scope.
+#   * The STANDALONE both-branch-same-var if merge-read bug is now FIXED (see
+#     BOTH_BRANCH_SAME_VAR below, asserted correct): a var assigned in BOTH branches of an
+#     if (`if{ x+=1 } else { x+=2 }`) used to mis-read on the else side (`let mut x=5; if
+#     1<0 {x=x+1} else {x=x+2}` -> 2 not 7) because the else block was lowered from the
+#     env AFTER the then block's rebindings; the fix restores the let-env to the branch
+#     fork before lowering the else (nb_if_value_merged / nb_if_stmt_merged), so each
+#     branch reads the INCOMING value. The both-branch-same-var LOOP case is a SEPARATE
+#     follow-up: nb_while_carry_ifnest deliberately does NOT promote a both-branch-same-var
+#     (XOR filter), so that loop shape stays fail-closed (unchanged, not newly miscompiled).
 I64_IF_IN_WHILE_GAP_NOTE = (
     "REMAINING (not this fix, pre-existing gaps): i64 while{ if{ while{ x+=1 } } } returns "
     "2 not 6 (Sub-step C, if-wrapped inner while); i64 while{ if{ if{ x+=1 } } } returns 1 "
     "not 3 (if-in-if — x written only via nested if in ONE branch, not a top-level "
-    "single-branch carry, unpromoted); both-branch-same-var if merge-read bug "
-    "(if{x+=1}else{x+=2}) — all tracked as follow-ups"
+    "single-branch carry, unpromoted); the both-branch-same-var if merge-read bug "
+    "(if{x+=1}else{x+=2}) is now FIXED for the STANDALONE if (BOTH_BRANCH_SAME_VAR below) — "
+    "only the both-branch-same-var LOOP-carry case stays fail-closed as a follow-up"
 )
+
+# Regression battery for the STANDALONE both-branch-same-var if-merge else-read fix
+# (branch-isolation: the else branch must read a merged var from the INCOMING env, not the
+# then branch's fresh/uninitialized rebinding). (label, expected_exit, src). The else-taken
+# cases (cond false) were the bug (returned then-uninitialized 0 + rhs); the then-taken and
+# different-var cases are the controls that must stay correct.
+BOTH_BRANCH_SAME_VAR = [
+    ("value-block else-taken: if 1<0 {x=x+1} else {x=x+2} x=5", 7,
+     "fn main() -> i64 {\n    let mut x: i64 = 5;\n    if 1 < 0 { x = x + 1; } else { x = x + 2; }\n    return x;\n}\n"),
+    ("value-block else-taken: if 1<0 {x=x+2} else {x=x+3} x=5", 8,
+     "fn main() -> i64 {\n    let mut x: i64 = 5;\n    if 1 < 0 { x = x + 2; } else { x = x + 3; }\n    return x;\n}\n"),
+    ("value-block else-taken larger incoming: if 1<0 {x=x+1} else {x=x+7} x=10", 17,
+     "fn main() -> i64 {\n    let mut x: i64 = 10;\n    if 1 < 0 { x = x + 1; } else { x = x + 7; }\n    return x;\n}\n"),
+    ("value-block then-taken control: if 1>0 {x=x+1} else {x=x+2} x=5", 6,
+     "fn main() -> i64 {\n    let mut x: i64 = 5;\n    if 1 > 0 { x = x + 1; } else { x = x + 2; }\n    return x;\n}\n"),
+    ("param-cond else-taken: if c {x=x+1} else {x=x+2} c=0 x=5", 7,
+     "fn g(c: i64) -> i64 {\n    let mut x: i64 = 5;\n    if c > 0 { x = x + 1; } else { x = x + 2; }\n    return x;\n}\nfn main() -> i64 { return g(0); }\n"),
+    ("param-cond then-taken: if c {x=x+1} else {x=x+2} c=1 x=5", 6,
+     "fn g(c: i64) -> i64 {\n    let mut x: i64 = 5;\n    if c > 0 { x = x + 1; } else { x = x + 2; }\n    return x;\n}\nfn main() -> i64 { return g(1); }\n"),
+    ("stmt-block (trailing let) else-taken: if 1<0 {x=x+2;let z} else {x=x+3;let w} x=5", 8,
+     "fn main() -> i64 {\n    let mut x: i64 = 5;\n    if 1 < 0 { x = x + 2; let z: i64 = 0; } else { x = x + 3; let w: i64 = 0; }\n    return x;\n}\n"),
+    ("different-vars control else-taken: if 1<0 {x=x+1} else {y=y+2} return y", 6,
+     "fn main() -> i64 {\n    let mut x: i64 = 5;\n    let mut y: i64 = 4;\n    if 1 < 0 { x = x + 1; } else { y = y + 2; }\n    return y;\n}\n"),
+]
 # WORK controls: i64 loops are unaffected; a narrow param with NO loop lowers via the
 # entry width-wrap driver (must NOT be over-rejected).
 I64_CONTROLS = [
@@ -365,6 +394,7 @@ def main() -> int:
     nested_ok = 0
     nested_loop_ok = 0
     if_in_loop_ok = 0
+    both_branch_ok = 0
     xn_refused = 0
     refused = 0
     if_wrapped_refused = 0
@@ -502,6 +532,20 @@ def main() -> int:
                   f"(XN silent-miscompile guard): {label} (emit {len(elf)}B, want 0 — "
                   f"fail-closed, NOT run)")
 
+        for label, exp, src in BOTH_BRANCH_SAME_VAR:
+            elf = emit(src)
+            if not elf:
+                print(f"  FAIL  both-branch-same-var OVER-REJECTED: {label} (emit 0B, want run)")
+                all_ok = False
+                continue
+            want = exp & 0xFF
+            rc = run_elf(elf)
+            ok = rc == want
+            all_ok = all_ok and ok
+            both_branch_ok += 1 if ok else 0
+            print(f"  {'PASS' if ok else 'FAIL'}  both-branch-same-var if-merge else-read (fixed): "
+                  f"{label} -> exit {rc} (want {want})")
+
         print(f"  NOTE  documented pre-existing gap (NOT fixed here): {I64_IF_IN_WHILE_GAP_NOTE}")
 
         for label, exp, src in I64_CONTROLS:
@@ -543,6 +587,11 @@ def main() -> int:
     if if_wrapped_refused < len(IF_WRAPPED_WHILE):
         print("FAIL: an if-wrapped inner-while shape was PERMITTED (0b5f489 regression "
               "— must be fail-closed for every narrow width)")
+        return 1
+    if both_branch_ok < len(BOTH_BRANCH_SAME_VAR):
+        print("FAIL: a both-branch-same-var if-merge else-read shape mis-compiled "
+              "(branch-isolation regression — the else must read the INCOMING value, "
+              "not the then branch's fresh rebinding)")
         return 1
     if xn_refused < len(XN_SIBLING_NESTED_WRITE):
         print("FAIL: a sibling-nested-write shape was PERMITTED (XN silent-miscompile "
