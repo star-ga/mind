@@ -23062,6 +23062,16 @@ pub fn nb_carry_record(carry: i64, ccell: i64, buf: i64, lo: i64, hi: i64, post_
         return 0;
     }
     let n: i64 = __mind_load_i64(ccell);
+    // Cap guard: the carry table is a fixed 256-entry x 4-word buffer
+    // (__mind_alloc(256 * 4 * 8)). A 257th distinct carried var would store one
+    // slot past the end and corrupt the adjacent arena allocation (the compiler's
+    // own state) — a silent miscompile. Refuse loudly (fail-closed -1, dropping
+    // the carried var so the byte-diff / keystone catches the wrong emit) instead
+    // of overflowing. No current fn has >256 carried vars, so this is never taken
+    // during self-compile and the loop stays byte-identical.
+    if n >= 256 {
+        return 0 - 1;
+    }
     let init_slot: i64 = nb_lets_lookup(lets, lcell, buf, lo, hi);
     __mind_store_i64(carry + (n * 4 + 0) * 8, lo);
     __mind_store_i64(carry + (n * 4 + 1) * 8, hi);
@@ -23104,6 +23114,14 @@ pub fn nb_while_carry(carry: i64, ccell: i64, next_id: i64, buf: i64, body_sa: i
 // patched to the loop end once known. Threaded like jmps/jcell.
 pub fn nb_loops_push(loops: i64, lpcell: i64, header: i64, breaks_buf: i64) -> i64 {
     let n: i64 = __mind_load_i64(lpcell);
+    // Cap guard: the loop-frame stack is a fixed 256-entry x 3-word buffer
+    // (__mind_alloc(256 * 3 * 8)). A 257th nested loop frame would overflow it and
+    // corrupt adjacent arena state. Refuse loudly (fail-closed -1) rather than
+    // overflow; >256 nested loops is unreachable in current source, so this is
+    // never taken during self-compile (byte-identical).
+    if n >= 256 {
+        return 0 - 1;
+    }
     __mind_store_i64(loops + (n * 3 + 0) * 8, header);
     __mind_store_i64(loops + (n * 3 + 1) * 8, breaks_buf);
     __mind_store_i64(loops + (n * 3 + 2) * 8, 0);
@@ -23418,11 +23436,13 @@ pub fn nb_emit_while(st: NbState, buf: i64, node: i64, params_addr: i64, n_param
     // will) to find each loop-carried var's working post_id + pre-loop init slot.
     // The body walk starts at the post-cond next_id.
     let after_cond_count: i64 = nb_count_expr(st.next_id, buf, cond, params_addr, n_params, lets, lcell);
-    // deferred: the carry/loops/breaks scratch tables are fixed 256-cap with no
-    // bounds check (nb_carry_record/nb_loops_push) — a fn with >256 distinct
-    // carried vars or loop frames would overflow. Not hit by any current stdlib
-    // fn; byte-identity fail-closes (wrong bytes) rather than silently passing —
-    // upgrade path: grow-on-overflow or a compile-time cap assert.
+    // The carry + loop-frame scratch tables (nb_carry_record / nb_loops_push) are
+    // fixed 256-cap and NOW CAP-GUARDED: at n >= 256 they fail closed (-1) instead
+    // of storing one slot past the buffer and corrupting adjacent arena state
+    // (gated by self_host_carry_cap_smoke.py). Not hit by any current fn.
+    // deferred: the per-loop `breaks_buf` (nb_loops_push_break) is still uncapped,
+    // and grow-on-overflow (vs the current fail-closed cap) remains the richer
+    // upgrade — both low-priority until a >256-break or >256-carried-var fn exists.
     // deferred: nb_while_carry sets post_id = arhs-1; a bare `x = y` (ident RHS,
     // no id bump) can desync post_id from the emit last_id. Not hit (stdlib carried
     // assigns all have non-trivial RHS) — upgrade path: special-case ident RHS.
