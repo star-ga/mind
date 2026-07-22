@@ -25250,7 +25250,10 @@ pub fn nb_stmts_have_while(buf: i64, stmts_addr: i64, stmts_len: i64, i: i64) ->
 // {x=x+1;c=c+1;} return x }`) or reads a stale carried value. A narrow param that
 // is only READ/RETURNED with no loop lowers CORRECTLY (the entry width-wrap driver
 // handles it — self_host_native_autowrap_smoke.py's pw32/wadd cases pass), so it is
-// NOT flagged; and narrow LOCALS (not params) in a loop are fine too. Rather than
+// NOT flagged. (A narrow-typed LOCAL reassigned in a general loop ALSO hangs via the
+// same desync — a SEPARATE, structure-dependent gap NOT guarded here: the autowrap
+// smoke's single-iteration `while i<1` narrow-local case happens to work, so a blanket
+// narrow-local-in-loop guard would over-reject it; logged as a C2 follow-up.) Rather than
 // emit the hanging ELF, the whole native emit FAILS CLOSED (empty es_new()) — loud
 // refusal until narrow-param-carry support lands (roadmap C2). Body-having fns only
 // (the 48 narrow-typed std sigs are extern `unsafe fn`, no body). No self-host fn
