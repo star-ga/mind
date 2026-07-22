@@ -24448,6 +24448,11 @@ pub fn nb_if_stmt_merged(st: NbState, buf: i64, node: i64, params_addr: i64, n_p
     // then-block: leading const0 + then-stmts. then_result = the LAST statement's
     // value (lower.rs sets then_result = id after each let/assign, line 3978/3988),
     // which for `if c { x = .. }` is the assign value — NOT the leading const0.
+    // Snapshot the let-env size at the branch fork (post-cond) so the else block can
+    // be lowered from the SAME incoming env the then block saw — the two branches are
+    // mutually exclusive, so the else's variable reads must resolve against the pre-if
+    // env, NOT the then block's rebindings/local lets (which are dead on the else path).
+    let branch_fork_n: i64 = __mind_load_i64(lcell);
     let s_t0: NbState = nb_emit_const0(s_je);
     let s_tb: NbState = nb_block_stmts(s_t0, buf, then_sa, then_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
     let then_result: i64 = s_tb.last_id;
@@ -24478,6 +24483,13 @@ pub fn nb_if_stmt_merged(st: NbState, buf: i64, node: i64, params_addr: i64, n_p
 
     // else-block: leading const0 (slot P_t) + else-stmts. else_result = the last
     // stmt's value (empty else keeps the leading const0).
+    // Branch-isolation restore: rewind the let-env to the fork point so the else block
+    // reads variables from the INCOMING env, not the then block's rebindings. Fixes the
+    // both-branch-same-var else-read miscompile (`let mut x=5; if 1<0 {x=x+1} else {x=x+2}`
+    // used to read x as the then's uninitialized fresh slot -> 0+2=2 instead of 5+2=7).
+    // Disjoint-var ifs (all of main.mind's own) are unaffected: then's appends never
+    // shadow an else read, so the emitted bytes stay identical.
+    __mind_store_i64(lcell, branch_fork_n);
     let s_e_in: NbState = NbState { code: s_tj.code, next_id: p_t, last_id: s_tj.last_id, ncalls: s_tj.ncalls };
     let s_e0: NbState = nb_emit_const0(s_e_in);
     let s_eb: NbState = nb_block_stmts(s_e0, buf, else_sa, else_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
@@ -24697,6 +24709,11 @@ pub fn nb_if_value_merged(st: NbState, buf: i64, node: i64, params_addr: i64, n_
     let je_which: i64 = __mind_load_i64(jcell) - 1;
     let s_je: NbState = NbState { code: c_je, next_id: sc.next_id, last_id: sc.last_id, ncalls: sc.ncalls };
 
+    // Snapshot the let-env size at the branch fork (post-cond) so the else block can be
+    // lowered from the SAME incoming env the then block saw — the two branches are
+    // mutually exclusive, so the else's variable reads must resolve against the pre-if
+    // env, NOT the then block's rebindings/local lets (dead on the else path).
+    let branch_fork_n: i64 = __mind_load_i64(lcell);
     // then-block: leading const0 + then-stmts.
     let s_t0: NbState = nb_emit_const0(s_je);
     let s_tb: NbState = nb_block_stmts(s_t0, buf, then_sa, then_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
@@ -24737,6 +24754,15 @@ pub fn nb_if_value_merged(st: NbState, buf: i64, node: i64, params_addr: i64, n_
     let _pj: i64 = nb_jmp_set_target(jmps, jcell, je_which, else_at);
 
     // else-block: leading const0 (slot P_t) + else-stmts.
+    // Branch-isolation restore: rewind the let-env to the fork point so the else block
+    // reads variables from the INCOMING env, not the then block's rebindings/locals. Fixes
+    // the both-branch-same-var else-read miscompile (`let mut x=5; if 1<0 {x=x+1} else
+    // {x=x+2}` -> the else used to read x as the then's uninitialized fresh slot, 0+2=2
+    // instead of 5+2=7). The then-side merge stores (c_tms) above already resolved the
+    // then-defined values from env-after-then, so truncating here is safe. Disjoint-var
+    // value-ifs (all of main.mind's own) are unaffected: then's appends never shadow an
+    // else read, so the emitted bytes stay identical.
+    __mind_store_i64(lcell, branch_fork_n);
     let s_e_in: NbState = NbState { code: c_tj, next_id: p_t, last_id: s_tb.last_id, ncalls: s_tb.ncalls };
     let s_e0: NbState = nb_emit_const0(s_e_in);
     let s_eb: NbState = nb_block_stmts(s_e0, buf, else_sa, else_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
