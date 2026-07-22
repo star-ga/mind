@@ -95,6 +95,39 @@ CAST_BINOP = [
     ("i8 param no-paren `x as i64 + 5` (as binds tighter than +), f(10)", 15,
      "fn f(x: i8) -> i64 {\n    return x as i64 + 5;\n}\nfn main() -> i64 { return f(10); }\n"),
 ]
+# EMIT + RUN correct: NARROWING casts `as i8/i16/i32` in a binop. The operand is an
+# i64 param holding the FULL value; `(y as iN)` truncates it two's-complement to N
+# bits (native movsx rax,al/ax / movsxd rax,eax — the same wrap the __mind_wrap_iN
+# intrinsics use), then composes as a normal integer binop operand. `exp` is the low
+# byte of an INDEPENDENT Python two's-complement-wrap reference (wrap(), above), NOT
+# the compiler. Previously narrowing casts fed into a binop were fail-closed (a plain
+# `as i64` passthrough would be WRONG for a narrowing target); now they truncate.
+NARROW_CAST = [
+    ("(y as i8)+1 f(300) -> wrap(300,8)=44, +1", (wrap(300, 8) + 1) & 0xFF,
+     "fn f(y: i64) -> i64 {\n    return (y as i8) + 1;\n}\nfn main() -> i64 { return f(300); }\n"),
+    ("(y as i8)+1 f(200) OVERFLOW -> wrap(200,8)=-56, +1", (wrap(200, 8) + 1) & 0xFF,
+     "fn f(y: i64) -> i64 {\n    return (y as i8) + 1;\n}\nfn main() -> i64 { return f(200); }\n"),
+    ("(y as i16)+7 f(70000) -> wrap(70000,16)=4464, +7", (wrap(70000, 16) + 7) & 0xFF,
+     "fn f(y: i64) -> i64 {\n    return (y as i16) + 7;\n}\nfn main() -> i64 { return f(70000); }\n"),
+    ("(y as i32)+2 f(4294967301) -> high bits masked, wrap=5, +2", (wrap(4294967301, 32) + 2) & 0xFF,
+     "fn f(y: i64) -> i64 {\n    return (y as i32) + 2;\n}\nfn main() -> i64 { return f(4294967301); }\n"),
+    ("no-paren `y as i8 + 5` (as binds tighter than +) f(300)", (wrap(300, 8) + 5) & 0xFF,
+     "fn f(y: i64) -> i64 {\n    return y as i8 + 5;\n}\nfn main() -> i64 { return f(300); }\n"),
+    ("(y as i8)*2 f(200) -> wrap(200,8)=-56, *2=-112", (wrap(200, 8) * 2) & 0xFF,
+     "fn f(y: i64) -> i64 {\n    return (y as i8) * 2;\n}\nfn main() -> i64 { return f(200); }\n"),
+    ("return (y as i8) f(200) (no binop, widened i64 return) -> -56", wrap(200, 8) & 0xFF,
+     "fn f(y: i64) -> i64 {\n    return (y as i8);\n}\nfn main() -> i64 { return f(200); }\n"),
+]
+# EMIT + RUN correct (ITEM 2): a narrow-declared LOCAL (`let mut y: i8`) carried by a
+# TOP-LEVEL while — the c27a766 twin-slot narrow-carry mechanism keyed on a narrow
+# carried assign TARGET, which covers a narrow LOCAL, not just a narrow param. `exp`
+# is the independent Python reference: y re-wraps two's-complement each iteration.
+NARROW_LOCAL_LOOP = [
+    ("i8 LOCAL y=0 reassigned in top-level loop x3", _carry_ref(0, 3, 8),
+     "fn f() -> i64 {\n    let mut y: i8 = 0;\n    let mut c: i64 = 0;\n    while c < 3 {\n        y = y + 1;\n        c = c + 1;\n    }\n    return y as i64;\n}\nfn main() -> i64 { return f(); }\n"),
+    ("i8 LOCAL y=125 OVERFLOW two's-complement wrap x5 -> -126", _carry_ref(125, 5, 8),
+     "fn f() -> i64 {\n    let mut y: i8 = 125;\n    let mut c: i64 = 0;\n    while c < 5 {\n        y = y + 1;\n        c = c + 1;\n    }\n    return y as i64;\n}\nfn main() -> i64 { return f(); }\n"),
+]
 # REFUSE: the two genuinely-broken sub-shapes must emit an EMPTY ELF.
 REFUSE = [
     ("i8 param reassigned in an IF-NESTED loop (F2 nested-region carry, unrecorded)",
@@ -159,6 +192,8 @@ def main() -> int:
     all_ok = True
     carried = 0
     cast_ok = 0
+    narrow_cast_ok = 0
+    narrow_local_ok = 0
     refused = 0
     ran = 0
     with tempfile.TemporaryDirectory() as td:
@@ -198,6 +233,34 @@ def main() -> int:
             print(f"  {'PASS' if ok else 'FAIL'}  cast-in-binop now composes: {label} "
                   f"-> exit {rc} (python-ref {exp} -> byte {want})")
 
+        for label, exp, src in NARROW_CAST:
+            elf = emit(src)
+            if not elf:
+                print(f"  FAIL  narrowing cast REFUSED (want emit+run): {label} (emit 0B)")
+                all_ok = False
+                continue
+            want = exp & 0xFF
+            rc = run_elf(elf)
+            ok = rc == want
+            all_ok = all_ok and ok
+            narrow_cast_ok += 1 if ok else 0
+            print(f"  {'PASS' if ok else 'FAIL'}  narrowing cast truncates + composes: {label} "
+                  f"-> exit {rc} (python-wrap-ref byte {want})")
+
+        for label, exp, src in NARROW_LOCAL_LOOP:
+            elf = emit(src)
+            if not elf:
+                print(f"  FAIL  narrow LOCAL carry OVER-REJECTED: {label} (emit 0B, want run)")
+                all_ok = False
+                continue
+            want = exp & 0xFF
+            rc = run_elf(elf)
+            ok = rc == want
+            all_ok = all_ok and ok
+            narrow_local_ok += 1 if ok else 0
+            print(f"  {'PASS' if ok else 'FAIL'}  narrow LOCAL carried by loop (item 2): {label} "
+                  f"-> exit {rc} (python-ref {exp} -> byte {want})")
+
         for label, src in REFUSE:
             elf = emit(src)
             ok = len(elf) == 0
@@ -224,6 +287,12 @@ def main() -> int:
     if cast_ok < 1:
         print("FAIL: vacuous (no cast-in-binop shape emitted + ran)")
         return 1
+    if narrow_cast_ok < 1:
+        print("FAIL: vacuous (no narrowing-cast shape emitted + ran)")
+        return 1
+    if narrow_local_ok < 1:
+        print("FAIL: vacuous (no narrow-local-in-loop shape emitted + ran)")
+        return 1
     if refused < 1:
         print("FAIL: vacuous (no broken sub-shape refused)")
         return 1
@@ -231,11 +300,12 @@ def main() -> int:
         print("FAIL: vacuous (no i64 control ran)")
         return 1
     if all_ok:
-        print("ALL PASS  narrow-width params carried by a top-level loop emit + run "
-              "correct (two's-complement wrap, no stale/hang), the no-loop "
-              "cast-in-binop `(x as i64)+c` now composes (trailing binop lowered, not "
-              "dropped), while the nested-loop + narrow read-only loop-carry sub-shapes "
-              "stay fail-closed and i64 fns are unaffected")
+        print("ALL PASS  narrow-width params/locals carried by a top-level loop emit + "
+              "run correct (two's-complement wrap, no stale/hang), the widening "
+              "cast-in-binop `(x as i64)+c` composes, and NARROWING casts `(y as "
+              "i8/i16/i32)` in a binop now truncate two's-complement (movsx) + compose "
+              "vs an independent Python wrap ref, while the nested-loop + narrow "
+              "read-only loop-carry sub-shapes stay fail-closed and i64 fns are unaffected")
         return 0
     print("FAIL  narrow-param carry smoke mis-behaved")
     return 1
