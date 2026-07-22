@@ -635,6 +635,9 @@ jobs:
             self_host_native_tensor_matmul_smoke \
             self_host_native_tensor_rowsum_smoke \
             self_host_native_tensor_transpose_smoke \
+            self_host_native_tensor_ewmul_smoke \
+            self_host_native_tensor_colsum_smoke \
+            self_host_native_tensor_bcastadd_smoke \
             self_host_param_mutation_smoke \
             self_host_float_lit_exact_smoke \
             self_host_carry_cap_smoke \

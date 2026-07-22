@@ -98,6 +98,9 @@ chk "tensor_dot (C4-T2 native MAC)"        python3 examples/mindc_mind/self_host
 chk "tensor_matmul (C4-T3 nested 2-D)"    python3 examples/mindc_mind/self_host_native_tensor_matmul_smoke.py
 chk "tensor_rowsum (C4-T4 reduction)"     python3 examples/mindc_mind/self_host_native_tensor_rowsum_smoke.py
 chk "tensor_transpose (C4-T4 transpose)"  python3 examples/mindc_mind/self_host_native_tensor_transpose_smoke.py
+chk "tensor_ewmul (C4-T5 elementwise mul)" python3 examples/mindc_mind/self_host_native_tensor_ewmul_smoke.py
+chk "tensor_colsum (C4-T5 col reduction)"  python3 examples/mindc_mind/self_host_native_tensor_colsum_smoke.py
+chk "tensor_bcastadd (C4-T5 broadcast add)" python3 examples/mindc_mind/self_host_native_tensor_bcastadd_smoke.py
 chk "param_mutation (reassigned-param live slot)" python3 examples/mindc_mind/self_host_param_mutation_smoke.py
 chk "float_lit_exact (dyadic-only C1 guard)" python3 examples/mindc_mind/self_host_float_lit_exact_smoke.py
 chk "carry_cap (256-cap scratch-table guard)" python3 examples/mindc_mind/self_host_carry_cap_smoke.py
