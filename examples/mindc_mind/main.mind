@@ -816,6 +816,18 @@ pub fn ast_continue() -> i64 {
 pub fn ast_float_lit() -> i64 {
     24
 }
+// `EXPR as i8/i16/i32` NARROWING cast expression. child0 = operand expr, aux =
+// target bit width (8/16/32). A WIDENING `as i64` cast stays a value passthrough
+// (no node — parse_postfix_rest returns the operand unchanged); only a narrowing
+// target needs a real two's-complement truncation, emitted natively as a movsx
+// (nb_expr's ast_cast arm -> nb_movsx_rax_al/ax / nb_movsxd_rax_eax, the same
+// reg-to-reg wrap the __mind_wrap_iN intrinsics use). main.mind's OWN source uses
+// no cast in code (every `as iN` occurrence is inside a comment the lexer strips),
+// so this node is NEVER produced during self-compile — additive, the integer
+// native-ELF oracle and the mic@3/mic@1 canary paths stay byte-identical.
+pub fn ast_cast() -> i64 {
+    25
+}
 
 // ===== Binop operator tags =====
 
@@ -1060,6 +1072,20 @@ pub fn ast_new_not(span_lo: i64, span_hi: i64, operand: i64) -> i64 {
     n
 }
 
+// `EXPR as i8/i16/i32`: child0 = operand expr, aux (offset 48) = target bit width
+// (8/16/32). child1/child2 are 0 (a unary node — mirrors ast_new_neg's layout).
+pub fn ast_new_cast(span_lo: i64, span_hi: i64, operand: i64, width: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0, ast_cast());
+    __mind_store_i64(n + 8, span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, operand);
+    __mind_store_i64(n + 32, 0);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, width);
+    n
+}
+
 // `receiver.field`: child0=receiver expr, child1/child2 (offsets 32/40) carry
 // the field-name span (lo/hi) into the source buffer.  Mirrors the Rust
 // front-end's ast::Node::FieldAccess { receiver, field, span }.  The emitter
@@ -1292,6 +1318,38 @@ pub fn is_ident_i64(buf: i64, lo: i64, hi: i64) -> i64 {
             if load_byte(buf, lo + 1) == 54 {
                 if load_byte(buf, lo + 2) == 52 {
                     return 1;
+                }
+            }
+        }
+    }
+    0
+}
+
+// The NARROWING integer cast targets: `i8`->8, `i16`->16, `i32`->32, else 0.
+// Bytes: 'i'=105, '8'=56, '1'=49, '6'=54, '3'=51, '2'=50. `i64` is NOT matched here
+// (it is the widening passthrough gated by is_ident_i64). Used by parse_postfix_rest
+// to wrap `EXPR as iN` in an ast_cast node carrying the target width.
+pub fn narrow_cast_width(buf: i64, lo: i64, hi: i64) -> i64 {
+    // `i8` (2 bytes: i 8)
+    if hi - lo == 2 {
+        if load_byte(buf, lo + 0) == 105 {
+            if load_byte(buf, lo + 1) == 56 {
+                return 8;
+            }
+        }
+        return 0;
+    }
+    // `i16` / `i32` (3 bytes: i 1 6 | i 3 2)
+    if hi - lo == 3 {
+        if load_byte(buf, lo + 0) == 105 {
+            if load_byte(buf, lo + 1) == 49 {
+                if load_byte(buf, lo + 2) == 54 {
+                    return 16;
+                }
+            }
+            if load_byte(buf, lo + 1) == 51 {
+                if load_byte(buf, lo + 2) == 50 {
+                    return 32;
                 }
             }
         }
@@ -1662,17 +1720,25 @@ pub fn parse_postfix_rest(toks: Vec, pos: i64, buf: i64, recv: i64) -> ParseResu
     // widening-to-i64 cast is a value passthrough for every integer source width, so
     // the operand node is kept UNCHANGED (its span still resolves the param/local
     // name) and the trailing binop operand is lowered instead of becoming dead code
-    // after the cast. Only the i64 target is consumed: narrowing targets
-    // (i8/i16/i32) need a real two's-complement truncation, so they are left
-    // UNCONSUMED and stay fail-closed rather than passthrough-miscompile.
-    // deferred: narrowing `as i8/i16/i32` — emit __mind_wrap_iN truncation (helpers
-    // already exist in the nb path) and drop this i64-only gate. `as` is reserved,
-    // so a 2-byte "as" ident here is never a variable — no postfix shape is shadowed.
+    // after the cast. A NARROWING target (i8/i16/i32) wraps recv in an ast_cast node
+    // carrying the target bit width; the native emitter (nb_expr's ast_cast arm)
+    // truncates via a reg-to-reg movsx (the same two's-complement wrap the
+    // __mind_wrap_iN intrinsics use), so `(y as i8)` of 300 -> 44 and composes as a
+    // binop operand. Continue postfix from the wrapped node so a trailing `.field` /
+    // chained cast still binds. `as` is reserved, so a 2-byte "as" ident here is never
+    // a variable — no postfix shape is shadowed.
     if tok_kind(toks, pos) == tk_ident() {
         if is_ident_as(buf, tok_lo(toks, pos), tok_hi(toks, pos)) == 1 {
             if tok_kind(toks, pos + 1) == tk_ident() {
-                if is_ident_i64(buf, tok_lo(toks, pos + 1), tok_hi(toks, pos + 1)) == 1 {
+                let cty_lo: i64 = tok_lo(toks, pos + 1);
+                let cty_hi: i64 = tok_hi(toks, pos + 1);
+                if is_ident_i64(buf, cty_lo, cty_hi) == 1 {
                     return parse_postfix_rest(toks, pos + 2, buf, recv);
+                }
+                let cw: i64 = narrow_cast_width(buf, cty_lo, cty_hi);
+                if cw > 0 {
+                    let cnode: i64 = ast_new_cast(ast_span_lo(recv), cty_hi, recv, cw);
+                    return parse_postfix_rest(toks, pos + 2, buf, cnode);
                 }
             }
         }
@@ -22643,6 +22709,37 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         __mind_store_i64(lcell, pre_if_n);
         return sv;
     }
+    if k == ast_cast() {
+        // NARROWING cast `EXPR as i8/i16/i32`: lower the operand, load it into rax, and
+        // apply the width-matched reg-to-reg movsx (movsx rax,al / movsx rax,ax / movsxd
+        // rax,eax) — a real two's-complement wrap-to-width, the exact sequence the
+        // __mind_wrap_iN intrinsics emit (nb_emit_intrinsic kinds 17/18/19). One SSA id
+        // for the truncated result (matching nb_count_expr's ast_cast arm: operand + 1),
+        // so a downstream binop consuming the cast sees a normal integer slot. Result is
+        // always INT (nb_node_dtype defaults a cast to INT). Early-return statement form
+        // per width (no struct-valued if-expr — the mis-lower trap). main.mind's OWN
+        // source produces no cast node (every `as iN` is in a stripped comment), so this
+        // arm is never taken during self-compile and the integer native-ELF oracle stays
+        // byte-identical.
+        let cs1: NbState = nb_expr(st, buf, ast_child0(node), params_addr, n_params, calls, lets, lcell);
+        let cop: i64 = cs1.last_id;
+        let cid: i64 = cs1.next_id;
+        let cw: i64 = ast_aux(node);
+        let cl: String = nb_load_rax(cs1.code, nb_slot_disp(cop));
+        if cw == 8 {
+            let c8: String = nb_movsx_rax_al(cl);
+            let c8s: String = nb_store_rax(c8, nb_slot_disp(cid));
+            return NbState { code: c8s, next_id: cid + 1, last_id: cid, ncalls: cs1.ncalls };
+        }
+        if cw == 16 {
+            let c16: String = nb_movsx_rax_ax(cl);
+            let c16s: String = nb_store_rax(c16, nb_slot_disp(cid));
+            return NbState { code: c16s, next_id: cid + 1, last_id: cid, ncalls: cs1.ncalls };
+        }
+        let c32: String = nb_movsxd_rax_eax(cl);
+        let c32s: String = nb_store_rax(c32, nb_slot_disp(cid));
+        return NbState { code: c32s, next_id: cid + 1, last_id: cid, ncalls: cs1.ncalls };
+    }
     // ast_binop(): lower both operands, then the in-place op.
     let s1: NbState = nb_expr(st, buf, ast_child0(node), params_addr, n_params, calls, lets, lcell);
     let lhs_id: i64 = s1.last_id;
@@ -24775,6 +24872,15 @@ pub fn nb_count_expr(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         __mind_store_i64(clcell, outer_n);
         return after_else + merge_ids + 1;
     }
+    // NARROWING cast `EXPR as iN`: operand ids + 1 for the movsx result, matching
+    // nb_expr's ast_cast arm (recurse operand, then a single movsx result). Without this
+    // arm a cast falls to the binop tail and walks ast_child1 == 0 (a null node) -> the
+    // frame slot-count would be wrong. main.mind has no cast node in its native-emitted
+    // source, so this never fires during self-compile.
+    if k == ast_cast() {
+        let after_c: i64 = nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params, clets, clcell);
+        return after_c + 1;
+    }
     // binop
     let l: i64 = nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params, clets, clcell);
     let r: i64 = nb_count_expr(l, buf, ast_child1(node), params_addr, n_params, clets, clcell);
@@ -25088,6 +25194,13 @@ pub fn nb_ccount_expr(buf: i64, node: i64, ccell: i64) -> i64 {
         };
         return nb_ccount_stmts(buf, ie_sa, ie_sl, 0, ccell);
     }
+    // NARROWING cast `EXPR as iN` — walk the operand for call sites (a cast of a call
+    // is still a call). Pre-arm this fell to the binop tail and recursed into
+    // ast_child1 == 0 (null), faulting the call-table sizing walker on any cast node.
+    // Never fires during self-compile (main.mind produces no cast node).
+    if k == ast_cast() {
+        return nb_ccount_expr(buf, ast_child0(node), ccell);
+    }
     // binop: walk both operands.
     let _l: i64 = nb_ccount_expr(buf, ast_child0(node), ccell);
     nb_ccount_expr(buf, ast_child1(node), ccell)
@@ -25244,6 +25357,12 @@ pub fn nb_argv_expr(buf: i64, node: i64) -> i64 {
             ast_aux(ie_blk)
         };
         return nb_argv_stmts(buf, ie_sa, ie_sl, 0);
+    }
+    // NARROWING cast `EXPR as iN` — walk the operand only (child1 == 0). Pre-arm this
+    // fell to the binop tail and recursed into ast_child1 == 0 (null), faulting the
+    // argv scan on any cast node. Never fires during self-compile.
+    if k == ast_cast() {
+        return nb_argv_expr(buf, ast_child0(node));
     }
     if nb_argv_expr(buf, ast_child0(node)) == 1 {
         return 1;
@@ -26711,6 +26830,13 @@ pub fn nb_reach_expr(buf: i64, fns: i64, n_fns: i64, reach: i64, node: i64, chan
             ast_aux(re_blk)
         };
         return nb_reach_stmts(buf, fns, n_fns, reach, re_sa, re_sl, 0, changed);
+    }
+    // NARROWING cast `EXPR as iN` — walk the operand only (child1 == 0) to mark reachable
+    // callees. Pre-arm this fell to the binop tail and null-deref'd on ast_child1 == 0
+    // when the call-graph reachability pass walked a cast node. Never fires during
+    // self-compile (main.mind produces no cast node).
+    if k == ast_cast() {
+        return nb_reach_expr(buf, fns, n_fns, reach, ast_child0(node), changed);
     }
     let _l: i64 = nb_reach_expr(buf, fns, n_fns, reach, ast_child0(node), changed);
     nb_reach_expr(buf, fns, n_fns, reach, ast_child1(node), changed)
