@@ -26759,17 +26759,16 @@ pub fn selftest_native_elf_h(src_addr: i64, src_len: i64, hash_addr: i64) -> Emi
 //   are: extern-decl items, the seeded stdlib items, the prune, and matching next_id/order.
 //   This is a build-whole-module port (multi-session), fully de-risked: target dumpable +
 //   sha-confirmed, mechanism known, machinery mostly present.
-pub fn nb_trace_hash(src_addr: i64, src_len: i64, user_lo: i64, fns: i64, n_fns: i64) -> i64 {
+pub fn nb_trace_hash(tokens: Vec, src_addr: i64, src_len: i64, user_lo: i64) -> i64 {
     // SELF-COMPUTE the note (#17 sub-milestone 3): build the SEEDED+PRUNED combined
     // mic@3 in pure MIND (nb_build_mic3 — byte-exact vs emit_mic3, gated to
     // /tmp/add_combined.mic3 at 5447 B / sha e912443707c23b57) and run the ported
-    // SHA-256 over its .buf bytes. fns/n_fns are recomputed inside nb_build_mic3 from
-    // (src, user_lo) — the caller already laid the same kept set — so they are unused.
+    // SHA-256 over its .buf bytes. The prune/kept set is recomputed inside
+    // nb_build_mic3_from_tokens from (src, user_lo), so the caller passes only the
+    // ALREADY-lexed token stream (ARENA dedup — no re-lex of the full source here).
     // nb_build_mic3 fails closed (empty .buf) on any unmatched fn shape => len 0 =>
     // nb_sha256_note returns 0 => the no-hash entries refuse to emit a wrong note.
-    let _f: i64 = fns;
-    let _n: i64 = n_fns;
-    let mic3: EmitState = nb_build_mic3(src_addr, src_len, user_lo);
+    let mic3: EmitState = nb_build_mic3_from_tokens(tokens, src_addr, src_len, user_lo);
     let bufstr: String = mic3.buf;
     let addr: i64 = string_addr(bufstr);
     let ln: i64 = string_len(bufstr);
@@ -27276,10 +27275,24 @@ pub fn nb_emit_items(s: EmitState, src: i64, items_addr: i64, items_len: i64, st
 // machinery verbatim, then materializes the instr stream + struct registry.
 pub fn nb_build_mic3(src_addr: i64, src_len: i64, user_lo: i64) -> EmitState {
     let tokens: Vec = lex(src_addr, src_len);
+    nb_build_mic3_from_tokens(tokens, src_addr, src_len, user_lo)
+}
+
+// ARENA (Rule-2c dedup): build the pruned-combined mic@3 from an ALREADY-lexed token
+// stream, so the self-compile trace-hash path (selftest_native_elf_u -> nb_trace_hash)
+// reuses the tokens it already lexed instead of re-lexing the full ~1.9 MB source TWICE
+// (once here, once inside srt_build) into the fixed 1 GiB native bump arena. Each such
+// full-source lex permanently occupies ~46 MB (Vec doubling, no free); on the whole-
+// compiler self-compile the two redundant lexes here cost ~92 MB of arena that the
+// nb_trace_hash mic@3 build (~600 MB, half the arena) did not need. Byte-identical to
+// nb_build_mic3: the same (src_addr, src_len) tokens yield an identical parse/registry/
+// emit, so the mic@3 bytes (and thus the SHA-256 note) are unchanged. Mirrors
+// selftest_native_elf_hb_from_tokens' proven parse(tokens)+srt_build_from_tokens reuse.
+pub fn nb_build_mic3_from_tokens(tokens: Vec, src_addr: i64, src_len: i64, user_lo: i64) -> EmitState {
     let ast_root: i64 = parse(tokens, src_addr);
     let items_addr: i64 = ast_child0(ast_root);
     let items_len: i64 = ast_aux(ast_root);
-    let srt: i64 = srt_build(src_addr, src_len);
+    let srt: i64 = srt_build_from_tokens(tokens, src_addr);
     let n_structs: i64 = srt_count(srt);
     // STRUCT-LIT preprocessing (mirror selftest_mic3_module_nfn ~L12026): desugar
     // struct-literal ctors -> __mind_alloc + ordered __mind_store_i64 + ptr-result,
@@ -27490,18 +27503,15 @@ pub fn selftest_native_elf(src_addr: i64, src_len: i64) -> EmitState {
 }
 pub fn selftest_native_elf_u(src_addr: i64, src_len: i64, user_lo: i64) -> EmitState {
     let tokens: Vec = lex(src_addr, src_len);
-    let ast_root: i64 = parse(tokens, src_addr);
-    let items_addr: i64 = ast_child0(ast_root);
-    let items_len: i64 = ast_aux(ast_root);
-    let all_fns: i64 = __mind_alloc((items_len + 1) * 8);
-    let nb_all: i64 = nb_collect_fns(items_addr, items_len, 0, all_fns, 0);
-    let reach: i64 = __mind_alloc((nb_all + 1) * 8);
-    let _r0: i64 = nb_mark_roots(src_addr, all_fns, nb_all, user_lo, reach, 0);
-    let _rf: i64 = nb_reach_fixpoint(src_addr, all_fns, nb_all, reach, nb_all + 1);
-    let fns: i64 = __mind_alloc((nb_all + 1) * 8);
-    let n_fns: i64 = nb_build_kept(src_addr, all_fns, nb_all, reach, fns, 0, 0);
-    // Self-compute the note hash (no oracle feed). 0 => fail closed.
-    let h32: i64 = nb_trace_hash(src_addr, src_len, user_lo, fns, n_fns);
+    // Self-compute the note hash (no oracle feed). 0 => fail closed. nb_trace_hash
+    // recomputes its own prune/kept set inside nb_build_mic3_from_tokens, so the ONLY
+    // input it needs is the already-lexed `tokens` — the former parse+collect+reach+
+    // kept block here fed only nb_trace_hash's old `fns`/`n_fns` params, which it
+    // discarded (see nb_trace_hash), so building it was pure dead work: one full AST
+    // parse (~28 MB) + three prune arrays permanently resident in the fixed 1 GiB
+    // native bump arena for NOTHING. Removing it is byte-exact (no emitted byte depends
+    // on those values) and reclaims that arena for source growth.
+    let h32: i64 = nb_trace_hash(tokens, src_addr, src_len, user_lo);
     if h32 == 0 {
         // Open mic@3 port: refuse to emit a note we cannot self-compute. Return the
         // empty EmitState so the smoke's no-feed rung fails LOUD (no fake win).
@@ -27509,12 +27519,15 @@ pub fn selftest_native_elf_u(src_addr: i64, src_len: i64, user_lo: i64) -> EmitS
     }
     // ARENA (Rule-2c dedup, 2026-07-21): thread the tokens ALREADY lexed above into
     // the _hb body instead of letting it re-lex the full source. Each full-source
-    // lex() permanently occupies ~65 MB of the fixed 1 GiB bump arena (Vec doubling,
-    // no free); with the u -> trace_hash -> hb chain at three lexes the whole-compiler
-    // self-compile sat ~150 KB under the arena cap, so ANY source growth (e.g. adding
-    // a handful of fns) tripped the nb_arena ud2 capacity guard mid-compile (SIGILL,
-    // `stage1.elf exited -4` in self_host_loop_smoke.py). Token reuse is byte-exact:
-    // same (src_addr, src_len) => identical token stream => identical emitted ELF.
+    // lex() permanently occupies ~46 MB of the fixed 1 GiB bump arena (Vec doubling,
+    // no free); before this dedup the u -> trace_hash -> hb chain lexed the full source
+    // THREE times and parsed it a dead FOURTH time, leaving the whole-compiler self-
+    // compile close enough to the cap that ANY source growth (e.g. adding a handful of
+    // fns) tripped the nb_arena ud2 capacity guard mid-compile (SIGILL, `stage1.elf
+    // exited -4` in self_host_loop_smoke.py). Threading tokens through nb_trace_hash
+    // (-> nb_build_mic3_from_tokens) and _hb, plus dropping the dead prune above, takes
+    // the chain to ONE lex + no dead parse. Token reuse is byte-exact: same
+    // (src_addr, src_len) => identical token stream => identical note + emitted ELF.
     selftest_native_elf_hb_from_tokens(tokens, src_addr, h32, user_lo)
 }
 
