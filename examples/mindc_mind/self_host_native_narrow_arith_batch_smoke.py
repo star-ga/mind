@@ -120,6 +120,22 @@ DRIVERS = [
         (1000, 1000), (256, 256), (-256, 256), (7, 8), (100, 3),
         (32767, 32767), (200, 200), (2, 3),
     ]),
+    ("selftest_native_elf_narrow_sub_i16", "sub", 16, [
+        (-32768, 1), (32767, -1), (30000, -30000), (1000000, -1000000),
+        (100, 50), (-5, -7), (32767, 0), (-32768, 0),
+    ]),
+    ("selftest_native_elf_narrow_add_i32", "add", 32, [
+        (2147483647, 1), (2000000000, 2000000000), (-2147483648, -1),
+        (1500000000, 1500000000), (100, 200), (-5, 7), (2147483647, 0),
+    ]),
+    ("selftest_native_elf_narrow_sub_i32", "sub", 32, [
+        (2147483647, -1), (-2147483648, 1), (2000000000, -2000000000),
+        (1500000000, -1500000000), (100, 50), (-5, -7), (0, 2147483647),
+    ]),
+    ("selftest_native_elf_narrow_mul_i32", "mul", 32, [
+        (65536, 65536), (100000, 100000), (46341, 46341), (50000, 50000),
+        (7, 8), (100, 3), (2, 3),
+    ]),
 ]
 
 
@@ -175,7 +191,7 @@ def main() -> int:
                 print(f"  PASS  {sym}: non-vacuous ({n_wrap} wrap + {n_nowrap} no-wrap)")
             all_ok = all_ok and drv_ok
 
-        # Fail-closed domain guard (shared driver): out-of-domain operands refused.
+        # Fail-closed domain guard (i8/i16 band = [-1e6,1e6]): out-of-domain refused.
         for a, b in [
             (1000001, 0), (0, 1000001), (-1000001, 0), (0, -1000001),
             (2147483648, 1), (9999999999, 0),
@@ -185,13 +201,32 @@ def main() -> int:
             all_ok = all_ok and ok
             print(
                 f"  {'PASS' if ok else 'FAIL'}  sub_i8(a={a},b={b}) refused "
-                f"(fail-closed domain guard, got {len(elf)}B want 0B)"
+                f"(fail-closed i8/i16 guard [-1e6,1e6], got {len(elf)}B want 0B)"
+            )
+        # Fail-closed domain guard (i32 band = [-3e9,3e9]): the WIDER band still
+        # refuses past its edge, and an in-i32-band-but-out-of-i8-band operand is
+        # ACCEPTED by the i32 driver (proves the guard is width-aware, not a
+        # constant). 3e9 baked fine via movabs (past imm32).
+        for sym, a, b, want_refuse in [
+            ("selftest_native_elf_narrow_add_i32", 3000000001, 0, True),
+            ("selftest_native_elf_narrow_add_i32", 0, -3000000001, True),
+            ("selftest_native_elf_narrow_add_i32", 5000000000, 0, True),
+            ("selftest_native_elf_narrow_add_i32", 2000000000, 1, False),
+        ]:
+            elf = elf_of(lib, sym, a, b)
+            refused = len(elf) == 0
+            ok = refused == want_refuse
+            all_ok = all_ok and ok
+            verb = "refused" if want_refuse else "accepted"
+            print(
+                f"  {'PASS' if ok else 'FAIL'}  add_i32(a={a},b={b}) {verb} "
+                f"(width-aware i32 guard [-3e9,3e9], got {len(elf)}B)"
             )
 
     if all_ok:
         print(
-            "ALL PASS  narrow-int wrap arithmetic {sub,mul}xi8 + {add,mul}xi16 lowers "
-            "native-ELF end to end — baked operands narrowed via movsx al/ax, op "
+            "ALL PASS  narrow-int wrap arithmetic {add,sub,mul}x{i8,i16,i32} lowers "
+            "native-ELF end to end — baked operands narrowed via movsx al/ax/eax, op "
             "applied in a full 64-bit register, the RESULT narrowed again so iW "
             "overflow wraps two's-complement instead of i64-widening; full-width "
             "stdout check against an independent width-w wrap reference + exact-i64 "

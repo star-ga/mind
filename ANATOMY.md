@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3179 | **Est. tokens:** ~7,587,918
-**Generated:** 2026-07-22 07:43 UTC
+**Files:** 3179 | **Est. tokens:** ~7,588,446
+**Generated:** 2026-07-22 08:20 UTC
 
 ## Token Budget Guide
 
@@ -40,7 +40,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,450 |
-| `docs/` | 30 | ~51,729 |
+| `docs/` | 30 | ~51,800 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
@@ -58,7 +58,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 109 | ~194,343 |
+| `examples/mindc_mind/` | 109 | ~194,800 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
 | `examples/native/` | 4 | ~527 |
@@ -679,7 +679,7 @@
 - `errors.md` (~701 tok, large) — MIND Core Error Model
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
 - `gpu.md` (~387 tok, medium) — GPU backend profile
-- `INDEPENDENCE_ROADMAP.md` (~6402 tok, huge) — MIND Rust-Independence Roadmap
+- `INDEPENDENCE_ROADMAP.md` (~6473 tok, huge) — MIND Rust-Independence Roadmap
 - `install.md` (~1012 tok, large) — Installing mindc
 - `ir.md` (~451 tok, medium) — MIND IR core
 - `ir-mlir.md` (~480 tok, medium) — IR & MLIR Integration
@@ -908,7 +908,7 @@
 - `self_host_native_intdot_smoke.py` (~1165 tok, large) — RI-B2-S1 (#108) scalar i64 DOT-PRODUCT reduction native-ELF (zero MLIR/LLVM).
 - `self_host_native_matmul_f32_v_smoke.py` (~1611 tok, huge) — RI-B2-S9 (#108) — native-ELF scalar STRICT-FP f32 GEMV (matmul-f32-v).
 - `self_host_native_narrow_add_i8_smoke.py` (~2260 tok, huge) — C2 — native-ELF NARROW-INT (i8) WRAP ARITHMETIC, zero MLIR/LLVM.
-- `self_host_native_narrow_arith_batch_smoke.py` (~2097 tok, huge) — C2 — native-ELF NARROW-INT WRAP ARITHMETIC batch: {sub,mul}xi8 + {add,mul}xi16.
+- `self_host_native_narrow_arith_batch_smoke.py` (~2554 tok, huge) — C2 — native-ELF NARROW-INT WRAP ARITHMETIC batch: {sub,mul}xi8 + {add,mul}xi16.
 - `self_host_native_narrowint_smoke.py` (~1656 tok, huge) — Roadmap C2 narrow-int native-ELF rung — user-reachable i8/i16/i32 truncating
 - `self_host_native_narrowwrap_smoke.py` (~1673 tok, huge) — Roadmap C2 narrow-int native-ELF rung — user-reachable i8/i16/i32 two's-complement
 - `self_host_native_scalar_f32_smoke.py` (~1342 tok, large) — Phase C1-remainder f32 rung — native-ELF scalar SINGLE-precision chain.
