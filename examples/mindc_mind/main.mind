@@ -35546,3 +35546,144 @@ pub fn selftest_native_elf_tensor_rowmin_i64(m: i64, n: i64) -> EmitState {
     let elf: String = nb_write_elf(code, 0, note);
     EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
 }
+
+
+
+// ============================================================================
+// C2 — native-ELF NARROW-INT WRAP ARITHMETIC, generalized: {add,sub,mul} x {i8,i16}.
+// Extends selftest_native_elf_narrow_add_i8 (the i8-add rung) to an op- and
+// width-parametric driver. Each emits a runnable ET_EXEC that narrows both baked
+// operands to width w via nb_wrap_rax_w(_, w), applies the op in a full 64-bit
+// register, narrows the RESULT again so overflow wraps two's-complement at width
+// w (never i64-widens), writes the 8 LE bytes of the sign-extended result to
+// stdout, and exits (result == baked_expected)*41 + 1 — 42 only on an EXACT
+// full-width i64 match against the emit-time-baked expected (movabs past imm32).
+// `expected` is baked HOST-side via the width-parametric wrap below. All operands
+// guarded to [-1000000, 1000000]; both i8 AND i16 WRAP within that band
+// (1e6 >> 127 and >> 32767), so every corpus case is a genuine wrap test.
+// ADDITIVE: NEW exports never reached during self-compile — the integer
+// native-ELF oracle stays byte-identical. The gate is EXECUTION CORRECTNESS
+// (emit, run, assert stdout+exit against an independent Python reference).
+// ============================================================================
+
+// Width -> two's-complement modulus (2^w) for w in {8,16,32}.
+pub fn nb_narrow_modulus(w: i64) -> i64 {
+    if w == 8 {
+        return 256;
+    }
+    if w == 16 {
+        return 65536;
+    }
+    4294967296
+}
+
+// HOST-side non-negative low residue x mod 2^w (nb_narrowadd8_lowmod generalized):
+// MIND signed div truncates toward zero, so re-add the modulus when the remainder
+// is negative — giving a residue in [0, 2^w).
+pub fn nb_narrow_lowmod_w(x: i64, m: i64) -> i64 {
+    let r: i64 = x - (x / m) * m;
+    if r < 0 {
+        return r + m;
+    }
+    r
+}
+
+// HOST-side exact width-w two's-complement wrap: (x as iW) as i64. Low w bits,
+// then re-sign the top bit (>= 2^(w-1) -> subtract 2^w). Idempotent; matches the
+// emitted nb_wrap_rax_w(_, w) (movsx al / movsx ax / movsxd eax) byte-for-byte.
+pub fn nb_narrow_wrap_w(x: i64, w: i64) -> i64 {
+    let m: i64 = nb_narrow_modulus(w);
+    let low: i64 = nb_narrow_lowmod_w(x, m);
+    let half: i64 = m / 2;
+    if low >= half {
+        return low - m;
+    }
+    low
+}
+
+// HOST-side baked expected: wrap_w(wrap_w(a) OP wrap_w(b)) — the SAME order the
+// emitted code applies (narrow both operands, op full-width, narrow the result).
+pub fn nb_narrow_arith_expected(a: i64, b: i64, op: i64, w: i64) -> i64 {
+    let aw: i64 = nb_narrow_wrap_w(a, w);
+    let bw: i64 = nb_narrow_wrap_w(b, w);
+    if op == op_sub() {
+        return nb_narrow_wrap_w(aw - bw, w);
+    }
+    if op == op_mul() {
+        return nb_narrow_wrap_w(aw * bw, w);
+    }
+    nb_narrow_wrap_w(aw + bw, w)
+}
+
+// The generalized C2 narrow-int wrap driver: op in {add,sub,mul}, width w in
+// {8,16}. Clones selftest_native_elf_narrow_add_i8 with the op and wrap width
+// parametric. FAILS CLOSED (empty buf) unless both operands in [-1000000,1000000].
+pub fn selftest_native_elf_narrow_arith(a: i64, b: i64, op: i64, w: i64) -> EmitState {
+    if a < 0 - 1000000 {
+        return nb_narrowadd8_empty();
+    }
+    if a > 1000000 {
+        return nb_narrowadd8_empty();
+    }
+    if b < 0 - 1000000 {
+        return nb_narrowadd8_empty();
+    }
+    if b > 1000000 {
+        return nb_narrowadd8_empty();
+    }
+    let expected: i64 = nb_narrow_arith_expected(a, b, op, w);
+    let p0: String = nb_fp_prologue_frame(string_new(), 4096);
+    // Baked operands + constants.
+    let k1: String = nb_intdot_movimm(p0, a, 0 - 8);
+    let k2: String = nb_intdot_movimm(k1, b, 0 - 16);
+    let k3: String = nb_intdot_movimm(k2, expected, 0 - 48);
+    let k4: String = nb_intdot_movimm(k3, 41, 0 - 56);
+    let k5: String = nb_intdot_movimm(k4, 1, 0 - 64);
+    let k6: String = nb_intdot_movimm(k5, 1, 0 - 80);
+    let k7: String = nb_intdot_movimm(k6, 8, 0 - 96);
+    // aw = (a as iW) : load a, narrow to width w, store Aw.
+    let w1: String = nb_load_rax(k7, 0 - 8);
+    let w2: String = nb_wrap_rax_w(w1, w);
+    let w3: String = nb_store_rax(w2, 0 - 24);
+    // bw = (b as iW).
+    let w4: String = nb_load_rax(w3, 0 - 16);
+    let w5: String = nb_wrap_rax_w(w4, w);
+    let w6: String = nb_store_rax(w5, 0 - 32);
+    // r = ((aw OP bw) as iW) : op full-width in rax, then narrow the RESULT.
+    let s1: String = nb_load_rax(w6, 0 - 24);
+    let s2: String = nb_arith_rax_mem(s1, op, 0 - 32);
+    let s3: String = nb_wrap_rax_w(s2, w);
+    let s4: String = nb_store_rax(s3, 0 - 40);
+    // write(1, &result, 8) — the full-width (sign-extended iW) stdout observable.
+    let t3: String = nb_intdot_lea(s4, 0 - 40, 0 - 88);
+    let t6: String = nb_emit_write(t3, 0 - 80, 0 - 88, 0 - 96);
+    // exitcode = (result == expected)*41 + 1 — 42 only on an exact i64 match.
+    let u1: String = nb_load_rax(t6, 0 - 40);
+    let u2: String = nb_cmp_rax_mem(u1, nb_setcc_opcode(op_eq()), 0 - 48);
+    let u3: String = nb_store_rax(u2, 0 - 72);
+    let u4: String = nb_load_rax(u3, 0 - 72);
+    let u5: String = nb_arith_rax_mem(u4, op_mul(), 0 - 56);
+    let u6: String = nb_arith_rax_mem(u5, op_add(), 0 - 64);
+    let u7: String = nb_store_rax(u6, 0 - 104);
+    let u8: String = nb_load_rax(u7, 0 - 104);
+    let code: String = nb_emit_return(u8, 1);
+    // No intra-fn jumps to patch (straight-line scalar arithmetic).
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
+
+// Thin op/width wrappers — one export per rung (the batch smoke calls each).
+pub fn selftest_native_elf_narrow_sub_i8(a: i64, b: i64) -> EmitState {
+    selftest_native_elf_narrow_arith(a, b, op_sub(), 8)
+}
+pub fn selftest_native_elf_narrow_mul_i8(a: i64, b: i64) -> EmitState {
+    selftest_native_elf_narrow_arith(a, b, op_mul(), 8)
+}
+pub fn selftest_native_elf_narrow_add_i16(a: i64, b: i64) -> EmitState {
+    selftest_native_elf_narrow_arith(a, b, op_add(), 16)
+}
+pub fn selftest_native_elf_narrow_mul_i16(a: i64, b: i64) -> EmitState {
+    selftest_native_elf_narrow_arith(a, b, op_mul(), 16)
+}
