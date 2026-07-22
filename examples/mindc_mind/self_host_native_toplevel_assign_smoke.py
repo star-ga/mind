@@ -126,6 +126,41 @@ def build_value_src(init: int, ops: list) -> str:
     return f"fn main() -> i64 {{\n{body}\n}}\n"
 
 
+def py_value_if(c: int, then_v: int, else_v: int) -> int:
+    """INDEPENDENT reference: `w = if c > 0 { then_v } else { else_v }`."""
+    return then_v if c > 0 else else_v
+
+
+def build_value_if_src(c: int, then_v: int, else_v: int) -> str:
+    """`let c=..; let w=0; w = if c > 0 { then_v } else { else_v }; w` — raw final w.
+    Exercises the value-if RHS in a top-level reassignment (the deferred sub-case)."""
+    return (
+        "fn main() -> i64 {\n"
+        f"    let c: i64 = {c};\n"
+        "    let w: i64 = 0;\n"
+        f"    w = if c > 0 {{ {then_v} }} else {{ {else_v} }};\n"
+        "    w\n"
+        "}\n"
+    )
+
+
+def build_marker_value_if_src(c: int, then_v: int, else_v: int, expected: int) -> str:
+    """Non-fakeable: the value-if reassign then a FULL-64-bit `w == expected` compare
+    that runs BEFORE the exit-code mod-256 truncation (wrong lowering exits 43)."""
+    return (
+        "fn main() -> i64 {\n"
+        f"    let c: i64 = {c};\n"
+        "    let w: i64 = 0;\n"
+        f"    w = if c > 0 {{ {then_v} }} else {{ {else_v} }};\n"
+        f"    if w == {expected} {{\n"
+        f"        {MARKER}\n"
+        "    } else {\n"
+        "        43\n"
+        "    }\n"
+        "}\n"
+    )
+
+
 def build_marker_src(init: int, ops: list, expected: int) -> str:
     """`let w = init; w = ...; if w == expected { 42 } else { 43 }` — non-fakeable:
     the FULL-64-bit compare runs before the exit-code mod-256 truncation."""
@@ -165,6 +200,15 @@ SHAPES = [
     ("chained", 100, [("+", 100), ("*", 2)]),    # 200 then *2 = 400
     ("selfref", 5, [("-", 1), ("*", "w"), ("+", 2)]),  # 4, 16, 18
     ("many", 1, [("+", 10), ("*", 3), ("-", 7), ("+", 100)]),  # 11,33,26,126
+]
+
+# Value-if RHS reassignment shapes (the DEFERRED sub-case now closed):
+# `let w=0; w = if c > 0 { then_v } else { else_v };` — BOTH branches, both signs of c.
+VALUE_IF_SHAPES = [
+    ("vif-then", 1, 10, 20),    # c>0  -> w = 10
+    ("vif-else", -1, 10, 20),   # c<=0 -> w = 20
+    ("vif-else0", 0, 10, 20),   # c==0 -> w = 20 (boundary)
+    ("vif-then42", 7, 42, 99),  # c>0  -> w = 42 (raw-exit lands on MARKER value)
 ]
 
 
@@ -226,6 +270,43 @@ def main() -> int:
                 f"(elf {len(velf)}B, zero MLIR/LLVM)"
             )
 
+        # --- value-if RHS reassignment shapes (deferred sub-case now closed) ---
+        for name, c, then_v, else_v in VALUE_IF_SHAPES:
+            expected = py_value_if(c, then_v, else_v)  # INDEPENDENT Python reference
+
+            # (a) raw-value fixture: native ELF exit == py_reference (mod 256), zero stdout
+            vsrc = build_value_if_src(c, then_v, else_v)
+            velf = mind_native_elf(lib, vsrc)
+            v_is_elf = len(velf) > 120 and velf[:4] == b"\x7fELF"
+            if not v_is_elf:
+                print(f"  FAIL  {name}: value-if RHS assign fails closed "
+                      f"(empty/invalid ELF len={len(velf)})")
+                all_ok = False
+                continue
+            v_exit, v_out = run_elf(velf, tmp)
+            want_exit = expected & 0xFF
+            v_ok = v_exit == want_exit and v_out == b""
+
+            # (b) mic@3 byte-identity of the raw-value fixture vs the Rust oracle
+            mine = mind_mic3(lib, vsrc)
+            orc = oracle_mic3(mindc, vsrc, tmp)
+            mic_ok = len(orc) > 0 and mine == orc
+
+            # (c) non-fakeable MARKER discrimination -> exit==42 iff w==expected
+            msrc = build_marker_value_if_src(c, then_v, else_v, expected)
+            melf = mind_native_elf(lib, msrc)
+            m_is_elf = len(melf) > 120 and melf[:4] == b"\x7fELF"
+            m_exit, m_out = run_elf(melf, tmp) if m_is_elf else (None, None)
+            m_ok = m_is_elf and m_exit == MARKER and m_out == b""
+
+            ok = v_ok and mic_ok and m_ok
+            all_ok = all_ok and ok
+            print(
+                f"  {'PASS' if ok else 'FAIL'}  {name:10} value_exit={v_exit} "
+                f"(py_ref={want_exit}) mic3_id={mic_ok} marker_exit={m_exit} "
+                f"(elf {len(velf)}B, zero MLIR/LLVM)"
+            )
+
         # --- loop-carried control (already supported) ---
         celf = mind_native_elf(lib, SRC_LOOP_CONTROL)
         c_is_elf = len(celf) > 120 and celf[:4] == b"\x7fELF"
@@ -239,10 +320,11 @@ def main() -> int:
 
     if all_ok:
         print(
-            "ALL PASS  top-level straight-line i64 reassignment (`let w=100; w=w+100;`) "
-            "now EMITS a runnable native ELF and runs correct; the mic@3 trace-hash note "
-            "is byte-identical to the Rust --emit-mic3 oracle for every fixture "
-            "(flatten_stmt_seq top-level-assign arm, additive to the self-compile)"
+            "ALL PASS  top-level i64 reassignment — straight-line (`w=w+100;`) AND "
+            "value-if RHS (`w = if c>0 {A} else {B};`) — EMITS a runnable native ELF "
+            "and runs correct; the mic@3 trace-hash note is byte-identical to the Rust "
+            "--emit-mic3 oracle for every fixture (flatten_stmt_seq top-level-assign "
+            "arm + its type-7 value-if sub-case, additive to the self-compile)"
         )
         return 0
     print(
