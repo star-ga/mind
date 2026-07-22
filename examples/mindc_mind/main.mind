@@ -10375,6 +10375,41 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
             return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
         }
     }
+    // (type 0, reuse) TOP-LEVEL STRAIGHT-LINE REASSIGN `NAME = VALUE` (i64).
+    // Mirrors eval/lower.rs's body_env.insert: `w = w + 100` emits the RHS
+    // instructions and REBINDS NAME to the RHS result vid — there is NO dedicated
+    // Assign instruction, so the emitted mic@3 body is byte-identical to a `let w2 =
+    // w + 100` (mic@3 bodies are SSA vids, no variable names). It reuses the type-0
+    // let plan path EXACTLY (same [start,end) range-resolution + one env entry), the
+    // only difference being the shadow env entry re-uses NAME (child0), so
+    // letenv_lookup's last-match-wins resolves every LATER read of NAME to the
+    // reassigned slot while the RHS — flattened FIRST, against the prior env — still
+    // reads the pre-assign binding. Additive: main.mind's float-free, immutable-style
+    // source has NO top-level straight-line assign in any kept fn (else this build
+    // would already fail closed and the self-host loop would break), so no
+    // currently-emitting fn reaches this arm — byte-identical self-compile.
+    // deferred: a value-if RHS (`w = if c { A } else { B }`) is NOT handled here — it
+    // falls through to the bare-expr arm and fails closed. upgrade path: mirror the
+    // type-7 value-if let sub-case (emit_if_expr_any_lv + a synth dst slot).
+    if ast_kind(stmt) == ast_assign() {
+        let aname: i64 = ast_child0(stmt);
+        let aval: i64 = ast_child2(stmt);
+        let astart: i64 = __mind_load_i64(cursor);
+        let aroot: i64 = flatten_expr_env(aval, src, params_addr, n_params, nodes, cursor, env, nlets);
+        if aroot < 0 {
+            return 0;
+        }
+        let aend: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(env + nlets * 24 + 0, ast_span_lo(aname));
+        __mind_store_i64(env + nlets * 24 + 8, ast_span_hi(aname));
+        __mind_store_i64(env + nlets * 24 + 16, aroot);
+        __mind_store_i64(nlets_cell, nlets + 1);
+        __mind_store_i64(plan + p * 64 + 0, 0);
+        __mind_store_i64(plan + p * 64 + 8, astart);
+        __mind_store_i64(plan + p * 64 + 16, aend);
+        __mind_store_i64(nplan_cell, p + 1);
+        return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
+    }
     // BARE EXPRESSION STATEMENT (a call/expr emitted for side-effect; its result vid
     // is allocated then discarded, e.g. `__mind_store_i64(n, kind);` in ast_new_leaf).
     // Flatten it like a let-init but bind NO name. Type 11, NOT type 0: a real `let`
