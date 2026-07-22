@@ -60,6 +60,15 @@ fi
 rm -f "$_fk_probe"
 
 echo "== fast front-end keystone =="
+# 0. FORMAT GATE (fail fast). `mindc check` treats fmt::drift as a FATAL error
+# (it reddens the "Mindcraft check" CI job), and NONE of the byte-identity gates
+# below catch formatting — a self-host edit that leaves a trailing `;` or stray
+# layout passes every smoke here yet fails CI. Catch it before the push.
+if ! "$MINDC" fmt --check "$ENTRY" >/tmp/fk_fmt.log 2>&1; then
+  echo "  FAIL  fmt drift in $ENTRY — run: $MINDC fmt --fix $ENTRY"
+  head -8 /tmp/fk_fmt.log | sed 's/^/        /'; exit 1
+fi
+echo "  PASS  fmt check ($ENTRY canonical)"
 # 1. deterministic build: Mind.toml-driven vs direct must be byte-identical.
 # --no-cache is LOAD-BEARING for this gate: the module cache key (src/build/cache.rs)
 # hashes source_bytes + target + optimize + compiler_version (semver, NOT a build hash),
