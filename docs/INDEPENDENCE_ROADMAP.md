@@ -139,10 +139,12 @@ Native-ELF covers only scalar i64/ptr/struct/control-flow. To drop the 12,753-LO
   (2026-07-21, zero MLIR/LLVM):** elementwise-add (`selftest_native_elf_tensor_ewadd_i64`, C4-T1), dot/MAC
   reduction (`_dot_i64`, C4-T2), 2-D matmul (`_matmul_i64`, C4-T3, `f468e02`/`24699d0`), 2-D axis reduction
   (`_rowsum_i64`, C4-T4 — squared-row-sum checksum, layout-discriminating) and 2-D transpose (`_transpose_i64`,
-  C4-T4 — opposite-stride `i*n+j`->`j*m+i` with a position-weighted checksum) — each emits a runnable native x86-64
+  C4-T4 — opposite-stride `i*n+j`->`j*m+i` with a position-weighted checksum), elementwise-multiply (`_ewmul_i64`,
+  C4-T5), 2-D column reduction (`_colsum_i64`, C4-T5 — the axis-transpose of rowsum), and row-vector broadcast-add
+  (`_bcastadd_i64`, C4-T5 — `C[i,j]=A[i,j]+B[j]`, B stride-0 across rows) — each emits a runnable native x86-64
   ELF with 2-D row-major addressing + a fail-closed frame-bound guard (dims bounded before products, so no
   i64-overflow shape overruns), verified against an independent Python reference AND the native-ELF byte-oracle.
-  **Still open:** broadcast / general N-D indexing, f-typed tensors (needs C1 float-in-registry), and the
+  **Still open:** general N-D indexing, f-typed tensors (needs C1 float-in-registry), and the
   optimizing backend (C6, MLIR still owns performance today).
 - [ ] **C5** Vectorization (AVX2/NEON SIMD) for performance parity
 - [ ] **C6** ⚠️ **Optimizing backend** — register allocation + instruction scheduling (today LLVM `-O3`). *The multi-year item*; without it native codegen is correct but slow
