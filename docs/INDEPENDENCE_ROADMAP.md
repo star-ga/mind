@@ -5,6 +5,17 @@
 > (native-ELF + MLIR + gap agents) and the native-ELF self-host feasibility probe.
 > **No fake wins:** every claim in this file is gated on a runnable, byte-verifiable
 > artifact — not a byte-comparison that was never executed.
+>
+> **Measured state (2026-07-21 gap-map):** B-frontend ~30% (type-checker 10 of 22 diagnostic
+> rule families ported as pure-MIND decision cores; parser ~40% by construct), C-backend ~35%
+> for the static x86-64 product (~15–20% for the full axis). True long poles, in order: C6
+> optimizing backend (measured ~9.6× vs MLIR+clang `-O3` — deleting LLVM waits behind it, multi-year),
+> B2 `infer_expr` + heavy constructs (quarters), the aarch64 second encoder family (months, cheaply
+> de-risked now), C7 GPU. Three distinct finish lines, not to be conflated: (a) 100% Rust-independent
+> static x86-64 mindc (~2–3 quarters of serial reseed-gated rungs); (b) + cross-substrate (aarch64,
+> +months); (c) + *fastest* (delete LLVM, gated on C6, multi-year). Recent correctness-first rungs:
+> param-mutation stale-slot read, non-dyadic float-literal silent-bits, carry/loop-frame 256-cap
+> overflow — all silent-miscompile → loud-refusal, keystone byte-identity held.
 
 ## The bigger goal: SOTA, not just independent
 Rust-independence is **one** pillar. The north star is a **SOTA compiler — fastest, most
@@ -83,7 +94,12 @@ itself byte-identically with zero Rust & zero LLVM in the loop"* (integer/contro
   prefix — `name.starts_with("__mind_")`) — each an additive `selftest_tc_*` export byte-for-byte matching its Rust
   oracle over positive+negative cases, all gated in `fast_keystone.sh` (`tc_class_rules`, `tc_shape_rules`). The
   remaining ~5,000 LOC (float/tensor/enum + AST-context-dependent rules) is the bulk still open.
-- [ ] **B2** Full parser + AST→IR lowering (`parser` 5,109 + `eval/lower.rs` 7,818) for every construct
+- [ ] **B2** Full parser + AST→IR lowering (`parser` ~5,563 portable of 7,782 total — the `#[bimap]` + trivia
+  ~2,219 LOC are descoped from the self-host target — + `eval/lower.rs` 9,966) for every construct. The self-host
+  front-end already lexes+parses+lowers the scalar/i64/control-flow subset (that is what the keystone loop
+  compiles); the open 60% is strings, collections, enums, generics, the tensor family, and real type annotations.
+  Incrementally portable construct-by-construct (the 67-fixture gap corpus + per-construct byte-oracle prove no
+  big-bang needed), but every rung is SERIAL through the RI-E1 reseed, so wall-clock is bounded by rung cadence.
 - [ ] **B3** Autodiff in pure MIND
 - [ ] **B4** Optimizer / analysis passes in pure MIND
 
