@@ -35615,20 +35615,35 @@ pub fn nb_narrow_arith_expected(a: i64, b: i64, op: i64, w: i64) -> i64 {
     nb_narrow_wrap_w(aw + bw, w)
 }
 
+// Operand guard bound by width: the narrow band [-1e6,1e6] keeps i8/i16 baking
+// small AND already wraps them (1e6 >> 127, >> 32767). i32 only WRAPS past
+// ~2^31, so w=32 widens the band to [-3e9,3e9] to exercise it — operands are
+// movabs-baked full-width (nb_intdot_movimm = movabs rax,imm64), so no imm32
+// truncation. Unknown widths fall through to the narrow band.
+pub fn nb_narrow_guard_hi(w: i64) -> i64 {
+    if w == 32 {
+        return 3000000000;
+    }
+    1000000
+}
+
 // The generalized C2 narrow-int wrap driver: op in {add,sub,mul}, width w in
-// {8,16}. Clones selftest_native_elf_narrow_add_i8 with the op and wrap width
-// parametric. FAILS CLOSED (empty buf) unless both operands in [-1000000,1000000].
+// {8,16,32}. Clones selftest_native_elf_narrow_add_i8 with the op and wrap width
+// parametric. FAILS CLOSED (empty buf) unless both operands within the
+// width-dependent band nb_narrow_guard_hi(w) ([-1e6,1e6] for i8/i16, [-3e9,3e9]
+// for i32).
 pub fn selftest_native_elf_narrow_arith(a: i64, b: i64, op: i64, w: i64) -> EmitState {
-    if a < 0 - 1000000 {
+    let hi: i64 = nb_narrow_guard_hi(w);
+    if a < 0 - hi {
         return nb_narrowadd8_empty();
     }
-    if a > 1000000 {
+    if a > hi {
         return nb_narrowadd8_empty();
     }
-    if b < 0 - 1000000 {
+    if b < 0 - hi {
         return nb_narrowadd8_empty();
     }
-    if b > 1000000 {
+    if b > hi {
         return nb_narrowadd8_empty();
     }
     let expected: i64 = nb_narrow_arith_expected(a, b, op, w);
@@ -35686,4 +35701,16 @@ pub fn selftest_native_elf_narrow_add_i16(a: i64, b: i64) -> EmitState {
 }
 pub fn selftest_native_elf_narrow_mul_i16(a: i64, b: i64) -> EmitState {
     selftest_native_elf_narrow_arith(a, b, op_mul(), 16)
+}
+pub fn selftest_native_elf_narrow_sub_i16(a: i64, b: i64) -> EmitState {
+    selftest_native_elf_narrow_arith(a, b, op_sub(), 16)
+}
+pub fn selftest_native_elf_narrow_add_i32(a: i64, b: i64) -> EmitState {
+    selftest_native_elf_narrow_arith(a, b, op_add(), 32)
+}
+pub fn selftest_native_elf_narrow_sub_i32(a: i64, b: i64) -> EmitState {
+    selftest_native_elf_narrow_arith(a, b, op_sub(), 32)
+}
+pub fn selftest_native_elf_narrow_mul_i32(a: i64, b: i64) -> EmitState {
+    selftest_native_elf_narrow_arith(a, b, op_mul(), 32)
 }
