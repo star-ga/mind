@@ -639,6 +639,11 @@ jobs:
             self_host_native_tensor_colsum_smoke \
             self_host_native_tensor_bcastadd_smoke \
             self_host_standalone_driver_smoke \
+            self_host_native_tensor_maxrowmax_smoke \
+            self_host_native_tensor_relu_smoke \
+            self_host_native_narrow_add_i8_smoke \
+            self_host_native_tensor_batchsum_smoke \
+            self_host_native_tensor_rowmin_smoke \
             self_host_param_mutation_smoke \
             self_host_float_lit_exact_smoke \
             self_host_carry_cap_smoke \
