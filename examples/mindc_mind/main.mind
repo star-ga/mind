@@ -23172,8 +23172,24 @@ pub fn nb_while_carry(carry: i64, ccell: i64, next_id: i64, buf: i64, body_sa: i
     let after: i64 = if ast_kind(stmt) == ast_assign() {
         let arhs: i64 = nb_count_expr(next_id, buf, ast_child2(stmt), params_addr, n_params, clets, clcell);
         let name_leaf: i64 = ast_child0(stmt);
-        let _r: i64 = nb_carry_record(carry, ccell, buf, ast_span_lo(name_leaf), ast_span_hi(name_leaf), arhs - 1, lets, lcell);
-        arhs
+        // C2 declared-width driver (carry form): a narrow-DECLARED carried var's
+        // assign consumes ONE fresh wrap slot at emit (nb_stmt assign arm mints
+        // `wida = s1.next_id` = arhs, then next_id = arhs+1, last_id = arhs). So the
+        // working post_id IS the wrap slot (arhs) — NOT the RHS result (arhs-1) — and
+        // the threaded next_id must advance one further so a LATER carried var in the
+        // same body counts from the emit's real next_id (else its post_id is one low
+        // and the loop cond reads a never-updated slot → hang). Mirror both here, the
+        // exact twin of nb_count_stmt's assign arm (+1 iff narrow) which sizes the
+        // frame. Every carried var in main.mind is i64 → width 64 → post_id = arhs-1,
+        // after = arhs (unchanged) — byte-identical self-compile.
+        let cw: i64 = nb_lets_lookup_width(lets, lcell, buf, ast_span_lo(name_leaf), ast_span_hi(name_leaf));
+        if cw < 64 {
+            let _rw: i64 = nb_carry_record(carry, ccell, buf, ast_span_lo(name_leaf), ast_span_hi(name_leaf), arhs, lets, lcell);
+            arhs + 1
+        } else {
+            let _r: i64 = nb_carry_record(carry, ccell, buf, ast_span_lo(name_leaf), ast_span_hi(name_leaf), arhs - 1, lets, lcell);
+            arhs
+        }
     } else {
         nb_count_stmt(next_id, buf, stmt, params_addr, n_params, clets, clcell, srt)
     };
@@ -25315,23 +25331,98 @@ pub fn nb_stmts_have_while(buf: i64, stmts_addr: i64, stmts_len: i64, i: i64) ->
     nb_stmts_have_while(buf, stmts_addr, stmts_len, i + 1)
 }
 
+// 1 iff any statement in [i, n) is an `if` whose then/else block CONTAINS (at any
+// depth) a while loop — i.e. a while NESTED inside an if branch, NOT a top-level
+// body while. A narrow carried var mutated by such a nested while needs the F2
+// nested-region carry threading (lower.rs 4737-4777 last_region_exit_rebindings)
+// which nb_while_carry does not yet record, so its post-region binding can desync;
+// this sub-shape stays fail-closed. A while at the fn-body top level does NOT match
+// (its carry is fully handled by nb_emit_while's local pre-walk).
+pub fn nb_stmts_have_nested_while(buf: i64, stmts_addr: i64, stmts_len: i64, i: i64) -> i64 {
+    if i >= stmts_len {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    if ast_kind(stmt) == ast_if() {
+        let then_blk: i64 = ast_child1(stmt);
+        if nb_stmts_have_while(buf, ast_child0(then_blk), ast_aux(then_blk), 0) == 1 {
+            return 1;
+        }
+        let else_blk: i64 = ast_child2(stmt);
+        if else_blk != 0 {
+            if nb_stmts_have_while(buf, ast_child0(else_blk), ast_aux(else_blk), 0) == 1 {
+                return 1;
+            }
+        }
+    }
+    nb_stmts_have_nested_while(buf, stmts_addr, stmts_len, i + 1)
+}
+
+// 1 iff a top-level assign statement in this while body reassigns a narrow-declared
+// (i8/i16/i32) PARAM — the shape nb_while_carry now lowers correctly (it mints the
+// emit's fresh width-wrap slot for the carried narrow assign). Used to distinguish
+// the SAFE "narrow param carried by a top-level while" pattern from the read-only
+// "narrow param merely present while a loop runs" pattern (whose post-loop use via
+// a `(x as i64)`-cast-fed binop hits a SEPARATE, still-open cast-in-binop lowering
+// bug — kept fail-closed).
+pub fn nb_while_assigns_narrow_param(buf: i64, body_sa: i64, body_sl: i64, i: i64, params_addr: i64, n_params: i64) -> i64 {
+    if i >= body_sl {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(body_sa + i * 8);
+    if ast_kind(stmt) == ast_assign() {
+        let nl: i64 = ast_child0(stmt);
+        let idx: i64 = resolve_param(params_addr, n_params, buf, ast_span_lo(nl), ast_span_hi(nl));
+        if idx >= 0 {
+            let pnode: i64 = __mind_load_i64(params_addr + idx * 8);
+            if nb_width_of_ann(buf, ast_child1(pnode)) < 64 {
+                return 1;
+            }
+        }
+    }
+    nb_while_assigns_narrow_param(buf, body_sa, body_sl, i + 1, params_addr, n_params)
+}
+
+// 1 iff some TOP-LEVEL body while loop reassigns a narrow-declared param (the SAFE,
+// now-correct carry shape). A while nested inside an if is NOT considered here (it is
+// separately refused by nb_stmts_have_nested_while).
+pub fn nb_toplevel_while_carries_narrow(buf: i64, stmts_addr: i64, stmts_len: i64, i: i64, params_addr: i64, n_params: i64) -> i64 {
+    if i >= stmts_len {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    if ast_kind(stmt) == ast_while() {
+        let body_blk: i64 = ast_child1(stmt);
+        if nb_while_assigns_narrow_param(buf, ast_child0(body_blk), ast_aux(body_blk), 0, params_addr, n_params) == 1 {
+            return 1;
+        }
+    }
+    nb_toplevel_while_carries_narrow(buf, stmts_addr, stmts_len, i + 1, params_addr, n_params)
+}
+
 // 1 iff any BODY-having fn in the pruned `ordered` set declares a narrow-width
-// (i8/i16/i32) param AND its body contains a while loop — the BROKEN
-// narrow-param-in-loop shape. In that shape the loop-carry + width interaction
-// desyncs the frame/slot count, so the emitted ELF HANGS (`fn f(x: i8){ while c<3
-// {x=x+1;c=c+1;} return x }`) or reads a stale carried value. A narrow param that
-// is only READ/RETURNED with no loop lowers CORRECTLY (the entry width-wrap driver
-// handles it — self_host_native_autowrap_smoke.py's pw32/wadd cases pass), so it is
-// NOT flagged. (A narrow-typed LOCAL reassigned in a general loop ALSO hangs via the
-// same desync — a SEPARATE, structure-dependent gap NOT guarded here: the autowrap
-// smoke's single-iteration `while i<1` narrow-local case happens to work, so a blanket
-// narrow-local-in-loop guard would over-reject it; logged as a C2 follow-up.) Rather than
-// emit the hanging ELF, the whole native emit FAILS CLOSED (empty es_new()) — loud
-// refusal until narrow-param-carry support lands (roadmap C2). Body-having fns only
-// (the 48 narrow-typed std sigs are extern `unsafe fn`, no body). No self-host fn
-// has a narrow param in a loop, so this never fires during self-compile and the
-// loop stays byte-identical. (The separate narrow-param `x as i64` cast wrong-value
-// bug — no loop — is documented as a C2 follow-up, not caught here.)
+// (i8/i16/i32) param AND its body has a while loop that is NOT the now-correct
+// "narrow param carried by a top-level while" shape — i.e. a still-broken sub-shape.
+//
+// FIXED (now emits + runs correct): a narrow param REASSIGNED by a TOP-LEVEL body
+// while. nb_while_carry now mints the emit's fresh width-wrap slot for a narrow
+// carried assign (post_id = the wrap slot, next_id advanced +1), so the carried
+// var's working slot and every later carried var stay frame-consistent with the
+// emit + the count (nb_count_stmt assign arm) — the value re-wraps two's-complement
+// each iteration and post-loop reads resolve to the live slot.
+//
+// STILL REFUSED (fail-closed empty es_new()):
+//   (a) a while NESTED inside an if branch — its narrow-carried var needs the F2
+//       last_region_exit_rebindings threading nb_while_carry does not yet record.
+//   (b) a narrow param merely PRESENT while a top-level loop runs but NOT reassigned
+//       by it — a read-only narrow param used post-loop via a `(x as i64)`-cast fed
+//       into a binop hits a SEPARATE, still-open cast-in-binop lowering bug (`as` is
+//       not an infix operator in the pratt parser, so the cast mis-lowers and the
+//       trailing operand becomes dead code). Refused until that cast fix lands.
+//
+// Body-having fns only (the narrow-typed std sigs are extern `unsafe fn`, no body).
+// No self-host fn has a narrow param, so this never fires during self-compile and the
+// loop stays byte-identical.
 pub fn nb_fns_reassign_narrow_param(buf: i64, ordered: i64, n_fns: i64, k: i64) -> i64 {
     if k >= n_fns {
         return 0;
@@ -25342,8 +25433,18 @@ pub fn nb_fns_reassign_narrow_param(buf: i64, ordered: i64, n_fns: i64, k: i64) 
         let n_params: i64 = ast_aux(node) / 2;
         if nb_fn_has_narrow_param(buf, params_addr, n_params, 0) == 1 {
             let body: i64 = ast_child2(node);
-            if nb_stmts_have_while(buf, ast_child0(body), ast_aux(body), 0) == 1 {
+            let bsa: i64 = ast_child0(body);
+            let bsl: i64 = ast_aux(body);
+            // (a) a while nested inside an if -> refuse.
+            if nb_stmts_have_nested_while(buf, bsa, bsl, 0) == 1 {
                 return 1;
+            }
+            // (b) a top-level while present, but no narrow param is reassigned by a
+            // top-level while (read-only-with-loop) -> refuse (cast-in-binop risk).
+            if nb_stmts_have_while(buf, bsa, bsl, 0) == 1 {
+                if nb_toplevel_while_carries_narrow(buf, bsa, bsl, 0, params_addr, n_params) == 0 {
+                    return 1;
+                }
             }
         }
     }
