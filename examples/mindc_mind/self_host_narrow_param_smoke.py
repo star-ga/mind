@@ -20,8 +20,16 @@ value; the narrow width-wrap slot is minted+counted identically on both the
 nb_while_carry pre-walk and the nb_count_stmt assign arm via the param-width
 let-env binding. Verified at if-depth 1 AND 2, in the then- and else-branch, and
 when the enclosing if is not taken. Gated by nb_region_while_carries_narrow, which
-permits a top-level OR if-nested narrow carry but deliberately does NOT descend into
-a `while` body — so the genuinely-broken shapes below stay fail-closed.
+permits a top-level narrow carry, an if-nested narrow carry, OR a narrow carry in a
+DIRECT nested while (to any depth) — but descends into a `while` body ONLY through
+DIRECT nested whiles (nb_body_while_carries_narrow_direct, no `if` arm), matching
+exactly what the loop-carry promotion (nb_while_carry_wnest) handles. An inner while
+wrapped in an `if` INSIDE a loop body (`while{ if{ while{ narrow += 1 } } }`) is NOT
+promoted to the outer carry, so it stays FAIL-CLOSED (asserted in IF_WRAPPED_WHILE
+below) — permitting it would silently drop the carry. The pre-existing i64
+`while{ if{ x += 1 } }` carry-drop gap (a plain if-wrapped assign in a loop, no
+narrow param, so not gated by this guard at all) is a SEPARATE generic-path bug,
+documented below (I64_IF_IN_WHILE_GAP) and left for a follow-up — not fixed here.
 
 F2 FIXED: a narrow param REASSIGNED by a while NESTED inside ANOTHER while (nested
 loops mutating an OUTER carried var) now lowers CORRECTLY. nb_while_carry descends
@@ -210,6 +218,42 @@ REFUSE = [
      "even `return x as i64` w/ a loop is refused)",
      "fn f(x: i8) -> i64 {\n    let mut c: i64 = 0;\n    while c < 3 {\n        c = c + 1;\n    }\n    return (x as i64) + c;\n}\nfn main() -> i64 { return f(10); }\n"),
 ]
+# REFUSE (regression guard for commit 0b5f489): a narrow param reassigned by a while
+# wrapped in an `if` INSIDE a loop body (`while{ if{ while{ x += 1 } } }`). The inner
+# while is NOT promoted to the OUTER loop's carry (nb_while_carry_nonassign only
+# descends into a DIRECT nested while — nb_while_carry_wnest — never through an if), so
+# the narrow var is dropped across the outer loop. Before 0b5f489 this matched neither
+# guard arm -> refused (correct); 0b5f489's F2 fix let the guard's while-body recursion
+# reach the inner while THROUGH the if arm and wrongly PERMIT it, silently miscompiling
+# (independently confirmed got=2 want=6). The guard's while-body descent is now
+# direct-while-only (nb_body_while_carries_narrow_direct), so this stays fail-closed.
+# MUST emit an EMPTY ELF for every narrow width.
+IF_WRAPPED_WHILE = [
+    ("i8 param while{ if{ while{ x+=1 } } } 3x2 (if-wrapped inner while — carry NOT "
+     "promoted to outer loop, must fail-closed)",
+     "fn f(x: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 3 {\n        let mut d: i64 = 0;\n        if a < 10 {\n            while d < 2 { x = x + 1; d = d + 1; }\n        }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
+    ("i16 param while{ if{ while{ x+=1 } } } 3x2 (if-wrapped inner while — must "
+     "fail-closed)",
+     "fn f(x: i16) -> i64 {\n    let mut a: i64 = 0;\n    while a < 3 {\n        let mut d: i64 = 0;\n        if a < 10 {\n            while d < 2 { x = x + 1; d = d + 1; }\n        }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
+    ("i32 param while{ if{ while{ x+=1 } } } 3x2 (if-wrapped inner while — must "
+     "fail-closed)",
+     "fn f(x: i32) -> i64 {\n    let mut a: i64 = 0;\n    while a < 3 {\n        let mut d: i64 = 0;\n        if a < 10 {\n            while d < 2 { x = x + 1; d = d + 1; }\n        }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
+]
+# DOCUMENTED PRE-EXISTING GAP (Finding #2, NOT fixed here — follow-up's job): the i64
+# `while{ if{ x += 1 } }` shape (a plain if-wrapped assign inside a loop, no narrow
+# param) miscompiles on the GENERIC native-ELF loop path — the if-region merge does not
+# thread the conditional assign's carry out through the outer loop, so f() returns 1
+# instead of 3 (independently confirmed via probe2.py). This has NOTHING to do with the
+# narrow-param guard (an all-i64 fn never enters nb_fns_reassign_narrow_param), so this
+# fix does not — and cannot — address it; it needs a separate generic-path carry fix.
+# The same class also miscompiles the i64 `while{ if{ while{ x+=1 } } }` shape (got=2
+# want=6, probe.py). Recorded here so the gap is visible + tracked, NOT hidden. Not run
+# as an assertion below (it is a known-wrong shape awaiting the follow-up), only noted:
+I64_IF_IN_WHILE_GAP_NOTE = (
+    "i64 while{ if{ x+=1 } } returns 1 not 3, and i64 while{ if{ while{ x+=1 } } } "
+    "returns 2 not 6 — pre-existing generic-path if-in-loop carry-drop gap (Finding #2, "
+    "follow-up)"
+)
 # WORK controls: i64 loops are unaffected; a narrow param with NO loop lowers via the
 # entry width-wrap driver (must NOT be over-rejected).
 I64_CONTROLS = [
@@ -270,6 +314,7 @@ def main() -> int:
     nested_ok = 0
     nested_loop_ok = 0
     refused = 0
+    if_wrapped_refused = 0
     ran = 0
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
@@ -372,6 +417,17 @@ def main() -> int:
             print(f"  {'PASS' if ok else 'FAIL'}  still-broken sub-shape refused: {label} "
                   f"(emit {len(elf)}B, want 0 — fail-closed, NOT run)")
 
+        for label, src in IF_WRAPPED_WHILE:
+            elf = emit(src)
+            ok = len(elf) == 0
+            all_ok = all_ok and ok
+            if_wrapped_refused += 1 if ok else 0
+            print(f"  {'PASS' if ok else 'FAIL'}  if-wrapped inner while refused "
+                  f"(0b5f489 regression guard): {label} (emit {len(elf)}B, want 0 — "
+                  f"fail-closed, NOT run)")
+
+        print(f"  NOTE  documented pre-existing gap (NOT fixed here): {I64_IF_IN_WHILE_GAP_NOTE}")
+
         for label, exp, src in I64_CONTROLS:
             elf = emit(src)
             if not elf:
@@ -405,6 +461,10 @@ def main() -> int:
     if refused < 1:
         print("FAIL: vacuous (no broken sub-shape refused)")
         return 1
+    if if_wrapped_refused < len(IF_WRAPPED_WHILE):
+        print("FAIL: an if-wrapped inner-while shape was PERMITTED (0b5f489 regression "
+              "— must be fail-closed for every narrow width)")
+        return 1
     if ran < 1:
         print("FAIL: vacuous (no i64 control ran)")
         return 1
@@ -416,8 +476,9 @@ def main() -> int:
               "composes, NARROWING casts `(y as i8/i16/i32)` in a binop truncate "
               "two's-complement (movsx) + compose, a var carried by a while NESTED in "
               "another while (any width, overflow, triple-nest) now emits + runs correct "
-              "(F2 fixed), while the narrow read-only loop-carry sub-shape stays "
-              "fail-closed and i64 fns are unaffected")
+              "(F2 fixed), while the narrow read-only loop-carry sub-shape AND an inner "
+              "while wrapped in an `if` inside a loop body (0b5f489 regression guard) "
+              "stay fail-closed and i64 fns are unaffected")
         return 0
     print("FAIL  narrow-param carry smoke mis-behaved")
     return 1
