@@ -27498,37 +27498,80 @@ pub fn selftest_nb_mic3_faildiag(src_addr: i64, src_len: i64, user_lo: i64, out:
 // the smoke's no-feed rung then sees a zero-length ELF and reports the gap rather
 // than a fake pass. Once nb_trace_hash is byte-exact, these become the canonical
 // path and the _h/_hb shims call them.
+// ---- ROUND 2 arena reclaim: mic@3 scratch checkpoint/reset (byte-exact) ----
+//
+// Copy the 32-byte trace-hash digest src->dst so it survives an arena reclaim.
+// Byte-wise (matches nb_note_hash_bytes); dst is a stable slot allocated BELOW
+// the reclaim checkpoint, src is the (about-to-be-reclaimed) sha256 buffer.
+pub fn nb_copy32(dst: i64, src: i64, i: i64) -> i64 {
+    if i >= 32 {
+        return 0;
+    }
+    let _s: i64 = __mind_store_i8(dst + i, __mind_load_i8(src + i));
+    nb_copy32(dst, src, i + 1)
+}
+
+// Reset the native bump-arena cursor to reclaim everything allocated after the
+// checkpoint (the dead mic@3 scratch that nb_trace_hash built only to SHA-256).
+// `ckpt` is the pointer that `__mind_alloc(0)` returned at the checkpoint. In the
+// EMITTED native ELF the bump arena is a fixed 1 GiB BSS window at ARENA_ADDR and
+// __mind_alloc(n) returns ARENA_ADDR+cursor+16 while advancing the cursor by n+8
+// (nb_emit_alloc/_core, NO zero-guard) — so alloc(0) returns ARENA_ADDR+C0+16 and
+// leaves the cursor at C0+8; restoring the cursor to (ckpt - ARENA_ADDR - 8) == C0+8
+// frees the whole post-checkpoint region for the ELF emit to REUSE. The range guard
+// makes this a SAFE NO-OP in the malloc-backed .so: there __mind_alloc(0) returns 0
+// (`if (bytes<=0) return 0`), which is < ARENA_ADDR, so we never poke a fixed address
+// the .so does not own. The reset changes only WHERE the running compiler allocates,
+// never an emitted byte (output is a String built from the IR, address-independent),
+// so the native-ELF and .so emitters stay byte-identical.
+pub fn nb_arena_reclaim(ckpt: i64) -> i64 {
+    if ckpt < nb_arena_addr() + 16 {
+        return 0;
+    }
+    if ckpt >= nb_arena_addr() + nb_arena_bytes() {
+        return 0;
+    }
+    let _r: i64 = __mind_store_i64(nb_arena_addr(), ckpt - nb_arena_addr() - 8);
+    0
+}
+
 pub fn selftest_native_elf(src_addr: i64, src_len: i64) -> EmitState {
     selftest_native_elf_u(src_addr, src_len, 0)
 }
 pub fn selftest_native_elf_u(src_addr: i64, src_len: i64, user_lo: i64) -> EmitState {
     let tokens: Vec = lex(src_addr, src_len);
+    // ARENA (Round-2 mic@3 reclaim, 2026-07-21): nb_trace_hash builds the canonical
+    // seeded+pruned mic@3 bytes (~476 MB for the whole self-host source) ONLY to
+    // SHA-256 them into the 32-byte trace_hash note; that buffer is DEAD the instant
+    // the digest exists, yet the fixed 1 GiB bump arena never frees, so the ~268 MB
+    // native-ELF emit used to stack ON TOP of it. We CHECKPOINT the bump cursor before
+    // the mic@3 build, COPY the finished digest out to a stable slot below the
+    // checkpoint, then RESET the cursor so the ELF emit REUSES the reclaimed mic@3
+    // region instead of extending past it — reclaiming ~268 MB of peak arena (the ELF
+    // emit no longer stacks), which is what lets the self-compile keep growing without
+    // tripping the nb_arena ud2 cap. Byte-exact: nothing live points into the reclaimed
+    // region (tokens + src predate the checkpoint; the digest is copied out first), and
+    // no emitted byte depends on the arena layout.
+    let hslot: i64 = __mind_alloc(32);
+    let ckpt: i64 = __mind_alloc(0);
     // Self-compute the note hash (no oracle feed). 0 => fail closed. nb_trace_hash
     // recomputes its own prune/kept set inside nb_build_mic3_from_tokens, so the ONLY
-    // input it needs is the already-lexed `tokens` — the former parse+collect+reach+
-    // kept block here fed only nb_trace_hash's old `fns`/`n_fns` params, which it
-    // discarded (see nb_trace_hash), so building it was pure dead work: one full AST
-    // parse (~28 MB) + three prune arrays permanently resident in the fixed 1 GiB
-    // native bump arena for NOTHING. Removing it is byte-exact (no emitted byte depends
-    // on those values) and reclaims that arena for source growth.
+    // input it needs is the already-lexed `tokens` (ARENA dedup — no re-lex here).
     let h32: i64 = nb_trace_hash(tokens, src_addr, src_len, user_lo);
     if h32 == 0 {
         // Open mic@3 port: refuse to emit a note we cannot self-compute. Return the
         // empty EmitState so the smoke's no-feed rung fails LOUD (no fake win).
         return es_new();
     }
-    // ARENA (Rule-2c dedup, 2026-07-21): thread the tokens ALREADY lexed above into
-    // the _hb body instead of letting it re-lex the full source. Each full-source
-    // lex() permanently occupies ~46 MB of the fixed 1 GiB bump arena (Vec doubling,
-    // no free); before this dedup the u -> trace_hash -> hb chain lexed the full source
-    // THREE times and parsed it a dead FOURTH time, leaving the whole-compiler self-
-    // compile close enough to the cap that ANY source growth (e.g. adding a handful of
-    // fns) tripped the nb_arena ud2 capacity guard mid-compile (SIGILL, `stage1.elf
-    // exited -4` in self_host_loop_smoke.py). Threading tokens through nb_trace_hash
-    // (-> nb_build_mic3_from_tokens) and _hb, plus dropping the dead prune above, takes
-    // the chain to ONE lex + no dead parse. Token reuse is byte-exact: same
-    // (src_addr, src_len) => identical token stream => identical note + emitted ELF.
-    selftest_native_elf_hb_from_tokens(tokens, src_addr, h32, user_lo)
+    // Preserve the digest into the stable slot BEFORE reclaiming the mic@3 region it
+    // lives in, then reset the bump cursor (native-ELF only; no-op in the .so).
+    let _cp: i64 = nb_copy32(hslot, h32, 0);
+    let _rs: i64 = nb_arena_reclaim(ckpt);
+    // Thread the ALREADY-lexed tokens into the _hb body instead of re-lexing (each
+    // full-source lex() permanently occupies ~46 MB of the no-free arena). Token reuse
+    // is byte-exact: same (src_addr, src_len) => identical token stream => identical
+    // note + emitted ELF. The note is read from `hslot` (the stable digest copy).
+    selftest_native_elf_hb_from_tokens(tokens, src_addr, hslot, user_lo)
 }
 
 // 4-arg form: `user_lo` is the offset in `src_addr` where the USER file begins
