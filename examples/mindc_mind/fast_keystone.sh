@@ -100,6 +100,10 @@ chk "param_mutation (reassigned-param live slot)" python3 examples/mindc_mind/se
 chk "float_lit_exact (dyadic-only C1 guard)" python3 examples/mindc_mind/self_host_float_lit_exact_smoke.py
 chk "carry_cap (256-cap scratch-table guard)" python3 examples/mindc_mind/self_host_carry_cap_smoke.py
 chk "narrow_param (i8/i16/i32 param fail-closed)" python3 examples/mindc_mind/self_host_narrow_param_smoke.py
+chk "tc_let_class (E2015 let/assign class)" python3 examples/mindc_mind/self_host_tc_let_class_mismatch_smoke.py
+chk "tc_fixed_bytes (E2006 bytes->vec)" python3 examples/mindc_mind/self_host_tc_fixed_bytes_into_vec_smoke.py
+chk "tc_shape_annot (dtype/rank/dim compat)" python3 examples/mindc_mind/self_host_tc_shape_annot_compat_smoke.py
+chk "tc_classify (error-code router)" python3 examples/mindc_mind/self_host_tc_classify_error_code_smoke.py
 chk "arena_growth (self-host cap headroom)" python3 examples/mindc_mind/self_host_arena_growth_smoke.py
 
 rm -f "$DIR_SO" "$MT_SO"
