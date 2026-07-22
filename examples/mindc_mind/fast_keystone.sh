@@ -105,6 +105,7 @@ chk "standalone_driver (C8 no-Python mindc)" python3 examples/mindc_mind/self_ho
 chk "tensor_maxrowmax (C4-T6 max-reduce)"  python3 examples/mindc_mind/self_host_native_tensor_maxrowmax_smoke.py
 chk "tensor_relu (C4-T6 relu)"             python3 examples/mindc_mind/self_host_native_tensor_relu_smoke.py
 chk "narrow_add_i8 (C2 wrap arithmetic)"   python3 examples/mindc_mind/self_host_native_narrow_add_i8_smoke.py
+chk "narrow_arith_batch (C2 {sub,mul}i8+{add,mul}i16)" python3 examples/mindc_mind/self_host_native_narrow_arith_batch_smoke.py
 chk "tensor_batchsum (C4-T6 3-D N-D idx)"  python3 examples/mindc_mind/self_host_native_tensor_batchsum_smoke.py
 chk "tensor_rowmin (C4-T6 min-reduce)"     python3 examples/mindc_mind/self_host_native_tensor_rowmin_smoke.py
 chk "param_mutation (reassigned-param live slot)" python3 examples/mindc_mind/self_host_param_mutation_smoke.py

@@ -642,6 +642,7 @@ jobs:
             self_host_native_tensor_maxrowmax_smoke \
             self_host_native_tensor_relu_smoke \
             self_host_native_narrow_add_i8_smoke \
+            self_host_native_narrow_arith_batch_smoke \
             self_host_native_tensor_batchsum_smoke \
             self_host_native_tensor_rowmin_smoke \
             self_host_param_mutation_smoke \
