@@ -14,15 +14,25 @@ EMITS and RUNS to the value an INDEPENDENT Python reference computes.
 Two sub-shapes remain genuinely broken and MUST still fail closed (empty ELF):
   * a narrow param REASSIGNED by a while NESTED inside an `if` branch — needs the
     F2 last_region_exit_rebindings threading nb_while_carry does not yet record.
-  * a read-only narrow param used post-loop via a `(x as i64)`-cast fed into a
-    binop — a SEPARATE, still-open cast-in-binop lowering bug (`as` is not an infix
-    operator in the pratt parser, so the cast mis-lowers and the trailing binop
-    operand is emitted as dead code after `ret`). Loop-INDEPENDENT; refused here.
+  * a narrow read-only param CARRIED ACROSS a top-level loop then returned — the
+    narrow-param loop-carry machinery only records a REASSIGNED carry slot; a
+    read-only narrow param read post-loop (with or without a trailing cast/binop)
+    is not yet threaded. Independent of the cast: even `return x as i64` (no binop)
+    is refused when a loop is present. Refused here (loud, no silent miscompile).
+
+The `(x as i64) + c` CAST-IN-BINOP lowering itself is now FIXED: parse_postfix_rest
+consumes `as TYPE` in postfix position so the cast binds tighter than any infix op
+and the trailing binop operand is lowered, not dropped. Previously it SILENTLY
+mis-lowered — the `+ c` became dead code after `ret`, so `(x as i64)+3` of f(10)
+returned 10 not 13. Asserted below (CAST_BINOP) over narrow (i8/i16/i32) params
+widened into +/* binops with NO loop (the shape the bug reproduces on): emit + run
+== the independent Python value.
 
 Asserts: (1) the top-level-carry shapes EMIT and run to the Python-reference exit
-(incl. two's-complement overflow wrap); (2) the two broken sub-shapes emit an EMPTY
-ELF (refused — loud, no silent miscompile); (3) i64 + narrow-no-loop controls still
-emit + run (no over-rejection). Guarded on >=1 of each so it cannot pass vacuously.
+(incl. two's-complement overflow wrap); (2) the now-fixed no-loop cast-in-binop
+shapes EMIT and run correct; (3) the two broken sub-shapes emit an EMPTY ELF
+(refused); (4) i64 + narrow-no-loop controls still emit + run (no over-rejection).
+Guarded on >=1 of each so it cannot pass vacuously.
 
 Env: MINDC_SO (prebuilt .so) or MINDC_BIN (default mindc).
 """
@@ -69,11 +79,29 @@ CARRY = [
      _carry_ref(126, 3, 8),
      "fn f(x: i8) -> i64 {\n    let mut c: i64 = 0;\n    while c < 3 {\n        x = x + 1;\n        c = c + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(126); }\n"),
 ]
+# EMIT + RUN correct: the now-fixed cast-in-binop. A narrow (i8/i16/i32) param is
+# widened via `(x as i64)` and fed into a +/* binop with NO loop — the exact shape
+# the dropped-`+c` bug reproduced on. `exp` is the plain integer value; process exit
+# is its low byte. Previously each of these SILENTLY returned the un-added operand.
+CAST_BINOP = [
+    ("i8 param (x as i64)+3, f(10)", 13,
+     "fn f(x: i8) -> i64 {\n    return (x as i64) + 3;\n}\nfn main() -> i64 { return f(10); }\n"),
+    ("i8 param (x as i64)*2+1, f(4)", 9,
+     "fn f(x: i8) -> i64 {\n    return (x as i64) * 2 + 1;\n}\nfn main() -> i64 { return f(4); }\n"),
+    ("i16 param (x as i64)+7, f(100)", 107,
+     "fn f(x: i16) -> i64 {\n    return (x as i64) + 7;\n}\nfn main() -> i64 { return f(100); }\n"),
+    ("i32 param (x as i64)+2, f(40)", 42,
+     "fn f(x: i32) -> i64 {\n    return (x as i64) + 2;\n}\nfn main() -> i64 { return f(40); }\n"),
+    ("i8 param no-paren `x as i64 + 5` (as binds tighter than +), f(10)", 15,
+     "fn f(x: i8) -> i64 {\n    return x as i64 + 5;\n}\nfn main() -> i64 { return f(10); }\n"),
+]
 # REFUSE: the two genuinely-broken sub-shapes must emit an EMPTY ELF.
 REFUSE = [
     ("i8 param reassigned in an IF-NESTED loop (F2 nested-region carry, unrecorded)",
      "fn f(x: i8) -> i64 {\n    let mut c: i64 = 0;\n    if c < 1 {\n        while c < 4 {\n            x = x + 1;\n            c = c + 1;\n        }\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(10); }\n"),
-    ("i8 read-only param, post-loop (x as i64)+c cast-in-binop (separate cast bug)",
+    ("i8 read-only param carried across a top-level loop then (x as i64)+c "
+     "(narrow read-only loop-carry gap — NOT the cast, which now composes; "
+     "even `return x as i64` w/ a loop is refused)",
      "fn f(x: i8) -> i64 {\n    let mut c: i64 = 0;\n    while c < 3 {\n        c = c + 1;\n    }\n    return (x as i64) + c;\n}\nfn main() -> i64 { return f(10); }\n"),
 ]
 # WORK controls: i64 loops are unaffected; a narrow param with NO loop lowers via the
@@ -130,6 +158,7 @@ def main() -> int:
 
     all_ok = True
     carried = 0
+    cast_ok = 0
     refused = 0
     ran = 0
     with tempfile.TemporaryDirectory() as td:
@@ -155,6 +184,20 @@ def main() -> int:
             print(f"  {'PASS' if ok else 'FAIL'}  narrow param carried by loop: {label} "
                   f"-> exit {rc} (python-ref {exp} -> byte {want})")
 
+        for label, exp, src in CAST_BINOP:
+            elf = emit(src)
+            if not elf:
+                print(f"  FAIL  cast-in-binop REFUSED (want emit+run): {label} (emit 0B)")
+                all_ok = False
+                continue
+            want = exp & 0xFF
+            rc = run_elf(elf)
+            ok = rc == want
+            all_ok = all_ok and ok
+            cast_ok += 1 if ok else 0
+            print(f"  {'PASS' if ok else 'FAIL'}  cast-in-binop now composes: {label} "
+                  f"-> exit {rc} (python-ref {exp} -> byte {want})")
+
         for label, src in REFUSE:
             elf = emit(src)
             ok = len(elf) == 0
@@ -178,6 +221,9 @@ def main() -> int:
     if carried < 1:
         print("FAIL: vacuous (no narrow-param carry ran)")
         return 1
+    if cast_ok < 1:
+        print("FAIL: vacuous (no cast-in-binop shape emitted + ran)")
+        return 1
     if refused < 1:
         print("FAIL: vacuous (no broken sub-shape refused)")
         return 1
@@ -186,8 +232,10 @@ def main() -> int:
         return 1
     if all_ok:
         print("ALL PASS  narrow-width params carried by a top-level loop emit + run "
-              "correct (two's-complement wrap, no stale/hang) while the nested-loop + "
-              "cast-in-binop sub-shapes stay fail-closed and i64 fns are unaffected")
+              "correct (two's-complement wrap, no stale/hang), the no-loop "
+              "cast-in-binop `(x as i64)+c` now composes (trailing binop lowered, not "
+              "dropped), while the nested-loop + narrow read-only loop-carry sub-shapes "
+              "stay fail-closed and i64 fns are unaffected")
         return 0
     print("FAIL  narrow-param carry smoke mis-behaved")
     return 1

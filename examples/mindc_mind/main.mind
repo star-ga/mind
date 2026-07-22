@@ -1267,6 +1267,38 @@ pub fn is_ident_mut(buf: i64, lo: i64, hi: i64) -> i64 {
     0
 }
 
+// `as` (the cast keyword) lexes as a bare 2-byte ident: 'a'=97, 's'=115. The cast
+// keyword is reserved, so no MIND identifier can spell `as`; matching by content is
+// unambiguous (mirrors is_ident_mut / is_ident_while).
+pub fn is_ident_as(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo == 2 {
+        if load_byte(buf, lo + 0) == 97 {
+            if load_byte(buf, lo + 1) == 115 {
+                return 1;
+            }
+        }
+    }
+    0
+}
+
+// The type name `i64` (3 bytes: 'i'=105, '6'=54, '4'=52). Used to gate the `as`
+// cast to the WIDENING-to-i64 target, whose value passthrough is exact for every
+// integer source width. Narrowing targets (i8/i16/i32) would need a real
+// two's-complement truncation and are deliberately NOT matched here — they stay
+// fail-closed rather than passthrough-miscompile.
+pub fn is_ident_i64(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo == 3 {
+        if load_byte(buf, lo + 0) == 105 {
+            if load_byte(buf, lo + 1) == 54 {
+                if load_byte(buf, lo + 2) == 52 {
+                    return 1;
+                }
+            }
+        }
+    }
+    0
+}
+
 // ===== Pratt precedence table =====
 
 // Binding precedence (higher = tighter). The bitwise/shift ops are interleaved to
@@ -1623,6 +1655,27 @@ pub fn parse_postfix_ns(toks: Vec, pos: i64, buf: i64, no_struct: i64) -> ParseR
 pub fn parse_postfix_rest(toks: Vec, pos: i64, buf: i64, recv: i64) -> ParseResult {
     if at_eof(toks, pos) == 1 {
         return pr_new(pos, recv);
+    }
+    // `EXPR as i64` cast. `as` lexes as a bare ident; the cast binds tighter than
+    // any infix operator (consumed here in postfix position, BEFORE parse_pratt),
+    // matching the Rust front-end where `x as i64 + 1` parses `(x as i64) + 1`. A
+    // widening-to-i64 cast is a value passthrough for every integer source width, so
+    // the operand node is kept UNCHANGED (its span still resolves the param/local
+    // name) and the trailing binop operand is lowered instead of becoming dead code
+    // after the cast. Only the i64 target is consumed: narrowing targets
+    // (i8/i16/i32) need a real two's-complement truncation, so they are left
+    // UNCONSUMED and stay fail-closed rather than passthrough-miscompile.
+    // deferred: narrowing `as i8/i16/i32` — emit __mind_wrap_iN truncation (helpers
+    // already exist in the nb path) and drop this i64-only gate. `as` is reserved,
+    // so a 2-byte "as" ident here is never a variable — no postfix shape is shadowed.
+    if tok_kind(toks, pos) == tk_ident() {
+        if is_ident_as(buf, tok_lo(toks, pos), tok_hi(toks, pos)) == 1 {
+            if tok_kind(toks, pos + 1) == tk_ident() {
+                if is_ident_i64(buf, tok_lo(toks, pos + 1), tok_hi(toks, pos + 1)) == 1 {
+                    return parse_postfix_rest(toks, pos + 2, buf, recv);
+                }
+            }
+        }
     }
     if tok_kind(toks, pos) != tk_dot() {
         return pr_new(pos, recv);
