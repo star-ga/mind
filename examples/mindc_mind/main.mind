@@ -10388,12 +10388,49 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
     // source has NO top-level straight-line assign in any kept fn (else this build
     // would already fail closed and the self-host loop would break), so no
     // currently-emitting fn reaches this arm — byte-identical self-compile.
-    // deferred: a value-if RHS (`w = if c { A } else { B }`) is NOT handled here — it
-    // falls through to the bare-expr arm and fails closed. upgrade path: mirror the
-    // type-7 value-if let sub-case (emit_if_expr_any_lv + a synth dst slot).
     if ast_kind(stmt) == ast_assign() {
         let aname: i64 = ast_child0(stmt);
         let aval: i64 = ast_child2(stmt);
+        // (type 7, reuse) value-if RHS `NAME = if C {A} else {B}` (i64). Mirrors the
+        // type-7 value-if LET sub-case above EXACTLY (emit_if_expr_any_lv + a synth
+        // dst-slot node bound to the merged OP_IF dst in Pass B); the ONLY difference
+        // is the env entry re-uses NAME (child0) so letenv_lookup's last-match-wins
+        // rebinds every LATER read of NAME to the reassigned merged value, while the
+        // if-expr's branches — flattened against the prior env — still read the
+        // pre-assign binding. The plan type-7 entry records NO name, so downstream
+        // (seq_fix_deltas / seq_body_len / emit_stmt_seq) is byte-identical to the let
+        // case. Additive: no kept main.mind fn has a top-level value-if reassign.
+        if is_any_value_if_expr(aval) == 1 {
+            let a7_nodes: i64 = __mind_alloc(256 * 32);
+            let a7_cursor: i64 = __mind_alloc(8);
+            let a7_vidbuf: i64 = __mind_alloc(256 * 8);
+            let a7_cell: i64 = __mind_alloc(8);
+            __mind_store_i64(a7_cell, 0 - 1);
+            let a7_lvenv: i64 = __mind_alloc((nlets + 1) * 24);
+            let _a7lv: i64 = seq_env_to_lvenv(env, nlets, 0, a7_lvenv, 0, 0);
+            let a7: EmitState = emit_if_expr_any_lv(es_new(), aval, src, params_addr, n_params, a7_nodes, a7_cursor, a7_vidbuf, 0, a7_cell, a7_lvenv, nlets, 0, 0, 0, 0, 0);
+            let a7_dst: i64 = __mind_load_i64(a7_cell);
+            if a7_dst >= 0 {
+                let a7_slot: i64 = __mind_load_i64(cursor);
+                __mind_store_i64(nodes + a7_slot * 32 + 0, 0);
+                __mind_store_i64(nodes + a7_slot * 32 + 8, 0);
+                __mind_store_i64(nodes + a7_slot * 32 + 16, 0);
+                __mind_store_i64(nodes + a7_slot * 32 + 24, 0);
+                __mind_store_i64(cursor, a7_slot + 1);
+                __mind_store_i64(env + nlets * 24 + 0, ast_span_lo(aname));
+                __mind_store_i64(env + nlets * 24 + 8, ast_span_hi(aname));
+                __mind_store_i64(env + nlets * 24 + 16, a7_slot);
+                __mind_store_i64(nlets_cell, nlets + 1);
+                __mind_store_i64(plan + p * 64 + 0, 7);
+                __mind_store_i64(plan + p * 64 + 8, aval);
+                __mind_store_i64(plan + p * 64 + 16, a7_dst + 1);
+                __mind_store_i64(plan + p * 64 + 24, params_addr);
+                __mind_store_i64(plan + p * 64 + 32, n_params);
+                __mind_store_i64(plan + p * 64 + 40, a7_slot);
+                __mind_store_i64(nplan_cell, p + 1);
+                return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
+            }
+        }
         let astart: i64 = __mind_load_i64(cursor);
         let aroot: i64 = flatten_expr_env(aval, src, params_addr, n_params, nodes, cursor, env, nlets);
         if aroot < 0 {
