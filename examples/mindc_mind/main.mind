@@ -8971,9 +8971,9 @@ pub fn emit_if_else_fallthrough_lv(s: EmitState, if_node: i64, buf: i64, params_
         let bo: i64 = bb_to_bindout(bb, bindout, n_merged, 0);
         // bo < 0 => over-64-cap refusal (no copy): expose 0 bindings upward (fail-closed).
         if bo >= 0 {
-            __mind_store_i64(nbind_cell, n_merged);
+            __mind_store_i64(nbind_cell, n_merged)
         } else {
-            __mind_store_i64(nbind_cell, 0);
+            __mind_store_i64(nbind_cell, 0)
         }
     }
     __mind_store_i64(okcell, dst);
@@ -9948,9 +9948,9 @@ pub fn emit_if_expr_lv_bubble(s: EmitState, cond_expr: i64, then_expr: i64, else
         let bo: i64 = bb_to_bindout(bb, bindout, n_merged, 0);
         // bo < 0 => over-64-cap refusal (no copy): expose 0 bindings upward (fail-closed).
         if bo >= 0 {
-            __mind_store_i64(nbind_cell, n_merged);
+            __mind_store_i64(nbind_cell, n_merged)
         } else {
-            __mind_store_i64(nbind_cell, 0);
+            __mind_store_i64(nbind_cell, 0)
         }
     }
     __mind_store_i64(okcell, dst);
@@ -25014,92 +25014,44 @@ pub fn nb_count_args(next_id: i64, buf: i64, args_addr: i64, args_len: i64, i: i
     let after: i64 = nb_count_expr(next_id, buf, arg_node, params_addr, n_params, clets, clcell);
     nb_count_args(after, buf, args_addr, args_len, i + 1, params_addr, n_params, clets, clcell)
 }
-// Count DISTINCT loop-carried variable names among a while body's TOP-LEVEL
-// `Assign` statements (mirror record_loop_mut's first-sighting dedup @lower.rs
-// 4615). Each distinct carried var allocates one exit_id (lower.rs 4801), which
-// adds one frame slot (assign_slots define @mod.rs 622). Dedup is by name span:
-// a name seen earlier in the same body is not re-counted.
-// deferred: nested-region (if/while-in-body) mutations of an OUTER carried var
-// (lower.rs F2 4737-4777) are not counted — string_push_str's carried vars are
-// all top-level body assigns. upgrade path: recurse into nested if/while tails.
-pub fn nb_count_carried(buf: i64, body_sa: i64, body_sl: i64, clets: i64, clcell: i64, entry_n: i64) -> i64 {
-    let names: i64 = __mind_alloc(256 * 2 * 8);
-    nb_count_carried_rest(buf, body_sa, body_sl, 0, names, 0, clets, clcell, entry_n)
-}
-pub fn nb_count_carried_rest(buf: i64, body_sa: i64, body_sl: i64, i: i64, names: i64, n: i64, clets: i64, clcell: i64, entry_n: i64) -> i64 {
-    if i >= body_sl {
-        return n;
-    }
-    let stmt: i64 = __mind_load_i64(body_sa + i * 8);
-    let sk: i64 = ast_kind(stmt);
-    let new_n: i64 = if sk == ast_assign() {
-        let nm: i64 = ast_child0(stmt);
-        let lo: i64 = ast_span_lo(nm);
-        let hi: i64 = ast_span_hi(nm);
-        if nb_name_seen(buf, names, n, lo, hi, 0) == 1 {
-            n
-        } else {
-            let _s: i64 = nb_name_record(names, n, lo, hi);
-            n + 1
-        }
-    } else {
-        // 2-way value-if (mic@3 note-emittable): the non-assign case (nested while
-        // descent) is an early-return helper, not a flat `else if`.
-        nb_count_carried_other(buf, stmt, names, n, clets, clcell, entry_n)
-    };
-    nb_count_carried_rest(buf, body_sa, body_sl, i + 1, names, new_n, clets, clcell, entry_n)
-}
-// F2: count the OUTER (pre-loop) vars a nested while reassigns only inside its body —
-// each gets an exit_id (frame slot) in THIS loop, exactly as nb_carry_promote_inner
-// records them on the emit side (lockstep). Any non-while statement contributes 0.
-pub fn nb_count_carried_other(buf: i64, stmt: i64, names: i64, n: i64, clets: i64, clcell: i64, entry_n: i64) -> i64 {
-    if ast_kind(stmt) == ast_while() {
-        let iw_body: i64 = ast_child1(stmt);
-        return nb_count_carried_nested(buf, ast_child0(iw_body), ast_aux(iw_body), 0, names, n, clets, clcell, entry_n);
-    }
-    n
-}
-// Descend a nested loop region, counting each OUTER-scope var it reassigns (bounded
-// membership test over the enclosing loop's pre-loop scope [0, entry_n)), deduped
-// against `names`. Recurses through deeper nested whiles so a doubly-nested outer
-// mutation is counted once. Mirrors nb_carry_promote_inner's promoted set exactly so
-// the frame count and the emit carry table stay in lockstep on while{while{}}.
-pub fn nb_count_carried_nested(buf: i64, sa: i64, sl: i64, i: i64, names: i64, n: i64, clets: i64, clcell: i64, entry_n: i64) -> i64 {
-    if i >= sl {
-        return n;
-    }
-    let stmt: i64 = __mind_load_i64(sa + i * 8);
-    let sk: i64 = ast_kind(stmt);
-    let new_n: i64 = if sk == ast_assign() {
-        let nm: i64 = ast_child0(stmt);
-        let lo: i64 = ast_span_lo(nm);
-        let hi: i64 = ast_span_hi(nm);
-        let os: i64 = nb_lets_lookup_rest(clets, entry_n, buf, lo, hi, 0, 0 - 1);
-        if os >= 0 {
-            if nb_name_seen(buf, names, n, lo, hi, 0) == 1 {
-                n
-            } else {
-                let _s: i64 = nb_name_record(names, n, lo, hi);
-                n + 1
-            }
-        } else {
-            n
-        }
-    } else {
-        // 2-way value-if (mic@3 note-emittable): a deeper nested while recurses via an
-        // early-return helper rather than a flat `else if`.
-        nb_count_carried_nested_other(buf, stmt, names, n, clets, clcell, entry_n)
-    };
-    nb_count_carried_nested(buf, sa, sl, i + 1, names, new_n, clets, clcell, entry_n)
-}
-// Recurse through a deeper nested while (a doubly-nested outer mutation); any other
-// statement contributes 0. Early-return so the caller's value-if stays 2-way.
-pub fn nb_count_carried_nested_other(buf: i64, stmt: i64, names: i64, n: i64, clets: i64, clcell: i64, entry_n: i64) -> i64 {
-    if ast_kind(stmt) == ast_while() {
-        let iw_body: i64 = ast_child1(stmt);
-        return nb_count_carried_nested(buf, ast_child0(iw_body), ast_aux(iw_body), 0, names, n, clets, clcell, entry_n);
-    }
-    n
+// Count DISTINCT loop-carried variable names in a while body (each distinct carried
+// var allocates one exit_id @lower.rs 4801 = one frame slot, assign_slots define
+// @mod.rs 622). Handled shapes: a TOP-LEVEL `Assign`, and a var an inner DIRECT nested
+// `while` reassigns that is OUTER to this loop (F2 promotion, any depth). Dedup is by
+// name span (record_loop_mut first-sighting @lower.rs 4615). See the fn comment for the
+// SUB-STEP A de-desync: the count is the emit carry pre-walk's own record count.
+// deferred: an OUTER var mutated inside an `if`-region in the body (`while{ if{ x+=1 } }`)
+// or an if-wrapped inner while is NOT yet carried (Sub-step B/C) — fail-closed today.
+// SUB-STEP A (de-desync): the loop-carry frame COUNT is now DERIVED from the SAME
+// traversal the emit uses (nb_while_carry), not a separate hand-mirrored count chain.
+// Previously two parallel walks (this count chain + nb_while_carry) had to agree on the
+// carried-var SET, and every time they drifted the frame count desynced from the emit
+// carry table -> a silent miscompile (c27a766 x=1-not-3; 0b5f489 got=2-want=6, and the
+// FIX #229 infinite loop). That entire class is retired by construction here: run the
+// emit carry pre-walk into a SCRATCH carry table and RETURN ITS RECORD COUNT. There is
+// no second computation to drift from.
+//
+// Byte-neutral vs the old count chain: the old top-level-assign arm recorded every
+// distinct top-level assign name (no outer check) -> nb_while_carry's assign arm does
+// exactly the same; the old nested arm filtered a nested while's assigns to OUTER vars
+// (nb_lets_lookup_rest over [0,entry_n)) deduped -> nb_while_carry_wnest records the
+// inner assigns then nb_carry_promote_inner filters to OUTER vars deduped by name, the
+// identical resulting SET size. clets is BOTH the count-env and the "let-env" the walk
+// reads for membership (a single env exists during counting), so lets==clets here. The
+// walk's transient body-let growth (a body `let`/`if` reached via nb_count_stmt) is
+// snapshot/restored around the call exactly as nb_emit_while restores prewalk_lcell, so
+// clcell is unchanged on return. next_id/params/srt thread the walk identically to the
+// emit pre-walk; the threaded post_ids are discarded, only the record COUNT is read.
+// The caller invokes this BEFORE the body count (emit-parallel), so the walk sees the
+// pre-body incremental clets state the emit pre-walk sees.
+pub fn nb_count_carried(buf: i64, body_sa: i64, body_sl: i64, clets: i64, clcell: i64, entry_n: i64, next_id: i64, params_addr: i64, n_params: i64, srt: i64) -> i64 {
+    let carry: i64 = __mind_alloc(256 * 4 * 8);
+    let ccell: i64 = __mind_alloc(8);
+    __mind_store_i64(ccell, 0);
+    let snap: i64 = __mind_load_i64(clcell);
+    let _w: i64 = nb_while_carry(carry, ccell, next_id, buf, body_sa, body_sl, 0, params_addr, n_params, clets, clcell, srt, clets, clcell, entry_n);
+    __mind_store_i64(clcell, snap);
+    __mind_load_i64(ccell)
 }
 // True if name span [lo,hi) is already in the names table (0..n).
 pub fn nb_name_seen(buf: i64, names: i64, n: i64, lo: i64, hi: i64, i: i64) -> i64 {
@@ -25234,8 +25186,11 @@ pub fn nb_count_stmt(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         // count (== the emit pre-walk's prewalk_lcell). Body-local lets appended during
         // after_body are >= this bound and so are never miscounted as outer-carried.
         let pre_body_n: i64 = __mind_load_i64(clcell);
+        // SUB-STEP A: derive ncarry from the emit carry pre-walk BEFORE the body count,
+        // so the walk sees the pre-body clets state the emit pre-walk (nb_emit_while)
+        // sees (nb_count_carried snapshot/restores clcell, leaving it at pre_body_n).
+        let ncarry: i64 = nb_count_carried(buf, body_sa, body_sl, clets, clcell, pre_body_n, after_cond, params_addr, n_params, srt);
         let after_body: i64 = nb_count_stmts(after_cond, buf, body_sa, body_sl, 0, params_addr, n_params, clets, clcell, srt);
-        let ncarry: i64 = nb_count_carried(buf, body_sa, body_sl, clets, clcell, pre_body_n);
         return after_body + ncarry + 1;
     }
     if k == ast_assign() {
