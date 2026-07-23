@@ -1882,16 +1882,19 @@ pub fn parse_primary_ns(toks: Vec, pos: i64, buf: i64, no_struct: i64) -> ParseR
                 return parse_call(toks, pos, buf);
             }
         }
-        // C-LIKE ENUM PATH `Name::Variant` (`::` = two tk_colon tokens):
-        // resolved at parse time (ent_resolve) and desugared to a SYNTHETIC
-        // int-lit carrying the i64 discriminant — the proven child1==1 form,
-        // so the native int-const emit path is reused with zero new emit code.
-        // An unresolvable path (no/duplicate decl, payload variant anywhere in
-        // the decl, unknown variant, non-increasing explicit discriminant) or
-        // a trailing `(` (payload construction / a call through the path)
-        // produces the POISON leaf -> the enclosing compile refuses (0 bytes),
-        // never a wrong value. main.mind's own source has no `::` in code, so
-        // this production never fires during self-compile — byte-identical.
+        // ENUM PATH `Name::Variant` (`::` = two tk_colon tokens). C-LIKE paths
+        // resolve (ent_resolve) to a SYNTHETIC int-lit carrying the i64
+        // discriminant — the proven child1==1 form, zero new emit code. When
+        // ent_resolve refuses AND the decl is a SINGLE-PAYLOAD enum, the path
+        // is a payload-enum CONSTRUCTION instead: `Opt::Some(e)` / `Opt::None`
+        // desugar to the proven array-literal 2-word block `[tag, payload]`
+        // (parse_epath_ctor / parse_epath_nopay — see the single-payload-enum
+        // section). Every other shape (unknown/duplicate decl, unknown
+        // variant, a payload variant WITHOUT its payload, a payload-free
+        // variant CALLED with args, non-i64/multi-field payloads) produces the
+        // POISON leaf -> the enclosing compile refuses (0 bytes), never a
+        // wrong value. main.mind's own source has no `::` in code, so none of
+        // this fires during self-compile — byte-identical.
         if at_eof(toks, pos + 3) == 0 {
             if tok_kind(toks, pos + 1) == tk_colon() {
                 if tok_kind(toks, pos + 2) == tk_colon() {
@@ -1899,12 +1902,12 @@ pub fn parse_primary_ns(toks: Vec, pos: i64, buf: i64, no_struct: i64) -> ParseR
                         let vhi: i64 = tok_hi(toks, pos + 3);
                         if at_eof(toks, pos + 4) == 0 {
                             if tok_kind(toks, pos + 4) == tk_lparen() {
-                                return pr_new(pos + 4, ast_new_leaf(ast_unsupported(), lo, vhi));
+                                return parse_epath_ctor(toks, pos, buf, lo, hi, vhi);
                             }
                         }
                         let ev: i64 = ent_resolve(toks, buf, lo, hi, tok_lo(toks, pos + 3), vhi);
                         if ev < 0 {
-                            return pr_new(pos + 4, ast_new_leaf(ast_unsupported(), lo, vhi));
+                            return parse_epath_nopay(toks, pos, buf, lo, hi, vhi);
                         }
                         return pr_new(pos + 4, ent_syn_node(ev, lo, vhi));
                     }
@@ -3167,6 +3170,261 @@ pub fn ent_syn_node(v: i64, lo: i64, hi: i64) -> i64 {
     n
 }
 
+// ===== Single-payload enums (the Option/Result tier) =====
+//
+// `enum Opt { Some(i64), None }` is a SINGLE-PAYLOAD enum: at least one
+// variant carries exactly one i64 payload. A payload-enum VALUE is a tagged
+// 2-word heap block `{tag, payload}` built with the PROVEN array-literal
+// alloc+store ABI: construction `Opt::Some(5)` desugars at PARSE TIME to the
+// array literal `[<tag>, 5]` (ast_array_lit, synthetic tag int-lit) and
+// `Opt::None` to `[<tag>, 0]`, so every downstream emitter carries it with
+// ZERO new emit code. A match arm `Opt::Some(x) => ..` dispatches on the tag
+// word (`SCRUT[0] == tag`, the proven index-read form) and binds `x` by
+// prepending `let x = SCRUT[1];` to the arm block. Variant tags are the
+// 0-based decl positions (Some=0, None=1) — sequential, hence provably
+// unique. Payload-free variants in a payload enum carry an unused payload
+// slot (0).
+//
+// FAIL-CLOSED (refuse -> POISON leaf -> 0-byte compile, never a wrong value
+// or a wrong dispatch):
+//   - multi-field payloads `V(i64, i64)`, tuple/struct payloads `V((a,b))`,
+//     any payload type that is not literally `i64` (f64, i8, T, ...);
+//   - generic decls `enum Opt<T> { .. }` (the decl matcher requires
+//     `enum Name {`, so a `<` after the name never resolves);
+//   - explicit discriminants `V = n` inside a payload enum;
+//   - a payload variant used WITHOUT its payload (`Opt::Some` bare), a
+//     payload-free variant CALLED with arguments (`Opt::None(5)`), a binding
+//     pattern on a payload-free variant (`Opt::None(x)`), a NON-binding match
+//     arm on a payload variant (`Opt::Some =>`), and `_` as the binding name
+//     (`Opt::Some(_)` — the ignore-binding form is a follow-up);
+//   - MIXING payload-enum patterns with int / C-like-enum patterns in one
+//     match, or with patterns of a DIFFERENT enum (the scrutinee is a block
+//     POINTER — a scalar compare against it would be a fail-OPEN dispatch);
+//   - a non-exhaustive match: the arm list must end with `_` OR cover ALL
+//     variants (the final covering arm becomes the unconditional else);
+//   - decls with more than 62 variants (coverage-bitmask guard);
+//   - duplicate decls / duplicate variant names / an unknown variant.
+//
+// main.mind's own source contains no `::` tokens in code, so none of this
+// runs during self-compile — the self-host loop stays byte-identical modulo
+// its own source growth.
+
+// Byte-compare a span against the literal payload type `i64`.
+pub fn pnt_span_is_i64(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo == 3 {
+        if load_byte(buf, lo + 0) == 105 {
+            if load_byte(buf, lo + 1) == 54 {
+                if load_byte(buf, lo + 2) == 52 {
+                    return 1;
+                }
+            }
+        }
+    }
+    0
+}
+
+// Classify ONE variant entry at `pos` (an ident token): 0 = payload-free
+// (1 token), 1 = single-i64 payload `Name(i64)` (4 tokens), -1 = invalid
+// (multi-field / tuple / non-i64 payload, explicit discriminant, stray
+// token). Fail-closed: anything but the two accepted shapes refuses.
+pub fn pnt_variant_shape(toks: Vec, buf: i64, pos: i64) -> i64 {
+    if tok_kind(toks, pos) != tk_ident() {
+        return 0 - 1;
+    }
+    if at_eof(toks, pos + 1) == 1 {
+        return 0 - 1;
+    }
+    if tok_kind(toks, pos + 1) == tk_lparen() {
+        if at_eof(toks, pos + 3) == 1 {
+            return 0 - 1;
+        }
+        if tok_kind(toks, pos + 2) == tk_ident() {
+            if pnt_span_is_i64(buf, tok_lo(toks, pos + 2), tok_hi(toks, pos + 2)) == 1 {
+                if tok_kind(toks, pos + 3) == tk_rparen() {
+                    return 1;
+                }
+            }
+        }
+        return 0 - 1;
+    }
+    if tok_kind(toks, pos + 1) == tk_eq() {
+        return 0 - 1;
+    }
+    0
+}
+
+// Advance past one classified variant entry plus an optional `,` separator.
+pub fn pnt_adv(toks: Vec, pos: i64, shape: i64) -> i64 {
+    let p: i64 = if shape == 1 {
+        pos + 4
+    } else {
+        pos + 1
+    };
+    if tok_kind(toks, p) == tk_comma() {
+        return p + 1;
+    }
+    p
+}
+
+// Walk the variant list from just after `{`, resolving the variant whose name
+// span equals buf[vlo..vhi). `tag` is the 0-based position of the NEXT
+// variant; `found` is the resolved encoding so far (-1 = not yet found;
+// otherwise tag*2 + has_payload); `seen_p` records whether ANY payload
+// variant exists (a decl with none is C-LIKE — ent_* territory, refused
+// here). The walk always continues to `}` so an invalid variant ANYWHERE in
+// the decl refuses, even after a match.
+pub fn pnt_scan(toks: Vec, buf: i64, pos: i64, vlo: i64, vhi: i64, tag: i64, found: i64, seen_p: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0 - 1;
+    }
+    if tok_kind(toks, pos) == tk_rbrace() {
+        if seen_p == 0 {
+            return 0 - 1;
+        }
+        return found;
+    }
+    let sh: i64 = pnt_variant_shape(toks, buf, pos);
+    if sh < 0 {
+        return 0 - 1;
+    }
+    let nsp: i64 = if sh == 1 {
+        1
+    } else {
+        seen_p
+    };
+    if span_bytes_equal(buf, vlo, vhi, tok_lo(toks, pos), tok_hi(toks, pos)) == 1 {
+        // Duplicate variant name -> ambiguous: refuse.
+        if found >= 0 {
+            return 0 - 1;
+        }
+        return pnt_scan(toks, buf, pnt_adv(toks, pos, sh), vlo, vhi, tag + 1, tag * 2 + sh, nsp);
+    }
+    pnt_scan(toks, buf, pnt_adv(toks, pos, sh), vlo, vhi, tag + 1, found, nsp)
+}
+
+// Resolve `Name::Variant` against a SINGLE-PAYLOAD enum decl. Returns
+// tag*2 + has_payload (>= 0), or -1 (no/duplicate decl, invalid decl shape,
+// C-like decl, unknown variant — see the FAIL-CLOSED list above).
+pub fn pnt_variant_info(toks: Vec, buf: i64, nlo: i64, nhi: i64, vlo: i64, vhi: i64) -> i64 {
+    let body: i64 = ent_find_from(toks, buf, 0, nlo, nhi);
+    if body < 0 {
+        return 0 - 1;
+    }
+    if ent_find_from(toks, buf, body + 1, nlo, nhi) >= 0 {
+        return 0 - 1;
+    }
+    pnt_scan(toks, buf, body + 1, vlo, vhi, 0, 0 - 1, 0)
+}
+
+// Count the variants of a SINGLE-PAYLOAD enum decl (validating every entry's
+// shape). Returns N (1..62), or -1 (invalid / C-like / oversized decl).
+pub fn pnt_count_scan(toks: Vec, buf: i64, pos: i64, n: i64, seen_p: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0 - 1;
+    }
+    if tok_kind(toks, pos) == tk_rbrace() {
+        if seen_p == 0 {
+            return 0 - 1;
+        }
+        return n;
+    }
+    let sh: i64 = pnt_variant_shape(toks, buf, pos);
+    if sh < 0 {
+        return 0 - 1;
+    }
+    let nsp: i64 = if sh == 1 {
+        1
+    } else {
+        seen_p
+    };
+    pnt_count_scan(toks, buf, pnt_adv(toks, pos, sh), n + 1, nsp)
+}
+pub fn pnt_variant_count(toks: Vec, buf: i64, nlo: i64, nhi: i64) -> i64 {
+    let body: i64 = ent_find_from(toks, buf, 0, nlo, nhi);
+    if body < 0 {
+        return 0 - 1;
+    }
+    if ent_find_from(toks, buf, body + 1, nlo, nhi) >= 0 {
+        return 0 - 1;
+    }
+    let n: i64 = pnt_count_scan(toks, buf, body + 1, 0, 0);
+    if n > 62 {
+        return 0 - 1;
+    }
+    n
+}
+
+// Tagged 2-word block construction node: the array literal `[tag, payload]`
+// re-spanned to the source path text. The synthetic tag int-lit reuses the
+// proven child1==1 sentinel form (value read directly, span bookkeeping only).
+pub fn pnt_ctor_node(tag: i64, pay: i64, lo: i64, hi: i64) -> i64 {
+    let acc0: Vec = vec_new();
+    let acc1: Vec = vec_push(acc0, ent_syn_node(tag, lo, hi));
+    let acc2: Vec = vec_push(acc1, pay);
+    ast_new_array_lit(lo, hi, vec_addr(acc2), vec_len(acc2))
+}
+
+// Expression-position `Name::Variant` where ent_resolve refused: a
+// payload-FREE variant of a single-payload enum constructs `[tag, 0]`; a
+// payload variant WITHOUT its payload refuses.
+pub fn parse_epath_nopay(toks: Vec, pos: i64, buf: i64, lo: i64, hi: i64, vhi: i64) -> ParseResult {
+    let info: i64 = pnt_variant_info(toks, buf, lo, hi, tok_lo(toks, pos + 3), vhi);
+    if info < 0 {
+        return pr_new(pos + 4, ast_new_leaf(ast_unsupported(), lo, vhi));
+    }
+    if info % 2 == 1 {
+        return pr_new(pos + 4, ast_new_leaf(ast_unsupported(), lo, vhi));
+    }
+    pr_new(pos + 4, pnt_ctor_node(info / 2, mk_syn_intlit(0), lo, vhi))
+}
+
+// Expression-position `Name::Variant( ... )`: a payload variant constructs
+// `[tag, <payload expr>]` (the payload is ONE full expression, `)` required);
+// a payload-free variant called with arguments, an unresolvable path, a
+// missing `)`, or a 2+-argument list (the arg parse stops at `,`, not `)`)
+// refuses.
+pub fn parse_epath_ctor(toks: Vec, pos: i64, buf: i64, lo: i64, hi: i64, vhi: i64) -> ParseResult {
+    let info: i64 = pnt_variant_info(toks, buf, lo, hi, tok_lo(toks, pos + 3), vhi);
+    if info < 0 {
+        return pr_new(pos + 4, ast_new_leaf(ast_unsupported(), lo, vhi));
+    }
+    if info % 2 == 0 {
+        return pr_new(pos + 4, ast_new_leaf(ast_unsupported(), lo, vhi));
+    }
+    let pay: ParseResult = parse_expr(toks, pos + 5, buf);
+    let after: i64 = pr_pos(pay);
+    if tok_kind(toks, after) != tk_rparen() {
+        return pr_new(after, ast_new_leaf(ast_unsupported(), lo, vhi));
+    }
+    let chi: i64 = tok_hi(toks, after);
+    pr_new(after + 1, pnt_ctor_node(info / 2, pr_node(pay), lo, chi))
+}
+
+// Copy `n` statement slots from src[0..n) into dst[1..n+1) (slot 0 is the
+// prepended binding let).
+pub fn pnt_copy_stmts(dst: i64, src: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    __mind_store_i64(dst + (i + 1) * 8, __mind_load_i64(src + i * 8));
+    pnt_copy_stmts(dst, src, n, i + 1)
+}
+
+// Return a NEW block node = `stmt` prepended to `blk`'s statements. A
+// non-block node (a POISON leaf from a refused arm) is returned unchanged so
+// the refusal still flows to the emitter.
+pub fn pnt_prepend_stmt(blk: i64, stmt: i64) -> i64 {
+    if ast_kind(blk) != ast_block() {
+        return blk;
+    }
+    let old_addr: i64 = ast_child0(blk);
+    let old_len: i64 = ast_aux(blk);
+    let na: i64 = __mind_alloc((old_len + 1) * 8);
+    __mind_store_i64(na + 0, stmt);
+    let _c: i64 = pnt_copy_stmts(na, old_addr, old_len, 0);
+    ast_new_block(ast_span_lo(blk), ast_span_hi(blk), na, old_len + 1)
+}
+
 // ===== Match-expressions (parse-time desugar to if) =====
 //
 // `match SCRUT { PAT => VAL0, _ => VAL1 }` desugars at PARSE TIME to the
@@ -3209,7 +3467,7 @@ pub fn parse_match(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     let scrut: ParseResult = parse_expr_ns(toks, pos + 1, buf, 1);
     let lbrace_pos: i64 = pr_pos(scrut);
 
-    let chain: ParseResult = parse_match_chain(toks, lbrace_pos + 1, buf, pos + 1, kw_lo);
+    let chain: ParseResult = parse_match_chain(toks, lbrace_pos + 1, buf, pos + 1, kw_lo, 0, 0, 0, 0);
     let after_arms: i64 = pr_pos(chain);
     let after_close: i64 = if tok_kind(toks, after_arms) == tk_rbrace() {
         after_arms + 1
@@ -3253,18 +3511,191 @@ pub fn mt_wrap_else(node: i64) -> i64 {
     ast_new_block(ast_span_lo(node), ast_span_hi(node), vec_addr(acc1), vec_len(acc1))
 }
 
-// Recursively parse the arm list starting at pattern token `pat_pos`, returning
-// the else-if chain node (an ast_if for a pattern arm, or the terminal block for
-// the wildcard arm).  `scrut_start` is the token just after `match` (the
-// scrutinee start), re-parsed per condition; `kw_lo` is the `match` span_lo.
-pub fn parse_match_chain(toks: Vec, pat_pos: i64, buf: i64, scrut_start: i64, kw_lo: i64) -> ParseResult {
+// Classify the PATTERN at `pat_pos`: 0 = int literal, 1 = `_` wildcard,
+// 2 = enum path `Name::Variant`, 3 = enum path with `(` (a payload-BINDING
+// pattern), -1 = unsupported (fail-closed — this also keeps closed the
+// bare-IDENT fail-OPEN: a letter span parse_int_span'd into a GARBAGE
+// constant would be a silent wrong dispatch, so bare variant names refuse
+// and the qualified `Color::Red` form is required).
+pub fn mt_pat_kind(toks: Vec, buf: i64, pat_pos: i64) -> i64 {
+    let k: i64 = tok_kind(toks, pat_pos);
+    if k == tk_int() {
+        return 0;
+    }
+    if k != tk_ident() {
+        return 0 - 1;
+    }
+    if is_ident_underscore(buf, tok_lo(toks, pat_pos), tok_hi(toks, pat_pos)) == 1 {
+        return 1;
+    }
+    if at_eof(toks, pat_pos + 3) == 1 {
+        return 0 - 1;
+    }
+    if tok_kind(toks, pat_pos + 1) != tk_colon() {
+        return 0 - 1;
+    }
+    if tok_kind(toks, pat_pos + 2) != tk_colon() {
+        return 0 - 1;
+    }
+    if tok_kind(toks, pat_pos + 3) != tk_ident() {
+        return 0 - 1;
+    }
+    if at_eof(toks, pat_pos + 4) == 0 {
+        if tok_kind(toks, pat_pos + 4) == tk_lparen() {
+            return 3;
+        }
+    }
+    2
+}
+
+// Validate the BINDING of a payload pattern `Name::Variant(x)`: `x` must be
+// a plain non-`_` ident and the very next token the closing `)`. Anything
+// else (`_`, a literal, `x,y`, a nested pattern) refuses.
+pub fn mt_bind_ok(toks: Vec, buf: i64, pat_pos: i64) -> i64 {
+    if at_eof(toks, pat_pos + 6) == 1 {
+        return 0;
+    }
+    if tok_kind(toks, pat_pos + 5) != tk_ident() {
+        return 0;
+    }
+    if is_ident_underscore(buf, tok_lo(toks, pat_pos + 5), tok_hi(toks, pat_pos + 5)) == 1 {
+        return 0;
+    }
+    if tok_kind(toks, pat_pos + 6) != tk_rparen() {
+        return 0;
+    }
+    1
+}
+
+// Skip an optional `,` or `;` arm separator (block arms usually have none).
+pub fn mt_skip_sep(toks: Vec, p: i64) -> i64 {
+    if tok_kind(toks, p) == tk_comma() {
+        return p + 1;
+    }
+    if tok_kind(toks, p) == tk_semi() {
+        return p + 1;
+    }
+    p
+}
+
+// Build one SCALAR pattern arm (int literal or C-like enum path): cond =
+// SCRUT == PAT, then = arm block, else = recursive rest (mode 1 — a payload
+// arm later in the chain refuses). An enum-path pattern compares against its
+// resolved discriminant carried in a synthetic int-lit (child1==1) — same
+// proven form as the expression position.
+pub fn mt_scalar_arm(toks: Vec, pat_pos: i64, buf: i64, scrut_start: i64, kw_lo: i64, is_ep: i64, epv: i64, val_pos: i64) -> ParseResult {
     let pat_lo: i64 = tok_lo(toks, pat_pos);
     let pat_hi: i64 = tok_hi(toks, pat_pos);
-    // NON-EXHAUSTIVE match (arm list ends with NO wildcard arm): reaching `}`
-    // (or EOF) in PATTERN position means no `_` arm terminated the chain — the
-    // desugared if-chain would need a fall-through else VALUE that does not
-    // exist, so emitting anything would be a wrong value. POISON leaf ->
-    // 0-byte refusal. (An all-variants-covered enum match without `_` also
+    let val_res: ParseResult = parse_arm_value(toks, val_pos, buf);
+    let next_pos: i64 = mt_skip_sep(toks, pr_pos(val_res));
+    let scrut_i: ParseResult = parse_expr_ns(toks, scrut_start, buf, 1);
+    let pat_end_hi: i64 = if is_ep == 1 {
+        tok_hi(toks, pat_pos + 3)
+    } else {
+        pat_hi
+    };
+    let pat_lit: i64 = if is_ep == 1 {
+        ent_syn_node(epv, pat_lo, pat_end_hi)
+    } else {
+        ast_new_leaf(ast_int_lit(), pat_lo, pat_hi)
+    };
+    let cond: i64 = ast_new_binop(kw_lo, pat_end_hi, pr_node(scrut_i), pat_lit, op_eq());
+    let rest: ParseResult = parse_match_chain(toks, next_pos, buf, scrut_start, kw_lo, 1, 0, 0, 0);
+    let else_blk: i64 = mt_wrap_else(pr_node(rest));
+    let if_node: i64 = ast_new_if(kw_lo, ast_span_hi(pr_node(rest)), cond, pr_node(val_res), else_blk);
+    pr_new(pr_pos(rest), if_node)
+}
+
+// Build the payload-binding let `let x = SCRUT[1];` for a `Name::Variant(x)`
+// arm and prepend it to the arm block. The scrutinee is re-parsed (a fresh
+// subtree, exactly like each arm's condition) and the payload word read with
+// the proven index form.
+pub fn mt_bind_prepend(toks: Vec, pat_pos: i64, buf: i64, scrut_start: i64, kw_lo: i64, val_blk: i64, pat_end_hi: i64) -> i64 {
+    let name: i64 = ast_new_leaf(ast_ident(), tok_lo(toks, pat_pos + 5), tok_hi(toks, pat_pos + 5));
+    let scrut_b: ParseResult = parse_expr_ns(toks, scrut_start, buf, 1);
+    let payread: i64 = ast_new_index(kw_lo, pat_end_hi, pr_node(scrut_b), mk_syn_intlit(1));
+    let blet: i64 = ast_new_let(0, 0, name, 0, payread);
+    pnt_prepend_stmt(val_blk, blet)
+}
+
+// Build one PAYLOAD-ENUM pattern arm (`Name::Variant` on a payload-free
+// variant, or `Name::Variant(x)` binding a payload variant): cond =
+// SCRUT[0] == tag (the tag word of the 2-word block), then = the arm block
+// (binding form: with `let x = SCRUT[1];` prepended), else = recursive rest
+// (mode 2, same-enum required). EXHAUSTIVENESS: when this is the LAST arm
+// (next pattern position is `}`) and the seen-bitmask now covers ALL
+// variants, the arm becomes the UNCONDITIONAL else block — tags are the
+// 0-based decl positions (unique), so the dropped condition is implied.
+pub fn mt_payload_arm(toks: Vec, pat_pos: i64, buf: i64, scrut_start: i64, kw_lo: i64, mode: i64, enlo: i64, enhi: i64, seen: i64, tag: i64, has_bind: i64, vhi: i64) -> ParseResult {
+    let pat_lo: i64 = tok_lo(toks, pat_pos);
+    let pat_hi: i64 = tok_hi(toks, pat_pos);
+    // MODE GATE: never mix payload-enum arms with scalar arms (the scrutinee
+    // is a block POINTER — a scalar compare would be a fail-OPEN dispatch),
+    // and every payload arm must name the SAME enum.
+    if mode == 1 {
+        return pr_new(pat_pos + 4, ast_new_leaf(ast_unsupported(), pat_lo, vhi));
+    }
+    if mode == 2 {
+        if span_bytes_equal(buf, enlo, enhi, pat_lo, pat_hi) == 0 {
+            return pr_new(pat_pos + 4, ast_new_leaf(ast_unsupported(), pat_lo, vhi));
+        }
+    }
+    let pat_end_hi: i64 = if has_bind == 1 {
+        tok_hi(toks, pat_pos + 6)
+    } else {
+        vhi
+    };
+    let val_pos: i64 = if has_bind == 1 {
+        pat_pos + 9
+    } else {
+        pat_pos + 6
+    };
+    let val_res: ParseResult = parse_arm_value(toks, val_pos, buf);
+    let next_pos: i64 = mt_skip_sep(toks, pr_pos(val_res));
+    let arm_blk: i64 = if has_bind == 1 {
+        mt_bind_prepend(toks, pat_pos, buf, scrut_start, kw_lo, pr_node(val_res), pat_end_hi)
+    } else {
+        pr_node(val_res)
+    };
+    let newseen: i64 = seen | (1 << tag);
+    // Terminal-coverage: last arm + full coverage -> unconditional else.
+    if at_eof(toks, next_pos) == 0 {
+        if tok_kind(toks, next_pos) == tk_rbrace() {
+            let nvar: i64 = pnt_variant_count(toks, buf, pat_lo, pat_hi);
+            if nvar > 0 {
+                if newseen == (1 << nvar) - 1 {
+                    return pr_new(next_pos, arm_blk);
+                }
+            }
+        }
+    }
+    let scrut_i: ParseResult = parse_expr_ns(toks, scrut_start, buf, 1);
+    let tagread: i64 = ast_new_index(kw_lo, pat_end_hi, pr_node(scrut_i), mk_syn_intlit(0));
+    let cond: i64 = ast_new_binop(kw_lo, pat_end_hi, tagread, ent_syn_node(tag, pat_lo, pat_end_hi), op_eq());
+    let rest: ParseResult = parse_match_chain(toks, next_pos, buf, scrut_start, kw_lo, 2, pat_lo, pat_hi, newseen);
+    let else_blk: i64 = mt_wrap_else(pr_node(rest));
+    let if_node: i64 = ast_new_if(kw_lo, ast_span_hi(pr_node(rest)), cond, arm_blk, else_blk);
+    pr_new(pr_pos(rest), if_node)
+}
+
+// Recursively parse the arm list starting at pattern token `pat_pos`, returning
+// the else-if chain node (an ast_if for a pattern arm, or the terminal block for
+// the wildcard / final-covering arm).  `scrut_start` is the token just after
+// `match` (the scrutinee start), re-parsed per condition; `kw_lo` is the
+// `match` span_lo.  `mode` tracks the arm family seen so far: 0 =
+// undetermined, 1 = scalar (int literal / C-like enum — the pre-payload
+// behavior, unchanged), 2 = payload-enum (buf[enlo..enhi) is the enum name,
+// `seen` the coverage bitmask of matched tags). Families never mix (see
+// mt_payload_arm's mode gate).
+pub fn parse_match_chain(toks: Vec, pat_pos: i64, buf: i64, scrut_start: i64, kw_lo: i64, mode: i64, enlo: i64, enhi: i64, seen: i64) -> ParseResult {
+    let pat_lo: i64 = tok_lo(toks, pat_pos);
+    let pat_hi: i64 = tok_hi(toks, pat_pos);
+    // NON-EXHAUSTIVE match (arm list ends with NO terminal arm): reaching `}`
+    // (or EOF) in PATTERN position means no `_` arm — and, for a payload
+    // enum, no final COVERING arm — terminated the chain. The desugared
+    // if-chain would need a fall-through else VALUE that does not exist, so
+    // emitting anything would be a wrong value. POISON leaf -> 0-byte
+    // refusal. (An all-variants-covered C-LIKE enum match without `_` also
     // lands here — a sound refusal; ACCEPTING it needs scrutinee type
     // knowledge and is the follow-up upgrade.)
     if at_eof(toks, pat_pos) == 1 {
@@ -3273,130 +3704,61 @@ pub fn parse_match_chain(toks: Vec, pat_pos: i64, buf: i64, scrut_start: i64, kw
     if tok_kind(toks, pat_pos) == tk_rbrace() {
         return pr_new(pat_pos, ast_new_leaf(ast_unsupported(), pat_lo, pat_hi));
     }
-    let is_wild: i64 = if tok_kind(toks, pat_pos) == tk_ident() {
-        is_ident_underscore(buf, pat_lo, pat_hi)
-    } else {
-        0
-    };
-    // ENUM-PATH pattern `Name::Variant => ..` (4 tokens; `=>` then at
-    // pat_pos+4/+5, the arm value at pat_pos+6).
-    let is_epath: i64 = if is_wild == 1 {
-        0
-    } else {
-        if tok_kind(toks, pat_pos) == tk_ident() {
-            if at_eof(toks, pat_pos + 3) == 0 {
-                if tok_kind(toks, pat_pos + 1) == tk_colon() {
-                    if tok_kind(toks, pat_pos + 2) == tk_colon() {
-                        if tok_kind(toks, pat_pos + 3) == tk_ident() {
-                            1
-                        } else {
-                            0
-                        }
-                    } else {
-                        0
-                    }
-                } else {
-                    0
-                }
-            } else {
-                0
-            }
-        } else {
-            0
-        }
-    };
     // PATTERN-SHAPE GATE (fail-closed): int literal | `_` wildcard | enum
-    // path. ANY other pattern token REFUSES. This also closes a pre-existing
-    // fail-OPEN: a bare-IDENT pattern previously became an int-lit leaf whose
-    // letter span parse_int_span'd into a GARBAGE constant — a silent wrong
-    // dispatch, never caught by any byte gate. Bare variant names (`Red =>`)
-    // therefore refuse too: the qualified `Color::Red` form is required.
-    let pat_ok: i64 = if is_wild == 1 {
-        1
-    } else {
-        if is_epath == 1 {
-            1
-        } else {
-            if tok_kind(toks, pat_pos) == tk_int() {
-                1
-            } else {
-                0
-            }
-        }
-    };
-    if pat_ok == 0 {
+    // path (C-like scalar, payload-free, or payload-binding). ANY other
+    // pattern token REFUSES.
+    let pk: i64 = mt_pat_kind(toks, buf, pat_pos);
+    if pk < 0 {
         return pr_new(pat_pos + 1, ast_new_leaf(ast_unsupported(), pat_lo, pat_hi));
     }
-    // Payload-BINDING arm `Name::Variant(x) => ..` -> refuse (the Option/
-    // Result payload tier is the follow-up; never bind or drop a payload).
-    if is_epath == 1 {
-        if at_eof(toks, pat_pos + 4) == 0 {
-            if tok_kind(toks, pat_pos + 4) == tk_lparen() {
+    if pk == 1 {
+        // Wildcard: terminal else = the arm block itself (any mode).
+        let wv: ParseResult = parse_arm_value(toks, pat_pos + 3, buf);
+        return pr_new(mt_skip_sep(toks, pr_pos(wv)), pr_node(wv));
+    }
+    if pk == 0 {
+        // Int-literal arm: scalar compare — a payload-mode chain refuses.
+        if mode == 2 {
+            return pr_new(pat_pos + 1, ast_new_leaf(ast_unsupported(), pat_lo, pat_hi));
+        }
+        return mt_scalar_arm(toks, pat_pos, buf, scrut_start, kw_lo, 0, 0, pat_pos + 3);
+    }
+    let vlo: i64 = tok_lo(toks, pat_pos + 3);
+    let vhi: i64 = tok_hi(toks, pat_pos + 3);
+    if pk == 2 {
+        // `Name::Variant` without `(`: a C-LIKE discriminant when ent_resolve
+        // accepts (scalar compare, pre-payload behavior unchanged) ...
+        let epv: i64 = ent_resolve(toks, buf, pat_lo, pat_hi, vlo, vhi);
+        if epv >= 0 {
+            if mode == 2 {
                 return pr_new(pat_pos + 4, ast_new_leaf(ast_unsupported(), pat_lo, pat_hi));
             }
+            return mt_scalar_arm(toks, pat_pos, buf, scrut_start, kw_lo, 1, epv, pat_pos + 6);
         }
-    }
-    // Resolve an enum-path pattern's discriminant; unresolvable -> refuse.
-    let epv: i64 = if is_epath == 1 {
-        ent_resolve(toks, buf, pat_lo, pat_hi, tok_lo(toks, pat_pos + 3), tok_hi(toks, pat_pos + 3))
-    } else {
-        0
-    };
-    if is_epath == 1 {
-        if epv < 0 {
+        // ... else a payload-FREE variant of a single-payload enum. A payload
+        // variant in NON-binding form refuses (never silently drop a payload).
+        let info: i64 = pnt_variant_info(toks, buf, pat_lo, pat_hi, vlo, vhi);
+        if info < 0 {
             return pr_new(pat_pos + 4, ast_new_leaf(ast_unsupported(), pat_lo, pat_hi));
         }
-    }
-
-    // `=>` is two tokens (tk_eq tk_gt); the arm value follows the pattern (a
-    // single token, or 4 tokens for an enum path).
-    let val_pos: i64 = if is_epath == 1 {
-        pat_pos + 6
-    } else {
-        pat_pos + 3
-    };
-    let val_res: ParseResult = parse_arm_value(toks, val_pos, buf);
-    let after_val: i64 = pr_pos(val_res);
-    let val_blk: i64 = pr_node(val_res);
-
-    // Optional `,` or `;` arm separator (block arms usually have none).
-    let next_pos: i64 = if tok_kind(toks, after_val) == tk_comma() {
-        after_val + 1
-    } else {
-        if tok_kind(toks, after_val) == tk_semi() {
-            after_val + 1
-        } else {
-            after_val
+        if info % 2 == 1 {
+            return pr_new(pat_pos + 4, ast_new_leaf(ast_unsupported(), pat_lo, pat_hi));
         }
-    };
-
-    if is_wild == 1 {
-        // Terminal else: the wildcard block itself.
-        return pr_new(next_pos, val_blk);
+        return mt_payload_arm(toks, pat_pos, buf, scrut_start, kw_lo, mode, enlo, enhi, seen, info / 2, 0, vhi);
     }
-
-    // Pattern arm: cond = SCRUT == PAT, then = arm block, else = recursive rest.
-    // An enum-path pattern compares against its resolved discriminant carried
-    // in a synthetic int-lit (child1==1) — same proven form as the expression
-    // position.
-    let scrut_i: ParseResult = parse_expr_ns(toks, scrut_start, buf, 1);
-    let pat_end_hi: i64 = if is_epath == 1 {
-        tok_hi(toks, pat_pos + 3)
-    } else {
-        pat_hi
-    };
-    let pat_lit: i64 = if is_epath == 1 {
-        ent_syn_node(epv, pat_lo, pat_end_hi)
-    } else {
-        ast_new_leaf(ast_int_lit(), pat_lo, pat_hi)
-    };
-    let cond: i64 = ast_new_binop(kw_lo, pat_end_hi, pr_node(scrut_i), pat_lit, op_eq());
-
-    let rest: ParseResult = parse_match_chain(toks, next_pos, buf, scrut_start, kw_lo);
-    let else_blk: i64 = mt_wrap_else(pr_node(rest));
-
-    let if_node: i64 = ast_new_if(kw_lo, ast_span_hi(pr_node(rest)), cond, val_blk, else_blk);
-    pr_new(pr_pos(rest), if_node)
+    // pk == 3: `Name::Variant(x)` payload-BINDING arm. Refuses on a
+    // payload-free variant, an invalid binding shape, or a non-payload enum.
+    let binfo: i64 = pnt_variant_info(toks, buf, pat_lo, pat_hi, vlo, vhi);
+    if binfo < 0 {
+        return pr_new(pat_pos + 4, ast_new_leaf(ast_unsupported(), pat_lo, pat_hi));
+    }
+    if binfo % 2 == 0 {
+        return pr_new(pat_pos + 4, ast_new_leaf(ast_unsupported(), pat_lo, pat_hi));
+    }
+    if mt_bind_ok(toks, buf, pat_pos) == 0 {
+        return pr_new(pat_pos + 4, ast_new_leaf(ast_unsupported(), pat_lo, pat_hi));
+    }
+    mt_payload_arm(toks, pat_pos, buf, scrut_start, kw_lo, mode, enlo, enhi, seen, binfo / 2, 1, vhi)
 }
 
 // ===== Function definitions =====
