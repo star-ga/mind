@@ -77,11 +77,13 @@ CASES = [
      "fn main()->i64{ let x:i64 = 2; return match x { 1 => 10, 2 => 20, _ => 30 }; }", 20, "OK"),
     ("int match wildcard still dispatches",
      "fn main()->i64{ let x:i64 = 9; return match x { 1 => 10, 2 => 20, _ => 30 }; }", 30, "OK"),
-    # --- FAIL-CLOSED: payload / exhaustiveness / unresolvable shapes -> 0B ---
-    ("refuse payload variant decl (even payload-free ref)",
-     "enum E { A(i64), B }\nfn main()->i64{ return E::B; }", None, "0B"),
-    ("refuse payload construction E::A(5)",
-     "enum E { A(i64), B }\nfn main()->i64{ return E::A(5); }", None, "0B"),
+    # --- single-payload tier landed: payload decls now CONSTRUCT (tagged
+    # --- 2-word block) instead of refusing; full battery in option_netverify.py ---
+    ("payload enum payload-free variant constructs + matches",
+     "enum E { A(i64), B }\nfn main()->i64{ let e:E = E::B; return match e { E::A(x) => x, E::B => 21 }; }", 21, "OK"),
+    ("payload construction E::A(5) constructs + binds",
+     "enum E { A(i64), B }\nfn main()->i64{ let e:E = E::A(5); return match e { E::A(x) => x, E::B => 0 }; }", 5, "OK"),
+    # --- FAIL-CLOSED: exhaustiveness / unresolvable shapes -> 0B ---
     ("refuse payload-binding match arm on C-like enum",
      COLOR + "fn main()->i64{ let c:i64 = Color::Red; return match c { Color::Red(x) => 1, _ => 0 }; }", None, "0B"),
     ("refuse payload-binding in NON-first arm (else-position poison must be walked)",
