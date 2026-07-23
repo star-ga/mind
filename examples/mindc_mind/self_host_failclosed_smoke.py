@@ -94,7 +94,6 @@ REFUSED = [
     ("tuple destructure array RHS", M("let (a,b)=[1,2]; return a;"), "0B"),
     ("tuple pattern mut", M("let (mut a, b)=(1,2); return a;"), "0B"),
     ("tuple pattern literal", M("let (a, 1)=(1,2); return a;"), "0B"),
-    ("ref + deref", M("let x:i64=5; let r=&x; return *r;"), "0B"),
     ("compound assign +=", M("let mut c:i64=0; c += 1; return c;"), "0B"),
     # arrays are SUPPORTED (i64 subset, below) — but the array boundary itself
     # stays fail-closed: non-i64 elements, empty literal, trailing comma,
@@ -120,15 +119,38 @@ REFUSED = [
      "struct P { x: i64, y: i64 }\nfn main()->i64{ let p: P = P { x: 1, x: 2 }; return p.x; }", "0B"),
     ("struct-lit unknown field",
      "struct P { x: i64, y: i64 }\nfn main()->i64{ let p: P = P { x: 1, z: 2 }; return p.x; }", "0B"),
+    # FLOATS: the general path has no float tier (that lives behind the
+    # dedicated selftest_native_elf_fp_* entries) — every float-bearing shape
+    # (float literal, f64/f32 annotation on let/param/return, as-cast) must
+    # refuse 0B. Confirmed fail-OPEN before the pre-gate: "used float cast+add"
+    # RAN to 5 (want 7, the f64 read back as 0) and "float in int return" RAN
+    # to 0 — running wrong-value ELFs, the exact forbidden class.
+    ("used float cast+add", M("let f:f64=2.0; return (f as i64) + 5;"), "0B"),
+    ("float in int return", M("return 1.5;"), "0B"),
+    ("float arith chain", M("let f:f64=1.5; let g:f64=f+2.0; return (g as i64);"), "0B"),
+    ("float param", "fn add1(x:f64)->f64{ return x+1.0; }\nfn main()->i64{ let r:f64=add1(2.5); return 0; }", "0B"),
+    ("float return type", "fn mk()->f64{ return 1.5; }\nfn main()->i64{ let r:f64=mk(); return 0; }", "0B"),
+    ("as f64 cast", M("let x:i64=3; let f:f64=x as f64; return 0;"), "0B"),
+    ("float let unused", M("let f:f64=2.0; return 5;"), "0B"),
+    ("f32 let", M("let f:f32=2.0; return 5;"), "0B"),
+    ("f64 struct field", "struct F { a: f64 }\nfn main()->i64{ return 0; }", "0B"),
+    ("float range bound", M("let mut c:i64=0; for i in 0..1.5 { c=c+1; } return c;"), "0B"),
+    ("float in sep fn", "fn h()->i64{ let f:f64=1.5; return 0; }\nfn main()->i64{ return h(); }", "0B"),
     # sticky poison: unsupported nested in supported -> whole unit refuses
-    ("ref nested in if", M("let x:i64=5; if x>0 { let r=&x; return *r; } return 0;"), "0B"),
+    # (`.len()` is still out-of-subset; i64 references LANDED — see the
+    # SUPPORTED ref cases below and ref_netverify.py for their own boundary)
+    (".len() nested in if", M("let a=[1,2,3]; if a[0]>0 { return a.len(); } return 0;"), "0B"),
     # unsupported node in a separate function still refuses the whole unit
-    ("unsupported in sep fn", "fn helper()->i64{ let x:i64=1; let r=&x; return 0; }\nfn main()->i64{ return helper(); }", "0B"),
+    ("unsupported in sep fn", "fn helper()->i64{ let a=[1,2,3]; return a.len(); }\nfn main()->i64{ return helper(); }", "0B"),
 ]
 
 # (label, source, expected exit value) — the supported subset MUST run correct.
 SUPPORTED = [
     ("scalar arith", M("return 2+3*4;"), 14),
+    # i64 references (LANDED — read-through + deref; ref_netverify.py locks the
+    # write-back battery and the remaining ref fail-closed boundary)
+    ("ref + deref", M("let x:i64=5; let r=&x; return *r;"), 5),
+    ("ref nested in if", M("let x:i64=5; if x>0 { let r=&x; return *r; } return 0;"), 5),
     # fixed i64 arrays (alloc + base+8*i load/store ABI)
     ("array literal index", M("return [1,2,3][1];"), 2),
     ("array let + index", M("let a=[10,20,30]; return a[2];"), 30),

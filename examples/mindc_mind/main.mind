@@ -3467,6 +3467,9 @@ pub fn name_buf_i32() -> i64 {
 pub fn name_buf_f64() -> i64 {
     make_byte_buf_3(102, 54, 52)
 }
+pub fn name_buf_f32() -> i64 {
+    make_byte_buf_3(102, 51, 50)
+}
 pub fn name_buf_bool() -> i64 {
     make_byte_buf_4(98, 111, 111, 108)
 }
@@ -30872,6 +30875,79 @@ pub fn selftest_native_elf_u(src_addr: i64, src_len: i64, user_lo: i64) -> EmitS
     selftest_native_elf_hb_from_tokens(tokens, src_addr, hslot, user_lo)
 }
 
+// ---- FLOAT fail-closed pre-gate (B0 poison-boundary residual) ----
+//
+// The general whole-program path (this h/hb family) has NO float support and NO
+// float oracle: a USER float that reaches lowering silently miscompiles instead
+// of refusing — `let f: f64 = 2.0; return (f as i64) + 5;` ran to 5 (want 7,
+// the f64 read back as 0) and `fn main()->i64{ return 1.5; }` ran to 0 (the
+// literal lands in xmm0 while the INT return reads rax). Floats are a future
+// tier (the proven float work lives behind the DEDICATED fp entries —
+// selftest_native_elf_fp_* / selftest_native_elf_scalar_f64 — with their own
+// drivers and execution gates; those do not route through this pre-gate). Until
+// that tier connects here, ANY float-bearing USER token refuses the WHOLE
+// module (0B), never a running wrong-value ELF.
+//
+// A token is a float-bearing candidate iff it is in the USER region
+// (tok_lo >= user_lo — the seeded std bricks are exempt, same scoping as the
+// nb_fns_use_argv argv gate; every user fn is a prune root so the user region
+// is exactly the emitted user surface) AND it is either:
+//   * a tk_float literal — EXCLUDING the fused nested-tuple-access spelling
+//     `.N.M` (the lexer fuses `N.M` after a `.` into ONE tk_float; exactly a
+//     tk_float preceded by a SINGLE tk_dot). A `..`-preceded tk_float
+//     (`0..1.5`, a float range bound) is NOT tuple access and stays a
+//     candidate; or
+//   * a bare 3-byte `f64` / `f32` ident — a let/param/return/cast/struct-field
+//     type annotation. Compound idents (ty_f64, f64_buf, ...) do not match.
+// Never fires during self-compile: main.mind's own user region has ZERO
+// candidates (no float literal, no bare f64/f32 ident — verified over its
+// 288k-token stream), so the self-host loop stays byte-identical.
+pub fn nb_user_float_tok(tokens: Vec, buf: i64, i: i64, user_lo: i64) -> i64 {
+    if tok_lo(tokens, i) < user_lo {
+        return 0;
+    }
+    let k: i64 = tok_kind(tokens, i);
+    if k == tk_float() {
+        if i == 0 {
+            return 1;
+        }
+        if tok_kind(tokens, i - 1) != tk_dot() {
+            return 1;
+        }
+        if i >= 2 {
+            if tok_kind(tokens, i - 2) == tk_dot() {
+                return 1;
+            }
+        }
+        return 0;
+    }
+    if k == tk_ident() {
+        let lo: i64 = tok_lo(tokens, i);
+        let hi: i64 = tok_hi(tokens, i);
+        if hi - lo == 3 {
+            if bytes_eq(buf, lo, hi, name_buf_f64(), 0, 3) == 1 {
+                return 1;
+            }
+            if bytes_eq(buf, lo, hi, name_buf_f32(), 0, 3) == 1 {
+                return 1;
+            }
+        }
+    }
+    0
+}
+// 1 iff ANY token at/after user_lo is a float-bearing candidate. One frame per
+// token — the same recursion depth as the lexer's own scan(), proven on both
+// substrates over the full self-host source.
+pub fn nb_tokens_user_float(tokens: Vec, buf: i64, i: i64, n: i64, user_lo: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    if nb_user_float_tok(tokens, buf, i, user_lo) == 1 {
+        return 1;
+    }
+    nb_tokens_user_float(tokens, buf, i + 1, n, user_lo)
+}
+
 // 4-arg form: `user_lo` is the offset in `src_addr` where the USER file begins
 // (the bundled std/*.mind sources are concatenated ahead of it). Fns whose name
 // starts at/after user_lo are the prune roots; reachable+last-def-per-name fns
@@ -30967,6 +31043,15 @@ pub fn selftest_native_elf_hb_from_tokens(tokens: Vec, src_addr: i64, hash_addr:
     // `return`-in-branch and exit-only branches are permitted (proven correct).
     // Never fires during self-compile (main.mind has zero break/continue).
     if nb_fns_branch_exit_carry(src_addr, ordered, n_fns, 0) == 1 {
+        return es_new();
+    }
+    // B0 FLOAT fail-closed pre-gate (see nb_user_float_tok above): a float
+    // literal or f64/f32 type ident anywhere in the USER region refuses the
+    // WHOLE module (0B) — the general path has no float tier yet and a leaked
+    // float runs to a silently WRONG value. Never fires during self-compile
+    // (main.mind's user region has zero candidates), so the loop stays
+    // byte-identical.
+    if nb_tokens_user_float(tokens, src_addr, 0, tok_count(tokens), user_lo) == 1 {
         return es_new();
     }
     let acc0: NbState = NbState { code: string_new(), next_id: 0, last_id: 0, ncalls: 0 };
