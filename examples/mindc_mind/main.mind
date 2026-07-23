@@ -162,14 +162,26 @@ pub fn tk_andand() -> i64 {
 pub fn tk_oror() -> i64 {
     38
 }
-// FAIL-CLOSED lexer default: any byte with NO real token production (`[`, `]`,
-// `"`, `'`, `#`, `@`, ...) lexes as tk_unsupported instead of a synthetic
+// FAIL-CLOSED lexer default: any byte with NO real token production (`"`,
+// `'`, `#`, `@`, ...) lexes as tk_unsupported instead of a synthetic
 // one-byte tk_ident. The parser turns it into ast_unsupported, which every
 // emitter REFUSES (0-byte output) — the silent-miscompile boundary becomes an
 // explicit refusal. main.mind's own non-comment source contains none of these
 // bytes (verified), so the self-compile token stream is byte-identical.
 pub fn tk_unsupported() -> i64 {
     39
+}
+// `[` / `]` array brackets (fixed i64 arrays): real tokens so an array literal
+// `[e0, e1, ...]` and the index postfix `EXPR[EXPR]` parse into real AST nodes
+// (ast_array_lit / ast_index / ast_index_assign) instead of the tk_unsupported
+// poison. main.mind's own non-comment source contains no `[` / `]` bytes (its
+// records use the manual __mind_alloc + load/store ABI), so the self-compile
+// token stream is byte-identical.
+pub fn tk_lbracket() -> i64 {
+    40
+}
+pub fn tk_rbracket() -> i64 {
+    41
 }
 
 // ===== Byte loads =====
@@ -619,9 +631,15 @@ pub fn match_punct(b: i64) -> i64 {
     if b == 37 {
         return tk_percent();
     }
+    if b == 91 {
+        return tk_lbracket();
+    }
+    if b == 93 {
+        return tk_rbracket();
+    }
     // FAIL CLOSED: an unrecognised byte is NOT an ident — it is an unsupported
-    // token, so the construct it belongs to (array literal, char/string literal,
-    // attribute, ...) is refused downstream instead of silently mis-lowered.
+    // token, so the construct it belongs to (char/string literal, attribute,
+    // ...) is refused downstream instead of silently mis-lowered.
     tk_unsupported()
 }
 
@@ -882,6 +900,26 @@ pub fn ast_cast() -> i64 {
 // (supported-subset only), so the self-compile is byte-identical.
 pub fn ast_unsupported() -> i64 {
     26
+}
+// ===== Fixed i64 arrays =====
+// `[e0, e1, ...]` array LITERAL: child1 = elems vec addr (one node ptr per
+// element, 8-byte stride), aux = element count. Lowers to the SAME alloc +
+// base+8*i store ABI the struct-literal arm uses (heap block of n*8 bytes,
+// the value is the base pointer). Elements are i64-only this pass; a FLOAT
+// element fail-closes (poison).
+pub fn ast_array_lit() -> i64 {
+    27
+}
+// `BASE[IDX]` index READ: child0 = base expr, child1 = index expr. Lowers to
+// __mind_load_i64(base + idx*8). Composes as a postfix (chains, binop
+// operands, call args, return values).
+pub fn ast_index() -> i64 {
+    28
+}
+// `BASE[IDX] = RHS ;` index WRITE statement: child0 = base expr, child1 =
+// index expr, child2 = rhs expr. Lowers to __mind_store_i64(base + idx*8, rhs).
+pub fn ast_index_assign() -> i64 {
+    29
 }
 
 // ===== Binop operator tags =====
@@ -1220,6 +1258,46 @@ pub fn ast_new_assign(span_lo: i64, span_hi: i64, name: i64, value: i64) -> i64 
     __mind_store_i64(n + 16, span_hi);
     __mind_store_i64(n + 24, name);
     __mind_store_i64(n + 32, 0);
+    __mind_store_i64(n + 40, value);
+    __mind_store_i64(n + 48, 0);
+    n
+}
+
+// `[e0, e1, ...]` array literal node: elems_addr = one node ptr per element
+// (8-byte stride, same layout as call args), elems_len = element count.
+pub fn ast_new_array_lit(span_lo: i64, span_hi: i64, elems_addr: i64, elems_len: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0, ast_array_lit());
+    __mind_store_i64(n + 8, span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, 0);
+    __mind_store_i64(n + 32, elems_addr);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, elems_len);
+    n
+}
+
+// `BASE[IDX]` index-read node.
+pub fn ast_new_index(span_lo: i64, span_hi: i64, base: i64, idx: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0, ast_index());
+    __mind_store_i64(n + 8, span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, base);
+    __mind_store_i64(n + 32, idx);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, 0);
+    n
+}
+
+// `BASE[IDX] = RHS ;` index-write statement node.
+pub fn ast_new_index_assign(span_lo: i64, span_hi: i64, base: i64, idx: i64, value: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0, ast_index_assign());
+    __mind_store_i64(n + 8, span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, base);
+    __mind_store_i64(n + 32, idx);
     __mind_store_i64(n + 40, value);
     __mind_store_i64(n + 48, 0);
     n
@@ -1639,6 +1717,16 @@ pub fn parse_primary_ns(toks: Vec, pos: i64, buf: i64, no_struct: i64) -> ParseR
         return pr_new(pos + 1, n);
     }
 
+    if k == tk_lbracket() {
+        // `[e0, e1, ...]` array literal. Elements are full expressions (struct-
+        // lit ALLOWED inside — brackets reset the no_struct context, like
+        // parens). An EMPTY `[]` and a missing `]` fail closed (poison node):
+        // a zero-length array has no readable element and a truncated literal
+        // must never silently parse. A trailing comma also fail-closes (the
+        // recursive element parse hits `]` in expression position -> poison).
+        return parse_array_lit(toks, pos, buf);
+    }
+
     // FAIL CLOSED: a token with NO real production here (tk_unsupported bytes,
     // `*` / `&` prefix positions, stray `,` / `:` / keyword tokens from an
     // unsupported surrounding construct) becomes the ast_unsupported POISON
@@ -1647,6 +1735,31 @@ pub fn parse_primary_ns(toks: Vec, pos: i64, buf: i64, no_struct: i64) -> ParseR
     // consumes exactly one token (pos + 1), so the parse always advances.
     let fallback: i64 = ast_new_leaf(ast_unsupported(), lo, hi);
     pr_new(pos + 1, fallback)
+}
+
+// Parse `[e0, e1, ...]` into an ast_array_lit. `pos` is the `[`. Elements are
+// collected via parse_args_rest (the SAME comma-separated collector call args
+// use — its sentinel block carries the vec addr + len). Empty `[]` and a
+// missing closing `]` produce the ast_unsupported POISON marker (fail-closed;
+// every emitter refuses it, whole unit emits 0 bytes).
+pub fn parse_array_lit(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let lo: i64 = tok_lo(toks, pos);
+    if tok_kind(toks, pos + 1) == tk_rbracket() {
+        // `[]` — refuse (no element type / no readable element this pass).
+        let pnode: i64 = ast_new_leaf(ast_unsupported(), lo, tok_hi(toks, pos + 1));
+        return pr_new(pos + 2, pnode);
+    }
+    let elems_res: ParseResult = parse_args_rest(toks, pos + 1, buf, vec_new());
+    let after_elems: i64 = pr_pos(elems_res);
+    let elems_node: i64 = pr_node(elems_res);
+    if tok_kind(toks, after_elems) != tk_rbracket() {
+        // Missing `]` — refuse (never silently misparse a truncated literal).
+        let pnode2: i64 = ast_new_leaf(ast_unsupported(), lo, tok_hi(toks, after_elems));
+        return pr_new(after_elems, pnode2);
+    }
+    let close_hi: i64 = tok_hi(toks, after_elems);
+    let arr: i64 = ast_new_array_lit(lo, close_hi, ast_child0(elems_node), ast_aux(elems_node));
+    pr_new(after_elems + 1, arr)
 }
 
 // Parse `Name { f0: e0, f1: e1, ... }` (optional trailing comma) into an
@@ -1815,6 +1928,22 @@ pub fn parse_postfix_rest(toks: Vec, pos: i64, buf: i64, recv: i64) -> ParseResu
             }
         }
     }
+    // `EXPR[IDX]` index postfix (fixed i64 arrays). Binds tighter than any
+    // infix operator (consumed here BEFORE parse_pratt), so `a[0] + a[1]`
+    // parses `(a[0]) + (a[1])`. The index is a full expression (no_struct
+    // RESET — bracket interior is unambiguous expression position). Chains
+    // left-associatively (`a[i][j]` = index(index(a,i),j)) by continuing the
+    // postfix loop from the new node. A missing `]` fail-closes (poison node).
+    if tok_kind(toks, pos) == tk_lbracket() {
+        let idx_res: ParseResult = parse_expr(toks, pos + 1, buf);
+        let after_idx: i64 = pr_pos(idx_res);
+        if tok_kind(toks, after_idx) != tk_rbracket() {
+            let pnode: i64 = ast_new_leaf(ast_unsupported(), ast_span_lo(recv), tok_hi(toks, after_idx));
+            return pr_new(after_idx, pnode);
+        }
+        let ix: i64 = ast_new_index(ast_span_lo(recv), tok_hi(toks, after_idx), recv, pr_node(idx_res));
+        return parse_postfix_rest(toks, after_idx + 1, buf, ix);
+    }
     if tok_kind(toks, pos) != tk_dot() {
         return pr_new(pos, recv);
     }
@@ -1932,8 +2061,47 @@ pub fn parse_stmt(toks: Vec, pos: i64, buf: i64) -> ParseResult {
         if tok_kind(toks, pos + 1) == tk_eq() {
             return parse_assign(toks, pos, buf);
         }
+        // `NAME[IDX] = VALUE ;` index-WRITE statement (fixed i64 arrays): an
+        // ident immediately followed by `[`. Parse the postfix chain first; if
+        // it ends in an ast_index followed by a single `=` (`==` lexes as ONE
+        // tk_eqeq token, so tk_eq here is unambiguous), it is an index-assign.
+        // Otherwise the postfix node is an ordinary expression statement —
+        // continue the Pratt loop from it (e.g. `a[0] + f();`).
+        if tok_kind(toks, pos + 1) == tk_lbracket() {
+            return parse_index_assign_or_expr(toks, pos, buf);
+        }
     }
     let e: ParseResult = parse_expr(toks, pos, buf);
+    let after_e: i64 = pr_pos(e);
+    if tok_kind(toks, after_e) == tk_semi() {
+        return pr_new(after_e + 1, pr_node(e));
+    }
+    e
+}
+
+// Statement starting `IDENT [` — either an index-assign `NAME[IDX] = RHS ;`
+// (postfix chain ending in ast_index, then a single `=`) or a plain expression
+// statement beginning with an index read. The index-assign keeps the LAST
+// index of a chain as the write target (`a[i][j] = v` writes *(a[i] + j*8)),
+// mirroring how the read arm composes.
+pub fn parse_index_assign_or_expr(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let pf: ParseResult = parse_postfix(toks, pos, buf);
+    let target: i64 = pr_node(pf);
+    let after_pf: i64 = pr_pos(pf);
+    if ast_kind(target) == ast_index() {
+        if tok_kind(toks, after_pf) == tk_eq() {
+            let rhs: ParseResult = parse_expr(toks, after_pf + 1, buf);
+            let after_rhs: i64 = pr_pos(rhs);
+            let ia: i64 = ast_new_index_assign(ast_span_lo(target), ast_span_hi(pr_node(rhs)), ast_child0(target), ast_child1(target), pr_node(rhs));
+            if tok_kind(toks, after_rhs) == tk_semi() {
+                return pr_new(after_rhs + 1, ia);
+            }
+            return pr_new(after_rhs, ia);
+        }
+    }
+    // Not an index-assign: continue as an expression statement from the
+    // postfix node (mirrors parse_stmt's expression tail).
+    let e: ParseResult = parse_pratt(toks, after_pf, buf, target, 1);
     let after_e: i64 = pr_pos(e);
     if tok_kind(toks, after_e) == tk_semi() {
         return pr_new(after_e + 1, pr_node(e));
@@ -22810,6 +22978,15 @@ pub fn nb_wrap_params_w(code: String, buf: i64, params_addr: i64, n_params: i64,
 // order — which for the supported fixtures equals declaration order, so the
 // field's byte offset is 8*index. Returns -1 when the name is not found.
 pub fn nb_slit_field_index(slit_node: i64, buf: i64, flo: i64, fhi: i64) -> i64 {
+    // FAIL CLOSED: only a struct-literal-SHAPED descriptor (a real ast_struct_lit
+    // or the synthetic decl descriptor, which carries the same kind) has 3-i64
+    // name triples at child1. An ARRAY-literal descriptor (bound by
+    // nb_let_descriptor for the index-OOB check) stores plain element node ptrs
+    // there — scanning them as name spans would read garbage. Refuse (-1), so a
+    // field read over an array-bound name poisons instead of mis-resolving.
+    if ast_kind(slit_node) != ast_struct_lit() {
+        return 0 - 1;
+    }
     let fields_addr: i64 = ast_child1(slit_node);
     let nfields: i64 = ast_aux(slit_node);
     nb_slit_field_index_loop(fields_addr, nfields, buf, flo, fhi, 0)
@@ -22959,6 +23136,98 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let s_fields: NbState = nb_struct_fields(s_alloc, buf, fields_addr, nfields, 0, ptr_id, params_addr, n_params, calls, lets, lcell);
         // The struct-lit's VALUE is the base pointer.
         return NbState { code: s_fields.code, next_id: s_fields.next_id, last_id: ptr_id, ncalls: s_fields.ncalls };
+    }
+    if k == ast_array_lit() {
+        // `[e0, e1, ...]` fixed i64 ARRAY literal — byte-for-byte the SAME
+        // alloc + base+8*i store ABI as the struct-literal arm above (and as
+        // main.mind's own manual __mind_alloc records): CONST 8 ; CONST n ;
+        // MUL -> size ; __mind_alloc(size) -> base ; per element i in SOURCE
+        // order: value -> val ; addr = (i==0 ? base : CONST(8*i)+ADD) ;
+        // __mind_store_i64(addr, val) (store-dst id consumed, never read).
+        // The array's VALUE is the base-pointer slot. i64 elements ONLY this
+        // pass: a FLOAT element poisons (fail-closed) inside nb_array_elems —
+        // never a silent raw-bit store. main.mind's own source contains no
+        // `[` bytes outside comments, so this arm never fires during
+        // self-compile and the integer native-ELF oracle stays byte-identical.
+        let aelems_addr: i64 = ast_child1(node);
+        let anelems: i64 = ast_aux(node);
+        // CONST 8 (element size).
+        let asz_id: i64 = st.next_id;
+        let aa1: String = nb_push(st.code, 72);
+        let aa2: String = nb_push(aa1, 184);
+        let aa3: String = nb_i64le(aa2, 8);
+        let aa4: String = nb_store_rax(aa3, nb_slot_disp(asz_id));
+        // CONST n_elems.
+        let anf_id: i64 = asz_id + 1;
+        let ab1: String = nb_push(aa4, 72);
+        let ab2: String = nb_push(ab1, 184);
+        let ab3: String = nb_i64le(ab2, anelems);
+        let ab4: String = nb_store_rax(ab3, nb_slot_disp(anf_id));
+        // MUL(sz, n) -> alloc size.
+        let amul_id: i64 = anf_id + 1;
+        let am1: String = nb_load_rax(ab4, nb_slot_disp(asz_id));
+        let am2: String = nb_arith_rax_mem(am1, op_mul(), nb_slot_disp(anf_id));
+        let am3: String = nb_store_rax(am2, nb_slot_disp(amul_id));
+        // __mind_alloc(size) -> base pointer.
+        let aptr_id: i64 = amul_id + 1;
+        let aal1: String = nb_emit_alloc(am3, nb_slot_disp(amul_id));
+        let aal2: String = nb_store_rax(aal1, nb_slot_disp(aptr_id));
+        let s_aalloc: NbState = NbState { code: aal2, next_id: aptr_id + 1, last_id: aptr_id, ncalls: st.ncalls };
+        // Per-element stores, in SOURCE order.
+        let s_aelems: NbState = nb_array_elems(s_aalloc, buf, aelems_addr, anelems, 0, aptr_id, params_addr, n_params, calls, lets, lcell);
+        // The array literal's VALUE is the base pointer.
+        return NbState { code: s_aelems.code, next_id: s_aelems.next_id, last_id: aptr_id, ncalls: s_aelems.ncalls };
+    }
+    if k == ast_index() {
+        // `BASE[IDX]` i64 array index READ: lower base -> pointer slot, idx ->
+        // index slot, then CONST 8 ; MUL(idx,8) -> off ; ADD(base,off) -> addr ;
+        // __mind_load_i64(addr) -> dst. Uniform for constant AND variable idx
+        // (4 fresh ids after the operands — mirrored exactly in nb_count_expr).
+        // Compile-time bounds refusal (fail-closed, never a silent OOB read):
+        // a constant NEGATIVE index, or a constant index >= n on a base name
+        // let-bound directly to an `[...]` literal, POISONS the compile
+        // (nb_index_oob). Runtime bounds are NOT checked — same trust model as
+        // the manual __mind_load_i64 ABI this desugars to (documented in the
+        // fail-closed smoke). FLOAT base or FLOAT idx poisons (i64-only).
+        // main.mind's own source produces no index node — never fires during
+        // self-compile, integer native-ELF oracle byte-identical.
+        let ix_base: i64 = ast_child0(node);
+        let ix_idx: i64 = ast_child1(node);
+        let s_xb: NbState = nb_expr(st, buf, ix_base, params_addr, n_params, calls, lets, lcell);
+        let xb_id: i64 = s_xb.last_id;
+        let s_xi: NbState = nb_expr(s_xb, buf, ix_idx, params_addr, n_params, calls, lets, lcell);
+        let xi_id: i64 = s_xi.last_id;
+        if nb_index_oob(ix_base, ix_idx, buf, lets, lcell) == 1 {
+            __mind_store_i64(lcell + 80, 1)
+        }
+        let xdtbl: i64 = __mind_load_i64(lcell + 8);
+        if nb_node_dtype_tbl(ix_base, xdtbl, lets, lcell, buf, params_addr, n_params) == nb_dtype_float() {
+            __mind_store_i64(lcell + 80, 1)
+        }
+        if nb_node_dtype_tbl(ix_idx, xdtbl, lets, lcell, buf, params_addr, n_params) == nb_dtype_float() {
+            __mind_store_i64(lcell + 80, 1)
+        }
+        // CONST 8 (element stride).
+        let xc8_id: i64 = s_xi.next_id;
+        let xc1: String = nb_push(s_xi.code, 72);
+        let xc2: String = nb_push(xc1, 184);
+        let xc3: String = nb_i64le(xc2, 8);
+        let xc4: String = nb_store_rax(xc3, nb_slot_disp(xc8_id));
+        // MUL(idx, 8) -> byte offset.
+        let xoff_id: i64 = xc8_id + 1;
+        let xm1: String = nb_load_rax(xc4, nb_slot_disp(xi_id));
+        let xm2: String = nb_arith_rax_mem(xm1, op_mul(), nb_slot_disp(xc8_id));
+        let xm3: String = nb_store_rax(xm2, nb_slot_disp(xoff_id));
+        // ADD(base, off) -> element address.
+        let xaddr_id: i64 = xoff_id + 1;
+        let xa1: String = nb_load_rax(xm3, nb_slot_disp(xb_id));
+        let xa2: String = nb_arith_rax_mem(xa1, op_add(), nb_slot_disp(xoff_id));
+        let xa3: String = nb_store_rax(xa2, nb_slot_disp(xaddr_id));
+        // __mind_load_i64(addr) -> dst.
+        let xdst_id: i64 = xaddr_id + 1;
+        let xl1: String = nb_emit_load_i64(xa3, nb_slot_disp(xaddr_id));
+        let xl2: String = nb_store_rax(xl1, nb_slot_disp(xdst_id));
+        return NbState { code: xl2, next_id: xdst_id + 1, last_id: xdst_id, ncalls: s_xi.ncalls };
     }
     if k == ast_field() {
         // `recv.field` field READ (mirrors eval/lower.rs FieldAccess + the Rust
@@ -23347,6 +23616,13 @@ pub fn nb_let_descriptor(init: i64, ty_node: i64, buf: i64, srt: i64) -> i64 {
     if ast_kind(init) == ast_struct_lit() {
         return init;
     }
+    // An `[...]` array-literal init binds its OWN node as the descriptor so
+    // the index arms can refuse a proven-constant OOB index (nb_index_oob
+    // reads its element count) — the field-READ path guards on descriptor
+    // kind (nb_slit_field_index) so `name.field` over an array still refuses.
+    if ast_kind(init) == ast_array_lit() {
+        return init;
+    }
     if ty_node == 0 {
         return 0;
     }
@@ -23525,6 +23801,80 @@ pub fn nb_struct_field_store_off(code: String, next_id: i64, ptr_id: i64, val_id
     let store_dst: i64 = add_id + 1;
     let c_st: String = nb_emit_store_i64(a3, nb_slot_disp(add_id), nb_slot_disp(val_id));
     NbState { code: c_st, next_id: store_dst + 1, last_id: store_dst, ncalls: ncalls }
+}
+
+// Per-element stores for an `[e0, e1, ...]` array literal (mirror
+// nb_struct_fields; elements live at elems_addr + i*8 — one node ptr per
+// element, no name triples). Reuses the struct-field store helpers
+// byte-for-byte: element 0 stores at the base ptr, element i>0 materialises
+// CONST(8*i)+ADD first. An element that classifies FLOAT poisons (i64-only
+// arrays this pass); emission continues so the SSA-id progression still
+// matches nb_count_array_elems (the poisoned output is discarded whole).
+pub fn nb_array_elems(st: NbState, buf: i64, elems_addr: i64, nelems: i64, i: i64, ptr_id: i64, params_addr: i64, n_params: i64, calls: i64, lets: i64, lcell: i64) -> NbState {
+    if i >= nelems {
+        return st;
+    }
+    let value_node: i64 = __mind_load_i64(elems_addr + i * 8);
+    let sv: NbState = nb_expr(st, buf, value_node, params_addr, n_params, calls, lets, lcell);
+    if nb_node_dtype_tbl(value_node, __mind_load_i64(lcell + 8), lets, lcell, buf, params_addr, n_params) == nb_dtype_float() {
+        __mind_store_i64(lcell + 80, 1)
+    }
+    if i == 0 {
+        let s_after0: NbState = nb_struct_field_store0(sv.code, sv.next_id, ptr_id, sv.last_id, sv.ncalls);
+        return nb_array_elems(s_after0, buf, elems_addr, nelems, i + 1, ptr_id, params_addr, n_params, calls, lets, lcell);
+    }
+    let s_after: NbState = nb_struct_field_store_off(sv.code, sv.next_id, ptr_id, sv.last_id, sv.ncalls, i * 8);
+    nb_array_elems(s_after, buf, elems_addr, nelems, i + 1, ptr_id, params_addr, n_params, calls, lets, lcell)
+}
+
+// Compile-time bounds refusal for `BASE[IDX]` (read AND write): 1 iff the
+// index is a PROVEN out-of-range constant. Two cases: (a) a NEGATIVE constant
+// (`ast_neg` over an int literal) — OOB for every array; (b) a plain int
+// literal >= n where BASE is an ident let-bound DIRECTLY to an `[...]`
+// literal (the descriptor nb_let_descriptor records). A variable index, a
+// reassigned base, or an array that crossed a call boundary is NOT statically
+// checkable — those index UNCHECKED at runtime (the same trust model as the
+// manual __mind_load_i64 ABI this desugars to; documented in the fail-closed
+// smoke). An if-STATEMENT chain (no value-if-let phis) — self-host subset.
+pub fn nb_index_oob(base: i64, idx: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
+    if ast_kind(idx) == ast_neg() {
+        if ast_kind(ast_child0(idx)) == ast_int_lit() {
+            return 1;
+        }
+    }
+    if ast_kind(idx) != ast_int_lit() {
+        return 0;
+    }
+    let iv: i64 = if ast_child1(idx) == 1 {
+        ast_child0(idx)
+    } else {
+        parse_int_span(buf, ast_span_lo(idx), ast_span_hi(idx), 0)
+    };
+    if iv < 0 {
+        return 1;
+    }
+    // A DIRECT array-literal base (`[1,2,3][7]`) carries its own element
+    // count — check it without any let-env binding.
+    if ast_kind(base) == ast_array_lit() {
+        if iv >= ast_aux(base) {
+            return 1;
+        }
+        return 0;
+    }
+    if ast_kind(base) != ast_ident() {
+        return 0;
+    }
+    let desc: i64 = nb_lets_lookup_slit(lets, lcell, buf, ast_span_lo(base), ast_span_hi(base));
+    if desc == 0 {
+        return 0;
+    }
+    if ast_kind(desc) != ast_array_lit() {
+        return 0;
+    }
+    if iv >= ast_aux(desc) {
+        return 1;
+    }
+    0
 }
 
 // Load each call arg 0..n-1 into its SysV argument register, drawing from two
@@ -24711,6 +25061,59 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let _dt167: i64 = nb_dtype_tag_slot(dtbl167, s1.last_id, rhs_dt167);
         return s1;
     }
+    if k == ast_index_assign() {
+        // `BASE[IDX] = RHS ;` i64 array index WRITE — the store twin of
+        // nb_expr's ast_index read arm. Evaluation order (left-to-right,
+        // mirrored EXACTLY in nb_count_stmt): base -> ptr slot ; idx -> index
+        // slot ; CONST 8 ; MUL(idx,8) -> off ; ADD(base,off) -> addr ; RHS ->
+        // val ; __mind_store_i64(addr, val) (store-dst id consumed, never
+        // read — same as the struct-field store). It is a MEMORY store, not a
+        // name rebind: no let-env change, so if/while merge machinery is
+        // untouched (heap writes are naturally visible across branches and
+        // loop iterations). Same fail-closed refusals as the read arm:
+        // proven-constant OOB index, FLOAT idx, FLOAT rhs (i64-only).
+        // main.mind's own source produces no index-assign node — never fires
+        // during self-compile, integer native-ELF oracle byte-identical.
+        let w_base: i64 = ast_child0(node);
+        let w_idx: i64 = ast_child1(node);
+        let w_rhs: i64 = ast_child2(node);
+        let s_wb: NbState = nb_expr(st, buf, w_base, params_addr, n_params, calls, lets, lcell);
+        let wb_id: i64 = s_wb.last_id;
+        let s_wi: NbState = nb_expr(s_wb, buf, w_idx, params_addr, n_params, calls, lets, lcell);
+        let wi_id: i64 = s_wi.last_id;
+        if nb_index_oob(w_base, w_idx, buf, lets, lcell) == 1 {
+            __mind_store_i64(lcell + 80, 1)
+        }
+        let wdtbl: i64 = __mind_load_i64(lcell + 8);
+        if nb_node_dtype_tbl(w_idx, wdtbl, lets, lcell, buf, params_addr, n_params) == nb_dtype_float() {
+            __mind_store_i64(lcell + 80, 1)
+        }
+        // CONST 8 (element stride).
+        let wc8_id: i64 = s_wi.next_id;
+        let wc1: String = nb_push(s_wi.code, 72);
+        let wc2: String = nb_push(wc1, 184);
+        let wc3: String = nb_i64le(wc2, 8);
+        let wc4: String = nb_store_rax(wc3, nb_slot_disp(wc8_id));
+        // MUL(idx, 8) -> byte offset.
+        let woff_id: i64 = wc8_id + 1;
+        let wm1: String = nb_load_rax(wc4, nb_slot_disp(wi_id));
+        let wm2: String = nb_arith_rax_mem(wm1, op_mul(), nb_slot_disp(wc8_id));
+        let wm3: String = nb_store_rax(wm2, nb_slot_disp(woff_id));
+        // ADD(base, off) -> element address.
+        let waddr_id: i64 = woff_id + 1;
+        let wa1: String = nb_load_rax(wm3, nb_slot_disp(wb_id));
+        let wa2: String = nb_arith_rax_mem(wa1, op_add(), nb_slot_disp(woff_id));
+        let wa3: String = nb_store_rax(wa2, nb_slot_disp(waddr_id));
+        // RHS -> value slot.
+        let s_wv: NbState = nb_expr(NbState { code: wa3, next_id: waddr_id + 1, last_id: waddr_id, ncalls: s_wi.ncalls }, buf, w_rhs, params_addr, n_params, calls, lets, lcell);
+        if nb_node_dtype_tbl(w_rhs, wdtbl, lets, lcell, buf, params_addr, n_params) == nb_dtype_float() {
+            __mind_store_i64(lcell + 80, 1)
+        }
+        // __mind_store_i64(addr, val); the store's dst id is consumed unread.
+        let wdst_id: i64 = s_wv.next_id;
+        let ws1: String = nb_emit_store_i64(s_wv.code, nb_slot_disp(waddr_id), nb_slot_disp(s_wv.last_id));
+        return NbState { code: ws1, next_id: wdst_id + 1, last_id: wdst_id, ncalls: s_wv.ncalls };
+    }
     if k == ast_break() {
         // `break` — emit the leading ConstI64(unit,0) (lower.rs 5967), then a jmp
         // whose target is the loop end (patched at loop close). Record its index in
@@ -25539,6 +25942,20 @@ pub fn nb_count_expr(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         // The struct-lit VALUE is the alloc-ptr slot (next_id+3); no extra id.
         return after_fields;
     }
+    if k == ast_array_lit() {
+        // sz + n + mul + alloc-ptr = 4 ids, then per element i: value ids +
+        // (i==0 ? 0 : 2 for CONST off + ADD) + 1 store-dst — the EXACT mirror
+        // of nb_expr's ast_array_lit arm (nb_array_elems). The array VALUE is
+        // the alloc-ptr slot (next_id+3); no extra id.
+        return nb_count_array_elems(next_id + 4, buf, ast_child1(node), ast_aux(node), 0, params_addr, n_params, clets, clcell);
+    }
+    if k == ast_index() {
+        // base ids + idx ids + 4 (CONST 8 ; MUL ; ADD ; load-dst) — the exact
+        // mirror of nb_expr's ast_index arm.
+        let xcb: i64 = nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params, clets, clcell);
+        let xci: i64 = nb_count_expr(xcb, buf, ast_child1(node), params_addr, n_params, clets, clcell);
+        return xci + 4;
+    }
     if k == ast_field() {
         // recv ids (an ident contributes 0) + (off==0 ? 1 load : 2 off+add + 1 load).
         // Offset resolved via the same helper as emission (no value-if-let phis).
@@ -25681,6 +26098,19 @@ pub fn nb_count_struct_fields(next_id: i64, buf: i64, fields_addr: i64, nfields:
     // Computed via a helper (if-statement) to stay in the self-host subset.
     let after_addr: i64 = nb_field_addr_ids(after_val, i);
     nb_count_struct_fields(after_addr + 1, buf, fields_addr, nfields, i + 1, params_addr, n_params, clets, clcell)
+}
+
+// Count the ids each array-literal element's store contributes (mirror
+// nb_array_elems): value ids + (i==0 ? 0 : 2 for CONST off + ADD) + 1
+// store-dst, in SOURCE order. Elements live at elems_addr + i*8.
+pub fn nb_count_array_elems(next_id: i64, buf: i64, elems_addr: i64, nelems: i64, i: i64, params_addr: i64, n_params: i64, clets: i64, clcell: i64) -> i64 {
+    if i >= nelems {
+        return next_id;
+    }
+    let value_node: i64 = __mind_load_i64(elems_addr + i * 8);
+    let after_val: i64 = nb_count_expr(next_id, buf, value_node, params_addr, n_params, clets, clcell);
+    let after_addr: i64 = nb_field_addr_ids(after_val, i);
+    nb_count_array_elems(after_addr + 1, buf, elems_addr, nelems, i + 1, params_addr, n_params, clets, clcell)
 }
 pub fn nb_count_args(next_id: i64, buf: i64, args_addr: i64, args_len: i64, i: i64, params_addr: i64, n_params: i64, clets: i64, clcell: i64) -> i64 {
     if i >= args_len {
@@ -25884,6 +26314,15 @@ pub fn nb_count_stmt(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         }
         return after_rhs;
     }
+    if k == ast_index_assign() {
+        // `BASE[IDX] = RHS ;`: base ids + idx ids + 3 (CONST 8 ; MUL ; ADD) +
+        // RHS ids + 1 store-dst — the exact mirror of nb_stmt's index-assign
+        // arm. A memory store, not a name rebind: no count-lets change.
+        let wcb: i64 = nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params, clets, clcell);
+        let wci: i64 = nb_count_expr(wcb, buf, ast_child1(node), params_addr, n_params, clets, clcell);
+        let wcr: i64 = nb_count_expr(wci + 3, buf, ast_child2(node), params_addr, n_params, clets, clcell);
+        return wcr + 1;
+    }
     if k == ast_break() {
         // `break`/`continue` emit a leading ConstI64(unit,0) (1 fresh id); the
         // terminator itself has no dst (lower.rs 5967-5972).
@@ -25936,6 +26375,15 @@ pub fn nb_ccount_expr(buf: i64, node: i64, ccell: i64) -> i64 {
         let fields_addr: i64 = ast_child1(node);
         let nfields: i64 = ast_aux(node);
         return nb_ccount_struct_fields(buf, fields_addr, nfields, 0, ccell);
+    }
+    // Array literal / index read: walk the element / base+idx sub-exprs for
+    // call sites (an element or index that is a call is a call site).
+    if k == ast_array_lit() {
+        return nb_ccount_array_elems(buf, ast_child1(node), ast_aux(node), 0, ccell);
+    }
+    if k == ast_index() {
+        let _xb: i64 = nb_ccount_expr(buf, ast_child0(node), ccell);
+        return nb_ccount_expr(buf, ast_child1(node), ccell);
     }
     if k == ast_field() {
         return nb_ccount_expr(buf, ast_child0(node), ccell);
@@ -26008,6 +26456,14 @@ pub fn nb_ccount_struct_fields(buf: i64, fields_addr: i64, nfields: i64, i: i64,
     let _v: i64 = nb_ccount_expr(buf, value_node, ccell);
     nb_ccount_struct_fields(buf, fields_addr, nfields, i + 1, ccell)
 }
+pub fn nb_ccount_array_elems(buf: i64, elems_addr: i64, nelems: i64, i: i64, ccell: i64) -> i64 {
+    if i >= nelems {
+        return 0;
+    }
+    let value_node: i64 = __mind_load_i64(elems_addr + i * 8);
+    let _v: i64 = nb_ccount_expr(buf, value_node, ccell);
+    nb_ccount_array_elems(buf, elems_addr, nelems, i + 1, ccell)
+}
 pub fn nb_ccount_args(buf: i64, args_addr: i64, args_len: i64, i: i64, ccell: i64) -> i64 {
     if i >= args_len {
         return 0;
@@ -26051,6 +26507,12 @@ pub fn nb_ccount_stmt(buf: i64, node: i64, ccell: i64) -> i64 {
     }
     if k == ast_assign() {
         // `NAME = VALUE`: call sites in the value expr (child2).
+        return nb_ccount_expr(buf, ast_child2(node), ccell);
+    }
+    if k == ast_index_assign() {
+        // `BASE[IDX] = RHS ;`: call sites in the base, index and rhs exprs.
+        let _wb: i64 = nb_ccount_expr(buf, ast_child0(node), ccell);
+        let _wi: i64 = nb_ccount_expr(buf, ast_child1(node), ccell);
         return nb_ccount_expr(buf, ast_child2(node), ccell);
     }
     if k == ast_break() {
@@ -26112,6 +26574,17 @@ pub fn nb_argv_expr(buf: i64, node: i64) -> i64 {
         let fields_addr: i64 = ast_child1(node);
         let nfields: i64 = ast_aux(node);
         return nb_argv_struct_fields(buf, fields_addr, nfields, 0);
+    }
+    // Array literal / index read: an argv intrinsic can sit in an element or
+    // in the base/index sub-exprs — walk them (short-circuit OR).
+    if k == ast_array_lit() {
+        return nb_argv_array_elems(buf, ast_child1(node), ast_aux(node), 0);
+    }
+    if k == ast_index() {
+        if nb_argv_expr(buf, ast_child0(node)) == 1 {
+            return 1;
+        }
+        return nb_argv_expr(buf, ast_child1(node));
     }
     if k == ast_field() {
         return nb_argv_expr(buf, ast_child0(node));
@@ -26180,6 +26653,16 @@ pub fn nb_argv_struct_fields(buf: i64, fields_addr: i64, nfields: i64, i: i64) -
     }
     nb_argv_struct_fields(buf, fields_addr, nfields, i + 1)
 }
+pub fn nb_argv_array_elems(buf: i64, elems_addr: i64, nelems: i64, i: i64) -> i64 {
+    if i >= nelems {
+        return 0;
+    }
+    let value_node: i64 = __mind_load_i64(elems_addr + i * 8);
+    if nb_argv_expr(buf, value_node) == 1 {
+        return 1;
+    }
+    nb_argv_array_elems(buf, elems_addr, nelems, i + 1)
+}
 pub fn nb_argv_args(buf: i64, args_addr: i64, args_len: i64, i: i64) -> i64 {
     if i >= args_len {
         return 0;
@@ -26229,6 +26712,15 @@ pub fn nb_argv_stmt(buf: i64, node: i64) -> i64 {
         return nb_argv_stmts(buf, ast_child0(body_blk), ast_aux(body_blk), 0);
     }
     if k == ast_assign() {
+        return nb_argv_expr(buf, ast_child2(node));
+    }
+    if k == ast_index_assign() {
+        if nb_argv_expr(buf, ast_child0(node)) == 1 {
+            return 1;
+        }
+        if nb_argv_expr(buf, ast_child1(node)) == 1 {
+            return 1;
+        }
         return nb_argv_expr(buf, ast_child2(node));
     }
     if k == ast_break() {
@@ -27787,6 +28279,16 @@ pub fn nb_reach_expr(buf: i64, fns: i64, n_fns: i64, reach: i64, node: i64, chan
         let nfields: i64 = ast_aux(node);
         return nb_reach_struct_fields(buf, fns, n_fns, reach, fields_addr, nfields, 0, changed);
     }
+    // Array literal / index read: mark callees inside the elements and the
+    // base/index sub-exprs (an element that is a call keeps its callee live
+    // through the prune).
+    if k == ast_array_lit() {
+        return nb_reach_array_elems(buf, fns, n_fns, reach, ast_child1(node), ast_aux(node), 0, changed);
+    }
+    if k == ast_index() {
+        let _xb: i64 = nb_reach_expr(buf, fns, n_fns, reach, ast_child0(node), changed);
+        return nb_reach_expr(buf, fns, n_fns, reach, ast_child1(node), changed);
+    }
     if k == ast_field() {
         return nb_reach_expr(buf, fns, n_fns, reach, ast_child0(node), changed);
     }
@@ -27856,6 +28358,14 @@ pub fn nb_reach_struct_fields(buf: i64, fns: i64, n_fns: i64, reach: i64, fields
     let _v: i64 = nb_reach_expr(buf, fns, n_fns, reach, value_node, changed);
     nb_reach_struct_fields(buf, fns, n_fns, reach, fields_addr, nfields, i + 1, changed)
 }
+pub fn nb_reach_array_elems(buf: i64, fns: i64, n_fns: i64, reach: i64, elems_addr: i64, nelems: i64, i: i64, changed: i64) -> i64 {
+    if i >= nelems {
+        return 0;
+    }
+    let value_node: i64 = __mind_load_i64(elems_addr + i * 8);
+    let _v: i64 = nb_reach_expr(buf, fns, n_fns, reach, value_node, changed);
+    nb_reach_array_elems(buf, fns, n_fns, reach, elems_addr, nelems, i + 1, changed)
+}
 pub fn nb_reach_args(buf: i64, fns: i64, n_fns: i64, reach: i64, args_addr: i64, args_len: i64, i: i64, changed: i64) -> i64 {
     if i >= args_len {
         return 0;
@@ -27899,6 +28409,12 @@ pub fn nb_reach_stmt(buf: i64, fns: i64, n_fns: i64, reach: i64, node: i64, chan
     }
     if k == ast_assign() {
         // `NAME = VALUE`: mark callees in the value expr (child2).
+        return nb_reach_expr(buf, fns, n_fns, reach, ast_child2(node), changed);
+    }
+    if k == ast_index_assign() {
+        // `BASE[IDX] = RHS ;`: mark callees in the base, index and rhs exprs.
+        let _wb: i64 = nb_reach_expr(buf, fns, n_fns, reach, ast_child0(node), changed);
+        let _wi: i64 = nb_reach_expr(buf, fns, n_fns, reach, ast_child1(node), changed);
         return nb_reach_expr(buf, fns, n_fns, reach, ast_child2(node), changed);
     }
     if k == ast_break() {
