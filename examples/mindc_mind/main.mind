@@ -37630,6 +37630,136 @@ pub fn selftest_tc_self_host_only_call(w0: i64, w1: i64, w2: i64, w3: i64, len: 
     tc_is_self_host_only_call(w0, w1, w2, w3, len)
 }
 
+// ---- E2008 unknown enum variant ----
+// Twin of resolve.rs `unknown_variant` + `collect_enum_variants`
+// (UNKNOWN_VARIANT_CODE): a qualified `Enum::Variant` path whose HEAD names a
+// locally-declared enum but whose trailing segment is NOT one of that enum's
+// declared variants — a silent-miscompile typo (the lowerer folds the unknown
+// variant to discriminant tag 0). Sound-condition only, mirroring the Rust
+// deferrals exactly: a bare name (no "::"), a deeper `a::B::C` path, and a
+// head that is not a locally-declared enum all return 0 (deferred, never a
+// false positive). Duplicate enum declarations MERGE their variant sets
+// (BTreeMap `or_default` semantics in collect_enum_variants).
+//
+// The registry is built by a token scan over the module source: each
+// `enum NAME {` header (ident "enum" + ident + lbrace, via the real lexer so
+// comments/strings never alias) opens a body whose variant names are the
+// leading identifier of each top-level comma-separated entry; tuple payloads
+// `V(i64, i64)` and struct payloads `V { w: i64 }` are skipped by
+// paren/brace depth tracking. This mirrors collect_enum_variants over the
+// declaration forms the surface grammar accepts (top-level and module-block
+// enum declarations). Additive: reached only through
+// selftest_tc_unknown_variant, never mindc_compile.
+
+// First byte index of "::" in path[lo..len), or len as the not-found sentinel
+// (an index >= len - 1 can never start a two-byte "::").
+pub fn tc_uv_find_dcolon(path: i64, lo: i64, len: i64) -> i64 {
+    if lo + 1 >= len {
+        return len;
+    }
+    if load_byte(path, lo) == 58 {
+        if load_byte(path, lo + 1) == 58 {
+            return lo;
+        }
+    }
+    tc_uv_find_dcolon(path, lo + 1, len)
+}
+
+// Scan one enum body (tokens from i, just past the opening lbrace) for a
+// variant name byte-equal to path[vlo..vhi). Entry grammar: at brace depth 1
+// and paren depth 0, the first identifier after the opening brace or after a
+// separating comma is a variant name; everything nested deeper is payload.
+// Returns 1 iff the variant is declared in THIS body.
+pub fn tc_uv_scan_body(toks: Vec, n: i64, i: i64, src: i64, path: i64, vlo: i64, vhi: i64, bdepth: i64, pdepth: i64, expect: i64, found: i64) -> i64 {
+    if i >= n {
+        return found;
+    }
+    let k: i64 = tok_kind(toks, i);
+    if k == tk_rbrace() {
+        if bdepth == 1 {
+            return found;
+        }
+        return tc_uv_scan_body(toks, n, i + 1, src, path, vlo, vhi, bdepth - 1, pdepth, expect, found);
+    }
+    if k == tk_lbrace() {
+        return tc_uv_scan_body(toks, n, i + 1, src, path, vlo, vhi, bdepth + 1, pdepth, expect, found);
+    }
+    if k == tk_lparen() {
+        return tc_uv_scan_body(toks, n, i + 1, src, path, vlo, vhi, bdepth, pdepth + 1, expect, found);
+    }
+    if k == tk_rparen() {
+        return tc_uv_scan_body(toks, n, i + 1, src, path, vlo, vhi, bdepth, pdepth - 1, expect, found);
+    }
+    if bdepth == 1 {
+        if pdepth == 0 {
+            if k == tk_comma() {
+                return tc_uv_scan_body(toks, n, i + 1, src, path, vlo, vhi, bdepth, pdepth, 1, found);
+            }
+            if expect == 1 {
+                if k == tk_ident() {
+                    if span_bytes_equal2(src, tok_lo(toks, i), tok_hi(toks, i), path, vlo, vhi) == 1 {
+                        return tc_uv_scan_body(toks, n, i + 1, src, path, vlo, vhi, bdepth, pdepth, 0, 1);
+                    }
+                    return tc_uv_scan_body(toks, n, i + 1, src, path, vlo, vhi, bdepth, pdepth, 0, found);
+                }
+            }
+        }
+    }
+    tc_uv_scan_body(toks, n, i + 1, src, path, vlo, vhi, bdepth, pdepth, expect, found)
+}
+
+// Walk the whole token stream for `enum NAME {` headers whose NAME byte-equals
+// path[hlo..hhi); merge the found-variant verdict across ALL matching
+// declarations (duplicate-decl merge). Decision at end of stream: 1 iff the
+// head matched at least one local enum AND the variant matched none.
+pub fn tc_uv_walk(toks: Vec, n: i64, i: i64, src: i64, path: i64, hlo: i64, hhi: i64, vlo: i64, vhi: i64, head_found: i64, var_found: i64) -> i64 {
+    if i + 2 >= n {
+        if head_found == 1 {
+            if var_found == 0 {
+                return 1;
+            }
+        }
+        return 0;
+    }
+    if tok_kind(toks, i) == tk_ident() {
+        if is_enum_kw(src, tok_lo(toks, i), tok_hi(toks, i)) == 1 {
+            if tok_kind(toks, i + 1) == tk_ident() {
+                if tok_kind(toks, i + 2) == tk_lbrace() {
+                    if span_bytes_equal2(src, tok_lo(toks, i + 1), tok_hi(toks, i + 1), path, hlo, hhi) == 1 {
+                        if tc_uv_scan_body(toks, n, i + 3, src, path, vlo, vhi, 1, 0, 1, 0) == 1 {
+                            return tc_uv_walk(toks, n, i + 3, src, path, hlo, hhi, vlo, vhi, 1, 1);
+                        }
+                        return tc_uv_walk(toks, n, i + 3, src, path, hlo, hhi, vlo, vhi, 1, var_found);
+                    }
+                }
+            }
+        }
+    }
+    tc_uv_walk(toks, n, i + 1, src, path, hlo, hhi, vlo, vhi, head_found, var_found)
+}
+
+// E2008: 1 iff `path` (a qualified value/callee string) is a two-segment
+// `Enum::Variant` whose head names an enum declared in `src` but whose
+// variant is not one of that enum's declared variants. Mirrors the Rust
+// decision exactly: no "::" -> 0; deeper path -> 0; non-local head -> 0;
+// declared variant -> 0.
+pub fn tc_is_unknown_variant(src: i64, src_len: i64, path: i64, path_len: i64) -> i64 {
+    let d: i64 = tc_uv_find_dcolon(path, 0, path_len);
+    if d >= path_len {
+        return 0;
+    }
+    let rlo: i64 = d + 2;
+    if tc_uv_find_dcolon(path, rlo, path_len) < path_len {
+        return 0;
+    }
+    let toks: Vec = lex(src, src_len);
+    tc_uv_walk(toks, tok_count(toks), 0, src, path, 0, d, rlo, path_len, 0, 0)
+}
+
+pub fn selftest_tc_unknown_variant(src: i64, src_len: i64, path: i64, path_len: i64) -> i64 {
+    tc_is_unknown_variant(src, src_len, path, path_len)
+}
+
 
 
 // ============================================================================

@@ -102,10 +102,13 @@ itself byte-identically with zero Rust & zero LLVM in the loop"* (integer/contro
   self-host-only intrinsic call: `starts_with("__mind_")` AND not in the 33-entry intrinsic table;
   packed-word encoding makes tuple-equality == string-equality; gated by a THREE-WAY-agreement smoke:
   MIND core == runtime-parsed `mod.rs` table == live `mindc check`, 107 cases. E2014 retired (#99),
-  E2007 has no live oracle.)** **13 pure-decision rule families now ported.** The
-  remaining rules (E2001/2/3/8/9/12 — general mismatch / unknown ident / unknown call / unknown variant /
-  undeclared assign / fn-value call) need the resolution/inference ENVIRONMENT (not pure decision cores) —
-  that engine-dependent bulk is the still-open work.
+  E2007 has no live oracle.)** **14 pure-decision rule families now ported** (+ E2008 unknown-variant, 2026-07-23 — a syntactic
+  enum-variant registry built from the source via the self-host lexer, 16-case three-way smoke). The
+  remaining rules: **E2002/E2003/E2009/E2012 all share ONE missing engine** — the lexical scope-frame
+  walk (`Scopes` + binding-aware body walk + std-export name set); a single ~`sft_build_table`-sized
+  investment unlocks all four at once (none is independently portable). **E2001** additionally needs full
+  type inference (a resolved-type environment) — a separate, larger tier. That engine-dependent bulk is
+  the next B1 sub-project.
 - [ ] **B2** Full parser + AST→IR lowering (`parser` ~5,563 portable of 7,782 total — the `#[bimap]` + trivia
   ~2,219 LOC are descoped from the self-host target — + `eval/lower.rs` 9,966) for every construct. The self-host
   front-end already lexes+parses+lowers the scalar/i64/control-flow subset (that is what the keystone loop
