@@ -129,6 +129,14 @@ chk "tc_classify (error-code router)" python3 examples/mindc_mind/self_host_tc_c
 chk "arena_growth (self-host cap headroom)" python3 examples/mindc_mind/self_host_arena_growth_smoke.py
 chk "toplevel_assign (C: straight-line i64 reassign)" python3 examples/mindc_mind/self_host_native_toplevel_assign_smoke.py
 chk "narrow_paramret (i8/i16/i32 param+return wrap)" python3 examples/mindc_mind/self_host_native_narrow_paramret_smoke.py
+# Grown-subset capability value-correctness gates (main.mind does not USE these
+# features, so the self-host loop never exercises them — these harnesses are their
+# ONLY regression gate; wired here so CI protects each landed rung).
+chk "ref_netverify (refs value + cycle fail-closed)" python3 examples/mindc_mind/ref_netverify.py
+chk "field_store_netverify (p.x=v mutable structs)"  python3 examples/mindc_mind/field_store_netverify.py
+chk "enum_netverify (C-like enums + match)"          python3 examples/mindc_mind/enum_netverify.py
+chk "option_netverify (Option/Result payload enums)" python3 examples/mindc_mind/option_netverify.py
+chk "failclosed (poison boundary + float refusal)"   python3 examples/mindc_mind/self_host_failclosed_smoke.py
 
 rm -f "$DIR_SO" "$MT_SO"
 echo "== $pass passed, $fail failed in $(($(date +%s)-t0))s =="
