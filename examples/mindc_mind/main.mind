@@ -32775,10 +32775,44 @@ pub fn selftest_native_elf_fp_let(src_addr: i64, src_len: i64) -> EmitState {
 // classification `p.x` would classify INT, take the GP-integer field load, and the trunc
 // of the mis-interpreted bits would fault or return the wrong exit — so a correct exit is
 // non-fakeable. A MIXED struct (int + float fields) reading its float field proves the
-// per-field dtype + offset. Same nb_block_stmts / lcell+8 dtype-table plumbing as fp_let.
+// per-field dtype + offset. Same nb_block_stmts / lcell+8 dtype-table plumbing as fp_let,
+// but the block is wrapped in the fp_call ENTRY-CALLS-BLOCK scaffold (not a bare entry)
+// and its intra-fn forward jumps are patched (nb_patch_jmps), so if/value-if branches and
+// explicit `return <float>` statements over float fields lower correctly too.
+// Given `pos` just past a struct decl's opening `{`, return the index just past
+// its matching `}`. Struct field lists are FLAT (`name: type` pairs — no nested
+// braces), so a linear scan to the first `}` is exact.
+pub fn nb_fp_skip_decl_body(toks: Vec, pos: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return pos;
+    }
+    if tok_kind(toks, pos) == tk_rbrace() {
+        return pos + 1;
+    }
+    nb_fp_skip_decl_body(toks, pos + 1)
+}
+
+// Skip the LEADING `struct Name { ... }` declaration items of a block fixture,
+// returning the token index of the statement block's opening `{`. The fp_field
+// fixtures prefix the block with the struct declarations srt_build registers;
+// parse_block starting at token 0 (`struct`) mis-parses the DECL as statements
+// and poisons the compile, so the driver must start the block parse here.
+pub fn nb_fp_skip_struct_decls(toks: Vec, buf: i64, pos: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return pos;
+    }
+    if tok_kind(toks, pos) == tk_ident() {
+        if is_struct_kw(buf, tok_lo(toks, pos), tok_hi(toks, pos)) == 1 {
+            // pos+1 = Name, pos+2 = `{`; body scan starts at pos+3.
+            return nb_fp_skip_struct_decls(toks, buf, nb_fp_skip_decl_body(toks, pos + 3));
+        }
+    }
+    pos
+}
+
 pub fn selftest_native_elf_fp_field(src_addr: i64, src_len: i64) -> EmitState {
     let toks: Vec = lex(src_addr, src_len);
-    let pr: ParseResult = parse_block(toks, 0, src_addr);
+    let pr: ParseResult = parse_block(toks, nb_fp_skip_struct_decls(toks, src_addr, 0), src_addr);
     let blk: i64 = pr_node(pr);
     let stmts_addr: i64 = ast_child0(blk);
     let stmts_len: i64 = ast_aux(blk);
@@ -32798,17 +32832,67 @@ pub fn selftest_native_elf_fp_field(src_addr: i64, src_len: i64) -> EmitState {
     __mind_store_i64(lcell + 72, 64);
     __mind_store_i64(lcell + 8, nb_dtype_table_new(128));
     let srt: i64 = srt_build(src_addr, src_len);
+    let frt: i64 = frt_build(src_addr, src_len);
     let loops: i64 = __mind_alloc(256 * 3 * 8);
     let lpcell: i64 = __mind_alloc(8);
     __mind_store_i64(lpcell, 0);
+    // FIX (fp-field SIGSEGV): stash the FULL nb_lower_fn lcell side-channel —
+    // nb_expr's struct-lit arm reads srt off lcell+24 (nb_slit_validate /
+    // nb_slit_src_index), the call-dtype arm reads frt off +16, and the value-if
+    // arm reads jmps/jcell/loops/lpcell off +40/+48/+56/+64. This hand-rolled
+    // driver left them UNINITIALIZED, so the fixture's struct literal deref'd a
+    // garbage srt handle inside nb_slit_validate -> SIGSEGV during emission.
+    // +80 is the fail-closed poison word — zeroed here, checked after lowering.
+    __mind_store_i64(lcell + 16, frt);
+    __mind_store_i64(lcell + 24, srt);
+    __mind_store_i64(lcell + 32, 0);
+    __mind_store_i64(lcell + 40, jmps);
+    __mind_store_i64(lcell + 48, jcell);
+    __mind_store_i64(lcell + 56, loops);
+    __mind_store_i64(lcell + 64, lpcell);
+    __mind_store_i64(lcell + 80, 0);
     let st0: NbState = NbState { code: p, next_id: 0, last_id: 0 - 1, ncalls: 0 };
     let sb: NbState = nb_block_stmts(st0, src_addr, stmts_addr, stmts_len, 0, params, 0, calls, 0, jmps, jcell, lets, lcell, srt, loops, lpcell);
+    // FAIL CLOSED (mirror nb_lower_fn's systemic gate): a refused node poisons
+    // lcell+80 (or propagates the -1 sentinel) — return the empty EmitState
+    // (0 bytes), never a running ELF with a wrong value.
+    if sb.next_id < 0 {
+        return es_new();
+    }
+    if __mind_load_i64(lcell + 80) == 1 {
+        return es_new();
+    }
+    // The block is lowered as a CALLEE fn (fp_call scaffold, not a bare entry):
+    // tail value -> xmm0 ; epilogue+ret. An explicit `return <float>` inside the
+    // block takes nb_stmt's return arm (movsd xmm0 ; epilogue+ret, is_entry=0) —
+    // the SAME convention — so statement-if + return over a float field works.
     let c1: String = nb_fp_movsd_load_xmm0(sb.code, nb_slot_disp(sb.last_id));
-    let c2: String = nb_fp_trunc_rax_xmm0(c1);
-    let code: String = nb_emit_return(c2, 1);
+    let fnc: String = nb_emit_return(c1, 0);
+    // Patch every recorded intra-fn forward jump IN PLACE before concatenation
+    // (mirror nb_lower_fn / the sibling fp drivers) — without this an if/value-if
+    // in the block leaves its je/jmp rel32 placeholders unresolved (always-else /
+    // crash). Sites are fn-relative, so patch the block's own buffer.
+    let njmps: i64 = __mind_load_i64(jcell);
+    let _px: i64 = nb_patch_jmps(string_addr(fnc), jmps, njmps, 0);
+    // Entry stub (fp_call scaffold): movabs rsp, STACK_TOP ; call <block> (rel32) ;
+    // cvttsd2si rax,xmm0 ; exit(rax).
+    let e0: String = string_new();
+    let e1: String = nb_push(e0, 72);
+    let e2: String = nb_push(e1, 188);
+    let e3: String = nb_i64le(e2, nb_stack_top());
+    let e4: String = nb_push(e3, 232);
+    let entry_call_site: i64 = string_len(e4);
+    let e5: String = nb_u32(e4, 0);
+    let e6: String = nb_fp_trunc_rax_xmm0(e5);
+    let entry: String = nb_emit_return(e6, 1);
+    let entry_len: i64 = string_len(entry);
+    // image = [entry][block fn]; patch the entry's call rel32 to the block start.
+    let image: String = string_push_str(entry, fnc);
+    let rel: i64 = entry_len - (entry_call_site + 4);
+    let _pe: i64 = nb_patch_rel32(string_addr(image), entry_call_site, rel);
     let hbuf: i64 = __mind_alloc(32);
     let note: String = nb_build_note(string_new(), hbuf);
-    let elf: String = nb_write_elf(code, 0, note);
+    let elf: String = nb_write_elf(image, 0, note);
     EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
 }
 
@@ -33217,6 +33301,14 @@ pub fn selftest_native_elf_fp_call(src_addr: i64, src_len: i64) -> EmitState {
     // fn_names for callee resolution, then patch every inter-fn rel32 (f -> g).
     let fn_names: i64 = __mind_alloc((n_fns + 1) * 2 * 8);
     let _fn: i64 = nb_fill_names(ordered, n_fns, 0, fn_names);
+    // FAIL-CLOSED (mirror of the main driver's gate): refuse (0B) if ANY call
+    // record's callee does not resolve to a defined fn — otherwise nb_patch_all
+    // reads starts[-1] and patches a garbage rel32 (fail-OPEN SIGILL or a silent
+    // wrong value). Same byte-identical resolution walk as nb_patch_all, so a
+    // valid fp module (every callee defined) is never over-refused.
+    if nb_calls_all_resolve(calls, total_calls, fn_names, n_fns, src_addr, 0) == 0 {
+        return es_new();
+    }
     let _p: i64 = nb_patch_all(code_addr, calls, total_calls, call_owner, starts, fn_names, n_fns, src_addr, 0);
 
     // Patch the entry's `call <caller>` rel32: the caller is the LAST fn (it consumes g()).

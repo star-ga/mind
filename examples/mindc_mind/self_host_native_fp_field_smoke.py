@@ -78,6 +78,32 @@ def main() -> int:
         ("struct P { x: f64 } { let p: P = P { x: 6.5 }; p.x - 2.0 }", 4),
         ("struct Q { a: i64, b: f64 } { let q: Q = Q { a: 5, b: 2.5 }; q.b + 1.0 }", 3),
         ("struct Q { a: i64, b: f64 } { let q: Q = Q { a: 9, b: 4.0 }; q.b * 2.0 }", 8),
+        # ---- branch coverage (blind-review gap): the driver must PATCH forward jumps
+        # (nb_patch_jmps) — unpatched je/jmp rel32 placeholders made every branch fall
+        # through to else (or crash). Value-if selecting ON a float-field compare:
+        ("struct P { x: f64 } { let p: P = P { x: 3.5 }; "
+         "if p.x > 3.0 { 1.0 } else { 0.0 } }", 1),
+        ("struct P { x: f64 } { let p: P = P { x: 2.5 }; "
+         "if p.x > 3.0 { 1.0 } else { 0.0 } }", 0),
+        # value-if with an INT cond over float branches (pre-fix: always-else -> 9).
+        ("struct P { x: f64 } { let c: i64 = 1; let p: P = P { x: 3.5 }; "
+         "if c == 1 { 5.0 } else { 9.0 } }", 5),
+        # value-if whose branches READ the float field.
+        ("struct Q { a: i64, b: f64 } { let q: Q = Q { a: 1, b: 6.5 }; "
+         "if q.a == 1 { q.b } else { 0.0 } }", 6),
+        # statement-if + explicit `return <float>` over a float-field cond (pre-fix:
+        # SIGSEGV — `ret` with no caller; the entry-calls-block scaffold makes the
+        # block a real callee, so return -> xmm0 ; epilogue+ret is well-defined).
+        ("struct P { x: f64 } { let p: P = P { x: 6.5 }; "
+         "if p.x > 3.0 { return 8.0; } return 2.0 }", 8),
+        ("struct P { x: f64 } { let p: P = P { x: 1.5 }; "
+         "if p.x > 3.0 { return 8.0; } return 2.0 }", 2),
+    ]
+    # FAIL-CLOSED: a genuinely-unsupported shape must refuse (0 bytes), never emit a
+    # wrong-value ELF and never segfault (the driver mirrors nb_lower_fn's lcell+80
+    # poison + -1 sentinel gate). An unbound ident poisons the compile.
+    refuse_cases = [
+        "struct P { x: f64 } { let p: P = P { x: 3.5 }; qq + 1.0 }",
     ]
     all_ok = True
     with tempfile.TemporaryDirectory() as td:
@@ -96,6 +122,14 @@ def main() -> int:
                 f"exit={got} expected={expected} "
                 f"(elf {len(elf)}B, SSE2 native, zero MLIR/LLVM)"
             )
+    for src in refuse_cases:
+        elf = mind_fp_field_elf(lib, src)
+        ok = len(elf) == 0
+        all_ok = all_ok and ok
+        print(
+            f"  {'PASS' if ok else 'FAIL'}  refuse-0B {src!r} -> len={len(elf)} "
+            f"(unsupported shape fail-closed, no segfault)"
+        )
     if all_ok:
         print(
             "ALL PASS  FLOAT struct-FIELD READ dtype flows through general nb_expr lowering "
