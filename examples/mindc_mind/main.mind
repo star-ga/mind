@@ -37760,6 +37760,408 @@ pub fn selftest_tc_unknown_variant(src: i64, src_len: i64, path: i64, path_len: 
     tc_is_unknown_variant(src, src_len, path, path_len)
 }
 
+// ---- D1: module top-level DECL-NAME SET (scope-frame engine foundation) ----
+// Twin of resolve.rs `collect_decl_names` + the `collect_module_syms` prelude
+// injection (resolve.rs:344): the set of names a module's TOP-LEVEL items
+// declare — fn / struct / enum (+ per variant BOTH the bare name AND the
+// qualified `Enum::Variant` form) / let (incl. `let mut`) / const / type
+// (alias AND `type NAME { .. }` record form) / `extern const NAME` /
+// `extern "C" { fn NAME .. }` block fns — recursing into the Block that a
+// `module NAME { ... }` body unwraps into (the module NAME itself is DROPPED
+// by the parser, so it is NOT a member), plus the hardwired prelude
+// Result / Option / Ok / Err / Some / None. Names inside fn bodies, struct
+// fields, enum payload fields, params, strings and comments are NOT members.
+//
+// Built by a token scan over the real self-host lexer (comments never
+// tokenize; string/char literals lex per-byte as tk_unsupported, so the walk
+// skips quote-to-quote before interpreting keywords or braces). Non-decl
+// braces (fn bodies, struct bodies, initializer blocks, if/while bodies) are
+// OPAQUE (skipped balanced, string-aware); module-block and extern-block
+// braces are TRANSPARENT (their members count, mirroring the Rust Block /
+// ExternBlock recursion). Duplicate decls merge naturally (any matching decl
+// answers membership — BTreeSet insert semantics). Additive: reached only
+// through selftest_tc_decl_names, never mindc_compile.
+
+// Returns 1 iff bytes buf[lo..hi) spell "mut" (109,117,116).
+pub fn tc_dn_is_mut(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo == 3 {
+        if load_byte(buf, lo) == 109 {
+            if load_byte(buf, lo + 1) == 117 {
+                if load_byte(buf, lo + 2) == 116 {
+                    return 1;
+                }
+            }
+        }
+    }
+    0
+}
+
+// Returns 1 iff bytes buf[lo..hi) spell "type" (116,121,112,101).
+pub fn tc_dn_is_type_kw(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo == 4 {
+        if load_byte(buf, lo) == 116 {
+            if load_byte(buf, lo + 1) == 121 {
+                if load_byte(buf, lo + 2) == 112 {
+                    if load_byte(buf, lo + 3) == 101 {
+                        return 1;
+                    }
+                }
+            }
+        }
+    }
+    0
+}
+
+// Pack buf[0..len) little-endian into one word (caller guards len <= 8).
+pub fn tc_dn_pack8_loop(buf: i64, i: i64, len: i64, acc: i64) -> i64 {
+    if i >= len {
+        return acc;
+    }
+    tc_dn_pack8_loop(buf, i + 1, len, acc + (load_byte(buf, i) << (8 * i)))
+}
+
+pub fn tc_dn_pack8(buf: i64, len: i64) -> i64 {
+    tc_dn_pack8_loop(buf, 0, len, 0)
+}
+
+// The resolve.rs:344 prelude: Result / Option / Ok / Err / Some / None are
+// always resolvable (compiler-registered enums with no source-level EnumDef).
+// Packed-word constants regenerated + cross-checked by the smoke.
+pub fn tc_dn_is_prelude(name: i64, len: i64) -> i64 {
+    if len < 2 {
+        return 0;
+    }
+    if len > 6 {
+        return 0;
+    }
+    let w: i64 = tc_dn_pack8(name, len);
+    // "Ok"
+    if len == 2 {
+        if w == 27471 {
+            return 1;
+        }
+        return 0;
+    }
+    // "Err"
+    if len == 3 {
+        if w == 7500357 {
+            return 1;
+        }
+        return 0;
+    }
+    if len == 4 {
+        // "Some"
+        if w == 1701670739 {
+            return 1;
+        }
+        // "None"
+        if w == 1701736270 {
+            return 1;
+        }
+        return 0;
+    }
+    if len == 6 {
+        // "Result"
+        if w == 128009175786834 {
+            return 1;
+        }
+        // "Option"
+        if w == 121424789663823 {
+            return 1;
+        }
+        return 0;
+    }
+    0
+}
+
+// Skip a string/char literal at token level: the lexer emits the quote byte
+// itself as tk_unsupported, so from the token AFTER the opening quote, advance
+// past the next tk_unsupported token whose source byte equals `q`. Returns the
+// index after the closing quote, or n (fail-safe: end of stream).
+pub fn tc_dn_skip_str(toks: Vec, n: i64, i: i64, src: i64, q: i64) -> i64 {
+    if i >= n {
+        return n;
+    }
+    if tok_kind(toks, i) == tk_unsupported() {
+        if load_byte(src, tok_lo(toks, i)) == q {
+            return i + 1;
+        }
+    }
+    tc_dn_skip_str(toks, n, i + 1, src, q)
+}
+
+// Skip an OPAQUE balanced-brace region (fn body, struct body, initializer
+// block, ...) starting just after its opening lbrace (depth 1). String-aware:
+// a quote opens a literal whose bytes (incl. `{` / `}`) never count toward
+// depth. Returns the index after the matching rbrace, or n.
+pub fn tc_dn_skip_brace(toks: Vec, n: i64, i: i64, src: i64, depth: i64) -> i64 {
+    if i >= n {
+        return n;
+    }
+    let k: i64 = tok_kind(toks, i);
+    if k == tk_unsupported() {
+        let b: i64 = load_byte(src, tok_lo(toks, i));
+        if b == 34 {
+            return tc_dn_skip_brace(toks, n, tc_dn_skip_str(toks, n, i + 1, src, 34), src, depth);
+        }
+        if b == 39 {
+            return tc_dn_skip_brace(toks, n, tc_dn_skip_str(toks, n, i + 1, src, 39), src, depth);
+        }
+        return tc_dn_skip_brace(toks, n, i + 1, src, depth);
+    }
+    if k == tk_lbrace() {
+        return tc_dn_skip_brace(toks, n, i + 1, src, depth + 1);
+    }
+    if k == tk_rbrace() {
+        if depth == 1 {
+            return i + 1;
+        }
+        return tc_dn_skip_brace(toks, n, i + 1, src, depth - 1);
+    }
+    tc_dn_skip_brace(toks, n, i + 1, src, depth)
+}
+
+// Index just past the next lbrace (extern-block header hop over `"C"` /
+// callconv tokens), or n if none.
+pub fn tc_dn_find_lbrace(toks: Vec, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return n;
+    }
+    if tok_kind(toks, i) == tk_lbrace() {
+        return i + 1;
+    }
+    tc_dn_find_lbrace(toks, n, i + 1)
+}
+
+// Consume a `module NAME` header's dotted-path tail (`.seg` chain, i starts
+// just after NAME); a following lbrace is TRANSPARENT (Block recursion), a
+// missing one is the file-level `module NAME` no-op header.
+pub fn tc_dn_module_hdr_end(toks: Vec, n: i64, i: i64) -> i64 {
+    if i + 1 < n {
+        if tok_kind(toks, i) == tk_dot() {
+            if tok_kind(toks, i + 1) == tk_ident() {
+                return tc_dn_module_hdr_end(toks, n, i + 2);
+            }
+        }
+    }
+    if i < n {
+        if tok_kind(toks, i) == tk_lbrace() {
+            return i + 1;
+        }
+    }
+    i
+}
+
+// Shared KW IDENT decl arm (struct / const / type): in bare mode the declared
+// ident is a member; then continue past it (its body brace, if any, is opaque
+// via the generic walk rule).
+pub fn tc_dn_name_decl(toks: Vec, n: i64, i: i64, src: i64, q: i64, mode: i64, hlo: i64, hhi: i64, vlo: i64, vhi: i64) -> i64 {
+    if i + 1 < n {
+        if tok_kind(toks, i + 1) == tk_ident() {
+            if mode == 0 {
+                if span_bytes_equal2(src, tok_lo(toks, i + 1), tok_hi(toks, i + 1), q, vlo, vhi) == 1 {
+                    return 1;
+                }
+            }
+            return tc_dn_walk(toks, n, i + 2, src, q, mode, hlo, hhi, vlo, vhi);
+        }
+    }
+    tc_dn_walk(toks, n, i + 1, src, q, mode, hlo, hhi, vlo, vhi)
+}
+
+// `let [mut] NAME` arm: the bound NAME is a member (Node::Let). Initializer
+// tokens are walked generically (only strings could inject keyword bytes at
+// decl level, and those are quote-skipped; `{` initializers are opaque).
+pub fn tc_dn_let_arm(toks: Vec, n: i64, i: i64, src: i64, q: i64, mode: i64, hlo: i64, hhi: i64, vlo: i64, vhi: i64) -> i64 {
+    if i + 2 < n {
+        if tok_kind(toks, i + 1) == tk_ident() {
+            if tc_dn_is_mut(src, tok_lo(toks, i + 1), tok_hi(toks, i + 1)) == 1 {
+                if tok_kind(toks, i + 2) == tk_ident() {
+                    if mode == 0 {
+                        if span_bytes_equal2(src, tok_lo(toks, i + 2), tok_hi(toks, i + 2), q, vlo, vhi) == 1 {
+                            return 1;
+                        }
+                    }
+                    return tc_dn_walk(toks, n, i + 3, src, q, mode, hlo, hhi, vlo, vhi);
+                }
+            }
+        }
+    }
+    if i + 1 < n {
+        if tok_kind(toks, i + 1) == tk_ident() {
+            if mode == 0 {
+                if span_bytes_equal2(src, tok_lo(toks, i + 1), tok_hi(toks, i + 1), q, vlo, vhi) == 1 {
+                    return 1;
+                }
+            }
+            return tc_dn_walk(toks, n, i + 2, src, q, mode, hlo, hhi, vlo, vhi);
+        }
+    }
+    tc_dn_walk(toks, n, i + 1, src, q, mode, hlo, hhi, vlo, vhi)
+}
+
+// `enum NAME { variants }` arm. Bare mode: the enum NAME and every variant's
+// bare name are members (variant scan reuses tc_uv_scan_body — brace/paren
+// depth entry grammar, payloads skipped). Qual mode: member iff NAME equals
+// the query head AND the query tail is a declared variant (`Enum::Variant`
+// insertion). The body interior is then walked transparently — it contains no
+// decl keywords, payload braces are opaque, and its closing rbrace is a no-op.
+pub fn tc_dn_enum_arm(toks: Vec, n: i64, i: i64, src: i64, q: i64, mode: i64, hlo: i64, hhi: i64, vlo: i64, vhi: i64) -> i64 {
+    if i + 2 < n {
+        if tok_kind(toks, i + 1) == tk_ident() {
+            if tok_kind(toks, i + 2) == tk_lbrace() {
+                if mode == 0 {
+                    if span_bytes_equal2(src, tok_lo(toks, i + 1), tok_hi(toks, i + 1), q, vlo, vhi) == 1 {
+                        return 1;
+                    }
+                    if tc_uv_scan_body(toks, n, i + 3, src, q, vlo, vhi, 1, 0, 1, 0) == 1 {
+                        return 1;
+                    }
+                    return tc_dn_walk(toks, n, i + 3, src, q, mode, hlo, hhi, vlo, vhi);
+                }
+                if span_bytes_equal2(src, tok_lo(toks, i + 1), tok_hi(toks, i + 1), q, hlo, hhi) == 1 {
+                    if tc_uv_scan_body(toks, n, i + 3, src, q, vlo, vhi, 1, 0, 1, 0) == 1 {
+                        return 1;
+                    }
+                }
+                return tc_dn_walk(toks, n, i + 3, src, q, mode, hlo, hhi, vlo, vhi);
+            }
+        }
+    }
+    tc_dn_walk(toks, n, i + 1, src, q, mode, hlo, hhi, vlo, vhi)
+}
+
+// `extern const NAME: T` counts NAME (Node::ExternConst); `extern "C" { .. }`
+// hops to its lbrace and walks the interior TRANSPARENTLY — its body-less
+// `fn NAME(..);` decls are counted by the generic fn arm (Node::ExternBlock).
+pub fn tc_dn_extern_arm(toks: Vec, n: i64, i: i64, src: i64, q: i64, mode: i64, hlo: i64, hhi: i64, vlo: i64, vhi: i64) -> i64 {
+    if i + 2 < n {
+        if tok_kind(toks, i + 1) == tk_ident() {
+            if is_const_kw(src, tok_lo(toks, i + 1), tok_hi(toks, i + 1)) == 1 {
+                if tok_kind(toks, i + 2) == tk_ident() {
+                    if mode == 0 {
+                        if span_bytes_equal2(src, tok_lo(toks, i + 2), tok_hi(toks, i + 2), q, vlo, vhi) == 1 {
+                            return 1;
+                        }
+                    }
+                    return tc_dn_walk(toks, n, i + 3, src, q, mode, hlo, hhi, vlo, vhi);
+                }
+            }
+        }
+    }
+    tc_dn_walk(toks, n, tc_dn_find_lbrace(toks, n, i + 1), src, q, mode, hlo, hhi, vlo, vhi)
+}
+
+// `module NAME[.seg]* { .. }` arm: the module NAME is DROPPED (the parser
+// unwraps the body into a Block, no module-decl node), so only the interior
+// members count — the header is consumed and its brace is transparent.
+pub fn tc_dn_module_arm(toks: Vec, n: i64, i: i64, src: i64, q: i64, mode: i64, hlo: i64, hhi: i64, vlo: i64, vhi: i64) -> i64 {
+    if i + 1 < n {
+        if tok_kind(toks, i + 1) == tk_ident() {
+            return tc_dn_walk(toks, n, tc_dn_module_hdr_end(toks, n, i + 2), src, q, mode, hlo, hhi, vlo, vhi);
+        }
+    }
+    tc_dn_walk(toks, n, i + 1, src, q, mode, hlo, hhi, vlo, vhi)
+}
+
+// Ident-token dispatch: struct/const/type/enum/extern/module are lexed as
+// plain identifiers (byte-content keywords); anything else is a bare ident
+// (param, field, expression atom) and never a decl name by itself.
+pub fn tc_dn_ident_arm(toks: Vec, n: i64, i: i64, src: i64, q: i64, mode: i64, hlo: i64, hhi: i64, vlo: i64, vhi: i64) -> i64 {
+    let lo: i64 = tok_lo(toks, i);
+    let hi: i64 = tok_hi(toks, i);
+    if is_struct_kw(src, lo, hi) == 1 {
+        return tc_dn_name_decl(toks, n, i, src, q, mode, hlo, hhi, vlo, vhi);
+    }
+    if is_const_kw(src, lo, hi) == 1 {
+        return tc_dn_name_decl(toks, n, i, src, q, mode, hlo, hhi, vlo, vhi);
+    }
+    if tc_dn_is_type_kw(src, lo, hi) == 1 {
+        return tc_dn_name_decl(toks, n, i, src, q, mode, hlo, hhi, vlo, vhi);
+    }
+    if is_enum_kw(src, lo, hi) == 1 {
+        return tc_dn_enum_arm(toks, n, i, src, q, mode, hlo, hhi, vlo, vhi);
+    }
+    if is_extern_kw(src, lo, hi) == 1 {
+        return tc_dn_extern_arm(toks, n, i, src, q, mode, hlo, hhi, vlo, vhi);
+    }
+    if is_module_kw(src, lo, hi) == 1 {
+        return tc_dn_module_arm(toks, n, i, src, q, mode, hlo, hhi, vlo, vhi);
+    }
+    tc_dn_walk(toks, n, i + 1, src, q, mode, hlo, hhi, vlo, vhi)
+}
+
+// The decl-level walk. mode 0 (bare query q[vlo..vhi)): any fn / struct /
+// const / type / let / extern-const / extern-block-fn / enum name or bare
+// variant equal to the query is a member. mode 1 (qualified `Head::Tail`,
+// head q[hlo..hhi), tail q[vlo..vhi)): member iff some declared enum named
+// Head has variant Tail. Strings quote-skip; unclassified lbraces are opaque;
+// stray rbraces (module/extern closes) are no-ops.
+pub fn tc_dn_walk(toks: Vec, n: i64, i: i64, src: i64, q: i64, mode: i64, hlo: i64, hhi: i64, vlo: i64, vhi: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    let k: i64 = tok_kind(toks, i);
+    if k == tk_unsupported() {
+        let b: i64 = load_byte(src, tok_lo(toks, i));
+        if b == 34 {
+            return tc_dn_walk(toks, n, tc_dn_skip_str(toks, n, i + 1, src, 34), src, q, mode, hlo, hhi, vlo, vhi);
+        }
+        if b == 39 {
+            return tc_dn_walk(toks, n, tc_dn_skip_str(toks, n, i + 1, src, 39), src, q, mode, hlo, hhi, vlo, vhi);
+        }
+        return tc_dn_walk(toks, n, i + 1, src, q, mode, hlo, hhi, vlo, vhi);
+    }
+    if k == tk_lbrace() {
+        return tc_dn_walk(toks, n, tc_dn_skip_brace(toks, n, i + 1, src, 1), src, q, mode, hlo, hhi, vlo, vhi);
+    }
+    if k == tk_kw_fn() {
+        if i + 1 < n {
+            if tok_kind(toks, i + 1) == tk_ident() {
+                if mode == 0 {
+                    if span_bytes_equal2(src, tok_lo(toks, i + 1), tok_hi(toks, i + 1), q, vlo, vhi) == 1 {
+                        return 1;
+                    }
+                }
+                return tc_dn_walk(toks, n, i + 2, src, q, mode, hlo, hhi, vlo, vhi);
+            }
+        }
+        return tc_dn_walk(toks, n, i + 1, src, q, mode, hlo, hhi, vlo, vhi);
+    }
+    if k == tk_kw_let() {
+        return tc_dn_let_arm(toks, n, i, src, q, mode, hlo, hhi, vlo, vhi);
+    }
+    if k == tk_ident() {
+        return tc_dn_ident_arm(toks, n, i, src, q, mode, hlo, hhi, vlo, vhi);
+    }
+    tc_dn_walk(toks, n, i + 1, src, q, mode, hlo, hhi, vlo, vhi)
+}
+
+// D1 membership: 1 iff `name` is in the module's top-level declared-name set
+// exactly as resolve.rs collect_decl_names + the prelude compute it. A bare
+// name walks in mode 0; a two-segment `Enum::Variant` walks in mode 1; a
+// deeper `a::B::C` path is never inserted by the Rust rule, so it is never a
+// member.
+pub fn tc_is_decl_name(src: i64, src_len: i64, name: i64, name_len: i64) -> i64 {
+    if tc_dn_is_prelude(name, name_len) == 1 {
+        return 1;
+    }
+    let d: i64 = tc_uv_find_dcolon(name, 0, name_len);
+    let toks: Vec = lex(src, src_len);
+    let n: i64 = tok_count(toks);
+    if d >= name_len {
+        return tc_dn_walk(toks, n, 0, src, name, 0, 0, 0, 0, name_len);
+    }
+    if tc_uv_find_dcolon(name, d + 2, name_len) < name_len {
+        return 0;
+    }
+    tc_dn_walk(toks, n, 0, src, name, 1, 0, d, d + 2, name_len)
+}
+
+pub fn selftest_tc_decl_names(src: i64, src_len: i64, name: i64, name_len: i64) -> i64 {
+    tc_is_decl_name(src, src_len, name, name_len)
+}
+
 
 
 // ============================================================================
