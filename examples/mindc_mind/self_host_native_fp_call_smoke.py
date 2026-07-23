@@ -280,6 +280,27 @@ def main() -> int:
                 f"exit={got} expected={expected} "
                 f"(elf {len(elf)}B, SSE2 native, zero MLIR/LLVM)"
             )
+    # FAIL-CLOSED: a module with an UNRESOLVED callee must refuse (0 bytes) — the
+    # fp-path mirror of the main driver's nb_calls_all_resolve gate. Pre-gate,
+    # nb_patch_all resolved the callee to index -1, read starts[-1] (adjacent
+    # allocation) and patched a GARBAGE rel32: a fail-OPEN SIGILL or a silently
+    # wrong running value. A refusal is diagnosable; a wrong-value ELF is not.
+    refuse_cases = [
+        # single fn calling an undefined name.
+        "fn f() -> f64 { gg() + 1.5 }",
+        # undefined callee alongside a defined (unrelated) sibling fn.
+        "fn g(x: f64) -> f64 { x } fn f() -> f64 { h(2.0) }",
+        # undefined callee nested under a defined call's argument.
+        "fn g(x: f64) -> f64 { x } fn f() -> f64 { g(missing()) }",
+    ]
+    for src in refuse_cases:
+        elf = mind_fp_call_elf(lib, src)
+        ok = len(elf) == 0
+        all_ok = all_ok and ok
+        print(
+            f"  {'PASS' if ok else 'FAIL'}  refuse-0B {src!r} -> len={len(elf)} "
+            f"(unresolved callee fail-closed, no garbage rel32)"
+        )
     if all_ok:
         print(
             "ALL PASS  FLOAT call-RETURN dtype flows through general nb_expr lowering — "

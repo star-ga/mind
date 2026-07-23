@@ -138,6 +138,8 @@ chk "enum_netverify (C-like enums + match)"          python3 examples/mindc_mind
 chk "option_netverify (Option/Result payload enums)" python3 examples/mindc_mind/option_netverify.py
 chk "failclosed (poison boundary + float refusal)"   python3 examples/mindc_mind/self_host_failclosed_smoke.py
 chk "closure_netverify (unresolved-callee fail-closed)" python3 examples/mindc_mind/closure_netverify.py
+chk "fp_call (float call-return/args + unresolved-callee 0B)" python3 examples/mindc_mind/self_host_native_fp_call_smoke.py
+chk "fp_field (float struct-field read (SSE))" python3 examples/mindc_mind/self_host_native_fp_field_smoke.py
 
 rm -f "$DIR_SO" "$MT_SO"
 echo "== $pass passed, $fail failed in $(($(date +%s)-t0))s =="
