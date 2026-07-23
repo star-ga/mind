@@ -964,6 +964,24 @@ pub fn ast_deref() -> i64 {
 pub fn ast_deref_assign() -> i64 {
     32
 }
+// `RECV.FIELD = VALUE ;` struct field-WRITE statement (native-ELF surface
+// ONLY; every other surface refuses via its fail-closed default arm): child0 =
+// the ast_field TARGET node (which carries the receiver expr at its child0 and
+// the field-name span at its child1/child2), child2 = value expr. Structs are
+// memory-backed (the binding's slot holds a base pointer; fields live at
+// 8*declared-index), so this lowers to __mind_store_i64(base + field_offset,
+// value) — a MEMORY store, not a name rebind: the next field READ (always a
+// fresh load through the base pointer) observes it in straight-line code,
+// across if branches and across while iterations WITHOUT the loop-carry
+// machinery. SUPPORTED subset: single-level `ident.field` on an i64 field of a
+// struct binding nb_field_offset can resolve. FAIL-CLOSED refusals (poison ->
+// 0-byte ELF, never a silent drop): nested paths (`p.q.x = v`, non-ident
+// receiver), an unbound/non-struct receiver, an unknown field, a FLOAT field,
+// a FLOAT rhs. main.mind's own source has no field-store statements, so this
+// node is never produced during self-compile.
+pub fn ast_field_assign() -> i64 {
+    33
+}
 
 // ===== Binop operator tags =====
 
@@ -1391,6 +1409,21 @@ pub fn ast_new_deref(span_lo: i64, span_hi: i64, operand: i64) -> i64 {
 pub fn ast_new_deref_assign(span_lo: i64, span_hi: i64, target: i64, value: i64) -> i64 {
     let n: i64 = ast_alloc();
     __mind_store_i64(n + 0, ast_deref_assign());
+    __mind_store_i64(n + 8, span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, target);
+    __mind_store_i64(n + 32, 0);
+    __mind_store_i64(n + 40, value);
+    __mind_store_i64(n + 48, 0);
+    n
+}
+
+// `RECV.FIELD = VALUE ;` field-write statement node. child0 = the ast_field
+// TARGET node (receiver + field-name span intact), child2 = value expr — the
+// same child0/child2 target/value shape ast_deref_assign uses.
+pub fn ast_new_field_assign(span_lo: i64, span_hi: i64, target: i64, value: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0, ast_field_assign());
     __mind_store_i64(n + 8, span_lo);
     __mind_store_i64(n + 16, span_hi);
     __mind_store_i64(n + 24, target);
@@ -2282,8 +2315,9 @@ pub fn parse_stmt(toks: Vec, pos: i64, buf: i64) -> ParseResult {
         if tok_kind(toks, pos + 1) == tk_lbracket() {
             return parse_index_assign_or_expr(toks, pos, buf);
         }
-        // `IDENT . …` — field-store statement (`p.x = 5;`, poisoned fail-CLOSED)
-        // or a plain field-read-opening expression statement (parsed unchanged).
+        // `IDENT . …` — field-store statement (`p.x = 5;`, an ast_field_assign
+        // memory store on the native-ELF surface, fail-closed elsewhere) or a
+        // plain field-read-opening expression statement (parsed unchanged).
         // See parse_field_assign_or_expr for why the store MUST be caught before
         // the generic expression tail (bare `=` is an infix comparison there).
         if tok_kind(toks, pos + 1) == tk_dot() {
@@ -2313,15 +2347,16 @@ pub fn parse_stmt(toks: Vec, pos: i64, buf: i64) -> ParseResult {
 // tk_eq -> op_eq, mirroring the Rust parser), so the generic expression tail
 // silently parses `p.x = 5;` as a DEAD `(p.x == 5)` comparison and DROPS the
 // store — a running ELF with the wrong value (returned 0 want 5, top-level and
-// region alike, fail-OPEN). No emitter supports a field store, so the statement
-// is consumed whole and poisoned with ast_unsupported: EVERY emitter refuses the
-// module (native: nb_stmt/nb_expr default arm poisons -> 0-byte EmitState; the
-// mic@3 walkers fail closed on the unknown kind) — an honest 0B refusal, never a
-// silent drop. The non-store path re-enters the Pratt loop from the postfix node
-// (exactly what the generic tail did), so plain `IDENT.field`-opening expression
-// statements parse UNCHANGED — and main.mind's own source has no field-store
-// statements, so its self-compile is byte-identical. Mirrors
-// parse_deref_assign_or_expr's shape exactly.
+// region alike, fail-OPEN). The store builds an ast_field_assign node (target =
+// the ast_field, value = RHS) — the native-ELF backend lowers it to a memory
+// store through the receiver's base pointer (nb_stmt's field-assign arm), and
+// every unsupported shape there (nested path / unknown field / float) POISONS
+// (0-byte refusal, never a silent drop); the mic@3 walkers and the MLIR path
+// refuse the kind via their fail-closed default arms. The non-store path
+// re-enters the Pratt loop from the postfix node (exactly what the generic tail
+// did), so plain `IDENT.field`-opening expression statements parse UNCHANGED —
+// and main.mind's own source has no field-store statements, so its self-compile
+// is byte-identical. Mirrors parse_deref_assign_or_expr's shape exactly.
 pub fn parse_field_assign_or_expr(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     let pf: ParseResult = parse_postfix(toks, pos, buf);
     let target: i64 = pr_node(pf);
@@ -2330,7 +2365,7 @@ pub fn parse_field_assign_or_expr(toks: Vec, pos: i64, buf: i64) -> ParseResult 
         if tok_kind(toks, after_pf) == tk_eq() {
             let frhs: ParseResult = parse_expr(toks, after_pf + 1, buf);
             let after_frhs: i64 = pr_pos(frhs);
-            let fp: i64 = ast_new_leaf(ast_unsupported(), ast_span_lo(target), ast_span_hi(pr_node(frhs)));
+            let fp: i64 = ast_new_field_assign(ast_span_lo(target), ast_span_hi(pr_node(frhs)), target, pr_node(frhs));
             if tok_kind(toks, after_frhs) == tk_semi() {
                 return pr_new(after_frhs + 1, fp);
             }
@@ -2396,6 +2431,13 @@ pub fn parse_index_assign_or_expr(toks: Vec, pos: i64, buf: i64) -> ParseResult 
     }
     // Not an index-assign: continue as an expression statement from the
     // postfix node (mirrors parse_stmt's expression tail).
+    // deferred: a chain opening `IDENT[` that ends in `ast_field` (e.g.
+    // `a[i].x = v`) is NOT caught here — it falls to parse_pratt where bare `=`
+    // becomes an op_eq comparison, silently dropping the store. SAFE ONLY while
+    // array-of-struct field READ poisons to 0B (so the whole shape refuses
+    // today). Upgrade path: before implementing array-of-struct read, mirror
+    // parse_field_assign_or_expr's ast_field guard here to build ast_field_assign
+    // (which fail-closes at emit) so the store can never be silently dropped.
     let e: ParseResult = parse_pratt(toks, after_pf, buf, target, 1);
     let after_e: i64 = pr_pos(e);
     if tok_kind(toks, after_e) == tk_semi() {
@@ -24308,6 +24350,28 @@ pub fn nb_field_read(code: String, next_id: i64, ptr_id: i64, off: i64, ncalls: 
     NbState { code: e2, next_id: ld_id + 1, last_id: ld_id, ncalls: ncalls }
 }
 
+// Resolve a field's ADDRESS into a fresh slot for the field-STORE arm:
+// CONST off ; ADD(ptr,off) -> addr (2 fresh ids, uniform for EVERY offset —
+// adding 0 for field 0 keeps the fn straight-line, the same proven shape class
+// as nb_deref_store; an off==0 early-return-struct-lit arm is outside the nfn
+// driver's supported shapes and fail-closes the whole-module mic@3 flip).
+// The same address computation nb_field_read performs before its final load —
+// the store twin stops at the address (the caller then lowers the RHS and
+// emits __mind_store_i64(addr, val)). Returns the NbState whose last_id is
+// the address slot.
+pub fn nb_field_addr(code: String, next_id: i64, ptr_id: i64, off: i64, ncalls: i64) -> NbState {
+    let off_id: i64 = next_id;
+    let o1: String = nb_push(code, 72);
+    let o2: String = nb_push(o1, 184);
+    let o3: String = nb_i64le(o2, off);
+    let o4: String = nb_store_rax(o3, nb_slot_disp(off_id));
+    let add_id: i64 = off_id + 1;
+    let d1: String = nb_load_rax(o4, nb_slot_disp(ptr_id));
+    let d2: String = nb_arith_rax_mem(d1, op_add(), nb_slot_disp(off_id));
+    let d3: String = nb_store_rax(d2, nb_slot_disp(add_id));
+    NbState { code: d3, next_id: add_id + 1, last_id: add_id, ncalls: ncalls }
+}
+
 // Resolve a field access `recv.field`'s byte offset (8 * declared field index),
 // or -1 (FAIL CLOSED) when the shape is unsupported: non-ident receiver, a
 // receiver name with no struct binding/descriptor, or a field name not in the
@@ -25886,6 +25950,51 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let ws1: String = nb_emit_store_i64(s_wv.code, nb_slot_disp(waddr_id), nb_slot_disp(s_wv.last_id));
         return NbState { code: ws1, next_id: wdst_id + 1, last_id: wdst_id, ncalls: s_wv.ncalls };
     }
+    if k == ast_field_assign() {
+        // `RECV.FIELD = RHS ;` struct field WRITE — the store twin of nb_expr's
+        // ast_field read arm, lowered exactly like the index-assign arm above
+        // but with the field's fixed byte offset in place of idx*8. Evaluation
+        // order (mirrored EXACTLY in nb_count_stmt): recv -> base-ptr slot ;
+        // CONST off ; ADD(base,off) -> addr (uniform, off==0 included) ; RHS ->
+        // val ; __mind_store_i64(addr, val) (store-dst id consumed, never read). It
+        // is a MEMORY store, not a name rebind: no let-env change, so if/while
+        // merge machinery is untouched — heap writes are naturally visible
+        // across branches and loop iterations (the next field READ is always a
+        // fresh load through the base pointer). FAIL-CLOSED refusals (poison ->
+        // 0-byte ELF, never a silent drop): unsupported target shape
+        // (nb_field_offset -1: nested `p.q.x` / non-ident receiver / unbound or
+        // non-struct receiver / unknown field), a FLOAT field, a FLOAT rhs.
+        // main.mind's own source produces no field-assign node — never fires
+        // during self-compile, integer native-ELF oracle byte-identical.
+        let fa_t: i64 = ast_child0(node);
+        let fa_v: i64 = ast_child2(node);
+        let fa_recv: i64 = ast_child0(fa_t);
+        let s_fb: NbState = nb_expr(st, buf, fa_recv, params_addr, n_params, calls, lets, lcell);
+        let fb_id: i64 = s_fb.last_id;
+        let foff: i64 = nb_field_offset(fa_recv, fa_t, buf, lets, lcell);
+        if foff < 0 {
+            // Unsupported target shape — poison; the placeholder const0 keeps
+            // the walk crash-free (its output is discarded on refusal).
+            __mind_store_i64(lcell + 80, 1);
+            return nb_emit_const0(s_fb);
+        }
+        // i64-only: a FLOAT field target refuses (the store would drop the SSE
+        // classification), as does a FLOAT rhs below.
+        if nb_field_dtype(fa_recv, fa_t, buf, lets, lcell) == nb_dtype_float() {
+            __mind_store_i64(lcell + 80, 1)
+        }
+        let s_fa: NbState = nb_field_addr(s_fb.code, s_fb.next_id, fb_id, foff, s_fb.ncalls);
+        let faddr_id: i64 = s_fa.last_id;
+        let s_fv: NbState = nb_expr(s_fa, buf, fa_v, params_addr, n_params, calls, lets, lcell);
+        let fdtbl: i64 = __mind_load_i64(lcell + 8);
+        if nb_node_dtype_tbl(fa_v, fdtbl, lets, lcell, buf, params_addr, n_params) == nb_dtype_float() {
+            __mind_store_i64(lcell + 80, 1)
+        }
+        // __mind_store_i64(addr, val); the store's dst id is consumed unread.
+        let fdst_id: i64 = s_fv.next_id;
+        let fs1: String = nb_emit_store_i64(s_fv.code, nb_slot_disp(faddr_id), nb_slot_disp(s_fv.last_id));
+        return NbState { code: fs1, next_id: fdst_id + 1, last_id: fdst_id, ncalls: s_fv.ncalls };
+    }
     if k == ast_break() {
         // `break` — emit the leading ConstI64(unit,0) (lower.rs 5967), then a jmp
         // whose target is the loop end (patched at loop close). Record its index in
@@ -27123,6 +27232,24 @@ pub fn nb_count_stmt(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         let wcr: i64 = nb_count_expr(wci + 3, buf, ast_child2(node), params_addr, n_params, clets, clcell);
         return wcr + 1;
     }
+    if k == ast_field_assign() {
+        // `RECV.FIELD = RHS ;`: recv ids + 2 (CONST off ; ADD — uniform, the
+        // off==0 field included) + RHS ids + 1 store-dst — the exact mirror of
+        // nb_stmt's field-assign arm (offset resolved via the same helper, like
+        // the field-READ count arm above). A memory store, not a name rebind:
+        // no count-lets change. The UNSUPPORTED shape (-1) mirrors the emit's
+        // poison placeholder (recv ids + 1 const0); its count only needs to
+        // stay crash-free — the poisoned compile discards the output.
+        let fa_t: i64 = ast_child0(node);
+        let fa_recv: i64 = ast_child0(fa_t);
+        let fcb: i64 = nb_count_expr(next_id, buf, fa_recv, params_addr, n_params, clets, clcell);
+        let foff: i64 = nb_field_offset(fa_recv, fa_t, buf, clets, clcell);
+        if foff < 0 {
+            return fcb + 1;
+        }
+        let fcr: i64 = nb_count_expr(fcb + 2, buf, ast_child2(node), params_addr, n_params, clets, clcell);
+        return fcr + 1;
+    }
     if k == ast_break() {
         // `break`/`continue` emit a leading ConstI64(unit,0) (1 fresh id); the
         // terminator itself has no dst (lower.rs 5967-5972).
@@ -27319,6 +27446,12 @@ pub fn nb_ccount_stmt(buf: i64, node: i64, ccell: i64) -> i64 {
         // `*TARGET = VALUE ;` (i64 references): call sites in the value expr —
         // the emit lowers VALUE through nb_expr (which pushes its call records),
         // so the table must be sized for them. The ident target is call-free.
+        return nb_ccount_expr(buf, ast_child2(node), ccell);
+    }
+    if k == ast_field_assign() {
+        // `RECV.FIELD = RHS ;`: call sites in the target's receiver (the
+        // ast_field expr arm recurses into it) and the rhs expr.
+        let _ft: i64 = nb_ccount_expr(buf, ast_child0(node), ccell);
         return nb_ccount_expr(buf, ast_child2(node), ccell);
     }
     if k == ast_break() {
@@ -27532,6 +27665,14 @@ pub fn nb_argv_stmt(buf: i64, node: i64) -> i64 {
     if k == ast_deref_assign() {
         // `*TARGET = VALUE ;` (i64 references): an argv intrinsic can sit in
         // the value expr (the ident target is leaf/call-free).
+        return nb_argv_expr(buf, ast_child2(node));
+    }
+    if k == ast_field_assign() {
+        // `RECV.FIELD = RHS ;`: an argv intrinsic can sit in the target's
+        // receiver (the ast_field expr arm recurses into it) or the rhs expr.
+        if nb_argv_expr(buf, ast_child0(node)) == 1 {
+            return 1;
+        }
         return nb_argv_expr(buf, ast_child2(node));
     }
     if k == ast_break() {
@@ -27753,6 +27894,12 @@ pub fn nb_at_scan_stmt(at: i64, buf: i64, node: i64) -> i64 {
     }
     if k == ast_deref_assign() {
         let _t: i64 = nb_at_scan_expr(at, buf, ast_child0(node));
+        return nb_at_scan_expr(at, buf, ast_child2(node));
+    }
+    if k == ast_field_assign() {
+        // `RECV.FIELD = RHS ;`: `&NAME` sites can sit in the target's receiver
+        // subtree (the ast_field expr arm recurses into it) or the rhs expr.
+        let _ft: i64 = nb_at_scan_expr(at, buf, ast_child0(node));
         return nb_at_scan_expr(at, buf, ast_child2(node));
     }
     if k == ast_break() {
@@ -29683,6 +29830,14 @@ pub fn nb_reach_stmt(buf: i64, fns: i64, n_fns: i64, reach: i64, node: i64, chan
         // `*TARGET = VALUE ;` (i64 references): mark callees in the value expr
         // — the emit lowers VALUE, so an unmarked callee would be pruned while
         // its call site is still emitted (an unpatchable rel32).
+        return nb_reach_expr(buf, fns, n_fns, reach, ast_child2(node), changed);
+    }
+    if k == ast_field_assign() {
+        // `RECV.FIELD = RHS ;`: mark callees in the target's receiver (the
+        // ast_field expr arm recurses into it) and the rhs expr — the emit
+        // lowers both, so an unmarked callee would be pruned while its call
+        // site is still emitted (an unpatchable rel32).
+        let _ft: i64 = nb_reach_expr(buf, fns, n_fns, reach, ast_child0(node), changed);
         return nb_reach_expr(buf, fns, n_fns, reach, ast_child2(node), changed);
     }
     if k == ast_break() {
