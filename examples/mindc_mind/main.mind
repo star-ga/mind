@@ -162,6 +162,15 @@ pub fn tk_andand() -> i64 {
 pub fn tk_oror() -> i64 {
     38
 }
+// FAIL-CLOSED lexer default: any byte with NO real token production (`[`, `]`,
+// `"`, `'`, `#`, `@`, ...) lexes as tk_unsupported instead of a synthetic
+// one-byte tk_ident. The parser turns it into ast_unsupported, which every
+// emitter REFUSES (0-byte output) — the silent-miscompile boundary becomes an
+// explicit refusal. main.mind's own non-comment source contains none of these
+// bytes (verified), so the self-compile token stream is byte-identical.
+pub fn tk_unsupported() -> i64 {
+    39
+}
 
 // ===== Byte loads =====
 
@@ -610,7 +619,10 @@ pub fn match_punct(b: i64) -> i64 {
     if b == 37 {
         return tk_percent();
     }
-    tk_ident()
+    // FAIL CLOSED: an unrecognised byte is NOT an ident — it is an unsupported
+    // token, so the construct it belongs to (array literal, char/string literal,
+    // attribute, ...) is refused downstream instead of silently mis-lowered.
+    tk_unsupported()
 }
 
 // ===== Main scan loop (tail-recursive) =====
@@ -857,6 +869,19 @@ pub fn ast_float_lit() -> i64 {
 // native-ELF oracle and the mic@3/mic@1 canary paths stay byte-identical.
 pub fn ast_cast() -> i64 {
     25
+}
+// UNSUPPORTED-construct POISON marker (fail-closed boundary). Produced by
+// parse_primary_ns's fallback for any token with NO real production (tuples,
+// refs `&x`/`*r`, enum paths, leftover tokens of a mis-parsed unsupported
+// statement) and by the lexer's tk_unsupported bytes (`[`, `"`, `'`, ...).
+// EVERY emitter refuses it: the native path (nb_expr/nb_stmt default arm)
+// poisons the per-fn lcell+80 flag so the whole compile returns a 0-byte
+// EmitState; the mic@3 flatten walkers already fail closed on any unknown kind.
+// A refused construct is an HONEST 0-byte "not implemented", never a running
+// ELF with a wrong value. main.mind's own source never produces this node
+// (supported-subset only), so the self-compile is byte-identical.
+pub fn ast_unsupported() -> i64 {
+    26
 }
 
 // ===== Binop operator tags =====
@@ -1614,7 +1639,13 @@ pub fn parse_primary_ns(toks: Vec, pos: i64, buf: i64, no_struct: i64) -> ParseR
         return pr_new(pos + 1, n);
     }
 
-    let fallback: i64 = ast_new_leaf(ast_ident(), lo, hi);
+    // FAIL CLOSED: a token with NO real production here (tk_unsupported bytes,
+    // `*` / `&` prefix positions, stray `,` / `:` / keyword tokens from an
+    // unsupported surrounding construct) becomes the ast_unsupported POISON
+    // marker — NOT a synthetic ident. Every emitter refuses the marker, so the
+    // enclosing compile returns 0 bytes instead of a silent wrong value. Still
+    // consumes exactly one token (pos + 1), so the parse always advances.
+    let fallback: i64 = ast_new_leaf(ast_unsupported(), lo, hi);
     pr_new(pos + 1, fallback)
 }
 
@@ -2153,6 +2184,27 @@ pub fn parse_let(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     let name_lo: i64 = tok_lo(toks, mp + 1);
     let name_hi: i64 = tok_hi(toks, mp + 1);
     let name: i64 = ast_new_leaf(ast_ident(), name_lo, name_hi);
+    // UNTYPED form `let NAME = INIT;`: the annotation slot (mp+2) holds `=`,
+    // not `:`. ty = 0 — the exact no-annotation value every let consumer
+    // already handles (nb_width_of_ann -> 64, nb_let_descriptor -> init-derived,
+    // ann_dt -> INT) — and INIT parses from mp+3. The old code assumed the
+    // TYPED token layout unconditionally, silently mis-reading the init token
+    // as the type and the NEXT statement's first token as the init (one of the
+    // adversarial sweep's silent-miscompile classes; post-poison it surfaced as
+    // a wrong refusal of every untyped let). main.mind's own source uses only
+    // typed lets, so the self-compile parse is byte-identical.
+    if tok_kind(toks, mp + 2) == tk_eq() {
+        let uinit: ParseResult = parse_expr(toks, mp + 3, buf);
+        let uafter: i64 = pr_pos(uinit);
+        let uas: i64 = if tok_kind(toks, uafter) == tk_semi() {
+            uafter + 1
+        } else {
+            uafter
+        };
+        let uhi: i64 = ast_span_hi(pr_node(uinit));
+        let ulet: i64 = ast_new_let(kw_lo, uhi, name, 0, pr_node(uinit));
+        return pr_new(uas, ulet);
+    }
     let ty_lo: i64 = tok_lo(toks, mp + 3);
     let ty_hi: i64 = tok_hi(toks, mp + 3);
     let ty: i64 = ast_new_leaf(ast_ident(), ty_lo, ty_hi);
@@ -22828,6 +22880,9 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // header). main.mind is float-free, so this arm is never taken during
         // self-compile and the integer native-ELF oracle stays byte-identical.
         if nb_float_lit_is_dyadic(buf, ast_span_lo(node), ast_span_hi(node)) == 0 {
+            // POISON (systemic fail-closed): flag lcell+80 so nb_lower_fn refuses
+            // the whole fn (0-byte module), not just a -1 last_id sentinel.
+            __mind_store_i64(lcell + 80, 1);
             return NbState { code: st.code, next_id: st.next_id, last_id: 0 - 1, ncalls: st.ncalls };
         }
         let bits: i64 = nb_float_lit_bits(buf, ast_span_lo(node), ast_span_hi(node));
@@ -22856,9 +22911,13 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         if idx >= 0 {
             return NbState { code: st.code, next_id: st.next_id, last_id: idx, ncalls: st.ncalls };
         }
-        // Out of the supported subset: fail loud by returning -1 last_id; the
-        // caller's emit produces a deterministic but wrong slot, which the
-        // byte-diff gate will catch.
+        // Out of the supported subset (an UNBOUND name: an enum variant used as
+        // a value, a name from a refused declaration, ...): POISON lcell+80 so
+        // nb_lower_fn refuses the whole compile (0-byte EmitState) — never a
+        // deterministic-but-wrong slot. main.mind's own source resolves every
+        // ident (its frozen self-compile bytes prove it), so this never fires
+        // during self-compile.
+        __mind_store_i64(lcell + 80, 1);
         return NbState { code: st.code, next_id: st.next_id, last_id: 0 - 1, ncalls: st.ncalls };
     }
     if k == ast_paren() {
@@ -22915,6 +22974,14 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // exactly one return (a dual-return branch lowers to an extra leading
         // const0 in the self-host subset, breaking the mic@3 flip).
         let off: i64 = nb_field_offset(recv, node, buf, lets, lcell);
+        // FAIL CLOSED: nb_field_offset returns -1 for an unsupported shape
+        // (non-ident receiver, unbound receiver name, unknown field). POISON
+        // lcell+80 and emit a placeholder const-0 (discarded — the poisoned
+        // compile returns 0 bytes) instead of silently reading field 0.
+        if off < 0 {
+            __mind_store_i64(lcell + 80, 1);
+            return nb_emit_const0(s_recv);
+        }
         // RI-D2 S-D: an f64/f32 struct field READ returns a FLOAT-tagged value. Classify
         // the field's dtype from the struct binding (nb_field_dtype, value-node based for
         // a struct-literal binding); a FLOAT field loads through the SSE register file
@@ -23152,74 +23219,90 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let c32s: String = nb_store_rax(c32, nb_slot_disp(cid));
         return NbState { code: c32s, next_id: cid + 1, last_id: cid, ncalls: cs1.ncalls };
     }
-    // ast_binop(): lower both operands, then the in-place op.
-    let s1: NbState = nb_expr(st, buf, ast_child0(node), params_addr, n_params, calls, lets, lcell);
-    let lhs_id: i64 = s1.last_id;
-    let s2: NbState = nb_expr(s1, buf, ast_child1(node), params_addr, n_params, calls, lets, lcell);
-    let rhs_id: i64 = s2.last_id;
-    let id: i64 = s2.next_id;
-    let op: i64 = ast_aux(node);
-    // RI-B1 FLOAT-op-FLOAT arm: when BOTH operands classify FLOAT (nb_node_dtype,
-    // which propagates float through paren + scalar-arith binops) and the operator
-    // is scalar arithmetic (+ - * /, nb_fp_opsel >= 0), route through the SSE2 f64
-    // encoders instead of the GP-integer path: load lhs slot -> xmm0 (movsd), apply
-    // <op>sd xmm0,[rhs slot] (memory-operand binop), spill xmm0 -> dst slot (movsd).
-    // The dst is thereby FLOAT-typed (nb_node_dtype classifies this node FLOAT), so a
-    // parent binop consuming it routes float too. main.mind's OWN source contains no
-    // float literals, so every operand here classifies INT during self-compile, this
-    // branch is never taken, and the integer native-ELF emission stays byte-identical.
-    // RI-B1 FOLLOW-UP: consult the per-fn dtype table (threaded at lcell+8, see
-    // nb_lower_fn) so a FLOAT let-bound operand is classified FLOAT. A null table
-    // (lcell+8 == 0 on the bare-expr fp selftests) makes nb_node_dtype_tbl fall back
-    // to the pure-AST nb_node_dtype, and main.mind's float-free source keeps every
-    // slot INT during self-compile, so the integer path stays byte-identical.
-    let dtbl: i64 = __mind_load_i64(lcell + 8);
-    let lhs_dt: i64 = nb_node_dtype_tbl(ast_child0(node), dtbl, lets, lcell, buf, params_addr, n_params);
-    let rhs_dt: i64 = nb_node_dtype_tbl(ast_child1(node), dtbl, lets, lcell, buf, params_addr, n_params);
-    let fsel: i64 = nb_fp_opsel(op);
-    if lhs_dt == nb_dtype_float() {
-        if rhs_dt == nb_dtype_float() {
-            if fsel >= 0 {
-                let f1: String = nb_fp_movsd_load_xmm0(s2.code, nb_slot_disp(lhs_id));
-                let f2: String = nb_fp_binop_xmm0_mem(f1, fsel, nb_slot_disp(rhs_id));
-                let f3: String = nb_fp_movsd_store_xmm0(f2, nb_slot_disp(id));
-                // FIX #167: TAG the fp-binop dst slot FLOAT, so a later ident read of this
-                // result (e.g. via a `let`/assign rebind, then a call arg) classifies FLOAT
-                // and marshals in the SSE pool. dtbl (lcell+8) is loaded above. Inert for
-                // main.mind's float-free source (this arm is never taken during self-compile).
-                let _tg167: i64 = nb_dtype_tag_slot(dtbl, id, nb_dtype_float());
-                return NbState { code: f3, next_id: id + 1, last_id: id, ncalls: s2.ncalls };
-            }
-            // FIX #168: FLOAT-operand COMPARISON. The SSE guard above only covers scalar
-            // arithmetic (nb_fp_opsel >= 0); a relational/equality op over two FLOAT operands
-            // fell through to the GP path (nb_load_rax + nb_cmp_rax_mem) — a SIGNED-INTEGER
-            // compare of the raw IEEE-754 bits, which is INVERTED for two negatives (IEEE-754
-            // is sign-magnitude) and wrong for -0.0/+0.0 and NaN. Route it through ucomisd +
-            // an UNSIGNED setcc (comisd sets CF/ZF like an unsigned compare), materializing
-            // the same i64 0/1 boolean the rest of the pipeline consumes. Correct for all
-            // FINITE operands; deferred: NaN-ordering edge cases (see nb_fp_setcc_opcode).
-            // main.mind is float-free, so this arm never fires during self-compile — the
-            // integer native-ELF emission stays byte-identical.
-            let fcc: i64 = nb_fp_setcc_opcode(op);
-            if fcc >= 0 {
-                let g1: String = nb_fp_movsd_load_xmm0(s2.code, nb_slot_disp(lhs_id));
-                let g2: String = nb_fp_cmp_xmm0_mem(g1, fcc, nb_slot_disp(rhs_id));
-                let g3: String = nb_store_rax(g2, nb_slot_disp(id));
-                return NbState { code: g3, next_id: id + 1, last_id: id, ncalls: s2.ncalls };
+    // ast_binop(): lower both operands, then the in-place op. EXPLICITLY gated
+    // on ast_binop (fail-closed): before this guard, ANY unhandled node kind
+    // fell through here and walked ast_child0/child1 as if it were a binop — a
+    // silent miscompile (or a null-node fault) for every unsupported construct.
+    if k == ast_binop() {
+        let s1: NbState = nb_expr(st, buf, ast_child0(node), params_addr, n_params, calls, lets, lcell);
+        let lhs_id: i64 = s1.last_id;
+        let s2: NbState = nb_expr(s1, buf, ast_child1(node), params_addr, n_params, calls, lets, lcell);
+        let rhs_id: i64 = s2.last_id;
+        let id: i64 = s2.next_id;
+        let op: i64 = ast_aux(node);
+        // RI-B1 FLOAT-op-FLOAT arm: when BOTH operands classify FLOAT (nb_node_dtype,
+        // which propagates float through paren + scalar-arith binops) and the operator
+        // is scalar arithmetic (+ - * /, nb_fp_opsel >= 0), route through the SSE2 f64
+        // encoders instead of the GP-integer path: load lhs slot -> xmm0 (movsd), apply
+        // <op>sd xmm0,[rhs slot] (memory-operand binop), spill xmm0 -> dst slot (movsd).
+        // The dst is thereby FLOAT-typed (nb_node_dtype classifies this node FLOAT), so a
+        // parent binop consuming it routes float too. main.mind's OWN source contains no
+        // float literals, so every operand here classifies INT during self-compile, this
+        // branch is never taken, and the integer native-ELF emission stays byte-identical.
+        // RI-B1 FOLLOW-UP: consult the per-fn dtype table (threaded at lcell+8, see
+        // nb_lower_fn) so a FLOAT let-bound operand is classified FLOAT. A null table
+        // (lcell+8 == 0 on the bare-expr fp selftests) makes nb_node_dtype_tbl fall back
+        // to the pure-AST nb_node_dtype, and main.mind's float-free source keeps every
+        // slot INT during self-compile, so the integer path stays byte-identical.
+        let dtbl: i64 = __mind_load_i64(lcell + 8);
+        let lhs_dt: i64 = nb_node_dtype_tbl(ast_child0(node), dtbl, lets, lcell, buf, params_addr, n_params);
+        let rhs_dt: i64 = nb_node_dtype_tbl(ast_child1(node), dtbl, lets, lcell, buf, params_addr, n_params);
+        let fsel: i64 = nb_fp_opsel(op);
+        if lhs_dt == nb_dtype_float() {
+            if rhs_dt == nb_dtype_float() {
+                if fsel >= 0 {
+                    let f1: String = nb_fp_movsd_load_xmm0(s2.code, nb_slot_disp(lhs_id));
+                    let f2: String = nb_fp_binop_xmm0_mem(f1, fsel, nb_slot_disp(rhs_id));
+                    let f3: String = nb_fp_movsd_store_xmm0(f2, nb_slot_disp(id));
+                    // FIX #167: TAG the fp-binop dst slot FLOAT, so a later ident read of this
+                    // result (e.g. via a `let`/assign rebind, then a call arg) classifies FLOAT
+                    // and marshals in the SSE pool. dtbl (lcell+8) is loaded above. Inert for
+                    // main.mind's float-free source (this arm is never taken during self-compile).
+                    let _tg167: i64 = nb_dtype_tag_slot(dtbl, id, nb_dtype_float());
+                    return NbState { code: f3, next_id: id + 1, last_id: id, ncalls: s2.ncalls };
+                }
+                // FIX #168: FLOAT-operand COMPARISON. The SSE guard above only covers scalar
+                // arithmetic (nb_fp_opsel >= 0); a relational/equality op over two FLOAT operands
+                // fell through to the GP path (nb_load_rax + nb_cmp_rax_mem) — a SIGNED-INTEGER
+                // compare of the raw IEEE-754 bits, which is INVERTED for two negatives (IEEE-754
+                // is sign-magnitude) and wrong for -0.0/+0.0 and NaN. Route it through ucomisd +
+                // an UNSIGNED setcc (comisd sets CF/ZF like an unsigned compare), materializing
+                // the same i64 0/1 boolean the rest of the pipeline consumes. Correct for all
+                // FINITE operands; deferred: NaN-ordering edge cases (see nb_fp_setcc_opcode).
+                // main.mind is float-free, so this arm never fires during self-compile — the
+                // integer native-ELF emission stays byte-identical.
+                let fcc: i64 = nb_fp_setcc_opcode(op);
+                if fcc >= 0 {
+                    let g1: String = nb_fp_movsd_load_xmm0(s2.code, nb_slot_disp(lhs_id));
+                    let g2: String = nb_fp_cmp_xmm0_mem(g1, fcc, nb_slot_disp(rhs_id));
+                    let g3: String = nb_store_rax(g2, nb_slot_disp(id));
+                    return NbState { code: g3, next_id: id + 1, last_id: id, ncalls: s2.ncalls };
+                }
             }
         }
+        // mov rax,[lhs] ; OP rax,[rhs] ; mov [dst],rax. A comparison op routes through
+        // cmp+setcc+movzx (-> 0/1); Add/Sub/Mul through the in-place arith form.
+        let c1: String = nb_load_rax(s2.code, nb_slot_disp(lhs_id));
+        let setcc: i64 = nb_setcc_opcode(op);
+        let c2: String = if setcc >= 0 {
+            nb_cmp_rax_mem(c1, setcc, nb_slot_disp(rhs_id))
+        } else {
+            nb_arith_rax_mem(c1, op, nb_slot_disp(rhs_id))
+        };
+        let c3: String = nb_store_rax(c2, nb_slot_disp(id));
+        return NbState { code: c3, next_id: id + 1, last_id: id, ncalls: s2.ncalls };
     }
-    // mov rax,[lhs] ; OP rax,[rhs] ; mov [dst],rax. A comparison op routes through
-    // cmp+setcc+movzx (-> 0/1); Add/Sub/Mul through the in-place arith form.
-    let c1: String = nb_load_rax(s2.code, nb_slot_disp(lhs_id));
-    let setcc: i64 = nb_setcc_opcode(op);
-    let c2: String = if setcc >= 0 {
-        nb_cmp_rax_mem(c1, setcc, nb_slot_disp(rhs_id))
-    } else {
-        nb_arith_rax_mem(c1, op, nb_slot_disp(rhs_id))
-    };
-    let c3: String = nb_store_rax(c2, nb_slot_disp(id));
-    NbState { code: c3, next_id: id + 1, last_id: id, ncalls: s2.ncalls }
+    // DEFAULT ARM — FAIL CLOSED (systemic). Any node kind with no arm above
+    // (ast_unsupported from the parser's poison fallback, ast_method, a block
+    // used as an expression, any future kind) is REFUSED: poison lcell+80 so
+    // nb_lower_fn returns the -1 sentinel and the whole compile emits 0 bytes.
+    // The placeholder const-0 keeps this walk crash-free (no null-child
+    // recursion); its bytes are discarded with the rest of the poisoned
+    // compile. main.mind's own source only produces the kinds handled above
+    // (its frozen self-compile bytes prove it), so this arm never fires during
+    // self-compile and the integer native-ELF oracle stays byte-identical.
+    __mind_store_i64(lcell + 80, 1);
+    nb_emit_const0(st)
 }
 
 // Lower each call arg in order, storing each arg's resulting slot id into ids[i] and
@@ -23303,21 +23386,25 @@ pub fn nb_field_read(code: String, next_id: i64, ptr_id: i64, off: i64, ncalls: 
 }
 
 // Resolve a field access `recv.field`'s byte offset (8 * declared field index),
-// or 0 when the shape is unsupported (non-ident receiver, unbound name, or an
-// unknown field). Uses if-STATEMENTS with early returns (NOT value-if-let phis,
-// which are outside the self-host mic@3 subset) so the pure-MIND compiler lowers
-// this byte-identically to the Rust oracle.
+// or -1 (FAIL CLOSED) when the shape is unsupported: non-ident receiver, a
+// receiver name with no struct binding/descriptor, or a field name not in the
+// binding. The old behaviour returned 0 for all three — a SILENT read of field
+// 0. The emit caller (nb_expr's ast_field arm) poisons the compile on -1; the
+// count caller treats -1 like the single-load case (its count is discarded once
+// the emit refuses). Uses if-STATEMENTS with early returns (NOT value-if-let
+// phis, which are outside the self-host mic@3 subset) so the pure-MIND compiler
+// lowers this byte-identically to the Rust oracle.
 pub fn nb_field_offset(recv: i64, field_node: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
     if ast_kind(recv) != ast_ident() {
-        return 0;
+        return 0 - 1;
     }
     let slit: i64 = nb_lets_lookup_slit(lets, lcell, buf, ast_span_lo(recv), ast_span_hi(recv));
     if slit == 0 {
-        return 0;
+        return 0 - 1;
     }
     let fidx: i64 = nb_slit_field_index(slit, buf, ast_child1(field_node), ast_child2(field_node));
     if fidx < 0 {
-        return 0;
+        return 0 - 1;
     }
     fidx * 8
 }
@@ -25458,8 +25545,11 @@ pub fn nb_count_expr(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         let recv: i64 = ast_child0(node);
         let after_recv: i64 = nb_count_expr(next_id, buf, recv, params_addr, n_params, clets, clcell);
         let off: i64 = nb_field_offset(recv, node, buf, clets, clcell);
-        if off == 0 {
-            // offset 0 (or unsupported, counted as the offset-0 single load).
+        if off <= 0 {
+            // offset 0, or UNSUPPORTED (-1, fail-closed): counted as the
+            // offset-0 single load. The unsupported case's count is irrelevant
+            // — the emit walk poisons the compile and the output is discarded —
+            // but it must stay crash-free and non-negative.
             return after_recv + 1;
         }
         return after_recv + 3;
@@ -25556,10 +25646,19 @@ pub fn nb_count_expr(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         let after_c: i64 = nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params, clets, clcell);
         return after_c + 1;
     }
-    // binop
-    let l: i64 = nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params, clets, clcell);
-    let r: i64 = nb_count_expr(l, buf, ast_child1(node), params_addr, n_params, clets, clcell);
-    r + 1
+    // binop — EXPLICITLY gated (fail-closed): only a real ast_binop walks its
+    // two children here.
+    if k == ast_binop() {
+        let l: i64 = nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params, clets, clcell);
+        let r: i64 = nb_count_expr(l, buf, ast_child1(node), params_addr, n_params, clets, clcell);
+        return r + 1;
+    }
+    // DEFAULT ARM — unsupported node kind (ast_unsupported poison leaf, or any
+    // future kind). Consume ONE id (mirrors nb_expr's default-arm placeholder
+    // const-0, keeping count >= emit) and DO NOT recurse into absent children
+    // (a null-node walk faults). The count is discarded anyway: the emit walk
+    // poisons the compile at this same node and the module emits 0 bytes.
+    next_id + 1
 }
 // The id count of a struct field's ADDRESS computation: 0 for field 0 (stored at
 // the base ptr), 2 for field i>0 (CONST off + ADD). An if-statement helper.
@@ -25891,9 +25990,15 @@ pub fn nb_ccount_expr(buf: i64, node: i64, ccell: i64) -> i64 {
     if k == ast_cast() {
         return nb_ccount_expr(buf, ast_child0(node), ccell);
     }
-    // binop: walk both operands.
-    let _l: i64 = nb_ccount_expr(buf, ast_child0(node), ccell);
-    nb_ccount_expr(buf, ast_child1(node), ccell)
+    // binop: walk both operands — EXPLICITLY gated (fail-closed). Any other
+    // kind (ast_unsupported poison leaf, any future kind) is call-free here;
+    // recursing into its absent children null-derefs. The emit walk refuses
+    // the poison node, so an under-count for a refused fn is discarded anyway.
+    if k == ast_binop() {
+        let _l: i64 = nb_ccount_expr(buf, ast_child0(node), ccell);
+        return nb_ccount_expr(buf, ast_child1(node), ccell);
+    }
+    0
 }
 pub fn nb_ccount_struct_fields(buf: i64, fields_addr: i64, nfields: i64, i: i64, ccell: i64) -> i64 {
     if i >= nfields {
@@ -26054,10 +26159,16 @@ pub fn nb_argv_expr(buf: i64, node: i64) -> i64 {
     if k == ast_cast() {
         return nb_argv_expr(buf, ast_child0(node));
     }
-    if nb_argv_expr(buf, ast_child0(node)) == 1 {
-        return 1;
+    // binop: walk both operands — EXPLICITLY gated (fail-closed). Any other
+    // kind (ast_unsupported poison leaf, any future kind) references no argv
+    // intrinsic; recursing into its absent children null-derefs.
+    if k == ast_binop() {
+        if nb_argv_expr(buf, ast_child0(node)) == 1 {
+            return 1;
+        }
+        return nb_argv_expr(buf, ast_child1(node));
     }
-    nb_argv_expr(buf, ast_child1(node))
+    0
 }
 pub fn nb_argv_struct_fields(buf: i64, fields_addr: i64, nfields: i64, i: i64) -> i64 {
     if i >= nfields {
@@ -26725,9 +26836,13 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // ast_if arm reads them from here instead of a wide signature change threaded
     // through nb_expr's ~20 call sites. Grown 24 -> 72 to hold the six new words,
     // then 72 -> 80 for the C2 declared return width at +72 (read by nb_stmt's
-    // return arm; 64 = full-width no-op for every main.mind fn).
-    let lcell: i64 = __mind_alloc(80);
+    // return arm; 64 = full-width no-op for every main.mind fn), then 80 -> 88
+    // for the FAIL-CLOSED poison flag at +80 (set by nb_expr's default/refusal
+    // arms; read below after the body walk — a poisoned fn refuses the whole
+    // compile with the next_id == -1 sentinel instead of emitting wrong bytes).
+    let lcell: i64 = __mind_alloc(88);
     __mind_store_i64(lcell, 0);
+    __mind_store_i64(lcell + 80, 0);
     // RI-B1 FOLLOW-UP: per-fn SSA dtype table (nb_dtype_table_new, all-INT default),
     // threaded through the EXISTING lets/lcell plumbing at lcell+8 — nb_expr's binop
     // arm reads it, the `let` arm tags it. Sized nslots+64 (all SSA ids < nslots; the
@@ -26790,6 +26905,20 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // nb_finish_body (xmm0 for a float return, rax otherwise). INT for every main.mind fn.
     let ret_dt: i64 = frt_lookup_dtype(frt, buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node)));
     let st_body: NbState = nb_finish_body(st_body0, is_entry, stmts_addr, stmts_len, ret_dt, __mind_load_i64(lcell + 72));
+
+    // SYSTEMIC FAIL-CLOSED gate: if any node in this fn's body was REFUSED
+    // (nb_expr/nb_stmt default arm, unbound ident, unsupported field shape —
+    // all poison lcell+80), refuse the WHOLE fn: return the next_id == -1
+    // sentinel with EMPTY code (nb_poison_state — helper-CALL return form, the
+    // self-host-subset shape; an inline struct-literal return here pushed this
+    // fn outside the nfn-emittable subset and broke the mic@3 flip).
+    // nb_lower_all propagates the sentinel and the top-level driver returns a
+    // 0-byte EmitState — an explicit, machine-checkable "not implemented",
+    // never a running ELF with a wrong value. Never fires during main.mind's
+    // own self-compile (supported subset only).
+    if __mind_load_i64(lcell + 80) == 1 {
+        return nb_poison_state(ncalls0);
+    }
 
     // Patch every recorded forward jump into this fn's assembled code IN PLACE
     // (string_addr) before nb_lower_all concatenates it into the image. Intra-fn
@@ -27708,8 +27837,16 @@ pub fn nb_reach_expr(buf: i64, fns: i64, n_fns: i64, reach: i64, node: i64, chan
     if k == ast_cast() {
         return nb_reach_expr(buf, fns, n_fns, reach, ast_child0(node), changed);
     }
-    let _l: i64 = nb_reach_expr(buf, fns, n_fns, reach, ast_child0(node), changed);
-    nb_reach_expr(buf, fns, n_fns, reach, ast_child1(node), changed)
+    // binop — EXPLICITLY gated (fail-closed): only a real ast_binop walks its
+    // two children. Any other kind (ast_unsupported poison leaf, any future
+    // kind) is a call-free no-op here — recursing into its absent children
+    // null-derefs. The emit walk refuses the poison node; this pass only marks
+    // reachable callees, so under-marking a refused fn is irrelevant.
+    if k == ast_binop() {
+        let _l: i64 = nb_reach_expr(buf, fns, n_fns, reach, ast_child0(node), changed);
+        return nb_reach_expr(buf, fns, n_fns, reach, ast_child1(node), changed);
+    }
+    0
 }
 pub fn nb_reach_struct_fields(buf: i64, fns: i64, n_fns: i64, reach: i64, fields_addr: i64, nfields: i64, i: i64, changed: i64) -> i64 {
     if i >= nfields {
@@ -28887,6 +29024,15 @@ pub fn selftest_native_elf_hb_from_tokens(tokens: Vec, src_addr: i64, hash_addr:
     }
     let acc0: NbState = NbState { code: string_new(), next_id: 0, last_id: 0, ncalls: 0 };
     let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, entry_idx, srt, frt, uses_argv);
+    // SYSTEMIC FAIL-CLOSED top gate: any fn refused during lowering (unsupported
+    // construct — arrays/tuples/refs/enums/closures/unbound names/unsupported
+    // struct shapes — poisons its lcell, nb_lower_fn returns the -1 sentinel,
+    // nb_lower_all propagates it stickily) refuses the WHOLE compile: return the
+    // EMPTY EmitState (0 bytes, not a valid ELF) so the boundary is explicit and
+    // machine-checkable. The loop/native smokes already FAIL on empty output.
+    if lr.next_id < 0 {
+        return es_new();
+    }
     let image0: String = lr.code;
     let total_calls: i64 = lr.ncalls;
 
@@ -29036,9 +29182,36 @@ pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, ca
     // Record owner for each newly-added call.
     let _o: i64 = nb_set_owners(call_owner, ncalls0, fr.ncalls, k);
     let image2: String = string_push_str(image, fr.code);
-    let acc2: NbState = NbState { code: image2, next_id: 0, last_id: 0, ncalls: fr.ncalls };
+    // FAIL-CLOSED propagation: a refused fn (nb_lower_fn's poison sentinel,
+    // fr.next_id == -1) marks the WHOLE module refused. The sentinel is STICKY
+    // across the remaining fns (nb_poison_merge keeps an already -1 acc), and
+    // the top-level driver maps it to a 0-byte EmitState. acc.next_id is 0 on
+    // every non-refused walk, so the supported path is unchanged. Helper-call
+    // form (NOT a value-if over field reads) so this fn stays inside the
+    // self-host nfn-emittable seq subset (see the guard-return comment above).
+    let frn: i64 = fr.next_id;
+    let accn: i64 = acc.next_id;
+    let pn: i64 = nb_poison_merge(frn, accn);
+    let acc2: NbState = NbState { code: image2, next_id: pn, last_id: 0, ncalls: fr.ncalls };
     nb_lower_all(acc2, buf, ordered, n_fns, k + 1, calls, starts, call_owner, entry_idx, srt, frt, uses_argv)
 }
+// The REFUSED-fn sentinel NbState (fail-closed): empty code + next_id == -1.
+// A single-expression helper (the es_new shape) so nb_lower_fn's poison gate
+// stays a plain call-return inside the self-host nfn-emittable subset.
+pub fn nb_poison_state(ncalls0: i64) -> NbState {
+    NbState { code: string_new(), next_id: 0 - 1, last_id: 0 - 1, ncalls: ncalls0 }
+}
+
+// FAIL-CLOSED sentinel merge for nb_lower_all: -1 (refused) once ANY fn's
+// next_id sentinel is negative, else the accumulator's running value (0 on a
+// clean walk). Early-return statement form (self-host subset).
+pub fn nb_poison_merge(fr_next: i64, acc_next: i64) -> i64 {
+    if fr_next < 0 {
+        return 0 - 1;
+    }
+    acc_next
+}
+
 pub fn nb_set_owners(call_owner: i64, c0: i64, c1: i64, k: i64) -> i64 {
     if c0 >= c1 {
         return 0;
@@ -29757,7 +29930,7 @@ pub fn selftest_native_elf_fp_expr(src_addr: i64, src_len: i64) -> EmitState {
     let params: i64 = __mind_alloc(8);
     let calls: i64 = __mind_alloc(8);
     let lets: i64 = __mind_alloc(512 * 5 * 8);
-    let lcell: i64 = __mind_alloc(80);
+    let lcell: i64 = __mind_alloc(88);
     __mind_store_i64(lcell, 0);
     // C2 return-width word (+72): full-width 64 on this hand-rolled driver path,
     // so nb_stmt's return arm reads a DEFINED no-op width, never adjacent-alloc
@@ -29798,7 +29971,7 @@ pub fn selftest_native_elf_fp_binop(src_addr: i64, src_len: i64) -> EmitState {
     let params: i64 = __mind_alloc(8);
     let calls: i64 = __mind_alloc(8);
     let lets: i64 = __mind_alloc(512 * 5 * 8);
-    let lcell: i64 = __mind_alloc(80);
+    let lcell: i64 = __mind_alloc(88);
     __mind_store_i64(lcell, 0);
     // C2 return-width word (+72): full-width 64 on this hand-rolled driver path,
     // so nb_stmt's return arm reads a DEFINED no-op width, never adjacent-alloc
@@ -29848,7 +30021,7 @@ pub fn selftest_native_elf_fp_let(src_addr: i64, src_len: i64) -> EmitState {
     __mind_store_i64(jcell, 0);
     // Per-fn let-env + real dtype table at lcell+8 (the nb_lower_fn plumbing).
     let lets: i64 = __mind_alloc(512 * 5 * 8);
-    let lcell: i64 = __mind_alloc(80);
+    let lcell: i64 = __mind_alloc(88);
     __mind_store_i64(lcell, 0);
     // C2 return-width word (+72): full-width 64 on this hand-rolled driver path,
     // so nb_stmt's return arm reads a DEFINED no-op width, never adjacent-alloc
@@ -29900,7 +30073,7 @@ pub fn selftest_native_elf_fp_field(src_addr: i64, src_len: i64) -> EmitState {
     let jcell: i64 = __mind_alloc(8);
     __mind_store_i64(jcell, 0);
     let lets: i64 = __mind_alloc(512 * 5 * 8);
-    let lcell: i64 = __mind_alloc(80);
+    let lcell: i64 = __mind_alloc(88);
     __mind_store_i64(lcell, 0);
     // C2 return-width word (+72): full-width 64 on this hand-rolled driver path,
     // so nb_stmt's return arm reads a DEFINED no-op width, never adjacent-alloc
@@ -30006,7 +30179,7 @@ pub fn selftest_native_elf_fp_param(src_addr: i64, src_len: i64) -> EmitState {
     let jcell: i64 = __mind_alloc(8);
     __mind_store_i64(jcell, 0);
     let lets: i64 = __mind_alloc(512 * 5 * 8);
-    let lcell: i64 = __mind_alloc(80);
+    let lcell: i64 = __mind_alloc(88);
     __mind_store_i64(lcell, 0);
     // C2 return-width word (+72): full-width 64 on this hand-rolled driver path,
     // so nb_stmt's return arm reads a DEFINED no-op width, never adjacent-alloc
@@ -30296,6 +30469,11 @@ pub fn selftest_native_elf_fp_call(src_addr: i64, src_len: i64) -> EmitState {
     // Lower every fn as NON-entry (entry_idx = -1) into one image; f -> g calls recorded.
     let acc0: NbState = NbState { code: string_new(), next_id: 0, last_id: 0, ncalls: 0 };
     let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, 0 - 1, srt, frt, 0);
+    // FAIL CLOSED (same top gate as selftest_native_elf_hb_from_tokens): a
+    // refused fn propagates the -1 sentinel — return the empty EmitState.
+    if lr.next_id < 0 {
+        return es_new();
+    }
     let body_image: String = lr.code;
     let total_calls: i64 = lr.ncalls;
 
