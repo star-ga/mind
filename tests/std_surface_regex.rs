@@ -270,7 +270,7 @@ fn bundled_stdlib_resolves_use_std_regex() {
 
 #[cfg(all(feature = "mlir-build", feature = "cross-module-imports"))]
 mod mlir_functional {
-    use super::mindc_bin;
+    use super::common::mindc_bin;
     use std::path::PathBuf;
     use std::process::Command;
 

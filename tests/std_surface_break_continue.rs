@@ -38,7 +38,7 @@ fn break_continue_lower_deterministically() {
 
 #[cfg(all(feature = "mlir-build", feature = "cross-module-imports"))]
 mod functional {
-    use super::mindc_bin;
+    use super::common::mindc_bin;
     use std::path::PathBuf;
     use std::process::Command;
 

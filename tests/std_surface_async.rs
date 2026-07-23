@@ -225,7 +225,7 @@ fn sched_kind_accessor_in_ir() {
 
 #[cfg(feature = "mlir-build")]
 mod mlir_tests {
-    use super::mindc_bin;
+    use super::common::mindc_bin;
 
     use std::path::PathBuf;
 
