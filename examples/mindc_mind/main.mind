@@ -23003,6 +23003,107 @@ pub fn nb_slit_field_index_loop(fields_addr: i64, nfields: i64, buf: i64, flo: i
     nb_slit_field_index_loop(fields_addr, nfields, buf, flo, fhi, i + 1)
 }
 
+// DECLARED-order canonicalization of a struct-literal field name: resolve the
+// literal's struct-name span (child0/child2) in `srt` and return the field's
+// index within the struct DEFINITION's declared field list — the physical slot
+// every consumer (the literal's own reads AND the srt decl-descriptor reads
+// inside an accessor fn) agrees on. Before this, an OUT-of-declared-order
+// literal (`P { y: 2, x: 1 }`) stored by literal source order while a param-
+// typed accessor read by declared order — a running ELF with the WRONG field
+// value (silent miscompile). Fallbacks keep every legacy path byte-identical:
+// srt==0 (a bare-expr selftest driver's zeroed lcell) or an unresolvable
+// struct name (the SYNTHETIC decl descriptor carries a 0,0 name span; its
+// triples are already declared-order) return `src_idx` unchanged; a field
+// name NOT in the declared list returns -1 so the read path fails closed.
+// main.mind's own literals are declared-order, so declared index == source
+// index and the self-compile emits byte-identical code.
+pub fn nb_slit_decl_index(slit: i64, buf: i64, srt: i64, nlo: i64, nhi: i64, src_idx: i64) -> i64 {
+    if srt == 0 {
+        return src_idx;
+    }
+    let sk: i64 = srt_find_by_name(srt, buf, ast_child0(slit), ast_child2(slit), 0);
+    if sk < 0 {
+        return src_idx;
+    }
+    srt_field_index(srt, sk, buf, nlo, nhi, 0)
+}
+
+// The literal-triple index holding the value for DECLARED slot i — the store
+// walk (nb_struct_fields + nb_count_struct_fields) iterates DECLARED order and
+// picks each declared field's value out of the literal by NAME, mirroring the
+// Rust oracle's canonical-order reordering (eval/lower.rs StructLit: `order` =
+// struct_defs names filtered through the literal). Both walks call this with
+// the same arguments, so count and emission stay in exact SSA lockstep.
+// Fallback to `i` (legacy source order) when srt==0, the struct name is not
+// registered, or the literal is malformed vs the declaration (missing/extra
+// field — nb_slit_validate poisons those on the emit walk; the fallback only
+// keeps the discarded walks crash-free). Declared-order literals resolve
+// si == i, so main.mind's self-compile is byte-identical.
+pub fn nb_slit_src_index(snode: i64, buf: i64, srt: i64, i: i64) -> i64 {
+    if srt == 0 {
+        return i;
+    }
+    let sk: i64 = srt_find_by_name(srt, buf, ast_child0(snode), ast_child2(snode), 0);
+    if sk < 0 {
+        return i;
+    }
+    if i >= srt_field_count(srt, sk) {
+        return i;
+    }
+    let si: i64 = nb_slit_field_index_loop(ast_child1(snode), ast_aux(snode), buf, srt_field_lo(srt, sk, i), srt_field_hi(srt, sk, i), 0);
+    if si < 0 {
+        return i;
+    }
+    si
+}
+
+// FAIL-CLOSED validation of a struct literal against its declared definition
+// (poisons lcell+80): when the struct name resolves in srt, the literal must
+// list EXACTLY the declared field set — same count, every name declared, no
+// duplicates. Anything else would leave a declared slot unwritten or doubly
+// written under the declared-order layout — a wrong-value ELF — so the whole
+// compile refuses (0 bytes) instead. An unknown struct name keeps the legacy
+// source-order layout (self-consistent: no decl descriptor can exist for it).
+// Runs ONLY on the emit walk (the count clcell0 is a 32-byte cell with no +80
+// poison word). main.mind's own literals are exact declared sets, so this
+// never poisons during self-compile.
+pub fn nb_slit_validate(snode: i64, buf: i64, srt: i64, lcell: i64) -> i64 {
+    if srt == 0 {
+        return 0;
+    }
+    let sk: i64 = srt_find_by_name(srt, buf, ast_child0(snode), ast_child2(snode), 0);
+    if sk < 0 {
+        return 0;
+    }
+    let nfields: i64 = ast_aux(snode);
+    if nfields != srt_field_count(srt, sk) {
+        __mind_store_i64(lcell + 80, 1);
+        return 0;
+    }
+    nb_slit_validate_fields(buf, srt, sk, lcell, ast_child1(snode), nfields, 0)
+}
+
+// Per-field half of nb_slit_validate: field i's name must be in the declared
+// list (unknown field -> poison) and must be the FIRST literal occurrence of
+// that name (a duplicate maps two stores onto one declared slot and leaves
+// another unwritten -> poison).
+pub fn nb_slit_validate_fields(buf: i64, srt: i64, sk: i64, lcell: i64, fields_addr: i64, nfields: i64, i: i64) -> i64 {
+    if i >= nfields {
+        return 0;
+    }
+    let nlo: i64 = __mind_load_i64(fields_addr + (i * 3 + 0) * 8);
+    let nhi: i64 = __mind_load_i64(fields_addr + (i * 3 + 1) * 8);
+    if srt_field_index(srt, sk, buf, nlo, nhi, 0) < 0 {
+        __mind_store_i64(lcell + 80, 1);
+        return 0;
+    }
+    if nb_slit_field_index_loop(fields_addr, nfields, buf, nlo, nhi, 0) < i {
+        __mind_store_i64(lcell + 80, 1);
+        return 0;
+    }
+    nb_slit_validate_fields(buf, srt, sk, lcell, fields_addr, nfields, i + 1)
+}
+
 // ---- scalar expression lowering -> machine code ----
 // Mirrors emit_mlir_expr_env's SSA numbering EXACTLY (so slot id == SSA id) but
 // emits x86-64 into st.code. `calls` is the scratch call table; `params_addr` /
@@ -23104,10 +23205,11 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // `Name { f0: e0, .. }` for an all-i64 struct (legacy 8-byte-stride path,
         // mirrors eval/lower.rs's StructLit all_i64 arm + the IR the Rust native
         // backend inlines). IR (== oracle disasm): CONST 8 ; CONST n_fields ;
-        // MUL(8,n) ; __mind_alloc(size) -> ptr ; then for each SOURCE-order field
-        // i: emit value -> val ; addr = (i==0 ? ptr : CONST(8*i)+ADD(ptr,off)) ;
-        // __mind_store_i64(addr, val) (its dst id is consumed but never read).
-        // The struct value IS the ptr slot.
+        // MUL(8,n) ; __mind_alloc(size) -> ptr ; then for each DECLARED-order
+        // field i (the literal's values picked by name, mirroring the oracle's
+        // canonical reordering): emit value -> val ; addr = (i==0 ? ptr :
+        // CONST(8*i)+ADD(ptr,off)) ; __mind_store_i64(addr, val) (its dst id is
+        // consumed but never read). The struct value IS the ptr slot.
         let fields_addr: i64 = ast_child1(node);
         let nfields: i64 = ast_aux(node);
         // CONST 8 (element size).
@@ -23132,8 +23234,16 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let al1: String = nb_emit_alloc(m3, nb_slot_disp(mul_id));
         let al2: String = nb_store_rax(al1, nb_slot_disp(ptr_id));
         let s_alloc: NbState = NbState { code: al2, next_id: ptr_id + 1, last_id: ptr_id, ncalls: st.ncalls };
-        // Per-field stores, in SOURCE order.
-        let s_fields: NbState = nb_struct_fields(s_alloc, buf, fields_addr, nfields, 0, ptr_id, params_addr, n_params, calls, lets, lcell);
+        // FAIL CLOSED: a literal that is not exactly the declared field set
+        // (missing/unknown/duplicate field) poisons the compile — under the
+        // declared-order layout it would leave a slot unwritten or doubly
+        // written. Emission continues (discarded) to keep SSA-id lockstep.
+        let _sv: i64 = nb_slit_validate(node, buf, __mind_load_i64(lcell + 24), lcell);
+        // Per-field stores, in DECLARED order (each declared field's value
+        // picked from the literal by name — mirrors the Rust oracle's
+        // canonical-order reordering, so an out-of-declared-order literal
+        // lays out identically to its in-order spelling).
+        let s_fields: NbState = nb_struct_fields(s_alloc, buf, node, fields_addr, nfields, 0, ptr_id, params_addr, n_params, calls, lets, lcell);
         // The struct-lit's VALUE is the base pointer.
         return NbState { code: s_fields.code, next_id: s_fields.next_id, last_id: ptr_id, ncalls: s_fields.ncalls };
     }
@@ -23682,7 +23792,17 @@ pub fn nb_field_offset(recv: i64, field_node: i64, buf: i64, lets: i64, lcell: i
     if fidx < 0 {
         return 0 - 1;
     }
-    fidx * 8
+    // Canonicalize to the DECLARED index (the physical slot the store walk now
+    // lays out): a literal-bound receiver resolves its struct name in srt so an
+    // out-of-declared-order literal still reads the right slot; the synthetic
+    // decl descriptor (0,0 name span) falls back to fidx, which IS declared
+    // order there. A field present in the literal but absent from the declared
+    // list fails closed (-1) — the constructor was poisoned anyway.
+    let didx: i64 = nb_slit_decl_index(slit, buf, __mind_load_i64(lcell + 24), ast_child1(field_node), ast_child2(field_node), fidx);
+    if didx < 0 {
+        return 0 - 1;
+    }
+    didx * 8
 }
 
 // RI-D2 S-D: classify a field READ `recv.field`'s dtype (FLOAT for an f64/f32 field,
@@ -23756,11 +23876,16 @@ pub fn nb_field_read_fp(code: String, next_id: i64, ptr_id: i64, off: i64, ncall
 // value expr -> val slot ; addr = (i==0 ? ptr_id : CONST(8*i)+ADD(ptr,off)) ;
 // __mind_store_i64(addr, val) — the store's own dst id is consumed (the front-end
 // never reads a store's result) so the SSA numbering matches the oracle exactly.
-pub fn nb_struct_fields(st: NbState, buf: i64, fields_addr: i64, nfields: i64, i: i64, ptr_id: i64, params_addr: i64, n_params: i64, calls: i64, lets: i64, lcell: i64) -> NbState {
+pub fn nb_struct_fields(st: NbState, buf: i64, snode: i64, fields_addr: i64, nfields: i64, i: i64, ptr_id: i64, params_addr: i64, n_params: i64, calls: i64, lets: i64, lcell: i64) -> NbState {
     if i >= nfields {
         return st;
     }
-    let value_node: i64 = __mind_load_i64(fields_addr + (i * 3 + 2) * 8);
+    // DECLARED slot i takes the value the literal names for declared field i
+    // (nb_slit_src_index — si == i for a declared-order literal, so main.mind's
+    // self-compile is byte-identical; an out-of-order literal is REORDERED to
+    // the declared layout, mirroring the Rust oracle's canonical order).
+    let si: i64 = nb_slit_src_index(snode, buf, __mind_load_i64(lcell + 24), i);
+    let value_node: i64 = __mind_load_i64(fields_addr + (si * 3 + 2) * 8);
     // Lower the field value -> its slot.
     let sv: NbState = nb_expr(st, buf, value_node, params_addr, n_params, calls, lets, lcell);
     let val_id: i64 = sv.last_id;
@@ -23772,10 +23897,10 @@ pub fn nb_struct_fields(st: NbState, buf: i64, fields_addr: i64, nfields: i64, i
     // materialises addr = ptr + 8*i (CONST + ADD).
     if i == 0 {
         let s_after: NbState = nb_struct_field_store0(sv.code, sv.next_id, ptr_id, val_id, val_nc);
-        return nb_struct_fields(s_after, buf, fields_addr, nfields, i + 1, ptr_id, params_addr, n_params, calls, lets, lcell);
+        return nb_struct_fields(s_after, buf, snode, fields_addr, nfields, i + 1, ptr_id, params_addr, n_params, calls, lets, lcell);
     }
     let s_after: NbState = nb_struct_field_store_off(sv.code, sv.next_id, ptr_id, val_id, val_nc, i * 8);
-    nb_struct_fields(s_after, buf, fields_addr, nfields, i + 1, ptr_id, params_addr, n_params, calls, lets, lcell)
+    nb_struct_fields(s_after, buf, snode, fields_addr, nfields, i + 1, ptr_id, params_addr, n_params, calls, lets, lcell)
 }
 
 // Emit field-0's store at the base pointer (offset 0), consuming the store's dst
@@ -25934,11 +26059,11 @@ pub fn nb_count_expr(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         return nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params, clets, clcell);
     }
     if k == ast_struct_lit() {
-        // sz + nf + mul + alloc-ptr = 4 ids, then per SOURCE-order field i:
+        // sz + nf + mul + alloc-ptr = 4 ids, then per DECLARED-order field i:
         //   value ids + (i==0 ? 0 : 2 for CONST off + ADD) + 1 store-dst.
         let fields_addr: i64 = ast_child1(node);
         let nfields: i64 = ast_aux(node);
-        let after_fields: i64 = nb_count_struct_fields(next_id + 4, buf, fields_addr, nfields, 0, params_addr, n_params, clets, clcell);
+        let after_fields: i64 = nb_count_struct_fields(next_id + 4, buf, node, fields_addr, nfields, 0, params_addr, n_params, clets, clcell);
         // The struct-lit VALUE is the alloc-ptr slot (next_id+3); no extra id.
         return after_fields;
     }
@@ -26087,17 +26212,21 @@ pub fn nb_field_addr_ids(after_val: i64, i: i64) -> i64 {
 }
 
 // Count the ids each struct-literal field's store contributes (mirror
-// nb_struct_fields): value ids + (i==0 ? 0 : 2) + 1 store-dst, in SOURCE order.
-pub fn nb_count_struct_fields(next_id: i64, buf: i64, fields_addr: i64, nfields: i64, i: i64, params_addr: i64, n_params: i64, clets: i64, clcell: i64) -> i64 {
+// nb_struct_fields): value ids + (i==0 ? 0 : 2) + 1 store-dst, in DECLARED
+// order — the value counted at slot i is the one the literal names for
+// declared field i (nb_slit_src_index, the SAME helper the emit walk uses,
+// so count and emission stay in exact SSA lockstep for any field order).
+pub fn nb_count_struct_fields(next_id: i64, buf: i64, snode: i64, fields_addr: i64, nfields: i64, i: i64, params_addr: i64, n_params: i64, clets: i64, clcell: i64) -> i64 {
     if i >= nfields {
         return next_id;
     }
-    let value_node: i64 = __mind_load_i64(fields_addr + (i * 3 + 2) * 8);
+    let si: i64 = nb_slit_src_index(snode, buf, __mind_load_i64(clcell + 24), i);
+    let value_node: i64 = __mind_load_i64(fields_addr + (si * 3 + 2) * 8);
     let after_val: i64 = nb_count_expr(next_id, buf, value_node, params_addr, n_params, clets, clcell);
     // i==0 stores at the base ptr (no addr instrs); i>0 adds CONST+ADD (2 ids).
     // Computed via a helper (if-statement) to stay in the self-host subset.
     let after_addr: i64 = nb_field_addr_ids(after_val, i);
-    nb_count_struct_fields(after_addr + 1, buf, fields_addr, nfields, i + 1, params_addr, n_params, clets, clcell)
+    nb_count_struct_fields(after_addr + 1, buf, snode, fields_addr, nfields, i + 1, params_addr, n_params, clets, clcell)
 }
 
 // Count the ids each array-literal element's store contributes (mirror

@@ -91,6 +91,17 @@ REFUSED = [
     ("array .len()", M("let a=[1,2,3]; return a.len();"), "0B"),
     ("array field access", M("let a=[1,2,3]; return a.x;"), "0B"),
     ("array missing ]", M("let a=[1,2; return 0;"), "0B"),
+    # struct literals must be EXACTLY the declared field set: under the
+    # declared-order layout a missing/unknown/duplicate field would leave a
+    # slot unwritten or doubly written — a wrong-value ELF — so refuse.
+    ("struct-lit missing field",
+     "struct P { x: i64, y: i64 }\nfn main()->i64{ let p: P = P { x: 1 }; return p.x; }", "0B"),
+    ("struct-lit extra field",
+     "struct P { x: i64, y: i64 }\nfn main()->i64{ let p: P = P { x: 1, y: 2, z: 3 }; return p.x; }", "0B"),
+    ("struct-lit duplicate field",
+     "struct P { x: i64, y: i64 }\nfn main()->i64{ let p: P = P { x: 1, x: 2 }; return p.x; }", "0B"),
+    ("struct-lit unknown field",
+     "struct P { x: i64, y: i64 }\nfn main()->i64{ let p: P = P { x: 1, z: 2 }; return p.x; }", "0B"),
     # sticky poison: unsupported nested in supported -> whole unit refuses
     ("tuple nested in if", M("let x:i64=5; if x>0 { return (7,8).0; } return 0;"), "0B"),
     # unsupported node in a separate function still refuses the whole unit
@@ -123,6 +134,27 @@ SUPPORTED = [
     ("untyped let", M("let mut i=0; let mut c:i64=0; while i<4 { c=c+1; i=i+1; } return c;"), 4),
     ("else-if chain", M("let x:i64=2; if x==1 {return 1;} else if x==2 {return 2;} else {return 3;}"), 2),
     ("recursion", "fn fib(n:i64)->i64{ if n<2 { return n; } return fib(n-1)+fib(n-2); }\nfn main()->i64{ return fib(7); }", 13),
+    # OUT-OF-DECLARED-ORDER struct literals: the physical layout is DECLARED
+    # order (mirrors the Rust oracle's canonical reordering), so `P { y:2, x:1 }`
+    # reads back p.x==1 / p.y==2 — including through the accessor-fn idiom,
+    # where the caller's literal layout and the param-typed srt decl-descriptor
+    # read MUST agree (the silent miscompile this battery locks against).
+    ("struct ooo p.x",
+     "struct P { x: i64, y: i64 }\nfn main()->i64{ let p: P = P { y: 2, x: 1 }; return p.x; }", 1),
+    ("struct ooo p.y",
+     "struct P { x: i64, y: i64 }\nfn main()->i64{ let p: P = P { y: 2, x: 1 }; return p.y; }", 2),
+    ("struct in-order p.y",
+     "struct P { x: i64, y: i64 }\nfn main()->i64{ let p: P = P { x: 1, y: 2 }; return p.y; }", 2),
+    ("struct 3-field ooo q.a",
+     "struct Q { a: i64, b: i64, c: i64 }\nfn main()->i64{ let q: Q = Q { c: 3, a: 1, b: 2 }; return q.a; }", 1),
+    ("struct 3-field ooo q.b",
+     "struct Q { a: i64, b: i64, c: i64 }\nfn main()->i64{ let q: Q = Q { c: 3, a: 1, b: 2 }; return q.b; }", 2),
+    ("struct 3-field ooo q.c",
+     "struct Q { a: i64, b: i64, c: i64 }\nfn main()->i64{ let q: Q = Q { c: 3, a: 1, b: 2 }; return q.c; }", 3),
+    ("struct accessor-fn in-order",
+     "struct R { u: i64, v: i64 }\nfn get_u(r: R)->i64{ return r.u; }\nfn main()->i64{ let r: R = R { u: 7, v: 9 }; return get_u(r); }", 7),
+    ("struct accessor-fn ooo lit",
+     "struct R { u: i64, v: i64 }\nfn get_u(r: R)->i64{ return r.u; }\nfn main()->i64{ let r: R = R { v: 9, u: 7 }; return get_u(r); }", 7),
 ]
 
 
