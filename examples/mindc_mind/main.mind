@@ -38162,6 +38162,39 @@ pub fn selftest_tc_decl_names(src: i64, src_len: i64, name: i64, name_len: i64) 
     tc_is_decl_name(src, src_len, name, name_len)
 }
 
+// ---- D3: STD-SURFACE EXPORT NAME SET (scope-frame engine, B1) ----
+// Twin of resolve.rs `stdlib_export_names()`: the flattened union of
+// `collect_decl_names` over the BUNDLED std modules (project/stdlib.rs
+// STDLIB_MIND_SOURCES; an on-disk std/*.mind file NOT in that list is NOT a
+// member). This is the OTHER half of `name_resolvable` (the E2012 exclusion
+// path, reusable for E2002/E2003/E2009): D1 answers the per-module decl set,
+// this answers the std-surface set. The caller supplies the CONCATENATED
+// bundled-std source text — every bundled module is a balanced top-level
+// file, so concatenation preserves each top-level decl position and the D1
+// walk over the concat equals the Rust per-module union. Differences from
+// tc_is_decl_name: NO prelude injection (resolve.rs adds Result / Option /
+// Ok / Err / Some / None to the per-module set in collect_module_syms,
+// never to the std export set). Query cost is one lex of the supplied
+// buffer; an integration caller that already holds a token stream should
+// grow a *_from_tokens variant rather than re-lex (arena rule). Additive:
+// reached only through selftest_tc_std_export, never mindc_compile.
+pub fn tc_is_std_export(src: i64, src_len: i64, name: i64, name_len: i64) -> i64 {
+    let d: i64 = tc_uv_find_dcolon(name, 0, name_len);
+    let toks: Vec = lex(src, src_len);
+    let n: i64 = tok_count(toks);
+    if d >= name_len {
+        return tc_dn_walk(toks, n, 0, src, name, 0, 0, 0, 0, name_len);
+    }
+    if tc_uv_find_dcolon(name, d + 2, name_len) < name_len {
+        return 0;
+    }
+    tc_dn_walk(toks, n, 0, src, name, 1, 0, d, d + 2, name_len)
+}
+
+pub fn selftest_tc_std_export(src: i64, src_len: i64, name: i64, name_len: i64) -> i64 {
+    tc_is_std_export(src, src_len, name, name_len)
+}
+
 // ============================================================================
 // B1 scope-frame engine D2 — the NESTED SCOPE-FRAME WALK (resolve.rs `Scopes`
 // + `Resolver::walk`/`walk_block`), on top of the D1 decl-name set. Answers:

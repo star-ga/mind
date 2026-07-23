@@ -115,8 +115,13 @@ itself byte-identically with zero Rust & zero LLVM in the loop"* (integer/contro
   for E2002/E2003/E2009/E2012.** **D2 LANDED (2026-07-23) — the nested scope-frame walk (`selftest_tc_scope_frame`: Scopes frames +
   params-frame-0 + block push/pop + bind-after-RHS sequential visibility + For/Match binds; a blind
   review caught + fixed 2 fail-OPEN scope divergences pre-landing — struct-pattern-head-binds-nothing
-  and newline-continuation extent; 28-case three-leg smoke, 25 live-`mindc`-checked).** Remaining:
-  D3 (the ~910-name std-export set), D4 (assemble `tc_is_fn_value_call` = E2012).
+  and newline-continuation extent; 28-case three-leg smoke, 25 live-`mindc`-checked).**
+  **D3 LANDED (2026-07-23) — the std-surface export set (`tc_is_std_export`: the D1 decl-name walk
+  reused over the CONCATENATED bundled-std source — a drift-free check-time scan, no giant table, so
+  the arena stays flat; `::`-qualified handling; 43-case three-way smoke that re-extracts
+  `STDLIB_MIND_SOURCES` from `src/project/stdlib.rs` each run so a bundling change fails LOUD; prelude
+  + non-bundled + near-miss negatives).** Remaining: D4 (assemble `tc_is_fn_value_call` = E2012 =
+  D2-positive ∧ ¬(D1 ∪ D3 ∪ bare-builtins ∪ E2024-table ∪ prefixes)).
 - [ ] **B2** Full parser + AST→IR lowering (`parser` ~5,563 portable of 7,782 total — the `#[bimap]` + trivia
   ~2,219 LOC are descoped from the self-host target — + `eval/lower.rs` 9,966) for every construct. The self-host
   front-end already lexes+parses+lowers the scalar/i64/control-flow subset (that is what the keystone loop
