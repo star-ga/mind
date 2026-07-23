@@ -30616,6 +30616,33 @@ pub fn nb_resolve_callee(buf: i64, fn_names: i64, n_fns: i64, lo: i64, hi: i64, 
     nb_resolve_callee(buf, fn_names, n_fns, lo, hi, k + 1)
 }
 
+// FAIL-CLOSED pre-patch gate: every recorded call site must resolve to a defined
+// fn BEFORE nb_patch_all runs. Pre-gate, an unresolved callee — a call through a
+// let-bound value (`let f:i64 = 5; f(41)`), an undefined/misspelled name, a param
+// name called as a fn, a struct name called — reached nb_patch_all with
+// callee_idx = -1, which read starts[-1] (the arena word BELOW the starts table)
+// and patched a GARBAGE rel32: the emitted ELF calls into garbage. Observed
+// fail-OPEN outcomes on the base compiler: SIGILL (rc=-4) AND a silently WRONG
+// running value (an undefined callee in a non-main fn returned rc=1). The
+// reference compiler rejects every such program at type-check (E2012 fn-value
+// call / unknown call), so refusing the whole module (0B) matches its surface.
+// First-class function values stay fail-closed until the LANGUAGE grows a
+// fn-value surface (no lambda syntax exists; `fn(..)->..` types are extern-"C"
+// callback declarations only). Never fires during self-compile — every callee in
+// main.mind resolves (the loop links today) — so the loop stays byte-identical
+// modulo this gate's own code. Returns 1 iff all `total_calls` records resolve.
+pub fn nb_calls_all_resolve(calls: i64, total_calls: i64, fn_names: i64, n_fns: i64, buf: i64, c: i64) -> i64 {
+    if c >= total_calls {
+        return 1;
+    }
+    let lo: i64 = __mind_load_i64(calls + (c * 3 + 1) * 8);
+    let hi: i64 = __mind_load_i64(calls + (c * 3 + 2) * 8);
+    if nb_resolve_callee(buf, fn_names, n_fns, lo, hi, 0) < 0 {
+        return 0;
+    }
+    nb_calls_all_resolve(calls, total_calls, fn_names, n_fns, buf, c + 1)
+}
+
 // Patch a single rel32 at absolute code offset `abs_off` to value `rel`.
 // Writes 4 little-endian bytes (two's-complement) directly into the code buffer.
 pub fn nb_patch_rel32(code_addr: i64, abs_off: i64, rel: i64) -> i64 {
@@ -31714,6 +31741,13 @@ pub fn selftest_native_elf_hb_from_tokens(tokens: Vec, src_addr: i64, hash_addr:
     }
     let image0: String = lr.code;
     let total_calls: i64 = lr.ncalls;
+    // FAIL-CLOSED: refuse (0B) if ANY call record's callee does not resolve to a
+    // defined fn — otherwise nb_patch_all patches a garbage rel32 (call through a
+    // let-bound value / undefined name: fail-OPEN SIGILL or a silent wrong value).
+    // See nb_calls_all_resolve. Never fires during self-compile.
+    if nb_calls_all_resolve(calls, total_calls, fn_names, n_fns, src_addr, 0) == 0 {
+        return es_new();
+    }
 
     // No-`main` (library) module: prepend the 9-byte synth entry stub at offset 0
     // (mirrors src/native/mod.rs pushing synth_lib_entry() as funcs[0]) and shift

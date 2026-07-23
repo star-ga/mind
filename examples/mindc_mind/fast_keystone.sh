@@ -137,6 +137,7 @@ chk "field_store_netverify (p.x=v mutable structs)"  python3 examples/mindc_mind
 chk "enum_netverify (C-like enums + match)"          python3 examples/mindc_mind/enum_netverify.py
 chk "option_netverify (Option/Result payload enums)" python3 examples/mindc_mind/option_netverify.py
 chk "failclosed (poison boundary + float refusal)"   python3 examples/mindc_mind/self_host_failclosed_smoke.py
+chk "closure_netverify (unresolved-callee fail-closed)" python3 examples/mindc_mind/closure_netverify.py
 
 rm -f "$DIR_SO" "$MT_SO"
 echo "== $pass passed, $fail failed in $(($(date +%s)-t0))s =="
