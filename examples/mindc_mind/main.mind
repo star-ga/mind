@@ -1965,16 +1965,49 @@ pub fn parse_if(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     let then_hi: i64 = ast_span_hi(then_blk);
 
     if tok_kind(toks, after_then) == tk_kw_else() {
-        let else_res: ParseResult = parse_block(toks, after_then + 1, buf);
-        let after_else: i64 = pr_pos(else_res);
-        let else_blk: i64 = pr_node(else_res);
-        let else_hi: i64 = ast_span_hi(else_blk);
-        let if_node: i64 = ast_new_if(kw_lo, else_hi, pr_node(cond), then_blk, else_blk);
-        return pr_new(after_else, if_node);
+        return parse_if_else_tail(toks, after_then, buf, kw_lo, pr_node(cond), then_blk);
     }
 
     let if_node: i64 = ast_new_if(kw_lo, then_hi, pr_node(cond), then_blk, 0);
     pr_new(after_then, if_node)
+}
+
+// Parse an `else` tail: either `else { block }` or the `else if …` sugar.  Kept
+// as its own function (called from parse_if) so that BOTH parse_if and this
+// helper stay a SINGLE-LEVEL `if <cond> { …; return } …` shape — the same shape
+// the pre-existing parse_if had, which the self-host mic@3 emitter reproduces
+// byte-identically.  Inlining the `else if` branch as a nested if-with-return
+// inside parse_if's else-branch instead created a DOUBLE-nested if-return shape
+// the self-host emitter over-emits by 72 B (mic@3 FLIP drift); this flattening
+// avoids that.
+//
+// `else if …` desugars to the explicit `else { if … }` form: parse the trailing
+// `if` recursively (handles arbitrary-depth chains) and wrap the single if-node
+// in a one-statement block — byte-identical in AST shape to what parse_block
+// produces for an explicit `else { if … }` (child0 = a 1-element stmts vec
+// holding the if-node, aux = 1), so the shared if-emit path lowers both forms to
+// the same bytes with ZERO new emit code.  emit reads child0/child1/child2 and
+// stmts_addr/aux only — never a block's or if-node's span — so the nested-if span
+// assigned to the wrapper block does not perturb byte-identity.
+pub fn parse_if_else_tail(toks: Vec, after_then: i64, buf: i64, kw_lo: i64, cond_node: i64, then_blk: i64) -> ParseResult {
+    if tok_kind(toks, after_then + 1) == tk_kw_if() {
+        let nested: ParseResult = parse_if(toks, after_then + 1, buf);
+        let after_else: i64 = pr_pos(nested);
+        let nested_if: i64 = pr_node(nested);
+        let else_hi: i64 = ast_span_hi(nested_if);
+        let else_lo: i64 = ast_span_lo(nested_if);
+        let one_acc0: Vec = vec_new();
+        let one_acc: Vec = vec_push(one_acc0, nested_if);
+        let else_blk: i64 = ast_new_block(else_lo, else_hi, vec_addr(one_acc), vec_len(one_acc));
+        let if_node: i64 = ast_new_if(kw_lo, else_hi, cond_node, then_blk, else_blk);
+        return pr_new(after_else, if_node);
+    }
+    let else_res: ParseResult = parse_block(toks, after_then + 1, buf);
+    let after_else: i64 = pr_pos(else_res);
+    let else_blk: i64 = pr_node(else_res);
+    let else_hi: i64 = ast_span_hi(else_blk);
+    let if_node: i64 = ast_new_if(kw_lo, else_hi, cond_node, then_blk, else_blk);
+    pr_new(after_else, if_node)
 }
 
 // ===== Match-expressions (parse-time desugar to if) =====
