@@ -38162,6 +38162,813 @@ pub fn selftest_tc_decl_names(src: i64, src_len: i64, name: i64, name_len: i64) 
     tc_is_decl_name(src, src_len, name, name_len)
 }
 
+// ============================================================================
+// B1 scope-frame engine D2 — the NESTED SCOPE-FRAME WALK (resolve.rs `Scopes`
+// + `Resolver::walk`/`walk_block`), on top of the D1 decl-name set. Answers:
+// at byte position `pos` in `src` (an ident token — a call-site callee), is
+// that ident a LIVE LOCAL binding under nested-frame scoping with sequential
+// visibility? This is the `self.scopes.contains(name)` half of E2012
+// (resolve.rs is_fn_value_call), reusable for E2002/E2009. It does NOT consult
+// the D1 decl-name set or std exports — those are the OTHER half of the rules.
+//
+// Rust semantics mirrored (resolve.rs):
+//   * frame 0 = fn params (resolve_fn_body binds params into the base frame;
+//     body stmts then walk DIRECTLY in it — no extra frame for the body);
+//   * walk_block pushes a frame on `{`, pops on `}` — here a frame is the
+//     SAVED binding count: a block descent appends bindings past the caller's
+//     count and the caller resumes with its own count (truncate == pop), so
+//     frame semantics fall out of the recursion;
+//   * Node::Let walks the RHS FIRST, then binds — sequential visibility: a
+//     name is NOT in scope in its own initializer, and a use BEFORE its `let`
+//     never sees it (the walk simply has not bound it yet);
+//   * Node::LetTuple — RHS first, then every destructured name binds;
+//   * Node::For / ForEach — start/end (collection) walk in the OUTER scope,
+//     then push + bind the loop var + walk the body + pop;
+//   * Node::Match — scrutinee walks outside; per arm: push, bind the
+//     pattern's binding idents (bind_pattern: bare idents and variant-payload
+//     / tuple sub-patterns bind; literals, `_`, and the variant head itself
+//     bind nothing), walk the guard WITH the pattern binds live, walk the
+//     body, pop;
+//   * If / While / Block need no dedicated arm: conditions introduce no
+//     bindings and every `{` is a fresh frame via the generic lbrace arm.
+//
+// Statement extents are token-level: a fragment ends at a depth-0 `;`, `}`,
+// `,` (match arms only) or a depth-0 LINE BREAK (newline-terminated
+// statement); `(`/`[` nest, `{...}` regions are opaque to the end-finder (the
+// walker descends into them separately). Newline-continued initializers
+// follow the Pratt parser's greedy extent when the operator TRAILS the break
+// (`let x = a +\n  b` — tc_sf_is_open_op continues the fragment); when the
+// next line LEADS with a binary-only operator (`let x = a\n  + b`) the let
+// binding is WITHHELD for the remaining walk (tc_sf_is_binonly fail-close:
+// conservatively out of scope, never a false in-scope — fmt-clean source
+// never emits either shape).
+// deferred: extern-block fns, fns nested inside `module { }` bodies, and
+// EnumStruct `..` rest-patterns are out of D2 scope — upgrade path: reuse the
+// self-host Pratt parser's expression end once the tc walk moves onto the AST.
+//
+// The binding buffer is PER-QUERY TRANSIENT (one __mind_alloc(4096) per call,
+// 16 bytes per entry, cap 250 entries), never a new full-source lex of
+// main.mind nor a permanent arena residency (Rule 2c): a query lexes only its
+// own fixture source, and this path is never reached by mindc_compile.
+
+// Bytes src[alo+k..alo+len) == src[blo+k..blo+len).
+pub fn tc_sf_span_eq_loop(src: i64, alo: i64, blo: i64, k: i64, len: i64) -> i64 {
+    if k >= len {
+        return 1;
+    }
+    if load_byte(src, alo + k) == load_byte(src, blo + k) {
+        return tc_sf_span_eq_loop(src, alo, blo, k + 1, len);
+    }
+    0
+}
+
+// Span equality within one source buffer: src[alo..ahi) == src[blo..bhi).
+pub fn tc_sf_span_eq(src: i64, alo: i64, ahi: i64, blo: i64, bhi: i64) -> i64 {
+    if ahi - alo == bhi - blo {
+        return tc_sf_span_eq_loop(src, alo, blo, 0, ahi - alo);
+    }
+    0
+}
+
+// Little-endian packed word of a span's bytes (len > 8 -> -1): keyword probes.
+pub fn tc_sf_word(src: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo > 8 {
+        return 0 - 1;
+    }
+    tc_dn_pack8(src + lo, hi - lo)
+}
+
+// span == "for" (102|111<<8|114<<16).
+pub fn tc_sf_is_for(src: i64, lo: i64, hi: i64) -> i64 {
+    if tc_sf_word(src, lo, hi) == 7499622 {
+        return 1;
+    }
+    0
+}
+
+// span == "match" (109|97<<8|116<<16|99<<24|104<<32).
+pub fn tc_sf_is_match(src: i64, lo: i64, hi: i64) -> i64 {
+    if tc_sf_word(src, lo, hi) == 448345170285 {
+        return 1;
+    }
+    0
+}
+
+// span == "_" (the wildcard pattern, byte 95): binds nothing.
+pub fn tc_sf_is_wild(src: i64, lo: i64, hi: i64) -> i64 {
+    if tc_sf_word(src, lo, hi) == 95 {
+        return 1;
+    }
+    0
+}
+
+// Scopes::bind — append the (lo,hi) name span at the live top. Cap 250
+// entries (4000 of the 4096 buffer bytes); an overflowing bind is dropped
+// fail-safe (corpus fns bind well under 20 names).
+pub fn tc_sf_bind(buf: i64, cnt: i64, lo: i64, hi: i64) -> i64 {
+    if cnt >= 250 {
+        return cnt;
+    }
+    __mind_store_i64(buf + cnt * 16, lo);
+    __mind_store_i64(buf + cnt * 16 + 8, hi);
+    cnt + 1
+}
+
+// Scopes::contains — any live entry in [0..cnt) spelling src[qlo..qhi).
+pub fn tc_sf_lookup(src: i64, buf: i64, cnt: i64, qlo: i64, qhi: i64) -> i64 {
+    if cnt <= 0 {
+        return 0;
+    }
+    let e: i64 = buf + (cnt - 1) * 16;
+    if tc_sf_span_eq(src, __mind_load_i64(e), __mind_load_i64(e + 8), qlo, qhi) == 1 {
+        return 1;
+    }
+    tc_sf_lookup(src, buf, cnt - 1, qlo, qhi)
+}
+
+// Any newline byte in src[lo..hi)?
+pub fn tc_sf_has_nl(src: i64, lo: i64, hi: i64) -> i64 {
+    if lo >= hi {
+        return 0;
+    }
+    if load_byte(src, lo) == 10 {
+        return 1;
+    }
+    tc_sf_has_nl(src, lo + 1, hi)
+}
+
+// First token of kind `want` at/after i (or n).
+pub fn tc_sf_find_kind(toks: Vec, n: i64, i: i64, want: i64) -> i64 {
+    if i >= n {
+        return n;
+    }
+    if tok_kind(toks, i) == want {
+        return i;
+    }
+    tc_sf_find_kind(toks, n, i + 1, want)
+}
+
+// Matching rparen for an open group already at paren-depth d (d starts 1).
+pub fn tc_sf_find_rparen(toks: Vec, n: i64, i: i64, d: i64) -> i64 {
+    if i >= n {
+        return n;
+    }
+    let k: i64 = tok_kind(toks, i);
+    if k == tk_lparen() {
+        return tc_sf_find_rparen(toks, n, i + 1, d + 1);
+    }
+    if k == tk_rparen() {
+        if d == 1 {
+            return i;
+        }
+        return tc_sf_find_rparen(toks, n, i + 1, d - 1);
+    }
+    tc_sf_find_rparen(toks, n, i + 1, d)
+}
+
+// First lbrace at paren-depth 0 (header -> body hop), string-aware.
+pub fn tc_sf_find_lbrace0(toks: Vec, n: i64, i: i64, src: i64, pd: i64) -> i64 {
+    if i >= n {
+        return n;
+    }
+    let k: i64 = tok_kind(toks, i);
+    if k == tk_unsupported() {
+        let b: i64 = load_byte(src, tok_lo(toks, i));
+        if b == 34 {
+            return tc_sf_find_lbrace0(toks, n, tc_dn_skip_str(toks, n, i + 1, src, 34), src, pd);
+        }
+        if b == 39 {
+            return tc_sf_find_lbrace0(toks, n, tc_dn_skip_str(toks, n, i + 1, src, 39), src, pd);
+        }
+        return tc_sf_find_lbrace0(toks, n, i + 1, src, pd);
+    }
+    if k == tk_lbrace() {
+        if pd == 0 {
+            return i;
+        }
+    }
+    if k == tk_lparen() {
+        return tc_sf_find_lbrace0(toks, n, i + 1, src, pd + 1);
+    }
+    if k == tk_rparen() {
+        return tc_sf_find_lbrace0(toks, n, i + 1, src, pd - 1);
+    }
+    tc_sf_find_lbrace0(toks, n, i + 1, src, pd)
+}
+
+// Operator kinds that cannot END an expression: a depth-0 line break right
+// AFTER one of these continues the initializer (the Pratt parser's greedy
+// extent — `let f = 1 +\n  f(2)` is ONE initializer), it does not end it.
+pub fn tc_sf_is_open_op(k: i64) -> i64 {
+    if k == tk_plus() {
+        return 1;
+    }
+    if k == tk_minus() {
+        return 1;
+    }
+    if k == tk_star() {
+        return 1;
+    }
+    if k == tk_slash() {
+        return 1;
+    }
+    if k == tk_percent() {
+        return 1;
+    }
+    if k == tk_lt() {
+        return 1;
+    }
+    if k == tk_gt() {
+        return 1;
+    }
+    if k == tk_le() {
+        return 1;
+    }
+    if k == tk_ge() {
+        return 1;
+    }
+    if k == tk_eqeq() {
+        return 1;
+    }
+    if k == tk_ne() {
+        return 1;
+    }
+    if k == tk_eq() {
+        return 1;
+    }
+    if k == tk_amp() {
+        return 1;
+    }
+    if k == tk_pipe() {
+        return 1;
+    }
+    if k == tk_caret() {
+        return 1;
+    }
+    if k == tk_shl() {
+        return 1;
+    }
+    if k == tk_shr() {
+        return 1;
+    }
+    if k == tk_andand() {
+        return 1;
+    }
+    if k == tk_oror() {
+        return 1;
+    }
+    if k == tk_dot() {
+        return 1;
+    }
+    if k == tk_bang() {
+        return 1;
+    }
+    if k == tk_comma() {
+        return 1;
+    }
+    if k == tk_colon() {
+        return 1;
+    }
+    if k == tk_arrow() {
+        return 1;
+    }
+    0
+}
+
+// BINARY-ONLY operator kinds that cannot START a statement: a fragment that
+// ended at a line break directly BEFORE one of these split a newline-continued
+// initializer (`let f = 1\n  + f(2)`). Deliberately EXCLUDES the prefix-capable
+// kinds (`-` unary minus, `*` deref-assign, `&` ref, `!` not) so no real
+// statement start ever matches.
+pub fn tc_sf_is_binonly(k: i64) -> i64 {
+    if k == tk_plus() {
+        return 1;
+    }
+    if k == tk_slash() {
+        return 1;
+    }
+    if k == tk_percent() {
+        return 1;
+    }
+    if k == tk_lt() {
+        return 1;
+    }
+    if k == tk_gt() {
+        return 1;
+    }
+    if k == tk_le() {
+        return 1;
+    }
+    if k == tk_ge() {
+        return 1;
+    }
+    if k == tk_eqeq() {
+        return 1;
+    }
+    if k == tk_ne() {
+        return 1;
+    }
+    if k == tk_pipe() {
+        return 1;
+    }
+    if k == tk_caret() {
+        return 1;
+    }
+    if k == tk_shl() {
+        return 1;
+    }
+    if k == tk_shr() {
+        return 1;
+    }
+    if k == tk_andand() {
+        return 1;
+    }
+    if k == tk_oror() {
+        return 1;
+    }
+    if k == tk_dot() {
+        return 1;
+    }
+    if k == tk_comma() {
+        return 1;
+    }
+    if k == tk_colon() {
+        return 1;
+    }
+    if k == tk_arrow() {
+        return 1;
+    }
+    0
+}
+
+// End of the statement/arm fragment starting at `start`: the index of the
+// first depth-0 `;` / `}` / `,` (comma only when stop_comma=1) / token that
+// begins after a depth-0 LINE BREAK whose PRECEDING token can end an
+// expression (a trailing binary/open operator continues the fragment — the
+// Pratt extent). The terminator itself is NOT part of the fragment. `(`/`[`
+// nest; `{...}` is opaque here (the walker descends separately); string-aware.
+pub fn tc_sf_frag_end(toks: Vec, n: i64, i: i64, src: i64, start: i64, pd: i64, stop_comma: i64) -> i64 {
+    if i >= n {
+        return n;
+    }
+    let k: i64 = tok_kind(toks, i);
+    if k == tk_unsupported() {
+        let b: i64 = load_byte(src, tok_lo(toks, i));
+        if b == 34 {
+            return tc_sf_frag_end(toks, n, tc_dn_skip_str(toks, n, i + 1, src, 34), src, start, pd, stop_comma);
+        }
+        if b == 39 {
+            return tc_sf_frag_end(toks, n, tc_dn_skip_str(toks, n, i + 1, src, 39), src, start, pd, stop_comma);
+        }
+        return tc_sf_frag_end(toks, n, i + 1, src, start, pd, stop_comma);
+    }
+    if pd == 0 {
+        if k == tk_semi() {
+            return i;
+        }
+        if k == tk_rbrace() {
+            return i;
+        }
+        if k == tk_comma() {
+            if stop_comma == 1 {
+                return i;
+            }
+        }
+        if i > start {
+            if tc_sf_has_nl(src, tok_hi(toks, i - 1), tok_lo(toks, i)) == 1 {
+                if tc_sf_is_open_op(tok_kind(toks, i - 1)) == 0 {
+                    return i;
+                }
+            }
+        }
+    }
+    if k == tk_lparen() {
+        return tc_sf_frag_end(toks, n, i + 1, src, start, pd + 1, stop_comma);
+    }
+    if k == tk_lbracket() {
+        return tc_sf_frag_end(toks, n, i + 1, src, start, pd + 1, stop_comma);
+    }
+    if k == tk_rparen() {
+        return tc_sf_frag_end(toks, n, i + 1, src, start, pd - 1, stop_comma);
+    }
+    if k == tk_rbracket() {
+        return tc_sf_frag_end(toks, n, i + 1, src, start, pd - 1, stop_comma);
+    }
+    if k == tk_lbrace() {
+        return tc_sf_frag_end(toks, n, tc_dn_skip_brace(toks, n, i + 1, src, 1), src, start, pd, stop_comma);
+    }
+    tc_sf_frag_end(toks, n, i + 1, src, start, pd, stop_comma)
+}
+
+// Verdict at the query token: -2 = in scope, -1 = not in scope.
+pub fn tc_sf_verdict(src: i64, buf: i64, cnt: i64, qlo: i64, qhi: i64) -> i64 {
+    if tc_sf_lookup(src, buf, cnt, qlo, qhi) == 1 {
+        return 0 - 2;
+    }
+    0 - 1
+}
+
+// Bind every non-`_` ident token in [a,b): the Let name (a one-token range)
+// and the LetTuple destructured names (commas / parens skipped).
+pub fn tc_sf_bind_range(toks: Vec, src: i64, buf: i64, cnt: i64, a: i64, b: i64) -> i64 {
+    if a >= b {
+        return cnt;
+    }
+    if tok_kind(toks, a) == tk_ident() {
+        if tc_sf_is_wild(src, tok_lo(toks, a), tok_hi(toks, a)) == 0 {
+            return tc_sf_bind_range(toks, src, buf, tc_sf_bind(buf, cnt, tok_lo(toks, a), tok_hi(toks, a)), a + 1, b);
+        }
+    }
+    tc_sf_bind_range(toks, src, buf, cnt, a + 1, b)
+}
+
+// bind_pattern over the pattern token region [a,g): a bare ident binds; `_`,
+// literals, a variant head (`Some(`), a qualified `Enum::Variant` pair and a
+// struct-pattern field label (`f:`) bind nothing; payload/tuple sub-pattern
+// idents bind. String-aware (literal patterns).
+pub fn tc_sf_bind_pat(toks: Vec, src: i64, buf: i64, cnt: i64, a: i64, g: i64) -> i64 {
+    if a >= g {
+        return cnt;
+    }
+    let k: i64 = tok_kind(toks, a);
+    if k == tk_unsupported() {
+        let b: i64 = load_byte(src, tok_lo(toks, a));
+        if b == 34 {
+            return tc_sf_bind_pat(toks, src, buf, cnt, tc_dn_skip_str(toks, g, a + 1, src, 34), g);
+        }
+        if b == 39 {
+            return tc_sf_bind_pat(toks, src, buf, cnt, tc_dn_skip_str(toks, g, a + 1, src, 39), g);
+        }
+        return tc_sf_bind_pat(toks, src, buf, cnt, a + 1, g);
+    }
+    if k == tk_ident() {
+        if tc_sf_is_wild(src, tok_lo(toks, a), tok_hi(toks, a)) == 0 {
+            if a + 1 < g {
+                if tok_kind(toks, a + 1) == tk_lbrace() {
+                    // struct-pattern head `Point {` — the TYPE name binds
+                    // NOTHING (bind_pattern binds only sub-patterns); the
+                    // fields inside are handled by the colon-guard (labels)
+                    // and the ident fall-through (shorthand / sub-patterns).
+                    return tc_sf_bind_pat(toks, src, buf, cnt, a + 1, g);
+                }
+                if tok_kind(toks, a + 1) == tk_lparen() {
+                    return tc_sf_bind_pat(toks, src, buf, cnt, a + 1, g);
+                }
+                if tok_kind(toks, a + 1) == tk_colon() {
+                    if a + 2 < g {
+                        if tok_kind(toks, a + 2) == tk_colon() {
+                            return tc_sf_bind_pat(toks, src, buf, cnt, a + 4, g);
+                        }
+                    }
+                    return tc_sf_bind_pat(toks, src, buf, cnt, a + 2, g);
+                }
+            }
+            return tc_sf_bind_pat(toks, src, buf, tc_sf_bind(buf, cnt, tok_lo(toks, a), tok_hi(toks, a)), a + 1, g);
+        }
+    }
+    tc_sf_bind_pat(toks, src, buf, cnt, a + 1, g)
+}
+
+// First depth-0 fat arrow `=>` (tk_eq immediately followed by tk_gt) at/after
+// i — the match-arm pattern/body split. String-aware; all bracket kinds nest.
+pub fn tc_sf_find_fat(toks: Vec, n: i64, i: i64, src: i64, d: i64) -> i64 {
+    if i + 1 >= n {
+        return n;
+    }
+    let k: i64 = tok_kind(toks, i);
+    if k == tk_unsupported() {
+        let b: i64 = load_byte(src, tok_lo(toks, i));
+        if b == 34 {
+            return tc_sf_find_fat(toks, n, tc_dn_skip_str(toks, n, i + 1, src, 34), src, d);
+        }
+        if b == 39 {
+            return tc_sf_find_fat(toks, n, tc_dn_skip_str(toks, n, i + 1, src, 39), src, d);
+        }
+        return tc_sf_find_fat(toks, n, i + 1, src, d);
+    }
+    if d == 0 {
+        if k == tk_eq() {
+            if tok_kind(toks, i + 1) == tk_gt() {
+                return i;
+            }
+        }
+    }
+    if k == tk_lparen() {
+        return tc_sf_find_fat(toks, n, i + 1, src, d + 1);
+    }
+    if k == tk_lbrace() {
+        return tc_sf_find_fat(toks, n, i + 1, src, d + 1);
+    }
+    if k == tk_lbracket() {
+        return tc_sf_find_fat(toks, n, i + 1, src, d + 1);
+    }
+    if k == tk_rparen() {
+        return tc_sf_find_fat(toks, n, i + 1, src, d - 1);
+    }
+    if k == tk_rbrace() {
+        return tc_sf_find_fat(toks, n, i + 1, src, d - 1);
+    }
+    if k == tk_rbracket() {
+        return tc_sf_find_fat(toks, n, i + 1, src, d - 1);
+    }
+    tc_sf_find_fat(toks, n, i + 1, src, d)
+}
+
+// First guard `if` in the pattern region [i, fa), else fa (no guard).
+pub fn tc_sf_find_guard(toks: Vec, fa: i64, i: i64) -> i64 {
+    if i >= fa {
+        return fa;
+    }
+    if tok_kind(toks, i) == tk_kw_if() {
+        return i;
+    }
+    tc_sf_find_guard(toks, fa, i + 1)
+}
+
+// Optional arm-separating comma.
+pub fn tc_sf_skip_comma(toks: Vec, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return n;
+    }
+    if tok_kind(toks, i) == tk_comma() {
+        return i + 1;
+    }
+    i
+}
+
+// `let [mut]` — index of the bound-name region start (D1 tc_dn_let_arm rule).
+pub fn tc_sf_let_skip_mut(toks: Vec, n: i64, s: i64, src: i64) -> i64 {
+    if s + 1 < n {
+        if tok_kind(toks, s) == tk_ident() {
+            if tok_kind(toks, s + 1) == tk_ident() {
+                if tc_dn_is_mut(src, tok_lo(toks, s), tok_hi(toks, s)) == 1 {
+                    return s + 1;
+                }
+            }
+        }
+    }
+    s
+}
+
+// Shared Node::Let / Node::LetTuple tail (resolve.rs Let/LetTuple arms): find
+// `=`, walk the RHS with the name(s) NOT yet live (sequential visibility),
+// THEN bind every name in [a,b) and resume past the terminator.
+pub fn tc_sf_let_tail(toks: Vec, n: i64, src: i64, buf: i64, cnt: i64, p: i64, qlo: i64, qhi: i64, a: i64, b: i64, after: i64) -> i64 {
+    let eq: i64 = tc_sf_find_kind(toks, n, after, tk_eq());
+    let r0: i64 = eq + 1;
+    let end: i64 = tc_sf_frag_end(toks, n, r0, src, r0, 0, 0);
+    let rw: i64 = tc_sf_walk(toks, end, r0, src, buf, cnt, p, qlo, qhi);
+    if rw < 0 {
+        return rw;
+    }
+    if end < n {
+        if tc_sf_is_binonly(tok_kind(toks, end)) == 1 {
+            // FAIL-CLOSE: the extent finder split a newline-continued
+            // initializer whose next line LEADS with a binary-only operator
+            // (`let f = 1\n  + f(2)`) — the leftover tail is still the SAME
+            // initializer, so the let name must NOT be live in it. Withhold
+            // the binding for the remaining walk: conservatively OUT of
+            // scope, never a false in-scope (fmt-clean source never emits
+            // this shape).
+            return tc_sf_walk(toks, n, end, src, buf, cnt, p, qlo, qhi);
+        }
+    }
+    let c2: i64 = tc_sf_bind_range(toks, src, buf, cnt, a, b);
+    if end >= n {
+        return n;
+    }
+    if tok_kind(toks, end) == tk_semi() {
+        return tc_sf_walk(toks, n, end + 1, src, buf, c2, p, qlo, qhi);
+    }
+    tc_sf_walk(toks, n, end, src, buf, c2, p, qlo, qhi)
+}
+
+// Node::Let / Node::LetTuple dispatch at a tk_kw_let.
+pub fn tc_sf_let_arm(toks: Vec, n: i64, i: i64, src: i64, buf: i64, cnt: i64, p: i64, qlo: i64, qhi: i64) -> i64 {
+    let s: i64 = tc_sf_let_skip_mut(toks, n, i + 1, src);
+    if s >= n {
+        return n;
+    }
+    if tok_kind(toks, s) == tk_lparen() {
+        let close: i64 = tc_sf_find_rparen(toks, n, s + 1, 1);
+        return tc_sf_let_tail(toks, n, src, buf, cnt, p, qlo, qhi, s + 1, close, close + 1);
+    }
+    tc_sf_let_tail(toks, n, src, buf, cnt, p, qlo, qhi, s, s + 1, s + 1)
+}
+
+// Node::For / ForEach: `for VAR in EXPR { ... }` — the header EXPR walks in
+// the OUTER scope (var not yet bound), then a fresh frame binds ONLY the loop
+// var for the body, popped on resume.
+pub fn tc_sf_for_arm(toks: Vec, n: i64, i: i64, src: i64, buf: i64, cnt: i64, p: i64, qlo: i64, qhi: i64) -> i64 {
+    if i + 3 >= n {
+        return n;
+    }
+    let lb: i64 = tc_sf_find_lbrace0(toks, n, i + 3, src, 0);
+    let hw: i64 = tc_sf_walk(toks, lb, i + 3, src, buf, cnt, p, qlo, qhi);
+    if hw < 0 {
+        return hw;
+    }
+    let c2: i64 = tc_sf_bind(buf, cnt, tok_lo(toks, i + 1), tok_hi(toks, i + 1));
+    let r: i64 = tc_sf_walk(toks, n, lb + 1, src, buf, c2, p, qlo, qhi);
+    if r < 0 {
+        return r;
+    }
+    tc_sf_walk(toks, n, r, src, buf, cnt, p, qlo, qhi)
+}
+
+// Node::Match: scrutinee walks in the outer scope; then the arm list.
+pub fn tc_sf_match_arm(toks: Vec, n: i64, i: i64, src: i64, buf: i64, cnt: i64, p: i64, qlo: i64, qhi: i64) -> i64 {
+    let lb: i64 = tc_sf_find_lbrace0(toks, n, i + 1, src, 0);
+    let sw: i64 = tc_sf_walk(toks, lb, i + 1, src, buf, cnt, p, qlo, qhi);
+    if sw < 0 {
+        return sw;
+    }
+    tc_sf_arms(toks, n, lb + 1, src, buf, cnt, p, qlo, qhi)
+}
+
+// One match arm per step: push (fresh frame = the caller's cnt), bind the
+// pattern, walk the guard then the body WITH the binds live, pop (resume with
+// cnt). A `}` here closes the match.
+pub fn tc_sf_arms(toks: Vec, n: i64, a: i64, src: i64, buf: i64, cnt: i64, p: i64, qlo: i64, qhi: i64) -> i64 {
+    if a >= n {
+        return n;
+    }
+    if tok_kind(toks, a) == tk_rbrace() {
+        return a + 1;
+    }
+    let fa: i64 = tc_sf_find_fat(toks, n, a, src, 0);
+    let g: i64 = tc_sf_find_guard(toks, fa, a);
+    let c2: i64 = tc_sf_bind_pat(toks, src, buf, cnt, a, g);
+    if g < fa {
+        let gw: i64 = tc_sf_walk(toks, fa, g + 1, src, buf, c2, p, qlo, qhi);
+        if gw < 0 {
+            return gw;
+        }
+    }
+    let b0: i64 = fa + 2;
+    if b0 >= n {
+        return n;
+    }
+    if tok_kind(toks, b0) == tk_lbrace() {
+        let r: i64 = tc_sf_walk(toks, n, b0 + 1, src, buf, c2, p, qlo, qhi);
+        if r < 0 {
+            return r;
+        }
+        return tc_sf_arms(toks, n, tc_sf_skip_comma(toks, n, r), src, buf, cnt, p, qlo, qhi);
+    }
+    let end: i64 = tc_sf_frag_end(toks, n, b0, src, b0, 0, 1);
+    let r2: i64 = tc_sf_walk(toks, end, b0, src, buf, c2, p, qlo, qhi);
+    if r2 < 0 {
+        return r2;
+    }
+    tc_sf_arms(toks, n, tc_sf_skip_comma(toks, n, end), src, buf, cnt, p, qlo, qhi)
+}
+
+// Resolver::walk over tokens [i..n) — n is the region LIMIT, not always the
+// stream end. Threads the LIVE binding count; returns the verdict (-2/-1) if
+// the query token index p lies inside the region, else the index just past
+// the region's closing rbrace (or the limit).
+pub fn tc_sf_walk(toks: Vec, n: i64, i: i64, src: i64, buf: i64, cnt: i64, p: i64, qlo: i64, qhi: i64) -> i64 {
+    if i >= n {
+        return i;
+    }
+    if i == p {
+        return tc_sf_verdict(src, buf, cnt, qlo, qhi);
+    }
+    let k: i64 = tok_kind(toks, i);
+    if k == tk_unsupported() {
+        let b: i64 = load_byte(src, tok_lo(toks, i));
+        if b == 34 {
+            return tc_sf_walk(toks, n, tc_dn_skip_str(toks, n, i + 1, src, 34), src, buf, cnt, p, qlo, qhi);
+        }
+        if b == 39 {
+            return tc_sf_walk(toks, n, tc_dn_skip_str(toks, n, i + 1, src, 39), src, buf, cnt, p, qlo, qhi);
+        }
+        return tc_sf_walk(toks, n, i + 1, src, buf, cnt, p, qlo, qhi);
+    }
+    if k == tk_rbrace() {
+        return i + 1;
+    }
+    if k == tk_lbrace() {
+        let r: i64 = tc_sf_walk(toks, n, i + 1, src, buf, cnt, p, qlo, qhi);
+        if r < 0 {
+            return r;
+        }
+        return tc_sf_walk(toks, n, r, src, buf, cnt, p, qlo, qhi);
+    }
+    if k == tk_kw_let() {
+        return tc_sf_let_arm(toks, n, i, src, buf, cnt, p, qlo, qhi);
+    }
+    if k == tk_ident() {
+        if tc_sf_is_for(src, tok_lo(toks, i), tok_hi(toks, i)) == 1 {
+            return tc_sf_for_arm(toks, n, i, src, buf, cnt, p, qlo, qhi);
+        }
+        if tc_sf_is_match(src, tok_lo(toks, i), tok_hi(toks, i)) == 1 {
+            return tc_sf_match_arm(toks, n, i, src, buf, cnt, p, qlo, qhi);
+        }
+    }
+    tc_sf_walk(toks, n, i + 1, src, buf, cnt, p, qlo, qhi)
+}
+
+// Frame 0: bind every param name — an ident directly followed by `:` at
+// paren-depth 0 of the param list [a, rp) (fn-ptr type interiors nest).
+pub fn tc_sf_params(toks: Vec, src: i64, buf: i64, cnt: i64, a: i64, rp: i64, d: i64) -> i64 {
+    if a >= rp {
+        return cnt;
+    }
+    let k: i64 = tok_kind(toks, a);
+    if k == tk_lparen() {
+        return tc_sf_params(toks, src, buf, cnt, a + 1, rp, d + 1);
+    }
+    if k == tk_rparen() {
+        return tc_sf_params(toks, src, buf, cnt, a + 1, rp, d - 1);
+    }
+    if d == 0 {
+        if k == tk_ident() {
+            if a + 1 < rp {
+                if tok_kind(toks, a + 1) == tk_colon() {
+                    return tc_sf_params(toks, src, buf, tc_sf_bind(buf, cnt, tok_lo(toks, a), tok_hi(toks, a)), a + 2, rp, d);
+                }
+            }
+        }
+    }
+    tc_sf_params(toks, src, buf, cnt, a + 1, rp, d)
+}
+
+// Top-level scan: find the fn whose BODY contains the query token, bind its
+// params as frame 0 (resolve_fn_body) and walk the body stmts directly in it.
+// Other fn bodies are hopped wholesale; strings are skipped (fn-in-string
+// trap, as in D1). Maps the walk verdict to 1/0; -3 = pos not in any fn body.
+pub fn tc_sf_top(toks: Vec, n: i64, i: i64, src: i64, buf: i64, p: i64, qlo: i64, qhi: i64) -> i64 {
+    if i >= n {
+        return 0 - 3;
+    }
+    let k: i64 = tok_kind(toks, i);
+    if k == tk_unsupported() {
+        let b: i64 = load_byte(src, tok_lo(toks, i));
+        if b == 34 {
+            return tc_sf_top(toks, n, tc_dn_skip_str(toks, n, i + 1, src, 34), src, buf, p, qlo, qhi);
+        }
+        if b == 39 {
+            return tc_sf_top(toks, n, tc_dn_skip_str(toks, n, i + 1, src, 39), src, buf, p, qlo, qhi);
+        }
+        return tc_sf_top(toks, n, i + 1, src, buf, p, qlo, qhi);
+    }
+    if k == tk_kw_fn() {
+        let lp: i64 = tc_sf_find_kind(toks, n, i + 1, tk_lparen());
+        let rp: i64 = tc_sf_find_rparen(toks, n, lp + 1, 1);
+        let lb: i64 = tc_sf_find_lbrace0(toks, n, rp + 1, src, 0);
+        let bend: i64 = tc_dn_skip_brace(toks, n, lb + 1, src, 1);
+        if p > lb {
+            if p < bend {
+                let c0: i64 = tc_sf_params(toks, src, buf, 0, lp + 1, rp, 0);
+                let r: i64 = tc_sf_walk(toks, n, lb + 1, src, buf, c0, p, qlo, qhi);
+                if r == 0 - 2 {
+                    return 1;
+                }
+                if r == 0 - 1 {
+                    return 0;
+                }
+                return 0 - 3;
+            }
+        }
+        return tc_sf_top(toks, n, bend, src, buf, p, qlo, qhi);
+    }
+    tc_sf_top(toks, n, i + 1, src, buf, p, qlo, qhi)
+}
+
+// D2 scope query: 1 = the ident token starting at byte `pos` is a LIVE LOCAL
+// binding there (the scopes.contains half of E2012); 0 = it is not; -3 = pos
+// does not start an ident token inside any fn body.
+pub fn tc_sf_query(src: i64, src_len: i64, pos: i64) -> i64 {
+    let toks: Vec = lex(src, src_len);
+    let n: i64 = tok_count(toks);
+    let p: i64 = tc_sf_find_pos(toks, n, 0, pos);
+    if p < 0 {
+        return 0 - 3;
+    }
+    let buf: i64 = __mind_alloc(4096);
+    tc_sf_top(toks, n, 0, src, buf, p, tok_lo(toks, p), tok_hi(toks, p))
+}
+
+// Token index whose span STARTS at byte pos, iff it is an ident (-1 else).
+pub fn tc_sf_find_pos(toks: Vec, n: i64, i: i64, pos: i64) -> i64 {
+    if i >= n {
+        return 0 - 1;
+    }
+    if tok_lo(toks, i) == pos {
+        if tok_kind(toks, i) == tk_ident() {
+            return i;
+        }
+        return 0 - 1;
+    }
+    tc_sf_find_pos(toks, n, i + 1, pos)
+}
+
+pub fn selftest_tc_scope_frame(src: i64, src_len: i64, pos: i64) -> i64 {
+    tc_sf_query(src, src_len, pos)
+}
+
 
 
 // ============================================================================
