@@ -621,7 +621,8 @@ jobs:
         # E2004/E2005/E2010/E2011/E2013/E2016/E2023/E2101/E2102/E2103; the E2008
         # unknown-variant + E2024 intrinsic-table advisory rules; and the B1
         # scope-frame engine — D1 module decl-name set, D2 nested scope-frame
-        # walk, D3 std-surface export set — whose THREE-WAY smokes ALSO run the
+        # walk, D3 std-surface export set, D4 assembled E2012 fn-value-call
+        # rule — whose THREE-WAY smokes ALSO run the
         # live `mindc check` oracle leg (MINDC_BIN below points them at the
         # just-built mindc; without it their leg-3 subprocess would FileNotFound);
         # narrow-int store/load + wrap + declared-width driver; scalar f32;
@@ -675,7 +676,8 @@ jobs:
             self_host_tc_self_host_only_call_smoke \
             self_host_tc_decl_names_smoke \
             self_host_tc_scope_frame_smoke \
-            self_host_tc_std_export_smoke; do
+            self_host_tc_std_export_smoke \
+            self_host_tc_fn_value_call_smoke; do
             echo "=== $s ==="
             MINDC_SO=/tmp/libmindc_mind_self_host.so \
             MINDC_BIN="${{ github.workspace }}/target/release/mindc" \

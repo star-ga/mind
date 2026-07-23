@@ -120,8 +120,16 @@ itself byte-identically with zero Rust & zero LLVM in the loop"* (integer/contro
   reused over the CONCATENATED bundled-std source — a drift-free check-time scan, no giant table, so
   the arena stays flat; `::`-qualified handling; 43-case three-way smoke that re-extracts
   `STDLIB_MIND_SOURCES` from `src/project/stdlib.rs` each run so a bundling change fails LOUD; prelude
-  + non-bundled + near-miss negatives).** Remaining: D4 (assemble `tc_is_fn_value_call` = E2012 =
-  D2-positive ∧ ¬(D1 ∪ D3 ∪ bare-builtins ∪ E2024-table ∪ prefixes)).
+  + non-bundled + near-miss negatives).**
+  **D4 LANDED (2026-07-23) — `tc_is_fn_value_call` = the full E2012 rule, the CAPSTONE that fires
+  off the engine: D2-positive (live local binding) ∧ ¬(name_resolvable [D1 module-decls+prelude ∪
+  D3 std-exports] ∪ `::` ∪ `bytes` ∪ `gen_deref` ∪ `__mind_`/`tensor.` prefixes ∪ the 34 bare-builtins
+  ∪ the E2024 intrinsic table). One lex of `src` feeds the guard+D2+D1 reuse (arena rule); 56-case
+  three-way smoke + a cross-family blind review (45 NEW adversarial shapes beyond the smoke, ZERO
+  divergence in either fail-OPEN direction — false-E2012 rejects valid code, suppressed-E2012 misses
+  an error — enum-variant boundary confirmed name_resolvable→excluded). **The B1 scope-frame engine
+  (D1–D4) is COMPLETE.** Next: E2002/E2009 reuse the same engine; E2001 needs full type inference
+  (a larger tier).
 - [ ] **B2** Full parser + AST→IR lowering (`parser` ~5,563 portable of 7,782 total — the `#[bimap]` + trivia
   ~2,219 LOC are descoped from the self-host target — + `eval/lower.rs` 9,966) for every construct. The self-host
   front-end already lexes+parses+lowers the scalar/i64/control-flow subset (that is what the keystone loop
