@@ -1882,6 +1882,35 @@ pub fn parse_primary_ns(toks: Vec, pos: i64, buf: i64, no_struct: i64) -> ParseR
                 return parse_call(toks, pos, buf);
             }
         }
+        // C-LIKE ENUM PATH `Name::Variant` (`::` = two tk_colon tokens):
+        // resolved at parse time (ent_resolve) and desugared to a SYNTHETIC
+        // int-lit carrying the i64 discriminant — the proven child1==1 form,
+        // so the native int-const emit path is reused with zero new emit code.
+        // An unresolvable path (no/duplicate decl, payload variant anywhere in
+        // the decl, unknown variant, non-increasing explicit discriminant) or
+        // a trailing `(` (payload construction / a call through the path)
+        // produces the POISON leaf -> the enclosing compile refuses (0 bytes),
+        // never a wrong value. main.mind's own source has no `::` in code, so
+        // this production never fires during self-compile — byte-identical.
+        if at_eof(toks, pos + 3) == 0 {
+            if tok_kind(toks, pos + 1) == tk_colon() {
+                if tok_kind(toks, pos + 2) == tk_colon() {
+                    if tok_kind(toks, pos + 3) == tk_ident() {
+                        let vhi: i64 = tok_hi(toks, pos + 3);
+                        if at_eof(toks, pos + 4) == 0 {
+                            if tok_kind(toks, pos + 4) == tk_lparen() {
+                                return pr_new(pos + 4, ast_new_leaf(ast_unsupported(), lo, vhi));
+                            }
+                        }
+                        let ev: i64 = ent_resolve(toks, buf, lo, hi, tok_lo(toks, pos + 3), vhi);
+                        if ev < 0 {
+                            return pr_new(pos + 4, ast_new_leaf(ast_unsupported(), lo, vhi));
+                        }
+                        return pr_new(pos + 4, ent_syn_node(ev, lo, vhi));
+                    }
+                }
+            }
+        }
         // Struct-literal: `Ident {` in non-condition expression position. Gated
         // by no_struct so condition-position `if IDENT {` keeps the `{` as the
         // block opener (byte-identical to the pre-existing parse).
@@ -2986,6 +3015,158 @@ pub fn parse_if_else_tail(toks: Vec, after_then: i64, buf: i64, kw_lo: i64, cond
     pr_new(after_else, if_node)
 }
 
+// ===== C-like enums (parse-time desugar to synthetic int-lit constants) =====
+//
+// `enum Color { Red, Green, Blue }` is a payload-FREE (C-like) enum: each
+// variant IS a sequential i64 discriminant (Red=0, Green=1, Blue=2; an explicit
+// `Name = <int>` sets the value and the implicit sequence continues from it).
+// A path expression `Color::Red` (`::` lexes as two tk_colon tokens — there is
+// no fused path token) is resolved AT PARSE TIME against the decl's variant
+// list and desugared to a SYNTHETIC int-lit (mk_syn_intlit, the child1==1
+// sentinel form the &&/|| desugar already emits), so the native-ELF emitter's
+// PROVEN int-const arm carries it with ZERO new emit code. The decl itself
+// still lowers to the parse_struct_def stub item (unchanged).
+//
+// FAIL-CLOSED (refuse -1 -> the caller produces the ast_unsupported POISON
+// leaf -> 0-byte compile, never a wrong value):
+//   - no `enum Name {` decl in the token stream, or a DUPLICATE decl of the
+//     same name (ambiguous resolution);
+//   - ANY payload variant `V(..)` anywhere in the decl (a payload enum is not
+//     C-like — its layout is not a bare i64 discriminant), even when the
+//     referenced variant itself is payload-free;
+//   - an explicit discriminant that is not a plain decimal int token, or that
+//     is LOWER than the running implicit value (a non-increasing explicit
+//     value could collide with an earlier discriminant — Rust rejects
+//     duplicate discriminants; refusing keeps every accepted decl's values
+//     strictly increasing, hence provably unique);
+//   - a DUPLICATE variant name, an unknown variant, or any unexpected token
+//     in the variant list.
+//
+// The resolver scans the WHOLE token stream per path occurrence (enums are
+// top-level decls; fixtures are small). main.mind's own source contains no
+// `::` tokens in code, so this never runs during self-compile and the
+// self-host loop stays byte-identical.
+
+// Find the token index of the `{` opening `enum <name> {` whose decl name span
+// equals buf[nlo..nhi), scanning from `pos`. Returns -1 if not found. `enum`
+// lexes as a plain ident, detected by byte content (is_enum_kw).
+pub fn ent_find_from(toks: Vec, buf: i64, pos: i64, nlo: i64, nhi: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0 - 1;
+    }
+    if tok_kind(toks, pos) == tk_ident() {
+        if is_enum_kw(buf, tok_lo(toks, pos), tok_hi(toks, pos)) == 1 {
+            if tok_kind(toks, pos + 1) == tk_ident() {
+                if tok_kind(toks, pos + 2) == tk_lbrace() {
+                    if span_bytes_equal(buf, nlo, nhi, tok_lo(toks, pos + 1), tok_hi(toks, pos + 1)) == 1 {
+                        return pos + 2;
+                    }
+                }
+            }
+        }
+    }
+    ent_find_from(toks, buf, pos + 1, nlo, nhi)
+}
+
+// Advance past one variant entry at `pos` (`Name` or `Name = <int>`), plus an
+// optional trailing `,` separator.
+pub fn ent_adv(toks: Vec, pos: i64, has_exp: i64) -> i64 {
+    let p: i64 = if has_exp == 1 {
+        pos + 3
+    } else {
+        pos + 1
+    };
+    if tok_kind(toks, p) == tk_comma() {
+        return p + 1;
+    }
+    p
+}
+
+// Walk the variant list from just after `{`, resolving the variant whose name
+// span equals buf[vlo..vhi). `next_val` is the implicit discriminant for the
+// NEXT variant; `found` is the resolved value so far (-1 = not yet found).
+// Returns the discriminant (>= 0) or -1 (refuse). The walk always continues to
+// `}` so a payload variant ANYWHERE in the decl refuses, even after a match.
+pub fn ent_scan_variants(toks: Vec, buf: i64, pos: i64, vlo: i64, vhi: i64, next_val: i64, found: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0 - 1;
+    }
+    if tok_kind(toks, pos) == tk_rbrace() {
+        return found;
+    }
+    if tok_kind(toks, pos) == tk_ident() {
+        // Payload variant `Name(..)` -> the whole enum is not C-like: refuse.
+        if tok_kind(toks, pos + 1) == tk_lparen() {
+            return 0 - 1;
+        }
+        // Explicit discriminant `Name = <int>`; a `=` followed by anything but
+        // a plain decimal int token (e.g. a negative value) refuses.
+        let has_exp: i64 = if tok_kind(toks, pos + 1) == tk_eq() {
+            if tok_kind(toks, pos + 2) == tk_int() {
+                1
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+        if tok_kind(toks, pos + 1) == tk_eq() {
+            if has_exp == 0 {
+                return 0 - 1;
+            }
+        }
+        let v: i64 = if has_exp == 1 {
+            parse_int_span(buf, tok_lo(toks, pos + 2), tok_hi(toks, pos + 2), 0)
+        } else {
+            next_val
+        };
+        // A non-increasing explicit value could DUPLICATE an earlier
+        // discriminant (first-match dispatch would then silently shadow the
+        // later variant in a desugared match) -> refuse. Accepted decls have
+        // strictly increasing values, hence provably unique.
+        if v < next_val {
+            return 0 - 1;
+        }
+        if span_bytes_equal(buf, vlo, vhi, tok_lo(toks, pos), tok_hi(toks, pos)) == 1 {
+            // Duplicate variant name -> ambiguous: refuse.
+            if found >= 0 {
+                return 0 - 1;
+            }
+            return ent_scan_variants(toks, buf, ent_adv(toks, pos, has_exp), vlo, vhi, v + 1, v);
+        }
+        return ent_scan_variants(toks, buf, ent_adv(toks, pos, has_exp), vlo, vhi, v + 1, found);
+    }
+    // Any other token in variant position (stray separator, unsupported
+    // bytes, ...) -> refuse.
+    0 - 1
+}
+
+// Resolve the path `Name::Variant` (name span [nlo,nhi), variant span
+// [vlo,vhi)) to its i64 discriminant, or -1 (refuse; see the FAIL-CLOSED list
+// in the section header).
+pub fn ent_resolve(toks: Vec, buf: i64, nlo: i64, nhi: i64, vlo: i64, vhi: i64) -> i64 {
+    let body: i64 = ent_find_from(toks, buf, 0, nlo, nhi);
+    if body < 0 {
+        return 0 - 1;
+    }
+    // A second decl of the same enum name is ambiguous -> refuse.
+    if ent_find_from(toks, buf, body + 1, nlo, nhi) >= 0 {
+        return 0 - 1;
+    }
+    ent_scan_variants(toks, buf, body + 1, vlo, vhi, 0, 0 - 1)
+}
+
+// Synthetic int-lit carrying a resolved enum discriminant, re-spanned to the
+// source `Name::Variant` path text. Spans on a child1==1 node are bookkeeping
+// only — every sentinel-honoring emitter (nb_expr / flatten_ast int-lit arms)
+// reads the value DIRECTLY from child0 and never parses the span.
+pub fn ent_syn_node(v: i64, lo: i64, hi: i64) -> i64 {
+    let n: i64 = mk_syn_intlit(v);
+    __mind_store_i64(n + 8, lo);
+    __mind_store_i64(n + 16, hi);
+    n
+}
+
 // ===== Match-expressions (parse-time desugar to if) =====
 //
 // `match SCRUT { PAT => VAL0, _ => VAL1 }` desugars at PARSE TIME to the
@@ -3055,17 +3236,21 @@ pub fn parse_arm_value(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     pr_new(pr_pos(v), blk)
 }
 
-// Wrap a recursive-rest node as an else block: if it is an ast_if (more arms
-// follow — the `else if` case) wrap it in a one-statement block, exactly like
-// parse_if_else_tail; otherwise it is already the wildcard's terminal block and
-// is used directly (the `else { block }` case).
+// Wrap a recursive-rest node as an else block: the wildcard's terminal block
+// is used directly (the `else { block }` case); ANY other node — an ast_if
+// (more arms follow, the `else if` case, exactly like parse_if_else_tail) or a
+// POISON ast_unsupported leaf (non-exhaustive / refused later arm) — is
+// wrapped in a one-statement block. Wrapping the poison leaf is LOAD-BEARING
+// for fail-closed: a bare non-block leaf in else-position reads as an EMPTY
+// block (aux=0 statements), so the walker would never VISIT the poison and the
+// truncated match would emit with a garbage else value instead of refusing.
 pub fn mt_wrap_else(node: i64) -> i64 {
-    if ast_kind(node) == ast_if() {
-        let acc: Vec = vec_new();
-        let acc1: Vec = vec_push(acc, node);
-        return ast_new_block(ast_span_lo(node), ast_span_hi(node), vec_addr(acc1), vec_len(acc1));
+    if ast_kind(node) == ast_block() {
+        return node;
     }
-    node
+    let acc: Vec = vec_new();
+    let acc1: Vec = vec_push(acc, node);
+    ast_new_block(ast_span_lo(node), ast_span_hi(node), vec_addr(acc1), vec_len(acc1))
 }
 
 // Recursively parse the arm list starting at pattern token `pat_pos`, returning
@@ -3075,14 +3260,102 @@ pub fn mt_wrap_else(node: i64) -> i64 {
 pub fn parse_match_chain(toks: Vec, pat_pos: i64, buf: i64, scrut_start: i64, kw_lo: i64) -> ParseResult {
     let pat_lo: i64 = tok_lo(toks, pat_pos);
     let pat_hi: i64 = tok_hi(toks, pat_pos);
+    // NON-EXHAUSTIVE match (arm list ends with NO wildcard arm): reaching `}`
+    // (or EOF) in PATTERN position means no `_` arm terminated the chain — the
+    // desugared if-chain would need a fall-through else VALUE that does not
+    // exist, so emitting anything would be a wrong value. POISON leaf ->
+    // 0-byte refusal. (An all-variants-covered enum match without `_` also
+    // lands here — a sound refusal; ACCEPTING it needs scrutinee type
+    // knowledge and is the follow-up upgrade.)
+    if at_eof(toks, pat_pos) == 1 {
+        return pr_new(pat_pos, ast_new_leaf(ast_unsupported(), pat_lo, pat_hi));
+    }
+    if tok_kind(toks, pat_pos) == tk_rbrace() {
+        return pr_new(pat_pos, ast_new_leaf(ast_unsupported(), pat_lo, pat_hi));
+    }
     let is_wild: i64 = if tok_kind(toks, pat_pos) == tk_ident() {
         is_ident_underscore(buf, pat_lo, pat_hi)
     } else {
         0
     };
+    // ENUM-PATH pattern `Name::Variant => ..` (4 tokens; `=>` then at
+    // pat_pos+4/+5, the arm value at pat_pos+6).
+    let is_epath: i64 = if is_wild == 1 {
+        0
+    } else {
+        if tok_kind(toks, pat_pos) == tk_ident() {
+            if at_eof(toks, pat_pos + 3) == 0 {
+                if tok_kind(toks, pat_pos + 1) == tk_colon() {
+                    if tok_kind(toks, pat_pos + 2) == tk_colon() {
+                        if tok_kind(toks, pat_pos + 3) == tk_ident() {
+                            1
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                }
+            } else {
+                0
+            }
+        } else {
+            0
+        }
+    };
+    // PATTERN-SHAPE GATE (fail-closed): int literal | `_` wildcard | enum
+    // path. ANY other pattern token REFUSES. This also closes a pre-existing
+    // fail-OPEN: a bare-IDENT pattern previously became an int-lit leaf whose
+    // letter span parse_int_span'd into a GARBAGE constant — a silent wrong
+    // dispatch, never caught by any byte gate. Bare variant names (`Red =>`)
+    // therefore refuse too: the qualified `Color::Red` form is required.
+    let pat_ok: i64 = if is_wild == 1 {
+        1
+    } else {
+        if is_epath == 1 {
+            1
+        } else {
+            if tok_kind(toks, pat_pos) == tk_int() {
+                1
+            } else {
+                0
+            }
+        }
+    };
+    if pat_ok == 0 {
+        return pr_new(pat_pos + 1, ast_new_leaf(ast_unsupported(), pat_lo, pat_hi));
+    }
+    // Payload-BINDING arm `Name::Variant(x) => ..` -> refuse (the Option/
+    // Result payload tier is the follow-up; never bind or drop a payload).
+    if is_epath == 1 {
+        if at_eof(toks, pat_pos + 4) == 0 {
+            if tok_kind(toks, pat_pos + 4) == tk_lparen() {
+                return pr_new(pat_pos + 4, ast_new_leaf(ast_unsupported(), pat_lo, pat_hi));
+            }
+        }
+    }
+    // Resolve an enum-path pattern's discriminant; unresolvable -> refuse.
+    let epv: i64 = if is_epath == 1 {
+        ent_resolve(toks, buf, pat_lo, pat_hi, tok_lo(toks, pat_pos + 3), tok_hi(toks, pat_pos + 3))
+    } else {
+        0
+    };
+    if is_epath == 1 {
+        if epv < 0 {
+            return pr_new(pat_pos + 4, ast_new_leaf(ast_unsupported(), pat_lo, pat_hi));
+        }
+    }
 
-    // `=>` is two tokens (tk_eq tk_gt); the arm value follows at pat_pos+3.
-    let val_res: ParseResult = parse_arm_value(toks, pat_pos + 3, buf);
+    // `=>` is two tokens (tk_eq tk_gt); the arm value follows the pattern (a
+    // single token, or 4 tokens for an enum path).
+    let val_pos: i64 = if is_epath == 1 {
+        pat_pos + 6
+    } else {
+        pat_pos + 3
+    };
+    let val_res: ParseResult = parse_arm_value(toks, val_pos, buf);
     let after_val: i64 = pr_pos(val_res);
     let val_blk: i64 = pr_node(val_res);
 
@@ -3103,9 +3376,21 @@ pub fn parse_match_chain(toks: Vec, pat_pos: i64, buf: i64, scrut_start: i64, kw
     }
 
     // Pattern arm: cond = SCRUT == PAT, then = arm block, else = recursive rest.
+    // An enum-path pattern compares against its resolved discriminant carried
+    // in a synthetic int-lit (child1==1) — same proven form as the expression
+    // position.
     let scrut_i: ParseResult = parse_expr_ns(toks, scrut_start, buf, 1);
-    let pat_lit: i64 = ast_new_leaf(ast_int_lit(), pat_lo, pat_hi);
-    let cond: i64 = ast_new_binop(kw_lo, pat_hi, pr_node(scrut_i), pat_lit, op_eq());
+    let pat_end_hi: i64 = if is_epath == 1 {
+        tok_hi(toks, pat_pos + 3)
+    } else {
+        pat_hi
+    };
+    let pat_lit: i64 = if is_epath == 1 {
+        ent_syn_node(epv, pat_lo, pat_end_hi)
+    } else {
+        ast_new_leaf(ast_int_lit(), pat_lo, pat_hi)
+    };
+    let cond: i64 = ast_new_binop(kw_lo, pat_end_hi, pr_node(scrut_i), pat_lit, op_eq());
 
     let rest: ParseResult = parse_match_chain(toks, next_pos, buf, scrut_start, kw_lo);
     let else_blk: i64 = mt_wrap_else(pr_node(rest));
