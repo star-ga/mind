@@ -9,7 +9,11 @@ parse-time desugars match / && / || / for / else-if, plus declared-order
 all-i64 structs via accessor fns — the idiom main.mind is written in — plus
 fixed i64 arrays: `[e0, e1, ...]` literals, index read/write `a[i]`, composing
 in arithmetic / call args / returns / loops, with proven-constant-OOB indexes,
-non-i64 elements, `[]`, trailing commas and `.len()` refused). For ANY
+non-i64 elements, `[]`, trailing commas and `.len()` refused — plus i64 TUPLES
+as anonymous positional structs: `(e0, e1, ...)` literals (comma-disambiguated
+from paren groups), `.N` slot reads, and `let (a, b) = <tuple literal>;`
+destructuring, with non-i64 elements, 1-tuples, out-of-arity `.N` and
+non-literal-RHS destructures refused). For ANY
 construct outside that subset it must FAIL CLOSED: emit 0 bytes (refuse),
 NEVER a running ELF with a wrong value. An adversarial sweep once found ~123
 constructs that silently miscompiled; a poison mechanism (lexer
@@ -74,8 +78,22 @@ def M(body: str) -> str:
 
 # (label, source, expected)  — expected "0B" means MUST refuse.
 REFUSED = [
-    ("tuple field", M("return (1,2).1;"), "0B"),
-    ("tuple destructure", M("let (a,b)=(1,2); return b;"), "0B"),
+    # tuples are SUPPORTED (i64 anonymous-positional-struct subset, below) —
+    # but the tuple boundary itself stays fail-closed: non-i64 elements, the
+    # 1-tuple/trailing-comma spelling, `.N` out of the literal's arity, and a
+    # destructure whose RHS is not a DIRECT tuple literal of matching arity
+    # (a call/ident/array RHS has no statically-known arity — refusing beats
+    # a possible OOB read).
+    ("tuple float element", M("return (1.5, 2.5).0;"), "0B"),
+    ("tuple 1-tuple (1,)", M("let t=(1,); return 0;"), "0B"),
+    ("tuple .N out of arity", M("return (1,2).5;"), "0B"),
+    ("tuple .N OOB via let", M("let t=(1,2); return t.2;"), "0B"),
+    ("tuple destructure arity mismatch", M("let (a,b,c)=(1,2); return a;"), "0B"),
+    ("tuple destructure ident RHS", M("let x=(1,2); let (a,b)=x; return a;"), "0B"),
+    ("tuple destructure call RHS", "fn mk()->i64{ return (4,5); }\nfn main()->i64{ let (a,b)=mk(); return a; }", "0B"),
+    ("tuple destructure array RHS", M("let (a,b)=[1,2]; return a;"), "0B"),
+    ("tuple pattern mut", M("let (mut a, b)=(1,2); return a;"), "0B"),
+    ("tuple pattern literal", M("let (a, 1)=(1,2); return a;"), "0B"),
     ("ref + deref", M("let x:i64=5; let r=&x; return *r;"), "0B"),
     ("compound assign +=", M("let mut c:i64=0; c += 1; return c;"), "0B"),
     # arrays are SUPPORTED (i64 subset, below) — but the array boundary itself
@@ -103,9 +121,9 @@ REFUSED = [
     ("struct-lit unknown field",
      "struct P { x: i64, y: i64 }\nfn main()->i64{ let p: P = P { x: 1, z: 2 }; return p.x; }", "0B"),
     # sticky poison: unsupported nested in supported -> whole unit refuses
-    ("tuple nested in if", M("let x:i64=5; if x>0 { return (7,8).0; } return 0;"), "0B"),
+    ("ref nested in if", M("let x:i64=5; if x>0 { let r=&x; return *r; } return 0;"), "0B"),
     # unsupported node in a separate function still refuses the whole unit
-    ("unsupported in sep fn", "fn helper()->i64{ let t=(1,2); return 0; }\nfn main()->i64{ return helper(); }", "0B"),
+    ("unsupported in sep fn", "fn helper()->i64{ let x:i64=1; let r=&x; return 0; }\nfn main()->i64{ return helper(); }", "0B"),
 ]
 
 # (label, source, expected exit value) — the supported subset MUST run correct.
@@ -125,6 +143,25 @@ SUPPORTED = [
     ("array nested literal", M("let a=[[1,2],[3,4]]; return a[1][0];"), 3),
     ("array in while body", M("let mut c:i64=0; while c<3 { let a=[1,2]; c=c+a[0]; } return c;"), 3),
     ("array in sep fn", "fn helper()->i64{ let a=[1,2,3]; return a[0]; }\nfn main()->i64{ return helper(); }", 1),
+    # i64 TUPLES (anonymous positional structs — the array alloc + base+8*i ABI
+    # with `.N` slot reads and literal-RHS destructuring; parse-time desugar,
+    # zero new emit surface)
+    ("tuple literal .1", M("return (1,2).1;"), 2),
+    ("tuple 3-elem .2", M("return (10,20,30).2;"), 30),
+    ("tuple destructure", M("let (a,b)=(1,2); return a+b;"), 3),
+    ("tuple 3-destructure", M("let (a,b,c)=(7,8,9); return a+b*c;"), 79),
+    ("tuple destructure swap", M("let x=1; let y=2; let (a,b)=(y,x); return a*10+b;"), 21),
+    ("tuple let + arith", M("let t=(3,4); return t.0+t.1;"), 7),
+    ("tuple as call arg", "fn snd(p:i64)->i64{ return p.1; }\nfn main()->i64{ let t=(7,8); return snd(t); }", 8),
+    ("tuple as return value", "fn mk()->i64{ return (4,5); }\nfn main()->i64{ let t=mk(); return t.1; }", 5),
+    ("tuple nested .1.0", M("return ((1,2),(3,4)).1.0;"), 3),
+    ("tuple nested via let", M("let t=((1,2),(3,4)); return t.0.1;"), 2),
+    ("tuple computed elems", M("let x=5; return (x+1, x*2).1;"), 10),
+    ("tuple computed destructure", M("let x=5; let (a,b)=(x+1,x*2); return a+b;"), 16),
+    ("tuple in if branch", M("let x:i64=5; if x>0 { return (7,8).0; } return 0;"), 7),
+    # paren-grouping is NOT perturbed by the tuple comma-disambiguation
+    ("paren grouping (1+2)*3", M("return (1+2)*3;"), 9),
+    ("paren double ((1))", M("return ((1));"), 1),
     ("if/else", M("let x:i64=5; if x>3 { return 3; } else { return 8; }"), 3),
     ("while carry", M("let mut c:i64=0; let mut i:i64=0; while i<10 { c=c+1; i=i+1; } return c;"), 10),
     ("match 3-arm", "fn main()->i64{ match 3 { 1=>{return 1;} 2=>{return 2;} _=>{return 9;} } }", 9),

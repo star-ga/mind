@@ -1277,6 +1277,19 @@ pub fn ast_new_array_lit(span_lo: i64, span_hi: i64, elems_addr: i64, elems_len:
     n
 }
 
+// `(e0, e1, ...)` TUPLE literal node — an anonymous POSITIONAL struct. Reuses
+// the ast_array_lit node kind byte-for-byte (identical alloc + base+8*i store
+// ABI, identical emit/count/walker arms — zero new emitter surface) with
+// child0 (+24, always 0 for a `[...]` array) set to 1 as the TUPLE marker.
+// The marker is read ONLY by the destructuring let (parse_let_tuple), which
+// requires a DIRECT tuple-literal RHS of matching arity; every other consumer
+// treats the node exactly as an array literal.
+pub fn ast_new_tuple_lit(span_lo: i64, span_hi: i64, elems_addr: i64, elems_len: i64) -> i64 {
+    let n: i64 = ast_new_array_lit(span_lo, span_hi, elems_addr, elems_len);
+    __mind_store_i64(n + 24, 1);
+    n
+}
+
 // `BASE[IDX]` index-read node.
 pub fn ast_new_index(span_lo: i64, span_hi: i64, base: i64, idx: i64) -> i64 {
     let n: i64 = ast_alloc();
@@ -1680,6 +1693,14 @@ pub fn parse_primary_ns(toks: Vec, pos: i64, buf: i64, no_struct: i64) -> ParseR
         // Parenthesised group RESETS no_struct: `( Ident { .. } )` is a literal.
         let inner: ParseResult = parse_expr(toks, pos + 1, buf);
         let after_inner: i64 = pr_pos(inner);
+        // TUPLE literal `(e0, e1, ...)`: a COMMA after the first element is the
+        // disambiguator — `(expr)` stays a paren group, `(a, b)` is a tuple.
+        // main.mind's own grouping parens never contain a top-level comma (call
+        // arguments go through parse_call, not this arm), so its self-compile
+        // parse is byte-identical.
+        if tok_kind(toks, after_inner) == tk_comma() {
+            return parse_tuple_lit_rest(toks, after_inner, buf, lo, pr_node(inner));
+        }
         let close_hi: i64 = tok_hi(toks, after_inner);
         let after_close: i64 = if tok_kind(toks, after_inner) == tk_rparen() {
             after_inner + 1
@@ -1760,6 +1781,31 @@ pub fn parse_array_lit(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     let close_hi: i64 = tok_hi(toks, after_elems);
     let arr: i64 = ast_new_array_lit(lo, close_hi, ast_child0(elems_node), ast_aux(elems_node));
     pr_new(after_elems + 1, arr)
+}
+
+// Finish a TUPLE literal `(e0, e1, ...)` after parse_primary_ns's lparen arm
+// has parsed e0 and found a comma. `pos` is the comma; `first` is e0's node;
+// `lo` is the `(`'s span-lo. The remaining elements are collected with
+// parse_args_rest (the same comma-separated collector call args and array
+// literals use), seeded with e0. FAIL CLOSED: a missing `)` — including the
+// trailing-comma / 1-tuple `(e0,)` spelling, whose element parse hits `)` in
+// expression position and poisons — produces the ast_unsupported POISON marker
+// (whole unit refuses, 0 bytes). The result node is ast_new_tuple_lit: the
+// array-lit alloc + base+8*i store ABI with the tuple marker (child0=1) that
+// the destructuring let requires.
+pub fn parse_tuple_lit_rest(toks: Vec, pos: i64, buf: i64, lo: i64, first: i64) -> ParseResult {
+    let acc0: Vec = vec_new();
+    let acc1: Vec = vec_push(acc0, first);
+    let elems_res: ParseResult = parse_args_rest(toks, pos + 1, buf, acc1);
+    let after_elems: i64 = pr_pos(elems_res);
+    let elems_node: i64 = pr_node(elems_res);
+    if tok_kind(toks, after_elems) != tk_rparen() {
+        let pnode: i64 = ast_new_leaf(ast_unsupported(), lo, tok_hi(toks, after_elems));
+        return pr_new(after_elems, pnode);
+    }
+    let close_hi: i64 = tok_hi(toks, after_elems);
+    let tup: i64 = ast_new_tuple_lit(lo, close_hi, ast_child0(elems_node), ast_aux(elems_node));
+    pr_new(after_elems + 1, tup)
 }
 
 // Parse `Name { f0: e0, f1: e1, ... }` (optional trailing comma) into an
@@ -1947,6 +1993,32 @@ pub fn parse_postfix_rest(toks: Vec, pos: i64, buf: i64, recv: i64) -> ParseResu
     if tok_kind(toks, pos) != tk_dot() {
         return pr_new(pos, recv);
     }
+    // `.N` TUPLE slot read (tuples are anonymous positional structs sharing the
+    // array base+8*i ABI): `t.1` desugars to the index read `t[1]` — the int
+    // literal's node spans the digit text, so the proven ast_index arm (incl.
+    // its proven-constant OOB refusal against the tuple literal's arity) does
+    // all the work. main.mind's own source has no dot-int / dot-float token
+    // sequence (struct fields are all idents), so its parse is byte-identical.
+    if tok_kind(toks, pos + 1) == tk_int() {
+        let tn_hi: i64 = tok_hi(toks, pos + 1);
+        let tidx: i64 = ast_new_leaf(ast_int_lit(), tok_lo(toks, pos + 1), tn_hi);
+        let tix: i64 = ast_new_index(ast_span_lo(recv), tn_hi, recv, tidx);
+        return parse_postfix_rest(toks, pos + 2, buf, tix);
+    }
+    // `.N.M` nested tuple access: the lexer fuses `N.M` into ONE tk_float token
+    // (`<digits>.<digits>`), so split it at the interior `.` into TWO chained
+    // index reads — `((1,2),(3,4)).1.0` = `[...][1][0]`. Both digit runs are
+    // non-empty by the lexer's float shape.
+    if tok_kind(toks, pos + 1) == tk_float() {
+        let tf_lo: i64 = tok_lo(toks, pos + 1);
+        let tf_hi: i64 = tok_hi(toks, pos + 1);
+        let tdp: i64 = tuple_dot_pos(buf, tf_lo, tf_hi);
+        let ti1: i64 = ast_new_leaf(ast_int_lit(), tf_lo, tdp);
+        let tx1: i64 = ast_new_index(ast_span_lo(recv), tdp, recv, ti1);
+        let ti2: i64 = ast_new_leaf(ast_int_lit(), tdp + 1, tf_hi);
+        let tx2: i64 = ast_new_index(ast_span_lo(recv), tf_hi, tx1, ti2);
+        return parse_postfix_rest(toks, pos + 2, buf, tx2);
+    }
     if tok_kind(toks, pos + 1) != tk_ident() {
         return pr_new(pos, recv);
     }
@@ -1955,6 +2027,21 @@ pub fn parse_postfix_rest(toks: Vec, pos: i64, buf: i64, recv: i64) -> ParseResu
     let recv_lo: i64 = ast_span_lo(recv);
     let fa: i64 = ast_new_field(recv_lo, field_hi, recv, field_lo, field_hi);
     parse_postfix_rest(toks, pos + 2, buf, fa)
+}
+
+// Find the interior `.` (byte 46) of a lexer-fused `<digits>.<digits>` float
+// token span — the split point for a `.N.M` nested-tuple access. Returns `hi`
+// if no dot is found (unreachable for a well-formed float token; the resulting
+// empty second span parses to 0 via parse_int_span, and the shape only arises
+// after a tk_float, which the lexer only emits with an interior dot).
+pub fn tuple_dot_pos(buf: i64, i: i64, hi: i64) -> i64 {
+    if i >= hi {
+        return hi;
+    }
+    if load_byte(buf, i) == 46 {
+        return i;
+    }
+    tuple_dot_pos(buf, i + 1, hi)
 }
 
 // `A && B` short-circuit lowering: desugar (at PARSE time) to the value-if
@@ -2388,6 +2475,128 @@ pub fn parse_let(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     pr_new(after_semi, let_node)
 }
 
+// ===== Tuple destructuring `let (n0, n1, ...) = (e0, e1, ...);` =====
+//
+// Desugars at PARSE time (tuples = anonymous positional structs) into k+1
+// sibling let-statements over the already-proven aggregate machinery:
+//   let <pat-span> = <tuple literal>;   // the temp's "name" is the WHOLE
+//                                       // `(n0, n1, ...)` pattern source text
+//                                       // — it contains `(`/`,` bytes, so it
+//                                       // can never collide with a real ident
+//   let n0 = <pat-span>[0]; ... let nk = <pat-span>[k];
+// The RHS is evaluated ONCE, before any name binds (so `let (a,b) = (b,a)`
+// swaps). Each generated index is a synthetic int-lit < arity by construction,
+// so no OOB is reachable. FAIL CLOSED: the RHS must be a DIRECT tuple literal
+// (ast_array_lit with the child0==1 tuple marker) whose arity equals the
+// pattern arity — a call / ident / array / non-tuple RHS, a non-ident pattern
+// element, a missing `=`, or an arity mismatch produces the ast_unsupported
+// POISON statement (whole unit refuses, 0 bytes), never a wrong-value binding.
+// `out` (16 bytes): out+0 = addr of the desugared stmt-node array, out+8 = its
+// length. Returns the token position after the statement.
+pub fn parse_let_tuple(toks: Vec, pos: i64, buf: i64, out: i64) -> i64 {
+    let kw_lo: i64 = tok_lo(toks, pos);
+    let pat_lo: i64 = tok_lo(toks, pos + 1);
+    let names0: Vec = vec_new();
+    let npr: ParseResult = parse_tuple_pat_names(toks, pos + 2, buf, names0);
+    let after_names: i64 = pr_pos(npr);
+    let names_node: i64 = pr_node(npr);
+    if ast_kind(names_node) == ast_unsupported() {
+        return plt_poison(out, names_node, after_names);
+    }
+    let names_addr: i64 = ast_child0(names_node);
+    let n_names: i64 = ast_aux(names_node);
+    let pat_hi: i64 = tok_hi(toks, after_names);
+    if tok_kind(toks, after_names + 1) != tk_eq() {
+        let p1: i64 = ast_new_leaf(ast_unsupported(), pat_lo, pat_hi);
+        return plt_poison(out, p1, after_names + 1);
+    }
+    let rhs: ParseResult = parse_expr(toks, after_names + 2, buf);
+    let after_rhs: i64 = pr_pos(rhs);
+    let after_semi: i64 = if tok_kind(toks, after_rhs) == tk_semi() {
+        after_rhs + 1
+    } else {
+        after_rhs
+    };
+    let rhs_node: i64 = pr_node(rhs);
+    if ast_kind(rhs_node) != ast_array_lit() {
+        let p2: i64 = ast_new_leaf(ast_unsupported(), pat_lo, pat_hi);
+        return plt_poison(out, p2, after_semi);
+    }
+    if ast_child0(rhs_node) != 1 {
+        let p3: i64 = ast_new_leaf(ast_unsupported(), pat_lo, pat_hi);
+        return plt_poison(out, p3, after_semi);
+    }
+    if ast_aux(rhs_node) != n_names {
+        let p4: i64 = ast_new_leaf(ast_unsupported(), pat_lo, pat_hi);
+        return plt_poison(out, p4, after_semi);
+    }
+    let stmts0: Vec = vec_new();
+    let tmp_name: i64 = ast_new_leaf(ast_ident(), pat_lo, pat_hi);
+    let l0: i64 = ast_new_let(kw_lo, ast_span_hi(rhs_node), tmp_name, 0, rhs_node);
+    let stmts1: Vec = vec_push(stmts0, l0);
+    let stmts2: Vec = plt_binds(stmts1, names_addr, n_names, 0, pat_lo, pat_hi, kw_lo);
+    __mind_store_i64(out + 0, vec_addr(stmts2));
+    __mind_store_i64(out + 8, vec_len(stmts2));
+    after_semi
+}
+
+// Collect the destructuring pattern's names `n0, n1, ...` (plain idents only)
+// into `acc` as ident-leaf nodes. On success returns a sentinel block (child0 =
+// vec addr, aux = count) positioned AT the closing `)`. Any non-ident element
+// (a literal, `mut`, a nested pattern) or a token other than `,`/`)` after a
+// name returns the ast_unsupported POISON marker — fail-closed.
+pub fn parse_tuple_pat_names(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult {
+    if tok_kind(toks, pos) != tk_ident() {
+        let p: i64 = ast_new_leaf(ast_unsupported(), tok_lo(toks, pos), tok_hi(toks, pos));
+        return pr_new(pos, p);
+    }
+    let n: i64 = ast_new_leaf(ast_ident(), tok_lo(toks, pos), tok_hi(toks, pos));
+    let a2: Vec = vec_push(acc, n);
+    if tok_kind(toks, pos + 1) == tk_comma() {
+        return parse_tuple_pat_names(toks, pos + 2, buf, a2);
+    }
+    if tok_kind(toks, pos + 1) == tk_rparen() {
+        let s: i64 = ast_new_block(0, 0, vec_addr(a2), vec_len(a2));
+        return pr_new(pos + 1, s);
+    }
+    let p2: i64 = ast_new_leaf(ast_unsupported(), tok_lo(toks, pos + 1), tok_hi(toks, pos + 1));
+    pr_new(pos + 1, p2)
+}
+
+// Record a single POISON statement in the destructure out-cell (the whole unit
+// refuses via the emitters' ast_unsupported guard) and return the resume
+// position. A leaf helper so parse_let_tuple's refusal arms stay one-return.
+pub fn plt_poison(out: i64, pnode: i64, np: i64) -> i64 {
+    let s0: Vec = vec_new();
+    let s1: Vec = vec_push(s0, pnode);
+    __mind_store_i64(out + 0, vec_addr(s1));
+    __mind_store_i64(out + 8, vec_len(s1));
+    np
+}
+
+// Append the per-name binding lets: `let n_i = <pat-span>[i]` for i in 0..n.
+// The index is a SYNTHETIC int-lit (mk_syn_intlit — value carried directly),
+// always < the tuple arity by the caller's arity check.
+pub fn plt_binds(acc: Vec, names_addr: i64, n: i64, i: i64, pat_lo: i64, pat_hi: i64, kw_lo: i64) -> Vec {
+    if i >= n {
+        return acc;
+    }
+    let name_node: i64 = __mind_load_i64(names_addr + i * 8);
+    let tmp_ref: i64 = ast_new_leaf(ast_ident(), pat_lo, pat_hi);
+    let idx: i64 = mk_syn_intlit(i);
+    let ix: i64 = ast_new_index(pat_lo, pat_hi, tmp_ref, idx);
+    let li: i64 = ast_new_let(kw_lo, pat_hi, name_node, 0, ix);
+    plt_binds(vec_push(acc, li), names_addr, n, i + 1, pat_lo, pat_hi, kw_lo)
+}
+
+// Push the desugared destructure statements into the block's accumulator.
+pub fn plt_push_stmts(acc: Vec, addr: i64, n: i64, i: i64) -> Vec {
+    if i >= n {
+        return acc;
+    }
+    plt_push_stmts(vec_push(acc, __mind_load_i64(addr + i * 8)), addr, n, i + 1)
+}
+
 pub fn parse_return(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     let kw_lo: i64 = tok_lo(toks, pos);
     let value: ParseResult = parse_expr(toks, pos + 1, buf);
@@ -2442,6 +2651,20 @@ pub fn parse_block_stmts(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult
             let fa1: Vec = vec_push(acc, __mind_load_i64(fout + 0));
             let fa2: Vec = vec_push(fa1, __mind_load_i64(fout + 8));
             return parse_block_stmts(toks, fnp, buf, fa2);
+        }
+    }
+    // `let (n0, n1, ...) = TUPLE;` destructuring desugars to a VARIABLE number
+    // of sibling let-statements (a temp binding + one per name), so like `for`
+    // it is intercepted here and the desugared nodes are pushed individually.
+    // main.mind's own lets always bind a plain ident (`let x` / `let mut x`),
+    // never `let (`, so its self-compile parse is byte-identical. See
+    // parse_let_tuple for the desugar + its fail-closed boundary.
+    if tok_kind(toks, pos) == tk_kw_let() {
+        if tok_kind(toks, pos + 1) == tk_lparen() {
+            let tout: i64 = __mind_alloc(16);
+            let tnp: i64 = parse_let_tuple(toks, pos, buf, tout);
+            let tacc: Vec = plt_push_stmts(acc, __mind_load_i64(tout + 0), __mind_load_i64(tout + 8), 0);
+            return parse_block_stmts(toks, tnp, buf, tacc);
         }
     }
     let one: ParseResult = parse_stmt(toks, pos, buf);
