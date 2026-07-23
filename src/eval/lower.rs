@@ -14,7 +14,21 @@
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::{Cell, UnsafeCell};
-use std::collections::HashMap;
+use std::collections::HashMap as StdHashMap;
+
+/// This file's per-compile side tables (`env`, `struct_env`, `receiver_types`,
+/// per-fn envs) on the type checker's deterministic `FxHasher` instead of the
+/// std SipHash `RandomState` — the same swap (and the same byte-identity
+/// argument) already accepted for the type checker's hot maps: every probe of
+/// these maps is a by-key lookup, the single `env.iter()` walk feeds another
+/// map (order-irrelevant), and the run-to-run determinism gates already prove
+/// no emitted byte depends on iteration order (today's `RandomState` order is
+/// random per process, and the 15-canary gate is green). Same keys ⇒ same
+/// values ⇒ same output bytes; only the per-lookup hash cost changes. Maps
+/// shared with readonly files (`abi_gate.rs` via `bind_let` /
+/// `is_monomorphizable`, `struct_resolver.rs`'s builder return) keep their
+/// fully-qualified `std::collections::HashMap` types untouched.
+type HashMap<K, V, S = crate::type_checker::FxBuild> = StdHashMap<K, V, S>;
 
 use crate::ast;
 use crate::ast::Literal;
@@ -1250,7 +1264,7 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     // mic@1/mic@3 bytes + cross-substrate identity are byte-for-byte unchanged.
     #[cfg(feature = "std-surface")]
     NARROW_LOCALS.with(|n| n.borrow_mut().clear());
-    let mut env: HashMap<String, ValueId> = HashMap::new();
+    let mut env: HashMap<String, ValueId> = HashMap::default();
     // RFC 0005 P0f Step 1 — track `let x = Foo { ... }` so a later
     // `x.field` can resolve `Foo`'s canonical field-name order from
     // `ir.struct_defs` and emit the correct heap-record load offset.
@@ -1260,7 +1274,7 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     // feature, so silence the unused-mut lint instead of duplicating
     // the binding under a second cfg.
     #[allow(unused_mut)]
-    let mut struct_env: HashMap<String, String> = HashMap::new();
+    let mut struct_env: HashMap<String, String> = HashMap::default();
     // RFC 0005 P0f Step 2 — module-wide side-table that maps every
     // `FieldAccess` span to its receiver's struct-type name. Built by
     // a single AST pre-pass so the FieldAccess arm in `lower_expr` can
@@ -1301,12 +1315,17 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
         .any(|it| matches!(it, ast::Node::StructDef { .. }))
         || crate::ir::with_global_enums(|g| !g.structs.is_empty())
     {
+        // The builder (readonly `struct_resolver.rs`) returns a std-hashed
+        // map; re-collect once into the Fx-hashed table so the many per-node
+        // probes below hash fast. Same (key, value) set — no output change.
         crate::eval::struct_resolver::build_field_access_types(module)
+            .into_iter()
+            .collect()
     } else {
-        HashMap::new()
+        HashMap::default()
     };
     #[cfg(not(feature = "std-surface"))]
-    let receiver_types_owned: HashMap<crate::ast::Span, String> = HashMap::new();
+    let receiver_types_owned: HashMap<crate::ast::Span, String> = HashMap::default();
     let receiver_types: &HashMap<crate::ast::Span, String> = &receiver_types_owned;
 
     // RFC 0010 Phase B fix: two-pass repr_c collection.
