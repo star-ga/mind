@@ -14,7 +14,21 @@
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::{Cell, UnsafeCell};
-use std::collections::HashMap;
+use std::collections::HashMap as StdHashMap;
+
+/// This file's per-compile side tables (`env`, `struct_env`, `receiver_types`,
+/// per-fn envs) on the type checker's deterministic `FxHasher` instead of the
+/// std SipHash `RandomState` — the same swap (and the same byte-identity
+/// argument) already accepted for the type checker's hot maps: every probe of
+/// these maps is a by-key lookup, the single `env.iter()` walk feeds another
+/// map (order-irrelevant), and the run-to-run determinism gates already prove
+/// no emitted byte depends on iteration order (today's `RandomState` order is
+/// random per process, and the 15-canary gate is green). Same keys ⇒ same
+/// values ⇒ same output bytes; only the per-lookup hash cost changes. Maps
+/// shared with readonly files (`abi_gate.rs` via `bind_let` /
+/// `is_monomorphizable`, `struct_resolver.rs`'s builder return) keep their
+/// fully-qualified `std::collections::HashMap` types untouched.
+type HashMap<K, V, S = crate::type_checker::FxBuild> = StdHashMap<K, V, S>;
 
 use crate::ast;
 use crate::ast::Literal;
@@ -917,6 +931,84 @@ fn lower_pure_scalar_item(n: &ast::Node, ir: &mut IRModule) -> ValueId {
     }
 }
 
+/// Const-fold sub-lane of the pure-scalar fast lane: compute, WITHOUT emitting
+/// the intermediate instruction stream, the exact `ConstI64` value and root
+/// `ValueId` that `canonicalize_module` would leave behind for one whitelisted
+/// item — or `None` when (and only when) `constant_fold` itself would bail, in
+/// which case the caller falls back to the stream-emitting lane verbatim.
+///
+/// Byte-identity derivation (against src/opt/ir_canonical.rs, read this
+/// iteration):
+///  - Id numbering: `prune_dead` retains instructions in place and never
+///    renumbers; `constant_fold` rewrites a foldable `BinOp { dst, .. }` to
+///    `ConstI64(dst, v)` in place; the final `next_sequential_id` is
+///    `max dst + 1`. A whitelisted item mints ids left-subtree, right-subtree,
+///    then dst — so its canonical root is simply the LAST id it mints, and the
+///    canonical module for an all-foldable item list is exactly
+///    `[ConstI64(root_k, v_k), Output(root_k)]…` with `next_id` = total ids
+///    minted. `ids` here replays that mint order as a bare counter.
+///  - Fold arithmetic: mirrors `constant_fold` arm-for-arm — `checked_add` /
+///    `checked_sub` / `checked_mul` with bail on overflow (the runtime wraps;
+///    the compile-time fold must not), Div/Mod bail on `r == 0` or
+///    `i64::MIN / -1`, comparisons fold to `(cond) as i64`. Any bail anywhere
+///    aborts the WHOLE sub-lane (partial folds would need the general
+///    canonicalizer), so the fallback stream is byte-for-byte today's output.
+///  - `reorder_commutative_ops` is irrelevant on both sides: left-then-right
+///    minting makes `rhs > lhs` for every emitted BinOp (no swap fires), and a
+///    folded BinOp carries no operands.
+///  - The emitted form is `canonicalize_module`'s fixed point (prune keeps the
+///    Output-marked consts, fold re-registers them, `next_sequential_id`
+///    returns the same `next_id`), and the pipeline's FIRST `verify_module`
+///    accepts it because the SAME function already accepts the identical
+///    post-canonicalize module today (`next_id >= max dst + 1` is the only
+///    counter constraint).
+///
+/// Profile basis (this box, criterion compile_small/scalar_math, iter exp10):
+/// downstream chew of the 9-instr stream is the top in-surface cost block —
+/// verify_module 7.4% + prune_dead 5.8% + instruction_dst 4.6% +
+/// canonicalize_module 4.4% + ~2.9% memmove from the 9 `Instr` pushes — all of
+/// which collapses to the 2-instr canonical stream this lane emits directly.
+#[cfg(feature = "std-surface")]
+fn fold_pure_scalar_item(n: &ast::Node, ids: &mut usize) -> Option<i64> {
+    match n {
+        ast::Node::Lit(Literal::Int(v), _) => {
+            *ids += 1;
+            Some(*v)
+        }
+        ast::Node::Binary {
+            op, left, right, ..
+        } => {
+            let l = fold_pure_scalar_item(left, ids)?;
+            let r = fold_pure_scalar_item(right, ids)?;
+            *ids += 1;
+            Some(match op {
+                ast::BinOp::Add => l.checked_add(r)?,
+                ast::BinOp::Sub => l.checked_sub(r)?,
+                ast::BinOp::Mul => l.checked_mul(r)?,
+                ast::BinOp::Div => {
+                    if r == 0 || (l == i64::MIN && r == -1) {
+                        return None;
+                    }
+                    l / r
+                }
+                ast::BinOp::Mod => {
+                    if r == 0 || (l == i64::MIN && r == -1) {
+                        return None;
+                    }
+                    l % r
+                }
+                ast::BinOp::Lt => (l < r) as i64,
+                ast::BinOp::Le => (l <= r) as i64,
+                ast::BinOp::Gt => (l > r) as i64,
+                ast::BinOp::Ge => (l >= r) as i64,
+                ast::BinOp::Eq => (l == r) as i64,
+                ast::BinOp::Ne => (l != r) as i64,
+            })
+        }
+        _ => None,
+    }
+}
+
 pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     // PURE-SCALAR FAST LANE. For a module whose every item passes
     // `is_pure_scalar_arith_item` (the `scalar_math` compile-speed floor:
@@ -961,6 +1053,36 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                     && g.fn_returns.is_empty()
             })
         {
+            // CONST-FOLD SUB-LANE (exp10). Emit the post-`canonicalize_module`
+            // fixed point DIRECTLY — `[ConstI64(root, v), Output(root)]` per
+            // item with the stream lane's id numbering replayed as a counter —
+            // so the pipeline's verify ×2 + canonicalize run over 2 instrs per
+            // item instead of the full expression stream. Byte-identical by
+            // the derivation on `fold_pure_scalar_item`; any fold bail
+            // (overflow, div/mod by zero, `i64::MIN / -1`) falls through to
+            // the stream lane below, whose output is today's byte-for-byte.
+            let mut ids = 0usize;
+            let mut roots: Vec<(ValueId, i64)> = Vec::with_capacity(module.items.len());
+            let mut all_folded = true;
+            for item in &module.items {
+                match fold_pure_scalar_item(item, &mut ids) {
+                    Some(v) => roots.push((ValueId(ids - 1), v)),
+                    None => {
+                        all_folded = false;
+                        break;
+                    }
+                }
+            }
+            if all_folded {
+                let mut ir = IRModule::new();
+                ir.instrs.reserve_exact(roots.len().saturating_mul(2));
+                for (root, v) in roots {
+                    ir.instrs.push(Instr::ConstI64(root, v));
+                    ir.instrs.push(Instr::Output(root));
+                }
+                ir.next_id = ids;
+                return ir;
+            }
             let mut ir = IRModule::new();
             ir.instrs
                 .reserve(module.items.len().saturating_mul(8).max(16));
@@ -1159,7 +1281,7 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
             }
         }
     });
-    let mut env: HashMap<String, ValueId> = HashMap::new();
+    let mut env: HashMap<String, ValueId> = HashMap::default();
     // RFC 0005 P0f Step 1 — track `let x = Foo { ... }` so a later
     // `x.field` can resolve `Foo`'s canonical field-name order from
     // `ir.struct_defs` and emit the correct heap-record load offset.
@@ -1169,7 +1291,7 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     // feature, so silence the unused-mut lint instead of duplicating
     // the binding under a second cfg.
     #[allow(unused_mut)]
-    let mut struct_env: HashMap<String, String> = HashMap::new();
+    let mut struct_env: HashMap<String, String> = HashMap::default();
     // RFC 0005 P0f Step 2 — module-wide side-table that maps every
     // `FieldAccess` span to its receiver's struct-type name. Built by
     // a single AST pre-pass so the FieldAccess arm in `lower_expr` can
@@ -1210,12 +1332,17 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
         .any(|it| matches!(it, ast::Node::StructDef { .. }))
         || crate::ir::with_global_enums(|g| !g.structs.is_empty())
     {
+        // The builder (readonly `struct_resolver.rs`) returns a std-hashed
+        // map; re-collect once into the Fx-hashed table so the many per-node
+        // probes below hash fast. Same (key, value) set — no output change.
         crate::eval::struct_resolver::build_field_access_types(module)
+            .into_iter()
+            .collect()
     } else {
-        HashMap::new()
+        HashMap::default()
     };
     #[cfg(not(feature = "std-surface"))]
-    let receiver_types_owned: HashMap<crate::ast::Span, String> = HashMap::new();
+    let receiver_types_owned: HashMap<crate::ast::Span, String> = HashMap::default();
     let receiver_types: &HashMap<crate::ast::Span, String> = &receiver_types_owned;
 
     // RFC 0010 Phase B fix: two-pass repr_c collection.
