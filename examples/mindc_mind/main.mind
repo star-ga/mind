@@ -1925,6 +1925,191 @@ pub fn parse_while(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     pr_new(after_body, w)
 }
 
+// ===== Range-`for` (parse-time desugar to `let` + `while`) =====
+//
+// `for VAR in LO .. HI { BODY }` desugars to the two SIBLING statements
+//   `let mut VAR: i64 = LO ;`   and   `while VAR < HI { BODY ; VAR = VAR + 1 ; }`
+// injected into the enclosing block's statement list (parse_block_stmts). The
+// upper bound is EXCLUSIVE (half-open), so `for i in 0..5` runs i = 0,1,2,3,4.
+// The desugar is BYTE-IDENTICAL to hand-writing that `let`+`while` pair: the two
+// nodes flow through the SAME nb_stmt / nb_count_stmt let+while arms, so no new
+// emit code and no oracle-shape change. It is NOT block-wrapped (the native path
+// has no standalone-block statement); the induction var leaks into the enclosing
+// scope exactly as the explicit `let mut i` form does — this is what keeps the
+// two forms byte-identical. Mirrors the else-if / match / && / || parse-time
+// desugars already in this file.
+//
+// `break` in BODY exits the loop with NO auto-increment (correct `break`). A
+// `continue` targeting THIS loop jumps to the while header and would SKIP a
+// trailing increment (a semantic bug: standard `for` runs the increment on
+// `continue`). So when BODY contains an own-level `continue`, parse_for switches
+// to the TOP-increment form `let mut VAR = LO - 1; while VAR + 1 < HI { VAR =
+// VAR + 1; BODY }`: the increment is the FIRST body statement (top level, so it
+// carries via the loop phi) and runs unconditionally each header entry, incl.
+// after a `continue`. The continue-free case keeps the byte-identical bottom
+// form. See parse_for for the two forms and why an in-branch increment can't
+// carry in this while model.
+
+// `for` (102,111,114): loop keyword, lexed as a bare ident (like while/match).
+pub fn is_ident_for(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo == 3 {
+        if load_byte(buf, lo + 0) == 102 {
+            if load_byte(buf, lo + 1) == 111 {
+                if load_byte(buf, lo + 2) == 114 {
+                    return 1;
+                }
+            }
+        }
+    }
+    0
+}
+
+// Build a fresh `VAR = VAR + 1` assign node (the range-for auto-increment). VAR's
+// source span (var_lo,var_hi) resolves the induction binding; the `1` is a synthetic
+// int literal (its value lives in child0, span 0 — nb_expr reads the value).
+pub fn for_make_incr(var_lo: i64, var_hi: i64) -> i64 {
+    let vref: i64 = ast_new_leaf(ast_ident(), var_lo, var_hi);
+    let one: i64 = mk_syn_intlit(1);
+    let sum: i64 = ast_new_binop(var_lo, var_hi, vref, one, op_add());
+    let nm: i64 = ast_new_leaf(ast_ident(), var_lo, var_hi);
+    ast_new_assign(var_lo, var_hi, nm, sum)
+}
+
+// Does a statement list contain a `continue` targeting the CURRENT loop level?
+// Descends into if then/else blocks (same loop level); STOPS at a nested `while`
+// (its `continue` belongs to the inner loop — a nested `for` is already a `while`
+// by the time the outer body is copied). Tail/structural recursion.
+pub fn for_has_own_continue(sa: i64, sl: i64, i: i64) -> i64 {
+    if i >= sl {
+        return 0;
+    }
+    let s: i64 = __mind_load_i64(sa + i * 8);
+    let k: i64 = ast_kind(s);
+    if k == ast_continue() {
+        return 1;
+    }
+    if k == ast_if() {
+        if for_if_has_continue(s) == 1 {
+            return 1;
+        }
+    }
+    for_has_own_continue(sa, sl, i + 1)
+}
+
+// Own-continue check for an if node (its then + else blocks).
+pub fn for_if_has_continue(node: i64) -> i64 {
+    let tb: i64 = ast_child1(node);
+    if for_has_own_continue(ast_child0(tb), ast_aux(tb), 0) == 1 {
+        return 1;
+    }
+    let eb: i64 = ast_child2(node);
+    if eb != 0 {
+        if for_has_own_continue(ast_child0(eb), ast_aux(eb), 0) == 1 {
+            return 1;
+        }
+    }
+    0
+}
+
+// Copy a statement list (node pointers) into `acc` unchanged. Used to build the
+// while body as [BODY..., increment] (bottom form) or [increment, BODY...] (top
+// form) from a fresh vec. Copying keeps the same node pointers, so a bottom-form
+// body is byte-identical to the hand-written `{ BODY ; VAR = VAR + 1 }`.
+pub fn for_append_stmts(sa: i64, sl: i64, i: i64, acc: Vec) -> Vec {
+    if i >= sl {
+        return acc;
+    }
+    let nx: Vec = vec_push(acc, __mind_load_i64(sa + i * 8));
+    for_append_stmts(sa, sl, i + 1, nx)
+}
+
+// Parse `for VAR in LO .. HI { BODY }` at `pos` (pos = the `for` ident) and write
+// the desugared `let` node to out+0 and the `while` node to out+8. Returns the
+// token position after the body's closing `}`. LO/HI are parsed with no_struct=1
+// (so `HI {` opens the body, not a struct literal); LO stops at the `..` because
+// the first `.` has no infix precedence and postfix field-access needs an ident
+// after the dot (here it is the second `.`). The two `..` dots sit at after_lo and
+// after_lo+1, so HI starts at after_lo+2.
+//
+// TWO desugar forms, selected by whether BODY contains an own-level `continue`:
+//
+//   (A) NO own continue  ->  BOTTOM-increment (byte-identical to the explicit form)
+//       `let mut VAR: i64 = LO ;  while VAR < HI { BODY ; VAR = VAR + 1 ; }`
+//
+//   (B) HAS own continue ->  TOP-increment (correct standard for-continue semantics)
+//       `let mut VAR: i64 = LO - 1 ;  while VAR + 1 < HI { VAR = VAR + 1 ; BODY }`
+//       The increment is the FIRST body statement (top level -> it carries via the
+//       loop's phi), so a `continue` that jumps to the header still advances VAR on
+//       the next entry. The bottom form CANNOT support continue: `continue` skips a
+//       trailing increment, and an increment placed INSIDE the continue's if-branch
+//       does not carry out of the branch in this while model (verified: it hangs).
+//       Form (B) sidesteps that by keeping the increment top-level and unconditional.
+pub fn parse_for(toks: Vec, pos: i64, buf: i64, out: i64) -> i64 {
+    let kw_lo: i64 = tok_lo(toks, pos);
+    let var_lo: i64 = tok_lo(toks, pos + 1);
+    let var_hi: i64 = tok_hi(toks, pos + 1);
+    let lo_res: ParseResult = parse_expr_ns(toks, pos + 3, buf, 1);
+    let after_lo: i64 = pr_pos(lo_res);
+    let hi_res: ParseResult = parse_expr_ns(toks, after_lo + 2, buf, 1);
+    let after_hi: i64 = pr_pos(hi_res);
+
+    let body_acc0: Vec = vec_new();
+    let body_res: ParseResult = parse_block_stmts(toks, after_hi + 1, buf, body_acc0);
+    let after_body: i64 = pr_pos(body_res);
+    let body_stmts: i64 = pr_node(body_res);
+    let sa: i64 = ast_child0(body_stmts);
+    let sl: i64 = ast_aux(body_stmts);
+    let close_hi: i64 = tok_hi(toks, after_body);
+    let body_open: i64 = tok_lo(toks, after_hi);
+    let after_close: i64 = if tok_kind(toks, after_body) == tk_rbrace() {
+        after_body + 1
+    } else {
+        after_body
+    };
+
+    let has_cont: i64 = for_has_own_continue(sa, sl, 0);
+    let lo_hi: i64 = ast_span_hi(pr_node(lo_res));
+    let hi_hi: i64 = ast_span_hi(pr_node(hi_res));
+    let name: i64 = ast_new_leaf(ast_ident(), var_lo, var_hi);
+    let ty: i64 = ast_new_leaf(ast_ident(), var_lo, var_hi);
+
+    if has_cont == 1 {
+        // Form (B): top-increment.
+        // init = LO - 1
+        let init_b: i64 = ast_new_binop(var_lo, lo_hi, pr_node(lo_res), mk_syn_intlit(1), op_sub());
+        let let_b: i64 = ast_new_let(kw_lo, lo_hi, name, ty, init_b);
+        // body = [ VAR = VAR + 1 ; BODY... ]
+        let tb0: Vec = vec_push(vec_new(), for_make_incr(var_lo, var_hi));
+        let tb1: Vec = for_append_stmts(sa, sl, 0, tb0);
+        let wbody_b: i64 = ast_new_block(body_open, close_hi, vec_addr(tb1), vec_len(tb1));
+        // cond = (VAR + 1) < HI
+        let vplus: i64 = ast_new_binop(var_lo, var_hi, ast_new_leaf(ast_ident(), var_lo, var_hi), mk_syn_intlit(1), op_add());
+        let cond_b: i64 = ast_new_binop(var_lo, hi_hi, vplus, pr_node(hi_res), op_lt());
+        let while_b: i64 = ast_new_while(kw_lo, close_hi, cond_b, wbody_b);
+        __mind_store_i64(out + 0, let_b);
+        __mind_store_i64(out + 8, while_b);
+        return after_close;
+    }
+
+    // Form (A): bottom-increment (byte-identical to the explicit `let`+`while`).
+    // `let mut VAR: i64 = LO`. The type leaf reuses VAR's span: it classifies as
+    // width-64 INT with no struct descriptor (nb_width_of_ann / nb_param_is_float /
+    // nb_let_descriptor read the span only to CLASSIFY, never emit it), exactly like
+    // an explicit `: i64`, so the emitted bytes match the hand-written form.
+    let let_a: i64 = ast_new_let(kw_lo, lo_hi, name, ty, pr_node(lo_res));
+    // body = [ BODY... ; VAR = VAR + 1 ]
+    let ab0: Vec = for_append_stmts(sa, sl, 0, vec_new());
+    let ab1: Vec = vec_push(ab0, for_make_incr(var_lo, var_hi));
+    let wbody_a: i64 = ast_new_block(body_open, close_hi, vec_addr(ab1), vec_len(ab1));
+    // cond = VAR < HI
+    let vref: i64 = ast_new_leaf(ast_ident(), var_lo, var_hi);
+    let cond_a: i64 = ast_new_binop(var_lo, hi_hi, vref, pr_node(hi_res), op_lt());
+    let while_a: i64 = ast_new_while(kw_lo, close_hi, cond_a, wbody_a);
+    __mind_store_i64(out + 0, let_a);
+    __mind_store_i64(out + 8, while_a);
+    after_close
+}
+
 // `NAME = VALUE ;` assignment statement. `pos` is the name ident; `pos+1` is the
 // `=`; the value expression follows. Mirrors Node::Assign { name, value }.
 pub fn parse_assign(toks: Vec, pos: i64, buf: i64) -> ParseResult {
@@ -2026,6 +2211,18 @@ pub fn parse_block_stmts(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult
     if tok_kind(toks, pos) == tk_rbrace() {
         let s: i64 = ast_new_block(0, 0, vec_addr(acc), vec_len(acc));
         return pr_new(pos, s);
+    }
+    // `for VAR in LO..HI { BODY }` desugars to TWO sibling statements (a `let` init
+    // and a `while`), so it is intercepted here (parse_stmt returns a single node)
+    // and both nodes are pushed into the block's statement list. See parse_for.
+    if tok_kind(toks, pos) == tk_ident() {
+        if is_ident_for(buf, tok_lo(toks, pos), tok_hi(toks, pos)) == 1 {
+            let fout: i64 = __mind_alloc(16);
+            let fnp: i64 = parse_for(toks, pos, buf, fout);
+            let fa1: Vec = vec_push(acc, __mind_load_i64(fout + 0));
+            let fa2: Vec = vec_push(fa1, __mind_load_i64(fout + 8));
+            return parse_block_stmts(toks, fnp, buf, fa2);
+        }
     }
     let one: ParseResult = parse_stmt(toks, pos, buf);
     let new_acc: Vec = vec_push(acc, pr_node(one));
