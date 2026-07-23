@@ -39002,6 +39002,331 @@ pub fn selftest_tc_scope_frame(src: i64, src_len: i64, pos: i64) -> i64 {
     tc_sf_query(src, src_len, pos)
 }
 
+// ============================================================================
+// B1 scope-frame engine D4 (CAPSTONE) — the FULL E2012 rule
+// (resolve.rs `is_fn_value_call`, FN_VALUE_CALL_CODE), assembled from the
+// landed primitives: D2 (nested scope-frame walk, the positive trigger) minus
+// the exclusion union D1 (module decl-name set + prelude) / D3 (std-surface
+// export set) / the literal resolve.rs FALSE arms. The exact Rust condition
+// mirrored (resolve.rs:655-678):
+//
+//   scopes.contains(name)                                    [D2 == 1]
+//   && !( syms.name_resolvable(name)     — module decls+prelude [D1]
+//                                          OR std exports        [D3]
+//      || name.contains("::")            — qualified path (two tk_colon)
+//      || name == "bytes"
+//      || name.starts_with("__mind_")
+//      || name.starts_with("tensor.")    — a dot can never be inside ONE
+//                                          ident token, so the tk_dot
+//                                          adjacency arm below covers it
+//      || name == "gen_deref"
+//      || BARE_BUILTINS contains name    — the 34-name empirically-swept set
+//      || std_surface_intrinsic_arity(name).is_some()
+//                                        — reuses tc_is_std_surface_intrinsic
+//                                          (the E2024 table; its only
+//                                          non-"__mind_" entry is "byte")
+//      || cm_lookup_fn(name).is_some() )
+//
+// deferred: `cm_lookup_fn` (the cross-module imported-fn signature table) is
+// populated only for multi-file project builds; the single-file `mindc check`
+// query model this engine mirrors (same model as D1/D3) has it empty, so the
+// arm is vacuous here — upgrade path: a project-table export-set primitive.
+//
+// Query model: `pos` is the byte offset of a CALL-SITE CALLEE ident token.
+// Returns 1 (E2012 fires there) / 0 (it does not) / -3 (fail-closed sentinel:
+// pos does not start an ident, the ident is not a bare-call callee, or the
+// walk cannot classify the position). The fail-closed direction matches the
+// resolve.rs sound-condition discipline: a shape the assembly cannot resolve
+// NEVER answers 1 (E2012 rejects code, so a false 1 is the fail-open
+// direction), and the -3 sentinel is distinct from 0 so a suppressed-real-
+// diagnostic never masquerades as a clean verdict. The `::`/`.`-adjacent head
+// answers 0 (not -3) because that is resolve.rs's OWN verdict — E2012
+// structurally never fires on a qualified/normalized-path callee.
+//
+// Signature: the D3 leg needs the CONCATENATED bundled-std source (this
+// additive path has no file I/O — same caller-supplied model as
+// tc_is_std_export), so the predicate takes (src, src_len, pos, std_src,
+// std_len). Reuse discipline (arena rule): ONE lex of `src` feeds the
+// call-site guard, the D2 walk (tc_sf_top) AND the D1 walk (tc_dn_walk —
+// the from-tokens form of tc_is_decl_name; a single ident token can never
+// contain "::", so only the bare mode arises); tc_is_std_export lexes the
+// std buffer once. Additive: reached only through selftest_tc_fn_value_call,
+// never mindc_compile.
+
+// Word k (k = 0/1/2/3) of name bytes src[lo..hi), packed little-endian and
+// zero-padded — the same encoding tc_shoc_eq / tc_is_std_surface_intrinsic
+// consume (ASCII identifier bytes < 128 keep every word non-negative).
+pub fn tc_fvc_word(src: i64, lo: i64, hi: i64, k: i64) -> i64 {
+    let s: i64 = lo + 8 * k;
+    if s >= hi {
+        return 0;
+    }
+    if hi - s >= 8 {
+        return tc_dn_pack8(src + s, 8);
+    }
+    tc_dn_pack8(src + s, hi - s)
+}
+
+// Two-word packed-name equality: 1 iff (w0, w1, len) == (e0, e1, elen).
+pub fn tc_fvc_eq2(w0: i64, w1: i64, len: i64, e0: i64, e1: i64, elen: i64) -> i64 {
+    if len != elen {
+        return 0;
+    }
+    if w0 != e0 {
+        return 0;
+    }
+    if w1 != e1 {
+        return 0;
+    }
+    1
+}
+
+// Membership in resolve.rs BARE_BUILTINS (all 34 entries; longest is
+// "random_normal", 13 bytes, so two packed words are a bijection). Constants
+// are regenerated from the Rust table by the smoke on every run — a table
+// drift fails loud there rather than silently here.
+pub fn tc_fvc_is_bare_builtin(w0: i64, w1: i64, len: i64) -> i64 {
+    // "abs"
+    if tc_fvc_eq2(w0, w1, len, 7561825, 0, 3) == 1 {
+        return 1;
+    }
+    // "argmax"
+    if tc_fvc_eq2(w0, w1, len, 132359842656865, 0, 6) == 1 {
+        return 1;
+    }
+    // "backward"
+    if tc_fvc_eq2(w0, w1, len, 7237954716668485986, 0, 8) == 1 {
+        return 1;
+    }
+    // "conv2d"
+    if tc_fvc_eq2(w0, w1, len, 110167898091363, 0, 6) == 1 {
+        return 1;
+    }
+    // "cos"
+    if tc_fvc_eq2(w0, w1, len, 7565155, 0, 3) == 1 {
+        return 1;
+    }
+    // "exp"
+    if tc_fvc_eq2(w0, w1, len, 7370853, 0, 3) == 1 {
+        return 1;
+    }
+    // "fft"
+    if tc_fvc_eq2(w0, w1, len, 7628390, 0, 3) == 1 {
+        return 1;
+    }
+    // "fft2d"
+    if tc_fvc_eq2(w0, w1, len, 430343218790, 0, 5) == 1 {
+        return 1;
+    }
+    // "floor"
+    if tc_fvc_eq2(w0, w1, len, 491495844966, 0, 5) == 1 {
+        return 1;
+    }
+    // "full"
+    if tc_fvc_eq2(w0, w1, len, 1819047270, 0, 4) == 1 {
+        return 1;
+    }
+    // "gather"
+    if tc_fvc_eq2(w0, w1, len, 125779869720935, 0, 6) == 1 {
+        return 1;
+    }
+    // "ifft"
+    if tc_fvc_eq2(w0, w1, len, 1952867945, 0, 4) == 1 {
+        return 1;
+    }
+    // "linspace"
+    if tc_fvc_eq2(w0, w1, len, 7305790156125923692, 0, 8) == 1 {
+        return 1;
+    }
+    // "log"
+    if tc_fvc_eq2(w0, w1, len, 6778732, 0, 3) == 1 {
+        return 1;
+    }
+    // "log10"
+    if tc_fvc_eq2(w0, w1, len, 206987292524, 0, 5) == 1 {
+        return 1;
+    }
+    // "log2"
+    if tc_fvc_eq2(w0, w1, len, 845639532, 0, 4) == 1 {
+        return 1;
+    }
+    // "log_softmax"
+    if tc_fvc_eq2(w0, w1, len, 8387513897336663916, 7889261, 11) == 1 {
+        return 1;
+    }
+    // "matmul"
+    if tc_fvc_eq2(w0, w1, len, 119251603317101, 0, 6) == 1 {
+        return 1;
+    }
+    // "max"
+    if tc_fvc_eq2(w0, w1, len, 7889261, 0, 3) == 1 {
+        return 1;
+    }
+    // "maxpool2d"
+    if tc_fvc_eq2(w0, w1, len, 3633401523800138093, 100, 9) == 1 {
+        return 1;
+    }
+    // "mean"
+    if tc_fvc_eq2(w0, w1, len, 1851876717, 0, 4) == 1 {
+        return 1;
+    }
+    // "ones"
+    if tc_fvc_eq2(w0, w1, len, 1936027247, 0, 4) == 1 {
+        return 1;
+    }
+    // "pow"
+    if tc_fvc_eq2(w0, w1, len, 7827312, 0, 3) == 1 {
+        return 1;
+    }
+    // "rand_normal"
+    if tc_fvc_eq2(w0, w1, len, 8245930798724571506, 7102829, 11) == 1 {
+        return 1;
+    }
+    // "rand_uniform"
+    if tc_fvc_eq2(w0, w1, len, 7597138673987903858, 1836216166, 12) == 1 {
+        return 1;
+    }
+    // "random"
+    if tc_fvc_eq2(w0, w1, len, 120325193752946, 0, 6) == 1 {
+        return 1;
+    }
+    // "random_normal"
+    if tc_fvc_eq2(w0, w1, len, 7953195792153338226, 465491030639, 13) == 1 {
+        return 1;
+    }
+    // "relu"
+    if tc_fvc_eq2(w0, w1, len, 1970038130, 0, 4) == 1 {
+        return 1;
+    }
+    // "reshape"
+    if tc_fvc_eq2(w0, w1, len, 28552536314307954, 0, 7) == 1 {
+        return 1;
+    }
+    // "round"
+    if tc_fvc_eq2(w0, w1, len, 431349919602, 0, 5) == 1 {
+        return 1;
+    }
+    // "sigmoid"
+    if tc_fvc_eq2(w0, w1, len, 28263424968845683, 0, 7) == 1 {
+        return 1;
+    }
+    // "sin"
+    if tc_fvc_eq2(w0, w1, len, 7235955, 0, 3) == 1 {
+        return 1;
+    }
+    // "sqrt"
+    if tc_fvc_eq2(w0, w1, len, 1953657203, 0, 4) == 1 {
+        return 1;
+    }
+    // "sum"
+    if tc_fvc_eq2(w0, w1, len, 7173491, 0, 3) == 1 {
+        return 1;
+    }
+    0
+}
+
+// The exclusion union — every FALSE arm of resolve.rs is_fn_value_call for a
+// bare (unqualified) callee whose D2 verdict is already 1. Returns 1 iff the
+// name ALSO resolves through an emittable source, so E2012 must NOT fire.
+pub fn tc_fvc_excluded(toks: Vec, n: i64, src: i64, lo: i64, hi: i64, std_src: i64, std_len: i64) -> i64 {
+    let len: i64 = hi - lo;
+    // syms.name_resolvable, half 1: the per-module decl set incl. the
+    // collect_module_syms prelude injection (D1, from-tokens form).
+    if tc_dn_is_prelude(src + lo, len) == 1 {
+        return 1;
+    }
+    if tc_dn_walk(toks, n, 0, src, src + lo, 0, 0, 0, 0, len) == 1 {
+        return 1;
+    }
+    // syms.name_resolvable, half 2: the bundled-std export set (D3).
+    if tc_is_std_export(std_src, std_len, src + lo, len) == 1 {
+        return 1;
+    }
+    let w0: i64 = tc_fvc_word(src, lo, hi, 0);
+    let w1: i64 = tc_fvc_word(src, lo, hi, 1);
+    // name == "bytes" (the value-type constructor).
+    if tc_fvc_eq2(w0, w1, len, 495623371106, 0, 5) == 1 {
+        return 1;
+    }
+    // name == "gen_deref".
+    if tc_fvc_eq2(w0, w1, len, 7310016626947941735, 102, 9) == 1 {
+        return 1;
+    }
+    // name.starts_with("__mind_") — low 7 packed bytes of w0.
+    if len >= 7 {
+        if w0 % tc_shoc_low7_mod() == tc_shoc_prefix7() {
+            return 1;
+        }
+    }
+    if tc_fvc_is_bare_builtin(w0, w1, len) == 1 {
+        return 1;
+    }
+    // std_surface_intrinsic_arity(name).is_some() — the E2024 table; the
+    // "__mind_" prefix arm above already took every prefixed entry, so this
+    // adds exactly its non-prefixed members ("byte").
+    let w2: i64 = tc_fvc_word(src, lo, hi, 2);
+    let w3: i64 = tc_fvc_word(src, lo, hi, 3);
+    if tc_is_std_surface_intrinsic(w0, w1, w2, w3, len) == 1 {
+        return 1;
+    }
+    0
+}
+
+// D4 query: 1 = E2012 fires at the callee ident starting at byte `pos`;
+// 0 = it does not; -3 = fail-closed sentinel (see the block comment).
+pub fn tc_is_fn_value_call(src: i64, src_len: i64, pos: i64, std_src: i64, std_len: i64) -> i64 {
+    let toks: Vec = lex(src, src_len);
+    let n: i64 = tok_count(toks);
+    let p: i64 = tc_sf_find_pos(toks, n, 0, pos);
+    if p < 0 {
+        return 0 - 3;
+    }
+    if p + 1 >= n {
+        return 0 - 3;
+    }
+    // Call-site shape guard on the token AFTER the ident.
+    let nk: i64 = tok_kind(toks, p + 1);
+    if nk == tk_colon() {
+        if p + 2 < n {
+            if tok_kind(toks, p + 2) == tk_colon() {
+                // `Head::...(args)` — the Rust callee string contains "::";
+                // resolve.rs excludes it unconditionally.
+                return 0;
+            }
+        }
+        // A single `:` is an annotation position, not a call site.
+        return 0 - 3;
+    }
+    if nk == tk_dot() {
+        // `head.rest(args)` — a method/UFCS call or a parser-normalized
+        // module path (`tensor.dot`, `fixed_point.q16_add`): E2012
+        // structurally never fires on this head.
+        return 0;
+    }
+    if nk != tk_lparen() {
+        return 0 - 3;
+    }
+    let lo: i64 = tok_lo(toks, p);
+    let hi: i64 = tok_hi(toks, p);
+    // D2: scopes.contains — the positive trigger.
+    let buf: i64 = __mind_alloc(4096);
+    let sf: i64 = tc_sf_top(toks, n, 0, src, buf, p, lo, hi);
+    if sf == 0 {
+        return 0;
+    }
+    if sf != 1 {
+        return 0 - 3;
+    }
+    if tc_fvc_excluded(toks, n, src, lo, hi, std_src, std_len) == 1 {
+        return 0;
+    }
+    1
+}
+
+pub fn selftest_tc_fn_value_call(src: i64, src_len: i64, pos: i64, std_src: i64, std_len: i64) -> i64 {
+    tc_is_fn_value_call(src, src_len, pos, std_src, std_len)
+}
+
 
 
 // ============================================================================
