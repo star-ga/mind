@@ -2282,6 +2282,13 @@ pub fn parse_stmt(toks: Vec, pos: i64, buf: i64) -> ParseResult {
         if tok_kind(toks, pos + 1) == tk_lbracket() {
             return parse_index_assign_or_expr(toks, pos, buf);
         }
+        // `IDENT . …` — field-store statement (`p.x = 5;`, poisoned fail-CLOSED)
+        // or a plain field-read-opening expression statement (parsed unchanged).
+        // See parse_field_assign_or_expr for why the store MUST be caught before
+        // the generic expression tail (bare `=` is an infix comparison there).
+        if tok_kind(toks, pos + 1) == tk_dot() {
+            return parse_field_assign_or_expr(toks, pos, buf);
+        }
     }
     // `*TARGET = VALUE ;` deref-WRITE statement (i64 references): a statement
     // opening with `*` is a deref — parse the prefix chain; if it yields an
@@ -2292,6 +2299,45 @@ pub fn parse_stmt(toks: Vec, pos: i64, buf: i64) -> ParseResult {
         return parse_deref_assign_or_expr(toks, pos, buf);
     }
     let e: ParseResult = parse_expr(toks, pos, buf);
+    let after_e: i64 = pr_pos(e);
+    if tok_kind(toks, after_e) == tk_semi() {
+        return pr_new(after_e + 1, pr_node(e));
+    }
+    e
+}
+
+// Statement opening `IDENT .` — either a field-STORE `FIELD = RHS ;` (postfix
+// chain ending in ast_field, then a single `=`) or a plain expression statement
+// beginning with a field read (`p.x + f();`). The store form MUST be intercepted
+// here: bare `=` is ALSO an infix comparison in the Pratt table (infix_prec
+// tk_eq -> op_eq, mirroring the Rust parser), so the generic expression tail
+// silently parses `p.x = 5;` as a DEAD `(p.x == 5)` comparison and DROPS the
+// store — a running ELF with the wrong value (returned 0 want 5, top-level and
+// region alike, fail-OPEN). No emitter supports a field store, so the statement
+// is consumed whole and poisoned with ast_unsupported: EVERY emitter refuses the
+// module (native: nb_stmt/nb_expr default arm poisons -> 0-byte EmitState; the
+// mic@3 walkers fail closed on the unknown kind) — an honest 0B refusal, never a
+// silent drop. The non-store path re-enters the Pratt loop from the postfix node
+// (exactly what the generic tail did), so plain `IDENT.field`-opening expression
+// statements parse UNCHANGED — and main.mind's own source has no field-store
+// statements, so its self-compile is byte-identical. Mirrors
+// parse_deref_assign_or_expr's shape exactly.
+pub fn parse_field_assign_or_expr(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let pf: ParseResult = parse_postfix(toks, pos, buf);
+    let target: i64 = pr_node(pf);
+    let after_pf: i64 = pr_pos(pf);
+    if ast_kind(target) == ast_field() {
+        if tok_kind(toks, after_pf) == tk_eq() {
+            let frhs: ParseResult = parse_expr(toks, after_pf + 1, buf);
+            let after_frhs: i64 = pr_pos(frhs);
+            let fp: i64 = ast_new_leaf(ast_unsupported(), ast_span_lo(target), ast_span_hi(pr_node(frhs)));
+            if tok_kind(toks, after_frhs) == tk_semi() {
+                return pr_new(after_frhs + 1, fp);
+            }
+            return pr_new(after_frhs, fp);
+        }
+    }
+    let e: ParseResult = parse_pratt(toks, after_pf, buf, target, 1);
     let after_e: i64 = pr_pos(e);
     if tok_kind(toks, after_e) == tk_semi() {
         return pr_new(after_e + 1, pr_node(e));
@@ -24901,36 +24947,22 @@ pub fn nb_if_carry_promote(carry: i64, ccell: i64, names: i64, nmerged: i64, j: 
     let lo: i64 = __mind_load_i64(names + (j * 2 + 0) * 8);
     let hi: i64 = __mind_load_i64(names + (j * 2 + 1) * 8);
     let os: i64 = nb_lets_lookup_rest(lets, entry_n, buf, lo, hi, 0, 0 - 1);
-    let then_a: i64 = nb_block_top_assigns(buf, then_sa, then_sl, 0, lo, hi);
-    let else_a: i64 = nb_block_top_assigns(buf, else_sa, else_sl, 0, lo, hi);
-    // Promote iff OUTER and a GENUINE single-branch carry: the var is DIRECTLY (top-level)
-    // assigned in exactly one branch AND the SIBLING branch does NOT write it ANYWHERE (any
-    // depth — nested if/while included, nb_block_writes_rec). The sibling-write check MUST be
-    // recursive: a non-recursive top-level scan misses `else { if{ x+=5 } }` and would carry
-    // x as clean single-branch while DROPPING the else's nested write — a silent miscompile
-    // (the blind-review XN class). When the sibling writes the var by any means we fail-closed
-    // (do not promote), matching the base 41d98e7 behavior. A var written directly in BOTH
-    // branches (then_a+else_a==2) also stays unpromoted — that hits a SEPARATE pre-existing
-    // nb_if_stmt_merged merge-read bug (`let mut x=5; if 1<0 {x=x+1} else {x=x+2}` -> 2 not 7),
-    // out of Sub-step B scope. A genuine single-branch var is read via in_outer (the carried
-    // incoming value) on the other side, so it carries correctly; two DIFFERENT vars one per
-    // branch each qualify independently (each sibling does not write the other's var).
-    let sib_writes: i64 = if then_a == 1 {
-        nb_block_writes_rec(buf, else_sa, else_sl, lo, hi, 0)
-    } else {
-        if else_a == 1 {
-            nb_block_writes_rec(buf, then_sa, then_sl, lo, hi, 0)
-        } else {
-            0
-        }
-    };
+    // SUB-STEP C: promote iff OUTER and ASSIGNED anywhere in either branch (any depth —
+    // nested if/while included, nb_block_writes_rec). Every merged name has a merge phi
+    // at merge_base + j and the branch-fork env restore (nb_if_value_merged /
+    // nb_if_stmt_merged) makes each branch read the INCOMING incarnation, so the merge
+    // slot IS the region-exit incarnation (lower.rs last_region_exit_rebindings) for
+    // both-branch-same-var, nested-if writes (if-in-if) and an if-wrapped inner while
+    // alike — the earlier XOR single-branch filter (41d98e7) under-promoted all three,
+    // silently dropping the carry across the loop back-edge (B1/N1/C1 battery classes:
+    // exit 7 want 11 / 1 want 3 / 2 want 6). A merged name written only via a branch
+    // `let` (shadowing, not an Assign) is NOT a loop-carry write and stays unpromoted
+    // (nb_block_writes_rec counts Assign only), as before.
+    let then_w: i64 = nb_block_writes_rec(buf, then_sa, then_sl, lo, hi, 0);
+    let else_w: i64 = nb_block_writes_rec(buf, else_sa, else_sl, lo, hi, 0);
     let direct: i64 = if os >= 0 {
-        if then_a + else_a == 1 {
-            if sib_writes == 0 {
-                1
-            } else {
-                0
-            }
+        if then_w + else_w >= 1 {
+            1
         } else {
             0
         }
@@ -25238,20 +25270,46 @@ pub fn nb_writes_add(buf: i64, names: i64, n: i64, name_leaf: i64) -> i64 {
     let _r: i64 = nb_name_record(names, n, lo, hi);
     n + 1
 }
-// A while's top-level live_var (carried) names are writes of the enclosing branch
-// (last_region_exit_rebindings threads them up). Add each distinct top-level
-// assign target in the while body.
+// A while's live_var (carried) names are writes of the enclosing branch
+// (last_region_exit_rebindings threads them up). Add each distinct assign target
+// in the while body at ANY region depth — descending into nested `if` branches and
+// nested `while` bodies (SUB-STEP C: a top-level-only scan missed a var assigned
+// only inside an if/while nested in the branch-while, so the enclosing if never
+// merged it and its post-region read resolved to the stale pre-if slot —
+// `if{ while{ if{x+=1} } }` returned 0 want 3). Assign targets only: a nested
+// `let` of the same name is a region-local shadow, not a write of the outer var.
 pub fn nb_while_live_writes(buf: i64, body_sa: i64, body_sl: i64, i: i64, names: i64, n: i64) -> i64 {
     if i >= body_sl {
         return n;
     }
     let stmt: i64 = __mind_load_i64(body_sa + i * 8);
-    let new_n: i64 = if ast_kind(stmt) == ast_assign() {
+    let k: i64 = ast_kind(stmt);
+    let new_n: i64 = if k == ast_assign() {
         nb_writes_add(buf, names, n, ast_child0(stmt))
     } else {
-        n
+        nb_while_live_writes_region(buf, stmt, k, names, n)
     };
     nb_while_live_writes(buf, body_sa, body_sl, i + 1, names, new_n)
+}
+
+// Region-descent arm of nb_while_live_writes (early-return form so the value-if
+// above stays 2-way, mic@3 note-emittable): a nested `while` recurses into its
+// body; a nested `if` recurses into both branches; anything else adds nothing.
+pub fn nb_while_live_writes_region(buf: i64, stmt: i64, k: i64, names: i64, n: i64) -> i64 {
+    if k == ast_while() {
+        let wb: i64 = ast_child1(stmt);
+        return nb_while_live_writes(buf, ast_child0(wb), ast_aux(wb), 0, names, n);
+    }
+    if k == ast_if() {
+        let tb: i64 = ast_child1(stmt);
+        let after_then: i64 = nb_while_live_writes(buf, ast_child0(tb), ast_aux(tb), 0, names, n);
+        let eb: i64 = ast_child2(stmt);
+        if eb == 0 {
+            return after_then;
+        }
+        return nb_while_live_writes(buf, ast_child0(eb), ast_aux(eb), 0, names, after_then);
+    }
+    n
 }
 
 // Build merged_names = then_writes ∪ else_writes (then order first, else-only
@@ -28092,6 +28150,151 @@ pub fn nb_fns_reassign_narrow_param(buf: i64, ordered: i64, n_fns: i64, k: i64) 
     nb_fns_reassign_narrow_param(buf, ordered, n_fns, k + 1)
 }
 
+// ===== SUB-STEP C FAIL-CLOSED GUARD: branch-exit carry bypass =====
+// A `break`/`continue` inside an if-branch that ALSO assigns a variable bypasses
+// the if's merge-phi stores when taken (the exit jumps straight out of the
+// region), so every write on that path is DROPPED from the merge/carry — a
+// running ELF with a WRONG value (`while{ if a==2 {x=x+100; break;} else {x+=1}
+// }` returned 2 want 102; bare-`=`+break returned 0 want 100; write+continue
+// dropped too). `return` is EXCLUDED: a return computes its value from the live
+// env at the return site (the branch's writes are bound), proven correct
+// empirically (write+return in branch -> 102 == ref), and main.mind's
+// early-return style depends on it. An exit-ONLY branch (no assign) is ALSO
+// correct — the merge slot retains the pre-region value, which is the var's true
+// value on that path — and stays permitted. Refuse loudly (0B) rather than emit
+// the drop; carrying writes through an exit edge properly (mirror lower.rs's
+// break-edge rebindings) is a follow-up. main.mind's own source contains ZERO
+// `break`/`continue` statements, so this never fires during self-compile and the
+// loop stays byte-identical.
+
+// 1 iff block [sa,sl) contains a `break`/`continue` binding to the ENCLOSING
+// loop: descends nested `if` branches but NOT nested `while` bodies (an exit
+// inside a nested while binds to that inner loop and the outer region's merge
+// stores still run after it completes).
+pub fn nb_block_loop_exit(buf: i64, sa: i64, sl: i64, i: i64) -> i64 {
+    if i >= sl {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(sa + i * 8);
+    let k: i64 = ast_kind(stmt);
+    if k == ast_break() {
+        return 1;
+    }
+    if k == ast_continue() {
+        return 1;
+    }
+    if k == ast_if() {
+        let tb: i64 = ast_child1(stmt);
+        if nb_block_loop_exit(buf, ast_child0(tb), ast_aux(tb), 0) == 1 {
+            return 1;
+        }
+        let eb: i64 = ast_child2(stmt);
+        if eb != 0 {
+            if nb_block_loop_exit(buf, ast_child0(eb), ast_aux(eb), 0) == 1 {
+                return 1;
+            }
+        }
+    }
+    nb_block_loop_exit(buf, sa, sl, i + 1)
+}
+
+// 1 iff block [sa,sl) contains ANY name-assign statement at ANY depth (descends
+// nested if branches AND while bodies): a name write anywhere in the branch is
+// merged/carried via the phi slots the exit edge bypasses. Memory stores
+// (index/deref assigns) are NOT phi-merged and persist across the exit, so only
+// ast_assign counts.
+pub fn nb_block_any_assign(buf: i64, sa: i64, sl: i64, i: i64) -> i64 {
+    if i >= sl {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(sa + i * 8);
+    let k: i64 = ast_kind(stmt);
+    if k == ast_assign() {
+        return 1;
+    }
+    if k == ast_while() {
+        let wb: i64 = ast_child1(stmt);
+        if nb_block_any_assign(buf, ast_child0(wb), ast_aux(wb), 0) == 1 {
+            return 1;
+        }
+    }
+    if k == ast_if() {
+        let tb: i64 = ast_child1(stmt);
+        if nb_block_any_assign(buf, ast_child0(tb), ast_aux(tb), 0) == 1 {
+            return 1;
+        }
+        let eb: i64 = ast_child2(stmt);
+        if eb != 0 {
+            if nb_block_any_assign(buf, ast_child0(eb), ast_aux(eb), 0) == 1 {
+                return 1;
+            }
+        }
+    }
+    nb_block_any_assign(buf, sa, sl, i + 1)
+}
+
+// Region walk: 1 iff any if-branch in [sa,sl) — recursing into if branches and
+// while bodies so the check re-applies inside every nested loop context — has
+// BOTH a loop-level exit (nb_block_loop_exit) and a name assign
+// (nb_block_any_assign). Per-BRANCH: a branch that only exits (H5-class) or only
+// writes stays permitted.
+pub fn nb_stmts_branch_exit_carry(buf: i64, sa: i64, sl: i64, i: i64) -> i64 {
+    if i >= sl {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(sa + i * 8);
+    let k: i64 = ast_kind(stmt);
+    if k == ast_if() {
+        let tb: i64 = ast_child1(stmt);
+        let tsa: i64 = ast_child0(tb);
+        let tsl: i64 = ast_aux(tb);
+        if nb_block_loop_exit(buf, tsa, tsl, 0) == 1 {
+            if nb_block_any_assign(buf, tsa, tsl, 0) == 1 {
+                return 1;
+            }
+        }
+        if nb_stmts_branch_exit_carry(buf, tsa, tsl, 0) == 1 {
+            return 1;
+        }
+        let eb: i64 = ast_child2(stmt);
+        if eb != 0 {
+            let esa: i64 = ast_child0(eb);
+            let esl: i64 = ast_aux(eb);
+            if nb_block_loop_exit(buf, esa, esl, 0) == 1 {
+                if nb_block_any_assign(buf, esa, esl, 0) == 1 {
+                    return 1;
+                }
+            }
+            if nb_stmts_branch_exit_carry(buf, esa, esl, 0) == 1 {
+                return 1;
+            }
+        }
+    }
+    if k == ast_while() {
+        let wb: i64 = ast_child1(stmt);
+        if nb_stmts_branch_exit_carry(buf, ast_child0(wb), ast_aux(wb), 0) == 1 {
+            return 1;
+        }
+    }
+    nb_stmts_branch_exit_carry(buf, sa, sl, i + 1)
+}
+
+// Per-fn driver over the pruned `ordered` set (mirror nb_fns_reassign_narrow_param):
+// 1 iff any body-having fn contains the branch-exit carry-bypass shape.
+pub fn nb_fns_branch_exit_carry(buf: i64, ordered: i64, n_fns: i64, k: i64) -> i64 {
+    if k >= n_fns {
+        return 0;
+    }
+    let node: i64 = __mind_load_i64(ordered + k * 8);
+    if ast_child2(node) != 0 {
+        let body: i64 = ast_child2(node);
+        if nb_stmts_branch_exit_carry(buf, ast_child0(body), ast_aux(body), 0) == 1 {
+            return 1;
+        }
+    }
+    nb_fns_branch_exit_carry(buf, ordered, n_fns, k + 1)
+}
+
 // round_up(x, 16)
 pub fn nb_round16(x: i64) -> i64 {
     let r: i64 = x - (x / 16) * 16;
@@ -30601,6 +30804,14 @@ pub fn selftest_native_elf_hb_from_tokens(tokens: Vec, src_addr: i64, hash_addr:
     // self-compile (no body-having self-host fn reassigns a narrow param), so the
     // loop stays byte-identical.
     if nb_fns_reassign_narrow_param(src_addr, ordered, n_fns, 0) == 1 {
+        return es_new();
+    }
+    // SUB-STEP C FAIL-CLOSED: a `break`/`continue` inside an if-branch that also
+    // assigns bypasses the branch's merge-phi stores when taken (the writes are
+    // silently DROPPED — wrong running value). Refuse the whole module (0B).
+    // `return`-in-branch and exit-only branches are permitted (proven correct).
+    // Never fires during self-compile (main.mind has zero break/continue).
+    if nb_fns_branch_exit_carry(src_addr, ordered, n_fns, 0) == 1 {
         return es_new();
     }
     let acc0: NbState = NbState { code: string_new(), next_id: 0, last_id: 0, ncalls: 0 };

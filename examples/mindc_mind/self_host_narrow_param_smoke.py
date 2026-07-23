@@ -303,12 +303,14 @@ XN_SIBLING_NESTED_WRITE = [
 #     follow-up: nb_while_carry_ifnest deliberately does NOT promote a both-branch-same-var
 #     (XOR filter), so that loop shape stays fail-closed (unchanged, not newly miscompiled).
 I64_IF_IN_WHILE_GAP_NOTE = (
-    "REMAINING (not this fix, pre-existing gaps): i64 while{ if{ while{ x+=1 } } } returns "
-    "2 not 6 (Sub-step C, if-wrapped inner while); i64 while{ if{ if{ x+=1 } } } returns 1 "
-    "not 3 (if-in-if — x written only via nested if in ONE branch, not a top-level "
-    "single-branch carry, unpromoted); the both-branch-same-var if merge-read bug "
-    "(if{x+=1}else{x+=2}) is now FIXED for the STANDALONE if (BOTH_BRANCH_SAME_VAR below) — "
-    "only the both-branch-same-var LOOP-carry case stays fail-closed as a follow-up"
+    "RESOLVED (Sub-step C landed): every previously-listed i64 if-region loop-carry gap now "
+    "emits + runs correct — while{ if{ while{x+=1} } } (was 2 want 6), while{ if{ if{x+=1} } } "
+    "(was 1 want 3), and the both-branch-same-var LOOP-carry while{ if{x+=1}else{x+=2} } (was "
+    "7 want 11). nb_if_carry_promote promotes any merged OUTER var assigned at any depth in "
+    "either branch (post_id = its merge phi slot) and nb_while_live_writes descends into "
+    "nested regions. Gated permanently by self_host_if_region_carry_smoke.py (20 loop-carry + "
+    "6 straight-line shapes vs an independent Python reference). Narrow (i8/i16/i32) "
+    "if-wrapped-while shapes stay fail-closed via the scan-based permit guard (unchanged)."
 )
 
 # Regression battery for the STANDALONE both-branch-same-var if-merge else-read fix
@@ -546,7 +548,7 @@ def main() -> int:
             print(f"  {'PASS' if ok else 'FAIL'}  both-branch-same-var if-merge else-read (fixed): "
                   f"{label} -> exit {rc} (want {want})")
 
-        print(f"  NOTE  documented pre-existing gap (NOT fixed here): {I64_IF_IN_WHILE_GAP_NOTE}")
+        print(f"  NOTE  i64 if-region loop-carry status: {I64_IF_IN_WHILE_GAP_NOTE}")
 
         for label, exp, src in I64_CONTROLS:
             elf = emit(src)
