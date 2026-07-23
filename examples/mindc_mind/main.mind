@@ -39327,6 +39327,673 @@ pub fn selftest_tc_fn_value_call(src: i64, src_len: i64, pos: i64, std_src: i64,
     tc_is_fn_value_call(src, src_len, pos, std_src, std_len)
 }
 
+// ============================================================================
+// B1 — the FULL E2002 rule (resolve.rs `ident_resolvable`,
+// UNKNOWN_IDENT_CODE): a bare identifier in VALUE/USE position that resolves
+// to NOTHING. The resolve-time complement of the D4 exclusions, assembled
+// from the same landed primitives. The exact Rust condition mirrored
+// (resolve.rs:551-570, the walk arm at resolve.rs:744-771): at a
+// `Node::Lit(Literal::Ident(name), span)` reached by the body walk, E2002
+// fires iff NOT ident_resolvable(name), where
+//
+//   ident_resolvable(name) =
+//        scopes.contains(name)            [D2 — live local binding]
+//     || syms.name_resolvable(name)       — module decls + prelude [D1]
+//                                           OR bundled-std exports  [D3]
+//     || name == "bytes"                  — the builtin value type
+//     || name.contains("::")              — qualified path, never bare-undef
+//     || cm_symbol_exported_res(name)     — vacuous single-file (no table)
+//
+// CRUCIAL grounded difference from E2003/E2012 (live-verified): the
+// BARE_BUILTINS set, the "__mind_"/"tensor." prefixes, "gen_deref", and the
+// E2024 intrinsic table are CALL-only exclusions (`call_resolvable`) — they
+// are NOT in `ident_resolvable`. A bare `sqrt` or `__mind_alloc` in value
+// position DOES fire E2002 ("unknown identifier `sqrt`") even though the
+// same name as a callee never fires E2003.
+//
+// deferred: resolve.rs's `injected` set also carries generic type-parameter
+// names and symbolic tensor shape-dim idents (type_checker/mod.rs:4446-4468)
+// and the cross-module project table; the single-file query model this
+// engine mirrors has none of those — upgrade path: a generic/shape-var
+// header-scan primitive, same shape as D1.
+//
+// Query model: `pos` is the byte offset of an ident token in VALUE/USE
+// position. Returns 1 (E2002 fires there) / 0 (it does not) / -3
+// (fail-closed sentinel: pos does not start an ident, or the position is
+// NOT a classifiable value use — a callee (E2003/E2012 domain), a binding
+// or decl name, an annotation type, a member name after `.`, an assign
+// target (E2009 domain), a match-pattern binding, a struct-lit head). The
+// fail-closed direction: E2002 REJECTS code, so a false 1 is fail-open — an
+// unclassifiable shape NEVER answers 1. A `Head::…` qualified head answers
+// 0 (not -3) because that is resolve.rs's OWN verdict — a name carrying
+// "::" is unconditionally ident_resolvable.
+//
+// Reuse discipline (arena rule): ONE lex of `src` feeds the shape guard,
+// the D2 walk (tc_sf_top) AND the D1 walk (tc_dn_walk); tc_is_std_export
+// lexes the caller-supplied std concat once. Additive: reached only through
+// selftest_tc_unknown_ident, never mindc_compile.
+// ============================================================================
+
+// span == "as" (97|115<<8): the cast keyword — the following ident is a TYPE
+// name (Node::As walks only `expr`), never a value use.
+pub fn tc_ui_is_as(src: i64, lo: i64, hi: i64) -> i64 {
+    if tc_sf_word(src, lo, hi) == 29537 {
+        return 1;
+    }
+    0
+}
+
+// span == "while" (119|104<<8|105<<16|108<<24|101<<32).
+pub fn tc_ui_is_while(src: i64, lo: i64, hi: i64) -> i64 {
+    if tc_sf_word(src, lo, hi) == 435610544247 {
+        return 1;
+    }
+    0
+}
+
+// Parser-folded / static-type method-call heads — the ONLY `head.method(…)`
+// receivers resolve.rs does NOT walk (live-verified): `tensor.*` folds into
+// one callee string (resolve.rs:583, never a Lit ident), and `string`/`String`
+// are the static-type receiver exception (type_checker walk, resolve.rs's
+// MethodCall arm: walked only when locally resolvable — and then it resolves
+// anyway). Everything else — including `module`-decl heads and `std.`/`math.`
+// heads — IS walked and can fire E2002 (live-verified 2026-07-23).
+pub fn tc_ui_folded_head(src: i64, lo: i64, hi: i64) -> i64 {
+    let len: i64 = hi - lo;
+    let w0: i64 = tc_fvc_word(src, lo, hi, 0);
+    let w1: i64 = tc_fvc_word(src, lo, hi, 1);
+    if tc_fvc_eq2(w0, w1, len, 125823003551092, 0, 6) == 1 {
+        return 1;
+    }
+    if tc_fvc_eq2(w0, w1, len, 113723913172083, 0, 6) == 1 {
+        return 1;
+    }
+    if tc_fvc_eq2(w0, w1, len, 113723913172051, 0, 6) == 1 {
+        return 1;
+    }
+    0
+}
+
+// Innermost unmatched opening delimiter at-or-before token i (backward scan
+// skipping balanced groups); -1 = none. The enclosing-context primitive.
+pub fn tc_ui_opener(toks: Vec, i: i64, d: i64) -> i64 {
+    if i < 0 {
+        return 0 - 1;
+    }
+    let k: i64 = tok_kind(toks, i);
+    if k == tk_rbrace() {
+        return tc_ui_opener(toks, i - 1, d + 1);
+    }
+    if k == tk_rparen() {
+        return tc_ui_opener(toks, i - 1, d + 1);
+    }
+    if k == tk_rbracket() {
+        return tc_ui_opener(toks, i - 1, d + 1);
+    }
+    if k == tk_lbrace() {
+        if d == 0 {
+            return i;
+        }
+        return tc_ui_opener(toks, i - 1, d - 1);
+    }
+    if k == tk_lparen() {
+        if d == 0 {
+            return i;
+        }
+        return tc_ui_opener(toks, i - 1, d - 1);
+    }
+    if k == tk_lbracket() {
+        if d == 0 {
+            return i;
+        }
+        return tc_ui_opener(toks, i - 1, d - 1);
+    }
+    tc_ui_opener(toks, i - 1, d)
+}
+
+// Matching `}` for the `{` at index i (forward, brace depth); n if unclosed.
+pub fn tc_ui_close_brace(toks: Vec, n: i64, i: i64, d: i64) -> i64 {
+    if i >= n {
+        return n;
+    }
+    let k: i64 = tok_kind(toks, i);
+    if k == tk_lbrace() {
+        return tc_ui_close_brace(toks, n, i + 1, d + 1);
+    }
+    if k == tk_rbrace() {
+        if d == 1 {
+            return i;
+        }
+        return tc_ui_close_brace(toks, n, i + 1, d - 1);
+    }
+    tc_ui_close_brace(toks, n, i + 1, d)
+}
+
+// Forward from i: does a fat arrow (`=` `>` token pair) appear before any
+// `{` / `}` / `;`? 1 = yes — the region just closed was a match-ARM pattern
+// (so a colon-RHS inside it was a sub-pattern BINDER); 0 = struct LITERAL.
+// A guarded arm (`P { … } if g =>`) also answers 1: the guard expr carries
+// no brace, so the `=>` is still found first.
+pub fn tc_ui_fat_ahead(toks: Vec, n: i64, i: i64) -> i64 {
+    if i + 1 >= n {
+        return 0;
+    }
+    let k: i64 = tok_kind(toks, i);
+    if k == tk_eq() {
+        if tok_kind(toks, i + 1) == tk_gt() {
+            return 1;
+        }
+    }
+    if k == tk_lbrace() {
+        return 0;
+    }
+    if k == tk_rbrace() {
+        return 0;
+    }
+    if k == tk_semi() {
+        return 0;
+    }
+    tc_ui_fat_ahead(toks, n, i + 1)
+}
+
+// Backward from i at group depth d: is position i the TAIL of a header
+// expression — an `if`/`while`/`match`/`for … in` condition/scrutinee or a
+// match-arm guard? 1 iff a controlling keyword appears at depth 0 before any
+// statement boundary (`{` `}` `;` `=` and any unmatched opener). This is what
+// separates `if undef {` (value use, walked) from `Name {` (struct-lit head,
+// never walked): the parser forbids struct-lits in condition headers, so a
+// header keyword upstream proves the ident is an expression tail.
+pub fn tc_ui_hdr_scan(toks: Vec, i: i64, d: i64, src: i64) -> i64 {
+    if i < 0 {
+        return 0;
+    }
+    let k: i64 = tok_kind(toks, i);
+    if k == tk_rparen() {
+        return tc_ui_hdr_scan(toks, i - 1, d + 1, src);
+    }
+    if k == tk_rbracket() {
+        return tc_ui_hdr_scan(toks, i - 1, d + 1, src);
+    }
+    if d > 0 {
+        if k == tk_lparen() {
+            return tc_ui_hdr_scan(toks, i - 1, d - 1, src);
+        }
+        if k == tk_lbracket() {
+            return tc_ui_hdr_scan(toks, i - 1, d - 1, src);
+        }
+        if k == tk_lbrace() {
+            return 0;
+        }
+        if k == tk_rbrace() {
+            return 0;
+        }
+        return tc_ui_hdr_scan(toks, i - 1, d, src);
+    }
+    if k == tk_lparen() {
+        return 0;
+    }
+    if k == tk_lbracket() {
+        return 0;
+    }
+    if k == tk_lbrace() {
+        return 0;
+    }
+    if k == tk_rbrace() {
+        return 0;
+    }
+    if k == tk_semi() {
+        return 0;
+    }
+    if k == tk_eq() {
+        return 0;
+    }
+    if k == tk_kw_if() {
+        return 1;
+    }
+    if k == tk_ident() {
+        let lo: i64 = tok_lo(toks, i);
+        let hi: i64 = tok_hi(toks, i);
+        if tc_sf_is_match(src, lo, hi) == 1 {
+            return 1;
+        }
+        if tc_ui_is_while(src, lo, hi) == 1 {
+            return 1;
+        }
+        if tc_sf_is_for(src, lo, hi) == 1 {
+            return 1;
+        }
+    }
+    tc_ui_hdr_scan(toks, i - 1, d, src)
+}
+
+// pk == `:` disambiguation — an annotation TYPE (`let x: T` / `let mut x: T`
+// / `fn f(a: T)`: decline) vs a struct-LIT field VALUE (`P { x: v }`: value
+// use, resolve.rs walks f.value) vs a struct-PATTERN field sub-binder
+// (`P { x: v } =>`: decline). Uses the innermost-opener context: a field
+// colon lives directly inside an ident-headed `{`; whether that brace is a
+// LITERAL or a match-arm PATTERN is decided by the arm-tail probe (`=>`
+// ahead of the matching `}` before any brace/semi).
+//
+// deferred: a struct-DEFINITION field type (`struct P { x: i64 }`) is
+// structurally identical to a struct-lit field value here — this fn answers
+// 2 for it, and it is saved from over-firing ONLY because struct defs sit at
+// top level, where tc_sf_top's not-inside-any-fn sentinel forces the final
+// verdict to -3. Correct today by that accident of placement — upgrade path
+// if struct defs ever nest inside fn bodies: walk back from the opener's
+// head ident and decline when the enclosing statement begins with the
+// `struct` keyword.
+pub fn tc_ui_colon_ctx(toks: Vec, n: i64, p: i64, src: i64) -> i64 {
+    if p < 3 {
+        return 0 - 3;
+    }
+    if tok_kind(toks, p - 2) != tk_ident() {
+        return 0 - 3;
+    }
+    let t3: i64 = tok_kind(toks, p - 3);
+    if t3 == tk_kw_let() {
+        return 0 - 3;
+    }
+    if t3 == tk_ident() {
+        if tc_dn_is_mut(src, tok_lo(toks, p - 3), tok_hi(toks, p - 3)) == 1 {
+            return 0 - 3;
+        }
+    }
+    let op: i64 = tc_ui_opener(toks, p - 3, 0);
+    if op < 1 {
+        return 0 - 3;
+    }
+    if tok_kind(toks, op) != tk_lbrace() {
+        return 0 - 3;
+    }
+    if tok_kind(toks, op - 1) != tk_ident() {
+        return 0 - 3;
+    }
+    let close: i64 = tc_ui_close_brace(toks, n, op, 0);
+    if close >= n {
+        return 0 - 3;
+    }
+    if tc_ui_fat_ahead(toks, n, close + 1) == 1 {
+        return 0 - 3;
+    }
+    2
+}
+
+// Bool literals `true` / `false`. The parser lowers a bare bool in value
+// position to `Literal::Int` (src/parser/mod.rs:4108-4112) — there is NO
+// `Literal::Bool` and it NEVER falls through to `Literal::Ident`, so
+// resolve.rs structurally cannot fire E2002 on it (a valid value literal).
+pub fn tc_ui_bool_lit(src: i64, lo: i64, hi: i64) -> i64 {
+    let w: i64 = tc_sf_word(src, lo, hi);
+    if w == 1702195828 {
+        return 1;
+    }
+    if w == 435728179558 {
+        return 1;
+    }
+    0
+}
+
+// span == "region" (114|101<<8|103<<16|105<<24|111<<32|110<<40).
+pub fn tc_ui_is_region(src: i64, lo: i64, hi: i64) -> i64 {
+    if tc_sf_word(src, lo, hi) == 121424788809074 {
+        return 1;
+    }
+    0
+}
+
+// Reserved statement keywords that the MIND lexer emits as tk_ident and the
+// PARSER consumes by text (the closed 23-word `stmt_keyword` perfect-hash
+// table in src/parser/mod.rs:200-240, minus fn/let/use/pub/if/else which
+// this lexer emits as distinct token kinds, minus match/region which are
+// gated lexically — they hijack EXPRESSION position too) plus the operator
+// words `mut`/`in`/`as`. LIVE-VERIFIED DIRECTION (2026-07-23 probe): in
+// EXPRESSION position (`let z = return`) the Rust parser DOES produce
+// `Lit(Ident)` for every one of these and live mindc fires E2002 — so a
+// spelling match alone must NOT decline; the positional check
+// (tc_ui_expr_ctx_prev) decides keyword-statement occurrence vs expr atom.
+pub fn tc_ui_stmt_kw_word(src: i64, lo: i64, hi: i64) -> i64 {
+    let len: i64 = hi - lo;
+    if len < 2 {
+        return 0;
+    }
+    if len > 9 {
+        return 0;
+    }
+    if len == 9 {
+        let w0: i64 = tc_fvc_word(src, lo, hi, 0);
+        let w1: i64 = tc_fvc_word(src, lo, hi, 1);
+        if tc_fvc_eq2(w0, w1, 9, 7953754356895346281, 116, 9) == 1 {
+            return 1;
+        }
+        return 0;
+    }
+    let w: i64 = tc_sf_word(src, lo, hi);
+    if w == 121437875889522 {
+        return 1;
+    }
+    if w == 461195539042 {
+        return 1;
+    }
+    if w == 7310870969309884259 {
+        return 1;
+    }
+    if w == 435610544247 {
+        return 1;
+    }
+    if w == 7499622 {
+        return 1;
+    }
+    if w == 1886351212 {
+        return 1;
+    }
+    if w == 127970521019507 {
+        return 1;
+    }
+    if w == 1836412517 {
+        return 1;
+    }
+    if w == 500152823651 {
+        return 1;
+    }
+    if w == 1701869940 {
+        return 1;
+    }
+    if w == 111516500389741 {
+        return 1;
+    }
+    if w == 128034844732777 {
+        return 1;
+    }
+    if w == 128034844735589 {
+        return 1;
+    }
+    if w == 121437607458917 {
+        return 1;
+    }
+    if w == 128034677158753 {
+        return 1;
+    }
+    if w == 500068610672 {
+        return 1;
+    }
+    if w == 7632237 {
+        return 1;
+    }
+    if w == 28265 {
+        return 1;
+    }
+    if w == 29537 {
+        return 1;
+    }
+    0
+}
+
+// Is the token BEFORE p an expression-context opener — i.e. would the parser
+// be expecting an expression ATOM at p (so a keyword-spelled ident there
+// parses as `Lit(Ident)` and live fires E2002)? `=` / `(` / `[` / `,` /
+// binary operators / a preceding `return`. `>` is deliberately EXCLUDED (a
+// `=>` arm-body head is ambiguous — deferred: would need the arm-context
+// walk; declining there is the fail-closed direction).
+pub fn tc_ui_expr_ctx_prev(toks: Vec, p: i64, src: i64) -> i64 {
+    if p == 0 {
+        return 0;
+    }
+    let k: i64 = tok_kind(toks, p - 1);
+    if k == tk_eq() {
+        return 1;
+    }
+    if k == tk_lparen() {
+        return 1;
+    }
+    if k == tk_lbracket() {
+        return 1;
+    }
+    if k == tk_comma() {
+        return 1;
+    }
+    if k == tk_plus() {
+        return 1;
+    }
+    if k == tk_minus() {
+        return 1;
+    }
+    if k == tk_star() {
+        return 1;
+    }
+    if k == tk_slash() {
+        return 1;
+    }
+    if k == tk_percent() {
+        return 1;
+    }
+    if k == tk_lt() {
+        return 1;
+    }
+    if k == tk_le() {
+        return 1;
+    }
+    if k == tk_ge() {
+        return 1;
+    }
+    if k == tk_eqeq() {
+        return 1;
+    }
+    if k == tk_ne() {
+        return 1;
+    }
+    if k == tk_amp() {
+        return 1;
+    }
+    if k == tk_pipe() {
+        return 1;
+    }
+    if k == tk_caret() {
+        return 1;
+    }
+    if k == tk_shl() {
+        return 1;
+    }
+    if k == tk_shr() {
+        return 1;
+    }
+    if k == tk_andand() {
+        return 1;
+    }
+    if k == tk_oror() {
+        return 1;
+    }
+    if k == tk_ident() {
+        // A preceding `return` keyword: `return <atom>`.
+        if tc_sf_word(src, tok_lo(toks, p - 1), tok_hi(toks, p - 1)) == 121437875889522 {
+            return 1;
+        }
+    }
+    0
+}
+
+// Structural use-position guard over the enclosing context of ident p.
+// Returns 2 (classifiable value use — run the resolution union), 0 (E2002
+// structurally never fires here: qualified `Head::…`, folded/static method
+// head, bool literal), -3 (decline: callee / binder / decl / annotation /
+// member name / reserved-keyword statement occurrence).
+pub fn tc_ui_shape(toks: Vec, n: i64, p: i64, src: i64) -> i64 {
+    if p == 0 {
+        return 0 - 3;
+    }
+    if p + 1 >= n {
+        return 0 - 3;
+    }
+    // Keyword / bool-literal pre-gate — the lexer emits these as tk_ident but
+    // the PARSER never produces a `Lit(Ident)` for them at these positions,
+    // so resolve.rs cannot fire E2002 there (live-verified per word):
+    //   * `true`/`false` — Literal::Int value literals: NEVER fires (0).
+    //   * `match`/`region` — hijack expression position too (a bare
+    //     `let z = match` is a parse error): decline (-3) everywhere.
+    //   * the other stmt keywords + `mut`/`in`/`as` — keyword occurrence
+    //     (statement position) → decline; expression position (`= w`,
+    //     `f(w`, `1 + w`, `return w`) → the parser DOES make a Lit(Ident)
+    //     and live fires E2002 → fall through and classify normally.
+    let qlo: i64 = tok_lo(toks, p);
+    let qhi: i64 = tok_hi(toks, p);
+    if tc_ui_bool_lit(src, qlo, qhi) == 1 {
+        return 0;
+    }
+    if tc_sf_is_match(src, qlo, qhi) == 1 {
+        return 0 - 3;
+    }
+    if tc_ui_is_region(src, qlo, qhi) == 1 {
+        return 0 - 3;
+    }
+    if tc_ui_stmt_kw_word(src, qlo, qhi) == 1 {
+        if tc_ui_expr_ctx_prev(toks, p, src) == 0 {
+            return 0 - 3;
+        }
+    }
+    let nk: i64 = tok_kind(toks, p + 1);
+    if nk == tk_lparen() {
+        // A callee — resolve.rs dispatches is_call there (E2003/E2012).
+        return 0 - 3;
+    }
+    if nk == tk_lbrace() {
+        // `ident {` — condition/scrutinee TAIL (value use, walked) iff a
+        // header keyword controls it; otherwise a struct-lit HEAD (never
+        // walked by resolve.rs) — decline.
+        if tc_ui_hdr_scan(toks, p - 1, 0, src) == 1 {
+            return 2;
+        }
+        return 0 - 3;
+    }
+    if nk == tk_eq() {
+        if p + 2 < n {
+            if tok_kind(toks, p + 2) == tk_gt() {
+                // `ident =>` — a match-arm GUARD tail (`_ if g =>`: value
+                // use, resolve.rs walks the guard) vs a bare pattern
+                // BINDER (`n =>`: binds, never a use) — decline binder.
+                if tc_ui_hdr_scan(toks, p - 1, 0, src) == 1 {
+                    return 2;
+                }
+                return 0 - 3;
+            }
+        }
+        // `name = …` assign target — E2009 domain.
+        return 0 - 3;
+    }
+    // Prev-token guards: binding / decl / member / type positions.
+    let pk: i64 = tok_kind(toks, p - 1);
+    if pk == tk_kw_fn() {
+        return 0 - 3;
+    }
+    if pk == tk_kw_let() {
+        return 0 - 3;
+    }
+    if pk == tk_kw_use() {
+        return 0 - 3;
+    }
+    if pk == tk_dot() {
+        return 0 - 3;
+    }
+    if pk == tk_ident() {
+        let plo: i64 = tok_lo(toks, p - 1);
+        let phi: i64 = tok_hi(toks, p - 1);
+        if tc_dn_is_mut(src, plo, phi) == 1 {
+            return 0 - 3;
+        }
+        if tc_sf_is_for(src, plo, phi) == 1 {
+            return 0 - 3;
+        }
+        if tc_ui_is_as(src, plo, phi) == 1 {
+            return 0 - 3;
+        }
+    }
+    if pk == tk_colon() {
+        return tc_ui_colon_ctx(toks, n, p, src);
+    }
+    if nk == tk_colon() {
+        if p + 2 < n {
+            if tok_kind(toks, p + 2) == tk_colon() {
+                // `Head::…` — the folded name contains "::", so
+                // ident_resolvable is unconditionally true: never fires.
+                return 0;
+            }
+        }
+        // Single `:` — an annotation / struct-lit field name.
+        return 0 - 3;
+    }
+    if nk == tk_dot() {
+        if p + 3 < n {
+            if tok_kind(toks, p + 2) == tk_ident() {
+                if tok_kind(toks, p + 3) == tk_lparen() {
+                    // `head.method(…)`: ONLY the tensor/string/String heads
+                    // are folded/static (never walked → 0). Every other
+                    // receiver IS walked by resolve.rs — classify it.
+                    if tc_ui_folded_head(src, tok_lo(toks, p), tok_hi(toks, p)) == 1 {
+                        return 0;
+                    }
+                    return 2;
+                }
+            }
+        }
+        return 2;
+    }
+    2
+}
+
+// ident_resolvable's NON-scope arms: prelude + module decls [D1], bundled-std
+// exports [D3], the "bytes" builtin value type. ("::" is handled structurally
+// in tc_ui_shape; the cross-module arm is vacuous single-file.)
+pub fn tc_ui_resolvable(toks: Vec, n: i64, src: i64, lo: i64, hi: i64, std_src: i64, std_len: i64) -> i64 {
+    let len: i64 = hi - lo;
+    if tc_dn_is_prelude(src + lo, len) == 1 {
+        return 1;
+    }
+    if tc_dn_walk(toks, n, 0, src, src + lo, 0, 0, 0, 0, len) == 1 {
+        return 1;
+    }
+    if tc_is_std_export(std_src, std_len, src + lo, len) == 1 {
+        return 1;
+    }
+    let w0: i64 = tc_fvc_word(src, lo, hi, 0);
+    let w1: i64 = tc_fvc_word(src, lo, hi, 1);
+    if tc_fvc_eq2(w0, w1, len, 495623371106, 0, 5) == 1 {
+        return 1;
+    }
+    0
+}
+
+// The E2002 query: 1 = "unknown identifier" fires at the value-use ident
+// starting at byte `pos`; 0 = it does not; -3 = fail-closed sentinel.
+pub fn tc_is_unknown_ident(src: i64, src_len: i64, pos: i64, std_src: i64, std_len: i64) -> i64 {
+    let toks: Vec = lex(src, src_len);
+    let n: i64 = tok_count(toks);
+    let p: i64 = tc_sf_find_pos(toks, n, 0, pos);
+    if p < 0 {
+        return 0 - 3;
+    }
+    let g: i64 = tc_ui_shape(toks, n, p, src);
+    if g != 2 {
+        return g;
+    }
+    let lo: i64 = tok_lo(toks, p);
+    let hi: i64 = tok_hi(toks, p);
+    // D2: scopes.contains — a live local binding resolves the use.
+    let buf: i64 = __mind_alloc(4096);
+    let sf: i64 = tc_sf_top(toks, n, 0, src, buf, p, lo, hi);
+    if sf == 1 {
+        return 0;
+    }
+    if sf != 0 {
+        return 0 - 3;
+    }
+    if tc_ui_resolvable(toks, n, src, lo, hi, std_src, std_len) == 1 {
+        return 0;
+    }
+    1
+}
+
+pub fn selftest_tc_unknown_ident(src: i64, src_len: i64, pos: i64, std_src: i64, std_len: i64) -> i64 {
+    tc_is_unknown_ident(src, src_len, pos, std_src, std_len)
+}
+
 
 
 // ============================================================================

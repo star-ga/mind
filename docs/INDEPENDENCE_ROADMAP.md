@@ -128,8 +128,16 @@ itself byte-identically with zero Rust & zero LLVM in the loop"* (integer/contro
   three-way smoke + a cross-family blind review (45 NEW adversarial shapes beyond the smoke, ZERO
   divergence in either fail-OPEN direction — false-E2012 rejects valid code, suppressed-E2012 misses
   an error — enum-variant boundary confirmed name_resolvable→excluded). **The B1 scope-frame engine
-  (D1–D4) is COMPLETE.** Next: E2002/E2009 reuse the same engine; E2001 needs full type inference
-  (a larger tier).
+  (D1–D4) is COMPLETE.**
+  **E2002 LANDED (2026-07-23) — unknown-identifier (value/use position), the first rule on the engine's
+  use-position classifier: `tc_is_unknown_ident` = ¬(D2-local ∨ name_resolvable[D1∪D3] ∨ `bytes` ∨ `::`),
+  with enclosing-context tracking (`tc_ui_hdr_scan` backward keyword scan, `tc_ui_colon_ctx`,
+  `tc_ui_fat_ahead`) that a 3-token window can't do, and a positional keyword gate (keyword-spelled idents
+  fire in expression-atom position, decline as statements; `true`/`false` lower to Literal::Int, never fire).
+  Two adversarial blind-review rounds hardened it — 6 suppressed-E2002 under-fires + a colluding-smoke-oracle
+  bug (leg-2 mirrored the port → Rule 3a), then a bool-literal/keyword false-E2002 over-fire — all fixed;
+  91-case three-way smoke with an INDEPENDENT leg-2 + a parser-keyword-table drift tripwire.** Next: E2009
+  (assign-target unknown ident, reuses the engine); E2001 needs full type inference (a larger tier).
 - [ ] **B2** Full parser + AST→IR lowering (`parser` ~5,563 portable of 7,782 total — the `#[bimap]` + trivia
   ~2,219 LOC are descoped from the self-host target — + `eval/lower.rs` 9,966) for every construct. The self-host
   front-end already lexes+parses+lowers the scalar/i64/control-flow subset (that is what the keystone loop
