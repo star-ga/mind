@@ -188,6 +188,9 @@ REFUSAL_ARMS = [
     ("r  deref-write",
      "`*r = v` deref write (native-ELF-only; mic@3 must fail closed EMPTY)",
      "pub fn f() -> i64 { let mut x: i64 = 0; let r: i64 = &x; *r = 7; return x; }"),
+    ("r  field-store",
+     "`p.x = v` struct field store (native-ELF-only; mic@3 must fail closed EMPTY)",
+     "struct P { x: i64 }\npub fn f() -> i64 { let mut p: P = P { x: 1 }; p.x = 7; return p.x; }"),
 ]
 
 

@@ -109,10 +109,6 @@ CASES = [
 #     DROPPING the writes (was fail-OPEN: exit 2 want 102 / 0 want 100 / 4 want 54).
 #     Guarded by nb_fns_branch_exit_carry. `return`-in-branch and exit-ONLY branches
 #     are permitted — both proven value-correct (see CASES / CONTROLS).
-#   * field-store statement `p.x = 5;`: bare `=` is an infix comparison in the Pratt
-#     table, so the store used to parse as a DEAD `(p.x == 5)` comparison and drop
-#     (was fail-OPEN even at top level: 0 want 5). parse_field_assign_or_expr now
-#     poisons it ast_unsupported -> every emitter refuses 0B.
 REFUSE = [
     ("break after write, same branch: while{ if a==2 {x+=100; break;} else {x+=1} }",
      "fn main() -> i64 {\n    let mut x: i64 = 0;\n    let mut a: i64 = 0;\n    while a < 10 {\n        if a == 2 { x = x + 100; break; } else { x = x + 1; }\n        a = a + 1;\n    }\n    return x;\n}\n"),
@@ -122,11 +118,23 @@ REFUSE = [
      "fn main() -> i64 {\n    let mut x: i64 = 0;\n    let mut a: i64 = 0;\n    while a < 5 {\n        a = a + 1;\n        if a == 3 { x = x + 50; continue; }\n        x = x + 1;\n    }\n    return x;\n}\n"),
     ("break at nested-if depth in a writing branch: while{ if{ x+=1; if{ break; } } }",
      "fn main() -> i64 {\n    let mut x: i64 = 0;\n    let mut a: i64 = 0;\n    while a < 10 {\n        if a < 10 { x = x + 1; if x > 2 { break; } }\n        a = a + 1;\n    }\n    return x;\n}\n"),
-    ("field store in straight-line if: if 1<2 { p.x = 5; }",
+]
+
+# Struct field STORES (`p.x = v`) — formerly REFUSE cases from the era when
+# parse_field_assign_or_expr poisoned the statement (bare `=` is an infix
+# comparison in the Pratt table, so the store used to parse as a DEAD
+# `(p.x == 5)` comparison and drop — fail-OPEN 0 want 5). The store is now a
+# real memory write (ast_field_assign -> __mind_store_i64(base + field_offset,
+# rhs), nb_stmt's field-assign arm), so these MUST be value-correct: a heap
+# store is naturally visible across if branches and while iterations without
+# the loop-carry machinery. Unsupported store shapes (nested paths, unknown
+# fields, floats) stay fail-closed — see field_store_netverify.py.
+FIELD_STORE_CASES = [
+    ("field store in straight-line if: if 1<2 { p.x = 5; }", 5,
      "struct P {\n    x: i64,\n    y: i64,\n}\nfn main() -> i64 {\n    let p: P = P { x: 0, y: 9 };\n    if 1 < 2 { p.x = 5; }\n    return p.x;\n}\n"),
-    ("field store top-level (no region): p.x = 5;",
+    ("field store top-level (no region): p.x = 5;", 5,
      "struct P {\n    x: i64,\n    y: i64,\n}\nfn main() -> i64 {\n    let p: P = P { x: 0, y: 9 };\n    p.x = 5;\n    return p.x;\n}\n"),
-    ("field store in while: while{ p.x = p.x + 1 }",
+    ("field store in while: while{ p.x = p.x + 1 }", 3,
      "struct P {\n    x: i64,\n    y: i64,\n}\nfn main() -> i64 {\n    let p: P = P { x: 0, y: 9 };\n    let mut a: i64 = 0;\n    while a < 3 {\n        p.x = p.x + 1;\n        a = a + 1;\n    }\n    return p.x;\n}\n"),
 ]
 
@@ -207,6 +215,7 @@ def main() -> int:
     loop_ok = 0
     sl_ok = 0
     exitc_ok = 0
+    fstore_ok = 0
     refused = 0
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
@@ -218,7 +227,8 @@ def main() -> int:
             return subprocess.run([str(p)], timeout=10).returncode
 
         for group, cases in (("loop-carry", CASES), ("straight-line", STRAIGHT),
-                             ("exit-control", EXIT_CONTROLS)):
+                             ("exit-control", EXIT_CONTROLS),
+                             ("field-store", FIELD_STORE_CASES)):
             for label, exp, src in cases:
                 elf = emit(src)
                 if not elf:
@@ -234,6 +244,8 @@ def main() -> int:
                         loop_ok += 1
                     elif group == "straight-line":
                         sl_ok += 1
+                    elif group == "field-store":
+                        fstore_ok += 1
                     else:
                         exitc_ok += 1
                 print(f"  {'PASS' if ok else 'FAIL'}  {group}: {label} "
@@ -250,15 +262,18 @@ def main() -> int:
             print(f"  PASS  fail-closed 0B: {label}")
 
     if (loop_ok < len(CASES) or sl_ok < len(STRAIGHT)
-            or exitc_ok < len(EXIT_CONTROLS) or refused < len(REFUSE)):
+            or exitc_ok < len(EXIT_CONTROLS) or fstore_ok < len(FIELD_STORE_CASES)
+            or refused < len(REFUSE)):
         all_ok = False
     if all_ok:
         print(f"ALL PASS  i64 loop-carry through branched regions ({loop_ok} loop-carry + "
-              f"{sl_ok} straight-line + {exitc_ok} exit-control shapes) emit + run to the "
+              f"{sl_ok} straight-line + {exitc_ok} exit-control + {fstore_ok} field-store "
+              "shapes) emit + run to the "
               "independent Python reference — both-branch-same-var, if-in-if (depth 3), "
               "if-wrapped inner while (Sub-step C), outer-if-wrapped loop, for-loop, multi-var, "
-              f"write+return / exit-only branches — and {refused} unsound shapes (branch-exit "
-              "carry bypass, field-store statements) REFUSE 0B fail-closed; no fail-OPEN drop")
+              f"write+return / exit-only branches, field stores in if/top-level/while — and "
+              f"{refused} unsound shapes (branch-exit "
+              "carry bypass) REFUSE 0B fail-closed; no fail-OPEN drop")
         return 0
     print("FAILURES above")
     return 1
