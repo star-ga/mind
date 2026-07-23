@@ -129,6 +129,8 @@ chk "tc_classify (error-code router)" python3 examples/mindc_mind/self_host_tc_c
 chk "tc_self_host_only (E2024 intrinsic-table advisory)" python3 examples/mindc_mind/self_host_tc_self_host_only_call_smoke.py
 chk "tc_unknown_variant (E2008 enum-variant registry)" python3 examples/mindc_mind/self_host_tc_unknown_variant_smoke.py
 chk "tc_decl_names (D1 module decl-name set)" python3 examples/mindc_mind/self_host_tc_decl_names_smoke.py
+chk "tc_scope_frame (D2 nested scope-frame walk)" python3 examples/mindc_mind/self_host_tc_scope_frame_smoke.py
+chk "tc_std_export (D3 std-surface export set)" python3 examples/mindc_mind/self_host_tc_std_export_smoke.py
 chk "arena_growth (self-host cap headroom)" python3 examples/mindc_mind/self_host_arena_growth_smoke.py
 chk "toplevel_assign (C: straight-line i64 reassign)" python3 examples/mindc_mind/self_host_native_toplevel_assign_smoke.py
 chk "narrow_paramret (i8/i16/i32 param+return wrap)" python3 examples/mindc_mind/self_host_native_narrow_paramret_smoke.py
