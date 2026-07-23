@@ -37423,6 +37423,213 @@ pub fn selftest_tc_classify_error_code(c1: i64, c2: i64, c3: i64, c4: i64, c5: i
     tc_classify_error_code(c1, c2, c3, c4, c5, c6, c7, c8, c9)
 }
 
+// ---- E2024 self-host-only intrinsic call ----
+// Twin of the resolve.rs advisory (SELF_HOST_ONLY_CALL_CODE): a callee that
+// starts with the reserved "__mind_" prefix but is NOT one of the registered,
+// arity-checked STD_SURFACE_INTRINSICS entries gets zero existence checking
+// from the Rust/MLIR backends — flag it. The Rust decision is exactly
+// `callee.starts_with("__mind_") && std_surface_intrinsic_arity(callee).is_none()`.
+//
+// Name encoding: a name's first 32 bytes packed little-endian into four i64
+// words (unused high bytes zero) plus the TRUE byte length. For len <= 32 the
+// tuple (w0,w1,w2,w3,len) is a bijection with the name, so tuple equality IS
+// string equality; for len > 32 no table entry can match anyway (the longest
+// registered name is 31 bytes), so length inequality alone decides — the
+// encoding is exact over the whole identifier space. starts_with("__mind_")
+// reads the low 7 bytes of w0 (w0 % 2^56, valid: ASCII bytes keep w0 >= 0)
+// once len >= 7. Additive: reached only through
+// selftest_tc_self_host_only_call, never mindc_compile.
+
+// The 7 bytes of "__mind_" packed little-endian (95 95 109 105 110 100 95).
+pub fn tc_shoc_prefix7() -> i64 {
+    26850548165467999
+}
+
+// 2^56 — the modulus that keeps only the low 7 packed bytes of a word.
+pub fn tc_shoc_low7_mod() -> i64 {
+    72057594037927936
+}
+
+// One packed-name equality: 1 iff (w0..w3,len) == (e0..e3,elen).
+pub fn tc_shoc_eq(w0: i64, w1: i64, w2: i64, w3: i64, len: i64, e0: i64, e1: i64, e2: i64, e3: i64, elen: i64) -> i64 {
+    if len != elen {
+        return 0;
+    }
+    if w0 != e0 {
+        return 0;
+    }
+    if w1 != e1 {
+        return 0;
+    }
+    if w2 != e2 {
+        return 0;
+    }
+    if w3 != e3 {
+        return 0;
+    }
+    1
+}
+
+// Membership in the STD_SURFACE_INTRINSICS table (all 33 entries, packed-word
+// constants generated from the Rust table in src/type_checker/mod.rs — the
+// smoke regenerates them from that same source and cross-checks every case
+// against the live `mindc check` E2024 verdict).
+pub fn tc_is_std_surface_intrinsic(w0: i64, w1: i64, w2: i64, w3: i64, len: i64) -> i64 {
+    // "__mind_alloc"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7016437169844477791, 1668246636, 0, 0, 12) == 1 {
+        return 1;
+    }
+    // "__mind_blas_dot_f32"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7088494763882405727, 6878245007790399852, 3289958, 0, 19) == 1 {
+        return 1;
+    }
+    // "__mind_blas_dot_f32_v"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7088494763882405727, 6878245007790399852, 508403266406, 0, 21) == 1 {
+        return 1;
+    }
+    // "__mind_blas_dot_i16_v"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7088494763882405727, 6878245007790399852, 508403528041, 0, 21) == 1 {
+        return 1;
+    }
+    // "__mind_blas_dot_l1_f32"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7088494763882405727, 6878245007790399852, 55196342235500, 0, 22) == 1 {
+        return 1;
+    }
+    // "__mind_blas_dot_l1_f32_v"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7088494763882405727, 6878245007790399852, 8529591415605244268, 0, 24) == 1 {
+        return 1;
+    }
+    // "__mind_blas_dot_l1_q16"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7088494763882405727, 6878245007790399852, 59585983361388, 0, 22) == 1 {
+        return 1;
+    }
+    // "__mind_blas_dot_l1_q16_v"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7088494763882405727, 6878245007790399852, 8529595805246370156, 0, 24) == 1 {
+        return 1;
+    }
+    // "__mind_blas_dot_linf_f32"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7088494763882405727, 6878245007790399852, 3617347485635078508, 0, 24) == 1 {
+        return 1;
+    }
+    // "__mind_blas_dot_linf_f32_v"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7088494763882405727, 6878245007790399852, 3617347485635078508, 30303, 26) == 1 {
+        return 1;
+    }
+    // "__mind_blas_dot_q16"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7088494763882405727, 6878245007790399852, 3551601, 0, 19) == 1 {
+        return 1;
+    }
+    // "__mind_blas_dot_q16_v"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7088494763882405727, 6878245007790399852, 508403528049, 0, 21) == 1 {
+        return 1;
+    }
+    // "__mind_blas_matmul_rmajor_f32"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7088494763882405727, 7887035969813307756, 8028336408439516277, 215610711922, 29) == 1 {
+        return 1;
+    }
+    // "__mind_blas_matmul_rmajor_f32_v"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7088494763882405727, 7887035969813307756, 8028336408439516277, 33318716467208050, 31) == 1 {
+        return 1;
+    }
+    // "__mind_blas_matmul_rmajor_i16_v"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7088494763882405727, 7887035969813307756, 8028336408439516277, 33318733613719410, 31) == 1 {
+        return 1;
+    }
+    // "__mind_blas_matmul_rmajor_q16_v"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7088494763882405727, 7887035969813307756, 8028336408439516277, 33318733614243698, 31) == 1 {
+        return 1;
+    }
+    // "__mind_blas_matmul_mm_i8_v"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7088494763882405727, 7887035969813307756, 4064885062269627509, 30303, 26) == 1 {
+        return 1;
+    }
+    // "__mind_blas_matmul_mm_i8_mt_v"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7088494763882405727, 7887035969813307756, 4064885062269627509, 508407606623, 29) == 1 {
+        return 1;
+    }
+    // "__mind_blas_matmul_mm_q16_v"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7088494763882405727, 7887035969813307756, 3562733703817817205, 7757622, 27) == 1 {
+        return 1;
+    }
+    // "__mind_blas_matmul_mm_q16_mt_v"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7088494763882405727, 7887035969813307756, 3562733703817817205, 130152347295542, 30) == 1 {
+        return 1;
+    }
+    // "__mind_free"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7376725140034117471, 6645106, 0, 0, 11) == 1 {
+        return 1;
+    }
+    // "__mind_load_i64"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7809070704261685087, 14696524988834159, 0, 0, 15) == 1 {
+        return 1;
+    }
+    // "__mind_load_i8"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7809070704261685087, 62025223135599, 0, 0, 14) == 1 {
+        return 1;
+    }
+    // "__mind_load_i32"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7809070704261685087, 14130276500529519, 0, 0, 15) == 1 {
+        return 1;
+    }
+    // "__mind_load_i16"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7809070704261685087, 15253977384116591, 0, 0, 15) == 1 {
+        return 1;
+    }
+    // "__mind_read"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8241416268489252703, 6578533, 0, 0, 11) == 1 {
+        return 1;
+    }
+    // "__mind_realloc"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8241416268489252703, 109330211561829, 0, 0, 14) == 1 {
+        return 1;
+    }
+    // "__mind_store_i64"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 3762310397159436148, 0, 0, 16) == 1 {
+        return 1;
+    }
+    // "__mind_store_i8"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 15878457140604788, 0, 0, 15) == 1 {
+        return 1;
+    }
+    // "__mind_store_i32"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 3617350784153448308, 0, 0, 16) == 1 {
+        return 1;
+    }
+    // "__mind_store_i16"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8313473862527180639, 3905018210351738740, 0, 0, 16) == 1 {
+        return 1;
+    }
+    // "__mind_write"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 8601704238678892383, 1702127986, 0, 0, 12) == 1 {
+        return 1;
+    }
+    // "byte"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 1702132066, 0, 0, 0, 4) == 1 {
+        return 1;
+    }
+    0
+}
+
+// E2024: 1 iff the packed callee name starts with "__mind_" AND is not a
+// registered std-surface intrinsic (advisory Warning in the Rust oracle).
+pub fn tc_is_self_host_only_call(w0: i64, w1: i64, w2: i64, w3: i64, len: i64) -> i64 {
+    if len < 7 {
+        return 0;
+    }
+    let low7: i64 = w0 % tc_shoc_low7_mod();
+    if low7 != tc_shoc_prefix7() {
+        return 0;
+    }
+    if tc_is_std_surface_intrinsic(w0, w1, w2, w3, len) == 1 {
+        return 0;
+    }
+    1
+}
+
+pub fn selftest_tc_self_host_only_call(w0: i64, w1: i64, w2: i64, w3: i64, len: i64) -> i64 {
+    tc_is_self_host_only_call(w0, w1, w2, w3, len)
+}
+
 
 
 // ============================================================================
