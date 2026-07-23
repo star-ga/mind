@@ -170,6 +170,26 @@ ARMS = [
      "pub fn pick(c: i64) -> i64 { match c { 0 => 10, _ => 20 } }"),
 ]
 
+# i64-REFERENCES arms — NATIVE-ELF-ONLY constructs, parity-by-REFUSAL.
+# The mic@3 nfn emitter has NO lowering for ast_addr_of / ast_deref /
+# ast_deref_assign (kinds 30/31/32): its fail-closed default arms must emit an
+# EMPTY buf for any ref-bearing fn. These arms pin that contract so the three
+# native-ELF emit arms are not silently uncovered here: a NON-EMPTY emit for a
+# ref construct would be an unreviewed mic@3 surface (DRIFT, exit 1). The Rust
+# oracle is NOT consulted for these (the assertion is about MIND's refusal,
+# not byte parity — there are no reviewed oracle bytes for a refused surface).
+REFUSAL_ARMS = [
+    ("r  addr-of",
+     "`&x` address-of (native-ELF-only; mic@3 must fail closed EMPTY)",
+     "pub fn f() -> i64 { let x: i64 = 5; let r: i64 = &x; return r - r; }"),
+    ("r  deref-read",
+     "`*r` deref read (native-ELF-only; mic@3 must fail closed EMPTY)",
+     "pub fn f() -> i64 { let x: i64 = 5; let r: i64 = &x; return *r; }"),
+    ("r  deref-write",
+     "`*r = v` deref write (native-ELF-only; mic@3 must fail closed EMPTY)",
+     "pub fn f() -> i64 { let mut x: i64 = 0; let r: i64 = &x; *r = 7; return x; }"),
+]
+
 
 def oracle_mic3(mindc: pathlib.Path, src: str):
     """Regenerate the Rust-oracle mic@3 bytes for `src`, live. None on failure."""
@@ -274,8 +294,27 @@ def main() -> int:
         print(f"             MIND  [{lo}:{di + 8}] = {list(got[lo:di + 8])}")
         print(f"             oracle[{lo}:{di + 8}] = {list(oracle[lo:di + 8])}")
 
-    ok = len(ARMS) - drifted - blocked
-    print(f"\n  parity {ok}/{len(ARMS)} arms byte-identical vs oracle"
+    # i64-REFERENCES refusal arms: MIND must emit an EMPTY buf (fail-closed) —
+    # a non-empty emit is an unreviewed mic@3 surface for a native-ELF-only
+    # construct (DRIFT). No oracle bytes are asserted (parity-by-refusal).
+    for arm_id, label, src in REFUSAL_ARMS:
+        try:
+            got = mind_mic3(fn, src)
+        except Exception as exc:  # noqa: BLE001 — surface any FFI/driver failure
+            print(f"  [BLOCKED] {arm_id:<22} MIND driver raised {exc!r} for: {label}")
+            blocked += 1
+            continue
+        if got:
+            drifted += 1
+            print(f"  [DRIFT  ] {arm_id:<22} REFUSAL VIOLATION: emitted {len(got)}B "
+                  f"(must fail closed EMPTY): {label}")
+            continue
+        print(f"  [OK-REF ] {arm_id:<22}   0B  fail-closed refusal  {label}")
+
+    total = len(ARMS) + len(REFUSAL_ARMS)
+    ok = total - drifted - blocked
+    print(f"\n  parity {ok}/{total} arms"
+          f" ({len(ARMS)} byte-identical vs oracle + {len(REFUSAL_ARMS)} fail-closed-by-refusal)"
           f"  |  drift {drifted}  |  blocked {blocked}")
 
     if blocked:
@@ -284,9 +323,10 @@ def main() -> int:
         print(f"\nBLOCKED: {blocked} arm(s) could not be oracle-checked (fail-closed)")
         return EXIT_BLOCKED
     if drifted:
-        print(f"\nFAIL: {drifted} arm(s) drifted from the Rust oracle")
+        print(f"\nFAIL: {drifted} arm(s) drifted (oracle parity or refusal contract)")
         return EXIT_DRIFT
-    print("\nPASS: every self-host arm is byte-identical to its Rust oracle")
+    print("\nPASS: every self-host arm is byte-identical to its Rust oracle"
+          " (i64-reference arms fail-closed by refusal)")
     return EXIT_PASS
 
 
