@@ -119,23 +119,23 @@ REFUSED = [
      "struct P { x: i64, y: i64 }\nfn main()->i64{ let p: P = P { x: 1, x: 2 }; return p.x; }", "0B"),
     ("struct-lit unknown field",
      "struct P { x: i64, y: i64 }\nfn main()->i64{ let p: P = P { x: 1, z: 2 }; return p.x; }", "0B"),
-    # FLOATS: the general path has no float tier (that lives behind the
-    # dedicated selftest_native_elf_fp_* entries) — every float-bearing shape
-    # (float literal, f64/f32 annotation on let/param/return, as-cast) must
-    # refuse 0B. Confirmed fail-OPEN before the pre-gate: "used float cast+add"
-    # RAN to 5 (want 7, the f64 read back as 0) and "float in int return" RAN
-    # to 0 — running wrong-value ELFs, the exact forbidden class.
-    ("used float cast+add", M("let f:f64=2.0; return (f as i64) + 5;"), "0B"),
-    ("float in int return", M("return 1.5;"), "0B"),
-    ("float arith chain", M("let f:f64=1.5; let g:f64=f+2.0; return (g as i64);"), "0B"),
-    ("float param", "fn add1(x:f64)->f64{ return x+1.0; }\nfn main()->i64{ let r:f64=add1(2.5); return 0; }", "0B"),
-    ("float return type", "fn mk()->f64{ return 1.5; }\nfn main()->i64{ let r:f64=mk(); return 0; }", "0B"),
+    # FLOATS (B0 gate LIFTED for f64): the general path now lowers the f64
+    # tier soundly (see general_float_netverify.py for the value battery —
+    # float lets/arith/compares/params/calls, saturating `f as i64`, entry
+    # trunc-to-exit). The REMAINING float refusals are locked here: f32 (the
+    # general tier computes in scalar-double — f64-rounding a declared-f32
+    # program would be a silent miscompile), `as` to a non-integer target
+    # (an explicit parser refusal — the old fall-through was a coercion-shaped
+    # leak), MIXED float/int binops (the pre-gate fail-OPEN leak class: raw
+    # IEEE-754 bits flowed into the GP integer path), and float conditions.
     ("as f64 cast", M("let x:i64=3; let f:f64=x as f64; return 0;"), "0B"),
-    ("float let unused", M("let f:f64=2.0; return 5;"), "0B"),
     ("f32 let", M("let f:f32=2.0; return 5;"), "0B"),
-    ("f64 struct field", "struct F { a: f64 }\nfn main()->i64{ return 0; }", "0B"),
     ("float range bound", M("let mut c:i64=0; for i in 0..1.5 { c=c+1; } return c;"), "0B"),
-    ("float in sep fn", "fn h()->i64{ let f:f64=1.5; return 0; }\nfn main()->i64{ return h(); }", "0B"),
+    ("mixed float+int binop", M("let f:f64=2.0; return f + 5;"), "0B"),
+    ("float % float", M("let f:f64=5.0; let g:f64=f % 2.0; return 0;"), "0B"),
+    ("narrowing cast of float", M("let f:f64=2.5; return f as i8;"), "0B"),
+    ("float condition", M("let f:f64=1.5; if f { return 1; } return 2;"), "0B"),
+    ("non-dyadic float literal", M("let f:f64=0.1; return (f as i64);"), "0B"),
     # sticky poison: unsupported nested in supported -> whole unit refuses
     # (`.len()` is still out-of-subset; i64 references LANDED — see the
     # SUPPORTED ref cases below and ref_netverify.py for their own boundary)

@@ -2154,13 +2154,36 @@ pub fn parse_postfix_rest(toks: Vec, pos: i64, buf: i64, recv: i64) -> ParseResu
                 let cty_lo: i64 = tok_lo(toks, pos + 1);
                 let cty_hi: i64 = tok_hi(toks, pos + 1);
                 if is_ident_i64(buf, cty_lo, cty_hi) == 1 {
-                    return parse_postfix_rest(toks, pos + 2, buf, recv);
+                    // GENERAL-PATH FLOAT (B0 lift): `EXPR as i64` now builds a REAL
+                    // ast_cast node carrying width 64 instead of a value passthrough.
+                    // The passthrough was correct for an integer source (a true no-op)
+                    // but a SILENT DROP of the float->int convert for a float source:
+                    // `(f as i64) + 5` parsed as `f + 5`, and the raw IEEE-754 bits
+                    // flowed into the GP integer add (exit 5, not 7). This mirrors the
+                    // Rust front-end's own fix (eval/lower.rs scalar_int64_cast_signed:
+                    // the same historical `_ => val` pass-through wrapped in a
+                    // __mind_conv_i64 intrinsic). nb_expr's ast_cast arm keeps the
+                    // integer no-op semantics (identity copy) and lowers a FLOAT
+                    // source through the SATURATING f64->i64 sequence. main.mind's own
+                    // source has no `as i64` outside stripped comments, so its parse —
+                    // and every self-compile byte — is unchanged.
+                    let c64: i64 = ast_new_cast(ast_span_lo(recv), cty_hi, recv, 64);
+                    return parse_postfix_rest(toks, pos + 2, buf, c64);
                 }
                 let cw: i64 = narrow_cast_width(buf, cty_lo, cty_hi);
                 if cw > 0 {
                     let cnode: i64 = ast_new_cast(ast_span_lo(recv), cty_hi, recv, cw);
                     return parse_postfix_rest(toks, pos + 2, buf, cnode);
                 }
+                // Any OTHER `as TARGET` (f64/f32/u64/usize/...): explicitly
+                // UNSUPPORTED (fail-closed poison node -> 0B refusal). Before the
+                // B0 gate narrowing this fell through with `as` unconsumed —
+                // `x as f64` silently bound x's INT bits into a FLOAT-annotated
+                // let (a coercion-shaped leak) or left a dangling `as` token.
+                // main.mind's own source has no non-comment `as`, so its parse is
+                // byte-identical.
+                let upn: i64 = ast_new_leaf(ast_unsupported(), ast_span_lo(recv), cty_hi);
+                return pr_new(pos + 2, upn);
             }
         }
     }
@@ -23840,6 +23863,24 @@ pub fn nb_emit_return(code: String, is_entry: i64) -> String {
     nb_push(c4, 195)
 }
 
+// GENERAL-PATH FLOAT return bridge (B0 lift): load a FLOAT return value's slot
+// into xmm0 (the SysV float return register — callers spill from xmm0). For the
+// ENTRY fn additionally cvttsd2si rax,xmm0 so the exit-syscall epilogue that
+// follows (nb_emit_return's mov rdi,rax) exports trunc(result) as the process
+// exit code — the SAME convention the dedicated fp tier's scaffold pins
+// (selftest_native_elf_fp_call's synthesized entry: call ; cvttsd2si rax,xmm0 ;
+// exit). Pre-fix the general entry's float return loaded xmm0 and left STALE
+// raw bits in rax, so `fn main() -> f64 { return 1.5 }` exited 0 (the low byte
+// of the movabs'd IEEE-754 bits), a silent wrong value. main.mind's fns all
+// return INT, so this is never taken during self-compile — byte-identical.
+pub fn nb_ret_float_load(code: String, disp: i64, is_entry: i64) -> String {
+    let c1: String = nb_fp_movsd_load_xmm0(code, disp);
+    if is_entry == 1 {
+        return nb_fp_trunc_rax_xmm0(c1);
+    }
+    c1
+}
+
 // ---- calls scratch table ----
 // One call record = 3 i64 words: (rel32_offset_within_fn, callee_lo, callee_hi).
 // The calls buffer is a heap block passed in; nb_calls_push appends at index
@@ -24673,6 +24714,12 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // already have crashed here), so this arm never fires during self-compile and the
         // integer native-ELF oracle stays byte-identical.
         let nn1: NbState = nb_expr(st, buf, ast_child0(node), params_addr, n_params, calls, lets, lcell);
+        // B0 lift fail-closed: `!f` over a FLOAT operand would integer-Eq the raw
+        // IEEE-754 bits against 0 (-0.0 reads nonzero -> wrong). Ill-typed shape;
+        // refuse (poison), never run. INT operands (all of main.mind) untouched.
+        if nb_node_dtype_tbl(ast_child0(node), __mind_load_i64(lcell + 8), lets, lcell, buf, params_addr, n_params) == nb_dtype_float() {
+            __mind_store_i64(lcell + 80, 1)
+        }
         let nn_op: i64 = nn1.last_id;
         let nn_zid: i64 = nn1.next_id;
         let z1: String = nb_push(nn1.code, 72);
@@ -24736,6 +24783,34 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let cop: i64 = cs1.last_id;
         let cid: i64 = cs1.next_id;
         let cw: i64 = ast_aux(node);
+        let cop_dt: i64 = nb_node_dtype_tbl(ast_child0(node), __mind_load_i64(lcell + 8), lets, lcell, buf, params_addr, n_params);
+        // WIDTH-64 cast `EXPR as i64` (B0 lift; the parser now builds a real node).
+        // Fixed 5-id layout matching nb_count_expr's cw==64 arm: raw=cid mpos=cid+1
+        // mnan=cid+2 max=cid+3 dst=cid+4. A FLOAT source lowers through the
+        // SATURATING f64->i64 sequence (nb_sat_cast_i64 — the dynamic-slot twin of
+        // nb_sat_f64_to_i64, same Rust-`as`/trunc_sat semantics the MLIR path pins
+        // via emit_saturating_fp_to_i64: in-range->trunc, +ovf->INT64_MAX,
+        // -ovf->INT64_MIN, NaN->0). An INT source keeps the historical no-op
+        // semantics as an identity copy into dst (the 4 scratch ids stay unused so
+        // count and emit agree dtype-blind). The cast RESULT is INT (table default
+        // — no tag). main.mind has no `as i64` outside stripped comments, so this
+        // arm never fires during self-compile — byte-identical.
+        if cw == 64 {
+            if cop_dt == nb_dtype_float() {
+                let cf: String = nb_sat_cast_i64(cs1.code, nb_slot_disp(cop), nb_slot_disp(cid), nb_slot_disp(cid + 1), nb_slot_disp(cid + 2), nb_slot_disp(cid + 3), nb_slot_disp(cid + 4));
+                return NbState { code: cf, next_id: cid + 5, last_id: cid + 4, ncalls: cs1.ncalls };
+            }
+            let ci1: String = nb_load_rax(cs1.code, nb_slot_disp(cop));
+            let ci2: String = nb_store_rax(ci1, nb_slot_disp(cid + 4));
+            return NbState { code: ci2, next_id: cid + 5, last_id: cid + 4, ncalls: cs1.ncalls };
+        }
+        // NARROWING cast of a FLOAT source (`f as i8/i16/i32`): the movsx path below
+        // would sign-extend raw IEEE-754 bits — a silent miscompile. POISON (0-byte
+        // refusal, systemic fail-closed gate) until a convert+wrap tier exists.
+        if cop_dt == nb_dtype_float() {
+            __mind_store_i64(lcell + 80, 1);
+            return NbState { code: cs1.code, next_id: cid + 1, last_id: cid, ncalls: cs1.ncalls };
+        }
         let cl: String = nb_load_rax(cs1.code, nb_slot_disp(cop));
         if cw == 8 {
             let c8: String = nb_movsx_rax_al(cl);
@@ -24810,7 +24885,28 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
                     let g3: String = nb_store_rax(g2, nb_slot_disp(id));
                     return NbState { code: g3, next_id: id + 1, last_id: id, ncalls: s2.ncalls };
                 }
+                // BOTH-FLOAT with an operator outside the SSE tier (% << >> | & ^):
+                // POISON — falling to the GP path below would run the integer op
+                // over raw IEEE-754 bits, a silent wrong value. Fail-closed (0B).
+                __mind_store_i64(lcell + 80, 1);
+                return NbState { code: s2.code, next_id: id + 1, last_id: id, ncalls: s2.ncalls };
             }
+        }
+        // MIXED-dtype binop (exactly one operand FLOAT): POISON — this was the
+        // rung-4-era fail-OPEN leak: pre-B0-gate, `f + 5` (a FLOAT lhs after the
+        // parser dropped `as i64`, an INT rhs) fell through to the GP integer path
+        // and added the raw IEEE-754 bits of 2.5 (exit low byte 5, not 7). A
+        // well-typed post-cast program never produces a mixed binop, so this
+        // refusal over-covers only ill-typed/unsupported shapes — 0B, never wrong
+        // bytes. INT⊕INT (all of main.mind's self-compile) skips both checks and
+        // takes the GP path byte-identically.
+        if lhs_dt == nb_dtype_float() {
+            __mind_store_i64(lcell + 80, 1);
+            return NbState { code: s2.code, next_id: id + 1, last_id: id, ncalls: s2.ncalls };
+        }
+        if rhs_dt == nb_dtype_float() {
+            __mind_store_i64(lcell + 80, 1);
+            return NbState { code: s2.code, next_id: id + 1, last_id: id, ncalls: s2.ncalls };
         }
         // mov rax,[lhs] ; OP rax,[rhs] ; mov [dst],rax. A comparison op routes through
         // cmp+setcc+movzx (-> 0/1); Add/Sub/Mul through the in-place arith form.
@@ -26146,6 +26242,11 @@ pub fn nb_lower_let_init(st: NbState, buf: i64, init: i64, params_addr: i64, n_p
 //   emit body ; pop frame ; back-edge jmp (target = header) ; end = len(code) ;
 //   patch je -> end ; patch every break -> end. Then the trailing unit const0.
 pub fn nb_emit_while(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64, srt: i64, loops: i64, lpcell: i64) -> NbState {
+    // B0 lift fail-closed: FLOAT-dtype while condition — same raw-bits zero-test
+    // hazard as nb_if_stmt; refuse (poison), never run.
+    if nb_node_dtype_tbl(ast_child0(node), __mind_load_i64(lcell + 8), lets, lcell, buf, params_addr, n_params) == nb_dtype_float() {
+        __mind_store_i64(lcell + 80, 1)
+    }
     let cond: i64 = ast_child0(node);
     let body_blk: i64 = ast_child1(node);
     let body_sa: i64 = ast_child0(body_blk);
@@ -26280,7 +26381,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
             let sv: NbState = nb_if_value(st, buf, ret_operand, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
             let rvdt: i64 = nb_node_dtype_tbl(ret_operand, __mind_load_i64(lcell + 8), lets, lcell, buf, params_addr, n_params);
             let cv: String = if rvdt == nb_dtype_float() {
-                nb_fp_movsd_load_xmm0(sv.code, nb_slot_disp(sv.last_id))
+                nb_ret_float_load(sv.code, nb_slot_disp(sv.last_id), is_entry)
             } else {
                 nb_load_rax(sv.code, nb_slot_disp(sv.last_id))
             };
@@ -26300,7 +26401,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // INT (float-free source), so ret_dt166 is always INT here and this is byte-identical.
         let ret_dt166: i64 = nb_node_dtype_tbl(ast_child0(node), __mind_load_i64(lcell + 8), lets, lcell, buf, params_addr, n_params);
         let c1: String = if ret_dt166 == nb_dtype_float() {
-            nb_fp_movsd_load_xmm0(s1.code, nb_slot_disp(s1.last_id))
+            nb_ret_float_load(s1.code, nb_slot_disp(s1.last_id), is_entry)
         } else {
             nb_load_rax(s1.code, nb_slot_disp(s1.last_id))
         };
@@ -26685,6 +26786,13 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
 // branch with a nested while that mutates a body-let) generates merge phis — routed
 // through nb_if_stmt_merged. The scalar no-write subset takes the simple path.
 pub fn nb_if_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64, srt: i64, loops: i64, lpcell: i64) -> NbState {
+    // B0 lift fail-closed: a FLOAT-dtype condition would be consumed by the GP
+    // cmp-[slot],0 zero-test over raw IEEE-754 bits (-0.0/NaN read TRUE) — an
+    // ill-typed shape (conds are bools; a float COMPARE result is INT) that must
+    // refuse, never run. Poison only; INT conds (all of main.mind) are untouched.
+    if nb_node_dtype_tbl(ast_child0(node), __mind_load_i64(lcell + 8), lets, lcell, buf, params_addr, n_params) == nb_dtype_float() {
+        __mind_store_i64(lcell + 80, 1)
+    }
     let then_blk: i64 = ast_child1(node);
     let then_sa: i64 = ast_child0(then_blk);
     let then_sl: i64 = ast_aux(then_blk);
@@ -26977,6 +27085,11 @@ pub fn nb_if_merged_else_edge(code: String, buf: i64, mt: i64, nmerged: i64, els
 //   load then_result; store dst; jmp(join) ; patch je->else_at ;
 //   else const0 ; else-stmts ; load else_result; store dst ; patch jmp->end_at.
 pub fn nb_if_value(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64, srt: i64, loops: i64, lpcell: i64) -> NbState {
+    // B0 lift fail-closed: FLOAT-dtype value-if condition — same raw-bits
+    // zero-test hazard as nb_if_stmt; refuse (poison), never run.
+    if nb_node_dtype_tbl(ast_child0(node), __mind_load_i64(lcell + 8), lets, lcell, buf, params_addr, n_params) == nb_dtype_float() {
+        __mind_store_i64(lcell + 80, 1)
+    }
     let then_blk: i64 = ast_child1(node);
     let then_sa: i64 = ast_child0(then_blk);
     let then_sl: i64 = ast_aux(then_blk);
@@ -27590,8 +27703,15 @@ pub fn nb_count_expr(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
     // arm a cast falls to the binop tail and walks ast_child1 == 0 (a null node) -> the
     // frame slot-count would be wrong. main.mind has no cast node in its native-emitted
     // source, so this never fires during self-compile.
+    // WIDTH-64 cast `EXPR as i64` (B0 lift): operand ids + 5, matching nb_expr's
+    // cw==64 arm exactly — raw/mpos/mnan/max scratch + dst for the SATURATING
+    // float->i64 sequence; the integer identity-copy path reserves the SAME 5 ids
+    // (4 unused) so the count stays dtype-blind and frame-consistent either way.
     if k == ast_cast() {
         let after_c: i64 = nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params, clets, clcell);
+        if ast_aux(node) == 64 {
+            return after_c + 5;
+        }
         return after_c + 1;
     }
     // binop — EXPLICITLY gated (fail-closed): only a real ast_binop walks its
@@ -29122,7 +29242,7 @@ pub fn nb_finish_body(st0: NbState, is_entry: i64, stmts_addr: i64, stmts_len: i
     // lexer strips, and std externs are `;`-terminated with no body), so ret_dt is
     // always INT during self-compile and this stays byte-for-byte identical.
     let r1: String = if ret_dt == nb_dtype_float() {
-        nb_fp_movsd_load_xmm0(st0.code, nb_slot_disp(st0.last_id))
+        nb_ret_float_load(st0.code, nb_slot_disp(st0.last_id), is_entry)
     } else {
         nb_load_rax(st0.code, nb_slot_disp(st0.last_id))
     };
@@ -31580,28 +31700,20 @@ pub fn nb_user_float_tok(tokens: Vec, buf: i64, i: i64, user_lo: i64) -> i64 {
     if tok_lo(tokens, i) < user_lo {
         return 0;
     }
-    let k: i64 = tok_kind(tokens, i);
-    if k == tk_float() {
-        if i == 0 {
-            return 1;
-        }
-        if tok_kind(tokens, i - 1) != tk_dot() {
-            return 1;
-        }
-        if i >= 2 {
-            if tok_kind(tokens, i - 2) == tk_dot() {
-                return 1;
-            }
-        }
-        return 0;
-    }
-    if k == tk_ident() {
+    // B0 gate NARROWED to f32-only (general-path f64 lift): f64 lets/params/
+    // returns, float literals, float arithmetic/compares, `f as i64`, and the
+    // entry float-return trunc now lower soundly through the general nb_expr
+    // float tier (with every unsupported float shape POISONED fail-closed at its
+    // emit arm — mixed-dtype binops, non-SSE float ops, narrowing casts of a
+    // float, non-dyadic literals, float conds). f32 stays refused module-wide:
+    // the general tier computes in scalar-double (movsd/addsd), which would
+    // silently produce f64-rounded results for a declared-f32 program — a
+    // wrong-value miscompile, not a refusal. upgrade path: an f32 tier keyed on
+    // the declared width (cvtsd2ss single-rounding at each op, cvttss2si casts).
+    if tok_kind(tokens, i) == tk_ident() {
         let lo: i64 = tok_lo(tokens, i);
         let hi: i64 = tok_hi(tokens, i);
         if hi - lo == 3 {
-            if bytes_eq(buf, lo, hi, name_buf_f64(), 0, 3) == 1 {
-                return 1;
-            }
             if bytes_eq(buf, lo, hi, name_buf_f32(), 0, 3) == 1 {
                 return 1;
             }
@@ -31719,12 +31831,14 @@ pub fn selftest_native_elf_hb_from_tokens(tokens: Vec, src_addr: i64, hash_addr:
     if nb_fns_branch_exit_carry(src_addr, ordered, n_fns, 0) == 1 {
         return es_new();
     }
-    // B0 FLOAT fail-closed pre-gate (see nb_user_float_tok above): a float
-    // literal or f64/f32 type ident anywhere in the USER region refuses the
-    // WHOLE module (0B) — the general path has no float tier yet and a leaked
-    // float runs to a silently WRONG value. Never fires during self-compile
-    // (main.mind's user region has zero candidates), so the loop stays
-    // byte-identical.
+    // B0 f32 fail-closed pre-gate (see nb_user_float_tok above — NARROWED from
+    // the original all-float gate): an `f32` type ident anywhere in the USER
+    // region refuses the WHOLE module (0B) — the general float tier computes in
+    // scalar-double and would silently f64-round a declared-f32 program. f64 and
+    // float literals now flow through the general nb_expr float tier; every
+    // still-unsupported float shape poisons fail-closed at its own emit arm.
+    // Never fires during self-compile (main.mind's user region has zero
+    // candidates), so the loop stays byte-identical.
     if nb_tokens_user_float(tokens, src_addr, 0, tok_count(tokens), user_lo) == 1 {
         return es_new();
     }
@@ -32569,6 +32683,10 @@ pub fn nb_find_dot(buf: i64, lo: i64, hi: i64) -> i64 {
 }
 
 // Parse a `<intdigits>.<fracdigits>` span into IEEE-754 f64 bits (see block header).
+// PRECONDITION: only called on spans nb_float_lit_is_dyadic accepted — its
+// 18-digit-content numerator-overflow guard keeps every intermediate here
+// (ipart*den + fpart, nb_pow10, nb_strip_pow5) overflow-free. Do NOT call this
+// on an unguarded span: a wrapped numerator silently yields ~0.0 bits.
 pub fn nb_float_lit_bits(buf: i64, lo: i64, hi: i64) -> i64 {
     let dot: i64 = nb_find_dot(buf, lo, hi);
     let ipart: i64 = parse_int_span(buf, lo, dot, 0);
@@ -32605,13 +32723,31 @@ pub fn nb_pow5_divides(num: i64, k: i64) -> i64 {
 // 3.14 -> 3.0). Same parse as nb_float_lit_bits.
 pub fn nb_float_lit_is_dyadic(buf: i64, lo: i64, hi: i64) -> i64 {
     let dot: i64 = nb_find_dot(buf, lo, hi);
-    let ipart: i64 = parse_int_span(buf, lo, dot, 0);
     let fdigits: i64 = hi - (dot + 1);
     let fk: i64 = if fdigits < 0 {
         0
     } else {
         fdigits
     };
+    // NUMERATOR-OVERFLOW fail-close (B0-lift follow-up, blind-review CRITICAL):
+    // num = ipart*10^fk + fpart is computed in WRAPPING i64. A literal whose
+    // integer-digit content (intpart digits + fk) exceeds 18 decimal digits can
+    // exceed 2^63 (~9.2e18, 19 digits) and WRAP — and the wrapped num can PASS
+    // the pow5 test below while nb_float_lit_bits emits ~0.0 bits (observed
+    // fail-OPEN: 9223372036854775808.0 -> 0.0, so `(f as i64)` exited 0 where
+    // the oracle saturates to INT64_MAX; 18446744073709551616.0 wraps num to
+    // EXACTLY 0). <= 18 content digits guarantees num < 10^18 < 2^63 and
+    // 10^fk itself exact — the whole integer pipeline is overflow-free. This
+    // OVER-refuses some exactly-representable huge dyadics (e.g. 2^60.0, which
+    // the wrapped path already refused by luck) — fail-closed 0B, never wrong
+    // bits. upgrade path: a bignum numerator (the same follow-up as the
+    // correctly-rounded dec2flt in the block header). Leading zeros count
+    // toward the bound (over-refusal only). main.mind is float-free, so this
+    // guard never runs during self-compile.
+    if (dot - lo) + fk > 18 {
+        return 0;
+    }
+    let ipart: i64 = parse_int_span(buf, lo, dot, 0);
     let fpart: i64 = parse_int_span(buf, dot + 1, hi, 0);
     let den: i64 = nb_pow10(fk);
     let num: i64 = ipart * den + fpart;
@@ -35113,6 +35249,51 @@ pub fn nb_sat_f64_to_i64(code: String, x_disp: i64, out_disp: i64) -> String {
     let e3: String = nb_store_rax(e2, 0 - 96);
     let e4: String = nb_load_rax(e3, out_disp);
     let e5: String = nb_arith_rax_mem(e4, op_bitxor(), 0 - 96);
+    nb_store_rax(e5, out_disp)
+}
+
+// GENERAL-PATH twin of nb_sat_f64_to_i64 (B0 lift): the identical branchless
+// SATURATING f64->i64 sequence (Rust `as` / trunc_sat semantics, matching the
+// MLIR path's emit_saturating_fp_to_i64: in-range->trunc-toward-zero,
+// x>=2^63->INT64_MAX, -ovf/-inf->INT64_MIN, NaN->0) with every scratch slot a
+// PARAMETER instead of the dedicated scaffold's fixed -72/-96/-104/-112 frame
+// offsets — those would collide with real SSA slots in a general fn frame — and
+// with INT64_MAX materialized inline (the dedicated entry pre-stages it).
+// Consumed by nb_expr's cw==64 ast_cast arm; the 5 slots are the count-mirrored
+// cid..cid+4 run. NEVER reached during self-compile (main.mind has no `as i64`
+// outside comments) — the integer native-ELF oracle stays byte-identical.
+pub fn nb_sat_cast_i64(code: String, x_disp: i64, raw_disp: i64, mpos_disp: i64, mnan_disp: i64, max_disp: i64, out_disp: i64) -> String {
+    // INT64_MAX into its scratch slot: movabs rax, 0x7FFFFFFFFFFFFFFF ; store.
+    let m1: String = nb_push(code, 72);
+    let m2: String = nb_push(m1, 184);
+    let m3: String = nb_i64le(m2, 9223372036854775807);
+    let m4: String = nb_store_rax(m3, max_disp);
+    // raw = cvttsd2si(x)  (INT64_MIN sentinel on overflow/nan).
+    let a1: String = nb_fp_movsd_load_xmm0(m4, x_disp);
+    let a2: String = nb_fp_trunc_rax_xmm0(a1);
+    let a3: String = nb_store_rax(a2, raw_disp);
+    // mpos = (2^63 <= x) ? -1 : 0   [xmm1 = 2^63 ; cmplesd xmm1, [x]].
+    let b1: String = nb_fp_const_xmm(a3, 4890909195324358656, 1);
+    let b2: String = nb_fp_cmpsd_mem(b1, 1, x_disp, 2);
+    let b3: String = nb_fp_movq_rax_xmm1(b2);
+    let b4: String = nb_store_rax(b3, mpos_disp);
+    // mnan = (x unord x) ? -1 : 0   [cmpunordsd xmm0, [x]].
+    let c1: String = nb_fp_movsd_load_xmm0(b4, x_disp);
+    let c2: String = nb_fp_cmpsd_mem(c1, 0, x_disp, 3);
+    let c3: String = nb_fp_movq_rax_xmm0(c2);
+    let c4: String = nb_store_rax(c3, mnan_disp);
+    // result = raw ^ ((raw ^ INT64_MAX) & mpos).
+    let d1: String = nb_load_rax(c4, raw_disp);
+    let d2: String = nb_arith_rax_mem(d1, op_bitxor(), max_disp);
+    let d3: String = nb_arith_rax_mem(d2, op_bitand(), mpos_disp);
+    let d4: String = nb_arith_rax_mem(d3, op_bitxor(), raw_disp);
+    let d5: String = nb_store_rax(d4, out_disp);
+    // result = result & ~mnan   (spelled result ^ (result & mnan); raw slot reused).
+    let e1: String = nb_load_rax(d5, out_disp);
+    let e2: String = nb_arith_rax_mem(e1, op_bitand(), mnan_disp);
+    let e3: String = nb_store_rax(e2, raw_disp);
+    let e4: String = nb_load_rax(e3, out_disp);
+    let e5: String = nb_arith_rax_mem(e4, op_bitxor(), raw_disp);
     nb_store_rax(e5, out_disp)
 }
 
