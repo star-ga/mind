@@ -6,7 +6,10 @@ The self-host native-ELF emit (`selftest_native_elf_h` in
 examples/mindc_mind/main.mind) supports a low-level scalar + control-flow
 subset (i64 scalars, calls, if/else/while/let/assign/break/continue, and the
 parse-time desugars match / && / || / for / else-if, plus declared-order
-all-i64 structs via accessor fns — the idiom main.mind is written in). For ANY
+all-i64 structs via accessor fns — the idiom main.mind is written in — plus
+fixed i64 arrays: `[e0, e1, ...]` literals, index read/write `a[i]`, composing
+in arithmetic / call args / returns / loops, with proven-constant-OOB indexes,
+non-i64 elements, `[]`, trailing commas and `.len()` refused). For ANY
 construct outside that subset it must FAIL CLOSED: emit 0 bytes (refuse),
 NEVER a running ELF with a wrong value. An adversarial sweep once found ~123
 constructs that silently miscompiled; a poison mechanism (lexer
@@ -71,22 +74,46 @@ def M(body: str) -> str:
 
 # (label, source, expected)  — expected "0B" means MUST refuse.
 REFUSED = [
-    ("array literal index", M("return [1,2,3][1];"), "0B"),
-    ("array let + index", M("let a=[10,20,30]; return a[2];"), "0B"),
     ("tuple field", M("return (1,2).1;"), "0B"),
     ("tuple destructure", M("let (a,b)=(1,2); return b;"), "0B"),
     ("ref + deref", M("let x:i64=5; let r=&x; return *r;"), "0B"),
     ("compound assign +=", M("let mut c:i64=0; c += 1; return c;"), "0B"),
+    # arrays are SUPPORTED (i64 subset, below) — but the array boundary itself
+    # stays fail-closed: non-i64 elements, empty literal, trailing comma,
+    # proven-constant OOB indexes, .len(), field access over an array binding.
+    ("array float element", M("let a=[1.5, 2.5]; return 0;"), "0B"),
+    ("array empty []", M("let a=[]; return 0;"), "0B"),
+    ("array trailing comma", M("let a=[1,2,]; return a[0];"), "0B"),
+    ("array const OOB read", M("let a=[1,2,3]; return a[3];"), "0B"),
+    ("array const OOB write", M("let mut a=[1,2,3]; a[5]=1; return 0;"), "0B"),
+    ("array negative index", M("let a=[1,2,3]; return a[-1];"), "0B"),
+    ("array direct-lit OOB", M("return [1,2,3][7];"), "0B"),
+    ("array .len()", M("let a=[1,2,3]; return a.len();"), "0B"),
+    ("array field access", M("let a=[1,2,3]; return a.x;"), "0B"),
+    ("array missing ]", M("let a=[1,2; return 0;"), "0B"),
     # sticky poison: unsupported nested in supported -> whole unit refuses
-    ("array nested in while", M("let mut c:i64=0; while c<3 { let a=[1,2]; c=c+1; } return c;"), "0B"),
     ("tuple nested in if", M("let x:i64=5; if x>0 { return (7,8).0; } return 0;"), "0B"),
     # unsupported node in a separate function still refuses the whole unit
-    ("unsupported in sep fn", "fn helper()->i64{ let a=[1,2,3]; return a[0]; }\nfn main()->i64{ return helper(); }", "0B"),
+    ("unsupported in sep fn", "fn helper()->i64{ let t=(1,2); return 0; }\nfn main()->i64{ return helper(); }", "0B"),
 ]
 
 # (label, source, expected exit value) — the supported subset MUST run correct.
 SUPPORTED = [
     ("scalar arith", M("return 2+3*4;"), 14),
+    # fixed i64 arrays (alloc + base+8*i load/store ABI)
+    ("array literal index", M("return [1,2,3][1];"), 2),
+    ("array let + index", M("let a=[10,20,30]; return a[2];"), 30),
+    ("array variable index", M("let a=[10,20,30]; let i=2; return a[i];"), 30),
+    ("array arith compose", M("let a=[10,20,30]; return a[0]+a[1];"), 30),
+    ("array index write", M("let mut a=[1,2,3]; a[1]=9; return a[1];"), 9),
+    ("array for-loop sum", M("let a=[10,20,30]; let mut s=0; for i in 0..3 { s=s+a[i]; } return s;"), 60),
+    ("array while-loop sum", M("let a=[10,20,30]; let mut s=0; let mut i=0; while i<3 { s=s+a[i]; i=i+1; } return s;"), 60),
+    ("array write in loop", M("let mut a=[0,0,0]; for i in 0..3 { a[i]=i*10; } return a[0]+a[1]+a[2];"), 30),
+    ("array as call arg", "fn get(p:i64, i:i64)->i64{ return p[i]; }\nfn main()->i64{ let a=[7,8,9]; return get(a, 1); }", 8),
+    ("array as return value", "fn mk()->i64{ return [4,5,6]; }\nfn main()->i64{ let a=mk(); return a[2]; }", 6),
+    ("array nested literal", M("let a=[[1,2],[3,4]]; return a[1][0];"), 3),
+    ("array in while body", M("let mut c:i64=0; while c<3 { let a=[1,2]; c=c+a[0]; } return c;"), 3),
+    ("array in sep fn", "fn helper()->i64{ let a=[1,2,3]; return a[0]; }\nfn main()->i64{ return helper(); }", 1),
     ("if/else", M("let x:i64=5; if x>3 { return 3; } else { return 8; }"), 3),
     ("while carry", M("let mut c:i64=0; let mut i:i64=0; while i<10 { c=c+1; i=i+1; } return c;"), 10),
     ("match 3-arm", "fn main()->i64{ match 3 { 1=>{return 1;} 2=>{return 2;} _=>{return 9;} } }", 9),
