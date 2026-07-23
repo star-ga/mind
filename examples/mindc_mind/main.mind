@@ -152,6 +152,16 @@ pub fn tk_percent() -> i64 {
 pub fn tk_float() -> i64 {
     36
 }
+// `&&` / `||` logical operators. Two-char tokens (like tk_shl/tk_shr), lexed
+// before the single-char `&` (tk_amp) / `|` (tk_pipe) so `a && b` is ONE token,
+// not two tk_amp. They carry NO tk_to_op mapping: the Pratt parser desugars them
+// at parse time to a short-circuit value-if (desugar_andand / desugar_oror).
+pub fn tk_andand() -> i64 {
+    37
+}
+pub fn tk_oror() -> i64 {
+    38
+}
 
 // ===== Byte loads =====
 
@@ -703,6 +713,26 @@ pub fn scan(buf: i64, i: i64, buf_len: i64, toks: Vec) -> Vec {
         if i + 1 < buf_len {
             if load_byte(buf, i + 1) == 62 {
                 let next_toks: Vec = push_token(toks, tk_shr(), i, i + 2);
+                return scan(buf, i + 2, buf_len, next_toks);
+            }
+        }
+    }
+    // `&&` (38,38): logical-and two-char token. Checked before the single-char
+    // `&` (tk_amp) path so `a && b` lexes as one tk_andand, not two tk_amp.
+    if b == 38 {
+        if i + 1 < buf_len {
+            if load_byte(buf, i + 1) == 38 {
+                let next_toks: Vec = push_token(toks, tk_andand(), i, i + 2);
+                return scan(buf, i + 2, buf_len, next_toks);
+            }
+        }
+    }
+    // `||` (124,124): logical-or two-char token. Checked before the single-char
+    // `|` (tk_pipe) path so `a || b` lexes as one tk_oror, not two tk_pipe.
+    if b == 124 {
+        if i + 1 < buf_len {
+            if load_byte(buf, i + 1) == 124 {
+                let next_toks: Vec = push_token(toks, tk_oror(), i, i + 2);
                 return scan(buf, i + 2, buf_len, next_toks);
             }
         }
@@ -1370,53 +1400,64 @@ pub fn infix_prec(kind: i64) -> i64 {
     if kind == tk_eq() {
         return 1;
     }
-    if kind == tk_pipe() {
+    // Logical `||` (loosest, above assignment) < `&&` < all bitwise/comparison.
+    // Only the relative ordering matters to the Pratt loop, so inserting these two
+    // levels between assignment and bitor and renumbering the tighter levels upward
+    // leaves every pre-existing (non-logical) expression's parse tree UNCHANGED —
+    // main.mind uses no `&&`/`||`, so its self-compile stays byte-identical.
+    if kind == tk_oror() {
         return 2;
     }
-    if kind == tk_caret() {
+    if kind == tk_andand() {
         return 3;
     }
-    if kind == tk_amp() {
+    if kind == tk_pipe() {
         return 4;
     }
-    if kind == tk_shl() {
+    if kind == tk_caret() {
         return 5;
+    }
+    if kind == tk_amp() {
+        return 6;
+    }
+    if kind == tk_shl() {
+        return 7;
     }
     if kind == tk_shr() {
-        return 5;
+        return 7;
     }
     if kind == tk_lt() {
-        return 6;
+        return 8;
     }
     if kind == tk_gt() {
-        return 6;
+        return 8;
     }
     if kind == tk_eqeq() {
-        return 6;
+        return 8;
     }
     if kind == tk_le() {
-        return 6;
+        return 8;
     }
     if kind == tk_ge() {
-        return 6;
+        return 8;
     }
     if kind == tk_ne() {
-        return 6;
+        return 8;
     }
     if kind == tk_plus() {
-        return 7;
+        return 9;
     }
     if kind == tk_minus() {
-        return 7;
+        return 9;
     }
     if kind == tk_star() {
-        return 8;
+        return 10;
     }
     if kind == tk_slash() {
-        return 8;
+        return 10;
     }
     if kind == tk_percent() {
-        return 8;
+        return 10;
     }
     0
 }
@@ -1756,6 +1797,36 @@ pub fn parse_postfix_rest(toks: Vec, pos: i64, buf: i64, recv: i64) -> ParseResu
     parse_postfix_rest(toks, pos + 2, buf, fa)
 }
 
+// `A && B` short-circuit lowering: desugar (at PARSE time) to the value-if
+// `if A { B } else { 0 }` — B is evaluated ONLY when A is true, and the whole
+// expression is 0 (false) when A is false. Both branches are one-statement blocks
+// (tail-expression form), so the existing value-if lowering (nb_if_value / the
+// mic@3 OP_IF path / MLIR) evaluates them with zero new emit code. 0 = false; the
+// else-block's `mk_syn_intlit(0)` carries the constant directly. Mirrors the Rust
+// front-end / the else-if & match parse-time desugars already in this file.
+pub fn desugar_andand(span_lo: i64, span_hi: i64, lhs: i64, rhs: i64) -> i64 {
+    let then_acc0: Vec = vec_new();
+    let then_acc: Vec = vec_push(then_acc0, rhs);
+    let then_blk: i64 = ast_new_block(span_lo, span_hi, vec_addr(then_acc), vec_len(then_acc));
+    let else_acc0: Vec = vec_new();
+    let else_acc: Vec = vec_push(else_acc0, mk_syn_intlit(0));
+    let else_blk: i64 = ast_new_block(span_lo, span_hi, vec_addr(else_acc), vec_len(else_acc));
+    ast_new_if(span_lo, span_hi, lhs, then_blk, else_blk)
+}
+
+// `A || B` short-circuit lowering: desugar to `if A { 1 } else { B }` — B is
+// evaluated ONLY when A is false, and the whole expression is 1 (true) when A is
+// true. Dual of desugar_andand; the then-block's `mk_syn_intlit(1)` carries the 1.
+pub fn desugar_oror(span_lo: i64, span_hi: i64, lhs: i64, rhs: i64) -> i64 {
+    let then_acc0: Vec = vec_new();
+    let then_acc: Vec = vec_push(then_acc0, mk_syn_intlit(1));
+    let then_blk: i64 = ast_new_block(span_lo, span_hi, vec_addr(then_acc), vec_len(then_acc));
+    let else_acc0: Vec = vec_new();
+    let else_acc: Vec = vec_push(else_acc0, rhs);
+    let else_blk: i64 = ast_new_block(span_lo, span_hi, vec_addr(else_acc), vec_len(else_acc));
+    ast_new_if(span_lo, span_hi, lhs, then_blk, else_blk)
+}
+
 pub fn parse_pratt(toks: Vec, pos: i64, buf: i64, lhs: i64, min_prec: i64) -> ParseResult {
     parse_pratt_ns(toks, pos, buf, lhs, min_prec, 0)
 }
@@ -1775,12 +1846,27 @@ pub fn parse_pratt_ns(toks: Vec, pos: i64, buf: i64, lhs: i64, min_prec: i64, no
         return pr_new(pos, lhs);
     }
 
-    let op_tag: i64 = tk_to_op(k);
     let rhs_prim: ParseResult = parse_postfix_ns(toks, pos + 1, buf, no_struct);
     let rhs_full: ParseResult = parse_pratt_ns(toks, pr_pos(rhs_prim), buf, pr_node(rhs_prim), prec + 1, no_struct);
 
     let lhs_lo: i64 = ast_span_lo(lhs);
     let rhs_hi: i64 = ast_span_hi(pr_node(rhs_full));
+
+    // Logical `&&` / `||` are NOT binops: desugar to a short-circuit value-if here,
+    // then continue the Pratt loop with the if-node as the new lhs. `prec + 1` for the
+    // RHS gives LEFT associativity (`a && b && c` == `(a && b) && c`), and the
+    // precedence table makes `&&` bind tighter than `||` and both looser than
+    // comparison (`a > 0 && b > 0` == `(a>0) && (b>0)`).
+    if k == tk_andand() {
+        let comb_a: i64 = desugar_andand(lhs_lo, rhs_hi, lhs, pr_node(rhs_full));
+        return parse_pratt_ns(toks, pr_pos(rhs_full), buf, comb_a, min_prec, no_struct);
+    }
+    if k == tk_oror() {
+        let comb_o: i64 = desugar_oror(lhs_lo, rhs_hi, lhs, pr_node(rhs_full));
+        return parse_pratt_ns(toks, pr_pos(rhs_full), buf, comb_o, min_prec, no_struct);
+    }
+
+    let op_tag: i64 = tk_to_op(k);
     let combined: i64 = ast_new_binop(lhs_lo, rhs_hi, lhs, pr_node(rhs_full), op_tag);
 
     parse_pratt_ns(toks, pr_pos(rhs_full), buf, combined, min_prec, no_struct)
@@ -22504,7 +22590,16 @@ pub fn nb_slit_field_index_loop(fields_addr: i64, nfields: i64, buf: i64, flo: i
 pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, lets: i64, lcell: i64) -> NbState {
     let k: i64 = ast_kind(node);
     if k == ast_int_lit() {
-        let val: i64 = parse_int_span(buf, ast_span_lo(node), ast_span_hi(node), 0);
+        // Honor the synthetic-int-lit sentinel (child1==1 ⇒ the value lives DIRECTLY
+        // in child0, no source decimal to parse) — mirrors flatten_ast's mic@3 int-lit
+        // arm. The short-circuit `&&`/`||` desugar emits mk_syn_intlit(0)/mk_syn_intlit(1)
+        // for the false/true constants. main.mind's OWN source int-lits are all real
+        // (child1==0), so they still parse their span here — byte-identical self-compile.
+        let val: i64 = if ast_child1(node) == 1 {
+            ast_child0(node)
+        } else {
+            parse_int_span(buf, ast_span_lo(node), ast_span_hi(node), 0)
+        };
         let id: i64 = st.next_id;
         // movabs rax, imm64 = 48 B8 <imm64>
         let c1: String = nb_push(st.code, 72);
