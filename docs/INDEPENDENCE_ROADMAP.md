@@ -142,8 +142,26 @@ itself byte-identically with zero Rust & zero LLVM in the loop"* (integer/contro
   nor name_resolvable, with a STRICTLY-SMALLER union than E2002 (no `bytes`, no `::` auto-accept —
   `bytes = 5` and undeclared `Foo::Bar = 5` FIRE; a locally-declared `Mode::On = 5` does not). First-pass
   clean, NO fix rounds — E2002's hardened discipline (Rule 3a, live-probe-before-gating) transferred; the
-  blind review verified 76 clean-parseable three-way shapes, 0 divergences.** Next: E2001 needs full type
-  inference (a larger tier).
+  blind review verified 76 clean-parseable three-way shapes, 0 divergences.**
+  **E2003 LANDED (2026-07-24) — unknown-call (`tc_is_unknown_call`), the call-position sibling of E2012,
+  QUARTET COMPLETE (E2002/E2003/E2009/E2012 all on the shared scope-frame engine). Fires iff
+  `!call_resolvable(callee)` at a bare-callee position — the exclusion union is shared VERBATIM with
+  E2012 (`tc_fvc_excluded`: D1 decls+prelude, D3 std exports, `bytes`/`gen_deref`, the `__mind_` blanket
+  prefix, the 34 BARE_BUILTINS, the E2024 intrinsic table); the E2012 boundary is exactly the scope axis
+  (a live local binding fires E2012, never E2003). Live-grounded: keyword-spelled callees in EXPRESSION
+  position (`let z = return(1)`) DO fire E2003; dotted heads are MethodCall receivers (E2002 domain);
+  the resolve.rs doc-comment's import-suppression is STALE (no suppression exists — pinned live). The
+  KEYWORD-CALLEE class was closed by a full live sweep (the parser's 23 stmt keywords + in/as/mut + match +
+  bool literals × expr/stmt callee position, 58 cells, 0 divergences): folded non-ident keywords
+  (`fn`/`let`/`use`/`import`/`pub`/`else` — the self-host lexer emits tk_kw_* kinds) route by token KIND
+  through the positional gate (`else` alone also fires at a bare statement start, with the consumed
+  `} else (…)` if-chain shape declined via a dedicated if/else-header scan); the context words
+  `in`/`as`/`mut` are NOT statement keywords and fire in BOTH positions (structural operand tails —
+  `for i in (3)`, `x as (i64)`, `let mut (a, b)` — decline); live also contextually BINDS keyword names
+  (`let use = 5` is legal, callee then fires E2012 not E2003) so the D2 binder registers folded-keyword
+  bindings (inert for tk_ident-position rules). Smoke: 67 case shapes + the generated 29×2 keyword matrix
+  (live-keyed, both directions), 125 checks, 0 divergences.** Next: E2001 needs full type inference (a
+  larger tier).
 - [ ] **B2** Full parser + AST→IR lowering (`parser` ~5,563 portable of 7,782 total — the `#[bimap]` + trivia
   ~2,219 LOC are descoped from the self-host target — + `eval/lower.rs` 9,966) for every construct. The self-host
   front-end already lexes+parses+lowers the scalar/i64/control-flow subset (that is what the keystone loop
