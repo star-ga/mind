@@ -678,7 +678,8 @@ jobs:
             self_host_tc_scope_frame_smoke \
             self_host_tc_std_export_smoke \
             self_host_tc_fn_value_call_smoke \
-            self_host_tc_unknown_ident_smoke; do
+            self_host_tc_unknown_ident_smoke \
+            self_host_tc_undeclared_assign_smoke; do
             echo "=== $s ==="
             MINDC_SO=/tmp/libmindc_mind_self_host.so \
             MINDC_BIN="${{ github.workspace }}/target/release/mindc" \
