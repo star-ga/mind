@@ -680,7 +680,8 @@ jobs:
             self_host_tc_fn_value_call_smoke \
             self_host_tc_unknown_ident_smoke \
             self_host_tc_undeclared_assign_smoke \
-            self_host_tc_unknown_call_smoke; do
+            self_host_tc_unknown_call_smoke \
+            self_host_tc_let_infer_smoke; do
             echo "=== $s ==="
             MINDC_SO=/tmp/libmindc_mind_self_host.so \
             MINDC_BIN="${{ github.workspace }}/target/release/mindc" \
@@ -702,6 +703,12 @@ jobs:
           MINDC_SO=/tmp/libmindc_mind_self_host.so \
           MINDC_BIN="${{ github.workspace }}/target/release/mindc" \
             python3 examples/mindc_mind/tc_differential_fuzz.py --rule all --ci --budget 400
+          # T1 type-inference: `let x: T = <literal>` scalar-class (E2015).
+          # Dedicated annotation x RHS-literal corpus (not the position grid);
+          # planted literal-tag-flip mutation gate runs first.
+          MINDC_SO=/tmp/libmindc_mind_self_host.so \
+          MINDC_BIN="${{ github.workspace }}/target/release/mindc" \
+            python3 examples/mindc_mind/tc_differential_fuzz.py --rule E2015 --ci
         working-directory: ${{ github.workspace }}
 
       - name: Run Phase G integration tests
