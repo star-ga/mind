@@ -688,6 +688,22 @@ jobs:
           done
         working-directory: ${{ github.workspace }}
 
+      - name: Differential fuzzer — tc-rule ports vs live mindc (tcdiff)
+        # The self_host_tc_* smokes above are CURATED fixtures; tcdiff GENERATES
+        # ~400 parseable MIND programs per rule and diffs the pure-MIND selftest
+        # verdict against live `mindc check` over the token x position matrix the
+        # hand corpus keeps missing. It found the folded-keyword fail-OPEN class
+        # across E2002/E2003/E2009 that 3 fix rounds + 2 cross-family blind reviews
+        # all missed while the curated smokes stayed green. Fixed seed => the same
+        # programs every run (deterministic); a planted-mutant gate runs first and
+        # proves it still catches a fail-open; any divergence fails the build. Cheap
+        # (~10s: one `mindc check` per generated program, all 4 rules scored from it).
+        run: |
+          MINDC_SO=/tmp/libmindc_mind_self_host.so \
+          MINDC_BIN="${{ github.workspace }}/target/release/mindc" \
+            python3 examples/mindc_mind/tc_differential_fuzz.py --rule all --ci --budget 400
+        working-directory: ${{ github.workspace }}
+
       - name: Run Phase G integration tests
         run: |
           cargo test --release --no-default-features \
