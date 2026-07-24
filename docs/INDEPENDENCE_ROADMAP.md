@@ -160,8 +160,16 @@ itself byte-identically with zero Rust & zero LLVM in the loop"* (integer/contro
   `for i in (3)`, `x as (i64)`, `let mut (a, b)` — decline); live also contextually BINDS keyword names
   (`let use = 5` is legal, callee then fires E2012 not E2003) so the D2 binder registers folded-keyword
   bindings (inert for tk_ident-position rules). Smoke: 67 case shapes + the generated 29×2 keyword matrix
-  (live-keyed, both directions), 125 checks, 0 divergences.** Next: E2001 needs full type inference (a
-  larger tier).
+  (live-keyed, both directions), 125 checks, 0 divergences.**
+  **DIAGNOSTIC-RULE PORTING COMPLETE (2026-07-24) — every diagnostic code the Rust checker still EMITS is
+  now a pure-MIND decision core; the only exclusions are E2007 (feature-gate, no live oracle) and E2014
+  (retired #99, u64 first-class) — both ungatable, correctly not ported. The quartet was then HARDENED via
+  a codex `gpt-5.6-sol` audit + kimi K3 hunt + the differential fuzzer + 2 cross-family blind reviews
+  (`1701f11f`): closed a 250-binding scope-cap, a match-arm folded-kw under-fire + stmt-kw over-fire, and a
+  premature-sentinel fail-open; `tc_differential_fuzz.py` (wired into CI) now gates all four resolution rules
+  at 0 divergences vs live mindc, mechanically. B1's remaining frontier is the TYPE-INFERENCE tier: E2001 +
+  `infer_expr` (a resolved-type environment over the whole expr walk — the ~5k-LOC core of
+  `type_checker/mod.rs`) — plus the tensors backend construct, B2 parser, and drop-MLIR.**
 - [ ] **B2** Full parser + AST→IR lowering (`parser` ~5,563 portable of 7,782 total — the `#[bimap]` + trivia
   ~2,219 LOC are descoped from the self-host target — + `eval/lower.rs` 9,966) for every construct. The self-host
   front-end already lexes+parses+lowers the scalar/i64/control-flow subset (that is what the keystone loop
