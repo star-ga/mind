@@ -38239,8 +38239,10 @@ pub fn selftest_tc_std_export(src: i64, src_len: i64, name: i64, name_len: i64) 
 // EnumStruct `..` rest-patterns are out of D2 scope — upgrade path: reuse the
 // self-host Pratt parser's expression end once the tc walk moves onto the AST.
 //
-// The binding buffer is PER-QUERY TRANSIENT (one __mind_alloc(4096) per call,
-// 16 bytes per entry, cap 250 entries), never a new full-source lex of
+// The binding buffer is PER-QUERY TRANSIENT (one __mind_alloc((n + 16) * 16)
+// per call, sized to the token count = an upper bound on live bindings so the
+// scope matches Rust's unbounded resolve.rs; fail-closed at 4096 entries in
+// tc_sf_bind), never a new full-source lex of
 // main.mind nor a permanent arena residency (Rule 2c): a query lexes only its
 // own fixture source, and this path is never reached by mindc_compile.
 
@@ -38295,13 +38297,19 @@ pub fn tc_sf_is_wild(src: i64, lo: i64, hi: i64) -> i64 {
     0
 }
 
-// Scopes::bind — append the (lo,hi) name span at the live top. Cap 250
-// entries (4000 of the 4096 buffer bytes); an overflowing bind is dropped
-// fail-safe (corpus fns bind well under 20 names).
+// Scopes::bind — append the (lo,hi) name span at the live top. Rust's
+// resolve.rs scope is UNBOUNDED; the buffer is sized by the query driver to
+// (n + 16) entries (16 bytes each, n = token count) — a STRICT upper bound on
+// the live bindings on any nesting path: each bind consumes at least one
+// distinct token (a `let`/param NAME token), so live_bindings <= n < n + 16.
+// The buffer therefore PROVABLY never overflows and needs no cap — a bind
+// always fits. There is deliberately NO premature fail-closed sentinel: an
+// earlier magic `cnt >= 4096` cap (buffer capacity is n + 16, never 4096) trips
+// BEFORE the buffer is full and, via tc_sf_lookup's BOUND-on-negative reading,
+// would SUPPRESS a genuinely-undefined ident past 4096 bindings (a fail-OPEN,
+// live still fires E2002 there). Keying nothing here and letting the walk bind
+// up to the guaranteed capacity matches resolve.rs's unbounded scope exactly.
 pub fn tc_sf_bind(buf: i64, cnt: i64, lo: i64, hi: i64) -> i64 {
-    if cnt >= 250 {
-        return cnt;
-    }
     __mind_store_i64(buf + cnt * 16, lo);
     __mind_store_i64(buf + cnt * 16 + 8, hi);
     cnt + 1
@@ -39022,7 +39030,7 @@ pub fn tc_sf_query(src: i64, src_len: i64, pos: i64) -> i64 {
     if p < 0 {
         return 0 - 3;
     }
-    let buf: i64 = __mind_alloc(4096);
+    let buf: i64 = __mind_alloc((n + 16) * 16);
     tc_sf_top(toks, n, 0, src, buf, p, tok_lo(toks, p), tok_hi(toks, p))
 }
 
@@ -39351,7 +39359,7 @@ pub fn tc_is_fn_value_call(src: i64, src_len: i64, pos: i64, std_src: i64, std_l
     let lo: i64 = tok_lo(toks, p);
     let hi: i64 = tok_hi(toks, p);
     // D2: scopes.contains — the positive trigger.
-    let buf: i64 = __mind_alloc(4096);
+    let buf: i64 = __mind_alloc((n + 16) * 16);
     let sf: i64 = tc_sf_top(toks, n, 0, src, buf, p, lo, hi);
     if sf == 0 {
         return 0;
@@ -39891,6 +39899,48 @@ pub fn tc_ui_expr_ctx_prev(toks: Vec, p: i64, src: i64) -> i64 {
     0
 }
 
+// The fat-arrow arm-body head: p sits on the first atom of a match-arm body,
+// i.e. tokens p-2,p-1 spell `=>` (this lexer emits the fat arrow as tk_eq +
+// tk_gt, byte-adjacent). A statement/block context, distinct from a
+// comparison RHS (`a > kw`) and a return-type arrow (`-> kw`, a type slot).
+pub fn tc_ui_is_arm_body(toks: Vec, p: i64) -> i64 {
+    if p < 2 {
+        return 0;
+    }
+    if tok_kind(toks, p - 1) != tk_gt() {
+        return 0;
+    }
+    if tok_kind(toks, p - 2) != tk_eq() {
+        return 0;
+    }
+    if tok_hi(toks, p - 2) != tok_lo(toks, p - 1) {
+        return 0;
+    }
+    1
+}
+
+// span spells a DIVERGING control-flow keyword (break/continue/return) — the
+// three that live parses as control flow (never Lit(Ident)) in a statement /
+// block context, i.e. the match-arm body head, so E2002 must NOT fire there.
+// UNLIKE every pure-expression atom position (let-RHS, return value, call-arg,
+// binop operand, cond-tail, struct-lit field value, index base, method
+// receiver) where the SAME spellings lex as plain idents and DO fire E2002
+// (full-position live sweep 2026-07-24). break=461195539042,
+// continue=7310870969309884259, return=121437875889522.
+pub fn tc_ui_is_divergent_kw(src: i64, lo: i64, hi: i64) -> i64 {
+    let w: i64 = tc_sf_word(src, lo, hi);
+    if w == 461195539042 {
+        return 1;
+    }
+    if w == 7310870969309884259 {
+        return 1;
+    }
+    if w == 121437875889522 {
+        return 1;
+    }
+    0
+}
+
 // Extended VALUE-ATOM context for a keyword-spelled name at p: the positions
 // where live's parser is expecting an expression atom, so the spelling
 // parses as `Lit(Ident)` and resolve.rs fires E2002 on it. The tcdiff
@@ -39926,6 +39976,19 @@ pub fn tc_ui_kw_val_ctx(toks: Vec, n: i64, p: i64, src: i64) -> i64 {
         // Struct-lit field VALUE only (an annotation type declines inside
         // tc_ui_colon_ctx — live-probed clean for keyword type spellings).
         if tc_ui_colon_ctx(toks, n, p, src) == 2 {
+            return 1;
+        }
+    }
+    if pk == tk_gt() {
+        // Match-arm body head `=> <atom>`. Live parses a folded-keyword arm
+        // body as `Lit(Ident)` and fires E2002 (use/pub/else/import/fn/let;
+        // `if` is excluded upstream as an if-expression) — live-probed
+        // 2026-07-24. The diverging control-flow keywords break/continue/
+        // return are the SOLE exception in this position (they parse as
+        // control flow, not Lit(Ident)); their decline is handled at the
+        // stmt-keyword gate in tc_is_unknown_ident, keyed on
+        // tc_ui_is_divergent_kw, so this context detector answers 1 uniformly.
+        if tc_ui_is_arm_body(toks, p) == 1 {
             return 1;
         }
     }
@@ -39994,13 +40057,29 @@ pub fn tc_ui_kw_value(toks: Vec, n: i64, q: i64, src: i64) -> i64 {
             // `kw(…)` — the E2003 callee domain (tc_uc_kw_callee).
             return 0 - 3;
         }
+        if tok_kind(toks, q + 1) == tk_eq() {
+            // `kw = …` plain assign TARGET (not `==`, not the `=>` arrow) — the
+            // E2009 domain, never an E2002 value-use, mirroring the tk_ident
+            // path's nk==tk_eq decline. This is the position where a folded
+            // keyword used as an assign target (`_ => fn = 5`) would otherwise
+            // over-fire E2002 (live attributes the assign to the arm pattern,
+            // never the target; live-probed 2026-07-24). A compound `kw OP= …`
+            // (tk_plus/… at q+1) still routes through tc_ui_kw_comp_tgt below,
+            // which correctly clones the LHS as a value use.
+            if q + 2 >= n {
+                return 0 - 3;
+            }
+            if tok_kind(toks, q + 2) != tk_gt() {
+                return 0 - 3;
+            }
+        }
     }
     if tc_ui_kw_val_ctx(toks, n, q, src) == 0 {
         if tc_ui_kw_comp_tgt(toks, n, q, src) == 0 {
             return 0 - 3;
         }
     }
-    let buf: i64 = __mind_alloc(4096);
+    let buf: i64 = __mind_alloc((n + 16) * 16);
     let sf: i64 = tc_sf_top(toks, n, 0, src, buf, q, tok_lo(toks, q), tok_hi(toks, q));
     if sf == 1 {
         return 0;
@@ -40050,6 +40129,17 @@ pub fn tc_ui_shape(toks: Vec, n: i64, p: i64, src: i64) -> i64 {
         return 0 - 3;
     }
     if tc_ui_stmt_kw_word(src, qlo, qhi) == 1 {
+        // Arm-body value head `=> break|continue|return`: live parses these as
+        // diverging control-flow, NOT Lit(Ident), so E2002 never fires — even
+        // though the SAME keywords ARE idents (and DO fire) at every pure-
+        // expression atom position (let-RHS, return value, call-arg, binop,
+        // cond-tail, struct-field value, index base, method receiver; live-
+        // swept 2026-07-24). Decline ONLY in the arm-body context.
+        if tc_ui_is_arm_body(toks, p) == 1 {
+            if tc_ui_is_divergent_kw(src, qlo, qhi) == 1 {
+                return 0 - 3;
+            }
+        }
         if tc_ui_kw_val_ctx(toks, n, p, src) == 0 {
             // Not a value atom — but a compound-assign TARGET's desugar
             // clones the LHS as a value use (`in += 2` fires E2002 at the
@@ -40229,7 +40319,7 @@ pub fn tc_is_unknown_ident(src: i64, src_len: i64, pos: i64, std_src: i64, std_l
     let lo: i64 = tok_lo(toks, p);
     let hi: i64 = tok_hi(toks, p);
     // D2: scopes.contains — a live local binding resolves the use.
-    let buf: i64 = __mind_alloc(4096);
+    let buf: i64 = __mind_alloc((n + 16) * 16);
     let sf: i64 = tc_sf_top(toks, n, 0, src, buf, p, lo, hi);
     if sf == 1 {
         return 0;
@@ -40487,7 +40577,7 @@ pub fn tc_ua_kw_target(toks: Vec, n: i64, q: i64, src: i64) -> i64 {
             return 0 - 3;
         }
     }
-    let buf: i64 = __mind_alloc(4096);
+    let buf: i64 = __mind_alloc((n + 16) * 16);
     let sf: i64 = tc_sf_top(toks, n, 0, src, buf, q, tok_lo(toks, q), tok_hi(toks, q));
     if sf == 1 {
         return 0;
@@ -40564,7 +40654,31 @@ pub fn tc_is_undeclared_assign(src: i64, src_len: i64, pos: i64, std_src: i64, s
         if q < 0 {
             return 0 - 3;
         }
+        if tc_ui_is_arm_body(toks, q) == 1 {
+            // Bare arm-body folded-keyword assign target (`_ => else = 5`):
+            // same column rule as the ident-target guard below — live
+            // attributes E2009 to the arm-pattern `_`, never the target token,
+            // so decline here (live-probed 2026-07-24).
+            return 0 - 3;
+        }
         return tc_ua_kw_target(toks, n, q, src);
+    }
+    if tc_ui_is_arm_body(toks, p) == 1 {
+        // deferred: bare arm-body assign `match _ => x = 5` — live places the
+        // E2009 diagnostic at the arm-PATTERN column (the `_`/binder span), NOT
+        // the l-value token `x`, so this positional query is EXACTLY silent at
+        // the l-value and the port declines (fail-closed) to match live there.
+        // COLUMN MISMATCH: live still reports the undeclared assign (by name)
+        // at the pattern column, which this l-value-keyed rule does not surface
+        // — the error is not mis-located, it is under-surfaced. Upgrade path:
+        // attribute the arm-body-assign E2009 to the arm-pattern span (emit at
+        // the pattern token) once the tc walk carries arm structure, then this
+        // guard fires at the pattern column instead of declining. Distinct from
+        // a BLOCK arm `_ => { x = v }` (l-value prev token is `{`, fails
+        // tc_ui_is_arm_body): live DOES fire at the l-value there and the port
+        // keeps firing, so no block-arm undeclared-assign is masked (live-
+        // probed 2026-07-24).
+        return 0 - 3;
     }
     let e: i64 = tc_ua_target_end(toks, n, p, src);
     if e < 0 {
@@ -40576,7 +40690,7 @@ pub fn tc_is_undeclared_assign(src: i64, src_len: i64, pos: i64, std_src: i64, s
     let len: i64 = tok_hi(toks, e) - qlo;
     if e == p {
         // Bare target: D2 scopes || D1 decls + prelude || D3 std exports.
-        let buf: i64 = __mind_alloc(4096);
+        let buf: i64 = __mind_alloc((n + 16) * 16);
         let sf: i64 = tc_sf_top(toks, n, 0, src, buf, p, qlo, qlo + len);
         if sf == 1 {
             return 0;
@@ -40937,7 +41051,7 @@ pub fn tc_uc_kw_callee(toks: Vec, n: i64, q: i64, src: i64) -> i64 {
             return 0 - 3;
         }
     }
-    let buf: i64 = __mind_alloc(4096);
+    let buf: i64 = __mind_alloc((n + 16) * 16);
     let sf: i64 = tc_sf_top(toks, n, 0, src, buf, q, tok_lo(toks, q), tok_hi(toks, q));
     if sf != 0 {
         return 0 - 3;
@@ -41004,7 +41118,7 @@ pub fn tc_is_unknown_call(src: i64, src_len: i64, pos: i64, std_src: i64, std_le
     // D2: scopes.contains — a live local binding is IN call_resolvable
     // (item 1 of the union): never E2003. (sf==1 with no other accept is
     // exactly where E2012 fires instead — the sibling boundary.)
-    let buf: i64 = __mind_alloc(4096);
+    let buf: i64 = __mind_alloc((n + 16) * 16);
     let sf: i64 = tc_sf_top(toks, n, 0, src, buf, p, lo, hi);
     if sf == 1 {
         return 0;

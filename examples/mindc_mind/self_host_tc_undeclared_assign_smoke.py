@@ -437,8 +437,15 @@ CASES = [
     ("classify", S_COMPOUND_OK, "k +=", 0, "compound += bound -> no (D2)"),
     ("classify", S_SHL, "zz", 0, "compound <<= undefined -> E2009"),
     ("classify", S_AMP_OK, "b &=", 0, "compound &= bound -> no (D2)"),
-    ("classify", S_ARM, "zz", 0, "match-arm body assign -> E2009"),
-    ("classify", S_ARM_BINDER, "n = 5", 0, "arm binder target -> no (D2)"),
+    # deferred-column class (Finding 2, 2026-07-24): live places the arm-body
+    # assign's E2009 at the arm-PATTERN column, not the l-value token, so the
+    # positional port declines at the l-value (fail-closed, matches live's
+    # exact-column silence). arm_defer asserts got==-3 AND live has no E2009 at
+    # the exact l-value column. See the `deferred:` marker in main.mind.
+    ("arm_defer", S_ARM, "zz", 0,
+     "arm-body assign: port declines at l-value; live E2009 at arm-pattern col (deferred)"),
+    ("arm_defer", S_ARM_BINDER, "n = 5", 0,
+     "arm binder (bound n) assign: port declines at l-value; no error at l-value"),
     ("classify", S_IN, "in =", 0, "`in` target (NOT a stmt kw) -> E2009"),
     ("classify", S_AS, "as =", 0, "`as` target (NOT a stmt kw) -> E2009"),
     ("classify", S_MUT, "mut =", 0, "`mut` target (NOT a stmt kw) -> E2009"),
@@ -550,6 +557,20 @@ def live_verdict(mindc, src, pos, workdir, idx):
     return 0
 
 
+def live_e2009_exact_col(mindc, src, pos, workdir, idx):
+    """1 iff live emits E2009 at the EXACT (line, col) of pos — no name
+    fallback. Used for the arm-body-assign deferred-column class: live places
+    the arm-body assign's E2009 at the arm-PATTERN column, so the l-value
+    position is exactly silent (see the `deferred:` marker in main.mind /
+    tc_is_undeclared_assign)."""
+    line = src.count("\n", 0, pos) + 1
+    col = pos - (src.rfind("\n", 0, pos) + 1) + 1
+    for ln, co, code, _nm in live_diags(mindc, src, workdir, idx):
+        if code == "E2009" and ln == line and co == col:
+            return 1
+    return 0
+
+
 def pos_of(src, needle, occ):
     hits = [m.start() for m in re.finditer(re.escape(needle), src)]
     return hits[occ]
@@ -647,6 +668,18 @@ def main():
                 exp = resolution_verdict(src, pos, std_set)
                 ok = got == exp == live
                 exp_s = str(exp)
+            elif mode == "arm_defer":
+                # deferred-column: live emits the arm-body-assign E2009 at the
+                # arm-PATTERN column, so the l-value position is exactly silent
+                # and the positional port declines there (fail-closed). Assert
+                # the decline AND that live has no E2009 at the exact l-value
+                # column (the deferred gap is that live's real diagnostic lands
+                # at the pattern column, which this l-value-keyed rule does not
+                # surface — see main.mind `deferred:` marker).
+                exp = -3
+                live_exact = live_e2009_exact_col(mindc, src, pos, workdir, idx)
+                ok = got == -3 and live_exact == 0
+                exp_s = "d-3(arm-col-defer)"
             else:  # decline — allowed ONLY where live-E2009 does not fire
                 exp = -3
                 ok = got == -3 and live == 0
