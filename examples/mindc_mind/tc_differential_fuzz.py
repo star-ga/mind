@@ -103,7 +103,18 @@ RULES = {
     "E2003": "selftest_tc_unknown_call",
     "E2009": "selftest_tc_undeclared_assign",
     "E2012": "selftest_tc_fn_value_call",
+    # T1 type-inference: `let x: T = <literal>` scalar-class mismatch (RFC 0011).
+    # E2004 narrowing is UNREACHABLE from a literal RHS (int literals are the
+    # narrowest int width), so the OBSERVABLE diagnostic for literal RHS is
+    # E2015 (LET_CLASS_MISMATCH_CODE). This rule runs a DEDICATED annotation ×
+    # RHS-literal corpus (run_e2015), not the position × token grid.
+    "E2015": "selftest_tc_let_infer_lit",
 }
+
+# The four source-POSITION classifier rules — the `--rule all` set and the only
+# rules driven through the position × token grid. E2015 is intentionally
+# excluded: it is a `let : =` value-class rule with its own corpus.
+POSITION_RULES = ["E2002", "E2003", "E2009", "E2012"]
 
 # Keywords the lexer folds to a non-tk_ident token kind (Rule 3c) — the
 # E2003 historical fail-open lived exactly here.
@@ -467,6 +478,12 @@ def modeled_verdict(port, rule, fclass, src, pos, mutation):
         return 1  # E2002 r2-class over-fire on true/false
     if mutation == "pos-off":
         return port.call(rule, src, pos + 1)
+    if mutation == "lit-flip" and fclass in ("float_lit", "int_lit", "bool_lit"):
+        # E2015 literal-tag-flip class: a mis-tagged float/int/bool literal
+        # inverts the fire decision. Guaranteed to diverge from live on every
+        # scored literal case (Rule 3b non-null proof).
+        real = port.call(rule, src, pos)
+        return 0 if real == 1 else 1
     return port.call(rule, src, pos)
 
 
@@ -676,6 +693,119 @@ def coverage_report(coverage, templates, enforce_floor):
     return True
 
 
+# ── E2015 (T1 let-class-mismatch) dedicated corpus ─────────────────────────
+# Annotation axis (position/context) × RHS-literal axis (token class). Verdicts
+# come SOLELY from live `mindc check` at the RHS hole — no Python leg-2, so the
+# gate cannot collude with the port's tokeniser (§1.4 null-gate class). The
+# class labels below are for the COVERAGE matrix only, never for scoring.
+E2015_ANNS = [
+    ("i32", "int"), ("i64", "int"), ("u32", "int"), ("bool", "int"),
+    ("i8", "int"), ("i16", "int"), ("u8", "int"), ("u16", "int"),
+    ("u64", "int"), ("isize", "int"), ("usize", "int"),
+    ("f32", "float"), ("f64", "float"),
+    ("String", "none"), ("Vec", "none"), ("Widget", "none"),
+]
+# RHS literal token classes (fclass, literal text). Strings lex to tk_unsupported
+# in the self-host lexer -> class-opaque -> never fires (matches live).
+E2015_RHS = [
+    ("int_lit", "42"), ("float_lit", "3.5"), ("str_lit", '"hi"'),
+    ("bool_lit", "true"), ("bool_lit", "false"),
+    # `1.5e-3` has a dotted mantissa so it lexes as ONE tk_float on both sides
+    # -> Float class -> agrees across the whole ann matrix (fires vs int anns,
+    # clean vs f32/f64). The exponent-WITHOUT-dot / underscore forms (1e5,
+    # 1_000.0) that the self-host number lexer mis-splits are DELIBERATE
+    # under-coverage (port declines, live fires vs int anns) — they cannot live
+    # in this full-agreement sweep; their no-over-fire invariant is gated in
+    # self_host_tc_let_infer_smoke.py::DEFERRED_NO_OVERFIRE instead.
+    ("float_lit", "1.5e-3"),
+]
+
+
+def gen_e2015_cases():
+    cases = []
+    for ann, _annc in E2015_ANNS:
+        for fclass, tok in E2015_RHS:
+            src = f"fn main() -> i64 {{\n    let z: {ann} = {tok}\n    return 0\n}}\n"
+            cases.append(Case(ann, fclass, tok, src, src.index(tok)))
+        # `let mut` modifier-slot variant (float RHS = a live-firing shape for
+        # every int ann, clean for f32/f64) — exercises the optional-mut head.
+        src = f"fn main() -> i64 {{\n    let mut z: {ann} = 3.5\n    return 0\n}}\n"
+        cases.append(Case(ann + "_mut", "float_lit", "3.5", src, src.index("3.5")))
+    return cases
+
+
+def e2015_templates():
+    return [(a, None) for a, _ in E2015_ANNS] + [(a + "_mut", None) for a, _ in E2015_ANNS]
+
+
+def e2015_sentinel(oracle):
+    fire = "fn main() -> i64 {\n    let z: f64 = 42\n    return 0\n}\n"
+    _, at = oracle.check(fire)
+    if "E2015" not in at.get(line_col(fire, fire.index("42")), set()):
+        fail_infra("E2015 sentinel — not at the RHS literal of `let z: f64 = 42`")
+    clean = "fn main() -> i64 {\n    let z: i32 = 42\n    return 0\n}\n"
+    codes, _ = oracle.check(clean)
+    if "E2015" in codes:
+        fail_infra("E2015 sentinel — spurious fire on clean `let z: i32 = 42`")
+    print("E2015 sentinel: fires at `f64 = 42` RHS + clean at `i32 = 42` (2/2)")
+
+
+def e2015_mutation_gate(port, oracle, cases):
+    """Rule 3b: plant a literal-tag flip; the gate MUST catch it, else null."""
+    caught, firing = None, 0
+    for case in cases:
+        codes, at = oracle.check(case.src)
+        if PARSE_ERROR_CODE in codes:
+            continue
+        if "E2015" in at.get(line_col(case.src, case.pos), set()):
+            firing += 1
+            state, div = eval_case(case, "E2015", port, oracle, "lit-flip")
+            if state == "divergent" and caught is None:
+                caught = div
+    if firing == 0:
+        fail_infra("E2015 mutation gate: no live-firing case in the corpus")
+    if caught is None:
+        print("MUTATION GATE FAILED: planted lit-flip mutant survived — null gate")
+        sys.exit(3)
+    shrunk = shrink(caught, port, oracle, "lit-flip")
+    print(
+        f"mutation gate: planted literal-tag-flip CAUGHT on E2015 "
+        f"({firing} live-firing cases; shrunk to "
+        f"{len(shrunk.case.src.splitlines())} lines, kind={shrunk.kind})"
+    )
+
+
+def run_e2015(args, port, oracle, rng):
+    """The E2015 pipeline: sentinel -> mutation gate (--ci) -> ANNxRHS sweep."""
+    e2015_sentinel(oracle)
+    cases = gen_e2015_cases()
+    if args.ci and not args.mutate:
+        e2015_mutation_gate(port, oracle, cases)
+    stats, coverage, divergences = sweep(
+        ["E2015"], cases, port, oracle, args.mutate, args.shrink
+    )
+    floor_ok = coverage_report(coverage, e2015_templates(), enforce_floor=args.ci)
+    parseable = stats["generated"] - stats["unparseable"]
+    print(
+        f"\ntcdiff E2015 sweep: generated={stats['generated']} "
+        f"parseable={parseable} unparseable={stats['unparseable']} "
+        f"scored={stats['scored']} divergences={len(divergences)}"
+    )
+    if divergences:
+        print("RESULT: DIVERGENT — the pure-MIND port disagrees with live mindc"
+              + (" (planted mutant caught — the gate works)" if args.mutate else ""))
+        return 1
+    if args.mutate:
+        print("MUTATION GATE FAILED: planted bug produced ZERO divergences — "
+              "null gate")
+        return 3
+    if not floor_ok:
+        return 1
+    print("RESULT: 0 divergences — E2015 port agrees with live mindc on every "
+          "parseable ANNxRHS case")
+    return 0
+
+
 # ── main ───────────────────────────────────────────────────────────────────
 def main():
     ap = argparse.ArgumentParser(
@@ -690,7 +820,7 @@ def main():
         "--mutate",
         nargs="?",
         const="bool-overfire",
-        choices=["bool-overfire", "suppress", "pos-off"],
+        choices=["bool-overfire", "suppress", "pos-off", "lit-flip"],
         default=None,
     )
     shr = ap.add_mutually_exclusive_group()
@@ -704,7 +834,7 @@ def main():
         CI_SEED if args.ci else random.randrange(2 ** 32)
     )
     rng = random.Random(seed)
-    rules = list(RULES) if args.rule == "all" else [args.rule]
+    rules = list(POSITION_RULES) if args.rule == "all" else [args.rule]
     mutation = args.mutate
     print(
         f"tcdiff: rules={rules} seed={seed:#x} budget={args.budget} "
@@ -731,6 +861,14 @@ def main():
     exit_code = 0
     with tempfile.TemporaryDirectory() as workdir:
         oracle = LiveOracle(os.environ.get("MINDC_BIN", "mindc"), workdir)
+        if rules == ["E2015"]:
+            exit_code = run_e2015(args, port, oracle, rng)
+            if built:
+                try:
+                    os.unlink(so)
+                except OSError:
+                    pass
+            sys.exit(exit_code)
         sentinels(oracle)
         if args.ci and not mutation:
             for rule in rules:

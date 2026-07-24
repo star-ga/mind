@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3179 | **Est. tokens:** ~7,588,446
-**Generated:** 2026-07-22 08:20 UTC
+**Files:** 3207 | **Est. tokens:** ~7,711,274
+**Generated:** 2026-07-24 11:22 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 33 | ~25,596 |
+| `./` | 33 | ~25,641 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -40,7 +40,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,450 |
-| `docs/` | 30 | ~51,800 |
+| `docs/` | 32 | ~69,204 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
@@ -58,7 +58,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 109 | ~194,800 |
+| `examples/mindc_mind/` | 135 | ~299,521 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
 | `examples/native/` | 4 | ~527 |
@@ -69,7 +69,7 @@
 | `.githooks/` | 1 | ~255 |
 | `.github/` | 3 | ~149 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 9 | ~14,696 |
+| `.github/workflows/` | 9 | ~15,354 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~18,670 |
 | `scripts/` | 9 | ~11,565 |
@@ -502,7 +502,7 @@
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~1256 tok, large) — Security Policy
 - `.sembleignore` (~72 tok, small) — # semble code-search ignore list
-- `STATUS.md` (~4364 tok, huge) — MIND Compiler Status
+- `STATUS.md` (~4409 tok, huge) — MIND Compiler Status
 - `test_real_compile_time.py` (~265 tok, medium) — Quick test of real MIND compilation time using Python bindings."""
 ### `agents/`
 
@@ -679,11 +679,12 @@
 - `errors.md` (~701 tok, large) — MIND Core Error Model
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
 - `gpu.md` (~387 tok, medium) — GPU backend profile
-- `INDEPENDENCE_ROADMAP.md` (~6473 tok, huge) — MIND Rust-Independence Roadmap
+- `INDEPENDENCE_ROADMAP.md` (~14198 tok, huge) — MIND Rust-Independence Roadmap
 - `install.md` (~1012 tok, large) — Installing mindc
 - `ir.md` (~451 tok, medium) — MIND IR core
 - `ir-mlir.md` (~480 tok, medium) — IR & MLIR Integration
 - `ir-stability.md` (~1485 tok, large) — IR stability contract
+- `migration-roadmap.md` (~1896 tok, huge) — MIND Migration Roadmap — Any Language → Pure Executing MIND
 ### `docs/mindcraft/`
 
 - `fmt.md` (~2302 tok, huge) — `mindc fmt` — Canonical Formatter Reference
@@ -744,6 +745,7 @@
 ### `docs/`
 
 - `type-system.md` (~1082 tok, large) — Type System
+- `VERIFICATION_APPARATUS.md` (~7783 tok, huge) — Self-Host Port Verification Apparatus & SOTA Roadmap
 - `versioning.md` (~804 tok, large) — MIND Core Stability & Versioning
 - `version-matrix.md` (~1796 tok, huge) — MIND Ecosystem — Version Matrix
 - `whitepaper.md` (~2788 tok, huge) — MIND: The Native Language for Intelligent Systems
@@ -842,16 +844,20 @@
 
 - `bootstrap_smoke.py` (~2329 tok, huge)
 - `check_driver.mind` (~3938 tok, huge) — ===========================================================================
+- `closure_netverify.py` (~1414 tok, large) — # Canonical independent net-verify harness for CLOSURES / FN-VALUES / UNRESOLVED
 - `collect_field_strings_smoke.py` (~1161 tok, large)
 - `cutover_coverage_measure.py` (~2238 tok, huge)
 - `div_shift_cmp_edge_smoke.py` (~1846 tok, huge)
+- `enum_netverify.py` (~1840 tok, huge) — # Canonical independent net-verify harness for C-LIKE ENUMS in the native-ELF backend.
 - `EXPECTED.md` (~773 tok, large) — Phase 6.5 Stage 5 — Expected IR Text (APEX)
-- `fast_keystone.sh` (~2300 tok, huge) — fast_keystone.sh — fast LOCAL front-end keystone gate for the pure-MIND self-host
+- `fast_keystone.sh` (~3154 tok, huge) — fast_keystone.sh — fast LOCAL front-end keystone gate for the pure-MIND self-host
+- `field_store_netverify.py` (~1404 tok, large) — # Canonical independent value harness for struct field STORES (`p.x = v`) in the
 - `FIXED_POINT_REPORT.md` (~1770 tok, huge) — Phase 6.5 — Bootstrap Fixed-Point Report
 - `fixed_point_smoke.py` (~3275 tok, huge)
 - `fixture.mind` (~183 tok, small) — Phase 6.4 emit_ir smoke fixture.
 - `full_strtab_smoke.py` (~1663 tok, huge)
 - `gap_corpus_smoke.py` (~1922 tok, huge)
+- `general_float_netverify.py` (~1779 tok, huge) — general_float_netverify.py — GENERAL-path f64 value battery (B0 gate lift).
 - `.gitignore` (~5 tok, tiny) — __pycache__/
 - `match_struct_smoke.py` (~1311 tok, large)
 - `method_callee_smoke.py` (~1350 tok, large)
@@ -862,14 +868,17 @@
 - `mod_operator_smoke.py` (~2100 tok, huge)
 - `multi_let_smoke.py` (~1499 tok, large)
 - `now_ns_smoke.py` (~678 tok, large) — # Copyright 2025 STARGA Inc.
-- `oracle_parity_lint.py` (~3034 tok, huge)
+- `option_netverify.py` (~2312 tok, huge) — # Canonical independent net-verify harness for SINGLE-PAYLOAD ENUMS (the
+- `oracle_parity_lint.py` (~3627 tok, huge)
 - `param_types_smoke.py` (~1273 tok, large)
 - `_ref_add.note` (~16 tok, tiny) — 757f339973d282495a5d15f72a761b6baf3a6b38dc08deb95400e03318bc5de0
 - `_ref_if_ret.note` (~16 tok, tiny) — d042c5006591bd69365074c242559b25d031bb550f0d282255a57f3563c1ff45
 - `_ref_main.note` (~16 tok, tiny) — 52d6b1210f0b294848c30b4f7a96c4b203e2d560126f31efde31de931da34b50
+- `ref_netverify.py` (~1464 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
 - `_ref_recursion.note` (~16 tok, tiny) — 320e76629d23b18074bd73d2a0849074be06099452bb530ed19e0657f32c6fc5
 - `_ref_struct_field.note` (~16 tok, tiny) — 062dd03998de380436f501819bf8ee1e05901d427a2f0ed3614310d020aa0e1b
 - `_ref_value_if.note` (~16 tok, tiny) — 5abd28b3622a896e51617f2bbe0f6976231cb607664c0471c4a3dbebfc5e72d5
+- `self_host_andor_smoke.py` (~2065 tok, huge) — Permanent battery for the self-host `&&` / `||` short-circuit operators.
 - `self_host_arena_growth_smoke.py` (~1382 tok, large)
 - `self_host_args_from_os_smoke.py` (~1356 tok, large)
 - `selfhost_argv_driver.mind` (~1187 tok, large) — ===========================================================================
@@ -879,10 +888,16 @@
 - `self_host_check_driver_smoke.py` (~2045 tok, huge)
 - `selfhost_driver.mind` (~623 tok, large) — ===========================================================================
 - `self_host_dtype_tag_smoke.py` (~780 tok, large) — RI-B1 per-SSA dtype-tag gate (parser <-> nb_fp_* encoder connecting construct).
+- `self_host_else_if_smoke.py` (~1715 tok, huge)
+- `self_host_failclosed_smoke.py` (~3559 tok, huge) — self_host_failclosed_smoke.py — the fail-closed boundary of the pure-MIND
 - `self_host_float_lit_exact_smoke.py` (~1069 tok, large) — CPU-as-oracle smoke for the C1 float-literal exactness guard.
+- `self_host_for_smoke.py` (~1891 tok, huge) — Permanent battery for the self-host range-`for` loop.
+- `self_host_if_region_carry_smoke.py` (~4552 tok, huge) — Native-ELF smoke: i64 loop-carry through BRANCHED regions (Sub-step C).
+- `self_host_lockstep_smoke.py` (~2161 tok, huge) — SUB-STEP A lockstep smoke: the loop-carry frame COUNT and the loop-carry EMIT are
 - `self_host_loop_smoke.py` (~3420 tok, huge)
+- `self_host_match_smoke.py` (~1893 tok, huge)
 - `self_host_mlir_smoke.py` (~1736 tok, huge)
-- `self_host_narrow_param_smoke.py` (~1528 tok, huge) — Fail-closed guard smoke for narrow-width (i8/i16/i32) function PARAMETERS.
+- `self_host_narrow_param_smoke.py` (~10070 tok, huge) — Native-ELF smoke for narrow-width (i8/i16/i32) function PARAMETERS carried by a loop.
 - `self_host_native_autowrap_smoke.py` (~2442 tok, huge) — Roadmap C2 declared-width AUTO-WRAP driver — narrow-int (i8/i16/i32) `let` and
 - `self_host_native_avx2_dot_f32_smoke.py` (~1559 tok, huge) — RI-B2-S13 (#108) — native-ELF PACKED-f32 SIMD via 256-bit AVX2 (VEX/YMM) STRICT-FP DOT.
 - `self_host_native_blas_dot_i16_smoke.py` (~2879 tok, huge)
@@ -892,9 +907,9 @@
 - `self_host_native_dot_l1_q16_smoke.py` (~1088 tok, large) — RI-B2 L1-Q16 rung (#108) — native-ELF Q16.16 L1 distance.
 - `self_host_native_elf_smoke.py` (~10783 tok, huge)
 - `self_host_native_fp_binop_smoke.py` (~1095 tok, large) — RI-B1 nb_expr FLOAT-op-FLOAT arithmetic routing gate (zero MLIR/LLVM).
-- `self_host_native_fp_call_smoke.py` (~5200 tok, huge) — RI-D2 S-C1: FLOAT call-RETURN dtype through the native-ELF general nb_expr lowering.
+- `self_host_native_fp_call_smoke.py` (~5471 tok, huge) — RI-D2 S-C1: FLOAT call-RETURN dtype through the native-ELF general nb_expr lowering.
 - `self_host_native_fp_expr_smoke.py` (~1020 tok, large) — RI-B1 nb_expr float-scalar routing gate (zero MLIR/LLVM).
-- `self_host_native_fp_field_smoke.py` (~1334 tok, large) — RI-D2 S-D FLOAT struct-FIELD READ dtype through native-ELF general lowering (zero MLIR).
+- `self_host_native_fp_field_smoke.py` (~1832 tok, huge) — RI-D2 S-D FLOAT struct-FIELD READ dtype through native-ELF general lowering (zero MLIR).
 - `self_host_native_fp_let_smoke.py` (~1208 tok, large) — RI-B1 (#107 follow-up) FLOAT dtype propagation ACROSS a LET binding (zero MLIR/LLVM).
 - `self_host_native_fp_param_smoke.py` (~1403 tok, large) — RI-D2 S-B: FLOAT fn-param dtype classification + SysV SSE-spill ABI (zero MLIR/LLVM).
 - `self_host_native_fp_smoke.py` (~1142 tok, large) — RI-B1 native-ELF scalar-f64 gate (zero MLIR/LLVM).
@@ -910,6 +925,7 @@
 - `self_host_native_narrow_add_i8_smoke.py` (~2260 tok, huge) — C2 — native-ELF NARROW-INT (i8) WRAP ARITHMETIC, zero MLIR/LLVM.
 - `self_host_native_narrow_arith_batch_smoke.py` (~2554 tok, huge) — C2 — native-ELF NARROW-INT WRAP ARITHMETIC batch: {sub,mul}xi8 + {add,mul}xi16.
 - `self_host_native_narrowint_smoke.py` (~1656 tok, huge) — Roadmap C2 narrow-int native-ELF rung — user-reachable i8/i16/i32 truncating
+- `self_host_native_narrow_paramret_smoke.py` (~1949 tok, huge) — Byte-behavior smoke for narrow-int (i8/i16/i32) PARAM + RETURN auto-wrap in the
 - `self_host_native_narrowwrap_smoke.py` (~1673 tok, huge) — Roadmap C2 narrow-int native-ELF rung — user-reachable i8/i16/i32 two's-complement
 - `self_host_native_scalar_f32_smoke.py` (~1342 tok, large) — Phase C1-remainder f32 rung — native-ELF scalar SINGLE-precision chain.
 - `self_host_native_scalar_f64_smoke.py` (~1201 tok, large) — RI-B2 f64 rung (#108) — native-ELF scalar STRICT-FP f64 CHAIN.
@@ -928,6 +944,7 @@
 - `self_host_native_tensor_rowmin_smoke.py` (~2353 tok, huge) — C4-T6 — native-ELF tensor ROW MIN-REDUCTION (i64), zero MLIR/LLVM.
 - `self_host_native_tensor_rowsum_smoke.py` (~1958 tok, huge) — C4-T4 — native-ELF tensor ROW REDUCTION (i64), zero MLIR/LLVM.
 - `self_host_native_tensor_transpose_smoke.py` (~2224 tok, huge) — C4-T4 — native-ELF tensor TRANSPOSE (i64), zero MLIR/LLVM.
+- `self_host_native_toplevel_assign_smoke.py` (~3477 tok, huge) — INDEPENDENCE_ROADMAP Phase-C follow-up — TOP-LEVEL STRAIGHT-LINE i64 REASSIGN
 - `self_host_native_write8_smoke.py` (~929 tok, large) — RI-B2-S2 STEP A (#108) — de-risk the C1 "emit 8 LE bytes to stdout + hash" gate.
 - `self_host_native_write_f32_smoke.py` (~815 tok, large) — RI-B2-S8 STEP A (#108) — de-risk the raw-f32-bytes harness on a KNOWN f32.
 - `self_host_open_smoke.py` (~1310 tok, large)
@@ -937,15 +954,26 @@
 - `self_host_tc_classify_error_code_smoke.py` (~2158 tok, huge) — CPU-as-oracle smoke for the pure-MIND classify_error_code router.
 - `self_host_tc_class_mismatch_smoke.py` (~840 tok, large) — CPU-as-oracle smoke for the pure-MIND E2015 int<->float class-mismatch rule.
 - `self_host_tc_class_rules_smoke.py` (~1560 tok, huge) — CPU-as-oracle smoke for the pure-MIND E2010/E2011/E2013/E2016 class rules.
+- `self_host_tc_decl_names_smoke.py` (~3329 tok, huge) — CPU-as-oracle smoke for the pure-MIND D1 module DECL-NAME SET.
 - `self_host_tc_fixed_bytes_into_vec_smoke.py` (~1110 tok, large) — CPU-as-oracle smoke for the pure-MIND E2006 FIXED_BYTES_INTO_VEC rule (Bug #38).
+- `self_host_tc_fn_value_call_smoke.py` (~6982 tok, huge) — CPU-as-oracle smoke for the pure-MIND B1/D4 CAPSTONE — the FULL E2012 rule.
 - `self_host_tc_let_class_mismatch_smoke.py` (~991 tok, large) — CPU-as-oracle smoke for the pure-MIND E2015 LET_CLASS_MISMATCH let/assign rule.
+- `self_host_tc_let_infer_smoke.py` (~2011 tok, huge) — self_host_tc_let_infer_smoke — three-leg gate for the T1 type-inference port.
 - `self_host_tc_narrowing_smoke.py` (~1042 tok, large)
+- `self_host_tc_scope_frame_smoke.py` (~5434 tok, huge) — CPU-as-oracle smoke for the pure-MIND B1/D2 NESTED SCOPE-FRAME WALK.
+- `self_host_tc_self_host_only_call_smoke.py` (~1833 tok, huge) — CPU-as-oracle smoke for the pure-MIND E2024 self-host-only-call rule.
 - `self_host_tc_shape_annot_compat_smoke.py` (~1615 tok, huge) — CPU-as-oracle smoke for the pure-MIND shape annotation-compat rule.
 - `self_host_tc_shape_rules_smoke.py` (~1820 tok, huge) — CPU-as-oracle smoke for the pure-MIND E2005/E2101/E2102/E2103 shape rules + E2023 reserved-prefix rule.
+- `self_host_tc_std_export_smoke.py` (~3178 tok, huge) — CPU-as-oracle smoke for the pure-MIND D3 STD-SURFACE EXPORT NAME SET.
+- `self_host_tc_undeclared_assign_smoke.py` (~6743 tok, huge) — CPU-as-oracle smoke for the pure-MIND B1 E2009 rule — undeclared assign.
+- `self_host_tc_unknown_call_smoke.py` (~8459 tok, huge) — CPU-as-oracle smoke for the pure-MIND B1 E2003 rule — unknown call.
+- `self_host_tc_unknown_ident_smoke.py` (~10920 tok, huge) — CPU-as-oracle smoke for the pure-MIND B1 E2002 rule — unknown identifier.
+- `self_host_tc_unknown_variant_smoke.py` (~1911 tok, huge) — CPU-as-oracle smoke for the pure-MIND E2008 unknown-enum-variant rule.
 - `self_host_value_if_expr_smoke.py` (~1557 tok, huge)
 - `sha256_hash_smoke.py` (~732 tok, large) — # Copyright 2025 STARGA Inc.
 - `struct_fields_smoke.py` (~1076 tok, large)
 - `struct_lit_smoke.py` (~1923 tok, huge)
+- `tc_differential_fuzz.py` (~9688 tok, huge) — tcdiff — differential fuzzer for the self-host source-position tc-rule ports.
 ### `examples/mindc_mind/testdata/native_elf_oracle/`
 
 - `add.elf` (~125 tok, small) — ELF> @@@8
@@ -1032,7 +1060,7 @@
 
 - `bench-gate.yml` (~1442 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~222 tok, medium) — name: Cargo Deny
-- `ci.yml` (~8647 tok, huge) — name: CI
+- `ci.yml` (~9305 tok, huge) — name: CI
 - `crypto-vectors.yml` (~1238 tok, large) — name: Crypto Vectors
 - `docs-claims.yml` (~364 tok, medium) — name: Docs Claims
 - `link-check.yml` (~221 tok, medium) — name: Link Check

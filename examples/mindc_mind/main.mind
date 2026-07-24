@@ -4220,6 +4220,341 @@ pub fn tc_is_implicit_narrowing(to_ty: i64, from_ty: i64) -> i64 {
     0
 }
 
+// ===== T1 type-inference: infer_expr_tag (LEAF literals) + let-class gate =====
+//
+// Pure-MIND port of the RHS front-end of src/type_checker/mod.rs. For a
+// `let NAME: ANN = <literal>` binding INSIDE a fn body the ONLY observable
+// diagnostic on a LITERAL RHS is E2015 (LET_CLASS_MISMATCH_CODE, the RFC-0011
+// "no implicit int<->float conversion" rule, mod.rs:3016-3050): it fires iff
+// the annotation's scalar CLASS and the RHS literal's scalar CLASS are both
+// determinate and DIFFER. E2004 narrowing is UNREACHABLE from a literal RHS —
+// every int literal is ScalarI32 (the narrowest int width), so no destination
+// is strictly narrower; narrowing needs an i64 SOURCE (a variable / expr),
+// which is slice T2's Ident-RHS. PROVEN for the lexer-clean literal leaves
+// (decimal/hex/octal/binary int, `<digits>.<digits>` float, bool, string)
+// across the ANNxRHS class matrix. DEFERRED (decline, safe under-coverage — a
+// wrong verdict never, only "not yet"): (a) exponent/underscore numeric forms
+// `1e5` / `1_000.0`, blocked on the self-host number lexer (see infer_expr_tag
+// fail-closed guard below); (b) Neg / Paren / Ident / Call / Binary RHS = slice
+// T2+. Scalar class: 1=Int, 2=Float, 0=None (opaque / non-scalar).
+
+// RHS literal tag from the token at index i (the value hole). Reuses the ty_*
+// tag vocabulary: int literal -> ty_i32 (ScalarI32), float -> ty_f64
+// (ScalarF64), bool literal true/false -> ty_i32 (the parser folds true/false
+// to Int(1/0), mod.rs:825 + parser/mod.rs:4108). Every other leaf (string —
+// which lexes to tk_unsupported — operator, keyword, ...) -> ty_unknown: the
+// class-opaque, FAIL-CLOSED sentinel that raises no diagnostic, mirroring
+// confident_scalar_class returning None (mod.rs:2976). NOTE the deliberate
+// divergence from infer_expr's nominal Str -> ScalarI32 (mod.rs:827): the
+// OBSERVABLE E2015 gate runs off confident_scalar_class, which treats a string
+// literal as class-None, so a str tag of i32 would spuriously fire E2015 on
+// `let x: f64 = "s"` (live: clean). ty_unknown is the correct class-opaque tag.
+pub fn infer_expr_tag(toks: Vec, i: i64, src: i64, src_len: i64) -> i64 {
+    let k: i64 = tok_kind(toks, i);
+    if k == tk_int() {
+        // FAIL-CLOSED on numeric literals the self-host number lexer MIS-SPLITS.
+        // scan_int_end (:553) consumes neither an exponent (e/E) nor `_` digit
+        // separators (float rule exponent form is deferred at :676), so `1e5`
+        // lexes as tk_int("1")+tk_ident("e5") and `1_000.0` as
+        // tk_int("1")+tk_ident("_000")+... . The Rust frontend parses BOTH as
+        // Literal::Float (parser/mod.rs:4253 underscore, :4308 exponent), so a
+        // confident Int tag here spuriously FIRES E2015 on `let x: f64 = 1e5`
+        // (live: clean) — a false positive that rejects valid code. When the
+        // tk_int is IMMEDIATELY followed by e/E/_ it is the head of such a
+        // mis-split literal: return the class-opaque sentinel (decline, like a
+        // string) so confident_scalar_class=None and NO diagnostic fires. This
+        // UNDER-covers `1_000` / `1e5` (the safe direction — honest "not yet",
+        // never a wrong verdict). deferred: real fix is exponent + `_` in the
+        // self-host number scanner (scan_int_end :553 / float rule :676) — a
+        // byte-identity-gated mind-self-host task; until then classify only
+        // lexer-clean integer literals.
+        let hi: i64 = tok_hi(toks, i);
+        if hi < src_len {
+            let nx: i64 = load_byte(src, hi);
+            if nx == 95 {
+                return ty_unknown();
+            }
+            if nx == 101 {
+                return ty_unknown();
+            }
+            if nx == 69 {
+                return ty_unknown();
+            }
+        }
+        return ty_i32();
+    }
+    if k == tk_float() {
+        return ty_f64();
+    }
+    if k == tk_ident() {
+        if tc_lit_is_bool(src, tok_lo(toks, i), tok_hi(toks, i)) == 1 {
+            return ty_i32();
+        }
+    }
+    ty_unknown()
+}
+
+// 1 iff the byte range spells `true` (116,114,117,101) or `false`
+// (102,97,108,115,101). true/false lex as tk_ident in the self-host lexer
+// (classify_ident does not fold them) — the parser is the fold point.
+pub fn tc_lit_is_bool(buf: i64, lo: i64, hi: i64) -> i64 {
+    let ln: i64 = hi - lo;
+    if ln == 4 {
+        if load_byte(buf, lo + 0) == 116 {
+            if load_byte(buf, lo + 1) == 114 {
+                if load_byte(buf, lo + 2) == 117 {
+                    if load_byte(buf, lo + 3) == 101 {
+                        return 1;
+                    }
+                }
+            }
+        }
+    }
+    if ln == 5 {
+        if load_byte(buf, lo + 0) == 102 {
+            if load_byte(buf, lo + 1) == 97 {
+                if load_byte(buf, lo + 2) == 108 {
+                    if load_byte(buf, lo + 3) == 115 {
+                        if load_byte(buf, lo + 4) == 101 {
+                            return 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    0
+}
+
+// Scalar CLASS of a value TAG: 1=Int, 2=Float, 0=None. Mirrors the Rust
+// class(ValueType) grouping used by same_scalar_class / RFC 0011. The RHS leaf
+// map only ever yields ty_i32 / ty_f64 / ty_unknown, but ty_i64 / ty_bool map
+// to Int too so the helper is correct for the future typed-env (T2) tags.
+pub fn tc_scalar_class_of_tag(ty: i64) -> i64 {
+    if ty == ty_i32() {
+        return 1;
+    }
+    if ty == ty_i64() {
+        return 1;
+    }
+    if ty == ty_bool() {
+        return 1;
+    }
+    if ty == ty_f64() {
+        return 2;
+    }
+    0
+}
+
+// Scalar CLASS of an ANNOTATION name span: 1=Int, 2=Float, 0=None. Byte-exact
+// port of scalar_class_of_ann (mod.rs:2938): Int = i8/i16/i32/i64 · u8/u16/u32/
+// u64 · isize/usize · bool; Float = f32/f64; everything else (String, Vec, an
+// unknown Named, a compound type) = None. resolve_type_ident is NOT reused
+// here: it lacks f32/u32 and returns TAGS, not CLASSES, so it would under-fire
+// (a live-firing `let x: f32 = 42` / `let x: u32 = 3.5`).
+pub fn tc_ann_scalar_class(buf: i64, lo: i64, hi: i64) -> i64 {
+    let ln: i64 = hi - lo;
+    if ln == 2 {
+        return tc_ann_cls2(buf, lo);
+    }
+    if ln == 3 {
+        return tc_ann_cls3(buf, lo);
+    }
+    if ln == 4 {
+        return tc_ann_cls_bool(buf, lo);
+    }
+    if ln == 5 {
+        return tc_ann_cls_size(buf, lo);
+    }
+    0
+}
+
+// len-2 int scalars: `i8` (105,56) / `u8` (117,56).
+pub fn tc_ann_cls2(buf: i64, lo: i64) -> i64 {
+    if load_byte(buf, lo + 1) == 56 {
+        let c0: i64 = load_byte(buf, lo);
+        if c0 == 105 {
+            return 1;
+        }
+        if c0 == 117 {
+            return 1;
+        }
+    }
+    0
+}
+
+// len-3 scalars: `i`/`u` + {16,32,64} -> Int; `f` + {32,64} -> Float.
+pub fn tc_ann_cls3(buf: i64, lo: i64) -> i64 {
+    let c0: i64 = load_byte(buf, lo);
+    let c1: i64 = load_byte(buf, lo + 1);
+    let c2: i64 = load_byte(buf, lo + 2);
+    if c0 == 105 {
+        return tc_ann_int_suffix(c1, c2);
+    }
+    if c0 == 117 {
+        return tc_ann_int_suffix(c1, c2);
+    }
+    if c0 == 102 {
+        return tc_ann_float_suffix(c1, c2);
+    }
+    0
+}
+
+// `16` (49,54) / `32` (51,50) / `64` (54,52) -> 1 (Int width), else 0.
+pub fn tc_ann_int_suffix(c1: i64, c2: i64) -> i64 {
+    if c1 == 49 {
+        if c2 == 54 {
+            return 1;
+        }
+    }
+    if c1 == 51 {
+        if c2 == 50 {
+            return 1;
+        }
+    }
+    if c1 == 54 {
+        if c2 == 52 {
+            return 1;
+        }
+    }
+    0
+}
+
+// `32` (51,50) / `64` (54,52) -> 2 (Float); f16 is NOT a scalar_class_of_ann
+// Float, so a `16` suffix stays None.
+pub fn tc_ann_float_suffix(c1: i64, c2: i64) -> i64 {
+    if c1 == 51 {
+        if c2 == 50 {
+            return 2;
+        }
+    }
+    if c1 == 54 {
+        if c2 == 52 {
+            return 2;
+        }
+    }
+    0
+}
+
+// `bool` (98,111,111,108) -> Int.
+pub fn tc_ann_cls_bool(buf: i64, lo: i64) -> i64 {
+    if load_byte(buf, lo + 0) == 98 {
+        if load_byte(buf, lo + 1) == 111 {
+            if load_byte(buf, lo + 2) == 111 {
+                if load_byte(buf, lo + 3) == 108 {
+                    return 1;
+                }
+            }
+        }
+    }
+    0
+}
+
+// `isize` (105,...) / `usize` (117,...) — both end `size` (115,105,122,101).
+pub fn tc_ann_cls_size(buf: i64, lo: i64) -> i64 {
+    let c0: i64 = load_byte(buf, lo);
+    if c0 == 105 {
+        return tc_ann_size_tail(buf, lo);
+    }
+    if c0 == 117 {
+        return tc_ann_size_tail(buf, lo);
+    }
+    0
+}
+
+pub fn tc_ann_size_tail(buf: i64, lo: i64) -> i64 {
+    if load_byte(buf, lo + 1) == 115 {
+        if load_byte(buf, lo + 2) == 105 {
+            if load_byte(buf, lo + 3) == 122 {
+                if load_byte(buf, lo + 4) == 101 {
+                    return 1;
+                }
+            }
+        }
+    }
+    0
+}
+
+// 1 iff the byte range spells `mut` (109,117,116) — an optional binding
+// modifier between `let` and the name; lexes as tk_ident (not folded).
+pub fn tc_lit_is_mut(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo == 3 {
+        if load_byte(buf, lo + 0) == 109 {
+            if load_byte(buf, lo + 1) == 117 {
+                if load_byte(buf, lo + 2) == 116 {
+                    return 1;
+                }
+            }
+        }
+    }
+    0
+}
+
+// 1 iff tokens r-1..r-k form the `let NAME : ANN =` head immediately before the
+// RHS hole at index r (optionally `let mut NAME : ANN =`). Fail-closed: any
+// other shape (no annotation, compound/qualified type, missing `let`) returns
+// 0 so the driver declines (-3) rather than guessing.
+pub fn tc_lil_head_ok(toks: Vec, n: i64, r: i64, src: i64) -> i64 {
+    if r < 5 {
+        return 0;
+    }
+    if tok_kind(toks, r - 1) != tk_eq() {
+        return 0;
+    }
+    if tok_kind(toks, r - 2) != tk_ident() {
+        return 0;
+    }
+    if tok_kind(toks, r - 3) != tk_colon() {
+        return 0;
+    }
+    if tok_kind(toks, r - 4) != tk_ident() {
+        return 0;
+    }
+    if tok_kind(toks, r - 5) == tk_kw_let() {
+        return 1;
+    }
+    if r >= 6 {
+        if tok_kind(toks, r - 5) == tk_ident() {
+            if tc_lit_is_mut(src, tok_lo(toks, r - 5), tok_hi(toks, r - 5)) == 1 {
+                if tok_kind(toks, r - 6) == tk_kw_let() {
+                    return 1;
+                }
+            }
+        }
+    }
+    0
+}
+
+// Driver: E2015 verdict for a `let NAME: ANN = <literal@pos>` binding. Returns
+// 1 (fires: ann-class and rhs-class both determinate and DIFFER), 0 (in-domain
+// no-fire: same class, string RHS, or non-scalar annotation), or -3 (declines:
+// the head at pos is not a `let : =` literal binding — out of T1 scope). One
+// lex of src feeds the whole verdict (arena rule). std_src/std_len are unused
+// (literals need no symbol resolution) but kept for ABI uniformity.
+pub fn tc_let_infer_lit(src: i64, src_len: i64, pos: i64, std_src: i64, std_len: i64) -> i64 {
+    let toks: Vec = lex(src, src_len);
+    let n: i64 = tok_count(toks);
+    let r: i64 = tc_uc_find_tok(toks, n, 0, pos);
+    if r < 0 {
+        return 0 - 3;
+    }
+    if tc_lil_head_ok(toks, n, r, src) == 0 {
+        return 0 - 3;
+    }
+    let ann_cls: i64 = tc_ann_scalar_class(src, tok_lo(toks, r - 2), tok_hi(toks, r - 2));
+    if ann_cls == 0 {
+        return 0;
+    }
+    let rhs_cls: i64 = tc_scalar_class_of_tag(infer_expr_tag(toks, r, src, src_len));
+    if rhs_cls == 0 {
+        return 0;
+    }
+    if ann_cls == rhs_cls {
+        return 0;
+    }
+    1
+}
+
 // Isolated selftest entry (ADDITIVE — never reached through mindc_compile, so
 // the mic@1 canary / self-host loop are untouched by its logic). Resolves two
 // type NAMES chosen by selector through the real resolve_type_ident path, then
@@ -40335,6 +40670,12 @@ pub fn tc_is_unknown_ident(src: i64, src_len: i64, pos: i64, std_src: i64, std_l
 
 pub fn selftest_tc_unknown_ident(src: i64, src_len: i64, pos: i64, std_src: i64, std_len: i64) -> i64 {
     tc_is_unknown_ident(src, src_len, pos, std_src, std_len)
+}
+
+// T1 export — source-position ABI (matches the tc-rule family) so the
+// differential fuzzer can drive `let x: T = <literal@pos>` vs live mindc.
+pub fn selftest_tc_let_infer_lit(src: i64, src_len: i64, pos: i64, std_src: i64, std_len: i64) -> i64 {
+    tc_let_infer_lit(src, src_len, pos, std_src, std_len)
 }
 
 // ============================================================================
