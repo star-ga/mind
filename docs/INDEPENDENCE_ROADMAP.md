@@ -136,8 +136,14 @@ itself byte-identically with zero Rust & zero LLVM in the loop"* (integer/contro
   fire in expression-atom position, decline as statements; `true`/`false` lower to Literal::Int, never fire).
   Two adversarial blind-review rounds hardened it — 6 suppressed-E2002 under-fires + a colluding-smoke-oracle
   bug (leg-2 mirrored the port → Rule 3a), then a bool-literal/keyword false-E2002 over-fire — all fixed;
-  91-case three-way smoke with an INDEPENDENT leg-2 + a parser-keyword-table drift tripwire.** Next: E2009
-  (assign-target unknown ident, reuses the engine); E2001 needs full type inference (a larger tier).
+  91-case three-way smoke with an INDEPENDENT leg-2 + a parser-keyword-table drift tripwire.**
+  **E2009 LANDED (2026-07-24) — undeclared-assignment-target (`tc_is_undeclared_assign`), reusing the
+  engine + E2002's classifier: fires on a bare-ident `Node::Assign` target that is neither a live local
+  nor name_resolvable, with a STRICTLY-SMALLER union than E2002 (no `bytes`, no `::` auto-accept —
+  `bytes = 5` and undeclared `Foo::Bar = 5` FIRE; a locally-declared `Mode::On = 5` does not). First-pass
+  clean, NO fix rounds — E2002's hardened discipline (Rule 3a, live-probe-before-gating) transferred; the
+  blind review verified 76 clean-parseable three-way shapes, 0 divergences.** Next: E2001 needs full type
+  inference (a larger tier).
 - [ ] **B2** Full parser + AST→IR lowering (`parser` ~5,563 portable of 7,782 total — the `#[bimap]` + trivia
   ~2,219 LOC are descoped from the self-host target — + `eval/lower.rs` 9,966) for every construct. The self-host
   front-end already lexes+parses+lowers the scalar/i64/control-flow subset (that is what the keystone loop

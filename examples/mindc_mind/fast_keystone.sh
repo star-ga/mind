@@ -133,6 +133,7 @@ chk "tc_scope_frame (D2 nested scope-frame walk)" python3 examples/mindc_mind/se
 chk "tc_std_export (D3 std-surface export set)" python3 examples/mindc_mind/self_host_tc_std_export_smoke.py
 chk "tc_fn_value_call (D4 full E2012 rule)" python3 examples/mindc_mind/self_host_tc_fn_value_call_smoke.py
 chk "tc_unknown_ident (B1 full E2002 rule)" python3 examples/mindc_mind/self_host_tc_unknown_ident_smoke.py
+chk "tc_undeclared_assign (B1 full E2009 rule)" python3 examples/mindc_mind/self_host_tc_undeclared_assign_smoke.py
 chk "arena_growth (self-host cap headroom)" python3 examples/mindc_mind/self_host_arena_growth_smoke.py
 chk "toplevel_assign (C: straight-line i64 reassign)" python3 examples/mindc_mind/self_host_native_toplevel_assign_smoke.py
 chk "narrow_paramret (i8/i16/i32 param+return wrap)" python3 examples/mindc_mind/self_host_native_narrow_paramret_smoke.py

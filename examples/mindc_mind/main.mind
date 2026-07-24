@@ -39994,7 +39994,260 @@ pub fn selftest_tc_unknown_ident(src: i64, src_len: i64, pos: i64, std_src: i64,
     tc_is_unknown_ident(src, src_len, pos, std_src, std_len)
 }
 
+// ============================================================================
+// B1 rule E2009 — UNDECLARED ASSIGNMENT TARGET (resolve.rs Node::Assign arm,
+// UNDECLARED_ASSIGN_CODE). The Rust predicate (resolve.rs:860-882): an
+// assignment statement `name = expr` (incl. the compound `name OP= expr`
+// desugar, parser/mod.rs:1360-1439, same bare-ident LHS shape) whose l-value
+// NAME is bound NOWHERE — `!scopes.contains(name) &&
+// !syms.name_resolvable(name)`. The union is STRICTLY SMALLER than E2002's
+// ident_resolvable: NO "bytes" accept, NO "::" auto-accept (a qualified
+// target resolves only through the decl set's local `Enum::Variant`
+// insertion or a qualified std export), NO cross-module arm (vacuous
+// single-file). Live-grounded boundaries (probe battery 2026-07-23):
+//   * `s.field = v` / `xs[i] = v` are FieldAssign / IndexAssign — separate
+//     nodes whose receiver is walked as a VALUE USE (E2002, never E2009);
+//   * `x += 1` desugars to Assign(x, x+1): the cloned LHS inside the value
+//     fires E2002 AND the target fires E2009 (both, same position);
+//   * `x == 1` is a comparison (tk_eqeq, one token) — never an Assign;
+//   * `bytes = 5` FIRES (the "bytes" accept is ident_resolvable-only);
+//   * `Foo::Bar = 5` / `Mode::Zap = 5` / `A::B::C = 5` / `Option::Some = 5`
+//     FIRE with the folded name (prelude injects only the 6 BARE names);
+//     `Mode::On = 5` with `Mode::On` declared resolves (mode-1 walk);
+//   * a match-arm body assign (`n => zz = 5`) IS an Assign — `=>` opens a
+//     statement context;
+//   * parser stmt-keyword-spelled and bool-literal targets (`return = 5`,
+//     `true = 5`, `loop = 5`) are parse errors — never reach resolve:
+//     decline. BUT `mut` / `in` / `as` are context words, NOT statement
+//     keywords: `in = 5`, `as = 5`, `mut = 5` all fire E2009 live — they
+//     are exempt from the keyword decline.
+// Reuse discipline (arena rule): ONE lex of `src` feeds the shape gate, the
+// D2 walk (tc_sf_top) and the D1 walks (tc_dn_walk modes 0/1);
+// tc_is_std_export lexes the caller-supplied std concat once. Additive:
+// reached only through selftest_tc_undeclared_assign, never mindc_compile.
 
+// Compound-assignment FIRST-token kinds (`+ - * / % & | ^ << >>`; the lexer
+// emits `<<`/`>>` as single shl/shr tokens, so every compound operator is
+// exactly one OP token followed by a byte-adjacent `=`).
+pub fn tc_ua_comp_op(k: i64) -> i64 {
+    if k == tk_plus() {
+        return 1;
+    }
+    if k == tk_minus() {
+        return 1;
+    }
+    if k == tk_star() {
+        return 1;
+    }
+    if k == tk_slash() {
+        return 1;
+    }
+    if k == tk_percent() {
+        return 1;
+    }
+    if k == tk_amp() {
+        return 1;
+    }
+    if k == tk_pipe() {
+        return 1;
+    }
+    if k == tk_caret() {
+        return 1;
+    }
+    if k == tk_shl() {
+        return 1;
+    }
+    if k == tk_shr() {
+        return 1;
+    }
+    0
+}
+
+// `mut` / `in` / `as` — the three tc_ui_stmt_kw_word entries that are NOT
+// parser statement keywords (stmt_keyword, parser/mod.rs:198): at statement
+// start they parse as a plain Lit(Ident) l-value, so an assignment to them
+// reaches resolve.rs and fires E2009 (live-verified). Only consulted when
+// tc_ui_stmt_kw_word already matched, so the sole len-2 members are
+// `in`/`as`.
+pub fn tc_ua_kw_exempt(src: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo == 2 {
+        return 1;
+    }
+    if tc_dn_is_mut(src, lo, hi) == 1 {
+        return 1;
+    }
+    0
+}
+
+// 1 iff token p opens a STATEMENT — the only contexts where the parser can
+// produce Node::Assign: block start (`{`), a closed block (`}`), a `;`
+// separator, a `=>` match-arm head, or a LINE BREAK before p (newline-
+// terminated statements). A mid-expression `a + zz = 5` or a spaced
+// `zz\n= 5` is a parse error, never an Assign (live-verified).
+pub fn tc_ua_stmt_start(toks: Vec, p: i64, src: i64) -> i64 {
+    let pk: i64 = tok_kind(toks, p - 1);
+    if pk == tk_lbrace() {
+        return 1;
+    }
+    if pk == tk_rbrace() {
+        return 1;
+    }
+    if pk == tk_semi() {
+        return 1;
+    }
+    if pk == tk_gt() {
+        if p >= 2 {
+            if tok_kind(toks, p - 2) == tk_eq() {
+                return 1;
+            }
+        }
+    }
+    tc_sf_has_nl(src, tok_hi(toks, p - 1), tok_lo(toks, p))
+}
+
+// Fold an adjacent `Head::Seg[::Seg]*` chain from e: the parser folds `::`
+// segments into ONE Lit(Ident) name, so the assign-target NAME span is
+// tok_lo(p)..tok_hi(end). Byte-adjacency required — a spaced `Foo :: Bar`
+// is a parse error, never an Assign (live-verified).
+pub fn tc_ua_qual_end(toks: Vec, n: i64, e: i64) -> i64 {
+    if e + 3 < n {
+        if tok_kind(toks, e + 1) == tk_colon() {
+            if tok_kind(toks, e + 2) == tk_colon() {
+                if tok_kind(toks, e + 3) == tk_ident() {
+                    if tok_hi(toks, e) == tok_lo(toks, e + 1) {
+                        if tok_hi(toks, e + 1) == tok_lo(toks, e + 2) {
+                            if tok_hi(toks, e + 2) == tok_lo(toks, e + 3) {
+                                return tc_ua_qual_end(toks, n, e + 3);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    e
+}
+
+// The E2009 SHAPE gate: is ident token p the l-value NAME of an assignment
+// statement? Returns the target's END token index (== p bare, > p folded
+// qualified) or -3 (not an assign target — out of E2009's domain).
+pub fn tc_ua_target_end(toks: Vec, n: i64, p: i64, src: i64) -> i64 {
+    if p <= 0 {
+        return 0 - 3;
+    }
+    if tok_kind(toks, p) != tk_ident() {
+        return 0 - 3;
+    }
+    if tc_ua_stmt_start(toks, p, src) == 0 {
+        return 0 - 3;
+    }
+    let qlo: i64 = tok_lo(toks, p);
+    let qhi: i64 = tok_hi(toks, p);
+    if tc_ui_bool_lit(src, qlo, qhi) == 1 {
+        return 0 - 3;
+    }
+    if tc_sf_is_match(src, qlo, qhi) == 1 {
+        return 0 - 3;
+    }
+    if tc_ui_is_region(src, qlo, qhi) == 1 {
+        return 0 - 3;
+    }
+    if tc_ui_stmt_kw_word(src, qlo, qhi) == 1 {
+        if tc_ua_kw_exempt(src, qlo, qhi) == 0 {
+            return 0 - 3;
+        }
+    }
+    let e: i64 = tc_ua_qual_end(toks, n, p);
+    if e + 1 >= n {
+        return 0 - 3;
+    }
+    if tc_sf_has_nl(src, tok_hi(toks, e), tok_lo(toks, e + 1)) == 1 {
+        return 0 - 3;
+    }
+    let nk: i64 = tok_kind(toks, e + 1);
+    if nk == tk_eq() {
+        if e + 2 < n {
+            if tok_kind(toks, e + 2) == tk_gt() {
+                // `=>` — a match-arm binder / guard tail, never an Assign.
+                return 0 - 3;
+            }
+        }
+        return e;
+    }
+    if tc_ua_comp_op(nk) == 1 {
+        if e + 2 < n {
+            if tok_kind(toks, e + 2) == tk_eq() {
+                if tok_hi(toks, e + 1) == tok_lo(toks, e + 2) {
+                    return e;
+                }
+            }
+        }
+        // A plain binary operator — a VALUE USE (E2002 domain), not assign.
+        return 0 - 3;
+    }
+    0 - 3
+}
+
+// The E2009 query: 1 = "assignment to undeclared variable" fires at the
+// assign-target ident starting at byte `pos`; 0 = the target resolves; -3 =
+// fail-closed sentinel (not an assign-target position).
+pub fn tc_is_undeclared_assign(src: i64, src_len: i64, pos: i64, std_src: i64, std_len: i64) -> i64 {
+    let toks: Vec = lex(src, src_len);
+    let n: i64 = tok_count(toks);
+    let p: i64 = tc_sf_find_pos(toks, n, 0, pos);
+    if p < 0 {
+        return 0 - 3;
+    }
+    let e: i64 = tc_ua_target_end(toks, n, p, src);
+    if e < 0 {
+        return 0 - 3;
+    }
+    let qlo: i64 = tok_lo(toks, p);
+    let len: i64 = tok_hi(toks, e) - qlo;
+    if e == p {
+        // Bare target: D2 scopes || D1 decls + prelude || D3 std exports.
+        let buf: i64 = __mind_alloc(4096);
+        let sf: i64 = tc_sf_top(toks, n, 0, src, buf, p, qlo, qlo + len);
+        if sf == 1 {
+            return 0;
+        }
+        if sf != 0 {
+            return 0 - 3;
+        }
+        if tc_dn_is_prelude(src + qlo, len) == 1 {
+            return 0;
+        }
+        if tc_dn_walk(toks, n, 0, src, src + qlo, 0, 0, 0, 0, len) == 1 {
+            return 0;
+        }
+        if tc_is_std_export(std_src, std_len, src + qlo, len) == 1 {
+            return 0;
+        }
+        return 1;
+    }
+    // Folded qualified target: locals never contain "::" and the prelude
+    // injects only bare names — resolvable ONLY via the decl set's
+    // `Enum::Variant` insertion (mode-1 walk) or a qualified std export.
+    let d: i64 = tc_uv_find_dcolon(src + qlo, 0, len);
+    if d >= len {
+        return 0 - 3;
+    }
+    if tc_uv_find_dcolon(src + qlo, d + 2, len) < len {
+        // A deeper `A::B::C` is never inserted by collect_decl_names: fires.
+        return 1;
+    }
+    if tc_dn_walk(toks, n, 0, src, src + qlo, 1, 0, d, d + 2, len) == 1 {
+        return 0;
+    }
+    if tc_is_std_export(std_src, std_len, src + qlo, len) == 1 {
+        return 0;
+    }
+    1
+}
+
+pub fn selftest_tc_undeclared_assign(src: i64, src_len: i64, pos: i64, std_src: i64, std_len: i64) -> i64 {
+    tc_is_undeclared_assign(src, src_len, pos, std_src, std_len)
+}
 
 // ============================================================================
 // C4-T4 — native-ELF TENSOR ROW REDUCTION (i64), the axis-reduction rung.
