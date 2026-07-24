@@ -76,6 +76,7 @@ PRELUDE = e2002.PRELUDE
 collect_decl_names = e2002.collect_decl_names
 scope_verdict = e2002.scope_verdict
 bundled_modules = e2002.bundled_modules
+stmt_keywords = e2002.stmt_keywords
 
 # ── source-of-truth guard: the Assign arm's predicate must keep the exact
 # two-term union (a third accept appearing there = this smoke is stale) ─────
@@ -660,6 +661,110 @@ def main():
             mark = "ok " if ok else "DIFF"
             print(f"  {mark} got={got} rule={exp_s} live={live} pos={pos} "
                   f"[{mode}] {note}")
+
+        # ── GENERATED keyword × ASSIGN-position matrix (tcdiff cross-rule
+        # class closure, 2026-07-23): every keyword — the parser stmt_keyword
+        # table (extracted each run) + mut/in/as + match + the folded
+        # non-ident keywords + bool literals — as a plain and a compound
+        # assign target, LIVE-keyed: live fires E2009 at/naming the target →
+        # the port MUST answer 1; live quiet on parseable code → the port
+        # MUST NOT answer 1; parse errors skipped (never reach resolve).
+        # Ground truth (kw_pos_probe): `else` is the ONLY folded keyword
+        # that parses as an assign target (plain → E2009; compound → E2002+
+        # E2009); impl/trait/mut/in fire among the tk_ident keywords; all
+        # others are parse errors.
+        KW_ALL = sorted(stmt_keywords() | {"mut", "in", "as", "match"}
+                        | {"import", "use", "pub", "else", "fn", "let", "if"}
+                        | {"true", "false"})
+        parse_re = re.compile(r"\[type_check::E1001\]")
+
+        def live_parses(src, idx):
+            path = os.path.join(workdir, f"kwm_{idx}.mind")
+            with open(path, "w") as f:
+                f.write(src)
+            r = subprocess.run([mindc, "check", path], capture_output=True,
+                               text=True)
+            return not parse_re.search(r.stdout + r.stderr)
+
+        M_PRE = "fn main() -> i64 {\n    let bnd = 1\n"
+        m_fired = m_quiet = m_parse = m_fails = 0
+        for kw in KW_ALL:
+            for tname, tmpl in (("assign_tgt", "    @K@ = 2\n"),
+                                ("compound_tgt", "    @K@ += 2\n")):
+                src = M_PRE + tmpl.replace("@K@", kw) + "    return 0\n}\n"
+                pos = len(M_PRE) + tmpl.index("@K@")
+                if not live_parses(src, f"{kw}_{tname}"):
+                    m_parse += 1
+                    continue
+                live = live_verdict(mindc, src, pos, workdir,
+                                    f"{kw}_{tname}_v")
+                got = mind_verdict(src, pos)
+                live_checked += 1
+                total += 1
+                if live == 1:
+                    m_fired += 1
+                    ok = got == 1
+                else:
+                    m_quiet += 1
+                    ok = got != 1
+                if not ok:
+                    m_fails += 1
+                    fails += 1
+                    print(f"  DIFF kw-matrix `{kw}` [{tname}] port={got} "
+                          f"live={live}")
+        print(f"  ok  kw-matrix: {len(KW_ALL)}x2 cells, fired={m_fired} "
+              f"quiet={m_quiet} parse-skipped={m_parse}, {m_fails} diffs")
+        if m_fired < 6:
+            print("FAIL: kw-matrix vacuous (live fired < 6 cells)")
+            sys.exit(1)
+
+        # Bound `else` suppression: `let mut else = 5` binds the keyword
+        # name (contextual); the assign then resolves CLEAN — the port must
+        # answer 0 through the tc_sf_kw_bindable D2 walk.
+        src = ("fn main() -> i64 {\n    let mut else = 5\n"
+               "    else = 7\n    return 0\n}\n")
+        pos = src.index("else = 7")
+        got = mind_verdict(src, pos)
+        live = live_verdict(mindc, src, pos, workdir, "bound_else")
+        live_checked += 1
+        total += 1
+        negatives += 1
+        if not (live == 0 and got == 0 and live_parses(src, "bound_else_p")):
+            fails += 1
+            print(f"  DIFF bound `else` assign: port={got} live={live} "
+                  f"(want 0/0)")
+        print("  ok  bound `else` assign target resolves")
+
+        # ── tensor-headed dotted targets (name-FOLD boundary, live-probed):
+        # a byte-adjacent tensor.seg[.seg]* chain folds into ONE Assign name
+        # → E2009 fires; string.x stays a FieldAssign (receiver E2002, never
+        # E2009); String.x is the static-type exception (clean).
+        TENSOR_CASES = [
+            ("tensor.add = 2", "tensor", 1),
+            ("tensor.a.b = 2", "tensor", 1),
+            ("tensor.add += 2", "tensor", 1),
+            ("string.x = 2", "string", 0),
+            ("String.x = 2", "String", 0),
+        ]
+        for cidx, (stmt, head, want) in enumerate(TENSOR_CASES):
+            src = M_PRE + "    " + stmt + "\n    return 0\n}\n"
+            pos = src.index(head + ".")
+            live = live_verdict(mindc, src, pos, workdir, f"tn_{cidx}")
+            got = mind_verdict(src, pos)
+            live_checked += 1
+            total += 1
+            if want == 1:
+                positives += 1
+                ok = live == 1 and got == 1
+            else:
+                negatives += 1
+                ok = live == 0 and got != 1
+            if not ok:
+                fails += 1
+                print(f"  DIFF dotted target `{stmt}`: port={got} "
+                      f"live={live} want={want}")
+        print(f"  ok  dotted-target fold boundary: {len(TENSOR_CASES)} "
+              f"cases")
 
     print(f"undeclared_assign: cases={total} positives={positives} "
           f"negatives={negatives} live_checked={live_checked} fails={fails}")

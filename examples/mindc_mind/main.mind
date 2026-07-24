@@ -39456,6 +39456,42 @@ pub fn tc_ui_folded_head(src: i64, lo: i64, hi: i64) -> i64 {
     0
 }
 
+// span == "tensor" ONLY (the first tc_ui_folded_head arm). Needed separately
+// because the three folded-head words are NOT interchangeable outside the
+// single-method shape (live-probed 2026-07-23): a byte-adjacent
+// `tensor.seg[.seg]*` folds into ONE name in EVERY position (callee accepted
+// via the tensor. prefix; assign target fires E2009 as one name; value use
+// fires E2002 as one name at the head's position) — while `string.x = 2`
+// stays a FieldAssign (receiver walked, E2002) and `String.x = 2` is the
+// static-type exception (clean).
+pub fn tc_ui_tensor_head(src: i64, lo: i64, hi: i64) -> i64 {
+    let len: i64 = hi - lo;
+    let w0: i64 = tc_fvc_word(src, lo, hi, 0);
+    let w1: i64 = tc_fvc_word(src, lo, hi, 1);
+    if tc_fvc_eq2(w0, w1, len, 125823003551092, 0, 6) == 1 {
+        return 1;
+    }
+    0
+}
+
+// End token of the byte-adjacent `head.seg[.seg]*` dot chain from e (the
+// live lexer/parser folds ONLY the adjacent form — a spaced `tensor . add`
+// is a parse error, live-probed 2026-07-23).
+pub fn tc_ui_dot_chain_end(toks: Vec, n: i64, e: i64) -> i64 {
+    if e + 2 < n {
+        if tok_kind(toks, e + 1) == tk_dot() {
+            if tok_kind(toks, e + 2) == tk_ident() {
+                if tok_hi(toks, e) == tok_lo(toks, e + 1) {
+                    if tok_hi(toks, e + 1) == tok_lo(toks, e + 2) {
+                        return tc_ui_dot_chain_end(toks, n, e + 2);
+                    }
+                }
+            }
+        }
+    }
+    e
+}
+
 // Innermost unmatched opening delimiter at-or-before token i (backward scan
 // skipping balanced groups); -1 = none. The enclosing-context primitive.
 pub fn tc_ui_opener(toks: Vec, i: i64, d: i64) -> i64 {
@@ -39855,6 +39891,126 @@ pub fn tc_ui_expr_ctx_prev(toks: Vec, p: i64, src: i64) -> i64 {
     0
 }
 
+// Extended VALUE-ATOM context for a keyword-spelled name at p: the positions
+// where live's parser is expecting an expression atom, so the spelling
+// parses as `Lit(Ident)` and resolve.rs fires E2002 on it. The tcdiff
+// fuzzer (2026-07-23) proved tc_ui_expr_ctx_prev alone under-covers by five
+// positions — cond tails (`if w {` / `while w {` / `match w {`), the
+// match-arm guard (`_ if w =>`, same tk_kw_if prev as if-cond) and the
+// struct-lit field value (`Pt { x: w }`) — all live-swept FIRING for every
+// stmt-keyword and folded-keyword filler (kw_pos_probe battery, full
+// 26-keyword x 12-position grid).
+pub fn tc_ui_kw_val_ctx(toks: Vec, n: i64, p: i64, src: i64) -> i64 {
+    if tc_ui_expr_ctx_prev(toks, p, src) == 1 {
+        return 1;
+    }
+    if p == 0 {
+        return 0;
+    }
+    let pk: i64 = tok_kind(toks, p - 1);
+    if pk == tk_kw_if() {
+        // if-cond head + match-arm guard tail.
+        return 1;
+    }
+    if pk == tk_ident() {
+        let plo: i64 = tok_lo(toks, p - 1);
+        let phi: i64 = tok_hi(toks, p - 1);
+        if tc_ui_is_while(src, plo, phi) == 1 {
+            return 1;
+        }
+        if tc_sf_is_match(src, plo, phi) == 1 {
+            return 1;
+        }
+    }
+    if pk == tk_colon() {
+        // Struct-lit field VALUE only (an annotation type declines inside
+        // tc_ui_colon_ctx — live-probed clean for keyword type spellings).
+        if tc_ui_colon_ctx(toks, n, p, src) == 2 {
+            return 1;
+        }
+    }
+    0
+}
+
+// Keyword-named compound-assign TARGET (`else += 2` / `in += 2` /
+// `mut += 2`): live desugars `x OP= e` cloning the LHS as a value use, so
+// E2002 fires AT the target position alongside E2009 (live-probed
+// 2026-07-23; bound targets suppress both). Restricted to tk_kw_else plus
+// the tk_ident context words (tc_ua_kw_exempt: in/as/mut — the non-
+// statement keywords that parse as plain l-values) — every other keyword's
+// compound-target shape is a parse error (live-swept), so answering there
+// would be fail-open.
+pub fn tc_ui_kw_comp_tgt(toks: Vec, n: i64, q: i64, src: i64) -> i64 {
+    let k: i64 = tok_kind(toks, q);
+    if k != tk_kw_else() {
+        if k != tk_ident() {
+            return 0;
+        }
+        if tc_ua_kw_exempt(src, tok_lo(toks, q), tok_hi(toks, q)) == 0 {
+            return 0;
+        }
+    }
+    if q <= 0 {
+        return 0;
+    }
+    if q + 2 >= n {
+        return 0;
+    }
+    if tc_ua_comp_op(tok_kind(toks, q + 1)) == 0 {
+        return 0;
+    }
+    if tok_kind(toks, q + 2) != tk_eq() {
+        return 0;
+    }
+    if tok_hi(toks, q + 1) != tok_lo(toks, q + 2) {
+        return 0;
+    }
+    tc_ua_stmt_start(toks, q, src)
+}
+
+// Folded-keyword VALUE-USE verdict — the E2002 cross-rule fail-open class
+// the tcdiff fuzzer surfaced (109+ divergences at HEAD 22c332aa): the
+// SELF-HOST lexer folds `fn`/`if`/`else`/`let`/`use`[+`import`]/`pub` to
+// dedicated tk_kw_* kinds, invisible to the tk_ident-only finder — yet live
+// mindc lexes them as plain idents and, in every value-atom position
+// (let-RHS, return, call-arg, binop operand, cond tails, guard, struct-lit
+// field value, index base, method receiver), produces a `Lit(Ident)` that
+// fires E2002 (full live sweep 2026-07-23). Mirrors tc_uc_kw_callee's
+// discipline: bindable-kind gate, E2003-callee exclusion, position gate,
+// then the D2 frame walk (tc_sf_kw_bindable makes `let use = 5` visible —
+// a bound keyword name resolves clean, live-probed).
+pub fn tc_ui_kw_value(toks: Vec, n: i64, q: i64, src: i64) -> i64 {
+    let k: i64 = tok_kind(toks, q);
+    if tc_sf_kw_bindable(k) == 0 {
+        return 0 - 3;
+    }
+    if k == tk_kw_if() {
+        // A value-position `if` is an if-expression header — every bare
+        // `= if` shape is a parse error (live-swept): never a Lit(Ident).
+        return 0 - 3;
+    }
+    if q + 1 < n {
+        if tok_kind(toks, q + 1) == tk_lparen() {
+            // `kw(…)` — the E2003 callee domain (tc_uc_kw_callee).
+            return 0 - 3;
+        }
+    }
+    if tc_ui_kw_val_ctx(toks, n, q, src) == 0 {
+        if tc_ui_kw_comp_tgt(toks, n, q, src) == 0 {
+            return 0 - 3;
+        }
+    }
+    let buf: i64 = __mind_alloc(4096);
+    let sf: i64 = tc_sf_top(toks, n, 0, src, buf, q, tok_lo(toks, q), tok_hi(toks, q));
+    if sf == 1 {
+        return 0;
+    }
+    if sf != 0 {
+        return 0 - 3;
+    }
+    1
+}
+
 // Structural use-position guard over the enclosing context of ident p.
 // Returns 2 (classifiable value use — run the resolution union), 0 (E2002
 // structurally never fires here: qualified `Head::…`, folded/static method
@@ -39880,7 +40036,12 @@ pub fn tc_ui_shape(toks: Vec, n: i64, p: i64, src: i64) -> i64 {
     let qlo: i64 = tok_lo(toks, p);
     let qhi: i64 = tok_hi(toks, p);
     if tc_ui_bool_lit(src, qlo, qhi) == 1 {
-        return 0;
+        // A value literal — EXCEPT as a dotted-access head: live parses
+        // `true.foo` / `true.foo(2)` with a Lit(Ident) receiver and FIRES
+        // E2002 there (tcdiff + live probe 2026-07-23) — classify those.
+        if tok_kind(toks, p + 1) != tk_dot() {
+            return 0;
+        }
     }
     if tc_sf_is_match(src, qlo, qhi) == 1 {
         return 0 - 3;
@@ -39889,11 +40050,29 @@ pub fn tc_ui_shape(toks: Vec, n: i64, p: i64, src: i64) -> i64 {
         return 0 - 3;
     }
     if tc_ui_stmt_kw_word(src, qlo, qhi) == 1 {
-        if tc_ui_expr_ctx_prev(toks, p, src) == 0 {
-            return 0 - 3;
+        if tc_ui_kw_val_ctx(toks, n, p, src) == 0 {
+            // Not a value atom — but a compound-assign TARGET's desugar
+            // clones the LHS as a value use (`in += 2` fires E2002 at the
+            // target, live-probed): consult the comp-target shape before
+            // declining.
+            if tc_ui_kw_comp_tgt(toks, n, p, src) == 0 {
+                return 0 - 3;
+            }
         }
     }
     let nk: i64 = tok_kind(toks, p + 1);
+    if nk == tk_colon() {
+        if p + 2 < n {
+            if tok_kind(toks, p + 2) == tk_colon() {
+                // `Head::…` — the folded name contains "::", so
+                // ident_resolvable is unconditionally true: never fires.
+                // Checked BEFORE the pk guards: a struct-lit field value
+                // `Pt { x: Foo::Bar }` must resolve as the qualified fold,
+                // not classify the bare head (tcdiff over-fire, 2026-07-23).
+                return 0;
+            }
+        }
+    }
     if nk == tk_lparen() {
         // A callee — resolve.rs dispatches is_call there (E2003/E2012).
         return 0 - 3;
@@ -39953,17 +40132,39 @@ pub fn tc_ui_shape(toks: Vec, n: i64, p: i64, src: i64) -> i64 {
         return tc_ui_colon_ctx(toks, n, p, src);
     }
     if nk == tk_colon() {
-        if p + 2 < n {
-            if tok_kind(toks, p + 2) == tk_colon() {
-                // `Head::…` — the folded name contains "::", so
-                // ident_resolvable is unconditionally true: never fires.
-                return 0;
-            }
-        }
-        // Single `:` — an annotation / struct-lit field name.
+        // Single `:` — an annotation / struct-lit field name (the
+        // qualified `::` fold already returned 0 above).
         return 0 - 3;
     }
     if nk == tk_dot() {
+        if tc_ui_tensor_head(src, qlo, qhi) == 1 {
+            // A byte-adjacent `tensor.seg[.seg]*` chain folds into ONE name
+            // (live-probed 2026-07-23): followed by `(` it is a callee the
+            // tensor. prefix blanket-accepts (never fires — incl. the deep
+            // `tensor.add.foo(2)`); followed by a plain `=` it is an Assign
+            // NAME (the E2009 domain — live fires E2009 there, never
+            // E2002). Any other tail (bare value use, compound `OP=` whose
+            // desugar clones the LHS as a value use) falls through and
+            // classifies — the folded name has no accept in E2002's union,
+            // matching live's fire at the head position.
+            let c: i64 = tc_ui_dot_chain_end(toks, n, p);
+            if c > p {
+                if c + 1 < n {
+                    if tok_kind(toks, c + 1) == tk_lparen() {
+                        return 0;
+                    }
+                    if tok_kind(toks, c + 1) == tk_eq() {
+                        if c + 2 < n {
+                            if tok_kind(toks, c + 2) == tk_gt() {
+                                // `=>` — a guard/arm tail: value use.
+                                return 2;
+                            }
+                        }
+                        return 0;
+                    }
+                }
+            }
+        }
         if p + 3 < n {
             if tok_kind(toks, p + 2) == tk_ident() {
                 if tok_kind(toks, p + 3) == tk_lparen() {
@@ -40011,7 +40212,15 @@ pub fn tc_is_unknown_ident(src: i64, src_len: i64, pos: i64, std_src: i64, std_l
     let n: i64 = tok_count(toks);
     let p: i64 = tc_sf_find_pos(toks, n, 0, pos);
     if p < 0 {
-        return 0 - 3;
+        // Not an ident token: a FOLDED-KEYWORD value use (fn/else/let/use/
+        // pub/import lex as dedicated tk_kw_* kinds, invisible to the
+        // tk_ident-only finder) — live mindc fires E2002 on every one of
+        // them in value-atom position (see tc_ui_kw_value).
+        let q: i64 = tc_uc_find_tok(toks, n, 0, pos);
+        if q < 0 {
+            return 0 - 3;
+        }
+        return tc_ui_kw_value(toks, n, q, src);
     }
     let g: i64 = tc_ui_shape(toks, n, p, src);
     if g != 2 {
@@ -40232,6 +40441,115 @@ pub fn tc_ua_target_end(toks: Vec, n: i64, p: i64, src: i64) -> i64 {
     0 - 3
 }
 
+// Folded-keyword ASSIGN-TARGET verdict — the E2009 arm of the tcdiff
+// fail-open class: `else = 2` / `else OP= 2` parse as a plain Assign whose
+// l-value NAME spells `else` and live fires E2009 (bound `let mut else`
+// suppresses it — the tc_sf_kw_bindable frame walk sees the binding). ONLY
+// tk_kw_else: every other folded keyword's assign-target shape is a parse
+// error (live-swept 2026-07-23 — fn/let/use/import/pub/if `= 2` all E1001),
+// so answering there would be fail-open. (`} else = 2` after an if-arm is
+// likewise a parse error — the stmt-start gate's rbrace arm can only be
+// reached on shapes live refuses to parse, which the differential gate
+// discards unscored.)
+pub fn tc_ua_kw_target(toks: Vec, n: i64, q: i64, src: i64) -> i64 {
+    if tok_kind(toks, q) != tk_kw_else() {
+        return 0 - 3;
+    }
+    if q <= 0 {
+        return 0 - 3;
+    }
+    if q + 1 >= n {
+        return 0 - 3;
+    }
+    if tc_ua_stmt_start(toks, q, src) == 0 {
+        return 0 - 3;
+    }
+    let nk: i64 = tok_kind(toks, q + 1);
+    if nk == tk_eq() {
+        if q + 2 < n {
+            if tok_kind(toks, q + 2) == tk_gt() {
+                // `=>` — never an Assign.
+                return 0 - 3;
+            }
+        }
+    }
+    if nk != tk_eq() {
+        if tc_ua_comp_op(nk) == 0 {
+            return 0 - 3;
+        }
+        if q + 2 >= n {
+            return 0 - 3;
+        }
+        if tok_kind(toks, q + 2) != tk_eq() {
+            return 0 - 3;
+        }
+        if tok_hi(toks, q + 1) != tok_lo(toks, q + 2) {
+            return 0 - 3;
+        }
+    }
+    let buf: i64 = __mind_alloc(4096);
+    let sf: i64 = tc_sf_top(toks, n, 0, src, buf, q, tok_lo(toks, q), tok_hi(toks, q));
+    if sf == 1 {
+        return 0;
+    }
+    if sf != 0 {
+        return 0 - 3;
+    }
+    1
+}
+
+// Tensor-headed DOTTED assign target — the second tcdiff E2009 fail-open:
+// a byte-adjacent `tensor.seg[.seg]* = v` (and the compound `OP=` form)
+// folds into ONE Assign name ("tensor.add", "tensor.a.b" — live-probed
+// 2026-07-23) that no binder or decl set can ever contain (locals/decls are
+// dot-free; std exports are dot-free): E2009 always fires. Every OTHER
+// dotted target is a FieldAssign whose receiver is a value use (E2002
+// domain, never E2009) — decline; a spaced `tensor . add = 2` is a parse
+// error (live-probed).
+pub fn tc_ua_tensor_tgt(toks: Vec, n: i64, p: i64, src: i64) -> i64 {
+    if p <= 0 {
+        return 0 - 3;
+    }
+    if p + 1 >= n {
+        return 0 - 3;
+    }
+    if tok_kind(toks, p + 1) != tk_dot() {
+        return 0 - 3;
+    }
+    if tc_ui_tensor_head(src, tok_lo(toks, p), tok_hi(toks, p)) == 0 {
+        return 0 - 3;
+    }
+    if tc_ua_stmt_start(toks, p, src) == 0 {
+        return 0 - 3;
+    }
+    let c: i64 = tc_ui_dot_chain_end(toks, n, p);
+    if c <= p {
+        return 0 - 3;
+    }
+    if c + 1 >= n {
+        return 0 - 3;
+    }
+    let nk: i64 = tok_kind(toks, c + 1);
+    if nk == tk_eq() {
+        if c + 2 < n {
+            if tok_kind(toks, c + 2) == tk_gt() {
+                return 0 - 3;
+            }
+        }
+        return 1;
+    }
+    if tc_ua_comp_op(nk) == 1 {
+        if c + 2 < n {
+            if tok_kind(toks, c + 2) == tk_eq() {
+                if tok_hi(toks, c + 1) == tok_lo(toks, c + 2) {
+                    return 1;
+                }
+            }
+        }
+    }
+    0 - 3
+}
+
 // The E2009 query: 1 = "assignment to undeclared variable" fires at the
 // assign-target ident starting at byte `pos`; 0 = the target resolves; -3 =
 // fail-closed sentinel (not an assign-target position).
@@ -40240,11 +40558,19 @@ pub fn tc_is_undeclared_assign(src: i64, src_len: i64, pos: i64, std_src: i64, s
     let n: i64 = tok_count(toks);
     let p: i64 = tc_sf_find_pos(toks, n, 0, pos);
     if p < 0 {
-        return 0 - 3;
+        // Not an ident token: a FOLDED-KEYWORD assign target (`else = 2`) —
+        // see tc_ua_kw_target.
+        let q: i64 = tc_uc_find_tok(toks, n, 0, pos);
+        if q < 0 {
+            return 0 - 3;
+        }
+        return tc_ua_kw_target(toks, n, q, src);
     }
     let e: i64 = tc_ua_target_end(toks, n, p, src);
     if e < 0 {
-        return 0 - 3;
+        // A tensor-headed dotted chain folds into ONE Assign name — the
+        // only dotted shape where E2009 fires (see tc_ua_tensor_tgt).
+        return tc_ua_tensor_tgt(toks, n, p, src);
     }
     let qlo: i64 = tok_lo(toks, p);
     let len: i64 = tok_hi(toks, e) - qlo;

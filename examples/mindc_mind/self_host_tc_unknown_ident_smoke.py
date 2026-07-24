@@ -1262,6 +1262,110 @@ def main():
         print(f"  ok  bare-builtin value-use sweep: {len(bare)} names, "
               f"{sweep_fails} diffs")
 
+        # ── GENERATED keyword × VALUE-position matrix (tcdiff cross-rule
+        # class closure, 2026-07-23): every keyword the lexer can see — the
+        # parser's stmt_keyword table (extracted each run) + the context
+        # words mut/in/as + match + the folded non-ident keywords
+        # (import/use/pub/else/fn/let/if, which the SELF-HOST lexer emits as
+        # tk_kw_* kinds) + the bool literals — crossed with the tcdiff
+        # generator's value-position template axis. LIVE-keyed: live fires
+        # E2002 at the hole → the port MUST answer 1; live quiet on
+        # parseable code → the port MUST NOT answer 1 (0/-3 both sound);
+        # parse errors never reach resolve → skipped. Ground truth
+        # (kw_pos_probe full sweep): EVERY keyword fires in EVERY value
+        # position (match/region/if parse-error out; true/false fire ONLY as
+        # a dotted-access head), so a future under-fire in any cell goes RED
+        # here without a hand-listed table.
+        VAL_TEMPLATES = [
+            ("let_rhs", "    let z = @K@\n"),
+            ("ret_val", "    return @K@\n"),
+            ("call_arg", "    let a = helper(@K@)\n"),
+            ("binop_rhs", "    let b = 1 + @K@\n"),
+            ("if_cond", "    if @K@ {\n        let d = 1\n    }\n"),
+            ("while_cond", "    while @K@ {\n        break\n    }\n"),
+            ("match_scrut", "    match @K@ {\n        _ => 1,\n    }\n"),
+            ("match_guard", "    match bnd {\n        _ if @K@ => 1,\n"
+             "        _ => 2,\n    }\n"),
+            ("sfield_val", "    let q = Pt { x: @K@ }\n"),
+            ("index_base", "    let ix = @K@[0]\n"),
+            ("method_recv", "    let r = @K@.foo(2)\n"),
+            ("compound_tgt", "    @K@ += 2\n"),
+        ]
+        KW_ALL = sorted(kws | {"mut", "in", "as", "match"}
+                        | {"import", "use", "pub", "else", "fn", "let", "if"}
+                        | {"true", "false"})
+        M_PRE = ("fn helper(a: i64) -> i64 { return a }\n"
+                 "struct Pt { x: i64 }\n"
+                 "fn main() -> i64 {\n    let bnd = 1\n")
+        parse_re = re.compile(r"\[type_check::E1001\]")
+
+        def live_matrix_cell(src, pos, idx):
+            path = os.path.join(workdir, f"kwm_{idx}.mind")
+            with open(path, "w") as f:
+                f.write(src)
+            r = subprocess.run([mindc, "check", path], capture_output=True,
+                               text=True)
+            text = r.stdout + r.stderr
+            if parse_re.search(text):
+                return "parse"
+            line = src.count("\n", 0, pos) + 1
+            col = pos - (src.rfind("\n", 0, pos) + 1) + 1
+            for m in DIAG_RE.finditer(text):
+                if (int(m.group(1)) == line and int(m.group(2)) == col
+                        and m.group(3) == "E2002"):
+                    return "fire"
+            return "quiet"
+
+        m_fired = m_quiet = m_parse = m_fails = 0
+        for kw in KW_ALL:
+            for tname, tmpl in VAL_TEMPLATES:
+                src = M_PRE + tmpl.replace("@K@", kw) + "    return 0\n}\n"
+                pos = len(M_PRE) + tmpl.index("@K@")
+                state = live_matrix_cell(src, pos, f"{kw}_{tname}")
+                if state == "parse":
+                    m_parse += 1
+                    continue
+                got = mind_verdict(src, pos)
+                live_checked += 1
+                total += 1
+                if state == "fire":
+                    m_fired += 1
+                    ok = got == 1
+                else:
+                    m_quiet += 1
+                    ok = got != 1
+                if not ok:
+                    m_fails += 1
+                    fails += 1
+                    print(f"  DIFF kw-matrix `{kw}` [{tname}] port={got} "
+                          f"live={state}")
+        print(f"  ok  kw-matrix: {len(KW_ALL)}x{len(VAL_TEMPLATES)} cells, "
+              f"fired={m_fired} quiet={m_quiet} parse-skipped={m_parse}, "
+              f"{m_fails} diffs")
+        if m_fired < 150:
+            print("FAIL: kw-matrix vacuous (live fired < 150 cells)")
+            sys.exit(1)
+
+        # Bound-keyword suppression: `let use = 5` legally BINDS the keyword
+        # name (contextual, live-probed) and the value use then resolves
+        # CLEAN — the port must answer 0 through the tc_sf_kw_bindable D2
+        # walk, not merely decline.
+        for kidx, kw in enumerate(("import", "use", "pub", "else", "fn",
+                                   "let")):
+            src = ("fn main() -> i64 {\n    let " + kw + " = 5\n"
+                   "    let nz = " + kw + "\n    return nz\n}\n")
+            pos = src.index("let nz = ") + len("let nz = ")
+            state = live_matrix_cell(src, pos, f"bound_{kidx}")
+            got = mind_verdict(src, pos)
+            live_checked += 1
+            total += 1
+            negatives += 1
+            if not (state == "quiet" and got == 0):
+                fails += 1
+                print(f"  DIFF bound-kw `{kw}` value use: port={got} "
+                      f"live={state} (want quiet/0)")
+        print("  ok  bound folded-keyword value uses resolve (6 names)")
+
     print(f"unknown_ident: cases={total} positives={positives} "
           f"negatives={negatives} live_checked={live_checked} fails={fails}")
     if positives < 12 or negatives < 10 or live_checked < 40:
