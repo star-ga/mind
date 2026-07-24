@@ -239,6 +239,19 @@ TEMPLATES = [
     ("while_cond", ["while @@HOLE@@ {", "    break", "}"]),
     ("match_scrut", ["match @@HOLE@@ {", "    _ => 1,", "}"]),
     ("match_guard", ["match bnd {", "    _ if @@HOLE@@ => 1,", "    _ => 2,", "}"]),
+    # Match-arm BODY value position (`=> <atom>`). `=>` lexes as tk_eq+tk_gt in
+    # the self-host lexer, so a folded keyword here was invisible to the
+    # value-atom classifier (codex Finding 2, 2026-07-24): live parses the arm
+    # body as Lit(Ident) and fires E2002 on use/pub/else/import/fn/let.
+    ("match_arm_val", ["match bnd {", "    _ => @@HOLE@@,", "}"]),
+    # Match-arm BODY assign l-value (`=> x = 5`). A BARE arm body (l-value
+    # directly after `=>`) — live attributes the E2009 diagnostic to the arm-
+    # PATTERN column (`_`), NOT the l-value token, so the port must DECLINE at
+    # the l-value here (codex Finding 2, 2026-07-24). Distinct from a BLOCK arm
+    # `_ => { x = 5 }`, where live DOES fire E2009 at the l-value and the port
+    # keeps firing — the two are separated by the l-value's prev token (`=>`
+    # vs `{`).
+    ("match_arm_assign", ["match bnd {", "    _ => @@HOLE@@ = 5,", "}"]),
     ("method_recv", ["let r = @@HOLE@@.foo(2)"]),
     ("call_arg", ["let a = helper(@@HOLE@@)"]),
     ("binop_rhs", ["let b = 1 + @@HOLE@@"]),
@@ -260,6 +273,43 @@ def nested_templates(rng):
         for lvl in range(depth - 1, -1, -1):
             lines.append("    " * lvl + "}")
         out.append((f"nested_d{depth}", lines))
+    return out
+
+
+def deep_binding_cases(rng):
+    """Deep-scope stress: programs with 251..N flat local bindings then a use
+    of an EARLY or LATE one — the scope-table cap class (codex Finding 1, the
+    old fixed 250-entry buffer false-fired E2002 on valid code past 250 locals).
+
+    A BOUND name must resolve clean (live no-fire) at every depth: this is the
+    false-fire regression guard — before the fix the port fired at N>=251 while
+    live stayed clean, which the sweep flags as a divergence. An UNDEFINED name
+    (kept well under the 4096 fail-closed cap) must fire in BOTH port and live,
+    proving the deep regime is a non-null gate rather than a blanket suppressor.
+    """
+    out = []
+    for n in (251, 260, 300, 512, 1024):
+        binds = "".join(f"    let b{i:04d} = 0\n" for i in range(n))
+        for which, target in (("early", "b0000"), ("late", f"b{n - 1:04d}")):
+            src = (PRELUDE_SRC + "fn main() -> i64 {\n" + binds
+                   + f"    let z = {target}\n    return 0\n}}\n")
+            pos = src.index(f"let z = {target}") + len("let z = ")
+            out.append(Case(f"deep_bind_{which}_n{n}", "bound_local", target, src, pos))
+    # UNDEFINED-at-depth — MUST fire E2002 in both port and live at every
+    # depth, PAST the old premature 4096 fail-closed sentinel (4097/8192): the
+    # sentinel tripped at cnt>=4096 while the (n+16)-entry buffer is nowhere
+    # near full, and tc_sf_lookup read the negative sentinel as BOUND, SILENTLY
+    # SUPPRESSING a genuine unknown ident past 4096 bindings (a fail-OPEN; live
+    # still fires). These deep-undefined cases are the regression guard for
+    # that class — before the sentinel-removal fix, port=0 while live=E2002 at
+    # n>=4097, which the sweep flags as a divergence.
+    for n in (251, 300, 1000, 4097, 8192):
+        binds = "".join(f"    let b{i:05d} = 0\n" for i in range(n))
+        und = f"und_{rng.randrange(10 ** 6):06d}"
+        src = (PRELUDE_SRC + "fn main() -> i64 {\n" + binds
+               + f"    let z = {und}\n    return 0\n}}\n")
+        pos = src.index(f"let z = {und}") + len("let z = ")
+        out.append(Case(f"deep_bind_undef_n{n}", "undefined", und, src, pos))
     return out
 
 
@@ -686,6 +736,9 @@ def main():
             for rule in rules:
                 mutation_gate(rule, port, oracle, random.Random(seed ^ 0xA5))
         cases = gen_cases(rng, fillers, templates, args.budget)
+        # Deep-binding stress is always appended (never budget-trimmed) so the
+        # scope-cap class is exercised on every --ci run.
+        cases = cases + deep_binding_cases(rng)
         stats, coverage, divergences = sweep(
             rules, cases, port, oracle, mutation, args.shrink
         )
