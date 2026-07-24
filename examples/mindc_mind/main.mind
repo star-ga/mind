@@ -38603,6 +38603,36 @@ pub fn tc_sf_verdict(src: i64, buf: i64, cnt: i64, qlo: i64, qhi: i64) -> i64 {
 
 // Bind every non-`_` ident token in [a,b): the Let name (a one-token range)
 // and the LetTuple destructured names (commas / parens skipped).
+// The folded keyword kinds this lexer emits instead of tk_ident
+// (classify_ident: fn/if/else/let/use[+import]/pub). LIVE mindc treats these
+// words as CONTEXTUAL — `let use = 5` legally binds a variable named `use`
+// (live-probed 2026-07-23) — so the D2 binder must register them too, or a
+// bound-keyword callee (`let use = 5` then `use(1)`, live E2012) is
+// invisible to the frame walk. Inert for tk_ident-position queries
+// (E2002/E2009/E2012): their finders can never produce a query span that
+// spells a folded keyword, so the extra bindings are unreachable there.
+pub fn tc_sf_kw_bindable(k: i64) -> i64 {
+    if k == tk_kw_fn() {
+        return 1;
+    }
+    if k == tk_kw_if() {
+        return 1;
+    }
+    if k == tk_kw_else() {
+        return 1;
+    }
+    if k == tk_kw_let() {
+        return 1;
+    }
+    if k == tk_kw_use() {
+        return 1;
+    }
+    if k == tk_kw_pub() {
+        return 1;
+    }
+    0
+}
+
 pub fn tc_sf_bind_range(toks: Vec, src: i64, buf: i64, cnt: i64, a: i64, b: i64) -> i64 {
     if a >= b {
         return cnt;
@@ -38611,6 +38641,11 @@ pub fn tc_sf_bind_range(toks: Vec, src: i64, buf: i64, cnt: i64, a: i64, b: i64)
         if tc_sf_is_wild(src, tok_lo(toks, a), tok_hi(toks, a)) == 0 {
             return tc_sf_bind_range(toks, src, buf, tc_sf_bind(buf, cnt, tok_lo(toks, a), tok_hi(toks, a)), a + 1, b);
         }
+    }
+    if tc_sf_kw_bindable(tok_kind(toks, a)) == 1 {
+        // A contextually-bound keyword name (`let use = 5`) — see
+        // tc_sf_kw_bindable.
+        return tc_sf_bind_range(toks, src, buf, tc_sf_bind(buf, cnt, tok_lo(toks, a), tok_hi(toks, a)), a + 1, b);
     }
     tc_sf_bind_range(toks, src, buf, cnt, a + 1, b)
 }
@@ -38734,6 +38769,13 @@ pub fn tc_sf_let_skip_mut(toks: Vec, n: i64, s: i64, src: i64) -> i64 {
     if s + 1 < n {
         if tok_kind(toks, s) == tk_ident() {
             if tok_kind(toks, s + 1) == tk_ident() {
+                if tc_dn_is_mut(src, tok_lo(toks, s), tok_hi(toks, s)) == 1 {
+                    return s + 1;
+                }
+            }
+            if tc_sf_kw_bindable(tok_kind(toks, s + 1)) == 1 {
+                // `let mut use = 5` — the bound name is a folded keyword
+                // token, so `mut` must still be skipped, not bound.
                 if tc_dn_is_mut(src, tok_lo(toks, s), tok_hi(toks, s)) == 1 {
                     return s + 1;
                 }
@@ -39701,9 +39743,11 @@ pub fn tc_ui_stmt_kw_word(src: i64, lo: i64, hi: i64) -> i64 {
     if w == 111516500389741 {
         return 1;
     }
-    if w == 128034844732777 {
-        return 1;
-    }
+    // NOTE: no "import" entry — the SELF-HOST lexer folds `import` to
+    // tk_kw_use (classify_ident), so an ident-token span can never spell it;
+    // a word-match here would be dead code. The folded-keyword callee class
+    // (`import`/`use`/`pub`/`else`/`fn`/`let`) is handled by kind, not
+    // spelling, in the E2003 route (tc_uc_kw_callee).
     if w == 128034844735589 {
         return 1;
     }
@@ -40247,6 +40291,413 @@ pub fn tc_is_undeclared_assign(src: i64, src_len: i64, pos: i64, std_src: i64, s
 
 pub fn selftest_tc_undeclared_assign(src: i64, src_len: i64, pos: i64, std_src: i64, std_len: i64) -> i64 {
     tc_is_undeclared_assign(src, src_len, pos, std_src, std_len)
+}
+
+// ============================================================================
+// B1 rule E2003 — UNKNOWN CALL (resolve.rs Node::Call arm, UNKNOWN_CALL_CODE).
+// The call-position sibling of E2012, closing the scope-frame-engine quartet
+// (E2002/E2003/E2009/E2012). The Rust predicate (resolve.rs:774-832, the
+// Node::Call arm's else-if chain): at a call whose callee is a BARE name,
+// E2003 fires iff !call_resolvable(callee), where (resolve.rs:572-634)
+//
+//   call_resolvable(name) =
+//        ident_resolvable(name):
+//          scopes.contains(name)          [D2 — live local binding]
+//       || syms.name_resolvable(name)     — module decls + prelude [D1]
+//                                           OR bundled-std exports  [D3]
+//       || name == "bytes"
+//       || name.contains("::")            — qualified path, never bare-undef
+//       || cm_symbol_exported_res(name)   — vacuous single-file (no table)
+//     || name.starts_with("__mind_")      — blanket intrinsic namespace
+//     || name.starts_with("tensor.")      — folds into ONE callee string; a
+//                                           dot can never be inside one ident
+//                                           token, so the tk_dot structural
+//                                           arm below covers it
+//     || name == "gen_deref"
+//     || BARE_BUILTINS contains name      — the 34-name empirically-swept set
+//     || std_surface_intrinsic_arity(name).is_some()   — E2024 table ("byte")
+//     || cm_lookup_fn(name).is_some()     — vacuous single-file (no table)
+//
+// Precedence at the Call arm (grounded): unknown_variant (E2008, needs a
+// `::` head that is a local enum) → is_fn_value_call (E2012, callee resolves
+// ONLY as a local binding) → !call_resolvable (E2003). Both earlier arms
+// imply call_resolvable is TRUE (a "::" name and a scope binding are both in
+// the union), so E2003 ≡ !call_resolvable at a bare-callee position — the
+// E2012 boundary is exactly the sf axis: sf==1 && !excluded → E2012 (never
+// E2003); sf==0 && !excluded → E2003.
+//
+// Live-grounded boundaries (probe battery 2026-07-23):
+//   * keyword-spelled callees in EXPRESSION position (`let z = return(1)`,
+//     `loop(1)`, `break(1)`, `in(1)`, `as(1)`, `mut(1)`) parse as Call and
+//     FIRE E2003 — the same positional discipline as E2002: a stmt-keyword
+//     spelling declines ONLY at statement position (`while (c) {`,
+//     `return (3)` — header/statement consumption, never a Call);
+//   * `match`/`region` hijack expression position too — decline everywhere;
+//   * `true(1)` is a value literal head, never a Call — decline;
+//   * a dotted `head.rest(args)` is a MethodCall whose RECEIVER is walked as
+//     a value use (E2002 domain — `undefmod.undefn(1)` fires E2002 on the
+//     head, never E2003) or a folded `tensor.*` string (blanket-accepted):
+//     E2003 structurally never fires on the head → 0;
+//   * a module-level call (`let g = zork(1)` at top level) is OUTSIDE
+//     resolve_fn_body — live fires E2001 there, never E2003 (tc_sf_top's
+//     not-inside-any-fn sentinel forces -3);
+//   * the resolve.rs module doc-comment's "unresolved imports suppress
+//     undefined-call diagnostics" (resolve.rs:45-50, 333-335) is STALE — no
+//     suppression exists in the current implementation and live E2003 fires
+//     under BOTH `import std.vec` and an unresolvable non-std import
+//     (live-verified; the smoke pins this with positive cases).
+// Reuse discipline (arena rule): ONE lex of `src` feeds the shape gate, the
+// D2 walk (tc_sf_top) and the exclusion union (tc_fvc_excluded — shared
+// verbatim with E2012, whose FALSE arms are exactly call_resolvable's
+// bare-name accepts); tc_is_std_export lexes the caller-supplied std concat
+// once. Additive: reached only through selftest_tc_unknown_call, never
+// mindc_compile.
+
+// Operand-tail guard for the context words `in`/`as`/`mut`
+// (tc_ua_kw_exempt): they are NOT parser statement keywords (E2009
+// grounding) and live fires E2003 on a callee use in BOTH expression and
+// statement position (`in(1)` at a statement start FIRES — live-swept). But
+// a context word directly after an expression tail or `let` is a STRUCTURAL
+// (non-call) use — a for-header's `for i in (3)`, a cast's `x as (i64)` /
+// `1 as (i64)` / `(x) as (i64)`, a destructuring `let mut (a, b)` — all
+// legal, live-probed clean → decline. (`return in(1)` still fires: the
+// preceding-`return` case is taken by tc_ui_expr_ctx_prev FIRST.)
+pub fn tc_uc_ctx_operand_prev(toks: Vec, p: i64) -> i64 {
+    if p == 0 {
+        return 1;
+    }
+    let k: i64 = tok_kind(toks, p - 1);
+    if k == tk_ident() {
+        return 1;
+    }
+    if k == tk_int() {
+        return 1;
+    }
+    if k == tk_rparen() {
+        return 1;
+    }
+    if k == tk_rbracket() {
+        return 1;
+    }
+    if k == tk_kw_let() {
+        return 1;
+    }
+    0
+}
+
+// The E2003 SHAPE gate: 2 = classifiable bare-callee position (run the
+// resolution union), 0 = E2003 structurally never fires here (qualified
+// `Head::…(` / dotted `head.rest(` — resolve.rs's OWN verdict), -3 = decline
+// (not a call-position callee: decl name, method name, keyword statement
+// occurrence, value-literal head, non-call ident).
+pub fn tc_uc_shape(toks: Vec, n: i64, p: i64, src: i64) -> i64 {
+    if p + 1 >= n {
+        return 0 - 3;
+    }
+    let qlo: i64 = tok_lo(toks, p);
+    let qhi: i64 = tok_hi(toks, p);
+    // `true`/`false` — Literal::Int value literals, never a Call head.
+    if tc_ui_bool_lit(src, qlo, qhi) == 1 {
+        return 0 - 3;
+    }
+    // `match`/`region` hijack expression position too: decline everywhere.
+    if tc_sf_is_match(src, qlo, qhi) == 1 {
+        return 0 - 3;
+    }
+    if tc_ui_is_region(src, qlo, qhi) == 1 {
+        return 0 - 3;
+    }
+    // Statement-keyword spelling: keyword occurrence (statement position —
+    // `while (c) {`, `return (3)`, arm-body `=> return(1)`) is header/
+    // statement consumption, never a Call → decline; expression position
+    // (`= return(1)`, `f(loop(1)`) DOES parse as a Call and live fires
+    // E2003 → fall through and classify. EXCEPTION (live-swept, full 29-word
+    // × 2-position matrix 2026-07-23): the CONTEXT words `in`/`as`/`mut`
+    // (tc_ua_kw_exempt) are NOT statement keywords — a callee use fires
+    // E2003 in BOTH positions (`in(1)` at stmt start and in an arm body
+    // FIRE) — their only non-call `<word>(` shapes are structural operand
+    // tails (tc_uc_ctx_operand_prev).
+    if tc_ui_stmt_kw_word(src, qlo, qhi) == 1 {
+        if tc_ui_expr_ctx_prev(toks, p, src) == 0 {
+            if tc_ua_kw_exempt(src, qlo, qhi) == 0 {
+                return 0 - 3;
+            }
+            if tc_uc_ctx_operand_prev(toks, p) == 1 {
+                return 0 - 3;
+            }
+        }
+    }
+    let nk: i64 = tok_kind(toks, p + 1);
+    if nk == tk_colon() {
+        if p + 2 < n {
+            if tok_kind(toks, p + 2) == tk_colon() {
+                // `Head::…(args)` — the folded callee contains "::", so
+                // call_resolvable is unconditionally true: never fires.
+                return 0;
+            }
+        }
+        // A single `:` is an annotation position, not a call site.
+        return 0 - 3;
+    }
+    if nk == tk_dot() {
+        // `head.rest(args)` — a MethodCall receiver (E2002 domain) or a
+        // folded `tensor.*` callee (blanket-accepted): never fires.
+        return 0;
+    }
+    if nk != tk_lparen() {
+        return 0 - 3;
+    }
+    if p > 0 {
+        let pk: i64 = tok_kind(toks, p - 1);
+        if pk == tk_kw_fn() {
+            // `fn name(` — a declaration head, not a call site.
+            return 0 - 3;
+        }
+        if pk == tk_dot() {
+            // `recv.name(` — a method NAME (the receiver is the walked
+            // reference; no E2003 position exists here).
+            return 0 - 3;
+        }
+    }
+    2
+}
+
+// Any-kind token whose span STARTS at byte pos; -1 if none. The folded-
+// keyword callee router needs this because tc_sf_find_pos is tk_ident-only.
+pub fn tc_uc_find_tok(toks: Vec, n: i64, i: i64, pos: i64) -> i64 {
+    if i >= n {
+        return 0 - 1;
+    }
+    if tok_lo(toks, i) == pos {
+        return i;
+    }
+    if tok_lo(toks, i) > pos {
+        return 0 - 1;
+    }
+    tc_uc_find_tok(toks, n, i + 1, pos)
+}
+
+// The folded keywords that live-FIRE E2003 as a callee in expression /
+// match-arm-body position: fn / let / use (which also covers `import` —
+// classify_ident folds both to tk_kw_use) / pub. `if` NEVER fires (an
+// `if(1)` in any position parses as an if-expression header); `else` has
+// richer statement-position behaviour (see tc_uc_kw_callee).
+pub fn tc_uc_kw_fires(k: i64) -> i64 {
+    if k == tk_kw_fn() {
+        return 1;
+    }
+    if k == tk_kw_let() {
+        return 1;
+    }
+    if k == tk_kw_use() {
+        return 1;
+    }
+    if k == tk_kw_pub() {
+        return 1;
+    }
+    0
+}
+
+// Match-arm-body head: token p directly follows a `=>` (tk_eq + tk_gt pair).
+pub fn tc_uc_arm_head(toks: Vec, p: i64) -> i64 {
+    if p < 2 {
+        return 0;
+    }
+    if tok_kind(toks, p - 1) == tk_gt() {
+        if tok_kind(toks, p - 2) == tk_eq() {
+            return 1;
+        }
+    }
+    0
+}
+
+// Backward if/else-header scan from token i at group depth d: 1 iff a
+// tk_kw_if / tk_kw_else controls the `{` this scan started just before —
+// the consumed-else discriminator: a `} else (…)` after an if / else-if arm
+// is swallowed by the if-chain parser (incl. the newline-separated
+// `}\nelse(` — live-probed) and never becomes a Call, while a while/match/
+// for-headed block does NOT consume a following `else(` (live-probed: it
+// FIRES). Mirrors tc_ui_hdr_scan's walk, keyed to the two chain keywords.
+pub fn tc_uc_ifelse_hdr(toks: Vec, i: i64, d: i64) -> i64 {
+    if i < 0 {
+        return 0;
+    }
+    let k: i64 = tok_kind(toks, i);
+    if k == tk_rparen() {
+        return tc_uc_ifelse_hdr(toks, i - 1, d + 1);
+    }
+    if k == tk_rbracket() {
+        return tc_uc_ifelse_hdr(toks, i - 1, d + 1);
+    }
+    if d > 0 {
+        if k == tk_lparen() {
+            return tc_uc_ifelse_hdr(toks, i - 1, d - 1);
+        }
+        if k == tk_lbracket() {
+            return tc_uc_ifelse_hdr(toks, i - 1, d - 1);
+        }
+        if k == tk_lbrace() {
+            return 0;
+        }
+        if k == tk_rbrace() {
+            return 0;
+        }
+        return tc_uc_ifelse_hdr(toks, i - 1, d);
+    }
+    if k == tk_lparen() {
+        return 0;
+    }
+    if k == tk_lbracket() {
+        return 0;
+    }
+    if k == tk_lbrace() {
+        return 0;
+    }
+    if k == tk_rbrace() {
+        return 0;
+    }
+    if k == tk_semi() {
+        return 0;
+    }
+    if k == tk_kw_if() {
+        return 1;
+    }
+    if k == tk_kw_else() {
+        return 1;
+    }
+    tc_uc_ifelse_hdr(toks, i - 1, d)
+}
+
+// Folded-keyword callee verdict — the fail-OPEN class the tk_ident-only
+// finder missed: the SELF-HOST lexer folds `fn`/`if`/`else`/`let`/`use`/
+// `pub`/`import` to dedicated tk_kw_* kinds (classify_ident), so
+// tc_sf_find_pos never sees them — yet live mindc lexes them as plain
+// idents and (in expression / match-arm-body position) parses a following
+// `(` into a Call whose callee SPELLS the keyword, firing E2003
+// ("unsupported call to `fn`/`let`/`use`/`import`/`pub`/`else`").
+// LIVE-PROBED truth table (2026-07-23; positions probed per keyword:
+// `= kw(1)` / bare-stmt `kw(1)` / arg / binop / `return kw(1)` /
+// arm-body `=> kw(1)` / top level):
+//   fn, let, use, import, pub — FIRE in expression + arm-body position;
+//     statement position is consumed by decl/import parsing (no Call, no
+//     diagnostic) → decline;
+//   else — FIRES in expression + arm-body position AND at a bare statement
+//     start (after `{` / `;` / a newline boundary / a NON-if-chain `}` —
+//     an else with no preceding if-arm is not consumed); the ONLY no-fire
+//     shape is the consumed `} else (…)` of an if / else-if arm (incl.
+//     newline-separated) → the tc_uc_ifelse_hdr discriminator;
+//   if — NEVER fires (any `if(1)` parses as an if-expression header).
+// Top-level confinement + the BOUND-keyword boundary, both via the
+// tc_sf_top gate (span-based, so a keyword query span works):
+//   * top level — resolve_fn_body only walks fn bodies (a top-level
+//     `let g = use(1)` fires E2001, never E2003 — live-probed): the
+//     out-of-fn sentinel → decline;
+//   * live mindc treats these words as CONTEXTUAL and a `let use = 5`
+//     legally BINDS (live-probed) — a bound-keyword callee then fires
+//     E2012, NOT E2003 (`let use = 5` + `use(1)` → live E2012; the
+//     closed-scope variant → live E2003). tc_sf_kw_bindable extends the D2
+//     binder so the frame walk sees such bindings: sf==1 (bound) → decline
+//     (the E2012 domain), sf==0 → the keyword verdict below.
+pub fn tc_uc_kw_callee(toks: Vec, n: i64, q: i64, src: i64) -> i64 {
+    if q + 1 >= n {
+        return 0 - 3;
+    }
+    if tok_kind(toks, q + 1) != tk_lparen() {
+        return 0 - 3;
+    }
+    let k: i64 = tok_kind(toks, q);
+    if tc_uc_kw_fires(k) == 0 {
+        if k != tk_kw_else() {
+            return 0 - 3;
+        }
+    }
+    let buf: i64 = __mind_alloc(4096);
+    let sf: i64 = tc_sf_top(toks, n, 0, src, buf, q, tok_lo(toks, q), tok_hi(toks, q));
+    if sf != 0 {
+        return 0 - 3;
+    }
+    if tc_ui_expr_ctx_prev(toks, q, src) == 1 {
+        return 1;
+    }
+    if tc_uc_arm_head(toks, q) == 1 {
+        return 1;
+    }
+    if k != tk_kw_else() {
+        return 0 - 3;
+    }
+    if q <= 0 {
+        return 0 - 3;
+    }
+    if tc_ua_stmt_start(toks, q, src) == 0 {
+        return 0 - 3;
+    }
+    if tok_kind(toks, q - 1) != tk_rbrace() {
+        // Bare statement-start else (`{` / `;` / newline boundary): FIRES.
+        return 1;
+    }
+    // `} else(` — consumed iff the closed block is an if / else-if arm.
+    let lb: i64 = tc_ui_opener(toks, q - 2, 0);
+    if lb < 1 {
+        return 0 - 3;
+    }
+    if tok_kind(toks, lb) != tk_lbrace() {
+        return 0 - 3;
+    }
+    if tc_uc_ifelse_hdr(toks, lb - 1, 0) == 1 {
+        return 0 - 3;
+    }
+    1
+}
+
+// The E2003 query: 1 = "unsupported call" fires at the callee ident starting
+// at byte `pos`; 0 = the callee resolves (or E2003 structurally never fires
+// at this shape); -3 = fail-closed sentinel (not a classifiable bare-callee
+// position). Fail-closed direction: E2003 REJECTS code, so a false 1 is the
+// fail-open bug — an unclassifiable shape NEVER answers 1.
+pub fn tc_is_unknown_call(src: i64, src_len: i64, pos: i64, std_src: i64, std_len: i64) -> i64 {
+    let toks: Vec = lex(src, src_len);
+    let n: i64 = tok_count(toks);
+    let p: i64 = tc_sf_find_pos(toks, n, 0, pos);
+    if p < 0 {
+        // Not an ident token: a FOLDED-KEYWORD callee (fn/if/else/let/use/
+        // pub/import lex as dedicated tk_kw_* kinds, invisible to the
+        // tk_ident-only finder) — live mindc fires E2003 on most of them in
+        // expression position (see tc_uc_kw_callee).
+        let q: i64 = tc_uc_find_tok(toks, n, 0, pos);
+        if q < 0 {
+            return 0 - 3;
+        }
+        return tc_uc_kw_callee(toks, n, q, src);
+    }
+    let g: i64 = tc_uc_shape(toks, n, p, src);
+    if g != 2 {
+        return g;
+    }
+    let lo: i64 = tok_lo(toks, p);
+    let hi: i64 = tok_hi(toks, p);
+    // D2: scopes.contains — a live local binding is IN call_resolvable
+    // (item 1 of the union): never E2003. (sf==1 with no other accept is
+    // exactly where E2012 fires instead — the sibling boundary.)
+    let buf: i64 = __mind_alloc(4096);
+    let sf: i64 = tc_sf_top(toks, n, 0, src, buf, p, lo, hi);
+    if sf == 1 {
+        return 0;
+    }
+    if sf != 0 {
+        return 0 - 3;
+    }
+    // The bare-name accepts of call_resolvable — shared verbatim with E2012
+    // (its FALSE arms ARE this union): D1 decls + prelude, D3 std exports,
+    // "bytes", "gen_deref", the "__mind_" prefix, BARE_BUILTINS, the E2024
+    // intrinsic table ("byte").
+    if tc_fvc_excluded(toks, n, src, lo, hi, std_src, std_len) == 1 {
+        return 0;
+    }
+    1
+}
+
+pub fn selftest_tc_unknown_call(src: i64, src_len: i64, pos: i64, std_src: i64, std_len: i64) -> i64 {
+    tc_is_unknown_call(src, src_len, pos, std_src, std_len)
 }
 
 // ============================================================================
