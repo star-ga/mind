@@ -2319,6 +2319,32 @@ pub fn parse_postfix_rest(toks: Vec, pos: i64, buf: i64, recv: i64) -> ParseResu
     if tok_kind(toks, pos + 1) != tk_ident() {
         return pr_new(pos, recv);
     }
+    // `.ident (` METHOD-CALL postfix (`recv.method(args)`): build an ast_method
+    // node retaining the receiver, the method-NAME span, and the arg count —
+    // DISTINCT from the `.ident` field access below (which is left UNCHANGED for
+    // a `.ident` NOT followed by `(`). Native-ELF emit (nb_expr's ast_method arm)
+    // lowers ONLY zero-arg `.len()` on a fixed-size ARRAY receiver to its
+    // compile-time-constant length; every other method / arg / receiver shape
+    // fail-closes (0-byte refusal), never a wrong running ELF. Zero-arg fast path
+    // plus the general parse_args_rest, mirroring mc_parse_first. main.mind's own
+    // source has ZERO `recv.method(...)` token sequences (every `.ident` is a
+    // struct-field read not followed by `(`), so this branch never fires during
+    // self-parse and every self-compile byte is unchanged.
+    if tok_kind(toks, pos + 2) == tk_lparen() {
+        let m_lo: i64 = tok_lo(toks, pos + 1);
+        let m_hi: i64 = tok_hi(toks, pos + 1);
+        let mrecv_lo: i64 = ast_span_lo(recv);
+        let mopen: i64 = pos + 3;
+        if tok_kind(toks, mopen) == tk_rparen() {
+            let mnode0: i64 = mc_new_method(mrecv_lo, tok_hi(toks, mopen), recv, m_lo, m_hi, 0);
+            return parse_postfix_rest(toks, mopen + 1, buf, mnode0);
+        }
+        let margs: ParseResult = parse_args_rest(toks, mopen, buf, vec_new());
+        let m_after: i64 = pr_pos(margs);
+        let m_argc: i64 = ast_aux(pr_node(margs));
+        let mnode: i64 = mc_new_method(mrecv_lo, tok_hi(toks, m_after), recv, m_lo, m_hi, m_argc);
+        return parse_postfix_rest(toks, m_after + 1, buf, mnode);
+    }
     let field_lo: i64 = tok_lo(toks, pos + 1);
     let field_hi: i64 = tok_hi(toks, pos + 1);
     let recv_lo: i64 = ast_span_lo(recv);
@@ -25698,9 +25724,44 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let d_c2: String = nb_store_rax(d_c1, nb_slot_disp(d_id));
         return NbState { code: d_c2, next_id: d_id + 1, last_id: d_id, ncalls: st.ncalls };
     }
+    if k == ast_method() {
+        // `recv.method(args)` — this slice lowers EXACTLY ONE shape: zero-arg
+        // `.len()` on a fixed-size i64 ARRAY receiver, which is emit-time-known
+        // (arrays are fixed-size), so it lowers to a SINGLE i64 const — NO
+        // receiver lowering, NO call. nb_method_array_len returns the element
+        // count for that shape (a direct `[...]` literal, or an ident let-bound
+        // DIRECTLY to an array literal — the same binding nb_index_oob reads),
+        // or -1 for ANYTHING else: a non-`len` method, any argument, a non-array
+        // or unbound receiver, a non-ident/non-array-lit receiver. -1 POISONS
+        // lcell+80 (fail-closed 0-byte refusal) with a discarded const-0
+        // placeholder — NEVER a wrong running ELF (the load-bearing B0 over-fire
+        // guard). Uniform ONE SSA slot in both the valid and poison cases, so the
+        // nb_count_expr default (+1, no recurse) stays in exact frame lockstep and
+        // every scan walker's leaf default (0 calls / 0 argv / 0 addr-of / 0
+        // reach) is correct. main.mind's own source has no `recv.method(...)`
+        // call, so this arm never fires during self-compile and the integer
+        // native-ELF oracle stays byte-identical.
+        let m_recv: i64 = ast_child0(node);
+        let m_lo: i64 = ast_child1(node);
+        let m_hi: i64 = ast_child2(node);
+        let m_argc: i64 = ast_aux(node);
+        let m_len: i64 = nb_method_array_len(m_recv, m_lo, m_hi, m_argc, buf, lets, lcell);
+        if m_len < 0 {
+            __mind_store_i64(lcell + 80, 1);
+            return nb_emit_const0(st);
+        }
+        let m_id: i64 = st.next_id;
+        // movabs rax, imm64 = 48 B8 <imm64> ; mov [slot], rax.
+        let mc1: String = nb_push(st.code, 72);
+        let mc2: String = nb_push(mc1, 184);
+        let mc3: String = nb_i64le(mc2, m_len);
+        let mc4: String = nb_store_rax(mc3, nb_slot_disp(m_id));
+        return NbState { code: mc4, next_id: m_id + 1, last_id: m_id, ncalls: st.ncalls };
+    }
     // DEFAULT ARM — FAIL CLOSED (systemic). Any node kind with no arm above
-    // (ast_unsupported from the parser's poison fallback, ast_method, a block
-    // used as an expression, any future kind) is REFUSED: poison lcell+80 so
+    // (ast_unsupported from the parser's poison fallback, an unsupported
+    // ast_method shape falls to its own poison branch above, a block used as an
+    // expression, any future kind) is REFUSED: poison lcell+80 so
     // nb_lower_fn returns the -1 sentinel and the whole compile emits 0 bytes.
     // The placeholder const-0 keeps this walk crash-free (no null-child
     // recursion); its bytes are discarded with the rest of the poisoned
@@ -26093,6 +26154,70 @@ pub fn nb_index_oob(base: i64, idx: i64, buf: i64, lets: i64, lcell: i64) -> i64
         return 1;
     }
     0
+}
+
+// True iff the method-name span [lo,hi) is exactly "len" (bytes 108,101,110).
+// Byte-literal match (same shape as nb_intrinsic_id) — no allocation.
+pub fn nb_method_name_is_len(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo != 3 {
+        return 0;
+    }
+    if load_byte(buf, lo + 0) != 108 {
+        return 0;
+    }
+    if load_byte(buf, lo + 1) != 101 {
+        return 0;
+    }
+    if load_byte(buf, lo + 2) != 110 {
+        return 0;
+    }
+    1
+}
+
+// Emit-time array LENGTH for a `.len()` method call, or -1 (fail-closed) for
+// ANY shape outside the supported subset. Scope (over-fire guarded — the
+// load-bearing B0 invariant): the method name MUST be exactly "len", the call
+// MUST be zero-arg, and the receiver MUST be a known FIXED-SIZE i64 array —
+// either a DIRECT `[...]` array literal, or an ident let-bound DIRECTLY to an
+// array literal (nb_lets_lookup_slit descriptor, the SAME binding nb_index_oob
+// reads for its constant-index bounds check). Arrays are fixed-size, so the
+// length is the compile-time element count (ast_aux of the array-lit node). A
+// non-`len` method, any argument, a non-array or unbound receiver, or a
+// non-ident/non-array-lit receiver all return -1 so the caller poisons (0-byte
+// refusal) — NEVER a wrong running ELF. An if-statement chain (no value-if-let
+// phis) keeps it in the self-host subset.
+pub fn nb_method_array_len(recv: i64, m_lo: i64, m_hi: i64, argc: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
+    if argc != 0 {
+        return 0 - 1;
+    }
+    if nb_method_name_is_len(buf, m_lo, m_hi) == 0 {
+        return 0 - 1;
+    }
+    // Direct array-literal receiver (`[1,2,3].len()`) carries its own count.
+    // A TUPLE literal shares the ast_array_lit node kind (child0==1 marker) but
+    // is NOT an array — `.len()` is array-only this slice, so refuse it.
+    if ast_kind(recv) == ast_array_lit() {
+        if ast_child0(recv) == 1 {
+            return 0 - 1;
+        }
+        return ast_aux(recv);
+    }
+    if ast_kind(recv) != ast_ident() {
+        return 0 - 1;
+    }
+    let desc: i64 = nb_lets_lookup_slit(lets, lcell, buf, ast_span_lo(recv), ast_span_hi(recv));
+    if desc == 0 {
+        return 0 - 1;
+    }
+    if ast_kind(desc) != ast_array_lit() {
+        return 0 - 1;
+    }
+    // A tuple binding (`let t=(1,2,3)`) is an ast_array_lit with the child0==1
+    // tuple marker — reject it (tuples are not arrays; `.len()` is array-only).
+    if ast_child0(desc) == 1 {
+        return 0 - 1;
+    }
+    ast_aux(desc)
 }
 
 // Load each call arg 0..n-1 into its SysV argument register, drawing from two

@@ -7,9 +7,12 @@ examples/mindc_mind/main.mind) supports a low-level scalar + control-flow
 subset (i64 scalars, calls, if/else/while/let/assign/break/continue, and the
 parse-time desugars match / && / || / for / else-if, plus declared-order
 all-i64 structs via accessor fns — the idiom main.mind is written in — plus
-fixed i64 arrays: `[e0, e1, ...]` literals, index read/write `a[i]`, composing
-in arithmetic / call args / returns / loops, with proven-constant-OOB indexes,
-non-i64 elements, `[]`, trailing commas and `.len()` refused — plus i64 TUPLES
+fixed i64 arrays: `[e0, e1, ...]` literals, index read/write `a[i]`, the
+zero-arg `.len()` method (compile-time-constant element count), composing in
+arithmetic / call args / returns / loops, with proven-constant-OOB indexes,
+non-i64 elements, `[]`, trailing commas refused, and every NON-`len` method /
+`.len()` with args / `.len()` on a non-array or unbound receiver refused —
+plus i64 TUPLES
 as anonymous positional structs: `(e0, e1, ...)` literals (comma-disambiguated
 from paren groups), `.N` slot reads, and `let (a, b) = <tuple literal>;`
 destructuring, with non-i64 elements, 1-tuples, out-of-arity `.N` and
@@ -95,9 +98,10 @@ REFUSED = [
     ("tuple pattern mut", M("let (mut a, b)=(1,2); return a;"), "0B"),
     ("tuple pattern literal", M("let (a, 1)=(1,2); return a;"), "0B"),
     ("compound assign +=", M("let mut c:i64=0; c += 1; return c;"), "0B"),
-    # arrays are SUPPORTED (i64 subset, below) — but the array boundary itself
-    # stays fail-closed: non-i64 elements, empty literal, trailing comma,
-    # proven-constant OOB indexes, .len(), field access over an array binding.
+    # arrays are SUPPORTED (i64 subset, below — now incl. zero-arg `.len()`) —
+    # but the array boundary itself stays fail-closed: non-i64 elements, empty
+    # literal, trailing comma, proven-constant OOB indexes, field access over an
+    # array binding.
     ("array float element", M("let a=[1.5, 2.5]; return 0;"), "0B"),
     ("array empty []", M("let a=[]; return 0;"), "0B"),
     ("array trailing comma", M("let a=[1,2,]; return a[0];"), "0B"),
@@ -105,9 +109,27 @@ REFUSED = [
     ("array const OOB write", M("let mut a=[1,2,3]; a[5]=1; return 0;"), "0B"),
     ("array negative index", M("let a=[1,2,3]; return a[-1];"), "0B"),
     ("array direct-lit OOB", M("return [1,2,3][7];"), "0B"),
-    ("array .len()", M("let a=[1,2,3]; return a.len();"), "0B"),
     ("array field access", M("let a=[1,2,3]; return a.x;"), "0B"),
     ("array missing ]", M("let a=[1,2; return 0;"), "0B"),
+    # METHOD-CALL over-fire guard (B0): ONLY zero-arg `.len()` on a fixed-size
+    # array receiver lowers. Every OTHER method-call shape MUST refuse (0B) —
+    # never a wrong running ELF. These previously ALL refused via the parser's
+    # non-method fall-through; now the parser builds a real ast_method node and
+    # nb_expr's arm must still refuse each.
+    (".len() with arg", M("let a=[1,2,3]; return a.len(1);"), "0B"),
+    ("unknown method .foo() on array", M("let a=[1,2,3]; return a.foo();"), "0B"),
+    (".push(4) on array", M("let mut a=[1,2,3]; return a.push(4);"), "0B"),
+    (".len() on int scalar", M("let x:i64=5; return x.len();"), "0B"),
+    (".len() on unbound name", M("return z.len();"), "0B"),
+    (".len() on int literal", M("return 5.len();"), "0B"),
+    (".len() on struct receiver",
+     "struct P { x: i64, y: i64 }\nfn main()->i64{ let p: P = P { x: 1, y: 2 }; return p.len(); }", "0B"),
+    (".len() on array reassigned-from-call",
+     "fn mk()->i64{ return [4,5,6]; }\nfn main()->i64{ let a=mk(); return a.len(); }", "0B"),
+    # a TUPLE shares the ast_array_lit node (child0==1 marker) but is NOT an
+    # array — `.len()` is array-only this slice, so a tuple receiver refuses.
+    (".len() on tuple literal", M("return (1,2,3).len();"), "0B"),
+    (".len() on tuple via let", M("let t=(1,2,3); return t.len();"), "0B"),
     # struct literals must be EXACTLY the declared field set: under the
     # declared-order layout a missing/unknown/duplicate field would leave a
     # slot unwritten or doubly written — a wrong-value ELF — so refuse.
@@ -137,11 +159,11 @@ REFUSED = [
     ("float condition", M("let f:f64=1.5; if f { return 1; } return 2;"), "0B"),
     ("non-dyadic float literal", M("let f:f64=0.1; return (f as i64);"), "0B"),
     # sticky poison: unsupported nested in supported -> whole unit refuses
-    # (`.len()` is still out-of-subset; i64 references LANDED — see the
-    # SUPPORTED ref cases below and ref_netverify.py for their own boundary)
-    (".len() nested in if", M("let a=[1,2,3]; if a[0]>0 { return a.len(); } return 0;"), "0B"),
+    # (an unknown method `.foo()` is still out-of-subset; zero-arg `.len()` on an
+    # array LANDED — see the SUPPORTED cases below)
+    (".foo() nested in if", M("let a=[1,2,3]; if a[0]>0 { return a.foo(); } return 0;"), "0B"),
     # unsupported node in a separate function still refuses the whole unit
-    ("unsupported in sep fn", "fn helper()->i64{ let a=[1,2,3]; return a.len(); }\nfn main()->i64{ return helper(); }", "0B"),
+    ("unsupported method in sep fn", "fn helper()->i64{ let a=[1,2,3]; return a.foo(); }\nfn main()->i64{ return helper(); }", "0B"),
     # ITEM-LEVEL ATTRIBUTES: `#[...]` on a declaration is out of subset. The
     # parser's unrecognized-item-start fallback poisons (ast_unsupported) so the
     # stray `#`/`[`/ident/`]` tokens can NEVER silently drop and emit a running
@@ -176,6 +198,14 @@ SUPPORTED = [
     ("array nested literal", M("let a=[[1,2],[3,4]]; return a[1][0];"), 3),
     ("array in while body", M("let mut c:i64=0; while c<3 { let a=[1,2]; c=c+a[0]; } return c;"), 3),
     ("array in sep fn", "fn helper()->i64{ let a=[1,2,3]; return a[0]; }\nfn main()->i64{ return helper(); }", 1),
+    # zero-arg `.len()` on a fixed-size array — compile-time-constant element
+    # count (arrays are fixed-size), lowered to a single i64 const.
+    ("array .len() via let", M("let a=[1,2,3]; return a.len();"), 3),
+    ("array .len() direct lit", M("return [10,20,30,40].len();"), 4),
+    ("array .len() in arith", M("let a=[1,2,3,4]; return a.len()+1;"), 5),
+    ("array .len() nested in if", M("let a=[1,2,3]; if a[0]>0 { return a.len(); } return 0;"), 3),
+    ("array .len() 1-elem", M("let a=[7]; return a.len();"), 1),
+    ("array .len() in sep fn", "fn helper()->i64{ let a=[5,6]; return a.len(); }\nfn main()->i64{ return helper(); }", 2),
     # i64 TUPLES (anonymous positional structs — the array alloc + base+8*i ABI
     # with `.N` slot reads and literal-RHS destructuring; parse-time desugar,
     # zero new emit surface)
