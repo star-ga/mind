@@ -242,6 +242,17 @@ REFUSED = [
     # 397B running ELF byte-identical to the un-attributed program.
     ("item attr #[inline]", "#[inline]\nfn main()->i64{7}", "0B"),
     ("item attr #[nonsense]", "#[nonsense]\nfn main()->i64{7}", "0B"),
+    # CHAR LITERALS (#257 item 6): a char literal `'X'` / `'\X'` folds to a
+    # synthetic i64 int-lit carrying the character's byte value (parse_char_span,
+    # matching parser::parse_char_lit — NO new AST kind). The literal boundary
+    # stays fail-closed: a MULTI-char `'AB'` and the EMPTY `''` spelling are NOT
+    # valid char literals (the reference rejects both with E1001), so the bare `'`
+    # lexes as tk_unsupported and the whole compile refuses (0B), never a running
+    # wrong-value ELF.
+    ("char multi 'AB'", M("return 'AB';"), "0B"),
+    ("char empty ''", M("return '';"), "0B"),
+    ("char unterminated", M("return 'A;"), "0B"),
+    ("char multi nested in if", M("if 1>0 { return 'AB'; } return 0;"), "0B"),
 ]
 
 # (label, source, expected exit value) — the supported subset MUST run correct.
@@ -405,6 +416,23 @@ SUPPORTED = [
      "struct P { x: i64, y: i64 }\nfn mk()->P{ P{x:7,y:8} }\nfn main()->i64{ return mk().y; }", 8),
     ("call field arith mk().x + mk().y",
      "struct P { x: i64, y: i64 }\nfn mk()->P{ P{x:7,y:8} }\nfn main()->i64{ return mk().x + mk().y; }", 15),
+    # CHAR LITERALS (#257 item 6): `'X'` is the character's byte value — an i64
+    # int-lit lowered through the existing int-lit emit arm (parse_char_span decodes
+    # the folded tk_int span). ASCII byte value, the `'0'`==48 digit-char (proves it
+    # is NOT the integer 0), composition in arithmetic and in a comparison, and the
+    # `\n`==10 escape (matching parser::parse_char_lit's escape table).
+    ("char 'A' value", M("return 'A';"), 65),
+    ("char '0' is 48 not 0", M("return '0';"), 48),
+    ("char ' ' space is 32", M("return ' ';"), 32),
+    ("char arith 'A' + 1", M("return 'A' + 1;"), 66),
+    ("char compare 'A' == 65", M("if 'A' == 65 { return 1; } return 0;"), 1),
+    ("char escape newline '\\n'", M("return '\\n';"), 10),
+    ("char escape tab '\\t'", M("return '\\t';"), 9),
+    ("char escape null '\\0'", M("return '\\0';"), 0),
+    ("char escape backslash '\\\\'", M("return '\\\\';"), 92),
+    ("char escape quote '\\''", M("return '\\'';"), 39),
+    ("char let + arith", M("let c='A'; return c + 2;"), 67),
+    ("char in loop guard", M("let mut c='A'; let mut n=0; while n < c { n=n+10; } return n;"), 70),
 ]
 
 # (label, source, expected exit code) — a RUNTIME array-bounds VIOLATION on a
