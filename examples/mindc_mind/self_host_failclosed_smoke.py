@@ -205,6 +205,13 @@ SUPPORTED = [
     ("array literal index", M("return [1,2,3][1];"), 2),
     ("array let + index", M("let a=[10,20,30]; return a[2];"), 30),
     ("array variable index", M("let a=[10,20,30]; let i=2; return a[i];"), 30),
+    # RUNTIME bounds guard: an IN-RANGE variable/computed index still returns the
+    # correct value (the guard falls straight through — no perturbation of the
+    # in-bounds path). The matching OUT-OF-RANGE cases are in TRAP below.
+    ("array var index low edge (i=0)", M("let a=[10,20,30]; let i=0; return a[i];"), 10),
+    ("array var index high edge (i=N-1)", M("let a=[10,20,30]; let i=2; return a[i];"), 30),
+    ("array computed index in-range", M("let a=[10,20,30]; let i=1+1; return a[i];"), 30),
+    ("array var write in-range", M("let mut a=[1,2,3]; let i=2; a[i]=9; return a[2];"), 9),
     ("array arith compose", M("let a=[10,20,30]; return a[0]+a[1];"), 30),
     ("array index write", M("let mut a=[1,2,3]; a[1]=9; return a[1];"), 9),
     ("array for-loop sum", M("let a=[10,20,30]; let mut s=0; for i in 0..3 { s=s+a[i]; } return s;"), 60),
@@ -284,6 +291,28 @@ SUPPORTED = [
      "struct R { u: i64, v: i64 }\nfn get_u(r: R)->i64{ return r.u; }\nfn main()->i64{ let r: R = R { v: 9, u: 7 }; return get_u(r); }", 7),
 ]
 
+# (label, source, expected exit code) — a RUNTIME array-bounds VIOLATION on a
+# DIRECT let-bound known-length array (#256 slice 5/5). The compile-time
+# nb_index_oob refusal only catches CONSTANT indices; a VARIABLE/computed index
+# used to do an UNCHECKED load/store past the array (a memory-safety hole). The
+# runtime guard (nb_emit_bounds_guard) now halts DETERMINISTICALLY via
+# _exit(nb_oob_trap_code) == _exit(77) — a RUNNING ELF that traps with a FIXED
+# reproducible code, NEVER a wrong value and never an OOB access. Both READ
+# (ast_index) and WRITE (ast_index_assign) arms are covered. Only the
+# direct-binding known-length case; a call-boundary array (no runtime length)
+# stays unchecked (deferred LARGE part) and is NOT probed here.
+OOB_TRAP = 77
+TRAP = [
+    ("array var index OOB (i=N)", M("let a=[10,20,30]; let i=3; return a[i];")),
+    ("array var index OOB (i=N+2)", M("let a=[10,20,30]; let i=5; return a[i];")),
+    ("array var index OOB negative", M("let a=[10,20,30]; let i=0-1; return a[i];")),
+    ("array computed index OOB (1+2==N)", M("let a=[10,20,30]; let i=1+2; return a[i];")),
+    ("array var WRITE OOB (i=N+2)", M("let mut a=[1,2,3]; let i=5; a[i]=9; return 0;")),
+    ("array var WRITE OOB negative", M("let mut a=[1,2,3]; let i=0-2; a[i]=9; return 0;")),
+    ("array for-loop index OOB", M("let a=[10,20,30]; let mut s=0; for i in 0..4 { s=s+a[i]; } return s;")),
+    ("array direct-lit var index OOB", M("let i=3; return [10,20,30][i];")),
+]
+
 
 def main() -> int:
     fails = 0
@@ -300,10 +329,19 @@ def main() -> int:
         fails += 0 if ok else 1
         detail = f"exit {rc}" if st == "OK" else st
         print(f"  {'PASS' if ok else 'FAIL'}  {lbl}: {detail} want {want}")
+    print("== RUNTIME OOB TRAP (variable/computed index MUST deterministically trap) ==")
+    for lbl, src in TRAP:
+        st, rc = run(src)
+        # A running ELF (emit succeeded) that exits with the fixed trap code —
+        # NOT a wrong value (any other rc) and NOT a compile-time refusal (0B).
+        ok = st == "OK" and rc == OOB_TRAP
+        fails += 0 if ok else 1
+        detail = f"exit {rc}" if st == "OK" else st
+        print(f"  {'PASS' if ok else 'FAIL'}  {lbl}: {detail} want trap-exit {OOB_TRAP}")
     if fails:
         print(f"FAIL: {fails} fail-closed boundary violation(s)")
         return 1
-    print("ALL PASS  (fail-closed: unsupported refuses 0B, sticky through nesting; supported runs correct)")
+    print("ALL PASS  (fail-closed: unsupported refuses 0B, sticky through nesting; supported runs correct; runtime OOB traps deterministically)")
     return 0
 
 
