@@ -142,11 +142,22 @@ REFUSED = [
     (".len() nested in if", M("let a=[1,2,3]; if a[0]>0 { return a.len(); } return 0;"), "0B"),
     # unsupported node in a separate function still refuses the whole unit
     ("unsupported in sep fn", "fn helper()->i64{ let a=[1,2,3]; return a.len(); }\nfn main()->i64{ return helper(); }", "0B"),
+    # ITEM-LEVEL ATTRIBUTES: `#[...]` on a declaration is out of subset. The
+    # parser's unrecognized-item-start fallback poisons (ast_unsupported) so the
+    # stray `#`/`[`/ident/`]` tokens can NEVER silently drop and emit a running
+    # ELF (B0 fail-OPEN). Previously `#[inline]\nfn main()->i64{7}` emitted a
+    # 397B running ELF byte-identical to the un-attributed program.
+    ("item attr #[inline]", "#[inline]\nfn main()->i64{7}", "0B"),
+    ("item attr #[nonsense]", "#[nonsense]\nfn main()->i64{7}", "0B"),
 ]
 
 # (label, source, expected exit value) — the supported subset MUST run correct.
 SUPPORTED = [
     ("scalar arith", M("return 2+3*4;"), 14),
+    # control: the SAME fn without the item-level attribute still emits + runs
+    # (proves the poison is scoped to the unrecognized attribute token, not the
+    # bare-tail-expr `fn main()->i64{7}` shape itself)
+    ("attr-free control fn", "fn main()->i64{7}", 7),
     # i64 references (LANDED — read-through + deref; ref_netverify.py locks the
     # write-back battery and the remaining ref fail-closed boundary)
     ("ref + deref", M("let x:i64=5; let r=&x; return *r;"), 5),
