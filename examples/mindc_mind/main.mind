@@ -29530,122 +29530,73 @@ pub fn nb_toplevel_while_carries_narrow(buf: i64, stmts_addr: i64, stmts_len: i6
     nb_toplevel_while_carries_narrow(buf, stmts_addr, stmts_len, i + 1, params_addr, n_params)
 }
 
-// 1 iff a while that REASSIGNS a narrow-declared param is reachable through a chain of
-// DIRECT nested `while`s at this region level (a `while` in `stmts`, or such a while
-// direct-nested to any depth inside another while's body). This is the EXACT set the
-// loop-carry promotion handles: nb_while_carry -> nb_while_carry_nonassign only descends
-// into a DIRECT nested `while` (nb_while_carry_wnest), which promotes the inner while's
-// narrow-carried OUTER var into the enclosing loop's carry table. It has NO `if` arm on
-// purpose: an inner while wrapped in an `if` inside the loop body is NOT promoted to the
-// outer carry (nb_while_carry_nonassign hands a non-while stmt to nb_count_stmt, which
-// does not thread the inner while's carried writes out through the `if`), so permitting
-// it would silently drop the carry -> wrong result. This scanner is the fail-closed guard
-// that matches nb_while_carry_wnest/nb_while_assigns_narrow_param exactly.
-pub fn nb_body_while_carries_narrow_direct(buf: i64, stmts_addr: i64, stmts_len: i64, i: i64, params_addr: i64, n_params: i64) -> i64 {
-    if i >= stmts_len {
-        return 0;
-    }
-    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
-    let k: i64 = ast_kind(stmt);
-    if k == ast_while() {
-        let body_blk: i64 = ast_child1(stmt);
-        if nb_while_assigns_narrow_param(buf, ast_child0(body_blk), ast_aux(body_blk), 0, params_addr, n_params) == 1 {
-            return 1;
-        }
-        if nb_body_while_carries_narrow_direct(buf, ast_child0(body_blk), ast_aux(body_blk), 0, params_addr, n_params) == 1 {
-            return 1;
-        }
-    }
-    nb_body_while_carries_narrow_direct(buf, stmts_addr, stmts_len, i + 1, params_addr, n_params)
-}
-
-// 1 iff a top-level `if` in this while body has a branch that DIRECTLY (top-level)
-// reassigns a narrow-declared param — the exact shape nb_while_carry_ifnest carries
-// (Sub-step B). Reuses nb_while_assigns_narrow_param on each branch block (top-level
-// assigns only), so it does NOT look through a nested `while` inside the branch: an
-// if-wrapped inner while (`while{ if{ while{ narrow += 1 } } }`, Sub-step C) is NOT
-// matched here and stays fail-closed.
-pub fn nb_while_body_if_assigns_narrow(buf: i64, sa: i64, sl: i64, i: i64, params_addr: i64, n_params: i64) -> i64 {
+// 1 iff a narrow-declared (i8/i16/i32) PARAM is the target of an `Assign` at ANY
+// region depth in [sa,sl) — descending into `if` branches AND `while` bodies. This is
+// the EXACT reach of the Sub-step C loop-carry promotion: nb_if_carry_promote promotes
+// a merged OUTER var assigned anywhere in either branch (nb_block_writes_rec, recursive)
+// with post_id = its region-exit (merge phi) slot, and nb_while_live_writes descends
+// into nested if/while regions to collect it — so a narrow param reassigned anywhere
+// inside a loop-body region threads its two's-complement width-wrap out through the
+// merge/carry slot correctly regardless of if/while nesting depth. Proven by empirical
+// ELF-run boundary-mapping (guards off, value + sign-of-wrap checked vs an independent
+// Python reference) across if-wrapped-while, both-branch-same-var, sibling-nested,
+// if-in-if and deeper nestings at every width incl. overflow wrap. Only `Assign`
+// targets count: a nested `let` of the same name is a region-local shadow, not a
+// loop-carry write (matching nb_block_writes_rec).
+pub fn nb_region_reassigns_narrow(buf: i64, sa: i64, sl: i64, i: i64, params_addr: i64, n_params: i64) -> i64 {
     if i >= sl {
         return 0;
     }
     let stmt: i64 = __mind_load_i64(sa + i * 8);
-    if ast_kind(stmt) == ast_if() {
-        let then_blk: i64 = ast_child1(stmt);
-        let then_sa: i64 = ast_child0(then_blk);
-        let then_sl: i64 = ast_aux(then_blk);
-        let else_blk: i64 = ast_child2(stmt);
-        let else_sa: i64 = if else_blk == 0 {
-            0
-        } else {
-            ast_child0(else_blk)
-        };
-        let else_sl: i64 = if else_blk == 0 {
-            0
-        } else {
-            ast_aux(else_blk)
-        };
-        // Permit ONLY a GENUINE single-branch narrow carry: a narrow param top-level assigned
-        // in one branch whose SIBLING branch does not write it ANYWHERE (recursive, via
-        // nb_block_writes_rec). This is exactly what nb_if_carry_promote carries. A narrow
-        // param the sibling writes by nested control (`else { if{ x+=5 } }`) is NOT this shape
-        // and stays fail-closed (0B) — matching base 41d98e7 — instead of emitting a wrong
-        // value (the XN silent-miscompile class). Both-branch-same-var and Sub-step C
-        // (if-wrapped inner while) also do not match here and stay fail-closed.
-        if nb_block_narrow_single(buf, then_sa, then_sl, else_sa, else_sl, 0, params_addr, n_params) == 1 {
-            return 1;
-        }
-        if nb_block_narrow_single(buf, else_sa, else_sl, then_sa, then_sl, 0, params_addr, n_params) == 1 {
-            return 1;
-        }
-    }
-    nb_while_body_if_assigns_narrow(buf, sa, sl, i + 1, params_addr, n_params)
-}
-
-// 1 iff block A [asa,asl) has a TOP-LEVEL `Assign` to a narrow-declared param that is NOT
-// written (recursively, any depth) in the sibling block S [ssa,ssl) — the genuine
-// single-branch narrow carry nb_if_carry_promote handles. A narrow param the sibling also
-// writes (any means) is excluded so the fn fails closed rather than dropping the sibling write.
-pub fn nb_block_narrow_single(buf: i64, asa: i64, asl: i64, ssa: i64, ssl: i64, i: i64, params_addr: i64, n_params: i64) -> i64 {
-    if i >= asl {
-        return 0;
-    }
-    let stmt: i64 = __mind_load_i64(asa + i * 8);
-    if ast_kind(stmt) == ast_assign() {
+    let k: i64 = ast_kind(stmt);
+    if k == ast_assign() {
         let nl: i64 = ast_child0(stmt);
         let idx: i64 = resolve_param(params_addr, n_params, buf, ast_span_lo(nl), ast_span_hi(nl));
         if idx >= 0 {
             let pnode: i64 = __mind_load_i64(params_addr + idx * 8);
             if nb_width_of_ann(buf, ast_child1(pnode)) < 64 {
-                if nb_block_writes_rec(buf, ssa, ssl, ast_span_lo(nl), ast_span_hi(nl), 0) == 0 {
-                    return 1;
-                }
+                return 1;
             }
         }
     }
-    nb_block_narrow_single(buf, asa, asl, ssa, ssl, i + 1, params_addr, n_params)
+    if k == ast_while() {
+        let wb: i64 = ast_child1(stmt);
+        if nb_region_reassigns_narrow(buf, ast_child0(wb), ast_aux(wb), 0, params_addr, n_params) == 1 {
+            return 1;
+        }
+    }
+    if k == ast_if() {
+        let tb: i64 = ast_child1(stmt);
+        if nb_region_reassigns_narrow(buf, ast_child0(tb), ast_aux(tb), 0, params_addr, n_params) == 1 {
+            return 1;
+        }
+        let eb: i64 = ast_child2(stmt);
+        if eb != 0 {
+            if nb_region_reassigns_narrow(buf, ast_child0(eb), ast_aux(eb), 0, params_addr, n_params) == 1 {
+                return 1;
+            }
+        }
+    }
+    nb_region_reassigns_narrow(buf, sa, sl, i + 1, params_addr, n_params)
 }
 
-// 1 iff a while that REASSIGNS a narrow-declared param is reachable at this region
-// level: either a `while` DIRECTLY in `stmts` whose body reassigns a narrow param,
-// or such a while nested inside an `if` branch (recursing through if-nesting to any
-// depth). This is the exact set of nested-while carry shapes whose rebinding threads
-// correctly out through the enclosing if-region's merge exit-env (verified: the
-// if-merge machinery collects the nested while's top-level live_writes as branch
-// writes — nb_branch_writes' ast_while arm -> nb_while_live_writes — allocates a
-// merge phi per carried name, and nb_rebind_merges binds them into the post-if
-// let-env so the post-loop read resolves the carried value; the narrow width-wrap
-// slot is minted+counted identically on both the nb_while_carry pre-walk and the
-// nb_count_stmt assign arm via the param-width binding in the let-env).
+// 1 iff a narrow-declared param is REASSIGNED by a `while` reachable in this region:
+// either a `while` directly in `stmts` whose body region (any if/while nesting depth)
+// reassigns a narrow param, or such a while nested inside an `if` branch. The carry
+// threads correctly out through the Sub-step C machinery (nb_if_carry_promote +
+// nb_while_live_writes) regardless of how the reassigning while/assign is nested inside
+// the loop body — proven by empirical ELF-run boundary-mapping (guards off, value +
+// sign-of-wrap checked vs an independent Python reference) across if-wrapped-while,
+// both-branch, sibling-nested, if-in-if and deeper nestings at every width incl.
+// two's-complement overflow. Previously the while-body descent was DIRECT-while-only
+// (the if-wrapped inner while `while{ if{ while{ narrow += 1 } } }` mis-compiled before
+// Sub-step C landed, so it was kept fail-closed); Sub-step C fixed that shape at the
+// machinery level, so the recursive descent (nb_region_reassigns_narrow) now permits it.
 //
-// Into a `while` body it descends ONLY through DIRECT nested `while`s (via
-// nb_body_while_carries_narrow_direct), which is exactly what the loop-carry promotion
-// (nb_while_carry_wnest) handles — so `while{ while{ narrow += 1 } }` and deeper
-// direct-nested loops are PERMITTED and run correct. It DELIBERATELY does NOT reach an
-// inner while that is wrapped in an `if` inside a loop body (`while{ if{ while{ ... } } }`):
-// that inner while is never promoted to the outer carry, so the narrow var is dropped
-// across the outer loop — such a shape produces 0 here and stays fail-closed at the guard
-// site (the pre-existing i64 `while{ if{ x += 1 } }` carry-drop gap is likewise refused).
+// The ONLY narrow loop-carry shape still genuinely broken (a write on a `break`/
+// `continue` exit edge) is refused by the SEPARATE nb_fns_branch_exit_carry guard, so it
+// stays fail-closed even though this scanner permits it. A read-only narrow param merely
+// present while a loop runs (never reassigned) yields 0 here and stays fail-closed.
 //
 // No self-host fn has a narrow param, so this never fires during self-compile and the
 // byte-identical loop is unaffected.
@@ -29657,27 +29608,7 @@ pub fn nb_region_while_carries_narrow(buf: i64, stmts_addr: i64, stmts_len: i64,
     let k: i64 = ast_kind(stmt);
     if k == ast_while() {
         let body_blk: i64 = ast_child1(stmt);
-        if nb_while_assigns_narrow_param(buf, ast_child0(body_blk), ast_aux(body_blk), 0, params_addr, n_params) == 1 {
-            return 1;
-        }
-        // F2 FIXED: a while DIRECT-NESTED inside this while whose body reassigns a
-        // narrow param now carries correctly (nb_while_carry_wnest promotes the outer
-        // var through the direct nested region). Descend into the while body via the
-        // DIRECT-ONLY scanner so `while{ while{ x = x + 1 } }` (and deeper direct nests)
-        // is PERMITTED. This must NOT reach through an `if` inside the body: an
-        // if-wrapped inner while (`while{ if{ while{ x = x + 1 } } }`) is never promoted
-        // to the outer carry, so descending through the full scanner would downgrade a
-        // safe refusal to a silent carry-drop miscompile — hence nb_body_while_carries_
-        // narrow_direct (no ast_if() arm), matching what the promotion actually handles.
-        if nb_body_while_carries_narrow_direct(buf, ast_child0(body_blk), ast_aux(body_blk), 0, params_addr, n_params) == 1 {
-            return 1;
-        }
-        // SUB-STEP B: a top-level `if` in this while body whose branch DIRECTLY assigns a
-        // narrow param now carries correctly (nb_while_carry_ifnest promotes the outer var
-        // via the if's merge slot). Permit `while{ if{ narrow += 1 } }`. Direct branch
-        // assigns only (nb_while_body_if_assigns_narrow does not look through a nested
-        // while), so `while{ if{ while{ narrow += 1 } } }` (Sub-step C) stays fail-closed.
-        if nb_while_body_if_assigns_narrow(buf, ast_child0(body_blk), ast_aux(body_blk), 0, params_addr, n_params) == 1 {
+        if nb_region_reassigns_narrow(buf, ast_child0(body_blk), ast_aux(body_blk), 0, params_addr, n_params) == 1 {
             return 1;
         }
     }
@@ -29697,31 +29628,29 @@ pub fn nb_region_while_carries_narrow(buf: i64, stmts_addr: i64, stmts_len: i64,
 }
 
 // 1 iff any BODY-having fn in the pruned `ordered` set declares a narrow-width
-// (i8/i16/i32) param AND its body has a while loop that is NOT the now-correct
-// "narrow param carried by a top-level while" shape — i.e. a still-broken sub-shape.
+// (i8/i16/i32) param AND its body has a while loop that does NOT reassign the narrow
+// param anywhere a loop carries it — i.e. a still-broken read-only-carry sub-shape.
 //
-// FIXED (now emits + runs correct): a narrow param REASSIGNED by a TOP-LEVEL body
-// while. nb_while_carry now mints the emit's fresh width-wrap slot for a narrow
-// carried assign (post_id = the wrap slot, next_id advanced +1), so the carried
-// var's working slot and every later carried var stay frame-consistent with the
-// emit + the count (nb_count_stmt assign arm) — the value re-wraps two's-complement
-// each iteration and post-loop reads resolve to the live slot.
+// FIXED (now emits + runs correct — nb_while_carry mints the emit's fresh width-wrap
+// slot for a narrow carried assign so the value re-wraps two's-complement each
+// iteration and post-loop reads resolve to the live slot): a narrow param REASSIGNED
+// by a `while` at ANY region nesting — top-level, inside an `if` branch, direct-nested
+// in another while, or an if-WRAPPED inner while (`while{ if{ while{ narrow += 1 } } }`),
+// both-branch-same-var, sibling-nested and if-in-if writes, at any depth. The Sub-step C
+// machinery (nb_if_carry_promote promotes a merged OUTER var written anywhere in a
+// branch region with post_id = its merge phi slot; nb_while_live_writes descends into
+// nested if/while regions to collect it) threads the carry + width-wrap out correctly
+// regardless of nesting. nb_region_while_carries_narrow now permits exactly that set
+// (recursive nb_region_reassigns_narrow), proven by empirical ELF-run boundary-mapping
+// (guards off, value + sign-of-wrap checked vs an independent Python reference).
 //
-// STILL REFUSED (fail-closed empty es_new()):
-//   (a) an inner while wrapped in an `if` INSIDE a loop body
-//       (`while{ if{ while{ narrow += 1 } } }`) — the inner while is not promoted to
-//       the outer loop's carry (nb_while_carry_nonassign only descends into a DIRECT
-//       nested while), so the narrow var is dropped across the outer loop. The guard's
-//       while-body descent is direct-while-only (nb_body_while_carries_narrow_direct),
-//       so this shape stays fail-closed (as does the pre-existing i64 `while{ if{ x += 1
-//       } }` carry-drop gap). A top-level `if{ while{ narrow += 1 } }` (an if at the
-//       fn-body region wrapping a while) IS permitted+correct — the if-merge machinery
-//       threads it — and is unaffected.
-//   (b) a narrow param merely PRESENT while a top-level loop runs but NOT reassigned
-//       by it — a read-only narrow param used post-loop via a `(x as i64)`-cast fed
-//       into a binop hits a SEPARATE, still-open cast-in-binop lowering bug (`as` is
-//       not an infix operator in the pratt parser, so the cast mis-lowers and the
-//       trailing operand becomes dead code). Refused until that cast fix lands.
+// STILL REFUSED here (fail-closed empty es_new()):
+//   * a narrow param merely PRESENT while a loop runs but NEVER reassigned by it — a
+//     read-only narrow param carried across a loop then read post-loop. The narrow
+//     loop-carry machinery records only a REASSIGNED carry slot; a read-only narrow
+//     param threaded across a loop is not yet handled. Refused until that lands.
+//   (A `break`/`continue` write-on-exit-edge shape is reassigned so it is permitted
+//   HERE, but the SEPARATE nb_fns_branch_exit_carry guard refuses it — see below.)
 //
 // Body-having fns only (the narrow-typed std sigs are extern `unsafe fn`, no body).
 // No self-host fn has a narrow param, so this never fires during self-compile and the
@@ -29738,19 +29667,14 @@ pub fn nb_fns_reassign_narrow_param(buf: i64, ordered: i64, n_fns: i64, k: i64) 
             let body: i64 = ast_child2(node);
             let bsa: i64 = ast_child0(body);
             let bsl: i64 = ast_aux(body);
-            // A while is present (top-level or region-nested) but NO while that
-            // reassigns the narrow param is reachable through the fn-body / if-region
-            // exit env -> refuse. nb_region_while_carries_narrow returns 1 iff a
-            // top-level while, a while nested inside an if-branch (at any if-depth), OR
-            // a while DIRECT-nested inside another while (to any depth) reassigns a
-            // narrow param — the shapes whose carry rebinding threads correctly out (the
-            // if-merge machinery collects a nested while's live_writes as branch writes
-            // and rebinds them post-if; nb_while_carry_wnest promotes a direct nested
-            // while's carried OUTER var into the enclosing loop's carry table). Into a
-            // while body it descends ONLY through DIRECT nested whiles, so an inner while
-            // wrapped in an `if` inside a loop body (`while{ if{ while{ narrow += 1 } } }`)
-            // is NOT promoted to the outer carry and stays fail-closed, as does a
-            // read-only narrow param merely present while a loop runs.
+            // A while is present but NO while that reassigns the narrow param is
+            // reachable through the fn body's if/while region nesting -> refuse.
+            // nb_region_while_carries_narrow returns 1 iff a narrow param is reassigned
+            // by a `while` at ANY region nesting depth (top-level, if-nested, direct
+            // while-nested, or if-wrapped inner while — recursive nb_region_reassigns_
+            // narrow), all of which the Sub-step C carry/merge machinery threads out
+            // correctly. Only a read-only narrow param merely present while a loop runs
+            // (never reassigned) yields 0 and stays fail-closed here.
             if nb_stmts_have_while(buf, bsa, bsl, 0) == 1 {
                 if nb_region_while_carries_narrow(buf, bsa, bsl, 0, params_addr, n_params) == 0 {
                     return 1;
