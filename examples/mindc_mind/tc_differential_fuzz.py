@@ -733,6 +733,23 @@ E2015_RHS = [
 ]
 
 
+# ESCAPED-QUOTE-before-let E2015 twin (task #244 regression lock). A defensive
+# lock: the E2015 driver (tc_let_infer_lit) locates the target `let` token by
+# byte position and inspects it locally, so it never runs the tc_dn_skip_str
+# prefix scan the E2004 driver does — a preceding escaped-quote string therefore
+# does NOT desync it (agrees with live both before AND after the #244 fix). Kept
+# so the tc_dn_skip_str change is proven not to perturb the E2015 path either.
+# Each fires E2015 at the RHS `42` (int literal into a float annotation).
+E2015_ESCAPE = [
+    ("esc_dquote_str",
+     'fn main() -> i64 {\n    let s = "a\\"b"\n'
+     "    let z: f64 = 42\n    return 0\n}\n"),
+    ("esc_squote_char",
+     "fn main() -> i64 {\n    let c = '\\''\n"
+     "    let z: f64 = 42\n    return 0\n}\n"),
+]
+
+
 def gen_e2015_cases():
     cases = []
     for ann, _annc in E2015_ANNS:
@@ -743,11 +760,15 @@ def gen_e2015_cases():
         # every int ann, clean for f32/f64) — exercises the optional-mut head.
         src = f"fn main() -> i64 {{\n    let mut z: {ann} = 3.5\n    return 0\n}}\n"
         cases.append(Case(ann + "_mut", "float_lit", "3.5", src, src.index("3.5")))
+    for label, src in E2015_ESCAPE:
+        cases.append(Case("escaped", "int_lit", "42", src,
+                          src.rindex("= 42") + 2))
     return cases
 
 
 def e2015_templates():
-    return [(a, None) for a, _ in E2015_ANNS] + [(a + "_mut", None) for a, _ in E2015_ANNS]
+    return ([(a, None) for a, _ in E2015_ANNS]
+            + [(a + "_mut", None) for a, _ in E2015_ANNS] + [("escaped", None)])
 
 
 def e2015_sentinel(oracle):
@@ -874,18 +895,35 @@ E2004_DECLINE = [
 # path: extend tc_lii_src_ty to the `( NAME : ANN ,|)` param slot, then move
 # the param shapes into the scored grid here and in the three-leg smoke.
 #
-# deferred: an ESCAPED-QUOTE string (`let s = "a\"b"`) in any statement BEFORE
-# the narrowing let makes the self-host lex()/tc_dn_skip_str (main.mind:38546)
-# treat the `\"` as a string terminator (it matches a raw quote byte, no
-# backslash-escape handling) and desync the following `let`, so the port
-# declines where live fires E2004. PRE-EXISTING + fix-orthogonal (reproduces
-# with zero braces, so tc_lii_brace_depth is not involved) + fail-CLOSED, and
-# it affects the whole tc_lii prefix scan and likely sibling tc_* drivers.
-# Kept OUT of this corpus for the same decline-vs-fire scoring reason. Upgrade
-# path: teach tc_dn_skip_str (and lex()'s string scan) to skip the byte after
-# `\` inside a string/char literal, add the `\"`-before-let case to E2004 +
-# E2015 corpora, then re-freeze the self-host seed. Found by the T2 blind
+# FIXED 2026-07-24 (task #244): an ESCAPED-QUOTE string (`let s = "a\"b"`) in a
+# statement BEFORE the narrowing let used to make the self-host
+# lex()/tc_dn_skip_str (main.mind) treat the `\"` as a string terminator (it
+# matched a raw quote byte with no backslash-escape handling) and desync the
+# following `let`, so the port declined where live fires E2004. tc_dn_skip_str
+# now skips the token AFTER a backslash (byte 92) inside a string/char literal,
+# mirroring the live lexer's decode_string_body — so `\"` / `\'` no longer
+# terminate the literal. The E2004_ESCAPE cases below (and their E2015 twins)
+# lock the fix in: each FIRES and agrees with live. Found by the T2 blind
 # adversarial review 2026-07-24.
+
+
+# ESCAPED-QUOTE-before-let FIRE cases (task #244 regression lock). A string or
+# char literal containing an escaped quote (`\"` / `\'`) in a statement BEFORE
+# the narrowing `let a: i64 = 5` / `let b: i32 = a`. The self-host lexer
+# tokenizes byte-by-byte and tc_dn_skip_str now honors `\`-escapes, so the
+# escaped quote no longer terminates the literal and desyncs the following let.
+# Each FIRES E2004 at `= a` and must AGREE with live. Before the fix these were
+# under-fires (port declined, live fired) — the RED that proved the defect.
+E2004_ESCAPE = [
+    # escaped DOUBLE-quote inside a string (q=34): `"a\"b"`.
+    ("esc_dquote_str",
+     'fn m() -> i64 {\n    let s = "a\\"b"\n'
+     "    let a: i64 = 5\n    let b: i32 = a\n    return 0\n}\n"),
+    # escaped SINGLE-quote char literal (q=39): `'\''`.
+    ("esc_squote_char",
+     "fn m() -> i64 {\n    let c = '\\''\n"
+     "    let a: i64 = 5\n    let b: i32 = a\n    return 0\n}\n"),
+]
 
 
 def gen_e2004_cases():
@@ -905,12 +943,15 @@ def gen_e2004_cases():
     for label, src in E2004_DECLINE:
         cases.append(Case("declined", f"ident_{label}", "a", src,
                           src.rindex("= a") + 2))
+    for label, src in E2004_ESCAPE:
+        cases.append(Case("escaped", f"ident_{label}", "a", src,
+                          src.rindex("= a") + 2))
     return cases
 
 
 def e2004_templates():
     return ([(f"src_{a}", None) for a in E2004_ANNS]
-            + [("src_i64_mut", None), ("declined", None)])
+            + [("src_i64_mut", None), ("declined", None), ("escaped", None)])
 
 
 def e2004_sentinel(oracle):

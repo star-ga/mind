@@ -4773,9 +4773,23 @@ pub fn tc_lii_rhs_solo(toks: Vec, n: i64, r: i64, src: i64) -> i64 {
 
 // Number of ident tokens in [i,e) whose span spells src[qlo..qhi). Accumulator
 // form (tail-recursive) so the prefix scan does not grow the frame per token.
+// String/char-literal AWARE: the self-host lexer emits the bytes inside a `"`
+// / `'` literal as ordinary ident/int/punct tokens, so an ident spelled like
+// the name that happens to sit INSIDE a string literal (`let s = "a\"b"`, the
+// inner `a`) must NOT count as a binding occurrence. A quote token hands the
+// whole literal to tc_dn_skip_str (escape-aware), so its content is skipped.
 pub fn tc_lii_occ_count(toks: Vec, src: i64, i: i64, e: i64, qlo: i64, qhi: i64, acc: i64) -> i64 {
     if i >= e {
         return acc;
+    }
+    if tok_kind(toks, i) == tk_unsupported() {
+        let b: i64 = load_byte(src, tok_lo(toks, i));
+        if b == 34 {
+            return tc_lii_occ_count(toks, src, tc_dn_skip_str(toks, e, i + 1, src, 34), e, qlo, qhi, acc);
+        }
+        if b == 39 {
+            return tc_lii_occ_count(toks, src, tc_dn_skip_str(toks, e, i + 1, src, 39), e, qlo, qhi, acc);
+        }
     }
     if tok_kind(toks, i) == tk_ident() {
         if tc_sf_span_eq(src, tok_lo(toks, i), tok_hi(toks, i), qlo, qhi) == 1 {
@@ -4785,17 +4799,32 @@ pub fn tc_lii_occ_count(toks: Vec, src: i64, i: i64, e: i64, qlo: i64, qhi: i64,
     tc_lii_occ_count(toks, src, i + 1, e, qlo, qhi, acc)
 }
 
-// Index of the LAST ident token in [0,i] spelling src[qlo..qhi), or -1.
-pub fn tc_lii_last_occ(toks: Vec, src: i64, i: i64, qlo: i64, qhi: i64) -> i64 {
-    if i < 0 {
-        return 0 - 1;
+// Index of the sole binding occurrence of src[qlo..qhi) in [0,e), SKIPPING
+// string/char-literal contents (an ident inside a literal is text, never a
+// binding). Forward accumulator (`best` = last match so far) so a
+// string-internal spelling can never shadow the real binding regardless of
+// order; with the uniqueness guard (occ_count == 1) this is the single real
+// occurrence. Returns -1 if none. Replaces the earlier backward tc_lii_last_occ
+// (which walked raw tokens and could latch onto a string-internal ident).
+pub fn tc_lii_find_occ(toks: Vec, src: i64, i: i64, e: i64, qlo: i64, qhi: i64, best: i64) -> i64 {
+    if i >= e {
+        return best;
+    }
+    if tok_kind(toks, i) == tk_unsupported() {
+        let b: i64 = load_byte(src, tok_lo(toks, i));
+        if b == 34 {
+            return tc_lii_find_occ(toks, src, tc_dn_skip_str(toks, e, i + 1, src, 34), e, qlo, qhi, best);
+        }
+        if b == 39 {
+            return tc_lii_find_occ(toks, src, tc_dn_skip_str(toks, e, i + 1, src, 39), e, qlo, qhi, best);
+        }
     }
     if tok_kind(toks, i) == tk_ident() {
         if tc_sf_span_eq(src, tok_lo(toks, i), tok_hi(toks, i), qlo, qhi) == 1 {
-            return i;
+            return tc_lii_find_occ(toks, src, i + 1, e, qlo, qhi, i);
         }
     }
-    tc_lii_last_occ(toks, src, i - 1, qlo, qhi)
+    tc_lii_find_occ(toks, src, i + 1, e, qlo, qhi, best)
 }
 
 // Declared TYPE TAG of the binding whose NAME slot is token j — i.e. j must be
@@ -4870,7 +4899,7 @@ pub fn tc_let_infer_ident(src: i64, src_len: i64, pos: i64, std_src: i64, std_le
     if tc_lii_occ_count(toks, src, 0, r, qlo, qhi, 0) != 1 {
         return 0 - 3;
     }
-    let j: i64 = tc_lii_last_occ(toks, src, r - 1, qlo, qhi);
+    let j: i64 = tc_lii_find_occ(toks, src, 0, r, qlo, qhi, 0 - 1);
     if j < 0 {
         return 0 - 3;
     }
@@ -38543,12 +38572,25 @@ pub fn tc_dn_is_prelude(name: i64, len: i64) -> i64 {
 // itself as tk_unsupported, so from the token AFTER the opening quote, advance
 // past the next tk_unsupported token whose source byte equals `q`. Returns the
 // index after the closing quote, or n (fail-safe: end of stream).
+//
+// Escape-aware: a backslash (byte 92) escapes the FOLLOWING token, so `\"` /
+// `\'` / `\\` (and `\n`, `\t`, ...) never terminate the literal. This mirrors
+// the live lexer's decode_string_body (parser/mod.rs), which consumes `\` plus
+// the next byte as one unit; without it an escaped quote inside a preceding
+// string desyncs tokenization of the following statement (a fail-CLOSED
+// under-fire). The bootstrap source uses no string-literal escapes (every `\`
+// in main.mind is inside a `//` comment the lexer strips), so this branch is
+// never taken during self-compile and the emit stays byte-identical.
 pub fn tc_dn_skip_str(toks: Vec, n: i64, i: i64, src: i64, q: i64) -> i64 {
     if i >= n {
         return n;
     }
     if tok_kind(toks, i) == tk_unsupported() {
-        if load_byte(src, tok_lo(toks, i)) == q {
+        let b: i64 = load_byte(src, tok_lo(toks, i));
+        if b == 92 {
+            return tc_dn_skip_str(toks, n, i + 2, src, q);
+        }
+        if b == q {
             return i + 1;
         }
     }
