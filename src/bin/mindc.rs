@@ -353,6 +353,32 @@ enum Command {
         #[arg(long)]
         require_deterministic: bool,
     },
+    /// Decode + inspect a mic@3 binary artifact — the consumer/debug counterpart
+    /// of `--emit-mic3`. Pretty-prints the canonical IR body plus a structural
+    /// summary (instruction count, SSA value count, exports, byte size) and, when
+    /// the artifact carries an `evidence_chain` MAP, the trace_hash / determinism
+    /// / fp_mode.
+    ///
+    /// With `--diff OTHER`, structurally compares two artifacts and reports the
+    /// FIRST diverging byte plus each side's parse status and instruction count —
+    /// the tool the self-host byte-identity gates need when a reseed or loop stops
+    /// being byte-identical and "bytes differ" is not enough. mic@3 is canonical
+    /// (RFC 0021), so byte-identity IS structural identity.
+    ///
+    /// Exit 0 = decoded (and, with `--diff`, identical); 1 = artifacts differ
+    /// (`--diff`) or a malformed artifact; 2 = I/O error.
+    Inspect {
+        /// Path to the mic@3 artifact to inspect.
+        #[arg(value_name = "ARTIFACT")]
+        artifact: String,
+        /// Emit the summary as a JSON object instead of human-readable text.
+        #[arg(long)]
+        json: bool,
+        /// Structurally diff ARTIFACT against a second mic@3 artifact; report the
+        /// first diverging byte. Exit 1 unless the two are byte-identical.
+        #[arg(long, value_name = "OTHER")]
+        diff: Option<String>,
+    },
 }
 
 #[derive(Parser, Debug, Default)]
@@ -609,6 +635,13 @@ fn main() {
                 *require_deterministic,
                 &trusted,
             ));
+        }
+        Some(Command::Inspect {
+            artifact,
+            json,
+            diff,
+        }) => {
+            process::exit(run_inspect(artifact, *json, diff.as_deref()));
         }
         None => {}
     }
@@ -1655,6 +1688,160 @@ fn json_escape(s: &str) -> String {
         }
     }
     out
+}
+
+/// `mindc inspect <artifact> [--diff OTHER]` — decode + pretty-print a mic@3
+/// artifact and, with `--diff`, structurally compare two. The consumer/debug
+/// counterpart of `--emit-mic3`: it surfaces MIND's deterministic canonical IR
+/// and its tamper-evident evidence chain, and — via `--diff` — pinpoints WHERE
+/// two artifacts diverge, exactly what the self-host byte-identity gates need
+/// when a reseed or loop stops being byte-identical. Not a Rust `objdump` clone:
+/// the value is the canonical-IR + evidence surface only MIND's wedge exposes.
+///
+/// Returns the process exit code: 0 = decoded (and, with `--diff`, identical);
+/// 1 = artifacts differ (`--diff`) or a malformed artifact; 2 = I/O error.
+fn run_inspect(artifact: &str, json: bool, diff: Option<&str>) -> i32 {
+    use libmind::ir::compact::{Determinism, mic3_evidence_report, parse_mic3};
+
+    let bytes = match fs::read(artifact) {
+        Ok(b) => b,
+        Err(err) => {
+            eprintln!("error[inspect]: cannot read artifact {artifact}: {err}");
+            return 2;
+        }
+    };
+
+    // --diff MODE: mic@3 is canonical (RFC 0021), so byte-identity IS structural
+    // identity. When the bytes differ, locate the first diverging byte and parse
+    // each side to report parse status + instruction-count delta (a parse failure
+    // is itself a reported difference, never a crash).
+    if let Some(other) = diff {
+        let other_bytes = match fs::read(other) {
+            Ok(b) => b,
+            Err(err) => {
+                eprintln!("error[inspect]: cannot read artifact {other}: {err}");
+                return 2;
+            }
+        };
+        if bytes == other_bytes {
+            // Canonical mic@3: byte-identity IS structural identity — but the
+            // contract is "exit 0 = decoded", so two byte-identical GARBAGE files
+            // (e.g. both zero-length from an aborted build, or a self-diff of a
+            // corrupt artifact) must still fail closed rather than report a
+            // confident "identical: YES".
+            if let Err(err) = parse_mic3(&bytes) {
+                eprintln!("error[inspect]: {artifact} did not parse as mic@3: {err:?}");
+                if json {
+                    println!(
+                        "{{\"a\":\"{}\",\"b\":\"{}\",\"identical\":true,\"decoded\":false,\"bytes\":{}}}",
+                        json_escape(artifact),
+                        json_escape(other),
+                        bytes.len()
+                    );
+                }
+                return 1;
+            }
+            if json {
+                println!(
+                    "{{\"a\":\"{}\",\"b\":\"{}\",\"identical\":true,\"decoded\":true,\"bytes\":{}}}",
+                    json_escape(artifact),
+                    json_escape(other),
+                    bytes.len()
+                );
+            } else {
+                println!("identical:  YES ({} bytes)", bytes.len());
+            }
+            return 0;
+        }
+        let common = bytes.len().min(other_bytes.len());
+        let first_diff = (0..common).find(|&i| bytes[i] != other_bytes[i]).unwrap_or(common);
+        let a_instrs = parse_mic3(&bytes).map(|m| m.instrs.len() as i64).unwrap_or(-1);
+        let b_instrs = parse_mic3(&other_bytes).map(|m| m.instrs.len() as i64).unwrap_or(-1);
+        if json {
+            println!(
+                "{{\"a\":\"{}\",\"b\":\"{}\",\"identical\":false,\"a_bytes\":{},\"b_bytes\":{},\"first_diff_offset\":{},\"a_instrs\":{},\"b_instrs\":{}}}",
+                json_escape(artifact),
+                json_escape(other),
+                bytes.len(),
+                other_bytes.len(),
+                first_diff,
+                a_instrs,
+                b_instrs
+            );
+        } else {
+            let fmt_side = |n: i64| if n < 0 { "PARSE FAIL".to_string() } else { format!("{n} instrs") };
+            println!("identical:        NO");
+            println!("a:                {artifact} ({} bytes, {})", bytes.len(), fmt_side(a_instrs));
+            println!("b:                {other} ({} bytes, {})", other_bytes.len(), fmt_side(b_instrs));
+            println!("first_diff_byte:  {first_diff}");
+            let lo = first_diff.saturating_sub(4);
+            let a_hi = (first_diff + 4).min(bytes.len());
+            let b_hi = (first_diff + 4).min(other_bytes.len());
+            println!("  a[{lo}..]: {}", hex_encode(&bytes[lo..a_hi]));
+            println!("  b[{lo}..]: {}", hex_encode(&other_bytes[lo..b_hi]));
+        }
+        return 1;
+    }
+
+    // INSPECT MODE: decode + pretty-print one artifact.
+    let module = match parse_mic3(&bytes) {
+        Ok(m) => m,
+        Err(err) => {
+            let reason = format!("{err:?}");
+            eprintln!("error[inspect]: {artifact} did not parse as mic@3: {reason}");
+            // Mirror run_verify: a scripted --json consumer reads stdout, so emit a
+            // well-formed error object there too (not just stderr).
+            if json {
+                println!(
+                    "{{\"artifact\":\"{}\",\"error\":\"{}\"}}",
+                    json_escape(artifact),
+                    json_escape(&reason)
+                );
+            }
+            return 1;
+        }
+    };
+    let evidence = mic3_evidence_report(&bytes).ok();
+    let det_str = |d: &Determinism| {
+        if matches!(d, Determinism::Deterministic) { "deterministic" } else { "nondeterministic" }
+    };
+
+    if json {
+        let (attested, trace_hash, determinism, fp_mode) = match &evidence {
+            Some(r) => (true, hex_encode(&r.trace_hash), det_str(&r.determinism), r.fp_mode.as_str()),
+            None => (false, String::new(), "", ""),
+        };
+        println!(
+            "{{\"artifact\":\"{}\",\"bytes\":{},\"instrs\":{},\"next_id\":{},\"exports\":{},\"attested\":{},\"trace_hash\":\"{}\",\"determinism\":\"{}\",\"fp_mode\":\"{}\"}}",
+            json_escape(artifact),
+            bytes.len(),
+            module.instrs.len(),
+            module.next_id,
+            module.exports.len(),
+            attested,
+            trace_hash,
+            determinism,
+            fp_mode
+        );
+    } else {
+        println!("artifact:         {artifact}");
+        println!("bytes:            {}", bytes.len());
+        println!("instrs:           {}", module.instrs.len());
+        println!("ssa_next_id:      {}", module.next_id);
+        println!("exports:          {}", module.exports.len());
+        match &evidence {
+            Some(r) => {
+                println!("attested:         YES");
+                println!("trace_hash:       {}", hex_encode(&r.trace_hash));
+                println!("determinism:      {}", det_str(&r.determinism));
+                println!("fp_mode:          {}", r.fp_mode.as_str());
+            }
+            None => println!("attested:         no (no evidence_chain MAP)"),
+        }
+        println!("--- canonical IR ---");
+        println!("{module}");
+    }
+    0
 }
 
 /// `mindc verify <artifact>` — consumer-side static + evidence verification.
