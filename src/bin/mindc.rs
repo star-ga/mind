@@ -1754,9 +1754,15 @@ fn run_inspect(artifact: &str, json: bool, diff: Option<&str>) -> i32 {
             return 0;
         }
         let common = bytes.len().min(other_bytes.len());
-        let first_diff = (0..common).find(|&i| bytes[i] != other_bytes[i]).unwrap_or(common);
-        let a_instrs = parse_mic3(&bytes).map(|m| m.instrs.len() as i64).unwrap_or(-1);
-        let b_instrs = parse_mic3(&other_bytes).map(|m| m.instrs.len() as i64).unwrap_or(-1);
+        let first_diff = (0..common)
+            .find(|&i| bytes[i] != other_bytes[i])
+            .unwrap_or(common);
+        let a_instrs = parse_mic3(&bytes)
+            .map(|m| m.instrs.len() as i64)
+            .unwrap_or(-1);
+        let b_instrs = parse_mic3(&other_bytes)
+            .map(|m| m.instrs.len() as i64)
+            .unwrap_or(-1);
         if json {
             println!(
                 "{{\"a\":\"{}\",\"b\":\"{}\",\"identical\":false,\"a_bytes\":{},\"b_bytes\":{},\"first_diff_offset\":{},\"a_instrs\":{},\"b_instrs\":{}}}",
@@ -1769,10 +1775,24 @@ fn run_inspect(artifact: &str, json: bool, diff: Option<&str>) -> i32 {
                 b_instrs
             );
         } else {
-            let fmt_side = |n: i64| if n < 0 { "PARSE FAIL".to_string() } else { format!("{n} instrs") };
+            let fmt_side = |n: i64| {
+                if n < 0 {
+                    "PARSE FAIL".to_string()
+                } else {
+                    format!("{n} instrs")
+                }
+            };
             println!("identical:        NO");
-            println!("a:                {artifact} ({} bytes, {})", bytes.len(), fmt_side(a_instrs));
-            println!("b:                {other} ({} bytes, {})", other_bytes.len(), fmt_side(b_instrs));
+            println!(
+                "a:                {artifact} ({} bytes, {})",
+                bytes.len(),
+                fmt_side(a_instrs)
+            );
+            println!(
+                "b:                {other} ({} bytes, {})",
+                other_bytes.len(),
+                fmt_side(b_instrs)
+            );
             println!("first_diff_byte:  {first_diff}");
             let lo = first_diff.saturating_sub(4);
             let a_hi = (first_diff + 4).min(bytes.len());
@@ -1803,12 +1823,21 @@ fn run_inspect(artifact: &str, json: bool, diff: Option<&str>) -> i32 {
     };
     let evidence = mic3_evidence_report(&bytes).ok();
     let det_str = |d: &Determinism| {
-        if matches!(d, Determinism::Deterministic) { "deterministic" } else { "nondeterministic" }
+        if matches!(d, Determinism::Deterministic) {
+            "deterministic"
+        } else {
+            "nondeterministic"
+        }
     };
 
     if json {
         let (attested, trace_hash, determinism, fp_mode) = match &evidence {
-            Some(r) => (true, hex_encode(&r.trace_hash), det_str(&r.determinism), r.fp_mode.as_str()),
+            Some(r) => (
+                true,
+                hex_encode(&r.trace_hash),
+                det_str(&r.determinism),
+                r.fp_mode.as_str(),
+            ),
             None => (false, String::new(), "", ""),
         };
         println!(
