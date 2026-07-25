@@ -4035,7 +4035,15 @@ pub fn parse_item(toks: Vec, pos: i64, buf: i64) -> ParseResult {
             return parse_const_decl(toks, pos, buf);
         }
     }
-    let n: i64 = ast_new_leaf(ast_ident(), lo, hi);
+    // Fallback: an item-start token we do not recognize (a stray hash/bracket
+    // of an item-level attribute like an inline hint, or any other unexpected
+    // token). Poison the unit with ast_unsupported so the whole compilation
+    // unit fails closed to a 0-byte refusal (B0 invariant) rather than silently
+    // dropping the stray tokens and emitting a running ELF. main.mind's own
+    // top-level items (import/pub/fn/struct/enum/extern/module/const) are all
+    // recognized above, so this fallback is never reached on the self-host
+    // source and the canary fixed point is unchanged.
+    let n: i64 = ast_new_leaf(ast_unsupported(), lo, hi);
     pr_new(pos + 1, n)
 }
 
@@ -32420,6 +32428,16 @@ pub fn selftest_native_elf_hb_from_tokens(tokens: Vec, src_addr: i64, hash_addr:
     let items_addr: i64 = ast_child0(ast_root);
     let items_len: i64 = ast_aux(ast_root);
 
+    // B0 fail-closed: if the parser poisoned ANY top-level item (an unrecognized
+    // item-start token — e.g. an item-level attribute like an inline hint, whose
+    // stray hash/bracket lexes to tk_unsupported), refuse the WHOLE compile (0B)
+    // rather than silently dropping the marker and emitting the surrounding fns.
+    // Never fires during self-compile (main.mind's top-level items are all
+    // recognized), so the byte-identity loop is unchanged.
+    if nb_items_any_unsupported(items_addr, items_len, 0) == 1 {
+        return es_new();
+    }
+
     // Collect ALL fn_def items in combined source order (std bricks first, then
     // the user file). nb_all = the pre-prune set.
     let all_fns: i64 = __mind_alloc((items_len + 1) * 8);
@@ -32570,6 +32588,26 @@ pub fn nb_collect_fns(items_addr: i64, items_len: i64, i: i64, fns: i64, n: i64)
         n
     };
     nb_collect_fns(items_addr, items_len, i + 1, fns, n2)
+}
+
+// B0 fail-closed: 1 iff ANY top-level item is the ast_unsupported POISON marker.
+// The parser emits this marker for an unrecognized item-start token (e.g. the
+// stray hash/bracket of an item-level attribute, which lexes to tk_unsupported).
+// nb_collect_fns only gathers ast_fn_def items and would otherwise SILENTLY DROP
+// such a marker and still emit the surrounding fns (a fail-OPEN miscompile: an
+// attributed program would run byte-identical to the un-attributed one). Scanning
+// here lets the whole compile refuse (0B) instead. main.mind's own top-level
+// items are all import/pub/fn/struct, none of which hit the parser fallback, so
+// this never fires during self-compile and the byte-identity loop is unchanged.
+pub fn nb_items_any_unsupported(items_addr: i64, items_len: i64, i: i64) -> i64 {
+    if i >= items_len {
+        return 0;
+    }
+    let item: i64 = __mind_load_i64(items_addr + i * 8);
+    if ast_kind(item) == ast_unsupported() {
+        return 1;
+    }
+    nb_items_any_unsupported(items_addr, items_len, i + 1)
 }
 
 // Find the index of the fn named `main`, or -1.
