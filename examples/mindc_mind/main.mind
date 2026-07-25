@@ -560,6 +560,73 @@ pub fn scan_int_end(buf: i64, i: i64, buf_len: i64) -> i64 {
     i
 }
 
+// Decimal integer part WITH `_` digit separators, mirroring the Rust parser
+// (parser/mod.rs:4253): an `_` is part of the literal ONLY when it sits BETWEEN
+// two digits (`d _ d`). A trailing `_`, a doubled `__`, or an `_` before a
+// non-digit is NOT consumed — it is left for the surrounding lex, so `1_` lexes
+// as int `1` + ident `_` exactly as Rust leaves it (d.parse drops the `_`s).
+pub fn scan_dec_end(buf: i64, i: i64, buf_len: i64) -> i64 {
+    if i >= buf_len {
+        return i;
+    }
+    let c: i64 = load_byte(buf, i);
+    if is_digit(c) == 1 {
+        return scan_dec_end(buf, i + 1, buf_len);
+    }
+    if c == 95 {
+        if i + 1 < buf_len {
+            if is_digit(load_byte(buf, i + 1)) == 1 {
+                return scan_dec_end(buf, i + 2, buf_len);
+            }
+        }
+    }
+    i
+}
+
+// `i` points at the first REQUIRED exponent digit. Returns the index past the
+// exponent digit run, or -1 if there is no digit. Rust makes a bare `1e` / `1e+`
+// a HARD parse error (parser/mod.rs:4289 `.ok_or_else(...expected exponent
+// digits)`), so an empty exponent fails closed (-1). Underscores are NOT accepted
+// here (Rust uses a plain digits() for the exponent).
+pub fn scan_exp_digits(buf: i64, i: i64, buf_len: i64) -> i64 {
+    if i >= buf_len {
+        return -1;
+    }
+    if is_digit(load_byte(buf, i)) == 0 {
+        return -1;
+    }
+    scan_int_end(buf, i + 1, buf_len)
+}
+
+// If `i` points at a well-formed exponent tail `(e|E)[+|-]?<digit>+`, return the
+// index just past it; otherwise -1. Mirrors parser/mod.rs:4279-4291 (after a
+// dotted mantissa) and :4308-4329 (integer mantissa). The exponent digits are
+// MANDATORY; a missing/empty exponent fails closed so the mantissa lexes as an
+// integer instead of emitting a float for a shape Rust rejects.
+pub fn scan_float_exp(buf: i64, i: i64, buf_len: i64) -> i64 {
+    if i >= buf_len {
+        return -1;
+    }
+    let c: i64 = load_byte(buf, i);
+    if c != 101 {
+        if c != 69 {
+            return -1;
+        }
+    }
+    let after_e: i64 = i + 1;
+    if after_e >= buf_len {
+        return -1;
+    }
+    let s: i64 = load_byte(buf, after_e);
+    if s == 43 {
+        return scan_exp_digits(buf, after_e + 1, buf_len);
+    }
+    if s == 45 {
+        return scan_exp_digits(buf, after_e + 1, buf_len);
+    }
+    scan_exp_digits(buf, after_e, buf_len)
+}
+
 pub fn scan_comment_end(buf: i64, i: i64, buf_len: i64) -> i64 {
     if i >= buf_len {
         return i;
@@ -668,22 +735,39 @@ pub fn scan(buf: i64, i: i64, buf_len: i64, toks: Vec) -> Vec {
         return scan(buf, hi, buf_len, next_toks);
     }
     if is_digit(b) == 1 {
-        let hi: i64 = scan_int_end(buf, i + 1, buf_len);
-        // Float literal: <digits> '.' <digits>. Fire only when a '.' (46) is
-        // immediately followed by a digit, so `x.0` (ident-dot-int), `0..n`
-        // (range) and a trailing `.` stay int-DOT paths. `hi + 1 < buf_len`
-        // guarantees both `hi` and `hi + 1` are valid indices.
-        // deferred: exponent form `<digits>.<digits>(e|E)[+|-]<digits>` — the
-        // parser float-lit AST kind + dtype threading are separate follow-up
-        // constructs; upgrade path: add a scan_float_exp tail after the frac scan.
+        let hi: i64 = scan_dec_end(buf, i + 1, buf_len);
+        // Float literal, FRACTIONAL form: <dec> '.' <digits> [exponent]. Fire
+        // only when a '.' (46) is immediately followed by a digit, so `x.0`
+        // (ident-dot-int), `0..n` (range) and a trailing `.` stay int-DOT paths.
+        // `hi + 1 < buf_len` guarantees both `hi` and `hi + 1` are valid indices.
+        // Mirrors parser/mod.rs:4269-4291 (dotted mantissa + optional exponent).
+        // NB: `_` separators are consumed in the integer mantissa (scan_dec_end)
+        // but NOT in the fractional part — the Rust parser uses a plain digits()
+        // for the fraction, so `1_0.0_5` lexes as float `1_0.0` + ident `_5` on
+        // BOTH sides.
         if hi + 1 < buf_len {
             if load_byte(buf, hi) == 46 {
                 if is_digit(load_byte(buf, hi + 1)) == 1 {
                     let fhi: i64 = scan_int_end(buf, hi + 1, buf_len);
+                    let fe: i64 = scan_float_exp(buf, fhi, buf_len);
+                    if fe >= 0 {
+                        let fetoks: Vec = push_token(toks, tk_float(), i, fe);
+                        return scan(buf, fe, buf_len, fetoks);
+                    }
                     let ftoks: Vec = push_token(toks, tk_float(), i, fhi);
                     return scan(buf, fhi, buf_len, ftoks);
                 }
             }
+        }
+        // Float literal, EXPONENT-ONLY form (integer mantissa): <dec> (e|E)[+|-]?
+        // <digits>. `1e5` / `1E5` / `1e+5` / `1e-5` / `1_0e5` are floats even with
+        // no decimal point (parser/mod.rs:4308-4329). Fails closed (-1) on an empty
+        // exponent (`1e` / `1e+`), leaving the mantissa to lex as an integer — Rust
+        // treats those as a hard parse error, so we never emit a float for them.
+        let ee: i64 = scan_float_exp(buf, hi, buf_len);
+        if ee >= 0 {
+            let etoks: Vec = push_token(toks, tk_float(), i, ee);
+            return scan(buf, ee, buf_len, etoks);
         }
         let next_toks: Vec = push_token(toks, tk_int(), i, hi);
         return scan(buf, hi, buf_len, next_toks);
@@ -4231,12 +4315,14 @@ pub fn tc_is_implicit_narrowing(to_ty: i64, from_ty: i64) -> i64 {
 // every int literal is ScalarI32 (the narrowest int width), so no destination
 // is strictly narrower; narrowing needs an i64 SOURCE (a variable / expr),
 // which is slice T2's Ident-RHS. PROVEN for the lexer-clean literal leaves
-// (decimal/hex/octal/binary int, `<digits>.<digits>` float, bool, string)
-// across the ANNxRHS class matrix. DEFERRED (decline, safe under-coverage — a
-// wrong verdict never, only "not yet"): (a) exponent/underscore numeric forms
-// `1e5` / `1_000.0`, blocked on the self-host number lexer (see infer_expr_tag
-// fail-closed guard below); (b) Neg / Paren / Ident / Call / Binary RHS = slice
-// T2+. Scalar class: 1=Int, 2=Float, 0=None (opaque / non-scalar).
+// (decimal/hex/octal/binary int, float `<digits>.<digits>`, exponent `1e5` /
+// `1E5` / `1e+5`, underscore-separated `1_000` / `1_000.0`, bool, string) across
+// the ANNxRHS class matrix — the self-host number lexer now emits a single
+// tk_float for the exponent/underscore forms (scan_dec_end + scan_float_exp),
+// so they tag Float/Int correctly and are FULLY covered. DEFERRED (decline, safe
+// under-coverage — a wrong verdict never, only "not yet"): Neg / Paren / Ident /
+// Call / Binary RHS = slice T2+. Scalar class: 1=Int, 2=Float, 0=None (opaque /
+// non-scalar).
 
 // RHS literal tag from the token at index i (the value hole). Reuses the ty_*
 // tag vocabulary: int literal -> ty_i32 (ScalarI32), float -> ty_f64
@@ -4252,22 +4338,20 @@ pub fn tc_is_implicit_narrowing(to_ty: i64, from_ty: i64) -> i64 {
 pub fn infer_expr_tag(toks: Vec, i: i64, src: i64, src_len: i64) -> i64 {
     let k: i64 = tok_kind(toks, i);
     if k == tk_int() {
-        // FAIL-CLOSED on numeric literals the self-host number lexer MIS-SPLITS.
-        // scan_int_end (:553) consumes neither an exponent (e/E) nor `_` digit
-        // separators (float rule exponent form is deferred at :676), so `1e5`
-        // lexes as tk_int("1")+tk_ident("e5") and `1_000.0` as
-        // tk_int("1")+tk_ident("_000")+... . The Rust frontend parses BOTH as
-        // Literal::Float (parser/mod.rs:4253 underscore, :4308 exponent), so a
-        // confident Int tag here spuriously FIRES E2015 on `let x: f64 = 1e5`
-        // (live: clean) — a false positive that rejects valid code. When the
-        // tk_int is IMMEDIATELY followed by e/E/_ it is the head of such a
-        // mis-split literal: return the class-opaque sentinel (decline, like a
-        // string) so confident_scalar_class=None and NO diagnostic fires. This
-        // UNDER-covers `1_000` / `1e5` (the safe direction — honest "not yet",
-        // never a wrong verdict). deferred: real fix is exponent + `_` in the
-        // self-host number scanner (scan_int_end :553 / float rule :676) — a
-        // byte-identity-gated mind-self-host task; until then classify only
-        // lexer-clean integer literals.
+        // DEFENSE-IN-DEPTH fail-closed guard on the MALFORMED numeric residue the
+        // number lexer legitimately splits. WELL-FORMED exponent/underscore forms
+        // (`1e5`, `1_000`, `1_000.0`) now lex as a SINGLE token (float / int) and
+        // never reach here as a tk_int trailed by e/E/_ — scan_dec_end absorbs the
+        // whole integer mantissa incl. separators, scan_float_exp absorbs a valid
+        // exponent as a tk_float. What DOES still land here is the residue Rust
+        // ALSO rejects as a hard parse error: a bare `1e` / `1e+` (no exponent
+        // digits), a trailing `1_`, a doubled `1__0`. For those the tk_int spans
+        // just the leading digits and the NEXT source byte is e/E/_. Live `mindc`
+        // raises a parse error (NOT E2015) on such input, so a confident Int tag
+        // here would spuriously fire E2015 (over-fire). Returning the class-opaque
+        // sentinel (decline) keeps the port fail-closed — no diagnostic — matching
+        // the "not E2015" live outcome. Well-formed literals are fully covered
+        // above; this guard is retained ONLY for the malformed-residue safety.
         let hi: i64 = tok_hi(toks, i);
         if hi < src_len {
             let nx: i64 = load_byte(src, hi);
