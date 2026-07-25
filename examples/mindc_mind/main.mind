@@ -25241,9 +25241,15 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         if nb_node_dtype_tbl(ix_idx, xdtbl, lets, lcell, buf, params_addr, n_params) == nb_dtype_float() {
             __mind_store_i64(lcell + 80, 1)
         }
+        // RUNTIME bounds guard (direct let-bound known-length arrays only): a
+        // variable/computed index that would read OUT OF BOUNDS halts
+        // deterministically (_exit(nb_oob_trap_code)) instead of an unchecked
+        // load. Consumes NO SSA id (raw rax compare + fixed rel8 jumps), so the
+        // count mirror stays in lockstep. -1 length (call-boundary) => no guard.
+        let x_guard: String = nb_emit_bounds_guard(s_xi.code, nb_slot_disp(xi_id), nb_index_len(ix_base, buf, lets, lcell), nb_oob_trap_code());
         // CONST 8 (element stride).
         let xc8_id: i64 = s_xi.next_id;
-        let xc1: String = nb_push(s_xi.code, 72);
+        let xc1: String = nb_push(x_guard, 72);
         let xc2: String = nb_push(xc1, 184);
         let xc3: String = nb_i64le(xc2, 8);
         let xc4: String = nb_store_rax(xc3, nb_slot_disp(xc8_id));
@@ -26189,6 +26195,93 @@ pub fn nb_index_oob(base: i64, idx: i64, buf: i64, lets: i64, lcell: i64) -> i64
         return 1;
     }
     0
+}
+
+// Statically-known element COUNT of an index BASE, or -1 when it is not known.
+// Mirrors nb_index_oob's base resolution EXACTLY: a DIRECT `[...]` array literal
+// carries its count in ast_aux; an ident let-bound DIRECTLY to an array literal
+// (nb_lets_lookup_slit descriptor) carries the length in its descriptor's
+// ast_aux. Any other base — a non-array/unbound ident, or an array that crossed
+// a CALL BOUNDARY (no runtime length header) — returns -1: NOT statically
+// checkable, so the runtime bounds guard is DEFERRED for it (the LARGE
+// fat-pointer part; see the deferred marker in nb_emit_bounds_guard). This is
+// the direct-binding known-length case the MEDIUM starter covers.
+pub fn nb_index_len(base: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
+    if ast_kind(base) == ast_array_lit() {
+        return ast_aux(base);
+    }
+    if ast_kind(base) != ast_ident() {
+        return 0 - 1;
+    }
+    let desc: i64 = nb_lets_lookup_slit(lets, lcell, buf, ast_span_lo(base), ast_span_hi(base));
+    if desc == 0 {
+        return 0 - 1;
+    }
+    if ast_kind(desc) != ast_array_lit() {
+        return 0 - 1;
+    }
+    ast_aux(desc)
+}
+
+// Deterministic exit code for a RUNTIME array-bounds violation trap. A clean,
+// reproducible _exit(77) — the SAME outcome every run (determinism is the
+// wedge) — never undefined behaviour and never a wrong value.
+pub fn nb_oob_trap_code() -> i64 {
+    77
+}
+
+// RUNTIME array-bounds guard for a DIRECT let-bound array of statically-known
+// length `n` (nb_index_len). Emitted BEFORE the element MUL/ADD/load|store of an
+// `ast_index` READ or `ast_index_assign` WRITE, closing the unchecked-OOB hole a
+// COMPUTED/VARIABLE index otherwise had (the compile-time nb_index_oob refusal
+// only covers CONSTANT indices). Byte sequence (idx already lowered to slot
+// `idx_disp`):
+//   mov rax,[rbp+idx] ; cmp rax,0 ; jl TRAP ; cmp rax,n ; jge TRAP ;
+//   jmp CONT ; TRAP: mov eax,60 ; mov edi,exit_code ; syscall ; CONT: ...
+// An out-of-range runtime index (idx<0 OR idx>=n) halts DETERMINISTICALLY via
+// _exit(exit_code); an in-range index falls straight through (jmp CONT) and the
+// following MUL reloads rax, so the guard consumes NO SSA slot — next_id is
+// UNCHANGED and nb_count_expr / nb_count_stmt need no adjustment (exact
+// lockstep). All jump displacements are fixed rel8 (the trap block is a constant
+// 12 bytes). n<0 means the length is not statically known — a variable index on
+// an array that crossed a CALL BOUNDARY (no runtime length header): emit NOTHING
+// so that path stays byte-identical.
+// deferred: the LARGE call-boundary case — a fat-pointer (ptr,len) ABI carrying
+// the length across the call so a guard can be emitted there too. Upgrade path:
+// thread a runtime length header alongside the array pointer and load it here in
+// place of the compile-time `n`.
+pub fn nb_emit_bounds_guard(code: String, idx_disp: i64, n: i64, exit_code: i64) -> String {
+    if n < 0 {
+        return code;
+    }
+    // mov rax,[rbp+idx] = 48 8B 85 <disp32>
+    let g1: String = nb_load_rax(code, idx_disp);
+    // cmp rax,0 = 48 3D 00 00 00 00
+    let g2: String = nb_push(g1, 72);
+    let g3: String = nb_push(g2, 61);
+    let g4: String = nb_u32(g3, 0);
+    // jl TRAP = 7C 0A  (skip cmp(6) + jge(2) + jmp(2) = 10 bytes)
+    let g5: String = nb_push(g4, 124);
+    let g6: String = nb_push(g5, 10);
+    // cmp rax,n = 48 3D <n32>
+    let g7: String = nb_push(g6, 72);
+    let g8: String = nb_push(g7, 61);
+    let g9: String = nb_u32(g8, n);
+    // jge TRAP = 7D 02  (skip jmp(2) = 2 bytes)
+    let g10: String = nb_push(g9, 125);
+    let g11: String = nb_push(g10, 2);
+    // jmp CONT = EB 0C  (skip trap block mov(5)+mov(5)+syscall(2) = 12 bytes)
+    let g12: String = nb_push(g11, 235);
+    let g13: String = nb_push(g12, 12);
+    // TRAP: mov eax,60 = B8 3C 00 00 00
+    let g14: String = nb_push(g13, 184);
+    let g15: String = nb_u32(g14, 60);
+    // mov edi,exit_code = BF <code32>
+    let g16: String = nb_push(g15, 191);
+    let g17: String = nb_u32(g16, exit_code);
+    // syscall = 0F 05
+    let g18: String = nb_push(g17, 15);
+    nb_push(g18, 5)
 }
 
 // Element dtype of an index base: FLOAT iff BASE is a FLOAT-element array — a
@@ -27621,9 +27714,15 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         if nb_node_dtype_tbl(w_idx, wdtbl, lets, lcell, buf, params_addr, n_params) == nb_dtype_float() {
             __mind_store_i64(lcell + 80, 1)
         }
+        // RUNTIME bounds guard (direct let-bound known-length arrays only): a
+        // variable/computed index that would write OUT OF BOUNDS halts
+        // deterministically (_exit(nb_oob_trap_code)) instead of an unchecked
+        // store. Consumes NO SSA id (raw rax compare + fixed rel8 jumps), so the
+        // count mirror stays in lockstep. -1 length (call-boundary) => no guard.
+        let w_guard: String = nb_emit_bounds_guard(s_wi.code, nb_slot_disp(wi_id), nb_index_len(w_base, buf, lets, lcell), nb_oob_trap_code());
         // CONST 8 (element stride).
         let wc8_id: i64 = s_wi.next_id;
-        let wc1: String = nb_push(s_wi.code, 72);
+        let wc1: String = nb_push(w_guard, 72);
         let wc2: String = nb_push(wc1, 184);
         let wc3: String = nb_i64le(wc2, 8);
         let wc4: String = nb_store_rax(wc3, nb_slot_disp(wc8_id));
