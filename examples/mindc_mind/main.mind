@@ -33095,6 +33095,18 @@ pub fn nb_fp_movsd_load_xmm0_rax(code: String) -> String {
     nb_push(c3, 0)
 }
 
+// movsd [rax], xmm0  =  F2 0F 11 00   (store xmm0 to the 8 bytes AT the address in rax)
+// The register-indirect dual of nb_fp_movsd_load_xmm0_rax: used by the float TENSOR
+// element WRITE, where the destination c[i] lives at a RUNTIME address base+i*8 held
+// in rax (not a fixed [rbp+disp32] slot). ModRM 00: mod=00 reg=xmm0 rm=rax; store
+// opcode 0x11 (the 0x10 load's dual). GP-only address arithmetic never touches xmm0.
+pub fn nb_fp_movsd_store_xmm0_rax(code: String) -> String {
+    let c1: String = nb_push(code, 242);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, 17);
+    nb_push(c3, 0)
+}
+
 // movsd [rbp+disp32], xmm0  =  F2 0F 11 85 <disp32>   (store xmm0 -> slot)
 pub fn nb_fp_movsd_store_xmm0(code: String, disp: i64) -> String {
     let c1: String = nb_push(code, 242);
@@ -37638,6 +37650,156 @@ pub fn selftest_native_elf_tensor_ewadd_i64(n: i64) -> EmitState {
     let t6: String = nb_emit_write(t5, 0 - 131208, 0 - 131216, 0 - 131224);
     // exitcode = (sum == expected)*41 + 1 — 42 only on an exact i64 match.
     let u1: String = nb_load_rax(t6, 0 - 131184);
+    let u2: String = nb_cmp_rax_mem(u1, nb_setcc_opcode(op_eq()), 0 - 131192);
+    let u3: String = nb_store_rax(u2, 0 - 131120);
+    let u4: String = nb_load_rax(u3, 0 - 131120);
+    let u5: String = nb_arith_rax_mem(u4, op_mul(), 0 - 131240);
+    let u6: String = nb_arith_rax_mem(u5, op_add(), 0 - 131104);
+    let u7: String = nb_store_rax(u6, 0 - 131232);
+    let u8: String = nb_load_rax(u7, 0 - 131232);
+    let code: String = nb_emit_return(u8, 1);
+    // Patch every recorded intra-fn jump (entry_off = 0).
+    let njmps: i64 = __mind_load_i64(jcell);
+    let _px: i64 = nb_patch_jmps(string_addr(code), jmps, njmps, 0);
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
+
+// ============================================================================
+// C4-T4 — native-ELF float64 TENSOR element-wise-add + STRICT-SEQUENTIAL reduce.
+// The FIRST float-typed native-ELF tensor kernel (all prior tensor selftests are
+// _i64). Composes the C1 SSE scalar-f64 primitives (movsd / addsd, register- and
+// [rbp]-relative forms) into two emitted counted loops over base+i*8 addressing:
+//   loop 1: c[i] = a[i] + b[i]                        (addsd, elementwise)
+//   loop 2: sum  = ((0.0 + c[0]) + c[1]) + ...        STRICT LEFT-TO-RIGHT
+// The reduction is a strict left-to-right fold: NO reassociation, NO tree/pairwise,
+// NO SIMD horizontal-add. That holds the strict-FP determinism tier (bit-identical
+// low bits) — any reassociation would perturb the low mantissa bits. a[]/b[] are
+// baked into the frame as their raw i64 IEEE-754 bit patterns (movabs+store — a bit
+// pattern is a bit pattern), so main.mind needs NO float arithmetic of its own. The
+// 8 LE bytes of `sum` go to stdout; a smoke checks them against a Python f64
+// reference computed in the SAME sequential order (and asserts a reassociated order
+// would differ in the low bits, proving strict ordering). `expected_bits` (the
+// reference sum's i64 bit pattern, passed in by the smoke) is baked for an in-ELF
+// full-width exit gate: exit = (sum_bits == expected_bits)*41 + 1 -> 42 only on an
+// EXACT 64-bit match. No frozen byte oracle exists (the deleted Rust native backend
+// rejected ConstF64); the gate is EXECUTION CORRECTNESS + strict-FP determinism.
+//
+// Frame 135168 (arrays A=-131072 B=-98304 C=-65536, 32768B each so n<=4096):
+//   i=-131080 n=-131088 eight=-131096 one=-131104 cmpflag=-131120
+//   baseA=-131128 baseB=-131136 baseC=-131144 expected=-131192 fortyone=-131240
+//   exitcode=-131232 fd=-131208 bufaddr=-131216 count=-131224 (mirror the T1 map);
+//   float scratch below the T1 map: aval=-131256 bval=-131264 sum=-131272
+//   cval=-131280.
+// ============================================================================
+
+// One float element LOAD into xmm0: rax = base + i*8 ; movsd xmm0,[rax]. base_disp
+// holds the RUNTIME base address (from lea); i*8 is the byte offset.
+pub fn nb_fp_load_elem(code: String, base_disp: i64, i_disp: i64, eight_disp: i64) -> String {
+    let c1: String = nb_load_rax(code, i_disp);
+    let c2: String = nb_arith_rax_mem(c1, op_mul(), eight_disp);
+    let c3: String = nb_arith_rax_mem(c2, op_add(), base_disp);
+    nb_fp_movsd_load_xmm0_rax(c3)
+}
+
+// One float element STORE from xmm0: rax = base + i*8 ; movsd [rax],xmm0.
+pub fn nb_fp_store_elem(code: String, base_disp: i64, i_disp: i64, eight_disp: i64) -> String {
+    let c1: String = nb_load_rax(code, i_disp);
+    let c2: String = nb_arith_rax_mem(c1, op_mul(), eight_disp);
+    let c3: String = nb_arith_rax_mem(c2, op_add(), base_disp);
+    nb_fp_movsd_store_xmm0_rax(c3)
+}
+
+// One ewadd-loop body: aval=a[i]; bval=b[i]; c[i]=aval+bval; i+=1. a[i] and b[i] are
+// spilled to fixed scratch slots, then xmm0=aval; addsd xmm0,bval (a[i]+b[i], the
+// Python reference operand order); the sum is written to c[i]; i+=1.
+pub fn nb_fp_ewadd_body(code: String) -> String {
+    let a1: String = nb_fp_load_elem(code, 0 - 131128, 0 - 131080, 0 - 131096);
+    let a2: String = nb_fp_movsd_store_xmm0(a1, 0 - 131256);
+    let b1: String = nb_fp_load_elem(a2, 0 - 131136, 0 - 131080, 0 - 131096);
+    let b2: String = nb_fp_movsd_store_xmm0(b1, 0 - 131264);
+    let c1: String = nb_fp_movsd_load_xmm0(b2, 0 - 131256);
+    let c2: String = nb_fp_binop_xmm0_mem(c1, 0, 0 - 131264);
+    let d1: String = nb_fp_store_elem(c2, 0 - 131144, 0 - 131080, 0 - 131096);
+    let e1: String = nb_load_rax(d1, 0 - 131080);
+    let e2: String = nb_arith_rax_mem(e1, op_add(), 0 - 131104);
+    nb_store_rax(e2, 0 - 131080)
+}
+
+// One STRICT-SEQUENTIAL reduction body: cval=c[i]; sum = sum + cval; i+=1. The
+// accumulator is read from its slot, c[i] added on the RIGHT (sum_{i+1}=sum_i+c[i]),
+// then written back — a strict left-to-right fold, NO reassociation.
+pub fn nb_fp_ewsum_body(code: String) -> String {
+    let a1: String = nb_fp_load_elem(code, 0 - 131144, 0 - 131080, 0 - 131096);
+    let a2: String = nb_fp_movsd_store_xmm0(a1, 0 - 131280);
+    let b1: String = nb_fp_movsd_load_xmm0(a2, 0 - 131272);
+    let b2: String = nb_fp_binop_xmm0_mem(b1, 0, 0 - 131280);
+    let b3: String = nb_fp_movsd_store_xmm0(b2, 0 - 131272);
+    let e1: String = nb_load_rax(b3, 0 - 131080);
+    let e2: String = nb_arith_rax_mem(e1, op_add(), 0 - 131104);
+    nb_store_rax(e2, 0 - 131080)
+}
+
+// The C4-T4 driver. a_addr/b_addr point at the caller's in-memory f64 fixtures
+// (read as raw i64 bit patterns at emit time); n is the shared length (n<=4096).
+// expected_bits is the reference sum's i64 bit pattern for the in-ELF exit gate.
+pub fn selftest_native_elf_tensor_ewadd_f64(a_addr: i64, b_addr: i64, n: i64, expected_bits: i64) -> EmitState {
+    let p0: String = nb_fp_prologue_frame(string_new(), 135168);
+    // Bake a[]/b[] IEEE-754 bit patterns into the A/B frame regions.
+    let p1: String = nb_intdot_store_arr(p0, a_addr, 0 - 131072, 0, n);
+    let p2: String = nb_intdot_store_arr(p1, b_addr, 0 - 98304, 0, n);
+    // Constants.
+    let k1: String = nb_intdot_movimm(p2, n, 0 - 131088);
+    let k2: String = nb_intdot_movimm(k1, 8, 0 - 131096);
+    let k3: String = nb_intdot_movimm(k2, 1, 0 - 131104);
+    let k4: String = nb_intdot_movimm(k3, 0, 0 - 131272);
+    let k5: String = nb_intdot_movimm(k4, expected_bits, 0 - 131192);
+    let k6: String = nb_intdot_movimm(k5, 41, 0 - 131240);
+    // Runtime base addresses of the three in-frame arrays.
+    let ba: String = nb_intdot_lea(k6, 0 - 131072, 0 - 131128);
+    let bb: String = nb_intdot_lea(ba, 0 - 98304, 0 - 131136);
+    let bc: String = nb_intdot_lea(bb, 0 - 65536, 0 - 131144);
+    // Jump scaffold buffer shared by both loops.
+    let jmps: i64 = __mind_alloc(64 * 2 * 8);
+    let jcell: i64 = __mind_alloc(8);
+    __mind_store_i64(jcell, 0);
+    // --- loop 1: c[i] = a[i] + b[i] (the tensor element-wise op) ---
+    let w0: String = nb_intdot_movimm(bc, 0, 0 - 131080);
+    let w_hdr: i64 = string_len(w0);
+    let wc1: String = nb_load_rax(w0, 0 - 131080);
+    let wc2: String = nb_cmp_rax_mem(wc1, nb_setcc_opcode(op_lt()), 0 - 131088);
+    let wc3: String = nb_store_rax(wc2, 0 - 131120);
+    let wcj: String = nb_emit_cmp_je_zero(wc3, 0 - 131120, jmps, jcell);
+    let w_je: i64 = __mind_load_i64(jcell) - 1;
+    let wb: String = nb_fp_ewadd_body(wcj);
+    let wjb: String = nb_emit_jmp(wb, jmps, jcell);
+    let w_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _wp1: i64 = nb_jmp_set_target(jmps, jcell, w_bk, w_hdr);
+    let w_end: i64 = string_len(wjb);
+    let _wp2: i64 = nb_jmp_set_target(jmps, jcell, w_je, w_end);
+    // --- loop 2: sum = strict-sequential Sum c[i] (horizontal reduction) ---
+    let s0: String = nb_intdot_movimm(wjb, 0, 0 - 131080);
+    let s_hdr: i64 = string_len(s0);
+    let sc1: String = nb_load_rax(s0, 0 - 131080);
+    let sc2: String = nb_cmp_rax_mem(sc1, nb_setcc_opcode(op_lt()), 0 - 131088);
+    let sc3: String = nb_store_rax(sc2, 0 - 131120);
+    let scj: String = nb_emit_cmp_je_zero(sc3, 0 - 131120, jmps, jcell);
+    let s_je: i64 = __mind_load_i64(jcell) - 1;
+    let sb: String = nb_fp_ewsum_body(scj);
+    let sjb: String = nb_emit_jmp(sb, jmps, jcell);
+    let s_bk: i64 = __mind_load_i64(jcell) - 1;
+    let _sp1: i64 = nb_jmp_set_target(jmps, jcell, s_bk, s_hdr);
+    let s_end: i64 = string_len(sjb);
+    let _sp2: i64 = nb_jmp_set_target(jmps, jcell, s_je, s_end);
+    // write(1, &sum, 8) — the 8 IEEE-754 LE bytes of the reduction (stdout observable).
+    let t3: String = nb_intdot_lea(sjb, 0 - 131272, 0 - 131216);
+    let t4: String = nb_intdot_movimm(t3, 1, 0 - 131208);
+    let t5: String = nb_intdot_movimm(t4, 8, 0 - 131224);
+    let t6: String = nb_emit_write(t5, 0 - 131208, 0 - 131216, 0 - 131224);
+    // exit = (sum_bits == expected_bits)*41 + 1 — 42 only on an EXACT 64-bit match.
+    let u1: String = nb_load_rax(t6, 0 - 131272);
     let u2: String = nb_cmp_rax_mem(u1, nb_setcc_opcode(op_eq()), 0 - 131192);
     let u3: String = nb_store_rax(u2, 0 - 131120);
     let u4: String = nb_load_rax(u3, 0 - 131120);
