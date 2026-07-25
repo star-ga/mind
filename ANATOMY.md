@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3209 | **Est. tokens:** ~7,723,674
-**Generated:** 2026-07-25 11:07 UTC
+**Files:** 3210 | **Est. tokens:** ~7,727,596
+**Generated:** 2026-07-25 11:19 UTC
 
 ## Token Budget Guide
 
@@ -58,7 +58,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 136 | ~308,387 |
+| `examples/mindc_mind/` | 137 | ~312,309 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
 | `examples/native/` | 4 | ~527 |
@@ -859,6 +859,7 @@
 - `gap_corpus_smoke.py` (~1922 tok, huge)
 - `general_float_netverify.py` (~1779 tok, huge) — general_float_netverify.py — GENERAL-path f64 value battery (B0 gate lift).
 - `.gitignore` (~5 tok, tiny) — __pycache__/
+- `lockstep_lint.py` (~3922 tok, huge) — lockstep_lint.py -- native-ELF walker lockstep linter for the pure-MIND self-host compiler.
 - `match_struct_smoke.py` (~1311 tok, large)
 - `method_callee_smoke.py` (~1350 tok, large)
 - `method_calls_smoke.py` (~1294 tok, large)
