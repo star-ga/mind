@@ -25493,9 +25493,9 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // and emit the read through a SINGLE tail-return helper, so this if-arm has
         // exactly one return (a dual-return branch lowers to an extra leading
         // const0 in the self-host subset, breaking the mic@3 flip).
-        let off: i64 = nb_field_offset(recv, node, buf, lets, lcell);
-        // FAIL CLOSED: nb_field_offset returns -1 for an unsupported shape
-        // (non-ident receiver, unbound receiver name, unknown field). POISON
+        let off: i64 = nb_field_offset_r(recv, node, buf, lets, lcell);
+        // FAIL CLOSED: nb_field_offset_r returns -1 for an unsupported shape
+        // (a non-struct-returning call, unbound receiver name, unknown field). POISON
         // lcell+80 and emit a placeholder const-0 (discarded — the poisoned
         // compile returns 0 bytes) instead of silently reading field 0.
         if off < 0 {
@@ -26171,6 +26171,54 @@ pub fn nb_field_offset(recv: i64, field_node: i64, buf: i64, lets: i64, lcell: i
     // decl descriptor (0,0 name span) falls back to fidx, which IS declared
     // order there. A field present in the literal but absent from the declared
     // list fails closed (-1) — the constructor was poisoned anyway.
+    let didx: i64 = nb_slit_decl_index(slit, buf, __mind_load_i64(lcell + 24), ast_child1(field_node), ast_child2(field_node), fidx);
+    if didx < 0 {
+        return 0 - 1;
+    }
+    didx * 8
+}
+
+// Read-side receiver DESCRIPTOR for `recv.field`:
+//   * IDENT receiver -> the let-env slit binding (nb_lets_lookup_slit); the SAME
+//     value nb_field_offset resolves, so an ident-receiver field read (all of
+//     main.mind's own `let r = parse_...(); r.field` shape) is byte-identical.
+//   * struct-returning CALL receiver `mk().field` -> the synthetic decl descriptor
+//     inferred from the callee's `-> P` return type (nb_struct_desc_from_call), the
+//     SAME descriptor d0c40587 binds for `let p = mk(); p.field`. srt/frt come from
+//     the per-fn cell (lcell+24 / lcell+16), populated identically on the emit and
+//     count cells. 0 for a NON-struct-returning call, an unregistered callee, or a
+//     unit return -> the field read fails closed (0B).
+//   * any OTHER receiver shape (nested field `p.q.x`, index, method) -> 0 (a
+//     non-call is rejected by nb_struct_desc_from_call), so `mk().x.y` and
+//     method-then-field defer (fail closed) exactly as before.
+// if-STATEMENT early returns only (the proven self-host subset — no value-if-let).
+pub fn nb_field_recv_desc_r(recv: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
+    if ast_kind(recv) == ast_ident() {
+        return nb_lets_lookup_slit(lets, lcell, buf, ast_span_lo(recv), ast_span_hi(recv));
+    }
+    nb_struct_desc_from_call(recv, buf, __mind_load_i64(lcell + 24), __mind_load_i64(lcell + 16))
+}
+
+// Read-side field byte offset — like nb_field_offset (ident receiver) but ALSO
+// resolves a struct-returning CALL receiver `mk().field` via nb_field_recv_desc_r,
+// so a DIRECT field access on a call result reads the right slot (the call returns
+// the struct's i64 handle in its dst slot exactly like a let-bound receiver). The
+// WRITE path keeps calling ident-only nb_field_offset, so `mk().x = v` stays
+// fail-closed (never a store to a throwaway temporary). Used by BOTH the emit
+// (nb_expr ast_field) and count (nb_count_expr ast_field) READ arms so their SSA
+// id accounting stays in lockstep. FAIL CLOSED (-1) on an unresolvable descriptor,
+// an unknown field, or a field absent from the declared list. main.mind's own
+// field reads are all ident receivers, so this returns the SAME offset the prior
+// nb_field_offset did there -> the emitted read bytes are byte-identical.
+pub fn nb_field_offset_r(recv: i64, field_node: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
+    let slit: i64 = nb_field_recv_desc_r(recv, buf, lets, lcell);
+    if slit == 0 {
+        return 0 - 1;
+    }
+    let fidx: i64 = nb_slit_field_index(slit, buf, ast_child1(field_node), ast_child2(field_node));
+    if fidx < 0 {
+        return 0 - 1;
+    }
     let didx: i64 = nb_slit_decl_index(slit, buf, __mind_load_i64(lcell + 24), ast_child1(field_node), ast_child2(field_node), fidx);
     if didx < 0 {
         return 0 - 1;
@@ -28947,7 +28995,7 @@ pub fn nb_count_expr(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         // Offset resolved via the same helper as emission (no value-if-let phis).
         let recv: i64 = ast_child0(node);
         let after_recv: i64 = nb_count_expr(next_id, buf, recv, params_addr, n_params, clets, clcell);
-        let off: i64 = nb_field_offset(recv, node, buf, clets, clcell);
+        let off: i64 = nb_field_offset_r(recv, node, buf, clets, clcell);
         if off <= 0 {
             // offset 0, or UNSUPPORTED (-1, fail-closed): counted as the
             // offset-0 single load. The unsupported case's count is irrelevant
