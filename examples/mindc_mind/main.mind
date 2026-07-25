@@ -25241,6 +25241,27 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         if nb_node_dtype_tbl(ix_idx, xdtbl, lets, lcell, buf, params_addr, n_params) == nb_dtype_float() {
             __mind_store_i64(lcell + 80, 1)
         }
+        // NESTED index base (`a[i][j]`) whose LEAF scalar dtype is PROVEN FLOAT:
+        // fail CLOSED. nb_index_elem_dtype classifies only a DIRECT ident/array-lit
+        // base and returns INT for a nested ast_index base, so a nested-FLOAT read
+        // GP-loads the raw IEEE-754 bits and `as i64` no-ops to 0 — a silent
+        // miscompile (fail-OPEN). Poison -> 0-byte ELF. A nested-i64 index proves
+        // INT and keeps running. No SSA slot is consumed, so the count mirror is
+        // unchanged. The poison fires ONLY on a PROVEN-FLOAT leaf (== float), never
+        // on -1/UNKNOWN: main.mind's own source has ZERO float arrays but DOES carry
+        // internal nested integer indices whose leaf can be UNPROVABLE (-1) — a `!=
+        // int` guard would poison those and 0-byte the self-emit. A proven-float
+        // leaf can never occur during self-compile, so byte-identity holds.
+        // deferred: a nested index whose base IS float but UNPROVABLE (-1, e.g. a
+        // float array reaching this arm through an untraceable path) is NOT caught
+        // this slice — rare, and a documented follow-up, not a regression. Upgrade
+        // path: strengthen nb_index_leaf_dtype's root resolution to cover the
+        // unprovable float paths, then widen the guard to catch -1-float too.
+        if ast_kind(ix_base) == ast_index() {
+            if nb_index_leaf_dtype(node, 0, buf, lets, lcell) == nb_dtype_float() {
+                __mind_store_i64(lcell + 80, 1)
+            }
+        }
         // RUNTIME bounds guard (direct let-bound known-length arrays only): a
         // variable/computed index that would read OUT OF BOUNDS halts
         // deterministically (_exit(nb_oob_trap_code)) instead of an unchecked
@@ -26322,6 +26343,86 @@ pub fn nb_index_elem_dtype(base: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
         return nb_node_dtype(__mind_load_i64(ast_child1(desc)));
     }
     nb_dtype_int()
+}
+
+// Leaf SCALAR dtype of a (possibly nested) index chain: walk `node`'s ast_index
+// chain (plus `extra` implicit outer index levels the caller supplies) to the root
+// base, resolve it to an array-lit descriptor, and descend element-0 that many
+// dimensions. Returns nb_dtype_float() / nb_dtype_int() when the leaf dtype is
+// PROVABLE, or -1 (UNKNOWN) when the chain can't be resolved to a concrete
+// homogeneous array-lit nest of matching depth (unbound/non-ident/non-array root,
+// a tuple dimension, or a depth deeper than the literal nest). The ast_index READ
+// and ast_index_assign WRITE arms fail CLOSED (poison -> 0-byte ELF) on a NESTED
+// base whose leaf is FLOAT or UNKNOWN: nb_index_elem_dtype only classifies a DIRECT
+// ident/array-lit base and returns INT for a nested ast_index base, so a
+// nested-FLOAT index (`a[1][0]` over `[[1.0, ..], ..]`) GP-loads the raw IEEE-754
+// bits and `as i64` no-ops to the low byte (0) — a silent miscompile. A nested-i64
+// index proves INT here and keeps running. Element 0 classifies the whole
+// dimension because nb_array_elems' homogeneity gate already refused any
+// non-homogeneous array. main.mind has no index node, so this never fires during
+// self-compile.
+// deferred: correct nested-FLOAT support (movsd the leaf through the inner row
+// pointer) is a FEATURE, not this safety fix — upgrade path: tag the inner index's
+// result slot with the row's element dtype and movsd-read a float leaf.
+// Index-chain depth rooted at `node` (0 when `node` is not an ast_index), plus an
+// `acc` seed the caller supplies for implicit outer levels. Recursion + if-chain
+// (the self-host subset idiom — cf. nb_lets_lookup_slit_rest); no while / no mut,
+// so it self-compiles native-ELF unchanged.
+pub fn nb_index_chain_depth(node: i64, acc: i64) -> i64 {
+    if ast_kind(node) == ast_index() {
+        return nb_index_chain_depth(ast_child0(node), acc + 1);
+    }
+    acc
+}
+
+// Root (non-index) base of an ast_index chain.
+pub fn nb_index_chain_root(node: i64) -> i64 {
+    if ast_kind(node) == ast_index() {
+        return nb_index_chain_root(ast_child0(node));
+    }
+    node
+}
+
+// Descend `depth` array dimensions from array-lit descriptor `desc` via element 0
+// (homogeneity-gated), returning the leaf scalar dtype: nb_dtype_float() /
+// nb_dtype_int() when PROVABLE, or -1 (UNKNOWN) when the nest can't be resolved to
+// a concrete homogeneous array-lit of matching depth. A TUPLE dimension (child0==1
+// marker, shared ast_array_lit node) is i64-only by construction — a float tuple
+// element is refused at a separate gate — so it PROVES INT (mirrors
+// nb_index_elem_dtype's tuple arm), keeping nested-tuple `.N.M` reads running.
+pub fn nb_arr_leaf_dtype(desc: i64, depth: i64) -> i64 {
+    if depth < 1 {
+        return nb_node_dtype(desc);
+    }
+    if ast_kind(desc) != ast_array_lit() {
+        return 0 - 1;
+    }
+    if ast_child0(desc) == 1 {
+        return nb_dtype_int();
+    }
+    if ast_aux(desc) < 1 {
+        return 0 - 1;
+    }
+    nb_arr_leaf_dtype(__mind_load_i64(ast_child1(desc)), depth - 1)
+}
+
+pub fn nb_index_leaf_dtype(node: i64, extra: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
+    let depth: i64 = nb_index_chain_depth(node, extra);
+    let root: i64 = nb_index_chain_root(node);
+    if ast_kind(root) == ast_array_lit() {
+        return nb_arr_leaf_dtype(root, depth);
+    }
+    if ast_kind(root) != ast_ident() {
+        return 0 - 1;
+    }
+    let desc: i64 = nb_lets_lookup_slit(lets, lcell, buf, ast_span_lo(root), ast_span_hi(root));
+    if desc == 0 {
+        return 0 - 1;
+    }
+    if ast_kind(desc) != ast_array_lit() {
+        return 0 - 1;
+    }
+    nb_arr_leaf_dtype(desc, depth)
 }
 
 // True iff the method-name span [lo,hi) is exactly "len" (bytes 108,101,110).
@@ -27713,6 +27814,21 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let wdtbl: i64 = __mind_load_i64(lcell + 8);
         if nb_node_dtype_tbl(w_idx, wdtbl, lets, lcell, buf, params_addr, n_params) == nb_dtype_float() {
             __mind_store_i64(lcell + 80, 1)
+        }
+        // NESTED index base (`a[i][j] = rhs`) whose LEAF scalar dtype is PROVEN
+        // FLOAT: fail CLOSED (twin of the READ arm). The target chain is w_base
+        // indexed once more, so classify w_base with one EXTRA level. A nested-FLOAT
+        // cell written through the GP integer store path is a silent miscompile (an
+        // int rhs corrupts the float cell; a float rhs already poisons via the
+        // rhs-dtype check below). A nested-i64 write proves INT and keeps running.
+        // Poison fires ONLY on a PROVEN-FLOAT leaf (== float), never on -1/UNKNOWN,
+        // for the same self-compile-byte-identity reason as the READ arm. No SSA
+        // slot is consumed. deferred: the unprovable-float (-1) write is a
+        // documented follow-up (see the READ arm), not a regression.
+        if ast_kind(w_base) == ast_index() {
+            if nb_index_leaf_dtype(w_base, 1, buf, lets, lcell) == nb_dtype_float() {
+                __mind_store_i64(lcell + 80, 1)
+            }
         }
         // RUNTIME bounds guard (direct let-bound known-length arrays only): a
         // variable/computed index that would write OUT OF BOUNDS halts

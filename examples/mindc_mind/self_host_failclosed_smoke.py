@@ -120,6 +120,20 @@ REFUSED = [
     ("array bool elements", M("let a=[true, false, true]; return a.len();"), "0B"),
     ("array mixed float-then-int", M("let a=[1.0, 2]; return a.len();"), "0B"),
     ("array mixed int-then-float", M("let a=[1, 2.0]; return a.len();"), "0B"),
+    # NESTED-FLOAT array index — the fail-OPEN class closed by nb_index_leaf_dtype.
+    # nb_index_elem_dtype classifies only a DIRECT ident/array-lit base and returns
+    # INT for a nested ast_index base, so a nested-FLOAT read `a[1][0]` used to
+    # GP-load the raw IEEE-754 bits and `as i64` no-op them to 0 — a RUNNING ELF
+    # returning the WRONG value (want 3, got 0). The nested base is now poisoned
+    # (float or unprovable leaf dtype) -> 0B. Nested-i64 (`[[1,2],[3,4]]; a[1][0]`)
+    # PROVES INT and keeps running (SUPPORTED, below). Both READ and WRITE arms,
+    # const AND variable index, and a nested-FLOAT cell written with an INT rhs
+    # (which would corrupt the float cell) are covered. deferred: correct
+    # nested-FLOAT support (movsd the leaf through the row pointer) — a feature.
+    ("nested-float read a[1][0]", M("let a=[[1.0,2.0],[3.0,4.0]]; return a[1][0] as i64;"), "0B"),
+    ("nested-float read var idx", M("let a=[[1.0,2.0],[3.0,4.0]]; let i=1; let j=0; return a[i][j] as i64;"), "0B"),
+    ("nested-float write float rhs", M("let mut a=[[1.0,2.0],[3.0,4.0]]; a[1][0]=9.0; return a[1][0] as i64;"), "0B"),
+    ("nested-float write int rhs", M("let mut a=[[1.0,2.0],[3.0,4.0]]; a[1][0]=9; return a[1][0] as i64;"), "0B"),
     ("array empty []", M("let a=[]; return 0;"), "0B"),
     ("array trailing comma", M("let a=[1,2,]; return a[0];"), "0B"),
     ("array const OOB read", M("let a=[1,2,3]; return a[3];"), "0B"),
@@ -220,6 +234,11 @@ SUPPORTED = [
     ("array as call arg", "fn get(p:i64, i:i64)->i64{ return p[i]; }\nfn main()->i64{ let a=[7,8,9]; return get(a, 1); }", 8),
     ("array as return value", "fn mk()->i64{ return [4,5,6]; }\nfn main()->i64{ let a=mk(); return a[2]; }", 6),
     ("array nested literal", M("let a=[[1,2],[3,4]]; return a[1][0];"), 3),
+    # nested-i64 index PROVES INT at every descent level (nb_index_leaf_dtype) so it
+    # keeps running — the regression guard against over-refusing when the
+    # nested-FLOAT fail-closed poison landed. WRITE and 3-deep READ both covered.
+    ("array nested i64 write", M("let mut a=[[1,2],[3,4]]; a[1][0]=9; return a[1][0];"), 9),
+    ("array nested i64 3-deep", M("let a=[[[1,2],[3,4]],[[5,6],[7,8]]]; return a[1][0][1];"), 6),
     ("array in while body", M("let mut c:i64=0; while c<3 { let a=[1,2]; c=c+a[0]; } return c;"), 3),
     ("array in sep fn", "fn helper()->i64{ let a=[1,2,3]; return a[0]; }\nfn main()->i64{ return helper(); }", 1),
     # zero-arg `.len()` on a fixed-size array — compile-time-constant element
