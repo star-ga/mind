@@ -20,16 +20,17 @@ value; the narrow width-wrap slot is minted+counted identically on both the
 nb_while_carry pre-walk and the nb_count_stmt assign arm via the param-width
 let-env binding. Verified at if-depth 1 AND 2, in the then- and else-branch, and
 when the enclosing if is not taken. Gated by nb_region_while_carries_narrow, which
-permits a top-level narrow carry, an if-nested narrow carry, OR a narrow carry in a
-DIRECT nested while (to any depth) — but descends into a `while` body ONLY through
-DIRECT nested whiles (nb_body_while_carries_narrow_direct, no `if` arm), matching
-exactly what the loop-carry promotion (nb_while_carry_wnest) handles. An inner while
-wrapped in an `if` INSIDE a loop body (`while{ if{ while{ narrow += 1 } } }`) is NOT
-promoted to the outer carry, so it stays FAIL-CLOSED (asserted in IF_WRAPPED_WHILE
-below) — permitting it would silently drop the carry. The pre-existing i64
-`while{ if{ x += 1 } }` carry-drop gap (a plain if-wrapped assign in a loop, no
-narrow param, so not gated by this guard at all) is a SEPARATE generic-path bug,
-documented below (I64_IF_IN_WHILE_GAP) and left for a follow-up — not fixed here.
+permits a narrow param REASSIGNED by a `while` at ANY region nesting depth — top-level,
+if-nested, direct while-nested, OR an if-WRAPPED inner while
+(`while{ if{ while{ narrow += 1 } } }`) — via the recursive nb_region_reassigns_narrow
+scan, matching the full reach of the Sub-step C carry/merge machinery
+(nb_if_carry_promote + nb_while_live_writes). The if-wrapped inner while (formerly kept
+fail-closed pre-Sub-step-C, when it dropped the carry got=2 want=6) now emits + runs
+correct at every width incl. two's-complement overflow (asserted in IF_WRAPPED_WHILE
+below), as do sibling-nested and both-branch writes (XN_SIBLING_NESTED_WRITE). Only a
+narrow write on a `break`/`continue` exit edge stays fail-closed — via the SEPARATE
+nb_fns_branch_exit_carry guard (REFUSE_NARROW_EXIT) — so no genuinely-broken shape was
+downgraded to a silent miscompile.
 
 F2 FIXED: a narrow param REASSIGNED by a while NESTED inside ANOTHER while (nested
 loops mutating an OUTER carried var) now lowers CORRECTLY. nb_while_carry descends
@@ -245,47 +246,66 @@ REFUSE = [
      "even `return x as i64` w/ a loop is refused)",
      "fn f(x: i8) -> i64 {\n    let mut c: i64 = 0;\n    while c < 3 {\n        c = c + 1;\n    }\n    return (x as i64) + c;\n}\nfn main() -> i64 { return f(10); }\n"),
 ]
-# REFUSE (regression guard for commit 0b5f489): a narrow param reassigned by a while
-# wrapped in an `if` INSIDE a loop body (`while{ if{ while{ x += 1 } } }`). The inner
-# while is NOT promoted to the OUTER loop's carry (nb_while_carry_nonassign only
-# descends into a DIRECT nested while — nb_while_carry_wnest — never through an if), so
-# the narrow var is dropped across the outer loop. Before 0b5f489 this matched neither
-# guard arm -> refused (correct); 0b5f489's F2 fix let the guard's while-body recursion
-# reach the inner while THROUGH the if arm and wrongly PERMIT it, silently miscompiling
-# (independently confirmed got=2 want=6). The guard's while-body descent is now
-# direct-while-only (nb_body_while_carries_narrow_direct), so this stays fail-closed.
-# MUST emit an EMPTY ELF for every narrow width.
+# NOW PERMITTED + RUN CORRECT (this change — narrow if-wrapped-while relaxation): a narrow
+# param reassigned by a while WRAPPED in an `if` INSIDE a loop body
+# (`while{ if{ while{ x += 1 } } }`). Before Sub-step C this dropped the carry (got=2
+# want=6) and was kept fail-closed; Sub-step C's nb_if_carry_promote (promotes a merged
+# OUTER var written ANYWHERE in a branch region — nb_block_writes_rec — with post_id = its
+# merge phi slot) + nb_while_live_writes (descends into nested if/while regions) now thread
+# the carry AND the two's-complement width-wrap out correctly at every width. Proven by
+# empirical ELF-run boundary-mapping (guards off, value + sign-of-wrap checked vs an
+# independent Python ref). The param guard (nb_region_while_carries_narrow) now permits it
+# via the recursive nb_region_reassigns_narrow scan. `exp` is the independent Python ref;
+# process exit is its low byte. (label, python_ref, src)
 IF_WRAPPED_WHILE = [
-    ("i8 param while{ if{ while{ x+=1 } } } 3x2 (if-wrapped inner while — carry NOT "
-     "promoted to outer loop, must fail-closed)",
+    ("i8 param while{ if{ while{ x+=1 } } } f(0) 3x2 -> 6", _nested_ref(3, 2, 0, 8),
      "fn f(x: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 3 {\n        let mut d: i64 = 0;\n        if a < 10 {\n            while d < 2 { x = x + 1; d = d + 1; }\n        }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
-    ("i16 param while{ if{ while{ x+=1 } } } 3x2 (if-wrapped inner while — must "
-     "fail-closed)",
+    ("i16 param while{ if{ while{ x+=1 } } } f(0) 3x2 -> 6", _nested_ref(3, 2, 0, 16),
      "fn f(x: i16) -> i64 {\n    let mut a: i64 = 0;\n    while a < 3 {\n        let mut d: i64 = 0;\n        if a < 10 {\n            while d < 2 { x = x + 1; d = d + 1; }\n        }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
-    ("i32 param while{ if{ while{ x+=1 } } } 3x2 (if-wrapped inner while — must "
-     "fail-closed)",
+    ("i32 param while{ if{ while{ x+=1 } } } f(0) 3x2 -> 6", _nested_ref(3, 2, 0, 32),
      "fn f(x: i32) -> i64 {\n    let mut a: i64 = 0;\n    while a < 3 {\n        let mut d: i64 = 0;\n        if a < 10 {\n            while d < 2 { x = x + 1; d = d + 1; }\n        }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
+    ("i8 param OVERFLOW while{ if{ while{ x+=1 } } } f(126) 3x2 -> wrap", _nested_ref(3, 2, 126, 8),
+     "fn f(x: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 3 {\n        let mut d: i64 = 0;\n        if a < 10 {\n            while d < 2 { x = x + 1; d = d + 1; }\n        }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(126); }\n"),
+    ("i8 param selective while{ if(a%2==0){ while{ x+=1 } } } 4x3 -> 6", 6,
+     "fn f(x: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 4 {\n        let mut d: i64 = 0;\n        if a % 2 == 0 {\n            while d < 3 { x = x + 1; d = d + 1; }\n        }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
+    # SIGN-DISCRIMINATING overflow: f(120) i8 + 10 -> 130 wraps to -126 (<0). A post-loop
+    # `if x < 0` returns 111 iff the two's-complement wrap is applied AT the carry slot; an
+    # un-wrapped i64 carry (x=130>0) would return 99. This distinguishes narrow-wrap from a
+    # raw-i64 carry, which a +1 low-byte comparison cannot (they differ by a multiple of 256).
+    ("i8 param sign-discriminate OVERFLOW: f(120), +10, x<0 ? 111 : 99", 111,
+     "fn f(x: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 2 {\n        let mut d: i64 = 0;\n        if a < 100 {\n            while d < 5 { x = x + 1; d = d + 1; }\n        }\n        a = a + 1;\n    }\n    if x < 0 { return 111; }\n    return 99;\n}\nfn main() -> i64 { return f(120); }\n"),
 ]
-# REFUSE (blind-review XN class, regression guard for the UNCOMMITTED Sub-step B): a narrow
-# param assigned TOP-LEVEL in one if branch while the SIBLING branch ALSO writes it via
-# NESTED control (`else { if{ x+=5 } }` / `else { while{ x+=1 } }`). A non-recursive
-# "single-branch" check misclassified these as clean single-branch and carried x while
-# DROPPING the sibling's nested write — a running ELF with the WRONG value (XN1 emitted
-# exit 7 want 12). The sibling-write check is now RECURSIVE (nb_block_writes_rec), so any
-# sibling write at any depth fails these closed. MUST emit an EMPTY ELF for every width.
+# NOW PERMITTED + RUN CORRECT (this change): a narrow param assigned in one if branch
+# while the SIBLING branch ALSO writes it via NESTED control (`else { if{ x+=5 } }` /
+# `else { while{ x+=1 } }`). At Sub-step B a non-recursive single-branch check would have
+# mis-carried these (XN1 leaked exit 7 want 12); Sub-step C's nb_if_carry_promote promotes
+# a merged OUTER var written ANYWHERE in EITHER branch (nb_block_writes_rec, recursive) with
+# the branch-fork env restore making each branch read the INCOMING value, so both-branch and
+# sibling-nested writes now merge + carry correctly. Proven by ELF-run boundary-mapping.
+# `exp` is the independent Python ref (x accumulates 1 or 5 per iter per the taken branch).
 XN_SIBLING_NESTED_WRITE = [
-    ("i8 while{ if{ x+=1 } else { if{ x+=5 } } } — else writes x via nested if (must "
-     "fail-closed, was leaking exit 7 want 12)",
+    ("i8 while{ if{ x+=1 } else { if{ x+=5 } } } — else writes x via nested if, 4it -> 12", 12,
      "fn f(x: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 4 {\n        if a < 2 { x = x + 1; } else { if a < 10 { x = x + 5; } }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
-    ("i8 while{ if{ if{ x+=5 } } else { x+=1 } } — then writes x via nested if (mirror, "
-     "must fail-closed)",
+    ("i8 while{ if{ if{ x+=5 } } else { x+=1 } } — then writes x via nested if (mirror), 4it -> 12", 12,
      "fn f(x: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 4 {\n        if a < 2 { if a < 10 { x = x + 5; } } else { x = x + 1; }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
-    ("i8 while{ if{ x+=1 } else { while{ x+=1 } } } — else writes x via nested while (must "
-     "fail-closed)",
+    ("i8 while{ if{ x+=1 } else { while{ x+=1 } } } — else writes x via nested while, 4it -> 8", 8,
      "fn f(x: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 4 {\n        let mut d: i64 = 0;\n        if a < 2 { x = x + 1; } else { while d < 3 { x = x + 1; d = d + 1; } }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
-    ("i8 while{ if{ x+=1 } else { if{ while{ x+=1 } } } } — else writes x via if>while "
-     "(deep, must fail-closed)",
+    ("i8 while{ if{ x+=1 } else { if{ while{ x+=1 } } } } — else writes x via if>while (deep), 4it -> 6", 6,
      "fn f(x: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 4 {\n        if a < 2 { x = x + 1; } else { if a < 10 { let mut d: i64 = 0; while d < 2 { x = x + 1; d = d + 1; } } }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
+]
+# RETAINED FAIL-CLOSED (regression guard): a narrow param write on a `break`/`continue`
+# EXIT edge inside an if-branch bypasses the branch's merge-phi stores when the exit is
+# taken, silently dropping the write (a running ELF with a WRONG value). Although the
+# narrow param IS reassigned (so nb_region_while_carries_narrow permits it), the SEPARATE
+# nb_fns_branch_exit_carry guard refuses the whole module 0B. MUST emit an EMPTY ELF —
+# proves the relaxation did NOT downgrade this genuinely-broken shape to a silent miscompile.
+REFUSE_NARROW_EXIT = [
+    ("i8 break-after-write in branch: while{ if a==2 {x+=100; break;} else {x+=1} }",
+     "fn f(x: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 10 {\n        if a == 2 { x = x + 100; break; } else { x = x + 1; }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
+    ("i8 continue-after-write in branch: while{ a+=1; if a==3 {x+=50; continue;} x+=1 }",
+     "fn f(x: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 5 {\n        a = a + 1;\n        if a == 3 { x = x + 50; continue; }\n        x = x + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
+    ("i16 break-after-write in branch (mirror at wider width)",
+     "fn f(x: i16) -> i64 {\n    let mut a: i64 = 0;\n    while a < 10 {\n        if a == 2 { x = x + 100; break; } else { x = x + 1; }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
 ]
 # SUB-STEP B FIXED the single-branch part of Finding #2: i64/narrow `while{ if{ x+=1 } }`
 # now carries correct (returns 3, asserted in IF_IN_LOOP_CARRY above). Two related shapes
@@ -310,7 +330,9 @@ I64_IF_IN_WHILE_GAP_NOTE = (
     "either branch (post_id = its merge phi slot) and nb_while_live_writes descends into "
     "nested regions. Gated permanently by self_host_if_region_carry_smoke.py (20 loop-carry + "
     "6 straight-line shapes vs an independent Python reference). Narrow (i8/i16/i32) "
-    "if-wrapped-while shapes stay fail-closed via the scan-based permit guard (unchanged)."
+    "if-wrapped-while shapes now ALSO emit + run correct (this change relaxed the "
+    "scan-based permit guard refuse->run via nb_region_reassigns_narrow; only a narrow "
+    "write on a break/continue exit edge stays fail-closed via a separate guard)."
 )
 
 # Regression battery for the STANDALONE both-branch-same-var if-merge else-read fix
@@ -397,9 +419,10 @@ def main() -> int:
     nested_loop_ok = 0
     if_in_loop_ok = 0
     both_branch_ok = 0
-    xn_refused = 0
+    xn_ok = 0
     refused = 0
-    if_wrapped_refused = 0
+    if_wrapped_ok = 0
+    exit_refused = 0
     ran = 0
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
@@ -516,22 +539,41 @@ def main() -> int:
             print(f"  {'PASS' if ok else 'FAIL'}  still-broken sub-shape refused: {label} "
                   f"(emit {len(elf)}B, want 0 — fail-closed, NOT run)")
 
-        for label, src in IF_WRAPPED_WHILE:
+        for label, exp, src in IF_WRAPPED_WHILE:
             elf = emit(src)
-            ok = len(elf) == 0
+            if not elf:
+                print(f"  FAIL  if-wrapped inner-while carry OVER-REJECTED: {label} (emit 0B, want run)")
+                all_ok = False
+                continue
+            want = exp & 0xFF
+            rc = run_elf(elf)
+            ok = rc == want
             all_ok = all_ok and ok
-            if_wrapped_refused += 1 if ok else 0
-            print(f"  {'PASS' if ok else 'FAIL'}  if-wrapped inner while refused "
-                  f"(0b5f489 regression guard): {label} (emit {len(elf)}B, want 0 — "
-                  f"fail-closed, NOT run)")
+            if_wrapped_ok += 1 if ok else 0
+            print(f"  {'PASS' if ok else 'FAIL'}  narrow if-wrapped inner-while carry (now "
+                  f"permitted): {label} -> exit {rc} (python-ref {exp} -> byte {want})")
 
-        for label, src in XN_SIBLING_NESTED_WRITE:
+        for label, exp, src in XN_SIBLING_NESTED_WRITE:
+            elf = emit(src)
+            if not elf:
+                print(f"  FAIL  sibling-nested-write carry OVER-REJECTED: {label} (emit 0B, want run)")
+                all_ok = False
+                continue
+            want = exp & 0xFF
+            rc = run_elf(elf)
+            ok = rc == want
+            all_ok = all_ok and ok
+            xn_ok += 1 if ok else 0
+            print(f"  {'PASS' if ok else 'FAIL'}  narrow sibling/both-branch write carry (now "
+                  f"permitted): {label} -> exit {rc} (python-ref {exp} -> byte {want})")
+
+        for label, src in REFUSE_NARROW_EXIT:
             elf = emit(src)
             ok = len(elf) == 0
             all_ok = all_ok and ok
-            xn_refused += 1 if ok else 0
-            print(f"  {'PASS' if ok else 'FAIL'}  sibling-nested-write refused "
-                  f"(XN silent-miscompile guard): {label} (emit {len(elf)}B, want 0 — "
+            exit_refused += 1 if ok else 0
+            print(f"  {'PASS' if ok else 'FAIL'}  narrow break/continue write-on-exit-edge "
+                  f"refused (separate branch-exit guard): {label} (emit {len(elf)}B, want 0 — "
                   f"fail-closed, NOT run)")
 
         for label, exp, src in BOTH_BRANCH_SAME_VAR:
@@ -586,33 +628,39 @@ def main() -> int:
     if refused < 1:
         print("FAIL: vacuous (no broken sub-shape refused)")
         return 1
-    if if_wrapped_refused < len(IF_WRAPPED_WHILE):
-        print("FAIL: an if-wrapped inner-while shape was PERMITTED (0b5f489 regression "
-              "— must be fail-closed for every narrow width)")
+    if if_wrapped_ok < len(IF_WRAPPED_WHILE):
+        print("FAIL: a narrow if-wrapped inner-while carry did not run correct "
+              "(relaxation regression — the carry + two's-complement wrap must thread "
+              "out through the Sub-step C merge/promote machinery)")
         return 1
     if both_branch_ok < len(BOTH_BRANCH_SAME_VAR):
         print("FAIL: a both-branch-same-var if-merge else-read shape mis-compiled "
               "(branch-isolation regression — the else must read the INCOMING value, "
               "not the then branch's fresh rebinding)")
         return 1
-    if xn_refused < len(XN_SIBLING_NESTED_WRITE):
-        print("FAIL: a sibling-nested-write shape was PERMITTED (XN silent-miscompile "
-              "regression — the sibling branch writes the carried var, must be fail-closed)")
+    if xn_ok < len(XN_SIBLING_NESTED_WRITE):
+        print("FAIL: a narrow sibling/both-branch-nested-write carry did not run correct "
+              "(the sibling/both-branch write must merge + carry via nb_if_carry_promote)")
+        return 1
+    if exit_refused < len(REFUSE_NARROW_EXIT):
+        print("FAIL: a narrow break/continue write-on-exit-edge shape was PERMITTED "
+              "(the separate nb_fns_branch_exit_carry guard must keep it fail-closed — "
+              "the relaxation must NOT downgrade it to a silent miscompile)")
         return 1
     if ran < 1:
         print("FAIL: vacuous (no i64 control ran)")
         return 1
     if all_ok:
-        print("ALL PASS  narrow-width params/locals carried by a top-level loop AND by "
-              "a while NESTED inside an if-branch (any if-depth, then/else, overflow, "
-              "untaken) emit + run correct (two's-complement wrap, no stale/hang) vs an "
-              "independent Python ref, the widening cast-in-binop `(x as i64)+c` "
-              "composes, NARROWING casts `(y as i8/i16/i32)` in a binop truncate "
-              "two's-complement (movsx) + compose, a var carried by a while NESTED in "
-              "another while (any width, overflow, triple-nest) now emits + runs correct "
-              "(F2 fixed), while the narrow read-only loop-carry sub-shape AND an inner "
-              "while wrapped in an `if` inside a loop body (0b5f489 regression guard) "
-              "stay fail-closed and i64 fns are unaffected")
+        print("ALL PASS  narrow-width params/locals carried by a top-level loop, by a "
+              "while NESTED inside an if-branch, by a while NESTED in another while, by "
+              "an if-WRAPPED inner while (`while{ if{ while{ x+=1 } } }`), and by "
+              "sibling-nested / both-branch writes all emit + run correct (two's-complement "
+              "wrap incl. sign-discriminated overflow, no stale/hang) vs an independent "
+              "Python ref; the widening cast-in-binop `(x as i64)+c` composes; NARROWING "
+              "casts `(y as i8/i16/i32)` truncate two's-complement (movsx) + compose; while "
+              "the narrow read-only loop-carry sub-shape stays fail-closed AND a narrow "
+              "write on a break/continue exit edge stays fail-closed (separate branch-exit "
+              "guard) — no silent miscompile — and i64 fns are unaffected")
         return 0
     print("FAIL  narrow-param carry smoke mis-behaved")
     return 1
