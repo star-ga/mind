@@ -25741,7 +25741,48 @@ pub fn nb_slit_or_zero(init: i64) -> i64 {
 //   * else 0 (scalar let; field-offset path unchanged).
 // `ty_node` = the let's type leaf (ast_child1); 0 when untyped. An if-STATEMENT
 // chain (no value-if-let phis) so it stays in the self-host subset.
-pub fn nb_let_descriptor(init: i64, ty_node: i64, buf: i64, srt: i64) -> i64 {
+// Infer a struct field-offset descriptor for an UNANNOTATED let whose init is a
+// CALL to a struct-returning fn: `let p = mk(); p.x` where `fn mk() -> P {..}`.
+// The callee's declared return-type NAME (from the frt registry's retty span)
+// resolves the struct in srt exactly as an explicit `: P` annotation would, so
+// the non-param receiver gets the SAME synthetic decl descriptor the annotated
+// path (nb_let_descriptor's ty_node arm) builds. Returns 0 (no descriptor, the
+// unchanged scalar-let behavior) whenever this cannot prove a struct return:
+// a null registry, a non-call/non-ident-callee init, an unregistered callee (an
+// intrinsic or a fn outside the scanned buffer), a unit/multi-token return
+// ((0,0) span), or a return type that is not a struct name in srt. main.mind's
+// own struct-typed lets are ALL annotated (`let r: ParseResult = parse_...()`),
+// so this arm never fires during self-compile and the native oracle stays
+// byte-identical (a non-annotated let bound to a NON-struct call resolves to 0
+// here, identical to the prior `ty_node == 0 -> 0`).
+pub fn nb_struct_desc_from_call(init: i64, buf: i64, srt: i64, frt: i64) -> i64 {
+    if frt == 0 {
+        return 0;
+    }
+    if ast_kind(init) != ast_call() {
+        return 0;
+    }
+    let callee: i64 = ast_child0(init);
+    if ast_kind(callee) != ast_ident() {
+        return 0;
+    }
+    let k: i64 = frt_find(frt, buf, ast_span_lo(callee), ast_span_hi(callee), 0);
+    if k < 0 {
+        return 0;
+    }
+    let rlo: i64 = frt_retty_lo(frt, k);
+    let rhi: i64 = frt_retty_hi(frt, k);
+    if rhi <= rlo {
+        return 0;
+    }
+    let sk: i64 = srt_find_by_name(srt, buf, rlo, rhi, 0);
+    if sk < 0 {
+        return 0;
+    }
+    nb_struct_decl_descriptor(srt, buf, sk)
+}
+
+pub fn nb_let_descriptor(init: i64, ty_node: i64, buf: i64, srt: i64, frt: i64) -> i64 {
     if ast_kind(init) == ast_struct_lit() {
         return init;
     }
@@ -25753,7 +25794,10 @@ pub fn nb_let_descriptor(init: i64, ty_node: i64, buf: i64, srt: i64) -> i64 {
         return init;
     }
     if ty_node == 0 {
-        return 0;
+        // Unannotated: infer a struct descriptor from a struct-returning call
+        // init (`let p = mk(); p.x`); 0 (scalar, unchanged) for every non-struct
+        // call, so main.mind's own unannotated scalar-call lets are byte-neutral.
+        return nb_struct_desc_from_call(init, buf, srt, frt);
     }
     let sk: i64 = srt_find_by_name(srt, buf, ast_span_lo(ty_node), ast_span_hi(ty_node), 0);
     if sk < 0 {
@@ -27174,7 +27218,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
             let cw1: String = nb_load_rax(s1.code, nb_slot_disp(s1.last_id));
             let cw2: String = nb_wrap_rax_w(cw1, declw);
             let cw3: String = nb_store_rax(cw2, nb_slot_disp(wid));
-            let _bw: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), wid, nb_let_descriptor(init, ast_child1(node), buf, srt), declw);
+            let _bw: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), wid, nb_let_descriptor(init, ast_child1(node), buf, srt, __mind_load_i64(lcell + 16)), declw);
             let _dtw: i64 = nb_dtype_tag_slot(dtbl, wid, init_dt);
             return NbState { code: cw3, next_id: wid + 1, last_id: wid, ncalls: s1.ncalls };
         }
@@ -27190,12 +27234,12 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
                 let cid: i64 = s1.next_id;
                 let cc1: String = nb_load_rax(s1.code, nb_slot_disp(s1.last_id));
                 let cc2: String = nb_store_rax(cc1, nb_slot_disp(cid));
-                let _bc: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), cid, nb_let_descriptor(init, ast_child1(node), buf, srt), declw);
+                let _bc: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), cid, nb_let_descriptor(init, ast_child1(node), buf, srt, __mind_load_i64(lcell + 16)), declw);
                 let _dtc: i64 = nb_dtype_tag_slot(dtbl, cid, init_dt);
                 return NbState { code: cc2, next_id: cid + 1, last_id: cid, ncalls: s1.ncalls };
             }
         }
-        let _b: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), s1.last_id, nb_let_descriptor(init, ast_child1(node), buf, srt), declw);
+        let _b: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), s1.last_id, nb_let_descriptor(init, ast_child1(node), buf, srt, __mind_load_i64(lcell + 16)), declw);
         let _dt: i64 = nb_dtype_tag_slot(dtbl, s1.last_id, init_dt);
         return s1;
     }
@@ -28565,7 +28609,7 @@ pub fn nb_count_stmt(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         // so the assign arm's count-side lookup agrees with emission. declw == 64
         // for every i64/unannotated let -> identical count, byte-identical frame.
         let declw: i64 = nb_width_of_ann(buf, ast_child1(node));
-        let _b: i64 = nb_lets_bind(clets, clcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), 0, nb_let_descriptor(init, ast_child1(node), buf, srt), declw);
+        let _b: i64 = nb_lets_bind(clets, clcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), 0, nb_let_descriptor(init, ast_child1(node), buf, srt, __mind_load_i64(clcell + 16)), declw);
         // i64-REFERENCES: nb_bind_mints_slot folds the narrow-width wrap slot
         // (declw < 64) together with the address-taken capture-copy slot (a
         // bare-ident init naming an address-taken var) — the exact emit-side
@@ -30006,6 +30050,10 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     let clcell0: i64 = __mind_alloc(96);
     __mind_store_i64(clcell0, 0);
     __mind_store_i64(clcell0 + 24, srt);
+    // Mirror the emit lcell's frt slot (+16) so nb_count_stmt's nb_let_descriptor
+    // resolves an unannotated struct-returning-call receiver's descriptor IDENTICALLY
+    // to the emit walk (count<->emit lockstep for the inferred field-read slot count).
+    __mind_store_i64(clcell0 + 16, frt);
     // i64-REFERENCES: per-fn address-taken registry (every `&NAME` operand name in
     // this body), built BEFORE the count walk so the count-side capture-copy
     // accounting (nb_bind_mints_slot) sees it. Empty for main.mind's own prefix-
@@ -33778,9 +33826,13 @@ pub fn frt_cap() -> i64 {
 }
 
 // Words per fn slot: name_lo + name_hi + ret_is_float + ret_width (C2 driver;
-// 64 default, 8/16/32 only for a declared `-> i8/i16/i32 {` return).
+// 64 default, 8/16/32 only for a declared `-> i8/i16/i32 {` return) + retty_lo +
+// retty_hi (the return-type NAME span, for struct-return descriptor inference on
+// an UNANNOTATED call-init let `let p = mk(); p.x` — the span names the struct in
+// srt exactly as an explicit `: P` annotation would; (0,0) for a unit/extern/
+// multi-token return, which never names a struct).
 pub fn frt_slot_words() -> i64 {
-    4
+    6
 }
 
 pub fn frt_alloc() -> i64 {
@@ -33815,9 +33867,21 @@ pub fn frt_retw(t: i64, k: i64) -> i64 {
     __mind_load_i64(t + (frt_slot_base(k) + 3) * 8)
 }
 
-// Append a fn with name span (nlo, nhi), return-dtype `ret_dt`, and declared
-// return width `retw`. Overflow no-ops.
-pub fn frt_push(t: i64, nlo: i64, nhi: i64, ret_dt: i64, retw: i64) -> i64 {
+// The fn's declared return-type NAME span [lo, hi) (0,0 for a unit/extern/
+// multi-token return). Used by nb_struct_desc_from_call to resolve a struct
+// return type in srt, so an unannotated `let p = mk()` binds p's field-offset
+// descriptor from mk's `-> P` exactly as an explicit `: P` annotation would.
+pub fn frt_retty_lo(t: i64, k: i64) -> i64 {
+    __mind_load_i64(t + (frt_slot_base(k) + 4) * 8)
+}
+
+pub fn frt_retty_hi(t: i64, k: i64) -> i64 {
+    __mind_load_i64(t + (frt_slot_base(k) + 5) * 8)
+}
+
+// Append a fn with name span (nlo, nhi), return-dtype `ret_dt`, declared return
+// width `retw`, and return-type NAME span (rtlo, rthi). Overflow no-ops.
+pub fn frt_push(t: i64, nlo: i64, nhi: i64, ret_dt: i64, retw: i64, rtlo: i64, rthi: i64) -> i64 {
     let n: i64 = frt_count(t);
     if n >= frt_cap() {
         return n;
@@ -33826,6 +33890,8 @@ pub fn frt_push(t: i64, nlo: i64, nhi: i64, ret_dt: i64, retw: i64) -> i64 {
     __mind_store_i64(t + (frt_slot_base(n) + 1) * 8, nhi);
     __mind_store_i64(t + (frt_slot_base(n) + 2) * 8, ret_dt);
     __mind_store_i64(t + (frt_slot_base(n) + 3) * 8, retw);
+    __mind_store_i64(t + (frt_slot_base(n) + 4) * 8, rtlo);
+    __mind_store_i64(t + (frt_slot_base(n) + 5) * 8, rthi);
     __mind_store_i64(t + 0, n + 1);
     n
 }
@@ -33910,6 +33976,29 @@ pub fn frt_scan_retw(toks: Vec, buf: i64, pos: i64) -> i64 {
     frt_scan_retw(toks, buf, pos + 1)
 }
 
+// The return-type-SPAN twin of frt_scan_ret: from the token AFTER a fn's name,
+// scan to the signature's return type and return the TOKEN INDEX of the single
+// return-type token for a `-> RETTYPE {` shape, or -1 for a unit return (body `{`
+// with no `->`), an extern (`-> TYPE ;`, no body), or a multi-token type. The
+// caller derives the type's byte span from tok_lo/tok_hi at that index. Same stop
+// rules as frt_scan_ret / frt_scan_retw. Tail-recursive (self-host subset).
+pub fn frt_scan_retty_pos(toks: Vec, pos: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0 - 1;
+    }
+    let k: i64 = tok_kind(toks, pos);
+    if k == tk_lbrace() {
+        return 0 - 1;
+    }
+    if k == tk_arrow() {
+        if tok_kind(toks, pos + 2) == tk_lbrace() {
+            return pos + 1;
+        }
+        return 0 - 1;
+    }
+    frt_scan_retty_pos(toks, pos + 1)
+}
+
 // Scan the token stream, recording every `fn NAME (...) -> RETTYPE {` def and its
 // return dtype. `fn` is a dedicated keyword token (tk_kw_fn), and the name is always the
 // next token (`pub fn NAME` yields kw_pub, kw_fn, NAME, so pos+1 is the name in both the
@@ -33922,7 +34011,18 @@ pub fn frt_collect(toks: Vec, buf: i64, pos: i64, t: i64) -> i64 {
     if tok_kind(toks, pos) == tk_kw_fn() {
         let ret_dt: i64 = frt_scan_ret(toks, buf, pos + 2);
         let retw: i64 = frt_scan_retw(toks, buf, pos + 2);
-        let _p: i64 = frt_push(t, tok_lo(toks, pos + 1), tok_hi(toks, pos + 1), ret_dt, retw);
+        let rp: i64 = frt_scan_retty_pos(toks, pos + 2);
+        let rtlo: i64 = if rp < 0 {
+            0
+        } else {
+            tok_lo(toks, rp)
+        };
+        let rthi: i64 = if rp < 0 {
+            0
+        } else {
+            tok_hi(toks, rp)
+        };
+        let _p: i64 = frt_push(t, tok_lo(toks, pos + 1), tok_hi(toks, pos + 1), ret_dt, retw, rtlo, rthi);
         return frt_collect(toks, buf, pos + 1, t);
     }
     frt_collect(toks, buf, pos + 1, t)

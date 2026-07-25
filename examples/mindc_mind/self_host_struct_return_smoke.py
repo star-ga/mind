@@ -24,22 +24,28 @@ under-claimed. Concretely, in the native-ELF path today:
     reproducing main.mind byte-identically IS the proof the native path handles
     it. This smoke locks it against regression with SMALL fixtures.
 
-Fail-closed boundary (the genuine remaining gaps — correctly refused today)
---------------------------------------------------------------------------
-Two adjacent shapes the REFERENCE frontend (`mindc --emit-ir`) accepts but the
+Return-type inference for the UNANNOTATED receiver (LANDED)
+----------------------------------------------------------
+`let p = mk(); p.x` (no `: P`) now RUNS: nb_let_descriptor's ty_node==0 arm
+infers p's struct descriptor from the callee's `-> P` return type via the frt
+registry's new return-type-name span (nb_struct_desc_from_call), so an
+unannotated struct-returning-call receiver resolves its field offset exactly
+like the annotated `let p: P = mk()` case. Threaded through nb_let_descriptor at
+all 4 count/emit call sites in lockstep (frt read from the emit lcell+16 /
+count clcell+16). Non-struct call inits resolve to 0 (unchanged scalar-let
+behavior), so main.mind's own compile stays byte-identical.
+
+Fail-closed boundary (the genuine remaining gap — correctly refused today)
+-------------------------------------------------------------------------
+One adjacent shape the REFERENCE frontend (`mindc --emit-ir`) accepts but the
 native path still refuses 0B — an honest fail-closed gap, NOT a miscompile:
 
-  * UNANNOTATED call-init receiver: `let p = mk(); p.x` (no `: P`). Without the
-    annotation the native path cannot resolve the struct descriptor (it does not
-    yet infer the type from the callee's return annotation), so nb_field_offset
-    returns -1 and the whole unit refuses 0B. Turning THIS into a correct emit
-    (infer the struct type from the callee's `-> P` via a return-type registry)
-    is the true next feature slice.
   * Direct field on a call: `mk().x` (receiver is a call expr, not an ident).
-    nb_field_offset requires an ast_ident receiver, so this refuses 0B.
+    nb_field_offset requires an ast_ident receiver, so this refuses 0B. Making
+    it run needs the call spilled to a temp slot first — a separate slice.
 
-Both refusals are CORRECT (fail-closed beats a wrong-value ELF) and are asserted
-below as controls, so a future change that makes them run must do so *correctly*
+This refusal is CORRECT (fail-closed beats a wrong-value ELF) and is asserted
+below as a control, so a future change that makes it run must do so *correctly*
 or trip this smoke.
 
 Usage: MINDC_SO=<built .so> python3 examples/mindc_mind/self_host_struct_return_smoke.py
@@ -137,6 +143,18 @@ SUPPORTED = [
     # an adjacent control so the two receiver kinds sit side by side).
     ("param struct receiver (control)",
      P + "fn get(r:P)->i64{ return r.x; }\nfn main()->i64{ let r:P=P{x:7,y:9}; return get(r); }", 7),
+    # UNANNOTATED call-init receiver (LANDED): descriptor inferred from mk's
+    # `-> P` return type — no `: P` annotation needed.
+    ("unannotated call-init receiver .x",
+     P + "fn mk()->P{ return P{x:7,y:9}; }\nfn main()->i64{ let p=mk(); return p.x; }", 7),
+    ("unannotated call-init receiver .y",
+     P + "fn mk()->P{ return P{x:7,y:9}; }\nfn main()->i64{ let p=mk(); return p.y; }", 9),
+    ("unannotated call-init receiver, 3-field .b",
+     Q + "fn mk()->Q{ return Q{a:1,b:2,c:3}; }\nfn main()->i64{ let q=mk(); return q.b; }", 2),
+    ("unannotated call-init receiver, ooo lit + call-with-arg",
+     Q + "fn mk(n:i64)->Q{ return Q{c:3,a:n,b:2}; }\nfn main()->i64{ let q=mk(5); return q.a; }", 5),
+    ("unannotated receiver, mut let",
+     P + "fn mk()->P{ return P{x:7,y:9}; }\nfn main()->i64{ let mut p=mk(); return p.x; }", 7),
 ]
 
 # (label, source)  — MUST refuse 0B. Genuine fail-closed gaps: the native path
@@ -145,12 +163,15 @@ SUPPORTED = [
 # implementing them correctly is the next slice — a change that makes them RUN
 # must return the right value or this control trips.
 REFUSED = [
-    ("unannotated call-init receiver: let p = mk(); p.x",
-     P + "fn mk()->P{ return P{x:7,y:9}; }\nfn main()->i64{ let p=mk(); return p.x; }"),
+    # direct field on a call — receiver is a call expr, not an ident; still
+    # fail-closed (needs the call result spilled to a temp before field-read).
     ("direct field on call: mk().x",
      P + "fn mk()->P{ return P{x:7,y:9}; }\nfn main()->i64{ return mk().x; }"),
-    ("unannotated call-init receiver, 3-field",
-     Q + "fn mk()->Q{ return Q{a:1,b:2,c:3}; }\nfn main()->i64{ let q=mk(); return q.b; }"),
+    # a scalar-returning call bound unannotated then field-accessed MUST still
+    # refuse (no struct descriptor to infer — the return type is i64, not a
+    # struct): a control that the inference does not over-fire on non-structs.
+    ("unannotated scalar-call receiver .x (no struct to infer)",
+     "fn mk()->i64{ return 5; }\nfn main()->i64{ let p=mk(); return p.x; }"),
 ]
 
 
