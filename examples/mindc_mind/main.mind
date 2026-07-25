@@ -1954,6 +1954,24 @@ pub fn parse_primary_ns(toks: Vec, pos: i64, buf: i64, no_struct: i64) -> ParseR
     }
 
     if k == tk_ident() {
+        // Bool literals `true` / `false` fold to a SYNTHETIC int-lit here (the
+        // parser is the designated fold point — classify_ident leaves them as
+        // tk_ident; see tc_lit_is_bool). bool is i64-backed in the native path
+        // (true=1, false=0), matching the comparison path's 1/0 result and
+        // mindc-Rust's `fmt` which rewrites the source `true`->`1`/`false`->`0`.
+        // Reuses the proven child1==1 int-lit form (mk_syn_intlit) -> zero new
+        // AST kind, zero new emit surface: conditions/lets/returns/arithmetic
+        // all flow through the existing i64 int path. Checked FIRST so a bool
+        // literal is a pure value (a `true(...)`/`true::x`/`true {}` follow-on
+        // then parses against the int value and refuses, fail-closed). main.mind
+        // has no bool literal in its own code, so this never fires on the
+        // self-compile -> parse byte-identical.
+        if tc_lit_is_bool(buf, lo, hi) == 1 {
+            if hi - lo == 4 {
+                return pr_new(pos + 1, mk_syn_intlit(1));
+            }
+            return pr_new(pos + 1, mk_syn_intlit(0));
+        }
         // Match-expression: `match SCRUT { ... }` desugars at parse time to an
         // ast_if. Detected via is_ident_match (match is a bare ident, not a
         // keyword token), mirroring the is_struct_kw dispatch. Checked before

@@ -14,7 +14,9 @@ arithmetic / call args / returns / loops, with proven-constant-OOB indexes,
 `[]`, trailing commas refused — the f64 tier is ARRAY-ONLY (a float element in a
 TUPLE still refuses; tuples stay i64-only) and NON-f64 float/mixed element types
 (f32, mixed `[1.0, 2]`) plus narrow-int-annotated element arrays (i32/i8) and
-bool-element arrays refuse (0B), and every NON-`len` method /
+TYPE-annotated `[bool; N]` arrays refuse (0B) — an UNTYPED `[true, false]`
+folds to a plain i64 array [1, 0] and RUNS (bool literals `true`/`false` fold
+to synthetic i64 int-lits 1/0), and every NON-`len` method /
 `.len()` with args / `.len()` on a non-array or unbound receiver refused —
 plus i64 TUPLES
 as anonymous positional structs: `(e0, e1, ...)` literals (comma-disambiguated
@@ -124,12 +126,17 @@ REFUSED = [
     # above). MIXED arrays refuse via the homogeneity gate (element dtype !=
     # element 0's). f32 refuses via the module-wide nb_user_float_tok pre-gate
     # (the general float tier computes in scalar-double, so a declared-f32 array
-    # would f64-round — a silent miscompile). Narrow-int-annotated (i32/i8) and
-    # bool element arrays are out of the supported element-type subset.
+    # would f64-round — a silent miscompile). Narrow-int-annotated (i32/i8)
+    # element arrays are out of the supported element-type subset. An UNTYPED
+    # bool-element array (`[true, false, ...]`) is NOT refused: since
+    # `true`/`false` fold to synthetic i64 int-lits (1/0), it is an ordinary
+    # i64 array that RUNS correct (indexing gives 1/0) — SUPPORTED below. Only a
+    # TYPE-annotated `[bool; N]` array still refuses (the typed-array annotation
+    # scopes to i64/f64; bool-typed stays fail-closed) — see the case just below.
     ("array f32 elements", M("let a: [f32; 3] = [1.0, 2.0, 3.0]; return a[0] as i64;"), "0B"),
     ("array i32 elements", M("let a: [i32; 3] = [1, 2, 3]; return a[0];"), "0B"),
     ("array i8 elements", M("let a: [i8; 3] = [1, 2, 3]; return a[0];"), "0B"),
-    ("array bool elements", M("let a=[true, false, true]; return a.len();"), "0B"),
+    ("typed bool array [bool;N]", M("let a: [bool; 2] = [true, false]; return 0;"), "0B"),
     ("array mixed float-then-int", M("let a=[1.0, 2]; return a.len();"), "0B"),
     ("array mixed int-then-float", M("let a=[1, 2.0]; return a.len();"), "0B"),
     # NESTED-FLOAT array index — the fail-OPEN class closed by nb_index_leaf_dtype.
@@ -280,6 +287,25 @@ SUPPORTED = [
     ("array .len() nested in if", M("let a=[1,2,3]; if a[0]>0 { return a.len(); } return 0;"), 3),
     ("array .len() 1-elem", M("let a=[7]; return a.len();"), 1),
     ("array .len() in sep fn", "fn helper()->i64{ let a=[5,6]; return a.len(); }\nfn main()->i64{ return helper(); }", 2),
+    # bool literals `true`/`false` fold to synthetic i64 int-lits (true=1,
+    # false=0) at parse time — matching bool's i64 backing, the comparison
+    # path's 1/0, and mindc-Rust's `fmt` fold. They flow through the existing
+    # i64 path in conditions, lets, returns, arithmetic, loop guards, and array
+    # elements. NO new AST kind, NO new emit surface. (A TYPE-annotated
+    # `[bool; N]` array still refuses — see REFUSED above.)
+    ("bool let true cond", M("let b=true; if b {return 7;} return 0;"), 7),
+    ("bool let false cond", M("let b=false; if b {return 1;} return 9;"), 9),
+    ("bool return true", M("return true;"), 1),
+    ("bool return false", M("return false;"), 0),
+    ("bool arith true+true", M("return true + true;"), 2),
+    ("bool arith false+true", M("return false + true;"), 1),
+    ("bool while guard", M("let mut b=true; let mut n=0; while b { n=n+1; if n>2 { b=false; } } return n;"), 3),
+    ("bool while true literal guard", M("let mut s=0; let mut i=0; while true { if i>3 { return s; } s=s+i; i=i+1; } return s;"), 6),
+    # UNTYPED bool-element array folds to an ordinary i64 array [1,0,1] — RUNS
+    # correct (len + index give 1/0). This is the reconciled ex-`array bool
+    # elements` REFUSED fixture: running-correct 1/0 is honest, NOT a fail-OPEN.
+    ("untyped bool array .len()", M("let a=[true, false, true]; return a.len();"), 3),
+    ("untyped bool array index", M("let a=[true, false, true]; return a[0]+a[2];"), 2),
     # fixed f64-element arrays (the f64 element tier — #256): the array cell holds
     # the raw IEEE-754 bits (nb_expr's float-lit arm movsd-spills them; the 8-byte
     # GP element store copies them byte-exact). An index READ tags its result FLOAT
