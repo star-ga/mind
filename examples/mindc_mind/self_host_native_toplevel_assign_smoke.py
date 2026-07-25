@@ -161,6 +161,108 @@ def build_marker_value_if_src(c: int, then_v: int, else_v: int, expected: int) -
     )
 
 
+def apply_op(w: int, op: str, operand: int) -> int:
+    if op == "+":
+        return sixty4(w + operand)
+    if op == "-":
+        return sixty4(w - operand)
+    if op == "*":
+        return sixty4(w * operand)
+    raise ValueError(op)
+
+
+def py_selfref_vif(init, c, then_op, then_v, else_op, else_v) -> int:
+    """INDEPENDENT reference: `w = init; w = if c>0 { w THEN } else { w ELSE }`."""
+    if c > 0:
+        return apply_op(init, then_op, then_v)
+    return apply_op(init, else_op, else_v)
+
+
+def build_selfref_vif_src(init, c, then_op, then_v, else_op, else_v) -> str:
+    """SELF-REFERENTIAL value-if reassign: BOTH branches read the PRE-assign `w`
+    (`w = if c>0 { w+1 } else { w }`). Proves the branch-fork env restore resolves
+    `w` inside each branch to the INCOMING binding (not the merged dst slot) — the
+    exact hazard the type-7 value-if sub-case has to get right."""
+    return (
+        "fn main() -> i64 {\n"
+        f"    let c: i64 = {c};\n"
+        f"    let w: i64 = {init};\n"
+        f"    w = if c > 0 {{ w {then_op} {then_v} }} else {{ w {else_op} {else_v} }};\n"
+        "    w\n"
+        "}\n"
+    )
+
+
+def build_marker_selfref_vif_src(init, c, then_op, then_v, else_op, else_v, expected) -> str:
+    """Non-fakeable self-ref variant: FULL-64-bit `w == expected` before mod-256 exit."""
+    return (
+        "fn main() -> i64 {\n"
+        f"    let c: i64 = {c};\n"
+        f"    let w: i64 = {init};\n"
+        f"    w = if c > 0 {{ w {then_op} {then_v} }} else {{ w {else_op} {else_v} }};\n"
+        f"    if w == {expected} {{\n"
+        f"        {MARKER}\n"
+        "    } else {\n"
+        "        43\n"
+        "    }\n"
+        "}\n"
+    )
+
+
+def py_chained_vif(c, a, b, d, e, f) -> int:
+    """INDEPENDENT reference: two value-if reassigns in a row; the 2nd reads the 1st's `w`."""
+    w = a if c > 0 else b
+    return sixty4(w + e) if d > 0 else sixty4(w - f)
+
+
+def build_chained_vif_src(c, a, b, d, e, f) -> str:
+    """CHAINED value-if reassign: `w = if c>0 {a} else {b}; w = if d>0 {w+e} else {w-f};`
+    — the second value-if's branches must read the first reassignment's merged slot."""
+    return (
+        "fn main() -> i64 {\n"
+        f"    let c: i64 = {c};\n"
+        f"    let d: i64 = {d};\n"
+        "    let w: i64 = 0;\n"
+        f"    w = if c > 0 {{ {a} }} else {{ {b} }};\n"
+        f"    w = if d > 0 {{ w + {e} }} else {{ w - {f} }};\n"
+        "    w\n"
+        "}\n"
+    )
+
+
+def build_marker_chained_vif_src(c, a, b, d, e, f, expected) -> str:
+    """Non-fakeable chained variant: FULL-64-bit `w == expected` before mod-256 exit."""
+    return (
+        "fn main() -> i64 {\n"
+        f"    let c: i64 = {c};\n"
+        f"    let d: i64 = {d};\n"
+        "    let w: i64 = 0;\n"
+        f"    w = if c > 0 {{ {a} }} else {{ {b} }};\n"
+        f"    w = if d > 0 {{ w + {e} }} else {{ w - {f} }};\n"
+        f"    if w == {expected} {{\n"
+        f"        {MARKER}\n"
+        "    } else {\n"
+        "        43\n"
+        "    }\n"
+        "}\n"
+    )
+
+
+# FAIL-CLOSED control: a value-if RHS whose then-branch carries an unsupported
+# construct (`break` outside a loop) must REFUSE — return the empty EmitState (0B),
+# never a wrong-value ELF. This is the fail-closed-over-miscompile invariant for the
+# value-if reassign arm: shapes the emitter cannot prove must produce a visible,
+# diagnosable gap, not a silent miscompile.
+SRC_FAILCLOSED_VIF = (
+    "fn main() -> i64 {\n"
+    "    let c: i64 = 1;\n"
+    "    let w: i64 = 0;\n"
+    "    w = if c > 0 { break; 1 } else { 2 };\n"
+    "    w\n"
+    "}\n"
+)
+
+
 def build_marker_src(init: int, ops: list, expected: int) -> str:
     """`let w = init; w = ...; if w == expected { 42 } else { 43 }` — non-fakeable:
     the FULL-64-bit compare runs before the exit-code mod-256 truncation."""
@@ -209,6 +311,24 @@ VALUE_IF_SHAPES = [
     ("vif-else", -1, 10, 20),   # c<=0 -> w = 20
     ("vif-else0", 0, 10, 20),   # c==0 -> w = 20 (boundary)
     ("vif-then42", 7, 42, 99),  # c>0  -> w = 42 (raw-exit lands on MARKER value)
+]
+
+# SELF-REFERENTIAL value-if reassign shapes (branches read the PRE-assign w):
+# (name, init, c, then_op, then_v, else_op, else_v)
+SELFREF_VIF_SHAPES = [
+    ("vif-sr-then",  5,  3, "+", 1, "+", 0),   # c>0  -> w+1 = 6
+    ("vif-sr-else",  5,  0, "+", 1, "+", 0),   # c==0 -> w+0 = 5 (boundary, reads w)
+    ("vif-sr-mul",   7,  2, "*", 3, "-", 4),   # c>0  -> w*3 = 21
+    ("vif-sr-nelse", 7, -1, "*", 3, "-", 4),   # c<=0 -> w-4 = 3
+]
+
+# CHAINED value-if reassign shapes (2nd value-if reads the 1st's merged w):
+# (name, c, a, b, d, e, f)
+CHAINED_VIF_SHAPES = [
+    ("vif-chain-tt",  1, 10, 20,  1, 5, 5),   # w=10 then w+5 = 15
+    ("vif-chain-tf",  1, 10, 20,  0, 5, 5),   # w=10 then w-5 = 5
+    ("vif-chain-ft", -1, 10, 20,  1, 5, 5),   # w=20 then w+5 = 25
+    ("vif-chain-ff", -1, 10, 20, -1, 5, 5),   # w=20 then w-5 = 15
 ]
 
 
@@ -307,6 +427,75 @@ def main() -> int:
                 f"(elf {len(velf)}B, zero MLIR/LLVM)"
             )
 
+        # --- SELF-REFERENTIAL value-if reassign (branches read pre-assign w) ---
+        for name, init, c, top, tv, eop, ev in SELFREF_VIF_SHAPES:
+            expected = py_selfref_vif(init, c, top, tv, eop, ev)  # INDEPENDENT ref
+            vsrc = build_selfref_vif_src(init, c, top, tv, eop, ev)
+            velf = mind_native_elf(lib, vsrc)
+            v_is_elf = len(velf) > 120 and velf[:4] == b"\x7fELF"
+            if not v_is_elf:
+                print(f"  FAIL  {name}: self-ref value-if assign fails closed "
+                      f"(empty/invalid ELF len={len(velf)})")
+                all_ok = False
+                continue
+            v_exit, v_out = run_elf(velf, tmp)
+            v_ok = v_exit == (expected & 0xFF) and v_out == b""
+            mine = mind_mic3(lib, vsrc)
+            orc = oracle_mic3(mindc, vsrc, tmp)
+            mic_ok = len(orc) > 0 and mine == orc
+            msrc = build_marker_selfref_vif_src(init, c, top, tv, eop, ev, expected)
+            melf = mind_native_elf(lib, msrc)
+            m_is_elf = len(melf) > 120 and melf[:4] == b"\x7fELF"
+            m_exit, m_out = run_elf(melf, tmp) if m_is_elf else (None, None)
+            m_ok = m_is_elf and m_exit == MARKER and m_out == b""
+            ok = v_ok and mic_ok and m_ok
+            all_ok = all_ok and ok
+            print(
+                f"  {'PASS' if ok else 'FAIL'}  {name:12} value_exit={v_exit} "
+                f"(py_ref={expected & 0xFF}) mic3_id={mic_ok} marker_exit={m_exit} "
+                f"(elf {len(velf)}B, zero MLIR/LLVM)"
+            )
+
+        # --- CHAINED value-if reassign (2nd value-if reads 1st's merged w) ---
+        for name, c, a, b, d, e, f in CHAINED_VIF_SHAPES:
+            expected = py_chained_vif(c, a, b, d, e, f)  # INDEPENDENT reference
+            vsrc = build_chained_vif_src(c, a, b, d, e, f)
+            velf = mind_native_elf(lib, vsrc)
+            v_is_elf = len(velf) > 120 and velf[:4] == b"\x7fELF"
+            if not v_is_elf:
+                print(f"  FAIL  {name}: chained value-if assign fails closed "
+                      f"(empty/invalid ELF len={len(velf)})")
+                all_ok = False
+                continue
+            v_exit, v_out = run_elf(velf, tmp)
+            v_ok = v_exit == (expected & 0xFF) and v_out == b""
+            mine = mind_mic3(lib, vsrc)
+            orc = oracle_mic3(mindc, vsrc, tmp)
+            mic_ok = len(orc) > 0 and mine == orc
+            msrc = build_marker_chained_vif_src(c, a, b, d, e, f, expected)
+            melf = mind_native_elf(lib, msrc)
+            m_is_elf = len(melf) > 120 and melf[:4] == b"\x7fELF"
+            m_exit, m_out = run_elf(melf, tmp) if m_is_elf else (None, None)
+            m_ok = m_is_elf and m_exit == MARKER and m_out == b""
+            ok = v_ok and mic_ok and m_ok
+            all_ok = all_ok and ok
+            print(
+                f"  {'PASS' if ok else 'FAIL'}  {name:12} value_exit={v_exit} "
+                f"(py_ref={expected & 0xFF}) mic3_id={mic_ok} marker_exit={m_exit} "
+                f"(elf {len(velf)}B, zero MLIR/LLVM)"
+            )
+
+        # --- FAIL-CLOSED control (unsupported branch construct must REFUSE) ---
+        fcelf = mind_native_elf(lib, SRC_FAILCLOSED_VIF)
+        fc_refused = len(fcelf) <= 120 or fcelf[:4] != b"\x7fELF"
+        all_ok = all_ok and fc_refused
+        print(
+            f"  {'PASS' if fc_refused else 'FAIL'}  {'vif-failclosed':12} "
+            f"emit_len={len(fcelf)} "
+            f"({'REFUSED (0B, fail-closed)' if fc_refused else 'EMITTED A WRONG-VALUE ELF — MISCOMPILE'}; "
+            "`break` in a value-if branch)"
+        )
+
         # --- loop-carried control (already supported) ---
         celf = mind_native_elf(lib, SRC_LOOP_CONTROL)
         c_is_elf = len(celf) > 120 and celf[:4] == b"\x7fELF"
@@ -320,11 +509,14 @@ def main() -> int:
 
     if all_ok:
         print(
-            "ALL PASS  top-level i64 reassignment — straight-line (`w=w+100;`) AND "
-            "value-if RHS (`w = if c>0 {A} else {B};`) — EMITS a runnable native ELF "
-            "and runs correct; the mic@3 trace-hash note is byte-identical to the Rust "
-            "--emit-mic3 oracle for every fixture (flatten_stmt_seq top-level-assign "
-            "arm + its type-7 value-if sub-case, additive to the self-compile)"
+            "ALL PASS  top-level i64 reassignment — straight-line (`w=w+100;`), value-if "
+            "RHS (`w = if c>0 {A} else {B};`), SELF-REFERENTIAL value-if (branches read "
+            "pre-assign w), and CHAINED value-if (2nd reads 1st's merged w) — each EMITS a "
+            "runnable native ELF and runs correct vs an INDEPENDENT Python reference; the "
+            "mic@3 trace-hash note is byte-identical to the Rust --emit-mic3 oracle for "
+            "every fixture; an unsupported value-if branch (`break`) REFUSES fail-closed "
+            "(flatten_stmt_seq top-level-assign arm + its type-7 value-if sub-case, additive "
+            "to the self-compile)"
         )
         return 0
     print(
