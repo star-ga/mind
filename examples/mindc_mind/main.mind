@@ -25205,8 +25205,10 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let aal1: String = nb_emit_alloc(am3, nb_slot_disp(amul_id));
         let aal2: String = nb_store_rax(aal1, nb_slot_disp(aptr_id));
         let s_aalloc: NbState = NbState { code: aal2, next_id: aptr_id + 1, last_id: aptr_id, ncalls: st.ncalls };
-        // Per-element stores, in SOURCE order.
-        let s_aelems: NbState = nb_array_elems(s_aalloc, buf, aelems_addr, anelems, 0, aptr_id, params_addr, n_params, calls, lets, lcell);
+        // Per-element stores, in SOURCE order. child0 (tuple marker: 1 for a
+        // `(...)` tuple, 0 for an `[...]` array) gates the f64 element tier to
+        // ARRAYS only — a float element in a tuple poisons (i64-only tuples).
+        let s_aelems: NbState = nb_array_elems(s_aalloc, buf, aelems_addr, anelems, 0, aptr_id, params_addr, n_params, calls, lets, lcell, ast_child0(node));
         // The array literal's VALUE is the base pointer.
         return NbState { code: s_aelems.code, next_id: s_aelems.next_id, last_id: aptr_id, ncalls: s_aelems.ncalls };
     }
@@ -25259,6 +25261,15 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let xdst_id: i64 = xaddr_id + 1;
         let xl1: String = nb_emit_load_i64(xa3, nb_slot_disp(xaddr_id));
         let xl2: String = nb_store_rax(xl1, nb_slot_disp(xdst_id));
+        // f64-element array READ: tag the result slot FLOAT so a binop over it
+        // (`a[i] + a[j]`) routes the SSE2 arm (the GP load already spilled the raw
+        // 8-byte IEEE bits to xdst; a float consumer movsd-reads them, so no SSE
+        // load is needed). INT arrays and non-array bases are unchanged
+        // (nb_index_elem_dtype returns INT). Tagging allocates NO slot, so count
+        // lockstep is preserved. main.mind has no index node -> byte-identical.
+        if nb_index_elem_dtype(ix_base, buf, lets, lcell) == nb_dtype_float() {
+            let _xtg: i64 = nb_dtype_tag_slot(xdtbl, xdst_id, nb_dtype_float());
+        }
         return NbState { code: xl2, next_id: xdst_id + 1, last_id: xdst_id, ncalls: s_xi.ncalls };
     }
     if k == ast_field() {
@@ -26086,24 +26097,48 @@ pub fn nb_struct_field_store_off(code: String, next_id: i64, ptr_id: i64, val_id
 // nb_struct_fields; elements live at elems_addr + i*8 — one node ptr per
 // element, no name triples). Reuses the struct-field store helpers
 // byte-for-byte: element 0 stores at the base ptr, element i>0 materialises
-// CONST(8*i)+ADD first. An element that classifies FLOAT poisons (i64-only
-// arrays this pass); emission continues so the SSA-id progression still
-// matches nb_count_array_elems (the poisoned output is discarded whole).
-pub fn nb_array_elems(st: NbState, buf: i64, elems_addr: i64, nelems: i64, i: i64, ptr_id: i64, params_addr: i64, n_params: i64, calls: i64, lets: i64, lcell: i64) -> NbState {
+// CONST(8*i)+ADD first. `is_tuple` is the node's child0 marker (1 for a
+// `(...)` TUPLE, 0 for an `[...]` array — see ast_new_tuple_lit): the f64
+// element tier is ARRAY-ONLY, so a FLOAT element in a TUPLE STILL poisons
+// (i64-only positional structs). Emission continues so the SSA-id progression
+// still matches nb_count_array_elems (the poisoned output is discarded whole).
+pub fn nb_array_elems(st: NbState, buf: i64, elems_addr: i64, nelems: i64, i: i64, ptr_id: i64, params_addr: i64, n_params: i64, calls: i64, lets: i64, lcell: i64, is_tuple: i64) -> NbState {
     if i >= nelems {
         return st;
     }
     let value_node: i64 = __mind_load_i64(elems_addr + i * 8);
     let sv: NbState = nb_expr(st, buf, value_node, params_addr, n_params, calls, lets, lcell);
-    if nb_node_dtype_tbl(value_node, __mind_load_i64(lcell + 8), lets, lcell, buf, params_addr, n_params) == nb_dtype_float() {
+    // f64-element ARRAYS now emit (roadmap: f64 element tier). HOMOGENEITY gate
+    // (fail-closed B0): an element whose dtype differs from element 0's poisons
+    // the whole compile (0B) — a MIXED array (`[1.0, 2]`) is a type error the
+    // reference refuses, never a silent raw-bit store. All-i64 (unchanged) and
+    // all-f64 arrays pass; f32 is already refused module-wide (nb_user_float_tok
+    // pre-gate), so only f64 floats reach here. The value store is a plain 8-byte
+    // GP copy for BOTH dtypes (nb_expr already spilled the f64 IEEE bits to the
+    // element's SSA slot via movsd), so no SSE store is needed and the SSA-id
+    // progression is UNCHANGED — nb_count_array_elems stays in exact lockstep
+    // (the poison allocates no slot). main.mind is float-free and array-free, so
+    // this never fires during self-compile and the loop stays byte-identical.
+    let dt_i: i64 = nb_node_dtype_tbl(value_node, __mind_load_i64(lcell + 8), lets, lcell, buf, params_addr, n_params);
+    let elem0: i64 = __mind_load_i64(elems_addr + 0 * 8);
+    let dt_0: i64 = nb_node_dtype_tbl(elem0, __mind_load_i64(lcell + 8), lets, lcell, buf, params_addr, n_params);
+    if dt_i != dt_0 {
         __mind_store_i64(lcell + 80, 1)
+    }
+    // ARRAY-ONLY f64 acceptance: a TUPLE (is_tuple==1) shares this node kind but
+    // is i64-only in the supported subset, so a FLOAT element in a tuple STILL
+    // poisons — `(1.5, 2.5)` refuses (0B), never a raw-bit-in-i64-slot leak.
+    if dt_i == nb_dtype_float() {
+        if is_tuple == 1 {
+            __mind_store_i64(lcell + 80, 1)
+        }
     }
     if i == 0 {
         let s_after0: NbState = nb_struct_field_store0(sv.code, sv.next_id, ptr_id, sv.last_id, sv.ncalls);
-        return nb_array_elems(s_after0, buf, elems_addr, nelems, i + 1, ptr_id, params_addr, n_params, calls, lets, lcell);
+        return nb_array_elems(s_after0, buf, elems_addr, nelems, i + 1, ptr_id, params_addr, n_params, calls, lets, lcell, is_tuple);
     }
     let s_after: NbState = nb_struct_field_store_off(sv.code, sv.next_id, ptr_id, sv.last_id, sv.ncalls, i * 8);
-    nb_array_elems(s_after, buf, elems_addr, nelems, i + 1, ptr_id, params_addr, n_params, calls, lets, lcell)
+    nb_array_elems(s_after, buf, elems_addr, nelems, i + 1, ptr_id, params_addr, n_params, calls, lets, lcell, is_tuple)
 }
 
 // Compile-time bounds refusal for `BASE[IDX]` (read AND write): 1 iff the
@@ -26154,6 +26189,46 @@ pub fn nb_index_oob(base: i64, idx: i64, buf: i64, lets: i64, lcell: i64) -> i64
         return 1;
     }
     0
+}
+
+// Element dtype of an index base: FLOAT iff BASE is a FLOAT-element array — a
+// DIRECT `[f, ...]` literal, or an ident let-bound to one (nb_lets_lookup_slit
+// descriptor, the SAME binding nb_index_oob reads) — whose element 0 classifies
+// float; else INT. Mirrors nb_index_oob's base resolution. Used to (a) tag a
+// float array READ's result slot FLOAT so `a[i] + a[j]` routes the SSE2 binop
+// arm, and (b) classify ast_index in nb_node_dtype_tbl. A tuple binding
+// (ast_child0 == 1 marker), a non-array/unbound base, or an empty array all
+// return INT (the integer path unchanged). Element 0 alone is inspected because
+// nb_array_elems' homogeneity gate already refused any non-homogeneous array, so
+// element 0's dtype IS the array's element dtype. If-statement chain (self-host
+// subset). main.mind has no index node, so this never fires during self-compile.
+pub fn nb_index_elem_dtype(base: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
+    if ast_kind(base) == ast_array_lit() {
+        if ast_child0(base) == 1 {
+            return nb_dtype_int();
+        }
+        if ast_aux(base) >= 1 {
+            return nb_node_dtype(__mind_load_i64(ast_child1(base)));
+        }
+        return nb_dtype_int();
+    }
+    if ast_kind(base) != ast_ident() {
+        return nb_dtype_int();
+    }
+    let desc: i64 = nb_lets_lookup_slit(lets, lcell, buf, ast_span_lo(base), ast_span_hi(base));
+    if desc == 0 {
+        return nb_dtype_int();
+    }
+    if ast_kind(desc) != ast_array_lit() {
+        return nb_dtype_int();
+    }
+    if ast_child0(desc) == 1 {
+        return nb_dtype_int();
+    }
+    if ast_aux(desc) >= 1 {
+        return nb_node_dtype(__mind_load_i64(ast_child1(desc)));
+    }
+    nb_dtype_int()
 }
 
 // True iff the method-name span [lo,hi) is exactly "len" (bytes 108,101,110).
@@ -33288,6 +33363,14 @@ pub fn nb_node_dtype_tbl(node: i64, tbl: i64, lets: i64, lcell: i64, buf: i64, p
             }
         }
         return nb_dtype_int();
+    }
+    // A float-element array READ (`a[i]`) classifies FLOAT so an immediate binop
+    // over it (`a[i] + a[j]`) routes the SSE2 arm; INT arrays and non-array bases
+    // classify INT. main.mind has no index node, so this is byte-identical during
+    // self-compile (every classification there is INT exactly as the prior
+    // fall-through returned).
+    if k == ast_index() {
+        return nb_index_elem_dtype(ast_child0(node), buf, lets, lcell);
     }
     nb_dtype_int()
 }
