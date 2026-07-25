@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3207 | **Est. tokens:** ~7,711,274
-**Generated:** 2026-07-24 11:22 UTC
+**Files:** 3207 | **Est. tokens:** ~7,711,320
+**Generated:** 2026-07-25 01:50 UTC
 
 ## Token Budget Guide
 
@@ -58,7 +58,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 135 | ~299,521 |
+| `examples/mindc_mind/` | 135 | ~299,567 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
 | `examples/native/` | 4 | ~527 |
@@ -958,7 +958,7 @@
 - `self_host_tc_fixed_bytes_into_vec_smoke.py` (~1110 tok, large) — CPU-as-oracle smoke for the pure-MIND E2006 FIXED_BYTES_INTO_VEC rule (Bug #38).
 - `self_host_tc_fn_value_call_smoke.py` (~6982 tok, huge) — CPU-as-oracle smoke for the pure-MIND B1/D4 CAPSTONE — the FULL E2012 rule.
 - `self_host_tc_let_class_mismatch_smoke.py` (~991 tok, large) — CPU-as-oracle smoke for the pure-MIND E2015 LET_CLASS_MISMATCH let/assign rule.
-- `self_host_tc_let_infer_smoke.py` (~2011 tok, huge) — self_host_tc_let_infer_smoke — three-leg gate for the T1 type-inference port.
+- `self_host_tc_let_infer_smoke.py` (~2052 tok, huge) — self_host_tc_let_infer_smoke — three-leg gate for the T1 type-inference port.
 - `self_host_tc_narrowing_smoke.py` (~1042 tok, large)
 - `self_host_tc_scope_frame_smoke.py` (~5434 tok, huge) — CPU-as-oracle smoke for the pure-MIND B1/D2 NESTED SCOPE-FRAME WALK.
 - `self_host_tc_self_host_only_call_smoke.py` (~1833 tok, huge) — CPU-as-oracle smoke for the pure-MIND E2024 self-host-only-call rule.
@@ -973,7 +973,7 @@
 - `sha256_hash_smoke.py` (~732 tok, large) — # Copyright 2025 STARGA Inc.
 - `struct_fields_smoke.py` (~1076 tok, large)
 - `struct_lit_smoke.py` (~1923 tok, huge)
-- `tc_differential_fuzz.py` (~9688 tok, huge) — tcdiff — differential fuzzer for the self-host source-position tc-rule ports.
+- `tc_differential_fuzz.py` (~9693 tok, huge) — tcdiff — differential fuzzer for the self-host source-position tc-rule ports.
 ### `examples/mindc_mind/testdata/native_elf_oracle/`
 
 - `add.elf` (~125 tok, small) — ELF> @@@8

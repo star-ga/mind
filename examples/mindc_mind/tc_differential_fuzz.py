@@ -712,12 +712,13 @@ E2015_RHS = [
     ("bool_lit", "true"), ("bool_lit", "false"),
     # `1.5e-3` has a dotted mantissa so it lexes as ONE tk_float on both sides
     # -> Float class -> agrees across the whole ann matrix (fires vs int anns,
-    # clean vs f32/f64). The exponent-WITHOUT-dot / underscore forms (1e5,
-    # 1_000.0) that the self-host number lexer mis-splits are DELIBERATE
-    # under-coverage (port declines, live fires vs int anns) — they cannot live
-    # in this full-agreement sweep; their no-over-fire invariant is gated in
-    # self_host_tc_let_infer_smoke.py::DEFERRED_NO_OVERFIRE instead.
+    # clean vs f32/f64).
     ("float_lit", "1.5e-3"),
+    # Exponent-WITHOUT-dot (`1e5`, `2E3`) and underscore (`1_000.0`) forms now
+    # lex as ONE tk_float via scan_dec_end + scan_float_exp — Float class, so they
+    # AGREE across the whole ann matrix (fire vs int anns, clean vs f32/f64), no
+    # longer the mis-split under-coverage they were.
+    ("float_lit", "1e5"), ("float_lit", "2E3"), ("float_lit", "1_000.0"),
 ]
 
 

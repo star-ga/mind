@@ -64,24 +64,27 @@ ANNS = ["i32", "i64", "u32", "bool", "i8", "i16", "u8", "u16", "u64",
         "isize", "usize", "f32", "f64", "String", "Vec", "Widget"]
 RHS = [("int", "42"), ("float", "3.5"), ("str", '"hi"'),
        ("bool", "true"), ("bool", "false"),
-       # `1.5e-3` lexes as tk_float (dotted mantissa) → correctly Float on both
-       # sides; the exponent-WITHOUT-dot forms (1e5) are the deferred-shape block.
-       ("float", "1.5e-3")]
+       # `1.5e-3` lexes as tk_float (dotted mantissa) → Float on both sides.
+       ("float", "1.5e-3"),
+       # Exponent / underscore numeric forms — the self-host number lexer now
+       # emits a SINGLE tk_float (`1e5`/`2E3`/`1_000.0`) or tk_int (`1_000`) via
+       # scan_dec_end + scan_float_exp, so they tag Float/Int correctly and AGREE
+       # across the full ann matrix (fire vs a class-mismatched ann, clean vs a
+       # matched one). Previously the deferred no-over-fire block; now full cases.
+       ("float", "1e5"), ("float", "2E3"), ("float", "1_000.0"),
+       ("int", "1_000")]
 
 # Shapes infer_expr_tag CANNOT yet confidently classify — the invariant is that
-# it must NEVER over-fire (emit a false E2015 on valid code). The self-host
-# number lexer mis-splits exponent (`1e5`) and underscore (`1_000.0`) forms:
-# this was the HIGH false-positive the blind review caught — `let x: f64 = 1e5`
-# used to fire E2015 on valid code — now fail-closed to a decline. Neg / Paren
-# RHS are slice-T2 scope. PASS iff the port does NOT fire (pfire == 0); the live
-# verdict is printed for the record (an under-fire, where live fires and the
-# port declines, is the SAFE direction — a wrong "not yet", never a wrong verdict).
-# Real fix for the numeric forms = exponent + `_` in the self-host number lexer
-# (a byte-identity-gated mind-self-host task).
+# it must NEVER over-fire (emit a false E2015 on valid code). Only Neg / Paren
+# RHS remain here (slice-T2 scope). The exponent/underscore numeric forms that
+# used to live here — the HIGH false-positive the blind review caught, where
+# `let x: f64 = 1e5` mis-split into tk_int and spuriously fired E2015 — are now
+# lexer-clean and moved into the full three-way case set above. PASS iff the port
+# does NOT fire (pfire == 0); the live verdict is printed for the record (an
+# under-fire, where live fires and the port declines, is the SAFE direction — a
+# wrong "not yet", never a wrong verdict).
 DEFERRED_NO_OVERFIRE = [
-    ("f64", "1e5"), ("f32", "1e5"), ("f64", "2E3"), ("i32", "1e5"),
-    ("i32", "2E3"), ("f64", "1_000.0"), ("i32", "1_000.0"), ("i32", "1_000"),
-    ("f64", "1_000"), ("i32", "-3.5"), ("f64", "-5"), ("i32", "(3.5)"),
+    ("i32", "-3.5"), ("f64", "-5"), ("i32", "(3.5)"),
 ]
 
 
