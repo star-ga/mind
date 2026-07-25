@@ -4639,6 +4639,252 @@ pub fn tc_let_infer_lit(src: i64, src_len: i64, pos: i64, std_src: i64, std_len:
     1
 }
 
+// ===== T2 type-inference: IDENT RHS -> E2004 implicit integer narrowing =====
+//
+// Successor to T1 (literal RHS -> E2015). For a `let NAME: ANN = <IDENT>`
+// binding inside a fn body the RHS type is `infer_expr`'s Ident arm
+// (mod.rs:831): the variable's type looked up in the typed env. The observable
+// diagnostic is E2004 (NARROWING_CODE, mod.rs:3995 `is_implicit_narrowing`):
+// it fires iff BOTH sides are int scalars and the destination is STRICTLY
+// narrower. The Rust oracle models exactly two int widths — ScalarI32 (32) and
+// ScalarI64 (64), with `u32` mapping to ScalarI32 (valuetype_from_ann,
+// mod.rs:2659) — so the ONLY firing shape is `i32`/`u32` destination with an
+// `i64` source. Live-probed 2026-07-24: `let a: i64 = 5; let b: i32 = a` fires
+// at the RHS ident column; the widening twin `let a: i32 = 5; let b: i64 = a`
+// is clean; `u32` destination fires; an `i8` source (TypeAnn::Named ->
+// valuetype_from_ann None -> never inserted into the env) does NOT fire.
+//
+// SCOPE / ENV MODEL (fail-closed, no fail-OPEN): the port does NOT widen the
+// SHARED tc_sf scope-frame cell layout ([lo,hi], 16 bytes) that the landed
+// E2002/E2003/E2009/E2012 quartet depends on — tc_sf is reused READ-ONLY
+// (tc_sf_top as an in-scope oracle). The source ident's TYPE comes from a
+// separate, purely local derivation with two independent guards:
+//   (1) UNIQUENESS — the name must occur EXACTLY ONCE in the token prefix
+//       before the RHS hole, and that one occurrence must be the NAME slot of
+//       a `let [mut] NAME : ANN =` head. Any second occurrence (a shadowing
+//       re-`let`, a `for` binder, a match pattern, a fn param, an assignment,
+//       a plain use) makes the binding non-unique -> DECLINE. This kills the
+//       whole shadowing/rebinding over-fire class without a typed side-table.
+//   (2) LIVE-SCOPE — tc_sf_top must report the ident as a live local binding
+//       at the query position, so a binding that has gone OUT of scope
+//       (`if c { let a: i64 = 5 } let b: i32 = a`, where live reports an
+//       unknown identifier and NEVER E2004) declines instead of over-firing.
+// Any annotation the oracle does not map to a concrete ValueType (`i8`,
+// `usize`, a user alias) declines rather than guessing: an alias could resolve
+// to a narrower int through the caller's alias path, so a "clean" verdict
+// there would be an invented semantic. Returns 1 (fires) / 0 (in-domain, no
+// E2004) / -3 (declines). One lex of src feeds the whole verdict (arena rule);
+// std_src/std_len are unused (no symbol resolution) but kept for ABI
+// uniformity with the tc-rule family.
+
+// Annotation NAME span -> ValueType TAG. Byte-exact twin of valuetype_from_ann
+// (mod.rs:2640) for the single-ident annotation forms: i32 -> ScalarI32,
+// u32 -> ScalarI32 (Tier-2 mapping, mod.rs:2659), i64 -> ScalarI64, f32/f64 ->
+// a Float tag, bool -> ScalarBool. Vec/String keep their resolve_type_ident
+// tags (non-int, so they can never narrow). EVERY other spelling — `i8`,
+// `u64`, `usize`, a user-defined Named/alias — is TypeAnn::Named, for which
+// valuetype_from_ann returns None; those map to ty_unknown = DECLINE.
+pub fn tc_lii_ann_ty(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo == 3 {
+        let c0: i64 = load_byte(buf, lo);
+        let c1: i64 = load_byte(buf, lo + 1);
+        let c2: i64 = load_byte(buf, lo + 2);
+        if c0 == 117 {
+            if c1 == 51 {
+                if c2 == 50 {
+                    return ty_i32();
+                }
+            }
+            return ty_unknown();
+        }
+        if c0 == 102 {
+            if c1 == 51 {
+                if c2 == 50 {
+                    return ty_f64();
+                }
+            }
+        }
+    }
+    resolve_type_ident(buf, lo, hi)
+}
+
+// Brace-nesting depth of the token at index e, scanning tokens [i,e) from
+// depth `depth`. String-aware (mirrors tc_sf_top): a quote opens a literal
+// whose interior tokens — including `{` / `}` — are skipped and never count.
+// The fn body's opening `{` brings depth to 1, so a statement that is a DIRECT
+// child of the fn body sits at depth 1; a statement nested inside any
+// if/while/match/block body sits at depth >= 2. This is the load-bearing
+// mirror of the Rust fire boundary: is_implicit_narrowing (mod.rs:3995) runs
+// ONLY over the fn body's TOP-LEVEL Node::Let items (the body is walked as a
+// `body_module { items: body.clone() }`, mod.rs:4349) and NEVER recurses into
+// branch bodies, so a narrowing `let` nested in a branch is never checked live.
+// Live-probed 2026-07-24: top-level `let a:i64=5; let b:i32=a` fires E2004;
+// the same pair inside an if/while-body or a match-arm emits NO E2004.
+pub fn tc_lii_brace_depth(toks: Vec, n: i64, i: i64, e: i64, src: i64, depth: i64) -> i64 {
+    if i >= e {
+        return depth;
+    }
+    let k: i64 = tok_kind(toks, i);
+    if k == tk_unsupported() {
+        let b: i64 = load_byte(src, tok_lo(toks, i));
+        if b == 34 {
+            return tc_lii_brace_depth(toks, n, tc_dn_skip_str(toks, n, i + 1, src, 34), e, src, depth);
+        }
+        if b == 39 {
+            return tc_lii_brace_depth(toks, n, tc_dn_skip_str(toks, n, i + 1, src, 39), e, src, depth);
+        }
+        return tc_lii_brace_depth(toks, n, i + 1, e, src, depth);
+    }
+    if k == tk_lbrace() {
+        return tc_lii_brace_depth(toks, n, i + 1, e, src, depth + 1);
+    }
+    if k == tk_rbrace() {
+        return tc_lii_brace_depth(toks, n, i + 1, e, src, depth - 1);
+    }
+    tc_lii_brace_depth(toks, n, i + 1, e, src, depth)
+}
+
+// 1 iff the token at r is the WHOLE RHS of the let — the next token cannot
+// continue the expression. Accepted followers: end of input, `;`, `}`, a `let`
+// keyword, or an ident/word token on a LATER LINE (a new statement). Anything
+// else (an operator, `(`, `.`, `[`, `,`, a same-line word) means the RHS is a
+// compound expression, which is out of the T2 Ident-leaf domain -> decline.
+pub fn tc_lii_rhs_solo(toks: Vec, n: i64, r: i64, src: i64) -> i64 {
+    if r + 1 >= n {
+        return 1;
+    }
+    let k: i64 = tok_kind(toks, r + 1);
+    if k == tk_semi() {
+        return 1;
+    }
+    if k == tk_rbrace() {
+        return 1;
+    }
+    if k == tk_kw_let() {
+        return 1;
+    }
+    if k == tk_ident() {
+        if tc_sf_has_nl(src, tok_hi(toks, r), tok_lo(toks, r + 1)) == 1 {
+            return 1;
+        }
+    }
+    0
+}
+
+// Number of ident tokens in [i,e) whose span spells src[qlo..qhi). Accumulator
+// form (tail-recursive) so the prefix scan does not grow the frame per token.
+pub fn tc_lii_occ_count(toks: Vec, src: i64, i: i64, e: i64, qlo: i64, qhi: i64, acc: i64) -> i64 {
+    if i >= e {
+        return acc;
+    }
+    if tok_kind(toks, i) == tk_ident() {
+        if tc_sf_span_eq(src, tok_lo(toks, i), tok_hi(toks, i), qlo, qhi) == 1 {
+            return tc_lii_occ_count(toks, src, i + 1, e, qlo, qhi, acc + 1);
+        }
+    }
+    tc_lii_occ_count(toks, src, i + 1, e, qlo, qhi, acc)
+}
+
+// Index of the LAST ident token in [0,i] spelling src[qlo..qhi), or -1.
+pub fn tc_lii_last_occ(toks: Vec, src: i64, i: i64, qlo: i64, qhi: i64) -> i64 {
+    if i < 0 {
+        return 0 - 1;
+    }
+    if tok_kind(toks, i) == tk_ident() {
+        if tc_sf_span_eq(src, tok_lo(toks, i), tok_hi(toks, i), qlo, qhi) == 1 {
+            return i;
+        }
+    }
+    tc_lii_last_occ(toks, src, i - 1, qlo, qhi)
+}
+
+// Declared TYPE TAG of the binding whose NAME slot is token j — i.e. j must be
+// the NAME of a `let [mut] NAME : ANN =` head. ty_unknown = decline (j is some
+// other occurrence: a use, a param, a pattern, an un-annotated let).
+pub fn tc_lii_src_ty(toks: Vec, n: i64, j: i64, src: i64) -> i64 {
+    if j < 1 {
+        return ty_unknown();
+    }
+    if j + 3 >= n {
+        return ty_unknown();
+    }
+    if tok_kind(toks, j + 1) != tk_colon() {
+        return ty_unknown();
+    }
+    if tok_kind(toks, j + 2) != tk_ident() {
+        return ty_unknown();
+    }
+    if tok_kind(toks, j + 3) != tk_eq() {
+        return ty_unknown();
+    }
+    if tok_kind(toks, j - 1) == tk_kw_let() {
+        return tc_lii_ann_ty(src, tok_lo(toks, j + 2), tok_hi(toks, j + 2));
+    }
+    if j >= 2 {
+        if tok_kind(toks, j - 1) == tk_ident() {
+            if tc_lit_is_mut(src, tok_lo(toks, j - 1), tok_hi(toks, j - 1)) == 1 {
+                if tok_kind(toks, j - 2) == tk_kw_let() {
+                    return tc_lii_ann_ty(src, tok_lo(toks, j + 2), tok_hi(toks, j + 2));
+                }
+            }
+        }
+    }
+    ty_unknown()
+}
+
+// Driver: E2004 verdict for a `let NAME: ANN = <IDENT@pos>` binding.
+pub fn tc_let_infer_ident(src: i64, src_len: i64, pos: i64, std_src: i64, std_len: i64) -> i64 {
+    let toks: Vec = lex(src, src_len);
+    let n: i64 = tok_count(toks);
+    let r: i64 = tc_uc_find_tok(toks, n, 0, pos);
+    if r < 0 {
+        return 0 - 3;
+    }
+    if tok_kind(toks, r) != tk_ident() {
+        return 0 - 3;
+    }
+    let qlo: i64 = tok_lo(toks, r);
+    let qhi: i64 = tok_hi(toks, r);
+    if tc_lit_is_bool(src, qlo, qhi) == 1 {
+        return 0 - 3;
+    }
+    if tc_lil_head_ok(toks, n, r, src) == 0 {
+        return 0 - 3;
+    }
+    // TOP-LEVEL-ONLY guard (fail-closed): live checks narrowing ONLY over the
+    // fn body's direct Node::Let statements, never inside a branch body. A let
+    // at the fn-body top level sits at brace depth 1; anything nested (if /
+    // while / match / block body) is depth >= 2 and is NOT checked live, so we
+    // DECLINE it rather than over-fire. (No braces appear between the `let`
+    // head and the RHS hole, so depth at r == the let statement's nesting.)
+    if tc_lii_brace_depth(toks, n, 0, r, src, 0) != 1 {
+        return 0 - 3;
+    }
+    if tc_lii_rhs_solo(toks, n, r, src) == 0 {
+        return 0 - 3;
+    }
+    let dst_ty: i64 = tc_lii_ann_ty(src, tok_lo(toks, r - 2), tok_hi(toks, r - 2));
+    if dst_ty == ty_unknown() {
+        return 0 - 3;
+    }
+    if tc_lii_occ_count(toks, src, 0, r, qlo, qhi, 0) != 1 {
+        return 0 - 3;
+    }
+    let j: i64 = tc_lii_last_occ(toks, src, r - 1, qlo, qhi);
+    if j < 0 {
+        return 0 - 3;
+    }
+    let src_ty: i64 = tc_lii_src_ty(toks, n, j, src);
+    if src_ty == ty_unknown() {
+        return 0 - 3;
+    }
+    let buf: i64 = __mind_alloc((n + 16) * 16);
+    if tc_sf_top(toks, n, 0, src, buf, r, qlo, qhi) != 1 {
+        return 0 - 3;
+    }
+    tc_is_implicit_narrowing(dst_ty, src_ty)
+}
+
 // Isolated selftest entry (ADDITIVE — never reached through mindc_compile, so
 // the mic@1 canary / self-host loop are untouched by its logic). Resolves two
 // type NAMES chosen by selector through the real resolve_type_ident path, then
@@ -40760,6 +41006,11 @@ pub fn selftest_tc_unknown_ident(src: i64, src_len: i64, pos: i64, std_src: i64,
 // differential fuzzer can drive `let x: T = <literal@pos>` vs live mindc.
 pub fn selftest_tc_let_infer_lit(src: i64, src_len: i64, pos: i64, std_src: i64, std_len: i64) -> i64 {
     tc_let_infer_lit(src, src_len, pos, std_src, std_len)
+}
+
+// T2 export — same source-position ABI, IDENT RHS -> E2004 narrowing.
+pub fn selftest_tc_let_infer_ident(src: i64, src_len: i64, pos: i64, std_src: i64, std_len: i64) -> i64 {
+    tc_let_infer_ident(src, src_len, pos, std_src, std_len)
 }
 
 // ============================================================================

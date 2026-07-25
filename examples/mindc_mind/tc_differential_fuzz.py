@@ -109,6 +109,11 @@ RULES = {
     # E2015 (LET_CLASS_MISMATCH_CODE). This rule runs a DEDICATED annotation ×
     # RHS-literal corpus (run_e2015), not the position × token grid.
     "E2015": "selftest_tc_let_infer_lit",
+    # T2 type-inference: `let x: T = <IDENT>` implicit integer NARROWING
+    # (E2004, NARROWING_CODE). The RHS type is the variable's DECLARED type
+    # from the typed env, so unlike E2015 this rule needs a source binding —
+    # it runs a DEDICATED source-ann x dest-ann corpus (run_e2004).
+    "E2004": "selftest_tc_let_infer_ident",
 }
 
 # The four source-POSITION classifier rules — the `--rule all` set and the only
@@ -478,6 +483,12 @@ def modeled_verdict(port, rule, fclass, src, pos, mutation):
         return 1  # E2002 r2-class over-fire on true/false
     if mutation == "pos-off":
         return port.call(rule, src, pos + 1)
+    if mutation == "width-flip" and fclass.startswith("ident_"):
+        # E2004 declared-WIDTH-flip class: a mis-resolved source/destination
+        # width inverts the narrowing decision. Guaranteed to diverge from live
+        # on every scored ident case (Rule 3b non-null proof).
+        real = port.call(rule, src, pos)
+        return 0 if real == 1 else 1
     if mutation == "lit-flip" and fclass in ("float_lit", "int_lit", "bool_lit"):
         # E2015 literal-tag-flip class: a mis-tagged float/int/bool literal
         # inverts the fire decision. Guaranteed to diverge from live on every
@@ -808,6 +819,172 @@ def run_e2015(args, port, oracle, rng):
 
 
 # ── main ───────────────────────────────────────────────────────────────────
+# ── E2004 (T2 let-ident narrowing) dedicated corpus ────────────────────────
+# Source-annotation axis (template) x destination-annotation axis (fclass).
+# Verdicts come SOLELY from live `mindc check` at the RHS IDENT hole — no
+# Python leg-2, so the gate cannot collude with the port's tokeniser.
+E2004_ANNS = ["i32", "i64", "u32", "f32", "f64", "bool"]
+E2004_SEED = {"i32": "5", "u32": "5", "i64": "5", "f32": "1.5", "f64": "1.5",
+              "bool": "true"}
+
+# Shapes the port deliberately DECLINES and where live ALSO reports no E2004 —
+# the fail-closed boundary (opaque annotation, shadowed / out-of-scope /
+# un-annotated source, compound RHS, use-before-decl). Scored like any other
+# case: port and live must agree that nothing fires.
+E2004_DECLINE = [
+    ("i8_src", "fn m() -> i64 {\n    let a: i8 = 5\n    let b: i32 = a\n"
+     "    return 0\n}\n"),
+    ("usize_src", "fn m() -> i64 {\n    let a: usize = 5\n"
+     "    let b: i32 = a\n    return 0\n}\n"),
+    ("named_dst", "fn m() -> i64 {\n    let a: i64 = 5\n"
+     "    let b: Widget = a\n    return 0\n}\n"),
+    ("shadowed", "fn m() -> i64 {\n    let a: i64 = 5\n    let a: i32 = 1\n"
+     "    let b: i32 = a\n    return 0\n}\n"),
+    ("dead_scope", "fn m() -> i64 {\n    if true {\n        let a: i64 = 5\n"
+     "    }\n    let b: i32 = a\n    return 0\n}\n"),
+    ("compound_rhs", "fn m() -> i64 {\n    let a: i64 = 5\n"
+     "    let b: i32 = a + 1\n    return 0\n}\n"),
+    ("unannotated_src", "fn m() -> i64 {\n    let a = 5\n"
+     "    let b: i32 = a\n    return 0\n}\n"),
+    ("use_before_decl", "fn m() -> i64 {\n    let b: i32 = a\n"
+     "    let a: i64 = 5\n    return 0\n}\n"),
+    # NESTED-BLOCK narrowing — live checks narrowing ONLY over the fn body's
+    # TOP-LEVEL Node::Let items (mod.rs:3995 over `body_module{items:body}`,
+    # never recursing into branch bodies), so a narrowing `let` nested in any
+    # if/while/match/block emits NO E2004. The port MUST decline (top-level-only
+    # brace-depth guard). This is the fail-OPEN over-fire class the adversarial
+    # probe caught 2026-07-24 — gated here so it cannot regress.
+    ("nested_both_in_if", "fn m() -> i64 {\n    if 1 == 1 {\n"
+     "        let a: i64 = 5\n        let b: i32 = a\n    }\n    return 0\n}\n"),
+    ("nested_src_outer", "fn m() -> i64 {\n    let a: i64 = 5\n"
+     "    if 1 == 1 {\n        let b: i32 = a\n    }\n    return 0\n}\n"),
+    ("nested_if_2deep", "fn m() -> i64 {\n    if 1 == 1 {\n"
+     "        if 1 == 1 {\n            let a: i64 = 5\n"
+     "            let b: i32 = a\n        }\n    }\n    return 0\n}\n"),
+    ("nested_while", "fn m() -> i64 {\n    while 1 == 1 {\n"
+     "        let a: i64 = 5\n        let b: i32 = a\n    }\n    return 0\n}\n"),
+    ("nested_match_arm", "fn m() -> i64 {\n    match 1 {\n"
+     "        _ => {\n            let a: i64 = 5\n"
+     "            let b: i32 = a\n        }\n    }\n    return 0\n}\n"),
+]
+# deferred: a FN-PARAM source (`fn m(a: i64) { let b: i32 = a }`) LIVE-fires
+# E2004 while the port declines (params are not in the T2 annotated-let
+# derivation) — a documented, fail-CLOSED under-fire, kept OUT of this corpus
+# because the sweep scores a decline-vs-live-fire as a divergence. Upgrade
+# path: extend tc_lii_src_ty to the `( NAME : ANN ,|)` param slot, then move
+# the param shapes into the scored grid here and in the three-leg smoke.
+#
+# deferred: an ESCAPED-QUOTE string (`let s = "a\"b"`) in any statement BEFORE
+# the narrowing let makes the self-host lex()/tc_dn_skip_str (main.mind:38546)
+# treat the `\"` as a string terminator (it matches a raw quote byte, no
+# backslash-escape handling) and desync the following `let`, so the port
+# declines where live fires E2004. PRE-EXISTING + fix-orthogonal (reproduces
+# with zero braces, so tc_lii_brace_depth is not involved) + fail-CLOSED, and
+# it affects the whole tc_lii prefix scan and likely sibling tc_* drivers.
+# Kept OUT of this corpus for the same decline-vs-fire scoring reason. Upgrade
+# path: teach tc_dn_skip_str (and lex()'s string scan) to skip the byte after
+# `\` inside a string/char literal, add the `\"`-before-let case to E2004 +
+# E2015 corpora, then re-freeze the self-host seed. Found by the T2 blind
+# adversarial review 2026-07-24.
+
+
+def gen_e2004_cases():
+    cases = []
+    for sann in E2004_ANNS:
+        for dann in E2004_ANNS:
+            src = (f"fn m() -> i64 {{\n    let a: {sann} = {E2004_SEED[sann]}\n"
+                   f"    let b: {dann} = a\n    return 0\n}}\n")
+            cases.append(Case(f"src_{sann}", f"ident_{dann}", "a", src,
+                              src.rindex("= a") + 2))
+    # `let mut` source-head variant across the same destination axis.
+    for dann in E2004_ANNS:
+        src = (f"fn m() -> i64 {{\n    let mut a: i64 = 5\n"
+               f"    let b: {dann} = a\n    return 0\n}}\n")
+        cases.append(Case("src_i64_mut", f"ident_{dann}", "a", src,
+                          src.rindex("= a") + 2))
+    for label, src in E2004_DECLINE:
+        cases.append(Case("declined", f"ident_{label}", "a", src,
+                          src.rindex("= a") + 2))
+    return cases
+
+
+def e2004_templates():
+    return ([(f"src_{a}", None) for a in E2004_ANNS]
+            + [("src_i64_mut", None), ("declined", None)])
+
+
+def e2004_sentinel(oracle):
+    fire = ("fn m() -> i64 {\n    let a: i64 = 5\n    let b: i32 = a\n"
+            "    return 0\n}\n")
+    _, at = oracle.check(fire)
+    if "E2004" not in at.get(line_col(fire, fire.rindex("= a") + 2), set()):
+        fail_infra("E2004 sentinel — not at the RHS ident of `let b: i32 = a`")
+    clean = ("fn m() -> i64 {\n    let a: i32 = 5\n    let b: i64 = a\n"
+             "    return 0\n}\n")
+    codes, _ = oracle.check(clean)
+    if "E2004" in codes:
+        fail_infra("E2004 sentinel — spurious fire on the widening twin")
+    print("E2004 sentinel: fires at `i32 = a` (a: i64) RHS + clean on the "
+          "widening twin (2/2)")
+
+
+def e2004_mutation_gate(port, oracle, cases):
+    """Rule 3b: plant a declared-width flip; the gate MUST catch it."""
+    caught, firing = None, 0
+    for case in cases:
+        codes, at = oracle.check(case.src)
+        if PARSE_ERROR_CODE in codes:
+            continue
+        if "E2004" in at.get(line_col(case.src, case.pos), set()):
+            firing += 1
+            state, div = eval_case(case, "E2004", port, oracle, "width-flip")
+            if state == "divergent" and caught is None:
+                caught = div
+    if firing == 0:
+        fail_infra("E2004 mutation gate: no live-firing case in the corpus")
+    if caught is None:
+        print("MUTATION GATE FAILED: planted width-flip mutant survived — "
+              "null gate")
+        sys.exit(3)
+    shrunk = shrink(caught, port, oracle, "width-flip")
+    print(
+        f"mutation gate: planted declared-width-flip CAUGHT on E2004 "
+        f"({firing} live-firing cases; shrunk to "
+        f"{len(shrunk.case.src.splitlines())} lines, kind={shrunk.kind})"
+    )
+
+
+def run_e2004(args, port, oracle):
+    """The E2004 pipeline: sentinel -> mutation gate (--ci) -> ann-pair sweep."""
+    e2004_sentinel(oracle)
+    cases = gen_e2004_cases()
+    if args.ci and not args.mutate:
+        e2004_mutation_gate(port, oracle, cases)
+    stats, coverage, divergences = sweep(
+        ["E2004"], cases, port, oracle, args.mutate, args.shrink
+    )
+    floor_ok = coverage_report(coverage, e2004_templates(), enforce_floor=args.ci)
+    parseable = stats["generated"] - stats["unparseable"]
+    print(
+        f"\ntcdiff E2004 sweep: generated={stats['generated']} "
+        f"parseable={parseable} unparseable={stats['unparseable']} "
+        f"scored={stats['scored']} divergences={len(divergences)}"
+    )
+    if divergences:
+        print("RESULT: DIVERGENT — the pure-MIND port disagrees with live mindc"
+              + (" (planted mutant caught — the gate works)" if args.mutate else ""))
+        return 1
+    if args.mutate:
+        print("MUTATION GATE FAILED: planted bug produced ZERO divergences — "
+              "this harness is a null gate")
+        return 3
+    if not floor_ok:
+        return 1
+    print("RESULT: 0 divergences — E2004 port agrees with live mindc on every "
+          "parseable ann-pair case")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="tcdiff — port-vs-live differential fuzzer "
@@ -821,7 +998,8 @@ def main():
         "--mutate",
         nargs="?",
         const="bool-overfire",
-        choices=["bool-overfire", "suppress", "pos-off", "lit-flip"],
+        choices=["bool-overfire", "suppress", "pos-off", "lit-flip",
+                 "width-flip"],
         default=None,
     )
     shr = ap.add_mutually_exclusive_group()
@@ -862,6 +1040,14 @@ def main():
     exit_code = 0
     with tempfile.TemporaryDirectory() as workdir:
         oracle = LiveOracle(os.environ.get("MINDC_BIN", "mindc"), workdir)
+        if rules == ["E2004"]:
+            exit_code = run_e2004(args, port, oracle)
+            if built:
+                try:
+                    os.unlink(so)
+                except OSError:
+                    pass
+            sys.exit(exit_code)
         if rules == ["E2015"]:
             exit_code = run_e2015(args, port, oracle, rng)
             if built:
