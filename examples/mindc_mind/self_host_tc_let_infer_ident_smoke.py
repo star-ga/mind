@@ -80,6 +80,20 @@ def build_cases():
         src = fixture("i64", dst_ann, mut=True)
         cases.append((f"mut i64->{dst_ann}", "i64", dst_ann, src,
                       src.rindex("= a") + 2))
+    # ESCAPED-QUOTE-before-let (task #244): a string / char literal with an
+    # escaped quote (`"a\"b"` / `'\''`) in a statement BEFORE the narrowing let.
+    # The self-host lexer tokenizes byte-by-byte; tc_dn_skip_str now honors
+    # `\`-escapes so the escaped quote no longer terminates the literal and
+    # desyncs the following let. Narrowing i64->i32 so all three legs FIRE.
+    # Before the fix the port under-fired here (declined, praw=-3) — the RED.
+    esc_dq = ('fn m() -> i64 {\n    let s = "a\\"b"\n'
+              "    let a: i64 = 5\n    let b: i32 = a\n    return 0\n}\n")
+    cases.append(("esc-dquote i64->i32", "i64", "i32", esc_dq,
+                  esc_dq.rindex("= a") + 2))
+    esc_sq = ("fn m() -> i64 {\n    let c = '\\''\n"
+              "    let a: i64 = 5\n    let b: i32 = a\n    return 0\n}\n")
+    cases.append(("esc-squote i64->i32", "i64", "i32", esc_sq,
+                  esc_sq.rindex("= a") + 2))
     return cases
 
 
