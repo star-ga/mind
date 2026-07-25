@@ -142,6 +142,12 @@ REFUSED = [
     ("array direct-lit OOB", M("return [1,2,3][7];"), "0B"),
     ("array field access", M("let a=[1,2,3]; return a.x;"), "0B"),
     ("array missing ]", M("let a=[1,2; return 0;"), "0B"),
+    # TYPED-ARRAY annotation `let NAME : [T; N] = INIT` (parse-past the balanced
+    # annotation, then the existing i64/f64 array-lit emit path runs). A MALFORMED
+    # annotation (no matching `]`) MUST still fail-close (0B), never run — the
+    # balanced scan (let_arr_ann_after) hits EOF and poisons.
+    ("typed-array malformed no ]", M("let a:[i64; = [1,2,3]; return a[0];"), "0B"),
+    ("typed-array malformed close paren", M("let a:[i64; 3) = [1,2,3]; return a[0];"), "0B"),
     # METHOD-CALL over-fire guard (B0): ONLY zero-arg `.len()` on a fixed-size
     # array receiver lowers. Every OTHER method-call shape MUST refuse (0B) —
     # never a wrong running ELF. These previously ALL refused via the parser's
@@ -217,6 +223,19 @@ SUPPORTED = [
     ("ref nested in if", M("let x:i64=5; if x>0 { let r=&x; return *r; } return 0;"), 5),
     # fixed i64 arrays (alloc + base+8*i load/store ABI)
     ("array literal index", M("return [1,2,3][1];"), 2),
+    # TYPED-ARRAY annotation `let NAME : [i64; N] = INIT` — the parser now consumes
+    # the balanced `[i64; N]` annotation (type ASSERTION only; the init `[..]`
+    # literal carries the elements + length), so `=` is found at the right position
+    # and the proven i64 array-lit emit path runs. The UN-annotated form already
+    # worked; only the annotated form was refusing (0B) before this fix.
+    ("typed-array i64 let index", M("let a:[i64;3]=[1,2,3]; return a[1];"), 2),
+    ("typed-array i64 let sum", M("let a:[i64;2]=[10,20]; return a[0]+a[1];"), 30),
+    ("typed-array i64 spaced annot", M("let a: [i64; 3] = [1, 2, 3]; return a[2];"), 3),
+    ("typed-array i64 mut write", M("let mut a:[i64;3]=[1,2,3]; a[1]=9; return a[1];"), 9),
+    # f64 element arrays are also value-safe under the ty=0 path (raw IEEE-754
+    # cells; index read routes the SSE2 arm). f32 stays refused (above).
+    ("typed-array f64 read", M("let a:[f64;2]=[1.0,2.0]; return a[0] as i64;"), 1),
+    ("typed-array f64 sum", M("let a:[f64;3]=[1.0,2.0,4.0]; return (a[0]+a[1]+a[2]) as i64;"), 7),
     ("array let + index", M("let a=[10,20,30]; return a[2];"), 30),
     ("array variable index", M("let a=[10,20,30]; let i=2; return a[i];"), 30),
     # RUNTIME bounds guard: an IN-RANGE variable/computed index still returns the

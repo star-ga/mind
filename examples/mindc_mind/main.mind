@@ -2842,6 +2842,35 @@ pub fn parse_break_continue(toks: Vec, pos: i64, buf: i64, kind: i64) -> ParseRe
     pr_new(after_semi, n)
 }
 
+// Skip past a balanced array-type annotation `[T; N]` (also nested `[[T;N];M]`),
+// tracking `[`/`]` depth so the `;` and length token inside are consumed like any
+// other token. `pos` points AT the token to consume next; `depth` = count of
+// still-open `[`. Returns the token index of the first token AFTER the balanced
+// annotation (where `=` is expected), or -1 if EOF is reached before the
+// annotation closes (a MALFORMED `[i64;` with no matching `]` -> the caller
+// fail-closes, 0 bytes). Mirrors skip_generic_args' balance-and-recurse idiom;
+// only `[`/`]` move the depth, so an init array literal's own brackets can never
+// be mistaken for the annotation close (a stray-`[` init keeps depth > 0 -> -1).
+pub fn let_arr_ann_after(toks: Vec, pos: i64, depth: i64) -> i64 {
+    if depth <= 0 {
+        return pos;
+    }
+    if at_eof(toks, pos) == 1 {
+        return 0 - 1;
+    }
+    let k: i64 = tok_kind(toks, pos);
+    let nd: i64 = if k == tk_lbracket() {
+        depth + 1
+    } else {
+        if k == tk_rbracket() {
+            depth - 1
+        } else {
+            depth
+        }
+    };
+    let_arr_ann_after(toks, pos + 1, nd)
+}
+
 pub fn parse_let(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     let kw_lo: i64 = tok_lo(toks, pos);
     // Optional `mut` marker: `let mut X : T = INIT` shifts the name/type/init
@@ -2874,6 +2903,72 @@ pub fn parse_let(toks: Vec, pos: i64, buf: i64) -> ParseResult {
         let uhi: i64 = ast_span_hi(pr_node(uinit));
         let ulet: i64 = ast_new_let(kw_lo, uhi, name, 0, pr_node(uinit));
         return pr_new(uas, ulet);
+    }
+    // TYPED-ARRAY annotation `let NAME : [T; N] = INIT ;`. The one-token type
+    // read below assumes the annotation is EXACTLY one token (`: i64`, `: P`) —
+    // main.mind's own source uses only those, so that path stays byte-identical.
+    // An array-type annotation is MULTIPLE tokens (`[` `T` `;` `N` `]`), so read
+    // one token would leave the init parse starting mid-annotation and poison the
+    // whole unit (a wrong refusal of every `[T;N]`-typed let). When the annotation
+    // token is `[`, consume the WHOLE balanced `[T; N]` first, then expect `=`.
+    // The annotation is a type ASSERTION only: the init `[..]` literal already
+    // carries the elements and the length, so ty = 0 (exactly the proven untyped
+    // `let a = [..]` array path — nb_width_of_ann(0) = 64, init-derived). A
+    // MALFORMED annotation (no matching `]`, or a token other than `=` after it)
+    // builds an ast_unsupported init and fail-closes (0 bytes), never runs.
+    //
+    // ELEMENT-TYPE gate (fail-closed): only `i64` and `f64` element arrays are
+    // value-safe under the ty = 0 path, where the init `[..]` literal emits
+    // 8-byte i64 cells (i64) / raw IEEE-754 cells (f64). A narrow-int (i32/i8/
+    // i16) or f32/bool declared element type would need narrowing storage the
+    // i64-cell path does NOT do — accepting it would be a silent type bypass —
+    // so a non-{i64,f64} element type MUST still refuse (0B), preserving the
+    // fail-closed boundary the committed self_host_failclosed_smoke locks. The
+    // element type token sits at mp+4 (mp+3 is `[`); a NESTED `[[..]]` element
+    // (token `[` at mp+4) also refuses here (fail-closed; flat i64/f64 only).
+    if tok_kind(toks, mp + 3) == tk_lbracket() {
+        let et_lo: i64 = tok_lo(toks, mp + 4);
+        let et_hi: i64 = tok_hi(toks, mp + 4);
+        let i64_nm: i64 = make_byte_buf_3(105, 54, 52);
+        let f64_nm: i64 = make_byte_buf_3(102, 54, 52);
+        let ok_et: i64 = if bytes_eq(buf, et_lo, et_hi, i64_nm, 0, 3) == 1 {
+            1
+        } else {
+            if bytes_eq(buf, et_lo, et_hi, f64_nm, 0, 3) == 1 {
+                1
+            } else {
+                0
+            }
+        };
+        let a_after: i64 = if ok_et == 1 {
+            let_arr_ann_after(toks, mp + 4, 1)
+        } else {
+            0 - 1
+        };
+        if a_after < 0 {
+            let m_lo: i64 = tok_lo(toks, mp + 3);
+            let m_hi: i64 = tok_hi(toks, mp + 3);
+            let m_bad: i64 = ast_new_leaf(ast_unsupported(), m_lo, m_hi);
+            let m_let: i64 = ast_new_let(kw_lo, m_hi, name, 0, m_bad);
+            return pr_new(mp + 4, m_let);
+        }
+        if tok_kind(toks, a_after) != tk_eq() {
+            let e_lo: i64 = tok_lo(toks, mp + 3);
+            let e_hi: i64 = tok_hi(toks, mp + 3);
+            let e_bad: i64 = ast_new_leaf(ast_unsupported(), e_lo, e_hi);
+            let e_let: i64 = ast_new_let(kw_lo, e_hi, name, 0, e_bad);
+            return pr_new(a_after, e_let);
+        }
+        let a_init: ParseResult = parse_expr(toks, a_after + 1, buf);
+        let a_end: i64 = pr_pos(a_init);
+        let a_semi: i64 = if tok_kind(toks, a_end) == tk_semi() {
+            a_end + 1
+        } else {
+            a_end
+        };
+        let a_hi: i64 = ast_span_hi(pr_node(a_init));
+        let a_let: i64 = ast_new_let(kw_lo, a_hi, name, 0, pr_node(a_init));
+        return pr_new(a_semi, a_let);
     }
     let ty_lo: i64 = tok_lo(toks, mp + 3);
     let ty_hi: i64 = tok_hi(toks, mp + 3);
