@@ -7,10 +7,14 @@ examples/mindc_mind/main.mind) supports a low-level scalar + control-flow
 subset (i64 scalars, calls, if/else/while/let/assign/break/continue, and the
 parse-time desugars match / && / || / for / else-if, plus declared-order
 all-i64 structs via accessor fns — the idiom main.mind is written in — plus
-fixed i64 arrays: `[e0, e1, ...]` literals, index read/write `a[i]`, the
-zero-arg `.len()` method (compile-time-constant element count), composing in
+fixed i64 AND f64 arrays: `[e0, e1, ...]` literals, index read/write `a[i]`
+(an f64-element array read routes the SSE2 arm so `a[i]+a[j]` sums via addsd),
+the zero-arg `.len()` method (compile-time-constant element count), composing in
 arithmetic / call args / returns / loops, with proven-constant-OOB indexes,
-non-i64 elements, `[]`, trailing commas refused, and every NON-`len` method /
+`[]`, trailing commas refused — the f64 tier is ARRAY-ONLY (a float element in a
+TUPLE still refuses; tuples stay i64-only) and NON-f64 float/mixed element types
+(f32, mixed `[1.0, 2]`) plus narrow-int-annotated element arrays (i32/i8) and
+bool-element arrays refuse (0B), and every NON-`len` method /
 `.len()` with args / `.len()` on a non-array or unbound receiver refused —
 plus i64 TUPLES
 as anonymous positional structs: `(e0, e1, ...)` literals (comma-disambiguated
@@ -98,11 +102,24 @@ REFUSED = [
     ("tuple pattern mut", M("let (mut a, b)=(1,2); return a;"), "0B"),
     ("tuple pattern literal", M("let (a, 1)=(1,2); return a;"), "0B"),
     ("compound assign +=", M("let mut c:i64=0; c += 1; return c;"), "0B"),
-    # arrays are SUPPORTED (i64 subset, below — now incl. zero-arg `.len()`) —
-    # but the array boundary itself stays fail-closed: non-i64 elements, empty
-    # literal, trailing comma, proven-constant OOB indexes, field access over an
-    # array binding.
-    ("array float element", M("let a=[1.5, 2.5]; return 0;"), "0B"),
+    # arrays are SUPPORTED (i64 AND f64 subset, below — incl. zero-arg `.len()`) —
+    # but the array boundary itself stays fail-closed: NON-f64 float element types
+    # and MIXED-dtype arrays, empty literal, trailing comma, proven-constant OOB
+    # indexes, field access over an array binding.
+    # The f64 element tier is ARRAY-ONLY: a homogeneous-float TUPLE shares the
+    # ast_array_lit node (child0==1 marker) but tuples are i64-only, so a float
+    # tuple element STILL refuses (regression guard — see `tuple float element`
+    # above). MIXED arrays refuse via the homogeneity gate (element dtype !=
+    # element 0's). f32 refuses via the module-wide nb_user_float_tok pre-gate
+    # (the general float tier computes in scalar-double, so a declared-f32 array
+    # would f64-round — a silent miscompile). Narrow-int-annotated (i32/i8) and
+    # bool element arrays are out of the supported element-type subset.
+    ("array f32 elements", M("let a: [f32; 3] = [1.0, 2.0, 3.0]; return a[0] as i64;"), "0B"),
+    ("array i32 elements", M("let a: [i32; 3] = [1, 2, 3]; return a[0];"), "0B"),
+    ("array i8 elements", M("let a: [i8; 3] = [1, 2, 3]; return a[0];"), "0B"),
+    ("array bool elements", M("let a=[true, false, true]; return a.len();"), "0B"),
+    ("array mixed float-then-int", M("let a=[1.0, 2]; return a.len();"), "0B"),
+    ("array mixed int-then-float", M("let a=[1, 2.0]; return a.len();"), "0B"),
     ("array empty []", M("let a=[]; return 0;"), "0B"),
     ("array trailing comma", M("let a=[1,2,]; return a[0];"), "0B"),
     ("array const OOB read", M("let a=[1,2,3]; return a[3];"), "0B"),
@@ -206,6 +223,16 @@ SUPPORTED = [
     ("array .len() nested in if", M("let a=[1,2,3]; if a[0]>0 { return a.len(); } return 0;"), 3),
     ("array .len() 1-elem", M("let a=[7]; return a.len();"), 1),
     ("array .len() in sep fn", "fn helper()->i64{ let a=[5,6]; return a.len(); }\nfn main()->i64{ return helper(); }", 2),
+    # fixed f64-element arrays (the f64 element tier — #256): the array cell holds
+    # the raw IEEE-754 bits (nb_expr's float-lit arm movsd-spills them; the 8-byte
+    # GP element store copies them byte-exact). An index READ tags its result FLOAT
+    # so a[i]+a[j] routes the SSE2 addsd arm; `.len()` is the compile-time count.
+    # Correctness is execution-gated (native-ELF float has no byte-identity oracle).
+    ("f64 array index read", M("let a=[10.0, 20.0, 30.0]; return a[2] as i64;"), 30),
+    ("f64 array sum via addsd", M("let a=[1.0, 2.0, 4.0]; let s=a[0]+a[1]+a[2]; return s as i64;"), 7),
+    ("f64 array .len()", M("let a=[1.0, 2.0, 3.0, 4.0, 5.0]; return a.len();"), 5),
+    ("f64 array variable index", M("let a=[2.0, 8.0, 32.0]; let i=1; return a[i] as i64;"), 8),
+    ("f64 array direct-lit index", M("return [3.0, 6.0, 9.0][1] as i64;"), 6),
     # i64 TUPLES (anonymous positional structs — the array alloc + base+8*i ABI
     # with `.N` slot reads and literal-RHS destructuring; parse-time desugar,
     # zero new emit surface)
