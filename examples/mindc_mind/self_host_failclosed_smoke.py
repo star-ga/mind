@@ -197,6 +197,21 @@ REFUSED = [
      "struct P { x: i64, y: i64 }\nfn main()->i64{ let p: P = P { x: 1, x: 2 }; return p.x; }", "0B"),
     ("struct-lit unknown field",
      "struct P { x: i64, y: i64 }\nfn main()->i64{ let p: P = P { x: 1, z: 2 }; return p.x; }", "0B"),
+    # DIRECT field access on a CALL receiver `mk().field` (#257 item 7): the
+    # struct-returning-call case is SUPPORTED (below), but the fail-closed
+    # boundary stays sharp — a call whose callee returns a NON-struct, a struct-
+    # returning call to an UNKNOWN field, and a CHAINED `mk().x.y` (a non-call
+    # receiver on the outer field) all refuse (0B), never a running wrong-value ELF.
+    # (There is no call-receiver field-WRITE to probe: a statement opening
+    # `mk() . x = 3` never enters the field-assign parser — that fires only for an
+    # `IDENT .` receiver — so `=` parses as an infix comparison `mk().x == 3`, a
+    # supported discarded expression, exactly as the reference frontend accepts.)
+    ("call field on non-struct return",
+     "fn mk()->i64{ return 5; }\nfn main()->i64{ return mk().x; }", "0B"),
+    ("call field unknown field mk().z",
+     "struct P { x: i64, y: i64 }\nfn mk()->P{ P{x:7,y:8} }\nfn main()->i64{ return mk().z; }", "0B"),
+    ("call field chained mk().x.y (defer)",
+     "struct P { x: i64, y: i64 }\nfn mk()->P{ P{x:7,y:8} }\nfn main()->i64{ return mk().x.y; }", "0B"),
     # FLOATS (B0 gate LIFTED for f64): the general path now lowers the f64
     # tier soundly (see general_float_netverify.py for the value battery —
     # float lets/arith/compares/params/calls, saturating `f as i64`, entry
@@ -378,6 +393,18 @@ SUPPORTED = [
      "struct R { u: i64, v: i64 }\nfn get_u(r: R)->i64{ return r.u; }\nfn main()->i64{ let r: R = R { u: 7, v: 9 }; return get_u(r); }", 7),
     ("struct accessor-fn ooo lit",
      "struct R { u: i64, v: i64 }\nfn get_u(r: R)->i64{ return r.u; }\nfn main()->i64{ let r: R = R { v: 9, u: 7 }; return get_u(r); }", 7),
+    # DIRECT field access on a CALL receiver `mk().field` (#257 item 7): the
+    # `let p = mk(); p.field` form already worked (d0c40587 infers the struct
+    # descriptor from the callee's `-> P` return type); this lands the DIRECT
+    # form, resolving the field offset through the SAME decl-descriptor path and
+    # loading base+offset*8 off the call's returned i64 struct handle. Field 0
+    # (offset 0), a nonzero-offset field, and two calls composed in arithmetic.
+    ("call field mk().x",
+     "struct P { x: i64, y: i64 }\nfn mk()->P{ P{x:7,y:8} }\nfn main()->i64{ return mk().x; }", 7),
+    ("call field mk().y",
+     "struct P { x: i64, y: i64 }\nfn mk()->P{ P{x:7,y:8} }\nfn main()->i64{ return mk().y; }", 8),
+    ("call field arith mk().x + mk().y",
+     "struct P { x: i64, y: i64 }\nfn mk()->P{ P{x:7,y:8} }\nfn main()->i64{ return mk().x + mk().y; }", 15),
 ]
 
 # (label, source, expected exit code) — a RUNTIME array-bounds VIOLATION on a
