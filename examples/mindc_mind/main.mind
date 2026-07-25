@@ -851,37 +851,6 @@ pub fn scan(buf: i64, i: i64, buf_len: i64, toks: Vec) -> Vec {
             }
         }
     }
-    // Char literal `'X'` / `'\X'` (opening `'` == byte 39): fold to a single tk_int
-    // token spanning the whole literal. The byte VALUE is decoded later by
-    // parse_int_span (the '-leading-span branch) — matching parser::parse_char_lit,
-    // which lowers a char literal to `Literal::Int(byte)` with NO new AST kind. Two
-    // well-formed shapes are accepted; anything else (multi-char `'AB'`, empty `''`,
-    // unterminated) falls through so the bare `'` lexes as tk_unsupported and the
-    // whole compile fail-closes to 0B, exactly as the reference rejects them.
-    if b == 39 {
-        // ESCAPE form `'\X'` = bytes [39, 92, X, 39]. Checked first so a `'\''`
-        // (escaped quote) does not mis-parse as an empty/plain literal.
-        if i + 3 < buf_len {
-            if load_byte(buf, i + 1) == 92 {
-                if load_byte(buf, i + 3) == 39 {
-                    let etoks: Vec = push_token(toks, tk_int(), i, i + 4);
-                    return scan(buf, i + 4, buf_len, etoks);
-                }
-            }
-        }
-        // PLAIN form `'X'` = bytes [39, X, 39] where X is neither the closing quote
-        // (would be the empty literal `''`) nor a backslash (handled above).
-        if i + 2 < buf_len {
-            if load_byte(buf, i + 1) != 39 {
-                if load_byte(buf, i + 1) != 92 {
-                    if load_byte(buf, i + 2) == 39 {
-                        let ctoks: Vec = push_token(toks, tk_int(), i, i + 3);
-                        return scan(buf, i + 3, buf_len, ctoks);
-                    }
-                }
-            }
-        }
-    }
     let kind: i64 = match_punct(b);
     let next_toks: Vec = push_token(toks, kind, i, i + 1);
     scan(buf, i + 1, buf_len, next_toks)
@@ -18514,58 +18483,7 @@ pub fn emit_op_mnemonic(s: EmitState, op: i64) -> EmitState {
 
 // ===== Integer-literal value parsing =====
 
-// Decode a char-literal escape byte (the char AFTER the backslash) to its value,
-// matching parser::parse_char_lit's escape table exactly: `\n \t \r \0 \\ \' \"`;
-// any other `\X` is the literal byte X.
-pub fn char_escape_value(e: i64) -> i64 {
-    if e == 110 {
-        return 10;
-    }
-    if e == 116 {
-        return 9;
-    }
-    if e == 114 {
-        return 13;
-    }
-    if e == 48 {
-        return 0;
-    }
-    if e == 92 {
-        return 92;
-    }
-    if e == 39 {
-        return 39;
-    }
-    if e == 34 {
-        return 34;
-    }
-    e
-}
-
-// Decode a char-literal span (the lexer folds a well-formed `'X'` / `'\X'` char
-// literal to a tk_int token whose span BEGINS with a `'`, byte 39). The span shape
-// is already validated by the lexer, so a plain literal is `'X'` (value = X at
-// lo+1) and an escape is `'\X'` (value = char_escape_value(X at lo+2)). Returns the
-// character's byte value — the same i64 the equivalent integer literal would yield,
-// so it reuses the int-lit AST + every emit arm with zero new AST kind.
-pub fn parse_char_span(buf: i64, lo: i64, hi: i64) -> i64 {
-    let b1: i64 = load_byte(buf, lo + 1);
-    if b1 == 92 {
-        return char_escape_value(load_byte(buf, lo + 2));
-    }
-    b1
-}
-
 pub fn parse_int_span(buf: i64, lo: i64, hi: i64, acc: i64) -> i64 {
-    // Char-literal span: a `'`-leading tk_int span (byte 39) is a folded char
-    // literal, not decimal digits — decode it to the byte value. A real integer
-    // literal always begins with a digit, and every recursive call advances lo past
-    // the first byte, so this fires only at a genuine char-literal entry.
-    if lo < hi {
-        if load_byte(buf, lo) == 39 {
-            return parse_char_span(buf, lo, hi);
-        }
-    }
     if lo >= hi {
         return acc;
     }
