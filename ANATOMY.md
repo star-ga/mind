@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3208 | **Est. tokens:** ~7,714,489
-**Generated:** 2026-07-25 02:09 UTC
+**Files:** 3208 | **Est. tokens:** ~7,714,692
+**Generated:** 2026-07-25 02:29 UTC
 
 ## Token Budget Guide
 
@@ -379,7 +379,7 @@
 | `src/` | 7 | ~18,310 |
 | `src/ast/` | 1 | ~8,927 |
 | `src/autodiff/` | 3 | ~6,624 |
-| `src/bin/` | 2 | ~34,860 |
+| `src/bin/` | 2 | ~34,966 |
 | `src/build/` | 2 | ~16,388 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 3 | ~10,829 |
@@ -413,7 +413,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~194,284 |
-| `tests/` | 292 | ~502,210 |
+| `tests/` | 292 | ~502,307 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -3891,7 +3891,7 @@
 ### `src/bin/`
 
 - `mind-ai.rs` (~9878 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~24982 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc.rs` (~25088 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
 - `cache.rs` (~6766 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4402,7 +4402,7 @@
 - `mindc_cache_phase_f.rs` (~6231 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_deps_phase_de.rs` (~6823 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_doc_phase1.rs` (~2957 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc_inspect.rs` (~1038 tok, large) — Integration test for `mindc inspect` — the mic@3 artifact decoder/differ.
+- `mindc_inspect.rs` (~1135 tok, large) — Integration test for `mindc inspect` — the mic@3 artifact decoder/differ.
 ### `tests/mindcraft/check/`
 
 - `clean.mind` (~11 tok, tiny) — fn add(a: i64, b: i64) -> i64 {
