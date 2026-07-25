@@ -101,7 +101,19 @@ REFUSED = [
     ("tuple destructure array RHS", M("let (a,b)=[1,2]; return a;"), "0B"),
     ("tuple pattern mut", M("let (mut a, b)=(1,2); return a;"), "0B"),
     ("tuple pattern literal", M("let (a, 1)=(1,2); return a;"), "0B"),
-    ("compound assign +=", M("let mut c:i64=0; c += 1; return c;"), "0B"),
+    # compound-assign `NAME OP= RHS` is SUPPORTED for arithmetic ops on a plain
+    # ident LHS (parse-time desugar `lhs OP= rhs` -> `lhs = lhs OP rhs`, see the
+    # SUPPORTED cases below). The BITWISE/SHIFT compound forms (`&= |= ^= <<= >>=`)
+    # stay out of subset -> fail-closed; an array/field compound target is out of
+    # the ident-only scope -> fail-closed (never a double-evaluated miscompile);
+    # a MALFORMED RHS poisons.
+    ("compound bitand-assign &=", M("let mut c:i64=3; c &= 1; return c;"), "0B"),
+    ("compound bitor-assign |=", M("let mut c:i64=1; c |= 2; return c;"), "0B"),
+    ("compound shl-assign <<=", M("let mut c:i64=1; c <<= 2; return c;"), "0B"),
+    ("compound array-elem += (out of scope)", M("let mut a=[1,2,3]; a[0] += 4; return a[0];"), "0B"),
+    ("compound field += (out of scope)",
+     "struct P { x: i64, y: i64 }\nfn main()->i64{ let mut p: P = P { x: 1, y: 2 }; p.x += 4; return p.x; }", "0B"),
+    ("compound malformed empty RHS", M("let mut c:i64=0; c += ; return c;"), "0B"),
     # arrays are SUPPORTED (i64 AND f64 subset, below — incl. zero-arg `.len()`) —
     # but the array boundary itself stays fail-closed: NON-f64 float element types
     # and MIXED-dtype arrays, empty literal, trailing comma, proven-constant OOB
@@ -303,6 +315,19 @@ SUPPORTED = [
     ("&& short-circuit", M("if 1>0 && 1>0 { return 1; } return 0;"), 1),
     ("|| short-circuit", M("if 0>1 || 1>0 { return 1; } return 0;"), 1),
     ("range for", M("let mut c:i64=0; for i in 0..5 { c=c+1; } return c;"), 5),
+    # compound-assign arithmetic desugar `lhs OP= rhs` -> `lhs = lhs OP rhs`
+    # (parse-time; plain-ident LHS; zero new emit surface — the desugared
+    # assign/binop arms run). All five arithmetic ops + chaining + loop body.
+    ("compound += basic", M("let mut c:i64=0; c += 5; return c;"), 5),
+    ("compound -= basic", M("let mut c:i64=10; c -= 2; return c;"), 8),
+    ("compound *= basic", M("let mut c:i64=3; c *= 3; return c;"), 9),
+    ("compound /= basic", M("let mut c:i64=20; c /= 4; return c;"), 5),
+    ("compound %= basic", M("let mut c:i64=17; c %= 5; return c;"), 2),
+    ("compound += chain", M("let mut c:i64=0; c += 5; c -= 2; c += 4; return c;"), 7),
+    ("compound += rhs-expr", M("let mut c:i64=1; c += 2*3; return c;"), 7),
+    ("compound += in for-loop", M("let mut s:i64=0; for i in 0..3 { s += i; } return s;"), 3),
+    ("compound += in while-loop", M("let mut s:i64=0; let mut i:i64=0; while i<4 { s += i; i += 1; } return s;"), 6),
+    ("compound *= in loop (factorial)", M("let mut p:i64=1; for i in 1..5 { p *= i; } return p;"), 24),
     ("untyped let", M("let mut i=0; let mut c:i64=0; while i<4 { c=c+1; i=i+1; } return c;"), 4),
     ("else-if chain", M("let x:i64=2; if x==1 {return 1;} else if x==2 {return 2;} else {return 3;}"), 2),
     ("recursion", "fn fib(n:i64)->i64{ if n<2 { return n; } return fib(n-1)+fib(n-2); }\nfn main()->i64{ return fib(7); }", 13),

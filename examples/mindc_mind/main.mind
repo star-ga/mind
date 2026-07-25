@@ -2471,6 +2471,24 @@ pub fn parse_stmt(toks: Vec, pos: i64, buf: i64) -> ParseResult {
         if tok_kind(toks, pos + 1) == tk_eq() {
             return parse_assign(toks, pos, buf);
         }
+        // Compound-assign `NAME OP= VALUE ;` (arithmetic `+= -= *= /= %=`): the
+        // lexer has NO compound token, so `+=` lexes as `tk_plus` then `tk_eq`
+        // (and `==`/`<=`/`!=` lex as ONE token) — so pos+1 being a single-char
+        // arith op AND pos+2 being a single `=` is an unambiguous compound-assign.
+        // Desugar `lhs OP= rhs` -> `lhs = (lhs OP rhs)` via the existing assign +
+        // binop builders (no new AST kind — the rewrite lowers through the proven
+        // assign/binop arms; mirrors the Rust parser's parse_stmt desugar). SCOPE:
+        // plain-ident LHS only (re-reading an ident is side-effect-free, so no
+        // double-eval hazard); an array/field/deref compound target keeps its
+        // pos+1 = `[`/`.`/prefix shape and falls through to fail-close downstream,
+        // never a double-evaluated miscompile. Bitwise/shift compound (`&=`,`<<=`)
+        // is out of subset (is_compound_assign_op = 0) and fails closed too.
+        // main.mind's own source uses no `OP=`, so its self-compile is byte-identical.
+        if is_compound_assign_op(tok_kind(toks, pos + 1)) == 1 {
+            if tok_kind(toks, pos + 2) == tk_eq() {
+                return parse_compound_assign(toks, pos, buf, tk_to_op(tok_kind(toks, pos + 1)));
+            }
+        }
         // `NAME[IDX] = VALUE ;` index-WRITE statement (fixed i64 arrays): an
         // ident immediately followed by `[`. Parse the postfix chain first; if
         // it ends in an ast_index followed by a single `=` (`==` lexes as ONE
@@ -2826,6 +2844,56 @@ pub fn parse_assign(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     };
     let v_hi: i64 = ast_span_hi(pr_node(value));
     let a: i64 = ast_new_assign(name_lo, v_hi, name, pr_node(value));
+    pr_new(after_semi, a)
+}
+
+// The arithmetic compound-assign operator tokens `+= -= *= /= %=`, recognised by
+// their FIRST token (the lexer has no compound token). Bitwise/shift compound
+// (`&= |= ^= <<= >>=`) is deliberately EXCLUDED — out of the native-ELF subset,
+// so it falls through parse_stmt and fail-closes. deferred: bitwise compound
+// would map tk_amp/tk_pipe/tk_caret/tk_shl/tk_shr through tk_to_op the same way.
+pub fn is_compound_assign_op(kind: i64) -> i64 {
+    if kind == tk_plus() {
+        return 1;
+    }
+    if kind == tk_minus() {
+        return 1;
+    }
+    if kind == tk_star() {
+        return 1;
+    }
+    if kind == tk_slash() {
+        return 1;
+    }
+    if kind == tk_percent() {
+        return 1;
+    }
+    0
+}
+
+// Compound-assign desugar `NAME OP= RHS ;` -> `NAME = (NAME OP RHS)`. `pos`
+// points at the NAME ident; `op` is the arith binop tag (op_add/op_sub/...).
+// Builds TWO independent ident leaves with the same span — one the assign
+// TARGET, one the binop LHS (re-reading a plain ident is side-effect-free, so
+// there is no double-eval hazard). RHS begins after the three tokens `NAME OP =`.
+// A malformed RHS (`c += ;` -> parse_expr over `;`) yields an unsupported value
+// node the assign/binop emit arms POISON (0 bytes), never a running wrong-value
+// ELF. main.mind's own source uses no `OP=`, so its self-compile is unchanged.
+pub fn parse_compound_assign(toks: Vec, pos: i64, buf: i64, op: i64) -> ParseResult {
+    let name_lo: i64 = tok_lo(toks, pos);
+    let name_hi: i64 = tok_hi(toks, pos);
+    let tgt: i64 = ast_new_leaf(ast_ident(), name_lo, name_hi);
+    let lhs: i64 = ast_new_leaf(ast_ident(), name_lo, name_hi);
+    let value: ParseResult = parse_expr(toks, pos + 3, buf);
+    let after_v: i64 = pr_pos(value);
+    let v_hi: i64 = ast_span_hi(pr_node(value));
+    let bin: i64 = ast_new_binop(name_lo, v_hi, lhs, pr_node(value), op);
+    let a: i64 = ast_new_assign(name_lo, v_hi, tgt, bin);
+    let after_semi: i64 = if tok_kind(toks, after_v) == tk_semi() {
+        after_v + 1
+    } else {
+        after_v
+    };
     pr_new(after_semi, a)
 }
 
