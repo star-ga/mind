@@ -2068,6 +2068,21 @@ pub fn parse_primary_ns(toks: Vec, pos: i64, buf: i64, no_struct: i64) -> ParseR
                 }
             }
         }
+        // Top-level `const NAME: TYPE = <int>;` used as a VALUE: inline the
+        // value as a synthetic int-lit (mk_syn_intlit, the child1==1 form) —
+        // zero new emit code, the direct twin of the enum-path arm above. A name
+        // that is ALSO a local/param anywhere (const_name_bound) is NOT inlined
+        // so the emitter's let-env/param lookup wins (mindc-Rust checks env
+        // before the module const table); a non-int / duplicate / absent decl
+        // refuses (-1) and the ident stays a normal leaf. main.mind has no
+        // top-level const, so const_resolve is -1 for every ident and the
+        // self-compile is byte-identical.
+        let cv: i64 = const_resolve(toks, buf, lo, hi);
+        if cv >= 0 {
+            if const_name_bound(toks, buf, lo, hi) == 0 {
+                return pr_new(pos + 1, mk_syn_intlit(cv));
+            }
+        }
         let n: i64 = ast_new_leaf(ast_ident(), lo, hi);
         return pr_new(pos + 1, n);
     }
@@ -3524,6 +3539,174 @@ pub fn ent_syn_node(v: i64, lo: i64, hi: i64) -> i64 {
     __mind_store_i64(n + 8, lo);
     __mind_store_i64(n + 16, hi);
     n
+}
+
+// ===== Top-level `const NAME: TYPE = <int>;` (parse-time inline to int-lit) =====
+//
+// A scalar integer const `const N: i64 = 5;` inlines its value at each USE site:
+// mindc-Rust lowers the decl to a unit stub (parse_const_decl above) and, at an
+// ident use, checks the fn env (params + lets) FIRST and only THEN the module
+// const table (src/eval/lower.rs — env.get(name) before module_const_value). So
+// a bare-ident const is the DIRECT twin of the C-like enum resolver
+// (ent_find_from / ent_resolve): resolved AT PARSE TIME to a SYNTHETIC int-lit
+// (mk_syn_intlit, the child1==1 sentinel), carried by every emitter with ZERO
+// new emit code.
+//
+// PRECEDENCE (local/param WINS over const, matching mindc-Rust's env-before-
+// const order). parse_primary_ns is scope-blind, so an UNCONDITIONAL parse-time
+// inline would wrongly resolve `const N=5; fn f(){ let N=3; return N }` to 5.
+// Guard: a bare ident that ALSO names a `let` binding OR a param ANYWHERE in the
+// source (const_name_bound) is NOT inlined — it stays an ast_ident, so the
+// emitter's let-env/param lookup resolves it (the local wins where in scope). A
+// genuine const use whose name is never a local resolves to the value; a const
+// used out of a same-named local's scope stays an ast_ident and FAILS CLOSED
+// (0 bytes) at emit rather than mis-resolving — never a wrong value.
+//
+// FAIL-CLOSED (return -1 -> no inline): no `const NAME:` decl, a DUPLICATE decl
+// of the same name (ambiguous), or an initializer that is not a plain decimal
+// int token (a const-expr RHS is a later slice).
+//
+// main.mind's own source has NO top-level `const` decl (const_find_from returns
+// -1 for every ident), so none of this changes any byte during self-compile.
+
+// Find the NAME token index of a `const <ident==buf[nlo..nhi)> :` decl, scanning
+// from `pos`. Returns the NAME index or -1. `const` lexes as a plain ident
+// (is_const_kw), exactly like `enum` in ent_find_from.
+pub fn const_find_from(toks: Vec, buf: i64, pos: i64, nlo: i64, nhi: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0 - 1;
+    }
+    if tok_kind(toks, pos) == tk_ident() {
+        if is_const_kw(buf, tok_lo(toks, pos), tok_hi(toks, pos)) == 1 {
+            if tok_kind(toks, pos + 1) == tk_ident() {
+                if tok_kind(toks, pos + 2) == tk_colon() {
+                    if span_bytes_equal(buf, nlo, nhi, tok_lo(toks, pos + 1), tok_hi(toks, pos + 1)) == 1 {
+                        return pos + 1;
+                    }
+                }
+            }
+        }
+    }
+    const_find_from(toks, buf, pos + 1, nlo, nhi)
+}
+
+// Read the initializer of `const NAME : TYPE = <int> ;` (NAME at `np`). Returns
+// the i64 value, or -1 if the decl is not the plain `: <ident-type> = <int> ;`
+// shape (a const-expr / non-int RHS is a later slice — refuse).
+pub fn const_read_init(toks: Vec, buf: i64, np: i64) -> i64 {
+    if tok_kind(toks, np + 1) == tk_colon() {
+        if tok_kind(toks, np + 2) == tk_ident() {
+            if tok_kind(toks, np + 3) == tk_eq() {
+                if tok_kind(toks, np + 4) == tk_int() {
+                    if tok_kind(toks, np + 5) == tk_semi() {
+                        return parse_int_span(buf, tok_lo(toks, np + 4), tok_hi(toks, np + 4), 0);
+                    }
+                }
+            }
+        }
+    }
+    0 - 1
+}
+
+// Resolve a bare ident buf[nlo..nhi) to its const value, or -1 (refuse; see the
+// section header). Twin of ent_resolve: find the decl, refuse a DUPLICATE decl,
+// then read the initializer.
+pub fn const_resolve(toks: Vec, buf: i64, nlo: i64, nhi: i64) -> i64 {
+    // PERF gate (keeps self-compile O(idents), not O(idents * tokens)): only a
+    // name whose first byte is an ASCII uppercase letter [A-Z] is scanned as a
+    // possible const. const_find_from below scans the WHOLE token stream per
+    // call, so an ungated per-ident scan is quadratic on the 1.75 MB self-host
+    // source (it exceeds the loop's 120 s budget). Consts are SCREAMING_CASE by
+    // convention; main.mind's own idents are lowercase, so this returns -1 in
+    // O(1) for every self-compile ident and the loop stays byte-identical AND
+    // fast. A lowercase-named const use is simply NOT inlined (stays an
+    // ast_ident -> local-resolve / fail-closed) — an accepted capability gap,
+    // never a wrong value.
+    let b0: i64 = load_byte(buf, nlo);
+    if b0 < 65 {
+        return 0 - 1;
+    }
+    if b0 > 90 {
+        return 0 - 1;
+    }
+    let np: i64 = const_find_from(toks, buf, 0, nlo, nhi);
+    if np < 0 {
+        return 0 - 1;
+    }
+    if const_find_from(toks, buf, np + 1, nlo, nhi) >= 0 {
+        return 0 - 1;
+    }
+    const_read_init(toks, buf, np)
+}
+
+// True (1) if buf[nlo..nhi) names a `let` binding ANYWHERE (scanning from `pos`):
+// `let NAME` or `let mut NAME`. `let` is a keyword token (tk_kw_let); `mut`
+// lexes as a plain ident (is_ident_mut), mirroring parse_let's offset shift.
+pub fn const_bound_let(toks: Vec, buf: i64, pos: i64, nlo: i64, nhi: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0;
+    }
+    if tok_kind(toks, pos) == tk_kw_let() {
+        let np: i64 = if is_ident_mut(buf, tok_lo(toks, pos + 1), tok_hi(toks, pos + 1)) == 1 {
+            pos + 2
+        } else {
+            pos + 1
+        };
+        if span_bytes_equal(buf, nlo, nhi, tok_lo(toks, np), tok_hi(toks, np)) == 1 {
+            return 1;
+        }
+    }
+    const_bound_let(toks, buf, pos + 1, nlo, nhi)
+}
+
+// True (1) if the token at `pos-1` opens a parameter slot (`(` or `,`). Guards
+// pos<=0 (a param is never the first token).
+pub fn const_prev_opens_param(toks: Vec, pos: i64) -> i64 {
+    if pos <= 0 {
+        return 0;
+    }
+    if tok_kind(toks, pos - 1) == tk_lparen() {
+        return 1;
+    }
+    if tok_kind(toks, pos - 1) == tk_comma() {
+        return 1;
+    }
+    0
+}
+
+// True (1) if buf[nlo..nhi) names a PARAMETER anywhere: an ident matching the
+// name, preceded by `(` or `,` and followed by `:` (a `( NAME :` / `, NAME :`
+// param slot). An over-approximation (a parenthesised type annotation would also
+// match) — safe because a false positive only DISABLES const inlining for that
+// name (local-wins / fail-closed), never mis-resolves.
+pub fn const_bound_param(toks: Vec, buf: i64, pos: i64, nlo: i64, nhi: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0;
+    }
+    if tok_kind(toks, pos) == tk_ident() {
+        if span_bytes_equal(buf, nlo, nhi, tok_lo(toks, pos), tok_hi(toks, pos)) == 1 {
+            if tok_kind(toks, pos + 1) == tk_colon() {
+                if const_prev_opens_param(toks, pos) == 1 {
+                    return 1;
+                }
+            }
+        }
+    }
+    const_bound_param(toks, buf, pos + 1, nlo, nhi)
+}
+
+// True (1) if buf[nlo..nhi) is bound as a local (`let`) or a parameter anywhere
+// in the source — a const of the same name is then NOT inlined (the local/param
+// must win, matching mindc-Rust's env-before-const precedence). Two top-level
+// sibling early-returns (the proven ent_resolve shape).
+pub fn const_name_bound(toks: Vec, buf: i64, nlo: i64, nhi: i64) -> i64 {
+    if const_bound_let(toks, buf, 0, nlo, nhi) == 1 {
+        return 1;
+    }
+    if const_bound_param(toks, buf, 0, nlo, nhi) == 1 {
+        return 1;
+    }
+    0
 }
 
 // ===== Single-payload enums (the Option/Result tier) =====
