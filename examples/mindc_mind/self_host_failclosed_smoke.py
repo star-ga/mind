@@ -253,11 +253,37 @@ REFUSED = [
     ("char empty ''", M("return '';"), "0B"),
     ("char unterminated", M("return 'A;"), "0B"),
     ("char multi nested in if", M("if 1>0 { return 'AB'; } return 0;"), "0B"),
+    # Top-level `const NAME: i64 = <int>;` inlines an uppercase-named scalar const
+    # at each use (SUPPORTED below). The boundary stays fail-closed: a lowercase-
+    # named const is NOT inlined (the SCREAMING_CASE-only perf gate in
+    # const_resolve — a lowercase name stays an ast_ident, here unbound -> 0B), a
+    # non-plain-int initializer (const-expr RHS is a later slice) refuses, and a
+    # DUPLICATE decl of the same name is ambiguous -> refuse.
+    ("const lowercase name (gate: not inlined -> unbound)",
+     "const n: i64 = 5;\nfn main()->i64{ return n; }", "0B"),
+    ("const non-int RHS (const-expr later slice)",
+     "const N: i64 = 1 + 2;\nfn main()->i64{ return N; }", "0B"),
+    ("const duplicate decl (ambiguous)",
+     "const N: i64 = 5;\nconst N: i64 = 6;\nfn main()->i64{ return N; }", "0B"),
 ]
 
 # (label, source, expected exit value) — the supported subset MUST run correct.
 SUPPORTED = [
     ("scalar arith", M("return 2+3*4;"), 14),
+    # Top-level scalar `const NAME: i64 = <int>;` used as a VALUE (parse-time
+    # inline to a synthetic int-lit; uppercase/SCREAMING_CASE names only, this
+    # slice). PRECEDENCE matches mindc-Rust (env — params/lets — checked BEFORE
+    # the module const table): a local `let N` or a param `N` of the same name
+    # WINS over the const (const_name_bound leaves the ident an ast_ident so the
+    # emitter's let-env/param lookup resolves it).
+    ("const use -> value", "const N: i64 = 5;\nfn main()->i64{ return N; }", 5),
+    ("const in arith", "const N: i64 = 5;\nfn main()->i64{ return N + 2; }", 7),
+    ("const used twice", "const N: i64 = 5;\nfn main()->i64{ return N * N; }", 25),
+    ("two consts", "const A: i64 = 4;\nconst B: i64 = 10;\nfn main()->i64{ return A + B; }", 14),
+    ("local let shadows const (local wins)",
+     "const N: i64 = 5;\nfn main()->i64{ let N: i64 = 3; return N; }", 3),
+    ("param shadows const (local wins)",
+     "const N: i64 = 5;\nfn f(N: i64)->i64{ return N; }\nfn main()->i64{ return f(3); }", 3),
     # control: the SAME fn without the item-level attribute still emits + runs
     # (proves the poison is scoped to the unrecognized attribute token, not the
     # bare-tail-expr `fn main()->i64{7}` shape itself)
