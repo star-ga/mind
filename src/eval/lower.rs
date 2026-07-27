@@ -6739,18 +6739,20 @@ fn lower_expr(
         // Gated to `std-surface` — default builds never reach this arm.
         #[cfg(feature = "std-surface")]
         ast::Node::While { cond, body, .. } => {
-            // Lower the condition expression into a scratch sub-module to
-            // capture the instructions that produce it without polluting the
-            // parent IR stream.  The resulting ValueIds are local to the
-            // sub-module; MLIR lowering re-emits them verbatim in the header
-            // block so the numbering is stable.
-            //
-            // Use sub_ir_from so the condition sub-module's ValueIds start
-            // above the parent's current next_id.  Without this, a constant
-            // emitted in the condition (e.g. ConstI64(ValueId(0), 16)) would
-            // collide with the function's first parameter (%0: i64) when both
-            // are serialised into the same MLIR func.func body — the same
-            // fix already applied to Instr::If (see sub_ir_from comment).
+            // --- Pre-scan: collect loop-carried assignment targets ---
+            // Collect every variable assigned in the body (including inside
+            // nested branches/blocks/matches) that exists in the outer env —
+            // the exact set the loop-carried machinery below records. Hoist
+            // this out of the per-variable alias-break below to avoid O(n^2)
+            // repeated scans of the body (a 600-line body with 30 assignments
+            // was 18,000 AST nodes scanned 30 times, 540,000 nodes total).
+            let mut assigned: Vec<String> = Vec::new();
+            collect_assign_targets(body, &mut assigned);
+            let candidates: Vec<String> = assigned
+                .into_iter()
+                .filter(|name| env.contains_key(name.as_str()))
+                .collect();
+
             // --- Alias-break for loop-carried variables (silent-miscompile fix) ---
             // `let mut j = start` lowers as pure env aliasing: `j` and `start`
             // share ONE ValueId. The MLIR While emitter rewrites every textual
@@ -6769,17 +6771,8 @@ fn lower_expr(
             #[cfg(feature = "std-surface")]
             let seed_env: HashMap<String, ValueId> = {
                 let mut seed = env.clone();
-                // Loop-carried candidates: outer-scope vars assigned anywhere in
-                // the body (including inside a branch/block/match executed in a
-                // single iteration), matching the set the arm below records as
-                // loop-carried (direct + nested-region rebindings).
-                let mut assigned: Vec<String> = Vec::new();
-                collect_assign_targets(body, &mut assigned);
-                let mut candidates: Vec<String> = assigned
-                    .into_iter()
-                    .filter(|name| env.contains_key(name.as_str()))
-                    .collect();
                 // Deterministic processing order (no HashMap iteration order).
+                let mut candidates = candidates;
                 candidates.sort();
                 for name in &candidates {
                     let id = match seed.get(name) {
