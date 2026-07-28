@@ -85,6 +85,13 @@ def M(body: str) -> str:
     return "fn main()->i64{ %s }" % body
 
 
+# Struct prelude for the NESTED struct-typed-field-read slice: `O` has a
+# struct-typed field `i: I` (an inner struct) and a scalar field `n: i64`, so a
+# chain `o.i.v` reads a field of a struct-typed field, and `o.n.x` reads a field
+# of a NON-struct field (must refuse). Inner-first + outer, both declared-order.
+NST = "struct I { v: i64 }\nstruct O { i: I, n: i64 }\n"
+
+
 # (label, source, expected)  — expected "0B" means MUST refuse.
 REFUSED = [
     # tuples are SUPPORTED (i64 anonymous-positional-struct subset, below) —
@@ -212,6 +219,14 @@ REFUSED = [
      "struct P { x: i64, y: i64 }\nfn mk()->P{ P{x:7,y:8} }\nfn main()->i64{ return mk().z; }", "0B"),
     ("call field chained mk().x.y (defer)",
      "struct P { x: i64, y: i64 }\nfn mk()->P{ P{x:7,y:8} }\nfn main()->i64{ return mk().x.y; }", "0B"),
+    # NESTED struct-typed-field read: reading a field of a struct-typed field is
+    # SUPPORTED (below), but reading a field of a NON-struct field must refuse —
+    # `o.n.x` (n is i64) and a let bound to a scalar field (`let p=o.n; p.x`)
+    # have no inner struct descriptor -> fail closed (never a wrong-value ELF).
+    ("nested field-of-scalar o.n.x",
+     NST + "fn main()->i64{ let o: O = O { i: I { v: 7 }, n: 3 }; return o.n.x; }", "0B"),
+    ("nested let-of-scalar then field",
+     NST + "fn main()->i64{ let o: O = O { i: I { v: 7 }, n: 3 }; let p = o.n; return p.x; }", "0B"),
     # FLOATS (B0 gate LIFTED for f64): the general path now lowers the f64
     # tier soundly (see general_float_netverify.py for the value battery —
     # float lets/arith/compares/params/calls, saturating `f as i64`, entry
@@ -442,6 +457,23 @@ SUPPORTED = [
      "struct P { x: i64, y: i64 }\nfn mk()->P{ P{x:7,y:8} }\nfn main()->i64{ return mk().y; }", 8),
     ("call field arith mk().x + mk().y",
      "struct P { x: i64, y: i64 }\nfn mk()->P{ P{x:7,y:8} }\nfn main()->i64{ return mk().x + mk().y; }", 15),
+    # NESTED struct-typed-field read `o.i.v` (#40 slice): reading a field of a
+    # struct-TYPED field. The inner struct handle is stored in the outer field
+    # (construction already worked); the chain resolves `.v`'s offset through the
+    # inner struct's descriptor. Three receiver-descriptor shapes for `o`: a
+    # struct-LITERAL binding (value node = inner literal `I{v:7}`), a let bound to
+    # the intermediate field (`let p = o.i; p.v`, p inherits the inner descriptor),
+    # and a struct-returning CALL result (`let o = mk()`, a synthetic decl
+    # descriptor whose field-type slot resolves I via the srt registry — the
+    # srt_field_type path). The scalar outer field `o.n` still reads correct.
+    ("nested field lit o.i.v",
+     NST + "fn main()->i64{ let o: O = O { i: I { v: 7 }, n: 3 }; return o.i.v; }", 7),
+    ("nested field via let p=o.i",
+     NST + "fn main()->i64{ let o: O = O { i: I { v: 7 }, n: 3 }; let p = o.i; return p.v; }", 7),
+    ("nested field via call ret o.i.v",
+     NST + "fn mk()->O{ O { i: I { v: 7 }, n: 3 } }\nfn main()->i64{ let o = mk(); return o.i.v; }", 7),
+    ("nested outer scalar o.n (regression)",
+     NST + "fn main()->i64{ let o: O = O { i: I { v: 7 }, n: 3 }; return o.n; }", 3),
     # CHAR LITERALS (#257 item 6): `'X'` is the character's byte value — an i64
     # int-lit lowered through the existing int-lit emit arm (parse_char_span decodes
     # the folded tk_int span). ASCII byte value, the `'0'`==48 digit-char (proves it
