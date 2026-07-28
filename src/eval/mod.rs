@@ -1514,6 +1514,17 @@ pub(crate) fn eval_value_expr_mode(
                 other
             ))),
         },
+        // Unary bitwise NOT `~expr`: two's-complement complement on i64
+        // (`~x == -x - 1`). Matches the `-1 - x` desugar used by the lowerer.
+        Node::BitNot { operand, .. } => {
+            match eval_value_expr_mode(operand, env, tensor_env, mode)? {
+                Value::Int(n) => Ok(Value::Int(!n)),
+                other => Err(EvalError::UnsupportedMsg(format!(
+                    "cannot apply `~` to {:?}",
+                    other
+                ))),
+            }
+        }
         Node::MethodCall {
             receiver,
             method,

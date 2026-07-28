@@ -588,6 +588,15 @@ pub enum Node {
         operand: Box<Node>,
         span: Span,
     },
+    /// Unary bitwise NOT: `~expr`. Integer operand -> integer result
+    /// (two's-complement complement: `~x == -x - 1`). Distinct from the
+    /// logical `Node::Not` (`!`), which is truthy/falsy. Held as a faithful
+    /// AST node and desugared to `-1 - x` at lower time so it produces the
+    /// same integer IR the source form `-1 - x` already does.
+    BitNot {
+        operand: Box<Node>,
+        span: Span,
+    },
     /// Method call
     MethodCall {
         receiver: Box<Node>,
@@ -984,6 +993,7 @@ impl Node {
             | Node::Print { span, .. }
             | Node::Neg { span, .. }
             | Node::Not { span, .. }
+            | Node::BitNot { span, .. }
             | Node::MethodCall { span, .. }
             | Node::FieldAccess { span, .. }
             | Node::Const { span, .. }
