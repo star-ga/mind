@@ -21220,9 +21220,10 @@ pub fn srt_field_cap() -> i64 {
     16
 }
 
-// Words per struct slot: name_lo + name_hi + field_count + field_cap*2 spans.
+// Words per struct slot: name_lo + name_hi + field_count + field_cap*4 words
+// (each field: name_lo, name_hi, type_name_lo, type_name_hi).
 pub fn srt_slot_words() -> i64 {
-    3 + srt_field_cap() * 2
+    3 + srt_field_cap() * 4
 }
 
 pub fn srt_alloc() -> i64 {
@@ -21254,11 +21255,34 @@ pub fn srt_field_count(t: i64, k: i64) -> i64 {
 }
 
 pub fn srt_field_lo(t: i64, k: i64, j: i64) -> i64 {
-    __mind_load_i64(t + (srt_slot_base(k) + 3 + j * 2 + 0) * 8)
+    __mind_load_i64(t + (srt_slot_base(k) + 3 + j * 4 + 0) * 8)
 }
 
 pub fn srt_field_hi(t: i64, k: i64, j: i64) -> i64 {
-    __mind_load_i64(t + (srt_slot_base(k) + 3 + j * 2 + 1) * 8)
+    __mind_load_i64(t + (srt_slot_base(k) + 3 + j * 4 + 1) * 8)
+}
+
+// span of field j's declared TYPE name (the `T` in `name: T`); (0,0) when the
+// field carries no `: type` (never in main.mind's clean struct bodies).
+pub fn srt_field_type_lo(t: i64, k: i64, j: i64) -> i64 {
+    __mind_load_i64(t + (srt_slot_base(k) + 3 + j * 4 + 2) * 8)
+}
+
+pub fn srt_field_type_hi(t: i64, k: i64, j: i64) -> i64 {
+    __mind_load_i64(t + (srt_slot_base(k) + 3 + j * 4 + 3) * 8)
+}
+
+// Resolve field j's declared TYPE name to a struct index in `t`, or -1 when the
+// field's type is scalar/non-struct (i64, String, Vec, ...) or an empty span.
+// Deferred to lookup time so a field whose struct type is declared LATER
+// (forward reference) still resolves once the whole registry is built.
+pub fn srt_field_type_sk(t: i64, src: i64, k: i64, j: i64) -> i64 {
+    let tlo: i64 = srt_field_type_lo(t, k, j);
+    let thi: i64 = srt_field_type_hi(t, k, j);
+    if thi <= tlo {
+        return 0 - 1;
+    }
+    srt_find_by_name(t, src, tlo, thi, 0)
 }
 
 // Append a struct with name span (nlo, nhi) and zero fields, returning its index.
@@ -21274,14 +21298,17 @@ pub fn srt_push_struct(t: i64, nlo: i64, nhi: i64) -> i64 {
     n
 }
 
-// Append a field span (flo, fhi) to struct k, bumping its field count.
-pub fn srt_push_field(t: i64, k: i64, flo: i64, fhi: i64) -> i64 {
+// Append a field: name span (flo, fhi) + declared-type name span (tlo, thi) to
+// struct k, bumping its field count. (tlo,thi)=(0,0) for a field with no `: type`.
+pub fn srt_push_field(t: i64, k: i64, flo: i64, fhi: i64, tlo: i64, thi: i64) -> i64 {
     let fc: i64 = srt_field_count(t, k);
     if fc >= srt_field_cap() {
         return t;
     }
-    __mind_store_i64(t + (srt_slot_base(k) + 3 + fc * 2 + 0) * 8, flo);
-    __mind_store_i64(t + (srt_slot_base(k) + 3 + fc * 2 + 1) * 8, fhi);
+    __mind_store_i64(t + (srt_slot_base(k) + 3 + fc * 4 + 0) * 8, flo);
+    __mind_store_i64(t + (srt_slot_base(k) + 3 + fc * 4 + 1) * 8, fhi);
+    __mind_store_i64(t + (srt_slot_base(k) + 3 + fc * 4 + 2) * 8, tlo);
+    __mind_store_i64(t + (srt_slot_base(k) + 3 + fc * 4 + 3) * 8, thi);
     __mind_store_i64(t + (srt_slot_base(k) + 2) * 8, fc + 1);
     t
 }
@@ -21297,8 +21324,27 @@ pub fn srt_parse_fields(toks: Vec, pos: i64, t: i64, k: i64) -> i64 {
         return t;
     }
     if tok_kind(toks, pos) == tk_ident() {
-        let _t: i64 = srt_push_field(t, k, tok_lo(toks, pos), tok_hi(toks, pos));
-        if tok_kind(toks, pos + 1) == tk_colon() {
+        // When a `: type` follows, capture the TYPE-name token at pos+2 (a single
+        // ident for a struct type or scalar spelling); else (0,0). Preserves the
+        // original push-on-every-ident ordering exactly (heap-only registry — the
+        // added type span never affects emitted bytes).
+        let has_colon: i64 = if tok_kind(toks, pos + 1) == tk_colon() {
+            1
+        } else {
+            0
+        };
+        let tlo: i64 = if has_colon == 1 {
+            tok_lo(toks, pos + 2)
+        } else {
+            0
+        };
+        let thi: i64 = if has_colon == 1 {
+            tok_hi(toks, pos + 2)
+        } else {
+            0
+        };
+        let _t: i64 = srt_push_field(t, k, tok_lo(toks, pos), tok_hi(toks, pos), tlo, thi);
+        if has_colon == 1 {
             if tok_kind(toks, pos + 3) == tk_comma() {
                 return srt_parse_fields(toks, pos + 4, t, k);
             }
@@ -26346,7 +26392,7 @@ pub fn nb_struct_desc_from_call(init: i64, buf: i64, srt: i64, frt: i64) -> i64 
     nb_struct_decl_descriptor(srt, buf, sk)
 }
 
-pub fn nb_let_descriptor(init: i64, ty_node: i64, buf: i64, srt: i64, frt: i64) -> i64 {
+pub fn nb_let_descriptor(init: i64, ty_node: i64, buf: i64, srt: i64, frt: i64, lets: i64, lcell: i64) -> i64 {
     if ast_kind(init) == ast_struct_lit() {
         return init;
     }
@@ -26358,6 +26404,13 @@ pub fn nb_let_descriptor(init: i64, ty_node: i64, buf: i64, srt: i64, frt: i64) 
         return init;
     }
     if ty_node == 0 {
+        // Unannotated `let p = o.i` where `o.i` is a struct-typed field read:
+        // bind p to that field's inner struct descriptor so `p.v` resolves. Returns
+        // 0 (scalar, unchanged) when the field is not struct-typed — main.mind's own
+        // unannotated field-init lets read scalar fields, so they stay byte-neutral.
+        if ast_kind(init) == ast_field() {
+            return nb_field_type_desc(init, buf, lets, lcell);
+        }
         // Unannotated: infer a struct descriptor from a struct-returning call
         // init (`let p = mk(); p.x`); 0 (scalar, unchanged) for every non-struct
         // call, so main.mind's own unannotated scalar-call lets are byte-neutral.
@@ -26468,9 +26521,54 @@ pub fn nb_field_offset(recv: i64, field_node: i64, buf: i64, lets: i64, lcell: i
 //     non-call is rejected by nb_struct_desc_from_call), so `mk().x.y` and
 //     method-then-field defer (fail closed) exactly as before.
 // if-STATEMENT early returns only (the proven self-host subset — no value-if-let).
+// Resolve the inner struct descriptor of a struct-TYPED field `field_node`
+// (`o.i` where field `i` has a struct type), so a nested read `o.i.v` (or a
+// `let p = o.i; p.v` binding) recovers `.v`'s offset. Two receiver-descriptor
+// shapes feed it (both struct-lit-SHAPED so nb_slit_field_index applies):
+//   * a struct-LITERAL descriptor `O{i:I{v:7},..}` -> field i's value slot holds
+//     the inner literal node `I{v:7}` (a positive ast_struct_lit ptr) -> return it.
+//   * a synthetic DECL descriptor (struct-typed param/call receiver) -> field i's
+//     value slot holds the -(inner_sk+2) type sentinel -> build inner_sk's decl
+//     descriptor from `srt` (lcell+24).
+// FAIL CLOSED (0) whenever the receiver has no descriptor, the field is unknown,
+// or the field is NOT struct-typed (scalar value node / slot 0) -> the outer read
+// then fails closed (0B) exactly as before. Mutually recursive with
+// nb_field_recv_desc_r so a chain `a.b.c.d` resolves left-to-right.
+pub fn nb_field_type_desc(field_node: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
+    let inner_recv: i64 = ast_child0(field_node);
+    let recv_desc: i64 = nb_field_recv_desc_r(inner_recv, buf, lets, lcell);
+    if recv_desc == 0 {
+        return 0;
+    }
+    let fidx: i64 = nb_slit_field_index(recv_desc, buf, ast_child1(field_node), ast_child2(field_node));
+    if fidx < 0 {
+        return 0;
+    }
+    let fields_addr: i64 = ast_child1(recv_desc);
+    let vslot: i64 = __mind_load_i64(fields_addr + (fidx * 3 + 2) * 8);
+    if vslot > 0 {
+        // struct-literal value node: a struct-typed field's value is the inner
+        // literal; a scalar field's value node is some other kind -> not a struct.
+        if ast_kind(vslot) == ast_struct_lit() {
+            return vslot;
+        }
+        return 0;
+    }
+    if vslot < 0 {
+        let inner_sk: i64 = 0 - vslot - 2;
+        return nb_struct_decl_descriptor(__mind_load_i64(lcell + 24), buf, inner_sk);
+    }
+    0
+}
+
 pub fn nb_field_recv_desc_r(recv: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
     if ast_kind(recv) == ast_ident() {
         return nb_lets_lookup_slit(lets, lcell, buf, ast_span_lo(recv), ast_span_hi(recv));
+    }
+    // NESTED field receiver `a.b` (for `a.b.c`): resolve b's struct-typed field
+    // to its inner struct descriptor via the field-type slot.
+    if ast_kind(recv) == ast_field() {
+        return nb_field_type_desc(recv, buf, lets, lcell);
     }
     nb_struct_desc_from_call(recv, buf, __mind_load_i64(lcell + 24), __mind_load_i64(lcell + 16))
 }
@@ -26528,7 +26626,11 @@ pub fn nb_field_dtype(recv: i64, field_node: i64, buf: i64, lets: i64, lcell: i6
     }
     let fields_addr: i64 = ast_child1(slit);
     let value_node: i64 = __mind_load_i64(fields_addr + (fidx * 3 + 2) * 8);
-    if value_node == 0 {
+    // <= 0: value slot is EITHER 0 (scalar field / unused) OR a NEGATIVE field-type
+    // sentinel (-(sk+2), set by nb_fill_decl_triples for a struct-typed field of a
+    // decl descriptor) — neither is an ast-node ptr, so classify INT without deref.
+    // A positive slot is a real value node (struct-literal binding) -> classify it.
+    if value_node <= 0 {
         return nb_dtype_int();
     }
     nb_node_dtype(value_node)
@@ -28125,7 +28227,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
             let cw1: String = nb_load_rax(s1.code, nb_slot_disp(s1.last_id));
             let cw2: String = nb_wrap_rax_w(cw1, declw);
             let cw3: String = nb_store_rax(cw2, nb_slot_disp(wid));
-            let _bw: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), wid, nb_let_descriptor(init, ast_child1(node), buf, srt, __mind_load_i64(lcell + 16)), declw);
+            let _bw: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), wid, nb_let_descriptor(init, ast_child1(node), buf, srt, __mind_load_i64(lcell + 16), lets, lcell), declw);
             let _dtw: i64 = nb_dtype_tag_slot(dtbl, wid, init_dt);
             return NbState { code: cw3, next_id: wid + 1, last_id: wid, ncalls: s1.ncalls };
         }
@@ -28141,12 +28243,12 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
                 let cid: i64 = s1.next_id;
                 let cc1: String = nb_load_rax(s1.code, nb_slot_disp(s1.last_id));
                 let cc2: String = nb_store_rax(cc1, nb_slot_disp(cid));
-                let _bc: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), cid, nb_let_descriptor(init, ast_child1(node), buf, srt, __mind_load_i64(lcell + 16)), declw);
+                let _bc: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), cid, nb_let_descriptor(init, ast_child1(node), buf, srt, __mind_load_i64(lcell + 16), lets, lcell), declw);
                 let _dtc: i64 = nb_dtype_tag_slot(dtbl, cid, init_dt);
                 return NbState { code: cc2, next_id: cid + 1, last_id: cid, ncalls: s1.ncalls };
             }
         }
-        let _b: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), s1.last_id, nb_let_descriptor(init, ast_child1(node), buf, srt, __mind_load_i64(lcell + 16)), declw);
+        let _b: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), s1.last_id, nb_let_descriptor(init, ast_child1(node), buf, srt, __mind_load_i64(lcell + 16), lets, lcell), declw);
         let _dt: i64 = nb_dtype_tag_slot(dtbl, s1.last_id, init_dt);
         return s1;
     }
@@ -29537,7 +29639,7 @@ pub fn nb_count_stmt(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         // so the assign arm's count-side lookup agrees with emission. declw == 64
         // for every i64/unannotated let -> identical count, byte-identical frame.
         let declw: i64 = nb_width_of_ann(buf, ast_child1(node));
-        let _b: i64 = nb_lets_bind(clets, clcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), 0, nb_let_descriptor(init, ast_child1(node), buf, srt, __mind_load_i64(clcell + 16)), declw);
+        let _b: i64 = nb_lets_bind(clets, clcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), 0, nb_let_descriptor(init, ast_child1(node), buf, srt, __mind_load_i64(clcell + 16), clets, clcell), declw);
         // i64-REFERENCES: nb_bind_mints_slot folds the narrow-width wrap slot
         // (declw < 64) together with the address-taken capture-copy slot (a
         // bare-ident init naming an address-taken var) — the exact emit-side
@@ -30880,7 +30982,20 @@ pub fn nb_fill_decl_triples(srt: i64, src: i64, k: i64, nf: i64, fields_addr: i6
     }
     __mind_store_i64(fields_addr + (j * 3 + 0) * 8, srt_field_lo(srt, k, j));
     __mind_store_i64(fields_addr + (j * 3 + 1) * 8, srt_field_hi(srt, k, j));
-    __mind_store_i64(fields_addr + (j * 3 + 2) * 8, 0);
+    // 3rd slot encodes the field's TYPE when it is itself a struct, so a NESTED
+    // field read `recv.f.g` recovers f's inner struct descriptor. Encoding:
+    //   0                 -> scalar/non-struct field (i64/String/... — the prior 0)
+    //   -(inner_sk + 2)   -> field's type is struct index inner_sk in `srt`
+    // A NEGATIVE sentinel (never a valid positive ast-node ptr and never 0) so the
+    // struct-LITERAL descriptor's positive value-node slot and the dtype classifier
+    // (nb_field_dtype, value_node <= 0 -> INT) stay unambiguous.
+    let fsk: i64 = srt_field_type_sk(srt, src, k, j);
+    let enc: i64 = if fsk < 0 {
+        0
+    } else {
+        0 - (fsk + 2)
+    };
+    __mind_store_i64(fields_addr + (j * 3 + 2) * 8, enc);
     nb_fill_decl_triples(srt, src, k, nf, fields_addr, j + 1)
 }
 
