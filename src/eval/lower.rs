@@ -3700,7 +3700,9 @@ fn descend_for_continue(node: &mut ast::Node, step: &ast::Node) {
             descend_for_continue(right, step);
         }
         N::Paren(inner, _) => descend_for_continue(inner, step),
-        N::Neg { operand, .. } | N::Not { operand, .. } => descend_for_continue(operand, step),
+        N::Neg { operand, .. } | N::Not { operand, .. } | N::BitNot { operand, .. } => {
+            descend_for_continue(operand, step)
+        }
         N::As { expr, .. } => descend_for_continue(expr, step),
         N::Ref { inner, .. } => descend_for_continue(inner, step),
         N::Tuple { elements, .. } | N::ArrayLit { elements, .. } | N::SetLit { elements, .. } => {
@@ -4083,6 +4085,23 @@ fn lower_expr(
                 dst
             }
         },
+        // Unary bitwise NOT `~expr`. Desugars to `(-1) - operand`, which is
+        // exactly `~operand` in two's complement (`~x == -x - 1 == -1 - x`).
+        // Reuses the keystone-stable integer `Sub` lowering; no new opcode and
+        // no feature gate needed (works in every build config).
+        ast::Node::BitNot { operand, .. } => {
+            let rhs = lower_expr(operand, ir, env, struct_env, receiver_types);
+            let neg_one = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(neg_one, -1));
+            let dst = ir.fresh();
+            ir.instrs.push(Instr::BinOp {
+                dst,
+                op: BinOp::Sub,
+                lhs: neg_one,
+                rhs,
+            });
+            dst
+        }
         #[cfg(feature = "std-surface")]
         ast::Node::Lit(Literal::Str(s), _) => {
             // Materialize the literal into a real `String { addr, len, cap }`

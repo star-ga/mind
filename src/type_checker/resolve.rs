@@ -966,6 +966,7 @@ impl<'a> Resolver<'a> {
             Node::Paren(inner, _)
             | Node::Neg { operand: inner, .. }
             | Node::Not { operand: inner, .. }
+            | Node::BitNot { operand: inner, .. }
             | Node::Ref { inner, .. } => {
                 self.walk(inner);
             }

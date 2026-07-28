@@ -1272,6 +1272,10 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             p.push("!");
             emit_expr(p, operand);
         }
+        Node::BitNot { operand, .. } => {
+            p.push("~");
+            emit_expr(p, operand);
+        }
         Node::Call { callee, args, .. } => emit_call(p, callee, args),
         Node::MethodCall {
             receiver,

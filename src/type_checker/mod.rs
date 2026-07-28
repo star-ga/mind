@@ -1774,6 +1774,10 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
         // the result as the operand's scalar type (mirrors `Neg`; the result is
         // truthy/falsy and feeds `if`/`while` conditions — enum_match #9).
         Node::Not { operand, .. } => infer_expr(operand, env),
+        // `~expr` yields the operand's integer scalar type unchanged (mirrors
+        // `Neg`). Bitwise complement is only meaningful on integers; the operand
+        // is validated by inferring it.
+        Node::BitNot { operand, .. } => infer_expr(operand, env),
         Node::MethodCall { receiver, span, .. } => {
             // Static/associated type-name call (`string.from_utf8_bytes(..)`): the
             // receiver is a TYPE name, not a value — don't resolve it as an
@@ -3205,7 +3209,7 @@ fn walk_expr_class_checks(
             walk_expr_class_checks(expr, ctx, src, file, errs);
         }
         Node::Paren(inner, _) => walk_expr_class_checks(inner, ctx, src, file, errs),
-        Node::Neg { operand, .. } | Node::Not { operand, .. } => {
+        Node::Neg { operand, .. } | Node::Not { operand, .. } | Node::BitNot { operand, .. } => {
             walk_expr_class_checks(operand, ctx, src, file, errs)
         }
         Node::Logical { left, right, .. } => {

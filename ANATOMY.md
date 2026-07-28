@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3215 | **Est. tokens:** ~7,742,466
-**Generated:** 2026-07-28 09:52 UTC
+**Files:** 3217 | **Est. tokens:** ~7,743,743
+**Generated:** 2026-07-28 10:13 UTC
 
 ## Token Budget Guide
 
@@ -377,7 +377,7 @@
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
 | `src/` | 7 | ~18,310 |
-| `src/ast/` | 1 | ~9,140 |
+| `src/ast/` | 1 | ~9,256 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 2 | ~34,966 |
 | `src/build/` | 2 | ~16,388 |
@@ -387,17 +387,17 @@
 | `src/diagnostics/` | 1 | ~3,719 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,987 |
-| `src/eval/` | 12 | ~65,572 |
+| `src/eval/` | 12 | ~65,580 |
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
-| `src/fmt/` | 3 | ~20,758 |
+| `src/fmt/` | 3 | ~20,786 |
 | `src/ir/` | 5 | ~46,820 |
 | `src/ir/compact/` | 3 | ~15,267 |
 | `src/ir/compact/v2/` | 8 | ~38,037 |
 | `src/ir/compact/v3/` | 6 | ~48,342 |
 | `src/lint/` | 2 | ~4,001 |
-| `src/lint/rules/` | 6 | ~9,864 |
+| `src/lint/rules/` | 6 | ~9,880 |
 | `src/mlir/` | 3 | ~5,905 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 7 | ~36,960 |
@@ -409,11 +409,11 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,979 |
-| `src/type_checker/` | 1 | ~12,946 |
+| `src/type_checker/` | 1 | ~12,959 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~194,284 |
-| `tests/` | 295 | ~504,579 |
+| `tests/` | 297 | ~505,675 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -3886,7 +3886,7 @@
 - `SKILL.md` (~6002 tok, huge) — Write MIND Code
 ### `src/ast/`
 
-- `mod.rs` (~9140 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~9256 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~3890 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3951,7 +3951,7 @@
 - `tensor.rs` (~8360 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/`
 
-- `struct_resolver.rs` (~6759 tok, huge) — Copyright 2025 STARGA Inc.
+- `struct_resolver.rs` (~6767 tok, huge) — Copyright 2025 STARGA Inc.
 - `value.rs` (~2003 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/exec/`
 
@@ -3967,7 +3967,7 @@
 
 - `cli.rs` (~3873 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~16291 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~16319 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4693 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4009,9 +4009,9 @@
 ### `src/lint/rules/`
 
 - `mod.rs` (~454 tok, medium) — Copyright 2025 STARGA Inc.
-- `naming_convention.rs` (~2013 tok, huge) — Copyright 2025 STARGA Inc.
+- `naming_convention.rs` (~2021 tok, huge) — Copyright 2025 STARGA Inc.
 - `q16_overflow.rs` (~2910 tok, huge) — Copyright 2025 STARGA Inc.
-- `shadowing.rs` (~1926 tok, huge) — Copyright 2025 STARGA Inc.
+- `shadowing.rs` (~1934 tok, huge) — Copyright 2025 STARGA Inc.
 - `trailing_whitespace.rs` (~869 tok, large) — Copyright 2025 STARGA Inc.
 - `unused_import.rs` (~1692 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -4080,7 +4080,7 @@
 - `mod.rs` (~5979 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `resolve.rs` (~12946 tok, huge) — Copyright 2025 STARGA Inc.
+- `resolve.rs` (~12959 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
@@ -4379,6 +4379,8 @@
 ### `tests/`
 
 - `issue_201_202_unary_not_const_ctx.rs` (~1132 tok, large) — Copyright 2025 STARGA Inc.
+- `issue_246_bitnot_operator.rs` (~571 tok, large) — Copyright 2025 STARGA Inc.
+- `issue_246_tensor_named_dtype.rs` (~525 tok, large) — Copyright 2025 STARGA Inc.
 - `issue_263_method_chain_newline.rs` (~869 tok, large) — Copyright 2025 STARGA Inc.
 - `issue_263_use_path_import.rs` (~633 tok, large) — Copyright 2025 STARGA Inc.
 - `issue_263_usize_suffix_literal.rs` (~770 tok, large) — Copyright 2025 STARGA Inc.

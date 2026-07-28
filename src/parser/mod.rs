@@ -777,6 +777,27 @@ impl<'a> P<'a> {
                 return Ok(name.into());
             }
         }
+        // Fallback: a NAMED element type — a builtin int not in the table above
+        // (`i8`, `u8`, `u32`, …), a local type alias, or an imported/qualified
+        // named type (`Q16_16`, `fixed_point.Q16_16`). Tensor element types are
+        // opaque at parse time; the string is carried through and resolved by the
+        // type-checker. Accepts a dotted qualified path so `Tensor<mod.Type>`
+        // works. Anything that is not an identifier is still the original error.
+        if let Some(first) = self.word() {
+            let mut dt = first.to_string();
+            while self.at(b'.') {
+                let save = self.pos;
+                self.pos += 1; // consume `.`
+                if let Some(seg) = self.word() {
+                    dt.push('.');
+                    dt.push_str(seg);
+                } else {
+                    self.pos = save;
+                    break;
+                }
+            }
+            return Ok(dt);
+        }
         Err(self.err("expected dtype".into()))
     }
 
@@ -4002,6 +4023,20 @@ impl<'a> P<'a> {
             let operand = self.parse_atom()?;
             let span = Span::new(start, self.pos);
             return Ok(Node::Not {
+                operand: Box::new(operand),
+                span,
+            });
+        }
+        // Unary bitwise NOT `~expr`. `~` only exists in prefix position (there is
+        // no infix `~`), so no `peek_binop` disambiguation is needed. Integer
+        // operand -> integer result (`~x == -x - 1`).
+        if self.at(b'~') {
+            let start = self.pos;
+            self.advance();
+            self.skip_ws();
+            let operand = self.parse_atom()?;
+            let span = Span::new(start, self.pos);
+            return Ok(Node::BitNot {
                 operand: Box::new(operand),
                 span,
             });
