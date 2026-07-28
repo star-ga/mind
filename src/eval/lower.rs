@@ -3737,6 +3737,16 @@ fn descend_for_continue(node: &mut ast::Node, step: &ast::Node) {
             descend_for_continue(receiver, step);
             descend_for_continue(index, step);
         }
+        N::SliceRange {
+            receiver,
+            start,
+            end,
+            ..
+        } => {
+            descend_for_continue(receiver, step);
+            descend_for_continue(start, step);
+            descend_for_continue(end, step);
+        }
         N::Let { value, .. }
         | N::LetTuple { value, .. }
         | N::Assign { value, .. }

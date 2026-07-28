@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3212 | **Est. tokens:** ~7,739,771
-**Generated:** 2026-07-28 09:08 UTC
+**Files:** 3212 | **Est. tokens:** ~7,740,194
+**Generated:** 2026-07-28 09:35 UTC
 
 ## Token Budget Guide
 
@@ -377,7 +377,7 @@
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
 | `src/` | 7 | ~18,310 |
-| `src/ast/` | 1 | ~8,927 |
+| `src/ast/` | 1 | ~9,140 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 2 | ~34,966 |
 | `src/build/` | 2 | ~16,388 |
@@ -391,7 +391,7 @@
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
-| `src/fmt/` | 3 | ~20,612 |
+| `src/fmt/` | 3 | ~20,758 |
 | `src/ir/` | 5 | ~46,820 |
 | `src/ir/compact/` | 3 | ~15,267 |
 | `src/ir/compact/v2/` | 8 | ~38,037 |
@@ -409,7 +409,7 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,979 |
-| `src/type_checker/` | 1 | ~12,882 |
+| `src/type_checker/` | 1 | ~12,946 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~194,284 |
@@ -3886,7 +3886,7 @@
 - `SKILL.md` (~6002 tok, huge) — Write MIND Code
 ### `src/ast/`
 
-- `mod.rs` (~8927 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~9140 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~3890 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3967,7 +3967,7 @@
 
 - `cli.rs` (~3873 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~16145 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~16291 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4693 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4080,7 +4080,7 @@
 - `mod.rs` (~5979 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `resolve.rs` (~12882 tok, huge) — Copyright 2025 STARGA Inc.
+- `resolve.rs` (~12946 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.

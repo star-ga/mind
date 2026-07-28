@@ -3699,6 +3699,35 @@ impl<'a> P<'a> {
                 self.skip_ws();
                 let index = self.parse_expr()?;
                 self.skip_ws();
+                // #263 surface 1: range-slice `receiver[start..end]`. A `..`
+                // after the first index expression makes this a slice over the
+                // half-open range `[start, end)` rather than a single-element
+                // index. `..` is NOT an infix operator in `parse_expr` (only the
+                // tensor `.+ .- .* ./` forms are), so `parse_expr` stops cleanly
+                // at the `..`; the `.` trailer only fires before an ident-start
+                // byte, and a numeric `start` (`1..3`) is guarded against the
+                // float path by the digit-after-`.` check — so `start` and the
+                // `end` expression (which may itself be compound, `base + c`)
+                // both parse correctly here.
+                if self.at(b'.') && self.b.get(self.pos + 1) == Some(&b'.') {
+                    self.pos += 2;
+                    self.skip_ws();
+                    let end = self.parse_expr()?;
+                    self.skip_ws();
+                    if !self.eat(b']') {
+                        return Err(
+                            self.err("expected `]` to close range-slice `[start..end]`".into())
+                        );
+                    }
+                    let span = Span::new(node.span_start(), self.pos);
+                    node = Node::SliceRange {
+                        receiver: Box::new(node),
+                        start: Box::new(index),
+                        end: Box::new(end),
+                        span,
+                    };
+                    continue;
+                }
                 if !self.eat(b']') {
                     return Err(self.err("expected `]` to close index expression".into()));
                 }

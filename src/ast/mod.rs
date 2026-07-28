@@ -707,6 +707,21 @@ pub enum Node {
         index: Box<Node>,
         span: Span,
     },
+    /// Range-slice indexing `receiver[start..end]` (#263 surface 1). Produces
+    /// a slice/view over the half-open element range `[start, end)` of an
+    /// array/slice receiver. Distinct from `IndexAccess` (single element) and
+    /// from the tensor `CallSlice` builtin. `&arr[a..b]` parses as
+    /// `Ref { inner: SliceRange { .. } }`; the bare `arr[a..b]` form is also
+    /// admitted. Bounds are integer (usize-class); the receiver must be an
+    /// array/slice. The tree-eval interpreter materialises the sub-range as a
+    /// `Value::Tuple`; native/MLIR slice-ABI lowering is a follow-up (the
+    /// fat-pointer slice runtime does not exist yet — see `lower_expr`).
+    SliceRange {
+        receiver: Box<Node>,
+        start: Box<Node>,
+        end: Box<Node>,
+        span: Span,
+    },
     /// Indexed assignment statement: `receiver[index] = value` (Phase 10.6).
     /// Used in backward / gradient kernels to write through a mutable
     /// slice receiver.
@@ -978,6 +993,7 @@ impl Node {
             | Node::StructDef { span, .. }
             | Node::StructLit { span, .. }
             | Node::IndexAccess { span, .. }
+            | Node::SliceRange { span, .. }
             | Node::IndexAssign { span, .. }
             | Node::FieldAssign { span, .. }
             | Node::EnumDef { span, .. }
