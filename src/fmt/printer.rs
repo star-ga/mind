@@ -1306,6 +1306,23 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             emit_expr(p, index);
             p.push("]");
         }
+        // #263 surface 1: range-slice `receiver[start..end]`. Canonical form
+        // has no spaces around `..` (matching the for-loop range printer), so
+        // the rfn-mind source `&state[start..end]` round-trips byte-identical
+        // and passes `mindc check`'s fmt gate.
+        Node::SliceRange {
+            receiver,
+            start,
+            end,
+            ..
+        } => {
+            emit_expr(p, receiver);
+            p.push("[");
+            emit_expr(p, start);
+            p.push("..");
+            emit_expr(p, end);
+            p.push("]");
+        }
         Node::StructLit { name, fields, .. } => emit_struct_lit(p, name, fields),
         Node::ArrayLit { elements, .. } => {
             p.push("[");

@@ -1698,6 +1698,52 @@ pub(crate) fn eval_value_expr_mode(
                 other => Ok(other),
             }
         }
+        // #263 surface 1: range-slice `receiver[start..end]`. Materialise the
+        // half-open element range `[start, end)` of an array/slice receiver as
+        // a fresh `Value::Tuple` — the same representation `ArrayLit` uses — so
+        // the resulting slice indexes (`s[i]`), reports `.len()`, and passes to
+        // functions exactly like any other array value. Bounds are clamped-
+        // validated: negative or out-of-order or out-of-bounds ranges are a
+        // loud error (never a silent empty/oversized view). The receiver's `&`
+        // is transparent (a borrow reads its inner value; see `Node::Ref`).
+        Node::SliceRange {
+            receiver,
+            start,
+            end,
+            ..
+        } => {
+            let recv = eval_value_expr_mode(receiver, env, tensor_env, mode.clone())?;
+            let s = match eval_value_expr_mode(start, env, tensor_env, mode.clone())? {
+                Value::Int(n) => n,
+                other => {
+                    return Err(EvalError::UnsupportedMsg(format!(
+                        "range-slice start must be an integer, got {other:?}"
+                    )));
+                }
+            };
+            let e = match eval_value_expr_mode(end, env, tensor_env, mode)? {
+                Value::Int(n) => n,
+                other => {
+                    return Err(EvalError::UnsupportedMsg(format!(
+                        "range-slice end must be an integer, got {other:?}"
+                    )));
+                }
+            };
+            match recv {
+                Value::Tuple(items) => {
+                    if s < 0 || e < s || e as usize > items.len() {
+                        return Err(EvalError::UnsupportedMsg(format!(
+                            "range-slice [{s}..{e}] out of bounds (len {})",
+                            items.len()
+                        )));
+                    }
+                    Ok(Value::Tuple(items[s as usize..e as usize].to_vec()))
+                }
+                other => Err(EvalError::UnsupportedMsg(format!(
+                    "range-slice receiver must be an array/slice, got {other:?}"
+                ))),
+            }
+        }
         // Phase 10.6: indexed assignment is a statement, not an
         // expression. Evaluating it as an expression returns the
         // assigned value (matches C-style semantics).

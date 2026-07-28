@@ -1027,6 +1027,16 @@ impl<'a> Resolver<'a> {
                 self.walk(receiver);
                 self.walk(index);
             }
+            Node::SliceRange {
+                receiver,
+                start,
+                end,
+                ..
+            } => {
+                self.walk(receiver);
+                self.walk(start);
+                self.walk(end);
+            }
             Node::IndexAssign {
                 receiver,
                 index,

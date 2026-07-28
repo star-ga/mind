@@ -219,6 +219,15 @@ const LET_CLASS_MISMATCH_CODE: &str = "E2015";
 /// letting the raw integer/float bits pass through unnormalised. Use `x != 0`.
 const AS_BOOL_CODE: &str = "E2016";
 
+/// A range-slice `receiver[start..end]` (#263 surface 1) whose `start` or
+/// `end` bound is not an integer-class scalar. Slice bounds are usize-class
+/// offsets; a float / tensor / gradient-map bound is rejected fail-loud here
+/// rather than silently truncated. The receiver's array/slice-ness is not
+/// gated (the loose placeholder type model returns `ScalarI32` for many
+/// indexable receivers, so a strict array-only check would false-reject valid
+/// element-typed slices) — only the bounds are enforced.
+const SLICE_RANGE_BOUND_CODE: &str = "E2030";
+
 /// An `import std.X` line was parsed but this `mindc` binary was built
 /// WITHOUT the std surface compiled in (neither `std-surface` nor
 /// `cross-module-imports`). Without that surface the bundled stdlib
@@ -1857,6 +1866,23 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
             infer_expr(index, env)?;
             Ok((ValueType::ScalarI32, *span))
         }
+        // #263 surface 1: range-slice `receiver[start..end]`. Infer the
+        // receiver and both bounds for early error surfacing (unknown idents,
+        // etc.); the result is a slice/view, but the loose placeholder type
+        // model has no slice `ValueType`, so return `ScalarI32` exactly as
+        // `IndexAccess` does. Bound integer-class enforcement (E2030) lives in
+        // the `walk_expr_class_checks` coded-diagnostic pass.
+        Node::SliceRange {
+            receiver,
+            start,
+            end,
+            span,
+        } => {
+            infer_expr(receiver, env)?;
+            infer_expr(start, env)?;
+            infer_expr(end, env)?;
+            Ok((ValueType::ScalarI32, *span))
+        }
         // Phase 10.6: index assignment `xs[i] = v`. Statement-style;
         // returns ScalarI32 placeholder (the value's type) so downstream
         // typecheck passes don't break.
@@ -3190,6 +3216,36 @@ fn walk_expr_class_checks(
             for a in args {
                 walk_expr_class_checks(a, ctx, src, file, errs);
             }
+        }
+        // #263 surface 1: range-slice `receiver[start..end]`. Bounds are
+        // usize-class offsets — a float bound is a fail-loud reject (E2030),
+        // never a silent truncation. Only `Float` is flagged: `Int` and the
+        // loose-placeholder `None` case (idents/exprs the class oracle can't
+        // confidently resolve, e.g. `usize` locals) pass, so valid
+        // integer-bounded slices are never false-rejected. Recurse into the
+        // receiver and both bounds so nested class errors still surface.
+        Node::SliceRange {
+            receiver,
+            start,
+            end,
+            ..
+        } => {
+            for bound in [start.as_ref(), end.as_ref()] {
+                if confident_scalar_class(bound, ctx) == Some(ScalarClass::Float) {
+                    errs.push(diag_from_span(
+                        src,
+                        file,
+                        "range-slice bound must be an integer offset (usize-class); \
+                         a float bound is not permitted"
+                            .to_string(),
+                        bound.span(),
+                        SLICE_RANGE_BOUND_CODE,
+                    ));
+                }
+            }
+            walk_expr_class_checks(receiver, ctx, src, file, errs);
+            walk_expr_class_checks(start, ctx, src, file, errs);
+            walk_expr_class_checks(end, ctx, src, file, errs);
         }
         _ => {}
     }
