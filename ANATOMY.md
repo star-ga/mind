@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3212 | **Est. tokens:** ~7,740,194
-**Generated:** 2026-07-28 09:35 UTC
+**Files:** 3215 | **Est. tokens:** ~7,742,466
+**Generated:** 2026-07-28 09:52 UTC
 
 ## Token Budget Guide
 
@@ -413,7 +413,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~194,284 |
-| `tests/` | 292 | ~502,307 |
+| `tests/` | 295 | ~504,579 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -4379,6 +4379,9 @@
 ### `tests/`
 
 - `issue_201_202_unary_not_const_ctx.rs` (~1132 tok, large) — Copyright 2025 STARGA Inc.
+- `issue_263_method_chain_newline.rs` (~869 tok, large) — Copyright 2025 STARGA Inc.
+- `issue_263_use_path_import.rs` (~633 tok, large) — Copyright 2025 STARGA Inc.
+- `issue_263_usize_suffix_literal.rs` (~770 tok, large) — Copyright 2025 STARGA Inc.
 - `keccak_driver.py` (~1507 tok, huge) — # Official-vector driver for std/keccak.mind (pure-MIND FIPS 202).
 ### `tests/lexical/`
 

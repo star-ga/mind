@@ -446,9 +446,16 @@ impl<'a> P<'a> {
             return None;
         }
         // Each candidate suffix and the `TypeAnn` it maps to. `u32`/`i32`/`i64`
-        // have dedicated scalar variants; the remaining widths ride through the
-        // `Named` path (same as writing `as u64`).
-        const SUFFIXES: &[&str] = &["u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64"];
+        // have dedicated scalar variants; the remaining widths (incl. the
+        // pointer-sized `usize`/`isize`, #263 surface 2 — `0usize` in a match
+        // arm) ride through the `Named` path (same as writing `as u64`). The
+        // type checker already recognises `usize`/`isize` as integer-class
+        // named scalars, so the desugared `as`-cast type-checks unchanged. Order
+        // is irrelevant: the word-boundary check rejects a shorter prefix like
+        // `u8` against `usize` (the `s` after `u` is an ident-cont byte).
+        const SUFFIXES: &[&str] = &[
+            "usize", "isize", "u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64",
+        ];
         for lit in SUFFIXES {
             let bytes = lit.as_bytes();
             let end = self.pos + bytes.len();
@@ -1526,11 +1533,30 @@ impl<'a> P<'a> {
             .word()
             .ok_or_else(|| self.err("expected module name".into()))?;
         path.push(first.to_string());
-        while self.eat(b'.') {
-            let part = self
-                .word()
-                .ok_or_else(|| self.err("expected module name after '.'".into()))?;
-            path.push(part.to_string());
+        // #263 surface 1: accept BOTH the shipped dotted form (`use a.b.c`) and
+        // the path form (`use std::fixed_point::Q16_16`). A `::` separator is
+        // the Rust-style module path; the final segment is bound as the imported
+        // name, exactly as the dotted form does. Segments may not mix within one
+        // `use`, but this loop handles either separator per step, which subsumes
+        // both spellings without a separate parse path.
+        loop {
+            if self.eat(b'.') {
+                let part = self
+                    .word()
+                    .ok_or_else(|| self.err("expected module name after '.'".into()))?;
+                path.push(part.to_string());
+            } else if self.pos + 1 < self.b.len()
+                && self.b[self.pos] == b':'
+                && self.b[self.pos + 1] == b':'
+            {
+                self.pos += 2; // consume `::`
+                let part = self
+                    .word()
+                    .ok_or_else(|| self.err("expected path segment after '::'".into()))?;
+                path.push(part.to_string());
+            } else {
+                break;
+            }
         }
         self.skip_ws();
         self.eat(b';'); // optional semicolon
@@ -3525,6 +3551,38 @@ impl<'a> P<'a> {
         let mut node = self.parse_primary()?;
         loop {
             self.skip_ws();
+            // #263 surface 3: a method/field chain may continue on the next line
+            // with a leading `.` —
+            //     foo
+            //       .bar()
+            //       .baz()
+            // A leading `.<ident-start>` can only be a postfix continuation: no
+            // statement or fresh expression begins with `.<ident>`, so when the
+            // next non-blank, non-comment token across one or more newlines is
+            // exactly that, we consume the intervening newlines and let the `.`
+            // trailer below fire. The lookahead is guarded three ways so nothing
+            // else shifts: (1) it only triggers when the cursor is parked on a
+            // newline (or a trailing line comment) — same-line parsing is
+            // untouched; (2) it requires `.` followed by an ident-start byte, so
+            // a range `..` (next byte `.`) and a float `.5` (next byte a digit)
+            // are excluded; (3) on no match the cursor is restored to the
+            // newline, so the expression terminates exactly as before. No
+            // keystone/std source spells `\n.ident` (it would have been a parse
+            // error pre-fix), so their parses stay byte-identical.
+            if self.pos < self.b.len()
+                && (self.b[self.pos] == b'\n'
+                    || (self.b[self.pos] == b'/' && self.b.get(self.pos + 1) == Some(&b'/')))
+            {
+                let saved = self.pos;
+                self.skip_ws_and_newlines();
+                let continues_chain = self.pos + 1 < self.b.len()
+                    && self.b[self.pos] == b'.'
+                    && self.b[self.pos + 1] != b'.'
+                    && Self::is_ident_start(self.b[self.pos + 1]);
+                if !continues_chain {
+                    self.pos = saved;
+                }
+            }
             if self.at(b'.') {
                 let dot_pos = self.pos;
                 if dot_pos + 1 < self.b.len() && Self::is_ident_start(self.b[dot_pos + 1]) {
