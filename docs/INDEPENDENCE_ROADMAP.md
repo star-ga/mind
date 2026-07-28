@@ -263,6 +263,64 @@ Native-ELF covers only scalar i64/ptr/struct/control-flow. To drop the 12,753-LO
 ## PHASE E — Delete the Rust compiler
 - [ ] **E1** Archive the 80,268-LOC Rust `mindc` (as `src/native` was)
 - [ ] **E2** Shipped toolchain = the self-hosted pure-MIND binary. **Now "100% Rust-independent" is true.**
+- [ ] **E3 (gate retirement — do it IN the E1 change, or the scaffolding calcifies)** — delete `oracle-parity`, re-anchor keystone/smokes to a frozen self-hosted stage, update the claim gate. See *Gate lifecycle* below.
+
+## Gate lifecycle — scaffolding vs. wedge (explicit retirement condition)
+> Added 2026-07-28. The byte-identity apparatus is **not one gate — it is two gates with
+> opposite lifecycles.** Failing to say so is how transitional scaffolding hardens into
+> permanent architecture out of habit. This section pins which parts are temporary-by-design
+> and the exact condition that retires them, so they are dismantled on purpose.
+
+The apparatus exists because the compiler today has **two emitters separated by a language
+boundary** — the Rust `mindc` and the pure-MIND self-host front-end (`examples/mindc_mind/main.mind`).
+Two emitters that cannot share code can only be kept in agreement by an external protocol that
+hash-compares their outputs. That protocol is a **symptom of the boundary, not a feature of the
+product.** Decompose it — and to tell the two halves apart, apply the **one-line test: would this
+check still make sense if the compiler had only ONE emitter?**
+
+**A. Two-emitter AGREEMENT checks — SCAFFOLDING. Retire at Phase E1. (One-emitter test: NO.)**
+- `oracle-parity` (the 23 self-host arms byte-match their Rust oracle arm) — a direct
+  Rust-emit == MIND-emit comparison; meaningless once the Rust emitter is gone.
+- keystone / native-ELF / MLIR-text smokes **as anchored on the Rust-produced oracle**
+  (`testdata/native_elf_oracle/`) — i.e. "MIND-emit == the reference the Rust path produced."
+- **Retirement condition (E1):** when the Rust `mindc` emitter is archived (E1) there is no
+  second emitter to disagree with. `oracle-parity` is **DELETED**. The keystone/smokes do not
+  vanish — they **re-anchor** from the Rust oracle to a *frozen prior self-hosted stage*,
+  converting from "agree with Rust" to "**stage-N reproduces stage-N+1**": the ordinary
+  self-reproduction fixed point every bootstrapping compiler keeps (gcc/rustc 3-stage). That
+  surviving check is **not** scaffolding — it is the determinism invariant, and it stays.
+- **Owner action, all in the E1 change:** (a) delete the oracle-parity job; (b) re-freeze the
+  native-ELF oracle from the last *self-hosted* stage, not the Rust one; (c) update the claim
+  gate. If E1 lands without (a)–(c), the scaffolding has calcified — treat that as a defect.
+- **Maintenance rule — keep the retirement list current (this section applied to itself).**
+  E1 is multi-year (the claim gate puts C6/GPU on the tail), and set A **keeps growing** — every
+  new self-host construct adds a two-emitter agreement arm (e.g. `self_host_if_region_carry_smoke.py`
+  #42 landed this week). **Any new check added to A must be added to E3's deletion list in the same
+  change that adds it to CI.** Otherwise A accretes for years unrecorded and E1 becomes a large,
+  scary, therefore-perpetually-deferred deletion — the exact calcification this section exists to
+  prevent, one level up. The retirement list stays cheap to act on only if it is never allowed to
+  fall behind CI.
+
+**B. Cross-SUBSTRATE identity — the WEDGE. PERMANENT, never retires. (One-emitter test: YES.)**
+- x86 == aarch64 == GPU byte-identical output + the 15-canary run-to-run determinism gate.
+  This has nothing to do with the two-emitter split; it exists in a single-emitter world and
+  is the product differentiator (bit-identical output across substrates + a tamper-evident
+  evidence chain). **Do not conflate B with A.** When A retires at E1, B is exactly as
+  load-bearing as before — 0% of B is scaffolding.
+
+**What retirement does NOT cost — determinism and compilation speed are both preserved.**
+- **Determinism is untouched.** It was never *provided* by the two-emitter agreement gate —
+  that gate only checked that two emitters *agreed*. Determinism is provided by (B) the
+  permanent cross-substrate + 15-canary run-to-run gates and by the surviving
+  stage-N==stage-N+1 self-reproduction fixed point. All three outlive E1. Retiring A removes
+  a **redundancy, not a guarantee.**
+- **Compilation speed is untouched by gate retirement** — the gate is CI *verification*, not
+  compiler *codegen*; deleting it changes nothing the shipped `mindc` executes (it slightly
+  speeds CI up). The genuine speed constraint is a **separate, already-pinned invariant**:
+  dropping MLIR/LLVM (Phase D) stays gated behind **C6** (the MIND optimizing backend) so that
+  independence never trades away LLVM `-O3`. **Do not conflate "retire the two-emitter gate"
+  (free, any time after E1) with "delete LLVM" (gated on C6).** Both keep speed; only the
+  second could lose it if sequenced before C6 lands.
 
 ---
 
