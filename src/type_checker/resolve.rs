@@ -49,10 +49,24 @@
 //! may legitimately come from the import). Bare-variable references are still
 //! reported even then — imports bring functions/types, never loose variables.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::OnceLock;
 
 use crate::ast::{Literal, Module, Node, Pattern, TypeAnn};
+
+/// Deterministic FxHash-backed tables for the lookup-only symbol sets built
+/// per `resolve_fn_body` call (the type checker's `FxBuild` — the same
+/// deterministic hasher swap that sped the per-compile side tables). BTree
+/// membership tests are O(log n) pointer-chases over per-node allocations;
+/// these sets are queried once per identifier/call in the body walk, so the
+/// flat open-addressed layout is the structural win. Every iteration over
+/// these structures feeds only order-independent consumers (`suggest`
+/// tie-breaks lexicographically on equal edit distance, so candidate order
+/// never reaches output; the std caches feed a set union), and the diagnostic
+/// vectors are filled in AST-walk order — emitted bytes and diagnostics are
+/// unchanged.
+type FxSet = HashSet<String, super::FxBuild>;
+type FxMap<V> = HashMap<String, V, super::FxBuild>;
 
 /// Closed set of bare math / tensor / autodiff builtin call names — the
 /// builtins the corpus invokes WITHOUT an `import` line or a `tensor.` prefix
@@ -189,19 +203,19 @@ struct ModuleSyms {
     /// All names resolvable without a local binding: module fns/consts/lets,
     /// struct/enum/type-alias names, in-file extern fn names, and (when the
     /// project table is populated) cross-module imported symbols.
-    names: BTreeSet<String>,
+    names: FxSet,
     /// Locally-declared enums: enum name -> its declared variant-name set. Used
     /// ONLY to validate a qualified `Enum::Variant` value/constructor path whose
     /// head is one of THESE enums; a head not in this map (imported enum,
     /// associated fn on a struct, cross-module type) is deferred as before.
-    enums: BTreeMap<String, BTreeSet<String>>,
+    enums: FxMap<FxSet>,
     /// Module-level declaration names that are NOT functions and NOT callable
     /// constructors — const / extern-const / module-`let` / struct / enum-TYPE /
     /// type-alias names, minus any name that also has a function definition.
     /// A call whose callee resolves only to one of these targets a data/global
     /// symbol; see `is_module_non_fn_call`.
     non_fn_decls: BTreeSet<String>,
-}
+ }
 
 impl ModuleSyms {
     /// A name is module-resolvable iff it is a per-module declaration/import name
@@ -218,17 +232,23 @@ impl ModuleSyms {
 /// `module NAME { ... }` body unwraps into. Pure: it does NOT resolve imports,
 /// so it is safe to call while building the std-export cache (no re-entrancy).
 pub(crate) fn collect_decl_names(module: &Module, out: &mut BTreeSet<String>) {
+    collect_decl_names_into(module, out);
+}
+
+/// Set-generic body of [`collect_decl_names`] so the per-compile FxHash-backed
+/// tables are populated directly instead of being rebuilt from a BTree copy.
+fn collect_decl_names_into<S: Extend<String>>(module: &Module, out: &mut S) {
     for item in &module.items {
         match item {
             Node::FnDef(fd, _) => {
-                out.insert(fd.name.clone());
+                out.extend([fd.name.clone()]);
             }
             Node::Const { name, .. }
             | Node::ExternConst { name, .. }
             | Node::Let { name, .. }
             | Node::StructDef { name, .. }
             | Node::TypeAlias { name, .. } => {
-                out.insert(name.clone());
+                out.extend([name.clone()]);
             }
             Node::EnumDef { name, variants, .. } => {
                 // The enum name, plus per variant BOTH the qualified `Enum::Variant`
@@ -243,22 +263,22 @@ pub(crate) fn collect_decl_names(module: &Module, out: &mut BTreeSet<String>) {
                 // pass owns only the undefined-reference question; verifying a
                 // bare variant belongs to the EXPECTED enum is a later type-check
                 // concern.)
-                out.insert(name.clone());
+                out.extend([name.clone()]);
                 for v in variants {
-                    out.insert(format!("{name}::{}", v.name));
-                    out.insert(v.name.clone());
+                    out.extend([format!("{name}::{}", v.name)]);
+                    out.extend([v.name.clone()]);
                 }
             }
             Node::ExternBlock { fns, .. } => {
                 for efn in fns {
-                    out.insert(efn.name.clone());
+                    out.extend([efn.name.clone()]);
                 }
             }
             Node::Block { stmts, .. } => {
                 let inner = Module {
                     items: stmts.clone(),
                 };
-                collect_decl_names(&inner, out);
+                collect_decl_names_into(&inner, out);
             }
             _ => {}
         }
@@ -269,7 +289,7 @@ pub(crate) fn collect_decl_names(module: &Module, out: &mut BTreeSet<String>) {
 /// `Block` that a `module NAME { ... }` body unwraps into. Mirrors
 /// `collect_decl_names`'s recursion so an enum declared inside a `module { }`
 /// block is registered too. Pure metadata — never resolves imports.
-fn collect_enum_variants(module: &Module, out: &mut BTreeMap<String, BTreeSet<String>>) {
+fn collect_enum_variants(module: &Module, out: &mut FxMap<FxSet>) {
     for item in &module.items {
         match item {
             Node::EnumDef { name, variants, .. } => {
@@ -340,8 +360,8 @@ fn collect_non_fn_decl_names(
 /// single-file `mindc check` path resolves std-surface calls (`vec_new`,
 /// `sha256`, ...) PRECISELY — no false positive, and no blanket suppression
 /// that would also hide a genuine typo.
-fn stdlib_exports() -> &'static BTreeMap<String, BTreeSet<String>> {
-    static CACHE: OnceLock<BTreeMap<String, BTreeSet<String>>> = OnceLock::new();
+fn stdlib_exports() -> &'static FxMap<FxSet> {
+    static CACHE: OnceLock<FxMap<FxSet>> = OnceLock::new();
     CACHE.get_or_init(|| {
         // `project::stdlib` (the bundled std-surface registry) is gated behind
         // `cross-module-imports`. With the feature off there is no std surface
@@ -349,11 +369,11 @@ fn stdlib_exports() -> &'static BTreeMap<String, BTreeSet<String>> {
         // compiling while leaving the feature-on behaviour byte-for-byte
         // unchanged.
         #[allow(unused_mut)]
-        let mut map = BTreeMap::new();
+        let mut map = FxMap::default();
         #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
         for (path, module) in crate::project::stdlib::parsed_stdlib_modules() {
-            let mut names = BTreeSet::new();
-            collect_decl_names(&module, &mut names);
+            let mut names = FxSet::default();
+            collect_decl_names_into(&module, &mut names);
             map.insert(path, names);
         }
         map
@@ -373,10 +393,10 @@ fn stdlib_exports() -> &'static BTreeMap<String, BTreeSet<String>> {
 /// iff it is in the per-module set OR this std set (same union as before), and the
 /// suggestion candidate set is the same (`closest_identifier` tie-breaks
 /// lexicographically, so iteration order never reaches output).
-fn stdlib_export_names() -> &'static BTreeSet<String> {
-    static CACHE: OnceLock<BTreeSet<String>> = OnceLock::new();
+fn stdlib_export_names() -> &'static FxSet {
+    static CACHE: OnceLock<FxSet> = OnceLock::new();
     CACHE.get_or_init(|| {
-        let mut s = BTreeSet::new();
+        let mut s = FxSet::default();
         for exports in stdlib_exports().values() {
             s.extend(exports.iter().cloned());
         }
@@ -392,8 +412,8 @@ fn stdlib_export_names() -> &'static BTreeSet<String> {
 /// enumerated here suppresses undefined-CALL reports only — bare undefined
 /// variables are still reported, since imports bring fns/types, never vars.
 fn collect_module_syms(module: &Module, injected: &BTreeSet<String>) -> ModuleSyms {
-    let mut names: BTreeSet<String> = injected.clone();
-    collect_decl_names(module, &mut names);
+    let mut names: FxSet = injected.iter().cloned().collect();
+    collect_decl_names_into(module, &mut names);
     // Built-in Result/Option prelude: the bare variant names are always
     // resolvable (the compiler registers the enums in the lowering side-tables;
     // they have no source-level `EnumDef` to feed `collect_decl_names`). A user
@@ -415,7 +435,7 @@ fn collect_module_syms(module: &Module, injected: &BTreeSet<String>) -> ModuleSy
     // this per-module `names` — that copy was O(items x std_names), the dominant
     // cost of `mindc check main.mind`. It is checked separately via
     // `stdlib_export_names()` in `name_resolvable` and the `suggest` chain.
-    let mut enums: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut enums: FxMap<FxSet> = FxMap::default();
     collect_enum_variants(module, &mut enums);
     // Module-level non-function decls, used to reject a call whose callee names a
     // data/global symbol (const/let/struct/enum-type/type-alias) rather than a
@@ -517,17 +537,17 @@ fn add_shape_dim_str(dim: &str, out: &mut BTreeSet<String>) {
 /// A stack of lexical scope frames. Frame 0 holds the fn parameters; nested
 /// blocks push a fresh frame on entry and pop it on exit.
 struct Scopes {
-    frames: Vec<BTreeSet<String>>,
+    frames: Vec<FxSet>,
 }
 
 impl Scopes {
     fn new() -> Self {
         Scopes {
-            frames: vec![BTreeSet::new()],
+            frames: vec![FxSet::default()],
         }
     }
     fn push(&mut self) {
-        self.frames.push(BTreeSet::new());
+        self.frames.push(FxSet::default());
     }
     fn pop(&mut self) {
         self.frames.pop();
