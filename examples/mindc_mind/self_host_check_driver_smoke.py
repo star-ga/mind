@@ -7,8 +7,12 @@ self-hosted native-ELF path, then runs that ELF as a real subprocess feeding a
 .mind source on STDIN. Asserts:
   * a CLEAN source  -> exit 0 (typecheck report has no "ERROR:")
   * an ERROR source -> exit 1 (return-type mismatch flagged)
-plus the flag-recognition behavior (--no-typecheck gates the pass; --reporter
-json and --fix are recognized + surfaced as stubs on stdout).
+plus the flag-recognition behavior (--no-typecheck gates the pass; --fix is
+recognized + surfaced as a stub) AND the machine reporters: `--reporter json`
+emits a stable JSON array of {code, severity, file, line, col, message}
+diagnostics and `--reporter lsp` emits an LSP publishDiagnostics array
+({uri, range, severity, source, message, code}). Both are validated by parsing
+the emitted bytes with the stdlib json module and asserting each field.
 
 This is the load-bearing proof that lex -> parse -> TYPECHECK (which uses the
 pure-MIND Map/env) EXECUTE correctly through the native-ELF runtime — not just
@@ -22,6 +26,7 @@ Run:  MINDC_SO=<self-host .so> python3 examples/mindc_mind/self_host_check_drive
 """
 
 import ctypes
+import json
 import pathlib
 import stat
 import subprocess
@@ -138,12 +143,75 @@ def main() -> int:
         ok = ok and good
         print(f"  {'PASS' if good else 'FAIL'}  --no-typecheck BY-PATH error file -> exit {code} (expected 0)")
 
-        # (4) --fix + --reporter json recognized + stubbed (path arg not swallowed as the value)
+        # (4) --reporter json on a CLEAN source -> empty JSON array, exit 0, no
+        # stray "note:" (machine output is not polluted with the --fix stub note).
         code, out = run_check_path(p, clean_f, ["--fix", "--reporter", "json"])
-        good = code == 0 and "note:" in out
+        good = code == 0 and out.strip() == "[]" and "note:" not in out
         ok = ok and good
-        print(f"  {'PASS' if good else 'FAIL'}  --fix/--reporter json stubs surfaced BY-PATH "
-              f"(exit {code}, 'note:' in stdout: {'note:' in out})")
+        print(f"  {'PASS' if good else 'FAIL'}  --reporter json clean -> '[]' BY-PATH "
+              f"(exit {code}, out={out.strip()!r}, no note: {'note:' not in out})")
+
+        # (4b) --reporter json on an ERROR source -> a stable JSON array with one
+        # diagnostic carrying code/severity/file/line/col/message. Parsed with the
+        # stdlib json module (proves the emitted bytes are valid JSON), then the
+        # fields are asserted individually. exit 1.
+        code, out = run_check_path(p, bad_f, ["--reporter", "json"])
+        jgood = False
+        try:
+            diags = json.loads(out)
+            d = diags[0]
+            jgood = (
+                code == 1
+                and len(diags) == 1
+                and d["severity"] == "error"
+                and d["message"] == "return type mismatch"
+                and d["code"] == "type_check"
+                and d["line"] == 2
+                and d["col"] == 5
+                and d["file"] == str(bad_f)
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"          json.loads/field error: {e}")
+        ok = ok and jgood
+        print(f"  {'PASS' if jgood else 'FAIL'}  --reporter json error -> structured diagnostic (exit {code})")
+        print(f"          stdout: {out.strip()!r}")
+
+        # (4c) --reporter lsp on an ERROR source -> an LSP publishDiagnostics array:
+        # {uri, range{start,end}, severity(1=Error), source, message, code}. LSP
+        # line/character are 0-based (line 2 -> 1, col 5 -> character 4). exit 1.
+        code, out = run_check_path(p, bad_f, ["--reporter", "lsp"])
+        lgood = False
+        try:
+            items = json.loads(out)
+            it = items[0]
+            lgood = (
+                code == 1
+                and len(items) == 1
+                and it["severity"] == 1
+                and it["source"] == "mindc"
+                and it["message"] == "return type mismatch"
+                and it["code"] == "type_check"
+                and it["uri"] == f"file://{bad_f}"
+                and it["range"]["start"] == {"line": 1, "character": 4}
+                and it["range"]["end"] == {"line": 1, "character": 4}
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"          json.loads/field error: {e}")
+        ok = ok and lgood
+        print(f"  {'PASS' if lgood else 'FAIL'}  --reporter lsp error -> LSP Diagnostic (exit {code})")
+        print(f"          stdout: {out.strip()!r}")
+
+        # (4d) --reporter json STDIN-fallback error -> file field is the "<stdin>"
+        # sentinel (deterministic; no positional path).
+        code, out = run_check(p, ERROR_SRC, ["--reporter", "json"])
+        sgood = False
+        try:
+            d = json.loads(out)[0]
+            sgood = code == 1 and d["file"] == "<stdin>" and d["severity"] == "error"
+        except Exception as e:  # noqa: BLE001
+            print(f"          json.loads/field error: {e}")
+        ok = ok and sgood
+        print(f"  {'PASS' if sgood else 'FAIL'}  --reporter json STDIN error -> '<stdin>' file (exit {code})")
         print(f"          stdout: {out.strip()!r}")
 
         # (5) nonexistent path -> "cannot read source" + exit 1, no crash. The

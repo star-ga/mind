@@ -284,6 +284,560 @@ pub fn ckd_msg_fix() -> String {
     string_push_byte(l, 100)
 }
 
+// ===========================================================================
+// JSON / LSP diagnostic reporters (RI-C, task #109 slice C)
+//
+// The self-hosted front-end's typecheck() returns only a human-readable report
+// String; its one diagnostic kind is the line
+//   "ERROR: return type mismatch at span [<lo>,<hi>)\n"
+// (push_kw_error + push_err_return_mismatch + push_at_span in main.mind, where
+// <lo>/<hi> are BYTE offsets into the source). These reporters parse that report
+// line-by-line and re-emit each ERROR line as a stable, DETERMINISTIC JSON object
+// (no clock / RNG). Two shapes:
+//   mode 0 (json): {"file","line","col","severity","code","message"}
+//   mode 1 (lsp) : LSP publishDiagnostics Diagnostic {uri,range,severity,source,
+//                  message,code} (0-based line/character; severity 1 = Error)
+// Byte offsets are converted to 1-based line/col by scanning the source.
+//
+// deferred: `code` is the phase id "type_check", not a per-rule code (the Rust
+// reporter emits "type_check::E001"-style ids). The self-hosted typecheck() does
+// not yet classify beyond the phase — upgrade path: have typecheck() return
+// structured (rule_id, severity, line, col, message) diagnostics instead of only
+// embedding a marker in report text (same upgrade path noted on
+// ckd_report_has_error), then this reporter emits the real rule_id and precomputed
+// line/col.
+// deferred: ckd_line_of/ckd_col_of scan the source with per-byte recursion up to
+// the diagnostic's byte offset, so recursion depth is O(offset). Safe for the
+// modest sources the gate exercises; a very large source with a late diagnostic
+// could exceed the native ELF's stack. Upgrade path: structured diagnostics
+// carrying precomputed line/col (above), or a single forward line-index pass once
+// in-loop mutation is proven in the native subset (task #230).
+// ===========================================================================
+
+// Accumulator threaded through the recursive report walk: the JSON/LSP body built
+// so far plus the count of diagnostics already emitted (for comma separation).
+struct CkdAcc {
+    out: String,
+    n: i64,
+}
+pub fn ckd_acc(out: String, n: i64) -> CkdAcc {
+    CkdAcc { out: out, n: n }
+}
+pub fn ckd_acc_out(a: CkdAcc) -> String {
+    a.out
+}
+pub fn ckd_acc_n(a: CkdAcc) -> i64 {
+    a.n
+}
+
+// "," — object separator (built byte-by-byte; no literals in the subset).
+pub fn ckd_comma() -> String {
+    string_push_byte(string_new(), 44)
+}
+
+// 1-based line number of byte offset `off` in the source at `src`: 1 + count of
+// '\n' bytes in src[0..off). Recursive; see the O(offset) deferred note above.
+pub fn ckd_line_of(src: i64, off: i64, i: i64, line: i64) -> i64 {
+    if i >= off {
+        return line;
+    }
+    if __mind_load_i8(src + i) == 10 {
+        return ckd_line_of(src, off, i + 1, line + 1);
+    }
+    ckd_line_of(src, off, i + 1, line)
+}
+
+// 1-based column of byte offset `off`: bytes since the last '\n' (+1). The char
+// immediately after a newline is column 1.
+pub fn ckd_col_of(src: i64, off: i64, i: i64, col: i64) -> i64 {
+    if i >= off {
+        return col;
+    }
+    if __mind_load_i8(src + i) == 10 {
+        return ckd_col_of(src, off, i + 1, 1);
+    }
+    ckd_col_of(src, off, i + 1, col + 1)
+}
+
+// Index of the next '\n' at/after `i` in report[..len), or `len` if none.
+pub fn ckd_line_end(ra: i64, len: i64, i: i64) -> i64 {
+    if i >= len {
+        return len;
+    }
+    if __mind_load_i8(ra + i) == 10 {
+        return i;
+    }
+    ckd_line_end(ra, len, i + 1)
+}
+
+// Does the report line at `i` start with the 7-byte prefix "ERROR: " (the marker
+// pushed by push_kw_error, followed by its trailing space)? Only such lines are
+// emitted as diagnostics — the report also carries non-error "let NAME: TYPE"
+// lines (tc_let), which must be skipped.
+pub fn ckd_is_error_prefix(ra: i64, i: i64, len: i64) -> i64 {
+    if i + 7 > len {
+        return 0;
+    }
+    if __mind_load_i8(ra + i) != 69 {
+        return 0;
+    }
+    if __mind_load_i8(ra + i + 1) != 82 {
+        return 0;
+    }
+    if __mind_load_i8(ra + i + 2) != 82 {
+        return 0;
+    }
+    if __mind_load_i8(ra + i + 3) != 79 {
+        return 0;
+    }
+    if __mind_load_i8(ra + i + 4) != 82 {
+        return 0;
+    }
+    if __mind_load_i8(ra + i + 5) != 58 {
+        return 0;
+    }
+    if __mind_load_i8(ra + i + 6) != 32 {
+        return 0;
+    }
+    1
+}
+
+// Index of the first '[' (91) in report[i..hi), or `hi` if none. Marks the start
+// of the "[lo,hi)" span suffix on an error line.
+pub fn ckd_find_lbracket(ra: i64, i: i64, hi: i64) -> i64 {
+    if i >= hi {
+        return hi;
+    }
+    if __mind_load_i8(ra + i) == 91 {
+        return i;
+    }
+    ckd_find_lbracket(ra, i + 1, hi)
+}
+
+// Parse a base-10 non-negative integer from report bytes starting at `i`, folding
+// digits into `acc`; stops at the first non-digit (returns `acc`).
+pub fn ckd_parse_num(ra: i64, i: i64, acc: i64) -> i64 {
+    let b: i64 = __mind_load_i8(ra + i);
+    if b < 48 {
+        return acc;
+    }
+    if b > 57 {
+        return acc;
+    }
+    ckd_parse_num(ra, i + 1, acc * 10 + (b - 48))
+}
+
+// Push bytes addr[i..hi) into `dst`, JSON-escaping '"' (\"), '\' (\\) and newline
+// (\n). Messages and file paths here are ASCII; the escape keeps the output valid
+// JSON regardless.
+pub fn ckd_json_escape(dst: String, addr: i64, i: i64, hi: i64) -> String {
+    if i >= hi {
+        return dst;
+    }
+    let b: i64 = __mind_load_i8(addr + i);
+    if b == 34 {
+        let d1: String = string_push_byte(dst, 92);
+        let d2: String = string_push_byte(d1, 34);
+        return ckd_json_escape(d2, addr, i + 1, hi);
+    }
+    if b == 92 {
+        let e1: String = string_push_byte(dst, 92);
+        let e2: String = string_push_byte(e1, 92);
+        return ckd_json_escape(e2, addr, i + 1, hi);
+    }
+    if b == 10 {
+        let f1: String = string_push_byte(dst, 92);
+        let f2: String = string_push_byte(f1, 110);
+        return ckd_json_escape(f2, addr, i + 1, hi);
+    }
+    let g1: String = string_push_byte(dst, b);
+    ckd_json_escape(g1, addr, i + 1, hi)
+}
+
+// ckd_find_path_str — the first positional PATH arg as a String view (or empty).
+// Same skip rules as ckd_find_path (skips '-'-led flags and the value consumed by
+// --reporter) but returns the args_get String rather than a raw pointer, so the
+// `file` field reuses the borrowed argv view without constructing a String struct.
+pub fn ckd_find_path_str(a: Args, i: i64, n: i64, reporter_flag: String) -> String {
+    if i >= n {
+        return string_new();
+    }
+    let s: String = args_get(a, i);
+    if s.len > 0 {
+        if string_get_byte(s, 0) == 45 {
+            return ckd_find_path_str(a, i + 1, n, reporter_flag);
+        }
+    }
+    if i > 1 {
+        let prev: String = args_get(a, i - 1);
+        if string_eq(prev, reporter_flag) == 1 {
+            return ckd_find_path_str(a, i + 1, n, reporter_flag);
+        }
+    }
+    s
+}
+
+// The `file` field: the positional path if present, else the "<stdin>" sentinel
+// (matching the stdin-fallback read mode).
+pub fn ckd_path_field(a: Args) -> String {
+    let p: String = ckd_find_path_str(a, 1, args_len(a), ckd_s_reporter());
+    if p.len > 0 {
+        return p;
+    }
+    ckd_s_stdin()
+}
+
+// Reporter kind from the --reporter value: 1 = json, 2 = lsp, 0 = human (default).
+pub fn ckd_reporter_kind(reporter: String) -> i64 {
+    if string_eq(reporter, ckd_s_json()) == 1 {
+        return 1;
+    }
+    if string_eq(reporter, ckd_s_lsp()) == 1 {
+        return 2;
+    }
+    0
+}
+
+// Build one diagnostic object for the ERROR line report[ls..le). `mode` 0 = json,
+// 1 = lsp. `n` is the count of objects already emitted (>0 -> prefix a comma).
+pub fn ckd_emit_obj(ra: i64, ls: i64, le: i64, src: i64, file: String, n: i64, mode: i64) -> String {
+    let br: i64 = ckd_find_lbracket(ra, ls, le);
+    let lo: i64 = ckd_parse_num(ra, br + 1, 0);
+    // Message spans [ls+7, br-9): after "ERROR: " (7 bytes), up to the 10-byte
+    // " at span [" suffix whose '[' is `br` (leading space at br-9).
+    let msg_lo: i64 = ls + 7;
+    let msg_hi: i64 = br - 9;
+    let line: i64 = ckd_line_of(src, lo, 0, 1);
+    let col: i64 = ckd_col_of(src, lo, 0, 1);
+    let fa: i64 = string_addr(file);
+    let fl: i64 = string_len(file);
+    if mode == 1 {
+        let l0: i64 = line - 1;
+        let c0: i64 = col - 1;
+        let g1: String = ckd_l1();
+        let g2: String = ckd_json_escape(g1, fa, 0, fl);
+        let g3: String = string_push_str(g2, ckd_l2());
+        let g4: String = push_i64(g3, l0);
+        let g5: String = string_push_str(g4, ckd_l3());
+        let g6: String = push_i64(g5, c0);
+        let g7: String = string_push_str(g6, ckd_l4());
+        let g8: String = push_i64(g7, l0);
+        let g9: String = string_push_str(g8, ckd_l3());
+        let g10: String = push_i64(g9, c0);
+        let g11: String = string_push_str(g10, ckd_l6());
+        let g12: String = ckd_json_escape(g11, ra, msg_lo, msg_hi);
+        let lbody: String = string_push_str(g12, ckd_l7());
+        if n > 0 {
+            return string_push_str(ckd_comma(), lbody);
+        }
+        return lbody;
+    }
+    let f1: String = ckd_j1();
+    let f2: String = ckd_json_escape(f1, fa, 0, fl);
+    let f3: String = string_push_str(f2, ckd_j2());
+    let f4: String = push_i64(f3, line);
+    let f5: String = string_push_str(f4, ckd_j3());
+    let f6: String = push_i64(f5, col);
+    let f7: String = string_push_str(f6, ckd_j4());
+    let f8: String = ckd_json_escape(f7, ra, msg_lo, msg_hi);
+    let jbody: String = string_push_str(f8, ckd_j5());
+    if n > 0 {
+        return string_push_str(ckd_comma(), jbody);
+    }
+    jbody
+}
+
+// Recursively walk the report line-by-line, appending an object for each ERROR
+// line. Threads the (out, count) accumulator; immutable + tail-recursive to stay
+// clear of the native in-loop-mut miscompile.
+pub fn ckd_walk(ra: i64, rlen: i64, i: i64, src: i64, file: String, acc: CkdAcc, mode: i64) -> CkdAcc {
+    if i >= rlen {
+        return acc;
+    }
+    let le: i64 = ckd_line_end(ra, rlen, i);
+    if ckd_is_error_prefix(ra, i, rlen) == 1 {
+        let n: i64 = ckd_acc_n(acc);
+        let obj: String = ckd_emit_obj(ra, i, le, src, file, n, mode);
+        let joined: String = string_push_str(ckd_acc_out(acc), obj);
+        let acc2: CkdAcc = ckd_acc(joined, n + 1);
+        return ckd_walk(ra, rlen, le + 1, src, file, acc2, mode);
+    }
+    ckd_walk(ra, rlen, le + 1, src, file, acc, mode)
+}
+
+// Emit the full diagnostics array ("[" objects "]\n") for `report`, converting
+// byte spans against `src`. `mode` 0 = json, 1 = lsp.
+pub fn ckd_emit_diags(report: String, src: i64, file: String, mode: i64) -> String {
+    let open: String = string_push_byte(string_new(), 91);
+    let acc0: CkdAcc = ckd_acc(open, 0);
+    let acc: CkdAcc = ckd_walk(string_addr(report), string_len(report), 0, src, file, acc0, mode);
+    let closed: String = string_push_byte(ckd_acc_out(acc), 93);
+    string_push_byte(closed, 10)
+}
+
+pub fn ckd_j1() -> String {
+    let s0: String = string_push_byte(string_new(), 123);
+    let s1: String = string_push_byte(s0, 34);
+    let s2: String = string_push_byte(s1, 102);
+    let s3: String = string_push_byte(s2, 105);
+    let s4: String = string_push_byte(s3, 108);
+    let s5: String = string_push_byte(s4, 101);
+    let s6: String = string_push_byte(s5, 34);
+    let s7: String = string_push_byte(s6, 58);
+    string_push_byte(s7, 34)
+}
+pub fn ckd_j2() -> String {
+    let s0: String = string_push_byte(string_new(), 34);
+    let s1: String = string_push_byte(s0, 44);
+    let s2: String = string_push_byte(s1, 34);
+    let s3: String = string_push_byte(s2, 108);
+    let s4: String = string_push_byte(s3, 105);
+    let s5: String = string_push_byte(s4, 110);
+    let s6: String = string_push_byte(s5, 101);
+    let s7: String = string_push_byte(s6, 34);
+    string_push_byte(s7, 58)
+}
+pub fn ckd_j3() -> String {
+    let s0: String = string_push_byte(string_new(), 44);
+    let s1: String = string_push_byte(s0, 34);
+    let s2: String = string_push_byte(s1, 99);
+    let s3: String = string_push_byte(s2, 111);
+    let s4: String = string_push_byte(s3, 108);
+    let s5: String = string_push_byte(s4, 34);
+    string_push_byte(s5, 58)
+}
+pub fn ckd_j4() -> String {
+    let s0: String = string_push_byte(string_new(), 44);
+    let s1: String = string_push_byte(s0, 34);
+    let s2: String = string_push_byte(s1, 115);
+    let s3: String = string_push_byte(s2, 101);
+    let s4: String = string_push_byte(s3, 118);
+    let s5: String = string_push_byte(s4, 101);
+    let s6: String = string_push_byte(s5, 114);
+    let s7: String = string_push_byte(s6, 105);
+    let s8: String = string_push_byte(s7, 116);
+    let s9: String = string_push_byte(s8, 121);
+    let s10: String = string_push_byte(s9, 34);
+    let s11: String = string_push_byte(s10, 58);
+    let s12: String = string_push_byte(s11, 34);
+    let s13: String = string_push_byte(s12, 101);
+    let s14: String = string_push_byte(s13, 114);
+    let s15: String = string_push_byte(s14, 114);
+    let s16: String = string_push_byte(s15, 111);
+    let s17: String = string_push_byte(s16, 114);
+    let s18: String = string_push_byte(s17, 34);
+    let s19: String = string_push_byte(s18, 44);
+    let s20: String = string_push_byte(s19, 34);
+    let s21: String = string_push_byte(s20, 99);
+    let s22: String = string_push_byte(s21, 111);
+    let s23: String = string_push_byte(s22, 100);
+    let s24: String = string_push_byte(s23, 101);
+    let s25: String = string_push_byte(s24, 34);
+    let s26: String = string_push_byte(s25, 58);
+    let s27: String = string_push_byte(s26, 34);
+    let s28: String = string_push_byte(s27, 116);
+    let s29: String = string_push_byte(s28, 121);
+    let s30: String = string_push_byte(s29, 112);
+    let s31: String = string_push_byte(s30, 101);
+    let s32: String = string_push_byte(s31, 95);
+    let s33: String = string_push_byte(s32, 99);
+    let s34: String = string_push_byte(s33, 104);
+    let s35: String = string_push_byte(s34, 101);
+    let s36: String = string_push_byte(s35, 99);
+    let s37: String = string_push_byte(s36, 107);
+    let s38: String = string_push_byte(s37, 34);
+    let s39: String = string_push_byte(s38, 44);
+    let s40: String = string_push_byte(s39, 34);
+    let s41: String = string_push_byte(s40, 109);
+    let s42: String = string_push_byte(s41, 101);
+    let s43: String = string_push_byte(s42, 115);
+    let s44: String = string_push_byte(s43, 115);
+    let s45: String = string_push_byte(s44, 97);
+    let s46: String = string_push_byte(s45, 103);
+    let s47: String = string_push_byte(s46, 101);
+    let s48: String = string_push_byte(s47, 34);
+    let s49: String = string_push_byte(s48, 58);
+    string_push_byte(s49, 34)
+}
+pub fn ckd_j5() -> String {
+    let s0: String = string_push_byte(string_new(), 34);
+    string_push_byte(s0, 125)
+}
+pub fn ckd_l1() -> String {
+    let s0: String = string_push_byte(string_new(), 123);
+    let s1: String = string_push_byte(s0, 34);
+    let s2: String = string_push_byte(s1, 117);
+    let s3: String = string_push_byte(s2, 114);
+    let s4: String = string_push_byte(s3, 105);
+    let s5: String = string_push_byte(s4, 34);
+    let s6: String = string_push_byte(s5, 58);
+    let s7: String = string_push_byte(s6, 34);
+    let s8: String = string_push_byte(s7, 102);
+    let s9: String = string_push_byte(s8, 105);
+    let s10: String = string_push_byte(s9, 108);
+    let s11: String = string_push_byte(s10, 101);
+    let s12: String = string_push_byte(s11, 58);
+    let s13: String = string_push_byte(s12, 47);
+    string_push_byte(s13, 47)
+}
+pub fn ckd_l2() -> String {
+    let s0: String = string_push_byte(string_new(), 34);
+    let s1: String = string_push_byte(s0, 44);
+    let s2: String = string_push_byte(s1, 34);
+    let s3: String = string_push_byte(s2, 114);
+    let s4: String = string_push_byte(s3, 97);
+    let s5: String = string_push_byte(s4, 110);
+    let s6: String = string_push_byte(s5, 103);
+    let s7: String = string_push_byte(s6, 101);
+    let s8: String = string_push_byte(s7, 34);
+    let s9: String = string_push_byte(s8, 58);
+    let s10: String = string_push_byte(s9, 123);
+    let s11: String = string_push_byte(s10, 34);
+    let s12: String = string_push_byte(s11, 115);
+    let s13: String = string_push_byte(s12, 116);
+    let s14: String = string_push_byte(s13, 97);
+    let s15: String = string_push_byte(s14, 114);
+    let s16: String = string_push_byte(s15, 116);
+    let s17: String = string_push_byte(s16, 34);
+    let s18: String = string_push_byte(s17, 58);
+    let s19: String = string_push_byte(s18, 123);
+    let s20: String = string_push_byte(s19, 34);
+    let s21: String = string_push_byte(s20, 108);
+    let s22: String = string_push_byte(s21, 105);
+    let s23: String = string_push_byte(s22, 110);
+    let s24: String = string_push_byte(s23, 101);
+    let s25: String = string_push_byte(s24, 34);
+    string_push_byte(s25, 58)
+}
+pub fn ckd_l3() -> String {
+    let s0: String = string_push_byte(string_new(), 44);
+    let s1: String = string_push_byte(s0, 34);
+    let s2: String = string_push_byte(s1, 99);
+    let s3: String = string_push_byte(s2, 104);
+    let s4: String = string_push_byte(s3, 97);
+    let s5: String = string_push_byte(s4, 114);
+    let s6: String = string_push_byte(s5, 97);
+    let s7: String = string_push_byte(s6, 99);
+    let s8: String = string_push_byte(s7, 116);
+    let s9: String = string_push_byte(s8, 101);
+    let s10: String = string_push_byte(s9, 114);
+    let s11: String = string_push_byte(s10, 34);
+    string_push_byte(s11, 58)
+}
+pub fn ckd_l4() -> String {
+    let s0: String = string_push_byte(string_new(), 125);
+    let s1: String = string_push_byte(s0, 44);
+    let s2: String = string_push_byte(s1, 34);
+    let s3: String = string_push_byte(s2, 101);
+    let s4: String = string_push_byte(s3, 110);
+    let s5: String = string_push_byte(s4, 100);
+    let s6: String = string_push_byte(s5, 34);
+    let s7: String = string_push_byte(s6, 58);
+    let s8: String = string_push_byte(s7, 123);
+    let s9: String = string_push_byte(s8, 34);
+    let s10: String = string_push_byte(s9, 108);
+    let s11: String = string_push_byte(s10, 105);
+    let s12: String = string_push_byte(s11, 110);
+    let s13: String = string_push_byte(s12, 101);
+    let s14: String = string_push_byte(s13, 34);
+    string_push_byte(s14, 58)
+}
+pub fn ckd_l6() -> String {
+    let s0: String = string_push_byte(string_new(), 125);
+    let s1: String = string_push_byte(s0, 125);
+    let s2: String = string_push_byte(s1, 44);
+    let s3: String = string_push_byte(s2, 34);
+    let s4: String = string_push_byte(s3, 115);
+    let s5: String = string_push_byte(s4, 101);
+    let s6: String = string_push_byte(s5, 118);
+    let s7: String = string_push_byte(s6, 101);
+    let s8: String = string_push_byte(s7, 114);
+    let s9: String = string_push_byte(s8, 105);
+    let s10: String = string_push_byte(s9, 116);
+    let s11: String = string_push_byte(s10, 121);
+    let s12: String = string_push_byte(s11, 34);
+    let s13: String = string_push_byte(s12, 58);
+    let s14: String = string_push_byte(s13, 49);
+    let s15: String = string_push_byte(s14, 44);
+    let s16: String = string_push_byte(s15, 34);
+    let s17: String = string_push_byte(s16, 115);
+    let s18: String = string_push_byte(s17, 111);
+    let s19: String = string_push_byte(s18, 117);
+    let s20: String = string_push_byte(s19, 114);
+    let s21: String = string_push_byte(s20, 99);
+    let s22: String = string_push_byte(s21, 101);
+    let s23: String = string_push_byte(s22, 34);
+    let s24: String = string_push_byte(s23, 58);
+    let s25: String = string_push_byte(s24, 34);
+    let s26: String = string_push_byte(s25, 109);
+    let s27: String = string_push_byte(s26, 105);
+    let s28: String = string_push_byte(s27, 110);
+    let s29: String = string_push_byte(s28, 100);
+    let s30: String = string_push_byte(s29, 99);
+    let s31: String = string_push_byte(s30, 34);
+    let s32: String = string_push_byte(s31, 44);
+    let s33: String = string_push_byte(s32, 34);
+    let s34: String = string_push_byte(s33, 109);
+    let s35: String = string_push_byte(s34, 101);
+    let s36: String = string_push_byte(s35, 115);
+    let s37: String = string_push_byte(s36, 115);
+    let s38: String = string_push_byte(s37, 97);
+    let s39: String = string_push_byte(s38, 103);
+    let s40: String = string_push_byte(s39, 101);
+    let s41: String = string_push_byte(s40, 34);
+    let s42: String = string_push_byte(s41, 58);
+    string_push_byte(s42, 34)
+}
+pub fn ckd_l7() -> String {
+    let s0: String = string_push_byte(string_new(), 34);
+    let s1: String = string_push_byte(s0, 44);
+    let s2: String = string_push_byte(s1, 34);
+    let s3: String = string_push_byte(s2, 99);
+    let s4: String = string_push_byte(s3, 111);
+    let s5: String = string_push_byte(s4, 100);
+    let s6: String = string_push_byte(s5, 101);
+    let s7: String = string_push_byte(s6, 34);
+    let s8: String = string_push_byte(s7, 58);
+    let s9: String = string_push_byte(s8, 34);
+    let s10: String = string_push_byte(s9, 116);
+    let s11: String = string_push_byte(s10, 121);
+    let s12: String = string_push_byte(s11, 112);
+    let s13: String = string_push_byte(s12, 101);
+    let s14: String = string_push_byte(s13, 95);
+    let s15: String = string_push_byte(s14, 99);
+    let s16: String = string_push_byte(s15, 104);
+    let s17: String = string_push_byte(s16, 101);
+    let s18: String = string_push_byte(s17, 99);
+    let s19: String = string_push_byte(s18, 107);
+    let s20: String = string_push_byte(s19, 34);
+    string_push_byte(s20, 125)
+}
+pub fn ckd_s_stdin() -> String {
+    let s0: String = string_push_byte(string_new(), 60);
+    let s1: String = string_push_byte(s0, 115);
+    let s2: String = string_push_byte(s1, 116);
+    let s3: String = string_push_byte(s2, 100);
+    let s4: String = string_push_byte(s3, 105);
+    let s5: String = string_push_byte(s4, 110);
+    string_push_byte(s5, 62)
+}
+pub fn ckd_s_json() -> String {
+    let s0: String = string_push_byte(string_new(), 106);
+    let s1: String = string_push_byte(s0, 115);
+    let s2: String = string_push_byte(s1, 111);
+    string_push_byte(s2, 110)
+}
+pub fn ckd_s_lsp() -> String {
+    let s0: String = string_push_byte(string_new(), 108);
+    let s1: String = string_push_byte(s0, 115);
+    string_push_byte(s1, 112)
+}
+pub fn ckd_arr_empty_nl() -> String {
+    let s0: String = string_push_byte(string_new(), 91);
+    let s1: String = string_push_byte(s0, 93);
+    string_push_byte(s1, 10)
+}
+
 pub fn main() -> i64 {
     // Real OS argv (proven self-hosted in task #225). Flags are recognized here;
     // the source is read BY PATH (task #228, __mind_open) when a positional
@@ -293,45 +847,57 @@ pub fn main() -> i64 {
     let has_fix: i64 = args_has_flag(a, ckd_s_fix(), ckd_s_empty());
     let _nofmt: i64 = args_has_flag(a, ckd_s_no_fmt(), ckd_s_empty());
     let _nolint: i64 = args_has_flag(a, ckd_s_no_lint(), ckd_s_empty());
-    // --reporter <value>: human is the only implemented reporter; json/lsp are stubs.
-    // Uses the recursive ckd_arg_after (NOT cli's args_flag_value, which hits the
-    // in-loop-mut native miscompile above).
+    // --reporter <value>: human (default), json, or lsp. Uses the recursive
+    // ckd_arg_after (NOT cli's args_flag_value, which hits the in-loop-mut native
+    // miscompile). ckd_reporter_kind: 1 = json, 2 = lsp, 0 = human.
     let reporter: String = ckd_arg_after(a, ckd_s_reporter(), 0, args_len(a));
-    // Surface the --fix stub explicitly (recognized, not implemented this slice).
+    let kind: i64 = ckd_reporter_kind(reporter);
+
+    // --fix is recognized + STUBBED (no source rewrite yet). Surface the stub as a
+    // note ONLY in human mode — a "note:" line would corrupt the JSON/LSP array.
     if has_fix == 1 {
-        let _n: i64 = ckd_note(ckd_msg_fix());
-    }
-    // A non-human reporter is recognized but stubbed -> note it and fall back to human.
-    if reporter.len > 0 {
-        if string_get_byte(reporter, 0) != 104 {
-            let _r: i64 = ckd_note(reporter);
+        if kind == 0 {
+            let _n: i64 = ckd_note(ckd_msg_fix());
         }
     }
 
     // Read the source to check: BY PATH (RI-C task #228, __mind_open) if a
     // positional path arg is given, else the stdin fallback. Ask for ONE byte
-    // beyond `cap` (into the existing +16 pad) so a source that fills the
-    // whole cap and a source LARGER than the cap are distinguishable: if the
-    // probe byte was read too (src_len > cap), the real input didn't fit and
-    // was about to be silently truncated — reject it instead.
+    // beyond `cap` so a source that fills `cap` and one LARGER than `cap` are
+    // distinguishable (see the overflow probe below).
     let cap: i64 = 4194304;
     let src: i64 = __mind_alloc(cap + 16);
     let src_len: i64 = ckd_read_src(a, src, cap + 1);
-    // The path could not be opened, OR opened but a read(2) call failed
-    // partway through -> report + exit 1 (never proceed on a partial read).
+    // The path could not be opened, OR a read(2) failed partway through -> report
+    // + exit 1 (never proceed on a partial read). Machine reporters emit an empty
+    // array so a consumer still gets valid JSON; the exit code carries the failure.
     if src_len < 0 {
-        let _e: i64 = ckd_note(ckd_msg_openerr());
+        if kind == 0 {
+            let _e: i64 = ckd_note(ckd_msg_openerr());
+        }
+        if kind != 0 {
+            let _ea: i64 = ckd_puts(ckd_arr_empty_nl());
+        }
         return 1;
     }
     // The source did not fit in `cap` bytes -> report + exit 1 rather than
     // silently typechecking only the first `cap` bytes.
     if src_len > cap {
-        let _t: i64 = ckd_note(ckd_msg_toolarge());
+        if kind == 0 {
+            let _t: i64 = ckd_note(ckd_msg_toolarge());
+        }
+        if kind != 0 {
+            let _ta: i64 = ckd_puts(ckd_arr_empty_nl());
+        }
         return 1;
     }
 
-    // --no-typecheck gates the (only) self-hosted pass: emit nothing, report clean.
+    // --no-typecheck gates the (only) self-hosted pass: no diagnostics. Machine
+    // reporters still emit an empty array; human emits nothing. Report clean.
     if no_tc == 1 {
+        if kind != 0 {
+            let _na: i64 = ckd_puts(ckd_arr_empty_nl());
+        }
         return 0;
     }
 
@@ -340,10 +906,21 @@ pub fn main() -> i64 {
     let ast_root: i64 = parse(toks, src);
     let report: String = typecheck(ast_root, src);
 
-    // Human reporter: print the diagnostic report to stdout.
-    let _w: i64 = ckd_puts(report);
+    // Emit in the selected reporter shape. json/lsp parse the human report's
+    // "ERROR: <msg> at span [lo,hi)" lines into structured diagnostics with
+    // byte-offset -> 1-based line/col resolved against the source.
+    let file: String = ckd_path_field(a);
+    if kind == 1 {
+        let _j: i64 = ckd_puts(ckd_emit_diags(report, src, file, 0));
+    }
+    if kind == 2 {
+        let _l: i64 = ckd_puts(ckd_emit_diags(report, src, file, 1));
+    }
+    if kind == 0 {
+        let _w: i64 = ckd_puts(report);
+    }
 
-    // Exit code: 1 if any "ERROR:" diagnostic, else 0.
+    // Exit code: 1 if any "ERROR:" diagnostic, else 0 — regardless of reporter.
     if ckd_report_has_error(string_addr(report), string_len(report), 0) == 1 {
         return 1;
     }
