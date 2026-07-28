@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3217 | **Est. tokens:** ~7,743,859
-**Generated:** 2026-07-28 10:53 UTC
+**Files:** 3217 | **Est. tokens:** ~7,750,537
+**Generated:** 2026-07-28 11:10 UTC
 
 ## Token Budget Guide
 
@@ -58,7 +58,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 139 | ~322,414 |
+| `examples/mindc_mind/` | 139 | ~329,092 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
 | `examples/native/` | 4 | ~527 |
@@ -843,7 +843,7 @@
 ### `examples/mindc_mind/`
 
 - `bootstrap_smoke.py` (~2329 tok, huge)
-- `check_driver.mind` (~3938 tok, huge) — ===========================================================================
+- `check_driver.mind` (~9782 tok, huge) — ===========================================================================
 - `closure_netverify.py` (~1414 tok, large) — # Canonical independent net-verify harness for CLOSURES / FN-VALUES / UNRESOLVED
 - `collect_field_strings_smoke.py` (~1161 tok, large)
 - `cutover_coverage_measure.py` (~2238 tok, huge)
@@ -886,7 +886,7 @@
 - `self_host_argv_smoke.py` (~1136 tok, large)
 - `self_host_body_smoke.py` (~3055 tok, huge)
 - `self_host_carry_cap_smoke.py` (~1088 tok, large) — Cap-guard smoke for the self-host loop-carry / loop-frame scratch tables.
-- `self_host_check_driver_smoke.py` (~2045 tok, huge)
+- `self_host_check_driver_smoke.py` (~2879 tok, huge)
 - `selfhost_driver.mind` (~623 tok, large) — ===========================================================================
 - `self_host_dtype_tag_smoke.py` (~780 tok, large) — RI-B1 per-SSA dtype-tag gate (parser <-> nb_fp_* encoder connecting construct).
 - `self_host_else_if_smoke.py` (~1715 tok, huge)
