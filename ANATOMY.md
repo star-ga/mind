@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3219 | **Est. tokens:** ~7,756,370
-**Generated:** 2026-07-29 12:55 UTC
+**Files:** 3220 | **Est. tokens:** ~7,760,479
+**Generated:** 2026-07-29 13:17 UTC
 
 ## Token Budget Guide
 
@@ -59,6 +59,7 @@
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
 | `examples/mindc_mind/` | 139 | ~329,480 |
+| `examples/mindc_mind/testdata/` | 1 | ~2,452 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
 | `examples/native/` | 4 | ~527 |
@@ -413,7 +414,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~194,284 |
-| `tests/` | 298 | ~507,268 |
+| `tests/` | 298 | ~508,925 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -978,6 +979,9 @@
 - `struct_fields_smoke.py` (~1076 tok, large)
 - `struct_lit_smoke.py` (~1923 tok, huge)
 - `tc_differential_fuzz.py` (~12513 tok, huge) — tcdiff — differential fuzzer for the self-host source-position tc-rule ports.
+### `examples/mindc_mind/testdata/`
+
+- `dtk_plan_parity_smoke.py` (~2452 tok, huge)
 ### `examples/mindc_mind/testdata/native_elf_oracle/`
 
 - `add.elf` (~123 tok, small) — ELF> @@@8
@@ -4564,7 +4568,7 @@
 - `reductions_grad.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
 - `reductions_preview.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
 - `_ref_mic3_dump.rs` (~1663 tok, huge) — Committed self-host reference generator (A9b): reconstruct
-- `regalloc_dtk_parity.rs` (~1477 tok, large) — DTK slice 1 (#254) — parity consumer for src/opt/regalloc_dtk.rs.
+- `regalloc_dtk_parity.rs` (~3134 tok, huge) — DTK slice 1 (#254) — parity consumer for src/opt/regalloc_dtk.rs.
 - `region_phase_ja.rs` (~4239 tok, huge) — Copyright 2025 STARGA Inc.
 - `relu_exec.rs` (~472 tok, medium) — Copyright 2025 STARGA Inc.
 - `relu_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.

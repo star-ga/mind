@@ -26239,7 +26239,7 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let c2: String = if setcc >= 0 {
             nb_val_cmp_rax(dplan, rhs_id, c1, setcc)
         } else {
-            nb_val_arith_rax(dplan, rhs_id, c1, op)
+            nb_val_arith_rax(dplan, rhs_id, c1, op, lcell)
         };
         let c3: String = nb_val_store_rax(dplan, id, c2);
         return NbState { code: c3, next_id: id + 1, last_id: id, ncalls: s2.ncalls };
@@ -31470,8 +31470,10 @@ pub fn nb_val_load_rax(plan: i64, id: i64, code: String) -> String {
 }
 // In-place arith of rax with value `id` (reg-form ModRM mod=11): add=03 sub=2B
 // and=23 or=0B xor=33 imul=0F AF, REX 48 (rbx) / 49 (r12), ModRM C3 (rbx) / C4
-// (r12). Falls through to nb_arith_rax_mem for a spilled operand.
-pub fn nb_val_arith_rax(plan: i64, id: i64, code: String, op: i64) -> String {
+// (r12). A SPILLED operand (rc<0) correctly reads its stack home via
+// nb_arith_rax_mem. A REG-HOMED operand with a non-reg-form op POISONS (see the
+// fallthrough below) rather than reading the value's stale stack slot.
+pub fn nb_val_arith_rax(plan: i64, id: i64, code: String, op: i64, lcell: i64) -> String {
     let rc: i64 = nb_plan_reg(plan, id);
     if rc < 0 {
         return nb_arith_rax_mem(code, op, nb_slot_disp(id));
@@ -31517,9 +31519,17 @@ pub fn nb_val_arith_rax(plan: i64, id: i64, code: String, op: i64) -> String {
         let c3: String = nb_push(c2, 175);
         return nb_push(c3, modrm);
     }
-    // Non-reg-form op on a reg-homed operand cannot occur in an eligible fn
-    // (whitelist excludes div/mod/shift) — defensive stack fallthrough.
-    nb_arith_rax_mem(code, op, nb_slot_disp(id))
+    // Non-reg-form op (div/mod/shift/...) on a REG-HOMED operand cannot occur in
+    // an eligible fn — the DTK eligibility whitelist (nb_dtk_op_ok) refuses any fn
+    // containing such an op, so a reg-homed operand is only ever reached by a
+    // reg-form op handled above. This arm is therefore DEAD. Falling through to
+    // nb_arith_rax_mem(nb_slot_disp(id)) here would read `id`'s STALE STACK SLOT
+    // for a value that lives in rbx/r12 — a silent wrong-bytes miscompile. POISON
+    // (lcell+80 / 0-byte fail-closed refusal) instead: byte-neutral today because
+    // the arm never fires, but fail-closed if a future op-whitelist widening ever
+    // lets it.
+    __mind_store_i64(lcell + 80, 1);
+    code
 }
 // Reg-form of nb_cmp_rax_mem: cmp rax,reg (48/49 3B C3/C4) ; setcc al ; movzx.
 pub fn nb_val_cmp_rax(plan: i64, id: i64, code: String, setcc: i64) -> String {
@@ -33111,12 +33121,20 @@ pub fn selftest_dtk_plan(src_addr: i64, src_len: i64, out_addr: i64) -> i64 {
     __mind_store_i64(atab, 0);
     __mind_store_i64(atab + 8, 0);
     let _ats: i64 = nb_at_scan_stmts(atab, src_addr, stmts_addr, stmts_len, 0);
+    // Build the struct registry from the ALREADY-lexed tokens (Rule 2c: no
+    // re-lex). nb_count_stmts's `let X: T = ..` arm resolves the annotation type
+    // through nb_let_descriptor -> srt_find_by_name(srt, ..), which dereferences
+    // srt; passing 0 (as the pre-fix code did) null-derefs and SIGSEGVs on ANY
+    // let-bearing fn. srt is empty (count 0) for a scalar fixture, so annotated
+    // i64 lets resolve to descriptor 0 (scalar) exactly as the canonical
+    // nb_lower_fn path does — no behavior change, just a valid (non-null) table.
+    let srt: i64 = srt_build_from_tokens(tokens, src_addr);
     let clets: i64 = __mind_alloc(512 * 5 * 8);
     let clcell: i64 = __mind_alloc(104);
     let _zc: i64 = nb_dtk_zero(clcell, 13, 0);
     __mind_store_i64(clcell + 88, atab);
-    let nslots: i64 = nb_count_stmts(n_params, src_addr, stmts_addr, stmts_len, 0, params_addr, n_params, clets, clcell, 0);
-    let plan: i64 = nb_dtk_plan(src_addr, stmts_addr, stmts_len, params_addr, n_params, atab, 0, 0, nslots);
+    let nslots: i64 = nb_count_stmts(n_params, src_addr, stmts_addr, stmts_len, 0, params_addr, n_params, clets, clcell, srt);
+    let plan: i64 = nb_dtk_plan(src_addr, stmts_addr, stmts_len, params_addr, n_params, atab, srt, 0, nslots);
     let count: i64 = if plan == 0 {
         0
     } else {
