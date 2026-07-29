@@ -40,14 +40,14 @@
 //! [`DtkPlan::assignment`] is a [`BTreeMap`] so iteration order is canonical.
 //!
 //! Use-count is a *heuristic weight*, not a correctness input: an operand-bearing
-//! variant not yet enumerated in [`accumulate`] merely under-counts a value's
+//! variant not yet enumerated in `accumulate` merely under-counts a value's
 //! weight (it may be spilled when it could have been a register) — it can never
 //! miscompile, because every DEFINED value that is not in the top-`K` falls
 //! through to [`Slot::Spill`], the existing stack scheme. The self-host subset
 //! (i64 `ConstI64`/`BinOp`/`Call`/`Param`/`Return` plus `If`/`While`) is covered
 //! exactly; the tensor/vector variants fall through conservatively.
 //!
-//! Coverage note: [`accumulate`] recurses into an [`Instr::Region`] *body* but
+//! Coverage note: `accumulate` recurses into an `Instr::Region` *body* but
 //! does not yet record `Region`'s own `result`/`enter_id`/`exit_id`/`alloc_ids`
 //! as defs, so a Region result value is never ranked and always defaults to
 //! [`Slot::Spill`]. That is safe under the conservative-fallthrough contract
