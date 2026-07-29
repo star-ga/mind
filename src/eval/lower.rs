@@ -1159,6 +1159,18 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
             }
         }
     });
+    // Task #270 / Fable IR-audit #2 — reset the NARROW_LOCALS registry at entry.
+    // Module-level narrow `let`s (the top-level item loop below) record into this
+    // thread-local BEFORE any fn body runs, and a fn body's `enter_narrow_scope`
+    // only take/restores around its OWN body — so a prior module's top-level
+    // `let c: u8 = 200` entry would survive on a shared thread (project build /
+    // LSP) and silently re-mask a later module's i64 `let c` via
+    // `mask_narrow_assign`. Clearing at entry (mirrors the MONO / ARRAY_PARAM_FNS
+    // / FN_RETURNS resets above) makes each lowering start clean. Empty for a
+    // narrow-free module (the keystone), so the clear is a no-op and emitted
+    // mic@1/mic@3 bytes + cross-substrate identity are byte-for-byte unchanged.
+    #[cfg(feature = "std-surface")]
+    NARROW_LOCALS.with(|n| n.borrow_mut().clear());
     let mut env: HashMap<String, ValueId> = HashMap::new();
     // RFC 0005 P0f Step 1 — track `let x = Foo { ... }` so a later
     // `x.field` can resolve `Foo`'s canonical field-name order from
@@ -5316,6 +5328,19 @@ fn lower_expr(
             let mut local_env = env.clone();
             #[allow(unused_mut)]
             let mut local_struct_env = struct_env.clone();
+            // Task #270 / Fable IR-audit #2 (sub-case) — block-scope the narrow-let
+            // recordings below. A block-local `let c: u8 = 5` records into the
+            // fn-wide NARROW_LOCALS map with no scoping; without restore, a later
+            // `c = 300` on an OUTER i64 `c` (rebound in `local_env` but same name)
+            // would be re-masked to 8 bits after the block ends — a silent
+            // miscompile. Snapshot the map on entry (outer narrow entries stay
+            // visible INSIDE the block so genuine outer-narrow reassignments still
+            // mask) and restore it on scope exit via the guard, dropping any
+            // block-local additions/overrides. Empty for a narrow-free block (the
+            // keystone), so the clone/restore is a no-op and emitted bytes are
+            // byte-for-byte unchanged.
+            #[cfg(feature = "std-surface")]
+            let _narrow_block_scope = NarrowLocalsGuard(NARROW_LOCALS.with(|n| n.borrow().clone()));
             let mut last_id = None;
             for stmt in stmts {
                 if let ast::Node::Let {
