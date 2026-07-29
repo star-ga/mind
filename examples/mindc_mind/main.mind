@@ -1714,6 +1714,29 @@ pub fn is_ident_i64(buf: i64, lo: i64, hi: i64) -> i64 {
     0
 }
 
+// The type name `f64` (3 bytes: 'f'=102, '6'=54, '4'=52). Gate for the
+// int->f64 WIDENING cast `EXPR as f64` (cvtsi2sd). Only an INT source is
+// accepted; a float source poisons in nb_expr's ast_cast arm (fail-closed).
+pub fn is_ident_f64(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo == 3 {
+        if load_byte(buf, lo + 0) == 102 {
+            if load_byte(buf, lo + 1) == 54 {
+                if load_byte(buf, lo + 2) == 52 {
+                    return 1;
+                }
+            }
+        }
+    }
+    0
+}
+
+// The ast_cast aux sentinel for an int->f64 widening cast. Distinct from the
+// integer cast widths (8/16/32/64) so nb_count_expr / nb_expr / nb_node_dtype
+// route the cvtsi2sd convert instead of a movsx truncate or the i64 saturator.
+pub fn nb_castw_f64() -> i64 {
+    1064
+}
+
 // The NARROWING integer cast targets: `i8`->8, `i16`->16, `i32`->32, else 0.
 // Bytes: 'i'=105, '8'=56, '1'=49, '6'=54, '3'=51, '2'=50. `i64` is NOT matched here
 // (it is the widening passthrough gated by is_ident_i64). Used by parse_postfix_rest
@@ -2334,7 +2357,17 @@ pub fn parse_postfix_rest(toks: Vec, pos: i64, buf: i64, recv: i64) -> ParseResu
                     let cnode: i64 = ast_new_cast(ast_span_lo(recv), cty_hi, recv, cw);
                     return parse_postfix_rest(toks, pos + 2, buf, cnode);
                 }
-                // Any OTHER `as TARGET` (f64/f32/u64/usize/...): explicitly
+                // `EXPR as f64` (int -> f64 WIDENING cast): build a real ast_cast
+                // node carrying the f64 sentinel width. nb_expr's arm lowers it via
+                // cvtsi2sd (INT source only; a FLOAT source poisons), and nb_node_dtype
+                // classifies the node FLOAT so a downstream float op / float-annotated
+                // let routes the SSE2 path. main.mind's own source has no non-comment
+                // `as`, so its parse — and every self-compile byte — is unchanged.
+                if is_ident_f64(buf, cty_lo, cty_hi) == 1 {
+                    let cf64: i64 = ast_new_cast(ast_span_lo(recv), cty_hi, recv, nb_castw_f64());
+                    return parse_postfix_rest(toks, pos + 2, buf, cf64);
+                }
+                // Any OTHER `as TARGET` (f32/u64/usize/...): explicitly
                 // UNSUPPORTED (fail-closed poison node -> 0B refusal). Before the
                 // B0 gate narrowing this fell through with `as` unconsumed —
                 // `x as f64` silently bound x's INT bits into a FLOAT-annotated
@@ -26053,6 +26086,27 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let cid: i64 = cs1.next_id;
         let cw: i64 = ast_aux(node);
         let cop_dt: i64 = nb_node_dtype_tbl(ast_child0(node), __mind_load_i64(lcell + 8), lets, lcell, buf, params_addr, n_params);
+        // INT -> f64 WIDENING cast `EXPR as f64`: cvtsi2sd xmm0, [operand slot] then
+        // movsd [dst], xmm0; the dst slot is tagged FLOAT so a downstream float op /
+        // float-annotated let routes the SSE2 path. Fixed 1-id layout (dst=cid),
+        // matching nb_count_expr's default cast arm (operand ids + 1). Only an
+        // INTEGER source is sound: a FLOAT source would cvtsi2sd raw IEEE-754 bits
+        // (a silent miscompile), and a struct/pointer slot is equally nonsensical —
+        // so anything that does not affirmatively classify as INT POISONS (0-byte
+        // refusal), keeping the fail-closed boundary sharp (the front-end type
+        // checker already rejects non-numeric `as f64`; this is defense in depth).
+        // main.mind's own source has no `as f64`, so this arm never fires during
+        // self-compile.
+        if cw == nb_castw_f64() {
+            if cop_dt != nb_dtype_int() {
+                __mind_store_i64(lcell + 80, 1);
+                return NbState { code: cs1.code, next_id: cid + 1, last_id: cid, ncalls: cs1.ncalls };
+            }
+            let cvf: String = nb_fp_cvtsi2sd_mem(cs1.code, nb_slot_disp(cop));
+            let cvs: String = nb_fp_movsd_store_xmm0(cvf, nb_slot_disp(cid));
+            let _ftg: i64 = nb_dtype_tag_slot(__mind_load_i64(lcell + 8), cid, nb_dtype_float());
+            return NbState { code: cvs, next_id: cid + 1, last_id: cid, ncalls: cs1.ncalls };
+        }
         // WIDTH-64 cast `EXPR as i64` (B0 lift; the parser now builds a real node).
         // Fixed 5-id layout matching nb_count_expr's cw==64 arm: raw=cid mpos=cid+1
         // mnan=cid+2 max=cid+3 dst=cid+4. A FLOAT source lowers through the
@@ -34120,6 +34174,13 @@ pub fn nb_node_dtype(node: i64) -> i64 {
         }
         return nb_dtype_int();
     }
+    // An int->f64 cast node (`EXPR as f64`) is FLOAT; every integer cast is INT.
+    if k == ast_cast() {
+        if ast_aux(node) == nb_castw_f64() {
+            return nb_dtype_float();
+        }
+        return nb_dtype_int();
+    }
     nb_dtype_int()
 }
 
@@ -34218,6 +34279,13 @@ pub fn nb_node_dtype_tbl(node: i64, tbl: i64, lets: i64, lcell: i64, buf: i64, p
     // fall-through returned).
     if k == ast_index() {
         return nb_index_elem_dtype(ast_child0(node), buf, lets, lcell);
+    }
+    // An int->f64 cast node (`EXPR as f64`) is FLOAT; every integer cast is INT.
+    if k == ast_cast() {
+        if ast_aux(node) == nb_castw_f64() {
+            return nb_dtype_float();
+        }
+        return nb_dtype_int();
     }
     nb_dtype_int()
 }

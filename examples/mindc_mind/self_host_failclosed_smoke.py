@@ -230,13 +230,12 @@ REFUSED = [
     # FLOATS (B0 gate LIFTED for f64): the general path now lowers the f64
     # tier soundly (see general_float_netverify.py for the value battery —
     # float lets/arith/compares/params/calls, saturating `f as i64`, entry
-    # trunc-to-exit). The REMAINING float refusals are locked here: f32 (the
-    # general tier computes in scalar-double — f64-rounding a declared-f32
-    # program would be a silent miscompile), `as` to a non-integer target
-    # (an explicit parser refusal — the old fall-through was a coercion-shaped
-    # leak), MIXED float/int binops (the pre-gate fail-OPEN leak class: raw
-    # IEEE-754 bits flowed into the GP integer path), and float conditions.
-    ("as f64 cast", M("let x:i64=3; let f:f64=x as f64; return 0;"), "0B"),
+    # trunc-to-exit, and the int->f64 `x as f64` cvtsi2sd cast). The REMAINING
+    # float refusals are locked here: f32 (the general tier computes in
+    # scalar-double — f64-rounding a declared-f32 program would be a silent
+    # miscompile), `as f64` on a FLOAT source (cvtsi2sd of raw IEEE-754 bits —
+    # poisoned 0B), MIXED float/int binops (the pre-gate fail-OPEN leak class:
+    # raw IEEE-754 bits flowed into the GP integer path), and float conditions.
     ("f32 let", M("let f:f32=2.0; return 5;"), "0B"),
     ("float range bound", M("let mut c:i64=0; for i in 0..1.5 { c=c+1; } return c;"), "0B"),
     ("mixed float+int binop", M("let f:f64=2.0; return f + 5;"), "0B"),
