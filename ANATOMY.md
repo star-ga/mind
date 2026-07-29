@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3217 | **Est. tokens:** ~7,750,537
-**Generated:** 2026-07-28 11:10 UTC
+**Files:** 3217 | **Est. tokens:** ~7,750,569
+**Generated:** 2026-07-29 09:26 UTC
 
 ## Token Budget Guide
 
@@ -40,7 +40,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,450 |
-| `docs/` | 32 | ~71,436 |
+| `docs/` | 32 | ~71,468 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
@@ -675,7 +675,7 @@
 - `v0.3.md` (~110 tok, small) — MIND Design v0.3 (Draft)
 ### `docs/`
 
-- `determinism.md` (~3956 tok, huge) — The Determinism Contract
+- `determinism.md` (~3988 tok, huge) — The Determinism Contract
 - `errors.md` (~701 tok, large) — MIND Core Error Model
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
 - `gpu.md` (~387 tok, medium) — GPU backend profile

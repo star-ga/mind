@@ -30,12 +30,12 @@ on backend / GPU / optimization level"* — does not exist in MIND.
 
 Determinism in MIND is **checkable**. Each compiled artifact embeds an evidence
 chain whose `trace_hash = SHA-256` of the canonical `mic@3` bytes. Identical
-(source, inputs, version, target) ⇒ identical `trace_hash`. `mind verify ./artifact`
+(source, inputs, version, target) ⇒ identical `trace_hash`. `mindc verify ./artifact`
 confirms it without trusting the build host. No other toolchain ships a verifiable
 determinism contract. ✅
 
 The verifier also re-derives the artifact's **floating-point contract mode**
-(`strict` / `relaxed`) directly from the hashed body — so `mind verify
+(`strict` / `relaxed`) directly from the hashed body — so `mindc verify
 --require-strict-fp ./artifact` fails closed unless the artifact was lowered on
 the strict path (no FMA-contraction, no `f32` reduction reassociation). Because
 the mode is a pure function of bytes the `trace_hash` already attests, this is
@@ -134,9 +134,11 @@ Two execution tiers; the contract is **bit-identity**, never "within tolerance"
   today — fixed source order, no FMA-contraction, no reassociation — and is
   run-to-run bit-identical. The `cross_substrate` suite enforces x86(avx2) ==
   ARM(neon) for the **integer/Q16.16** canaries by construction; the strict
-  *scalar-float* legs pin on avx2 + run-to-run and DEFER the neon assertion until
-  a real-aarch64 bless (`pin_or_defer_strict_fp`), so float byte-identity is a
-  contract we hold, not yet a suite-gated one for every substrate. Separately, and
+  *scalar-float* legs are now committed on **both** avx2 and neon (real aarch64
+  silicon, byte-identical across four independent runs), and `pin_strict_fp` is
+  fail-closed — a substrate with no committed strict-FP hash can no longer green
+  the gate. Strict-f32 x86==ARM byte-identity is therefore suite-gated and proven
+  by execution, not argued. Separately, and
   **outside** the `cross_substrate` suite (which has no GPU arm), the same `f64`
   Lorenz–Euler integrator has been verified by hand to produce results identical
   to the last bit on an x86 CPU and on an NVIDIA GPU (CUDA, `sm_86`), because the
@@ -260,10 +262,10 @@ non-determinism is a **traced, attested opt-in** across three layers:
    declares `deterministic`. The flag authorises the *build*, never the *label*.
 3. **Verify re-derivation (tamper-proof).** The `determinism` field lives in the
    MAP epilogue, outside the `trace_hash` anchor, so on an unsigned artifact it
-   would be forgeable. `mind verify` therefore **re-derives** the mode from the
+   would be forgeable. `mindc verify` therefore **re-derives** the mode from the
    hashed body (exactly as it re-derives `fp_mode`), reports that authoritative
    value, and **fails closed** if the stored field disagrees — a forged
-   `deterministic` label cannot pass. `mind verify --require-deterministic` fails
+   `deterministic` label cannot pass. `mindc verify --require-deterministic` fails
    closed for a consumer that requires reproducibility.
 
 The result: the attestation can never lie, and non-determinism is always
