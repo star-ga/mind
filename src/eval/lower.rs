@@ -917,6 +917,77 @@ fn lower_pure_scalar_item(n: &ast::Node, ir: &mut IRModule) -> ValueId {
     }
 }
 
+/// Register one enum's variant-tag / boxed-record metadata into `ir`, exactly as
+/// the top-level `EnumDef` lowering arm does: ordinal `0,1,2,…` tags under the
+/// qualified `Enum::Variant` path, plus (for an enum with a payload on ≥1
+/// variant) the boxed-record slot count and per-variant payload/field-name
+/// tables. Extracted so the top-level arm AND the module-wrapped pre-pass
+/// (`register_module_wrapped_enum_tags`) share ONE registration, guaranteeing a
+/// `module { enum … }` variant resolves its tag identically to a top-level one.
+#[cfg(feature = "std-surface")]
+fn register_enum_metadata(ir: &mut IRModule, name: &str, variants: &[ast::EnumVariant]) {
+    for (ordinal, variant) in variants.iter().enumerate() {
+        ir.enum_variant_tags
+            .insert(format!("{name}::{}", variant.name), ordinal as i64);
+    }
+    let max_arity = variants.iter().map(|v| v.payload.len()).max().unwrap_or(0);
+    if max_arity > 0 {
+        ir.boxed_enums.insert(name.to_string());
+        ir.enum_payload_slots
+            .insert(name.to_string(), 1 + max_arity);
+        for variant in variants {
+            if !variant.payload.is_empty() {
+                ir.enum_payload_types
+                    .insert(format!("{name}::{}", variant.name), variant.payload.clone());
+            }
+            if !variant.field_names.is_empty() {
+                ir.enum_struct_field_names.insert(
+                    format!("{name}::{}", variant.name),
+                    variant.field_names.clone(),
+                );
+            }
+        }
+    }
+}
+
+/// Pre-pass (task #271): register variant tags for every `enum` declared INSIDE a
+/// `module { … }` block. The parser lowers `module NAME { … }` to a transparent
+/// `ast::Node::Block`, so a nested `EnumDef` never reaches the top-level `EnumDef`
+/// arm of the main lowering loop — leaving `enum_variant_tags` unpopulated for it.
+/// A `match Mode::Off { Mode::On => …, Mode::Off => … }` then found NO tag in
+/// `pattern_test`/`desugar_match_to_if` and DEGRADED to the scrutinee-ignoring
+/// sequential fallback that returns the LAST arm for every input — a silent
+/// miscompile (HIGH). Registering here, BEFORE any body lowers, makes the
+/// module-qualified path (`Mode::On`) available to EVERY match regardless of item
+/// order — exactly as the cross-module registry does for sibling-module enums —
+/// and the short (bare) form resolves off those qualified entries in
+/// `resolve_bare`. Only descends into `Node::Block` wrappers; a top-level
+/// `EnumDef` keeps its existing inline registration in the main loop, so a module
+/// with no module-wrapped enum is byte-for-byte unchanged.
+#[cfg(feature = "std-surface")]
+fn register_module_wrapped_enum_tags(ir: &mut IRModule, items: &[ast::Node]) {
+    for item in items {
+        if let ast::Node::Block { stmts, .. } = item {
+            register_enums_in_block(ir, stmts);
+        }
+    }
+}
+
+/// Recursive worker for [`register_module_wrapped_enum_tags`]: registers every
+/// `EnumDef` found directly in `stmts` and descends into further nested blocks.
+#[cfg(feature = "std-surface")]
+fn register_enums_in_block(ir: &mut IRModule, stmts: &[ast::Node]) {
+    for stmt in stmts {
+        match stmt {
+            ast::Node::EnumDef { name, variants, .. } => {
+                register_enum_metadata(ir, name, variants);
+            }
+            ast::Node::Block { stmts, .. } => register_enums_in_block(ir, stmts),
+            _ => {}
+        }
+    }
+}
+
 pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     // PURE-SCALAR FAST LANE. For a module whose every item passes
     // `is_pure_scalar_arith_item` (the `scalar_math` compile-speed floor:
@@ -1082,6 +1153,14 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
             }
         });
     }
+    // Task #271: register variant tags for enums declared inside `module { … }`
+    // blocks BEFORE any body lowers, so a match on a module-wrapped variant
+    // resolves its tag (real discriminant jump) instead of degrading to the
+    // scrutinee-ignoring last-arm sequential fallback (a silent miscompile). A
+    // no-op for any module with no `module { enum … }` block (the keystone,
+    // every canary) → emitted bytes are byte-for-byte unchanged there.
+    #[cfg(feature = "std-surface")]
+    register_module_wrapped_enum_tags(&mut ir, &module.items);
     // Pre-size the instruction buffer. `IRModule::new()` starts `instrs` at
     // capacity 0, so the AST→IR builder below grows it 0→4→8→16…, and the
     // profiler attributes the resulting `RawVec::finish_grow` realloc +
@@ -1482,40 +1561,15 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
             // declaration-only IR-shape contract (mirrors `StructDef`).
             #[cfg(feature = "std-surface")]
             ast::Node::EnumDef { name, variants, .. } => {
-                for (ordinal, variant) in variants.iter().enumerate() {
-                    let path = format!("{name}::{}", variant.name);
-                    ir.enum_variant_tags.insert(path, ordinal as i64);
-                }
-                // A "boxed" enum carries a payload on ≥1 variant. Record it so
-                // EVERY constructor of this enum (including its fieldless
-                // variants) lowers to the uniform heap record, keeping the
-                // match's `__mind_load_i64(scrutinee + 0)` tag-read valid. The
-                // record is `1 + max payload arity` i64 slots (tag + the widest
-                // variant's fields), used for every variant so any arm's
-                // field-load addresses valid memory.
-                let max_arity = variants.iter().map(|v| v.payload.len()).max().unwrap_or(0);
-                if max_arity > 0 {
-                    ir.boxed_enums.insert(name.clone());
-                    ir.enum_payload_slots.insert(name.clone(), 1 + max_arity);
-                    // Record each variant's declared field types so the ctor and
-                    // match desugar can coerce a non-i64 field across the i64 slot.
-                    for variant in variants {
-                        if !variant.payload.is_empty() {
-                            ir.enum_payload_types.insert(
-                                format!("{name}::{}", variant.name),
-                                variant.payload.clone(),
-                            );
-                        }
-                        // Struct-variant field-name order, so a named construction
-                        // / match resolves each field to its declared slot.
-                        if !variant.field_names.is_empty() {
-                            ir.enum_struct_field_names.insert(
-                                format!("{name}::{}", variant.name),
-                                variant.field_names.clone(),
-                            );
-                        }
-                    }
-                }
+                // Record the variant tags + (for a payload-carrying enum) the
+                // boxed-record slot count and per-variant payload/field-name
+                // tables. Shared verbatim with the module-wrapped pre-pass via
+                // `register_enum_metadata` so a `module { enum … }` variant
+                // resolves identically to a top-level one (task #271). An enum
+                // declaration is a no-op at the value level, so the
+                // `ConstI64(0)`/`Output` placeholder is preserved for the
+                // declaration-only IR-shape contract (mirrors `StructDef`).
+                register_enum_metadata(&mut ir, name, variants);
                 let id = ir.fresh();
                 ir.instrs.push(Instr::ConstI64(id, 0));
                 ir.instrs.push(Instr::Output(id));
@@ -8793,6 +8847,24 @@ fn string_pattern_test(scrutinee: &ast::Node, lit: &str, span: crate::ast::Span)
     test
 }
 
+/// Reduce a module-qualified variant path `mod.Enum::Variant` to the registry
+/// key `Enum::Variant` by stripping the leading `mod.` prefix off the enum
+/// segment (`config.Mode::On` → `Mode::On`). A path with no `::` (or no `.` in
+/// its enum segment) is returned unchanged. Task #271.
+#[cfg(feature = "std-surface")]
+fn module_qualified_variant_key(path: &str) -> String {
+    match path.rsplit_once("::") {
+        Some((enum_seg, variant)) => {
+            let enum_name = enum_seg
+                .rsplit_once('.')
+                .map(|(_, e)| e)
+                .unwrap_or(enum_seg);
+            format!("{enum_name}::{variant}")
+        }
+        None => path.to_string(),
+    }
+}
+
 /// `Node::Binary(Eq)` nodes and is lowered through the unchanged
 /// `ast::Node::If` arm, so none of the dominance/merge machinery is touched.
 #[cfg(feature = "std-surface")]
@@ -8923,6 +8995,32 @@ fn desugar_match_to_if(
                     .collect();
                 ast::MatchArm {
                     pattern: ast::Pattern::EnumVariant { path: key, args },
+                    guard: arm.guard.clone(),
+                    body: arm.body.clone(),
+                    span: arm.span,
+                }
+            }
+            // A MODULE-qualified variant path `mod.Enum::Variant`
+            // (`config.Mode::On`, from `match m { config.Mode::On => … }`): the
+            // tag registry is keyed by `Enum::Variant`, so strip the leading
+            // `mod.` prefix off the enum segment (task #271). Only rewrite when
+            // the stripped `Enum::Variant` is a KNOWN tag; a genuinely-unknown
+            // path is left verbatim so the fail-closed poison in `pattern_test`
+            // catches the typo instead of a silent last-arm fallback.
+            ast::Pattern::EnumVariant { path, args }
+                if path.contains('.') && path.contains("::") =>
+            {
+                let stripped = module_qualified_variant_key(path);
+                let key = if enum_tags.contains_key(&stripped) {
+                    stripped
+                } else {
+                    path.clone()
+                };
+                ast::MatchArm {
+                    pattern: ast::Pattern::EnumVariant {
+                        path: key,
+                        args: args.clone(),
+                    },
                     guard: arm.guard.clone(),
                     body: arm.body.clone(),
                     span: arm.span,
@@ -9149,20 +9247,25 @@ fn desugar_match_to_if(
             // bare scrutinee against the tag; payload variants compare the
             // loaded tag and bind their payload (handled by `build_binds`).
             ast::Pattern::EnumVariant { path, .. } => {
-                // deferred: this exact miss SHOULD fail-closed (IR-audit finding
-                // #3 route 2 — an unknown variant tag drops the whole match into
-                // the scrutinee-ignoring sequential fallback that returns the
-                // LAST arm, a silent miscompile). It is NOT poisoned here because
-                // module-wrapped enums (`module m { enum Mode { On, Off } }`) are
-                // NOT registered in `enum_variant_tags` at this lowering point, so
-                // a VALID `Mode::On` arm also misses the registry (identical to a
-                // truly-unknown `Ghost::A`) — a poison here reddens
-                // `tests/parse_match_and_ref.rs` (5 legitimate module-wrapped
-                // matches). upgrade path: register module-qualified variant tags
-                // (populate `enum_variant_tags` for `module { enum … }` items)
-                // BEFORE match lowering, then a registry miss is unambiguously a
-                // dangling tag and this `?` can become a fail-closed poison.
-                let tag = enum_tags.get(path).copied()?;
+                // Fail-closed poison (IR-audit finding #3 route 2, task #271):
+                // a registry MISS here is now unambiguously a DANGLING variant
+                // tag — every VALID variant (top-level AND module-wrapped, the
+                // latter now registered by `register_module_wrapped_enum_tags`
+                // BEFORE any body lowers) resolves. Previously this `?` returned
+                // `None`, dropping the WHOLE match into the scrutinee-ignoring
+                // sequential fallback that returns the LAST arm for every input
+                // — a silent miscompile. Panic loudly (mirrors the `(None,None)`
+                // bare-collision poison below) instead of miscompiling a match
+                // on a non-existent variant.
+                let Some(tag) = enum_tags.get(path).copied() else {
+                    panic!(
+                        "match arm variant `{path}` is not a registered enum variant \
+                         (unknown/dangling tag) — lowering it would drop the whole \
+                         match into a scrutinee-ignoring sequential evaluation that \
+                         returns the last arm (a silent miscompile). Check the variant \
+                         spelling and that its `enum` is in scope."
+                    );
+                };
                 Some(Some(ast::Node::Binary {
                     op: ast::BinOp::Eq,
                     left: Box::new(cmp_lhs.clone()),

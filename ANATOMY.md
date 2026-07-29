@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3224 | **Est. tokens:** ~7,743,928
-**Generated:** 2026-07-29 16:17 UTC
+**Files:** 3223 | **Est. tokens:** ~7,744,962
+**Generated:** 2026-07-29 17:17 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 35 | ~25,641 |
+| `./` | 33 | ~25,641 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -414,7 +414,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~194,333 |
-| `tests/` | 301 | ~515,003 |
+| `tests/` | 302 | ~516,037 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -472,8 +472,6 @@
 
 ### `./`
 
-- `10,` (~0 tok, tiny)
-- `20` (~0 tok, tiny)
 - `ARCHITECTURE.md` (~300 tok, medium) — MIND Architecture (high level)
 - `AUDIT_REPORT.md` (~1151 tok, large) — Audit Report
 - `.bench-baseline-2026-04-27.txt` (~531 tok, large) —    Compiling mind v0.2.3 (.)
@@ -4546,6 +4544,7 @@
 - `mlkem768_driver.py` (~1699 tok, huge) — # Reference-vector driver for std/mlkem768.mind (pure-MIND ML-KEM-768,
 - `module_const_run.rs` (~774 tok, large) — Copyright 2025 STARGA Inc.
 - `module_decl_run.rs` (~643 tok, large) — Copyright 2025 STARGA Inc.
+- `module_enum_match_run.rs` (~1034 tok, large) — Copyright 2025 STARGA Inc.
 - `narrow_call_abi.rs` (~1374 tok, large) — Copyright 2025 STARGA Inc.
 - `narrowing_check.rs` (~438 tok, medium) — Regression test for the silent i64->i32 narrowing miscompile found by MIND-Fuzz
 - `narrow_local_mask_run.rs` (~838 tok, large) — Copyright 2025 STARGA Inc.

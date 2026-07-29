@@ -1620,63 +1620,79 @@ fn build_global_enums(parsed: &[(String, crate::ast::Module)]) -> crate::ir::Glo
     let mut enums = crate::ir::GlobalEnums::default();
     for (_path, module) in parsed {
         for item in &module.items {
-            if let crate::ast::Node::EnumDef { name, variants, .. } = item {
-                if !enums.names.iter().any(|n| n == name) {
-                    enums.names.push(name.clone());
-                }
-                #[cfg(feature = "std-surface")]
-                {
-                    for (ordinal, variant) in variants.iter().enumerate() {
-                        enums
-                            .variant_tags
-                            .insert(format!("{name}::{}", variant.name), ordinal as i64);
-                    }
-                    let max_arity = variants.iter().map(|v| v.payload.len()).max().unwrap_or(0);
-                    if max_arity > 0 {
-                        enums.boxed.insert(name.clone());
-                        enums.slots.insert(name.clone(), 1 + max_arity);
-                        for variant in variants {
-                            if !variant.payload.is_empty() {
-                                enums.payload_types.insert(
-                                    format!("{name}::{}", variant.name),
-                                    variant.payload.clone(),
-                                );
-                            }
-                            if !variant.field_names.is_empty() {
-                                enums.struct_field_names.insert(
-                                    format!("{name}::{}", variant.name),
-                                    variant.field_names.clone(),
-                                );
-                            }
-                        }
-                    }
-                }
-                #[cfg(not(feature = "std-surface"))]
-                let _ = variants;
-            }
-            // Every struct → (field names, field types) for cross-module field
-            // resolution (a module reading a sibling-module struct's collection
-            // field, e.g. compile.mind's `analyzed.determinism`).
-            #[cfg(feature = "std-surface")]
-            if let crate::ast::Node::StructDef { name, fields, .. } = item {
-                let field_names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
-                let field_types: Vec<crate::ast::TypeAnn> =
-                    fields.iter().map(|f| f.ty.clone()).collect();
-                enums
-                    .structs
-                    .insert(name.clone(), (field_names, field_types));
-            }
-            // Every fn → its declared return type, for `let x = f(...)` RHS type
-            // inference (`let raw = decorator_arg_string(d); raw.split(…)`).
-            #[cfg(feature = "std-surface")]
-            if let crate::ast::Node::FnDef(fd, _) = item
-                && let Some(rt) = &fd.ret_type
-            {
-                enums.fn_returns.insert(fd.name.clone(), rt.clone());
-            }
+            collect_global_enum_item(item, &mut enums);
         }
     }
     enums
+}
+
+/// Record one top-level item's enum / struct / fn-return metadata into the
+/// whole-project [`crate::ir::GlobalEnums`] registry, descending into
+/// `module { … }` blocks (task #271: a module-wrapped `enum` is parsed to a
+/// transparent `Node::Block`, so without this recursion a cross-module match on
+/// its variant would find no tag and silently take the last-arm fallback — the
+/// same miss the per-module `register_module_wrapped_enum_tags` pre-pass closes
+/// for the single-file path).
+#[cfg(feature = "cross-module-imports")]
+fn collect_global_enum_item(item: &crate::ast::Node, enums: &mut crate::ir::GlobalEnums) {
+    if let crate::ast::Node::EnumDef { name, variants, .. } = item {
+        if !enums.names.iter().any(|n| n == name) {
+            enums.names.push(name.clone());
+        }
+        #[cfg(feature = "std-surface")]
+        {
+            for (ordinal, variant) in variants.iter().enumerate() {
+                enums
+                    .variant_tags
+                    .insert(format!("{name}::{}", variant.name), ordinal as i64);
+            }
+            let max_arity = variants.iter().map(|v| v.payload.len()).max().unwrap_or(0);
+            if max_arity > 0 {
+                enums.boxed.insert(name.clone());
+                enums.slots.insert(name.clone(), 1 + max_arity);
+                for variant in variants {
+                    if !variant.payload.is_empty() {
+                        enums
+                            .payload_types
+                            .insert(format!("{name}::{}", variant.name), variant.payload.clone());
+                    }
+                    if !variant.field_names.is_empty() {
+                        enums.struct_field_names.insert(
+                            format!("{name}::{}", variant.name),
+                            variant.field_names.clone(),
+                        );
+                    }
+                }
+            }
+        }
+        #[cfg(not(feature = "std-surface"))]
+        let _ = variants;
+    }
+    // Every struct → (field names, field types) for cross-module field
+    // resolution (a module reading a sibling-module struct's collection
+    // field, e.g. compile.mind's `analyzed.determinism`).
+    #[cfg(feature = "std-surface")]
+    if let crate::ast::Node::StructDef { name, fields, .. } = item {
+        let field_names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
+        let field_types: Vec<crate::ast::TypeAnn> = fields.iter().map(|f| f.ty.clone()).collect();
+        enums
+            .structs
+            .insert(name.clone(), (field_names, field_types));
+    }
+    // Every fn → its declared return type, for `let x = f(...)` RHS type
+    // inference (`let raw = decorator_arg_string(d); raw.split(…)`).
+    #[cfg(feature = "std-surface")]
+    if let crate::ast::Node::FnDef(fd, _) = item
+        && let Some(rt) = &fd.ret_type
+    {
+        enums.fn_returns.insert(fd.name.clone(), rt.clone());
+    }
+    // Descend into a `module { … }` wrapper (a transparent `Node::Block`).
+    if let crate::ast::Node::Block { stmts, .. } = item {
+        for inner in stmts {
+            collect_global_enum_item(inner, enums);
+        }
+    }
 }
 
 /// Emit a visible warning when a project module cannot be compiled natively and
