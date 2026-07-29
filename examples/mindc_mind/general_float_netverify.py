@@ -92,6 +92,13 @@ SUPPORTED = [
     ("float in sep fn", "fn h()->i64{ let f:f64=1.5; return 0; }\nfn main()->i64{ return h(); }", 0),
     ("f64 struct field decl only", "struct F { a: f64 }\nfn main()->i64{ return 0; }", 0),
     ("int as i64 identity", M("let x:i64=41; return (x as i64) + 1;"), 42),
+    # int -> f64 WIDENING cast `x as f64` (cvtsi2sd): value round-trips AND the
+    # FLOAT dtype tag routes a downstream float op through SSE2, not the GP int
+    # path. These are the only fixtures that exercise the emit arm added at
+    # main.mind ~26096 (every other f64 fixture uses a float LITERAL, which
+    # lowers through the const path, not cvtsi2sd).
+    ("int as f64 round-trip (3)", M("let x:i64=3; let f:f64=x as f64; return (f as i64);"), 3),
+    ("int as f64 then float add", M("let x:i64=2; let f:f64=x as f64; let g:f64=f+1.5; return (g as i64);"), 3),
     ("float let + int while", M("let f:f64=1.0; let mut c:i64=0; while c < 2 { c = c + 1; } return c;"), 2),
     # big-but-representable literals (<= 18 integer-content digits stay EXACT;
     # value-proving division so a wrong bit pattern cannot sneak through):
@@ -110,7 +117,10 @@ REFUSED = [
     ("narrowing cast of float", M("let f:f64=2.5; return f as i8;")),
     ("bare float if cond", M("let f:f64=1.5; if f { return 1; } return 2;")),
     ("bare float while cond", M("let f:f64=1.5; while f { return 0; } return 1;")),
-    ("as f64 (int->float cast)", M("let x:i64=3; let f:f64=x as f64; return 0;")),
+    # `as f64` on an INT source LANDED (see SUPPORTED above); the remaining
+    # refusal is `as f64` on a FLOAT source, which would cvtsi2sd raw IEEE-754
+    # bits — a silent miscompile — so the emit arm poisons it 0B.
+    ("as f64 of float source", M("let f:f64=1.5; let g:f64=f as f64; return 0;")),
     # HUGE literals (>= 2^63): the i64 numerator in the literal builder WRAPS
     # (2^64 wraps num to exactly 0) and the wrapped value could pass the dyadic
     # test while the bits builder emitted ~0.0 — the blind-review fail-OPEN.
