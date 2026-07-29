@@ -3386,7 +3386,17 @@ impl LoweringContext {
                             arg_refs.push(format!("%{}", a.0));
                         }
                     }
-                    let call_ret_ty = ret_type.as_deref().unwrap_or("i64");
+                    let ret_tok = ret_type.as_deref().unwrap_or("i64");
+                    let call_ret_ty = extern_ret_mlir_ty(ret_tok);
+                    // Fable IR-audit #1: a narrow SCALAR return (SysV/C only) is
+                    // read at its real width, then sign/zero-extended to the i64
+                    // MIND value. Win64 is left verbatim (its classifier path is
+                    // out of this fix's scope).
+                    let narrow_ext = if matches!(callconv, crate::ast::CallConv::Win64) {
+                        None
+                    } else {
+                        extern_ret_narrow_ext(ret_tok)
+                    };
                     let varargs_suffix = if is_varargs { ", ..." } else { "" };
                     // RFC 0010 Phase C: emit cconv attribute for Win64 calls.
                     let cconv_attr = cconv_attr_for(callconv);
@@ -3405,6 +3415,23 @@ impl LoweringContext {
                         self.emit_line(&format!(
                             "    %{} = llvm.ptrtoint {raw} : !llvm.ptr to i64",
                             dst.0
+                        ));
+                    } else if let Some((ext_op, width)) = narrow_ext {
+                        // Narrow scalar return: read only the callee-written bits
+                        // at their real width, then extend to the i64 MIND value.
+                        let raw = format!("%narrowret_{}", dst.0);
+                        self.emit_line(&format!(
+                            "    {raw} = llvm.call{} @{}({}) : ({}{}) -> {}",
+                            cconv_attr,
+                            name,
+                            arg_refs.join(", "),
+                            param_type_str.join(", "),
+                            varargs_suffix,
+                            width,
+                        ));
+                        self.emit_line(&format!(
+                            "    %{} = {} {raw} : {} to i64",
+                            dst.0, ext_op, width,
                         ));
                     } else {
                         self.emit_line(&format!(
@@ -10733,7 +10760,9 @@ pub fn lower_ir_to_mlir_with_entry(
         } else {
             String::new()
         };
-        let ret_str = ret_type.as_deref().unwrap_or("i64");
+        // Fable IR-audit #1: normalize a narrow-scalar return token to its
+        // signless MLIR width for the declaration (e.g. `u32`→`i32`, `bool`→`i8`).
+        let ret_str = ret_type.as_deref().map(extern_ret_mlir_ty).unwrap_or("i64");
         let cconv_attr = cconv_attr_for(*callconv);
         out.push_str(&format!(
             "  llvm.func{cconv_attr} @{name}({params_str}{varargs_suffix}) -> {ret_str}\n"
@@ -10801,6 +10830,46 @@ fn cconv_attr_for(callconv: crate::ast::CallConv) -> &'static str {
         CallConv::Win64 => " cconv = #llvm.cconv<win64cc>",
         // SysV, C (platform default), Aapcs (Phase D) — no cconv attribute.
         _ => "",
+    }
+}
+
+/// Fable IR-audit #1 — normalize an extern return-type token to a valid signless
+/// MLIR type. The SysV narrow-scalar tokens `u8`/`u16`/`u32`/`bool` are MIND
+/// names (chosen in `src/eval/lower.rs::extern_ret_type_to_mlir_for` so their
+/// signedness survives to `extern_ret_narrow_ext`); map them to the signless
+/// MLIR width. Every other string is already valid MLIR (`i8`/`i16`/`i32`/`i64`/
+/// `f32`/`f64`/`!llvm.ptr`, including the Win64 classifier outputs) and passes
+/// through untouched.
+#[cfg(feature = "std-surface")]
+fn extern_ret_mlir_ty(tok: &str) -> &str {
+    match tok {
+        "u8" => "i8",
+        "u16" => "i16",
+        "u32" => "i32",
+        "bool" => "i8",
+        other => other,
+    }
+}
+
+/// Fable IR-audit #1 — for a SysV narrow-scalar extern return token, the
+/// `(arith op, narrow MLIR width)` pair used to widen the call result to the
+/// i64 MIND value; `None` for any non-narrow return (`i64`/`f32`/`f64`/ptr/
+/// struct-register), which is used verbatim. Signed widths sign-extend
+/// (`arith.extsi`); `u*`/`bool` zero-extend (`arith.extui`, giving `_Bool`
+/// the canonical `{0,1}`). This is only ever consulted on the SysV/C path — the
+/// SysV struct classifier never emits `i8`/`i16`/`i32`, so a narrow-int token
+/// here is unambiguously a scalar return.
+#[cfg(feature = "std-surface")]
+fn extern_ret_narrow_ext(tok: &str) -> Option<(&'static str, &'static str)> {
+    match tok {
+        "i8" => Some(("arith.extsi", "i8")),
+        "i16" => Some(("arith.extsi", "i16")),
+        "i32" => Some(("arith.extsi", "i32")),
+        "u8" => Some(("arith.extui", "i8")),
+        "u16" => Some(("arith.extui", "i16")),
+        "u32" => Some(("arith.extui", "i32")),
+        "bool" => Some(("arith.extui", "i8")),
+        _ => None,
     }
 }
 

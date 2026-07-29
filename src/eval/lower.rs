@@ -7542,10 +7542,11 @@ fn lower_expr(
                 let ret_type = efn.ret_type.as_ref().map(|t| {
                     // Return types: structs >8B returned via hidden pointer;
                     // use first ABI slot as the declared return type (single register).
-                    extern_type_to_mlir_multi_for(t, &repr_c_snapshot, effective_callconv)
-                        .into_iter()
-                        .next()
-                        .unwrap_or_else(|| "i64".to_string())
+                    // Fable IR-audit #1: a narrow SCALAR return declares its REAL
+                    // width (i8/i16/i32) instead of collapsing to i64, so the call
+                    // reads only the bits the callee wrote and sign/zero-extends
+                    // them to the i64 MIND value (see extern_ret_type_to_mlir_for).
+                    extern_ret_type_to_mlir_for(t, &repr_c_snapshot, effective_callconv)
                 });
                 ir.instrs.push(Instr::ExternFnDecl {
                     name: efn.name.clone(),
@@ -10075,6 +10076,65 @@ pub(crate) fn extern_type_to_mlir_multi_for(
             extern_type_to_mlir_multi(ty, repr_c)
         }
     }
+}
+
+/// Fable IR-audit #1 — narrow-scalar extern RETURN type classifier (SysV/C).
+///
+/// A narrow C scalar return (`char`/`short`/`int`/`_Bool`) is written by the
+/// callee to only the low bits of `rax` — e.g. an `int` result lands in `eax`
+/// with the high 32 bits of `rax` ABI-unspecified (a `-1` gives
+/// `rax = 0x0000_0000_FFFF_FFFF`). The old return map collapsed every narrow
+/// scalar to `i64`, so the `llvm.call` read the FULL `rax` and mis-recovered a
+/// negative `int` as `4294967295` (and read undefined high bits for sub-32-bit
+/// widths — a nondeterminism / cross-substrate break). Because the width was
+/// erased at DECLARATION time, no downstream `extsi` could recover it.
+///
+/// This helper instead declares the REAL narrow MLIR width for a scalar return
+/// so the call reads only the bits the callee wrote; the call site then
+/// sign/zero-extends that narrow value to the i64 MIND value
+/// (`src/mlir/lowering.rs`, see `extern_ret_mlir_ty` / `extern_ret_narrow_ext`).
+/// The token returned here is the MIND scalar NAME (`i8`/`i16`/`i32` signed,
+/// `u8`/`u16`/`u32`/`bool` unsigned) so signedness survives to the extension
+/// choice — it is normalized to a signless MLIR type at every emission point.
+///
+/// Scope matches the audit finding exactly: only the SysV / C (and the
+/// Aapcs→SysV fallback) path is narrowed here. Win64 is left verbatim to its
+/// existing classifier (`extern_type_to_mlir_multi_win64`), which already maps
+/// scalars to their real narrow width. Struct / pointer / float / `i64`
+/// returns fall through to the unchanged first-ABI-slot behavior — the SysV
+/// struct classifier never emits `i8`/`i16`/`i32`, so a narrow-int return token
+/// on this path is unambiguously a scalar at the consuming call site.
+///
+/// deferred: PARAM narrowing and the Win64 call-site extension are intentionally
+/// out of scope for this fix (audit #1 is the SCALAR SysV return map) — upgrade
+/// path: mirror this narrow-return/extend pair on the Win64 call path once a
+/// Win64 narrow-return artifact is exercised end-to-end.
+#[cfg(feature = "std-surface")]
+pub(crate) fn extern_ret_type_to_mlir_for(
+    ty: &crate::ast::TypeAnn,
+    repr_c: &std::collections::BTreeMap<String, Vec<crate::ast::TypeAnn>>,
+    callconv: crate::ast::CallConv,
+) -> String {
+    use crate::ast::{CallConv, TypeAnn};
+    if !matches!(callconv, CallConv::Win64) {
+        let token = match ty {
+            TypeAnn::Named(name) => match name.as_str() {
+                "i8" | "i16" | "i32" | "u8" | "u16" | "u32" | "bool" => Some(name.clone()),
+                _ => None,
+            },
+            TypeAnn::ScalarI32 => Some("i32".to_string()),
+            TypeAnn::ScalarU32 => Some("u32".to_string()),
+            TypeAnn::ScalarBool => Some("bool".to_string()),
+            _ => None,
+        };
+        if let Some(tok) = token {
+            return tok;
+        }
+    }
+    extern_type_to_mlir_multi_for(ty, repr_c, callconv)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| "i64".to_string())
 }
 
 /// RFC 0010 Phase C — Win64 variant of `extern_type_to_mlir_multi`.
