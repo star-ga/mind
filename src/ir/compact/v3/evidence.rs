@@ -464,8 +464,14 @@ fn compute_signature_payload(
 ///
 /// Returns an [`EvidenceReport`] with `trace_hash_valid = true` when the stored
 /// `trace_hash` equals the SHA-256 of the canonical mic@3 bytes of the parsed
-/// module.  A single flipped byte anywhere in the body or MAP flips
-/// `trace_hash_valid` to `false`.
+/// module. Note the anchor is the **canonical form of the IR recovered from the
+/// artifact** (`ir_trace_hash` hashes the *re-emission* of the parsed module),
+/// not the artifact's literal bytes: a mutation that the decoder normalises away
+/// — a non-minimal ULEB encoding, or trailing bytes after the body — re-emits
+/// identically and still reports `trace_hash_valid = true`. Any byte flip that
+/// changes the recovered IR flips `trace_hash_valid` to `false`. Integrity of
+/// the literal artifact bytes (including semantically-neutral regions) is the
+/// job of the signature, not the trace_hash.
 ///
 /// Returns [`EvidenceError::Missing`] if no `evidence_chain.*` keys are present.
 pub fn mic3_evidence_report(bytes: &[u8]) -> Result<EvidenceReport, EvidenceError> {
