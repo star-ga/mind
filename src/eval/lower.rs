@@ -1576,6 +1576,14 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
             }
             other => {
                 let id = lower_expr(other, &mut ir, &env, &struct_env, receiver_types);
+                // #6: thread nested-region exit rebindings (a `while`/`if`
+                // statement that mutates an outer var) back into the enclosing
+                // env so a later top-level read sees the post-region SSA id.
+                // The helper emits no instructions — byte-neutral.
+                #[cfg(feature = "std-surface")]
+                for (nm, eid) in stmt_exit_rebindings(&ir.instrs, &env) {
+                    env.insert(nm, eid);
+                }
                 ir.instrs.push(Instr::Output(id));
             }
         }
@@ -4395,12 +4403,16 @@ fn lower_expr(
                     );
                 }
             }
-            // Undefined — emit placeholder.
-            #[cfg(debug_assertions)]
-            eprintln!("[WARN] lower_expr: undefined identifier `{name}`, defaulting to 0");
-            let id = ir.fresh();
-            ir.instrs.push(Instr::ConstI64(id, 0));
-            id
+            // Undefined identifier reaching lowering is a silent-miscompile
+            // hazard: emitting `const.i64 0` would fabricate a wrong-answer
+            // artifact. Fail closed in ALL builds — mirror the unknown-variant
+            // panic above and the `ExternConst` panic. Name resolution / type-
+            // checking must reject an unbound name before it reaches here.
+            panic!(
+                "undefined identifier `{name}` reached lowering — refusing to \
+                 emit const 0 (a silent miscompile). Should have been caught \
+                 during name resolution/type-checking."
+            );
         }
         ast::Node::Binary {
             op, left, right, ..
@@ -5306,6 +5318,15 @@ fn lower_expr(
                                     // ^while_after block arg), not the
                                     // body-internal post_id.
                                     for (k, (vname, _post)) in live_vars.iter().enumerate() {
+                                        // #5(ii): a genuine loop-carried var must
+                                        // pre-exist in `fn_env` (you cannot
+                                        // `Assign` an undeclared name); the only
+                                        // names that do NOT are the synthesized
+                                        // `for`/`foreach` hidden counters, which
+                                        // must not leak into the enclosing scope.
+                                        if !fn_env.contains_key(vname) {
+                                            continue;
+                                        }
                                         let exit =
                                             exit_ids.get(k).copied().unwrap_or(live_vars[k].1);
                                         fn_env.insert(vname.clone(), exit);
@@ -5516,6 +5537,12 @@ fn lower_expr(
                         &local_struct_env,
                         receiver_types,
                     ));
+                    // #6: thread nested-region exit rebindings back into this
+                    // value-block's env (byte-neutral — no instructions).
+                    #[cfg(feature = "std-surface")]
+                    for (nm, eid) in stmt_exit_rebindings(&ir.instrs, &local_env) {
+                        local_env.insert(nm, eid);
+                    }
                 }
             }
             last_id.unwrap_or_else(|| {
@@ -9591,7 +9618,16 @@ fn lower_stmt_seq(
                 env.insert(name.clone(), id);
                 id
             }
-            other => lower_expr(other, ir, env, struct_env, receiver_types),
+            other => {
+                let id = lower_expr(other, ir, env, struct_env, receiver_types);
+                // #6: thread nested-region exit rebindings back into the region
+                // env (byte-neutral — the helper emits no instructions).
+                #[cfg(feature = "std-surface")]
+                for (nm, eid) in stmt_exit_rebindings(&ir.instrs, env) {
+                    env.insert(nm, eid);
+                }
+                id
+            }
         };
         if let Some(ref mut out) = alloc_ids {
             collect_alloc_ids(&ir.instrs, out);
@@ -9882,6 +9918,53 @@ fn last_region_exit_rebindings(instrs: &[Instr]) -> Vec<(String, ValueId)> {
     if n >= 2 {
         if let Instr::ConstI64(..) = &instrs[n - 1] {
             return region_exit_rebindings(&instrs[n - 2]);
+        }
+    }
+    Vec::new()
+}
+
+/// Statement-context variant of `last_region_exit_rebindings` with the #5(ii)
+/// scope-leak filter built in — the single shared helper used at the three
+/// previously-unthreaded statement sites (module-item, value-`Block`,
+/// `lower_stmt_seq`).
+///
+/// `While`-origin rebindings (from `live_vars`) are dropped unless the name
+/// already exists in the enclosing `env`. A genuine loop-carried var must
+/// pre-exist to have been `Assign`ed, so it survives; the only names that do
+/// NOT pre-exist are the synthesized `for`/`foreach` hidden counters (bound
+/// only in the desugar's local `loop_env` clone), so they are correctly
+/// suppressed instead of leaking outward.
+///
+/// `If` `branch_bindings` pass through UNFILTERED: Gap C deliberately threads
+/// branch-local `let`s outward to match fn-body flat-env semantics — filtering
+/// them would break that contract. Emits no instructions, so code without a
+/// nested-mutation-then-read shape lowers byte-identically.
+#[cfg(feature = "std-surface")]
+fn stmt_exit_rebindings(
+    instrs: &[Instr],
+    env: &HashMap<String, ValueId>,
+) -> Vec<(String, ValueId)> {
+    let take = |instr: &Instr| -> Vec<(String, ValueId)> {
+        match instr {
+            Instr::While { .. } => region_exit_rebindings(instr)
+                .into_iter()
+                .filter(|(nm, _)| env.contains_key(nm))
+                .collect(),
+            Instr::If { .. } => region_exit_rebindings(instr),
+            _ => Vec::new(),
+        }
+    };
+    let n = instrs.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let direct = take(&instrs[n - 1]);
+    if !direct.is_empty() {
+        return direct;
+    }
+    if n >= 2 {
+        if let Instr::ConstI64(..) = &instrs[n - 1] {
+            return take(&instrs[n - 2]);
         }
     }
     Vec::new()
@@ -10338,5 +10421,28 @@ pub fn extern_type_to_mlir_multi_win64(
         }
         TypeAnn::ScalarI64 => vec!["i64".to_string()],
         _ => vec!["i64".to_string()],
+    }
+}
+
+#[cfg(test)]
+mod undefined_ident_tests {
+    use super::*;
+
+    // #9: an undefined identifier reaching lowering must panic (fail closed),
+    // never fold to `const.i64 0` (a silent miscompile). Source-level tests
+    // cannot reach this arm — name resolution / type-checking rejects the
+    // unbound name earlier — so the module AST is constructed directly with a
+    // lone `Lit(Ident("nope"))` module item. Mirrors the unknown-variant and
+    // ExternConst fail-closed panics.
+    #[test]
+    #[should_panic(expected = "undefined identifier")]
+    fn undefined_identifier_panics_instead_of_const_zero() {
+        let module = ast::Module {
+            items: vec![ast::Node::Lit(
+                Literal::Ident("nope".to_string()),
+                ast::Span::new(0, 0),
+            )],
+        };
+        let _ = lower_to_ir(&module);
     }
 }
