@@ -1146,9 +1146,10 @@ commitment. Nothing here is planned work yet.
         a chaotic/complex map with a **hash-anchored (tamper-evident) trace** —
         the "deterministic ≠ predictable" anchor, one more public runnable proof.
         (Honesty: as a *strict-f64* example it pins on avx2 + run-to-run today; the
-        neon leg DEFERS under `pin_or_defer_strict_fp` until a real-aarch64 bless,
-        same class as `dot-f32-v` — do NOT claim x86==ARM==GPU byte-identity for it
-        until that lands. The integer `galperin_pi` demo, by contrast, is
+        neon leg is gated fail-closed under `pin_strict_fp` (no self-passing defer
+        arm) and needs a committed strict-f64 aarch64 hash, same class as `dot-f32-v`
+        — do NOT claim x86==ARM==GPU byte-identity for it until that lands (there is
+        no GPU arm in the suite). The integer `galperin_pi` demo, by contrast, is
         avx2==neon by construction.) That is buildable today and worth doing; the
         closed-form *fold* is not, and claiming otherwise would be the open-problem
         overreach this entry exists to fence off.
