@@ -8,19 +8,22 @@
 // 0) then r12 (rank 1); everything else spills.
 //
 // Cross-implementation parity (Rust plan_module_k  ==  the pure-MIND
-// `selftest_dtk_plan` export in examples/mindc_mind/main.mind) is asserted by the
-// companion `dtk_plan_parity_smoke.py`, which loads the built .so and diffs its
-// serialized [count | (id, reg_code)*count] table against `expected_slice1`
-// below. That smoke needs the cdylib built (U1's gate), so it is out of this
-// front-end-only test; the expectations it consumes live here as the single
-// source of truth.
+// `selftest_dtk_plan` export in examples/mindc_mind/main.mind) is NOT YET gated
+// end-to-end. THIS file checks only `plan_module_k` against the hardcoded
+// `expected_slice1` expectations below — i.e. Rust-vs-Rust, not Rust-vs-.mind.
+// The end-to-end oracle — a `dtk_plan_parity_smoke.py` that builds the cdylib,
+// runs `selftest_dtk_plan`, and diffs its serialized [count | (id, reg_code)*count]
+// table against `plan_module_k` over a corpus (plus asserting count==0 for the
+// ineligible classes) — is PLANNED but NOT YET WRITTEN (needs the cdylib built,
+// U1's gate). Until it lands, these expectations are the single source of truth
+// and the `.mind` side is verified only by the byte-identity native-ELF gate.
 //
 // SLICE 1 candidate rule (matches the .mind scan): params are EXCLUDED from
 // candidates (they are homed on the stack by nb_emit_params this slice), so we
 // filter Param defs out of `DtkPlan.ranked` before cutting the top-K.
 
 use libmind::ir::{BinOp, IRModule, Instr, ValueId};
-use libmind::opt::regalloc_dtk::{plan_module_k, DtkPlan, Slot, CALLEE_SAVED};
+use libmind::opt::regalloc_dtk::{CALLEE_SAVED, DtkPlan, Slot, plan_module_k};
 
 /// The reg_code the pure-MIND side serializes: 0 = rbx, 1 = r12.
 fn reg_code(reg: &str) -> i64 {
