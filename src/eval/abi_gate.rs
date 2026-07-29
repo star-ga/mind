@@ -618,12 +618,15 @@ fn payload_subpattern_supported(args: &[crate::ast::Pattern]) -> bool {
 /// byte-identical (keystone 7/7).
 pub fn check_match_runnable(module: &Module, src: &str, file: Option<&str>) -> Vec<Diagnostic> {
     let mut out = Vec::new();
+    // Walk EVERY top-level item, not just `FnDef` bodies. A `match` can appear at
+    // MODULE scope (`let y = match x { 1.0 => 10, _ => 20 }`) or inside a
+    // block/let-init position; the old FnDef-only walk missed those, letting a
+    // degenerate module-level match bypass the gate and hit the scrutinee-
+    // ignoring sequential fallback (IR-audit finding #3 route 1). `walk_match_
+    // runnable` now recurses into `FnDef` bodies itself, so a uniform per-item
+    // walk covers functions, module-level `let`/`const`, and nested positions.
     for item in &module.items {
-        if let Node::FnDef(fd, _) = item {
-            for stmt in &fd.body {
-                walk_match_runnable(stmt, src, file, &mut out);
-            }
-        }
+        walk_match_runnable(item, src, file, &mut out);
     }
     out
 }
@@ -670,12 +673,12 @@ pub fn check_ambiguous_bare_ctor(
     if ambiguous.is_empty() {
         return out;
     }
+    // Walk EVERY top-level item (not just `FnDef` bodies) so a bare ambiguous
+    // ctor at MODULE scope (`let z: Zeta = V(7)`) or in a nested block/let-init
+    // is covered too — `walk_ambiguous_ctor` recurses into `FnDef` bodies
+    // itself (IR-audit finding #3: gate must not be FnDef-only).
     for item in &module.items {
-        if let Node::FnDef(fd, _) = item {
-            for stmt in &fd.body {
-                walk_ambiguous_ctor(stmt, &ambiguous, src, file, &mut out);
-            }
-        }
+        walk_ambiguous_ctor(item, &ambiguous, src, file, &mut out);
     }
     out
 }
@@ -694,6 +697,7 @@ fn walk_ambiguous_ctor(
     let recur =
         |n: &Node, out: &mut Vec<Diagnostic>| walk_ambiguous_ctor(n, ambiguous, src, file, out);
     match node {
+        N::FnDef(fd, _) => fd.body.iter().for_each(|s| recur(s, out)),
         N::Call {
             callee, args, span, ..
         } => {
@@ -780,6 +784,10 @@ fn walk_ambiguous_ctor(
 fn walk_match_runnable(node: &Node, src: &str, file: Option<&str>, out: &mut Vec<Diagnostic>) {
     use Node as N;
     match node {
+        N::FnDef(fd, _) => fd
+            .body
+            .iter()
+            .for_each(|s| walk_match_runnable(s, src, file, out)),
         N::Call { args, .. } => {
             // Multi-field constructors now lower (every field is stored into its
             // own record slot), so a ctor call no longer gates. Recurse into the

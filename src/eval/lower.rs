@@ -9149,6 +9149,19 @@ fn desugar_match_to_if(
             // bare scrutinee against the tag; payload variants compare the
             // loaded tag and bind their payload (handled by `build_binds`).
             ast::Pattern::EnumVariant { path, .. } => {
+                // deferred: this exact miss SHOULD fail-closed (IR-audit finding
+                // #3 route 2 — an unknown variant tag drops the whole match into
+                // the scrutinee-ignoring sequential fallback that returns the
+                // LAST arm, a silent miscompile). It is NOT poisoned here because
+                // module-wrapped enums (`module m { enum Mode { On, Off } }`) are
+                // NOT registered in `enum_variant_tags` at this lowering point, so
+                // a VALID `Mode::On` arm also misses the registry (identical to a
+                // truly-unknown `Ghost::A`) — a poison here reddens
+                // `tests/parse_match_and_ref.rs` (5 legitimate module-wrapped
+                // matches). upgrade path: register module-qualified variant tags
+                // (populate `enum_variant_tags` for `module { enum … }` items)
+                // BEFORE match lowering, then a registry miss is unambiguously a
+                // dangling tag and this `?` can become a fail-closed poison.
                 let tag = enum_tags.get(path).copied()?;
                 Some(Some(ast::Node::Binary {
                     op: ast::BinOp::Eq,
@@ -9348,10 +9361,27 @@ fn desugar_match_to_if(
                     span,
                 }]
             }
-            // An irrefutable pattern with NO guard reaching a TEST slot is
-            // impossible (an unguarded catch-all is the terminal `else`). Bail
-            // defensively rather than silently mislower.
-            (None, None) => return None,
+            // An irrefutable pattern with NO guard reaching a TEST slot means a
+            // bare-identifier arm whose name COLLIDES with a registered enum
+            // variant (so `is_catch_all` rejected it as a catch-all) sits in a
+            // non-final test position: it is neither a discriminant test nor a
+            // catch-all. Returning `None` here dropped the whole match into the
+            // scrutinee-ignoring sequential fallback that returns the LAST arm
+            // for EVERY input — a SILENT MISCOMPILE (IR-audit finding #3 route
+            // 3). Refuse (0-byte artifact) instead (#306 fail-closed). Qualify
+            // the variant (`Enum::V`), rename the binding, or move the catch-all
+            // to the final arm.
+            (None, None) => panic!(
+                "match arm pattern `{:?}` is an irrefutable bare-identifier \
+                 binding whose name collides with a registered enum variant, in \
+                 a non-final (test) position — it is neither a discriminant test \
+                 nor a catch-all, so the match cannot be lowered. Qualify the \
+                 variant (`Enum::V`), rename the binding, or move the catch-all \
+                 to the final arm. (Falling back to a sequential evaluation here \
+                 would ignore the scrutinee and return the last arm — a silent \
+                 miscompile.)",
+                arm.pattern
+            ),
         };
         else_stmts = Some(level);
     }
