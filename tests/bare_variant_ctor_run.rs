@@ -4,14 +4,22 @@
 
 //! Bare (unqualified) enum-variant constructor + pattern RUNTIME gate.
 //!
-//! MIND links every module into one global unit, so a variant can be referenced
-//! UNQUALIFIED: `Some(x)` / `Ok(v)` / `Err(e)` resolve to their enum's variant
-//! without the `Enum::` prefix, in BOTH construction position and `match`
-//! patterns. Previously only the qualified `Opt::Some(42)` form worked; a bare
-//! `Some(42)` failed `E2003 unsupported call`, and a bare `Some(v)` pattern fell
-//! through to the catch-all (wrong arm). This compiles a Result-style program to
-//! a `.so`, dlopen-calls it, and asserts the rewrap values — the exact shape
-//! mind-flow's parser uses.
+//! MIND links every module into one global unit, so a variant with a SOLE
+//! owning enum can be referenced UNQUALIFIED (`Good(v)` / `Just(x)`) in BOTH
+//! construction position and `match` patterns. Previously only the qualified
+//! `Opt::Just(42)` form worked; a bare `Just(42)` failed `E2003 unsupported
+//! call`, and a bare `Just(v)` pattern fell through to the catch-all (wrong
+//! arm). This compiles a program to a `.so`, dlopen-calls it, and asserts the
+//! rewrap values.
+//!
+//! The USER enums here deliberately use names with NO prelude collision
+//! (`Good`/`Bad`/`Just`, not `Ok`/`Err`/`Some`): after Fable finding #8, a bare
+//! name owned by BOTH a user enum and the `Option`/`Result` prelude is
+//! fail-closed ambiguous (qualify it), so a fixture testing SOLE-owner bare
+//! resolution must not shadow prelude names. Bare resolution of the prelude
+//! names themselves (no shadowing enum → sole owner) is covered by
+//! `result_option_prelude_run`; the ambiguity fail-closed by
+//! `bare_variant_ambiguity_run`.
 //!
 //! Gate: `cargo test --features "std-surface mlir-build cross-module-imports"
 //!                   --test bare_variant_ctor_run`
@@ -24,39 +32,39 @@ use common::mindc_bin;
 use std::process::Command;
 
 const SRC: &str = r#"
-enum Res { Ok(i64), Err(i64) }
+enum Res { Good(i64), Bad(i64) }
 
-// Bare Ok/Err in BOTH construction and pattern position, with a re-wrap.
+// Bare Good/Bad in BOTH construction and pattern position, with a re-wrap.
 fn dbl(r: Res) -> Res {
     match r {
-        Ok(v) => Ok(v + v),
-        Err(e) => Err(e),
+        Good(v) => Good(v + v),
+        Bad(e) => Bad(e),
     }
 }
 
 pub fn run_ok() -> i64 {
-    let r = dbl(Ok(21))
+    let r = dbl(Good(21))
     match r {
-        Ok(v) => v,
-        Err(e) => 0 - 1,
+        Good(v) => v,
+        Bad(e) => 0 - 1,
     }
 }
 
 pub fn run_err() -> i64 {
-    let r = dbl(Err(7))
+    let r = dbl(Bad(7))
     match r {
-        Ok(v) => v,
-        Err(e) => e,
+        Good(v) => v,
+        Bad(e) => e,
     }
 }
 
-enum Opt { Some(i64), Nothing }
+enum Opt { Just(i64), Nothing }
 
-// Bare Some construction + bare Some(v) payload-binding pattern.
+// Bare Just construction + bare Just(v) payload-binding pattern.
 pub fn some_val() -> i64 {
-    let o = Some(42)
+    let o = Just(42)
     match o {
-        Some(v) => v,
+        Just(v) => v,
         Nothing => 0,
     }
 }

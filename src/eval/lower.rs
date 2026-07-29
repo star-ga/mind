@@ -4350,16 +4350,24 @@ fn lower_expr(
                 // Resolve a fieldless variant value used bare (`None`, `Nothing`)
                 // OR qualified (`Mode::On`): a bare name with no `::` is matched
                 // against any `Enum::V` in the registry, mirroring the bare
-                // payload-ctor resolution in the `Node::Call` arm.
-                let vkey: Option<String> = if ir.enum_variant_tags.contains_key(name) {
-                    Some(name.clone())
-                } else if !name.contains("::") {
-                    ir.enum_variant_tags
-                        .keys()
-                        .find(|k| k.rsplit_once("::").map(|(_, v)| v == name).unwrap_or(false))
-                        .cloned()
-                } else {
-                    None
+                // payload-ctor resolution in the `Node::Call` arm. A bare name
+                // that collides across enums is FAIL-CLOSED (Fable #8) instead of
+                // silently resolving to the lexicographically-first owner. An
+                // `Unknown` bare name falls through to the qualified-head /
+                // undefined-identifier panics below, exactly as before.
+                let vkey: Option<String> = match resolve_bare_variant(&ir.enum_variant_tags, name) {
+                    BareVariant::Exact(k) | BareVariant::Unique(k) => Some(k),
+                    BareVariant::Ambiguous(cands) => panic!(
+                        "ambiguous bare enum variant `{name}`: it names a variant \
+                         of multiple enums ({}) — qualify it (e.g. `{}`) so \
+                         lowering does not silently resolve to the \
+                         lexicographically-first match (a silent miscompile). \
+                         This should have been caught during name \
+                         resolution/type-checking.",
+                        cands.join(", "),
+                        cands[0]
+                    ),
+                    BareVariant::Unknown => None,
                 };
                 if let Some(vkey) = vkey {
                     let tag = ir.enum_variant_tags[&vkey];
@@ -6246,21 +6254,25 @@ fn lower_expr(
                 // directly; a BARE `V` (`Some(x)`, `Ok(v)`, `Err(e)`) is matched
                 // against any `Enum::V` in the registry so UNQUALIFIED
                 // constructors resolve (one global link unit). A bare name that
-                // collides across enums takes the first in deterministic BTreeMap
-                // order — distinct in practice (Ok/Err/Some/None).
-                let vkey: Option<String> = if ir.enum_variant_tags.contains_key(callee) {
-                    Some(callee.clone())
-                } else if !callee.contains("::") {
-                    ir.enum_variant_tags
-                        .keys()
-                        .find(|k| {
-                            k.rsplit_once("::")
-                                .map(|(_, v)| v == callee)
-                                .unwrap_or(false)
-                        })
-                        .cloned()
-                } else {
-                    None
+                // collides across enums is FAIL-CLOSED (Fable #8): the old code
+                // silently took the lexicographically-first owner — a wrong-tag
+                // miscompile invisible to the author. `Unknown` (no owner, or a
+                // qualified head that is not an enum) falls through to normal
+                // call lowering exactly as before.
+                let vkey: Option<String> = match resolve_bare_variant(&ir.enum_variant_tags, callee)
+                {
+                    BareVariant::Exact(k) | BareVariant::Unique(k) => Some(k),
+                    BareVariant::Ambiguous(cands) => panic!(
+                        "ambiguous bare enum variant `{callee}`: it names a \
+                             variant of multiple enums ({}) — qualify it (e.g. \
+                             `{}`) so lowering does not silently resolve to the \
+                             lexicographically-first match (a silent miscompile). \
+                             This should have been caught during name \
+                             resolution/type-checking.",
+                        cands.join(", "),
+                        cands[0]
+                    ),
+                    BareVariant::Unknown => None,
                 };
                 if let Some(vkey) = vkey {
                     let tag = ir.enum_variant_tags[&vkey];
@@ -8759,8 +8771,19 @@ fn build_try_desugar(inner: &ast::Node, is_option: bool) -> ast::Node {
     let span = inner.span();
     let ok_bind = format!("__try_ok_{}", span.start());
     let err_bind = format!("__try_err_{}", span.start());
-    let ok_variant = if is_option { "Some" } else { "Ok" };
-    // `Ok(v) => v` / `Some(v) => v`
+    // Fully-QUALIFY the synthesized prelude ctor/pattern names (Fable #8 risk
+    // flag i): a module that declares a same-named variant (e.g. `enum Basket {
+    // Err }`) would make bare `Err`/`None`/`Some` ambiguous, detonating the new
+    // fail-closed panic on EVERY `?`. `Option::Some`/`Result::Err` etc. are the
+    // exact prelude registry keys (installed unconditionally when a `?` is
+    // present, since `Node::Try` is not a pure-literal item), so they resolve
+    // `Exact` and byte-identically to the old bare resolution.
+    let ok_variant = if is_option {
+        "Option::Some"
+    } else {
+        "Result::Ok"
+    };
+    // `Result::Ok(v) => v` / `Option::Some(v) => v`
     let ok_arm = ast::MatchArm {
         pattern: ast::Pattern::EnumVariant {
             path: ok_variant.to_string(),
@@ -8770,23 +8793,23 @@ fn build_try_desugar(inner: &ast::Node, is_option: bool) -> ast::Node {
         body: ast::Node::Lit(Literal::Ident(ok_bind), span),
         span,
     };
-    // `Err(e) => return Err(e)` / `None => return None`
+    // `Result::Err(e) => return Result::Err(e)` / `Option::None => return Option::None`
     let (err_pattern, err_value) = if is_option {
         (
             ast::Pattern::EnumVariant {
-                path: "None".to_string(),
+                path: "Option::None".to_string(),
                 args: Vec::new(),
             },
-            ast::Node::Lit(Literal::Ident("None".to_string()), span),
+            ast::Node::Lit(Literal::Ident("Option::None".to_string()), span),
         )
     } else {
         (
             ast::Pattern::EnumVariant {
-                path: "Err".to_string(),
+                path: "Result::Err".to_string(),
                 args: vec![ast::Pattern::Ident(err_bind.clone())],
             },
             ast::Node::Call {
-                callee: "Err".to_string(),
+                callee: "Result::Err".to_string(),
                 args: vec![ast::Node::Lit(Literal::Ident(err_bind), span)],
                 span,
             },
@@ -8872,6 +8895,70 @@ fn string_pattern_test(scrutinee: &ast::Node, lit: &str, span: crate::ast::Span)
         };
     }
     test
+}
+
+/// Outcome of resolving a possibly-bare enum-variant name against the
+/// `enum_variant_tags` registry (Fable finding #8). See `resolve_bare_variant`.
+#[cfg(feature = "std-surface")]
+enum BareVariant {
+    /// The name is already a registry key verbatim (qualified `Enum::V`, or a
+    /// bare name that is itself a key). Same key the old first-match code picked.
+    Exact(String),
+    /// A bare name owned by exactly one enum — the resolved qualified key.
+    /// Byte-identical to the old `.find(first-BTreeMap-match)` result because a
+    /// single owner IS the first (and only) match.
+    Unique(String),
+    /// A bare name owned by ≥2 enums (e.g. user `Wrapper::Some` vs prelude
+    /// `Option::Some`). The old code silently picked the lexicographically-first
+    /// owner — a wrong-answer miscompile invisible to the author. Carries every
+    /// candidate qualified key (BTreeMap order) so the caller can fail closed
+    /// with a "qualify it" message instead of guessing.
+    Ambiguous(Vec<String>),
+    /// The name matches no registered variant (a plain function call, a plain
+    /// identifier, or a qualified path whose enum head is unknown). The caller
+    /// preserves its prior fall-through behaviour for this case.
+    Unknown,
+}
+
+/// Resolve a possibly-bare enum-variant name against the `enum_variant_tags`
+/// registry WITHOUT silently guessing on a cross-enum collision (Fable finding
+/// #8). Replaces two blind `.find(first-BTreeMap-match)` sites (the `Call`-arm
+/// payload ctor and the fieldless `Lit(Ident)` value arm) that resolved a bare
+/// variant name to the lexicographically-first `Enum::V` — invisibly wrong when
+/// the name collides across the Option/Result prelude and a user or sibling-
+/// module enum.
+///
+/// Resolution order:
+/// 1. `name` is a registry key verbatim (qualified `Enum::V`, or a bare name
+///    that is itself a key) → `Exact` — same key the old code returned.
+/// 2. `name` is qualified (`contains "::"`) but absent → `Unknown` (the caller
+///    keeps its prior fall-through: a plain call, or the unknown-variant panic).
+/// 3. otherwise collect every key whose last `::`-segment equals `name` (via
+///    `rsplit_once` so post-#271 module-qualified keys `m::E::V` resolve): one
+///    owner → `Unique`, ≥2 → `Ambiguous`, none → `Unknown`.
+///
+/// No prelude priority: a module that never references `Option`/`Result` never
+/// installed those keys (see `may_reference_enum_prelude`), so they simply are
+/// not in `tags` and never appear in the owner set — the helper needs no
+/// special-case for that.
+#[cfg(feature = "std-surface")]
+fn resolve_bare_variant(tags: &std::collections::BTreeMap<String, i64>, name: &str) -> BareVariant {
+    if tags.contains_key(name) {
+        return BareVariant::Exact(name.to_string());
+    }
+    if name.contains("::") {
+        return BareVariant::Unknown;
+    }
+    let owners: Vec<String> = tags
+        .keys()
+        .filter(|k| k.rsplit_once("::").map(|(_, v)| v == name).unwrap_or(false))
+        .cloned()
+        .collect();
+    match owners.len() {
+        0 => BareVariant::Unknown,
+        1 => BareVariant::Unique(owners.into_iter().next().unwrap()),
+        _ => BareVariant::Ambiguous(owners),
+    }
 }
 
 /// Reduce a module-qualified variant path `mod.Enum::Variant` to the registry
