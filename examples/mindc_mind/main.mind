@@ -25590,7 +25590,7 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let c1: String = nb_push(st.code, 72);
         let c2: String = nb_push(c1, 184);
         let c3: String = nb_i64le(c2, val);
-        let c4: String = nb_store_rax(c3, nb_slot_disp(id));
+        let c4: String = nb_val_store_rax(__mind_load_i64(lcell + 96), id, c3);
         return NbState { code: c4, next_id: id + 1, last_id: id, ncalls: st.ncalls };
     }
     if k == ast_float_lit() {
@@ -26233,14 +26233,15 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         }
         // mov rax,[lhs] ; OP rax,[rhs] ; mov [dst],rax. A comparison op routes through
         // cmp+setcc+movzx (-> 0/1); Add/Sub/Mul through the in-place arith form.
-        let c1: String = nb_load_rax(s2.code, nb_slot_disp(lhs_id));
+        let dplan: i64 = __mind_load_i64(lcell + 96);
+        let c1: String = nb_val_load_rax(dplan, lhs_id, s2.code);
         let setcc: i64 = nb_setcc_opcode(op);
         let c2: String = if setcc >= 0 {
-            nb_cmp_rax_mem(c1, setcc, nb_slot_disp(rhs_id))
+            nb_val_cmp_rax(dplan, rhs_id, c1, setcc)
         } else {
-            nb_arith_rax_mem(c1, op, nb_slot_disp(rhs_id))
+            nb_val_arith_rax(dplan, rhs_id, c1, op)
         };
-        let c3: String = nb_store_rax(c2, nb_slot_disp(id));
+        let c3: String = nb_val_store_rax(dplan, id, c2);
         return NbState { code: c3, next_id: id + 1, last_id: id, ncalls: s2.ncalls };
     }
     if k == ast_addr_of() {
@@ -28204,7 +28205,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let c1: String = if ret_dt166 == nb_dtype_float() {
             nb_ret_float_load(s1.code, nb_slot_disp(s1.last_id), is_entry)
         } else {
-            nb_load_rax(s1.code, nb_slot_disp(s1.last_id))
+            nb_val_load_rax(__mind_load_i64(lcell + 96), s1.last_id, s1.code)
         };
         // C2 return-width driver: an explicit `return E` in a narrow-int-returning
         // fn (`-> i8/i16/i32 {`) wraps rax at the declared width from lcell+72
@@ -28212,7 +28213,9 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // spelling, so it never coexists with the float branch above. 64 for every
         // main.mind fn -> nb_wrap_ret_w emits nothing, byte-identical.
         let c1w: String = nb_wrap_ret_w(c1, __mind_load_i64(lcell + 72));
-        let c2: String = nb_emit_return(c1w, is_entry);
+        // DTK SLICE 1: pop callee-saved regs before the ret. No-op for empty plan.
+        let c1p: String = nb_val_epilogue(__mind_load_i64(lcell + 96), c1w);
+        let c2: String = nb_emit_return(c1p, is_entry);
         return NbState { code: c2, next_id: s1.next_id, last_id: s1.last_id, ncalls: s1.ncalls };
     }
     if k == ast_let() {
@@ -30974,7 +30977,7 @@ pub fn nb_round16(x: i64) -> i64 {
 // IS the FnDef's ret_id: emit `mov rax,[ret_id]` then the epilogue. A tail-return
 // helper (each arm `return`s the NbState directly) so it stays in the self-host
 // mic@3 subset — NOT a struct-typed value-if (which mis-lowers).
-pub fn nb_finish_body(st0: NbState, is_entry: i64, stmts_addr: i64, stmts_len: i64, ret_dt: i64, retw: i64) -> NbState {
+pub fn nb_finish_body(st0: NbState, is_entry: i64, stmts_addr: i64, stmts_len: i64, ret_dt: i64, retw: i64, plan: i64) -> NbState {
     if nb_last_emits_return(stmts_addr, stmts_len) == 1 {
         return st0;
     }
@@ -30990,7 +30993,7 @@ pub fn nb_finish_body(st0: NbState, is_entry: i64, stmts_addr: i64, stmts_len: i
     let r1: String = if ret_dt == nb_dtype_float() {
         nb_ret_float_load(st0.code, nb_slot_disp(st0.last_id), is_entry)
     } else {
-        nb_load_rax(st0.code, nb_slot_disp(st0.last_id))
+        nb_val_load_rax(plan, st0.last_id, st0.code)
     };
     // C2 param/return width driver: a narrow-int-returning fn (`-> i8/i16/i32 {`)
     // wraps its implicit tail-return value in rax at the declared width. A narrow
@@ -30998,7 +31001,10 @@ pub fn nb_finish_body(st0: NbState, is_entry: i64, stmts_addr: i64, stmts_len: i
     // float (xmm0) branch above — wrapping rax unconditionally is safe. retw is 64
     // for every main.mind fn -> nb_wrap_ret_w emits nothing, byte-identical.
     let r1w: String = nb_wrap_ret_w(r1, retw);
-    let r2: String = nb_emit_return(r1w, is_entry);
+    // DTK SLICE 1: restore callee-saved regs (pop r12 ; pop rbx) before the
+    // mov rsp,rbp ; pop rbp ; ret. No-op for an empty plan.
+    let r1p: String = nb_val_epilogue(plan, r1w);
+    let r2: String = nb_emit_return(r1p, is_entry);
     NbState { code: r2, next_id: st0.next_id, last_id: st0.last_id, ncalls: st0.ncalls }
 }
 
@@ -31096,6 +31102,490 @@ pub fn nb_register_struct_params(srt: i64, src: i64, params_addr: i64, n_params:
 // Returns NbState{code = this fn's bytes, ncalls = updated count}. `srt` is the
 // whole-module struct registry, used to give struct-typed params a field-offset
 // descriptor in the let-env (the Step-2 FieldAccess path).
+// ===========================================================================
+// DTK — Deterministic Top-K callee-saved register-allocation, SLICE 1
+// (Independence Roadmap Phase C, #254). Pure-MIND native-ELF port of the Rust
+// reference planner src/opt/regalloc_dtk.rs. A whole-fn planning pass that ranks
+// an eligible leaf/straight-line scalar-i64 fn's non-param SSA values by static
+// use-count and homes the top-K=2 in callee-saved GPRs (rbx=code 0, r12=code 1),
+// spilling the rest to the existing stack scheme. RANK = (use-count DESC, id ASC)
+// — a total order, byte-for-byte the tie-break of regalloc_dtk.rs::plan_module_k
+// (ub.cmp(&ua).then_with(|| a.cmp(b))). An ineligible fn => empty plan (0) =>
+// every emit wrapper falls through to nb_slot_disp stack homes => bytes identical
+// to today. WHITELIST predicate (fail-closed): unknown ast_kind => ineligible.
+// deferred: slot compaction (a reg-homed id keeps its unused frame slot so the
+//   frame size / SSA numbering / count<->emit lockstep are untouched) — upgrade
+//   path: renumber slots after the plan, re-prove nb_count_stmts lockstep.
+// deferred: K>2 (r13/r14/r15) and param homes — upgrade path: home params in
+//   nb_emit_params (store_argreg -> callee-saved reg) and lift the non-param gate.
+
+// 1 iff `op` has a reg-form (ModRM mod=11) encoding in the nb_val_* wrappers:
+// add/sub/imul/and/or/xor plus any comparison (routes through cmp reg,reg+setcc).
+// div/mod/shift are EXCLUDED (rdx:rax / cl fixed-register forms not ported) — a
+// fn containing one is ineligible, so its values never reach a reg wrapper.
+pub fn nb_dtk_op_ok(op: i64) -> i64 {
+    if op == op_add() {
+        return 1;
+    }
+    if op == op_sub() {
+        return 1;
+    }
+    if op == op_mul() {
+        return 1;
+    }
+    if op == op_bitand() {
+        return 1;
+    }
+    if op == op_bitor() {
+        return 1;
+    }
+    if op == op_bitxor() {
+        return 1;
+    }
+    if nb_setcc_opcode(op) >= 0 {
+        return 1;
+    }
+    0
+}
+
+// Zero an i64 table [0,n).
+pub fn nb_dtk_zero(t: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    __mind_store_i64(t + i * 8, 0);
+    nb_dtk_zero(t, n, i + 1)
+}
+
+// ---- scan control block (dsc) layout ----
+//  +0 next_id (running SSA counter, seeded n_params) ; +8 eligible (1/0) ;
+//  +16 uses table ; +24 defs table (1 = candidate def) ; +32 scan let-env
+//  (triples lo,hi,id) ; +40 env count ; +48 buf ; +56 params_addr ;
+//  +64 n_params ; +72 table bound (nb).
+pub fn nb_dtk_fail(dsc: i64) -> i64 {
+    __mind_store_i64(dsc + 8, 0);
+    0
+}
+pub fn nb_dtk_mark_def(dsc: i64, id: i64) -> i64 {
+    if id >= 0 {
+        if id < __mind_load_i64(dsc + 72) {
+            __mind_store_i64(__mind_load_i64(dsc + 24) + id * 8, 1)
+        }
+    }
+    0
+}
+pub fn nb_dtk_bump_use(dsc: i64, id: i64) -> i64 {
+    if id >= 0 {
+        if id < __mind_load_i64(dsc + 72) {
+            let u: i64 = __mind_load_i64(dsc + 16);
+            __mind_store_i64(u + id * 8, __mind_load_i64(u + id * 8) + 1)
+        }
+    }
+    0
+}
+pub fn nb_dtk_env_bind(dsc: i64, lo: i64, hi: i64, id: i64) -> i64 {
+    let env: i64 = __mind_load_i64(dsc + 32);
+    let n: i64 = __mind_load_i64(dsc + 40);
+    __mind_store_i64(env + n * 24 + 0, lo);
+    __mind_store_i64(env + n * 24 + 8, hi);
+    __mind_store_i64(env + n * 24 + 16, id);
+    __mind_store_i64(dsc + 40, n + 1);
+    0
+}
+// Last-match-wins name lookup (scan from the most-recent binding down).
+pub fn nb_dtk_env_lookup_at(env: i64, buf: i64, lo: i64, hi: i64, i: i64) -> i64 {
+    if i < 0 {
+        return 0 - 1;
+    }
+    let elo: i64 = __mind_load_i64(env + i * 24 + 0);
+    let ehi: i64 = __mind_load_i64(env + i * 24 + 8);
+    if span_bytes_equal(buf, lo, hi, elo, ehi) == 1 {
+        return __mind_load_i64(env + i * 24 + 16);
+    }
+    nb_dtk_env_lookup_at(env, buf, lo, hi, i - 1)
+}
+pub fn nb_dtk_env_lookup(dsc: i64, lo: i64, hi: i64) -> i64 {
+    nb_dtk_env_lookup_at(__mind_load_i64(dsc + 32), __mind_load_i64(dsc + 48), lo, hi, __mind_load_i64(dsc + 40) - 1)
+}
+
+// Scan an expression, MIRRORING nb_expr's scalar-i64 SSA numbering exactly:
+// int_lit consumes 1 id (before), ident consumes 0, paren passes through, a
+// reg-form binop consumes 1 id AFTER both operands. Returns the value's SSA id
+// (or -1 on refusal). Consumer-based use counting (like regalloc_dtk::record_uses):
+// a binop bumps BOTH operand ids; the statement layer bumps a return/tail value.
+// Any non-whitelisted kind (call/method/field/index/struct/array/addr/deref/
+// neg/not/cast/if/float) fails the whole fn — the leaf + straight-line + scalar
+// predicate is enforced here by whitelist, not blacklist.
+pub fn nb_dtk_scan_expr(dsc: i64, node: i64) -> i64 {
+    let buf: i64 = __mind_load_i64(dsc + 48);
+    let k: i64 = ast_kind(node);
+    if k == ast_int_lit() {
+        let id: i64 = __mind_load_i64(dsc + 0);
+        __mind_store_i64(dsc + 0, id + 1);
+        let _d: i64 = nb_dtk_mark_def(dsc, id);
+        return id;
+    }
+    if k == ast_paren() {
+        return nb_dtk_scan_expr(dsc, ast_child0(node));
+    }
+    if k == ast_ident() {
+        let lo: i64 = ast_span_lo(node);
+        let hi: i64 = ast_span_hi(node);
+        let e: i64 = nb_dtk_env_lookup(dsc, lo, hi);
+        if e >= 0 {
+            return e;
+        }
+        let p: i64 = resolve_param(__mind_load_i64(dsc + 56), __mind_load_i64(dsc + 64), buf, lo, hi);
+        if p >= 0 {
+            return p;
+        }
+        let _f: i64 = nb_dtk_fail(dsc);
+        return 0 - 1;
+    }
+    if k == ast_binop() {
+        let op: i64 = ast_aux(node);
+        if nb_dtk_op_ok(op) == 0 {
+            let _f: i64 = nb_dtk_fail(dsc);
+            return 0 - 1;
+        }
+        let lid: i64 = nb_dtk_scan_expr(dsc, ast_child0(node));
+        let rid: i64 = nb_dtk_scan_expr(dsc, ast_child1(node));
+        let _bl: i64 = nb_dtk_bump_use(dsc, lid);
+        let _br: i64 = nb_dtk_bump_use(dsc, rid);
+        let id: i64 = __mind_load_i64(dsc + 0);
+        __mind_store_i64(dsc + 0, id + 1);
+        let _d: i64 = nb_dtk_mark_def(dsc, id);
+        return id;
+    }
+    let _f: i64 = nb_dtk_fail(dsc);
+    0 - 1
+}
+
+// Scan a statement. Whitelist: return / let / assign / a bare tail expression
+// (last statement only — mirrors nb_finish_body's implicit tail return, which
+// LOADS the value; a non-tail bare expr would be an Output whose counting is not
+// modelled this slice, so it fails closed). let/assign width-64 scalar only.
+pub fn nb_dtk_scan_stmt(dsc: i64, node: i64, is_last: i64) -> i64 {
+    let buf: i64 = __mind_load_i64(dsc + 48);
+    let k: i64 = ast_kind(node);
+    if k == ast_return() {
+        let v: i64 = nb_dtk_scan_expr(dsc, ast_child0(node));
+        let _b: i64 = nb_dtk_bump_use(dsc, v);
+        return 0;
+    }
+    if k == ast_let() {
+        let tl: i64 = ast_child1(node);
+        if tl != 0 {
+            if nb_width_of_ann(buf, tl) < 64 {
+                return nb_dtk_fail(dsc);
+            }
+            if nb_param_is_float(buf, tl) == nb_dtype_float() {
+                return nb_dtk_fail(dsc);
+            }
+        }
+        let v: i64 = nb_dtk_scan_expr(dsc, ast_child2(node));
+        let nl: i64 = ast_child0(node);
+        let _e: i64 = nb_dtk_env_bind(dsc, ast_span_lo(nl), ast_span_hi(nl), v);
+        return 0;
+    }
+    if k == ast_assign() {
+        let v: i64 = nb_dtk_scan_expr(dsc, ast_child2(node));
+        let nl: i64 = ast_child0(node);
+        let _e: i64 = nb_dtk_env_bind(dsc, ast_span_lo(nl), ast_span_hi(nl), v);
+        return 0;
+    }
+    if is_last == 1 {
+        let v: i64 = nb_dtk_scan_expr(dsc, node);
+        let _b: i64 = nb_dtk_bump_use(dsc, v);
+        return 0;
+    }
+    nb_dtk_fail(dsc)
+}
+pub fn nb_dtk_scan_stmts(dsc: i64, stmts_addr: i64, stmts_len: i64, i: i64) -> i64 {
+    if i >= stmts_len {
+        return 0;
+    }
+    if __mind_load_i64(dsc + 8) == 0 {
+        return 0;
+    }
+    let is_last: i64 = if i == stmts_len - 1 {
+        1
+    } else {
+        0
+    };
+    let _s: i64 = nb_dtk_scan_stmt(dsc, __mind_load_i64(stmts_addr + i * 8), is_last);
+    nb_dtk_scan_stmts(dsc, stmts_addr, stmts_len, i + 1)
+}
+
+// 1 iff any param in [i,n_params) is float-declared (excluded — a float operand
+// takes nb_expr's SSE2 path, which does NOT go through the nb_val_* GP wrappers,
+// so a reg home for a float value would never be written: fail closed).
+pub fn nb_dtk_any_float_param(buf: i64, params_addr: i64, n_params: i64, i: i64) -> i64 {
+    if i >= n_params {
+        return 0;
+    }
+    let pnode: i64 = __mind_load_i64(params_addr + i * 8);
+    if nb_param_is_float(buf, ast_child1(pnode)) == nb_dtype_float() {
+        return 1;
+    }
+    nb_dtk_any_float_param(buf, params_addr, n_params, i + 1)
+}
+
+// Find the best candidate by (use-count DESC, id ASC), excluding `exclude`.
+// Iterating id ASCENDING and replacing ONLY on a STRICTLY-greater use-count keeps
+// the lowest id among an equal-max group — exactly the regalloc_dtk tie-break.
+pub fn nb_dtk_best(uses: i64, defs: i64, nb: i64, exclude: i64, i: i64, best_id: i64, best_u: i64) -> i64 {
+    if i >= nb {
+        return best_id;
+    }
+    if __mind_load_i64(defs + i * 8) == 1 {
+        if i != exclude {
+            let u: i64 = __mind_load_i64(uses + i * 8);
+            if best_id < 0 {
+                return nb_dtk_best(uses, defs, nb, exclude, i + 1, i, u);
+            }
+            if u > best_u {
+                return nb_dtk_best(uses, defs, nb, exclude, i + 1, i, u);
+            }
+        }
+    }
+    nb_dtk_best(uses, defs, nb, exclude, i + 1, best_id, best_u)
+}
+
+// Cut the top-K=2 of the ranking into a plan table [count | (id, reg_code)*count],
+// reg_code 0=rbx (rank 0), 1=r12 (rank 1). Returns 0 when no candidate exists.
+pub fn nb_dtk_select(uses: i64, defs: i64, nb: i64) -> i64 {
+    let b0: i64 = nb_dtk_best(uses, defs, nb, 0 - 1, 0, 0 - 1, 0);
+    if b0 < 0 {
+        return 0;
+    }
+    let b1: i64 = nb_dtk_best(uses, defs, nb, b0, 0, 0 - 1, 0);
+    let plan: i64 = __mind_alloc(8 + 2 * 16);
+    if b1 < 0 {
+        __mind_store_i64(plan, 1);
+        __mind_store_i64(plan + 8, b0);
+        __mind_store_i64(plan + 16, 0);
+        return plan;
+    }
+    __mind_store_i64(plan, 2);
+    __mind_store_i64(plan + 8, b0);
+    __mind_store_i64(plan + 16, 0);
+    __mind_store_i64(plan + 24, b1);
+    __mind_store_i64(plan + 32, 1);
+    plan
+}
+
+// Whole-fn planner. Returns 0 (no reg homes — every wrapper falls through to the
+// stack scheme, byte-identical to today) when the fn is INELIGIBLE. Fail-closed
+// gates (§3): entry fn, any address-taken name (atab>0), nslots>64, any narrow
+// param, any float param. Then the whitelist scan; any refusal => 0.
+pub fn nb_dtk_plan(buf: i64, stmts_addr: i64, stmts_len: i64, params_addr: i64, n_params: i64, atab: i64, srt: i64, is_entry: i64, nslots: i64) -> i64 {
+    if is_entry == 1 {
+        return 0;
+    }
+    if __mind_load_i64(atab) > 0 {
+        return 0;
+    }
+    if nslots > 64 {
+        return 0;
+    }
+    if nb_fn_has_narrow_param(buf, params_addr, n_params, 0) == 1 {
+        return 0;
+    }
+    if nb_dtk_any_float_param(buf, params_addr, n_params, 0) == 1 {
+        return 0;
+    }
+    let nb: i64 = nslots + 64;
+    let uses: i64 = __mind_alloc(nb * 8);
+    let defs: i64 = __mind_alloc(nb * 8);
+    let _zu: i64 = nb_dtk_zero(uses, nb, 0);
+    let _zd: i64 = nb_dtk_zero(defs, nb, 0);
+    let env: i64 = __mind_alloc(512 * 3 * 8);
+    let dsc: i64 = __mind_alloc(80);
+    __mind_store_i64(dsc + 0, n_params);
+    __mind_store_i64(dsc + 8, 1);
+    __mind_store_i64(dsc + 16, uses);
+    __mind_store_i64(dsc + 24, defs);
+    __mind_store_i64(dsc + 32, env);
+    __mind_store_i64(dsc + 40, 0);
+    __mind_store_i64(dsc + 48, buf);
+    __mind_store_i64(dsc + 56, params_addr);
+    __mind_store_i64(dsc + 64, n_params);
+    __mind_store_i64(dsc + 72, nb);
+    let _sc: i64 = nb_dtk_scan_stmts(dsc, stmts_addr, stmts_len, 0);
+    if __mind_load_i64(dsc + 8) == 0 {
+        return 0;
+    }
+    nb_dtk_select(uses, defs, nb)
+}
+
+// ---- plan lookup + reg-form def/use wrappers (the def/use seam) ----
+// nb_plan_reg: reg_code (0=rbx,1=r12) for `id`, or -1 (spill). plan==0 => -1.
+pub fn nb_plan_reg_find(plan: i64, n: i64, id: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0 - 1;
+    }
+    if __mind_load_i64(plan + 8 + i * 16) == id {
+        return __mind_load_i64(plan + 8 + i * 16 + 8);
+    }
+    nb_plan_reg_find(plan, n, id, i + 1)
+}
+pub fn nb_plan_reg(plan: i64, id: i64) -> i64 {
+    if plan == 0 {
+        return 0 - 1;
+    }
+    nb_plan_reg_find(plan, __mind_load_i64(plan), id, 0)
+}
+// Store rax into value `id`'s home: mov rbx,rax=48 89 C3 / mov r12,rax=49 89 C4,
+// else the stack home nb_store_rax(nb_slot_disp(id)).
+pub fn nb_val_store_rax(plan: i64, id: i64, code: String) -> String {
+    let rc: i64 = nb_plan_reg(plan, id);
+    if rc == 0 {
+        let c1: String = nb_push(code, 72);
+        let c2: String = nb_push(c1, 137);
+        return nb_push(c2, 195);
+    }
+    if rc == 1 {
+        let c1: String = nb_push(code, 73);
+        let c2: String = nb_push(c1, 137);
+        return nb_push(c2, 196);
+    }
+    nb_store_rax(code, nb_slot_disp(id))
+}
+// Load value `id` into rax: mov rax,rbx=48 8B C3 / mov rax,r12=49 8B C4, else
+// nb_load_rax(nb_slot_disp(id)).
+pub fn nb_val_load_rax(plan: i64, id: i64, code: String) -> String {
+    let rc: i64 = nb_plan_reg(plan, id);
+    if rc == 0 {
+        let c1: String = nb_push(code, 72);
+        let c2: String = nb_push(c1, 139);
+        return nb_push(c2, 195);
+    }
+    if rc == 1 {
+        let c1: String = nb_push(code, 73);
+        let c2: String = nb_push(c1, 139);
+        return nb_push(c2, 196);
+    }
+    nb_load_rax(code, nb_slot_disp(id))
+}
+// In-place arith of rax with value `id` (reg-form ModRM mod=11): add=03 sub=2B
+// and=23 or=0B xor=33 imul=0F AF, REX 48 (rbx) / 49 (r12), ModRM C3 (rbx) / C4
+// (r12). Falls through to nb_arith_rax_mem for a spilled operand.
+pub fn nb_val_arith_rax(plan: i64, id: i64, code: String, op: i64) -> String {
+    let rc: i64 = nb_plan_reg(plan, id);
+    if rc < 0 {
+        return nb_arith_rax_mem(code, op, nb_slot_disp(id));
+    }
+    let rex: i64 = if rc == 1 {
+        73
+    } else {
+        72
+    };
+    let modrm: i64 = if rc == 1 {
+        196
+    } else {
+        195
+    };
+    if op == op_add() {
+        let c1: String = nb_push(code, rex);
+        let c2: String = nb_push(c1, 3);
+        return nb_push(c2, modrm);
+    }
+    if op == op_sub() {
+        let c1: String = nb_push(code, rex);
+        let c2: String = nb_push(c1, 43);
+        return nb_push(c2, modrm);
+    }
+    if op == op_bitand() {
+        let c1: String = nb_push(code, rex);
+        let c2: String = nb_push(c1, 35);
+        return nb_push(c2, modrm);
+    }
+    if op == op_bitor() {
+        let c1: String = nb_push(code, rex);
+        let c2: String = nb_push(c1, 11);
+        return nb_push(c2, modrm);
+    }
+    if op == op_bitxor() {
+        let c1: String = nb_push(code, rex);
+        let c2: String = nb_push(c1, 51);
+        return nb_push(c2, modrm);
+    }
+    if op == op_mul() {
+        let c1: String = nb_push(code, rex);
+        let c2: String = nb_push(c1, 15);
+        let c3: String = nb_push(c2, 175);
+        return nb_push(c3, modrm);
+    }
+    // Non-reg-form op on a reg-homed operand cannot occur in an eligible fn
+    // (whitelist excludes div/mod/shift) — defensive stack fallthrough.
+    nb_arith_rax_mem(code, op, nb_slot_disp(id))
+}
+// Reg-form of nb_cmp_rax_mem: cmp rax,reg (48/49 3B C3/C4) ; setcc al ; movzx.
+pub fn nb_val_cmp_rax(plan: i64, id: i64, code: String, setcc: i64) -> String {
+    let rc: i64 = nb_plan_reg(plan, id);
+    if rc < 0 {
+        return nb_cmp_rax_mem(code, setcc, nb_slot_disp(id));
+    }
+    let rex: i64 = if rc == 1 {
+        73
+    } else {
+        72
+    };
+    let modrm: i64 = if rc == 1 {
+        196
+    } else {
+        195
+    };
+    let c1: String = nb_push(code, rex);
+    let c2: String = nb_push(c1, 59);
+    let c3: String = nb_push(c2, modrm);
+    let c5: String = nb_push(c3, 15);
+    let c6: String = nb_push(c5, setcc);
+    let c7: String = nb_push(c6, 192);
+    let c8: String = nb_push(c7, 15);
+    let c9: String = nb_push(c8, 182);
+    nb_push(c9, 192)
+}
+// Prologue callee-saved pushes in rank order (push rbx=53 ; push r12=41 54),
+// emitted AFTER `sub rsp,frame` so nb_slot_disp stays rbp-relative & unchanged.
+pub fn nb_val_prologue(plan: i64, code: String) -> String {
+    let n: i64 = if plan == 0 {
+        0
+    } else {
+        __mind_load_i64(plan)
+    };
+    let c1: String = if n >= 1 {
+        nb_push(code, 83)
+    } else {
+        code
+    };
+    if n >= 2 {
+        let c2: String = nb_push(c1, 65);
+        return nb_push(c2, 84);
+    }
+    c1
+}
+// Epilogue callee-saved pops in REVERSE push order (pop r12=41 5C ; pop rbx=5B),
+// emitted BEFORE the mov rsp,rbp ; pop rbp ; ret of nb_emit_return.
+pub fn nb_val_epilogue(plan: i64, code: String) -> String {
+    let n: i64 = if plan == 0 {
+        0
+    } else {
+        __mind_load_i64(plan)
+    };
+    let c1: String = if n >= 2 {
+        let a: String = nb_push(code, 65);
+        nb_push(a, 92)
+    } else {
+        code
+    };
+    if n >= 1 {
+        return nb_push(c1, 91);
+    }
+    c1
+}
+
 pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64, srt: i64, frt: i64, uses_argv: i64, ordered: i64, n_fns: i64) -> NbState {
     let params_addr: i64 = ast_child1(node);
     let n_params: i64 = ast_aux(node) / 2;
@@ -31144,8 +31634,11 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // then 32 -> 96 so the i64-references address-taken registry sits at +88 — the
     // SAME offset the emit lcell uses (the pre-walks alias the emit lcell as clcell,
     // so the count-side let/assign arms read one offset on either cell).
-    let clcell0: i64 = __mind_alloc(96);
+    // Grown 96 -> 104 for the DTK plan pointer at +96 (count-side mirror is 0 —
+    // the count walk never emits, so it never consults a reg home; see nb_dtk_plan).
+    let clcell0: i64 = __mind_alloc(104);
     __mind_store_i64(clcell0, 0);
+    __mind_store_i64(clcell0 + 96, 0);
     __mind_store_i64(clcell0 + 24, srt);
     // Mirror the emit lcell's frt slot (+16) so nb_count_stmt's nb_let_descriptor
     // resolves an unannotated struct-returning-call receiver's descriptor IDENTICALLY
@@ -31165,6 +31658,10 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // CONST+ADD ids for a nonzero-offset field read must be counted into nslots).
     let _crp: i64 = nb_register_struct_params(srt, buf, params_addr, n_params, clets0, clcell0, 0);
     let nslots: i64 = nb_count_stmts(n_params, buf, stmts_addr, stmts_len, 0, params_addr, n_params, clets0, clcell0, srt);
+    // DTK SLICE 1 (#254): plan callee-saved reg homes for this fn. 0 (empty) for
+    // every ineligible fn => every nb_val_* wrapper below falls through to the
+    // stack scheme => bytes identical to pre-DTK. Reuses the already-built atab.
+    let plan: i64 = nb_dtk_plan(buf, stmts_addr, stmts_len, params_addr, n_params, atab, srt, is_entry, nslots);
     let frame: i64 = nb_round16(8 * nslots);
 
     let code0: String = string_new();
@@ -31189,11 +31686,14 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     let p6: String = nb_push(p5, 129);
     let p7: String = nb_push(p6, 236);
     let p8: String = nb_i32le_signed(p7, frame);
+    // DTK SLICE 1: save the callee-saved regs the plan homes (push rbx ; push r12),
+    // in rank order, BELOW the frame (after sub rsp). No-op for an empty plan.
+    let p8r: String = nb_val_prologue(plan, p8);
 
     // Spill incoming params into their slots (Param arms): store_argreg(i, slot i).
     // gp_k / sse_k are the SysV GP and SSE arg-register counters (both 0 to start);
     // an integer/pointer param consumes a GP register, a float param an SSE register.
-    let st_params: NbState = NbState { code: p8, next_id: n_params, last_id: 0 - 1, ncalls: ncalls0 };
+    let st_params: NbState = NbState { code: p8r, next_id: n_params, last_id: 0 - 1, ncalls: ncalls0 };
     let st_p0: NbState = nb_emit_params(st_params, buf, params_addr, n_params, 0, 0, 0);
     // C2 param-width driver: wrap each narrow-declared (i8/i16/i32) param in place
     // in its home slot right after the SysV spill, so every later read of the
@@ -31223,8 +31723,12 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // for the FAIL-CLOSED poison flag at +80 (set by nb_expr's default/refusal
     // arms; read below after the body walk — a poisoned fn refuses the whole
     // compile with the next_id == -1 sentinel instead of emitting wrong bytes).
-    let lcell: i64 = __mind_alloc(96);
+    // Grown 96 -> 104 for the DTK plan pointer at +96 (DTK slice 1, #254): nb_expr
+    // and nb_stmt read it to route a reg-homed value's def/use through the nb_val_*
+    // wrappers. 0 (empty plan) => stack scheme => byte-identical to pre-DTK.
+    let lcell: i64 = __mind_alloc(104);
     __mind_store_i64(lcell, 0);
+    __mind_store_i64(lcell + 96, 0);
     __mind_store_i64(lcell + 88, 0);
     __mind_store_i64(lcell + 80, 0);
     // RI-B1 FOLLOW-UP: per-fn SSA dtype table (nb_dtype_table_new, all-INT default),
@@ -31281,6 +31785,9 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // count side at clcell0+88) — read by nb_expr's addr-of arm and the
     // let/assign capture-copy + direct-assignment refusal.
     __mind_store_i64(lcell + 88, atab);
+    // DTK SLICE 1: the reg-allocation plan (0 for an ineligible fn), read by the
+    // nb_val_* def/use wrappers in nb_expr / nb_stmt.
+    __mind_store_i64(lcell + 96, plan);
     // i64-REFERENCES fail-closed guards (blind-review findings):
     // (1) CRITICAL — an fn that BOTH takes an address AND can transitively
     //     REACH ITSELF through the call graph (direct recursion, mutual
@@ -31327,7 +31834,7 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // looked up by name in the frt registry, drives the return-register selection in
     // nb_finish_body (xmm0 for a float return, rax otherwise). INT for every main.mind fn.
     let ret_dt: i64 = frt_lookup_dtype(frt, buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node)));
-    let st_body: NbState = nb_finish_body(st_body0, is_entry, stmts_addr, stmts_len, ret_dt, __mind_load_i64(lcell + 72));
+    let st_body: NbState = nb_finish_body(st_body0, is_entry, stmts_addr, stmts_len, ret_dt, __mind_load_i64(lcell + 72), plan);
 
     // SYSTEMIC FAIL-CLOSED gate: if any node in this fn's body was REFUSED
     // (nb_expr/nb_stmt default arm, unbound ident, unsupported field shape —
@@ -32572,6 +33079,60 @@ pub fn nb_patch_rel32(code_addr: i64, abs_off: i64, rel: i64) -> i64 {
 // byte-identical. The stdlib-bundling path uses the 4-arg variant below.
 pub fn selftest_native_elf_h(src_addr: i64, src_len: i64, hash_addr: i64) -> EmitState {
     selftest_native_elf_hb(src_addr, src_len, hash_addr, 0)
+}
+
+// DTK SLICE 1 (#254) parity export. Runs nb_dtk_plan over the FIRST fn in `src`
+// (the parity harness isolates one leaf, non-entry, scalar-i64 fn as item 0),
+// serializing the plan table into `out_addr` as [count | (id, reg_code)*count]
+// (reg_code 0=rbx, 1=r12) and returning count. The Rust reference
+// src/opt/regalloc_dtk.rs::plan_module_k(module, 2) over the same fn's IR must
+// produce the identical (id, reg_code) set after filtering out its Param defs
+// (slice 1 excludes params from candidates) — tests/regalloc_dtk_parity.rs.
+// is_entry is passed 0 so the comparison matches the Rust planner, which has no
+// entry-specific notion. srt=0 is sound: an eligible fn reads no struct fields.
+pub fn selftest_dtk_plan(src_addr: i64, src_len: i64, out_addr: i64) -> i64 {
+    let tokens: Vec = lex(src_addr, src_len);
+    let ast_root: i64 = parse(tokens, src_addr);
+    let items_addr: i64 = ast_child0(ast_root);
+    let items_len: i64 = ast_aux(ast_root);
+    let all_fns: i64 = __mind_alloc((items_len + 1) * 8);
+    let nfns: i64 = nb_collect_fns(items_addr, items_len, 0, all_fns, 0);
+    if nfns <= 0 {
+        __mind_store_i64(out_addr, 0);
+        return 0;
+    }
+    let fnode: i64 = __mind_load_i64(all_fns);
+    let params_addr: i64 = ast_child1(fnode);
+    let n_params: i64 = ast_aux(fnode) / 2;
+    let body: i64 = ast_child2(fnode);
+    let stmts_addr: i64 = ast_child0(body);
+    let stmts_len: i64 = ast_aux(body);
+    let atab: i64 = __mind_alloc(16 + 1024 * 2 * 8);
+    __mind_store_i64(atab, 0);
+    __mind_store_i64(atab + 8, 0);
+    let _ats: i64 = nb_at_scan_stmts(atab, src_addr, stmts_addr, stmts_len, 0);
+    let clets: i64 = __mind_alloc(512 * 5 * 8);
+    let clcell: i64 = __mind_alloc(104);
+    let _zc: i64 = nb_dtk_zero(clcell, 13, 0);
+    __mind_store_i64(clcell + 88, atab);
+    let nslots: i64 = nb_count_stmts(n_params, src_addr, stmts_addr, stmts_len, 0, params_addr, n_params, clets, clcell, 0);
+    let plan: i64 = nb_dtk_plan(src_addr, stmts_addr, stmts_len, params_addr, n_params, atab, 0, 0, nslots);
+    let count: i64 = if plan == 0 {
+        0
+    } else {
+        __mind_load_i64(plan)
+    };
+    __mind_store_i64(out_addr, count);
+    let _w: i64 = nb_dtk_serialize(plan, count, out_addr, 0);
+    count
+}
+pub fn nb_dtk_serialize(plan: i64, count: i64, out_addr: i64, i: i64) -> i64 {
+    if i >= count {
+        return 0;
+    }
+    __mind_store_i64(out_addr + 8 + i * 16, __mind_load_i64(plan + 8 + i * 16));
+    __mind_store_i64(out_addr + 8 + i * 16 + 8, __mind_load_i64(plan + 8 + i * 16 + 8));
+    nb_dtk_serialize(plan, count, out_addr, i + 1)
 }
 
 // ---- SELF-COMPUTED trace hash (no oracle feed) ----

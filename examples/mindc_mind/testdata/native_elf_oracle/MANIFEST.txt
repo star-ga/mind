@@ -1,6 +1,6 @@
 # Frozen native-ELF oracle references, captured before #15 deletes src/native.
 # name  size_bytes  sha256  expected_exit_code
-add	498	464714363b292de8e045d8397ee51db0e617070183cc43faabf6646e6363fa07	5
+add	492	4e70e77c8fc8646390b1e56f32ac51870d1f8408ac39bd80c71ddc2460a5526f	5
 if_ret	598	752e801434c03844fa1c94c48c4ab15b88d525ea7d93298a628467cc45bac758	1
 value_if	585	3ac4a43b25a99821250b1820027edbab95fcc4a027859681849c39da14075262	7
 recursion	699	5ef7d0ae3c9b79f57121cccc6f96c5336e53771a8c4e638ad9beb1bfc62bde52	13
