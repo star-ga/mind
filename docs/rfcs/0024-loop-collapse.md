@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0024 |
 | Title | Loop Collapse — prove-or-fail closed-form replacement of counted loops (`#[collapse]`) |
-| Status | **Draft** — feature UNBUILT. This RFC fixes the `#[collapse]` contract, the `E22xx` diagnostic family, the ring-exact closed-form builder, and the `evidence_chain.collapse.*` receipt. Slice 0 (Z/2^64 affine sums) is the first implementation target; geometric / Q16.16-affine / fixed-point are named follow-on slices. |
+| Status | **Partial** — the `#[collapse]` contract, the `E22xx` diagnostic family (E2201–E2215), the ring-exact closed-form builder, and the `evidence_chain.collapse.*` receipt are **shipped** (`src/opt/collapse.rs`, `src/opt/scev.rs`, `src/ir/compact/v3/collapse_receipt.rs`; the receipt is re-derived by `mindc verify`). Slice S1 (Z/2^64 affine sum/count → O(1) closed form) is implemented and prove-or-fail gated; Slice S2 (geometric powering) and the Q16.16-map recognizer are present. Unannotated-affine auto-collapse stays deferred (an optimization, opt-in only today). |
 | Authors | STARGA Inc. |
 | Created | 2026-07-15 |
 | Depends | RFC 0015 (cross-substrate bit-identity — the property collapse must preserve), RFC 0016 (evidence-chain emission — the carrier for the collapse receipt), RFC 0017 (`mindc verify` — re-derives the collapse proof), RFC 0021 (canonical mic@3 IR + MAP epilogue — the hashed body collapse rewrites) |
