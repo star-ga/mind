@@ -35122,12 +35122,47 @@ pub fn nb_pow5_divides(num: i64, k: i64) -> i64 {
     nb_pow5_divides(num / 5, k - 1)
 }
 
+// 1 iff [lo,hi) contains an EXPONENT marker byte 'e' (101) or 'E' (69). The
+// native-ELF float pipeline (nb_float_lit_bits) parses ONLY the dotted
+// <int>.<frac> form with integer arithmetic — it has no exponent handling. An
+// exponent-form literal (1e19, 1.5e3, ...) still lexes as a tk_float (the lexer's
+// scan_float_exp path), and parse_int_span silently absorbs the 'e' as a bogus
+// decimal digit (byte 101 - 48 = 53), so 1e19 mis-parses to 6319 and the float
+// arm emits a RUNNING wrong-value ELF (exit 6319 & 0xff = 175) — a fail-OPEN
+// silent miscompile. Detecting the marker lets nb_float_lit_is_dyadic refuse
+// (return 0), which the nb_expr float arm turns into the systemic fail-closed
+// 0-byte poison (lcell+80=1). main.mind is float-free, so this never runs during
+// self-compile; a dotted in-range literal contains no 'e'/'E' and is unaffected
+// (byte-identical). upgrade path: real exponent scaling in the same bignum
+// dec2flt follow-up as the block header.
+pub fn nb_span_has_exp(buf: i64, lo: i64, hi: i64) -> i64 {
+    if lo >= hi {
+        return 0;
+    }
+    let b: i64 = load_byte(buf, lo);
+    if b == 101 {
+        return 1;
+    }
+    if b == 69 {
+        return 1;
+    }
+    nb_span_has_exp(buf, lo + 1, hi)
+}
+
 // 1 iff the decimal literal in [lo,hi) is EXACTLY a dyadic rational q * 2^-fk —
 // i.e. 5^fk divides num = ipart*10^fk + fpart. nb_float_lit_bits is exact ONLY in
 // that case; a non-dyadic literal (0.1, 3.14, 0.7 ...) truncates in
 // nb_strip_pow5's integer /5 and yields SILENT wrong IEEE-754 bits (0.1 -> 0.0,
 // 3.14 -> 3.0). Same parse as nb_float_lit_bits.
 pub fn nb_float_lit_is_dyadic(buf: i64, lo: i64, hi: i64) -> i64 {
+    // EXPONENT-FORM fail-close: nb_float_lit_bits handles only the dotted
+    // <int>.<frac> form; an exponent literal (1e19, 1.5e3) mis-parses through
+    // parse_int_span (the 'e' absorbed as digit 53) and would emit a running
+    // wrong-value ELF. Refuse it here so the nb_expr float arm poisons (0-byte
+    // fail-closed) instead of a silent miscompile.
+    if nb_span_has_exp(buf, lo, hi) == 1 {
+        return 0;
+    }
     let dot: i64 = nb_find_dot(buf, lo, hi);
     let fdigits: i64 = hi - (dot + 1);
     let fk: i64 = if fdigits < 0 {
@@ -35197,6 +35232,18 @@ pub fn selftest_native_elf_fp_expr(src_addr: i64, src_len: i64) -> EmitState {
     __mind_store_i64(lcell + 8, 0);
     let st0: NbState = NbState { code: p, next_id: 0, last_id: 0 - 1, ncalls: 0 };
     let s1: NbState = nb_expr(st0, src_addr, node, params, 0, calls, lets, lcell);
+    // Fail-closed gate (mirror nb_lower_fn / selftest_native_elf_fp_field): if
+    // nb_expr poisoned the fn — an unsupported / out-of-range float literal such
+    // as the exponent-form 1e19 that nb_float_lit_bits cannot emit correctly —
+    // refuse with the systemic empty (0-byte) module instead of building a
+    // runnable wrong-value ELF (fail-OPEN). Byte-neutral for in-range programs:
+    // an emittable dyadic literal never sets lcell+80 or the -1 sentinel.
+    if s1.next_id < 0 {
+        return es_new();
+    }
+    if __mind_load_i64(lcell + 80) == 1 {
+        return es_new();
+    }
     // Read the float back out of its slot and truncate to i64 for exit(rax).
     let c1: String = nb_fp_movsd_load_xmm0(s1.code, nb_slot_disp(s1.last_id));
     let c2: String = nb_fp_trunc_rax_xmm0(c1);
@@ -35239,6 +35286,17 @@ pub fn selftest_native_elf_fp_binop(src_addr: i64, src_len: i64) -> EmitState {
     __mind_store_i64(lcell + 8, 0);
     let st0: NbState = NbState { code: p, next_id: 0, last_id: 0 - 1, ncalls: 0 };
     let s1: NbState = nb_expr(st0, src_addr, node, params, 0, calls, lets, lcell);
+    // Fail-closed gate (mirror nb_lower_fn / selftest_native_elf_fp_field): refuse
+    // with the systemic empty (0-byte) module if nb_expr poisoned the fn — an
+    // unsupported / out-of-range float operand such as the exponent-form 1e19 —
+    // never build a runnable wrong-value ELF. Byte-neutral for in-range dyadic
+    // operands (they never set lcell+80 or the -1 sentinel).
+    if s1.next_id < 0 {
+        return es_new();
+    }
+    if __mind_load_i64(lcell + 80) == 1 {
+        return es_new();
+    }
     // Read the float result back out of its slot and truncate to i64 for exit(rax).
     let c1: String = nb_fp_movsd_load_xmm0(s1.code, nb_slot_disp(s1.last_id));
     let c2: String = nb_fp_trunc_rax_xmm0(c1);
