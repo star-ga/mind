@@ -50,6 +50,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   No wire-format or schema change.
 
 ### Added
+- **DTK — deterministic top-K callee-saved register allocation (first slice).**
+  The first real register-allocation pass in the pure-MIND native-ELF backend:
+  the top-K most-used non-parameter values in a leaf scalar function are homed in
+  callee-saved registers (rbx, r12), ranked by a total order — (use-count DESC,
+  ValueId ASC) — that is a pure function of the IR, so the choice is identical
+  across runs and substrates. Everything else spills to the existing stack scheme,
+  so the pass can only ever *improve* register use, never miscompile. The Rust
+  `src/opt/regalloc_dtk.rs` is a differential parity oracle for the pure-MIND scan
+  (`nb_dtk_*` in `examples/mindc_mind/main.mind`); the two are diffed field-exact
+  by `dtk_plan_parity_smoke.py` over an eligible corpus, plus a fail-closed empty
+  plan on every ineligible class. Scope: leaf scalar (i64) functions only — any
+  call, branch, or non-whitelisted op makes a function ineligible and falls through
+  to the stack scheme unchanged. Keystone 7/7 byte-identical; the native-ELF
+  fixtures re-froze to reflect the new register homes.
+- **`int → f64` widening cast in the pure-MIND native-ELF backend.** `expr as f64`
+  on an integer source now emits `cvtsi2sd` + `movsd` (FLOAT-tagged) directly from
+  the self-host backend, zero MLIR/LLVM — gated strictly on the cast width so it is
+  additive, and fail-closed (0-byte refusal) on a non-integer source. Keystone 7/7.
+- **Rust-vs-.mind DTK parity smoke.**
+  `examples/mindc_mind/testdata/dtk_plan_parity_smoke.py` builds the cdylib, runs
+  the pure-MIND `selftest_dtk_plan` export, and diffs its serialized plan table
+  field-exact against the Rust `plan_module_k` oracle over an eligible corpus, plus
+  asserts a fail-closed empty plan for every ineligible class — a genuine
+  cross-implementation gate for the allocator's ranking *and* eligibility.
 - **Postfix `?` error-propagation operator (W1.5f).** `expr?` in a
   `Result`/`Option`-returning fn desugars — before lowering — to the existing
   `match` machinery: `x?` is `match x { Ok(v) => v, Err(e) => return Err(e) }`
@@ -348,6 +372,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   broadly.
 
 ### Fixed
+- **Latent null-deref in the `selftest_dtk_plan` test export.** The DTK parity
+  export passed a null struct-registry pointer into `nb_count_stmts`, so any
+  `let x: T = …` in a probed function dereferenced null (SIGSEGV). It now builds
+  the registry from the already-lexed tokens, exactly as the canonical
+  `nb_lower_fn` path does. Test-only export (no emission path reaches it); native
+  ELF byte-identity unchanged.
+- **DTK docs: private-item rustdoc links + import ordering.** `regalloc_dtk.rs`
+  module docs linked the private `accumulate` fn and `Instr::Region` as intra-doc
+  links (rustdoc `-D warnings` failure); demoted to code spans. Import group in
+  the parity test reordered per rustfmt.
 - **String-literal `match` patterns stored escapes RAW instead of decoding
   them.** `parse_string_lit` decodes `"\n"` to the single byte `0x0A`, but the
   pattern parser copied the raw slice, so a `match s { "\n" => … }` arm stored
