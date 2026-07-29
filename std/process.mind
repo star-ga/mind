@@ -160,7 +160,7 @@ pub fn spawn(prog_addr: i64, argv_vec_addr: i64, argv_vec_len: i64) -> i64 {
     __mind_store_i64(child + 24, 0 - 1);
     __mind_store_i64(child + 32, 0);
     let argv: i64 = proc_build_argv(prog_addr, argv_vec_addr, argv_vec_len);
-    let pid: i32 = fork();
+    let pid: i64 = fork() as i64;
     if pid < 0 {
         return child;
     }
@@ -168,7 +168,7 @@ pub fn spawn(prog_addr: i64, argv_vec_addr: i64, argv_vec_len: i64) -> i64 {
         let _ = execvp(prog_addr as *const u8, argv as *const *const u8);
         exit(127)
     }
-    __mind_store_i64(child + 0, pid as i64);
+    __mind_store_i64(child + 0, pid);
     child
 }
 
@@ -187,9 +187,9 @@ pub fn spawn_capture(prog_addr: i64, argv_vec_addr: i64, argv_vec_len: i64) -> i
     let _ = memset(p_in as *mut u8, 0, 8);
     let _ = memset(p_out as *mut u8, 0, 8);
     let _ = memset(p_err as *mut u8, 0, 8);
-    let r1: i32 = pipe(p_in as *mut i32);
-    let r2: i32 = pipe(p_out as *mut i32);
-    let r3: i32 = pipe(p_err as *mut i32);
+    let r1: i64 = pipe(p_in as *mut i32) as i64;
+    let r2: i64 = pipe(p_out as *mut i32) as i64;
+    let r3: i64 = pipe(p_err as *mut i32) as i64;
     if r1 != 0 {
         return child;
     }
@@ -206,7 +206,7 @@ pub fn spawn_capture(prog_addr: i64, argv_vec_addr: i64, argv_vec_len: i64) -> i
     let perr_r: i64 = __mind_load_i64(p_err + 0) & 65535;
     let perr_w: i64 = __mind_load_i64(p_err + 4) & 65535;
     let argv: i64 = proc_build_argv(prog_addr, argv_vec_addr, argv_vec_len);
-    let pid: i32 = fork();
+    let pid: i64 = fork() as i64;
     if pid < 0 {
         return child;
     }
@@ -223,7 +223,7 @@ pub fn spawn_capture(prog_addr: i64, argv_vec_addr: i64, argv_vec_len: i64) -> i
     let _ = close(pin_r as i32);
     let _ = close(pout_w as i32);
     let _ = close(perr_w as i32);
-    __mind_store_i64(child + 0, pid as i64);
+    __mind_store_i64(child + 0, pid);
     __mind_store_i64(child + 8, pin_w);
     __mind_store_i64(child + 16, pout_r);
     __mind_store_i64(child + 24, perr_r);
@@ -246,7 +246,7 @@ pub fn wait(c: i64) -> i64 {
 // proc_kill — send signal sig to child process. Returns 1 on success.
 pub fn proc_kill(c: i64, sig: i64) -> i64 {
     let pid: i64 = child_pid(c);
-    let r: i32 = kill(pid as i32, sig as i32);
+    let r: i64 = kill(pid as i32, sig as i32) as i64;
     if r == 0 {
         1
     } else {
@@ -288,7 +288,7 @@ pub fn proc_getenv(name_addr: i64) -> i64 {
 
 // proc_setenv — set an environment variable. Returns 1 on success.
 pub fn proc_setenv(name_addr: i64, value_addr: i64) -> i64 {
-    let r: i32 = setenv(name_addr as *const u8, value_addr as *const u8, 1);
+    let r: i64 = setenv(name_addr as *const u8, value_addr as *const u8, 1) as i64;
     if r == 0 {
         1
     } else {
@@ -298,7 +298,7 @@ pub fn proc_setenv(name_addr: i64, value_addr: i64) -> i64 {
 
 // proc_unsetenv — remove an environment variable. Returns 1 on success.
 pub fn proc_unsetenv(name_addr: i64) -> i64 {
-    let r: i32 = unsetenv(name_addr as *const u8);
+    let r: i64 = unsetenv(name_addr as *const u8) as i64;
     if r == 0 {
         1
     } else {
@@ -332,7 +332,7 @@ pub fn current_dir() -> i64 {
 
 // set_current_dir — change the working directory. Returns 1 on success.
 pub fn set_current_dir(path_addr: i64) -> i64 {
-    let r: i32 = chdir(path_addr as *const u8);
+    let r: i64 = chdir(path_addr as *const u8) as i64;
     if r == 0 {
         1
     } else {
