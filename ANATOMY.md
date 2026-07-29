@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3217 | **Est. tokens:** ~7,750,815
-**Generated:** 2026-07-29 10:46 UTC
+**Files:** 3219 | **Est. tokens:** ~7,756,294
+**Generated:** 2026-07-29 12:30 UTC
 
 ## Token Budget Guide
 
@@ -58,8 +58,8 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 139 | ~329,275 |
-| `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
+| `examples/mindc_mind/` | 139 | ~329,480 |
+| `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
 | `examples/native/` | 4 | ~527 |
 | `examples/parser/` | 5 | ~17,923 |
@@ -400,7 +400,7 @@
 | `src/lint/rules/` | 6 | ~9,880 |
 | `src/mlir/` | 3 | ~5,905 |
 | `src/ops/` | 3 | ~4,764 |
-| `src/opt/` | 7 | ~36,960 |
+| `src/opt/` | 8 | ~40,837 |
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 2 | ~20,355 |
 | `src/phf/` | 1 | ~4,955 |
@@ -413,7 +413,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~194,284 |
-| `tests/` | 297 | ~505,791 |
+| `tests/` | 298 | ~507,190 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -859,7 +859,7 @@
 - `gap_corpus_smoke.py` (~1922 tok, huge)
 - `general_float_netverify.py` (~1979 tok, huge) — general_float_netverify.py — GENERAL-path f64 value battery (B0 gate lift).
 - `.gitignore` (~5 tok, tiny) — __pycache__/
-- `lockstep_lint.py` (~3922 tok, huge) — lockstep_lint.py -- native-ELF walker lockstep linter for the pure-MIND self-host compiler.
+- `lockstep_lint.py` (~4127 tok, huge) — lockstep_lint.py -- native-ELF walker lockstep linter for the pure-MIND self-host compiler.
 - `match_struct_smoke.py` (~1311 tok, large)
 - `method_callee_smoke.py` (~1350 tok, large)
 - `method_calls_smoke.py` (~1294 tok, large)
@@ -980,7 +980,7 @@
 - `tc_differential_fuzz.py` (~12513 tok, huge) — tcdiff — differential fuzzer for the self-host source-position tc-rule ports.
 ### `examples/mindc_mind/testdata/native_elf_oracle/`
 
-- `add.elf` (~125 tok, small) — ELF> @@@8
+- `add.elf` (~123 tok, small) — ELF> @@@8
 - `if_ret.elf` (~150 tok, small) — ELF> @@@8
 - `MANIFEST.txt` (~152 tok, small) — # Frozen native-ELF oracle references, captured before #15 deletes src/native.
 - `recursion.elf` (~175 tok, small) — ELF> @@@8
@@ -4034,7 +4034,8 @@
 - `fold.rs` (~2046 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_canonical.rs` (~4728 tok, huge) — Copyright 2025 STARGA Inc.
 - `memory_layout.rs` (~4110 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `mod.rs` (~192 tok, small) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~198 tok, small) — Copyright 2025 STARGA Inc.
+- `regalloc_dtk.rs` (~3871 tok, huge) — Copyright 2025 STARGA Inc.
 - `scev.rs` (~8574 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/package/`
 
@@ -4563,6 +4564,7 @@
 - `reductions_grad.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
 - `reductions_preview.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
 - `_ref_mic3_dump.rs` (~1663 tok, huge) — Committed self-host reference generator (A9b): reconstruct
+- `regalloc_dtk_parity.rs` (~1399 tok, large) — DTK slice 1 (#254) — parity consumer for src/opt/regalloc_dtk.rs.
 - `region_phase_ja.rs` (~4239 tok, huge) — Copyright 2025 STARGA Inc.
 - `relu_exec.rs` (~472 tok, medium) — Copyright 2025 STARGA Inc.
 - `relu_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.

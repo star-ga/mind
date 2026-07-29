@@ -8,7 +8,7 @@ byte-identity gate after the fact -- cf. commits c27a766, 0b5f489, the #229 fix)
   parallel "walker" functions that recurse over the AST dispatching on `ast_kind`:
   the emit walkers (nb_expr / nb_stmt), the count walkers (nb_count_expr /
   nb_count_stmt -- the frame-slot sizer that MUST agree with emit), and the scan
-  walkers (nb_ccount_*, nb_argv_*, nb_at_scan_*, nb_reach_*).
+  walkers (nb_ccount_*, nb_argv_*, nb_at_scan_*, nb_reach_*, nb_dtk_scan_*).
 
   INVARIANT: within a family (expr walkers, stmt walkers), every ast_kind that HAS
   CHILDREN must be recursed into by EVERY walker. A walker that fails to recurse into
@@ -199,6 +199,14 @@ def descent_closure(lines, fns, walker_names):
     return descent
 
 
+def is_gate_walker(name):
+    """A fail-closed WHITELIST eligibility gate (not a frame-slot sizer): any
+    child-bearing kind it does not recurse into makes the whole fn ineligible
+    (empty plan => stack scheme => byte-identical), so a "missing" arm is safe by
+    design and must not be flagged as a lockstep desync. See DTK slice 1 (#254)."""
+    return "dtk_scan" in name
+
+
 def recurse_kinds(lines, walker, descent):
     """Kinds whose arm body calls a descent function (i.e. descends into children)."""
     out = set()
@@ -311,6 +319,12 @@ class Report:
             for m in members:
                 if k in recset[m]:
                     cells.append(f"{'R':>10s}")
+                elif is_gate_walker(m):
+                    # Fail-closed WHITELIST gate (nb_dtk_scan_*, #254): an unlisted
+                    # child-bearing kind makes the fn INELIGIBLE (the plan is empty
+                    # => stack scheme => byte-identical), so NOT recursing is the
+                    # safe behaviour, not a silent desync. Shown but not flagged.
+                    cells.append(f"{'gate':>10s}")
                 else:
                     cells.append(f"{'--MISS--':>10s}")
                     miss.append(m)
