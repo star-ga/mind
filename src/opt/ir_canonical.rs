@@ -302,12 +302,59 @@ fn constant_fold(instrs: &mut [Instr], n: usize) {
     }
 }
 
+/// The exclusive upper bound (`max ValueId.0 + 1`) an instruction contributes to
+/// its enclosing stream's `next_id`.
+///
+/// `instruction_dst` alone UNDERSTATES this for control-flow nodes: it returns
+/// `None` for `While` and only the post-merge `dst` for `If`, so a node's
+/// synthesized enclosing-scope ids that ALSO came from `fresh()` — `While.exit_ids`
+/// (`^while_after` block args), `If.merges[i].0` (the merge phi ids), and
+/// `If.branch_bindings` — never contribute. `for_each_operand` covers the read
+/// ids (`While.init_ids`, `If.merges` then/else vals, `Break`/`Continue.live`);
+/// this helper folds in the WRITTEN control-flow ids `for_each_operand` omits, so
+/// `next_sequential_id` can never lower `next_id` BELOW a live id in the same
+/// stream — which would let `prune_dead`'s `next_id`-sized `used` bitset silently
+/// delete an instruction whose `dst.0 >= next_id`.
+///
+/// SCOPE: like `next_sequential_id`, this operates on ONE stream's own SSA
+/// namespace — it does NOT descend into a `FnDef` body (its own reset namespace).
+pub(crate) fn instruction_id_bound(instr: &Instr) -> usize {
+    let mut bound = instruction_dst(instr).map_or(0, |id| id.0 + 1);
+    for_each_operand(instr, |v| bound = bound.max(v.0 + 1));
+    #[cfg(feature = "std-surface")]
+    match instr {
+        Instr::While { exit_ids, .. } => {
+            for e in exit_ids {
+                bound = bound.max(e.0 + 1);
+            }
+        }
+        Instr::If {
+            dst,
+            merges,
+            branch_bindings,
+            ..
+        } => {
+            bound = bound.max(dst.0 + 1);
+            for (merge_id, then_val, else_val) in merges {
+                bound = bound
+                    .max(merge_id.0 + 1)
+                    .max(then_val.0 + 1)
+                    .max(else_val.0 + 1);
+            }
+            for (_name, id) in branch_bindings {
+                bound = bound.max(id.0 + 1);
+            }
+        }
+        _ => {}
+    }
+    bound
+}
+
 fn next_sequential_id(module: &IRModule) -> usize {
     module
         .instrs
         .iter()
-        .filter_map(instruction_dst)
-        .map(|id| id.0 + 1)
+        .map(instruction_id_bound)
         .max()
         .unwrap_or(0)
 }

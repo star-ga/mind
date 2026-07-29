@@ -494,6 +494,187 @@ fn check_ssa_stream(instrs: &[Instr], defined: &mut BTreeSet<ValueId>) -> Result
     Ok(())
 }
 
+/// In-pipeline analog of [`check_ssa_stream`]: walk one instruction stream in
+/// program order, threading `defined` through nested regions, and validating the
+/// SAME SSA discipline (define-before-use + single-assignment) but returning the
+/// structured [`IrVerifyError`] the pipeline consumes instead of an
+/// [`SsaViolation`].
+///
+/// This is a FAITHFUL mirror of `check_ssa_stream` — same classification, same
+/// deferred `If`-merge check, same per-branch scopes, same shared helpers
+/// (`validate_while_backedges`, `validate_if_merges`, `expose_region_definitions`).
+/// Keeping it structurally identical is what guarantees `verify_module` and
+/// `check_ssa_well_formed` can never disagree on which IRs are SSA-well-formed
+/// (the differential gates in `tests/verify_ssa.rs`). Before this existed,
+/// `verify_module` walked ONLY the top-level stream and the `FnDef` body,
+/// treating a `While`/`If`/`Region` interior as an opaque unit — so a
+/// duplicate-def or undefined operand INSIDE a loop/branch body passed clean
+/// (finding #123, one region deeper).
+fn validate_ssa_stream(
+    instrs: &[Instr],
+    defined: &mut BTreeSet<ValueId>,
+) -> Result<(), IrVerifyError> {
+    for (idx, instr) in instrs.iter().enumerate() {
+        // Region-bearing nodes produce their own `dst`/`result` INSIDE a
+        // sub-stream, so the node-level definition is exposed only after the
+        // recursion (step 4), never before (which would false-collide with the
+        // interior def).
+        let is_region = matches!(instr, Instr::FnDef { .. });
+        #[cfg(feature = "std-surface")]
+        let is_region = is_region
+            || matches!(
+                instr,
+                Instr::While { .. } | Instr::If { .. } | Instr::Region { .. }
+            );
+
+        // 1. Define-before-use. Deferred for `If`: its `merges`' `then_val` /
+        //    `else_val` (yielded by `instruction_operands(If)`) are branch-EXIT
+        //    values validated per-branch in step 3, not enclosing-scope reads.
+        //    Every other instruction — including `While` (`init_ids` only) and
+        //    `Break`/`Continue` (their `live` snapshot ids) — is checked here.
+        let defer_operand_check = {
+            #[cfg(feature = "std-surface")]
+            {
+                matches!(instr, Instr::If { .. })
+            }
+            #[cfg(not(feature = "std-surface"))]
+            {
+                false
+            }
+        };
+        if !defer_operand_check {
+            for operand in instruction_operands(instr) {
+                if !defined.contains(&operand) {
+                    return Err(IrVerifyError::UseBeforeDefinition {
+                        value: operand,
+                        instr_index: idx,
+                    });
+                }
+            }
+        }
+
+        // 2. Single-assignment for straight-line ops. `Param` re-stating a seeded
+        //    id is idempotent (mirrors `check_ssa_stream`).
+        if !is_region {
+            let is_param = matches!(instr, Instr::Param { .. });
+            if let Some(dst) = instruction_dst(instr) {
+                if !defined.insert(dst) && !is_param {
+                    return Err(IrVerifyError::DuplicateDefinition(dst));
+                }
+            }
+        }
+
+        // 3. Recurse into nested regions.
+        match instr {
+            Instr::FnDef { body, .. } => {
+                // Fresh, function-local namespace (the lowering resets the value
+                // counter per `FnDef`). Deliberately NOT seeded with the param ids:
+                // real fn bodies materialize each parameter as a leading
+                // `Instr::Param` that defines its id, so an empty seed suffices and
+                // matches the previously-shipped `verify_module` FnDef behavior
+                // (param-seeding would newly reject a hand-built body that re-uses a
+                // param id as a straight-line `dst` — a synthetic case `fresh()`
+                // never produces, guarded by tests/verify_audit.rs).
+                let mut body_scope: BTreeSet<ValueId> = BTreeSet::new();
+                validate_ssa_stream(body, &mut body_scope)?;
+            }
+            #[cfg(feature = "std-surface")]
+            Instr::While {
+                cond_id,
+                cond_instrs,
+                body,
+                live_vars,
+                ..
+            } => {
+                let enclosing_before = defined.clone();
+                validate_ssa_stream(cond_instrs, defined)?;
+                validate_ssa_stream(body, defined)?;
+                // `cond_id` lives in the loop namespace (enclosing ∪ cond ∪ body);
+                // a dangling one in a crafted artifact is defined nowhere.
+                if !defined.contains(cond_id) {
+                    return Err(IrVerifyError::UseBeforeDefinition {
+                        value: *cond_id,
+                        instr_index: idx,
+                    });
+                }
+                // Loop-carry back-edge soundness (the loop analog of the `If`
+                // merge check), via the SHARED helper.
+                if let Err(post_id) =
+                    validate_while_backedges(cond_instrs, body, live_vars, &enclosing_before)
+                {
+                    return Err(IrVerifyError::UseBeforeDefinition {
+                        value: post_id,
+                        instr_index: idx,
+                    });
+                }
+            }
+            #[cfg(feature = "std-surface")]
+            Instr::If {
+                cond_id,
+                cond_instrs,
+                then_instrs,
+                then_result,
+                else_instrs,
+                else_result,
+                merges,
+                ..
+            } => {
+                validate_ssa_stream(cond_instrs, defined)?;
+                if !defined.contains(cond_id) {
+                    return Err(IrVerifyError::UseBeforeDefinition {
+                        value: *cond_id,
+                        instr_index: idx,
+                    });
+                }
+                // Per-branch scopes (issue #24): the then-branch's interior defs
+                // must NOT be visible when validating the else-branch merge value,
+                // and vice versa.
+                let mut then_scope = defined.clone();
+                validate_ssa_stream(then_instrs, &mut then_scope)?;
+                if !then_scope.contains(then_result) {
+                    return Err(IrVerifyError::UseBeforeDefinition {
+                        value: *then_result,
+                        instr_index: idx,
+                    });
+                }
+                let mut else_scope = defined.clone();
+                validate_ssa_stream(else_instrs, &mut else_scope)?;
+                if !else_scope.contains(else_result) {
+                    return Err(IrVerifyError::UseBeforeDefinition {
+                        value: *else_result,
+                        instr_index: idx,
+                    });
+                }
+                if let Err(operand) =
+                    validate_if_merges(&then_scope, &else_scope, then_instrs, else_instrs, merges)
+                {
+                    return Err(IrVerifyError::UseBeforeDefinition {
+                        value: operand,
+                        instr_index: idx,
+                    });
+                }
+                // Merge both branches' interior defs back into the enclosing scope
+                // for straight-line code after the `If` (same union the shared
+                // consumer walk produces).
+                defined.extend(then_scope);
+                defined.extend(else_scope);
+            }
+            #[cfg(feature = "std-surface")]
+            Instr::Region { body, .. } => {
+                validate_ssa_stream(body, defined)?;
+            }
+            _ => {}
+        }
+
+        // 4. Expose the region node's exit/merge ids into the enclosing scope via
+        //    the SAME shared helper `check_ssa_stream` uses.
+        if is_region {
+            expose_region_definitions(instr, defined);
+        }
+    }
+    Ok(())
+}
+
 /// Structured errors returned by the IR verifier.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum IrVerifyError {
@@ -531,8 +712,16 @@ pub fn verify_module(module: &IRModule) -> Result<(), IrVerifyError> {
             if !defined.insert(dst) {
                 return Err(IrVerifyError::DuplicateDefinition(dst));
             }
-            max_seen = max_seen.max(dst.0 + 1);
         }
+        // `next_id` must cover EVERY id this instruction contributes to the
+        // top-level stream — not just `instruction_dst`, which understates a
+        // control-flow node (see `instruction_id_bound`: it folds in
+        // `While.exit_ids`, `If.merges[i].0`, `If.branch_bindings`, and the read
+        // ids from `for_each_operand`). Using the dst alone let a top-level
+        // control-flow node carry a `fresh()`-minted id ABOVE `max_seen`, so a
+        // `next_id` lowered to that understated max passed the sync check while
+        // sitting below a live id.
+        max_seen = max_seen.max(crate::opt::ir_canonical::instruction_id_bound(instr));
 
         if matches!(instr, Instr::Output(_)) {
             saw_output = true;
@@ -555,40 +744,6 @@ pub fn verify_module(module: &IRModule) -> Result<(), IrVerifyError> {
     }
 
     Ok(())
-}
-
-/// Walk a branch sub-stream for the in-pipeline verifier, threading the exposed
-/// region/straight-line definitions into a SCOPED copy seeded from the enclosing
-/// scope, and recursively validating any nested `If` merge operands encountered
-/// (so a cross-branch forgery nested inside a branch is still caught). Returns
-/// the branch's post-walk scope (enclosing ∪ this branch's exposed defs), which
-/// the caller uses to validate the branch's own merge operand.
-///
-/// This mirrors the exposure model of the consumer-side `check_ssa_stream`
-/// (using the SHARED `expose_region_definitions`) so `verify_module` and
-/// `check_ssa_well_formed` agree on which ids a branch makes visible — and now
-/// also agree, per-branch, on `If` merge soundness (issue #24).
-#[cfg(feature = "std-surface")]
-fn collect_branch_scope(
-    instrs: &[Instr],
-    enclosing: &BTreeSet<ValueId>,
-) -> Result<BTreeSet<ValueId>, IrVerifyError> {
-    let mut scope = enclosing.clone();
-    for instr in instrs {
-        // Recurse FIRST for an `If` so its branches' interior defs are exposed
-        // (and its nested merges validated) before we expose the node-level ids.
-        if let Instr::If {
-            then_instrs,
-            else_instrs,
-            merges,
-            ..
-        } = instr
-        {
-            validate_if_node(then_instrs, else_instrs, merges, &scope)?;
-        }
-        expose_region_definitions(instr, &mut scope);
-    }
-    Ok(scope)
 }
 
 /// Validate a `While` node's loop-carried back-edge values — the soundness
@@ -631,32 +786,6 @@ fn validate_while_backedges(
         if !reachable.contains(post_id) {
             return Err(*post_id);
         }
-    }
-    Ok(())
-}
-
-/// Validate one `If` node's F2 merge operands against PER-BRANCH scopes for the
-/// in-pipeline verifier, recursing into nested `If`s. The soundness core of the
-/// #24 fix on the `verify_module` side: it builds each branch's own scope via
-/// [`collect_branch_scope`] and defers the actual operand test to the SHARED
-/// [`validate_if_merges`], so both verifiers reject identical cross-branch
-/// forgeries.
-#[cfg(feature = "std-surface")]
-fn validate_if_node(
-    then_instrs: &[Instr],
-    else_instrs: &[Instr],
-    merges: &[(ValueId, ValueId, ValueId)],
-    enclosing: &BTreeSet<ValueId>,
-) -> Result<(), IrVerifyError> {
-    let then_scope = collect_branch_scope(then_instrs, enclosing)?;
-    let else_scope = collect_branch_scope(else_instrs, enclosing)?;
-    if let Err(operand) =
-        validate_if_merges(&then_scope, &else_scope, then_instrs, else_instrs, merges)
-    {
-        return Err(IrVerifyError::UseBeforeDefinition {
-            value: operand,
-            instr_index: 0,
-        });
     }
     Ok(())
 }
@@ -772,108 +901,17 @@ fn validate_operands(
         Instr::Output(id) => {
             check_defined(*id)?;
         }
-        Instr::FnDef { body, .. } => {
-            // FnDef bodies contain their own scope; params are defined within.
-            // Verify body instructions have internally consistent definitions.
-            let mut body_defined: BTreeSet<ValueId> = BTreeSet::new();
-            for (body_idx, body_instr) in body.iter().enumerate() {
-                // SOUNDNESS (issue #24): a nested `If` inside this fn body carries
-                // F2 `merges` whose `then_val`/`else_val` must be validated against
-                // PER-BRANCH scopes built from the enclosing (fn-body) scope as it
-                // stands NOW — before the `If`'s own merge ids are exposed below.
-                // `validate_if_node` recurses into both branches (and any deeper
-                // nested `If`s) and defers to the shared `validate_if_merges`.
-                #[cfg(feature = "std-surface")]
-                if let Instr::If {
-                    then_instrs,
-                    else_instrs,
-                    merges,
-                    ..
-                } = body_instr
-                {
-                    validate_if_node(then_instrs, else_instrs, merges, &body_defined)?;
-                }
-                // SOUNDNESS (loop-carry): a nested `While` carries `live_vars`
-                // back-edge ids that MUST be defined inside the loop body (the
-                // loop analog of the `If` merge check above). Validate them
-                // against the fn-body scope as it stands NOW — before the loop's
-                // own `exit_ids` are exposed below — via the SHARED
-                // `validate_while_backedges` so both verifiers reject identical
-                // loop-carry forgeries.
-                #[cfg(feature = "std-surface")]
-                if let Instr::While {
-                    cond_instrs,
-                    body,
-                    live_vars,
-                    ..
-                } = body_instr
-                {
-                    if let Err(post_id) =
-                        validate_while_backedges(cond_instrs, body, live_vars, &body_defined)
-                    {
-                        return Err(IrVerifyError::UseBeforeDefinition {
-                            value: post_id,
-                            instr_index: body_idx,
-                        });
-                    }
-                }
-                // Classify nested control-flow / region / fn instructions. Their
-                // operands live in their *own* SSA sub-namespaces (e.g. a fall-
-                // through `If` merge value defined inside a branch body, or a
-                // `usize::MAX` non-fall-through placeholder) and were already
-                // validated above by `validate_if_node` / `validate_while_backedges`,
-                // so here they are opaque control-flow units: we ONLY expose the
-                // region-EXIT / MERGE ids they make visible to the enclosing
-                // (fn-body) scope.
-                let is_nested_region = matches!(body_instr, Instr::FnDef { .. });
-                #[cfg(feature = "std-surface")]
-                let is_nested_region = is_nested_region
-                    || matches!(
-                        body_instr,
-                        Instr::While { .. } | Instr::If { .. } | Instr::Region { .. }
-                    );
-                if is_nested_region {
-                    // Expose the ids this region node makes visible via the SHARED
-                    // `expose_region_definitions` helper (the same one the consumer-
-                    // side `check_ssa_stream` uses, so the two verifiers can never
-                    // diverge on control-flow exposure). For a `While` it adds ONLY
-                    // the `exit_ids` (^while_after block args); for an `If` the
-                    // `merges` ids (^if_after block args) plus `dst`; for a `Region`
-                    // its `result`. RFC 0005 Gap 1 + F2.
-                    expose_region_definitions(body_instr, &mut body_defined);
-                } else {
-                    // Straight-line op. FINDING #123: validate operands FIRST —
-                    // against the PRE-instruction `body_defined` set — and ONLY THEN
-                    // expose this op's own `dst`. Previously `expose_region_definitions`
-                    // ran here BEFORE the operand check, so a straight-line op's own
-                    // `dst` was inserted into `body_defined` before its operands were
-                    // checked; that let a self-referential / use-before-def op like
-                    // `%5 = add %5, %0` pass verify_module. We reuse the same
-                    // exhaustive operand enumeration as the DCE pass
-                    // (`instruction_operands`).
-                    for operand in crate::opt::ir_canonical::instruction_operands(body_instr) {
-                        if !body_defined.contains(&operand) {
-                            return Err(IrVerifyError::UseBeforeDefinition {
-                                value: operand,
-                                instr_index: body_idx,
-                            });
-                        }
-                    }
-                    // Single-assignment: expose the op's own `dst`, rejecting a
-                    // duplicate definition (FINDING #123 also caught duplicate-defs,
-                    // because the old exposure path used a bare `BTreeSet::insert`
-                    // that silently ignored collisions). A `Param` re-stating a
-                    // seeded id is idempotent (mirrors `check_ssa_stream`); this
-                    // fn-body scope is not param-seeded, but the guard is kept for
-                    // parity so the two verifiers agree.
-                    let is_param = matches!(body_instr, Instr::Param { .. });
-                    if let Some(dst) = instruction_dst(body_instr) {
-                        if !body_defined.insert(dst) && !is_param {
-                            return Err(IrVerifyError::DuplicateDefinition(dst));
-                        }
-                    }
-                }
-            }
+        Instr::FnDef { .. } => {
+            // A function body is its own SSA namespace. Delegate to the shared
+            // recursive stream validator, which walks the body — and RECURSES
+            // into any nested `While`/`If`/`Region` interiors (finding #123, one
+            // region deeper) — applying define-before-use + single-assignment and
+            // the shared per-branch merge / loop-carry back-edge soundness checks.
+            // The `FnDef` arm inside `validate_ssa_stream` builds the fresh
+            // param-seeded body scope, so the scope passed here is only used for
+            // this node's (operand-less, dst-less) top-level slot.
+            let mut scope: BTreeSet<ValueId> = BTreeSet::new();
+            validate_ssa_stream(std::slice::from_ref(instr), &mut scope)?;
         }
         Instr::Call { args, .. } => {
             for arg in args {
@@ -891,20 +929,31 @@ fn validate_operands(
         Instr::SparseAttr { src, .. } => {
             check_defined(*src)?;
         }
-        // RFC 0005 Gap 1: While loop — condition and body each reside in their
-        // own sub-module (separate SSA namespaces).  The outer verifier treats
-        // the node as an opaque control-flow unit; no use-before-def check
-        // at the module level is applicable. Gated.
-        //
-        // NOTE: This arm is called from the FnDef body-verifier loop (which
-        // uses body_defined, not the outer `defined`). We do NOT check operands
-        // here because the while body has its own SSA namespace.  The outer
-        // check_defined closure references the wrong scope.
+        // RFC 0005 Gap 1: While loop — condition and body reside in their own
+        // sub-streams (loop-local SSA namespace that still reads enclosing-scope
+        // ids). Delegate to the shared recursive validator so a duplicate-def or
+        // undefined operand INSIDE `cond_instrs`/`body` is caught (finding #123,
+        // one region deeper), the `cond_id` is validated, and the loop-carry
+        // back-edge ids are checked via `validate_while_backedges`. Seeded from a
+        // clone of the enclosing `defined` (the loop body legitimately reads
+        // pre-loop values); the clone keeps top-level exposure unchanged
+        // (`verify_module` still exposes only the node `dst`). Gated.
         #[cfg(feature = "std-surface")]
-        Instr::While { .. } => {}
-        // Loop control markers: pure terminators with no operands.
+        Instr::While { .. } => {
+            let mut scope = defined.clone();
+            validate_ssa_stream(std::slice::from_ref(instr), &mut scope)?;
+        }
+        // Loop control markers: NOT operand-free. Break/Continue snapshot the
+        // CURRENT value of every in-scope var in `live` (`for_each_operand`
+        // yields these ids); the lowering forwards them as `^while_after` /
+        // `^while_header` block-args, so each is a genuine operand that must be
+        // defined. Validate them against the enclosing scope. Gated.
         #[cfg(feature = "std-surface")]
-        Instr::Break { .. } | Instr::Continue { .. } => {}
+        Instr::Break { live } | Instr::Continue { live } => {
+            for (_name, id) in live {
+                check_defined(*id)?;
+            }
+        }
         // RFC 0005 Phase 6.2b Gap 2: array constant — values are literals,
         // no SSA operand references to check.
         #[cfg(feature = "std-surface")]
@@ -915,22 +964,19 @@ fn validate_operands(
             check_defined(*base)?;
             check_defined(*index)?;
         }
-        // Phase 6.5 Stage 1a: If — condition, then, and else each reside in
-        // their own sub-instruction streams (separate SSA namespaces from the
-        // outer scope). The node is otherwise an opaque control-flow unit, BUT
-        // its F2 `merges` carry `then_val`/`else_val` operands that MUST be
-        // validated against PER-BRANCH scopes (issue #24 soundness): `then_val`
-        // against (enclosing ∪ then-defs), `else_val` against (enclosing ∪
-        // else-defs). Validating both against the union would wrongly accept a
-        // cross-branch forgery. `defined` here is the enclosing scope. Gated.
+        // Phase 6.5 Stage 1a: If — condition, then, and else reside in their own
+        // sub-instruction streams. Delegate to the shared recursive validator: it
+        // walks each branch (catching a duplicate-def / undefined operand INSIDE
+        // a branch body — finding #123, one region deeper), validates the
+        // `cond_id`, and enforces the issue #24 per-branch `merges` soundness
+        // (`then_val` against enclosing ∪ then only, `else_val` against enclosing
+        // ∪ else only) via the shared `validate_if_merges`. Seeded from a clone of
+        // the enclosing `defined`; top-level exposure is unchanged (`verify_module`
+        // still exposes only the node `dst`). Gated.
         #[cfg(feature = "std-surface")]
-        Instr::If {
-            then_instrs,
-            else_instrs,
-            merges,
-            ..
-        } => {
-            validate_if_node(then_instrs, else_instrs, merges, defined)?;
+        Instr::If { .. } => {
+            let mut scope = defined.clone();
+            validate_ssa_stream(std::slice::from_ref(instr), &mut scope)?;
         }
         // RFC 0006 Track B: SIMD vector primitives. Each operand is an
         // ordinary SSA value that must be defined before use; the lane
@@ -978,11 +1024,16 @@ fn validate_operands(
         // RFC 0010 Phase A: extern declaration — no SSA operands to verify.
         #[cfg(feature = "std-surface")]
         Instr::ExternFnDecl { .. } => {}
-        // RFC 0010 Phase J-A: region block — body instructions reside in
-        // their own sub-stream (separate SSA namespace from the outer scope).
-        // The outer verifier treats the node as an opaque unit. Gated.
+        // RFC 0010 Phase J-A: region block — body instructions reside in their
+        // own sub-stream (still reading enclosing-scope ids). Delegate to the
+        // shared recursive validator so a duplicate-def / undefined operand inside
+        // the region body is caught. Seeded from a clone of the enclosing scope.
+        // Gated.
         #[cfg(feature = "std-surface")]
-        Instr::Region { .. } => {}
+        Instr::Region { .. } => {
+            let mut scope = defined.clone();
+            validate_ssa_stream(std::slice::from_ref(instr), &mut scope)?;
+        }
     }
 
     Ok(())
