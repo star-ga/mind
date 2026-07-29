@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3220 | **Est. tokens:** ~7,760,479
-**Generated:** 2026-07-29 13:36 UTC
+**Files:** 3219 | **Est. tokens:** ~7,738,682
+**Generated:** 2026-07-29 14:16 UTC
 
 ## Token Budget Guide
 
@@ -45,7 +45,7 @@
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
 | `docs/mindcraft/` | 3 | ~7,086 |
-| `docs/rfcs/` | 31 | ~143,494 |
+| `docs/rfcs/` | 31 | ~143,593 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 28 | ~49,880 |
 | `examples/bimap_currency/` | 3 | ~780 |
@@ -380,7 +380,7 @@
 | `src/` | 7 | ~18,310 |
 | `src/ast/` | 1 | ~9,256 |
 | `src/autodiff/` | 3 | ~6,624 |
-| `src/bin/` | 2 | ~34,966 |
+| `src/bin/` | 1 | ~9,878 |
 | `src/build/` | 2 | ~16,388 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 3 | ~10,829 |
@@ -393,15 +393,15 @@
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~20,786 |
-| `src/ir/` | 5 | ~46,820 |
-| `src/ir/compact/` | 3 | ~15,267 |
-| `src/ir/compact/v2/` | 8 | ~38,037 |
-| `src/ir/compact/v3/` | 6 | ~48,342 |
+| `src/ir/` | 5 | ~47,295 |
+| `src/ir/compact/` | 3 | ~15,271 |
+| `src/ir/compact/v2/` | 8 | ~38,404 |
+| `src/ir/compact/v3/` | 6 | ~49,105 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,880 |
 | `src/mlir/` | 3 | ~5,905 |
 | `src/ops/` | 3 | ~4,764 |
-| `src/opt/` | 8 | ~40,835 |
+| `src/opt/` | 8 | ~41,311 |
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 2 | ~20,355 |
 | `src/phf/` | 1 | ~4,955 |
@@ -414,7 +414,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~194,284 |
-| `tests/` | 298 | ~508,925 |
+| `tests/` | 298 | ~510,032 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -725,7 +725,7 @@
 - `0018-bare-metal-substrate.md` (~3799 tok, huge) — RFC 0018: Bare-Metal Substrate Lowering Tier
 - `0019-deterministic-agent-substrate.md` (~4131 tok, huge) — RFC 0019: Deterministic Agent Substrate
 - `0020-mind-bench-reproducibility-harness.md` (~4083 tok, huge) — RFC 0020: mind-bench Public Reproducibility Harness
-- `0021-canonical-ir-unification.md` (~4388 tok, huge) — RFC 0021: Canonical IR Unification — one IR, provenance as a versioned epilogue
+- `0021-canonical-ir-unification.md` (~4487 tok, huge) — RFC 0021: Canonical IR Unification — one IR, provenance as a versioned epilogue
 - `0022-deterministic-io-substrate.md` (~2120 tok, huge) — RFC 0022: Deterministic I/O Substrate — fastest async I/O with bit-identical replay
 - `0024-loop-collapse.md` (~7579 tok, huge) — RFC 0024: Loop Collapse — prove-or-fail closed-form replacement of counted loops (`#[collapse]`)
 - `DRAFT-deterministic-format-frontend.md` (~10507 tok, huge) — RFC DRAFT: Deterministic Multi-Format Ingest Front-End (JSON / TOON / CSV / TSV / NDJSON / TOML)
@@ -3899,7 +3899,6 @@
 ### `src/bin/`
 
 - `mind-ai.rs` (~9878 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~25088 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
 - `cache.rs` (~6766 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3975,15 +3974,15 @@
 ### `src/ir/compact/`
 
 - `emit.rs` (~4693 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~2450 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~2454 tok, huge) — Copyright 2025 STARGA Inc.
 - `parse.rs` (~8124 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/v2/`
 
 - `binary.rs` (~6314 tok, huge) — Copyright 2025 STARGA Inc.
 - `emit.rs` (~2445 tok, huge) — Copyright 2025 STARGA Inc.
-- `evidence.rs` (~10157 tok, huge) — Copyright 2025 STARGA Inc.
+- `evidence.rs` (~10501 tok, huge) — Copyright 2025 STARGA Inc.
 - `map_tests.rs` (~5702 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~1310 tok, large) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~1333 tok, large) — Copyright 2025 STARGA Inc.
 - `parse.rs` (~5746 tok, huge) — Copyright 2025 STARGA Inc.
 - `types.rs` (~4764 tok, huge) — Copyright 2025 STARGA Inc.
 - `varint.rs` (~1599 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3993,15 +3992,15 @@
 - `ed25519.rs` (~6051 tok, huge) — Copyright 2025 STARGA Inc.
 - `emit.rs` (~11038 tok, huge) — Copyright 2025 STARGA Inc.
 - `mldsa.rs` (~1510 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~13713 tok, huge) — Copyright 2025 STARGA Inc.
-- `parse.rs` (~10921 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~13865 tok, huge) — Copyright 2025 STARGA Inc.
+- `parse.rs` (~11532 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
 - `evidence.rs` (~5759 tok, huge) — Copyright 2025 STARGA Inc.
 - `fp_mode.rs` (~13657 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
 - `mod.rs` (~12311 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
-- `verify.rs` (~11553 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify.rs` (~12028 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `lib.rs` (~1012 tok, large) — Copyright 2025 STARGA Inc.
@@ -4036,7 +4035,7 @@
 - `collapse.rs` (~11442 tok, huge) — Copyright 2025 STARGA Inc.
 - `comptime.rs` (~5868 tok, huge) — Copyright 2025 STARGA Inc.
 - `fold.rs` (~2046 tok, huge) — Copyright 2025 STARGA Inc.
-- `ir_canonical.rs` (~4728 tok, huge) — Copyright 2025 STARGA Inc.
+- `ir_canonical.rs` (~5204 tok, huge) — Copyright 2025 STARGA Inc.
 - `memory_layout.rs` (~4110 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~198 tok, small) — Copyright 2025 STARGA Inc.
 - `regalloc_dtk.rs` (~3869 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4410,7 +4409,7 @@
 - `mic3_break_continue_string_roundtrip.rs` (~1616 tok, huge) — Copyright 2026 STARGA Inc.
 - `mic3_cli_emit.rs` (~2431 tok, huge) — Copyright 2025 STARGA Inc.
 - `mic3_const_dense_tensor_roundtrip.rs` (~842 tok, large) — Copyright 2026 STARGA Inc.
-- `mic3_parser_dos.rs` (~830 tok, large) — Copyright 2025 STARGA Inc.
+- `mic3_parser_dos.rs` (~1651 tok, huge) — Copyright 2025 STARGA Inc.
 - `micb_dos_reject.rs` (~2341 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_build_phase_a.rs` (~4566 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_cache_phase_f.rs` (~6231 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4506,7 +4505,7 @@
 - `mindc.rs` (~1851 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_test_phase_b.rs` (~3572 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_workspace_phase_c.rs` (~4166 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindfuzz_cross_substrate.rs` (~14938 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindfuzz_cross_substrate.rs` (~15224 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/mindfuzz_cross_substrate/staged/`
 
 - `fuzz_repro_seed_deadbeef_prog006.mind` (~157 tok, small) — DIVERGENCE REPRODUCER (issue #72 fuzzer)

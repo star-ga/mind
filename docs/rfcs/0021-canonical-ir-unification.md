@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0021 |
 | Title | Canonical IR Unification (mic@3 binary `IRModule` + embedded MAP; model-exchange demotion) |
-| Status | **Partial** — design locked + cross-reviewed (§3.2). **Steps 1–4 SHIPPED** (mic@3 codec mind@5c29f0d + evidence MAP mind@c64bd0b + `mindc --emit-mic3`/`--emit-evidence` CLI emit mind@7fc10d2 + `mindc verify --evidence` consumer); steps 5–6 pending (§4). The CLI emits a round-trip-decodable canonical mic@3 binary artifact (plain via `--emit-mic3`; with an embedded `evidence_chain.*` MAP via `--emit-evidence`), `trace_hash` anchored on the canonical mic@3 bytes (`ir::ir_trace_hash`, the 2026-05-31 re-anchor), and `mindc verify` peels + recomputes + reports `trace_hash_valid`. "Demote v2" re-scoped as a byte-preserving cross-repo migration (§4.5). |
+| Status | **Partial** — design locked + cross-reviewed (§3.2). **Steps 1–4 SHIPPED** (mic@3 codec mind@5c29f0d + evidence MAP mind@c64bd0b + `mindc --emit-mic3`/`--emit-evidence` CLI emit mind@7fc10d2 + `mindc verify <artifact>` consumer); steps 5–6 pending (§4). The CLI emits a round-trip-decodable canonical mic@3 binary artifact (plain via `--emit-mic3`; with an embedded `evidence_chain.*` MAP via `--emit-evidence`), `trace_hash` anchored on the canonical mic@3 bytes (`ir::ir_trace_hash`, the 2026-05-31 re-anchor), and `mindc verify` peels + recomputes + reports `trace_hash_valid`. "Demote v2" re-scoped as a byte-preserving cross-repo migration (§4.5). |
 | Authors | STARGA Inc. |
 | Created | 2026-05-26 (rev. 2026-05-27) |
 | Supersedes-in-part | RFC 0016 §3.2/§5.4 (evidence anchor + carrier), RFC 0015 (enforcement seam) |
@@ -90,11 +90,13 @@ just to reuse mic@1's right *data model*. The correct move is the converse: give
 `IRModule` is the sole compiled-artifact IR (the v2 `Graph` data model cannot represent
 real programs and is demoted, §3.3). `trace_hash` is `SHA-256` of the **canonical IR
 bytes** via the `deps::mini_sha256` FIPS-180-4 seam (bit-identical to a future pure-MIND
-`std.sha256`, preserving RFC 0016 §5.4). Today's anchor `src/ir/evidence.rs::ir_trace_hash`
-hashes the canonical **mic@1 text** — the deterministic interim encoding (RFC-0001 fixed
-point, already what the pipeline + self-host produce); it remains valid as the authoritative
-bytes until §3.2's binary form ships, after which the hash is taken over the canonical
-binary IR bytes.
+`std.sha256`, preserving RFC 0016 §5.4). The anchor `src/ir/evidence.rs::ir_trace_hash`
+hashes the canonical **mic@3 binary** bytes — `ir_trace_hash(ir) = mini_sha256(&emit_mic3(ir))`
+(re-anchored 2026-05-31, matching the §4 step-0/step-2 footnotes). The mic@1-text anchor
+was the ship-time interim (RFC-0001 fixed point); it was superseded once a collision audit
+found mic@1 text can drop function-body semantics — mic@3 binary commits the full
+`IRModule`, so the hash is now taken over the canonical binary IR bytes. mic@1 text is
+retained only as the human-readable/`--emit-ir` view (§3.4), never as the hash anchor.
 
 ### 3.2 Canonical container: **mic@3** — binary `IRModule` + embedded MAP
 Extend the binary mic@2/MIC-B encoding to carry the **full `IRModule`** instruction set
@@ -210,8 +212,10 @@ today; convergence is a tracked deliverable**, not a shipped fact.
    enabled only via an operator key-seed env var, **never signed-by-default**;
    unsigned artifacts stay byte-identical, `schema` stays Int 1, **no `mic@N`
    bump**. Only wiring it into the release-tag CI runner is still pending §3.4.)
-4. **`mindc verify --evidence`** reads a mic@3 artifact, recomputes `trace_hash` over its
+4. **`mindc verify <artifact>`** reads a mic@3 artifact, recomputes `trace_hash` over its
    IR body, compares, validates the signature (shares the RFC 0017 surface, #290).
+   (`[--json] [--require-strict-fp]`; there is no `--evidence` flag — evidence is
+   detected from the artifact's MAP epilogue.)
 5. **Demote** v2 `Graph` → `mind-model@2`. ⚠️ **This is a byte-preserving cross-repo
    migration, NOT a doc rename** (arch review 2026-05-27). The v2 `Graph`/MIC-B is a
    published `mind-spec` wire contract with live external consumers: **512-mind** hashes
@@ -230,8 +234,9 @@ keystone bootstrap are never regressed (mic@3 is added alongside, not in place o
 
 1. An evidence-free `mindc build` emits byte-identical mic@1 to pre-RFC output;
    `phase_g_keystone_bootstrap` 7/7 unchanged.
-2. `mindc build --emit=evidence` produces a **mic@3** artifact whose `trace_hash` equals
-   the canonical-IR-bytes hash of its own IR body; `mindc verify --evidence` round-trips it.
+2. `mindc <file> --emit-evidence <path>` produces a **mic@3** artifact whose `trace_hash`
+   equals the canonical-IR-bytes hash of its own IR body; `mindc verify <artifact>`
+   round-trips it.
 3. The cross-substrate gate runs in CI and hard-fails on a deliberately corrupted
    reference hash (no self-skip on release tags).
 4. `docs/ir-stability.md` describes exactly one compiled-artifact IR (mic@1 text /
@@ -243,7 +248,7 @@ keystone bootstrap are never regressed (mic@3 is added alongside, not in place o
 1. Spec + implement the **mic@3** binary `IRModule` encoding (§4.1) with the
    `save→load→save` fixed-point test — the foundational, keystone-safe addition
    (a new emit target; mic@1 and the bootstrap are untouched).
-2. Attach the MAP/Ed25519 container to mic@3 + wire `mindc build --emit=evidence` (§4.2–4.3).
+2. Attach the MAP/Ed25519 container to mic@3 + wire `mindc <file> --emit-evidence <path>` (§4.2–4.3).
 3. `oracle.rs` + CI gate for bit-identity (§3.5 / #307).
 
 > Note: mic@3 is **added alongside** mic@1 — it does not modify the frozen mic@1 parser,

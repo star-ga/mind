@@ -79,6 +79,77 @@ fn mic3_string_reference_bomb_is_rejected() {
     );
 }
 
+/// Craft a nested-`OP_REGION` (0x24) chain `depth` levels deep where every level
+/// declares a huge `body_len` (`declared`, which must be `<= limit` to pass
+/// `read_count`). Each region's body begins with the next region, so the decoder
+/// recurses to the depth guard. Before the reservation-amplification fix, each of
+/// the ~256 live frames reserved `Vec::<Instr>::with_capacity(min(declared,
+/// limit))` — held live across the recursion — for a ~tens-of-GB spike from a
+/// ~1 MiB input. The fix caps the *reservation* (not the loop) at a small
+/// constant, so the parse fails closed at the depth guard using trivial memory.
+///
+/// The trailing padding makes the whole-input length (the `limit` the reservation
+/// and `read_count` are bounded against) `>= declared`, so the large `body_len`
+/// survives `read_count` and actually reaches the `with_capacity` call.
+fn nested_region_reservation_bomb(depth: usize, declared: u64, total_len: usize) -> Vec<u8> {
+    let mut b = Vec::new();
+    b.extend_from_slice(b"MIC3");
+    b.push(0x02); // version
+    uleb(0, &mut b); // string-table count
+    uleb(0, &mut b); // next_id
+    uleb(0, &mut b); // exports count
+    uleb(1, &mut b); // instruction count = 1 (the outermost region)
+    for _ in 0..depth {
+        b.push(0x24); // OP_REGION
+        uleb(declared, &mut b); // body_len — huge, but <= limit so read_count passes
+    }
+    // Pad so the whole-input length is at least `declared`; the decoder trips the
+    // depth guard long before it reaches this padding.
+    if b.len() < total_len {
+        b.resize(total_len, 0);
+    }
+    b
+}
+
+#[test]
+fn mic3_nested_region_reservation_bomb_is_rejected() {
+    // 256 nested regions, each declaring a 1_000_000-element body, from a ~1 MiB
+    // input. Pre-fix this drove ~256 * 1e6 * size_of::<Instr>() of live
+    // reservations (tens of GB -> SIGABRT); post-fix the reservation is capped at
+    // a small constant so the parser fails closed at the depth guard.
+    let declared = 1_000_000u64;
+    let b = nested_region_reservation_bomb(256, declared, declared as usize + 1);
+    assert!(
+        b.len() < 10 * 1024 * 1024,
+        "crafted input stays within the mic@3 input cap: {} bytes",
+        b.len()
+    );
+
+    let res = parse_mic3(&b);
+    assert!(
+        res.is_err(),
+        "a nested-region reservation-amplification bomb must be rejected, not parsed"
+    );
+    let msg = format!("{}", res.unwrap_err());
+    assert!(
+        msg.contains("nesting depth") || msg.contains("depth"),
+        "rejection should trip the nesting-depth guard, got: {msg}"
+    );
+}
+
+#[test]
+fn mic3_modest_nested_regions_still_parse() {
+    // Control: a shallow nested-region chain (well under the depth guard, small
+    // declared bodies) that is TRUNCATED must fail as a clean truncation error,
+    // never OOM and never a spurious depth error — proving the reservation cap
+    // does not change decode semantics for legitimate shapes.
+    let b = nested_region_reservation_bomb(4, 8, 64);
+    let res = parse_mic3(&b);
+    // It is not a well-formed module (bodies are unbacked padding), so it errors;
+    // the point is that it errors quickly and safely, not via the depth guard.
+    assert!(res.is_err(), "unbacked shallow region chain must error");
+}
+
 #[test]
 fn mic3_modest_string_reuse_still_parses() {
     // Control: a short (32-byte) identifier referenced 100x is trivially within

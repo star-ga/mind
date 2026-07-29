@@ -113,6 +113,10 @@ impl Determinism {
 ///
 /// Panics if `graph.map` already contains any `evidence_chain.*` key (would
 /// indicate a double-call; use [`remove_evidence_chain`] first if re-attaching).
+// Internal v2 evidence path: still computes the legacy MIC-B trace_hash pending
+// the mind-model@2 demote (RFC 0021 step 5). The `#[deprecated]` mark is for
+// external callers; this in-crate use is intentional until the demote lands.
+#[allow(deprecated)]
 pub fn attach_evidence_chain(
     graph: &mut Graph,
     substrate: &str,
@@ -174,11 +178,27 @@ pub fn remove_evidence_chain(graph: &mut Graph) {
 ///
 /// The graph must already have all other `evidence_chain.*` keys populated.
 ///
+/// # Legacy anchor — no `TraceHashKind` variant names it
+///
+/// This is the **v2 / MIC-B** `trace_hash`, anchored on the MIC-B serialization
+/// of a [`Graph`]. It is NOT the canonical anchor: the shipped `trace_hash`
+/// (RFC 0021, `ir::ir_trace_hash`) is `mini_sha256(&emit_mic3(ir))` over the
+/// canonical mic@3 bytes. The [`TraceHashKind`] enum deliberately has only
+/// [`TraceHashKind::Mic3Bytes`] and [`TraceHashKind::Mic1Text`] variants — there
+/// is **no variant that labels this MIC-B hash**, so a value it produces cannot
+/// be described by the verifier's kind vocabulary. Retained only for the v2
+/// evidence path pending the `mind-model@2` demote (RFC 0021 step 5).
+///
 /// # Panics
 ///
 /// Panics if MIC-B serialization fails. Serialization here writes into an
 /// in-memory `Vec<u8>`, which is infallible, so this cannot fire on a valid
 /// graph — but the panic is documented because this is a `pub` entry point.
+#[deprecated(
+    note = "legacy v2/MIC-B trace_hash — no TraceHashKind variant names it; the \
+            canonical anchor is ir::ir_trace_hash over emit_mic3 bytes (RFC 0021). \
+            Retained for the v2 evidence path pending the mind-model@2 demote."
+)]
 pub fn compute_trace_hash(graph: &Graph) -> [u8; 32] {
     let stripped_map = strip_keys_for_hash(&graph.map);
     let temp_graph = Graph {
@@ -345,6 +365,7 @@ fn map_get<'a>(map: &'a Map, key: &str) -> Option<&'a MapValue> {
 // broken/forged back-link. Stubbed because single-artifact `verify` has no
 // ancestor store to resolve against. upgrade path: a `mindc verify --chain
 // <dir>` mode that walks `parent` links across the store.
+#[allow(deprecated)] // in-crate v2 evidence path; see attach_evidence_chain.
 pub fn verify_evidence_chain(graph: &Graph) -> Result<EvidenceReport, EvidenceError> {
     // An artifact with no evidence_chain.* keys is unattested, not invalid.
     let has_any = graph
@@ -431,6 +452,7 @@ pub fn verify_evidence_chain(graph: &Graph) -> Result<EvidenceReport, EvidenceEr
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
+#[allow(deprecated)] // tests exercise the legacy v2 compute_trace_hash directly.
 mod tests {
     use super::*;
     use crate::ir::compact::v2::binary::{emit_micb, parse_micb};

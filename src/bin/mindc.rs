@@ -1892,11 +1892,33 @@ fn run_verify(
     require_deterministic: bool,
     trusted: &[Vec<u8>],
 ) -> i32 {
-    use libmind::ir::check_ssa_well_formed;
     use libmind::ir::compact::{
-        CollapseVerifyStatus, Determinism, EvidenceError, TraceHashKind, mic3_evidence_report,
-        parse_mic3,
+        CollapseVerifyStatus, Determinism, EvidenceError, MAX_MIC3_INPUT, TraceHashKind,
+        mic3_evidence_report, parse_mic3,
     };
+    use libmind::ir::{IrVerifyError, check_ssa_well_formed, verify_module};
+
+    // Stat-before-read DoS guard: `parse_mic3` rejects input over MAX_MIC3_INPUT,
+    // but only AFTER the bytes are in memory. Reading the whole file first means a
+    // crafted `truncate -s 100G evil.mic3` aborts `mindc verify` on an allocation
+    // failure before that cap is ever consulted. Reject on the file's declared
+    // size up front so an oversized artifact fails closed (exit 2) instead of
+    // OOM-killing the process.
+    match fs::metadata(artifact) {
+        Ok(meta) if meta.len() > MAX_MIC3_INPUT as u64 => {
+            eprintln!(
+                "error[verify]: artifact {artifact} is {} bytes, exceeds the mic@3 \
+                 input cap of {MAX_MIC3_INPUT} bytes",
+                meta.len()
+            );
+            return 2;
+        }
+        Ok(_) => {}
+        Err(err) => {
+            eprintln!("error[verify]: cannot stat artifact {artifact}: {err}");
+            return 2;
+        }
+    }
 
     let bytes = match fs::read(artifact) {
         Ok(b) => b,
@@ -1924,7 +1946,23 @@ fn run_verify(
             Ok(module) => {
                 let det = libmind::ir::ir_declares_deterministic(&module);
                 match check_ssa_well_formed(&module) {
-                    Ok(()) => (true, None, Some(det)),
+                    Ok(()) => {
+                        // check_ssa_well_formed covers single-assignment +
+                        // define-before-use over the full instruction tree. Also run
+                        // the in-pipeline `verify_module` so the untrusted-artifact
+                        // surface gains its SEMANTIC operand sanity (negative axis /
+                        // zero conv stride — `IrVerifyError::InvalidOperand`), which
+                        // the SSA-only consumer check does not cover. `MissingOutput`
+                        // is NOT a fault at this surface (a decoded fn-only / export
+                        // artifact legitimately lacks a top-level `Output`), so it is
+                        // not treated as a failure. The two verifiers agree on the SSA
+                        // verdict (differential gates in tests/verify_ssa.rs), so this
+                        // never contradicts the check above.
+                        match verify_module(&module) {
+                            Ok(()) | Err(IrVerifyError::MissingOutput) => (true, None, Some(det)),
+                            Err(e) => (false, Some(e.to_string()), Some(det)),
+                        }
+                    }
                     Err(v) => (false, Some(v.to_string()), Some(det)),
                 }
             }

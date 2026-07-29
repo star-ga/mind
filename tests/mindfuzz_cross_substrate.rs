@@ -1252,6 +1252,28 @@ fn mindfuzz_cross_substrate_determinism() {
                     repro.display()
                 );
             });
+            // Byte fixed point on the real-program corpus: emit(parse(emit)) ==
+            // emit. Oracle 1 above only proved emit DETERMINISM (two compiles of
+            // one source agree); this closes emit/parse ASYMMETRY (a field-order
+            // divergence between v3::emit and v3::parse) which determinism alone
+            // cannot see.
+            let bytes_reemit = libmind::ir::compact::v3::emit_mic3(&module);
+            if bytes_reemit != bytes_a {
+                let repro = stage_reproducer(
+                    idx,
+                    "mic@3 emit(parse(emit)) != emit: emit/parse asymmetry",
+                    &src,
+                );
+                panic!(
+                    "MIND-Fuzz PROG {idx} (seed 0x{FUZZ_SEED:08X}): mic@3 is NOT a \
+                     round-trip fixed point — emit(parse(emit))={} bytes vs \
+                     emit={} bytes (asymmetric emit/parse field order).\n\
+                     reproducer staged at {}\n--- source ---\n{src}",
+                    bytes_reemit.len(),
+                    bytes_a.len(),
+                    repro.display()
+                );
+            }
             let vm: Vec<i64> = PROBE_INPUTS
                 .iter()
                 .map(|&a| {

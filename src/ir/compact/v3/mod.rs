@@ -128,7 +128,7 @@ pub use evidence::{
     emit_mic3_with_signed_evidence_scheme, mic3_collapse_verify, mic3_evidence_report,
     mic3_signature_status,
 };
-pub use parse::{Mic3Error, parse_mic3};
+pub use parse::{MAX_MIC3_INPUT, Mic3Error, parse_mic3};
 // Re-export the evidence vocabulary at the v3 level for convenience.
 pub use crate::ir::compact::v2::{Determinism, EvidenceError, EvidenceReport, TraceHashKind};
 
@@ -181,7 +181,19 @@ mod tests {
 
     fn roundtrip(m: &IRModule) -> IRModule {
         let bytes = emit_mic3(m);
-        parse_mic3(&bytes).expect("parse_mic3 failed")
+        let parsed = parse_mic3(&bytes).expect("parse_mic3 failed");
+        // True byte fixed point: emit(parse(emit(m))) == emit(m). This is
+        // stronger than the mic@1 structural compare below (mic@1's text
+        // emitter has no FnDef-body arms, so a FnDef-body emit/parse field-order
+        // asymmetry is invisible in mic1_canonical). Asserting here converts
+        // every roundtrip_* test into a true fixed point across opcodes
+        // 0x01..=0x2A.
+        assert_eq!(
+            emit_mic3(&parsed),
+            bytes,
+            "mic@3 emit(parse(emit(m))) != emit(m): asymmetric emit/parse"
+        );
+        parsed
     }
 
     // -------------------------------------------------------------------------

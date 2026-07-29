@@ -52,6 +52,7 @@ mod varint;
 
 pub use binary::{MicbError, emit_micb, parse_micb};
 pub use emit::{Mic2Emitter, emit_mic2};
+#[allow(deprecated)] // re-export of the legacy v2 compute_trace_hash; see its own doc note.
 pub use evidence::{
     Determinism, EvidenceError, EvidenceReport, TraceHashKind, attach_evidence_chain,
     compute_trace_hash, remove_evidence_chain, verify_evidence_chain,

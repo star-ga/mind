@@ -112,6 +112,29 @@ fn bounded_cap(n: usize, limit: usize) -> usize {
     n.min(limit)
 }
 
+/// Reservation cap for the bodies of *recursive-container* instructions
+/// (`FnDef` / `While` / `If` / `Region`). These differ from leaf collections in
+/// one load-bearing way: the `Vec::with_capacity` reservation is held **live**
+/// across the recursive `decode_instr` calls that fill it. A per-frame
+/// reservation of `bounded_cap(_, limit)` (up to the whole 10 MiB input) held
+/// across up to `MAX_MIC3_DEPTH` (256) nested frames is an allocation-
+/// amplification bomb: a ~KB crafted nest of empty-but-hugely-declared bodies
+/// drives 256 × `limit` × `size_of::<Instr>()` of `Vec<Instr>` reservations —
+/// hundreds of GB, a SIGABRT on an untrusted artifact. `decode_instr` is
+/// generic over `R: Read`, so the Cursor-`position()` remaining-bytes bound used
+/// in the MAP parser is unavailable here; instead we cap the *reservation* (not
+/// the loop, which still validates every element against the wire and errors
+/// when bytes run out). The loop pushes element-by-element, so under-reserving
+/// is free — a genuinely large body just reallocates geometrically as it
+/// decodes. Byte-neutral: the parsed `IRModule` and its re-emission are
+/// identical.
+const RECURSIVE_BODY_RESERVE_CAP: usize = 64;
+
+#[inline]
+fn body_cap(n: usize) -> usize {
+    n.min(RECURSIVE_BODY_RESERVE_CAP)
+}
+
 /// Read an untrusted, length-prefixing element count and reject it up front if
 /// it could not possibly be backed by the input. Every wire element occupies at
 /// least one byte, so a count larger than the total remaining input (`limit`,
@@ -716,7 +739,7 @@ fn decode_instr<R: Read>(
             let ret_id = read_opt_vid(r)?;
             let reap_threshold = read_opt_f64(r)?;
             let body_len = read_count(r, limit)?;
-            let mut body = Vec::with_capacity(bounded_cap(body_len, limit));
+            let mut body = Vec::with_capacity(body_cap(body_len));
             for _ in 0..body_len {
                 body.push(decode_instr(r, strings, depth, limit, version)?);
             }
@@ -766,12 +789,12 @@ fn decode_instr<R: Read>(
         OP_WHILE => {
             let cond_id = read_vid(r)?;
             let cond_len = read_count(r, limit)?;
-            let mut cond_instrs = Vec::with_capacity(bounded_cap(cond_len, limit));
+            let mut cond_instrs = Vec::with_capacity(body_cap(cond_len));
             for _ in 0..cond_len {
                 cond_instrs.push(decode_instr(r, strings, depth, limit, version)?);
             }
             let body_len = read_count(r, limit)?;
-            let mut body = Vec::with_capacity(bounded_cap(body_len, limit));
+            let mut body = Vec::with_capacity(body_cap(body_len));
             for _ in 0..body_len {
                 body.push(decode_instr(r, strings, depth, limit, version)?);
             }
@@ -798,18 +821,18 @@ fn decode_instr<R: Read>(
         OP_IF => {
             let cond_id = read_vid(r)?;
             let cond_len = read_count(r, limit)?;
-            let mut cond_instrs = Vec::with_capacity(bounded_cap(cond_len, limit));
+            let mut cond_instrs = Vec::with_capacity(body_cap(cond_len));
             for _ in 0..cond_len {
                 cond_instrs.push(decode_instr(r, strings, depth, limit, version)?);
             }
             let then_len = read_count(r, limit)?;
-            let mut then_instrs = Vec::with_capacity(bounded_cap(then_len, limit));
+            let mut then_instrs = Vec::with_capacity(body_cap(then_len));
             for _ in 0..then_len {
                 then_instrs.push(decode_instr(r, strings, depth, limit, version)?);
             }
             let then_result = read_vid(r)?;
             let else_len = read_count(r, limit)?;
-            let mut else_instrs = Vec::with_capacity(bounded_cap(else_len, limit));
+            let mut else_instrs = Vec::with_capacity(body_cap(else_len));
             for _ in 0..else_len {
                 else_instrs.push(decode_instr(r, strings, depth, limit, version)?);
             }
@@ -921,7 +944,7 @@ fn decode_instr<R: Read>(
         #[cfg(feature = "std-surface")]
         OP_REGION => {
             let body_len = read_count(r, limit)?;
-            let mut body = Vec::with_capacity(bounded_cap(body_len, limit));
+            let mut body = Vec::with_capacity(body_cap(body_len));
             for _ in 0..body_len {
                 body.push(decode_instr(r, strings, depth, limit, version)?);
             }
@@ -1187,6 +1210,27 @@ pub fn parse_mic3(data: &[u8]) -> Result<IRModule, Mic3Error> {
             module.repr_c_structs.insert(name, fields);
         }
     }
+
+    // Reconcile `next_id` against the ids actually present in the decoded
+    // top-level stream. mic@3 stores `next_id` verbatim, so an understated wire
+    // value (a hand-crafted/malicious artifact, or one whose emitter lowered
+    // `next_id` below a live control-flow id) would size the `vec![_; next_id]`
+    // dense tables in `canonicalize_module` (`prune_dead`'s `used`,
+    // `constant_fold`'s `constants`) TOO SMALL, silently deleting every top-level
+    // instruction whose `dst.0 >= next_id`. Grow `next_id` to cover every id the
+    // top-level stream carries — the same `instruction_id_bound` fold
+    // `next_sequential_id` uses — mirroring the mic@1 text parser, which grows
+    // `next_id` per node id (`compact/parse.rs`). SCOPE: top-level only (a
+    // `FnDef` body is its own reset namespace), so on a well-formed artifact whose
+    // emitter already set `next_id` correctly this is a no-op and the mic@3
+    // round-trip stays byte-identical.
+    let top_level_bound = module
+        .instrs
+        .iter()
+        .map(crate::opt::ir_canonical::instruction_id_bound)
+        .max()
+        .unwrap_or(0);
+    module.next_id = module.next_id.max(top_level_bound);
 
     Ok(module)
 }
