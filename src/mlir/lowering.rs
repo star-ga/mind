@@ -7693,7 +7693,7 @@ impl LoweringContext {
     /// Emits a standalone K-quad loop accumulating `%{p}_bacc_h` via
     /// `vpdpbusd.512(bacc, ones_u8, B_s8)` over the SAME `Bp[jrbase + kp*(NR·4)]`
     /// quad loads the microkernel reads, then produces
-    /// `%{p}_bsx = extsi(bacc) << 7` (the `<<7` = `·128`) as vector<NRxi64>.
+    /// `%{p}_bsx = extsi(bacc) << 7` (the `<<7` = `·128`) as `vector<NRxi64>`.
     /// The exact-integer value is identical to the in-loop accumulation, so this
     /// is loop-invariant code motion with zero effect on the output bytes.
     #[cfg(feature = "std-surface")]
