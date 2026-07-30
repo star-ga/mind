@@ -3101,7 +3101,6 @@ fn receiver_is_tracked_collection(
 /// on the shared `%init_id`) would clobber the source into the loop counter — a
 /// silent miscompile. When no source name is read the alias is harmless and the
 /// binding is left untouched, preserving byte-identity for correct programs.
-#[cfg(feature = "std-surface")]
 /// Collect every identifier a match-arm PATTERN binds, recursing into payload
 /// (`EnumVariant`), tuple, and struct-variant sub-patterns. `Literal`/`Wildcard`
 /// bind nothing. Used by the fail-closed match fallbacks below to register a
@@ -3135,6 +3134,7 @@ fn collect_pattern_bindings(pat: &ast::Pattern, out: &mut Vec<String>) {
     }
 }
 
+#[cfg(feature = "std-surface")]
 fn ast_reads_ident(node: &ast::Node, targets: &std::collections::HashSet<String>) -> bool {
     use ast::Node as N;
     match node {
