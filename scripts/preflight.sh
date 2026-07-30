@@ -39,7 +39,40 @@ else
   bad "could not build mindc"
 fi
 
+step "no-features compile parity  [ci.yml 'Check compiles (no features)' + gated feature-combo steps]"
+# The keystone/build/mindc gates above ALL use std-surface, so a change that
+# compiles there but not under --no-default-features (a mis-placed #[cfg], a
+# std-surface-only variant referenced from a non-std-surface path) rides straight
+# onto red main. Mirror every feature combo ci.yml compiles.
+nf_ok=1
+for feats in "" "std-surface" "cross-module-imports" "std-surface,cross-module-imports" \
+             "autodiff" "mlir-lowering" "cpu-buffers" "cpu-exec" "pkg"; do
+  if [ -z "$feats" ]; then flag=(--no-default-features); label="--no-default-features";
+  else flag=(--no-default-features --features "$feats"); label="--no-default-features --features $feats"; fi
+  if ! cargo check "${flag[@]}" --quiet 2>/tmp/preflight-nf.err; then
+    bad "cargo check $label BROKEN — this is the exact class that slips past the std-surface gates:"
+    grep -E '^error' /tmp/preflight-nf.err | head -4
+    nf_ok=0
+  fi
+done
+[ "$nf_ok" = 1 ] && echo "ok (all CI feature combos compile)"
+
 if [ "${1:-}" = "--full" ]; then
+  step "no-features test parity  [ci.yml Build & Test 'Test' steps — the fail-close regression class]"
+  # A test that feeds lower_to_ir free operands / hits a gated path lowered to a
+  # silent const-0 pre-#9 now panics loud — and only shows under the non-std-surface
+  # test steps the keystone never runs. The `error: test failed` grep is abort-aware
+  # (a stack-overflow SIGABRT prints NO `test result: FAILED`, only the cargo line).
+  # Two accepted CI-ABSENT local-only failures are excluded: mindfuzz_cross_substrate
+  # (needs the MLIR toolchain; soft-skips in CI's build_test job) and g2_differential_mlir
+  # (dlopens the gitignored, stale in-tree libmindc_mind.so; CI's fresh checkout rebuilds).
+  nft_out=$(cargo test --no-default-features --features std-surface,cross-module-imports \
+              --no-fail-fast 2>&1 | grep -E "error: test failed|has overflowed its stack" | \
+              grep -viE "mindfuzz_cross_substrate|g2_differential_mlir" || true)
+  if [ -z "$nft_out" ]; then echo "ok (no test failures beyond the accepted CI-absent mindfuzz + g2)"; else
+    bad "cargo test --no-default-features --features std-surface,cross-module-imports FAILS beyond mindfuzz:"; printf '%s\n' "$nft_out" | head
+  fi
+
   step "keystone byte-identity 7/7  [ci.yml + cross-substrate — the wedge invariant]"
   if MIND_BENCH_REQUIRE=1 cargo test --release \
        --features "mlir-build std-surface cross-module-imports" \
