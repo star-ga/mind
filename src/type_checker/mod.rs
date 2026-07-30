@@ -2035,6 +2035,14 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
         // placeholder) until Gap 1 lands full control-flow typing.
         #[cfg(feature = "std-surface")]
         Node::While { span, .. } => Ok((ValueType::ScalarI32, *span)),
+        // #267: closures are desugared (into an env struct + top-level fn +
+        // struct literal) BEFORE type inference runs, so a raw `Closure` should
+        // never reach here. Fail closed with a TypeError rather than a benign
+        // scalar placeholder that could mask a missed desugar.
+        Node::Closure { span, .. } => Err(TypeErrSpan {
+            msg: "internal: closure reached type inference before desugaring".to_string(),
+            span: *span,
+        }),
         // RFC 0010 Phase A: `extern "C"` blocks are declarations; they do not
         // produce a typed value. Return ScalarI32 placeholder for compatibility.
         Node::ExternBlock { span, .. } => Ok((ValueType::ScalarI32, *span)),

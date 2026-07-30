@@ -1705,6 +1705,41 @@ fn emit_expr(p: &mut Printer, node: &Node) {
         Node::ExternBlock { callconv, fns, .. } => {
             emit_extern_block(p, callconv, fns);
         }
+        // #267: closure `|caps; params| -> R { body }`. `mindc fmt` runs on the
+        // pre-desugar AST, so a source closure round-trips through this emitter.
+        Node::Closure {
+            captures,
+            params,
+            ret_type,
+            body,
+            span,
+        } => {
+            p.push("|");
+            for (i, c) in captures.iter().enumerate() {
+                if i > 0 {
+                    p.push(", ");
+                }
+                p.push(c);
+            }
+            p.push("; ");
+            for (i, param) in params.iter().enumerate() {
+                if i > 0 {
+                    p.push(", ");
+                }
+                p.push(&param.name);
+                p.push(": ");
+                emit_type_ann(p, &param.ty);
+            }
+            p.push("| ");
+            if let Some(rt) = ret_type {
+                p.push("-> ");
+                emit_type_ann(p, rt);
+                p.push(" ");
+            }
+            p.push("{");
+            emit_body_stmts(p, body, span.end());
+            p.push("}");
+        }
     }
 }
 

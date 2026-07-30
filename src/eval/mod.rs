@@ -41,6 +41,7 @@ use value::Buffer;
 
 pub mod abi_gate;
 pub mod autodiff;
+pub mod closures;
 pub mod conv2d_grad;
 pub mod ir_interp;
 pub mod lower;
@@ -214,6 +215,7 @@ mod enum_value_tests {
     }
 }
 
+pub use closures::desugar_closures;
 pub use ir_interp::eval_ir;
 pub use lower::lower_to_ir;
 #[cfg(feature = "mlir-build")]
@@ -1955,6 +1957,11 @@ pub(crate) fn eval_value_expr_mode(
         // does not call `__mind_region_enter` / `__mind_region_exit` (it
         // manages no real heap) but maintains semantic parity with the
         // codegen path: a region evaluates to its last expression.
+        // #267: a raw closure is desugared before lowering; the tree-eval
+        // interpreter never executes one (fail-closed).
+        Node::Closure { .. } => Err(EvalError::UnsupportedMsg(
+            "closures are desugared before evaluation; a raw closure cannot be interpreted".into(),
+        )),
         #[cfg(feature = "std-surface")]
         Node::Region { body, .. } => {
             let mut region_env = env.clone();
