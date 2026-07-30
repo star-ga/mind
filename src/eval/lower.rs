@@ -3102,6 +3102,39 @@ fn receiver_is_tracked_collection(
 /// silent miscompile. When no source name is read the alias is harmless and the
 /// binding is left untouched, preserving byte-identity for correct programs.
 #[cfg(feature = "std-surface")]
+/// Collect every identifier a match-arm PATTERN binds, recursing into payload
+/// (`EnumVariant`), tuple, and struct-variant sub-patterns. `Literal`/`Wildcard`
+/// bind nothing. Used by the fail-closed match fallbacks below to register a
+/// bound name (bare `x`, or a payload binding like `Some(v)`) before lowering
+/// the arm body — otherwise a body that READS the binding reaches the
+/// fail-closed undefined-identifier panic (Fable #9). Exhaustive (no catch-all)
+/// so a future `Pattern` variant forces a compile error here rather than
+/// silently re-opening the panic. Registering these names is CORRECT (they ARE
+/// parser-produced bindings) and does not weaken the fail-close: a genuinely
+/// undefined identifier is still not among the pattern's bindings, so it panics.
+fn collect_pattern_bindings(pat: &ast::Pattern, out: &mut Vec<String>) {
+    use ast::Pattern as P;
+    match pat {
+        P::Ident(name) => out.push(name.clone()),
+        P::EnumVariant { args, .. } => {
+            for a in args {
+                collect_pattern_bindings(a, out);
+            }
+        }
+        P::Tuple(subs) => {
+            for s in subs {
+                collect_pattern_bindings(s, out);
+            }
+        }
+        P::EnumStruct { fields, .. } => {
+            for (_name, sub) in fields {
+                collect_pattern_bindings(sub, out);
+            }
+        }
+        P::Literal(_) | P::Wildcard => {}
+    }
+}
+
 fn ast_reads_ident(node: &ast::Node, targets: &std::collections::HashSet<String>) -> bool {
     use ast::Node as N;
     match node {
@@ -6455,12 +6488,30 @@ fn lower_expr(
                 None => {
                     // Unsupported pattern kind (enum variant / non-int
                     // literal) — preserve the prior sequential behaviour so
-                    // those matches are not regressed by this step.
-                    let _scrut_id = lower_expr(scrutinee, ir, env, struct_env, receiver_types);
+                    // those matches are not regressed by this step. This match is
+                    // already gated NON-RUNNABLE (abi_gate emits
+                    // `enum_match_unsupported_payload`), so the emitted arm-body
+                    // values never execute — but lowering must stay TOTAL, so
+                    // bind every pattern-introduced ident (bare `x`, or a payload
+                    // binding like `Some(v)`) to the scrutinee id before lowering
+                    // each arm body, else a body that reads the binding reaches
+                    // the fail-closed undefined-identifier panic (Fable #9).
+                    let scrut_id = lower_expr(scrutinee, ir, env, struct_env, receiver_types);
                     let mut last_id = ir.fresh();
                     ir.instrs.push(Instr::ConstI64(last_id, 0));
                     for arm in arms {
-                        last_id = lower_expr(&arm.body, ir, env, struct_env, receiver_types);
+                        let mut binds: Vec<String> = Vec::new();
+                        collect_pattern_bindings(&arm.pattern, &mut binds);
+                        if binds.is_empty() {
+                            last_id = lower_expr(&arm.body, ir, env, struct_env, receiver_types);
+                        } else {
+                            let mut arm_env = env.clone();
+                            for b in binds {
+                                arm_env.insert(b, scrut_id);
+                            }
+                            last_id =
+                                lower_expr(&arm.body, ir, &arm_env, struct_env, receiver_types);
+                        }
                     }
                     last_id
                 }
@@ -6476,21 +6527,25 @@ fn lower_expr(
             let mut last_id = ir.fresh();
             ir.instrs.push(Instr::ConstI64(last_id, 0));
             for arm in arms {
-                // A bare-`Ident` catch-all arm (`x => …`) binds the scrutinee to
-                // that name, and the arm body may READ it (`x => x`). The default
-                // (non-std-surface) build has no branching `If` lowering, so this
-                // fallback flattens every arm body sequentially — but the binding
-                // must still be registered in `env` or the body's identifier
-                // reaches the fail-closed undefined-identifier panic (Fable #9).
-                // The name IS defined (it is a pattern binding produced by the
-                // parser), so registering it is CORRECT and does not weaken that
-                // fail-close — a genuinely undefined identifier still panics.
-                if let ast::Pattern::Ident(bind) = &arm.pattern {
-                    let mut arm_env = env.clone();
-                    arm_env.insert(bind.clone(), scrut_id);
-                    last_id = lower_expr(&arm.body, ir, &arm_env, struct_env, receiver_types);
-                } else {
+                // A pattern binds names — a bare-`Ident` catch-all (`x => x`) or
+                // a payload binding (`Some(v) => v`). The default (non-std-surface)
+                // build has no branching `If` lowering, so this fallback flattens
+                // every arm body sequentially — but each bound name must be
+                // registered in `env` or the body's read of it reaches the
+                // fail-closed undefined-identifier panic (Fable #9). The names ARE
+                // defined (parser-produced pattern bindings), so registering them
+                // is CORRECT and does not weaken the fail-close — a genuinely
+                // undefined identifier is not a pattern binding, so it still panics.
+                let mut binds: Vec<String> = Vec::new();
+                collect_pattern_bindings(&arm.pattern, &mut binds);
+                if binds.is_empty() {
                     last_id = lower_expr(&arm.body, ir, env, struct_env, receiver_types);
+                } else {
+                    let mut arm_env = env.clone();
+                    for b in binds {
+                        arm_env.insert(b, scrut_id);
+                    }
+                    last_id = lower_expr(&arm.body, ir, &arm_env, struct_env, receiver_types);
                 }
             }
             last_id
