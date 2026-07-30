@@ -153,15 +153,21 @@ fn note_of(ir: &IRModule) -> String {
 }
 
 // Manual reference-regeneration utility, not a CI assertion: it writes
-// `_ref_*.note` fixtures into a developer-local absolute path and makes no
-// assertions, so it is `#[ignore]`d and run explicitly with
-// `cargo test dump_ref -- --ignored` when the mic@3 references are refreshed.
-// (Left unignored it fails on any machine whose checkout is not that absolute
-// path — e.g. every CI runner.)
+// `_ref_*.note` fixtures next to the smoke and makes no assertions, so it is
+// `#[ignore]`d and run explicitly with `cargo test dump_ref -- --ignored` when
+// the mic@3 references are refreshed.
+//
+// The output directory is resolved from THIS checkout, never a fixed absolute
+// path: `$MIND_REF_OUT_DIR` if set, else `$CARGO_MANIFEST_DIR/examples/mindc_mind`
+// (CARGO_MANIFEST_DIR is the crate root of the tree being built). For the default
+// main-repo build this is `/home/n/mind/examples/mindc_mind` — byte-identical to
+// the old hardcoded path — but a git-worktree / CI checkout now regenerates into
+// ITS OWN tree instead of clobbering the main repo's committed references.
 #[test]
-#[ignore = "manual mic@3 reference-dump utility; writes into a dev-local path, run with --ignored"]
+#[ignore = "manual mic@3 reference-dump utility; writes _ref_*.note into this checkout, run with --ignored"]
 fn dump_ref() {
-    let out_dir = "/home/n/mind/examples/mindc_mind";
+    let out_dir = std::env::var("MIND_REF_OUT_DIR")
+        .unwrap_or_else(|_| format!("{}/examples/mindc_mind", env!("CARGO_MANIFEST_DIR")));
     for (name, src) in FIXTURES {
         let ir = ref_ir(src);
         let bytes = libmind::ir::compact::emit_mic3(&ir);

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3233 | **Est. tokens:** ~7,772,896
-**Generated:** 2026-07-30 13:59 UTC
+**Files:** 3233 | **Est. tokens:** ~7,773,011
+**Generated:** 2026-07-30 14:01 UTC
 
 ## Token Budget Guide
 
@@ -414,7 +414,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~194,333 |
-| `tests/` | 309 | ~527,625 |
+| `tests/` | 309 | ~527,740 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -4578,7 +4578,7 @@
 - `reap_threshold.rs` (~2089 tok, huge) — Copyright 2025 STARGA Inc.
 - `reductions_grad.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
 - `reductions_preview.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
-- `_ref_mic3_dump.rs` (~1663 tok, huge) — Committed self-host reference generator (A9b): reconstruct
+- `_ref_mic3_dump.rs` (~1778 tok, huge) — Committed self-host reference generator (A9b): reconstruct
 - `regalloc_dtk_parity.rs` (~3134 tok, huge) — DTK slice 1 (#254) — parity consumer for src/opt/regalloc_dtk.rs.
 - `region_phase_ja.rs` (~4239 tok, huge) — Copyright 2025 STARGA Inc.
 - `relu_exec.rs` (~472 tok, medium) — Copyright 2025 STARGA Inc.
