@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3230 | **Est. tokens:** ~7,765,097
-**Generated:** 2026-07-30 08:54 UTC
+**Files:** 3231 | **Est. tokens:** ~7,765,894
+**Generated:** 2026-07-30 10:28 UTC
 
 ## Token Budget Guide
 
@@ -414,7 +414,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~194,333 |
-| `tests/` | 307 | ~525,723 |
+| `tests/` | 308 | ~526,520 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -4583,6 +4583,7 @@
 - `relu_exec.rs` (~472 tok, medium) — Copyright 2025 STARGA Inc.
 - `relu_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `repl_basic.rs` (~523 tok, large) — Copyright 2025 STARGA Inc.
+- `reshape_runtime_dim_273.rs` (~797 tok, large) — Copyright 2025 STARGA Inc.
 - `resolve_fn_body.rs` (~1450 tok, large) — Copyright 2025 STARGA Inc.
 - `result_option_prelude_run.rs` (~910 tok, large) — Copyright 2025 STARGA Inc.
 - `return_cond_type_reject.rs` (~3849 tok, huge) — Copyright 2025 STARGA Inc.
