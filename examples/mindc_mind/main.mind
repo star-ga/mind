@@ -6435,6 +6435,36 @@ pub fn emit_mic3_const_i64(s: EmitState, dst: i64, v: i64) -> EmitState {
     emit_sleb_zigzag(s2, v)
 }
 
+// Push the low `n` bytes of `v` little-endian onto the EmitState buffer. Mirrors
+// the native-ELF nb_le idiom EXACTLY: `& 255` isolates the low byte (correct for
+// any sign) and the step MUST be a floor divide (`(v-255)/256` when v<0) — NOT the
+// language's trunc-toward-zero `/` — so a NEGATIVE i64 f64 bit pattern (e.g. -inf =
+// 0xFFF0000000000000, a small-magnitude signed i64) keeps its sign bytes. For v>=0
+// floor == trunc.
+pub fn emit_le_es(s: EmitState, v: i64, n: i64) -> EmitState {
+    if n <= 0 {
+        return s;
+    }
+    let s1: EmitState = es_push(s, v & 255);
+    let next: i64 = if v < 0 {
+        (v - 255) / 256
+    } else {
+        v / 256
+    };
+    emit_le_es(s1, next, n - 1)
+}
+
+// Instr::ConstF64 { dst, v }: OP_CONST_F64(0x02) || vid(dst) || u64_le(v.to_bits()).
+// `bits` is the IEEE-754 double bit pattern as an i64 (== `v.to_bits() as i64`,
+// computed integer-only by nb_float_lit_bits). Byte-exact vs the Rust emit_mic3
+// ConstF64 arm (src/ir/compact/v3/emit.rs — write_vid then write_u64_le), Bound by
+// MIND-CONSTITUTION §I.
+pub fn emit_mic3_const_f64(s: EmitState, dst: i64, bits: i64) -> EmitState {
+    let s1: EmitState = es_push(s, 2);
+    let s2: EmitState = emit_uleb128(s1, dst);
+    emit_le_es(s2, bits, 8)
+}
+
 // Instr::BinOp { dst, op, lhs, rhs }:
 //   OP_BINOP(0x04) || vid(dst) || binop_to_byte(op) || vid(lhs) || vid(rhs)
 // `op_byte` is binop_to_byte(op) — supplied by the (future) lowering; here it is
@@ -16465,6 +16495,14 @@ pub fn emit_mic3_tree_body(s: EmitState, nodes: i64, n_nodes: i64, vidbuf: i64, 
         let sc: EmitState = emit_mic3_const_i64(s, dst, lit);
         return emit_mic3_tree_body(sc, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
     }
+    // kind 6 = float const leaf (ast_float_lit): record[1] = f64 bit pattern.
+    // Emits OP_CONST_F64, byte-exact vs --emit-mic3 (only dyadic literals reach
+    // here; flatten fails closed on non-dyadic/exponent/overflow).
+    if kind == 6 {
+        let fbits: i64 = __mind_load_i64(nodes + i * 32 + 8);
+        let sf: EmitState = emit_mic3_const_f64(s, dst, fbits);
+        return emit_mic3_tree_body(sf, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
+    }
     if kind == 3 {
         // CALL: child0 = callee leaf slot (its span -> strtab index), child1 = first
         // arg-cons slot. nargs is the chain length; arg vids are each cons node's
@@ -16649,6 +16687,26 @@ pub fn flatten_ast(node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: 
         __mind_store_i64(nodes + slot * 32 + 24, 0);
         __mind_store_i64(cursor, slot + 1);
         return slot;
+    }
+    if k == ast_float_lit() {
+        // Float const leaf (descriptor kind=6): store the IEEE-754 f64 bit pattern
+        // (integer-only via nb_float_lit_bits). emit_mic3_tree_body emits it as
+        // OP_CONST_F64, byte-exact vs --emit-mic3. FAIL CLOSED on a non-dyadic /
+        // exponent / overflow literal — nb_float_lit_bits is exact ONLY for a dyadic
+        // rational, so a non-dyadic would emit wrong bits (a silent miscompile); the
+        // -1 return poisons the whole fn (never partial/wrong bytes), matching the
+        // native-ELF nb_expr float arm's dyadic guard.
+        if nb_float_lit_is_dyadic(buf, ast_span_lo(node), ast_span_hi(node)) == 0 {
+            return 0 - 1;
+        }
+        let fbits: i64 = nb_float_lit_bits(buf, ast_span_lo(node), ast_span_hi(node));
+        let fslot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + fslot * 32 + 0, 6);
+        __mind_store_i64(nodes + fslot * 32 + 8, fbits);
+        __mind_store_i64(nodes + fslot * 32 + 16, 0);
+        __mind_store_i64(nodes + fslot * 32 + 24, 0);
+        __mind_store_i64(cursor, fslot + 1);
+        return fslot;
     }
     if k == ast_binop() {
         let lslot: i64 = flatten_ast(ast_child0(node), buf, params_addr, n_params, nodes, cursor);
@@ -17150,6 +17208,14 @@ pub fn count_nonparam_nodes(node: i64, buf: i64, params_addr: i64, n_params: i64
     if k == ast_int_lit() {
         return 1;
     }
+    if k == ast_float_lit() {
+        // 1 instr (OP_CONST_F64), same as an int const leaf. Fail-close (-1) on a
+        // non-dyadic literal so the vid count matches flatten_ast's poison exactly.
+        if nb_float_lit_is_dyadic(buf, ast_span_lo(node), ast_span_hi(node)) == 0 {
+            return 0 - 1;
+        }
+        return 1;
+    }
     if k == ast_binop() {
         let l: i64 = count_nonparam_nodes(ast_child0(node), buf, params_addr, n_params);
         if l < 0 {
@@ -17422,6 +17488,22 @@ pub fn flatten_ast_lv(node: i64, buf: i64, params_addr: i64, n_params: i64, node
         __mind_store_i64(cursor, slot + 1);
         return slot;
     }
+    if k == ast_float_lit() {
+        // Float const leaf (descriptor kind=6) — see flatten_ast's ast_float_lit arm.
+        // Dyadic-guarded fail-close; the branch value of a float value-if (`{ 1.0 }`)
+        // flattens through here in the lv-aware seq/letchain path.
+        if nb_float_lit_is_dyadic(buf, ast_span_lo(node), ast_span_hi(node)) == 0 {
+            return 0 - 1;
+        }
+        let fbits: i64 = nb_float_lit_bits(buf, ast_span_lo(node), ast_span_hi(node));
+        let fslot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + fslot * 32 + 0, 6);
+        __mind_store_i64(nodes + fslot * 32 + 8, fbits);
+        __mind_store_i64(nodes + fslot * 32 + 16, 0);
+        __mind_store_i64(nodes + fslot * 32 + 24, 0);
+        __mind_store_i64(cursor, fslot + 1);
+        return fslot;
+    }
     if k == ast_binop() {
         let lslot: i64 = flatten_ast_lv(ast_child0(node), buf, params_addr, n_params, nodes, cursor, lvenv, nlv);
         if lslot < 0 {
@@ -17547,6 +17629,13 @@ pub fn count_nonparam_nodes_lv(node: i64, buf: i64, params_addr: i64, n_params: 
         return 0;
     }
     if k == ast_int_lit() {
+        return 1;
+    }
+    if k == ast_float_lit() {
+        // 1 instr (OP_CONST_F64) — see count_nonparam_nodes's ast_float_lit arm.
+        if nb_float_lit_is_dyadic(buf, ast_span_lo(node), ast_span_hi(node)) == 0 {
+            return 0 - 1;
+        }
         return 1;
     }
     if k == ast_binop() {
@@ -31734,11 +31823,23 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // BEFORE the STACK_TOP rsp switch abandons the OS stack. Statement-form gate
     // (nb_entry_prefix) so an argv-free entry gets code0 unchanged — byte-identical.
     let codecap: String = nb_entry_prefix(code0, is_entry, uses_argv);
-    // Entry-only stack switch: movabs rsp, STACK_TOP = 48 BC <imm64>
+    // Entry-only stack switch: movabs rsp, STACK_TOP - 8 = 48 BC <imm64>
+    // FIX #169 (SysV rsp alignment): STACK_TOP is 16-aligned, but the entry is
+    // reached by this hard rsp-switch, NOT by a `call`, so it lacks the 8-byte
+    // return-address displacement a normally-called function has on entry. With a
+    // plain STACK_TOP the shared `push rbp ; sub rsp,frame(16-mult)` prologue lands
+    // the body at rsp ≡ 8 (mod 16), so EVERY `call` in the entry's call graph fires
+    // at rsp ≡ 8 — 8 bytes off the SysV requirement that rsp ≡ 0 (mod 16) at the
+    // `call` (callee then sees ≡ 8 after the return-address push). Subtracting 8
+    // here emulates the missing return address: the entry now enters at rsp ≡ 8,
+    // `push rbp` → ≡ 0, `sub rsp,frame` → ≡ 0, so the body and every call run at
+    // rsp ≡ 0 exactly like every called function — the whole graph is SysV-aligned.
+    // (The fp-scaffold entry stubs `call` directly at STACK_TOP with no push rbp, so
+    // they are already aligned and keep the plain STACK_TOP.)
     let code1: String = if is_entry == 1 {
         let a1: String = nb_push(codecap, 72);
         let a2: String = nb_push(a1, 188);
-        nb_i64le(a2, nb_stack_top())
+        nb_i64le(a2, nb_stack_top() - 8)
     } else {
         codecap
     };

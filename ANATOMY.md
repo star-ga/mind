@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3233 | **Est. tokens:** ~7,773,011
-**Generated:** 2026-07-30 14:01 UTC
+**Files:** 3235 | **Est. tokens:** ~7,776,681
+**Generated:** 2026-07-30 14:25 UTC
 
 ## Token Budget Guide
 
@@ -58,7 +58,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 139 | ~331,130 |
+| `examples/mindc_mind/` | 141 | ~334,800 |
 | `examples/mindc_mind/testdata/` | 1 | ~2,452 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
@@ -898,6 +898,7 @@
 - `self_host_lockstep_smoke.py` (~2161 tok, huge) — SUB-STEP A lockstep smoke: the loop-carry frame COUNT and the loop-carry EMIT are
 - `self_host_loop_smoke.py` (~3420 tok, huge)
 - `self_host_match_smoke.py` (~1893 tok, huge)
+- `self_host_mic3_float_valueif_smoke.py` (~1768 tok, huge)
 - `self_host_mlir_smoke.py` (~1736 tok, huge)
 - `self_host_narrow_param_smoke.py` (~11195 tok, huge) — Native-ELF smoke for narrow-width (i8/i16/i32) function PARAMETERS carried by a loop.
 - `self_host_native_autowrap_smoke.py` (~2442 tok, huge) — Roadmap C2 declared-width AUTO-WRAP driver — narrow-int (i8/i16/i32) `let` and
@@ -907,6 +908,7 @@
 - `self_host_native_cast_conv_smoke.py` (~1267 tok, large) — RI-B2 scalar-cast-conv rung (#108) — native-ELF int<->float `as`-cast chain.
 - `self_host_native_dot_f32_smoke.py` (~1334 tok, large) — RI-B2-S8 STEP C (#108) — native-ELF scalar STRICT-FP f32 DOT-PRODUCT.
 - `self_host_native_dot_l1_q16_smoke.py` (~1088 tok, large) — RI-B2 L1-Q16 rung (#108) — native-ELF Q16.16 L1 distance.
+- `self_host_native_elf_alignment_smoke.py` (~1902 tok, huge) — Self-host NATIVE-ELF ABI-alignment smoke (FIX #169).
 - `self_host_native_elf_smoke.py` (~10783 tok, huge)
 - `self_host_native_fp_binop_smoke.py` (~1095 tok, large) — RI-B1 nb_expr FLOAT-op-FLOAT arithmetic routing gate (zero MLIR/LLVM).
 - `self_host_native_fp_call_smoke.py` (~5471 tok, huge) — RI-D2 S-C1: FLOAT call-RETURN dtype through the native-ELF general nb_expr lowering.
