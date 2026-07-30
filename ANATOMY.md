@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3236 | **Est. tokens:** ~7,781,319
-**Generated:** 2026-07-30 23:08 UTC
+**Files:** 3237 | **Est. tokens:** ~7,782,763
+**Generated:** 2026-07-30 23:43 UTC
 
 ## Token Budget Guide
 
@@ -58,7 +58,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 141 | ~335,034 |
+| `examples/mindc_mind/` | 142 | ~336,478 |
 | `examples/mindc_mind/testdata/` | 1 | ~2,452 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
@@ -875,7 +875,7 @@
 - `param_types_smoke.py` (~1273 tok, large)
 - `_ref_add.note` (~16 tok, tiny) — 6fa59a74687e6bac38c983655d4d93ab1873299f130f68cbe481cf92041f6610
 - `_ref_if_ret.note` (~16 tok, tiny) — 3fdc70390e9e12d8030552d11b2194078e8579fbcfac19b14d1beed77174cb07
-- `_ref_main.note` (~16 tok, tiny) — e7e44fa47c63b011194468b994d559e1bf6c8a4d031b28ae7317b13d3f8c1e5e
+- `_ref_main.note` (~16 tok, tiny) — fc96ce1dc8bcafb99b1bb7376bb084dc50c034a18ae06e6665076f0b521c9b45
 - `ref_netverify.py` (~1464 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
 - `_ref_recursion.note` (~16 tok, tiny) — 6d125a946243b0550700d9aa6bc2058b51a3b8bf6e536a8b0b3f545d79b7346f
 - `_ref_struct_field.note` (~16 tok, tiny) — 2f7f2ea32ee47138e1b0162bd51f418b4e5005b4569054f5f3c392ebd2258d96
@@ -950,6 +950,7 @@
 - `self_host_native_tensor_rowsum_smoke.py` (~1958 tok, huge) — C4-T4 — native-ELF tensor ROW REDUCTION (i64), zero MLIR/LLVM.
 - `self_host_native_tensor_transpose_smoke.py` (~2224 tok, huge) — C4-T4 — native-ELF tensor TRANSPOSE (i64), zero MLIR/LLVM.
 - `self_host_native_toplevel_assign_smoke.py` (~5550 tok, huge) — INDEPENDENCE_ROADMAP Phase-C follow-up — TOP-LEVEL STRAIGHT-LINE i64 REASSIGN
+- `self_host_native_ucast_smoke.py` (~1444 tok, large)
 - `self_host_native_write8_smoke.py` (~929 tok, large) — RI-B2-S2 STEP A (#108) — de-risk the C1 "emit 8 LE bytes to stdout + hash" gate.
 - `self_host_native_write_f32_smoke.py` (~815 tok, large) — RI-B2-S8 STEP A (#108) — de-risk the raw-f32-bytes harness on a KNOWN f32.
 - `self_host_open_smoke.py` (~1310 tok, large)

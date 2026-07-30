@@ -1769,6 +1769,46 @@ pub fn narrow_cast_width(buf: i64, lo: i64, hi: i64) -> i64 {
     0
 }
 
+// UNSIGNED narrowing-cast MASK for `EXPR as u8/u16/u32`. Unsigned narrowing to
+// width w is a ZERO-extended truncation — the low w bits kept, high bits cleared
+// — which for any i64 input (including negatives: `-1 as u8` = 255) is exactly
+// `EXPR & ((1<<w)-1)`. So the parser DESUGARS `EXPR as uN` into the fully-proven
+// bitwise-AND binop (Rule 4b desugar-to-proven-form): no new native-emit / count /
+// dtype / mic@3-flatten arm, and — unlike the signed ast_cast node, which the
+// mic@3 NOTE builder (nb_build_mic3) refuses — the AND binop lowers through BOTH
+// the native-ELF path AND the note builder, so an unsigned cast SELF-HOSTS through
+// the full selftest_native_elf_u path. Returns the AND mask (255 / 65535 /
+// 4294967295) for u8/u16/u32, or 0 for any other target. main.mind's own source
+// has no non-comment `as uN`, so this never fires during self-compile and the
+// integer native-ELF oracle / self-host loop stay byte-identical.
+pub fn unsigned_cast_mask(buf: i64, lo: i64, hi: i64) -> i64 {
+    // `u8` (2 bytes: u 8)
+    if hi - lo == 2 {
+        if load_byte(buf, lo + 0) == 117 {
+            if load_byte(buf, lo + 1) == 56 {
+                return 255;
+            }
+        }
+        return 0;
+    }
+    // `u16` / `u32` (3 bytes: u 1 6 | u 3 2)
+    if hi - lo == 3 {
+        if load_byte(buf, lo + 0) == 117 {
+            if load_byte(buf, lo + 1) == 49 {
+                if load_byte(buf, lo + 2) == 54 {
+                    return 65535;
+                }
+            }
+            if load_byte(buf, lo + 1) == 51 {
+                if load_byte(buf, lo + 2) == 50 {
+                    return 4294967295;
+                }
+            }
+        }
+    }
+    0
+}
+
 // ===== Pratt precedence table =====
 
 // Binding precedence (higher = tighter). The bitwise/shift ops are interleaved to
@@ -2366,6 +2406,18 @@ pub fn parse_postfix_rest(toks: Vec, pos: i64, buf: i64, recv: i64) -> ParseResu
                 if is_ident_f64(buf, cty_lo, cty_hi) == 1 {
                     let cf64: i64 = ast_new_cast(ast_span_lo(recv), cty_hi, recv, nb_castw_f64());
                     return parse_postfix_rest(toks, pos + 2, buf, cf64);
+                }
+                // `EXPR as u8/u16/u32` UNSIGNED narrowing cast: DESUGAR to the
+                // proven `EXPR & mask` binop (unsigned_cast_mask header). A masked
+                // AND is byte-identical to a hand-written `EXPR & 255` in the native
+                // path AND self-hosts through the note builder (which refuses the
+                // signed ast_cast node). Continue postfix from the binop so a
+                // trailing `.field` / index still binds. main.mind uses no
+                // non-comment `as uN`, so its parse is byte-identical.
+                let umask: i64 = unsigned_cast_mask(buf, cty_lo, cty_hi);
+                if umask > 0 {
+                    let umnode: i64 = ast_new_binop(ast_span_lo(recv), cty_hi, recv, mk_syn_intlit(umask), op_bitand());
+                    return parse_postfix_rest(toks, pos + 2, buf, umnode);
                 }
                 // Any OTHER `as TARGET` (f32/u64/usize/...): explicitly
                 // UNSUPPORTED (fail-closed poison node -> 0B refusal). Before the
