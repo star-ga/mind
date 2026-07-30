@@ -133,6 +133,27 @@ ARMS = [
     ("g2 nested-if-return",
      "nested if-statement early return then trailing value",
      "pub fn s(a: i64, b: i64) -> i64 { if a == 1 { if b == 1 { return 2; } } 0 }"),
+    # #258 regression guard — the if-with-SEQ-then-block flattener
+    # (emit_if_seq_then_instr / emit_if_seq_segments and their `_lv` mirrors) is
+    # reached ONLY when an outer `if` wraps >=2 SIBLING early-return-if chains.
+    # None of the arms above hit it (g2 is a SINGLE nested chain), and main.mind's
+    # `scan` splits its two char-literal guards specifically to avoid it — so this
+    # emitter path was previously ungated. These arms pin its SSA-id count to the
+    # Rust oracle byte-for-byte: the planner (`flatten_stmt_seq`) derives the
+    # segment's `next_delta` by PROBING this same emitter (next_delta = pr_dst + 1),
+    # so any future drift in the emitter's minted-id count would shift every
+    # trailing statement's base and fail this arm loudly.
+    ("g3 sibling-seq-2chains",
+     "outer if wrapping TWO sibling early-return-if chains (#258 flattener)",
+     "pub fn s(a: i64, b: i64, c: i64) -> i64 { if a == 1 { "
+     "if b == 1 { if c == 1 { return 2; } } "
+     "if b == 2 { if c == 2 { return 3; } } } a + b + c }"),
+    ("g3 sibling-seq-lets",
+     "sibling early-return-if chains with lets-in-then (scan char-literal shape)",
+     "fn g(t: i64, a: i64) -> i64 { t + a }\n"
+     "pub fn s(a: i64, b: i64, t: i64) -> i64 { if a == 1 { "
+     "if b == 1 { let x: i64 = g(t, b); return x; } "
+     "if b == 2 { let y: i64 = g(t, a); return y; } } a + b + t }"),
     ("h  general-seq",
      "general statement sequence (let + if-return + let + trailing)",
      "pub fn foo(a: i64, b: i64) -> i64 { let t: i64 = a + b; "
