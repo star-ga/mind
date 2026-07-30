@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3228 | **Est. tokens:** ~7,753,438
-**Generated:** 2026-07-30 06:55 UTC
+**Files:** 3228 | **Est. tokens:** ~7,754,321
+**Generated:** 2026-07-30 07:15 UTC
 
 ## Token Budget Guide
 
@@ -73,7 +73,7 @@
 | `.github/workflows/` | 9 | ~15,354 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~18,670 |
-| `scripts/` | 9 | ~11,565 |
+| `scripts/` | 9 | ~12,144 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `sdk/ts/mic-map/` | 6 | ~22,706 |
@@ -414,7 +414,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~194,333 |
-| `tests/` | 306 | ~522,828 |
+| `tests/` | 306 | ~523,068 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -456,7 +456,7 @@
 | `tests/mindcraft/lint/q16_overflow/` | 3 | ~191 |
 | `tests/mindcraft/lint/shadowing/` | 2 | ~87 |
 | `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
-| `tests/mindfuzz_cross_substrate/staged/` | 17 | ~3,127 |
+| `tests/mindfuzz_cross_substrate/staged/` | 17 | ~3,191 |
 | `tests/runtime/` | 2 | ~135 |
 | `tests/selfhost_gaps/` | 67 | ~5,301 |
 | `tests/shapes/` | 3 | ~260 |
@@ -1102,7 +1102,7 @@
 - `main.rs` (~2372 tok, huge) — Copyright 2026 STARGA Inc.
 ### `scripts/`
 
-- `preflight.sh` (~813 tok, large) — preflight.sh — local CI-parity gate. Run before pushing to avoid red CI.
+- `preflight.sh` (~1392 tok, large) — preflight.sh — local CI-parity gate. Run before pushing to avoid red CI.
 - `quick_perf.sh` (~734 tok, large) — quick_perf.sh — FAST one-sided compile-speed criterion gate.
 - `run_crypto_vectors.sh` (~1751 tok, huge) — Build every pure-MIND crypto/TLS std module to a shared object and run its
 ### `sdk/ts/mic-map/dist/`
@@ -4414,7 +4414,7 @@
 - `mic3_break_continue_string_roundtrip.rs` (~1616 tok, huge) — Copyright 2026 STARGA Inc.
 - `mic3_cli_emit.rs` (~2431 tok, huge) — Copyright 2025 STARGA Inc.
 - `mic3_const_dense_tensor_roundtrip.rs` (~842 tok, large) — Copyright 2026 STARGA Inc.
-- `mic3_parser_dos.rs` (~1651 tok, huge) — Copyright 2025 STARGA Inc.
+- `mic3_parser_dos.rs` (~1891 tok, huge) — Copyright 2025 STARGA Inc.
 - `micb_dos_reject.rs` (~2341 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_build_phase_a.rs` (~4566 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_cache_phase_f.rs` (~6231 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4513,7 +4513,7 @@
 - `mindfuzz_cross_substrate.rs` (~15224 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/mindfuzz_cross_substrate/staged/`
 
-- `fuzz_repro_seed_deadbeef_prog000.mind` (~138 tok, small) — DIVERGENCE REPRODUCER (issue #72 fuzzer)
+- `fuzz_repro_seed_deadbeef_prog000.mind` (~202 tok, medium) — DIVERGENCE REPRODUCER (issue #72 fuzzer)
 - `fuzz_repro_seed_deadbeef_prog006.mind` (~157 tok, small) — DIVERGENCE REPRODUCER (issue #72 fuzzer)
 - `manifest.tsv` (~357 tok, medium) — scalar_arith_step000	f	3735928559	64	5e39820a2a8325417e39057f19ba9bceec01bd2068c
 - `scalar_accum_step000.mind` (~154 tok, small) — MIND-Fuzz seed: scalar accumulator with a return-feeding literal.

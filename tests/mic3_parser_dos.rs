@@ -125,16 +125,31 @@ fn mic3_nested_region_reservation_bomb_is_rejected() {
         b.len()
     );
 
-    let res = parse_mic3(&b);
-    assert!(
-        res.is_err(),
-        "a nested-region reservation-amplification bomb must be rejected, not parsed"
-    );
-    let msg = format!("{}", res.unwrap_err());
-    assert!(
-        msg.contains("nesting depth") || msg.contains("depth"),
-        "rejection should trip the nesting-depth guard, got: {msg}"
-    );
+    // The parser recurses up to MAX_MIC3_DEPTH (256) before rejecting; in a debug
+    // build those frames exceed the 2 MiB default test-thread stack, so the parse
+    // must run on a generous stack to REACH the depth bound rather than overflow
+    // before it. Production parses on a >= 8 MiB stack where 256 frames are far
+    // below the overflow threshold — a test-harness concern only, mirroring the
+    // sibling `reject_excessive_nesting` test in `src/ir/compact/v3/mod.rs`. The
+    // reservation cap (the bomb's actual subject) still prevents the OOM this test
+    // guards against; reaching the depth bound proves the cap held (no OOM).
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            let res = parse_mic3(&b);
+            assert!(
+                res.is_err(),
+                "a nested-region reservation-amplification bomb must be rejected, not parsed"
+            );
+            let msg = format!("{}", res.unwrap_err());
+            assert!(
+                msg.contains("nesting depth") || msg.contains("depth"),
+                "rejection should trip the nesting-depth guard, got: {msg}"
+            );
+        })
+        .expect("spawn depth-guard test thread")
+        .join()
+        .expect("depth-guard test thread panicked");
 }
 
 #[test]
