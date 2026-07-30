@@ -130,6 +130,12 @@ const TYPE_ERR_CODE: &str = "E2001";
 const SHAPE_BROADCAST_CODE: &str = "E2101";
 const SHAPE_RANK_CODE: &str = "E2102";
 const SHAPE_INNER_DIM_CODE: &str = "E2103";
+/// Finding #273 — a `tensor.reshape` dimension names a runtime value binding
+/// instead of a compile-time-known extent (integer literal or static shape
+/// symbol). The runtime value would be silently discarded, so this fails
+/// closed at check time. The `shape::` prefix routes it through
+/// `is_shape_diag_code` so it surfaces inside fn bodies (RFC 0012 Phase A).
+const RESHAPE_RUNTIME_DIM_CODE: &str = "shape::reshape_runtime_dim";
 /// Implicit integer narrowing (data-loss) without an explicit `as` cast.
 /// The spec forbids silent dtype changes across an assignment boundary
 /// (`grammar-syntax.ebnf:240` provides `AsCast = Expression "as" Type` for
@@ -937,6 +943,35 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
             let (arg_ty, _) = infer_expr(x, env)?;
             match arg_ty {
                 ValueType::Tensor(tensor) => {
+                    // Finding #273 — a reshape dim is either a compile-time
+                    // integer literal or a *static shape symbol* (in scope from
+                    // a tensor type, e.g. `reshape(x, [batch, 800])`). A
+                    // non-numeric dim that instead names a *runtime value*
+                    // binding in scope (`let n = 6; reshape(x, [2, n])`) is a
+                    // silent miscompile: the parser stores the identifier as a
+                    // shape SYMBOL, so the runtime value is discarded, the
+                    // element-count check is bypassed (a symbolic product is
+                    // unknown), and the reshape produces a bogus symbolic-dim
+                    // tensor. Fail closed at check time — the value can never be
+                    // used as a static extent. Shape symbols are NOT value
+                    // bindings, so they are absent from `env` and never flagged.
+                    for dim in dims {
+                        if dim.parse::<usize>().is_err() {
+                            if let Some(vt) = env.get(dim.as_str()) {
+                                return Err(TypeErrSpan {
+                                    msg: format!(
+                                        "`tensor.reshape` dimension `{dim}` refers to a \
+                                         runtime value of type `{}`; a reshape dim must be a \
+                                         compile-time integer literal or a static shape \
+                                         symbol (a compile-time-known extent), not a runtime \
+                                         value",
+                                        describe_value_type(vt)
+                                    ),
+                                    span: *span,
+                                });
+                            }
+                        }
+                    }
                     let new_shape = shape_from_dims(dims);
                     if new_shape.len() != tensor.shape.len() {
                         return Err(TypeErrSpan {
@@ -5715,6 +5750,9 @@ fn classify_error_code(msg: &str) -> &'static str {
     } else if msg.contains("fixed-size `bytes[N]` buffer handle") {
         // Bug #38: fixed buffer flowing into a growable `bytes` parameter.
         FIXED_BYTES_INTO_VEC_CODE
+    } else if msg.starts_with("`tensor.reshape` dimension `") && msg.contains("runtime value") {
+        // Finding #273: reshape dim naming a runtime value binding.
+        RESHAPE_RUNTIME_DIM_CODE
     } else {
         TYPE_ERR_CODE
     }
