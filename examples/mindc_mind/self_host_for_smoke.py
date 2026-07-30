@@ -101,6 +101,58 @@ CASES = [
     ("call_in_body", b"fn inc(x: i64) -> i64 { return x + 1; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..4 { c = inc(c); } return c; }", 4),
 ]
 
+# ---------------------------------------------------------------------------
+# GATED hygiene cases (Fable #4 / #5i) — SELF-HOST leg of the cross-substrate
+# differential. The Rust compiler now branches range-`for` on a hygiene gate
+# (`src/eval/lower.rs` For arm): when END re-evaluation is observable, VAR
+# shadows an outer binding, or the body assigns VAR, it emits a hygienic form
+# (span-unique counter, END pre-lowered ONCE, per-iteration `let mut VAR`
+# copy). The interpreter-oracle and Rust-compiled-ELF legs (asserting
+# interp/rust == hand reference) live in `tests/for_hygiene_run.rs`; THIS
+# battery adds the third substrate — the self-host native-ELF.
+#
+# The self-host compiler still desugars range-`for` at PARSE time into the
+# naive `let mut VAR=LO; while VAR<HI {B; VAR=VAR+1}` form with NO hygiene gate
+# (that is Step 2 of the C/D redesign — self-host nb while-body let-env scoping
+# then an unconditional hygienic form). So each gated case is EXPECTED to
+# diverge on self-host TODAY. Those divergences are recorded as LOUD xfails:
+# an xfail that unexpectedly PASSES (self-host silently gained the fix) fails
+# the battery so the bookkeeping never drifts stale.
+#
+# (name, source, reference-exit-code, self_host_xfail, note)
+#   self_host_xfail = True  -> self-host is expected to DIVERGE from reference
+#                              (wrong value, fail-closed empty ELF, or a hang).
+#   self_host_xfail = False -> self-host coincidentally matches (a PURE end
+#                              call re-evaluated per-iter yields the same bound).
+GATED_CASES = [
+    # Loop var shadows an outer `let i = 100`; VAR must NOT escape the loop.
+    # Reference (interp / hygienic Rust): outer `i` is untouched -> 100.
+    # Self-host: parse-time `let mut i=0` clobbers the outer binding -> 3.
+    ("shadow_outer",
+     b"fn main() -> i64 { let i: i64 = 100; for i in 0..3 { } return i; }",
+     100, True, "VAR escapes/clobbers shadowed outer binding (Step-2 gap)"),
+    # Body assigns the loop var; the write must hit a per-iteration copy, not
+    # the counter. Reference: 3 iterations -> c == 3.
+    # Self-host: `i = i + 5` mutates the counter, loop exits after 1 iter -> 1.
+    ("body_assign_iters",
+     b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { i = i + 5; c = c + 1; } return c; }",
+     3, True, "body write to VAR corrupts the counter (Step-2 gap)"),
+    # END reads a body-assigned var; END must be evaluated ONCE.
+    # Reference: bound frozen at 3 -> c == 3.
+    # Self-host: END `h` re-evaluated per iter and h grows -> INFINITE LOOP
+    # (timeout sentinel -1 -> 0xFF, never == 3).
+    ("end_reads_body_assigned",
+     b"fn main() -> i64 { let mut h: i64 = 3; let mut c: i64 = 0; for i in 0..h { h = h + 1; c = c + 1; } return c; }",
+     3, True, "END re-evaluated per iter -> infinite loop (Step-2 gap)"),
+    # END is a call. The hygienic Rust form pre-lowers it once; the self-host
+    # re-evaluates it per iter, but `hi()` is PURE and returns 3 every time, so
+    # the observable result COINCIDES with the reference (3). Not an xfail —
+    # but the case still guards that a call in END does not crash self-host.
+    ("end_call",
+     b"fn hi() -> i64 { return 3; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..hi() { c = c + 1; } return c; }",
+     3, False, "pure END call re-eval coincides with once-eval"),
+]
+
 # byte-identity: each `for` vs its explicit `let mut i:i64=LO; while i<HI { B; i=i+1; }` form.
 DESUGAR_PAIRS = [
     ("count5_vs_while",
@@ -141,7 +193,38 @@ def main() -> int:
                 print(f"  FAIL  {name}: for form ({len(ea)} B) != explicit while-desugar ({len(eb)} B)")
                 rc = 1
 
-    print("ALL PASS  (range-for: value-correct + byte-identical to let+while desugar)" if rc == 0
+        # ---- GATED hygiene cases: self-host substrate leg + xfail bookkeeping.
+        xfail_expected = 0
+        xfail_unexpected_pass = 0
+        for name, src, want, xfail, note in GATED_CASES:
+            elf = mind_elf(lib, src)
+            got = (run_elf(elf, tmp) & 0xFF) if elf else None  # None = fail-closed
+            matches = got == want
+            if xfail:
+                xfail_expected += 1
+                if matches:
+                    # An xfail that PASSES means self-host silently gained the
+                    # fix — the bookkeeping is stale. Fail LOUD (never silent).
+                    print(f"  XPASS {name}: self-host UNEXPECTEDLY matched ref {want} "
+                          f"(exit {got}) — Step-2 landed? update GATED_CASES xfail flag")
+                    xfail_unexpected_pass += 1
+                    rc = 1
+                else:
+                    shown = "fail-closed" if got is None else f"exit {got}"
+                    print(f"  XFAIL {name}: self-host diverges as expected "
+                          f"({shown} != ref {want}) — {note}")
+            else:
+                if matches:
+                    print(f"  PASS  {name}: self-host exit {got} == ref {want} — {note}")
+                else:
+                    shown = "fail-closed (empty ELF)" if got is None else f"exit {got}"
+                    print(f"  FAIL  {name}: self-host {shown}, want {want} — {note}")
+                    rc = 1
+        print(f"  xfail bookkeeping: {xfail_expected} expected self-host divergences "
+              f"(Step-2 gap), {xfail_unexpected_pass} unexpected passes")
+
+    print("ALL PASS  (range-for: value-correct + byte-identical to let+while desugar; "
+          "gated hygiene self-host xfails accounted)" if rc == 0
           else "FAIL  (range-for battery had failures)")
     return rc
 

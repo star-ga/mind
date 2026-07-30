@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3225 | **Est. tokens:** ~7,748,571
-**Generated:** 2026-07-29 18:28 UTC
+**Files:** 3226 | **Est. tokens:** ~7,751,523
+**Generated:** 2026-07-30 03:51 UTC
 
 ## Token Budget Guide
 
@@ -58,7 +58,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 139 | ~329,480 |
+| `examples/mindc_mind/` | 139 | ~330,743 |
 | `examples/mindc_mind/testdata/` | 1 | ~2,452 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
@@ -414,14 +414,14 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~194,333 |
-| `tests/` | 304 | ~519,646 |
+| `tests/` | 305 | ~521,088 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
 | `tests/conformance/gpu_profile/` | 2 | ~11 |
 | `tests/cross_substrate_identity/` | 2 | ~4,113 |
-| `tests/cross_substrate_identity/bimap-phf/` | 2 | ~1,418 |
+| `tests/cross_substrate_identity/bimap-phf/` | 2 | ~1,665 |
 | `tests/cross_substrate_identity/collatz/` | 2 | ~962 |
 | `tests/cross_substrate_identity/dot-f32-v-4093/` | 2 | ~1,222 |
 | `tests/cross_substrate_identity/dot-i16-4096/` | 2 | ~648 |
@@ -893,7 +893,7 @@
 - `self_host_else_if_smoke.py` (~1715 tok, huge)
 - `self_host_failclosed_smoke.py` (~9325 tok, huge) — self_host_failclosed_smoke.py — the fail-closed boundary of the pure-MIND
 - `self_host_float_lit_exact_smoke.py` (~1069 tok, large) — CPU-as-oracle smoke for the C1 float-literal exactness guard.
-- `self_host_for_smoke.py` (~1891 tok, huge) — Permanent battery for the self-host range-`for` loop.
+- `self_host_for_smoke.py` (~3154 tok, huge) — Permanent battery for the self-host range-`for` loop.
 - `self_host_if_region_carry_smoke.py` (~4552 tok, huge) — Native-ELF smoke: i64 loop-carry through BRANCHED regions (Sub-step C).
 - `self_host_lockstep_smoke.py` (~2161 tok, huge) — SUB-STEP A lockstep smoke: the loop-carry frame COUNT and the loop-carry EMIT are
 - `self_host_loop_smoke.py` (~3420 tok, huge)
@@ -4217,7 +4217,7 @@
 ### `tests/cross_substrate_identity/bimap-phf/`
 
 - `manifest.toml` (~780 tok, large) — version = "1"
-- `reference_hashes.toml` (~638 tok, large) — avx2 = "782396add7bdc58d94606442b44f2e67cd7b3bf6772976f51577f8c53ffd75ed"
+- `reference_hashes.toml` (~885 tok, large) — avx2 = "33483ee02a0b062becb8c8f7c1078e0bc17c543298971514e37e371b2b86bc01"
 ### `tests/cross_substrate_identity/collatz/`
 
 - `manifest.toml` (~511 tok, large) — version = "1"
@@ -4357,6 +4357,7 @@
 - `for_continue_advances_run.rs` (~1549 tok, huge) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
 - `for_continue_step_injection.rs` (~1302 tok, large) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
 - `for_each_run.rs` (~859 tok, large) — Copyright 2025 STARGA Inc.
+- `for_hygiene_run.rs` (~1442 tok, large) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
 - `g2_differential_mlir.rs` (~6203 tok, huge) — Copyright 2025 STARGA Inc.
 - `gather_preview.rs` (~288 tok, medium) — Copyright 2025 STARGA Inc.
 - `generics_lowering.rs` (~1384 tok, large) — Copyright 2026 STARGA Inc. Licensed under the Apache License, Version 2.0.

@@ -35,6 +35,20 @@
 # run the gate with MIND_BENCH_BLESS=1 and commit the new trace_hash. The
 # artifact is attested but UNSIGNED (Ed25519 signing is RFC 0016 Phase C,
 # pending — `signature: absent` today).
+#
+# Re-bless 2026-07-29 (Fable #4 / #5i — range-`for` hygiene gate): the `#[bimap]`
+# from_str CONSTRUCTION body is unchanged; the drift is entirely in main()'s
+# `for j in 0..currency_count()` loop. `currency_count()` is a CALL, so the new
+# hygiene gate in the `For` arm (`src/eval/lower.rs`) legitimately fires
+# (`end_has_call`) and pre-lowers END ONCE into a hidden bound instead of
+# re-evaluating the call every iteration — matching the interpreter oracle's
+# evaluate-END-once semantics (`src/eval/mod.rs` For arm). RUNTIME OUTPUT IS
+# UNCHANGED: `mindc run` still prints "0 AUD / 1 JPY / 2 USD" byte-for-byte
+# (currency_count() is pure = 3, and the body mutates nothing it depends on, so
+# END-once == END-per-iter observationally). The mic@3 bytes differ only in
+# call-once vs call-per-iter emission for the loop bound. The construction gate
+# stays STRICT + valid; the value remains substrate-independent (frontend/IR
+# emit, no SIMD) so avx2 == neon by construction.
 
-avx2 = "782396add7bdc58d94606442b44f2e67cd7b3bf6772976f51577f8c53ffd75ed"
-neon = "782396add7bdc58d94606442b44f2e67cd7b3bf6772976f51577f8c53ffd75ed"
+avx2 = "33483ee02a0b062becb8c8f7c1078e0bc17c543298971514e37e371b2b86bc01"
+neon = "33483ee02a0b062becb8c8f7c1078e0bc17c543298971514e37e371b2b86bc01"
