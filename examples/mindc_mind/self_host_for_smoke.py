@@ -2,12 +2,14 @@
 """Permanent battery for the self-host range-`for` loop.
 
 `for VAR in LO..HI { BODY }` is desugared at PARSE time (parse_block_stmts ->
-parse_for) into the two SIBLING statements `let mut VAR: i64 = LO;` and
-`while VAR < HI { BODY ; VAR = VAR + 1; }` — reusing the proven native-ELF `while`
-lowering with ZERO new emit code. The upper bound is EXCLUSIVE (half-open).
-`break` exits with no increment; an own-level `continue` is rewritten to
-`VAR = VAR + 1; continue` so standard for-continue semantics hold (the increment
-runs before the back-edge).
+parse_for) into the HYGIENIC form (Step 2): three SIBLING statements — a hidden
+counter `let CTR = LO`, a hidden bound `let BND = HI` (upper bound evaluated
+ONCE), and `while CTR < BND { let VAR = CTR ; BODY ; CTR = CTR + 1 }` — reusing
+the proven native-ELF `while` lowering. The per-iteration `let VAR = CTR` copy is
+body-scoped (nb_emit_while), so VAR cannot escape the loop or be corrupted by a
+body write. The upper bound is EXCLUSIVE (half-open). `break` exits with no
+increment; an own-level `continue` uses the TOP-increment form so the counter
+still advances before the back-edge.
 
 This battery compiles each program through the pure-MIND native-ELF entry
 (`selftest_native_elf_h`), RUNS the resulting x86-64 ELF, and asserts the exit
@@ -124,47 +126,45 @@ CASES = [
 #                              (wrong value, fail-closed empty ELF, or a hang).
 #   self_host_xfail = False -> self-host coincidentally matches (a PURE end
 #                              call re-evaluated per-iter yields the same bound).
+# Step 2 (this change) landed the self-host HYGIENIC range-`for` desugar: the
+# native-ELF parse_for now emits a hidden counter `let CTR = LO`, a bound
+# `let BND = HI` (END evaluated ONCE), and `while CTR < BND { let VAR = CTR;
+# BODY; CTR = CTR + 1 }`, and nb_emit_while scopes the while body's let-env so the
+# per-iteration `let VAR = CTR` copy dies at loop exit. So the self-host substrate
+# now MATCHES the interpreter/hygienic-Rust reference on all three shapes that used
+# to diverge — the former xfails are real PASSes (`self_host_xfail = False`). An
+# xfail flag left True here would fail LOUD (XPASS), so the bookkeeping stays honest.
 GATED_CASES = [
     # Loop var shadows an outer `let i = 100`; VAR must NOT escape the loop.
-    # Reference (interp / hygienic Rust): outer `i` is untouched -> 100.
-    # Self-host: parse-time `let mut i=0` clobbers the outer binding -> 3.
+    # Hygienic: the per-iteration `let i = CTR` copy is body-scoped, so post-loop
+    # `return i` resolves the outer binding -> 100.
     ("shadow_outer",
      b"fn main() -> i64 { let i: i64 = 100; for i in 0..3 { } return i; }",
-     100, True, "VAR escapes/clobbers shadowed outer binding (Step-2 gap)"),
-    # Body assigns the loop var; the write must hit a per-iteration copy, not
-    # the counter. Reference: 3 iterations -> c == 3.
-    # Self-host: `i = i + 5` mutates the counter, loop exits after 1 iter -> 1.
+     100, False, "VAR stays loop-local, outer binding preserved"),
+    # Body assigns the loop var; the write hits the per-iteration copy, not the
+    # hidden counter. 3 iterations -> c == 3.
     ("body_assign_iters",
      b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { i = i + 5; c = c + 1; } return c; }",
-     3, True, "body write to VAR corrupts the counter (Step-2 gap)"),
-    # END reads a body-assigned var; END must be evaluated ONCE.
-    # Reference: bound frozen at 3 -> c == 3.
-    # Self-host: END `h` re-evaluated per iter and h grows -> INFINITE LOOP
-    # (timeout sentinel -1 -> 0xFF, never == 3).
+     3, False, "body write to VAR hits per-iteration copy, counter advances"),
+    # END reads a body-assigned var; END is pre-lowered ONCE into the hidden bound,
+    # so the loop terminates at the frozen bound 3 -> c == 3 (no infinite loop).
     ("end_reads_body_assigned",
      b"fn main() -> i64 { let mut h: i64 = 3; let mut c: i64 = 0; for i in 0..h { h = h + 1; c = c + 1; } return c; }",
-     3, True, "END re-evaluated per iter -> infinite loop (Step-2 gap)"),
-    # END is a call. The hygienic Rust form pre-lowers it once; the self-host
-    # re-evaluates it per iter, but `hi()` is PURE and returns 3 every time, so
-    # the observable result COINCIDES with the reference (3). Not an xfail —
-    # but the case still guards that a call in END does not crash self-host.
+     3, False, "END evaluated once into hidden bound, loop terminates"),
+    # END is a call. The hygienic form pre-lowers `hi()` once into the bound; the
+    # value is 3 -> c == 3. Guards that a call in END compiles + runs.
     ("end_call",
      b"fn hi() -> i64 { return 3; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..hi() { c = c + 1; } return c; }",
-     3, False, "pure END call re-eval coincides with once-eval"),
+     3, False, "END call pre-lowered once into hidden bound"),
 ]
 
-# byte-identity: each `for` vs its explicit `let mut i:i64=LO; while i<HI { B; i=i+1; }` form.
-DESUGAR_PAIRS = [
-    ("count5_vs_while",
-     b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..5 { c = c + 1; } return c; }",
-     b"fn main() -> i64 { let mut c: i64 = 0; let mut i: i64 = 0; while i < 5 { c = c + 1; i = i + 1; } return c; }"),
-    ("sum10_vs_while",
-     b"fn main() -> i64 { let mut s: i64 = 0; for i in 0..5 { s = s + i; } return s; }",
-     b"fn main() -> i64 { let mut s: i64 = 0; let mut i: i64 = 0; while i < 5 { s = s + i; i = i + 1; } return s; }"),
-    ("range2_6_vs_while",
-     b"fn main() -> i64 { let mut c: i64 = 0; for i in 2..6 { c = c + 1; } return c; }",
-     b"fn main() -> i64 { let mut c: i64 = 0; let mut i: i64 = 2; while i < 6 { c = c + 1; i = i + 1; } return c; }"),
-]
+# DESUGAR_PAIRS (byte-identity of `for` vs the NAIVE explicit `let mut i; while
+# i<HI { B; i=i+1 }` form) is RETIRED as of Step 2: the hygienic desugar emits a
+# hidden counter + a pre-lowered bound + a body-local element copy, so it is
+# deliberately NO LONGER byte-identical to the naive while form the pairs encode.
+# Value-correctness across the same shapes is covered by CASES above; the
+# hygiene-specific behavior is covered by GATED_CASES.
+DESUGAR_PAIRS = []
 
 
 def main() -> int:

@@ -2802,6 +2802,22 @@ pub fn for_make_incr(var_lo: i64, var_hi: i64) -> i64 {
     ast_new_assign(var_lo, var_hi, nm, sum)
 }
 
+// Build `let VAR = CTR` — the per-iteration element copy for the HYGIENIC range-
+// for desugar. VAR (var_lo,var_hi) is the user's loop variable; CTR (var_lo,ctr_hi)
+// is the hidden counter, which spans the header text "VAR in LO..HI" (containing
+// spaces + `..` dots), so its bytes can never equal a user identifier. The copy is
+// a body-local `let`, so nb_emit_while's while-body let-env scoping drops it at loop
+// exit: VAR cannot escape to clobber a shadowed outer binding, and a body write to
+// VAR hits THIS copy, never the counter (mirrors the Rust For-arm `let mut VAR =
+// __for_i` element bind, 450875ed). The type leaf reuses VAR's span (classifies as
+// width-64 INT / no struct, exactly like an explicit `: i64`).
+pub fn for_make_var_copy(var_lo: i64, var_hi: i64, ctr_hi: i64) -> i64 {
+    let vname: i64 = ast_new_leaf(ast_ident(), var_lo, var_hi);
+    let vty: i64 = ast_new_leaf(ast_ident(), var_lo, var_hi);
+    let ctr_ref: i64 = ast_new_leaf(ast_ident(), var_lo, ctr_hi);
+    ast_new_let(var_lo, var_hi, vname, vty, ctr_ref)
+}
+
 // Does a statement list contain a `continue` targeting the CURRENT loop level?
 // Descends into if then/else blocks (same loop level); STOPS at a nested `while`
 // (its `continue` belongs to the inner loop — a nested `for` is already a `while`
@@ -2895,45 +2911,66 @@ pub fn parse_for(toks: Vec, pos: i64, buf: i64, out: i64) -> i64 {
     };
 
     let has_cont: i64 = for_has_own_continue(sa, sl, 0);
+    let lo_lo: i64 = ast_span_lo(pr_node(lo_res));
     let lo_hi: i64 = ast_span_hi(pr_node(lo_res));
     let hi_hi: i64 = ast_span_hi(pr_node(hi_res));
-    let name: i64 = ast_new_leaf(ast_ident(), var_lo, var_hi);
+    // Shared i64 type classifier (VAR's span "i" -> width-64 INT / no struct, exactly
+    // like an explicit `: i64`; nb_width_of_ann / nb_let_descriptor read the span only
+    // to CLASSIFY, never emit it — proven byte-neutral).
     let ty: i64 = ast_new_leaf(ast_ident(), var_lo, var_hi);
+    // HYGIENIC desugar (self-host Step 2, mirrors the Rust For arm 450875ed).
+    // Identity is by SOURCE BYTES (span_bytes_equal), resolved at EMIT time:
+    //   - hidden counter CTR : span (var_lo,hi_hi) = header text "VAR in LO..HI"
+    //   - hidden bound   BND : span (lo_lo,hi_hi) = range text "LO..HI"
+    // Both spans contain the ` in ` spaces / `..` dots, so NEITHER can equal a user
+    // identifier -> CTR never clobbers a shadowed outer VAR, and a body write to VAR
+    // hits the per-iteration copy (built in the while body), not the counter. The two
+    // spans differ in length so CTR != BND. Distinct loop-var text keeps sibling and
+    // nested counters distinct; BND is read only by the cond (emitted BEFORE the body,
+    // so name resolution is fixed before any inner shadow) so it needs no per-loop
+    // uniqueness. `let BND = HI` pre-lowers the upper bound ONCE, so an END that reads
+    // a body-assigned var (or is a call) is evaluated exactly once, never per-iter.
+    let bnd_name: i64 = ast_new_leaf(ast_ident(), lo_lo, hi_hi);
+    let let_bnd: i64 = ast_new_let(kw_lo, hi_hi, bnd_name, ty, pr_node(hi_res));
 
     if has_cont == 1 {
-        // Form (B): top-increment.
-        // init = LO - 1
+        // Form (B): TOP-increment on the hidden counter (standard for-continue
+        // semantics — a `continue` jumps to the header, which re-runs the cond then
+        // the top increment, so the counter still advances).
+        // let CTR = LO - 1
+        let ctr_name_b: i64 = ast_new_leaf(ast_ident(), var_lo, hi_hi);
         let init_b: i64 = ast_new_binop(var_lo, lo_hi, pr_node(lo_res), mk_syn_intlit(1), op_sub());
-        let let_b: i64 = ast_new_let(kw_lo, lo_hi, name, ty, init_b);
-        // body = [ VAR = VAR + 1 ; BODY... ]
-        let tb0: Vec = vec_push(vec_new(), for_make_incr(var_lo, var_hi));
-        let tb1: Vec = for_append_stmts(sa, sl, 0, tb0);
-        let wbody_b: i64 = ast_new_block(body_open, close_hi, vec_addr(tb1), vec_len(tb1));
-        // cond = (VAR + 1) < HI
-        let vplus: i64 = ast_new_binop(var_lo, var_hi, ast_new_leaf(ast_ident(), var_lo, var_hi), mk_syn_intlit(1), op_add());
-        let cond_b: i64 = ast_new_binop(var_lo, hi_hi, vplus, pr_node(hi_res), op_lt());
+        let let_ctr_b: i64 = ast_new_let(kw_lo, lo_hi, ctr_name_b, ty, init_b);
+        // body = [ CTR = CTR + 1 ; let VAR = CTR ; BODY... ]
+        let tb0: Vec = vec_push(vec_new(), for_make_incr(var_lo, hi_hi));
+        let tb1: Vec = vec_push(tb0, for_make_var_copy(var_lo, var_hi, hi_hi));
+        let tb2: Vec = for_append_stmts(sa, sl, 0, tb1);
+        let wbody_b: i64 = ast_new_block(body_open, close_hi, vec_addr(tb2), vec_len(tb2));
+        // cond = (CTR + 1) < BND
+        let cplus: i64 = ast_new_binop(var_lo, hi_hi, ast_new_leaf(ast_ident(), var_lo, hi_hi), mk_syn_intlit(1), op_add());
+        let cond_b: i64 = ast_new_binop(var_lo, hi_hi, cplus, ast_new_leaf(ast_ident(), lo_lo, hi_hi), op_lt());
         let while_b: i64 = ast_new_while(kw_lo, close_hi, cond_b, wbody_b);
-        __mind_store_i64(out + 0, let_b);
-        __mind_store_i64(out + 8, while_b);
+        __mind_store_i64(out + 0, let_ctr_b);
+        __mind_store_i64(out + 8, let_bnd);
+        __mind_store_i64(out + 16, while_b);
         return after_close;
     }
 
-    // Form (A): bottom-increment (byte-identical to the explicit `let`+`while`).
-    // `let mut VAR: i64 = LO`. The type leaf reuses VAR's span: it classifies as
-    // width-64 INT with no struct descriptor (nb_width_of_ann / nb_param_is_float /
-    // nb_let_descriptor read the span only to CLASSIFY, never emit it), exactly like
-    // an explicit `: i64`, so the emitted bytes match the hand-written form.
-    let let_a: i64 = ast_new_let(kw_lo, lo_hi, name, ty, pr_node(lo_res));
-    // body = [ BODY... ; VAR = VAR + 1 ]
-    let ab0: Vec = for_append_stmts(sa, sl, 0, vec_new());
-    let ab1: Vec = vec_push(ab0, for_make_incr(var_lo, var_hi));
-    let wbody_a: i64 = ast_new_block(body_open, close_hi, vec_addr(ab1), vec_len(ab1));
-    // cond = VAR < HI
-    let vref: i64 = ast_new_leaf(ast_ident(), var_lo, var_hi);
-    let cond_a: i64 = ast_new_binop(var_lo, hi_hi, vref, pr_node(hi_res), op_lt());
+    // Form (A): BOTTOM-increment on the hidden counter.
+    // let CTR = LO
+    let ctr_name_a: i64 = ast_new_leaf(ast_ident(), var_lo, hi_hi);
+    let let_ctr_a: i64 = ast_new_let(kw_lo, lo_hi, ctr_name_a, ty, pr_node(lo_res));
+    // body = [ let VAR = CTR ; BODY... ; CTR = CTR + 1 ]
+    let ab0: Vec = vec_push(vec_new(), for_make_var_copy(var_lo, var_hi, hi_hi));
+    let ab1: Vec = for_append_stmts(sa, sl, 0, ab0);
+    let ab2: Vec = vec_push(ab1, for_make_incr(var_lo, hi_hi));
+    let wbody_a: i64 = ast_new_block(body_open, close_hi, vec_addr(ab2), vec_len(ab2));
+    // cond = CTR < BND
+    let cond_a: i64 = ast_new_binop(var_lo, hi_hi, ast_new_leaf(ast_ident(), var_lo, hi_hi), ast_new_leaf(ast_ident(), lo_lo, hi_hi), op_lt());
     let while_a: i64 = ast_new_while(kw_lo, close_hi, cond_a, wbody_a);
-    __mind_store_i64(out + 0, let_a);
-    __mind_store_i64(out + 8, while_a);
+    __mind_store_i64(out + 0, let_ctr_a);
+    __mind_store_i64(out + 8, let_bnd);
+    __mind_store_i64(out + 16, while_a);
     after_close
 }
 
@@ -3327,16 +3364,19 @@ pub fn parse_block_stmts(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult
         let s: i64 = ast_new_block(0, 0, vec_addr(acc), vec_len(acc));
         return pr_new(pos, s);
     }
-    // `for VAR in LO..HI { BODY }` desugars to TWO sibling statements (a `let` init
-    // and a `while`), so it is intercepted here (parse_stmt returns a single node)
-    // and both nodes are pushed into the block's statement list. See parse_for.
+    // `for VAR in LO..HI { BODY }` desugars to THREE sibling statements (hidden
+    // counter `let CTR = LO`, hidden bound `let BND = HI` evaluated once, and the
+    // `while CTR < BND { let VAR = CTR ; BODY ; CTR = CTR + 1 }`), so it is
+    // intercepted here (parse_stmt returns a single node) and all three nodes are
+    // pushed into the block's statement list. See parse_for (hygienic desugar).
     if tok_kind(toks, pos) == tk_ident() {
         if is_ident_for(buf, tok_lo(toks, pos), tok_hi(toks, pos)) == 1 {
-            let fout: i64 = __mind_alloc(16);
+            let fout: i64 = __mind_alloc(24);
             let fnp: i64 = parse_for(toks, pos, buf, fout);
             let fa1: Vec = vec_push(acc, __mind_load_i64(fout + 0));
             let fa2: Vec = vec_push(fa1, __mind_load_i64(fout + 8));
-            return parse_block_stmts(toks, fnp, buf, fa2);
+            let fa3: Vec = vec_push(fa2, __mind_load_i64(fout + 16));
+            return parse_block_stmts(toks, fnp, buf, fa3);
         }
     }
     // `let (n0, n1, ...) = TUPLE;` destructuring desugars to a VARIABLE number
@@ -28094,6 +28134,19 @@ pub fn nb_emit_while(st: NbState, buf: i64, node: i64, params_addr: i64, n_param
     let c_copyin: String = nb_while_copyin(st.code, carry, ncarry, 0, buf, lets, lcell);
     let s_copyin: NbState = NbState { code: c_copyin, next_id: st.next_id, last_id: st.last_id, ncalls: st.ncalls };
 
+    // While-body let-env scoping (self-host Step 2). Snapshot the let-env count
+    // AFTER copy-in — its carried-var post_id rebinds MUST survive (post-loop reads
+    // of carried vars resolve through them; see the exit_ids note below) — and
+    // restore it after the body emit so any body-LOCAL `let` (a nested block's
+    // binding, or the hygienic range-for's per-iteration `let VAR = CTR` copy) dies
+    // at loop exit and cannot leak past the loop to clobber/shadow an outer binding.
+    // Slot ids (next_id) are unaffected; only NAME resolution for post-loop code
+    // changes, and only for a name a body-local let would otherwise leak. main.mind
+    // has no loop that reads a body-local let after the loop, so its self-compile is
+    // byte-identical (keystone-gated). Mirrors the existing count-prewalk save/restore
+    // above and the dst-id pre-walk snapshots in nb_if_stmt_(simple|merged).
+    let body_scope: i64 = __mind_load_i64(lcell);
+
     // header = current code length (the back-edge target).
     let header: i64 = string_len(c_copyin);
 
@@ -28110,6 +28163,8 @@ pub fn nb_emit_while(st: NbState, buf: i64, node: i64, params_addr: i64, n_param
 
     // body.
     let s_body: NbState = nb_block_stmts(s_je, buf, body_sa, body_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
+    // Drop body-local let bindings (keep the copy-in rebinds below body_scope).
+    __mind_store_i64(lcell, body_scope);
 
     // back-edge: jmp to header. Record + set its target immediately (backward, so
     // nb_patch_jmps computes a negative rel32 — nb_patch_rel32 handles the sign).
