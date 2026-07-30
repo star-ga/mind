@@ -46,3 +46,6 @@ jobs:
 
       - name: No AI-attribution in public artifacts
         run: bash scripts/check_no_ai_attribution.sh
+
+      - name: JSON is never an evidence-hash preimage (wedge integrity)
+        run: bash scripts/check_json_not_evidence.sh
