@@ -79,8 +79,21 @@ fn check_src(src: &str, env: &TypeEnv) -> Vec<libmind::diagnostics::Diagnostic> 
 }
 
 /// Parse `src` and return the IR text produced by `lower_to_ir`.
+///
+/// The Phase-B snippets reference the bare tensor operands `a` and `b` as FREE
+/// identifiers. This helper calls `lower_to_ir` DIRECTLY, bypassing the name-
+/// resolution pass that the real `compile_source` pipeline always runs first,
+/// so those operands must be BOUND or they reach the fail-closed
+/// undefined-identifier panic in `lower_expr` (Fable #9) — a deliberate
+/// hardening that replaced the old silent `const 0` fail-open these snippets
+/// used to rely on. Declaring `a`/`b` keeps the input name-resolvable WITHOUT
+/// weakening that fail-close: both sides of every byte-identity assertion below
+/// receive the identical `let a`/`let b` prefix, so it cancels and each
+/// comparison still isolates exactly the operator desugar under test
+/// (`.+`→`Add`, `@`→`MatMul`, …).
 fn ir_text(src: &str) -> String {
-    let module = parser::parse(src).unwrap_or_else(|e| panic!("parse error: {e:?}"));
+    let wrapped = format!("let a = 0\nlet b = 0\n{src}");
+    let module = parser::parse(&wrapped).unwrap_or_else(|e| panic!("parse error: {e:?}"));
     let ir = lower_to_ir(&module);
     format_ir_module(&ir)
 }
