@@ -1224,9 +1224,10 @@ fn jv_dump_value(sb: i64, h: i64, pretty: i64, depth: i64) -> i64 {
                         while ai < alen {
                             if ai > 0 {
                                 let _ = jvsb_push(sb, 44);
-                                // Compact (pretty==0) is CANONICAL and
-                                // whitespace-free — these bytes are sha256-hashed
-                                // into evidence, so no space follows the comma.
+                                // Compact (pretty==0) is deterministic + whitespace-free:
+                                // a given Value always dumps identical bytes. It is NOT a
+                                // canonical form (object key order = insertion order) and
+                                // MUST NOT be an evidence-hash preimage — see `encode`.
                                 if pretty == 1 {
                                     let _ = jvsb_push(sb, 10);
                                     let _ = jv_dump_indent(sb, depth + 1);
@@ -1506,8 +1507,8 @@ pub fn bool(v: bool) -> Value {
 }
 
 // int — wrap a signed integer as a JSON number. The sign lives in n_neg;
-// n_int is kept non-negative (i64::MIN wraps two's-complement — callers
-// hashing evidence never emit it, and the dump is still deterministic).
+// n_int is kept non-negative (i64::MIN wraps two's-complement — a documented
+// representation limit of this JSON number record; the dump stays deterministic).
 pub fn int(v: i64) -> Value {
     if v < 0 {
         return Value { h: jv_make_number(0 - v, 0, 1, 1, 1) };
@@ -1581,8 +1582,13 @@ pub fn push(arr: Value, value: Value) -> Value {
 // --- Serialise / parse ---
 
 // encode — compact serialisation (jv_dump pretty=0) as growable `bytes`.
-// Compact is load-bearing: these bytes are sha256-hashed into evidence
-// records, so the byte stream must be canonical and whitespace-free.
+// DETERMINISTIC (a given Value always encodes to identical bytes) but NOT
+// canonical: object key order is insertion order, so distinct constructions of
+// the same logical object produce different bytes. It therefore MUST NOT be used
+// as an evidence-hash preimage. Evidence records serialise via canonical MIND
+// records (fixed-layout binary + std.sha256, the same primitive trace_hash uses
+// — see std.io_canon), never JSON. JSON is for the interop boundary (HTTP, MCP,
+// LLM tool-calling, config), where an external consumer defines the format.
 // The error Value encodes to empty bytes (fail-soft; callers that care
 // check is_error() first).
 pub fn encode(v: Value) -> bytes {
