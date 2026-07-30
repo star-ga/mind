@@ -45,6 +45,7 @@ pub mod closures;
 pub mod conv2d_grad;
 pub mod ir_interp;
 pub mod lower;
+pub mod traits;
 // RFC 0005 P0f Step 2 — pre-pass that builds a span-keyed side-table
 // of `FieldAccess` receiver struct types so lowering can resolve
 // chained access, fn returns, and struct-typed parameters.
@@ -237,6 +238,7 @@ pub use mlir_export::emit_mlir_with_opts;
 pub use mlir_export::to_mlir;
 #[cfg(feature = "mlir-exec")]
 pub use mlir_run::MlirExecConfig;
+pub use traits::desugar_traits;
 pub use value::TensorVal;
 pub use value::Value;
 pub use value::VarId;
@@ -1961,6 +1963,14 @@ pub(crate) fn eval_value_expr_mode(
         // interpreter never executes one (fail-closed).
         Node::Closure { .. } => Err(EvalError::UnsupportedMsg(
             "closures are desugared before evaluation; a raw closure cannot be interpreted".into(),
+        )),
+        // #268: trait/impl declarations are desugared (impls to free fns, traits
+        // dropped) before evaluation; the tree-eval interpreter never sees one
+        // (fail-closed rather than a silent unit).
+        Node::TraitDef { .. } | Node::ImplBlock { .. } => Err(EvalError::UnsupportedMsg(
+            "trait/impl declarations are desugared before evaluation; a raw trait/impl \
+             cannot be interpreted"
+                .into(),
         )),
         #[cfg(feature = "std-surface")]
         Node::Region { body, .. } => {

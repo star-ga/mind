@@ -845,6 +845,48 @@ pub enum Node {
         body: Vec<Node>,
         span: Span,
     },
+    /// Trait declaration (#268 Phase 1): `trait T { fn m(self, ...) -> R }`.
+    ///
+    /// A trait is a NAMED set of method signatures — a static contract only.
+    /// It is DROPPED before IR emit by `eval::desugar_traits` after being used
+    /// to check that every `impl T for Foo` covers the trait's methods; NO trait
+    /// object, NO vtable, NO `dyn` ever reaches the mic@3 codec. A module with no
+    /// trait/impl is left byte-identical (the desugar early-returns).
+    TraitDef {
+        is_pub: bool,
+        name: String,
+        methods: Vec<TraitMethodSig>,
+        span: Span,
+    },
+    /// Trait implementation (#268 Phase 1): `impl T for Foo { fn m(self, ...) {...} }`.
+    ///
+    /// Each method is DESUGARED to an ordinary top-level free `fn` named by the
+    /// existing UFCS convention `{lowercase(Foo)}_{method}` — the SAME free
+    /// function a `foo.method(args)` call already resolves to in the `MethodCall`
+    /// lowering arm — so static dispatch on a concrete receiver falls out of the
+    /// existing machinery with NO new IR, NO wire change, NO dynamic dispatch.
+    ImplBlock {
+        trait_name: String,
+        type_name: String,
+        /// Each element is a `Node::FnDef` (the impl method, self-param typed to
+        /// `type_name`).
+        methods: Vec<Node>,
+        span: Span,
+    },
+}
+
+/// One method signature inside a `trait` declaration (#268 Phase 1).
+///
+/// Signature only — no body. `params` includes the leading `self` receiver
+/// (typed to `Named("Self")`, a placeholder never lowered since trait decls are
+/// dropped before IR emit). Used by `eval::desugar_traits` to verify every
+/// `impl` covers the trait's methods by name.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitMethodSig {
+    pub name: String,
+    pub params: Vec<Param>,
+    pub ret_type: Option<TypeAnn>,
+    pub span: Span,
 }
 
 /// One arm of a `match` expression: `pattern [if guard] => body`.
@@ -1047,6 +1089,7 @@ impl Node {
             #[cfg(feature = "std-surface")]
             Node::Region { span, .. } => *span,
             Node::Closure { span, .. } => *span,
+            Node::TraitDef { span, .. } | Node::ImplBlock { span, .. } => *span,
         }
     }
 

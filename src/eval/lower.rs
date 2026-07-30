@@ -3992,6 +3992,9 @@ fn descend_for_continue(node: &mut ast::Node, step: &ast::Node) {
         // A closure body is a different scope (like a nested `fn`); it is also
         // desugared away before lowering, so this is unreachable in practice.
         | N::Closure { .. }
+        // #268: trait/impl are desugared away before lowering (unreachable here).
+        | N::TraitDef { .. }
+        | N::ImplBlock { .. }
         | N::StructDef { .. }
         | N::EnumDef { .. }
         | N::TypeAlias { .. }

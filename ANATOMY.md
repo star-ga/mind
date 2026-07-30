@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3231 | **Est. tokens:** ~7,766,244
-**Generated:** 2026-07-30 13:51 UTC
+**Files:** 3233 | **Est. tokens:** ~7,772,896
+**Generated:** 2026-07-30 13:59 UTC
 
 ## Token Budget Guide
 
@@ -377,8 +377,8 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 7 | ~18,435 |
-| `src/ast/` | 1 | ~9,612 |
+| `src/` | 7 | ~18,597 |
+| `src/ast/` | 1 | ~10,100 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
 | `src/build/` | 2 | ~16,852 |
@@ -388,11 +388,11 @@
 | `src/diagnostics/` | 1 | ~3,719 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,987 |
-| `src/eval/` | 13 | ~72,671 |
+| `src/eval/` | 14 | ~76,856 |
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
-| `src/fmt/` | 3 | ~21,056 |
+| `src/fmt/` | 3 | ~21,719 |
 | `src/ir/` | 5 | ~47,295 |
 | `src/ir/compact/` | 3 | ~15,271 |
 | `src/ir/compact/v2/` | 8 | ~38,404 |
@@ -410,11 +410,11 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,979 |
-| `src/type_checker/` | 1 | ~12,985 |
+| `src/type_checker/` | 1 | ~13,034 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~194,333 |
-| `tests/` | 308 | ~526,520 |
+| `tests/` | 309 | ~527,625 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -3890,7 +3890,7 @@
 - `SKILL.md` (~6002 tok, huge) — Write MIND Code
 ### `src/ast/`
 
-- `mod.rs` (~9612 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~10100 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~3890 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3940,7 +3940,7 @@
 
 - `abi_gate.rs` (~12049 tok, huge) — Runnable-artifact ABI gate (release-readiness P1.1).
 - `autodiff.rs` (~14268 tok, huge) — Copyright 2025 STARGA Inc.
-- `closures.rs` (~6880 tok, huge) — Copyright 2025 STARGA Inc.
+- `closures.rs` (~6915 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~3818 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_build.rs` (~8937 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3956,6 +3956,7 @@
 ### `src/eval/`
 
 - `struct_resolver.rs` (~6767 tok, huge) — Copyright 2025 STARGA Inc.
+- `traits.rs` (~4150 tok, huge) — Copyright 2025 STARGA Inc.
 - `value.rs` (~2003 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/exec/`
 
@@ -3971,7 +3972,7 @@
 
 - `cli.rs` (~3873 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~16589 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~17252 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4693 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4054,7 +4055,7 @@
 - `mod.rs` (~4955 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `pipeline.rs` (~5389 tok, huge) — Copyright 2025 STARGA Inc.
+- `pipeline.rs` (~5551 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
 - `module_table.rs` (~4562 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4085,7 +4086,7 @@
 - `mod.rs` (~5979 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `resolve.rs` (~12985 tok, huge) — Copyright 2025 STARGA Inc.
+- `resolve.rs` (~13034 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
@@ -4769,6 +4770,7 @@
 - `tls13_handshake_driver.py` (~6662 tok, huge) — # Official-vector driver for std/tls13_handshake.mind (pure-MIND TLS 1.3
 - `tls13_keyschedule_driver.py` (~2863 tok, huge) — # Official-vector driver for std/tls13_keyschedule.mind (pure-MIND TLS 1.3 key
 - `tls13_record_driver.py` (~3051 tok, huge) — # Official-vector driver for std/tls13_record.mind (pure-MIND TLS 1.3 record
+- `trait_static_dispatch_run.rs` (~1105 tok, large) — Copyright 2025 STARGA Inc.
 - `transpose_preview.rs` (~269 tok, medium) — Copyright 2025 STARGA Inc.
 - `try_operator_run.rs` (~1108 tok, large) — Copyright 2025 STARGA Inc.
 - `tuple_destructure_run.rs` (~1162 tok, large) — Copyright 2025 STARGA Inc.
