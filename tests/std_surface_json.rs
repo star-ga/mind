@@ -289,7 +289,7 @@ fn bundled_stdlib_resolves_use_std_json() {
 
 #[cfg(all(feature = "mlir-build", feature = "cross-module-imports"))]
 mod mlir_functional {
-    use super::mindc_bin;
+    use super::common::mindc_bin;
     use std::path::PathBuf;
     use std::process::Command;
 
@@ -612,13 +612,14 @@ pub fn smoke_jv_make_number(n_int: i64, n_frac: i64, n_frac_d: i64, n_neg: i64, 
                 "KAT 5: constructed -678 must dump as \"-678\""
             );
 
-            // KAT 6: zeros inside an array (compact separators unchanged).
+            // KAT 6: zeros inside an array survive dump; separators are
+            // whitespace-free (dump is evidence-canonical -- no space after comma).
             let arr = parse(b"[0, 1, 0]");
             assert!(arr != 0, "KAT 6: `[0, 1, 0]` must parse");
             assert_eq!(
                 dump_bytes(arr),
-                b"[0, 1, 0]",
-                "KAT 6: array zeros must survive dump"
+                b"[0,1,0]",
+                "KAT 6: array zeros must survive dump (whitespace-free separators)"
             );
 
             // KAT 7: zero integer part of a fraction ("0.5" dumped ".5" pre-fix).
