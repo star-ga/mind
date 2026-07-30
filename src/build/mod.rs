@@ -239,6 +239,11 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
     // regression (a one-file build under a poisoned `/tmp` walked all 116k dirs
     // of `/tmp`, ~2.3s vs ~60ms). No-explicit-path project builds keep the
     // classic cwd-anchored ancestor scan (`find_project_root`), unchanged.
+    // `single_file` marks an explicit `mindc build <file>` with NO governing
+    // Mind.toml in bounds — the manifest is synthesised and the project root is
+    // the entry file's OWN directory. Such a build compiles only the named entry
+    // (see `BuildOptions::single_file`), never a whole-directory sibling walk.
+    let mut single_file = false;
     let (project_root, manifest) = if !opts.paths.is_empty() {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let first_path = if opts.paths[0].is_absolute() {
@@ -254,9 +259,26 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
             Some(root) => {
                 let m = load_manifest(&root)
                     .map_err(|e| BuildError::Invalid(format!("manifest error: {e}")))?;
+                // A file explicitly named on the command line that sits DIRECTLY
+                // next to a *bare* manifest (one declaring no `[targets.*].sources`
+                // list) is a single-file build: the manifest is either a real
+                // one-file project or — the common case — a leftover synthetic
+                // `Mind.toml` a PRIOR `mindc build <file>` wrote into a scratch
+                // directory (`/tmp`, `$HOME`). Without this, the second build of a
+                // trivial file in such a directory adopts that leftover manifest as
+                // a "project" and compiles every unrelated sibling `.mind` as a
+                // translation unit (the class of failure this fixes). A genuine
+                // multi-file project keeps the whole-directory walk: its entry
+                // lives in a `src/` subtree (root != the file's own dir) or it
+                // declares an explicit `[targets.*].sources` list.
+                let declares_sources = m.targets.values().any(|t| t.sources.is_some());
+                if !declares_sources && root == entry_dir {
+                    single_file = true;
+                }
                 (root, m)
             }
             None => {
+                single_file = true;
                 // No governing manifest in-bounds — synthesise a single-file
                 // manifest rooted at the entry file's OWN directory (never cwd
                 // nor a distant ancestor), so source collection stays scoped to
@@ -471,6 +493,7 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
         &artifact_path,
         opts.verbose,
         &project_root,
+        single_file,
     );
 
     let manifest_path = project_root.join("Mind.toml");
@@ -779,6 +802,7 @@ fn legacy_opts_from(
     artifact_path: &Path,
     verbose: bool,
     project_root: &Path,
+    single_file: bool,
 ) -> LegacyBuildOptions {
     let target_str = match target {
         BuildTarget::Cpu => None,
@@ -807,6 +831,10 @@ fn legacy_opts_from(
         // from cwd — otherwise the legacy path could re-ascend to a stray
         // ancestor `Mind.toml` and reintroduce the foreign-tree walk.
         project_root: Some(project_root.to_path_buf()),
+        // Explicit single-file build (no governing `Mind.toml`): compile ONLY
+        // the entry, never the whole entry-directory walk (which would pull in
+        // unrelated sibling `.mind` files from a shared dir).
+        single_file,
     }
 }
 
