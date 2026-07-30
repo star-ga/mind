@@ -820,6 +820,31 @@ pub enum Node {
         body: Vec<Node>,
         span: Span,
     },
+    /// Closure expression (#267 Phase 1): `|cap1, cap2; p1: T1, ...| -> R { body }`.
+    ///
+    /// EXPLICIT capture list (before `;`), each captured BY VALUE — the captured
+    /// set + order is source-authored, never inferred from a hashmap walk, which
+    /// keeps the env-struct field order deterministic (the byte-identity wedge).
+    ///
+    /// A closure is DESUGARED before IR emit (`eval::desugar_closures`) into a
+    /// synthesized env `struct` + a top-level `fn` + a `struct`-literal, so only
+    /// ordinary fns/structs/calls reach the mic@3 codec — NO wire change, NO
+    /// `MIC3_VERSION` bump (same principle as the `for`/`match` desugars). Phase 1
+    /// supports: capture-by-value i64, single param, bound via `let f = <closure>`
+    /// at fn-statement position and applied by a DIRECT call `f(args)` in the same
+    /// fn scope (monomorphized to `__cl_{span}(env, args)` — no fn-pointer, no
+    /// dispatch). Any other closure form is rejected fail-closed by the desugar.
+    ///
+    /// Non-gated (unlike `While`/`Region`) so no `#[cfg]` mismatch can arise
+    /// between feature configs; the desugar output (structs/fns) is what a
+    /// std-surface build actually lowers.
+    Closure {
+        captures: Vec<String>,
+        params: Vec<Param>,
+        ret_type: Option<TypeAnn>,
+        body: Vec<Node>,
+        span: Span,
+    },
 }
 
 /// One arm of a `match` expression: `pattern [if guard] => body`.
@@ -1021,6 +1046,7 @@ impl Node {
             Node::Break { span } | Node::Continue { span } => *span,
             #[cfg(feature = "std-surface")]
             Node::Region { span, .. } => *span,
+            Node::Closure { span, .. } => *span,
         }
     }
 

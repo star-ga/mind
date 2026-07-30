@@ -1097,6 +1097,8 @@ impl<'a> Resolver<'a> {
             // Declarations and constructs that introduce no resolvable
             // references inside a fn body (or are handled at module level).
             Node::FnDef(..)
+            // #267: closures are desugared before the resolver runs.
+            | Node::Closure { .. }
             | Node::Const { .. }
             | Node::ExternConst { .. }
             | Node::TypeAlias { .. }

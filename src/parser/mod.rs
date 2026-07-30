@@ -2791,6 +2791,81 @@ impl<'a> P<'a> {
         })
     }
 
+    /// Parse a closure expression `|cap1, cap2; p1: T1, ...| -> R { body }`
+    /// (#267 Phase 1). The `;` separates the EXPLICIT capture list (bare idents,
+    /// captured by value, source order) from the parameter list (`name: type`).
+    /// Both lists may be empty. An optional `-> R` return type follows the closing
+    /// `|`, then a `{ body }` block. Produces a `Node::Closure`, which
+    /// `eval::desugar_closures` lowers into an env struct + top-level fn + struct
+    /// literal before IR emit. The parser accepts the general shape; the desugar
+    /// enforces the Phase-1 support boundary fail-closed.
+    fn parse_closure(&mut self) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.expect(b'|')?; // opening pipe
+        // Capture list (comma-separated bare idents), terminated by `;`.
+        let mut captures = Vec::new();
+        self.skip_ws_and_newlines();
+        if !self.at(b';') {
+            loop {
+                self.skip_ws_and_newlines();
+                let name = self
+                    .word()
+                    .ok_or_else(|| self.err("expected capture name in closure".into()))?
+                    .to_string();
+                captures.push(name);
+                self.skip_ws();
+                if !self.eat(b',') {
+                    break;
+                }
+            }
+        }
+        self.skip_ws();
+        // `;` separates captures from params (Phase 1 explicit-capture form).
+        self.expect(b';')?;
+        // Parameter list (comma-separated `name: type`), terminated by `|`.
+        let mut params = Vec::new();
+        self.skip_ws_and_newlines();
+        if !self.at(b'|') {
+            params.push(self.parse_param()?);
+            loop {
+                self.skip_ws_and_newlines();
+                if !self.eat(b',') {
+                    break;
+                }
+                self.skip_ws_and_newlines();
+                if self.at(b'|') {
+                    break;
+                }
+                params.push(self.parse_param()?);
+            }
+        }
+        self.skip_ws_and_newlines();
+        self.expect(b'|')?; // closing pipe
+        self.skip_ws();
+        // Optional return type `-> R`.
+        let ret_type = if self.starts_with(b"->") {
+            self.pos += 2;
+            self.skip_ws_and_newlines();
+            Some(self.type_ann()?)
+        } else {
+            None
+        };
+        self.skip_ws_and_newlines();
+        // Body block.
+        self.expect(b'{')?;
+        let body = self.parse_fn_body_stmts()?;
+        self.skip_ws_and_newlines();
+        self.expect(b'}')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::Closure {
+            captures,
+            params,
+            ret_type,
+            body,
+            span,
+        })
+    }
+
     fn parse_param(&mut self) -> Result<Param, ParseError> {
         self.skip_ws_and_newlines();
         let start = self.pos;
@@ -3971,6 +4046,14 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         if self.at_end() {
             return Err(self.err("unexpected end of input".into()));
+        }
+        // #267 Phase 1: closure expression `|caps; params| -> R { body }`.
+        // A leading `|` is only reachable in PRIMARY (prefix) position — the
+        // infix bitwise-or / logical-or `|`/`||` are handled by `peek_binop`
+        // after a left operand is already parsed — so a `|` here is
+        // unambiguously the start of a closure.
+        if self.at(b'|') {
+            return self.parse_closure();
         }
         if self.at(b'(') {
             return self.parse_tuple_or_paren();

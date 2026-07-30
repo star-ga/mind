@@ -3989,6 +3989,9 @@ fn descend_for_continue(node: &mut ast::Node, step: &ast::Node) {
         | N::Lit(..)
         | N::Import { .. }
         | N::FnDef(..)
+        // A closure body is a different scope (like a nested `fn`); it is also
+        // desugared away before lowering, so this is unreachable in practice.
+        | N::Closure { .. }
         | N::StructDef { .. }
         | N::EnumDef { .. }
         | N::TypeAlias { .. }

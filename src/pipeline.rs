@@ -274,6 +274,15 @@ pub fn compile_source_with_name(
         return Err(CompileError::TypeError(collapse_diags));
     }
 
+    // #267 Phase 1: desugar closures into env struct + top-level fn + struct
+    // literal BEFORE type-check and lowering, so only ordinary fns/structs/calls
+    // are seen downstream (no mic@3 wire change). A closure-free module (the
+    // keystone `main.mind`, all of std/) is left byte-identical (early no-op).
+    let closure_diags = eval::desugar_closures(&mut module, source, source_name);
+    if !closure_diags.is_empty() {
+        return Err(CompileError::TypeError(closure_diags));
+    }
+
     let type_diags = type_checker::check_module_types_in_file(
         &module,
         source,
