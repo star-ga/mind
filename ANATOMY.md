@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3235 | **Est. tokens:** ~7,776,681
-**Generated:** 2026-07-30 14:25 UTC
+**Files:** 3235 | **Est. tokens:** ~7,776,813
+**Generated:** 2026-07-30 15:34 UTC
 
 ## Token Budget Guide
 
@@ -58,7 +58,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 141 | ~334,800 |
+| `examples/mindc_mind/` | 141 | ~334,932 |
 | `examples/mindc_mind/testdata/` | 1 | ~2,452 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
@@ -974,7 +974,7 @@
 - `self_host_tc_std_export_smoke.py` (~3178 tok, huge) — CPU-as-oracle smoke for the pure-MIND D3 STD-SURFACE EXPORT NAME SET.
 - `self_host_tc_undeclared_assign_smoke.py` (~6743 tok, huge) — CPU-as-oracle smoke for the pure-MIND B1 E2009 rule — undeclared assign.
 - `self_host_tc_unknown_call_smoke.py` (~8459 tok, huge) — CPU-as-oracle smoke for the pure-MIND B1 E2003 rule — unknown call.
-- `self_host_tc_unknown_ident_smoke.py` (~10920 tok, huge) — CPU-as-oracle smoke for the pure-MIND B1 E2002 rule — unknown identifier.
+- `self_host_tc_unknown_ident_smoke.py` (~11052 tok, huge) — CPU-as-oracle smoke for the pure-MIND B1 E2002 rule — unknown identifier.
 - `self_host_tc_unknown_variant_smoke.py` (~1911 tok, huge) — CPU-as-oracle smoke for the pure-MIND E2008 unknown-enum-variant rule.
 - `self_host_value_if_expr_smoke.py` (~1557 tok, huge)
 - `sha256_hash_smoke.py` (~732 tok, large) — # Copyright 2025 STARGA Inc.
