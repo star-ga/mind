@@ -9170,6 +9170,29 @@ fn desugar_match_to_if(
     struct_field_names: &std::collections::BTreeMap<String, Vec<String>>,
 ) -> Option<ast::Node> {
     let span = scrutinee.span();
+    // Fable #7: an EFFECTFUL scrutinee (one containing a call) is embedded into
+    // EVERY arm's discriminant test and each payload bind (~6 clone sites
+    // below), so re-lowering it per arm re-runs its side effects — whereas the
+    // interpreter oracle evaluates the scrutinee EXACTLY once. When the
+    // scrutinee contains a call, pre-bind it ONCE into a span-unique hidden
+    // `let __match_scrut_{uniq}` (uniq = span.start(), distinct per match so a
+    // nested-in-arm-body gated match never collides) and embed that ident
+    // everywhere instead, so all arms resolve the SAME ValueId — mirrors
+    // ForEach's `__fe_coll_{uniq}` pre-bind. A PURE scrutinee
+    // (ident/literal/field/index with no call) keeps the byte-identical
+    // embed-verbatim path (the common case: most matches scrutinise an ident),
+    // so the gate-off path is provably zero-drift for keystone / canaries.
+    let needs_bind = expr_contains_call(scrutinee);
+    let orig_scrutinee = scrutinee;
+    let scrut_owned: ast::Node = if needs_bind {
+        ast::Node::Lit(
+            Literal::Ident(format!("__match_scrut_{}", span.start())),
+            span,
+        )
+    } else {
+        scrutinee.clone()
+    };
+    let scrutinee: &ast::Node = &scrut_owned;
     // Disambiguate BARE variant patterns (`Foo(v)`, `Bar`) to a single owning
     // enum BEFORE the per-arm normalisation. All variant arms of one match
     // belong to the same enum, so a bare name must resolve within THAT enum —
@@ -9786,10 +9809,35 @@ fn desugar_match_to_if(
     // outermost arm; a guarded irrefutable outermost arm (`n if g`) prepends its
     // binding `let`, so wrap the two statements in a `Block` (an expression that
     // yields its last statement's value — the match result).
-    match else_stmts {
+    let chain = match else_stmts {
         Some(mut v) if v.len() == 1 => v.pop(),
         Some(v) if !v.is_empty() => Some(ast::Node::Block { stmts: v, span }),
         _ => None,
+    };
+    // Fable #7: when the scrutinee was pre-bound (effectful), prefix the chain
+    // with `let __match_scrut_{uniq} = <original scrutinee>` inside a Block so
+    // the scrutinee's side effects run EXACTLY once, ahead of every arm test.
+    // The `let` uses the ORIGINAL scrutinee node (captured before the shadow);
+    // every embedded reference above resolves this single binding. Block-as-
+    // match-result is the same shape the guarded-irrefutable arm already emits
+    // (an expression yielding its last statement's value), so merge-out of any
+    // enclosing-scope mutation inside an arm body is unchanged. On the pure
+    // (gate-off) path `chain` is returned verbatim — byte-identical to before.
+    match chain {
+        Some(node) if needs_bind => {
+            let bind = ast::Node::Let {
+                name: format!("__match_scrut_{}", span.start()),
+                mutable: false,
+                ann: None,
+                value: Box::new(orig_scrutinee.clone()),
+                span,
+            };
+            Some(ast::Node::Block {
+                stmts: vec![bind, node],
+                span,
+            })
+        }
+        other => other,
     }
 }
 

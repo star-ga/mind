@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3226 | **Est. tokens:** ~7,751,523
-**Generated:** 2026-07-30 03:51 UTC
+**Files:** 3227 | **Est. tokens:** ~7,753,046
+**Generated:** 2026-07-30 04:15 UTC
 
 ## Token Budget Guide
 
@@ -414,7 +414,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~194,333 |
-| `tests/` | 305 | ~521,088 |
+| `tests/` | 306 | ~522,611 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -4409,6 +4409,7 @@
 - `map_surface_run.rs` (~949 tok, large) — Copyright 2025 STARGA Inc.
 - `match_arm_stmt_run.rs` (~846 tok, large) — Copyright 2025 STARGA Inc.
 - `match_fallback_fail_closed.rs` (~1750 tok, huge) — Copyright 2025 STARGA Inc.
+- `match_scrutinee_once.rs` (~1523 tok, huge) — Copyright 2025 STARGA Inc.
 - `method_call.rs` (~397 tok, medium) — Copyright 2025 STARGA Inc.
 - `mic3_break_continue_string_roundtrip.rs` (~1616 tok, huge) — Copyright 2026 STARGA Inc.
 - `mic3_cli_emit.rs` (~2431 tok, huge) — Copyright 2025 STARGA Inc.
