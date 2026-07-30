@@ -33624,6 +33624,76 @@ pub fn nb_skip_to_semi(toks: Vec, pos: i64) -> i64 {
     nb_skip_to_semi(toks, pos + 1)
 }
 
+// 1 iff the extern RETURN type at token `tpos` is a narrow-width scalar whose mic@3
+// return spelling is its OWN name (i8/i16/i32/u8/u16/u32/bool), NOT the collapsed
+// "i64". Mirrors extern_ret_type_to_mlir_for (src/eval/lower.rs 10744): a narrow
+// SCALAR return declares its real width so the caller reads only the bits the callee
+// wrote (e.g. libc open/close/read `-> i32`). Params still collapse to i64 via
+// nb_type_cat; ONLY the return position preserves the narrow spelling. Return 0 for
+// pointer / f32 / f64 / i64 / u64 / usize / isize (handled by nb_type_cat as before).
+pub fn nb_ret_is_narrow(subbase: i64, toks: Vec, tpos: i64) -> i64 {
+    if tok_kind(toks, tpos) != tk_ident() {
+        return 0;
+    }
+    let lo: i64 = tok_lo(toks, tpos);
+    let hi: i64 = tok_hi(toks, tpos);
+    let n: i64 = hi - lo;
+    let c0: i64 = load_byte(subbase, lo);
+    if n == 2 {
+        // i8 (105,56) / u8 (117,56)
+        if load_byte(subbase, lo + 1) == 56 {
+            if c0 == 105 {
+                return 1;
+            }
+            if c0 == 117 {
+                return 1;
+            }
+        }
+        return 0;
+    }
+    if n == 3 {
+        let c1: i64 = load_byte(subbase, lo + 1);
+        let c2: i64 = load_byte(subbase, lo + 2);
+        // i16 (105,49,54) / u16 (117,49,54)
+        if c1 == 49 {
+            if c2 == 54 {
+                if c0 == 105 {
+                    return 1;
+                }
+                if c0 == 117 {
+                    return 1;
+                }
+            }
+        }
+        // i32 (105,51,50) / u32 (117,51,50)
+        if c1 == 51 {
+            if c2 == 50 {
+                if c0 == 105 {
+                    return 1;
+                }
+                if c0 == 117 {
+                    return 1;
+                }
+            }
+        }
+        return 0;
+    }
+    if n == 4 {
+        // bool (98,111,111,108)
+        if c0 == 98 {
+            if load_byte(subbase, lo + 1) == 111 {
+                if load_byte(subbase, lo + 2) == 111 {
+                    if load_byte(subbase, lo + 3) == 108 {
+                        return 1;
+                    }
+                }
+            }
+        }
+        return 0;
+    }
+    0
+}
+
 // Scan an extern block's tokens: for each `fn NAME(params) -> ret;` decl, intern the
 // name, then each param type, then the return type — mirroring collect_instr_strings'
 // ExternFnDecl arm (name, param_types.., ret_type). Non-`fn` tokens (extern/"C"/{/}/
@@ -33637,9 +33707,17 @@ pub fn nb_extern_scan(strbuf: i64, offs: i64, ccell: i64, subbase: i64, toks: Ve
         // params start after `NAME (` (pos+1 = name, pos+2 = `(`, pos+3 = first tok).
         let rp: i64 = nb_extern_params(strbuf, offs, ccell, subbase, toks, tconst, pos + 3);
         let nafter: i64 = if tok_kind(toks, rp + 1) == tk_arrow() {
-            let cat: i64 = nb_type_cat(subbase, toks, rp + 2);
-            let _r: i64 = nb_intern_tcat(strbuf, offs, ccell, tconst, cat);
-            nb_skip_to_semi(toks, rp + 2)
+            // A narrow SCALAR return interns its REAL-width source spelling (e.g. "i32"),
+            // not the collapsed "i64" — mirroring extern_ret_type_to_mlir_for. Interning
+            // the source span keeps the byte-exact type string the oracle's strtab carries.
+            if nb_ret_is_narrow(subbase, toks, rp + 2) == 1 {
+                let _rn: i64 = intern_span(strbuf, offs, ccell, subbase, tok_lo(toks, rp + 2), tok_hi(toks, rp + 2));
+                nb_skip_to_semi(toks, rp + 2)
+            } else {
+                let cat: i64 = nb_type_cat(subbase, toks, rp + 2);
+                let _r: i64 = nb_intern_tcat(strbuf, offs, ccell, tconst, cat);
+                nb_skip_to_semi(toks, rp + 2)
+            }
         } else {
             nb_skip_to_semi(toks, rp + 1)
         };
@@ -33801,8 +33879,14 @@ pub fn nb_emit_extern_scan(s: EmitState, strbuf: i64, offs: i64, ncount: i64, su
         let s2: EmitState = emit_uleb128(s1, ncat);
         let s3: EmitState = nb_emit_cat_idxs(s2, strbuf, offs, ncount, tconst, catbuf, ncat, 0);
         if tok_kind(toks, rp + 1) == tk_arrow() {
-            let rcat: i64 = nb_type_cat(subbase, toks, rp + 2);
-            let ridx: i64 = nb_tcat_index(strbuf, offs, ncount, tconst, rcat);
+            // A narrow SCALAR return points at its REAL-width string idx (e.g. "i32"),
+            // interned by nb_extern_scan's matching narrow-return arm; other types
+            // resolve via the collapsed category index (i64/ptr/f32/f64) as before.
+            let ridx: i64 = if nb_ret_is_narrow(subbase, toks, rp + 2) == 1 {
+                intern_find(strbuf, offs, ncount, subbase, tok_lo(toks, rp + 2), tok_hi(toks, rp + 2), 0)
+            } else {
+                nb_tcat_index(strbuf, offs, ncount, tconst, nb_type_cat(subbase, toks, rp + 2))
+            };
             let s4: EmitState = es_push(s3, 1);
             let s5: EmitState = emit_uleb128(s4, ridx);
             let s6: EmitState = es_push(s5, 0);

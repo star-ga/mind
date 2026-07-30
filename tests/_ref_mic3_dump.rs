@@ -172,6 +172,9 @@ fn dump_ref() {
         let ir = ref_ir(src);
         let bytes = libmind::ir::compact::emit_mic3(&ir);
         let note = note_of(&ir);
+        if let Ok(dir) = std::env::var("MIND_MIC3_BYTES_DIR") {
+            std::fs::write(format!("{dir}/rust_{name}.mic3"), &bytes).unwrap();
+        }
         std::fs::write(format!("{out_dir}/_ref_{name}.note"), &note).unwrap();
         eprintln!(
             "REF {name}: {} B  next_id={}  instrs={}  note={note}",

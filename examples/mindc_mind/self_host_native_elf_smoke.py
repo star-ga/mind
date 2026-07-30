@@ -244,9 +244,14 @@ def derive_rust_ref_notes() -> dict[str, bytes] | None:
     if cargo is None:
         print("  [ref] cargo not on PATH — using committed _ref_*.note cache")
         return None
+    # dump_ref is #[ignore]d (it WRITES the _ref_*.note fixtures, makes no
+    # assertions), so it must be named + run with --ignored — otherwise the
+    # filter matches zero tests, ZERO notes are derived, and the gate silently
+    # falls back to the (possibly stale) committed cache. Naming the test +
+    # --ignored makes the derivation compare against LIVE Rust emit_mic3.
     cmd = [
         cargo, "test", "--features", _RUST_REF_FEATURES,
-        "--test", _RUST_REF_TEST, "--", "--nocapture",
+        "--test", _RUST_REF_TEST, "dump_ref", "--", "--ignored", "--nocapture",
     ]
     print(f"  [ref] deriving Rust emit_mic3 reference notes (cargo test --test {_RUST_REF_TEST}) ...")
     try:
