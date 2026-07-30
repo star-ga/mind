@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3228 | **Est. tokens:** ~7,754,321
-**Generated:** 2026-07-30 07:15 UTC
+**Files:** 3228 | **Est. tokens:** ~7,755,795
+**Generated:** 2026-07-30 08:40 UTC
 
 ## Token Budget Guide
 
@@ -381,7 +381,7 @@
 | `src/ast/` | 1 | ~9,256 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
-| `src/build/` | 2 | ~16,388 |
+| `src/build/` | 2 | ~16,852 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 3 | ~10,829 |
 | `src/deps/` | 1 | ~9,345 |
@@ -414,7 +414,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~194,333 |
-| `tests/` | 306 | ~523,068 |
+| `tests/` | 306 | ~524,078 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -3902,7 +3902,7 @@
 ### `src/build/`
 
 - `cache.rs` (~6766 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~9622 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~10086 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/cache/`
 
 - `entry.rs` (~977 tok, large) — Copyright 2025-2026 STARGA Inc.
@@ -4416,7 +4416,7 @@
 - `mic3_const_dense_tensor_roundtrip.rs` (~842 tok, large) — Copyright 2026 STARGA Inc.
 - `mic3_parser_dos.rs` (~1891 tok, huge) — Copyright 2025 STARGA Inc.
 - `micb_dos_reject.rs` (~2341 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc_build_phase_a.rs` (~4566 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc_build_phase_a.rs` (~5576 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_cache_phase_f.rs` (~6231 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_deps_phase_de.rs` (~6823 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_doc_phase1.rs` (~2957 tok, huge) — Copyright 2025 STARGA Inc.

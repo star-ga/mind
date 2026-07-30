@@ -556,6 +556,23 @@ pub struct BuildOptions {
     /// root than the one the manifest was written under. `None` preserves the
     /// legacy `find_project_root()` behaviour for direct callers.
     pub project_root: Option<PathBuf>,
+    /// Explicit single-file build: `mindc build <file>` where the named file
+    /// either has NO governing `Mind.toml` (a synthetic manifest is used) or
+    /// sits directly next to a *bare* manifest (no `[targets.*].sources` list —
+    /// typically a leftover synthetic `Mind.toml` a prior build wrote into a
+    /// scratch dir). In that case the "project" is exactly the named entry: the
+    /// whole-directory source walk is WRONG, because the entry
+    /// often sits in a shared directory (`/tmp`, `$HOME`, a scratch dir) holding
+    /// unrelated `.mind` files — every one of which the binary/object path would
+    /// otherwise lower and link as a translation unit of this program, so a
+    /// single broken sibling (e.g. a deliberately-invalid front-end fixture)
+    /// panics or fails the build of an unrelated trivial program. When `true`,
+    /// `build_project` compiles ONLY the entry (mirroring the cdylib path);
+    /// `use std.*` still resolves through the seeded stdlib module table and the
+    /// substrate-object import BFS, which are import-driven, not walk-driven.
+    /// `false` (the default) preserves the whole-directory walk for manifest-
+    /// rooted projects (self-host / keystone depend on it byte-for-byte).
+    pub single_file: bool,
 }
 
 /// Build result
@@ -819,15 +836,31 @@ pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
     // every path validated) — the walk default only sees the entry file's own
     // subtree, which silently excludes modules outside it. A target without a
     // declared list keeps the entry-parent walk EXACTLY as before.
-    let (sources, explicit_sources) = match target_config.and_then(|cfg| cfg.sources.as_deref()) {
-        Some(declared) => (
-            resolve_declared_sources(&project_root, declared, &manifest.build.entry)?,
-            true,
-        ),
-        None => (
-            collect_sources(&project_root, &manifest.build.entry)?,
-            false,
-        ),
+    let (sources, explicit_sources) = if opts.single_file {
+        // Explicit single-file build (`mindc build <file>`, no governing
+        // Mind.toml). The "project" is exactly the named entry — compiling every
+        // sibling `.mind` in the entry's directory as a translation unit (the
+        // walk below) drags in unrelated (and often individually non-compiling)
+        // files from a shared dir like `/tmp` or `$HOME`, which is exactly what
+        // broke `mindc build <file> --emit=binary` for a trivial program. Mirror
+        // the cdylib single-entry path: `use std.*` still resolves via the seeded
+        // stdlib module table + substrate-object import BFS (import-driven).
+        let entry = project_root.join(&manifest.build.entry);
+        if !entry.exists() {
+            return Err(anyhow!("Entry file not found: {}", entry.display()));
+        }
+        (vec![entry], false)
+    } else {
+        match target_config.and_then(|cfg| cfg.sources.as_deref()) {
+            Some(declared) => (
+                resolve_declared_sources(&project_root, declared, &manifest.build.entry)?,
+                true,
+            ),
+            None => (
+                collect_sources(&project_root, &manifest.build.entry)?,
+                false,
+            ),
+        }
     };
 
     if opts.verbose {

@@ -609,3 +609,96 @@ fn cli_build_self_build_smoke() {
     assert!(sz > 0, ".so is empty at {}", out.display());
     eprintln!("self-build smoke: {} bytes", sz);
 }
+
+/// Regression: an explicit single-file `mindc build <file> --emit=binary` must
+/// compile ONLY the named entry, never every sibling `.mind` in the entry's
+/// directory. A scratch directory (`/tmp`, `$HOME`) routinely holds unrelated —
+/// and individually NON-compiling — `.mind` files; the whole-directory source
+/// walk used for manifest-rooted multi-file projects made a trivial single-file
+/// binary build try to lower each sibling as a translation unit and panic on the
+/// first invalid one (observed: an undefined-`f32` front-end fixture tripped the
+/// fail-closed unbound-identifier guard in `lower.rs`, so EVERY `--emit=binary`
+/// build under a poisoned scratch dir aborted). `--emit=cdylib` was immune
+/// because it already compiles only the entry, which is why this regressed
+/// silently: cdylib is the keystone path and the ONLY emit exercised by CI.
+///
+/// This test writes a deliberately broken sibling next to a trivial entry and
+/// asserts binary + object builds of the entry succeed (and the binary runs and
+/// returns its value) — proving the sibling is not dragged in.
+///
+/// mlir-gated like its siblings: the native binary/object link needs the full
+/// external MLIR/llc/clang toolchain, absent on the metadata-only CI runner.
+#[test]
+fn cli_build_single_file_binary_ignores_broken_sibling() {
+    let Some(bin) = require_mindc() else { return };
+    if !mlir_available() {
+        eprintln!("SKIP: MLIR tools not available");
+        return;
+    }
+
+    let td = tempfile::tempdir().expect("tempdir");
+    // Trivial entry: `main` reaches no float/BLAS code.
+    let entry = td.path().join("triv.mind");
+    fs::write(&entry, "fn main() -> i64 { return 10 }\n").unwrap();
+    // Unrelated broken sibling in the SAME directory: references a bareword
+    // `f32` that name resolution never binds (scalar f32 is not in the type
+    // system yet). Individually this file does not compile; a single-file build
+    // of `triv.mind` must never touch it.
+    fs::write(
+        td.path().join("poison_sibling.mind"),
+        "fn poison() -> i64 { return f32 }\n",
+    )
+    .unwrap();
+
+    // --emit=binary: build + run, expect exit 10.
+    let out_bin = td.path().join("triv");
+    let output = Command::new(&bin)
+        .args([
+            "build",
+            entry.to_str().unwrap(),
+            "--release",
+            "--emit=binary",
+            &format!("--out={}", out_bin.display()),
+        ])
+        .output()
+        .expect("spawn mindc");
+    assert!(
+        output.status.success(),
+        "single-file --emit=binary must ignore the broken sibling; exit {:?}\nstderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(out_bin.exists(), "expected binary at {}", out_bin.display());
+    let run = Command::new(&out_bin).output().expect("run built binary");
+    assert_eq!(
+        run.status.code(),
+        Some(10),
+        "built binary must return 10; got {:?}",
+        run.status.code()
+    );
+
+    // --emit=object: must compile clean (exit 0), same sibling present. Run it a
+    // SECOND time to also cover the leftover-manifest path — the first build
+    // wrote a synthetic `Mind.toml` into the tempdir, and a co-located bare
+    // manifest must still be treated as a single-file build, not a project whose
+    // sibling `.mind` files are all translation units.
+    let out_obj = td.path().join("triv.o");
+    for pass in 0..2 {
+        let output = Command::new(&bin)
+            .args([
+                "build",
+                entry.to_str().unwrap(),
+                "--release",
+                "--emit=object",
+                &format!("--out={}", out_obj.display()),
+            ])
+            .output()
+            .expect("spawn mindc");
+        assert!(
+            output.status.success(),
+            "single-file --emit=object (pass {pass}) must ignore the broken sibling; exit {:?}\nstderr: {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
