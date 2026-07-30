@@ -1099,6 +1099,10 @@ impl<'a> Resolver<'a> {
             Node::FnDef(..)
             // #267: closures are desugared before the resolver runs.
             | Node::Closure { .. }
+            // #268: trait/impl are desugared (impls to free fns, traits dropped)
+            // before the resolver runs.
+            | Node::TraitDef { .. }
+            | Node::ImplBlock { .. }
             | Node::Const { .. }
             | Node::ExternConst { .. }
             | Node::TypeAlias { .. }

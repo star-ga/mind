@@ -2078,6 +2078,14 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
             msg: "internal: closure reached type inference before desugaring".to_string(),
             span: *span,
         }),
+        // #268: trait/impl declarations are desugared (impls to free fns, traits
+        // dropped) BEFORE type inference runs, so a raw one should never reach
+        // here. Fail closed rather than a benign placeholder that could mask a
+        // missed desugar.
+        Node::TraitDef { span, .. } | Node::ImplBlock { span, .. } => Err(TypeErrSpan {
+            msg: "internal: trait/impl reached type inference before desugaring".to_string(),
+            span: *span,
+        }),
         // RFC 0010 Phase A: `extern "C"` blocks are declarations; they do not
         // produce a typed value. Return ScalarI32 placeholder for compatibility.
         Node::ExternBlock { span, .. } => Ok((ValueType::ScalarI32, *span)),

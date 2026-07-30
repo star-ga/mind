@@ -17,7 +17,8 @@
 
 use crate::ast::{
     Attribute, BinOp, BitOp, CallConv, EnumVariant, ExternFn, Field, FnDefData, Literal, LogicalOp,
-    MatchArm, Module, Node, Param, Pattern, Span, SparseLayout, StructLitField, TypeAnn,
+    MatchArm, Module, Node, Param, Pattern, Span, SparseLayout, StructLitField, TraitMethodSig,
+    TypeAnn,
 };
 use crate::parser::{TriviaKind, TriviaStream};
 use crate::project::MindcraftFormatConfig;
@@ -1740,6 +1741,96 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             emit_body_stmts(p, body, span.end());
             p.push("}");
         }
+        // #268: `trait Name { fn m(self, ...) -> R }`. `mindc fmt` runs on the
+        // pre-desugar AST, so a source trait/impl round-trips through this
+        // emitter.
+        Node::TraitDef {
+            is_pub,
+            name,
+            methods,
+            ..
+        } => emit_trait_def(p, *is_pub, name, methods),
+        Node::ImplBlock {
+            trait_name,
+            type_name,
+            methods,
+            ..
+        } => emit_impl_block(p, trait_name, type_name, methods),
+    }
+}
+
+/// Emit a trait declaration in canonical form (#268 Phase 1).
+fn emit_trait_def(p: &mut Printer, is_pub: bool, name: &str, methods: &[TraitMethodSig]) {
+    if is_pub {
+        p.push("pub ");
+    }
+    p.push("trait ");
+    p.push(name);
+    p.push(" {\n");
+    p.indent += 1;
+    for m in methods {
+        let ind = p.indent_str();
+        p.push(&ind);
+        emit_method_sig(p, &m.name, &m.params, &m.ret_type);
+        p.push("\n");
+    }
+    p.indent -= 1;
+    let ind = p.indent_str();
+    p.push(&ind);
+    p.push("}");
+}
+
+/// Emit an impl block in canonical form (#268 Phase 1).
+fn emit_impl_block(p: &mut Printer, trait_name: &str, type_name: &str, methods: &[Node]) {
+    p.push("impl ");
+    p.push(trait_name);
+    p.push(" for ");
+    p.push(type_name);
+    p.push(" {\n");
+    p.indent += 1;
+    for m in methods {
+        if let Node::FnDef(fd, span) = m {
+            let ind = p.indent_str();
+            p.push(&ind);
+            emit_method_sig(p, &fd.name, &fd.params, &fd.ret_type);
+            p.push(" {\n");
+            p.indent += 1;
+            let close_line = p.stripped_idx.line_of(span.end());
+            emit_body_stmts(p, &fd.body, close_line);
+            p.indent -= 1;
+            let ind = p.indent_str();
+            p.push(&ind);
+            p.push("}\n");
+        }
+    }
+    p.indent -= 1;
+    let ind = p.indent_str();
+    p.push(&ind);
+    p.push("}");
+}
+
+/// Emit a method signature `fn name(self, p: T, ...) -> R` — the leading `self`
+/// receiver is printed bare (its synthesized type is elided in source form).
+fn emit_method_sig(p: &mut Printer, name: &str, params: &[Param], ret_type: &Option<TypeAnn>) {
+    p.push("fn ");
+    p.push(name);
+    p.push("(");
+    for (i, param) in params.iter().enumerate() {
+        if i > 0 {
+            p.push(", ");
+        }
+        if param.name == "self" {
+            p.push("self");
+        } else {
+            p.push(&param.name);
+            p.push(": ");
+            emit_type_ann(p, &param.ty);
+        }
+    }
+    p.push(")");
+    if let Some(rt) = ret_type {
+        p.push(" -> ");
+        emit_type_ann(p, rt);
     }
 }
 

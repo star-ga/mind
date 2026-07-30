@@ -167,6 +167,8 @@ enum StmtKw {
     Region,
     Break,
     Continue,
+    Trait,
+    Impl,
 }
 
 /// Recognise a statement-leading keyword from the identifier run at the cursor.
@@ -206,11 +208,13 @@ fn stmt_keyword(w: &[u8]) -> Option<StmtKw> {
         (3, b'p') => (b"pub", StmtKw::Pub),
         (3, b'u') => (b"use", StmtKw::Use),
         (4, b'e') => (b"enum", StmtKw::Enum),
+        (4, b'i') => (b"impl", StmtKw::Impl),
         (4, b'l') => (b"loop", StmtKw::Loop),
         (4, b't') => (b"type", StmtKw::Type),
         (5, b'b') => (b"break", StmtKw::Break),
         (5, b'c') => (b"const", StmtKw::Const),
         (5, b'p') => (b"print", StmtKw::Print),
+        (5, b't') => (b"trait", StmtKw::Trait),
         (5, b'w') => (b"while", StmtKw::While),
         (6, b'a') => (b"assert", StmtKw::Assert),
         // The only two ambiguous cells; `w[2]` separates them (`export`/`extern`
@@ -1319,6 +1323,12 @@ impl<'a> P<'a> {
             Some(StmtKw::Struct) => return self.parse_struct(Vec::new(), is_pub),
             Some(StmtKw::Enum) => return self.parse_enum(Vec::new(), is_pub),
             Some(StmtKw::Fn) => return self.parse_fn_def(is_pub),
+            // #268 Phase 1: static-dispatch traits. `trait`/`impl` declarations
+            // are desugared before IR emit (`eval::desugar_traits`) — impls to
+            // ordinary free fns, traits dropped after coverage checking — so no
+            // vtable/dyn/trait-object ever reaches the codec.
+            Some(StmtKw::Trait) => return self.parse_trait(is_pub),
+            Some(StmtKw::Impl) => return self.parse_impl(),
             // RFC 0010 Phase A: `extern "C" [callconv(.x)] { ... }` block.
             // `extern const NAME: [T; N]` is a distinct form — an externally-provided
             // constant (e.g. a Q16.16 LUT table supplied by the build system), NOT an
@@ -2628,6 +2638,202 @@ impl<'a> P<'a> {
         is_pub: bool,
     ) -> Result<Node, ParseError> {
         self.parse_fn_def_with_attrs(reap_threshold, false, is_pub, Vec::new())
+    }
+
+    /// Parse a method parameter list `( self, p: T, ... )` (#268 Phase 1).
+    ///
+    /// The FIRST parameter may be a bare `self` receiver (no `: T`); its type is
+    /// synthesized as `Named(self_ty)` — `"Self"` for a trait signature, the impl
+    /// type for an `impl` block. Every other parameter is a normal `name: T`.
+    fn parse_method_params(&mut self, self_ty: &str) -> Result<Vec<Param>, ParseError> {
+        self.expect(b'(')?;
+        let mut params = Vec::new();
+        self.skip_ws_and_newlines();
+        if !self.at(b')') {
+            params.push(self.parse_method_param(self_ty, params.is_empty())?);
+            loop {
+                self.skip_ws_and_newlines();
+                if !self.eat(b',') {
+                    break;
+                }
+                self.skip_ws_and_newlines();
+                if self.at(b')') {
+                    break;
+                }
+                let first = params.is_empty();
+                params.push(self.parse_method_param(self_ty, first)?);
+            }
+        }
+        self.skip_ws_and_newlines();
+        self.expect(b')')?;
+        Ok(params)
+    }
+
+    /// Parse one method parameter. When `first` and the word is exactly `self`
+    /// (not followed by `:`), it is the receiver — typed to `Named(self_ty)`.
+    fn parse_method_param(&mut self, self_ty: &str, first: bool) -> Result<Param, ParseError> {
+        self.skip_ws_and_newlines();
+        let start = self.pos;
+        if first && self.cur_word() == b"self" {
+            // Peek past `self` to see if a `: T` annotation follows.
+            let after = start + 4;
+            let mut j = after;
+            while j < self.b.len() && (self.b[j] == b' ' || self.b[j] == b'\t') {
+                j += 1;
+            }
+            if j >= self.b.len() || self.b[j] != b':' {
+                self.pos = after;
+                let span = Span::new(start, self.pos);
+                return Ok(Param {
+                    name: "self".to_string(),
+                    ty: TypeAnn::Named(self_ty.to_string()),
+                    span,
+                });
+            }
+        }
+        self.parse_param()
+    }
+
+    /// Parse a `trait Name { fn m(self, ...) -> R ... }` declaration (#268 Phase 1).
+    ///
+    /// Method BODIES are absent (signature only). The trait is a static contract:
+    /// `eval::desugar_traits` checks each `impl` covers it, then drops it before
+    /// IR emit. No trait object / vtable / `dyn` is ever produced.
+    fn parse_trait(&mut self, is_pub: bool) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += 5; // "trait"
+        self.skip_ws_and_newlines();
+        let name = self
+            .word()
+            .ok_or_else(|| self.err("expected trait name".into()))?
+            .to_string();
+        self.skip_ws_and_newlines();
+        self.expect(b'{')?;
+        let mut methods = Vec::new();
+        loop {
+            self.skip_ws_and_newlines();
+            if self.at(b'}') {
+                break;
+            }
+            if !self.at_keyword(b"fn") {
+                return Err(self.err("expected `fn` method signature in trait body".into()));
+            }
+            let m_start = self.pos;
+            self.pos += 2; // "fn"
+            self.skip_ws_and_newlines();
+            let m_name = self
+                .word()
+                .ok_or_else(|| self.err("expected method name in trait".into()))?
+                .to_string();
+            self.skip_ws_and_newlines();
+            let params = self.parse_method_params("Self")?;
+            self.skip_ws_and_newlines();
+            let ret_type = if self.starts_with(b"->") {
+                self.pos += 2;
+                self.skip_ws_and_newlines();
+                Some(self.type_ann()?)
+            } else {
+                None
+            };
+            methods.push(crate::ast::TraitMethodSig {
+                name: m_name,
+                params,
+                ret_type,
+                span: Span::new(m_start, self.pos),
+            });
+        }
+        self.skip_ws_and_newlines();
+        self.expect(b'}')?;
+        Ok(Node::TraitDef {
+            is_pub,
+            name,
+            methods,
+            span: Span::new(start, self.pos),
+        })
+    }
+
+    /// Parse an `impl Trait for Type { fn m(self, ...) -> R { body } ... }` block
+    /// (#268 Phase 1). Each method is stored as a `Node::FnDef` whose `self`
+    /// receiver is typed to the impl `Type`, so the desugar can lift it to a
+    /// free `{lowercase(Type)}_{method}(self, ...)` and reuse the existing UFCS
+    /// static-dispatch lowering.
+    fn parse_impl(&mut self) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += 4; // "impl"
+        self.skip_ws_and_newlines();
+        let trait_name = self
+            .word()
+            .ok_or_else(|| self.err("expected trait name after `impl`".into()))?
+            .to_string();
+        self.skip_ws_and_newlines();
+        if !self.at_keyword(b"for") {
+            return Err(self.err("expected `for` in `impl Trait for Type`".into()));
+        }
+        self.pos += 3; // "for"
+        self.skip_ws_and_newlines();
+        let type_name = self
+            .word()
+            .ok_or_else(|| self.err("expected type name in `impl Trait for Type`".into()))?
+            .to_string();
+        self.skip_ws_and_newlines();
+        self.expect(b'{')?;
+        let mut methods = Vec::new();
+        loop {
+            self.skip_ws_and_newlines();
+            if self.at(b'}') {
+                break;
+            }
+            if !self.at_keyword(b"fn") {
+                return Err(self.err("expected `fn` method in impl body".into()));
+            }
+            let m_start = self.pos;
+            self.pos += 2; // "fn"
+            self.skip_ws_and_newlines();
+            let m_name = self
+                .word()
+                .ok_or_else(|| self.err("expected method name in impl".into()))?
+                .to_string();
+            self.skip_ws_and_newlines();
+            let params = self.parse_method_params(&type_name)?;
+            self.skip_ws_and_newlines();
+            let ret_type = if self.starts_with(b"->") {
+                self.pos += 2;
+                self.skip_ws_and_newlines();
+                Some(self.type_ann()?)
+            } else {
+                None
+            };
+            self.skip_ws_and_newlines();
+            let prev_ret = std::mem::replace(&mut self.current_fn_ret, ret_type.clone());
+            self.expect(b'{')?;
+            let body = self.parse_fn_body_stmts();
+            self.current_fn_ret = prev_ret;
+            let body = body?;
+            self.skip_ws_and_newlines();
+            self.expect(b'}')?;
+            methods.push(Node::FnDef(
+                Box::new(crate::ast::FnDefData {
+                    is_pub: false,
+                    is_test: false,
+                    name: m_name,
+                    type_params: Vec::new(),
+                    params,
+                    ret_type,
+                    body,
+                    reap_threshold: None,
+                    attrs: Vec::new(),
+                }),
+                Span::new(m_start, self.pos),
+            ));
+        }
+        self.skip_ws_and_newlines();
+        self.expect(b'}')?;
+        Ok(Node::ImplBlock {
+            trait_name,
+            type_name,
+            methods,
+            span: Span::new(start, self.pos),
+        })
     }
 
     /// Parse `extern "C" [callconv(.x)] { fn_decls... }` (RFC 0010 Phase A).

@@ -274,6 +274,18 @@ pub fn compile_source_with_name(
         return Err(CompileError::TypeError(collapse_diags));
     }
 
+    // #268 Phase 1: desugar traits/impls into ordinary top-level free fns
+    // (impls) + drop trait decls, BEFORE type-check and lowering, so only
+    // fns/structs/calls are seen downstream (no mic@3 wire change, no
+    // vtable/dyn/trait-object). Runs before the closure desugar so a closure
+    // inside an impl method body is handled by that pass. A trait-free module
+    // (the keystone `main.mind`, all of std/) is left byte-identical (early
+    // no-op).
+    let trait_diags = eval::desugar_traits(&mut module, source, source_name);
+    if !trait_diags.is_empty() {
+        return Err(CompileError::TypeError(trait_diags));
+    }
+
     // #267 Phase 1: desugar closures into env struct + top-level fn + struct
     // literal BEFORE type-check and lowering, so only ordinary fns/structs/calls
     // are seen downstream (no mic@3 wire change). A closure-free module (the

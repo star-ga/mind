@@ -479,6 +479,8 @@ fn node_children_mut(node: &mut Node) -> Vec<&mut Node> {
         Node::Lit(..)
         | Node::FnDef(..)
         | Node::Closure { .. }
+        | Node::TraitDef { .. }
+        | Node::ImplBlock { .. }
         | Node::Import { .. }
         | Node::ExternConst { .. }
         | Node::TypeAlias { .. }
@@ -537,7 +539,7 @@ fn find_closure_span(node: &Node) -> Option<Span> {
 
 /// Immutable twin of [`node_children_mut`] — same EXHAUSTIVE classification (no
 /// `_ => {}`), used by the `Closure`-survivor scan / no-op fast path.
-fn node_children_ref(node: &Node) -> Vec<&Node> {
+pub(crate) fn node_children_ref(node: &Node) -> Vec<&Node> {
     let mut out: Vec<&Node> = Vec::new();
     match node {
         Node::Binary { left, right, .. }
@@ -683,6 +685,8 @@ fn node_children_ref(node: &Node) -> Vec<&Node> {
         Node::Lit(..)
         | Node::FnDef(..)
         | Node::Closure { .. }
+        | Node::TraitDef { .. }
+        | Node::ImplBlock { .. }
         | Node::Import { .. }
         | Node::ExternConst { .. }
         | Node::TypeAlias { .. }
