@@ -6472,11 +6472,26 @@ fn lower_expr(
         ast::Node::Match {
             scrutinee, arms, ..
         } => {
-            let _scrut_id = lower_expr(scrutinee, ir, env, struct_env, receiver_types);
+            let scrut_id = lower_expr(scrutinee, ir, env, struct_env, receiver_types);
             let mut last_id = ir.fresh();
             ir.instrs.push(Instr::ConstI64(last_id, 0));
             for arm in arms {
-                last_id = lower_expr(&arm.body, ir, env, struct_env, receiver_types);
+                // A bare-`Ident` catch-all arm (`x => …`) binds the scrutinee to
+                // that name, and the arm body may READ it (`x => x`). The default
+                // (non-std-surface) build has no branching `If` lowering, so this
+                // fallback flattens every arm body sequentially — but the binding
+                // must still be registered in `env` or the body's identifier
+                // reaches the fail-closed undefined-identifier panic (Fable #9).
+                // The name IS defined (it is a pattern binding produced by the
+                // parser), so registering it is CORRECT and does not weaken that
+                // fail-close — a genuinely undefined identifier still panics.
+                if let ast::Pattern::Ident(bind) = &arm.pattern {
+                    let mut arm_env = env.clone();
+                    arm_env.insert(bind.clone(), scrut_id);
+                    last_id = lower_expr(&arm.body, ir, &arm_env, struct_env, receiver_types);
+                } else {
+                    last_id = lower_expr(&arm.body, ir, env, struct_env, receiver_types);
+                }
             }
             last_id
         }
