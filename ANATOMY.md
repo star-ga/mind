@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3231 | **Est. tokens:** ~7,765,894
-**Generated:** 2026-07-30 10:28 UTC
+**Files:** 3231 | **Est. tokens:** ~7,766,244
+**Generated:** 2026-07-30 13:51 UTC
 
 ## Token Budget Guide
 
@@ -58,7 +58,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 139 | ~330,780 |
+| `examples/mindc_mind/` | 139 | ~331,130 |
 | `examples/mindc_mind/testdata/` | 1 | ~2,452 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
@@ -871,7 +871,7 @@
 - `multi_let_smoke.py` (~1499 tok, large)
 - `now_ns_smoke.py` (~678 tok, large) — # Copyright 2025 STARGA Inc.
 - `option_netverify.py` (~2312 tok, huge) — # Canonical independent net-verify harness for SINGLE-PAYLOAD ENUMS (the
-- `oracle_parity_lint.py` (~3627 tok, huge)
+- `oracle_parity_lint.py` (~3977 tok, huge)
 - `param_types_smoke.py` (~1273 tok, large)
 - `_ref_add.note` (~16 tok, tiny) — 757f339973d282495a5d15f72a761b6baf3a6b38dc08deb95400e03318bc5de0
 - `_ref_if_ret.note` (~16 tok, tiny) — d042c5006591bd69365074c242559b25d031bb550f0d282255a57f3563c1ff45
