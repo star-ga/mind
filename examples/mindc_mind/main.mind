@@ -35904,7 +35904,15 @@ pub fn selftest_native_elf_fp_expr(src_addr: i64, src_len: i64) -> EmitState {
     let params: i64 = __mind_alloc(8);
     let calls: i64 = __mind_alloc(8);
     let lets: i64 = __mind_alloc(512 * 5 * 8);
-    let lcell: i64 = __mind_alloc(96);
+    let lcell: i64 = __mind_alloc(104);
+    // lcell layout matches nb_lower_fn's 104-byte cell: +96 is the register-alloc
+    // plan word. These hand-rolled drivers build NO plan, so zero it -> nb_plan_reg
+    // returns -1 (spill) for every id, matching the stack-slot store/load these
+    // drivers assume. A 96-byte alloc left +96 one word PAST the buffer, so
+    // nb_expr's int-lit / call-dtype arms read adjacent-alloc garbage as a plan
+    // pointer and nb_plan_reg deref'd it -> SIGSEGV (e.g. a mixed struct's i64
+    // field literal during nb_struct_fields). Zeroed here before any nb_expr call.
+    __mind_store_i64(lcell + 96, 0);
     __mind_store_i64(lcell, 0);
     __mind_store_i64(lcell + 88, 0);
     // C2 return-width word (+72): full-width 64 on this hand-rolled driver path,
@@ -35958,7 +35966,15 @@ pub fn selftest_native_elf_fp_binop(src_addr: i64, src_len: i64) -> EmitState {
     let params: i64 = __mind_alloc(8);
     let calls: i64 = __mind_alloc(8);
     let lets: i64 = __mind_alloc(512 * 5 * 8);
-    let lcell: i64 = __mind_alloc(96);
+    let lcell: i64 = __mind_alloc(104);
+    // lcell layout matches nb_lower_fn's 104-byte cell: +96 is the register-alloc
+    // plan word. These hand-rolled drivers build NO plan, so zero it -> nb_plan_reg
+    // returns -1 (spill) for every id, matching the stack-slot store/load these
+    // drivers assume. A 96-byte alloc left +96 one word PAST the buffer, so
+    // nb_expr's int-lit / call-dtype arms read adjacent-alloc garbage as a plan
+    // pointer and nb_plan_reg deref'd it -> SIGSEGV (e.g. a mixed struct's i64
+    // field literal during nb_struct_fields). Zeroed here before any nb_expr call.
+    __mind_store_i64(lcell + 96, 0);
     __mind_store_i64(lcell, 0);
     __mind_store_i64(lcell + 88, 0);
     // C2 return-width word (+72): full-width 64 on this hand-rolled driver path,
@@ -36020,7 +36036,15 @@ pub fn selftest_native_elf_fp_let(src_addr: i64, src_len: i64) -> EmitState {
     __mind_store_i64(jcell, 0);
     // Per-fn let-env + real dtype table at lcell+8 (the nb_lower_fn plumbing).
     let lets: i64 = __mind_alloc(512 * 5 * 8);
-    let lcell: i64 = __mind_alloc(96);
+    let lcell: i64 = __mind_alloc(104);
+    // lcell layout matches nb_lower_fn's 104-byte cell: +96 is the register-alloc
+    // plan word. These hand-rolled drivers build NO plan, so zero it -> nb_plan_reg
+    // returns -1 (spill) for every id, matching the stack-slot store/load these
+    // drivers assume. A 96-byte alloc left +96 one word PAST the buffer, so
+    // nb_expr's int-lit / call-dtype arms read adjacent-alloc garbage as a plan
+    // pointer and nb_plan_reg deref'd it -> SIGSEGV (e.g. a mixed struct's i64
+    // field literal during nb_struct_fields). Zeroed here before any nb_expr call.
+    __mind_store_i64(lcell + 96, 0);
     __mind_store_i64(lcell, 0);
     __mind_store_i64(lcell + 88, 0);
     // C2 return-width word (+72): full-width 64 on this hand-rolled driver path,
@@ -36107,7 +36131,15 @@ pub fn selftest_native_elf_fp_field(src_addr: i64, src_len: i64) -> EmitState {
     let jcell: i64 = __mind_alloc(8);
     __mind_store_i64(jcell, 0);
     let lets: i64 = __mind_alloc(512 * 5 * 8);
-    let lcell: i64 = __mind_alloc(96);
+    let lcell: i64 = __mind_alloc(104);
+    // lcell layout matches nb_lower_fn's 104-byte cell: +96 is the register-alloc
+    // plan word. These hand-rolled drivers build NO plan, so zero it -> nb_plan_reg
+    // returns -1 (spill) for every id, matching the stack-slot store/load these
+    // drivers assume. A 96-byte alloc left +96 one word PAST the buffer, so
+    // nb_expr's int-lit / call-dtype arms read adjacent-alloc garbage as a plan
+    // pointer and nb_plan_reg deref'd it -> SIGSEGV (e.g. a mixed struct's i64
+    // field literal during nb_struct_fields). Zeroed here before any nb_expr call.
+    __mind_store_i64(lcell + 96, 0);
     __mind_store_i64(lcell, 0);
     __mind_store_i64(lcell + 88, 0);
     // C2 return-width word (+72): full-width 64 on this hand-rolled driver path,
@@ -36264,7 +36296,15 @@ pub fn selftest_native_elf_fp_param(src_addr: i64, src_len: i64) -> EmitState {
     let jcell: i64 = __mind_alloc(8);
     __mind_store_i64(jcell, 0);
     let lets: i64 = __mind_alloc(512 * 5 * 8);
-    let lcell: i64 = __mind_alloc(96);
+    let lcell: i64 = __mind_alloc(104);
+    // lcell layout matches nb_lower_fn's 104-byte cell: +96 is the register-alloc
+    // plan word. These hand-rolled drivers build NO plan, so zero it -> nb_plan_reg
+    // returns -1 (spill) for every id, matching the stack-slot store/load these
+    // drivers assume. A 96-byte alloc left +96 one word PAST the buffer, so
+    // nb_expr's int-lit / call-dtype arms read adjacent-alloc garbage as a plan
+    // pointer and nb_plan_reg deref'd it -> SIGSEGV (e.g. a mixed struct's i64
+    // field literal during nb_struct_fields). Zeroed here before any nb_expr call.
+    __mind_store_i64(lcell + 96, 0);
     __mind_store_i64(lcell, 0);
     __mind_store_i64(lcell + 88, 0);
     // C2 return-width word (+72): full-width 64 on this hand-rolled driver path,
