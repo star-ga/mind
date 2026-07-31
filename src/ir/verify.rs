@@ -471,8 +471,24 @@ fn check_ssa_stream(instrs: &[Instr], defined: &mut BTreeSet<ValueId>) -> Result
                 defined.extend(else_scope);
             }
             #[cfg(feature = "std-surface")]
-            Instr::Region { body, .. } => {
+            Instr::Region { body, result, .. } => {
                 check_ssa_stream(body, defined)?;
+                // SOUNDNESS: `result` is the region's exit value — documented as
+                // the "last body value" (`ir/mod.rs`) and exposed to the enclosing
+                // scope by `expose_region_definitions` (step 4). Nothing enforced
+                // that it is actually PRODUCED by the body: a forged mic@3 artifact
+                // could set `result` to an id defined nowhere, and it would still
+                // be exposed as "defined" — certifying an undefined-value module as
+                // well-formed. Validate it against the post-body scope (enclosing ∪
+                // body), exactly as the `If` arm validates `then_result`/
+                // `else_result` against their branch scopes. A dangling / cross /
+                // undefined region result is now rejected fail-CLOSED.
+                if !defined.contains(result) {
+                    return Err(SsaViolation {
+                        value: *result,
+                        rule: SsaRule::DefineBeforeUse,
+                    });
+                }
             }
             _ => {}
         }
@@ -660,8 +676,19 @@ fn validate_ssa_stream(
                 defined.extend(else_scope);
             }
             #[cfg(feature = "std-surface")]
-            Instr::Region { body, .. } => {
+            Instr::Region { body, result, .. } => {
                 validate_ssa_stream(body, defined)?;
+                // Mirror of the `check_ssa_stream` Region guard (and the symmetric
+                // `If` then_result/else_result checks above): the region `result`
+                // must be produced by the body's own instructions, not a dangling
+                // id a forged artifact points nowhere. Exposed as "defined" by
+                // `expose_region_definitions` otherwise — a verifier fail-open.
+                if !defined.contains(result) {
+                    return Err(IrVerifyError::UseBeforeDefinition {
+                        value: *result,
+                        instr_index: idx,
+                    });
+                }
             }
             _ => {}
         }

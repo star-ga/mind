@@ -687,3 +687,108 @@ fn ssa_while_carry_differential_emit_parse_agrees() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// RFC 0010 Phase J-A — `Instr::Region` exit-value soundness.
+//
+// A Region's `result` is the SSA id of the value produced by the LAST body
+// instruction (`ir/mod.rs:755`), and `expose_region_definitions` exposes it to
+// the enclosing scope as "defined". Nothing enforced that `result` is actually
+// produced BY the body — a forged mic@3 artifact could point `result` at an id
+// defined nowhere, and BOTH verifiers certified it well-formed (fail-open),
+// while downstream lowering registers it as a live value with no defining op.
+// Both verifiers now REJECT a Region whose result is not defined by its body,
+// mirroring the `If` then_result/else_result guards. Gated to std-surface.
+// ---------------------------------------------------------------------------
+
+/// `[Region{ body:[ConstI64(%0,7)], result, enter_id:%1, exit_id:%2,
+/// alloc_ids:[] }, Output(result)]`. When `result == %0` the region result is
+/// produced by the body (valid); otherwise it is a dangling exit value.
+#[cfg(feature = "std-surface")]
+fn region_result_module(result: ValueId) -> IRModule {
+    let mut m = IRModule::new();
+    m.instrs.push(Instr::Region {
+        body: vec![Instr::ConstI64(ValueId(0), 7)],
+        result,
+        enter_id: ValueId(1),
+        exit_id: ValueId(2),
+        alloc_ids: vec![],
+    });
+    m.instrs.push(Instr::Output(result));
+    m.next_id = 43;
+    m
+}
+
+/// A Region whose `result` IS produced by the body (`%0`) must verify clean on
+/// both the consumer and the in-pipeline verifier — the fix must not reject any
+/// currently-valid IR.
+#[cfg(feature = "std-surface")]
+#[test]
+fn ssa_region_result_from_body_passes() {
+    let m = region_result_module(ValueId(0));
+    assert!(
+        check_ssa_well_formed(&m).is_ok(),
+        "valid region result must pass check_ssa_well_formed: {:?}",
+        check_ssa_well_formed(&m)
+    );
+    assert!(
+        libmind::ir::verify_module(&m).is_ok(),
+        "valid region result must pass verify_module: {:?}",
+        libmind::ir::verify_module(&m)
+    );
+}
+
+/// ★ FAIL-OPEN regression (evidence integrity): the forged repro from the
+/// bug-hunt — a Region whose `result` is `%42`, defined by NO instruction in the
+/// body — must be REJECTED by BOTH verifiers. Before the fix both returned
+/// `Ok(())`, certifying an undefined-value module as well-formed.
+#[cfg(feature = "std-surface")]
+#[test]
+fn ssa_region_dangling_result_rejected() {
+    let m = region_result_module(ValueId(42));
+
+    let err = check_ssa_well_formed(&m)
+        .expect_err("dangling region result %42 must be rejected by check_ssa_well_formed");
+    assert_eq!(err.value, ValueId(42), "violation must name the dangling %42");
+    assert_eq!(
+        err.rule,
+        SsaRule::DefineBeforeUse,
+        "dangling region result must be a define-before-use fault"
+    );
+
+    assert!(
+        libmind::ir::verify_module(&m).is_err(),
+        "verify_module must also reject the dangling region result %42"
+    );
+}
+
+/// ★ DIFFERENTIAL — the two verifiers agree on the valid and forged region
+/// cases across the mic@3 codec round-trip (`Region.result` is serialized in
+/// mic@3 0x02, so the forged id survives `parse(emit(ir))`).
+#[cfg(feature = "std-surface")]
+#[test]
+fn ssa_region_result_differential_emit_parse_agrees() {
+    use libmind::ir::compact::v3::parse_mic3;
+    let cases = [
+        (region_result_module(ValueId(0)), true),
+        (region_result_module(ValueId(42)), false),
+    ];
+    for (m, expect_ok) in cases {
+        let vm_ok = libmind::ir::verify_module(&m).is_ok();
+        let bytes = emit_mic3(&m);
+        let parsed = parse_mic3(&bytes).expect("parse round-trip");
+        let consumer_ok = check_ssa_well_formed(&parsed).is_ok();
+        assert_eq!(
+            vm_ok, expect_ok,
+            "verify_module verdict mismatch for expect_ok={expect_ok}"
+        );
+        assert_eq!(
+            consumer_ok, expect_ok,
+            "check_ssa_well_formed(parse(emit)) verdict mismatch for expect_ok={expect_ok}"
+        );
+        assert_eq!(
+            vm_ok, consumer_ok,
+            "DIFFERENTIAL: verify_module and check_ssa_well_formed must agree on region result"
+        );
+    }
+}
