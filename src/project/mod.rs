@@ -2413,6 +2413,27 @@ fn native_link(
     cmd.arg("-lpthread");
     cmd.arg("-lm");
 
+    // Emitted-artifact hardening — byte-neutral linker directives (SAME class
+    // as the cdylib path's `-Wl,-Bsymbolic-functions` / `-Wl,-z,*`; see the
+    // self-documenting comment in src/eval/mlir_build.rs). These change only
+    // ELF segment permissions and DT_FLAGS bits, not one emitted instruction
+    // byte, and are applied uniformly on every substrate, so the native-ELF
+    // artifact stays byte-identical across builds and substrates (proven via
+    // `objdump -d` .text identity before/after):
+    //   -z relro       : GOT/relocated sections read-only after startup.
+    //   -z now         : eager relocation resolution (BIND_NOW / DF_1_NOW) so
+    //                    RELRO becomes Full — closes the GOT-overwrite vector.
+    //   -z noexecstack : non-executable stack (GNU_STACK without X).
+    cmd.arg("-Wl,-z,relro");
+    cmd.arg("-Wl,-z,now");
+    cmd.arg("-Wl,-z,noexecstack");
+    // deferred: the BYTE-CHANGING hardening pass — `-fstack-protector-strong`
+    // (canary prologue/epilogue machine code) and `-pie` (PC-relative codegen +
+    // ELF type DYN) — perturbs emitted instruction bytes and requires a keystone
+    // (7/7) + cross-substrate re-bless. Upgrade path: land under a fresh
+    // reference_hashes.toml blessing ceremony owned by mind-cross-substrate
+    // (Constitution §I.3), NOT in this byte-neutral dispatch.
+
     // Add rpath for runtime library lookup
     #[cfg(target_os = "linux")]
     {
