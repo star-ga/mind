@@ -749,7 +749,11 @@ fn ssa_region_dangling_result_rejected() {
 
     let err = check_ssa_well_formed(&m)
         .expect_err("dangling region result %42 must be rejected by check_ssa_well_formed");
-    assert_eq!(err.value, ValueId(42), "violation must name the dangling %42");
+    assert_eq!(
+        err.value,
+        ValueId(42),
+        "violation must name the dangling %42"
+    );
     assert_eq!(
         err.rule,
         SsaRule::DefineBeforeUse,
