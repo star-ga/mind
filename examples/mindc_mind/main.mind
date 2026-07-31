@@ -2394,8 +2394,29 @@ pub fn parse_postfix_rest(toks: Vec, pos: i64, buf: i64, recv: i64) -> ParseResu
                 }
                 let cw: i64 = narrow_cast_width(buf, cty_lo, cty_hi);
                 if cw > 0 {
-                    let cnode: i64 = ast_new_cast(ast_span_lo(recv), cty_hi, recv, cw);
-                    return parse_postfix_rest(toks, pos + 2, buf, cnode);
+                    // SIGNED narrowing cast `EXPR as i8/i16/i32`: DESUGAR to the proven
+                    // arithmetic-shift pair `(EXPR << (64-w)) >> (64-w)`. MIND's `>>` is a
+                    // SIGNED (arithmetic, SAR) shift, so shifting the low w bits up to the
+                    // sign position and back sign-extends them to i64 — exactly the
+                    // two's-complement wrap the ast_cast movsx arm produced, but through TWO
+                    // fully-proven shift binops that — unlike the signed ast_cast node the
+                    // mic@3 NOTE builder (nb_build_mic3) refuses — lower through BOTH the
+                    // native-ELF path AND the note builder, so a signed narrowing cast
+                    // SELF-HOSTS through the full selftest_native_elf_u path (Rule 4b
+                    // desugar-to-proven-form: no new native-emit / count / mic@3-flatten
+                    // arm). The `<<` is modular so EXPR's high bits above bit w-1 are
+                    // dropped; the SAR then re-fills from bit w-1, so the result is exact
+                    // for any i64 source. A FLOAT source stays FAIL-CLOSED: `f << k` is a
+                    // MIXED (float+int) binop, which nb_expr's binop arm POISONS (0-byte
+                    // refusal) — the same boundary the ast_cast float branch held — never a
+                    // wrong value. main.mind's own source has no non-comment `as iN`
+                    // (it wraps via the __mind_wrap_iN intrinsics), so this never fires
+                    // during self-compile and the integer native-ELF oracle / self-host
+                    // loop stay byte-identical.
+                    let sh: i64 = 64 - cw;
+                    let shl_node: i64 = ast_new_binop(ast_span_lo(recv), cty_hi, recv, mk_syn_intlit(sh), op_shl());
+                    let sar_node: i64 = ast_new_binop(ast_span_lo(recv), cty_hi, shl_node, mk_syn_intlit(sh), op_shr());
+                    return parse_postfix_rest(toks, pos + 2, buf, sar_node);
                 }
                 // `EXPR as f64` (int -> f64 WIDENING cast): build a real ast_cast
                 // node carrying the f64 sentinel width. nb_expr's arm lowers it via

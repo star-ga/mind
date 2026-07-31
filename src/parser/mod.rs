@@ -3426,10 +3426,10 @@ impl<'a> P<'a> {
     /// | 1     | `\|\|`                   | (1, 2)     |
     /// | 2     | `&&`                     | (3, 4)     |
     /// | 3     | `==` `!=` `<` `<=` `>` `>=` | (5, 6) |
-    /// | 4     | `as` (postfix cast)      | (7, _)     |
-    /// | 5     | `+` `-`                  | (9, 10)    |
-    /// | 6     | `\|` `&` `^` `<<` `>>`   | (11, 12)   |
-    /// | 7     | `*` `/`                  | (13, 14)   |
+    /// | 4     | `+` `-`                  | (9, 10)    |
+    /// | 5     | `\|` `&` `^` `<<` `>>`   | (11, 12)   |
+    /// | 6     | `*` `/`                  | (13, 14)   |
+    /// | 7     | `as` (postfix cast)      | (15, _)    |
     /// | leaf  | `parse_atom`             | —          |
     ///
     /// The chain is preserved exactly: ordering matches the prior recursive
@@ -3625,10 +3625,21 @@ impl<'a> P<'a> {
 
         // `as` keyword (postfix cast). Requires a word-boundary on the right
         // so identifiers like `assert` and `ascii` are not misparsed.
+        //
+        // Precedence: `as` binds TIGHTER than every binary operator (lbp 15,
+        // above multiplicative's rbp 14), so `a + b as i8` parses as
+        // `a + (b as i8)` and `x * y as f64` as `x * (y as f64)` — matching
+        // the language spec (unary > as > `* /` > `+ -`), the pure-MIND
+        // self-host `parse_postfix_rest` desugar (which consumes `as` in
+        // postfix position "tighter than any infix op"), and Rust-lang's own
+        // `as` precedence. Prior to this it was lbp 7 (LOOSER than additive),
+        // which parsed `a + b as i8` as `(a + b) as i8` — an implementation
+        // bug that diverged from the self-host front-end. As a postfix cast
+        // the rbp is unused (the AsCast arm parses a TypeAnn, not an expr).
         if b0 == b'a' && b1 == b's' {
             let nb = self.b.get(p + 2).copied().unwrap_or(0);
             if !Self::is_ident_cont(nb) {
-                return Some((PrattOp::AsCast, 7, 0, 2));
+                return Some((PrattOp::AsCast, 15, 0, 2));
             }
         }
 
