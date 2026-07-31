@@ -1,0 +1,3 @@
+struct P { x: i64, y: i64 }
+pub fn mk(z: i64) -> i64 { z }
+pub fn f(a: i64, b: i64) -> i64 { let m: i64 = mk(P { x: a, y: b }.x); return P { x: b, y: a }.y; }

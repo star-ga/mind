@@ -1,0 +1,2 @@
+struct P { x: i64, y: i64 }
+pub fn f(a: i64, b: i64) -> i64 { let p1: P = P { x: a, y: b }; return P { x: b, y: a }.x; }

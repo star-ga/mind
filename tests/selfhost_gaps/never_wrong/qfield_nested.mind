@@ -1,0 +1,3 @@
+struct Q { z: i64 }
+struct P { q: Q, w: i64 }
+pub fn f(a: i64, b: i64) -> i64 { let qq: Q = Q { z: a }; return P { q: qq, w: b }.w; }

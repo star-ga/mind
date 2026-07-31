@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3245 | **Est. tokens:** ~7,790,861
-**Generated:** 2026-07-31 15:09 UTC
+**Files:** 3251 | **Est. tokens:** ~7,791,582
+**Generated:** 2026-07-31 15:31 UTC
 
 ## Token Budget Guide
 
@@ -58,7 +58,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 147 | ~346,146 |
+| `examples/mindc_mind/` | 147 | ~346,657 |
 | `examples/mindc_mind/testdata/` | 1 | ~2,452 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
@@ -459,6 +459,7 @@
 | `tests/mindfuzz_cross_substrate/staged/` | 16 | ~2,989 |
 | `tests/runtime/` | 2 | ~135 |
 | `tests/selfhost_gaps/` | 70 | ~5,372 |
+| `tests/selfhost_gaps/never_wrong/` | 6 | ~210 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tools/` | 4 | ~4,578 |
@@ -857,7 +858,7 @@
 - `fixed_point_smoke.py` (~3275 tok, huge)
 - `fixture.mind` (~183 tok, small) — Phase 6.4 emit_ir smoke fixture.
 - `full_strtab_smoke.py` (~1663 tok, huge)
-- `gap_corpus_smoke.py` (~1922 tok, huge)
+- `gap_corpus_smoke.py` (~2433 tok, huge)
 - `general_float_netverify.py` (~1979 tok, huge) — general_float_netverify.py — GENERAL-path f64 value battery (B0 gate lift).
 - `.gitignore` (~5 tok, tiny) — __pycache__/
 - `lockstep_lint.py` (~4127 tok, huge) — lockstep_lint.py -- native-ELF walker lockstep linter for the pure-MIND self-host compiler.
@@ -4663,6 +4664,16 @@
 - `mixed-prefix_7.mind` (~29 tok, tiny)
 - `mixed-prefix_8.mind` (~49 tok, tiny)
 - `mixed-prefix_9.mind` (~50 tok, small)
+### `tests/selfhost_gaps/never_wrong/`
+
+- `callarg_then_field_recv.mind` (~40 tok, tiny)
+- `chained_field_pqz.mind` (~37 tok, tiny)
+- `nested_slit_field.mind` (~30 tok, tiny)
+- `prior_let_then_field_recv.mind` (~31 tok, tiny)
+- `qfield_nested.mind` (~34 tok, tiny)
+- `two_scalar_prior.mind` (~38 tok, tiny)
+### `tests/selfhost_gaps/`
+
 - `operator-edges_1.mind` (~24 tok, tiny)
 - `operator-edges_2.mind` (~26 tok, tiny)
 - `operator-edges_3.mind` (~26 tok, tiny)
