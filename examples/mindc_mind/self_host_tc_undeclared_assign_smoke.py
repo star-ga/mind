@@ -92,7 +92,19 @@ def assign_arm_source_guard():
         print("FAIL: Node::Assign arm not found in resolve.rs — drifted")
         sys.exit(1)
     arm = m.group(1)
-    if "!self.scopes.contains(name) && !self.syms.name_resolvable(name)" not in arm:
+    # The E2009 decision is the exact two-term union
+    # `!scopes.contains(name) && !name_resolvable(name)`. It may sit INLINE in
+    # the Assign arm, OR be factored into the `is_undeclared_assign` method the
+    # arm calls — both express the identical decision. Accept either form, but
+    # in the factored form REQUIRE the arm to actually call the method AND the
+    # exact predicate to still exist verbatim in resolve.rs (the method body),
+    # so drift is caught wherever the predicate lives.
+    pred = "!self.scopes.contains(name) && !self.syms.name_resolvable(name)"
+    if pred in arm:
+        pass  # inline form
+    elif "self.is_undeclared_assign(name)" in arm and pred in rs:
+        pass  # factored into is_undeclared_assign(), predicate still grounded
+    else:
         print("FAIL: Assign-arm predicate drifted from "
               "scopes.contains && name_resolvable — re-ground the port")
         sys.exit(1)
