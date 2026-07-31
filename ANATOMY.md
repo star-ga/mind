@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3240 | **Est. tokens:** ~7,787,862
-**Generated:** 2026-07-31 02:11 UTC
+**Files:** 3241 | **Est. tokens:** ~7,789,240
+**Generated:** 2026-07-31 03:03 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 33 | ~25,641 |
+| `./` | 33 | ~25,648 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -40,7 +40,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,450 |
-| `docs/` | 32 | ~71,468 |
+| `docs/` | 32 | ~71,472 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
@@ -58,7 +58,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 145 | ~341,577 |
+| `examples/mindc_mind/` | 146 | ~342,944 |
 | `examples/mindc_mind/testdata/` | 1 | ~2,452 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
@@ -498,7 +498,7 @@
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
 - `Mind.toml` (~108 tok, small) — [package]
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
-- `README.md` (~5837 tok, huge) — MIND — Machine Intelligence Native Design
+- `README.md` (~5844 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~1256 tok, large) — Security Policy
@@ -676,7 +676,7 @@
 - `v0.3.md` (~110 tok, small) — MIND Design v0.3 (Draft)
 ### `docs/`
 
-- `determinism.md` (~3988 tok, huge) — The Determinism Contract
+- `determinism.md` (~3992 tok, huge) — The Determinism Contract
 - `errors.md` (~701 tok, large) — MIND Core Error Model
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
 - `gpu.md` (~387 tok, medium) — GPU backend profile
@@ -886,6 +886,7 @@
 - `self_host_args_from_os_smoke.py` (~1356 tok, large)
 - `selfhost_argv_driver.mind` (~1187 tok, large) — ===========================================================================
 - `self_host_argv_smoke.py` (~1136 tok, large)
+- `self_host_array_smoke.py` (~1367 tok, large)
 - `self_host_body_smoke.py` (~3055 tok, huge)
 - `self_host_carry_cap_smoke.py` (~1088 tok, large) — Cap-guard smoke for the self-host loop-carry / loop-frame scratch tables.
 - `self_host_check_driver_smoke.py` (~2879 tok, huge)

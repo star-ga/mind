@@ -16564,6 +16564,72 @@ pub fn tree_resolve_vids(nodes: i64, n_nodes: i64, n: i64, vidbuf: i64, i: i64, 
 // For a param-only tree no kind-2 slot exists, so this is byte-identical to the
 // former emit_mic3_tree_binops (Bound by MIND-CONSTITUTION §I — param-only path
 // unchanged).
+// ===========================================================================
+// Fixed-i64 CONSTANT ARRAYS in the mic@3 note path (#40/#111) — the oracle emits
+// a COMPACT array form (OP_CONST_ARRAY 0x19 + OP_ARRAY_LOAD 0x1A), NOT the
+// __mind_alloc + __mind_store_i64 + __mind_load_i64 expansion the native-ELF
+// path uses. `let a = [10, 20, 30]; a[1]` lowers to:
+//   CONST_ARRAY %0 name=None values=[10,20,30]   (elements zigzag-baked; NO vids)
+//   CONST_I64   %1 = 1                            (the index)
+//   ARRAY_LOAD  %2 base=%0 index=%1
+// The array-literal descriptor is kind 7 (record[1]=elems_addr, record[2]=count);
+// the index-read descriptor is kind 8 (record[2]=base_slot, record[3]=index_slot).
+// Both are value nodes, so tree_resolve_vids / seq_resolve_range / the *_nonparam
+// counters (which give every non-0/4/5 slot one vid + one body instr) handle them
+// with no change. Byte-exact vs `mindc --emit-mic3` (Bound by MIND-CONSTITUTION §I).
+
+// True iff `elem` is a compile-time constant int (int literal or a negated int
+// literal) — the only element shape OP_CONST_ARRAY can bake into the instruction.
+pub fn arr_elem_is_int(elem: i64) -> i64 {
+    let k: i64 = ast_kind(elem);
+    if k == ast_int_lit() {
+        return 1;
+    }
+    if k == ast_neg() {
+        return arr_elem_is_int(ast_child0(elem));
+    }
+    0
+}
+
+// True iff EVERY element of the array literal is a constant int. A non-const
+// element fails closed (the array-lit descriptor is not built, the module
+// refuses) — never a wrong-value CONST_ARRAY.
+pub fn arrlit_all_int(elems_addr: i64, count: i64, j: i64) -> i64 {
+    if j >= count {
+        return 1;
+    }
+    let elem: i64 = __mind_load_i64(elems_addr + j * 8);
+    if arr_elem_is_int(elem) == 0 {
+        return 0;
+    }
+    arrlit_all_int(elems_addr, count, j + 1)
+}
+
+// Read the i64 value of a constant array element (int literal or `-N`). The
+// synthetic int-lit sentinel (child1==1) carries its value directly in child0.
+pub fn arr_elem_int(src: i64, elem: i64) -> i64 {
+    if ast_kind(elem) == ast_neg() {
+        return 0 - arr_elem_int(src, ast_child0(elem));
+    }
+    if ast_child1(elem) == 1 {
+        return ast_child0(elem);
+    }
+    parse_int_span(src, ast_span_lo(elem), ast_span_hi(elem), 0)
+}
+
+// Emit each constant array element's zigzag-encoded i64 value — the
+// OP_CONST_ARRAY payload (mirrors src/ir/compact/v3/emit.rs's ConstArray arm:
+// `uleb128_write(w, zigzag_encode(v))` per value). Recurses in source order.
+pub fn emit_arr_elems(s: EmitState, src: i64, elems_addr: i64, count: i64, j: i64) -> EmitState {
+    if j >= count {
+        return s;
+    }
+    let elem: i64 = __mind_load_i64(elems_addr + j * 8);
+    let lit: i64 = arr_elem_int(src, elem);
+    let s1: EmitState = emit_sleb_zigzag(s, lit);
+    emit_arr_elems(s1, src, elems_addr, count, j + 1)
+}
+
 pub fn emit_mic3_tree_body(s: EmitState, nodes: i64, n_nodes: i64, vidbuf: i64, src: i64, strbuf: i64, offs: i64, n_strings: i64, i: i64) -> EmitState {
     if i >= n_nodes {
         return s;
@@ -16611,6 +16677,33 @@ pub fn emit_mic3_tree_body(s: EmitState, nodes: i64, n_nodes: i64, vidbuf: i64, 
         let s4: EmitState = emit_uleb128(s3, nargs);
         let s5: EmitState = emit_argcons_vids(s4, nodes, vidbuf, first_cons);
         return emit_mic3_tree_body(s5, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
+    }
+    // kind 7 = constant-int array literal -> OP_CONST_ARRAY (0x19): dst ||
+    // opt_string(None) || uleb(count) || per-element zigzag(value). Elements are
+    // baked into the instruction (no vids/instrs of their own) — see the
+    // array-const design note above emit_mic3_tree_body.
+    if kind == 7 {
+        let elems_addr: i64 = __mind_load_i64(nodes + i * 32 + 8);
+        let count: i64 = __mind_load_i64(nodes + i * 32 + 16);
+        let sa1: EmitState = es_push(s, 25);
+        let sa2: EmitState = emit_uleb128(sa1, dst);
+        let sa3: EmitState = es_push(sa2, 0);
+        let sa4: EmitState = emit_uleb128(sa3, count);
+        let sa5: EmitState = emit_arr_elems(sa4, src, elems_addr, count, 0);
+        return emit_mic3_tree_body(sa5, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
+    }
+    // kind 8 = array index READ -> OP_ARRAY_LOAD (0x1A): dst || base_vid ||
+    // index_vid. record[2]=base_slot, record[3]=index_slot.
+    if kind == 8 {
+        let base_slot: i64 = __mind_load_i64(nodes + i * 32 + 16);
+        let index_slot: i64 = __mind_load_i64(nodes + i * 32 + 24);
+        let base_vid: i64 = __mind_load_i64(vidbuf + base_slot * 8);
+        let index_vid: i64 = __mind_load_i64(vidbuf + index_slot * 8);
+        let sl1: EmitState = es_push(s, 26);
+        let sl2: EmitState = emit_uleb128(sl1, dst);
+        let sl3: EmitState = emit_uleb128(sl2, base_vid);
+        let sl4: EmitState = emit_uleb128(sl3, index_vid);
+        return emit_mic3_tree_body(sl4, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
     }
     let op_byte: i64 = __mind_load_i64(nodes + i * 32 + 8);
     let lslot: i64 = __mind_load_i64(nodes + i * 32 + 16);
@@ -17973,6 +18066,47 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         __mind_store_i64(nodes + slot * 32 + 8, 0);
         __mind_store_i64(nodes + slot * 32 + 16, cslot);
         __mind_store_i64(nodes + slot * 32 + 24, first_cons);
+        __mind_store_i64(cursor, slot + 1);
+        return slot;
+    }
+    if k == ast_array_lit() {
+        // `[e0, e1, ...]` constant-int array literal -> ONE array-const descriptor
+        // (kind 7). The oracle bakes the element VALUES into OP_CONST_ARRAY, so the
+        // elements get NO separate slots/vids. Fail-closed on a non-const element
+        // (or the tuple marker child0==1) — a non-const array cannot be baked.
+        if ast_child0(node) == 1 {
+            return 0 - 1;
+        }
+        let elems_addr: i64 = ast_child1(node);
+        let count: i64 = ast_aux(node);
+        if arrlit_all_int(elems_addr, count, 0) == 0 {
+            return 0 - 1;
+        }
+        let slot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + slot * 32 + 0, 7);
+        __mind_store_i64(nodes + slot * 32 + 8, elems_addr);
+        __mind_store_i64(nodes + slot * 32 + 16, count);
+        __mind_store_i64(nodes + slot * 32 + 24, 0);
+        __mind_store_i64(cursor, slot + 1);
+        return slot;
+    }
+    if k == ast_index() {
+        // `BASE[IDX]` index read -> array-load descriptor (kind 8). Base + index
+        // flatten post-order first (a let-bound array base resolves to its existing
+        // slot with no new node), then the load node takes the final vid.
+        let base_slot: i64 = flatten_expr_env(ast_child0(node), src, params_addr, n_params, nodes, cursor, env, nlets);
+        if base_slot < 0 {
+            return 0 - 1;
+        }
+        let index_slot: i64 = flatten_expr_env(ast_child1(node), src, params_addr, n_params, nodes, cursor, env, nlets);
+        if index_slot < 0 {
+            return 0 - 1;
+        }
+        let slot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + slot * 32 + 0, 8);
+        __mind_store_i64(nodes + slot * 32 + 8, 0);
+        __mind_store_i64(nodes + slot * 32 + 16, base_slot);
+        __mind_store_i64(nodes + slot * 32 + 24, index_slot);
         __mind_store_i64(cursor, slot + 1);
         return slot;
     }
