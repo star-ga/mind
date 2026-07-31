@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3239 | **Est. tokens:** ~7,786,137
-**Generated:** 2026-07-31 01:15 UTC
+**Files:** 3240 | **Est. tokens:** ~7,787,862
+**Generated:** 2026-07-31 02:11 UTC
 
 ## Token Budget Guide
 
@@ -58,7 +58,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 144 | ~339,852 |
+| `examples/mindc_mind/` | 145 | ~341,577 |
 | `examples/mindc_mind/testdata/` | 1 | ~2,452 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
@@ -875,7 +875,7 @@
 - `param_types_smoke.py` (~1273 tok, large)
 - `_ref_add.note` (~16 tok, tiny) — 6fa59a74687e6bac38c983655d4d93ab1873299f130f68cbe481cf92041f6610
 - `_ref_if_ret.note` (~16 tok, tiny) — 3fdc70390e9e12d8030552d11b2194078e8579fbcfac19b14d1beed77174cb07
-- `_ref_main.note` (~16 tok, tiny) — fc00efb7da3d603fb72905c4552f0318d066212574805053cde21e6559a30cde
+- `_ref_main.note` (~16 tok, tiny) — d8f1948016207c721e6f5d82a00aab8c346f3680fef5db226d1587cdb0581fbf
 - `ref_netverify.py` (~1464 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
 - `_ref_recursion.note` (~16 tok, tiny) — 6d125a946243b0550700d9aa6bc2058b51a3b8bf6e536a8b0b3f545d79b7346f
 - `_ref_struct_field.note` (~16 tok, tiny) — 2f7f2ea32ee47138e1b0162bd51f418b4e5005b4569054f5f3c392ebd2258d96
@@ -896,6 +896,7 @@
 - `self_host_float_lit_exact_smoke.py` (~1069 tok, large) — CPU-as-oracle smoke for the C1 float-literal exactness guard.
 - `self_host_for_smoke.py` (~3191 tok, huge) — Permanent battery for the self-host range-`for` loop.
 - `self_host_if_region_carry_smoke.py` (~4552 tok, huge) — Native-ELF smoke: i64 loop-carry through BRANCHED regions (Sub-step C).
+- `self_host_ifret_chain_mic3_smoke.py` (~1725 tok, huge)
 - `self_host_lockstep_smoke.py` (~2161 tok, huge) — SUB-STEP A lockstep smoke: the loop-carry frame COUNT and the loop-carry EMIT are
 - `self_host_loop_smoke.py` (~3420 tok, huge)
 - `self_host_match_smoke.py` (~1893 tok, huge)
