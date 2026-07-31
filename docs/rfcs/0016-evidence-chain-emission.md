@@ -8,7 +8,7 @@
 | Authors | STARGA Inc. |
 | Created | 2026-05-26 |
 | Task | #288 |
-| Carrier | mic@2.1 MAP `evidence_chain.*` namespace ([mic2.1-spec.md](../../../mind-spec/spec/mic/mic2.1-spec.md) §4, §6) |
+| Carrier | mic@3 MAP `evidence_chain.*` namespace (namespace specified for mic@2.1 MAP: [mic2.1-spec.md](https://github.com/star-ga/mind-spec/blob/main/spec/mic/mic2.1-spec.md) §4, §6; `trace_hash` re-anchored to canonical mic@3 bytes 2026-05-31 — see §3.3) |
 | Related | RFC 0011 (ReplayScheduler trace-hash — the runtime trace source), RFC 0014 (per-substrate lowering — the `substrate` field), RFC 0015 (cross-substrate bit-identity — the attested property), RFC 0017 (`mindc verify` — the cross-target certificate the chain can carry), RFC 0019 / #294 (deterministic agent substrate — `agent.*` links INTO the chain), RFC 0020 (#303 mind-bench — the public wedge-score is a chain link), 512-mind DIFC `proof_chain` (governance consumer, NOT a parallel chain) |
 
 ---
@@ -46,7 +46,7 @@ for RFC 0019 to build on.
 
 ## 2. Non-goals
 
-- **Not a new wire format.** The carrier is mic@2.1 MAP (already specified). This
+- **Not a new wire format.** The carrier is the mic@3 MAP; its `evidence_chain.*` namespace was already specified for mic@2.1 MAP and is inherited unchanged. This
   RFC defines key *semantics*, not encoding.
 - **Not a new signer.** Signing is mic@2.1 §6 (Ed25519 via `mind_mem.model_signing`).
   One primitive across mind-mem / mic@2.1 / evidence-chain (anti-fragmentation; §7).
@@ -62,7 +62,7 @@ for RFC 0019 to build on.
 
 ## 3. The evidence-chain object
 
-An **evidence link** is the `evidence_chain.*` MAP block of a single mic@2.1
+An **evidence link** is the `evidence_chain.*` MAP block of a single mic@3
 artifact. It records, for the graph it is attached to:
 
 | Key | Type | Meaning |

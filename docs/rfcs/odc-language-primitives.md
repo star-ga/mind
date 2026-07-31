@@ -41,6 +41,6 @@ The compiler emits proof that a code path is:
 Compile-time verification that composed computations use compatible observation bases.
 
 ## References
-- [ODC Specification v1.0](specs/observer-dependent-cognition.md)
+- ODC Specification v1.0 (spec doc forthcoming)
 - QBism: Stanford Encyclopedia of Philosophy
 - Wang et al., "Decoupling Metacognition from Cognition" (AAAI 2025)
