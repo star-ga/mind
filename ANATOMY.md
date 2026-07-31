@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3242 | **Est. tokens:** ~7,790,681
-**Generated:** 2026-07-31 04:16 UTC
+**Files:** 3245 | **Est. tokens:** ~7,790,861
+**Generated:** 2026-07-31 15:09 UTC
 
 ## Token Budget Guide
 
@@ -45,7 +45,7 @@
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
 | `docs/mindcraft/` | 3 | ~7,086 |
-| `docs/rfcs/` | 31 | ~143,593 |
+| `docs/rfcs/` | 31 | ~143,643 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 28 | ~49,880 |
 | `examples/bimap_currency/` | 3 | ~780 |
@@ -58,7 +58,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 147 | ~344,385 |
+| `examples/mindc_mind/` | 147 | ~346,146 |
 | `examples/mindc_mind/testdata/` | 1 | ~2,452 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
@@ -70,13 +70,13 @@
 | `.githooks/` | 1 | ~255 |
 | `.github/` | 3 | ~149 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 9 | ~15,386 |
+| `.github/workflows/` | 9 | ~15,387 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~18,670 |
 | `scripts/` | 10 | ~12,690 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
-| `sdk/ts/mic-map/` | 6 | ~22,706 |
+| `sdk/ts/mic-map/` | 6 | ~16,202 |
 | `sdk/ts/mic-map/dist/` | 36 | ~29,044 |
 | `sdk/ts/mic-map/node_modules/` | 1 | ~13,764 |
 | `sdk/ts/mic-map/node_modules/@ampproject/remapping/` | 3 | ~5,225 |
@@ -388,12 +388,12 @@
 | `src/diagnostics/` | 1 | ~3,719 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,987 |
-| `src/eval/` | 14 | ~76,856 |
+| `src/eval/` | 14 | ~77,340 |
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~21,719 |
-| `src/ir/` | 5 | ~47,295 |
+| `src/ir/` | 5 | ~47,725 |
 | `src/ir/compact/` | 3 | ~15,271 |
 | `src/ir/compact/v2/` | 8 | ~38,404 |
 | `src/ir/compact/v3/` | 6 | ~49,105 |
@@ -410,11 +410,11 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,979 |
-| `src/type_checker/` | 1 | ~13,034 |
+| `src/type_checker/` | 1 | ~14,834 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~198,092 |
-| `tests/` | 309 | ~527,807 |
+| `tests/` | 310 | ~530,096 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -456,9 +456,9 @@
 | `tests/mindcraft/lint/q16_overflow/` | 3 | ~191 |
 | `tests/mindcraft/lint/shadowing/` | 2 | ~87 |
 | `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
-| `tests/mindfuzz_cross_substrate/staged/` | 17 | ~3,191 |
+| `tests/mindfuzz_cross_substrate/staged/` | 16 | ~2,989 |
 | `tests/runtime/` | 2 | ~135 |
-| `tests/selfhost_gaps/` | 67 | ~5,301 |
+| `tests/selfhost_gaps/` | 70 | ~5,372 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tools/` | 4 | ~4,578 |
@@ -720,7 +720,7 @@
 - `0013-cli-agent-harness-stack.md` (~6781 tok, huge) — RFC 0013: CLI Agent Harness Stack
 - `0014-per-substrate-mlir-lowering-contracts.md` (~5412 tok, huge) — RFC 0014: Per-Substrate MLIR Lowering Pipeline Contracts
 - `0015-cross-substrate-bit-identity.md` (~5174 tok, huge) — RFC 0015: Cross-Substrate Bit-Identity Proof Obligation
-- `0016-evidence-chain-emission.md` (~6944 tok, huge) — RFC 0016: Compile-Time Evidence-Chain Emission
+- `0016-evidence-chain-emission.md` (~6998 tok, huge) — RFC 0016: Compile-Time Evidence-Chain Emission
 - `0017-mindc-verify.md` (~3745 tok, huge) — RFC 0017: `mindc verify` — Artifact Verification Surface
 - `0018-bare-metal-substrate.md` (~3799 tok, huge) — RFC 0018: Bare-Metal Substrate Lowering Tier
 - `0019-deterministic-agent-substrate.md` (~4131 tok, huge) — RFC 0019: Deterministic Agent Substrate
@@ -730,7 +730,7 @@
 - `0024-loop-collapse.md` (~7579 tok, huge) — RFC 0024: Loop Collapse — prove-or-fail closed-form replacement of counted loops (`#[collapse]`)
 - `DRAFT-deterministic-format-frontend.md` (~10507 tok, huge) — RFC DRAFT: Deterministic Multi-Format Ingest Front-End (JSON / TOON / CSV / TSV / NDJSON / TOML)
 - `DRAFT-deterministic-json-frontend.md` (~5175 tok, huge) — RFC DRAFT: Deterministic Streaming SIMD JSON Structural Front-End
-- `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
+- `odc-language-primitives.md` (~418 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
 
@@ -962,7 +962,7 @@
 - `self_host_param_mutation_smoke.py` (~1243 tok, large) — CPU-as-oracle smoke for the param-mutation fix (nb_expr ident arm: consult the
 - `_selfhost_so.py` (~919 tok, large) — Shared self-host `.so` resolver for the examples/mindc_mind smokes.
 - `self_host_standalone_driver_smoke.py` (~3226 tok, huge)
-- `self_host_struct_return_smoke.py` (~2528 tok, huge) — self_host_struct_return_smoke.py — regression lock for STRUCT-BY-VALUE
+- `self_host_struct_return_smoke.py` (~4113 tok, huge) — self_host_struct_return_smoke.py — regression lock for STRUCT-BY-VALUE
 - `self_host_tc_classify_error_code_smoke.py` (~2158 tok, huge) — CPU-as-oracle smoke for the pure-MIND classify_error_code router.
 - `self_host_tc_class_mismatch_smoke.py` (~840 tok, large) — CPU-as-oracle smoke for the pure-MIND E2015 int<->float class-mismatch rule.
 - `self_host_tc_class_rules_smoke.py` (~1560 tok, huge) — CPU-as-oracle smoke for the pure-MIND E2010/E2011/E2013/E2016 class rules.
@@ -978,7 +978,7 @@
 - `self_host_tc_shape_annot_compat_smoke.py` (~1615 tok, huge) — CPU-as-oracle smoke for the pure-MIND shape annotation-compat rule.
 - `self_host_tc_shape_rules_smoke.py` (~1820 tok, huge) — CPU-as-oracle smoke for the pure-MIND E2005/E2101/E2102/E2103 shape rules + E2023 reserved-prefix rule.
 - `self_host_tc_std_export_smoke.py` (~3178 tok, huge) — CPU-as-oracle smoke for the pure-MIND D3 STD-SURFACE EXPORT NAME SET.
-- `self_host_tc_undeclared_assign_smoke.py` (~6743 tok, huge) — CPU-as-oracle smoke for the pure-MIND B1 E2009 rule — undeclared assign.
+- `self_host_tc_undeclared_assign_smoke.py` (~6919 tok, huge) — CPU-as-oracle smoke for the pure-MIND B1 E2009 rule — undeclared assign.
 - `self_host_tc_unknown_call_smoke.py` (~8459 tok, huge) — CPU-as-oracle smoke for the pure-MIND B1 E2003 rule — unknown call.
 - `self_host_tc_unknown_ident_smoke.py` (~11052 tok, huge) — CPU-as-oracle smoke for the pure-MIND B1 E2002 rule — unknown identifier.
 - `self_host_tc_unknown_variant_smoke.py` (~1911 tok, huge) — CPU-as-oracle smoke for the pure-MIND E2008 unknown-enum-variant rule.
@@ -1079,7 +1079,7 @@
 - `ci.yml` (~9305 tok, huge) — name: CI
 - `crypto-vectors.yml` (~1238 tok, large) — name: Crypto Vectors
 - `docs-claims.yml` (~396 tok, medium) — name: Docs Claims
-- `link-check.yml` (~221 tok, medium) — name: Link Check
+- `link-check.yml` (~222 tok, medium) — name: Link Check
 - `mindcraft.yml` (~715 tok, large) — name: Mindcraft Check
 - `release-drafter.yml` (~91 tok, small) — name: Release Drafter
 - `release.yml` (~1756 tok, huge) — name: Release
@@ -3864,7 +3864,7 @@
 ### `sdk/ts/mic-map/`
 
 - `package.json` (~210 tok, medium) — Keys: name, version, description, type, private
-- `package-lock.json` (~19547 tok, huge) — Keys: name, version, lockfileVersion, requires, packages
+- `package-lock.json` (~13043 tok, huge) — Keys: name, version, lockfileVersion, requires, packages
 - `README.md` (~152 tok, small) — @mind/mic-map
 ### `sdk/ts/mic-map/scripts/`
 
@@ -3952,7 +3952,7 @@
 - `closures.rs` (~6915 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~3818 tok, huge) — Copyright 2025 STARGA Inc.
-- `mlir_build.rs` (~8937 tok, huge) — Copyright 2025 STARGA Inc.
+- `mlir_build.rs` (~9421 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~12220 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
@@ -4011,7 +4011,7 @@
 - `fp_mode.rs` (~13657 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
 - `mod.rs` (~12311 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
-- `verify.rs` (~12028 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify.rs` (~12458 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `lib.rs` (~1012 tok, large) — Copyright 2025 STARGA Inc.
@@ -4095,7 +4095,7 @@
 - `mod.rs` (~5979 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `resolve.rs` (~13034 tok, huge) — Copyright 2025 STARGA Inc.
+- `resolve.rs` (~14834 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
@@ -4525,7 +4525,6 @@
 - `mindfuzz_cross_substrate.rs` (~15224 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/mindfuzz_cross_substrate/staged/`
 
-- `fuzz_repro_seed_deadbeef_prog000.mind` (~202 tok, medium) — DIVERGENCE REPRODUCER (issue #72 fuzzer)
 - `fuzz_repro_seed_deadbeef_prog006.mind` (~157 tok, small) — DIVERGENCE REPRODUCER (issue #72 fuzzer)
 - `manifest.tsv` (~357 tok, medium) — scalar_arith_step000	f	3735928559	64	5e39820a2a8325417e39057f19ba9bceec01bd2068c
 - `scalar_accum_step000.mind` (~154 tok, small) — MIND-Fuzz seed: scalar accumulator with a return-feeding literal.
@@ -4561,6 +4560,7 @@
 - `module_const_run.rs` (~774 tok, large) — Copyright 2025 STARGA Inc.
 - `module_decl_run.rs` (~643 tok, large) — Copyright 2025 STARGA Inc.
 - `module_enum_match_run.rs` (~1034 tok, large) — Copyright 2025 STARGA Inc.
+- `module_non_fn_call_reject.rs` (~1215 tok, large) — Copyright 2025 STARGA Inc.
 - `narrow_call_abi.rs` (~1374 tok, large) — Copyright 2025 STARGA Inc.
 - `narrowing_check.rs` (~438 tok, medium) — Regression test for the silent i64->i32 narrowing miscompile found by MIND-Fuzz
 - `narrow_local_mask_run.rs` (~838 tok, large) — Copyright 2025 STARGA Inc.
@@ -4672,6 +4672,9 @@
 - `struct-lit_1.mind` (~63 tok, small)
 - `struct-lit_2.mind` (~56 tok, small)
 - `struct-lit_3.mind` (~60 tok, small)
+- `struct-lit-field-recv_1.mind` (~23 tok, tiny)
+- `struct-lit-field-recv_2.mind` (~23 tok, tiny)
+- `struct-lit-field-recv_3.mind` (~25 tok, tiny)
 - `value-ifexpr_1.mind` (~98 tok, small) — MISMATCH: a `let`-block in a NESTED (else-if) branch of a value if-expr.
 - `value-ifexpr_2.mind` (~79 tok, small) — MISMATCH: same-named `let` in two SIBLING branches of a value if-expr.
 - `value-ifexpr_3.mind` (~71 tok, small) — MISMATCH: a `let` inside a NESTED if-expr that sits in the THEN-side of an
@@ -4806,7 +4809,7 @@
 - `verify_cli.rs` (~3821 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify_holes.rs` (~2624 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify_pinned_signer.rs` (~993 tok, large) — Copyright 2025 STARGA Inc.
-- `verify_ssa.rs` (~6339 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify_ssa.rs` (~7413 tok, huge) — Copyright 2025 STARGA Inc.
 - `x25519mlkem768_driver.py` (~2378 tok, huge) — # Known-answer driver for std/x25519mlkem768.mind (pure-MIND X25519MLKEM768
 - `x25519_vectors_driver.py` (~1525 tok, huge) — # Official-vector driver for std/x25519.mind (pure-MIND Curve25519 ECDH).
 - `x509_vectors_driver.py` (~3593 tok, huge) — # Real-certificate driver for std/x509.mind (pure-MIND X.509 DER parsing + RSA

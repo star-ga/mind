@@ -15304,7 +15304,11 @@ pub fn slit_stmt_snode(stmt: i64) -> i64 {
 
 // Number of output statements a top-level statement expands to: a desugarable struct-lit
 // (resolvable type, all fields present) -> nfields + 2 (alloc-let + stores + final), else 1.
-pub fn slit_stmt_outn(stmt: i64, src: i64, srt: i64) -> i64 {
+// `fr_ok` (1/0): whether a FIELD-RECEIVER hoist may fire for THIS statement — true only
+// when no prior struct-construction has expanded in the body (the synthetic `__sl` would be
+// the first `__mind_alloc`-named alloc-let, so the field prefold's first-match type scan
+// resolves it). The caller computes fr_ok = (running expanded length == input index).
+pub fn slit_stmt_outn(stmt: i64, src: i64, srt: i64, fr_ok: i64) -> i64 {
     let snode: i64 = slit_stmt_snode(stmt);
     if snode != 0 {
         let k: i64 = srt_find_by_name(srt, src, ast_child0(snode), ast_child2(snode), 0);
@@ -15331,16 +15335,40 @@ pub fn slit_stmt_outn(stmt: i64, src: i64, srt: i64) -> i64 {
         }
         return 2 * hnf + 2;
     }
+    // FIELD-RECEIVER HOIST (gated by fr_ok): `P{..}.x` -> same [alloc + stores] + using stmt.
+    if fr_ok == 1 {
+        let frs: i64 = slit_stmt_field_recv_snode(stmt);
+        if frs != 0 {
+            let fk: i64 = srt_find_by_name(srt, src, ast_child0(frs), ast_child2(frs), 0);
+            if fk < 0 {
+                return 1;
+            }
+            let fnf: i64 = srt_field_count(srt, fk);
+            if ast_aux(frs) != fnf {
+                return 1;
+            }
+            return 2 * fnf + 2;
+        }
+    }
     1
 }
 
-// Sum of expanded lengths over a statement list (used to size the new array).
-pub fn slit_seq_len(stmts_addr: i64, stmts_len: i64, src: i64, srt: i64, i: i64) -> i64 {
+// Sum of expanded lengths over a statement list (used to size the new array). `acc` is the
+// running expanded length of statements 0..i; fr_ok = (acc == i) means no prior construction
+// expanded, so a field-receiver at i is safe to hoist. seq_fill applies the identical left-
+// to-right gate via (out == i), keeping sizing and filling in lockstep.
+pub fn slit_seq_len(stmts_addr: i64, stmts_len: i64, src: i64, srt: i64, i: i64, acc: i64) -> i64 {
     if i >= stmts_len {
         return 0;
     }
     let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
-    slit_stmt_outn(stmt, src, srt) + slit_seq_len(stmts_addr, stmts_len, src, srt, i + 1)
+    let fr_ok: i64 = if acc == i {
+        1
+    } else {
+        0
+    };
+    let outn: i64 = slit_stmt_outn(stmt, src, srt, fr_ok);
+    outn + slit_seq_len(stmts_addr, stmts_len, src, srt, i + 1, acc + outn)
 }
 
 // Write the per-field store-lets for one struct-lit into new_stmts[base..base+nfields).
@@ -15452,19 +15480,62 @@ pub fn slit_hoist_replace(stmt: i64, alo: i64, ahi: i64) -> i64 {
     slit_hoist_replace_arg(ast_child1(expr), ast_aux(expr), 0, alo, ahi)
 }
 
+// FIELD-RECEIVER HOIST detector: a struct-lit that appears as the DIRECT receiver of a
+// field access in the statement's value expr (`return P{..}.x` / `let y = P{..}.x` /
+// trailing `P{..}.x`). Returns the struct-lit node, or 0. The hoist rewrites it into a
+// synthetic `let __sl: P = __mind_alloc(..); <stores>; <stmt with recv -> __sl>` so the
+// existing ident-receiver field prefold folds `__sl.x` -> `__mind_load_i64(__sl + idx*8)`.
+// SAFETY: this is only byte-correct when the synthetic `__sl` alloc-let is the FIRST
+// struct-construction in the body (all synthetic alloc-lets share the `__mind_alloc` name
+// span, and the field prefold's type scan is first-match) — the caller gates it on that
+// via `fr_ok` (output index == input index, i.e. no prior construction expanded). When a
+// prior construction exists the hoist is suppressed and the raw struct-lit-field falls
+// through to flatten, which fails closed (0 bytes) — never a miscompile.
+pub fn slit_stmt_field_recv_snode(stmt: i64) -> i64 {
+    let expr: i64 = slit_hoist_expr_of(stmt);
+    if ast_kind(expr) != ast_field() {
+        return 0;
+    }
+    let recv: i64 = ast_child0(expr);
+    if ast_kind(recv) == ast_struct_lit() {
+        return recv;
+    }
+    0
+}
+
+// Mutate: replace the struct-lit receiver of the value expr's field access with a fresh
+// `__mind_alloc` ident (so the following `__sl.x` resolves the hoisted alloc handle);
+// return the struct-lit node.
+pub fn slit_field_recv_replace(stmt: i64, alo: i64, ahi: i64) -> i64 {
+    let expr: i64 = slit_hoist_expr_of(stmt);
+    if ast_kind(expr) != ast_field() {
+        return 0;
+    }
+    let recv: i64 = ast_child0(expr);
+    if ast_kind(recv) == ast_struct_lit() {
+        __mind_store_i64(expr + 24, ast_new_leaf(ast_ident(), alo, ahi));
+        return recv;
+    }
+    0
+}
+
 // Emit ONLY the alloc-let + per-field value/store-lets for a hoisted struct-lit (NO final
 // statement — the using statement, with the struct-lit replaced by an __mind_alloc ident,
 // follows). Returns the count emitted (2*nfields + 1). The __mind_alloc-named handle is
 // resolved by the following statement via letenv_lookup last-match, byte-exact vs the
 // oracle's anonymous alloc/store SSA values.
-pub fn slit_emit_ctor_hoist(new_stmts: i64, out: i64, snode: i64, src: i64, srt: i64, k: i64, nfields: i64, alo: i64, ahi: i64, slo: i64, shi: i64) -> i64 {
+// `ty` is the alloc-let's type annotation node (0 = untyped). A call-arg hoist passes 0
+// (byte-identical to the original untyped alloc-let, since a type annotation emits no
+// instruction); a FIELD-RECEIVER hoist passes a synthetic struct-name type node so the
+// ident-receiver field prefold can resolve `__sl.<field>`.
+pub fn slit_emit_ctor_hoist(new_stmts: i64, out: i64, snode: i64, src: i64, srt: i64, k: i64, nfields: i64, alo: i64, ahi: i64, slo: i64, shi: i64, ty: i64) -> i64 {
     let size: i64 = ast_new_binop(0, 0, mk_syn_intlit(8), mk_syn_intlit(nfields), op_mul());
     let acallee: i64 = ast_new_leaf(ast_ident(), alo, ahi);
     let aargs: i64 = __mind_alloc(8);
     __mind_store_i64(aargs + 0, size);
     let acall: i64 = ast_new_call(0, 0, acallee, aargs, 1);
     let aname: i64 = ast_new_leaf(ast_ident(), alo, ahi);
-    let alet: i64 = ast_new_let(0, 0, aname, 0, acall);
+    let alet: i64 = ast_new_let(0, 0, aname, ty, acall);
     __mind_store_i64(new_stmts + out * 8, alet);
     let _f: i64 = slit_fill_stores_at(new_stmts, out + 1, ast_child1(snode), ast_aux(snode), src, srt, k, nfields, alo, ahi, slo, shi, 0);
     2 * nfields + 1
@@ -15479,7 +15550,14 @@ pub fn slit_seq_fill(new_stmts: i64, out_cell: i64, stmts_addr: i64, stmts_len: 
     }
     let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
     let out: i64 = __mind_load_i64(out_cell);
-    let outn: i64 = slit_stmt_outn(stmt, src, srt);
+    // fr_ok mirrors slit_seq_len's (acc == i) gate: out == i iff no prior construction
+    // expanded, so a field-receiver hoist here is the FIRST __mind_alloc-named alloc-let.
+    let fr_ok: i64 = if out == i {
+        1
+    } else {
+        0
+    };
+    let outn: i64 = slit_stmt_outn(stmt, src, srt, fr_ok);
     if outn == 1 {
         __mind_store_i64(new_stmts + out * 8, stmt);
         __mind_store_i64(out_cell, out + 1)
@@ -15491,14 +15569,32 @@ pub fn slit_seq_fill(new_stmts: i64, out_cell: i64, stmts_addr: i64, stmts_len: 
             let _e: i64 = slit_emit_ctor(new_stmts, out, stmt, snode, src, srt, k, nfields, alo, ahi, slo, shi);
             __mind_store_i64(out_cell, out + 2 * nfields + 2)
         } else {
-            // HOIST: mutate the statement (struct-lit arg -> __mind_alloc ident), emit the
-            // alloc+stores, then the rewritten statement.
-            let hnode: i64 = slit_hoist_replace(stmt, alo, ahi);
-            let hk: i64 = srt_find_by_name(srt, src, ast_child0(hnode), ast_child2(hnode), 0);
-            let hnf: i64 = srt_field_count(srt, hk);
-            let hc: i64 = slit_emit_ctor_hoist(new_stmts, out, hnode, src, srt, hk, hnf, alo, ahi, slo, shi);
-            __mind_store_i64(new_stmts + (out + hc) * 8, stmt);
-            __mind_store_i64(out_cell, out + hc + 1)
+            // outn>1 with no direct snode: a FIELD-RECEIVER hoist (gated by fr_ok) or a
+            // call-arg hoist. A field-receiver synthesizes the struct's TYPE annotation on
+            // the alloc-let (from the struct-lit's name span) so the ident-receiver field
+            // prefold resolves `__sl.x`; a call-arg hoist passes ty=0 (byte-identical to the
+            // pre-existing untyped alloc-let).
+            let frs: i64 = if fr_ok == 1 {
+                slit_stmt_field_recv_snode(stmt)
+            } else {
+                0
+            };
+            if frs != 0 {
+                let fty: i64 = ast_new_leaf(ast_ident(), ast_child0(frs), ast_child2(frs));
+                let _fr: i64 = slit_field_recv_replace(stmt, alo, ahi);
+                let fk: i64 = srt_find_by_name(srt, src, ast_child0(frs), ast_child2(frs), 0);
+                let fnf: i64 = srt_field_count(srt, fk);
+                let fc: i64 = slit_emit_ctor_hoist(new_stmts, out, frs, src, srt, fk, fnf, alo, ahi, slo, shi, fty);
+                __mind_store_i64(new_stmts + (out + fc) * 8, stmt);
+                __mind_store_i64(out_cell, out + fc + 1)
+            } else {
+                let hnode: i64 = slit_hoist_replace(stmt, alo, ahi);
+                let hk: i64 = srt_find_by_name(srt, src, ast_child0(hnode), ast_child2(hnode), 0);
+                let hnf: i64 = srt_field_count(srt, hk);
+                let hc: i64 = slit_emit_ctor_hoist(new_stmts, out, hnode, src, srt, hk, hnf, alo, ahi, slo, shi, 0);
+                __mind_store_i64(new_stmts + (out + hc) * 8, stmt);
+                __mind_store_i64(out_cell, out + hc + 1)
+            }
         }
     }
     slit_seq_fill(new_stmts, out_cell, stmts_addr, stmts_len, src, srt, alo, ahi, slo, shi, i + 1)
@@ -15516,7 +15612,7 @@ pub fn slit_desugar_body_seq(fn_node: i64, src: i64, srt: i64, alo: i64, ahi: i6
     }
     let stmts_addr: i64 = ast_child0(body);
     let stmts_len: i64 = ast_aux(body);
-    let new_len: i64 = slit_seq_len(stmts_addr, stmts_len, src, srt, 0);
+    let new_len: i64 = slit_seq_len(stmts_addr, stmts_len, src, srt, 0, 0);
     if new_len == stmts_len {
         return 0;
     }
