@@ -677,6 +677,23 @@ impl<'a> Resolver<'a> {
         true
     }
 
+    /// The E2009 (`UNDECLARED_ASSIGN`) predicate: an assignment target name that
+    /// is PROVABLY neither (i) bound in any active local scope frame NOR (ii) a
+    /// known module-level name (fn/const/let/struct/enum/type-alias/extern +
+    /// injected cross-module symbols). The loose lowerer auto-creates a fresh
+    /// variable for an assignment to such an unbound name, turning a typo
+    /// (`conter = counter + 1`) into wrong runtime output with no diagnostic;
+    /// flagging it fails that shape closed. Forward-declared module state is a
+    /// module-level name, so it still resolves — when in doubt (any known name),
+    /// we keep accepting.
+    ///
+    /// Pure sibling of `ident_resolvable`/`call_resolvable`/`is_fn_value_call`:
+    /// the negated scope-frame membership plus module-symbol resolvability, with
+    /// no I/O or diagnostic emission — the caller owns the `Unresolved` push.
+    fn is_undeclared_assign(&self, name: &str) -> bool {
+        !self.scopes.contains(name) && !self.syms.name_resolvable(name)
+    }
+
     /// Classify a qualified `Enum::Variant` value/constructor path. Returns
     /// `Some(enum_name)` ONLY when the head names a locally-declared enum but the
     /// trailing segment is NOT one of that enum's variants — a typo the lowerer
@@ -859,16 +876,11 @@ impl<'a> Resolver<'a> {
             Node::Assign { name, value, span } => {
                 // `name` is an l-value. Resolve the RHS first.
                 self.walk(value);
-                // Silent-miscompile guard: the loose lowerer auto-creates a
-                // fresh variable for an assignment to an unbound name, turning a
-                // typo (`conter = counter + 1`) into wrong runtime output with
-                // no diagnostic. Flag an assign target that is PROVABLY neither
-                // (i) bound in any active local scope frame NOR (ii) a known
-                // module-level name (fn/const/let/struct/enum/type-alias/extern +
-                // injected cross-module symbols). Forward-declared module state
-                // is a module-level name, so it still resolves — when in doubt
-                // (any known name), we keep accepting.
-                if !self.scopes.contains(name) && !self.syms.name_resolvable(name) {
+                // Silent-miscompile guard (see `is_undeclared_assign`): the loose
+                // lowerer auto-creates a fresh variable for an assignment to an
+                // unbound name, turning a typo (`conter = counter + 1`) into wrong
+                // runtime output with no diagnostic. Flag the undeclared target.
+                if self.is_undeclared_assign(name) {
                     let suggestion = suggest(name, &self.scopes, self.syms);
                     self.out.push(Unresolved {
                         name: name.clone(),
