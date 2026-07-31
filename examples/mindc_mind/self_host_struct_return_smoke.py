@@ -45,13 +45,31 @@ base+offset*8 off the returned i64 struct handle. Read arms only — the field
 descriptor is inferred identically for the ident-receiver case, so main.mind's
 own `let r = parse_...(); r.field` reads emit byte-identically.
 
+Chained field on a struct-returning call `mk().x.v` (LANDED)
+------------------------------------------------------------
+When the intermediate field `.x` is itself a STRUCT type, `mk().x.v` now RUNS
+correctly. nb_field_recv_desc_r's ast_field arm (added with the struct-typed
+field-read slice) routes the intermediate receiver `mk().x` through
+nb_field_type_desc: it resolves `mk()`'s descriptor (nb_struct_desc_from_call),
+finds field `x`, reads the -(inner_sk+2) struct-typed sentinel off the decl
+descriptor, and rebuilds the inner struct's descriptor — so `.v` loads off the
+correct inner offset. This is fully recursive, so 3-level chains `mk().x.v.s`
+(each intermediate a struct) resolve left-to-right, and it composes anywhere a
+field-read expr is valid (arith operand, call arg). No emit-side change was
+needed for the CALL innermost receiver — the ident/nested/call receiver kinds
+share nb_field_recv_desc_r, so this smoke only LOCKS the working shape.
+
 Fail-closed boundary (the genuine remaining gaps — correctly refused today)
 -------------------------------------------------------------------------
 Adjacent shapes the REFERENCE frontend (`mindc --emit-ir`) accepts but the
 native path still refuses 0B — honest fail-closed gaps, NOT miscompiles:
 
-  * Chained field on a call `mk().x.y` — the outer receiver `mk().x` is itself a
-    field access (not a call/ident with a resolvable descriptor), so it defers.
+  * Chained field on a call where the INTERMEDIATE field is NON-struct
+    `struct P{x:i64}; mk().x.y` — `.x` is i64, so there is no inner struct
+    descriptor to recurse into; the read defers (0B). (When `.x` IS a struct it
+    now RUNS — see above; only the non-struct-intermediate chain refuses.)
+  * Chained field that dead-ends on a scalar `mk().x.v.q` (`.v` is i64) or names
+    an unknown inner field `mk().x.zzz` — no descriptor / no field, refuses.
   * Field on a NON-struct-returning call `fn mk()->i64{..}; mk().x` — no struct
     descriptor to infer, so the field read refuses.
 
@@ -112,6 +130,11 @@ def run(src: str):
 
 P = "struct P { x: i64, y: i64 }\n"
 Q = "struct Q { a: i64, b: i64, c: i64 }\n"
+# Nested-struct preludes for the CHAINED field-on-call cases: PQ makes P's field
+# `x` a struct type (Qi{v,w}); PQR nests one deeper (Qi.v is Ri{s,t}) for the
+# 3-level chain. Distinct inner names so they don't collide with the flat Q above.
+PQ = "struct Q { v: i64, w: i64 }\nstruct P { x: Q, y: i64 }\n"
+PQR = "struct R { s: i64, t: i64 }\nstruct Q { v: R, w: i64 }\nstruct P { x: Q, y: i64 }\n"
 
 # (label, source, want)  — want is a HAND-ENUMERATED expected exit code derived
 # from the fixture's own semantics, INDEPENDENT of the port's algorithm (Rule 3a:
@@ -177,6 +200,31 @@ SUPPORTED = [
     # descriptor independently): mk().x + mk().y == 7 + 9.
     ("direct field on call, arith mk().x + mk().y",
      P + "fn mk()->P{ return P{x:7,y:9}; }\nfn main()->i64{ return mk().x + mk().y; }", 16),
+    # CHAINED field on a struct-returning call `mk().x.v` where the intermediate
+    # field `.x` is a STRUCT type (LANDED): nb_field_recv_desc_r recurses through
+    # nb_field_type_desc to resolve mk()'s P descriptor, then P.x's inner Q
+    # descriptor, then loads .v off it. Read arms only; fully recursive.
+    ("chained field on call: mk().x.v (x:Q struct)",
+     PQ + "fn mk()->P{ return P{x:Q{v:7,w:8},y:9}; }\nfn main()->i64{ return mk().x.v; }", 7),
+    ("chained field on call: mk().x.w (inner field 2)",
+     PQ + "fn mk()->P{ return P{x:Q{v:7,w:8},y:9}; }\nfn main()->i64{ return mk().x.w; }", 8),
+    # single scalar field on the SAME two-struct shape (sibling of the chain).
+    ("field on call, scalar sibling: mk().y",
+     PQ + "fn mk()->P{ return P{x:Q{v:7,w:8},y:9}; }\nfn main()->i64{ return mk().y; }", 9),
+    # 3-level chain: each intermediate (`.x` -> Q, `.v` -> R) is a struct, so the
+    # recursion resolves left-to-right and `.s` loads off R.
+    ("3-level chain on call: mk().x.v.s (x:Q, Q.v:R struct)",
+     PQR + "fn mk()->P{ return P{x:Q{v:R{s:11,t:12},w:8},y:9}; }\nfn main()->i64{ return mk().x.v.s; }", 11),
+    # chained read composed in arithmetic: mk().x.v + mk().x.w == 7 + 8.
+    ("chained field on call, arith mk().x.v + mk().x.w",
+     PQ + "fn mk()->P{ return P{x:Q{v:7,w:8},y:9}; }\nfn main()->i64{ return mk().x.v + mk().x.w; }", 15),
+    # chained read fed as a call ARG: id(mk().x.v) == 7.
+    ("chained field on call as arg: id(mk().x.v)",
+     PQ + "fn mk()->P{ return P{x:Q{v:7,w:8},y:9}; }\nfn id(n:i64)->i64{ return n; }\n"
+          "fn main()->i64{ return id(mk().x.v); }", 7),
+    # chained on a call WITH an arg: mk(3).x.v == 3 (arg flows to the inner field).
+    ("chained field on call-with-arg: mk(3).x.v",
+     PQ + "fn mk(n:i64)->P{ return P{x:Q{v:n,w:8},y:9}; }\nfn main()->i64{ return mk(3).x.v; }", 3),
 ]
 
 # (label, source)  — MUST refuse 0B. Genuine fail-closed gaps: the native path
@@ -185,12 +233,22 @@ SUPPORTED = [
 # implementing them correctly is the next slice — a change that makes them RUN
 # must return the right value or this control trips.
 REFUSED = [
-    # chained field on a call `mk().x.y` — the OUTER receiver mk().x is itself a
-    # field access (no resolvable descriptor), so it defers (0B), never a
-    # wrong-value ELF. A control that the direct-call support does not over-fire
-    # onto chained-receiver shapes.
-    ("chained field on call: mk().x.y",
+    # chained field on a call where the INTERMEDIATE field `.x` is NON-struct
+    # (P.x is i64) — there is no inner struct descriptor to recurse into, so the
+    # read defers (0B), never a wrong-value ELF. A control that the chained-struct
+    # support does NOT over-fire onto a scalar intermediate. (Contrast the
+    # SUPPORTED `mk().x.v` where `.x` IS a struct.)
+    ("chained field on call, non-struct intermediate: mk().x.y (x:i64)",
      P + "fn mk()->P{ return P{x:7,y:9}; }\nfn main()->i64{ return mk().x.y; }"),
+    # chained field that dead-ends on a SCALAR: `.x` is struct Q, `.v` is i64, so
+    # `.q` on an i64 has no descriptor — refuses. A control that the recursion
+    # STOPS at the first non-struct link instead of reading through it.
+    ("chained field dead-ends on scalar: mk().x.v.q (v:i64)",
+     PQ + "fn mk()->P{ return P{x:Q{v:7,w:8},y:9}; }\nfn main()->i64{ return mk().x.v.q; }"),
+    # chained field naming an UNKNOWN inner field: `.x` resolves to Q but `zzz`
+    # is not a field of Q — refuses (no field index), never reads field 0.
+    ("chained field unknown inner field: mk().x.zzz",
+     PQ + "fn mk()->P{ return P{x:Q{v:7,w:8},y:9}; }\nfn main()->i64{ return mk().x.zzz; }"),
     # direct field on a NON-struct-returning call `fn mk()->i64{..}; mk().x` MUST
     # refuse: the callee returns i64, so there is no struct descriptor to infer —
     # a control that the call-receiver inference does not over-fire on non-structs.
