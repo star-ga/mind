@@ -165,6 +165,12 @@ pub struct Unresolved {
     /// binding (a function value) and to nothing emittable — selects the
     /// `FN_VALUE_CALL_CODE` diagnostic.
     pub fn_value_call: bool,
+    /// `true` iff this is a call whose callee is a MODULE-LEVEL NON-FUNCTION
+    /// declaration (const / module-`let` / struct / enum-type / type-alias name)
+    /// and resolves to nothing emittable as a function — the module-scope twin
+    /// of `fn_value_call`. Selects the `FN_VALUE_CALL_CODE` diagnostic (same
+    /// broken-artifact class) with an "`X` is not a function" message.
+    pub non_fn_call: bool,
 }
 
 /// A call that resolves (never blocks `mindc check`) but whose callee is only
@@ -189,6 +195,12 @@ struct ModuleSyms {
     /// head is one of THESE enums; a head not in this map (imported enum,
     /// associated fn on a struct, cross-module type) is deferred as before.
     enums: BTreeMap<String, BTreeSet<String>>,
+    /// Module-level declaration names that are NOT functions and NOT callable
+    /// constructors — const / extern-const / module-`let` / struct / enum-TYPE /
+    /// type-alias names, minus any name that also has a function definition.
+    /// A call whose callee resolves only to one of these targets a data/global
+    /// symbol; see `is_module_non_fn_call`.
+    non_fn_decls: BTreeSet<String>,
 }
 
 impl ModuleSyms {
@@ -277,6 +289,52 @@ fn collect_enum_variants(module: &Module, out: &mut BTreeMap<String, BTreeSet<St
     }
 }
 
+/// Collect the module-level declaration names that are NOT functions and NOT
+/// callable constructors — const / extern-const / module-`let` / struct /
+/// enum-TYPE / type-alias names. A call whose callee resolves ONLY to one of
+/// these (and to nothing emittable as a function) targets a data/global symbol;
+/// the lowerer would synthesise `func.call @<name>` against a non-callable
+/// global, and `--emit-shared` then yields an undefined/non-callable `.so` —
+/// the exact E2012 broken-artifact class. Enum VARIANT names (bare + qualified)
+/// are deliberately EXCLUDED: they are valid unit/payload constructors
+/// (`Some(x)`, `Ok(v)`, `Color::Red`). Function and extern-function names are
+/// recorded in `fns` so a name that also has a function definition is never
+/// treated as a non-function (defensive against a same-name redeclaration).
+/// Recurses into `module { }` blocks exactly like `collect_decl_names`.
+fn collect_non_fn_decl_names(
+    module: &Module,
+    out: &mut BTreeSet<String>,
+    fns: &mut BTreeSet<String>,
+) {
+    for item in &module.items {
+        match item {
+            Node::FnDef(fd, _) => {
+                fns.insert(fd.name.clone());
+            }
+            Node::ExternBlock { fns: efns, .. } => {
+                for efn in efns {
+                    fns.insert(efn.name.clone());
+                }
+            }
+            Node::Const { name, .. }
+            | Node::ExternConst { name, .. }
+            | Node::Let { name, .. }
+            | Node::StructDef { name, .. }
+            | Node::TypeAlias { name, .. }
+            | Node::EnumDef { name, .. } => {
+                out.insert(name.clone());
+            }
+            Node::Block { stmts, .. } => {
+                let inner = Module {
+                    items: stmts.clone(),
+                };
+                collect_non_fn_decl_names(&inner, out, fns);
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Cached map of std-module path (`"std.vec"`) to the set of top-level names it
 /// exports. Built exactly once from the bundled stdlib registry so the
 /// single-file `mindc check` path resolves std-surface calls (`vec_new`,
@@ -359,7 +417,19 @@ fn collect_module_syms(module: &Module, injected: &BTreeSet<String>) -> ModuleSy
     // `stdlib_export_names()` in `name_resolvable` and the `suggest` chain.
     let mut enums: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     collect_enum_variants(module, &mut enums);
-    ModuleSyms { names, enums }
+    // Module-level non-function decls, used to reject a call whose callee names a
+    // data/global symbol (const/let/struct/enum-type/type-alias) rather than a
+    // function. Function names are collected alongside and subtracted so a name
+    // that also has a `fn` definition is never treated as a non-function.
+    let mut non_fn_decls: BTreeSet<String> = BTreeSet::new();
+    let mut fn_decls: BTreeSet<String> = BTreeSet::new();
+    collect_non_fn_decl_names(module, &mut non_fn_decls, &mut fn_decls);
+    non_fn_decls.retain(|n| !fn_decls.contains(n));
+    ModuleSyms {
+        names,
+        enums,
+        non_fn_decls,
+    }
 }
 
 /// Collect the symbolic shape-dimension identifiers declared in a type
@@ -677,6 +747,48 @@ impl<'a> Resolver<'a> {
         true
     }
 
+    /// A CALL whose callee is a MODULE-LEVEL NON-FUNCTION declaration (const /
+    /// extern-const / module-`let` / struct / enum-TYPE / type-alias name) and
+    /// resolves to nothing emittable as a function. The module-scope twin of
+    /// `is_fn_value_call`: that guard only inspects LOCAL `scopes`, so a call to
+    /// a module-level const/struct/enum name slips through — the name is in
+    /// `syms.names` (so `call_resolvable` accepts it → no E2003), yet it is not a
+    /// function, so the lowerer synthesises `func.call @<name>` to a data/global
+    /// symbol and `--emit-shared` yields an undefined/non-callable `.so`. Reject
+    /// at compile (E2012) instead of at link.
+    ///
+    /// Fail-CLOSED sound condition: fires ONLY when the callee is a known non-fn
+    /// module decl AND resolves through NO emittable function source (a
+    /// `::`-qualified associated path, `bytes`, `__mind_*` / `tensor.*` /
+    /// `gen_deref` builtins, `BARE_BUILTINS`, the std-surface intrinsic table, or
+    /// the cross-module imported-fn table). Enum VARIANT constructors are never
+    /// in `non_fn_decls`, so `Some(x)` / `Ok(v)` / `Color::Red` never fire here.
+    /// `name_resolvable` is intentionally NOT consulted — a non-fn module decl
+    /// IS name-resolvable (that is exactly the leak this closes).
+    fn is_module_non_fn_call(&self, name: &str) -> bool {
+        if !self.syms.non_fn_decls.contains(name) {
+            return false;
+        }
+        if name.contains("::")
+            || name == "bytes"
+            || name.starts_with("__mind_")
+            || name.starts_with("tensor.")
+            || name == "gen_deref"
+            || BARE_BUILTINS.binary_search(&name).is_ok()
+        {
+            return false;
+        }
+        #[cfg(feature = "std-surface")]
+        if super::std_surface_intrinsic_arity(name).is_some() {
+            return false;
+        }
+        #[cfg(feature = "cross-module-imports")]
+        if super::cm_lookup_fn(name).is_some() {
+            return false;
+        }
+        true
+    }
+
     /// The E2009 (`UNDECLARED_ASSIGN`) predicate: an assignment target name that
     /// is PROVABLY neither (i) bound in any active local scope frame NOR (ii) a
     /// known module-level name (fn/const/let/struct/enum/type-alias/extern +
@@ -773,6 +885,7 @@ impl<'a> Resolver<'a> {
                         variant_of: Some(enum_name),
                         undeclared_assign: false,
                         fn_value_call: false,
+                        non_fn_call: false,
                     });
                 } else if !self.ident_resolvable(name) {
                     let suggestion = suggest(name, &self.scopes, self.syms);
@@ -784,6 +897,7 @@ impl<'a> Resolver<'a> {
                         variant_of: None,
                         undeclared_assign: false,
                         fn_value_call: false,
+                        non_fn_call: false,
                     });
                 }
             }
@@ -820,6 +934,7 @@ impl<'a> Resolver<'a> {
                         variant_of: Some(enum_name),
                         undeclared_assign: false,
                         fn_value_call: false,
+                        non_fn_call: false,
                     });
                 } else if self.is_fn_value_call(callee) {
                     // Calling a function value (`let f = add1  f(41)`): the
@@ -834,6 +949,23 @@ impl<'a> Resolver<'a> {
                         variant_of: None,
                         undeclared_assign: false,
                         fn_value_call: true,
+                        non_fn_call: false,
+                    });
+                } else if self.is_module_non_fn_call(callee) {
+                    // Calling a module-level NON-function (`const ADD: i64 = 1
+                    // ADD(2)`): the callee is a data/global symbol, not a fn, so
+                    // the lowerer would synthesise `func.call @ADD` to a
+                    // non-callable global. Reject at compile (E2012, same class)
+                    // rather than emitting an undefined/non-callable `.so`.
+                    self.out.push(Unresolved {
+                        name: callee.clone(),
+                        span: *span,
+                        is_call: true,
+                        suggestion: None,
+                        variant_of: None,
+                        undeclared_assign: false,
+                        fn_value_call: false,
+                        non_fn_call: true,
                     });
                 } else if !self.call_resolvable(callee) {
                     let suggestion = suggest(callee, &self.scopes, self.syms);
@@ -845,6 +977,7 @@ impl<'a> Resolver<'a> {
                         variant_of: None,
                         undeclared_assign: false,
                         fn_value_call: false,
+                        non_fn_call: false,
                     });
                 }
                 // Skip arg descent ONLY for the dtype-literal tensor
@@ -890,6 +1023,7 @@ impl<'a> Resolver<'a> {
                         variant_of: None,
                         undeclared_assign: true,
                         fn_value_call: false,
+                        non_fn_call: false,
                     });
                 }
             }
