@@ -181,10 +181,10 @@ def main():
 
     # Cardinal invariant: the driver NEVER emits wrong bytes (a crash counts as wrong — the
     # driver must fail-closed, never crash). Always hard-fails.
-    # Coverage ratchet: byte-exact must not drop below FLOOR. The whole 66-fixture corpus
+    # Coverage ratchet: byte-exact must not drop below FLOOR. The whole corpus
     # lowers byte-exactly under the canonical FRESH-load measurement; the floor pins it so
     # no fixture can silently regress to fail-closed or wrong.
-    FLOOR = 66
+    FLOOR = 69
     ok = True
     if wrong:
         print("FAIL: WRONG-BYTES (silent miscompile) — the cardinal invariant is violated:")
@@ -198,6 +198,46 @@ def main():
     if byte_exact < FLOOR:
         print(f"FAIL: byte-exact {byte_exact} < floor {FLOOR} — a fixture regressed to fail-closed/wrong.")
         ok = False
+
+    # --- never-wrong corpus (tests/selfhost_gaps/never_wrong/) ------------------------
+    # Prior-construction / nested-construction struct-lit field-receiver shapes that the
+    # desugar-hoist positional guard (fr_ok = out==i) MUST suppress: hoisting a non-first
+    # construction would share the `__mind_alloc` name span and the field prefold's
+    # first-match type scan would mis-resolve -> a WRONG-BYTES miscompile. Unlike the
+    # byte-exact corpus above, fail-closed is PERMITTED here (these shapes are not yet
+    # lowered) — the ONLY forbidden outcome is wrong-bytes. This locks the guard: a change
+    # that reintroduces the miscompile turns this RED, where the byte-exact-only gap corpus
+    # (which passed 66/66 on the unguarded version) structurally cannot.
+    nw = sorted((CORPUS / "never_wrong").glob("*.mind")) if (CORPUS / "never_wrong").is_dir() else []
+    nw_wrong, nw_be, nw_fc, nw_skip = [], 0, 0, 0
+    for f in nw:
+        src = f.read_text()
+        oracle = oracle_mic3(src)
+        if oracle is None:
+            nw_skip += 1
+            continue
+        nfn, status = nfn_mic3(src)
+        if status == "CRASH":
+            nw_wrong.append(f"{f.name} (driver CRASHED — must fail-closed, never crash)")
+        elif not nfn:
+            nw_fc += 1
+        elif nfn == oracle:
+            nw_be += 1
+        else:
+            n = min(len(nfn), len(oracle))
+            di = next((i for i in range(n) if nfn[i] != oracle[i]), n)
+            nw_wrong.append(f"{f.name} (nfn={len(nfn)}B oracle={len(oracle)}B diff@{di})")
+    if nw:
+        print(
+            f"never-wrong corpus: {nw_be + nw_fc}/{len(nw) - nw_skip} safe "
+            f"({nw_be} byte-exact, {nw_fc} fail-closed), {len(nw_wrong)} wrong-bytes"
+            + (f" ({nw_skip} oracle-invalid skipped)" if nw_skip else "")
+        )
+        if nw_wrong:
+            print("FAIL: never-wrong corpus WRONG-BYTES — the desugar-hoist guard regressed to a miscompile:")
+            for w in nw_wrong:
+                print(f"   {w}")
+            ok = False
 
     if ok:
         print(
