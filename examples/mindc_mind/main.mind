@@ -17855,6 +17855,21 @@ pub fn count_nonparam_nodes_lv(node: i64, buf: i64, params_addr: i64, n_params: 
         }
         return 4 + fc;
     }
+    if k == ast_not() {
+        // `!<int-literal>` fast path — the oracle collapses `!Lit(n)` to ONE
+        // ConstI64 (see count_nonparam_nodes / flatten_ast ast_not). Env-aware
+        // counterpart so an `if !b { ... }` cond (b a let-bound local) pre-counts
+        // exactly like flatten_expr_env's ast_not desugar.
+        if ast_kind(ast_child0(node)) == ast_int_lit() {
+            return 1;
+        }
+        // `!x` -> CONST 0 (1 instr) + `==` binop (1 instr) + the operand's instrs.
+        let o: i64 = count_nonparam_nodes_lv(ast_child0(node), buf, params_addr, n_params, lvenv, nlv);
+        if o < 0 {
+            return 0 - 1;
+        }
+        return 2 + o;
+    }
     0 - 1
 }
 pub fn slit_count_fields(values: i64, nf: i64, buf: i64, params_addr: i64, n_params: i64, lvenv: i64, nlv: i64, j: i64) -> i64 {
@@ -18022,6 +18037,53 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         __mind_store_i64(nodes + nslot * 32 + 24, oslot);
         __mind_store_i64(cursor, nslot + 1);
         return nslot;
+    }
+    if k == ast_not() {
+        // Unary logical NOT `!x` desugars to `x == 0` — exactly how the Rust
+        // front-end lowers it (src/eval/lower.rs Node::Not: lhs = lower(operand);
+        // zero = CONST 0; dst = BinOp Eq(lhs, zero)). Env-aware counterpart of the
+        // flatten_ast ast_not arm, so an `if !b { ... }` cond (b a let-bound local)
+        // lowers byte-exactly. Post-order: operand first, then a synthetic const-0
+        // leaf, then the Eq binop LAST (lhs=operand slot, rhs=const-0 slot).
+        let operand: i64 = ast_child0(node);
+        // `!<int-literal>` fast path — mirrors src/eval/lower.rs Node::Not
+        // `!Lit(Int(n))` => a single ConstI64(id, (n == 0)).
+        if ast_kind(operand) == ast_int_lit() {
+            let litv: i64 = if ast_child1(operand) == 1 {
+                ast_child0(operand)
+            } else {
+                parse_int_span(src, ast_span_lo(operand), ast_span_hi(operand), 0)
+            };
+            let cval: i64 = if litv == 0 {
+                1
+            } else {
+                0
+            };
+            let cslot: i64 = __mind_load_i64(cursor);
+            __mind_store_i64(nodes + cslot * 32 + 0, 2);
+            __mind_store_i64(nodes + cslot * 32 + 8, cval);
+            __mind_store_i64(nodes + cslot * 32 + 16, 0);
+            __mind_store_i64(nodes + cslot * 32 + 24, 0);
+            __mind_store_i64(cursor, cslot + 1);
+            return cslot;
+        }
+        let oslot: i64 = flatten_expr_env(operand, src, params_addr, n_params, nodes, cursor, env, nlets);
+        if oslot < 0 {
+            return 0 - 1;
+        }
+        let zslot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + zslot * 32 + 0, 2);
+        __mind_store_i64(nodes + zslot * 32 + 8, 0);
+        __mind_store_i64(nodes + zslot * 32 + 16, 0);
+        __mind_store_i64(nodes + zslot * 32 + 24, 0);
+        __mind_store_i64(cursor, zslot + 1);
+        let nslot2: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + nslot2 * 32 + 0, 1);
+        __mind_store_i64(nodes + nslot2 * 32 + 8, binop_to_byte(op_eq()));
+        __mind_store_i64(nodes + nslot2 * 32 + 16, oslot);
+        __mind_store_i64(nodes + nslot2 * 32 + 24, zslot);
+        __mind_store_i64(cursor, nslot2 + 1);
+        return nslot2;
     }
     if k == ast_binop() {
         let lslot: i64 = flatten_expr_env(ast_child0(node), src, params_addr, n_params, nodes, cursor, env, nlets);
