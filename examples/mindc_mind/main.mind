@@ -7278,6 +7278,202 @@ pub fn intern_store_i64_literal(strbuf: i64, offs: i64, ccell: i64) -> i64 {
     n
 }
 
+// ===== mic@3 NON-CONST array-literal synthetic-name interns (#40) =====
+//
+// A non-const array literal `[e0, e1, ..]` (any element not a compile-time int)
+// lowers onto the std.vec heap runtime EXACTLY like src/eval/lower.rs
+// lower_array_surface_lit: `v = vec_new(); v = vec_push(v, e0); v = vec_push(v, e1);
+// .. ; v` — vec_new emitted first, then per element [element instrs, vec_push], the
+// running handle chaining (each push's first arg is the PREVIOUS handle). The two
+// synthetic call names intern FIRST-SEEN in that instruction order: "vec_new" (7
+// bytes) then "vec_push" (8 bytes). Both mirror intern_load_i64_literal's allocate
+// tail exactly; only the bytes + length differ.
+
+// The j-th byte (0..6) of the synthetic call name "vec_new" = 118 101 99 95 110 101 119.
+pub fn vec_new_name_byte(j: i64) -> i64 {
+    if j == 0 {
+        return 118;
+    }
+    if j == 1 {
+        return 101;
+    }
+    if j == 2 {
+        return 99;
+    }
+    if j == 3 {
+        return 95;
+    }
+    if j == 4 {
+        return 110;
+    }
+    if j == 5 {
+        return 101;
+    }
+    119
+}
+
+// Write the literal "vec_new" (7 bytes) into `strbuf` at the current interning
+// cursor; register its offset/count; return the fresh string index.
+pub fn intern_vec_new_literal(strbuf: i64, offs: i64, ccell: i64) -> i64 {
+    let n: i64 = __mind_load_i64(ccell);
+    let start: i64 = __mind_load_i64(offs + n * 8);
+    __mind_store_i8(strbuf + start + 0, 118);
+    __mind_store_i8(strbuf + start + 1, 101);
+    __mind_store_i8(strbuf + start + 2, 99);
+    __mind_store_i8(strbuf + start + 3, 95);
+    __mind_store_i8(strbuf + start + 4, 110);
+    __mind_store_i8(strbuf + start + 5, 101);
+    __mind_store_i8(strbuf + start + 6, 119);
+    __mind_store_i64(offs + (n + 1) * 8, start + 7);
+    __mind_store_i64(ccell, n + 1);
+    n
+}
+
+// Does the already-interned string at index i equal "vec_new"? Raw-byte compare.
+pub fn vec_new_name_eq_at(strbuf: i64, offs: i64, i: i64, j: i64) -> i64 {
+    let elo: i64 = __mind_load_i64(offs + i * 8);
+    let ehi: i64 = __mind_load_i64(offs + (i + 1) * 8);
+    if ehi - elo != 7 {
+        return 0;
+    }
+    if j >= 7 {
+        return 1;
+    }
+    if load_byte(strbuf, elo + j) != vec_new_name_byte(j) {
+        return 0;
+    }
+    vec_new_name_eq_at(strbuf, offs, i, j + 1)
+}
+
+// Find the string index of "vec_new" among the n already-interned strings, or -1.
+pub fn vec_new_name_find(strbuf: i64, offs: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0 - 1;
+    }
+    if vec_new_name_eq_at(strbuf, offs, i, 0) == 1 {
+        return i;
+    }
+    vec_new_name_find(strbuf, offs, n, i + 1)
+}
+
+// Dedup-aware intern of "vec_new" (the COLLECTION PASS form): existing index on a
+// hit, else allocate. Matches Rust `Instr::Call { name } => st.intern(name)`.
+pub fn intern_vec_new_name(strbuf: i64, offs: i64, ccell: i64) -> i64 {
+    let n: i64 = __mind_load_i64(ccell);
+    let hit: i64 = vec_new_name_find(strbuf, offs, n, 0);
+    if hit >= 0 {
+        return hit;
+    }
+    intern_vec_new_literal(strbuf, offs, ccell)
+}
+
+// The j-th byte (0..7) of "vec_push" = 118 101 99 95 112 117 115 104.
+pub fn vec_push_name_byte(j: i64) -> i64 {
+    if j == 0 {
+        return 118;
+    }
+    if j == 1 {
+        return 101;
+    }
+    if j == 2 {
+        return 99;
+    }
+    if j == 3 {
+        return 95;
+    }
+    if j == 4 {
+        return 112;
+    }
+    if j == 5 {
+        return 117;
+    }
+    if j == 6 {
+        return 115;
+    }
+    104
+}
+
+// Write the literal "vec_push" (8 bytes) into `strbuf`; register offset/count; index.
+pub fn intern_vec_push_literal(strbuf: i64, offs: i64, ccell: i64) -> i64 {
+    let n: i64 = __mind_load_i64(ccell);
+    let start: i64 = __mind_load_i64(offs + n * 8);
+    __mind_store_i8(strbuf + start + 0, 118);
+    __mind_store_i8(strbuf + start + 1, 101);
+    __mind_store_i8(strbuf + start + 2, 99);
+    __mind_store_i8(strbuf + start + 3, 95);
+    __mind_store_i8(strbuf + start + 4, 112);
+    __mind_store_i8(strbuf + start + 5, 117);
+    __mind_store_i8(strbuf + start + 6, 115);
+    __mind_store_i8(strbuf + start + 7, 104);
+    __mind_store_i64(offs + (n + 1) * 8, start + 8);
+    __mind_store_i64(ccell, n + 1);
+    n
+}
+
+// Does the already-interned string at index i equal "vec_push"? Raw-byte compare.
+pub fn vec_push_name_eq_at(strbuf: i64, offs: i64, i: i64, j: i64) -> i64 {
+    let elo: i64 = __mind_load_i64(offs + i * 8);
+    let ehi: i64 = __mind_load_i64(offs + (i + 1) * 8);
+    if ehi - elo != 8 {
+        return 0;
+    }
+    if j >= 8 {
+        return 1;
+    }
+    if load_byte(strbuf, elo + j) != vec_push_name_byte(j) {
+        return 0;
+    }
+    vec_push_name_eq_at(strbuf, offs, i, j + 1)
+}
+
+// Find the string index of "vec_push" among the n already-interned strings, or -1.
+pub fn vec_push_name_find(strbuf: i64, offs: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0 - 1;
+    }
+    if vec_push_name_eq_at(strbuf, offs, i, 0) == 1 {
+        return i;
+    }
+    vec_push_name_find(strbuf, offs, n, i + 1)
+}
+
+// Dedup-aware intern of "vec_push" (COLLECTION PASS form): index on hit, else alloc.
+pub fn intern_vec_push_name(strbuf: i64, offs: i64, ccell: i64) -> i64 {
+    let n: i64 = __mind_load_i64(ccell);
+    let hit: i64 = vec_push_name_find(strbuf, offs, n, 0);
+    if hit >= 0 {
+        return hit;
+    }
+    intern_vec_push_literal(strbuf, offs, ccell)
+}
+
+// True (1) iff `elem` is a scalar element the non-const array desugar supports.
+// FAIL-CLOSED (0) on a nested array literal or a struct literal element — those are
+// later dispatches (nested `[[..]]`, array-of-struct); a wrong-bytes path must never
+// open. Every other element kind (param/let-ref ident, int-lit, binop, call) flows
+// through flatten_expr_env + collect_expr_strings identically to the Rust oracle.
+pub fn arr_elem_desugar_ok(elem: i64) -> i64 {
+    let k: i64 = ast_kind(elem);
+    if k == ast_array_lit() {
+        return 0;
+    }
+    if k == ast_struct_lit() {
+        return 0;
+    }
+    1
+}
+
+// True iff EVERY element of the array literal is desugar-supported (see above).
+pub fn arr_elems_desugar_ok(elems_addr: i64, count: i64, j: i64) -> i64 {
+    if j >= count {
+        return 1;
+    }
+    if arr_elem_desugar_ok(__mind_load_i64(elems_addr + j * 8)) == 0 {
+        return 0;
+    }
+    arr_elems_desugar_ok(elems_addr, count, j + 1)
+}
+
 // Scan the token stream for the first field-access `.` and return the token
 // index of the dot, or -1 if none. The receiver ident is at dot-1, the field
 // ident at dot+1 (mirrors the surface `recv . field`).
@@ -9239,6 +9435,27 @@ pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: 
         // the enclosing while's live_var pass, not here).
         return collect_expr_strings(strbuf, offs, ccell, src, ast_child2(node));
     }
+    if k == ast_array_lit() {
+        // NON-CONST array literal (#40): mirror lower_array_surface_lit's instruction
+        // order so the oracle strtab matches — vec_new's CALL is emitted first (intern
+        // "vec_new"), then PER ELEMENT (source order) [element's strings, then the
+        // vec_push CALL -> "vec_push"]. A tuple marker or an all-int-const array interns
+        // nothing (the const path emits OP_CONST_ARRAY, which carries no name; a tuple /
+        // nested / struct-element array fails closed in flatten, emitting no bytes).
+        if ast_child0(node) == 1 {
+            return 0;
+        }
+        let ae_addr: i64 = ast_child1(node);
+        let ae_count: i64 = ast_aux(node);
+        if arrlit_all_int(ae_addr, ae_count, 0) == 1 {
+            return 0;
+        }
+        if arr_elems_desugar_ok(ae_addr, ae_count, 0) == 0 {
+            return 0;
+        }
+        let _vn: i64 = intern_vec_new_name(strbuf, offs, ccell);
+        return collect_arr_push_strings(strbuf, offs, ccell, src, ae_addr, ae_count, 0);
+    }
     if k == ast_struct_lit() {
         // Mirror flatten_struct_lit_lv's emit order so the oracle strtab matches: intern
         // __mind_alloc once, then PER FIELD (declared order) [field value's strings, then
@@ -9253,6 +9470,18 @@ pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: 
     }
     0
 }
+// Per non-const array element (source order): the element VALUE's strings then the
+// synthetic "vec_push" call name (#40) — mirrors lower_array_surface_lit's
+// [lower_expr(elem), push] instruction order so the strtab is first-seen byte-exact.
+pub fn collect_arr_push_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, elems_addr: i64, count: i64, j: i64) -> i64 {
+    if j >= count {
+        return 0;
+    }
+    let _e: i64 = collect_expr_strings(strbuf, offs, ccell, src, __mind_load_i64(elems_addr + j * 8));
+    let _vp: i64 = intern_vec_push_name(strbuf, offs, ccell);
+    collect_arr_push_strings(strbuf, offs, ccell, src, elems_addr, count, j + 1)
+}
+
 // Per struct-lit field (declared order): the field VALUE's strings then __mind_store_i64.
 pub fn slit_collect_field_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, values: i64, nf: i64, slo: i64, shi: i64, j: i64) -> i64 {
     if j >= nf {
@@ -16774,6 +17003,33 @@ pub fn emit_mic3_tree_body(s: EmitState, nodes: i64, n_nodes: i64, vidbuf: i64, 
         let s5: EmitState = emit_argcons_vids(s4, nodes, vidbuf, first_cons);
         return emit_mic3_tree_body(s5, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
     }
+    // kind 9 = NON-CONST array vec_new (#40) -> OP_CALL (0x16): dst || name_idx(vec_new)
+    // || uleb(0 args). The array runtime handle; the strtab already interned "vec_new".
+    if kind == 9 {
+        let vn_idx: i64 = vec_new_name_find(strbuf, offs, n_strings, 0);
+        let sn1: EmitState = es_push(s, 22);
+        let sn2: EmitState = emit_uleb128(sn1, dst);
+        let sn3: EmitState = emit_uleb128(sn2, vn_idx);
+        let sn4: EmitState = emit_uleb128(sn3, 0);
+        return emit_mic3_tree_body(sn4, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
+    }
+    // kind 10 = NON-CONST array vec_push (#40) -> OP_CALL (0x16): dst || name_idx(vec_push)
+    // || uleb(2) || handle_vid || elem_vid. record[2]=prev-handle slot, record[3]=element
+    // slot; the handle chains (each push's first arg is the previous push / vec_new vid).
+    if kind == 10 {
+        let vp_vslot: i64 = __mind_load_i64(nodes + i * 32 + 16);
+        let vp_eslot: i64 = __mind_load_i64(nodes + i * 32 + 24);
+        let vp_vvid: i64 = __mind_load_i64(vidbuf + vp_vslot * 8);
+        let vp_evid: i64 = __mind_load_i64(vidbuf + vp_eslot * 8);
+        let vp_idx: i64 = vec_push_name_find(strbuf, offs, n_strings, 0);
+        let sp1: EmitState = es_push(s, 22);
+        let sp2: EmitState = emit_uleb128(sp1, dst);
+        let sp3: EmitState = emit_uleb128(sp2, vp_idx);
+        let sp4: EmitState = emit_uleb128(sp3, 2);
+        let sp5: EmitState = emit_uleb128(sp4, vp_vvid);
+        let sp6: EmitState = emit_uleb128(sp5, vp_evid);
+        return emit_mic3_tree_body(sp6, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
+    }
     // kind 7 = constant-int array literal -> OP_CONST_ARRAY (0x19): dst ||
     // opt_string(None) || uleb(count) || per-element zigzag(value). Elements are
     // baked into the instruction (no vids/instrs of their own) — see the
@@ -18238,7 +18494,23 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         let elems_addr: i64 = ast_child1(node);
         let count: i64 = ast_aux(node);
         if arrlit_all_int(elems_addr, count, 0) == 0 {
-            return 0 - 1;
+            // NON-CONST array `[e0, e1, ..]` -> std.vec heap desugar (#40), mirroring
+            // src/eval/lower.rs lower_array_surface_lit: a vec_new CALL (kind 9), then
+            // per element in source order a vec_push CALL (kind 10) whose FIRST arg is
+            // the running handle (prev push slot, or vec_new for element 0) and whose
+            // SECOND arg is the element's flattened slot. The array VALUE is the LAST
+            // push slot (or vec_new for `[]`). Fail-closed on a nested array / struct
+            // element (arr_elems_desugar_ok) so no wrong-bytes path opens.
+            if arr_elems_desugar_ok(elems_addr, count, 0) == 0 {
+                return 0 - 1;
+            }
+            let new_slot: i64 = __mind_load_i64(cursor);
+            __mind_store_i64(nodes + new_slot * 32 + 0, 9);
+            __mind_store_i64(nodes + new_slot * 32 + 8, 0);
+            __mind_store_i64(nodes + new_slot * 32 + 16, 0);
+            __mind_store_i64(nodes + new_slot * 32 + 24, 0);
+            __mind_store_i64(cursor, new_slot + 1);
+            return flatten_arr_pushes(elems_addr, count, 0, new_slot, src, params_addr, n_params, nodes, cursor, env, nlets);
         }
         let slot: i64 = __mind_load_i64(cursor);
         __mind_store_i64(nodes + slot * 32 + 0, 7);
@@ -18269,6 +18541,31 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         return slot;
     }
     0 - 1
+}
+
+// Build the per-element vec_push CALL chain for a NON-CONST array literal (#40).
+// Element `j` flattens FIRST (post-order — its instrs precede its push, matching
+// lower_array_surface_lit's `val = lower_expr(elem)` before the push), then a push
+// node (kind 10, record[2]=prev-handle-slot, record[3]=element-slot). The running
+// `prev_slot` is the previous push's slot (or the vec_new slot for j==0) so the
+// handle CHAINS. Returns the LAST push slot (value of the array), `prev_slot` on an
+// empty array, or -1 if an element fails to flatten (fail-closed, no partial nodes).
+pub fn flatten_arr_pushes(elems_addr: i64, count: i64, j: i64, prev_slot: i64, src: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, env: i64, nlets: i64) -> i64 {
+    if j >= count {
+        return prev_slot;
+    }
+    let elem: i64 = __mind_load_i64(elems_addr + j * 8);
+    let eslot: i64 = flatten_expr_env(elem, src, params_addr, n_params, nodes, cursor, env, nlets);
+    if eslot < 0 {
+        return 0 - 1;
+    }
+    let pslot: i64 = __mind_load_i64(cursor);
+    __mind_store_i64(nodes + pslot * 32 + 0, 10);
+    __mind_store_i64(nodes + pslot * 32 + 8, 0);
+    __mind_store_i64(nodes + pslot * 32 + 16, prev_slot);
+    __mind_store_i64(nodes + pslot * 32 + 24, eslot);
+    __mind_store_i64(cursor, pslot + 1);
+    flatten_arr_pushes(elems_addr, count, j + 1, pslot, src, params_addr, n_params, nodes, cursor, env, nlets)
 }
 
 // Let-env-aware arg-cons builder — the flatten_argcons counterpart that resolves a
