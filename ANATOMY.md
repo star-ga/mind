@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3241 | **Est. tokens:** ~7,789,240
-**Generated:** 2026-07-31 03:04 UTC
+**Files:** 3242 | **Est. tokens:** ~7,790,681
+**Generated:** 2026-07-31 04:16 UTC
 
 ## Token Budget Guide
 
@@ -58,7 +58,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 146 | ~342,944 |
+| `examples/mindc_mind/` | 147 | ~344,385 |
 | `examples/mindc_mind/testdata/` | 1 | ~2,452 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
@@ -875,7 +875,7 @@
 - `param_types_smoke.py` (~1273 tok, large)
 - `_ref_add.note` (~16 tok, tiny) — 6fa59a74687e6bac38c983655d4d93ab1873299f130f68cbe481cf92041f6610
 - `_ref_if_ret.note` (~16 tok, tiny) — 3fdc70390e9e12d8030552d11b2194078e8579fbcfac19b14d1beed77174cb07
-- `_ref_main.note` (~16 tok, tiny) — d8f1948016207c721e6f5d82a00aab8c346f3680fef5db226d1587cdb0581fbf
+- `_ref_main.note` (~16 tok, tiny) — 1ea1e79cd0e383ad0dfc017339eadf14d0ae2eeb25704b8304490139d4f31c93
 - `ref_netverify.py` (~1464 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
 - `_ref_recursion.note` (~16 tok, tiny) — 6d125a946243b0550700d9aa6bc2058b51a3b8bf6e536a8b0b3f545d79b7346f
 - `_ref_struct_field.note` (~16 tok, tiny) — 2f7f2ea32ee47138e1b0162bd51f418b4e5005b4569054f5f3c392ebd2258d96
@@ -957,6 +957,7 @@
 - `self_host_native_ucast_smoke.py` (~1444 tok, large)
 - `self_host_native_write8_smoke.py` (~929 tok, large) — RI-B2-S2 STEP A (#108) — de-risk the C1 "emit 8 LE bytes to stdout + hash" gate.
 - `self_host_native_write_f32_smoke.py` (~815 tok, large) — RI-B2-S8 STEP A (#108) — de-risk the raw-f32-bytes harness on a KNOWN f32.
+- `self_host_not_smoke.py` (~1441 tok, large)
 - `self_host_open_smoke.py` (~1310 tok, large)
 - `self_host_param_mutation_smoke.py` (~1243 tok, large) — CPU-as-oracle smoke for the param-mutation fix (nb_expr ident arm: consult the
 - `_selfhost_so.py` (~919 tok, large) — Shared self-host `.so` resolver for the examples/mindc_mind smokes.
