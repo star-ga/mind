@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3256 | **Est. tokens:** ~7,791,670
-**Generated:** 2026-07-31 16:31 UTC
+**Files:** 3260 | **Est. tokens:** ~7,791,764
+**Generated:** 2026-07-31 17:23 UTC
 
 ## Token Budget Guide
 
@@ -458,8 +458,8 @@
 | `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
 | `tests/mindfuzz_cross_substrate/staged/` | 16 | ~2,989 |
 | `tests/runtime/` | 2 | ~135 |
-| `tests/selfhost_gaps/` | 74 | ~5,441 |
-| `tests/selfhost_gaps/never_wrong/` | 7 | ~229 |
+| `tests/selfhost_gaps/` | 77 | ~5,502 |
+| `tests/selfhost_gaps/never_wrong/` | 8 | ~262 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tools/` | 4 | ~4,578 |
@@ -4614,6 +4614,9 @@
 - `scalar_cast_unsigned_narrow_run.rs` (~1092 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/selfhost_gaps/`
 
+- `array-nested_1.mind` (~19 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
+- `array-nested_2.mind` (~19 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
+- `array-nested_3.mind` (~23 tok, tiny) — fn f(a: i64, b: i64, c: i64) -> i64 {
 - `array-nonconst_1.mind` (~16 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `array-nonconst_2.mind` (~18 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `array-nonconst_3.mind` (~18 tok, tiny) — fn g(a: i64, b: i64, c: i64) -> i64 {
@@ -4670,9 +4673,10 @@
 - `mixed-prefix_9.mind` (~50 tok, small)
 ### `tests/selfhost_gaps/never_wrong/`
 
+- `array_of_struct.mind` (~29 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `callarg_then_field_recv.mind` (~40 tok, tiny)
 - `chained_field_pqz.mind` (~37 tok, tiny)
-- `nested_array_nonconst.mind` (~19 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
+- `nested_array_typed.mind` (~23 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `nested_slit_field.mind` (~30 tok, tiny)
 - `prior_let_then_field_recv.mind` (~31 tok, tiny)
 - `qfield_nested.mind` (~34 tok, tiny)

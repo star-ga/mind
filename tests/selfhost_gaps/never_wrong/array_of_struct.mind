@@ -1,0 +1,9 @@
+struct P {
+    x: i64,
+    y: i64,
+}
+
+fn f(a: i64, b: i64) -> i64 {
+    let m = [P { x: a, y: b }];
+    return 0;
+}
