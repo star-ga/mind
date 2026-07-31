@@ -7447,15 +7447,23 @@ pub fn intern_vec_push_name(strbuf: i64, offs: i64, ccell: i64) -> i64 {
     intern_vec_push_literal(strbuf, offs, ccell)
 }
 
-// True (1) iff `elem` is a scalar element the non-const array desugar supports.
-// FAIL-CLOSED (0) on a nested array literal or a struct literal element — those are
-// later dispatches (nested `[[..]]`, array-of-struct); a wrong-bytes path must never
-// open. Every other element kind (param/let-ref ident, int-lit, binop, call) flows
-// through flatten_expr_env + collect_expr_strings identically to the Rust oracle.
+// True (1) iff `elem` is an element the non-const array desugar supports.
+// A NESTED array-literal element (#40 gap e) is allowed by RECURSING: each inner
+// array lowers to its own vec_new/vec_push chain (value = its last push), mirroring
+// the Rust oracle's `lower_expr(elem)` on a `[..]` element. flatten_expr_env /
+// collect_expr_strings / emit_mic3_tree_body already walk sub-array descriptors
+// generically, so per-level dispatch (const inner -> OP_CONST_ARRAY; non-const
+// inner -> vec_new/push) stays byte-exact. A tuple marker (child0==1) or a struct
+// literal element still FAILS-CLOSED (0) — array-of-struct is a later multi-
+// construction dispatch; a wrong-bytes path must never open. Every scalar element
+// kind (param/let-ref ident, int-lit, binop, call) flows through unchanged.
 pub fn arr_elem_desugar_ok(elem: i64) -> i64 {
     let k: i64 = ast_kind(elem);
     if k == ast_array_lit() {
-        return 0;
+        if ast_child0(elem) == 1 {
+            return 0;
+        }
+        return arr_elems_desugar_ok(ast_child1(elem), ast_aux(elem), 0);
     }
     if k == ast_struct_lit() {
         return 0;
