@@ -35,16 +35,27 @@ all 4 count/emit call sites in lockstep (frt read from the emit lcell+16 /
 count clcell+16). Non-struct call inits resolve to 0 (unchanged scalar-let
 behavior), so main.mind's own compile stays byte-identical.
 
-Fail-closed boundary (the genuine remaining gap — correctly refused today)
+Direct field on a struct-returning call `mk().x` (LANDED)
+---------------------------------------------------------
+`mk().x` (a field read whose receiver is a struct-returning CALL, not an ident)
+now RUNS correctly: nb_field_recv_desc_r resolves the call's struct descriptor
+from the callee's `-> P` return type (the SAME nb_struct_desc_from_call path the
+unannotated `let p = mk(); p.x` case uses), and nb_field_offset_r loads
+base+offset*8 off the returned i64 struct handle. Read arms only — the field
+descriptor is inferred identically for the ident-receiver case, so main.mind's
+own `let r = parse_...(); r.field` reads emit byte-identically.
+
+Fail-closed boundary (the genuine remaining gaps — correctly refused today)
 -------------------------------------------------------------------------
-One adjacent shape the REFERENCE frontend (`mindc --emit-ir`) accepts but the
-native path still refuses 0B — an honest fail-closed gap, NOT a miscompile:
+Adjacent shapes the REFERENCE frontend (`mindc --emit-ir`) accepts but the
+native path still refuses 0B — honest fail-closed gaps, NOT miscompiles:
 
-  * Direct field on a call: `mk().x` (receiver is a call expr, not an ident).
-    nb_field_offset requires an ast_ident receiver, so this refuses 0B. Making
-    it run needs the call spilled to a temp slot first — a separate slice.
+  * Chained field on a call `mk().x.y` — the outer receiver `mk().x` is itself a
+    field access (not a call/ident with a resolvable descriptor), so it defers.
+  * Field on a NON-struct-returning call `fn mk()->i64{..}; mk().x` — no struct
+    descriptor to infer, so the field read refuses.
 
-This refusal is CORRECT (fail-closed beats a wrong-value ELF) and is asserted
+Each refusal is CORRECT (fail-closed beats a wrong-value ELF) and is asserted
 below as a control, so a future change that makes it run must do so *correctly*
 or trip this smoke.
 
@@ -155,6 +166,17 @@ SUPPORTED = [
      Q + "fn mk(n:i64)->Q{ return Q{c:3,a:n,b:2}; }\nfn main()->i64{ let q=mk(5); return q.a; }", 5),
     ("unannotated receiver, mut let",
      P + "fn mk()->P{ return P{x:7,y:9}; }\nfn main()->i64{ let mut p=mk(); return p.x; }", 7),
+    # DIRECT field on a struct-returning call `mk().x` (LANDED, b9d596ac): the
+    # receiver is a call expr; its struct descriptor is inferred from mk's `-> P`
+    # return type, and the field loads off the returned handle at offset 0 / 8.
+    ("direct field on call: mk().x",
+     P + "fn mk()->P{ return P{x:7,y:9}; }\nfn main()->i64{ return mk().x; }", 7),
+    ("direct field on call: mk().y",
+     P + "fn mk()->P{ return P{x:7,y:9}; }\nfn main()->i64{ return mk().y; }", 9),
+    # two struct-returning calls composed in arithmetic (each resolves its own
+    # descriptor independently): mk().x + mk().y == 7 + 9.
+    ("direct field on call, arith mk().x + mk().y",
+     P + "fn mk()->P{ return P{x:7,y:9}; }\nfn main()->i64{ return mk().x + mk().y; }", 16),
 ]
 
 # (label, source)  — MUST refuse 0B. Genuine fail-closed gaps: the native path
@@ -163,10 +185,17 @@ SUPPORTED = [
 # implementing them correctly is the next slice — a change that makes them RUN
 # must return the right value or this control trips.
 REFUSED = [
-    # direct field on a call — receiver is a call expr, not an ident; still
-    # fail-closed (needs the call result spilled to a temp before field-read).
-    ("direct field on call: mk().x",
-     P + "fn mk()->P{ return P{x:7,y:9}; }\nfn main()->i64{ return mk().x; }"),
+    # chained field on a call `mk().x.y` — the OUTER receiver mk().x is itself a
+    # field access (no resolvable descriptor), so it defers (0B), never a
+    # wrong-value ELF. A control that the direct-call support does not over-fire
+    # onto chained-receiver shapes.
+    ("chained field on call: mk().x.y",
+     P + "fn mk()->P{ return P{x:7,y:9}; }\nfn main()->i64{ return mk().x.y; }"),
+    # direct field on a NON-struct-returning call `fn mk()->i64{..}; mk().x` MUST
+    # refuse: the callee returns i64, so there is no struct descriptor to infer —
+    # a control that the call-receiver inference does not over-fire on non-structs.
+    ("direct field on scalar-return call: mk().x (no struct)",
+     "fn mk()->i64{ return 5; }\nfn main()->i64{ return mk().x; }"),
     # a scalar-returning call bound unannotated then field-accessed MUST still
     # refuse (no struct descriptor to infer — the return type is i64, not a
     # struct): a control that the inference does not over-fire on non-structs.
