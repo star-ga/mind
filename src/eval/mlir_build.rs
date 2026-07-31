@@ -700,6 +700,33 @@ fn run_clang_codegen(
         // unaffected). Exported symbols remain in `.dynsym`, so direct
         // `dlsym`/ctypes calls and native cross-module linking are unchanged.
         args.push("-Wl,-Bsymbolic-functions".into());
+        // Emitted-artifact hardening — SAME byte-neutral class as the
+        // `-Wl,-Bsymbolic-functions` directive above. These three linker
+        // directives change only ELF segment permissions and DT_FLAGS bits;
+        // they do NOT change a single emitted instruction byte, and are applied
+        // uniformly on every substrate, so two builds stay byte-identical to
+        // each other and x86/ARM stay byte-identical (keystone + cross-substrate
+        // gates unaffected — proven via `objdump -d` .text identity before/after
+        // adding these flags):
+        //   -z relro       : make the GOT/relocated sections read-only after
+        //                    startup (Full RELRO when paired with -z now).
+        //   -z now         : resolve all dynamic relocations eagerly at load
+        //                    time (BIND_NOW / DF_1_NOW), so the now-RELRO'd GOT
+        //                    can be sealed read-only — closes the classic
+        //                    GOT-overwrite vector. A deterministic DT_FLAGS bit.
+        //   -z noexecstack : mark the stack non-executable (GNU_STACK w/o X).
+        // These affect only load-time segment metadata / relocation timing, not
+        // codegen, so they are byte-neutral by construction.
+        args.push("-Wl,-z,relro".into());
+        args.push("-Wl,-z,now".into());
+        args.push("-Wl,-z,noexecstack".into());
+        // deferred: the BYTE-CHANGING hardening pass — `-fstack-protector-strong`
+        // (inserts canary prologue/epilogue machine code) and `-pie`
+        // (PC-relative codegen + ELF type DYN) — perturbs emitted instruction
+        // bytes and therefore requires a keystone (7/7) + cross-substrate
+        // re-bless. Upgrade path: land those two flags under a fresh
+        // reference_hashes.toml blessing ceremony owned by mind-cross-substrate
+        // (Constitution §I.3), NOT in this byte-neutral dispatch.
     } else {
         args.push("-c".into());
     }
