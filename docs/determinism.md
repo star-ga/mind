@@ -260,7 +260,7 @@ non-determinism is a **traced, attested opt-in** across three layers:
    and its `evidence_chain.determinism` field — *derived from the IR* — declares
    `nondeterministic`. Every other module (including seeded `randn(shape, seed)`)
    declares `deterministic`. The flag authorises the *build*, never the *label*.
-3. **Verify re-derivation (tamper-proof).** The `determinism` field lives in the
+3. **Verify re-derivation (forgery-detected, fail-closed).** The `determinism` field lives in the
    MAP epilogue, outside the `trace_hash` anchor, so on an unsigned artifact it
    would be forgeable. `mindc verify` therefore **re-derives** the mode from the
    hashed body (exactly as it re-derives `fp_mode`), reports that authoritative

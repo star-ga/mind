@@ -5,8 +5,8 @@
 | Version | Supported          |
 | ------- | ------------------ |
 | main    | :white_check_mark: |
-| 0.1.x   | :white_check_mark: |
-| < 0.1   | :x:                |
+| 0.10.x  | :white_check_mark: |
+| < 0.10  | :x:                |
 
 We provide security updates for the latest release and the `main` branch. Older versions are not supported.
 
