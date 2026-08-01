@@ -1971,6 +1971,26 @@ pub fn parse_primary_ns(toks: Vec, pos: i64, buf: i64, no_struct: i64) -> ParseR
     if k == tk_minus() {
         let operand: ParseResult = parse_primary_ns(toks, pos + 1, buf, no_struct);
         let opnode: i64 = pr_node(operand);
+        // `-<bare source int literal>` constant-folds to a single negative CONST
+        // at PARSE time — in EVERY expression position (binop operand, paren,
+        // comparison, call arg, lone tail), mirroring the Rust oracle which emits
+        // a negated numeric literal as one folded const everywhere (verified vs
+        // --emit-mic3: `-5` is one CONST, not a `0 - 5` sub). mk_syn_intlit carries
+        // the folded value DIRECTLY (child1==1 sentinel), so every int-lit
+        // emitter/count arm honours it with zero new surface — the base `0 - x`
+        // neg desugar (which over-emits 3 instrs) and the env-path neg refusal are
+        // both bypassed for the literal case. Only a bare SOURCE literal
+        // (child1==0) folds; a synthetic operand (`- -5`, an inlined const/bool/
+        // enum-path value) and every non-literal (`-(a+b)`, `--a`, `-ident`) stay
+        // a real neg node (the separate neg-of-non-leaf class, unchanged).
+        // main.mind's own `return -1;` sites fold to the identical single CONST,
+        // so its self-compile stays byte-identical.
+        if ast_kind(opnode) == ast_int_lit() {
+            if ast_child1(opnode) == 0 {
+                let v: i64 = parse_int_span(buf, ast_span_lo(opnode), ast_span_hi(opnode), 0);
+                return pr_new(pr_pos(operand), mk_syn_intlit(0 - v));
+            }
+        }
         let neg: i64 = ast_new_neg(lo, ast_span_hi(opnode), opnode);
         return pr_new(pr_pos(operand), neg);
     }
