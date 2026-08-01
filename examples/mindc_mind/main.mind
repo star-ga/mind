@@ -3024,7 +3024,7 @@ pub fn parse_for(toks: Vec, pos: i64, buf: i64, out: i64) -> i64 {
     let after_hi: i64 = pr_pos(hi_res);
 
     let body_acc0: Vec = vec_new();
-    let body_res: ParseResult = parse_block_stmts(toks, after_hi + 1, buf, body_acc0);
+    let body_res: ParseResult = parse_block_stmts(toks, after_hi + 1, buf, body_acc0, 0);
     let after_body: i64 = pr_pos(body_res);
     let body_stmts: i64 = pr_node(body_res);
     let sa: i64 = ast_child0(body_stmts);
@@ -3504,7 +3504,7 @@ pub fn parse_return(toks: Vec, pos: i64, buf: i64) -> ParseResult {
 pub fn parse_block(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     let open_lo: i64 = tok_lo(toks, pos);
     let acc: Vec = vec_new();
-    let body: ParseResult = parse_block_stmts(toks, pos + 1, buf, acc);
+    let body: ParseResult = parse_block_stmts(toks, pos + 1, buf, acc, 0);
     let after_body: i64 = pr_pos(body);
     let stmts_node: i64 = pr_node(body);
     let stmts_addr: i64 = ast_child0(stmts_node);
@@ -3520,7 +3520,33 @@ pub fn parse_block(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     pr_new(after_close, blk)
 }
 
-pub fn parse_block_stmts(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult {
+// FN-BODY block parser: identical to parse_block but flags its DIRECT statements
+// as top-level (is_fn_body=1) so parse_block_stmts may HOIST a `match CALL(..)`
+// scrutinee into a preceding `let TMP = call` there. The hoist is valid ONLY at a
+// fn's top level, where the synthetic let binds NO if-merge; a match-call NESTED
+// in an if-branch keeps its per-arm inline form (byte-identical to the oracle,
+// which does not hoist there). Nested blocks are parsed via parse_block
+// (is_fn_body=0), so only the fn body's own statements hoist.
+pub fn parse_fn_body_block(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let open_lo: i64 = tok_lo(toks, pos);
+    let acc: Vec = vec_new();
+    let body: ParseResult = parse_block_stmts(toks, pos + 1, buf, acc, 1);
+    let after_body: i64 = pr_pos(body);
+    let stmts_node: i64 = pr_node(body);
+    let stmts_addr: i64 = ast_child0(stmts_node);
+    let stmts_len: i64 = ast_aux(stmts_node);
+
+    let close_hi: i64 = tok_hi(toks, after_body);
+    let after_close: i64 = if tok_kind(toks, after_body) == tk_rbrace() {
+        after_body + 1
+    } else {
+        after_body
+    };
+    let blk: i64 = ast_new_block(open_lo, close_hi, stmts_addr, stmts_len);
+    pr_new(after_close, blk)
+}
+
+pub fn parse_block_stmts(toks: Vec, pos: i64, buf: i64, acc: Vec, is_fn_body: i64) -> ParseResult {
     if at_eof(toks, pos) == 1 {
         let s: i64 = ast_new_block(0, 0, vec_addr(acc), vec_len(acc));
         return pr_new(pos, s);
@@ -3545,7 +3571,7 @@ pub fn parse_block_stmts(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult
             let fa1: Vec = for_push_if_nonzero(acc, __mind_load_i64(fout + 0));
             let fa2: Vec = for_push_if_nonzero(fa1, __mind_load_i64(fout + 8));
             let fa3: Vec = for_push_if_nonzero(fa2, __mind_load_i64(fout + 16));
-            return parse_block_stmts(toks, fnp, buf, fa3);
+            return parse_block_stmts(toks, fnp, buf, fa3, is_fn_body);
         }
     }
     // `let (n0, n1, ...) = TUPLE;` destructuring desugars to a VARIABLE number
@@ -3559,12 +3585,39 @@ pub fn parse_block_stmts(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult
             let tout: i64 = __mind_alloc(16);
             let tnp: i64 = parse_let_tuple(toks, pos, buf, tout);
             let tacc: Vec = plt_push_stmts(acc, __mind_load_i64(tout + 0), __mind_load_i64(tout + 8), 0);
-            return parse_block_stmts(toks, tnp, buf, tacc);
+            return parse_block_stmts(toks, tnp, buf, tacc, is_fn_body);
+        }
+    }
+    // `match CALL(..) { .. }` statement at a fn's TOP LEVEL HOISTS the scrutinee
+    // call: the Rust oracle evaluates a match scrutinee CALL ONCE before the
+    // if-chain, so the desugar emits the sibling pair `let TMP = call ; if TMP ==
+    // P0 { .. } ..`. Intercepted here (like `for` / `let (tuple)`) so both
+    // statements are pushed into the block. GATED on is_fn_body==1: only a fn
+    // body's own statements hoist (there the synthetic let binds no if-merge). A
+    // match-call NESTED in an if-branch (is_fn_body==0) keeps its per-arm inline
+    // form — byte-identical to the oracle, which does not hoist there, and where a
+    // named let would wrongly escape as a merge binding. Only fires when the
+    // scrutinee is a CALL — a non-call scrutinee (ident / arithmetic) the oracle
+    // re-emits per arm, matching the plain parse_stmt path below, so it is left
+    // untouched (main.mind's own matches are all non-call: its self-compile takes
+    // the unchanged path and stays byte-identical).
+    if is_fn_body == 1 {
+        if tok_kind(toks, pos) == tk_ident() {
+            if is_ident_match(buf, tok_lo(toks, pos), tok_hi(toks, pos)) == 1 {
+                let mscrut: ParseResult = parse_expr_ns(toks, pos + 1, buf, 1);
+                if ast_kind(pr_node(mscrut)) == ast_call() {
+                    let mout: i64 = __mind_alloc(8);
+                    let mres: ParseResult = parse_match_stmt(toks, pos, buf, mout);
+                    let macc: Vec = for_push_if_nonzero(acc, __mind_load_i64(mout + 0));
+                    let macc2: Vec = vec_push(macc, pr_node(mres));
+                    return parse_block_stmts(toks, pr_pos(mres), buf, macc2, is_fn_body);
+                }
+            }
         }
     }
     let one: ParseResult = parse_stmt(toks, pos, buf);
     let new_acc: Vec = vec_push(acc, pr_node(one));
-    parse_block_stmts(toks, pr_pos(one), buf, new_acc)
+    parse_block_stmts(toks, pr_pos(one), buf, new_acc, is_fn_body)
 }
 
 // ===== If-expressions =====
@@ -4251,7 +4304,93 @@ pub fn parse_match(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     } else {
         after_arms
     };
-    pr_new(after_close, pr_node(chain))
+    let node: i64 = pr_node(chain);
+    // EXPRESSION-POSITION call scrutinee: FAIL CLOSED. Reaching parse_match (vs
+    // the statement-position parse_match_stmt via parse_fn_body_block) means the
+    // match sits in a let-init, a return value, or nested in an if-branch — a
+    // position with NOWHERE to bind the single call evaluation the oracle
+    // requires, where the per-arm re-parse would emit the CALL more than once (or
+    // desugar to a shape that differs from the oracle) = wrong bytes. So rewrite
+    // every condition's LHS to an UNBOUND temp (mt_rewrite_chain_lhs) and provide
+    // NO binding: the emit cannot resolve it and refuses (0 bytes) — a safe
+    // fail-closed, never a silent miscompile. Only TOP-LEVEL statement position
+    // (parse_match_stmt) hoists byte-exactly. main.mind never matches on a call,
+    // so this never fires on its self-compile (byte-identical). NO node marker /
+    // annotation-slot reuse — only ordinary ast_ident nodes are created.
+    if ast_kind(pr_node(scrut)) == ast_call() {
+        if ast_kind(node) == ast_if() {
+            let _rw: i64 = mt_rewrite_chain_lhs(node, pr_node(scrut));
+        }
+    }
+    pr_new(after_close, node)
+}
+
+// Statement-position variant of parse_match that HOISTS a CALL scrutinee. The
+// Rust oracle evaluates a match scrutinee CALL exactly ONCE before the if-chain
+// (a call may carry side effects), each arm comparing a const against that
+// single result — byte-identical to `let TMP = call; if TMP == P0 { .. } else
+// if TMP == P1 ..` (proven vs `--emit-mic3`). The per-arm re-parse in
+// parse_match_chain would instead re-emit the CALL in EVERY condition
+// (duplicated effect + wrong bytes). So this builds the if-chain, rewrites every
+// condition's LHS to reference a synthetic temp (mt_rewrite_chain_lhs), and
+// returns the hoisted `let TMP = call` via out+0; parse_block_stmts pushes it as
+// the sibling statement just before the if-chain (the same multi-statement
+// desugar pattern `for` / `let (tuple)` use). The temp's NAME span reuses the
+// call's OWN source span (bytes like `g(a)`, which contain `(` and can never
+// collide with a real identifier, while letenv_lookup's byte compare still ties
+// the binding and its references together) — names are compile-time only, never
+// emitted, so the synthetic name changes ZERO bytes. Callers route here ONLY
+// when the scrutinee is a call; a NON-call scrutinee the oracle RE-EMITS per arm
+// (which the plain per-arm parse already matches), so it takes the unchanged
+// parse_stmt path. NO AST-node mutation and NO annotation-slot reuse — nothing
+// for the struct-lit annotation reader (flatten_ast_lv, node+56) to trip on.
+pub fn parse_match_stmt(toks: Vec, pos: i64, buf: i64, out: i64) -> ParseResult {
+    let kw_lo: i64 = tok_lo(toks, pos);
+    let scrut: ParseResult = parse_expr_ns(toks, pos + 1, buf, 1);
+    let lbrace_pos: i64 = pr_pos(scrut);
+    let call: i64 = pr_node(scrut);
+    let chain: ParseResult = parse_match_chain(toks, lbrace_pos + 1, buf, pos + 1, kw_lo, 0, 0, 0, 0);
+    let after_arms: i64 = pr_pos(chain);
+    let after_close: i64 = if tok_kind(toks, after_arms) == tk_rbrace() {
+        after_arms + 1
+    } else {
+        after_arms
+    };
+    let node: i64 = pr_node(chain);
+    __mind_store_i64(out + 0, 0);
+    if ast_kind(node) == ast_if() {
+        let _rw: i64 = mt_rewrite_chain_lhs(node, call);
+        let tname: i64 = ast_new_leaf(ast_ident(), ast_span_lo(call), ast_span_hi(call));
+        __mind_store_i64(out + 0, ast_new_let(0, 0, tname, 0, call))
+    }
+    let final_pos: i64 = if tok_kind(toks, after_close) == tk_semi() {
+        after_close + 1
+    } else {
+        after_close
+    };
+    pr_new(final_pos, node)
+}
+
+// Walk the else-if chain of a desugared match, replacing each condition's LHS
+// (the re-parsed scrutinee call; cond = binop(scrut == Pi)) with a FRESH ident
+// referencing the hoisted temp (span = the call span). The else child of a
+// non-terminal arm is a one-statement block wrapping the next if (mt_wrap_else);
+// the terminal else (wildcard block) stops the walk. Only the else (child2)
+// chain is followed — arm VALUES (then, child1) are never touched.
+pub fn mt_rewrite_chain_lhs(if_node: i64, call: i64) -> i64 {
+    let cond: i64 = ast_child0(if_node);
+    let tref: i64 = ast_new_leaf(ast_ident(), ast_span_lo(call), ast_span_hi(call));
+    __mind_store_i64(cond + 24, tref);
+    let els: i64 = ast_child2(if_node);
+    if ast_kind(els) == ast_block() {
+        if ast_aux(els) == 1 {
+            let s0: i64 = __mind_load_i64(ast_child0(els) + 0);
+            if ast_kind(s0) == ast_if() {
+                return mt_rewrite_chain_lhs(s0, call);
+            }
+        }
+    }
+    0
 }
 
 // Parse ONE match arm value at `pos` (the token just after `=>`) into a BLOCK
@@ -4573,7 +4712,7 @@ pub fn parse_fn_def(toks: Vec, pos: i64, buf: i64, is_pub: i64) -> ParseResult {
         after_rparen
     };
 
-    let body_res: ParseResult = parse_block(toks, after_ret, buf);
+    let body_res: ParseResult = parse_fn_body_block(toks, after_ret, buf);
     let body_hi: i64 = ast_span_hi(pr_node(body_res));
 
     let fn_node: i64 = ast_new_fn_def(fn_lo, body_hi, name, params_addr, pr_node(body_res), params_len, is_pub);

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3292 | **Est. tokens:** ~7,792,353
-**Generated:** 2026-08-01 02:48 UTC
+**Files:** 3296 | **Est. tokens:** ~7,792,465
+**Generated:** 2026-08-01 04:14 UTC
 
 ## Token Budget Guide
 
@@ -458,8 +458,8 @@
 | `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
 | `tests/mindfuzz_cross_substrate/staged/` | 16 | ~2,989 |
 | `tests/runtime/` | 2 | ~135 |
-| `tests/selfhost_gaps/` | 105 | ~5,917 |
-| `tests/selfhost_gaps/never_wrong/` | 12 | ~328 |
+| `tests/selfhost_gaps/` | 108 | ~5,995 |
+| `tests/selfhost_gaps/never_wrong/` | 13 | ~362 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tools/` | 4 | ~4,578 |
@@ -876,7 +876,7 @@
 - `param_types_smoke.py` (~1273 tok, large)
 - `_ref_add.note` (~16 tok, tiny) — 6fa59a74687e6bac38c983655d4d93ab1873299f130f68cbe481cf92041f6610
 - `_ref_if_ret.note` (~16 tok, tiny) — 3fdc70390e9e12d8030552d11b2194078e8579fbcfac19b14d1beed77174cb07
-- `_ref_main.note` (~16 tok, tiny) — e066d0cef29d1ab1f3e236116bb1417207ff65ebcd16546c8ea04ab6c314d5ce
+- `_ref_main.note` (~16 tok, tiny) — d483bb0f4918756c629a0d51bbac7876ca4dedc949210c46bf37adef8f128ae7
 - `ref_netverify.py` (~1464 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
 - `_ref_recursion.note` (~16 tok, tiny) — 6d125a946243b0550700d9aa6bc2058b51a3b8bf6e536a8b0b3f545d79b7346f
 - `_ref_struct_field.note` (~16 tok, tiny) — 2f7f2ea32ee47138e1b0162bd51f418b4e5005b4569054f5f3c392ebd2258d96
@@ -4679,6 +4679,9 @@
 - `let-ifexpr-seq_5.mind` (~19 tok, tiny)
 - `let-ifexpr-seq_6.mind` (~27 tok, tiny)
 - `let-ifexpr-seq_7.mind` (~46 tok, tiny)
+- `matchcall-scrutinee_0arg.mind` (~24 tok, tiny) — fn g() -> i64 {
+- `matchcall-scrutinee_1arg.mind` (~33 tok, tiny) — fn g(a: i64) -> i64 {
+- `matchcall-scrutinee_arith.mind` (~21 tok, tiny) — fn f(a: i64) -> i64 {
 - `mixed-prefix_10.mind` (~32 tok, tiny)
 - `mixed-prefix_11.mind` (~27 tok, tiny)
 - `mixed-prefix_12.mind` (~40 tok, tiny)
@@ -4697,6 +4700,7 @@
 - `callarg_then_field_recv.mind` (~40 tok, tiny)
 - `chained_field_pqz.mind` (~37 tok, tiny)
 - `for_range_continue_1.mind` (~35 tok, tiny) — fn f() -> i64 {
+- `matchcall_letinit_1.mind` (~34 tok, tiny) — fn g(a: i64) -> i64 {
 - `nested_array_typed.mind` (~23 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `nested_slit_field.mind` (~30 tok, tiny)
 - `print_int_discarded.mind` (~11 tok, tiny) — fn main() -> i64 {
