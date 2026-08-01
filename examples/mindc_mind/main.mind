@@ -17672,21 +17672,26 @@ pub fn flatten_ast(node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: 
         return slot;
     }
     if k == ast_neg() {
-        // Unary `-x` desugars to `0 - x` (CONST 0, then `sub`) — exactly how the
-        // Rust front-end lowers it (verified vs --emit-mic3: CONST %k=0 then
-        // BINOP %k+1 = %k sub %operand). Post-order: flatten the operand first, then
-        // a synthetic const-0 leaf, then the `sub` binop LAST. Additive — main.mind
-        // has no unary neg, so the flip stays byte-identical.
-        let oslot: i64 = flatten_ast(ast_child0(node), buf, params_addr, n_params, nodes, cursor);
-        if oslot < 0 {
-            return 0 - 1;
-        }
+        // Unary `-x` (non-literal operand) desugars to `0 - x` (CONST 0, then `sub`)
+        // — exactly how the Rust front-end lowers it (src/eval/lower.rs Node::Neg
+        // non-Lit arm: `zero = fresh(); ConstI64(zero,0)` is emitted BEFORE
+        // `lower_expr(operand)`, then `Sub(dst, zero, rhs)`). Post-order slot order
+        // therefore is: synthetic const-0 leaf FIRST (lowest vid), then the operand's
+        // own instrs, then the `sub` binop LAST. Emitting the const-0 before recursing
+        // into the operand is load-bearing for byte-identity: the oracle assigns the
+        // const-0 the earlier SSA id, so a `-(a+b)`/`-(a*b)`/`--a` neg-of-non-leaf
+        // lowers byte-exactly (a bare `-<literal>` folds to one CONST at parse time,
+        // never reaching here). Additive — main.mind has no unary neg-of-non-leaf.
         let zslot: i64 = __mind_load_i64(cursor);
         __mind_store_i64(nodes + zslot * 32 + 0, 2);
         __mind_store_i64(nodes + zslot * 32 + 8, 0);
         __mind_store_i64(nodes + zslot * 32 + 16, 0);
         __mind_store_i64(nodes + zslot * 32 + 24, 0);
         __mind_store_i64(cursor, zslot + 1);
+        let oslot: i64 = flatten_ast(ast_child0(node), buf, params_addr, n_params, nodes, cursor);
+        if oslot < 0 {
+            return 0 - 1;
+        }
         let slot: i64 = __mind_load_i64(cursor);
         __mind_store_i64(nodes + slot * 32 + 0, 1);
         __mind_store_i64(nodes + slot * 32 + 8, binop_to_byte(op_sub()));
@@ -18744,20 +18749,21 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
             __mind_store_i64(cursor, cslot + 1);
             return cslot;
         }
-        // `-x` -> `0 - x`: operand first, then a synthetic const-0 leaf, then a `sub` binop
-        // (op byte 1) LAST with lhs=const0, rhs=operand. Mirrors flatten_ast's ast_neg arm so
-        // a seq-let init `let u = -p` lowers byte-exactly. Additive (no unary neg in main.mind's
-        // seq positions).
-        let oslot: i64 = flatten_expr_env(neg_operand, src, params_addr, n_params, nodes, cursor, env, nlets);
-        if oslot < 0 {
-            return 0 - 1;
-        }
+        // `-x` -> `0 - x`: synthetic const-0 leaf FIRST (lowest vid), then the operand,
+        // then a `sub` binop (op byte 1) LAST with lhs=const0, rhs=operand. Mirrors
+        // flatten_ast's ast_neg arm and src/eval/lower.rs Node::Neg (const-0 fresh id
+        // BEFORE lower_expr(operand)) so a seq-let init `let u = -(p+q)` lowers
+        // byte-exactly. Additive (no unary neg-of-non-leaf in main.mind's seq positions).
         let zslot: i64 = __mind_load_i64(cursor);
         __mind_store_i64(nodes + zslot * 32 + 0, 2);
         __mind_store_i64(nodes + zslot * 32 + 8, 0);
         __mind_store_i64(nodes + zslot * 32 + 16, 0);
         __mind_store_i64(nodes + zslot * 32 + 24, 0);
         __mind_store_i64(cursor, zslot + 1);
+        let oslot: i64 = flatten_expr_env(neg_operand, src, params_addr, n_params, nodes, cursor, env, nlets);
+        if oslot < 0 {
+            return 0 - 1;
+        }
         let nslot: i64 = __mind_load_i64(cursor);
         __mind_store_i64(nodes + nslot * 32 + 0, 1);
         __mind_store_i64(nodes + nslot * 32 + 8, 1);
