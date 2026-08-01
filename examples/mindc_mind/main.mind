@@ -440,6 +440,29 @@ pub fn is_module_kw(buf: i64, lo: i64, hi: i64) -> i64 {
     0
 }
 
+// `trait` is lexed as a plain identifier; detect it by byte content like
+// is_struct_kw. The oracle accepts exactly ONE trait shape at top level —
+// `trait NAME { }` with an EMPTY body (no methods, no generics) — and DROPS the
+// item entirely (no module slot: the emitted module is byte-identical to the
+// same source with the item removed). Non-empty trait bodies do not compile in
+// the oracle, so they are not a self-host gap.
+pub fn is_trait_kw(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo == 5 {
+        if load_byte(buf, lo + 0) == 116 {
+            if load_byte(buf, lo + 1) == 114 {
+                if load_byte(buf, lo + 2) == 97 {
+                    if load_byte(buf, lo + 3) == 105 {
+                        if load_byte(buf, lo + 4) == 116 {
+                            return 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    0
+}
+
 // Advance past all tokens until (and including) the closing `}` of a struct body.
 pub fn skip_to_rbrace(toks: Vec, pos: i64) -> i64 {
     if at_eof(toks, pos) == 1 {
@@ -4931,9 +4954,12 @@ pub fn skip_balanced_brace(toks: Vec, pos: i64, depth: i64) -> i64 {
 // whichever shape appears first; EOF terminates. The oracle lowers each
 // `;`-terminated unrecognized item to ONE scaffold placeholder pair, so
 // per-token poisoning was a wrong-bytes miscompile (N stub pairs instead of
-// one). NOTE: brace-bodied items (`trait`/`impl` shape) are a KNOWN SEPARATE
-// gap — the oracle drops them from the module entirely (no module slot), so
-// the one-stub node this produces is still not oracle-exact for that class.
+// one). NOTE: the empty-body `trait NAME { }` class is intercepted in
+// parse_item and dropped entirely (matching the oracle) BEFORE reaching this
+// fallback; OTHER brace-bodied items (`impl`/`mod` shape, non-empty trait
+// bodies) are a KNOWN SEPARATE gap — the oracle rejects them (they do not
+// compile), so the one-stub node this produces is never compared for that
+// class.
 pub fn skip_unknown_item(toks: Vec, pos: i64) -> i64 {
     skip_unknown_item_d(toks, pos, 0)
 }
@@ -4982,8 +5008,24 @@ pub fn parse_item(toks: Vec, pos: i64, buf: i64) -> ParseResult {
         // anything else after `pub` is a pub fn. (main.mind's own structs are bare
         // `struct`, so this never perturbs the canary fixed point.)
         if tok_kind(toks, pos + 1) == tk_ident() {
-            if is_struct_kw(buf, tok_lo(toks, pos + 1), tok_hi(toks, pos + 1)) == 1 {
+            let pk_lo: i64 = tok_lo(toks, pos + 1);
+            let pk_hi: i64 = tok_hi(toks, pos + 1);
+            if is_struct_kw(buf, pk_lo, pk_hi) == 1 {
                 return parse_struct_def(toks, pos + 1, buf);
+            }
+            // `pub trait NAME { }` (EMPTY body): the oracle drops the item
+            // entirely, exactly like the bare `trait` arm below — yield ZERO
+            // nodes (node handle 0 = dropped sentinel, skipped by
+            // parse_items_rest). Any other shape falls through to parse_fn_def
+            // unchanged.
+            if is_trait_kw(buf, pk_lo, pk_hi) == 1 {
+                if tok_kind(toks, pos + 2) == tk_ident() {
+                    if tok_kind(toks, pos + 3) == tk_lbrace() {
+                        if tok_kind(toks, pos + 4) == tk_rbrace() {
+                            return pr_new(pos + 5, 0);
+                        }
+                    }
+                }
             }
         }
         return parse_fn_def(toks, pos + 1, buf, 1);
@@ -5011,6 +5053,25 @@ pub fn parse_item(toks: Vec, pos: i64, buf: i64) -> ParseResult {
         if is_const_kw(buf, lo, hi) == 1 {
             return parse_const_decl(toks, pos, buf);
         }
+        if is_trait_kw(buf, lo, hi) == 1 {
+            // `trait NAME { }` with an EMPTY body is the one brace-bodied item
+            // class the oracle accepts — and it DROPS the item entirely (no
+            // module slot), so the whole program must parse as if the item were
+            // absent. Yield ZERO nodes: node handle 0 is the dropped sentinel
+            // that parse_items_rest skips (AST handles are __mind_alloc arena
+            // addresses, never 0). The one-stub-per-item fallback below is a
+            // wrong-bytes miscompile for this class (it emits a module slot the
+            // oracle does not). Non-empty / malformed trait shapes do not
+            // compile in the oracle, so they fall through to the generic
+            // fallback unchanged.
+            if tok_kind(toks, pos + 1) == tk_ident() {
+                if tok_kind(toks, pos + 2) == tk_lbrace() {
+                    if tok_kind(toks, pos + 3) == tk_rbrace() {
+                        return pr_new(pos + 4, 0);
+                    }
+                }
+            }
+        }
     }
     // Fallback: an item-start token we do not recognize (`type` alias, or any
     // other unexpected item). For `;`-terminated items the oracle lowers EACH
@@ -5021,8 +5082,10 @@ pub fn parse_item(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     // its `;` or balanced `{ .. }` body) and keep ONE ast_unsupported POISON
     // marker: the native driver still fails closed on it (B0 invariant,
     // unchanged), while the mic@3 item loop emits exactly one stub pair,
-    // matching the oracle byte-for-byte on `;`-terminated items. (Brace-bodied
-    // items remain a known separate gap — see skip_unknown_item.) main.mind's
+    // matching the oracle byte-for-byte on `;`-terminated items. (The empty-body
+    // `trait NAME { }` class is intercepted above and dropped entirely, matching
+    // the oracle; OTHER brace-bodied shapes remain a known separate gap — see
+    // skip_unknown_item.) main.mind's
     // own top-level items (import/pub/fn/struct/enum/extern/module/const) are
     // all recognized above, so this fallback is never reached on the self-host
     // source and the canary fixed point is unchanged.
@@ -5038,7 +5101,13 @@ pub fn parse_items_rest(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult 
         return pr_new(pos, s);
     }
     let one: ParseResult = parse_item(toks, pos, buf);
-    let new_acc: Vec = vec_push(acc, pr_node(one));
+    let nn: i64 = pr_node(one);
+    if nn == 0 {
+        // Dropped-item sentinel (empty-body `trait NAME { }`): the oracle emits
+        // NO module slot for the item, so it must not occupy one here either.
+        return parse_items_rest(toks, pr_pos(one), buf, acc);
+    }
+    let new_acc: Vec = vec_push(acc, nn);
     parse_items_rest(toks, pr_pos(one), buf, new_acc)
 }
 
