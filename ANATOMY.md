@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3284 | **Est. tokens:** ~7,792,160
-**Generated:** 2026-08-01 02:00 UTC
+**Files:** 3288 | **Est. tokens:** ~7,792,201
+**Generated:** 2026-08-01 02:16 UTC
 
 ## Token Budget Guide
 
@@ -458,7 +458,7 @@
 | `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
 | `tests/mindfuzz_cross_substrate/staged/` | 16 | ~2,989 |
 | `tests/runtime/` | 2 | ~135 |
-| `tests/selfhost_gaps/` | 97 | ~5,832 |
+| `tests/selfhost_gaps/` | 101 | ~5,873 |
 | `tests/selfhost_gaps/never_wrong/` | 12 | ~328 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
@@ -876,7 +876,7 @@
 - `param_types_smoke.py` (~1273 tok, large)
 - `_ref_add.note` (~16 tok, tiny) — 6fa59a74687e6bac38c983655d4d93ab1873299f130f68cbe481cf92041f6610
 - `_ref_if_ret.note` (~16 tok, tiny) — 3fdc70390e9e12d8030552d11b2194078e8579fbcfac19b14d1beed77174cb07
-- `_ref_main.note` (~16 tok, tiny) — ee30da68609f791ff5fce63096d4c2ca5854a4c2029f0f6ae722135d1c22af31
+- `_ref_main.note` (~16 tok, tiny) — 26b41d300fc2e0f969f24afe46e5afc91d2631629b36a369b3daa9facfdcc929
 - `ref_netverify.py` (~1464 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
 - `_ref_recursion.note` (~16 tok, tiny) — 6d125a946243b0550700d9aa6bc2058b51a3b8bf6e536a8b0b3f545d79b7346f
 - `_ref_struct_field.note` (~16 tok, tiny) — 2f7f2ea32ee47138e1b0162bd51f418b4e5005b4569054f5f3c392ebd2258d96
@@ -4630,6 +4630,9 @@
 - `call-arg-nesting_7.mind` (~28 tok, tiny)
 - `call-arg-nesting_8.mind` (~50 tok, small)
 - `call-arg-nesting_9.mind` (~10 tok, tiny)
+- `const_false_lone_1.mind` (~8 tok, tiny) — fn f() -> bool {
+- `const_ref_lone_1.mind` (~11 tok, tiny) — fn f() -> i64 {
+- `const_true_lone_1.mind` (~7 tok, tiny) — fn f() -> bool {
 - `deep-combos_1.mind` (~42 tok, tiny)
 - `deep-combos_2.mind` (~42 tok, tiny)
 - `deep-combos_3.mind` (~35 tok, tiny)
@@ -4643,6 +4646,7 @@
 - `discarded-stmt_3.mind` (~22 tok, tiny) — fn main() -> i64 {
 - `discarded-stmt_4.mind` (~12 tok, tiny) — fn main() -> i64 {
 - `discarded-stmt_5.mind` (~17 tok, tiny) — fn main() -> i64 {
+- `enum_path_lone_1.mind` (~15 tok, tiny) — fn f() -> i64 {
 - `fallthrough-shadow_1.mind` (~28 tok, tiny)
 - `fallthrough-shadow_2.mind` (~42 tok, tiny)
 - `fallthrough-shadow_3.mind` (~55 tok, small)
