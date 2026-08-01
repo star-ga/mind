@@ -1,0 +1,2 @@
+enum E { A, B = 10, C }
+fn f() -> i64 { E::C }

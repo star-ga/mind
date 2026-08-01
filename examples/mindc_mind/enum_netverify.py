@@ -42,13 +42,14 @@ CASES = [
      COLOR + "fn main()->i64{ return Color::Green; }", 1, "OK"),
     ("variant const Blue=2",
      COLOR + "fn main()->i64{ return Color::Blue; }", 2, "OK"),
-    # --- explicit discriminants (increasing only) ---
-    ("explicit disc A=5",
-     "enum E { A = 5, B }\nfn main()->i64{ return E::A; }", 5, "OK"),
-    ("implicit continues after explicit B=6",
-     "enum E { A = 5, B }\nfn main()->i64{ return E::B; }", 6, "OK"),
-    ("explicit mid-list C=11",
-     "enum F { A, B = 10, C }\nfn main()->i64{ return F::C; }", 11, "OK"),
+    # --- explicit discriminants are IGNORED (sequential-from-0, matching the
+    # --- Rust oracle, which parses-and-discards `= N` for ordinary enums) ---
+    ("explicit disc A=5 IGNORED -> A=0",
+     "enum E { A = 5, B }\nfn main()->i64{ return E::A; }", 0, "OK"),
+    ("sequential after ignored explicit -> B=1",
+     "enum E { A = 5, B }\nfn main()->i64{ return E::B; }", 1, "OK"),
+    ("explicit mid-list B=10 IGNORED -> C=2",
+     "enum F { A, B = 10, C }\nfn main()->i64{ return F::C; }", 2, "OK"),
     # --- variant in arithmetic ---
     ("variant arithmetic Blue*10+Green",
      COLOR + "fn main()->i64{ return Color::Blue * 10 + Color::Green; }", 21, "OK"),
@@ -98,9 +99,13 @@ CASES = [
      "fn main()->i64{ return Shape::Circle; }", None, "0B"),
     ("refuse duplicate enum decl (ambiguous)",
      "enum D { A }\nenum D { A, B }\nfn main()->i64{ return D::A; }", None, "0B"),
-    ("refuse non-increasing explicit discriminant",
-     "enum G { A = 5, B = 2 }\nfn main()->i64{ return G::B; }", None, "0B"),
-    ("refuse negative explicit discriminant",
+    ("non-increasing explicit ignored -> sequential G::B=1",
+     "enum G { A = 5, B = 2 }\nfn main()->i64{ return G::B; }", 1, "OK"),
+    # negative/non-int `= <expr>` is still fail-closed (the self-host only skips
+    # a plain decimal int after `=`; a non-int refuses — a safe GAP, not a
+    # miscompile, since the emitted native ELF would otherwise need to parse the
+    # discarded expr the oracle ignores).
+    ("fail-closed: non-int explicit discriminant (= -1)",
      "enum H { A = -1, B }\nfn main()->i64{ return H::B; }", None, "0B"),
     ("refuse duplicate variant name",
      "enum J { A, A }\nfn main()->i64{ return J::A; }", None, "0B"),

@@ -3716,7 +3716,11 @@ pub fn ent_scan_variants(toks: Vec, buf: i64, pos: i64, vlo: i64, vhi: i64, next
             return 0 - 1;
         }
         // Explicit discriminant `Name = <int>`; a `=` followed by anything but
-        // a plain decimal int token (e.g. a negative value) refuses.
+        // a plain decimal int token (e.g. a negative value) refuses. The `= N`
+        // VALUE is parsed-and-DISCARDED to match the Rust oracle, which ignores
+        // explicit discriminants for ordinary enums (they are sequential from 0;
+        // `= N` is reserved for the bimap derive attribute) -> `has_exp` is retained
+        // ONLY to advance past the `= N` tokens, never to set the discriminant.
         let has_exp: i64 = if tok_kind(toks, pos + 1) == tk_eq() {
             if tok_kind(toks, pos + 2) == tk_int() {
                 1
@@ -3731,18 +3735,10 @@ pub fn ent_scan_variants(toks: Vec, buf: i64, pos: i64, vlo: i64, vhi: i64, next
                 return 0 - 1;
             }
         }
-        let v: i64 = if has_exp == 1 {
-            parse_int_span(buf, tok_lo(toks, pos + 2), tok_hi(toks, pos + 2), 0)
-        } else {
-            next_val
-        };
-        // A non-increasing explicit value could DUPLICATE an earlier
-        // discriminant (first-match dispatch would then silently shadow the
-        // later variant in a desugared match) -> refuse. Accepted decls have
-        // strictly increasing values, hence provably unique.
-        if v < next_val {
-            return 0 - 1;
-        }
+        // Discriminant is ALWAYS the sequential ordinal (`next_val`), never the
+        // explicit `= N` value -> byte-exact with the oracle. Sequential values
+        // are strictly increasing, hence provably unique (no shadowing).
+        let v: i64 = next_val;
         if span_bytes_equal(buf, vlo, vhi, tok_lo(toks, pos), tok_hi(toks, pos)) == 1 {
             // Duplicate variant name -> ambiguous: refuse.
             if found >= 0 {
