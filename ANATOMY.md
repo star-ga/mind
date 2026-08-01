@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3260 | **Est. tokens:** ~7,791,764
-**Generated:** 2026-07-31 17:23 UTC
+**Files:** 3268 | **Est. tokens:** ~7,791,874
+**Generated:** 2026-08-01 00:47 UTC
 
 ## Token Budget Guide
 
@@ -458,8 +458,8 @@
 | `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
 | `tests/mindfuzz_cross_substrate/staged/` | 16 | ~2,989 |
 | `tests/runtime/` | 2 | ~135 |
-| `tests/selfhost_gaps/` | 77 | ~5,502 |
-| `tests/selfhost_gaps/never_wrong/` | 8 | ~262 |
+| `tests/selfhost_gaps/` | 82 | ~5,581 |
+| `tests/selfhost_gaps/never_wrong/` | 11 | ~293 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tools/` | 4 | ~4,578 |
@@ -4638,6 +4638,11 @@
 - `deep-combos_6.mind` (~128 tok, small)
 - `deep-combos_7.mind` (~87 tok, small)
 - `deep-combos_8.mind` (~14 tok, tiny)
+- `discarded-stmt_1.mind` (~12 tok, tiny) — fn main() -> i64 {
+- `discarded-stmt_2.mind` (~16 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
+- `discarded-stmt_3.mind` (~22 tok, tiny) — fn main() -> i64 {
+- `discarded-stmt_4.mind` (~12 tok, tiny) — fn main() -> i64 {
+- `discarded-stmt_5.mind` (~17 tok, tiny) — fn main() -> i64 {
 - `fallthrough-shadow_1.mind` (~28 tok, tiny)
 - `fallthrough-shadow_2.mind` (~42 tok, tiny)
 - `fallthrough-shadow_3.mind` (~55 tok, small)
@@ -4678,6 +4683,9 @@
 - `chained_field_pqz.mind` (~37 tok, tiny)
 - `nested_array_typed.mind` (~23 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `nested_slit_field.mind` (~30 tok, tiny)
+- `print_int_discarded.mind` (~11 tok, tiny) — fn main() -> i64 {
+- `print_lone.mind` (~9 tok, tiny) — fn main() -> i64 {
+- `print_str_discarded.mind` (~11 tok, tiny) — fn main() -> i64 {
 - `prior_let_then_field_recv.mind` (~31 tok, tiny)
 - `qfield_nested.mind` (~34 tok, tiny)
 - `two_scalar_prior.mind` (~38 tok, tiny)
