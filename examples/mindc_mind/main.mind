@@ -4867,21 +4867,107 @@ pub fn parse_params_rest(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult
 
 // ===== Use statements =====
 
+// Advance to the first `;` token (a use/import item is always `;`-terminated),
+// or EOF. parse_use scans its path freely instead of assuming a fixed
+// `head . tail` 5-token shape.
+pub fn skip_to_semi(toks: Vec, pos: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return pos;
+    }
+    if tok_kind(toks, pos) == tk_semi() {
+        return pos;
+    }
+    skip_to_semi(toks, pos + 1)
+}
+
 pub fn parse_use(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     let use_lo: i64 = tok_lo(toks, pos);
     let h_lo: i64 = tok_lo(toks, pos + 1);
     let h_hi: i64 = tok_hi(toks, pos + 1);
     let head: i64 = ast_new_leaf(ast_ident(), h_lo, h_hi);
-    let t_lo: i64 = tok_lo(toks, pos + 3);
-    let t_hi: i64 = tok_hi(toks, pos + 3);
+    // Path separators may be `.` or `::` (`::` lexes as TWO tk_colon tokens), so
+    // fixed offsets mis-split `use std::math;` into a stub plus two poison items
+    // (a wrong-bytes miscompile vs the oracle's single placeholder pair). Scan
+    // to the `;` and take the last path segment as the tail. For the canonical
+    // `import std.vec;` shape this yields the identical node as the old fixed
+    // offsets (tail = tok(pos+3), after = pos+5), so main.mind's own imports
+    // stay byte-identical.
+    let semi: i64 = skip_to_semi(toks, pos + 2);
+    let t_lo: i64 = tok_lo(toks, semi - 1);
+    let t_hi: i64 = tok_hi(toks, semi - 1);
     let tail: i64 = ast_new_leaf(ast_ident(), t_lo, t_hi);
-    let after_semi: i64 = if tok_kind(toks, pos + 4) == tk_semi() {
-        pos + 5
+    let after_semi: i64 = if tok_kind(toks, semi) == tk_semi() {
+        semi + 1
     } else {
-        pos + 4
+        semi
     };
     let node: i64 = ast_new_use(use_lo, t_hi, head, tail);
     pr_new(after_semi, node)
+}
+
+// Consume a balanced `{ .. }` body: pos is the first token AFTER the opening
+// `{`, depth is the running brace depth (1 on entry). Returns the position
+// after the matching `}` (or EOF).
+pub fn skip_balanced_brace(toks: Vec, pos: i64, depth: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return pos;
+    }
+    let k: i64 = tok_kind(toks, pos);
+    if k == tk_lbrace() {
+        return skip_balanced_brace(toks, pos + 1, depth + 1);
+    }
+    if k == tk_rbrace() {
+        if depth == 1 {
+            return pos + 1;
+        }
+        return skip_balanced_brace(toks, pos + 1, depth - 1);
+    }
+    skip_balanced_brace(toks, pos + 1, depth)
+}
+
+// Skip an UNRECOGNIZED top-level item as ONE node: through the first `;` at
+// paren/bracket depth 0 (semicolon items like `type Foo = i64;`, including
+// `[i64; N]` array syntax), or through a balanced `{ .. }` body (brace items),
+// whichever shape appears first; EOF terminates. The oracle lowers each
+// `;`-terminated unrecognized item to ONE scaffold placeholder pair, so
+// per-token poisoning was a wrong-bytes miscompile (N stub pairs instead of
+// one). NOTE: brace-bodied items (`trait`/`impl` shape) are a KNOWN SEPARATE
+// gap — the oracle drops them from the module entirely (no module slot), so
+// the one-stub node this produces is still not oracle-exact for that class.
+pub fn skip_unknown_item(toks: Vec, pos: i64) -> i64 {
+    skip_unknown_item_d(toks, pos, 0)
+}
+
+pub fn skip_unknown_item_d(toks: Vec, pos: i64, depth: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return pos;
+    }
+    let k: i64 = tok_kind(toks, pos);
+    if k == tk_semi() {
+        if depth == 0 {
+            return pos + 1;
+        }
+        return skip_unknown_item_d(toks, pos + 1, depth);
+    }
+    if k == tk_lbrace() {
+        if depth == 0 {
+            return skip_balanced_brace(toks, pos + 1, 1);
+        }
+        return skip_unknown_item_d(toks, pos + 1, depth);
+    }
+    if k == tk_lparen() {
+        return skip_unknown_item_d(toks, pos + 1, depth + 1);
+    }
+    if k == tk_rparen() {
+        return skip_unknown_item_d(toks, pos + 1, depth - 1);
+    }
+    if k == tk_lbracket() {
+        return skip_unknown_item_d(toks, pos + 1, depth + 1);
+    }
+    if k == tk_rbracket() {
+        return skip_unknown_item_d(toks, pos + 1, depth - 1);
+    }
+    skip_unknown_item_d(toks, pos + 1, depth)
 }
 
 // ===== Top-level item / program =====
@@ -4926,16 +5012,24 @@ pub fn parse_item(toks: Vec, pos: i64, buf: i64) -> ParseResult {
             return parse_const_decl(toks, pos, buf);
         }
     }
-    // Fallback: an item-start token we do not recognize (a stray hash/bracket
-    // of an item-level attribute like an inline hint, or any other unexpected
-    // token). Poison the unit with ast_unsupported so the whole compilation
-    // unit fails closed to a 0-byte refusal (B0 invariant) rather than silently
-    // dropping the stray tokens and emitting a running ELF. main.mind's own
-    // top-level items (import/pub/fn/struct/enum/extern/module/const) are all
-    // recognized above, so this fallback is never reached on the self-host
+    // Fallback: an item-start token we do not recognize (`type` alias, or any
+    // other unexpected item). For `;`-terminated items the oracle lowers EACH
+    // unrecognized top-level item to ONE scaffold ConstI64/Output placeholder
+    // pair (the same stub shape as use/import/struct/const items), so the whole
+    // item must parse as ONE node — poisoning per token emitted N stub pairs, a
+    // wrong-bytes miscompile vs the oracle. Consume the entire item (through
+    // its `;` or balanced `{ .. }` body) and keep ONE ast_unsupported POISON
+    // marker: the native driver still fails closed on it (B0 invariant,
+    // unchanged), while the mic@3 item loop emits exactly one stub pair,
+    // matching the oracle byte-for-byte on `;`-terminated items. (Brace-bodied
+    // items remain a known separate gap — see skip_unknown_item.) main.mind's
+    // own top-level items (import/pub/fn/struct/enum/extern/module/const) are
+    // all recognized above, so this fallback is never reached on the self-host
     // source and the canary fixed point is unchanged.
-    let n: i64 = ast_new_leaf(ast_unsupported(), lo, hi);
-    pr_new(pos + 1, n)
+    let end: i64 = skip_unknown_item(toks, pos);
+    let hi2: i64 = tok_hi(toks, end - 1);
+    let n: i64 = ast_new_leaf(ast_unsupported(), lo, hi2);
+    pr_new(end, n)
 }
 
 pub fn parse_items_rest(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult {
