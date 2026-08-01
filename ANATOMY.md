@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3268 | **Est. tokens:** ~7,791,874
-**Generated:** 2026-08-01 00:47 UTC
+**Files:** 3276 | **Est. tokens:** ~7,792,002
+**Generated:** 2026-08-01 01:13 UTC
 
 ## Token Budget Guide
 
@@ -458,7 +458,7 @@
 | `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
 | `tests/mindfuzz_cross_substrate/staged/` | 16 | ~2,989 |
 | `tests/runtime/` | 2 | ~135 |
-| `tests/selfhost_gaps/` | 82 | ~5,581 |
+| `tests/selfhost_gaps/` | 90 | ~5,709 |
 | `tests/selfhost_gaps/never_wrong/` | 11 | ~293 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
@@ -4697,6 +4697,14 @@
 - `operator-edges_4.mind` (~8 tok, tiny)
 - `operator-edges_5.mind` (~16 tok, tiny)
 - `operator-edges_6.mind` (~14 tok, tiny)
+- `prec-add-bitand.mind` (~16 tok, tiny) — fn f(a: i64, b: i64, c: i64) -> i64 {
+- `prec-add-bitor.mind` (~16 tok, tiny) — fn f(a: i64, b: i64, c: i64) -> i64 {
+- `prec-add-shift.mind` (~16 tok, tiny) — fn f(a: i64, b: i64, c: i64) -> i64 {
+- `prec-bitand-eq.mind` (~16 tok, tiny) — fn f(a: i64, b: i64, c: i64) -> i64 {
+- `prec-mul-bitand.mind` (~16 tok, tiny) — fn f(a: i64, b: i64, c: i64) -> i64 {
+- `prec-samebit-or-and.mind` (~16 tok, tiny) — fn f(a: i64, b: i64, c: i64) -> i64 {
+- `prec-shift-mul.mind` (~16 tok, tiny) — fn f(a: i64, b: i64, c: i64) -> i64 {
+- `prec-xor-cmp.mind` (~16 tok, tiny) — fn f(a: i64, b: i64, c: i64) -> i64 {
 - `struct-lit_1.mind` (~63 tok, small)
 - `struct-lit_2.mind` (~56 tok, small)
 - `struct-lit_3.mind` (~60 tok, small)
