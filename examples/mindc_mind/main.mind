@@ -1811,75 +1811,75 @@ pub fn unsigned_cast_mask(buf: i64, lo: i64, hi: i64) -> i64 {
 
 // ===== Pratt precedence table =====
 
-// Binding precedence (higher = tighter). The bitwise/shift ops are interleaved to
-// match the Rust mindc parser exactly (verified vs --emit-mic3): multiplicative >
-// additive > comparison > shift > bitand > bitxor > bitor > assignment. The
-// pre-existing levels (assignment / comparison / additive / multiplicative) keep
-// their relative order; the bitwise tiers are inserted between comparison and
-// assignment, so the existing levels are renumbered upward (no tree-shape change
-// for non-bitwise expressions — relative ordering is what the Pratt loop reads).
+// Binding precedence (higher = tighter). Ordering EXACTLY matches the Rust mindc
+// Pratt table (src/parser/mod.rs peek_binop, tightest->loosest by lbp):
+//   `as`(15) > `* / %`(13) > `| & ^ << >>`(ALL lbp 11, one level) >
+//   `+ -`(9) > comparison `== != < <= > >=`(5) > `&&`(3) > `||`(1) > assignment.
+// The five bitwise/shift ops share ONE level, LEFT-associative (the Pratt loop
+// calls the RHS with prec+1, so `a | b & c` == `(a | b) & c`), and that level is
+// TIGHTER than additive and LOOSER than multiplicative — this is the corrected
+// ordering; the earlier table wrongly placed bitwise LOOSER than additive and
+// split pipe/caret/amp into distinct levels. (`as` is consumed in postfix
+// position, not via this table.)
 pub fn infix_prec(kind: i64) -> i64 {
     if kind == tk_eq() {
         return 1;
     }
-    // Logical `||` (loosest, above assignment) < `&&` < all bitwise/comparison.
-    // Only the relative ordering matters to the Pratt loop, so inserting these two
-    // levels between assignment and bitor and renumbering the tighter levels upward
-    // leaves every pre-existing (non-logical) expression's parse tree UNCHANGED —
-    // main.mind uses no `&&`/`||`, so its self-compile stays byte-identical.
     if kind == tk_oror() {
         return 2;
     }
     if kind == tk_andand() {
         return 3;
     }
-    if kind == tk_pipe() {
+    if kind == tk_lt() {
         return 4;
     }
-    if kind == tk_caret() {
+    if kind == tk_gt() {
+        return 4;
+    }
+    if kind == tk_eqeq() {
+        return 4;
+    }
+    if kind == tk_le() {
+        return 4;
+    }
+    if kind == tk_ge() {
+        return 4;
+    }
+    if kind == tk_ne() {
+        return 4;
+    }
+    if kind == tk_plus() {
         return 5;
+    }
+    if kind == tk_minus() {
+        return 5;
+    }
+    // Bitwise / shift: `| & ^ << >>` all share ONE level, left-associative,
+    // tighter than additive, looser than multiplicative.
+    if kind == tk_pipe() {
+        return 6;
+    }
+    if kind == tk_caret() {
+        return 6;
     }
     if kind == tk_amp() {
         return 6;
     }
     if kind == tk_shl() {
-        return 7;
+        return 6;
     }
     if kind == tk_shr() {
-        return 7;
-    }
-    if kind == tk_lt() {
-        return 8;
-    }
-    if kind == tk_gt() {
-        return 8;
-    }
-    if kind == tk_eqeq() {
-        return 8;
-    }
-    if kind == tk_le() {
-        return 8;
-    }
-    if kind == tk_ge() {
-        return 8;
-    }
-    if kind == tk_ne() {
-        return 8;
-    }
-    if kind == tk_plus() {
-        return 9;
-    }
-    if kind == tk_minus() {
-        return 9;
+        return 6;
     }
     if kind == tk_star() {
-        return 10;
+        return 7;
     }
     if kind == tk_slash() {
-        return 10;
+        return 7;
     }
     if kind == tk_percent() {
-        return 10;
+        return 7;
     }
     0
 }
