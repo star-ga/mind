@@ -96,14 +96,18 @@ CASES = [
     ("sc_or", b"fn sc(a: i64) -> i64 { if a > 0 || (100 / (a - 1)) > 0 { return 1; } else { return 0; } } fn main() -> i64 { return sc(1); }", 1),
 ]
 
-# byte-identity: `A && B` vs explicit `if A { B } else { 0 }`; `A || B` vs `if A { 1 } else { B }`.
+# byte-identity: `A && B` / `A || B` vs their explicit normalized nested-if desugar,
+# which mirrors the Rust front-end (lower.rs `Node::Logical`) EXACTLY — the RHS is
+# normalised to `if B { 1 } else { 0 }` so every branch result is a literal 0/1:
+#   A && B  ->  if A { if B { 1 } else { 0 } } else { 0 }
+#   A || B  ->  if A { 1 } else { if B { 1 } else { 0 } }
 DESUGAR_PAIRS = [
     ("and_vs_ifelse",
      b"fn t(a: i64, b: i64) -> i64 { return a > 0 && b > 0; }",
-     b"fn t(a: i64, b: i64) -> i64 { return if a > 0 { b > 0 } else { 0 }; }"),
+     b"fn t(a: i64, b: i64) -> i64 { return if a > 0 { if b > 0 { 1 } else { 0 } } else { 0 }; }"),
     ("or_vs_ifelse",
      b"fn t(a: i64, b: i64) -> i64 { return a > 0 || b > 0; }",
-     b"fn t(a: i64, b: i64) -> i64 { return if a > 0 { 1 } else { b > 0 }; }"),
+     b"fn t(a: i64, b: i64) -> i64 { return if a > 0 { 1 } else { if b > 0 { 1 } else { 0 } }; }"),
 ]
 
 

@@ -2548,34 +2548,96 @@ pub fn tuple_dot_pos(buf: i64, i: i64, hi: i64) -> i64 {
     tuple_dot_pos(buf, i + 1, hi)
 }
 
+// True when `node` is a comparison binop (== != < <= > >=) — the operand shape
+// the Rust front-end (lower.rs `is_cmp`) uses DIRECTLY as an if-condition (it
+// already yields the boolean the If lowering wants). Any other operand is an
+// i64 that must be coerced with `e != 0` for correct truthiness.
+pub fn andor_is_cmp(node: i64) -> i64 {
+    if ast_kind(node) != ast_binop() {
+        return 0;
+    }
+    let op: i64 = ast_aux(node);
+    if op == op_lt() {
+        return 1;
+    }
+    if op == op_gt() {
+        return 1;
+    }
+    if op == op_eq() {
+        return 1;
+    }
+    if op == op_le() {
+        return 1;
+    }
+    if op == op_ge() {
+        return 1;
+    }
+    if op == op_ne() {
+        return 1;
+    }
+    0
+}
+
+// Coerce an operand into a boolean if-condition, mirroring the Rust front-end's
+// `as_cond` (lower.rs): a comparison is used verbatim; anything else becomes
+// `e != 0`.
+pub fn andor_as_cond(node: i64, lo: i64, hi: i64) -> i64 {
+    if andor_is_cmp(node) == 1 {
+        return node;
+    }
+    ast_new_binop(lo, hi, node, mk_syn_intlit(0), op_ne())
+}
+
+// `if as_cond(node) { 1 } else { 0 }` — normalise an operand to a true i64 0/1,
+// matching the oracle's `norm_right`. Every logical-op branch RESULT is a literal
+// 0/1 (never a bare comparison), so no boolean value ever reaches an If-merge as a
+// non-i64.
+pub fn andor_norm(node: i64, lo: i64, hi: i64) -> i64 {
+    let cond: i64 = andor_as_cond(node, lo, hi);
+    let t0: Vec = vec_new();
+    let t1: Vec = vec_push(t0, mk_syn_intlit(1));
+    let then_blk: i64 = ast_new_block(lo, hi, vec_addr(t1), vec_len(t1));
+    let e0: Vec = vec_new();
+    let e1: Vec = vec_push(e0, mk_syn_intlit(0));
+    let else_blk: i64 = ast_new_block(lo, hi, vec_addr(e1), vec_len(e1));
+    ast_new_if(lo, hi, cond, then_blk, else_blk)
+}
+
 // `A && B` short-circuit lowering: desugar (at PARSE time) to the value-if
-// `if A { B } else { 0 }` — B is evaluated ONLY when A is true, and the whole
-// expression is 0 (false) when A is false. Both branches are one-statement blocks
-// (tail-expression form), so the existing value-if lowering (nb_if_value / the
-// mic@3 OP_IF path / MLIR) evaluates them with zero new emit code. 0 = false; the
-// else-block's `mk_syn_intlit(0)` carries the constant directly. Mirrors the Rust
-// front-end / the else-if & match parse-time desugars already in this file.
+// `if as_cond(A) { if as_cond(B) { 1 } else { 0 } } else { 0 }` — B is evaluated
+// ONLY when A is true, and every branch result is a literal 0/1. This mirrors the
+// Rust front-end's lower.rs `Node::Logical` desugar EXACTLY (RHS normalised via
+// `norm_right`), so the emitted mic@3 / native-ELF / MLIR is byte-identical to
+// `mindc --emit-mic3`. Both branches are one-statement (tail-expression) blocks, so
+// the existing value-if lowering (nb_if_value / the mic@3 OP_IF path / MLIR)
+// evaluates them with zero new emit code.
 pub fn desugar_andand(span_lo: i64, span_hi: i64, lhs: i64, rhs: i64) -> i64 {
+    let cond: i64 = andor_as_cond(lhs, span_lo, span_hi);
+    let norm_rhs: i64 = andor_norm(rhs, span_lo, span_hi);
     let then_acc0: Vec = vec_new();
-    let then_acc: Vec = vec_push(then_acc0, rhs);
+    let then_acc: Vec = vec_push(then_acc0, norm_rhs);
     let then_blk: i64 = ast_new_block(span_lo, span_hi, vec_addr(then_acc), vec_len(then_acc));
     let else_acc0: Vec = vec_new();
     let else_acc: Vec = vec_push(else_acc0, mk_syn_intlit(0));
     let else_blk: i64 = ast_new_block(span_lo, span_hi, vec_addr(else_acc), vec_len(else_acc));
-    ast_new_if(span_lo, span_hi, lhs, then_blk, else_blk)
+    ast_new_if(span_lo, span_hi, cond, then_blk, else_blk)
 }
 
-// `A || B` short-circuit lowering: desugar to `if A { 1 } else { B }` — B is
-// evaluated ONLY when A is false, and the whole expression is 1 (true) when A is
-// true. Dual of desugar_andand; the then-block's `mk_syn_intlit(1)` carries the 1.
+// `A || B` short-circuit lowering: desugar to
+// `if as_cond(A) { 1 } else { if as_cond(B) { 1 } else { 0 } }` — B is evaluated
+// ONLY when A is false, and the whole expression is 1 (true) when A is true. Dual
+// of desugar_andand; mirrors lower.rs `LogicalOp::Or` (RHS normalised via
+// `norm_right`) so the emit is byte-identical to the oracle.
 pub fn desugar_oror(span_lo: i64, span_hi: i64, lhs: i64, rhs: i64) -> i64 {
+    let cond: i64 = andor_as_cond(lhs, span_lo, span_hi);
+    let norm_rhs: i64 = andor_norm(rhs, span_lo, span_hi);
     let then_acc0: Vec = vec_new();
     let then_acc: Vec = vec_push(then_acc0, mk_syn_intlit(1));
     let then_blk: i64 = ast_new_block(span_lo, span_hi, vec_addr(then_acc), vec_len(then_acc));
     let else_acc0: Vec = vec_new();
-    let else_acc: Vec = vec_push(else_acc0, rhs);
+    let else_acc: Vec = vec_push(else_acc0, norm_rhs);
     let else_blk: i64 = ast_new_block(span_lo, span_hi, vec_addr(else_acc), vec_len(else_acc));
-    ast_new_if(span_lo, span_hi, lhs, then_blk, else_blk)
+    ast_new_if(span_lo, span_hi, cond, then_blk, else_blk)
 }
 
 pub fn parse_pratt(toks: Vec, pos: i64, buf: i64, lhs: i64, min_prec: i64) -> ParseResult {
