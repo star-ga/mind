@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3296 | **Est. tokens:** ~7,792,465
-**Generated:** 2026-08-01 04:14 UTC
+**Files:** 3302 | **Est. tokens:** ~7,792,639
+**Generated:** 2026-08-01 04:40 UTC
 
 ## Token Budget Guide
 
@@ -58,7 +58,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 147 | ~346,765 |
+| `examples/mindc_mind/` | 147 | ~346,842 |
 | `examples/mindc_mind/testdata/` | 1 | ~2,452 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
@@ -458,8 +458,8 @@
 | `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
 | `tests/mindfuzz_cross_substrate/staged/` | 16 | ~2,989 |
 | `tests/runtime/` | 2 | ~135 |
-| `tests/selfhost_gaps/` | 108 | ~5,995 |
-| `tests/selfhost_gaps/never_wrong/` | 13 | ~362 |
+| `tests/selfhost_gaps/` | 112 | ~6,056 |
+| `tests/selfhost_gaps/never_wrong/` | 15 | ~398 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tools/` | 4 | ~4,578 |
@@ -876,13 +876,13 @@
 - `param_types_smoke.py` (~1273 tok, large)
 - `_ref_add.note` (~16 tok, tiny) — 6fa59a74687e6bac38c983655d4d93ab1873299f130f68cbe481cf92041f6610
 - `_ref_if_ret.note` (~16 tok, tiny) — 3fdc70390e9e12d8030552d11b2194078e8579fbcfac19b14d1beed77174cb07
-- `_ref_main.note` (~16 tok, tiny) — d483bb0f4918756c629a0d51bbac7876ca4dedc949210c46bf37adef8f128ae7
+- `_ref_main.note` (~16 tok, tiny) — bdfb7c1323d727ceb2b0f0b04a786e5c549b5289df2619061c37e7205c974603
 - `ref_netverify.py` (~1464 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
 - `_ref_recursion.note` (~16 tok, tiny) — 6d125a946243b0550700d9aa6bc2058b51a3b8bf6e536a8b0b3f545d79b7346f
 - `_ref_struct_field.note` (~16 tok, tiny) — 2f7f2ea32ee47138e1b0162bd51f418b4e5005b4569054f5f3c392ebd2258d96
 - `_ref_value_if.note` (~16 tok, tiny) — ae565a5154b76ee1f44a32c16db2e9a8387f2f60c5fca92bba2dc9bb70afb599
 - `self_host_andor_precedence_smoke.py` (~1680 tok, huge) — Front-end PARITY battery for `&&` / `||` precedence + short-circuit.
-- `self_host_andor_smoke.py` (~2065 tok, huge) — Permanent battery for the self-host `&&` / `||` short-circuit operators.
+- `self_host_andor_smoke.py` (~2142 tok, huge) — Permanent battery for the self-host `&&` / `||` short-circuit operators.
 - `self_host_arena_growth_smoke.py` (~1382 tok, large)
 - `self_host_args_from_os_smoke.py` (~1356 tok, large)
 - `selfhost_argv_driver.mind` (~1187 tok, large) — ===========================================================================
@@ -4614,6 +4614,10 @@
 - `scalar_cast_unsigned_narrow_run.rs` (~1092 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/selfhost_gaps/`
 
+- `andor_and_direct_1.mind` (~12 tok, tiny) — fn f(a: bool, b: bool) -> bool {
+- `andor_and_letinit_1.mind` (~23 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
+- `andor_and_ret_1.mind` (~13 tok, tiny) — fn f(a: i64, b: i64) -> bool {
+- `andor_or_ret_1.mind` (~13 tok, tiny) — fn f(a: i64, b: i64) -> bool {
 - `array-nested_1.mind` (~19 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `array-nested_2.mind` (~19 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `array-nested_3.mind` (~23 tok, tiny) — fn f(a: i64, b: i64, c: i64) -> i64 {
@@ -4696,6 +4700,8 @@
 - `mixed-prefix_9.mind` (~50 tok, small)
 ### `tests/selfhost_gaps/never_wrong/`
 
+- `andor_and_ifcond_1.mind` (~18 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
+- `andor_or_ifcond_1.mind` (~18 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `array_of_struct.mind` (~29 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `callarg_then_field_recv.mind` (~40 tok, tiny)
 - `chained_field_pqz.mind` (~37 tok, tiny)

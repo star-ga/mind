@@ -1,0 +1,4 @@
+fn f(a: i64, b: i64) -> i64 {
+    let c: bool = a > 0 && b > 0;
+    if c { 1 } else { 0 }
+}
