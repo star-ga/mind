@@ -9773,7 +9773,18 @@ pub fn const_fn_value(src: i64, fn_node: i64) -> i64 {
     if ast_kind(expr) != ast_int_lit() {
         return 0 - 1;
     }
-    parse_int_span(src, ast_span_lo(expr), ast_span_hi(expr), 0)
+    // SYNTHETIC int-lit (child1==1 sentinel): the parser desugars `true`/`false`,
+    // const refs, and enum paths into int-lits carrying the folded value DIRECT in
+    // child0 with span (0,0) or the path text — NOT a decimal span. Honor the
+    // sentinel (as every other int-lit emitter arm does, e.g. the :17351 field-read
+    // arm) instead of re-parsing the span, which digit-accumulated non-decimal bytes
+    // into garbage (`true` -> const 0, `const K` -> 0, `C::G` -> 20123 vs oracle 1).
+    // Real source int-lits have child1==0 and take the parse_int_span path unchanged.
+    if ast_child1(expr) == 1 {
+        ast_child0(expr)
+    } else {
+        parse_int_span(src, ast_span_lo(expr), ast_span_hi(expr), 0)
+    }
 }
 
 // Extract the mic@3 op-byte of a 2-param single-binop arith fn (body = one
