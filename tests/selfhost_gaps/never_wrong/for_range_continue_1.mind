@@ -1,0 +1,10 @@
+fn f() -> i64 {
+    let mut s = 0;
+    for i in 0..5 {
+        if i > 2 {
+            continue;
+        }
+        s = s + i;
+    }
+    s
+}

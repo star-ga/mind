@@ -2939,6 +2939,60 @@ pub fn for_append_stmts(sa: i64, sl: i64, i: i64, acc: Vec) -> Vec {
     for_append_stmts(sa, sl, i + 1, nx)
 }
 
+// Push `node` onto `acc` unless it is 0 (the parse_for sentinel for "no third
+// statement"). The byte-neutral single-var range-for desugar emits only TWO
+// sibling statements (`let VAR = LO ; while ...`), storing 0 at out+16; the
+// hidden-counter fail-closed form emits three. The block builder uses this so
+// the two-statement form does not push a bogus 0 node.
+pub fn for_push_if_nonzero(acc: Vec, node: i64) -> Vec {
+    if node == 0 {
+        return acc;
+    }
+    vec_push(acc, node)
+}
+
+// Does the loop BODY assign the loop variable VAR (`VAR = ...`) at this loop
+// level? Descends if then/else blocks (same loop level); stops at nested loops
+// (already lowered to `while`). Mirrors the oracle's `body_assigns_var` gate
+// (src/eval/lower.rs): when the body writes VAR the Rust For arm switches to the
+// HYGIENIC desugar (a per-iteration `let mut VAR = __for_i_N` copy), which the
+// self-host cannot reproduce byte-for-byte, so this steers such shapes onto the
+// fail-closed hidden-counter form instead of a wrong-bytes byte-neutral emit.
+pub fn for_body_assigns_var(sa: i64, sl: i64, buf: i64, var_lo: i64, var_hi: i64, i: i64) -> i64 {
+    if i >= sl {
+        return 0;
+    }
+    let s: i64 = __mind_load_i64(sa + i * 8);
+    let k: i64 = ast_kind(s);
+    if k == ast_assign() {
+        let nm: i64 = ast_child0(s);
+        if span_bytes_equal(buf, ast_span_lo(nm), ast_span_hi(nm), var_lo, var_hi) == 1 {
+            return 1;
+        }
+    }
+    if k == ast_if() {
+        if for_if_assigns_var(s, buf, var_lo, var_hi) == 1 {
+            return 1;
+        }
+    }
+    for_body_assigns_var(sa, sl, buf, var_lo, var_hi, i + 1)
+}
+
+// VAR-assignment check for an if node (its then + else blocks).
+pub fn for_if_assigns_var(node: i64, buf: i64, var_lo: i64, var_hi: i64) -> i64 {
+    let tb: i64 = ast_child1(node);
+    if for_body_assigns_var(ast_child0(tb), ast_aux(tb), buf, var_lo, var_hi, 0) == 1 {
+        return 1;
+    }
+    let eb: i64 = ast_child2(node);
+    if eb != 0 {
+        if for_body_assigns_var(ast_child0(eb), ast_aux(eb), buf, var_lo, var_hi, 0) == 1 {
+            return 1;
+        }
+    }
+    0
+}
+
 // Parse `for VAR in LO .. HI { BODY }` at `pos` (pos = the `for` ident) and write
 // the desugared `let` node to out+0 and the `while` node to out+8. Returns the
 // token position after the body's closing `}`. LO/HI are parsed with no_struct=1
@@ -2991,18 +3045,56 @@ pub fn parse_for(toks: Vec, pos: i64, buf: i64, out: i64) -> i64 {
     // like an explicit `: i64`; nb_width_of_ann / nb_let_descriptor read the span only
     // to CLASSIFY, never emit it — proven byte-neutral).
     let ty: i64 = ast_new_leaf(ast_ident(), var_lo, var_hi);
-    // HYGIENIC desugar (self-host Step 2, mirrors the Rust For arm 450875ed).
-    // Identity is by SOURCE BYTES (span_bytes_equal), resolved at EMIT time:
-    //   - hidden counter CTR : span (var_lo,hi_hi) = header text "VAR in LO..HI"
-    //   - hidden bound   BND : span (lo_lo,hi_hi) = range text "LO..HI"
-    // Both spans contain the ` in ` spaces / `..` dots, so NEITHER can equal a user
-    // identifier -> CTR never clobbers a shadowed outer VAR, and a body write to VAR
-    // hits the per-iteration copy (built in the while body), not the counter. The two
-    // spans differ in length so CTR != BND. Distinct loop-var text keeps sibling and
-    // nested counters distinct; BND is read only by the cond (emitted BEFORE the body,
-    // so name resolution is fixed before any inner shadow) so it needs no per-loop
-    // uniqueness. `let BND = HI` pre-lowers the upper bound ONCE, so an END that reads
-    // a body-assigned var (or is a call) is evaluated exactly once, never per-iter.
+
+    // ---- Byte-neutral single-var form (oracle !needs_hygiene) --------------
+    // The overwhelmingly common shape lowers to the EXACT Rust byte-neutral
+    // desugar (src/eval/lower.rs, the `!needs_hygiene` For arm):
+    //   `let VAR = LO ;  while VAR < HI { BODY ; VAR = VAR + 1 ; }`
+    // ONE loop variable — the user's VAR, span "i" (NOT the header text) — and HI
+    // is INLINED into the while condition so it lowers inside the cond region
+    // exactly as the oracle emits it (no hidden counter, no pre-hoisted bound).
+    // This is byte-identical to `mindc --emit-mic3`. It is taken ONLY for the
+    // shapes the oracle treats as non-hygienic here: no own-`continue`, BODY does
+    // not write VAR, and HI is a plain integer literal (so END cannot read a
+    // body-mutated value nor be a call — the oracle's other hygiene triggers).
+    // Every other shape falls through to the hidden-counter form below, which the
+    // nfn driver refuses (fail-CLOSED — never wrong bytes vs the oracle's
+    // hygienic emit, which the self-host cannot yet reproduce byte-for-byte).
+    let end_is_lit: i64 = if ast_kind(pr_node(hi_res)) == ast_int_lit() {
+        1
+    } else {
+        0
+    };
+    let body_writes: i64 = for_body_assigns_var(sa, sl, buf, var_lo, var_hi, 0);
+    if has_cont == 0 {
+        if body_writes == 0 {
+            if end_is_lit == 1 {
+                let vname: i64 = ast_new_leaf(ast_ident(), var_lo, var_hi);
+                let let_var: i64 = ast_new_let(kw_lo, lo_hi, vname, ty, pr_node(lo_res));
+                let wb0: Vec = for_append_stmts(sa, sl, 0, vec_new());
+                let wb1: Vec = vec_push(wb0, for_make_incr(var_lo, var_hi));
+                let wbody: i64 = ast_new_block(body_open, close_hi, vec_addr(wb1), vec_len(wb1));
+                let vref: i64 = ast_new_leaf(ast_ident(), var_lo, var_hi);
+                let cond: i64 = ast_new_binop(var_lo, var_hi, vref, pr_node(hi_res), op_lt());
+                let while_bn: i64 = ast_new_while(kw_lo, close_hi, cond, wbody);
+                __mind_store_i64(out + 0, let_var);
+                __mind_store_i64(out + 8, while_bn);
+                __mind_store_i64(out + 16, 0);
+                return after_close;
+            }
+        }
+    }
+
+    // ---- Hidden-counter form (shapes the oracle lowers HYGIENICALLY) --------
+    // Reached when the byte-neutral form above does NOT apply: own-`continue`, a
+    // body write to VAR, or a non-literal END. The oracle emits its hygienic
+    // `__for_i_N` desugar for these, which the self-host cannot yet reproduce
+    // byte-for-byte — so the mic@3 nfn emit is NOT byte-exact here (and a body
+    // containing `continue` fails CLOSED, since nfn refuses the `continue`
+    // statement). These desugars remain VALID for the native-ELF / MLIR backends
+    // (the AST feeds all three), so the program still compiles correctly; only the
+    // mic@3 byte-oracle parity is deferred. This is the pre-existing behavior,
+    // unchanged: the fix above only ADDS the byte-neutral fast path in front.
     let bnd_name: i64 = ast_new_leaf(ast_ident(), lo_lo, hi_hi);
     let let_bnd: i64 = ast_new_let(kw_lo, hi_hi, bnd_name, ty, pr_node(hi_res));
 
@@ -3446,9 +3538,13 @@ pub fn parse_block_stmts(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult
         if is_ident_for(buf, tok_lo(toks, pos), tok_hi(toks, pos)) == 1 {
             let fout: i64 = __mind_alloc(24);
             let fnp: i64 = parse_for(toks, pos, buf, fout);
-            let fa1: Vec = vec_push(acc, __mind_load_i64(fout + 0));
-            let fa2: Vec = vec_push(fa1, __mind_load_i64(fout + 8));
-            let fa3: Vec = vec_push(fa2, __mind_load_i64(fout + 16));
+            // The byte-neutral single-var form emits only TWO sibling statements
+            // (`let VAR = LO ; while ...`) and stores 0 at out+16; the hidden-
+            // counter form emits three. Skip a 0 slot so the two-statement form
+            // does not push a bogus node.
+            let fa1: Vec = for_push_if_nonzero(acc, __mind_load_i64(fout + 0));
+            let fa2: Vec = for_push_if_nonzero(fa1, __mind_load_i64(fout + 8));
+            let fa3: Vec = for_push_if_nonzero(fa2, __mind_load_i64(fout + 16));
             return parse_block_stmts(toks, fnp, buf, fa3);
         }
     }
@@ -19822,6 +19918,15 @@ pub fn parse_int_span(buf: i64, lo: i64, hi: i64, acc: i64) -> i64 {
         return acc;
     }
     let b: i64 = load_byte(buf, lo);
+    // Digit separator `_` (byte 95): the lexer's scan_dec_end folds an `_`
+    // sitting between two digits into the literal token span (`1_000_000`), so
+    // the raw span carries the `_`s. The Rust oracle drops them at parse time
+    // (parser/mod.rs digits() accumulates only ascii digits, the `_` is
+    // consumed but never pushed), so `1_000_000 == 1000000`. Mirror that here:
+    // skip the `_` without folding it into the accumulator (no `*10`, no digit).
+    if b == 95 {
+        return parse_int_span(buf, lo + 1, hi, acc);
+    }
     parse_int_span(buf, lo + 1, hi, acc * 10 + (b - 48))
 }
 

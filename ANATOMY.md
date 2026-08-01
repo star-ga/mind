@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3276 | **Est. tokens:** ~7,792,002
-**Generated:** 2026-08-01 01:13 UTC
+**Files:** 3284 | **Est. tokens:** ~7,792,160
+**Generated:** 2026-08-01 02:00 UTC
 
 ## Token Budget Guide
 
@@ -458,8 +458,8 @@
 | `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
 | `tests/mindfuzz_cross_substrate/staged/` | 16 | ~2,989 |
 | `tests/runtime/` | 2 | ~135 |
-| `tests/selfhost_gaps/` | 90 | ~5,709 |
-| `tests/selfhost_gaps/never_wrong/` | 11 | ~293 |
+| `tests/selfhost_gaps/` | 97 | ~5,832 |
+| `tests/selfhost_gaps/never_wrong/` | 12 | ~328 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tools/` | 4 | ~4,578 |
@@ -876,7 +876,7 @@
 - `param_types_smoke.py` (~1273 tok, large)
 - `_ref_add.note` (~16 tok, tiny) — 6fa59a74687e6bac38c983655d4d93ab1873299f130f68cbe481cf92041f6610
 - `_ref_if_ret.note` (~16 tok, tiny) — 3fdc70390e9e12d8030552d11b2194078e8579fbcfac19b14d1beed77174cb07
-- `_ref_main.note` (~16 tok, tiny) — 1ea1e79cd0e383ad0dfc017339eadf14d0ae2eeb25704b8304490139d4f31c93
+- `_ref_main.note` (~16 tok, tiny) — ee30da68609f791ff5fce63096d4c2ca5854a4c2029f0f6ae722135d1c22af31
 - `ref_netverify.py` (~1464 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
 - `_ref_recursion.note` (~16 tok, tiny) — 6d125a946243b0550700d9aa6bc2058b51a3b8bf6e536a8b0b3f545d79b7346f
 - `_ref_struct_field.note` (~16 tok, tiny) — 2f7f2ea32ee47138e1b0162bd51f418b4e5005b4569054f5f3c392ebd2258d96
@@ -4656,7 +4656,14 @@
 - `field-read_3.mind` (~27 tok, tiny)
 - `field-read_4.mind` (~29 tok, tiny)
 - `field-read_5.mind` (~61 tok, small)
+- `for_range_bound10_1.mind` (~24 tok, tiny) — fn f(a: i64) -> i64 {
+- `for_range_multistmt_1.mind` (~29 tok, tiny) — fn f(a: i64) -> i64 {
+- `for_range_simple_1.mind` (~24 tok, tiny) — fn f(a: i64) -> i64 {
+- `for_range_zero_1.mind` (~24 tok, tiny) — fn f(a: i64) -> i64 {
 - `GAPS.md` (~2429 tok, huge) — Self-host nfn driver — gap inventory (fuzz-discovered)
+- `int_underscore_group_1.mind` (~7 tok, tiny) — fn f() -> i64 {
+- `int_underscore_million_1.mind` (~8 tok, tiny) — fn f() -> i64 {
+- `int_underscore_pair_1.mind` (~7 tok, tiny) — fn f() -> i64 {
 - `let-ifexpr-seq_1.mind` (~23 tok, tiny)
 - `let-ifexpr-seq_2.mind` (~34 tok, tiny)
 - `let-ifexpr-seq_3.mind` (~23 tok, tiny)
@@ -4681,6 +4688,7 @@
 - `array_of_struct.mind` (~29 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `callarg_then_field_recv.mind` (~40 tok, tiny)
 - `chained_field_pqz.mind` (~37 tok, tiny)
+- `for_range_continue_1.mind` (~35 tok, tiny) — fn f() -> i64 {
 - `nested_array_typed.mind` (~23 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `nested_slit_field.mind` (~30 tok, tiny)
 - `print_int_discarded.mind` (~11 tok, tiny) — fn main() -> i64 {

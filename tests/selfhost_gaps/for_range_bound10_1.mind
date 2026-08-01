@@ -1,0 +1,7 @@
+fn f(a: i64) -> i64 {
+    let mut s = 0;
+    for i in 0..10 {
+        s = s + a;
+    }
+    s
+}
