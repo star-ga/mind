@@ -1,0 +1,5 @@
+fn main() -> i64 {
+    let p: i64 = __mind_alloc(8);
+    __mind_store_i8(p, 1);
+    0
+}

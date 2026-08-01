@@ -1,0 +1,5 @@
+fn main() -> i64 {
+    let a: i64 = 5;
+    let b: i64 = 7;
+    0
+}

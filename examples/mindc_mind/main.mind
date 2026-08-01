@@ -9662,7 +9662,15 @@ pub fn const_fn_value(src: i64, fn_node: i64) -> i64 {
     let body: i64 = ast_child2(fn_node);
     let stmts_addr: i64 = ast_child0(body);
     let stmts_len: i64 = ast_aux(body);
-    if stmts_len < 1 {
+    // MUST be a lone int-literal body. Earlier this accepted ANY 0-param fn whose
+    // LAST stmt was an int-literal, silently DROPPING every preceding statement
+    // (`fn f(){ let p=16; 0 }` -> const 0) — a fail-OPEN miscompile vs the oracle,
+    // which does NO dead-statement elimination and keeps every statement. Requiring
+    // exactly one statement routes any preceding-statement body to the letchain / seq
+    // emitters (which keep all statements byte-exact). Safe for main.mind's own
+    // self-compile: a multi-stmt-ending-in-int-literal 0-param fn would already have
+    // broken the keystone (self drops it, oracle keeps it) — so none exists here.
+    if stmts_len != 1 {
         return 0 - 1;
     }
     let expr: i64 = __mind_load_i64(stmts_addr + (stmts_len - 1) * 8);
@@ -17183,6 +17191,31 @@ pub fn binop_to_byte(op_tag: i64) -> i64 {
     op_tag - 1
 }
 
+// Does the source span [lo,hi) spell exactly the 5-byte builtin name `print`?
+// Used to fail-closed on `print(..)` calls, whose oracle desugar (printI64 +
+// printNewline) the self-host does not model.
+pub fn span_is_print(src: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo != 5 {
+        return 0;
+    }
+    if load_byte(src, lo + 0) != 112 {
+        return 0;
+    }
+    if load_byte(src, lo + 1) != 114 {
+        return 0;
+    }
+    if load_byte(src, lo + 2) != 105 {
+        return 0;
+    }
+    if load_byte(src, lo + 3) != 110 {
+        return 0;
+    }
+    if load_byte(src, lo + 4) != 116 {
+        return 0;
+    }
+    1
+}
+
 // Recursive post-order flatten of a param-only binary-expression AST sub-tree into
 // the 4-i64 descriptor array `nodes` (kind,a,b,c per record, 32 bytes). `cursor` is
 // a 1-i64 heap cell holding the next free slot. Returns the slot index of `node`'s
@@ -17278,6 +17311,17 @@ pub fn flatten_ast(node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: 
         // nodes (which emit NOTHING and consume NO vid), then the call node (kind=3)
         // LAST so it takes the final vid (matching the --emit-mic3 oracle).
         let callee: i64 = ast_child0(node);
+        // FAIL-CLOSED on the `print` builtin: the Rust oracle DESUGARS `print(x)` into
+        // TWO renamed calls — `printI64(x)` then `printNewline()` (3 strtab entries) —
+        // a shape the self-host generic-call path (one OP_CALL to the literal callee
+        // name) does NOT model. Emitting a bare `print` call would be a valid-but-WRONG
+        // module (calls a nonexistent `print`, omits printNewline). Refuse the whole
+        // subtree so the module fails closed (0 bytes) rather than miscompiling. Named
+        // builtin only — a real user call keeps the generic OP_CALL path. main.mind
+        // never calls `print`, so its own self-compile is unaffected.
+        if span_is_print(buf, ast_span_lo(callee), ast_span_hi(callee)) == 1 {
+            return 0 - 1;
+        }
         let args_addr: i64 = ast_child1(node);
         let args_len: i64 = ast_aux(node);
         // (1)+(2): flatten each arg expr post-order + build the arg-cons chain.
@@ -18471,6 +18515,13 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         // h(a, k)`) reuses the earlier call's vid with no new node — byte-exact vs
         // --emit-mic3 (Bound by MIND-CONSTITUTION §I).
         let callee: i64 = ast_child0(node);
+        // FAIL-CLOSED on `print` — the oracle desugars it (printI64 + printNewline),
+        // a shape this generic OP_CALL path does not model. Mirrors flatten_ast's
+        // guard so a discarded/trailing `print(..)` fails the module closed (0 bytes)
+        // instead of emitting a valid-but-wrong bare `print` call.
+        if span_is_print(src, ast_span_lo(callee), ast_span_hi(callee)) == 1 {
+            return 0 - 1;
+        }
         let args_addr: i64 = ast_child1(node);
         let args_len: i64 = ast_aux(node);
         let first_cons: i64 = flatten_argcons_env(args_addr, args_len, 0, src, params_addr, n_params, nodes, cursor, env, nlets);
