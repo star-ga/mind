@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3312 | **Est. tokens:** ~7,794,465
-**Generated:** 2026-08-03 07:57 UTC
+**Files:** 3312 | **Est. tokens:** ~7,794,680
+**Generated:** 2026-08-03 08:24 UTC
 
 ## Token Budget Guide
 
@@ -458,8 +458,8 @@
 | `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
 | `tests/mindfuzz_cross_substrate/staged/` | 16 | ~2,989 |
 | `tests/runtime/` | 2 | ~135 |
-| `tests/selfhost_gaps/` | 133 | ~7,870 |
-| `tests/selfhost_gaps/never_wrong/` | 4 | ~105 |
+| `tests/selfhost_gaps/` | 134 | ~8,115 |
+| `tests/selfhost_gaps/never_wrong/` | 3 | ~75 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tools/` | 4 | ~4,578 |
@@ -4676,7 +4676,7 @@
 - `for_range_multistmt_1.mind` (~29 tok, tiny) — fn f(a: i64) -> i64 {
 - `for_range_simple_1.mind` (~24 tok, tiny) — fn f(a: i64) -> i64 {
 - `for_range_zero_1.mind` (~24 tok, tiny) — fn f(a: i64) -> i64 {
-- `GAPS.md` (~3849 tok, huge) — Self-host nfn driver — gap inventory (fuzz-discovered)
+- `GAPS.md` (~4064 tok, huge) — Self-host nfn driver — gap inventory (fuzz-discovered)
 - `int_underscore_group_1.mind` (~7 tok, tiny) — fn f() -> i64 {
 - `int_underscore_million_1.mind` (~8 tok, tiny) — fn f() -> i64 {
 - `int_underscore_pair_1.mind` (~7 tok, tiny) — fn f() -> i64 {
@@ -4714,11 +4714,11 @@
 - `neg_nonleaf_mul_1.mind` (~10 tok, tiny) — fn f(a: i64) -> i64 {
 - `neg_nonleaf_paren_sub_1.mind` (~10 tok, tiny) — fn f(a: i64) -> i64 {
 - `nested_array_typed.mind` (~23 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
+- `nested_slit_field.mind` (~30 tok, tiny)
 ### `tests/selfhost_gaps/never_wrong/`
 
 - `array_of_struct.mind` (~29 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `for_range_continue_1.mind` (~35 tok, tiny) — fn f() -> i64 {
-- `nested_slit_field.mind` (~30 tok, tiny)
 - `print_str_discarded.mind` (~11 tok, tiny) — fn main() -> i64 {
 ### `tests/selfhost_gaps/`
 

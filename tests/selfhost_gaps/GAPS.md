@@ -205,3 +205,15 @@ the prefold then folds it to a load of the hoisted alloc — exactly the oracle'
 `construction; __mind_load_i64(alloc); mk(load)`. Bare struct-lit args keep the
 untyped handle (byte-identical to before). gap-corpus floor 131 -> 132; loop
 anchor re-frozen; flip byte-identical.
+
+## Fixed (cont.) — nested struct-lits as field values (`nested_slit_field`)
+`P { q: Q { z: a }, w: b }` — the store fill wrapped every field value in a
+value-let, so a struct-lit VALUE produced a `let … = Q{..}` with no construction
+(fail-closed). The fill now runs a running offset and, for a struct-lit value,
+inlines the inner construction chain (alloc + recursive stores — the oracle
+allocs the OUTER record first, then evaluates nested values in order) before the
+store-let that writes its handle. Depth-3 nesting verified. One real bug caught
+by the never-wrong gate pre-merge: the nested chain's alloc CALL callee must
+keep the interned `__mind_alloc` span (talo/tahi threading) — passing the outer
+handle span emitted a call to a nonexistent name (wrong-bytes class).
+gap-corpus floor 132 -> 133; loop anchor re-frozen; flip byte-identical.
