@@ -16128,20 +16128,12 @@ pub fn slit_build_store_let(alo: i64, ahi: i64, slo: i64, shi: i64, j: i64, vref
 
 // Fill new_stmts[1 .. 1+nfields] with per-canonical-field store-lets. Returns 1, or
 // 0 if any canonical field is missing from the literal (fail-closed).
-pub fn slit_fill_stores(new_stmts: i64, fields_addr: i64, ntriples: i64, src: i64, srt: i64, k: i64, nfields: i64, alo: i64, ahi: i64, slo: i64, shi: i64, j: i64) -> i64 {
-    if j >= nfields {
-        return 1;
-    }
-    let val: i64 = slit_canon_value(fields_addr, ntriples, src, srt, k, j);
-    if val == 0 {
-        return 0;
-    }
-    let vlet: i64 = slit_build_value_let(val);
-    let vref: i64 = ast_new_leaf(ast_ident(), ast_span_lo(val), ast_span_hi(val));
-    let slet: i64 = slit_build_store_let(alo, ahi, slo, shi, j, vref);
-    __mind_store_i64(new_stmts + (1 + 2 * j) * 8, vlet);
-    __mind_store_i64(new_stmts + (1 + 2 * j + 1) * 8, slet);
-    slit_fill_stores(new_stmts, fields_addr, ntriples, src, srt, k, nfields, alo, ahi, slo, shi, j + 1)
+// Running-offset variant of the store fill (nested struct-lit field values
+// inline their own construction chain — see slit_fill_stores_at). Returns the
+// next free offset, or -1 (fail-closed). The single-stmt desugar writes from
+// base 1 (slot 0 is the alloc-let).
+pub fn slit_fill_stores(new_stmts: i64, fields_addr: i64, ntriples: i64, src: i64, srt: i64, k: i64, nfields: i64, alo: i64, ahi: i64, talo: i64, tahi: i64, slo: i64, shi: i64, j: i64) -> i64 {
+    slit_fill_stores_at(new_stmts, 1, fields_addr, ntriples, src, srt, k, nfields, alo, ahi, talo, tahi, slo, shi, j)
 }
 
 // Desugar a single-stmt struct-lit-bodied fn body in place into the let-chain.
@@ -16169,7 +16161,10 @@ pub fn slit_desugar_body(fn_node: i64, src: i64, srt: i64, alo: i64, ahi: i64, s
     if ntriples != nfields {
         return 0;
     }
-    let new_len: i64 = 2 * nfields + 2;
+    let new_len: i64 = slit_stores_slots(fields_addr, ntriples, src, srt, k, nfields, 0, 0) + 2;
+    if new_len < 2 {
+        return 0;
+    }
     let new_stmts: i64 = __mind_alloc(new_len * 8);
     // The synthetic handle (alloc-let name, store addr refs, trailing ref) carries
     // the struct-lit's OWN source span — unique per construction site, so a body
@@ -16188,14 +16183,15 @@ pub fn slit_desugar_body(fn_node: i64, src: i64, srt: i64, alo: i64, ahi: i64, s
     let aname: i64 = ast_new_leaf(ast_ident(), hlo, hhi);
     let alet: i64 = ast_new_let(0, 0, aname, 0, acall);
     __mind_store_i64(new_stmts + 0, alet);
-    // (1..nfields) per-field stores in canonical order.
-    let okf: i64 = slit_fill_stores(new_stmts, fields_addr, ntriples, src, srt, k, nfields, hlo, hhi, slo, shi, 0);
-    if okf == 0 {
+    // (1..) per-field stores in canonical order (a nested struct-lit value inlines
+    // its own construction chain — the fill returns the next free offset).
+    let okf: i64 = slit_fill_stores(new_stmts, fields_addr, ntriples, src, srt, k, nfields, hlo, hhi, alo, ahi, slo, shi, 0);
+    if okf < 0 {
         return 0;
     }
     // (last) trailing ptr ref -> ret vid = alloc vid.
     let tref: i64 = ast_new_leaf(ast_ident(), hlo, hhi);
-    __mind_store_i64(new_stmts + (2 * nfields + 1) * 8, tref);
+    __mind_store_i64(new_stmts + (new_len - 1) * 8, tref);
     // Replace the body block's statements (child0 = stmts_addr, aux = stmts_len).
     __mind_store_i64(body + 24, new_stmts);
     __mind_store_i64(body + 48, new_len);
@@ -16224,6 +16220,48 @@ pub fn slit_stmt_snode(stmt: i64) -> i64 {
     0
 }
 
+// Slots one field VALUE occupies in a desugared construction chain: 2 (value-let
+// + store-let) for a plain value; (1 + inner_stores + 1) for a nested
+// struct-lit — its own alloc-let, its (recursive) store chain, and the outer
+// store-let that writes its handle. -1 when a nested literal's type or field
+// set is unresolvable (the caller fails closed; never emits a guessed shape).
+pub fn slit_field_slots(val: i64, src: i64, srt: i64) -> i64 {
+    if ast_kind(val) != ast_struct_lit() {
+        return 2;
+    }
+    let vk: i64 = srt_find_by_name(srt, src, ast_child0(val), ast_child2(val), 0);
+    if vk < 0 {
+        return 0 - 1;
+    }
+    let vnf: i64 = srt_field_count(srt, vk);
+    if ast_aux(val) != vnf {
+        return 0 - 1;
+    }
+    let inner: i64 = slit_stores_slots(ast_child1(val), vnf, src, srt, vk, vnf, 0, 0);
+    if inner < 0 {
+        return 0 - 1;
+    }
+    1 + inner + 1
+}
+
+// Sum of slit_field_slots over the canonical fields of struct k (the store
+// chain length, without the alloc-let and final statement). -1 if any field is
+// missing or unresolvable.
+pub fn slit_stores_slots(fields_addr: i64, ntriples: i64, src: i64, srt: i64, k: i64, nfields: i64, j: i64, acc: i64) -> i64 {
+    if j >= nfields {
+        return acc;
+    }
+    let val: i64 = slit_canon_value(fields_addr, ntriples, src, srt, k, j);
+    if val == 0 {
+        return 0 - 1;
+    }
+    let fs: i64 = slit_field_slots(val, src, srt);
+    if fs < 0 {
+        return 0 - 1;
+    }
+    slit_stores_slots(fields_addr, ntriples, src, srt, k, nfields, j + 1, acc + fs)
+}
+
 // Number of output statements a top-level statement expands to: a desugarable struct-lit
 // (resolvable type, all fields present) -> nfields + 2 (alloc-let + stores + final), else 1.
 // `fr_ok` is RETIRED (kept only for signature stability with slit_seq_len/slit_seq_fill):
@@ -16240,9 +16278,15 @@ pub fn slit_stmt_outn(stmt: i64, src: i64, srt: i64, fr_ok: i64) -> i64 {
         if ast_aux(snode) != nfields {
             return 1;
         }
-        return 2 * nfields + 2;
+        // store chain can be wider than 2/field when a field value is itself a
+        // struct-lit (its own construction chain inlines; see slit_field_slots).
+        let tot: i64 = slit_stores_slots(ast_child1(snode), nfields, src, srt, k, nfields, 0, 0);
+        if tot < 0 {
+            return 1;
+        }
+        return tot + 2;
     }
-    // HOIST: a struct-lit passed as a call-arg expands to [alloc + stores] (2*nf+1) plus
+    // HOIST: a struct-lit passed as a call-arg expands to [alloc + stores] plus
     // the using statement (1), with the struct-lit replaced by an __mind_alloc ident.
     let hnode: i64 = slit_stmt_hoist_snode(stmt);
     if hnode != 0 {
@@ -16254,7 +16298,11 @@ pub fn slit_stmt_outn(stmt: i64, src: i64, srt: i64, fr_ok: i64) -> i64 {
         if ast_aux(hnode) != hnf {
             return 1;
         }
-        return 2 * hnf + 2;
+        let htot: i64 = slit_stores_slots(ast_child1(hnode), hnf, src, srt, hk, hnf, 0, 0);
+        if htot < 0 {
+            return 1;
+        }
+        return htot + 2;
     }
     // FIELD-RECEIVER HOIST: `P{..}.x` -> same [alloc + stores] + using stmt. Safe at
     // any position: every construction's synthetic handle (alloc-let name, store
@@ -16272,7 +16320,11 @@ pub fn slit_stmt_outn(stmt: i64, src: i64, srt: i64, fr_ok: i64) -> i64 {
         if ast_aux(frs) != fnf {
             return 1;
         }
-        return 2 * fnf + 2;
+        let ftot: i64 = slit_stores_slots(ast_child1(frs), fnf, src, srt, fk, fnf, 0, 0);
+        if ftot < 0 {
+            return 1;
+        }
+        return ftot + 2;
     }
     1
 }
@@ -16296,20 +16348,72 @@ pub fn slit_seq_len(stmts_addr: i64, stmts_len: i64, src: i64, srt: i64, i: i64,
 }
 
 // Write the per-field store-lets for one struct-lit into new_stmts[base..base+nfields).
-pub fn slit_fill_stores_at(new_stmts: i64, base: i64, fields_addr: i64, ntriples: i64, src: i64, srt: i64, k: i64, nfields: i64, alo: i64, ahi: i64, slo: i64, shi: i64, j: i64) -> i64 {
+// Fill new_stmts[base..] with the per-field value/store chain for struct k's
+// canonical fields. A PLAIN value emits [value-let, store-let]; a NESTED
+// struct-lit value emits its own construction chain inline (alloc-let +
+// recursive stores — the oracle allocs the OUTER record first, then evaluates
+// nested field values in order) followed by the store-let that writes its
+// handle. (alo,ahi) = THIS construction's handle span (store addr refs);
+// (talo,tahi) = the interned `__mind_alloc` span, needed so a nested chain's
+// alloc CALL callee stays interned-correct. Returns the next free offset, or
+// -1 (fail-closed) on an unresolvable field / nested literal.
+pub fn slit_fill_stores_at(new_stmts: i64, base: i64, fields_addr: i64, ntriples: i64, src: i64, srt: i64, k: i64, nfields: i64, alo: i64, ahi: i64, talo: i64, tahi: i64, slo: i64, shi: i64, j: i64) -> i64 {
     if j >= nfields {
-        return 1;
+        return base;
     }
     let val: i64 = slit_canon_value(fields_addr, ntriples, src, srt, k, j);
     if val == 0 {
-        return 0;
+        return 0 - 1;
+    }
+    if ast_kind(val) == ast_struct_lit() {
+        let vk: i64 = srt_find_by_name(srt, src, ast_child0(val), ast_child2(val), 0);
+        if vk < 0 {
+            return 0 - 1;
+        }
+        let vnf: i64 = srt_field_count(srt, vk);
+        if ast_aux(val) != vnf {
+            return 0 - 1;
+        }
+        let vslots: i64 = slit_stores_slots(ast_child1(val), vnf, src, srt, vk, vnf, 0, 0);
+        if vslots < 0 {
+            return 0 - 1;
+        }
+        // Inner construction chain at [base..base+1+vslots): alloc-let + its stores.
+        let _ic: i64 = slit_emit_nested_ctor(new_stmts, base, val, src, srt, vk, vnf, talo, tahi, slo, shi);
+        // The outer store-let writes the inner handle (named by the inner
+        // struct-lit's own span — the construction's handle) into field j.
+        let vref: i64 = ast_new_leaf(ast_ident(), ast_span_lo(val), ast_span_hi(val));
+        let slet: i64 = slit_build_store_let(alo, ahi, slo, shi, j, vref);
+        __mind_store_i64(new_stmts + (base + 1 + vslots) * 8, slet);
+        return slit_fill_stores_at(new_stmts, base + 1 + vslots + 1, fields_addr, ntriples, src, srt, k, nfields, alo, ahi, talo, tahi, slo, shi, j + 1);
     }
     let vlet: i64 = slit_build_value_let(val);
     let vref: i64 = ast_new_leaf(ast_ident(), ast_span_lo(val), ast_span_hi(val));
     let slet: i64 = slit_build_store_let(alo, ahi, slo, shi, j, vref);
-    __mind_store_i64(new_stmts + (base + 2 * j) * 8, vlet);
-    __mind_store_i64(new_stmts + (base + 2 * j + 1) * 8, slet);
-    slit_fill_stores_at(new_stmts, base, fields_addr, ntriples, src, srt, k, nfields, alo, ahi, slo, shi, j + 1)
+    __mind_store_i64(new_stmts + base * 8, vlet);
+    __mind_store_i64(new_stmts + (base + 1) * 8, slet);
+    slit_fill_stores_at(new_stmts, base + 2, fields_addr, ntriples, src, srt, k, nfields, alo, ahi, talo, tahi, slo, shi, j + 1)
+}
+
+// Emit a NESTED construction chain (alloc-let + per-field stores, no final
+// statement) for a struct-lit field VALUE at new_stmts[base..]. The handle name
+// is the struct-lit's own span (unique per site, matching the outer handle
+// discipline); the alloc CALL callee keeps the interned (talo,tahi) span, the
+// store callees keep (slo,shi). Returns the count emitted (1 + inner store
+// slots).
+pub fn slit_emit_nested_ctor(new_stmts: i64, base: i64, snode: i64, src: i64, srt: i64, k: i64, nfields: i64, talo: i64, tahi: i64, slo: i64, shi: i64) -> i64 {
+    let size: i64 = ast_new_binop(0, 0, mk_syn_intlit(8), mk_syn_intlit(nfields), op_mul());
+    let acallee: i64 = ast_new_leaf(ast_ident(), talo, tahi);
+    let aargs: i64 = __mind_alloc(8);
+    __mind_store_i64(aargs + 0, size);
+    let acall: i64 = ast_new_call(0, 0, acallee, aargs, 1);
+    let hlo: i64 = ast_span_lo(snode);
+    let hhi: i64 = ast_span_hi(snode);
+    let aname: i64 = ast_new_leaf(ast_ident(), hlo, hhi);
+    let alet: i64 = ast_new_let(0, 0, aname, 0, acall);
+    __mind_store_i64(new_stmts + base * 8, alet);
+    let nxt: i64 = slit_fill_stores_at(new_stmts, base + 1, ast_child1(snode), ast_aux(snode), src, srt, k, nfields, hlo, hhi, talo, tahi, slo, shi, 0);
+    nxt - base
 }
 
 // Expand one struct-lit statement into [alloc-let, stores, final] at new_stmts[out..].
@@ -16331,7 +16435,7 @@ pub fn slit_emit_ctor(new_stmts: i64, out: i64, orig_stmt: i64, snode: i64, src:
     let aname: i64 = ast_new_leaf(ast_ident(), hlo, hhi);
     let alet: i64 = ast_new_let(0, 0, aname, 0, acall);
     __mind_store_i64(new_stmts + out * 8, alet);
-    let _f: i64 = slit_fill_stores_at(new_stmts, out + 1, ast_child1(snode), ast_aux(snode), src, srt, k, nfields, hlo, hhi, slo, shi, 0);
+    let fend: i64 = slit_fill_stores_at(new_stmts, out + 1, ast_child1(snode), ast_aux(snode), src, srt, k, nfields, hlo, hhi, alo, ahi, slo, shi, 0);
     let sl_ref: i64 = ast_new_leaf(ast_ident(), hlo, hhi);
     let kind: i64 = ast_kind(orig_stmt);
     let final: i64 = if kind == ast_let() {
@@ -16346,8 +16450,8 @@ pub fn slit_emit_ctor(new_stmts: i64, out: i64, orig_stmt: i64, snode: i64, src:
             sl_ref
         }
     };
-    __mind_store_i64(new_stmts + (out + 2 * nfields + 1) * 8, final);
-    1
+    __mind_store_i64(new_stmts + fend * 8, final);
+    fend - out + 1
 }
 
 // The expression that carries a statement's value (let init / return value / trailing).
@@ -16515,8 +16619,8 @@ pub fn slit_emit_ctor_hoist(new_stmts: i64, out: i64, snode: i64, src: i64, srt:
     let aname: i64 = ast_new_leaf(ast_ident(), hlo, hhi);
     let alet: i64 = ast_new_let(0, 0, aname, ty, acall);
     __mind_store_i64(new_stmts + out * 8, alet);
-    let _f: i64 = slit_fill_stores_at(new_stmts, out + 1, ast_child1(snode), ast_aux(snode), src, srt, k, nfields, hlo, hhi, slo, shi, 0);
-    2 * nfields + 1
+    let fend: i64 = slit_fill_stores_at(new_stmts, out + 1, ast_child1(snode), ast_aux(snode), src, srt, k, nfields, hlo, hhi, alo, ahi, slo, shi, 0);
+    fend - out
 }
 
 // Fill the new (expanded) statement array, copying non-struct-lit statements and
@@ -16544,8 +16648,8 @@ pub fn slit_seq_fill(new_stmts: i64, out_cell: i64, stmts_addr: i64, stmts_len: 
         if snode != 0 {
             let k: i64 = srt_find_by_name(srt, src, ast_child0(snode), ast_child2(snode), 0);
             let nfields: i64 = srt_field_count(srt, k);
-            let _e: i64 = slit_emit_ctor(new_stmts, out, stmt, snode, src, srt, k, nfields, alo, ahi, slo, shi);
-            __mind_store_i64(out_cell, out + 2 * nfields + 2)
+            let ec: i64 = slit_emit_ctor(new_stmts, out, stmt, snode, src, srt, k, nfields, alo, ahi, slo, shi);
+            __mind_store_i64(out_cell, out + ec)
         } else {
             // outn>1 with no direct snode: a FIELD-RECEIVER hoist or a call-arg
             // hoist. Both synthesize their construction with the struct-lit's OWN
