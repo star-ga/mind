@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3312 | **Est. tokens:** ~7,792,740
-**Generated:** 2026-08-01 09:07 UTC
+**Files:** 3312 | **Est. tokens:** ~7,792,972
+**Generated:** 2026-08-03 04:02 UTC
 
 ## Token Budget Guide
 
@@ -458,8 +458,8 @@
 | `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
 | `tests/mindfuzz_cross_substrate/staged/` | 16 | ~2,989 |
 | `tests/runtime/` | 2 | ~135 |
-| `tests/selfhost_gaps/` | 122 | ~6,157 |
-| `tests/selfhost_gaps/never_wrong/` | 15 | ~398 |
+| `tests/selfhost_gaps/` | 124 | ~6,409 |
+| `tests/selfhost_gaps/never_wrong/` | 13 | ~378 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tools/` | 4 | ~4,578 |
@@ -876,7 +876,7 @@
 - `param_types_smoke.py` (~1273 tok, large)
 - `_ref_add.note` (~16 tok, tiny) — 6fa59a74687e6bac38c983655d4d93ab1873299f130f68cbe481cf92041f6610
 - `_ref_if_ret.note` (~16 tok, tiny) — 3fdc70390e9e12d8030552d11b2194078e8579fbcfac19b14d1beed77174cb07
-- `_ref_main.note` (~16 tok, tiny) — 62565133bd02fd99ca3e0c751cb60aa59740c76c4b41425cd0617e6a52960473
+- `_ref_main.note` (~16 tok, tiny) — c40a15fd353b6e71ac7720dd74777ac463379c17042d88f85612106c1da16205
 - `ref_netverify.py` (~1464 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
 - `_ref_recursion.note` (~16 tok, tiny) — 6d125a946243b0550700d9aa6bc2058b51a3b8bf6e536a8b0b3f545d79b7346f
 - `_ref_struct_field.note` (~16 tok, tiny) — 2f7f2ea32ee47138e1b0162bd51f418b4e5005b4569054f5f3c392ebd2258d96
@@ -4672,7 +4672,7 @@
 - `for_range_multistmt_1.mind` (~29 tok, tiny) — fn f(a: i64) -> i64 {
 - `for_range_simple_1.mind` (~24 tok, tiny) — fn f(a: i64) -> i64 {
 - `for_range_zero_1.mind` (~24 tok, tiny) — fn f(a: i64) -> i64 {
-- `GAPS.md` (~2429 tok, huge) — Self-host nfn driver — gap inventory (fuzz-discovered)
+- `GAPS.md` (~2661 tok, huge) — Self-host nfn driver — gap inventory (fuzz-discovered)
 - `int_underscore_group_1.mind` (~7 tok, tiny) — fn f() -> i64 {
 - `int_underscore_million_1.mind` (~8 tok, tiny) — fn f() -> i64 {
 - `int_underscore_pair_1.mind` (~7 tok, tiny) — fn f() -> i64 {
@@ -4719,8 +4719,6 @@
 - `matchcall_letinit_1.mind` (~34 tok, tiny) — fn g(a: i64) -> i64 {
 - `nested_array_typed.mind` (~23 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `nested_slit_field.mind` (~30 tok, tiny)
-- `print_int_discarded.mind` (~11 tok, tiny) — fn main() -> i64 {
-- `print_lone.mind` (~9 tok, tiny) — fn main() -> i64 {
 - `print_str_discarded.mind` (~11 tok, tiny) — fn main() -> i64 {
 - `prior_let_then_field_recv.mind` (~31 tok, tiny)
 - `qfield_nested.mind` (~34 tok, tiny)
@@ -4741,6 +4739,8 @@
 - `prec-samebit-or-and.mind` (~16 tok, tiny) — fn f(a: i64, b: i64, c: i64) -> i64 {
 - `prec-shift-mul.mind` (~16 tok, tiny) — fn f(a: i64, b: i64, c: i64) -> i64 {
 - `prec-xor-cmp.mind` (~16 tok, tiny) — fn f(a: i64, b: i64, c: i64) -> i64 {
+- `print_int_discarded.mind` (~11 tok, tiny) — fn main() -> i64 {
+- `print_lone.mind` (~9 tok, tiny) — fn main() -> i64 {
 - `struct-lit_1.mind` (~63 tok, small)
 - `struct-lit_2.mind` (~56 tok, small)
 - `struct-lit_3.mind` (~60 tok, small)
