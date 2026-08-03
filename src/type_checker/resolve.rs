@@ -215,7 +215,7 @@ struct ModuleSyms {
     /// A call whose callee resolves only to one of these targets a data/global
     /// symbol; see `is_module_non_fn_call`.
     non_fn_decls: BTreeSet<String>,
- }
+}
 
 impl ModuleSyms {
     /// A name is module-resolvable iff it is a per-module declaration/import name

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3312 | **Est. tokens:** ~7,794,041
-**Generated:** 2026-08-03 05:47 UTC
+**Files:** 3312 | **Est. tokens:** ~7,794,061
+**Generated:** 2026-08-03 07:15 UTC
 
 ## Token Budget Guide
 
@@ -414,7 +414,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~198,092 |
-| `tests/` | 310 | ~530,096 |
+| `tests/` | 310 | ~530,116 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -4782,12 +4782,12 @@
 - `stdlib_tensor.rs` (~256 tok, medium) — Copyright 2025 STARGA Inc.
 - `std_llvm_bindings_smoke.rs` (~2606 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_mlir_bindings_smoke.rs` (~4774 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_arena.rs` (~1336 tok, large) — Copyright 2025 STARGA Inc.
+- `std_surface_arena.rs` (~1338 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_array_literals.rs` (~1334 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_async.rs` (~4230 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_bitwise_binops.rs` (~2391 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_bool_return.rs` (~1247 tok, large) — Copyright 2026 STARGA Inc.
-- `std_surface_break_continue.rs` (~1308 tok, large) — Copyright 2026 STARGA Inc.
+- `std_surface_break_continue.rs` (~1310 tok, large) — Copyright 2026 STARGA Inc.
 - `std_surface_call_lowering.rs` (~834 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_cdylib_link.rs` (~2078 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_cli_equals_form.rs` (~874 tok, large) — Copyright 2025 STARGA Inc.
@@ -4801,31 +4801,31 @@
 - `std_surface_if_statement.rs` (~3282 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_intrinsics.rs` (~2438 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_io_ansi.rs` (~793 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_io_canon.rs` (~3260 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_io_canon.rs` (~3262 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_io_module.rs` (~1540 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_iouring.rs` (~3542 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_json.rs` (~7041 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_logical_ops.rs` (~1181 tok, large) — Copyright 2026 STARGA Inc.
+- `std_surface_logical_ops.rs` (~1183 tok, large) — Copyright 2026 STARGA Inc.
 - `std_surface_map_module.rs` (~2015 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_method_call.rs` (~2939 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_net_fs_process.rs` (~7303 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_net_fs_process.rs` (~7305 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_c_stdlib_bundle.rs` (~1466 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_d_env_override.rs` (~1597 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_promotion_compose.rs` (~5551 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_reactor.rs` (~1351 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_regex.rs` (~5280 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_ring.rs` (~1304 tok, large) — Copyright 2025 STARGA Inc.
+- `std_surface_reactor.rs` (~1353 tok, large) — Copyright 2025 STARGA Inc.
+- `std_surface_regex.rs` (~5282 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_ring.rs` (~1306 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_self_emit_shared.rs` (~1807 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_string_itoa.rs` (~934 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_string_module.rs` (~2284 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_string_push_str.rs` (~864 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_struct_lowering.rs` (~2712 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_toml.rs` (~4142 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_toml.rs` (~4144 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_tui.rs` (~2261 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_use_import_phase_b.rs` (~2303 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_use_import.rs` (~1757 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_vec_module.rs` (~1805 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_vec_zeroed.rs` (~1071 tok, large) — Copyright 2025 STARGA Inc.
+- `std_surface_vec_zeroed.rs` (~1073 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_while_statement.rs` (~3200 tok, huge) — Copyright 2025 STARGA Inc.
 - `stmt_keyword_recognizer.rs` (~2473 tok, huge) — Copyright 2025 STARGA Inc.
 - `stride_gather_grad.rs` (~312 tok, medium) — Copyright 2025 STARGA Inc.
