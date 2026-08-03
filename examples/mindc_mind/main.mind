@@ -16371,7 +16371,41 @@ pub fn slit_find_slit_arg(args: i64, nargs: i64, i: i64) -> i64 {
     if ast_kind(arg) == ast_struct_lit() {
         return arg;
     }
+    // Field-read ON a struct-lit arg (`mk(P{..}.x)`): hoistable too — the
+    // construction is hoisted and the receiver replaced, the field prefold then
+    // folds `<handle>.x` to a load of the hoisted alloc (the oracle's shape).
+    if ast_kind(arg) == ast_field() {
+        if ast_kind(ast_child0(arg)) == ast_struct_lit() {
+            return ast_child0(arg);
+        }
+    }
     slit_find_slit_arg(args, nargs, i + 1)
+}
+
+// The FORM of the first hoistable struct-lit arg in the statement's value-expr
+// call: 0 = none, 1 = bare struct-lit arg, 2 = field-read-on-struct-lit arg
+// (`mk(P{..}.x)`). Mirrors slit_find_slit_arg's first-match order exactly.
+pub fn slit_arg_hoist_form(stmt: i64) -> i64 {
+    let expr: i64 = slit_hoist_expr_of(stmt);
+    if ast_kind(expr) != ast_call() {
+        return 0;
+    }
+    slit_arg_form_walk(ast_child1(expr), ast_aux(expr), 0)
+}
+pub fn slit_arg_form_walk(args: i64, nargs: i64, i: i64) -> i64 {
+    if i >= nargs {
+        return 0;
+    }
+    let arg: i64 = __mind_load_i64(args + i * 8);
+    if ast_kind(arg) == ast_struct_lit() {
+        return 1;
+    }
+    if ast_kind(arg) == ast_field() {
+        if ast_kind(ast_child0(arg)) == ast_struct_lit() {
+            return 2;
+        }
+    }
+    slit_arg_form_walk(args, nargs, i + 1)
 }
 
 // Detect (non-mutating) a HOISTABLE nested struct-lit: a `T{..}` passed as a direct call
@@ -16386,8 +16420,10 @@ pub fn slit_stmt_hoist_snode(stmt: i64) -> i64 {
     slit_find_slit_arg(ast_child1(expr), ast_aux(expr), 0)
 }
 
-// Replace the FIRST struct-lit call-arg with a fresh `__mind_alloc` ident leaf (so the call
-// resolves the hoisted alloc handle via letenv_lookup last-match); return the struct-lit.
+// Replace the FIRST struct-lit call-arg with a fresh ident leaf spanning [alo,ahi)
+// (the struct-lit's own source span — so the call resolves ITS hoisted alloc
+// handle); for a field-read-on-struct-lit arg (`mk(P{..}.x)`), replace the field's
+// RECEIVER instead, leaving the `.x` to the field prefold. Return the struct-lit.
 pub fn slit_hoist_replace_arg(args: i64, nargs: i64, i: i64, alo: i64, ahi: i64) -> i64 {
     if i >= nargs {
         return 0;
@@ -16396,6 +16432,13 @@ pub fn slit_hoist_replace_arg(args: i64, nargs: i64, i: i64, alo: i64, ahi: i64)
     if ast_kind(arg) == ast_struct_lit() {
         __mind_store_i64(args + i * 8, ast_new_leaf(ast_ident(), alo, ahi));
         return arg;
+    }
+    if ast_kind(arg) == ast_field() {
+        if ast_kind(ast_child0(arg)) == ast_struct_lit() {
+            let snode: i64 = ast_child0(arg);
+            __mind_store_i64(arg + 24, ast_new_leaf(ast_ident(), alo, ahi));
+            return snode;
+        }
     }
     slit_hoist_replace_arg(args, nargs, i + 1, alo, ahi)
 }
@@ -16524,10 +16567,20 @@ pub fn slit_seq_fill(new_stmts: i64, out_cell: i64, stmts_addr: i64, stmts_len: 
                 __mind_store_i64(out_cell, out + fc + 1)
             } else {
                 let hpre: i64 = slit_stmt_hoist_snode(stmt);
+                let hform: i64 = slit_arg_hoist_form(stmt);
                 let hnode: i64 = slit_hoist_replace(stmt, ast_span_lo(hpre), ast_span_hi(hpre));
                 let hk: i64 = srt_find_by_name(srt, src, ast_child0(hnode), ast_child2(hnode), 0);
                 let hnf: i64 = srt_field_count(srt, hk);
-                let hc: i64 = slit_emit_ctor_hoist(new_stmts, out, hnode, src, srt, hk, hnf, alo, ahi, slo, shi, 0);
+                // A field-read-on-struct-lit arg (`mk(P{..}.x)`) leaves `<handle>.x`
+                // behind for the field prefold — annotate the alloc-let with the
+                // struct type (like the field-receiver hoist) so it resolves. A bare
+                // struct-lit arg keeps the untyped handle (byte-identical to before).
+                let hty: i64 = if hform == 2 {
+                    ast_new_leaf(ast_ident(), ast_child0(hnode), ast_child2(hnode))
+                } else {
+                    0
+                };
+                let hc: i64 = slit_emit_ctor_hoist(new_stmts, out, hnode, src, srt, hk, hnf, alo, ahi, slo, shi, hty);
                 __mind_store_i64(new_stmts + (out + hc) * 8, stmt);
                 __mind_store_i64(out_cell, out + hc + 1)
             }

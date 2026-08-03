@@ -194,3 +194,14 @@ byte-exact vs the oracle for param/let receivers, nonzero indices, and chains
 inside larger expressions. Non-struct-typed intermediate fields (Vec, tuples)
 stay fail-closed. gap-corpus floor 130 -> 131; loop anchor re-frozen; flip
 byte-identical.
+
+## Fixed (cont.) — field-read on a struct-lit call arg (`callarg_then_field_recv`)
+`mk(P{..}.x)` — the call-arg hoist matched only BARE struct-lit args, so a
+field-read wrapped around one fell through to flatten (fail-closed). The arg
+scan now also matches `ast_field(struct_lit)`, hoists the construction with the
+struct-TYPE annotation (the field-receiver hoist's fty idiom, so the prefold
+resolves `<handle>.x`), and replaces the field's receiver with the handle ident;
+the prefold then folds it to a load of the hoisted alloc — exactly the oracle's
+`construction; __mind_load_i64(alloc); mk(load)`. Bare struct-lit args keep the
+untyped handle (byte-identical to before). gap-corpus floor 131 -> 132; loop
+anchor re-frozen; flip byte-identical.
