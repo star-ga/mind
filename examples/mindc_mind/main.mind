@@ -16006,8 +16006,9 @@ pub fn slit_canon_value(fields_addr: i64, ntriples: i64, src: i64, srt: i64, k: 
 }
 
 // Build `let __sN = __mind_store_i64(addr, val)` for canonical field index `j`:
-// addr = ptr ref (j==0) or Add(ptr, idx*8). The let name + ptr ref reuse the
-// `__mind_alloc` span (alo/ahi); the store callee + let name reuse `__mind_store_i64`.
+// addr = ptr ref (j==0) or Add(ptr, idx*8). The ptr ref carries the caller's
+// per-construction handle span (the struct-lit's own source span, passed via
+// alo/ahi); the store callee + let name reuse `__mind_store_i64`.
 // Bind the field VALUE to a let BEFORE its store, so the value is emitted ahead of the
 // store address — matching the oracle's StructLit lowering (eval field value, THEN compute
 // the address, THEN store). The let's name span = the value node's own span (unique per
