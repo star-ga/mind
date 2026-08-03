@@ -16887,11 +16887,35 @@ pub fn selftest_mic3_module_nfn(src_addr: i64, src_len: i64, strbuf: i64, offs: 
     // so the desugar/annotation was skipped and every struct-lit fell closed. Append the two
     // literals to a src copy and use appended-offset spans. main.mind itself contains both
     // literals (have_spans==1), so it keeps src_addr + the real spans BYTE-FOR-BYTE.
+    // PRINT desugar (see print_desugar_module): when any fn body has a statement-level
+    // numeric `print(x)`, the synthetic printI64/printNewline callee names need spans to
+    // intern from — appended after the slit intrinsics (or alone when have_spans==1).
+    // Modules WITHOUT print take the exact old path (main.mind included), byte-for-byte.
+    let have_print: i64 = print_module_has(src_addr, items_addr, items_len, 0);
     let src_use: i64 = if have_spans == 1 {
-        src_addr
+        if have_print == 1 {
+            build_src_print_only(src_addr, src_len)
+        } else {
+            src_addr
+        }
     } else {
-        build_src_intrinsics(src_addr, src_len)
+        if have_print == 1 {
+            build_src_intrinsics_print(src_addr, src_len)
+        } else {
+            build_src_intrinsics(src_addr, src_len)
+        }
     };
+    // print helper name spans in src_use (only meaningful when have_print==1):
+    // slit-appended layout puts them after the 43 intrinsic bytes; the print-only
+    // copy puts them at src_len.
+    let p64lo: i64 = if have_spans == 1 {
+        src_len
+    } else {
+        src_len + 43
+    };
+    let p64hi: i64 = p64lo + 8;
+    let pnlo: i64 = p64lo + 8;
+    let pnhi: i64 = pnlo + 12;
     let alo: i64 = if have_spans == 1 {
         __mind_load_i64(slit_acell + 0)
     } else {
@@ -16928,6 +16952,15 @@ pub fn selftest_mic3_module_nfn(src_addr: i64, src_len: i64, strbuf: i64, offs: 
     };
     let _pf: i64 = field_prefold_module(src_use, prefold_len, items_addr, items_len, 0, srt);
     let _an: i64 = slit_annotate_module(src_use, items_addr, items_len, srt, alo, ahi, slo, shi, 0);
+    // PRINT STATEMENT DESUGAR: expand every direct fn-body `print(x)` (numeric arg)
+    // into [printI64(x); printNewline(); 0] BEFORE the strtab pass, so the synthetic
+    // callee names intern first-seen in body order (the oracle's collect order).
+    // have_print==0 modules skip the pass entirely (byte-identical old path).
+    let _pd: i64 = if have_print == 1 {
+        print_desugar_module(src_use, items_addr, items_len, p64lo, p64hi, pnlo, pnhi, 0)
+    } else {
+        0
+    };
     __mind_store_i64(ccell, 0);
     __mind_store_i64(offs + 0, 0);
     let r: i64 = build_module_strtab(strbuf, offs, ccell, src_use, items_addr, items_len, 0);
@@ -17701,6 +17734,272 @@ pub fn span_is_print(src: i64, lo: i64, hi: i64) -> i64 {
         return 0;
     }
     1
+}
+
+// ===== print() STATEMENT desugar (printI64 + printNewline + unit const) =====
+//
+// The Rust oracle (src/eval/lower.rs Node::Print arm) lowers a statement-level
+// numeric `print(x)` to: <arg instrs> ; CALL printI64(arg) ; CALL printNewline() ;
+// CONST 0 (the unit placeholder, which is also the fn's value when `print(x)` is
+// the tail). The self-host models this with a PARSE-TIME statement desugar that
+// runs BEFORE the strtab pass, so the synthetic callee names intern first-seen at
+// exactly the oracle's positions: every DIRECT fn-body statement `print(x)` with
+// one flatten-supported arg expands to [printI64(x); printNewline(); 0]. The
+// existing machinery (seq emitter keeps discarded calls + literals byte-exact)
+// then lowers the expansion with zero new emit code. String-arg and
+// nested-expression `print` stay fail-closed (the flatten guards refuse them).
+
+// The j-th byte (0..8) of the synthetic call name "printI64".
+pub fn printi64_name_byte(j: i64) -> i64 {
+    if j == 0 {
+        return 112;
+    }
+    if j == 1 {
+        return 114;
+    }
+    if j == 2 {
+        return 105;
+    }
+    if j == 3 {
+        return 110;
+    }
+    if j == 4 {
+        return 116;
+    }
+    if j == 5 {
+        return 73;
+    }
+    if j == 6 {
+        return 54;
+    }
+    52
+}
+
+// The j-th byte (0..12) of the synthetic call name "printNewline".
+pub fn printnl_name_byte(j: i64) -> i64 {
+    if j == 0 {
+        return 112;
+    }
+    if j == 1 {
+        return 114;
+    }
+    if j == 2 {
+        return 105;
+    }
+    if j == 3 {
+        return 110;
+    }
+    if j == 4 {
+        return 116;
+    }
+    if j == 5 {
+        return 78;
+    }
+    if j == 6 {
+        return 101;
+    }
+    if j == 7 {
+        return 119;
+    }
+    if j == 8 {
+        return 108;
+    }
+    if j == 9 {
+        return 105;
+    }
+    if j == 10 {
+        return 110;
+    }
+    101
+}
+
+// Write the 8-byte `printI64` literal at dst[0..8) using printi64_name_byte.
+pub fn nfn_fill_printi64_name(dst: i64, j: i64) -> i64 {
+    if j >= 8 {
+        return 8;
+    }
+    __mind_store_i8(dst + j, printi64_name_byte(j));
+    nfn_fill_printi64_name(dst, j + 1)
+}
+
+// Write the 12-byte `printNewline` literal at dst[0..12) using printnl_name_byte.
+pub fn nfn_fill_printnl_name(dst: i64, j: i64) -> i64 {
+    if j >= 12 {
+        return 12;
+    }
+    __mind_store_i8(dst + j, printnl_name_byte(j));
+    nfn_fill_printnl_name(dst, j + 1)
+}
+
+// Source copy with ONLY the print helper names appended (20 bytes at
+// [src_len, src_len+20)): used when the module needs no slit intrinsics copy
+// (have_spans==1) but DOES call print. Span layout: printI64 = src_len..+8,
+// printNewline = src_len+8..+20.
+pub fn build_src_print_only(src_addr: i64, src_len: i64) -> i64 {
+    let buf: i64 = __mind_alloc(src_len + 24);
+    let _c: i64 = nfn_copy_src_bytes(buf, src_addr, src_len, 0);
+    let _a: i64 = nfn_fill_printi64_name(buf + src_len, 0);
+    let _b: i64 = nfn_fill_printnl_name(buf + src_len + 8, 0);
+    buf
+}
+
+// Source copy with the slit intrinsics (43 bytes) AND the print helper names
+// (20 bytes) appended: printI64 = src_len+43..+51, printNewline = +51..+63.
+pub fn build_src_intrinsics_print(src_addr: i64, src_len: i64) -> i64 {
+    let buf: i64 = __mind_alloc(src_len + 72);
+    let _c: i64 = nfn_copy_src_bytes(buf, src_addr, src_len, 0);
+    let _a: i64 = nfn_fill_alloc_name(buf + src_len, 0);
+    let _s: i64 = nfn_fill_store_name(buf + src_len + 12, 0);
+    let _l: i64 = nfn_fill_load_name(buf + src_len + 28, 0);
+    let _p: i64 = nfn_fill_printi64_name(buf + src_len + 43, 0);
+    let _q: i64 = nfn_fill_printnl_name(buf + src_len + 51, 0);
+    buf
+}
+
+// If `stmt` is a desugarable statement-position `print(x)` — a call whose callee
+// spells the 5-byte builtin, with exactly ONE argument whose shape the flattener
+// already lowers byte-exactly — return the arg node; else 0. String-literal and
+// other unsupported args return 0 so the module keeps failing closed downstream
+// (the flatten guards), never emitting valid-but-wrong bytes.
+pub fn print_stmt_arg(stmt: i64, src: i64) -> i64 {
+    if ast_kind(stmt) != ast_call() {
+        return 0;
+    }
+    let callee: i64 = ast_child0(stmt);
+    if span_is_print(src, ast_span_lo(callee), ast_span_hi(callee)) == 0 {
+        return 0;
+    }
+    if ast_aux(stmt) != 1 {
+        return 0;
+    }
+    let args_addr: i64 = ast_child1(stmt);
+    let arg: i64 = __mind_load_i64(args_addr + 0);
+    let k: i64 = ast_kind(arg);
+    if k == ast_int_lit() {
+        return arg;
+    }
+    if k == ast_ident() {
+        return arg;
+    }
+    if k == ast_binop() {
+        return arg;
+    }
+    if k == ast_paren() {
+        return arg;
+    }
+    if k == ast_neg() {
+        return arg;
+    }
+    if k == ast_not() {
+        return arg;
+    }
+    if k == ast_call() {
+        return arg;
+    }
+    0
+}
+
+// True when any DIRECT statement of a fn body is a desugarable print call.
+pub fn print_body_has(stmts_addr: i64, stmts_len: i64, src: i64, i: i64) -> i64 {
+    if i >= stmts_len {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    if print_stmt_arg(stmt, src) != 0 {
+        return 1;
+    }
+    print_body_has(stmts_addr, stmts_len, src, i + 1)
+}
+
+// True when any fn in the module has a desugarable print statement (gates the
+// src copy + the desugar pass; modules without print take the exact old path).
+pub fn print_module_has(src: i64, items_addr: i64, items_len: i64, i: i64) -> i64 {
+    if i >= items_len {
+        return 0;
+    }
+    let item: i64 = __mind_load_i64(items_addr + i * 8);
+    if ast_kind(item) == ast_fn_def() {
+        let body: i64 = ast_child2(item);
+        if print_body_has(ast_child0(body), ast_aux(body), src, 0) == 1 {
+            return 1;
+        }
+    }
+    print_module_has(src, items_addr, items_len, i + 1)
+}
+
+// Output-statement count after the print expansion (each print stmt -> 3).
+pub fn print_count_out(stmts_addr: i64, stmts_len: i64, src: i64, i: i64, acc: i64) -> i64 {
+    if i >= stmts_len {
+        return acc;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    if print_stmt_arg(stmt, src) != 0 {
+        return print_count_out(stmts_addr, stmts_len, src, i + 1, acc + 3);
+    }
+    print_count_out(stmts_addr, stmts_len, src, i + 1, acc + 1)
+}
+
+// Write the 3-statement expansion [printI64(arg); printNewline(); 0] at out[0..3).
+// The unit placeholder is a synthetic int-lit (the same value the oracle emits as
+// the print's CONST 0); in tail position it becomes the fn's return value.
+pub fn print_expand_into(out: i64, arg: i64, p64lo: i64, p64hi: i64, pnlo: i64, pnhi: i64) -> i64 {
+    let c1callee: i64 = ast_new_leaf(ast_ident(), p64lo, p64hi);
+    let c1args: i64 = __mind_alloc(8);
+    __mind_store_i64(c1args + 0, arg);
+    let c1: i64 = ast_new_call(0, 0, c1callee, c1args, 1);
+    let c2callee: i64 = ast_new_leaf(ast_ident(), pnlo, pnhi);
+    let c2args: i64 = __mind_alloc(8);
+    let c2: i64 = ast_new_call(0, 0, c2callee, c2args, 0);
+    __mind_store_i64(out + 0, c1);
+    __mind_store_i64(out + 8, c2);
+    __mind_store_i64(out + 16, mk_syn_intlit(0));
+    3
+}
+
+// Copy the statement array, expanding each print statement in place order.
+pub fn print_desugar_copy(stmts_addr: i64, stmts_len: i64, out: i64, src: i64, p64lo: i64, p64hi: i64, pnlo: i64, pnhi: i64, i: i64, o: i64) -> i64 {
+    if i >= stmts_len {
+        return o;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let arg: i64 = print_stmt_arg(stmt, src);
+    if arg != 0 {
+        let _e: i64 = print_expand_into(out + o * 8, arg, p64lo, p64hi, pnlo, pnhi);
+        return print_desugar_copy(stmts_addr, stmts_len, out, src, p64lo, p64hi, pnlo, pnhi, i + 1, o + 3);
+    }
+    __mind_store_i64(out + o * 8, stmt);
+    print_desugar_copy(stmts_addr, stmts_len, out, src, p64lo, p64hi, pnlo, pnhi, i + 1, o + 1)
+}
+
+// Rewrite one fn body in place, expanding every direct print statement. Returns
+// 1 if any statement expanded, 0 if the body was left intact.
+pub fn print_desugar_body(fn_node: i64, src: i64, p64lo: i64, p64hi: i64, pnlo: i64, pnhi: i64) -> i64 {
+    let body: i64 = ast_child2(fn_node);
+    let stmts_addr: i64 = ast_child0(body);
+    let stmts_len: i64 = ast_aux(body);
+    if print_body_has(stmts_addr, stmts_len, src, 0) == 0 {
+        return 0;
+    }
+    let new_len: i64 = print_count_out(stmts_addr, stmts_len, src, 0, 0);
+    let new_stmts: i64 = __mind_alloc(new_len * 8);
+    let _w: i64 = print_desugar_copy(stmts_addr, stmts_len, new_stmts, src, p64lo, p64hi, pnlo, pnhi, 0, 0);
+    __mind_store_i64(body + 24, new_stmts);
+    __mind_store_i64(body + 48, new_len);
+    1
+}
+
+// Desugar print statements in every fn of the module. Runs AFTER slit annotate
+// and BEFORE build_module_strtab, so the synthetic callee names intern first-seen
+// in body order (matching the oracle's collect_instr_strings walk).
+pub fn print_desugar_module(src: i64, items_addr: i64, items_len: i64, p64lo: i64, p64hi: i64, pnlo: i64, pnhi: i64, i: i64) -> i64 {
+    if i >= items_len {
+        return 0;
+    }
+    let item: i64 = __mind_load_i64(items_addr + i * 8);
+    if ast_kind(item) == ast_fn_def() {
+        let _d: i64 = print_desugar_body(item, src, p64lo, p64hi, pnlo, pnhi);
+    }
+    print_desugar_module(src, items_addr, items_len, p64lo, p64hi, pnlo, pnhi, i + 1)
 }
 
 // Recursive post-order flatten of a param-only binary-expression AST sub-tree into

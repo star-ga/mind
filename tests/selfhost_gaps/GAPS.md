@@ -123,3 +123,15 @@ byte-exactly was needless. The whole corpus is now 66/66, FLOOR-pinned. Repros p
 regression corpus. Every previously-fail-closed class — struct-lit in call-arg / if-expr-branch
 positions, field-read in non-let / literal-less modules — also lowers byte-exactly (the lowering
 was correct; the passes were just gated on source-literal presence; see "The big lesson" above).
+
+## Fixed (cont.) — statement-position numeric `print(x)` (`print_lone`, `print_int_discarded`)
+The Rust oracle (lower.rs `Node::Print`) lowers a statement-level numeric `print(x)` to
+`<arg instrs> ; CALL printI64(arg) ; CALL printNewline() ; CONST 0` (the unit placeholder,
+also the fn's value in tail position). The self-host now models this with a PARSE-TIME
+statement desugar (`print_desugar_module`, before the strtab pass): every DIRECT fn-body
+`print(x)` with one flatten-supported arg expands to `[printI64(x); printNewline(); 0]`,
+the synthetic callee names interning first-seen at exactly the oracle's positions from
+spans appended to the src copy (the slit intrinsics idiom). The seq emitter then lowers
+the expansion with zero new emit code. String-arg, multi-arg, and nested-expression
+`print` stay fail-closed (never_wrong locks intact). gap-corpus floor 121 -> 123; loop
+anchor re-frozen; flip byte-identical.
