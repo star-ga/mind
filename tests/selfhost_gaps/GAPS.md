@@ -181,3 +181,16 @@ pattern); plain trees take the unchanged flatten path. 3+-operand chains
 (`a && b && c`, where the desugared inner if becomes a `!= 0` binop operand)
 stay fail-closed. gap-corpus floor 128 -> 130; loop anchor re-frozen; flip
 byte-identical.
+
+## Fixed (cont.) — chained struct field reads (`chained_field_pqz`)
+`p.q.z` — the field prefold recursed into the receiver, folded the inner read,
+then required an IDENT receiver and gave up on the outer one (the struct
+registry stored field NAMES only, so the intermediate type was unknowable).
+The prefold now resolves a field's declared TYPE from the source declaration
+(srt_field_ty_span, on-demand scan of the `field: Type` token — no registry
+reshape) and recurses through field receivers (field_access_ty), folding the
+outer read on the folded receiver: `__mind_load_i64(__mind_load_i64(p) + idx*8)`,
+byte-exact vs the oracle for param/let receivers, nonzero indices, and chains
+inside larger expressions. Non-struct-typed intermediate fields (Vec, tuples)
+stay fail-closed. gap-corpus floor 130 -> 131; loop anchor re-frozen; flip
+byte-identical.

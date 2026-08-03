@@ -15591,6 +15591,79 @@ pub fn field_recv_field_idx(fn_node: i64, src: i64, srt: i64, recv_lo: i64, recv
     srt_field_index(srt, k, src, fld_lo, fld_hi, 0)
 }
 
+// Skip spaces/tabs/newlines/CRs from i; returns the first non-ws offset.
+pub fn field_ty_skip_ws(src: i64, i: i64) -> i64 {
+    let b: i64 = load_byte(src, i);
+    if b == 32 {
+        return field_ty_skip_ws(src, i + 1);
+    }
+    if b == 9 {
+        return field_ty_skip_ws(src, i + 1);
+    }
+    if b == 10 {
+        return field_ty_skip_ws(src, i + 1);
+    }
+    if b == 13 {
+        return field_ty_skip_ws(src, i + 1);
+    }
+    i
+}
+
+// Span of field j's TYPE name in struct k's declaration (`q: Q,` -> the `Q`
+// token right after the colon). The registry stores field NAME spans only; the
+// type token is scanned from source on demand (no registry reshape). Writes
+// [lo, hi] to cell and returns 1; returns 0 when the type is not a simple
+// identifier (Vec<..>, [T; N], tuple — chains through those stay fail-closed).
+pub fn srt_field_ty_span(t: i64, k: i64, j: i64, src: i64, cell: i64) -> i64 {
+    let mut_i: i64 = field_ty_skip_ws(src, srt_field_hi(t, k, j));
+    if load_byte(src, mut_i) != 58 {
+        return 0;
+    }
+    let tstart: i64 = field_ty_skip_ws(src, mut_i + 1);
+    if is_alpha(load_byte(src, tstart)) == 0 {
+        return 0;
+    }
+    let tend: i64 = scan_ident_end(src, tstart, tstart + 64);
+    __mind_store_i64(cell + 0, tstart);
+    __mind_store_i64(cell + 8, tend);
+    1
+}
+
+// The TYPE node of a field access `recv.f` — the declared type of field f in
+// recv's struct type; 0 when unresolvable. Recurses through field receivers so
+// a chain `p.q.z` resolves the intermediate type (P.q : Q) for the outer read.
+pub fn field_access_ty(fn_node: i64, src: i64, srt: i64, node: i64) -> i64 {
+    if ast_kind(node) != ast_field() {
+        return 0;
+    }
+    let recv: i64 = strip_parens(ast_child0(node));
+    let rty: i64 = if ast_kind(recv) == ast_ident() {
+        field_recv_ty(fn_node, src, ast_span_lo(recv), ast_span_hi(recv))
+    } else {
+        if ast_kind(recv) == ast_field() {
+            field_access_ty(fn_node, src, srt, recv)
+        } else {
+            0
+        }
+    };
+    if rty == 0 {
+        return 0;
+    }
+    let k: i64 = srt_find_by_name(srt, src, ast_span_lo(rty), ast_span_hi(rty), 0);
+    if k < 0 {
+        return 0;
+    }
+    let j: i64 = srt_field_index(srt, k, src, ast_child1(node), ast_child2(node), 0);
+    if j < 0 {
+        return 0;
+    }
+    let cell: i64 = __mind_alloc(16);
+    if srt_field_ty_span(srt, k, j, src, cell) == 0 {
+        return 0;
+    }
+    ast_new_leaf(ast_ident(), __mind_load_i64(cell + 0), __mind_load_i64(cell + 8))
+}
+
 // Build the `__mind_load_i64(field_addr)` Call subtree for `recv.field` at field
 // index `fidx`. idx==0 -> addr is the receiver node directly; idx>0 -> Add(recv,
 // const idx*8). callee = ast_ident leaf spanning the source "__mind_load_i64".
@@ -15625,11 +15698,30 @@ pub fn field_rewrite_expr(node: i64, src: i64, srt: i64, fn_node: i64, load_lo: 
     }
     let k: i64 = ast_kind(node);
     if k == ast_field() {
-        let recv: i64 = field_rewrite_expr(ast_child0(node), src, srt, fn_node, load_lo, load_hi);
+        let orig: i64 = ast_child0(node);
+        let recv: i64 = field_rewrite_expr(orig, src, srt, fn_node, load_lo, load_hi);
         __mind_store_i64(node + 24, recv);
         // Strip parens around the receiver so `(s).a` resolves like `s.a`.
         let bare: i64 = strip_parens(recv);
         if ast_kind(bare) != ast_ident() {
+            // CHAINED field-read (`p.q.z`): the inner access folded to a load
+            // call. Resolve the chain's type from the ORIGINAL receiver (still
+            // an ast_field), then fold the outer read on the folded receiver —
+            // the oracle's `__mind_load_i64(__mind_load_i64(p) + idx*8)` shape.
+            // Unresolvable chains keep the old fall-through (fail-closed
+            // downstream), never a guessed rewrite.
+            if ast_kind(orig) == ast_field() {
+                let oty: i64 = field_access_ty(fn_node, src, srt, orig);
+                if oty != 0 {
+                    let ok: i64 = srt_find_by_name(srt, src, ast_span_lo(oty), ast_span_hi(oty), 0);
+                    if ok >= 0 {
+                        let cidx: i64 = srt_field_index(srt, ok, src, ast_child1(node), ast_child2(node), 0);
+                        if cidx >= 0 {
+                            return field_build_load_call(bare, cidx, load_lo, load_hi);
+                        }
+                    }
+                }
+            }
             return node;
         }
         let fidx: i64 = field_recv_field_idx(fn_node, src, srt, ast_span_lo(bare), ast_span_hi(bare), ast_child1(node), ast_child2(node));
