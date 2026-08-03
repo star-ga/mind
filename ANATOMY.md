@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3312 | **Est. tokens:** ~7,792,972
-**Generated:** 2026-08-03 04:02 UTC
+**Files:** 3312 | **Est. tokens:** ~7,793,779
+**Generated:** 2026-08-03 05:37 UTC
 
 ## Token Budget Guide
 
@@ -58,7 +58,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 147 | ~346,842 |
+| `examples/mindc_mind/` | 147 | ~346,865 |
 | `examples/mindc_mind/testdata/` | 1 | ~2,452 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
@@ -458,8 +458,8 @@
 | `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
 | `tests/mindfuzz_cross_substrate/staged/` | 16 | ~2,989 |
 | `tests/runtime/` | 2 | ~135 |
-| `tests/selfhost_gaps/` | 124 | ~6,409 |
-| `tests/selfhost_gaps/never_wrong/` | 13 | ~378 |
+| `tests/selfhost_gaps/` | 131 | ~7,389 |
+| `tests/selfhost_gaps/never_wrong/` | 6 | ~182 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tools/` | 4 | ~4,578 |
@@ -858,7 +858,7 @@
 - `fixed_point_smoke.py` (~3275 tok, huge)
 - `fixture.mind` (~183 tok, small) — Phase 6.4 emit_ir smoke fixture.
 - `full_strtab_smoke.py` (~1663 tok, huge)
-- `gap_corpus_smoke.py` (~2433 tok, huge)
+- `gap_corpus_smoke.py` (~2456 tok, huge)
 - `general_float_netverify.py` (~1979 tok, huge) — general_float_netverify.py — GENERAL-path f64 value battery (B0 gate lift).
 - `.gitignore` (~5 tok, tiny) — __pycache__/
 - `lockstep_lint.py` (~4127 tok, huge) — lockstep_lint.py -- native-ELF walker lockstep linter for the pure-MIND self-host compiler.
@@ -4615,8 +4615,10 @@
 ### `tests/selfhost_gaps/`
 
 - `andor_and_direct_1.mind` (~12 tok, tiny) — fn f(a: bool, b: bool) -> bool {
+- `andor_and_ifcond_1.mind` (~18 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `andor_and_letinit_1.mind` (~23 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `andor_and_ret_1.mind` (~13 tok, tiny) — fn f(a: i64, b: i64) -> bool {
+- `andor_or_ifcond_1.mind` (~18 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `andor_or_ret_1.mind` (~13 tok, tiny) — fn f(a: i64, b: i64) -> bool {
 - `array-nested_1.mind` (~19 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `array-nested_2.mind` (~19 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
@@ -4672,7 +4674,7 @@
 - `for_range_multistmt_1.mind` (~29 tok, tiny) — fn f(a: i64) -> i64 {
 - `for_range_simple_1.mind` (~24 tok, tiny) — fn f(a: i64) -> i64 {
 - `for_range_zero_1.mind` (~24 tok, tiny) — fn f(a: i64) -> i64 {
-- `GAPS.md` (~2661 tok, huge) — Self-host nfn driver — gap inventory (fuzz-discovered)
+- `GAPS.md` (~3445 tok, huge) — Self-host nfn driver — gap inventory (fuzz-discovered)
 - `int_underscore_group_1.mind` (~7 tok, tiny) — fn f() -> i64 {
 - `int_underscore_million_1.mind` (~8 tok, tiny) — fn f() -> i64 {
 - `int_underscore_pair_1.mind` (~7 tok, tiny) — fn f() -> i64 {
@@ -4683,6 +4685,7 @@
 - `let-ifexpr-seq_5.mind` (~19 tok, tiny)
 - `let-ifexpr-seq_6.mind` (~27 tok, tiny)
 - `let-ifexpr-seq_7.mind` (~46 tok, tiny)
+- `matchcall_letinit_1.mind` (~34 tok, tiny) — fn g(a: i64) -> i64 {
 - `matchcall-scrutinee_0arg.mind` (~24 tok, tiny) — fn g() -> i64 {
 - `matchcall-scrutinee_1arg.mind` (~33 tok, tiny) — fn g(a: i64) -> i64 {
 - `matchcall-scrutinee_arith.mind` (~21 tok, tiny) — fn f(a: i64) -> i64 {
@@ -4708,21 +4711,15 @@
 - `neg_nonleaf_call_1.mind` (~17 tok, tiny) — fn g(x: i64) -> i64 {
 - `neg_nonleaf_mul_1.mind` (~10 tok, tiny) — fn f(a: i64) -> i64 {
 - `neg_nonleaf_paren_sub_1.mind` (~10 tok, tiny) — fn f(a: i64) -> i64 {
+- `nested_array_typed.mind` (~23 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 ### `tests/selfhost_gaps/never_wrong/`
 
-- `andor_and_ifcond_1.mind` (~18 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
-- `andor_or_ifcond_1.mind` (~18 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `array_of_struct.mind` (~29 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `callarg_then_field_recv.mind` (~40 tok, tiny)
 - `chained_field_pqz.mind` (~37 tok, tiny)
 - `for_range_continue_1.mind` (~35 tok, tiny) — fn f() -> i64 {
-- `matchcall_letinit_1.mind` (~34 tok, tiny) — fn g(a: i64) -> i64 {
-- `nested_array_typed.mind` (~23 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `nested_slit_field.mind` (~30 tok, tiny)
 - `print_str_discarded.mind` (~11 tok, tiny) — fn main() -> i64 {
-- `prior_let_then_field_recv.mind` (~31 tok, tiny)
-- `qfield_nested.mind` (~34 tok, tiny)
-- `two_scalar_prior.mind` (~38 tok, tiny)
 ### `tests/selfhost_gaps/`
 
 - `operator-edges_1.mind` (~24 tok, tiny)
@@ -4741,12 +4738,15 @@
 - `prec-xor-cmp.mind` (~16 tok, tiny) — fn f(a: i64, b: i64, c: i64) -> i64 {
 - `print_int_discarded.mind` (~11 tok, tiny) — fn main() -> i64 {
 - `print_lone.mind` (~9 tok, tiny) — fn main() -> i64 {
+- `prior_let_then_field_recv.mind` (~31 tok, tiny)
+- `qfield_nested.mind` (~34 tok, tiny)
 - `struct-lit_1.mind` (~63 tok, small)
 - `struct-lit_2.mind` (~56 tok, small)
 - `struct-lit_3.mind` (~60 tok, small)
 - `struct-lit-field-recv_1.mind` (~23 tok, tiny)
 - `struct-lit-field-recv_2.mind` (~23 tok, tiny)
 - `struct-lit-field-recv_3.mind` (~25 tok, tiny)
+- `two_scalar_prior.mind` (~38 tok, tiny)
 - `value-ifexpr_1.mind` (~98 tok, small) — MISMATCH: a `let`-block in a NESTED (else-if) branch of a value if-expr.
 - `value-ifexpr_2.mind` (~79 tok, small) — MISMATCH: same-named `let` in two SIBLING branches of a value if-expr.
 - `value-ifexpr_3.mind` (~71 tok, small) — MISMATCH: a `let` inside a NESTED if-expr that sits in the THEN-side of an

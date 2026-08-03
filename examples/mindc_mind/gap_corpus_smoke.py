@@ -184,7 +184,7 @@ def main():
     # Coverage ratchet: byte-exact must not drop below FLOOR. The whole corpus
     # lowers byte-exactly under the canonical FRESH-load measurement; the floor pins it so
     # no fixture can silently regress to fail-closed or wrong.
-    FLOOR = 123
+    FLOOR = 130
     ok = True
     if wrong:
         print("FAIL: WRONG-BYTES (silent miscompile) — the cardinal invariant is violated:")
@@ -200,14 +200,16 @@ def main():
         ok = False
 
     # --- never-wrong corpus (tests/selfhost_gaps/never_wrong/) ------------------------
-    # Prior-construction / nested-construction struct-lit field-receiver shapes that the
-    # desugar-hoist positional guard (fr_ok = out==i) MUST suppress: hoisting a non-first
-    # construction would share the `__mind_alloc` name span and the field prefold's
-    # first-match type scan would mis-resolve -> a WRONG-BYTES miscompile. Unlike the
-    # byte-exact corpus above, fail-closed is PERMITTED here (these shapes are not yet
-    # lowered) — the ONLY forbidden outcome is wrong-bytes. This locks the guard: a change
-    # that reintroduces the miscompile turns this RED, where the byte-exact-only gap corpus
-    # (which passed 66/66 on the unguarded version) structurally cannot.
+    # Shapes the self-host does not yet lower (if-cond &&/||, loop break/continue,
+    # string-literal print, nested/chained struct field forms, struct-in-array).
+    # Historically this held the struct-lit field-receiver family that the fr_ok
+    # positional guard suppressed against a shared-`__mind_alloc`-span miscompile;
+    # the unique per-construction handle spans (slit handle = the struct-lit's own
+    # source span) retired that guard and those fixtures moved to the byte-exact
+    # corpus above. Unlike the byte-exact corpus, fail-closed is PERMITTED here
+    # (these shapes are not yet lowered) — the ONLY forbidden outcome is
+    # wrong-bytes: a change that reintroduces a miscompile turns this RED, where
+    # the byte-exact-only gap corpus structurally cannot.
     nw = sorted((CORPUS / "never_wrong").glob("*.mind")) if (CORPUS / "never_wrong").is_dir() else []
     nw_wrong, nw_be, nw_fc, nw_skip = [], 0, 0, 0
     for f in nw:

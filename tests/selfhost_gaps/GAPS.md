@@ -135,3 +135,49 @@ spans appended to the src copy (the slit intrinsics idiom). The seq emitter then
 the expansion with zero new emit code. String-arg, multi-arg, and nested-expression
 `print` stay fail-closed (never_wrong locks intact). gap-corpus floor 121 -> 123; loop
 anchor re-frozen; flip byte-identical.
+
+## Fixed (cont.) — let-init call-scrutinee match (`matchcall_letinit_1`)
+`let x [: T] = match g(a) { .. };` — the oracle evaluates the scrutinee call ONCE
+(Call instr first), then lowers the match as a value-if comparing each pattern
+against that single result vid, the outer let binding the if's dst. Parse-time
+desugar in parse_block_stmts (is_fn_body==1 gated): `let TMP = call ; let X = if
+TMP == P0 { .. } ..` — the parse_match_stmt hoisted-temp idiom composed with the
+type-7 let-bound-to-value-if seq path. Covers typed/untyped lets and 3+-arm chains;
+non-call scrutinees take the unchanged per-arm path; nested-in-if stays fail-closed.
+gap-corpus floor 123 -> 124; loop anchor re-frozen; flip byte-identical.
+
+## Fixed (cont.) — depth-2 nested array-type annotation (`nested_array_typed`)
+`let m: [[i64; 2]; 2] = [[a, b], [b, a]]; m[1][0]` fail-closed at parse_let's
+element-type gate, which refused any `[` element token even though the untyped
+nested literal already lowers byte-exactly via the vec_new/vec_push heap path.
+The gate now accepts a depth-2 nested annotation whose INNER element type is
+i64/f64 (assertion-only, ty = 0, same contract as the flat case); narrow-int
+inner types and depth-3+ stay refused. gap-corpus floor 124 -> 125; loop anchor
+re-frozen; flip byte-identical.
+
+## Fixed (cont.) — multi-construction bodies: unique per-construction handle spans
+Every synthetic struct-construction handle (alloc-let name, store addr refs,
+trailing/using refs) used to carry the SAME `__mind_alloc` source span, so two
+constructions in one body made the field prefold's first-match type scan (and
+letenv) mis-resolve — the reason the field-receiver hoist was gated to
+first-construction-only (fr_ok). Each construction's handle now carries the
+struct-lit's OWN source span (unique per site, compile-time-only, zero emitted
+bytes); the alloc/store CALL callees keep the interned spans. fr_ok is retired.
+Closes `prior_let_then_field_recv`, `qfield_nested`, `two_scalar_prior`; the main
+corpus (incl. every single-construction struct-lit shape) stays byte-exact.
+Still fail-closed (separate features): chained ident field reads (`p.q.z`),
+field-receivers inside call args, nested struct-lits as field values,
+struct-in-array. gap-corpus floor 125 -> 128; loop anchor re-frozen; flip
+byte-identical.
+
+## Fixed (cont.) — if-CONDITION && / || (`andor_and_ifcond_1`, `andor_or_ifcond_1`)
+`if a > 0 && b > 0 { 1 } else { 0 }` — the oracle lowers the condition's Logical
+as ONE nested OP_IF in the cond region (cond_count=1, cond_id = the inner if's
+dst; branches = synth + value), not as nested statement-ifs. emit_mic3_if_instr
+now takes a nested-OP_IF arm in all three positions (cond / then / else): an
+ast_if expression probe-emits via the recursive emit_if_value_node to learn its
+dst, then frames and re-emits deterministically (the established probe/re-emit
+pattern); plain trees take the unchanged flatten path. 3+-operand chains
+(`a && b && c`, where the desugared inner if becomes a `!= 0` binop operand)
+stay fail-closed. gap-corpus floor 128 -> 130; loop anchor re-frozen; flip
+byte-identical.
