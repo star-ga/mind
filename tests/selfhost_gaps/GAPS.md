@@ -217,3 +217,17 @@ by the never-wrong gate pre-merge: the nested chain's alloc CALL callee must
 keep the interned `__mind_alloc` span (talo/tahi threading) — passing the outer
 handle span emitted a call to a nonexistent name (wrong-bytes class).
 gap-corpus floor 132 -> 133; loop anchor re-frozen; flip byte-identical.
+
+## Fixed (cont.) — string-literal print (`print_str_discarded`)
+`print("hi")` — needed the full stack: a tk_str lexer token (single guard in
+scan, escapes/unterminated fail-closed), an ast_str_lit parser leaf, and the
+print desugar's string arm: a per-statement expansion to the oracle's exact
+chain (content alloc + per-char store_i8 + record alloc + 3 store_i64 + 2
+load_i64 + print_bytes + unit const), with synthetic handle spans rooted at the
+opening-quote byte (never a real ident) and the two new interned callee names
+(__mind_store_i8, print_bytes) appended to the src copy. 1-char, 5-char, tail,
+and mixed string+numeric all byte-exact; empty string stays fail-closed. One
+self-host compile-shape constraint hit: the desugar copy's first draft nested
+two sibling early-return-if chains in one inner if-block (the #258 SSA
+over-allocation shape — flip caught a +2 id drift at byte 288250); restructured
+flat, flip byte-identical. gap-corpus floor 133 -> 134; loop anchor re-frozen.
