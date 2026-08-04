@@ -3109,6 +3109,45 @@ pub fn for_push_if_nonzero(acc: Vec, node: i64) -> Vec {
     vec_push(acc, node)
 }
 
+// Splice a FRESH `VAR = VAR + 1` immediately before every own-level `continue`
+// (direct statement or inside if then/else blocks — the SAME traversal as
+// for_has_own_continue, so a body this reports as has_cont==1 gets EVERY
+// continue stepped), mirroring Rust inject_step_before_continue (lower.rs
+// 3817-3844). `break` and nested `while` bodies are boundaries, left untouched.
+pub fn for_inject_step(sa: i64, sl: i64, i: i64, acc: Vec, var_lo: i64, var_hi: i64) -> Vec {
+    if i >= sl {
+        return acc;
+    }
+    let s: i64 = __mind_load_i64(sa + i * 8);
+    let k: i64 = ast_kind(s);
+    if k == ast_continue() {
+        let a1: Vec = vec_push(acc, for_make_incr(var_lo, var_hi));
+        let a2: Vec = vec_push(a1, s);
+        return for_inject_step(sa, sl, i + 1, a2, var_lo, var_hi);
+    }
+    if k == ast_if() {
+        let a: Vec = vec_push(acc, for_inject_step_if(s, var_lo, var_hi));
+        return for_inject_step(sa, sl, i + 1, a, var_lo, var_hi);
+    }
+    let a: Vec = vec_push(acc, s);
+    for_inject_step(sa, sl, i + 1, a, var_lo, var_hi)
+}
+
+// Rebuild an if node with the step injected into both branch blocks (the cond is
+// shared unchanged — reading it is side-effect-free). A missing else stays 0.
+pub fn for_inject_step_if(node: i64, var_lo: i64, var_hi: i64) -> i64 {
+    let tb: i64 = ast_child1(node);
+    let nt: Vec = for_inject_step(ast_child0(tb), ast_aux(tb), 0, vec_new(), var_lo, var_hi);
+    let ntb: i64 = ast_new_block(ast_span_lo(tb), ast_span_hi(tb), vec_addr(nt), vec_len(nt));
+    let eb: i64 = ast_child2(node);
+    if eb == 0 {
+        return ast_new_if(ast_span_lo(node), ast_span_hi(node), ast_child0(node), ntb, 0);
+    }
+    let ne: Vec = for_inject_step(ast_child0(eb), ast_aux(eb), 0, vec_new(), var_lo, var_hi);
+    let neb: i64 = ast_new_block(ast_span_lo(eb), ast_span_hi(eb), vec_addr(ne), vec_len(ne));
+    ast_new_if(ast_span_lo(node), ast_span_hi(node), ast_child0(node), ntb, neb)
+}
+
 // Does the loop BODY assign the loop variable VAR (`VAR = ...`) at this loop
 // level? Descends if then/else blocks (same loop level); stops at nested loops
 // (already lowered to `while`). Mirrors the oracle's `body_assigns_var` gate
@@ -3243,16 +3282,43 @@ pub fn parse_for(toks: Vec, pos: i64, buf: i64, out: i64) -> i64 {
         }
     }
 
+    // ---- Byte-neutral continue form (oracle !needs_hygiene WITH own-continue) --
+    // Same gate as the fast path (no body write to VAR, literal END) but WITH an
+    // own-level `continue`: the oracle KEEPS the byte-neutral desugar and splices
+    // `VAR = VAR + 1` before every own-level continue (inject_step_before_continue,
+    // lower.rs 3817), then appends the tail increment — NO hidden counter.
+    // Verified vs --emit-mic3: `for i in 0..5 { if i > 2 { continue; } s = s + i; }`
+    // lowers exactly as `let i = 0; while i < 5 { if i > 2 { i = i + 1; continue; }
+    // s = s + i; i = i + 1; }` (strtab has no `__for_i_N`).
+    if has_cont == 1 {
+        if body_writes == 0 {
+            if end_is_lit == 1 {
+                let vname_c: i64 = ast_new_leaf(ast_ident(), var_lo, var_hi);
+                let let_var_c: i64 = ast_new_let(kw_lo, lo_hi, vname_c, ty, pr_node(lo_res));
+                let inj: Vec = for_inject_step(sa, sl, 0, vec_new(), var_lo, var_hi);
+                let wb1c: Vec = vec_push(inj, for_make_incr(var_lo, var_hi));
+                let wbody_c: i64 = ast_new_block(body_open, close_hi, vec_addr(wb1c), vec_len(wb1c));
+                let vref_c: i64 = ast_new_leaf(ast_ident(), var_lo, var_hi);
+                let cond_c: i64 = ast_new_binop(var_lo, var_hi, vref_c, pr_node(hi_res), op_lt());
+                let while_cn: i64 = ast_new_while(kw_lo, close_hi, cond_c, wbody_c);
+                __mind_store_i64(out + 0, let_var_c);
+                __mind_store_i64(out + 8, while_cn);
+                __mind_store_i64(out + 16, 0);
+                return after_close;
+            }
+        }
+    }
+
     // ---- Hidden-counter form (shapes the oracle lowers HYGIENICALLY) --------
-    // Reached when the byte-neutral form above does NOT apply: own-`continue`, a
-    // body write to VAR, or a non-literal END. The oracle emits its hygienic
+    // Reached when NEITHER byte-neutral form above applies: a body write to VAR,
+    // or a non-literal END (an own-`continue` alone now takes the inject form
+    // above). The oracle emits its hygienic
     // `__for_i_N` desugar for these, which the self-host cannot yet reproduce
-    // byte-for-byte — so the mic@3 nfn emit is NOT byte-exact here (and a body
-    // containing `continue` fails CLOSED, since nfn refuses the `continue`
-    // statement). These desugars remain VALID for the native-ELF / MLIR backends
+    // byte-for-byte — so the mic@3 nfn emit is NOT byte-exact here. These desugars
+    // remain VALID for the native-ELF / MLIR backends
     // (the AST feeds all three), so the program still compiles correctly; only the
     // mic@3 byte-oracle parity is deferred. This is the pre-existing behavior,
-    // unchanged: the fix above only ADDS the byte-neutral fast path in front.
+    // unchanged: the fixes above only ADD byte-neutral fast paths in front.
     let bnd_name: i64 = ast_new_leaf(ast_ident(), lo_lo, hi_hi);
     let let_bnd: i64 = ast_new_let(kw_lo, hi_hi, bnd_name, ty, pr_node(hi_res));
 
@@ -9951,26 +10017,65 @@ pub fn collect_fn_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, fn_node:
     let body: i64 = ast_child2(fn_node);
     let stmts_addr: i64 = ast_child0(body);
     let stmts_len: i64 = ast_aux(body);
-    collect_body_strings(strbuf, offs, ccell, src, stmts_addr, stmts_len, 0)
+    // In-scope NAME env for the break/continue live-snapshot interning: 24-byte
+    // [lo,hi,-] records, appended per `let` along each statement walk (block-local
+    // additions stay local to the block — the count threads by value). Capacity
+    // bound: every `let` needs >= 4 source bytes ("let "), so the fn span bounds
+    // the deepest append path. The env interns NOTHING by itself — only a
+    // break/continue marker reads it (sorted, shadow-deduped).
+    let fn_span: i64 = ast_span_hi(fn_node) - ast_span_lo(fn_node);
+    let ebuf: i64 = __mind_alloc((fn_span / 4 + 16) * 24);
+    collect_body_strings(strbuf, offs, ccell, src, stmts_addr, stmts_len, 0, ebuf, 0)
+}
+
+// Append a let-name's (lo,hi) span to the name env (dedup happens at snapshot
+// time — a shadowed earlier entry is dropped there, innermost wins). Returns the
+// new count.
+pub fn bc_env_append(ebuf: i64, en: i64, name: i64) -> i64 {
+    __mind_store_i64(ebuf + en * 24 + 0, ast_span_lo(name));
+    __mind_store_i64(ebuf + en * 24 + 8, ast_span_hi(name));
+    __mind_store_i64(ebuf + en * 24 + 16, 0);
+    en + 1
+}
+
+// Intern the break/continue live snapshot for the CURRENT name env: unique names
+// (innermost wins — mirrors the Rust name->vid env map), sorted by name bytes
+// (lower.rs Break/Continue arm: env captured, then `live.sort_by(name)`). This is
+// where the Rust collect pass first sees those names, so interning here keeps the
+// strtab first-seen order byte-exact.
+pub fn bc_intern_snapshot(strbuf: i64, offs: i64, ccell: i64, src: i64, ebuf: i64, en: i64) -> i64 {
+    let snap: i64 = __mind_alloc((en + 1) * 24);
+    let n: i64 = lvenv_snapshot_unique(ebuf, en, src, snap, 0, 0);
+    let _s: i64 = lvenv_sort_by_name(snap, n, src, 1);
+    intern_name_span_buf(strbuf, offs, ccell, src, snap, n, 0)
 }
 
 // Intern call-callee names appearing in a fn body, in statement+expression order,
 // mirroring Rust collect_strings -> collect_instr_strings recursion. Only the
 // constructs the AST-driven path emits are walked (let-init, call); other leaves
-// intern nothing. Idempotent via intern_span's first-seen dedup.
-pub fn collect_body_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, stmts_addr: i64, stmts_len: i64, i: i64) -> i64 {
+// intern nothing. Idempotent via intern_span's first-seen dedup. (ebuf,en) is the
+// in-scope name env for break/continue snapshots; a `let` appends its name for
+// the statements that FOLLOW it.
+pub fn collect_body_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, stmts_addr: i64, stmts_len: i64, i: i64, ebuf: i64, en: i64) -> i64 {
     if i >= stmts_len {
         return 0;
     }
     let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
-    let r: i64 = collect_expr_strings(strbuf, offs, ccell, src, stmt);
-    collect_body_strings(strbuf, offs, ccell, src, stmts_addr, stmts_len, i + 1)
+    let r: i64 = collect_expr_strings(strbuf, offs, ccell, src, stmt, ebuf, en);
+    let en2: i64 = if ast_kind(stmt) == ast_let() { bc_env_append(ebuf, en, ast_child0(stmt)) } else { en };
+    collect_body_strings(strbuf, offs, ccell, src, stmts_addr, stmts_len, i + 1, ebuf, en2)
 }
 
-pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: i64) -> i64 {
+pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: i64, ebuf: i64, en: i64) -> i64 {
     let k: i64 = ast_kind(node);
+    if k == ast_break() {
+        return bc_intern_snapshot(strbuf, offs, ccell, src, ebuf, en);
+    }
+    if k == ast_continue() {
+        return bc_intern_snapshot(strbuf, offs, ccell, src, ebuf, en);
+    }
     if k == ast_let() {
-        return collect_expr_strings(strbuf, offs, ccell, src, ast_child2(node));
+        return collect_expr_strings(strbuf, offs, ccell, src, ast_child2(node), ebuf, en);
     }
     if k == ast_call() {
         // A call `f(a, b)` lowers to [a's instrs, b's instrs, CALL f] — the CALL instr's
@@ -9985,8 +10090,8 @@ pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: 
         return intern_span(strbuf, offs, ccell, src, ast_span_lo(callee), ast_span_hi(callee));
     }
     if k == ast_binop() {
-        let rl: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node));
-        return collect_expr_strings(strbuf, offs, ccell, src, ast_child1(node));
+        let rl: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node), ebuf, en);
+        return collect_expr_strings(strbuf, offs, ccell, src, ast_child1(node), ebuf, en);
     }
     if k == ast_field() {
         // FieldAccess lowers (src/eval/lower.rs ast::Node::FieldAccess resolved arm)
@@ -9994,7 +10099,7 @@ pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: 
         // Call("__mind_load_i64", [addr]). Mirror the Rust collect order: recurse
         // the receiver first (its own Call names, if any, intern before this one),
         // then intern the synthetic load-call name. CONST/BINOP intern nothing.
-        let rr: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node));
+        let rr: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node), ebuf, en);
         return intern_load_i64_name(strbuf, offs, ccell);
     }
     if k == ast_if() {
@@ -10008,14 +10113,14 @@ pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: 
         // that escapes the then-block as a merge binds its name into the strtab; the
         // 2-let oracle decode confirmed source order (x before y), branch-bindings-last
         // (a call after the let interns BEFORE the let name). No-let blocks: no-op.
-        let rc: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node));
+        let rc: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node), ebuf, en);
         let then_blk: i64 = ast_child1(node);
         let then_sa: i64 = ast_child0(then_blk);
         let then_sl: i64 = ast_aux(then_blk);
-        let rt: i64 = collect_block_strings(strbuf, offs, ccell, src, then_sa, then_sl, 0);
+        let rt: i64 = collect_block_strings(strbuf, offs, ccell, src, then_sa, then_sl, 0, ebuf, en);
         let else_blk: i64 = ast_child2(node);
         if else_blk != 0 {
-            let re: i64 = collect_block_strings(strbuf, offs, ccell, src, ast_child0(else_blk), ast_aux(else_blk), 0);
+            let re: i64 = collect_block_strings(strbuf, offs, ccell, src, ast_child0(else_blk), ast_aux(else_blk), 0, ebuf, en);
         }
         // branch_bindings names = merged_names = then-WRITES ++ else-WRITES (deduped,
         // first-occurrence order; lower.rs 4203-4208). A "write" is a branch-local `let`
@@ -10048,16 +10153,16 @@ pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: 
         return 0;
     }
     if k == ast_return() {
-        return collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node));
+        return collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node), ebuf, en);
     }
     if k == ast_while() {
         // Mirror Rust collect_instr_strings Instr::While: cond strings, then body
         // strings (each stmt in source order), then the loop-carried (live_var) NAMES.
-        let rc: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node));
+        let rc: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node), ebuf, en);
         let body_blk: i64 = ast_child1(node);
         let body_sa: i64 = ast_child0(body_blk);
         let body_sl: i64 = ast_aux(body_blk);
-        let rb: i64 = collect_block_strings(strbuf, offs, ccell, src, body_sa, body_sl, 0);
+        let rb: i64 = collect_block_strings(strbuf, offs, ccell, src, body_sa, body_sl, 0, ebuf, en);
         // live_var names = assign-targets NOT declared by a `let` earlier in this body
         // (loop-carried = pre-loop vars), in first-assign source order.
         return intern_while_live_names(strbuf, offs, ccell, src, body_sa, body_sl, 0);
@@ -10065,7 +10170,7 @@ pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: 
     if k == ast_assign() {
         // An assign statement's RHS supplies its strings (the target name is interned by
         // the enclosing while's live_var pass, not here).
-        return collect_expr_strings(strbuf, offs, ccell, src, ast_child2(node));
+        return collect_expr_strings(strbuf, offs, ccell, src, ast_child2(node), ebuf, en);
     }
     if k == ast_array_lit() {
         // NON-CONST array literal (#40): mirror lower_array_surface_lit's instruction
@@ -10109,7 +10214,9 @@ pub fn collect_arr_push_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, el
     if j >= count {
         return 0;
     }
-    let _e: i64 = collect_expr_strings(strbuf, offs, ccell, src, __mind_load_i64(elems_addr + j * 8));
+    // Pure-expression context (array elements): no statement Vec is reachable, so
+    // no break/continue can appear — the name env is empty here.
+    let _e: i64 = collect_expr_strings(strbuf, offs, ccell, src, __mind_load_i64(elems_addr + j * 8), 0, 0);
     let _vp: i64 = intern_vec_push_name(strbuf, offs, ccell);
     collect_arr_push_strings(strbuf, offs, ccell, src, elems_addr, count, j + 1)
 }
@@ -10119,7 +10226,8 @@ pub fn slit_collect_field_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, 
     if j >= nf {
         return 0;
     }
-    let _v: i64 = collect_expr_strings(strbuf, offs, ccell, src, __mind_load_i64(values + j * 8));
+    // Pure-expression context (field values): no break/continue reachable — empty env.
+    let _v: i64 = collect_expr_strings(strbuf, offs, ccell, src, __mind_load_i64(values + j * 8), 0, 0);
     let _is: i64 = intern_span(strbuf, offs, ccell, src, slo, shi);
     slit_collect_field_strings(strbuf, offs, ccell, src, values, nf, slo, shi, j + 1)
 }
@@ -10127,13 +10235,17 @@ pub fn slit_collect_field_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, 
 // Collect strings from a block's statements in source order (each stmt via
 // collect_expr_strings: a let recurses its init, an if recurses cond/then/else,
 // a return its value). Used by the ast_if arm to walk if-body sub-statements.
-pub fn collect_block_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, stmts_addr: i64, stmts_len: i64, i: i64) -> i64 {
+// (ebuf,en) is the in-scope name env for break/continue snapshots; a block-local
+// `let` appends its name only for the statements that follow it IN THIS BLOCK
+// (the count threads by value, so the addition never leaks past the block).
+pub fn collect_block_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, stmts_addr: i64, stmts_len: i64, i: i64, ebuf: i64, en: i64) -> i64 {
     if i >= stmts_len {
         return 0;
     }
     let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
-    let r: i64 = collect_expr_strings(strbuf, offs, ccell, src, stmt);
-    collect_block_strings(strbuf, offs, ccell, src, stmts_addr, stmts_len, i + 1)
+    let r: i64 = collect_expr_strings(strbuf, offs, ccell, src, stmt, ebuf, en);
+    let en2: i64 = if ast_kind(stmt) == ast_let() { bc_env_append(ebuf, en, ast_child0(stmt)) } else { en };
+    collect_block_strings(strbuf, offs, ccell, src, stmts_addr, stmts_len, i + 1, ebuf, en2)
 }
 
 // Intern the NAMES of ALL `let` statements of a then-block (its OP_IF
@@ -10248,7 +10360,8 @@ pub fn collect_args_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, args_a
         return 0;
     }
     let arg: i64 = __mind_load_i64(args_addr + i * 8);
-    let r: i64 = collect_expr_strings(strbuf, offs, ccell, src, arg);
+    // Pure-expression context (call args): no statement Vec reachable — empty env.
+    let r: i64 = collect_expr_strings(strbuf, offs, ccell, src, arg, 0, 0);
     collect_args_strings(strbuf, offs, ccell, src, args_addr, args_len, i + 1)
 }
 
@@ -24920,13 +25033,170 @@ pub fn selftest_mic3_while_count(buf: i64, offs: i64, op_byte: i64, incr: i64) -
 // OP_IF arm (0x1c). Fails closed on any non-assign / unknown-target statement.
 // ===========================================================================
 
+// Byte-wise lexicographic compare of two name spans (Rust str::cmp on UTF-8
+// bytes): -1 if a < b, 0 if equal, +1 if a > b. Used to order the break/continue
+// live snapshot, which lower.rs sorts by name before serialising.
+pub fn span_bytes_cmp(src: i64, alo: i64, ahi: i64, blo: i64, bhi: i64, i: i64) -> i64 {
+    if alo + i >= ahi {
+        if blo + i >= bhi {
+            return 0;
+        }
+        return 0 - 1;
+    }
+    if blo + i >= bhi {
+        return 1;
+    }
+    let ca: i64 = load_byte(src, alo + i);
+    let cb: i64 = load_byte(src, blo + i);
+    if ca < cb {
+        return 0 - 1;
+    }
+    if ca > cb {
+        return 1;
+    }
+    span_bytes_cmp(src, alo, ahi, blo, bhi, i + 1)
+}
+
+// 1 if name (lo,hi) has a LATER (innermore) binding in env[i..nlv): then the
+// earlier occurrence is shadowed and must NOT appear in the live snapshot (the
+// Rust env is a name->vid map — one entry per name, innermost wins).
+pub fn lvenv_shadowed_later(benv: i64, nlv: i64, buf: i64, lo: i64, hi: i64, i: i64) -> i64 {
+    if i >= nlv {
+        return 0;
+    }
+    if span_bytes_equal2(buf, lo, hi, buf, __mind_load_i64(benv + i * 24 + 0), __mind_load_i64(benv + i * 24 + 8)) == 1 {
+        return 1;
+    }
+    lvenv_shadowed_later(benv, nlv, buf, lo, hi, i + 1)
+}
+
+// Copy the shadow-surviving entries of an lv-env (24-byte [lo,hi,vid] records)
+// into `out`, preserving order. Returns the surviving count.
+pub fn lvenv_snapshot_unique(benv: i64, nlv: i64, buf: i64, out: i64, i: i64, n: i64) -> i64 {
+    if i >= nlv {
+        return n;
+    }
+    let lo: i64 = __mind_load_i64(benv + i * 24 + 0);
+    let hi: i64 = __mind_load_i64(benv + i * 24 + 8);
+    if lvenv_shadowed_later(benv, nlv, buf, lo, hi, i + 1) == 1 {
+        return lvenv_snapshot_unique(benv, nlv, buf, out, i + 1, n);
+    }
+    __mind_store_i64(out + n * 24 + 0, lo);
+    __mind_store_i64(out + n * 24 + 8, hi);
+    __mind_store_i64(out + n * 24 + 16, __mind_load_i64(benv + i * 24 + 16));
+    lvenv_snapshot_unique(benv, nlv, buf, out, i + 1, n + 1)
+}
+
+// Shift records env[j+1..] right one slot until the insertion hole for the key
+// (lo,hi) is found (insertion sort, stable: an equal name stays LEFT). Returns
+// the hole index; env[j+1] is left unwritten for the caller to fill.
+pub fn lvenv_sort_hole(env: i64, buf: i64, lo: i64, hi: i64, j: i64) -> i64 {
+    if j < 0 {
+        return 0;
+    }
+    let jlo: i64 = __mind_load_i64(env + j * 24 + 0);
+    let jhi: i64 = __mind_load_i64(env + j * 24 + 8);
+    if span_bytes_cmp(buf, jlo, jhi, lo, hi, 0) <= 0 {
+        return j + 1;
+    }
+    __mind_store_i64(env + (j + 1) * 24 + 0, jlo);
+    __mind_store_i64(env + (j + 1) * 24 + 8, jhi);
+    __mind_store_i64(env + (j + 1) * 24 + 16, __mind_load_i64(env + j * 24 + 16));
+    lvenv_sort_hole(env, buf, lo, hi, j - 1)
+}
+
+// Insertion-sort lv-records [0..n) by name bytes (Rust sort_by str::cmp order).
+pub fn lvenv_sort_by_name(env: i64, n: i64, buf: i64, i: i64) -> i64 {
+    if i >= n {
+        return n;
+    }
+    let lo: i64 = __mind_load_i64(env + i * 24 + 0);
+    let hi: i64 = __mind_load_i64(env + i * 24 + 8);
+    let vid: i64 = __mind_load_i64(env + i * 24 + 16);
+    let j: i64 = lvenv_sort_hole(env, buf, lo, hi, i - 1);
+    __mind_store_i64(env + j * 24 + 0, lo);
+    __mind_store_i64(env + j * 24 + 8, hi);
+    __mind_store_i64(env + j * 24 + 16, vid);
+    lvenv_sort_by_name(env, n, buf, i + 1)
+}
+
+// Build the break/continue live snapshot from an lv-env: unique names (innermost
+// occurrence wins — mirrors the Rust name->vid env map), sorted by name bytes
+// (lower.rs Break/Continue arm: `live.sort_by(name)`). Writes 24-byte
+// [lo,hi,vid] records into `out` (capacity >= nlv); returns the count.
+pub fn lvenv_snapshot_sorted(benv: i64, nlv: i64, buf: i64, out: i64) -> i64 {
+    let n: i64 = lvenv_snapshot_unique(benv, nlv, buf, out, 0, 0);
+    let _s: i64 = lvenv_sort_by_name(out, n, buf, 1);
+    n
+}
+
+// 1 if every snapshot name is present in the string table (the collect pass
+// interned it at the marker's traversal position). 0 -> the caller FAILS CLOSED:
+// emitting a name the strtab lacks would produce silently wrong bytes.
+pub fn bc_snapshot_interned(snap: i64, n: i64, buf: i64, strbuf: i64, offs: i64, ncount: i64, i: i64) -> i64 {
+    if i >= n {
+        return 1;
+    }
+    if intern_find(strbuf, offs, ncount, buf, __mind_load_i64(snap + i * 24 + 0), __mind_load_i64(snap + i * 24 + 8), 0) < 0 {
+        return 0;
+    }
+    bc_snapshot_interned(snap, n, buf, strbuf, offs, ncount, i + 1)
+}
+
+// Emit the snapshot's (name_idx, vid) pairs in order (encode_named_vids body).
+pub fn bc_emit_snapshot(s: EmitState, snap: i64, n: i64, buf: i64, strbuf: i64, offs: i64, ncount: i64, i: i64) -> EmitState {
+    if i >= n {
+        return s;
+    }
+    let nidx: i64 = intern_find(strbuf, offs, ncount, buf, __mind_load_i64(snap + i * 24 + 0), __mind_load_i64(snap + i * 24 + 8), 0);
+    let s1: EmitState = emit_uleb128(s, nidx);
+    let s2: EmitState = emit_uleb128(s1, __mind_load_i64(snap + i * 24 + 16));
+    bc_emit_snapshot(s2, snap, n, buf, strbuf, offs, ncount, i + 1)
+}
+
+// Emit ONE loop-control marker: OP_BREAK (0x28) / OP_CONTINUE (0x29) followed by
+// encode_named_vids of the CURRENT env snapshot (unique names, sorted by name —
+// lower.rs 8509-8521). Fails closed via okcell if a snapshot name is not in the
+// string table. The caller emits the marker's leading (unreachable) unit const.
+// ncount == 0 is the no-strtab PROBE mode (supportability probes run the general
+// emitter with a null strtab and discard the bytes): the interned-check is
+// skipped there — every lookup would miss and wrongly report the shape walled.
+pub fn emit_mic3_loop_ctl(s: EmitState, opcode: i64, benv: i64, nlv: i64, buf: i64, strbuf: i64, offs: i64, ncount: i64, okcell: i64) -> EmitState {
+    let snap: i64 = __mind_alloc((nlv + 1) * 24);
+    let n: i64 = lvenv_snapshot_sorted(benv, nlv, buf, snap);
+    if ncount > 0 {
+        if bc_snapshot_interned(snap, n, buf, strbuf, offs, ncount, 0) == 0 {
+            __mind_store_i64(okcell, 0);
+            return s;
+        }
+    }
+    let s1: EmitState = es_push(s, opcode);
+    let s2: EmitState = emit_uleb128(s1, n);
+    bc_emit_snapshot(s2, snap, n, buf, strbuf, offs, ncount, 0)
+}
+
 // Every stmt in a branch is an Assign whose target name is bound in `benv`?
+// EXCEPTION: the branch's LAST statement may be a `break`/`continue` leaf (the
+// divergent-branch shape — the merge then takes the OTHER branch's exit value).
 pub fn while_if_branch_all_assigns(sa: i64, sl: i64, buf: i64, benv: i64, nlv: i64, i: i64) -> i64 {
     if i >= sl {
         return 1;
     }
     let stmt: i64 = __mind_load_i64(sa + i * 8);
-    if ast_kind(stmt) != ast_assign() {
+    let sk: i64 = ast_kind(stmt);
+    if sk == ast_break() {
+        if i == sl - 1 {
+            return 1;
+        }
+        return 0;
+    }
+    if sk == ast_continue() {
+        if i == sl - 1 {
+            return 1;
+        }
+        return 0;
+    }
+    if sk != ast_assign() {
         return 0;
     }
     let name: i64 = ast_child0(stmt);
@@ -24956,6 +25226,14 @@ pub fn while_if_collect_names(sa: i64, sl: i64, buf: i64, out: i64, ncell: i64, 
         return __mind_load_i64(ncell);
     }
     let stmt: i64 = __mind_load_i64(sa + i * 8);
+    let sk: i64 = ast_kind(stmt);
+    // A break/continue leaf has no assign-target name — skip it.
+    if sk == ast_break() {
+        return while_if_collect_names(sa, sl, buf, out, ncell, i + 1);
+    }
+    if sk == ast_continue() {
+        return while_if_collect_names(sa, sl, buf, out, ncell, i + 1);
+    }
     let name: i64 = ast_child0(stmt);
     let lo: i64 = ast_span_lo(name);
     let hi: i64 = ast_span_hi(name);
@@ -24971,7 +25249,10 @@ pub fn while_if_collect_names(sa: i64, sl: i64, buf: i64, out: i64, ncell: i64, 
 // PURE branch walk: flatten each assign RHS at the threaded base, rebind the
 // branch env, record the last root into result_cell, advance base_cell. Returns
 // the end base (one past the branch's last instr). -1 / okcell=0 on a wall.
-pub fn while_if_layout_branch(sa: i64, sl: i64, idx: i64, buf: i64, params_addr: i64, n_params: i64, wnodes: i64, wcursor: i64, wvidbuf: i64, base_cell: i64, benv: i64, nlv: i64, result_cell: i64, okcell: i64) -> i64 {
+// A trailing break/continue leaf (last stmt only) sets div_cell=1, records the
+// leading unit-const vid as the branch result, and advances base by ONE (the
+// marker opcode itself takes NO vid — lower.rs Break/Continue arm).
+pub fn while_if_layout_branch(sa: i64, sl: i64, idx: i64, buf: i64, params_addr: i64, n_params: i64, wnodes: i64, wcursor: i64, wvidbuf: i64, base_cell: i64, benv: i64, nlv: i64, result_cell: i64, div_cell: i64, okcell: i64) -> i64 {
     if idx >= sl {
         return __mind_load_i64(base_cell);
     }
@@ -24979,6 +25260,13 @@ pub fn while_if_layout_branch(sa: i64, sl: i64, idx: i64, buf: i64, params_addr:
         return 0 - 1;
     }
     let stmt: i64 = __mind_load_i64(sa + idx * 8);
+    let sk: i64 = ast_kind(stmt);
+    if sk == ast_break() {
+        return while_if_layout_bc(sl, idx, base_cell, result_cell, div_cell, okcell);
+    }
+    if sk == ast_continue() {
+        return while_if_layout_bc(sl, idx, base_cell, result_cell, div_cell, okcell);
+    }
     let name: i64 = ast_child0(stmt);
     let rhs: i64 = ast_child2(stmt);
     let cur: i64 = __mind_load_i64(base_cell);
@@ -25000,42 +25288,69 @@ pub fn while_if_layout_branch(sa: i64, sl: i64, idx: i64, buf: i64, params_addr:
     __mind_store_i64(benv + slot * 24 + 16, root);
     __mind_store_i64(result_cell, root);
     __mind_store_i64(base_cell, cur + nn);
-    while_if_layout_branch(sa, sl, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, benv, nlv, result_cell, okcell)
+    while_if_layout_branch(sa, sl, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, benv, nlv, result_cell, div_cell, okcell)
+}
+
+// Layout of a branch-terminal break/continue: legal ONLY as the branch's last
+// statement. The leading unit const occupies one vid (recorded as the branch
+// result — the Rust arm returns that const's id); the marker takes none.
+pub fn while_if_layout_bc(sl: i64, idx: i64, base_cell: i64, result_cell: i64, div_cell: i64, okcell: i64) -> i64 {
+    if idx != sl - 1 {
+        __mind_store_i64(okcell, 0);
+        return 0 - 1;
+    }
+    let cur: i64 = __mind_load_i64(base_cell);
+    __mind_store_i64(result_cell, cur);
+    __mind_store_i64(div_cell, 1);
+    __mind_store_i64(base_cell, cur + 1);
+    cur + 1
 }
 
 // Fill per-merge 40-byte records M[k] = (lo, hi, merge_id, then_val, else_val).
-pub fn while_if_fill_merges(m: i64, names: i64, n: i64, else_end: i64, buf: i64, tenv: i64, eenv: i64, nlv: i64, k: i64) -> i64 {
+// A DIVERGED branch (ends in break/continue) does not fall through to ^if_after:
+// its merge slot takes the OTHER branch's exit value (lower.rs 6282/6304 — the
+// diverged cf.br is never emitted), never its own rebound env. -1 if a name is
+// missing from a needed env (cannot happen for shape-gated branches — assign
+// targets pre-exist — but fail-closed beats wrong bytes).
+pub fn while_if_fill_merges(m: i64, names: i64, n: i64, else_end: i64, buf: i64, tenv: i64, eenv: i64, nlv: i64, tdiv: i64, ediv: i64, k: i64) -> i64 {
     if k >= n {
         return n;
     }
     let lo: i64 = __mind_load_i64(names + k * 24 + 0);
     let hi: i64 = __mind_load_i64(names + k * 24 + 8);
+    let tval: i64 = if tdiv == 1 { lvenv_lookup(buf, lo, hi, eenv, nlv, 0) } else { lvenv_lookup(buf, lo, hi, tenv, nlv, 0) };
+    let eval: i64 = if ediv == 1 { lvenv_lookup(buf, lo, hi, tenv, nlv, 0) } else { lvenv_lookup(buf, lo, hi, eenv, nlv, 0) };
+    if tval < 0 {
+        return 0 - 1;
+    }
+    if eval < 0 {
+        return 0 - 1;
+    }
     __mind_store_i64(m + k * 40 + 0, lo);
     __mind_store_i64(m + k * 40 + 8, hi);
     __mind_store_i64(m + k * 40 + 16, else_end + k);
-    __mind_store_i64(m + k * 40 + 24, lvenv_lookup(buf, lo, hi, tenv, nlv, 0));
-    __mind_store_i64(m + k * 40 + 32, lvenv_lookup(buf, lo, hi, eenv, nlv, 0));
-    while_if_fill_merges(m, names, n, else_end, buf, tenv, eenv, nlv, k + 1)
+    __mind_store_i64(m + k * 40 + 24, tval);
+    __mind_store_i64(m + k * 40 + 32, eval);
+    while_if_fill_merges(m, names, n, else_end, buf, tenv, eenv, nlv, tdiv, ediv, k + 1)
 }
 
-// PURE layout of the if-else assign-merge shape. Fills L[0..9] scalar cells and the
-// 40-byte merge buffer M. Returns 1 on success, 0 (fail-closed) on any unsupported shape.
+// PURE layout of the if-else assign-merge shape. Fills L[0..11] scalar cells and
+// the 40-byte merge buffer M. Returns 1 on success, 0 (fail-closed) on any
+// unsupported shape.
 //   L+0 cond_id  L+8 cond_n  L+16 then_synth(=after_cond)  L+24 then_end  L+32 then_result
 //   L+40 else_synth  L+48 else_end  L+56 else_result  L+64 n_merged  L+72 dst
+//   L+80 then_diverged (trailing break/continue)  L+88 else_diverged
+// A MISSING else (`if C { .. }` with no else block) lowers to the synthesized
+// empty branch — one unit const — lower.rs "Lower the else-branch (or
+// synthesise a unit zero)".
 pub fn while_if_layout(if_node: i64, buf: i64, params_addr: i64, n_params: i64, base0: i64, wenv: i64, wnlv: i64, l: i64, m: i64) -> i64 {
     let then_blk: i64 = ast_child1(if_node);
     let else_blk: i64 = ast_child2(if_node);
-    if else_blk == 0 {
-        return 0;
-    }
     let then_sa: i64 = ast_child0(then_blk);
     let then_sl: i64 = ast_aux(then_blk);
-    let else_sa: i64 = ast_child0(else_blk);
-    let else_sl: i64 = ast_aux(else_blk);
+    let else_sa: i64 = if else_blk == 0 { 0 } else { ast_child0(else_blk) };
+    let else_sl: i64 = if else_blk == 0 { 0 } else { ast_aux(else_blk) };
     if then_sl < 1 {
-        return 0;
-    }
-    if else_sl < 1 {
         return 0;
     }
     if while_if_branch_all_assigns(then_sa, then_sl, buf, wenv, wnlv, 0) != 1 {
@@ -25067,9 +25382,11 @@ pub fn while_if_layout(if_node: i64, buf: i64, params_addr: i64, n_params: i64, 
     __mind_store_i64(tbase, after_cond + 1);
     let tresult: i64 = __mind_alloc(8);
     __mind_store_i64(tresult, after_cond);
+    let tdiv: i64 = __mind_alloc(8);
+    __mind_store_i64(tdiv, 0);
     let tok: i64 = __mind_alloc(8);
     __mind_store_i64(tok, 1);
-    let then_end: i64 = while_if_layout_branch(then_sa, then_sl, 0, buf, params_addr, n_params, bnodes, bcursor, bvidbuf, tbase, tenv, wnlv, tresult, tok);
+    let then_end: i64 = while_if_layout_branch(then_sa, then_sl, 0, buf, params_addr, n_params, bnodes, bcursor, bvidbuf, tbase, tenv, wnlv, tresult, tdiv, tok);
     if __mind_load_i64(tok) == 0 {
         return 0;
     }
@@ -25081,9 +25398,11 @@ pub fn while_if_layout(if_node: i64, buf: i64, params_addr: i64, n_params: i64, 
     __mind_store_i64(ebase, else_synth + 1);
     let eresult: i64 = __mind_alloc(8);
     __mind_store_i64(eresult, else_synth);
+    let ediv: i64 = __mind_alloc(8);
+    __mind_store_i64(ediv, 0);
     let eok: i64 = __mind_alloc(8);
     __mind_store_i64(eok, 1);
-    let else_end: i64 = while_if_layout_branch(else_sa, else_sl, 0, buf, params_addr, n_params, bnodes, bcursor, bvidbuf, ebase, eenv, wnlv, eresult, eok);
+    let else_end: i64 = while_if_layout_branch(else_sa, else_sl, 0, buf, params_addr, n_params, bnodes, bcursor, bvidbuf, ebase, eenv, wnlv, eresult, ediv, eok);
     if __mind_load_i64(eok) == 0 {
         return 0;
     }
@@ -25094,7 +25413,10 @@ pub fn while_if_layout(if_node: i64, buf: i64, params_addr: i64, n_params: i64, 
     let _cn1: i64 = while_if_collect_names(then_sa, then_sl, buf, names, ncell, 0);
     let _cn2: i64 = while_if_collect_names(else_sa, else_sl, buf, names, ncell, 0);
     let n_merged: i64 = __mind_load_i64(ncell);
-    let _fm: i64 = while_if_fill_merges(m, names, n_merged, else_end, buf, tenv, eenv, wnlv, 0);
+    let fm: i64 = while_if_fill_merges(m, names, n_merged, else_end, buf, tenv, eenv, wnlv, __mind_load_i64(tdiv), __mind_load_i64(ediv), 0);
+    if fm < 0 {
+        return 0;
+    }
     let dst: i64 = else_end + n_merged;
     __mind_store_i64(l + 0, cond_id);
     __mind_store_i64(l + 8, cond_n);
@@ -25106,6 +25428,8 @@ pub fn while_if_layout(if_node: i64, buf: i64, params_addr: i64, n_params: i64, 
     __mind_store_i64(l + 56, __mind_load_i64(eresult));
     __mind_store_i64(l + 64, n_merged);
     __mind_store_i64(l + 72, dst);
+    __mind_store_i64(l + 80, __mind_load_i64(tdiv));
+    __mind_store_i64(l + 88, __mind_load_i64(ediv));
     1
 }
 
@@ -25119,6 +25443,30 @@ pub fn while_if_emit_branch(s: EmitState, sa: i64, sl: i64, idx: i64, buf: i64, 
         return s;
     }
     let stmt: i64 = __mind_load_i64(sa + idx * 8);
+    let sk: i64 = ast_kind(stmt);
+    // Trailing break/continue: leading (unreachable) unit const, then the marker
+    // with the CURRENT branch-env live snapshot. Params are not in the lv-env, so
+    // a param-carrying snapshot would miss them — fail closed there (deferred).
+    if sk == ast_break() {
+        if n_params > 0 {
+            __mind_store_i64(okcell, 0);
+            return s;
+        }
+        let bcur: i64 = __mind_load_i64(base_cell);
+        let sb: EmitState = emit_mic3_const_i64(s, bcur, 0);
+        __mind_store_i64(base_cell, bcur + 1);
+        return emit_mic3_loop_ctl(sb, 40, benv, nlv, buf, strbuf, offs, ncount, okcell);
+    }
+    if sk == ast_continue() {
+        if n_params > 0 {
+            __mind_store_i64(okcell, 0);
+            return s;
+        }
+        let ccur: i64 = __mind_load_i64(base_cell);
+        let sc: EmitState = emit_mic3_const_i64(s, ccur, 0);
+        __mind_store_i64(base_cell, ccur + 1);
+        return emit_mic3_loop_ctl(sc, 41, benv, nlv, buf, strbuf, offs, ncount, okcell);
+    }
     let name: i64 = ast_child0(stmt);
     let rhs: i64 = ast_child2(stmt);
     let cur: i64 = __mind_load_i64(base_cell);
@@ -25188,14 +25536,18 @@ pub fn emit_while_if_assign(s: EmitState, if_node: i64, buf: i64, params_addr: i
     let else_result: i64 = __mind_load_i64(l + 56);
     let n_merged: i64 = __mind_load_i64(l + 64);
     let dst: i64 = __mind_load_i64(l + 72);
-    let then_len: i64 = 1 + (then_end - (then_synth + 1));
-    let else_len: i64 = 1 + (else_end - (else_synth + 1));
+    // Branch instruction counts: synth + statement instrs (+1 for the loop-control
+    // marker when the branch diverges — the marker takes no vid but IS an instr).
+    let then_div: i64 = __mind_load_i64(l + 80);
+    let else_div: i64 = __mind_load_i64(l + 88);
+    let then_len: i64 = 1 + (then_end - (then_synth + 1)) + then_div;
+    let else_len: i64 = 1 + (else_end - (else_synth + 1)) + else_div;
     let then_blk: i64 = ast_child1(if_node);
     let else_blk: i64 = ast_child2(if_node);
     let then_sa: i64 = ast_child0(then_blk);
     let then_sl: i64 = ast_aux(then_blk);
-    let else_sa: i64 = ast_child0(else_blk);
-    let else_sl: i64 = ast_aux(else_blk);
+    let else_sa: i64 = if else_blk == 0 { 0 } else { ast_child0(else_blk) };
+    let else_sl: i64 = if else_blk == 0 { 0 } else { ast_aux(else_blk) };
     // OP_IF header + cond.
     let cnodes: i64 = __mind_alloc(256 * 32);
     let ccursor: i64 = __mind_alloc(8);
@@ -25389,6 +25741,19 @@ pub fn while_body_measure(stmts_addr: i64, n: i64, idx: i64, buf: i64, params_ad
         __mind_store_i64(body_len_cell, __mind_load_i64(body_len_cell) + nn);
         return while_body_measure(stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, pre_nlv, lv, init, nlv_w_cell, body_len_cell, okcell);
     }
+    // DIRECT loop-control statement in the body: leading unit const + marker =
+    // TWO body instrs, ONE vid (the const; the marker takes none). Statements
+    // after it still lower (the Rust body walk does not truncate at a terminator).
+    if ast_kind(stmt) == ast_break() {
+        __mind_store_i64(base_cell, cur_base + 1);
+        __mind_store_i64(body_len_cell, __mind_load_i64(body_len_cell) + 2);
+        return while_body_measure(stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, pre_nlv, lv, init, nlv_w_cell, body_len_cell, okcell);
+    }
+    if ast_kind(stmt) == ast_continue() {
+        __mind_store_i64(base_cell, cur_base + 1);
+        __mind_store_i64(body_len_cell, __mind_load_i64(body_len_cell) + 2);
+        return while_body_measure(stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, pre_nlv, lv, init, nlv_w_cell, body_len_cell, okcell);
+    }
     // BARE side-effect statement (call/store): flatten, advance base, bind NO name.
     let be_root: i64 = flatten_branch_lv(stmt, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, cur_base, wenv, wnlv);
     if be_root < 0 {
@@ -25488,6 +25853,29 @@ pub fn while_body_emit(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
         __mind_store_i64(wnlv_cell, wnlv + 1);
         __mind_store_i64(base_cell, cur_base + nn);
         return while_body_emit(s1, stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, strbuf, offs, ncount, okcell);
+    }
+    // DIRECT loop-control statement in the body: leading (unreachable) unit const,
+    // then the marker with the CURRENT body-env live snapshot. Params are not in
+    // the lv-env — fail closed when the fn has any (snapshot would miss them).
+    if ast_kind(stmt) == ast_break() {
+        if n_params > 0 {
+            __mind_store_i64(okcell, 0);
+            return s;
+        }
+        let sb1: EmitState = emit_mic3_const_i64(s, cur_base, 0);
+        __mind_store_i64(base_cell, cur_base + 1);
+        let sb2: EmitState = emit_mic3_loop_ctl(sb1, 40, wenv, wnlv, buf, strbuf, offs, ncount, okcell);
+        return while_body_emit(sb2, stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, strbuf, offs, ncount, okcell);
+    }
+    if ast_kind(stmt) == ast_continue() {
+        if n_params > 0 {
+            __mind_store_i64(okcell, 0);
+            return s;
+        }
+        let sc1: EmitState = emit_mic3_const_i64(s, cur_base, 0);
+        __mind_store_i64(base_cell, cur_base + 1);
+        let sc2: EmitState = emit_mic3_loop_ctl(sc1, 41, wenv, wnlv, buf, strbuf, offs, ncount, okcell);
+        return while_body_emit(sc2, stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, strbuf, offs, ncount, okcell);
     }
     let be_root: i64 = flatten_branch_lv(stmt, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, cur_base, wenv, wnlv);
     if be_root < 0 {

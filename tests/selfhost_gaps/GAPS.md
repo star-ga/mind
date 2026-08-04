@@ -241,3 +241,30 @@ inline via flatten_struct_lit_lv (alloc + field stores between vec_new and
 vec_push — the oracle's exact interleave). Two-element, mixed struct+scalar,
 and plain arrays all byte-exact; unannotated struct elements stay fail-closed.
 gap-corpus floor 134 -> 135; loop anchor re-frozen; flip byte-identical.
+
+## Fixed (cont.) — loop break/continue with live snapshots (`for_range_continue_1`)
+`for i in 0..5 { if i > 2 { continue; } s = s + i; }` — needed the full stack.
+parse_for gained the oracle's byte-neutral continue desugar (the Rust For arm's
+!needs_hygiene path): keep `let VAR = LO; while VAR < HI { BODY; VAR = VAR + 1 }`
+and splice a fresh `VAR = VAR + 1` before every own-level continue
+(inject_step_before_continue, lower.rs 3817) — the old hidden-counter Form B was
+NOT byte-exact for this shape and is now reached only by hygienic shapes (body
+writes VAR / non-literal END). The mic@3 while emitter learned the
+divergent-branch shape: an if branch may end in break/continue (assigns +
+trailing marker); the marker emits a leading (unreachable) unit const then
+OP_BREAK (0x28) / OP_CONTINUE (0x29) with the CURRENT env's live snapshot
+(unique names, innermost wins, sorted by name bytes — lower.rs 8509-8521); a
+diverged branch's merge value comes from the OTHER branch's exit env
+(lower.rs 6282/6304); a missing else lowers to the synthesized empty branch
+(one unit const). Direct body break/continue also emit (const + marker; the
+body walk does not truncate at a terminator). The strtab collect pass threads
+an in-scope name env (a `let` appends its name for the statements that follow
+it, block-local by value) so the snapshot names intern at the marker's exact
+traversal position; the marker fails closed if a name is not interned, and on
+n_params > 0 (params are not in the lv-env — deferred). Probed byte-exact:
+if-continue no-else, if-break, direct break/continue with dead tail, for+break,
+both-branches-diverge. Known oracle-side limit: else-ONLY divergence fails the
+Rust IR verifier (E3001) — no oracle artifact exists to match, so the nfn
+driver stays permissive there (never promoted without an oracle reference).
+gap-corpus floor 135 -> 136; never_wrong corpus EMPTY (directory retired);
+loop anchor re-frozen; flip byte-identical (674147 B).
