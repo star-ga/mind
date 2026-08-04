@@ -184,7 +184,7 @@ def main():
     # Coverage ratchet: byte-exact must not drop below FLOOR. The whole corpus
     # lowers byte-exactly under the canonical FRESH-load measurement; the floor pins it so
     # no fixture can silently regress to fail-closed or wrong.
-    FLOOR = 135
+    FLOOR = 136
     ok = True
     if wrong:
         print("FAIL: WRONG-BYTES (silent miscompile) — the cardinal invariant is violated:")
@@ -200,8 +200,11 @@ def main():
         ok = False
 
     # --- never-wrong corpus (tests/selfhost_gaps/never_wrong/) ------------------------
-    # Shapes the self-host does not yet lower (if-cond &&/||, loop break/continue,
-    # string-literal print, nested/chained struct field forms, struct-in-array).
+    # Shapes the self-host does not yet lower. EMPTY as of for_range_continue_1's
+    # promotion (loop break/continue with live snapshots landed): every queued
+    # family — if-cond &&/||, break/continue, string-literal print, nested/chained
+    # struct field forms, struct-in-array — now lowers byte-exactly and lives in
+    # the main corpus above; the directory is kept only as a future landing pad.
     # Historically this held the struct-lit field-receiver family that the fr_ok
     # positional guard suppressed against a shared-`__mind_alloc`-span miscompile;
     # the unique per-construction handle spans (slit handle = the struct-lit's own
