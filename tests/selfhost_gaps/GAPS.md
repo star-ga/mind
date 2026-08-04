@@ -231,3 +231,13 @@ self-host compile-shape constraint hit: the desugar copy's first draft nested
 two sibling early-return-if chains in one inner if-block (the #258 SSA
 over-allocation shape — flip caught a +2 id drift at byte 288250); restructured
 flat, flip byte-identical. gap-corpus floor 133 -> 134; loop anchor re-frozen.
+
+## Fixed (cont.) — struct-lit elements in array literals (`array_of_struct`)
+`let m = [P { x: a, y: b }]` — the non-const array path's element guard
+(arr_elems_desugar_ok) refused any struct-lit element. The annotation walker
+(slit_annotate_expr) now descends into array literals, recording each struct-lit
+element's construction at node+56; flatten_arr_pushes emits annotated elements
+inline via flatten_struct_lit_lv (alloc + field stores between vec_new and
+vec_push — the oracle's exact interleave). Two-element, mixed struct+scalar,
+and plain arrays all byte-exact; unannotated struct elements stay fail-closed.
+gap-corpus floor 134 -> 135; loop anchor re-frozen; flip byte-identical.

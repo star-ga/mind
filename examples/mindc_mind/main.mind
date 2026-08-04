@@ -8083,7 +8083,13 @@ pub fn arr_elem_desugar_ok(elem: i64) -> i64 {
         }
         return arr_elems_desugar_ok(ast_child1(elem), ast_aux(elem), 0);
     }
+    // Struct-lit elements are supported when the annotation pass recorded their
+    // construction (node+56): flatten_arr_pushes emits it inline via
+    // flatten_struct_lit_lv. Unannotated stays fail-closed.
     if k == ast_struct_lit() {
+        if __mind_load_i64(elem + 56) != 0 {
+            return 1;
+        }
         return 0;
     }
     1
@@ -16856,6 +16862,11 @@ pub fn slit_annotate_expr(node: i64, src: i64, srt: i64, alo: i64, ahi: i64, slo
     if k == ast_call() {
         return slit_annotate_args(ast_child1(node), ast_aux(node), 0, src, srt, alo, ahi, slo, shi);
     }
+    // Array literals: annotate each struct-lit ELEMENT too, so a `[P{..}]` element
+    // can emit its construction inline (flatten_struct_lit_lv reads node+56).
+    if k == ast_array_lit() {
+        return slit_annotate_args(ast_child1(node), ast_aux(node), 0, src, srt, alo, ahi, slo, shi);
+    }
     if k == ast_if() {
         let _c: i64 = slit_annotate_expr(ast_child0(node), src, srt, alo, ahi, slo, shi);
         let tb: i64 = ast_child1(node);
@@ -20087,7 +20098,14 @@ pub fn flatten_arr_pushes(elems_addr: i64, count: i64, j: i64, prev_slot: i64, s
         return prev_slot;
     }
     let elem: i64 = __mind_load_i64(elems_addr + j * 8);
-    let eslot: i64 = flatten_expr_env(elem, src, params_addr, n_params, nodes, cursor, env, nlets);
+    // Struct-lit element with a recorded construction (node+56 annotation):
+    // emit alloc + field stores inline (flatten_struct_lit_lv), then push the
+    // handle — the oracle's vec_new → construct → vec_push interleave.
+    let eslot: i64 = if ast_kind(elem) == ast_struct_lit() {
+        flatten_struct_lit_lv(elem, src, params_addr, n_params, nodes, cursor, env, nlets)
+    } else {
+        flatten_expr_env(elem, src, params_addr, n_params, nodes, cursor, env, nlets)
+    };
     if eslot < 0 {
         return 0 - 1;
     }
