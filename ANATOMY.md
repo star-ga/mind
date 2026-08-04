@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3312 | **Est. tokens:** ~7,794,929
-**Generated:** 2026-08-03 09:57 UTC
+**Files:** 3312 | **Est. tokens:** ~7,795,104
+**Generated:** 2026-08-04 03:45 UTC
 
 ## Token Budget Guide
 
@@ -458,8 +458,8 @@
 | `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
 | `tests/mindfuzz_cross_substrate/staged/` | 16 | ~2,989 |
 | `tests/runtime/` | 2 | ~135 |
-| `tests/selfhost_gaps/` | 135 | ~8,375 |
-| `tests/selfhost_gaps/never_wrong/` | 2 | ~64 |
+| `tests/selfhost_gaps/` | 136 | ~8,579 |
+| `tests/selfhost_gaps/never_wrong/` | 1 | ~35 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tools/` | 4 | ~4,578 |
@@ -4627,6 +4627,7 @@
 - `array-nonconst_2.mind` (~18 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `array-nonconst_3.mind` (~18 tok, tiny) — fn g(a: i64, b: i64, c: i64) -> i64 {
 - `array-nonconst_4.mind` (~17 tok, tiny) — fn h(a: i64, b: i64) -> i64 {
+- `array_of_struct.mind` (~29 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `call-arg-nesting_1.mind` (~25 tok, tiny)
 - `call-arg-nesting_2.mind` (~35 tok, tiny)
 - `call-arg-nesting_3.mind` (~41 tok, tiny)
@@ -4676,7 +4677,7 @@
 - `for_range_multistmt_1.mind` (~29 tok, tiny) — fn f(a: i64) -> i64 {
 - `for_range_simple_1.mind` (~24 tok, tiny) — fn f(a: i64) -> i64 {
 - `for_range_zero_1.mind` (~24 tok, tiny) — fn f(a: i64) -> i64 {
-- `GAPS.md` (~4313 tok, huge) — Self-host nfn driver — gap inventory (fuzz-discovered)
+- `GAPS.md` (~4488 tok, huge) — Self-host nfn driver — gap inventory (fuzz-discovered)
 - `int_underscore_group_1.mind` (~7 tok, tiny) — fn f() -> i64 {
 - `int_underscore_million_1.mind` (~8 tok, tiny) — fn f() -> i64 {
 - `int_underscore_pair_1.mind` (~7 tok, tiny) — fn f() -> i64 {
@@ -4717,7 +4718,6 @@
 - `nested_slit_field.mind` (~30 tok, tiny)
 ### `tests/selfhost_gaps/never_wrong/`
 
-- `array_of_struct.mind` (~29 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `for_range_continue_1.mind` (~35 tok, tiny) — fn f() -> i64 {
 ### `tests/selfhost_gaps/`
 
