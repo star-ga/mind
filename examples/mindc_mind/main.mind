@@ -2194,6 +2194,18 @@ pub fn parse_primary_ns(toks: Vec, pos: i64, buf: i64, no_struct: i64) -> ParseR
         if is_ident_match(buf, lo, hi) == 1 {
             return parse_match(toks, pos, buf);
         }
+        // Built-in Option/Result constructor: bare `Some(e)` / `Ok(e)` /
+        // `Err(e)` / `None` (NO `Option::`/`Result::` prefix). Routes to the
+        // same ast_enum_ctor / ect_desugar chain as the declared-enum path
+        // (emit_boxed_enum_record), matching the Rust oracle's built-in prelude.
+        // Checked BEFORE the call arm so `Some(5)` builds a boxed record instead
+        // of a wrong-value call to a fn "Some" (the pre-existing 42B fail-open).
+        // main.mind never spells these in value position, so its self-compile is
+        // byte-identical.
+        let bic: i64 = bic_kind(buf, lo, hi);
+        if bic >= 0 {
+            return parse_builtin_ctor(toks, pos, buf, lo, hi, bic);
+        }
         if at_eof(toks, pos + 1) == 0 {
             if tok_kind(toks, pos + 1) == tk_lparen() {
                 return parse_call(toks, pos, buf);
@@ -4377,16 +4389,19 @@ pub fn const_name_bound(toks: Vec, buf: i64, nlo: i64, nhi: i64) -> i64 {
 // runs during self-compile — the self-host loop stays byte-identical modulo
 // its own source growth.
 //
-// SCOPE: this "Option/Result tier" is the DECLARED-enum path only — a value
-// written `Name::Variant(..)` that resolves to a user `enum Name { .. }` decl.
-// The BUILTIN, UNQUALIFIED constructor form (bare `Some(5)` / `Ok(x)` /
-// `Err(e)` with NO `Option::`/`Result::` prefix and no matching decl) is a
-// SEPARATE path this pass does NOT touch. The QUALIFIED builtin form
-// `Option::Some(..)` refuses (0B), but the bare unqualified form is a
-// PRE-EXISTING fail-OPEN: self emits 42B (wrong) vs the oracle's 101B,
-// identical at base — this patch neither introduces nor fixes it. Do NOT read
-// this section as covering builtin Option/Result.
-// deferred: bare unqualified builtin Some/Ok/Err ctor is pre-existing fail-open (42B wrong) — tracked separately
+// SCOPE: this "Option/Result tier" covers the DECLARED-enum path (a value
+// written `Name::Variant(..)` resolving to a user `enum Name { .. }` decl) AND
+// the BUILTIN, UNQUALIFIED constructor form (bare `Some(e)` / `Ok(e)` / `Err(e)`
+// / `None` with NO `Option::`/`Result::` prefix). The built-in form routes
+// through parse_builtin_ctor (bic_kind) to the SAME ast_enum_ctor + ect_desugar
+// chain (emit_boxed_enum_record), matching the Rust oracle's built-in prelude
+// (lower.rs:1117 — Option::Some=tag0, Option::None=tag1, Result::Ok=tag0,
+// Result::Err=tag1): byte-exact 101B in the let-init / return / trailing
+// positions ect_desugar rewrites, fail-closed (0B) elsewhere (call-arg /
+// if-branch / a match scrutinee — the same positions the declared form refuses).
+// The former 42B fail-OPEN on a bare builtin ctor is FIXED. The QUALIFIED
+// builtin form `Option::Some(..)` still refuses (0B).
+// deferred: bare builtin ctor in a call-arg / if-branch / match-scrutinee position refuses (0B, safe) — upgrade path: extend ect_desugar to those positions (same as the declared-enum form)
 
 // Byte-compare a span against the literal payload type `i64`.
 pub fn pnt_span_is_i64(buf: i64, lo: i64, hi: i64) -> i64 {
@@ -4589,6 +4604,122 @@ pub fn parse_epath_ctor(toks: Vec, pos: i64, buf: i64, lo: i64, hi: i64, vhi: i6
     }
     let chi: i64 = tok_hi(toks, after);
     pr_new(after + 1, pnt_ctor_node(info / 2, pr_node(pay), lo, chi, 1))
+}
+
+// ===== Built-in Option/Result constructor (bare, unqualified) =====
+//
+// The Rust oracle installs a built-in Result/Option prelude (lower.rs:1117):
+// Option::Some=tag 0, Option::None=tag 1, Result::Ok=tag 0, Result::Err=tag 1;
+// each is a 2-slot boxed record lowered via emit_boxed_enum_record — the SAME
+// alloc/store chain a DECLARED single-payload enum ctor uses. A bare unqualified
+// `Some(e)` / `Ok(e)` / `Err(e)` / `None` (no `Option::`/`Result::` prefix and
+// no user decl) therefore routes through the ident-arm below to the identical
+// ast_enum_ctor node + ect_desugar path, with ONE structural difference the
+// source itself supplies: the built-in form has NO `enum` decl, so the module
+// emits NO EnumDef top-level item — matching the built-in oracle's 1-item
+// module (101B) vs the declared form's 2-item module (106B). main.mind never
+// spells these names in value position (comments only), so its self-compile is
+// byte-identical.
+
+// Classify a bare built-in Option/Result constructor name span buf[lo..hi):
+// 0 = Some, 1 = Ok, 2 = Err, 3 = None, -1 = not a built-in ctor.
+pub fn bic_kind(buf: i64, lo: i64, hi: i64) -> i64 {
+    let n: i64 = hi - lo;
+    if n == 4 {
+        // "Some" = 83 111 109 101
+        if load_byte(buf, lo) == 83 {
+            if load_byte(buf, lo + 1) == 111 {
+                if load_byte(buf, lo + 2) == 109 {
+                    if load_byte(buf, lo + 3) == 101 {
+                        return 0;
+                    }
+                }
+            }
+        }
+        // "None" = 78 111 110 101
+        if load_byte(buf, lo) == 78 {
+            if load_byte(buf, lo + 1) == 111 {
+                if load_byte(buf, lo + 2) == 110 {
+                    if load_byte(buf, lo + 3) == 101 {
+                        return 3;
+                    }
+                }
+            }
+        }
+        return 0 - 1;
+    }
+    if n == 2 {
+        // "Ok" = 79 107
+        if load_byte(buf, lo) == 79 {
+            if load_byte(buf, lo + 1) == 107 {
+                return 1;
+            }
+        }
+        return 0 - 1;
+    }
+    if n == 3 {
+        // "Err" = 69 114 114
+        if load_byte(buf, lo) == 69 {
+            if load_byte(buf, lo + 1) == 114 {
+                if load_byte(buf, lo + 2) == 114 {
+                    return 2;
+                }
+            }
+        }
+        return 0 - 1;
+    }
+    0 - 1
+}
+
+// The (tag, has_payload) of a bic_kind, encoded as tag*2 + has_payload:
+// Some/Ok = tag 0 payload; Err = tag 1 payload; None = tag 1 no-payload.
+pub fn bic_encoding(kind: i64) -> i64 {
+    if kind == 0 {
+        return 1;
+    }
+    if kind == 1 {
+        return 1;
+    }
+    if kind == 2 {
+        return 3;
+    }
+    2
+}
+
+// Parse a bare built-in Option/Result constructor at `pos` (the ctor-name ident;
+// `kind` = bic_kind result). Some/Ok/Err take exactly ONE payload expression in
+// parens and build a payload ctor node; None is a bare payload-free ctor. Every
+// other shape (a payload ctor without `(expr)`, None CALLED with args, a missing
+// `)`, a 2+-arg list — the arg parse stops at `,`) fails CLOSED (POISON leaf),
+// never a wrong-value call emit. The ast_enum_ctor node routes through
+// ect_desugar exactly like the declared-enum ctor.
+pub fn parse_builtin_ctor(toks: Vec, pos: i64, buf: i64, lo: i64, hi: i64, kind: i64) -> ParseResult {
+    let enc: i64 = bic_encoding(kind);
+    let tag: i64 = enc / 2;
+    let has_pay: i64 = enc % 2;
+    if has_pay == 0 {
+        // None: a `(` after it is `None(args)` — refuse (never call a nopay ctor).
+        if at_eof(toks, pos + 1) == 0 {
+            if tok_kind(toks, pos + 1) == tk_lparen() {
+                return pr_new(pos + 1, ast_new_leaf(ast_unsupported(), lo, hi));
+            }
+        }
+        return pr_new(pos + 1, pnt_ctor_node(tag, 0, lo, hi, 0));
+    }
+    // Some/Ok/Err: require `( expr )`; a bare `Some` (no parens) is not a value.
+    if at_eof(toks, pos + 1) == 1 {
+        return pr_new(pos + 1, ast_new_leaf(ast_unsupported(), lo, hi));
+    }
+    if tok_kind(toks, pos + 1) != tk_lparen() {
+        return pr_new(pos + 1, ast_new_leaf(ast_unsupported(), lo, hi));
+    }
+    let pay: ParseResult = parse_expr(toks, pos + 2, buf);
+    let after: i64 = pr_pos(pay);
+    if tok_kind(toks, after) != tk_rparen() {
+        return pr_new(after, ast_new_leaf(ast_unsupported(), lo, hi));
+    }
+    let chi: i64 = tok_hi(toks, after);
+    pr_new(after + 1, pnt_ctor_node(tag, pr_node(pay), lo, chi, 1))
 }
 
 // ===== Enum-ctor STATEMENT desugar (alloc/store record chain) =====

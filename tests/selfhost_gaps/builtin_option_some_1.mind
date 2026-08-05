@@ -1,0 +1,1 @@
+pub fn f() -> i64 { let o = Some(5); 0 }
