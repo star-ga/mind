@@ -1117,6 +1117,20 @@ pub fn ast_index_assign() -> i64 {
 pub fn ast_str_lit() -> i64 {
     34
 }
+// ===== Single-payload enum CONSTRUCTION (the Option/Result tier) =====
+// `Name::Variant(payload)` / `Name::Variant` of a SINGLE-PAYLOAD enum: child0
+// = synthetic tag int-lit (the variant's 0-based decl ordinal), child1 = the
+// payload expression node (0 when payload-free), aux = has_payload (1/0). The
+// span covers the whole source construction text (`O::Some(5)` / `O::None`).
+// The statement-level ect_desugar pass rewrites these into the oracle's
+// alloc/store record chain (lower.rs emit_boxed_enum_record). Any ctor that
+// SURVIVES that pass (nested/expression positions it does not rewrite) fails
+// closed downstream — flatten rejects the unknown kind (0 bytes, never a
+// wrong-value CONST_ARRAY, which is what the historical array-literal desugar
+// emitted once the const-array path moved to OP_CONST_ARRAY).
+pub fn ast_enum_ctor() -> i64 {
+    35
+}
 
 // ===== i64 references (native-ELF surface ONLY; every other surface refuses) =====
 // `&NAME` ADDRESS-OF expression: child0 = operand expr. SUPPORTED subset: the
@@ -2190,14 +2204,15 @@ pub fn parse_primary_ns(toks: Vec, pos: i64, buf: i64, no_struct: i64) -> ParseR
         // discriminant — the proven child1==1 form, zero new emit code. When
         // ent_resolve refuses AND the decl is a SINGLE-PAYLOAD enum, the path
         // is a payload-enum CONSTRUCTION instead: `Opt::Some(e)` / `Opt::None`
-        // desugar to the proven array-literal 2-word block `[tag, payload]`
-        // (parse_epath_ctor / parse_epath_nopay — see the single-payload-enum
-        // section). Every other shape (unknown/duplicate decl, unknown
-        // variant, a payload variant WITHOUT its payload, a payload-free
-        // variant CALLED with args, non-i64/multi-field payloads) produces the
-        // POISON leaf -> the enclosing compile refuses (0 bytes), never a
-        // wrong value. main.mind's own source has no `::` in code, so none of
-        // this fires during self-compile — byte-identical.
+        // parse to an ast_enum_ctor node (parse_epath_ctor / parse_epath_nopay)
+        // that the ect_desugar statement pass lowers to the oracle's
+        // __mind_alloc + __mind_store_i64 record chain (see the
+        // single-payload-enum section). Every other shape (unknown/duplicate
+        // decl, unknown variant, a payload variant WITHOUT its payload, a
+        // payload-free variant CALLED with args, non-i64/multi-field payloads)
+        // produces the POISON leaf -> the enclosing compile refuses (0 bytes),
+        // never a wrong value. main.mind's own source has no `::` in code, so
+        // none of this fires during self-compile — byte-identical.
         if at_eof(toks, pos + 3) == 0 {
             if tok_kind(toks, pos + 1) == tk_colon() {
                 if tok_kind(toks, pos + 2) == tk_colon() {
@@ -4317,16 +4332,26 @@ pub fn const_name_bound(toks: Vec, buf: i64, nlo: i64, nhi: i64) -> i64 {
 //
 // `enum Opt { Some(i64), None }` is a SINGLE-PAYLOAD enum: at least one
 // variant carries exactly one i64 payload. A payload-enum VALUE is a tagged
-// 2-word heap block `{tag, payload}` built with the PROVEN array-literal
-// alloc+store ABI: construction `Opt::Some(5)` desugars at PARSE TIME to the
-// array literal `[<tag>, 5]` (ast_array_lit, synthetic tag int-lit) and
-// `Opt::None` to `[<tag>, 0]`, so every downstream emitter carries it with
-// ZERO new emit code. A match arm `Opt::Some(x) => ..` dispatches on the tag
-// word (`SCRUT[0] == tag`, the proven index-read form) and binds `x` by
-// prepending `let x = SCRUT[1];` to the arm block. Variant tags are the
-// 0-based decl positions (Some=0, None=1) — sequential, hence provably
-// unique. Payload-free variants in a payload enum carry an unused payload
-// slot (0).
+// 2-word heap block `{tag, payload}` built with the __mind_alloc +
+// __mind_store_i64 record ABI the oracle uses (lower.rs
+// emit_boxed_enum_record): construction `Opt::Some(e)` / `Opt::None` parses
+// to an ast_enum_ctor node (tag + payload expr + has_payload flag), and the
+// ect_desugar STATEMENT pass rewrites a top-level let-init / return / trailing
+// construction into the oracle's chain — payload eval BEFORE the alloc, tag
+// stored at +0, payload (or a zero-fill) at +8, the alloc handle as the
+// construction's value. A ctor in any position that pass does not rewrite
+// fails closed (flatten rejects the kind) — never a wrong value. A match arm
+// `Opt::Some(x) => ..` parses (mode 2) into an if-chain that dispatches on the
+// tag word (`SCRUT[0] == tag`, the proven index-read form) and binds `x` by
+// prepending `let x = SCRUT[1];` to the arm block. This dispatch is proven on
+// the native-ELF surface (where the ctor lowers to the 2-word array record);
+// on the mic@3 surface a match whose scrutinee is a payload-enum ctor is NOT
+// yet desugared and REFUSES (0B) — the base emitted 0B here too, so this patch
+// neither introduces nor regresses it.
+// deferred: match-over-payload-enum-ctor on mic@3 refuses (0B) — upgrade path: extend ect_desugar to the match-scrutinee position
+// Variant tags are the 0-based decl positions (Some=0,
+// None=1) — sequential, hence provably unique. Payload-free variants in a
+// payload enum carry an unused payload slot (0).
 //
 // FAIL-CLOSED (refuse -> POISON leaf -> 0-byte compile, never a wrong value
 // or a wrong dispatch):
@@ -4351,6 +4376,17 @@ pub fn const_name_bound(toks: Vec, buf: i64, nlo: i64, nhi: i64) -> i64 {
 // main.mind's own source contains no `::` tokens in code, so none of this
 // runs during self-compile — the self-host loop stays byte-identical modulo
 // its own source growth.
+//
+// SCOPE: this "Option/Result tier" is the DECLARED-enum path only — a value
+// written `Name::Variant(..)` that resolves to a user `enum Name { .. }` decl.
+// The BUILTIN, UNQUALIFIED constructor form (bare `Some(5)` / `Ok(x)` /
+// `Err(e)` with NO `Option::`/`Result::` prefix and no matching decl) is a
+// SEPARATE path this pass does NOT touch. The QUALIFIED builtin form
+// `Option::Some(..)` refuses (0B), but the bare unqualified form is a
+// PRE-EXISTING fail-OPEN: self emits 42B (wrong) vs the oracle's 101B,
+// identical at base — this patch neither introduces nor fixes it. Do NOT read
+// this section as covering builtin Option/Result.
+// deferred: bare unqualified builtin Some/Ok/Err ctor is pre-existing fail-open (42B wrong) — tracked separately
 
 // Byte-compare a span against the literal payload type `i64`.
 pub fn pnt_span_is_i64(buf: i64, lo: i64, hi: i64) -> i64 {
@@ -4497,19 +4533,31 @@ pub fn pnt_variant_count(toks: Vec, buf: i64, nlo: i64, nhi: i64) -> i64 {
     n
 }
 
-// Tagged 2-word block construction node: the array literal `[tag, payload]`
-// re-spanned to the source path text. The synthetic tag int-lit reuses the
-// proven child1==1 sentinel form (value read directly, span bookkeeping only).
-pub fn pnt_ctor_node(tag: i64, pay: i64, lo: i64, hi: i64) -> i64 {
-    let acc0: Vec = vec_new();
-    let acc1: Vec = vec_push(acc0, ent_syn_node(tag, lo, hi));
-    let acc2: Vec = vec_push(acc1, pay);
-    ast_new_array_lit(lo, hi, vec_addr(acc2), vec_len(acc2))
+// Tagged-record construction node for a SINGLE-PAYLOAD enum: an ast_enum_ctor
+// (kind 35) carrying the synthetic tag int-lit (child0), the payload expr or 0
+// (child1) and the has_payload flag (aux). The ect_desugar statement pass
+// rewrites it into the oracle's alloc/store chain (lower.rs
+// emit_boxed_enum_record: payload eval BEFORE the alloc, tag at +0, payload at
+// +8); positions that pass does not rewrite fail closed (flatten rejects the
+// unknown kind). The node's OWN source span (the construction text) names the
+// desugared alloc handle — unique per construction site, the slit discipline.
+pub fn pnt_ctor_node(tag: i64, pay: i64, lo: i64, hi: i64, has_pay: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0, ast_enum_ctor());
+    __mind_store_i64(n + 8, lo);
+    __mind_store_i64(n + 16, hi);
+    __mind_store_i64(n + 24, ent_syn_node(tag, lo, hi));
+    __mind_store_i64(n + 32, pay);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, has_pay);
+    n
 }
 
 // Expression-position `Name::Variant` where ent_resolve refused: a
-// payload-FREE variant of a single-payload enum constructs `[tag, 0]`; a
-// payload variant WITHOUT its payload refuses.
+// payload-FREE variant of a single-payload enum constructs a tagged record
+// (has_payload=0; the desugar zero-fills the payload slot, matching the
+// oracle's emit_boxed_enum_record zero-fill); a payload variant WITHOUT its
+// payload refuses.
 pub fn parse_epath_nopay(toks: Vec, pos: i64, buf: i64, lo: i64, hi: i64, vhi: i64) -> ParseResult {
     let info: i64 = pnt_variant_info(toks, buf, lo, hi, tok_lo(toks, pos + 3), vhi);
     if info < 0 {
@@ -4518,14 +4566,14 @@ pub fn parse_epath_nopay(toks: Vec, pos: i64, buf: i64, lo: i64, hi: i64, vhi: i
     if info % 2 == 1 {
         return pr_new(pos + 4, ast_new_leaf(ast_unsupported(), lo, vhi));
     }
-    pr_new(pos + 4, pnt_ctor_node(info / 2, mk_syn_intlit(0), lo, vhi))
+    pr_new(pos + 4, pnt_ctor_node(info / 2, 0, lo, vhi, 0))
 }
 
-// Expression-position `Name::Variant( ... )`: a payload variant constructs
-// `[tag, <payload expr>]` (the payload is ONE full expression, `)` required);
-// a payload-free variant called with arguments, an unresolvable path, a
-// missing `)`, or a 2+-argument list (the arg parse stops at `,`, not `)`)
-// refuses.
+// Expression-position `Name::Variant( ... )`: a payload variant constructs a
+// tagged record (has_payload=1; the payload is ONE full expression, `)`
+// required); a payload-free variant called with arguments, an unresolvable
+// path, a missing `)`, or a 2+-argument list (the arg parse stops at `,`, not
+// `)`) refuses.
 pub fn parse_epath_ctor(toks: Vec, pos: i64, buf: i64, lo: i64, hi: i64, vhi: i64) -> ParseResult {
     let info: i64 = pnt_variant_info(toks, buf, lo, hi, tok_lo(toks, pos + 3), vhi);
     if info < 0 {
@@ -4540,7 +4588,249 @@ pub fn parse_epath_ctor(toks: Vec, pos: i64, buf: i64, lo: i64, hi: i64, vhi: i6
         return pr_new(after, ast_new_leaf(ast_unsupported(), lo, vhi));
     }
     let chi: i64 = tok_hi(toks, after);
-    pr_new(after + 1, pnt_ctor_node(info / 2, pr_node(pay), lo, chi))
+    pr_new(after + 1, pnt_ctor_node(info / 2, pr_node(pay), lo, chi, 1))
+}
+
+// ===== Enum-ctor STATEMENT desugar (alloc/store record chain) =====
+//
+// The oracle lowers a single-payload enum construction (lower.rs
+// emit_boxed_enum_record) to:
+//   <payload instrs first> ; 8*slots ; __mind_alloc ; store tag at +0 ;
+//   store payload (or a fresh const 0) at +8
+// and the construction VALUE is the alloc handle. This pass rewrites a
+// TOP-LEVEL fn-body statement that DIRECTLY constructs one (let-init /
+// return-value / trailing-or-bare expression) into exactly that let-chain,
+// mirroring the slit (struct-lit) desugar discipline:
+//   let o: O = O::Some(p);  ->  let <p-span>  = p;
+//                               let <ctor-span> = __mind_alloc(8 * 2);
+//                               let <store-span> = __mind_store_i64(<ctor-span>, <tag>);
+//                               let <store-span> = __mind_store_i64(<ctor-span> + 8, <p-span>);
+//                               let o: O = <ctor-span>;
+// (payload-free variant: no first let; the +8 store value is a fresh const 0).
+// Synthetic let NAMES are compile-time only (never emitted): the payload let
+// carries the payload's own span, the alloc handle the ctor's own span
+// (unique per construction site — slit's per-ctor handle discipline), the
+// store lets the interned __mind_store_i64 span (never referenced). Positional
+// last-match in letenv_lookup ties each reference to ITS chain even when two
+// constructions share name bytes. The alloc/store CALLEE idents carry the
+// interned (alo,ahi)/(slo,shi) spans, so the strtab pass interns them
+// first-seen in body order — the oracle's collect order. A ctor this pass
+// does NOT rewrite (nested / if-branch / call-arg positions) keeps kind 35
+// and every flatten fails closed on it — never a wrong-value emit.
+
+// The enum-ctor node a statement DIRECTLY constructs, or 0 (no direct ctor):
+// let-init, return-value, or a bare expression statement.
+pub fn ect_stmt_ctor(stmt: i64) -> i64 {
+    let k: i64 = ast_kind(stmt);
+    if k == ast_let() {
+        let init: i64 = ast_child2(stmt);
+        if ast_kind(init) == ast_enum_ctor() {
+            return init;
+        }
+        return 0;
+    }
+    if k == ast_return() {
+        let v: i64 = ast_child0(stmt);
+        if v == 0 {
+            return 0;
+        }
+        if ast_kind(v) == ast_enum_ctor() {
+            return v;
+        }
+        return 0;
+    }
+    if k == ast_enum_ctor() {
+        return stmt;
+    }
+    0
+}
+
+// One store LET: `let <store-span> = __mind_store_i64(<addr>, <val>)` — the
+// slit_build_store_let shape (a let whose init is the 2-arg store call; the
+// binding is inert, the call instrs are what emit).
+pub fn ect_build_store(addr: i64, val: i64, slo: i64, shi: i64) -> i64 {
+    let callee: i64 = ast_new_leaf(ast_ident(), slo, shi);
+    let args: i64 = __mind_alloc(16);
+    __mind_store_i64(args + 0, addr);
+    __mind_store_i64(args + 8, val);
+    let call: i64 = ast_new_call(0, 0, callee, args, 2);
+    let name: i64 = ast_new_leaf(ast_ident(), slo, shi);
+    ast_new_let(0, 0, name, 0, call)
+}
+
+// The number of output statements `stmt` expands to (1 = unchanged). Chain
+// lengths: payload variant = payload-let + alloc + 2 stores (4); payload-FREE
+// variant = alloc + tag store + ZERO-let + zero-fill store (4 — the zero-let
+// precedes the +8 store because the oracle emits the zero-fill VALUE const
+// BEFORE the offset/add, and a store flattens addr-before-value). A bare
+// trailing ctor keeps a final handle-ref value (is_trail=1); a bare ctor among
+// other statements is DISCARDED (chain only, no final — the oracle keeps the
+// side effects, drops the value).
+pub fn ect_stmt_outn(stmt: i64, is_trail: i64) -> i64 {
+    let cnode: i64 = ect_stmt_ctor(stmt);
+    if cnode == 0 {
+        return 1;
+    }
+    let k: i64 = ast_kind(stmt);
+    if k == ast_let() {
+        return 5;
+    }
+    if k == ast_return() {
+        return 5;
+    }
+    if is_trail == 1 {
+        return 5;
+    }
+    4
+}
+
+// Emit one ctor's chain into new_stmts[out..]. Returns the count written.
+pub fn ect_emit_ctor(new_stmts: i64, out: i64, stmt: i64, cnode: i64, is_trail: i64, alo: i64, ahi: i64, slo: i64, shi: i64) -> i64 {
+    let hlo: i64 = ast_span_lo(cnode);
+    let hhi: i64 = ast_span_hi(cnode);
+    let has_pay: i64 = ast_aux(cnode);
+    // 1. Payload let FIRST — the oracle lowers payloads before the alloc.
+    let wp: i64 = if has_pay == 1 {
+        let pay: i64 = ast_child1(cnode);
+        let pname: i64 = ast_new_leaf(ast_ident(), ast_span_lo(pay), ast_span_hi(pay));
+        __mind_store_i64(new_stmts + out * 8, ast_new_let(0, 0, pname, 0, pay));
+        out + 1
+    } else {
+        out
+    };
+    // 2. Alloc let: let <ctor-span> = __mind_alloc(8 * 2).
+    let size: i64 = ast_new_binop(0, 0, mk_syn_intlit(8), mk_syn_intlit(2), op_mul());
+    let acallee: i64 = ast_new_leaf(ast_ident(), alo, ahi);
+    let aargs: i64 = __mind_alloc(8);
+    __mind_store_i64(aargs + 0, size);
+    let acall: i64 = ast_new_call(0, 0, acallee, aargs, 1);
+    let aname: i64 = ast_new_leaf(ast_ident(), hlo, hhi);
+    __mind_store_i64(new_stmts + wp * 8, ast_new_let(0, 0, aname, 0, acall));
+    // 3. Tag store at +0 (no add — the oracle stores directly at the handle).
+    let href: i64 = ast_new_leaf(ast_ident(), hlo, hhi);
+    let s0: i64 = ect_build_store(href, ast_child0(cnode), slo, shi);
+    __mind_store_i64(new_stmts + (wp + 1) * 8, s0);
+    // 4. Payload store at +8 — or, for a payload-FREE variant, a ZERO-let
+    // followed by the zero-fill store. The zero-let comes FIRST because the
+    // oracle's emit_boxed_enum_record emits the zero-fill VALUE const before
+    // the offset/add, while a store statement flattens addr-before-value. The
+    // zero-let's name is the ctor span TRIMMED by one byte — a span no real
+    // identifier can carry (`:` never appears in a name) and no other chain
+    // node uses, so its store reference resolves to it alone (the handle keeps
+    // the full ctor span).
+    let s1pos: i64 = if has_pay == 1 {
+        wp + 2
+    } else {
+        let zname: i64 = ast_new_leaf(ast_ident(), hlo, hhi - 1);
+        __mind_store_i64(new_stmts + (wp + 2) * 8, ast_new_let(0, 0, zname, 0, mk_syn_intlit(0)));
+        wp + 3
+    };
+    let sval: i64 = if has_pay == 1 {
+        let payv: i64 = ast_child1(cnode);
+        ast_new_leaf(ast_ident(), ast_span_lo(payv), ast_span_hi(payv))
+    } else {
+        ast_new_leaf(ast_ident(), hlo, hhi - 1)
+    };
+    let href8: i64 = ast_new_leaf(ast_ident(), hlo, hhi);
+    let addr8: i64 = ast_new_binop(0, 0, href8, mk_syn_intlit(8), op_add());
+    let s1: i64 = ect_build_store(addr8, sval, slo, shi);
+    __mind_store_i64(new_stmts + s1pos * 8, s1);
+    // 5. Final statement (let-bind / return / trailing value) — a bare
+    // non-trailing ctor is discarded (no final).
+    let k: i64 = ast_kind(stmt);
+    let nfinal: i64 = if k == ast_let() {
+        let href3: i64 = ast_new_leaf(ast_ident(), hlo, hhi);
+        __mind_store_i64(new_stmts + (s1pos + 1) * 8, ast_new_let(0, 0, ast_child0(stmt), ast_child1(stmt), href3));
+        1
+    } else {
+        if k == ast_return() {
+            let href3: i64 = ast_new_leaf(ast_ident(), hlo, hhi);
+            __mind_store_i64(new_stmts + (s1pos + 1) * 8, ast_new_return(0, 0, href3));
+            1
+        } else {
+            if is_trail == 1 {
+                let href3: i64 = ast_new_leaf(ast_ident(), hlo, hhi);
+                __mind_store_i64(new_stmts + (s1pos + 1) * 8, href3);
+                1
+            } else {
+                0
+            }
+        }
+    };
+    s1pos + 1 + nfinal - out
+}
+
+// Expanded statement count for a body.
+pub fn ect_seq_len(stmts_addr: i64, stmts_len: i64, i: i64, acc: i64) -> i64 {
+    if i >= stmts_len {
+        return acc;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let is_trail: i64 = if i == stmts_len - 1 {
+        1
+    } else {
+        0
+    };
+    ect_seq_len(stmts_addr, stmts_len, i + 1, acc + ect_stmt_outn(stmt, is_trail))
+}
+
+// Fill the expanded statement array (slit_seq_fill discipline).
+pub fn ect_seq_fill(new_stmts: i64, out_cell: i64, stmts_addr: i64, stmts_len: i64, alo: i64, ahi: i64, slo: i64, shi: i64, i: i64) -> i64 {
+    if i >= stmts_len {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let out: i64 = __mind_load_i64(out_cell);
+    let cnode: i64 = ect_stmt_ctor(stmt);
+    if cnode == 0 {
+        __mind_store_i64(new_stmts + out * 8, stmt);
+        __mind_store_i64(out_cell, out + 1)
+    } else {
+        let is_trail: i64 = if i == stmts_len - 1 {
+            1
+        } else {
+            0
+        };
+        let n: i64 = ect_emit_ctor(new_stmts, out, stmt, cnode, is_trail, alo, ahi, slo, shi);
+        __mind_store_i64(out_cell, out + n)
+    }
+    ect_seq_fill(new_stmts, out_cell, stmts_addr, stmts_len, alo, ahi, slo, shi, i + 1)
+}
+
+// Desugar enum-ctor statements in a fn's TOP-LEVEL body block. Does NOT
+// recurse into if-blocks (same scope gate as slit_desugar_body_seq — a named
+// let inside a branch would wrongly escape as a merge binding). Returns 1 if
+// the body was rewritten, else 0.
+pub fn ect_desugar_body(fn_node: i64, alo: i64, ahi: i64, slo: i64, shi: i64) -> i64 {
+    let body: i64 = ast_child2(fn_node);
+    if ast_kind(body) != ast_block() {
+        return 0;
+    }
+    let stmts_addr: i64 = ast_child0(body);
+    let stmts_len: i64 = ast_aux(body);
+    let new_len: i64 = ect_seq_len(stmts_addr, stmts_len, 0, 0);
+    if new_len == stmts_len {
+        return 0;
+    }
+    let new_stmts: i64 = __mind_alloc(new_len * 8);
+    let out_cell: i64 = __mind_alloc(8);
+    __mind_store_i64(out_cell, 0);
+    let _fl: i64 = ect_seq_fill(new_stmts, out_cell, stmts_addr, stmts_len, alo, ahi, slo, shi, 0);
+    __mind_store_i64(body + 24, new_stmts);
+    __mind_store_i64(body + 48, new_len);
+    1
+}
+
+// Module pass: desugar enum-ctor constructions in every top-level fn_def.
+pub fn ect_desugar_module(items_addr: i64, items_len: i64, alo: i64, ahi: i64, slo: i64, shi: i64, i: i64) -> i64 {
+    if i >= items_len {
+        return 0;
+    }
+    let item: i64 = __mind_load_i64(items_addr + i * 8);
+    if ast_kind(item) == ast_fn_def() {
+        let _r: i64 = ect_desugar_body(item, alo, ahi, slo, shi);
+    }
+    ect_desugar_module(items_addr, items_len, alo, ahi, slo, shi, i + 1)
 }
 
 // Copy `n` statement slots from src[0..n) into dst[1..n+1) (slot 0 is the
@@ -17550,6 +17840,17 @@ pub fn selftest_mic3_module_nfn(src_addr: i64, src_len: i64, strbuf: i64, offs: 
         src_len + 28
     };
     let _sl: i64 = slit_desugar_module(src_use, src_len, items_addr, items_len, srt, alo, ahi, slo, shi, 0);
+    // ENUM-CTOR desugar (see ect_desugar_module): rewrite statement-level
+    // single-payload enum constructions (`E::V(p)` / `E::V`) into the oracle's
+    // payload-let + __mind_alloc + __mind_store_i64 record chain (lower.rs
+    // emit_boxed_enum_record — payloads BEFORE the alloc, tag at +0, payload /
+    // zero-fill at +8). Runs after the slit desugar (the two chains never
+    // interact: a ctor node is not a struct-lit) and BEFORE the strtab pass,
+    // so the synthetic alloc/store callee spans intern first-seen in body
+    // order — the oracle's collect order. Ctor nodes the pass does not rewrite
+    // (nested positions) keep kind 35 and fail closed downstream. No-op for
+    // modules without single-payload enum constructions (byte-identical path).
+    let _ect: i64 = ect_desugar_module(items_addr, items_len, alo, ahi, slo, shi, 0);
     // FIELD-READ PRE-RESOLVE: rewrite every resolvable `recv.field` into the
     // equivalent `__mind_load_i64(field_addr)` Call subtree, IN PLACE, BEFORE the
     // strtab pass. Order is load-bearing: the oracle interns "__mind_load_i64" at
@@ -28865,6 +29166,28 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // The array literal's VALUE is the base pointer.
         return NbState { code: s_aelems.code, next_id: s_aelems.next_id, last_id: aptr_id, ncalls: s_aelems.ncalls };
     }
+    if k == ast_enum_ctor() {
+        // Single-payload enum CONSTRUCTION on the native-ELF surface: the
+        // runtime record is the SAME 2-word block the old parse-time array
+        // desugar produced — [tag @ +0, payload @ +8] — so the match arm's
+        // SCRUT[0] tag-read / SCRUT[1] payload-bind stay correct. Lower it by
+        // synthesising that array literal ([tag, payload] or [tag, 0] for a
+        // payload-free variant) and recursing into the proven array arm above.
+        // (The mic@3 surface takes the ect_desugar alloc/store chain instead —
+        // the oracle's emit_boxed_enum_record instrs — so this arm is the
+        // native-only twin.) main.mind's own source has no `::` constructions,
+        // so this never fires during self-compile.
+        let epay: i64 = if ast_aux(node) == 1 {
+            ast_child1(node)
+        } else {
+            mk_syn_intlit(0)
+        };
+        let eelems: i64 = __mind_alloc(16);
+        __mind_store_i64(eelems + 0, ast_child0(node));
+        __mind_store_i64(eelems + 8, epay);
+        let earr: i64 = ast_new_array_lit(ast_span_lo(node), ast_span_hi(node), eelems, 2);
+        return nb_expr(st, buf, earr, params_addr, n_params, calls, lets, lcell);
+    }
     if k == ast_index() {
         // `BASE[IDX]` i64 array index READ: lower base -> pointer slot, idx ->
         // index slot, then CONST 8 ; MUL(idx,8) -> off ; ADD(base,off) -> addr ;
@@ -29574,6 +29897,21 @@ pub fn nb_let_descriptor(init: i64, ty_node: i64, buf: i64, srt: i64, frt: i64, 
     // kind (nb_slit_field_index) so `name.field` over an array still refuses.
     if ast_kind(init) == ast_array_lit() {
         return init;
+    }
+    // A single-payload ENUM CTOR init binds the SAME 2-element record shape
+    // ([tag, payload-or-zero]) the old parse-time array desugar produced, so
+    // the index arms (a match's SCRUT[0] tag-read / SCRUT[1] payload-bind)
+    // keep the identical length / OOB / bounds-guard behaviour.
+    if ast_kind(init) == ast_enum_ctor() {
+        let epay: i64 = if ast_aux(init) == 1 {
+            ast_child1(init)
+        } else {
+            mk_syn_intlit(0)
+        };
+        let eelems: i64 = __mind_alloc(16);
+        __mind_store_i64(eelems + 0, ast_child0(init));
+        __mind_store_i64(eelems + 8, epay);
+        return ast_new_array_lit(ast_span_lo(init), ast_span_hi(init), eelems, 2);
     }
     if ty_node == 0 {
         // Unannotated `let p = o.i` where `o.i` is a struct-typed field read:
@@ -32550,6 +32888,21 @@ pub fn nb_count_expr(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         // the alloc-ptr slot (next_id+3); no extra id.
         return nb_count_array_elems(next_id + 4, buf, ast_child1(node), ast_aux(node), 0, params_addr, n_params, clets, clcell);
     }
+    if k == ast_enum_ctor() {
+        // Mirror of nb_expr's ast_enum_ctor arm: the synthesised 2-element
+        // array [tag, payload-or-zero]. Same counting as nb_count_array_elems
+        // over those two elements: 4 (sz+n+mul+ptr) + per element value ids +
+        // (i==0 ? 0 : 2) + 1 store-dst. The record VALUE is the alloc-ptr
+        // slot; no extra id.
+        let ctag: i64 = nb_count_expr(next_id + 4, buf, ast_child0(node), params_addr, n_params, clets, clcell);
+        let cafter0: i64 = nb_field_addr_ids(ctag, 0) + 1;
+        let cpay: i64 = if ast_aux(node) == 1 {
+            nb_count_expr(cafter0, buf, ast_child1(node), params_addr, n_params, clets, clcell)
+        } else {
+            cafter0 + 1
+        };
+        return nb_field_addr_ids(cpay, 1) + 1;
+    }
     if k == ast_index() {
         // base ids + idx ids + 4 (CONST 8 ; MUL ; ADD ; load-dst) — the exact
         // mirror of nb_expr's ast_index arm.
@@ -33035,6 +33388,13 @@ pub fn nb_ccount_expr(buf: i64, node: i64, ccell: i64) -> i64 {
     if k == ast_array_lit() {
         return nb_ccount_array_elems(buf, ast_child1(node), ast_aux(node), 0, ccell);
     }
+    if k == ast_enum_ctor() {
+        // The tag is a synthetic const (never a call); walk the payload only.
+        if ast_aux(node) == 1 {
+            return nb_ccount_expr(buf, ast_child1(node), ccell);
+        }
+        return 0;
+    }
     if k == ast_index() {
         let _xb: i64 = nb_ccount_expr(buf, ast_child0(node), ccell);
         return nb_ccount_expr(buf, ast_child1(node), ccell);
@@ -33245,6 +33605,13 @@ pub fn nb_argv_expr(buf: i64, node: i64) -> i64 {
     // in the base/index sub-exprs — walk them (short-circuit OR).
     if k == ast_array_lit() {
         return nb_argv_array_elems(buf, ast_child1(node), ast_aux(node), 0);
+    }
+    if k == ast_enum_ctor() {
+        // The tag is a synthetic const (never argv); probe the payload only.
+        if ast_aux(node) == 1 {
+            return nb_argv_expr(buf, ast_child1(node));
+        }
+        return 0;
     }
     if k == ast_index() {
         if nb_argv_expr(buf, ast_child0(node)) == 1 {
@@ -33532,6 +33899,13 @@ pub fn nb_at_scan_expr(at: i64, buf: i64, node: i64) -> i64 {
     }
     if k == ast_array_lit() {
         return nb_at_scan_elems(at, buf, ast_child1(node), ast_aux(node), 0);
+    }
+    if k == ast_enum_ctor() {
+        // The tag is a synthetic const (never address-taken); scan the payload.
+        if ast_aux(node) == 1 {
+            return nb_at_scan_expr(at, buf, ast_child1(node));
+        }
+        return 0;
     }
     if k == ast_index() {
         let _b: i64 = nb_at_scan_expr(at, buf, ast_child0(node));
@@ -35876,6 +36250,13 @@ pub fn nb_reach_expr(buf: i64, fns: i64, n_fns: i64, reach: i64, node: i64, chan
     // through the prune).
     if k == ast_array_lit() {
         return nb_reach_array_elems(buf, fns, n_fns, reach, ast_child1(node), ast_aux(node), 0, changed);
+    }
+    if k == ast_enum_ctor() {
+        // The tag is a synthetic const (no callee); reach-mark the payload.
+        if ast_aux(node) == 1 {
+            return nb_reach_expr(buf, fns, n_fns, reach, ast_child1(node), changed);
+        }
+        return 0;
     }
     if k == ast_index() {
         let _xb: i64 = nb_reach_expr(buf, fns, n_fns, reach, ast_child0(node), changed);
