@@ -1,0 +1,1 @@
+pub fn f(x: i64) -> i64 { let o = Err(x); 0 }

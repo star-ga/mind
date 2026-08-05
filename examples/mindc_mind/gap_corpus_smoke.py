@@ -184,7 +184,7 @@ def main():
     # Coverage ratchet: byte-exact must not drop below FLOOR. The whole corpus
     # lowers byte-exactly under the canonical FRESH-load measurement; the floor pins it so
     # no fixture can silently regress to fail-closed or wrong.
-    FLOOR = 136
+    FLOOR = 141
     ok = True
     if wrong:
         print("FAIL: WRONG-BYTES (silent miscompile) — the cardinal invariant is violated:")
