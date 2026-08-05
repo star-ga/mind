@@ -1264,6 +1264,14 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     // mic@1/mic@3 bytes + cross-substrate identity are byte-for-byte unchanged.
     #[cfg(feature = "std-surface")]
     NARROW_LOCALS.with(|n| n.borrow_mut().clear());
+    // Compile-speed early-skip (perf): one O(n) AST prescan decides whether this
+    // module can EVER produce a narrow arithmetic type; `false` lets
+    // `infer_narrow_arith_ty` return `None` without walking operand subtrees
+    // (the per-binop re-walk is O(n²) on nested narrow-free arithmetic). The
+    // skip is provably byte-identical — see src/eval/narrow_scan.rs.
+    #[cfg(feature = "std-surface")]
+    MODULE_HAS_NARROW_SURFACE
+        .with(|f| f.set(crate::eval::narrow_scan::module_mentions_narrow(module)));
     let mut env: HashMap<String, ValueId> = HashMap::default();
     // RFC 0005 P0f Step 1 — track `let x = Foo { ... }` so a later
     // `x.field` can resolve `Foo`'s canonical field-name order from
@@ -2088,6 +2096,21 @@ thread_local! {
         std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
+thread_local! {
+    /// Compile-speed early-skip for `infer_narrow_arith_ty` (perf; mirrors the
+    /// `NARROW_LOCALS` thread-local pattern). Set ONCE per `lower_to_ir` call
+    /// by an O(n) prescan of the module AST (`narrow_scan::module_mentions_narrow`);
+    /// `false` proves the module mentions NO narrow-int type anywhere, so every
+    /// `infer_narrow_arith_ty` call would return `None` — the early return skips
+    /// the per-binop operand-subtree re-walk (O(n²) on nested all-i64/float
+    /// arithmetic) without changing a single masking decision. See
+    /// src/eval/narrow_scan.rs for the full byte-identity proof. Defaults to
+    /// `true` (fail-safe: an entry path that never runs the prescan keeps the
+    /// masking machinery fully active).
+    #[cfg(feature = "std-surface")]
+    static MODULE_HAS_NARROW_SURFACE: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
 /// RAII guard restoring the previous `NARROW_LOCALS` map when a fn body's lowering
 /// scope ends, mirroring `ParamTypesGuard`. Seeds the map with this fn's narrow
 /// PARAMS so a reassigned narrow param (`fn f(c: u8) { c = c + 100 }`) re-masks too.
@@ -2245,7 +2268,17 @@ fn record_narrow_let(name: &str, ann: &Option<TypeAnn>) {
         // leaves the registry empty (byte-identical hot path).
         _ => {
             NARROW_LOCALS.with(|n| {
-                n.borrow_mut().remove(name);
+                let mut m = n.borrow_mut();
+                // Perf: removing from an EMPTY registry is a no-op, but
+                // `HashMap::remove` still hashes `name` (SipHash) before it can
+                // find that out — and this arm runs for EVERY non-narrow `let`.
+                // Callgrind on the all-i64/tensor hot path attributed ~200
+                // instructions per `let` to exactly this hash+probe. Skipping
+                // the call outright when the map is empty (the common
+                // narrow-free-module case) is trivially byte-identical.
+                if !m.is_empty() {
+                    m.remove(name);
+                }
             });
         }
     }
@@ -2290,6 +2323,15 @@ fn infer_narrow_arith_ty(
     struct_env: &HashMap<String, String>,
     receiver_types: &HashMap<crate::ast::Span, String>,
 ) -> Option<TypeAnn> {
+    // Perf early-skip: a module with NO narrow-int surface (prescan at
+    // `lower_to_ir` entry) can never yield `Some` here — every leaf arm filters
+    // through `is_named_narrow_sig_ty`, and every source it consults is
+    // narrow-free when the prescan found no narrow mention (proof in
+    // src/eval/narrow_scan.rs). Returning `None` up front skips the recursive
+    // operand-subtree walk that made nested all-i64/float arithmetic O(n²).
+    if !MODULE_HAS_NARROW_SURFACE.with(|f| f.get()) {
+        return None;
+    }
     match node {
         ast::Node::Lit(Literal::Ident(name), _) => NARROW_LOCALS
             .with(|n| n.borrow().get(name).cloned())
