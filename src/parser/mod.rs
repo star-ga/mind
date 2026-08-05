@@ -4056,6 +4056,32 @@ impl<'a> P<'a> {
                         };
                         continue;
                     }
+                } else if dot_pos + 1 < self.b.len() && self.b[dot_pos + 1].is_ascii_digit() {
+                    // Numeric TUPLE index `t.0` (Finding 6): consume the digit
+                    // run into a FieldAccess whose `field` is the digit string,
+                    // and stay in the postfix loop so `t.0.1` chains. Reachable
+                    // only when a `.` follows an already-parsed expression: a
+                    // FLOAT literal (`1.5`) is consumed whole by the number
+                    // lexer (digit-after-dot check) and never parks the cursor
+                    // here, and a range's `..` fails the digit test (next byte
+                    // is `.`). Lowering resolves the index against the
+                    // receiver's DECLARED tuple annotation and fails loudly on
+                    // anything else — never a silent fallthrough.
+                    self.pos = dot_pos + 1;
+                    let digits_start = self.pos;
+                    while self.pos < self.b.len() && self.b[self.pos].is_ascii_digit() {
+                        self.pos += 1;
+                    }
+                    let field = std::str::from_utf8(&self.b[digits_start..self.pos])
+                        .expect("ascii digit run is valid UTF-8")
+                        .to_string();
+                    let span = Span::new(node.span_start(), self.pos);
+                    node = Node::FieldAccess {
+                        receiver: Box::new(node),
+                        field,
+                        span,
+                    };
+                    continue;
                 }
             }
             // Phase 10.6: postfix index `receiver[index]` for slice /
