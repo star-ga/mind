@@ -1994,6 +1994,33 @@ fn is_narrow_scalar_ty(ty: &TypeAnn) -> bool {
         || matches!(scalar_uint_cast_width(ty), Some(w) if w < 64)
 }
 
+/// True when `ty` is a declared builtin `Option<…>`/`Result<…>` generic with
+/// explicit args (Finding 5). Such annotations enter `NARROW_LOCALS` so that
+/// `desugar_match_to_if` can recover the DECLARED payload type of a builtin
+/// `Some`/`Ok`/`Err` bind — the prelude registers those payloads as the generic
+/// `[ScalarI64]`, so an `Option<u64>` payload otherwise bound SIGNED
+/// (`u64::MAX` read back as `-1`, `v < 1` wrongly true). Every other
+/// `NARROW_LOCALS` reader is a no-op on a `Generic` entry (see the registry
+/// doc-comment), so recording these is byte-identical outside the match-bind
+/// path.
+#[cfg(feature = "std-surface")]
+fn is_payload_generic_ty(ty: &TypeAnn) -> bool {
+    matches!(ty, TypeAnn::Generic { name, args }
+        if matches!(name.as_str(), "Option" | "Result") && !args.is_empty())
+}
+
+/// True when `ty` is a declared TUPLE annotation with elements (Finding 6).
+/// Such annotations enter `NARROW_LOCALS` so a numeric tuple index `t.N` can
+/// resolve the receiver's declared element types — both for the bounds check
+/// and to re-materialise a narrow/`u64` element at its true width/signedness
+/// (`let t: (u64, i64) = …; t.0 < 1` must compare UNSIGNED). Every other
+/// `NARROW_LOCALS` reader is a no-op on a `Tuple` entry (see the registry
+/// doc-comment).
+#[cfg(feature = "std-surface")]
+fn is_tuple_ann_ty(ty: &TypeAnn) -> bool {
+    matches!(ty, TypeAnn::Tuple { elements } if !elements.is_empty())
+}
+
 /// True when `ty` is a sub-i64 integer that reaches a fn SIGNATURE as
 /// `TypeAnn::Named` (`i8`/`u8`/`i16`/`u16`) — the widths lowered by the
 /// i64-SLOT narrow-signature ABI: the MLIR `func.func` signature stays
@@ -2044,10 +2071,18 @@ thread_local! {
     /// carries no annotation — without re-masking, `c` silently keeps the full i64
     /// value (`300` instead of `44`), a SILENT MISCOMPILE that spans top-level,
     /// branch and loop bodies. `Assign` lowering consults this map and re-applies
-    /// `mask_narrow_let`. Populated ONLY with genuinely narrow scalars (see
-    /// `is_narrow_scalar_ty`), so an all-i64 module leaves it empty and the masking
-    /// is a no-op (zero extra IR, byte-identical hot path). Scoped per fn body and
-    /// restored on exit via `NarrowLocalsGuard`, so it never leaks across fns.
+    /// `mask_narrow_let`. Populated with genuinely narrow scalars (see
+    /// `is_narrow_scalar_ty`) plus two DECLARED-annotation kinds used to type
+    /// derived reads: Finding 5 — `Option<…>`/`Result<…>` generics (see
+    /// `is_payload_generic_ty`), read by `desugar_match_to_if` to type a
+    /// builtin `Some`/`Ok`/`Err` payload bind; Finding 6 — tuple annotations
+    /// (see `is_tuple_ann_ty`), read by the numeric tuple index `t.N` to
+    /// resolve element types. Every other reader is a no-op on a
+    /// `Generic`/`Tuple` entry: `mask_narrow_let` falls through all width arms,
+    /// `infer_narrow_arith_ty` filters to `is_named_narrow_sig_ty`. An all-i64
+    /// module leaves the map empty and the masking is a no-op (zero extra IR,
+    /// byte-identical hot path). Scoped per fn body and restored on exit via
+    /// `NarrowLocalsGuard`, so it never leaks across fns.
     #[cfg(feature = "std-surface")]
     static NARROW_LOCALS: std::cell::RefCell<std::collections::HashMap<String, TypeAnn>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
@@ -2076,7 +2111,10 @@ fn enter_narrow_scope(params: &[ast::Param]) -> NarrowLocalsGuard {
         {
             let mut m = n.borrow_mut();
             for prm in params {
-                if is_narrow_scalar_ty(&prm.ty) {
+                if is_narrow_scalar_ty(&prm.ty)
+                    || is_payload_generic_ty(&prm.ty)
+                    || is_tuple_ann_ty(&prm.ty)
+                {
                     m.insert(prm.name.clone(), prm.ty.clone());
                 }
             }
@@ -2188,7 +2226,14 @@ fn callee_array_lit_param(callee: &str, idx: usize) -> bool {
 #[cfg(feature = "std-surface")]
 fn record_narrow_let(name: &str, ann: &Option<TypeAnn>) {
     match ann {
-        Some(ty) if is_narrow_scalar_ty(ty) => {
+        // Finding 5: a declared `Option<…>`/`Result<…>` generic is recorded too,
+        // so `desugar_match_to_if` can type a builtin `Some`/`Ok`/`Err` payload
+        // bind at its declared width/signedness. The `_ =>` shadow-clear arm
+        // below already handles a re-`let` of the same name at any other type.
+        // Finding 6: a declared tuple annotation is recorded too, so a numeric
+        // tuple index `t.N` can resolve its element types (same shadow-clear
+        // rule via the `_ =>` arm below).
+        Some(ty) if is_narrow_scalar_ty(ty) || is_payload_generic_ty(ty) || is_tuple_ann_ty(ty) => {
             NARROW_LOCALS.with(|n| n.borrow_mut().insert(name.to_string(), ty.clone()));
         }
         // Finding 1(a): a re-`let` (shadow) of the SAME name at a WIDE/non-narrow
@@ -2256,8 +2301,10 @@ fn infer_narrow_arith_ty(
             left,
             right,
             ..
-        } => infer_narrow_arith_ty(left, ir, struct_env, receiver_types)
-            .or_else(|| infer_narrow_arith_ty(right, ir, struct_env, receiver_types)),
+        } => join_narrow_tys(
+            infer_narrow_arith_ty(left, ir, struct_env, receiver_types),
+            infer_narrow_arith_ty(right, ir, struct_env, receiver_types),
+        ),
         // Finding 3: a shift result carries the LEFT operand's declared width
         // (the count's width is irrelevant), so recurse only into `left`.
         ast::Node::Bitwise {
@@ -2327,6 +2374,29 @@ fn narrow_named_shift_width(ty: &TypeAnn) -> Option<u32> {
         .filter(|&w| w < 64)
 }
 
+/// Join the two inferred narrow operand types of an arithmetic binop
+/// (Finding 7). The old `infer(left).or_else(infer(right))` picked the LEFT
+/// operand's width whenever both sides were narrow, so `(a + b) / 2` with
+/// `a: u8, b: u16` wrapped at 8 bits while `(b + a) / 2` wrapped at 16 — an
+/// ASYMMETRIC result for the same values. The result type is the WIDEST
+/// operand: `(None, x)`/`(x, None)` → `x`; both `Some` → the greater width
+/// (8 vs 16); EQUAL width → the LEFT operand (preserving today's bytes for
+/// `u8+u8` and the mixed-signedness equal-width `i8+u8`). `Shl`/`Shr` stay
+/// LEFT-only (the count's width is irrelevant) and never reach this join.
+#[cfg(feature = "std-surface")]
+fn join_narrow_tys(l: Option<TypeAnn>, r: Option<TypeAnn>) -> Option<TypeAnn> {
+    match (l, r) {
+        (Some(a), Some(b)) => {
+            // Both are `is_named_narrow_sig_ty` (8/16-bit) by construction —
+            // `narrow_named_shift_width` is total on them.
+            let wa = narrow_named_shift_width(&a).unwrap_or(64);
+            let wb = narrow_named_shift_width(&b).unwrap_or(64);
+            if wb > wa { Some(b) } else { Some(a) }
+        }
+        (a, b) => a.or(b),
+    }
+}
+
 /// Re-mask an ARITHMETIC binop result to its inferred narrow width (`i8`/`u8`/
 /// `i16`/`u16`), emitting the same truncate/sign-extend forms as
 /// `mask_narrow_let`. Only `Add`/`Sub`/`Mul`/`Div`/`Mod` are masked — the
@@ -2344,10 +2414,10 @@ fn mask_narrow_binop_result(
     receiver_types: &HashMap<crate::ast::Span, String>,
 ) -> ValueId {
     let ty = match op {
-        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
-            infer_narrow_arith_ty(left, ir, struct_env, receiver_types)
-                .or_else(|| infer_narrow_arith_ty(right, ir, struct_env, receiver_types))
-        }
+        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => join_narrow_tys(
+            infer_narrow_arith_ty(left, ir, struct_env, receiver_types),
+            infer_narrow_arith_ty(right, ir, struct_env, receiver_types),
+        ),
         // Finding 3: a shift result's width is the LEFT operand's declared width
         // (`(x << 1)` with `x: u8` must truncate to `u8` before a following op).
         BinOp::Shl | BinOp::Shr => infer_narrow_arith_ty(left, ir, struct_env, receiver_types),
@@ -7643,6 +7713,68 @@ fn lower_expr(
             field,
             span,
         } => {
+            // Finding 6: numeric TUPLE index `t.N` (parser now emits it as a
+            // FieldAccess whose `field` is an all-digit string). Resolve the
+            // receiver's DECLARED `(T, U, …)` tuple annotation from
+            // `NARROW_LOCALS`, bounds-check N, and emit the same
+            // `__mind_load_i64(base + 8*N)` shape LetTuple destructuring uses —
+            // then re-materialise the element at its declared type
+            // (`mask_narrow_let`), so a `u64` element compares UNSIGNED and a
+            // narrow element keeps its width. Any MISS — non-ident receiver,
+            // unannotated/non-tuple binding, out-of-range N — FAILS LOUDLY:
+            // falling through to struct resolution would reach the const-0 /
+            // ArrayLoad placeholder paths, a guaranteed silent miscompile.
+            if !field.is_empty() && field.bytes().all(|b| b.is_ascii_digit()) {
+                let idx: usize = field.parse().unwrap_or_else(|_| {
+                    panic!("tuple index `.{field}` is out of range for a tuple type")
+                });
+                let elements: Vec<TypeAnn> = match receiver.as_ref() {
+                    ast::Node::Lit(Literal::Ident(nm), _) => NARROW_LOCALS
+                        .with(|n| n.borrow().get(nm).cloned())
+                        .and_then(|t| match t {
+                            TypeAnn::Tuple { elements } => Some(elements),
+                            _ => None,
+                        }),
+                    _ => None,
+                }
+                .unwrap_or_else(|| {
+                    panic!(
+                        "tuple index `.{field}` requires a receiver that is a local \
+                         with a declared tuple annotation (`let t: (T, U) = …`); \
+                         annotate the receiver's tuple type. (Falling through to \
+                         struct-field resolution here would be a silent miscompile.)"
+                    )
+                });
+                if idx >= elements.len() {
+                    panic!(
+                        "tuple index `.{field}` is out of bounds for a {}-element \
+                         tuple",
+                        elements.len()
+                    );
+                }
+                let addr = lower_expr(receiver, ir, env, struct_env, receiver_types);
+                let elem_addr = if idx == 0 {
+                    addr
+                } else {
+                    let offset = ir.fresh();
+                    ir.instrs.push(Instr::ConstI64(offset, (idx as i64) * 8));
+                    let sum = ir.fresh();
+                    ir.instrs.push(Instr::BinOp {
+                        dst: sum,
+                        op: BinOp::Add,
+                        lhs: addr,
+                        rhs: offset,
+                    });
+                    sum
+                };
+                let loaded = ir.fresh();
+                ir.instrs.push(Instr::Call {
+                    dst: loaded,
+                    name: "__mind_load_i64".to_string(),
+                    args: vec![elem_addr],
+                });
+                return mask_narrow_let(ir, &Some(elements[idx].clone()), loaded);
+            }
             // `array<T>` length: `arr.len` / `arr.length` (no parens) on a
             // vec-sentinel receiver lowers to the std.vec `vec_len` free
             // function. mind-flow writes `.length`; std.vec exposes `vec_len`,
@@ -10021,20 +10153,56 @@ fn desugar_match_to_if(
                 if !args.iter().all(sub_ok) {
                     return None;
                 }
-                // deferred: Finding 5 — a builtin generic `Some`/`Ok`/`Err`
-                // payload has NO entry in `payload_types` (only DECLARED enums do),
-                // so a `match o { Some(v) => .. }` where `o: Option<u64>` binds `v`
-                // SIGNED (`u64::MAX` reads as -1, `v < 1` wrongly true). Fixing it
-                // needs the scrutinee's declared generic arg (`u64`) propagated
-                // here; there is no per-var declared-TypeAnn registry today, and
-                // adding cross-fn scrutinee-payload state is itself a
-                // silent-miscompile class. Declared-enum coverage (the
-                // `payload_types` path below) is correct and unaffected.
-                // upgrade path: thread a var→Option/Result generic-arg map
-                // (populated at every `let` site, scoped per fn) into
-                // `desugar_match_to_if` and fall back to it when `payload_types`
-                // misses a builtin Some/Ok/Err path.
-                let field_types = payload_types.get(path);
+                // Finding 5 (landed): the builtin prelude registers the
+                // `Option::Some`/`Result::Ok`/`Result::Err` payloads as the
+                // GENERIC `[ScalarI64]`, so a `match o { Some(v) => .. }` where
+                // `o: Option<u64>` bound `v` SIGNED (`u64::MAX` read as -1,
+                // `v < 1` wrongly true). When the scrutinee is a plain ident
+                // whose DECLARED `Option<T>`/`Result<T, E>` annotation is
+                // tracked in `NARROW_LOCALS`, synthesize the variant's payload
+                // type from the declared generic args — Some→[T], Ok→[T],
+                // Err→[E] — so the existing `bind_ann`/`mask_narrow_let`
+                // machinery re-materialises the payload at its true
+                // width/signedness. RESTRICTED to INTEGER args: `T = i64`
+                // synthesizes exactly the builtin `[ScalarI64]` (byte-identical
+                // bind), narrow/u64 args gain their mask/`__mind_conv_u64`
+                // marker. A non-ident scrutinee (incl. the effectful
+                // `__match_scrut_*` pre-bind), an untracked name, or a declared
+                // user enum all miss and keep today's `payload_types` path.
+                // deferred: float generic args (`Option<f64>`) stay on the
+                // builtin `[ScalarI64]` path — the f64 payload bit-repr through
+                // the boxed record is unverified — upgrade path: prove the
+                // `__mind_f64_to_bits`/`__mind_bits_to_f64` round-trip through
+                // the `Some(x)` constructor, then admit float args here.
+                let generic_payload_override: Option<Vec<ast::TypeAnn>> = (|| {
+                    let ast::Node::Lit(Literal::Ident(scrut_name), _) = scrutinee else {
+                        return None;
+                    };
+                    let ann = NARROW_LOCALS.with(|n| n.borrow().get(scrut_name).cloned())?;
+                    let ast::TypeAnn::Generic { name, args } = ann else {
+                        return None;
+                    };
+                    let is_int_ann = |t: &ast::TypeAnn| {
+                        scalar_int_cast_width(t).is_some()
+                            || scalar_uint_cast_width(t).is_some()
+                            || scalar_int64_cast_signed(t).is_some()
+                    };
+                    match (name.as_str(), path.as_str()) {
+                        ("Option", "Option::Some") if args.len() == 1 && is_int_ann(&args[0]) => {
+                            Some(vec![args[0].clone()])
+                        }
+                        ("Result", "Result::Ok") if args.len() == 2 && is_int_ann(&args[0]) => {
+                            Some(vec![args[0].clone()])
+                        }
+                        ("Result", "Result::Err") if args.len() == 2 && is_int_ann(&args[1]) => {
+                            Some(vec![args[1].clone()])
+                        }
+                        _ => None,
+                    }
+                })();
+                let field_types = generic_payload_override
+                    .as_ref()
+                    .or(payload_types.get(path));
                 let mut stmts = Vec::new();
                 for (i, sub) in args.iter().enumerate() {
                     // field_addr = scrutinee + 8*(i+1)
