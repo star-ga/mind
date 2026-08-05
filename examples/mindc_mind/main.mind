@@ -10062,7 +10062,11 @@ pub fn collect_body_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, stmts_
     }
     let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
     let r: i64 = collect_expr_strings(strbuf, offs, ccell, src, stmt, ebuf, en);
-    let en2: i64 = if ast_kind(stmt) == ast_let() { bc_env_append(ebuf, en, ast_child0(stmt)) } else { en };
+    let en2: i64 = if ast_kind(stmt) == ast_let() {
+        bc_env_append(ebuf, en, ast_child0(stmt))
+    } else {
+        en
+    };
     collect_body_strings(strbuf, offs, ccell, src, stmts_addr, stmts_len, i + 1, ebuf, en2)
 }
 
@@ -10091,6 +10095,17 @@ pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: 
     }
     if k == ast_binop() {
         let rl: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node), ebuf, en);
+        return collect_expr_strings(strbuf, offs, ccell, src, ast_child1(node), ebuf, en);
+    }
+    if k == ast_index() {
+        // `BASE[IDX]`: ArrayLoad carries no name, but the base's instrs precede the
+        // index's (src/eval/lower.rs ArrayLoad). Recurse base first so a TEMP array
+        // literal base (`[x, x+10][1]`) interns its vec_new/vec_push chain at the
+        // oracle's first-seen position — previously the base was never walked and the
+        // emitted vec calls carried a -1 callee index (wrong bytes). A let-bound array
+        // base (ast_ident) interns nothing here (its names intern at the let), so every
+        // existing array fixture stays byte-identical.
+        let rb: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node), ebuf, en);
         return collect_expr_strings(strbuf, offs, ccell, src, ast_child1(node), ebuf, en);
     }
     if k == ast_field() {
@@ -10244,7 +10259,11 @@ pub fn collect_block_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, stmts
     }
     let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
     let r: i64 = collect_expr_strings(strbuf, offs, ccell, src, stmt, ebuf, en);
-    let en2: i64 = if ast_kind(stmt) == ast_let() { bc_env_append(ebuf, en, ast_child0(stmt)) } else { en };
+    let en2: i64 = if ast_kind(stmt) == ast_let() {
+        bc_env_append(ebuf, en, ast_child0(stmt))
+    } else {
+        en
+    };
     collect_block_strings(strbuf, offs, ccell, src, stmts_addr, stmts_len, i + 1, ebuf, en2)
 }
 
@@ -15701,6 +15720,58 @@ pub fn mk_syn_intlit(value: i64) -> i64 {
 // list, recursing through if then/else blocks. Returns the type node, or 0 if no such
 // let. Names are SSA-unique in the bootstrap source (s1, s2, ..) so the first match is
 // authoritative.
+// Skip spaces/tabs/newlines/CRs from i (self-contained mirror of field_ty_skip_ws,
+// defined ahead of its caller so no forward reference).
+pub fn let_init_skip_ws(src: i64, i: i64) -> i64 {
+    let b: i64 = load_byte(src, i);
+    if b == 32 {
+        return let_init_skip_ws(src, i + 1);
+    }
+    if b == 9 {
+        return let_init_skip_ws(src, i + 1);
+    }
+    if b == 10 {
+        return let_init_skip_ws(src, i + 1);
+    }
+    if b == 13 {
+        return let_init_skip_ws(src, i + 1);
+    }
+    i
+}
+
+// When an UNANNOTATED let binds a desugared struct-lit handle (`let s = P{..}`,
+// which the slit desugar rewrites to `let s = <handle>` whose init is an ast_ident
+// spanning the struct-lit source `P { .. }`), recover the struct TYPE from that
+// handle's span: the leading identifier of a struct-lit span is the struct name,
+// immediately followed (past whitespace) by `{`. Mirrors the oracle's infer_struct
+// StructLit arm (struct_resolver.rs), so a later `s.field` prefold resolves the
+// receiver's struct type. Returns a synthetic ident leaf spanning the struct NAME
+// (for srt_find_by_name), or 0 when the init is not a struct-lit handle (scalar /
+// var / call init — stays fail-closed). Gated to annotation==0 lets only, so every
+// annotated let (all of main.mind's EmitState bindings) is untouched — keystone-safe.
+pub fn let_struct_ty_from_init(src: i64, init: i64) -> i64 {
+    if init == 0 {
+        return 0;
+    }
+    if ast_kind(init) != ast_ident() {
+        return 0;
+    }
+    let lo: i64 = ast_span_lo(init);
+    let hi: i64 = ast_span_hi(init);
+    if lo >= hi {
+        return 0;
+    }
+    if is_alpha(load_byte(src, lo)) == 0 {
+        return 0;
+    }
+    let name_end: i64 = scan_ident_end(src, lo, hi);
+    let brace_i: i64 = let_init_skip_ws(src, name_end);
+    if load_byte(src, brace_i) != 123 {
+        return 0;
+    }
+    ast_new_leaf(ast_ident(), lo, name_end)
+}
+
 pub fn find_let_ty_in_stmts(stmts_addr: i64, stmts_len: i64, src: i64, recv_lo: i64, recv_hi: i64, i: i64) -> i64 {
     if i >= stmts_len {
         return 0;
@@ -15710,7 +15781,11 @@ pub fn find_let_ty_in_stmts(stmts_addr: i64, stmts_len: i64, src: i64, recv_lo: 
     if k == ast_let() {
         let name: i64 = ast_child0(stmt);
         if span_bytes_equal(src, recv_lo, recv_hi, ast_span_lo(name), ast_span_hi(name)) == 1 {
-            return ast_child1(stmt);
+            let ann: i64 = ast_child1(stmt);
+            if ann != 0 {
+                return ann;
+            }
+            return let_struct_ty_from_init(src, ast_child2(stmt));
         }
     }
     if k == ast_if() {
@@ -25318,8 +25393,16 @@ pub fn while_if_fill_merges(m: i64, names: i64, n: i64, else_end: i64, buf: i64,
     }
     let lo: i64 = __mind_load_i64(names + k * 24 + 0);
     let hi: i64 = __mind_load_i64(names + k * 24 + 8);
-    let tval: i64 = if tdiv == 1 { lvenv_lookup(buf, lo, hi, eenv, nlv, 0) } else { lvenv_lookup(buf, lo, hi, tenv, nlv, 0) };
-    let eval: i64 = if ediv == 1 { lvenv_lookup(buf, lo, hi, tenv, nlv, 0) } else { lvenv_lookup(buf, lo, hi, eenv, nlv, 0) };
+    let tval: i64 = if tdiv == 1 {
+        lvenv_lookup(buf, lo, hi, eenv, nlv, 0)
+    } else {
+        lvenv_lookup(buf, lo, hi, tenv, nlv, 0)
+    };
+    let eval: i64 = if ediv == 1 {
+        lvenv_lookup(buf, lo, hi, tenv, nlv, 0)
+    } else {
+        lvenv_lookup(buf, lo, hi, eenv, nlv, 0)
+    };
     if tval < 0 {
         return 0 - 1;
     }
@@ -25348,8 +25431,16 @@ pub fn while_if_layout(if_node: i64, buf: i64, params_addr: i64, n_params: i64, 
     let else_blk: i64 = ast_child2(if_node);
     let then_sa: i64 = ast_child0(then_blk);
     let then_sl: i64 = ast_aux(then_blk);
-    let else_sa: i64 = if else_blk == 0 { 0 } else { ast_child0(else_blk) };
-    let else_sl: i64 = if else_blk == 0 { 0 } else { ast_aux(else_blk) };
+    let else_sa: i64 = if else_blk == 0 {
+        0
+    } else {
+        ast_child0(else_blk)
+    };
+    let else_sl: i64 = if else_blk == 0 {
+        0
+    } else {
+        ast_aux(else_blk)
+    };
     if then_sl < 1 {
         return 0;
     }
@@ -25546,8 +25637,16 @@ pub fn emit_while_if_assign(s: EmitState, if_node: i64, buf: i64, params_addr: i
     let else_blk: i64 = ast_child2(if_node);
     let then_sa: i64 = ast_child0(then_blk);
     let then_sl: i64 = ast_aux(then_blk);
-    let else_sa: i64 = if else_blk == 0 { 0 } else { ast_child0(else_blk) };
-    let else_sl: i64 = if else_blk == 0 { 0 } else { ast_aux(else_blk) };
+    let else_sa: i64 = if else_blk == 0 {
+        0
+    } else {
+        ast_child0(else_blk)
+    };
+    let else_sl: i64 = if else_blk == 0 {
+        0
+    } else {
+        ast_aux(else_blk)
+    };
     // OP_IF header + cond.
     let cnodes: i64 = __mind_alloc(256 * 32);
     let ccursor: i64 = __mind_alloc(8);
