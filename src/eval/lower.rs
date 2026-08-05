@@ -1354,6 +1354,24 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
         }
     }
 
+    // Finding 2 — pre-register every non-generic fn's ABI signature (param types +
+    // declared return) so a narrow (8/16-bit) RETURN type is resolvable from a
+    // CALL operand during body lowering REGARDLESS of definition order (a caller
+    // defined before its callee). The per-FnDef insert (RFC 0012 §5.1) still runs
+    // during the loop below; this pre-pass only widens visibility. Metadata only —
+    // an all-i64 module records all-`ScalarI64` and lowers byte-identically.
+    #[cfg(feature = "std-surface")]
+    for item in &module.items {
+        if let ast::Node::FnDef(fd, _) = item {
+            if fd.type_params.is_empty() {
+                let param_types: Vec<crate::ast::TypeAnn> =
+                    fd.params.iter().map(|p| p.ty.clone()).collect();
+                ir.fn_signatures
+                    .insert(fd.name.clone(), (param_types, fd.ret_type.clone()));
+            }
+        }
+    }
+
     for item in &module.items {
         match item {
             ast::Node::Let {
@@ -2169,9 +2187,21 @@ fn callee_array_lit_param(callee: &str, idx: usize) -> bool {
 /// No-op for non-narrow annotations (keeps the registry empty for i64 modules).
 #[cfg(feature = "std-surface")]
 fn record_narrow_let(name: &str, ann: &Option<TypeAnn>) {
-    if let Some(ty) = ann {
-        if is_narrow_scalar_ty(ty) {
+    match ann {
+        Some(ty) if is_narrow_scalar_ty(ty) => {
             NARROW_LOCALS.with(|n| n.borrow_mut().insert(name.to_string(), ty.clone()));
+        }
+        // Finding 1(a): a re-`let` (shadow) of the SAME name at a WIDE/non-narrow
+        // type (`let x: u8 = 5; let x: i64 = v`) must CLEAR any prior narrow
+        // tracking — otherwise `infer_narrow_arith_ty`/`mask_narrow_assign` would
+        // keep masking the now-i64 `x` to 8 bits (a silent miscompile regression
+        // from the narrow-locals registry). Removing on a non-narrow re-let is a
+        // no-op for a name that was never tracked, so an all-i64 module still
+        // leaves the registry empty (byte-identical hot path).
+        _ => {
+            NARROW_LOCALS.with(|n| {
+                n.borrow_mut().remove(name);
+            });
         }
     }
 }
@@ -2209,21 +2239,92 @@ fn mask_narrow_assign(ir: &mut IRModule, name: &str, val: ValueId) -> ValueId {
 /// `i64`/`u64`/handles are not narrow. Comparisons are excluded by the caller
 /// (they yield `i1`/bool, never a narrow scalar).
 #[cfg(feature = "std-surface")]
-fn infer_narrow_arith_ty(node: &ast::Node) -> Option<TypeAnn> {
+fn infer_narrow_arith_ty(
+    node: &ast::Node,
+    ir: &IRModule,
+    struct_env: &HashMap<String, String>,
+    receiver_types: &HashMap<crate::ast::Span, String>,
+) -> Option<TypeAnn> {
     match node {
         ast::Node::Lit(Literal::Ident(name), _) => NARROW_LOCALS
             .with(|n| n.borrow().get(name).cloned())
             .filter(is_named_narrow_sig_ty),
-        ast::Node::Paren(inner, _) => infer_narrow_arith_ty(inner),
+        ast::Node::Paren(inner, _) => infer_narrow_arith_ty(inner, ir, struct_env, receiver_types),
         ast::Node::Binary {
             op:
                 ast::BinOp::Add | ast::BinOp::Sub | ast::BinOp::Mul | ast::BinOp::Div | ast::BinOp::Mod,
             left,
             right,
             ..
-        } => infer_narrow_arith_ty(left).or_else(|| infer_narrow_arith_ty(right)),
+        } => infer_narrow_arith_ty(left, ir, struct_env, receiver_types)
+            .or_else(|| infer_narrow_arith_ty(right, ir, struct_env, receiver_types)),
+        // Finding 3: a shift result carries the LEFT operand's declared width
+        // (the count's width is irrelevant), so recurse only into `left`.
+        ast::Node::Bitwise {
+            op: ast::BitOp::Shl | ast::BitOp::Shr,
+            left,
+            ..
+        } => infer_narrow_arith_ty(left, ir, struct_env, receiver_types),
+        // Finding 2: a narrow value produced by a CAST (`x as u8`), a CALL to a
+        // fn declared `-> u8`, a struct FIELD of type `u8`, or an `array<u8>`
+        // element read also escapes unmasked without these leaves.
+        ast::Node::As { ty, .. } => Some(ty.clone()).filter(is_named_narrow_sig_ty),
+        ast::Node::Call { callee, .. } => ir
+            .fn_signatures
+            .get(callee)
+            .and_then(|(_, ret)| ret.clone())
+            .filter(is_named_narrow_sig_ty),
+        ast::Node::FieldAccess { .. } => {
+            field_access_scalar_ty(node, ir, struct_env, receiver_types)
+                .filter(is_named_narrow_sig_ty)
+        }
+        ast::Node::IndexAccess { receiver, .. } => {
+            index_element_narrow_ty(receiver, ir, struct_env, receiver_types)
+                .filter(is_named_narrow_sig_ty)
+        }
         _ => None,
     }
+}
+
+/// The declared SCALAR type of a struct-field access `base.field` (`b.a` where
+/// `a: u8`), read from the width-aware `struct_field_types` table via the same
+/// `receiver_types` / `struct_env` resolution the FieldAccess read path uses.
+/// `None` for a non-struct receiver or a non-scalar field. Used by
+/// `infer_narrow_arith_ty` (Finding 2) to re-mask a narrow field feeding
+/// intermediate arithmetic.
+#[cfg(feature = "std-surface")]
+fn field_access_scalar_ty(
+    node: &ast::Node,
+    ir: &IRModule,
+    struct_env: &HashMap<String, String>,
+    receiver_types: &HashMap<crate::ast::Span, String>,
+) -> Option<TypeAnn> {
+    let ast::Node::FieldAccess {
+        receiver: base,
+        field,
+        span,
+    } = node
+    else {
+        return None;
+    };
+    let sname = receiver_types
+        .get(span)
+        .cloned()
+        .or_else(|| receiver_struct_type(base, ir, struct_env))?;
+    let sname = struct_key_for(ir, &sname);
+    let idx = ir.struct_defs.get(sname)?.iter().position(|f| f == field)?;
+    ir.struct_field_types.get(sname)?.get(idx).cloned()
+}
+
+/// The bit width (`8`/`16`) of a Named 8/16-bit narrow integer type, else `None`.
+/// Used to mask a shift COUNT to `width-1` at the operand's declared width
+/// (Finding 3) — an i64-backed `u8`/`u16` shift would otherwise mask the count
+/// mod 64 in MLIR (`1u8 << 8` giving 0 instead of the count-mod-8 `1`).
+#[cfg(feature = "std-surface")]
+fn narrow_named_shift_width(ty: &TypeAnn) -> Option<u32> {
+    scalar_int_cast_width(ty)
+        .or_else(|| scalar_uint_cast_width(ty))
+        .filter(|&w| w < 64)
 }
 
 /// Re-mask an ARITHMETIC binop result to its inferred narrow width (`i8`/`u8`/
@@ -2239,14 +2340,22 @@ fn mask_narrow_binop_result(
     left: &ast::Node,
     right: &ast::Node,
     dst: ValueId,
+    struct_env: &HashMap<String, String>,
+    receiver_types: &HashMap<crate::ast::Span, String>,
 ) -> ValueId {
-    if !matches!(
-        op,
-        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod
-    ) {
-        return dst;
-    }
-    match infer_narrow_arith_ty(left).or_else(|| infer_narrow_arith_ty(right)) {
+    let ty = match op {
+        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
+            infer_narrow_arith_ty(left, ir, struct_env, receiver_types)
+                .or_else(|| infer_narrow_arith_ty(right, ir, struct_env, receiver_types))
+        }
+        // Finding 3: a shift result's width is the LEFT operand's declared width
+        // (`(x << 1)` with `x: u8` must truncate to `u8` before a following op).
+        BinOp::Shl | BinOp::Shr => infer_narrow_arith_ty(left, ir, struct_env, receiver_types),
+        // Comparisons yield `i1`/bool; bitwise And/Or/Xor over in-range narrow
+        // operands stay in range — neither needs a width re-mask.
+        _ => None,
+    };
+    match ty {
         Some(ty) => mask_narrow_let(ir, &Some(ty), dst),
         None => dst,
     }
@@ -2261,6 +2370,8 @@ fn mask_narrow_binop_result(
     _left: &ast::Node,
     _right: &ast::Node,
     dst: ValueId,
+    _struct_env: &HashMap<String, String>,
+    _receiver_types: &HashMap<crate::ast::Span, String>,
 ) -> ValueId {
     dst
 }
@@ -4705,7 +4816,7 @@ fn lower_expr(
             // let-init/return. `(x + 10) / 2` with `x: u8` must truncate the
             // inner `(x + 10)` to `u8` before the `/2` (issue: it computed on
             // the un-truncated i64 `260`). No-op for non-narrow results.
-            mask_narrow_binop_result(ir, op, left, right, dst)
+            mask_narrow_binop_result(ir, op, left, right, dst, struct_env, receiver_types)
         }
         // Logical `&&` / `||` (Phase 10.5 `Node::Logical`, kept separate from
         // `BinOp`). The IR has no logical-and/or instruction, so we DESUGAR to
@@ -4799,8 +4910,7 @@ fn lower_expr(
             op, left, right, ..
         } => {
             let lhs = lower_expr(left, ir, env, struct_env, receiver_types);
-            let rhs = lower_expr(right, ir, env, struct_env, receiver_types);
-            let dst = ir.fresh();
+            let mut rhs = lower_expr(right, ir, env, struct_env, receiver_types);
             let ir_op = match op {
                 ast::BitOp::And => BinOp::BitAnd,
                 ast::BitOp::Or => BinOp::BitOr,
@@ -4808,13 +4918,41 @@ fn lower_expr(
                 ast::BitOp::Shl => BinOp::Shl,
                 ast::BitOp::Shr => BinOp::Shr,
             };
+            // Finding 3: for a narrow (8/16-bit, i64-backed) LEFT-operand shift,
+            // pre-mask the shift COUNT to the LHS width-1 so `1u8 << 8` wraps the
+            // count mod 8 (== `1 << 0` == 1) at the operand's DECLARED width. The
+            // MLIR lowering sees an i64-backed value and would otherwise mask the
+            // count mod 64. Only fires for i8/u8/i16/u16 lefts (physical i32/u32
+            // shifts keep their own width path in `lowering.rs`) → the already-
+            // correct u32/i32 cases are untouched, and an all-i64 module never
+            // hits this (empty NARROW_LOCALS).
+            if matches!(ir_op, BinOp::Shl | BinOp::Shr) {
+                if let Some(w) = infer_narrow_arith_ty(left, ir, struct_env, receiver_types)
+                    .as_ref()
+                    .and_then(narrow_named_shift_width)
+                {
+                    let mask_id = ir.fresh();
+                    ir.instrs.push(Instr::ConstI64(mask_id, (w as i64) - 1));
+                    let masked = ir.fresh();
+                    ir.instrs.push(Instr::BinOp {
+                        dst: masked,
+                        op: BinOp::BitAnd,
+                        lhs: rhs,
+                        rhs: mask_id,
+                    });
+                    rhs = masked;
+                }
+            }
+            let dst = ir.fresh();
             ir.instrs.push(Instr::BinOp {
                 dst,
                 op: ir_op,
                 lhs,
                 rhs,
             });
-            dst
+            // Finding 3: re-mask a narrow shift RESULT to its declared width
+            // (`(x << 1)` with `x: u8` truncates 400→144 before the following op).
+            mask_narrow_binop_result(ir, ir_op, left, right, dst, struct_env, receiver_types)
         }
         ast::Node::CallTensorSum {
             x, axes, keepdims, ..
@@ -5178,6 +5316,10 @@ fn lower_expr(
                 // 8-byte stride. Metadata only; an all-i64 struct still takes the
                 // byte-identical fast path.
                 fn_ir.struct_field_types = ir.struct_field_types.clone();
+                // Finding 2: inherit the module-wide fn signature table so a CALL
+                // operand inside this body (`(gu8() + 10) / 2`) can resolve the
+                // callee's narrow declared return type for intermediate re-masking.
+                fn_ir.fn_signatures = ir.fn_signatures.clone();
             }
             // Build fn_env from env, but do NOT carry over const-array
             // SSA ids from the outer module — those ids are only valid in
@@ -5885,6 +6027,18 @@ fn lower_expr(
             let then_struct_env = struct_env;
             let mut then_result = then_ir.fresh();
             then_ir.instrs.push(Instr::ConstI64(then_result, 0));
+            // Finding 1(b): block-scope narrow-let recordings within each branch
+            // body, mirroring the `Node::Block` arm's `NarrowLocalsGuard`. A narrow
+            // `let t: u8 = 1` inside a branch records into the fn-wide NARROW_LOCALS
+            // map; without restoring on branch exit its entry LEAKS past the `if`,
+            // so a later `let t: i64 = x` (or an i64 `t` reassignment) is wrongly
+            // re-masked to 8 bits. Snapshot on entry (outer narrow entries stay
+            // visible so genuine outer-narrow reassignments inside the branch still
+            // mask) and restore below, dropping branch-local additions. Empty for a
+            // narrow-free branch (the keystone) → the clone/restore is a no-op and
+            // emitted bytes are byte-for-byte unchanged.
+            #[cfg(feature = "std-surface")]
+            let narrow_if_snapshot = NARROW_LOCALS.with(|n| n.borrow().clone());
             for stmt in then_branch {
                 match stmt {
                     ast::Node::Return { value, .. } => {
@@ -6085,6 +6239,10 @@ fn lower_expr(
                     }
                 }
             }
+            // Finding 1(b): drop the then-branch's narrow-local additions before
+            // lowering the else branch / post-`if` code (see snapshot above).
+            #[cfg(feature = "std-surface")]
+            NARROW_LOCALS.with(|n| *n.borrow_mut() = narrow_if_snapshot.clone());
 
             // ── 3. Lower the else-branch (or synthesise a unit zero) ──────────
             //      Starts from then_ir's highest id.
@@ -6305,6 +6463,10 @@ fn lower_expr(
                     }
                 }
             }
+            // Finding 1(b): drop the else-branch's narrow-local additions before
+            // post-`if` code (see snapshot before the then loop).
+            #[cfg(feature = "std-surface")]
+            NARROW_LOCALS.with(|n| *n.borrow_mut() = narrow_if_snapshot);
 
             // ── 4. Build the merge phi set ────────────────────────────────────
             //
@@ -9859,6 +10021,19 @@ fn desugar_match_to_if(
                 if !args.iter().all(sub_ok) {
                     return None;
                 }
+                // deferred: Finding 5 — a builtin generic `Some`/`Ok`/`Err`
+                // payload has NO entry in `payload_types` (only DECLARED enums do),
+                // so a `match o { Some(v) => .. }` where `o: Option<u64>` binds `v`
+                // SIGNED (`u64::MAX` reads as -1, `v < 1` wrongly true). Fixing it
+                // needs the scrutinee's declared generic arg (`u64`) propagated
+                // here; there is no per-var declared-TypeAnn registry today, and
+                // adding cross-fn scrutinee-payload state is itself a
+                // silent-miscompile class. Declared-enum coverage (the
+                // `payload_types` path below) is correct and unaffected.
+                // upgrade path: thread a var→Option/Result generic-arg map
+                // (populated at every `let` site, scoped per fn) into
+                // `desugar_match_to_if` and fall back to it when `payload_types`
+                // misses a builtin Some/Ok/Err path.
                 let field_types = payload_types.get(path);
                 let mut stmts = Vec::new();
                 for (i, sub) in args.iter().enumerate() {

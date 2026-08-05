@@ -1691,7 +1691,17 @@ impl LoweringContext {
                         // (`docs/determinism.md`).
                         let is_shift = matches!(op, BinOp::Shl | BinOp::Shr);
                         let widen_mode = if is_shift {
-                            lhs_nonlit_i64
+                            // Finding 4: a shift whose LEFT operand is any i64-kind
+                            // value — a non-literal i64 OR an i64 CONSTANT literal —
+                            // computes at 64-bit width (count masked mod 64). A bare
+                            // literal `1` has no narrow declared width, so
+                            // `(1 << n) as i64` with a u32 count must widen to i64
+                            // (`1 << 33` == 8589934592), NOT drop into the count's
+                            // narrow width and mask the count mod 31 (→ `1 << 1`).
+                            // A genuinely-narrow PHYSICAL i32/u32 LEFT is not
+                            // ScalarI64, so it keeps its own declared width (Finding
+                            // 3's u32 shift cases stay byte-identical).
+                            matches!(lhs_kind, ValueKind::ScalarI64)
                         } else {
                             lhs_nonlit_i64 || rhs_nonlit_i64 || both_narrow_diff
                         };
