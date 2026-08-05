@@ -2217,11 +2217,7 @@ fn infer_narrow_arith_ty(node: &ast::Node) -> Option<TypeAnn> {
         ast::Node::Paren(inner, _) => infer_narrow_arith_ty(inner),
         ast::Node::Binary {
             op:
-                ast::BinOp::Add
-                | ast::BinOp::Sub
-                | ast::BinOp::Mul
-                | ast::BinOp::Div
-                | ast::BinOp::Mod,
+                ast::BinOp::Add | ast::BinOp::Sub | ast::BinOp::Mul | ast::BinOp::Div | ast::BinOp::Mod,
             left,
             right,
             ..
@@ -9811,18 +9807,41 @@ fn desugar_match_to_if(
                             // type (e.g. `f64`) so the binding has the right type.
                             let ty = field_types.and_then(|ts| ts.get(i));
                             let value = coerce_enum_field_from_bits(load_i64(field_addr), ty, span);
-                            // Propagate an `array<T>` payload field's declared type as
-                            // the binding annotation so the Let-lowering records the
-                            // vec-sentinel + element tracking. Non-array payload fields
-                            // keep `ann: None`, so their lowering is byte-identical.
-                            let arr_ann: Option<ast::TypeAnn> = match ty {
-                                Some(t) if is_array_surface_ty(t) => Some(t.clone()),
+                            // Propagate the payload field's declared type as the
+                            // binding annotation when the Let-lowering must
+                            // re-materialise it at its true width/signedness (the same
+                            // `mask_narrow_let` mechanism an ordinary `let x: T = …`
+                            // uses):
+                            //   * `array<T>` — records the vec-sentinel + element
+                            //     tracking.
+                            //   * narrow int (`i8`/`u8`/`i16`/`u16`/`i32`/`u32`) —
+                            //     shift-pair (signed) / BitAnd (unsigned) so the
+                            //     sub-i64 payload is not read as a wider value.
+                            //   * full-width `u64` — the identity `__mind_conv_u64`
+                            //     marker so downstream sign-sensitive ops
+                            //     (`< / % / >> / >=`) pick the UNSIGNED variant.
+                            //     Without it a `u64::MAX` payload loaded via
+                            //     `__mind_load_i64` binds as a SIGNED i64 `-1`, and
+                            //     `v < 1` wrongly returns true (enum-payload
+                            //     signedness bug).
+                            // `f64` stays on the `coerce_enum_field_from_bits`
+                            // (`__mind_bits_to_f64`) path with `ann: None`; `i64` /
+                            // pointers / handles / aliases keep `ann: None`, so their
+                            // lowering is byte-identical.
+                            let bind_ann: Option<ast::TypeAnn> = match ty {
+                                Some(t)
+                                    if is_array_surface_ty(t)
+                                        || is_narrow_scalar_ty(t)
+                                        || matches!(scalar_int64_cast_signed(t), Some(false)) =>
+                                {
+                                    Some(t.clone())
+                                }
                                 _ => None,
                             };
                             stmts.push(ast::Node::Let {
                                 name: name.clone(),
                                 mutable: false,
-                                ann: arr_ann,
+                                ann: bind_ann,
                                 value: Box::new(value),
                                 span,
                             });
