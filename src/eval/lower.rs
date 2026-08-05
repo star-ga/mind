@@ -2189,6 +2189,86 @@ fn mask_narrow_assign(ir: &mut IRModule, name: &str, val: ValueId) -> ValueId {
     }
 }
 
+/// Infer the NARROW scalar type (`i8`/`u8`/`i16`/`u16`) of an ARITHMETIC
+/// expression's result, if any operand is a tracked narrow local/param.
+/// Recurses through parentheses and nested arithmetic so `(x + 10) / 2` with
+/// `x: u8` yields `Some(u8)`. Returns `None` for any expression that is not a
+/// narrow-typed arithmetic result (the all-i64 path — byte-identical, zero
+/// extra IR).
+///
+/// This closes the intermediate-wrap gap: without it, `(x + 10) / 2` masked
+/// only at let-init/return, so the INTERMEDIATE `(x + 10)` flowed as an
+/// un-truncated i64 (`260`) into the `/2`, computing `130` instead of the
+/// wrapped `4/2 == 2`. Masking each narrow arithmetic RESULT — because
+/// `lower_expr` is recursive — truncates the inner `(x + 10)` to `u8` before
+/// it feeds the outer op, no separate special-case needed.
+///
+/// Restricted to the 8/16-bit `Named` widths via `is_named_narrow_sig_ty`:
+/// `i32`/`u32` deliberately stay on their PHYSICAL-i32 MLIR ABI path (masking
+/// them here would perturb the byte-identical i32 artifact stream), and
+/// `i64`/`u64`/handles are not narrow. Comparisons are excluded by the caller
+/// (they yield `i1`/bool, never a narrow scalar).
+#[cfg(feature = "std-surface")]
+fn infer_narrow_arith_ty(node: &ast::Node) -> Option<TypeAnn> {
+    match node {
+        ast::Node::Lit(Literal::Ident(name), _) => NARROW_LOCALS
+            .with(|n| n.borrow().get(name).cloned())
+            .filter(is_named_narrow_sig_ty),
+        ast::Node::Paren(inner, _) => infer_narrow_arith_ty(inner),
+        ast::Node::Binary {
+            op:
+                ast::BinOp::Add
+                | ast::BinOp::Sub
+                | ast::BinOp::Mul
+                | ast::BinOp::Div
+                | ast::BinOp::Mod,
+            left,
+            right,
+            ..
+        } => infer_narrow_arith_ty(left).or_else(|| infer_narrow_arith_ty(right)),
+        _ => None,
+    }
+}
+
+/// Re-mask an ARITHMETIC binop result to its inferred narrow width (`i8`/`u8`/
+/// `i16`/`u16`), emitting the same truncate/sign-extend forms as
+/// `mask_narrow_let`. Only `Add`/`Sub`/`Mul`/`Div`/`Mod` are masked — the
+/// comparisons (`Lt`/`Le`/`Gt`/`Ge`/`Eq`/`Ne`) produce `i1`/bool and must not
+/// be truncated. Returns `dst` unchanged when the result is not a narrow
+/// arithmetic value (the byte-identical all-i64 path).
+#[cfg(feature = "std-surface")]
+fn mask_narrow_binop_result(
+    ir: &mut IRModule,
+    op: BinOp,
+    left: &ast::Node,
+    right: &ast::Node,
+    dst: ValueId,
+) -> ValueId {
+    if !matches!(
+        op,
+        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod
+    ) {
+        return dst;
+    }
+    match infer_narrow_arith_ty(left).or_else(|| infer_narrow_arith_ty(right)) {
+        Some(ty) => mask_narrow_let(ir, &Some(ty), dst),
+        None => dst,
+    }
+}
+
+/// Non-`std-surface` builds have no narrow scalar types, so intermediate-wrap
+/// masking is a no-op — the binop result is returned verbatim (byte-identical).
+#[cfg(not(feature = "std-surface"))]
+fn mask_narrow_binop_result(
+    _ir: &mut IRModule,
+    _op: BinOp,
+    _left: &ast::Node,
+    _right: &ast::Node,
+    dst: ValueId,
+) -> ValueId {
+    dst
+}
+
 /// The byte width and signedness of a struct field type for the canonical
 /// width-aware struct ABI. Returns `(width_bytes, signed)`:
 ///   * `i64`/`u64`/struct-handle (`Named` non-narrow)/pointer  → 8, signed
@@ -4567,7 +4647,12 @@ fn lower_expr(
                 ast::BinOp::Ne => BinOp::Ne,
             };
             ir.instrs.push(Instr::BinOp { dst, op, lhs, rhs });
-            dst
+            // Re-mask an INTERMEDIATE narrow arithmetic result to its declared
+            // width so a wrap happens after EVERY operator, not only at
+            // let-init/return. `(x + 10) / 2` with `x: u8` must truncate the
+            // inner `(x + 10)` to `u8` before the `/2` (issue: it computed on
+            // the un-truncated i64 `260`). No-op for non-narrow results.
+            mask_narrow_binop_result(ir, op, left, right, dst)
         }
         // Logical `&&` / `||` (Phase 10.5 `Node::Logical`, kept separate from
         // `BinOp`). The IR has no logical-and/or instruction, so we DESUGAR to
