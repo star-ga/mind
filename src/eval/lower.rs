@@ -2793,6 +2793,63 @@ fn collection_sentinel_for_ty(ty: &TypeAnn) -> Option<&'static str> {
     }
 }
 
+/// The declared ELEMENT type of an `array<T>` index receiver (`arr[i]` or a
+/// struct FIELD `b.items[i]`) as a `TypeAnn`, but ONLY when `T` is a
+/// fixed-width integer whose i64 SSA representation is sign-sensitive: a narrow
+/// width (`i8`/`u8`/`i16`/`u16`/`i32`/`u32`) or full-width `u64`. Returns `None`
+/// for `i64` (the default SIGNED representation is already correct), floats,
+/// strings, struct and nested-collection elements — those keep their existing
+/// lowering byte-identically.
+///
+/// A `vec_get` element read otherwise yields an UNTYPED i64 SSA value. A
+/// `u64` element (e.g. `u64::MAX`, all-ones i64 = -1) then fed to a
+/// sign-sensitive op (`>> / < / %`) selected the SIGNED variant — `v >> 63`
+/// returned -1 instead of 1. The caller re-materialises the read via
+/// `mask_narrow_let` (the same `__mind_conv_u64` marker / narrow mask an
+/// ordinary `let x: T = …` gets), restoring the element's unsignedness/width
+/// downstream.
+#[cfg(feature = "std-surface")]
+fn index_element_narrow_ty(
+    receiver: &ast::Node,
+    ir: &IRModule,
+    struct_env: &HashMap<String, String>,
+    receiver_types: &HashMap<crate::ast::Span, String>,
+) -> Option<TypeAnn> {
+    let ty: TypeAnn = match receiver {
+        // IDENT `array<T>` — the `__elem__<name>` sentinel is a bare type-name
+        // string (`element_type_sentinel`); a scalar-int sentinel reconstructs
+        // to `TypeAnn::Named`. `String`/struct/`vec` sentinels rebuild to a
+        // `Named` the narrow/u64 guard below rejects, so they return `None`.
+        ast::Node::Lit(Literal::Ident(v), _) => {
+            TypeAnn::Named(struct_env.get(&format!("__elem__{v}"))?.clone())
+        }
+        // Struct FIELD `b.items[i]` of declared type `array<T>` → `T` verbatim
+        // from the struct field-type table.
+        ast::Node::FieldAccess {
+            receiver: base,
+            field,
+            span,
+        } => {
+            let sname = receiver_types
+                .get(span)
+                .cloned()
+                .or_else(|| receiver_struct_type(base, ir, struct_env))?;
+            let sname = struct_key_for(ir, &sname);
+            let idx = ir.struct_defs.get(sname)?.iter().position(|f| f == field)?;
+            match ir.struct_field_types.get(sname)?.get(idx)? {
+                TypeAnn::Generic { name, args } if name == "array" => args.first()?.clone(),
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+    if is_narrow_scalar_ty(&ty) || matches!(scalar_int64_cast_signed(&ty), Some(false)) {
+        Some(ty)
+    } else {
+        None
+    }
+}
+
 /// Resolve the collection sentinel of a method-call / index RECEIVER, covering
 /// BOTH an Ident bound to a collection (via `struct_env`) AND a struct-FIELD
 /// access whose declared field type is a collection
@@ -7763,6 +7820,11 @@ fn lower_expr(
             if receiver_collection_sentinel(receiver, ir, struct_env, receiver_types)
                 == Some(ARRAY_VEC_SENTINEL)
             {
+                // Recover the declared element type BEFORE `lower_expr` reborrows
+                // `ir` mutably. `Some(T)` only for a narrow/`u64` element (the
+                // sign-sensitive representations); `i64`/float/string/struct/
+                // nested-array elements resolve to `None` and stay untouched.
+                let elem_ty = index_element_narrow_ty(receiver, ir, struct_env, receiver_types);
                 let base = lower_expr(receiver, ir, env, struct_env, receiver_types);
                 let index_id = lower_expr(index, ir, env, struct_env, receiver_types);
                 let dst = ir.fresh();
@@ -7771,6 +7833,13 @@ fn lower_expr(
                     name: "vec_get".to_string(),
                     args: vec![base, index_id],
                 });
+                // Re-materialise a narrow / `u64` element at its declared
+                // width/signedness so it carries into a downstream sign-sensitive
+                // op (`>> / < / %`). Without this the untyped i64 `vec_get` result
+                // made a `u64::MAX` element `>> 63` an ARITHMETIC shift (-1, not 1).
+                if let Some(elem_ty) = elem_ty {
+                    return mask_narrow_let(ir, &Some(elem_ty), dst);
+                }
                 return dst;
             }
             // `v[i]` on a fixed `bytes[N]` buffer (a raw stride-1 byte buffer

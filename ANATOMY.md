@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3313 | **Est. tokens:** ~7,799,265
-**Generated:** 2026-08-05 11:09 UTC
+**Files:** 3314 | **Est. tokens:** ~7,800,299
+**Generated:** 2026-08-05 13:38 UTC
 
 ## Token Budget Guide
 
@@ -414,7 +414,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~198,092 |
-| `tests/` | 310 | ~530,116 |
+| `tests/` | 311 | ~531,150 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -4154,6 +4154,7 @@
 - `alias_miscompile_run.rs` (~1338 tok, large) — Copyright 2025 STARGA Inc.
 - `array_ctor_push_get_run.rs` (~907 tok, large) — Copyright 2025 STARGA Inc.
 - `array_surface_run.rs` (~875 tok, large) — Copyright 2025 STARGA Inc.
+- `array_u64_element_shift_run.rs` (~1034 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/autodiff/`
 
 - `matmul_gradient.mind` (~167 tok, small) — Autodiff test: MatMul gradient computation
