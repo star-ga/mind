@@ -27,9 +27,9 @@ innovative, AND deterministic**. Independence must never be bought by sacrificin
   is currently *unoptimized* (correct but slow); LLVM's `-O3` is what makes the MLIR path fast.
   So Phase C6 (an optimizing backend in MIND) is not optional — it's how independence and SOTA
   speed coexist.
-- **Method — autoresearch + alg-inv evolution.** The SOTA-fast, still-deterministic codegen is
-  a *search/invention* problem, and we own the machinery: `autoresearch` (overnight experiment
-  loop) + `alg-inv` (AB-MCTS algorithm invention on MIND kernels). Point them at the
+- **Method — evolutionary search + invention.** The SOTA-fast, still-deterministic codegen is
+  a *search/invention* problem, and MIND research runs an evolutionary search over MIND kernels
+  (AB-MCTS under a hard determinism constraint). Point it at the
   performance-critical parts — deterministic reduction schedules (fastest bit-identical fold,
   task #58), GEMM/int-dot kernel tiling + instruction selection (beat asm, #47), register
   allocation / scheduling (C6), vectorization — **with fitness = speed GATED by keystone
@@ -251,10 +251,10 @@ Native-ELF covers only scalar i64/ptr/struct/control-flow. To drop the 12,753-LO
 - [ ] Nice-to-have: port `self_host_native_scalar_f32_smoke.py` + `div_shift_cmp_edge_smoke.py` to `resolve_so()` so
   they BUILD the `.so` when `MINDC_SO` is unset instead of soft-SKIPping — no longer a live vacuity (both CI and
   fast_keystone always set `MINDC_SO`), just robustness for a bare manual run.
-- [ ] SOTA-speed method (this is where **mind-lab on s1** comes in): point the autoresearch + alg-inv evolutionary
+- [ ] SOTA-speed method (this is where **MIND research** comes in): point the evolutionary
   search at the perf-critical parts (deterministic reduction schedule #58, GEMM/int-dot tiling #47, register
   allocation for C6) with fitness = speed GATED by keystone byte-identity — the novel edge is *codegen optimized by
-  evolutionary search under a hard determinism constraint*. Compile-speed campaign is live on s1 from mind-lab-latest.
+  evolutionary search under a hard determinism constraint*. A determinism-constrained compile-speed search campaign is the live MIND-research instance of this method.
 
 ## PHASE D — Remove the external toolchain
 - [ ] **D1** Delete the 12,753-LOC MLIR Rust + the LLVM 17/18 + clang dependency (after C)
