@@ -31,7 +31,7 @@ tar = { version = "0.4", optional = true }
 flate2 = { version = "1.0", default-features = false, features = ["rust_backend"], optional = true }
 sha2 = { version = "0.10", optional = true }
 dirs = "5"
-pyo3 = { version = "0.22", optional = true, features = ["extension-module"] }
+pyo3 = { version = "0.24", optional = true, features = ["extension-module"] }
 # Post-quantum ML-DSA (FIPS-204) signing for the evidence chain (RFC 0021 §6).
 # OPTIONAL + off by default so the default compiler build keeps its minimal
 # dependency surface and the determinism/keystone gate never compiles it. This

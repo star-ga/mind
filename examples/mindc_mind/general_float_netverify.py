@@ -53,7 +53,7 @@ def run(src: str):
     e = emit(src)
     if not e:
         return ("0B", None)
-    p = pathlib.Path(tempfile.mktemp())
+    p = pathlib.Path(os.path.join(tempfile.mkdtemp(), "artifact"))
     p.write_bytes(e)
     p.chmod(p.stat().st_mode | stat.S_IEXEC)
     try:
