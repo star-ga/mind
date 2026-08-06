@@ -370,6 +370,49 @@ impl EmitKind {
     }
 }
 
+/// Code-generation backend (RI-D seam, RFC-track "drop LLVM").
+///
+/// `Mlir` (default) drives the production MLIR-text → `mlir-opt` /
+/// `mlir-translate` / `clang` pipeline and is the ONLY wired path today; its
+/// artifacts are the byte-identity–gated canonical output.
+///
+/// `Native` is the opt-in seam for the pure-MIND x86-64 native-ELF emitters
+/// (the self-host `nb_*` lane). It is NOT yet reachable from the Rust driver —
+/// selecting it fails loud rather than silently falling back to MLIR, so the
+/// default build stays fully inert while future RI-D slices land behind this
+/// flag.
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Backend {
+    /// MLIR-text → mlir-opt/mlir-translate/clang (default, wired).
+    #[default]
+    Mlir,
+    /// Pure-MIND x86-64 native-ELF path (seam only; not yet wired).
+    Native,
+}
+
+impl Backend {
+    /// Canonical string name for display and diagnostics.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Backend::Mlir => "mlir",
+            Backend::Native => "native",
+        }
+    }
+
+    /// Parse from a CLI string. Returns an error string on unknown input.
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s.to_ascii_lowercase().as_str() {
+            "mlir" => Ok(Backend::Mlir),
+            "native" => Ok(Backend::Native),
+            other => Err(format!(
+                "unknown backend '{}' (expected mlir|native)",
+                other
+            )),
+        }
+    }
+}
+
 /// RFC 0008 §3 — optimization / profile level.
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]

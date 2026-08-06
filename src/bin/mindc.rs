@@ -39,7 +39,8 @@ use libmind::diagnostics::{ColorChoice, DiagnosticEmitter, DiagnosticFormat};
 use libmind::ops::core_v1;
 use libmind::pipeline::{CompileOptions, compile_source_with_name};
 use libmind::project::{
-    BenchOptions, BuildOptions, BuildTarget, EmitKind, OptimizeLevel, bench_project, run_project,
+    Backend, BenchOptions, BuildOptions, BuildTarget, EmitKind, OptimizeLevel, bench_project,
+    run_project,
 };
 use libmind::{ConformanceOptions, ConformanceProfile, conformance};
 
@@ -81,6 +82,15 @@ enum Command {
         /// Overrides `[build].target` in Mind.toml.
         #[arg(long, value_name = "TARGET")]
         target: Option<String>,
+        /// Code-generation backend: mlir (default) | native.
+        ///
+        /// `mlir` drives the production MLIR-text → mlir-opt/clang pipeline.
+        /// `native` selects the pure-MIND x86-64 native-ELF seam (RI-D "drop
+        /// LLVM" track); it is not yet wired into the Rust driver and fails
+        /// loud when selected, so the default build is unaffected.
+        #[arg(long, value_name = "BACKEND", default_value = "mlir",
+              value_parser = ["mlir", "native"])]
+        backend: String,
         /// Output artifact type: binary | cdylib | object.
         /// Overrides `[build].emit` in Mind.toml.
         #[arg(long, value_name = "EMIT")]
@@ -477,6 +487,7 @@ fn main() {
             paths,
             release,
             target,
+            backend,
             emit,
             optimize,
             out,
@@ -489,6 +500,7 @@ fn main() {
                 paths,
                 *release,
                 target,
+                backend,
                 emit,
                 optimize,
                 out,
@@ -796,6 +808,7 @@ fn run_mindc_build(
     paths: &[String],
     release: bool,
     target: &Option<String>,
+    backend: &str,
     emit: &Option<String>,
     optimize: &Option<String>,
     out: &Option<String>,
@@ -803,6 +816,27 @@ fn run_mindc_build(
     package: Option<&str>,
     no_cache: bool,
 ) {
+    // Code-generation backend dispatch (RI-D seam). The default `mlir` path is
+    // left fully inert: it falls through to the existing pipeline unchanged.
+    // `native` selects the pure-MIND x86-64 native-ELF emitters, which are not
+    // yet reachable from the Rust driver — fail loud rather than silently
+    // producing MLIR output under a `native` request.
+    match Backend::parse(backend) {
+        Ok(Backend::Mlir) => {}
+        Ok(Backend::Native) => {
+            eprintln!(
+                "error[backend]: native backend not yet wired into the Rust driver \
+                 (RI-D seam; the pure-MIND x86-64 native-ELF path lives in the \
+                 self-host compiler). Use the default --backend=mlir."
+            );
+            process::exit(2);
+        }
+        Err(msg) => {
+            eprintln!("error[build]: {}", msg);
+            process::exit(2);
+        }
+    }
+
     // Workspace detection: if we are at a workspace root and no explicit
     // source paths are given, delegate to the workspace build path.
     if paths.is_empty() {
