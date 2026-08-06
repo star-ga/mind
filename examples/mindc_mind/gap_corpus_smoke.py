@@ -184,7 +184,13 @@ def main():
     # Coverage ratchet: byte-exact must not drop below FLOOR. The whole corpus
     # lowers byte-exactly under the canonical FRESH-load measurement; the floor pins it so
     # no fixture can silently regress to fail-closed or wrong.
-    FLOOR = 142
+    # 142 -> 143: the neg/not-call-in-branch coverage batch. node_has_call now walks
+    # ast_neg/ast_not/ast_index, so a call hidden under a unary op in a branch value
+    # can no longer slip into the src=0 narrow emitter (was silent WRONG-BYTES).
+    # not_call_branch_then is byte-exact (+1); the 4 neg_call_branch_* fixtures are
+    # pinned safe fail-closed (the general path refuses rather than mis-emits) — a
+    # regression to wrong-bytes trips the `wrong` assert above regardless of FLOOR.
+    FLOOR = 143
     ok = True
     if wrong:
         print("FAIL: WRONG-BYTES (silent miscompile) — the cardinal invariant is violated:")

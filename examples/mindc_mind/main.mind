@@ -17564,6 +17564,25 @@ pub fn node_has_call(node: i64) -> i64 {
     if k == ast_paren() {
         return node_has_call(ast_child0(node));
     }
+    // Unary neg/not wrap their operand at child0 (ast_new_neg/ast_new_not). A call
+    // hidden under `-g(a)` / `!g(a)` in a branch value MUST be detected here, or the
+    // narrow src=0 branch emitters (g/g2/e/e2) intern the callee against a NULL
+    // strtab (name_idx = uleb128(-1)) -> silent WRONG-BYTES vs the general path.
+    // Mirrors subtree_contains_array_lit's neg/not/index arms.
+    if k == ast_neg() {
+        return node_has_call(ast_child0(node));
+    }
+    if k == ast_not() {
+        return node_has_call(ast_child0(node));
+    }
+    // index base (child0) + index expr (child1). Defense-in-depth: index+call
+    // currently fails closed, but harden against a future index-in-branch emitter.
+    if k == ast_index() {
+        if node_has_call(ast_child0(node)) == 1 {
+            return 1;
+        }
+        return node_has_call(ast_child1(node));
+    }
     if k == ast_binop() {
         if node_has_call(ast_child0(node)) == 1 {
             return 1;
