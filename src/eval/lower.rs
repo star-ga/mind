@@ -6153,8 +6153,7 @@ fn lower_expr(
             // unique and disjoint from the parent scope's ids (especially fn
             // parameters which occupy the lowest ids).
             let mut cond_ir = sub_ir_from(ir);
-            let cond_env = env.clone();
-            let cond_id = lower_expr(cond, &mut cond_ir, &cond_env, struct_env, receiver_types);
+            let cond_id = lower_expr(cond, &mut cond_ir, env, struct_env, receiver_types);
 
             // ── 2. Lower the then-branch into a scratch sub-module ────────────
             //      Starts from cond_ir's highest id.
@@ -7289,8 +7288,7 @@ fn lower_expr(
             let mut cond_ir = IRModule::new();
             // Seed the condition sub-module's env with the current bindings
             // so identifiers in the condition (e.g. `i`, `n`) resolve.
-            let cond_env = seed_env.clone();
-            let cond_id = lower_expr(cond, &mut cond_ir, &cond_env, struct_env, receiver_types);
+            let cond_id = lower_expr(cond, &mut cond_ir, &seed_env, struct_env, receiver_types);
 
             // Lower the body into a scratch sub-module.  Track every Assign
             // target — those are the variables that are live across the

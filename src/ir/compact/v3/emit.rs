@@ -732,9 +732,9 @@ pub fn emit_mic3(module: &IRModule) -> Vec<u8> {
     out.write_all(&[MIC3_VERSION]).unwrap();
 
     // String table
-    let entries = st.entries().to_vec();
+    let entries = st.entries();
     uleb128_write(&mut out, entries.len() as u64).unwrap();
-    for s in &entries {
+    for s in entries {
         let b = s.as_bytes();
         uleb128_write(&mut out, b.len() as u64).unwrap();
         out.write_all(b).unwrap();
