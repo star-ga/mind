@@ -147,7 +147,7 @@ of functions) this is sub-microsecond.
   bypassable; a type error is not.
 - **Full refinement types (Liquid/F\*).** Rejected for this purpose:
   SMT per constraint breaks the µs frontend. Index-refinements
-  (a separate future RFC, per the autoresearch) are the
+  (a separate future RFC, per MIND research) are the
   compile-speed-safe refinement subset; evidence tokens are nominal
   and need no solver.
 - **Effect rows carrying evidence.** Considered; deferred. Effect

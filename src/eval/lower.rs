@@ -14,7 +14,21 @@
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::{Cell, UnsafeCell};
-use std::collections::HashMap;
+use std::collections::HashMap as StdHashMap;
+
+/// This file's per-compile side tables (`env`, `struct_env`, `receiver_types`,
+/// per-fn envs) on the type checker's deterministic `FxHasher` instead of the
+/// std SipHash `RandomState` — the same swap (and the same byte-identity
+/// argument) already accepted for the type checker's hot maps: every probe of
+/// these maps is a by-key lookup, the single `env.iter()` walk feeds another
+/// map (order-irrelevant), and the run-to-run determinism gates already prove
+/// no emitted byte depends on iteration order (today's `RandomState` order is
+/// random per process, and the 15-canary gate is green). Same keys ⇒ same
+/// values ⇒ same output bytes; only the per-lookup hash cost changes. Maps
+/// shared with readonly files (`abi_gate.rs` via `bind_let` /
+/// `is_monomorphizable`, `struct_resolver.rs`'s builder return) keep their
+/// fully-qualified `std::collections::HashMap` types untouched.
+type HashMap<K, V, S = crate::type_checker::FxBuild> = StdHashMap<K, V, S>;
 
 use crate::ast;
 use crate::ast::Literal;
@@ -1250,7 +1264,15 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     // mic@1/mic@3 bytes + cross-substrate identity are byte-for-byte unchanged.
     #[cfg(feature = "std-surface")]
     NARROW_LOCALS.with(|n| n.borrow_mut().clear());
-    let mut env: HashMap<String, ValueId> = HashMap::new();
+    // Compile-speed early-skip (perf): one O(n) AST prescan decides whether this
+    // module can EVER produce a narrow arithmetic type; `false` lets
+    // `infer_narrow_arith_ty` return `None` without walking operand subtrees
+    // (the per-binop re-walk is O(n²) on nested narrow-free arithmetic). The
+    // skip is provably byte-identical — see src/eval/narrow_scan.rs.
+    #[cfg(feature = "std-surface")]
+    MODULE_HAS_NARROW_SURFACE
+        .with(|f| f.set(crate::eval::narrow_scan::module_mentions_narrow(module)));
+    let mut env: HashMap<String, ValueId> = HashMap::default();
     // RFC 0005 P0f Step 1 — track `let x = Foo { ... }` so a later
     // `x.field` can resolve `Foo`'s canonical field-name order from
     // `ir.struct_defs` and emit the correct heap-record load offset.
@@ -1260,7 +1282,7 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     // feature, so silence the unused-mut lint instead of duplicating
     // the binding under a second cfg.
     #[allow(unused_mut)]
-    let mut struct_env: HashMap<String, String> = HashMap::new();
+    let mut struct_env: HashMap<String, String> = HashMap::default();
     // RFC 0005 P0f Step 2 — module-wide side-table that maps every
     // `FieldAccess` span to its receiver's struct-type name. Built by
     // a single AST pre-pass so the FieldAccess arm in `lower_expr` can
@@ -1301,12 +1323,17 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
         .any(|it| matches!(it, ast::Node::StructDef { .. }))
         || crate::ir::with_global_enums(|g| !g.structs.is_empty())
     {
+        // The builder (readonly `struct_resolver.rs`) returns a std-hashed
+        // map; re-collect once into the Fx-hashed table so the many per-node
+        // probes below hash fast. Same (key, value) set — no output change.
         crate::eval::struct_resolver::build_field_access_types(module)
+            .into_iter()
+            .collect()
     } else {
-        HashMap::new()
+        HashMap::default()
     };
     #[cfg(not(feature = "std-surface"))]
-    let receiver_types_owned: HashMap<crate::ast::Span, String> = HashMap::new();
+    let receiver_types_owned: HashMap<crate::ast::Span, String> = HashMap::default();
     let receiver_types: &HashMap<crate::ast::Span, String> = &receiver_types_owned;
 
     // RFC 0010 Phase B fix: two-pass repr_c collection.
@@ -1331,6 +1358,24 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                 let field_types: Vec<crate::ast::TypeAnn> =
                     fields.iter().map(|f| f.ty.clone()).collect();
                 ir.repr_c_structs.insert(name.clone(), field_types);
+            }
+        }
+    }
+
+    // Finding 2 — pre-register every non-generic fn's ABI signature (param types +
+    // declared return) so a narrow (8/16-bit) RETURN type is resolvable from a
+    // CALL operand during body lowering REGARDLESS of definition order (a caller
+    // defined before its callee). The per-FnDef insert (RFC 0012 §5.1) still runs
+    // during the loop below; this pre-pass only widens visibility. Metadata only —
+    // an all-i64 module records all-`ScalarI64` and lowers byte-identically.
+    #[cfg(feature = "std-surface")]
+    for item in &module.items {
+        if let ast::Node::FnDef(fd, _) = item {
+            if fd.type_params.is_empty() {
+                let param_types: Vec<crate::ast::TypeAnn> =
+                    fd.params.iter().map(|p| p.ty.clone()).collect();
+                ir.fn_signatures
+                    .insert(fd.name.clone(), (param_types, fd.ret_type.clone()));
             }
         }
     }
@@ -1957,6 +2002,33 @@ fn is_narrow_scalar_ty(ty: &TypeAnn) -> bool {
         || matches!(scalar_uint_cast_width(ty), Some(w) if w < 64)
 }
 
+/// True when `ty` is a declared builtin `Option<…>`/`Result<…>` generic with
+/// explicit args (Finding 5). Such annotations enter `NARROW_LOCALS` so that
+/// `desugar_match_to_if` can recover the DECLARED payload type of a builtin
+/// `Some`/`Ok`/`Err` bind — the prelude registers those payloads as the generic
+/// `[ScalarI64]`, so an `Option<u64>` payload otherwise bound SIGNED
+/// (`u64::MAX` read back as `-1`, `v < 1` wrongly true). Every other
+/// `NARROW_LOCALS` reader is a no-op on a `Generic` entry (see the registry
+/// doc-comment), so recording these is byte-identical outside the match-bind
+/// path.
+#[cfg(feature = "std-surface")]
+fn is_payload_generic_ty(ty: &TypeAnn) -> bool {
+    matches!(ty, TypeAnn::Generic { name, args }
+        if matches!(name.as_str(), "Option" | "Result") && !args.is_empty())
+}
+
+/// True when `ty` is a declared TUPLE annotation with elements (Finding 6).
+/// Such annotations enter `NARROW_LOCALS` so a numeric tuple index `t.N` can
+/// resolve the receiver's declared element types — both for the bounds check
+/// and to re-materialise a narrow/`u64` element at its true width/signedness
+/// (`let t: (u64, i64) = …; t.0 < 1` must compare UNSIGNED). Every other
+/// `NARROW_LOCALS` reader is a no-op on a `Tuple` entry (see the registry
+/// doc-comment).
+#[cfg(feature = "std-surface")]
+fn is_tuple_ann_ty(ty: &TypeAnn) -> bool {
+    matches!(ty, TypeAnn::Tuple { elements } if !elements.is_empty())
+}
+
 /// True when `ty` is a sub-i64 integer that reaches a fn SIGNATURE as
 /// `TypeAnn::Named` (`i8`/`u8`/`i16`/`u16`) — the widths lowered by the
 /// i64-SLOT narrow-signature ABI: the MLIR `func.func` signature stays
@@ -2007,13 +2079,36 @@ thread_local! {
     /// carries no annotation — without re-masking, `c` silently keeps the full i64
     /// value (`300` instead of `44`), a SILENT MISCOMPILE that spans top-level,
     /// branch and loop bodies. `Assign` lowering consults this map and re-applies
-    /// `mask_narrow_let`. Populated ONLY with genuinely narrow scalars (see
-    /// `is_narrow_scalar_ty`), so an all-i64 module leaves it empty and the masking
-    /// is a no-op (zero extra IR, byte-identical hot path). Scoped per fn body and
-    /// restored on exit via `NarrowLocalsGuard`, so it never leaks across fns.
+    /// `mask_narrow_let`. Populated with genuinely narrow scalars (see
+    /// `is_narrow_scalar_ty`) plus two DECLARED-annotation kinds used to type
+    /// derived reads: Finding 5 — `Option<…>`/`Result<…>` generics (see
+    /// `is_payload_generic_ty`), read by `desugar_match_to_if` to type a
+    /// builtin `Some`/`Ok`/`Err` payload bind; Finding 6 — tuple annotations
+    /// (see `is_tuple_ann_ty`), read by the numeric tuple index `t.N` to
+    /// resolve element types. Every other reader is a no-op on a
+    /// `Generic`/`Tuple` entry: `mask_narrow_let` falls through all width arms,
+    /// `infer_narrow_arith_ty` filters to `is_named_narrow_sig_ty`. An all-i64
+    /// module leaves the map empty and the masking is a no-op (zero extra IR,
+    /// byte-identical hot path). Scoped per fn body and restored on exit via
+    /// `NarrowLocalsGuard`, so it never leaks across fns.
     #[cfg(feature = "std-surface")]
     static NARROW_LOCALS: std::cell::RefCell<std::collections::HashMap<String, TypeAnn>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+thread_local! {
+    /// Compile-speed early-skip for `infer_narrow_arith_ty` (perf; mirrors the
+    /// `NARROW_LOCALS` thread-local pattern). Set ONCE per `lower_to_ir` call
+    /// by an O(n) prescan of the module AST (`narrow_scan::module_mentions_narrow`);
+    /// `false` proves the module mentions NO narrow-int type anywhere, so every
+    /// `infer_narrow_arith_ty` call would return `None` — the early return skips
+    /// the per-binop operand-subtree re-walk (O(n²) on nested all-i64/float
+    /// arithmetic) without changing a single masking decision. See
+    /// src/eval/narrow_scan.rs for the full byte-identity proof. Defaults to
+    /// `true` (fail-safe: an entry path that never runs the prescan keeps the
+    /// masking machinery fully active).
+    #[cfg(feature = "std-surface")]
+    static MODULE_HAS_NARROW_SURFACE: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
 }
 
 /// RAII guard restoring the previous `NARROW_LOCALS` map when a fn body's lowering
@@ -2039,7 +2134,10 @@ fn enter_narrow_scope(params: &[ast::Param]) -> NarrowLocalsGuard {
         {
             let mut m = n.borrow_mut();
             for prm in params {
-                if is_narrow_scalar_ty(&prm.ty) {
+                if is_narrow_scalar_ty(&prm.ty)
+                    || is_payload_generic_ty(&prm.ty)
+                    || is_tuple_ann_ty(&prm.ty)
+                {
                     m.insert(prm.name.clone(), prm.ty.clone());
                 }
             }
@@ -2150,9 +2248,38 @@ fn callee_array_lit_param(callee: &str, idx: usize) -> bool {
 /// No-op for non-narrow annotations (keeps the registry empty for i64 modules).
 #[cfg(feature = "std-surface")]
 fn record_narrow_let(name: &str, ann: &Option<TypeAnn>) {
-    if let Some(ty) = ann {
-        if is_narrow_scalar_ty(ty) {
+    match ann {
+        // Finding 5: a declared `Option<…>`/`Result<…>` generic is recorded too,
+        // so `desugar_match_to_if` can type a builtin `Some`/`Ok`/`Err` payload
+        // bind at its declared width/signedness. The `_ =>` shadow-clear arm
+        // below already handles a re-`let` of the same name at any other type.
+        // Finding 6: a declared tuple annotation is recorded too, so a numeric
+        // tuple index `t.N` can resolve its element types (same shadow-clear
+        // rule via the `_ =>` arm below).
+        Some(ty) if is_narrow_scalar_ty(ty) || is_payload_generic_ty(ty) || is_tuple_ann_ty(ty) => {
             NARROW_LOCALS.with(|n| n.borrow_mut().insert(name.to_string(), ty.clone()));
+        }
+        // Finding 1(a): a re-`let` (shadow) of the SAME name at a WIDE/non-narrow
+        // type (`let x: u8 = 5; let x: i64 = v`) must CLEAR any prior narrow
+        // tracking — otherwise `infer_narrow_arith_ty`/`mask_narrow_assign` would
+        // keep masking the now-i64 `x` to 8 bits (a silent miscompile regression
+        // from the narrow-locals registry). Removing on a non-narrow re-let is a
+        // no-op for a name that was never tracked, so an all-i64 module still
+        // leaves the registry empty (byte-identical hot path).
+        _ => {
+            NARROW_LOCALS.with(|n| {
+                let mut m = n.borrow_mut();
+                // Perf: removing from an EMPTY registry is a no-op, but
+                // `HashMap::remove` still hashes `name` (SipHash) before it can
+                // find that out — and this arm runs for EVERY non-narrow `let`.
+                // Callgrind on the all-i64/tensor hot path attributed ~200
+                // instructions per `let` to exactly this hash+probe. Skipping
+                // the call outright when the map is empty (the common
+                // narrow-free-module case) is trivially byte-identical.
+                if !m.is_empty() {
+                    m.remove(name);
+                }
+            });
         }
     }
 }
@@ -2168,6 +2295,239 @@ fn mask_narrow_assign(ir: &mut IRModule, name: &str, val: ValueId) -> ValueId {
         Some(ty) => mask_narrow_let(ir, &Some(ty), val),
         None => val,
     }
+}
+
+/// Codex PR #216 Finding 2 — resolve the DECLARED `TypeAnn` of a numeric
+/// tuple-index receiver expression, recursively, so a CHAINED index `t.0.1`
+/// resolves its element type.
+///
+/// A tuple `(a, b, …)` is lowered as an all-i64 heap record (`__mind_alloc(8*n)`,
+/// element `i` at offset `8*i`, the tuple VALUE being the base pointer). A NESTED
+/// element is stored as ITS base pointer at the parent's slot, so `t.0` on a
+/// nested-tuple-typed `t` loads the inner tuple's pointer and `t.0.1` loads at
+/// `+8` from there. The address chain is produced automatically by
+/// `lower_expr(receiver, …)` recursing through this same FieldAccess arm; this
+/// helper only recovers the element TYPE list at each level.
+///
+/// Resolution:
+/// - `Ident(nm)` — the receiver's own declared annotation from `NARROW_LOCALS`
+///   (a `let t: (…, …) = …` records a `TypeAnn::Tuple`).
+/// - numeric `FieldAccess { receiver, field }` — resolve `receiver`'s type, and
+///   if it is a `Tuple`, index `field` into its elements (the inner element type).
+/// - `Paren(inner)` — transparent.
+///
+/// Returns `None` for any receiver whose tuple type cannot be established, so the
+/// caller FAILS LOUDLY (never falls through to a silent-miscompile placeholder).
+#[cfg(feature = "std-surface")]
+fn resolve_numeric_field_receiver_ty(node: &ast::Node) -> Option<TypeAnn> {
+    match node {
+        ast::Node::Lit(Literal::Ident(nm), _) => {
+            NARROW_LOCALS.with(|n| n.borrow().get(nm).cloned())
+        }
+        ast::Node::Paren(inner, _) => resolve_numeric_field_receiver_ty(inner),
+        ast::Node::FieldAccess {
+            receiver, field, ..
+        } if !field.is_empty() && field.bytes().all(|b| b.is_ascii_digit()) => {
+            let elements = match resolve_numeric_field_receiver_ty(receiver)? {
+                TypeAnn::Tuple { elements } => elements,
+                _ => return None,
+            };
+            let idx: usize = field.parse().ok()?;
+            elements.get(idx).cloned()
+        }
+        _ => None,
+    }
+}
+
+/// Infer the NARROW scalar type (`i8`/`u8`/`i16`/`u16`) of an ARITHMETIC
+/// expression's result, if any operand is a tracked narrow local/param.
+/// Recurses through parentheses and nested arithmetic so `(x + 10) / 2` with
+/// `x: u8` yields `Some(u8)`. Returns `None` for any expression that is not a
+/// narrow-typed arithmetic result (the all-i64 path — byte-identical, zero
+/// extra IR).
+///
+/// This closes the intermediate-wrap gap: without it, `(x + 10) / 2` masked
+/// only at let-init/return, so the INTERMEDIATE `(x + 10)` flowed as an
+/// un-truncated i64 (`260`) into the `/2`, computing `130` instead of the
+/// wrapped `4/2 == 2`. Masking each narrow arithmetic RESULT — because
+/// `lower_expr` is recursive — truncates the inner `(x + 10)` to `u8` before
+/// it feeds the outer op, no separate special-case needed.
+///
+/// Restricted to the 8/16-bit `Named` widths via `is_named_narrow_sig_ty`:
+/// `i32`/`u32` deliberately stay on their PHYSICAL-i32 MLIR ABI path (masking
+/// them here would perturb the byte-identical i32 artifact stream), and
+/// `i64`/`u64`/handles are not narrow. Comparisons are excluded by the caller
+/// (they yield `i1`/bool, never a narrow scalar).
+#[cfg(feature = "std-surface")]
+fn infer_narrow_arith_ty(
+    node: &ast::Node,
+    ir: &IRModule,
+    struct_env: &HashMap<String, String>,
+    receiver_types: &HashMap<crate::ast::Span, String>,
+) -> Option<TypeAnn> {
+    // Perf early-skip: a module with NO narrow-int surface (prescan at
+    // `lower_to_ir` entry) can never yield `Some` here — every leaf arm filters
+    // through `is_named_narrow_sig_ty`, and every source it consults is
+    // narrow-free when the prescan found no narrow mention (proof in
+    // src/eval/narrow_scan.rs). Returning `None` up front skips the recursive
+    // operand-subtree walk that made nested all-i64/float arithmetic O(n²).
+    if !MODULE_HAS_NARROW_SURFACE.with(|f| f.get()) {
+        return None;
+    }
+    match node {
+        ast::Node::Lit(Literal::Ident(name), _) => NARROW_LOCALS
+            .with(|n| n.borrow().get(name).cloned())
+            .filter(is_named_narrow_sig_ty),
+        ast::Node::Paren(inner, _) => infer_narrow_arith_ty(inner, ir, struct_env, receiver_types),
+        ast::Node::Binary {
+            op:
+                ast::BinOp::Add | ast::BinOp::Sub | ast::BinOp::Mul | ast::BinOp::Div | ast::BinOp::Mod,
+            left,
+            right,
+            ..
+        } => join_narrow_tys(
+            infer_narrow_arith_ty(left, ir, struct_env, receiver_types),
+            infer_narrow_arith_ty(right, ir, struct_env, receiver_types),
+        ),
+        // Finding 3: a shift result carries the LEFT operand's declared width
+        // (the count's width is irrelevant), so recurse only into `left`.
+        ast::Node::Bitwise {
+            op: ast::BitOp::Shl | ast::BitOp::Shr,
+            left,
+            ..
+        } => infer_narrow_arith_ty(left, ir, struct_env, receiver_types),
+        // Finding 2: a narrow value produced by a CAST (`x as u8`), a CALL to a
+        // fn declared `-> u8`, a struct FIELD of type `u8`, or an `array<u8>`
+        // element read also escapes unmasked without these leaves.
+        ast::Node::As { ty, .. } => Some(ty.clone()).filter(is_named_narrow_sig_ty),
+        ast::Node::Call { callee, .. } => ir
+            .fn_signatures
+            .get(callee)
+            .and_then(|(_, ret)| ret.clone())
+            .filter(is_named_narrow_sig_ty),
+        ast::Node::FieldAccess { .. } => {
+            field_access_scalar_ty(node, ir, struct_env, receiver_types)
+                .filter(is_named_narrow_sig_ty)
+        }
+        ast::Node::IndexAccess { receiver, .. } => {
+            index_element_narrow_ty(receiver, ir, struct_env, receiver_types)
+                .filter(is_named_narrow_sig_ty)
+        }
+        _ => None,
+    }
+}
+
+/// The declared SCALAR type of a struct-field access `base.field` (`b.a` where
+/// `a: u8`), read from the width-aware `struct_field_types` table via the same
+/// `receiver_types` / `struct_env` resolution the FieldAccess read path uses.
+/// `None` for a non-struct receiver or a non-scalar field. Used by
+/// `infer_narrow_arith_ty` (Finding 2) to re-mask a narrow field feeding
+/// intermediate arithmetic.
+#[cfg(feature = "std-surface")]
+fn field_access_scalar_ty(
+    node: &ast::Node,
+    ir: &IRModule,
+    struct_env: &HashMap<String, String>,
+    receiver_types: &HashMap<crate::ast::Span, String>,
+) -> Option<TypeAnn> {
+    let ast::Node::FieldAccess {
+        receiver: base,
+        field,
+        span,
+    } = node
+    else {
+        return None;
+    };
+    let sname = receiver_types
+        .get(span)
+        .cloned()
+        .or_else(|| receiver_struct_type(base, ir, struct_env))?;
+    let sname = struct_key_for(ir, &sname);
+    let idx = ir.struct_defs.get(sname)?.iter().position(|f| f == field)?;
+    ir.struct_field_types.get(sname)?.get(idx).cloned()
+}
+
+/// The bit width (`8`/`16`) of a Named 8/16-bit narrow integer type, else `None`.
+/// Used to mask a shift COUNT to `width-1` at the operand's declared width
+/// (Finding 3) — an i64-backed `u8`/`u16` shift would otherwise mask the count
+/// mod 64 in MLIR (`1u8 << 8` giving 0 instead of the count-mod-8 `1`).
+#[cfg(feature = "std-surface")]
+fn narrow_named_shift_width(ty: &TypeAnn) -> Option<u32> {
+    scalar_int_cast_width(ty)
+        .or_else(|| scalar_uint_cast_width(ty))
+        .filter(|&w| w < 64)
+}
+
+/// Join the two inferred narrow operand types of an arithmetic binop
+/// (Finding 7). The old `infer(left).or_else(infer(right))` picked the LEFT
+/// operand's width whenever both sides were narrow, so `(a + b) / 2` with
+/// `a: u8, b: u16` wrapped at 8 bits while `(b + a) / 2` wrapped at 16 — an
+/// ASYMMETRIC result for the same values. The result type is the WIDEST
+/// operand: `(None, x)`/`(x, None)` → `x`; both `Some` → the greater width
+/// (8 vs 16); EQUAL width → the LEFT operand (preserving today's bytes for
+/// `u8+u8` and the mixed-signedness equal-width `i8+u8`). `Shl`/`Shr` stay
+/// LEFT-only (the count's width is irrelevant) and never reach this join.
+#[cfg(feature = "std-surface")]
+fn join_narrow_tys(l: Option<TypeAnn>, r: Option<TypeAnn>) -> Option<TypeAnn> {
+    match (l, r) {
+        (Some(a), Some(b)) => {
+            // Both are `is_named_narrow_sig_ty` (8/16-bit) by construction —
+            // `narrow_named_shift_width` is total on them.
+            let wa = narrow_named_shift_width(&a).unwrap_or(64);
+            let wb = narrow_named_shift_width(&b).unwrap_or(64);
+            if wb > wa { Some(b) } else { Some(a) }
+        }
+        (a, b) => a.or(b),
+    }
+}
+
+/// Re-mask an ARITHMETIC binop result to its inferred narrow width (`i8`/`u8`/
+/// `i16`/`u16`), emitting the same truncate/sign-extend forms as
+/// `mask_narrow_let`. Only `Add`/`Sub`/`Mul`/`Div`/`Mod` are masked — the
+/// comparisons (`Lt`/`Le`/`Gt`/`Ge`/`Eq`/`Ne`) produce `i1`/bool and must not
+/// be truncated. Returns `dst` unchanged when the result is not a narrow
+/// arithmetic value (the byte-identical all-i64 path).
+#[cfg(feature = "std-surface")]
+fn mask_narrow_binop_result(
+    ir: &mut IRModule,
+    op: BinOp,
+    left: &ast::Node,
+    right: &ast::Node,
+    dst: ValueId,
+    struct_env: &HashMap<String, String>,
+    receiver_types: &HashMap<crate::ast::Span, String>,
+) -> ValueId {
+    let ty = match op {
+        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => join_narrow_tys(
+            infer_narrow_arith_ty(left, ir, struct_env, receiver_types),
+            infer_narrow_arith_ty(right, ir, struct_env, receiver_types),
+        ),
+        // Finding 3: a shift result's width is the LEFT operand's declared width
+        // (`(x << 1)` with `x: u8` must truncate to `u8` before a following op).
+        BinOp::Shl | BinOp::Shr => infer_narrow_arith_ty(left, ir, struct_env, receiver_types),
+        // Comparisons yield `i1`/bool; bitwise And/Or/Xor over in-range narrow
+        // operands stay in range — neither needs a width re-mask.
+        _ => None,
+    };
+    match ty {
+        Some(ty) => mask_narrow_let(ir, &Some(ty), dst),
+        None => dst,
+    }
+}
+
+/// Non-`std-surface` builds have no narrow scalar types, so intermediate-wrap
+/// masking is a no-op — the binop result is returned verbatim (byte-identical).
+#[cfg(not(feature = "std-surface"))]
+fn mask_narrow_binop_result(
+    _ir: &mut IRModule,
+    _op: BinOp,
+    _left: &ast::Node,
+    _right: &ast::Node,
+    dst: ValueId,
+    _struct_env: &HashMap<String, String>,
+    _receiver_types: &HashMap<crate::ast::Span, String>,
+) -> ValueId {
+    dst
 }
 
 /// The byte width and signedness of a struct field type for the canonical
@@ -2693,6 +3053,63 @@ fn collection_sentinel_for_ty(ty: &TypeAnn) -> Option<&'static str> {
         Some(ARRAY_VEC_SENTINEL)
     } else if is_fixed_bytes_ty(ty) {
         Some(FIXED_BYTES_SENTINEL)
+    } else {
+        None
+    }
+}
+
+/// The declared ELEMENT type of an `array<T>` index receiver (`arr[i]` or a
+/// struct FIELD `b.items[i]`) as a `TypeAnn`, but ONLY when `T` is a
+/// fixed-width integer whose i64 SSA representation is sign-sensitive: a narrow
+/// width (`i8`/`u8`/`i16`/`u16`/`i32`/`u32`) or full-width `u64`. Returns `None`
+/// for `i64` (the default SIGNED representation is already correct), floats,
+/// strings, struct and nested-collection elements — those keep their existing
+/// lowering byte-identically.
+///
+/// A `vec_get` element read otherwise yields an UNTYPED i64 SSA value. A
+/// `u64` element (e.g. `u64::MAX`, all-ones i64 = -1) then fed to a
+/// sign-sensitive op (`>> / < / %`) selected the SIGNED variant — `v >> 63`
+/// returned -1 instead of 1. The caller re-materialises the read via
+/// `mask_narrow_let` (the same `__mind_conv_u64` marker / narrow mask an
+/// ordinary `let x: T = …` gets), restoring the element's unsignedness/width
+/// downstream.
+#[cfg(feature = "std-surface")]
+fn index_element_narrow_ty(
+    receiver: &ast::Node,
+    ir: &IRModule,
+    struct_env: &HashMap<String, String>,
+    receiver_types: &HashMap<crate::ast::Span, String>,
+) -> Option<TypeAnn> {
+    let ty: TypeAnn = match receiver {
+        // IDENT `array<T>` — the `__elem__<name>` sentinel is a bare type-name
+        // string (`element_type_sentinel`); a scalar-int sentinel reconstructs
+        // to `TypeAnn::Named`. `String`/struct/`vec` sentinels rebuild to a
+        // `Named` the narrow/u64 guard below rejects, so they return `None`.
+        ast::Node::Lit(Literal::Ident(v), _) => {
+            TypeAnn::Named(struct_env.get(&format!("__elem__{v}"))?.clone())
+        }
+        // Struct FIELD `b.items[i]` of declared type `array<T>` → `T` verbatim
+        // from the struct field-type table.
+        ast::Node::FieldAccess {
+            receiver: base,
+            field,
+            span,
+        } => {
+            let sname = receiver_types
+                .get(span)
+                .cloned()
+                .or_else(|| receiver_struct_type(base, ir, struct_env))?;
+            let sname = struct_key_for(ir, &sname);
+            let idx = ir.struct_defs.get(sname)?.iter().position(|f| f == field)?;
+            match ir.struct_field_types.get(sname)?.get(idx)? {
+                TypeAnn::Generic { name, args } if name == "array" => args.first()?.clone(),
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+    if is_narrow_scalar_ty(&ty) || matches!(scalar_int64_cast_signed(&ty), Some(false)) {
+        Some(ty)
     } else {
         None
     }
@@ -4548,7 +4965,12 @@ fn lower_expr(
                 ast::BinOp::Ne => BinOp::Ne,
             };
             ir.instrs.push(Instr::BinOp { dst, op, lhs, rhs });
-            dst
+            // Re-mask an INTERMEDIATE narrow arithmetic result to its declared
+            // width so a wrap happens after EVERY operator, not only at
+            // let-init/return. `(x + 10) / 2` with `x: u8` must truncate the
+            // inner `(x + 10)` to `u8` before the `/2` (issue: it computed on
+            // the un-truncated i64 `260`). No-op for non-narrow results.
+            mask_narrow_binop_result(ir, op, left, right, dst, struct_env, receiver_types)
         }
         // Logical `&&` / `||` (Phase 10.5 `Node::Logical`, kept separate from
         // `BinOp`). The IR has no logical-and/or instruction, so we DESUGAR to
@@ -4642,8 +5064,7 @@ fn lower_expr(
             op, left, right, ..
         } => {
             let lhs = lower_expr(left, ir, env, struct_env, receiver_types);
-            let rhs = lower_expr(right, ir, env, struct_env, receiver_types);
-            let dst = ir.fresh();
+            let mut rhs = lower_expr(right, ir, env, struct_env, receiver_types);
             let ir_op = match op {
                 ast::BitOp::And => BinOp::BitAnd,
                 ast::BitOp::Or => BinOp::BitOr,
@@ -4651,13 +5072,41 @@ fn lower_expr(
                 ast::BitOp::Shl => BinOp::Shl,
                 ast::BitOp::Shr => BinOp::Shr,
             };
+            // Finding 3: for a narrow (8/16-bit, i64-backed) LEFT-operand shift,
+            // pre-mask the shift COUNT to the LHS width-1 so `1u8 << 8` wraps the
+            // count mod 8 (== `1 << 0` == 1) at the operand's DECLARED width. The
+            // MLIR lowering sees an i64-backed value and would otherwise mask the
+            // count mod 64. Only fires for i8/u8/i16/u16 lefts (physical i32/u32
+            // shifts keep their own width path in `lowering.rs`) → the already-
+            // correct u32/i32 cases are untouched, and an all-i64 module never
+            // hits this (empty NARROW_LOCALS).
+            if matches!(ir_op, BinOp::Shl | BinOp::Shr) {
+                if let Some(w) = infer_narrow_arith_ty(left, ir, struct_env, receiver_types)
+                    .as_ref()
+                    .and_then(narrow_named_shift_width)
+                {
+                    let mask_id = ir.fresh();
+                    ir.instrs.push(Instr::ConstI64(mask_id, (w as i64) - 1));
+                    let masked = ir.fresh();
+                    ir.instrs.push(Instr::BinOp {
+                        dst: masked,
+                        op: BinOp::BitAnd,
+                        lhs: rhs,
+                        rhs: mask_id,
+                    });
+                    rhs = masked;
+                }
+            }
+            let dst = ir.fresh();
             ir.instrs.push(Instr::BinOp {
                 dst,
                 op: ir_op,
                 lhs,
                 rhs,
             });
-            dst
+            // Finding 3: re-mask a narrow shift RESULT to its declared width
+            // (`(x << 1)` with `x: u8` truncates 400→144 before the following op).
+            mask_narrow_binop_result(ir, ir_op, left, right, dst, struct_env, receiver_types)
         }
         ast::Node::CallTensorSum {
             x, axes, keepdims, ..
@@ -5021,6 +5470,10 @@ fn lower_expr(
                 // 8-byte stride. Metadata only; an all-i64 struct still takes the
                 // byte-identical fast path.
                 fn_ir.struct_field_types = ir.struct_field_types.clone();
+                // Finding 2: inherit the module-wide fn signature table so a CALL
+                // operand inside this body (`(gu8() + 10) / 2`) can resolve the
+                // callee's narrow declared return type for intermediate re-masking.
+                fn_ir.fn_signatures = ir.fn_signatures.clone();
             }
             // Build fn_env from env, but do NOT carry over const-array
             // SSA ids from the outer module — those ids are only valid in
@@ -5728,6 +6181,18 @@ fn lower_expr(
             let then_struct_env = struct_env;
             let mut then_result = then_ir.fresh();
             then_ir.instrs.push(Instr::ConstI64(then_result, 0));
+            // Finding 1(b): block-scope narrow-let recordings within each branch
+            // body, mirroring the `Node::Block` arm's `NarrowLocalsGuard`. A narrow
+            // `let t: u8 = 1` inside a branch records into the fn-wide NARROW_LOCALS
+            // map; without restoring on branch exit its entry LEAKS past the `if`,
+            // so a later `let t: i64 = x` (or an i64 `t` reassignment) is wrongly
+            // re-masked to 8 bits. Snapshot on entry (outer narrow entries stay
+            // visible so genuine outer-narrow reassignments inside the branch still
+            // mask) and restore below, dropping branch-local additions. Empty for a
+            // narrow-free branch (the keystone) → the clone/restore is a no-op and
+            // emitted bytes are byte-for-byte unchanged.
+            #[cfg(feature = "std-surface")]
+            let narrow_if_snapshot = NARROW_LOCALS.with(|n| n.borrow().clone());
             for stmt in then_branch {
                 match stmt {
                     ast::Node::Return { value, .. } => {
@@ -5928,6 +6393,10 @@ fn lower_expr(
                     }
                 }
             }
+            // Finding 1(b): drop the then-branch's narrow-local additions before
+            // lowering the else branch / post-`if` code (see snapshot above).
+            #[cfg(feature = "std-surface")]
+            NARROW_LOCALS.with(|n| *n.borrow_mut() = narrow_if_snapshot.clone());
 
             // ── 3. Lower the else-branch (or synthesise a unit zero) ──────────
             //      Starts from then_ir's highest id.
@@ -6148,6 +6617,10 @@ fn lower_expr(
                     }
                 }
             }
+            // Finding 1(b): drop the else-branch's narrow-local additions before
+            // post-`if` code (see snapshot before the then loop).
+            #[cfg(feature = "std-surface")]
+            NARROW_LOCALS.with(|n| *n.borrow_mut() = narrow_if_snapshot);
 
             // ── 4. Build the merge phi set ────────────────────────────────────
             //
@@ -6720,18 +7193,35 @@ fn lower_expr(
         // Gated to `std-surface` — default builds never reach this arm.
         #[cfg(feature = "std-surface")]
         ast::Node::While { cond, body, .. } => {
-            // Lower the condition expression into a scratch sub-module to
-            // capture the instructions that produce it without polluting the
-            // parent IR stream.  The resulting ValueIds are local to the
-            // sub-module; MLIR lowering re-emits them verbatim in the header
-            // block so the numbering is stable.
-            //
-            // Use sub_ir_from so the condition sub-module's ValueIds start
-            // above the parent's current next_id.  Without this, a constant
-            // emitted in the condition (e.g. ConstI64(ValueId(0), 16)) would
-            // collide with the function's first parameter (%0: i64) when both
-            // are serialised into the same MLIR func.func body — the same
-            // fix already applied to Instr::If (see sub_ir_from comment).
+            // Task #270 / Codex PR #216 Finding 1 — snapshot/restore NARROW_LOCALS
+            // across the loop body, mirroring the `Node::Block` arm's guard. A
+            // wide re-let inside the body (`let x: i64 = …`) that SHADOWS an outer
+            // `u8`/`u16` local clears that outer's narrow metadata via
+            // `record_narrow_let`'s shadow-clear arm; without this guard the clear
+            // is permanent (even on zero iterations), so a later assignment to the
+            // outer var after the loop emits UNMASKED — an out-of-range silent
+            // miscompile. The snapshot keeps outer narrow entries VISIBLE inside
+            // the body (a genuine loop-carried narrow var reassigned — not re-let —
+            // still masks via `mask_narrow_assign`), and the guard restores the map
+            // on scope exit, dropping only body-local additions/shadow-clears.
+            // Empty for a narrow-free loop (the keystone), so it is a no-op and the
+            // emitted bytes are byte-for-byte unchanged. `For`/`ForEach` desugar to
+            // this `While` arm, so this one guard covers every loop body.
+            let _narrow_while_scope = NarrowLocalsGuard(NARROW_LOCALS.with(|n| n.borrow().clone()));
+            // --- Pre-scan: collect loop-carried assignment targets ---
+            // Collect every variable assigned in the body (including inside
+            // nested branches/blocks/matches) that exists in the outer env —
+            // the exact set the loop-carried machinery below records. Hoist
+            // this out of the per-variable alias-break below to avoid O(n^2)
+            // repeated scans of the body (a 600-line body with 30 assignments
+            // was 18,000 AST nodes scanned 30 times, 540,000 nodes total).
+            let mut assigned: Vec<String> = Vec::new();
+            collect_assign_targets(body, &mut assigned);
+            let candidates: Vec<String> = assigned
+                .into_iter()
+                .filter(|name| env.contains_key(name.as_str()))
+                .collect();
+
             // --- Alias-break for loop-carried variables (silent-miscompile fix) ---
             // `let mut j = start` lowers as pure env aliasing: `j` and `start`
             // share ONE ValueId. The MLIR While emitter rewrites every textual
@@ -6750,17 +7240,8 @@ fn lower_expr(
             #[cfg(feature = "std-surface")]
             let seed_env: HashMap<String, ValueId> = {
                 let mut seed = env.clone();
-                // Loop-carried candidates: outer-scope vars assigned anywhere in
-                // the body (including inside a branch/block/match executed in a
-                // single iteration), matching the set the arm below records as
-                // loop-carried (direct + nested-region rebindings).
-                let mut assigned: Vec<String> = Vec::new();
-                collect_assign_targets(body, &mut assigned);
-                let mut candidates: Vec<String> = assigned
-                    .into_iter()
-                    .filter(|name| env.contains_key(name.as_str()))
-                    .collect();
                 // Deterministic processing order (no HashMap iteration order).
+                let mut candidates = candidates;
                 candidates.sort();
                 for name in &candidates {
                     let id = match seed.get(name) {
@@ -7331,6 +7812,71 @@ fn lower_expr(
             field,
             span,
         } => {
+            // Finding 6: numeric TUPLE index `t.N` (parser now emits it as a
+            // FieldAccess whose `field` is an all-digit string). Resolve the
+            // receiver's DECLARED `(T, U, …)` tuple annotation from
+            // `NARROW_LOCALS`, bounds-check N, and emit the same
+            // `__mind_load_i64(base + 8*N)` shape LetTuple destructuring uses —
+            // then re-materialise the element at its declared type
+            // (`mask_narrow_let`), so a `u64` element compares UNSIGNED and a
+            // narrow element keeps its width. Any MISS — non-ident receiver,
+            // unannotated/non-tuple binding, out-of-range N — FAILS LOUDLY:
+            // falling through to struct resolution would reach the const-0 /
+            // ArrayLoad placeholder paths, a guaranteed silent miscompile.
+            if !field.is_empty() && field.bytes().all(|b| b.is_ascii_digit()) {
+                let idx: usize = field.parse().unwrap_or_else(|_| {
+                    panic!("tuple index `.{field}` is out of range for a tuple type")
+                });
+                // Resolve the receiver's tuple element types RECURSIVELY, so a
+                // chained numeric index (`t.0.1` on a nested-tuple-typed `t`)
+                // resolves the inner tuple's element type — not only a plain
+                // `Ident` receiver. The address chain for the outer `.N` is built
+                // by `lower_expr(receiver, …)` below, which recurses through this
+                // same arm for the inner `.M`.
+                let elements: Vec<TypeAnn> = resolve_numeric_field_receiver_ty(receiver)
+                    .and_then(|t| match t {
+                        TypeAnn::Tuple { elements } => Some(elements),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "tuple index `.{field}` requires a receiver with a declared \
+                             tuple annotation — either a local `let t: (T, U) = …`, or a \
+                             nested tuple element such as `t.0` where element 0 is itself \
+                             a tuple; annotate the receiver's tuple type. (Falling through \
+                             to struct-field resolution here would be a silent miscompile.)"
+                        )
+                    });
+                if idx >= elements.len() {
+                    panic!(
+                        "tuple index `.{field}` is out of bounds for a {}-element \
+                         tuple",
+                        elements.len()
+                    );
+                }
+                let addr = lower_expr(receiver, ir, env, struct_env, receiver_types);
+                let elem_addr = if idx == 0 {
+                    addr
+                } else {
+                    let offset = ir.fresh();
+                    ir.instrs.push(Instr::ConstI64(offset, (idx as i64) * 8));
+                    let sum = ir.fresh();
+                    ir.instrs.push(Instr::BinOp {
+                        dst: sum,
+                        op: BinOp::Add,
+                        lhs: addr,
+                        rhs: offset,
+                    });
+                    sum
+                };
+                let loaded = ir.fresh();
+                ir.instrs.push(Instr::Call {
+                    dst: loaded,
+                    name: "__mind_load_i64".to_string(),
+                    args: vec![elem_addr],
+                });
+                return mask_narrow_let(ir, &Some(elements[idx].clone()), loaded);
+            }
             // `array<T>` length: `arr.len` / `arr.length` (no parens) on a
             // vec-sentinel receiver lowers to the std.vec `vec_len` free
             // function. mind-flow writes `.length`; std.vec exposes `vec_len`,
@@ -7670,6 +8216,11 @@ fn lower_expr(
             if receiver_collection_sentinel(receiver, ir, struct_env, receiver_types)
                 == Some(ARRAY_VEC_SENTINEL)
             {
+                // Recover the declared element type BEFORE `lower_expr` reborrows
+                // `ir` mutably. `Some(T)` only for a narrow/`u64` element (the
+                // sign-sensitive representations); `i64`/float/string/struct/
+                // nested-array elements resolve to `None` and stay untouched.
+                let elem_ty = index_element_narrow_ty(receiver, ir, struct_env, receiver_types);
                 let base = lower_expr(receiver, ir, env, struct_env, receiver_types);
                 let index_id = lower_expr(index, ir, env, struct_env, receiver_types);
                 let dst = ir.fresh();
@@ -7678,6 +8229,13 @@ fn lower_expr(
                     name: "vec_get".to_string(),
                     args: vec![base, index_id],
                 });
+                // Re-materialise a narrow / `u64` element at its declared
+                // width/signedness so it carries into a downstream sign-sensitive
+                // op (`>> / < / %`). Without this the untyped i64 `vec_get` result
+                // made a `u64::MAX` element `>> 63` an ARITHMETIC shift (-1, not 1).
+                if let Some(elem_ty) = elem_ty {
+                    return mask_narrow_let(ir, &Some(elem_ty), dst);
+                }
                 return dst;
             }
             // `v[i]` on a fixed `bytes[N]` buffer (a raw stride-1 byte buffer
@@ -7842,6 +8400,18 @@ fn lower_expr(
             let mut body_ir = sub_ir_from(ir);
             let mut body_env = env.clone();
             let mut alloc_ids: Vec<crate::ir::ValueId> = Vec::new();
+
+            // Codex PR #216 broader sweep — snapshot/restore NARROW_LOCALS across
+            // the region body, mirroring the `Node::Block`/`Node::While` guards.
+            // `lower_stmt_seq` calls `record_narrow_let` for a body-local narrow
+            // `let` (and its shadow-clear arm for a wide re-let shadowing an outer
+            // narrow local); without this guard those mutations leak past the
+            // `region { … }` scope, so a later assignment to an outer narrow var
+            // would be re-masked to a body-local width or emitted unmasked — a
+            // silent miscompile. Empty for a narrow-free region, so it is a no-op
+            // and emitted bytes are byte-for-byte unchanged.
+            let _narrow_region_scope =
+                NarrowLocalsGuard(NARROW_LOCALS.with(|n| n.borrow().clone()));
 
             // Lower the body using the shared statement-sequence helper.
             // It handles Let / Assign / expression statements and appends
@@ -9697,7 +10267,56 @@ fn desugar_match_to_if(
                 if !args.iter().all(sub_ok) {
                     return None;
                 }
-                let field_types = payload_types.get(path);
+                // Finding 5 (landed): the builtin prelude registers the
+                // `Option::Some`/`Result::Ok`/`Result::Err` payloads as the
+                // GENERIC `[ScalarI64]`, so a `match o { Some(v) => .. }` where
+                // `o: Option<u64>` bound `v` SIGNED (`u64::MAX` read as -1,
+                // `v < 1` wrongly true). When the scrutinee is a plain ident
+                // whose DECLARED `Option<T>`/`Result<T, E>` annotation is
+                // tracked in `NARROW_LOCALS`, synthesize the variant's payload
+                // type from the declared generic args — Some→[T], Ok→[T],
+                // Err→[E] — so the existing `bind_ann`/`mask_narrow_let`
+                // machinery re-materialises the payload at its true
+                // width/signedness. RESTRICTED to INTEGER args: `T = i64`
+                // synthesizes exactly the builtin `[ScalarI64]` (byte-identical
+                // bind), narrow/u64 args gain their mask/`__mind_conv_u64`
+                // marker. A non-ident scrutinee (incl. the effectful
+                // `__match_scrut_*` pre-bind), an untracked name, or a declared
+                // user enum all miss and keep today's `payload_types` path.
+                // deferred: float generic args (`Option<f64>`) stay on the
+                // builtin `[ScalarI64]` path — the f64 payload bit-repr through
+                // the boxed record is unverified — upgrade path: prove the
+                // `__mind_f64_to_bits`/`__mind_bits_to_f64` round-trip through
+                // the `Some(x)` constructor, then admit float args here.
+                let generic_payload_override: Option<Vec<ast::TypeAnn>> = (|| {
+                    let ast::Node::Lit(Literal::Ident(scrut_name), _) = scrutinee else {
+                        return None;
+                    };
+                    let ann = NARROW_LOCALS.with(|n| n.borrow().get(scrut_name).cloned())?;
+                    let ast::TypeAnn::Generic { name, args } = ann else {
+                        return None;
+                    };
+                    let is_int_ann = |t: &ast::TypeAnn| {
+                        scalar_int_cast_width(t).is_some()
+                            || scalar_uint_cast_width(t).is_some()
+                            || scalar_int64_cast_signed(t).is_some()
+                    };
+                    match (name.as_str(), path.as_str()) {
+                        ("Option", "Option::Some") if args.len() == 1 && is_int_ann(&args[0]) => {
+                            Some(vec![args[0].clone()])
+                        }
+                        ("Result", "Result::Ok") if args.len() == 2 && is_int_ann(&args[0]) => {
+                            Some(vec![args[0].clone()])
+                        }
+                        ("Result", "Result::Err") if args.len() == 2 && is_int_ann(&args[1]) => {
+                            Some(vec![args[1].clone()])
+                        }
+                        _ => None,
+                    }
+                })();
+                let field_types = generic_payload_override
+                    .as_ref()
+                    .or(payload_types.get(path));
                 let mut stmts = Vec::new();
                 for (i, sub) in args.iter().enumerate() {
                     // field_addr = scrutinee + 8*(i+1)
@@ -9714,18 +10333,41 @@ fn desugar_match_to_if(
                             // type (e.g. `f64`) so the binding has the right type.
                             let ty = field_types.and_then(|ts| ts.get(i));
                             let value = coerce_enum_field_from_bits(load_i64(field_addr), ty, span);
-                            // Propagate an `array<T>` payload field's declared type as
-                            // the binding annotation so the Let-lowering records the
-                            // vec-sentinel + element tracking. Non-array payload fields
-                            // keep `ann: None`, so their lowering is byte-identical.
-                            let arr_ann: Option<ast::TypeAnn> = match ty {
-                                Some(t) if is_array_surface_ty(t) => Some(t.clone()),
+                            // Propagate the payload field's declared type as the
+                            // binding annotation when the Let-lowering must
+                            // re-materialise it at its true width/signedness (the same
+                            // `mask_narrow_let` mechanism an ordinary `let x: T = …`
+                            // uses):
+                            //   * `array<T>` — records the vec-sentinel + element
+                            //     tracking.
+                            //   * narrow int (`i8`/`u8`/`i16`/`u16`/`i32`/`u32`) —
+                            //     shift-pair (signed) / BitAnd (unsigned) so the
+                            //     sub-i64 payload is not read as a wider value.
+                            //   * full-width `u64` — the identity `__mind_conv_u64`
+                            //     marker so downstream sign-sensitive ops
+                            //     (`< / % / >> / >=`) pick the UNSIGNED variant.
+                            //     Without it a `u64::MAX` payload loaded via
+                            //     `__mind_load_i64` binds as a SIGNED i64 `-1`, and
+                            //     `v < 1` wrongly returns true (enum-payload
+                            //     signedness bug).
+                            // `f64` stays on the `coerce_enum_field_from_bits`
+                            // (`__mind_bits_to_f64`) path with `ann: None`; `i64` /
+                            // pointers / handles / aliases keep `ann: None`, so their
+                            // lowering is byte-identical.
+                            let bind_ann: Option<ast::TypeAnn> = match ty {
+                                Some(t)
+                                    if is_array_surface_ty(t)
+                                        || is_narrow_scalar_ty(t)
+                                        || matches!(scalar_int64_cast_signed(t), Some(false)) =>
+                                {
+                                    Some(t.clone())
+                                }
                                 _ => None,
                             };
                             stmts.push(ast::Node::Let {
                                 name: name.clone(),
                                 mutable: false,
-                                ann: arr_ann,
+                                ann: bind_ann,
                                 value: Box::new(value),
                                 span,
                             });

@@ -217,7 +217,7 @@ public contract for every pure-MIND program. Options:
   port to the IR→LLVM-text backend in Phase 15.
 
 The recommended order is **decide via internal review +
-autoresearch loop** before any implementation work, per the standing
+MIND research** before any implementation work, per the standing
 "non-obvious architectural decisions need review" rule. Until then,
 Phase 2 is *blocked on a design decision, not on code*.
 
@@ -341,7 +341,7 @@ direct calls (no dispatch). `.bench-baseline` one-sided +10% regression gate unc
   unordered map may come later behind an explicit non-deterministic
   opt-in for non-governed code.
 - **Arena-only, no free.** Considered for the compiler (Zig-style
-  arena-per-module — see Phase 15 / autoresearch finding). Kept as an
+  arena-per-module — see Phase 15 / a MIND research finding). Kept as an
   *option* (`vec.with_arena`) but the general `Vec` supports `free`
   so `std` is usable outside the compiler too.
 

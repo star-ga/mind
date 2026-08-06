@@ -183,6 +183,15 @@ pub fn tk_lbracket() -> i64 {
 pub fn tk_rbracket() -> i64 {
     41
 }
+// `"..."` string literal: a real token (span covers both quotes) so a
+// statement-position `print("hi")` can desugar to the oracle's
+// alloc/store_i8/record/print_bytes chain. Escapes (`\` inside) and
+// unterminated/newline strings fall through to tk_unsupported — fail-closed.
+// main.mind's own non-comment source contains no `"` (verified: line 165's
+// fail-closed note), so the self-compile token stream is byte-identical.
+pub fn tk_str() -> i64 {
+    42
+}
 
 // ===== Byte loads =====
 
@@ -916,9 +925,40 @@ pub fn scan(buf: i64, i: i64, buf_len: i64, toks: Vec) -> Vec {
             }
         }
     }
+    // String literal `"..."` (opening `"` == byte 34): one tk_str token spanning
+    // both quotes. A single top-level guard (the #258 SSA constraint), accept or
+    // fall through to tk_unsupported (escapes/newlines/unterminated).
+    if b == 34 {
+        let se: i64 = scan_string_end(buf, i + 1, buf_len);
+        if se > 0 {
+            let stoks: Vec = push_token(toks, tk_str(), i, se);
+            return scan(buf, se, buf_len, stoks);
+        }
+    }
     let kind: i64 = match_punct(b);
     let next_toks: Vec = push_token(toks, kind, i, i + 1);
     scan(buf, i + 1, buf_len, next_toks)
+}
+
+// String literal scan: from just after the opening `"`, find the closing quote
+// on the same line. Returns close+1, or -1 on backslash (escapes unsupported),
+// newline, or EOF (unterminated) — the caller falls through to tk_unsupported,
+// so a malformed string fail-closes the whole compile rather than mis-lexing.
+pub fn scan_string_end(buf: i64, i: i64, buf_len: i64) -> i64 {
+    if i >= buf_len {
+        return 0 - 1;
+    }
+    let b: i64 = load_byte(buf, i);
+    if b == 34 {
+        return i + 1;
+    }
+    if b == 92 {
+        return 0 - 1;
+    }
+    if b == 10 {
+        return 0 - 1;
+    }
+    scan_string_end(buf, i + 1, buf_len)
 }
 
 // ===== Public entry: lex =====
@@ -1069,6 +1109,27 @@ pub fn ast_index() -> i64 {
 // index expr, child2 = rhs expr. Lowers to __mind_store_i64(base + idx*8, rhs).
 pub fn ast_index_assign() -> i64 {
     29
+}
+// `"..."` string literal: span covers both quotes (content is [lo+1, hi-1)).
+// Only the print-statement desugar consumes this node (print("…") lowers to the
+// alloc/store_i8/record/print_bytes chain); every other surface fails closed on
+// the unknown kind — a string in any other position is an honest 0-byte refusal.
+pub fn ast_str_lit() -> i64 {
+    34
+}
+// ===== Single-payload enum CONSTRUCTION (the Option/Result tier) =====
+// `Name::Variant(payload)` / `Name::Variant` of a SINGLE-PAYLOAD enum: child0
+// = synthetic tag int-lit (the variant's 0-based decl ordinal), child1 = the
+// payload expression node (0 when payload-free), aux = has_payload (1/0). The
+// span covers the whole source construction text (`O::Some(5)` / `O::None`).
+// The statement-level ect_desugar pass rewrites these into the oracle's
+// alloc/store record chain (lower.rs emit_boxed_enum_record). Any ctor that
+// SURVIVES that pass (nested/expression positions it does not rewrite) fails
+// closed downstream — flatten rejects the unknown kind (0 bytes, never a
+// wrong-value CONST_ARRAY, which is what the historical array-literal desugar
+// emitted once the const-array path moved to OP_CONST_ARRAY).
+pub fn ast_enum_ctor() -> i64 {
+    35
 }
 
 // ===== i64 references (native-ELF surface ONLY; every other surface refuses) =====
@@ -1991,6 +2052,12 @@ pub fn parse_primary_ns(toks: Vec, pos: i64, buf: i64, no_struct: i64) -> ParseR
         return parse_if(toks, pos, buf);
     }
 
+    // `"..."` string literal: one ast_str_lit leaf carrying the token span. Only
+    // the print-statement desugar consumes it; every other surface fails closed.
+    if k == tk_str() {
+        return pr_new(pos + 1, ast_new_leaf(ast_str_lit(), lo, hi));
+    }
+
     if k == tk_minus() {
         let operand: ParseResult = parse_primary_ns(toks, pos + 1, buf, no_struct);
         let opnode: i64 = pr_node(operand);
@@ -2127,6 +2194,18 @@ pub fn parse_primary_ns(toks: Vec, pos: i64, buf: i64, no_struct: i64) -> ParseR
         if is_ident_match(buf, lo, hi) == 1 {
             return parse_match(toks, pos, buf);
         }
+        // Built-in Option/Result constructor: bare `Some(e)` / `Ok(e)` /
+        // `Err(e)` / `None` (NO `Option::`/`Result::` prefix). Routes to the
+        // same ast_enum_ctor / ect_desugar chain as the declared-enum path
+        // (emit_boxed_enum_record), matching the Rust oracle's built-in prelude.
+        // Checked BEFORE the call arm so `Some(5)` builds a boxed record instead
+        // of a wrong-value call to a fn "Some" (the pre-existing 42B fail-open).
+        // main.mind never spells these in value position, so its self-compile is
+        // byte-identical.
+        let bic: i64 = bic_kind(buf, lo, hi);
+        if bic >= 0 {
+            return parse_builtin_ctor(toks, pos, buf, lo, hi, bic);
+        }
         if at_eof(toks, pos + 1) == 0 {
             if tok_kind(toks, pos + 1) == tk_lparen() {
                 return parse_call(toks, pos, buf);
@@ -2137,14 +2216,15 @@ pub fn parse_primary_ns(toks: Vec, pos: i64, buf: i64, no_struct: i64) -> ParseR
         // discriminant — the proven child1==1 form, zero new emit code. When
         // ent_resolve refuses AND the decl is a SINGLE-PAYLOAD enum, the path
         // is a payload-enum CONSTRUCTION instead: `Opt::Some(e)` / `Opt::None`
-        // desugar to the proven array-literal 2-word block `[tag, payload]`
-        // (parse_epath_ctor / parse_epath_nopay — see the single-payload-enum
-        // section). Every other shape (unknown/duplicate decl, unknown
-        // variant, a payload variant WITHOUT its payload, a payload-free
-        // variant CALLED with args, non-i64/multi-field payloads) produces the
-        // POISON leaf -> the enclosing compile refuses (0 bytes), never a
-        // wrong value. main.mind's own source has no `::` in code, so none of
-        // this fires during self-compile — byte-identical.
+        // parse to an ast_enum_ctor node (parse_epath_ctor / parse_epath_nopay)
+        // that the ect_desugar statement pass lowers to the oracle's
+        // __mind_alloc + __mind_store_i64 record chain (see the
+        // single-payload-enum section). Every other shape (unknown/duplicate
+        // decl, unknown variant, a payload variant WITHOUT its payload, a
+        // payload-free variant CALLED with args, non-i64/multi-field payloads)
+        // produces the POISON leaf -> the enclosing compile refuses (0 bytes),
+        // never a wrong value. main.mind's own source has no `::` in code, so
+        // none of this fires during self-compile — byte-identical.
         if at_eof(toks, pos + 3) == 0 {
             if tok_kind(toks, pos + 1) == tk_colon() {
                 if tok_kind(toks, pos + 2) == tk_colon() {
@@ -3056,6 +3136,45 @@ pub fn for_push_if_nonzero(acc: Vec, node: i64) -> Vec {
     vec_push(acc, node)
 }
 
+// Splice a FRESH `VAR = VAR + 1` immediately before every own-level `continue`
+// (direct statement or inside if then/else blocks — the SAME traversal as
+// for_has_own_continue, so a body this reports as has_cont==1 gets EVERY
+// continue stepped), mirroring Rust inject_step_before_continue (lower.rs
+// 3817-3844). `break` and nested `while` bodies are boundaries, left untouched.
+pub fn for_inject_step(sa: i64, sl: i64, i: i64, acc: Vec, var_lo: i64, var_hi: i64) -> Vec {
+    if i >= sl {
+        return acc;
+    }
+    let s: i64 = __mind_load_i64(sa + i * 8);
+    let k: i64 = ast_kind(s);
+    if k == ast_continue() {
+        let a1: Vec = vec_push(acc, for_make_incr(var_lo, var_hi));
+        let a2: Vec = vec_push(a1, s);
+        return for_inject_step(sa, sl, i + 1, a2, var_lo, var_hi);
+    }
+    if k == ast_if() {
+        let a: Vec = vec_push(acc, for_inject_step_if(s, var_lo, var_hi));
+        return for_inject_step(sa, sl, i + 1, a, var_lo, var_hi);
+    }
+    let a: Vec = vec_push(acc, s);
+    for_inject_step(sa, sl, i + 1, a, var_lo, var_hi)
+}
+
+// Rebuild an if node with the step injected into both branch blocks (the cond is
+// shared unchanged — reading it is side-effect-free). A missing else stays 0.
+pub fn for_inject_step_if(node: i64, var_lo: i64, var_hi: i64) -> i64 {
+    let tb: i64 = ast_child1(node);
+    let nt: Vec = for_inject_step(ast_child0(tb), ast_aux(tb), 0, vec_new(), var_lo, var_hi);
+    let ntb: i64 = ast_new_block(ast_span_lo(tb), ast_span_hi(tb), vec_addr(nt), vec_len(nt));
+    let eb: i64 = ast_child2(node);
+    if eb == 0 {
+        return ast_new_if(ast_span_lo(node), ast_span_hi(node), ast_child0(node), ntb, 0);
+    }
+    let ne: Vec = for_inject_step(ast_child0(eb), ast_aux(eb), 0, vec_new(), var_lo, var_hi);
+    let neb: i64 = ast_new_block(ast_span_lo(eb), ast_span_hi(eb), vec_addr(ne), vec_len(ne));
+    ast_new_if(ast_span_lo(node), ast_span_hi(node), ast_child0(node), ntb, neb)
+}
+
 // Does the loop BODY assign the loop variable VAR (`VAR = ...`) at this loop
 // level? Descends if then/else blocks (same loop level); stops at nested loops
 // (already lowered to `while`). Mirrors the oracle's `body_assigns_var` gate
@@ -3190,16 +3309,43 @@ pub fn parse_for(toks: Vec, pos: i64, buf: i64, out: i64) -> i64 {
         }
     }
 
+    // ---- Byte-neutral continue form (oracle !needs_hygiene WITH own-continue) --
+    // Same gate as the fast path (no body write to VAR, literal END) but WITH an
+    // own-level `continue`: the oracle KEEPS the byte-neutral desugar and splices
+    // `VAR = VAR + 1` before every own-level continue (inject_step_before_continue,
+    // lower.rs 3817), then appends the tail increment — NO hidden counter.
+    // Verified vs --emit-mic3: `for i in 0..5 { if i > 2 { continue; } s = s + i; }`
+    // lowers exactly as `let i = 0; while i < 5 { if i > 2 { i = i + 1; continue; }
+    // s = s + i; i = i + 1; }` (strtab has no `__for_i_N`).
+    if has_cont == 1 {
+        if body_writes == 0 {
+            if end_is_lit == 1 {
+                let vname_c: i64 = ast_new_leaf(ast_ident(), var_lo, var_hi);
+                let let_var_c: i64 = ast_new_let(kw_lo, lo_hi, vname_c, ty, pr_node(lo_res));
+                let inj: Vec = for_inject_step(sa, sl, 0, vec_new(), var_lo, var_hi);
+                let wb1c: Vec = vec_push(inj, for_make_incr(var_lo, var_hi));
+                let wbody_c: i64 = ast_new_block(body_open, close_hi, vec_addr(wb1c), vec_len(wb1c));
+                let vref_c: i64 = ast_new_leaf(ast_ident(), var_lo, var_hi);
+                let cond_c: i64 = ast_new_binop(var_lo, var_hi, vref_c, pr_node(hi_res), op_lt());
+                let while_cn: i64 = ast_new_while(kw_lo, close_hi, cond_c, wbody_c);
+                __mind_store_i64(out + 0, let_var_c);
+                __mind_store_i64(out + 8, while_cn);
+                __mind_store_i64(out + 16, 0);
+                return after_close;
+            }
+        }
+    }
+
     // ---- Hidden-counter form (shapes the oracle lowers HYGIENICALLY) --------
-    // Reached when the byte-neutral form above does NOT apply: own-`continue`, a
-    // body write to VAR, or a non-literal END. The oracle emits its hygienic
+    // Reached when NEITHER byte-neutral form above applies: a body write to VAR,
+    // or a non-literal END (an own-`continue` alone now takes the inject form
+    // above). The oracle emits its hygienic
     // `__for_i_N` desugar for these, which the self-host cannot yet reproduce
-    // byte-for-byte — so the mic@3 nfn emit is NOT byte-exact here (and a body
-    // containing `continue` fails CLOSED, since nfn refuses the `continue`
-    // statement). These desugars remain VALID for the native-ELF / MLIR backends
+    // byte-for-byte — so the mic@3 nfn emit is NOT byte-exact here. These desugars
+    // remain VALID for the native-ELF / MLIR backends
     // (the AST feeds all three), so the program still compiles correctly; only the
     // mic@3 byte-oracle parity is deferred. This is the pre-existing behavior,
-    // unchanged: the fix above only ADDS the byte-neutral fast path in front.
+    // unchanged: the fixes above only ADD byte-neutral fast paths in front.
     let bnd_name: i64 = ast_new_leaf(ast_ident(), lo_lo, hi_hi);
     let let_bnd: i64 = ast_new_let(kw_lo, hi_hi, bnd_name, ty, pr_node(hi_res));
 
@@ -3407,18 +3553,41 @@ pub fn parse_let(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     // i64-cell path does NOT do — accepting it would be a silent type bypass —
     // so a non-{i64,f64} element type MUST still refuse (0B), preserving the
     // fail-closed boundary the committed self_host_failclosed_smoke locks. The
-    // element type token sits at mp+4 (mp+3 is `[`); a NESTED `[[..]]` element
-    // (token `[` at mp+4) also refuses here (fail-closed; flat i64/f64 only).
+    // element type token sits at mp+4 (mp+3 is `[`). A depth-2 NESTED element
+    // (`[[i64; N]; M]`, token `[` at mp+4) is accepted the same way when its
+    // INNER element type is i64/f64 (token at mp+5, `;` at mp+6 — anything
+    // deeper stays refused): the annotation is likewise an assertion only and
+    // the nested init literal already lowers via the proven vec_new/vec_push
+    // heap path (byte-exact vs --emit-mic3 on the untyped form).
     if tok_kind(toks, mp + 3) == tk_lbracket() {
         let et_lo: i64 = tok_lo(toks, mp + 4);
         let et_hi: i64 = tok_hi(toks, mp + 4);
         let i64_nm: i64 = make_byte_buf_3(105, 54, 52);
         let f64_nm: i64 = make_byte_buf_3(102, 54, 52);
-        let ok_et: i64 = if bytes_eq(buf, et_lo, et_hi, i64_nm, 0, 3) == 1 {
+        let flat_et: i64 = if bytes_eq(buf, et_lo, et_hi, i64_nm, 0, 3) == 1 {
             1
         } else {
             if bytes_eq(buf, et_lo, et_hi, f64_nm, 0, 3) == 1 {
                 1
+            } else {
+                0
+            }
+        };
+        let ok_et: i64 = if flat_et == 1 {
+            1
+        } else {
+            if tok_kind(toks, mp + 4) == tk_lbracket() {
+                if tok_kind(toks, mp + 6) == tk_semi() {
+                    let it_lo: i64 = tok_lo(toks, mp + 5);
+                    let it_hi: i64 = tok_hi(toks, mp + 5);
+                    if bytes_eq(buf, it_lo, it_hi, i64_nm, 0, 3) == 1 {
+                        1
+                    } else {
+                        bytes_eq(buf, it_lo, it_hi, f64_nm, 0, 3)
+                    }
+                } else {
+                    0
+                }
             } else {
                 0
             }
@@ -3691,6 +3860,72 @@ pub fn parse_block_stmts(toks: Vec, pos: i64, buf: i64, acc: Vec, is_fn_body: i6
             let tnp: i64 = parse_let_tuple(toks, pos, buf, tout);
             let tacc: Vec = plt_push_stmts(acc, __mind_load_i64(tout + 0), __mind_load_i64(tout + 8), 0);
             return parse_block_stmts(toks, tnp, buf, tacc, is_fn_body);
+        }
+    }
+    // `let X [: T] = match CALL(..) { .. };` — let-INIT call-scrutinee match. The
+    // oracle evaluates the scrutinee call ONCE (Call instr first), then lowers the
+    // match as a value-if comparing each pattern against that single result vid;
+    // the outer let binds the if's dst (no separate binding instrs). Desugar to the
+    // sibling pair `let TMP = call ; let X [: T] = if TMP == P0 { .. } ..` — the
+    // hoisted-let idiom of parse_match_stmt (TMP's name span = the call's own
+    // source span, which can never collide with a real identifier) composed with
+    // the type-7 "let bound to an if-EXPRESSION value" seq path, so the emitted
+    // bytes are Call; OP_IF(cond: TMP == P0; then/else) — exactly the oracle.
+    // GATED on is_fn_body==1 (a named let inside an if-branch would wrongly escape
+    // as a merge binding, same reason as the statement hoist) and on the scrutinee
+    // being a CALL; anything else falls through to parse_let, whose expression-
+    // position match fail-closes. main.mind never lets a call-scrutinee match, so
+    // its self-compile parse is byte-identical.
+    if is_fn_body == 1 {
+        if tok_kind(toks, pos) == tk_kw_let() {
+            if tok_kind(toks, pos + 1) != tk_lparen() {
+                let lmp: i64 = if is_ident_mut(buf, tok_lo(toks, pos + 1), tok_hi(toks, pos + 1)) == 1 {
+                    pos + 1
+                } else {
+                    pos
+                };
+                // init head: untyped `let X = …` at lmp+3; typed `let X : T = …` at
+                // lmp+5 (an array-type annotation `let X : [T; N]` is left to
+                // parse_let's own fail-closed path).
+                let linit: i64 = if tok_kind(toks, lmp + 2) == tk_eq() {
+                    lmp + 3
+                } else {
+                    if tok_kind(toks, lmp + 4) == tk_eq() {
+                        if tok_kind(toks, lmp + 3) != tk_lbracket() {
+                            lmp + 5
+                        } else {
+                            0 - 1
+                        }
+                    } else {
+                        0 - 1
+                    }
+                };
+                if linit > 0 {
+                    if tok_kind(toks, linit) == tk_ident() {
+                        if is_ident_match(buf, tok_lo(toks, linit), tok_hi(toks, linit)) == 1 {
+                            let lscrut: ParseResult = parse_expr_ns(toks, linit + 1, buf, 1);
+                            if ast_kind(pr_node(lscrut)) == ast_call() {
+                                let lout: i64 = __mind_alloc(8);
+                                let lres: ParseResult = parse_match_stmt(toks, linit, buf, lout);
+                                let hoist: i64 = __mind_load_i64(lout + 0);
+                                if hoist != 0 {
+                                    let chain: i64 = pr_node(lres);
+                                    let lname: i64 = ast_new_leaf(ast_ident(), tok_lo(toks, lmp + 1), tok_hi(toks, lmp + 1));
+                                    let lty: i64 = if linit == lmp + 5 {
+                                        ast_new_leaf(ast_ident(), tok_lo(toks, lmp + 3), tok_hi(toks, lmp + 3))
+                                    } else {
+                                        0
+                                    };
+                                    let new_let: i64 = ast_new_let(tok_lo(toks, pos), ast_span_hi(chain), lname, lty, chain);
+                                    let lacc: Vec = vec_push(acc, hoist);
+                                    let lacc2: Vec = vec_push(lacc, new_let);
+                                    return parse_block_stmts(toks, pr_pos(lres), buf, lacc2, is_fn_body);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     // `match CALL(..) { .. }` statement at a fn's TOP LEVEL HOISTS the scrutinee
@@ -4109,16 +4344,26 @@ pub fn const_name_bound(toks: Vec, buf: i64, nlo: i64, nhi: i64) -> i64 {
 //
 // `enum Opt { Some(i64), None }` is a SINGLE-PAYLOAD enum: at least one
 // variant carries exactly one i64 payload. A payload-enum VALUE is a tagged
-// 2-word heap block `{tag, payload}` built with the PROVEN array-literal
-// alloc+store ABI: construction `Opt::Some(5)` desugars at PARSE TIME to the
-// array literal `[<tag>, 5]` (ast_array_lit, synthetic tag int-lit) and
-// `Opt::None` to `[<tag>, 0]`, so every downstream emitter carries it with
-// ZERO new emit code. A match arm `Opt::Some(x) => ..` dispatches on the tag
-// word (`SCRUT[0] == tag`, the proven index-read form) and binds `x` by
-// prepending `let x = SCRUT[1];` to the arm block. Variant tags are the
-// 0-based decl positions (Some=0, None=1) — sequential, hence provably
-// unique. Payload-free variants in a payload enum carry an unused payload
-// slot (0).
+// 2-word heap block `{tag, payload}` built with the __mind_alloc +
+// __mind_store_i64 record ABI the oracle uses (lower.rs
+// emit_boxed_enum_record): construction `Opt::Some(e)` / `Opt::None` parses
+// to an ast_enum_ctor node (tag + payload expr + has_payload flag), and the
+// ect_desugar STATEMENT pass rewrites a top-level let-init / return / trailing
+// construction into the oracle's chain — payload eval BEFORE the alloc, tag
+// stored at +0, payload (or a zero-fill) at +8, the alloc handle as the
+// construction's value. A ctor in any position that pass does not rewrite
+// fails closed (flatten rejects the kind) — never a wrong value. A match arm
+// `Opt::Some(x) => ..` parses (mode 2) into an if-chain that dispatches on the
+// tag word (`SCRUT[0] == tag`, the proven index-read form) and binds `x` by
+// prepending `let x = SCRUT[1];` to the arm block. This dispatch is proven on
+// the native-ELF surface (where the ctor lowers to the 2-word array record);
+// on the mic@3 surface a match whose scrutinee is a payload-enum ctor is NOT
+// yet desugared and REFUSES (0B) — the base emitted 0B here too, so this patch
+// neither introduces nor regresses it.
+// deferred: match-over-payload-enum-ctor on mic@3 refuses (0B) — upgrade path: extend ect_desugar to the match-scrutinee position
+// Variant tags are the 0-based decl positions (Some=0,
+// None=1) — sequential, hence provably unique. Payload-free variants in a
+// payload enum carry an unused payload slot (0).
 //
 // FAIL-CLOSED (refuse -> POISON leaf -> 0-byte compile, never a wrong value
 // or a wrong dispatch):
@@ -4143,6 +4388,20 @@ pub fn const_name_bound(toks: Vec, buf: i64, nlo: i64, nhi: i64) -> i64 {
 // main.mind's own source contains no `::` tokens in code, so none of this
 // runs during self-compile — the self-host loop stays byte-identical modulo
 // its own source growth.
+//
+// SCOPE: this "Option/Result tier" covers the DECLARED-enum path (a value
+// written `Name::Variant(..)` resolving to a user `enum Name { .. }` decl) AND
+// the BUILTIN, UNQUALIFIED constructor form (bare `Some(e)` / `Ok(e)` / `Err(e)`
+// / `None` with NO `Option::`/`Result::` prefix). The built-in form routes
+// through parse_builtin_ctor (bic_kind) to the SAME ast_enum_ctor + ect_desugar
+// chain (emit_boxed_enum_record), matching the Rust oracle's built-in prelude
+// (lower.rs:1117 — Option::Some=tag0, Option::None=tag1, Result::Ok=tag0,
+// Result::Err=tag1): byte-exact 101B in the let-init / return / trailing
+// positions ect_desugar rewrites, fail-closed (0B) elsewhere (call-arg /
+// if-branch / a match scrutinee — the same positions the declared form refuses).
+// The former 42B fail-OPEN on a bare builtin ctor is FIXED. The QUALIFIED
+// builtin form `Option::Some(..)` still refuses (0B).
+// deferred: bare builtin ctor in a call-arg / if-branch / match-scrutinee position refuses (0B, safe) — upgrade path: extend ect_desugar to those positions (same as the declared-enum form)
 
 // Byte-compare a span against the literal payload type `i64`.
 pub fn pnt_span_is_i64(buf: i64, lo: i64, hi: i64) -> i64 {
@@ -4289,19 +4548,31 @@ pub fn pnt_variant_count(toks: Vec, buf: i64, nlo: i64, nhi: i64) -> i64 {
     n
 }
 
-// Tagged 2-word block construction node: the array literal `[tag, payload]`
-// re-spanned to the source path text. The synthetic tag int-lit reuses the
-// proven child1==1 sentinel form (value read directly, span bookkeeping only).
-pub fn pnt_ctor_node(tag: i64, pay: i64, lo: i64, hi: i64) -> i64 {
-    let acc0: Vec = vec_new();
-    let acc1: Vec = vec_push(acc0, ent_syn_node(tag, lo, hi));
-    let acc2: Vec = vec_push(acc1, pay);
-    ast_new_array_lit(lo, hi, vec_addr(acc2), vec_len(acc2))
+// Tagged-record construction node for a SINGLE-PAYLOAD enum: an ast_enum_ctor
+// (kind 35) carrying the synthetic tag int-lit (child0), the payload expr or 0
+// (child1) and the has_payload flag (aux). The ect_desugar statement pass
+// rewrites it into the oracle's alloc/store chain (lower.rs
+// emit_boxed_enum_record: payload eval BEFORE the alloc, tag at +0, payload at
+// +8); positions that pass does not rewrite fail closed (flatten rejects the
+// unknown kind). The node's OWN source span (the construction text) names the
+// desugared alloc handle — unique per construction site, the slit discipline.
+pub fn pnt_ctor_node(tag: i64, pay: i64, lo: i64, hi: i64, has_pay: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0, ast_enum_ctor());
+    __mind_store_i64(n + 8, lo);
+    __mind_store_i64(n + 16, hi);
+    __mind_store_i64(n + 24, ent_syn_node(tag, lo, hi));
+    __mind_store_i64(n + 32, pay);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, has_pay);
+    n
 }
 
 // Expression-position `Name::Variant` where ent_resolve refused: a
-// payload-FREE variant of a single-payload enum constructs `[tag, 0]`; a
-// payload variant WITHOUT its payload refuses.
+// payload-FREE variant of a single-payload enum constructs a tagged record
+// (has_payload=0; the desugar zero-fills the payload slot, matching the
+// oracle's emit_boxed_enum_record zero-fill); a payload variant WITHOUT its
+// payload refuses.
 pub fn parse_epath_nopay(toks: Vec, pos: i64, buf: i64, lo: i64, hi: i64, vhi: i64) -> ParseResult {
     let info: i64 = pnt_variant_info(toks, buf, lo, hi, tok_lo(toks, pos + 3), vhi);
     if info < 0 {
@@ -4310,14 +4581,14 @@ pub fn parse_epath_nopay(toks: Vec, pos: i64, buf: i64, lo: i64, hi: i64, vhi: i
     if info % 2 == 1 {
         return pr_new(pos + 4, ast_new_leaf(ast_unsupported(), lo, vhi));
     }
-    pr_new(pos + 4, pnt_ctor_node(info / 2, mk_syn_intlit(0), lo, vhi))
+    pr_new(pos + 4, pnt_ctor_node(info / 2, 0, lo, vhi, 0))
 }
 
-// Expression-position `Name::Variant( ... )`: a payload variant constructs
-// `[tag, <payload expr>]` (the payload is ONE full expression, `)` required);
-// a payload-free variant called with arguments, an unresolvable path, a
-// missing `)`, or a 2+-argument list (the arg parse stops at `,`, not `)`)
-// refuses.
+// Expression-position `Name::Variant( ... )`: a payload variant constructs a
+// tagged record (has_payload=1; the payload is ONE full expression, `)`
+// required); a payload-free variant called with arguments, an unresolvable
+// path, a missing `)`, or a 2+-argument list (the arg parse stops at `,`, not
+// `)`) refuses.
 pub fn parse_epath_ctor(toks: Vec, pos: i64, buf: i64, lo: i64, hi: i64, vhi: i64) -> ParseResult {
     let info: i64 = pnt_variant_info(toks, buf, lo, hi, tok_lo(toks, pos + 3), vhi);
     if info < 0 {
@@ -4332,7 +4603,365 @@ pub fn parse_epath_ctor(toks: Vec, pos: i64, buf: i64, lo: i64, hi: i64, vhi: i6
         return pr_new(after, ast_new_leaf(ast_unsupported(), lo, vhi));
     }
     let chi: i64 = tok_hi(toks, after);
-    pr_new(after + 1, pnt_ctor_node(info / 2, pr_node(pay), lo, chi))
+    pr_new(after + 1, pnt_ctor_node(info / 2, pr_node(pay), lo, chi, 1))
+}
+
+// ===== Built-in Option/Result constructor (bare, unqualified) =====
+//
+// The Rust oracle installs a built-in Result/Option prelude (lower.rs:1117):
+// Option::Some=tag 0, Option::None=tag 1, Result::Ok=tag 0, Result::Err=tag 1;
+// each is a 2-slot boxed record lowered via emit_boxed_enum_record — the SAME
+// alloc/store chain a DECLARED single-payload enum ctor uses. A bare unqualified
+// `Some(e)` / `Ok(e)` / `Err(e)` / `None` (no `Option::`/`Result::` prefix and
+// no user decl) therefore routes through the ident-arm below to the identical
+// ast_enum_ctor node + ect_desugar path, with ONE structural difference the
+// source itself supplies: the built-in form has NO `enum` decl, so the module
+// emits NO EnumDef top-level item — matching the built-in oracle's 1-item
+// module (101B) vs the declared form's 2-item module (106B). main.mind never
+// spells these names in value position (comments only), so its self-compile is
+// byte-identical.
+
+// Classify a bare built-in Option/Result constructor name span buf[lo..hi):
+// 0 = Some, 1 = Ok, 2 = Err, 3 = None, -1 = not a built-in ctor.
+pub fn bic_kind(buf: i64, lo: i64, hi: i64) -> i64 {
+    let n: i64 = hi - lo;
+    if n == 4 {
+        // "Some" = 83 111 109 101
+        if load_byte(buf, lo) == 83 {
+            if load_byte(buf, lo + 1) == 111 {
+                if load_byte(buf, lo + 2) == 109 {
+                    if load_byte(buf, lo + 3) == 101 {
+                        return 0;
+                    }
+                }
+            }
+        }
+        // "None" = 78 111 110 101
+        if load_byte(buf, lo) == 78 {
+            if load_byte(buf, lo + 1) == 111 {
+                if load_byte(buf, lo + 2) == 110 {
+                    if load_byte(buf, lo + 3) == 101 {
+                        return 3;
+                    }
+                }
+            }
+        }
+        return 0 - 1;
+    }
+    if n == 2 {
+        // "Ok" = 79 107
+        if load_byte(buf, lo) == 79 {
+            if load_byte(buf, lo + 1) == 107 {
+                return 1;
+            }
+        }
+        return 0 - 1;
+    }
+    if n == 3 {
+        // "Err" = 69 114 114
+        if load_byte(buf, lo) == 69 {
+            if load_byte(buf, lo + 1) == 114 {
+                if load_byte(buf, lo + 2) == 114 {
+                    return 2;
+                }
+            }
+        }
+        return 0 - 1;
+    }
+    0 - 1
+}
+
+// The (tag, has_payload) of a bic_kind, encoded as tag*2 + has_payload:
+// Some/Ok = tag 0 payload; Err = tag 1 payload; None = tag 1 no-payload.
+pub fn bic_encoding(kind: i64) -> i64 {
+    if kind == 0 {
+        return 1;
+    }
+    if kind == 1 {
+        return 1;
+    }
+    if kind == 2 {
+        return 3;
+    }
+    2
+}
+
+// Parse a bare built-in Option/Result constructor at `pos` (the ctor-name ident;
+// `kind` = bic_kind result). Some/Ok/Err take exactly ONE payload expression in
+// parens and build a payload ctor node; None is a bare payload-free ctor. Every
+// other shape (a payload ctor without `(expr)`, None CALLED with args, a missing
+// `)`, a 2+-arg list — the arg parse stops at `,`) fails CLOSED (POISON leaf),
+// never a wrong-value call emit. The ast_enum_ctor node routes through
+// ect_desugar exactly like the declared-enum ctor.
+pub fn parse_builtin_ctor(toks: Vec, pos: i64, buf: i64, lo: i64, hi: i64, kind: i64) -> ParseResult {
+    let enc: i64 = bic_encoding(kind);
+    let tag: i64 = enc / 2;
+    let has_pay: i64 = enc % 2;
+    if has_pay == 0 {
+        // None: a `(` after it is `None(args)` — refuse (never call a nopay ctor).
+        if at_eof(toks, pos + 1) == 0 {
+            if tok_kind(toks, pos + 1) == tk_lparen() {
+                return pr_new(pos + 1, ast_new_leaf(ast_unsupported(), lo, hi));
+            }
+        }
+        return pr_new(pos + 1, pnt_ctor_node(tag, 0, lo, hi, 0));
+    }
+    // Some/Ok/Err: require `( expr )`; a bare `Some` (no parens) is not a value.
+    if at_eof(toks, pos + 1) == 1 {
+        return pr_new(pos + 1, ast_new_leaf(ast_unsupported(), lo, hi));
+    }
+    if tok_kind(toks, pos + 1) != tk_lparen() {
+        return pr_new(pos + 1, ast_new_leaf(ast_unsupported(), lo, hi));
+    }
+    let pay: ParseResult = parse_expr(toks, pos + 2, buf);
+    let after: i64 = pr_pos(pay);
+    if tok_kind(toks, after) != tk_rparen() {
+        return pr_new(after, ast_new_leaf(ast_unsupported(), lo, hi));
+    }
+    let chi: i64 = tok_hi(toks, after);
+    pr_new(after + 1, pnt_ctor_node(tag, pr_node(pay), lo, chi, 1))
+}
+
+// ===== Enum-ctor STATEMENT desugar (alloc/store record chain) =====
+//
+// The oracle lowers a single-payload enum construction (lower.rs
+// emit_boxed_enum_record) to:
+//   <payload instrs first> ; 8*slots ; __mind_alloc ; store tag at +0 ;
+//   store payload (or a fresh const 0) at +8
+// and the construction VALUE is the alloc handle. This pass rewrites a
+// TOP-LEVEL fn-body statement that DIRECTLY constructs one (let-init /
+// return-value / trailing-or-bare expression) into exactly that let-chain,
+// mirroring the slit (struct-lit) desugar discipline:
+//   let o: O = O::Some(p);  ->  let <p-span>  = p;
+//                               let <ctor-span> = __mind_alloc(8 * 2);
+//                               let <store-span> = __mind_store_i64(<ctor-span>, <tag>);
+//                               let <store-span> = __mind_store_i64(<ctor-span> + 8, <p-span>);
+//                               let o: O = <ctor-span>;
+// (payload-free variant: no first let; the +8 store value is a fresh const 0).
+// Synthetic let NAMES are compile-time only (never emitted): the payload let
+// carries the payload's own span, the alloc handle the ctor's own span
+// (unique per construction site — slit's per-ctor handle discipline), the
+// store lets the interned __mind_store_i64 span (never referenced). Positional
+// last-match in letenv_lookup ties each reference to ITS chain even when two
+// constructions share name bytes. The alloc/store CALLEE idents carry the
+// interned (alo,ahi)/(slo,shi) spans, so the strtab pass interns them
+// first-seen in body order — the oracle's collect order. A ctor this pass
+// does NOT rewrite (nested / if-branch / call-arg positions) keeps kind 35
+// and every flatten fails closed on it — never a wrong-value emit.
+
+// The enum-ctor node a statement DIRECTLY constructs, or 0 (no direct ctor):
+// let-init, return-value, or a bare expression statement.
+pub fn ect_stmt_ctor(stmt: i64) -> i64 {
+    let k: i64 = ast_kind(stmt);
+    if k == ast_let() {
+        let init: i64 = ast_child2(stmt);
+        if ast_kind(init) == ast_enum_ctor() {
+            return init;
+        }
+        return 0;
+    }
+    if k == ast_return() {
+        let v: i64 = ast_child0(stmt);
+        if v == 0 {
+            return 0;
+        }
+        if ast_kind(v) == ast_enum_ctor() {
+            return v;
+        }
+        return 0;
+    }
+    if k == ast_enum_ctor() {
+        return stmt;
+    }
+    0
+}
+
+// One store LET: `let <store-span> = __mind_store_i64(<addr>, <val>)` — the
+// slit_build_store_let shape (a let whose init is the 2-arg store call; the
+// binding is inert, the call instrs are what emit).
+pub fn ect_build_store(addr: i64, val: i64, slo: i64, shi: i64) -> i64 {
+    let callee: i64 = ast_new_leaf(ast_ident(), slo, shi);
+    let args: i64 = __mind_alloc(16);
+    __mind_store_i64(args + 0, addr);
+    __mind_store_i64(args + 8, val);
+    let call: i64 = ast_new_call(0, 0, callee, args, 2);
+    let name: i64 = ast_new_leaf(ast_ident(), slo, shi);
+    ast_new_let(0, 0, name, 0, call)
+}
+
+// The number of output statements `stmt` expands to (1 = unchanged). Chain
+// lengths: payload variant = payload-let + alloc + 2 stores (4); payload-FREE
+// variant = alloc + tag store + ZERO-let + zero-fill store (4 — the zero-let
+// precedes the +8 store because the oracle emits the zero-fill VALUE const
+// BEFORE the offset/add, and a store flattens addr-before-value). A bare
+// trailing ctor keeps a final handle-ref value (is_trail=1); a bare ctor among
+// other statements is DISCARDED (chain only, no final — the oracle keeps the
+// side effects, drops the value).
+pub fn ect_stmt_outn(stmt: i64, is_trail: i64) -> i64 {
+    let cnode: i64 = ect_stmt_ctor(stmt);
+    if cnode == 0 {
+        return 1;
+    }
+    let k: i64 = ast_kind(stmt);
+    if k == ast_let() {
+        return 5;
+    }
+    if k == ast_return() {
+        return 5;
+    }
+    if is_trail == 1 {
+        return 5;
+    }
+    4
+}
+
+// Emit one ctor's chain into new_stmts[out..]. Returns the count written.
+pub fn ect_emit_ctor(new_stmts: i64, out: i64, stmt: i64, cnode: i64, is_trail: i64, alo: i64, ahi: i64, slo: i64, shi: i64) -> i64 {
+    let hlo: i64 = ast_span_lo(cnode);
+    let hhi: i64 = ast_span_hi(cnode);
+    let has_pay: i64 = ast_aux(cnode);
+    // 1. Payload let FIRST — the oracle lowers payloads before the alloc.
+    let wp: i64 = if has_pay == 1 {
+        let pay: i64 = ast_child1(cnode);
+        let pname: i64 = ast_new_leaf(ast_ident(), ast_span_lo(pay), ast_span_hi(pay));
+        __mind_store_i64(new_stmts + out * 8, ast_new_let(0, 0, pname, 0, pay));
+        out + 1
+    } else {
+        out
+    };
+    // 2. Alloc let: let <ctor-span> = __mind_alloc(8 * 2).
+    let size: i64 = ast_new_binop(0, 0, mk_syn_intlit(8), mk_syn_intlit(2), op_mul());
+    let acallee: i64 = ast_new_leaf(ast_ident(), alo, ahi);
+    let aargs: i64 = __mind_alloc(8);
+    __mind_store_i64(aargs + 0, size);
+    let acall: i64 = ast_new_call(0, 0, acallee, aargs, 1);
+    let aname: i64 = ast_new_leaf(ast_ident(), hlo, hhi);
+    __mind_store_i64(new_stmts + wp * 8, ast_new_let(0, 0, aname, 0, acall));
+    // 3. Tag store at +0 (no add — the oracle stores directly at the handle).
+    let href: i64 = ast_new_leaf(ast_ident(), hlo, hhi);
+    let s0: i64 = ect_build_store(href, ast_child0(cnode), slo, shi);
+    __mind_store_i64(new_stmts + (wp + 1) * 8, s0);
+    // 4. Payload store at +8 — or, for a payload-FREE variant, a ZERO-let
+    // followed by the zero-fill store. The zero-let comes FIRST because the
+    // oracle's emit_boxed_enum_record emits the zero-fill VALUE const before
+    // the offset/add, while a store statement flattens addr-before-value. The
+    // zero-let's name is the ctor span TRIMMED by one byte — a span no real
+    // identifier can carry (`:` never appears in a name) and no other chain
+    // node uses, so its store reference resolves to it alone (the handle keeps
+    // the full ctor span).
+    let s1pos: i64 = if has_pay == 1 {
+        wp + 2
+    } else {
+        let zname: i64 = ast_new_leaf(ast_ident(), hlo, hhi - 1);
+        __mind_store_i64(new_stmts + (wp + 2) * 8, ast_new_let(0, 0, zname, 0, mk_syn_intlit(0)));
+        wp + 3
+    };
+    let sval: i64 = if has_pay == 1 {
+        let payv: i64 = ast_child1(cnode);
+        ast_new_leaf(ast_ident(), ast_span_lo(payv), ast_span_hi(payv))
+    } else {
+        ast_new_leaf(ast_ident(), hlo, hhi - 1)
+    };
+    let href8: i64 = ast_new_leaf(ast_ident(), hlo, hhi);
+    let addr8: i64 = ast_new_binop(0, 0, href8, mk_syn_intlit(8), op_add());
+    let s1: i64 = ect_build_store(addr8, sval, slo, shi);
+    __mind_store_i64(new_stmts + s1pos * 8, s1);
+    // 5. Final statement (let-bind / return / trailing value) — a bare
+    // non-trailing ctor is discarded (no final).
+    let k: i64 = ast_kind(stmt);
+    let nfinal: i64 = if k == ast_let() {
+        let href3: i64 = ast_new_leaf(ast_ident(), hlo, hhi);
+        __mind_store_i64(new_stmts + (s1pos + 1) * 8, ast_new_let(0, 0, ast_child0(stmt), ast_child1(stmt), href3));
+        1
+    } else {
+        if k == ast_return() {
+            let href3: i64 = ast_new_leaf(ast_ident(), hlo, hhi);
+            __mind_store_i64(new_stmts + (s1pos + 1) * 8, ast_new_return(0, 0, href3));
+            1
+        } else {
+            if is_trail == 1 {
+                let href3: i64 = ast_new_leaf(ast_ident(), hlo, hhi);
+                __mind_store_i64(new_stmts + (s1pos + 1) * 8, href3);
+                1
+            } else {
+                0
+            }
+        }
+    };
+    s1pos + 1 + nfinal - out
+}
+
+// Expanded statement count for a body.
+pub fn ect_seq_len(stmts_addr: i64, stmts_len: i64, i: i64, acc: i64) -> i64 {
+    if i >= stmts_len {
+        return acc;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let is_trail: i64 = if i == stmts_len - 1 {
+        1
+    } else {
+        0
+    };
+    ect_seq_len(stmts_addr, stmts_len, i + 1, acc + ect_stmt_outn(stmt, is_trail))
+}
+
+// Fill the expanded statement array (slit_seq_fill discipline).
+pub fn ect_seq_fill(new_stmts: i64, out_cell: i64, stmts_addr: i64, stmts_len: i64, alo: i64, ahi: i64, slo: i64, shi: i64, i: i64) -> i64 {
+    if i >= stmts_len {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let out: i64 = __mind_load_i64(out_cell);
+    let cnode: i64 = ect_stmt_ctor(stmt);
+    if cnode == 0 {
+        __mind_store_i64(new_stmts + out * 8, stmt);
+        __mind_store_i64(out_cell, out + 1)
+    } else {
+        let is_trail: i64 = if i == stmts_len - 1 {
+            1
+        } else {
+            0
+        };
+        let n: i64 = ect_emit_ctor(new_stmts, out, stmt, cnode, is_trail, alo, ahi, slo, shi);
+        __mind_store_i64(out_cell, out + n)
+    }
+    ect_seq_fill(new_stmts, out_cell, stmts_addr, stmts_len, alo, ahi, slo, shi, i + 1)
+}
+
+// Desugar enum-ctor statements in a fn's TOP-LEVEL body block. Does NOT
+// recurse into if-blocks (same scope gate as slit_desugar_body_seq — a named
+// let inside a branch would wrongly escape as a merge binding). Returns 1 if
+// the body was rewritten, else 0.
+pub fn ect_desugar_body(fn_node: i64, alo: i64, ahi: i64, slo: i64, shi: i64) -> i64 {
+    let body: i64 = ast_child2(fn_node);
+    if ast_kind(body) != ast_block() {
+        return 0;
+    }
+    let stmts_addr: i64 = ast_child0(body);
+    let stmts_len: i64 = ast_aux(body);
+    let new_len: i64 = ect_seq_len(stmts_addr, stmts_len, 0, 0);
+    if new_len == stmts_len {
+        return 0;
+    }
+    let new_stmts: i64 = __mind_alloc(new_len * 8);
+    let out_cell: i64 = __mind_alloc(8);
+    __mind_store_i64(out_cell, 0);
+    let _fl: i64 = ect_seq_fill(new_stmts, out_cell, stmts_addr, stmts_len, alo, ahi, slo, shi, 0);
+    __mind_store_i64(body + 24, new_stmts);
+    __mind_store_i64(body + 48, new_len);
+    1
+}
+
+// Module pass: desugar enum-ctor constructions in every top-level fn_def.
+pub fn ect_desugar_module(items_addr: i64, items_len: i64, alo: i64, ahi: i64, slo: i64, shi: i64, i: i64) -> i64 {
+    if i >= items_len {
+        return 0;
+    }
+    let item: i64 = __mind_load_i64(items_addr + i * 8);
+    if ast_kind(item) == ast_fn_def() {
+        let _r: i64 = ect_desugar_body(item, alo, ahi, slo, shi);
+    }
+    ect_desugar_module(items_addr, items_len, alo, ahi, slo, shi, i + 1)
 }
 
 // Copy `n` statement slots from src[0..n) into dst[1..n+1) (slot 0 is the
@@ -7941,7 +8570,13 @@ pub fn arr_elem_desugar_ok(elem: i64) -> i64 {
         }
         return arr_elems_desugar_ok(ast_child1(elem), ast_aux(elem), 0);
     }
+    // Struct-lit elements are supported when the annotation pass recorded their
+    // construction (node+56): flatten_arr_pushes emits it inline via
+    // flatten_struct_lit_lv. Unannotated stays fail-closed.
     if k == ast_struct_lit() {
+        if __mind_load_i64(elem + 56) != 0 {
+            return 1;
+        }
         return 0;
     }
     1
@@ -9803,26 +10438,69 @@ pub fn collect_fn_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, fn_node:
     let body: i64 = ast_child2(fn_node);
     let stmts_addr: i64 = ast_child0(body);
     let stmts_len: i64 = ast_aux(body);
-    collect_body_strings(strbuf, offs, ccell, src, stmts_addr, stmts_len, 0)
+    // In-scope NAME env for the break/continue live-snapshot interning: 24-byte
+    // [lo,hi,-] records, appended per `let` along each statement walk (block-local
+    // additions stay local to the block — the count threads by value). Capacity
+    // bound: every `let` needs >= 4 source bytes ("let "), so the fn span bounds
+    // the deepest append path. The env interns NOTHING by itself — only a
+    // break/continue marker reads it (sorted, shadow-deduped).
+    let fn_span: i64 = ast_span_hi(fn_node) - ast_span_lo(fn_node);
+    let ebuf: i64 = __mind_alloc((fn_span / 4 + 16) * 24);
+    collect_body_strings(strbuf, offs, ccell, src, stmts_addr, stmts_len, 0, ebuf, 0)
+}
+
+// Append a let-name's (lo,hi) span to the name env (dedup happens at snapshot
+// time — a shadowed earlier entry is dropped there, innermost wins). Returns the
+// new count.
+pub fn bc_env_append(ebuf: i64, en: i64, name: i64) -> i64 {
+    __mind_store_i64(ebuf + en * 24 + 0, ast_span_lo(name));
+    __mind_store_i64(ebuf + en * 24 + 8, ast_span_hi(name));
+    __mind_store_i64(ebuf + en * 24 + 16, 0);
+    en + 1
+}
+
+// Intern the break/continue live snapshot for the CURRENT name env: unique names
+// (innermost wins — mirrors the Rust name->vid env map), sorted by name bytes
+// (lower.rs Break/Continue arm: env captured, then `live.sort_by(name)`). This is
+// where the Rust collect pass first sees those names, so interning here keeps the
+// strtab first-seen order byte-exact.
+pub fn bc_intern_snapshot(strbuf: i64, offs: i64, ccell: i64, src: i64, ebuf: i64, en: i64) -> i64 {
+    let snap: i64 = __mind_alloc((en + 1) * 24);
+    let n: i64 = lvenv_snapshot_unique(ebuf, en, src, snap, 0, 0);
+    let _s: i64 = lvenv_sort_by_name(snap, n, src, 1);
+    intern_name_span_buf(strbuf, offs, ccell, src, snap, n, 0)
 }
 
 // Intern call-callee names appearing in a fn body, in statement+expression order,
 // mirroring Rust collect_strings -> collect_instr_strings recursion. Only the
 // constructs the AST-driven path emits are walked (let-init, call); other leaves
-// intern nothing. Idempotent via intern_span's first-seen dedup.
-pub fn collect_body_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, stmts_addr: i64, stmts_len: i64, i: i64) -> i64 {
+// intern nothing. Idempotent via intern_span's first-seen dedup. (ebuf,en) is the
+// in-scope name env for break/continue snapshots; a `let` appends its name for
+// the statements that FOLLOW it.
+pub fn collect_body_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, stmts_addr: i64, stmts_len: i64, i: i64, ebuf: i64, en: i64) -> i64 {
     if i >= stmts_len {
         return 0;
     }
     let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
-    let r: i64 = collect_expr_strings(strbuf, offs, ccell, src, stmt);
-    collect_body_strings(strbuf, offs, ccell, src, stmts_addr, stmts_len, i + 1)
+    let r: i64 = collect_expr_strings(strbuf, offs, ccell, src, stmt, ebuf, en);
+    let en2: i64 = if ast_kind(stmt) == ast_let() {
+        bc_env_append(ebuf, en, ast_child0(stmt))
+    } else {
+        en
+    };
+    collect_body_strings(strbuf, offs, ccell, src, stmts_addr, stmts_len, i + 1, ebuf, en2)
 }
 
-pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: i64) -> i64 {
+pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: i64, ebuf: i64, en: i64) -> i64 {
     let k: i64 = ast_kind(node);
+    if k == ast_break() {
+        return bc_intern_snapshot(strbuf, offs, ccell, src, ebuf, en);
+    }
+    if k == ast_continue() {
+        return bc_intern_snapshot(strbuf, offs, ccell, src, ebuf, en);
+    }
     if k == ast_let() {
-        return collect_expr_strings(strbuf, offs, ccell, src, ast_child2(node));
+        return collect_expr_strings(strbuf, offs, ccell, src, ast_child2(node), ebuf, en);
     }
     if k == ast_call() {
         // A call `f(a, b)` lowers to [a's instrs, b's instrs, CALL f] — the CALL instr's
@@ -9837,8 +10515,19 @@ pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: 
         return intern_span(strbuf, offs, ccell, src, ast_span_lo(callee), ast_span_hi(callee));
     }
     if k == ast_binop() {
-        let rl: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node));
-        return collect_expr_strings(strbuf, offs, ccell, src, ast_child1(node));
+        let rl: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node), ebuf, en);
+        return collect_expr_strings(strbuf, offs, ccell, src, ast_child1(node), ebuf, en);
+    }
+    if k == ast_index() {
+        // `BASE[IDX]`: ArrayLoad carries no name, but the base's instrs precede the
+        // index's (src/eval/lower.rs ArrayLoad). Recurse base first so a TEMP array
+        // literal base (`[x, x+10][1]`) interns its vec_new/vec_push chain at the
+        // oracle's first-seen position — previously the base was never walked and the
+        // emitted vec calls carried a -1 callee index (wrong bytes). A let-bound array
+        // base (ast_ident) interns nothing here (its names intern at the let), so every
+        // existing array fixture stays byte-identical.
+        let rb: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node), ebuf, en);
+        return collect_expr_strings(strbuf, offs, ccell, src, ast_child1(node), ebuf, en);
     }
     if k == ast_field() {
         // FieldAccess lowers (src/eval/lower.rs ast::Node::FieldAccess resolved arm)
@@ -9846,7 +10535,7 @@ pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: 
         // Call("__mind_load_i64", [addr]). Mirror the Rust collect order: recurse
         // the receiver first (its own Call names, if any, intern before this one),
         // then intern the synthetic load-call name. CONST/BINOP intern nothing.
-        let rr: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node));
+        let rr: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node), ebuf, en);
         return intern_load_i64_name(strbuf, offs, ccell);
     }
     if k == ast_if() {
@@ -9860,14 +10549,14 @@ pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: 
         // that escapes the then-block as a merge binds its name into the strtab; the
         // 2-let oracle decode confirmed source order (x before y), branch-bindings-last
         // (a call after the let interns BEFORE the let name). No-let blocks: no-op.
-        let rc: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node));
+        let rc: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node), ebuf, en);
         let then_blk: i64 = ast_child1(node);
         let then_sa: i64 = ast_child0(then_blk);
         let then_sl: i64 = ast_aux(then_blk);
-        let rt: i64 = collect_block_strings(strbuf, offs, ccell, src, then_sa, then_sl, 0);
+        let rt: i64 = collect_block_strings(strbuf, offs, ccell, src, then_sa, then_sl, 0, ebuf, en);
         let else_blk: i64 = ast_child2(node);
         if else_blk != 0 {
-            let re: i64 = collect_block_strings(strbuf, offs, ccell, src, ast_child0(else_blk), ast_aux(else_blk), 0);
+            let re: i64 = collect_block_strings(strbuf, offs, ccell, src, ast_child0(else_blk), ast_aux(else_blk), 0, ebuf, en);
         }
         // branch_bindings names = merged_names = then-WRITES ++ else-WRITES (deduped,
         // first-occurrence order; lower.rs 4203-4208). A "write" is a branch-local `let`
@@ -9900,16 +10589,16 @@ pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: 
         return 0;
     }
     if k == ast_return() {
-        return collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node));
+        return collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node), ebuf, en);
     }
     if k == ast_while() {
         // Mirror Rust collect_instr_strings Instr::While: cond strings, then body
         // strings (each stmt in source order), then the loop-carried (live_var) NAMES.
-        let rc: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node));
+        let rc: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node), ebuf, en);
         let body_blk: i64 = ast_child1(node);
         let body_sa: i64 = ast_child0(body_blk);
         let body_sl: i64 = ast_aux(body_blk);
-        let rb: i64 = collect_block_strings(strbuf, offs, ccell, src, body_sa, body_sl, 0);
+        let rb: i64 = collect_block_strings(strbuf, offs, ccell, src, body_sa, body_sl, 0, ebuf, en);
         // live_var names = assign-targets NOT declared by a `let` earlier in this body
         // (loop-carried = pre-loop vars), in first-assign source order.
         return intern_while_live_names(strbuf, offs, ccell, src, body_sa, body_sl, 0);
@@ -9917,7 +10606,7 @@ pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: 
     if k == ast_assign() {
         // An assign statement's RHS supplies its strings (the target name is interned by
         // the enclosing while's live_var pass, not here).
-        return collect_expr_strings(strbuf, offs, ccell, src, ast_child2(node));
+        return collect_expr_strings(strbuf, offs, ccell, src, ast_child2(node), ebuf, en);
     }
     if k == ast_array_lit() {
         // NON-CONST array literal (#40): mirror lower_array_surface_lit's instruction
@@ -9961,7 +10650,9 @@ pub fn collect_arr_push_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, el
     if j >= count {
         return 0;
     }
-    let _e: i64 = collect_expr_strings(strbuf, offs, ccell, src, __mind_load_i64(elems_addr + j * 8));
+    // Pure-expression context (array elements): no statement Vec is reachable, so
+    // no break/continue can appear — the name env is empty here.
+    let _e: i64 = collect_expr_strings(strbuf, offs, ccell, src, __mind_load_i64(elems_addr + j * 8), 0, 0);
     let _vp: i64 = intern_vec_push_name(strbuf, offs, ccell);
     collect_arr_push_strings(strbuf, offs, ccell, src, elems_addr, count, j + 1)
 }
@@ -9971,7 +10662,8 @@ pub fn slit_collect_field_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, 
     if j >= nf {
         return 0;
     }
-    let _v: i64 = collect_expr_strings(strbuf, offs, ccell, src, __mind_load_i64(values + j * 8));
+    // Pure-expression context (field values): no break/continue reachable — empty env.
+    let _v: i64 = collect_expr_strings(strbuf, offs, ccell, src, __mind_load_i64(values + j * 8), 0, 0);
     let _is: i64 = intern_span(strbuf, offs, ccell, src, slo, shi);
     slit_collect_field_strings(strbuf, offs, ccell, src, values, nf, slo, shi, j + 1)
 }
@@ -9979,13 +10671,21 @@ pub fn slit_collect_field_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, 
 // Collect strings from a block's statements in source order (each stmt via
 // collect_expr_strings: a let recurses its init, an if recurses cond/then/else,
 // a return its value). Used by the ast_if arm to walk if-body sub-statements.
-pub fn collect_block_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, stmts_addr: i64, stmts_len: i64, i: i64) -> i64 {
+// (ebuf,en) is the in-scope name env for break/continue snapshots; a block-local
+// `let` appends its name only for the statements that follow it IN THIS BLOCK
+// (the count threads by value, so the addition never leaks past the block).
+pub fn collect_block_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, stmts_addr: i64, stmts_len: i64, i: i64, ebuf: i64, en: i64) -> i64 {
     if i >= stmts_len {
         return 0;
     }
     let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
-    let r: i64 = collect_expr_strings(strbuf, offs, ccell, src, stmt);
-    collect_block_strings(strbuf, offs, ccell, src, stmts_addr, stmts_len, i + 1)
+    let r: i64 = collect_expr_strings(strbuf, offs, ccell, src, stmt, ebuf, en);
+    let en2: i64 = if ast_kind(stmt) == ast_let() {
+        bc_env_append(ebuf, en, ast_child0(stmt))
+    } else {
+        en
+    };
+    collect_block_strings(strbuf, offs, ccell, src, stmts_addr, stmts_len, i + 1, ebuf, en2)
 }
 
 // Intern the NAMES of ALL `let` statements of a then-block (its OP_IF
@@ -10100,7 +10800,8 @@ pub fn collect_args_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, args_a
         return 0;
     }
     let arg: i64 = __mind_load_i64(args_addr + i * 8);
-    let r: i64 = collect_expr_strings(strbuf, offs, ccell, src, arg);
+    // Pure-expression context (call args): no statement Vec reachable — empty env.
+    let r: i64 = collect_expr_strings(strbuf, offs, ccell, src, arg, 0, 0);
     collect_args_strings(strbuf, offs, ccell, src, args_addr, args_len, i + 1)
 }
 
@@ -15440,6 +16141,58 @@ pub fn mk_syn_intlit(value: i64) -> i64 {
 // list, recursing through if then/else blocks. Returns the type node, or 0 if no such
 // let. Names are SSA-unique in the bootstrap source (s1, s2, ..) so the first match is
 // authoritative.
+// Skip spaces/tabs/newlines/CRs from i (self-contained mirror of field_ty_skip_ws,
+// defined ahead of its caller so no forward reference).
+pub fn let_init_skip_ws(src: i64, i: i64) -> i64 {
+    let b: i64 = load_byte(src, i);
+    if b == 32 {
+        return let_init_skip_ws(src, i + 1);
+    }
+    if b == 9 {
+        return let_init_skip_ws(src, i + 1);
+    }
+    if b == 10 {
+        return let_init_skip_ws(src, i + 1);
+    }
+    if b == 13 {
+        return let_init_skip_ws(src, i + 1);
+    }
+    i
+}
+
+// When an UNANNOTATED let binds a desugared struct-lit handle (`let s = P{..}`,
+// which the slit desugar rewrites to `let s = <handle>` whose init is an ast_ident
+// spanning the struct-lit source `P { .. }`), recover the struct TYPE from that
+// handle's span: the leading identifier of a struct-lit span is the struct name,
+// immediately followed (past whitespace) by `{`. Mirrors the oracle's infer_struct
+// StructLit arm (struct_resolver.rs), so a later `s.field` prefold resolves the
+// receiver's struct type. Returns a synthetic ident leaf spanning the struct NAME
+// (for srt_find_by_name), or 0 when the init is not a struct-lit handle (scalar /
+// var / call init — stays fail-closed). Gated to annotation==0 lets only, so every
+// annotated let (all of main.mind's EmitState bindings) is untouched — keystone-safe.
+pub fn let_struct_ty_from_init(src: i64, init: i64) -> i64 {
+    if init == 0 {
+        return 0;
+    }
+    if ast_kind(init) != ast_ident() {
+        return 0;
+    }
+    let lo: i64 = ast_span_lo(init);
+    let hi: i64 = ast_span_hi(init);
+    if lo >= hi {
+        return 0;
+    }
+    if is_alpha(load_byte(src, lo)) == 0 {
+        return 0;
+    }
+    let name_end: i64 = scan_ident_end(src, lo, hi);
+    let brace_i: i64 = let_init_skip_ws(src, name_end);
+    if load_byte(src, brace_i) != 123 {
+        return 0;
+    }
+    ast_new_leaf(ast_ident(), lo, name_end)
+}
+
 pub fn find_let_ty_in_stmts(stmts_addr: i64, stmts_len: i64, src: i64, recv_lo: i64, recv_hi: i64, i: i64) -> i64 {
     if i >= stmts_len {
         return 0;
@@ -15449,7 +16202,11 @@ pub fn find_let_ty_in_stmts(stmts_addr: i64, stmts_len: i64, src: i64, recv_lo: 
     if k == ast_let() {
         let name: i64 = ast_child0(stmt);
         if span_bytes_equal(src, recv_lo, recv_hi, ast_span_lo(name), ast_span_hi(name)) == 1 {
-            return ast_child1(stmt);
+            let ann: i64 = ast_child1(stmt);
+            if ann != 0 {
+                return ann;
+            }
+            return let_struct_ty_from_init(src, ast_child2(stmt));
         }
     }
     if k == ast_if() {
@@ -15502,6 +16259,79 @@ pub fn field_recv_field_idx(fn_node: i64, src: i64, srt: i64, recv_lo: i64, recv
     srt_field_index(srt, k, src, fld_lo, fld_hi, 0)
 }
 
+// Skip spaces/tabs/newlines/CRs from i; returns the first non-ws offset.
+pub fn field_ty_skip_ws(src: i64, i: i64) -> i64 {
+    let b: i64 = load_byte(src, i);
+    if b == 32 {
+        return field_ty_skip_ws(src, i + 1);
+    }
+    if b == 9 {
+        return field_ty_skip_ws(src, i + 1);
+    }
+    if b == 10 {
+        return field_ty_skip_ws(src, i + 1);
+    }
+    if b == 13 {
+        return field_ty_skip_ws(src, i + 1);
+    }
+    i
+}
+
+// Span of field j's TYPE name in struct k's declaration (`q: Q,` -> the `Q`
+// token right after the colon). The registry stores field NAME spans only; the
+// type token is scanned from source on demand (no registry reshape). Writes
+// [lo, hi] to cell and returns 1; returns 0 when the type is not a simple
+// identifier (Vec<..>, [T; N], tuple — chains through those stay fail-closed).
+pub fn srt_field_ty_span(t: i64, k: i64, j: i64, src: i64, cell: i64) -> i64 {
+    let mut_i: i64 = field_ty_skip_ws(src, srt_field_hi(t, k, j));
+    if load_byte(src, mut_i) != 58 {
+        return 0;
+    }
+    let tstart: i64 = field_ty_skip_ws(src, mut_i + 1);
+    if is_alpha(load_byte(src, tstart)) == 0 {
+        return 0;
+    }
+    let tend: i64 = scan_ident_end(src, tstart, tstart + 64);
+    __mind_store_i64(cell + 0, tstart);
+    __mind_store_i64(cell + 8, tend);
+    1
+}
+
+// The TYPE node of a field access `recv.f` — the declared type of field f in
+// recv's struct type; 0 when unresolvable. Recurses through field receivers so
+// a chain `p.q.z` resolves the intermediate type (P.q : Q) for the outer read.
+pub fn field_access_ty(fn_node: i64, src: i64, srt: i64, node: i64) -> i64 {
+    if ast_kind(node) != ast_field() {
+        return 0;
+    }
+    let recv: i64 = strip_parens(ast_child0(node));
+    let rty: i64 = if ast_kind(recv) == ast_ident() {
+        field_recv_ty(fn_node, src, ast_span_lo(recv), ast_span_hi(recv))
+    } else {
+        if ast_kind(recv) == ast_field() {
+            field_access_ty(fn_node, src, srt, recv)
+        } else {
+            0
+        }
+    };
+    if rty == 0 {
+        return 0;
+    }
+    let k: i64 = srt_find_by_name(srt, src, ast_span_lo(rty), ast_span_hi(rty), 0);
+    if k < 0 {
+        return 0;
+    }
+    let j: i64 = srt_field_index(srt, k, src, ast_child1(node), ast_child2(node), 0);
+    if j < 0 {
+        return 0;
+    }
+    let cell: i64 = __mind_alloc(16);
+    if srt_field_ty_span(srt, k, j, src, cell) == 0 {
+        return 0;
+    }
+    ast_new_leaf(ast_ident(), __mind_load_i64(cell + 0), __mind_load_i64(cell + 8))
+}
+
 // Build the `__mind_load_i64(field_addr)` Call subtree for `recv.field` at field
 // index `fidx`. idx==0 -> addr is the receiver node directly; idx>0 -> Add(recv,
 // const idx*8). callee = ast_ident leaf spanning the source "__mind_load_i64".
@@ -15536,11 +16366,30 @@ pub fn field_rewrite_expr(node: i64, src: i64, srt: i64, fn_node: i64, load_lo: 
     }
     let k: i64 = ast_kind(node);
     if k == ast_field() {
-        let recv: i64 = field_rewrite_expr(ast_child0(node), src, srt, fn_node, load_lo, load_hi);
+        let orig: i64 = ast_child0(node);
+        let recv: i64 = field_rewrite_expr(orig, src, srt, fn_node, load_lo, load_hi);
         __mind_store_i64(node + 24, recv);
         // Strip parens around the receiver so `(s).a` resolves like `s.a`.
         let bare: i64 = strip_parens(recv);
         if ast_kind(bare) != ast_ident() {
+            // CHAINED field-read (`p.q.z`): the inner access folded to a load
+            // call. Resolve the chain's type from the ORIGINAL receiver (still
+            // an ast_field), then fold the outer read on the folded receiver —
+            // the oracle's `__mind_load_i64(__mind_load_i64(p) + idx*8)` shape.
+            // Unresolvable chains keep the old fall-through (fail-closed
+            // downstream), never a guessed rewrite.
+            if ast_kind(orig) == ast_field() {
+                let oty: i64 = field_access_ty(fn_node, src, srt, orig);
+                if oty != 0 {
+                    let ok: i64 = srt_find_by_name(srt, src, ast_span_lo(oty), ast_span_hi(oty), 0);
+                    if ok >= 0 {
+                        let cidx: i64 = srt_field_index(srt, ok, src, ast_child1(node), ast_child2(node), 0);
+                        if cidx >= 0 {
+                            return field_build_load_call(bare, cidx, load_lo, load_hi);
+                        }
+                    }
+                }
+            }
             return node;
         }
         let fidx: i64 = field_recv_field_idx(fn_node, src, srt, ast_span_lo(bare), ast_span_hi(bare), ast_child1(node), ast_child2(node));
@@ -15917,8 +16766,9 @@ pub fn slit_canon_value(fields_addr: i64, ntriples: i64, src: i64, srt: i64, k: 
 }
 
 // Build `let __sN = __mind_store_i64(addr, val)` for canonical field index `j`:
-// addr = ptr ref (j==0) or Add(ptr, idx*8). The let name + ptr ref reuse the
-// `__mind_alloc` span (alo/ahi); the store callee + let name reuse `__mind_store_i64`.
+// addr = ptr ref (j==0) or Add(ptr, idx*8). The ptr ref carries the caller's
+// per-construction handle span (the struct-lit's own source span, passed via
+// alo/ahi); the store callee + let name reuse `__mind_store_i64`.
 // Bind the field VALUE to a let BEFORE its store, so the value is emitted ahead of the
 // store address — matching the oracle's StructLit lowering (eval field value, THEN compute
 // the address, THEN store). The let's name span = the value node's own span (unique per
@@ -15946,20 +16796,12 @@ pub fn slit_build_store_let(alo: i64, ahi: i64, slo: i64, shi: i64, j: i64, vref
 
 // Fill new_stmts[1 .. 1+nfields] with per-canonical-field store-lets. Returns 1, or
 // 0 if any canonical field is missing from the literal (fail-closed).
-pub fn slit_fill_stores(new_stmts: i64, fields_addr: i64, ntriples: i64, src: i64, srt: i64, k: i64, nfields: i64, alo: i64, ahi: i64, slo: i64, shi: i64, j: i64) -> i64 {
-    if j >= nfields {
-        return 1;
-    }
-    let val: i64 = slit_canon_value(fields_addr, ntriples, src, srt, k, j);
-    if val == 0 {
-        return 0;
-    }
-    let vlet: i64 = slit_build_value_let(val);
-    let vref: i64 = ast_new_leaf(ast_ident(), ast_span_lo(val), ast_span_hi(val));
-    let slet: i64 = slit_build_store_let(alo, ahi, slo, shi, j, vref);
-    __mind_store_i64(new_stmts + (1 + 2 * j) * 8, vlet);
-    __mind_store_i64(new_stmts + (1 + 2 * j + 1) * 8, slet);
-    slit_fill_stores(new_stmts, fields_addr, ntriples, src, srt, k, nfields, alo, ahi, slo, shi, j + 1)
+// Running-offset variant of the store fill (nested struct-lit field values
+// inline their own construction chain — see slit_fill_stores_at). Returns the
+// next free offset, or -1 (fail-closed). The single-stmt desugar writes from
+// base 1 (slot 0 is the alloc-let).
+pub fn slit_fill_stores(new_stmts: i64, fields_addr: i64, ntriples: i64, src: i64, srt: i64, k: i64, nfields: i64, alo: i64, ahi: i64, talo: i64, tahi: i64, slo: i64, shi: i64, j: i64) -> i64 {
+    slit_fill_stores_at(new_stmts, 1, fields_addr, ntriples, src, srt, k, nfields, alo, ahi, talo, tahi, slo, shi, j)
 }
 
 // Desugar a single-stmt struct-lit-bodied fn body in place into the let-chain.
@@ -15987,25 +16829,37 @@ pub fn slit_desugar_body(fn_node: i64, src: i64, srt: i64, alo: i64, ahi: i64, s
     if ntriples != nfields {
         return 0;
     }
-    let new_len: i64 = 2 * nfields + 2;
+    let new_len: i64 = slit_stores_slots(fields_addr, ntriples, src, srt, k, nfields, 0, 0) + 2;
+    if new_len < 2 {
+        return 0;
+    }
     let new_stmts: i64 = __mind_alloc(new_len * 8);
+    // The synthetic handle (alloc-let name, store addr refs, trailing ref) carries
+    // the struct-lit's OWN source span — unique per construction site, so a body
+    // may hold any number of constructions without name-sharing confusion (the
+    // alloc/store CALL callees keep the interned `__mind_alloc`/`__mind_store_i64`
+    // spans). The handle span's bytes contain `{` and can never collide with a
+    // real identifier; names are compile-time only and change zero emitted bytes.
+    let hlo: i64 = ast_span_lo(snode);
+    let hhi: i64 = ast_span_hi(snode);
     // (0) `let __sl = __mind_alloc(8 * nfields)`.
     let size: i64 = ast_new_binop(0, 0, mk_syn_intlit(8), mk_syn_intlit(nfields), op_mul());
     let acallee: i64 = ast_new_leaf(ast_ident(), alo, ahi);
     let aargs: i64 = __mind_alloc(8);
     __mind_store_i64(aargs + 0, size);
     let acall: i64 = ast_new_call(0, 0, acallee, aargs, 1);
-    let aname: i64 = ast_new_leaf(ast_ident(), alo, ahi);
+    let aname: i64 = ast_new_leaf(ast_ident(), hlo, hhi);
     let alet: i64 = ast_new_let(0, 0, aname, 0, acall);
     __mind_store_i64(new_stmts + 0, alet);
-    // (1..nfields) per-field stores in canonical order.
-    let okf: i64 = slit_fill_stores(new_stmts, fields_addr, ntriples, src, srt, k, nfields, alo, ahi, slo, shi, 0);
-    if okf == 0 {
+    // (1..) per-field stores in canonical order (a nested struct-lit value inlines
+    // its own construction chain — the fill returns the next free offset).
+    let okf: i64 = slit_fill_stores(new_stmts, fields_addr, ntriples, src, srt, k, nfields, hlo, hhi, alo, ahi, slo, shi, 0);
+    if okf < 0 {
         return 0;
     }
     // (last) trailing ptr ref -> ret vid = alloc vid.
-    let tref: i64 = ast_new_leaf(ast_ident(), alo, ahi);
-    __mind_store_i64(new_stmts + (2 * nfields + 1) * 8, tref);
+    let tref: i64 = ast_new_leaf(ast_ident(), hlo, hhi);
+    __mind_store_i64(new_stmts + (new_len - 1) * 8, tref);
     // Replace the body block's statements (child0 = stmts_addr, aux = stmts_len).
     __mind_store_i64(body + 24, new_stmts);
     __mind_store_i64(body + 48, new_len);
@@ -16034,12 +16888,53 @@ pub fn slit_stmt_snode(stmt: i64) -> i64 {
     0
 }
 
+// Slots one field VALUE occupies in a desugared construction chain: 2 (value-let
+// + store-let) for a plain value; (1 + inner_stores + 1) for a nested
+// struct-lit — its own alloc-let, its (recursive) store chain, and the outer
+// store-let that writes its handle. -1 when a nested literal's type or field
+// set is unresolvable (the caller fails closed; never emits a guessed shape).
+pub fn slit_field_slots(val: i64, src: i64, srt: i64) -> i64 {
+    if ast_kind(val) != ast_struct_lit() {
+        return 2;
+    }
+    let vk: i64 = srt_find_by_name(srt, src, ast_child0(val), ast_child2(val), 0);
+    if vk < 0 {
+        return 0 - 1;
+    }
+    let vnf: i64 = srt_field_count(srt, vk);
+    if ast_aux(val) != vnf {
+        return 0 - 1;
+    }
+    let inner: i64 = slit_stores_slots(ast_child1(val), vnf, src, srt, vk, vnf, 0, 0);
+    if inner < 0 {
+        return 0 - 1;
+    }
+    1 + inner + 1
+}
+
+// Sum of slit_field_slots over the canonical fields of struct k (the store
+// chain length, without the alloc-let and final statement). -1 if any field is
+// missing or unresolvable.
+pub fn slit_stores_slots(fields_addr: i64, ntriples: i64, src: i64, srt: i64, k: i64, nfields: i64, j: i64, acc: i64) -> i64 {
+    if j >= nfields {
+        return acc;
+    }
+    let val: i64 = slit_canon_value(fields_addr, ntriples, src, srt, k, j);
+    if val == 0 {
+        return 0 - 1;
+    }
+    let fs: i64 = slit_field_slots(val, src, srt);
+    if fs < 0 {
+        return 0 - 1;
+    }
+    slit_stores_slots(fields_addr, ntriples, src, srt, k, nfields, j + 1, acc + fs)
+}
+
 // Number of output statements a top-level statement expands to: a desugarable struct-lit
 // (resolvable type, all fields present) -> nfields + 2 (alloc-let + stores + final), else 1.
-// `fr_ok` (1/0): whether a FIELD-RECEIVER hoist may fire for THIS statement — true only
-// when no prior struct-construction has expanded in the body (the synthetic `__sl` would be
-// the first `__mind_alloc`-named alloc-let, so the field prefold's first-match type scan
-// resolves it). The caller computes fr_ok = (running expanded length == input index).
+// `fr_ok` is RETIRED (kept only for signature stability with slit_seq_len/slit_seq_fill):
+// every construction's synthetic handle now carries the struct-lit's own source span
+// (unique per site), so a field-receiver hoist is safe at any position.
 pub fn slit_stmt_outn(stmt: i64, src: i64, srt: i64, fr_ok: i64) -> i64 {
     let snode: i64 = slit_stmt_snode(stmt);
     if snode != 0 {
@@ -16051,9 +16946,15 @@ pub fn slit_stmt_outn(stmt: i64, src: i64, srt: i64, fr_ok: i64) -> i64 {
         if ast_aux(snode) != nfields {
             return 1;
         }
-        return 2 * nfields + 2;
+        // store chain can be wider than 2/field when a field value is itself a
+        // struct-lit (its own construction chain inlines; see slit_field_slots).
+        let tot: i64 = slit_stores_slots(ast_child1(snode), nfields, src, srt, k, nfields, 0, 0);
+        if tot < 0 {
+            return 1;
+        }
+        return tot + 2;
     }
-    // HOIST: a struct-lit passed as a call-arg expands to [alloc + stores] (2*nf+1) plus
+    // HOIST: a struct-lit passed as a call-arg expands to [alloc + stores] plus
     // the using statement (1), with the struct-lit replaced by an __mind_alloc ident.
     let hnode: i64 = slit_stmt_hoist_snode(stmt);
     if hnode != 0 {
@@ -16065,30 +16966,41 @@ pub fn slit_stmt_outn(stmt: i64, src: i64, srt: i64, fr_ok: i64) -> i64 {
         if ast_aux(hnode) != hnf {
             return 1;
         }
-        return 2 * hnf + 2;
-    }
-    // FIELD-RECEIVER HOIST (gated by fr_ok): `P{..}.x` -> same [alloc + stores] + using stmt.
-    if fr_ok == 1 {
-        let frs: i64 = slit_stmt_field_recv_snode(stmt);
-        if frs != 0 {
-            let fk: i64 = srt_find_by_name(srt, src, ast_child0(frs), ast_child2(frs), 0);
-            if fk < 0 {
-                return 1;
-            }
-            let fnf: i64 = srt_field_count(srt, fk);
-            if ast_aux(frs) != fnf {
-                return 1;
-            }
-            return 2 * fnf + 2;
+        let htot: i64 = slit_stores_slots(ast_child1(hnode), hnf, src, srt, hk, hnf, 0, 0);
+        if htot < 0 {
+            return 1;
         }
+        return htot + 2;
+    }
+    // FIELD-RECEIVER HOIST: `P{..}.x` -> same [alloc + stores] + using stmt. Safe at
+    // any position: every construction's synthetic handle (alloc-let name, store
+    // addr refs, trailing/using refs) carries the struct-lit's OWN source span
+    // (unique per construction site), so the first-match type scan and letenv
+    // last-match both resolve each field access to ITS OWN construction — the old
+    // shared-`__mind_alloc`-span miscompile the fr_ok guard suppressed is gone.
+    let frs: i64 = slit_stmt_field_recv_snode(stmt);
+    if frs != 0 {
+        let fk: i64 = srt_find_by_name(srt, src, ast_child0(frs), ast_child2(frs), 0);
+        if fk < 0 {
+            return 1;
+        }
+        let fnf: i64 = srt_field_count(srt, fk);
+        if ast_aux(frs) != fnf {
+            return 1;
+        }
+        let ftot: i64 = slit_stores_slots(ast_child1(frs), fnf, src, srt, fk, fnf, 0, 0);
+        if ftot < 0 {
+            return 1;
+        }
+        return ftot + 2;
     }
     1
 }
 
 // Sum of expanded lengths over a statement list (used to size the new array). `acc` is the
-// running expanded length of statements 0..i; fr_ok = (acc == i) means no prior construction
-// expanded, so a field-receiver at i is safe to hoist. seq_fill applies the identical left-
-// to-right gate via (out == i), keeping sizing and filling in lockstep.
+// running expanded length of statements 0..i; the fr_ok gate it used to feed is RETIRED
+// (unique per-construction handle spans make a field-receiver hoist safe at any index),
+// but the lockstep sizing discipline with seq_fill is unchanged.
 pub fn slit_seq_len(stmts_addr: i64, stmts_len: i64, src: i64, srt: i64, i: i64, acc: i64) -> i64 {
     if i >= stmts_len {
         return 0;
@@ -16104,20 +17016,72 @@ pub fn slit_seq_len(stmts_addr: i64, stmts_len: i64, src: i64, srt: i64, i: i64,
 }
 
 // Write the per-field store-lets for one struct-lit into new_stmts[base..base+nfields).
-pub fn slit_fill_stores_at(new_stmts: i64, base: i64, fields_addr: i64, ntriples: i64, src: i64, srt: i64, k: i64, nfields: i64, alo: i64, ahi: i64, slo: i64, shi: i64, j: i64) -> i64 {
+// Fill new_stmts[base..] with the per-field value/store chain for struct k's
+// canonical fields. A PLAIN value emits [value-let, store-let]; a NESTED
+// struct-lit value emits its own construction chain inline (alloc-let +
+// recursive stores — the oracle allocs the OUTER record first, then evaluates
+// nested field values in order) followed by the store-let that writes its
+// handle. (alo,ahi) = THIS construction's handle span (store addr refs);
+// (talo,tahi) = the interned `__mind_alloc` span, needed so a nested chain's
+// alloc CALL callee stays interned-correct. Returns the next free offset, or
+// -1 (fail-closed) on an unresolvable field / nested literal.
+pub fn slit_fill_stores_at(new_stmts: i64, base: i64, fields_addr: i64, ntriples: i64, src: i64, srt: i64, k: i64, nfields: i64, alo: i64, ahi: i64, talo: i64, tahi: i64, slo: i64, shi: i64, j: i64) -> i64 {
     if j >= nfields {
-        return 1;
+        return base;
     }
     let val: i64 = slit_canon_value(fields_addr, ntriples, src, srt, k, j);
     if val == 0 {
-        return 0;
+        return 0 - 1;
+    }
+    if ast_kind(val) == ast_struct_lit() {
+        let vk: i64 = srt_find_by_name(srt, src, ast_child0(val), ast_child2(val), 0);
+        if vk < 0 {
+            return 0 - 1;
+        }
+        let vnf: i64 = srt_field_count(srt, vk);
+        if ast_aux(val) != vnf {
+            return 0 - 1;
+        }
+        let vslots: i64 = slit_stores_slots(ast_child1(val), vnf, src, srt, vk, vnf, 0, 0);
+        if vslots < 0 {
+            return 0 - 1;
+        }
+        // Inner construction chain at [base..base+1+vslots): alloc-let + its stores.
+        let _ic: i64 = slit_emit_nested_ctor(new_stmts, base, val, src, srt, vk, vnf, talo, tahi, slo, shi);
+        // The outer store-let writes the inner handle (named by the inner
+        // struct-lit's own span — the construction's handle) into field j.
+        let vref: i64 = ast_new_leaf(ast_ident(), ast_span_lo(val), ast_span_hi(val));
+        let slet: i64 = slit_build_store_let(alo, ahi, slo, shi, j, vref);
+        __mind_store_i64(new_stmts + (base + 1 + vslots) * 8, slet);
+        return slit_fill_stores_at(new_stmts, base + 1 + vslots + 1, fields_addr, ntriples, src, srt, k, nfields, alo, ahi, talo, tahi, slo, shi, j + 1);
     }
     let vlet: i64 = slit_build_value_let(val);
     let vref: i64 = ast_new_leaf(ast_ident(), ast_span_lo(val), ast_span_hi(val));
     let slet: i64 = slit_build_store_let(alo, ahi, slo, shi, j, vref);
-    __mind_store_i64(new_stmts + (base + 2 * j) * 8, vlet);
-    __mind_store_i64(new_stmts + (base + 2 * j + 1) * 8, slet);
-    slit_fill_stores_at(new_stmts, base, fields_addr, ntriples, src, srt, k, nfields, alo, ahi, slo, shi, j + 1)
+    __mind_store_i64(new_stmts + base * 8, vlet);
+    __mind_store_i64(new_stmts + (base + 1) * 8, slet);
+    slit_fill_stores_at(new_stmts, base + 2, fields_addr, ntriples, src, srt, k, nfields, alo, ahi, talo, tahi, slo, shi, j + 1)
+}
+
+// Emit a NESTED construction chain (alloc-let + per-field stores, no final
+// statement) for a struct-lit field VALUE at new_stmts[base..]. The handle name
+// is the struct-lit's own span (unique per site, matching the outer handle
+// discipline); the alloc CALL callee keeps the interned (talo,tahi) span, the
+// store callees keep (slo,shi). Returns the count emitted (1 + inner store
+// slots).
+pub fn slit_emit_nested_ctor(new_stmts: i64, base: i64, snode: i64, src: i64, srt: i64, k: i64, nfields: i64, talo: i64, tahi: i64, slo: i64, shi: i64) -> i64 {
+    let size: i64 = ast_new_binop(0, 0, mk_syn_intlit(8), mk_syn_intlit(nfields), op_mul());
+    let acallee: i64 = ast_new_leaf(ast_ident(), talo, tahi);
+    let aargs: i64 = __mind_alloc(8);
+    __mind_store_i64(aargs + 0, size);
+    let acall: i64 = ast_new_call(0, 0, acallee, aargs, 1);
+    let hlo: i64 = ast_span_lo(snode);
+    let hhi: i64 = ast_span_hi(snode);
+    let aname: i64 = ast_new_leaf(ast_ident(), hlo, hhi);
+    let alet: i64 = ast_new_let(0, 0, aname, 0, acall);
+    __mind_store_i64(new_stmts + base * 8, alet);
+    let nxt: i64 = slit_fill_stores_at(new_stmts, base + 1, ast_child1(snode), ast_aux(snode), src, srt, k, nfields, hlo, hhi, talo, tahi, slo, shi, 0);
+    nxt - base
 }
 
 // Expand one struct-lit statement into [alloc-let, stores, final] at new_stmts[out..].
@@ -16131,11 +17095,16 @@ pub fn slit_emit_ctor(new_stmts: i64, out: i64, orig_stmt: i64, snode: i64, src:
     let aargs: i64 = __mind_alloc(8);
     __mind_store_i64(aargs + 0, size);
     let acall: i64 = ast_new_call(0, 0, acallee, aargs, 1);
-    let aname: i64 = ast_new_leaf(ast_ident(), alo, ahi);
+    // Handle name + refs carry the struct-lit's OWN source span (unique per
+    // construction site — see slit_desugar_body); only the call callees keep the
+    // interned `__mind_alloc`/`__mind_store_i64` spans.
+    let hlo: i64 = ast_span_lo(snode);
+    let hhi: i64 = ast_span_hi(snode);
+    let aname: i64 = ast_new_leaf(ast_ident(), hlo, hhi);
     let alet: i64 = ast_new_let(0, 0, aname, 0, acall);
     __mind_store_i64(new_stmts + out * 8, alet);
-    let _f: i64 = slit_fill_stores_at(new_stmts, out + 1, ast_child1(snode), ast_aux(snode), src, srt, k, nfields, alo, ahi, slo, shi, 0);
-    let sl_ref: i64 = ast_new_leaf(ast_ident(), alo, ahi);
+    let fend: i64 = slit_fill_stores_at(new_stmts, out + 1, ast_child1(snode), ast_aux(snode), src, srt, k, nfields, hlo, hhi, alo, ahi, slo, shi, 0);
+    let sl_ref: i64 = ast_new_leaf(ast_ident(), hlo, hhi);
     let kind: i64 = ast_kind(orig_stmt);
     let final: i64 = if kind == ast_let() {
         // Preserve the original let's TYPE annotation so a later field-read
@@ -16149,8 +17118,8 @@ pub fn slit_emit_ctor(new_stmts: i64, out: i64, orig_stmt: i64, snode: i64, src:
             sl_ref
         }
     };
-    __mind_store_i64(new_stmts + (out + 2 * nfields + 1) * 8, final);
-    1
+    __mind_store_i64(new_stmts + fend * 8, final);
+    fend - out + 1
 }
 
 // The expression that carries a statement's value (let init / return value / trailing).
@@ -16174,7 +17143,41 @@ pub fn slit_find_slit_arg(args: i64, nargs: i64, i: i64) -> i64 {
     if ast_kind(arg) == ast_struct_lit() {
         return arg;
     }
+    // Field-read ON a struct-lit arg (`mk(P{..}.x)`): hoistable too — the
+    // construction is hoisted and the receiver replaced, the field prefold then
+    // folds `<handle>.x` to a load of the hoisted alloc (the oracle's shape).
+    if ast_kind(arg) == ast_field() {
+        if ast_kind(ast_child0(arg)) == ast_struct_lit() {
+            return ast_child0(arg);
+        }
+    }
     slit_find_slit_arg(args, nargs, i + 1)
+}
+
+// The FORM of the first hoistable struct-lit arg in the statement's value-expr
+// call: 0 = none, 1 = bare struct-lit arg, 2 = field-read-on-struct-lit arg
+// (`mk(P{..}.x)`). Mirrors slit_find_slit_arg's first-match order exactly.
+pub fn slit_arg_hoist_form(stmt: i64) -> i64 {
+    let expr: i64 = slit_hoist_expr_of(stmt);
+    if ast_kind(expr) != ast_call() {
+        return 0;
+    }
+    slit_arg_form_walk(ast_child1(expr), ast_aux(expr), 0)
+}
+pub fn slit_arg_form_walk(args: i64, nargs: i64, i: i64) -> i64 {
+    if i >= nargs {
+        return 0;
+    }
+    let arg: i64 = __mind_load_i64(args + i * 8);
+    if ast_kind(arg) == ast_struct_lit() {
+        return 1;
+    }
+    if ast_kind(arg) == ast_field() {
+        if ast_kind(ast_child0(arg)) == ast_struct_lit() {
+            return 2;
+        }
+    }
+    slit_arg_form_walk(args, nargs, i + 1)
 }
 
 // Detect (non-mutating) a HOISTABLE nested struct-lit: a `T{..}` passed as a direct call
@@ -16189,8 +17192,10 @@ pub fn slit_stmt_hoist_snode(stmt: i64) -> i64 {
     slit_find_slit_arg(ast_child1(expr), ast_aux(expr), 0)
 }
 
-// Replace the FIRST struct-lit call-arg with a fresh `__mind_alloc` ident leaf (so the call
-// resolves the hoisted alloc handle via letenv_lookup last-match); return the struct-lit.
+// Replace the FIRST struct-lit call-arg with a fresh ident leaf spanning [alo,ahi)
+// (the struct-lit's own source span — so the call resolves ITS hoisted alloc
+// handle); for a field-read-on-struct-lit arg (`mk(P{..}.x)`), replace the field's
+// RECEIVER instead, leaving the `.x` to the field prefold. Return the struct-lit.
 pub fn slit_hoist_replace_arg(args: i64, nargs: i64, i: i64, alo: i64, ahi: i64) -> i64 {
     if i >= nargs {
         return 0;
@@ -16199,6 +17204,13 @@ pub fn slit_hoist_replace_arg(args: i64, nargs: i64, i: i64, alo: i64, ahi: i64)
     if ast_kind(arg) == ast_struct_lit() {
         __mind_store_i64(args + i * 8, ast_new_leaf(ast_ident(), alo, ahi));
         return arg;
+    }
+    if ast_kind(arg) == ast_field() {
+        if ast_kind(ast_child0(arg)) == ast_struct_lit() {
+            let snode: i64 = ast_child0(arg);
+            __mind_store_i64(arg + 24, ast_new_leaf(ast_ident(), alo, ahi));
+            return snode;
+        }
     }
     slit_hoist_replace_arg(args, nargs, i + 1, alo, ahi)
 }
@@ -16215,14 +17227,14 @@ pub fn slit_hoist_replace(stmt: i64, alo: i64, ahi: i64) -> i64 {
 // FIELD-RECEIVER HOIST detector: a struct-lit that appears as the DIRECT receiver of a
 // field access in the statement's value expr (`return P{..}.x` / `let y = P{..}.x` /
 // trailing `P{..}.x`). Returns the struct-lit node, or 0. The hoist rewrites it into a
-// synthetic `let __sl: P = __mind_alloc(..); <stores>; <stmt with recv -> __sl>` so the
-// existing ident-receiver field prefold folds `__sl.x` -> `__mind_load_i64(__sl + idx*8)`.
-// SAFETY: this is only byte-correct when the synthetic `__sl` alloc-let is the FIRST
-// struct-construction in the body (all synthetic alloc-lets share the `__mind_alloc` name
-// span, and the field prefold's type scan is first-match) — the caller gates it on that
-// via `fr_ok` (output index == input index, i.e. no prior construction expanded). When a
-// prior construction exists the hoist is suppressed and the raw struct-lit-field falls
-// through to flatten, which fails closed (0 bytes) — never a miscompile.
+// synthetic `let <handle>: P = __mind_alloc(..); <stores>; <stmt with recv -> <handle>>`
+// so the existing ident-receiver field prefold folds `<handle>.x` ->
+// `__mind_load_i64(<handle> + idx*8)`. The handle name is the struct-lit's OWN source
+// span (unique per construction site), so the hoist is byte-correct in ANY position —
+// prior constructions can no longer confuse the field prefold's first-match type scan
+// or letenv (the historical shared-`__mind_alloc`-span miscompile). A construction the
+// shape checks reject still falls through to flatten, which fails closed (0 bytes) —
+// never a miscompile.
 pub fn slit_stmt_field_recv_snode(stmt: i64) -> i64 {
     let expr: i64 = slit_hoist_expr_of(stmt);
     if ast_kind(expr) != ast_field() {
@@ -16236,8 +17248,9 @@ pub fn slit_stmt_field_recv_snode(stmt: i64) -> i64 {
 }
 
 // Mutate: replace the struct-lit receiver of the value expr's field access with a fresh
-// `__mind_alloc` ident (so the following `__sl.x` resolves the hoisted alloc handle);
-// return the struct-lit node.
+// ident spanning [alo,ahi) — the caller passes the struct-lit's OWN source span, so the
+// following `<handle>.x` resolves ITS construction's hoisted alloc handle; return the
+// struct-lit node.
 pub fn slit_field_recv_replace(stmt: i64, alo: i64, ahi: i64) -> i64 {
     let expr: i64 = slit_hoist_expr_of(stmt);
     if ast_kind(expr) != ast_field() {
@@ -16266,11 +17279,16 @@ pub fn slit_emit_ctor_hoist(new_stmts: i64, out: i64, snode: i64, src: i64, srt:
     let aargs: i64 = __mind_alloc(8);
     __mind_store_i64(aargs + 0, size);
     let acall: i64 = ast_new_call(0, 0, acallee, aargs, 1);
-    let aname: i64 = ast_new_leaf(ast_ident(), alo, ahi);
+    // Handle name + store addr refs carry the struct-lit's OWN source span
+    // (unique per construction site — see slit_desugar_body); the using
+    // statement's replaced receiver/arg references the same span.
+    let hlo: i64 = ast_span_lo(snode);
+    let hhi: i64 = ast_span_hi(snode);
+    let aname: i64 = ast_new_leaf(ast_ident(), hlo, hhi);
     let alet: i64 = ast_new_let(0, 0, aname, ty, acall);
     __mind_store_i64(new_stmts + out * 8, alet);
-    let _f: i64 = slit_fill_stores_at(new_stmts, out + 1, ast_child1(snode), ast_aux(snode), src, srt, k, nfields, alo, ahi, slo, shi, 0);
-    2 * nfields + 1
+    let fend: i64 = slit_fill_stores_at(new_stmts, out + 1, ast_child1(snode), ast_aux(snode), src, srt, k, nfields, hlo, hhi, alo, ahi, slo, shi, 0);
+    fend - out
 }
 
 // Fill the new (expanded) statement array, copying non-struct-lit statements and
@@ -16282,8 +17300,8 @@ pub fn slit_seq_fill(new_stmts: i64, out_cell: i64, stmts_addr: i64, stmts_len: 
     }
     let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
     let out: i64 = __mind_load_i64(out_cell);
-    // fr_ok mirrors slit_seq_len's (acc == i) gate: out == i iff no prior construction
-    // expanded, so a field-receiver hoist here is the FIRST __mind_alloc-named alloc-let.
+    // fr_ok is RETIRED (unique per-construction handle spans; kept only to keep the
+    // slit_stmt_outn signature in lockstep with slit_seq_len).
     let fr_ok: i64 = if out == i {
         1
     } else {
@@ -16298,32 +17316,43 @@ pub fn slit_seq_fill(new_stmts: i64, out_cell: i64, stmts_addr: i64, stmts_len: 
         if snode != 0 {
             let k: i64 = srt_find_by_name(srt, src, ast_child0(snode), ast_child2(snode), 0);
             let nfields: i64 = srt_field_count(srt, k);
-            let _e: i64 = slit_emit_ctor(new_stmts, out, stmt, snode, src, srt, k, nfields, alo, ahi, slo, shi);
-            __mind_store_i64(out_cell, out + 2 * nfields + 2)
+            let ec: i64 = slit_emit_ctor(new_stmts, out, stmt, snode, src, srt, k, nfields, alo, ahi, slo, shi);
+            __mind_store_i64(out_cell, out + ec)
         } else {
-            // outn>1 with no direct snode: a FIELD-RECEIVER hoist (gated by fr_ok) or a
-            // call-arg hoist. A field-receiver synthesizes the struct's TYPE annotation on
-            // the alloc-let (from the struct-lit's name span) so the ident-receiver field
-            // prefold resolves `__sl.x`; a call-arg hoist passes ty=0 (byte-identical to the
-            // pre-existing untyped alloc-let).
-            let frs: i64 = if fr_ok == 1 {
-                slit_stmt_field_recv_snode(stmt)
-            } else {
-                0
-            };
+            // outn>1 with no direct snode: a FIELD-RECEIVER hoist or a call-arg
+            // hoist. Both synthesize their construction with the struct-lit's OWN
+            // source span as the handle name (unique per construction site), so any
+            // number of constructions may share a body without confusing the
+            // first-match type scan or letenv. A field-receiver synthesizes the
+            // struct's TYPE annotation on the alloc-let (from the struct-lit's name
+            // span) so the ident-receiver field prefold resolves `<handle>.x`; a
+            // call-arg hoist passes ty=0 (byte-identical to the pre-existing
+            // untyped alloc-let).
+            let frs: i64 = slit_stmt_field_recv_snode(stmt);
             if frs != 0 {
                 let fty: i64 = ast_new_leaf(ast_ident(), ast_child0(frs), ast_child2(frs));
-                let _fr: i64 = slit_field_recv_replace(stmt, alo, ahi);
+                let _fr: i64 = slit_field_recv_replace(stmt, ast_span_lo(frs), ast_span_hi(frs));
                 let fk: i64 = srt_find_by_name(srt, src, ast_child0(frs), ast_child2(frs), 0);
                 let fnf: i64 = srt_field_count(srt, fk);
                 let fc: i64 = slit_emit_ctor_hoist(new_stmts, out, frs, src, srt, fk, fnf, alo, ahi, slo, shi, fty);
                 __mind_store_i64(new_stmts + (out + fc) * 8, stmt);
                 __mind_store_i64(out_cell, out + fc + 1)
             } else {
-                let hnode: i64 = slit_hoist_replace(stmt, alo, ahi);
+                let hpre: i64 = slit_stmt_hoist_snode(stmt);
+                let hform: i64 = slit_arg_hoist_form(stmt);
+                let hnode: i64 = slit_hoist_replace(stmt, ast_span_lo(hpre), ast_span_hi(hpre));
                 let hk: i64 = srt_find_by_name(srt, src, ast_child0(hnode), ast_child2(hnode), 0);
                 let hnf: i64 = srt_field_count(srt, hk);
-                let hc: i64 = slit_emit_ctor_hoist(new_stmts, out, hnode, src, srt, hk, hnf, alo, ahi, slo, shi, 0);
+                // A field-read-on-struct-lit arg (`mk(P{..}.x)`) leaves `<handle>.x`
+                // behind for the field prefold — annotate the alloc-let with the
+                // struct type (like the field-receiver hoist) so it resolves. A bare
+                // struct-lit arg keeps the untyped handle (byte-identical to before).
+                let hty: i64 = if hform == 2 {
+                    ast_new_leaf(ast_ident(), ast_child0(hnode), ast_child2(hnode))
+                } else {
+                    0
+                };
+                let hc: i64 = slit_emit_ctor_hoist(new_stmts, out, hnode, src, srt, hk, hnf, alo, ahi, slo, shi, hty);
                 __mind_store_i64(new_stmts + (out + hc) * 8, stmt);
                 __mind_store_i64(out_cell, out + hc + 1)
             }
@@ -16442,6 +17471,11 @@ pub fn slit_annotate_expr(node: i64, src: i64, srt: i64, alo: i64, ahi: i64, slo
     if k == ast_call() {
         return slit_annotate_args(ast_child1(node), ast_aux(node), 0, src, srt, alo, ahi, slo, shi);
     }
+    // Array literals: annotate each struct-lit ELEMENT too, so a `[P{..}]` element
+    // can emit its construction inline (flatten_struct_lit_lv reads node+56).
+    if k == ast_array_lit() {
+        return slit_annotate_args(ast_child1(node), ast_aux(node), 0, src, srt, alo, ahi, slo, shi);
+    }
     if k == ast_if() {
         let _c: i64 = slit_annotate_expr(ast_child0(node), src, srt, alo, ahi, slo, shi);
         let tb: i64 = ast_child1(node);
@@ -16529,6 +17563,25 @@ pub fn node_has_call(node: i64) -> i64 {
     }
     if k == ast_paren() {
         return node_has_call(ast_child0(node));
+    }
+    // Unary neg/not wrap their operand at child0 (ast_new_neg/ast_new_not). A call
+    // hidden under `-g(a)` / `!g(a)` in a branch value MUST be detected here, or the
+    // narrow src=0 branch emitters (g/g2/e/e2) intern the callee against a NULL
+    // strtab (name_idx = uleb128(-1)) -> silent WRONG-BYTES vs the general path.
+    // Mirrors subtree_contains_array_lit's neg/not/index arms.
+    if k == ast_neg() {
+        return node_has_call(ast_child0(node));
+    }
+    if k == ast_not() {
+        return node_has_call(ast_child0(node));
+    }
+    // index base (child0) + index expr (child1). Defense-in-depth: index+call
+    // currently fails closed, but harden against a future index-in-branch emitter.
+    if k == ast_index() {
+        if node_has_call(ast_child0(node)) == 1 {
+            return 1;
+        }
+        return node_has_call(ast_child1(node));
     }
     if k == ast_binop() {
         if node_has_call(ast_child0(node)) == 1 {
@@ -16887,11 +17940,35 @@ pub fn selftest_mic3_module_nfn(src_addr: i64, src_len: i64, strbuf: i64, offs: 
     // so the desugar/annotation was skipped and every struct-lit fell closed. Append the two
     // literals to a src copy and use appended-offset spans. main.mind itself contains both
     // literals (have_spans==1), so it keeps src_addr + the real spans BYTE-FOR-BYTE.
+    // PRINT desugar (see print_desugar_module): when any fn body has a statement-level
+    // numeric `print(x)`, the synthetic printI64/printNewline callee names need spans to
+    // intern from — appended after the slit intrinsics (or alone when have_spans==1).
+    // Modules WITHOUT print take the exact old path (main.mind included), byte-for-byte.
+    let have_print: i64 = print_module_has(src_addr, items_addr, items_len, 0);
     let src_use: i64 = if have_spans == 1 {
-        src_addr
+        if have_print == 1 {
+            build_src_print_only(src_addr, src_len)
+        } else {
+            src_addr
+        }
     } else {
-        build_src_intrinsics(src_addr, src_len)
+        if have_print == 1 {
+            build_src_intrinsics_print(src_addr, src_len)
+        } else {
+            build_src_intrinsics(src_addr, src_len)
+        }
     };
+    // print helper name spans in src_use (only meaningful when have_print==1):
+    // slit-appended layout puts them after the 43 intrinsic bytes; the print-only
+    // copy puts them at src_len.
+    let p64lo: i64 = if have_spans == 1 {
+        src_len
+    } else {
+        src_len + 43
+    };
+    let p64hi: i64 = p64lo + 8;
+    let pnlo: i64 = p64lo + 8;
+    let pnhi: i64 = pnlo + 12;
     let alo: i64 = if have_spans == 1 {
         __mind_load_i64(slit_acell + 0)
     } else {
@@ -16913,6 +17990,17 @@ pub fn selftest_mic3_module_nfn(src_addr: i64, src_len: i64, strbuf: i64, offs: 
         src_len + 28
     };
     let _sl: i64 = slit_desugar_module(src_use, src_len, items_addr, items_len, srt, alo, ahi, slo, shi, 0);
+    // ENUM-CTOR desugar (see ect_desugar_module): rewrite statement-level
+    // single-payload enum constructions (`E::V(p)` / `E::V`) into the oracle's
+    // payload-let + __mind_alloc + __mind_store_i64 record chain (lower.rs
+    // emit_boxed_enum_record — payloads BEFORE the alloc, tag at +0, payload /
+    // zero-fill at +8). Runs after the slit desugar (the two chains never
+    // interact: a ctor node is not a struct-lit) and BEFORE the strtab pass,
+    // so the synthetic alloc/store callee spans intern first-seen in body
+    // order — the oracle's collect order. Ctor nodes the pass does not rewrite
+    // (nested positions) keep kind 35 and fail closed downstream. No-op for
+    // modules without single-payload enum constructions (byte-identical path).
+    let _ect: i64 = ect_desugar_module(items_addr, items_len, alo, ahi, slo, shi, 0);
     // FIELD-READ PRE-RESOLVE: rewrite every resolvable `recv.field` into the
     // equivalent `__mind_load_i64(field_addr)` Call subtree, IN PLACE, BEFORE the
     // strtab pass. Order is load-bearing: the oracle interns "__mind_load_i64" at
@@ -16928,6 +18016,24 @@ pub fn selftest_mic3_module_nfn(src_addr: i64, src_len: i64, strbuf: i64, offs: 
     };
     let _pf: i64 = field_prefold_module(src_use, prefold_len, items_addr, items_len, 0, srt);
     let _an: i64 = slit_annotate_module(src_use, items_addr, items_len, srt, alo, ahi, slo, shi, 0);
+    // PRINT STATEMENT DESUGAR: expand every direct fn-body `print(x)` — numeric
+    // args into [printI64(x); printNewline(); 0], string literals into the
+    // alloc/store_i8/record/print_bytes chain — BEFORE the strtab pass, so the
+    // synthetic callee names intern first-seen in body order (the oracle's
+    // collect order). have_print==0 modules skip the pass entirely
+    // (byte-identical old path). The load-name span: the slit append holds it at
+    // src_len+28; the print-only copy at p64lo+46.
+    let ldlo: i64 = if have_spans == 1 {
+        p64lo + 46
+    } else {
+        src_len + 28
+    };
+    let psp: i64 = print_span_pack(alo, ahi, slo, shi, ldlo, ldlo + 15, p64lo, p64hi, pnlo, pnhi);
+    let _pd: i64 = if have_print == 1 {
+        print_desugar_module(src_use, items_addr, items_len, psp, 0)
+    } else {
+        0
+    };
     __mind_store_i64(ccell, 0);
     __mind_store_i64(offs + 0, 0);
     let r: i64 = build_module_strtab(strbuf, offs, ccell, src_use, items_addr, items_len, 0);
@@ -17320,6 +18426,50 @@ pub fn selftest_mic3_chain_fn(buf: i64, offs: i64, n: i64, op_byte: i64) -> Emit
 // `vidbuf` is a caller-supplied heap scratch array of `n_nodes` i64s used to record
 // each slot's resolved vid (a binop references children by slot, so the slot->vid map
 // must be materialized before the binops emit). It is filled by the first pass below.
+// Fail-closed guard for the src=0 downstream. emit_mic3_tree_fn_module (the plain
+// let-chain driver) and emit_mic3_if_block_instr (the if-with-let-in-branch path)
+// both call emit_mic3_tree_body with src=0 / strbuf=0 / offs=0 / n_strings=0. The
+// S1 collapse routed flatten_ast_le through flatten_expr_env, which now ACCEPTS
+// descriptors that this downstream cannot serve from a null src / empty strtab:
+//   kind 3 (call) + kind 5 (callee leaf): read src+strtab to intern the name
+//     (intern_find) -> wrong name_idx.
+//   kind 7 (const array): emit_arr_elems -> arr_elem_int -> parse_int_span(src=0)
+//     -> SIGSEGV.
+//   kind 8 (array-index READ): vid threading diverges by one vid -> silent
+//     same-length miscompile.
+//   kinds 9/10 (non-const / vec array): vec_new/vec_push names not interned ->
+//     wrong bytes.
+// Until the let-chain / if-let drivers thread a real src+strtab, refuse the whole
+// emit (fail-closed-over-wrong-bytes, Bound by MIND-CONSTITUTION §I). Kinds
+// 0/1/2/4/6 (param / binop / const / arg-cons / float) emit byte-exact through the
+// src=0 path and are KEPT (a real coverage gain). Returns 1 if ANY node kind is in
+// {3,5,7,8,9,10}.
+pub fn descriptor_has_src_dep_kind(nodes: i64, n_nodes: i64, i: i64) -> i64 {
+    if i >= n_nodes {
+        return 0;
+    }
+    let kind: i64 = __mind_load_i64(nodes + i * 32);
+    if kind == 3 {
+        return 1;
+    }
+    if kind == 5 {
+        return 1;
+    }
+    if kind == 7 {
+        return 1;
+    }
+    if kind == 8 {
+        return 1;
+    }
+    if kind == 9 {
+        return 1;
+    }
+    if kind == 10 {
+        return 1;
+    }
+    descriptor_has_src_dep_kind(nodes, n_nodes, i + 1)
+}
+
 pub fn emit_mic3_tree_fn_module(s: EmitState, buf: i64, offs: i64, n: i64, nodes: i64, n_nodes: i64, vidbuf: i64) -> EmitState {
     // Pass 1: resolve every slot's vid into vidbuf (post-order, binops from %n).
     let root: i64 = tree_resolve_vids(nodes, n_nodes, n, vidbuf, 0, n);
@@ -17703,6 +18853,577 @@ pub fn span_is_print(src: i64, lo: i64, hi: i64) -> i64 {
     1
 }
 
+// ===== print() STATEMENT desugar (printI64 + printNewline + unit const) =====
+//
+// The Rust oracle (src/eval/lower.rs Node::Print arm) lowers a statement-level
+// numeric `print(x)` to: <arg instrs> ; CALL printI64(arg) ; CALL printNewline() ;
+// CONST 0 (the unit placeholder, which is also the fn's value when `print(x)` is
+// the tail). The self-host models this with a PARSE-TIME statement desugar that
+// runs BEFORE the strtab pass, so the synthetic callee names intern first-seen at
+// exactly the oracle's positions: every DIRECT fn-body statement `print(x)` with
+// one flatten-supported arg expands to [printI64(x); printNewline(); 0]. The
+// existing machinery (seq emitter keeps discarded calls + literals byte-exact)
+// then lowers the expansion with zero new emit code. String-arg and
+// nested-expression `print` stay fail-closed (the flatten guards refuse them).
+
+// The j-th byte (0..8) of the synthetic call name "printI64".
+pub fn printi64_name_byte(j: i64) -> i64 {
+    if j == 0 {
+        return 112;
+    }
+    if j == 1 {
+        return 114;
+    }
+    if j == 2 {
+        return 105;
+    }
+    if j == 3 {
+        return 110;
+    }
+    if j == 4 {
+        return 116;
+    }
+    if j == 5 {
+        return 73;
+    }
+    if j == 6 {
+        return 54;
+    }
+    52
+}
+
+// The j-th byte (0..12) of the synthetic call name "printNewline".
+pub fn printnl_name_byte(j: i64) -> i64 {
+    if j == 0 {
+        return 112;
+    }
+    if j == 1 {
+        return 114;
+    }
+    if j == 2 {
+        return 105;
+    }
+    if j == 3 {
+        return 110;
+    }
+    if j == 4 {
+        return 116;
+    }
+    if j == 5 {
+        return 78;
+    }
+    if j == 6 {
+        return 101;
+    }
+    if j == 7 {
+        return 119;
+    }
+    if j == 8 {
+        return 108;
+    }
+    if j == 9 {
+        return 105;
+    }
+    if j == 10 {
+        return 110;
+    }
+    101
+}
+
+// Write the 8-byte `printI64` literal at dst[0..8) using printi64_name_byte.
+pub fn nfn_fill_printi64_name(dst: i64, j: i64) -> i64 {
+    if j >= 8 {
+        return 8;
+    }
+    __mind_store_i8(dst + j, printi64_name_byte(j));
+    nfn_fill_printi64_name(dst, j + 1)
+}
+
+// Write the 12-byte `printNewline` literal at dst[0..12) using printnl_name_byte.
+pub fn nfn_fill_printnl_name(dst: i64, j: i64) -> i64 {
+    if j >= 12 {
+        return 12;
+    }
+    __mind_store_i8(dst + j, printnl_name_byte(j));
+    nfn_fill_printnl_name(dst, j + 1)
+}
+
+// The j-th byte (0..15) of the synthetic call name "__mind_store_i8".
+pub fn store_i8_name_byte(j: i64) -> i64 {
+    if j == 0 {
+        return 95;
+    }
+    if j == 1 {
+        return 95;
+    }
+    if j == 2 {
+        return 109;
+    }
+    if j == 3 {
+        return 105;
+    }
+    if j == 4 {
+        return 110;
+    }
+    if j == 5 {
+        return 100;
+    }
+    if j == 6 {
+        return 95;
+    }
+    if j == 7 {
+        return 115;
+    }
+    if j == 8 {
+        return 116;
+    }
+    if j == 9 {
+        return 111;
+    }
+    if j == 10 {
+        return 114;
+    }
+    if j == 11 {
+        return 101;
+    }
+    if j == 12 {
+        return 95;
+    }
+    if j == 13 {
+        return 105;
+    }
+    56
+}
+
+// The j-th byte (0..11) of the synthetic call name "print_bytes".
+pub fn print_bytes_name_byte(j: i64) -> i64 {
+    if j == 0 {
+        return 112;
+    }
+    if j == 1 {
+        return 114;
+    }
+    if j == 2 {
+        return 105;
+    }
+    if j == 3 {
+        return 110;
+    }
+    if j == 4 {
+        return 116;
+    }
+    if j == 5 {
+        return 95;
+    }
+    if j == 6 {
+        return 98;
+    }
+    if j == 7 {
+        return 121;
+    }
+    if j == 8 {
+        return 116;
+    }
+    if j == 9 {
+        return 101;
+    }
+    115
+}
+
+// Write the 15-byte `__mind_store_i8` literal at dst[0..15).
+pub fn nfn_fill_store_i8_name(dst: i64, j: i64) -> i64 {
+    if j >= 15 {
+        return 15;
+    }
+    __mind_store_i8(dst + j, store_i8_name_byte(j));
+    nfn_fill_store_i8_name(dst, j + 1)
+}
+
+// Write the 11-byte `print_bytes` literal at dst[0..11).
+pub fn nfn_fill_print_bytes_name(dst: i64, j: i64) -> i64 {
+    if j >= 11 {
+        return 11;
+    }
+    __mind_store_i8(dst + j, print_bytes_name_byte(j));
+    nfn_fill_print_bytes_name(dst, j + 1)
+}
+
+// Source copy with ONLY the print helper names appended: printI64 = src_len..+8,
+// printNewline = +8..+20, __mind_store_i8 = +20..+35, print_bytes = +35..+46,
+// __mind_load_i64 = +46..+61 (the last so the print-string desugar can reference
+// it even when the source lacks the slit intrinsics).
+pub fn build_src_print_only(src_addr: i64, src_len: i64) -> i64 {
+    let buf: i64 = __mind_alloc(src_len + 64);
+    let _c: i64 = nfn_copy_src_bytes(buf, src_addr, src_len, 0);
+    let _a: i64 = nfn_fill_printi64_name(buf + src_len, 0);
+    let _b: i64 = nfn_fill_printnl_name(buf + src_len + 8, 0);
+    let _d: i64 = nfn_fill_store_i8_name(buf + src_len + 20, 0);
+    let _e: i64 = nfn_fill_print_bytes_name(buf + src_len + 35, 0);
+    let _f: i64 = nfn_fill_load_name(buf + src_len + 46, 0);
+    buf
+}
+
+// Source copy with the slit intrinsics (43 bytes) AND the print helper names
+// appended: printI64 = src_len+43..+51, printNewline = +51..+63,
+// __mind_store_i8 = +63..+78, print_bytes = +78..+89.
+pub fn build_src_intrinsics_print(src_addr: i64, src_len: i64) -> i64 {
+    let buf: i64 = __mind_alloc(src_len + 96);
+    let _c: i64 = nfn_copy_src_bytes(buf, src_addr, src_len, 0);
+    let _a: i64 = nfn_fill_alloc_name(buf + src_len, 0);
+    let _s: i64 = nfn_fill_store_name(buf + src_len + 12, 0);
+    let _l: i64 = nfn_fill_load_name(buf + src_len + 28, 0);
+    let _p: i64 = nfn_fill_printi64_name(buf + src_len + 43, 0);
+    let _q: i64 = nfn_fill_printnl_name(buf + src_len + 51, 0);
+    let _d: i64 = nfn_fill_store_i8_name(buf + src_len + 63, 0);
+    let _e: i64 = nfn_fill_print_bytes_name(buf + src_len + 78, 0);
+    buf
+}
+
+// If `stmt` is a desugarable statement-position `print(x)` — a call whose callee
+// spells the 5-byte builtin, with exactly ONE argument whose shape the flattener
+// already lowers byte-exactly — return the arg node; else 0. String-literal and
+// other unsupported args return 0 so the module keeps failing closed downstream
+// (the flatten guards), never emitting valid-but-wrong bytes.
+pub fn print_stmt_arg(stmt: i64, src: i64) -> i64 {
+    if ast_kind(stmt) != ast_call() {
+        return 0;
+    }
+    let callee: i64 = ast_child0(stmt);
+    if span_is_print(src, ast_span_lo(callee), ast_span_hi(callee)) == 0 {
+        return 0;
+    }
+    if ast_aux(stmt) != 1 {
+        return 0;
+    }
+    let args_addr: i64 = ast_child1(stmt);
+    let arg: i64 = __mind_load_i64(args_addr + 0);
+    let k: i64 = ast_kind(arg);
+    if k == ast_int_lit() {
+        return arg;
+    }
+    if k == ast_ident() {
+        return arg;
+    }
+    if k == ast_binop() {
+        return arg;
+    }
+    if k == ast_paren() {
+        return arg;
+    }
+    if k == ast_neg() {
+        return arg;
+    }
+    if k == ast_not() {
+        return arg;
+    }
+    if k == ast_call() {
+        return arg;
+    }
+    // String literal with at least one content byte (the empty string stays
+    // fail-closed — its oracle shape is unverified).
+    if k == ast_str_lit() {
+        if ast_span_hi(arg) - ast_span_lo(arg) >= 3 {
+            return arg;
+        }
+        return 0;
+    }
+    0
+}
+
+// True when any DIRECT statement of a fn body is a desugarable print call.
+pub fn print_body_has(stmts_addr: i64, stmts_len: i64, src: i64, i: i64) -> i64 {
+    if i >= stmts_len {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    if print_stmt_arg(stmt, src) != 0 {
+        return 1;
+    }
+    print_body_has(stmts_addr, stmts_len, src, i + 1)
+}
+
+// True when any fn in the module has a desugarable print statement (gates the
+// src copy + the desugar pass; modules without print take the exact old path).
+pub fn print_module_has(src: i64, items_addr: i64, items_len: i64, i: i64) -> i64 {
+    if i >= items_len {
+        return 0;
+    }
+    let item: i64 = __mind_load_i64(items_addr + i * 8);
+    if ast_kind(item) == ast_fn_def() {
+        let body: i64 = ast_child2(item);
+        if print_body_has(ast_child0(body), ast_aux(body), src, 0) == 1 {
+            return 1;
+        }
+    }
+    print_module_has(src, items_addr, items_len, i + 1)
+}
+
+// Output-statement count after the print expansion (each print stmt -> 3).
+pub fn print_count_out(stmts_addr: i64, stmts_len: i64, src: i64, i: i64, acc: i64) -> i64 {
+    if i >= stmts_len {
+        return acc;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    if print_stmt_arg(stmt, src) != 0 {
+        return print_count_out(stmts_addr, stmts_len, src, i + 1, acc + print_stmt_slots(stmt, src));
+    }
+    print_count_out(stmts_addr, stmts_len, src, i + 1, acc + 1)
+}
+
+// Write the 3-statement expansion [printI64(arg); printNewline(); 0] at out[0..3).
+// The unit placeholder is a synthetic int-lit (the same value the oracle emits as
+// the print's CONST 0); in tail position it becomes the fn's return value.
+pub fn print_expand_into(out: i64, arg: i64, p64lo: i64, p64hi: i64, pnlo: i64, pnhi: i64) -> i64 {
+    let c1callee: i64 = ast_new_leaf(ast_ident(), p64lo, p64hi);
+    let c1args: i64 = __mind_alloc(8);
+    __mind_store_i64(c1args + 0, arg);
+    let c1: i64 = ast_new_call(0, 0, c1callee, c1args, 1);
+    let c2callee: i64 = ast_new_leaf(ast_ident(), pnlo, pnhi);
+    let c2args: i64 = __mind_alloc(8);
+    let c2: i64 = ast_new_call(0, 0, c2callee, c2args, 0);
+    __mind_store_i64(out + 0, c1);
+    __mind_store_i64(out + 8, c2);
+    __mind_store_i64(out + 16, mk_syn_intlit(0));
+    3
+}
+
+// Per-char store statements for the string content: `__mind_store_i8(<c> [+k],
+// byte_k)` — char 0 stores at the base (no Add), matching the oracle.
+pub fn print_expand_str_chars(out: i64, src: i64, cpos: i64, k: i64, n: i64, s8lo: i64, s8hi: i64) -> i64 {
+    if k >= n {
+        return 0;
+    }
+    let b: i64 = load_byte(src, cpos + k);
+    let callee: i64 = ast_new_leaf(ast_ident(), s8lo, s8hi);
+    let cref: i64 = ast_new_leaf(ast_ident(), cpos - 1, cpos + 1);
+    let addr: i64 = if k == 0 {
+        cref
+    } else {
+        ast_new_binop(0, 0, cref, mk_syn_intlit(k), op_add())
+    };
+    let args: i64 = __mind_alloc(16);
+    __mind_store_i64(args + 0, addr);
+    __mind_store_i64(args + 8, mk_syn_intlit(b));
+    let call: i64 = ast_new_call(0, 0, callee, args, 2);
+    __mind_store_i64(out + k * 8, call);
+    print_expand_str_chars(out, src, cpos, k + 1, n, s8lo, s8hi)
+}
+
+// Statement-count a desugarable print expands to: numeric arg -> 3; string
+// literal of n bytes -> 9 + n.
+pub fn print_stmt_slots(stmt: i64, src: i64) -> i64 {
+    let arg: i64 = print_stmt_arg(stmt, src);
+    if arg == 0 {
+        return 1;
+    }
+    if ast_kind(arg) == ast_str_lit() {
+        return 9 + (ast_span_hi(arg) - ast_span_lo(arg) - 2);
+    }
+    3
+}
+
+// Write the string-print expansion for `print("...")` with token span [lo, hi)
+// (content [lo+1, hi-1), n = hi-lo-2 bytes) at out[0..(9+n)*8). Mirrors the
+// oracle's Node::Print string arm exactly:
+//   let <c> = __mind_alloc(n); __mind_store_i8(<c>[+k], byte_k)*n;
+//   let <r> = __mind_alloc(24); __mind_store_i64(<r>, <c>);
+//   __mind_store_i64(<r>+8, n); __mind_store_i64(<r>+16, n);
+//   let <addr> = __mind_load_i64(<r>); let <len> = __mind_load_i64(<r>+8);
+//   print_bytes(<addr>, <len>); 0
+// SP span-pack slots (i64 each): 0/1 alloc, 2/3 store_i64, 4/5 load_i64,
+// 6/7 store_i8, 8/9 print_bytes, 10/11 printI64, 12/13 printNewline.
+// Handle spans start at the opening-quote byte (34), which no real identifier
+// contains, and use distinct lengths: c=(lo,lo+2) r=(lo,lo+3) addr=(lo,lo+4)
+// len=(lo,lo+5).
+pub fn print_expand_str_into(out: i64, src: i64, lo: i64, hi: i64, sp: i64) -> i64 {
+    let n: i64 = hi - lo - 2;
+    let alo: i64 = __mind_load_i64(sp + 0);
+    let ahi: i64 = __mind_load_i64(sp + 8);
+    let slo: i64 = __mind_load_i64(sp + 16);
+    let shi: i64 = __mind_load_i64(sp + 24);
+    let ldlo: i64 = __mind_load_i64(sp + 32);
+    let ldhi: i64 = __mind_load_i64(sp + 40);
+    let s8lo: i64 = __mind_load_i64(sp + 48);
+    let s8hi: i64 = __mind_load_i64(sp + 56);
+    let pblo: i64 = __mind_load_i64(sp + 64);
+    let pbhi: i64 = __mind_load_i64(sp + 72);
+    // 0: let <c> = __mind_alloc(n)
+    let aname: i64 = ast_new_leaf(ast_ident(), lo, lo + 2);
+    let aargs: i64 = __mind_alloc(8);
+    __mind_store_i64(aargs + 0, mk_syn_intlit(n));
+    let acall: i64 = ast_new_call(0, 0, ast_new_leaf(ast_ident(), alo, ahi), aargs, 1);
+    __mind_store_i64(out + 0, ast_new_let(0, 0, aname, 0, acall));
+    // 1..n: char stores
+    let _ch: i64 = print_expand_str_chars(out + 8, src, lo + 1, 0, n, s8lo, s8hi);
+    // n+1: let <r> = __mind_alloc(24)
+    let rname: i64 = ast_new_leaf(ast_ident(), lo, lo + 3);
+    let rargs: i64 = __mind_alloc(8);
+    __mind_store_i64(rargs + 0, mk_syn_intlit(24));
+    let rcall: i64 = ast_new_call(0, 0, ast_new_leaf(ast_ident(), alo, ahi), rargs, 1);
+    __mind_store_i64(out + (n + 1) * 8, ast_new_let(0, 0, rname, 0, rcall));
+    // n+2: __mind_store_i64(<r>, <c>)
+    let s1args: i64 = __mind_alloc(16);
+    __mind_store_i64(s1args + 0, ast_new_leaf(ast_ident(), lo, lo + 3));
+    __mind_store_i64(s1args + 8, ast_new_leaf(ast_ident(), lo, lo + 2));
+    __mind_store_i64(out + (n + 2) * 8, ast_new_call(0, 0, ast_new_leaf(ast_ident(), slo, shi), s1args, 2));
+    // n+3: __mind_store_i64(<r> + 8, n)
+    let s2args: i64 = __mind_alloc(16);
+    __mind_store_i64(s2args + 0, ast_new_binop(0, 0, ast_new_leaf(ast_ident(), lo, lo + 3), mk_syn_intlit(8), op_add()));
+    __mind_store_i64(s2args + 8, mk_syn_intlit(n));
+    __mind_store_i64(out + (n + 3) * 8, ast_new_call(0, 0, ast_new_leaf(ast_ident(), slo, shi), s2args, 2));
+    // n+4: __mind_store_i64(<r> + 16, n)
+    let s3args: i64 = __mind_alloc(16);
+    __mind_store_i64(s3args + 0, ast_new_binop(0, 0, ast_new_leaf(ast_ident(), lo, lo + 3), mk_syn_intlit(16), op_add()));
+    __mind_store_i64(s3args + 8, mk_syn_intlit(n));
+    __mind_store_i64(out + (n + 4) * 8, ast_new_call(0, 0, ast_new_leaf(ast_ident(), slo, shi), s3args, 2));
+    // n+5: let <addr> = __mind_load_i64(<r>)
+    let adname: i64 = ast_new_leaf(ast_ident(), lo, lo + 4);
+    let adargs: i64 = __mind_alloc(8);
+    __mind_store_i64(adargs + 0, ast_new_leaf(ast_ident(), lo, lo + 3));
+    let adcall: i64 = ast_new_call(0, 0, ast_new_leaf(ast_ident(), ldlo, ldhi), adargs, 1);
+    __mind_store_i64(out + (n + 5) * 8, ast_new_let(0, 0, adname, 0, adcall));
+    // n+6: let <len> = __mind_load_i64(<r> + 8)
+    let lname: i64 = ast_new_leaf(ast_ident(), lo, lo + 5);
+    let largs: i64 = __mind_alloc(8);
+    __mind_store_i64(largs + 0, ast_new_binop(0, 0, ast_new_leaf(ast_ident(), lo, lo + 3), mk_syn_intlit(8), op_add()));
+    let lcall: i64 = ast_new_call(0, 0, ast_new_leaf(ast_ident(), ldlo, ldhi), largs, 1);
+    __mind_store_i64(out + (n + 6) * 8, ast_new_let(0, 0, lname, 0, lcall));
+    // n+7: print_bytes(<addr>, <len>)
+    let pbargs: i64 = __mind_alloc(16);
+    __mind_store_i64(pbargs + 0, ast_new_leaf(ast_ident(), lo, lo + 4));
+    __mind_store_i64(pbargs + 8, ast_new_leaf(ast_ident(), lo, lo + 5));
+    __mind_store_i64(out + (n + 7) * 8, ast_new_call(0, 0, ast_new_leaf(ast_ident(), pblo, pbhi), pbargs, 2));
+    // n+8: unit const (the print statement's value)
+    __mind_store_i64(out + (n + 8) * 8, mk_syn_intlit(0));
+    n + 9
+}
+
+// Copy the statement array, expanding each print statement in place order.
+// SP = span pack (see print_expand_str_into); per-statement expansion is 3
+// slots (numeric arg) or 9+n (string literal of n bytes). The guard chain is
+// FLAT (no sibling early-return-if chains inside a shared inner if-block — the
+// #258 SSA over-allocation constraint).
+pub fn print_desugar_copy(stmts_addr: i64, stmts_len: i64, out: i64, src: i64, sp: i64, i: i64, o: i64) -> i64 {
+    if i >= stmts_len {
+        return o;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let arg: i64 = print_stmt_arg(stmt, src);
+    if arg == 0 {
+        __mind_store_i64(out + o * 8, stmt);
+        return print_desugar_copy(stmts_addr, stmts_len, out, src, sp, i + 1, o + 1);
+    }
+    if ast_kind(arg) == ast_str_lit() {
+        let n: i64 = ast_span_hi(arg) - ast_span_lo(arg) - 2;
+        let _e: i64 = print_expand_str_into(out + o * 8, src, ast_span_lo(arg), ast_span_hi(arg), sp);
+        return print_desugar_copy(stmts_addr, stmts_len, out, src, sp, i + 1, o + 9 + n);
+    }
+    let _e: i64 = print_expand_into(out + o * 8, arg, __mind_load_i64(sp + 80), __mind_load_i64(sp + 88), __mind_load_i64(sp + 96), __mind_load_i64(sp + 104));
+    print_desugar_copy(stmts_addr, stmts_len, out, src, sp, i + 1, o + 3)
+}
+
+// Rewrite one fn body in place, expanding every direct print statement. Returns
+// 1 if any statement expanded, 0 if the body was left intact.
+// Build the span pack for the print desugar (heap i64 slots; layout documented
+// on print_expand_str_into). (p64lo, p64hi, pnlo, pnhi) = the printI64 /
+// printNewline spans; (alo..shi, ldlo, ldhi) = the slit alloc/store/load spans;
+// the store_i8 and print_bytes spans derive from p64lo (see the src-copy
+// builders' layouts).
+pub fn print_span_pack(alo: i64, ahi: i64, slo: i64, shi: i64, ldlo: i64, ldhi: i64, p64lo: i64, p64hi: i64, pnlo: i64, pnhi: i64) -> i64 {
+    let sp: i64 = __mind_alloc(14 * 8);
+    __mind_store_i64(sp + 0, alo);
+    __mind_store_i64(sp + 8, ahi);
+    __mind_store_i64(sp + 16, slo);
+    __mind_store_i64(sp + 24, shi);
+    __mind_store_i64(sp + 32, ldlo);
+    __mind_store_i64(sp + 40, ldhi);
+    __mind_store_i64(sp + 48, p64lo + 20);
+    __mind_store_i64(sp + 56, p64lo + 35);
+    __mind_store_i64(sp + 64, p64lo + 35);
+    __mind_store_i64(sp + 72, p64lo + 46);
+    __mind_store_i64(sp + 80, p64lo);
+    __mind_store_i64(sp + 88, p64hi);
+    __mind_store_i64(sp + 96, pnlo);
+    __mind_store_i64(sp + 104, pnhi);
+    sp
+}
+
+pub fn print_desugar_body(fn_node: i64, src: i64, sp: i64) -> i64 {
+    let body: i64 = ast_child2(fn_node);
+    let stmts_addr: i64 = ast_child0(body);
+    let stmts_len: i64 = ast_aux(body);
+    if print_body_has(stmts_addr, stmts_len, src, 0) == 0 {
+        return 0;
+    }
+    let new_len: i64 = print_count_out(stmts_addr, stmts_len, src, 0, 0);
+    let new_stmts: i64 = __mind_alloc(new_len * 8);
+    let _w: i64 = print_desugar_copy(stmts_addr, stmts_len, new_stmts, src, sp, 0, 0);
+    __mind_store_i64(body + 24, new_stmts);
+    __mind_store_i64(body + 48, new_len);
+    1
+}
+
+// Desugar print statements in every fn of the module. Runs AFTER slit annotate
+// and BEFORE build_module_strtab, so the synthetic callee names intern first-seen
+// in body order (matching the oracle's collect_instr_strings walk).
+pub fn print_desugar_module(src: i64, items_addr: i64, items_len: i64, sp: i64, i: i64) -> i64 {
+    if i >= items_len {
+        return 0;
+    }
+    let item: i64 = __mind_load_i64(items_addr + i * 8);
+    if ast_kind(item) == ast_fn_def() {
+        let _d: i64 = print_desugar_body(item, src, sp);
+    }
+    print_desugar_module(src, items_addr, items_len, sp, i + 1)
+}
+
+// deferred: conservative call-detector for the index-read fail-closed guard.
+// The real fix is branch-buffer slot accounting for a CALL inside an index-read
+// subtree — count_nonparam_nodes and flatten_ast disagree on the call's
+// non-emitting callee-leaf (kind 5) / arg-cons (kind 4) slots, so a `xs[g(a)]`
+// index over-flattens and trails 0xFF garbage after OP_CALL (upgrade path: make
+// count_nonparam_nodes model the call's non-vid structural slots so the branch
+// buffer sizes to match the flattener). Until then any index whose base OR index
+// subtree contains a call must fail closed. Returns 1 if `node`'s subtree CONTAINS
+// an ast_call/ast_method (or any shape we cannot prove call-free), else 0. Only
+// pure integer expr shapes (int/ident leaves, binop, index, neg, not, paren) are
+// provably call-free; every other kind is conservatively treated as call-bearing.
+pub fn subtree_contains_call(node: i64) -> i64 {
+    if node == 0 {
+        return 0;
+    }
+    let k: i64 = ast_kind(node);
+    if k == ast_int_lit() {
+        return 0;
+    }
+    if k == ast_ident() {
+        return 0;
+    }
+    if k == ast_binop() {
+        if subtree_contains_call(ast_child0(node)) == 1 {
+            return 1;
+        }
+        return subtree_contains_call(ast_child1(node));
+    }
+    if k == ast_index() {
+        if subtree_contains_call(ast_child0(node)) == 1 {
+            return 1;
+        }
+        return subtree_contains_call(ast_child1(node));
+    }
+    if k == ast_neg() {
+        return subtree_contains_call(ast_child0(node));
+    }
+    if k == ast_not() {
+        return subtree_contains_call(ast_child0(node));
+    }
+    if k == ast_paren() {
+        return subtree_contains_call(ast_child0(node));
+    }
+    // ast_call / ast_method / and every other (unprovable) kind: conservative refuse.
+    1
+}
+
 // Recursive post-order flatten of a param-only binary-expression AST sub-tree into
 // the 4-i64 descriptor array `nodes` (kind,a,b,c per record, 32 bytes). `cursor` is
 // a 1-i64 heap cell holding the next free slot. Returns the slot index of `node`'s
@@ -17711,217 +19432,13 @@ pub fn span_is_print(src: i64, lo: i64, hi: i64) -> i64 {
 // MUST abort (the descriptor is then partial/invalid) — fail-closed, never a
 // byte-mismatched emit (Bound by MIND-CONSTITUTION §I).
 pub fn flatten_ast(node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64) -> i64 {
-    let k: i64 = ast_kind(node);
-    if k == ast_paren() {
-        // Parentheses are purely structural — the mic@3 oracle carries no paren
-        // node (verified vs --emit-mic3 on (a+b)*c). Recurse transparently.
-        return flatten_ast(ast_child0(node), buf, params_addr, n_params, nodes, cursor);
-    }
-    if k == ast_ident() {
-        let idx: i64 = resolve_param(params_addr, n_params, buf, ast_span_lo(node), ast_span_hi(node));
-        if idx < 0 {
-            return 0 - 1;
-        }
-        let slot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + slot * 32 + 0, 0);
-        __mind_store_i64(nodes + slot * 32 + 8, idx);
-        __mind_store_i64(nodes + slot * 32 + 16, 0);
-        __mind_store_i64(nodes + slot * 32 + 24, 0);
-        __mind_store_i64(cursor, slot + 1);
-        return slot;
-    }
-    if k == ast_int_lit() {
-        // Phase 4h: const leaf. The int-literal node carries no stored value, only
-        // its source span [lo,hi) — parse the decimal digits to the raw literal.
-        // Descriptor kind=2, record[1]=raw literal (emit_mic3_const_i64 zigzag-
-        // encodes it at emission, matching the oracle's CONST lit*2). A const leaf
-        // gets its own post-order slot (vid allocated interleaved with binops).
-        // SYNTHETIC int-lit (field-read offset idx*8): child1==1 sentinel carries the
-        // value DIRECT in child0 (no source decimal); real source int-lits have
-        // child1==0 so this never fires for them.
-        let lit: i64 = if ast_child1(node) == 1 {
-            ast_child0(node)
-        } else {
-            parse_int_span(buf, ast_span_lo(node), ast_span_hi(node), 0)
-        };
-        let slot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + slot * 32 + 0, 2);
-        __mind_store_i64(nodes + slot * 32 + 8, lit);
-        __mind_store_i64(nodes + slot * 32 + 16, 0);
-        __mind_store_i64(nodes + slot * 32 + 24, 0);
-        __mind_store_i64(cursor, slot + 1);
-        return slot;
-    }
-    if k == ast_float_lit() {
-        // Float const leaf (descriptor kind=6): store the IEEE-754 f64 bit pattern
-        // (integer-only via nb_float_lit_bits). emit_mic3_tree_body emits it as
-        // OP_CONST_F64, byte-exact vs --emit-mic3. FAIL CLOSED on a non-dyadic /
-        // exponent / overflow literal — nb_float_lit_bits is exact ONLY for a dyadic
-        // rational, so a non-dyadic would emit wrong bits (a silent miscompile); the
-        // -1 return poisons the whole fn (never partial/wrong bytes), matching the
-        // native-ELF nb_expr float arm's dyadic guard.
-        if nb_float_lit_is_dyadic(buf, ast_span_lo(node), ast_span_hi(node)) == 0 {
-            return 0 - 1;
-        }
-        let fbits: i64 = nb_float_lit_bits(buf, ast_span_lo(node), ast_span_hi(node));
-        let fslot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + fslot * 32 + 0, 6);
-        __mind_store_i64(nodes + fslot * 32 + 8, fbits);
-        __mind_store_i64(nodes + fslot * 32 + 16, 0);
-        __mind_store_i64(nodes + fslot * 32 + 24, 0);
-        __mind_store_i64(cursor, fslot + 1);
-        return fslot;
-    }
-    if k == ast_binop() {
-        let lslot: i64 = flatten_ast(ast_child0(node), buf, params_addr, n_params, nodes, cursor);
-        if lslot < 0 {
-            return 0 - 1;
-        }
-        let rslot: i64 = flatten_ast(ast_child1(node), buf, params_addr, n_params, nodes, cursor);
-        if rslot < 0 {
-            return 0 - 1;
-        }
-        let slot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + slot * 32 + 0, 1);
-        __mind_store_i64(nodes + slot * 32 + 8, binop_to_byte(ast_aux(node)));
-        __mind_store_i64(nodes + slot * 32 + 16, lslot);
-        __mind_store_i64(nodes + slot * 32 + 24, rslot);
-        __mind_store_i64(cursor, slot + 1);
-        return slot;
-    }
-    if k == ast_call() {
-        // Strategy-A cutover: a call with arbitrary expression arguments, encoded as
-        // an ARG-CONS CHAIN inside the existing 32B descriptor array — no separate
-        // arglist buffer, no flatten-param threading. Post-order is preserved: each
-        // arg EXPRESSION sub-tree is flattened first (so its vids are assigned before
-        // the call), then the structural callee-leaf (kind=5) + arg-cons (kind=4)
-        // nodes (which emit NOTHING and consume NO vid), then the call node (kind=3)
-        // LAST so it takes the final vid (matching the --emit-mic3 oracle).
-        let callee: i64 = ast_child0(node);
-        // FAIL-CLOSED on the `print` builtin: the Rust oracle DESUGARS `print(x)` into
-        // TWO renamed calls — `printI64(x)` then `printNewline()` (3 strtab entries) —
-        // a shape the self-host generic-call path (one OP_CALL to the literal callee
-        // name) does NOT model. Emitting a bare `print` call would be a valid-but-WRONG
-        // module (calls a nonexistent `print`, omits printNewline). Refuse the whole
-        // subtree so the module fails closed (0 bytes) rather than miscompiling. Named
-        // builtin only — a real user call keeps the generic OP_CALL path. main.mind
-        // never calls `print`, so its own self-compile is unaffected.
-        if span_is_print(buf, ast_span_lo(callee), ast_span_hi(callee)) == 1 {
-            return 0 - 1;
-        }
-        let args_addr: i64 = ast_child1(node);
-        let args_len: i64 = ast_aux(node);
-        // (1)+(2): flatten each arg expr post-order + build the arg-cons chain.
-        let first_cons: i64 = flatten_argcons(args_addr, args_len, 0, buf, params_addr, n_params, nodes, cursor);
-        if first_cons < 0 {
-            return 0 - 1;
-        }
-        // (3): callee leaf — stores the callee NAME span (resolved to a strtab index
-        // at emit time). kind=5, [span_lo, span_hi], emits nothing.
-        let cslot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + cslot * 32 + 0, 5);
-        __mind_store_i64(nodes + cslot * 32 + 8, ast_span_lo(callee));
-        __mind_store_i64(nodes + cslot * 32 + 16, ast_span_hi(callee));
-        __mind_store_i64(nodes + cslot * 32 + 24, 0);
-        __mind_store_i64(cursor, cslot + 1);
-        // (4): the call node, LAST in post-order. child0=callee leaf, child1=first
-        // arg-cons slot (0 when zero-arg).
-        let slot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + slot * 32 + 0, 3);
-        __mind_store_i64(nodes + slot * 32 + 8, 0);
-        __mind_store_i64(nodes + slot * 32 + 16, cslot);
-        __mind_store_i64(nodes + slot * 32 + 24, first_cons);
-        __mind_store_i64(cursor, slot + 1);
-        return slot;
-    }
-    if k == ast_neg() {
-        // Unary `-x` (non-literal operand) desugars to `0 - x` (CONST 0, then `sub`)
-        // — exactly how the Rust front-end lowers it (src/eval/lower.rs Node::Neg
-        // non-Lit arm: `zero = fresh(); ConstI64(zero,0)` is emitted BEFORE
-        // `lower_expr(operand)`, then `Sub(dst, zero, rhs)`). Post-order slot order
-        // therefore is: synthetic const-0 leaf FIRST (lowest vid), then the operand's
-        // own instrs, then the `sub` binop LAST. Emitting the const-0 before recursing
-        // into the operand is load-bearing for byte-identity: the oracle assigns the
-        // const-0 the earlier SSA id, so a `-(a+b)`/`-(a*b)`/`--a` neg-of-non-leaf
-        // lowers byte-exactly (a bare `-<literal>` folds to one CONST at parse time,
-        // never reaching here). Additive — main.mind has no unary neg-of-non-leaf.
-        let zslot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + zslot * 32 + 0, 2);
-        __mind_store_i64(nodes + zslot * 32 + 8, 0);
-        __mind_store_i64(nodes + zslot * 32 + 16, 0);
-        __mind_store_i64(nodes + zslot * 32 + 24, 0);
-        __mind_store_i64(cursor, zslot + 1);
-        let oslot: i64 = flatten_ast(ast_child0(node), buf, params_addr, n_params, nodes, cursor);
-        if oslot < 0 {
-            return 0 - 1;
-        }
-        let slot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + slot * 32 + 0, 1);
-        __mind_store_i64(nodes + slot * 32 + 8, binop_to_byte(op_sub()));
-        __mind_store_i64(nodes + slot * 32 + 16, zslot);
-        __mind_store_i64(nodes + slot * 32 + 24, oslot);
-        __mind_store_i64(cursor, slot + 1);
-        return slot;
-    }
-    if k == ast_not() {
-        // Unary logical NOT `!x` desugars to `x == 0` — exactly how the Rust
-        // front-end lowers it (src/eval/lower.rs Node::Not: lhs = lower(operand);
-        // zero = CONST 0; dst = BinOp Eq(lhs, zero)). Verified byte-identical vs
-        // --emit-mic3: `!a` and `a == 0` emit the same 45-byte mic@3 module.
-        // Post-order: operand first, then a synthetic const-0, then the Eq binop
-        // LAST (so it takes the final vid, lhs=operand slot, rhs=const-0 slot).
-        // Additive — main.mind uses no `!` in a flattened trailing expression, so
-        // the whole-module self-host gates stay byte-identical.
-        let operand: i64 = ast_child0(node);
-        // `!<int-literal>` fast path — mirrors src/eval/lower.rs Node::Not `!Lit(Int(n))`
-        // => a single ConstI64(id, (n == 0)). One const leaf, NOT operand+zero+Eq. This
-        // must match the oracle exactly: the count arm (count_nonparam_nodes ast_not)
-        // now activates the module driver for `!`, so a bare `!5` would otherwise emit
-        // 3 instrs where the oracle emits 1 (byte-divergence).
-        if ast_kind(operand) == ast_int_lit() {
-            let litv: i64 = if ast_child1(operand) == 1 {
-                ast_child0(operand)
-            } else {
-                parse_int_span(buf, ast_span_lo(operand), ast_span_hi(operand), 0)
-            };
-            let cval: i64 = if litv == 0 {
-                1
-            } else {
-                0
-            };
-            let cslot: i64 = __mind_load_i64(cursor);
-            __mind_store_i64(nodes + cslot * 32 + 0, 2);
-            __mind_store_i64(nodes + cslot * 32 + 8, cval);
-            __mind_store_i64(nodes + cslot * 32 + 16, 0);
-            __mind_store_i64(nodes + cslot * 32 + 24, 0);
-            __mind_store_i64(cursor, cslot + 1);
-            return cslot;
-        }
-        let oslot: i64 = flatten_ast(operand, buf, params_addr, n_params, nodes, cursor);
-        if oslot < 0 {
-            return 0 - 1;
-        }
-        let zslot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + zslot * 32 + 0, 2);
-        __mind_store_i64(nodes + zslot * 32 + 8, 0);
-        __mind_store_i64(nodes + zslot * 32 + 16, 0);
-        __mind_store_i64(nodes + zslot * 32 + 24, 0);
-        __mind_store_i64(cursor, zslot + 1);
-        let slot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + slot * 32 + 0, 1);
-        __mind_store_i64(nodes + slot * 32 + 8, binop_to_byte(op_eq()));
-        __mind_store_i64(nodes + slot * 32 + 16, oslot);
-        __mind_store_i64(nodes + slot * 32 + 24, zslot);
-        __mind_store_i64(cursor, slot + 1);
-        return slot;
-    }
-    if k == ast_struct_lit() {
-        // PARSE-ONLY frontier: struct-literal CONSTRUCTION is parsed but not yet
-        // lowered. Fail closed (no bytes) — the desugar/emit half lands later.
-        return 0 - 1;
-    }
-    // Every other kind (field access, if, ...) = a later-phase wall — reject.
-    0 - 1
+    // Single Canonical Descriptor Lowering (P0 step 2): flatten_ast is now a thin
+    // empty-env wrapper over the ONE flattener flatten_expr_env (a strict superset
+    // of the old per-arm body). `buf` is the source-byte buffer -> flatten_expr_env's
+    // `src`; env=0/nlets=0 routes the ast_ident non-param case through letenv_lookup
+    // with nlets==0, which returns -1 byte-identically to the old non-param -1, and
+    // env is never dereferenced. Deletes the dual-engine divergence class.
+    flatten_expr_env(node, buf, params_addr, n_params, nodes, cursor, 0, 0)
 }
 
 // Flatten the args of a call into the descriptor array as an arg-cons chain. Arg
@@ -17998,6 +19515,12 @@ pub fn emit_mic3_ast_fn_module(s: EmitState, src: i64, strbuf: i64, offs: i64, n
         return s;
     }
     let n_nodes: i64 = __mind_load_i64(cursor);
+    // Fail-closed: flatten_ast (the base wrapper) now routes through flatten_expr_env,
+    // which accepts call/array/index; emit_mic3_tree_fn_module emits with src=0 /
+    // empty strtab, so those crash or emit wrong bytes (see descriptor_has_src_dep_kind).
+    if descriptor_has_src_dep_kind(nodes, n_nodes, 0) == 1 {
+        return s;
+    }
     emit_mic3_tree_fn_module(s, strbuf, offs, n, nodes, n_nodes, vidbuf)
 }
 
@@ -18071,104 +19594,17 @@ pub fn resolve_let_loop(lenv: i64, n: i64, buf: i64, lo: i64, hi: i64, i: i64) -
     resolve_let_loop(lenv, n, buf, lo, hi, i + 1)
 }
 
-// Let-env-aware post-order flatten. Identical to flatten_ast (Phase 4g/4h) except
-// the ast_ident branch first tries params, THEN let-names (alias to the bound slot,
-// no new node). Threads lenv/lcount through paren/binop recursion. Returns the
-// node's slot index, or -1 on an unsupported construct (fail-closed).
+// Single Canonical Descriptor Lowering (S1): flatten_ast_le is now a thin wrapper
+// over the ONE flattener flatten_expr_env (a strict superset of the old per-arm
+// body). Its `lenv` is a 24-byte [name_lo,name_hi,SLOT] record array param-first
+// with let->slot aliases — byte-identical in layout to flatten_expr_env's `env`;
+// its paren/ident/int_lit/binop/not arms emitted identically under that env. `lcount`
+// is a 1-i64 CELL, so pass __mind_load_i64(lcount) for flatten_expr_env's by-value
+// `nlets`. The first-match (resolve_let) vs last-match (letenv_lookup) resolution
+// difference is byte-neutral because the sole driver flatten_stmts binds only
+// DISTINCT source let names. Deletes the dual-engine divergence class.
 pub fn flatten_ast_le(node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, lenv: i64, lcount: i64) -> i64 {
-    let k: i64 = ast_kind(node);
-    if k == ast_paren() {
-        return flatten_ast_le(ast_child0(node), buf, params_addr, n_params, nodes, cursor, lenv, lcount);
-    }
-    if k == ast_ident() {
-        let idx: i64 = resolve_param(params_addr, n_params, buf, ast_span_lo(node), ast_span_hi(node));
-        if idx >= 0 {
-            let slot: i64 = __mind_load_i64(cursor);
-            __mind_store_i64(nodes + slot * 32 + 0, 0);
-            __mind_store_i64(nodes + slot * 32 + 8, idx);
-            __mind_store_i64(nodes + slot * 32 + 16, 0);
-            __mind_store_i64(nodes + slot * 32 + 24, 0);
-            __mind_store_i64(cursor, slot + 1);
-            return slot;
-        }
-        // Not a param: a let-bound local resolves to its init's already-emitted
-        // slot (an alias — emit no new node, return the bound slot directly).
-        let lslot: i64 = resolve_let(lenv, lcount, buf, ast_span_lo(node), ast_span_hi(node));
-        if lslot >= 0 {
-            return lslot;
-        }
-        return 0 - 1;
-    }
-    if k == ast_int_lit() {
-        let lit: i64 = parse_int_span(buf, ast_span_lo(node), ast_span_hi(node), 0);
-        let slot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + slot * 32 + 0, 2);
-        __mind_store_i64(nodes + slot * 32 + 8, lit);
-        __mind_store_i64(nodes + slot * 32 + 16, 0);
-        __mind_store_i64(nodes + slot * 32 + 24, 0);
-        __mind_store_i64(cursor, slot + 1);
-        return slot;
-    }
-    if k == ast_binop() {
-        let ls: i64 = flatten_ast_le(ast_child0(node), buf, params_addr, n_params, nodes, cursor, lenv, lcount);
-        if ls < 0 {
-            return 0 - 1;
-        }
-        let rs: i64 = flatten_ast_le(ast_child1(node), buf, params_addr, n_params, nodes, cursor, lenv, lcount);
-        if rs < 0 {
-            return 0 - 1;
-        }
-        let slot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + slot * 32 + 0, 1);
-        __mind_store_i64(nodes + slot * 32 + 8, binop_to_byte(ast_aux(node)));
-        __mind_store_i64(nodes + slot * 32 + 16, ls);
-        __mind_store_i64(nodes + slot * 32 + 24, rs);
-        __mind_store_i64(cursor, slot + 1);
-        return slot;
-    }
-    if k == ast_not() {
-        // Unary logical NOT `!x` desugars to `x == 0` (operand, synth CONST 0, Eq
-        // binop LAST) — mirrors the base flatten_ast ast_not arm, byte-identical vs
-        // --emit-mic3. Additive: enables `!x` inside a multi-statement let body.
-        // `!<int-literal>` fast path — mirrors src/eval/lower.rs `!Lit(Int(n))` => a
-        // single ConstI64((n == 0)); one const leaf, NOT operand+zero+Eq.
-        let notop: i64 = ast_child0(node);
-        if ast_kind(notop) == ast_int_lit() {
-            let litv: i64 = if ast_child1(notop) == 1 {
-                ast_child0(notop)
-            } else {
-                parse_int_span(buf, ast_span_lo(notop), ast_span_hi(notop), 0)
-            };
-            let cval: i64 = if litv == 0 {
-                1
-            } else {
-                0
-            };
-            return desc_emit_const(nodes, cursor, cval);
-        }
-        let oslot: i64 = flatten_ast_le(ast_child0(node), buf, params_addr, n_params, nodes, cursor, lenv, lcount);
-        if oslot < 0 {
-            return 0 - 1;
-        }
-        let zslot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + zslot * 32 + 0, 2);
-        __mind_store_i64(nodes + zslot * 32 + 8, 0);
-        __mind_store_i64(nodes + zslot * 32 + 16, 0);
-        __mind_store_i64(nodes + zslot * 32 + 24, 0);
-        __mind_store_i64(cursor, zslot + 1);
-        let slot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + slot * 32 + 0, 1);
-        __mind_store_i64(nodes + slot * 32 + 8, binop_to_byte(op_eq()));
-        __mind_store_i64(nodes + slot * 32 + 16, oslot);
-        __mind_store_i64(nodes + slot * 32 + 24, zslot);
-        __mind_store_i64(cursor, slot + 1);
-        return slot;
-    }
-    if k == ast_struct_lit() {
-        // PARSE-ONLY frontier: reject struct-literal construction (fail closed).
-        return 0 - 1;
-    }
-    0 - 1
+    return flatten_expr_env(node, buf, params_addr, n_params, nodes, cursor, lenv, __mind_load_i64(lcount));
 }
 
 // Walk a block's statement list: each `let` flattens its init and binds the
@@ -18211,6 +19647,11 @@ pub fn emit_mic3_let_fn_module(s: EmitState, src: i64, strbuf: i64, offs: i64, n
         return s;
     }
     let n_nodes: i64 = __mind_load_i64(cursor);
+    // Fail-closed: emit_mic3_tree_fn_module emits with src=0 / empty strtab; refuse
+    // any descriptor kind that needs a real src+strtab (see descriptor_has_src_dep_kind).
+    if descriptor_has_src_dep_kind(nodes, n_nodes, 0) == 1 {
+        return s;
+    }
     emit_mic3_tree_fn_module(s, strbuf, offs, n, nodes, n_nodes, vidbuf)
 }
 
@@ -18274,75 +19715,33 @@ pub fn selftest_mic3_let_fn(src_addr: i64, src_len: i64, strbuf: i64, offs: i64,
 // + BINOP nodes). Params contribute 0 (they re-use their own vid, no sub-instr).
 // Returns -1 on any unsupported construct (mirrors flatten_ast's rejection set).
 pub fn count_nonparam_nodes(node: i64, buf: i64, params_addr: i64, n_params: i64) -> i64 {
-    let k: i64 = ast_kind(node);
-    if k == ast_paren() {
-        return count_nonparam_nodes(ast_child0(node), buf, params_addr, n_params);
+    // Single Canonical Descriptor Lowering (P0 step 2): instead of an INDEPENDENT
+    // analytic per-kind count (which could disagree with the flattener — the root of
+    // 3 prior regressions), DRY-RUN the ONE flattener flatten_expr_env into a
+    // throwaway scratch descriptor buffer, then count non-param body slots exactly the
+    // way the emit path does (count_descriptor_nonparam, skipping kind 0 params / 4
+    // arg-cons / 5 callee leaves). Scratch is sized 256*32 to match the if-path emit's
+    // per-fn descriptor discipline; `cur` is a local throwaway cursor. Fail-closed (-1)
+    // whenever the flattener refuses, so pre-size and flatten never disagree.
+    let scratch: i64 = __mind_alloc(256 * 32);
+    let cur: i64 = __mind_alloc(8);
+    __mind_store_i64(cur, 0);
+    let root: i64 = flatten_expr_env(node, buf, params_addr, n_params, scratch, cur, 0, 0);
+    if root < 0 {
+        // FINDING 4 (bounded heap leak): release the per-call dry-run scratch on the
+        // refuse path too. __mind_free is the malloc-backed free in the cdylib emit
+        // path and a no-op `xor rax,rax` in the native bump-arena self-host (kind 7 ->
+        // nb_emit_free_xor); byte-neutral to every emitted artifact (this fn runs at
+        // emit time and its return value / emitted bytes are unchanged).
+        let _fr1: i64 = __mind_free(scratch);
+        let _fr2: i64 = __mind_free(cur);
+        return 0 - 1;
     }
-    if k == ast_ident() {
-        let idx: i64 = resolve_param(params_addr, n_params, buf, ast_span_lo(node), ast_span_hi(node));
-        if idx < 0 {
-            return 0 - 1;
-        }
-        return 0;
-    }
-    if k == ast_int_lit() {
-        return 1;
-    }
-    if k == ast_float_lit() {
-        // 1 instr (OP_CONST_F64), same as an int const leaf. Fail-close (-1) on a
-        // non-dyadic literal so the vid count matches flatten_ast's poison exactly.
-        if nb_float_lit_is_dyadic(buf, ast_span_lo(node), ast_span_hi(node)) == 0 {
-            return 0 - 1;
-        }
-        return 1;
-    }
-    if k == ast_binop() {
-        let l: i64 = count_nonparam_nodes(ast_child0(node), buf, params_addr, n_params);
-        if l < 0 {
-            return 0 - 1;
-        }
-        let r: i64 = count_nonparam_nodes(ast_child1(node), buf, params_addr, n_params);
-        if r < 0 {
-            return 0 - 1;
-        }
-        return 1 + l + r;
-    }
-    if k == ast_call() {
-        // The call emits ONE instr (the OP_CALL). The structural callee-leaf and
-        // arg-cons descriptor nodes emit nothing. Each arg contributes its own
-        // non-param instrs (consts/binops/nested calls).
-        let args_addr: i64 = ast_child1(node);
-        let args_len: i64 = ast_aux(node);
-        let a: i64 = count_nonparam_args(args_addr, args_len, 0, buf, params_addr, n_params);
-        if a < 0 {
-            return 0 - 1;
-        }
-        return 1 + a;
-    }
-    if k == ast_neg() {
-        // `-x` -> CONST 0 (1 instr) + `sub` binop (1 instr) + the operand's own instrs.
-        let o: i64 = count_nonparam_nodes(ast_child0(node), buf, params_addr, n_params);
-        if o < 0 {
-            return 0 - 1;
-        }
-        return 2 + o;
-    }
-    if k == ast_not() {
-        // `!<int-literal>` fast path — the oracle collapses `!Lit(n)` to ONE ConstI64,
-        // so the pre-count must be 1 (not 2 + operand's 1). Mirror flatten_ast exactly.
-        if ast_kind(ast_child0(node)) == ast_int_lit() {
-            return 1;
-        }
-        // `!x` -> CONST 0 (1 instr) + `==` binop (1 instr) + the operand's own instrs.
-        // Parallels the ast_neg arm and the base flatten_ast ast_not desugar so the
-        // pre-count agrees with the flattener (no buffer under-allocation).
-        let o: i64 = count_nonparam_nodes(ast_child0(node), buf, params_addr, n_params);
-        if o < 0 {
-            return 0 - 1;
-        }
-        return 2 + o;
-    }
-    0 - 1
+    let n_nodes: i64 = __mind_load_i64(cur);
+    let result: i64 = count_descriptor_nonparam(scratch, n_nodes, 0);
+    let _fs1: i64 = __mind_free(scratch);
+    let _fs2: i64 = __mind_free(cur);
+    result
 }
 
 // Sum the non-param instr counts of a call's arguments (left-to-right).
@@ -18894,8 +20293,41 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         __mind_store_i64(cursor, slot + 1);
         return slot;
     }
+    if k == ast_float_lit() {
+        // Float const leaf (descriptor kind=6): store the IEEE-754 f64 bit pattern
+        // (integer-only via nb_float_lit_bits). emit_mic3_tree_body emits it as
+        // OP_CONST_F64, byte-exact vs --emit-mic3. FAIL CLOSED on a non-dyadic /
+        // exponent / overflow literal — nb_float_lit_bits is exact ONLY for a dyadic
+        // rational, so a non-dyadic would emit wrong bits (a silent miscompile); the
+        // -1 return poisons the whole fn (never partial/wrong bytes), matching the
+        // native-ELF nb_expr float arm's dyadic guard. Byte-identical to flatten_ast's
+        // ast_float_lit arm (env/nlets unused, mirroring the int_lit arm above).
+        if nb_float_lit_is_dyadic(src, ast_span_lo(node), ast_span_hi(node)) == 0 {
+            return 0 - 1;
+        }
+        let fbits: i64 = nb_float_lit_bits(src, ast_span_lo(node), ast_span_hi(node));
+        let fslot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + fslot * 32 + 0, 6);
+        __mind_store_i64(nodes + fslot * 32 + 8, fbits);
+        __mind_store_i64(nodes + fslot * 32 + 16, 0);
+        __mind_store_i64(nodes + fslot * 32 + 24, 0);
+        __mind_store_i64(cursor, fslot + 1);
+        return fslot;
+    }
     if k == ast_neg() {
         let neg_operand: i64 = ast_child0(node);
+        // FAIL-CLOSED on `-<float literal>`: the oracle folds Neg(Float) to a SINGLE
+        // negative ConstF64 (src/eval/lower.rs ~4600-4603, -1.5 -> f8bf), but this arm's
+        // `0 - x` desugar below would emit a 3-instr `0 - 1.5` (const +1.5/f83f + sub) —
+        // a silent wrong-bytes miscompile (52B vs the oracle's 44B; also wrong inside an
+        // if-branch). Refuse -> the whole module fails closed (0 bytes, count auto-agrees
+        // since count_nonparam_nodes dry-runs this flattener). Neg-of-int-literal (folded
+        // below) and neg-of-non-leaf (`0 - x` desugar) stay byte-exact and are UNTOUCHED;
+        // ONLY neg-of-float-literal newly refuses (Bound by MIND-CONSTITUTION §I —
+        // fail-closed over wrong-bytes; the proper negative-ConstF64 fold is a later slice).
+        if ast_kind(neg_operand) == ast_float_lit() {
+            return 0 - 1;
+        }
         // `-<int literal>` constant-folds to a single negative CONST (the oracle folds it;
         // a `0 - 10` desugar would over-emit). Only a non-literal `-x` desugars to `0 - x`.
         if ast_kind(neg_operand) == ast_int_lit() {
@@ -19076,6 +20508,23 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         // `BASE[IDX]` index read -> array-load descriptor (kind 8). Base + index
         // flatten post-order first (a let-bound array base resolves to its existing
         // slot with no new node), then the load node takes the final vid.
+        // deferred: fail-closed guard, byte-identical to the flatten_ast /
+        // count_nonparam_nodes ast_index guards so the trailing / let-init env path
+        // refuses exactly the shapes the branch path refuses. (a) NEG base: `-xs[0]`
+        // parses as `(-xs)[0]` (child0 = ast_neg) and this arm would lower `0 - xs`
+        // as the base — a silently-wrong 50-byte module vs --emit-mic3 (upgrade path:
+        // parser neg / postfix-index precedence). (b) CALL in base/index subtree —
+        // count-vs-flatten slot disagreement (upgrade path: branch-buffer slot
+        // accounting for call-in-index subtrees). Refuse -> module fails closed (0B).
+        if ast_kind(ast_child0(node)) == ast_neg() {
+            return 0 - 1;
+        }
+        if subtree_contains_call(ast_child0(node)) == 1 {
+            return 0 - 1;
+        }
+        if subtree_contains_call(ast_child1(node)) == 1 {
+            return 0 - 1;
+        }
         let base_slot: i64 = flatten_expr_env(ast_child0(node), src, params_addr, n_params, nodes, cursor, env, nlets);
         if base_slot < 0 {
             return 0 - 1;
@@ -19107,7 +20556,14 @@ pub fn flatten_arr_pushes(elems_addr: i64, count: i64, j: i64, prev_slot: i64, s
         return prev_slot;
     }
     let elem: i64 = __mind_load_i64(elems_addr + j * 8);
-    let eslot: i64 = flatten_expr_env(elem, src, params_addr, n_params, nodes, cursor, env, nlets);
+    // Struct-lit element with a recorded construction (node+56 annotation):
+    // emit alloc + field stores inline (flatten_struct_lit_lv), then push the
+    // handle — the oracle's vec_new → construct → vec_push interleave.
+    let eslot: i64 = if ast_kind(elem) == ast_struct_lit() {
+        flatten_struct_lit_lv(elem, src, params_addr, n_params, nodes, cursor, env, nlets)
+    } else {
+        flatten_expr_env(elem, src, params_addr, n_params, nodes, cursor, env, nlets)
+    };
     if eslot < 0 {
         return 0 - 1;
     }
@@ -19270,11 +20726,74 @@ pub fn tree_resolve_vids_base(nodes: i64, n_nodes: i64, vidbuf: i64, i: i64, bas
     tree_resolve_vids_base(nodes, n_nodes, vidbuf, i + 1, base + 1)
 }
 
+// True (1) if any array literal `[..]` is reachable within `node` along the exact
+// descent flatten_expr_env would take (paren/neg/not child0, binop/index children,
+// call args). Leaves (ident/int/float) and any other kind report 0 — flatten_expr_env
+// either treats them as a leaf or refuses them independently before it could descend
+// into a nested array_lit, so no branch array_lit arm is reachable there. Used ONLY by
+// flatten_branch to restore HEAD's 0B refusal of branch array literals (fail-closed).
+pub fn args_contain_array_lit(args_addr: i64, args_len: i64, i: i64) -> i64 {
+    if i >= args_len {
+        return 0;
+    }
+    if subtree_contains_array_lit(__mind_load_i64(args_addr + i * 8)) == 1 {
+        return 1;
+    }
+    args_contain_array_lit(args_addr, args_len, i + 1)
+}
+pub fn subtree_contains_array_lit(node: i64) -> i64 {
+    if node == 0 {
+        return 0;
+    }
+    let k: i64 = ast_kind(node);
+    if k == ast_array_lit() {
+        return 1;
+    }
+    if k == ast_paren() {
+        return subtree_contains_array_lit(ast_child0(node));
+    }
+    if k == ast_neg() {
+        return subtree_contains_array_lit(ast_child0(node));
+    }
+    if k == ast_not() {
+        return subtree_contains_array_lit(ast_child0(node));
+    }
+    if k == ast_binop() {
+        if subtree_contains_array_lit(ast_child0(node)) == 1 {
+            return 1;
+        }
+        return subtree_contains_array_lit(ast_child1(node));
+    }
+    if k == ast_index() {
+        if subtree_contains_array_lit(ast_child0(node)) == 1 {
+            return 1;
+        }
+        return subtree_contains_array_lit(ast_child1(node));
+    }
+    if k == ast_call() {
+        return args_contain_array_lit(ast_child1(node), ast_aux(node), 0);
+    }
+    0
+}
+
 // Flatten ONE branch/cond expression tree into a fresh descriptor (resets cursor),
 // resolve its slot vids from `base`, and return the root slot's resolved vid (or
 // -1 on a wall). On success `cursor` holds n_nodes and `vidbuf` is filled — the
 // caller emits the branch's non-param instrs via emit_mic3_tree_body.
 pub fn flatten_branch(expr: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base: i64) -> i64 {
+    // FAIL-CLOSED on a branch array literal. HEAD refused all branch `[..]` (0B); the
+    // Single Canonical Descriptor collapse routed flatten_branch through
+    // flatten_expr_env's ast_array_lit arm, which mis-lowers in branch context — a
+    // const array SEGFAULTs the tree-body path, a non-const array emits a vec_push
+    // name_idx = uleb(-1) never interned into the strtab (wrong bytes). Refuse BEFORE
+    // descending so the enclosing if fails closed exactly as HEAD did (the caller checks
+    // `< 0` before counting, so count/flatten never desync). The non-branch let-chain /
+    // top-level trailing path does NOT go through flatten_branch, so `let m=[a,b,c]; m[2]`
+    // still self-emits (Bound by MIND-CONSTITUTION §I — fail-closed over wrong-bytes;
+    // proper branch array-literal lowering is a later slice).
+    if subtree_contains_array_lit(expr) == 1 {
+        return 0 - 1;
+    }
     __mind_store_i64(cursor, 0);
     let root_slot: i64 = flatten_ast(expr, buf, params_addr, n_params, nodes, cursor);
     if root_slot < 0 {
@@ -19539,50 +21058,155 @@ pub fn emit_mic3_module_fndef_ifret_chain(s: EmitState, src: i64, fn_node: i64, 
     s8
 }
 
+// Emit ONE value-if AST node (branches = single-statement blocks) as ONE OP_IF,
+// recursing through emit_mic3_if_instr so a nested value-if in ANY of the three
+// positions (cond / then / else) lowers as a nested OP_IF — the oracle's exact
+// lowering of the parse-time && / || desugar in condition position. Fails closed
+// (writes -1 to okcell, returns the seed) when a branch block is not a single
+// statement — those belong to the block_lv paths.
+pub fn emit_if_value_node(s: EmitState, if_node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64) -> EmitState {
+    let ic: i64 = ast_child0(if_node);
+    let te: i64 = branch_single_expr(ast_child1(if_node));
+    let ee: i64 = branch_single_expr(ast_child2(if_node));
+    if te < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    if ee < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    emit_mic3_if_instr(s, ic, te, ee, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, okcell)
+}
+
 pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_expr: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64) -> EmitState {
     // --- cond ---
-    let cond_id: i64 = flatten_branch(cond_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, base0);
+    // NESTED-IF cond (the parse-time && / || desugar): the oracle lowers it as
+    // ONE nested OP_IF in the cond region — cond_count=1, cond_id = the inner
+    // if's dst, no synth const. Probe-emit the inner if into a scratch state to
+    // learn its dst (deterministic re-emit below), else the flat tree path.
+    let ccell: i64 = __mind_alloc(8);
+    __mind_store_i64(ccell, 0 - 1);
+    let _cp: EmitState = if ast_kind(cond_expr) == ast_if() {
+        emit_if_value_node(es_new(), cond_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, ccell)
+    } else {
+        es_new()
+    };
+    let nested_cond: i64 = __mind_load_i64(ccell);
+    let flat_cond: i64 = if nested_cond >= 0 {
+        0 - 1
+    } else {
+        flatten_branch(cond_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, base0)
+    };
+    let cond_id: i64 = if nested_cond >= 0 {
+        nested_cond
+    } else {
+        flat_cond
+    };
     if cond_id < 0 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
     let cond_n: i64 = __mind_load_i64(cursor);
-    let cond_nonparam: i64 = count_nonparam_nodes(cond_expr, buf, params_addr, n_params);
+    let cond_nonparam: i64 = if nested_cond >= 0 {
+        1
+    } else {
+        count_nonparam_nodes(cond_expr, buf, params_addr, n_params)
+    };
     let s1: EmitState = es_push(s, 28);
     let s2: EmitState = emit_uleb128(s1, cond_id);
     let s3: EmitState = emit_uleb128(s2, cond_nonparam);
-    let s4: EmitState = emit_mic3_tree_body(s3, nodes, cond_n, vidbuf, 0, 0, 0, 0, 0);
-    let after_cond: i64 = base0 + cond_nonparam;
+    let s4: EmitState = if nested_cond >= 0 {
+        emit_if_value_node(s3, cond_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, okcell)
+    } else {
+        emit_mic3_tree_body(s3, nodes, cond_n, vidbuf, 0, 0, 0, 0, 0)
+    };
+    let after_cond: i64 = if nested_cond >= 0 {
+        cond_id + 1
+    } else {
+        base0 + cond_nonparam
+    };
 
-    // --- then: synth ConstI64(after_cond, 0) FIRST, then the then-expr tree ---
+    // --- then: synth ConstI64(after_cond, 0) FIRST, then the then-expr tree;
+    // a nested value-if branch follows the synth as ONE OP_IF (count = synth + 1,
+    // result = the nested dst) — the oracle's exact branch shape.
     let then_synth: i64 = after_cond;
-    let then_root: i64 = flatten_branch(then_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, after_cond + 1);
+    let tcell: i64 = __mind_alloc(8);
+    __mind_store_i64(tcell, 0 - 1);
+    let _tp: EmitState = if ast_kind(then_expr) == ast_if() {
+        emit_if_value_node(es_new(), then_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, after_cond + 1, tcell)
+    } else {
+        es_new()
+    };
+    let nested_then: i64 = __mind_load_i64(tcell);
+    let then_root: i64 = if nested_then >= 0 {
+        nested_then
+    } else {
+        flatten_branch(then_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, after_cond + 1)
+    };
     if then_root < 0 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
     let then_n: i64 = __mind_load_i64(cursor);
-    let then_nonparam: i64 = count_nonparam_nodes(then_expr, buf, params_addr, n_params);
+    let then_nonparam: i64 = if nested_then >= 0 {
+        1
+    } else {
+        count_nonparam_nodes(then_expr, buf, params_addr, n_params)
+    };
     let s5: EmitState = emit_uleb128(s4, then_nonparam + 1);
     let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
-    let s7: EmitState = emit_mic3_tree_body(s6, nodes, then_n, vidbuf, 0, 0, 0, 0, 0);
+    let s7: EmitState = if nested_then >= 0 {
+        emit_if_value_node(s6, then_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, after_cond + 1, okcell)
+    } else {
+        emit_mic3_tree_body(s6, nodes, then_n, vidbuf, 0, 0, 0, 0, 0)
+    };
     let s8: EmitState = emit_uleb128(s7, then_root);
-    let after_then: i64 = after_cond + 1 + then_nonparam;
+    let after_then: i64 = if nested_then >= 0 {
+        then_root + 1
+    } else {
+        after_cond + 1 + then_nonparam
+    };
 
-    // --- else: synth ConstI64(after_then, 0) FIRST, then the else-expr tree ---
+    // --- else: synth ConstI64(after_then, 0) FIRST, then the else-expr tree (or
+    // one nested OP_IF, mirroring the then branch) ---
     let else_synth: i64 = after_then;
-    let else_root: i64 = flatten_branch(else_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, after_then + 1);
+    let ecell: i64 = __mind_alloc(8);
+    __mind_store_i64(ecell, 0 - 1);
+    let _ep: EmitState = if ast_kind(else_expr) == ast_if() {
+        emit_if_value_node(es_new(), else_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, after_then + 1, ecell)
+    } else {
+        es_new()
+    };
+    let nested_else: i64 = __mind_load_i64(ecell);
+    let else_root: i64 = if nested_else >= 0 {
+        nested_else
+    } else {
+        flatten_branch(else_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, after_then + 1)
+    };
     if else_root < 0 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
     let else_n: i64 = __mind_load_i64(cursor);
-    let else_nonparam: i64 = count_nonparam_nodes(else_expr, buf, params_addr, n_params);
+    let else_nonparam: i64 = if nested_else >= 0 {
+        1
+    } else {
+        count_nonparam_nodes(else_expr, buf, params_addr, n_params)
+    };
     let s9: EmitState = emit_uleb128(s8, else_nonparam + 1);
     let s10: EmitState = emit_mic3_const_i64(s9, else_synth, 0);
-    let s11: EmitState = emit_mic3_tree_body(s10, nodes, else_n, vidbuf, 0, 0, 0, 0, 0);
+    let s11: EmitState = if nested_else >= 0 {
+        emit_if_value_node(s10, else_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, after_then + 1, okcell)
+    } else {
+        emit_mic3_tree_body(s10, nodes, else_n, vidbuf, 0, 0, 0, 0, 0)
+    };
     let s12: EmitState = emit_uleb128(s11, else_root);
-    let after_else: i64 = after_then + 1 + else_nonparam;
+    let after_else: i64 = if nested_else >= 0 {
+        else_root + 1
+    } else {
+        after_then + 1 + else_nonparam
+    };
 
     // --- dst (the if's value) + empty branch_bindings + empty merges ---
     let dst: i64 = after_else;
@@ -19862,6 +21486,24 @@ pub fn emit_mic3_if_block_instr(s: EmitState, cond_expr: i64, then_blk: i64, els
     let else_n: i64 = __mind_load_i64(e_cur);
     let else_nonparam: i64 = nonparam_count_desc(e_nodes, else_n, 0);
     let after_else: i64 = after_then + 1 + else_nonparam;
+
+    // Fail-closed: the cond / then / else branch bodies below emit via
+    // emit_mic3_tree_body with src=0 / empty strtab; a call/array/index descriptor in
+    // ANY of the three trees would crash or emit wrong bytes (same S1-collapse defect
+    // class as the plain let-chain — see descriptor_has_src_dep_kind). Refuse the whole
+    // OP_IF emit (fail-closed-over-wrong-bytes, Bound by MIND-CONSTITUTION §I).
+    if descriptor_has_src_dep_kind(c_nodes, cond_n, 0) == 1 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    if descriptor_has_src_dep_kind(t_nodes, then_n, 0) == 1 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    if descriptor_has_src_dep_kind(e_nodes, else_n, 0) == 1 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
 
     // --- merge pass: merged names, per-name placeholders + merge_ids from after_else ---
     let t_lcount: i64 = __mind_load_i64(t_lc);
@@ -23817,13 +25459,170 @@ pub fn selftest_mic3_while_count(buf: i64, offs: i64, op_byte: i64, incr: i64) -
 // OP_IF arm (0x1c). Fails closed on any non-assign / unknown-target statement.
 // ===========================================================================
 
+// Byte-wise lexicographic compare of two name spans (Rust str::cmp on UTF-8
+// bytes): -1 if a < b, 0 if equal, +1 if a > b. Used to order the break/continue
+// live snapshot, which lower.rs sorts by name before serialising.
+pub fn span_bytes_cmp(src: i64, alo: i64, ahi: i64, blo: i64, bhi: i64, i: i64) -> i64 {
+    if alo + i >= ahi {
+        if blo + i >= bhi {
+            return 0;
+        }
+        return 0 - 1;
+    }
+    if blo + i >= bhi {
+        return 1;
+    }
+    let ca: i64 = load_byte(src, alo + i);
+    let cb: i64 = load_byte(src, blo + i);
+    if ca < cb {
+        return 0 - 1;
+    }
+    if ca > cb {
+        return 1;
+    }
+    span_bytes_cmp(src, alo, ahi, blo, bhi, i + 1)
+}
+
+// 1 if name (lo,hi) has a LATER (innermore) binding in env[i..nlv): then the
+// earlier occurrence is shadowed and must NOT appear in the live snapshot (the
+// Rust env is a name->vid map — one entry per name, innermost wins).
+pub fn lvenv_shadowed_later(benv: i64, nlv: i64, buf: i64, lo: i64, hi: i64, i: i64) -> i64 {
+    if i >= nlv {
+        return 0;
+    }
+    if span_bytes_equal2(buf, lo, hi, buf, __mind_load_i64(benv + i * 24 + 0), __mind_load_i64(benv + i * 24 + 8)) == 1 {
+        return 1;
+    }
+    lvenv_shadowed_later(benv, nlv, buf, lo, hi, i + 1)
+}
+
+// Copy the shadow-surviving entries of an lv-env (24-byte [lo,hi,vid] records)
+// into `out`, preserving order. Returns the surviving count.
+pub fn lvenv_snapshot_unique(benv: i64, nlv: i64, buf: i64, out: i64, i: i64, n: i64) -> i64 {
+    if i >= nlv {
+        return n;
+    }
+    let lo: i64 = __mind_load_i64(benv + i * 24 + 0);
+    let hi: i64 = __mind_load_i64(benv + i * 24 + 8);
+    if lvenv_shadowed_later(benv, nlv, buf, lo, hi, i + 1) == 1 {
+        return lvenv_snapshot_unique(benv, nlv, buf, out, i + 1, n);
+    }
+    __mind_store_i64(out + n * 24 + 0, lo);
+    __mind_store_i64(out + n * 24 + 8, hi);
+    __mind_store_i64(out + n * 24 + 16, __mind_load_i64(benv + i * 24 + 16));
+    lvenv_snapshot_unique(benv, nlv, buf, out, i + 1, n + 1)
+}
+
+// Shift records env[j+1..] right one slot until the insertion hole for the key
+// (lo,hi) is found (insertion sort, stable: an equal name stays LEFT). Returns
+// the hole index; env[j+1] is left unwritten for the caller to fill.
+pub fn lvenv_sort_hole(env: i64, buf: i64, lo: i64, hi: i64, j: i64) -> i64 {
+    if j < 0 {
+        return 0;
+    }
+    let jlo: i64 = __mind_load_i64(env + j * 24 + 0);
+    let jhi: i64 = __mind_load_i64(env + j * 24 + 8);
+    if span_bytes_cmp(buf, jlo, jhi, lo, hi, 0) <= 0 {
+        return j + 1;
+    }
+    __mind_store_i64(env + (j + 1) * 24 + 0, jlo);
+    __mind_store_i64(env + (j + 1) * 24 + 8, jhi);
+    __mind_store_i64(env + (j + 1) * 24 + 16, __mind_load_i64(env + j * 24 + 16));
+    lvenv_sort_hole(env, buf, lo, hi, j - 1)
+}
+
+// Insertion-sort lv-records [0..n) by name bytes (Rust sort_by str::cmp order).
+pub fn lvenv_sort_by_name(env: i64, n: i64, buf: i64, i: i64) -> i64 {
+    if i >= n {
+        return n;
+    }
+    let lo: i64 = __mind_load_i64(env + i * 24 + 0);
+    let hi: i64 = __mind_load_i64(env + i * 24 + 8);
+    let vid: i64 = __mind_load_i64(env + i * 24 + 16);
+    let j: i64 = lvenv_sort_hole(env, buf, lo, hi, i - 1);
+    __mind_store_i64(env + j * 24 + 0, lo);
+    __mind_store_i64(env + j * 24 + 8, hi);
+    __mind_store_i64(env + j * 24 + 16, vid);
+    lvenv_sort_by_name(env, n, buf, i + 1)
+}
+
+// Build the break/continue live snapshot from an lv-env: unique names (innermost
+// occurrence wins — mirrors the Rust name->vid env map), sorted by name bytes
+// (lower.rs Break/Continue arm: `live.sort_by(name)`). Writes 24-byte
+// [lo,hi,vid] records into `out` (capacity >= nlv); returns the count.
+pub fn lvenv_snapshot_sorted(benv: i64, nlv: i64, buf: i64, out: i64) -> i64 {
+    let n: i64 = lvenv_snapshot_unique(benv, nlv, buf, out, 0, 0);
+    let _s: i64 = lvenv_sort_by_name(out, n, buf, 1);
+    n
+}
+
+// 1 if every snapshot name is present in the string table (the collect pass
+// interned it at the marker's traversal position). 0 -> the caller FAILS CLOSED:
+// emitting a name the strtab lacks would produce silently wrong bytes.
+pub fn bc_snapshot_interned(snap: i64, n: i64, buf: i64, strbuf: i64, offs: i64, ncount: i64, i: i64) -> i64 {
+    if i >= n {
+        return 1;
+    }
+    if intern_find(strbuf, offs, ncount, buf, __mind_load_i64(snap + i * 24 + 0), __mind_load_i64(snap + i * 24 + 8), 0) < 0 {
+        return 0;
+    }
+    bc_snapshot_interned(snap, n, buf, strbuf, offs, ncount, i + 1)
+}
+
+// Emit the snapshot's (name_idx, vid) pairs in order (encode_named_vids body).
+pub fn bc_emit_snapshot(s: EmitState, snap: i64, n: i64, buf: i64, strbuf: i64, offs: i64, ncount: i64, i: i64) -> EmitState {
+    if i >= n {
+        return s;
+    }
+    let nidx: i64 = intern_find(strbuf, offs, ncount, buf, __mind_load_i64(snap + i * 24 + 0), __mind_load_i64(snap + i * 24 + 8), 0);
+    let s1: EmitState = emit_uleb128(s, nidx);
+    let s2: EmitState = emit_uleb128(s1, __mind_load_i64(snap + i * 24 + 16));
+    bc_emit_snapshot(s2, snap, n, buf, strbuf, offs, ncount, i + 1)
+}
+
+// Emit ONE loop-control marker: OP_BREAK (0x28) / OP_CONTINUE (0x29) followed by
+// encode_named_vids of the CURRENT env snapshot (unique names, sorted by name —
+// lower.rs 8509-8521). Fails closed via okcell if a snapshot name is not in the
+// string table. The caller emits the marker's leading (unreachable) unit const.
+// ncount == 0 is the no-strtab PROBE mode (supportability probes run the general
+// emitter with a null strtab and discard the bytes): the interned-check is
+// skipped there — every lookup would miss and wrongly report the shape walled.
+pub fn emit_mic3_loop_ctl(s: EmitState, opcode: i64, benv: i64, nlv: i64, buf: i64, strbuf: i64, offs: i64, ncount: i64, okcell: i64) -> EmitState {
+    let snap: i64 = __mind_alloc((nlv + 1) * 24);
+    let n: i64 = lvenv_snapshot_sorted(benv, nlv, buf, snap);
+    if ncount > 0 {
+        if bc_snapshot_interned(snap, n, buf, strbuf, offs, ncount, 0) == 0 {
+            __mind_store_i64(okcell, 0);
+            return s;
+        }
+    }
+    let s1: EmitState = es_push(s, opcode);
+    let s2: EmitState = emit_uleb128(s1, n);
+    bc_emit_snapshot(s2, snap, n, buf, strbuf, offs, ncount, 0)
+}
+
 // Every stmt in a branch is an Assign whose target name is bound in `benv`?
+// EXCEPTION: the branch's LAST statement may be a `break`/`continue` leaf (the
+// divergent-branch shape — the merge then takes the OTHER branch's exit value).
 pub fn while_if_branch_all_assigns(sa: i64, sl: i64, buf: i64, benv: i64, nlv: i64, i: i64) -> i64 {
     if i >= sl {
         return 1;
     }
     let stmt: i64 = __mind_load_i64(sa + i * 8);
-    if ast_kind(stmt) != ast_assign() {
+    let sk: i64 = ast_kind(stmt);
+    if sk == ast_break() {
+        if i == sl - 1 {
+            return 1;
+        }
+        return 0;
+    }
+    if sk == ast_continue() {
+        if i == sl - 1 {
+            return 1;
+        }
+        return 0;
+    }
+    if sk != ast_assign() {
         return 0;
     }
     let name: i64 = ast_child0(stmt);
@@ -23853,6 +25652,14 @@ pub fn while_if_collect_names(sa: i64, sl: i64, buf: i64, out: i64, ncell: i64, 
         return __mind_load_i64(ncell);
     }
     let stmt: i64 = __mind_load_i64(sa + i * 8);
+    let sk: i64 = ast_kind(stmt);
+    // A break/continue leaf has no assign-target name — skip it.
+    if sk == ast_break() {
+        return while_if_collect_names(sa, sl, buf, out, ncell, i + 1);
+    }
+    if sk == ast_continue() {
+        return while_if_collect_names(sa, sl, buf, out, ncell, i + 1);
+    }
     let name: i64 = ast_child0(stmt);
     let lo: i64 = ast_span_lo(name);
     let hi: i64 = ast_span_hi(name);
@@ -23868,7 +25675,10 @@ pub fn while_if_collect_names(sa: i64, sl: i64, buf: i64, out: i64, ncell: i64, 
 // PURE branch walk: flatten each assign RHS at the threaded base, rebind the
 // branch env, record the last root into result_cell, advance base_cell. Returns
 // the end base (one past the branch's last instr). -1 / okcell=0 on a wall.
-pub fn while_if_layout_branch(sa: i64, sl: i64, idx: i64, buf: i64, params_addr: i64, n_params: i64, wnodes: i64, wcursor: i64, wvidbuf: i64, base_cell: i64, benv: i64, nlv: i64, result_cell: i64, okcell: i64) -> i64 {
+// A trailing break/continue leaf (last stmt only) sets div_cell=1, records the
+// leading unit-const vid as the branch result, and advances base by ONE (the
+// marker opcode itself takes NO vid — lower.rs Break/Continue arm).
+pub fn while_if_layout_branch(sa: i64, sl: i64, idx: i64, buf: i64, params_addr: i64, n_params: i64, wnodes: i64, wcursor: i64, wvidbuf: i64, base_cell: i64, benv: i64, nlv: i64, result_cell: i64, div_cell: i64, okcell: i64) -> i64 {
     if idx >= sl {
         return __mind_load_i64(base_cell);
     }
@@ -23876,6 +25686,13 @@ pub fn while_if_layout_branch(sa: i64, sl: i64, idx: i64, buf: i64, params_addr:
         return 0 - 1;
     }
     let stmt: i64 = __mind_load_i64(sa + idx * 8);
+    let sk: i64 = ast_kind(stmt);
+    if sk == ast_break() {
+        return while_if_layout_bc(sl, idx, base_cell, result_cell, div_cell, okcell);
+    }
+    if sk == ast_continue() {
+        return while_if_layout_bc(sl, idx, base_cell, result_cell, div_cell, okcell);
+    }
     let name: i64 = ast_child0(stmt);
     let rhs: i64 = ast_child2(stmt);
     let cur: i64 = __mind_load_i64(base_cell);
@@ -23897,42 +25714,85 @@ pub fn while_if_layout_branch(sa: i64, sl: i64, idx: i64, buf: i64, params_addr:
     __mind_store_i64(benv + slot * 24 + 16, root);
     __mind_store_i64(result_cell, root);
     __mind_store_i64(base_cell, cur + nn);
-    while_if_layout_branch(sa, sl, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, benv, nlv, result_cell, okcell)
+    while_if_layout_branch(sa, sl, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, benv, nlv, result_cell, div_cell, okcell)
+}
+
+// Layout of a branch-terminal break/continue: legal ONLY as the branch's last
+// statement. The leading unit const occupies one vid (recorded as the branch
+// result — the Rust arm returns that const's id); the marker takes none.
+pub fn while_if_layout_bc(sl: i64, idx: i64, base_cell: i64, result_cell: i64, div_cell: i64, okcell: i64) -> i64 {
+    if idx != sl - 1 {
+        __mind_store_i64(okcell, 0);
+        return 0 - 1;
+    }
+    let cur: i64 = __mind_load_i64(base_cell);
+    __mind_store_i64(result_cell, cur);
+    __mind_store_i64(div_cell, 1);
+    __mind_store_i64(base_cell, cur + 1);
+    cur + 1
 }
 
 // Fill per-merge 40-byte records M[k] = (lo, hi, merge_id, then_val, else_val).
-pub fn while_if_fill_merges(m: i64, names: i64, n: i64, else_end: i64, buf: i64, tenv: i64, eenv: i64, nlv: i64, k: i64) -> i64 {
+// A DIVERGED branch (ends in break/continue) does not fall through to ^if_after:
+// its merge slot takes the OTHER branch's exit value (lower.rs 6282/6304 — the
+// diverged cf.br is never emitted), never its own rebound env. -1 if a name is
+// missing from a needed env (cannot happen for shape-gated branches — assign
+// targets pre-exist — but fail-closed beats wrong bytes).
+pub fn while_if_fill_merges(m: i64, names: i64, n: i64, else_end: i64, buf: i64, tenv: i64, eenv: i64, nlv: i64, tdiv: i64, ediv: i64, k: i64) -> i64 {
     if k >= n {
         return n;
     }
     let lo: i64 = __mind_load_i64(names + k * 24 + 0);
     let hi: i64 = __mind_load_i64(names + k * 24 + 8);
+    let tval: i64 = if tdiv == 1 {
+        lvenv_lookup(buf, lo, hi, eenv, nlv, 0)
+    } else {
+        lvenv_lookup(buf, lo, hi, tenv, nlv, 0)
+    };
+    let eval: i64 = if ediv == 1 {
+        lvenv_lookup(buf, lo, hi, tenv, nlv, 0)
+    } else {
+        lvenv_lookup(buf, lo, hi, eenv, nlv, 0)
+    };
+    if tval < 0 {
+        return 0 - 1;
+    }
+    if eval < 0 {
+        return 0 - 1;
+    }
     __mind_store_i64(m + k * 40 + 0, lo);
     __mind_store_i64(m + k * 40 + 8, hi);
     __mind_store_i64(m + k * 40 + 16, else_end + k);
-    __mind_store_i64(m + k * 40 + 24, lvenv_lookup(buf, lo, hi, tenv, nlv, 0));
-    __mind_store_i64(m + k * 40 + 32, lvenv_lookup(buf, lo, hi, eenv, nlv, 0));
-    while_if_fill_merges(m, names, n, else_end, buf, tenv, eenv, nlv, k + 1)
+    __mind_store_i64(m + k * 40 + 24, tval);
+    __mind_store_i64(m + k * 40 + 32, eval);
+    while_if_fill_merges(m, names, n, else_end, buf, tenv, eenv, nlv, tdiv, ediv, k + 1)
 }
 
-// PURE layout of the if-else assign-merge shape. Fills L[0..9] scalar cells and the
-// 40-byte merge buffer M. Returns 1 on success, 0 (fail-closed) on any unsupported shape.
+// PURE layout of the if-else assign-merge shape. Fills L[0..11] scalar cells and
+// the 40-byte merge buffer M. Returns 1 on success, 0 (fail-closed) on any
+// unsupported shape.
 //   L+0 cond_id  L+8 cond_n  L+16 then_synth(=after_cond)  L+24 then_end  L+32 then_result
 //   L+40 else_synth  L+48 else_end  L+56 else_result  L+64 n_merged  L+72 dst
+//   L+80 then_diverged (trailing break/continue)  L+88 else_diverged
+// A MISSING else (`if C { .. }` with no else block) lowers to the synthesized
+// empty branch — one unit const — lower.rs "Lower the else-branch (or
+// synthesise a unit zero)".
 pub fn while_if_layout(if_node: i64, buf: i64, params_addr: i64, n_params: i64, base0: i64, wenv: i64, wnlv: i64, l: i64, m: i64) -> i64 {
     let then_blk: i64 = ast_child1(if_node);
     let else_blk: i64 = ast_child2(if_node);
-    if else_blk == 0 {
-        return 0;
-    }
     let then_sa: i64 = ast_child0(then_blk);
     let then_sl: i64 = ast_aux(then_blk);
-    let else_sa: i64 = ast_child0(else_blk);
-    let else_sl: i64 = ast_aux(else_blk);
+    let else_sa: i64 = if else_blk == 0 {
+        0
+    } else {
+        ast_child0(else_blk)
+    };
+    let else_sl: i64 = if else_blk == 0 {
+        0
+    } else {
+        ast_aux(else_blk)
+    };
     if then_sl < 1 {
-        return 0;
-    }
-    if else_sl < 1 {
         return 0;
     }
     if while_if_branch_all_assigns(then_sa, then_sl, buf, wenv, wnlv, 0) != 1 {
@@ -23964,9 +25824,11 @@ pub fn while_if_layout(if_node: i64, buf: i64, params_addr: i64, n_params: i64, 
     __mind_store_i64(tbase, after_cond + 1);
     let tresult: i64 = __mind_alloc(8);
     __mind_store_i64(tresult, after_cond);
+    let tdiv: i64 = __mind_alloc(8);
+    __mind_store_i64(tdiv, 0);
     let tok: i64 = __mind_alloc(8);
     __mind_store_i64(tok, 1);
-    let then_end: i64 = while_if_layout_branch(then_sa, then_sl, 0, buf, params_addr, n_params, bnodes, bcursor, bvidbuf, tbase, tenv, wnlv, tresult, tok);
+    let then_end: i64 = while_if_layout_branch(then_sa, then_sl, 0, buf, params_addr, n_params, bnodes, bcursor, bvidbuf, tbase, tenv, wnlv, tresult, tdiv, tok);
     if __mind_load_i64(tok) == 0 {
         return 0;
     }
@@ -23978,9 +25840,11 @@ pub fn while_if_layout(if_node: i64, buf: i64, params_addr: i64, n_params: i64, 
     __mind_store_i64(ebase, else_synth + 1);
     let eresult: i64 = __mind_alloc(8);
     __mind_store_i64(eresult, else_synth);
+    let ediv: i64 = __mind_alloc(8);
+    __mind_store_i64(ediv, 0);
     let eok: i64 = __mind_alloc(8);
     __mind_store_i64(eok, 1);
-    let else_end: i64 = while_if_layout_branch(else_sa, else_sl, 0, buf, params_addr, n_params, bnodes, bcursor, bvidbuf, ebase, eenv, wnlv, eresult, eok);
+    let else_end: i64 = while_if_layout_branch(else_sa, else_sl, 0, buf, params_addr, n_params, bnodes, bcursor, bvidbuf, ebase, eenv, wnlv, eresult, ediv, eok);
     if __mind_load_i64(eok) == 0 {
         return 0;
     }
@@ -23991,7 +25855,10 @@ pub fn while_if_layout(if_node: i64, buf: i64, params_addr: i64, n_params: i64, 
     let _cn1: i64 = while_if_collect_names(then_sa, then_sl, buf, names, ncell, 0);
     let _cn2: i64 = while_if_collect_names(else_sa, else_sl, buf, names, ncell, 0);
     let n_merged: i64 = __mind_load_i64(ncell);
-    let _fm: i64 = while_if_fill_merges(m, names, n_merged, else_end, buf, tenv, eenv, wnlv, 0);
+    let fm: i64 = while_if_fill_merges(m, names, n_merged, else_end, buf, tenv, eenv, wnlv, __mind_load_i64(tdiv), __mind_load_i64(ediv), 0);
+    if fm < 0 {
+        return 0;
+    }
     let dst: i64 = else_end + n_merged;
     __mind_store_i64(l + 0, cond_id);
     __mind_store_i64(l + 8, cond_n);
@@ -24003,6 +25870,8 @@ pub fn while_if_layout(if_node: i64, buf: i64, params_addr: i64, n_params: i64, 
     __mind_store_i64(l + 56, __mind_load_i64(eresult));
     __mind_store_i64(l + 64, n_merged);
     __mind_store_i64(l + 72, dst);
+    __mind_store_i64(l + 80, __mind_load_i64(tdiv));
+    __mind_store_i64(l + 88, __mind_load_i64(ediv));
     1
 }
 
@@ -24016,6 +25885,30 @@ pub fn while_if_emit_branch(s: EmitState, sa: i64, sl: i64, idx: i64, buf: i64, 
         return s;
     }
     let stmt: i64 = __mind_load_i64(sa + idx * 8);
+    let sk: i64 = ast_kind(stmt);
+    // Trailing break/continue: leading (unreachable) unit const, then the marker
+    // with the CURRENT branch-env live snapshot. Params are not in the lv-env, so
+    // a param-carrying snapshot would miss them — fail closed there (deferred).
+    if sk == ast_break() {
+        if n_params > 0 {
+            __mind_store_i64(okcell, 0);
+            return s;
+        }
+        let bcur: i64 = __mind_load_i64(base_cell);
+        let sb: EmitState = emit_mic3_const_i64(s, bcur, 0);
+        __mind_store_i64(base_cell, bcur + 1);
+        return emit_mic3_loop_ctl(sb, 40, benv, nlv, buf, strbuf, offs, ncount, okcell);
+    }
+    if sk == ast_continue() {
+        if n_params > 0 {
+            __mind_store_i64(okcell, 0);
+            return s;
+        }
+        let ccur: i64 = __mind_load_i64(base_cell);
+        let sc: EmitState = emit_mic3_const_i64(s, ccur, 0);
+        __mind_store_i64(base_cell, ccur + 1);
+        return emit_mic3_loop_ctl(sc, 41, benv, nlv, buf, strbuf, offs, ncount, okcell);
+    }
     let name: i64 = ast_child0(stmt);
     let rhs: i64 = ast_child2(stmt);
     let cur: i64 = __mind_load_i64(base_cell);
@@ -24085,14 +25978,26 @@ pub fn emit_while_if_assign(s: EmitState, if_node: i64, buf: i64, params_addr: i
     let else_result: i64 = __mind_load_i64(l + 56);
     let n_merged: i64 = __mind_load_i64(l + 64);
     let dst: i64 = __mind_load_i64(l + 72);
-    let then_len: i64 = 1 + (then_end - (then_synth + 1));
-    let else_len: i64 = 1 + (else_end - (else_synth + 1));
+    // Branch instruction counts: synth + statement instrs (+1 for the loop-control
+    // marker when the branch diverges — the marker takes no vid but IS an instr).
+    let then_div: i64 = __mind_load_i64(l + 80);
+    let else_div: i64 = __mind_load_i64(l + 88);
+    let then_len: i64 = 1 + (then_end - (then_synth + 1)) + then_div;
+    let else_len: i64 = 1 + (else_end - (else_synth + 1)) + else_div;
     let then_blk: i64 = ast_child1(if_node);
     let else_blk: i64 = ast_child2(if_node);
     let then_sa: i64 = ast_child0(then_blk);
     let then_sl: i64 = ast_aux(then_blk);
-    let else_sa: i64 = ast_child0(else_blk);
-    let else_sl: i64 = ast_aux(else_blk);
+    let else_sa: i64 = if else_blk == 0 {
+        0
+    } else {
+        ast_child0(else_blk)
+    };
+    let else_sl: i64 = if else_blk == 0 {
+        0
+    } else {
+        ast_aux(else_blk)
+    };
     // OP_IF header + cond.
     let cnodes: i64 = __mind_alloc(256 * 32);
     let ccursor: i64 = __mind_alloc(8);
@@ -24286,6 +26191,19 @@ pub fn while_body_measure(stmts_addr: i64, n: i64, idx: i64, buf: i64, params_ad
         __mind_store_i64(body_len_cell, __mind_load_i64(body_len_cell) + nn);
         return while_body_measure(stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, pre_nlv, lv, init, nlv_w_cell, body_len_cell, okcell);
     }
+    // DIRECT loop-control statement in the body: leading unit const + marker =
+    // TWO body instrs, ONE vid (the const; the marker takes none). Statements
+    // after it still lower (the Rust body walk does not truncate at a terminator).
+    if ast_kind(stmt) == ast_break() {
+        __mind_store_i64(base_cell, cur_base + 1);
+        __mind_store_i64(body_len_cell, __mind_load_i64(body_len_cell) + 2);
+        return while_body_measure(stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, pre_nlv, lv, init, nlv_w_cell, body_len_cell, okcell);
+    }
+    if ast_kind(stmt) == ast_continue() {
+        __mind_store_i64(base_cell, cur_base + 1);
+        __mind_store_i64(body_len_cell, __mind_load_i64(body_len_cell) + 2);
+        return while_body_measure(stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, pre_nlv, lv, init, nlv_w_cell, body_len_cell, okcell);
+    }
     // BARE side-effect statement (call/store): flatten, advance base, bind NO name.
     let be_root: i64 = flatten_branch_lv(stmt, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, cur_base, wenv, wnlv);
     if be_root < 0 {
@@ -24385,6 +26303,29 @@ pub fn while_body_emit(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
         __mind_store_i64(wnlv_cell, wnlv + 1);
         __mind_store_i64(base_cell, cur_base + nn);
         return while_body_emit(s1, stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, strbuf, offs, ncount, okcell);
+    }
+    // DIRECT loop-control statement in the body: leading (unreachable) unit const,
+    // then the marker with the CURRENT body-env live snapshot. Params are not in
+    // the lv-env — fail closed when the fn has any (snapshot would miss them).
+    if ast_kind(stmt) == ast_break() {
+        if n_params > 0 {
+            __mind_store_i64(okcell, 0);
+            return s;
+        }
+        let sb1: EmitState = emit_mic3_const_i64(s, cur_base, 0);
+        __mind_store_i64(base_cell, cur_base + 1);
+        let sb2: EmitState = emit_mic3_loop_ctl(sb1, 40, wenv, wnlv, buf, strbuf, offs, ncount, okcell);
+        return while_body_emit(sb2, stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, strbuf, offs, ncount, okcell);
+    }
+    if ast_kind(stmt) == ast_continue() {
+        if n_params > 0 {
+            __mind_store_i64(okcell, 0);
+            return s;
+        }
+        let sc1: EmitState = emit_mic3_const_i64(s, cur_base, 0);
+        __mind_store_i64(base_cell, cur_base + 1);
+        let sc2: EmitState = emit_mic3_loop_ctl(sc1, 41, wenv, wnlv, buf, strbuf, offs, ncount, okcell);
+        return while_body_emit(sc2, stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, strbuf, offs, ncount, okcell);
     }
     let be_root: i64 = flatten_branch_lv(stmt, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, cur_base, wenv, wnlv);
     if be_root < 0 {
@@ -27275,6 +29216,28 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // The array literal's VALUE is the base pointer.
         return NbState { code: s_aelems.code, next_id: s_aelems.next_id, last_id: aptr_id, ncalls: s_aelems.ncalls };
     }
+    if k == ast_enum_ctor() {
+        // Single-payload enum CONSTRUCTION on the native-ELF surface: the
+        // runtime record is the SAME 2-word block the old parse-time array
+        // desugar produced — [tag @ +0, payload @ +8] — so the match arm's
+        // SCRUT[0] tag-read / SCRUT[1] payload-bind stay correct. Lower it by
+        // synthesising that array literal ([tag, payload] or [tag, 0] for a
+        // payload-free variant) and recursing into the proven array arm above.
+        // (The mic@3 surface takes the ect_desugar alloc/store chain instead —
+        // the oracle's emit_boxed_enum_record instrs — so this arm is the
+        // native-only twin.) main.mind's own source has no `::` constructions,
+        // so this never fires during self-compile.
+        let epay: i64 = if ast_aux(node) == 1 {
+            ast_child1(node)
+        } else {
+            mk_syn_intlit(0)
+        };
+        let eelems: i64 = __mind_alloc(16);
+        __mind_store_i64(eelems + 0, ast_child0(node));
+        __mind_store_i64(eelems + 8, epay);
+        let earr: i64 = ast_new_array_lit(ast_span_lo(node), ast_span_hi(node), eelems, 2);
+        return nb_expr(st, buf, earr, params_addr, n_params, calls, lets, lcell);
+    }
     if k == ast_index() {
         // `BASE[IDX]` i64 array index READ: lower base -> pointer slot, idx ->
         // index slot, then CONST 8 ; MUL(idx,8) -> off ; ADD(base,off) -> addr ;
@@ -27984,6 +29947,21 @@ pub fn nb_let_descriptor(init: i64, ty_node: i64, buf: i64, srt: i64, frt: i64, 
     // kind (nb_slit_field_index) so `name.field` over an array still refuses.
     if ast_kind(init) == ast_array_lit() {
         return init;
+    }
+    // A single-payload ENUM CTOR init binds the SAME 2-element record shape
+    // ([tag, payload-or-zero]) the old parse-time array desugar produced, so
+    // the index arms (a match's SCRUT[0] tag-read / SCRUT[1] payload-bind)
+    // keep the identical length / OOB / bounds-guard behaviour.
+    if ast_kind(init) == ast_enum_ctor() {
+        let epay: i64 = if ast_aux(init) == 1 {
+            ast_child1(init)
+        } else {
+            mk_syn_intlit(0)
+        };
+        let eelems: i64 = __mind_alloc(16);
+        __mind_store_i64(eelems + 0, ast_child0(init));
+        __mind_store_i64(eelems + 8, epay);
+        return ast_new_array_lit(ast_span_lo(init), ast_span_hi(init), eelems, 2);
     }
     if ty_node == 0 {
         // Unannotated `let p = o.i` where `o.i` is a struct-typed field read:
@@ -30960,6 +32938,21 @@ pub fn nb_count_expr(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         // the alloc-ptr slot (next_id+3); no extra id.
         return nb_count_array_elems(next_id + 4, buf, ast_child1(node), ast_aux(node), 0, params_addr, n_params, clets, clcell);
     }
+    if k == ast_enum_ctor() {
+        // Mirror of nb_expr's ast_enum_ctor arm: the synthesised 2-element
+        // array [tag, payload-or-zero]. Same counting as nb_count_array_elems
+        // over those two elements: 4 (sz+n+mul+ptr) + per element value ids +
+        // (i==0 ? 0 : 2) + 1 store-dst. The record VALUE is the alloc-ptr
+        // slot; no extra id.
+        let ctag: i64 = nb_count_expr(next_id + 4, buf, ast_child0(node), params_addr, n_params, clets, clcell);
+        let cafter0: i64 = nb_field_addr_ids(ctag, 0) + 1;
+        let cpay: i64 = if ast_aux(node) == 1 {
+            nb_count_expr(cafter0, buf, ast_child1(node), params_addr, n_params, clets, clcell)
+        } else {
+            cafter0 + 1
+        };
+        return nb_field_addr_ids(cpay, 1) + 1;
+    }
     if k == ast_index() {
         // base ids + idx ids + 4 (CONST 8 ; MUL ; ADD ; load-dst) — the exact
         // mirror of nb_expr's ast_index arm.
@@ -31445,6 +33438,13 @@ pub fn nb_ccount_expr(buf: i64, node: i64, ccell: i64) -> i64 {
     if k == ast_array_lit() {
         return nb_ccount_array_elems(buf, ast_child1(node), ast_aux(node), 0, ccell);
     }
+    if k == ast_enum_ctor() {
+        // The tag is a synthetic const (never a call); walk the payload only.
+        if ast_aux(node) == 1 {
+            return nb_ccount_expr(buf, ast_child1(node), ccell);
+        }
+        return 0;
+    }
     if k == ast_index() {
         let _xb: i64 = nb_ccount_expr(buf, ast_child0(node), ccell);
         return nb_ccount_expr(buf, ast_child1(node), ccell);
@@ -31655,6 +33655,13 @@ pub fn nb_argv_expr(buf: i64, node: i64) -> i64 {
     // in the base/index sub-exprs — walk them (short-circuit OR).
     if k == ast_array_lit() {
         return nb_argv_array_elems(buf, ast_child1(node), ast_aux(node), 0);
+    }
+    if k == ast_enum_ctor() {
+        // The tag is a synthetic const (never argv); probe the payload only.
+        if ast_aux(node) == 1 {
+            return nb_argv_expr(buf, ast_child1(node));
+        }
+        return 0;
     }
     if k == ast_index() {
         if nb_argv_expr(buf, ast_child0(node)) == 1 {
@@ -31942,6 +33949,13 @@ pub fn nb_at_scan_expr(at: i64, buf: i64, node: i64) -> i64 {
     }
     if k == ast_array_lit() {
         return nb_at_scan_elems(at, buf, ast_child1(node), ast_aux(node), 0);
+    }
+    if k == ast_enum_ctor() {
+        // The tag is a synthetic const (never address-taken); scan the payload.
+        if ast_aux(node) == 1 {
+            return nb_at_scan_expr(at, buf, ast_child1(node));
+        }
+        return 0;
     }
     if k == ast_index() {
         let _b: i64 = nb_at_scan_expr(at, buf, ast_child0(node));
@@ -34286,6 +36300,13 @@ pub fn nb_reach_expr(buf: i64, fns: i64, n_fns: i64, reach: i64, node: i64, chan
     // through the prune).
     if k == ast_array_lit() {
         return nb_reach_array_elems(buf, fns, n_fns, reach, ast_child1(node), ast_aux(node), 0, changed);
+    }
+    if k == ast_enum_ctor() {
+        // The tag is a synthetic const (no callee); reach-mark the payload.
+        if ast_aux(node) == 1 {
+            return nb_reach_expr(buf, fns, n_fns, reach, ast_child1(node), changed);
+        }
+        return 0;
     }
     if k == ast_index() {
         let _xb: i64 = nb_reach_expr(buf, fns, n_fns, reach, ast_child0(node), changed);

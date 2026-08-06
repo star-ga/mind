@@ -326,7 +326,7 @@ fn mind_toml_rust_parse_ground_truth() {
 
 #[cfg(all(feature = "mlir-build", feature = "cross-module-imports"))]
 mod mlir_functional {
-    use super::mindc_bin;
+    use super::common::mindc_bin;
     use std::path::PathBuf;
     use std::process::Command;
 

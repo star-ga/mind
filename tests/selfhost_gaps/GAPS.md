@@ -123,3 +123,148 @@ byte-exactly was needless. The whole corpus is now 66/66, FLOOR-pinned. Repros p
 regression corpus. Every previously-fail-closed class — struct-lit in call-arg / if-expr-branch
 positions, field-read in non-let / literal-less modules — also lowers byte-exactly (the lowering
 was correct; the passes were just gated on source-literal presence; see "The big lesson" above).
+
+## Fixed (cont.) — statement-position numeric `print(x)` (`print_lone`, `print_int_discarded`)
+The Rust oracle (lower.rs `Node::Print`) lowers a statement-level numeric `print(x)` to
+`<arg instrs> ; CALL printI64(arg) ; CALL printNewline() ; CONST 0` (the unit placeholder,
+also the fn's value in tail position). The self-host now models this with a PARSE-TIME
+statement desugar (`print_desugar_module`, before the strtab pass): every DIRECT fn-body
+`print(x)` with one flatten-supported arg expands to `[printI64(x); printNewline(); 0]`,
+the synthetic callee names interning first-seen at exactly the oracle's positions from
+spans appended to the src copy (the slit intrinsics idiom). The seq emitter then lowers
+the expansion with zero new emit code. String-arg, multi-arg, and nested-expression
+`print` stay fail-closed (never_wrong locks intact). gap-corpus floor 121 -> 123; loop
+anchor re-frozen; flip byte-identical.
+
+## Fixed (cont.) — let-init call-scrutinee match (`matchcall_letinit_1`)
+`let x [: T] = match g(a) { .. };` — the oracle evaluates the scrutinee call ONCE
+(Call instr first), then lowers the match as a value-if comparing each pattern
+against that single result vid, the outer let binding the if's dst. Parse-time
+desugar in parse_block_stmts (is_fn_body==1 gated): `let TMP = call ; let X = if
+TMP == P0 { .. } ..` — the parse_match_stmt hoisted-temp idiom composed with the
+type-7 let-bound-to-value-if seq path. Covers typed/untyped lets and 3+-arm chains;
+non-call scrutinees take the unchanged per-arm path; nested-in-if stays fail-closed.
+gap-corpus floor 123 -> 124; loop anchor re-frozen; flip byte-identical.
+
+## Fixed (cont.) — depth-2 nested array-type annotation (`nested_array_typed`)
+`let m: [[i64; 2]; 2] = [[a, b], [b, a]]; m[1][0]` fail-closed at parse_let's
+element-type gate, which refused any `[` element token even though the untyped
+nested literal already lowers byte-exactly via the vec_new/vec_push heap path.
+The gate now accepts a depth-2 nested annotation whose INNER element type is
+i64/f64 (assertion-only, ty = 0, same contract as the flat case); narrow-int
+inner types and depth-3+ stay refused. gap-corpus floor 124 -> 125; loop anchor
+re-frozen; flip byte-identical.
+
+## Fixed (cont.) — multi-construction bodies: unique per-construction handle spans
+Every synthetic struct-construction handle (alloc-let name, store addr refs,
+trailing/using refs) used to carry the SAME `__mind_alloc` source span, so two
+constructions in one body made the field prefold's first-match type scan (and
+letenv) mis-resolve — the reason the field-receiver hoist was gated to
+first-construction-only (fr_ok). Each construction's handle now carries the
+struct-lit's OWN source span (unique per site, compile-time-only, zero emitted
+bytes); the alloc/store CALL callees keep the interned spans. fr_ok is retired.
+Closes `prior_let_then_field_recv`, `qfield_nested`, `two_scalar_prior`; the main
+corpus (incl. every single-construction struct-lit shape) stays byte-exact.
+Still fail-closed (separate features): chained ident field reads (`p.q.z`),
+field-receivers inside call args, nested struct-lits as field values,
+struct-in-array. gap-corpus floor 125 -> 128; loop anchor re-frozen; flip
+byte-identical.
+
+## Fixed (cont.) — if-CONDITION && / || (`andor_and_ifcond_1`, `andor_or_ifcond_1`)
+`if a > 0 && b > 0 { 1 } else { 0 }` — the oracle lowers the condition's Logical
+as ONE nested OP_IF in the cond region (cond_count=1, cond_id = the inner if's
+dst; branches = synth + value), not as nested statement-ifs. emit_mic3_if_instr
+now takes a nested-OP_IF arm in all three positions (cond / then / else): an
+ast_if expression probe-emits via the recursive emit_if_value_node to learn its
+dst, then frames and re-emits deterministically (the established probe/re-emit
+pattern); plain trees take the unchanged flatten path. 3+-operand chains
+(`a && b && c`, where the desugared inner if becomes a `!= 0` binop operand)
+stay fail-closed. gap-corpus floor 128 -> 130; loop anchor re-frozen; flip
+byte-identical.
+
+## Fixed (cont.) — chained struct field reads (`chained_field_pqz`)
+`p.q.z` — the field prefold recursed into the receiver, folded the inner read,
+then required an IDENT receiver and gave up on the outer one (the struct
+registry stored field NAMES only, so the intermediate type was unknowable).
+The prefold now resolves a field's declared TYPE from the source declaration
+(srt_field_ty_span, on-demand scan of the `field: Type` token — no registry
+reshape) and recurses through field receivers (field_access_ty), folding the
+outer read on the folded receiver: `__mind_load_i64(__mind_load_i64(p) + idx*8)`,
+byte-exact vs the oracle for param/let receivers, nonzero indices, and chains
+inside larger expressions. Non-struct-typed intermediate fields (Vec, tuples)
+stay fail-closed. gap-corpus floor 130 -> 131; loop anchor re-frozen; flip
+byte-identical.
+
+## Fixed (cont.) — field-read on a struct-lit call arg (`callarg_then_field_recv`)
+`mk(P{..}.x)` — the call-arg hoist matched only BARE struct-lit args, so a
+field-read wrapped around one fell through to flatten (fail-closed). The arg
+scan now also matches `ast_field(struct_lit)`, hoists the construction with the
+struct-TYPE annotation (the field-receiver hoist's fty idiom, so the prefold
+resolves `<handle>.x`), and replaces the field's receiver with the handle ident;
+the prefold then folds it to a load of the hoisted alloc — exactly the oracle's
+`construction; __mind_load_i64(alloc); mk(load)`. Bare struct-lit args keep the
+untyped handle (byte-identical to before). gap-corpus floor 131 -> 132; loop
+anchor re-frozen; flip byte-identical.
+
+## Fixed (cont.) — nested struct-lits as field values (`nested_slit_field`)
+`P { q: Q { z: a }, w: b }` — the store fill wrapped every field value in a
+value-let, so a struct-lit VALUE produced a `let … = Q{..}` with no construction
+(fail-closed). The fill now runs a running offset and, for a struct-lit value,
+inlines the inner construction chain (alloc + recursive stores — the oracle
+allocs the OUTER record first, then evaluates nested values in order) before the
+store-let that writes its handle. Depth-3 nesting verified. One real bug caught
+by the never-wrong gate pre-merge: the nested chain's alloc CALL callee must
+keep the interned `__mind_alloc` span (talo/tahi threading) — passing the outer
+handle span emitted a call to a nonexistent name (wrong-bytes class).
+gap-corpus floor 132 -> 133; loop anchor re-frozen; flip byte-identical.
+
+## Fixed (cont.) — string-literal print (`print_str_discarded`)
+`print("hi")` — needed the full stack: a tk_str lexer token (single guard in
+scan, escapes/unterminated fail-closed), an ast_str_lit parser leaf, and the
+print desugar's string arm: a per-statement expansion to the oracle's exact
+chain (content alloc + per-char store_i8 + record alloc + 3 store_i64 + 2
+load_i64 + print_bytes + unit const), with synthetic handle spans rooted at the
+opening-quote byte (never a real ident) and the two new interned callee names
+(__mind_store_i8, print_bytes) appended to the src copy. 1-char, 5-char, tail,
+and mixed string+numeric all byte-exact; empty string stays fail-closed. One
+self-host compile-shape constraint hit: the desugar copy's first draft nested
+two sibling early-return-if chains in one inner if-block (the #258 SSA
+over-allocation shape — flip caught a +2 id drift at byte 288250); restructured
+flat, flip byte-identical. gap-corpus floor 133 -> 134; loop anchor re-frozen.
+
+## Fixed (cont.) — struct-lit elements in array literals (`array_of_struct`)
+`let m = [P { x: a, y: b }]` — the non-const array path's element guard
+(arr_elems_desugar_ok) refused any struct-lit element. The annotation walker
+(slit_annotate_expr) now descends into array literals, recording each struct-lit
+element's construction at node+56; flatten_arr_pushes emits annotated elements
+inline via flatten_struct_lit_lv (alloc + field stores between vec_new and
+vec_push — the oracle's exact interleave). Two-element, mixed struct+scalar,
+and plain arrays all byte-exact; unannotated struct elements stay fail-closed.
+gap-corpus floor 134 -> 135; loop anchor re-frozen; flip byte-identical.
+
+## Fixed (cont.) — loop break/continue with live snapshots (`for_range_continue_1`)
+`for i in 0..5 { if i > 2 { continue; } s = s + i; }` — needed the full stack.
+parse_for gained the oracle's byte-neutral continue desugar (the Rust For arm's
+!needs_hygiene path): keep `let VAR = LO; while VAR < HI { BODY; VAR = VAR + 1 }`
+and splice a fresh `VAR = VAR + 1` before every own-level continue
+(inject_step_before_continue, lower.rs 3817) — the old hidden-counter Form B was
+NOT byte-exact for this shape and is now reached only by hygienic shapes (body
+writes VAR / non-literal END). The mic@3 while emitter learned the
+divergent-branch shape: an if branch may end in break/continue (assigns +
+trailing marker); the marker emits a leading (unreachable) unit const then
+OP_BREAK (0x28) / OP_CONTINUE (0x29) with the CURRENT env's live snapshot
+(unique names, innermost wins, sorted by name bytes — lower.rs 8509-8521); a
+diverged branch's merge value comes from the OTHER branch's exit env
+(lower.rs 6282/6304); a missing else lowers to the synthesized empty branch
+(one unit const). Direct body break/continue also emit (const + marker; the
+body walk does not truncate at a terminator). The strtab collect pass threads
+an in-scope name env (a `let` appends its name for the statements that follow
+it, block-local by value) so the snapshot names intern at the marker's exact
+traversal position; the marker fails closed if a name is not interned, and on
+n_params > 0 (params are not in the lv-env — deferred). Probed byte-exact:
+if-continue no-else, if-break, direct break/continue with dead tail, for+break,
+both-branches-diverge. Known oracle-side limit: else-ONLY divergence fails the
+Rust IR verifier (E3001) — no oracle artifact exists to match, so the nfn
+driver stays permissive there (never promoted without an oracle reference).
+gap-corpus floor 135 -> 136; never_wrong corpus EMPTY (directory retired);
+loop anchor re-frozen; flip byte-identical (674147 B).

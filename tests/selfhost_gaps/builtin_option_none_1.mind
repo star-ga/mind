@@ -1,0 +1,1 @@
+pub fn f() -> i64 { let o = None; 0 }

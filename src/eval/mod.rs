@@ -45,6 +45,10 @@ pub mod closures;
 pub mod conv2d_grad;
 pub mod ir_interp;
 pub mod lower;
+/// Module-wide narrow-int surface prescan — the compile-speed early-skip gate
+/// for `infer_narrow_arith_ty` (see narrow_scan.rs for the byte-identity proof).
+#[cfg(feature = "std-surface")]
+pub(crate) mod narrow_scan;
 pub mod traits;
 // RFC 0005 P0f Step 2 — pre-pass that builds a span-keyed side-table
 // of `FieldAccess` receiver struct types so lowering can resolve

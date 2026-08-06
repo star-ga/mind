@@ -402,15 +402,32 @@ bench-gate threshold documented at [`.bench-baseline-2026-05-17-phase10-6.txt`](
 
 ### MIC/MAP Format Efficiency
 
+MIND serialises the canonical `IRModule` two ways: **`mic@1`** is the canonical
+*text* form (LLM-context friendly), and **`mic@3`** is the canonical *binary*
+form that compiled artifacts carry and that the evidence-chain `trace_hash`
+anchors on. `mic@2`/`mic@2.1` are a legacy `Graph` dataflow lane, demoted to
+`mind-model@2` (RFC 0021 §5) — back-compat only, never the current canonical.
+
+**Text serialization** — LLM token efficiency vs JSON:
+
 | Format | Tokens | vs JSON | Parse Speed | Annual Cost (1M IRs) |
 |--------|--------|---------|-------------|----------------------|
 | JSON | 278 | baseline | 5.31 us | $8,340 |
 | TOML | 151 | 1.8x | 137.06 us | $4,530 |
 | TOON | 67 | 4.1x | 2.67 us | $2,010 |
-| mic@1 | 52 | 5.3x | 2.26 us | $1,560 |
-| **mic@2** | **27** | **10.3x** | **—** | **$810** |
+| **`mic@1`** (canonical text) | **52** | **5.3x** | **2.26 us** | **$1,560** |
+| `mic@2` (legacy Graph, demoted) | 27 | 10.3x | — | $810 |
 
-> **mic@3** (binary IRModule): 90 bytes &mdash; 12.4x smaller than JSON's 1,117 bytes.
+**Binary serialization** — canonical compiled-artifact wire format (byte size, full `IRModule`):
+
+| Format | Size | vs JSON | Status |
+|--------|------|---------|--------|
+| JSON (text) | 1,117 B | baseline | — |
+| **`mic@3`** (binary `IRModule`) | **90 B** | **12.4x smaller** | **current — `trace_hash` anchor** |
+| `mic@4` | — | target: smaller + faster than `mic@3` | roadmap — successor wire format ([Roadmap](docs/roadmap.md)) |
+
+> Compile-frontend and format numbers above are Rust-Criterion measured; they are
+> refreshed each release cycle (see [`benchmarks/BENCHMARK_RESULTS.md`](benchmarks/BENCHMARK_RESULTS.md)).
 
 | Protocol | Tokens | vs JSON-RPC |
 |----------|--------|-------------|

@@ -62,8 +62,10 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
   proven wedge; no vendor toolchain offers it.
 - ✅ **Emitted evidence chain** – each artifact carries an embedded evidence
   chain, `trace_hash = SHA-256` of the canonical `mic@3` bytes. Cryptographic
-  Ed25519 *signing* of the chain is the next milestone (see Roadmap), so the
-  chain is emitted/embedded but not yet signed.
+  Ed25519 / ML-DSA *signing* of the chain is **shipped opt-in** (RFC 0016
+  Phase C — enable with a key-seed env var); artifacts are unsigned and
+  tamper-evident by default, with release-CI auto-signing the remaining
+  deferred leg.
 - ✅ **Self-host fixed-point — canonical binary IR (`mic@3`)** – the pure-MIND
   `mindc` front-end reproduces the **canonical `mic@3` binary IR** of its own
   ~15k-line source **byte-for-byte** against the Rust reference
@@ -377,8 +379,9 @@ C-ABI via `param_non_i64`, `src/eval/abi_gate.rs:112`) with a **bulk,
 format-agnostic columnar front-end** (JSON / TOON / CSV / TSV / NDJSON / TOML)
 whose column output is **byte-identical across x86 / ARM** (GPU rung behind
 the open-core `GPUBackend` contract, concrete impl in the commercial runtime),
-anchored by the existing hash-anchored — tamper-evident, NOT signed (RFC 0016
-Phase C pending) — mic@3 `trace_hash` (`src/ir/evidence.rs:72-74`). This is
+anchored by the existing hash-anchored — tamper-evident, unsigned by default
+(RFC 0016 Phase C signing shipped opt-in) — mic@3 `trace_hash`
+(`src/ir/evidence.rs:72-74`). This is
 **not a parse-faster race**: the pipeline is I/O-bound by design and no
 MIND-vs-X GB/s number goes on any public surface. The claim is the property
 simdjson / pandas structurally cannot make.
@@ -402,7 +405,7 @@ width is substrate-dependent, the index is not).
 | 0 | CPU fitness harness: scalar decode → `tensor<f64[4096]>` → shipped fold → mic@3 (pure reuse, zero new SIMD; runnable today) | `format-col-sum` canary | mind-dev |
 | 0.5 | Radix-4096 tiled fold (bulk scale over the 4096 cap) | `format-col-sum-tiled`, avx2==neon | mind-mlir-lowering |
 | 1 | Scalar structural oracle per format (derived-index reference + adversarial-tail fuzz corpus) | oracle parity vs `std/json.mind` on the JSON subset | mind-dev |
-| 2 | alg-invent (AB-MCTS) on the ONE hard kernel — the structural pack; fitness = (oracle-identity ∧ cross-substrate index-hash-equal ∧ objdump-pure) hard gates × internal GB/s | x86 `format-structural-index` blessed | mind-det-gemm + alg-invent |
+| 2 | evolutionary search (AB-MCTS) on the ONE hard kernel — the structural pack; fitness = (oracle-identity ∧ cross-substrate index-hash-equal ∧ objdump-pure) hard gates × internal GB/s | x86 `format-structural-index` blessed | mind-det-gemm + MIND research |
 | 3 | Shared stage-2 index + stage-3 materialisation, multi-column, MT==ST | `format-multicol` | mind-dev / mind-mlir-lowering |
 | 4 | Remaining stage-1 classifiers (JSON, TOON, TOML-int) | per-format canary | mind-det-gemm |
 | 5 | Streaming chunker + cross-chunk straddle carry-buffer | boundary canary (split == unsplit) | mind-dev |
@@ -411,8 +414,9 @@ width is substrate-dependent, the index is not).
 
 ### Rails
 
-- Evidence chain stays **hash-anchored, tamper-evident, NOT signed** (RFC 0016
-  Phase C pending). `trace_hash` is over pre-backend mic@3 IR — it attests
+- Evidence chain stays **hash-anchored and tamper-evident, unsigned by default**
+  (RFC 0016 Phase C signing shipped opt-in; release-CI auto-signing deferred).
+  `trace_hash` is over pre-backend mic@3 IR — it attests
   provenance; numeric output identity is the separate per-substrate canary
   proof (do not conflate the two).
 - No public MIND GB/s / rec/s numbers — determinism is the claim, not speed.
@@ -1446,8 +1450,8 @@ discipline already in force (a speedup never trips it).
    and it lands only once the MIND core + deterministic-IO stack are
    production-complete.
 
-4c. **`mic@4` — autoresearch/alg-inv-evolved successor wire format.** Once
-   `mic@3` is stable, turn the autoresearch + alg-inv (AB-MCTS) engine on the
+4c. **`mic@4` — a MIND-research-evolved successor wire format.** Once
+   `mic@3` is stable, turn MIND research's evolutionary-search (AB-MCTS) engine on the
    canonical IR encoding itself — fitness = **smaller + faster emit/parse**,
    HARD-GATED by every invariant `mic@3` guarantees: deterministic byte-canonical
    output, the emit→parse→emit fixed point, cross-substrate byte-identity, and
