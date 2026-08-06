@@ -1,3 +1,4 @@
+import os
 #!/usr/bin/env python3
 # Canonical independent net-verify harness for C-LIKE ENUMS in the native-ELF backend.
 # Run: MINDC_SO=/path/to/mindc_self.so python3 enum_netverify.py
@@ -26,7 +27,7 @@ def run(s):
     e = ctypes.string_at(rd(sh, 0), ln) if ln > 0 else b""
     if not e:
         return ("0B", None)
-    p = pathlib.Path(tempfile.mktemp()); p.write_bytes(e); p.chmod(0o755)
+    p = pathlib.Path(os.path.join(tempfile.mkdtemp(), "artifact")); p.write_bytes(e); p.chmod(0o755)
     try:
         return ("OK", subprocess.run([str(p)], timeout=8).returncode)
     except Exception as ex:
