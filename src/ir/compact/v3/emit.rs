@@ -332,14 +332,19 @@ pub(super) fn encode_type_ann<W: Write>(
 /// we traverse `module.instrs` sequentially).
 pub(super) struct StringTable {
     entries: Vec<String>,
-    index: HashMap<String, usize>,
+    // Dedup index: string -> its position in `entries`. `entries` (a Vec) is the
+    // ordered serialized output; this map is only ever `get`/`insert`/`contains_key`,
+    // never iterated, so the hasher choice is byte-neutral. Use the crate's FxHash
+    // to drop the default SipHash cost on the mic@3 emit hot path (also speeds
+    // `ir_trace_hash`, which re-emits mic@3).
+    index: HashMap<String, usize, crate::type_checker::FxBuild>,
 }
 
 impl StringTable {
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
-            index: HashMap::new(),
+            index: HashMap::default(),
         }
     }
 
