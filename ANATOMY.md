@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3334 | **Est. tokens:** ~7,811,735
-**Generated:** 2026-08-06 05:40 UTC
+**Files:** 3339 | **Est. tokens:** ~7,811,970
+**Generated:** 2026-08-06 06:23 UTC
 
 ## Token Budget Guide
 
@@ -58,7 +58,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 148 | ~349,394 |
+| `examples/mindc_mind/` | 148 | ~349,520 |
 | `examples/mindc_mind/testdata/` | 1 | ~2,452 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
@@ -458,7 +458,7 @@
 | `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
 | `tests/mindfuzz_cross_substrate/staged/` | 16 | ~2,989 |
 | `tests/runtime/` | 2 | ~135 |
-| `tests/selfhost_gaps/` | 143 | ~9,180 |
+| `tests/selfhost_gaps/` | 148 | ~9,289 |
 | `tests/selfhost_gaps/never_wrong/` | 9 | ~184 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
@@ -859,7 +859,7 @@
 - `fixed_point_smoke.py` (~3275 tok, huge)
 - `fixture.mind` (~183 tok, small) — Phase 6.4 emit_ir smoke fixture.
 - `full_strtab_smoke.py` (~1663 tok, huge)
-- `gap_corpus_smoke.py` (~2556 tok, huge)
+- `gap_corpus_smoke.py` (~2682 tok, huge)
 - `general_float_netverify.py` (~1979 tok, huge) — general_float_netverify.py — GENERAL-path f64 value battery (B0 gate lift).
 - `.gitignore` (~5 tok, tiny) — __pycache__/
 - `lockstep_lint.py` (~4127 tok, huge) — lockstep_lint.py -- native-ELF walker lockstep linter for the pure-MIND self-host compiler.
@@ -4718,6 +4718,10 @@
 - `mixed-prefix_7.mind` (~29 tok, tiny)
 - `mixed-prefix_8.mind` (~49 tok, tiny)
 - `mixed-prefix_9.mind` (~50 tok, small)
+- `neg_call_branch_both_return_1.mind` (~25 tok, tiny) — fn g(a: i64) -> i64 { a + 1 }
+- `neg_call_branch_cond_1.mind` (~21 tok, tiny) — fn g(a: i64) -> i64 { a + 1 }
+- `neg_call_branch_else_1.mind` (~21 tok, tiny) — fn g(a: i64) -> i64 { a + 1 }
+- `neg_call_branch_then_1.mind` (~21 tok, tiny) — fn g(a: i64) -> i64 { a + 1 }
 - `neg_double_1.mind` (~8 tok, tiny) — fn f(a: i64) -> i64 {
 - `neg_lit_add_1.mind` (~9 tok, tiny) — fn f(a: i64) -> i64 {
 - `neg_lit_cmp_1.mind` (~14 tok, tiny) — fn f(a: i64) -> i64 {
@@ -4743,6 +4747,7 @@
 - `neg_index_trailing_1.mind` (~11 tok, tiny)
 ### `tests/selfhost_gaps/`
 
+- `not_call_branch_then_1.mind` (~21 tok, tiny) — fn g(a: i64) -> i64 { a + 1 }
 - `operator-edges_1.mind` (~24 tok, tiny)
 - `operator-edges_2.mind` (~26 tok, tiny)
 - `operator-edges_3.mind` (~26 tok, tiny)

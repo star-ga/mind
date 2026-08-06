@@ -1,0 +1,2 @@
+fn g(a: i64) -> i64 { a + 1 }
+fn f(a: i64) -> i64 { if a > 0 { !g(a) } else { 0 } }
