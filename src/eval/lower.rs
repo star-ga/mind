@@ -2297,6 +2297,48 @@ fn mask_narrow_assign(ir: &mut IRModule, name: &str, val: ValueId) -> ValueId {
     }
 }
 
+/// Codex PR #216 Finding 2 — resolve the DECLARED `TypeAnn` of a numeric
+/// tuple-index receiver expression, recursively, so a CHAINED index `t.0.1`
+/// resolves its element type.
+///
+/// A tuple `(a, b, …)` is lowered as an all-i64 heap record (`__mind_alloc(8*n)`,
+/// element `i` at offset `8*i`, the tuple VALUE being the base pointer). A NESTED
+/// element is stored as ITS base pointer at the parent's slot, so `t.0` on a
+/// nested-tuple-typed `t` loads the inner tuple's pointer and `t.0.1` loads at
+/// `+8` from there. The address chain is produced automatically by
+/// `lower_expr(receiver, …)` recursing through this same FieldAccess arm; this
+/// helper only recovers the element TYPE list at each level.
+///
+/// Resolution:
+/// - `Ident(nm)` — the receiver's own declared annotation from `NARROW_LOCALS`
+///   (a `let t: (…, …) = …` records a `TypeAnn::Tuple`).
+/// - numeric `FieldAccess { receiver, field }` — resolve `receiver`'s type, and
+///   if it is a `Tuple`, index `field` into its elements (the inner element type).
+/// - `Paren(inner)` — transparent.
+///
+/// Returns `None` for any receiver whose tuple type cannot be established, so the
+/// caller FAILS LOUDLY (never falls through to a silent-miscompile placeholder).
+#[cfg(feature = "std-surface")]
+fn resolve_numeric_field_receiver_ty(node: &ast::Node) -> Option<TypeAnn> {
+    match node {
+        ast::Node::Lit(Literal::Ident(nm), _) => {
+            NARROW_LOCALS.with(|n| n.borrow().get(nm).cloned())
+        }
+        ast::Node::Paren(inner, _) => resolve_numeric_field_receiver_ty(inner),
+        ast::Node::FieldAccess {
+            receiver, field, ..
+        } if !field.is_empty() && field.bytes().all(|b| b.is_ascii_digit()) => {
+            let elements = match resolve_numeric_field_receiver_ty(receiver)? {
+                TypeAnn::Tuple { elements } => elements,
+                _ => return None,
+            };
+            let idx: usize = field.parse().ok()?;
+            elements.get(idx).cloned()
+        }
+        _ => None,
+    }
+}
+
 /// Infer the NARROW scalar type (`i8`/`u8`/`i16`/`u16`) of an ARITHMETIC
 /// expression's result, if any operand is a tracked narrow local/param.
 /// Recurses through parentheses and nested arithmetic so `(x + 10) / 2` with
@@ -7151,6 +7193,21 @@ fn lower_expr(
         // Gated to `std-surface` — default builds never reach this arm.
         #[cfg(feature = "std-surface")]
         ast::Node::While { cond, body, .. } => {
+            // Task #270 / Codex PR #216 Finding 1 — snapshot/restore NARROW_LOCALS
+            // across the loop body, mirroring the `Node::Block` arm's guard. A
+            // wide re-let inside the body (`let x: i64 = …`) that SHADOWS an outer
+            // `u8`/`u16` local clears that outer's narrow metadata via
+            // `record_narrow_let`'s shadow-clear arm; without this guard the clear
+            // is permanent (even on zero iterations), so a later assignment to the
+            // outer var after the loop emits UNMASKED — an out-of-range silent
+            // miscompile. The snapshot keeps outer narrow entries VISIBLE inside
+            // the body (a genuine loop-carried narrow var reassigned — not re-let —
+            // still masks via `mask_narrow_assign`), and the guard restores the map
+            // on scope exit, dropping only body-local additions/shadow-clears.
+            // Empty for a narrow-free loop (the keystone), so it is a no-op and the
+            // emitted bytes are byte-for-byte unchanged. `For`/`ForEach` desugar to
+            // this `While` arm, so this one guard covers every loop body.
+            let _narrow_while_scope = NarrowLocalsGuard(NARROW_LOCALS.with(|n| n.borrow().clone()));
             // --- Pre-scan: collect loop-carried assignment targets ---
             // Collect every variable assigned in the body (including inside
             // nested branches/blocks/matches) that exists in the outer env —
@@ -7770,23 +7827,26 @@ fn lower_expr(
                 let idx: usize = field.parse().unwrap_or_else(|_| {
                     panic!("tuple index `.{field}` is out of range for a tuple type")
                 });
-                let elements: Vec<TypeAnn> = match receiver.as_ref() {
-                    ast::Node::Lit(Literal::Ident(nm), _) => NARROW_LOCALS
-                        .with(|n| n.borrow().get(nm).cloned())
-                        .and_then(|t| match t {
-                            TypeAnn::Tuple { elements } => Some(elements),
-                            _ => None,
-                        }),
-                    _ => None,
-                }
-                .unwrap_or_else(|| {
-                    panic!(
-                        "tuple index `.{field}` requires a receiver that is a local \
-                         with a declared tuple annotation (`let t: (T, U) = …`); \
-                         annotate the receiver's tuple type. (Falling through to \
-                         struct-field resolution here would be a silent miscompile.)"
-                    )
-                });
+                // Resolve the receiver's tuple element types RECURSIVELY, so a
+                // chained numeric index (`t.0.1` on a nested-tuple-typed `t`)
+                // resolves the inner tuple's element type — not only a plain
+                // `Ident` receiver. The address chain for the outer `.N` is built
+                // by `lower_expr(receiver, …)` below, which recurses through this
+                // same arm for the inner `.M`.
+                let elements: Vec<TypeAnn> = resolve_numeric_field_receiver_ty(receiver)
+                    .and_then(|t| match t {
+                        TypeAnn::Tuple { elements } => Some(elements),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "tuple index `.{field}` requires a receiver with a declared \
+                             tuple annotation — either a local `let t: (T, U) = …`, or a \
+                             nested tuple element such as `t.0` where element 0 is itself \
+                             a tuple; annotate the receiver's tuple type. (Falling through \
+                             to struct-field resolution here would be a silent miscompile.)"
+                        )
+                    });
                 if idx >= elements.len() {
                     panic!(
                         "tuple index `.{field}` is out of bounds for a {}-element \
@@ -8340,6 +8400,18 @@ fn lower_expr(
             let mut body_ir = sub_ir_from(ir);
             let mut body_env = env.clone();
             let mut alloc_ids: Vec<crate::ir::ValueId> = Vec::new();
+
+            // Codex PR #216 broader sweep — snapshot/restore NARROW_LOCALS across
+            // the region body, mirroring the `Node::Block`/`Node::While` guards.
+            // `lower_stmt_seq` calls `record_narrow_let` for a body-local narrow
+            // `let` (and its shadow-clear arm for a wide re-let shadowing an outer
+            // narrow local); without this guard those mutations leak past the
+            // `region { … }` scope, so a later assignment to an outer narrow var
+            // would be re-masked to a body-local width or emitted unmasked — a
+            // silent miscompile. Empty for a narrow-free region, so it is a no-op
+            // and emitted bytes are byte-for-byte unchanged.
+            let _narrow_region_scope =
+                NarrowLocalsGuard(NARROW_LOCALS.with(|n| n.borrow().clone()));
 
             // Lower the body using the shared statement-sequence helper.
             // It handles Let / Assign / expression statements and appends
