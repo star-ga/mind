@@ -18407,6 +18407,50 @@ pub fn selftest_mic3_chain_fn(buf: i64, offs: i64, n: i64, op_byte: i64) -> Emit
 // `vidbuf` is a caller-supplied heap scratch array of `n_nodes` i64s used to record
 // each slot's resolved vid (a binop references children by slot, so the slot->vid map
 // must be materialized before the binops emit). It is filled by the first pass below.
+// Fail-closed guard for the src=0 downstream. emit_mic3_tree_fn_module (the plain
+// let-chain driver) and emit_mic3_if_block_instr (the if-with-let-in-branch path)
+// both call emit_mic3_tree_body with src=0 / strbuf=0 / offs=0 / n_strings=0. The
+// S1 collapse routed flatten_ast_le through flatten_expr_env, which now ACCEPTS
+// descriptors that this downstream cannot serve from a null src / empty strtab:
+//   kind 3 (call) + kind 5 (callee leaf): read src+strtab to intern the name
+//     (intern_find) -> wrong name_idx.
+//   kind 7 (const array): emit_arr_elems -> arr_elem_int -> parse_int_span(src=0)
+//     -> SIGSEGV.
+//   kind 8 (array-index READ): vid threading diverges by one vid -> silent
+//     same-length miscompile.
+//   kinds 9/10 (non-const / vec array): vec_new/vec_push names not interned ->
+//     wrong bytes.
+// Until the let-chain / if-let drivers thread a real src+strtab, refuse the whole
+// emit (fail-closed-over-wrong-bytes, Bound by MIND-CONSTITUTION §I). Kinds
+// 0/1/2/4/6 (param / binop / const / arg-cons / float) emit byte-exact through the
+// src=0 path and are KEPT (a real coverage gain). Returns 1 if ANY node kind is in
+// {3,5,7,8,9,10}.
+pub fn descriptor_has_src_dep_kind(nodes: i64, n_nodes: i64, i: i64) -> i64 {
+    if i >= n_nodes {
+        return 0;
+    }
+    let kind: i64 = __mind_load_i64(nodes + i * 32);
+    if kind == 3 {
+        return 1;
+    }
+    if kind == 5 {
+        return 1;
+    }
+    if kind == 7 {
+        return 1;
+    }
+    if kind == 8 {
+        return 1;
+    }
+    if kind == 9 {
+        return 1;
+    }
+    if kind == 10 {
+        return 1;
+    }
+    descriptor_has_src_dep_kind(nodes, n_nodes, i + 1)
+}
+
 pub fn emit_mic3_tree_fn_module(s: EmitState, buf: i64, offs: i64, n: i64, nodes: i64, n_nodes: i64, vidbuf: i64) -> EmitState {
     // Pass 1: resolve every slot's vid into vidbuf (post-order, binops from %n).
     let root: i64 = tree_resolve_vids(nodes, n_nodes, n, vidbuf, 0, n);
@@ -19452,6 +19496,12 @@ pub fn emit_mic3_ast_fn_module(s: EmitState, src: i64, strbuf: i64, offs: i64, n
         return s;
     }
     let n_nodes: i64 = __mind_load_i64(cursor);
+    // Fail-closed: flatten_ast (the base wrapper) now routes through flatten_expr_env,
+    // which accepts call/array/index; emit_mic3_tree_fn_module emits with src=0 /
+    // empty strtab, so those crash or emit wrong bytes (see descriptor_has_src_dep_kind).
+    if descriptor_has_src_dep_kind(nodes, n_nodes, 0) == 1 {
+        return s;
+    }
     emit_mic3_tree_fn_module(s, strbuf, offs, n, nodes, n_nodes, vidbuf)
 }
 
@@ -19525,104 +19575,17 @@ pub fn resolve_let_loop(lenv: i64, n: i64, buf: i64, lo: i64, hi: i64, i: i64) -
     resolve_let_loop(lenv, n, buf, lo, hi, i + 1)
 }
 
-// Let-env-aware post-order flatten. Identical to flatten_ast (Phase 4g/4h) except
-// the ast_ident branch first tries params, THEN let-names (alias to the bound slot,
-// no new node). Threads lenv/lcount through paren/binop recursion. Returns the
-// node's slot index, or -1 on an unsupported construct (fail-closed).
+// Single Canonical Descriptor Lowering (S1): flatten_ast_le is now a thin wrapper
+// over the ONE flattener flatten_expr_env (a strict superset of the old per-arm
+// body). Its `lenv` is a 24-byte [name_lo,name_hi,SLOT] record array param-first
+// with let->slot aliases — byte-identical in layout to flatten_expr_env's `env`;
+// its paren/ident/int_lit/binop/not arms emitted identically under that env. `lcount`
+// is a 1-i64 CELL, so pass __mind_load_i64(lcount) for flatten_expr_env's by-value
+// `nlets`. The first-match (resolve_let) vs last-match (letenv_lookup) resolution
+// difference is byte-neutral because the sole driver flatten_stmts binds only
+// DISTINCT source let names. Deletes the dual-engine divergence class.
 pub fn flatten_ast_le(node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, lenv: i64, lcount: i64) -> i64 {
-    let k: i64 = ast_kind(node);
-    if k == ast_paren() {
-        return flatten_ast_le(ast_child0(node), buf, params_addr, n_params, nodes, cursor, lenv, lcount);
-    }
-    if k == ast_ident() {
-        let idx: i64 = resolve_param(params_addr, n_params, buf, ast_span_lo(node), ast_span_hi(node));
-        if idx >= 0 {
-            let slot: i64 = __mind_load_i64(cursor);
-            __mind_store_i64(nodes + slot * 32 + 0, 0);
-            __mind_store_i64(nodes + slot * 32 + 8, idx);
-            __mind_store_i64(nodes + slot * 32 + 16, 0);
-            __mind_store_i64(nodes + slot * 32 + 24, 0);
-            __mind_store_i64(cursor, slot + 1);
-            return slot;
-        }
-        // Not a param: a let-bound local resolves to its init's already-emitted
-        // slot (an alias — emit no new node, return the bound slot directly).
-        let lslot: i64 = resolve_let(lenv, lcount, buf, ast_span_lo(node), ast_span_hi(node));
-        if lslot >= 0 {
-            return lslot;
-        }
-        return 0 - 1;
-    }
-    if k == ast_int_lit() {
-        let lit: i64 = parse_int_span(buf, ast_span_lo(node), ast_span_hi(node), 0);
-        let slot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + slot * 32 + 0, 2);
-        __mind_store_i64(nodes + slot * 32 + 8, lit);
-        __mind_store_i64(nodes + slot * 32 + 16, 0);
-        __mind_store_i64(nodes + slot * 32 + 24, 0);
-        __mind_store_i64(cursor, slot + 1);
-        return slot;
-    }
-    if k == ast_binop() {
-        let ls: i64 = flatten_ast_le(ast_child0(node), buf, params_addr, n_params, nodes, cursor, lenv, lcount);
-        if ls < 0 {
-            return 0 - 1;
-        }
-        let rs: i64 = flatten_ast_le(ast_child1(node), buf, params_addr, n_params, nodes, cursor, lenv, lcount);
-        if rs < 0 {
-            return 0 - 1;
-        }
-        let slot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + slot * 32 + 0, 1);
-        __mind_store_i64(nodes + slot * 32 + 8, binop_to_byte(ast_aux(node)));
-        __mind_store_i64(nodes + slot * 32 + 16, ls);
-        __mind_store_i64(nodes + slot * 32 + 24, rs);
-        __mind_store_i64(cursor, slot + 1);
-        return slot;
-    }
-    if k == ast_not() {
-        // Unary logical NOT `!x` desugars to `x == 0` (operand, synth CONST 0, Eq
-        // binop LAST) — mirrors the base flatten_ast ast_not arm, byte-identical vs
-        // --emit-mic3. Additive: enables `!x` inside a multi-statement let body.
-        // `!<int-literal>` fast path — mirrors src/eval/lower.rs `!Lit(Int(n))` => a
-        // single ConstI64((n == 0)); one const leaf, NOT operand+zero+Eq.
-        let notop: i64 = ast_child0(node);
-        if ast_kind(notop) == ast_int_lit() {
-            let litv: i64 = if ast_child1(notop) == 1 {
-                ast_child0(notop)
-            } else {
-                parse_int_span(buf, ast_span_lo(notop), ast_span_hi(notop), 0)
-            };
-            let cval: i64 = if litv == 0 {
-                1
-            } else {
-                0
-            };
-            return desc_emit_const(nodes, cursor, cval);
-        }
-        let oslot: i64 = flatten_ast_le(ast_child0(node), buf, params_addr, n_params, nodes, cursor, lenv, lcount);
-        if oslot < 0 {
-            return 0 - 1;
-        }
-        let zslot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + zslot * 32 + 0, 2);
-        __mind_store_i64(nodes + zslot * 32 + 8, 0);
-        __mind_store_i64(nodes + zslot * 32 + 16, 0);
-        __mind_store_i64(nodes + zslot * 32 + 24, 0);
-        __mind_store_i64(cursor, zslot + 1);
-        let slot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + slot * 32 + 0, 1);
-        __mind_store_i64(nodes + slot * 32 + 8, binop_to_byte(op_eq()));
-        __mind_store_i64(nodes + slot * 32 + 16, oslot);
-        __mind_store_i64(nodes + slot * 32 + 24, zslot);
-        __mind_store_i64(cursor, slot + 1);
-        return slot;
-    }
-    if k == ast_struct_lit() {
-        // PARSE-ONLY frontier: reject struct-literal construction (fail closed).
-        return 0 - 1;
-    }
-    0 - 1
+    return flatten_expr_env(node, buf, params_addr, n_params, nodes, cursor, lenv, __mind_load_i64(lcount));
 }
 
 // Walk a block's statement list: each `let` flattens its init and binds the
@@ -19665,6 +19628,11 @@ pub fn emit_mic3_let_fn_module(s: EmitState, src: i64, strbuf: i64, offs: i64, n
         return s;
     }
     let n_nodes: i64 = __mind_load_i64(cursor);
+    // Fail-closed: emit_mic3_tree_fn_module emits with src=0 / empty strtab; refuse
+    // any descriptor kind that needs a real src+strtab (see descriptor_has_src_dep_kind).
+    if descriptor_has_src_dep_kind(nodes, n_nodes, 0) == 1 {
+        return s;
+    }
     emit_mic3_tree_fn_module(s, strbuf, offs, n, nodes, n_nodes, vidbuf)
 }
 
@@ -21499,6 +21467,24 @@ pub fn emit_mic3_if_block_instr(s: EmitState, cond_expr: i64, then_blk: i64, els
     let else_n: i64 = __mind_load_i64(e_cur);
     let else_nonparam: i64 = nonparam_count_desc(e_nodes, else_n, 0);
     let after_else: i64 = after_then + 1 + else_nonparam;
+
+    // Fail-closed: the cond / then / else branch bodies below emit via
+    // emit_mic3_tree_body with src=0 / empty strtab; a call/array/index descriptor in
+    // ANY of the three trees would crash or emit wrong bytes (same S1-collapse defect
+    // class as the plain let-chain — see descriptor_has_src_dep_kind). Refuse the whole
+    // OP_IF emit (fail-closed-over-wrong-bytes, Bound by MIND-CONSTITUTION §I).
+    if descriptor_has_src_dep_kind(c_nodes, cond_n, 0) == 1 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    if descriptor_has_src_dep_kind(t_nodes, then_n, 0) == 1 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    if descriptor_has_src_dep_kind(e_nodes, else_n, 0) == 1 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
 
     // --- merge pass: merged names, per-name placeholders + merge_ids from after_else ---
     let t_lcount: i64 = __mind_load_i64(t_lc);
