@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3328 | **Est. tokens:** ~7,807,723
-**Generated:** 2026-08-06 00:54 UTC
+**Files:** 3328 | **Est. tokens:** ~7,807,738
+**Generated:** 2026-08-06 00:59 UTC
 
 ## Token Budget Guide
 
@@ -39,7 +39,7 @@
 | `benchmarks/mojo/` | 8 | ~4,300 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
-| `config/` | 1 | ~1,450 |
+| `config/` | 1 | ~1,465 |
 | `docs/` | 32 | ~71,472 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
@@ -645,7 +645,7 @@
 - `config.toml` (~130 tok, small) — [registries]
 ### `config/`
 
-- `capabilities.toml` (~1450 tok, large) — [ir]
+- `capabilities.toml` (~1465 tok, large) — [ir]
 ### `docs/`
 
 - `architecture.md` (~965 tok, large) — Architecture

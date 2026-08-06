@@ -62,8 +62,10 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
   proven wedge; no vendor toolchain offers it.
 - ✅ **Emitted evidence chain** – each artifact carries an embedded evidence
   chain, `trace_hash = SHA-256` of the canonical `mic@3` bytes. Cryptographic
-  Ed25519 *signing* of the chain is the next milestone (see Roadmap), so the
-  chain is emitted/embedded but not yet signed.
+  Ed25519 / ML-DSA *signing* of the chain is **shipped opt-in** (RFC 0016
+  Phase C — enable with a key-seed env var); artifacts are unsigned and
+  tamper-evident by default, with release-CI auto-signing the remaining
+  deferred leg.
 - ✅ **Self-host fixed-point — canonical binary IR (`mic@3`)** – the pure-MIND
   `mindc` front-end reproduces the **canonical `mic@3` binary IR** of its own
   ~15k-line source **byte-for-byte** against the Rust reference
@@ -377,8 +379,9 @@ C-ABI via `param_non_i64`, `src/eval/abi_gate.rs:112`) with a **bulk,
 format-agnostic columnar front-end** (JSON / TOON / CSV / TSV / NDJSON / TOML)
 whose column output is **byte-identical across x86 / ARM** (GPU rung behind
 the open-core `GPUBackend` contract, concrete impl in the commercial runtime),
-anchored by the existing hash-anchored — tamper-evident, NOT signed (RFC 0016
-Phase C pending) — mic@3 `trace_hash` (`src/ir/evidence.rs:72-74`). This is
+anchored by the existing hash-anchored — tamper-evident, unsigned by default
+(RFC 0016 Phase C signing shipped opt-in) — mic@3 `trace_hash`
+(`src/ir/evidence.rs:72-74`). This is
 **not a parse-faster race**: the pipeline is I/O-bound by design and no
 MIND-vs-X GB/s number goes on any public surface. The claim is the property
 simdjson / pandas structurally cannot make.
@@ -411,8 +414,9 @@ width is substrate-dependent, the index is not).
 
 ### Rails
 
-- Evidence chain stays **hash-anchored, tamper-evident, NOT signed** (RFC 0016
-  Phase C pending). `trace_hash` is over pre-backend mic@3 IR — it attests
+- Evidence chain stays **hash-anchored and tamper-evident, unsigned by default**
+  (RFC 0016 Phase C signing shipped opt-in; release-CI auto-signing deferred).
+  `trace_hash` is over pre-backend mic@3 IR — it attests
   provenance; numeric output identity is the separate per-substrate canary
   proof (do not conflate the two).
 - No public MIND GB/s / rec/s numbers — determinism is the claim, not speed.
