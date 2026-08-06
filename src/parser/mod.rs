@@ -3063,13 +3063,15 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         self.expect(b'}')?;
         let span = Span::new(start, self.pos);
-        Ok(Node::Closure {
-            captures,
-            params,
-            ret_type,
-            body,
+        Ok(Node::Closure(
+            Box::new(crate::ast::ClosureData {
+                captures,
+                params,
+                ret_type,
+                body,
+            }),
             span,
-        })
+        ))
     }
 
     fn parse_param(&mut self) -> Result<Param, ParseError> {

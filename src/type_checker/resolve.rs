@@ -1264,7 +1264,7 @@ impl<'a> Resolver<'a> {
             // references inside a fn body (or are handled at module level).
             Node::FnDef(..)
             // #267: closures are desugared before the resolver runs.
-            | Node::Closure { .. }
+            | Node::Closure(..)
             // #268: trait/impl are desugared (impls to free fns, traits dropped)
             // before the resolver runs.
             | Node::TraitDef { .. }
