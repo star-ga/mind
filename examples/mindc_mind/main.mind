@@ -19314,6 +19314,53 @@ pub fn print_desugar_module(src: i64, items_addr: i64, items_len: i64, sp: i64, 
     print_desugar_module(src, items_addr, items_len, sp, i + 1)
 }
 
+// deferred: conservative call-detector for the index-read fail-closed guard.
+// The real fix is branch-buffer slot accounting for a CALL inside an index-read
+// subtree — count_nonparam_nodes and flatten_ast disagree on the call's
+// non-emitting callee-leaf (kind 5) / arg-cons (kind 4) slots, so a `xs[g(a)]`
+// index over-flattens and trails 0xFF garbage after OP_CALL (upgrade path: make
+// count_nonparam_nodes model the call's non-vid structural slots so the branch
+// buffer sizes to match the flattener). Until then any index whose base OR index
+// subtree contains a call must fail closed. Returns 1 if `node`'s subtree CONTAINS
+// an ast_call/ast_method (or any shape we cannot prove call-free), else 0. Only
+// pure integer expr shapes (int/ident leaves, binop, index, neg, not, paren) are
+// provably call-free; every other kind is conservatively treated as call-bearing.
+pub fn subtree_contains_call(node: i64) -> i64 {
+    if node == 0 {
+        return 0;
+    }
+    let k: i64 = ast_kind(node);
+    if k == ast_int_lit() {
+        return 0;
+    }
+    if k == ast_ident() {
+        return 0;
+    }
+    if k == ast_binop() {
+        if subtree_contains_call(ast_child0(node)) == 1 {
+            return 1;
+        }
+        return subtree_contains_call(ast_child1(node));
+    }
+    if k == ast_index() {
+        if subtree_contains_call(ast_child0(node)) == 1 {
+            return 1;
+        }
+        return subtree_contains_call(ast_child1(node));
+    }
+    if k == ast_neg() {
+        return subtree_contains_call(ast_child0(node));
+    }
+    if k == ast_not() {
+        return subtree_contains_call(ast_child0(node));
+    }
+    if k == ast_paren() {
+        return subtree_contains_call(ast_child0(node));
+    }
+    // ast_call / ast_method / and every other (unprovable) kind: conservative refuse.
+    1
+}
+
 // Recursive post-order flatten of a param-only binary-expression AST sub-tree into
 // the 4-i64 descriptor array `nodes` (kind,a,b,c per record, 32 bytes). `cursor` is
 // a 1-i64 heap cell holding the next free slot. Returns the slot index of `node`'s
@@ -19530,6 +19577,48 @@ pub fn flatten_ast(node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: 
         // PARSE-ONLY frontier: struct-literal CONSTRUCTION is parsed but not yet
         // lowered. Fail closed (no bytes) — the desugar/emit half lands later.
         return 0 - 1;
+    }
+    if k == ast_index() {
+        // `BASE[IDX]` index read -> array-load descriptor (kind 8). Base + index
+        // flatten post-order first, then the load node takes the final vid.
+        // Cloned byte-for-byte from flatten_expr_env's ast_index arm (recursing via
+        // flatten_ast) so an index read inside a param-only if-branch (flatten_branch
+        // -> flatten_ast) lowers byte-exactly vs --emit-mic3 (emit_mic3_tree_body
+        // serializes kind 8 as OP_ARRAY_LOAD 0x1A). The base resolves as a param
+        // ident; a non-param base / non-const index still fails closed via the -1
+        // guards below (no wrong-bytes path opens).
+        // deferred: fail-closed guard, MUST stay byte-identical to the count arm's
+        // guard (count_nonparam_nodes ast_index) so pre-size and flatten agree —
+        // a divergent predicate is itself wrong-bytes. (a) NEG base: `-xs[0]` parses
+        // as `(-xs)[0]` (child0 = ast_neg); the ast_neg arm would lower `0 - xs` as
+        // the base — wrong base (upgrade path: parser neg / postfix-index precedence).
+        // (b) a CALL anywhere in the base or index subtree trips a count-vs-flatten
+        // slot disagreement on the call's non-emitting callee/arg-cons slots
+        // (upgrade path: branch-buffer slot accounting for call-in-index subtrees).
+        if ast_kind(ast_child0(node)) == ast_neg() {
+            return 0 - 1;
+        }
+        if subtree_contains_call(ast_child0(node)) == 1 {
+            return 0 - 1;
+        }
+        if subtree_contains_call(ast_child1(node)) == 1 {
+            return 0 - 1;
+        }
+        let base_slot: i64 = flatten_ast(ast_child0(node), buf, params_addr, n_params, nodes, cursor);
+        if base_slot < 0 {
+            return 0 - 1;
+        }
+        let index_slot: i64 = flatten_ast(ast_child1(node), buf, params_addr, n_params, nodes, cursor);
+        if index_slot < 0 {
+            return 0 - 1;
+        }
+        let slot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + slot * 32 + 0, 8);
+        __mind_store_i64(nodes + slot * 32 + 8, 0);
+        __mind_store_i64(nodes + slot * 32 + 16, base_slot);
+        __mind_store_i64(nodes + slot * 32 + 24, index_slot);
+        __mind_store_i64(cursor, slot + 1);
+        return slot;
     }
     // Every other kind (field access, if, ...) = a later-phase wall — reject.
     0 - 1
@@ -19952,6 +20041,37 @@ pub fn count_nonparam_nodes(node: i64, buf: i64, params_addr: i64, n_params: i64
             return 0 - 1;
         }
         return 2 + o;
+    }
+    if k == ast_index() {
+        // `BASE[IDX]` -> base's instrs + index's instrs + 1 (the OP_ARRAY_LOAD).
+        // Mirrors flatten_ast's ast_index arm exactly so the pre-size / vid-base
+        // agrees with the flattener (a missized branch buffer is wrong-bytes, not a
+        // refusal — this MUST stay definitionally consistent with flatten_ast).
+        // deferred: fail-closed guard, byte-identical to flatten_ast's ast_index
+        // guard (neg base + call-in-base/index subtree). Kept in lockstep so the
+        // pre-size refuses exactly the shapes the flattener refuses — a divergent
+        // predicate would size a buffer for a shape flatten_ast then rejects (or
+        // vice-versa), which is wrong-bytes. Upgrade paths: parser neg / postfix-
+        // index precedence (neg base); branch-buffer slot accounting for a call
+        // inside an index subtree (call guard).
+        if ast_kind(ast_child0(node)) == ast_neg() {
+            return 0 - 1;
+        }
+        if subtree_contains_call(ast_child0(node)) == 1 {
+            return 0 - 1;
+        }
+        if subtree_contains_call(ast_child1(node)) == 1 {
+            return 0 - 1;
+        }
+        let b: i64 = count_nonparam_nodes(ast_child0(node), buf, params_addr, n_params);
+        if b < 0 {
+            return 0 - 1;
+        }
+        let ix: i64 = count_nonparam_nodes(ast_child1(node), buf, params_addr, n_params);
+        if ix < 0 {
+            return 0 - 1;
+        }
+        return 1 + b + ix;
     }
     0 - 1
 }
@@ -20687,6 +20807,23 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         // `BASE[IDX]` index read -> array-load descriptor (kind 8). Base + index
         // flatten post-order first (a let-bound array base resolves to its existing
         // slot with no new node), then the load node takes the final vid.
+        // deferred: fail-closed guard, byte-identical to the flatten_ast /
+        // count_nonparam_nodes ast_index guards so the trailing / let-init env path
+        // refuses exactly the shapes the branch path refuses. (a) NEG base: `-xs[0]`
+        // parses as `(-xs)[0]` (child0 = ast_neg) and this arm would lower `0 - xs`
+        // as the base — a silently-wrong 50-byte module vs --emit-mic3 (upgrade path:
+        // parser neg / postfix-index precedence). (b) CALL in base/index subtree —
+        // count-vs-flatten slot disagreement (upgrade path: branch-buffer slot
+        // accounting for call-in-index subtrees). Refuse -> module fails closed (0B).
+        if ast_kind(ast_child0(node)) == ast_neg() {
+            return 0 - 1;
+        }
+        if subtree_contains_call(ast_child0(node)) == 1 {
+            return 0 - 1;
+        }
+        if subtree_contains_call(ast_child1(node)) == 1 {
+            return 0 - 1;
+        }
         let base_slot: i64 = flatten_expr_env(ast_child0(node), src, params_addr, n_params, nodes, cursor, env, nlets);
         if base_slot < 0 {
             return 0 - 1;

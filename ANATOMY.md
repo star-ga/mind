@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3314 | **Est. tokens:** ~7,800,299
-**Generated:** 2026-08-05 13:38 UTC
+**Files:** 3328 | **Est. tokens:** ~7,807,723
+**Generated:** 2026-08-06 00:54 UTC
 
 ## Token Budget Guide
 
@@ -58,7 +58,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 147 | ~346,927 |
+| `examples/mindc_mind/` | 147 | ~347,192 |
 | `examples/mindc_mind/testdata/` | 1 | ~2,452 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
@@ -388,7 +388,7 @@
 | `src/diagnostics/` | 1 | ~3,719 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,987 |
-| `src/eval/` | 14 | ~77,340 |
+| `src/eval/` | 15 | ~80,351 |
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
@@ -414,7 +414,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~198,092 |
-| `tests/` | 311 | ~531,150 |
+| `tests/` | 313 | ~535,105 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -458,7 +458,8 @@
 | `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
 | `tests/mindfuzz_cross_substrate/staged/` | 16 | ~2,989 |
 | `tests/runtime/` | 2 | ~135 |
-| `tests/selfhost_gaps/` | 137 | ~9,108 |
+| `tests/selfhost_gaps/` | 143 | ~9,180 |
+| `tests/selfhost_gaps/never_wrong/` | 5 | ~121 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tools/` | 4 | ~4,578 |
@@ -858,7 +859,7 @@
 - `fixed_point_smoke.py` (~3275 tok, huge)
 - `fixture.mind` (~183 tok, small) — Phase 6.4 emit_ir smoke fixture.
 - `full_strtab_smoke.py` (~1663 tok, huge)
-- `gap_corpus_smoke.py` (~2518 tok, huge)
+- `gap_corpus_smoke.py` (~2556 tok, huge)
 - `general_float_netverify.py` (~1979 tok, huge) — general_float_netverify.py — GENERAL-path f64 value battery (B0 gate lift).
 - `.gitignore` (~5 tok, tiny) — __pycache__/
 - `lockstep_lint.py` (~4127 tok, huge) — lockstep_lint.py -- native-ELF walker lockstep linter for the pure-MIND self-host compiler.
@@ -872,11 +873,11 @@
 - `multi_let_smoke.py` (~1499 tok, large)
 - `now_ns_smoke.py` (~678 tok, large) — # Copyright 2025 STARGA Inc.
 - `option_netverify.py` (~2312 tok, huge) — # Canonical independent net-verify harness for SINGLE-PAYLOAD ENUMS (the
-- `oracle_parity_lint.py` (~3977 tok, huge)
+- `oracle_parity_lint.py` (~4204 tok, huge)
 - `param_types_smoke.py` (~1273 tok, large)
 - `_ref_add.note` (~16 tok, tiny) — 6fa59a74687e6bac38c983655d4d93ab1873299f130f68cbe481cf92041f6610
 - `_ref_if_ret.note` (~16 tok, tiny) — 3fdc70390e9e12d8030552d11b2194078e8579fbcfac19b14d1beed77174cb07
-- `_ref_main.note` (~16 tok, tiny) — c40a15fd353b6e71ac7720dd74777ac463379c17042d88f85612106c1da16205
+- `_ref_main.note` (~16 tok, tiny) — 4746291e1aefac1fe2446e399df14da628531c7aa7396af054ef3eea7be0285a
 - `ref_netverify.py` (~1464 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
 - `_ref_recursion.note` (~16 tok, tiny) — 6d125a946243b0550700d9aa6bc2058b51a3b8bf6e536a8b0b3f545d79b7346f
 - `_ref_struct_field.note` (~16 tok, tiny) — 2f7f2ea32ee47138e1b0162bd51f418b4e5005b4569054f5f3c392ebd2258d96
@@ -3959,6 +3960,7 @@
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_opt.rs` (~995 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_run.rs` (~1535 tok, huge) — Copyright 2025 STARGA Inc.
+- `narrow_scan.rs` (~3011 tok, huge) — Module-wide narrow-int SURFACE prescan (compile-speed early-skip).
 ### `src/eval/stdlib/`
 
 - `mod.rs` (~169 tok, small) — Copyright 2025 STARGA Inc.
@@ -4570,6 +4572,8 @@
 - `narrow_reassign_mask_run.rs` (~1342 tok, large) — Copyright 2025 STARGA Inc.
 - `narrow_reassign_run.rs` (~733 tok, large) — Copyright 2026 STARGA Inc.
 - `narrow_sig_abi_run.rs` (~1211 tok, large) — Copyright 2025 STARGA Inc.
+- `narrow_signedness_batch2_run.rs` (~2281 tok, huge) — Copyright 2025 STARGA Inc.
+- `narrow_signedness_batch_run.rs` (~1674 tok, huge) — Copyright 2025 STARGA Inc.
 - `narrow_unsigned_div_zero_run.rs` (~1228 tok, large) — Copyright 2025 STARGA Inc.
 - `nested_block_surface_run.rs` (~1036 tok, large) — Copyright 2025 STARGA Inc.
 - `nested_collection_run.rs` (~818 tok, large) — Copyright 2025 STARGA Inc.
@@ -4629,6 +4633,11 @@
 - `array-nonconst_3.mind` (~18 tok, tiny) — fn g(a: i64, b: i64, c: i64) -> i64 {
 - `array-nonconst_4.mind` (~17 tok, tiny) — fn h(a: i64, b: i64) -> i64 {
 - `array_of_struct.mind` (~29 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
+- `builtin_option_none_1.mind` (~10 tok, tiny)
+- `builtin_option_some_1.mind` (~11 tok, tiny)
+- `builtin_option_some_return_1.mind` (~10 tok, tiny)
+- `builtin_result_err_1.mind` (~12 tok, tiny)
+- `builtin_result_ok_1.mind` (~10 tok, tiny)
 - `call-arg-nesting_1.mind` (~25 tok, tiny)
 - `call-arg-nesting_2.mind` (~35 tok, tiny)
 - `call-arg-nesting_3.mind` (~41 tok, tiny)
@@ -4680,6 +4689,7 @@
 - `for_range_simple_1.mind` (~24 tok, tiny) — fn f(a: i64) -> i64 {
 - `for_range_zero_1.mind` (~24 tok, tiny) — fn f(a: i64) -> i64 {
 - `GAPS.md` (~4982 tok, huge) — Self-host nfn driver — gap inventory (fuzz-discovered)
+- `index-in-if_1.mind` (~19 tok, tiny)
 - `int_underscore_group_1.mind` (~7 tok, tiny) — fn f() -> i64 {
 - `int_underscore_million_1.mind` (~8 tok, tiny) — fn f() -> i64 {
 - `int_underscore_pair_1.mind` (~7 tok, tiny) — fn f() -> i64 {
@@ -4718,6 +4728,15 @@
 - `neg_nonleaf_paren_sub_1.mind` (~10 tok, tiny) — fn f(a: i64) -> i64 {
 - `nested_array_typed.mind` (~23 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `nested_slit_field.mind` (~30 tok, tiny)
+### `tests/selfhost_gaps/never_wrong/`
+
+- `index_call_binop_1.mind` (~28 tok, tiny) — fn g(a: i64) -> i64 { a + 1 }
+- `index_call_in_if_1.mind` (~27 tok, tiny) — fn g(a: i64) -> i64 { a + 1 }
+- `index_call_nested_1.mind` (~35 tok, tiny) — fn h(a: i64) -> i64 { a + 1 }
+- `neg_index_in_if_1.mind` (~20 tok, tiny)
+- `neg_index_trailing_1.mind` (~11 tok, tiny)
+### `tests/selfhost_gaps/`
+
 - `operator-edges_1.mind` (~24 tok, tiny)
 - `operator-edges_2.mind` (~26 tok, tiny)
 - `operator-edges_3.mind` (~26 tok, tiny)
