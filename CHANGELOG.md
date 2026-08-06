@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Branch-local `let` no longer escapes its scope (silent-miscompile fix).**
+  A `let` inside an `if`/`else` body that *shadows* an enclosing binding was
+  recorded in the branch's phi-merge set, so on branch exit the shadow's value
+  leaked into the outer variable — `let x = 10; if c { let x = 99 }; x` returned
+  99 instead of 10. The lowering now records a branch-body `let` in the merge set
+  only when its name is NOT already bound in the enclosing scope: a shadow stays
+  branch-local, a fresh name still escapes (the fn-flat semantics the self-host
+  front-end relies on). Applies to `let` and `let (…)` tuple bindings in both
+  branches. Byte-identical self-host: keystone 7/7, oracle-parity 30/30,
+  cross_substrate 24/24 (main.mind contains no such shadow, so its emitted bytes
+  are unchanged).
+
 ### Performance
 - **Boxed `FnDef` AST payload — `Node` shrunk 216 → 128 bytes (byte-identical).**
   The `FnDef` variant's ~9 inline fields made it the fattest `ast::Node`
