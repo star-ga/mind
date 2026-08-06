@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3328 | **Est. tokens:** ~7,807,738
-**Generated:** 2026-08-06 01:21 UTC
+**Files:** 3332 | **Est. tokens:** ~7,807,801
+**Generated:** 2026-08-06 03:15 UTC
 
 ## Token Budget Guide
 
@@ -459,7 +459,7 @@
 | `tests/mindfuzz_cross_substrate/staged/` | 16 | ~2,989 |
 | `tests/runtime/` | 2 | ~135 |
 | `tests/selfhost_gaps/` | 143 | ~9,180 |
-| `tests/selfhost_gaps/never_wrong/` | 5 | ~121 |
+| `tests/selfhost_gaps/never_wrong/` | 9 | ~184 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tools/` | 4 | ~4,578 |
@@ -4730,9 +4730,13 @@
 - `nested_slit_field.mind` (~30 tok, tiny)
 ### `tests/selfhost_gaps/never_wrong/`
 
+- `array_lit_in_if_const_1.mind` (~19 tok, tiny)
+- `array_lit_in_if_var_1.mind` (~20 tok, tiny)
 - `index_call_binop_1.mind` (~28 tok, tiny) — fn g(a: i64) -> i64 { a + 1 }
 - `index_call_in_if_1.mind` (~27 tok, tiny) — fn g(a: i64) -> i64 { a + 1 }
 - `index_call_nested_1.mind` (~35 tok, tiny) — fn h(a: i64) -> i64 { a + 1 }
+- `neg_float_1.mind` (~9 tok, tiny)
+- `neg_float_in_if_1.mind` (~15 tok, tiny)
 - `neg_index_in_if_1.mind` (~20 tok, tiny)
 - `neg_index_trailing_1.mind` (~11 tok, tiny)
 ### `tests/selfhost_gaps/`
