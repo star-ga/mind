@@ -20625,6 +20625,27 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         __mind_store_i64(cursor, slot + 1);
         return slot;
     }
+    if k == ast_float_lit() {
+        // Float const leaf (descriptor kind=6): store the IEEE-754 f64 bit pattern
+        // (integer-only via nb_float_lit_bits). emit_mic3_tree_body emits it as
+        // OP_CONST_F64, byte-exact vs --emit-mic3. FAIL CLOSED on a non-dyadic /
+        // exponent / overflow literal — nb_float_lit_bits is exact ONLY for a dyadic
+        // rational, so a non-dyadic would emit wrong bits (a silent miscompile); the
+        // -1 return poisons the whole fn (never partial/wrong bytes), matching the
+        // native-ELF nb_expr float arm's dyadic guard. Byte-identical to flatten_ast's
+        // ast_float_lit arm (env/nlets unused, mirroring the int_lit arm above).
+        if nb_float_lit_is_dyadic(src, ast_span_lo(node), ast_span_hi(node)) == 0 {
+            return 0 - 1;
+        }
+        let fbits: i64 = nb_float_lit_bits(src, ast_span_lo(node), ast_span_hi(node));
+        let fslot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + fslot * 32 + 0, 6);
+        __mind_store_i64(nodes + fslot * 32 + 8, fbits);
+        __mind_store_i64(nodes + fslot * 32 + 16, 0);
+        __mind_store_i64(nodes + fslot * 32 + 24, 0);
+        __mind_store_i64(cursor, fslot + 1);
+        return fslot;
+    }
     if k == ast_neg() {
         let neg_operand: i64 = ast_child0(node);
         // `-<int literal>` constant-folds to a single negative CONST (the oracle folds it;
