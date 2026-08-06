@@ -5156,7 +5156,7 @@ fn check_call_symbolic_dims(
     };
     // Bind symbol names to concrete sizes by walking (arg_position, tensor_param) entries.
     // sym_env: symbol_name → (bound_concrete_size, first_binding_param_name)
-    let mut sym_env: HashMap<String, (usize, String)> = HashMap::new();
+    let mut sym_env: HashMap<String, (usize, String), FxBuild> = HashMap::default();
     for (arg_pos, param_name, dims, _dtype) in tensor_params {
         // Argument at the declared position — skip if out of range.
         let Some(arg) = args.get(*arg_pos) else {
@@ -5493,7 +5493,7 @@ fn check_determinism_annotations(
 
     // Pre-scan: every user-defined function's annotation state, so the
     // determinism call-graph check can resolve callees within this module.
-    let mut annots: HashMap<&str, FnAnnot> = HashMap::new();
+    let mut annots: HashMap<&str, FnAnnot, FxBuild> = HashMap::default();
     for item in &fndefs {
         if let Node::FnDef(fd, _) = item {
             let name = &fd.name;
