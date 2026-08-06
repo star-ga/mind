@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3339 | **Est. tokens:** ~7,812,164
-**Generated:** 2026-08-06 12:33 UTC
+**Files:** 3339 | **Est. tokens:** ~7,812,324
+**Generated:** 2026-08-06 13:35 UTC
 
 ## Token Budget Guide
 
@@ -396,7 +396,7 @@
 | `src/ir/` | 5 | ~47,725 |
 | `src/ir/compact/` | 3 | ~15,271 |
 | `src/ir/compact/v2/` | 8 | ~38,404 |
-| `src/ir/compact/v3/` | 6 | ~49,102 |
+| `src/ir/compact/v3/` | 6 | ~49,206 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,880 |
 | `src/mlir/` | 3 | ~5,905 |
@@ -410,7 +410,7 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,979 |
-| `src/type_checker/` | 1 | ~15,095 |
+| `src/type_checker/` | 1 | ~15,151 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~198,092 |
@@ -4005,7 +4005,7 @@
 
 - `collapse_receipt.rs` (~5109 tok, huge) — Copyright 2025 STARGA Inc.
 - `ed25519.rs` (~6051 tok, huge) — Copyright 2025 STARGA Inc.
-- `emit.rs` (~11035 tok, huge) — Copyright 2025 STARGA Inc.
+- `emit.rs` (~11139 tok, huge) — Copyright 2025 STARGA Inc.
 - `mldsa.rs` (~1510 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~13865 tok, huge) — Copyright 2025 STARGA Inc.
 - `parse.rs` (~11532 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4099,7 +4099,7 @@
 - `mod.rs` (~5979 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `resolve.rs` (~15095 tok, huge) — Copyright 2025 STARGA Inc.
+- `resolve.rs` (~15151 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
