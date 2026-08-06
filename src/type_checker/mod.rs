@@ -2074,7 +2074,7 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
         // struct literal) BEFORE type inference runs, so a raw `Closure` should
         // never reach here. Fail closed with a TypeError rather than a benign
         // scalar placeholder that could mask a missed desugar.
-        Node::Closure { span, .. } => Err(TypeErrSpan {
+        Node::Closure(_, span) => Err(TypeErrSpan {
             msg: "internal: closure reached type inference before desugaring".to_string(),
             span: *span,
         }),

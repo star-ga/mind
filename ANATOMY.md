@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3339 | **Est. tokens:** ~7,812,048
-**Generated:** 2026-08-06 11:33 UTC
+**Files:** 3339 | **Est. tokens:** ~7,812,164
+**Generated:** 2026-08-06 12:33 UTC
 
 ## Token Budget Guide
 
@@ -378,7 +378,7 @@
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
 | `src/` | 7 | ~18,597 |
-| `src/ast/` | 1 | ~10,100 |
+| `src/ast/` | 1 | ~10,205 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
 | `src/build/` | 2 | ~16,852 |
@@ -388,11 +388,11 @@
 | `src/diagnostics/` | 1 | ~3,719 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,987 |
-| `src/eval/` | 15 | ~80,351 |
+| `src/eval/` | 15 | ~80,345 |
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
-| `src/fmt/` | 3 | ~21,719 |
+| `src/fmt/` | 3 | ~21,737 |
 | `src/ir/` | 5 | ~47,725 |
 | `src/ir/compact/` | 3 | ~15,271 |
 | `src/ir/compact/v2/` | 8 | ~38,404 |
@@ -410,7 +410,7 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,979 |
-| `src/type_checker/` | 1 | ~15,096 |
+| `src/type_checker/` | 1 | ~15,095 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~198,092 |
@@ -3902,7 +3902,7 @@
 - `SKILL.md` (~6002 tok, huge) — Write MIND Code
 ### `src/ast/`
 
-- `mod.rs` (~10100 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~10205 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~3890 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3952,7 +3952,7 @@
 
 - `abi_gate.rs` (~12049 tok, huge) — Runnable-artifact ABI gate (release-readiness P1.1).
 - `autodiff.rs` (~14268 tok, huge) — Copyright 2025 STARGA Inc.
-- `closures.rs` (~6915 tok, huge) — Copyright 2025 STARGA Inc.
+- `closures.rs` (~6911 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~3818 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_build.rs` (~9421 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3961,7 +3961,7 @@
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_opt.rs` (~995 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_run.rs` (~1535 tok, huge) — Copyright 2025 STARGA Inc.
-- `narrow_scan.rs` (~3011 tok, huge) — Module-wide narrow-int SURFACE prescan (compile-speed early-skip).
+- `narrow_scan.rs` (~3009 tok, huge) — Module-wide narrow-int SURFACE prescan (compile-speed early-skip).
 ### `src/eval/stdlib/`
 
 - `mod.rs` (~169 tok, small) — Copyright 2025 STARGA Inc.
@@ -3985,7 +3985,7 @@
 
 - `cli.rs` (~3873 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~17252 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~17270 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4693 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4099,7 +4099,7 @@
 - `mod.rs` (~5979 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `resolve.rs` (~15096 tok, huge) — Copyright 2025 STARGA Inc.
+- `resolve.rs` (~15095 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.

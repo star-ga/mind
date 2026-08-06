@@ -1708,13 +1708,13 @@ fn emit_expr(p: &mut Printer, node: &Node) {
         }
         // #267: closure `|caps; params| -> R { body }`. `mindc fmt` runs on the
         // pre-desugar AST, so a source closure round-trips through this emitter.
-        Node::Closure {
-            captures,
-            params,
-            ret_type,
-            body,
-            span,
-        } => {
+        Node::Closure(data, span) => {
+            let crate::ast::ClosureData {
+                captures,
+                params,
+                ret_type,
+                body,
+            } = data.as_ref();
             p.push("|");
             for (i, c) in captures.iter().enumerate() {
                 if i > 0 {
