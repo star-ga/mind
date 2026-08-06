@@ -19369,259 +19369,13 @@ pub fn subtree_contains_call(node: i64) -> i64 {
 // MUST abort (the descriptor is then partial/invalid) — fail-closed, never a
 // byte-mismatched emit (Bound by MIND-CONSTITUTION §I).
 pub fn flatten_ast(node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64) -> i64 {
-    let k: i64 = ast_kind(node);
-    if k == ast_paren() {
-        // Parentheses are purely structural — the mic@3 oracle carries no paren
-        // node (verified vs --emit-mic3 on (a+b)*c). Recurse transparently.
-        return flatten_ast(ast_child0(node), buf, params_addr, n_params, nodes, cursor);
-    }
-    if k == ast_ident() {
-        let idx: i64 = resolve_param(params_addr, n_params, buf, ast_span_lo(node), ast_span_hi(node));
-        if idx < 0 {
-            return 0 - 1;
-        }
-        let slot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + slot * 32 + 0, 0);
-        __mind_store_i64(nodes + slot * 32 + 8, idx);
-        __mind_store_i64(nodes + slot * 32 + 16, 0);
-        __mind_store_i64(nodes + slot * 32 + 24, 0);
-        __mind_store_i64(cursor, slot + 1);
-        return slot;
-    }
-    if k == ast_int_lit() {
-        // Phase 4h: const leaf. The int-literal node carries no stored value, only
-        // its source span [lo,hi) — parse the decimal digits to the raw literal.
-        // Descriptor kind=2, record[1]=raw literal (emit_mic3_const_i64 zigzag-
-        // encodes it at emission, matching the oracle's CONST lit*2). A const leaf
-        // gets its own post-order slot (vid allocated interleaved with binops).
-        // SYNTHETIC int-lit (field-read offset idx*8): child1==1 sentinel carries the
-        // value DIRECT in child0 (no source decimal); real source int-lits have
-        // child1==0 so this never fires for them.
-        let lit: i64 = if ast_child1(node) == 1 {
-            ast_child0(node)
-        } else {
-            parse_int_span(buf, ast_span_lo(node), ast_span_hi(node), 0)
-        };
-        let slot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + slot * 32 + 0, 2);
-        __mind_store_i64(nodes + slot * 32 + 8, lit);
-        __mind_store_i64(nodes + slot * 32 + 16, 0);
-        __mind_store_i64(nodes + slot * 32 + 24, 0);
-        __mind_store_i64(cursor, slot + 1);
-        return slot;
-    }
-    if k == ast_float_lit() {
-        // Float const leaf (descriptor kind=6): store the IEEE-754 f64 bit pattern
-        // (integer-only via nb_float_lit_bits). emit_mic3_tree_body emits it as
-        // OP_CONST_F64, byte-exact vs --emit-mic3. FAIL CLOSED on a non-dyadic /
-        // exponent / overflow literal — nb_float_lit_bits is exact ONLY for a dyadic
-        // rational, so a non-dyadic would emit wrong bits (a silent miscompile); the
-        // -1 return poisons the whole fn (never partial/wrong bytes), matching the
-        // native-ELF nb_expr float arm's dyadic guard.
-        if nb_float_lit_is_dyadic(buf, ast_span_lo(node), ast_span_hi(node)) == 0 {
-            return 0 - 1;
-        }
-        let fbits: i64 = nb_float_lit_bits(buf, ast_span_lo(node), ast_span_hi(node));
-        let fslot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + fslot * 32 + 0, 6);
-        __mind_store_i64(nodes + fslot * 32 + 8, fbits);
-        __mind_store_i64(nodes + fslot * 32 + 16, 0);
-        __mind_store_i64(nodes + fslot * 32 + 24, 0);
-        __mind_store_i64(cursor, fslot + 1);
-        return fslot;
-    }
-    if k == ast_binop() {
-        let lslot: i64 = flatten_ast(ast_child0(node), buf, params_addr, n_params, nodes, cursor);
-        if lslot < 0 {
-            return 0 - 1;
-        }
-        let rslot: i64 = flatten_ast(ast_child1(node), buf, params_addr, n_params, nodes, cursor);
-        if rslot < 0 {
-            return 0 - 1;
-        }
-        let slot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + slot * 32 + 0, 1);
-        __mind_store_i64(nodes + slot * 32 + 8, binop_to_byte(ast_aux(node)));
-        __mind_store_i64(nodes + slot * 32 + 16, lslot);
-        __mind_store_i64(nodes + slot * 32 + 24, rslot);
-        __mind_store_i64(cursor, slot + 1);
-        return slot;
-    }
-    if k == ast_call() {
-        // Strategy-A cutover: a call with arbitrary expression arguments, encoded as
-        // an ARG-CONS CHAIN inside the existing 32B descriptor array — no separate
-        // arglist buffer, no flatten-param threading. Post-order is preserved: each
-        // arg EXPRESSION sub-tree is flattened first (so its vids are assigned before
-        // the call), then the structural callee-leaf (kind=5) + arg-cons (kind=4)
-        // nodes (which emit NOTHING and consume NO vid), then the call node (kind=3)
-        // LAST so it takes the final vid (matching the --emit-mic3 oracle).
-        let callee: i64 = ast_child0(node);
-        // FAIL-CLOSED on the `print` builtin: the Rust oracle DESUGARS `print(x)` into
-        // TWO renamed calls — `printI64(x)` then `printNewline()` (3 strtab entries) —
-        // a shape the self-host generic-call path (one OP_CALL to the literal callee
-        // name) does NOT model. Emitting a bare `print` call would be a valid-but-WRONG
-        // module (calls a nonexistent `print`, omits printNewline). Refuse the whole
-        // subtree so the module fails closed (0 bytes) rather than miscompiling. Named
-        // builtin only — a real user call keeps the generic OP_CALL path. main.mind
-        // never calls `print`, so its own self-compile is unaffected.
-        if span_is_print(buf, ast_span_lo(callee), ast_span_hi(callee)) == 1 {
-            return 0 - 1;
-        }
-        let args_addr: i64 = ast_child1(node);
-        let args_len: i64 = ast_aux(node);
-        // (1)+(2): flatten each arg expr post-order + build the arg-cons chain.
-        let first_cons: i64 = flatten_argcons(args_addr, args_len, 0, buf, params_addr, n_params, nodes, cursor);
-        if first_cons < 0 {
-            return 0 - 1;
-        }
-        // (3): callee leaf — stores the callee NAME span (resolved to a strtab index
-        // at emit time). kind=5, [span_lo, span_hi], emits nothing.
-        let cslot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + cslot * 32 + 0, 5);
-        __mind_store_i64(nodes + cslot * 32 + 8, ast_span_lo(callee));
-        __mind_store_i64(nodes + cslot * 32 + 16, ast_span_hi(callee));
-        __mind_store_i64(nodes + cslot * 32 + 24, 0);
-        __mind_store_i64(cursor, cslot + 1);
-        // (4): the call node, LAST in post-order. child0=callee leaf, child1=first
-        // arg-cons slot (0 when zero-arg).
-        let slot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + slot * 32 + 0, 3);
-        __mind_store_i64(nodes + slot * 32 + 8, 0);
-        __mind_store_i64(nodes + slot * 32 + 16, cslot);
-        __mind_store_i64(nodes + slot * 32 + 24, first_cons);
-        __mind_store_i64(cursor, slot + 1);
-        return slot;
-    }
-    if k == ast_neg() {
-        // Unary `-x` (non-literal operand) desugars to `0 - x` (CONST 0, then `sub`)
-        // — exactly how the Rust front-end lowers it (src/eval/lower.rs Node::Neg
-        // non-Lit arm: `zero = fresh(); ConstI64(zero,0)` is emitted BEFORE
-        // `lower_expr(operand)`, then `Sub(dst, zero, rhs)`). Post-order slot order
-        // therefore is: synthetic const-0 leaf FIRST (lowest vid), then the operand's
-        // own instrs, then the `sub` binop LAST. Emitting the const-0 before recursing
-        // into the operand is load-bearing for byte-identity: the oracle assigns the
-        // const-0 the earlier SSA id, so a `-(a+b)`/`-(a*b)`/`--a` neg-of-non-leaf
-        // lowers byte-exactly (a bare `-<literal>` folds to one CONST at parse time,
-        // never reaching here). Additive — main.mind has no unary neg-of-non-leaf.
-        let zslot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + zslot * 32 + 0, 2);
-        __mind_store_i64(nodes + zslot * 32 + 8, 0);
-        __mind_store_i64(nodes + zslot * 32 + 16, 0);
-        __mind_store_i64(nodes + zslot * 32 + 24, 0);
-        __mind_store_i64(cursor, zslot + 1);
-        let oslot: i64 = flatten_ast(ast_child0(node), buf, params_addr, n_params, nodes, cursor);
-        if oslot < 0 {
-            return 0 - 1;
-        }
-        let slot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + slot * 32 + 0, 1);
-        __mind_store_i64(nodes + slot * 32 + 8, binop_to_byte(op_sub()));
-        __mind_store_i64(nodes + slot * 32 + 16, zslot);
-        __mind_store_i64(nodes + slot * 32 + 24, oslot);
-        __mind_store_i64(cursor, slot + 1);
-        return slot;
-    }
-    if k == ast_not() {
-        // Unary logical NOT `!x` desugars to `x == 0` — exactly how the Rust
-        // front-end lowers it (src/eval/lower.rs Node::Not: lhs = lower(operand);
-        // zero = CONST 0; dst = BinOp Eq(lhs, zero)). Verified byte-identical vs
-        // --emit-mic3: `!a` and `a == 0` emit the same 45-byte mic@3 module.
-        // Post-order: operand first, then a synthetic const-0, then the Eq binop
-        // LAST (so it takes the final vid, lhs=operand slot, rhs=const-0 slot).
-        // Additive — main.mind uses no `!` in a flattened trailing expression, so
-        // the whole-module self-host gates stay byte-identical.
-        let operand: i64 = ast_child0(node);
-        // `!<int-literal>` fast path — mirrors src/eval/lower.rs Node::Not `!Lit(Int(n))`
-        // => a single ConstI64(id, (n == 0)). One const leaf, NOT operand+zero+Eq. This
-        // must match the oracle exactly: the count arm (count_nonparam_nodes ast_not)
-        // now activates the module driver for `!`, so a bare `!5` would otherwise emit
-        // 3 instrs where the oracle emits 1 (byte-divergence).
-        if ast_kind(operand) == ast_int_lit() {
-            let litv: i64 = if ast_child1(operand) == 1 {
-                ast_child0(operand)
-            } else {
-                parse_int_span(buf, ast_span_lo(operand), ast_span_hi(operand), 0)
-            };
-            let cval: i64 = if litv == 0 {
-                1
-            } else {
-                0
-            };
-            let cslot: i64 = __mind_load_i64(cursor);
-            __mind_store_i64(nodes + cslot * 32 + 0, 2);
-            __mind_store_i64(nodes + cslot * 32 + 8, cval);
-            __mind_store_i64(nodes + cslot * 32 + 16, 0);
-            __mind_store_i64(nodes + cslot * 32 + 24, 0);
-            __mind_store_i64(cursor, cslot + 1);
-            return cslot;
-        }
-        let oslot: i64 = flatten_ast(operand, buf, params_addr, n_params, nodes, cursor);
-        if oslot < 0 {
-            return 0 - 1;
-        }
-        let zslot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + zslot * 32 + 0, 2);
-        __mind_store_i64(nodes + zslot * 32 + 8, 0);
-        __mind_store_i64(nodes + zslot * 32 + 16, 0);
-        __mind_store_i64(nodes + zslot * 32 + 24, 0);
-        __mind_store_i64(cursor, zslot + 1);
-        let slot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + slot * 32 + 0, 1);
-        __mind_store_i64(nodes + slot * 32 + 8, binop_to_byte(op_eq()));
-        __mind_store_i64(nodes + slot * 32 + 16, oslot);
-        __mind_store_i64(nodes + slot * 32 + 24, zslot);
-        __mind_store_i64(cursor, slot + 1);
-        return slot;
-    }
-    if k == ast_struct_lit() {
-        // PARSE-ONLY frontier: struct-literal CONSTRUCTION is parsed but not yet
-        // lowered. Fail closed (no bytes) — the desugar/emit half lands later.
-        return 0 - 1;
-    }
-    if k == ast_index() {
-        // `BASE[IDX]` index read -> array-load descriptor (kind 8). Base + index
-        // flatten post-order first, then the load node takes the final vid.
-        // Cloned byte-for-byte from flatten_expr_env's ast_index arm (recursing via
-        // flatten_ast) so an index read inside a param-only if-branch (flatten_branch
-        // -> flatten_ast) lowers byte-exactly vs --emit-mic3 (emit_mic3_tree_body
-        // serializes kind 8 as OP_ARRAY_LOAD 0x1A). The base resolves as a param
-        // ident; a non-param base / non-const index still fails closed via the -1
-        // guards below (no wrong-bytes path opens).
-        // deferred: fail-closed guard, MUST stay byte-identical to the count arm's
-        // guard (count_nonparam_nodes ast_index) so pre-size and flatten agree —
-        // a divergent predicate is itself wrong-bytes. (a) NEG base: `-xs[0]` parses
-        // as `(-xs)[0]` (child0 = ast_neg); the ast_neg arm would lower `0 - xs` as
-        // the base — wrong base (upgrade path: parser neg / postfix-index precedence).
-        // (b) a CALL anywhere in the base or index subtree trips a count-vs-flatten
-        // slot disagreement on the call's non-emitting callee/arg-cons slots
-        // (upgrade path: branch-buffer slot accounting for call-in-index subtrees).
-        if ast_kind(ast_child0(node)) == ast_neg() {
-            return 0 - 1;
-        }
-        if subtree_contains_call(ast_child0(node)) == 1 {
-            return 0 - 1;
-        }
-        if subtree_contains_call(ast_child1(node)) == 1 {
-            return 0 - 1;
-        }
-        let base_slot: i64 = flatten_ast(ast_child0(node), buf, params_addr, n_params, nodes, cursor);
-        if base_slot < 0 {
-            return 0 - 1;
-        }
-        let index_slot: i64 = flatten_ast(ast_child1(node), buf, params_addr, n_params, nodes, cursor);
-        if index_slot < 0 {
-            return 0 - 1;
-        }
-        let slot: i64 = __mind_load_i64(cursor);
-        __mind_store_i64(nodes + slot * 32 + 0, 8);
-        __mind_store_i64(nodes + slot * 32 + 8, 0);
-        __mind_store_i64(nodes + slot * 32 + 16, base_slot);
-        __mind_store_i64(nodes + slot * 32 + 24, index_slot);
-        __mind_store_i64(cursor, slot + 1);
-        return slot;
-    }
-    // Every other kind (field access, if, ...) = a later-phase wall — reject.
-    0 - 1
+    // Single Canonical Descriptor Lowering (P0 step 2): flatten_ast is now a thin
+    // empty-env wrapper over the ONE flattener flatten_expr_env (a strict superset
+    // of the old per-arm body). `buf` is the source-byte buffer -> flatten_expr_env's
+    // `src`; env=0/nlets=0 routes the ast_ident non-param case through letenv_lookup
+    // with nlets==0, which returns -1 byte-identically to the old non-param -1, and
+    // env is never dereferenced. Deletes the dual-engine divergence class.
+    flatten_expr_env(node, buf, params_addr, n_params, nodes, cursor, 0, 0)
 }
 
 // Flatten the args of a call into the descriptor array as an arg-cons chain. Arg
@@ -19974,106 +19728,33 @@ pub fn selftest_mic3_let_fn(src_addr: i64, src_len: i64, strbuf: i64, offs: i64,
 // + BINOP nodes). Params contribute 0 (they re-use their own vid, no sub-instr).
 // Returns -1 on any unsupported construct (mirrors flatten_ast's rejection set).
 pub fn count_nonparam_nodes(node: i64, buf: i64, params_addr: i64, n_params: i64) -> i64 {
-    let k: i64 = ast_kind(node);
-    if k == ast_paren() {
-        return count_nonparam_nodes(ast_child0(node), buf, params_addr, n_params);
+    // Single Canonical Descriptor Lowering (P0 step 2): instead of an INDEPENDENT
+    // analytic per-kind count (which could disagree with the flattener — the root of
+    // 3 prior regressions), DRY-RUN the ONE flattener flatten_expr_env into a
+    // throwaway scratch descriptor buffer, then count non-param body slots exactly the
+    // way the emit path does (count_descriptor_nonparam, skipping kind 0 params / 4
+    // arg-cons / 5 callee leaves). Scratch is sized 256*32 to match the if-path emit's
+    // per-fn descriptor discipline; `cur` is a local throwaway cursor. Fail-closed (-1)
+    // whenever the flattener refuses, so pre-size and flatten never disagree.
+    let scratch: i64 = __mind_alloc(256 * 32);
+    let cur: i64 = __mind_alloc(8);
+    __mind_store_i64(cur, 0);
+    let root: i64 = flatten_expr_env(node, buf, params_addr, n_params, scratch, cur, 0, 0);
+    if root < 0 {
+        // FINDING 4 (bounded heap leak): release the per-call dry-run scratch on the
+        // refuse path too. __mind_free is the malloc-backed free in the cdylib emit
+        // path and a no-op `xor rax,rax` in the native bump-arena self-host (kind 7 ->
+        // nb_emit_free_xor); byte-neutral to every emitted artifact (this fn runs at
+        // emit time and its return value / emitted bytes are unchanged).
+        let _fr1: i64 = __mind_free(scratch);
+        let _fr2: i64 = __mind_free(cur);
+        return 0 - 1;
     }
-    if k == ast_ident() {
-        let idx: i64 = resolve_param(params_addr, n_params, buf, ast_span_lo(node), ast_span_hi(node));
-        if idx < 0 {
-            return 0 - 1;
-        }
-        return 0;
-    }
-    if k == ast_int_lit() {
-        return 1;
-    }
-    if k == ast_float_lit() {
-        // 1 instr (OP_CONST_F64), same as an int const leaf. Fail-close (-1) on a
-        // non-dyadic literal so the vid count matches flatten_ast's poison exactly.
-        if nb_float_lit_is_dyadic(buf, ast_span_lo(node), ast_span_hi(node)) == 0 {
-            return 0 - 1;
-        }
-        return 1;
-    }
-    if k == ast_binop() {
-        let l: i64 = count_nonparam_nodes(ast_child0(node), buf, params_addr, n_params);
-        if l < 0 {
-            return 0 - 1;
-        }
-        let r: i64 = count_nonparam_nodes(ast_child1(node), buf, params_addr, n_params);
-        if r < 0 {
-            return 0 - 1;
-        }
-        return 1 + l + r;
-    }
-    if k == ast_call() {
-        // The call emits ONE instr (the OP_CALL). The structural callee-leaf and
-        // arg-cons descriptor nodes emit nothing. Each arg contributes its own
-        // non-param instrs (consts/binops/nested calls).
-        let args_addr: i64 = ast_child1(node);
-        let args_len: i64 = ast_aux(node);
-        let a: i64 = count_nonparam_args(args_addr, args_len, 0, buf, params_addr, n_params);
-        if a < 0 {
-            return 0 - 1;
-        }
-        return 1 + a;
-    }
-    if k == ast_neg() {
-        // `-x` -> CONST 0 (1 instr) + `sub` binop (1 instr) + the operand's own instrs.
-        let o: i64 = count_nonparam_nodes(ast_child0(node), buf, params_addr, n_params);
-        if o < 0 {
-            return 0 - 1;
-        }
-        return 2 + o;
-    }
-    if k == ast_not() {
-        // `!<int-literal>` fast path — the oracle collapses `!Lit(n)` to ONE ConstI64,
-        // so the pre-count must be 1 (not 2 + operand's 1). Mirror flatten_ast exactly.
-        if ast_kind(ast_child0(node)) == ast_int_lit() {
-            return 1;
-        }
-        // `!x` -> CONST 0 (1 instr) + `==` binop (1 instr) + the operand's own instrs.
-        // Parallels the ast_neg arm and the base flatten_ast ast_not desugar so the
-        // pre-count agrees with the flattener (no buffer under-allocation).
-        let o: i64 = count_nonparam_nodes(ast_child0(node), buf, params_addr, n_params);
-        if o < 0 {
-            return 0 - 1;
-        }
-        return 2 + o;
-    }
-    if k == ast_index() {
-        // `BASE[IDX]` -> base's instrs + index's instrs + 1 (the OP_ARRAY_LOAD).
-        // Mirrors flatten_ast's ast_index arm exactly so the pre-size / vid-base
-        // agrees with the flattener (a missized branch buffer is wrong-bytes, not a
-        // refusal — this MUST stay definitionally consistent with flatten_ast).
-        // deferred: fail-closed guard, byte-identical to flatten_ast's ast_index
-        // guard (neg base + call-in-base/index subtree). Kept in lockstep so the
-        // pre-size refuses exactly the shapes the flattener refuses — a divergent
-        // predicate would size a buffer for a shape flatten_ast then rejects (or
-        // vice-versa), which is wrong-bytes. Upgrade paths: parser neg / postfix-
-        // index precedence (neg base); branch-buffer slot accounting for a call
-        // inside an index subtree (call guard).
-        if ast_kind(ast_child0(node)) == ast_neg() {
-            return 0 - 1;
-        }
-        if subtree_contains_call(ast_child0(node)) == 1 {
-            return 0 - 1;
-        }
-        if subtree_contains_call(ast_child1(node)) == 1 {
-            return 0 - 1;
-        }
-        let b: i64 = count_nonparam_nodes(ast_child0(node), buf, params_addr, n_params);
-        if b < 0 {
-            return 0 - 1;
-        }
-        let ix: i64 = count_nonparam_nodes(ast_child1(node), buf, params_addr, n_params);
-        if ix < 0 {
-            return 0 - 1;
-        }
-        return 1 + b + ix;
-    }
-    0 - 1
+    let n_nodes: i64 = __mind_load_i64(cur);
+    let result: i64 = count_descriptor_nonparam(scratch, n_nodes, 0);
+    let _fs1: i64 = __mind_free(scratch);
+    let _fs2: i64 = __mind_free(cur);
+    result
 }
 
 // Sum the non-param instr counts of a call's arguments (left-to-right).
@@ -20648,6 +20329,18 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
     }
     if k == ast_neg() {
         let neg_operand: i64 = ast_child0(node);
+        // FAIL-CLOSED on `-<float literal>`: the oracle folds Neg(Float) to a SINGLE
+        // negative ConstF64 (src/eval/lower.rs ~4600-4603, -1.5 -> f8bf), but this arm's
+        // `0 - x` desugar below would emit a 3-instr `0 - 1.5` (const +1.5/f83f + sub) —
+        // a silent wrong-bytes miscompile (52B vs the oracle's 44B; also wrong inside an
+        // if-branch). Refuse -> the whole module fails closed (0 bytes, count auto-agrees
+        // since count_nonparam_nodes dry-runs this flattener). Neg-of-int-literal (folded
+        // below) and neg-of-non-leaf (`0 - x` desugar) stay byte-exact and are UNTOUCHED;
+        // ONLY neg-of-float-literal newly refuses (Bound by MIND-CONSTITUTION §I —
+        // fail-closed over wrong-bytes; the proper negative-ConstF64 fold is a later slice).
+        if ast_kind(neg_operand) == ast_float_lit() {
+            return 0 - 1;
+        }
         // `-<int literal>` constant-folds to a single negative CONST (the oracle folds it;
         // a `0 - 10` desugar would over-emit). Only a non-literal `-x` desugars to `0 - x`.
         if ast_kind(neg_operand) == ast_int_lit() {
@@ -21046,11 +20739,74 @@ pub fn tree_resolve_vids_base(nodes: i64, n_nodes: i64, vidbuf: i64, i: i64, bas
     tree_resolve_vids_base(nodes, n_nodes, vidbuf, i + 1, base + 1)
 }
 
+// True (1) if any array literal `[..]` is reachable within `node` along the exact
+// descent flatten_expr_env would take (paren/neg/not child0, binop/index children,
+// call args). Leaves (ident/int/float) and any other kind report 0 — flatten_expr_env
+// either treats them as a leaf or refuses them independently before it could descend
+// into a nested array_lit, so no branch array_lit arm is reachable there. Used ONLY by
+// flatten_branch to restore HEAD's 0B refusal of branch array literals (fail-closed).
+pub fn args_contain_array_lit(args_addr: i64, args_len: i64, i: i64) -> i64 {
+    if i >= args_len {
+        return 0;
+    }
+    if subtree_contains_array_lit(__mind_load_i64(args_addr + i * 8)) == 1 {
+        return 1;
+    }
+    args_contain_array_lit(args_addr, args_len, i + 1)
+}
+pub fn subtree_contains_array_lit(node: i64) -> i64 {
+    if node == 0 {
+        return 0;
+    }
+    let k: i64 = ast_kind(node);
+    if k == ast_array_lit() {
+        return 1;
+    }
+    if k == ast_paren() {
+        return subtree_contains_array_lit(ast_child0(node));
+    }
+    if k == ast_neg() {
+        return subtree_contains_array_lit(ast_child0(node));
+    }
+    if k == ast_not() {
+        return subtree_contains_array_lit(ast_child0(node));
+    }
+    if k == ast_binop() {
+        if subtree_contains_array_lit(ast_child0(node)) == 1 {
+            return 1;
+        }
+        return subtree_contains_array_lit(ast_child1(node));
+    }
+    if k == ast_index() {
+        if subtree_contains_array_lit(ast_child0(node)) == 1 {
+            return 1;
+        }
+        return subtree_contains_array_lit(ast_child1(node));
+    }
+    if k == ast_call() {
+        return args_contain_array_lit(ast_child1(node), ast_aux(node), 0);
+    }
+    0
+}
+
 // Flatten ONE branch/cond expression tree into a fresh descriptor (resets cursor),
 // resolve its slot vids from `base`, and return the root slot's resolved vid (or
 // -1 on a wall). On success `cursor` holds n_nodes and `vidbuf` is filled — the
 // caller emits the branch's non-param instrs via emit_mic3_tree_body.
 pub fn flatten_branch(expr: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base: i64) -> i64 {
+    // FAIL-CLOSED on a branch array literal. HEAD refused all branch `[..]` (0B); the
+    // Single Canonical Descriptor collapse routed flatten_branch through
+    // flatten_expr_env's ast_array_lit arm, which mis-lowers in branch context — a
+    // const array SEGFAULTs the tree-body path, a non-const array emits a vec_push
+    // name_idx = uleb(-1) never interned into the strtab (wrong bytes). Refuse BEFORE
+    // descending so the enclosing if fails closed exactly as HEAD did (the caller checks
+    // `< 0` before counting, so count/flatten never desync). The non-branch let-chain /
+    // top-level trailing path does NOT go through flatten_branch, so `let m=[a,b,c]; m[2]`
+    // still self-emits (Bound by MIND-CONSTITUTION §I — fail-closed over wrong-bytes;
+    // proper branch array-literal lowering is a later slice).
+    if subtree_contains_array_lit(expr) == 1 {
+        return 0 - 1;
+    }
     __mind_store_i64(cursor, 0);
     let root_slot: i64 = flatten_ast(expr, buf, params_addr, n_params, nodes, cursor);
     if root_slot < 0 {
