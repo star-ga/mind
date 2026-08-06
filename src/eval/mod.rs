@@ -1965,7 +1965,7 @@ pub(crate) fn eval_value_expr_mode(
         // codegen path: a region evaluates to its last expression.
         // #267: a raw closure is desugared before lowering; the tree-eval
         // interpreter never executes one (fail-closed).
-        Node::Closure { .. } => Err(EvalError::UnsupportedMsg(
+        Node::Closure(..) => Err(EvalError::UnsupportedMsg(
             "closures are desugared before evaluation; a raw closure cannot be interpreted".into(),
         )),
         // #268: trait/impl declarations are desugared (impls to free fns, traits
