@@ -184,7 +184,13 @@ def main():
     # Coverage ratchet: byte-exact must not drop below FLOOR. The whole corpus
     # lowers byte-exactly under the canonical FRESH-load measurement; the floor pins it so
     # no fixture can silently regress to fail-closed or wrong.
-    FLOOR = 121
+    # 142 -> 143: the neg/not-call-in-branch coverage batch. node_has_call now walks
+    # ast_neg/ast_not/ast_index, so a call hidden under a unary op in a branch value
+    # can no longer slip into the src=0 narrow emitter (was silent WRONG-BYTES).
+    # not_call_branch_then is byte-exact (+1); the 4 neg_call_branch_* fixtures are
+    # pinned safe fail-closed (the general path refuses rather than mis-emits) — a
+    # regression to wrong-bytes trips the `wrong` assert above regardless of FLOOR.
+    FLOOR = 143
     ok = True
     if wrong:
         print("FAIL: WRONG-BYTES (silent miscompile) — the cardinal invariant is violated:")
@@ -200,14 +206,20 @@ def main():
         ok = False
 
     # --- never-wrong corpus (tests/selfhost_gaps/never_wrong/) ------------------------
-    # Prior-construction / nested-construction struct-lit field-receiver shapes that the
-    # desugar-hoist positional guard (fr_ok = out==i) MUST suppress: hoisting a non-first
-    # construction would share the `__mind_alloc` name span and the field prefold's
-    # first-match type scan would mis-resolve -> a WRONG-BYTES miscompile. Unlike the
-    # byte-exact corpus above, fail-closed is PERMITTED here (these shapes are not yet
-    # lowered) — the ONLY forbidden outcome is wrong-bytes. This locks the guard: a change
-    # that reintroduces the miscompile turns this RED, where the byte-exact-only gap corpus
-    # (which passed 66/66 on the unguarded version) structurally cannot.
+    # Shapes the self-host does not yet lower byte-exactly and therefore FAIL CLOSED
+    # (0 bytes) rather than emit wrong bytes. Currently pins the ast_index fail-closed
+    # guards (flatten_ast / count_nonparam_nodes / flatten_expr_env ast_index arms):
+    #   * index_call_in_if_1  — `xs[g(a)]` (CALL in the index subtree) — count-vs-
+    #                           flatten slot disagreement on the call's non-emitting
+    #                           callee/arg-cons slots would trail 0xFF garbage.
+    #   * neg_index_in_if_1    — `-xs[0]` in an if-branch (NEG base: `(-xs)[0]`).
+    #   * neg_index_trailing_1 — `-xs[0]` in trailing position (env-arm NEG base).
+    # Each must self-emit 0B (fail-closed) or byte-exact — NEVER wrong-bytes. Unlike
+    # the byte-exact corpus, fail-closed is PERMITTED here (these shapes are not yet
+    # lowered); the ONLY forbidden outcome is wrong-bytes: a change that reintroduces
+    # one of these miscompiles turns this RED, where the byte-exact-only gap corpus
+    # structurally cannot. Upgrade paths (deferred): parser neg / postfix-index
+    # precedence; branch-buffer slot accounting for a call inside an index subtree.
     nw = sorted((CORPUS / "never_wrong").glob("*.mind")) if (CORPUS / "never_wrong").is_dir() else []
     nw_wrong, nw_be, nw_fc, nw_skip = [], 0, 0, 0
     for f in nw:

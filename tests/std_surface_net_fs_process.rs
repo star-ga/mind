@@ -244,7 +244,7 @@ mod cross_module {
 
 #[cfg(all(unix, feature = "mlir-build", feature = "cross-module-imports"))]
 mod mlir_functional {
-    use super::mindc_bin;
+    use super::common::mindc_bin;
     use std::path::PathBuf;
     use std::process::Command;
 

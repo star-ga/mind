@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3312 | **Est. tokens:** ~7,792,740
-**Generated:** 2026-08-01 09:07 UTC
+**Files:** 3339 | **Est. tokens:** ~7,811,970
+**Generated:** 2026-08-06 06:25 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 33 | ~25,648 |
+| `./` | 33 | ~25,909 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -39,13 +39,13 @@
 | `benchmarks/mojo/` | 8 | ~4,300 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
-| `config/` | 1 | ~1,450 |
-| `docs/` | 32 | ~71,472 |
+| `config/` | 1 | ~1,465 |
+| `docs/` | 32 | ~71,473 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
 | `docs/mindcraft/` | 3 | ~7,086 |
-| `docs/rfcs/` | 31 | ~143,643 |
+| `docs/rfcs/` | 32 | ~147,264 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 28 | ~49,880 |
 | `examples/bimap_currency/` | 3 | ~780 |
@@ -58,7 +58,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 147 | ~346,842 |
+| `examples/mindc_mind/` | 148 | ~349,520 |
 | `examples/mindc_mind/testdata/` | 1 | ~2,452 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 1 | ~102 |
@@ -388,7 +388,7 @@
 | `src/diagnostics/` | 1 | ~3,719 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,987 |
-| `src/eval/` | 14 | ~77,340 |
+| `src/eval/` | 15 | ~80,351 |
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
@@ -410,11 +410,11 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,979 |
-| `src/type_checker/` | 1 | ~14,834 |
+| `src/type_checker/` | 1 | ~15,096 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 41 | ~198,092 |
-| `tests/` | 310 | ~530,096 |
+| `tests/` | 314 | ~536,559 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -458,8 +458,8 @@
 | `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
 | `tests/mindfuzz_cross_substrate/staged/` | 16 | ~2,989 |
 | `tests/runtime/` | 2 | ~135 |
-| `tests/selfhost_gaps/` | 122 | ~6,157 |
-| `tests/selfhost_gaps/never_wrong/` | 15 | ~398 |
+| `tests/selfhost_gaps/` | 148 | ~9,289 |
+| `tests/selfhost_gaps/never_wrong/` | 9 | ~184 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tools/` | 4 | ~4,578 |
@@ -499,7 +499,7 @@
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
 - `Mind.toml` (~108 tok, small) — [package]
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
-- `README.md` (~5844 tok, huge) — MIND — Machine Intelligence Native Design
+- `README.md` (~6105 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~1256 tok, large) — Security Policy
@@ -645,7 +645,7 @@
 - `config.toml` (~130 tok, small) — [registries]
 ### `config/`
 
-- `capabilities.toml` (~1450 tok, large) — [ir]
+- `capabilities.toml` (~1465 tok, large) — [ir]
 ### `docs/`
 
 - `architecture.md` (~965 tok, large) — Architecture
@@ -681,7 +681,7 @@
 - `errors.md` (~701 tok, large) — MIND Core Error Model
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
 - `gpu.md` (~387 tok, medium) — GPU backend profile
-- `INDEPENDENCE_ROADMAP.md` (~16430 tok, huge) — MIND Rust-Independence Roadmap
+- `INDEPENDENCE_ROADMAP.md` (~16431 tok, huge) — MIND Rust-Independence Roadmap
 - `install.md` (~1012 tok, large) — Installing mindc
 - `ir.md` (~451 tok, medium) — MIND IR core
 - `ir-mlir.md` (~480 tok, medium) — IR & MLIR Integration
@@ -706,7 +706,7 @@
 - `0001-bitnet-native-support.md` (~3254 tok, huge) — RFC 0001: Native BitNet Support — `tri` and `q16_16` Types
 - `0002-pub-fn-c-exports.md` (~2084 tok, huge) — RFC 0002: `pub fn` → C ABI Symbol Export
 - `0003-cdylib-aot-emit.md` (~3195 tok, huge) — RFC 0003: cdylib AOT emit + symbol versioning
-- `0004-evidence-token-types.md` (~1913 tok, huge) — RFC 0004: Compile-Time Evidence Token Types
+- `0004-evidence-token-types.md` (~1912 tok, huge) — RFC 0004: Compile-Time Evidence Token Types
 - `0005-phase-6-2-mindc-gaps.md` (~3356 tok, huge) — RFC 0005 Phase 6.2 — mindc Feature Gaps (Design Note)
 - `0005-phase-d2b-design-note.md` (~1518 tok, huge) — RFC 0005 Phase D₂b — Cross-arg Named-struct identity matching
 - `0005-pure-mind-std-surface.md` (~5516 tok, huge) — RFC 0005: Pure-MIND Standard Surface
@@ -729,8 +729,9 @@
 - `0021-canonical-ir-unification.md` (~4487 tok, huge) — RFC 0021: Canonical IR Unification — one IR, provenance as a versioned epilogue
 - `0022-deterministic-io-substrate.md` (~2120 tok, huge) — RFC 0022: Deterministic I/O Substrate — fastest async I/O with bit-identical replay
 - `0024-loop-collapse.md` (~7579 tok, huge) — RFC 0024: Loop Collapse — prove-or-fail closed-form replacement of counted loops (`#[collapse]`)
-- `DRAFT-deterministic-format-frontend.md` (~10507 tok, huge) — RFC DRAFT: Deterministic Multi-Format Ingest Front-End (JSON / TOON / CSV / TSV / NDJSON / TOML)
-- `DRAFT-deterministic-json-frontend.md` (~5175 tok, huge) — RFC DRAFT: Deterministic Streaming SIMD JSON Structural Front-End
+- `0025-mind-intent-contracts.md` (~3605 tok, huge) — RFC 0025: MIND Intent — Intent Contracts (goal + constraints → verifiable Contract IR)
+- `DRAFT-deterministic-format-frontend.md` (~10522 tok, huge) — RFC DRAFT: Deterministic Multi-Format Ingest Front-End (JSON / TOON / CSV / TSV / NDJSON / TOML)
+- `DRAFT-deterministic-json-frontend.md` (~5177 tok, huge) — RFC DRAFT: Deterministic Streaming SIMD JSON Structural Front-End
 - `odc-language-primitives.md` (~418 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
@@ -858,7 +859,7 @@
 - `fixed_point_smoke.py` (~3275 tok, huge)
 - `fixture.mind` (~183 tok, small) — Phase 6.4 emit_ir smoke fixture.
 - `full_strtab_smoke.py` (~1663 tok, huge)
-- `gap_corpus_smoke.py` (~2433 tok, huge)
+- `gap_corpus_smoke.py` (~2682 tok, huge)
 - `general_float_netverify.py` (~1979 tok, huge) — general_float_netverify.py — GENERAL-path f64 value battery (B0 gate lift).
 - `.gitignore` (~5 tok, tiny) — __pycache__/
 - `lockstep_lint.py` (~4127 tok, huge) — lockstep_lint.py -- native-ELF walker lockstep linter for the pure-MIND self-host compiler.
@@ -872,11 +873,11 @@
 - `multi_let_smoke.py` (~1499 tok, large)
 - `now_ns_smoke.py` (~678 tok, large) — # Copyright 2025 STARGA Inc.
 - `option_netverify.py` (~2312 tok, huge) — # Canonical independent net-verify harness for SINGLE-PAYLOAD ENUMS (the
-- `oracle_parity_lint.py` (~3977 tok, huge)
+- `oracle_parity_lint.py` (~4204 tok, huge)
 - `param_types_smoke.py` (~1273 tok, large)
 - `_ref_add.note` (~16 tok, tiny) — 6fa59a74687e6bac38c983655d4d93ab1873299f130f68cbe481cf92041f6610
 - `_ref_if_ret.note` (~16 tok, tiny) — 3fdc70390e9e12d8030552d11b2194078e8579fbcfac19b14d1beed77174cb07
-- `_ref_main.note` (~16 tok, tiny) — 62565133bd02fd99ca3e0c751cb60aa59740c76c4b41425cd0617e6a52960473
+- `_ref_main.note` (~16 tok, tiny) — afe354b5a978a2d719a8a82dc2f779869042d63e2f6ca56a0bbce769bbf96e47
 - `ref_netverify.py` (~1464 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
 - `_ref_recursion.note` (~16 tok, tiny) — 6d125a946243b0550700d9aa6bc2058b51a3b8bf6e536a8b0b3f545d79b7346f
 - `_ref_struct_field.note` (~16 tok, tiny) — 2f7f2ea32ee47138e1b0162bd51f418b4e5005b4569054f5f3c392ebd2258d96
@@ -899,6 +900,7 @@
 - `self_host_for_smoke.py` (~3191 tok, huge) — Permanent battery for the self-host range-`for` loop.
 - `self_host_if_region_carry_smoke.py` (~4552 tok, huge) — Native-ELF smoke: i64 loop-carry through BRANCHED regions (Sub-step C).
 - `self_host_ifret_chain_mic3_smoke.py` (~1725 tok, huge)
+- `self_host_letpath_failclose_smoke.py` (~2202 tok, huge) — Self-host LET-PATH fail-closed smoke — pins the S1-collapse fail-open wall.
 - `self_host_lockstep_smoke.py` (~2161 tok, huge) — SUB-STEP A lockstep smoke: the loop-carry frame COUNT and the loop-carry EMIT are
 - `self_host_loop_smoke.py` (~3420 tok, huge)
 - `self_host_match_smoke.py` (~1893 tok, huge)
@@ -3959,6 +3961,7 @@
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_opt.rs` (~995 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_run.rs` (~1535 tok, huge) — Copyright 2025 STARGA Inc.
+- `narrow_scan.rs` (~3011 tok, huge) — Module-wide narrow-int SURFACE prescan (compile-speed early-skip).
 ### `src/eval/stdlib/`
 
 - `mod.rs` (~169 tok, small) — Copyright 2025 STARGA Inc.
@@ -4096,7 +4099,7 @@
 - `mod.rs` (~5979 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `resolve.rs` (~14834 tok, huge) — Copyright 2025 STARGA Inc.
+- `resolve.rs` (~15096 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
@@ -4154,6 +4157,7 @@
 - `alias_miscompile_run.rs` (~1338 tok, large) — Copyright 2025 STARGA Inc.
 - `array_ctor_push_get_run.rs` (~907 tok, large) — Copyright 2025 STARGA Inc.
 - `array_surface_run.rs` (~875 tok, large) — Copyright 2025 STARGA Inc.
+- `array_u64_element_shift_run.rs` (~1034 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/autodiff/`
 
 - `matmul_gradient.mind` (~167 tok, small) — Autodiff test: MatMul gradient computation
@@ -4569,6 +4573,9 @@
 - `narrow_reassign_mask_run.rs` (~1342 tok, large) — Copyright 2025 STARGA Inc.
 - `narrow_reassign_run.rs` (~733 tok, large) — Copyright 2026 STARGA Inc.
 - `narrow_sig_abi_run.rs` (~1211 tok, large) — Copyright 2025 STARGA Inc.
+- `narrow_signedness_batch2_run.rs` (~2281 tok, huge) — Copyright 2025 STARGA Inc.
+- `narrow_signedness_batch_run.rs` (~1674 tok, huge) — Copyright 2025 STARGA Inc.
+- `narrow_tuple_pr216_run.rs` (~1454 tok, large) — Copyright 2025 STARGA Inc.
 - `narrow_unsigned_div_zero_run.rs` (~1228 tok, large) — Copyright 2025 STARGA Inc.
 - `nested_block_surface_run.rs` (~1036 tok, large) — Copyright 2025 STARGA Inc.
 - `nested_collection_run.rs` (~818 tok, large) — Copyright 2025 STARGA Inc.
@@ -4615,8 +4622,10 @@
 ### `tests/selfhost_gaps/`
 
 - `andor_and_direct_1.mind` (~12 tok, tiny) — fn f(a: bool, b: bool) -> bool {
+- `andor_and_ifcond_1.mind` (~18 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `andor_and_letinit_1.mind` (~23 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `andor_and_ret_1.mind` (~13 tok, tiny) — fn f(a: i64, b: i64) -> bool {
+- `andor_or_ifcond_1.mind` (~18 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `andor_or_ret_1.mind` (~13 tok, tiny) — fn f(a: i64, b: i64) -> bool {
 - `array-nested_1.mind` (~19 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `array-nested_2.mind` (~19 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
@@ -4625,6 +4634,12 @@
 - `array-nonconst_2.mind` (~18 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `array-nonconst_3.mind` (~18 tok, tiny) — fn g(a: i64, b: i64, c: i64) -> i64 {
 - `array-nonconst_4.mind` (~17 tok, tiny) — fn h(a: i64, b: i64) -> i64 {
+- `array_of_struct.mind` (~29 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
+- `builtin_option_none_1.mind` (~10 tok, tiny)
+- `builtin_option_some_1.mind` (~11 tok, tiny)
+- `builtin_option_some_return_1.mind` (~10 tok, tiny)
+- `builtin_result_err_1.mind` (~12 tok, tiny)
+- `builtin_result_ok_1.mind` (~10 tok, tiny)
 - `call-arg-nesting_1.mind` (~25 tok, tiny)
 - `call-arg-nesting_2.mind` (~35 tok, tiny)
 - `call-arg-nesting_3.mind` (~41 tok, tiny)
@@ -4634,6 +4649,8 @@
 - `call-arg-nesting_7.mind` (~28 tok, tiny)
 - `call-arg-nesting_8.mind` (~50 tok, small)
 - `call-arg-nesting_9.mind` (~10 tok, tiny)
+- `callarg_then_field_recv.mind` (~40 tok, tiny)
+- `chained_field_pqz.mind` (~37 tok, tiny)
 - `const_false_lone_1.mind` (~8 tok, tiny) — fn f() -> bool {
 - `const_ref_lone_1.mind` (~11 tok, tiny) — fn f() -> i64 {
 - `const_true_lone_1.mind` (~7 tok, tiny) — fn f() -> bool {
@@ -4669,10 +4686,12 @@
 - `field-read_4.mind` (~29 tok, tiny)
 - `field-read_5.mind` (~61 tok, small)
 - `for_range_bound10_1.mind` (~24 tok, tiny) — fn f(a: i64) -> i64 {
+- `for_range_continue_1.mind` (~35 tok, tiny) — fn f() -> i64 {
 - `for_range_multistmt_1.mind` (~29 tok, tiny) — fn f(a: i64) -> i64 {
 - `for_range_simple_1.mind` (~24 tok, tiny) — fn f(a: i64) -> i64 {
 - `for_range_zero_1.mind` (~24 tok, tiny) — fn f(a: i64) -> i64 {
-- `GAPS.md` (~2429 tok, huge) — Self-host nfn driver — gap inventory (fuzz-discovered)
+- `GAPS.md` (~4982 tok, huge) — Self-host nfn driver — gap inventory (fuzz-discovered)
+- `index-in-if_1.mind` (~19 tok, tiny)
 - `int_underscore_group_1.mind` (~7 tok, tiny) — fn f() -> i64 {
 - `int_underscore_million_1.mind` (~8 tok, tiny) — fn f() -> i64 {
 - `int_underscore_pair_1.mind` (~7 tok, tiny) — fn f() -> i64 {
@@ -4683,6 +4702,7 @@
 - `let-ifexpr-seq_5.mind` (~19 tok, tiny)
 - `let-ifexpr-seq_6.mind` (~27 tok, tiny)
 - `let-ifexpr-seq_7.mind` (~46 tok, tiny)
+- `matchcall_letinit_1.mind` (~34 tok, tiny) — fn g(a: i64) -> i64 {
 - `matchcall-scrutinee_0arg.mind` (~24 tok, tiny) — fn g() -> i64 {
 - `matchcall-scrutinee_1arg.mind` (~33 tok, tiny) — fn g(a: i64) -> i64 {
 - `matchcall-scrutinee_arith.mind` (~21 tok, tiny) — fn f(a: i64) -> i64 {
@@ -4698,6 +4718,10 @@
 - `mixed-prefix_7.mind` (~29 tok, tiny)
 - `mixed-prefix_8.mind` (~49 tok, tiny)
 - `mixed-prefix_9.mind` (~50 tok, small)
+- `neg_call_branch_both_return_1.mind` (~25 tok, tiny) — fn g(a: i64) -> i64 { a + 1 }
+- `neg_call_branch_cond_1.mind` (~21 tok, tiny) — fn g(a: i64) -> i64 { a + 1 }
+- `neg_call_branch_else_1.mind` (~21 tok, tiny) — fn g(a: i64) -> i64 { a + 1 }
+- `neg_call_branch_then_1.mind` (~21 tok, tiny) — fn g(a: i64) -> i64 { a + 1 }
 - `neg_double_1.mind` (~8 tok, tiny) — fn f(a: i64) -> i64 {
 - `neg_lit_add_1.mind` (~9 tok, tiny) — fn f(a: i64) -> i64 {
 - `neg_lit_cmp_1.mind` (~14 tok, tiny) — fn f(a: i64) -> i64 {
@@ -4708,25 +4732,22 @@
 - `neg_nonleaf_call_1.mind` (~17 tok, tiny) — fn g(x: i64) -> i64 {
 - `neg_nonleaf_mul_1.mind` (~10 tok, tiny) — fn f(a: i64) -> i64 {
 - `neg_nonleaf_paren_sub_1.mind` (~10 tok, tiny) — fn f(a: i64) -> i64 {
-### `tests/selfhost_gaps/never_wrong/`
-
-- `andor_and_ifcond_1.mind` (~18 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
-- `andor_or_ifcond_1.mind` (~18 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
-- `array_of_struct.mind` (~29 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
-- `callarg_then_field_recv.mind` (~40 tok, tiny)
-- `chained_field_pqz.mind` (~37 tok, tiny)
-- `for_range_continue_1.mind` (~35 tok, tiny) — fn f() -> i64 {
-- `matchcall_letinit_1.mind` (~34 tok, tiny) — fn g(a: i64) -> i64 {
 - `nested_array_typed.mind` (~23 tok, tiny) — fn f(a: i64, b: i64) -> i64 {
 - `nested_slit_field.mind` (~30 tok, tiny)
-- `print_int_discarded.mind` (~11 tok, tiny) — fn main() -> i64 {
-- `print_lone.mind` (~9 tok, tiny) — fn main() -> i64 {
-- `print_str_discarded.mind` (~11 tok, tiny) — fn main() -> i64 {
-- `prior_let_then_field_recv.mind` (~31 tok, tiny)
-- `qfield_nested.mind` (~34 tok, tiny)
-- `two_scalar_prior.mind` (~38 tok, tiny)
+### `tests/selfhost_gaps/never_wrong/`
+
+- `array_lit_in_if_const_1.mind` (~19 tok, tiny)
+- `array_lit_in_if_var_1.mind` (~20 tok, tiny)
+- `index_call_binop_1.mind` (~28 tok, tiny) — fn g(a: i64) -> i64 { a + 1 }
+- `index_call_in_if_1.mind` (~27 tok, tiny) — fn g(a: i64) -> i64 { a + 1 }
+- `index_call_nested_1.mind` (~35 tok, tiny) — fn h(a: i64) -> i64 { a + 1 }
+- `neg_float_1.mind` (~9 tok, tiny)
+- `neg_float_in_if_1.mind` (~15 tok, tiny)
+- `neg_index_in_if_1.mind` (~20 tok, tiny)
+- `neg_index_trailing_1.mind` (~11 tok, tiny)
 ### `tests/selfhost_gaps/`
 
+- `not_call_branch_then_1.mind` (~21 tok, tiny) — fn g(a: i64) -> i64 { a + 1 }
 - `operator-edges_1.mind` (~24 tok, tiny)
 - `operator-edges_2.mind` (~26 tok, tiny)
 - `operator-edges_3.mind` (~26 tok, tiny)
@@ -4741,12 +4762,18 @@
 - `prec-samebit-or-and.mind` (~16 tok, tiny) — fn f(a: i64, b: i64, c: i64) -> i64 {
 - `prec-shift-mul.mind` (~16 tok, tiny) — fn f(a: i64, b: i64, c: i64) -> i64 {
 - `prec-xor-cmp.mind` (~16 tok, tiny) — fn f(a: i64, b: i64, c: i64) -> i64 {
+- `print_int_discarded.mind` (~11 tok, tiny) — fn main() -> i64 {
+- `print_lone.mind` (~9 tok, tiny) — fn main() -> i64 {
+- `print_str_discarded.mind` (~11 tok, tiny) — fn main() -> i64 {
+- `prior_let_then_field_recv.mind` (~31 tok, tiny)
+- `qfield_nested.mind` (~34 tok, tiny)
 - `struct-lit_1.mind` (~63 tok, small)
 - `struct-lit_2.mind` (~56 tok, small)
 - `struct-lit_3.mind` (~60 tok, small)
 - `struct-lit-field-recv_1.mind` (~23 tok, tiny)
 - `struct-lit-field-recv_2.mind` (~23 tok, tiny)
 - `struct-lit-field-recv_3.mind` (~25 tok, tiny)
+- `two_scalar_prior.mind` (~38 tok, tiny)
 - `value-ifexpr_1.mind` (~98 tok, small) — MISMATCH: a `let`-block in a NESTED (else-if) branch of a value if-expr.
 - `value-ifexpr_2.mind` (~79 tok, small) — MISMATCH: same-named `let` in two SIBLING branches of a value if-expr.
 - `value-ifexpr_3.mind` (~71 tok, small) — MISMATCH: a `let` inside a NESTED if-expr that sits in the THEN-side of an
@@ -4782,12 +4809,12 @@
 - `stdlib_tensor.rs` (~256 tok, medium) — Copyright 2025 STARGA Inc.
 - `std_llvm_bindings_smoke.rs` (~2606 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_mlir_bindings_smoke.rs` (~4774 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_arena.rs` (~1336 tok, large) — Copyright 2025 STARGA Inc.
+- `std_surface_arena.rs` (~1338 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_array_literals.rs` (~1334 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_async.rs` (~4230 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_bitwise_binops.rs` (~2391 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_bool_return.rs` (~1247 tok, large) — Copyright 2026 STARGA Inc.
-- `std_surface_break_continue.rs` (~1308 tok, large) — Copyright 2026 STARGA Inc.
+- `std_surface_break_continue.rs` (~1310 tok, large) — Copyright 2026 STARGA Inc.
 - `std_surface_call_lowering.rs` (~834 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_cdylib_link.rs` (~2078 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_cli_equals_form.rs` (~874 tok, large) — Copyright 2025 STARGA Inc.
@@ -4801,31 +4828,31 @@
 - `std_surface_if_statement.rs` (~3282 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_intrinsics.rs` (~2438 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_io_ansi.rs` (~793 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_io_canon.rs` (~3260 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_io_canon.rs` (~3262 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_io_module.rs` (~1540 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_iouring.rs` (~3542 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_json.rs` (~7041 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_logical_ops.rs` (~1181 tok, large) — Copyright 2026 STARGA Inc.
+- `std_surface_logical_ops.rs` (~1183 tok, large) — Copyright 2026 STARGA Inc.
 - `std_surface_map_module.rs` (~2015 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_method_call.rs` (~2939 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_net_fs_process.rs` (~7303 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_net_fs_process.rs` (~7305 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_c_stdlib_bundle.rs` (~1466 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_d_env_override.rs` (~1597 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_promotion_compose.rs` (~5551 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_reactor.rs` (~1351 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_regex.rs` (~5280 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_ring.rs` (~1304 tok, large) — Copyright 2025 STARGA Inc.
+- `std_surface_reactor.rs` (~1353 tok, large) — Copyright 2025 STARGA Inc.
+- `std_surface_regex.rs` (~5282 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_ring.rs` (~1306 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_self_emit_shared.rs` (~1807 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_string_itoa.rs` (~934 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_string_module.rs` (~2284 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_string_push_str.rs` (~864 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_struct_lowering.rs` (~2712 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_toml.rs` (~4142 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_toml.rs` (~4144 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_tui.rs` (~2261 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_use_import_phase_b.rs` (~2303 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_use_import.rs` (~1757 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_vec_module.rs` (~1805 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_vec_zeroed.rs` (~1071 tok, large) — Copyright 2025 STARGA Inc.
+- `std_surface_vec_zeroed.rs` (~1073 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_while_statement.rs` (~3200 tok, huge) — Copyright 2025 STARGA Inc.
 - `stmt_keyword_recognizer.rs` (~2473 tok, huge) — Copyright 2025 STARGA Inc.
 - `stride_gather_grad.rs` (~312 tok, medium) — Copyright 2025 STARGA Inc.

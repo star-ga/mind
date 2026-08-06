@@ -1,0 +1,2 @@
+fn g(a: i64) -> i64 { a + 1 }
+pub fn f(xs: Vec<i64>, a: i64) -> i64 { if a > 0 { xs[g(a) + 1] } else { 0 } }

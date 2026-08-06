@@ -17,7 +17,8 @@ Relationship to the other self-host gates (NOT a duplicate of any):
   * THIS linter                            — one representative module PER ARM
     (the shape-cases of `emit_mic3_module_fndef`: const / arith / call-2-lit /
     expr-tree / if-expr / if-both-return / let-chain / if-stmt-return /
-    nested-if-return / general-seq / bitwise / call-with-expr-args / match-desugar).
+    nested-if-return / general-seq / bitwise / call-with-expr-args / match-desugar /
+    enum-ctor).
     On drift it LOCALISES the failing arm and prints hash evidence, so a
     regression is diagnosed at the construct level, not the byte level.
 
@@ -189,6 +190,19 @@ ARMS = [
     ("e  match-desugar",
      "2-arm match desugars to if (zero new emit)",
      "pub fn pick(c: i64) -> i64 { match c { 0 => 10, _ => 20 } }"),
+    # #71 enum-ctor guard — a single-payload declared-enum CONSTRUCTION
+    # (`O::Some(p)`) that the ect_desugar statement pass rewrites into the
+    # oracle's payload-let + __mind_alloc + __mind_store_i64 record chain
+    # (lower.rs emit_boxed_enum_record). Pins the new chain byte-for-byte vs the
+    # Rust oracle so a future drift in the desugar (store order, +8 offset,
+    # alloc size, callee-intern order) fails this arm loudly at the construct
+    # level. NOTE: this covers DECLARED single-payload enums only — match-over-
+    # payload-enum-ctor and bare unqualified builtin Some/Ok/Err are NOT covered
+    # here (both deferred; see the enum-ctor section in main.mind).
+    ("i  enum-ctor-return",
+     "single-payload declared-enum ctor as a return value (emit_boxed_enum_record)",
+     "enum O { Some(i64), None }\n"
+     "pub fn f(p: i64) -> O { return O::Some(p); }"),
 ]
 
 # i64-REFERENCES arms — NATIVE-ELF-ONLY constructs, parity-by-REFUSAL.

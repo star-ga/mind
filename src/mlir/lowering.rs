@@ -1675,7 +1675,36 @@ impl LoweringContext {
                         // bytes are unchanged.
                         let both_narrow_diff =
                             is_narrow(&lhs_kind) && is_narrow(&rhs_kind) && lhs_kind != rhs_kind;
-                        let widen_mode = lhs_nonlit_i64 || rhs_nonlit_i64 || both_narrow_diff;
+                        // A SHIFT is NOT a usual-arithmetic-conversion op: its
+                        // result (and operation) width is the LEFT operand's
+                        // declared width, and the COUNT operand's width is
+                        // irrelevant — only its value matters, and it is masked to
+                        // width-1 below. So a shift must NOT be widened to i64
+                        // merely because the count is an i64-backed narrow
+                        // (`u8`/`u16`/`i8`/`i16`) or a non-literal i64 — doing so
+                        // was the `u32 << u8` bug: the result was computed at
+                        // 64-bit width and the count masked with 63 instead of 31
+                        // (`1u32 << 32` gave 0, not 1). Only a non-literal i64 LEFT
+                        // operand widens a shift; a narrow (i32/u32) left operand
+                        // keeps its declared width (mask 31), matching the
+                        // documented modulo-width shift semantics
+                        // (`docs/determinism.md`).
+                        let is_shift = matches!(op, BinOp::Shl | BinOp::Shr);
+                        let widen_mode = if is_shift {
+                            // Finding 4: a shift whose LEFT operand is any i64-kind
+                            // value — a non-literal i64 OR an i64 CONSTANT literal —
+                            // computes at 64-bit width (count masked mod 64). A bare
+                            // literal `1` has no narrow declared width, so
+                            // `(1 << n) as i64` with a u32 count must widen to i64
+                            // (`1 << 33` == 8589934592), NOT drop into the count's
+                            // narrow width and mask the count mod 31 (→ `1 << 1`).
+                            // A genuinely-narrow PHYSICAL i32/u32 LEFT is not
+                            // ScalarI64, so it keeps its own declared width (Finding
+                            // 3's u32 shift cases stay byte-identical).
+                            matches!(lhs_kind, ValueKind::ScalarI64)
+                        } else {
+                            lhs_nonlit_i64 || rhs_nonlit_i64 || both_narrow_diff
+                        };
                         // Signedness of the op in the i64 widen domain. When a
                         // NON-literal i64 operand drove the widen, the i64 side
                         // dominates and the contract is the signed default — this
@@ -1823,7 +1852,41 @@ impl LoweringContext {
                             }
                         };
                         let lhs_ref = legalize(self, *lhs, &lhs_kind, "ntl")?;
-                        let rhs_ref = legalize(self, *rhs, &rhs_kind, "ntr")?;
+                        let rhs_ref = if is_shift && !widen_mode && ity == "i32" {
+                            // Narrow (i32/u32) left-operand shift: coerce the COUNT
+                            // to the shifted-value width `i32`, regardless of the
+                            // count operand's own kind/signedness. The count is
+                            // masked to width-1 (31) immediately below, so
+                            // truncating a wider (i64-backed `u8`/`u16`/`i8`/`i16`
+                            // or a genuine i64) count is always value-safe. This is
+                            // the leg that keeps `u32 << u8` at u32 width instead of
+                            // the old (wrong) i64 promotion + mask-63.
+                            match &rhs_kind {
+                                ValueKind::ScalarI32 | ValueKind::ScalarU32 => {
+                                    format!("%{}", rhs.0)
+                                }
+                                ValueKind::ScalarBool if self.i1_values.contains(rhs) => {
+                                    self.emit_line(&format!(
+                                        "    %shc{0} = arith.extui %{1} : i1 to i32",
+                                        dst.0, rhs.0
+                                    ));
+                                    format!("%shc{}", dst.0)
+                                }
+                                // i64-backed count (a `ConstI64` literal, an
+                                // i64-backed narrow param `u8`/`u16`/`i8`/`i16`, a
+                                // genuine i64/u64, or an i64-backed bool): truncate
+                                // to i32.
+                                _ => {
+                                    self.emit_line(&format!(
+                                        "    %shc{0} = arith.trunci %{1} : i64 to i32",
+                                        dst.0, rhs.0
+                                    ));
+                                    format!("%shc{}", dst.0)
+                                }
+                            }
+                        } else {
+                            legalize(self, *rhs, &rhs_kind, "ntr")?
+                        };
                         // INVARIANT: never emit `nsw`/`nuw` on these — MIND integer overflow
                         // is DEFINED two's-complement wraparound, so plain arith.addi/subi/muli
                         // (defined wrap) is the ground truth the interpreter (wrapping_*) and
