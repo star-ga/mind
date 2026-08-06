@@ -214,7 +214,12 @@ struct ModuleSyms {
     /// type-alias names, minus any name that also has a function definition.
     /// A call whose callee resolves only to one of these targets a data/global
     /// symbol; see `is_module_non_fn_call`.
-    non_fn_decls: BTreeSet<String>,
+    ///
+    /// Membership-only (`contains` / `retain`), never iterated in a way that
+    /// reaches emitted output or diagnostic order, so an `FxSet` (matching the
+    /// `names`/`enums` siblings) is byte-neutral and drops the per-`contains`
+    /// O(log n) BTree string-compare to O(1).
+    non_fn_decls: FxSet,
 }
 
 impl ModuleSyms {
@@ -321,11 +326,7 @@ fn collect_enum_variants(module: &Module, out: &mut FxMap<FxSet>) {
 /// recorded in `fns` so a name that also has a function definition is never
 /// treated as a non-function (defensive against a same-name redeclaration).
 /// Recurses into `module { }` blocks exactly like `collect_decl_names`.
-fn collect_non_fn_decl_names(
-    module: &Module,
-    out: &mut BTreeSet<String>,
-    fns: &mut BTreeSet<String>,
-) {
+fn collect_non_fn_decl_names(module: &Module, out: &mut FxSet, fns: &mut FxSet) {
     for item in &module.items {
         match item {
             Node::FnDef(fd, _) => {
@@ -441,8 +442,8 @@ fn collect_module_syms(module: &Module, injected: &BTreeSet<String>) -> ModuleSy
     // data/global symbol (const/let/struct/enum-type/type-alias) rather than a
     // function. Function names are collected alongside and subtracted so a name
     // that also has a `fn` definition is never treated as a non-function.
-    let mut non_fn_decls: BTreeSet<String> = BTreeSet::new();
-    let mut fn_decls: BTreeSet<String> = BTreeSet::new();
+    let mut non_fn_decls: FxSet = FxSet::default();
+    let mut fn_decls: FxSet = FxSet::default();
     collect_non_fn_decl_names(module, &mut non_fn_decls, &mut fn_decls);
     non_fn_decls.retain(|n| !fn_decls.contains(n));
     ModuleSyms {
