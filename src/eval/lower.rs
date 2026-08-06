@@ -6331,16 +6331,7 @@ fn lower_expr(
                                 }
                             }
                         }
-                        // F2 (branch-local `let` scope escape): a shadowing `let`
-                        // (name already bound in the enclosing `env`) is a NEW
-                        // local, not a mutation of the outer var. Recording it as a
-                        // branch write phi-merges it into the outer binding after the
-                        // `if`, silently corrupting it (`if_shadow(1)` returned 99,
-                        // not 10). Only a FRESH name — which main.mind's fn-flat
-                        // semantics rely on escaping — is recorded.
-                        if !env.contains_key(name) {
-                            record_then_write(name, &mut then_writes);
-                        }
+                        record_then_write(name, &mut then_writes);
                         then_result = id;
                     }
                     ast::Node::Assign { name, value, .. } => {
@@ -6380,11 +6371,7 @@ fn lower_expr(
                             receiver_types,
                         );
                         for nm in names {
-                            // F2: a shadowing tuple-let element is a new local too;
-                            // only fresh names escape into the merge set.
-                            if !env.contains_key(nm) {
-                                record_then_write(nm, &mut then_writes);
-                            }
+                            record_then_write(nm, &mut then_writes);
                         }
                     }
                     other => {
@@ -6568,12 +6555,7 @@ fn lower_expr(
                                     }
                                 }
                             }
-                            // F2 (branch-local `let` scope escape) — else-branch
-                            // mirror: a shadowing `let` is a new local, not an outer
-                            // mutation, so it must not phi-merge into the outer var.
-                            if !env.contains_key(name) {
-                                record_else_write(name, &mut else_writes);
-                            }
+                            record_else_write(name, &mut else_writes);
                             else_result = id;
                         }
                         ast::Node::Assign { name, value, .. } => {
@@ -6615,11 +6597,7 @@ fn lower_expr(
                                 receiver_types,
                             );
                             for nm in names {
-                                // F2: shadowing tuple-let element is a new local;
-                                // only a fresh name escapes into the merge set.
-                                if !env.contains_key(nm) {
-                                    record_else_write(nm, &mut else_writes);
-                                }
+                                record_else_write(nm, &mut else_writes);
                             }
                         }
                         other => {
