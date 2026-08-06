@@ -283,6 +283,20 @@ pub struct Param {
 /// This is purely an internal memory-layout change: lowering/codegen read the
 /// same field values, so no emitted byte changes.
 #[derive(Debug, Clone, PartialEq)]
+pub struct ClosureData {
+    pub captures: Vec<String>,
+    pub params: Vec<Param>,
+    pub ret_type: Option<TypeAnn>,
+    pub body: Vec<Node>,
+}
+
+// Regression guard: boxing the fattest variants keeps `ast::Node` small on the
+// hot parse path (every parse_pratt/parse_atom return memmoves the max-variant
+// width). Closure's ~144B payload is now behind a `Box`; a future inline fat
+// variant that regrows Node past this bound fails the build here.
+const _: () = assert!(std::mem::size_of::<Node>() <= 128);
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct FnDefData {
     /// Whether the `pub` visibility modifier was present in source.
     pub is_pub: bool,
@@ -838,13 +852,7 @@ pub enum Node {
     /// Non-gated (unlike `While`/`Region`) so no `#[cfg]` mismatch can arise
     /// between feature configs; the desugar output (structs/fns) is what a
     /// std-surface build actually lowers.
-    Closure {
-        captures: Vec<String>,
-        params: Vec<Param>,
-        ret_type: Option<TypeAnn>,
-        body: Vec<Node>,
-        span: Span,
-    },
+    Closure(Box<ClosureData>, Span),
     /// Trait declaration (#268 Phase 1): `trait T { fn m(self, ...) -> R }`.
     ///
     /// A trait is a NAMED set of method signatures — a static contract only.
@@ -1088,7 +1096,7 @@ impl Node {
             Node::Break { span } | Node::Continue { span } => *span,
             #[cfg(feature = "std-surface")]
             Node::Region { span, .. } => *span,
-            Node::Closure { span, .. } => *span,
+            Node::Closure(_, span) => *span,
             Node::TraitDef { span, .. } | Node::ImplBlock { span, .. } => *span,
         }
     }

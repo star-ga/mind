@@ -225,12 +225,11 @@ fn node_mentions_narrow(node: &Node) -> bool {
             .iter()
             .any(|ef| params_mention_narrow(&ef.params) || opt_ty_mentions_narrow(&ef.ret_type)),
         Node::Region { body, .. } => any(body),
-        Node::Closure {
-            params,
-            ret_type,
-            body,
-            ..
-        } => params_mention_narrow(params) || opt_ty_mentions_narrow(ret_type) || any(body),
+        Node::Closure(data, _) => {
+            params_mention_narrow(&data.params)
+                || opt_ty_mentions_narrow(&data.ret_type)
+                || any(&data.body)
+        }
         Node::TraitDef { methods, .. } => methods
             .iter()
             .any(|m| params_mention_narrow(&m.params) || opt_ty_mentions_narrow(&m.ret_type)),

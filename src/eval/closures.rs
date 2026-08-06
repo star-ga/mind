@@ -95,7 +95,7 @@ fn desugar_fn_body(
     for stmt in body.iter_mut() {
         // `let f = |caps; params| ...` — the sole Phase-1 binding shape.
         if let Node::Let { name, value, .. } = stmt {
-            if let Node::Closure { .. } = value.as_ref() {
+            if let Node::Closure(..) = value.as_ref() {
                 match build_closure_items(value, synthesized, source, file) {
                     Ok((fn_name, struct_lit)) => {
                         closure_fns.insert(name.clone(), fn_name);
@@ -127,13 +127,13 @@ fn build_closure_items(
     file: Option<&str>,
 ) -> Result<(String, Node), Diagnostic> {
     let (captures, params, ret_type, cbody, span) = match closure {
-        Node::Closure {
-            captures,
-            params,
-            ret_type,
-            body,
-            span,
-        } => (captures, params, ret_type, body, *span),
+        Node::Closure(data, span) => (
+            &data.captures,
+            &data.params,
+            &data.ret_type,
+            &data.body,
+            *span,
+        ),
         _ => unreachable!("build_closure_items called on non-closure"),
     };
     // Phase-1 support boundary — EXACTLY one capture and one param. Multi-capture
@@ -478,7 +478,7 @@ fn node_children_mut(node: &mut Node) -> Vec<&mut Node> {
         // ── Leaves / different-scope boundaries (nothing to rewrite) ─────
         Node::Lit(..)
         | Node::FnDef(..)
-        | Node::Closure { .. }
+        | Node::Closure(..)
         | Node::TraitDef { .. }
         | Node::ImplBlock { .. }
         | Node::Import { .. }
@@ -506,7 +506,7 @@ fn node_has_closure(node: &Node) -> bool {
 /// the extra bodies that set omits (FnDef/While/closure bodies), so a survivor
 /// in any position is detected.
 fn find_closure_span(node: &Node) -> Option<Span> {
-    if let Node::Closure { span, .. } = node {
+    if let Node::Closure(_, span) = node {
         return Some(*span);
     }
     // FnDef / closure bodies are not in `node_children` (immutable variant):
@@ -519,8 +519,8 @@ fn find_closure_span(node: &Node) -> Option<Span> {
                 }
             }
         }
-        Node::Closure { body, .. } => {
-            for n in body {
+        Node::Closure(data, _) => {
+            for n in &data.body {
                 if let Some(sp) = find_closure_span(n) {
                     return Some(sp);
                 }
@@ -684,7 +684,7 @@ pub(crate) fn node_children_ref(node: &Node) -> Vec<&Node> {
         Node::Region { body, .. } => out.extend(body.iter()),
         Node::Lit(..)
         | Node::FnDef(..)
-        | Node::Closure { .. }
+        | Node::Closure(..)
         | Node::TraitDef { .. }
         | Node::ImplBlock { .. }
         | Node::Import { .. }
