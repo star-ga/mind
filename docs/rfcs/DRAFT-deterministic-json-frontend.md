@@ -139,7 +139,7 @@ aligned to **top-level record boundaries**. Memory is bounded by
 `chunk_size + column_tile_size`, independent of the 300 GB total. Chunk
 boundaries are the primary determinism hazard (§2).
 
-### 2. The determinism problem — the actual alg-invent target
+### 2. The determinism problem — the actual evolutionary-search target
 
 A SIMD/vectorised scan is **reduction-order-sensitive** if written naively.
 The hard, defensible invention is a **reduction-order-INVARIANT structural

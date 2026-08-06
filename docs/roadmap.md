@@ -405,7 +405,7 @@ width is substrate-dependent, the index is not).
 | 0 | CPU fitness harness: scalar decode → `tensor<f64[4096]>` → shipped fold → mic@3 (pure reuse, zero new SIMD; runnable today) | `format-col-sum` canary | mind-dev |
 | 0.5 | Radix-4096 tiled fold (bulk scale over the 4096 cap) | `format-col-sum-tiled`, avx2==neon | mind-mlir-lowering |
 | 1 | Scalar structural oracle per format (derived-index reference + adversarial-tail fuzz corpus) | oracle parity vs `std/json.mind` on the JSON subset | mind-dev |
-| 2 | alg-invent (AB-MCTS) on the ONE hard kernel — the structural pack; fitness = (oracle-identity ∧ cross-substrate index-hash-equal ∧ objdump-pure) hard gates × internal GB/s | x86 `format-structural-index` blessed | mind-det-gemm + alg-invent |
+| 2 | evolutionary search (AB-MCTS) on the ONE hard kernel — the structural pack; fitness = (oracle-identity ∧ cross-substrate index-hash-equal ∧ objdump-pure) hard gates × internal GB/s | x86 `format-structural-index` blessed | mind-det-gemm + MIND research |
 | 3 | Shared stage-2 index + stage-3 materialisation, multi-column, MT==ST | `format-multicol` | mind-dev / mind-mlir-lowering |
 | 4 | Remaining stage-1 classifiers (JSON, TOON, TOML-int) | per-format canary | mind-det-gemm |
 | 5 | Streaming chunker + cross-chunk straddle carry-buffer | boundary canary (split == unsplit) | mind-dev |
@@ -1450,8 +1450,8 @@ discipline already in force (a speedup never trips it).
    and it lands only once the MIND core + deterministic-IO stack are
    production-complete.
 
-4c. **`mic@4` — autoresearch/alg-inv-evolved successor wire format.** Once
-   `mic@3` is stable, turn the autoresearch + alg-inv (AB-MCTS) engine on the
+4c. **`mic@4` — a MIND-research-evolved successor wire format.** Once
+   `mic@3` is stable, turn MIND research's evolutionary-search (AB-MCTS) engine on the
    canonical IR encoding itself — fitness = **smaller + faster emit/parse**,
    HARD-GATED by every invariant `mic@3` guarantees: deterministic byte-canonical
    output, the emit→parse→emit fixed point, cross-substrate byte-identity, and

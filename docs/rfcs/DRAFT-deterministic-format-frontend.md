@@ -371,7 +371,7 @@ its cheapest legal pack — `vpmovmskb` on x86, Idiom A on ARM — exactly the
 - **Optional strict canary:** a normalised 64-bit raw bitmap via Idiom B —
   belt-and-suspenders, same defer discipline.
 - **No scalar fallback is required for correctness.** The scalar structural
-  oracle remains the *fitness oracle* for alg-invent (§8, Phase 2) and the
+  oracle remains the *fitness oracle* for the evolutionary search (§8, Phase 2) and the
   fail-closed reference. If a future target lacks any cheap movemask idiom,
   it falls back to scalar `ctz`-per-byte with a deferred-marker
   (`// deferred: <arch> lacks movemask idiom, scalar bit-scan fallback —
@@ -476,7 +476,7 @@ today" is claimed only for this concrete form.)
   primitives (scalar number decode + `param_non_i64` tensor param +
   `emit_tensor_reduce_pinned`).
 - **It is the fitness harness.** This Phase-0 slice is exactly the scored
-  target that alg-invent (AB-MCTS on kernels) runs stage-1 SIMD candidates
+  target that the evolutionary search (AB-MCTS on kernels) runs stage-1 SIMD candidates
   against later: a candidate kernel is *correct* iff its column bytes match the
   Phase-0 scalar reference, and *admissible* iff byte-identical across
   substrates. The harness exists before the kernels do.
@@ -494,7 +494,7 @@ on keystone 7/7 + cross_substrate + criterion (one-sided); blessing is always
 Scalar number decode (lifted from `std/json.mind:769`) fills a
 `tensor<f64[4096]>` tile; `fn colsum(t: tensor<f64[4096]>) -> f64 { t.sum() }`
 through the shipped fold → `map` → mic@3 anchor, byte-identical x86/ARM.
-*This is the alg-invent fitness harness — it exists before any kernel does.*
+*This is the evolutionary-search fitness harness — it exists before any kernel does.*
 Gate: `format-col-sum` canary. Owner: `mind-dev` (+ `mind-mlir-lowering` if a
 fold seam is needed).
 
@@ -505,13 +505,13 @@ avx2 == neon. Owner: `mind-mlir-lowering`. *DESIGN-ONLY.*
 
 **Phase 1 — scalar structural oracle (all target formats).** A `ctz`-per-byte
 scalar classifier per format emitting the derived structural index (§3) — the
-fail-closed reference and the alg-invent Gate-1 oracle. Corpus: a
+fail-closed reference and the evolutionary-search Gate-1 oracle. Corpus: a
 differential-fuzzer set (the `mindfuzz_cross_runner_identity` pattern) with
 adversarial tails — chunk-edge structural chars, UTF-8 multibyte, quoted
 structural chars. Gate: oracle parity vs the `std/json.mind` tree-walk on the
 JSON subset; corpus committed. Owner: `mind-dev`. *DESIGN-ONLY.*
 
-**Phase 2 — alg-invent (AB-MCTS) on the ONE hard kernel.** The
+**Phase 2 — evolutionary search (AB-MCTS) on the ONE hard kernel.** The
 reduction-order-invariant structural pack (classified chunk → derived-index
 representation). Search space: NEON `{vshrq, vsraq fold trees, vshrn nibble,
 vqtbl pack, vceqq compare forms, tail-predication schemes}`; x86
@@ -531,7 +531,7 @@ Because stage 1 is lane-local classify (zero cross-lane accumulation), any
 candidate passing Gate 1 is deterministic by construction — the search cannot
 invent a nondeterministic winner. Gate: winning kernel blessed as the x86
 `format-structural-index` line (neon line DEFERRED to Phase 6). Owner:
-`mind-det-gemm` (emitter) + the alg-invent loop. *DESIGN-ONLY.*
+`mind-det-gemm` (emitter) + the evolutionary-search loop. *DESIGN-ONLY.*
 
 **Phase 3 — shared stage-2 index + stage-3 materialisation + multi-column.**
 Format-independent, written once; stable document-order column indexing
