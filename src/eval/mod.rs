@@ -863,30 +863,29 @@ fn match_enum_payload(
     true
 }
 
-/// Execute a `while` STATEMENT against a mutable environment, so that
-/// assignments to enclosing-scope variables survive the loop — the semantics
-/// the compiled artifact has, and what a fn body needs when it reads a
-/// loop-carried variable after the loop (std.sha256's compression rounds).
-///
-/// Scoping is kept honest: a name first bound by `let` INSIDE the loop body
-/// is loop-local — its pre-loop value (or absence) is restored at loop exit,
-/// so a shadowing body-`let` cannot leak over an outer binding, while an
-/// `assign` to an outer name propagates. Nested `while`s recurse with the
-/// same environment; each level restores its own locals. Early `return`
-/// surfaces as `EvalError::ReturnFlow`, unwound at the `Node::Call` boundary
-/// (locals are restored first, which is moot but keeps the env consistent).
-/// Execute ONE statement against a threaded `&mut env`, so that any assignment
+/// Execute ONE statement against a threaded `&mut env`, so that an assignment
 /// to an enclosing-scope variable — whether it sits directly in a loop body or
-/// nested inside an `if`/`for`/`while` within that body — survives. This is the
+/// nested inside an `if`/`for`/`while`/block within it — survives. This is the
 /// single, uniform statement executor shared by the `while`/`for` body loops,
-/// the module-level statement loop, and the function-call body loop: without it,
-/// a mutation buried in an `if` inside a `while` (e.g. std.sha256's hex-encode
-/// and padding loops) routes to the expression-level control-flow arms, which
-/// clone the env and silently discard the mutation.
+/// the module-level statement loop, and the function-call body loop: without
+/// it, a mutation buried in an `if` inside a `while` (e.g. std.sha256's
+/// hex-encode and padding loops) routes to the expression-level control-flow
+/// arms, which clone the env and silently discard the mutation.
 ///
-/// `local_saves`/`local_names` record body-`let` (and `for`-var) bindings so the
-/// enclosing loop can restore them at exit; an early `return` propagates as
-/// `EvalError::ReturnFlow` and is caught at the function-body boundary.
+/// SCOPE CONTRACT: every scope-introducing sub-block dispatched from here
+/// gets its OWN frame via `exec_block_scoped` — `while`/`for` bodies (one
+/// frame per ITERATION), each `if`/`else` BRANCH, and bare `{ … }` blocks —
+/// so a block-local `let`, INCLUDING one shadowing an enclosing binding, is
+/// restored at that block's exit (lexical scoping), while an `assign` to an
+/// outer name threads out. `local_saves`/`local_names` belong to the
+/// CALLER-OWNED frame (the block this statement sits in): the `Let` arm
+/// records into them, and that frame's owner restores them at its own exit.
+/// Any NEW scope-introducing construct added here must open its own
+/// `exec_block_scoped` frame — sharing the caller's frame silently leaks
+/// shadowing `let`s (the 2026-08-07 if-branch regression).
+///
+/// An early `return` propagates as `EvalError::ReturnFlow` and is caught at
+/// the function-body boundary.
 #[allow(clippy::too_many_arguments)]
 fn exec_threaded_stmt(
     stmt: &Node,
@@ -899,8 +898,9 @@ fn exec_threaded_stmt(
     match stmt {
         Node::Let { name, value, .. } => {
             let v = eval_value_expr_mode(value, env, tensor_env, mode.clone())?;
-            // Record the pre-loop value once, so a shadowing body-`let` cannot
-            // leak over an outer binding after the loop exits.
+            // Record the pre-block value once in the CALLER-OWNED frame, so a
+            // shadowing block-`let` is restored when that frame's owner (the
+            // enclosing `exec_block_scoped` / fn body) exits.
             if local_names.insert(name.clone()) {
                 local_saves.push((name.clone(), env.get(name).cloned()));
             }
@@ -948,10 +948,17 @@ fn exec_threaded_stmt(
             body: inner_body,
             ..
         } => eval_while_stmt_threaded(inner_cond, inner_body, env, tensor_env, mode.clone()),
-        // `if`/`else` in statement position: evaluate the condition, then thread
-        // the taken branch's statements into the SAME env so their mutations
-        // survive (the expression-level `If` arm clones the env and discards
-        // them — the std.sha256 miscompile class).
+        // `if`/`else` in statement position: evaluate the condition, then run
+        // the taken branch as its OWN block scope (`exec_block_scoped` — the
+        // same per-block frame the `while`/`for` bodies use) against the SAME
+        // threaded env. An ASSIGN to an outer name inside the branch threads
+        // out (`if c { acc = acc + i }` must survive — the std.sha256
+        // miscompile class), while a branch-local `let` — including one
+        // SHADOWING an enclosing binding — is restored at branch exit
+        // (lexical scoping). Previously both branches shared the ENCLOSING
+        // frame's `local_saves`/`local_names`, so a shadowing branch-`let`
+        // found its name already recorded, got NO restore entry of its own,
+        // and silently leaked over the outer binding.
         Node::If {
             cond,
             then_branch,
@@ -959,32 +966,22 @@ fn exec_threaded_stmt(
             ..
         } => {
             let c = eval_value_expr_mode(cond, env, tensor_env, mode.clone())?;
-            let mut result = Value::Int(0);
             if !matches!(c, Value::Int(0)) {
-                for s in then_branch {
-                    result = exec_threaded_stmt(
-                        s,
-                        env,
-                        tensor_env,
-                        mode.clone(),
-                        local_saves,
-                        local_names,
-                    )?;
-                }
+                exec_block_scoped(then_branch, env, tensor_env, mode.clone())
             } else if let Some(else_stmts) = else_branch {
-                for s in else_stmts {
-                    result = exec_threaded_stmt(
-                        s,
-                        env,
-                        tensor_env,
-                        mode.clone(),
-                        local_saves,
-                        local_names,
-                    )?;
-                }
+                exec_block_scoped(else_stmts, env, tensor_env, mode.clone())
+            } else {
+                Ok(Value::Int(0))
             }
-            Ok(result)
         }
+        // Bare block `{ … }` in statement position: its own block scope over
+        // the SAME threaded env — outer assigns thread out, block-local
+        // `let`s (shadowing included) are restored at block exit. Without
+        // this arm a statement-position block fell through to the
+        // expression-level `Block` arm, which clones the env: block `let`s
+        // were lost to later block statements and outer assigns were
+        // silently discarded.
+        Node::Block { stmts, .. } => exec_block_scoped(stmts, env, tensor_env, mode.clone()),
         // `for v in start..end`: bounded integer range, body threaded like a
         // `while` body. The `for` gets its OWN scope, never the enclosing
         // loop's: each iteration of the body is a block scope
@@ -1686,12 +1683,17 @@ pub(crate) fn eval_value_expr_mode(
         // honored solely by the MLIR codegen path.
         #[cfg(feature = "std-surface")]
         Node::Break { .. } | Node::Continue { .. } => Ok(Value::Int(0)),
+        // Block-expression semantics (mirrors the expression-level `If` arm
+        // below): the block is ONE scope — a `let` inside it is visible to
+        // later statements and the tail expression, and dies at block exit.
+        // The expression position receives an IMMUTABLE env, so the block
+        // runs over a clone (outer-var assigns inside a block EXPRESSION are
+        // not propagated — same contract as every expression-position eval
+        // here; in STATEMENT position a block routes through
+        // `exec_threaded_stmt`'s `Block` arm, which threads them).
         Node::Block { stmts, .. } => {
-            let mut result = Value::Int(0);
-            for stmt in stmts {
-                result = eval_value_expr_mode(stmt, env, tensor_env, mode.clone())?;
-            }
-            Ok(result)
+            let mut block_env = env.clone();
+            exec_block_scoped(stmts, &mut block_env, tensor_env, mode.clone())
         }
         Node::If {
             cond,
