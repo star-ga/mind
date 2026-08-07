@@ -469,6 +469,14 @@ fn eval_test_fn(entry: &TestEntry) -> Result<(), String> {
     use crate::eval;
     use crate::eval::ExecMode;
 
+    // Fresh, deterministic linear memory for THIS test: every test sees an
+    // identical zeroed arena regardless of worker-thread assignment or run
+    // order (the arena is thread-local and worker threads are reused). The
+    // arena must survive across BOTH eval passes below — asserts in the
+    // second pass read memory the first pass wrote — so this is the only
+    // reset point.
+    eval::interp_mem::reset();
+
     // Re-parse to get a fresh, unaliased AST.
     let module = parser::parse(&entry.source_text).map_err(|errs| {
         errs.iter()
@@ -494,14 +502,17 @@ fn eval_test_fn(entry: &TestEntry) -> Result<(), String> {
         })
         .ok_or_else(|| format!("test function '{}' not found in module", fn_name))?;
 
-    // Build the synthetic module: module-level non-fn items first, then the
-    // test body. This puts consts/structs/types in scope for the test body.
-    let mut synthetic_items: Vec<Node> = module
-        .items
-        .iter()
-        .filter(|item| !matches!(item, Node::FnDef(..)))
-        .cloned()
-        .collect();
+    // Build the synthetic module: imported-std fn defs first (so file-local
+    // fns shadow them in the fn table — later install wins), then ALL
+    // module-level items, then the test body. `FnDef` items are inert at
+    // module eval level (`Ok(Int(0))`) but are registered by
+    // `fn_table_install`, which is what lets a test body call helper fns in
+    // its own file and `pub fn`s of bundled std modules (e.g. run the
+    // std.sha256 KAT) through the interpreter, with no native runtime.
+    let mut synthetic_items: Vec<Node> = Vec::new();
+    #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
+    synthetic_items.extend(resolve_std_import_fns(&module)?);
+    synthetic_items.extend(module.items.iter().cloned());
     synthetic_items.extend(body_items.clone());
 
     let synthetic_module = Module {
@@ -518,6 +529,66 @@ fn eval_test_fn(entry: &TestEntry) -> Result<(), String> {
     // Second pass: walk the body looking for `assert` nodes and evaluate them
     // against the environment that the first pass populated.
     eval_asserts_in_stmts(&body_items, &env)
+}
+
+/// Resolve `import std.X` / `use std::X` declarations of a test module (and,
+/// transitively, of the modules they import) against the stdlib sources baked
+/// into the binary (RFC 0005 Phase C, `project::stdlib`), returning the
+/// imported modules' `FnDef` items so the interpreter's fn table can dispatch
+/// cross-module calls — e.g. a `[test]` running the std.sha256 KAT — plus
+/// their module-level `Const` items, so a fn body that reads a module const
+/// (std.json's `MAX_DEPTH`) resolves it through the interpreter's const
+/// table.
+///
+/// Deterministic: imports are processed in source-encounter order (FIFO
+/// worklist, `BTreeSet` visited guard against cycles). An import that is not
+/// a bundled `std.*` module contributes nothing (existing behavior for it is
+/// unchanged); a bundled module that fails to parse is a fail-loud error.
+#[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
+fn resolve_std_import_fns(module: &crate::ast::Module) -> Result<Vec<Node>, String> {
+    use crate::project::stdlib::STDLIB_MIND_SOURCES;
+
+    fn import_key(item: &Node) -> Option<String> {
+        if let Node::Import { path, .. } = item {
+            if path.len() == 2 && path[0] == "std" {
+                return Some(path.join("."));
+            }
+        }
+        None
+    }
+
+    let mut out: Vec<Node> = Vec::new();
+    let mut visited: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut queue: VecDeque<String> = module.items.iter().filter_map(import_key).collect();
+    while let Some(key) = queue.pop_front() {
+        if !visited.insert(key.clone()) {
+            continue;
+        }
+        let Some((_, src)) = STDLIB_MIND_SOURCES.iter().find(|(k, _)| *k == key) else {
+            continue;
+        };
+        let imported = parser::parse(src).map_err(|errs| {
+            format!(
+                "failed to parse bundled std module '{key}': {}",
+                errs.iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            )
+        })?;
+        for item in &imported.items {
+            match item {
+                Node::FnDef(..) | Node::Const { .. } => out.push(item.clone()),
+                Node::Import { .. } => {
+                    if let Some(k) = import_key(item) {
+                        queue.push_back(k);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Walk a list of statements and evaluate any `assert(cond[, "msg"])` nodes.

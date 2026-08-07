@@ -390,6 +390,9 @@ fn shape_dim_from_value(value: &Value) -> Result<ShapeDim, EvalError> {
             Ok(ShapeDim::Known(*n as usize))
         }
         Value::Str(sym) => Ok(ShapeDim::Sym(leak_symbol(sym))),
+        // A plain-struct value is never a tensor shape dimension (fail-loud, not
+        // a silent 0): tensor shapes come from ints / symbolic dims / 1-D tensors.
+        Value::Struct { .. } => Err(EvalError::Unsupported),
         Value::Tensor(t) => {
             if t.shape.len() == 1 {
                 match t.shape[0] {
