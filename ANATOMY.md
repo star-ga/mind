@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3339 | **Est. tokens:** ~7,812,505
-**Generated:** 2026-08-07 02:34 UTC
+**Files:** 3340 | **Est. tokens:** ~7,816,196
+**Generated:** 2026-08-07 07:13 UTC
 
 ## Token Budget Guide
 
@@ -388,8 +388,8 @@
 | `src/diagnostics/` | 1 | ~3,719 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,987 |
-| `src/eval/` | 15 | ~80,345 |
-| `src/eval/stdlib/` | 2 | ~8,529 |
+| `src/eval/` | 16 | ~83,142 |
+| `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~21,737 |
@@ -409,7 +409,7 @@
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
-| `src/test/` | 1 | ~5,979 |
+| `src/test/` | 1 | ~6,816 |
 | `src/type_checker/` | 1 | ~15,151 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
@@ -3954,6 +3954,7 @@
 - `autodiff.rs` (~14268 tok, huge) — Copyright 2025 STARGA Inc.
 - `closures.rs` (~6911 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
+- `interp_mem.rs` (~2572 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~3818 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_build.rs` (~9421 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~12220 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3965,12 +3966,12 @@
 ### `src/eval/stdlib/`
 
 - `mod.rs` (~169 tok, small) — Copyright 2025 STARGA Inc.
-- `tensor.rs` (~8360 tok, huge) — Copyright 2025 STARGA Inc.
+- `tensor.rs` (~8417 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/`
 
 - `struct_resolver.rs` (~6767 tok, huge) — Copyright 2025 STARGA Inc.
 - `traits.rs` (~4150 tok, huge) — Copyright 2025 STARGA Inc.
-- `value.rs` (~2003 tok, huge) — Copyright 2025 STARGA Inc.
+- `value.rs` (~2228 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/exec/`
 
 - `conv.rs` (~435 tok, medium) — Copyright 2025 STARGA Inc.
@@ -4096,7 +4097,7 @@
 - `tensor.rs` (~391 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/test/`
 
-- `mod.rs` (~5979 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~6816 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
 - `resolve.rs` (~15151 tok, huge) — Copyright 2025 STARGA Inc.
