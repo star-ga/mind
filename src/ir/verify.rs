@@ -142,17 +142,32 @@ pub fn check_ssa_well_formed(module: &IRModule) -> Result<(), SsaViolation> {
 /// Does a branch sub-stream fall through to `^if_after` (i.e. does it reach the
 /// merge), or does it terminate early with a `return`?
 ///
-/// This MUST mirror the lowering rule in `src/eval/lower.rs` (§ "A branch that
-/// ends in `return` does not fall through to `^if_after`"): a branch whose last
-/// instruction is `Return` has its `cf.br` omitted and does NOT pass a merge
-/// value. Its slot in the `(merge_id, then_val, else_val)` tuple is a PLACEHOLDER
-/// — the *other* branch's value, or a `usize::MAX` sentinel when neither branch
-/// assigns the name — and therefore must NOT be validated against this branch's
-/// scope (it is not a real edge into the merge). Only a falling-through branch
-/// contributes a genuine merge operand that must be defined in its own scope.
+/// This MUST mirror the lowering rule in `src/eval/lower.rs` (`branch_terminates`,
+/// § "A branch that ends in a block terminator does not fall through to
+/// `^if_after`") and the MLIR emitter (`instr_is_block_terminator` in
+/// `src/mlir/lowering.rs`): a branch whose last instruction is a terminator has
+/// its `cf.br` omitted and does NOT pass a merge value. Its slot in the
+/// `(merge_id, then_val, else_val)` tuple is a PLACEHOLDER — the *other* branch's
+/// value, or a `usize::MAX` sentinel when neither branch assigns the name — and
+/// therefore must NOT be validated against this branch's scope (it is not a real
+/// edge into the merge). Only a falling-through branch contributes a genuine merge
+/// operand that must be defined in its own scope.
+///
+/// `Return` always terminates. Under `std-surface`, a `match`-arm/branch body that
+/// exits or re-tests the enclosing loop ends in `Break`/`Continue`, which likewise
+/// emits a `cf.br` to `^while_after`/`^while_header` and NOT to `^if_after` — so it
+/// too does not fall through. Recognizing only `Return` here (while the lowering
+/// and MLIR emitter recognized `Break`/`Continue`) made the verifier reject a
+/// well-formed `if { outer = … } else { continue }` inside a loop: it validated the
+/// terminating branch's dead placeholder edge (the *other* branch's value, defined
+/// in the *other* scope) and flagged it as an undefined operand (E3001). All three
+/// surfaces must classify terminators identically.
 #[cfg(feature = "std-surface")]
 fn branch_falls_through(instrs: &[Instr]) -> bool {
-    !matches!(instrs.last(), Some(Instr::Return { .. }))
+    !matches!(
+        instrs.last(),
+        Some(Instr::Return { .. }) | Some(Instr::Break { .. }) | Some(Instr::Continue { .. })
+    )
 }
 
 /// Validate the F2 merge operands of an `If` against PER-BRANCH scopes — the
