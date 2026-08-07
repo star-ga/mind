@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-08-07 — runtime-free `mindc test` over real memory/struct/cross-module MIND, verifier break/continue if-merge fix, compile-speed (small-object allocator + boxed AST), and the `--backend` opt-in seam
+
 ### Performance
 - **Boxed `FnDef` AST payload — `Node` shrunk 216 → 128 bytes (byte-identical).**
   The `FnDef` variant's ~9 inline fields made it the fattest `ast::Node`
