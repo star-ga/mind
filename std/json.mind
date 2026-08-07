@@ -1498,8 +1498,10 @@ pub fn string(s: string) -> Value {
     Value { h: jv_string_value_from_native(s) }
 }
 
-// bool — wrap a native bool as a JSON true/false value.
-pub fn bool(v: bool) -> Value {
+// boolean — wrap a native bool as a JSON true/false value. (Named `boolean`,
+// not `bool`: `bool(x)` in call position is the built-in cast `x as bool`
+// (E2025) — a fn named `bool` would be uncallable.)
+pub fn boolean(v: bool) -> Value {
     if v {
         return Value { h: jv_make_bool(1) };
     }
@@ -1516,10 +1518,12 @@ pub fn int(v: i64) -> Value {
     Value { h: jv_make_number(v, 0, 1, 0, 1) }
 }
 
-// u64 — wrap an unsigned integer as a JSON number. Values above i64::MAX
+// num_u64 — wrap an unsigned integer as a JSON number. Values above i64::MAX
 // are unrepresentable in the jv number record: fail closed with the error
-// Value (h == 0) rather than silently emitting a wrong number (D4).
-pub fn u64(v: u64) -> Value {
+// Value (h == 0) rather than silently emitting a wrong number (D4). (Named
+// `num_u64`, not `u64`: `u64(x)` in call position is the built-in cast
+// `x as u64` (E2025) — a fn named `u64` would be uncallable.)
+pub fn num_u64(v: u64) -> Value {
     // Reject values above i64::MAX (unrepresentable in the jv number record):
     // fail closed with the error Value (h == 0). The high-bit test is an
     // UNSIGNED threshold compare `v > i64::MAX`, NOT `(v as i64) < 0` — the
@@ -1566,6 +1570,10 @@ pub fn push(arr: Value, value: Value) -> Value {
         return Value { h: 0 };
     }
     if jv_kind(arr.h) != jv_kind_array() {
+        return Value { h: 0 };
+    }
+    // Propagate a poisoned value (fail-closed is transitive) — see `insert`.
+    if value.h == 0 {
         return Value { h: 0 };
     }
     let out: i64 = jv_make_array();
@@ -1682,6 +1690,12 @@ pub fn insert(v: Value, key: string, value: Value) -> Value {
         return Value { h: 0 };
     }
     if jv_kind(v.h) != jv_kind_object() {
+        return Value { h: 0 };
+    }
+    // Propagate a poisoned value: fail-closed is transitive. Without this a zero
+    // handle is stored into the key table and dereferenced downstream (segfault),
+    // rather than yielding the documented error Value.
+    if value.h == 0 {
         return Value { h: 0 };
     }
     let obj: i64 = jv_make_object();

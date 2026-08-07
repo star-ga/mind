@@ -225,6 +225,33 @@ const LET_CLASS_MISMATCH_CODE: &str = "E2015";
 /// letting the raw integer/float bits pass through unnormalised. Use `x != 0`.
 const AS_BOOL_CODE: &str = "E2016";
 
+/// A user `fn` named after a built-in primitive conversion (`u64`, `bool`, …).
+/// The parser desugars a one-argument call written with a scalar type name —
+/// `u64(x)` — to the cast `x as u64` (`parse_generic_call`), so a function with
+/// one of these names is UNCALLABLE: every call site silently invokes the
+/// built-in conversion instead of the function (std/json.mind's old `pub fn
+/// u64` returned a broken handle-0 `Value` this way). Rejected fail-loud at
+/// definition, not at the (unreachable) call.
+const PRIMITIVE_CONV_FN_CODE: &str = "E2025";
+
+/// A `let` binding annotated with a locally-declared STRUCT type whose RHS is
+/// a provably-scalar expression (`let v: Value = 42`). The loose v1 model used
+/// to accept the scalar bits as the struct's handle silently — the second half
+/// of the `u64(42)` miscompile (the desugared scalar flowed into a `Value`
+/// binding with no diagnostic). Fires only on syntactically-confident scalar
+/// RHS forms (literals, `as`-casts to a scalar, arithmetic over those) so a
+/// struct-returning call or struct literal is never flagged.
+const SCALAR_INTO_STRUCT_CODE: &str = "E2026";
+
+/// The scalar type names reserved against use as `fn` names (E2025). The first
+/// eleven are exactly the call-form cast set the parser desugars in
+/// `parse_generic_call` (`u32(x)` → `x as u32`, …); `bool` and `isize` are the
+/// remaining scalar type keywords, reserved with the same diagnostic so the
+/// name set stays closed if they later gain the call-form desugar.
+const PRIMITIVE_CONV_NAMES: &[&str] = &[
+    "u32", "i32", "i64", "f64", "u8", "u16", "u64", "i8", "i16", "usize", "f32", "bool", "isize",
+];
+
 /// A range-slice `receiver[start..end]` (#263 surface 1) whose `start` or
 /// `end` bound is not an integer-class scalar. Slice bounds are usize-class
 /// offsets; a float / tensor / gradient-map bound is rejected fail-loud here
@@ -3592,6 +3619,73 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
+// ── E2026 — locally-declared struct names ─────────────────────────────
+//
+// The names of every module-level `struct` in the file being checked, so the
+// `let` arm can recognise a struct-typed annotation (`let v: Value = …`) even
+// inside the FnDef-body mini-module recursion (whose sub-module holds only the
+// body statements, NO `StructDef` items). Same merge-on-install / restore-on-
+// drop discipline as `INTRA_FN_SIGS` / `FIXED_BYTES_LOCALS`.
+thread_local! {
+    static STRUCT_NAMES: std::cell::RefCell<Option<BTreeSet<String>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// True iff `name` is a `struct` declared in the module currently being
+/// checked. `false` when the side-table is unpopulated (no module context).
+fn struct_name_in_scope(name: &str) -> bool {
+    STRUCT_NAMES.with(|cell| cell.borrow().as_ref().is_some_and(|set| set.contains(name)))
+}
+
+/// RAII guard for `STRUCT_NAMES`; merges onto any parent table (so the fn-body
+/// recursion keeps the enclosing module's structs visible) and restores the
+/// previous table on drop.
+struct StructNamesGuard {
+    prev: Option<BTreeSet<String>>,
+}
+
+impl StructNamesGuard {
+    fn install(names: BTreeSet<String>) -> Self {
+        let prev = STRUCT_NAMES.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            let prev = slot.clone();
+            match slot.as_mut() {
+                Some(existing) => existing.extend(names),
+                None => *slot = Some(names),
+            }
+            prev
+        });
+        StructNamesGuard { prev }
+    }
+}
+
+impl Drop for StructNamesGuard {
+    fn drop(&mut self) {
+        STRUCT_NAMES.with(|cell| *cell.borrow_mut() = self.prev.take());
+    }
+}
+
+/// Syntactically-confident scalar RHS forms for E2026: numeric literals,
+/// `as`-casts to a scalar type (the desugared form of the `u64(x)` / `i32(x)`
+/// call-cast surface), and parenthesised / binary / unary combinations of
+/// those. Anything else (calls, idents, struct literals, field access) is NOT
+/// flagged — the loose model cannot prove those scalar, and a struct-returning
+/// call must never false-positive.
+fn expr_is_confident_scalar(node: &Node) -> bool {
+    match node {
+        Node::Lit(Literal::Int(_) | Literal::Float(_), _) => true,
+        Node::As { ty, .. } => scalar_class_of_ann(ty).is_some(),
+        Node::Paren(inner, _) => expr_is_confident_scalar(inner),
+        Node::Binary { left, right, .. } => {
+            expr_is_confident_scalar(left) && expr_is_confident_scalar(right)
+        }
+        Node::Not { operand, .. } | Node::BitNot { operand, .. } => {
+            expr_is_confident_scalar(operand)
+        }
+        _ => false,
+    }
+}
+
 /// True iff `name` is a body-local binding declared with a fixed `bytes[N]`
 /// annotation in the currently-checked fn body. `false` when the side-table is
 /// unpopulated (no fn-body context) — preserving the loose i64 ABI everywhere
@@ -3973,6 +4067,21 @@ fn check_module_types_in_file_impl(
                     "E2023",
                 ));
             }
+            // E2025 — a fn named after a built-in primitive conversion is
+            // uncallable (the parser desugars `u64(x)` to `x as u64` before
+            // resolution ever sees the name), so reject the DEFINITION with
+            // the real cause instead of letting call sites silently cast.
+            if PRIMITIVE_CONV_NAMES.contains(&name.as_str()) {
+                errs.push(diag_from_span(
+                    src,
+                    file,
+                    format!(
+                        "`{name}` is a built-in primitive conversion and cannot be used as a function name (a call `{name}(x)` always means the cast `x as {name}`, never this function); rename it"
+                    ),
+                    *span,
+                    PRIMITIVE_CONV_FN_CODE,
+                ));
+            }
         }
     }
 
@@ -3984,6 +4093,7 @@ fn check_module_types_in_file_impl(
     // overhead even on a one-item list. Insertion order within each container is
     // identical to the original (module.items order) → byte-identical output.
     let mut repr_c_struct_names = std::collections::BTreeSet::<String>::new();
+    let mut struct_names = BTreeSet::<String>::new();
     let mut fn_tensor_sigs: FnTensorSigs = FnTensorSigs::default();
     let mut intra_fn_sigs: IntraFnSigs = IntraFnSigs::default();
     let mut has_fn = false;
@@ -3991,12 +4101,16 @@ fn check_module_types_in_file_impl(
 
     for item in &module.items {
         match item {
-            Node::StructDef { name, attrs, .. }
+            Node::StructDef { name, attrs, .. } => {
+                // Every struct name feeds the E2026 registry; repr(C) names
+                // additionally feed the extern-ABI check below.
+                struct_names.insert(name.clone());
                 if attrs
                     .iter()
-                    .any(|a| a.name == "repr" && a.args.iter().any(|arg| arg == "C")) =>
-            {
-                repr_c_struct_names.insert(name.clone());
+                    .any(|a| a.name == "repr" && a.args.iter().any(|arg| arg == "C"))
+                {
+                    repr_c_struct_names.insert(name.clone());
+                }
             }
             Node::FnDef(fd, _) => {
                 let FnDefData {
@@ -4049,6 +4163,12 @@ fn check_module_types_in_file_impl(
     let _enum_variants_guard = has_enum.then(|| {
         EnumVariantsGuard::install(build_enum_variants(module), build_enum_payloads(module))
     });
+
+    // Install the struct-name registry for the E2026 scalar-into-struct check
+    // (merge-onto-parent, so a fn body's mini-module recursion — which carries
+    // no `StructDef` items — still sees the enclosing module's structs).
+    let _struct_names_guard =
+        (!struct_names.is_empty()).then(|| StructNamesGuard::install(struct_names));
 
     for item in &module.items {
         match item {
@@ -4156,13 +4276,35 @@ fn check_module_types_in_file_impl(
                         }
                         tenv.insert(name.clone(), vt_ann);
                     }
-                    None => errs.push(diag_from_span(
-                        src,
-                        file,
-                        format!("unsupported annotation for `{}`", name),
-                        *span,
-                        TYPE_ERR_CODE,
-                    )),
+                    // E2026 — annotation names a locally-declared struct but
+                    // the RHS is provably a scalar (`let v: Value = 42`, or
+                    // the desugared call-cast `let v: Value = u64(42)` ≡
+                    // `42 as u64`). The loose model used to accept the scalar
+                    // bits as the struct handle silently — a guaranteed-broken
+                    // value. Reject with the real cause; everything else keeps
+                    // the existing unsupported-annotation diagnostic.
+                    None => match annotation {
+                        TypeAnn::Named(tyname)
+                            if struct_name_in_scope(tyname) && expr_is_confident_scalar(value) =>
+                        {
+                            errs.push(diag_from_span(
+                                src,
+                                file,
+                                format!(
+                                    "type mismatch for `{name}`: annotation names struct `{tyname}` but the value is a scalar; a scalar cannot be bound as a struct — construct it explicitly (`{tyname} {{ .. }}`)"
+                                ),
+                                value.span(),
+                                SCALAR_INTO_STRUCT_CODE,
+                            ));
+                        }
+                        _ => errs.push(diag_from_span(
+                            src,
+                            file,
+                            format!("unsupported annotation for `{}`", name),
+                            *span,
+                            TYPE_ERR_CODE,
+                        )),
+                    },
                 },
                 None => match infer_expr(value, &tenv) {
                     Ok((vt, _)) => {
@@ -4517,6 +4659,13 @@ fn check_module_types_in_file_impl(
                         || d.code == MIXED_CLASS_BINOP_CODE
                         || d.code == LET_CLASS_MISMATCH_CODE
                         || d.code == AS_BOOL_CODE
+                        // E2025/E2026 fire only on concrete, sound conditions
+                        // (a fn literally named after a primitive conversion;
+                        // a provably-scalar RHS under a struct annotation) —
+                        // never on the ref/match-binding/struct-arg constructs
+                        // that made the generic mismatch path unsafe in bodies.
+                        || d.code == PRIMITIVE_CONV_FN_CODE
+                        || d.code == SCALAR_INTO_STRUCT_CODE
                 }));
 
                 // Early check-phase diagnostics that fail closed LATE at
