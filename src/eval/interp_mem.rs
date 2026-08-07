@@ -36,6 +36,7 @@
 //! substrates are little-endian).
 
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 
 /// Fixed non-zero base "address" of the arena. Offsets below this are
 /// invalid, so `__mind_alloc` never returns 0 for a successful allocation
@@ -49,13 +50,21 @@ const MEM_CAP_BYTES: usize = 1 << 30; // 1 GiB
 
 thread_local! {
     static MEM: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    /// Offsets returned by `materialize_str` — the pointers to native string
+    /// RECORDS marshalled from a `Value::Str` at the `string`-typed-param
+    /// boundary. Tracked so `==`/`!=` between two of them can fail loud instead
+    /// of silently comparing arena offsets. Membership-only (never iterated to
+    /// produce a value) and a `BTreeSet`, so it introduces no non-determinism.
+    static STR_RECORDS: RefCell<BTreeSet<i64>> = const { RefCell::new(BTreeSet::new()) };
 }
 
-/// Clear the arena (bump pointer back to base). Called once per `mindc test`
-/// case so each test sees identical fresh memory regardless of which worker
-/// thread runs it or what ran before — run-to-run and order-independent.
+/// Clear the arena (bump pointer back to base) and the string-record tag set.
+/// Called once per `mindc test` case so each test sees identical fresh memory
+/// regardless of which worker thread runs it or what ran before — run-to-run
+/// and order-independent.
 pub fn reset() {
     MEM.with(|m| m.borrow_mut().clear());
+    STR_RECORDS.with(|s| s.borrow_mut().clear());
 }
 
 /// Is `name` one of the memory intrinsics this model interprets?
@@ -137,7 +146,25 @@ pub(crate) fn materialize_str(s: &str) -> Result<i64, String> {
     store_bytes(rec, &data.to_le_bytes())?;
     store_bytes(rec + 8, &n.to_le_bytes())?;
     store_bytes(rec + 16, &n.to_le_bytes())?;
+    // Tag this record pointer so every VALUE-semantics operation between two
+    // marshalled strings (the full comparison class and field sugar — see
+    // `is_str_record`) fails loud rather than silently using arena offsets.
+    STR_RECORDS.with(|set| set.borrow_mut().insert(rec));
     Ok(rec)
+}
+
+/// Is `offset` the pointer to a native string RECORD materialized from a
+/// `Value::Str` at the `string`-typed-param boundary (`materialize_str`)?
+///
+/// The predicate behind the marshalled-string-record CLASS guard
+/// (`guard_str_record_value_op` in eval/mod.rs, consulted by both int-op
+/// dispatchers, plus the field accessor `eval_field_access`): the whole
+/// VALUE-semantics operation class on two such records — every comparison
+/// (`== != < <= > >=`) and field sugar (`.len`) — fails loud, while POINTER
+/// semantics (`rec + 8`, `__mind_load_*`, `rec == 0` null checks) stay legal.
+/// Deterministic: `BTreeSet` membership only, never iterated for ordering.
+pub(crate) fn is_str_record(offset: i64) -> bool {
+    STR_RECORDS.with(|set| set.borrow().contains(&offset))
 }
 
 /// `__mind_free` — validated no-op (the arena is a bump allocator, exactly

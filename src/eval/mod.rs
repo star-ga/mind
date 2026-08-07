@@ -2468,6 +2468,21 @@ fn eval_method_call(receiver: Value, method: &str, _args: &[Value]) -> Result<Va
 }
 
 fn eval_field_access(receiver: Value, field: &str) -> Result<Value, EvalError> {
+    // Marshalled-string-record class guard (see `guard_str_record_value_op`):
+    // field sugar (`.len` et al.) on a record POINTER is a value-semantics
+    // operation the interpreter does not model — fail loud with the record
+    // contract named, never fall through to a generic error or a silent 0.
+    // The record's real fields are read via pointer semantics:
+    // `__mind_load_i64(rec + 0 / 8 / 16)`.
+    if let Value::Int(n) = &receiver {
+        if interp_mem::is_str_record(*n) {
+            return Err(EvalError::UnsupportedMsg(format!(
+                "field access `.{field}` on a marshalled native string record: \
+                 the record has pointer semantics — read its [addr|len|cap] \
+                 fields via __mind_load_i64(rec + 0/8/16)"
+            )));
+        }
+    }
     // A struct value resolves its OWN fields by name first (a struct may
     // legitimately declare a field named `len`); a missing field is a loud
     // error naming the struct.
@@ -2632,7 +2647,48 @@ fn apply_binary(op: BinOp, left: Value, right: Value, mode: ExecMode) -> Result<
     }
 }
 
+/// CHOSEN NARROWING — the marshalled-string-record operation contract, closed
+/// as a CLASS at the operator dispatch (consulted by BOTH int-op dispatchers,
+/// `apply_int_op` and `apply_int_op_u64`, so every current and future
+/// comparison arm INHERITS it instead of rediscovering the bug one operator
+/// at a time; any new int-op dispatcher must call this guard too).
+///
+/// A `Value::Int` that is a materialized native string record
+/// (`interp_mem::is_str_record`) has POINTER semantics only:
+/// - LEGAL: field addressing (`rec + 8` / `rec + 16`), `__mind_load_*` /
+///   `__mind_store_*` through it, and mixed record-vs-plain comparisons
+///   (null checks like `rec == 0` are pointer semantics) — std/json.mind's
+///   `jv_string_value_from_native` depends on exactly these.
+/// - REJECTED LOUD: the whole VALUE-comparison class (`== != < <= > >=`)
+///   between TWO records — comparing arena offsets would silently report
+///   structurally-equal strings as unequal/misordered, and a silent wrong
+///   answer is the one thing this interpreter must never produce. This is a
+///   chosen narrowing now that the arena can tell string records apart, not
+///   a lost capability: pre-marshalling, `==` on two `Value::Str` was
+///   already `Err(Unsupported)`.
+///
+/// Deterministic: a `BTreeSet` membership test, no ordering iteration.
+// deferred: a content-aware string comparison (read both [addr|len|cap]
+// records, compare byte ranges) could replace this loud error if a string
+// comparison surface ever lands in the language — upgrade HERE, in one place.
+fn guard_str_record_value_op(op: BinOp, left: i64, right: i64) -> Result<(), EvalError> {
+    let is_value_comparison = matches!(
+        op,
+        BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
+    );
+    if is_value_comparison && interp_mem::is_str_record(left) && interp_mem::is_str_record(right) {
+        return Err(EvalError::UnsupportedMsg(format!(
+            "value comparison (`{op:?}`) of two marshalled native string records: \
+             a marshalled `string` has pointer semantics in the interpreter, and \
+             comparing arena offsets would be silently wrong for structurally \
+             equal strings — use byte-wise std string equality (`string_eq`)"
+        )));
+    }
+    Ok(())
+}
+
 fn apply_int_op(op: BinOp, left: i64, right: i64) -> Result<i64, EvalError> {
+    guard_str_record_value_op(op, left, right)?;
     Ok(match op {
         // MIND integer overflow = defined two's-complement wraparound (== the MLIR
         // artifact's `arith.addi`, no nsw/nuw); use explicit wrapping so debug and
@@ -2671,6 +2727,10 @@ fn apply_int_op(op: BinOp, left: i64, right: i64) -> Result<i64, EvalError> {
 /// never inspect the operand as an ordered value), so they defer to
 /// `apply_int_op` for exact parity.
 fn apply_int_op_u64(op: BinOp, left: i64, right: i64) -> Result<i64, EvalError> {
+    // Marshalled-string-record class guard — see `guard_str_record_value_op`.
+    // The unsigned dispatcher handles `< <= > >=` itself (never reaching
+    // `apply_int_op`), so it must consult the guard independently.
+    guard_str_record_value_op(op, left, right)?;
     let a = left as u64;
     let b = right as u64;
     Ok(match op {
