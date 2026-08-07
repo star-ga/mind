@@ -43,6 +43,7 @@ pub mod abi_gate;
 pub mod autodiff;
 pub mod closures;
 pub mod conv2d_grad;
+pub mod interp_mem;
 pub mod ir_interp;
 pub mod lower;
 /// Module-wide narrow-int surface prescan — the compile-speed early-skip gate
@@ -445,6 +446,10 @@ pub fn eval_module_value_with_env_mode(
     // Register all top-level functions so calls can dispatch to them (generic or
     // not). Restored after the module finishes so nested module evals don't leak.
     let _fn_prev = fn_table_install(m);
+    // Register module-level `const`s AFTER the fn table (an initializer may
+    // call a const-evaluable fn); called fn bodies resolve them through the
+    // Ident arm's CONST_TABLE fallback.
+    let _const_prev = const_table_install(m, mode.clone())?;
     // issue #99: start with a clean u64-var set (restored below) so a nested
     // module eval neither sees nor leaks the caller's u64 declarations.
     let _u64_prev = u64_vars_take();
@@ -582,7 +587,16 @@ pub fn eval_module_value_with_env_mode(
                 body,
                 ..
             } => {
-                // Module-level for-loop with mutable environment propagation
+                // Module-level `for`: route the body through the SAME uniform
+                // threaded executor the fn-level `For` arm uses — each
+                // iteration a block scope, the loop var restored at loop exit
+                // — so a mutation nested inside an `if` in the body survives
+                // (the old hand-rolled Assign/Let/IndexAssign-only match
+                // routed nested `if` to expression eval, which cloned the env
+                // and silently discarded the mutation). The final integer
+                // bindings are then reflected back into `env`, mirroring the
+                // module-level `While` arm, so a later assert or consumer
+                // reads the post-loop values.
                 let s = match eval_value_expr_mode(start, &venv, &tensor_env, mode.clone())? {
                     Value::Int(n) => n,
                     _ => {
@@ -595,70 +609,37 @@ pub fn eval_module_value_with_env_mode(
                     Value::Int(n) => n,
                     _ => return Err(EvalError::UnsupportedMsg("for-loop end must be int".into())),
                 };
+                let saved_var = venv.get(var).cloned();
                 for i in s..e {
                     venv.insert(var.clone(), Value::Int(i));
-                    for stmt in body {
-                        match stmt {
-                            Node::Assign { name, value, .. } => {
-                                let rhs =
-                                    eval_value_expr_mode(value, &venv, &tensor_env, mode.clone())?;
-                                if let Value::Int(n) = &rhs {
-                                    env.insert(name.clone(), *n);
-                                }
-                                venv.insert(name.clone(), rhs.clone());
-                                last = rhs;
-                            }
-                            Node::Let { name, value, .. } => {
-                                let rhs =
-                                    eval_value_expr_mode(value, &venv, &tensor_env, mode.clone())?;
-                                if let Value::Int(n) = &rhs {
-                                    env.insert(name.clone(), *n);
-                                }
-                                venv.insert(name.clone(), rhs.clone());
-                                last = rhs;
-                            }
-                            // `arr[i] = v` inside the loop body: rebuild + rebind
-                            // the array tuple (mirrors the module-level handler).
-                            Node::IndexAssign {
-                                receiver,
-                                index,
-                                value,
-                                ..
-                            } => {
-                                let val =
-                                    eval_value_expr_mode(value, &venv, &tensor_env, mode.clone())?;
-                                if let Node::Lit(Literal::Ident(arr), _) = receiver.as_ref() {
-                                    if let Some(Value::Tuple(mut items)) = venv.get(arr).cloned() {
-                                        let idx = match eval_value_expr_mode(
-                                            index,
-                                            &venv,
-                                            &tensor_env,
-                                            mode.clone(),
-                                        )? {
-                                            Value::Int(i) => i,
-                                            other => {
-                                                return Err(EvalError::UnsupportedMsg(format!(
-                                                    "array index must be an integer, got {other:?}"
-                                                )));
-                                            }
-                                        };
-                                        if idx < 0 || idx as usize >= items.len() {
-                                            return Err(EvalError::UnsupportedMsg(format!(
-                                                "array index {idx} out of bounds (len {})",
-                                                items.len()
-                                            )));
-                                        }
-                                        items[idx as usize] = val.clone();
-                                        venv.insert(arr.clone(), Value::Tuple(items));
-                                    }
-                                }
-                                last = val;
-                            }
-                            _ => {
-                                last =
-                                    eval_value_expr_mode(stmt, &venv, &tensor_env, mode.clone())?;
-                            }
-                        }
+                    last = exec_block_scoped(body, &mut venv, &tensor_env, mode.clone())?;
+                }
+                match saved_var {
+                    Some(v) => {
+                        venv.insert(var.clone(), v);
+                    }
+                    None => {
+                        venv.remove(var);
+                    }
+                }
+                for (k, v) in venv.iter() {
+                    if let Value::Int(n) = v {
+                        env.insert(k.clone(), *n);
+                    }
+                }
+            }
+            // Top-level `while`: thread the loop so body mutations of outer
+            // variables survive (`while i < n { sum = sum + i; i = i + 1 }`),
+            // then reflect the final integer bindings back into `env` so a later
+            // assert or consumer reads the post-loop values. Without this a
+            // top-level `while` routes to the expression-level arm, which clones
+            // the env and silently discards every loop-carried mutation.
+            #[cfg(feature = "std-surface")]
+            Node::While { cond, body, .. } => {
+                last = eval_while_stmt_threaded(cond, body, &mut venv, &tensor_env, mode.clone())?;
+                for (k, v) in venv.iter() {
+                    if let Value::Int(n) = v {
+                        env.insert(k.clone(), *n);
                     }
                 }
             }
@@ -794,6 +775,23 @@ fn is_enum_variant_ctor(callee: &str) -> bool {
     callee.contains("::") || callee == "Some"
 }
 
+/// Resolve a call callee against the installed user-fn table: the full name
+/// first, then — for a qualified `Module::fn` path — its final `::` segment
+/// (imported std fns are registered under their BARE name by
+/// `fn_table_install`, so `sha256::sha256(...)` must find `sha256`). The fn
+/// table is the arbiter between a qualified CALL and an enum-variant
+/// CONSTRUCTOR, which parse identically: `Result::Ok(x)` only resolves here
+/// if a fn named `Result::Ok` or `Ok` is genuinely registered; otherwise the
+/// caller falls through to the enum-ctor path. Deterministic — a pure table
+/// lookup keyed on the callee string.
+fn resolve_user_fn(callee: &str) -> Option<UserFn> {
+    fn_table_lookup(callee).or_else(|| {
+        callee
+            .rsplit_once("::")
+            .and_then(|(_, last)| fn_table_lookup(last))
+    })
+}
+
 /// Phase 10.7: does this bare identifier denote a payload-less (unit) variant?
 /// `Type::Variant` paths and the bare `None` constructor qualify.
 fn is_enum_unit_ctor(name: &str) -> bool {
@@ -865,6 +863,253 @@ fn match_enum_payload(
     true
 }
 
+/// Execute ONE statement against a threaded `&mut env`, so that an assignment
+/// to an enclosing-scope variable — whether it sits directly in a loop body or
+/// nested inside an `if`/`for`/`while`/block within it — survives. This is the
+/// single, uniform statement executor shared by the `while`/`for` body loops,
+/// the module-level statement loop, and the function-call body loop: without
+/// it, a mutation buried in an `if` inside a `while` (e.g. std.sha256's
+/// hex-encode and padding loops) routes to the expression-level control-flow
+/// arms, which clone the env and silently discard the mutation.
+///
+/// SCOPE CONTRACT: every scope-introducing sub-block dispatched from here
+/// gets its OWN frame via `exec_block_scoped` — `while`/`for` bodies (one
+/// frame per ITERATION), each `if`/`else` BRANCH, and bare `{ … }` blocks —
+/// so a block-local `let`, INCLUDING one shadowing an enclosing binding, is
+/// restored at that block's exit (lexical scoping), while an `assign` to an
+/// outer name threads out. `local_saves`/`local_names` belong to the
+/// CALLER-OWNED frame (the block this statement sits in): the `Let` arm
+/// records into them, and that frame's owner restores them at its own exit.
+/// Any NEW scope-introducing construct added here must open its own
+/// `exec_block_scoped` frame — sharing the caller's frame silently leaks
+/// shadowing `let`s (the 2026-08-07 if-branch regression).
+///
+/// An early `return` propagates as `EvalError::ReturnFlow` and is caught at
+/// the function-body boundary.
+#[allow(clippy::too_many_arguments)]
+fn exec_threaded_stmt(
+    stmt: &Node,
+    env: &mut HashMap<String, Value>,
+    tensor_env: &HashMap<String, TensorEnvEntry>,
+    mode: ExecMode,
+    local_saves: &mut Vec<(String, Option<Value>)>,
+    local_names: &mut std::collections::HashSet<String>,
+) -> Result<Value, EvalError> {
+    match stmt {
+        Node::Let { name, value, .. } => {
+            let v = eval_value_expr_mode(value, env, tensor_env, mode.clone())?;
+            // Record the pre-block value once in the CALLER-OWNED frame, so a
+            // shadowing block-`let` is restored when that frame's owner (the
+            // enclosing `exec_block_scoped` / fn body) exits.
+            if local_names.insert(name.clone()) {
+                local_saves.push((name.clone(), env.get(name).cloned()));
+            }
+            env.insert(name.clone(), v.clone());
+            Ok(v)
+        }
+        Node::Assign { name, value, .. } => {
+            let v = eval_value_expr_mode(value, env, tensor_env, mode.clone())?;
+            env.insert(name.clone(), v.clone());
+            Ok(v)
+        }
+        // `arr[i] = v`: rebuild + rebind the array tuple in the threaded env.
+        Node::IndexAssign {
+            receiver,
+            index,
+            value,
+            ..
+        } => {
+            let val = eval_value_expr_mode(value, env, tensor_env, mode.clone())?;
+            if let Node::Lit(Literal::Ident(arr), _) = receiver.as_ref() {
+                if let Some(Value::Tuple(mut items)) = env.get(arr).cloned() {
+                    let idx = match eval_value_expr_mode(index, env, tensor_env, mode.clone())? {
+                        Value::Int(i) => i,
+                        other => {
+                            return Err(EvalError::UnsupportedMsg(format!(
+                                "array index must be an integer, got {other:?}"
+                            )));
+                        }
+                    };
+                    if idx < 0 || idx as usize >= items.len() {
+                        return Err(EvalError::UnsupportedMsg(format!(
+                            "array index {idx} out of bounds (len {})",
+                            items.len()
+                        )));
+                    }
+                    items[idx as usize] = val.clone();
+                    env.insert(arr.clone(), Value::Tuple(items));
+                }
+            }
+            Ok(val)
+        }
+        #[cfg(feature = "std-surface")]
+        Node::While {
+            cond: inner_cond,
+            body: inner_body,
+            ..
+        } => eval_while_stmt_threaded(inner_cond, inner_body, env, tensor_env, mode.clone()),
+        // `if`/`else` in statement position: evaluate the condition, then run
+        // the taken branch as its OWN block scope (`exec_block_scoped` — the
+        // same per-block frame the `while`/`for` bodies use) against the SAME
+        // threaded env. An ASSIGN to an outer name inside the branch threads
+        // out (`if c { acc = acc + i }` must survive — the std.sha256
+        // miscompile class), while a branch-local `let` — including one
+        // SHADOWING an enclosing binding — is restored at branch exit
+        // (lexical scoping). Previously both branches shared the ENCLOSING
+        // frame's `local_saves`/`local_names`, so a shadowing branch-`let`
+        // found its name already recorded, got NO restore entry of its own,
+        // and silently leaked over the outer binding.
+        Node::If {
+            cond,
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            let c = eval_value_expr_mode(cond, env, tensor_env, mode.clone())?;
+            if !matches!(c, Value::Int(0)) {
+                exec_block_scoped(then_branch, env, tensor_env, mode.clone())
+            } else if let Some(else_stmts) = else_branch {
+                exec_block_scoped(else_stmts, env, tensor_env, mode.clone())
+            } else {
+                Ok(Value::Int(0))
+            }
+        }
+        // Bare block `{ … }` in statement position: its own block scope over
+        // the SAME threaded env — outer assigns thread out, block-local
+        // `let`s (shadowing included) are restored at block exit. Without
+        // this arm a statement-position block fell through to the
+        // expression-level `Block` arm, which clones the env: block `let`s
+        // were lost to later block statements and outer assigns were
+        // silently discarded.
+        Node::Block { stmts, .. } => exec_block_scoped(stmts, env, tensor_env, mode.clone()),
+        // `for v in start..end`: bounded integer range, body threaded like a
+        // `while` body. The `for` gets its OWN scope, never the enclosing
+        // loop's: each iteration of the body is a block scope
+        // (`exec_block_scoped` — body-`let`s die at iteration end, so a
+        // body-`let` shadowing an outer name, or even the loop var itself,
+        // never leaks or pollutes an enclosing `while`'s restore list), and
+        // the loop VAR's shadowed binding (if any) is saved here and restored
+        // the moment the loop exits, so a later statement in the enclosing
+        // body reads the OUTER binding (compiled scoping).
+        Node::For {
+            var,
+            start,
+            end,
+            body,
+            ..
+        } => {
+            let s = match eval_value_expr_mode(start, env, tensor_env, mode.clone())? {
+                Value::Int(n) => n,
+                _ => {
+                    return Err(EvalError::UnsupportedMsg(
+                        "for-loop start must be int".into(),
+                    ));
+                }
+            };
+            let e = match eval_value_expr_mode(end, env, tensor_env, mode.clone())? {
+                Value::Int(n) => n,
+                _ => return Err(EvalError::UnsupportedMsg("for-loop end must be int".into())),
+            };
+            let saved_var = env.get(var).cloned();
+            let run = (|| -> Result<Value, EvalError> {
+                let mut result = Value::Int(0);
+                for i in s..e {
+                    env.insert(var.clone(), Value::Int(i));
+                    result = exec_block_scoped(body, env, tensor_env, mode.clone())?;
+                }
+                Ok(result)
+            })();
+            // Restore on success AND on error/`ReturnFlow`, keeping the env
+            // consistent however the loop unwinds (moot for `ReturnFlow`
+            // — the fn boundary discards the call env — but honest).
+            match saved_var {
+                Some(v) => {
+                    env.insert(var.clone(), v);
+                }
+                None => {
+                    env.remove(var);
+                }
+            }
+            run
+        }
+        // Everything else (calls, bare expressions, `return`, …) is a pure
+        // expression evaluation; `return` surfaces as `ReturnFlow` and unwinds.
+        other => eval_value_expr_mode(other, env, tensor_env, mode.clone()),
+    }
+}
+
+/// Execute a loop body's statement list as ONE BLOCK SCOPE against the
+/// threaded env — the per-ITERATION scope of a `while`/`for` body. Names
+/// first bound by `let` inside the list (directly, or within a nested `if`
+/// branch) are block-local: their pre-block value (or absence) is restored
+/// when the block exits — success or error — so a shadowing body-`let` dies
+/// at iteration end and can never leak over an outer binding, while an
+/// `assign` to an outer name propagates. Restoring PER ITERATION (not once
+/// at loop exit) matches native block scoping exactly: a body `let` is
+/// fresh each iteration, so `x = x + 1; let x = 99` increments the OUTER
+/// `x` every iteration (an at-loop-exit restore would freeze it at its
+/// first-shadow snapshot instead).
+fn exec_block_scoped(
+    stmts: &[Node],
+    env: &mut HashMap<String, Value>,
+    tensor_env: &HashMap<String, TensorEnvEntry>,
+    mode: ExecMode,
+) -> Result<Value, EvalError> {
+    let mut saves: Vec<(String, Option<Value>)> = Vec::new();
+    let mut names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let outcome = (|| -> Result<Value, EvalError> {
+        let mut result = Value::Int(0);
+        for stmt in stmts {
+            result =
+                exec_threaded_stmt(stmt, env, tensor_env, mode.clone(), &mut saves, &mut names)?;
+        }
+        Ok(result)
+    })();
+    for (name, saved) in saves.into_iter().rev() {
+        match saved {
+            Some(v) => {
+                env.insert(name, v);
+            }
+            None => {
+                env.remove(&name);
+            }
+        }
+    }
+    outcome
+}
+
+#[cfg(feature = "std-surface")]
+fn eval_while_stmt_threaded(
+    cond: &Node,
+    body: &[Node],
+    env: &mut HashMap<String, Value>,
+    tensor_env: &HashMap<String, TensorEnvEntry>,
+    mode: ExecMode,
+) -> Result<Value, EvalError> {
+    const MAX_EVAL_ITERS: u64 = 1_000_000;
+    let mut result = Value::Int(0);
+    let mut iters: u64 = 0;
+    loop {
+        let cond_val = eval_value_expr_mode(cond, env, tensor_env, mode.clone())?;
+        if matches!(cond_val, Value::Int(0)) {
+            break;
+        }
+        iters += 1;
+        if iters > MAX_EVAL_ITERS {
+            return Err(EvalError::UnsupportedMsg(
+                "`while` exceeded the compile-time evaluation iteration cap \
+                 (possible non-terminating loop)"
+                    .into(),
+            ));
+        }
+        // Each iteration is its own block scope (`exec_block_scoped`):
+        // body-`let`s are restored at iteration end, `assign`s to outer
+        // names survive into the next condition check and past the loop.
+        result = exec_block_scoped(body, env, tensor_env, mode.clone())?;
+    }
+    Ok(result)
+}
+
 pub(crate) fn eval_value_expr_mode(
     node: &Node,
     env: &HashMap<String, Value>,
@@ -878,6 +1123,13 @@ pub(crate) fn eval_value_expr_mode(
         Node::Lit(Literal::Ident(name), _) => {
             if let Some(v) = env.get(name) {
                 return Ok(v.clone());
+            }
+            // Module-level `const NAME = …` fallback: the local env
+            // (params / `let`s) shadows first; the per-module-eval const
+            // table resolves next, so a CALLED fn body sees module consts
+            // (std/json.mind's `MAX_DEPTH`) without any env plumbing.
+            if let Some(v) = const_table_lookup(name) {
+                return Ok(v);
             }
             // Phase 10.7: a bare unit enum/`Option` variant (`Mode::On`, `None`)
             // that is not a bound variable evaluates to a payload-less
@@ -905,7 +1157,15 @@ pub(crate) fn eval_value_expr_mode(
             // builds a `Value::Enum` carrying the evaluated positional payload.
             // This is detected before the tensor-stdlib dispatch because those
             // callees never use `::` and are never named `Some`/`None`.
-            if is_enum_variant_ctor(callee) {
+            //
+            // A qualified CROSS-MODULE call (`sha256::sha256(...)`) parses the
+            // same `A::B` shape, so the installed fn table is consulted FIRST
+            // (`resolve_user_fn`: full path, then final segment — imported std
+            // fns register under their bare name). Only a callee that resolves
+            // to NO registered fn constructs an enum, so `Result::Ok` /
+            // `Mode::On` still build variants.
+            let user_fn = resolve_user_fn(callee);
+            if user_fn.is_none() && is_enum_variant_ctor(callee) {
                 let mut payload = Vec::with_capacity(args.len());
                 for arg in args {
                     payload.push(eval_value_expr_mode(arg, env, tensor_env, mode.clone())?);
@@ -921,7 +1181,7 @@ pub(crate) fn eval_value_expr_mode(
             // typed interpreter binds the concrete arg Values; type params are
             // only recorded on the FnDef. Checked before the tensor stdlib so a
             // user fn shadowing a stdlib name resolves to the user fn.
-            if let Some(func) = fn_table_lookup(callee) {
+            if let Some(func) = user_fn {
                 if func.params.len() != args.len() {
                     return Err(EvalError::UnsupportedMsg(format!(
                         "function `{callee}` expects {} argument(s), got {}",
@@ -930,8 +1190,29 @@ pub(crate) fn eval_value_expr_mode(
                     )));
                 }
                 let mut call_env = env.clone();
-                for (p, a) in func.params.iter().zip(args.iter()) {
-                    let v = eval_value_expr_mode(a, env, tensor_env, mode.clone())?;
+                for ((p, is_string), a) in func
+                    .params
+                    .iter()
+                    .zip(func.string_params.iter())
+                    .zip(args.iter())
+                {
+                    let mut v = eval_value_expr_mode(a, env, tensor_env, mode.clone())?;
+                    // Native-string boundary: a `Value::Str` bound to a param
+                    // DECLARED `string` is materialized in the interp_mem
+                    // arena as the compiled `[addr|len|cap]` record, so
+                    // byte-level std code (std/json.mind's
+                    // `jv_string_value_from_native`) can address it. A
+                    // record handle already in flight (`Value::Int`) passes
+                    // through untouched; non-`string` params keep `Str`
+                    // values Rust-side (e.g. the `.len` arm). Fail-loud on
+                    // arena errors.
+                    if *is_string {
+                        if let Value::Str(s) = &v {
+                            let rec = interp_mem::materialize_str(s)
+                                .map_err(EvalError::UnsupportedMsg)?;
+                            v = Value::Int(rec);
+                        }
+                    }
                     call_env.insert(p.clone(), v);
                 }
                 // Salov C3 (#179): the function-body boundary is where an early
@@ -946,25 +1227,55 @@ pub(crate) fn eval_value_expr_mode(
                 // the same binding-propagation the module / `For` / `While` body
                 // loops already perform. Without it a body with a top-level
                 // counter could not be const-evaluated at all.
+                // Execute the body through the uniform threaded executor so
+                // let/assign AND any mutation nested inside a top-level
+                // `if`/`for`/`while` survive to a later statement — the same
+                // binding-propagation the module / loop bodies perform (e.g.
+                // std.sha256's compression `while` and its hex-encode
+                // `if`-in-`while`, whose working state is read after the loop).
+                // An early `return` surfaces as `ReturnFlow` and yields here.
                 let mut result = Value::Int(0);
+                let mut fn_local_saves: Vec<(String, Option<Value>)> = Vec::new();
+                let mut fn_local_names: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
                 for stmt in &func.body {
-                    match stmt {
-                        Node::Let { name, value, .. } | Node::Assign { name, value, .. } => {
-                            let v =
-                                eval_value_expr_mode(value, &call_env, tensor_env, mode.clone())?;
-                            call_env.insert(name.clone(), v.clone());
-                            result = v;
-                        }
-                        _ => {
-                            match eval_value_expr_mode(stmt, &call_env, tensor_env, mode.clone()) {
-                                Ok(v) => result = v,
-                                Err(EvalError::ReturnFlow(v)) => return Ok(*v),
-                                Err(e) => return Err(e),
-                            }
-                        }
+                    match exec_threaded_stmt(
+                        stmt,
+                        &mut call_env,
+                        tensor_env,
+                        mode.clone(),
+                        &mut fn_local_saves,
+                        &mut fn_local_names,
+                    ) {
+                        Ok(v) => result = v,
+                        Err(EvalError::ReturnFlow(v)) => return Ok(*v),
+                        Err(e) => return Err(e),
                     }
                 }
                 return Ok(result);
+            }
+            // Deterministic linear-memory intrinsics (`__mind_alloc` /
+            // `__mind_load_*` / `__mind_store_*` / `__mind_free`): interpreted
+            // over the thread-local arena (`interp_mem`) so `mindc test` can
+            // run real memory-using MIND (std.sha256 / std.json byte buffers)
+            // without the native runtime. All are `(i64...) -> i64` by ABI.
+            // (`fn_table_install` skips `__mind_*` names, so a user fn can
+            // never shadow these — E2023 defence-in-depth.)
+            if interp_mem::is_memory_intrinsic(callee) {
+                let mut int_args = Vec::with_capacity(args.len());
+                for arg in args {
+                    match eval_value_expr_mode(arg, env, tensor_env, mode.clone())? {
+                        Value::Int(n) => int_args.push(n),
+                        other => {
+                            return Err(EvalError::UnsupportedMsg(format!(
+                                "{callee}: expected an i64 argument, got {other:?}"
+                            )));
+                        }
+                    }
+                }
+                return interp_mem::eval_intrinsic(callee, &int_args)
+                    .map(Value::Int)
+                    .map_err(EvalError::UnsupportedMsg);
             }
             stdlib::tensor::dispatch(callee, args, env, tensor_env, mode.clone())
         }
@@ -1372,12 +1683,17 @@ pub(crate) fn eval_value_expr_mode(
         // honored solely by the MLIR codegen path.
         #[cfg(feature = "std-surface")]
         Node::Break { .. } | Node::Continue { .. } => Ok(Value::Int(0)),
+        // Block-expression semantics (mirrors the expression-level `If` arm
+        // below): the block is ONE scope — a `let` inside it is visible to
+        // later statements and the tail expression, and dies at block exit.
+        // The expression position receives an IMMUTABLE env, so the block
+        // runs over a clone (outer-var assigns inside a block EXPRESSION are
+        // not propagated — same contract as every expression-position eval
+        // here; in STATEMENT position a block routes through
+        // `exec_threaded_stmt`'s `Block` arm, which threads them).
         Node::Block { stmts, .. } => {
-            let mut result = Value::Int(0);
-            for stmt in stmts {
-                result = eval_value_expr_mode(stmt, env, tensor_env, mode.clone())?;
-            }
-            Ok(result)
+            let mut block_env = env.clone();
+            exec_block_scoped(stmts, &mut block_env, tensor_env, mode.clone())
         }
         Node::If {
             cond,
@@ -1386,28 +1702,26 @@ pub(crate) fn eval_value_expr_mode(
             ..
         } => {
             let cond_val = eval_value_expr_mode(cond, env, tensor_env, mode.clone())?;
-            match cond_val {
-                Value::Int(0) => {
-                    // False branch
-                    if let Some(else_stmts) = else_branch {
-                        let mut result = Value::Int(0);
-                        for stmt in else_stmts {
-                            result = eval_value_expr_mode(stmt, env, tensor_env, mode.clone())?;
-                        }
-                        Ok(result)
-                    } else {
-                        Ok(Value::Int(0))
-                    }
-                }
-                _ => {
-                    // True branch
-                    let mut result = Value::Int(0);
-                    for stmt in then_branch {
-                        result = eval_value_expr_mode(stmt, env, tensor_env, mode.clone())?;
-                    }
-                    Ok(result)
-                }
-            }
+            let stmts: &[Node] = match cond_val {
+                Value::Int(0) => match else_branch {
+                    Some(else_stmts) => else_stmts.as_slice(),
+                    None => return Ok(Value::Int(0)),
+                },
+                _ => then_branch.as_slice(),
+            };
+            // Block-expression semantics: the taken branch is a BLOCK — a
+            // `let` inside it must be visible to later statements and to the
+            // tail expression (std/json.mind's `let d = __mind_alloc(n);
+            // jv_copy_bytes(..); d`). The expression position receives an
+            // IMMUTABLE env, so the block runs over a clone: local bindings
+            // resolve, the block's value is its last statement's, and the
+            // clone is discarded. (In STATEMENT position `if` routes through
+            // `exec_threaded_stmt`, which threads outer-var assigns; an
+            // outer-var assign buried in an if-EXPRESSION is not propagated —
+            // the same contract as every other expression-position eval
+            // here.)
+            let mut branch_env = env.clone();
+            exec_block_scoped(stmts, &mut branch_env, tensor_env, mode.clone())
         }
         // Import statements are module-level declarations, no runtime value
         Node::Import { .. } => Ok(Value::Int(0)),
@@ -1671,21 +1985,23 @@ pub(crate) fn eval_value_expr_mode(
                 _ => Ok(Value::Int(0)),
             }
         }
-        // Phase 10.6: struct literal preview-eval. Evaluate each field's
-        // value sub-expression and pack them into a Tuple in declared
-        // field order. Full structural eval (returning a typed aggregate
-        // tied to the struct name) lands when AOT codegen needs it.
-        Node::StructLit { fields, .. } => {
+        // Phase 10.6: struct literal eval. Evaluate each field's value
+        // sub-expression IN SOURCE ORDER and pack them, with their names,
+        // into a typed `Value::Struct` — so `v.h` on the result resolves by
+        // field NAME (std/json.mind's `Value { h: … }` handle-wrapper), and
+        // the struct's identity survives through call/return boundaries.
+        Node::StructLit { name, fields, .. } => {
             let mut items = Vec::with_capacity(fields.len());
             for f in fields {
-                items.push(eval_value_expr_mode(
-                    &f.value,
-                    env,
-                    tensor_env,
-                    mode.clone(),
-                )?);
+                items.push((
+                    f.name.clone(),
+                    eval_value_expr_mode(&f.value, env, tensor_env, mode.clone())?,
+                ));
             }
-            Ok(Value::Tuple(items))
+            Ok(Value::Struct {
+                name: name.clone(),
+                fields: items,
+            })
         }
         // Phase 10.6: index access `receiver[index]`. For an array/tuple value
         // (what `[a, b, c]` literals evaluate to) the interpreter returns the
@@ -2154,6 +2470,34 @@ fn eval_method_call(receiver: Value, method: &str, _args: &[Value]) -> Result<Va
 }
 
 fn eval_field_access(receiver: Value, field: &str) -> Result<Value, EvalError> {
+    // Marshalled-string-record class guard (see `guard_str_record_value_op`):
+    // field sugar (`.len` et al.) on a record POINTER is a value-semantics
+    // operation the interpreter does not model — fail loud with the record
+    // contract named, never fall through to a generic error or a silent 0.
+    // The record's real fields are read via pointer semantics:
+    // `__mind_load_i64(rec + 0 / 8 / 16)`.
+    if let Value::Int(n) = &receiver {
+        if interp_mem::is_str_record(*n) {
+            return Err(EvalError::UnsupportedMsg(format!(
+                "field access `.{field}` on a marshalled native string record: \
+                 the record has pointer semantics — read its [addr|len|cap] \
+                 fields via __mind_load_i64(rec + 0/8/16)"
+            )));
+        }
+    }
+    // A struct value resolves its OWN fields by name first (a struct may
+    // legitimately declare a field named `len`); a missing field is a loud
+    // error naming the struct.
+    if let Value::Struct { name, fields } = &receiver {
+        for (fname, fval) in fields {
+            if fname == field {
+                return Ok(fval.clone());
+            }
+        }
+        return Err(EvalError::UnsupportedMsg(format!(
+            "struct `{name}` has no field .{field}"
+        )));
+    }
     match field {
         "len" => match &receiver {
             Value::Tuple(items) => Ok(Value::Int(items.len() as i64)),
@@ -2305,7 +2649,48 @@ fn apply_binary(op: BinOp, left: Value, right: Value, mode: ExecMode) -> Result<
     }
 }
 
+/// CHOSEN NARROWING — the marshalled-string-record operation contract, closed
+/// as a CLASS at the operator dispatch (consulted by BOTH int-op dispatchers,
+/// `apply_int_op` and `apply_int_op_u64`, so every current and future
+/// comparison arm INHERITS it instead of rediscovering the bug one operator
+/// at a time; any new int-op dispatcher must call this guard too).
+///
+/// A `Value::Int` that is a materialized native string record
+/// (`interp_mem::is_str_record`) has POINTER semantics only:
+/// - LEGAL: field addressing (`rec + 8` / `rec + 16`), `__mind_load_*` /
+///   `__mind_store_*` through it, and mixed record-vs-plain comparisons
+///   (null checks like `rec == 0` are pointer semantics) — std/json.mind's
+///   `jv_string_value_from_native` depends on exactly these.
+/// - REJECTED LOUD: the whole VALUE-comparison class (`== != < <= > >=`)
+///   between TWO records — comparing arena offsets would silently report
+///   structurally-equal strings as unequal/misordered, and a silent wrong
+///   answer is the one thing this interpreter must never produce. This is a
+///   chosen narrowing now that the arena can tell string records apart, not
+///   a lost capability: pre-marshalling, `==` on two `Value::Str` was
+///   already `Err(Unsupported)`.
+///
+/// Deterministic: a `BTreeSet` membership test, no ordering iteration.
+// deferred: a content-aware string comparison (read both [addr|len|cap]
+// records, compare byte ranges) could replace this loud error if a string
+// comparison surface ever lands in the language — upgrade HERE, in one place.
+fn guard_str_record_value_op(op: BinOp, left: i64, right: i64) -> Result<(), EvalError> {
+    let is_value_comparison = matches!(
+        op,
+        BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
+    );
+    if is_value_comparison && interp_mem::is_str_record(left) && interp_mem::is_str_record(right) {
+        return Err(EvalError::UnsupportedMsg(format!(
+            "value comparison (`{op:?}`) of two marshalled native string records: \
+             a marshalled `string` has pointer semantics in the interpreter, and \
+             comparing arena offsets would be silently wrong for structurally \
+             equal strings — use byte-wise std string equality (`string_eq`)"
+        )));
+    }
+    Ok(())
+}
+
 fn apply_int_op(op: BinOp, left: i64, right: i64) -> Result<i64, EvalError> {
+    guard_str_record_value_op(op, left, right)?;
     Ok(match op {
         // MIND integer overflow = defined two's-complement wraparound (== the MLIR
         // artifact's `arith.addi`, no nsw/nuw); use explicit wrapping so debug and
@@ -2344,6 +2729,10 @@ fn apply_int_op(op: BinOp, left: i64, right: i64) -> Result<i64, EvalError> {
 /// never inspect the operand as an ordered value), so they defer to
 /// `apply_int_op` for exact parity.
 fn apply_int_op_u64(op: BinOp, left: i64, right: i64) -> Result<i64, EvalError> {
+    // Marshalled-string-record class guard — see `guard_str_record_value_op`.
+    // The unsigned dispatcher handles `< <= > >=` itself (never reaching
+    // `apply_int_op`), so it must consult the guard independently.
+    guard_str_record_value_op(op, left, right)?;
     let a = left as u64;
     let b = right as u64;
     Ok(match op {
@@ -3302,6 +3691,13 @@ use std::cell::RefCell;
 #[derive(Clone)]
 struct UserFn {
     params: Vec<String>,
+    /// Per-param: is the DECLARED type the native `string`? A `Value::Str`
+    /// argument bound to such a param is marshalled into the interp_mem arena
+    /// as a native `[addr|len|cap]` string record (the layout compiled code
+    /// passes — std/string.mind), so byte-level std code
+    /// (`jv_string_value_from_native` et al.) reads real memory, not a
+    /// Rust-side `Str` it cannot address.
+    string_params: Vec<bool>,
     body: Vec<Node>,
 }
 
@@ -3329,6 +3725,10 @@ fn fn_table_install(m: &Module) -> HashMap<String, UserFn> {
                 name.clone(),
                 UserFn {
                     params: params.iter().map(|p| p.name.clone()).collect(),
+                    string_params: params
+                        .iter()
+                        .map(|p| matches!(&p.ty, TypeAnn::Named(n) if n == "string"))
+                        .collect(),
                     body: body.clone(),
                 },
             );
@@ -3350,6 +3750,50 @@ fn fn_table_restore(prev: HashMap<String, UserFn>) {
 /// Look up a user-defined function by callee name.
 fn fn_table_lookup(name: &str) -> Option<UserFn> {
     FN_TABLE.with(|t| t.borrow().get(name).cloned())
+}
+
+// Module-level `const NAME: T = expr` bindings, mirrored from `FN_TABLE`:
+// installed once per module eval, consulted by `eval_value_expr_mode`'s Ident
+// arm as a fallback AFTER the local env (so a fn param or body `let` of the
+// same name still shadows the const) and BEFORE the enum-unit-ctor fallback.
+// This is what puts module consts (e.g. std/json.mind's `MAX_DEPTH`) in scope
+// inside CALLED fn bodies, whose fresh call envs never see module bindings.
+thread_local! {
+    static CONST_TABLE: RefCell<HashMap<String, Value>> = RefCell::new(HashMap::new());
+}
+
+/// Evaluate and register every top-level `const` in SOURCE ORDER — each
+/// initializer is const-evaluated against the consts registered before it
+/// (plus the already-installed fn table, so a const may call a
+/// const-evaluable fn). Deterministic: same items, same order, same values.
+/// A non-const-evaluable initializer is a LOUD error — never a silent 0.
+/// Returns the previous table for symmetry with `fn_table_install` (the
+/// install site discards it, same known deferral as `_fn_prev`).
+fn const_table_install(m: &Module, mode: ExecMode) -> Result<HashMap<String, Value>, EvalError> {
+    let prev = CONST_TABLE.with(|t| std::mem::take(&mut *t.borrow_mut()));
+    let empty_env: HashMap<String, Value> = HashMap::new();
+    let empty_tensors: HashMap<String, TensorEnvEntry> = HashMap::new();
+    for item in &m.items {
+        if let Node::Const { name, value, .. } = item {
+            // Earlier consts resolve through the Ident arm's CONST_TABLE
+            // fallback (the table is populated incrementally, in order).
+            let v = eval_value_expr_mode(value, &empty_env, &empty_tensors, mode.clone()).map_err(
+                |e| {
+                    EvalError::UnsupportedMsg(format!(
+                        "const `{name}` initializer is not const-evaluable \
+                         in the interpreter: {e}"
+                    ))
+                },
+            )?;
+            CONST_TABLE.with(|t| t.borrow_mut().insert(name.clone(), v));
+        }
+    }
+    Ok(prev)
+}
+
+/// Look up a module-level `const` by name (Ident-arm fallback).
+fn const_table_lookup(name: &str) -> Option<Value> {
+    CONST_TABLE.with(|t| t.borrow().get(name).cloned())
 }
 
 // issue #99: names of top-level bindings declared `u64`. The const-fold

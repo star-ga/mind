@@ -121,6 +121,14 @@ pub enum Value {
         variant: String,
         payload: Vec<Value>,
     },
+    /// Plain-struct value (interpreter): the struct's name plus its fields as
+    /// `(field_name, value)` pairs in literal order. Field access resolves by
+    /// NAME (`eval_field_access`), so declared-vs-literal field order never
+    /// matters. Deterministic: construction evaluates fields in source order.
+    Struct {
+        name: String,
+        fields: Vec<(String, Value)>,
+    },
 }
 
 impl Value {
@@ -209,6 +217,21 @@ pub fn format_value_human(v: &Value) -> String {
                 out.push(')');
                 out
             }
+        }
+        Value::Struct { name, fields } => {
+            let mut out = String::new();
+            out.push_str(name);
+            out.push_str(" { ");
+            for (i, (fname, fval)) in fields.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(fname);
+                out.push_str(": ");
+                out.push_str(&format_value_human(fval));
+            }
+            out.push_str(" }");
+            out
         }
     }
 }
