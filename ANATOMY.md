@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3340 | **Est. tokens:** ~7,816,846
-**Generated:** 2026-08-12 06:49 UTC
+**Files:** 3342 | **Est. tokens:** ~7,820,881
+**Generated:** 2026-08-12 06:52 UTC
 
 ## Token Budget Guide
 
@@ -45,6 +45,7 @@
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
 | `docs/mindcraft/` | 3 | ~7,086 |
+| `docs/provenance/` | 2 | ~4,035 |
 | `docs/rfcs/` | 32 | ~147,264 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 28 | ~49,880 |
@@ -698,6 +699,12 @@
 - `ops.md` (~604 tok, large) — Core v1 operator coverage
 - `optimization-frontier.md` (~11347 tok, huge) — MIND Optimization Frontier
 - `performance.md` (~880 tok, large) — Performance Guide
+### `docs/provenance/`
+
+- `2026-08-11-kimi-k3-in-c-commit-snapshot.json` (~1265 tok, large) — Keys: captured_at_local, purpose, external_repository, mind_prior_art, current_assessment
+- `2026-08-11-kimi-k3-in-c-commit-snapshot.md` (~2770 tok, huge) — Forensic provenance snapshot — `FareedKhan-dev/kimi-k3-in-c` vs MIND
+### `docs/`
+
 - `README.md` (~162 tok, small) — MIND Documentation
 - `reap-pruning.md` (~901 tok, large) — REAP Expert Pruning
 ### `docs/rfcs/`

@@ -1651,6 +1651,30 @@ workload shipped in spite of all of them, so none is a blocker — each is a sha
 forced a workaround, and each workaround is recorded so the fix can be validated against a
 real consumer rather than a synthetic test.
 
+### Priority order
+
+If these are taken in sequence, this is the order that unblocks the most consumer code per
+unit of compiler work:
+
+1. **17.4 — `const` array executable lowering.** Highest value by a wide margin. It is the
+   only item whose absence forces *generated source*: without it an N-row integer table
+   becomes N-branch `if` chains, which is roughly 1100 lines of noise for a 90-row table
+   and a measurable `arch-mind redundancy_q16` cost. The IR paths already work, so the
+   remaining work is confined to executable lowering.
+2. **17.1 — cross-module `f64` signatures.** Unblocks module structure for every numerical
+   program; today they must all be single-file.
+3. **17.2 — `f64` parameter-init inference.** Small fix, removes a workaround that is
+   currently load-bearing, and closes a silent-miscompile class.
+4. **17.5 — scalar `f64` `sqrt`.** Small and self-contained.
+5. **17.6 — `std/detmath`.** A working strict-path `exp`/`log` pair already exists in a
+   consumer and can be upstreamed rather than written fresh.
+6. **17.3, 17.7, 17.8** — larger or lower-frequency.
+
+Each item states its own acceptance gate. Prefer gating against a real numerical consumer
+over a synthetic test: 17.4 in particular is currently covered by an IR-shape assertion
+(`tests/std_surface_array_literals.rs`) that passes while the construct cannot be built,
+which is exactly how the gap survived.
+
 ### 17.1 — `f64` cannot cross a module boundary
 
 An imported function with an `f64` parameter is typed `(i64) -> i64` at the call site:
