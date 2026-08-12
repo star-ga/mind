@@ -1689,12 +1689,32 @@ cross-substrate byte-identity, which check sameness, not correctness. A **value-
 pinned) is a first-class gate here, alongside byte-identity — it is what caught the `!=`
 miscompile.
 
-**Open follow-ups (tracked):** activating 17.4/17.5 on the `mindc run` path (today they are
-live on `--emit-shared` but `run` routes through a different lowering entry); a
-`cross-module-imports`-feature regression that rejects a plain-sibling `use` the default path
-accepts; and making the JIT/runtime fallback exit non-zero when native compilation was expected
-but produced no output (a silent green is worse than a wrong answer). 17.1, 17.2, 17.7, 17.8
-remain.
+**Landed (2026-08-12), all proven on the actual `mindc run` consumer path (clean rebuild +
+run-path repro + expected exit semantics — the standing RH-consumer verification gate):**
+17.1 cross-module `f64` signatures, 17.2 `f64` param-init inference, 17.7 emit-evidence over a
+resolved project + `evidence_chain.parent`, and 17.8 application-namespace MAP keys (plus the
+`lib`-reserved diagnostic, `--emit-ir` `f64` rendering, and `mindc test` exit-non-zero). Gates:
+keystone 7/7, `cross_substrate_identity` 24/24 (no reference-hash drift), the self-host cascade
+(mic3_flip / oracle-parity / self_host_loop / native-ELF) re-frozen for the `std/io.mind`
+addition, the detmath value-oracle, and two adversarial reviews (compiler correctness +
+evidence-chain security, both PASS_WITH_NOTES — the security notes fixed fail-closed).
+
+**Correction to the prior status.** 17.4/17.5 were reported "live on `--emit-shared` but not on
+the `mindc run` path." That was a measurement artifact: a `… | tail; echo $?` shell pipe captured
+`tail`'s exit code, not `mindc`'s. `mindc run` emits its object through the SAME MLIR pipeline as
+`--emit-shared`, so 17.4 (`const` array) and 17.5 (`sqrt`) are correct on the run path (a 90-row
+`const` + `f64 sqrt` project → correct exit). The `cross-module-imports` "plain-sibling `use`"
+report was the 17.1 hard failure, now fixed. The JIT/runtime fail-loud landed.
+
+**Honest follow-ups (tracked, none RH-blocking):** the self-host compiler mirror for cross-module
+`f64` in `main.mind` (keystone stays green without it — the self-host compiler is single-unit
+all-`i64` and never exercises cross-module `f64`); the caller build cache key does not yet include
+imported callee signatures (a callee-signature change with byte-identical caller source is a stale
+hit — clean builds unaffected); calling an `std` function via `use std.io::…` does not link into a
+`mindc run` binary (pre-existing std-linking limitation — inline-copy or `--emit-shared`+FFI work);
+`--emit-ir` still renders an `f64` function *body* as a top-level `const.i64 0` stub (display-only;
+the compiled code is correct); and `examples/detmath_kat` `main()` returns 1 at HEAD (a pre-existing
+KAT vector, independent of this batch — old and new binary identical).
 
 ### Priority order
 

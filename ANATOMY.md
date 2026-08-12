@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3347 | **Est. tokens:** ~7,831,655
-**Generated:** 2026-08-12 09:52 UTC
+**Files:** 3347 | **Est. tokens:** ~7,834,361
+**Generated:** 2026-08-12 16:48 UTC
 
 ## Token Budget Guide
 
@@ -395,10 +395,10 @@
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~21,737 |
-| `src/ir/` | 5 | ~47,957 |
-| `src/ir/compact/` | 3 | ~15,271 |
+| `src/ir/` | 5 | ~48,700 |
+| `src/ir/compact/` | 3 | ~15,282 |
 | `src/ir/compact/v2/` | 8 | ~38,404 |
-| `src/ir/compact/v3/` | 6 | ~49,206 |
+| `src/ir/compact/v3/` | 6 | ~49,216 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,880 |
 | `src/mlir/` | 3 | ~5,905 |
@@ -407,7 +407,7 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 2 | ~20,355 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 2 | ~8,218 |
+| `src/project/` | 2 | ~8,922 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -415,7 +415,7 @@
 | `src/type_checker/` | 1 | ~15,151 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 42 | ~202,332 |
+| `std/` | 42 | ~203,570 |
 | `tests/` | 316 | ~538,839 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
@@ -887,13 +887,13 @@
 - `option_netverify.py` (~2321 tok, huge) — # Canonical independent net-verify harness for SINGLE-PAYLOAD ENUMS (the
 - `oracle_parity_lint.py` (~4204 tok, huge)
 - `param_types_smoke.py` (~1273 tok, large)
-- `_ref_add.note` (~16 tok, tiny) — 6fa59a74687e6bac38c983655d4d93ab1873299f130f68cbe481cf92041f6610
-- `_ref_if_ret.note` (~16 tok, tiny) — 3fdc70390e9e12d8030552d11b2194078e8579fbcfac19b14d1beed77174cb07
-- `_ref_main.note` (~16 tok, tiny) — 1170127da938fa27845514767e3fc654590c74851d8718320c024090443f9486
+- `_ref_add.note` (~16 tok, tiny) — c110f9cc4b921a2fe151b445c026cac1c3f93ecd3ae44c8ee9c1c26ea0308eda
+- `_ref_if_ret.note` (~16 tok, tiny) — 9816b99150ee201aba75fa1d66e22c09fcb0735f9b6e7b14167c2be48d223d92
+- `_ref_main.note` (~16 tok, tiny) — e59bcda312bfed7c9aa080373f5aa9c3edd245941a7e4aa4a48ee711a02d5b01
 - `ref_netverify.py` (~1473 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
-- `_ref_recursion.note` (~16 tok, tiny) — 6d125a946243b0550700d9aa6bc2058b51a3b8bf6e536a8b0b3f545d79b7346f
-- `_ref_struct_field.note` (~16 tok, tiny) — 2f7f2ea32ee47138e1b0162bd51f418b4e5005b4569054f5f3c392ebd2258d96
-- `_ref_value_if.note` (~16 tok, tiny) — ae565a5154b76ee1f44a32c16db2e9a8387f2f60c5fca92bba2dc9bb70afb599
+- `_ref_recursion.note` (~16 tok, tiny) — 97f3077b0e0c59b289a1e9a7c33ce969d61c7589016d0663b3f973acbf17bac0
+- `_ref_struct_field.note` (~16 tok, tiny) — 3e3ca459e5c5286178d6b0e0ba975300fe2d2b92f9f733facd57e12051171136
+- `_ref_value_if.note` (~16 tok, tiny) — 7d89aae4ba6680f7fe2765ece54cf8d0fd8340bbfbdc2db23614e6688921efb2
 - `self_host_andor_precedence_smoke.py` (~1680 tok, huge) — Front-end PARITY battery for `&&` / `||` precedence + short-circuit.
 - `self_host_andor_smoke.py` (~2142 tok, huge) — Permanent battery for the self-host `&&` / `||` short-circuit operators.
 - `self_host_arena_growth_smoke.py` (~1382 tok, large)
@@ -4002,7 +4002,7 @@
 ### `src/ir/compact/`
 
 - `emit.rs` (~4693 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~2454 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~2465 tok, huge) — Copyright 2025 STARGA Inc.
 - `parse.rs` (~8124 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/v2/`
 
@@ -4020,14 +4020,14 @@
 - `ed25519.rs` (~6051 tok, huge) — Copyright 2025 STARGA Inc.
 - `emit.rs` (~11139 tok, huge) — Copyright 2025 STARGA Inc.
 - `mldsa.rs` (~1510 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~13865 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~13875 tok, huge) — Copyright 2025 STARGA Inc.
 - `parse.rs` (~11532 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
 - `evidence.rs` (~5759 tok, huge) — Copyright 2025 STARGA Inc.
 - `fp_mode.rs` (~13657 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
 - `mod.rs` (~12311 tok, huge) — Copyright 2025 STARGA Inc.
-- `print.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
+- `print.rs` (~4283 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~12690 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
@@ -4084,7 +4084,7 @@
 - `pipeline.rs` (~5551 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `module_table.rs` (~4562 tok, huge) — Copyright 2025 STARGA Inc.
+- `module_table.rs` (~5266 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~3656 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
@@ -4138,7 +4138,7 @@
 - `http2_frame.mind` (~4191 tok, huge) — std/http2_frame.mind — HTTP/2 framing layer (RFC 9113 §3.4, §4.1, §6) in
 - `http.mind` (~6682 tok, huge) — std/http.mind — HTTP/1.1 client over std.net (task #XXX).
 - `io_canon.mind` (~2624 tok, huge) — std.io_canon — canonical completion ordering for deterministic I/O.
-- `io.mind` (~1688 tok, huge) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
+- `io.mind` (~2926 tok, huge) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
 - `iouring.mind` (~18767 tok, huge) — std.iouring — minimal io_uring binding (Linux). The physical-I/O reap source
 - `json.mind` (~15391 tok, huge) — std/json.mind -- RFC 8259 / ECMA-404 subset parser (task #269, cargo-retirement track).
 - `keccak.mind` (~3926 tok, huge) — std/keccak.mind — Keccak / SHA-3 + SHAKE (FIPS 202) in pure MIND.

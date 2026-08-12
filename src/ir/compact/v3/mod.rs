@@ -125,8 +125,8 @@ pub use emit::emit_mic3;
 pub use evidence::{
     CollapseVerifyStatus, SignatureStatus, SigningKey, VerifiedScheme, emit_mic3_with_evidence,
     emit_mic3_with_evidence_and_receipts, emit_mic3_with_signed_evidence,
-    emit_mic3_with_signed_evidence_scheme, mic3_collapse_verify, mic3_evidence_report,
-    mic3_signature_status,
+    emit_mic3_with_signed_evidence_scheme, mic3_app_metadata, mic3_collapse_verify,
+    mic3_evidence_report, mic3_signature_status, validate_app_entries,
 };
 pub use parse::{MAX_MIC3_INPUT, Mic3Error, parse_mic3};
 // Re-export the evidence vocabulary at the v3 level for convenience.

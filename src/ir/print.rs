@@ -34,6 +34,17 @@ fn format_instr(instr: &Instr, out: &mut String) {
         Instr::ConstI64(id, value) => {
             writeln!(out, "  {} = const.i64 {}", value_name(*id), value).unwrap();
         }
+        // Phase 17.8: render f64 constants at the IR layer. Previously
+        // `Instr::ConstF64` fell through the `_ => {}` catch-all and was elided
+        // (float bodies were undebuggable at `--emit-ir` and the attestation
+        // looked weaker than it is — the mic@3 body DOES carry the float bits, so
+        // this is a pretty-printer gap, not a serialization gap). Emit the exact
+        // `f64` (Rust `{}` for `f64` round-trips to the shortest exact decimal,
+        // so `1.0` stays `1` — force a decimal point so it never reads as an int).
+        Instr::ConstF64(id, value) => {
+            let rendered = format_f64_literal(*value);
+            writeln!(out, "  {} = const.f64 {}", value_name(*id), rendered).unwrap();
+        }
         Instr::ConstTensor(id, dtype, shape, fill) => {
             writeln!(
                 out,
@@ -489,6 +500,30 @@ fn format_dtype(dtype: &DType) -> String {
     format!("{:?}", dtype)
 }
 
+/// Render an `f64` IR constant so it is unambiguously a float at the `--emit-ir`
+/// layer (Phase 17.8). Rust's `{}` for `f64` prints the shortest exact decimal
+/// (`1.0` -> `"1"`, `3.14` -> `"3.14"`); a bare `1` would read as an integer, so
+/// non-finite values are named and any integer-valued float gets a `.0` suffix.
+/// The value round-trips exactly — this is presentation only, never the anchor.
+fn format_f64_literal(value: f64) -> String {
+    if value.is_nan() {
+        "nan".to_string()
+    } else if value.is_infinite() {
+        if value.is_sign_negative() {
+            "-inf".to_string()
+        } else {
+            "inf".to_string()
+        }
+    } else {
+        let s = format!("{value}");
+        if s.contains('.') || s.contains('e') || s.contains('E') {
+            s
+        } else {
+            format!("{s}.0")
+        }
+    }
+}
+
 fn format_shape(shape: &[ShapeDim]) -> Vec<String> {
     shape
         .iter()
@@ -501,4 +536,41 @@ fn format_shape(shape: &[ShapeDim]) -> Vec<String> {
 
 fn format_padding(padding: ConvPadding) -> &'static str {
     padding.as_str()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::IRModule;
+
+    // Phase 17.8: an `f64` constant at the IR layer renders as `const.f64 <v>`,
+    // never dropped by the catch-all (previously elided) nor mistaken for an int.
+    #[test]
+    fn const_f64_renders_as_float() {
+        let module = IRModule {
+            instrs: vec![
+                Instr::ConstF64(ValueId(0), 3.5),
+                Instr::ConstF64(ValueId(1), 1.0),
+                Instr::ConstI64(ValueId(2), 7),
+            ],
+            next_id: 3,
+            ..Default::default()
+        };
+        let text = format_ir_module(&module);
+        assert!(text.contains("%0 = const.f64 3.5"), "got:\n{text}");
+        // Integer-valued f64 keeps a decimal point so it never reads as an int.
+        assert!(text.contains("%1 = const.f64 1.0"), "got:\n{text}");
+        // i64 constants are unaffected.
+        assert!(text.contains("%2 = const.i64 7"), "got:\n{text}");
+    }
+
+    #[test]
+    fn f64_literal_formatting() {
+        assert_eq!(format_f64_literal(1.0), "1.0");
+        assert_eq!(format_f64_literal(3.5), "3.5");
+        assert_eq!(format_f64_literal(-2.0), "-2.0");
+        assert_eq!(format_f64_literal(f64::INFINITY), "inf");
+        assert_eq!(format_f64_literal(f64::NEG_INFINITY), "-inf");
+        assert_eq!(format_f64_literal(f64::NAN), "nan");
+    }
 }

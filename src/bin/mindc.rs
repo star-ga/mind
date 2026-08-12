@@ -437,6 +437,25 @@ struct CompileArgs {
     /// to verify the artifact offline.
     #[arg(long, value_name = "PATH")]
     emit_evidence: Option<String>,
+    /// Chain this artifact to a PARENT artifact's evidence (Phase 17.7).
+    ///
+    /// The value is either a 64-hex-char `trace_hash` or a path to a parent mic@3
+    /// evidence artifact whose `trace_hash` is read and recorded as this build's
+    /// `evidence_chain.parent`. Lets provenance form a chain (child references
+    /// parent). Only meaningful together with `--emit-evidence`. The parent link
+    /// lives in the MAP epilogue (outside the `trace_hash` preimage), so it never
+    /// perturbs this artifact's own anchor / byte-identity.
+    #[arg(long, value_name = "HASH_OR_PATH")]
+    evidence_parent: Option<String>,
+    /// Attach an application-namespace evidence attribute (Phase 17.8), repeatable.
+    ///
+    /// `KEY=VALUE` where `KEY` is a dotted, non-reserved namespace
+    /// (`org.example.build_id=42`). Reserved `evidence_chain.*` / `signature.*`
+    /// keys are rejected. Attributes are byte-additive: none supplied ⇒ the
+    /// artifact is byte-identical to the closed-key encoder. Only meaningful with
+    /// `--emit-evidence`.
+    #[arg(long = "evidence-attr", value_name = "KEY=VALUE")]
+    evidence_attr: Vec<String>,
     /// Compile a NON-DETERMINISTIC program (one that calls a PRNG / wall-clock /
     /// stdin builtin such as `random()` / `now()`). MIND programs are
     /// deterministic by default — such a program is REJECTED fail-loud unless this
@@ -710,6 +729,17 @@ fn main() {
         ..Default::default()
     };
 
+    // Phase 17.7: `--emit-evidence` must attest a RESOLVED multi-module project,
+    // not just a lone translation unit. The flat compile path is single-TU by
+    // default (only `mindc build` seeds the cross-module table), so a program that
+    // `use`s a sibling module fails to resolve here. When emitting evidence, seed
+    // the whole-project module table from the input file's sibling `.mind` sources
+    // first, so `use crate.util` resolves and the attested `trace_hash` covers the
+    // resolved program. Best-effort + cleared after compile; a true single file
+    // (no siblings) seeds nothing and is byte-identical to the prior path.
+    let seeded_project_table =
+        cli.compile.emit_evidence.is_some() && seed_project_table_for_evidence(&input);
+
     let products = match compile_source_with_name(&source, Some(&input), &opts) {
         Ok(products) => products,
         Err(err) => {
@@ -718,6 +748,10 @@ fn main() {
             process::exit(1);
         }
     };
+    if seeded_project_table {
+        // Restore the empty table so nothing downstream sees a stale project scope.
+        libmind::type_checker::cm_set_project_table(None);
+    }
 
     if cli.compile.verify_only {
         return;
@@ -949,6 +983,19 @@ fn run_mindc_test(
 
     match run_tests(&opts) {
         Ok(summary) => {
+            // Phase 17.8: fail-loud on a ZERO-test run. `mindc test` on a suite
+            // with no `#[test]` previously printed "running 0 tests / ok" and
+            // exited 0, so any CI gate built on the return code was silently
+            // green (a no-false-green violation). A discovery that finds nothing
+            // to run is a failure, not a pass — exit non-zero. `--list` is
+            // exempt: it deliberately enumerates without running.
+            if !list && summary.passed == 0 && summary.failed == 0 {
+                eprintln!(
+                    "error[test]: no tests found (0 tests ran); \
+                     nothing was verified — treating as failure"
+                );
+                process::exit(1);
+            }
             if summary.all_passed() {
                 process::exit(0);
             } else {
@@ -1531,17 +1578,50 @@ fn emit_evidence_if_requested(cli: &CompileArgs, products: &libmind::pipeline::C
         None => "",
     };
 
+    // Parent linkage (Phase 17.7): resolve `--evidence-parent` to the parent's
+    // 32-byte trace_hash (either a literal hex hash or a parent artifact path),
+    // recorded as `evidence_chain.parent` so chained artifacts reference their
+    // parent. The link sits in the epilogue, outside the trace_hash preimage, so
+    // it never perturbs THIS artifact's anchor.
+    let parent: Option<[u8; 32]> = cli
+        .evidence_parent
+        .as_deref()
+        .map(resolve_evidence_parent)
+        .transpose()
+        .unwrap_or_else(|()| {
+            // resolve_evidence_parent already emitted a specific diagnostic.
+            process::exit(1)
+        });
+
+    // Application-namespace attributes (Phase 17.8): parse `KEY=VALUE` pairs and
+    // validate them fail-closed (non-reserved, dotted, no duplicates) before
+    // emit. Empty ⇒ byte-identical to the closed-key encoder.
+    let app_entries: Vec<(String, String)> = cli
+        .evidence_attr
+        .iter()
+        .map(|kv| parse_evidence_attr(kv))
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap_or_else(|msg| {
+            eprintln!("error[emit-evidence]: {msg}");
+            process::exit(1);
+        });
+    if let Err(msg) = libmind::ir::compact::validate_app_entries(&app_entries) {
+        eprintln!("error[emit-evidence]: {msg}");
+        process::exit(1);
+    }
+
     // Emit body + evidence MAP, carrying the Salov loop-collapse receipts (S4)
     // the pipeline produced (empty for a source with no constant-folding
     // collapse — then byte-identical to the pre-S4 encoder, trace_hash unchanged).
     let bytes = match libmind::ir::compact::emit_mic3_with_evidence_and_receipts(
         &products.ir,
         substrate,
-        None,
+        parent,
         determinism,
         toolchain,
         signing_key.as_ref(),
         &products.collapse_receipts,
+        &app_entries,
     ) {
         Ok(b) => b,
         Err(msg) => {
@@ -1641,6 +1721,119 @@ fn parse_ed25519_seed(s: &str) -> Result<[u8; 32], String> {
             .map_err(|_| "seed must be lowercase/uppercase hex".to_string())?;
     }
     Ok(out)
+}
+
+/// Resolve `--evidence-parent` (Phase 17.7) to a parent artifact's 32-byte
+/// `trace_hash`. The value is either a 64-hex-char hash used verbatim, or a path
+/// to a parent mic@3 evidence artifact whose `trace_hash` is read out via the
+/// verifier core. Fail-closed: on any error a specific diagnostic is printed and
+/// `Err(())` is returned (the caller exits non-zero) — a build must never silently
+/// drop a requested parent link.
+fn resolve_evidence_parent(value: &str) -> Result<[u8; 32], ()> {
+    // A bare 64-hex-char string is a literal trace_hash.
+    if value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return parse_ed25519_seed(value).map_err(|msg| {
+            eprintln!("error[emit-evidence]: --evidence-parent hex is invalid: {msg}");
+        });
+    }
+    // Otherwise treat it as a path to a parent evidence artifact. The parent is
+    // untrusted input; cap it at the 10 MiB mic@3 ceiling BEFORE slurping it into
+    // memory (a FIFO / multi-GB file would otherwise balloon before the parser's
+    // own cap rejects it).
+    if let Ok(meta) = fs::metadata(value) {
+        const MAX_PARENT_ARTIFACT: u64 = 10 * 1024 * 1024;
+        if meta.len() > MAX_PARENT_ARTIFACT {
+            eprintln!(
+                "error[emit-evidence]: --evidence-parent `{value}` is {} bytes, over the \
+                 {MAX_PARENT_ARTIFACT}-byte mic@3 cap",
+                meta.len()
+            );
+            return Err(());
+        }
+    }
+    let bytes = fs::read(value).map_err(|err| {
+        eprintln!(
+            "error[emit-evidence]: --evidence-parent `{value}` is neither a 64-hex-char \
+             trace_hash nor a readable artifact: {err}"
+        );
+    })?;
+    match libmind::ir::compact::mic3_evidence_report(&bytes) {
+        Ok(report) if report.trace_hash_valid => Ok(report.trace_hash),
+        Ok(_) => {
+            eprintln!(
+                "error[emit-evidence]: --evidence-parent `{value}` is body-tampered — its \
+                 stored trace_hash does not match its canonical mic@3 body; refusing to \
+                 chain to a corrupt parent"
+            );
+            Err(())
+        }
+        Err(err) => {
+            eprintln!(
+                "error[emit-evidence]: --evidence-parent `{value}` carries no readable \
+                 evidence chain to link to ({err:?})"
+            );
+            Err(())
+        }
+    }
+}
+
+/// Seed the whole-project cross-module table (Phase 17.7) from the sibling
+/// `.mind` files next to `input`, so a `--emit-evidence` compile of a project
+/// entry resolves `use crate.<module>` references the same way `mindc build`
+/// does. Best-effort: unparseable siblings are skipped (they simply do not
+/// contribute exports). Returns `true` when a table WAS installed (there is at
+/// least one sibling module beyond the entry), so the caller clears it after the
+/// compile. A lone file with no siblings seeds nothing and returns `false`,
+/// leaving the single-TU path byte-identical.
+fn seed_project_table_for_evidence(input: &str) -> bool {
+    use std::path::Path;
+    let input_path = Path::new(input);
+    let dir = match input_path.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d,
+        _ => Path::new("."),
+    };
+    let mut parsed: Vec<(String, libmind::ast::Module)> =
+        libmind::project::stdlib::parsed_stdlib_modules();
+    let mut sibling_count = 0usize;
+    let entry_name = input_path.file_name();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        let mut paths: Vec<std::path::PathBuf> = rd.flatten().map(|e| e.path()).collect();
+        // Deterministic order so the seeded table is build-independent.
+        paths.sort();
+        for p in paths {
+            if p.extension().map(|x| x == "mind").unwrap_or(false) {
+                if let Ok(text) = std::fs::read_to_string(&p) {
+                    if let Ok(m) = libmind::parser::parse(&text) {
+                        if p.file_name() != entry_name {
+                            sibling_count += 1;
+                        }
+                        let key = libmind::project::module_table::module_path_of(&p, dir);
+                        parsed.push((key, m));
+                    }
+                }
+            }
+        }
+    }
+    if sibling_count == 0 {
+        return false;
+    }
+    let refs: Vec<(String, &libmind::ast::Module)> =
+        parsed.iter().map(|(k, m)| (k.clone(), m)).collect();
+    let table = libmind::project::module_table::build_module_table(&refs);
+    libmind::type_checker::cm_set_project_table(Some(table));
+    true
+}
+
+/// Parse one `--evidence-attr KEY=VALUE` (Phase 17.8) into a key/value pair. The
+/// key namespace is validated separately by `validate_app_entries`; here we only
+/// require a single `=` separator and a non-empty key.
+fn parse_evidence_attr(kv: &str) -> Result<(String, String), String> {
+    match kv.split_once('=') {
+        Some((k, v)) if !k.is_empty() => Ok((k.to_string(), v.to_string())),
+        _ => Err(format!(
+            "--evidence-attr expects KEY=VALUE with a non-empty key, got `{kv}`"
+        )),
+    }
 }
 
 /// Lowercase hex-encode a byte slice (no `hex` crate dependency).

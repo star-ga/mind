@@ -3859,6 +3859,33 @@ pub fn cm_imported_fn_param_types(name: &str) -> Option<Vec<crate::ast::TypeAnn>
     cm_lookup_fn(name).map(|f| f.param_types)
 }
 
+/// RFC 0012 §5.1 — every imported `pub fn`'s declared (param types, return
+/// type) across the active whole-project module table. The AST→IR lowering
+/// registers these into `IRModule::fn_signatures` (for names it does not
+/// define locally) so a cross-module `func.call` emits the callee's DECLARED
+/// scalar ABI — the fix for an f64-returning imported fn defaulting to the
+/// legacy `(i64) -> i64` call shape. Returns an empty `Vec` on the single-file
+/// / default-feature path (table is `None`), keeping that path byte-identical.
+#[cfg(feature = "cross-module-imports")]
+pub fn cm_all_imported_fn_signatures() -> Vec<(
+    String,
+    Vec<crate::ast::TypeAnn>,
+    Option<crate::ast::TypeAnn>,
+)> {
+    CM_TABLE.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .map(|table| {
+                table
+                    .all_exported_fns()
+                    .into_iter()
+                    .map(|f| (f.name.clone(), f.param_types.clone(), f.ret_type.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+}
+
 /// True iff ANY module in the active project table exports `name`. Unlike
 /// `cm_lookup_fn` (which resolves only typed `fn` signatures), this answers the
 /// bare resolvability question for EVERY exported symbol kind — `fn`, `const`,

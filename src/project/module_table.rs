@@ -150,6 +150,41 @@ impl ModuleTable {
         }
         None
     }
+
+    /// RFC 0012 §5.1 — every imported `pub fn` signature across the whole
+    /// project, in deterministic (sorted-path, then declaration) order. The
+    /// AST→IR lowering registers these into `IRModule::fn_signatures` so a
+    /// cross-module `func.call` is typed against the callee's DECLARED param /
+    /// return ABI (i64/i32/f32/f64/bool) instead of the legacy all-i64 default
+    /// — the default was a silent-miscompile-or-loud-mlir-error for any
+    /// non-i64-signatured imported callee (e.g. an f64 `scale`). Empty on the
+    /// single-file / default-feature path (no project table), so that path is
+    /// byte-identical.
+    pub fn all_exported_fns(&self) -> Vec<&ExportedFn> {
+        let mut keys: Vec<&String> = self.modules.keys().collect();
+        keys.sort();
+        let mut out = Vec::new();
+        for key in keys {
+            if let Some(m) = self.modules.get(key) {
+                out.extend(m.exported_fns.iter());
+            }
+        }
+        out
+    }
+}
+
+/// Module-file stems that name the CRATE ROOT rather than a submodule.
+/// A file `main.mind` / `lib.mind` / `mod.mind` collapses to its parent path
+/// (`src/main.mind` -> `crate`), so it can NOT be imported under its own stem
+/// (`use lib;` will not resolve to a `lib` module — the file is `crate`, not
+/// `crate.lib`). This is the single source of truth for that reserved set.
+pub const RESERVED_ROOT_STEMS: [&str; 3] = ["main", "lib", "mod"];
+
+/// `true` when `stem` is a reserved crate-root module name (see
+/// [`RESERVED_ROOT_STEMS`]). Callers use this to diagnose a file whose name
+/// collapses to the crate root instead of resolving as a named module.
+pub fn is_reserved_root_stem(stem: &str) -> bool {
+    RESERVED_ROOT_STEMS.contains(&stem)
 }
 
 /// Derive a dotted module path from a source file path relative to the
@@ -164,10 +199,7 @@ pub fn module_path_of(file: &Path, src_root: &Path) -> String {
         .filter(|s| !s.is_empty())
         .collect();
     // `main` / `lib` / `mod` are the crate root, not a named submodule.
-    if matches!(
-        parts.last().map(String::as_str),
-        Some("main" | "lib" | "mod")
-    ) {
+    if matches!(parts.last().map(String::as_str), Some(s) if is_reserved_root_stem(s)) {
         parts.pop();
     }
     if parts.is_empty() {
@@ -344,6 +376,30 @@ mod tests {
             module_path_of(&PathBuf::from("/p/src/util.mind"), &root),
             "crate.util"
         );
+    }
+
+    // Phase 17.8: `lib` (and `main`/`mod`) is a RESERVED crate-root stem, not an
+    // importable module name. `src/lib.mind` collapses to `crate` — so `use lib;`
+    // can never resolve to a `crate.lib` module; the byte-identical file under any
+    // other name (`mylib.mind`) becomes `crate.mylib` and resolves. This
+    // documents the collision by name so the driver can diagnose it.
+    #[test]
+    fn lib_is_a_reserved_root_stem_not_an_importable_module() {
+        let root = PathBuf::from("/p/src");
+        // Reserved: collapses to the crate root.
+        assert_eq!(
+            module_path_of(&PathBuf::from("/p/src/lib.mind"), &root),
+            "crate"
+        );
+        assert!(is_reserved_root_stem("lib"));
+        assert!(is_reserved_root_stem("main"));
+        assert!(is_reserved_root_stem("mod"));
+        // NOT reserved: resolves as a named module.
+        assert_eq!(
+            module_path_of(&PathBuf::from("/p/src/mylib.mind"), &root),
+            "crate.mylib"
+        );
+        assert!(!is_reserved_root_stem("mylib"));
     }
 
     #[test]

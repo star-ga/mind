@@ -10882,8 +10882,25 @@ pub fn lower_ir_to_mlir_with_entry(
         if ctx.defined_fns.contains(name) {
             continue;
         }
-        let params = vec!["i64"; *arity].join(", ");
-        out.push_str(&format!("  func.func private @{name}({params}) -> i64\n"));
+        // RFC 0012 §5.1 — type the forward declaration against the callee's
+        // DECLARED signature (`fn_signatures`, now populated with imported
+        // cross-module `pub fn`s in `lower_to_ir`) instead of the legacy
+        // all-i64 default. The `func.call` sites above are typed from the same
+        // table, so the forward decl and the call agree for ANY declared scalar
+        // ABI (i64/i32/f32/f64/bool) — a mismatch here was the `mlir-opt`
+        // "operand type mismatch: expected i64, but provided f64" reject on a
+        // cross-module f64 callee. An unsignatured callee (runtime bridge /
+        // IR built directly) keeps the all-i64 shape → byte-identical to before.
+        let sig = ctx.fn_signatures.get(name);
+        let params = match sig {
+            Some((p, _)) => (0..*arity)
+                .map(|i| p.get(i).map(String::as_str).unwrap_or("i64"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            None => vec!["i64"; *arity].join(", "),
+        };
+        let ret = sig.and_then(|(_, r)| r.as_deref()).unwrap_or("i64");
+        out.push_str(&format!("  func.func private @{name}({params}) -> {ret}\n"));
     }
     // RFC 0005 P0d: user-defined `func.func @name(...) -> i64 { ... }`
     // definitions, in source order. Emitted before `@main` so the

@@ -208,6 +208,7 @@ pub fn emit_mic3_with_evidence(
         trace_hash,
         None,
         None,
+        &[],
     );
     out
 }
@@ -236,6 +237,11 @@ pub fn emit_mic3_with_evidence(
 ///
 /// Returns `Err` only when a PQC signature scheme is requested on a build
 /// compiled WITHOUT the `evidence-mldsa` feature (fail-closed).
+// Eight legitimately-distinct evidence inputs (IR, substrate, parent, determinism,
+// toolchain, signing key, collapse receipts, application entries); bundling them into
+// a struct would obscure the wire contract more than it clarifies. House style already
+// takes this allow for the analogous MLIR-export emitters.
+#[allow(clippy::too_many_arguments)]
 pub fn emit_mic3_with_evidence_and_receipts(
     ir: &IRModule,
     substrate: &str,
@@ -244,7 +250,14 @@ pub fn emit_mic3_with_evidence_and_receipts(
     toolchain: &str,
     signing: Option<&SigningKey>,
     receipts: &[CollapseReceipt],
+    app_entries: &[(String, String)],
 ) -> Result<Vec<u8>, &'static str> {
+    // Validate application-namespace entries at the library boundary (not only at
+    // the CLI): reserved-prefix / un-namespaced / duplicate / empty keys must never
+    // reach the MAP or the signature preimage, or a non-CLI caller could break the
+    // canonical "MAP is a set" invariant. Byte-neutral for the empty / valid case.
+    validate_app_entries(app_entries)
+        .map_err(|_| "invalid application-namespace evidence entry")?;
     let body = super::emit_mic3(ir);
     let trace_hash = mini_sha256(&body);
     // Encode the canonical receipt blob; `None` (omit the key) when there is
@@ -268,6 +281,7 @@ pub fn emit_mic3_with_evidence_and_receipts(
                 toolchain,
                 &trace_hash,
                 blob_ref,
+                app_entries,
             );
             let scheme = scheme_for_key(key);
             let preimage = build_signature_preimage(&evidence_entries, &trace_hash, scheme);
@@ -286,6 +300,7 @@ pub fn emit_mic3_with_evidence_and_receipts(
         trace_hash,
         payload.as_ref(),
         blob_ref,
+        app_entries,
     );
     Ok(out)
 }
@@ -371,6 +386,7 @@ pub fn emit_mic3_with_signed_evidence_scheme(
         toolchain,
         &trace_hash,
         None,
+        &[],
     );
     // Bind the scheme (`alg`) tag into the signed preimage (see
     // `build_signature_preimage`): the scheme is read from the SAME source the
@@ -390,6 +406,7 @@ pub fn emit_mic3_with_signed_evidence_scheme(
         trace_hash,
         Some(&payload),
         None,
+        &[],
     );
     Ok(out)
 }
@@ -494,6 +511,41 @@ pub fn mic3_evidence_report(bytes: &[u8]) -> Result<EvidenceReport, EvidenceErro
         .map_err(|_| EvidenceError::Malformed("evidence_chain.trace_hash"))?;
 
     decode_evidence_report(&ir, &entries)
+}
+
+/// Extract the application-namespace metadata (Phase 17.8) from a mic@3 artifact.
+///
+/// Returns every MAP key that is NOT in a reserved (`evidence_chain.*` /
+/// `signature.*`) namespace, paired with its string value, in canonical
+/// (lexicographic) key order. An artifact with no application entries — every
+/// artifact emitted before 17.8, and every no-`--evidence-attr` build — yields an
+/// empty vector. Non-string application values are skipped (the emitter only
+/// writes strings). Returns [`EvidenceError::Missing`] when there is no MAP at all.
+pub fn mic3_app_metadata(bytes: &[u8]) -> Result<Vec<(String, String)>, EvidenceError> {
+    if bytes.len() > super::parse::MAX_MIC3_INPUT {
+        return Err(EvidenceError::Malformed("app_metadata"));
+    }
+    let body_end = find_map_sentinel(bytes).ok_or(EvidenceError::Missing)?;
+    let entries = parse_map_epilogue(&bytes[body_end..])
+        .map_err(|_| EvidenceError::Malformed("app_metadata"))?;
+    let mut out: Vec<(String, String)> = entries
+        .iter()
+        // Read-back mirrors `validate_app_entries`: only well-formed application
+        // keys (non-empty, dotted, non-reserved) are surfaced, so a hand-crafted
+        // artifact cannot smuggle a malformed key past a consumer that trusts
+        // "app keys are namespaced".
+        .filter(|e| {
+            !e.key.is_empty()
+                && e.key.contains('.')
+                && !RESERVED_KEY_PREFIXES.iter().any(|p| e.key.starts_with(p))
+        })
+        .filter_map(|e| match &e.value {
+            ParsedValue::Str(s) => Some((e.key.clone(), s.clone())),
+            _ => None,
+        })
+        .collect();
+    out.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+    Ok(out)
 }
 
 // ─── Collapse-receipt verification (S4) ────────────────────────────────────────
@@ -877,8 +929,9 @@ fn build_evidence_entries<'a>(
     toolchain: &'a str,
     trace_hash: &'a [u8; 32],
     collapse_blob: Option<&'a [u8]>,
-) -> Vec<(&'static str, MapEntryValue<'a>)> {
-    let mut entries: Vec<(&'static str, MapEntryValue<'a>)> = vec![
+    app_entries: &'a [(String, String)],
+) -> Vec<(&'a str, MapEntryValue<'a>)> {
+    let mut entries: Vec<(&'a str, MapEntryValue<'a>)> = vec![
         (
             KEY_DETERMINISM,
             MapEntryValue::Str(match determinism {
@@ -911,9 +964,54 @@ fn build_evidence_entries<'a>(
     if let Some(blob) = collapse_blob {
         entries.push((KEY_COLLAPSE_RECEIPTS, MapEntryValue::Bytes(blob)));
     }
+    // Application-namespace metadata (Phase 17.8): non-reserved, dotted keys
+    // (`org.example.*`) the caller supplies. Emitted ONLY when present, so a
+    // build with no app entries is byte-identical to the pre-17.8 encoder
+    // (byte-additive back-compat; older readers skip unknown keys). Reserved
+    // prefixes are rejected upstream at emit (`validate_app_entries`), so these
+    // can never shadow an `evidence_chain.*` / `signature.*` key. They sort into
+    // place with everything else; being non-`signature.*` they ARE covered by the
+    // signature preimage (authenticated on a signed artifact — not strippable).
+    for (k, v) in app_entries {
+        entries.push((k.as_str(), MapEntryValue::Str(v.as_str())));
+    }
     // Lexicographic sort — the canonical-encoding invariant.
     entries.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
     entries
+}
+
+/// Reserved MAP key prefixes an application namespace may NOT use. `org.example.*`
+/// is fine; `evidence_chain.*` and `signature.*` are the compiler's own.
+const RESERVED_KEY_PREFIXES: [&str; 2] = ["evidence_chain.", "signature."];
+
+/// Validate application-namespace MAP entries (Phase 17.8). Fail-closed: an empty
+/// key, a key colliding with a reserved namespace, or an un-namespaced key (no
+/// `.`) is rejected so an app attribute can never shadow or be mistaken for a
+/// compiler-reserved provenance field. Duplicate keys are also rejected (the MAP
+/// is a set; a duplicate would make the encoding non-injective).
+pub fn validate_app_entries(app_entries: &[(String, String)]) -> Result<(), String> {
+    let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    for (k, _) in app_entries {
+        if k.is_empty() {
+            return Err("application evidence key must not be empty".to_string());
+        }
+        for reserved in RESERVED_KEY_PREFIXES {
+            if k.starts_with(reserved) {
+                return Err(format!(
+                    "application evidence key `{k}` uses the reserved `{reserved}` namespace"
+                ));
+            }
+        }
+        if !k.contains('.') {
+            return Err(format!(
+                "application evidence key `{k}` must be namespaced (e.g. `org.example.{k}`)"
+            ));
+        }
+        if !seen.insert(k.as_str()) {
+            return Err(format!("duplicate application evidence key `{k}`"));
+        }
+    }
+    Ok(())
 }
 
 /// Serialize one MAP entry value into `out` using the exact mic@3 MAP wire
@@ -977,9 +1075,16 @@ fn build_signature_preimage(
     trace_hash: &[u8; 32],
     scheme: &str,
 ) -> Vec<u8> {
+    // Cover every provenance key EXCEPT the two exclusions: `signature.*` (a
+    // signature never covers itself) and `evidence_chain.trace_hash` (derived
+    // from the body it anchors). This deliberately INCLUDES the Phase-17.8
+    // application-namespace keys (`org.example.*`) so app metadata is
+    // authenticated on a signed artifact. For a no-app artifact the selected set
+    // is byte-identical to the pre-17.8 filter (there are simply no non-reserved
+    // keys), so existing signatures still verify.
     let mut selected: Vec<&(&str, MapEntryValue)> = entries
         .iter()
-        .filter(|(k, _)| k.starts_with("evidence_chain.") && *k != KEY_TRACE_HASH)
+        .filter(|(k, _)| !k.starts_with("signature.") && *k != KEY_TRACE_HASH)
         .collect();
     selected.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
 
@@ -1015,6 +1120,7 @@ fn append_map_epilogue(
     trace_hash: [u8; 32],
     signature: Option<&SignaturePayload>,
     collapse_blob: Option<&[u8]>,
+    app_entries: &[(String, String)],
 ) {
     // Collect the canonical evidence_chain.* entries (single source of truth,
     // shared with the signature preimage so what is signed == what is emitted).
@@ -1025,6 +1131,7 @@ fn append_map_epilogue(
         toolchain,
         &trace_hash,
         collapse_blob,
+        app_entries,
     );
     // Optional signature layer (sorts after every evidence_chain.* key). Bound
     // to `signature` so the borrows live through the sort + emit below. The
@@ -2036,6 +2143,7 @@ mod tests {
             "0.10.1",
             None,
             &receipts,
+            &[],
         )
         .unwrap();
 
@@ -2062,12 +2170,80 @@ mod tests {
             "0.10.1",
             None,
             &[],
+            &[],
         )
         .unwrap();
         assert_eq!(
             empty, no_r,
             "empty receipts must be byte-identical to the no-receipt encoder"
         );
+    }
+
+    // (17.8) Application-namespace MAP keys: round-trip, byte-additivity, and
+    // fail-closed reserved-prefix validation.
+    #[test]
+    fn app_namespace_keys_round_trip_and_are_byte_additive() {
+        let ir = mod_with_const(7);
+        // No app entries ⇒ byte-identical to the closed-key evidence encoder.
+        let plain = emit_mic3_with_evidence(&ir, "cpu", None, Determinism::Deterministic, "0.10.1");
+        let no_app = emit_mic3_with_evidence_and_receipts(
+            &ir,
+            "cpu",
+            None,
+            Determinism::Deterministic,
+            "0.10.1",
+            None,
+            &[],
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            plain, no_app,
+            "empty app entries must be byte-identical to the pre-17.8 encoder"
+        );
+
+        // With app entries: they round-trip; the body anchor is untouched.
+        let app = vec![
+            ("org.example.build_id".to_string(), "42".to_string()),
+            ("com.acme.reviewer".to_string(), "qa".to_string()),
+        ];
+        let with_app = emit_mic3_with_evidence_and_receipts(
+            &ir,
+            "cpu",
+            None,
+            Determinism::Deterministic,
+            "0.10.1",
+            None,
+            &[],
+            &app,
+        )
+        .unwrap();
+        assert_eq!(
+            mic3_evidence_report(&no_app).unwrap().trace_hash,
+            mic3_evidence_report(&with_app).unwrap().trace_hash,
+            "app metadata must not move the trace_hash anchor"
+        );
+        assert!(mic3_evidence_report(&with_app).unwrap().trace_hash_valid);
+
+        // Reads back in canonical (lexicographic) key order.
+        let read = mic3_app_metadata(&with_app).unwrap();
+        assert_eq!(
+            read,
+            vec![
+                ("com.acme.reviewer".to_string(), "qa".to_string()),
+                ("org.example.build_id".to_string(), "42".to_string()),
+            ]
+        );
+        assert!(mic3_app_metadata(&no_app).unwrap().is_empty());
+
+        // Fail-closed validation.
+        assert!(validate_app_entries(&app).is_ok());
+        assert!(
+            validate_app_entries(&[("evidence_chain.x".to_string(), "y".to_string())]).is_err()
+        );
+        assert!(validate_app_entries(&[("signature.x".to_string(), "y".to_string())]).is_err());
+        assert!(validate_app_entries(&[("nodot".to_string(), "y".to_string())]).is_err());
+        assert!(validate_app_entries(&[(String::new(), "y".to_string())]).is_err());
     }
 
     // (S4-b) Round-trip: an emitted receipt re-derives + binds to the body.
@@ -2089,6 +2265,7 @@ mod tests {
             "0.10.1",
             None,
             &receipts,
+            &[],
         )
         .unwrap();
         assert_eq!(
@@ -2119,6 +2296,7 @@ mod tests {
             "0.10.1",
             None,
             &receipts,
+            &[],
         )
         .unwrap();
         // trace_hash is still VALID (the epilogue is outside the anchor)...
@@ -2153,6 +2331,7 @@ mod tests {
             "0.10.1",
             None,
             &receipts,
+            &[],
         )
         .unwrap();
         assert!(receipts[0].is_self_consistent());
@@ -2194,6 +2373,7 @@ mod tests {
             "0.10.1",
             Some(&SigningKey::Ed25519(TEST_SEED)),
             &receipts,
+            &[],
         )
         .unwrap();
         // Untampered: signature valid.

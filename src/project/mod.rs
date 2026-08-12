@@ -1423,6 +1423,44 @@ fn compile_sources(
     }
     let opts = &opts_with_exports;
 
+    // Phase 17.8 — diagnose the reserved crate-root-name collision BY NAME.
+    // A non-entry source whose stem is `lib`/`main`/`mod` and which sits at the
+    // source root collapses to the crate root (`module_path_of` -> "crate"), so
+    // it is unreachable under its own name: `use lib;` silently fails to resolve
+    // (previously surfacing only as a cryptic downstream `E2003`). Fail loud with
+    // a clear, named message instead. A file legitimately named `lib.mind` that
+    // IS the crate entry is exempt (it is the entry, not a shadowed sibling); a
+    // `mod.mind` inside a subdirectory is exempt too (it resolves to its parent
+    // directory's module, the Rust-style `mod.rs` layout).
+    {
+        let src_root: &Path = if explicit_sources {
+            project_root
+        } else {
+            entry_path.parent().unwrap_or(project_root)
+        };
+        for source in sources.iter() {
+            let source_canonical = source.canonicalize().unwrap_or_else(|_| source.clone());
+            if source_canonical == entry_canonical {
+                continue;
+            }
+            let stem = source
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default();
+            if crate::project::module_table::is_reserved_root_stem(stem)
+                && crate::project::module_table::module_path_of(source, src_root) == "crate"
+            {
+                return Err(anyhow!(
+                    "module file `{}` uses the reserved crate-root name `{stem}`: it collapses \
+                     to the crate root and cannot be imported as a module (`use {stem};` will \
+                     not resolve). Rename it to a descriptive module name (e.g. `{stem}_impl.mind`) \
+                     to import it, or make it the crate entry in Mind.toml.",
+                    source.display()
+                ));
+            }
+        }
+    }
+
     // Cross-module imports D3: build the whole-project module table
     // once, before the per-file compile loop, and set it at project
     // scope so each file's existing single-file pipeline resolves
@@ -2654,6 +2692,24 @@ pub fn run_project(args: &[String], opts: &BuildOptions) -> Result<i32> {
              mind-runtime at execution, which may exit 0 without executing that \
              code; refusing to run rather than report a false green",
             result.fallback_sources.join(", ")
+        ));
+    }
+
+    // D2 fail-loud: a build that reported success MUST have produced the runnable
+    // artifact. If `build_project` returned `Ok` yet the output binary is absent
+    // (a hard toolchain failure — mlir-opt / clang / link — that was reported but
+    // did not propagate a non-zero process exit), refuse to run rather than
+    // execute a stale/absent binary and report a false green. This is the same
+    // honesty the `entry_native_compiled` / `fallback_sources` guards apply to the
+    // JIT-fallback path, extended to hard build failures (a build error must never
+    // exit 0). `build_project` already propagates such errors via `?` today; this
+    // is the belt-and-suspenders guard so no future swallow can reach `run`.
+    if !result.output_path.exists() {
+        return Err(anyhow!(
+            "build reported success but produced no runnable artifact at {} — a \
+             toolchain step (mlir-opt / clang / link) failed without propagating a \
+             non-zero exit; refusing to run rather than report a false green",
+            result.output_path.display()
         ));
     }
 

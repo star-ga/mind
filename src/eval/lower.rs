@@ -1380,6 +1380,31 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
         }
     }
 
+    // RFC 0012 §5.1 — register every IMPORTED `pub fn` signature (declared
+    // param + return ABI) from the active whole-project module table, so a
+    // cross-module `func.call @callee` is typed against the callee's DECLARED
+    // scalar signature instead of the legacy all-i64 default. Without this a
+    // caller of an f64-returning sibling emitted `(i64) -> i64` over an f64
+    // constant argument (`mlir-opt`: "expects different type ... i64 vs f64").
+    // Locally-defined fns were inserted just above and take precedence (a local
+    // definition shadows an import), so this only fills in genuinely-external
+    // callees. Empty on the single-file / default-feature path (no project
+    // table) → byte-identical there. The MLIR `func.call` typing, the callee
+    // return-kind and the narrow-int param-kind seeding are all derived from
+    // `fn_signatures` in `lower_ir_to_mlir_with_entry`, so no emitter change is
+    // needed. An imported callee that the type-checker resolved is present here
+    // (same thread-local project table). A callee with a captured signature is
+    // typed from it; one whose export block captured no signature stays all-i64
+    // but then hits a LOUD mlir-opt reject on a real f64 arg/return — a hard
+    // error, never a silent miscompile. A genuinely undefined callee is already a
+    // hard type-checker error before lowering.
+    #[cfg(all(feature = "std-surface", feature = "cross-module-imports"))]
+    for (name, param_types, ret_type) in crate::type_checker::cm_all_imported_fn_signatures() {
+        ir.fn_signatures
+            .entry(name)
+            .or_insert((param_types, ret_type));
+    }
+
     for item in &module.items {
         match item {
             ast::Node::Let {
@@ -5728,6 +5753,19 @@ fn lower_expr(
                         // (no-op for i64/u64/handles/collections).
                         #[cfg(feature = "std-surface")]
                         let id = mask_narrow_let(&mut fn_ir, ann, id);
+                        // Phase 17.2 — honor a DECLARED `f64` TypeAnn on a binding
+                        // whose RHS is a bare identifier (`let mut v: f64 = seed`).
+                        // Such a binding aliases the source's ValueId; if `v` is
+                        // then loop-carried, the enclosing loop's alias-break
+                        // materialises a distinct copy with an i64 identity
+                        // (`copy = src + 0` over ConstI64), degrading the value to
+                        // integer arithmetic (`arith.addi` on an f64 — mlir-opt
+                        // rejects `i64 vs f64`). Give `v` its OWN f64-typed
+                        // ValueId here so it is float from the start and the
+                        // loop-carry typing (which reads the init value's kind)
+                        // sees f64 — the alias-break then never fires for `v`.
+                        #[cfg(feature = "std-surface")]
+                        let id = materialize_f64_alias_let(&mut fn_ir, ann, value, id);
                         // Remember a narrow declared type so a LATER `c = c + …`
                         // reassignment (incl. the desugared `c += …`) re-masks.
                         #[cfg(feature = "std-surface")]
@@ -9479,6 +9517,50 @@ fn coerce_enum_field_to_bits(
         },
         _ => value,
     }
+}
+
+/// Phase 17.2 — give a float-annotated `let` whose RHS is a bare identifier its
+/// OWN correctly-typed `f64` ValueId, instead of aliasing the source binding's
+/// id. A `let mut v: f64 = seed` (seed an f64 param / another f64 local) aliases
+/// `seed`'s ValueId; when `v` is later loop-carried, the loop's alias-break
+/// materialises a distinct copy with an INTEGER identity (`copy = src + 0` over
+/// `ConstI64`) — degrading the value to `arith.addi` on an f64, which mlir-opt
+/// rejects (`i64 vs f64`). Emitting a float identity here (`v = src * 1.0`,
+/// value-preserving for every IEEE-754 value including `-0.0` / `inf` / a quiet
+/// `NaN`; a *signaling* NaN is quieted by the multiply, deterministically on every
+/// substrate so byte-identity still holds; strict under `FpMode`) gives `v` a distinct
+/// `f64`-typed id up front, so the loop-carry typing (which reads the init
+/// value's `ValueKind`) sees `f64` and the alias-break never fires for `v`.
+///
+/// Fires ONLY for an `f64`-annotated binding whose RHS is a bare identifier (the
+/// alias case). A literal / computed / call RHS already owns a distinct typed id
+/// → returned unchanged, so every existing program is byte-identical. `f32` is
+/// deferred: the IR has no `ConstF32`, so an `f32` identity constant cannot be
+/// spelled yet — an `f32` param-seeded loop-carry stays on the pre-existing path.
+/// upgrade path: add `Instr::ConstF32` and extend the match below.
+#[cfg(feature = "std-surface")]
+fn materialize_f64_alias_let(
+    ir: &mut IRModule,
+    ann: &Option<TypeAnn>,
+    value: &ast::Node,
+    id: ValueId,
+) -> ValueId {
+    if !matches!(ann, Some(TypeAnn::ScalarF64)) {
+        return id;
+    }
+    if !matches!(value, ast::Node::Lit(Literal::Ident(_), _)) {
+        return id;
+    }
+    let one = ir.fresh();
+    ir.instrs.push(Instr::ConstF64(one, 1.0));
+    let copy = ir.fresh();
+    ir.instrs.push(Instr::BinOp {
+        dst: copy,
+        op: BinOp::Mul,
+        lhs: id,
+        rhs: one,
+    });
+    copy
 }
 
 /// Inverse of [`coerce_enum_field_to_bits`]: wrap the i64 slot `load` in the

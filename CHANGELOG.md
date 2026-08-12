@@ -24,8 +24,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `cos`/`pow` with a pinned fold order, `det_sqrt` (intrinsic + a pinned canonical
   qNaN `0x7FF8000000000000` for out-of-domain inputs so negatives stay cross-substrate
   byte-identical), and a value-oracle KAT.
+- **Cross-module `f64` signatures (17.1).** An imported `pub fn` with a non-`i64` scalar
+  signature is now typed from the callee's DECLARED param/return ABI at both the
+  `func.call` site and the `func.func private` extern forward-declaration (imported
+  signatures are registered into `IRModule::fn_signatures`), so `f64`/`f32`/`i32`/`bool`
+  cross-module calls no longer default to `(i64) -> i64` — previously a hard `mlir-opt`
+  type error (e.g. an imported `f64 scale`). Empty on the single-file / default-feature
+  path → byte-identical. **Proven on the actual `mindc run` consumer path** (a
+  cross-module `f64` project builds and runs), not only `--emit-shared`.
+- **`f64` parameter-init inference (17.2).** A loop-carried `let mut v: f64 = <ident>`
+  seeded from an `f64` param now materialises its own `f64`-typed value up front, so the
+  loop-carry keeps `arith.addf` instead of degrading to `arith.addi` (the old int
+  alias-break was an `mlir-opt` `i64 vs f64` error). Fires only for the bare-identifier
+  alias case → every other binding is byte-identical.
+- **Artifact-embedded evidence over a resolved project + parent chaining (17.7).**
+  `mindc --emit-evidence <PATH>` resolves a multi-module project before emit, and
+  `--evidence-parent <HASH|PATH>` records a parent artifact's `trace_hash` as
+  `evidence_chain.parent` (in the MAP epilogue, outside the `trace_hash` preimage, so it
+  never perturbs the child's own anchor / byte-identity). Chaining to a body-tampered
+  parent is refused fail-closed. `--emit-evidence` → `mindc verify` round-trips.
+- **Application-namespace evidence attributes (17.8).** `--evidence-attr KEY=VALUE`
+  (repeatable) attaches dotted, non-reserved provenance keys to the mic@3 MAP epilogue:
+  byte-additive (byte-identical when unused; older readers skip unknown keys), lexically
+  sorted, validated fail-closed (reserved-prefix / un-namespaced / duplicate / empty
+  rejected) at BOTH the CLI and the library emit boundary, and folded into the signature
+  preimage so signed app metadata is non-strippable.
+- **`std/io.mind` `print_i64` / `print_f64_bits`.** Deterministic integer and exact-bits
+  float stdout printers over `__mind_write` (`print_f64_bits` prints the u64 IEEE-754 bit
+  pattern, round-trippable via `__mind_bits_to_f64`; a shortest-round-trip decimal float
+  printer is deferred as a research-grade determinism task).
+- **Edges (17.8):** `lib` / `main` / `mod` are diagnosed as reserved crate-root stems — a
+  non-entry `src/lib.mind` errors clearly (rename hint) instead of a cryptic downstream
+  `E2003` (behaviour change: a project that relied on such a sibling collapsing to `crate`
+  and reaching its exports by bare name now gets the diagnostic — an intended honesty
+  improvement, since both files already collapsed to `crate`); `--emit-ir` renders `f64`
+  constants as `const.f64`; `mindc test` exits non-zero on a failing OR empty run (was a
+  false green at exit 0).
 
 ### Fixed
+- **`--emit-evidence --evidence-parent <path>` accepted a body-tampered parent
+  (defense-in-depth, evidence-chain security review).** `resolve_evidence_parent` now
+  checks `trace_hash_valid` and refuses to chain to a parent whose stored `trace_hash`
+  does not match its canonical mic@3 body; the parent file is size-capped before it is
+  read into memory.
 - **`f64 !=` was lowered `arith.cmpf "one"` (ordered), so `NaN != NaN` was wrongly
   `false` — a silent miscompile.** Fixed to `"une"` (`==` stays `oeq`). Caught by the
   detmath value-oracle. cross_substrate_identity 24/24 with no reference-hash drift.
