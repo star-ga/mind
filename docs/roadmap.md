@@ -1805,3 +1805,90 @@ artifact without first concatenating its sources into a synthetic single file.
   keys) while the mic@2.1 spec explicitly permits non-reserved application namespaces
   (`org.example.*`). Either implement the spec's permission or amend the spec, so consumers
   are not left choosing between an unimplemented spec clause and a private dialect.
+
+## Phase 18 — Local-Learning IR (proposal, not yet scoped)
+
+**Status: evaluated, not built.** Recorded here so the reasoning survives; the open
+questions at the end must be answered before this gets a milestone.
+
+Today the compiler differentiates (`src/autodiff/`, `differentiate_function`, deterministic
+gradient IR) but has **no learning-rule surface at all** — nothing consumes the gradient IR
+as a training algorithm. The proposal is to let the same forward graph lower either to
+conventional backpropagation or to a *local* update rule, where the weight update for a
+layer depends only on adjacent state:
+
+```
+deps(dW_l)  ⊆  { x_{l-1}, x_l, e_l, W_l }        e_l = x_l - f(W_l x_{l-1})
+```
+
+and to have the compiler **prove** that containment rather than assert it.
+
+### What is actually defensible here
+
+Locality checking on its own is not a moat. It is a reachability query on a dataflow
+graph, and any framework with a graph-rewrite pass can print `NONLOCAL_WEIGHT_ACCESS=false`
+in an afternoon. What is not reproducible in an afternoon is the combination this repo
+already owns: the property proved on the **emitted artifact** rather than on source,
+bit-identical across substrates, with the result anchored into the mic@3 `trace_hash`.
+"Our source is local" is a claim. "This binary's update rule provably touched only
+`{x_{l-1}, x_l, e_l, W_l}`, and here is the tamper-evident hash" is a certification.
+
+That distinction only pays if someone needs the certification. The candidate buyers are
+narrow and should be named honestly rather than assumed: neuromorphic and crossbar targets
+where locality is a physical constraint rather than a preference; on-device and federated
+training, where "the update provably used no non-local information" is a privacy-adjacent
+property; and third-party auditors. Absent one of those, this is a demo feature.
+
+### Why it fits the wedge better than it first appears
+
+Predictive-coding-style learning has a reproducibility problem — accumulation order in the
+error settling loop, and asynchronous relaxation. The Q16.16 deterministic tier removes
+exactly that class of problem: fixed-point accumulation is order-independent under the
+pinned reduction, so the settling loop is reproducible by construction rather than by
+convention. Note also that in exact fixed-point a data-dependent stopping threshold is
+still deterministic — comparisons are exact — so it costs predictable wall-clock, not
+bit-identity.
+
+One naming discipline is load-bearing: **never write "iterate to convergence."** Say
+*K-step relaxation* and put `INFERENCE_ITERS = K` in the certificate as program semantics.
+A convergence claim is unfalsifiable at the artifact level; a step count is checkable.
+
+### The mechanism already exists and is proven
+
+This does not need a new certification primitive. `fp_mode` is the existing template: a
+body scan classifies the module, the classification rides in the evidence MAP, and
+`mindc verify --require-strict-fp` is a fail-closed gate. That gate was validated
+end-to-end against a real consumer — a numerical codebase attests `strict` and exits 0,
+while an otherwise identical build with one host-libm call attests `relaxed` and exits 1.
+A `learning_locality` classification with `--require-local` is the same shape: a taint
+analysis over the update body plus one fail-closed flag.
+
+**Hard dependency:** the mic@3 MAP key set is closed (`build_evidence_entries` hardcodes
+thirteen keys), so there is nowhere to put `learning.*` fields today. Phase 17.8 must land
+first. Phase 17.3 (f64 aggregates) is also on the path — per-layer error state needs an
+array.
+
+### Sequencing, and what NOT to build
+
+1. **Local-learning IR in the compiler.** The only place the proof can live. Reuses the
+   existing autodiff IR and evidence chain. Everything else certifies nothing without it.
+2. **A separate learning-rules library** — *defer.* Incubate as examples first. A new
+   repository before the IR exists is sprawl.
+3. **Error-driven compute scheduling** (allocate compute ∝ prediction error) — **do not
+   build.** It makes execution order data-dependent, which points directly at the
+   cross-substrate byte-identity canaries that are the wedge. It would spend a large budget
+   re-proving determinism for a speculative throughput win. Farthest from the wedge and the
+   only item on this page that actively threatens it.
+
+Keep the surface thin: one IR dialect, not a zoo of learning rules. The wedge is
+determinism, not learning theory, and this proposal is worth taking only for as long as it
+stays a *certification* story rather than an ML-framework story.
+
+### Open questions before scoping
+
+- Which buyer, concretely? Without one named, this stays a proposal.
+- Does the locality taint analysis survive lowering, or only hold at IR level? The claim is
+  worth nothing if it is proved before the pass that could violate it.
+- Relationship to the compiler-integrated-autodiff surface in US Provisional 63/947,737 —
+  this reads as a continuation rather than net-new, and that should be confirmed before any
+  public description.
