@@ -88,6 +88,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   false green at exit 0).
 
 ### Fixed
+- **`mindc check` fail-opened on a typed int↔float scalar mismatch at the call-argument and
+  implicit-return positions (GitHub #230).** A confident-`i64` value passed to an `f64`
+  parameter — or returned as a function's implicit trailing expression — passed `check`
+  (rc=0) while `build` correctly rejected it at MLIR lowering with a `'f64' vs 'i64'`
+  conflict, so `check`-only consumers (editors, fast CI paths) got a false green. The
+  RFC 0011 "no implicit int↔float" scalar-class pass now covers both positions: (1) a new
+  call-argument check (`E2027`) compares each argument's confident scalar class against the
+  intra-module callee's declared parameter class, and (2) a trailing-expression return check
+  (`E2010`) catches the implicit return the previous `Node::Return`-only checks missed
+  (recursing through tail `if`/`else` arms and blocks). Both keep the pass's zero-over-coverage
+  contract — they fire only when `confident_scalar_class` is `Some` (literal / declared binding
+  / `as` target), so enum-ctor args (`f(Mode::On)`), loose-typed calls, and width-sibling
+  arguments (`i32` into `i64`) are never flagged. Purely additive `check`-phase diagnostics:
+  it only rejects programs `build` already rejected, so no building consumer is affected and
+  the self-host fixed point is unchanged.
 - **`mindc --emit-mlir` silently destroyed sub-EPSILON `f64` constants (GitHub #231, HIGH).**
   `format_number` (src/mlir/lowering.rs) classified "integer-valued" with
   `(n.fract()).abs() < f64::EPSILON`, so any nonzero `|v| < f64::EPSILON` (≈2.22e-16) was

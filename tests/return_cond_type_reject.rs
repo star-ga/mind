@@ -454,3 +454,166 @@ fn let_float_ann_undeclared_call_accepted() {
         "`let x: f64 = f()` (f undeclared) falsely rejected E2015: {out}"
     );
 }
+
+// ── #230: RFC 0011 extended to the call-argument (E2027) and implicit
+//    trailing-expression return (E2010) positions ─────────────────────────────
+// Both used to pass `mindc check` (rc=0, fail-open) while `mlir-opt` rejected
+// the program with a `'f64' vs 'i64'` scalar-ABI conflict. The BAD cases pin
+// that the code now fires EARLY at check; the GREEN cases pin the loose-typed /
+// enum-ctor / valid / width-sibling forms that must stay invisible (zero
+// over-coverage). NON-VACUOUS: every BAD case returns rc=0 with NO E2027/E2010
+// on the pre-#230 compiler and is rejected only after the fix.
+
+#[test]
+fn typed_int_arg_into_float_param_rejected() {
+    // The #230 arg-position repro: `n: i64` flows into `scale`'s `x: f64`.
+    let bad = write_tmp(
+        "mind_arg_int_into_float_bad.mind",
+        "pub fn scale(x: f64) -> f64 {\n\
+         \x20   x + 1.0\n\
+         }\n\
+         pub fn driver(n: i64) -> f64 {\n\
+         \x20   scale(n)\n\
+         }\n",
+    );
+    let out = check_out(&bad);
+    assert!(
+        out.contains("E2027"),
+        "i64 argument into f64 parameter not rejected at check (fail-open); out: {out}"
+    );
+}
+
+#[test]
+fn typed_float_arg_into_int_param_rejected() {
+    // Mirror direction: a confident-float arg into an i64 parameter.
+    let bad = write_tmp(
+        "mind_arg_float_into_int_bad.mind",
+        "pub fn add1(x: i64) -> i64 {\n\
+         \x20   x + 1\n\
+         }\n\
+         pub fn driver(y: f64) -> i64 {\n\
+         \x20   add1(y)\n\
+         }\n",
+    );
+    let out = check_out(&bad);
+    assert!(
+        out.contains("E2027"),
+        "f64 argument into i64 parameter not rejected at check (fail-open); out: {out}"
+    );
+}
+
+#[test]
+fn implicit_int_tail_return_from_float_fn_rejected() {
+    // The #230 return-position repro: the implicit trailing expression `n`
+    // (i64) is the return value of an `-> f64` fn. Not a `Node::Return`, so the
+    // pre-#230 E2010 checks (which only match `Node::Return`) missed it.
+    let bad = write_tmp(
+        "mind_tail_int_into_float_bad.mind",
+        "pub fn f(n: i64) -> f64 {\n\
+         \x20   n\n\
+         }\n",
+    );
+    let out = check_out(&bad);
+    assert!(
+        out.contains("E2010"),
+        "implicit i64 tail return from f64 fn not rejected at check (fail-open); out: {out}"
+    );
+}
+
+#[test]
+fn implicit_float_tail_return_from_int_fn_rejected() {
+    // Mirror: implicit trailing float value returned from an `-> i64` fn.
+    let bad = write_tmp(
+        "mind_tail_float_into_int_bad.mind",
+        "pub fn f(n: f64) -> i64 {\n\
+         \x20   n\n\
+         }\n",
+    );
+    let out = check_out(&bad);
+    assert!(
+        out.contains("E2010"),
+        "implicit f64 tail return from i64 fn not rejected at check (fail-open); out: {out}"
+    );
+}
+
+// GREEN — must stay invisible (zero over-coverage)
+
+#[test]
+fn enum_ctor_arg_no_false_positive() {
+    // An enum-variant constructor in argument position resolves to class `None`
+    // (`confident_scalar_class` returns `None`), so E2027 must NOT fire.
+    let good = write_tmp(
+        "mind_arg_enum_ctor_ok.mind",
+        "enum Mode {\n\
+         \x20   On,\n\
+         \x20   Off,\n\
+         }\n\
+         pub fn g(m: Mode) -> i64 {\n\
+         \x20   0\n\
+         }\n\
+         pub fn h() -> i64 {\n\
+         \x20   g(Mode::On)\n\
+         }\n",
+    );
+    let out = check_out(&good);
+    assert!(
+        !out.contains("E2027"),
+        "enum-ctor argument falsely rejected E2027: {out}"
+    );
+}
+
+#[test]
+fn valid_float_arg_into_float_param_accepted() {
+    let good = write_tmp(
+        "mind_arg_float_ok.mind",
+        "pub fn scale(x: f64) -> f64 {\n\
+         \x20   x + 1.0\n\
+         }\n\
+         pub fn driver(n: f64) -> f64 {\n\
+         \x20   scale(n)\n\
+         }\n",
+    );
+    let out = check_out(&good);
+    assert!(
+        !out.contains("E2027") && !out.contains("E2010"),
+        "valid float→float call falsely rejected: {out}"
+    );
+}
+
+#[test]
+fn valid_int_arg_into_int_param_accepted() {
+    let good = write_tmp(
+        "mind_arg_int_ok.mind",
+        "pub fn add1(x: i64) -> i64 {\n\
+         \x20   x + 1\n\
+         }\n\
+         pub fn use_it(n: i64) -> i64 {\n\
+         \x20   add1(n)\n\
+         }\n",
+    );
+    let out = check_out(&good);
+    assert!(
+        !out.contains("E2027") && !out.contains("E2010"),
+        "valid int→int call falsely rejected: {out}"
+    );
+}
+
+#[test]
+fn width_sibling_arg_accepted() {
+    // i32 argument into an i64 parameter: SAME scalar class, different width —
+    // must NOT trip E2027 (the class check is int-vs-float, never width).
+    let good = write_tmp(
+        "mind_arg_width_ok.mind",
+        "pub fn add1(x: i64) -> i64 {\n\
+         \x20   x + 1\n\
+         }\n\
+         pub fn use_it(n: i32) -> i64 {\n\
+         \x20   add1(n)\n\
+         }\n",
+    );
+    let out = check_out(&good);
+    assert!(
+        !out.contains("E2027"),
+        "i32-into-i64 width-sibling argument falsely rejected E2027: {out}"
+    );
+}

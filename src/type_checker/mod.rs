@@ -225,6 +225,14 @@ const LET_CLASS_MISMATCH_CODE: &str = "E2015";
 /// letting the raw integer/float bits pass through unnormalised. Use `x != 0`.
 const AS_BOOL_CODE: &str = "E2016";
 
+/// #230 — a call argument whose confident scalar class (int/float) disagrees
+/// with the intra-module callee's declared parameter class. This is the exact
+/// scalar-ABI mismatch `mlir-opt` rejects (`'f64' vs 'i64'`) but `check`
+/// previously fail-opened on (rc=0 while `build` rejected). Fires only when the
+/// arg has a provable class (`confident_scalar_class` is `Some`), so enum-ctor
+/// and loose-typed args are never flagged.
+const ARG_CLASS_MISMATCH_CODE: &str = "E2027";
+
 /// A user `fn` named after a built-in primitive conversion (`u64`, `bool`, …).
 /// The parser desugars a one-argument call written with a scalar type name —
 /// `u64(x)` — to the cast `x as u64` (`parse_generic_call`), so a function with
@@ -3061,6 +3069,15 @@ enum ScalarClass {
     Float,
 }
 
+/// Human-readable noun for a scalar class, used in the RFC 0011 int↔float
+/// call-argument (E2027) and trailing-return (E2010) diagnostics.
+fn class_noun(c: ScalarClass) -> &'static str {
+    match c {
+        ScalarClass::Int => "an integer value",
+        ScalarClass::Float => "a float value",
+    }
+}
+
 /// The scalar CLASS of a type annotation, or `None` for non-scalar / unknown
 /// annotations. `bool` and every integer width map to `Int`; `f32`/`f64` map to
 /// `Float`. Name-exact on the `Named` fallback (the parser emits `Named("u64")`,
@@ -3249,6 +3266,79 @@ fn check_scalar_class_stmt(
     }
 }
 
+/// #230 — the implicit trailing-expression return (`fn f() -> f64 { n }`) is not
+/// a `Node::Return`, so both the infer-based and confident-class E2010 return
+/// checks (which only match `Node::Return`) miss it. Check the body's
+/// tail-value position against the declared return class, recursing through
+/// tail `if`/`else` arms and blocks. Same zero-over-coverage contract: fires
+/// only on a confident class that disagrees with the declared return class.
+fn check_tail_return_class(
+    body: &[Node],
+    ret_class: Option<ScalarClass>,
+    ctx: &ClassCtx,
+    src: &str,
+    file: Option<&str>,
+    errs: &mut Vec<Pretty>,
+) {
+    let Some(rc) = ret_class else {
+        return;
+    };
+    if let Some(tail) = body.last() {
+        check_tail_expr_class(tail, rc, ctx, src, file, errs);
+    }
+}
+
+fn check_tail_expr_class(
+    node: &Node,
+    ret_class: ScalarClass,
+    ctx: &ClassCtx,
+    src: &str,
+    file: Option<&str>,
+    errs: &mut Vec<Pretty>,
+) {
+    match node {
+        // Explicit `return` is covered by the E2010 return checks; skip here to
+        // avoid a double diagnostic.
+        Node::Return { .. } => {}
+        Node::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            if let Some(t) = then_branch.last() {
+                check_tail_expr_class(t, ret_class, ctx, src, file, errs);
+            }
+            if let Some(eb) = else_branch {
+                if let Some(e) = eb.last() {
+                    check_tail_expr_class(e, ret_class, ctx, src, file, errs);
+                }
+            }
+        }
+        Node::Block { stmts, .. } => {
+            if let Some(t) = stmts.last() {
+                check_tail_expr_class(t, ret_class, ctx, src, file, errs);
+            }
+        }
+        other => {
+            if let Some(tc) = confident_scalar_class(other, ctx) {
+                if tc != ret_class {
+                    errs.push(diag_from_span(
+                        src,
+                        file,
+                        format!(
+                            "return type mismatch: function returns {} but the final expression is {} (RFC 0011 — no implicit int↔float conversion; write the value in the return class or use an explicit `as` cast)",
+                            class_noun(ret_class),
+                            class_noun(tc),
+                        ),
+                        other.span(),
+                        RETURN_TYPE_MISMATCH_CODE,
+                    ));
+                }
+            }
+        }
+    }
+}
+
 /// Recursively check an expression for the mixed-class binop (E2013), u64
 /// unsigned-context (E2014), and `as bool` (E2016) diagnostics.
 fn walk_expr_class_checks(
@@ -3316,7 +3406,37 @@ fn walk_expr_class_checks(
             walk_expr_class_checks(left, ctx, src, file, errs);
             walk_expr_class_checks(right, ctx, src, file, errs);
         }
-        Node::Call { args, .. } => {
+        Node::Call { callee, args, .. } => {
+            // #230 — RFC 0011 extended to the call-argument position: a confident
+            // Int/Float argument flowing into an intra-module callee's
+            // oppositely-classed declared parameter is the exact scalar-ABI
+            // mismatch `mlir-opt` rejects (`'f64' vs 'i64'`) but `check`
+            // fail-opened on. Zero over-coverage: `confident_scalar_class` is
+            // `Some` only for literals / declared bindings / `as` targets, so
+            // enum-ctor args (`f(Mode::On)`) and loose-typed args stay `None` and
+            // are never flagged. Only checks up to the declared arity; an
+            // arity mismatch is E2005's job and is reported separately.
+            if let Some(sig) = intra_lookup_fn(callee) {
+                for (param, arg) in sig.param_types.iter().zip(args.iter()) {
+                    if let (Some(pc), Some(ac)) =
+                        (scalar_class_of_ann(param), confident_scalar_class(arg, ctx))
+                    {
+                        if pc != ac {
+                            errs.push(diag_from_span(
+                                src,
+                                file,
+                                format!(
+                                    "no implicit int↔float conversion (RFC 0011): argument is {} but the parameter is declared {} — write the value in the parameter's class or use an explicit `as` cast",
+                                    class_noun(ac),
+                                    class_noun(pc),
+                                ),
+                                arg.span(),
+                                ARG_CLASS_MISMATCH_CODE,
+                            ));
+                        }
+                    }
+                }
+            }
             for a in args {
                 walk_expr_class_checks(a, ctx, src, file, errs);
             }
@@ -4760,6 +4880,10 @@ fn check_module_types_in_file_impl(
                 }
                 let ret_class = ret_type.as_ref().and_then(scalar_class_of_ann);
                 check_scalar_classes(body, ret_class, &mut class_ctx, src, file, &mut errs);
+                // #230 — the implicit trailing-expression return the E2010 checks
+                // (which only match `Node::Return`) miss. Runs with the ctx grown
+                // by the body walk so top-level `let` bindings resolve.
+                check_tail_return_class(body, ret_class, &class_ctx, src, file, &mut errs);
 
                 // Issue #23 — scoped name resolution for the fn body. Replaces
                 // the dropped unknown-identifier / undefined-call diagnostics
