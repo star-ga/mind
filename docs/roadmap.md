@@ -1892,3 +1892,68 @@ stays a *certification* story rather than an ML-framework story.
 - Relationship to the compiler-integrated-autodiff surface in US Provisional 63/947,737 —
   this reads as a continuation rather than net-new, and that should be confirmed before any
   public description.
+
+### 18.2 — Prediction precommitment: a runtime-log property, not a compiler one
+
+A broader proposal argued for an ecosystem-wide prediction/error substrate whose most
+distinctive element is **precommitment**: commit `H(prediction, confidence, state)` *before*
+observing, then prove the prediction was not edited in hindsight. Evaluated here because
+the conclusion is a boundary, and boundaries are worth writing down.
+
+**It does not belong in the compiler.** mic@3 attests compile-time artifact bytes; an
+agent's prediction is a runtime event that does not exist when the artifact is sealed. The
+compiler cannot attest what a system will later predict. Precommitment belongs where the
+ecosystem already keeps append-only hash chains, not here.
+
+The compiler's real contribution is narrower and worth stating: compiling the *commitment
+machinery* — a deterministic, byte-identical verifier with no-clock, no-rand preimages — so
+that every consumer verifies commitments with the same bits. That is substrate, not
+precommitment.
+
+**Prerequisite, currently vapor.** `evidence_chain.parent: Option<[u8; 32]>` exists in the
+library (`src/ir/compact/v3/evidence.rs`) but `src/bin/mindc.rs:1537` passes `None`
+unconditionally, so artifacts cannot be chained from the command line at all. Nothing
+should be designed on top of artifact chaining until that is real (Phase 17.7/17.8).
+
+**It is commit-reveal, and it stays trivial unless two specific problems are solved.**
+Hashing a record before writing the next one proves nothing, because the committer controls
+the log:
+
+- **Ordering without clocks.** MIND is deliberately clockless, so "commit happened before
+  observation" has no timestamp to lean on. The only honest mechanism is positional — the
+  commitment occupies chain position N and the observation enters at N+1 — with the chain
+  head anchored somewhere the predictor cannot rewrite. A purely self-hosted chain proves
+  *sequence*, not that the whole chain was not regenerated after the outcome was known.
+- **Equivocation.** A system can commit fifty predictions and reveal the one that landed.
+  The scheme is worth nothing unless every commitment must be revealed, or the chain is
+  invalid. Non-selective disclosure is the entire game.
+
+The one property that would be genuinely hard to copy is binding the committed `state` to a
+**bit-reproducible deterministic state hash**, so a verifier re-derives the preimage instead
+of trusting it. That is the piece an ordinary Merkle-log product cannot claim, and it is the
+only part that actually needs this compiler.
+
+**A motivating example from a real consumer, including its failure.** A research repository
+in this ecosystem already practises precommitment by convention: it freezes a computed value
+to disk *before* comparing it against a published target, and records
+`FROZEN_BEFORE_COMPARE: true` in the artifact. That claim is unverifiable — it is a boolean
+the writer set. And it has already drifted in practice: the same artifact records the
+quadrature orders it was produced with, and they do not match the defaults of the committed
+code that allegedly produced it, so the file came from an uncommitted invocation. The
+discipline was real and the researcher was honest; the *evidence* was not checkable. That is
+precisely the gap worth closing, and precisely why hashing a blob does not close it.
+
+**Shape: a specification with pinned cross-implementation test vectors, not a shared
+repository.** A library spanning eight repositories fails badly — version lockstep across
+the fleet, a dependency hub every release gates on. A spec (preimage layout, chain rules,
+vectors) fails softly: implementations drift, but shared vectors *detect* drift, whereas
+coupling is structural. This is the mic@3 pattern and it is already known to work here.
+
+**Firewall — do not cross it.** 512-mind's I13 states that structural admissibility must not
+enter the optimization loop: no gradient, no reward, no penalty term, separate evidence
+stream, no action identifiers — "the moment a structural boundary becomes a metric, it
+ceases to function as a boundary." Prediction confidence must therefore never confer
+governance authority. A system may not argue that high confidence justifies relaxing an
+invariant. Predictive machinery answers *was the world model accurate*; governance answers
+*did the system remain legitimate*. Those two questions stay in separate evidence streams,
+permanently.
