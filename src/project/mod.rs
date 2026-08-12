@@ -632,6 +632,15 @@ pub struct BuildResult {
     /// run` must NOT report that as success: a silent green is worse than a
     /// wrong answer. See `run_project`, which fails loud on this flag.
     pub entry_native_compiled: bool,
+    /// Project-relative names of EVERY source (entry or not) that could not be
+    /// natively compiled and was embedded as a runtime-JIT fallback. D1 (Fable
+    /// audit, MED): `entry_native_compiled` tracks ONLY the entry, so a NON-entry
+    /// module that fell to the JIT fallback left `mindc run` green even though the
+    /// natively-compiled entry can call the fallen-back module's launcher-stub
+    /// symbols and reach the runtime-JIT at execution (a false green). `run_project`
+    /// fails loud (fail-closed) if this list is non-empty. Empty for the cdylib
+    /// path (which errors hard rather than falling back).
+    pub fallback_sources: Vec<String>,
 }
 
 /// Find the project root by looking for Mind.toml
@@ -997,11 +1006,12 @@ pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
             // pipeline or errors hard (compile diagnostics / runnable-blocker
             // rejection) — it never silently drops to the runtime-JIT fallback.
             entry_native_compiled: true,
+            fallback_sources: Vec::new(),
         });
     }
 
     // Build each source file and link
-    let (compiled, entry_native_compiled) =
+    let (compiled, entry_native_compiled, fallback_sources) =
         compile_sources(&project_root, &sources, &backend, opts, explicit_sources)?;
 
     // Link into final binary
@@ -1016,6 +1026,7 @@ pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
         target: target_name,
         success: true,
         entry_native_compiled,
+        fallback_sources,
     })
 }
 
@@ -1394,7 +1405,7 @@ fn compile_sources(
     backend: &str,
     opts: &BuildOptions,
     explicit_sources: bool,
-) -> Result<(Vec<PathBuf>, bool)> {
+) -> Result<(Vec<PathBuf>, bool, Vec<String>)> {
     let obj_dir = project_root.join("target").join("obj");
     fs::create_dir_all(&obj_dir)?;
 
@@ -1475,6 +1486,10 @@ fn compile_sources(
     // (unchanged link behaviour); flipped to `false` only when the entry itself
     // fell to the embedded runtime-JIT fallback.
     let mut entry_native_compiled = true;
+    // D1 (Fable audit, MED): collect EVERY source (entry or not) that fell to
+    // the runtime-JIT fallback, so `run_project` can fail loud rather than let a
+    // non-entry fallback silently reach the runtime at execution.
+    let mut fallback_sources: Vec<String> = Vec::new();
 
     for source in sources {
         // Object filename. The walk/default case keeps the historical
@@ -1517,6 +1532,9 @@ fn compile_sources(
         if is_entry && !native {
             entry_native_compiled = false;
         }
+        if !native {
+            fallback_sources.push(source_name.clone());
+        }
 
         objects.push(obj_path);
     }
@@ -1553,7 +1571,7 @@ fn compile_sources(
         crate::ir::clear_global_enums();
     }
 
-    Ok((objects, entry_native_compiled))
+    Ok((objects, entry_native_compiled, fallback_sources))
 }
 
 /// Compile every `std` substrate module transitively imported by ANY project
@@ -2618,6 +2636,24 @@ pub fn run_project(args: &[String], opts: &BuildOptions) -> Result<i32> {
              fallback — see the [WARN] above); refusing to run a launcher that \
              defers to the installed mind-runtime and may exit 0 without \
              executing your program"
+        ));
+    }
+
+    // D1 (Fable audit, MED): the same silent-green risk applies to a NON-entry
+    // source that fell to the JIT fallback. The natively-compiled entry can call
+    // that module's launcher-stub symbols and reach the runtime-JIT at execution,
+    // so a non-empty fallback set is also a false-green hazard. Fail closed:
+    // refuse to run and name the modules, rather than trust that an un-compiled
+    // module is unreachable. (A deliberately-broken sibling in a whole-directory
+    // walk should be excluded via explicit `[targets.*].sources` or `single_file`.)
+    if !result.fallback_sources.is_empty() {
+        return Err(anyhow!(
+            "module(s) not natively compiled (embedded as a runtime-JIT fallback \
+             — see the [WARN] above): {}. The natively-compiled entry can call \
+             into their launcher-stub symbols and reach the installed \
+             mind-runtime at execution, which may exit 0 without executing that \
+             code; refusing to run rather than report a false green",
+            result.fallback_sources.join(", ")
         ));
     }
 

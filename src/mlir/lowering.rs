@@ -4496,20 +4496,72 @@ impl LoweringContext {
                         });
                     }
                 };
-                let elem = elem_dtype.as_str();
+                // A2/A3 (Fable audit, HIGH): only {i64,i32,f32,f64} are
+                // proven-correct on the executable path. The old code used
+                // `elem_dtype.as_str()` directly (yielding `tensor<Nxq16>`,
+                // which is INVALID MLIR — Q16 is stored as i32, see
+                // src/types/mod.rs) and fell every non-f32/f64 element through
+                // to `ScalarI64`, so the consuming binop emitted i64 arith on
+                // an i32/f16 SSA value (a width miscompile / invalid IR). Map
+                // the proven set exactly; FAIL CLOSED for every other element
+                // type (Q16 — whose multiply contract differs from plain i32 —
+                // f16, bf16) with a loud compile error instead of a silent
+                // miscompile or unparseable IR.
+                let (elem, kind) = match elem_dtype {
+                    DType::I64 => ("i64", ValueKind::ScalarI64),
+                    DType::I32 => ("i32", ValueKind::ScalarI32),
+                    DType::F32 => ("f32", ValueKind::ScalarF32),
+                    DType::F64 => ("f64", ValueKind::ScalarF64),
+                    other => {
+                        return Err(MlirLowerError::ShapeError(format!(
+                            "ArrayLoad: element type `{}` is not supported on the \
+                             executable path (only i64/i32/f32/f64); indexing a \
+                             `{}`-typed array element is rejected to avoid a silent \
+                             width-miscompile or invalid IR",
+                            other.as_str(),
+                            other.as_str()
+                        )));
+                    }
+                };
+                // A1 (Fable audit, HIGH, wedge): an empty array has no
+                // in-bounds element — any index into it is out of bounds, so
+                // there is no deterministic value to clamp to. Reject it.
+                if len == 0 {
+                    return Err(MlirLowerError::ShapeError(format!(
+                        "ArrayLoad: cannot index an empty (len 0) array {base:?}"
+                    )));
+                }
+                // A1 (Fable audit, HIGH, wedge): clamp the (possibly runtime)
+                // index to `[0, len-1]` so `tensor.extract` is ALWAYS in
+                // bounds. Without this a negative or `>= len` index is an
+                // out-of-bounds `tensor.extract` — UB after bufferization whose
+                // result differs by substrate = a byte-identity break on the
+                // executable path (the wedge). The clamp gives OOB a PINNED,
+                // substrate-independent result (element 0 for a negative index,
+                // element len-1 for `>= len`). The clamp is pure signed i64
+                // min/max, itself byte-identical across x86/ARM.
+                self.emit_line(&format!("  %alo{0} = arith.constant 0 : i64", dst.0));
                 self.emit_line(&format!(
-                    "  %aidx{0} = arith.index_cast {1} : i64 to index",
+                    "  %ahi{0} = arith.constant {1} : i64",
+                    dst.0,
+                    len - 1
+                ));
+                self.emit_line(&format!(
+                    "  %acl0{0} = arith.maxsi {1}, %alo{0} : i64",
                     dst.0, index
+                ));
+                self.emit_line(&format!(
+                    "  %acl1{0} = arith.minsi %acl0{0}, %ahi{0} : i64",
+                    dst.0
+                ));
+                self.emit_line(&format!(
+                    "  %aidx{0} = arith.index_cast %acl1{0} : i64 to index",
+                    dst.0
                 ));
                 self.emit_line(&format!(
                     "  {0} = tensor.extract {1}[%aidx{2}] : tensor<{3}x{elem}>",
                     dst, base, dst.0, len
                 ));
-                let kind = match elem_dtype {
-                    DType::F64 => ValueKind::ScalarF64,
-                    DType::F32 => ValueKind::ScalarF32,
-                    _ => ValueKind::ScalarI64,
-                };
                 self.values.insert(*dst, kind);
             }
             // RFC 0006 Track B (increment 1) — SIMD vector load.
