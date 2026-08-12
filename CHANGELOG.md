@@ -49,10 +49,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sorted, validated fail-closed (reserved-prefix / un-namespaced / duplicate / empty
   rejected) at BOTH the CLI and the library emit boundary, and folded into the signature
   preimage so signed app metadata is non-strippable.
-- **`std/io.mind` `print_i64` / `print_f64_bits`.** Deterministic integer and exact-bits
-  float stdout printers over `__mind_write` (`print_f64_bits` prints the u64 IEEE-754 bit
-  pattern, round-trippable via `__mind_bits_to_f64`; a shortest-round-trip decimal float
-  printer is deferred as a research-grade determinism task).
 - **Edges (17.8):** `lib` / `main` / `mod` are diagnosed as reserved crate-root stems — a
   non-entry `src/lib.mind` errors clearly (rename hint) instead of a cryptic downstream
   `E2003` (behaviour change: a project that relied on such a sibling collapsing to `crate`

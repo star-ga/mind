@@ -1710,8 +1710,12 @@ report was the 17.1 hard failure, now fixed. The JIT/runtime fail-loud landed.
 `f64` in `main.mind` (keystone stays green without it — the self-host compiler is single-unit
 all-`i64` and never exercises cross-module `f64`); the caller build cache key does not yet include
 imported callee signatures (a callee-signature change with byte-identical caller source is a stale
-hit — clean builds unaffected); calling an `std` function via `use std.io::…` does not link into a
-`mindc run` binary (pre-existing std-linking limitation — inline-copy or `--emit-shared`+FFI work);
+hit — clean builds unaffected); deterministic numeric stdout printers (`print_i64` /
+`print_f64_bits`) are deferred — digit extraction needs `while`, so they cannot live in
+`std/io.mind` (which is contractually while-free / minimal-parseable, enforced by
+`tests/fmt_idempotence.rs`); they belong in a `std-surface`-tier fmt module, and separately,
+calling an `std` function via `use std.io::…` does not yet link into a `mindc run` binary
+(pre-existing std-linking limitation — inline-copy or `--emit-shared`+FFI work today);
 `--emit-ir` still renders an `f64` function *body* as a top-level `const.i64 0` stub (display-only;
 the compiled code is correct); and `examples/detmath_kat` `main()` returns 1 at HEAD (a pre-existing
 KAT vector, independent of this batch — old and new binary identical).
