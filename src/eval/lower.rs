@@ -1581,10 +1581,29 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
             #[cfg(feature = "std-surface")]
             ast::Node::Const {
                 name,
-                ty: Some(TypeAnn::Array { .. }),
+                ty: Some(TypeAnn::Array { element, .. }),
                 value,
                 ..
             } => {
+                // Phase 17.4 soundness guard: the named-`const`-array path is
+                // i64-only (`Instr::ConstArray.values: Vec<i64>`, materialised
+                // via `extract_array_lit_values` which coerces any non-integer
+                // literal to 0). A float element type therefore silently zeroed
+                // the whole table — a deterministic-wrong miscompile. Fail
+                // closed instead. f64 aggregates are Phase 17.3; upgrade path:
+                // store the raw bits on the i64 heap via the `__mind_*_to_bits`
+                // intrinsics, or add a typed dense-tensor const-array node.
+                if matches!(element.as_ref(), TypeAnn::ScalarF64 | TypeAnn::ScalarF32)
+                    || matches!(element.as_ref(), TypeAnn::Named(n) if n == "f64" || n == "f32")
+                {
+                    panic!(
+                        "const array `{name}` has a floating-point element type, \
+                         which the i64 const-array path cannot represent (it would \
+                         silently store zeros). Float aggregates are not yet \
+                         supported (roadmap 17.3); use a `tensor<f64[N]>` binding \
+                         or the `__mind_f64_to_bits` heap path instead."
+                    );
+                }
                 let values = extract_array_lit_values(value);
                 ir.const_array_defs.insert(name.clone(), values.clone());
                 let id = ir.fresh();

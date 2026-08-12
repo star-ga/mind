@@ -252,6 +252,15 @@ const PRIMITIVE_CONV_NAMES: &[&str] = &[
     "u32", "i32", "i64", "f64", "u8", "u16", "u64", "i8", "i16", "usize", "f32", "bool", "isize",
 ];
 
+/// Function names the compiler lowers as builtin intrinsics and therefore
+/// RESERVES against user `fn` definitions (E2031). Kept intentionally tiny —
+/// only names actually lowered specially. `sqrt` → IEEE `llvm.intr.sqrt`
+/// (roadmap 17.5). One name, one meaning: a reader (human or LLM) can assume
+/// `sqrt` is ALWAYS the correctly-rounded intrinsic, with no whole-program
+/// resolution rule to carry. Extend ONLY when adding a new name-matched builtin
+/// lowering, and list the name in the language spec's reserved-identifier table.
+const RESERVED_BUILTIN_INTRINSIC_FNS: &[&str] = &["sqrt"];
+
 /// A range-slice `receiver[start..end]` (#263 surface 1) whose `start` or
 /// `end` bound is not an integer-class scalar. Slice bounds are usize-class
 /// offsets; a float / tensor / gradient-map bound is rejected fail-loud here
@@ -2284,6 +2293,19 @@ const STD_SURFACE_INTRINSICS: &[(&str, usize)] = &[
     // M-row bands with raw POSIX threads. Output is independent of the thread
     // count (no cross-thread reduction), so cross-substrate bit-identity holds.
     ("__mind_blas_matmul_mm_q16_mt_v", 6),
+    // Phase 17.3 — `f64` bit-cast surface. These three same-width coercions let
+    // an `f64` aggregate be built on the existing i64 heap: `__mind_f64_to_bits`
+    // reinterprets an `f64` as its i64 bit pattern for storage, `__mind_bits_to_f64`
+    // reinterprets a loaded i64 back to `f64`, and `__mind_conv_f64` is the
+    // pure-marker identity used by the enum-payload / declared-type coercion path.
+    // All arity 1. The MLIR backend already lowers them (an `arith.bitcast`, or a
+    // pass-through marker); registering them here lets std / user source name them
+    // through the arity-checked cross-backend surface instead of the type checker
+    // rejecting the call. All three are classified strict in `src/ir/fp_mode.rs`
+    // (STRICT_FLOAT_INTRINSICS / dtype-recovery), so the FP attestation stays honest.
+    ("__mind_bits_to_f64", 1),
+    ("__mind_conv_f64", 1),
+    ("__mind_f64_to_bits", 1),
     ("__mind_free", 1),
     ("__mind_load_i64", 1),
     // RFC 0005 Phase 1.6 (task #306) — single-byte load/store. The
@@ -4080,6 +4102,24 @@ fn check_module_types_in_file_impl(
                     ),
                     *span,
                     PRIMITIVE_CONV_FN_CODE,
+                ));
+            }
+            // E2031 — a fn named after a builtin intrinsic the compiler lowers
+            // specially (currently `sqrt` → IEEE `llvm.intr.sqrt`, roadmap 17.5)
+            // is reserved. A user `fn sqrt` would either be silently shadowed by
+            // the intrinsic (wrong function called, no error) or collide with its
+            // emitted `func.func @sqrt` symbol (duplicate definition → the .so
+            // fails to link) — both are miscompiles. Reserve the name so `sqrt`
+            // is UNCONDITIONALLY the correctly-rounded intrinsic.
+            if RESERVED_BUILTIN_INTRINSIC_FNS.contains(&name.as_str()) {
+                errs.push(diag_from_span(
+                    src,
+                    file,
+                    format!(
+                        "`{name}` is a builtin intrinsic function (the compiler lowers it to the IEEE correctly-rounded operation); a user function may not be named `{name}` — rename it"
+                    ),
+                    *span,
+                    "E2031",
                 ));
             }
         }

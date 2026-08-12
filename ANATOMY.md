@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3342 | **Est. tokens:** ~7,820,881
-**Generated:** 2026-08-12 07:23 UTC
+**Files:** 3346 | **Est. tokens:** ~7,830,259
+**Generated:** 2026-08-12 08:09 UTC
 
 ## Token Budget Guide
 
@@ -54,6 +54,7 @@
 | `examples/c/` | 2 | ~400 |
 | `examples/columnar/` | 4 | ~7,585 |
 | `examples/compliance/` | 3 | ~5,294 |
+| `examples/detmath_kat/` | 2 | ~4,435 |
 | `examples/distribution-crossisa/` | 6 | ~6,336 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/grammar_mask/` | 2 | ~4,636 |
@@ -414,8 +415,8 @@
 | `src/type_checker/` | 1 | ~15,151 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 41 | ~198,273 |
-| `tests/` | 314 | ~536,559 |
+| `std/` | 42 | ~202,332 |
+| `tests/` | 315 | ~537,443 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -794,6 +795,10 @@
 ### `examples/`
 
 - `cos_dottie.mind` (~781 tok, large) — Cosine-map iteration toward the Dottie fixed point (x* ≈ 0.7390851332151607),
+### `examples/detmath_kat/`
+
+- `main.mind` (~4415 tok, huge) — examples/detmath_kat — value-oracle known-answer tests for std.detmath.
+- `Mind.toml` (~20 tok, tiny) — [package]
 ### `examples/distribution-crossisa/`
 
 - `afterkelly.cpp` (~2278 tok, huge) — Command line arguments. ____________________________________________
@@ -4125,6 +4130,7 @@
 - `blas.mind` (~2518 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
 - `chacha20_poly1305.mind` (~3972 tok, huge) — std/chacha20_poly1305.mind — ChaCha20-Poly1305 AEAD (RFC 8439) in pure MIND.
 - `cli.mind` (~3211 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
+- `detmath.mind` (~4059 tok, huge) — std.detmath — deterministic transcendental tier (roadmap Phase 17.6).
 - `ecdsa_p256.mind` (~6517 tok, huge) — std/ecdsa_p256.mind — ECDSA signature VERIFICATION on NIST P-256
 - `fs.mind` (~5019 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
 - `hkdf.mind` (~1547 tok, huge) — std/hkdf.mind — HMAC-SHA256 (RFC 2104) + HKDF (RFC 5869) in pure MIND.
@@ -4230,6 +4236,7 @@
 
 - `conformance.rs` (~129 tok, small)
 - `CONFORMANCE_TESTS.md` (~1225 tok, large) — MIND Conformance Test Corpus
+- `const_array_run.rs` (~884 tok, large) — Copyright 2025 STARGA Inc.
 - `const_folding.rs` (~246 tok, medium) — Copyright 2025 STARGA Inc.
 - `continue_in_match_arm_run.rs` (~1222 tok, large) — Copyright 2025 STARGA Inc.
 - `conv2d_exec.rs` (~620 tok, large) — Copyright 2025 STARGA Inc.

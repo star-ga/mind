@@ -2701,6 +2701,34 @@ impl LoweringContext {
                         }
                     }
                 }
+                // Phase 17.5 — scalar `sqrt` on a float value. `sqrt` is a
+                // strict-safe, IEEE correctly-rounded builtin (src/ir/fp_mode.rs)
+                // but had no executable lowering: the generic `func.call @sqrt`
+                // path below typed it `(i64) -> i64`, so `sqrt(2.0)` failed
+                // `use of value expects different type ... i64 vs f64`. Lower it
+                // to the LLVM `sqrt` intrinsic directly — `llvm.intr.sqrt` is
+                // already LLVM-dialect, so it needs NO `convert-math-to-llvm`
+                // pass (which would perturb the bench-gate pipeline moat) and
+                // survives `mlir-translate` as `@llvm.sqrt.f{32,64}`. Only fires
+                // for a single float arg and only when `sqrt` is NOT a
+                // user-defined function (name-trust guard), so a program that
+                // defines its own `sqrt` keeps the generic call path.
+                #[cfg(feature = "std-surface")]
+                if name == "sqrt" && args.len() == 1 && !self.defined_fns.contains(name) {
+                    let fty = match self.values.get(&args[0]) {
+                        Some(ValueKind::ScalarF64) => Some(("f64", ValueKind::ScalarF64)),
+                        Some(ValueKind::ScalarF32) => Some(("f32", ValueKind::ScalarF32)),
+                        _ => None,
+                    };
+                    if let Some((fty, out_kind)) = fty {
+                        self.emit_line(&format!(
+                            "    %{} = llvm.intr.sqrt(%{}) : ({fty}) -> {fty}",
+                            dst.0, args[0].0
+                        ));
+                        self.values.insert(*dst, out_kind);
+                        return Ok(());
+                    }
+                }
                 // `ikind` (the closed 33-name intrinsic classification) was computed
                 // once at the top of this arm, replacing the ~25-guard
                 // `name == "__mind_…"` ladder below. Each guard keeps its own
@@ -4367,6 +4395,20 @@ impl LoweringContext {
                     "  {} = arith.constant dense<[{}]> : tensor<{}xi64>",
                     dst, elems, n
                 ));
+                // Phase 17.4: register the base as a value-tensor so a
+                // downstream `ArrayLoad` can recover the element type and emit
+                // a well-typed `tensor.extract`. Without this the element load
+                // has no registered type and the enclosing binop fails with
+                // "missing type information" on the executable path (the IR
+                // paths never query the lowering type map). i64-only by
+                // construction (`ConstArray.values: Vec<i64>`).
+                self.values.insert(
+                    *dst,
+                    ValueKind::Tensor {
+                        dtype: DType::I64,
+                        shape: vec![ShapeDim::Known(n)],
+                    },
+                );
             }
             // Dense tensor literal `[e0, e1, ...]` — per-element bit patterns
             // (NOT a broadcast fill). Generalises the i64-only ConstArray emit to
@@ -4427,10 +4469,48 @@ impl LoweringContext {
             // Lowers to an `tensor.extract` from the base tensor constant.
             #[cfg(feature = "std-surface")]
             Instr::ArrayLoad { dst, base, index } => {
+                // Phase 17.4: recover the base tensor's element type + length so
+                // the extract is well-typed, index-cast the i64 index to `index`
+                // (tensor.extract requires `index`-typed subscripts), and
+                // register the scalar result kind so the enclosing binop finds
+                // its operand type. Previously this emitted `tensor<?>` and left
+                // `dst` untyped — the executable path then failed lowering the
+                // consuming binop with "missing type information", even though
+                // the IR paths (which never build) accepted it.
+                let (elem_dtype, len) = match self.values.get(base) {
+                    Some(ValueKind::Tensor { dtype, shape }) => {
+                        let len = match shape.as_slice() {
+                            [ShapeDim::Known(n)] => *n,
+                            _ => {
+                                return Err(MlirLowerError::ShapeError(format!(
+                                    "ArrayLoad base {base:?} is not a rank-1 static array"
+                                )));
+                            }
+                        };
+                        (dtype.clone(), len)
+                    }
+                    _ => {
+                        return Err(MlirLowerError::MissingTypeInfo {
+                            value: *base,
+                            context: "array load base",
+                        });
+                    }
+                };
+                let elem = elem_dtype.as_str();
                 self.emit_line(&format!(
-                    "  {} = tensor.extract {}[{}] : tensor<?>",
-                    dst, base, index
+                    "  %aidx{0} = arith.index_cast {1} : i64 to index",
+                    dst.0, index
                 ));
+                self.emit_line(&format!(
+                    "  {0} = tensor.extract {1}[%aidx{2}] : tensor<{3}x{elem}>",
+                    dst, base, dst.0, len
+                ));
+                let kind = match elem_dtype {
+                    DType::F64 => ValueKind::ScalarF64,
+                    DType::F32 => ValueKind::ScalarF32,
+                    _ => ValueKind::ScalarI64,
+                };
+                self.values.insert(*dst, kind);
             }
             // RFC 0006 Track B (increment 1) — SIMD vector load.
             //
@@ -11183,7 +11263,14 @@ fn select_arith_op(op: BinOp, dtype: &DType) -> &'static str {
             BinOp::Gt => "arith.cmpf \"ogt\",",
             BinOp::Ge => "arith.cmpf \"oge\",",
             BinOp::Eq => "arith.cmpf \"oeq\",",
-            BinOp::Ne => "arith.cmpf \"one\",",
+            // `!=` must be UNORDERED-or-not-equal (`une`), not ordered (`one`):
+            // IEEE / Rust / C semantics make `NaN != NaN` TRUE. `one` (ordered)
+            // wrongly yields FALSE for a NaN operand — a silent miscompile that
+            // broke `x != x` NaN detection (caught by the detmath value-oracle).
+            // `une` and `one` agree for all ordered inputs, so this only changes
+            // behaviour when an operand is NaN. `==` correctly stays `oeq`
+            // (`NaN == NaN` is FALSE). Applies to scalar and tensor float `!=`.
+            BinOp::Ne => "arith.cmpf \"une\",",
             // Bitwise ops on floating-point tensors are not meaningful;
             // emit a placeholder that mlir-opt will reject loudly rather
             // than silently producing wrong code.

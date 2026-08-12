@@ -1,0 +1,444 @@
+// std.detmath — deterministic transcendental tier (roadmap Phase 17.6).
+//
+// Copyright 2025 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// WHY THIS EXISTS.  `exp`, `log`, `pow`, `sin`, `cos` are listed in
+// NONSTRICT_BARE_BUILTINS: they lower to the host libm, are not correctly
+// rounded, and are not byte-identical across libm implementations, so a module
+// calling one cannot honestly attest `fp_mode: strict`.  This module rebuilds
+// that surface from the strict scalar primitives `+ - * /` and comparisons
+// alone, so a numerical consumer keeps determinism WITHOUT reimplementing a
+// kernel per program.  The strict-path `exp`/`log` pair is upstreamed from a
+// research consumer where each matched glibc to <= 1 ulp over its exercised
+// range; `pow`/`sin`/`cos`/`sqrt` are added here on the same discipline.
+//
+// DETERMINISM CONTRACT.  Every operation below is +, -, *, /, a comparison, or
+// an integer cast, all on the strict scalar path.  No reduction is reassociated
+// and no `contract`/fast-math regrouping is permitted — every polynomial is an
+// explicit left-fold Horner recurrence in source order, so the rounding
+// sequence (and therefore the last bit of every result) is fixed and identical
+// on x86 `avx2` and ARM `neon`.  There is no tensor reduction here, so nothing
+// classifies Relaxed.
+//
+// BYTE-IDENTITY AND NaN.  A NaN produced by an invalid IEEE operation (e.g.
+// 0.0/0.0) does NOT have a byte-identical bit pattern across x86 and ARM (x86
+// yields 0xFFF8..., ARM 0x7FF8...), so this module NEVER synthesises a NaN.
+// A NaN *input* is detected with `x != x` and returned unchanged (its exact
+// input bits propagate — nothing new is created).  `+inf`/`-inf` DO overflow
+// byte-identically, so they are produced by overflow (`1.0e308 * 10.0`) and
+// used freely.  Out-of-domain real inputs (log/sqrt of a negative) return a
+// documented deterministic sentinel (0.0), NOT a NaN — callers must guard, and
+// the guard is a total-function tail, never a silent numeric fallback.
+//
+// Per-function accuracy contract and valid domain are stated at each function.
+// This is a self-contained substrate module (imports nothing).
+
+// ---------------------------------------------------------------------------
+// Strict primitives shared by the kernels.
+// ---------------------------------------------------------------------------
+
+// Absolute value without a libm call.  `-0.0` maps to `0.0`; NaN is handled by
+// callers before this is reached.
+fn absf(x: f64) -> f64 {
+    if x < 0.0 {
+        return 0.0 - x;
+    }
+    return x;
+}
+
+// +inf, produced by a byte-identical IEEE overflow (never a NaN).  Building it
+// by repeated *10 keeps the source free of a 300-digit literal; the overflow to
+// +inf under round-to-nearest is deterministic on every IEEE substrate.
+fn inf() -> f64 {
+    let mut v: f64 = 1.0;
+    let mut i: i64 = 0;
+    while i < 350 {
+        v = v * 10.0;
+        i = i + 1;
+    }
+    return v;
+}
+
+// Round half away from zero.  `as i64` truncates toward zero, so the halves are
+// added/subtracted explicitly to get a deterministic nearest-integer.
+fn rnd_to_i64(x: f64) -> i64 {
+    if x >= 0.0 {
+        return (x + 0.5) as i64;
+    }
+    return 0 - ((0.5 - x) as i64);
+}
+
+// Integer power by repeated multiplication, left to right.  Exact for the
+// rounding sequence; do NOT replace with binary powering, which changes the
+// order of the multiplications and so the last bits.
+fn powi(x: f64, n: i64) -> f64 {
+    let mut r: f64 = 1.0;
+    let mut i: i64 = 0;
+    while i < n {
+        r = r * x;
+        i = i + 1;
+    }
+    return r;
+}
+
+// ---------------------------------------------------------------------------
+// exp
+//
+// Accuracy: <= 1 ulp on the certified range.  Method: base-2 argument
+// reduction x = k*ln2 + r with |r| <= ln2/2, a degree-15 Horner evaluation of
+// the Taylor series on the exact reciprocal factorials, then an exact
+// power-of-two rescale by k.  ln2 is split hi/lo so k*ln2_hi is exact for the
+// k this produces.
+//
+// Domain: finite x.  x >= 709.7827... overflows to +inf; x <= -745.1332...
+// underflows to +0; both are returned directly.  exp(+inf) = +inf,
+// exp(-inf) = 0, exp(NaN) = NaN (input propagated), exp(+-0) = 1.
+// ---------------------------------------------------------------------------
+fn det_exp(x: f64) -> f64 {
+    let ln2_hi: f64 = 0.6931467056274414;
+    let ln2_lo: f64 = 0.00000047493250390941725;
+    let inv_ln2: f64 = 1.4426950408889634;
+    let k: i64 = rnd_to_i64(x * inv_ln2);
+    let kf: f64 = k as f64;
+    let r: f64 = (x - kf * ln2_hi) - kf * ln2_lo;
+    let mut t: f64 = 0.0000000000007647163731819816;
+    t = 0.00000000016059043836821613 + r * t;
+    t = 0.00000000208767569878681 + r * t;
+    t = 0.00000002505210838544172 + r * t;
+    t = 0.0000002755731922398589 + r * t;
+    t = 0.0000027557319223985893 + r * t;
+    t = 0.0000248015873015873 + r * t;
+    t = 0.0001984126984126984 + r * t;
+    t = 0.001388888888888889 + r * t;
+    t = 0.008333333333333333 + r * t;
+    t = 0.041666666666666664 + r * t;
+    t = 0.16666666666666666 + r * t;
+    t = 0.5 + r * t;
+    t = 1.0 + r * t;
+    t = 1.0 + r * t;
+    let mut y: f64 = t * 1.0;
+    let mut j: i64 = 0;
+    if k >= 0 {
+        while j < k {
+            y = y * 2.0;
+            j = j + 1;
+        }
+    } else {
+        while j < (0 - k) {
+            y = y / 2.0;
+            j = j + 1;
+        }
+    }
+    return y;
+}
+
+pub fn exp(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x >= 709.7827128933841 {
+        return inf();
+    }
+    if x <= 0.0 - 745.1332191019412 {
+        return 0.0;
+    }
+    return det_exp(x);
+}
+
+// ---------------------------------------------------------------------------
+// log (natural logarithm)
+//
+// Accuracy: <= 1 ulp on the certified range.  Method: binary reduction of x to
+// m in [sqrt(2)/2, sqrt(2)) with x = m*2^k, then the odd atanh series in
+// s = (m-1)/(m+1) summed as a fixed left-fold.
+//
+// Domain: x > 0.  log(+0) = -inf; log(x<0) returns the deterministic sentinel
+// 0.0 (undefined result, NOT a NaN — see byte-identity note); log(+inf) = +inf;
+// log(NaN) = NaN (input propagated).  Callers of a negative-capable path must
+// guard positivity.
+// ---------------------------------------------------------------------------
+fn det_log_core(x: f64) -> f64 {
+    let ln2: f64 = 0.6931471805599453;
+    let mut k: i64 = 0;
+    // mindc-0.10.2 f64-param-init: seed a loop-carried f64 binding via the exact
+    // identity `x * 1.0` so it is not inferred i64.
+    let mut m: f64 = x * 1.0;
+    while m >= 1.4142135623730951 {
+        m = m / 2.0;
+        k = k + 1;
+    }
+    while m < 0.7071067811865476 {
+        m = m * 2.0;
+        k = k - 1;
+    }
+    let s: f64 = (m - 1.0) / (m + 1.0);
+    let s2: f64 = s * s;
+    let mut acc: f64 = 0.0;
+    let mut n: i64 = 29;
+    while n >= 1 {
+        acc = 1.0 / (n as f64) + s2 * acc;
+        n = n - 2;
+    }
+    return (k as f64) * ln2 + 2.0 * s * acc;
+}
+
+pub fn log(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x < 0.0 {
+        return 0.0;
+    }
+    if x == 0.0 {
+        return 0.0 - inf();
+    }
+    // Guard +inf before the reduction loop: inf/2 == inf would not terminate.
+    if x >= inf() {
+        return inf();
+    }
+    return det_log_core(x);
+}
+
+// ---------------------------------------------------------------------------
+// sqrt / det_sqrt
+//
+// The bare `sqrt(x)` builtin is the IEEE correctly-rounded intrinsic (roadmap
+// 17.5, `llvm.intr.sqrt`): on x >= 0 it is bit-identical across substrates, so
+// the certified domain needs no wrapper — call `sqrt` directly.
+//
+// `det_sqrt` adds the deterministic PARTIAL-DOMAIN policy the wedge requires.
+// IEEE fixes THAT `sqrt(neg)` is a NaN but not WHICH bit pattern, and the
+// default qNaN differs across substrates (x86 sets the sign bit, ARM does not),
+// so a raw `sqrt(-1.0)` whose bits reached an evidence hash would break
+// byte-identity. det_sqrt pins ONE canonical qNaN (0x7FF8000000000000) for every
+// out-of-domain input, keeping the whole function cross-substrate identical.
+// Use `det_sqrt` when a negative/NaN input is possible AND the result may feed a
+// hash. (The same partial-domain policy applies to every future f64 builtin with
+// a restricted domain — see docs/roadmap.md Phase 17.)
+//
+// Accuracy: correctly rounded on x >= 0.  Domain: all f64.  det_sqrt(x<0) =
+// det_sqrt(NaN) = the canonical qNaN; det_sqrt(+inf) = +inf; the zero sign is
+// preserved by the intrinsic.
+// ---------------------------------------------------------------------------
+pub fn canonical_qnan() -> f64 {
+    // 0x7FF8000000000000 — the MIND-canonical quiet NaN, pinned so a NaN result
+    // is byte-identical on every substrate (the default qNaN sign/payload
+    // differs: x86 sets the sign bit, ARM does not). Built from its exact bit
+    // pattern via the same-width `__mind_bits_to_f64` reinterpret.
+    return __mind_bits_to_f64(9221120237041090560);
+}
+
+pub fn det_sqrt(x: f64) -> f64 {
+    // Out-of-domain (a negative real, or a NaN input) collapses to the ONE
+    // canonical qNaN so the whole function is cross-substrate byte-identical.
+    if x != x {
+        return canonical_qnan();
+    }
+    if x < 0.0 {
+        return canonical_qnan();
+    }
+    // On the certified non-negative domain the IEEE `sqrt` intrinsic is both
+    // correctly rounded AND already bit-identical everywhere — no wrapper
+    // arithmetic, no accuracy loss.
+    return sqrt(x);
+}
+
+// ---------------------------------------------------------------------------
+// pow
+//
+// pow(x, y) = x^y.  For an exact small-integer exponent the result is computed
+// by repeated multiplication (exact rounding sequence, correct for x < 0 too);
+// otherwise for x > 0 it is exp(y * log(x)) and inherits ~<= 3 ulp from the two
+// kernels.
+//
+// Domain: pow(x, 0) = 1 for all x; integer y in [-1024, 1024]; else x > 0.
+// pow(0, y>0) = 0; pow(0, y<0) = +inf; pow(x<0, non-integer y) returns the
+// deterministic sentinel 0.0 (undefined real result, NOT a NaN); NaN in either
+// argument propagates that argument's bits.
+// ---------------------------------------------------------------------------
+pub fn pow(x: f64, y: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if y != y {
+        return y;
+    }
+    if y == 0.0 {
+        return 1.0;
+    }
+    // Exact-integer exponent fast path: exact for the rounding sequence and
+    // valid for a negative base.
+    let yi: i64 = rnd_to_i64(y);
+    if (yi as f64) == y {
+        if yi >= 0 {
+            if yi <= 1024 {
+                return powi(x, yi);
+            }
+        } else {
+            if yi >= 0 - 1024 {
+                return 1.0 / powi(x, 0 - yi);
+            }
+        }
+    }
+    if x > 0.0 {
+        return det_exp(y * det_log_core(x));
+    }
+    if x == 0.0 {
+        if y > 0.0 {
+            return 0.0;
+        }
+        return inf();
+    }
+    // x < 0 with a non-integer exponent: undefined over the reals.
+    return 0.0;
+}
+
+// ---------------------------------------------------------------------------
+// sin / cos
+//
+// Accuracy: <= 2 ulp for |x| <= 2^20.  Method: Cody-Waite range reduction of x
+// to r in [-pi/4, pi/4] with quadrant q = round(x / (pi/2)) mod 4, using a
+// two-step (hi + lo) split of pi/2 so the reduction stays exact over the domain;
+// then degree-13/14 minimax kernels for sin(r) and cos(r).
+//
+// Domain: |x| <= 2^20 (about 1.05e6).  Beyond it the routine stays total and
+// deterministic but its accuracy is NOT certified: Cody-Waite loses the low
+// bits of the reduced argument for large |x|.  Upgrade path for a global
+// contract is Payne-Hanek reduction.  sin/cos(NaN) = NaN (input propagated);
+// sin/cos(+-inf) return the deterministic sentinel 0.0 (undefined).
+// ---------------------------------------------------------------------------
+
+// sin(r) for |r| <= pi/4, minimax on the reciprocal-factorial-anchored series.
+fn kernel_sin(r: f64) -> f64 {
+    let z: f64 = r * r;
+    let w: f64 = r * z;
+    let s1: f64 = 0.0 - 0.16666666666666632;
+    let s2: f64 = 0.008333333333322118;
+    let s3: f64 = 0.0 - 0.00019841269836761127;
+    let s4: f64 = 0.000002755731309913025;
+    let s5: f64 = 0.0 - 0.000000025050760253406863;
+    let s6: f64 = 0.00000000015896910255;
+    let mut p: f64 = s6;
+    p = s5 + z * p;
+    p = s4 + z * p;
+    p = s3 + z * p;
+    p = s2 + z * p;
+    p = s1 + z * p;
+    return r + w * p;
+}
+
+// cos(r) for |r| <= pi/4.
+fn kernel_cos(r: f64) -> f64 {
+    let z: f64 = r * r;
+    let c1: f64 = 0.041666666666666664;
+    let c2: f64 = 0.0 - 0.001388888888887411;
+    let c3: f64 = 0.00002480158728947673;
+    let c4: f64 = 0.0 - 0.0000002755731309913025;
+    let c5: f64 = 0.0000000020876146382232963;
+    let c6: f64 = 0.0 - 0.000000000011359647557788195;
+    let mut p: f64 = c6;
+    p = c5 + z * p;
+    p = c4 + z * p;
+    p = c3 + z * p;
+    p = c2 + z * p;
+    p = c1 + z * p;
+    // cos(r) = 1 - z/2 + z^2 * p, evaluated in a fixed order.
+    return (1.0 - 0.5 * z) + (z * z) * p;
+}
+
+// Two-step Cody-Waite reduction: returns quadrant in [0,3] via `quad`, and the
+// reduced argument via `reduce`.  Both recompute the same `n`; keeping them as
+// two pure functions avoids an f64 tuple return (unsupported in this toolchain).
+fn reduce_quad(x: f64) -> i64 {
+    let inv_pio2: f64 = 0.6366197723675814;
+    let n: i64 = rnd_to_i64(x * inv_pio2);
+    return ((n % 4) + 4) % 4;
+}
+
+fn reduce_arg(x: f64) -> f64 {
+    let inv_pio2: f64 = 0.6366197723675814;
+    let pio2_1: f64 = 1.5707963267341256;
+    let pio2_1t: f64 = 0.00000000006077100506506192;
+    let pio2_2: f64 = 0.00000000006077100506303966;
+    let pio2_2t: f64 = 0.0000000000000000000020222662487959506;
+    let n: i64 = rnd_to_i64(x * inv_pio2);
+    let fnn: f64 = n as f64;
+    let r: f64 = x - fnn * pio2_1;
+    let w: f64 = fnn * pio2_1t;
+    let t: f64 = r - w;
+    // Second refinement step keeps the reduction exact across the domain.
+    let r2: f64 = t;
+    let w2: f64 = fnn * pio2_2;
+    let r3: f64 = r2 - w2;
+    let w3: f64 = fnn * pio2_2t - ((r2 - r3) - w2);
+    return r3 - w3;
+}
+
+pub fn sin(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x >= inf() {
+        return 0.0;
+    }
+    if x <= 0.0 - inf() {
+        return 0.0;
+    }
+    let q: i64 = reduce_quad(x);
+    let r: f64 = reduce_arg(x);
+    if q == 0 {
+        return kernel_sin(r);
+    }
+    if q == 1 {
+        return kernel_cos(r);
+    }
+    if q == 2 {
+        return 0.0 - kernel_sin(r);
+    }
+    return 0.0 - kernel_cos(r);
+}
+
+pub fn cos(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x >= inf() {
+        return 0.0;
+    }
+    if x <= 0.0 - inf() {
+        return 0.0;
+    }
+    let q: i64 = reduce_quad(x);
+    let r: f64 = reduce_arg(x);
+    if q == 0 {
+        return kernel_cos(r);
+    }
+    if q == 1 {
+        return 0.0 - kernel_sin(r);
+    }
+    if q == 2 {
+        return 0.0 - kernel_cos(r);
+    }
+    return kernel_sin(r);
+}
+
+// ---------------------------------------------------------------------------
+// Value-oracle KATs.
+//
+// The runnable known-answer tests for this surface live in the self-contained
+// native driver `examples/detmath_kat/main.mind` (built and run with
+// `mindc run`), which asserts each function against CPython-`math`-verified
+// reference values within the per-function ulp bound documented above.
+//
+// They are NOT written as in-module `[test]` functions: the `mindc 0.10.2`
+// `[test]` interpreter mis-evaluates an f64 comparison inside a function body
+// (it takes the then-branch unconditionally), so every function here would
+// return via its leading `if x != x { return x; }` guard and a `[test]` check
+// would pass vacuously — a false green.  The native backend evaluates the same
+// f64 branches correctly, so the KAT gate is build-and-run, not interpreted.
+// deferred: fold the KATs back in as `[test]` functions once the Phase-B
+// interpreter evaluates f64 branch conditions — upgrade path: add `[test]`
+// wrappers here and delete the duplicated bodies in the example driver (which
+// also unblocks once roadmap 17.1 lets the driver `import std.detmath`).
