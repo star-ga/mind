@@ -1651,6 +1651,51 @@ workload shipped in spite of all of them, so none is a blocker — each is a sha
 forced a workaround, and each workaround is recorded so the fix can be validated against a
 real consumer rather than a synthetic test.
 
+### Status (2026-08-12)
+
+Landed on the `--emit-shared` compile path (proven by build-and-run tests, not IR-shape
+assertions):
+
+- **17.4** — `const`-array executable lowering. `ConstArray` registers its base as a
+  `Tensor{i64}`; `ArrayLoad` recovers the element type + `index_cast`s the subscript so the
+  enclosing binop resolves. The element type is *derived* from the declaration — no IR-node
+  field, no `mic@3` wire change. `f64` `const`-array **definitions** fail closed (the i64 heap
+  would silently zero them; `f64` aggregates are 17.3). Gate: `tests/const_array_run.rs`
+  (`psi_sum`=16, `w_weighted`=300).
+- **17.5** — scalar `f64` `sqrt` → the IEEE correctly-rounded `llvm.intr.sqrt`. **`sqrt` is now
+  a reserved builtin name (E2031)**: a user `fn sqrt` is rejected at check-time. One name, one
+  meaning — an LLM (or reader) can assume `sqrt` is always the intrinsic, with no whole-program
+  resolution rule, and both failure modes of a name clash (silent shadow, duplicate
+  `func.func @sqrt`) become unreachable rather than fixed.
+- **17.3** — `__mind_bits_to_f64` / `__mind_f64_to_bits` / `__mind_conv_f64` registered.
+- **17.6** — `std/detmath.mind`: pure-`f64` minimax `exp`/`log`/`sin`/`cos`/`pow` with a pinned
+  fold order, `det_sqrt`, and a value-oracle KAT.
+- **Bonus silent-miscompile** caught by the value-oracle: `f64` `!=` lowered `fcmp one`, so
+  `NaN != NaN` was wrongly `false`. Fixed to `une` (`==` stays `oeq`).
+
+**Partial-domain policy (general, applies to every future `f64` builtin with a restricted
+domain).** IEEE fixes *that* an out-of-domain result is a NaN but not *which* bit pattern, and
+the default qNaN differs across substrates (x86 sets the sign bit, ARM does not). A raw
+`sqrt(-1.0)` whose bits reach an evidence hash would therefore break byte-identity. The rule:
+a deterministic wrapper canonicalises out-of-domain inputs to one pinned qNaN
+(`0x7FF8000000000000`), built via the `__mind_bits_to_f64` reinterpret; the valid-domain result
+is already correctly-rounded and bit-identical everywhere. `std/detmath.det_sqrt` is the
+reference. The bare `sqrt` intrinsic is the fast, IEEE-standard form for the certified domain.
+
+**Meta-lesson.** The dominant Phase-17 bug class is *deterministic wrongness* — integer ops on
+`f64` bit patterns produce identical wrong bytes on every substrate and pass keystone +
+cross-substrate byte-identity, which check sameness, not correctness. A **value-level oracle**
+(known results to a stated ulp bound, cross-checked once against an independent reference then
+pinned) is a first-class gate here, alongside byte-identity — it is what caught the `!=`
+miscompile.
+
+**Open follow-ups (tracked):** activating 17.4/17.5 on the `mindc run` path (today they are
+live on `--emit-shared` but `run` routes through a different lowering entry); a
+`cross-module-imports`-feature regression that rejects a plain-sibling `use` the default path
+accepts; and making the JIT/runtime fallback exit non-zero when native compilation was expected
+but produced no output (a silent green is worse than a wrong answer). 17.1, 17.2, 17.7, 17.8
+remain.
+
 ### Priority order
 
 If these are taken in sequence, this is the order that unblocks the most consumer code per

@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Phase 17 numerical research surface (f64 completeness)
+- **`const`-array executable lowering (17.4).** `const NAME: [i64; N] = [...]` with
+  indexed reads (`NAME[i]`) now builds and runs — `ConstArray` registers its base as
+  a `Tensor{i64}` and `ArrayLoad` recovers the element type + `index_cast`s the
+  subscript so the enclosing binop resolves. The element type is *derived* from the
+  declaration (no IR-node field, no mic@3 wire change). `f64` `const`-array
+  definitions fail closed (the i64 heap would silently zero them). Build-and-run gate
+  `tests/const_array_run.rs`.
+- **Scalar `f64` `sqrt` (17.5)** lowers to the IEEE correctly-rounded `llvm.intr.sqrt`.
+  `sqrt` is now a **reserved builtin name (E2031)** — a user `fn sqrt` is rejected at
+  check-time (one name, one meaning; removes a silent-shadow / duplicate-symbol class).
+- **`f64` bit-cast intrinsics (17.3):** `__mind_bits_to_f64` / `__mind_f64_to_bits` /
+  `__mind_conv_f64`.
+- **`std/detmath.mind` (17.6):** deterministic pure-`f64` minimax `exp`/`log`/`sin`/
+  `cos`/`pow` with a pinned fold order, `det_sqrt` (intrinsic + a pinned canonical
+  qNaN `0x7FF8000000000000` for out-of-domain inputs so negatives stay cross-substrate
+  byte-identical), and a value-oracle KAT.
+
+### Fixed
+- **`f64 !=` was lowered `arith.cmpf "one"` (ordered), so `NaN != NaN` was wrongly
+  `false` — a silent miscompile.** Fixed to `"une"` (`==` stays `oeq`). Caught by the
+  detmath value-oracle. cross_substrate_identity 24/24 with no reference-hash drift.
+- **`mindc run` failed silently (exit 0, empty log) when the entry — or any linked —
+  module fell back to the runtime JIT.** `run_project` now exits non-zero and names the
+  modules; a silent green is worse than a wrong answer.
+- **`ArrayLoad` hardening (audit follow-up):** OOB runtime index now clamps
+  deterministically (was substrate-divergent UB); unsupported element types (q16/f16/
+  bf16) fail closed instead of emitting invalid IR / i64-width miscompiles.
+
 ## [0.10.2] - 2026-08-07 — runtime-free `mindc test` over real memory/struct/cross-module MIND, verifier break/continue if-merge fix, compile-speed (small-object allocator + boxed AST), and the `--backend` opt-in seam
 
 ### Performance
