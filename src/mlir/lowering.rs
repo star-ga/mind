@@ -11502,7 +11502,13 @@ fn render_dense_elem(bits: u64, dtype: &DType) -> String {
 }
 
 fn format_number(n: f64) -> String {
-    if (n.fract()).abs() < f64::EPSILON {
+    // Issue #231: an integer-valued finite f64 (e.g. 5.0) is printed WITH a decimal
+    // point (via `{:.1}`) so it never reads as an int; every OTHER value — including
+    // sub-EPSILON magnitudes (1e-16) and subnormals — uses Rust's shortest-round-trip
+    // Display, which reproduces the exact IEEE-754 bits. The old
+    // `(n.fract()).abs() < f64::EPSILON` test misclassified any |v| < f64::EPSILON as
+    // integer-valued and destroyed it to `0.0` (silent-miscompile).
+    if n.is_finite() && n.fract() == 0.0 {
         format!("{:.1}", n)
     } else {
         n.to_string()

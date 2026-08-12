@@ -88,6 +88,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   false green at exit 0).
 
 ### Fixed
+- **`mindc --emit-mlir` silently destroyed sub-EPSILON `f64` constants (GitHub #231, HIGH).**
+  `format_number` (src/mlir/lowering.rs) classified "integer-valued" with
+  `(n.fract()).abs() < f64::EPSILON`, so any nonzero `|v| < f64::EPSILON` (≈2.22e-16) was
+  misrouted to the `{:.1}` branch and rendered `0.0` — a **silent wrong-constant miscompile**
+  (net-verified end-to-end: `pub fn f() -> f64 { 0.0000000000000001 }` compiled to a `.so`
+  whose `f()` returned bits `0x0000000000000000` instead of `0x3c9cd2b297d889bc`). Fixed
+  **structurally** with an exact integer-valued test — `n.is_finite() && n.fract() == 0.0`:
+  an integer-valued finite f64 still prints with a decimal point (`5.0`), and every other
+  value — sub-EPSILON magnitudes and subnormals included — uses Rust's shortest-round-trip
+  Display, which reproduces the exact IEEE-754 bits; the `is_finite()` guard also keeps
+  ±inf/NaN out of the integer branch. Permanent end-to-end regression
+  `tests/f64_literal_envelope.rs` compiles each envelope literal, dlopen-calls `f()`, and
+  asserts the exact returned bits (fails on the pre-fix compiler). The self-host fixed point
+  is unaffected (main.mind carries no sub-EPSILON `f64`). No special-casing, no tolerance
+  weakening, no target-fitting.
 - **Cross-module functions did not link on `--emit=cdylib` / `--emit-shared`.** The cdylib
   path compiled only the entry translation unit, so a `use sibling::fn` call produced a
   `.so` with an undefined symbol at load (a build-time `E2003` once the entry's cross-module
