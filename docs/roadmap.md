@@ -1640,3 +1640,144 @@ orchestrator's roadmap pins:
 - Gap 3: Rule induction → .mind programs (compile + verify)
 - Gap 8: Reasoning primitives (hypothesis, evidence, inference_step)
 - Phase 10.5 is prerequisite for all AGI .mind modules
+
+## Phase 17 — Numerical Research Surface (f64 completeness)
+
+Gaps found while building a deterministic numerical research codebase entirely in MIND
+(Gauss–Legendre quadrature, analytic bivariate jet propagation, and exact rational
+combinatorics over an integer term ledger). Every item below was established
+by compiling and running against `mindc 0.10.2`, with the observed error quoted. The
+workload shipped in spite of all of them, so none is a blocker — each is a sharp edge that
+forced a workaround, and each workaround is recorded so the fix can be validated against a
+real consumer rather than a synthetic test.
+
+### 17.1 — `f64` cannot cross a module boundary
+
+An imported function with an `f64` parameter is typed `(i64) -> i64` at the call site:
+
+```
+%1 = func.call @to_i(%0) : (i64) -> i64
+error: use of value '%0' expects different type than prior uses: 'i64' vs 'f64'
+```
+
+An `f64` return feeding a loop-carried binding fails the same way. Inference only succeeds
+when the argument is itself another cross-module call, which makes the working cases look
+arbitrary. Consequence: every float program must be a single file — the same wall
+`examples/mindc_mind/main.mind` hits, and the reason it is one 24.9k-line file.
+
+**Deliverable:** propagate declared parameter and return types across the module-resolution
+boundary instead of defaulting to `i64`. **Gate:** a two-module project where module A
+exports `fn f(x: f64) -> f64` and module B calls it with a literal, a local, and a
+loop-carried value, all producing correct results.
+
+### 17.2 — `let mut` initialised from an `f64` parameter is inferred as `i64`
+
+```mind
+fn legp(n: i64, x: f64) -> f64 {
+    let mut pk: f64 = x;          // becomes i64 once pk is loop-carried
+    while k < n { pk = ...; }
+}
+```
+lowers to `%12 = arith.addi %1, %11 : i64` where `%1` is the `f64` parameter, and the
+explicit `: f64` annotation is ignored. Initialising from a *literal* is fine; the trigger
+is a bare parameter reference that later becomes a loop-carried block argument. The
+workaround is to write `x * 1.0`, which is the exact identity on every finite double but
+should not be necessary. Note this failed loudly here only because the operand types
+disagreed — for an `i64`-compatible operand pair the same path would silently emit integer
+arithmetic, so this is a latent silent-miscompile class.
+
+**Deliverable:** honour the declared type when seeding a loop-carried binding.
+**Gate:** the reduced case above compiles and returns the `f64` result.
+
+### 17.3 — no `f64` aggregates
+
+An `f64` struct field fails to lower (`llvm.store %f64 ... : i64`); there is no `f64` `Vec`,
+array, or heap slot; and `__mind_f64_to_bits` / `__mind_bits_to_f64` / `__mind_conv_f64`
+exist but are absent from `STD_SURFACE_INTRINSICS`, so the build backend cannot emit them.
+`f64` is therefore reachable only as a scalar SSA value. Every float table in the consumer
+became a constant function and every float aggregate a set of loop-carried scalars.
+
+**Deliverable:** either `f64` struct fields and a typed `f64` vector, or (much cheaper)
+register the bit-cast intrinsics on the cross-backend surface so an `f64` array can be
+built on the existing i64 heap. **Gate:** store and reload 1000 `f64` values bit-identically.
+
+### 17.4 — a module containing a `const` array fails to lower
+
+```mind
+const PSI: [i64; 6] = [1, -3, 2, -6, 4, 18];
+pub fn main() -> i64 { ... PSI[i] ... }
+```
+```
+error: MLIR lowering failed: missing type information for value ValueId(5) while lowering binop
+```
+Removing the `const` line makes the identical file build and run. The construct works on
+the IR paths — `--emit-mic3`, `--emit-evidence` and `mindc test` all handle it, and a
+1620-value table round-trips exactly through a mic@3 artifact — so only executable lowering
+is missing. `tests/std_surface_array_literals.rs` asserts the IR instructions appear but
+never builds to a binary, which is why the gap is uncovered.
+
+This is the highest-value item here. It is what forced the consumer to encode a 90-row
+integer ledger as eleven ~90-branch `if` chains: ~1100 lines of generated source in place
+of eleven `const [i64; 90]` declarations, and a measurable `arch-mind redundancy_q16` cost
+(9916 → 9571).
+
+**Deliverable:** lower `ConstArray` / `ArrayLoad` through to the executable backend.
+**Gate:** a build-and-run test, not just an IR-shape assertion.
+
+### 17.5 — scalar `sqrt` is not wired for `f64`
+
+`sqrt(2.0)` lowers as `func.call @sqrt(%x) : (i64) -> i64` and fails. `sqrt` is listed as a
+strict-safe builtin (IEEE correctly-rounded) in `src/ir/fp_mode.rs`, so the classification
+is right and only the scalar lowering is missing.
+
+**Deliverable:** lower scalar `sqrt` on `f64` to `math.sqrt` / `llvm.intr.sqrt`.
+
+### 17.6 — no deterministic transcendental tier
+
+`exp`, `log`, `log2`, `log10`, `pow`, `sin`, `cos`, `sigmoid` are correctly listed in
+`NONSTRICT_BARE_BUILTINS`: they lower to the host libm, are not correctly rounded, and are
+not byte-identical across libm implementations, so a module calling one cannot honestly
+attest `fp_mode: strict`. That classification is doing real work — it is fail-closed and it
+is right. But today the only alternative is for each consumer to reimplement the functions,
+which is exactly what happened here: a strict-path `exp` (base-2 argument reduction,
+degree-15 Horner on exact reciprocal factorials, exact power-of-two rescale) and `log`
+(binary reduction plus the odd atanh series), both built from `+ - * /` alone and both
+matching glibc to ≤ 1 ulp over the exercised range.
+
+The control experiment is worth recording because it shows the gate is genuine: the
+consumer attests `fp_mode: strict` and passes
+`mindc verify --require-strict-fp --require-deterministic` (RC 0); an otherwise identical
+build with a single host-libm `exp()` call attests `relaxed` and is rejected (RC 1).
+
+**Deliverable:** a `std/detmath.mind` offering strict, range-reduced, reproducible
+`exp`/`log`/`pow`/`sin`/`cos`/`sqrt` with a stated per-function accuracy contract, so that
+determinism does not cost every numerical consumer its own kernel.
+**Gate:** cross-substrate byte-identity (x86 `avx2` == ARM `neon`) on the new surface, plus
+a published ulp bound per function.
+
+### 17.7 — evidence emission does not see a multi-module project
+
+`--emit-evidence` is a top-level single-file flag, so it cannot resolve local `use`
+imports (`error[type-check][E2003]: unsupported call to ...`), and `mindc build` has no
+`--emit-evidence` of its own. A multi-module project therefore cannot be anchored as one
+artifact without first concatenating its sources into a synthetic single file.
+
+**Deliverable:** `mindc build --emit-evidence <PATH>` over the resolved project.
+
+### 17.8 — smaller sharp edges
+
+- **`lib` is effectively a reserved module name.** `lib.mind` + `use lib;` fails with
+  `E2003: unsupported call`, while the byte-identical file under any other name resolves.
+  Silent and expensive to diagnose; it should either work or be diagnosed by name.
+- **`mindc test` exits 0 on a file with no `#[test]`**, printing `running 0 tests /
+  test result: ok`. Any CI gate built on it must assert `[1-9]+ passed` rather than trust
+  the return code. Worth an explicit non-zero exit or a `--require-tests` flag.
+- **`--emit-ir` renders `f64` function bodies as `const.i64 0`.** The mic@3 binary does
+  carry the float constants — changing one literal changes `trace_hash`, and the first
+  differing byte is in the body — so this is a pretty-printer gap, not a serialization
+  gap. It makes float programs undebuggable at the IR layer and makes the attestation look
+  weaker than it is.
+- **The mic@3 MAP key set is closed** (`evidence.rs` `build_evidence_entries` hardcodes 13
+  keys) while the mic@2.1 spec explicitly permits non-reserved application namespaces
+  (`org.example.*`). Either implement the spec's permission or amend the spec, so consumers
+  are not left choosing between an unimplemented spec clause and a private dialect.
