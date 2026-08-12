@@ -624,6 +624,14 @@ pub struct BuildResult {
     pub output_path: PathBuf,
     pub target: String,
     pub success: bool,
+    /// `false` iff the manifest ENTRY module could not be compiled to native
+    /// code and was instead embedded as a runtime-JIT fallback (parse/type
+    /// failure, or MLIR tools unavailable). The emitted artifact is then a
+    /// launcher that defers to the installed `mind-runtime`, which — when the
+    /// syntax exceeds its parser scope — prints a notice and exits 0. `mindc
+    /// run` must NOT report that as success: a silent green is worse than a
+    /// wrong answer. See `run_project`, which fails loud on this flag.
+    pub entry_native_compiled: bool,
 }
 
 /// Find the project root by looking for Mind.toml
@@ -985,11 +993,16 @@ pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
             output_path: cdylib_out,
             target: target_name,
             success: true,
+            // A cdylib emit either compiles the entry through the full native
+            // pipeline or errors hard (compile diagnostics / runnable-blocker
+            // rejection) — it never silently drops to the runtime-JIT fallback.
+            entry_native_compiled: true,
         });
     }
 
     // Build each source file and link
-    let compiled = compile_sources(&project_root, &sources, &backend, opts, explicit_sources)?;
+    let (compiled, entry_native_compiled) =
+        compile_sources(&project_root, &sources, &backend, opts, explicit_sources)?;
 
     // Link into final binary
     link_binary(&compiled, &output_path, &backend, opts)?;
@@ -1002,6 +1015,7 @@ pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
         output_path,
         target: target_name,
         success: true,
+        entry_native_compiled,
     })
 }
 
@@ -1371,13 +1385,16 @@ fn build_cdylib_from_entry(
 /// PROJECT-ROOT-relative path — stable and collision-free across subdirs.
 /// The walk/default case keeps the historical entry-parent keying and
 /// stem-named objects byte-unchanged (self-host + std depend on it).
+/// Compile every project source to an object and return the object paths plus
+/// whether the ENTRY module was natively compiled (`false` = embedded as a
+/// runtime-JIT fallback; the caller fails loud on `mindc run` in that case).
 fn compile_sources(
     project_root: &Path,
     sources: &[PathBuf],
     backend: &str,
     opts: &BuildOptions,
     explicit_sources: bool,
-) -> Result<Vec<PathBuf>> {
+) -> Result<(Vec<PathBuf>, bool)> {
     let obj_dir = project_root.join("target").join("obj");
     fs::create_dir_all(&obj_dir)?;
 
@@ -1453,6 +1470,11 @@ fn compile_sources(
     }
 
     let mut objects = Vec::new();
+    // Tracks whether the manifest ENTRY module lowered to a real native object.
+    // Stays `true` for a project with no discoverable entry among `sources`
+    // (unchanged link behaviour); flipped to `false` only when the entry itself
+    // fell to the embedded runtime-JIT fallback.
+    let mut entry_native_compiled = true;
 
     for source in sources {
         // Object filename. The walk/default case keeps the historical
@@ -1491,7 +1513,10 @@ fn compile_sources(
         let is_entry = source_canonical == entry_canonical;
 
         // Compile with appropriate mode
-        compile_single_source(source, &obj_path, backend, opts, is_entry)?;
+        let native = compile_single_source(source, &obj_path, backend, opts, is_entry)?;
+        if is_entry && !native {
+            entry_native_compiled = false;
+        }
 
         objects.push(obj_path);
     }
@@ -1528,7 +1553,7 @@ fn compile_sources(
         crate::ir::clear_global_enums();
     }
 
-    Ok(objects)
+    Ok((objects, entry_native_compiled))
 }
 
 /// Compile every `std` substrate module transitively imported by ANY project
@@ -1835,7 +1860,14 @@ fn reject_runnable_blockers(
     ))
 }
 
-/// Compile a single source file to native object code
+/// Compile a single source file to native object code.
+///
+/// Returns `Ok(true)` when the source lowered to a real native object, and
+/// `Ok(false)` when it could not be natively compiled and was embedded as a
+/// runtime-JIT fallback instead (parse/type failure, or MLIR tools
+/// unavailable). The caller threads that signal up so `mindc run` can fail
+/// loud when the ENTRY module is a fallback rather than silently deferring to a
+/// runtime that may print a notice and exit 0.
 #[allow(clippy::needless_return)]
 fn compile_single_source(
     source: &Path,
@@ -1843,7 +1875,7 @@ fn compile_single_source(
     backend: &str,
     opts: &BuildOptions,
     is_entry: bool, // true if this is the main entry point
-) -> Result<()> {
+) -> Result<bool> {
     use crate::pipeline::{CompileOptions, compile_source_with_name};
     use crate::runtime::types::BackendTarget;
 
@@ -1889,7 +1921,8 @@ fn compile_single_source(
             let src_name = source.to_string_lossy().into_owned();
             let diags = e.into_diagnostics(Some(&src_name));
             warn_embedded_fallback(source, &source_code, &diags, opts.verbose);
-            return compile_embedded_source(source, &source_code, output, backend, opts, is_entry);
+            compile_embedded_source(source, &source_code, output, backend, opts, is_entry)?;
+            return Ok(false);
         }
     };
 
@@ -1947,18 +1980,12 @@ fn compile_single_source(
                 mlir_build::build_all(&mlir, &tools, &build_opts)
                     .map_err(|e| anyhow!("MLIR build failed: {}", e))?;
 
-                return Ok(());
+                return Ok(true);
             }
             Err(_) => {
                 // MLIR tools not available, fall back to embedded source
-                return compile_embedded_source(
-                    source,
-                    &source_code,
-                    output,
-                    backend,
-                    opts,
-                    is_entry,
-                );
+                compile_embedded_source(source, &source_code, output, backend, opts, is_entry)?;
+                return Ok(false);
             }
         }
     }
@@ -1966,7 +1993,8 @@ fn compile_single_source(
     #[cfg(not(feature = "mlir-build"))]
     {
         let _ = &products; // products.ir is only consumed by the mlir-build path
-        compile_embedded_source(source, &source_code, output, backend, opts, is_entry)
+        compile_embedded_source(source, &source_code, output, backend, opts, is_entry)?;
+        Ok(false)
     }
 }
 
@@ -2574,6 +2602,23 @@ pub fn run_project(args: &[String], opts: &BuildOptions) -> Result<i32> {
 
     if !result.success {
         return Err(anyhow!("Build failed"));
+    }
+
+    // Fail loud on the silent-JIT-fallback path. When the ENTRY module could
+    // not be natively compiled it was embedded as a runtime-JIT fallback and
+    // the emitted artifact is a launcher deferring to the installed
+    // `mind-runtime`. For syntax that exceeds the runtime's parser scope the
+    // runtime prints a notice and exits 0 — so running the launcher would
+    // report a false green (exit 0) for a program that never executed. A silent
+    // green in CI is worse than a wrong answer: refuse to run and surface a
+    // non-zero exit here instead of trusting the launcher's exit code.
+    if !result.entry_native_compiled {
+        return Err(anyhow!(
+            "entry module was not natively compiled (embedded as a runtime-JIT \
+             fallback — see the [WARN] above); refusing to run a launcher that \
+             defers to the installed mind-runtime and may exit 0 without \
+             executing your program"
+        ));
     }
 
     // Then run
