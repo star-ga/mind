@@ -43835,13 +43835,17 @@ pub fn tc_shoc_eq(w0: i64, w1: i64, w2: i64, w3: i64, len: i64, e0: i64, e1: i64
     1
 }
 
-// Membership in the STD_SURFACE_INTRINSICS table (all 33 entries, packed-word
+// Membership in the STD_SURFACE_INTRINSICS table (all 36 entries, packed-word
 // constants generated from the Rust table in src/type_checker/mod.rs — the
 // smoke regenerates them from that same source and cross-checks every case
 // against the live `mindc check` E2024 verdict).
 pub fn tc_is_std_surface_intrinsic(w0: i64, w1: i64, w2: i64, w3: i64, len: i64) -> i64 {
     // "__mind_alloc"
     if tc_shoc_eq(w0, w1, w2, w3, len, 7016437169844477791, 1668246636, 0, 0, 12) == 1 {
+        return 1;
+    }
+    // "__mind_bits_to_f64"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7088494763882405727, 7376737260264453225, 13366, 0, 18) == 1 {
         return 1;
     }
     // "__mind_blas_dot_f32"
@@ -43918,6 +43922,14 @@ pub fn tc_is_std_surface_intrinsic(w0: i64, w1: i64, w2: i64, w3: i64, len: i64)
     }
     // "__mind_blas_matmul_mm_q16_mt_v"
     if tc_shoc_eq(w0, w1, w2, w3, len, 7088494763882405727, 7887035969813307756, 3562733703817817205, 130152347295542, 30) == 1 {
+        return 1;
+    }
+    // "__mind_conv_f64"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7160552357920333663, 14696512105115247, 0, 0, 15) == 1 {
+        return 1;
+    }
+    // "__mind_f64_to_bits"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7376725140034117471, 7593736853998482486, 29556, 0, 18) == 1 {
         return 1;
     }
     // "__mind_free"
