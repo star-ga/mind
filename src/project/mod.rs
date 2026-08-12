@@ -1128,6 +1128,39 @@ fn build_cdylib_from_entry(
                 .unwrap_or_else(|| "main".to_string());
             parsed.push((entry_key, m));
         }
+        // #302 layer 1 (name resolution): seed every NON-entry project source
+        // into the cdylib module table too — mirroring the executable path's
+        // whole-project setup in `compile_sources` — so an entry doing
+        // `use sibling::fn` resolves the sibling `pub fn` at type-check AND
+        // registers its declared scalar ABI (RFC 0012 `fn_signatures`) during
+        // AST→IR lowering inside `compile_source_with_name`. Keyed by
+        // `file_stem` (flat project layout), matching the entry key above; the
+        // entry is skipped by canonical path. Siblings the entry never calls
+        // are inert: a forward decl is emitted ONLY for an actually-called
+        // callee (`extern_calls`), and `fn_signatures` uses `or_insert` (a
+        // local def and the already-seeded stdlib win), so seeding cannot drift
+        // a build whose entry references no sibling (e.g. the self-host `.so`,
+        // whose `main.mind` imports only `std.*`).
+        let entry_canon = entry_path
+            .canonicalize()
+            .unwrap_or_else(|_| entry_path.to_path_buf());
+        for src in sources {
+            let src_canon = src.canonicalize().unwrap_or_else(|_| src.clone());
+            if src_canon == entry_canon {
+                continue;
+            }
+            if let Ok(text) = fs::read_to_string(src) {
+                if let Ok(m) = crate::parser::parse(&text) {
+                    let key = src
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    if !key.is_empty() {
+                        parsed.push((key, m));
+                    }
+                }
+            }
+        }
         let refs: Vec<(String, &crate::ast::Module)> =
             parsed.iter().map(|(p, m)| (p.clone(), m)).collect();
         let table = crate::project::module_table::build_module_table(&refs);
@@ -1345,6 +1378,16 @@ fn build_cdylib_from_entry(
                     objs.push(obj_path);
                 }
             }
+            // #302 layer 2 (sibling body linking): compile every NON-entry
+            // project sibling module the entry imports (transitively) to its own
+            // LIBRARY object (`@main` suppressed) and link it, so a
+            // `use sibling::fn` callee's BODY is present in the `.so` instead of
+            // an undefined symbol at `dlopen`. Import-scoped: a build whose entry
+            // imports no project sibling (the self-host `.so`) yields an empty
+            // set → byte-identical link.
+            let mut sib =
+                compile_project_sibling_objects(entry_path, sources, &obj_dir, target, &tools)?;
+            objs.append(&mut sib);
             objs
         }
         #[cfg(not(feature = "cross-module-imports"))]
@@ -1365,6 +1408,180 @@ fn build_cdylib_from_entry(
     }
 
     Ok(())
+}
+
+/// #302 — compile every NON-entry project sibling module the cdylib entry
+/// imports (transitively) to its own native LIBRARY object (`@main` suppressed),
+/// returning the object paths to link into the shared object.
+///
+/// Import-scoped by design: the walk starts from the entry's `use` / `import`
+/// statements and follows only leading segments that resolve to a project source
+/// (by `file_stem`), never the whole source directory. A `std.*` import's
+/// leading segment is `std`, which is not a project stem, so the substrate std
+/// modules stay on their separate link path (`compile_substrate_objects` twin
+/// above). A build whose entry imports no project sibling — e.g. the self-host
+/// `.so`, whose `main.mind` imports only `std.*` — yields an empty set, leaving
+/// the link byte-identical to the historical single-entry path. Each sibling
+/// lowers with `suppress_module_entry = true`, so no `@main` is emitted and
+/// there is no duplicate-`main` collision with the entry.
+#[cfg(all(feature = "cross-module-imports", feature = "mlir-build"))]
+fn compile_project_sibling_objects(
+    entry_path: &Path,
+    sources: &[PathBuf],
+    obj_dir: &Path,
+    target: crate::runtime::types::BackendTarget,
+    tools: &crate::eval::mlir_build::BuildTools,
+) -> Result<Vec<PathBuf>> {
+    use crate::eval::mlir_build;
+    use crate::pipeline::{CompileOptions, compile_source_with_name, lower_to_mlir_with_entry};
+    use std::collections::{BTreeMap, BTreeSet};
+
+    // Map `file_stem` -> source path for every NON-entry project source.
+    let entry_canon = entry_path
+        .canonicalize()
+        .unwrap_or_else(|_| entry_path.to_path_buf());
+    let mut by_stem: BTreeMap<String, PathBuf> = BTreeMap::new();
+    for src in sources {
+        let src_canon = src.canonicalize().unwrap_or_else(|_| src.clone());
+        if src_canon == entry_canon {
+            continue;
+        }
+        if let Some(stem) = src.file_stem().and_then(|s| s.to_str()) {
+            by_stem
+                .entry(stem.to_string())
+                .or_insert_with(|| src.clone());
+        }
+    }
+    if by_stem.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Which sibling stems does a source import? `use sibling::fn` and
+    // `import sibling` both parse to `Node::Import { path }`; the leading
+    // segment names the module. Only segments that resolve to a project sibling
+    // are followed (a `std.*` leading segment is not a project stem → skipped).
+    fn scan_sibling_imports(text: &str, by_stem: &BTreeMap<String, PathBuf>) -> Vec<String> {
+        let mut found = Vec::new();
+        if let Ok(ast) = crate::parser::parse(text) {
+            for item in &ast.items {
+                if let crate::ast::Node::Import { path, .. } = item {
+                    if let Some(first) = path.first() {
+                        if by_stem.contains_key(first) {
+                            found.push(first.clone());
+                        }
+                    }
+                }
+            }
+        }
+        found
+    }
+
+    // BFS the entry's sibling-import graph (transitive: a sibling importing
+    // another sibling pulls it too).
+    let entry_src = fs::read_to_string(entry_path)
+        .with_context(|| format!("Failed to read entry source: {}", entry_path.display()))?;
+    let mut imported: BTreeSet<String> = BTreeSet::new();
+    let mut worklist: Vec<String> = scan_sibling_imports(&entry_src, &by_stem);
+    while let Some(stem) = worklist.pop() {
+        if imported.insert(stem.clone()) {
+            if let Some(src_path) = by_stem.get(&stem) {
+                if let Ok(text) = fs::read_to_string(src_path) {
+                    for dep in scan_sibling_imports(&text, &by_stem) {
+                        if !imported.contains(&dep) {
+                            worklist.push(dep);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if imported.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Re-seed the whole-project module table (stdlib + every project source,
+    // `file_stem` keyed) so a sibling's own `std.*` / sibling calls resolve
+    // while it is compiled here — the entry compile above already cleared the
+    // table. Cleared again before returning so it never leaks into a later
+    // build (matching the set/None bracket around the entry compile).
+    let mut parsed: Vec<(String, crate::ast::Module)> =
+        crate::project::stdlib::parsed_stdlib_modules();
+    for src in sources {
+        if let Ok(text) = fs::read_to_string(src) {
+            if let Ok(m) = crate::parser::parse(&text) {
+                let key = src
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                if !key.is_empty() {
+                    parsed.push((key, m));
+                }
+            }
+        }
+    }
+    let refs: Vec<(String, &crate::ast::Module)> =
+        parsed.iter().map(|(p, m)| (p.clone(), m)).collect();
+    let table = crate::project::module_table::build_module_table(&refs);
+    crate::type_checker::cm_set_project_table(Some(table));
+
+    let sub_opts = CompileOptions {
+        func: None,
+        enable_autodiff: false,
+        target,
+        manifest_exports: Vec::new(),
+        ..Default::default()
+    };
+
+    // Compile each imported sibling to a library object; localize the table
+    // teardown so an early error still clears it.
+    let result = (|| -> Result<Vec<PathBuf>> {
+        let mut objs = Vec::new();
+        for stem in &imported {
+            let src_path = &by_stem[stem];
+            let text = fs::read_to_string(src_path).with_context(|| {
+                format!("Failed to read sibling source: {}", src_path.display())
+            })?;
+            let name = src_path.to_string_lossy().into_owned();
+            let prod = compile_source_with_name(&text, Some(&name), &sub_opts).map_err(|e| {
+                // Render the real diagnostics (file:line:col + message) instead of
+                // the opaque CompileError Display, matching the cdylib entry path.
+                let diags = e.into_diagnostics(Some(&name));
+                let rendered = diags
+                    .iter()
+                    .map(|d| crate::diagnostics::render(&text, d))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if rendered.trim().is_empty() {
+                    anyhow!("sibling module compile failed for {name}")
+                } else {
+                    anyhow!("sibling module compile failed for {name}:\n{rendered}")
+                }
+            })?;
+            #[cfg(feature = "autodiff")]
+            let sub_mlir = lower_to_mlir_with_entry(&prod.ir, prod.grad.as_ref(), true)
+                .map_err(|e| anyhow!("sibling MLIR lowering for {stem}: {e}"))?;
+            #[cfg(not(feature = "autodiff"))]
+            let sub_mlir = lower_to_mlir_with_entry(&prod.ir, true)
+                .map_err(|e| anyhow!("sibling MLIR lowering for {stem}: {e}"))?;
+            let obj_path = obj_dir.join(format!("__mod_{stem}.o"));
+            let sub_bo = mlir_build::BuildOptions {
+                preset: mlir_build::preset_for_mlir(&sub_mlir.primal_mlir),
+                emit_mlir_file: None,
+                emit_llvm_file: None,
+                emit_obj_file: Some(&obj_path),
+                emit_shared: None,
+                opt_pipeline: None,
+                target_triple: None,
+            };
+            mlir_build::build_all(&sub_mlir.primal_mlir, tools, &sub_bo)
+                .map_err(|e| anyhow!("sibling object build for {stem}: {e}"))?;
+            objs.push(obj_path);
+        }
+        Ok(objs)
+    })();
+
+    crate::type_checker::cm_set_project_table(None);
+    result
 }
 
 /// `mlir-build` feature disabled: a `cdylib` cannot be emitted because the

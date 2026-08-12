@@ -58,6 +58,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   false green at exit 0).
 
 ### Fixed
+- **Cross-module functions did not link on `--emit=cdylib` / `--emit-shared`.** The cdylib
+  path compiled only the entry translation unit, so a `use sibling::fn` call produced a
+  `.so` with an undefined symbol at load (a build-time `E2003` once the entry's cross-module
+  names were also seeded). Now each imported sibling module is compiled to its own object
+  (reusing the existing substrate-object path, with `suppress_module_entry` so there is no
+  `@main` collision) and linked in — a multi-module project exposing `pub fn`s over
+  `--emit-shared` now loads and runs (RFC 0012 f64 signatures included; `mindc run` /
+  `--emit=binary` already resolved cross-module). Import-scoped: an entry that imports no
+  sibling links byte-for-byte the historical single-entry path, so the self-host `.so` is
+  unchanged (keystone 7/7, self_host_loop 042bfea3).
 - **`--emit-evidence --evidence-parent <path>` accepted a body-tampered parent
   (defense-in-depth, evidence-chain security review).** `resolve_evidence_parent` now
   checks `trace_hash_valid` and refuses to chain to a parent whose stored `trace_hash`
