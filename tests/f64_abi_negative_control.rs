@@ -41,13 +41,11 @@ use common::mindc_bin;
 use std::process::Command;
 
 // POSITIVE control: f64 variable argument — valid f64 call ABI.
-const POS_SRC: &str =
-    "pub fn scale(x: f64) -> f64 {\n    x + 1.0\n}\n\npub fn driver(v: f64) -> f64 {\n    scale(v)\n}\n";
+const POS_SRC: &str = "pub fn scale(x: f64) -> f64 {\n    x + 1.0\n}\n\npub fn driver(v: f64) -> f64 {\n    scale(v)\n}\n";
 
 // NEGATIVE: typed i64 variable argument to the f64 parameter — invalid f64 ABI.
 // Byte-identical to POS_SRC except `v: f64` -> `n: i64` (the discriminator).
-const NEG_SRC: &str =
-    "pub fn scale(x: f64) -> f64 {\n    x + 1.0\n}\n\npub fn driver(n: i64) -> f64 {\n    scale(n)\n}\n";
+const NEG_SRC: &str = "pub fn scale(x: f64) -> f64 {\n    x + 1.0\n}\n\npub fn driver(n: i64) -> f64 {\n    scale(n)\n}\n";
 
 // The exact MLIR-lowering ABI type-conflict diagnostic the negative must emit.
 const ABI_DIAG: &str = "expects different type than prior uses";
@@ -58,7 +56,11 @@ fn emit_shared(
     so_path: &std::path::Path,
 ) -> std::process::Output {
     Command::new(mindc)
-        .args([src_path.to_str().unwrap(), "--emit-shared", so_path.to_str().unwrap()])
+        .args([
+            src_path.to_str().unwrap(),
+            "--emit-shared",
+            so_path.to_str().unwrap(),
+        ])
         .output()
         .expect("run mindc --emit-shared")
 }
