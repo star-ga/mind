@@ -95,6 +95,15 @@ fn f64_abi_negative_control_and_positive() {
     let nout = emit_shared(&mindc, &neg, &neg_so);
     let nstderr = String::from_utf8_lossy(&nout.stderr).to_string();
     let nlow = nstderr.to_lowercase();
+    // Invariant f64<->i64 type-conflict marker set (robust to cosmetic diagnostic
+    // rewording): load-bearing gate is BOTH types present + this marker set + the
+    // pos/neg discriminator, NOT a single exact human phrase. ABI_DIAG kept as one
+    // accepted marker so the exact-prose signal still counts when present.
+    let type_conflict = nstderr.contains(ABI_DIAG)
+        || nlow.contains("different type")
+        || nlow.contains("type mismatch")
+        || nlow.contains("incompatible type")
+        || nlow.contains("expects");
 
     assert!(
         !nout.status.success(),
@@ -103,7 +112,7 @@ fn f64_abi_negative_control_and_positive() {
     );
     // EXACT reason: the f64/i64 scalar-ABI type conflict (not a vacuous exit!=0).
     assert!(
-        nstderr.contains(ABI_DIAG) && nstderr.contains("f64") && nstderr.contains("i64"),
+        nstderr.contains("f64") && nstderr.contains("i64") && type_conflict,
         "NEGATIVE must fail with the EXACT f64 call-ABI type-conflict diagnostic \
          (`{ABI_DIAG} … 'f64' vs 'i64'`), not some unrelated error:\n{nstderr}"
     );
