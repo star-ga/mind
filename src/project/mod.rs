@@ -1432,6 +1432,12 @@ fn compile_sources(
     // IS the crate entry is exempt (it is the entry, not a shadowed sibling); a
     // `mod.mind` inside a subdirectory is exempt too (it resolves to its parent
     // directory's module, the Rust-style `mod.rs` layout).
+    //
+    // Gated on `cross-module-imports`: `module_table` (which owns the reserved-stem
+    // helpers) is only compiled under that feature, and a multi-source project that
+    // could hit this collision only exists there — the default / no-features build is
+    // single-source, so the diagnostic is both unavailable and moot.
+    #[cfg(feature = "cross-module-imports")]
     {
         let src_root: &Path = if explicit_sources {
             project_root

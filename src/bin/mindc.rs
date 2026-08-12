@@ -750,6 +750,7 @@ fn main() {
     };
     if seeded_project_table {
         // Restore the empty table so nothing downstream sees a stale project scope.
+        #[cfg(all(feature = "std-surface", feature = "cross-module-imports"))]
         libmind::type_checker::cm_set_project_table(None);
     }
 
@@ -1785,6 +1786,7 @@ fn resolve_evidence_parent(value: &str) -> Result<[u8; 32], ()> {
 /// least one sibling module beyond the entry), so the caller clears it after the
 /// compile. A lone file with no siblings seeds nothing and returns `false`,
 /// leaving the single-TU path byte-identical.
+#[cfg(all(feature = "std-surface", feature = "cross-module-imports"))]
 fn seed_project_table_for_evidence(input: &str) -> bool {
     use std::path::Path;
     let input_path = Path::new(input);
@@ -1822,6 +1824,16 @@ fn seed_project_table_for_evidence(input: &str) -> bool {
     let table = libmind::project::module_table::build_module_table(&refs);
     libmind::type_checker::cm_set_project_table(Some(table));
     true
+}
+
+/// No-op stub for builds without the cross-module machinery (`module_table` /
+/// `cm_set_project_table` / bundled `stdlib`): there is no multi-module project
+/// scope to seed, so `--emit-evidence` stays single-TU — byte-identical to the
+/// pre-17.7 path. Keeps the `mindc` binary buildable under `--no-default-features`
+/// and the default (`std-surface`-only) feature set.
+#[cfg(not(all(feature = "std-surface", feature = "cross-module-imports")))]
+fn seed_project_table_for_evidence(_input: &str) -> bool {
+    false
 }
 
 /// Parse one `--evidence-attr KEY=VALUE` (Phase 17.8) into a key/value pair. The
