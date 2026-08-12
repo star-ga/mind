@@ -32,6 +32,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   type error (e.g. an imported `f64 scale`). Empty on the single-file / default-feature
   path → byte-identical. **Proven on the actual `mindc run` consumer path** (a
   cross-module `f64` project builds and runs), not only `--emit-shared`.
+- **Self-host `f64` MLIR emit (17.1 self-host mirror, #298 step 1).** The pure-MIND
+  self-host MLIR emitter (`examples/mindc_mind/main.mind` `selftest_emit_mlir`) now lowers
+  scalar `f64` — `f64` params (`%N: f64`), `f64` returns (`-> f64` / `return %k : f64`), the
+  four `arith.{addf,subf,mulf,divf}` binops, and canonicalized `f64` constants (`2.50`→`2.5`,
+  `5.0`→`5.0`: a pure string canonicalization of the source span that matches the Rust
+  `ConstF64` shortest-round-trip Display for in-precision decimals — no Ryū in MIND) —
+  byte-identical to `mindc --emit-mlir`. Dtype is derived per-AST-node (no threaded state), so
+  the 17 pre-existing i64 cases stay byte-inert. Gated by `self_host_mlir_smoke.py` (now a CI
+  step): 25/25 cases (17 i64 + 8 f64). Out-of-step-1 `f64` cross-fn ABI (`func.call`) / `f64`
+  control-flow stay **fail-closed** (the byte-identity gate catches the i64-typed emit). The
+  main.mind growth re-freezes the RI-E1 self-host loop seed (`testdata/selfhost_loop/stage1.elf`
+  042bfea3 → 11df237d, expected Rule-1b source-growth drift; candidate fixed point
+  stage1==stage2==stage3 proven before the refreeze — full PRE/POST evidence in
+  `examples/mindc_mind/testdata/selfhost_loop/PROVENANCE_298_f64_selfhost_mlir.md`).
+  Advances the self-host toward 100% Rust-independence.
+  - **Fail-closed f64 call-ABI negative control** (`tests/f64_abi_negative_control.rs`):
+    a typed `i64` variable passed to an `f64` parameter is rejected at the MLIR-lowering
+    ABI boundary (`expects different type … 'f64' vs 'i64'`) — not silently miscompiled,
+    not a parse error, not a link error; a byte-identical `f64`-argument positive control
+    compiles. Machine-checked; a vacuous `exit != 0` is explicitly rejected.
+- **Known / deferred (#298 follow-ups, filed — not silently skipped):**
+  - The pure-MIND self-test surface `selftest_emit_mlir` SEGFAULTs when fed a *cross-fn*
+    f64 construct (an `f64` `func.call` or `f64` value-`if`) — **pre-existing** (the
+    unchanged `7b696f09` baseline `.so` crashes identically), latent (no shipped gate feeds
+    it those; the 25 gated cases are its scope), out of step-1 (single-fn f64) scope. To be
+    hardened to fail-closed alongside the cross-fn f64 self-host emit (step 2).
+  - `mindc check` fail-opens on a typed-`i64`→`f64` call-argument / return (passes `check`,
+    then fails `build` at MLIR lowering). The build gate already fail-closes (above), so
+    this is a belt-and-suspenders early-diagnostic gap to close at check-phase (RFC 0011
+    scalar-class extension), tracked separately to keep this change main.mind-only.
 - **`f64` parameter-init inference (17.2).** A loop-carried `let mut v: f64 = <ident>`
   seeded from an `f64` param now materialises its own `f64`-typed value up front, so the
   loop-carry keeps `arith.addf` instead of degrading to `arith.addi` (the old int

@@ -22441,12 +22441,16 @@ pub fn find_first_fn(addr: i64, n: i64, i: i64) -> i64 {
 // fixed point are untouched. Exposed via selftest_emit_mlir (the Python gate
 // diffs its EmitState.buf against `--emit-mlir` stdout).
 //
-// COVERED (byte-identical, scalar i64 subset only): the func.func wrapper with
-// `%N: i64` params and `-> i64`, ConstI64 -> `arith.constant N : i64`, BinOp
-// add/sub/mul/div -> `arith.{addi,subi,muli,divsi}`, ident -> param/let SSA id
-// (no instr), let-binding, Return -> `return %k : i64`, plus the synthetic empty
-// `@main`. Anything outside this subset (control flow, calls, tensors, narrow
-// ints, floats, comparisons) is OUT OF SCOPE for this increment and not emitted.
+// COVERED (byte-identical, scalar subset): the func.func wrapper with per-param
+// `%N: {i64,f64}` and `-> {i64,f64}`, ConstI64 -> `arith.constant N : i64`,
+// FloatLit -> `arith.constant <CANON> : f64` (source span, trailing fractional
+// zeros stripped), BinOp add/sub/mul/div -> `arith.{addi,subi,muli,divsi}` for
+// i64 / `arith.{addf,subf,mulf,divf}` for f64, ident -> param/let SSA id (no
+// instr), let-binding, Return -> `return %k : {i64,f64}`, plus the synthetic
+// empty i64 `@main`. Value dtype is computed per-node (float_lit->f64,
+// int_lit->i64, param->declared type, binop->f64 iff an operand is f64). Still
+// OUT OF SCOPE: tensors, narrow ints, f64 control-flow/calls/comparisons, and
+// float exponents / values needing rounding (the f64 fixtures avoid these).
 // ===========================================================================
 
 // `    %` (4 spaces + percent) — the SSA-result line indent inside a func body.
@@ -22562,6 +22566,200 @@ pub fn emit_mlir_arith_op(s: EmitState, op: i64) -> EmitState {
     let s4: EmitState = es_push(s3, 115);
     let s5: EmitState = es_push(s4, 105);
     es_push(s5, ch_space())
+}
+
+// ===========================================================================
+// f64 SCALAR MLIR (#298 step 1) — ADDITIVE dtype-aware emit. The i64 helpers
+// above are unchanged; these pick the f64 spelling when a value's dtype is f64.
+// A value's dtype is computed PER NODE from the parsed AST (no threaded state):
+// a float literal is f64; an int literal is i64; a param resolves to its own
+// declared type leaf (`i64`/`f64`); a binop is f64 iff either operand is f64;
+// a paren is transparent. A let-ident whose dtype is not otherwise recoverable
+// defaults to i64 — the constrained f64 fixtures never use a bare let-ident as a
+// standalone value (always inside a binop with a float sibling or annotated), so
+// this never mis-emits. Anything computed i64 emits BYTE-IDENTICAL to before, so
+// every existing scalar-i64 case is inert under these changes.
+// ===========================================================================
+
+// The float arith binop mnemonic + a trailing space:
+//   add -> "addf " · sub -> "subf " · mul -> "mulf " · div -> "divf "
+// (mirrors src/mlir/lowering.rs select_arith_op's f64 arm). Only reached when the
+// binop's dtype is f64.
+pub fn emit_mlir_arith_op_f(s: EmitState, op: i64) -> EmitState {
+    if op == op_add() {
+        // "addf "
+        let s1: EmitState = es_push(s, 97);
+        let s2: EmitState = es_push(s1, 100);
+        let s3: EmitState = es_push(s2, 100);
+        let s4: EmitState = es_push(s3, 102);
+        return es_push(s4, ch_space());
+    }
+    if op == op_sub() {
+        // "subf "
+        let s1: EmitState = es_push(s, 115);
+        let s2: EmitState = es_push(s1, 117);
+        let s3: EmitState = es_push(s2, 98);
+        let s4: EmitState = es_push(s3, 102);
+        return es_push(s4, ch_space());
+    }
+    if op == op_mul() {
+        // "mulf "
+        let s1: EmitState = es_push(s, 109);
+        let s2: EmitState = es_push(s1, 117);
+        let s3: EmitState = es_push(s2, 108);
+        let s4: EmitState = es_push(s3, 102);
+        return es_push(s4, ch_space());
+    }
+    // op_div(): "divf "
+    let s1: EmitState = es_push(s, 100);
+    let s2: EmitState = es_push(s1, 105);
+    let s3: EmitState = es_push(s2, 118);
+    let s4: EmitState = es_push(s3, 102);
+    es_push(s4, ch_space())
+}
+
+// Choose the integer / float arith mnemonic by dtype (early-return form so the
+// struct-valued if-expr call trap never fires — Rule 4 bootstrap mis-lower).
+pub fn emit_mlir_binop_op(s: EmitState, op: i64, is_f64: i64) -> EmitState {
+    if is_f64 == 1 {
+        return emit_mlir_arith_op_f(s, op);
+    }
+    emit_mlir_arith_op(s, op)
+}
+
+// ` : f64\n` — the f64 scalar result-type suffix (twin of emit_mlir_i64_nl).
+pub fn emit_mlir_f64_nl(s: EmitState) -> EmitState {
+    let s1: EmitState = es_push(s, ch_space());
+    let s2: EmitState = es_push(s1, 58);
+    let s3: EmitState = es_push(s2, ch_space());
+    let s4: EmitState = es_push(s3, 102);
+    let s5: EmitState = es_push(s4, 54);
+    let s6: EmitState = es_push(s5, 52);
+    es_push(s6, ch_newline())
+}
+
+// ` : TYPE\n` — pick the i64 / f64 result suffix by dtype.
+pub fn emit_mlir_ty_nl(s: EmitState, is_f64: i64) -> EmitState {
+    if is_f64 == 1 {
+        return emit_mlir_f64_nl(s);
+    }
+    emit_mlir_i64_nl(s)
+}
+
+// `i64` / `f64` — the bare 3-byte type name (no leading space, no newline). Used
+// in the func.func signature (param types + `-> TYPE`).
+pub fn emit_mlir_ty_letter(s: EmitState, is_f64: i64) -> EmitState {
+    if is_f64 == 1 {
+        let a: EmitState = es_push(s, 102);
+        let b: EmitState = es_push(a, 54);
+        return es_push(b, 52);
+    }
+    let a: EmitState = es_push(s, 105);
+    let b: EmitState = es_push(a, 54);
+    es_push(b, 52)
+}
+
+// The dot ('.') index in a float-literal source span [lo, hi), or -1 if none.
+pub fn mlir_find_dot(buf: i64, i: i64, hi: i64) -> i64 {
+    if i >= hi {
+        return 0 - 1;
+    }
+    if load_byte(buf, i) == 46 {
+        return i;
+    }
+    mlir_find_dot(buf, i + 1, hi)
+}
+
+// Compute the canonicalized fractional END for a `<int>.<frac>` float span:
+// strip trailing '0' bytes from the fraction but ALWAYS keep at least one
+// fractional digit (dp+1). Matches the Rust f64 Display shortest round-trip for
+// in-precision decimal literals: `2.50`->`2.5`, `2.500`->`2.5`, `5.0`->`5.0`.
+pub fn mlir_f64_frac_end(buf: i64, dp: i64, fe: i64) -> i64 {
+    if fe <= dp + 2 {
+        return fe;
+    }
+    if load_byte(buf, fe - 1) == 48 {
+        return mlir_f64_frac_end(buf, dp, fe - 1);
+    }
+    fe
+}
+
+// Emit the canonical f64 constant text for a float-literal source span [lo, hi).
+// For a `<int>.<frac>` literal it strips trailing fractional zeros (keeping >=1
+// fractional digit). If there is no dot (exponent-only / integer mantissa), or a
+// trailing char is not a strippable zero, the raw span is emitted unchanged. The
+// f64 fixtures are constrained to in-precision decimals with no exponent, so the
+// string canonicalization reproduces the Rust value-Display byte-for-byte.
+pub fn emit_mlir_f64_canon(s: EmitState, buf: i64, lo: i64, hi: i64) -> EmitState {
+    let dp: i64 = mlir_find_dot(buf, lo, hi);
+    if dp < 0 {
+        return emit_byte_range(s, buf, lo, hi);
+    }
+    let fe: i64 = mlir_f64_frac_end(buf, dp, hi);
+    emit_byte_range(s, buf, lo, fe)
+}
+
+// 1 iff param `idx` was declared `f64` (reads the param node's type leaf).
+pub fn mlir_param_is_f64(buf: i64, params_addr: i64, idx: i64) -> i64 {
+    let pnode: i64 = __mind_load_i64(params_addr + idx * 8);
+    let ty: i64 = ast_child1(pnode);
+    is_ident_f64(buf, ast_span_lo(ty), ast_span_hi(ty))
+}
+
+// 1 iff expression `node` has dtype f64. float_lit -> 1 ; int_lit -> 0 ;
+// paren -> child ; ident -> param's declared dtype (a let-ident defaults 0) ;
+// binop -> f64 iff either operand is f64. Anything else -> 0 (i64).
+pub fn mlir_node_is_f64(buf: i64, node: i64, params_addr: i64, n_params: i64) -> i64 {
+    if node == 0 {
+        return 0;
+    }
+    let k: i64 = ast_kind(node);
+    if k == ast_float_lit() {
+        return 1;
+    }
+    if k == ast_int_lit() {
+        return 0;
+    }
+    if k == ast_paren() {
+        return mlir_node_is_f64(buf, ast_child0(node), params_addr, n_params);
+    }
+    if k == ast_ident() {
+        let idx: i64 = resolve_param(params_addr, n_params, buf, ast_span_lo(node), ast_span_hi(node));
+        if idx >= 0 {
+            return mlir_param_is_f64(buf, params_addr, idx);
+        }
+        return 0;
+    }
+    if k == ast_binop() {
+        if mlir_node_is_f64(buf, ast_child0(node), params_addr, n_params) == 1 {
+            return 1;
+        }
+        return mlir_node_is_f64(buf, ast_child1(node), params_addr, n_params);
+    }
+    0
+}
+
+// Scan a fn body's top-level statements for the function RESULT dtype: the first
+// `return`'s value dtype, or (defensively) a trailing bare expr's dtype. Drives
+// the `-> TYPE` in the signature. 0 (i64) when no f64 result is found.
+pub fn mlir_result_scan(buf: i64, addr: i64, len: i64, i: i64, params_addr: i64, n_params: i64) -> i64 {
+    if i >= len {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(addr + i * 8);
+    if ast_kind(stmt) == ast_return() {
+        return mlir_node_is_f64(buf, ast_child0(stmt), params_addr, n_params);
+    }
+    if i == len - 1 {
+        if ast_kind(stmt) != ast_let() {
+            return mlir_node_is_f64(buf, stmt, params_addr, n_params);
+        }
+    }
+    mlir_result_scan(buf, addr, len, i + 1, params_addr, n_params)
+}
+
+pub fn mlir_fn_result_is_f64(buf: i64, body: i64, params_addr: i64, n_params: i64) -> i64 {
+    mlir_result_scan(buf, ast_child0(body), ast_aux(body), 0, params_addr, n_params)
 }
 
 // Emit each call arg's instructions (lowering them with the SAME numbering as
@@ -22707,6 +22905,21 @@ pub fn emit_mlir_expr_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n
         let s6: EmitState = emit_mlir_i64_nl(s5);
         return EmitState { buf: s6.buf, next_id: id + 1, last_id: id, lets: s6.lets };
     }
+    if k == ast_float_lit() {
+        // `    %k = arith.constant <CANON> : f64` — CANON is the source span with
+        // trailing fractional zeros stripped (shortest round-trip for in-precision
+        // decimals). Consumes one numeric id, exactly like an int literal.
+        let val_lo: i64 = ast_span_lo(node);
+        let val_hi: i64 = ast_span_hi(node);
+        let id: i64 = s.next_id;
+        let s1: EmitState = emit_mlir_indent_pct(s);
+        let s2: EmitState = emit_i64(s1, id);
+        let s3: EmitState = emit_mlir_eq_arith(s2);
+        let s4: EmitState = emit_mlir_constant_kw(s3);
+        let s5: EmitState = emit_mlir_f64_canon(s4, buf, val_lo, val_hi);
+        let s6: EmitState = emit_mlir_f64_nl(s5);
+        return EmitState { buf: s6.buf, next_id: id + 1, last_id: id, lets: s6.lets };
+    }
     if k == ast_ident() {
         let idx: i64 = resolve_param(params_addr, n_params, buf, ast_span_lo(node), ast_span_hi(node));
         if idx >= 0 {
@@ -22779,18 +22992,20 @@ pub fn emit_mlir_expr_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n
     if op_tag == op_shr() {
         return emit_mlir_shift(s2, lhs_id, rhs_id, 0);
     }
+    // dtype of this binop: f64 iff either operand is f64 (picks addf/.. + `: f64`).
+    let bf: i64 = mlir_node_is_f64(buf, node, params_addr, n_params);
     let id: i64 = s2.next_id;
     let s3: EmitState = emit_mlir_indent_pct(s2);
     let s4: EmitState = emit_i64(s3, id);
     let s5: EmitState = emit_mlir_eq_arith(s4);
-    let s6: EmitState = emit_mlir_arith_op(s5, ast_aux(node));
+    let s6: EmitState = emit_mlir_binop_op(s5, ast_aux(node), bf);
     let s7: EmitState = es_push(s6, ch_percent());
     let s8: EmitState = emit_i64(s7, lhs_id);
     let s9: EmitState = es_push(s8, ch_comma());
     let s10: EmitState = es_push(s9, ch_space());
     let s11: EmitState = es_push(s10, ch_percent());
     let s12: EmitState = emit_i64(s11, rhs_id);
-    let s13: EmitState = emit_mlir_i64_nl(s12);
+    let s13: EmitState = emit_mlir_ty_nl(s12, bf);
     EmitState { buf: s13.buf, next_id: id + 1, last_id: id, lets: s13.lets }
 }
 
@@ -23586,7 +23801,9 @@ pub fn emit_mlir_stmt_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n
         let s12: EmitState = es_push(s11, ch_space());
         let s13: EmitState = es_push(s12, ch_percent());
         let s14: EmitState = emit_i64(s13, rid);
-        return emit_mlir_i64_nl(s14);
+        // Result type follows the returned value's dtype (i64 vs f64).
+        let rf: i64 = mlir_node_is_f64(buf, ast_child0(node), params_addr, n_params);
+        return emit_mlir_ty_nl(s14, rf);
     }
     emit_mlir_expr_env(s, buf, node, params_addr, n_params)
 }
@@ -23600,8 +23817,10 @@ pub fn emit_mlir_block_stmts_env(s: EmitState, buf: i64, stmts_addr: i64, stmts_
     emit_mlir_block_stmts_env(s1, buf, stmts_addr, stmts_len, i + 1, params_addr, n_params)
 }
 
-// Emit one func.func parameter `%i: i64`, comma-separated for i > 0.
-pub fn emit_mlir_params(s: EmitState, i: i64, n_params: i64) -> EmitState {
+// Emit one func.func parameter `%i: TYPE`, comma-separated for i > 0. TYPE is
+// the param's OWN declared dtype (`i64`/`f64`), read from its type leaf — so a
+// mixed-dtype signature is emitted per-param correctly.
+pub fn emit_mlir_params(s: EmitState, i: i64, n_params: i64, params_addr: i64, buf: i64) -> EmitState {
     if i >= n_params {
         return s;
     }
@@ -23615,10 +23834,9 @@ pub fn emit_mlir_params(s: EmitState, i: i64, n_params: i64) -> EmitState {
     let s2: EmitState = emit_i64(s1, i);
     let s3: EmitState = es_push(s2, 58);
     let s4: EmitState = es_push(s3, ch_space());
-    let s5: EmitState = es_push(s4, 105);
-    let s6: EmitState = es_push(s5, 54);
-    let s7: EmitState = es_push(s6, 52);
-    emit_mlir_params(s7, i + 1, n_params)
+    let pf: i64 = mlir_param_is_f64(buf, params_addr, i);
+    let s7: EmitState = emit_mlir_ty_letter(s4, pf);
+    emit_mlir_params(s7, i + 1, n_params, params_addr, buf)
 }
 
 // `  func.func @` (2-space indent) — the per-fn wrapper opener prefix.
@@ -23653,17 +23871,16 @@ pub fn emit_mlir_fn(s: EmitState, buf: i64, node: i64) -> EmitState {
     let s1: EmitState = emit_mlir_funcfunc_head(s);
     let s2: EmitState = emit_byte_range(s1, buf, name_lo, name_hi);
     let s3: EmitState = es_push(s2, 40);
-    // params `%i: i64`...
-    let s4: EmitState = emit_mlir_params(s3, 0, n_params);
-    // `) -> i64 {\n`
+    // params `%i: TYPE`... (per-param dtype)
+    let s4: EmitState = emit_mlir_params(s3, 0, n_params, params_addr, buf);
+    // `) -> TYPE {\n` — TYPE follows the function's result dtype.
+    let ret_is_f64: i64 = mlir_fn_result_is_f64(buf, body, params_addr, n_params);
     let s5: EmitState = es_push(s4, 41);
     let s6: EmitState = es_push(s5, ch_space());
     let s7: EmitState = es_push(s6, 45);
     let s8: EmitState = es_push(s7, 62);
     let s9: EmitState = es_push(s8, ch_space());
-    let s10: EmitState = es_push(s9, 105);
-    let s11: EmitState = es_push(s10, 54);
-    let s12: EmitState = es_push(s11, 52);
+    let s12: EmitState = emit_mlir_ty_letter(s9, ret_is_f64);
     let s13: EmitState = es_push(s12, ch_space());
     let s14: EmitState = es_push(s13, ch_lbrace());
     let s15: EmitState = es_push(s14, ch_newline());

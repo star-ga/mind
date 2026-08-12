@@ -547,6 +547,17 @@ jobs:
             python3 examples/mindc_mind/mic3_flip_smoke.py
         working-directory: ${{ github.workspace }}
 
+      - name: Self-host MLIR-text f64+i64 emit gate (self_host_mlir_smoke.py)
+        # Byte-identity of the pure-MIND selftest_emit_mlir vs `mindc --emit-mlir`
+        # for the scalar i64 subset AND the f64 scalar surface (#298 step 1: f64
+        # params/returns, arith.addf/subf/mulf/divf, canonicalized f64 constants).
+        # Oracle regenerated live from the freshly-built mindc — no fake wins.
+        run: |
+          MINDC_SO=/tmp/libmindc_mind_self_host.so \
+          MINDC_BIN=${{ github.workspace }}/target/release/mindc \
+            python3 examples/mindc_mind/self_host_mlir_smoke.py
+        working-directory: ${{ github.workspace }}
+
       - name: Per-arm oracle-parity linter (oracle_parity_lint.py)
         # Localises which self-host ARM drifted from the Rust oracle. The
         # whole-module FLIP above reports one byte offset on the full stream;

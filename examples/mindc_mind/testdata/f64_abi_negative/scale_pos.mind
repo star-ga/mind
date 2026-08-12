@@ -1,0 +1,7 @@
+pub fn scale(x: f64) -> f64 {
+    x + 1.0
+}
+
+pub fn driver(v: f64) -> f64 {
+    scale(v)
+}

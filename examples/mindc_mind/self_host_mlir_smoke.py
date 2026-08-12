@@ -53,6 +53,18 @@ CASES = [
     ("shr",  "fn f(a: i64, b: i64) -> i64 {\n    return a >> b;\n}\n"),
     ("nif_then", "fn f(c: i64, a: i64, b: i64) -> i64 {\n    if c == 0 {\n        if a == 0 {\n            return a;\n        }\n        return b;\n    }\n    return a;\n}\n"),
     ("nif_else", "fn f(c: i64, a: i64, b: i64) -> i64 {\n    if c == 0 {\n        return a;\n    }\n    if b == 0 {\n        return b;\n    }\n    return c;\n}\n"),
+    # --- f64 scalar subset (#298 step 1). Constrained to in-precision decimal
+    # literals with no exponent, and explicit `return`, so the pure-MIND string
+    # canonicalization == the Rust f64 value-Display byte-for-byte. Oracle is
+    # regenerated live below; a diff is a real byte divergence, not a re-bless.
+    ("f_add", "fn f(x: f64) -> f64 {\n    return x + 2.5;\n}\n"),
+    ("f_sub", "fn f(x: f64) -> f64 {\n    return x - 2.5;\n}\n"),
+    ("f_mul", "fn f(a: f64, b: f64) -> f64 {\n    return a * b;\n}\n"),
+    ("f_div", "fn f(a: f64, b: f64) -> f64 {\n    return a / b;\n}\n"),
+    ("f_const", "fn f() -> f64 {\n    return 5.0;\n}\n"),
+    ("f_two", "fn f(a: f64, b: f64) -> f64 {\n    return a + b;\n}\n"),
+    ("f_let", "fn f(x: f64) -> f64 {\n    let t: f64 = x + 1.0;\n    return t * 2.0;\n}\n"),
+    ("f_canon", "fn f() -> f64 {\n    return 2.50;\n}\n"),
 ]
 
 # Hard-coded golden (verified vs `mindc --emit-mlir` 2026-06-24) for `add` — a
