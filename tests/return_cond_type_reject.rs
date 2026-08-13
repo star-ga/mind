@@ -730,3 +730,111 @@ fn tail_let_terminated_valid_accepted() {
         "valid f64 tail value preceding a trailing `let` falsely rejected E2010: {out}"
     );
 }
+
+// ── #233 follow-up: inner-scope annotated `let` as a branch tail ─────────────
+// A branch-local annotated `let` shadowing an outer binding of the same name
+// must resolve its OWN class in the tail check (seeded per-branch ctx), not the
+// stale outer class; and a `LetTuple` rebind must DROP the name (never keep a
+// stale scalar class). GREEN cases were FALSELY rejected before this fix.
+
+#[test]
+fn inner_scope_annotated_tail_no_false_positive() {
+    // then-branch's inner `n: f64` shadows the outer `n: i64`; the tail `n` is
+    // f64 into an f64 fn — valid. Before the per-branch seed it was mis-classed
+    // as the outer i64 → false E2010.
+    let good = write_tmp(
+        "mind_inner_scope_ok.mind",
+        "pub fn f(n: i64, c: i64) -> f64 {\n\
+         \x20   if c == 0 {\n\
+         \x20       let n: f64 = 1.0\n\
+         \x20       n\n\
+         \x20   } else {\n\
+         \x20       0.0\n\
+         \x20   }\n\
+         }\n",
+    );
+    let out = check_out(&good);
+    assert!(
+        !out.contains("E2010"),
+        "inner-scope `let n: f64` branch tail falsely rejected E2010: {out}"
+    );
+}
+
+#[test]
+fn inner_scope_still_catches_real_mismatch() {
+    // then-branch's inner `m: i64` IS returned from an f64 fn — a genuine
+    // mismatch that build rejects; E2010 must still fire (seed resolves m=Int).
+    let bad = write_tmp(
+        "mind_inner_scope_bad.mind",
+        "pub fn f(c: i64) -> f64 {\n\
+         \x20   if c == 0 {\n\
+         \x20       let m: i64 = 1\n\
+         \x20       m\n\
+         \x20   } else {\n\
+         \x20       0.0\n\
+         \x20   }\n\
+         }\n",
+    );
+    let out = check_out(&bad);
+    assert!(
+        out.contains("E2010"),
+        "inner-scope i64 branch tail into f64 fn not rejected; out: {out}"
+    );
+}
+
+#[test]
+fn inner_scope_lettuple_rebind_no_false_positive() {
+    // `let n: f64` then `let (n, w) = mkpair()` rebinds `n` to i64 (tuple ABI).
+    // The LetTuple binder must DROP `n` (→ class None), else the stale f64 from
+    // the first let would false-fire E2010 on the i64 tail `n`.
+    let good = write_tmp(
+        "mind_inner_lettuple_ok.mind",
+        "pub fn mkpair() -> (i64, i64) {\n\
+         \x20   (10, 20)\n\
+         }\n\
+         pub fn f(c: i64) -> i64 {\n\
+         \x20   if c == 0 {\n\
+         \x20       let n: f64 = 1.0\n\
+         \x20       let (n, w) = mkpair()\n\
+         \x20       n\n\
+         \x20   } else {\n\
+         \x20       5\n\
+         \x20   }\n\
+         }\n",
+    );
+    let out = check_out(&good);
+    assert!(
+        !out.contains("E2010"),
+        "LetTuple-rebound `n` falsely rejected E2010 (stale class not dropped): {out}"
+    );
+}
+
+#[test]
+fn inner_scope_shadow_after_statement_no_false_positive() {
+    // Fable audit concern: a NON-BINDER statement (`g(x)`) precedes the shadowing
+    // `let x: f64`. The per-branch seed must be a FULL sequential scan (not just
+    // the leading-let prefix) so the inner `x: f64` is seeded and the tail `x`
+    // resolves Float — otherwise the stale outer `x: i64` survives and E2010
+    // false-fires on this build-accepted program.
+    let good = write_tmp(
+        "mind_inner_shadow_after_stmt_ok.mind",
+        "pub fn g(x: i64) -> i64 {\n\
+         \x20   x\n\
+         }\n\
+         pub fn f(x: i64, c: i64) -> f64 {\n\
+         \x20   if c == 0 {\n\
+         \x20       g(x)\n\
+         \x20       let x: f64 = 1.5\n\
+         \x20       x\n\
+         \x20   } else {\n\
+         \x20       2.0\n\
+         \x20   }\n\
+         }\n",
+    );
+    let out = check_out(&good);
+    assert!(
+        !out.contains("E2010"),
+        "shadow `let x: f64` after a non-binder statement falsely rejected E2010 \
+         (seed is prefix-only, not full scan): {out}"
+    );
+}

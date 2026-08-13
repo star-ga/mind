@@ -3301,6 +3301,60 @@ fn check_tail_return_class(
     }
 }
 
+/// #233 follow-up (inner-scope tail): seed a per-branch `ClassCtx` from a block's
+/// leading bindings so an inner-scope annotated `let` (`{ let n: f64 = 1.0; n }`)
+/// resolves its OWN class in the tail check, not a stale/shadowed outer class.
+/// An annotated scalar `let` inserts its class; EVERY other binder
+/// (non-scalar/unannotated `let`, `LetTuple`) DROPS the name → class `None`
+/// (safe under-coverage), so a tuple-rebound name (`let (n, w) = mkpair()`, the
+/// i64 tuple ABI) never keeps a stale class that would false-fire E2010.
+fn seed_tail_branch_ctx(base: &ClassCtx, stmts: &[Node]) -> ClassCtx {
+    let mut ctx = base.clone();
+    for stmt in stmts {
+        match stmt {
+            Node::Let { name, ann, .. } => match ann.as_ref().and_then(scalar_class_of_ann) {
+                Some(c) => {
+                    ctx.classes.insert(name.clone(), c);
+                }
+                None => {
+                    ctx.classes.remove(name);
+                }
+            },
+            Node::LetTuple { names, .. } => {
+                for n in names {
+                    ctx.classes.remove(n);
+                }
+            }
+            _ => {}
+        }
+    }
+    ctx
+}
+
+/// Check the implicit-return (tail) value of a block: the last NON-binder
+/// statement (the lowerer's `ret_id` rule), evaluated in a ctx seeded with the
+/// block's leading bindings so inner-scope `let`s resolve their own class. Used
+/// for the `if`/`else`/block recursion so a branch-local annotated `let` is not
+/// mis-classed by an outer binding of the same name.
+fn check_tail_of_block(
+    stmts: &[Node],
+    ret_class: ScalarClass,
+    outer_ctx: &ClassCtx,
+    src: &str,
+    file: Option<&str>,
+    errs: &mut Vec<Pretty>,
+) {
+    if let Some(pos) = stmts.iter().rposition(|n| {
+        !matches!(
+            n,
+            Node::Let { .. } | Node::LetTuple { .. } | Node::Assign { .. }
+        )
+    }) {
+        let inner = seed_tail_branch_ctx(outer_ctx, &stmts[..pos]);
+        check_tail_expr_class(&stmts[pos], ret_class, &inner, src, file, errs);
+    }
+}
+
 fn check_tail_expr_class(
     node: &Node,
     ret_class: ScalarClass,
@@ -3318,19 +3372,15 @@ fn check_tail_expr_class(
             else_branch,
             ..
         } => {
-            if let Some(t) = then_branch.last() {
-                check_tail_expr_class(t, ret_class, ctx, src, file, errs);
-            }
+            // #233 follow-up: each branch's tail value in a per-branch ctx seeded
+            // with that branch's inner-scope `let`s (last-non-binder tail).
+            check_tail_of_block(then_branch, ret_class, ctx, src, file, errs);
             if let Some(eb) = else_branch {
-                if let Some(e) = eb.last() {
-                    check_tail_expr_class(e, ret_class, ctx, src, file, errs);
-                }
+                check_tail_of_block(eb, ret_class, ctx, src, file, errs);
             }
         }
         Node::Block { stmts, .. } => {
-            if let Some(t) = stmts.last() {
-                check_tail_expr_class(t, ret_class, ctx, src, file, errs);
-            }
+            check_tail_of_block(stmts, ret_class, ctx, src, file, errs);
         }
         other => {
             if let Some(tc) = confident_scalar_class(other, ctx) {

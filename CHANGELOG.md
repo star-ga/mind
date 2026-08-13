@@ -100,6 +100,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   single-fn f64 cases stay byte-identical; correct cross-fn f64 emit remains #298 'step 2'.
   Self-host fixed point re-frozen (Rule-1b): stage0 `11df237d` → `4431793f` (main.mind grew;
   stage1==stage2==stage3 self-consistent, oracle no-drift, keystone 7/7).
+- **RFC 0011 tail-return check mis-classed an inner-scope annotated `let` in an `if`/`else`
+  branch (GitHub #233 follow-up).** The branch tail was checked in the OUTER ctx, so
+  `if c { let n: f64 = 1.0; n } else { 0.0 }` under an outer `n: i64` saw `n` as i64 and
+  false-fired E2010 on a build-accepted program. Fixed by seeding a per-branch ctx from that
+  branch's bindings (full sequential scan to the tail): an annotated scalar `let` inserts its
+  class, and every `LetTuple` / non-scalar / unannotated `let` DROPS the name (→ class `None`,
+  so a tuple-rebound `let (n, w) = mkpair()` never keeps a stale class). Zero over-coverage
+  preserved; check-phase only; self-host fixed point unchanged. (Fable-audited: GO.)
 - **RFC 0011 scalar-class checks now reach match arms and the implicit trailing-return that
   precedes a binding (GitHub #233).** The confidence-gated int↔float class pass never entered a
   `match` arm (a `Node::Match` fell through to the walker's terminal `_ => {}`), so E2027
