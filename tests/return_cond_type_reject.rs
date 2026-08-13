@@ -70,7 +70,11 @@ fn check_out(path: &std::path::Path) -> String {
 /// trait/impl at E2001 before type inference). A scalar-class error (E2027) is
 /// raised during the type-check phase and returned BEFORE lowering/`mlir-opt`, so
 /// the reject shows up even in a build without a working MLIR toolchain; a clean
-/// program proceeds to emit.
+/// program proceeds to emit. Requires `std-surface` (the receiver-type map /
+/// E2027 check) and `mlir-build` (the `--emit-shared` entry point), so the four
+/// method-call tests below are gated on both — a `cargo test --no-default-features`
+/// run (no struct-resolver, no `--emit-shared`) compiles them out entirely.
+#[cfg(all(feature = "std-surface", feature = "mlir-build"))]
 fn build_out(path: &std::path::Path) -> String {
     let so = std::env::temp_dir().join(format!(
         "{}.so",
@@ -882,6 +886,7 @@ fn inner_scope_shadow_after_statement_no_false_positive() {
 // only failed at `mlir-opt`. Uses `build_out` (a real compile), not `check_out`.
 // ---------------------------------------------------------------------------
 
+#[cfg(all(feature = "std-surface", feature = "mlir-build"))]
 #[test]
 fn method_arg_int_into_float_param_rejected() {
     // `s.scale(2)` — int literal into an `f64`-declared method param. The lifted
@@ -912,6 +917,7 @@ fn method_arg_int_into_float_param_rejected() {
     );
 }
 
+#[cfg(all(feature = "std-surface", feature = "mlir-build"))]
 #[test]
 fn method_arg_float_into_int_param_rejected() {
     // Mirror direction: `c.bump(1.5)` — float literal into an `i64`-declared
@@ -940,6 +946,7 @@ fn method_arg_float_into_int_param_rejected() {
     );
 }
 
+#[cfg(all(feature = "std-surface", feature = "mlir-build"))]
 #[test]
 fn method_arg_correct_class_no_false_positive() {
     // The GREEN control: `s.scale(2.0)` passes the SAME arg into the SAME `f64`
@@ -968,6 +975,7 @@ fn method_arg_correct_class_no_false_positive() {
     );
 }
 
+#[cfg(all(feature = "std-surface", feature = "mlir-build"))]
 #[test]
 fn method_zero_arg_call_no_false_positive() {
     // The zero-arg method-as-field case Fable flagged: `foo.val()` takes no
