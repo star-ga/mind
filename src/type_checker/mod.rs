@@ -3514,45 +3514,14 @@ fn walk_expr_class_checks(
             // method-call position. A `receiver.method(args)` on a struct-typed
             // receiver lowers (UFCS static dispatch) to the free fn
             // `{type}_{method}(self, args...)` that `desugar_traits` lifted before
-            // this pass, so a confident Int/Float argument flowing into an
-            // oppositely-classed declared method parameter is the same scalar-ABI
-            // mismatch `mlir-opt` rejects (`'f64' vs 'i64'`) that `check` otherwise
-            // fail-opens on — now caught here. Zero over-coverage, three guards:
-            //   * `method_receiver_type` is `Some` ONLY for a struct-typed VALUE
-            //     receiver (a static `Type.m(..)` has no span entry → skipped);
-            //   * the self-inclusive arity gate `param_types.len() == args.len()+1`
-            //     rejects a coincidentally-named free fn / wrong-arity call and
-            //     keeps the `skip(1)` self-drop in bounds; and
-            //   * `confident_scalar_class` stays `Some` only for provable literals
-            //     / declared bindings / `as` targets, so enum-ctor and loose-typed
-            //     args are never flagged.
-            // Param 0 is the synthesized `self`; call arg i maps to param i+1.
-            if let Some(t) = method_receiver_type(*span) {
-                let mangled = format!("{}_{}", t.to_lowercase(), method);
-                if let Some(sig) = intra_lookup_fn(&mangled) {
-                    if sig.param_types.len() == args.len() + 1 {
-                        for (param, arg) in sig.param_types.iter().skip(1).zip(args.iter()) {
-                            if let (Some(pc), Some(ac)) =
-                                (scalar_class_of_ann(param), confident_scalar_class(arg, ctx))
-                            {
-                                if pc != ac {
-                                    errs.push(diag_from_span(
-                                        src,
-                                        file,
-                                        format!(
-                                            "no implicit int↔float conversion (RFC 0011): argument is {} but the parameter is declared {} — write the value in the parameter's class or use an explicit `as` cast",
-                                            class_noun(ac),
-                                            class_noun(pc),
-                                        ),
-                                        arg.span(),
-                                        ARG_CLASS_MISMATCH_CODE,
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            // the type-check phase of a compile, so a confident Int/Float argument
+            // flowing into an oppositely-classed declared method parameter is the
+            // same scalar-ABI mismatch `mlir-opt` rejects (`'f64' vs 'i64'`) — now
+            // caught here. The receiver-type resolution needs the `std-surface`-only
+            // `build_field_access_types` map, so the check lives in
+            // `check_method_arg_classes` (a no-op stub without `std-surface`); the
+            // receiver/arg recursion below is unconditional.
+            check_method_arg_classes(*span, method, args, ctx, src, file, errs);
             walk_expr_class_checks(receiver, ctx, src, file, errs);
             for a in args {
                 walk_expr_class_checks(a, ctx, src, file, errs);
@@ -3877,6 +3846,13 @@ fn check_intra_fn_call(
 // sub-module check swaps in its own map and restores the parent on drop, and the
 // two maps are keyed on disjoint spans). `None` for a struct-less module, so the
 // class check is a total no-op there.
+// NB: `struct_resolver` (the `FieldAccessTypes` map + `build_field_access_types`)
+// is itself `#![cfg(feature = "std-surface")]`, so everything that references it
+// — the side-table, the guard, and the resolution helper — is gated the same
+// way. Without `std-surface` there are no structs (and thus no resolvable method
+// calls), so `check_method_arg_classes` is a no-op stub and the arm still recurses
+// into the receiver/args unconditionally.
+#[cfg(feature = "std-surface")]
 thread_local! {
     static METHOD_RECV_TYPES: std::cell::RefCell<
         Option<crate::eval::struct_resolver::FieldAccessTypes>,
@@ -3888,14 +3864,17 @@ thread_local! {
 /// unresolved receiver, or a struct-less module — none of which get a map
 /// entry). Mirrors lowering's `receiver_types` lookup so the class check
 /// resolves the SAME `{type}_{method}` callee lowering will.
+#[cfg(feature = "std-surface")]
 fn method_receiver_type(span: crate::ast::Span) -> Option<String> {
     METHOD_RECV_TYPES.with(|cell| cell.borrow().as_ref().and_then(|m| m.get(&span).cloned()))
 }
 
+#[cfg(feature = "std-surface")]
 struct MethodRecvGuard {
     prev: Option<crate::eval::struct_resolver::FieldAccessTypes>,
 }
 
+#[cfg(feature = "std-surface")]
 impl MethodRecvGuard {
     fn install(map: crate::eval::struct_resolver::FieldAccessTypes) -> Self {
         let prev = METHOD_RECV_TYPES.with(|cell| cell.borrow_mut().replace(map));
@@ -3903,10 +3882,76 @@ impl MethodRecvGuard {
     }
 }
 
+#[cfg(feature = "std-surface")]
 impl Drop for MethodRecvGuard {
     fn drop(&mut self) {
         METHOD_RECV_TYPES.with(|cell| *cell.borrow_mut() = self.prev.take());
     }
+}
+
+/// RFC 0011 method-call argument-class check (#233 follow-up). Resolves the
+/// receiver's struct type at the call span via the `std-surface`
+/// `build_field_access_types` map (the same one lowering uses), mangles the UFCS
+/// callee `{type}_{method}`, and checks each argument's confident scalar class
+/// against the declared parameter class (param 0 is the synthesized `self`, so
+/// call arg `i` maps to param `i+1`). Three guards keep over-coverage at zero:
+/// `method_receiver_type` is `Some` only for a struct-typed VALUE receiver (a
+/// static `Type.m(..)` has no span entry); the self-inclusive arity gate
+/// `param_types.len() == args.len() + 1` rejects a coincidentally-named free fn
+/// or wrong-arity call and keeps the `skip(1)` self-drop in bounds; and
+/// `confident_scalar_class` stays `Some` only for provable literals / declared
+/// bindings / `as` targets.
+#[cfg(feature = "std-surface")]
+fn check_method_arg_classes(
+    span: crate::ast::Span,
+    method: &str,
+    args: &[Node],
+    ctx: &ClassCtx,
+    src: &str,
+    file: Option<&str>,
+    errs: &mut Vec<Pretty>,
+) {
+    if let Some(t) = method_receiver_type(span) {
+        let mangled = format!("{}_{}", t.to_lowercase(), method);
+        if let Some(sig) = intra_lookup_fn(&mangled) {
+            if sig.param_types.len() == args.len() + 1 {
+                for (param, arg) in sig.param_types.iter().skip(1).zip(args.iter()) {
+                    if let (Some(pc), Some(ac)) =
+                        (scalar_class_of_ann(param), confident_scalar_class(arg, ctx))
+                    {
+                        if pc != ac {
+                            errs.push(diag_from_span(
+                                src,
+                                file,
+                                format!(
+                                    "no implicit int↔float conversion (RFC 0011): argument is {} but the parameter is declared {} — write the value in the parameter's class or use an explicit `as` cast",
+                                    class_noun(ac),
+                                    class_noun(pc),
+                                ),
+                                arg.span(),
+                                ARG_CLASS_MISMATCH_CODE,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// No-op without `std-surface`: the struct-resolver receiver-type map — and
+/// structs themselves — are `std-surface`-only, so there is no method call to
+/// resolve. Keeps the `Node::MethodCall` arm feature-agnostic.
+#[cfg(not(feature = "std-surface"))]
+fn check_method_arg_classes(
+    _span: crate::ast::Span,
+    _method: &str,
+    _args: &[Node],
+    _ctx: &ClassCtx,
+    _src: &str,
+    _file: Option<&str>,
+    _errs: &mut Vec<Pretty>,
+) {
 }
 
 /// RAII guard that installs an intra-module signature table into the
@@ -4567,6 +4612,7 @@ fn check_module_types_in_file_impl(
     // module (the keystone, every scalar/matmul bench, every canary) skips the
     // build entirely and the class check is a no-op — compile speed on the hot
     // path is byte-for-byte unchanged.
+    #[cfg(feature = "std-surface")]
     let _method_recv_guard = (!struct_names.is_empty()).then(|| {
         MethodRecvGuard::install(crate::eval::struct_resolver::build_field_access_types(
             module,
