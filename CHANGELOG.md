@@ -121,6 +121,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`main.mind` and std have zero closures; keystone 7/7 byte-identical). Deferred hole: an
   *unannotated* capture has no provable type at desugar time and stays accepted (upgrade path: typed
   capture syntax + per-slot env `DType`).
+- **Tuple-DESTRUCTURE lost a `u64` element's unsigned tag (corr2 BUG6 → silent miscompile,
+  fixed).** A destructure `let (v, ignored) = t` read each slot with a bare `__mind_load_i64`
+  and bound the name with NO width/signedness, so a full-width `u64` element lost the
+  `__mind_conv_u64`/`ScalarU64` tag it carried before being stored into the tuple heap slot — a
+  later `v >> 63` then lowered to `arith.shrsi` (ARITHMETIC shift) instead of `arith.shrui`
+  (LOGICAL): `let x: u64 = u64::MAX; let t = (x, 0); let (v, _) = t; v >> 63` returned `-1`
+  instead of `1` (net-verified via ctypes). The fix mirrors the already-correct tuple-INDEX
+  element read (`t.N`, which re-materialises via `mask_narrow_let`): the destructure now
+  re-materialises each element at its declared or *synthesised* tuple element type at all three
+  element-load sites (fn-body, block-local, and the shared `lower_lettuple_stmt` used by
+  if/while blocks). An unannotated `let t = (x, 0)` synthesises the same `TypeAnn::Tuple` an
+  explicit `let t: (u64, i64) = …` records, so the unsigned tag survives the round-trip through
+  the tuple slot and `>>` re-selects `arith.shrui`. No new opcode / no mic@3 wire change (the
+  `__mind_conv_u64` marker is simply re-emitted on the destructured element). Adversarial
+  controls prove no over-application: an `i64` element still shifts SIGNED (`-1 >> 63` → `-1`),
+  and the `u64` tuple-INDEX path is byte-untouched. Codegen change → gated: keystone 7/7 +
+  `mic3_flip_smoke` + cross-substrate byte-identity all green, and `main.mind`/std carry no `u64`
+  tuple destructures so the self-host fixed point is byte-identical (no reseed). Closes the corr2
+  signedness/width-erasure batch (BUG1/BUG2/BUG6/BUG7). (Deferred: a `u64` element flowing
+  through a *call-returned* tuple whose element ABI is unannotated stays untagged — upgrade path:
+  per-slot tuple element `DType` on the value, marked in source.)
 - **RFC 0011 int↔float class check fail-opened in the method-call argument position (E2027).**
   The #230 call-argument scalar-class check (a confident Int/Float argument into an
   oppositely-classed declared parameter → `E2027`) covered free `Node::Call`s but not

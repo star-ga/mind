@@ -2383,6 +2383,145 @@ fn resolve_numeric_field_receiver_ty(node: &ast::Node) -> Option<TypeAnn> {
     }
 }
 
+/// BUG6 (corr2): a full-width `u64` `let` carries its unsigned identity on the
+/// VALUE — `mask_narrow_let` emits an identity `__mind_conv_u64` marker whose
+/// MLIR result is tagged `ScalarU64` (so `< / % / >>` select the UNSIGNED
+/// variants). `u64` is NOT a narrow scalar, so it never enters `NARROW_LOCALS`;
+/// the tag is therefore lost across a tuple heap store + `__mind_load_i64`.
+/// This traces an `Ident` binding back to that marker so the tuple-destructure
+/// and synthesised-tuple-annotation paths can re-tag a `u64` element unsigned.
+/// Byte-neutral: an all-i64 module emits no `__mind_conv_u64`, so this is always
+/// `false` there.
+#[cfg(feature = "std-surface")]
+fn ident_value_is_u64_tagged(nm: &str, ir: &IRModule, env: &HashMap<String, ValueId>) -> bool {
+    let Some(&vid) = env.get(nm) else {
+        return false;
+    };
+    ir.instrs.iter().any(|i| {
+        matches!(i, Instr::Call { dst, name, .. } if *dst == vid && name == "__mind_conv_u64")
+    })
+}
+
+/// BUG6 (corr2): infer a single tuple ELEMENT's re-materialisable scalar type
+/// from the tuple-literal element node, so an UNANNOTATED `let t = (x, 7)` can
+/// synthesise the same `TypeAnn::Tuple` an explicit `let t: (u64, i64) = …`
+/// records. Only the re-materialisable cases return `Some`:
+///   * an `Ident` recorded NARROW in `NARROW_LOCALS` (`u8`/`i16`/…) → that type
+///   * an `Ident` whose value carries the `__mind_conv_u64` tag → `u64`
+/// Everything else — int literals, arithmetic, unknown idents — returns `None`
+/// (a no-op slot: `mask_narrow_let(None)` / `record_narrow_let(None)` emit
+/// nothing, so the slot is byte-identical to today).
+#[cfg(feature = "std-surface")]
+fn infer_tuple_elem_scalar_ty(
+    node: &ast::Node,
+    ir: &IRModule,
+    env: &HashMap<String, ValueId>,
+) -> Option<TypeAnn> {
+    match node {
+        ast::Node::Paren(inner, _) => infer_tuple_elem_scalar_ty(inner, ir, env),
+        ast::Node::Lit(Literal::Ident(nm), _) => {
+            if let Some(t) = NARROW_LOCALS
+                .with(|n| n.borrow().get(nm).cloned())
+                .filter(is_narrow_scalar_ty)
+            {
+                return Some(t);
+            }
+            if ident_value_is_u64_tagged(nm, ir, env) {
+                return Some(TypeAnn::Named("u64".to_string()));
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// BUG6 (corr2): synthesise a `TypeAnn::Tuple` for an UNANNOTATED tuple-literal
+/// `let t = (x, 7)`, so a later destructure `let (v, _) = t` (or index `t.0`)
+/// recovers each element's width/signedness — exactly what an explicit
+/// `let t: (u64, i64) = …` records via `is_tuple_ann_ty`. Returns `Some` ONLY
+/// when at least one element is a genuine narrow/`u64` scalar; an all-i64 tuple
+/// returns `None` and records NOTHING, so every existing (all-i64) module stays
+/// byte-identical and the `NARROW_LOCALS` fast path stays empty. Unknown slots
+/// are filled with `i64` (a `mask_narrow_let`/`record_narrow_let` no-op).
+#[cfg(feature = "std-surface")]
+fn synthesize_tuple_ann(
+    value: &ast::Node,
+    ir: &IRModule,
+    env: &HashMap<String, ValueId>,
+) -> Option<TypeAnn> {
+    let elems = match value {
+        ast::Node::Tuple { elements, .. } => elements,
+        ast::Node::Paren(inner, _) => return synthesize_tuple_ann(inner, ir, env),
+        _ => return None,
+    };
+    if elems.is_empty() {
+        return None;
+    }
+    let tys: Vec<Option<TypeAnn>> = elems
+        .iter()
+        .map(|e| infer_tuple_elem_scalar_ty(e, ir, env))
+        .collect();
+    if !tys.iter().any(Option::is_some) {
+        return None;
+    }
+    Some(TypeAnn::Tuple {
+        elements: tys
+            .into_iter()
+            .map(|t| t.unwrap_or_else(|| TypeAnn::Named("i64".to_string())))
+            .collect(),
+    })
+}
+
+/// BUG6 (corr2): record a synthesised tuple annotation for an UNANNOTATED
+/// tuple-literal `let`, so a later destructure/index on the binding re-tags its
+/// narrow/`u64` elements. No-op unless the RHS is a tuple literal with a genuine
+/// narrow/`u64` element (see `synthesize_tuple_ann`), keeping the all-i64 hot
+/// path byte-identical.
+#[cfg(feature = "std-surface")]
+fn record_synth_tuple_let(
+    name: &str,
+    value: &ast::Node,
+    ir: &IRModule,
+    env: &HashMap<String, ValueId>,
+) {
+    if let Some(ty) = synthesize_tuple_ann(value, ir, env) {
+        NARROW_LOCALS.with(|n| n.borrow_mut().insert(name.to_string(), ty));
+    }
+}
+
+/// BUG6 (corr2): resolve the per-element declared/synthesised types for a tuple
+/// DESTRUCTURE `let (a, b, …) = <value>`, mirroring the tuple-INDEX element read
+/// (`t.N`). Two sources, in priority order:
+///   1. the RHS resolves (via `NARROW_LOCALS`) to a declared/synthesised
+///      `TypeAnn::Tuple` — an `Ident` bound to a `let t: (…) = …`, or the
+///      synthesised annotation of an unannotated `let t = (…)`;
+///   2. the RHS is itself a tuple LITERAL (`let (a, b) = (x, 7)`) — infer each
+///      element directly.
+/// Returns one `Option<TypeAnn>` per slot; a `None` slot masks/records nothing
+/// (byte-identical). An empty Vec means "no tuple type recoverable" — every slot
+/// is then treated as `None` by the caller.
+#[cfg(feature = "std-surface")]
+fn lettuple_elem_tys(
+    value: &ast::Node,
+    ir: &IRModule,
+    env: &HashMap<String, ValueId>,
+) -> Vec<Option<TypeAnn>> {
+    if let Some(TypeAnn::Tuple { elements }) = resolve_numeric_field_receiver_ty(value) {
+        return elements.into_iter().map(Some).collect();
+    }
+    let node = match value {
+        ast::Node::Paren(inner, _) => &**inner,
+        other => other,
+    };
+    if let ast::Node::Tuple { elements, .. } = node {
+        return elements
+            .iter()
+            .map(|e| infer_tuple_elem_scalar_ty(e, ir, env))
+            .collect();
+    }
+    Vec::new()
+}
+
 /// Infer the NARROW scalar type (`i8`/`u8`/`i16`/`u16`) of an ARITHMETIC
 /// expression's result, if any operand is a tracked narrow local/param.
 /// Recurses through parentheses and nested arithmetic so `(x + 10) / 2` with
@@ -5770,6 +5909,16 @@ fn lower_expr(
                         // reassignment (incl. the desugared `c += …`) re-masks.
                         #[cfg(feature = "std-surface")]
                         record_narrow_let(name, ann);
+                        // BUG6 (corr2): an UNANNOTATED tuple-literal `let t = (x, 7)`
+                        // synthesises + records the same `TypeAnn::Tuple` an explicit
+                        // `let t: (u64, i64) = …` records, so a later destructure/index
+                        // recovers a `u64`/narrow element's signedness. No-op unless the
+                        // RHS is a tuple literal with a genuine narrow/`u64` element, so
+                        // the all-i64 keystone stays byte-identical.
+                        #[cfg(feature = "std-surface")]
+                        if ann.is_none() {
+                            record_synth_tuple_let(name, value, &fn_ir, &fn_env);
+                        }
                         // Bug #209: a value-position `if` in this initializer may
                         // mutate an OUTER var (`let neg = if c { pos = pos + 1; 7 }
                         // else { 0 }`). Thread its dominating merge ids back into
@@ -5859,6 +6008,13 @@ fn lower_expr(
                         // body never reaches here, so the keystone is byte-identical.
                         let addr =
                             lower_expr(value, &mut fn_ir, &fn_env, &fn_struct_env, receiver_types);
+                        // BUG6 (corr2): recover each element's declared/synthesised
+                        // width+signedness so a `u64` (or narrow) destructured element
+                        // re-materialises its tag — mirrors the tuple-INDEX read `t.N`.
+                        // A `None` slot masks/records nothing (byte-identical; a
+                        // tuple-free fn never reaches here).
+                        #[cfg(feature = "std-surface")]
+                        let elem_tys = lettuple_elem_tys(value, &fn_ir, &fn_env);
                         for (i, nm) in names.iter().enumerate() {
                             let elem_addr = if i == 0 {
                                 addr
@@ -5880,6 +6036,13 @@ fn lower_expr(
                                 name: "__mind_load_i64".to_string(),
                                 args: vec![elem_addr],
                             });
+                            #[cfg(feature = "std-surface")]
+                            let loaded = {
+                                let ety = elem_tys.get(i).cloned().flatten();
+                                let masked = mask_narrow_let(&mut fn_ir, &ety, loaded);
+                                record_narrow_let(nm, &ety);
+                                masked
+                            };
                             fn_env.insert(nm.clone(), loaded);
                         }
                     }
@@ -6083,6 +6246,14 @@ fn lower_expr(
                     local_env.insert(name.clone(), id);
                     #[cfg(feature = "std-surface")]
                     record_narrow_let(name, ann);
+                    // BUG6 (corr2): synthesise + record a tuple annotation for an
+                    // UNANNOTATED tuple-literal block-local `let t = (x, 7)` (see the
+                    // fn-body Let arm). No-op unless a genuine narrow/`u64` element is
+                    // present — byte-identical for the all-i64 hot path.
+                    #[cfg(feature = "std-surface")]
+                    if ann.is_none() {
+                        record_synth_tuple_let(name, value, ir, &local_env);
+                    }
                     // P0f Step 1: track var→struct binding so a later FieldAccess
                     // inside this block resolves the canonical field offset.
                     #[cfg(feature = "std-surface")]
@@ -6129,6 +6300,11 @@ fn lower_expr(
                     // read side of the `Node::Tuple` aggregate. Tuple-free blocks
                     // never reach here, so the keystone stays byte-identical.
                     let addr = lower_expr(value, ir, &local_env, &local_struct_env, receiver_types);
+                    // BUG6 (corr2): re-materialise each element's declared/synthesised
+                    // width+signedness (see the fn-body destructure); `None` slots are
+                    // byte-identical no-ops.
+                    #[cfg(feature = "std-surface")]
+                    let elem_tys = lettuple_elem_tys(value, ir, &local_env);
                     for (i, nm) in names.iter().enumerate() {
                         let elem_addr = if i == 0 {
                             addr
@@ -6150,6 +6326,13 @@ fn lower_expr(
                             name: "__mind_load_i64".to_string(),
                             args: vec![elem_addr],
                         });
+                        #[cfg(feature = "std-surface")]
+                        let loaded = {
+                            let ety = elem_tys.get(i).cloned().flatten();
+                            let masked = mask_narrow_let(ir, &ety, loaded);
+                            record_narrow_let(nm, &ety);
+                            masked
+                        };
                         local_env.insert(nm.clone(), loaded);
                         last_id = Some(loaded);
                     }
@@ -10789,6 +10972,11 @@ fn lower_lettuple_stmt(
     receiver_types: &HashMap<crate::ast::Span, String>,
 ) -> ValueId {
     let addr = lower_expr(value, ir, env, struct_env, receiver_types);
+    // BUG6 (corr2): re-materialise each destructured element's declared/
+    // synthesised width+signedness (mirrors the tuple-INDEX read `t.N`), so a
+    // `u64` element re-tags unsigned and a narrow element keeps its width. A
+    // `None` slot masks/records nothing — byte-identical.
+    let elem_tys = lettuple_elem_tys(value, ir, env);
     let mut last = addr;
     for (i, nm) in names.iter().enumerate() {
         let elem_addr = if i == 0 {
@@ -10811,6 +10999,9 @@ fn lower_lettuple_stmt(
             name: "__mind_load_i64".to_string(),
             args: vec![elem_addr],
         });
+        let ety = elem_tys.get(i).cloned().flatten();
+        let loaded = mask_narrow_let(ir, &ety, loaded);
+        record_narrow_let(nm, &ety);
         env.insert(nm.clone(), loaded);
         last = loaded;
     }
