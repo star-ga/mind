@@ -121,6 +121,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`main.mind` and std have zero closures; keystone 7/7 byte-identical). Deferred hole: an
   *unannotated* capture has no provable type at desugar time and stays accepted (upgrade path: typed
   capture syntax + per-slot env `DType`).
+- **Closure captures wrongly rewrote inner bindings that shadow a capture (corr2/#287-F4 →
+  silent miscompile, fixed).** The pre-IR closure desugarer's `rewrite_captures` was
+  lexically scope-blind: it rewrote EVERY identifier whose spelling matched a capture name to
+  `env.<capture>`, so an inner `let`/`for`/match-pattern binding that shadows a captured name
+  was clobbered with the captured value — `let k: i64 = 10; let g = |k; x| { match x { k => k } };
+  g(7)` returned the captured `10` instead of the pattern-bound `7` (net-verified via ctypes; a
+  `let k = 100; x + k` closure body returned `11` instead of `101`). `rewrite_captures` now
+  threads a lexical shadow set (`rewrite_seq` + `collect_pattern_binds`): statement sequences
+  shadow left-to-right (a `let`'s VALUE is still rewritten in the pre-binding scope — a genuine
+  free reference to the outer capture — then the bound name shadows subsequent siblings only),
+  and scope-introducing nodes (`Block`, `If`, `For`/`ForEach` induction var, `While`, `Region`,
+  each `Match` arm's pattern binds incl. guard) are handled explicitly with per-scope-cloned
+  shadow sets. Only capture names enter the shadow set (a `let y` never suppresses `k`), so a
+  genuine free capture deep in the body still rewrites. Desugar-stage only (compile path;
+  `mindc check` does not desugar closures); `desugar_closures` is a no-op when no `Closure` node
+  exists, and `main.mind`/std carry zero closures, so keystone 7/7 + mic3_flip (681235 B) +
+  cross-substrate are byte-identical — no reseed. Adversarial controls verify no over-narrowing
+  (match-guard binds, `for k in 0..k` with the loop END using the free capture, re-let, and a
+  deep free capture that still rewrites all pass).
 - **Tuple-DESTRUCTURE lost a `u64` element's unsigned tag (corr2 BUG6 → silent miscompile,
   fixed).** A destructure `let (v, ignored) = t` read each slot with a bare `__mind_load_i64`
   and bound the name with NO width/signedness, so a full-width `u64` element lost the

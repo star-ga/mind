@@ -48,7 +48,9 @@
 //! // upgrade path: RFC #267 Phase 2/3 (monomorphize a closure-param fn per env
 //! // type; thread the capture DType through instead of assuming i64).
 
-use crate::ast::{Field, FnDefData, Literal, Module, Node, Param, Span, StructLitField, TypeAnn};
+use crate::ast::{
+    Field, FnDefData, Literal, Module, Node, Param, Pattern, Span, StructLitField, TypeAnn,
+};
 use crate::diagnostics::{Diagnostic, Span as DiagSpan};
 
 /// Desugar every supported closure in `module` in place, appending the
@@ -262,9 +264,10 @@ fn build_closure_items(
     let capture_set: std::collections::BTreeSet<&str> =
         captures.iter().map(|s| s.as_str()).collect();
     let mut fn_body: Vec<Node> = cbody.clone();
-    for n in fn_body.iter_mut() {
-        rewrite_captures(n, &capture_set, &env_param);
-    }
+    // The closure body opens a fresh lexical scope in which the captures are
+    // free references; the shadow set starts empty.
+    let shadowed = std::collections::BTreeSet::<String>::new();
+    rewrite_seq(&mut fn_body, &capture_set, &env_param, &shadowed);
     wrap_last_in_return(&mut fn_body, span);
 
     let fn_def = Node::FnDef(
@@ -304,14 +307,92 @@ fn build_closure_items(
     Ok((fn_name, struct_lit))
 }
 
-/// Rewrite every `Node::Lit(Ident(name))` where `name` is a capture into
-/// `env_param.name` (a FieldAccess), recursing through expression positions.
-/// Does NOT descend into a nested `Closure` (Phase 1 has none; a surviving one
-/// is caught by the fail-closed scan / lowering panic).
-fn rewrite_captures(node: &mut Node, captures: &std::collections::BTreeSet<&str>, env_param: &str) {
-    // Replace a bare captured ident with `env.field`.
+/// Rewrite a statement SEQUENCE, threading the lexical shadow set left-to-right:
+/// once a `let`/`let (…)` in the sequence (re)binds a name that is also a
+/// capture, that name is SHADOWED for every subsequent statement — a later
+/// reference is the fresh local, not the captured outer value, so it must not be
+/// rewritten to `env.<capture>`. The binding's VALUE is still rewritten in the
+/// pre-binding scope (it can legitimately reference the outer capture), which is
+/// why each statement is rewritten BEFORE its own binding is recorded.
+fn rewrite_seq(
+    stmts: &mut [Node],
+    captures: &std::collections::BTreeSet<&str>,
+    env_param: &str,
+    shadowed: &std::collections::BTreeSet<String>,
+) {
+    let mut shadowed = shadowed.clone();
+    for stmt in stmts.iter_mut() {
+        rewrite_captures(stmt, captures, env_param, &shadowed);
+        match stmt {
+            Node::Let { name, .. } => {
+                if captures.contains(name.as_str()) {
+                    shadowed.insert(name.clone());
+                }
+            }
+            Node::LetTuple { names, .. } => {
+                for n in names.iter() {
+                    if captures.contains(n.as_str()) {
+                        shadowed.insert(n.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Collect the names a `match` pattern BINDS that are also captures, into `out`.
+/// Only these shadow a capture inside the arm's guard + body. `Wildcard` and
+/// `Literal` bind nothing; every other kind's sub-patterns are walked.
+fn collect_pattern_binds(
+    pattern: &Pattern,
+    captures: &std::collections::BTreeSet<&str>,
+    out: &mut std::collections::BTreeSet<String>,
+) {
+    match pattern {
+        Pattern::Ident(name) => {
+            if captures.contains(name.as_str()) {
+                out.insert(name.clone());
+            }
+        }
+        Pattern::Wildcard | Pattern::Literal(_) => {}
+        Pattern::EnumVariant { args, .. } => {
+            for a in args {
+                collect_pattern_binds(a, captures, out);
+            }
+        }
+        Pattern::Tuple(subs) => {
+            for a in subs {
+                collect_pattern_binds(a, captures, out);
+            }
+        }
+        Pattern::EnumStruct { fields, .. } => {
+            for (_, p) in fields {
+                collect_pattern_binds(p, captures, out);
+            }
+        }
+    }
+}
+
+/// Rewrite every FREE reference `Node::Lit(Ident(name))` where `name` is a
+/// capture into `env_param.name` (a FieldAccess), recursing through expression
+/// positions. `shadowed` names an inner binder that has re-bound a capture in
+/// the current lexical scope: such a name is NOT a free reference to the
+/// captured outer value and is left untouched (the load-bearing fix — an inner
+/// `let`/match-pattern binding of a capture name previously mis-rewrote to the
+/// captured value, a silent miscompile). Does NOT descend into a nested
+/// `Closure`/`FnDef` (they open a different scope; a surviving `Closure` is
+/// caught by the fail-closed scan / lowering panic).
+fn rewrite_captures(
+    node: &mut Node,
+    captures: &std::collections::BTreeSet<&str>,
+    env_param: &str,
+    shadowed: &std::collections::BTreeSet<String>,
+) {
+    // Replace a bare captured ident with `env.field` — unless an inner binder
+    // has shadowed that name in the current scope.
     if let Node::Lit(Literal::Ident(name), sp) = node {
-        if captures.contains(name.as_str()) {
+        if captures.contains(name.as_str()) && !shadowed.contains(name.as_str()) {
             let field = name.clone();
             let span = *sp;
             *node = Node::FieldAccess {
@@ -319,11 +400,99 @@ fn rewrite_captures(node: &mut Node, captures: &std::collections::BTreeSet<&str>
                 field,
                 span,
             };
+        }
+        return;
+    }
+
+    // Scope-introducing / statement-sequence nodes: apply lexical shadowing
+    // EXPLICITLY. The flat `node_children_mut` walk is scope-blind, so these
+    // must be handled here (and must NOT also fall through to it — every arm
+    // returns).
+    match node {
+        Node::Block { stmts, .. } => {
+            rewrite_seq(stmts, captures, env_param, shadowed);
             return;
         }
+        Node::If {
+            cond,
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            rewrite_captures(cond, captures, env_param, shadowed);
+            rewrite_seq(then_branch, captures, env_param, shadowed);
+            if let Some(eb) = else_branch {
+                rewrite_seq(eb, captures, env_param, shadowed);
+            }
+            return;
+        }
+        Node::For {
+            var,
+            start,
+            end,
+            body,
+            ..
+        } => {
+            // The induction var is bound only in the body, not in start/end.
+            rewrite_captures(start, captures, env_param, shadowed);
+            rewrite_captures(end, captures, env_param, shadowed);
+            let mut inner = shadowed.clone();
+            if captures.contains(var.as_str()) {
+                inner.insert(var.clone());
+            }
+            rewrite_seq(body, captures, env_param, &inner);
+            return;
+        }
+        Node::ForEach {
+            var,
+            collection,
+            body,
+            ..
+        } => {
+            rewrite_captures(collection, captures, env_param, shadowed);
+            let mut inner = shadowed.clone();
+            if captures.contains(var.as_str()) {
+                inner.insert(var.clone());
+            }
+            rewrite_seq(body, captures, env_param, &inner);
+            return;
+        }
+        Node::Match {
+            scrutinee, arms, ..
+        } => {
+            rewrite_captures(scrutinee, captures, env_param, shadowed);
+            for arm in arms.iter_mut() {
+                // Pattern bindings shadow the capture inside this arm's guard
+                // and body only.
+                let mut inner = shadowed.clone();
+                collect_pattern_binds(&arm.pattern, captures, &mut inner);
+                if let Some(g) = &mut arm.guard {
+                    rewrite_captures(g, captures, env_param, &inner);
+                }
+                rewrite_captures(&mut arm.body, captures, env_param, &inner);
+            }
+            return;
+        }
+        #[cfg(feature = "std-surface")]
+        Node::While { cond, body, .. } => {
+            rewrite_captures(cond, captures, env_param, shadowed);
+            rewrite_seq(body, captures, env_param, shadowed);
+            return;
+        }
+        #[cfg(feature = "std-surface")]
+        Node::Region { body, .. } => {
+            rewrite_seq(body, captures, env_param, shadowed);
+            return;
+        }
+        _ => {}
     }
+
+    // Everything else (plain expressions, and the VALUE of a `Let`/`LetTuple`,
+    // which is evaluated in the pre-binding scope): recurse with the SAME shadow
+    // set. The onward shadowing of a `let` onto its SIBLINGS is `rewrite_seq`'s
+    // job, not this flat walk's.
     for child in node_children_mut(node) {
-        rewrite_captures(child, captures, env_param);
+        rewrite_captures(child, captures, env_param, shadowed);
     }
 }
 
