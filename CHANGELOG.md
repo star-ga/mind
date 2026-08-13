@@ -88,6 +88,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   false green at exit 0).
 
 ### Fixed
+- **Tuple-destructure arity mismatch (corr2 BUG2 → E2620) and const-index array out-of-bounds
+  (corr2 BUG1 → E2621) built and read past the allocation.** `let t = (11,22); let (a,b,c) = t; c`
+  built and returned an adjacent stack slot (garbage); `let a: array<i64> = [11,22]; a[2]` built and
+  returned heap contents (both net-verified via ctypes). The check-phase `ValueType` model is
+  scalar-or-tensor only — it collapses a tuple literal to its last element and an array literal to its
+  first, discarding arity/length — so once the aggregate flowed through a name (`t`, `a`) its shape was
+  invisible and neither an arity nor a bounds check could fire. Added a scoped aggregate-shape
+  side-table (`aggs: HashMap<String, AggShape{Tuple{arity}, Array{len}}>` on `ClassCtx`) populated only
+  from a *provable* literal binding (`let x = <tuple/array literal>`) and consulted to reject a
+  destructure whose binder count ≠ the known tuple arity (E2620) or a constant index ≥ the known array
+  length (E2621). Zero over-coverage, verified: it fires ONLY on a provable literal shape — a
+  call-returned/param/unannotated aggregate has no entry — and a **kill-set pre-pass** drops every name
+  (re)assigned or shadowed anywhere in a branch/loop body from the parent table before descending, so a
+  conditional or loop rebind (`let a=[1,2,3]; if c { a = f() }; a[5]`) does NOT false-fire (a dedicated
+  regression asserts this). ValueType is untouched — the shape lives entirely in the scoped side-table
+  that rides `ClassCtx`'s existing clone-per-block discipline — so no lowering/emit/mic@3 change and
+  keystone 7/7 stays byte-identical; no reseed. (Deferred: dynamic-index `a[i]` and in-place growable
+  mutation stay uncaught — runtime-bounds-check upgrade path, marked in source.)
 - **Non-`i64` closure capture was silently miscompiled (corr2 BUG7 → E2600).** Phase-1 closures
   store every capture in a fixed `i64` env field. A captured value whose declared type occupies that
   slot *differently* than `i64` — `u64`/`usize` (bit 63 makes shift arithmetic-vs-logical and

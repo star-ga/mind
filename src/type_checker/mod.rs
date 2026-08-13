@@ -16,6 +16,7 @@ mod resolve;
 
 use std::collections::BTreeSet;
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 /// Fast, deterministic non-cryptographic hasher (the FxHash algorithm from
 /// rustc/Firefox) for the type checker's hot per-compile maps. It is markedly
@@ -277,6 +278,24 @@ const RESERVED_BUILTIN_INTRINSIC_FNS: &[&str] = &["sqrt"];
 /// indexable receivers, so a strict array-only check would false-reject valid
 /// element-typed slices) — only the bounds are enforced.
 const SLICE_RANGE_BOUND_CODE: &str = "E2030";
+
+/// E2620 — a tuple-destructuring `let (a, b, ...) = t` whose binder count
+/// disagrees with the PROVABLE arity of the RHS tuple (a tuple literal, or a
+/// name bound to one earlier in scope). `ValueType` collapses a tuple to its
+/// last element, so once the tuple flows through a name its arity is otherwise
+/// invisible and the destructure reads past / short of the actual slots — a
+/// silent miscompile (`let (a,b,c) = (11,22)` binds adjacent stack garbage as
+/// `c`). Fires ONLY on a provable literal-seeded shape (the aggregate-shape
+/// side-table), never on a call-returned / param / unannotated tuple.
+const TUPLE_ARITY_CODE: &str = "E2620";
+
+/// E2621 — a constant index `a[k]` (k a compile-time integer, possibly negated)
+/// that is out of bounds for the PROVABLE length of `a` (an array literal bound
+/// to `a` earlier in scope). Mirrors the tensor const-OOB reject: `k < 0` or
+/// `k >= len` reads heap garbage past the buffer. Fires ONLY on a provable
+/// literal-seeded array length dropped on any rebind/consume — never on a
+/// call-returned / param / grown array.
+const INDEX_OOB_CODE: &str = "E2621";
 
 /// An `import std.X` line was parsed but this `mindc` binary was built
 /// WITHOUT the std surface compiled in (neither `std-surface` nor
@@ -3111,6 +3130,12 @@ fn is_bool_ann(ty: &TypeAnn) -> bool {
 #[derive(Debug, Clone, Default)]
 struct ClassCtx {
     classes: HashMap<String, ScalarClass>,
+    /// PROVABLE aggregate shapes (tuple arity / array length) in scope, for the
+    /// E2620/E2621 ident checks that `ValueType` (scalar-or-tensor only) cannot
+    /// express. Same lifecycle as `classes`: seeded ONLY from a literal
+    /// aggregate RHS (never a param/call), cloned per nested block, dropped on
+    /// any rebind/shadow/consume — so a lookup hit is always a fact.
+    aggs: HashMap<String, AggShape>,
 }
 
 /// Confidence-gated scalar class of an expression: `Some` ONLY when provable
@@ -3144,6 +3169,184 @@ fn confident_scalar_class(node: &Node, ctx: &ClassCtx) -> Option<ScalarClass> {
     }
 }
 
+/// A PROVABLE aggregate shape recovered from a literal `let`/`assign` RHS, for
+/// the arity/const-index checks (E2620/E2621) that `ValueType` — scalar-or-
+/// tensor only — cannot express. Populated ONLY from a tuple/array LITERAL
+/// (never a call result, param, or unannotated binding) and dropped on any
+/// rebind/shadow/consume, so a lookup hit is always a fact (mirrors
+/// `confident_scalar_class`'s zero-false-positive contract).
+#[derive(Debug, Clone, Copy)]
+enum AggShape {
+    Tuple { arity: usize },
+    Array { len: u32 },
+}
+
+/// The provable aggregate shape of a `let`/`assign` RHS, or `None` when the RHS
+/// is not a literal aggregate. ONLY a direct tuple / array literal yields a
+/// shape — a call result, ident alias, param, or any other expression stays
+/// `None`, so E2620/E2621 can never fire on a non-provable aggregate.
+fn agg_shape_of(value: &Node) -> Option<AggShape> {
+    match value {
+        Node::Tuple { elements, .. } => Some(AggShape::Tuple {
+            arity: elements.len(),
+        }),
+        Node::ArrayLit { elements, .. } => Some(AggShape::Array {
+            len: elements.len() as u32,
+        }),
+        _ => None,
+    }
+}
+
+/// The PROVABLE tuple arity of a `let (..) = <value>` RHS: a direct tuple
+/// literal's element count, or the arity of a name bound to a tuple literal
+/// earlier in scope. `None` for every non-provable RHS (call result, param,
+/// ident bound to a non-tuple), so E2620 fires only on a fact.
+fn provable_tuple_arity(value: &Node, ctx: &ClassCtx) -> Option<usize> {
+    match value {
+        Node::Tuple { elements, .. } => Some(elements.len()),
+        Node::Lit(Literal::Ident(n), _) => match ctx.aggs.get(n) {
+            Some(AggShape::Tuple { arity }) => Some(*arity),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// A compile-time-constant integer index value, or `None` for a runtime index.
+/// Sees through parentheses and unary negation (`a[-1]`, `a[(2)]`), matching the
+/// const forms `confident_scalar_class` already trusts. `checked_neg` keeps
+/// `i64::MIN` from panicking (a negative index fires regardless).
+fn const_int_index(node: &Node) -> Option<i64> {
+    match node {
+        Node::Lit(Literal::Int(k), _) => Some(*k),
+        Node::Paren(inner, _) => const_int_index(inner),
+        Node::Neg { operand, .. } => const_int_index(operand).and_then(i64::checked_neg),
+        _ => None,
+    }
+}
+
+/// Collect every name a statement slice REBINDS — an `assign` target, a `let`
+/// shadow, or a `let`-tuple binder — recursing through nested branches, loops,
+/// blocks, match arms, AND expression values (a rebind can hide inside an
+/// `if`/`block` used as an rvalue, or a block-valued call argument). Used to
+/// conservatively drop those names from the aggregate-shape table before the
+/// clone-per-block walk runs, so a shape rebound inside a cloned scope — or an
+/// rvalue branch the expression walker never descends — cannot leak its stale
+/// pre-scope shape to a later index / destructure (the E2620/E2621 over-fire
+/// class). CONSUMES (a name merely passed to a call, used as a method receiver,
+/// or read as an index) are NOT collected — only a genuine re-binding
+/// invalidates a provable literal shape, and a fixed-length array/tuple literal
+/// cannot change shape through a call in the current surface.
+/// deferred: an in-place mutating grow (`a.push(..)` / `grow(&mut a)`) would also
+/// invalidate an array length — none exists in the std surface today — upgrade
+/// path: also drop the method receiver / `&mut a` arg here once such a mutator
+/// lands. Over-approximate: a drop only ever UNDER-fires E2620/E2621, never
+/// false-positives.
+fn collect_rebound_names(stmts: &[Node], out: &mut HashSet<String>) {
+    for stmt in stmts {
+        collect_rebound_node(stmt, out);
+    }
+}
+
+/// Single-node worker for `collect_rebound_names`; see its contract.
+fn collect_rebound_node(node: &Node, out: &mut HashSet<String>) {
+    match node {
+        Node::Let { name, value, .. } => {
+            out.insert(name.clone());
+            collect_rebound_node(value, out);
+        }
+        Node::Assign { name, value, .. } => {
+            out.insert(name.clone());
+            collect_rebound_node(value, out);
+        }
+        Node::LetTuple { names, value, .. } => {
+            for n in names {
+                out.insert(n.clone());
+            }
+            collect_rebound_node(value, out);
+        }
+        Node::Return { value: Some(v), .. } => collect_rebound_node(v, out),
+        Node::If {
+            cond,
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            collect_rebound_node(cond, out);
+            collect_rebound_names(then_branch, out);
+            if let Some(eb) = else_branch {
+                collect_rebound_names(eb, out);
+            }
+        }
+        Node::Block { stmts, .. } => collect_rebound_names(stmts, out),
+        Node::For {
+            start, end, body, ..
+        } => {
+            collect_rebound_node(start, out);
+            collect_rebound_node(end, out);
+            collect_rebound_names(body, out);
+        }
+        Node::ForEach {
+            collection, body, ..
+        } => {
+            collect_rebound_node(collection, out);
+            collect_rebound_names(body, out);
+        }
+        #[cfg(feature = "std-surface")]
+        Node::While { cond, body, .. } => {
+            collect_rebound_node(cond, out);
+            collect_rebound_names(body, out);
+        }
+        Node::Match {
+            scrutinee, arms, ..
+        } => {
+            collect_rebound_node(scrutinee, out);
+            for arm in arms {
+                if let Some(g) = &arm.guard {
+                    collect_rebound_node(g, out);
+                }
+                collect_rebound_node(&arm.body, out);
+            }
+        }
+        Node::Call { args, .. } => {
+            for a in args {
+                collect_rebound_node(a, out);
+            }
+        }
+        Node::MethodCall { receiver, args, .. } => {
+            collect_rebound_node(receiver, out);
+            for a in args {
+                collect_rebound_node(a, out);
+            }
+        }
+        Node::Tuple { elements, .. }
+        | Node::ArrayLit { elements, .. }
+        | Node::SetLit { elements, .. } => {
+            for e in elements {
+                collect_rebound_node(e, out);
+            }
+        }
+        Node::Binary { left, right, .. }
+        | Node::Bitwise { left, right, .. }
+        | Node::Logical { left, right, .. } => {
+            collect_rebound_node(left, out);
+            collect_rebound_node(right, out);
+        }
+        Node::Paren(inner, _) => collect_rebound_node(inner, out),
+        Node::Neg { operand, .. } | Node::Not { operand, .. } | Node::BitNot { operand, .. } => {
+            collect_rebound_node(operand, out)
+        }
+        Node::As { expr, .. } => collect_rebound_node(expr, out),
+        Node::IndexAccess {
+            receiver, index, ..
+        } => {
+            collect_rebound_node(receiver, out);
+            collect_rebound_node(index, out);
+        }
+        _ => {}
+    }
+}
+
 /// Entry point: run the confidence-gated scalar-class checks over a fn body.
 /// `ret_class` is the enclosing fn's declared-return class (drives the E2010
 /// new direction); `ctx` is pre-seeded with the fn's scalar params.
@@ -3168,6 +3371,28 @@ fn check_scalar_class_stmt(
     file: Option<&str>,
     errs: &mut Vec<Pretty>,
 ) {
+    // Aggregate-shape kill-set (the load-bearing over-fire fix). AggShape has
+    // DROP-ON-REBIND semantics, so the clone-per-block mirror alone is NOT
+    // sufficient: a name rebound inside a cloned if/while/for/block branch — or
+    // hidden in an if/block used as an rvalue — would evaporate at the join and
+    // leave the OUTER table asserting a stale literal shape, a FALSE E2620/E2621
+    // on runtime-valid code (`let a=[1,2,3]; if c { a = g() }; a[5]`). Before any
+    // per-arm logic, drop from `aggs` every name this statement REBINDS anywhere
+    // (assign / let / let-tuple, recursing through nested branches, loops, blocks,
+    // match arms, AND expression values). Computed at the single walker entry, so
+    // it runs before EVERY `ctx.clone()` site (the per-branch kill-set) AND before
+    // the Let/Assign/Return value-walks — a strict superset of an inline-per-clone
+    // drop that also closes the rvalue-branch rebind hole (Node::If/Block are
+    // rvalues and walk_expr_class_checks does not descend their branches).
+    // Over-approximate: a drop only ever UNDER-fires. `classes` is untouched, so
+    // every existing class diagnostic is byte-identical.
+    {
+        let mut killed = HashSet::new();
+        collect_rebound_names(std::slice::from_ref(node), &mut killed);
+        for n in &killed {
+            ctx.aggs.remove(n);
+        }
+    }
     match node {
         Node::Let {
             name, ann, value, ..
@@ -3195,6 +3420,21 @@ fn check_scalar_class_stmt(
                     ctx.classes.remove(name);
                 }
             }
+            // Aggregate-shape side-table: seed ONLY from a provable literal RHS
+            // (tuple / array literal); every non-literal RHS (call result, ident
+            // alias, param) drops the name — never fire on a call-returned /
+            // param / unannotated aggregate. Annotation-seeding is deliberately
+            // NOT done in v1 (Fable over-fire guard 6: an aggregate annotation on
+            // a call RHS would fire off a lying annotation) — upgrade path: seed
+            // from TypeAnn::Tuple/Array once annotation-vs-RHS is enforced.
+            match agg_shape_of(value) {
+                Some(shape) => {
+                    ctx.aggs.insert(name.clone(), shape);
+                }
+                None => {
+                    ctx.aggs.remove(name);
+                }
+            }
         }
         Node::Assign { name, value, .. } => {
             walk_expr_class_checks(value, ctx, src, file, errs);
@@ -3209,6 +3449,19 @@ fn check_scalar_class_stmt(
                             LET_CLASS_MISMATCH_CODE,
                         ));
                     }
+                }
+            }
+            // Aggregate-shape RESEED/DROP on reassignment: a literal RHS
+            // RE-SEEDS the new shape; any other RHS drops the name (the
+            // top-of-fn `collect_rebound_names` drop already removed it, so this is the
+            // reseed half). Element writes (`a[i] = v` / `a.0 = v`) are not
+            // `Node::Assign`, so a mutated array keeps its shape.
+            match agg_shape_of(value) {
+                Some(shape) => {
+                    ctx.aggs.insert(name.clone(), shape);
+                }
+                None => {
+                    ctx.aggs.remove(name);
                 }
             }
         }
@@ -3249,13 +3502,48 @@ fn check_scalar_class_stmt(
             let mut inner = ctx.clone();
             check_scalar_classes(body, ret_class, &mut inner, src, file, errs);
         }
-        Node::For { body, .. } | Node::ForEach { body, .. } => {
+        Node::For { var, body, .. } | Node::ForEach { var, body, .. } => {
             let mut inner = ctx.clone();
+            // The loop variable is a fresh scalar that shadows any same-named
+            // aggregate for the loop body: drop its stale shape so an in-body
+            // index/destructure of `var` never fires off the outer literal shape.
+            inner.aggs.remove(var);
             check_scalar_classes(body, ret_class, &mut inner, src, file, errs);
         }
         Node::Block { stmts, .. } => {
             let mut inner = ctx.clone();
             check_scalar_classes(stmts, ret_class, &mut inner, src, file, errs);
+        }
+        Node::LetTuple {
+            names, value, span, ..
+        } => {
+            walk_expr_class_checks(value, ctx, src, file, errs);
+            // E2620 — destructure binder count vs the RHS's PROVABLE tuple arity
+            // (a tuple literal, or a name bound to one earlier). `ValueType`
+            // collapses a tuple to its last element, so a wrong-arity destructure
+            // through a name reads adjacent stack slots silently.
+            // `provable_tuple_arity` is `Some` only for a literal-seeded shape,
+            // so a call-returned / param / unannotated tuple RHS never fires.
+            if let Some(arity) = provable_tuple_arity(value, ctx) {
+                if arity != names.len() {
+                    errs.push(diag_from_span(
+                        src,
+                        file,
+                        format!(
+                            "tuple destructuring binds {} name(s) but the value is a {arity}-element tuple; the binder count must match the tuple arity",
+                            names.len()
+                        ),
+                        *span,
+                        TUPLE_ARITY_CODE,
+                    ));
+                }
+            }
+            // The destructured names are freshly-bound scalars (the i64 tuple
+            // ABI), not aggregates: drop any stale same-named shape (mirror
+            // seed_tail_branch_ctx's LetTuple drop).
+            for nm in names {
+                ctx.aggs.remove(nm);
+            }
         }
         // Nested fns carry their own return type; the mini-module recursion
         // checks them, and their diagnostics ride the body-filter whitelist.
@@ -3579,12 +3867,45 @@ fn walk_expr_class_checks(
                 pattern_bound_idents(&arm.pattern, &mut bound);
                 for name in &bound {
                     arm_ctx.classes.remove(name);
+                    // A pattern-bound name shadows any same-named outer aggregate
+                    // for the arm; drop its shape so an in-arm index/destructure of
+                    // that name never fires off the stale outer literal shape.
+                    arm_ctx.aggs.remove(name);
                 }
                 if let Some(guard) = &arm.guard {
                     walk_expr_class_checks(guard, &arm_ctx, src, file, errs);
                 }
                 walk_expr_class_checks(&arm.body, &arm_ctx, src, file, errs);
             }
+        }
+        // E2621 — const-OOB index on a PROVABLE literal-seeded array length.
+        // Fires ONLY for a bare-ident receiver with a known `Array { len }` and
+        // a compile-time-constant index (int literal, possibly parenthesised or
+        // negated): a runtime index, a non-array receiver, or a dropped/absent
+        // shape stays silent. Mirrors the tensor const-OOB reject
+        // (`if *i < 0 || (*i as usize) >= len`).
+        Node::IndexAccess {
+            receiver,
+            index,
+            span,
+        } => {
+            if let Node::Lit(Literal::Ident(n), _) = receiver.as_ref() {
+                if let Some(AggShape::Array { len }) = ctx.aggs.get(n) {
+                    if let Some(k) = const_int_index(index) {
+                        if k < 0 || k as u64 >= *len as u64 {
+                            errs.push(diag_from_span(
+                                src,
+                                file,
+                                format!("index {k} out of bounds for array of length {len}"),
+                                *span,
+                                INDEX_OOB_CODE,
+                            ));
+                        }
+                    }
+                }
+            }
+            walk_expr_class_checks(receiver, ctx, src, file, errs);
+            walk_expr_class_checks(index, ctx, src, file, errs);
         }
         _ => {}
     }
@@ -5128,6 +5449,8 @@ fn check_module_types_in_file_impl(
                         // that made the generic mismatch path unsafe in bodies.
                         || d.code == PRIMITIVE_CONV_FN_CODE
                         || d.code == SCALAR_INTO_STRUCT_CODE
+                        || d.code == TUPLE_ARITY_CODE
+                        || d.code == INDEX_OOB_CODE
                 }));
 
                 // Early check-phase diagnostics that fail closed LATE at
