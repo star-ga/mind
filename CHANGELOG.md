@@ -88,6 +88,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   false green at exit 0).
 
 ### Fixed
+- **Non-`i64` closure capture was silently miscompiled (corr2 BUG7 → E2600).** Phase-1 closures
+  store every capture in a fixed `i64` env field. A captured value whose declared type occupies that
+  slot *differently* than `i64` — `u64`/`usize` (bit 63 makes shift arithmetic-vs-logical and
+  compare/div/rem signed-vs-unsigned diverge) or `f32`/`f64` (bit reinterpretation) — was compiled to
+  a wrong result: `let k: u64 = u64::MAX; let g = |k; x| { k >> 63 }; g(0)` returned `-1` (arithmetic
+  shift of the signed reinterpretation) instead of `1` (net-verified end-to-end via ctypes). The
+  closure desugarer now threads a name→declared-type scope (fn params, always annotated, plus each
+  preceding annotated non-closure `let`) into `build_closure_items` and **rejects** an
+  i64-slot-divergent capture fail-closed (`E2600`) rather than fake-supporting it. `bool`, `i8..i64`
+  and `u8..u32` sign/zero-extend into the i64 slot *exactly* (a ≤32-bit unsigned value never sets bit
+  63), so those captures are correct and still compile. Desugar-stage change only (compile path;
+  `mindc check` does not desugar closures) — no lowering/emit change, self-host fixed point unaffected
+  (`main.mind` and std have zero closures; keystone 7/7 byte-identical). Deferred hole: an
+  *unannotated* capture has no provable type at desugar time and stays accepted (upgrade path: typed
+  capture syntax + per-slot env `DType`).
 - **RFC 0011 int↔float class check fail-opened in the method-call argument position (E2027).**
   The #230 call-argument scalar-class check (a confident Int/Float argument into an
   oppositely-classed declared parameter → `E2027`) covered free `Node::Call`s but not

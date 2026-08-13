@@ -63,7 +63,18 @@ pub fn desugar_closures(module: &mut Module, source: &str, file: Option<&str>) -
     let mut diags: Vec<Diagnostic> = Vec::new();
     for item in module.items.iter_mut() {
         if let Node::FnDef(fd, _) = item {
-            desugar_fn_body(&mut fd.body, &mut synthesized, &mut diags, source, file);
+            // Clone the (always-annotated) params once so the body can be
+            // mutated while their declared types seed the capture-type scope
+            // map — avoids a Box disjoint-field split-borrow. Cold desugar path.
+            let fn_params = fd.params.clone();
+            desugar_fn_body(
+                &mut fd.body,
+                &fn_params,
+                &mut synthesized,
+                &mut diags,
+                source,
+                file,
+            );
         }
     }
     // Append synthesized items in encounter (span) order — deterministic, and
@@ -84,6 +95,7 @@ pub fn desugar_closures(module: &mut Module, source: &str, file: Option<&str>) -
 /// Desugar the closure bindings + direct closure-calls in one fn body.
 fn desugar_fn_body(
     body: &mut [Node],
+    fn_params: &[Param],
     synthesized: &mut Vec<Node>,
     diags: &mut Vec<Diagnostic>,
     source: &str,
@@ -92,11 +104,23 @@ fn desugar_fn_body(
     // let-name -> synthesized `__cl_{span}` fn name, in source order.
     let mut closure_fns: std::collections::BTreeMap<String, String> =
         std::collections::BTreeMap::new();
+    // name -> declared type, for the BUG7 capture-type reject (corr2). Seeded
+    // with the fn's (always-annotated) params and grown at each preceding
+    // annotated non-closure `let`. A closure can never capture its own binding,
+    // so a captured name is always already in `scope` when its closure is built.
+    let mut scope: std::collections::HashMap<String, TypeAnn> = fn_params
+        .iter()
+        .map(|p| (p.name.clone(), p.ty.clone()))
+        .collect();
     for stmt in body.iter_mut() {
         // `let f = |caps; params| ...` — the sole Phase-1 binding shape.
-        if let Node::Let { name, value, .. } = stmt {
+        let mut is_closure_let = false;
+        if let Node::Let {
+            name, ann, value, ..
+        } = stmt
+        {
             if let Node::Closure(..) = value.as_ref() {
-                match build_closure_items(value, synthesized, source, file) {
+                match build_closure_items(value, &scope, synthesized, source, file) {
                     Ok((fn_name, struct_lit)) => {
                         closure_fns.insert(name.clone(), fn_name);
                         // Write through the existing box (reuses the allocation).
@@ -104,12 +128,34 @@ fn desugar_fn_body(
                     }
                     Err(d) => diags.push(d),
                 }
-                continue;
+                is_closure_let = true;
+            } else if let Some(ty) = ann {
+                // A non-closure annotated `let`: record its declared type so a
+                // LATER closure capturing this name can be checked (BUG7).
+                scope.insert(name.clone(), ty.clone());
             }
+        }
+        if is_closure_let {
+            continue;
         }
         // Every other statement: monomorphize any direct call `f(args)` whose
         // callee is a closure-local into `__cl_{span}(f, args)`.
         rewrite_closure_calls(stmt, &closure_fns);
+    }
+}
+
+/// True for capture types that do NOT round-trip through the Phase-1 i64 env
+/// slot: `u64`/`usize` can set bit 63 (arithmetic-vs-logical shift and
+/// signed-vs-unsigned compare/div/rem diverge), and `f32`/`f64` are
+/// bit-reinterpreted. Every other scalar (bool, i8..i64, u8..u32) sext/zext's
+/// into i64 exactly, so those captures are correct and MUST NOT be rejected.
+/// `u64` and `usize` ride as `TypeAnn::Named` (there is no `ScalarU64` variant),
+/// hence the string match.
+fn capture_ty_diverges_from_i64(ty: &TypeAnn) -> bool {
+    match ty {
+        TypeAnn::ScalarF32 | TypeAnn::ScalarF64 => true,
+        TypeAnn::Named(n) => matches!(n.as_str(), "u64" | "usize" | "f32" | "f64"),
+        _ => false,
     }
 }
 
@@ -122,6 +168,7 @@ fn desugar_fn_body(
 #[allow(clippy::result_large_err)]
 fn build_closure_items(
     closure: &Node,
+    scope: &std::collections::HashMap<String, TypeAnn>,
     synthesized: &mut Vec<Node>,
     source: &str,
     file: Option<&str>,
@@ -142,6 +189,22 @@ fn build_closure_items(
     // Fail closed (E2600) rather than silently compile an untested shape.
     if captures.len() != 1 || params.len() != 1 {
         return Err(unsupported_diag(source, file, span));
+    }
+    // BUG7 (corr2, net-verified): the Phase-1 env field is fixed i64. A captured
+    // value whose declared type occupies that slot DIFFERENTLY than i64 — u64 /
+    // usize (bit 63 makes shift arith-vs-logical and compare/div/rem signed-vs-
+    // unsigned diverge) or f32/f64 (bit reinterpretation) — is silently
+    // miscomputed (e.g. `let k:u64=u64::MAX; |k;x|{k>>63}` yields -1 not 1). Reject
+    // fail-closed (E2600) rather than fake-support it. bool / i8..i64 / u8..u32
+    // sext/zext into the i64 slot faithfully (a <=32-bit unsigned value never sets
+    // bit 63), so they are NOT rejected. Deferred hole: an UNANNOTATED capture has
+    // no `scope` entry (type unprovable at this pre-typecheck desugar stage) and
+    // stays accepted — see the i64-field note below. upgrade path (Phase 2): typed
+    // capture syntax + a per-slot env DType.
+    if let Some(ty) = scope.get(captures[0].as_str()) {
+        if capture_ty_diverges_from_i64(ty) {
+            return Err(unsupported_diag(source, file, span));
+        }
     }
 
     let s = span.start();
