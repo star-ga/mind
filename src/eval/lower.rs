@@ -2397,9 +2397,9 @@ fn ident_value_is_u64_tagged(nm: &str, ir: &IRModule, env: &HashMap<String, Valu
     let Some(&vid) = env.get(nm) else {
         return false;
     };
-    ir.instrs.iter().any(|i| {
-        matches!(i, Instr::Call { dst, name, .. } if *dst == vid && name == "__mind_conv_u64")
-    })
+    ir.instrs.iter().any(
+        |i| matches!(i, Instr::Call { dst, name, .. } if *dst == vid && name == "__mind_conv_u64"),
+    )
 }
 
 /// BUG6 (corr2): infer a single tuple ELEMENT's re-materialisable scalar type
