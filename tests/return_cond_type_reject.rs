@@ -617,3 +617,116 @@ fn width_sibling_arg_accepted() {
         "i32-into-i64 width-sibling argument falsely rejected E2027: {out}"
     );
 }
+
+// ── #233: RFC 0011 scalar-class checks extended into match arms + the implicit
+//    trailing-return that precedes a binding ──────────────────────────────────
+// The class checks previously never entered a `match` arm (a `Match` fell to the
+// terminal `_ => {}`), and the tail-return check used `body.last()` so a return
+// value preceding a trailing `let` was unchecked. Both are the SAME class of
+// early-diagnostic gap (build already fail-closes). BAD cases are non-vacuous:
+// each returns NO E20xx on the pre-#233 compiler. GREEN cases pin the
+// pattern-bound-shadow / valid forms that must stay invisible.
+
+#[test]
+fn match_arm_arg_class_mismatch_rejected() {
+    // Float literal into an i64 param, inside a match arm body — previously the
+    // arm was never walked so E2027 was silently missed.
+    let bad = write_tmp(
+        "mind_match_arm_arg_bad.mind",
+        "pub fn takes_i64(x: i64) -> i64 {\n\
+         \x20   x\n\
+         }\n\
+         pub fn f(m: i64) -> i64 {\n\
+         \x20   match m {\n\
+         \x20       _ => takes_i64(1.0),\n\
+         \x20   }\n\
+         }\n",
+    );
+    let out = check_out(&bad);
+    assert!(
+        out.contains("E2027"),
+        "f64 arg into i64 param inside a match arm not rejected; out: {out}"
+    );
+}
+
+#[test]
+fn match_arm_mixed_binop_rejected() {
+    // Mixed int/float binop inside a match arm body — E2013 now reaches it.
+    let bad = write_tmp(
+        "mind_match_arm_binop_bad.mind",
+        "pub fn f(a: i64, b: f64, m: i64) -> i64 {\n\
+         \x20   match m {\n\
+         \x20       _ => a + b,\n\
+         \x20   }\n\
+         }\n",
+    );
+    let out = check_out(&bad);
+    assert!(
+        out.contains("E2013"),
+        "mixed `i64 + f64` inside a match arm not rejected; out: {out}"
+    );
+}
+
+#[test]
+fn match_arm_pattern_bound_shadow_no_false_positive() {
+    // The pattern binds `n`, shadowing the outer `n: f64` param. The per-arm
+    // ctx must DROP the pattern-bound `n` so `takes_i64(n)` sees class `None`
+    // (never the stale outer f64) — otherwise E2027 falsely fires.
+    let good = write_tmp(
+        "mind_match_arm_shadow_ok.mind",
+        "enum Opt {\n\
+         \x20   Some(i64),\n\
+         \x20   None,\n\
+         }\n\
+         pub fn takes_i64(x: i64) -> i64 {\n\
+         \x20   x\n\
+         }\n\
+         pub fn h(o: Opt, n: f64) -> i64 {\n\
+         \x20   match o {\n\
+         \x20       Opt::Some(n) => takes_i64(n),\n\
+         \x20       Opt::None => 0,\n\
+         \x20   }\n\
+         }\n",
+    );
+    let out = check_out(&good);
+    assert!(
+        !out.contains("E2027"),
+        "pattern-bound `n` shadowing an outer f64 falsely rejected E2027: {out}"
+    );
+}
+
+#[test]
+fn tail_let_terminated_return_rejected() {
+    // The implicit return is `n` (i64), which PRECEDES a trailing `let` — the
+    // lowerer returns the last non-binding statement. `body.last()` (the `let`)
+    // missed it; the backward scan now checks `n` against the f64 return.
+    let bad = write_tmp(
+        "mind_tail_let_bad.mind",
+        "pub fn f(n: i64) -> f64 {\n\
+         \x20   n\n\
+         \x20   let _u: i64 = 5\n\
+         }\n",
+    );
+    let out = check_out(&bad);
+    assert!(
+        out.contains("E2010"),
+        "i64 return value preceding a trailing `let` in an f64 fn not rejected; out: {out}"
+    );
+}
+
+#[test]
+fn tail_let_terminated_valid_accepted() {
+    // Same shape but the tail value is f64 into an f64 fn — must stay clean.
+    let good = write_tmp(
+        "mind_tail_let_ok.mind",
+        "pub fn f(x: f64) -> f64 {\n\
+         \x20   x\n\
+         \x20   let _u: i64 = 5\n\
+         }\n",
+    );
+    let out = check_out(&good);
+    assert!(
+        !out.contains("E2010"),
+        "valid f64 tail value preceding a trailing `let` falsely rejected E2010: {out}"
+    );
+}

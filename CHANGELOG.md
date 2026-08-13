@@ -88,6 +88,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   false green at exit 0).
 
 ### Fixed
+- **RFC 0011 scalar-class checks now reach match arms and the implicit trailing-return that
+  precedes a binding (GitHub #233).** The confidence-gated int↔float class pass never entered a
+  `match` arm (a `Node::Match` fell through to the walker's terminal `_ => {}`), so E2027
+  call-argument, E2013 mixed-class binop, E2016 `as bool`, and E2030 slice-bound checks were
+  silently skipped inside every arm; and the trailing-return check used `body.last()`, so a
+  return value preceding a trailing `let`/`assign` (`{ n; let _u = 0 }` returns `n`, matching the
+  lowerer's `ret_id` selection) was unchecked. Both are closed: a `Node::Match` arm walks the
+  scrutinee plus each guard/body in a per-arm ctx that drops every pattern-bound identifier (so
+  `match x { Foo(n) => … }` resolves `n` to class `None`, never a stale/shadowed outer class —
+  zero over-coverage preserved), and the tail-return check scans backward past trailing binders to
+  the true implicit-return expression. Additive `check`-phase diagnostics only (build already
+  fail-closes these); self-host fixed point unchanged. (Method-call arguments and inner-scope
+  annotated tails were adversarially found to risk false positives and are deferred — see #233.)
 - **`mindc check` fail-opened on a typed int↔float scalar mismatch at the call-argument and
   implicit-return positions (GitHub #230).** A confident-`i64` value passed to an `f64`
   parameter — or returned as a function's implicit trailing expression — passed `check`

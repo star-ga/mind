@@ -3283,7 +3283,20 @@ fn check_tail_return_class(
     let Some(rc) = ret_class else {
         return;
     };
-    if let Some(tail) = body.last() {
+    // #233 tail-let-selection: the lowerer's implicit return value is the last
+    // statement that is NOT a binding (Let / LetTuple / Assign) — see the
+    // `ret_id` selection in src/eval/lower.rs. `body.last()` misses a return
+    // value that precedes a trailing `let`/assign (e.g. `{ n; let _u: i64 = 0 }`
+    // returns `n`, not the `let`), leaving that implicit-return position
+    // unchecked. Scan backward past the trailing binders to the real tail. An
+    // all-binding body has no tail value (unit) → `find` yields `None` → stay
+    // silent (under-coverage, never a false positive).
+    if let Some(tail) = body.iter().rev().find(|n| {
+        !matches!(
+            n,
+            Node::Let { .. } | Node::LetTuple { .. } | Node::Assign { .. }
+        )
+    }) {
         check_tail_expr_class(tail, rc, ctx, src, file, errs);
     }
 }
@@ -3471,7 +3484,64 @@ fn walk_expr_class_checks(
             walk_expr_class_checks(start, ctx, src, file, errs);
             walk_expr_class_checks(end, ctx, src, file, errs);
         }
+        // #233 match-arm-walk: match arms are expression positions too, but were
+        // never walked (a `Match` fell straight to the terminal `_ => {}`), so
+        // E2027/E2013/E2016/E2030 never fired inside a match. Walk the scrutinee
+        // in the outer ctx, then each guard + body in a PER-ARM ctx that is the
+        // outer scope MINUS every identifier the pattern binds. Dropping the
+        // pattern binds makes a pattern-bound name (`n` in `Foo(n)`) resolve to
+        // class `None` in `confident_scalar_class` (Node::Lit(Ident) =>
+        // ctx.classes.get), never a stale/shadowed outer class — the
+        // zero-over-coverage guarantee (mirrors the `Node::Let` shadow-drop).
+        // Block-bodied arms are only shallow-walked (this expression walker has
+        // neither `&mut ctx` nor `ret_class`, so it cannot statement-descend
+        // inner `let`s): that is UNDER-coverage, which the invariant permits.
+        Node::Match {
+            scrutinee, arms, ..
+        } => {
+            walk_expr_class_checks(scrutinee, ctx, src, file, errs);
+            for arm in arms {
+                let mut arm_ctx = ctx.clone();
+                let mut bound = Vec::new();
+                pattern_bound_idents(&arm.pattern, &mut bound);
+                for name in &bound {
+                    arm_ctx.classes.remove(name);
+                }
+                if let Some(guard) = &arm.guard {
+                    walk_expr_class_checks(guard, &arm_ctx, src, file, errs);
+                }
+                walk_expr_class_checks(&arm.body, &arm_ctx, src, file, errs);
+            }
+        }
         _ => {}
+    }
+}
+
+/// Collect every identifier a match pattern binds into scope. Enum-variant
+/// payloads, tuple elements, and struct-variant fields recurse; literals and
+/// `_` bind nothing. Used to DROP those names from the per-arm class ctx so a
+/// pattern-bound identifier resolves to class `None`, never a stale/shadowed
+/// outer class (the zero-over-coverage guarantee for match arms, #233).
+fn pattern_bound_idents(pat: &crate::ast::Pattern, out: &mut Vec<String>) {
+    use crate::ast::Pattern;
+    match pat {
+        Pattern::Ident(name) => out.push(name.clone()),
+        Pattern::EnumVariant { args, .. } => {
+            for a in args {
+                pattern_bound_idents(a, out);
+            }
+        }
+        Pattern::Tuple(pats) => {
+            for p in pats {
+                pattern_bound_idents(p, out);
+            }
+        }
+        Pattern::EnumStruct { fields, .. } => {
+            for (_, p) in fields {
+                pattern_bound_idents(p, out);
+            }
+        }
+        Pattern::Literal(_) | Pattern::Wildcard => {}
     }
 }
 
