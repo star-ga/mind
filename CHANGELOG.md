@@ -88,6 +88,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   false green at exit 0).
 
 ### Fixed
+- **Self-host `selftest_emit_mlir` silently emitted wrong (`i64`-typed) bytes for cross-function
+  f64 (GitHub #229).** An f64-result value-if or f64-returning intra-call in value position was
+  mis-typed `i64` in the pure-MIND MLIR emit (`mlir_node_is_f64` has no value-if/`Call` arm and
+  the value-if emit hardcodes `: i64`) — a latent silent self-host wrong-bytes path (no shipped
+  gate feeds cross-fn f64; the #298 25-case gate is single-fn only, so nothing shipped wrong).
+  The documented segfault symptom did not reproduce (a harness bug — unset ctypes argtypes).
+  Hardened to **fail-closed**: `emit_mlir_module` now runs an entry-point pre-pass and returns an
+  empty result (0 bytes) when the module contains a cross-fn f64 shape it would mis-type, instead
+  of emitting wrong bytes. `mlir_node_is_f64` and the emit path are untouched, so the 25 supported
+  single-fn f64 cases stay byte-identical; correct cross-fn f64 emit remains #298 'step 2'.
+  Self-host fixed point re-frozen (Rule-1b): stage0 `11df237d` → `4431793f` (main.mind grew;
+  stage1==stage2==stage3 self-consistent, oracle no-drift, keystone 7/7).
 - **RFC 0011 scalar-class checks now reach match arms and the implicit trailing-return that
   precedes a binding (GitHub #233).** The confidence-gated int↔float class pass never entered a
   `match` arm (a `Node::Match` fell through to the walker's terminal `_ => {}`), so E2027

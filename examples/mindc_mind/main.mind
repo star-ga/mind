@@ -23997,9 +23997,168 @@ pub fn emit_mlir_items(s: EmitState, buf: i64, items_addr: i64, items_len: i64, 
 //   module {\n <fns> <@main> }\n\n
 // The trailing extra `\n` mirrors the Rust `println!("{}", text)` that wraps the
 // module text (`--emit-mlir` stdout). Pure / additive / canary-isolated.
+// ===== FAIL-CLOSED guard for cross-fn f64 (#229) =====
+//
+// selftest_emit_mlir cannot yet correctly lower two cross-fn f64 shapes:
+//   (1) an f64-result value-if  (`if C { a } else { b }` used as a value where
+//       the branch value is f64) — the value-if emit hardcodes `: i64`;
+//   (2) an f64-returning intra-call in value position (`g(2.5)` where `g -> f64`)
+//       — mlir_node_is_f64 has no Call arm, so the call+result are typed i64.
+// Rather than emit SILENTLY-WRONG i64-typed bytes, the module entry point
+// REFUSES (returns an empty EmitState -> 0 bytes) when either shape is present.
+// This is a detector-only pre-pass; it never changes the bytes of a supported
+// module. Correct emit of these shapes is #298 step 2 (out of scope here).
+
+// The trailing value expression of a value block (the last stmt when it is not a
+// `return`), else 0. Mirrors branch_is_value_block's notion of "the block value".
+pub fn mlir_block_value_node(blk: i64) -> i64 {
+    let sa: i64 = ast_child0(blk);
+    let sl: i64 = ast_aux(blk);
+    if sl < 1 {
+        return 0;
+    }
+    __mind_load_i64(sa + (sl - 1) * 8)
+}
+
+// 1 iff a Call node's callee names a module fn whose result dtype is f64.
+// An unresolved name (builtin / external) -> 0 (not an intra-call we own).
+pub fn mlir_find_fn_ret_f64(items_addr: i64, items_len: i64, buf: i64, lo: i64, hi: i64, i: i64) -> i64 {
+    if i >= items_len {
+        return 0;
+    }
+    let item: i64 = __mind_load_i64(items_addr + i * 8);
+    if ast_kind(item) == ast_fn_def() {
+        let name: i64 = ast_child0(item);
+        if span_bytes_equal(buf, lo, hi, ast_span_lo(name), ast_span_hi(name)) == 1 {
+            let pa: i64 = ast_child1(item);
+            let np: i64 = ast_aux(item) / 2;
+            return mlir_fn_result_is_f64(buf, ast_child2(item), pa, np);
+        }
+    }
+    mlir_find_fn_ret_f64(items_addr, items_len, buf, lo, hi, i + 1)
+}
+
+pub fn mlir_call_returns_f64(items_addr: i64, items_len: i64, buf: i64, call_node: i64) -> i64 {
+    let callee: i64 = ast_child0(call_node);
+    mlir_find_fn_ret_f64(items_addr, items_len, buf, ast_span_lo(callee), ast_span_hi(callee), 0)
+}
+
+// Module-aware f64 dtype of a value expr: a Call resolves to its callee's result
+// dtype; a nested value-if resolves to its branch value's dtype; everything else
+// defers to mlir_node_is_f64 (float_lit / binop / ident-param / paren).
+pub fn mlir_expr_f64_mod(items_addr: i64, items_len: i64, buf: i64, node: i64, params_addr: i64, n_params: i64) -> i64 {
+    if node == 0 {
+        return 0;
+    }
+    let k: i64 = ast_kind(node);
+    if k == ast_call() {
+        return mlir_call_returns_f64(items_addr, items_len, buf, node);
+    }
+    if k == ast_paren() {
+        return mlir_expr_f64_mod(items_addr, items_len, buf, ast_child0(node), params_addr, n_params);
+    }
+    if k == ast_if() {
+        let tv: i64 = mlir_block_value_node(ast_child1(node));
+        if mlir_expr_f64_mod(items_addr, items_len, buf, tv, params_addr, n_params) == 1 {
+            return 1;
+        }
+        let eb: i64 = ast_child2(node);
+        if eb == 0 {
+            return 0;
+        }
+        return mlir_expr_f64_mod(items_addr, items_len, buf, mlir_block_value_node(eb), params_addr, n_params);
+    }
+    mlir_node_is_f64(buf, node, params_addr, n_params)
+}
+
+// 1 iff `ifn` is a value-if whose result dtype is f64 (either branch f64).
+pub fn mlir_value_if_is_f64(items_addr: i64, items_len: i64, buf: i64, ifn: i64, params_addr: i64, n_params: i64) -> i64 {
+    let tv: i64 = mlir_block_value_node(ast_child1(ifn));
+    if mlir_expr_f64_mod(items_addr, items_len, buf, tv, params_addr, n_params) == 1 {
+        return 1;
+    }
+    let eb: i64 = ast_child2(ifn);
+    if eb == 0 {
+        return 0;
+    }
+    mlir_expr_f64_mod(items_addr, items_len, buf, mlir_block_value_node(eb), params_addr, n_params)
+}
+
+// The value expression a statement contributes to the fn result: a return's
+// value, a let's init, or a trailing bare expr; else 0.
+pub fn mlir_stmt_value_expr(stmt: i64, i: i64, stmts_len: i64) -> i64 {
+    let k: i64 = ast_kind(stmt);
+    if k == ast_return() {
+        return ast_child0(stmt);
+    }
+    if k == ast_let() {
+        return ast_child2(stmt);
+    }
+    if i == stmts_len - 1 {
+        return stmt;
+    }
+    0
+}
+
+// 1 iff a statement's value expr is an UNSUPPORTED cross-fn f64 shape: an
+// f64-result value-if, or an f64-returning intra-call. A plain f64 expr
+// (binop / literal / param) is supported and returns 0.
+pub fn mlir_stmt_bad_f64(items_addr: i64, items_len: i64, buf: i64, vexpr: i64, params_addr: i64, n_params: i64) -> i64 {
+    if vexpr == 0 {
+        return 0;
+    }
+    let k: i64 = ast_kind(vexpr);
+    if k == ast_paren() {
+        return mlir_stmt_bad_f64(items_addr, items_len, buf, ast_child0(vexpr), params_addr, n_params);
+    }
+    if k == ast_if() {
+        if is_value_if_expr(vexpr) == 1 {
+            return mlir_value_if_is_f64(items_addr, items_len, buf, vexpr, params_addr, n_params);
+        }
+        return 0;
+    }
+    if k == ast_call() {
+        return mlir_call_returns_f64(items_addr, items_len, buf, vexpr);
+    }
+    0
+}
+
+pub fn mlir_fn_body_bad_f64(items_addr: i64, items_len: i64, buf: i64, stmts_addr: i64, stmts_len: i64, i: i64, params_addr: i64, n_params: i64) -> i64 {
+    if i >= stmts_len {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let vexpr: i64 = mlir_stmt_value_expr(stmt, i, stmts_len);
+    if mlir_stmt_bad_f64(items_addr, items_len, buf, vexpr, params_addr, n_params) == 1 {
+        return 1;
+    }
+    mlir_fn_body_bad_f64(items_addr, items_len, buf, stmts_addr, stmts_len, i + 1, params_addr, n_params)
+}
+
+// 1 iff any fn in the module contains an unsupported cross-fn f64 construct.
+pub fn mlir_module_has_bad_f64(items_addr: i64, items_len: i64, buf: i64, i: i64) -> i64 {
+    if i >= items_len {
+        return 0;
+    }
+    let item: i64 = __mind_load_i64(items_addr + i * 8);
+    if ast_kind(item) == ast_fn_def() {
+        let pa: i64 = ast_child1(item);
+        let np: i64 = ast_aux(item) / 2;
+        let body: i64 = ast_child2(item);
+        if mlir_fn_body_bad_f64(items_addr, items_len, buf, ast_child0(body), ast_aux(body), 0, pa, np) == 1 {
+            return 1;
+        }
+    }
+    mlir_module_has_bad_f64(items_addr, items_len, buf, i + 1)
+}
+
 pub fn emit_mlir_module(ast_addr: i64, buf: i64) -> EmitState {
     let items_addr: i64 = ast_child0(ast_addr);
     let items_len: i64 = ast_aux(ast_addr);
+    // FAIL-CLOSED (#229): refuse cross-fn f64 shapes we would mis-type as i64.
+    if mlir_module_has_bad_f64(items_addr, items_len, buf, 0) == 1 {
+        return es_new();
+    }
     let s0: EmitState = es_new();
     // `module {\n`
     let s1: EmitState = es_push(s0, 109);
