@@ -1519,6 +1519,17 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                 if let Some(s) = map_sentinel_for_opt(ann) {
                     struct_env.insert(name.clone(), s.to_string());
                 }
+                // Bare-pattern match disambiguation: record the enum this
+                // binding provably holds (typed `let b: E`, or a qualified
+                // constructor RHS) under `__enum__{name}` so a later
+                // `match b { X(v) => … }` over a variant name shared by multiple
+                // enums resolves against THIS enum, not the first registry hit.
+                // Pure metadata (distinct `__enum__` key namespace) — never
+                // serialized into mic@3 and inert to every struct-field lookup.
+                #[cfg(feature = "std-surface")]
+                if let Some(en) = let_binding_enum(ann, value, &ir.enum_variant_tags) {
+                    struct_env.insert(format!("__enum__{name}"), en);
+                }
                 ir.instrs.push(Instr::Output(id));
             }
             ast::Node::Assign { name, value, .. } => {
@@ -5987,6 +5998,16 @@ fn lower_expr(
                         if let Some(s) = set_sentinel_for_opt(ann) {
                             fn_struct_env.insert(name.clone(), s.to_string());
                         }
+                        // Bare-pattern match disambiguation: record the enum this
+                        // fn-local binding provably holds (typed `let b: E`, or a
+                        // qualified constructor RHS) under `__enum__{name}` so a
+                        // later `match b { X(v) => … }` over a variant name shared
+                        // across enums resolves against THIS enum. Pure metadata
+                        // (distinct key namespace) — never serialized into mic@3.
+                        #[cfg(feature = "std-surface")]
+                        if let Some(en) = let_binding_enum(ann, value, &fn_ir.enum_variant_tags) {
+                            fn_struct_env.insert(format!("__enum__{name}"), en);
+                        }
                         // RHS type inference (`let raw = f(...); raw.split(…)`).
                         #[cfg(feature = "std-surface")]
                         if let Some((__s, __e)) =
@@ -6279,6 +6300,15 @@ fn lower_expr(
                     #[cfg(feature = "std-surface")]
                     if let Some(s) = map_sentinel_for_opt(ann) {
                         local_struct_env.insert(name.clone(), s.to_string());
+                    }
+                    // Bare-pattern match disambiguation: record the enum this
+                    // block-local binding provably holds under `__enum__{name}`
+                    // so a later `match b { X(v) => … }` over a variant name
+                    // shared across enums resolves against THIS enum. Pure
+                    // metadata (distinct key namespace) — never in mic@3.
+                    #[cfg(feature = "std-surface")]
+                    if let Some(en) = let_binding_enum(ann, value, &ir.enum_variant_tags) {
+                        local_struct_env.insert(format!("__enum__{name}"), en);
                     }
                     // RHS type inference (`let raw = f(...); raw.split(…)`).
                     #[cfg(feature = "std-surface")]
@@ -7194,8 +7224,10 @@ fn lower_expr(
         ast::Node::Match {
             scrutinee, arms, ..
         } => {
+            let scrut_enum = scrutinee_enum_hint(scrutinee, struct_env, &ir.enum_variant_tags);
             match desugar_match_to_if(
                 scrutinee,
+                scrut_enum.as_deref(),
                 arms,
                 &ir.enum_variant_tags,
                 &ir.boxed_enums,
@@ -10086,11 +10118,84 @@ fn module_qualified_variant_key(path: &str) -> String {
     }
 }
 
+/// True when `name` is a known enum — the tag registry holds at least one
+/// `name::Variant` key. Lets an explicit `let b: E` annotation seed the
+/// scrutinee-enum hint for bare-pattern match disambiguation.
+#[cfg(feature = "std-surface")]
+fn enum_type_is_known(name: &str, tags: &std::collections::BTreeMap<String, i64>) -> bool {
+    let prefix = format!("{name}::");
+    tags.keys().any(|k| k.starts_with(&prefix))
+}
+
+/// Recover the enum a node's VALUE belongs to, when the node is a QUALIFIED
+/// enum constructor: a payload call `E::V(..)` (`Node::Call` callee `E::V`) or a
+/// fieldless `E::V` (`Node::Lit(Ident("E::V"))`). Returns the `E` segment when
+/// `E::V` is a registered tag. A BARE constructor is deliberately NOT resolved
+/// here — that is exactly the ambiguous case the scrutinee hint disambiguates.
+#[cfg(feature = "std-surface")]
+fn constructor_enum_of(
+    node: &ast::Node,
+    tags: &std::collections::BTreeMap<String, i64>,
+) -> Option<String> {
+    let key: &str = match node {
+        ast::Node::Call { callee, .. } => callee.as_str(),
+        ast::Node::Lit(Literal::Ident(s), _) => s.as_str(),
+        _ => return None,
+    };
+    if key.contains("::") && tags.contains_key(key) {
+        key.rsplit_once("::").map(|(e, _)| e.to_string())
+    } else {
+        None
+    }
+}
+
+/// The enum type a `let` binding provably holds, for recording into the
+/// var→enum side-table (`__enum__{name}` in `struct_env`) that bare-pattern
+/// match disambiguation consumes. Sources, in order: an explicit `Named(E)`
+/// annotation naming a known enum, else a qualified-constructor RHS. `None`
+/// when neither pins a single enum (so no stale/guessed fact is recorded).
+#[cfg(feature = "std-surface")]
+fn let_binding_enum(
+    ann: &Option<TypeAnn>,
+    value: &ast::Node,
+    tags: &std::collections::BTreeMap<String, i64>,
+) -> Option<String> {
+    if let Some(TypeAnn::Named(t)) = ann {
+        if enum_type_is_known(t, tags) {
+            return Some(t.clone());
+        }
+    }
+    constructor_enum_of(value, tags)
+}
+
+/// The owning enum of a MATCH scrutinee, when recoverable at the lowering site:
+/// a bare-ident scrutinee whose var→enum binding was recorded at its `let`, or
+/// a direct qualified-constructor scrutinee. `None` when the scrutinee's enum
+/// cannot be determined — the bare-pattern disambiguation then falls back to
+/// the arm-name heuristic (which itself fails closed on a true ambiguity).
+#[cfg(feature = "std-surface")]
+fn scrutinee_enum_hint(
+    scrutinee: &ast::Node,
+    struct_env: &HashMap<String, String>,
+    tags: &std::collections::BTreeMap<String, i64>,
+) -> Option<String> {
+    if let ast::Node::Lit(Literal::Ident(name), _) = scrutinee {
+        if let Some(e) = struct_env.get(&format!("__enum__{name}")) {
+            return Some(e.clone());
+        }
+    }
+    constructor_enum_of(scrutinee, tags)
+}
+
 /// `Node::Binary(Eq)` nodes and is lowered through the unchanged
 /// `ast::Node::If` arm, so none of the dominance/merge machinery is touched.
 #[cfg(feature = "std-surface")]
 fn desugar_match_to_if(
     scrutinee: &ast::Node,
+    // The scrutinee's OWNING enum, recovered from its typed `let` / qualified
+    // constructor when available (`scrutinee_enum_hint`). Authoritative for
+    // resolving bare variant patterns whose name is shared across enums.
+    scrut_enum: Option<&str>,
     arms: &[ast::MatchArm],
     enum_tags: &std::collections::BTreeMap<String, i64>,
     boxed_enums: &std::collections::BTreeSet<String>,
@@ -10159,6 +10264,19 @@ fn desugar_match_to_if(
         });
         if let Some(e) = qualified_enum {
             Some(e)
+        } else if let Some(se) = scrut_enum.filter(|se| {
+            bare_variant_names
+                .iter()
+                .all(|v| enum_tags.contains_key(&format!("{se}::{v}")))
+        }) {
+            // (1b) The scrutinee's OWN enum is authoritative — recovered from
+            // its typed `let` binding or qualified constructor. Anchor the bare
+            // arms to it whenever it declares every bare variant name, so a
+            // variant name shared across enums resolves to the SCRUTINEE's enum
+            // rather than the arm-name heuristic's first registry hit (the
+            // silent collision miscompile: `enum A{Y,X} enum B{X,Y}`, `b: B`,
+            // `match b { X(v) => … }` must test B::X's tag, not A::X's).
+            Some(se.to_string())
         } else {
             // (2) Candidate enums = those declaring EVERY bare variant name.
             let mut candidates: std::collections::BTreeSet<String> = enum_tags

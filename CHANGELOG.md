@@ -121,6 +121,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`main.mind` and std have zero closures; keystone 7/7 byte-identical). Deferred hole: an
   *unannotated* capture has no provable type at desugar time and stays accepted (upgrade path: typed
   capture syntax + per-slot env `DType`).
+- **Ambiguous bare enum-payload patterns silently dispatched on the first enum's tags
+  (corr2/#287-F3 → silent miscompile, fixed).** When a bare (unqualified) variant name in a
+  `match` arm existed in more than one enum, `resolve_bare` picked the first matching key in a
+  `BTreeMap` rather than the scrutinee's enum — so if two enums declared the same variant names
+  in different orders, matching dispatched to the WRONG arm: `enum A { Y(i64), X(i64) }
+  enum B { X(i64), Y(i64) } … let b: B = B::X(7); match b { X(v) => v+100, Y(v) => v+200 }`
+  returned `207` (bound via `A::X`'s tag) instead of `107` (net-verified via ctypes; the
+  `B::Y(7)` twin returned `107` for `207`). The lowering now recovers the scrutinee's provable
+  enum — recorded per-binding under an inert `__enum__{name}` key in the existing
+  `struct_env`/`fn_struct_env`/`local_struct_env` side-table (never serialized into mic@3) from
+  a typed `let b: B` or a qualified-constructor RHS — and threads it as `scrut_enum` into
+  `desugar_match_to_if`; `owning_enum` anchors bare arms to the scrutinee's enum whenever it
+  declares every bare variant name (filtered, so a type-mismatched pattern falls through to the
+  unchanged heuristic — no misresolve). Fully-qualified `B::X`/`B::Y` and unambiguous bare
+  patterns are unaffected. Not hard-coded to two enums. Because the new path only alters
+  resolution when a recorded scrutinee enum exists AND bare arms are present — and `std`/
+  `main.mind` declare NO MIND enums (i64 tag constants only) so `scrut_enum` is `None`
+  throughout — keystone 7/7 + mic3_flip (681235 B) + cross-substrate stay byte-identical; only
+  genuinely-ambiguous bare patterns change output. No wire-format change, no reseed.
 - **Closure captures wrongly rewrote inner bindings that shadow a capture (corr2/#287-F4 →
   silent miscompile, fixed).** The pre-IR closure desugarer's `rewrite_captures` was
   lexically scope-blind: it rewrote EVERY identifier whose spelling matched a capture name to
