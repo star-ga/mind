@@ -63,6 +63,32 @@ fn check_out(path: &std::path::Path) -> String {
     s
 }
 
+/// Combined stdout+stderr of a full `mindc <path> --emit-shared <tmp.so>` COMPILE.
+/// Unlike `mindc check`, the compile pipeline runs `desugar_traits` (impls lifted
+/// to `{type}_{method}` free fns) BEFORE type-checking — the only path on which
+/// the RFC 0011 method-call class check fires (`mindc check` rejects any raw
+/// trait/impl at E2001 before type inference). A scalar-class error (E2027) is
+/// raised during the type-check phase and returned BEFORE lowering/`mlir-opt`, so
+/// the reject shows up even in a build without a working MLIR toolchain; a clean
+/// program proceeds to emit.
+fn build_out(path: &std::path::Path) -> String {
+    let so = std::env::temp_dir().join(format!(
+        "{}.so",
+        path.file_stem().unwrap().to_str().unwrap()
+    ));
+    let out = mindc()
+        .args([
+            path.to_str().unwrap(),
+            "--emit-shared",
+            so.to_str().unwrap(),
+        ])
+        .output()
+        .expect("spawn mindc build");
+    let mut s = String::from_utf8_lossy(&out.stdout).to_string();
+    s.push_str(&String::from_utf8_lossy(&out.stderr));
+    s
+}
+
 #[test]
 fn float_return_from_int_fn_rejected() {
     let bad = write_tmp(
@@ -836,5 +862,138 @@ fn inner_scope_shadow_after_statement_no_false_positive() {
         !out.contains("E2010"),
         "shadow `let x: f64` after a non-binder statement falsely rejected E2010 \
          (seed is prefix-only, not full scan): {out}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// #233 follow-up — E2027 in the METHOD-CALL argument position (RFC 0011).
+//
+// A `receiver.method(arg)` on a struct-typed receiver lowers (UFCS static
+// dispatch) to the free fn `{type}_{method}(self, arg...)` that `desugar_traits`
+// lifts *before* type inference — but ONLY on the compile (`--emit-shared`)
+// pipeline. `mindc check` does not run `desugar_traits`, so a raw trait/impl is
+// rejected there at E2001 before type inference; the method-call class check
+// therefore fires on the BUILD path, where it turns a confident Int/Float
+// argument into an oppositely-classed declared method parameter — the exact
+// scalar-ABI mismatch `mlir-opt` rejects late (`'f64' vs 'i64'`) — into an EARLY
+// type-check-phase E2027, returned before lowering. NON-VACUOUS: on the pre-fix
+// compiler the method-call position had NO class check (the arm fell to the
+// terminal `_ => {}`), so `s.scale(2)` compiled its type-check phase clean and
+// only failed at `mlir-opt`. Uses `build_out` (a real compile), not `check_out`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn method_arg_int_into_float_param_rejected() {
+    // `s.scale(2)` — int literal into an `f64`-declared method param. The lifted
+    // free fn is `sc_scale(self: Sc, k: f64)`; arg 0 (`2` → Int) vs param 1
+    // (`f64` → Float) mismatch → E2027 at the type-check phase of the build,
+    // returned before `mlir-opt` ever runs.
+    let bad = write_tmp(
+        "mind_method_arg_int_into_f64.mind",
+        "struct Sc { tag: i64 }\n\
+         trait Scale {\n\
+         \x20   fn scale(self, k: f64) -> f64\n\
+         }\n\
+         impl Scale for Sc {\n\
+         \x20   fn scale(self, k: f64) -> f64 {\n\
+         \x20       return k\n\
+         \x20   }\n\
+         }\n\
+         pub fn bad() -> f64 {\n\
+         \x20   let s = Sc { tag: 0 }\n\
+         \x20   return s.scale(2)\n\
+         }\n",
+    );
+    let out = build_out(&bad);
+    assert!(
+        out.contains("E2027"),
+        "int literal `2` into `f64` method param NOT rejected E2027 (method-call \
+         arg class check missing on the build path): {out}"
+    );
+}
+
+#[test]
+fn method_arg_float_into_int_param_rejected() {
+    // Mirror direction: `c.bump(1.5)` — float literal into an `i64`-declared
+    // method param. Lifted `ct_bump(self: Ct, n: i64)`; arg 0 (`1.5` → Float) vs
+    // param 1 (`i64` → Int) → E2027.
+    let bad = write_tmp(
+        "mind_method_arg_float_into_i64.mind",
+        "struct Ct { c: i64 }\n\
+         trait Bump {\n\
+         \x20   fn bump(self, n: i64) -> i64\n\
+         }\n\
+         impl Bump for Ct {\n\
+         \x20   fn bump(self, n: i64) -> i64 {\n\
+         \x20       return n\n\
+         \x20   }\n\
+         }\n\
+         pub fn bad() -> i64 {\n\
+         \x20   let c = Ct { c: 3 }\n\
+         \x20   return c.bump(1.5)\n\
+         }\n",
+    );
+    let out = build_out(&bad);
+    assert!(
+        out.contains("E2027"),
+        "float literal `1.5` into `i64` method param NOT rejected E2027: {out}"
+    );
+}
+
+#[test]
+fn method_arg_correct_class_no_false_positive() {
+    // The GREEN control: `s.scale(2.0)` passes the SAME arg into the SAME `f64`
+    // param in the correct class. Must NOT false-fire E2027 — a valid program
+    // that compiles to a `.so` end-to-end (zero over-coverage is load-bearing).
+    let good = write_tmp(
+        "mind_method_arg_correct_class_ok.mind",
+        "struct Sc { tag: i64 }\n\
+         trait Scale {\n\
+         \x20   fn scale(self, k: f64) -> f64\n\
+         }\n\
+         impl Scale for Sc {\n\
+         \x20   fn scale(self, k: f64) -> f64 {\n\
+         \x20       return k\n\
+         \x20   }\n\
+         }\n\
+         pub fn okc() -> f64 {\n\
+         \x20   let s = Sc { tag: 0 }\n\
+         \x20   return s.scale(2.0)\n\
+         }\n",
+    );
+    let out = build_out(&good);
+    assert!(
+        !out.contains("E2027"),
+        "correctly-classed `s.scale(2.0)` falsely rejected E2027: {out}"
+    );
+}
+
+#[test]
+fn method_zero_arg_call_no_false_positive() {
+    // The zero-arg method-as-field case Fable flagged: `foo.val()` takes no
+    // args, so the self-inclusive arity gate holds (`param_types.len() == 1 ==
+    // 0 + 1`) and the arg loop is empty — no E2027, no panic (the `skip(1)`
+    // self-drop stays in bounds). This is the proven `trait_static_dispatch_run`
+    // shape (compiles + returns 42).
+    let good = write_tmp(
+        "mind_method_zero_arg_ok.mind",
+        "struct Foo { x: i64, y: i64 }\n\
+         trait Speak {\n\
+         \x20   fn val(self) -> i64\n\
+         }\n\
+         impl Speak for Foo {\n\
+         \x20   fn val(self) -> i64 {\n\
+         \x20       return self.x + self.y\n\
+         \x20   }\n\
+         }\n\
+         pub fn okz() -> i64 {\n\
+         \x20   let foo = Foo { x: 40, y: 2 }\n\
+         \x20   return foo.val()\n\
+         }\n",
+    );
+    let out = build_out(&good);
+    assert!(
+        !out.contains("E2027"),
+        "zero-arg `foo.val()` falsely rejected E2027 (arity/self-skip wrong): {out}"
     );
 }

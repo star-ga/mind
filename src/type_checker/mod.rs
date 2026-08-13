@@ -3504,6 +3504,60 @@ fn walk_expr_class_checks(
                 walk_expr_class_checks(a, ctx, src, file, errs);
             }
         }
+        Node::MethodCall {
+            receiver,
+            method,
+            args,
+            span,
+        } => {
+            // #233 follow-up — the #230 call-argument class check extended to the
+            // method-call position. A `receiver.method(args)` on a struct-typed
+            // receiver lowers (UFCS static dispatch) to the free fn
+            // `{type}_{method}(self, args...)` that `desugar_traits` lifted before
+            // this pass, so a confident Int/Float argument flowing into an
+            // oppositely-classed declared method parameter is the same scalar-ABI
+            // mismatch `mlir-opt` rejects (`'f64' vs 'i64'`) that `check` otherwise
+            // fail-opens on — now caught here. Zero over-coverage, three guards:
+            //   * `method_receiver_type` is `Some` ONLY for a struct-typed VALUE
+            //     receiver (a static `Type.m(..)` has no span entry → skipped);
+            //   * the self-inclusive arity gate `param_types.len() == args.len()+1`
+            //     rejects a coincidentally-named free fn / wrong-arity call and
+            //     keeps the `skip(1)` self-drop in bounds; and
+            //   * `confident_scalar_class` stays `Some` only for provable literals
+            //     / declared bindings / `as` targets, so enum-ctor and loose-typed
+            //     args are never flagged.
+            // Param 0 is the synthesized `self`; call arg i maps to param i+1.
+            if let Some(t) = method_receiver_type(*span) {
+                let mangled = format!("{}_{}", t.to_lowercase(), method);
+                if let Some(sig) = intra_lookup_fn(&mangled) {
+                    if sig.param_types.len() == args.len() + 1 {
+                        for (param, arg) in sig.param_types.iter().skip(1).zip(args.iter()) {
+                            if let (Some(pc), Some(ac)) =
+                                (scalar_class_of_ann(param), confident_scalar_class(arg, ctx))
+                            {
+                                if pc != ac {
+                                    errs.push(diag_from_span(
+                                        src,
+                                        file,
+                                        format!(
+                                            "no implicit int↔float conversion (RFC 0011): argument is {} but the parameter is declared {} — write the value in the parameter's class or use an explicit `as` cast",
+                                            class_noun(ac),
+                                            class_noun(pc),
+                                        ),
+                                        arg.span(),
+                                        ARG_CLASS_MISMATCH_CODE,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            walk_expr_class_checks(receiver, ctx, src, file, errs);
+            for a in args {
+                walk_expr_class_checks(a, ctx, src, file, errs);
+            }
+        }
         // #263 surface 1: range-slice `receiver[start..end]`. Bounds are
         // usize-class offsets — a float bound is a fail-loud reject (E2030),
         // never a silent truncation. Only `Float` is flagged: `Int` and the
@@ -3812,6 +3866,47 @@ fn check_intra_fn_call(
     // 0.8.x arg re-walk reddened the compositional suite's
     // `enum_tag_match_writes_field_in_each_arm`; arity tests assert E2005 only.)
     Ok((ValueType::ScalarI64, span))
+}
+
+// #233 follow-up — receiver-type side-table for the RFC 0011 method-call
+// argument-class check (`walk_expr_class_checks`' `MethodCall` arm). Keyed on
+// each `receiver.method(args)` node's OWN span → the receiver's struct type, and
+// built by the SAME `struct_resolver::build_field_access_types` map lowering
+// uses to resolve a UFCS method to its `{type}_{method}` free fn. Installed for
+// the duration of a `check_module_types_in_file` call; nesting-safe (a
+// sub-module check swaps in its own map and restores the parent on drop, and the
+// two maps are keyed on disjoint spans). `None` for a struct-less module, so the
+// class check is a total no-op there.
+thread_local! {
+    static METHOD_RECV_TYPES: std::cell::RefCell<
+        Option<crate::eval::struct_resolver::FieldAccessTypes>,
+    > = const { std::cell::RefCell::new(None) };
+}
+
+/// Struct type of a method-call receiver at the call's own span, or `None` when
+/// the receiver is not a struct-typed value (a static `Type.m()` call, an
+/// unresolved receiver, or a struct-less module — none of which get a map
+/// entry). Mirrors lowering's `receiver_types` lookup so the class check
+/// resolves the SAME `{type}_{method}` callee lowering will.
+fn method_receiver_type(span: crate::ast::Span) -> Option<String> {
+    METHOD_RECV_TYPES.with(|cell| cell.borrow().as_ref().and_then(|m| m.get(&span).cloned()))
+}
+
+struct MethodRecvGuard {
+    prev: Option<crate::eval::struct_resolver::FieldAccessTypes>,
+}
+
+impl MethodRecvGuard {
+    fn install(map: crate::eval::struct_resolver::FieldAccessTypes) -> Self {
+        let prev = METHOD_RECV_TYPES.with(|cell| cell.borrow_mut().replace(map));
+        MethodRecvGuard { prev }
+    }
+}
+
+impl Drop for MethodRecvGuard {
+    fn drop(&mut self) {
+        METHOD_RECV_TYPES.with(|cell| *cell.borrow_mut() = self.prev.take());
+    }
 }
 
 /// RAII guard that installs an intra-module signature table into the
@@ -4463,6 +4558,20 @@ fn check_module_types_in_file_impl(
 
     // Install the intra-fn signature side-table (built above, not a separate walk).
     let _intra_sig_guard = has_fn.then(|| IntraSigGuard::install(intra_fn_sigs));
+
+    // #233 follow-up — install the method-receiver-type map so the RFC 0011
+    // class check can resolve a `receiver.method(arg)` call's `{type}_{method}`
+    // callee (the UFCS free fn `desugar_traits` lifted before this pass).
+    // Gated on a local struct being present: `build_field_access_types` only
+    // resolves receivers to module-local `StructDef` names, so a struct-less
+    // module (the keystone, every scalar/matmul bench, every canary) skips the
+    // build entirely and the class check is a no-op — compile speed on the hot
+    // path is byte-for-byte unchanged.
+    let _method_recv_guard = (!struct_names.is_empty()).then(|| {
+        MethodRecvGuard::install(crate::eval::struct_resolver::build_field_access_types(
+            module,
+        ))
+    });
 
     // Install the enum-variant registry for match-exhaustiveness checking
     // (same merge-onto-parent discipline, so an enum match inside a fn body

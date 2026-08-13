@@ -88,6 +88,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   false green at exit 0).
 
 ### Fixed
+- **RFC 0011 int↔float class check fail-opened in the method-call argument position (E2027).**
+  The #230 call-argument scalar-class check (a confident Int/Float argument into an
+  oppositely-classed declared parameter → `E2027`) covered free `Node::Call`s but not
+  `Node::MethodCall`s — `s.scale(2)`, where `scale`'s parameter is declared `f64`, compiled its
+  type-check phase clean and only failed late at `mlir-opt` (`'f64' vs 'i64'`), the exact fail-open
+  #230 closed for free calls. A `receiver.method(args)` on a struct-typed receiver lowers (UFCS static
+  dispatch) to the free fn `{type}_{method}(self, args...)` that `desugar_traits` lifts *before* the
+  type-check phase of a **compile** (`mindc build` / `--emit-shared`), so the type checker now resolves
+  the receiver's struct type at the call span via the SAME `struct_resolver::build_field_access_types`
+  map lowering uses, mangles the callee, and checks each argument's confident class against the declared
+  parameter class (self-skipped) — turning the late opaque `mlir-opt` error into an early, precise
+  `E2027` returned before lowering. (Scope: the compile path only — `mindc check` does not run
+  `desugar_traits`, so it rejects any raw trait/impl at `E2001` before type inference; making `check`
+  handle traits is tracked separately.) Zero over-coverage by three guards: the receiver-type map is
+  populated ONLY for a struct-typed VALUE receiver (a static `Type.m(..)` call has no entry and is
+  skipped), a self-inclusive arity gate (`param_types.len() == args.len() + 1`) rejects a
+  coincidentally-named free fn or wrong-arity call, and `confident_scalar_class` stays `Some` only for
+  provable literals / declared bindings / `as` targets. The map is built only for modules with a local
+  `struct` (the keystone, every scalar/matmul bench, every canary skip it), so emitted bytes and
+  compile-speed on the hot path are unchanged. Type-checker-only (no lowering/emit change); the
+  self-host fixed point is unaffected (no reseed).
 - **Self-host `selftest_emit_mlir` silently emitted wrong (`i64`-typed) bytes for cross-function
   f64 (GitHub #229).** An f64-result value-if or f64-returning intra-call in value position was
   mis-typed `i64` in the pure-MIND MLIR emit (`mlir_node_is_f64` has no value-if/`Call` arm and
