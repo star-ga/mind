@@ -16181,15 +16181,54 @@ pub fn emit_mic3_module_fndef_seq(s: EmitState, src: i64, fn_node: i64, nidx: i6
     } else {
         is_any_value_if_expr(final_expr)
     };
+    // #311: a trailing return-terminated diverging if-ELSE chain (`...; if x==0
+    // {return A;} else {return B;}` — the scalar-int / fieldless-enum match desugar)
+    // is the FN_DEF result: emit as ONE else-nested OP_IF via emit_mic3_ifret_chain_instr_lv.
+    let trail_is_chain: i64 = if is_trail_ret == 1 {
+        0
+    } else {
+        if trail_is_if == 1 {
+            0
+        } else {
+            if ast_kind(final_stmt) == ast_if() {
+                if ast_child2(final_stmt) != 0 {
+                    let tc_then: i64 = branch_single_expr(ast_child1(final_stmt));
+                    if tc_then >= 0 {
+                        if ast_kind(tc_then) == ast_return() {
+                            if ifret_chain_has_call(final_stmt) == 0 {
+                                1
+                            } else {
+                                0
+                            }
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                }
+            } else {
+                0
+            }
+        }
+    };
     let trail_root: i64 = if trail_is_if == 1 {
         0
     } else {
-        flatten_expr_env(final_expr, src, params_addr, n_params, nodes, cursor, tenv, tk)
+        if trail_is_chain == 1 {
+            0
+        } else {
+            flatten_expr_env(final_expr, src, params_addr, n_params, nodes, cursor, tenv, tk)
+        }
     };
     if trail_is_if == 0 {
-        if trail_root < 0 {
-            __mind_store_i64(ok_cell, 0);
-            return s;
+        if trail_is_chain == 0 {
+            if trail_root < 0 {
+                __mind_store_i64(ok_cell, 0);
+                return s;
+            }
         }
     }
     let trail_end: i64 = __mind_load_i64(cursor);
@@ -16217,18 +16256,44 @@ pub fn emit_mic3_module_fndef_seq(s: EmitState, src: i64, fn_node: i64, nidx: i6
             return s;
         }
     }
+    // #311 chain probe: dst of the else-nested OP_IF (base0=0), rebased to trail_base.
+    let chain_probe_dst: i64 = if trail_is_chain == 1 {
+        let cp_nodes: i64 = __mind_alloc(256 * 32);
+        let cp_cursor: i64 = __mind_alloc(8);
+        let cp_vidbuf: i64 = __mind_alloc(256 * 8);
+        let cp_cell: i64 = __mind_alloc(8);
+        __mind_store_i64(cp_cell, 0 - 1);
+        let _cp: EmitState = emit_mic3_ifret_chain_instr_lv(es_new(), final_stmt, src, params_addr, n_params, cp_nodes, cp_cursor, cp_vidbuf, 0, cp_cell, trail_lv, tk);
+        __mind_load_i64(cp_cell)
+    } else {
+        0 - 1
+    };
+    if trail_is_chain == 1 {
+        if chain_probe_dst < 0 {
+            __mind_store_i64(ok_cell, 0);
+            return s;
+        }
+    }
     let ret_vid: i64 = if trail_is_if == 1 {
         trail_base + ie_probe_dst
     } else {
-        let _rr: i64 = seq_resolve_range(nodes, trail_start, trail_end, vidbuf, trail_base);
-        __mind_load_i64(vidbuf + trail_root * 8)
+        if trail_is_chain == 1 {
+            trail_base + chain_probe_dst
+        } else {
+            let _rr: i64 = seq_resolve_range(nodes, trail_start, trail_end, vidbuf, trail_base);
+            __mind_load_i64(vidbuf + trail_root * 8)
+        }
     };
     // body_len = n_params PARAMs + per-segment non-param body instrs + 1 per OP_IF.
     let seg_instrs: i64 = seq_body_len(nodes, plan, nplan, 0);
     let trail_instrs: i64 = if trail_is_if == 1 {
         1
     } else {
-        count_descriptor_nonparam_range(nodes, trail_start, trail_end)
+        if trail_is_chain == 1 {
+            1
+        } else {
+            count_descriptor_nonparam_range(nodes, trail_start, trail_end)
+        }
     };
     let body_len: i64 = n_params + seg_instrs + trail_instrs + is_trail_ret;
     // Build the RESOLVED seq lv-env (sequence-level lets -> their vids), then emit with
@@ -16255,7 +16320,16 @@ pub fn emit_mic3_module_fndef_seq(s: EmitState, src: i64, fn_node: i64, nidx: i6
         __mind_store_i64(ie_cell, 0 - 1);
         emit_if_expr_any_lv(s8, final_expr, src, params_addr, n_params, ie_nodes, ie_cursor, ie_vidbuf, trail_base, ie_cell, trail_lv, tk, strbuf, offs, ncount, 0, 0)
     } else {
-        emit_mic3_tree_body(s8, nodes, trail_end, vidbuf, src, strbuf, offs, ncount, trail_start)
+        if trail_is_chain == 1 {
+            let ce_nodes: i64 = __mind_alloc(256 * 32);
+            let ce_cursor: i64 = __mind_alloc(8);
+            let ce_vidbuf: i64 = __mind_alloc(256 * 8);
+            let ce_cell: i64 = __mind_alloc(8);
+            __mind_store_i64(ce_cell, 0 - 1);
+            emit_mic3_ifret_chain_instr_lv(s8, final_stmt, src, params_addr, n_params, ce_nodes, ce_cursor, ce_vidbuf, trail_base, ce_cell, trail_lv, tk)
+        } else {
+            emit_mic3_tree_body(s8, nodes, trail_end, vidbuf, src, strbuf, offs, ncount, trail_start)
+        }
     };
     // Body-terminal `return E`: append the explicit RETURN <ret_vid>.
     let s10: EmitState = if is_trail_ret == 1 {
@@ -21335,6 +21409,105 @@ pub fn emit_mic3_ifret_chain_instr(s: EmitState, if_node: i64, buf: i64, params_
     }
     let else_n: i64 = __mind_load_i64(cursor);
     let else_nonparam: i64 = count_nonparam_nodes(else_val, buf, params_addr, n_params);
+    let s9: EmitState = emit_uleb128(s8, else_nonparam + 2);
+    let s10: EmitState = emit_mic3_const_i64(s9, else_synth, 0);
+    let s11: EmitState = emit_mic3_tree_body(s10, nodes, else_n, vidbuf, 0, 0, 0, 0, 0);
+    let s11r: EmitState = emit_mic3_return(s11, 1, else_root);
+    let s12: EmitState = emit_uleb128(s11r, else_root);
+    let after_else: i64 = after_then + 1 + else_nonparam;
+    let dst: i64 = after_else;
+    let s13: EmitState = emit_uleb128(s12, dst);
+    let s14: EmitState = emit_uleb128(s13, 0);
+    let s15: EmitState = emit_uleb128(s14, 0);
+    __mind_store_i64(okcell, dst);
+    s15
+}
+
+
+// #311: lv-env clone of emit_mic3_ifret_chain_instr for a return-terminated
+// diverging if-ELSE chain (scalar-int / fieldless-enum match desugar) whose
+// cond/branches reference SEQUENCE lets; swaps flatten_branch/count_nonparam
+// to their _lv forms and recurses via _lv.
+pub fn emit_mic3_ifret_chain_instr_lv(s: EmitState, if_node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64, lvenv: i64, nlv: i64) -> EmitState {
+    let cond_expr: i64 = ast_child0(if_node);
+    let then_stmt: i64 = branch_single_expr(ast_child1(if_node));
+    let else_stmt: i64 = branch_single_expr(ast_child2(if_node));
+    if then_stmt < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    if else_stmt < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    if ast_kind(then_stmt) != ast_return() {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let then_val: i64 = ast_child0(then_stmt);
+    // --- cond ---
+    let cond_id: i64 = flatten_branch_lv(cond_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, lvenv, nlv);
+    if cond_id < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let cond_n: i64 = __mind_load_i64(cursor);
+    let cond_nonparam: i64 = count_nonparam_nodes_lv(cond_expr, buf, params_addr, n_params, lvenv, nlv);
+    let s1: EmitState = es_push(s, 28);
+    let s2: EmitState = emit_uleb128(s1, cond_id);
+    let s3: EmitState = emit_uleb128(s2, cond_nonparam);
+    let s4: EmitState = emit_mic3_tree_body(s3, nodes, cond_n, vidbuf, 0, 0, 0, 0, 0);
+    let after_cond: i64 = base0 + cond_nonparam;
+    // --- then (return): synth const + value tree + Return ---
+    let then_synth: i64 = after_cond;
+    let then_root: i64 = flatten_branch_lv(then_val, buf, params_addr, n_params, nodes, cursor, vidbuf, after_cond + 1, lvenv, nlv);
+    if then_root < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let then_n: i64 = __mind_load_i64(cursor);
+    let then_nonparam: i64 = count_nonparam_nodes_lv(then_val, buf, params_addr, n_params, lvenv, nlv);
+    let s5: EmitState = emit_uleb128(s4, then_nonparam + 2);
+    let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
+    let s7: EmitState = emit_mic3_tree_body(s6, nodes, then_n, vidbuf, 0, 0, 0, 0, 0);
+    let s7r: EmitState = emit_mic3_return(s7, 1, then_root);
+    let s8: EmitState = emit_uleb128(s7r, then_root);
+    let after_then: i64 = after_cond + 1 + then_nonparam;
+    // --- else ---
+    let else_synth: i64 = after_then;
+    if ast_kind(else_stmt) == ast_if() {
+        // else-region = synth const + a nested OP_IF (else_len = 2).
+        let sn9: EmitState = emit_uleb128(s8, 2);
+        let sn10: EmitState = emit_mic3_const_i64(sn9, else_synth, 0);
+        let dcell: i64 = __mind_alloc(8);
+        __mind_store_i64(dcell, 0 - 1);
+        let sn11: EmitState = emit_mic3_ifret_chain_instr_lv(sn10, else_stmt, buf, params_addr, n_params, nodes, cursor, vidbuf, after_then + 1, dcell, lvenv, nlv);
+        let ndst: i64 = __mind_load_i64(dcell);
+        if ndst < 0 {
+            __mind_store_i64(okcell, 0 - 1);
+            return s;
+        }
+        let sn12: EmitState = emit_uleb128(sn11, ndst);
+        let ndst_dst: i64 = ndst + 1;
+        let sn13: EmitState = emit_uleb128(sn12, ndst_dst);
+        let sn14: EmitState = emit_uleb128(sn13, 0);
+        let sn15: EmitState = emit_uleb128(sn14, 0);
+        __mind_store_i64(okcell, ndst_dst);
+        return sn15;
+    }
+    if ast_kind(else_stmt) != ast_return() {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    // terminal else (return): synth const + value tree + Return.
+    let else_val: i64 = ast_child0(else_stmt);
+    let else_root: i64 = flatten_branch_lv(else_val, buf, params_addr, n_params, nodes, cursor, vidbuf, after_then + 1, lvenv, nlv);
+    if else_root < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let else_n: i64 = __mind_load_i64(cursor);
+    let else_nonparam: i64 = count_nonparam_nodes_lv(else_val, buf, params_addr, n_params, lvenv, nlv);
     let s9: EmitState = emit_uleb128(s8, else_nonparam + 2);
     let s10: EmitState = emit_mic3_const_i64(s9, else_synth, 0);
     let s11: EmitState = emit_mic3_tree_body(s10, nodes, else_n, vidbuf, 0, 0, 0, 0, 0);
