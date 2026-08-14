@@ -20141,6 +20141,39 @@ pub fn flatten_ast_lv(node: i64, buf: i64, params_addr: i64, n_params: i64, node
     if k == ast_struct_lit() {
         return flatten_struct_lit_lv(node, buf, params_addr, n_params, nodes, cursor, lvenv, nlv);
     }
+    if k == ast_index() {
+        // `BASE[IDX]` index read -> array-load descriptor (kind 8), mirroring
+        // flatten_expr_env's ast_index arm so a subscript inside a WHILE/loop body
+        // (the lv-env flatten path) lowers byte-identically to `mindc --emit-mic3`.
+        // Base + index flatten post-order first (an lv-bound array base resolves to
+        // its carried vid via a kind-0 leaf), then the load node takes the final vid.
+        // Same fail-closed guards as the branch/let-init arms: a NEG base
+        // (`-xs[0]` parses `(-xs)[0]`) or a CALL in either subtree refuses.
+        if ast_kind(ast_child0(node)) == ast_neg() {
+            return 0 - 1;
+        }
+        if subtree_contains_call(ast_child0(node)) == 1 {
+            return 0 - 1;
+        }
+        if subtree_contains_call(ast_child1(node)) == 1 {
+            return 0 - 1;
+        }
+        let base_slot: i64 = flatten_ast_lv(ast_child0(node), buf, params_addr, n_params, nodes, cursor, lvenv, nlv);
+        if base_slot < 0 {
+            return 0 - 1;
+        }
+        let index_slot: i64 = flatten_ast_lv(ast_child1(node), buf, params_addr, n_params, nodes, cursor, lvenv, nlv);
+        if index_slot < 0 {
+            return 0 - 1;
+        }
+        let slot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + slot * 32 + 0, 8);
+        __mind_store_i64(nodes + slot * 32 + 8, 0);
+        __mind_store_i64(nodes + slot * 32 + 16, base_slot);
+        __mind_store_i64(nodes + slot * 32 + 24, index_slot);
+        __mind_store_i64(cursor, slot + 1);
+        return slot;
+    }
     0 - 1
 }
 
@@ -20253,6 +20286,29 @@ pub fn count_nonparam_nodes_lv(node: i64, buf: i64, params_addr: i64, n_params: 
             return 0 - 1;
         }
         return 2 + o;
+    }
+    if k == ast_index() {
+        // `BASE[IDX]` index read -> ONE array-load body instr (kind 8) plus the base
+        // and index subtrees' instrs. Same fail-closed guards as flatten_ast_lv's
+        // ast_index arm so count and flatten agree exactly (an lv array base counts 0).
+        if ast_kind(ast_child0(node)) == ast_neg() {
+            return 0 - 1;
+        }
+        if subtree_contains_call(ast_child0(node)) == 1 {
+            return 0 - 1;
+        }
+        if subtree_contains_call(ast_child1(node)) == 1 {
+            return 0 - 1;
+        }
+        let b: i64 = count_nonparam_nodes_lv(ast_child0(node), buf, params_addr, n_params, lvenv, nlv);
+        if b < 0 {
+            return 0 - 1;
+        }
+        let ix: i64 = count_nonparam_nodes_lv(ast_child1(node), buf, params_addr, n_params, lvenv, nlv);
+        if ix < 0 {
+            return 0 - 1;
+        }
+        return 1 + b + ix;
     }
     0 - 1
 }
