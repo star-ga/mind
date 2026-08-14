@@ -14836,8 +14836,26 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                 return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
             }
         }
+        // #312: narrow UNSIGNED let init mask. `let x: u8/u16/u32 = E` -> the oracle
+        // masks the INIT to the declared width (E & (2^w-1)); the note builder omitted
+        // it. Desugar to the proven `E & mask` binop (mirror of the `as uN` parser
+        // desugar @ parse_postfix), flatten the masked init so binding + note are
+        // byte-identical. INERT on main.mind (narrow lets only in comments). ORTHOGONAL
+        // follow-up: narrow-typed ARITHMETIC results (`a + 1` where a:u8 -> (a+1)&mask)
+        // are ALSO oracle-masked and still diverge here; signed narrow (i8/i16/i32) too.
+        let ann_nl: i64 = ast_child1(stmt);
+        let umask_nl: i64 = if ann_nl != 0 {
+            unsigned_cast_mask(src, ast_span_lo(ann_nl), ast_span_hi(ann_nl))
+        } else {
+            0
+        };
+        let init_nl: i64 = if umask_nl > 0 {
+            ast_new_binop(ast_span_lo(init), ast_span_hi(init), init, mk_syn_intlit(umask_nl), op_bitand())
+        } else {
+            init
+        };
         let start: i64 = __mind_load_i64(cursor);
-        let root_slot: i64 = flatten_expr_env(init, src, params_addr, n_params, nodes, cursor, env, nlets);
+        let root_slot: i64 = flatten_expr_env(init_nl, src, params_addr, n_params, nodes, cursor, env, nlets);
         if root_slot < 0 {
             return 0;
         }
