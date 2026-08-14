@@ -8552,6 +8552,123 @@ pub fn intern_vec_push_name(strbuf: i64, offs: i64, ccell: i64) -> i64 {
     intern_vec_push_literal(strbuf, offs, ccell)
 }
 
+// ===== mic@3 `EXPR as i64` conv-call synthetic name (slice #309) =====
+//
+// The Rust oracle lowers a full-width cast `EXPR as i64` to a CALL to the synthetic
+// intrinsic __mind_conv_i64 (src/eval/lower.rs scalar_int64_cast_signed ->
+// Instr::Call{ name: "__mind_conv_i64", args: [val] }) — IDENTICAL mic@3 bytes for
+// an integer OR a float source (the source kind only picks the MLIR expansion, never
+// the note). Mirror the vec_new/vec_push synthetic-name interns so the conv call needs
+// no source span / desugar pass. "__mind_conv_i64" = 15 bytes.
+pub fn conv_i64_name_byte(j: i64) -> i64 {
+    if j == 0 {
+        return 95;
+    }
+    if j == 1 {
+        return 95;
+    }
+    if j == 2 {
+        return 109;
+    }
+    if j == 3 {
+        return 105;
+    }
+    if j == 4 {
+        return 110;
+    }
+    if j == 5 {
+        return 100;
+    }
+    if j == 6 {
+        return 95;
+    }
+    if j == 7 {
+        return 99;
+    }
+    if j == 8 {
+        return 111;
+    }
+    if j == 9 {
+        return 110;
+    }
+    if j == 10 {
+        return 118;
+    }
+    if j == 11 {
+        return 95;
+    }
+    if j == 12 {
+        return 105;
+    }
+    if j == 13 {
+        return 54;
+    }
+    52
+}
+
+// Write the literal "__mind_conv_i64" (15 bytes) into `strbuf` at the current
+// interning cursor; register its offset/count; return the fresh string index.
+pub fn intern_conv_i64_literal(strbuf: i64, offs: i64, ccell: i64) -> i64 {
+    let n: i64 = __mind_load_i64(ccell);
+    let start: i64 = __mind_load_i64(offs + n * 8);
+    __mind_store_i8(strbuf + start + 0, 95);
+    __mind_store_i8(strbuf + start + 1, 95);
+    __mind_store_i8(strbuf + start + 2, 109);
+    __mind_store_i8(strbuf + start + 3, 105);
+    __mind_store_i8(strbuf + start + 4, 110);
+    __mind_store_i8(strbuf + start + 5, 100);
+    __mind_store_i8(strbuf + start + 6, 95);
+    __mind_store_i8(strbuf + start + 7, 99);
+    __mind_store_i8(strbuf + start + 8, 111);
+    __mind_store_i8(strbuf + start + 9, 110);
+    __mind_store_i8(strbuf + start + 10, 118);
+    __mind_store_i8(strbuf + start + 11, 95);
+    __mind_store_i8(strbuf + start + 12, 105);
+    __mind_store_i8(strbuf + start + 13, 54);
+    __mind_store_i8(strbuf + start + 14, 52);
+    __mind_store_i64(offs + (n + 1) * 8, start + 15);
+    __mind_store_i64(ccell, n + 1);
+    n
+}
+
+// Does the already-interned string at index i equal "__mind_conv_i64"? Raw-byte compare.
+pub fn conv_i64_name_eq_at(strbuf: i64, offs: i64, i: i64, j: i64) -> i64 {
+    let elo: i64 = __mind_load_i64(offs + i * 8);
+    let ehi: i64 = __mind_load_i64(offs + (i + 1) * 8);
+    if ehi - elo != 15 {
+        return 0;
+    }
+    if j >= 15 {
+        return 1;
+    }
+    if load_byte(strbuf, elo + j) != conv_i64_name_byte(j) {
+        return 0;
+    }
+    conv_i64_name_eq_at(strbuf, offs, i, j + 1)
+}
+
+// Find the string index of "__mind_conv_i64" among the n already-interned strings, or -1.
+pub fn conv_i64_name_find(strbuf: i64, offs: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0 - 1;
+    }
+    if conv_i64_name_eq_at(strbuf, offs, i, 0) == 1 {
+        return i;
+    }
+    conv_i64_name_find(strbuf, offs, n, i + 1)
+}
+
+// Dedup-aware intern of "__mind_conv_i64" (the COLLECTION PASS form): existing index
+// on a hit, else allocate. Matches Rust `Instr::Call { name } => st.intern(name)`.
+pub fn intern_conv_i64_name(strbuf: i64, offs: i64, ccell: i64) -> i64 {
+    let n: i64 = __mind_load_i64(ccell);
+    let hit: i64 = conv_i64_name_find(strbuf, offs, n, 0);
+    if hit >= 0 {
+        return hit;
+    }
+    intern_conv_i64_literal(strbuf, offs, ccell)
+}
+
 // True (1) iff `elem` is an element the non-const array desugar supports.
 // A NESTED array-literal element (#40 gap e) is allowed by RECURSING: each inner
 // array lowers to its own vec_new/vec_push chain (value = its last push), mirroring
@@ -10501,6 +10618,17 @@ pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: 
     }
     if k == ast_let() {
         return collect_expr_strings(strbuf, offs, ccell, src, ast_child2(node), ebuf, en);
+    }
+    if k == ast_cast() {
+        // `EXPR as i64` -> CALL __mind_conv_i64([operand]) (slice #309): the CALL name
+        // interns AFTER the operand's strings (Instr::Call name is interned post-args).
+        // Only the width-64 cast interns the conv name; other widths desugar/fail-close
+        // and the whole module is discarded, so no intern is needed there.
+        let _cs: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node), ebuf, en);
+        if ast_aux(node) == 64 {
+            return intern_conv_i64_name(strbuf, offs, ccell);
+        }
+        return 0;
     }
     if k == ast_call() {
         // A call `f(a, b)` lowers to [a's instrs, b's instrs, CALL f] — the CALL instr's
@@ -18556,6 +18684,9 @@ pub fn descriptor_has_src_dep_kind(nodes: i64, n_nodes: i64, i: i64) -> i64 {
     if kind == 10 {
         return 1;
     }
+    if kind == 11 {
+        return 1;
+    }
     descriptor_has_src_dep_kind(nodes, n_nodes, i + 1)
 }
 
@@ -18798,6 +18929,20 @@ pub fn emit_mic3_tree_body(s: EmitState, nodes: i64, n_nodes: i64, vidbuf: i64, 
         let sl3: EmitState = emit_uleb128(sl2, base_vid);
         let sl4: EmitState = emit_uleb128(sl3, index_vid);
         return emit_mic3_tree_body(sl4, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
+    }
+    // kind 11 = `EXPR as i64` conv call (slice #309) -> OP_CALL (0x16): dst ||
+    // name_idx(__mind_conv_i64) || uleb(1) || operand_vid. record[2]=operand slot; the
+    // strtab already interned "__mind_conv_i64" at the cast's first-seen position.
+    if kind == 11 {
+        let cv_oslot: i64 = __mind_load_i64(nodes + i * 32 + 16);
+        let cv_ovid: i64 = __mind_load_i64(vidbuf + cv_oslot * 8);
+        let cv_idx: i64 = conv_i64_name_find(strbuf, offs, n_strings, 0);
+        let cc1: EmitState = es_push(s, 22);
+        let cc2: EmitState = emit_uleb128(cc1, dst);
+        let cc3: EmitState = emit_uleb128(cc2, cv_idx);
+        let cc4: EmitState = emit_uleb128(cc3, 1);
+        let cc5: EmitState = emit_uleb128(cc4, cv_ovid);
+        return emit_mic3_tree_body(cc5, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
     }
     let op_byte: i64 = __mind_load_i64(nodes + i * 32 + 8);
     let lslot: i64 = __mind_load_i64(nodes + i * 32 + 16);
@@ -20575,6 +20720,32 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         __mind_store_i64(nodes + slot * 32 + 24, rslot);
         __mind_store_i64(cursor, slot + 1);
         return slot;
+    }
+    if k == ast_cast() {
+        // `EXPR as i64` note-emit (slice #309). The Rust oracle lowers a full-width
+        // i64 cast to CALL __mind_conv_i64([val]) (identical mic@3 bytes for an INT or
+        // FLOAT source; the source kind only picks the MLIR expansion). Flatten the
+        // operand post-order, then a self-contained conv-call descriptor (kind 11,
+        // record[2]=operand slot) — mirroring the vec_new/vec_push synthetic-call kinds
+        // so no source span / desugar pass is needed. ONLY width 64 (`as i64`) is ported
+        // here: i8/i16/i32 desugar to shifts and u8/u16/u32 to an AND in the parser;
+        // `as f64` (nb_castw_f64) and any other width FAIL CLOSED (-1 -> the module
+        // refuses, 0 bytes) — never wrong bytes. main.mind's own `as` are all in stripped
+        // comments (no real cast nodes), so the mic@3 flip stays byte-identical.
+        if ast_aux(node) != 64 {
+            return 0 - 1;
+        }
+        let cop: i64 = flatten_expr_env(ast_child0(node), src, params_addr, n_params, nodes, cursor, env, nlets);
+        if cop < 0 {
+            return 0 - 1;
+        }
+        let cvslot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + cvslot * 32 + 0, 11);
+        __mind_store_i64(nodes + cvslot * 32 + 8, 0);
+        __mind_store_i64(nodes + cvslot * 32 + 16, cop);
+        __mind_store_i64(nodes + cvslot * 32 + 24, 0);
+        __mind_store_i64(cursor, cvslot + 1);
+        return cvslot;
     }
     if k == ast_call() {
         // Let-env-aware CALL fold — mirrors flatten_ast's ast_call arm exactly (the
