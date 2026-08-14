@@ -74,6 +74,17 @@ FIXTURES = [
      "fn main() -> i64 { let mut s: i64 = 0; for i in 0..5 { s = s + i; } return s; }", 10),
     ("for_break",
      "fn main() -> i64 { let mut s: i64 = 0; for i in 0..10 { if i == 5 { break; } s = s + 1; } return s; }", 5),
+    # Fable audit Finding 2: a dead statement after a BARE break poisons the loop-carried
+    # var's POST-LOOP value (last-wins carry records the never-run dead slot). Must return 1.
+    ("break_dead_tail_value",
+     "fn main() -> i64 { let mut i: i64 = 0; while i < 3 { i = i + 1; break; i = i + 1; } return i; }", 1),
+]
+# No-hang guard (Fable audit Finding 1): shapes that must NEVER hang — either fail-closed
+# (0 bytes, honest) or terminate. Nested loops currently fail-close upstream, but a future
+# nested-for lowering must not reintroduce the dead-tail-continue hang.
+NO_HANG = [
+    ("nested_for_continue", "fn main() -> i64 { let mut s: i64 = 0; for i in 0..3 { for j in 0..2 { continue; } } return s; }"),
+    ("nested_while_dead_tail", "fn main() -> i64 { let mut i: i64 = 0; while i < 3 { i = i + 1; let mut k: i64 = 0; while k < 2 { k = k + 1; continue; k = k + 1; } } return i; }"),
 ]
 
 
@@ -92,6 +103,12 @@ def main() -> int:
             fails.append(f"{name}: exit {val}, expected {want}")
         else:
             print(f"  ok    {name}: exit {val}")
+    for name, prog in NO_HANG:
+        kind, val, comp = compile_and_run(prog)
+        if kind == "HANG":
+            fails.append(f"{name}: HUNG (must fail-close or terminate, never hang)")
+        else:
+            print(f"  ok    {name}: no-hang ({kind} {val})")
     if fails:
         print("FAIL  self-host continue/break regression gate (#308/#286):")
         for f in fails:
