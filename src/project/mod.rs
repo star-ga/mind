@@ -387,7 +387,7 @@ pub enum Backend {
     /// MLIR-text → mlir-opt/mlir-translate/clang (default, wired).
     #[default]
     Mlir,
-    /// Pure-MIND x86-64 native-ELF path (seam only; not yet wired).
+    /// Pure-MIND x86-64 native-ELF path (RI-D: wired for `mindc build` via the frozen pure-MIND compiler).
     Native,
 }
 

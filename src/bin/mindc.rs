@@ -85,9 +85,10 @@ enum Command {
         /// Code-generation backend: mlir (default) | native.
         ///
         /// `mlir` drives the production MLIR-text → mlir-opt/clang pipeline.
-        /// `native` selects the pure-MIND x86-64 native-ELF seam (RI-D "drop
-        /// LLVM" track); it is not yet wired into the Rust driver and fails
-        /// loud when selected, so the default build is unaffected.
+        /// `native` (RI-D Option A) bridges the build to the frozen pure-MIND
+        /// x86-64 native-ELF compiler for a runnable ELF with zero MLIR/LLVM/clang;
+        /// fail-closed on any construct the pure-MIND subset cannot lower (never a
+        /// silent MLIR fallback). The default `mlir` build is unaffected.
         #[arg(long, value_name = "BACKEND", default_value = "mlir",
               value_parser = ["mlir", "native"])]
         backend: String,
@@ -838,6 +839,163 @@ fn main() {
     emit_shared_if_requested(&cli.compile, &products);
 }
 
+/// RI-D Option A (task #110): bridge `mindc build --backend native` to the frozen
+/// pure-MIND x86-64 native-ELF compiler, producing a runnable ELF with ZERO
+/// MLIR/LLVM/clang in the path. The Rust driver only composes the source image and
+/// shells out; all code generation is the pure-MIND emitter (examples/mindc_mind,
+/// RI-B/E). Byte-identity to the pure-MIND compiler's direct stdout is the invariant
+/// (gate: backend_native_bridge_smoke.py) — the wrapper adds zero bytes.
+///
+/// Wire contract (selfhost_driver.mind `main`, proven byte-faithful by
+/// self_host_loop_smoke.py): stdin fd 0 = [8B user_lo LE][8B src_len LE][std_blob ++
+/// user_src]; the emitted static ELF is written to stdout fd 1. The compiler ELF is
+/// resolved from MINDC_NATIVE_ELF, else the frozen stage0 seed
+/// examples/mindc_mind/testdata/selfhost_loop/stage1.elf.
+///
+/// Fail-closed: a non-zero exit from the pure-MIND compiler is propagated verbatim and
+/// NO artifact is written. There is deliberately NO MLIR fallback — a `native` request
+/// that the pure-MIND subset cannot lower must fail loud, never silently degrade.
+fn run_native_backend_bridge(paths: &[String], out: &Option<String>) {
+    use std::io::Write as _;
+
+    // Slice 1: exactly one source file. Multi-file/workspace native builds are a later slice.
+    if paths.len() != 1 {
+        eprintln!(
+            "error[backend-native]: the native backend bridge currently accepts exactly one \
+             source file (got {}). Multi-file/workspace native builds are a later RI-D slice.",
+            paths.len()
+        );
+        process::exit(2);
+    }
+    let user_src = match std::fs::read(&paths[0]) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!(
+                "error[backend-native]: cannot read source '{}': {e}",
+                paths[0]
+            );
+            process::exit(2);
+        }
+    };
+
+    // Compose the std blob exactly as the pure-MIND compiler expects: the 21 std modules
+    // in this fixed order, '\n'-joined with a trailing '\n'. This list is the twin of
+    // self_host_standalone_driver_smoke.py::_STDLIB_MODULES; the bridge's byte-identity
+    // gate fails loud if the two ever drift (bridge output != stage1-direct output).
+    // deferred: unify both readers on one committed manifest — upgrade path:
+    //   examples/mindc_mind/testdata/stdlib_manifest.txt read by smoke + bridge.
+    const STD_MODULES: [&str; 21] = [
+        "arena", "async", "blas", "cli", "fs", "io", "io_canon", "iouring", "json", "map", "net",
+        "process", "reactor", "regex", "ring", "sha256", "string", "time", "toml", "tui", "vec",
+    ];
+    let std_dir = std::env::var("MINDC_STD_DIR").unwrap_or_else(|_| "std".to_string());
+    let mut combined: Vec<u8> = Vec::new();
+    for m in STD_MODULES.iter() {
+        let p = format!("{std_dir}/{m}.mind");
+        match std::fs::read(&p) {
+            Ok(b) => combined.extend_from_slice(&b),
+            Err(e) => {
+                eprintln!(
+                    "error[backend-native]: cannot read std module '{p}': {e} \
+                     (set MINDC_STD_DIR to the std/ directory)"
+                );
+                process::exit(2);
+            }
+        }
+        combined.push(b'\n');
+    }
+    let user_lo = combined.len() as i64;
+    combined.extend_from_slice(&user_src);
+    let src_len = combined.len() as i64;
+
+    // stdin image: [8B user_lo LE][8B src_len LE][combined]
+    let mut image: Vec<u8> = Vec::with_capacity(16 + combined.len());
+    image.extend_from_slice(&user_lo.to_le_bytes());
+    image.extend_from_slice(&src_len.to_le_bytes());
+    image.extend_from_slice(&combined);
+
+    // Resolve the pure-MIND compiler ELF (the RI-D shell-out target).
+    let elf = std::env::var("MINDC_NATIVE_ELF")
+        .unwrap_or_else(|_| "examples/mindc_mind/testdata/selfhost_loop/stage1.elf".to_string());
+    if !std::path::Path::new(&elf).exists() {
+        eprintln!(
+            "error[backend-native]: pure-MIND compiler ELF not found at '{elf}' \
+             (set MINDC_NATIVE_ELF)"
+        );
+        process::exit(2);
+    }
+
+    let mut child = match std::process::Command::new(&elf)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error[backend-native]: failed to spawn compiler ELF '{elf}': {e}");
+            process::exit(2);
+        }
+    };
+    if let Some(mut si) = child.stdin.take() {
+        if let Err(e) = si.write_all(&image) {
+            eprintln!("error[backend-native]: failed to stream source image to compiler: {e}");
+            process::exit(2);
+        }
+    }
+    let output = match child.wait_with_output() {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("error[backend-native]: compiler ELF did not complete: {e}");
+            process::exit(2);
+        }
+    };
+
+    // Fail-closed: propagate the pure-MIND compiler's diagnostic + exit; no artifact.
+    if !output.status.success() {
+        let code = output.status.code().unwrap_or(1);
+        if !output.stderr.is_empty() {
+            let _ = std::io::stderr().write_all(&output.stderr);
+        }
+        eprintln!(
+            "error[backend-native]: pure-MIND compiler rejected the program (exit {code}); \
+             no artifact written (native backend is fail-closed — no MLIR fallback)."
+        );
+        process::exit(if code == 0 { 1 } else { code });
+    }
+    let elf_bytes = output.stdout;
+    // A real static ELF (magic + ET_EXEC), never an empty/garbage artifact.
+    if elf_bytes.len() < 256 || &elf_bytes[0..4] != b"\x7fELF" {
+        eprintln!(
+            "error[backend-native]: compiler produced a non-ELF/short artifact ({} bytes); \
+             refusing to write.",
+            elf_bytes.len()
+        );
+        process::exit(1);
+    }
+
+    let out_path = out.clone().unwrap_or_else(|| "a.out".to_string());
+    if let Err(e) = std::fs::write(&out_path, &elf_bytes) {
+        eprintln!("error[backend-native]: cannot write output '{out_path}': {e}");
+        process::exit(2);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(md) = std::fs::metadata(&out_path) {
+            let mut perm = md.permissions();
+            perm.set_mode(perm.mode() | 0o755);
+            let _ = std::fs::set_permissions(&out_path, perm);
+        }
+    }
+    eprintln!(
+        "native: wrote {} ({} bytes) via the pure-MIND native-ELF backend \
+         (zero MLIR/LLVM/clang)",
+        out_path,
+        elf_bytes.len()
+    );
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_mindc_build(
     paths: &[String],
@@ -853,18 +1011,15 @@ fn run_mindc_build(
 ) {
     // Code-generation backend dispatch (RI-D seam). The default `mlir` path is
     // left fully inert: it falls through to the existing pipeline unchanged.
-    // `native` selects the pure-MIND x86-64 native-ELF emitters, which are not
-    // yet reachable from the Rust driver — fail loud rather than silently
-    // producing MLIR output under a `native` request.
+    // `native` (RI-D Option A) hands the build to the pure-MIND x86-64 native-ELF
+    // compiler (zero MLIR/LLVM/clang), fail-closed — never a silent MLIR fallback.
     match Backend::parse(backend) {
         Ok(Backend::Mlir) => {}
         Ok(Backend::Native) => {
-            eprintln!(
-                "error[backend]: native backend not yet wired into the Rust driver \
-                 (RI-D seam; the pure-MIND x86-64 native-ELF path lives in the \
-                 self-host compiler). Use the default --backend=mlir."
-            );
-            process::exit(2);
+            // RI-D Option A: hand the whole build to the pure-MIND native-ELF
+            // compiler (zero MLIR/LLVM/clang). Returns after writing the artifact.
+            run_native_backend_bridge(paths, out);
+            return;
         }
         Err(msg) => {
             eprintln!("error[build]: {}", msg);

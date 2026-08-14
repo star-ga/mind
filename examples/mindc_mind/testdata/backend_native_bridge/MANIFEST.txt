@@ -1,0 +1,18 @@
+# Pure-MIND native-ELF oracle (RI-D slice 1, task #110). Frozen from the pure-MIND
+# compiler stage1.elf (testdata/selfhost_loop/stage1.elf) — NOT the retired old-Rust
+# src/native backend (deleted in #15; its historical snapshot is native_elf_oracle/).
+# This is the canonical byte anchor for 
+# (gate: backend_native_bridge_smoke.py).
+#
+# compiler:  testdata/selfhost_loop/stage1.elf (frozen pure-MIND stage0)
+# std_blob:  21 modules, sha256 6c269ee7082a993dc48f83e70fdccf19f2b6252a479c22f40dc9a454c4e464bc (380832 bytes)
+# program:   fn add(a,b){return a+b} fn main(){return add(2,3)}  -> exit 5
+# wire:      stdin [8B user_lo LE][8B src_len LE][std_blob ++ program]; ELF -> stdout
+#
+# name  size_bytes  sha256  expected_exit_code
+add  492  2c6f923330882fa1324bbf4170d9f805a486f76225436c564f69a24d2f022c26  5
+#
+# Old-Rust divergence (native_elf_oracle/add.elf, sha b20651a5..., same 492B): 31 of 492
+# bytes differ, ALL in the tail (bytes 461-492). ELF header, entry (0x400120), program
+# headers, and the first 460 bytes are byte-identical. The two emitters are near-twins;
+# the pure-MIND output is deterministic run-to-run and is the canonical RI-D reference.
