@@ -32013,6 +32013,27 @@ pub fn nb_lower_let_init(st: NbState, buf: i64, init: i64, params_addr: i64, n_p
 //   header = len(code) ; emit cond ; cmp/je-exit(cond) ; push loop frame ;
 //   emit body ; pop frame ; back-edge jmp (target = header) ; end = len(code) ;
 //   patch je -> end ; patch every break -> end. Then the trailing unit const0.
+// #308: length of a loop body up to and including the first UNCONDITIONAL top-level
+// `continue`; statements after it are UNREACHABLE (dead). Returns `sl` unchanged when
+// there is no non-final top-level continue (byte-neutral). parse_for gate-2 desugars
+// `for i in 0..N { continue; }` to `let i=0; while i<N { i=i+1; continue; i=i+1 }` — the
+// tail `i=i+1` is DEAD, but nb_while_carry's last-wins carry records the loop-carried `i`
+// against it, so the LIVE `i=i+1` writes a slot the cond never re-reads -> i never advances
+// -> INFINITE LOOP (verified: `for i in 0..3 { continue; }` hung). Truncating for BOTH the
+// carry pre-walk and the emit keeps count/emit in lockstep (no #229 desync) and drops the
+// dead tail so the existing carry selection is correct. Byte-neutral for main.mind (never
+// writes `continue; <stmt>`) -> keystone-identical. mic@3/emit_mic3 desugar untouched ->
+// oracle-parity unchanged. break/return dead-tails exit before the back-edge (no hang).
+pub fn nb_truncate_dead(sa: i64, sl: i64, i: i64) -> i64 {
+    if i >= sl {
+        return sl;
+    }
+    if ast_kind(__mind_load_i64(sa + i * 8)) == ast_continue() {
+        return i + 1;
+    }
+    nb_truncate_dead(sa, sl, i + 1)
+}
+
 pub fn nb_emit_while(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64, srt: i64, loops: i64, lpcell: i64) -> NbState {
     // B0 lift fail-closed: FLOAT-dtype while condition — same raw-bits zero-test
     // hazard as nb_if_stmt; refuse (poison), never run.
@@ -32055,7 +32076,7 @@ pub fn nb_emit_while(st: NbState, buf: i64, node: i64, params_addr: i64, n_param
     // dst-id pre-walks at nb_if_stmt_(simple|merged) already do; the carry table is
     // fully populated by nb_while_carry, only the env growth is discarded.
     let prewalk_lcell: i64 = __mind_load_i64(lcell);
-    let _w: i64 = nb_while_carry(carry, ccell, after_cond_count, buf, body_sa, body_sl, 0, params_addr, n_params, lets, lcell, srt, lets, lcell, prewalk_lcell);
+    let _w: i64 = nb_while_carry(carry, ccell, after_cond_count, buf, body_sa, nb_truncate_dead(body_sa, body_sl, 0), 0, params_addr, n_params, lets, lcell, srt, lets, lcell, prewalk_lcell);
     __mind_store_i64(lcell, prewalk_lcell);
     let ncarry: i64 = __mind_load_i64(ccell);
 
@@ -32092,7 +32113,7 @@ pub fn nb_emit_while(st: NbState, buf: i64, node: i64, params_addr: i64, n_param
     let _lp: i64 = nb_loops_push(loops, lpcell, header, breaks_buf);
 
     // body.
-    let s_body: NbState = nb_block_stmts(s_je, buf, body_sa, body_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
+    let s_body: NbState = nb_block_stmts(s_je, buf, body_sa, nb_truncate_dead(body_sa, body_sl, 0), 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
     // Drop body-local let bindings (keep the copy-in rebinds below body_scope).
     __mind_store_i64(lcell, body_scope);
 
