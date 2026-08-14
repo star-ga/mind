@@ -51,19 +51,56 @@ spawns the frozen pure-MIND `stage1.elf`, captures its stdout ELF, writes it. It
 NOT call `resolve_tools()` / `build_all()` (the MLIR path), so the MLIR/clang absence is
 architectural, not incidental.
 
-## PRIORITY ORDER (by dependency impact, NOT patch size)
+## NATIVE_PRODUCTION_PROFILE + CUTOVER GATE
 
-1. **RI-D1 — production native dispatch**: flip `mindc build` default to native for the
-   supported subset (capability-negotiated, fail-closed to a diagnostic, never MLIR). Cuts
-   rows 3–7 for real programs. *Highest dependency impact.*
-2. Constructs blocking a **representative real MIND program corpus** under `--backend=native`
-   (measured, not smallest-patch). Ranked blockers today (in-isolation, `cutover_coverage_measure.py`):
-   struct-lit (47 fns) · field-read (36) · for (29).
-3. Native **float** completion (row 10).
-4. **Register allocation** sufficient for production (row 13).
-5. Native **tensor / aggregate** coverage (rows 11–12).
+`--backend=native` is **PRODUCTION_EXPERIMENTAL**; **`DEFAULT_BACKEND=MLIR`**. The global
+default MUST NOT flip while native coverage is partial — flipping at 20.6% would fake rows
+3–7 PASS by breaking supported builds (**dependency removal must not be claimed through
+capability regression**). RI-D1 = prove native is ready to be the default *for a frozen
+production profile with zero supported-semantics loss*, behind this gate:
+
+```
+GLOBAL_DEFAULT_NATIVE flips only when ALL hold:
+  NATIVE_PROFILE_CORPUS_PASS      = 100%
+  NO_SILENT_MLIR_FALLBACK         = TRUE
+  VALUE_PARITY                    = PASS
+  DETERMINISTIC_OUTPUT            = PASS
+  SUPPORTED_FEATURE_REGRESSION    = 0
+  UNSUPPORTED_FEATURE_DIAGNOSTICS = EXACT
+  CI_NATIVE_PROFILE               = GREEN
+```
+
+**Corpus baseline** (52 real `examples/` programs via `--backend=native`, measured):
+- **14/52 (27%) PASS** native ELF · **38/52 FAIL-CLOSED**.
+- 38 fails bucket (dominant construct): **tensor/ML 16** (long-term) · **float-heavy 14**
+  (native-float completion) · **field/method 4**.
+- **`UNSUPPORTED_FEATURE_DIAGNOSTICS=EXACT` currently FAILS**: all 38 fail with the SAME
+  generic `error[backend-native]: … non-ELF/short artifact (0 bytes); refusing to write` —
+  it does NOT name the blocking construct, so precise blocker ranking is impossible from the
+  diagnostic alone.
+
+## PRIORITY ORDER (by production-profile dependency impact, NOT patch size)
+
+1. **RI-D1a — EXACT native diagnostics**: make the native backend fail-closed with a diagnostic
+   naming the unsupported construct (line + kind), not a generic 0-byte message. Cutover-gate
+   REQUIRED (`UNSUPPORTED_FEATURE_DIAGNOSTICS=EXACT`) **and** the enabler of precise blocker
+   ranking. *This is the true next slice — not a "smallest gap".*
+2. **RI-D1b — rank + close the top production-profile blocker** (once diagnostics are exact):
+   for each missing construct compute BLOCKED_REAL_PROGRAMS / BLOCKED_FUNCTIONS /
+   UNLOCKED_DEPENDENCIES / IMPLEMENTATION_RISK; take the max-coverage-unlocked one. Candidates
+   today (approx, grep-bucketed, unverified vs exact diagnostic): native-float completion (14),
+   field/method (4). Verify against the corpus before choosing.
+3. **RI-D1 cutover**: flip the frozen production profile to native once the gate is 100% green.
+4. Native **tensor / aggregate** coverage (rows 11–12) — unblocks the 16 tensor/ML programs.
+5. **Register allocation** sufficient for production (row 13).
 6. Remaining **linker / toolchain** dependency removal (rows 6–7 default path).
-7. Pure-MIND **shipping/bootstrap** replacement of the Rust driver (row 8).
+7. **RI-G — pure-MIND shipping/bootstrap** replacement of the Rust driver (row 8;
+   `RUST_DRIVER_DEPENDENCY=NO` today — native path is Rust orchestration spawning a pure-MIND
+   compiler). Only after native approaches full supported-language parity does the GLOBAL
+   default change.
+
+Diagnostic (NOT the cutover gate): isolated single-fn native byte-exactness =
+402/1954 = 20.6% (`cutover_coverage_measure.py`). Whole-program profile pass = 27% (14/52).
 
 ## SCHEDULER RULE
 
