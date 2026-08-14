@@ -101,7 +101,16 @@ pub fn resolve_tools() -> Result<BuildTools, BuildError> {
         mlir_opt: resolve("MLIR_OPT", "mlir-opt", "mlir-opt")?,
         mlir_translate: resolve("MLIR_TRANSLATE", "mlir-translate", "mlir-translate")?,
         clang: resolve("CLANG", "clang", "clang")?,
-        timeout: Duration::from_secs(60),
+        // Build-tool (mlir-opt/translate/clang) wall-clock cap. 60s is too tight for a
+        // large self-host cdylib link under CPU contention; MINDC_BUILD_TOOL_TIMEOUT_SECS
+        // overrides. Build-orchestration only — does NOT affect emitted bytes.
+        timeout: Duration::from_secs(
+            std::env::var("MINDC_BUILD_TOOL_TIMEOUT_SECS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|&v| v > 0)
+                .unwrap_or(60),
+        ),
     })
 }
 
