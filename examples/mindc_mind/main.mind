@@ -10717,13 +10717,31 @@ pub fn collect_branch_write_names(sa: i64, sl: i64, src: i64, out: i64, ncell: i
     }
     let stmt: i64 = __mind_load_i64(sa + i * 8);
     let k: i64 = ast_kind(stmt);
-    if k == ast_let() {
-        let _a: i64 = collect_bwn_add(out, ncell, src, ast_child0(stmt));
-    }
+    // F2 scope fix (mirror lower.rs then_local_decls): a branch-local `let` is a
+    // block-scoped DECLARATION, NOT a merge write binding -- do NOT record it. An
+    // `assign` to a name DECLARED by a prior `let` in this branch is itself
+    // branch-local (ordered); record ONLY an assign to an OUTER binding.
     if k == ast_assign() {
-        let _a: i64 = collect_bwn_add(out, ncell, src, ast_child0(stmt));
+        if collect_bwn_prior_let(sa, i, src, ast_child0(stmt), 0) == 0 {
+            let _a: i64 = collect_bwn_add(out, ncell, src, ast_child0(stmt));
+        }
     }
     collect_branch_write_names(sa, sl, src, out, ncell, i + 1)
+}
+// Ordered shadow scan: 1 if a `let` earlier in this branch [0..upto) declares the
+// same name (span-equal) as `name`, else 0. (F2 assign-before/after-shadow order.)
+pub fn collect_bwn_prior_let(sa: i64, upto: i64, src: i64, name: i64, j: i64) -> i64 {
+    if j >= upto {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(sa + j * 8);
+    if ast_kind(stmt) == ast_let() {
+        let nm: i64 = ast_child0(stmt);
+        if span_bytes_equal2(src, ast_span_lo(nm), ast_span_hi(nm), src, ast_span_lo(name), ast_span_hi(name)) == 1 {
+            return 1;
+        }
+    }
+    collect_bwn_prior_let(sa, upto, src, name, j + 1)
 }
 
 // Append name-node's (lo,hi) span to `out` if not already present (dedup).
@@ -11925,14 +11943,21 @@ pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
     __mind_store_i64(lvbuf + nlv * 24 + 0, ast_span_lo(name));
     __mind_store_i64(lvbuf + nlv * 24 + 8, ast_span_hi(name));
     __mind_store_i64(nlv_cell, nlv + 1);
-    let at: i64 = __mind_load_i64(acc_cell);
-    __mind_store_i64(acc + at * 24 + 0, ast_span_lo(name));
-    __mind_store_i64(acc + at * 24 + 8, ast_span_hi(name));
-    // acc[+16] = this binding's THEN-value: a direct let's own vid (here) OR, for an
-    // if-segment's bubbled binding (bind_append), the inner merge_id. Uniform across both
-    // so a fall-through merge tail can read then_val from acc. (POISON-tail callers ignore it.)
-    __mind_store_i64(acc + at * 24 + 16, __mind_load_i64(lvbuf + nlv * 24 + 16));
-    __mind_store_i64(acc_cell, at + 1);
+    // #287-F2: a branch-local `let` DECLARATION never escapes. For FALL-THROUGH callers
+    // (esc_to_lv==1: emit_if_fallthrough_lv / emit_if_else_fallthrough_lv / probe_mixed_walk)
+    // it must NOT enter the escape/merge accumulator `acc` (the block-scoped name is dead
+    // after the block). For value/divergent callers (esc_to_lv==0) it is still accumulated —
+    // the value-branch acc==nlets guard depends on it and the mixed-then/mixedblock merge
+    // tails drop it downstream. probe_mixed_walk also uses emit_mixed_walk(esc_to_lv=1), so
+    // the escape COUNT and the EMIT stay consistent. The lv-env binding above is unchanged, so
+    // later reads still resolve. Mirrors lower.rs F2 + the oracle (H4 emits 0 bindings/merges).
+    if esc_to_lv == 0 {
+        let at: i64 = __mind_load_i64(acc_cell);
+        __mind_store_i64(acc + at * 24 + 0, ast_span_lo(name));
+        __mind_store_i64(acc + at * 24 + 8, ast_span_hi(name));
+        __mind_store_i64(acc + at * 24 + 16, __mind_load_i64(lvbuf + nlv * 24 + 16));
+        __mind_store_i64(acc_cell, at + 1)
+    }
     emit_mixed_walk(s2, stmts_addr, n, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv_cell, acc, acc_cell, okcell, strbuf, offs, ncount, esc_to_lv)
 }
 
@@ -12012,6 +12037,41 @@ pub fn acc_to_bindout(acc: i64, n: i64, else_synth: i64, bindout: i64, i: i64) -
     acc_to_bindout(acc, n, else_synth, bindout, i + 1)
 }
 
+// #287-F2: is (lo,hi) the name of a branch-local `let` DECLARATION in the prefix
+// then_sa[0..n_prefix]? Such a decl never escapes a divergent then-block.
+pub fn name_is_prefix_let(buf: i64, lo: i64, hi: i64, then_sa: i64, n_prefix: i64, i: i64) -> i64 {
+    if i >= n_prefix {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(then_sa + i * 8);
+    if ast_kind(stmt) == ast_let() {
+        let nm: i64 = ast_child0(stmt);
+        if span_bytes_equal2(buf, lo, hi, buf, ast_span_lo(nm), ast_span_hi(nm)) == 1 {
+            return 1;
+        }
+    }
+    name_is_prefix_let(buf, lo, hi, then_sa, n_prefix, i + 1)
+}
+
+// #287-F2: keep only acc escape entries that are NOT a branch-local prefix let-decl (drop
+// direct let decls + any bubbled binding renaming a local let); keep real bubbled
+// outer-assign escapes. Copies 24B {name_lo,name_hi,then_val} records; returns kept count.
+pub fn acc_drop_prefix_lets(dst: i64, dst_cell: i64, buf: i64, acc: i64, nacc: i64, then_sa: i64, n_prefix: i64, i: i64) -> i64 {
+    if i >= nacc {
+        return __mind_load_i64(dst_cell);
+    }
+    let lo: i64 = __mind_load_i64(acc + i * 24 + 0);
+    let hi: i64 = __mind_load_i64(acc + i * 24 + 8);
+    if name_is_prefix_let(buf, lo, hi, then_sa, n_prefix, 0) == 0 {
+        let at: i64 = __mind_load_i64(dst_cell);
+        __mind_store_i64(dst + at * 24 + 0, lo);
+        __mind_store_i64(dst + at * 24 + 8, hi);
+        __mind_store_i64(dst + at * 24 + 16, __mind_load_i64(acc + i * 24 + 16));
+        __mind_store_i64(dst_cell, at + 1)
+    }
+    acc_drop_prefix_lets(dst, dst_cell, buf, acc, nacc, then_sa, n_prefix, i + 1)
+}
+
 pub fn emit_if_mixed_then_instr_lv(s: EmitState, if_node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64, bindout: i64, nbind_cell: i64) -> EmitState {
     __mind_store_i64(nbind_cell, 0);
     if ast_child2(if_node) != 0 {
@@ -12085,12 +12145,22 @@ pub fn emit_if_mixed_then_instr_lv(s: EmitState, if_node: i64, buf: i64, params_
     let s8: EmitState = emit_mic3_tree_body(s7, nodes, ret_n, vidbuf, buf, strbuf, offs, ncount, 0);
     let s9: EmitState = emit_mic3_return(s8, 1, ret_root);
     let s10: EmitState = emit_uleb128(s9, ret_root);
-    let nb: i64 = __mind_load_i64(acc_cell);
+    // #287-F2: this then-block DIVERGES (mixed prefix + final `return`). A branch-local
+    // prefix `let` DECLARATION never escapes — drop those acc entries (and any bubbled
+    // binding that renames a local let); keep only real bubbled outer-assign escapes. The
+    // let INITS still emit above (emit_mixed_walk) so values+VIDs are preserved. Mirrors
+    // lower.rs F2. Previously nb=acc_cell serialized a dead poison-binding + merge per let.
+    let raw_nb: i64 = __mind_load_i64(acc_cell);
+    let facc: i64 = __mind_alloc((raw_nb + 1) * 24);
+    let facc_cell: i64 = __mind_alloc(8);
+    __mind_store_i64(facc_cell, 0);
+    let _fd: i64 = acc_drop_prefix_lets(facc, facc_cell, buf, acc, raw_nb, then_sa, n_prefix, 0);
+    let nb: i64 = __mind_load_i64(facc_cell);
     let else_synth: i64 = ret_base + ret_nonparam;
     // Divergent (returns) -> POISON then_val for fresh bindings; a binding whose name is
     // already live in the outer env keeps that vid (then=else=outer, no placeholder).
     let lay: i64 = __mind_alloc((nb + 1) * 48);
-    let dst: i64 = caseA_layout_acc(lay, acc, nb, buf, lvbuf, nlv, 0, else_synth + 1);
+    let dst: i64 = caseA_layout_acc(lay, facc, nb, buf, lvbuf, nlv, 0, else_synth + 1);
     let else_len: i64 = 1 + caseA_fresh_count(lay, nb, 0);
     let s11: EmitState = emit_uleb128(s10, else_len);
     let s12: EmitState = emit_mic3_const_i64(s11, else_synth, 0);
@@ -12406,12 +12476,16 @@ pub fn emit_if_chain_instr_lv(s: EmitState, if_node: i64, buf: i64, params_addr:
         let s9: EmitState = emit_mic3_return(s8, 1, ret_root);
         let s10: EmitState = emit_uleb128(s9, ret_root);
         let else_synth: i64 = seg_base + ret_nonparam;
-        let nb: i64 = nlets_then;
-        // Per-let merge layout: a let whose name is already live in the OUTER env (a prior
-        // segment's escaped binding, or an enclosing let) keeps that value across the
-        // diverging then-edge (then_val=else_val=outer_vid, no placeholder); a fresh name
-        // gets POISON then + a placeholder-const else. For all-fresh lets this is byte-
-        // identical to the old fixed layout.
+        // #287-F2: CASE A is `let* + return E` — the then-block DIVERGES, and every leading
+        // stmt is a `let` DECLARATION (count_leading_lets; an assign would route to the mixed
+        // delegate above). A declaration never writes an outer name, so NONE of these lets
+        // escape the block: the OP_IF emits an EMPTY branch-binding/merge set (nb=0). This
+        // also covers a let that SHADOWS an outer name (a new local binding, not an outer
+        // write). The let INITS still emit above (emit_let_inits_lv), so values+VIDs are
+        // preserved; only the spurious poison-binding + poison-merge (and the wrong bound
+        // no-op binding for a shadow) per branch-local let are dropped. Mirrors lower.rs F2
+        // (a `let` decl never escapes). Previously nb=nlets_then serialized those dead records.
+        let nb: i64 = 0;
         let lay: i64 = __mind_alloc((nb + 1) * 48);
         let dst: i64 = caseA_layout(lay, then_sa, nb, buf, lvbuf, nlv, 0, else_synth + 1);
         let else_len: i64 = 1 + caseA_fresh_count(lay, nb, 0);
@@ -12849,10 +12923,13 @@ pub fn emit_if_let_seq_then_instr_lv(s: EmitState, if_node: i64, buf: i64, param
     // reuses that vid on the else side, no placeholder). Previously the bubbled bindings were
     // dropped, so an enclosing block lost the inner if-segment's escaping names.
     let t4_nb: i64 = __mind_load_i64(t4_acc_cell);
-    let raw_nb: i64 = nlets + t4_nb;
+    // #287-F2: leading lets are branch-local DECLARATIONS — they never write an outer name,
+    // so they do NOT escape. Drop acc_copy_lvbuf(nlets leading lets); the escape set is only
+    // the if-segments' bubbled bindings (real outer-assignment escapes from nested ifs). The
+    // let INITS still emit above (emit_let_inits_lv) — only the spurious escape record drops.
+    let raw_nb: i64 = t4_nb;
     let raw: i64 = __mind_alloc((raw_nb + 1) * 24);
-    let _c1: i64 = acc_copy_lvbuf(raw, lvbuf, nlv0, nlets, 0);
-    let _c2: i64 = acc_copy_acc(raw, nlets, t4_acc, t4_nb, 0);
+    let _c2: i64 = acc_copy_acc(raw, 0, t4_acc, t4_nb, 0);
     // Dedup same-name escaping bindings (a leading let shadowed by a same-name bubbled
     // if-segment binding, e.g. `let x=..; if c { let x=.. }`) into ONE merge per name:
     // first-seen position, LAST value wins (SSA F2 — the name's value after the block is
@@ -13253,13 +13330,20 @@ pub fn emit_if_expr_block_lv(s: EmitState, if_node: i64, buf: i64, params_addr: 
     let else_init_ec: i64 = block_init_escape_probe(else_sa, else_nlets, else_synth + 1, buf, params_addr, n_params, else_lvbuf, nlv, strbuf, offs, ncount, else_lvbuf, nlv + else_nlets, 0, 0);
     let then_ec: i64 = branch_escape_probe(then_val_expr, buf, params_addr, n_params, then_val_base0, then_lvbuf, nlv + then_nlets, strbuf, offs, ncount, then_lvbuf, nlv + then_nlets + then_init_ec);
     let else_ec: i64 = branch_escape_probe(else_val_expr, buf, params_addr, n_params, else_val_base0, else_lvbuf, nlv + else_nlets, strbuf, offs, ncount, else_lvbuf, nlv + else_nlets + else_init_ec);
-    let then_nle: i64 = then_nlets + then_init_ec + then_ec;
-    let else_nle: i64 = else_nlets + else_init_ec + else_ec;
-    let blk_shared: i64 = blk_count_shared(then_lvbuf, nlv, then_nle, else_lvbuf, else_nle, buf, 0, 0);
+    // F2 branch-local-let scope (mirror lower.rs then_local_decls): the merge set omits
+    // NON-ESCAPING leading branch-local lets. Done WITHOUT touching the shared blk_* helpers
+    // or mixedblock: pass a SHIFTED merge-buffer pointer (buf + nlets*24) + the escape-only
+    // count, re-windowing the helpers (which only ever read (nlv+idx), never [0..nlv)) onto
+    // the escape records. CRITICAL PAIRING: emit_let_inits_lv + lvenv_append_escapes below
+    // stay UNSHIFTED (they mint/write real vids at [nlv+nlets..]); blk_fill_own reads own-vids
+    // via the SAME shifted pointer. Shifting ALL sites for symmetry silently breaks the fill.
+    let then_nle: i64 = then_init_ec + then_ec;
+    let else_nle: i64 = else_init_ec + else_ec;
+    let blk_shared: i64 = blk_count_shared(then_lvbuf + then_nlets * 24, nlv, then_nle, else_lvbuf + else_nlets * 24, else_nle, buf, 0, 0);
     let n_merged: i64 = then_nle + else_nle - blk_shared;
     let eix: i64 = __mind_alloc((then_nle + else_nle + 1) * 8);
     let bl: i64 = __mind_alloc((n_merged + 1) * 64);
-    let dst: i64 = blk_layout(bl, eix, then_lvbuf, else_lvbuf, nlv, then_nle, else_nle, n_merged, buf, params_addr, n_params, lvenv, nlv, 0, ph_start);
+    let dst: i64 = blk_layout(bl, eix, then_lvbuf + then_nlets * 24, else_lvbuf + else_nlets * 24, nlv, then_nle, else_nle, n_merged, buf, params_addr, n_params, lvenv, nlv, 0, ph_start);
     let then_len: i64 = 1 + then_let_instrs + then_val_instrs + blk_fresh_side(bl, n_merged, 0, 0);
     let s5: EmitState = emit_uleb128(s4, then_len);
     let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
@@ -13320,7 +13404,7 @@ pub fn emit_if_expr_block_lv(s: EmitState, if_node: i64, buf: i64, params_addr: 
     let s16: EmitState = emit_uleb128(s15, else_root);
     let s17: EmitState = emit_uleb128(s16, dst);
     // Fill each binding's own-side value from the now-emitted branch lv-bufs, then emit.
-    let _fo: i64 = blk_fill_own(bl, eix, then_lvbuf, else_lvbuf, nlv, then_nlets, n_merged, 0);
+    let _fo: i64 = blk_fill_own(bl, eix, then_lvbuf + then_nlets * 24, else_lvbuf + else_nlets * 24, nlv, then_nlets, n_merged, 0);
     let s18: EmitState = emit_uleb128(s17, n_merged);
     let s19: EmitState = blk_emit_bindings(s18, bl, n_merged, strbuf, offs, ncount, buf, 0);
     let s20: EmitState = emit_uleb128(s19, n_merged);
@@ -14058,14 +14142,19 @@ pub fn emit_if_expr_mixedblock_lv(s: EmitState, if_node: i64, buf: i64, params_a
     let else_nlets: i64 = __mind_load_i64(else_nl_c);
     let else_end: i64 = __mind_load_i64(else_end_c);
     // Merge set = UNION of names (a name bound on BOTH branches is one F2 phi).
-    let blk_shared: i64 = blk_count_shared(p_then_lvbuf, nlv, then_nlets, p_else_lvbuf, else_nlets, buf, 0, 0);
-    let n_merged: i64 = then_nlets + else_nlets - blk_shared;
+    // #287-F2: a value-if BLOCK's branch-local lets are DECLARATIONS — they never escape (only
+    // the block VALUE merges into `w`, handled by the branch value emit below). And
+    // emit_mixed_value_branch's acc==nlets guard means no outer-assign can bubble here. So the
+    // OP_IF branch-binding/merge set is EMPTY (n_merged=0). The real then_nlets/else_nlets are
+    // still used for the branch VALUE vid layout (then_v_instrs/else_v_instrs) below. Mirrors
+    // lower.rs F2 (a `let` decl never escapes) and the oracle record layout (trailing 0,0
+    // bindings/merges). Previously n_merged=then_nlets+else_nlets-shared serialized dead
+    // poison-binding + placeholder-const records per branch-local let.
+    let n_merged: i64 = 0;
     let eix: i64 = __mind_alloc((then_nlets + else_nlets + 1) * 8);
     let ph_start: i64 = else_end;
-    // Fresh/bound layout: a branch let already live in the outer env reuses that OUTER vid on
-    // the opposite side (no placeholder, 1 vid); a fresh let gets a placeholder (2 vids).
     let bl: i64 = __mind_alloc((n_merged + 1) * 64);
-    let dst: i64 = blk_layout(bl, eix, p_then_lvbuf, p_else_lvbuf, nlv, then_nlets, else_nlets, n_merged, buf, params_addr, n_params, lvenv, nlv, 0, ph_start);
+    let dst: i64 = blk_layout(bl, eix, p_then_lvbuf, p_else_lvbuf, nlv, 0, 0, n_merged, buf, params_addr, n_params, lvenv, nlv, 0, ph_start);
     // Block INSTR lengths. Placeholders emitted in a branch = the FRESH lets of the OPPOSITE
     // side (a then-block let's placeholder lives in the else branch, and vice versa).
     let then_pf_instrs: i64 = measure_mixed_instrs_probe(then_sa, then_sl - 1, buf, params_addr, n_params, lvenv, nlv);

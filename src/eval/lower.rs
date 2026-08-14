@@ -6435,6 +6435,20 @@ fn lower_expr(
             // merged var's per-branch value is taken from this env (dominating
             // at the branch's exit).
             let mut then_writes: Vec<String> = Vec::new();
+            // Scope fix (F2 shadow leak): names DECLARED by a branch-local `let`
+            // in this branch. A `let x` shadows any outer `x` for the rest of the
+            // branch but is block-scoped — it must NOT leak into the parent env
+            // after the `if` (unlike an `x = ...` Assign to an existing outer
+            // binding, which must still propagate). Declared-local names are
+            // excluded from `then_writes`/branch_bindings; a subsequent Assign to
+            // such a name inside the same branch is also branch-local.
+            let mut then_local_decls: Vec<String> = Vec::new();
+            // GAP 2 (assign-before-shadow): when a branch-local `let x` shadows a
+            // name that was ALREADY recorded as a genuine outer-binding write
+            // earlier in THIS branch (`x = 1; let x = 99`), the merge must use the
+            // pre-shadow ASSIGNED value (1), not the shadow (99). We freeze that
+            // value here and the merge builder consults it before `then_env`.
+            let mut then_frozen: Vec<(String, ValueId)> = Vec::new();
             let record_then_write = |name: &str, writes: &mut Vec<String>| {
                 if !writes.iter().any(|n| n == name) {
                     writes.push(name.to_owned());
@@ -6569,7 +6583,22 @@ fn lower_expr(
                             value_region_outer_rebindings(&then_ir.instrs, value_start, &then_env)
                         {
                             then_env.insert(nm.clone(), eid);
-                            record_then_write(&nm, &mut then_writes);
+                            // GAP 1: a threaded rebinding of a branch-local shadow
+                            // (a `let`-declared name) is a mutation of the SHADOW,
+                            // not the outer binding — thread it into `then_env` for
+                            // later use but do NOT record a merge write.
+                            if !then_local_decls.iter().any(|n| n == &nm) {
+                                record_then_write(&nm, &mut then_writes);
+                            }
+                        }
+                        // GAP 2: freeze the pre-shadow value if this `let` shadows a
+                        // name already recorded as an outer-binding write.
+                        if then_writes.iter().any(|n| n == name)
+                            && !then_frozen.iter().any(|(n, _)| n == name)
+                        {
+                            if let Some(pre) = then_env.get(name).copied() {
+                                then_frozen.push((name.clone(), pre));
+                            }
                         }
                         then_env.insert(name.clone(), id);
                         #[cfg(feature = "std-surface")]
@@ -6601,7 +6630,15 @@ fn lower_expr(
                                 }
                             }
                         }
-                        record_then_write(name, &mut then_writes);
+                        // Scope fix: record this `let` as a branch-local
+                        // DECLARATION (block-scoped) rather than a merge write.
+                        // It stays in `then_env` (inserted above) for the rest of
+                        // this branch, but is excluded from the merge/branch_bindings
+                        // so it does not overwrite an outer binding of the same name
+                        // after the `if`.
+                        if !then_local_decls.iter().any(|n| n == name) {
+                            then_local_decls.push(name.clone());
+                        }
                         then_result = id;
                     }
                     ast::Node::Assign { name, value, .. } => {
@@ -6622,13 +6659,22 @@ fn lower_expr(
                             value_region_outer_rebindings(&then_ir.instrs, value_start, &then_env)
                         {
                             then_env.insert(nm.clone(), eid);
-                            record_then_write(&nm, &mut then_writes);
+                            // GAP 1: skip the merge write for a threaded shadow name.
+                            if !then_local_decls.iter().any(|n| n == &nm) {
+                                record_then_write(&nm, &mut then_writes);
+                            }
                         }
                         // Re-mask a narrow local reassigned inside the then-branch.
                         #[cfg(feature = "std-surface")]
                         let id = mask_narrow_assign(&mut then_ir, name, id);
                         then_env.insert(name.clone(), id);
-                        record_then_write(name, &mut then_writes);
+                        // Scope fix: an Assign to a name DECLARED branch-local by a
+                        // prior `let` in this branch is itself branch-local — skip
+                        // the merge write. An Assign to an outer binding still
+                        // propagates (records the write) as before.
+                        if !then_local_decls.iter().any(|n| n == name) {
+                            record_then_write(name, &mut then_writes);
+                        }
                         then_result = id;
                     }
                     ast::Node::LetTuple { names, value, .. } => {
@@ -6640,6 +6686,13 @@ fn lower_expr(
                             struct_env,
                             receiver_types,
                         );
+                        // deferred: a branch-local `let (a, b) = ...` destructure is
+                        // also block-scoped and leaks past the `if` for the same
+                        // reason as a scalar `let` (recorded as a write here). Left
+                        // unscoped to keep this fix minimal / low-blast-radius on the
+                        // scalar-`let` case that was net-verified. Upgrade path: track
+                        // `names` in `then_local_decls` and skip the merge writes,
+                        // mirroring the scalar-`let` arm above.
                         for nm in names {
                             record_then_write(nm, &mut then_writes);
                         }
@@ -6657,7 +6710,11 @@ fn lower_expr(
                         // dominating) at this branch's exit.
                         for (nm, eid) in last_region_exit_rebindings(&then_ir.instrs) {
                             then_env.insert(nm.clone(), eid);
-                            record_then_write(&nm, &mut then_writes);
+                            // GAP 1: a nested region that mutated a branch-local
+                            // shadow must not re-leak it as a merge write.
+                            if !then_local_decls.iter().any(|n| n == &nm) {
+                                record_then_write(&nm, &mut then_writes);
+                            }
                         }
                     }
                 }
@@ -6672,6 +6729,11 @@ fn lower_expr(
             let mut else_ir = sub_ir_from_after(&then_ir, ir);
             let mut else_env = env.clone();
             let mut else_writes: Vec<String> = Vec::new();
+            // Scope fix (F2 shadow leak): branch-local `let`-declared names in the
+            // else branch — excluded from the merge, same as the then branch.
+            let mut else_local_decls: Vec<String> = Vec::new();
+            // GAP 2 twin: pre-shadow frozen merge values for the else branch.
+            let mut else_frozen: Vec<(String, ValueId)> = Vec::new();
             let record_else_write = |name: &str, writes: &mut Vec<String>| {
                 if !writes.iter().any(|n| n == name) {
                     writes.push(name.to_owned());
@@ -6793,7 +6855,19 @@ fn lower_expr(
                                 &else_env,
                             ) {
                                 else_env.insert(nm.clone(), eid);
-                                record_else_write(&nm, &mut else_writes);
+                                // GAP 1: skip the merge write for a threaded shadow.
+                                if !else_local_decls.iter().any(|n| n == &nm) {
+                                    record_else_write(&nm, &mut else_writes);
+                                }
+                            }
+                            // GAP 2: freeze the pre-shadow value if this `let`
+                            // shadows an already-recorded outer-binding write.
+                            if else_writes.iter().any(|n| n == name)
+                                && !else_frozen.iter().any(|(n, _)| n == name)
+                            {
+                                if let Some(pre) = else_env.get(name).copied() {
+                                    else_frozen.push((name.clone(), pre));
+                                }
                             }
                             else_env.insert(name.clone(), id);
                             #[cfg(feature = "std-surface")]
@@ -6825,7 +6899,12 @@ fn lower_expr(
                                     }
                                 }
                             }
-                            record_else_write(name, &mut else_writes);
+                            // Scope fix: record as a branch-local DECLARATION
+                            // (block-scoped), excluded from the merge/branch_bindings
+                            // so it does not leak past the `if`.
+                            if !else_local_decls.iter().any(|n| n == name) {
+                                else_local_decls.push(name.clone());
+                            }
                             else_result = id;
                         }
                         ast::Node::Assign { name, value, .. } => {
@@ -6848,13 +6927,21 @@ fn lower_expr(
                                 &else_env,
                             ) {
                                 else_env.insert(nm.clone(), eid);
-                                record_else_write(&nm, &mut else_writes);
+                                // GAP 1: skip the merge write for a threaded shadow.
+                                if !else_local_decls.iter().any(|n| n == &nm) {
+                                    record_else_write(&nm, &mut else_writes);
+                                }
                             }
                             // Re-mask a narrow local reassigned inside the else-branch.
                             #[cfg(feature = "std-surface")]
                             let id = mask_narrow_assign(&mut else_ir, name, id);
                             else_env.insert(name.clone(), id);
-                            record_else_write(name, &mut else_writes);
+                            // Scope fix: an Assign to a branch-local `let`-declared
+                            // name is itself branch-local — skip the merge write;
+                            // an Assign to an outer binding still propagates.
+                            if !else_local_decls.iter().any(|n| n == name) {
+                                record_else_write(name, &mut else_writes);
+                            }
                             else_result = id;
                         }
                         ast::Node::LetTuple { names, value, .. } => {
@@ -6880,7 +6967,11 @@ fn lower_expr(
                             );
                             for (nm, eid) in last_region_exit_rebindings(&else_ir.instrs) {
                                 else_env.insert(nm.clone(), eid);
-                                record_else_write(&nm, &mut else_writes);
+                                // GAP 1: a nested region that mutated a branch-local
+                                // shadow must not re-leak it as a merge write.
+                                if !else_local_decls.iter().any(|n| n == &nm) {
+                                    record_else_write(&nm, &mut else_writes);
+                                }
                             }
                         }
                     }
@@ -6976,8 +7067,19 @@ fn lower_expr(
             let mut branch_bindings: Vec<(String, ValueId)> = Vec::new();
             let mut merges: Vec<(ValueId, ValueId, ValueId)> = Vec::new();
             for name in &merged_names {
-                let then_has = then_env.get(name).copied();
-                let else_has = else_env.get(name).copied();
+                // GAP 2: consult the pre-shadow frozen value first (assign-before-
+                // shadow); otherwise the branch-exit env value. Additive: an empty
+                // `*_frozen` falls straight through to `*_env` → byte-identical.
+                let then_has = then_frozen
+                    .iter()
+                    .find(|(n, _)| n == name)
+                    .map(|(_, v)| *v)
+                    .or_else(|| then_env.get(name).copied());
+                let else_has = else_frozen
+                    .iter()
+                    .find(|(n, _)| n == name)
+                    .map(|(_, v)| *v)
+                    .or_else(|| else_env.get(name).copied());
                 // Type the synthesized absent-side ZERO placeholder by the side
                 // that DEFINES the binding (a one-sided let/assign): an f64
                 // binding gets an f64 placeholder so the merge phi types f64
