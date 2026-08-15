@@ -117,7 +117,7 @@ fn merge_else_edge_uses_preif_value_not_branch_shadow() {
     // Symmetric mirror of the then-edge case: THEN writes outer x=5; ELSE only
     // SHADOWS x with a branch-local `let x=99`. For c!=1 (else taken, outer x
     // untouched) the correct value of x is the pre-if 1. The x-merge else-edge
-    // must carry 1, not the block-scoped shadow 99. (Fable audit s6 shape.)
+    // must carry 1, not the block-scoped shadow 99. (symmetric mirror shape.)
     let src = r#"
 fn f(c: i64) -> i64 {
     let x: i64 = 1
@@ -149,7 +149,7 @@ fn merge_then_edge_uses_prewrite_not_later_shadow() {
     // `then_frozen` / GAP-2 assign-before-shadow: THEN writes the real outer
     // x=5, THEN introduces a block-local `let x=99`. The merge then-edge must
     // carry the pre-shadow real write 5, not the later shadow 99. ELSE writes 7.
-    // (Fable audit assign-before-shadow shape.)
+    // (assign-before-shadow / then_frozen shape.)
     let src = r#"
 fn f(c: i64) -> i64 {
     let x: i64 = 1
