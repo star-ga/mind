@@ -428,6 +428,17 @@ pub enum Instr {
         body: Vec<Instr>,
         /// Threshold from `[reap_threshold(t)]` attribute, if present.
         reap_threshold: Option<f64>,
+        /// Step D — the canonical aggregate-type table for THIS function's SSA
+        /// scope. Function bodies are a SEPARATE SSA namespace (lowering resets
+        /// the value counter per `FnDef`, see `src/eval/lower.rs`), so a body
+        /// ValueId and the module-level `IRModule.value_types` key space are
+        /// distinct — a fn-local aggregate is typed HERE, never in the module
+        /// table. Empty until the S3 population slice; NOT serialized until the
+        /// S2b v0x03 wire slice (so an all-empty module stays byte-for-byte
+        /// v0x02). `BTreeMap` for deterministic order; std-surface-gated to match
+        /// `IRModule.value_types`.
+        #[cfg(feature = "std-surface")]
+        value_types: std::collections::BTreeMap<ValueId, ArrayType>,
     },
     /// Function call
     Call {
@@ -961,6 +972,105 @@ pub(crate) fn dense_shape_len(shape: &[crate::types::ShapeDim]) -> Option<u64> {
     })
 }
 
+/// Step D — find the `ConstDenseTensor` node that DEFINES `vid` within ONE SSA
+/// scope, returning its `(dtype, shape)`. The search is RECURSIVE through nested
+/// control-flow bodies (`If.cond_instrs`/`then_instrs`/`else_instrs`,
+/// `While.cond_instrs`/`body`, `Region.body`) because those share the enclosing
+/// function/module SSA namespace (`sub_ir_from` chains `next_id`) — a const-dense
+/// can legally be defined inside an `if` arm. It STOPS at every `FnDef`: a
+/// function body is a SEPARATE namespace (`src/eval/lower.rs` resets the value
+/// counter per `FnDef`), so descending into it would let a callee's `%N` alias
+/// this scope's `%N`. Returns the FIRST match in pre-order; the well-formedness
+/// verifier separately rejects a second defining node for the same id in one
+/// scope, so at most one exists in a valid module.
+#[cfg(feature = "std-surface")]
+pub(crate) fn find_scoped_const_dense(
+    instrs: &[Instr],
+    vid: ValueId,
+) -> Option<(crate::types::DType, Vec<crate::types::ShapeDim>)> {
+    for i in instrs {
+        match i {
+            Instr::ConstDenseTensor {
+                dst, dtype, shape, ..
+            } if *dst == vid => {
+                return Some((dtype.clone(), shape.clone()));
+            }
+            Instr::If {
+                cond_instrs,
+                then_instrs,
+                else_instrs,
+                ..
+            } => {
+                if let Some(r) = find_scoped_const_dense(cond_instrs, vid) {
+                    return Some(r);
+                }
+                if let Some(r) = find_scoped_const_dense(then_instrs, vid) {
+                    return Some(r);
+                }
+                if let Some(r) = find_scoped_const_dense(else_instrs, vid) {
+                    return Some(r);
+                }
+            }
+            Instr::While {
+                cond_instrs, body, ..
+            } => {
+                if let Some(r) = find_scoped_const_dense(cond_instrs, vid) {
+                    return Some(r);
+                }
+                if let Some(r) = find_scoped_const_dense(body, vid) {
+                    return Some(r);
+                }
+            }
+            Instr::Region { body, .. } => {
+                if let Some(r) = find_scoped_const_dense(body, vid) {
+                    return Some(r);
+                }
+            }
+            // `FnDef` is a namespace boundary — do NOT descend (a fn-local id
+            // must resolve against its OWN scope's table, never this one).
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Step D — the SCOPE-LOCAL canonical aggregate-type lookup: the single algorithm
+/// shared by the module scope (`IRModule::canonical_array_type`) and each function
+/// scope. `instrs` is the scope's instruction stream and `table` is the scope's
+/// `value_types` (module-level or a `FnDef`'s). ABSENCE is kept strictly distinct
+/// from CORRUPTION (see `IRModule::canonical_array_type`): a conflict or malformed
+/// node is an `Err`, never `Ok(None)`.
+#[cfg(feature = "std-surface")]
+pub(crate) fn canonical_array_type_in(
+    instrs: &[Instr],
+    table: &std::collections::BTreeMap<ValueId, ArrayType>,
+    vid: ValueId,
+) -> Result<Option<ArrayType>, AggregateTypeError> {
+    let explicit = table.get(&vid).cloned();
+    // Reconstruct the defining ConstDenseTensor's type SEPARATELY from whether it
+    // is well-formed, so a malformed node is an ERROR, not absence.
+    let node_ty = match find_scoped_const_dense(instrs, vid) {
+        Some((dtype, shape)) => match dense_shape_len(&shape) {
+            Some(n) => Some(ArrayType {
+                elem_dtype: dtype,
+                size: ArraySize::Fixed(n),
+            }),
+            None => return Err(AggregateTypeError::MalformedConstDense),
+        },
+        None => None,
+    };
+    match (explicit, node_ty) {
+        (Some(e), Some(c)) if e == c => Ok(Some(e)),
+        (Some(table_ty), Some(node)) => Err(AggregateTypeError::Conflict {
+            table: table_ty,
+            node,
+        }),
+        (Some(e), None) => Ok(Some(e)),
+        (None, Some(c)) => Ok(Some(c)),
+        (None, None) => Ok(None),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct IRModule {
     pub instrs: Vec<Instr>,
@@ -1171,32 +1281,10 @@ impl IRModule {
         &self,
         vid: ValueId,
     ) -> Result<Option<ArrayType>, AggregateTypeError> {
-        let explicit = self.value_types.get(&vid).cloned();
-        // Find the defining ConstDenseTensor NODE (if any) SEPARATELY from whether
-        // its type is reconstructible, so a malformed node is an ERROR, not absence.
-        let dense_node = self.instrs.iter().find_map(|i| match i {
-            Instr::ConstDenseTensor {
-                dst, dtype, shape, ..
-            } if *dst == vid => Some((dtype.clone(), shape.as_slice())),
-            _ => None,
-        });
-        let node_ty = match dense_node {
-            Some((dtype, shape)) => match dense_shape_len(shape) {
-                Some(n) => Some(ArrayType {
-                    elem_dtype: dtype,
-                    size: ArraySize::Fixed(n),
-                }),
-                None => return Err(AggregateTypeError::MalformedConstDense),
-            },
-            None => None,
-        };
-        match (explicit, node_ty) {
-            (Some(e), Some(c)) if e == c => Ok(Some(e)),
-            (Some(table), Some(node)) => Err(AggregateTypeError::Conflict { table, node }),
-            (Some(e), None) => Ok(Some(e)),
-            (None, Some(c)) => Ok(Some(c)),
-            (None, None) => Ok(None),
-        }
+        // Module scope: the top-level instruction stream + the module-level table.
+        // A `FnDef`'s own aggregates are typed against ITS scope (its body +
+        // `FnDef.value_types`) via `canonical_array_type_in`, never here.
+        canonical_array_type_in(&self.instrs, &self.value_types, vid)
     }
 }
 

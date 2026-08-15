@@ -56,6 +56,8 @@ fn fndef_lowers_to_func_func_with_i64_signature() {
         ret_id: Some(ret),
         body,
         reap_threshold: None,
+        #[cfg(feature = "std-surface")]
+        value_types: std::collections::BTreeMap::new(),
     });
     // Need at least one main-level op so the assembler emits @main.
     let c = m.fresh();
@@ -83,6 +85,8 @@ fn fndef_appears_before_main_in_emitted_text() {
         ret_id: Some(ret),
         body,
         reap_threshold: None,
+        #[cfg(feature = "std-surface")]
+        value_types: std::collections::BTreeMap::new(),
     });
     let c = m.fresh();
     m.instrs.push(Instr::ConstI64(c, 0));
@@ -125,6 +129,8 @@ fn fndef_and_call_to_it_compose_cleanly() {
         ret_id: Some(s),
         body,
         reap_threshold: None,
+        #[cfg(feature = "std-surface")]
+        value_types: std::collections::BTreeMap::new(),
     });
 
     let c = m.fresh();

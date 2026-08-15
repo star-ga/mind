@@ -809,6 +809,91 @@ fn check_const_dense_wellformed(instrs: &[Instr]) -> Result<(), IrVerifyError> {
     Ok(())
 }
 
+/// Step D — validate the `value_types`-vs-node consistency for EVERY SSA scope:
+/// the module (its top-level stream + module table) and, recursively, each
+/// function (its body + its OWN table). Function bodies are separate namespaces,
+/// so a fn-local aggregate is checked against the FUNCTION's scope, never the
+/// module's — this is what makes a `%N` in `f` and a `%N` in `g` independently
+/// typed. Only `FnDef` opens a new scope; nested `If`/`While`/`Region` share the
+/// enclosing one and are handled by `canonical_array_type_in`'s recursive node
+/// search. Dormant while all tables are empty (S1/S2a); load-bearing from S3.
+#[cfg(feature = "std-surface")]
+fn check_value_types_scope(
+    instrs: &[Instr],
+    table: &std::collections::BTreeMap<ValueId, crate::ir::ArrayType>,
+) -> Result<(), IrVerifyError> {
+    for (vid, _at) in table {
+        match crate::ir::canonical_array_type_in(instrs, table, *vid) {
+            Ok(_) => {} // an explicit entry with no conflict resolves to Ok(Some(entry))
+            Err(crate::ir::AggregateTypeError::Conflict { table: t, node }) => {
+                return Err(IrVerifyError::AggregateTypeConflict {
+                    value: *vid,
+                    message: format!(
+                        "explicit value_types entry {t:?} disagrees with the \
+                         ConstDenseTensor node type {node:?} for the same value"
+                    ),
+                });
+            }
+            Err(crate::ir::AggregateTypeError::MalformedConstDense) => {
+                return Err(IrVerifyError::MalformedConstDenseTensor {
+                    value: *vid,
+                    message: "value_types entry references a malformed ConstDenseTensor"
+                        .to_string(),
+                });
+            }
+        }
+    }
+    // Each function is its OWN scope: find EVERY `FnDef` reachable in THIS scope's
+    // stream — including one buried inside an `If`/`While`/`Region` body (those
+    // share this scope, so we must descend them to reach a nested `FnDef`) — and
+    // check each against its own body+table. Without descending control flow, a
+    // hostile mic@3 artifact (S2b+) could bury a `FnDef` with a lying `value_types`
+    // table inside a `Region` and evade the conflict check.
+    check_nested_fndef_tables(instrs)?;
+    Ok(())
+}
+
+/// Step D — visit EVERY `FnDef` reachable within one SSA scope's instruction
+/// stream (descending same-scope `If`/`While`/`Region` bodies) and validate each
+/// function's own `value_types` table against its own scope via
+/// `check_value_types_scope` (which in turn hunts FnDefs nested inside THAT
+/// function). Descent stops implicitly at a found `FnDef`: we hand its body to
+/// `check_value_types_scope`, not back to this hunt, so a callee's scope is never
+/// merged into the caller's.
+#[cfg(feature = "std-surface")]
+fn check_nested_fndef_tables(instrs: &[Instr]) -> Result<(), IrVerifyError> {
+    for instr in instrs {
+        match instr {
+            Instr::FnDef {
+                body, value_types, ..
+            } => {
+                check_value_types_scope(body, value_types)?;
+            }
+            Instr::If {
+                cond_instrs,
+                then_instrs,
+                else_instrs,
+                ..
+            } => {
+                check_nested_fndef_tables(cond_instrs)?;
+                check_nested_fndef_tables(then_instrs)?;
+                check_nested_fndef_tables(else_instrs)?;
+            }
+            Instr::While {
+                cond_instrs, body, ..
+            } => {
+                check_nested_fndef_tables(cond_instrs)?;
+                check_nested_fndef_tables(body)?;
+            }
+            Instr::Region { body, .. } => {
+                check_nested_fndef_tables(body)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 pub fn verify_module(module: &IRModule) -> Result<(), IrVerifyError> {
     let mut defined: BTreeSet<ValueId> = BTreeSet::new();
     let mut saw_output = false;
@@ -864,36 +949,15 @@ pub fn verify_module(module: &IRModule) -> Result<(), IrVerifyError> {
     #[cfg(feature = "std-surface")]
     check_const_dense_wellformed(&module.instrs)?;
 
-    // Step D — AGGREGATE_TYPE_INVARIANT well-formedness (dormant in S1/S2: the
-    // `value_types` table is empty, so this loop is a no-op; it becomes
-    // load-bearing when the S3/S4 population slices fill the table, and S5 turns
-    // it into a required-presence check). `canonical_array_type` returns `Err`
-    // (never `Ok(None)`) when an explicit entry CONFLICTS with the defining
-    // `ConstDenseTensor` node or that node is malformed — a corruption may not
-    // masquerade as absence — which this converts to the matching hard verifier
-    // error rather than a silent single-authority pick.
+    // Step D — AGGREGATE_TYPE_INVARIANT well-formedness for EVERY scope (dormant in
+    // S1/S2a: every table is empty, so this is a no-op; load-bearing from S3). The
+    // module scope and each function scope are checked against THEIR OWN
+    // instruction stream + table, so a fn-local aggregate is never validated
+    // against — nor able to conflict with — a same-numbered value in the module or
+    // another function. `canonical_array_type_in` returns `Err` (never `Ok(None)`)
+    // on a conflict or malformed node — a corruption may not masquerade as absence.
     #[cfg(feature = "std-surface")]
-    for (vid, _at) in &module.value_types {
-        match module.canonical_array_type(*vid) {
-            Ok(_) => {} // an explicit entry with no conflict resolves to Ok(Some(entry))
-            Err(crate::ir::AggregateTypeError::Conflict { table, node }) => {
-                return Err(IrVerifyError::AggregateTypeConflict {
-                    value: *vid,
-                    message: format!(
-                        "explicit value_types entry {table:?} disagrees with the \
-                         ConstDenseTensor node type {node:?} for the same value"
-                    ),
-                });
-            }
-            Err(crate::ir::AggregateTypeError::MalformedConstDense) => {
-                return Err(IrVerifyError::MalformedConstDenseTensor {
-                    value: *vid,
-                    message: "value_types entry references a malformed ConstDenseTensor"
-                        .to_string(),
-                });
-            }
-        }
-    }
+    check_value_types_scope(&module.instrs, &module.value_types)?;
 
     Ok(())
 }
@@ -1248,6 +1312,182 @@ mod step_d_aggregate_type_tests {
         assert_eq!(m.canonical_array_type(v), Ok(None));
     }
 
+    fn const_dense(v: crate::ir::ValueId, dt: DType, n: usize) -> Instr {
+        Instr::ConstDenseTensor {
+            dst: v,
+            dtype: dt,
+            shape: vec![ShapeDim::Known(n)],
+            data: vec![0u64; n],
+        }
+    }
+
+    fn typed_fn(name: &str, body: Vec<Instr>) -> Instr {
+        Instr::FnDef {
+            name: name.to_string(),
+            params: vec![],
+            ret_id: None,
+            body,
+            reap_threshold: None,
+            value_types: std::collections::BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn same_numeric_valueid_different_functions_do_not_alias() {
+        // SAME_NUMERIC_VALUEID_DIFFERENT_FUNCTIONS_DO_NOT_ALIAS: function bodies are
+        // SEPARATE SSA namespaces, so the SAME numeric ValueId can define a `f32`
+        // aggregate in `f` and a `f64` aggregate in `g`. Each must be typed against
+        // ITS OWN scope; a flat/global key would alias them.
+        let v = crate::ir::ValueId(0);
+        let f_body = vec![const_dense(v, DType::F32, 3)];
+        let g_body = vec![const_dense(v, DType::F64, 3)];
+        assert_eq!(
+            crate::ir::canonical_array_type_in(&f_body, &std::collections::BTreeMap::new(), v),
+            Ok(Some(ArrayType {
+                elem_dtype: DType::F32,
+                size: ArraySize::Fixed(3),
+            }))
+        );
+        assert_eq!(
+            crate::ir::canonical_array_type_in(&g_body, &std::collections::BTreeMap::new(), v),
+            Ok(Some(ArrayType {
+                elem_dtype: DType::F64,
+                size: ArraySize::Fixed(3),
+            }))
+        );
+        // And both coexist in one module WITHOUT a false cross-function conflict.
+        let mut m = IRModule::new();
+        m.instrs.push(typed_fn("f", f_body));
+        m.instrs.push(typed_fn("g", g_body));
+        let w = m.fresh();
+        m.instrs.push(Instr::ConstI64(w, 0));
+        m.instrs.push(Instr::Output(w));
+        assert_eq!(verify_module(&m), Ok(()));
+    }
+
+    #[test]
+    fn const_dense_intrinsic_lookup_scoped() {
+        // CONST_DENSE_INTRINSIC_LOOKUP_SCOPED: the SAME numeric id defines a
+        // DIFFERENT-dtype const-dense at module scope, in `f`, and in `g`. The
+        // module lookup must NOT descend into the functions (no global first-match),
+        // and each function scope resolves its own.
+        let v = crate::ir::ValueId(3);
+        let mut m = IRModule::new();
+        // module scope: %3 = f32 (module lookup must return THIS, not a fn's).
+        while m.next_id <= 3 {
+            m.fresh();
+        }
+        m.instrs.push(const_dense(v, DType::F32, 2));
+        m.instrs.push(Instr::Output(v));
+        // `fpriv` is defined ONLY inside `f` (never at module scope) — the sharp
+        // no-descend probe: if the module lookup wrongly walked into FnDef bodies,
+        // it would resolve `fpriv`; it must return `Ok(None)`.
+        let fpriv = crate::ir::ValueId(9);
+        let f_body = vec![
+            const_dense(v, DType::F64, 2),
+            const_dense(fpriv, DType::F32, 2),
+        ];
+        let g_body = vec![const_dense(v, DType::I64, 2)];
+        m.instrs.push(typed_fn("f", f_body.clone()));
+        m.instrs.push(typed_fn("g", g_body.clone()));
+        // Module scope resolves f32 — it does NOT walk into FnDef bodies.
+        assert_eq!(
+            m.canonical_array_type(v),
+            Ok(Some(ArrayType {
+                elem_dtype: DType::F32,
+                size: ArraySize::Fixed(2),
+            }))
+        );
+        // Non-vacuous no-descend: `fpriv` exists ONLY in `f` -> module scope must
+        // NOT find it (would fail if FnDef descent were wrongly reintroduced).
+        assert_eq!(m.canonical_array_type(fpriv), Ok(None));
+        // Each function scope resolves its own dtype.
+        assert_eq!(
+            crate::ir::canonical_array_type_in(&f_body, &std::collections::BTreeMap::new(), v)
+                .unwrap()
+                .unwrap()
+                .elem_dtype,
+            DType::F64
+        );
+        assert_eq!(
+            crate::ir::canonical_array_type_in(&g_body, &std::collections::BTreeMap::new(), v)
+                .unwrap()
+                .unwrap()
+                .elem_dtype,
+            DType::I64
+        );
+    }
+
+    #[test]
+    fn const_dense_lookup_descends_control_flow() {
+        // The scope-local lookup must RECURSE into nested control-flow bodies
+        // (same SSA namespace), closing the latent S1 gap where a flat
+        // `instrs.iter().find_map` missed a const-dense buried in a Region/If/While.
+        let mut m = IRModule::new();
+        let v = m.fresh();
+        let r = m.fresh();
+        let en = m.fresh();
+        let ex = m.fresh();
+        m.instrs.push(Instr::Region {
+            body: vec![const_dense(v, DType::F64, 4)],
+            result: r,
+            enter_id: en,
+            exit_id: ex,
+            alloc_ids: vec![],
+        });
+        m.instrs.push(Instr::Output(v));
+        // Found via recursive descent even though it is NOT in the flat top-level
+        // instruction list.
+        assert_eq!(
+            m.canonical_array_type(v),
+            Ok(Some(ArrayType {
+                elem_dtype: DType::F64,
+                size: ArraySize::Fixed(4),
+            }))
+        );
+    }
+
+    #[test]
+    fn verify_catches_conflicting_table_in_fndef_nested_in_region() {
+        // NOTE-4 hardening: a FnDef whose OWN value_types table lies about a
+        // const-dense in its body must be caught EVEN when the FnDef is buried
+        // inside a Region (same enclosing scope). Without descending control flow
+        // in the FnDef hunt, a hostile mic@3 artifact could hide the lie here.
+        let fv = crate::ir::ValueId(0);
+        let mut fn_table = std::collections::BTreeMap::new();
+        fn_table.insert(
+            fv,
+            ArrayType {
+                elem_dtype: DType::I64, // lies: the body node is F64
+                size: ArraySize::Fixed(2),
+            },
+        );
+        let fndef = Instr::FnDef {
+            name: "buried".to_string(),
+            params: vec![],
+            ret_id: None,
+            body: vec![const_dense(fv, DType::F64, 2)],
+            reap_threshold: None,
+            value_types: fn_table,
+        };
+        let mut m = IRModule::new();
+        let r = m.fresh();
+        let en = m.fresh();
+        let ex = m.fresh();
+        m.instrs.push(Instr::Region {
+            body: vec![fndef, Instr::ConstI64(r, 0)],
+            result: r,
+            enter_id: en,
+            exit_id: ex,
+            alloc_ids: vec![],
+        });
+        m.instrs.push(Instr::Output(r));
+        match verify_module(&m) {
+            Err(IrVerifyError::AggregateTypeConflict { value, .. }) => assert_eq!(value, fv),
+            other => panic!("expected AggregateTypeConflict for the buried FnDef, got {other:?}"),
+        }
+    }
+
     #[test]
     fn verify_rejects_conflicting_value_types() {
         // Negative control E (FAIL CLOSED): an explicit value_types entry that
@@ -1334,6 +1574,8 @@ mod step_d_aggregate_type_tests {
                 data: vec![0u64; 4],
             }],
             reap_threshold: None,
+            #[cfg(feature = "std-surface")]
+            value_types: std::collections::BTreeMap::new(),
         });
         let v = m.fresh();
         m.instrs.push(Instr::ConstI64(v, 0));

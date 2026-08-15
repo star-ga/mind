@@ -43,6 +43,8 @@ fn module_with_dense_tensor() -> IRModule {
             Instr::Return { value: Some(r) },
         ],
         reap_threshold: None,
+        #[cfg(feature = "std-surface")]
+        value_types: std::collections::BTreeMap::new(),
     });
     m
 }

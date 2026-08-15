@@ -6213,6 +6213,14 @@ fn lower_expr(
                 ret_id,
                 body: fn_ir.instrs,
                 reap_threshold: *reap_threshold,
+                // Step D — move this function's OWN canonical aggregate-type table
+                // in alongside its body. `fn_ir` is the fresh per-function IRModule
+                // (separate SSA namespace), so its `value_types` is exactly the set
+                // of aggregates defined in THIS scope. Empty until the S3 population
+                // slice (so byte-neutral now); moving it here keeps the scope's
+                // types co-located with the scope's instructions.
+                #[cfg(feature = "std-surface")]
+                value_types: fn_ir.value_types,
             });
 
             // Function definitions don't produce a value

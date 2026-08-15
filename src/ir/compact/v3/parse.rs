@@ -749,6 +749,14 @@ fn decode_instr<R: Read>(
                 ret_id,
                 body,
                 reap_threshold,
+                // Step D — parsed FnDefs carry an EMPTY per-function table. S2a has
+                // no wire section; a legacy 0x02 (or S2b 0x03 with no entries)
+                // artifact reconstructs types LAZILY from the self-typed
+                // ConstDenseTensor nodes via `canonical_array_type`, never by
+                // populating this table on read (which would flip the content-gated
+                // version and break v0x02 byte-identity).
+                #[cfg(feature = "std-surface")]
+                value_types: std::collections::BTreeMap::new(),
             })
         }
         OP_CALL => {

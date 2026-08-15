@@ -755,6 +755,8 @@ mod tests {
                 ret_id: None,
                 body: vec![call("cos")],
                 reap_threshold: None,
+                #[cfg(feature = "std-surface")]
+                value_types: std::collections::BTreeMap::new(),
             },
         ]);
         assert_eq!(
@@ -859,6 +861,8 @@ mod tests {
                 lanes: 8,
             }],
             reap_threshold: None,
+            #[cfg(feature = "std-surface")]
+            value_types: std::collections::BTreeMap::new(),
         }]);
         assert_eq!(fp_contract_mode(&m), FpMode::Relaxed);
     }

@@ -1035,6 +1035,9 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             ret_id,
             body,
             reap_threshold,
+            // Step D — the per-function `value_types` table is NOT serialized in
+            // S2a (byte-neutral). S2b's v0x03 wire slice binds and emits it here.
+            ..
         } => {
             w.write_all(&[OP_FN_DEF]).unwrap();
             encode_string_idx(w, name, st).unwrap();

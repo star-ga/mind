@@ -554,6 +554,8 @@ mod tests {
                 Instr::Return { value: Some(ret) },
             ],
             reap_threshold: Some(0.5),
+            #[cfg(feature = "std-surface")]
+            value_types: std::collections::BTreeMap::new(),
         });
         m.instrs.push(Instr::ConstI64(v0, 3));
         m.instrs.push(Instr::Call {
@@ -614,12 +616,16 @@ mod tests {
                         },
                     ],
                     reap_threshold: None,
+                    #[cfg(feature = "std-surface")]
+                    value_types: std::collections::BTreeMap::new(),
                 },
                 Instr::Return {
                     value: Some(outer_p),
                 },
             ],
             reap_threshold: None,
+            #[cfg(feature = "std-surface")]
+            value_types: std::collections::BTreeMap::new(),
         });
         m.instrs.push(Instr::Output(outer_p));
 

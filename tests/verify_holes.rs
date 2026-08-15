@@ -52,6 +52,8 @@ fn fndef_body_self_reference_rejected() {
         params: vec![],
         ret_id: None,
         reap_threshold: None,
+        #[cfg(feature = "std-surface")]
+        value_types: std::collections::BTreeMap::new(),
         body: vec![
             Instr::ConstI64(a, 1),
             Instr::BinOp {
@@ -85,6 +87,8 @@ fn fndef_body_duplicate_def_rejected() {
         params: vec![],
         ret_id: None,
         reap_threshold: None,
+        #[cfg(feature = "std-surface")]
+        value_types: std::collections::BTreeMap::new(),
         body: vec![Instr::ConstI64(dup, 1), Instr::ConstI64(dup, 2)],
     });
     let out = m.fresh();
@@ -109,6 +113,8 @@ fn fndef_body_forward_chain_still_passes() {
         params: vec![],
         ret_id: None,
         reap_threshold: None,
+        #[cfg(feature = "std-surface")]
+        value_types: std::collections::BTreeMap::new(),
         body: vec![
             Instr::ConstI64(b0, 1),
             Instr::ConstI64(b1, 2),

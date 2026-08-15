@@ -55,6 +55,8 @@ fn module_with_fn(name: &str, body: Vec<Instr>, ret: ValueId) -> IRModule {
         ret_id: Some(ret),
         body,
         reap_threshold: None,
+        #[cfg(feature = "std-surface")]
+        value_types: std::collections::BTreeMap::new(),
     });
     // At least one main-level op so the assembler emits @main.
     let c = m.fresh();

@@ -147,6 +147,8 @@ fn ssa_fn_param_and_body_values_pass() {
             },
         ],
         reap_threshold: None,
+        #[cfg(feature = "std-surface")]
+        value_types: std::collections::BTreeMap::new(),
     });
     // Top-level namespace reuses %0 — must NOT collide with the function's %0.
     m.instrs.push(Instr::ConstI64(ValueId(0), 0));
@@ -185,6 +187,8 @@ fn ssa_duplicate_result_id_in_fn_body_fails() {
             },
         ],
         reap_threshold: None,
+        #[cfg(feature = "std-surface")]
+        value_types: std::collections::BTreeMap::new(),
     });
     m.next_id = 2;
 
@@ -342,6 +346,8 @@ fn if_merge_module(
             },
         ],
         reap_threshold: None,
+        #[cfg(feature = "std-surface")]
+        value_types: std::collections::BTreeMap::new(),
     });
     // Top-level value + Output, in the module's own SSA namespace (distinct from
     // the fn-body namespace), so verify_module's MissingOutput check is satisfied
@@ -580,6 +586,8 @@ fn while_carry_module(live_post: ValueId) -> IRModule {
             },
         ],
         reap_threshold: None,
+        #[cfg(feature = "std-surface")]
+        value_types: std::collections::BTreeMap::new(),
     });
     m.instrs.push(Instr::ConstI64(ValueId(0), 0));
     m.instrs.push(Instr::Output(ValueId(0)));

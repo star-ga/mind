@@ -309,6 +309,8 @@ fn if_return_mlir_does_not_place_return_mid_block() {
         ret_id: Some(dst),
         body: fn_body,
         reap_threshold: None,
+        #[cfg(feature = "std-surface")]
+        value_types: std::collections::BTreeMap::new(),
     });
     let out_id = m.fresh();
     m.instrs.push(Instr::ConstI64(out_id, 0));

@@ -311,6 +311,8 @@ mod tests {
                 Instr::Return { value: Some(rr) },
             ],
             reap_threshold: None,
+            #[cfg(feature = "std-surface")]
+            value_types: std::collections::BTreeMap::new(),
         });
         assert!(
             !ir_declares_deterministic(&nested),
@@ -439,6 +441,8 @@ mod tests {
                 Instr::Return { value: Some(rr) },
             ],
             reap_threshold: None,
+            #[cfg(feature = "std-surface")]
+            value_types: std::collections::BTreeMap::new(),
         });
         assert!(!ir_declares_deterministic(&nested));
     }
@@ -491,6 +495,8 @@ mod tests {
                 Instr::Return { value: Some(r) },
             ],
             reap_threshold: None,
+            #[cfg(feature = "std-surface")]
+            value_types: std::collections::BTreeMap::new(),
         });
         m
     }
