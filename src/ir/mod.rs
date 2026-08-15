@@ -905,6 +905,62 @@ pub enum BinOp {
     Shr,
 }
 
+/// Step D — the fixed-vs-dynamic SIZE category of an array aggregate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArraySize {
+    /// Fixed-length `[T; N]` — the element count `N` is known at compile time.
+    Fixed(u64),
+    /// Dynamic `array<T>` — the length lives in the runtime `[addr|len|cap]`
+    /// descriptor; the descriptor is storage/ABI, NOT the semantic type.
+    Dynamic,
+}
+
+/// Step D — the CANONICAL aggregate type of a ValueId that denotes an array
+/// (mandate AGGREGATE_TYPE_INVARIANT). Element dtype + size category, carried
+/// ONCE per aggregate ValueId. This is the single source of aggregate-type
+/// truth: established at AST->IR lowering, serialized in mic@3 (from S2), and
+/// CONSUMED by backends — a backend never re-derives the element dtype as its
+/// own authority. Generic over dtype (not an f64 special case): a new element
+/// dtype is a `DType` variant here plus its physical lowering, never a forest
+/// of dtype-specific branches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArrayType {
+    pub elem_dtype: crate::types::DType,
+    pub size: ArraySize,
+}
+
+/// Step D — a CORRUPTION found by the canonical aggregate-type lookup, kept
+/// STRICTLY distinct from `Ok(None)` (a genuinely non-aggregate ValueId). A
+/// downstream `None => scalar / legacy / re-infer` fallback must never be reached
+/// for a corrupt aggregate type, so [`IRModule::canonical_array_type`] returns
+/// these as `Err`, never as absence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AggregateTypeError {
+    /// The explicit `value_types` entry disagrees with the intrinsic type of the
+    /// `ConstDenseTensor` node that defines the same value (two authorities).
+    Conflict { table: ArrayType, node: ArrayType },
+    /// A `ConstDenseTensor` node's shape is not a valid FIXED extent (a non-Known
+    /// dim or an overflowing product), so no `ArrayType` can be reconstructed.
+    MalformedConstDense,
+    // S3/S5: `MissingAggregateType { .. }` is added here once canonical typing is
+    // mandatory for every KNOWN aggregate ValueId (a known aggregate with no
+    // canonical type is then an error, not `Ok(None)`).
+}
+
+/// Flat element count of a dense-tensor shape, or `None` if it is not a valid
+/// FIXED extent. FAIL CLOSED: `Some(product)` only when EVERY dim is `Known` and
+/// the product does not overflow; ANY non-`Known` dim (e.g. a `Sym` dim decoded
+/// from a hostile mic@3 artifact) yields `None`, so
+/// [`IRModule::canonical_array_type`] refuses to invent a confident `Fixed(N)`
+/// from an unknown extent rather than silently guessing `1`.
+#[cfg(feature = "std-surface")]
+pub(crate) fn dense_shape_len(shape: &[crate::types::ShapeDim]) -> Option<u64> {
+    shape.iter().try_fold(1u64, |acc, d| match d {
+        crate::types::ShapeDim::Known(n) => acc.checked_mul(*n as u64),
+        _ => None,
+    })
+}
+
 #[derive(Debug, Clone)]
 pub struct IRModule {
     pub instrs: Vec<Instr>,
@@ -944,6 +1000,18 @@ pub struct IRModule {
         String,
         (Vec<u64>, crate::types::DType, Vec<crate::types::ShapeDim>),
     >,
+    /// Step D — the CANONICAL aggregate-type registry (AGGREGATE_TYPE_INVARIANT).
+    /// Maps an aggregate ValueId to its [`ArrayType`] (element dtype + fixed/
+    /// dynamic size). Single source of aggregate-type truth: established at
+    /// AST->IR lowering, serialized in mic@3 (from S2), consumed by backends
+    /// (never re-derived). A `ConstDenseTensor` dst is typed INTRINSICALLY by its
+    /// own node (dtype+shape) and is reconstructed on demand by
+    /// [`IRModule::canonical_array_type`] rather than duplicated here — so this
+    /// table stays free of const-dense entries and Tier-B wire bytes stay frozen.
+    /// `BTreeMap` keeps the wire order deterministic. Gated; empty until the S3/S4
+    /// population slices land (S1 introduces it dormant).
+    #[cfg(feature = "std-surface")]
+    pub value_types: std::collections::BTreeMap<ValueId, ArrayType>,
     /// RFC 0010 Phase B — `#[repr(C)]` struct registry.
     ///
     /// Maps a struct name to its field types (as `crate::ast::TypeAnn`),
@@ -1053,6 +1121,8 @@ impl IRModule {
             #[cfg(feature = "std-surface")]
             const_dense_defs: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
+            value_types: std::collections::BTreeMap::new(),
+            #[cfg(feature = "std-surface")]
             repr_c_structs: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
             enum_variant_tags: std::collections::BTreeMap::new(),
@@ -1075,6 +1145,58 @@ impl IRModule {
         let id = self.next_id;
         self.next_id += 1;
         ValueId(id)
+    }
+
+    /// Step D (Amendment 1) — the canonical aggregate-type lookup: the SINGLE
+    /// source of aggregate-type truth for a ValueId. Two contributors:
+    ///   1. an explicit `value_types` entry (dynamic / mutable / literal
+    ///      aggregates — populated from S3/S4), and/or
+    ///   2. the `ConstDenseTensor` node that defines `vid` — Tier-B const dense is
+    ///      intrinsically self-typed by its dtype+shape, so it carries no
+    ///      `value_types` entry (keeping its wire bytes frozen) yet is still
+    ///      typed through THIS lookup.
+    ///
+    /// The result carefully distinguishes ABSENCE from CORRUPTION — a type
+    /// conflict must NEVER masquerade as "not an aggregate", or a downstream
+    /// `None => scalar / legacy / re-infer` path would turn a canonical-typing
+    /// corruption into a silent backend bypass:
+    ///   * non-aggregate ValueId                     -> `Ok(None)`
+    ///   * a valid aggregate type (one authority, or two that agree) -> `Ok(Some)`
+    ///   * table and node DISAGREE                    -> `Err(Conflict)`
+    ///   * `ConstDenseTensor` shape is not a valid fixed extent -> `Err(MalformedConstDense)`
+    /// (S3/S5 add `Err(MissingAggregateType)` once typing is mandatory for every
+    /// known aggregate.)
+    #[cfg(feature = "std-surface")]
+    pub fn canonical_array_type(
+        &self,
+        vid: ValueId,
+    ) -> Result<Option<ArrayType>, AggregateTypeError> {
+        let explicit = self.value_types.get(&vid).cloned();
+        // Find the defining ConstDenseTensor NODE (if any) SEPARATELY from whether
+        // its type is reconstructible, so a malformed node is an ERROR, not absence.
+        let dense_node = self.instrs.iter().find_map(|i| match i {
+            Instr::ConstDenseTensor {
+                dst, dtype, shape, ..
+            } if *dst == vid => Some((dtype.clone(), shape.as_slice())),
+            _ => None,
+        });
+        let node_ty = match dense_node {
+            Some((dtype, shape)) => match dense_shape_len(shape) {
+                Some(n) => Some(ArrayType {
+                    elem_dtype: dtype,
+                    size: ArraySize::Fixed(n),
+                }),
+                None => return Err(AggregateTypeError::MalformedConstDense),
+            },
+            None => None,
+        };
+        match (explicit, node_ty) {
+            (Some(e), Some(c)) if e == c => Ok(Some(e)),
+            (Some(table), Some(node)) => Err(AggregateTypeError::Conflict { table, node }),
+            (Some(e), None) => Ok(Some(e)),
+            (None, Some(c)) => Ok(Some(c)),
+            (None, None) => Ok(None),
+        }
     }
 }
 

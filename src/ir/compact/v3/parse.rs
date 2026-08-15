@@ -1147,6 +1147,12 @@ pub fn parse_mic3(data: &[u8]) -> Result<IRModule, Mic3Error> {
         // the `--no-default-features` build fails E0560 (the field is absent).
         #[cfg(feature = "std-surface")]
         const_dense_defs: std::collections::BTreeMap::new(),
+        // Step D — value_types is reconstructed empty on parse in S1 (no wire
+        // section yet); the S2 slice adds the version-gated `value_types` mic@3
+        // section and its reconstruction here. ConstDenseTensor dsts stay typed
+        // via the node itself (canonical_array_type), so Tier-B needs no entry.
+        #[cfg(feature = "std-surface")]
+        value_types: std::collections::BTreeMap::new(),
         #[cfg(feature = "std-surface")]
         repr_c_structs: std::collections::BTreeMap::new(),
         // The enum-discriminant table is a lowering-only side-table; it is

@@ -735,6 +735,21 @@ pub enum IrVerifyError {
     /// Operand validation failed (e.g., a negative axis or stride).
     #[error("invalid operand in instruction {instr_index}: {message}")]
     InvalidOperand { instr_index: usize, message: String },
+
+    /// Step D (AGGREGATE_TYPE_INVARIANT / Amendment 1) — a canonical
+    /// `value_types` entry for a ValueId disagrees with the intrinsic type of the
+    /// `ConstDenseTensor` node that also defines it. Two authorities may not
+    /// disagree; this is fail-closed rather than silently preferring one.
+    #[error("aggregate type conflict for value %{value}: {message}")]
+    AggregateTypeConflict { value: ValueId, message: String },
+
+    /// Step D — a `ConstDenseTensor` node is not a valid FIXED aggregate: its
+    /// shape has a non-`Known` dim (e.g. a `Sym` dim decoded from a hostile mic@3
+    /// artifact) or its `data` length disagrees with the shape's element product.
+    /// Rejected fail-closed so the canonical aggregate-type reconstruction can
+    /// never invent a confident `Fixed(N)` from an unknown / inconsistent extent.
+    #[error("malformed ConstDenseTensor for value %{value}: {message}")]
+    MalformedConstDenseTensor { value: ValueId, message: String },
 }
 
 /// Verify that an [`IRModule`] is well-formed and deterministic.
@@ -742,6 +757,58 @@ pub enum IrVerifyError {
 /// The verifier enforces SSA discipline (unique definitions, no use-before-def),
 /// basic operand sanity, and synchronization of the module's `next_id` counter.
 /// It returns structured errors instead of panicking on invalid input.
+/// Step D — recursively verify `ConstDenseTensor` well-formedness across the FULL
+/// nested instruction tree (FnDef / While / If / Region bodies), so a malformed
+/// node buried in a control-flow body cannot evade the fail-closed check. Each
+/// node's shape must be a valid FIXED extent and its `data` length must equal the
+/// shape's element product. The check is per-node intrinsic; SSA namespaces do
+/// not matter (only the `dst` is read, and only for the error message).
+#[cfg(feature = "std-surface")]
+fn check_const_dense_wellformed(instrs: &[Instr]) -> Result<(), IrVerifyError> {
+    for instr in instrs {
+        match instr {
+            Instr::ConstDenseTensor {
+                dst, shape, data, ..
+            } => match crate::ir::dense_shape_len(shape) {
+                None => {
+                    return Err(IrVerifyError::MalformedConstDenseTensor {
+                        value: *dst,
+                        message: "shape is not a fully-known fixed extent".to_string(),
+                    });
+                }
+                Some(n) if n as usize != data.len() => {
+                    return Err(IrVerifyError::MalformedConstDenseTensor {
+                        value: *dst,
+                        message: format!("shape element count {n} != data length {}", data.len()),
+                    });
+                }
+                Some(_) => {}
+            },
+            Instr::FnDef { body, .. } | Instr::Region { body, .. } => {
+                check_const_dense_wellformed(body)?;
+            }
+            Instr::While {
+                cond_instrs, body, ..
+            } => {
+                check_const_dense_wellformed(cond_instrs)?;
+                check_const_dense_wellformed(body)?;
+            }
+            Instr::If {
+                cond_instrs,
+                then_instrs,
+                else_instrs,
+                ..
+            } => {
+                check_const_dense_wellformed(cond_instrs)?;
+                check_const_dense_wellformed(then_instrs)?;
+                check_const_dense_wellformed(else_instrs)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 pub fn verify_module(module: &IRModule) -> Result<(), IrVerifyError> {
     let mut defined: BTreeSet<ValueId> = BTreeSet::new();
     let mut saw_output = false;
@@ -783,6 +850,49 @@ pub fn verify_module(module: &IRModule) -> Result<(), IrVerifyError> {
             found: module.next_id,
             expected: max_seen,
         });
+    }
+
+    // Step D — ConstDenseTensor well-formedness (fail closed on a hostile mic@3
+    // artifact): every const-dense node — at ANY nesting depth (FnDef / While /
+    // If / Region bodies, which the mic@3 parser accepts and lowering itself
+    // re-emits into fn bodies) — must have a valid FIXED extent (each dim
+    // `Known`, product non-overflowing) and an element count equal to
+    // `data.len()`. Without this a `Sym`-dim / mismatched node buried inside a
+    // loop body would evade the check and let the canonical lookup guess a
+    // `Fixed(N)`. The check is per-node intrinsic (shape vs data.len), so a
+    // function's separate SSA id-numbering does not matter.
+    #[cfg(feature = "std-surface")]
+    check_const_dense_wellformed(&module.instrs)?;
+
+    // Step D — AGGREGATE_TYPE_INVARIANT well-formedness (dormant in S1/S2: the
+    // `value_types` table is empty, so this loop is a no-op; it becomes
+    // load-bearing when the S3/S4 population slices fill the table, and S5 turns
+    // it into a required-presence check). `canonical_array_type` returns `Err`
+    // (never `Ok(None)`) when an explicit entry CONFLICTS with the defining
+    // `ConstDenseTensor` node or that node is malformed — a corruption may not
+    // masquerade as absence — which this converts to the matching hard verifier
+    // error rather than a silent single-authority pick.
+    #[cfg(feature = "std-surface")]
+    for (vid, _at) in &module.value_types {
+        match module.canonical_array_type(*vid) {
+            Ok(_) => {} // an explicit entry with no conflict resolves to Ok(Some(entry))
+            Err(crate::ir::AggregateTypeError::Conflict { table, node }) => {
+                return Err(IrVerifyError::AggregateTypeConflict {
+                    value: *vid,
+                    message: format!(
+                        "explicit value_types entry {table:?} disagrees with the \
+                         ConstDenseTensor node type {node:?} for the same value"
+                    ),
+                });
+            }
+            Err(crate::ir::AggregateTypeError::MalformedConstDense) => {
+                return Err(IrVerifyError::MalformedConstDenseTensor {
+                    value: *vid,
+                    message: "value_types entry references a malformed ConstDenseTensor"
+                        .to_string(),
+                });
+            }
+        }
     }
 
     Ok(())
@@ -1079,4 +1189,179 @@ fn validate_operands(
     }
 
     Ok(())
+}
+
+/// Step D S1 — the canonical aggregate-type invariant infrastructure: the
+/// `canonical_array_type` lookup (which distinguishes ABSENCE from CORRUPTION)
+/// and the fail-closed verifier rules. S1 acceptance controls exercised here:
+/// CANONICAL_ARRAY_TYPE_API, CONST_DENSE_CANONICAL_ARRAY_TYPE, ARRAY_TYPE_CONFLICT
+/// (fail closed), the permanent negative control
+/// ARRAY_TYPE_CONFLICT_CANNOT_MASQUERADE_AS_NOT_AGGREGATE, and malformed-node
+/// fail-closed — against the real IR types. (CANONICAL_ARRAY_TYPE_LOOKUP_TOTAL is
+/// deliberately NOT claimed until S3 populates every supported aggregate surface.)
+#[cfg(all(test, feature = "std-surface"))]
+mod step_d_aggregate_type_tests {
+    use crate::ir::{
+        AggregateTypeError, ArraySize, ArrayType, IRModule, Instr, IrVerifyError, verify_module,
+    };
+    use crate::types::{DType, ShapeDim};
+
+    fn const_dense_f64x4() -> (IRModule, crate::ir::ValueId) {
+        // A Tier-B const-dense `[f64; 4]` + an Output (verify_module requires one).
+        let mut m = IRModule::new();
+        let v = m.fresh();
+        m.instrs.push(Instr::ConstDenseTensor {
+            dst: v,
+            dtype: DType::F64,
+            shape: vec![ShapeDim::Known(4)],
+            data: vec![0u64; 4],
+        });
+        m.instrs.push(Instr::Output(v));
+        (m, v)
+    }
+
+    #[test]
+    fn canonical_array_type_total_for_const_dense() {
+        // CONST_DENSE_CANONICAL_ARRAY_TYPE: a ConstDenseTensor dst is fully typed
+        // through the canonical lookup EVEN WITH an empty value_types table (it is
+        // reconstructed from the node's dtype+shape) — canonical typing is total,
+        // and Tier-B needs no wire entry.
+        let (m, v) = const_dense_f64x4();
+        assert!(m.value_types.is_empty(), "S1: value_types starts empty");
+        assert_eq!(
+            m.canonical_array_type(v),
+            Ok(Some(ArrayType {
+                elem_dtype: DType::F64,
+                size: ArraySize::Fixed(4),
+            }))
+        );
+    }
+
+    #[test]
+    fn canonical_array_type_ok_none_for_non_aggregate() {
+        // Negative control A: a scalar ValueId is genuinely non-aggregate -> the
+        // API returns Ok(None) (ABSENCE), distinct from any Err (CORRUPTION).
+        let mut m = IRModule::new();
+        let v = m.fresh();
+        m.instrs.push(Instr::ConstI64(v, 7));
+        m.instrs.push(Instr::Output(v));
+        assert_eq!(m.canonical_array_type(v), Ok(None));
+    }
+
+    #[test]
+    fn verify_rejects_conflicting_value_types() {
+        // Negative control E (FAIL CLOSED): an explicit value_types entry that
+        // DISAGREES with the ConstDenseTensor node for the same value is a hard
+        // AggregateTypeConflict, never a silent single-authority pick.
+        let (mut m, v) = const_dense_f64x4();
+        m.value_types.insert(
+            v,
+            ArrayType {
+                elem_dtype: DType::I64, // conflicts with the node's F64
+                size: ArraySize::Fixed(4),
+            },
+        );
+        match verify_module(&m) {
+            Err(IrVerifyError::AggregateTypeConflict { value, .. }) => assert_eq!(value, v),
+            other => panic!("expected AggregateTypeConflict, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn array_type_conflict_cannot_masquerade_as_not_aggregate() {
+        // PERMANENT NEGATIVE CONTROL
+        // (ARRAY_TYPE_CONFLICT_CANNOT_MASQUERADE_AS_NOT_AGGREGATE): a conflict
+        // between the table and the node MUST surface as `Err(Conflict)` — never
+        // as `Ok(None)`. If it collapsed to absence, a downstream
+        // `None => scalar / legacy / re-infer` path would silently bypass the
+        // backend on a corrupt canonical type.
+        let (mut m, v) = const_dense_f64x4();
+        m.value_types.insert(
+            v,
+            ArrayType {
+                elem_dtype: DType::I64,
+                size: ArraySize::Fixed(4),
+            },
+        );
+        let got = m.canonical_array_type(v);
+        assert!(
+            matches!(got, Err(AggregateTypeError::Conflict { .. })),
+            "conflict must be Err(Conflict), got {got:?}"
+        );
+        assert_ne!(got, Ok(None), "a conflict must NOT masquerade as absence");
+    }
+
+    #[test]
+    fn malformed_const_dense_fails_closed() {
+        // A ConstDenseTensor with a non-Known (Sym) shape dim cannot be typed to a
+        // Fixed(N): the lookup returns Err(MalformedConstDense) (never a confident
+        // guess), and verify_module rejects it as MalformedConstDenseTensor.
+        let mut m = IRModule::new();
+        let v = m.fresh();
+        m.instrs.push(Instr::ConstDenseTensor {
+            dst: v,
+            dtype: DType::F64,
+            shape: vec![ShapeDim::Sym("B")], // not a fixed extent
+            data: vec![0u64; 4],
+        });
+        m.instrs.push(Instr::Output(v));
+        assert_eq!(
+            m.canonical_array_type(v),
+            Err(AggregateTypeError::MalformedConstDense)
+        );
+        match verify_module(&m) {
+            Err(IrVerifyError::MalformedConstDenseTensor { value, .. }) => assert_eq!(value, v),
+            other => panic!("expected MalformedConstDenseTensor, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn nested_malformed_const_dense_fails_closed() {
+        // Fail closed at ANY depth: a malformed ConstDenseTensor buried inside a
+        // FnDef body is still rejected (the well-formedness check walks the full
+        // nested instruction tree, not just top-level instrs). A flat,
+        // top-level-only check would let this hostile-artifact shape through.
+        let mut m = IRModule::new();
+        let r = m.fresh();
+        m.instrs.push(Instr::FnDef {
+            name: "g".to_string(),
+            params: vec![],
+            ret_id: Some(r),
+            body: vec![Instr::ConstDenseTensor {
+                dst: r,
+                dtype: DType::F64,
+                shape: vec![ShapeDim::Sym("B")], // malformed, nested one level down
+                data: vec![0u64; 4],
+            }],
+            reap_threshold: None,
+        });
+        let v = m.fresh();
+        m.instrs.push(Instr::ConstI64(v, 0));
+        m.instrs.push(Instr::Output(v));
+        match verify_module(&m) {
+            Err(IrVerifyError::MalformedConstDenseTensor { value, .. }) => assert_eq!(value, r),
+            other => panic!("expected MalformedConstDenseTensor for a nested node, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn verify_accepts_agreeing_value_types() {
+        // An explicit entry that AGREES with the node is well-formed.
+        let (mut m, v) = const_dense_f64x4();
+        m.value_types.insert(
+            v,
+            ArrayType {
+                elem_dtype: DType::F64,
+                size: ArraySize::Fixed(4),
+            },
+        );
+        assert!(verify_module(&m).is_ok());
+        assert_eq!(
+            m.canonical_array_type(v),
+            Ok(Some(ArrayType {
+                elem_dtype: DType::F64,
+                size: ArraySize::Fixed(4)
+            }))
+        );
+    }
 }
