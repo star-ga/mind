@@ -39,7 +39,7 @@
 //! # Structurally-scoped aggregate types (version `0x03`+, Step D)
 //!
 //! `0x03` appends the canonical array-typing tables. The version is
-//! *content-derived* ([`crate::ir::IRModule::has_scoped_value_types`]): `0x03`
+//! *content-derived* (`IRModule::has_scoped_value_types`): `0x03`
 //! iff any scope carries a non-empty table, else the byte-for-byte `0x02` base
 //! layout. Each table is a list ordered by ascending `ValueId`:
 //!
@@ -175,7 +175,7 @@ pub const MIC3_MAGIC: [u8; 4] = *b"MIC3";
 ///   tables (RFC-canonical array typing): a per-`FnDef` sub-list tail-appended
 ///   after each function's body, and a module-level table appended after the
 ///   `repr_c_structs` registry (the last `0x02` section). The version is
-///   *content-derived*: [`crate::ir::IRModule::has_scoped_value_types`] chooses
+///   *content-derived*: `IRModule::has_scoped_value_types` chooses
 ///   `0x03` iff any scope carries a non-empty table, else the byte-for-byte
 ///   `0x02` layout ([`MIC3_VERSION_BASE`]). Every table is empty in a
 ///   pipeline-produced module today (populated only by the later semantic
@@ -1685,7 +1685,10 @@ mod tests {
             let bytes = emit_mic3(&m);
             assert_eq!(bytes[4], MIC3_VERSION, "populated table ⇒ v0x03");
             let parsed = parse_mic3(&bytes).expect("v0x03 parse");
-            assert_eq!(parsed.value_types, m.value_types, "module table reconstructs");
+            assert_eq!(
+                parsed.value_types, m.value_types,
+                "module table reconstructs"
+            );
             assert_eq!(emit_mic3(&parsed), bytes, "v0x03 module-table fixed point");
         }
 
@@ -1694,8 +1697,11 @@ mod tests {
         #[test]
         fn fndef_table_roundtrip_v3() {
             let mut m = IRModule::new();
-            m.instrs
-                .push(fndef("f", vec![], tbl(&[(3, DType::F32, ArraySize::Dynamic)])));
+            m.instrs.push(fndef(
+                "f",
+                vec![],
+                tbl(&[(3, DType::F32, ArraySize::Dynamic)]),
+            ));
             let bytes = emit_mic3(&m);
             assert_eq!(bytes[4], MIC3_VERSION, "FnDef table ⇒ v0x03");
             let parsed = parse_mic3(&bytes).expect("v0x03 parse");
@@ -1764,9 +1770,11 @@ mod tests {
                 // pre-existing round-trip property unrelated to Step D. Anchoring
                 // on the parsed module removes that confound while still proving
                 // the v0x03 value_types bytes are a stable fixed point.
-                let canon = emit_mic3(&parse_mic3(&bytes).unwrap_or_else(|e| panic!("{label}: {e}")));
+                let canon =
+                    emit_mic3(&parse_mic3(&bytes).unwrap_or_else(|e| panic!("{label}: {e}")));
                 assert_eq!(canon[4], MIC3_VERSION, "{label}: canonical stays v0x03");
-                let reparsed = emit_mic3(&parse_mic3(&canon).unwrap_or_else(|e| panic!("{label}: {e}")));
+                let reparsed =
+                    emit_mic3(&parse_mic3(&canon).unwrap_or_else(|e| panic!("{label}: {e}")));
                 assert_eq!(reparsed, canon, "{label}: v0x03 fixed point");
             }
         }
@@ -1860,7 +1868,11 @@ mod tests {
             t.extend(entry(5, 0x03, 0x00, Some(4))); // vid 5
             t.extend(entry(3, 0x03, 0x00, Some(4))); // vid 3 < 5 → reject
             let err = parse_mic3(&v3_module_tail(&t)).expect_err("descending keys rejected");
-            assert!(err.message.contains("strictly ascending"), "got: {}", err.message);
+            assert!(
+                err.message.contains("strictly ascending"),
+                "got: {}",
+                err.message
+            );
         }
 
         #[test]
@@ -1870,7 +1882,11 @@ mod tests {
             t.extend(entry(5, 0x03, 0x00, Some(4)));
             t.extend(entry(5, 0x03, 0x00, Some(4))); // vid == prev → reject
             let err = parse_mic3(&v3_module_tail(&t)).expect_err("duplicate keys rejected");
-            assert!(err.message.contains("strictly ascending"), "got: {}", err.message);
+            assert!(
+                err.message.contains("strictly ascending"),
+                "got: {}",
+                err.message
+            );
         }
 
         #[test]
@@ -1879,7 +1895,11 @@ mod tests {
             uleb128_write(&mut t, 1).unwrap();
             t.extend(entry(0, 0x7F, 0x00, Some(1))); // dtype 0x7F is not a DType
             let err = parse_mic3(&v3_module_tail(&t)).expect_err("unknown dtype rejected");
-            assert!(err.message.contains("unknown dtype"), "got: {}", err.message);
+            assert!(
+                err.message.contains("unknown dtype"),
+                "got: {}",
+                err.message
+            );
         }
 
         #[test]
@@ -1888,7 +1908,11 @@ mod tests {
             uleb128_write(&mut t, 1).unwrap();
             t.extend(entry(0, 0x03, 0x05, None)); // size_kind 0x05 is neither Fixed nor Dynamic
             let err = parse_mic3(&v3_module_tail(&t)).expect_err("unknown size_kind rejected");
-            assert!(err.message.contains("unknown size_kind"), "got: {}", err.message);
+            assert!(
+                err.message.contains("unknown size_kind"),
+                "got: {}",
+                err.message
+            );
         }
 
         #[test]
@@ -1906,7 +1930,10 @@ mod tests {
             let mut t = Vec::new();
             uleb128_write(&mut t, u64::MAX).unwrap(); // absurd entry count
             let err = parse_mic3(&v3_module_tail(&t)).expect_err("count bomb rejected");
-            assert!(!err.message.is_empty(), "clean truncation error, not an OOM abort");
+            assert!(
+                !err.message.is_empty(),
+                "clean truncation error, not an OOM abort"
+            );
         }
     }
 }

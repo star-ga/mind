@@ -857,6 +857,12 @@ fn emit_value_types_table<W: Write>(
 
 // ─── Instruction emitter ──────────────────────────────────────────────────────
 
+// `ver` gates the v0x03 `value_types` sub-list in the OP_FN_DEF arm, which is
+// `std-surface`-only. Under `not(std-surface)` that arm is compiled out, so `ver`
+// is genuinely only threaded through the recursive calls — an intentional,
+// feature-scoped shape, not dead plumbing. Silence the recursion lint for that
+// config only (it correctly stays active under the full feature set).
+#[cfg_attr(not(feature = "std-surface"), allow(clippy::only_used_in_recursion))]
 fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable, ver: u8) {
     match instr {
         Instr::ConstI64(dst, v) => {
