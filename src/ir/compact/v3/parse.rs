@@ -1142,7 +1142,10 @@ pub fn parse_mic3(data: &[u8]) -> Result<IRModule, Mic3Error> {
         const_array_defs: std::collections::BTreeMap::new(),
         // const_dense_defs is a lowering-time registry, not serialized in mic@3
         // (the ConstDenseTensor node itself carries the dtype + bits on the
-        // wire), so a parsed module reconstructs it empty.
+        // wire), so a parsed module reconstructs it empty. Gated on std-surface
+        // exactly like the field's declaration in src/ir/mod.rs — without the cfg
+        // the `--no-default-features` build fails E0560 (the field is absent).
+        #[cfg(feature = "std-surface")]
         const_dense_defs: std::collections::BTreeMap::new(),
         #[cfg(feature = "std-surface")]
         repr_c_structs: std::collections::BTreeMap::new(),
