@@ -1140,6 +1140,10 @@ pub fn parse_mic3(data: &[u8]) -> Result<IRModule, Mic3Error> {
         struct_defs: std::collections::BTreeMap::new(),
         #[cfg(feature = "std-surface")]
         const_array_defs: std::collections::BTreeMap::new(),
+        // const_dense_defs is a lowering-time registry, not serialized in mic@3
+        // (the ConstDenseTensor node itself carries the dtype + bits on the
+        // wire), so a parsed module reconstructs it empty.
+        const_dense_defs: std::collections::BTreeMap::new(),
         #[cfg(feature = "std-surface")]
         repr_c_structs: std::collections::BTreeMap::new(),
         // The enum-discriminant table is a lowering-only side-table; it is

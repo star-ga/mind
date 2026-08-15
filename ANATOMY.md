@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3369 | **Est. tokens:** ~7,871,807
-**Generated:** 2026-08-15 13:10 UTC
+**Files:** 3370 | **Est. tokens:** ~7,873,218
+**Generated:** 2026-08-15 17:16 UTC
 
 ## Token Budget Guide
 
@@ -396,10 +396,10 @@
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~21,737 |
-| `src/ir/` | 5 | ~48,700 |
+| `src/ir/` | 5 | ~48,893 |
 | `src/ir/compact/` | 3 | ~15,282 |
 | `src/ir/compact/v2/` | 8 | ~38,404 |
-| `src/ir/compact/v3/` | 6 | ~49,216 |
+| `src/ir/compact/v3/` | 6 | ~49,286 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,880 |
 | `src/mlir/` | 3 | ~5,905 |
@@ -417,7 +417,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,332 |
-| `tests/` | 324 | ~555,091 |
+| `tests/` | 325 | ~556,239 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -4036,12 +4036,12 @@
 - `emit.rs` (~11139 tok, huge) — Copyright 2025 STARGA Inc.
 - `mldsa.rs` (~1510 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~13875 tok, huge) — Copyright 2025 STARGA Inc.
-- `parse.rs` (~11532 tok, huge) — Copyright 2025 STARGA Inc.
+- `parse.rs` (~11602 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
 - `evidence.rs` (~5759 tok, huge) — Copyright 2025 STARGA Inc.
 - `fp_mode.rs` (~13657 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
-- `mod.rs` (~12311 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~12504 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~4283 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~12690 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -4257,6 +4257,7 @@
 - `conformance.rs` (~129 tok, small)
 - `CONFORMANCE_TESTS.md` (~1225 tok, large) — MIND Conformance Test Corpus
 - `const_array_run.rs` (~884 tok, large) — Copyright 2025 STARGA Inc.
+- `const_f64_array_run.rs` (~1148 tok, large) — Copyright 2025 STARGA Inc.
 - `const_folding.rs` (~246 tok, medium) — Copyright 2025 STARGA Inc.
 - `continue_in_match_arm_run.rs` (~1222 tok, large) — Copyright 2025 STARGA Inc.
 - `conv2d_exec.rs` (~620 tok, large) — Copyright 2025 STARGA Inc.

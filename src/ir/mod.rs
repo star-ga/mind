@@ -933,6 +933,17 @@ pub struct IRModule {
     /// `BTreeMap` for deterministic iteration. Gated.
     #[cfg(feature = "std-surface")]
     pub const_array_defs: std::collections::BTreeMap<String, Vec<i64>>,
+    /// Phase 17.9 — named `const NAME: [f32/f64; N]` typed dense-blob registry
+    /// (f64-aggregate Tier B). Parallel to `const_array_defs`, but carries the
+    /// element `DType` + shape + per-element raw IEEE-754 bits so a fn body
+    /// (fresh SSA namespace) can re-emit a *typed* `ConstDenseTensor` on demand.
+    /// A float aggregate cannot use the i64-only `const_array_defs` (which would
+    /// silently zero every element). `BTreeMap` for deterministic iteration.
+    #[cfg(feature = "std-surface")]
+    pub const_dense_defs: std::collections::BTreeMap<
+        String,
+        (Vec<u64>, crate::types::DType, Vec<crate::types::ShapeDim>),
+    >,
     /// RFC 0010 Phase B — `#[repr(C)]` struct registry.
     ///
     /// Maps a struct name to its field types (as `crate::ast::TypeAnn`),
@@ -1039,6 +1050,8 @@ impl IRModule {
             struct_defs: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
             const_array_defs: std::collections::BTreeMap::new(),
+            #[cfg(feature = "std-surface")]
+            const_dense_defs: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
             repr_c_structs: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]

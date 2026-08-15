@@ -1617,7 +1617,7 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
             #[cfg(feature = "std-surface")]
             ast::Node::Const {
                 name,
-                ty: Some(TypeAnn::Array { element, .. }),
+                ty: Some(TypeAnn::Array { element, length }),
                 value,
                 ..
             } => {
@@ -1629,27 +1629,58 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                 // closed instead. f64 aggregates are Phase 17.3; upgrade path:
                 // store the raw bits on the i64 heap via the `__mind_*_to_bits`
                 // intrinsics, or add a typed dense-tensor const-array node.
-                if matches!(element.as_ref(), TypeAnn::ScalarF64 | TypeAnn::ScalarF32)
-                    || matches!(element.as_ref(), TypeAnn::Named(n) if n == "f64" || n == "f32")
-                {
-                    panic!(
-                        "const array `{name}` has a floating-point element type, \
-                         which the i64 const-array path cannot represent (it would \
-                         silently store zeros). Float aggregates are not yet \
-                         supported (roadmap 17.3); use a `tensor<f64[N]>` binding \
-                         or the `__mind_f64_to_bits` heap path instead."
-                    );
+                // Phase 17.9 — f64-aggregate Tier B: a floating-point element
+                // type routes to a TYPED dense blob (`ConstDenseTensor` +
+                // `const_dense_defs`) carrying per-element exact IEEE-754 bits,
+                // NOT the i64-only `ConstArray` path (which would silently store
+                // zeros — the former fail-closed panic). i64/i32 element types
+                // stay on the i64 path below, byte-identically (mic@3 gate).
+                let dense_dtype: Option<DType> = match element.as_ref() {
+                    TypeAnn::ScalarF64 => Some(DType::F64),
+                    TypeAnn::ScalarF32 => Some(DType::F32),
+                    TypeAnn::Named(n) if n == "f64" => Some(DType::F64),
+                    TypeAnn::Named(n) if n == "f32" => Some(DType::F32),
+                    _ => None,
+                };
+                if let Some(dtype) = dense_dtype {
+                    let elems: &[ast::Node] = match value.as_ref() {
+                        ast::Node::ArrayLit { elements, .. } => elements.as_slice(),
+                        _ => &[],
+                    };
+                    // Fail-closed: the literal element count must match the
+                    // declared length exactly (no silent truncation / zero-fill).
+                    if elems.len() != *length as usize {
+                        panic!(
+                            "const array `{name}`: literal has {} elements but the \
+                             declared length is {length}",
+                            elems.len()
+                        );
+                    }
+                    let data: Vec<u64> = elems.iter().map(|e| dense_elem_bits(e, &dtype)).collect();
+                    let shape = vec![ShapeDim::Known(*length as usize)];
+                    ir.const_dense_defs
+                        .insert(name.clone(), (data.clone(), dtype.clone(), shape.clone()));
+                    let id = ir.fresh();
+                    ir.instrs.push(Instr::ConstDenseTensor {
+                        dst: id,
+                        dtype,
+                        shape,
+                        data,
+                    });
+                    env.insert(name.clone(), id);
+                    ir.instrs.push(Instr::Output(id));
+                } else {
+                    let values = extract_array_lit_values(value);
+                    ir.const_array_defs.insert(name.clone(), values.clone());
+                    let id = ir.fresh();
+                    ir.instrs.push(Instr::ConstArray {
+                        dst: id,
+                        name: Some(name.clone()),
+                        values,
+                    });
+                    env.insert(name.clone(), id);
+                    ir.instrs.push(Instr::Output(id));
                 }
-                let values = extract_array_lit_values(value);
-                ir.const_array_defs.insert(name.clone(), values.clone());
-                let id = ir.fresh();
-                ir.instrs.push(Instr::ConstArray {
-                    dst: id,
-                    name: Some(name.clone()),
-                    values,
-                });
-                env.insert(name.clone(), id);
-                ir.instrs.push(Instr::Output(id));
             }
             // "finish MIND" Step 2 — record each enum variant's ordinal i64
             // tag (`0, 1, 2, …` in declaration order) under its fully-qualified
@@ -5037,6 +5068,20 @@ fn lower_expr(
                 });
                 return id;
             }
+            // Phase 17.9 — named f64/f32 const-array identifier: re-emit the
+            // TYPED dense blob (with its exact IEEE-754 bits + element dtype) so
+            // the following ArrayLoad has a well-typed base in this SSA namespace.
+            #[cfg(feature = "std-surface")]
+            if let Some((data, dtype, shape)) = ir.const_dense_defs.get(name).cloned() {
+                let id = ir.fresh();
+                ir.instrs.push(Instr::ConstDenseTensor {
+                    dst: id,
+                    dtype,
+                    shape,
+                    data,
+                });
+                return id;
+            }
             // Module-level `const NAME = value` (scalar / string / collection):
             // inline the value expression in the current SSA namespace. `env` is
             // checked first above, so a local of the same name shadows the const.
@@ -5646,6 +5691,7 @@ fn lower_expr(
                 // Phase 6.2b Gap 2: inherit const-array data so that
                 // fn bodies can re-emit ConstArray nodes on demand.
                 fn_ir.const_array_defs = ir.const_array_defs.clone();
+                fn_ir.const_dense_defs = ir.const_dense_defs.clone();
                 // "finish MIND" Step 2: inherit the enum-discriminant table so
                 // a variant referenced inside a fn body (as a value or a match
                 // arm) resolves to its tag rather than the placeholder 0.
@@ -5672,13 +5718,16 @@ fn lower_expr(
             // Build fn_env from env, but do NOT carry over const-array
             // SSA ids from the outer module — those ids are only valid in
             // the outer ir's SSA namespace.  Const-array identifiers will
-            // be re-resolved in the Ident arm below via const_array_defs.
+            // be re-resolved in the Ident arm below via const_array_defs
+            // (i64 LUTs) or const_dense_defs (Phase 17.9 f64/f32 dense LUTs);
+            // both must be filtered so the stale module id is not inherited.
             let mut fn_env: HashMap<String, ValueId> = env
                 .iter()
                 .filter(|(name, _)| {
                     #[cfg(feature = "std-surface")]
                     {
                         !ir.const_array_defs.contains_key(*name)
+                            && !ir.const_dense_defs.contains_key(*name)
                     }
                     #[cfg(not(feature = "std-surface"))]
                     {
@@ -11391,6 +11440,7 @@ fn sub_ir_from(parent: &IRModule) -> IRModule {
     m.next_id = parent.next_id;
     m.struct_defs = parent.struct_defs.clone();
     m.const_array_defs = parent.const_array_defs.clone();
+    m.const_dense_defs = parent.const_dense_defs.clone();
     m.enum_variant_tags = parent.enum_variant_tags.clone();
     // Boxed-enum metadata MUST be inherited too: a variant constructed inside a
     // control-flow body (`if cond { e = E.V { .. } }`) needs `boxed_enums` +
@@ -11417,6 +11467,7 @@ fn sub_ir_from_after(prev: &IRModule, meta_src: &IRModule) -> IRModule {
     m.next_id = prev.next_id;
     m.struct_defs = meta_src.struct_defs.clone();
     m.const_array_defs = meta_src.const_array_defs.clone();
+    m.const_dense_defs = meta_src.const_dense_defs.clone();
     m.enum_variant_tags = meta_src.enum_variant_tags.clone();
     // Inherit the boxed-enum metadata for variants constructed in this scope —
     // see the note in `sub_ir_from`.
