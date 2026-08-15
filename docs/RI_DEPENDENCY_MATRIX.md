@@ -74,14 +74,21 @@ GLOBAL_DEFAULT_NATIVE flips only when ALL hold:
 - **14/52 (27%) PASS** native ELF · **38/52 FAIL-CLOSED**.
 - 38 fails bucket (dominant construct): **tensor/ML 16** (long-term) · **float-heavy 14**
   (native-float completion) · **field/method 4**.
-- **`UNSUPPORTED_FEATURE_DIAGNOSTICS` — tensor/trait now EXACT (RI-D1a, #313)**: a native
-  fail-close is no longer a silent 0-byte-exit-0. The pure-MIND self-host driver
-  (`selfhost_driver.mind`) scans the user region and writes
-  `error[backend-native]: tensor type unsupported` / `… trait/impl unsupported` to stderr and
-  exits non-zero (the Rust bridge surfaces it via path #1); any other construct gets an honest
-  generic `unsupported construct` (still non-zero — never a silent 0-byte). Gate:
-  `self_host_native_diag_smoke.py` (CI-wired). deferred: line/column (no int→decimal helper in
-  the self-host dialect yet) + float-specific naming.
+- **`UNSUPPORTED_FEATURE_DIAGNOSTICS` — non-zero + named-when-confident, but HEURISTIC (RI-D1a,
+  #313; NOT yet truly EXACT)**: a native fail-close is no longer a silent 0-byte-exit-0 — the
+  pure-MIND driver (`selfhost_driver.mind`) exits non-zero and writes a stderr diagnostic (the
+  Rust bridge surfaces it via path #1). BUT the construct name comes from a **lexical substring
+  scan of the raw source** (`Tensor<` / `trait ` / `impl `), which is fragile and known-unsound
+  (multi-CLI audit 2026-08-14, net-verified): (a) **false-positive** — a program that fails for
+  another reason but contains the substring is MISLABELED (confirmed: `let portrait = 5` +
+  `f32` → "trait/impl unsupported"); (b) **missed spellings** — `tensor<` lowercase, `Tensor <`,
+  `trait\nGreet` fall to the generic message; (c) most real corpus failures (23/26 single-file
+  examples) hit the generic bucket anyway. The **truly-exact** fix is to have
+  `selftest_native_elf_u` return `{error_kind, source_lo, source_hi}` recorded at its fail-close
+  sites and render THAT (tracked separately) — a FORTRESS main.mind slice. Also deferred: the
+  scan is per-byte tail recursion (no TCO in the dialect) so a very large fail-closing program
+  can exhaust the stack — bound it. Gate today: `self_host_native_diag_smoke.py` (CI-wired) —
+  itself weak (exact-spelling only; audit #8).
 
 ## PRIORITY ORDER (by production-profile dependency impact, NOT patch size)
 
