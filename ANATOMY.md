@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3372 | **Est. tokens:** ~7,894,063
-**Generated:** 2026-08-15 22:31 UTC
+**Files:** 3372 | **Est. tokens:** ~7,900,803
+**Generated:** 2026-08-15 23:10 UTC
 
 ## Token Budget Guide
 
@@ -396,10 +396,10 @@
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~21,737 |
-| `src/ir/` | 5 | ~59,611 |
+| `src/ir/` | 5 | ~60,659 |
 | `src/ir/compact/` | 3 | ~15,282 |
 | `src/ir/compact/v2/` | 8 | ~38,404 |
-| `src/ir/compact/v3/` | 6 | ~49,718 |
+| `src/ir/compact/v3/` | 6 | ~55,410 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,880 |
 | `src/mlir/` | 3 | ~5,905 |
@@ -4034,15 +4034,15 @@
 
 - `collapse_receipt.rs` (~5109 tok, huge) — Copyright 2025 STARGA Inc.
 - `ed25519.rs` (~6051 tok, huge) — Copyright 2025 STARGA Inc.
-- `emit.rs` (~11184 tok, huge) — Copyright 2025 STARGA Inc.
+- `emit.rs` (~12094 tok, huge) — Copyright 2025 STARGA Inc.
 - `mldsa.rs` (~1510 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~13957 tok, huge) — Copyright 2025 STARGA Inc.
-- `parse.rs` (~11907 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~17722 tok, huge) — Copyright 2025 STARGA Inc.
+- `parse.rs` (~12924 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
 - `evidence.rs` (~5837 tok, huge) — Copyright 2025 STARGA Inc.
 - `fp_mode.rs` (~13711 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
-- `mod.rs` (~15399 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~16447 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~4283 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~20381 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`

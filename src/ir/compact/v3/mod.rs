@@ -18,14 +18,14 @@
 //!
 //! ```text
 //! [0..4)  magic  "MIC3"
-//! [4]     version 0x02
+//! [4]     version 0x02 (base) or 0x03 (with scoped value_types) — content-derived
 //! varint  string-table count N
 //! N × (varint byte-len, utf-8 bytes)  — string table entries (first-seen order)
 //! varint  next_id
 //! varint  exports count  (sorted lexicographically)
 //! N × varint  exports[i] — index into string table
 //! varint  instr count
-//! N × encoded-instr
+//! N × encoded-instr   (a v0x03 FnDef tail-appends its value_types sub-list)
 //! #[cfg(std-surface)]
 //! varint  struct_defs count
 //! N × (varint name-idx, varint field-count, M × varint field-name-idx)
@@ -33,7 +33,26 @@
 //! N × (varint name-idx, varint elem-count, M × zigzag-i64)
 //! varint  repr_c_structs count
 //! N × (varint name-idx, varint field-count, M × type-ann bytes)
+//! [v0x03 only] varint module value_types count, N × value_types entry
 //! ```
+//!
+//! # Structurally-scoped aggregate types (version `0x03`+, Step D)
+//!
+//! `0x03` appends the canonical array-typing tables. The version is
+//! *content-derived* ([`crate::ir::IRModule::has_scoped_value_types`]): `0x03`
+//! iff any scope carries a non-empty table, else the byte-for-byte `0x02` base
+//! layout. Each table is a list ordered by ascending `ValueId`:
+//!
+//! ```text
+//! value_types = varint entry-count, N × entry
+//! entry       = varint ValueId, u8 dtype-tag, u8 size_kind,
+//!               [varint N iff size_kind == 0x00 (Fixed)]
+//! size_kind: 0x00 = Fixed(N), 0x01 = Dynamic
+//! ```
+//!
+//! A per-`FnDef` table is tail-appended after that function's body; the module
+//! table is appended after `repr_c_structs`. A `0x02` (or `0x01`) artifact omits
+//! both; the parser reads them as empty for those versions.
 //!
 //! # Control-flow region-exit metadata (version `0x02`+)
 //!
@@ -152,16 +171,37 @@ pub const MIC3_MAGIC: [u8; 4] = *b"MIC3";
 ///   `While` with non-empty `exit_ids` or an `If` with non-empty `merges`, and
 ///   therefore changes `trace_hash` for those programs — the intended effect of
 ///   making the canonical content *complete* (RFC 0021 step-5).
+/// * `0x03` — Step D. Appends the structurally-scoped aggregate `value_types`
+///   tables (RFC-canonical array typing): a per-`FnDef` sub-list tail-appended
+///   after each function's body, and a module-level table appended after the
+///   `repr_c_structs` registry (the last `0x02` section). The version is
+///   *content-derived*: [`crate::ir::IRModule::has_scoped_value_types`] chooses
+///   `0x03` iff any scope carries a non-empty table, else the byte-for-byte
+///   `0x02` layout ([`MIC3_VERSION_BASE`]). Every table is empty in a
+///   pipeline-produced module today (populated only by the later semantic
+///   slice), so real programs keep emitting `0x02` unchanged. A `0x03` module
+///   with all tables empty is not canonical (it would have derived `0x02`); the
+///   parser therefore normalizes an all-empty `0x03` stream back to `0x02` on
+///   re-emit (WIRE_NON_CANONICAL_VERSION_NORMALIZES).
 ///
-/// The parser ([`parse_mic3`]) accepts BOTH `0x01` and `0x02`: a `0x01`
+/// The parser ([`parse_mic3`]) accepts `0x01`, `0x02`, and `0x03`: a `0x01`
 /// artifact is read with empty `exit_ids` / `merges` (the historical
-/// behaviour); a `0x02` artifact reads the real values. The emitter always
-/// writes [`MIC3_VERSION`] (currently `0x02`).
-pub const MIC3_VERSION: u8 = 0x02;
+/// behaviour); a `0x02` artifact reads those but no type tables; a `0x03`
+/// artifact reads the type tables too. The emitter writes [`MIC3_VERSION_BASE`]
+/// or [`MIC3_VERSION`] per the content predicate above.
+pub const MIC3_VERSION: u8 = 0x03;
+
+/// The additive-append BASE version — the layout emitted when a module carries
+/// no scoped aggregate `value_types` table (the overwhelmingly common case).
+/// Its bytes are exactly the historical `0x02` layout, so any real program
+/// (which never populates a type table before the semantic slice) is
+/// byte-for-byte unchanged from before Step D. See [`MIC3_VERSION`] for the
+/// version-derivation contract.
+pub const MIC3_VERSION_BASE: u8 = 0x02;
 
 /// Lowest MIC@3 format version this build can *read*. The parser is
-/// backward-compatible down to this version; the emitter always writes
-/// [`MIC3_VERSION`].
+/// backward-compatible down to this version; the emitter writes
+/// [`MIC3_VERSION_BASE`] or [`MIC3_VERSION`] per the content predicate.
 pub const MIC3_MIN_READ_VERSION: u8 = 0x01;
 
 #[cfg(test)]
@@ -730,7 +770,7 @@ mod tests {
         use crate::ir::compact::v2::uleb128_write;
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&MIC3_MAGIC);
-        bytes.push(MIC3_VERSION);
+        bytes.push(MIC3_VERSION_BASE);
         // n_strings = u32::MAX — far more entries than the buffer can hold.
         uleb128_write(&mut bytes, u32::MAX as u64).unwrap();
         // No further bytes: the first per-entry read must hit EOF.
@@ -769,7 +809,7 @@ mod tests {
         fn prefix() -> Vec<u8> {
             let mut b = Vec::new();
             b.extend_from_slice(&MIC3_MAGIC);
-            b.push(MIC3_VERSION);
+            b.push(MIC3_VERSION_BASE);
             uleb128_write(&mut b, 1).unwrap(); // n_strings
             uleb128_write(&mut b, 1).unwrap(); // len("f")
             b.push(b'f');
@@ -843,7 +883,7 @@ mod tests {
 
         let mut b = Vec::new();
         b.extend_from_slice(&MIC3_MAGIC);
-        b.push(MIC3_VERSION);
+        b.push(MIC3_VERSION_BASE);
         // String table: one entry, "f" (the FnDef name, idx 0).
         uleb128_write(&mut b, 1).unwrap(); // n_strings
         uleb128_write(&mut b, 1).unwrap(); // len("f")
@@ -1561,8 +1601,10 @@ mod tests {
             });
 
             let mut bytes = emit_mic3(&m);
-            // bytes[4] is the version byte; force it back to 0x01.
-            assert_eq!(bytes[4], MIC3_VERSION);
+            // bytes[4] is the version byte; force it back to 0x01. This module
+            // carries no scoped `value_types`, so the content-derived version is
+            // the v0x02 base layout (not the bumped MIC3_VERSION = 0x03).
+            assert_eq!(bytes[4], MIC3_VERSION_BASE);
             // For a 0x01 stream the trailing exit_ids count (a single 0x00 from
             // the empty vec) must be removed so the 0x01 reader does not consume
             // a non-existent field. Re-emit under 0x01 semantics by truncating
@@ -1591,6 +1633,280 @@ mod tests {
                 "got: {}",
                 err.message
             );
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Step D (S2b) — structurally-scoped aggregate `value_types` wire (v0x03)
+    // -------------------------------------------------------------------------
+    #[cfg(feature = "std-surface")]
+    mod step_d_value_types_wire {
+        use super::*;
+        use crate::ir::compact::v2::uleb128_write;
+        use crate::ir::{ArraySize, ArrayType, ValueId};
+        use crate::types::DType;
+        use std::collections::BTreeMap;
+
+        fn tbl(entries: &[(usize, DType, ArraySize)]) -> BTreeMap<ValueId, ArrayType> {
+            let mut t = BTreeMap::new();
+            for (id, dt, sz) in entries {
+                t.insert(
+                    ValueId(*id),
+                    ArrayType {
+                        elem_dtype: dt.clone(),
+                        size: sz.clone(),
+                    },
+                );
+            }
+            t
+        }
+
+        fn fndef(name: &str, body: Vec<Instr>, vt: BTreeMap<ValueId, ArrayType>) -> Instr {
+            Instr::FnDef {
+                name: name.to_string(),
+                params: vec![],
+                ret_id: None,
+                body,
+                reap_threshold: None,
+                value_types: vt,
+            }
+        }
+
+        // ---- invariant: populated tables round-trip byte-identically at v0x03 -
+
+        /// A non-empty MODULE table forces v0x03 and survives emit→parse→emit
+        /// byte-identically with the table reconstructed exactly.
+        #[test]
+        fn module_table_roundtrip_v3() {
+            let mut m = IRModule::new();
+            let v = m.fresh();
+            m.instrs.push(Instr::ConstI64(v, 7));
+            m.value_types = tbl(&[(0, DType::F64, ArraySize::Fixed(4))]);
+            let bytes = emit_mic3(&m);
+            assert_eq!(bytes[4], MIC3_VERSION, "populated table ⇒ v0x03");
+            let parsed = parse_mic3(&bytes).expect("v0x03 parse");
+            assert_eq!(parsed.value_types, m.value_types, "module table reconstructs");
+            assert_eq!(emit_mic3(&parsed), bytes, "v0x03 module-table fixed point");
+        }
+
+        /// A top-level FnDef with a non-empty per-function table forces v0x03 and
+        /// round-trips byte-identically with the FnDef table reconstructed.
+        #[test]
+        fn fndef_table_roundtrip_v3() {
+            let mut m = IRModule::new();
+            m.instrs
+                .push(fndef("f", vec![], tbl(&[(3, DType::F32, ArraySize::Dynamic)])));
+            let bytes = emit_mic3(&m);
+            assert_eq!(bytes[4], MIC3_VERSION, "FnDef table ⇒ v0x03");
+            let parsed = parse_mic3(&bytes).expect("v0x03 parse");
+            match &parsed.instrs[0] {
+                Instr::FnDef { value_types, .. } => {
+                    assert_eq!(*value_types, tbl(&[(3, DType::F32, ArraySize::Dynamic)]));
+                }
+                other => panic!("expected FnDef, got {other:?}"),
+            }
+            assert_eq!(emit_mic3(&parsed), bytes, "v0x03 FnDef fixed point");
+        }
+
+        /// nesting-position matrix — a table buried inside a `FnDef` nested in
+        /// another `FnDef`'s body, in an `If` then-branch, and in a `While`/
+        /// `Region` body all force v0x03 (the predicate crosses `FnDef`
+        /// boundaries) and round-trip byte-identically.
+        #[test]
+        fn nested_position_matrix_forces_v3() {
+            let deep = || fndef("g", vec![], tbl(&[(1, DType::I64, ArraySize::Fixed(2))]));
+
+            // (a) FnDef inside a FnDef body.
+            let mut a = IRModule::new();
+            a.instrs.push(fndef("f", vec![deep()], BTreeMap::new()));
+
+            // (b) FnDef inside an If then-branch.
+            let mut b = IRModule::new();
+            b.instrs.push(Instr::If {
+                cond_id: ValueId(0),
+                cond_instrs: vec![Instr::ConstI64(ValueId(0), 1)],
+                then_instrs: vec![deep()],
+                then_result: ValueId(0),
+                else_instrs: vec![],
+                else_result: ValueId(0),
+                dst: ValueId(0),
+                branch_bindings: vec![],
+                merges: vec![],
+            });
+
+            // (c) FnDef inside a While body.
+            let mut c = IRModule::new();
+            c.instrs.push(Instr::While {
+                cond_id: ValueId(0),
+                cond_instrs: vec![Instr::ConstI64(ValueId(0), 1)],
+                body: vec![deep()],
+                live_vars: vec![],
+                init_ids: vec![],
+                exit_ids: vec![],
+            });
+
+            // (d) FnDef inside a Region body.
+            let mut d = IRModule::new();
+            d.instrs.push(Instr::Region {
+                body: vec![deep()],
+                result: ValueId(0),
+                enter_id: ValueId(1),
+                exit_id: ValueId(2),
+                alloc_ids: vec![],
+            });
+
+            for (label, m) in [("fndef", a), ("if", b), ("while", c), ("region", d)] {
+                let bytes = emit_mic3(&m);
+                assert_eq!(bytes[4], MIC3_VERSION, "{label}: buried table ⇒ v0x03");
+                // Fixed point on the CANONICAL (parsed) form. The hand-built
+                // modules understate `next_id` (they reference ValueId(0..) but
+                // start at 0), and the parser reconciles `next_id` upward — a
+                // pre-existing round-trip property unrelated to Step D. Anchoring
+                // on the parsed module removes that confound while still proving
+                // the v0x03 value_types bytes are a stable fixed point.
+                let canon = emit_mic3(&parse_mic3(&bytes).unwrap_or_else(|e| panic!("{label}: {e}")));
+                assert_eq!(canon[4], MIC3_VERSION, "{label}: canonical stays v0x03");
+                let reparsed = emit_mic3(&parse_mic3(&canon).unwrap_or_else(|e| panic!("{label}: {e}")));
+                assert_eq!(reparsed, canon, "{label}: v0x03 fixed point");
+            }
+        }
+
+        /// entry-shape coverage — Fixed(0), a large Fixed extent, Dynamic, and a
+        /// mix of dtypes across ascending keys all round-trip.
+        #[test]
+        fn entry_shapes_roundtrip() {
+            let mut m = IRModule::new();
+            m.value_types = tbl(&[
+                (0, DType::I32, ArraySize::Fixed(0)),
+                (1, DType::F64, ArraySize::Fixed(1_000_000)),
+                (2, DType::Q16, ArraySize::Dynamic),
+                (5, DType::BF16, ArraySize::Fixed(7)),
+            ]);
+            let bytes = emit_mic3(&m);
+            let parsed = parse_mic3(&bytes).expect("parse");
+            assert_eq!(parsed.value_types, m.value_types);
+            assert_eq!(emit_mic3(&parsed), bytes, "mixed-shape fixed point");
+        }
+
+        // ---- invariant: empty tables keep the byte-for-byte v0x02 base --------
+
+        /// A module whose tables are all empty emits the v0x02 base layout — the
+        /// pre-Step-D bytes — so every real program is unchanged.
+        #[test]
+        fn empty_tables_stay_v2() {
+            let mut m = IRModule::new();
+            let v = m.fresh();
+            m.instrs.push(Instr::ConstI64(v, 1));
+            m.instrs.push(fndef("f", vec![], BTreeMap::new()));
+            let bytes = emit_mic3(&m);
+            assert_eq!(bytes[4], MIC3_VERSION_BASE, "empty tables ⇒ v0x02");
+            // A byte-identical fixed point with no v0x03 sections anywhere.
+            let parsed = parse_mic3(&bytes).expect("parse");
+            assert_eq!(emit_mic3(&parsed), bytes);
+        }
+
+        // ---- helpers for hand-crafted v0x03 module-tail streams ---------------
+
+        /// Minimal v0x03 stream: empty header/instrs/registries, then a
+        /// caller-supplied MODULE `value_types` section (the bytes under test).
+        fn v3_module_tail(table_bytes: &[u8]) -> Vec<u8> {
+            let mut b = Vec::new();
+            b.extend_from_slice(&MIC3_MAGIC);
+            b.push(MIC3_VERSION); // 0x03
+            uleb128_write(&mut b, 0).unwrap(); // n_strings
+            uleb128_write(&mut b, 0).unwrap(); // next_id
+            uleb128_write(&mut b, 0).unwrap(); // n_exports
+            uleb128_write(&mut b, 0).unwrap(); // n_instrs
+            uleb128_write(&mut b, 0).unwrap(); // struct_defs
+            uleb128_write(&mut b, 0).unwrap(); // const_array_defs
+            uleb128_write(&mut b, 0).unwrap(); // repr_c_structs
+            b.extend_from_slice(table_bytes); // module value_types (under test)
+            b
+        }
+
+        fn entry(vid: u64, dtype: u8, size_kind: u8, n: Option<u64>) -> Vec<u8> {
+            let mut e = Vec::new();
+            uleb128_write(&mut e, vid).unwrap();
+            e.push(dtype);
+            e.push(size_kind);
+            if let Some(n) = n {
+                uleb128_write(&mut e, n).unwrap();
+            }
+            e
+        }
+
+        // ---- non-canonical acceptance -----------------------------------------
+
+        /// WIRE_NON_CANONICAL_VERSION_NORMALIZES — an all-empty v0x03 stream is
+        /// ACCEPTED (not rejected) and normalizes back to v0x02 on re-emit, since
+        /// the content predicate then selects the base layout.
+        #[test]
+        fn empty_v3_normalizes_to_v2() {
+            let mut count0 = Vec::new();
+            uleb128_write(&mut count0, 0).unwrap(); // module table: 0 entries
+            let bytes = v3_module_tail(&count0);
+            let parsed = parse_mic3(&bytes).expect("empty v0x03 must be accepted");
+            assert!(parsed.value_types.is_empty());
+            let re = emit_mic3(&parsed);
+            assert_eq!(re[4], MIC3_VERSION_BASE, "empty v0x03 re-emits as v0x02");
+        }
+
+        // ---- hostile controls (each a HARD parse error) -----------------------
+
+        #[test]
+        fn non_ascending_keys_rejected() {
+            let mut t = Vec::new();
+            uleb128_write(&mut t, 2).unwrap(); // 2 entries
+            t.extend(entry(5, 0x03, 0x00, Some(4))); // vid 5
+            t.extend(entry(3, 0x03, 0x00, Some(4))); // vid 3 < 5 → reject
+            let err = parse_mic3(&v3_module_tail(&t)).expect_err("descending keys rejected");
+            assert!(err.message.contains("strictly ascending"), "got: {}", err.message);
+        }
+
+        #[test]
+        fn duplicate_keys_rejected() {
+            let mut t = Vec::new();
+            uleb128_write(&mut t, 2).unwrap();
+            t.extend(entry(5, 0x03, 0x00, Some(4)));
+            t.extend(entry(5, 0x03, 0x00, Some(4))); // vid == prev → reject
+            let err = parse_mic3(&v3_module_tail(&t)).expect_err("duplicate keys rejected");
+            assert!(err.message.contains("strictly ascending"), "got: {}", err.message);
+        }
+
+        #[test]
+        fn unknown_dtype_rejected() {
+            let mut t = Vec::new();
+            uleb128_write(&mut t, 1).unwrap();
+            t.extend(entry(0, 0x7F, 0x00, Some(1))); // dtype 0x7F is not a DType
+            let err = parse_mic3(&v3_module_tail(&t)).expect_err("unknown dtype rejected");
+            assert!(err.message.contains("unknown dtype"), "got: {}", err.message);
+        }
+
+        #[test]
+        fn unknown_size_kind_rejected() {
+            let mut t = Vec::new();
+            uleb128_write(&mut t, 1).unwrap();
+            t.extend(entry(0, 0x03, 0x05, None)); // size_kind 0x05 is neither Fixed nor Dynamic
+            let err = parse_mic3(&v3_module_tail(&t)).expect_err("unknown size_kind rejected");
+            assert!(err.message.contains("unknown size_kind"), "got: {}", err.message);
+        }
+
+        #[test]
+        fn truncated_entry_rejected() {
+            let mut t = Vec::new();
+            uleb128_write(&mut t, 1).unwrap();
+            uleb128_write(&mut t, 0).unwrap(); // vid
+            t.push(0x03); // dtype, then EOF (no size_kind byte)
+            let err = parse_mic3(&v3_module_tail(&t)).expect_err("truncated entry rejected");
+            assert!(!err.message.is_empty(), "clean error, not a panic");
+        }
+
+        #[test]
+        fn count_bomb_rejected() {
+            let mut t = Vec::new();
+            uleb128_write(&mut t, u64::MAX).unwrap(); // absurd entry count
+            let err = parse_mic3(&v3_module_tail(&t)).expect_err("count bomb rejected");
+            assert!(!err.message.is_empty(), "clean truncation error, not an OOM abort");
         }
     }
 }

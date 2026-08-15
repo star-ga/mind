@@ -303,6 +303,61 @@ fn read_named_vids<R: Read>(
     Ok(v)
 }
 
+/// Step D (v0x03) — read one structurally-scoped aggregate `value_types` table
+/// (module-level or a `FnDef`'s). The exact inverse of `emit_value_types_table`.
+///
+/// The read is UNCONDITIONAL on build features (only the CALLER's STORAGE of the
+/// result is `std-surface`-gated): the bytes are consumed and hostile-checked in
+/// EVERY build so a `not(std-surface)` parse of a `0x03` artifact stays in sync
+/// with the instruction stream rather than desyncing on the next opcode.
+///
+/// Hostile controls (every one a HARD error, never last-wins / never silent):
+///   * `read_count` bounds the entry count against the remaining input length
+///     (the #116 alloc-amplification pattern) BEFORE any allocation.
+///   * STRICT-ASCENDING `ValueId` order: each key must be `> ` the previous.
+///     This single check rejects BOTH a duplicate key (`vid == prev`, which a
+///     naive `insert` would silently last-wins) AND an unordered key
+///     (`vid < prev`, a non-canonical stream), forcing the one canonical order
+///     `emit` produces from its `BTreeMap`.
+///   * unknown dtype tag / unknown `size_kind` byte → hard error.
+///   * a truncated entry → hard error (the `read_*` primitives fail on EOF, so
+///     an EOF mid-table is never silently accepted as "table ends here").
+///
+/// No recursion happens here (a table has no nested tables), so the
+/// `MAX_MIC3_DEPTH` guard is neither needed nor touched.
+fn read_value_types_table<R: Read>(
+    r: &mut R,
+    limit: usize,
+) -> Result<std::collections::BTreeMap<ValueId, crate::ir::ArrayType>, Mic3Error> {
+    use crate::ir::{ArraySize, ArrayType};
+    let n = read_count(r, limit)?;
+    let mut table = std::collections::BTreeMap::new();
+    let mut prev: Option<ValueId> = None;
+    for _ in 0..n {
+        let vid = read_vid(r)?;
+        if let Some(p) = prev {
+            if vid <= p {
+                return Err(err!(
+                    "value_types table keys must be strictly ascending (got %{} after %{})",
+                    vid.0,
+                    p.0
+                ));
+            }
+        }
+        prev = Some(vid);
+        let dtag = read_u8(r)?;
+        let elem_dtype = byte_to_dtype(dtag)
+            .ok_or_else(|| err!("value_types entry: unknown dtype tag 0x{:02x}", dtag))?;
+        let size = match read_u8(r)? {
+            0x00 => ArraySize::Fixed(read_uleb(r)?),
+            0x01 => ArraySize::Dynamic,
+            other => return Err(err!("value_types entry: unknown size_kind 0x{:02x}", other)),
+        };
+        table.insert(vid, ArrayType { elem_dtype, size });
+    }
+    Ok(table)
+}
+
 fn read_shape_dim<R: Read>(r: &mut R, strings: &[String]) -> Result<ShapeDim, Mic3Error> {
     match read_u8(r)? {
         0 => {
@@ -743,20 +798,32 @@ fn decode_instr<R: Read>(
             for _ in 0..body_len {
                 body.push(decode_instr(r, strings, depth, limit, version)?);
             }
+            // Step D (v0x03) — the per-function `value_types` sub-list is
+            // TAIL-APPENDED after the body. The READ is UNCONDITIONAL on build
+            // features and gated ONLY on the wire version: the bytes must be
+            // consumed + hostile-checked in EVERY build (including
+            // `not(std-surface)`) or a 0x03 artifact would desync the stream at
+            // the NEXT opcode. Only the STORAGE into the (feature-gated) field is
+            // conditional — a `not(std-surface)` build parses and discards it. A
+            // v0x02 stream has no sub-list at all (table stays empty).
+            let value_types = if version >= MIC3_VERSION {
+                read_value_types_table(r, limit)?
+            } else {
+                std::collections::BTreeMap::new()
+            };
+            // In a `not(std-surface)` build the parsed table has nowhere to live;
+            // it was read purely to advance the cursor. Bind it away so the
+            // otherwise-unused local does not warn.
+            #[cfg(not(feature = "std-surface"))]
+            let _ = value_types;
             Ok(Instr::FnDef {
                 name,
                 params,
                 ret_id,
                 body,
                 reap_threshold,
-                // Step D — parsed FnDefs carry an EMPTY per-function table. S2a has
-                // no wire section; a legacy 0x02 (or S2b 0x03 with no entries)
-                // artifact reconstructs types LAZILY from the self-typed
-                // ConstDenseTensor nodes via `canonical_array_type`, never by
-                // populating this table on read (which would flip the content-gated
-                // version and break v0x02 byte-identity).
                 #[cfg(feature = "std-surface")]
-                value_types: std::collections::BTreeMap::new(),
+                value_types,
             })
         }
         OP_CALL => {
@@ -1078,8 +1145,10 @@ pub fn parse_mic3(data: &[u8]) -> Result<IRModule, Mic3Error> {
     // Version — the parser is backward-compatible: it reads every version in
     // [MIC3_MIN_READ_VERSION, MIC3_VERSION]. A 0x01 artifact predates the
     // control-flow region-exit metadata (While.exit_ids / If.merges) and is
-    // decoded with those fields empty; 0x02+ reads them from the wire. The
-    // emitter always writes MIC3_VERSION.
+    // decoded with those fields empty; 0x02 reads them from the wire; 0x03 also
+    // reads the Step D structurally-scoped `value_types` tables (per-FnDef
+    // sub-lists + the module tail). The emitter derives the version from content
+    // (`has_scoped_value_types`): 0x03 iff any table is non-empty, else 0x02.
     let version = read_u8(&mut r)?;
     if !(MIC3_MIN_READ_VERSION..=MIC3_VERSION).contains(&version) {
         return Err(err!(
@@ -1229,6 +1298,17 @@ pub fn parse_mic3(data: &[u8]) -> Result<IRModule, Mic3Error> {
                 fields.push(read_type_ann(&mut r, &strings, 0, limit)?);
             }
             module.repr_c_structs.insert(name, fields);
+        }
+
+        // Step D (v0x03 module tail) — the MODULE-scope `value_types` table,
+        // appended AFTER `repr_c_structs` (the last v0x02 section). Read iff the
+        // wire version is 0x03; a v0x02 stream has no such section and leaves the
+        // table empty. Hostile controls are inside `read_value_types_table`.
+        // This lives in the `std-surface` registries block because the field
+        // only exists under that feature — the same cross-feature trailing-wire
+        // discipline the other registries follow.
+        if version >= MIC3_VERSION {
+            module.value_types = read_value_types_table(&mut r, limit)?;
         }
     }
 

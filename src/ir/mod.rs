@@ -1085,6 +1085,72 @@ pub(crate) fn canonical_array_type_in(
     }
 }
 
+/// Step D (S2b) — the SINGLE enumeration of the sub-instruction streams an
+/// instruction owns. Every consumer that walks the instruction tree (the
+/// v0x03 wire-version predicate below, and any future whole-tree traversal)
+/// goes through here so they can NEVER disagree about which variants carry
+/// bodies: if a new body-carrying variant is added, this one function updates
+/// them all. Returns a fixed `[&[Instr]; 3]` (zero-alloc; empty slices are
+/// inert on recursion) covering the exact set of `Vec<Instr>` fields —
+/// `FnDef.body`, `While.{cond_instrs,body}`, `If.{cond_instrs,then_instrs,
+/// else_instrs}`, `Region.body`. UNLIKE the scope-local lookups, this INCLUDES
+/// `FnDef.body`: the version predicate must find a `value_types` table buried
+/// in any function at any nesting depth (a `FnDef` inside a `Region` inside an
+/// `If` still counts), so it crosses `FnDef` boundaries the scope walks stop at.
+#[cfg(feature = "std-surface")]
+fn instr_bodies(instr: &Instr) -> [&[Instr]; 3] {
+    const NONE: &[Instr] = &[];
+    match instr {
+        Instr::FnDef { body, .. } => [body.as_slice(), NONE, NONE],
+        Instr::While {
+            cond_instrs, body, ..
+        } => [cond_instrs.as_slice(), body.as_slice(), NONE],
+        Instr::If {
+            cond_instrs,
+            then_instrs,
+            else_instrs,
+            ..
+        } => [
+            cond_instrs.as_slice(),
+            then_instrs.as_slice(),
+            else_instrs.as_slice(),
+        ],
+        Instr::Region { body, .. } => [body.as_slice(), NONE, NONE],
+        // Every non-body-carrying variant. WARNING to maintainers: if a NEW
+        // `Vec<Instr>` body field is ever added to an `Instr` variant, add an arm
+        // ABOVE — a body left under this wildcard is invisible to the version
+        // predicate, so a table buried in it would derive v0x02 while non-empty.
+        // The emit-side tripwire (assert!(value_types.is_empty()) in the OP_FN_DEF
+        // arm at v0x02) converts that into a loud panic rather than a lossy
+        // artifact, so the failure is fail-closed — but it is caught at emit time,
+        // not compile time. Keep this set in lockstep with the `Vec<Instr>` fields.
+        _ => [NONE, NONE, NONE],
+    }
+}
+
+/// Step D (S2b) — does any SSA scope reachable from `instrs` carry a non-empty
+/// aggregate `value_types` table? Recurses THROUGH every body-carrying variant
+/// (via [`instr_bodies`]), including `FnDef` boundaries, checking each `FnDef`'s
+/// own table. Drives the mic@3 wire-version derivation in `emit_mic3`: a module
+/// with every table empty stays byte-for-byte v0x02, so pipeline-produced
+/// modules (which never populate a table until the S3 slice) are unaffected.
+#[cfg(feature = "std-surface")]
+fn instrs_have_scoped_value_types(instrs: &[Instr]) -> bool {
+    for i in instrs {
+        if let Instr::FnDef { value_types, .. } = i {
+            if !value_types.is_empty() {
+                return true;
+            }
+        }
+        for body in instr_bodies(i) {
+            if instrs_have_scoped_value_types(body) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 #[derive(Debug, Clone)]
 pub struct IRModule {
     pub instrs: Vec<Instr>,
@@ -1299,6 +1365,27 @@ impl IRModule {
         // A `FnDef`'s own aggregates are typed against ITS scope (its body +
         // `FnDef.value_types`) via `canonical_array_type_in`, never here.
         canonical_array_type_in(&self.instrs, &self.value_types, vid)
+    }
+
+    /// Step D (S2b) — the mic@3 wire-version predicate. Does ANY SSA scope in
+    /// this module carry a non-empty aggregate `value_types` table (the module
+    /// table or any `FnDef`'s, at any nesting depth)? `emit_mic3` calls this
+    /// ONCE before writing the header: `true` selects the v0x03 layout (which
+    /// serializes the tables in co-located sections), `false` keeps the
+    /// byte-for-byte legacy v0x02 layout. The signature is unconditional so the
+    /// wire path compiles in every feature configuration; under
+    /// `not(feature = "std-surface")` there is no `value_types` field to carry a
+    /// type at all, so the answer is trivially `false` and every module emits
+    /// v0x02 exactly as before.
+    pub(crate) fn has_scoped_value_types(&self) -> bool {
+        #[cfg(feature = "std-surface")]
+        {
+            !self.value_types.is_empty() || instrs_have_scoped_value_types(&self.instrs)
+        }
+        #[cfg(not(feature = "std-surface"))]
+        {
+            false
+        }
     }
 }
 

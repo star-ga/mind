@@ -20,7 +20,7 @@ use std::io::Write;
 use crate::ir::{BinOp, IRModule, Instr, ValueId};
 use crate::types::{ConvPadding, DType, ShapeDim};
 
-use super::{MIC3_MAGIC, MIC3_VERSION};
+use super::{MIC3_MAGIC, MIC3_VERSION, MIC3_VERSION_BASE};
 use crate::ir::compact::v2::{uleb128_write, zigzag_encode};
 
 // ─── Opcode constants ────────────────────────────────────────────────────────
@@ -732,9 +732,22 @@ pub fn emit_mic3(module: &IRModule) -> Vec<u8> {
 
     let mut out = Vec::with_capacity(256);
 
+    // Step D — content-derived wire version. A module that carries any non-empty
+    // scoped aggregate `value_types` table needs the v0x03 layout (which
+    // serializes those tables); every other module emits the byte-for-byte
+    // v0x02 base layout. This keeps every real program (empty tables) identical
+    // to the pre-Step-D bytes and confines the extension to modules that
+    // actually use it. `ver` is threaded through `emit_instr` so the per-`FnDef`
+    // sub-lists and the module tail are written iff `ver >= 0x03`.
+    let ver = if module.has_scoped_value_types() {
+        MIC3_VERSION
+    } else {
+        MIC3_VERSION_BASE
+    };
+
     // Header
     out.write_all(&MIC3_MAGIC).unwrap();
-    out.write_all(&[MIC3_VERSION]).unwrap();
+    out.write_all(&[ver]).unwrap();
 
     // String table
     let entries = st.entries();
@@ -759,7 +772,7 @@ pub fn emit_mic3(module: &IRModule) -> Vec<u8> {
     // Instructions
     uleb128_write(&mut out, module.instrs.len() as u64).unwrap();
     for instr in &module.instrs {
-        emit_instr(&mut out, instr, &st);
+        emit_instr(&mut out, instr, &st, ver);
     }
 
     // std-surface registries
@@ -794,14 +807,57 @@ pub fn emit_mic3(module: &IRModule) -> Vec<u8> {
                 encode_type_ann(&mut out, f, &st).unwrap();
             }
         }
+
+        // Step D (v0x03 module tail) — the MODULE-scope aggregate `value_types`
+        // table, appended AFTER `repr_c_structs` (the last v0x02 section) so the
+        // entire v0x02 prefix is byte-untouched. Written iff `ver >= 0x03`; in a
+        // v0x02 stream the table is provably empty (else `has_scoped_value_types`
+        // would have selected v0x03), so omitting it loses nothing.
+        if ver >= MIC3_VERSION {
+            emit_value_types_table(&mut out, &module.value_types);
+        }
     }
 
     out
 }
 
+/// Step D (v0x03) — serialize one structurally-scoped aggregate `value_types`
+/// table (the module's, or a `FnDef`'s). Layout: a uleb entry count, then each
+/// entry in `ValueId`-ASCENDING order (`BTreeMap` iterates sorted, so this is
+/// deterministic and canonical). Per entry:
+///   * `write_vid(ValueId)`
+///   * 1-byte dtype tag via [`dtype_to_byte`] (the SAME total, append-only
+///     `crate::types::DType` ↔ u8 map the tensor opcodes use — never a second
+///     encoding)
+///   * 1-byte `size_kind` (`0x00` = `Fixed`, `0x01` = `Dynamic`)
+///   * a uleb extent `N` IFF `size_kind == Fixed`
+/// The size discriminant is a separate byte rather than folded into the uleb so
+/// the two shapes stay unambiguous and cheap to bounds-check on parse.
+#[cfg(feature = "std-surface")]
+fn emit_value_types_table<W: Write>(
+    w: &mut W,
+    table: &std::collections::BTreeMap<ValueId, crate::ir::ArrayType>,
+) {
+    use crate::ir::ArraySize;
+    uleb128_write(w, table.len() as u64).unwrap();
+    for (vid, aty) in table {
+        write_vid(w, *vid).unwrap();
+        w.write_all(&[dtype_to_byte(&aty.elem_dtype)]).unwrap();
+        match &aty.size {
+            ArraySize::Fixed(n) => {
+                w.write_all(&[0x00]).unwrap();
+                uleb128_write(w, *n).unwrap();
+            }
+            ArraySize::Dynamic => {
+                w.write_all(&[0x01]).unwrap();
+            }
+        }
+    }
+}
+
 // ─── Instruction emitter ──────────────────────────────────────────────────────
 
-fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
+fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable, ver: u8) {
     match instr {
         Instr::ConstI64(dst, v) => {
             w.write_all(&[OP_CONST_I64]).unwrap();
@@ -1035,8 +1091,6 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             ret_id,
             body,
             reap_threshold,
-            // Step D — the per-function `value_types` table is NOT serialized in
-            // S2a (byte-neutral). S2b's v0x03 wire slice binds and emits it here.
             ..
         } => {
             w.write_all(&[OP_FN_DEF]).unwrap();
@@ -1047,7 +1101,28 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             // Emit body recursively
             uleb128_write(w, body.len() as u64).unwrap();
             for bi in body {
-                emit_instr(w, bi, st);
+                emit_instr(w, bi, st, ver);
+            }
+            // Step D (v0x03) — this function's own aggregate `value_types` table,
+            // TAIL-APPENDED after the body so the whole v0x02 FnDef encoding is
+            // byte-untouched. Written iff `ver >= 0x03`. In a v0x02 stream the
+            // table MUST be empty (a non-empty one would have forced v0x03 via
+            // `has_scoped_value_types`), so a non-empty table reaching here at
+            // v0x02 is an internal invariant break — the tripwire converts that
+            // silent truncation into a loud panic instead of a lossy artifact.
+            #[cfg(feature = "std-surface")]
+            {
+                if let Instr::FnDef { value_types, .. } = instr {
+                    if ver >= MIC3_VERSION {
+                        emit_value_types_table(w, value_types);
+                    } else {
+                        assert!(
+                            value_types.is_empty(),
+                            "mic@3 v0x02 FnDef with a non-empty value_types table \
+                             (has_scoped_value_types should have forced v0x03)"
+                        );
+                    }
+                }
             }
         }
         Instr::Call { dst, name, args } => {
@@ -1101,11 +1176,11 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             write_vid(w, *cond_id).unwrap();
             uleb128_write(w, cond_instrs.len() as u64).unwrap();
             for ci in cond_instrs {
-                emit_instr(w, ci, st);
+                emit_instr(w, ci, st, ver);
             }
             uleb128_write(w, body.len() as u64).unwrap();
             for bi in body {
-                emit_instr(w, bi, st);
+                emit_instr(w, bi, st, ver);
             }
             encode_named_vids(w, live_vars, st).unwrap();
             encode_vid_vec(w, init_ids).unwrap();
@@ -1132,16 +1207,16 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             write_vid(w, *cond_id).unwrap();
             uleb128_write(w, cond_instrs.len() as u64).unwrap();
             for ci in cond_instrs {
-                emit_instr(w, ci, st);
+                emit_instr(w, ci, st, ver);
             }
             uleb128_write(w, then_instrs.len() as u64).unwrap();
             for ti in then_instrs {
-                emit_instr(w, ti, st);
+                emit_instr(w, ti, st, ver);
             }
             write_vid(w, *then_result).unwrap();
             uleb128_write(w, else_instrs.len() as u64).unwrap();
             for ei in else_instrs {
-                emit_instr(w, ei, st);
+                emit_instr(w, ei, st, ver);
             }
             write_vid(w, *else_result).unwrap();
             write_vid(w, *dst).unwrap();
@@ -1242,7 +1317,7 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             w.write_all(&[OP_REGION]).unwrap();
             uleb128_write(w, body.len() as u64).unwrap();
             for bi in body {
-                emit_instr(w, bi, st);
+                emit_instr(w, bi, st, ver);
             }
             write_vid(w, *result).unwrap();
             write_vid(w, *enter_id).unwrap();
