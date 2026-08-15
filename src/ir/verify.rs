@@ -252,6 +252,55 @@ fn expose_region_definitions(instr: &Instr, scope: &mut BTreeSet<ValueId>) {
     }
 }
 
+/// Step D (S2b precondition) — collect EVERY ValueId defined in ONE SSA scope's
+/// namespace: the scope's `params` (function scope; empty for module) plus every
+/// definition reachable in its instruction stream. Descends same-scope
+/// `If`/`While`/`Region` bodies and STOPS at every `FnDef` (a nested function is a
+/// SEPARATE namespace). Reuses `expose_region_definitions` — the SAME block-arg /
+/// simple-result exposure the SSA verifier uses — so ownership checking never
+/// invents a second, divergent notion of "defined".
+#[cfg(feature = "std-surface")]
+fn collect_scope_definitions(instrs: &[Instr], params: &[ValueId]) -> BTreeSet<ValueId> {
+    let mut defs = BTreeSet::new();
+    for p in params {
+        defs.insert(*p);
+    }
+    collect_scope_definitions_into(instrs, &mut defs);
+    defs
+}
+
+#[cfg(feature = "std-surface")]
+fn collect_scope_definitions_into(instrs: &[Instr], defs: &mut BTreeSet<ValueId>) {
+    for instr in instrs {
+        // Block-arg + simple-result exposure, identical to the SSA verifier.
+        expose_region_definitions(instr, defs);
+        // Descend SAME-scope control flow for branch/body-internal definitions;
+        // STOP at FnDef (its body is a separate SSA namespace).
+        match instr {
+            Instr::If {
+                cond_instrs,
+                then_instrs,
+                else_instrs,
+                ..
+            } => {
+                collect_scope_definitions_into(cond_instrs, defs);
+                collect_scope_definitions_into(then_instrs, defs);
+                collect_scope_definitions_into(else_instrs, defs);
+            }
+            Instr::While {
+                cond_instrs, body, ..
+            } => {
+                collect_scope_definitions_into(cond_instrs, defs);
+                collect_scope_definitions_into(body, defs);
+            }
+            Instr::Region { body, .. } => {
+                collect_scope_definitions_into(body, defs);
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Walk one instruction stream in program order, threading the running
 /// `defined` set through nested regions. Operands are checked against
 /// definitions seen *earlier* in the walk; each instruction's result is then
@@ -750,6 +799,24 @@ pub enum IrVerifyError {
     /// never invent a confident `Fixed(N)` from an unknown / inconsistent extent.
     #[error("malformed ConstDenseTensor for value %{value}: {message}")]
     MalformedConstDenseTensor { value: ValueId, message: String },
+
+    /// Step D (S2b precondition) — an explicit `value_types` entry names a value
+    /// that is INTRINSICALLY typed by a `ConstDenseTensor` node in the same scope.
+    /// A ConstDenseTensor is the single canonical authority for its own type, so a
+    /// table entry for it is a redundant second authority and is rejected — even
+    /// when it agrees today (agreement can diverge after any later edit).
+    #[error("redundant value_types entry for ConstDenseTensor value %{value}: {message}")]
+    RedundantConstDenseTypeEntry { value: ValueId, message: String },
+
+    /// Step D (S2b precondition) — an explicit `value_types` entry names a ValueId
+    /// that is NOT defined in the owning SSA namespace (the module, or exactly the
+    /// FnDef the table belongs to). A hostile v0x03 artifact could otherwise carry
+    /// a type for a dangling id or one that lives only in another scope. The
+    /// definition set is computed with the SAME algorithm the SSA verifier uses
+    /// (`expose_region_definitions` over same-scope control flow + params),
+    /// stopping at every FnDef boundary.
+    #[error("value_types entry for value %{value} names a value not defined in its owning scope")]
+    TypeEntryReferencesUndefinedValue { value: ValueId },
 }
 
 /// Verify that an [`IRModule`] is well-formed and deterministic.
@@ -821,10 +888,37 @@ fn check_const_dense_wellformed(instrs: &[Instr]) -> Result<(), IrVerifyError> {
 fn check_value_types_scope(
     instrs: &[Instr],
     table: &std::collections::BTreeMap<ValueId, crate::ir::ArrayType>,
+    params: &[ValueId],
 ) -> Result<(), IrVerifyError> {
+    // The set of ValueIds legitimately defined in THIS scope's SSA namespace,
+    // computed with the SSA verifier's own exposure algorithm (params + block-args
+    // + control-flow-internal defs, stopping at FnDef). An empty table skips the
+    // build entirely (the common S1/S2a/real-program case).
+    let scope_defs: BTreeSet<ValueId> = if table.is_empty() {
+        BTreeSet::new()
+    } else {
+        collect_scope_definitions(instrs, params)
+    };
     for (vid, _at) in table {
+        // Ownership (S2b precondition): the key must name a value defined in THIS
+        // scope's namespace — never a dangling id, nor one that lives only in the
+        // module / another function.
+        if !scope_defs.contains(vid) {
+            return Err(IrVerifyError::TypeEntryReferencesUndefinedValue { value: *vid });
+        }
         match crate::ir::canonical_array_type_in(instrs, table, *vid) {
             Ok(_) => {} // an explicit entry with no conflict resolves to Ok(Some(entry))
+            Err(crate::ir::AggregateTypeError::RedundantConstDenseTypeEntry { entry }) => {
+                // Const-dense single-authority (S2b precondition): reject the
+                // redundant table entry even though it AGREES with the node.
+                return Err(IrVerifyError::RedundantConstDenseTypeEntry {
+                    value: *vid,
+                    message: format!(
+                        "value {entry:?} is intrinsically typed by a ConstDenseTensor \
+                         node; an explicit value_types entry is a redundant authority"
+                    ),
+                });
+            }
             Err(crate::ir::AggregateTypeError::Conflict { table: t, node }) => {
                 return Err(IrVerifyError::AggregateTypeConflict {
                     value: *vid,
@@ -865,9 +959,15 @@ fn check_nested_fndef_tables(instrs: &[Instr]) -> Result<(), IrVerifyError> {
     for instr in instrs {
         match instr {
             Instr::FnDef {
-                body, value_types, ..
+                params,
+                body,
+                value_types,
+                ..
             } => {
-                check_value_types_scope(body, value_types)?;
+                // A function's params are definitions in its own scope, so a
+                // value_types entry for a param is legitimate.
+                let param_ids: Vec<ValueId> = params.iter().map(|(_, v)| *v).collect();
+                check_value_types_scope(body, value_types, &param_ids)?;
             }
             Instr::If {
                 cond_instrs,
@@ -957,7 +1057,7 @@ pub fn verify_module(module: &IRModule) -> Result<(), IrVerifyError> {
     // another function. `canonical_array_type_in` returns `Err` (never `Ok(None)`)
     // on a conflict or malformed node — a corruption may not masquerade as absence.
     #[cfg(feature = "std-surface")]
-    check_value_types_scope(&module.instrs, &module.value_types)?;
+    check_value_types_scope(&module.instrs, &module.value_types, &[])?;
 
     Ok(())
 }
@@ -1587,23 +1687,98 @@ mod step_d_aggregate_type_tests {
     }
 
     #[test]
-    fn verify_accepts_agreeing_value_types() {
-        // An explicit entry that AGREES with the node is well-formed.
+    fn verify_rejects_redundant_const_dense_entry() {
+        // CONST_DENSE_EXPLICIT_TYPE_ENTRY=REJECTED (S2b precondition): an explicit
+        // value_types entry for a ConstDenseTensor dst is a redundant second
+        // authority and is REJECTED even when it AGREES with the node — agreement
+        // today could diverge after any later edit. (Negative control A.)
         let (mut m, v) = const_dense_f64x4();
         m.value_types.insert(
             v,
+            ArrayType {
+                elem_dtype: DType::F64, // agrees with the node, still rejected
+                size: ArraySize::Fixed(4),
+            },
+        );
+        match verify_module(&m) {
+            Err(IrVerifyError::RedundantConstDenseTypeEntry { value, .. }) => assert_eq!(value, v),
+            other => panic!("expected RedundantConstDenseTypeEntry, got {other:?}"),
+        }
+        // The canonical lookup detects the redundancy defensively too.
+        assert!(matches!(
+            m.canonical_array_type(v),
+            Err(AggregateTypeError::RedundantConstDenseTypeEntry { .. })
+        ));
+    }
+
+    #[test]
+    fn verify_rejects_type_entry_for_undefined_value() {
+        // TYPE_ENTRY_REFERENCES_UNDEFINED_VALUE=REJECT: a module table entry for a
+        // ValueId with no definition anywhere in the module namespace is rejected.
+        let mut m = IRModule::new();
+        let w = m.fresh();
+        m.instrs.push(Instr::ConstI64(w, 0));
+        m.instrs.push(Instr::Output(w));
+        let ghost = crate::ir::ValueId(999); // never defined
+        m.value_types.insert(
+            ghost,
             ArrayType {
                 elem_dtype: DType::F64,
                 size: ArraySize::Fixed(4),
             },
         );
-        assert!(verify_module(&m).is_ok());
-        assert_eq!(
-            m.canonical_array_type(v),
-            Ok(Some(ArrayType {
-                elem_dtype: DType::F64,
-                size: ArraySize::Fixed(4)
-            }))
+        match verify_module(&m) {
+            Err(IrVerifyError::TypeEntryReferencesUndefinedValue { value }) => {
+                assert_eq!(value, ghost)
+            }
+            other => panic!("expected TypeEntryReferencesUndefinedValue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn verify_rejects_function_table_naming_other_function_value() {
+        // TYPE_ENTRY_CANNOT_REFERENCE_OTHER_SCOPE: a function's table names %7, but
+        // %7 is not defined in its OWN body (it may exist only in another fn). The
+        // scope-local ownership check rejects it — structural, not reliant on
+        // numeric-collision absence. Exercised directly against the scope checker.
+        let shared = crate::ir::ValueId(7);
+        let mut f_table = std::collections::BTreeMap::new();
+        f_table.insert(
+            shared,
+            ArrayType {
+                elem_dtype: DType::F32,
+                size: ArraySize::Dynamic,
+            },
         );
+        // f's body defines %1, never %7.
+        let f_body = vec![Instr::ConstI64(crate::ir::ValueId(1), 0)];
+        match super::check_value_types_scope(&f_body, &f_table, &[]) {
+            Err(IrVerifyError::TypeEntryReferencesUndefinedValue { value }) => {
+                assert_eq!(value, shared)
+            }
+            other => panic!("expected TypeEntryReferencesUndefinedValue for %7, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn verify_allows_type_entry_for_function_param() {
+        // A function PARAMETER is a definition in that function's scope, so a
+        // value_types entry keyed on a param passes the ownership check (and there
+        // is no ConstDenseTensor node, so no redundancy).
+        let p = crate::ir::ValueId(0);
+        let mut t = std::collections::BTreeMap::new();
+        t.insert(
+            p,
+            ArrayType {
+                elem_dtype: DType::F32,
+                size: ArraySize::Dynamic,
+            },
+        );
+        let body = vec![Instr::Param {
+            dst: p,
+            name: "a".to_string(),
+            index: 0,
+        }];
+        assert_eq!(super::check_value_types_scope(&body, &t, &[p]), Ok(()));
     }
 }

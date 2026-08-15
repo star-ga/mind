@@ -953,6 +953,13 @@ pub enum AggregateTypeError {
     /// A `ConstDenseTensor` node's shape is not a valid FIXED extent (a non-Known
     /// dim or an overflowing product), so no `ArrayType` can be reconstructed.
     MalformedConstDense,
+    /// An explicit `value_types` entry names a value that is INTRINSICALLY typed by
+    /// a `ConstDenseTensor` node in the same scope. A `ConstDenseTensor` is the
+    /// SINGLE canonical authority for its own dtype+shape, so a table entry for it
+    /// is a redundant second authority and is REJECTED even when it agrees today —
+    /// agreement now could become two diverging authorities after any later edit.
+    /// (`Conflict` covers the disagree case; this covers the agree case.)
+    RedundantConstDenseTypeEntry { entry: ArrayType },
     // S3/S5: `MissingAggregateType { .. }` is added here once canonical typing is
     // mandatory for every KNOWN aggregate ValueId (a known aggregate with no
     // canonical type is then an error, not `Ok(None)`).
@@ -1060,7 +1067,14 @@ pub(crate) fn canonical_array_type_in(
         None => None,
     };
     match (explicit, node_ty) {
-        (Some(e), Some(c)) if e == c => Ok(Some(e)),
+        // A ConstDenseTensor is the SINGLE canonical authority for its own type.
+        // An explicit table entry for it is a redundant second authority and is
+        // REJECTED whether it agrees (RedundantConstDenseTypeEntry) or disagrees
+        // (Conflict) — never accepted. The lookup still detects the conflict
+        // defensively; the verifier/parser forbid the redundant representation.
+        (Some(entry), Some(node)) if entry == node => {
+            Err(AggregateTypeError::RedundantConstDenseTypeEntry { entry })
+        }
         (Some(table_ty), Some(node)) => Err(AggregateTypeError::Conflict {
             table: table_ty,
             node,
