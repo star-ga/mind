@@ -932,7 +932,7 @@ pub struct ArrayType {
 /// Step D — a CORRUPTION found by the canonical aggregate-type lookup, kept
 /// STRICTLY distinct from `Ok(None)` (a genuinely non-aggregate ValueId). A
 /// downstream `None => scalar / legacy / re-infer` fallback must never be reached
-/// for a corrupt aggregate type, so [`IRModule::canonical_array_type`] returns
+/// for a corrupt aggregate type, so `IRModule::canonical_array_type` returns
 /// these as `Err`, never as absence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AggregateTypeError {
@@ -951,7 +951,7 @@ pub enum AggregateTypeError {
 /// FIXED extent. FAIL CLOSED: `Some(product)` only when EVERY dim is `Known` and
 /// the product does not overflow; ANY non-`Known` dim (e.g. a `Sym` dim decoded
 /// from a hostile mic@3 artifact) yields `None`, so
-/// [`IRModule::canonical_array_type`] refuses to invent a confident `Fixed(N)`
+/// `IRModule::canonical_array_type` refuses to invent a confident `Fixed(N)`
 /// from an unknown extent rather than silently guessing `1`.
 #[cfg(feature = "std-surface")]
 pub(crate) fn dense_shape_len(shape: &[crate::types::ShapeDim]) -> Option<u64> {
@@ -1006,7 +1006,7 @@ pub struct IRModule {
     /// AST->IR lowering, serialized in mic@3 (from S2), consumed by backends
     /// (never re-derived). A `ConstDenseTensor` dst is typed INTRINSICALLY by its
     /// own node (dtype+shape) and is reconstructed on demand by
-    /// [`IRModule::canonical_array_type`] rather than duplicated here — so this
+    /// `IRModule::canonical_array_type` rather than duplicated here — so this
     /// table stays free of const-dense entries and Tier-B wire bytes stay frozen.
     /// `BTreeMap` keeps the wire order deterministic. Gated; empty until the S3/S4
     /// population slices land (S1 introduces it dormant).
