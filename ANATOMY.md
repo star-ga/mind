@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3367 | **Est. tokens:** ~7,865,086
-**Generated:** 2026-08-14 23:11 UTC
+**Files:** 3368 | **Est. tokens:** ~7,870,085
+**Generated:** 2026-08-15 05:20 UTC
 
 ## Token Budget Guide
 
@@ -40,7 +40,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,465 |
-| `docs/` | 33 | ~73,667 |
+| `docs/` | 33 | ~73,788 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
@@ -60,7 +60,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 154 | ~359,549 |
+| `examples/mindc_mind/` | 155 | ~364,147 |
 | `examples/mindc_mind/testdata/` | 1 | ~2,452 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 2 | ~415 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
@@ -73,7 +73,7 @@
 | `.githooks/` | 1 | ~255 |
 | `.github/` | 3 | ~149 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 9 | ~15,565 |
+| `.github/workflows/` | 9 | ~15,845 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~18,670 |
 | `scripts/` | 10 | ~12,690 |
@@ -746,7 +746,7 @@
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
 
-- `RI_DEPENDENCY_MATRIX.md` (~2194 tok, huge) — Rust-Independence (RI) Dependency Matrix
+- `RI_DEPENDENCY_MATRIX.md` (~2315 tok, huge) — Rust-Independence (RI) Dependency Matrix
 - `runs-burndown-roadmap.md` (~3203 tok, huge) — MIND RUNS Burndown Roadmap
 - `security.md` (~1492 tok, large) — Security Guide
 - `self-host-trace-hash-port.md` (~1406 tok, large) — #17 — Self-compute the native PT_NOTE (pure-MIND trace-hash port)
@@ -911,7 +911,7 @@
 - `self_host_cast_mic3_smoke.py` (~1776 tok, huge)
 - `self_host_check_driver_smoke.py` (~2879 tok, huge)
 - `self_host_continue_smoke.py` (~1387 tok, large) — Regression gate for #308 (closes #286's break/continue fixtures): the pure-MIND
-- `selfhost_driver.mind` (~623 tok, large) — ===========================================================================
+- `selfhost_driver.mind` (~4121 tok, huge) — ===========================================================================
 - `self_host_dtype_tag_smoke.py` (~780 tok, large) — RI-B1 per-SSA dtype-tag gate (parser <-> nb_fp_* encoder connecting construct).
 - `self_host_else_if_smoke.py` (~1715 tok, huge)
 - `self_host_failclosed_smoke.py` (~9331 tok, huge) — self_host_failclosed_smoke.py — the fail-closed boundary of the pure-MIND
@@ -933,6 +933,7 @@
 - `self_host_native_blas_dot_i16_smoke.py` (~2879 tok, huge)
 - `self_host_native_blas_dot_q16_smoke.py` (~1774 tok, huge)
 - `self_host_native_cast_conv_smoke.py` (~1267 tok, large) — RI-B2 scalar-cast-conv rung (#108) — native-ELF int<->float `as`-cast chain.
+- `self_host_native_diag_smoke.py` (~1100 tok, large) — RI-D1a gate (task #313): `mindc build --backend=native` must FAIL-CLOSED with an
 - `self_host_native_dot_f32_smoke.py` (~1334 tok, large) — RI-B2-S8 STEP C (#108) — native-ELF scalar STRICT-FP f32 DOT-PRODUCT.
 - `self_host_native_dot_l1_q16_smoke.py` (~1088 tok, large) — RI-B2 L1-Q16 rung (#108) — native-ELF Q16.16 L1 distance.
 - `self_host_native_elf_alignment_smoke.py` (~1902 tok, huge) — Self-host NATIVE-ELF ABI-alignment smoke (FIX #169).
@@ -1105,7 +1106,7 @@
 
 - `bench-gate.yml` (~1442 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~229 tok, medium) — name: Cargo Deny
-- `ci.yml` (~9469 tok, huge) — name: CI
+- `ci.yml` (~9749 tok, huge) — name: CI
 - `crypto-vectors.yml` (~1238 tok, large) — name: Crypto Vectors
 - `docs-claims.yml` (~396 tok, medium) — name: Docs Claims
 - `link-check.yml` (~229 tok, medium) — name: Link Check

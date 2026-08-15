@@ -21,6 +21,16 @@
 // The ELF is written to fd 1 (raw __mind_write, no libc). The note hash is the
 // self-computed nb_trace_hash — the loop needs determinism, not Rust-oracle
 // parity (the mic@3-vs-Rust match is a separate, non-blocking track).
+//
+// RI-D1a (task #313): on a NATIVE fail-close (selftest_native_elf_u returns a
+// 0-byte EmitState), main() no longer exits 0 with empty stdout — it scans the
+// USER region [user_lo, src_len) for the unsupported construct, writes an EXACT
+// diagnostic to stderr (fd 2), and exits NON-ZERO, so the Rust bridge
+// (run_native_backend_bridge path #1) surfaces the construct instead of a generic
+// "0 bytes" message. The scan runs ONLY on the fail path, so the self-host success
+// path (and closure) is byte-identical. deferred: line/column not emitted (no
+// int->decimal helper in the self-host dialect yet) — upgrade path: add nb_itoa
+// and prefix the message with the newline count of [user_lo, match).
 // ===========================================================================
 
 // Read exactly `want` bytes from `fd` into `buf` (a pipe read may return short).
@@ -36,6 +46,376 @@ pub fn nb_read_fully(fd: i64, buf: i64, want: i64, got: i64) -> i64 {
     nb_read_fully(fd, buf, want, got + n)
 }
 
+// RI-D1a: does pattern [pat, patlen) occur anywhere in buf[lo, hi)?  TAIL
+// RECURSION (one position per frame), the SAME shape as nb_read_fully above —
+// the whole-module native note emitter (selftest_native_elf_u) emits this form
+// but fail-closes on the `let mut`+`while`+early-return loop form (bisected
+// v2b FAIL / v3 EMIT_OK, 2026-08-14); the inner bytes_eq recurses only patlen
+// (<=8) deep. deferred: recursion depth == user-region length, so a very large
+// FAIL-CLOSING program could overflow the runtime stack (corpus programs are
+// small; the SUCCESS path never calls this) — upgrade path: teach the note
+// emitter the while form, or scan in bounded chunks.
+pub fn nb_region_has(buf: i64, lo: i64, hi: i64, pat: i64, patlen: i64) -> i64 {
+    if lo + patlen > hi {
+        return 0;
+    }
+    if bytes_eq(buf, lo, lo + patlen, pat, 0, patlen) == 1 {
+        return 1;
+    }
+    nb_region_has(buf, lo + 1, hi, pat, patlen)
+}
+
+// RI-D1a pattern buffer for `Tensor<` (7 bytes).
+pub fn nb_pat_tensor(p: i64) -> i64 {
+    __mind_store_i8(p + 0, 84);
+    __mind_store_i8(p + 1, 101);
+    __mind_store_i8(p + 2, 110);
+    __mind_store_i8(p + 3, 115);
+    __mind_store_i8(p + 4, 111);
+    __mind_store_i8(p + 5, 114);
+    __mind_store_i8(p + 6, 60);
+    7
+}
+
+// RI-D1a pattern buffer for `trait ` (6 bytes).
+pub fn nb_pat_trait(p: i64) -> i64 {
+    __mind_store_i8(p + 0, 116);
+    __mind_store_i8(p + 1, 114);
+    __mind_store_i8(p + 2, 97);
+    __mind_store_i8(p + 3, 105);
+    __mind_store_i8(p + 4, 116);
+    __mind_store_i8(p + 5, 32);
+    6
+}
+
+// RI-D1a pattern buffer for `impl ` (5 bytes).
+pub fn nb_pat_impl(p: i64) -> i64 {
+    __mind_store_i8(p + 0, 105);
+    __mind_store_i8(p + 1, 109);
+    __mind_store_i8(p + 2, 112);
+    __mind_store_i8(p + 3, 108);
+    __mind_store_i8(p + 4, 32);
+    5
+}
+
+// RI-D1a diagnostic writer: fills `dst` with the tensor message bytes,
+// returns its length. Byte-level (no string literals in the self-host dialect).
+pub fn nb_diag_tensor(dst: i64) -> i64 {
+    __mind_store_i8(dst + 0, 101);
+    __mind_store_i8(dst + 1, 114);
+    __mind_store_i8(dst + 2, 114);
+    __mind_store_i8(dst + 3, 111);
+    __mind_store_i8(dst + 4, 114);
+    __mind_store_i8(dst + 5, 91);
+    __mind_store_i8(dst + 6, 98);
+    __mind_store_i8(dst + 7, 97);
+    __mind_store_i8(dst + 8, 99);
+    __mind_store_i8(dst + 9, 107);
+    __mind_store_i8(dst + 10, 101);
+    __mind_store_i8(dst + 11, 110);
+    __mind_store_i8(dst + 12, 100);
+    __mind_store_i8(dst + 13, 45);
+    __mind_store_i8(dst + 14, 110);
+    __mind_store_i8(dst + 15, 97);
+    __mind_store_i8(dst + 16, 116);
+    __mind_store_i8(dst + 17, 105);
+    __mind_store_i8(dst + 18, 118);
+    __mind_store_i8(dst + 19, 101);
+    __mind_store_i8(dst + 20, 93);
+    __mind_store_i8(dst + 21, 58);
+    __mind_store_i8(dst + 22, 32);
+    __mind_store_i8(dst + 23, 116);
+    __mind_store_i8(dst + 24, 101);
+    __mind_store_i8(dst + 25, 110);
+    __mind_store_i8(dst + 26, 115);
+    __mind_store_i8(dst + 27, 111);
+    __mind_store_i8(dst + 28, 114);
+    __mind_store_i8(dst + 29, 32);
+    __mind_store_i8(dst + 30, 116);
+    __mind_store_i8(dst + 31, 121);
+    __mind_store_i8(dst + 32, 112);
+    __mind_store_i8(dst + 33, 101);
+    __mind_store_i8(dst + 34, 32);
+    __mind_store_i8(dst + 35, 117);
+    __mind_store_i8(dst + 36, 110);
+    __mind_store_i8(dst + 37, 115);
+    __mind_store_i8(dst + 38, 117);
+    __mind_store_i8(dst + 39, 112);
+    __mind_store_i8(dst + 40, 112);
+    __mind_store_i8(dst + 41, 111);
+    __mind_store_i8(dst + 42, 114);
+    __mind_store_i8(dst + 43, 116);
+    __mind_store_i8(dst + 44, 101);
+    __mind_store_i8(dst + 45, 100);
+    __mind_store_i8(dst + 46, 59);
+    __mind_store_i8(dst + 47, 32);
+    __mind_store_i8(dst + 48, 117);
+    __mind_store_i8(dst + 49, 115);
+    __mind_store_i8(dst + 50, 101);
+    __mind_store_i8(dst + 51, 32);
+    __mind_store_i8(dst + 52, 45);
+    __mind_store_i8(dst + 53, 45);
+    __mind_store_i8(dst + 54, 98);
+    __mind_store_i8(dst + 55, 97);
+    __mind_store_i8(dst + 56, 99);
+    __mind_store_i8(dst + 57, 107);
+    __mind_store_i8(dst + 58, 101);
+    __mind_store_i8(dst + 59, 110);
+    __mind_store_i8(dst + 60, 100);
+    __mind_store_i8(dst + 61, 61);
+    __mind_store_i8(dst + 62, 109);
+    __mind_store_i8(dst + 63, 108);
+    __mind_store_i8(dst + 64, 105);
+    __mind_store_i8(dst + 65, 114);
+    __mind_store_i8(dst + 66, 10);
+    67
+}
+
+// RI-D1a diagnostic writer: fills `dst` with the trait message bytes,
+// returns its length. Byte-level (no string literals in the self-host dialect).
+pub fn nb_diag_trait(dst: i64) -> i64 {
+    __mind_store_i8(dst + 0, 101);
+    __mind_store_i8(dst + 1, 114);
+    __mind_store_i8(dst + 2, 114);
+    __mind_store_i8(dst + 3, 111);
+    __mind_store_i8(dst + 4, 114);
+    __mind_store_i8(dst + 5, 91);
+    __mind_store_i8(dst + 6, 98);
+    __mind_store_i8(dst + 7, 97);
+    __mind_store_i8(dst + 8, 99);
+    __mind_store_i8(dst + 9, 107);
+    __mind_store_i8(dst + 10, 101);
+    __mind_store_i8(dst + 11, 110);
+    __mind_store_i8(dst + 12, 100);
+    __mind_store_i8(dst + 13, 45);
+    __mind_store_i8(dst + 14, 110);
+    __mind_store_i8(dst + 15, 97);
+    __mind_store_i8(dst + 16, 116);
+    __mind_store_i8(dst + 17, 105);
+    __mind_store_i8(dst + 18, 118);
+    __mind_store_i8(dst + 19, 101);
+    __mind_store_i8(dst + 20, 93);
+    __mind_store_i8(dst + 21, 58);
+    __mind_store_i8(dst + 22, 32);
+    __mind_store_i8(dst + 23, 116);
+    __mind_store_i8(dst + 24, 114);
+    __mind_store_i8(dst + 25, 97);
+    __mind_store_i8(dst + 26, 105);
+    __mind_store_i8(dst + 27, 116);
+    __mind_store_i8(dst + 28, 47);
+    __mind_store_i8(dst + 29, 105);
+    __mind_store_i8(dst + 30, 109);
+    __mind_store_i8(dst + 31, 112);
+    __mind_store_i8(dst + 32, 108);
+    __mind_store_i8(dst + 33, 32);
+    __mind_store_i8(dst + 34, 117);
+    __mind_store_i8(dst + 35, 110);
+    __mind_store_i8(dst + 36, 115);
+    __mind_store_i8(dst + 37, 117);
+    __mind_store_i8(dst + 38, 112);
+    __mind_store_i8(dst + 39, 112);
+    __mind_store_i8(dst + 40, 111);
+    __mind_store_i8(dst + 41, 114);
+    __mind_store_i8(dst + 42, 116);
+    __mind_store_i8(dst + 43, 101);
+    __mind_store_i8(dst + 44, 100);
+    __mind_store_i8(dst + 45, 59);
+    __mind_store_i8(dst + 46, 32);
+    __mind_store_i8(dst + 47, 117);
+    __mind_store_i8(dst + 48, 115);
+    __mind_store_i8(dst + 49, 101);
+    __mind_store_i8(dst + 50, 32);
+    __mind_store_i8(dst + 51, 45);
+    __mind_store_i8(dst + 52, 45);
+    __mind_store_i8(dst + 53, 98);
+    __mind_store_i8(dst + 54, 97);
+    __mind_store_i8(dst + 55, 99);
+    __mind_store_i8(dst + 56, 107);
+    __mind_store_i8(dst + 57, 101);
+    __mind_store_i8(dst + 58, 110);
+    __mind_store_i8(dst + 59, 100);
+    __mind_store_i8(dst + 60, 61);
+    __mind_store_i8(dst + 61, 109);
+    __mind_store_i8(dst + 62, 108);
+    __mind_store_i8(dst + 63, 105);
+    __mind_store_i8(dst + 64, 114);
+    __mind_store_i8(dst + 65, 10);
+    66
+}
+
+// RI-D1a diagnostic writer: fills `dst` with the impl message bytes,
+// returns its length. Byte-level (no string literals in the self-host dialect).
+pub fn nb_diag_impl(dst: i64) -> i64 {
+    __mind_store_i8(dst + 0, 101);
+    __mind_store_i8(dst + 1, 114);
+    __mind_store_i8(dst + 2, 114);
+    __mind_store_i8(dst + 3, 111);
+    __mind_store_i8(dst + 4, 114);
+    __mind_store_i8(dst + 5, 91);
+    __mind_store_i8(dst + 6, 98);
+    __mind_store_i8(dst + 7, 97);
+    __mind_store_i8(dst + 8, 99);
+    __mind_store_i8(dst + 9, 107);
+    __mind_store_i8(dst + 10, 101);
+    __mind_store_i8(dst + 11, 110);
+    __mind_store_i8(dst + 12, 100);
+    __mind_store_i8(dst + 13, 45);
+    __mind_store_i8(dst + 14, 110);
+    __mind_store_i8(dst + 15, 97);
+    __mind_store_i8(dst + 16, 116);
+    __mind_store_i8(dst + 17, 105);
+    __mind_store_i8(dst + 18, 118);
+    __mind_store_i8(dst + 19, 101);
+    __mind_store_i8(dst + 20, 93);
+    __mind_store_i8(dst + 21, 58);
+    __mind_store_i8(dst + 22, 32);
+    __mind_store_i8(dst + 23, 116);
+    __mind_store_i8(dst + 24, 114);
+    __mind_store_i8(dst + 25, 97);
+    __mind_store_i8(dst + 26, 105);
+    __mind_store_i8(dst + 27, 116);
+    __mind_store_i8(dst + 28, 47);
+    __mind_store_i8(dst + 29, 105);
+    __mind_store_i8(dst + 30, 109);
+    __mind_store_i8(dst + 31, 112);
+    __mind_store_i8(dst + 32, 108);
+    __mind_store_i8(dst + 33, 32);
+    __mind_store_i8(dst + 34, 117);
+    __mind_store_i8(dst + 35, 110);
+    __mind_store_i8(dst + 36, 115);
+    __mind_store_i8(dst + 37, 117);
+    __mind_store_i8(dst + 38, 112);
+    __mind_store_i8(dst + 39, 112);
+    __mind_store_i8(dst + 40, 111);
+    __mind_store_i8(dst + 41, 114);
+    __mind_store_i8(dst + 42, 116);
+    __mind_store_i8(dst + 43, 101);
+    __mind_store_i8(dst + 44, 100);
+    __mind_store_i8(dst + 45, 59);
+    __mind_store_i8(dst + 46, 32);
+    __mind_store_i8(dst + 47, 117);
+    __mind_store_i8(dst + 48, 115);
+    __mind_store_i8(dst + 49, 101);
+    __mind_store_i8(dst + 50, 32);
+    __mind_store_i8(dst + 51, 45);
+    __mind_store_i8(dst + 52, 45);
+    __mind_store_i8(dst + 53, 98);
+    __mind_store_i8(dst + 54, 97);
+    __mind_store_i8(dst + 55, 99);
+    __mind_store_i8(dst + 56, 107);
+    __mind_store_i8(dst + 57, 101);
+    __mind_store_i8(dst + 58, 110);
+    __mind_store_i8(dst + 59, 100);
+    __mind_store_i8(dst + 60, 61);
+    __mind_store_i8(dst + 61, 109);
+    __mind_store_i8(dst + 62, 108);
+    __mind_store_i8(dst + 63, 105);
+    __mind_store_i8(dst + 64, 114);
+    __mind_store_i8(dst + 65, 10);
+    66
+}
+
+// RI-D1a diagnostic writer: fills `dst` with the generic message bytes,
+// returns its length. Byte-level (no string literals in the self-host dialect).
+pub fn nb_diag_generic(dst: i64) -> i64 {
+    __mind_store_i8(dst + 0, 101);
+    __mind_store_i8(dst + 1, 114);
+    __mind_store_i8(dst + 2, 114);
+    __mind_store_i8(dst + 3, 111);
+    __mind_store_i8(dst + 4, 114);
+    __mind_store_i8(dst + 5, 91);
+    __mind_store_i8(dst + 6, 98);
+    __mind_store_i8(dst + 7, 97);
+    __mind_store_i8(dst + 8, 99);
+    __mind_store_i8(dst + 9, 107);
+    __mind_store_i8(dst + 10, 101);
+    __mind_store_i8(dst + 11, 110);
+    __mind_store_i8(dst + 12, 100);
+    __mind_store_i8(dst + 13, 45);
+    __mind_store_i8(dst + 14, 110);
+    __mind_store_i8(dst + 15, 97);
+    __mind_store_i8(dst + 16, 116);
+    __mind_store_i8(dst + 17, 105);
+    __mind_store_i8(dst + 18, 118);
+    __mind_store_i8(dst + 19, 101);
+    __mind_store_i8(dst + 20, 93);
+    __mind_store_i8(dst + 21, 58);
+    __mind_store_i8(dst + 22, 32);
+    __mind_store_i8(dst + 23, 117);
+    __mind_store_i8(dst + 24, 110);
+    __mind_store_i8(dst + 25, 115);
+    __mind_store_i8(dst + 26, 117);
+    __mind_store_i8(dst + 27, 112);
+    __mind_store_i8(dst + 28, 112);
+    __mind_store_i8(dst + 29, 111);
+    __mind_store_i8(dst + 30, 114);
+    __mind_store_i8(dst + 31, 116);
+    __mind_store_i8(dst + 32, 101);
+    __mind_store_i8(dst + 33, 100);
+    __mind_store_i8(dst + 34, 32);
+    __mind_store_i8(dst + 35, 99);
+    __mind_store_i8(dst + 36, 111);
+    __mind_store_i8(dst + 37, 110);
+    __mind_store_i8(dst + 38, 115);
+    __mind_store_i8(dst + 39, 116);
+    __mind_store_i8(dst + 40, 114);
+    __mind_store_i8(dst + 41, 117);
+    __mind_store_i8(dst + 42, 99);
+    __mind_store_i8(dst + 43, 116);
+    __mind_store_i8(dst + 44, 59);
+    __mind_store_i8(dst + 45, 32);
+    __mind_store_i8(dst + 46, 117);
+    __mind_store_i8(dst + 47, 115);
+    __mind_store_i8(dst + 48, 101);
+    __mind_store_i8(dst + 49, 32);
+    __mind_store_i8(dst + 50, 45);
+    __mind_store_i8(dst + 51, 45);
+    __mind_store_i8(dst + 52, 98);
+    __mind_store_i8(dst + 53, 97);
+    __mind_store_i8(dst + 54, 99);
+    __mind_store_i8(dst + 55, 107);
+    __mind_store_i8(dst + 56, 101);
+    __mind_store_i8(dst + 57, 110);
+    __mind_store_i8(dst + 58, 100);
+    __mind_store_i8(dst + 59, 61);
+    __mind_store_i8(dst + 60, 109);
+    __mind_store_i8(dst + 61, 108);
+    __mind_store_i8(dst + 62, 105);
+    __mind_store_i8(dst + 63, 114);
+    __mind_store_i8(dst + 64, 10);
+    65
+}
+
+
+// RI-D1a: fail-close reporter. Scans the user region for the unsupported construct,
+// writes an EXACT diagnostic to fd 2, returns a NON-ZERO exit code (3). Called only
+// when selftest_native_elf_u fail-closed (0-byte ELF).
+pub fn nb_report_unsupported(src: i64, user_lo: i64, src_len: i64) -> i64 {
+    let dst: i64 = __mind_alloc(128);
+    let p: i64 = __mind_alloc(16);
+    let pt: i64 = nb_pat_tensor(p);
+    if nb_region_has(src, user_lo, src_len, p, pt) == 1 {
+        let n: i64 = nb_diag_tensor(dst);
+        let _w: i64 = __mind_write(2, dst, n, 0 - 1);
+        return 3;
+    }
+    let ptr: i64 = nb_pat_trait(p);
+    if nb_region_has(src, user_lo, src_len, p, ptr) == 1 {
+        let n2: i64 = nb_diag_trait(dst);
+        let _w2: i64 = __mind_write(2, dst, n2, 0 - 1);
+        return 3;
+    }
+    let pim: i64 = nb_pat_impl(p);
+    if nb_region_has(src, user_lo, src_len, p, pim) == 1 {
+        let n3: i64 = nb_diag_impl(dst);
+        let _w3: i64 = __mind_write(2, dst, n3, 0 - 1);
+        return 3;
+    }
+    let n4: i64 = nb_diag_generic(dst);
+    let _w4: i64 = __mind_write(2, dst, n4, 0 - 1);
+    return 3;
+}
+
 pub fn main() -> i64 {
     let hdr: i64 = __mind_alloc(16);
     let _h: i64 = nb_read_fully(0, hdr, 16, 0);
@@ -44,6 +424,10 @@ pub fn main() -> i64 {
     let src: i64 = __mind_alloc(src_len + 16);
     let _r: i64 = nb_read_fully(0, src, src_len, 0);
     let es: EmitState = selftest_native_elf_u(src, src_len, user_lo);
-    let _w: i64 = __mind_write(1, string_addr(es.buf), string_len(es.buf), 0 - 1);
-    0
+    let elf_len: i64 = string_len(es.buf);
+    if elf_len > 0 {
+        let _w: i64 = __mind_write(1, string_addr(es.buf), elf_len, 0 - 1);
+        return 0;
+    }
+    return nb_report_unsupported(src, user_lo, src_len);
 }

@@ -611,6 +611,23 @@ jobs:
             python3 examples/mindc_mind/self_host_native_elf_smoke.py
         working-directory: ${{ github.workspace }}
 
+      - name: RI-D seam gates — mindc build --backend=native (bridge + exact fail-close diagnostics)
+        # RI-D0: `mindc build --backend=native` is a byte-faithful pass-through to the
+        # frozen pure-MIND stage1.elf (zero MLIR/LLVM/clang), fail-closed on garbage
+        # (backend_native_bridge_smoke.py). RI-D1a (#313): a native fail-close is no
+        # longer a silent 0-byte-exit-0 — the pure-MIND driver names the unsupported
+        # construct on stderr and exits non-zero (tensor / trait-impl EXACT), while a
+        # supported scalar program still compiles + runs (self_host_native_diag_smoke.py).
+        # Both drive the SHIPPING mindc + committed stage1.elf, so a driver/bridge
+        # regression that reverted the diagnostic to the generic 0-byte message would
+        # otherwise land CI-green.
+        run: |
+          set -e
+          python3 examples/mindc_mind/backend_native_bridge_smoke.py
+          MINDC_BIN=${{ github.workspace }}/target/release/mindc \
+            python3 examples/mindc_mind/self_host_native_diag_smoke.py
+        working-directory: ${{ github.workspace }}
+
       - name: Native-ELF float end-to-end gate (self_host_native_fp_expr_smoke.py)
         # RI-B1 CAPSTONE (roadmap C1): nb_expr now routes an ast_float_lit's value
         # through the SSE2 scalar-double encoders (nb_fp_const_xmm + movsd-store to the

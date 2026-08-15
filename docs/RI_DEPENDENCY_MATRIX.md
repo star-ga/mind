@@ -74,17 +74,22 @@ GLOBAL_DEFAULT_NATIVE flips only when ALL hold:
 - **14/52 (27%) PASS** native ELF · **38/52 FAIL-CLOSED**.
 - 38 fails bucket (dominant construct): **tensor/ML 16** (long-term) · **float-heavy 14**
   (native-float completion) · **field/method 4**.
-- **`UNSUPPORTED_FEATURE_DIAGNOSTICS=EXACT` currently FAILS**: all 38 fail with the SAME
-  generic `error[backend-native]: … non-ELF/short artifact (0 bytes); refusing to write` —
-  it does NOT name the blocking construct, so precise blocker ranking is impossible from the
-  diagnostic alone.
+- **`UNSUPPORTED_FEATURE_DIAGNOSTICS` — tensor/trait now EXACT (RI-D1a, #313)**: a native
+  fail-close is no longer a silent 0-byte-exit-0. The pure-MIND self-host driver
+  (`selfhost_driver.mind`) scans the user region and writes
+  `error[backend-native]: tensor type unsupported` / `… trait/impl unsupported` to stderr and
+  exits non-zero (the Rust bridge surfaces it via path #1); any other construct gets an honest
+  generic `unsupported construct` (still non-zero — never a silent 0-byte). Gate:
+  `self_host_native_diag_smoke.py` (CI-wired). deferred: line/column (no int→decimal helper in
+  the self-host dialect yet) + float-specific naming.
 
 ## PRIORITY ORDER (by production-profile dependency impact, NOT patch size)
 
-1. **RI-D1a — EXACT native diagnostics**: make the native backend fail-closed with a diagnostic
-   naming the unsupported construct (line + kind), not a generic 0-byte message. Cutover-gate
-   REQUIRED (`UNSUPPORTED_FEATURE_DIAGNOSTICS=EXACT`) **and** the enabler of precise blocker
-   ranking. *This is the true next slice — not a "smallest gap".*
+1. **RI-D1a — EXACT native diagnostics — ✅ LANDED (#313)**: the native backend fail-closes with a
+   stderr diagnostic naming the construct (tensor / trait-impl EXACT; else honest generic) and a
+   non-zero exit, via a pure-MIND capability scan in `selfhost_driver.mind` (self-host closure
+   stayed byte-identical — no capability regression). Gate `self_host_native_diag_smoke.py`
+   (CI-wired, RI-D seam gates step). deferred: line/column + float-specific naming.
 2. **RI-D1b — rank + close the top production-profile blocker** (once diagnostics are exact):
    for each missing construct compute BLOCKED_REAL_PROGRAMS / BLOCKED_FUNCTIONS /
    UNLOCKED_DEPENDENCIES / IMPLEMENTATION_RISK; take the max-coverage-unlocked one. Candidates
