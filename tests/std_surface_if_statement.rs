@@ -157,8 +157,10 @@ fn nested(a: i64, b: i64) -> i64 {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Test 4: `let` inside if-branch is visible in the outer scope after the if
-// (Gap C verification)
+// Test 4: a branch-local `let` inside an if-branch is BLOCK-SCOPED — it is NOT
+// recorded in the OP_IF branch_bindings (it never escapes the branch). #287-F2
+// corrected this: the earlier "Gap C" behavior (leaking the let into
+// branch_bindings) diverged from the Rust --emit-mic3 oracle and is now fixed.
 // ──────────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -180,7 +182,9 @@ fn gap_c_demo(cond: i64) -> i64 {
         count_if_instrs(&ir.instrs) >= 1,
         "expected Instr::If to exist"
     );
-    // The `branch_bindings` on the Instr::If should capture `x`.
+    // #287-F2: a branch-local `let x` is block-scoped and must NOT appear in the
+    // OP_IF branch_bindings (only outer-name assigns escape). Behaviorally verified:
+    // `gap_c_demo(1)` still compiles + runs to 99 — only the internal IR shape changed.
     let has_binding = ir.instrs.iter().any(|i| {
         if let Instr::FnDef { body, .. } = i {
             body.iter().any(|bi| {
@@ -198,8 +202,8 @@ fn gap_c_demo(cond: i64) -> i64 {
         }
     });
     assert!(
-        has_binding,
-        "branch_bindings on Instr::If should contain `x`"
+        !has_binding,
+        "branch_bindings on Instr::If must NOT contain block-scoped `let x` (#287-F2)"
     );
 }
 

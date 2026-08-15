@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3368 | **Est. tokens:** ~7,870,085
-**Generated:** 2026-08-15 05:20 UTC
+**Files:** 3368 | **Est. tokens:** ~7,870,193
+**Generated:** 2026-08-15 05:39 UTC
 
 ## Token Budget Guide
 
@@ -417,7 +417,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,332 |
-| `tests/` | 323 | ~553,548 |
+| `tests/` | 323 | ~553,656 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -4870,7 +4870,7 @@
 - `std_surface_fndef_lowering.rs` (~1412 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_http.rs` (~3981 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_i32_intrinsics.rs` (~808 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_if_statement.rs` (~3282 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_if_statement.rs` (~3390 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_intrinsics.rs` (~2438 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_io_ansi.rs` (~793 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_io_canon.rs` (~3262 tok, huge) — Copyright 2025 STARGA Inc.
