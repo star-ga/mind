@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3370 | **Est. tokens:** ~7,873,218
-**Generated:** 2026-08-15 17:16 UTC
+**Files:** 3371 | **Est. tokens:** ~7,875,432
+**Generated:** 2026-08-15 17:19 UTC
 
 ## Token Budget Guide
 
@@ -43,7 +43,7 @@
 | `docs/` | 33 | ~73,967 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
-| `docs/design/` | 3 | ~8,181 |
+| `docs/design/` | 4 | ~10,395 |
 | `docs/mindcraft/` | 3 | ~7,086 |
 | `docs/provenance/` | 2 | ~4,035 |
 | `docs/rfcs/` | 32 | ~147,264 |
@@ -677,6 +677,7 @@
 ### `docs/design/`
 
 - `execution-plan-performance-mode.md` (~8045 tok, huge) — Design: PerformanceMode + ExecutionPlan + ExecutionProvider
+- `f64_array_architecture.md` (~2214 tok, huge) — Normative array-semantics + f64-aggregate architecture record
 - `README.md` (~26 tok, tiny) — Design Docs
 - `v0.3.md` (~110 tok, small) — MIND Design v0.3 (Draft)
 ### `docs/`
