@@ -7074,12 +7074,36 @@ fn lower_expr(
                     .iter()
                     .find(|(n, _)| n == name)
                     .map(|(_, v)| *v)
-                    .or_else(|| then_env.get(name).copied());
+                    .or_else(|| {
+                        // #318 (F2-adjacent shadow leak): a merged name that this
+                        // branch did NOT genuinely WRITE — it only SHADOWED it with a
+                        // branch-local `let`, or left it untouched — must carry the
+                        // PRE-IF outer value (`env`), never the block-scoped shadow
+                        // that lives in `then_env`. ADDITIVE: a genuinely-written name
+                        // is in `then_writes` and still takes the branch-exit value; a
+                        // never-shadowed name has `then_env[name] == env[name]`, so any
+                        // program without a shadowed-merged-name is byte-identical
+                        // (keystone unaffected). Fixes the cross-backend divergence
+                        // where `let x=1; if c { let x=99 } else { x=5 }; x` merged the
+                        // then-edge to const 99 instead of 1.
+                        if then_writes.iter().any(|n| n == name) {
+                            then_env.get(name).copied()
+                        } else {
+                            env.get(name).copied()
+                        }
+                    });
                 let else_has = else_frozen
                     .iter()
                     .find(|(n, _)| n == name)
                     .map(|(_, v)| *v)
-                    .or_else(|| else_env.get(name).copied());
+                    .or_else(|| {
+                        // #318: mirror of the then-side fix (else-branch shadow).
+                        if else_writes.iter().any(|n| n == name) {
+                            else_env.get(name).copied()
+                        } else {
+                            env.get(name).copied()
+                        }
+                    });
                 // Type the synthesized absent-side ZERO placeholder by the side
                 // that DEFINES the binding (a one-sided let/assign): an f64
                 // binding gets an f64 placeholder so the merge phi types f64
