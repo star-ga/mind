@@ -370,6 +370,13 @@ pub enum EvalError {
     },
     #[error("out of bounds")]
     OutOfBounds,
+    /// ARRAY_OOB_CONTRACT=DETERMINISTIC_BOUNDS_TRAP (see docs/ARRAY_SEMANTICS.md):
+    /// the tree-evaluator's substrate representation of an out-of-bounds array
+    /// access. Deterministic and bounds-specific (NOT a generic "unsupported
+    /// construct", NOT a clamp, NOT a silent 0) — the same language event that a
+    /// compiled MIND executable represents by exiting with the pinned OOB code.
+    #[error("bounds trap: {0}")]
+    BoundsTrap(String),
     /// Control-flow signal — NOT a real error. Carries the value of an early
     /// `return X` so the enclosing function-body evaluation short-circuits.
     /// The `?` operator propagates it up through `Block`/`If`/`For`/`While`
@@ -569,7 +576,7 @@ pub fn eval_module_value_with_env_mode(
                                 }
                             };
                         if idx < 0 || idx as usize >= items.len() {
-                            return Err(EvalError::UnsupportedMsg(format!(
+                            return Err(EvalError::BoundsTrap(format!(
                                 "array index {idx} out of bounds (len {})",
                                 items.len()
                             )));
@@ -931,7 +938,7 @@ fn exec_threaded_stmt(
                         }
                     };
                     if idx < 0 || idx as usize >= items.len() {
-                        return Err(EvalError::UnsupportedMsg(format!(
+                        return Err(EvalError::BoundsTrap(format!(
                             "array index {idx} out of bounds (len {})",
                             items.len()
                         )));
@@ -2023,7 +2030,7 @@ pub(crate) fn eval_value_expr_mode(
                         }
                     };
                     if idx < 0 || idx as usize >= items.len() {
-                        return Err(EvalError::UnsupportedMsg(format!(
+                        return Err(EvalError::BoundsTrap(format!(
                             "array index {idx} out of bounds (len {})",
                             items.len()
                         )));
@@ -2247,7 +2254,7 @@ pub(crate) fn eval_value_expr_mode(
                                         }
                                     };
                                     if idx < 0 || idx as usize >= items.len() {
-                                        return Err(EvalError::UnsupportedMsg(format!(
+                                        return Err(EvalError::BoundsTrap(format!(
                                             "array index {idx} out of bounds (len {})",
                                             items.len()
                                         )));
@@ -2336,7 +2343,7 @@ pub(crate) fn eval_value_expr_mode(
                                     }
                                 };
                                 if idx < 0 || idx as usize >= items.len() {
-                                    return Err(EvalError::UnsupportedMsg(format!(
+                                    return Err(EvalError::BoundsTrap(format!(
                                         "array index {idx} out of bounds (len {})",
                                         items.len()
                                     )));
@@ -3380,6 +3387,38 @@ mod tests {
             Value::Int(n) => assert_eq!(n, 3, "while should count i to 3"),
             other => panic!("expected Int(3), got {other:?}"),
         }
+    }
+
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn eval_array_index_oob_is_bounds_trap() {
+        // ARRAY_OOB_CONTRACT=DETERMINISTIC_BOUNDS_TRAP (docs/ARRAY_SEMANTICS.md):
+        // the tree-evaluator's substrate representation of an out-of-bounds array
+        // index is a deterministic `EvalError::BoundsTrap` — NOT a generic
+        // `UnsupportedMsg` ("unsupported: …"), NOT a clamp to `[0, len-1]`, and NOT
+        // a silent 0. This is the evaluator's expression of the SAME language event
+        // a compiled MIND executable represents by exiting with the pinned OOB code.
+        // A `>= len` index:
+        let src = "let a: [i64; 3] = [10, 20, 30]; a[5]";
+        let module = parser::parse(src).unwrap();
+        let mut env = HashMap::new();
+        let err = eval_module_value_with_env(&module, &mut env, Some(src)).unwrap_err();
+        assert!(
+            matches!(err, EvalError::BoundsTrap(_)),
+            "`>= len` index should be a deterministic BoundsTrap, got {err:?}"
+        );
+        // A negative index (must NOT clamp to element 0). No type annotation on
+        // `i` — the tree-evaluator infers `0 - 1` as a narrow int, and an explicit
+        // `i64` annotation trips an unrelated inference mismatch (E2001) before the
+        // index is ever evaluated, which is orthogonal to the bounds contract.
+        let src2 = "let a: [i64; 3] = [10, 20, 30]; let i = 0 - 1; a[i]";
+        let module2 = parser::parse(src2).unwrap();
+        let mut env2 = HashMap::new();
+        let err2 = eval_module_value_with_env(&module2, &mut env2, Some(src2)).unwrap_err();
+        assert!(
+            matches!(err2, EvalError::BoundsTrap(_)),
+            "negative index should be a deterministic BoundsTrap, got {err2:?}"
+        );
     }
 
     #[cfg(feature = "std-surface")]

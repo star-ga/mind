@@ -158,6 +158,55 @@ MIND_EXPORT int64_t __mind_assert_fail(int64_t msg_len) {
     return 0; /* unreachable — abort() does not return */
 }
 
+// ARRAY_OOB_CONTRACT=DETERMINISTIC_BOUNDS_TRAP (see docs/ARRAY_SEMANTICS.md).
+//
+// __mind_oob_trap() is the SINGLE out-of-bounds trap authority for the
+// MLIR/clang executable backend. It terminates the process deterministically
+// with a fixed exit code (MIND_OOB_EXIT_CODE). That exit code is the current
+// executable ABI for the language-level bounds trap — it is NOT the eternal
+// language semantics (a future version may surface a typed panic/Result); the
+// language contract is "out-of-bounds access -> deterministic bounds trap", of
+// which "exit 77" is one substrate representation. The self-host native-ELF
+// backend has its OWN single authority for the same event (main.mind's
+// nb_oob_trap_code(), which likewise _exit(77)s); these are two implementations
+// of ONE contract, one per necessary substrate.
+//
+// `_Exit` (C99, <stdlib.h>) is used, not `exit`/`abort`: it runs no atexit
+// handlers and flushes no stdio buffers, so the outcome cannot be perturbed by
+// program state — no allocator, no libm, no unwinding, no stdout dependency, a
+// clean fixed status every run. Marked noreturn so the compiler enforces that
+// control never continues past it; the permanent negative test asserts an OOB
+// access reaches exactly this exit and never falls through to the load.
+#define MIND_OOB_EXIT_CODE 77
+#if defined(_MSC_VER) && !defined(__clang__)
+__declspec(noreturn) static void __mind_oob_trap(void)
+#else
+__attribute__((noreturn)) static void __mind_oob_trap(void)
+#endif
+{
+    _Exit(MIND_OOB_EXIT_CODE);
+}
+
+// __mind_oob_check(idx, len) -> idx: the single bounds-CHECK authority on the
+// executable path. Returns idx unchanged iff 0 <= idx < len; otherwise routes
+// to __mind_oob_trap() (which never returns). The unsigned comparison folds the
+// negative-index and >=len cases into one branch — any negative idx reinterprets
+// as a huge unsigned value that is >= len, so a single `(uint64_t)idx >=
+// (uint64_t)len` catches BOTH. The MLIR ArrayLoad lowering calls this BEFORE the
+// tensor.extract and the extract consumes this call's returned index, so no
+// element address is computed or loaded before the check passes: the trap
+// strictly dominates the memory access (SSA data dependency + a side-effecting,
+// possibly-non-returning call). There is NO clamp/saturation here — an
+// out-of-range index TRAPS, it is never redirected to element 0 or len-1.
+// Declared (i64,i64)->i64 to match the auto-generated extern signature
+// (`func.func private @__mind_oob_check(i64, i64) -> i64`).
+MIND_EXPORT int64_t __mind_oob_check(int64_t idx, int64_t len) {
+    if ((uint64_t)idx >= (uint64_t)len) {
+        __mind_oob_trap();
+    }
+    return idx;
+}
+
 MIND_EXPORT int64_t __mind_alloc(int64_t bytes) {
     if (bytes <= 0) return 0;
     void *p = malloc((size_t)bytes);

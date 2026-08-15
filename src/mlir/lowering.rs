@@ -4523,41 +4523,70 @@ impl LoweringContext {
                         )));
                     }
                 };
-                // A1 (Fable audit, HIGH, wedge): an empty array has no
-                // in-bounds element — any index into it is out of bounds, so
-                // there is no deterministic value to clamp to. Reject it.
+                // ARRAY_OOB_CONTRACT=DETERMINISTIC_BOUNDS_TRAP (Step C; see
+                // docs/ARRAY_SEMANTICS.md). An empty array has no in-bounds
+                // element, so EVERY index into it is out of bounds. `len` is a
+                // compile-time constant here (static array), so this is a
+                // compile-time-PROVABLE out-of-bounds access: reject it at
+                // compile time (the Step-B contract permits compile-time
+                // rejection of provable OOB). No index value can make it valid —
+                // we never manufacture a `len - 1` for a length-0 array.
                 if len == 0 {
                     return Err(MlirLowerError::ShapeError(format!(
-                        "ArrayLoad: cannot index an empty (len 0) array {base:?}"
+                        "ArrayLoad: cannot index an empty (len 0) array {base:?} \
+                         — every index is out of bounds"
                     )));
                 }
-                // A1 (Fable audit, HIGH, wedge): clamp the (possibly runtime)
-                // index to `[0, len-1]` so `tensor.extract` is ALWAYS in
-                // bounds. Without this a negative or `>= len` index is an
-                // out-of-bounds `tensor.extract` — UB after bufferization whose
-                // result differs by substrate = a byte-identity break on the
-                // executable path (the wedge). The clamp gives OOB a PINNED,
-                // substrate-independent result (element 0 for a negative index,
-                // element len-1 for `>= len`). The clamp is pure signed i64
-                // min/max, itself byte-identical across x86/ARM.
-                self.emit_line(&format!("  %alo{0} = arith.constant 0 : i64", dst.0));
-                self.emit_line(&format!(
-                    "  %ahi{0} = arith.constant {1} : i64",
-                    dst.0,
-                    len - 1
-                ));
-                self.emit_line(&format!(
-                    "  %acl0{0} = arith.maxsi {1}, %alo{0} : i64",
-                    dst.0, index
-                ));
-                self.emit_line(&format!(
-                    "  %acl1{0} = arith.minsi %acl0{0}, %ahi{0} : i64",
-                    dst.0
-                ));
-                self.emit_line(&format!(
-                    "  %aidx{0} = arith.index_cast %acl1{0} : i64 to index",
-                    dst.0
-                ));
+                // If `index` is a compile-time `ConstI64`, decide bounds NOW:
+                //   * proven in-range  -> emit the extract directly, NO runtime
+                //     check (PROVEN_IN_RANGE_BOUNDS_ELISION — a statically-safe
+                //     access carries zero bounds overhead);
+                //   * proven out-of-range -> reject at compile time (deterministic
+                //     compile-time OOB — never clamped, never a runtime trap).
+                // Only a genuinely RUNTIME index takes the deterministic runtime
+                // bounds trap below.
+                match self.const_i64_map.get(index).copied() {
+                    Some(c) if c < 0 || c >= len as i64 => {
+                        return Err(MlirLowerError::ShapeError(format!(
+                            "ArrayLoad: constant index {c} is out of bounds for a \
+                             length-{len} array {base:?} (valid indices 0..={}) — a \
+                             compile-time-provable out-of-bounds access is rejected \
+                             deterministically, never clamped",
+                            len - 1
+                        )));
+                    }
+                    Some(c) => {
+                        // Proven in-range constant `c` in [0, len): direct extract.
+                        self.emit_line(&format!("  %aidx{0} = arith.constant {c} : index", dst.0));
+                    }
+                    None => {
+                        // Runtime index: DETERMINISTIC_BOUNDS_TRAP. Call the single
+                        // bounds-check authority BEFORE the element address is
+                        // formed. `__mind_oob_check(idx, len)` returns `idx` iff
+                        // 0 <= idx < len, else it routes to __mind_oob_trap, which
+                        // `_Exit`s with the pinned OOB code (the current executable
+                        // ABI — exit 77) and never returns. The `tensor.extract`
+                        // below consumes THIS call's result as its subscript, so no
+                        // address is computed or loaded before the check passes:
+                        // the trap strictly dominates the memory access (SSA data
+                        // dependency + a side-effecting, possibly-non-returning
+                        // call). No clamp / no saturation — a negative or `>= len`
+                        // index TRAPS, never redirected to element 0 or len-1. This
+                        // is byte-identical across x86/ARM (a pure i64 compare +
+                        // call, no float, no pointer bits).
+                        self.extern_calls
+                            .insert(("__mind_oob_check".to_string(), 2));
+                        self.emit_line(&format!("  %alen{0} = arith.constant {len} : i64", dst.0));
+                        self.emit_line(&format!(
+                            "  %achk{0} = func.call @__mind_oob_check({1}, %alen{0}) : (i64, i64) -> i64",
+                            dst.0, index
+                        ));
+                        self.emit_line(&format!(
+                            "  %aidx{0} = arith.index_cast %achk{0} : i64 to index",
+                            dst.0
+                        ));
+                    }
+                }
                 self.emit_line(&format!(
                     "  {0} = tensor.extract {1}[%aidx{2}] : tensor<{3}x{elem}>",
                     dst, base, dst.0, len
