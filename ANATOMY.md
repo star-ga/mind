@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3371 | **Est. tokens:** ~7,875,432
-**Generated:** 2026-08-15 17:19 UTC
+**Files:** 3371 | **Est. tokens:** ~7,879,774
+**Generated:** 2026-08-15 17:30 UTC
 
 ## Token Budget Guide
 
@@ -40,10 +40,10 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,465 |
-| `docs/` | 33 | ~73,967 |
+| `docs/` | 34 | ~80,523 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
-| `docs/design/` | 4 | ~10,395 |
+| `docs/design/` | 3 | ~8,181 |
 | `docs/mindcraft/` | 3 | ~7,086 |
 | `docs/provenance/` | 2 | ~4,035 |
 | `docs/rfcs/` | 32 | ~147,264 |
@@ -653,6 +653,7 @@
 ### `docs/`
 
 - `architecture.md` (~965 tok, large) — Architecture
+- `ARRAY_SEMANTICS.md` (~6556 tok, huge) — MIND array semantics — normative architecture record
 - `autodiff.md` (~595 tok, large) — Static autodiff (public)
 ### `docs/backends/`
 
@@ -677,7 +678,6 @@
 ### `docs/design/`
 
 - `execution-plan-performance-mode.md` (~8045 tok, huge) — Design: PerformanceMode + ExecutionPlan + ExecutionProvider
-- `f64_array_architecture.md` (~2214 tok, huge) — Normative array-semantics + f64-aggregate architecture record
 - `README.md` (~26 tok, tiny) — Design Docs
 - `v0.3.md` (~110 tok, small) — MIND Design v0.3 (Draft)
 ### `docs/`
