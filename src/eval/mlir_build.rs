@@ -410,6 +410,58 @@ pub(crate) fn compile_runtime_support_obj(tools: &BuildTools) -> Result<NamedTem
     Ok(obj_tmp)
 }
 
+/// Compile a manifest-declared native C-ABI runtime source
+/// (`[targets.*].native_sources`) to a relocatable object at `out`, so the
+/// executable link can resolve the C-ABI runtime symbols a project's `.mind`
+/// modules call (e.g. mind-nerve's `__mind_nerve_blas_*` / `__mind_nerve_lut_*`).
+///
+/// Determinism contract — identical to [`compile_runtime_support_obj`]:
+///   * NO `-g` — debug info would embed the absolute source path via DWARF
+///     `DW_AT_comp_dir` / line tables and break byte-identity.
+///   * `-ffile-prefix-map=<src-dir>=.` normalises any embedded prefix; combined
+///     with clang recording only the BASENAME as the `STT_FILE` symbol, no
+///     absolute path leaks into `.symtab`. The basename is the repo-stable
+///     source filename (e.g. `blas_shims_i64.c`), so the object bytes are
+///     reproducible run-to-run and, given the same clang, across substrates.
+///   * `-ffp-contract=off` keeps the C runtime uniformly strict-FP, matching
+///     the IR codegen path (no float contraction).
+/// `-fPIC -O2` mirror the runtime-support shim. The object is written to a
+/// caller-owned persistent path (under the project `target/obj`), so it
+/// survives until the link.
+#[cfg(feature = "mlir-build")]
+pub(crate) fn compile_native_c_obj(
+    tools: &BuildTools,
+    src: &std::path::Path,
+    out: &std::path::Path,
+) -> Result<(), BuildError> {
+    let src_dir = src
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let prefix_map = format!("-ffile-prefix-map={}=.", src_dir.to_string_lossy());
+    let args: Vec<String> = vec![
+        "-x".into(),
+        "c".into(),
+        src.to_string_lossy().into_owned(),
+        "-c".into(),
+        "-fPIC".into(),
+        "-O2".into(),
+        "-ffp-contract=off".into(),
+        prefix_map,
+        "-o".into(),
+        out.to_string_lossy().into_owned(),
+    ];
+
+    let output = run_command(&tools.clang, &args, None, tools.timeout, "clang")?;
+    if !output.status.success() {
+        return Err(BuildError::Subprocess {
+            tool: "clang",
+            stderr: decode_to_string(&output.stderr),
+        });
+    }
+    Ok(())
+}
+
 /// Environment variables clang reads that can alter emitted object bytes.
 /// Folded into the runtime-obj cache key so an env change never yields a
 /// false cache hit (the key is conservative: a different value — or set vs

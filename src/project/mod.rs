@@ -518,6 +518,22 @@ pub struct TargetConfig {
     /// unchanged.
     #[serde(default)]
     pub sources: Option<Vec<String>>,
+    /// Native C-ABI runtime sources compiled and statically linked into the
+    /// executable, each path relative to the project root, in declared order.
+    /// This is the sanctioned resolution for a project whose `.mind` modules
+    /// call C-ABI runtime shims (e.g. mind-nerve's `__mind_nerve_blas_*` /
+    /// `__mind_nerve_lut_*` symbols, registered in the cross-backend
+    /// `STD_SURFACE_INTRINSICS` table so the MLIR backend emits a plain
+    /// `func.call @__mind_nerve_*`): the `func.call` needs the symbol DEFINED
+    /// at link time, which these C objects provide. Each is compiled through the
+    /// same deterministic clang invocation as the bundled runtime-support shim
+    /// (fixed basename STT_FILE + `-ffile-prefix-map`, no `-g`, `-ffp-contract=off`),
+    /// so no absolute path leaks into `.symtab` and the object bytes are
+    /// reproducible. When absent the executable link is byte-identical to the
+    /// historical path (the keystone declares none), so this never perturbs the
+    /// cross-substrate bit-identity gate.
+    #[serde(default)]
+    pub native_sources: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -1011,8 +1027,44 @@ pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
     }
 
     // Build each source file and link
-    let (compiled, entry_native_compiled, fallback_sources) =
+    let (mut compiled, entry_native_compiled, fallback_sources) =
         compile_sources(&project_root, &sources, &backend, opts, explicit_sources)?;
+
+    // Compile any manifest-declared native C-ABI runtime sources
+    // (`[targets.*].native_sources`) and add their objects to the link, so a
+    // project whose `.mind` modules call C-ABI runtime shims (registered in
+    // `STD_SURFACE_INTRINSICS`, lowered to `func.call @__mind_nerve_*`) has
+    // those symbols DEFINED at link time instead of failing native_link and
+    // dropping to a launcher stub. An absent/empty list leaves the object set
+    // unchanged — byte-identical to the historical link (keystone-safe).
+    #[cfg(feature = "mlir-build")]
+    if let Some(native_srcs) = target_config.and_then(|cfg| cfg.native_sources.as_deref()) {
+        if !native_srcs.is_empty() {
+            use crate::eval::mlir_build;
+            let tools = mlir_build::resolve_tools().map_err(|e| {
+                anyhow!("native_sources: MLIR build tools unavailable: {e}")
+            })?;
+            let obj_dir = project_root.join("target").join("obj");
+            fs::create_dir_all(&obj_dir)?;
+            for rel in native_srcs {
+                let src = project_root.join(rel);
+                if !src.exists() {
+                    return Err(anyhow!(
+                        "native_sources: declared C source not found: {}",
+                        src.display()
+                    ));
+                }
+                let stem = src
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .ok_or_else(|| anyhow!("native_sources: invalid path {}", src.display()))?;
+                let obj = obj_dir.join(format!("__native_{stem}.o"));
+                mlir_build::compile_native_c_obj(&tools, &src, &obj)
+                    .map_err(|e| anyhow!("native_sources: compile failed for {}: {e}", src.display()))?;
+                compiled.push(obj);
+            }
+        }
+    }
 
     // Link into final binary
     link_binary(&compiled, &output_path, &backend, opts)?;

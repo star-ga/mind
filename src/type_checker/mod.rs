@@ -2320,6 +2320,28 @@ const STD_SURFACE_INTRINSICS: &[(&str, usize)] = &[
     // M-row bands with raw POSIX threads. Output is independent of the thread
     // count (no cross-thread reduction), so cross-substrate bit-identity holds.
     ("__mind_blas_matmul_mm_q16_mt_v", 6),
+    // mind-nerve C-ABI runtime surface (RFC 0006 pattern, i64 ABI). These nine
+    // symbols are the native encoder's Q16.16 BLAS + LUT-handle bridge, defined
+    // in mind-nerve's `runtime/blas_shims_i64.c` + `runtime/lut_cache.c` and
+    // resolved at .so link time (the C objects are compiled+linked via the
+    // manifest `[build].native_sources` list). Registering them here — same as
+    // any `__mind_blas_*` extern — makes mindc's MLIR backend emit a plain
+    // arity-checked `func.call @__mind_nerve_*` (NOT the E2024 self-host-only
+    // advisory + runtime-JIT fallback), so the kernel/LUT modules that call them
+    // compile NATIVELY. All args + result are i64 (opaque heap addresses / Q16.16
+    // scalars in the low 32 bits); the C side is byte-identical scalar-vs-AVX2
+    // (task #57 cross-arch gate). The four `_lut_*_h` accessors are 0-arity cached
+    // table-handle getters; the five `_blas_*` are Q16.16 dot / score / GEMM /
+    // attention contractions with the un-transposed row-major operand layout.
+    ("__mind_nerve_blas_attnv_q16_i64", 6),
+    ("__mind_nerve_blas_dot_q16_i64", 3),
+    ("__mind_nerve_blas_matmul_q16_i64", 6),
+    ("__mind_nerve_blas_matmul_score_q16_i64", 5),
+    ("__mind_nerve_blas_qkt_q16_i64", 6),
+    ("__mind_nerve_lut_exp_h", 0),
+    ("__mind_nerve_lut_recip_h", 0),
+    ("__mind_nerve_lut_rsqrt_h", 0),
+    ("__mind_nerve_lut_tanh_h", 0),
     // Phase 17.3 — `f64` bit-cast surface. These three same-width coercions let
     // an `f64` aggregate be built on the existing i64 heap: `__mind_f64_to_bits`
     // reinterprets an `f64` as its i64 bit pattern for storage, `__mind_bits_to_f64`
