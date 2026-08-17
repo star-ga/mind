@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3376 | **Est. tokens:** ~7,915,569
-**Generated:** 2026-08-17 20:19 UTC
+**Files:** 3376 | **Est. tokens:** ~7,916,784
+**Generated:** 2026-08-17 22:06 UTC
 
 ## Token Budget Guide
 
@@ -76,7 +76,7 @@
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
 | `.github/workflows/` | 9 | ~15,845 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
-| `runtime-support/` | 1 | ~19,343 |
+| `runtime-support/` | 1 | ~20,558 |
 | `scripts/` | 10 | ~12,924 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
@@ -1127,7 +1127,7 @@
 - `verification.mind` (~948 tok, large) — Verification plane for inference consistency (LCU)
 ### `runtime-support/`
 
-- `mind_intrinsics.c` (~19343 tok, huge) — Copyright 2025 STARGA Inc.
+- `mind_intrinsics.c` (~20558 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
 - `anatomy-hook.sh` (~258 tok, medium) — anatomy-hook.sh — Git pre-commit hook to refresh ANATOMY.md

@@ -2320,6 +2320,16 @@ const STD_SURFACE_INTRINSICS: &[(&str, usize)] = &[
     // M-row bands with raw POSIX threads. Output is independent of the thread
     // count (no cross-thread reduction), so cross-substrate bit-identity holds.
     ("__mind_blas_matmul_mm_q16_mt_v", 6),
+    // Multithreaded fused Q16.16 GEMV — the routing SCORE kernel
+    // (`scores[M] = catalog[M×K] · query[K]`, catalog + query packed-i32, scores
+    // i32; arity 5: catalog, query, scores, m, k; i64 ABI, returns 0). Same
+    // owner-computes MT band wrapper as `__mind_blas_matmul_mm_q16_mt_v` with N
+    // pinned to 1, but each band vectorises the K reduction (exact i64 accumulate
+    // + horizontal reduce) instead of the N-columns tile — streaming the catalog
+    // once (memory-bound). Byte-for-byte identical to the per-row scalar dot oracle
+    // `Σ_k (catalog[i,k]*query[k])>>16` and independent of the thread count, so
+    // cross-substrate bit-identity holds.
+    ("__mind_blas_gemv_q16_mt", 5),
     // mind-nerve C-ABI runtime surface (RFC 0006 pattern, i64 ABI). These nine
     // symbols are the native encoder's Q16.16 BLAS + LUT-handle bridge, defined
     // in mind-nerve's `runtime/blas_shims_i64.c` + `runtime/lut_cache.c` and

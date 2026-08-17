@@ -92,6 +92,7 @@ enum IntrinsicKind {
     MatmulRmajorI16V,
     MatmulMmQ16V,
     MatmulMmQ16MtV,
+    GemvQ16Mt,
     MatmulMmI8V,
     MatmulMmI8MtV,
     // --- native-memory load/store (8) ---
@@ -164,6 +165,7 @@ fn classify_intrinsic(name: &str) -> Option<IntrinsicKind> {
         "blas_matmul_rmajor_i16_v" => IntrinsicKind::MatmulRmajorI16V,
         "blas_matmul_mm_q16_v" => IntrinsicKind::MatmulMmQ16V,
         "blas_matmul_mm_q16_mt_v" => IntrinsicKind::MatmulMmQ16MtV,
+        "blas_gemv_q16_mt" => IntrinsicKind::GemvQ16Mt,
         "blas_matmul_mm_i8_v" => IntrinsicKind::MatmulMmI8V,
         "blas_matmul_mm_i8_mt_v" => IntrinsicKind::MatmulMmI8MtV,
         "load_i64" => IntrinsicKind::LoadI64,
@@ -2862,7 +2864,29 @@ impl LoweringContext {
                 // single-thread path above is untouched.
                 if ikind == Some(IntrinsicKind::MatmulMmQ16MtV) && args.len() == 6 {
                     self.emit_vec_matmul_mm_q16_mt(
-                        *dst, args[0], args[1], args[2], args[3], args[4], args[5],
+                        *dst,
+                        args[0],
+                        args[1],
+                        args[2],
+                        args[3],
+                        args[4],
+                        Some(args[5]),
+                    );
+                    self.values.insert(*dst, ValueKind::ScalarI64);
+                    return Ok(());
+                }
+                // Multithreaded fused Q16.16 GEMV — the routing-score kernel
+                // (`scores[M] = catalog[M×K] · query[K]`, packed-i32). Same
+                // owner-computes MT band wrapper as the GEMM above, but N is pinned
+                // to 1 (`None`) and each band runs the K-vectorised gemv kernel
+                // (`emit_gemv_q16_row_band`) instead of the N-vectorised GEMM tile —
+                // so it streams the catalog once (memory-bound) and vectorises the
+                // K reduction. Byte-for-byte identical to the scalar dot oracle and
+                // thread-count-independent (exact i64 accumulate, owner-computes).
+                // Args: [catalog, query, scores, M, K]. Additive.
+                if ikind == Some(IntrinsicKind::GemvQ16Mt) && args.len() == 5 {
+                    self.emit_vec_matmul_mm_q16_mt(
+                        *dst, args[0], args[1], args[2], args[3], args[4], None,
                     );
                     self.values.insert(*dst, ValueKind::ScalarI64);
                     return Ok(());
@@ -9679,6 +9703,198 @@ impl LoweringContext {
         line("    }");
     }
 
+    /// Emit the fused Q16.16 GEMV row-band kernel: for each row `i` in
+    /// `[row_start, row_end)`, compute `scores[i] = Σ_k (catalog[i,k]*query[k]) >> 16`
+    /// and store the i64→i32 truncation to `cp[i]`. Catalog `ap` is M×K row-major
+    /// packed-i32, query `bp` is K packed-i32, scores `cp` is M i32.
+    ///
+    /// Unlike the GEMM tile (which vectorises across N columns and, at N=1, falls
+    /// into a scalar column tail with no SIMD over K), this kernel vectorises the
+    /// K REDUCTION: it accumulates a `vector<8xi64>` of per-product `>> 16` shifted
+    /// terms, then horizontally reduces, plus a scalar K%8 tail. Because the
+    /// accumulator is EXACT i64 integer (no rounding), the lane regrouping +
+    /// horizontal reduction sum to the identical value as the strictly-sequential
+    /// scalar oracle `__mind_blas_dot_q16` — so the emitted scores are byte-for-byte
+    /// identical to the oracle (and thread-count-independent when driven by the
+    /// owner-computes MT band wrapper). Streams the catalog once ⇒ memory-bound.
+    #[cfg(feature = "std-surface")]
+    #[allow(clippy::too_many_arguments)]
+    fn emit_gemv_q16_row_band(
+        buf: &mut String,
+        prefix: &str,
+        ap: &str,
+        bp: &str,
+        cp: &str,
+        k64: &str,
+        ki: &str,
+        row_start: &str,
+        row_end: &str,
+    ) {
+        use std::fmt::Write;
+        let p = prefix;
+        const VW: usize = 8;
+        let elem_bytes = std::mem::size_of::<i32>() as i64;
+        let mut line = |s: &str| {
+            writeln!(buf, "{s}").expect("write to string cannot fail");
+        };
+
+        // ── constants ────────────────────────────────────────────────────────
+        line(&format!("    %{p}_c0 = arith.constant 0 : index"));
+        line(&format!("    %{p}_c1 = arith.constant 1 : index"));
+        line(&format!("    %{p}_vw = arith.constant {VW} : index"));
+        line(&format!("    %{p}_eb = arith.constant {elem_bytes} : i64"));
+        line(&format!("    %{p}_s16 = arith.constant 16 : i64"));
+        line(&format!("    %{p}_z0 = arith.constant 0 : i64"));
+        line(&format!(
+            "    %{p}_s16v = arith.constant dense<16> : vector<{VW}xi64>"
+        ));
+        line(&format!(
+            "    %{p}_zv = arith.constant dense<0> : vector<{VW}xi64>"
+        ));
+        // k_main = (K / 8) * 8 (index), the vectorised prefix; the K%8 tail is scalar.
+        line(&format!(
+            "    %{p}_knb = arith.divui %{ki}, %{p}_vw : index"
+        ));
+        line(&format!(
+            "    %{p}_kmain = arith.muli %{p}_knb, %{p}_vw : index"
+        ));
+
+        // ── row loop: i in [row_start, row_end) ──────────────────────────────
+        line(&format!(
+            "    scf.for %{p}_i = %{row_start} to %{row_end} step %{p}_c1 {{"
+        ));
+        line(&format!(
+            "      %{p}_ii = arith.index_cast %{p}_i : index to i64"
+        ));
+        // catalog row base element index = i * K.
+        line(&format!(
+            "      %{p}_ibase = arith.muli %{p}_ii, %{k64} : i64"
+        ));
+
+        // ── region A — vectorised K reduction over [0, k_main) step 8 ─────────
+        line(&format!(
+            "      %{p}_vacc = scf.for %{p}_k = %{p}_c0 to %{p}_kmain step %{p}_vw \
+             iter_args(%{p}_acc = %{p}_zv) -> (vector<{VW}xi64>) {{"
+        ));
+        line(&format!(
+            "        %{p}_ki64 = arith.index_cast %{p}_k : index to i64"
+        ));
+        // catalog[i, k..k+8]
+        line(&format!(
+            "        %{p}_aidx = arith.addi %{p}_ibase, %{p}_ki64 : i64"
+        ));
+        line(&format!(
+            "        %{p}_abo = arith.muli %{p}_aidx, %{p}_eb : i64"
+        ));
+        line(&format!(
+            "        %{p}_aptr = llvm.getelementptr %{ap}[%{p}_abo] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        line(&format!(
+            "        %{p}_av = llvm.load %{p}_aptr {{alignment = 4 : i64}} : \
+             !llvm.ptr -> vector<{VW}xi32>"
+        ));
+        line(&format!(
+            "        %{p}_aw = arith.extsi %{p}_av : vector<{VW}xi32> to vector<{VW}xi64>"
+        ));
+        // query[k..k+8]
+        line(&format!(
+            "        %{p}_bbo = arith.muli %{p}_ki64, %{p}_eb : i64"
+        ));
+        line(&format!(
+            "        %{p}_bptr = llvm.getelementptr %{bp}[%{p}_bbo] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        line(&format!(
+            "        %{p}_bv = llvm.load %{p}_bptr {{alignment = 4 : i64}} : \
+             !llvm.ptr -> vector<{VW}xi32>"
+        ));
+        line(&format!(
+            "        %{p}_bw = arith.extsi %{p}_bv : vector<{VW}xi32> to vector<{VW}xi64>"
+        ));
+        // per-product >>16 then exact i64 vector accumulate (matches the oracle).
+        line(&format!(
+            "        %{p}_pp = arith.muli %{p}_aw, %{p}_bw : vector<{VW}xi64>"
+        ));
+        line(&format!(
+            "        %{p}_ps = arith.shrsi %{p}_pp, %{p}_s16v : vector<{VW}xi64>"
+        ));
+        line(&format!(
+            "        %{p}_na = arith.addi %{p}_acc, %{p}_ps : vector<{VW}xi64>"
+        ));
+        line(&format!("        scf.yield %{p}_na : vector<{VW}xi64>"));
+        line("      }");
+        // horizontal reduce the 8 lanes (exact i64 add ⇒ order-independent).
+        line(&format!(
+            "      %{p}_vsum = vector.reduction <add>, %{p}_vacc : vector<{VW}xi64> into i64"
+        ));
+
+        // ── region B — scalar K%8 tail over [k_main, K), seeded with vsum ─────
+        line(&format!(
+            "      %{p}_sacc = scf.for %{p}_kt = %{p}_kmain to %{ki} step %{p}_c1 \
+             iter_args(%{p}_s = %{p}_vsum) -> (i64) {{"
+        ));
+        line(&format!(
+            "        %{p}_tki64 = arith.index_cast %{p}_kt : index to i64"
+        ));
+        line(&format!(
+            "        %{p}_taidx = arith.addi %{p}_ibase, %{p}_tki64 : i64"
+        ));
+        line(&format!(
+            "        %{p}_tabo = arith.muli %{p}_taidx, %{p}_eb : i64"
+        ));
+        line(&format!(
+            "        %{p}_taptr = llvm.getelementptr %{ap}[%{p}_tabo] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        line(&format!(
+            "        %{p}_tas = llvm.load %{p}_taptr : !llvm.ptr -> i32"
+        ));
+        line(&format!(
+            "        %{p}_taw = arith.extsi %{p}_tas : i32 to i64"
+        ));
+        line(&format!(
+            "        %{p}_tbbo = arith.muli %{p}_tki64, %{p}_eb : i64"
+        ));
+        line(&format!(
+            "        %{p}_tbptr = llvm.getelementptr %{bp}[%{p}_tbbo] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        line(&format!(
+            "        %{p}_tbs = llvm.load %{p}_tbptr : !llvm.ptr -> i32"
+        ));
+        line(&format!(
+            "        %{p}_tbw = arith.extsi %{p}_tbs : i32 to i64"
+        ));
+        line(&format!(
+            "        %{p}_tpp = arith.muli %{p}_taw, %{p}_tbw : i64"
+        ));
+        line(&format!(
+            "        %{p}_tps = arith.shrsi %{p}_tpp, %{p}_s16 : i64"
+        ));
+        line(&format!(
+            "        %{p}_tns = arith.addi %{p}_s, %{p}_tps : i64"
+        ));
+        line(&format!("        scf.yield %{p}_tns : i64"));
+        line("      }");
+
+        // ── store scores[i] = (i32) sacc ─────────────────────────────────────
+        line(&format!(
+            "      %{p}_lo = arith.trunci %{p}_sacc : i64 to i32"
+        ));
+        line(&format!(
+            "      %{p}_cbo = arith.muli %{p}_ii, %{p}_eb : i64"
+        ));
+        line(&format!(
+            "      %{p}_cptr = llvm.getelementptr %{cp}[%{p}_cbo] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        line(&format!(
+            "      llvm.store %{p}_lo, %{p}_cptr {{alignment = 4 : i64}} : i32, !llvm.ptr"
+        ));
+        line("    }");
+    }
+
     /// Emit the multithreaded fused outer-product Q16.16 GEMM
     /// (`__mind_blas_matmul_mm_q16_mt_v`).
     ///
@@ -9708,7 +9924,11 @@ impl LoweringContext {
         c_addr: ValueId,
         m: ValueId,
         k: ValueId,
-        n: ValueId,
+        // `Some(n)` = GEMM (`C[M×N]=A·B`); `None` = GEMV (`scores[M]=catalog·query`,
+        // N pinned to 1, driven by the K-vectorised `emit_gemv_q16_row_band`). Both
+        // share this owner-computes MT band wrapper verbatim, so the GEMM path is
+        // byte-for-byte unchanged.
+        n: Option<ValueId>,
     ) {
         use std::fmt::Write;
         let d = dst.0;
@@ -9788,19 +10008,35 @@ impl LoweringContext {
             "    %wk_{d}_rei = arith.index_cast %wk_{d}_re : i64 to index"
         )
         .unwrap();
-        Self::emit_mm_q16_row_band(
-            &mut w,
-            &format!("mtk_{d}"),
-            &format!("wk_{d}_ap"),
-            &format!("wk_{d}_bp"),
-            &format!("wk_{d}_cp"),
-            &format!("wk_{d}_k"),
-            &format!("wk_{d}_n"),
-            &format!("wk_{d}_ki"),
-            &format!("wk_{d}_ni"),
-            &format!("wk_{d}_rsi"),
-            &format!("wk_{d}_rei"),
-        );
+        match n {
+            Some(_) => Self::emit_mm_q16_row_band(
+                &mut w,
+                &format!("mtk_{d}"),
+                &format!("wk_{d}_ap"),
+                &format!("wk_{d}_bp"),
+                &format!("wk_{d}_cp"),
+                &format!("wk_{d}_k"),
+                &format!("wk_{d}_n"),
+                &format!("wk_{d}_ki"),
+                &format!("wk_{d}_ni"),
+                &format!("wk_{d}_rsi"),
+                &format!("wk_{d}_rei"),
+            ),
+            // GEMV: N is implicitly 1, so the worker's `n`/`ni` (loaded as the
+            // constant 1) go unused; the K-vectorised band reads catalog/query
+            // straight from the row bounds.
+            None => Self::emit_gemv_q16_row_band(
+                &mut w,
+                &format!("mtk_{d}"),
+                &format!("wk_{d}_ap"),
+                &format!("wk_{d}_bp"),
+                &format!("wk_{d}_cp"),
+                &format!("wk_{d}_k"),
+                &format!("wk_{d}_ki"),
+                &format!("wk_{d}_rsi"),
+                &format!("wk_{d}_rei"),
+            ),
+        }
         writeln!(&mut w, "    %wk_{d}_null = llvm.mlir.zero : !llvm.ptr").unwrap();
         writeln!(&mut w, "    llvm.return %wk_{d}_null : !llvm.ptr").unwrap();
         writeln!(&mut w, "  }}").unwrap();
@@ -9915,9 +10151,15 @@ impl LoweringContext {
             "    %mt{d}_k64 = arith.addi %{}, %mt{d}_zc : i64",
             k.0
         ));
+        // GEMM: copy the caller's `n`. GEMV: pin N=1 (the `%mt{d}_one64` constant
+        // materialised above), so `C[i,j]=i*1+0` and `B[k,0]=k*1+0` collapse the
+        // GEMM indexing to the GEMV shape and the arg-struct `n` field carries 1.
+        let n_src = match n {
+            Some(nv) => format!("%{}", nv.0),
+            None => format!("%mt{d}_one64"),
+        };
         self.emit_line(&format!(
-            "    %mt{d}_n64 = arith.addi %{}, %mt{d}_zc : i64",
-            n.0
+            "    %mt{d}_n64 = arith.addi {n_src}, %mt{d}_zc : i64"
         ));
 
         // Spawn loop: for t in 0..T.
@@ -9976,42 +10218,23 @@ impl LoweringContext {
                 "      llvm.store {val}, %mt{d}_sp{idx} : i64, !llvm.ptr"
             ));
         }
-        // handle slot = handles + t*8.
-        self.emit_line(&format!(
-            "      %mt{d}_hoff = arith.muli %mt{d}_ti, %mt{d}_hsz : i64"
-        ));
-        self.emit_line(&format!(
-            "      %mt{d}_hp = llvm.getelementptr %mt{d}_handles[%mt{d}_hoff] : \
-             (!llvm.ptr, i64) -> !llvm.ptr, i8"
-        ));
-        self.emit_line(&format!(
-            "      %mt{d}_crc = llvm.call @pthread_create(%mt{d}_hp, %mt{d}_pnull, %mt{d}_wfp, %mt{d}_argp) : \
-             (!llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32"
-        ));
+        // (pack-only loop end — the per-band spawn moved to the pool dispatch)
         self.emit_line("    }");
 
-        // Join loop: for t in 0..T.
+        // The per-band `pthread_create`/`pthread_join` is replaced by a single
+        // dispatch to the persistent worker pool (`__mind_blas_mt_dispatch` in
+        // the runtime-support shim): it runs each of the T packed band-args on a
+        // parked pool thread and JOINS all bands before returning. The band
+        // partition + arg structs + worker fn are UNCHANGED, so the output is
+        // byte-for-byte identical to the inline spawn path and still independent
+        // of the thread/pool count (owner-computes), while the per-call spawn
+        // cost — which dominated a sub-millisecond GEMV — is amortised into the
+        // pool. (`%mt{d}_handles`/`_hnum`/`_hsz`/`_pnull` are now dead and the
+        // opt pipeline DCEs them.)
         self.emit_line(&format!(
-            "    scf.for %mt{d}_jt = %mt{d}_c0idx to %mt{d}_Ti step %mt{d}_c1idx {{"
+            "    llvm.call @__mind_blas_mt_dispatch(%mt{d}_wfp, %mt{d}_argbuf, %mt{d}_sb, %mt{d}_T) : \
+             (!llvm.ptr, !llvm.ptr, i64, i64) -> ()"
         ));
-        self.emit_line(&format!(
-            "      %mt{d}_jti = arith.index_cast %mt{d}_jt : index to i64"
-        ));
-        self.emit_line(&format!(
-            "      %mt{d}_jhoff = arith.muli %mt{d}_jti, %mt{d}_hsz : i64"
-        ));
-        self.emit_line(&format!(
-            "      %mt{d}_jhp = llvm.getelementptr %mt{d}_handles[%mt{d}_jhoff] : \
-             (!llvm.ptr, i64) -> !llvm.ptr, i8"
-        ));
-        self.emit_line(&format!(
-            "      %mt{d}_tid = llvm.load %mt{d}_jhp : !llvm.ptr -> i64"
-        ));
-        self.emit_line(&format!(
-            "      %mt{d}_jrc = llvm.call @pthread_join(%mt{d}_tid, %mt{d}_pnull) : \
-             (i64, !llvm.ptr) -> i32"
-        ));
-        self.emit_line("    }");
 
         // The intrinsic returns 0 (i64) — matches the single-thread sibling.
         self.emit_line(&format!("    %{d} = arith.constant 0 : i64"));
@@ -10956,6 +11179,10 @@ pub fn lower_ir_to_mlir_with_entry(
         );
         out.push_str("  llvm.func @pthread_join(i64, !llvm.ptr) -> i32\n");
         out.push_str("  llvm.func @sysconf(i32) -> i64\n");
+        // Persistent-pool dispatcher (runtime-support shim): the Q16.16 MT kernel
+        // hands its T packed band-args to this instead of spawning a pthread per
+        // call. `(worker_fp, argbuf, struct_bytes, n_bands) -> void`.
+        out.push_str("  llvm.func @__mind_blas_mt_dispatch(!llvm.ptr, !llvm.ptr, i64, i64)\n");
     }
     // Heap-allocation externs for the int8 BLIS macro-kernel's scratch panels
     // (C-scratch / packed-A / packed-B). Emitted once, before any function body
