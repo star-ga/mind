@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3372 | **Est. tokens:** ~7,902,847
-**Generated:** 2026-08-17 11:28 UTC
+**Files:** 3375 | **Est. tokens:** ~7,911,322
+**Generated:** 2026-08-17 18:33 UTC
 
 ## Token Budget Guide
 
@@ -26,6 +26,7 @@
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
+| `assets/logo/` | 1 | ~453 |
 | `audits/` | 6 | ~607 |
 | `bench/` | 2 | ~1,772 |
 | `benches/` | 27 | ~80,382 |
@@ -380,18 +381,18 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 7 | ~18,597 |
+| `src/` | 8 | ~23,333 |
 | `src/ast/` | 1 | ~10,205 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
-| `src/build/` | 2 | ~16,852 |
+| `src/build/` | 2 | ~17,847 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 3 | ~10,829 |
 | `src/deps/` | 1 | ~9,345 |
 | `src/diagnostics/` | 1 | ~3,719 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,987 |
-| `src/eval/` | 16 | ~86,602 |
+| `src/eval/` | 16 | ~86,705 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
@@ -408,7 +409,7 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 2 | ~20,355 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 2 | ~9,476 |
+| `src/project/` | 3 | ~11,664 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -520,6 +521,9 @@
 
 - `rules.mind` (~557 tok, large) — mind (language compiler / runtime root) architectural-governance rules
 - `scan.json` (~87 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
+### `assets/logo/`
+
+- `README.md` (~453 tok, medium) — MIND logo assets
 ### `audits/`
 
 - `arch-mind-2026-05-18-post-phase-6-1.json` (~169 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
@@ -3942,7 +3946,7 @@
 ### `src/build/`
 
 - `cache.rs` (~6766 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~10086 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~11081 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/cache/`
 
 - `entry.rs` (~977 tok, large) — Copyright 2025-2026 STARGA Inc.
@@ -3984,7 +3988,7 @@
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `interp_mem.rs` (~2993 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~3818 tok, huge) — Copyright 2025 STARGA Inc.
-- `mlir_build.rs` (~10087 tok, huge) — Copyright 2025 STARGA Inc.
+- `mlir_build.rs` (~10190 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~12220 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
@@ -4047,7 +4051,7 @@
 - `verify.rs` (~20381 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `lib.rs` (~1012 tok, large) — Copyright 2025 STARGA Inc.
+- `lib.rs` (~1016 tok, large) — Copyright 2025 STARGA Inc.
 - `linalg.rs` (~2025 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/lint/`
 
@@ -4100,6 +4104,7 @@
 - `pipeline.rs` (~5551 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
+- `link.rs` (~2188 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `module_table.rs` (~5820 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~3656 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -4123,6 +4128,9 @@
 
 - `mod.rs` (~169 tok, small) — Copyright 2025 STARGA Inc.
 - `tensor.rs` (~391 tok, medium) — Copyright 2025 STARGA Inc.
+### `src/`
+
+- `target.rs` (~4732 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `src/test/`
 
 - `mod.rs` (~6816 tok, huge) — Copyright 2025 STARGA Inc.
