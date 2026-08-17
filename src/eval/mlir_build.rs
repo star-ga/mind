@@ -168,7 +168,7 @@ pub fn build_all_with_objects(
         // Phase 6.5 Stage 1b: compile the runtime-support stub to a temp .o
         // and link it into the shared library so vec_new / vec_push /
         // __mind_load_i64 etc. are resolved without an external dependency.
-        let runtime_obj = compile_runtime_support_obj(tools)?;
+        let runtime_obj = compile_runtime_support_obj(tools, opts.target_triple)?;
         let mut extra = vec![runtime_obj.path().to_path_buf()];
         extra.extend(extra_objects.iter().cloned());
         run_clang_codegen(&llvm_ir, tools, opts.target_triple, path, true, &extra)?;
@@ -323,7 +323,10 @@ fn run_mlir_translate(input: &str, tools: &BuildTools) -> Result<String, BuildEr
 /// `.symtab`/`.strtab`, making the keystone artifact non-deterministic and
 /// silently breaking the cross-substrate byte-identity claim.
 #[cfg(feature = "mlir-build")]
-pub(crate) fn compile_runtime_support_obj(tools: &BuildTools) -> Result<NamedTempFile, BuildError> {
+pub(crate) fn compile_runtime_support_obj(
+    tools: &BuildTools,
+    target_triple: Option<&str>,
+) -> Result<NamedTempFile, BuildError> {
     let src_dir = tempfile::tempdir()?;
     let src_path = src_dir.path().join("mind_intrinsics.c");
     std::fs::write(&src_path, MIND_RUNTIME_SUPPORT_C.as_bytes())?;
@@ -337,7 +340,7 @@ pub(crate) fn compile_runtime_support_obj(tools: &BuildTools) -> Result<NamedTem
     //     if a path were embedded, it normalises to a stable prefix. Belt and
     //     suspenders behind the fixed `mind_intrinsics.c` basename above.
     let prefix_map = format!("-ffile-prefix-map={}=.", src_dir.path().to_string_lossy());
-    let args: Vec<String> = vec![
+    let mut args: Vec<String> = vec![
         "-x".into(),
         "c".into(),
         src_path.to_string_lossy().into_owned(),
@@ -352,6 +355,15 @@ pub(crate) fn compile_runtime_support_obj(tools: &BuildTools) -> Result<NamedTem
         "-o".into(),
         obj_tmp.path().to_string_lossy().into_owned(),
     ];
+    // Cross-compile: emit the target triple so clang produces the correct
+    // object format (e.g. COFF for *-w64-windows-gnu). Pushed BEFORE the
+    // cache-key computation below so a foreign-target .o can never be served
+    // from a host .o cache entry. host = None ⇒ this vector is byte-identical
+    // to the pre-change form ⇒ identical cache key + identical object bytes
+    // (RFC 0015 byte-identity preserved for the host path).
+    if let Some(triple) = target_triple {
+        args.push(format!("--target={triple}"));
+    }
 
     // ---------------------------------------------------------------------
     // Disk cache (perf only — output-neutral by construction).
@@ -434,13 +446,14 @@ pub(crate) fn compile_native_c_obj(
     tools: &BuildTools,
     src: &std::path::Path,
     out: &std::path::Path,
+    target_triple: Option<&str>,
 ) -> Result<(), BuildError> {
     let src_dir = src
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| std::path::PathBuf::from("."));
     let prefix_map = format!("-ffile-prefix-map={}=.", src_dir.to_string_lossy());
-    let args: Vec<String> = vec![
+    let mut args: Vec<String> = vec![
         "-x".into(),
         "c".into(),
         src.to_string_lossy().into_owned(),
@@ -452,6 +465,11 @@ pub(crate) fn compile_native_c_obj(
         "-o".into(),
         out.to_string_lossy().into_owned(),
     ];
+    // Cross target: retarget the object to `<triple>` (COFF for windows-gnu).
+    // `None` on the host adds nothing ⇒ byte-identical to the historical compile.
+    if let Some(triple) = target_triple {
+        args.push(format!("--target={triple}"));
+    }
 
     let output = run_command(&tools.clang, &args, None, tools.timeout, "clang")?;
     if !output.status.success() {

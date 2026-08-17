@@ -65,14 +65,11 @@ pub struct LinkDriver {
 }
 
 impl LinkDriver {
-    /// Driver for an explicit target.
+    /// Driver for an explicit target. `LinkDriver::new(Target::host())` is the
+    /// host link path (ELF on Linux) — byte-identical to the pre-driver native
+    /// link, proven by the keystone byte-identity gate.
     pub fn new(target: Target) -> Self {
         Self { target }
-    }
-
-    /// Driver for the compile host — the only fully-wired target today.
-    pub fn for_host() -> Self {
-        Self::new(Target::host())
     }
 
     /// Link the final executable, dispatching on the target's object/link format.
@@ -151,16 +148,58 @@ impl LinkDriver {
 
     /// PE/COFF (Windows, GNU/w64-mingw ABI) executable link.
     ///
-    /// deferred: the windows-gnu link differs materially from ELF — no `-ldl`
-    /// (absent), winpthreads for `-lpthread`, none of the `-Wl,-z,*` directives
-    /// (ELF-only; DEP/ASLR are PE format defaults), no rpath (PE has none: the
-    /// runtime lib must be static or beside the `.exe`), and the output gains
-    /// `target.exe_ext()`. It also requires the mingw cross toolchain + the
-    /// runtime-support shim compiled per-target with `int64_t` (LLP64: `long` is
-    /// 32-bit on Win64). Upgrade path: the windows-gnu PE slice, gated by the
-    /// universal OS-keyed byte-identity gate.
-    fn link_coff(&self, _ctx: &LinkCtx) -> Result<()> {
-        Err(self.not_wired("PE/COFF (windows-gnu)"))
+    /// The windows-gnu link differs materially from ELF and this arm encodes the
+    /// differences explicitly rather than reusing the ELF flag set:
+    ///   * NO `-ldl` — `dlopen` is absent on Windows (mingw has no `libdl`).
+    ///   * `-lpthread` resolves against **winpthreads** (mingw's pthread port).
+    ///   * `-lm` is present (mingw ships `libm`).
+    ///   * `-lbcrypt` — the runtime RNG uses the Windows CNG `BCryptGenRandom`;
+    ///     mingw always ships the `bcrypt` import lib, so this is safe to pass.
+    ///   * NONE of the `-Wl,-z,relro/now/noexecstack` directives — they are
+    ///     ELF-only; DEP/ASLR are PE format defaults set in the optional header.
+    ///   * NO rpath — PE has no runtime search path; the runtime lib must be
+    ///     static or sit beside the `.exe`.
+    ///   * `ctx.output` is written verbatim — the caller has already appended
+    ///     `Target::exe_ext()` (`.exe`) to the path.
+    ///
+    /// The emitted `.text` payload is byte-identical to every other substrate
+    /// (that is the wedge); only this container/link differs. The mingw cross
+    /// driver (`Target::cc_command`) and the per-target runtime-support shim
+    /// (compiled with `int64_t`, since Win64 is LLP64 and `long` is 32-bit) are
+    /// selected by the caller (`native_link`) and arrive through `ctx`.
+    fn link_coff(&self, ctx: &LinkCtx) -> Result<()> {
+        let mut cmd = Command::new(ctx.cc);
+
+        // Runtime-support shim first, so its MIND_EXPORT symbols resolve.
+        if let Some(shim) = ctx.runtime_shim {
+            cmd.arg(shim);
+        }
+
+        // Object files.
+        for obj in ctx.objects {
+            cmd.arg(obj);
+        }
+
+        // Output path (caller has appended `.exe`).
+        cmd.arg("-o").arg(ctx.output);
+
+        // MIND runtime library.
+        cmd.arg(format!("-L{}", ctx.lib_dir.display()));
+        cmd.arg(format!("-l{}", ctx.runtime_link));
+
+        // Standard libraries — Windows/mingw set (NO -ldl; winpthreads + libm +
+        // the CNG bcrypt import lib). No ELF `-Wl,-z,*` and no rpath (see above).
+        cmd.arg("-lpthread");
+        cmd.arg("-lm");
+        cmd.arg("-lbcrypt");
+
+        // Optimization flags (same as ELF).
+        if ctx.release {
+            cmd.arg("-O3");
+            cmd.arg("-flto");
+        }
+
+        self.run(cmd, ctx)
     }
 
     /// Mach-O (macOS) executable link.

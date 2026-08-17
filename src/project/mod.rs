@@ -935,6 +935,16 @@ pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
         }
     }
 
+    // Resolved build target for codegen + link. The cross-compile guard above
+    // still rejects any non-host triple, so this is the host today and
+    // `cc_target_triple` stays `None` — the codegen (`compile_sources`) and link
+    // (`link_binary`) paths are threaded to accept a cross target but receive the
+    // host here, keeping the emitted artifact byte-for-byte unchanged (the keystone
+    // byte-identity gate proves it). Turning a specific `{arch}×{os}` on is then a
+    // localized change to this resolution, not a scattered edit across the backend.
+    let build_target = crate::target::Target::host();
+    let cc_target_triple: Option<&str> = None;
+
     // Determine output name
     let output_name = if let Some(cfg) = target_config {
         cfg.output
@@ -1071,8 +1081,14 @@ pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
     }
 
     // Build each source file and link
-    let (compiled, entry_native_compiled, fallback_sources) =
-        compile_sources(&project_root, &sources, &backend, opts, explicit_sources)?;
+    let (compiled, entry_native_compiled, fallback_sources) = compile_sources(
+        &project_root,
+        &sources,
+        &backend,
+        opts,
+        explicit_sources,
+        cc_target_triple,
+    )?;
 
     // Compile any manifest-declared native C-ABI runtime sources
     // (`[targets.*].native_sources`) and add their objects to the link, so a
@@ -1108,7 +1124,7 @@ pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
                         .and_then(|s| s.to_str())
                         .ok_or_else(|| anyhow!("native_sources: invalid path {}", src.display()))?;
                     let obj = obj_dir.join(format!("__native_{stem}.o"));
-                    mlir_build::compile_native_c_obj(&tools, &src, &obj).map_err(|e| {
+                    mlir_build::compile_native_c_obj(&tools, &src, &obj, None).map_err(|e| {
                         anyhow!("native_sources: compile failed for {}: {e}", src.display())
                     })?;
                     compiled.push(obj);
@@ -1119,7 +1135,7 @@ pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
     };
 
     // Link into final binary
-    link_binary(&compiled, &output_path, &backend, opts)?;
+    link_binary(&compiled, &output_path, &backend, opts, &build_target)?;
 
     if opts.verbose {
         println!("  Output: {}", output_path.display());
@@ -1726,6 +1742,7 @@ fn compile_sources(
     backend: &str,
     opts: &BuildOptions,
     explicit_sources: bool,
+    cc_target_triple: Option<&str>,
 ) -> Result<(Vec<PathBuf>, bool, Vec<String>)> {
     let obj_dir = project_root.join("target").join("obj");
     fs::create_dir_all(&obj_dir)?;
@@ -1914,7 +1931,8 @@ fn compile_sources(
         let is_entry = source_canonical == entry_canonical;
 
         // Compile with appropriate mode
-        let native = compile_single_source(source, &obj_path, backend, opts, is_entry)?;
+        let native =
+            compile_single_source(source, &obj_path, backend, opts, is_entry, cc_target_triple)?;
         if is_entry && !native {
             entry_native_compiled = false;
         }
@@ -1947,7 +1965,8 @@ fn compile_sources(
             .iter()
             .map(|s| fs::read_to_string(s).unwrap_or_default())
             .collect();
-        let mut subs = compile_substrate_objects(&source_texts, &obj_dir, backend, opts)?;
+        let mut subs =
+            compile_substrate_objects(&source_texts, &obj_dir, backend, opts, cc_target_triple)?;
         objects.append(&mut subs);
     }
 
@@ -1985,6 +2004,7 @@ fn compile_substrate_objects(
     obj_dir: &Path,
     backend: &str,
     opts: &BuildOptions,
+    cc_target_triple: Option<&str>,
 ) -> Result<Vec<PathBuf>> {
     use crate::eval::mlir_build;
     use crate::pipeline::{CompileOptions, compile_source_with_name};
@@ -2100,7 +2120,7 @@ fn compile_substrate_objects(
                 emit_obj_file: Some(&obj_path),
                 emit_shared: None,
                 opt_pipeline: None,
-                target_triple: None,
+                target_triple: cc_target_triple,
             };
             mlir_build::build_all(&sub_mlir.primal_mlir, &tools, &sub_bo)
                 .map_err(|e| anyhow!("substrate object build for {modname}: {e}"))?;
@@ -2391,6 +2411,7 @@ fn compile_single_source(
     backend: &str,
     opts: &BuildOptions,
     is_entry: bool, // true if this is the main entry point
+    cc_target_triple: Option<&str>,
 ) -> Result<bool> {
     use crate::pipeline::{CompileOptions, compile_source_with_name};
     use crate::runtime::types::BackendTarget;
@@ -2512,7 +2533,12 @@ fn compile_single_source(
                     } else {
                         None
                     },
-                    target_triple: Some(get_target_triple(backend)),
+                    // Cross-compile: an explicit `[targets.*].target` triple wins;
+                    // host build (`None`) falls back to the exact per-backend host
+                    // triple, keeping the host object bytes byte-identical.
+                    target_triple: Some(
+                        cc_target_triple.unwrap_or_else(|| get_target_triple(backend)),
+                    ),
                 };
 
                 mlir_build::build_all(&mlir, &tools, &build_opts)
@@ -2780,6 +2806,7 @@ fn link_binary(
     output: &Path,
     backend: &str,
     opts: &BuildOptions,
+    build_target: &crate::target::Target,
 ) -> Result<()> {
     // Check for runtime library
     let lib_dir = find_runtime_lib(backend)?;
@@ -2793,7 +2820,7 @@ fn link_binary(
     let (runtime_lib, runtime_link) = get_runtime_lib_names(backend);
 
     // Try native linking first
-    let link_result = native_link(objects, output, &lib_dir, runtime_link, opts);
+    let link_result = native_link(objects, output, &lib_dir, runtime_link, opts, build_target);
 
     if link_result.is_ok() {
         return Ok(());
@@ -2995,11 +3022,18 @@ fn native_link(
     lib_dir: &Path,
     runtime_link: &str,
     opts: &BuildOptions,
+    build_target: &crate::target::Target,
 ) -> Result<()> {
     use crate::project::link::{LinkCtx, LinkDriver};
 
-    // Find a C compiler for linking
-    let cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
+    // C compiler / linker driver. The host build uses `$CC` (or `cc`); a cross
+    // target selects its own toolchain driver (`Target::cc_command`, e.g. the
+    // mingw-w64 cross gcc for windows-gnu) so the emitted container + CRT match the
+    // requested target, never the compile host.
+    let cc = match build_target.cc_command() {
+        Some(cross) => cross.to_string(),
+        None => std::env::var("CC").unwrap_or_else(|_| "cc".to_string()),
+    };
 
     // Compile the bundled runtime-support shim (runtime-support/mind_intrinsics.c:
     // printI64 / printNewline / __mind_alloc / __mind_store_i8 / __mind_load_i64 …)
@@ -3018,7 +3052,16 @@ fn native_link(
         use crate::eval::mlir_build;
         let tools = mlir_build::resolve_tools()
             .map_err(|e| anyhow!("runtime-support shim: MLIR build tools unavailable: {e}"))?;
-        mlir_build::compile_runtime_support_obj(&tools)
+        // Host build compiles the shim with no explicit `--target` (byte-identical
+        // to the historical path); a cross target compiles it for the target triple
+        // so the shim's ABI matches (Win64 is LLP64: `long` is 32-bit, so the shim's
+        // `int64_t` widths must come from the target, not the host).
+        let shim_target_triple = if build_target.is_host() {
+            None
+        } else {
+            Some(build_target.llvm_triple())
+        };
+        mlir_build::compile_runtime_support_obj(&tools, shim_target_triple)
             .map_err(|e| anyhow!("runtime-support shim compile failed: {e}"))?
     };
     #[cfg(feature = "mlir-build")]
@@ -3037,10 +3080,13 @@ fn native_link(
         runtime_shim,
     };
 
-    // Only the host target links today. The `[targets.*].target` seam already
-    // rejected any non-host triple fail-loud at `build_project` entry, so the
-    // host driver (ELF on Linux) is the correct — and byte-identical — path.
-    LinkDriver::for_host().link(&ctx)
+    // Dispatch on the requested target's object/link flavor: ELF for the Linux
+    // host, PE/COFF for a windows-gnu cross target, Mach-O for darwin. The host
+    // path (`LinkDriver::new(host)`) is the historical ELF link byte-for-byte
+    // (proven by the keystone byte-identity gate), so threading the target here
+    // does not perturb the host executable; it only routes a cross request to the
+    // matching container instead of the historical fail-loud at `build_project`.
+    LinkDriver::new(*build_target).link(&ctx)
 }
 
 /// Find the MIND runtime library for a backend.

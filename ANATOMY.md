@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3375 | **Est. tokens:** ~7,911,322
-**Generated:** 2026-08-17 18:33 UTC
+**Files:** 3375 | **Est. tokens:** ~7,912,194
+**Generated:** 2026-08-17 19:42 UTC
 
 ## Token Budget Guide
 
@@ -381,7 +381,7 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 8 | ~23,333 |
+| `src/` | 8 | ~23,561 |
 | `src/ast/` | 1 | ~10,205 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
@@ -392,7 +392,7 @@
 | `src/diagnostics/` | 1 | ~3,719 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,987 |
-| `src/eval/` | 16 | ~86,705 |
+| `src/eval/` | 16 | ~86,932 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
@@ -409,7 +409,7 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 2 | ~20,355 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 3 | ~11,664 |
+| `src/project/` | 3 | ~12,081 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -3988,7 +3988,7 @@
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `interp_mem.rs` (~2993 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~3818 tok, huge) — Copyright 2025 STARGA Inc.
-- `mlir_build.rs` (~10190 tok, huge) — Copyright 2025 STARGA Inc.
+- `mlir_build.rs` (~10417 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~12220 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
@@ -4104,7 +4104,7 @@
 - `pipeline.rs` (~5551 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `link.rs` (~2188 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `link.rs` (~2605 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `module_table.rs` (~5820 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~3656 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -4130,7 +4130,7 @@
 - `tensor.rs` (~391 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `target.rs` (~4732 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `target.rs` (~4960 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `src/test/`
 
 - `mod.rs` (~6816 tok, huge) — Copyright 2025 STARGA Inc.

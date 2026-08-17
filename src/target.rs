@@ -293,6 +293,22 @@ impl Target {
     pub fn is_host(&self) -> bool {
         *self == Target::host()
     }
+
+    /// The C compiler / linker-driver command for a CROSS target's toolchain, or
+    /// `None` when the caller should use the host driver (`$CC` / `cc`). A
+    /// windows-gnu target selects the mingw-w64 cross gcc, whose driver knows the
+    /// Win64 CRT, import libraries (winpthreads/bcrypt), and PE/COFF output — a
+    /// host `cc` would emit ELF and mis-target. Linux/Darwin cross drivers are not
+    /// yet wired (they return `None`; the fail-loud `[targets.*].target` seam plus
+    /// the `link_coff`/`link_macho` "not wired" arms keep an un-wired cross request
+    /// from silently linking with the host driver).
+    pub fn cc_command(&self) -> Option<&'static str> {
+        match (self.arch, self.os) {
+            (Arch::X86_64, Os::Windows) => Some("x86_64-w64-mingw32-gcc"),
+            (Arch::Aarch64, Os::Windows) => Some("aarch64-w64-mingw32-gcc"),
+            _ => None,
+        }
+    }
 }
 
 /// The `-march` string for a build target — a verbatim, byte-identical extraction
