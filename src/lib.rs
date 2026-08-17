@@ -61,6 +61,7 @@ pub mod runtime;
 pub mod runtime_interface;
 pub mod shapes;
 pub mod stdlib;
+pub mod target;
 pub mod type_checker;
 pub mod types;
 

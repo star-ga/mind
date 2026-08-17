@@ -534,6 +534,19 @@ pub struct TargetConfig {
     /// cross-substrate bit-identity gate.
     #[serde(default)]
     pub native_sources: Option<Vec<String>>,
+    /// Canonical LLVM target triple for this build target — the cross-compilation
+    /// seam. When present, mindc compiles/links FOR this triple (e.g.
+    /// `"x86_64-w64-windows-gnu"` for a native Windows PE, cross-built from a
+    /// Linux host) rather than the compile host, resolved via
+    /// [`crate::target::Target::from_triple`]. The supported set is
+    /// `{x86_64,aarch64} × {linux-gnu, w64-windows-gnu, apple-darwin}`. When
+    /// absent, the build targets the compile host — byte-identical to the
+    /// historical single-target path. An unknown triple is a hard error (never a
+    /// silent host fallback), so a manifest can never quietly mis-target. The
+    /// emitted deterministic payload is held byte-identical across every target;
+    /// only the container (ELF / PE / Mach-O) differs.
+    #[serde(default)]
+    pub target: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -890,6 +903,33 @@ pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
     // Determine target
     let target_name = opts.target.clone().unwrap_or_else(|| "cpu".to_string());
     let target_config = manifest.targets.get(&target_name);
+
+    // Cross-compilation seam (RFC: multi-target native codegen). A target block
+    // MAY declare a canonical LLVM triple via `[targets.<name>].target`. Validate
+    // it here so the field is never a silent no-op: an unknown triple fails loud
+    // through `Target::from_triple`, and a triple that is not the compile host is
+    // rejected with an explicit "not yet wired" error rather than quietly
+    // producing a host binary mislabeled as the requested target. When the field
+    // is absent, or names the host, the build proceeds on the identical host path
+    // below — byte-for-byte unchanged (the cross-substrate bit-identity gate is
+    // untouched).
+    //
+    // deferred: cross-target linking (windows-gnu PE / darwin Mach-O / linux
+    // -aarch64 ELF) lands with the LinkDriver + per-OS sysroot slices — upgrade
+    // path: thread `Target` into codegen/link and drop this guard target-by-target
+    // as each one's byte-identity gate goes green.
+    if let Some(triple) = target_config.and_then(|cfg| cfg.target.as_deref()) {
+        let requested = crate::target::Target::from_triple(triple)?;
+        let host = crate::target::Target::host();
+        if requested != host {
+            return Err(anyhow!(
+                "target `{target_name}` requests cross-compilation to `{triple}`, \
+                 but only the host target (`{}`) is wired today; cross-target \
+                 native codegen is landing per {{arch}}×{{os}} incrementally",
+                host.llvm_triple()
+            ));
+        }
+    }
 
     // Determine output name
     let output_name = if let Some(cfg) = target_config {
