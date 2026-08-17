@@ -213,6 +213,11 @@ fn classify_intrinsic(name: &str) -> Option<IntrinsicKind> {
 /// arch of this binary is the build target — exactly the model the
 /// `cross_substrate_identity` gate uses (`cfg!(target_arch)` for the substrate
 /// id).
+// deferred: a live `cfg!(target_arch)` site outside the `crate::target::Target`
+// authority. It is correct today (mindc's host arch is its build target, which is
+// exactly the substrate the cross_substrate_identity gate runs on), but the
+// single-authority + Rust-independence upgrade path is to derive this from a
+// threaded `Target::host().arch == Arch::X86_64` and delete the `cfg!`.
 #[cfg(feature = "std-surface")]
 const HOST_IS_X86: bool = cfg!(target_arch = "x86_64");
 

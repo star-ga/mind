@@ -696,14 +696,16 @@ fn run_clang_codegen(
     // across hosts; integer results are exact regardless of ISA, so the
     // cross-substrate byte-identity invariant is preserved (enforced by the
     // cross_substrate_identity gate on avx2 + real ARM).
-    let march: Option<&str> = match target_triple {
-        Some(t) if t.contains("aarch64") || t.contains("arm64") => Some("armv8-a"),
-        Some(t) if t.contains("x86_64") => Some("x86-64-v3"),
-        Some(_) => None,
-        None if cfg!(target_arch = "x86_64") => Some("x86-64-v3"),
-        None if cfg!(target_arch = "aarch64") => Some("armv8-a"),
-        None => None,
-    };
+    // deferred: this is the shared `crate::target::march_for` ladder, NOT a
+    // threaded `Target::march()`. It stays here because `Target` is not yet
+    // threaded through the build options — upgrade path (single-authority +
+    // Rust-independence): pass the resolved `Target` into `mlir_build` and call
+    // `target.march()` directly, then delete `march_for`. Until then, the two
+    // sources of truth are pinned together by the `march_for_agrees_with_target_march`
+    // unit test in `src/target.rs`, so they cannot silently drift. The extraction
+    // is byte-identical to the historical inline ladder (same contains-based
+    // arms), so the cross-substrate `-march` and the pinned hashes are unchanged.
+    let march: Option<&str> = crate::target::march_for(target_triple);
     if let Some(m) = march {
         args.push(format!("-march={m}"));
     }
