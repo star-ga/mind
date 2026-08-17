@@ -899,7 +899,7 @@ fn check_value_types_scope(
     } else {
         collect_scope_definitions(instrs, params)
     };
-    for (vid, _at) in table {
+    for vid in table.keys() {
         // Ownership (S2b precondition): the key must name a value defined in THIS
         // scope's namespace — never a dangling id, nor one that lives only in the
         // module / another function.

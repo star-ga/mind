@@ -831,6 +831,7 @@ pub fn emit_mic3(module: &IRModule) -> Vec<u8> {
 ///     encoding)
 ///   * 1-byte `size_kind` (`0x00` = `Fixed`, `0x01` = `Dynamic`)
 ///   * a uleb extent `N` IFF `size_kind == Fixed`
+///
 /// The size discriminant is a separate byte rather than folded into the uleb so
 /// the two shapes stay unambiguous and cheap to bounds-check on parse.
 #[cfg(feature = "std-surface")]

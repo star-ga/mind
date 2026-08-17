@@ -107,6 +107,24 @@ impl ModuleTable {
         self.modules.insert(exports.module_path.clone(), exports);
     }
 
+    /// Remove `names` from every module's exported value surface. Used to drop
+    /// POISONED cross-module const names — a const defined with CONFLICTING
+    /// values in more than one module (see `build_project_consts`) — so a
+    /// cross-module reference to such a name is reported unresolved (E2002) and
+    /// fails closed with a clean diagnostic, instead of resolving here and then
+    /// reaching the value-less fail-closed panic in lowering. A module's OWN use
+    /// of the const is unaffected: it resolves against the module's local scope /
+    /// MODULE_CONSTS, not this cross-module surface. No-op when `names` is empty
+    /// (the common case), so a project with no conflicting consts is untouched.
+    pub fn prune_exported(&mut self, names: &std::collections::BTreeSet<String>) {
+        if names.is_empty() {
+            return;
+        }
+        for m in self.modules.values_mut() {
+            m.exported.retain(|e| !names.contains(e));
+        }
+    }
+
     /// True iff `symbol` is exported by the module at `import_path`.
     /// `import_path` is the dotted path from a `use a.b.c` (the
     /// `Node::Import.path` segments). Resolution is exact — no globs,
@@ -290,6 +308,22 @@ pub fn collect_module_exports(module_path: &str, ast: &Module) -> ModuleExports 
                     });
                 }
                 Node::StructDef { name, .. } => exported.push(name.clone()),
+                // A cross-module `pub const` is referenced BARE at a sibling use
+                // site — e.g. mind-nerve's `MAX_REQUEST_TOKENS` (defined in
+                // `src.lib`, used bare in `src.tokenizer`) — so it must be in the
+                // exported surface, or `cm_symbol_exported` reports it as a
+                // genuinely-undefined identifier (E2002) and lowering hits the
+                // fail-closed panic. ONLY `Node::Const` is exported for
+                // value-position resolution: its VALUE is carried by the project
+                // const table (`build_project_consts`). ExternConst / TypeAlias /
+                // EnumDef are deliberately NOT exported here — a bare value-use of
+                // them has NO value backing in that table, so accepting the name
+                // would merely move the fail-closed panic onto the native compile
+                // path with no diagnostic. Enum variants
+                // already resolve via the global-enums registry; a type-position
+                // use of a sibling type/alias goes through type resolution, not
+                // this value-ident surface.
+                Node::Const { name, .. } => exported.push(name.clone()),
                 _ => {}
             }
         }

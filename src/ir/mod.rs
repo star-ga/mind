@@ -147,10 +147,46 @@ pub fn clear_module_consts() {
     RESOLVING_CONSTS.with(|c| c.borrow_mut().clear());
 }
 
+thread_local! {
+    /// Whole-project cross-module `const NAME = value` table. The project
+    /// builder seeds this ONCE from EVERY project source before the per-file
+    /// compile loop (mirroring `set_global_enums`), so a module that references
+    /// a SIBLING module's `pub const` (e.g. mind-nerve's `MAX_REQUEST_TOKENS`
+    /// defined in `src.lib`, used bare in `src.tokenizer`) inlines the sibling's
+    /// value at its use site instead of hitting the undefined-identifier
+    /// fail-closed panic in `lower_expr`. The per-module `MODULE_CONSTS` table
+    /// takes precedence (a local const shadows a same-named sibling). Empty on
+    /// the single-file / default-feature path (never seeded), so `module_const_value`
+    /// stays byte-identical there and the keystone (declares no cross-module
+    /// consts) is unaffected. Lowering-time inlining only — never serialised.
+    static PROJECT_CONSTS: std::cell::RefCell<
+        std::collections::BTreeMap<String, crate::ast::Node>,
+    > = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+}
+
+/// Install the whole-project cross-module const table for the current build.
+/// Called once by the project builder before the per-file compile loop.
+pub fn set_project_consts(consts: std::collections::BTreeMap<String, crate::ast::Node>) {
+    PROJECT_CONSTS.with(|c| *c.borrow_mut() = consts);
+}
+
+/// Reset the cross-module const table after the per-file compile loop so a
+/// subsequent single-file compile sees an empty table and stays byte-identical.
+pub fn clear_project_consts() {
+    PROJECT_CONSTS.with(|c| c.borrow_mut().clear());
+}
+
 /// Look up a module const's value expression by name (cloned), or `None` if the
 /// name is not a module const.
 pub fn module_const_value(name: &str) -> Option<crate::ast::Node> {
-    MODULE_CONSTS.with(|c| c.borrow().get(name).cloned())
+    // Local module consts take precedence (a local `const` shadows a same-named
+    // sibling); fall back to the whole-project table so a bare reference to a
+    // SIBLING module's `pub const` inlines its value instead of reaching the
+    // undefined-identifier fail-closed panic. PROJECT_CONSTS is empty on the
+    // single-file / default path, so that path is byte-identical.
+    MODULE_CONSTS
+        .with(|c| c.borrow().get(name).cloned())
+        .or_else(|| PROJECT_CONSTS.with(|c| c.borrow().get(name).cloned()))
 }
 
 /// Mark `name` as currently-resolving; returns `false` if it was already in
@@ -1354,6 +1390,7 @@ impl IRModule {
     ///   * a valid aggregate type (one authority, or two that agree) -> `Ok(Some)`
     ///   * table and node DISAGREE                    -> `Err(Conflict)`
     ///   * `ConstDenseTensor` shape is not a valid fixed extent -> `Err(MalformedConstDense)`
+    ///
     /// (S3/S5 add `Err(MissingAggregateType)` once typing is mandatory for every
     /// known aggregate.)
     #[cfg(feature = "std-surface")]

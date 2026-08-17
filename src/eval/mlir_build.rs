@@ -425,6 +425,7 @@ pub(crate) fn compile_runtime_support_obj(tools: &BuildTools) -> Result<NamedTem
 ///     reproducible run-to-run and, given the same clang, across substrates.
 ///   * `-ffp-contract=off` keeps the C runtime uniformly strict-FP, matching
 ///     the IR codegen path (no float contraction).
+///
 /// `-fPIC -O2` mirror the runtime-support shim. The object is written to a
 /// caller-owned persistent path (under the project `target/obj`), so it
 /// survives until the link.

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3372 | **Est. tokens:** ~7,901,568
-**Generated:** 2026-08-16 21:28 UTC
+**Files:** 3372 | **Est. tokens:** ~7,902,639
+**Generated:** 2026-08-17 05:23 UTC
 
 ## Token Budget Guide
 
@@ -391,15 +391,15 @@
 | `src/diagnostics/` | 1 | ~3,719 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,987 |
-| `src/eval/` | 16 | ~86,611 |
+| `src/eval/` | 16 | ~86,602 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~21,737 |
-| `src/ir/` | 5 | ~60,659 |
+| `src/ir/` | 5 | ~61,184 |
 | `src/ir/compact/` | 3 | ~15,282 |
 | `src/ir/compact/v2/` | 8 | ~38,404 |
-| `src/ir/compact/v3/` | 6 | ~55,628 |
+| `src/ir/compact/v3/` | 6 | ~55,629 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,880 |
 | `src/mlir/` | 3 | ~5,905 |
@@ -408,7 +408,7 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 2 | ~20,355 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 2 | ~8,922 |
+| `src/project/` | 2 | ~9,476 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -3980,11 +3980,11 @@
 
 - `abi_gate.rs` (~12049 tok, huge) — Runnable-artifact ABI gate (release-readiness P1.1).
 - `autodiff.rs` (~14268 tok, huge) — Copyright 2025 STARGA Inc.
-- `closures.rs` (~9294 tok, huge) — Copyright 2025 STARGA Inc.
+- `closures.rs` (~9284 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `interp_mem.rs` (~2993 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~3818 tok, huge) — Copyright 2025 STARGA Inc.
-- `mlir_build.rs` (~10086 tok, huge) — Copyright 2025 STARGA Inc.
+- `mlir_build.rs` (~10087 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~12220 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
@@ -4034,7 +4034,7 @@
 
 - `collapse_receipt.rs` (~5109 tok, huge) — Copyright 2025 STARGA Inc.
 - `ed25519.rs` (~6051 tok, huge) — Copyright 2025 STARGA Inc.
-- `emit.rs` (~12212 tok, huge) — Copyright 2025 STARGA Inc.
+- `emit.rs` (~12213 tok, huge) — Copyright 2025 STARGA Inc.
 - `mldsa.rs` (~1510 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~17822 tok, huge) — Copyright 2025 STARGA Inc.
 - `parse.rs` (~12924 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4042,7 +4042,7 @@
 
 - `evidence.rs` (~5837 tok, huge) — Copyright 2025 STARGA Inc.
 - `fp_mode.rs` (~13711 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
-- `mod.rs` (~16447 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~16972 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~4283 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~20381 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -4100,7 +4100,7 @@
 - `pipeline.rs` (~5551 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `module_table.rs` (~5266 tok, huge) — Copyright 2025 STARGA Inc.
+- `module_table.rs` (~5820 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~3656 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 

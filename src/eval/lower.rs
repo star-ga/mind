@@ -1078,17 +1078,37 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
         crate::ir::clear_module_consts();
         let mut consts = std::collections::BTreeMap::new();
         let mut const_types = std::collections::BTreeMap::new();
-        for item in &module.items {
-            if let ast::Node::Const {
-                name, value, ty, ..
-            } = item
-            {
-                consts.insert(name.clone(), (**value).clone());
-                if let Some(t) = ty {
-                    const_types.insert(name.clone(), t.clone());
+        // Descend `module { … }` blocks (parsed to a transparent `Node::Block`)
+        // when collecting this module's OWN consts, mirroring the project-wide
+        // `build_project_consts`. Without the descent a const declared inside a
+        // block-wrapped `module z { const LIMIT = … }` in THIS file would not be
+        // in MODULE_CONSTS, so its own uses would fall through to the project
+        // PROJECT_CONSTS table where a path-earlier sibling's same-named const
+        // could win — a silent wrong-value miscompile of a module's own const
+        // (the local table MUST always shadow, so a module's own const wins).
+        fn collect_local_consts(
+            items: &[ast::Node],
+            consts: &mut std::collections::BTreeMap<String, ast::Node>,
+            const_types: &mut std::collections::BTreeMap<String, ast::TypeAnn>,
+        ) {
+            for item in items {
+                match item {
+                    ast::Node::Const {
+                        name, value, ty, ..
+                    } => {
+                        consts.insert(name.clone(), (**value).clone());
+                        if let Some(t) = ty {
+                            const_types.insert(name.clone(), t.clone());
+                        }
+                    }
+                    ast::Node::Block { stmts, .. } => {
+                        collect_local_consts(stmts, consts, const_types);
+                    }
+                    _ => {}
                 }
             }
         }
+        collect_local_consts(&module.items, &mut consts, &mut const_types);
         crate::ir::set_module_consts(consts);
         crate::ir::set_module_const_types(const_types);
     }
@@ -2450,6 +2470,7 @@ fn ident_value_is_u64_tagged(nm: &str, ir: &IRModule, env: &HashMap<String, Valu
 /// records. Only the re-materialisable cases return `Some`:
 ///   * an `Ident` recorded NARROW in `NARROW_LOCALS` (`u8`/`i16`/…) → that type
 ///   * an `Ident` whose value carries the `__mind_conv_u64` tag → `u64`
+///
 /// Everything else — int literals, arithmetic, unknown idents — returns `None`
 /// (a no-op slot: `mask_narrow_let(None)` / `record_narrow_let(None)` emit
 /// nothing, so the slot is byte-identical to today).
@@ -2539,6 +2560,7 @@ fn record_synth_tuple_let(
 ///      synthesised annotation of an unannotated `let t = (…)`;
 ///   2. the RHS is itself a tuple LITERAL (`let (a, b) = (x, 7)`) — infer each
 ///      element directly.
+///
 /// Returns one `Option<TypeAnn>` per slot; a `None` slot masks/records nothing
 /// (byte-identical). An empty Vec means "no tuple type recoverable" — every slot
 /// is then treated as `None` by the caller.

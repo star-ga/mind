@@ -2342,6 +2342,23 @@ const STD_SURFACE_INTRINSICS: &[(&str, usize)] = &[
     ("__mind_nerve_lut_recip_h", 0),
     ("__mind_nerve_lut_rsqrt_h", 0),
     ("__mind_nerve_lut_tanh_h", 0),
+    // mind-nerve host/runtime FFI surface (src/runtime_ffi.mind): the envelope
+    // CLI's clock / stdio / file / entropy / exit primitives, defined in the
+    // mind-nerve runtime C shim and statically linked via
+    // `[targets.*].native_sources`. Registered here — same as the
+    // `__mind_nerve_blas_*` / `__mind_nerve_lut_*` surface — so the MLIR backend
+    // emits a plain arity-checked `func.call @__mind_nerve_rt_*` instead of the
+    // E2024 self-host-only advisory + runtime-JIT fallback. All args + result are
+    // i64 (opaque heap addresses / byte counts / status codes); arities match the
+    // `extern fn` decls in runtime_ffi.mind.
+    ("__mind_nerve_rt_exit", 1),
+    ("__mind_nerve_rt_file_size", 2),
+    ("__mind_nerve_rt_monotonic_ns", 0),
+    ("__mind_nerve_rt_os_entropy", 2),
+    ("__mind_nerve_rt_read_file", 4),
+    ("__mind_nerve_rt_read_stdin", 2),
+    ("__mind_nerve_rt_write_stderr", 2),
+    ("__mind_nerve_rt_write_stdout", 2),
     // Phase 17.3 — `f64` bit-cast surface. These three same-width coercions let
     // an `f64` aggregate be built on the existing i64 heap: `__mind_f64_to_bits`
     // reinterprets an `f64` as its i64 bit pattern for storage, `__mind_bits_to_f64`

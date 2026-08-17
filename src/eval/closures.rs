@@ -324,10 +324,8 @@ fn rewrite_seq(
     for stmt in stmts.iter_mut() {
         rewrite_captures(stmt, captures, env_param, &shadowed);
         match stmt {
-            Node::Let { name, .. } => {
-                if captures.contains(name.as_str()) {
-                    shadowed.insert(name.clone());
-                }
+            Node::Let { name, .. } if captures.contains(name.as_str()) => {
+                shadowed.insert(name.clone());
             }
             Node::LetTuple { names, .. } => {
                 for n in names.iter() {

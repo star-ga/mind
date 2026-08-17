@@ -1027,7 +1027,7 @@ pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
     }
 
     // Build each source file and link
-    let (mut compiled, entry_native_compiled, fallback_sources) =
+    let (compiled, entry_native_compiled, fallback_sources) =
         compile_sources(&project_root, &sources, &backend, opts, explicit_sources)?;
 
     // Compile any manifest-declared native C-ABI runtime sources
@@ -1037,34 +1037,42 @@ pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
     // those symbols DEFINED at link time instead of failing native_link and
     // dropping to a launcher stub. An absent/empty list leaves the object set
     // unchanged — byte-identical to the historical link (keystone-safe).
+    //
+    // Bound through a cfg-gated shadow so `compiled` stays immutable on the
+    // `--no-default-features` path (no `mlir-build` ⇒ nothing is ever pushed),
+    // where a `mut` binding would be an `unused_mut` under `-D warnings`.
     #[cfg(feature = "mlir-build")]
-    if let Some(native_srcs) = target_config.and_then(|cfg| cfg.native_sources.as_deref()) {
-        if !native_srcs.is_empty() {
-            use crate::eval::mlir_build;
-            let tools = mlir_build::resolve_tools().map_err(|e| {
-                anyhow!("native_sources: MLIR build tools unavailable: {e}")
-            })?;
-            let obj_dir = project_root.join("target").join("obj");
-            fs::create_dir_all(&obj_dir)?;
-            for rel in native_srcs {
-                let src = project_root.join(rel);
-                if !src.exists() {
-                    return Err(anyhow!(
-                        "native_sources: declared C source not found: {}",
-                        src.display()
-                    ));
+    let compiled = {
+        let mut compiled = compiled;
+        if let Some(native_srcs) = target_config.and_then(|cfg| cfg.native_sources.as_deref()) {
+            if !native_srcs.is_empty() {
+                use crate::eval::mlir_build;
+                let tools = mlir_build::resolve_tools()
+                    .map_err(|e| anyhow!("native_sources: MLIR build tools unavailable: {e}"))?;
+                let obj_dir = project_root.join("target").join("obj");
+                fs::create_dir_all(&obj_dir)?;
+                for rel in native_srcs {
+                    let src = project_root.join(rel);
+                    if !src.exists() {
+                        return Err(anyhow!(
+                            "native_sources: declared C source not found: {}",
+                            src.display()
+                        ));
+                    }
+                    let stem = src
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .ok_or_else(|| anyhow!("native_sources: invalid path {}", src.display()))?;
+                    let obj = obj_dir.join(format!("__native_{stem}.o"));
+                    mlir_build::compile_native_c_obj(&tools, &src, &obj).map_err(|e| {
+                        anyhow!("native_sources: compile failed for {}: {e}", src.display())
+                    })?;
+                    compiled.push(obj);
                 }
-                let stem = src
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .ok_or_else(|| anyhow!("native_sources: invalid path {}", src.display()))?;
-                let obj = obj_dir.join(format!("__native_{stem}.o"));
-                mlir_build::compile_native_c_obj(&tools, &src, &obj)
-                    .map_err(|e| anyhow!("native_sources: compile failed for {}: {e}", src.display()))?;
-                compiled.push(obj);
             }
         }
-    }
+        compiled
+    };
 
     // Link into final binary
     link_binary(&compiled, &output_path, &backend, opts)?;
@@ -1780,7 +1788,17 @@ fn compile_sources(
         }
         let refs: Vec<(String, &crate::ast::Module)> =
             parsed.iter().map(|(p, m)| (p.clone(), m)).collect();
-        let table = crate::project::module_table::build_module_table(&refs);
+        let mut table = crate::project::module_table::build_module_table(&refs);
+        // Cross-module const values + the set of names POISONED by a conflicting
+        // cross-module redefinition. Prune the poisoned
+        // names from the export surface BEFORE setting the table so a
+        // cross-module reference to an ambiguous const is reported unresolved
+        // (E2002) and fails closed with a clean diagnostic, rather than resolving
+        // here and reaching the value-less fail-closed panic in lowering. A
+        // module's OWN use of the const is unaffected — it resolves against local
+        // scope / MODULE_CONSTS, not this surface.
+        let (project_consts, poisoned_consts) = build_project_consts(&parsed);
+        table.prune_exported(&poisoned_consts);
         crate::type_checker::cm_set_project_table(Some(table));
         // Cross-module ENUM propagation: collect every enum DECLARED in any
         // parsed source into one whole-project registry, set at project scope
@@ -1791,7 +1809,18 @@ fn compile_sources(
         // later single-file compile sees an empty registry and stays
         // byte-identical.
         crate::ir::set_global_enums(build_global_enums(&parsed));
+        crate::ir::set_project_consts(project_consts);
     }
+
+    // RAII teardown: clears the seeded whole-project resolution state on EVERY
+    // return path. The E2002 fail-closed in
+    // `compile_single_source` makes an early `Err` common; without this guard
+    // that early return would skip the explicit clears below and leak
+    // PROJECT_CONSTS / global-enums / the cm project table onto the thread — a
+    // stale-state byte-identity hazard for same-thread reuse (the cargo test
+    // harness, a future daemon/LSP).
+    #[cfg(feature = "cross-module-imports")]
+    let _project_guard = ProjectResolutionGuard;
 
     let mut objects = Vec::new();
     // Tracks whether the manifest ENTRY module lowered to a real native object.
@@ -1878,11 +1907,9 @@ fn compile_sources(
         objects.append(&mut subs);
     }
 
-    #[cfg(feature = "cross-module-imports")]
-    {
-        crate::type_checker::cm_set_project_table(None);
-        crate::ir::clear_global_enums();
-    }
+    // Teardown of the seeded project-resolution state is handled by
+    // `_project_guard` (Drop) so it runs on every return path — including the
+    // early `Err` from the E2002 fail-closed in `compile_single_source`.
 
     Ok((objects, entry_native_compiled, fallback_sources))
 }
@@ -2056,6 +2083,98 @@ fn build_global_enums(parsed: &[(String, crate::ast::Module)]) -> crate::ir::Glo
         }
     }
     enums
+}
+
+/// Collect every module-level `const NAME = value` across the whole project into
+/// one name→value map for cross-module const inlining at lowering — the VALUE
+/// side of the cross-module `pub const` surface (the NAME side is the module
+/// table's exported set). Descends into `module { … }` blocks (parsed to a
+/// transparent `Node::Block`), mirroring `build_global_enums`. Seeded once before
+/// the per-file compile loop and cleared after, so the single-file /
+/// default-feature path (never seeded) stays byte-identical.
+///
+/// Returns `(values, poisoned)`: the value table, and the set of const names
+/// DROPPED from it because two modules defined the same name with conflicting
+/// values. The caller prunes `poisoned` from the module export surface so a
+/// cross-module reference to an ambiguous const fails closed with a clean
+/// diagnostic instead of resolving to a value-less name.
+#[cfg(feature = "cross-module-imports")]
+fn build_project_consts(
+    parsed: &[(String, crate::ast::Module)],
+) -> (
+    std::collections::BTreeMap<String, crate::ast::Node>,
+    std::collections::BTreeSet<String>,
+) {
+    fn walk(
+        items: &[crate::ast::Node],
+        out: &mut std::collections::BTreeMap<String, crate::ast::Node>,
+        poisoned: &mut std::collections::BTreeSet<String>,
+    ) {
+        for item in items {
+            match item {
+                crate::ast::Node::Const { name, value, .. } => {
+                    if poisoned.contains(name) {
+                        continue;
+                    }
+                    let v = (**value).clone();
+                    match out.get(name) {
+                        // Same name + DIFFERENT value across modules: POISON the
+                        // name instead of picking a path-arbitrary first-wins
+                        // winner (unqualified first-wins was a silent wrong-value
+                        // hazard). A poisoned name is dropped
+                        // from the cross-module table, so a genuine cross-module
+                        // reference to it resolves to None and fails closed
+                        // (undefined) rather than inlining one module's value into
+                        // another. A module's OWN use is unaffected — the per-module
+                        // MODULE_CONSTS table (with Block descent, see
+                        // `lower_to_ir`) always shadows first, so this only bites a
+                        // name a module references WITHOUT defining locally.
+                        //
+                        // Poison (not a hard build error) because collection is
+                        // visibility-blind by construction (Node::Const carries no
+                        // pub flag, finding 6): two modules sharing a PRIVATE const
+                        // name at different values — e.g. std's per-module
+                        // `MAX_DEPTH` — is legitimate and must not fail the build.
+                        Some(existing) if *existing != v => {
+                            out.remove(name);
+                            poisoned.insert(name.clone());
+                        }
+                        // Identical value across modules is harmless; keep first.
+                        Some(_) => {}
+                        None => {
+                            out.insert(name.clone(), v);
+                        }
+                    }
+                }
+                crate::ast::Node::Block { stmts, .. } => walk(stmts, out, poisoned),
+                _ => {}
+            }
+        }
+    }
+    let mut out = std::collections::BTreeMap::new();
+    let mut poisoned = std::collections::BTreeSet::new();
+    for (_path, module) in parsed {
+        walk(&module.items, &mut out, &mut poisoned);
+    }
+    (out, poisoned)
+}
+
+/// RAII teardown for the whole-project resolution state (the `cm` project table,
+/// global enums, and PROJECT_CONSTS) seeded before the per-file compile loop.
+/// Clearing on `Drop` makes teardown unconditional on every return path —
+/// including the early `Err` the E2002 fail-closed in `compile_single_source`
+/// makes common — so a failed project build cannot leak seeded state onto the
+/// thread and perturb a subsequent same-thread compile.
+#[cfg(feature = "cross-module-imports")]
+struct ProjectResolutionGuard;
+
+#[cfg(feature = "cross-module-imports")]
+impl Drop for ProjectResolutionGuard {
+    fn drop(&mut self) {
+        crate::type_checker::cm_set_project_table(None);
+        crate::ir::clear_global_enums();
+        crate::ir::clear_project_consts();
+    }
 }
 
 /// Record one top-level item's enum / struct / fn-return metadata into the
@@ -2245,12 +2364,34 @@ fn compile_single_source(
     ) {
         Ok(p) => p,
         Err(e) => {
+            let src_name = source.to_string_lossy().into_owned();
+            let diags = e.into_diagnostics(Some(&src_name));
+            // Blocker-2b fail-closed: a genuinely-undefined identifier (E2002 =
+            // resolve::UNKNOWN_IDENT_CODE) is a REAL name-resolution error, not a
+            // valid-but-natively-unsupported construct the runtime JIT can execute.
+            // Embedding it as a JIT fallback lowers the module to build its embedded
+            // IR (`compile_embedded_source`), where the undefined name reaches
+            // `lower_expr` and trips the fail-closed `undefined identifier reached
+            // lowering` panic at src/eval/lower.rs — a CRASH instead of a
+            // diagnostic. Fail CLOSED here with the rendered diagnostic (same
+            // discipline as `reject_runnable_blockers`), so an unresolved name is a
+            // clean non-zero build, never a panic. Legitimately-unsupported
+            // constructs (E2024 self-host-only, parse-only forms) still fall through
+            // to the JIT embed below — only a genuine undefined-reference is fatal.
+            if diags.iter().any(|d| d.code == "E2002") {
+                use crate::diagnostics::{ColorChoice, DiagnosticEmitter, DiagnosticFormat};
+                DiagnosticEmitter::new(DiagnosticFormat::Human, ColorChoice::Auto)
+                    .emit_all(&diags, Some(&source_code));
+                return Err(anyhow!(
+                    "{}: unresolved identifier(s) — refusing to embed a module that \
+                     would crash at lowering; fix the undefined reference(s) above",
+                    source.display()
+                ));
+            }
             // Fall back to embedding source for runtime JIT. This is NOT silent:
             // an embedded module is not natively compiled, so it sits outside the
             // byte-identity guarantee — surfacing the real diagnostic keeps a
             // "build succeeded" from masking a degraded/unparseable module.
-            let src_name = source.to_string_lossy().into_owned();
-            let diags = e.into_diagnostics(Some(&src_name));
             warn_embedded_fallback(source, &source_code, &diags, opts.verbose);
             compile_embedded_source(source, &source_code, output, backend, opts, is_entry)?;
             return Ok(false);
@@ -2491,15 +2632,34 @@ const char* mind_module_{module}_get_source(void) {{
 }
 
 /// Try to produce MIC IR from source. Returns None if parsing/lowering fails.
+///
+/// This is a BEST-EFFORT MIC emission for the runtime-JIT embedded fallback: the
+/// only caller ([`compile_embedded_source`]) is reached exactly when a module
+/// FAILED clean compilation, and it already has a source-embedding path when MIC
+/// is unavailable. `lower_to_ir` can therefore be handed a module that never
+/// type-checked, and its silent-miscompile guards (an undefined identifier or an
+/// unresolvable `recv.method(...)` receiver reaching lowering) fire as a Rust
+/// PANIC. Such a panic must fail CLOSED — degrade to source embedding — and must
+/// NEVER abort the whole project build (which is what an uncaught panic here
+/// does: `mindc build` exits 101 with no artifact). Isolate the lowering in
+/// `catch_unwind` (each `lower_to_ir` re-initialises its own thread-local const /
+/// resolving tables at entry, so a caught panic cannot bleed into the next
+/// module's compile) and return `None` on any panic, honouring the documented
+/// "returns None if … lowering fails" contract. The real diagnostic was already
+/// surfaced to the user by `warn_embedded_fallback` before this call.
 fn try_emit_mic(source_code: &str) -> Option<String> {
     use crate::eval;
     use crate::ir;
     use crate::parser;
 
     let module = parser::parse_with_diagnostics(source_code).ok()?;
-    let mut ir_module = eval::lower_to_ir(&module);
-    ir::prepare_ir_for_backend(&mut ir_module).ok()?;
-    Some(ir::compact::emit_mic(&ir_module))
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut ir_module = eval::lower_to_ir(&module);
+        ir::prepare_ir_for_backend(&mut ir_module).ok()?;
+        Some(ir::compact::emit_mic(&ir_module))
+    }))
+    .ok()
+    .flatten()
 }
 
 /// Get the LLVM target triple for a backend
