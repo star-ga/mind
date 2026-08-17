@@ -2353,6 +2353,7 @@ const STD_SURFACE_INTRINSICS: &[(&str, usize)] = &[
     // `extern fn` decls in runtime_ffi.mind.
     ("__mind_nerve_rt_exit", 1),
     ("__mind_nerve_rt_file_size", 2),
+    ("__mind_nerve_rt_getenv", 4),
     ("__mind_nerve_rt_monotonic_ns", 0),
     ("__mind_nerve_rt_os_entropy", 2),
     ("__mind_nerve_rt_read_file", 4),
