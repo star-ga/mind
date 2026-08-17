@@ -39,8 +39,7 @@ use libmind::diagnostics::{ColorChoice, DiagnosticEmitter, DiagnosticFormat};
 use libmind::ops::core_v1;
 use libmind::pipeline::{CompileOptions, compile_source_with_name};
 use libmind::project::{
-    Backend, BenchOptions, BuildOptions, BuildTarget, EmitKind, OptimizeLevel, bench_project,
-    run_project,
+    Backend, BenchOptions, BuildOptions, EmitKind, OptimizeLevel, bench_project, run_project,
 };
 use libmind::{ConformanceOptions, ConformanceProfile, conformance};
 
@@ -1038,17 +1037,10 @@ fn run_mindc_build(
         }
     }
 
-    // Parse --target override.
-    let eff_target: Option<BuildTarget> = match target {
-        None => None,
-        Some(t) => match BuildTarget::parse(t) {
-            Ok(bt) => Some(bt),
-            Err(msg) => {
-                eprintln!("error[build]: {}", msg);
-                process::exit(2);
-            }
-        },
-    };
+    // --target is passed RAW to the build layer, which resolves it against the
+    // manifest (`[targets.<name>]` block name wins, then backend class, else a
+    // hard error). Classifying here would reject a declared block name (e.g.
+    // `windows`) before the manifest is even loaded.
 
     // Parse --emit override.
     let eff_emit: Option<EmitKind> = match emit {
@@ -1080,7 +1072,7 @@ fn run_mindc_build(
 
     let opts = BuildOpts {
         paths: paths.iter().map(std::path::PathBuf::from).collect(),
-        target: eff_target,
+        target: target.clone(),
         emit: eff_emit,
         optimize: eff_optimize,
         out: out.as_ref().map(std::path::PathBuf::from),
@@ -1242,7 +1234,7 @@ fn run_workspace_build(
         // Run the Phase A build for this member's root.
         let mut build_opts = BuildOpts {
             paths: member_paths.iter().map(std::path::PathBuf::from).collect(),
-            target: parse_target_opt(target),
+            target: target.clone(),
             emit: parse_emit_opt(emit),
             optimize: parse_optimize_opt(release, optimize),
             out: member_out.map(std::path::PathBuf::from),
@@ -1282,19 +1274,6 @@ fn run_workspace_build(
 
     if any_failed {
         process::exit(1);
-    }
-}
-
-fn parse_target_opt(target: &Option<String>) -> Option<BuildTarget> {
-    match target {
-        None => None,
-        Some(t) => match BuildTarget::parse(t) {
-            Ok(bt) => Some(bt),
-            Err(msg) => {
-                eprintln!("error[build]: {msg}");
-                process::exit(2);
-            }
-        },
     }
 }
 

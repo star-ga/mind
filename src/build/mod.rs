@@ -140,8 +140,13 @@ pub struct BuildOpts {
     /// Positional source paths from the CLI. When empty, source resolution
     /// falls back to the manifest `[build].entry` field.
     pub paths: Vec<PathBuf>,
-    /// Override `[build].target`.
-    pub target: Option<BuildTarget>,
+    /// Override `[build].target` — the RAW `--target` name (a declared
+    /// `[targets.<name>]` block name OR a backend class), resolved against the
+    /// manifest by [`resolve_build_target`]. Raw (not pre-parsed to a
+    /// [`BuildTarget`]) so a declared block name that is not a backend class
+    /// (e.g. `windows`) survives to the manifest-aware resolver instead of being
+    /// rejected before the manifest is loaded.
+    pub target: Option<String>,
     /// Override `[build].emit`.
     pub emit: Option<EmitKind>,
     /// Override `[build].optimize`.
@@ -320,8 +325,13 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
     // Validate [package].name per RFC 0008 §3.
     validate_package_name(&manifest.package.name)?;
 
-    // 2. Resolve effective build parameters (CLI > manifest > default).
-    let eff_target = opts.target.unwrap_or(manifest.build.target);
+    // 2. Resolve effective build parameters (CLI > manifest > default). The raw
+    //    --target name resolves against `[targets.<name>]` blocks FIRST (declared
+    //    block wins), then backend classes; an undeclared name is a hard error,
+    //    never a silent host build. `sel_block` is the selected block name,
+    //    threaded to `build_project` so it picks THAT block's sources /
+    //    native_sources / `.target` triple.
+    let (eff_target, sel_block) = resolve_build_target(opts.target.as_deref(), &manifest)?;
     let eff_emit = opts.emit.unwrap_or(manifest.build.emit);
     let eff_optimize = opts.optimize.unwrap_or(manifest.build.optimize);
 
@@ -486,6 +496,7 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
 
     let legacy_opts = legacy_opts_from(
         eff_target,
+        sel_block,
         eff_emit,
         eff_optimize,
         &manifest.exports.c_abi,
@@ -691,6 +702,63 @@ fn validate_package_name(name: &str) -> Result<(), BuildError> {
     Ok(())
 }
 
+/// Resolve the raw `--target` name into (backend class, selected block name).
+///
+/// Declared-block-name wins (the Cargo-profile shape): a `--target <name>` that
+/// matches a `[targets.<name>]` block uses the block's `backend` field as the
+/// class and threads `<name>` to `build_project` (which reads the block's
+/// sources / native_sources / `.target` triple). Otherwise `<name>` must itself
+/// be a backend class. A name that is NEITHER is a hard error — the fail-loud
+/// closure of the undeclared-`--target`-name hole (never a silent host build).
+/// When no `--target` is given, the manifest `[build].target` class is used with
+/// no block override (byte-identical to the historical default path).
+///
+/// deferred: the incremental cache root/key (`cache_root` / `compile_cache_key`)
+/// still key on the backend CLASS only, so two blocks with the same backend but
+/// different `.target` triples (e.g. a `[targets.cpu]` linux target and a
+/// `[targets.windows]` windows-gnu target, both `backend = "cpu"`) would share a
+/// `target/cpu/<opt>/.cache` slot. This is DORMANT today: a non-host triple fails
+/// loud at the "not yet wired" cross-compilation guard in `build_project` before
+/// any artifact is produced or cached. Upgrade path (lands WITH the windows-gnu
+/// PE slice, when a cross artifact is actually emitted): thread the resolved
+/// triple into `cache_root` + `compile_cache_key` so per-OS artifacts occupy
+/// distinct cache slots.
+fn resolve_build_target(
+    name: Option<&str>,
+    manifest: &crate::project::ProjectManifest,
+) -> Result<(BuildTarget, Option<String>), BuildError> {
+    let Some(n) = name else {
+        return Ok((manifest.build.target, None));
+    };
+    if let Some(block) = manifest.targets.get(n) {
+        // Declared block wins; its `backend` field must be a real class.
+        let bt = BuildTarget::parse(&block.backend).map_err(|_| {
+            BuildError::Invalid(format!(
+                "targets.{n}.backend `{}` is not a backend class \
+                 (cpu|gpu|tpu|npu|lpu|dpu|fpga|cerebras|wasm)",
+                block.backend
+            ))
+        })?;
+        Ok((bt, Some(n.to_string())))
+    } else if let Ok(bt) = BuildTarget::parse(n) {
+        // Legacy class path (no matching block).
+        Ok((bt, None))
+    } else {
+        let mut declared: Vec<&str> = manifest.targets.keys().map(String::as_str).collect();
+        declared.sort_unstable();
+        let declared = if declared.is_empty() {
+            "none".to_string()
+        } else {
+            declared.join(", ")
+        };
+        Err(BuildError::Invalid(format!(
+            "unknown target `{n}`: neither a declared [targets.*] block \
+             (declared: {declared}) nor a backend class \
+             (cpu|gpu|tpu|npu|lpu|dpu|fpga|cerebras|wasm)"
+        )))
+    }
+}
+
 fn validate_target(target: BuildTarget) -> Result<(), BuildError> {
     match target {
         BuildTarget::Cpu => Ok(()),
@@ -795,6 +863,7 @@ fn default_artifact_path(
 #[allow(clippy::too_many_arguments)]
 fn legacy_opts_from(
     target: BuildTarget,
+    block_name: Option<String>,
     emit: EmitKind,
     optimize: OptimizeLevel,
     manifest_exports: &[String],
@@ -804,10 +873,14 @@ fn legacy_opts_from(
     project_root: &Path,
     single_file: bool,
 ) -> LegacyBuildOptions {
-    let target_str = match target {
+    // Prefer the explicitly-selected `[targets.<name>]` block name so
+    // `build_project` picks THAT block (its sources / native_sources / `.target`
+    // triple). With no block selected this falls back to the historical class
+    // mapping (`Cpu => None`, so the default host path is byte-identical).
+    let target_str = block_name.or(match target {
         BuildTarget::Cpu => None,
         other => Some(other.as_str().to_string()),
-    };
+    });
 
     LegacyBuildOptions {
         release: optimize.is_release(),
