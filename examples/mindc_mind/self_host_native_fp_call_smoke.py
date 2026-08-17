@@ -188,7 +188,7 @@ def main() -> int:
         ("fn f() -> f64 { let c: i64 = 0; if c == 1 { 2.0 } else { 3.0 } }", 3),   # else branch
         ("fn f() -> f64 { let c: i64 = 1; let r: f64 = if c == 1 { 2.0 } else { 3.0 }; "
          "r + 1.0 }", 3),                                                          # dst FLOAT-tagged
-        # ---- audit regression batch (cross-family Fable-5 audit, 2026-07-14): float dtype
+        # ---- audit regression batch (cross-family audit, 2026-07-14): float dtype
         # must survive CONTROL-FLOW rebinds; value-ifs in return/assign position must lower
         # (not silently const-0); -0.0 must fold to true IEEE negation; `!x` must not crash.
         # ---- #174: an if-STATEMENT branch merge (`if c { x = 2.5; }`) rebinds the merged var

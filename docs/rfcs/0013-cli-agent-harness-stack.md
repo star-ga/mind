@@ -16,7 +16,7 @@
 ## 1. Motivation
 
 The credibility test of self-hosting + RFC 0005 std-surface + RFC 0011 async is
-whether MIND can host **an agent CLI** — a Claude-Code-class terminal client
+whether MIND can host **an agent CLI** — an interactive terminal agent client
 (reference shape: the OSS `claw-code` project, `claw-code.codes`) — **written
 end-to-end in pure MIND**, with no Python / TS / Rust runtime underneath.
 
@@ -223,7 +223,7 @@ for a real HTTPS-backed MCP.
   natural first downstream consumers — both already speak the MCP surface
   through their current implementations
 
-Acceptance: a MIND CLI calls a stdio MCP server (Claude-flavoured), invokes
+Acceptance: a MIND CLI calls a stdio MCP server, invokes
 a tool, and parses results — full round-trip in pure MIND.
 
 ### 4.6 Tier 6 — `mindcraft-agent` demo

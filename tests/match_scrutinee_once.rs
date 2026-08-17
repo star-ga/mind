@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 // Part of the MIND project (Machine Intelligence Native Design).
 
-//! Match scrutinee EVALUATED-ONCE runtime gate (Fable audit #7).
+//! Match scrutinee EVALUATED-ONCE runtime gate (audit #7).
 //!
 //! The `match`-desugar embeds the scrutinee node into EVERY arm's discriminant
 //! test and each payload bind (~6 clone sites in `desugar_match_to_if`), so
@@ -21,7 +21,7 @@
 //! return (result * scale + observed call-count) is asserted against the hand
 //! oracle. Covers: a plain call scrutinee (gate ON), a payload-carrying enum
 //! scrutinee (gate ON, more embed sites), a NESTED gated match in an arm body
-//! (Fable caveat F — distinct span-unique temps must not collide), and a pure
+//! (audit caveat F — distinct span-unique temps must not collide), and a pure
 //! ident scrutinee (gate OFF — the byte-neutral common path).
 //!
 //! Gate: `cargo test --features "std-surface mlir-build" --test match_scrutinee_once`
@@ -77,7 +77,7 @@ pub fn scrut_once_payload() -> i64 {
     return r * 10 + __mind_load_i64(ctr)
 }
 
-// NESTED gated match inside an arm body (Fable caveat F): each match binds its
+// NESTED gated match inside an arm body (audit caveat F): each match binds its
 // OWN span-unique __match_scrut_*, so the inner pre-bind cannot collide with the
 // outer one. Both scrutinees must evaluate exactly once.
 // outer tag 1 -> inner tag 2 -> 77 ; outer called ONCE, inner called ONCE.

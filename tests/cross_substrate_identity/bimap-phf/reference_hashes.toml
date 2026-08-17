@@ -36,7 +36,7 @@
 # artifact is attested but UNSIGNED (Ed25519 signing is RFC 0016 Phase C,
 # pending — `signature: absent` today).
 #
-# Re-bless 2026-07-29 (Fable #4 / #5i — range-`for` hygiene gate): the `#[bimap]`
+# Re-bless 2026-07-29 (audit #4 / #5i — range-`for` hygiene gate): the `#[bimap]`
 # from_str CONSTRUCTION body is unchanged; the drift is entirely in main()'s
 # `for j in 0..currency_count()` loop. `currency_count()` is a CALL, so the new
 # hygiene gate in the `For` arm (`src/eval/lower.rs`) legitimately fires

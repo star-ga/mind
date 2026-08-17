@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 // Part of the MIND project (Machine Intelligence Native Design).
 
-//! Bare enum-variant constructor AMBIGUITY fail-closed gate (Fable finding #8).
+//! Bare enum-variant constructor AMBIGUITY fail-closed gate (audit finding #8).
 //!
 //! Two value-position ctor-resolution sites — the `Call`-arm payload ctor and
 //! the fieldless `Lit(Ident)` value arm — used to resolve a BARE variant name

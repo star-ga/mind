@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 // Part of the MIND project (Machine Intelligence Native Design).
 
-//! Fable IR-audit finding #2 (task #270) — the `NARROW_LOCALS` thread-local must
+//! IR-audit finding #2 (task #270) — the `NARROW_LOCALS` thread-local must
 //! not leak narrow-width type entries ACROSS modules on a shared thread, and a
 //! BLOCK-local narrow `let` must not clobber an outer same-named i64 binding
 //! after the block ends. Both are silent miscompiles: without the fix, a later

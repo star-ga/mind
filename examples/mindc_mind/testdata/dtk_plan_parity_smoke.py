@@ -1,5 +1,5 @@
 """
-DTK slice-1 differential PARITY smoke (Fable finding #1).
+DTK slice-1 differential PARITY smoke (audit finding #1).
 
 The `tests/regalloc_dtk_parity.rs` test checks the Rust `plan_module_k` against
 HARDCODED expectations — Rust-vs-Rust. Nothing cross-checked the pure-MIND
@@ -7,7 +7,7 @@ HARDCODED expectations — Rust-vs-Rust. Nothing cross-checked the pure-MIND
 smoke closes that gap: it builds the self-host cdylib, runs `selftest_dtk_plan`
 over a corpus, and diffs its serialized `[count | (id, reg_code)*count]` table,
 FIELD-EXACT, against the Rust `plan_module_k(m, 5)` result (filtered to
-non-params, top-2). It also pins the eligibility predicate from OUTSIDE (Fable
+non-params, top-2). It also pins the eligibility predicate from OUTSIDE (audit
 finding #3: the Rust reference has NO eligibility mirror) by asserting
 `selftest_dtk_plan` returns count==0 for every ineligible class.
 
@@ -81,7 +81,7 @@ PINNED_ORACLE = {
 # INELIGIBLE corpus: every class the .mind eligibility predicate must refuse
 # (nb_dtk_plan / nb_dtk_scan fail-closed). selftest_dtk_plan MUST return
 # count==0 for each — the only external pin on "should this fn be planned at
-# all" (Fable finding #3; Rust plan_module_k has no eligibility mirror).
+# all" (audit finding #3; Rust plan_module_k has no eligibility mirror).
 INELIGIBLE = [
     ("call", "fn f(a: i64) -> i64 {\n    return dbl(a);\n}\nfn dbl(x: i64) -> i64 {\n    return x + x;\n}\n"),
     ("if", "fn f(a: i64, b: i64) -> i64 {\n    if a > b {\n        return a;\n    }\n    return b;\n}\n"),

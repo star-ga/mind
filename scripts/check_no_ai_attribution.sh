@@ -1,26 +1,38 @@
 #!/usr/bin/env bash
-# Public-artifact hygiene gate: no AI tool/model named as having worked on MIND.
+# Public-artifact hygiene gate: no AI tool/model named as having AUTHORED or
+# REVIEWED MIND.
 #
-# STARGA policy: public artifacts (README, docs, benchmarks, PR/commit text)
-# never attribute work to an AI assistant. Naming a supported MCP *client*
-# (e.g. "Claude Code", "Gemini CLI", "Cursor") as an integration target is fine;
-# bare review/authorship attributions like "Copilot", "ChatGPT", or
-# "N-LLM consensus" tables are not.
+# STARGA policy: naming a supported MCP / CLI *client* ("Claude Code",
+# "Gemini CLI", "Cursor") as an integration target, or an LLM backend a tool
+# shells out to at runtime, is fine. Bare review/authorship attributions —
+# "Fable audit", "Copilot", "ChatGPT", "DeepSeek panel", "N-LLM consensus" — are
+# not. This scans source + docs + tests, not just Markdown: the earlier md-only,
+# 4-term gate let "Fable audit"/"IR-audit" attributions leak into ~60 source
+# comments across .rs/.py/.mind/.sh/.toml before this was caught.
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-# Forbidden patterns in tracked Markdown (excluding third-party node_modules and
-# the changelog's historical entries). Add patterns conservatively to avoid
-# false positives on legitimate technical prose.
-PATTERN='copilot|chatgpt|[0-9]+-llm consensus|claude/[a-z-]+-[A-Za-z0-9]{4,}'
+# Attribution-shaped patterns. `fable` (= an internal model codename) is never a
+# legitimate integration target in these repos, so it is flagged bare (word-
+# bounded, to spare "affable"/"ineffable"). Other vendors are flagged only when
+# adjacent to an authorship/review verb, so legitimate words ("grok" the verb,
+# "opus", a "Gemini CLI" integration line) do not false-positive.
+PATTERN='\bfable\b|copilot|chatgpt|[0-9]+[- ]llm consensus|claude/[a-z-]+-[A-Za-z0-9]{4,}|\b(deepseek|mistral|grok|gemini|gpt|opus|sonnet|haiku|kimi|qwen|nemotron|glm|moonshot|zhipu|anthropic|openai)[- ]?(audit|panel|review|finding|consensus|converged|driven|flagged|authored)\b'
 
-hits=$(git grep -inE "$PATTERN" -- '*.md' ':!node_modules' ':!**/node_modules' ':!ANATOMY.md' 2>/dev/null || true)
+# Excludes: vendored node_modules, the generated file index, and THIS file
+# (which necessarily contains the example patterns above).
+hits=$(git grep -inE "$PATTERN" -- \
+  '*.md' '*.rs' '*.py' '*.mind' '*.sh' '*.toml' '*.rst' '*.txt' \
+  ':!node_modules' ':!**/node_modules' ':!ANATOMY.md' \
+  ':!scripts/check_no_ai_attribution.sh' 2>/dev/null || true)
 if [ -n "$hits" ]; then
-  echo "::error::AI-attribution found in public docs (forbidden by STARGA policy):"
+  echo "::error::AI-attribution found in tracked files (forbidden by STARGA policy):"
   echo "$hits"
   echo ""
-  echo "Replace named-AI attributions with 'recent research' / 'cross-model review',"
-  echo "and remove AI-tool review artifacts. (MCP client names are fine.)"
+  echo "Replace named-AI review/authorship attributions with 'recent research' /"
+  echo "'cross-model review' / a neutral 'audit finding'. Integration-target and"
+  echo "runtime-LLM-backend mentions (Claude Code, Gemini CLI, a shelled-out CLI)"
+  echo "are fine."
   exit 1
 fi
 echo "no-ai-attribution gate: PASS"

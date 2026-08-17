@@ -1,6 +1,6 @@
 // Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
 //
-//! Range-`for` hygiene (Fable #4 / #5i) — RUNTIME gate for the Rust-compiled
+//! Range-`for` hygiene (audit #4 / #5i) — RUNTIME gate for the Rust-compiled
 //! substrate.
 //!
 //! `for VAR in START..END { BODY }` used to desugar unconditionally to

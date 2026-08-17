@@ -32449,14 +32449,14 @@ pub fn nb_truncate_dead(sa: i64, sl: i64, i: i64) -> i64 {
     // continue: dead tail poisons nb_while_carry's carry -> INFINITE LOOP (the #308
     // hang). break: dead tail poisons the loop-carried var's POST-LOOP value (last-wins
     // records the never-run dead slot; verified 
-    // returned 0 not 1 — a wrong-value silent miscompile, Fable audit Finding 2). return:
+    // returned 0 not 1 — a wrong-value silent miscompile, audit Finding 2). return:
     // dead code after a fn-terminating return is benign but is truly dead. All three are
     // unconditional terminators -> everything after them in the same statement list is
     // UNREACHABLE. deferred: nb_while_carry recurses into a NESTED while's body with the
     // RAW sl (nb_while_carry_wnest); a nested-while dead-tail would re-desync there — today
     // guarded because nested loops fail-close before emit (frontier gap), but if nested-for
     // is ever made to lower, move truncation INTO nb_while_carry/nb_block_stmts so every
-    // consumer inherits it (Fable audit Finding 1).
+    // consumer inherits it (audit Finding 1).
     let k0: i64 = ast_kind(__mind_load_i64(sa + i * 8));
     if k0 == ast_continue() {
         return i + 1;

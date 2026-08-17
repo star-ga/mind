@@ -3479,7 +3479,7 @@ impl LoweringContext {
                     }
                     let ret_tok = ret_type.as_deref().unwrap_or("i64");
                     let call_ret_ty = extern_ret_mlir_ty(ret_tok);
-                    // Fable IR-audit #1: a narrow SCALAR return (SysV/C only) is
+                    // IR-audit #1: a narrow SCALAR return (SysV/C only) is
                     // read at its real width, then sign/zero-extended to the i64
                     // MIND value. Win64 is left verbatim (its classifier path is
                     // out of this fix's scope).
@@ -4496,7 +4496,7 @@ impl LoweringContext {
                         });
                     }
                 };
-                // A2/A3 (Fable audit, HIGH): only {i64,i32,f32,f64} are
+                // A2/A3 (audit, HIGH): only {i64,i32,f32,f64} are
                 // proven-correct on the executable path. The old code used
                 // `elem_dtype.as_str()` directly (yielding `tensor<Nxq16>`,
                 // which is INVALID MLIR — Q16 is stored as i32, see
@@ -11001,7 +11001,7 @@ pub fn lower_ir_to_mlir_with_entry(
         } else {
             String::new()
         };
-        // Fable IR-audit #1: normalize a narrow-scalar return token to its
+        // IR-audit #1: normalize a narrow-scalar return token to its
         // signless MLIR width for the declaration (e.g. `u32`→`i32`, `bool`→`i8`).
         let ret_str = ret_type.as_deref().map(extern_ret_mlir_ty).unwrap_or("i64");
         let cconv_attr = cconv_attr_for(*callconv);
@@ -11074,7 +11074,7 @@ fn cconv_attr_for(callconv: crate::ast::CallConv) -> &'static str {
     }
 }
 
-/// Fable IR-audit #1 — normalize an extern return-type token to a valid signless
+/// IR-audit #1 — normalize an extern return-type token to a valid signless
 /// MLIR type. The SysV narrow-scalar tokens `u8`/`u16`/`u32`/`bool` are MIND
 /// names (chosen in `src/eval/lower.rs::extern_ret_type_to_mlir_for` so their
 /// signedness survives to `extern_ret_narrow_ext`); map them to the signless
@@ -11092,7 +11092,7 @@ fn extern_ret_mlir_ty(tok: &str) -> &str {
     }
 }
 
-/// Fable IR-audit #1 — for a SysV narrow-scalar extern return token, the
+/// IR-audit #1 — for a SysV narrow-scalar extern return token, the
 /// `(arith op, narrow MLIR width)` pair used to widen the call result to the
 /// i64 MIND value; `None` for any non-narrow return (`i64`/`f32`/`f64`/ptr/
 /// struct-register), which is used verbatim. Signed widths sign-extend

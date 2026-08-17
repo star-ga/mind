@@ -15,7 +15,7 @@ TARGET_DIR="."
 UPDATE_MODE=false
 OUTPUT_FILE="ANATOMY.md"
 
-# Token estimate: ~4 chars per token (GPT/Claude average)
+# Token estimate: ~4 chars per token (typical BPE tokenizer)
 estimate_tokens() {
   local file="$1"
   local chars

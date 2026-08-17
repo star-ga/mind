@@ -2,7 +2,7 @@
 Chern-number sub-experiment — the panel's pick for the STRONGEST honest
 "closed-form invariant of a whole system at once."
 
-Three independent external models (DeepSeek, Mistral, Grok) converged on the
+Three independent external analyses converged on the
 SAME answer: the first Chern number of a 2D Bloch band, computed by the
 Fukui-Hatsugai-Suzuki link-variable / plaquette Berry-flux method.
 

@@ -649,7 +649,7 @@ pub struct BuildResult {
     /// wrong answer. See `run_project`, which fails loud on this flag.
     pub entry_native_compiled: bool,
     /// Project-relative names of EVERY source (entry or not) that could not be
-    /// natively compiled and was embedded as a runtime-JIT fallback. D1 (Fable
+    /// natively compiled and was embedded as a runtime-JIT fallback. D1 (audit
     /// audit, MED): `entry_native_compiled` tracks ONLY the entry, so a NON-entry
     /// module that fell to the JIT fallback left `mindc run` green even though the
     /// natively-compiled entry can call the fallen-back module's launcher-stub
@@ -1828,7 +1828,7 @@ fn compile_sources(
     // (unchanged link behaviour); flipped to `false` only when the entry itself
     // fell to the embedded runtime-JIT fallback.
     let mut entry_native_compiled = true;
-    // D1 (Fable audit, MED): collect EVERY source (entry or not) that fell to
+    // D1 (audit, MED): collect EVERY source (entry or not) that fell to
     // the runtime-JIT fallback, so `run_project` can fail loud rather than let a
     // non-entry fallback silently reach the runtime at execution.
     let mut fallback_sources: Vec<String> = Vec::new();
@@ -3112,7 +3112,7 @@ pub fn run_project(args: &[String], opts: &BuildOptions) -> Result<i32> {
         ));
     }
 
-    // D1 (Fable audit, MED): the same silent-green risk applies to a NON-entry
+    // D1 (audit, MED): the same silent-green risk applies to a NON-entry
     // source that fell to the JIT fallback. The natively-compiled entry can call
     // that module's launcher-stub symbols and reach the runtime-JIT at execution,
     // so a non-empty fallback set is also a false-green hazard. Fail closed:

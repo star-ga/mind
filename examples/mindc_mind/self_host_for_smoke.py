@@ -104,7 +104,7 @@ CASES = [
 ]
 
 # ---------------------------------------------------------------------------
-# GATED hygiene cases (Fable #4 / #5i) — SELF-HOST leg of the cross-substrate
+# GATED hygiene cases (audit #4 / #5i) — SELF-HOST leg of the cross-substrate
 # differential. The Rust compiler now branches range-`for` on a hygiene gate
 # (`src/eval/lower.rs` For arm): when END re-evaluation is observable, VAR
 # shadows an outer binding, or the body assigns VAR, it emits a hygienic form

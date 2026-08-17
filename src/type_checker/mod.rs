@@ -3463,7 +3463,7 @@ fn check_scalar_class_stmt(
             // (tuple / array literal); every non-literal RHS (call result, ident
             // alias, param) drops the name — never fire on a call-returned /
             // param / unannotated aggregate. Annotation-seeding is deliberately
-            // NOT done in v1 (Fable over-fire guard 6: an aggregate annotation on
+            // NOT done in v1 (over-fire guard 6: an aggregate annotation on
             // a call RHS would fire off a lying annotation) — upgrade path: seed
             // from TypeAnn::Tuple/Array once annotation-vs-RHS is enforced.
             match agg_shape_of(value) {

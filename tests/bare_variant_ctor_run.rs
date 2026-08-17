@@ -13,7 +13,7 @@
 //! rewrap values.
 //!
 //! The USER enums here deliberately use names with NO prelude collision
-//! (`Good`/`Bad`/`Just`, not `Ok`/`Err`/`Some`): after Fable finding #8, a bare
+//! (`Good`/`Bad`/`Just`, not `Ok`/`Err`/`Some`): after audit finding #8, a bare
 //! name owned by BOTH a user enum and the `Option`/`Result` prelude is
 //! fail-closed ambiguous (qualify it), so a fixture testing SOLE-owner bare
 //! resolution must not shadow prelude names. Bare resolution of the prelude

@@ -4,7 +4,7 @@
 
 //! Phase 17.4 hardening — `ArrayLoad` bounds + element-type RUNTIME gate.
 //!
-//! Regression coverage for the Fable audit HIGH findings against the const-array
+//! Regression coverage for the audit HIGH findings against the const-array
 //! element-load lowering (`src/mlir/lowering.rs`, `Instr::ArrayLoad`):
 //!
 //! * **A1 (bounds, wedge):** an out-of-bounds runtime index used to lower to an

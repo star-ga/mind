@@ -3,7 +3,7 @@ Field-invariant experiment v2 — AMPLIFYING regime.
 Fully separate from any MIND repo. Pure numpy/scipy.
 
 v1 used a too-gentle contraction => unpinned float error stayed at machine
-epsilon and did not grow with depth. v2 picks the regime (per DeepSeek panel
+epsilon and did not grow with depth. v2 picks the regime (per the external panel
 hint) where the LOCAL/stepwise method provably diverges while the WHOLE-SYSTEM
 closed form stays analytically exact:
 

@@ -220,7 +220,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   branch's bindings (full sequential scan to the tail): an annotated scalar `let` inserts its
   class, and every `LetTuple` / non-scalar / unannotated `let` DROPS the name (→ class `None`,
   so a tuple-rebound `let (n, w) = mkpair()` never keeps a stale class). Zero over-coverage
-  preserved; check-phase only; self-host fixed point unchanged. (Fable-audited: GO.)
+  preserved; check-phase only; self-host fixed point unchanged. (audit-reviewed: GO.)
 - **RFC 0011 scalar-class checks now reach match arms and the implicit trailing-return that
   precedes a binding (GitHub #233).** The confidence-gated int↔float class pass never entered a
   `match` arm (a `Node::Match` fell through to the walker's terminal `_ => {}`), so E2027

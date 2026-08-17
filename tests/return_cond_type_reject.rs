@@ -841,7 +841,7 @@ fn inner_scope_lettuple_rebind_no_false_positive() {
 
 #[test]
 fn inner_scope_shadow_after_statement_no_false_positive() {
-    // Fable audit concern: a NON-BINDER statement (`g(x)`) precedes the shadowing
+    // audit concern: a NON-BINDER statement (`g(x)`) precedes the shadowing
     // `let x: f64`. The per-branch seed must be a FULL sequential scan (not just
     // the leading-let prefix) so the inner `x: f64` is seeded and the tail `x`
     // resolves Float — otherwise the stale outer `x: i64` survives and E2010
@@ -978,7 +978,7 @@ fn method_arg_correct_class_no_false_positive() {
 #[cfg(all(feature = "std-surface", feature = "mlir-build"))]
 #[test]
 fn method_zero_arg_call_no_false_positive() {
-    // The zero-arg method-as-field case Fable flagged: `foo.val()` takes no
+    // The zero-arg method-as-field case audit flagged: `foo.val()` takes no
     // args, so the self-inclusive arity gate holds (`param_types.len() == 1 ==
     // 0 + 1`) and the arg loop is empty — no E2027, no panic (the `skip(1)`
     // self-drop stays in bounds). This is the proven `trait_static_dispatch_run`

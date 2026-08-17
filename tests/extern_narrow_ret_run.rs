@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 // Part of the MIND project (Machine Intelligence Native Design).
 
-//! Fable IR-audit #1 — narrow-scalar `extern "C"` RETURN ABI, end-to-end.
+//! IR-audit #1 — narrow-scalar `extern "C"` RETURN ABI, end-to-end.
 //!
 //! Regression gate for a HIGH silent-miscompile: an `extern "C" { fn f(...) ->
 //! i32 }` used to be declared `llvm.func @f(...) -> i64`, so the call read the

@@ -84,7 +84,7 @@ fn check_src(src: &str, env: &TypeEnv) -> Vec<libmind::diagnostics::Diagnostic> 
 /// identifiers. This helper calls `lower_to_ir` DIRECTLY, bypassing the name-
 /// resolution pass that the real `compile_source` pipeline always runs first,
 /// so those operands must be BOUND or they reach the fail-closed
-/// undefined-identifier panic in `lower_expr` (Fable #9) — a deliberate
+/// undefined-identifier panic in `lower_expr` (audit #9) — a deliberate
 /// hardening that replaced the old silent `const 0` fail-open these snippets
 /// used to rely on. Declaring `a`/`b` keeps the input name-resolvable WITHOUT
 /// weakening that fail-close: both sides of every byte-identity assertion below

@@ -163,7 +163,7 @@ fn tiebreak_use_count_then_valueid() {
 }
 
 // ---------------------------------------------------------------------------
-// PARITY-SMOKE ORACLE (dtk_plan_parity_smoke.py, Fable finding #1).
+// PARITY-SMOKE ORACLE (dtk_plan_parity_smoke.py, audit finding #1).
 //
 // The pure-MIND `selftest_dtk_plan` export in examples/mindc_mind/main.mind
 // scans SOURCE TEXT and serializes the slice-1 plan as [count | (id,reg)*count].

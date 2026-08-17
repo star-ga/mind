@@ -1272,7 +1272,7 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
             }
         }
     });
-    // Task #270 / Fable IR-audit #2 — reset the NARROW_LOCALS registry at entry.
+    // Task #270 / IR-audit #2 — reset the NARROW_LOCALS registry at entry.
     // Module-level narrow `let`s (the top-level item loop below) record into this
     // thread-local BEFORE any fn body runs, and a fn body's `enter_narrow_scope`
     // only take/restores around its OWN body — so a prior module's top-level
@@ -3770,7 +3770,7 @@ fn receiver_is_tracked_collection(
 /// bind nothing. Used by the fail-closed match fallbacks below to register a
 /// bound name (bare `x`, or a payload binding like `Some(v)`) before lowering
 /// the arm body — otherwise a body that READS the binding reaches the
-/// fail-closed undefined-identifier panic (Fable #9). Exhaustive (no catch-all)
+/// fail-closed undefined-identifier panic (audit #9). Exhaustive (no catch-all)
 /// so a future `Pattern` variant forces a compile error here rather than
 /// silently re-opening the panic. Registering these names is CORRECT (they ARE
 /// parser-produced bindings) and does not weaken the fail-close: a genuinely
@@ -5135,7 +5135,7 @@ fn lower_expr(
                 // OR qualified (`Mode::On`): a bare name with no `::` is matched
                 // against any `Enum::V` in the registry, mirroring the bare
                 // payload-ctor resolution in the `Node::Call` arm. A bare name
-                // that collides across enums is FAIL-CLOSED (Fable #8) instead of
+                // that collides across enums is FAIL-CLOSED (audit #8) instead of
                 // silently resolving to the lexicographically-first owner. An
                 // `Unknown` bare name falls through to the qualified-head /
                 // undefined-identifier panics below, exactly as before.
@@ -6290,7 +6290,7 @@ fn lower_expr(
             let mut local_env = env.clone();
             #[allow(unused_mut)]
             let mut local_struct_env = struct_env.clone();
-            // Task #270 / Fable IR-audit #2 (sub-case) — block-scope the narrow-let
+            // Task #270 / IR-audit #2 (sub-case) — block-scope the narrow-let
             // recordings below. A block-local `let c: u8 = 5` records into the
             // fn-wide NARROW_LOCALS map with no scoping; without restore, a later
             // `c = 300` on an OUTER i64 `c` (rebound in `local_env` but same name)
@@ -7307,7 +7307,7 @@ fn lower_expr(
                 // directly; a BARE `V` (`Some(x)`, `Ok(v)`, `Err(e)`) is matched
                 // against any `Enum::V` in the registry so UNQUALIFIED
                 // constructors resolve (one global link unit). A bare name that
-                // collides across enums is FAIL-CLOSED (Fable #8): the old code
+                // collides across enums is FAIL-CLOSED (audit #8): the old code
                 // silently took the lexicographically-first owner — a wrong-tag
                 // miscompile invisible to the author. `Unknown` (no owner, or a
                 // qualified head that is not an enum) falls through to normal
@@ -7450,7 +7450,7 @@ fn lower_expr(
                     // bind every pattern-introduced ident (bare `x`, or a payload
                     // binding like `Some(v)`) to the scrutinee id before lowering
                     // each arm body, else a body that reads the binding reaches
-                    // the fail-closed undefined-identifier panic (Fable #9).
+                    // the fail-closed undefined-identifier panic (audit #9).
                     let scrut_id = lower_expr(scrutinee, ir, env, struct_env, receiver_types);
                     let mut last_id = ir.fresh();
                     ir.instrs.push(Instr::ConstI64(last_id, 0));
@@ -7487,7 +7487,7 @@ fn lower_expr(
                 // build has no branching `If` lowering, so this fallback flattens
                 // every arm body sequentially — but each bound name must be
                 // registered in `env` or the body's read of it reaches the
-                // fail-closed undefined-identifier panic (Fable #9). The names ARE
+                // fail-closed undefined-identifier panic (audit #9). The names ARE
                 // defined (parser-produced pattern bindings), so registering them
                 // is CORRECT and does not weaken the fail-close — a genuinely
                 // undefined identifier is not a pattern binding, so it still panics.
@@ -8836,7 +8836,7 @@ fn lower_expr(
                 let ret_type = efn.ret_type.as_ref().map(|t| {
                     // Return types: structs >8B returned via hidden pointer;
                     // use first ABI slot as the declared return type (single register).
-                    // Fable IR-audit #1: a narrow SCALAR return declares its REAL
+                    // IR-audit #1: a narrow SCALAR return declares its REAL
                     // width (i8/i16/i32) instead of collapsing to i64, so the call
                     // reads only the bits the callee wrote and sign/zero-extends
                     // them to the i64 MIND value (see extern_ret_type_to_mlir_for).
@@ -9584,7 +9584,7 @@ fn lower_expr(
             attrs: _,
             span,
         } => {
-            // ---- Hygiene gate (Fable #4 / #5i) --------------------------------
+            // ---- Hygiene gate (audit #4 / #5i) --------------------------------
             //
             // The naive desugar below (`let VAR = START; while VAR < END { BODY;
             // VAR = VAR + 1 }`) diverges from the interpreter oracle in two ways:
@@ -10115,7 +10115,7 @@ fn build_try_desugar(inner: &ast::Node, is_option: bool) -> ast::Node {
     let span = inner.span();
     let ok_bind = format!("__try_ok_{}", span.start());
     let err_bind = format!("__try_err_{}", span.start());
-    // Fully-QUALIFY the synthesized prelude ctor/pattern names (Fable #8 risk
+    // Fully-QUALIFY the synthesized prelude ctor/pattern names (audit #8 risk
     // flag i): a module that declares a same-named variant (e.g. `enum Basket {
     // Err }`) would make bare `Err`/`None`/`Some` ambiguous, detonating the new
     // fail-closed panic on EVERY `?`. `Option::Some`/`Result::Err` etc. are the
@@ -10242,7 +10242,7 @@ fn string_pattern_test(scrutinee: &ast::Node, lit: &str, span: crate::ast::Span)
 }
 
 /// Outcome of resolving a possibly-bare enum-variant name against the
-/// `enum_variant_tags` registry (Fable finding #8). See `resolve_bare_variant`.
+/// `enum_variant_tags` registry (audit finding #8). See `resolve_bare_variant`.
 #[cfg(feature = "std-surface")]
 enum BareVariant {
     /// The name is already a registry key verbatim (qualified `Enum::V`, or a
@@ -10265,7 +10265,7 @@ enum BareVariant {
 }
 
 /// Resolve a possibly-bare enum-variant name against the `enum_variant_tags`
-/// registry WITHOUT silently guessing on a cross-enum collision (Fable finding
+/// registry WITHOUT silently guessing on a cross-enum collision (audit finding
 /// #8). Replaces two blind `.find(first-BTreeMap-match)` sites (the `Call`-arm
 /// payload ctor and the fieldless `Lit(Ident)` value arm) that resolved a bare
 /// variant name to the lexicographically-first `Enum::V` — invisibly wrong when
@@ -10408,7 +10408,7 @@ fn desugar_match_to_if(
     struct_field_names: &std::collections::BTreeMap<String, Vec<String>>,
 ) -> Option<ast::Node> {
     let span = scrutinee.span();
-    // Fable #7: an EFFECTFUL scrutinee (one containing a call) is embedded into
+    // audit #7: an EFFECTFUL scrutinee (one containing a call) is embedded into
     // EVERY arm's discriminant test and each payload bind (~6 clone sites
     // below), so re-lowering it per arm re-runs its side effects — whereas the
     // interpreter oracle evaluates the scrutinee EXACTLY once. When the
@@ -11137,7 +11137,7 @@ fn desugar_match_to_if(
         Some(v) if !v.is_empty() => Some(ast::Node::Block { stmts: v, span }),
         _ => None,
     };
-    // Fable #7: when the scrutinee was pre-bound (effectful), prefix the chain
+    // audit #7: when the scrutinee was pre-bound (effectful), prefix the chain
     // with `let __match_scrut_{uniq} = <original scrutinee>` inside a Block so
     // the scrutinee's side effects run EXACTLY once, ahead of every arm test.
     // The `let` uses the ORIGINAL scrutinee node (captured before the shadow);
@@ -11966,7 +11966,7 @@ pub(crate) fn extern_type_to_mlir_multi_for(
     }
 }
 
-/// Fable IR-audit #1 — narrow-scalar extern RETURN type classifier (SysV/C).
+/// IR-audit #1 — narrow-scalar extern RETURN type classifier (SysV/C).
 ///
 /// A narrow C scalar return (`char`/`short`/`int`/`_Bool`) is written by the
 /// callee to only the low bits of `rax` — e.g. an `int` result lands in `eax`
