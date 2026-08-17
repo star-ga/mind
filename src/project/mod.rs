@@ -2411,7 +2411,11 @@ fn compile_single_source(
     backend: &str,
     opts: &BuildOptions,
     is_entry: bool, // true if this is the main entry point
-    cc_target_triple: Option<&str>,
+    // Consumed only by the `mlir-build` codegen path below; under
+    // `--no-default-features` that path is compiled out, so allow it unused there.
+    #[cfg_attr(not(feature = "mlir-build"), allow(unused_variables))] cc_target_triple: Option<
+        &str,
+    >,
 ) -> Result<bool> {
     use crate::pipeline::{CompileOptions, compile_source_with_name};
     use crate::runtime::types::BackendTarget;

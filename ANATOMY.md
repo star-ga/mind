@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3375 | **Est. tokens:** ~7,912,194
-**Generated:** 2026-08-17 19:49 UTC
+**Files:** 3376 | **Est. tokens:** ~7,915,569
+**Generated:** 2026-08-17 20:19 UTC
 
 ## Token Budget Guide
 
@@ -22,14 +22,14 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 33 | ~25,909 |
+| `./` | 33 | ~25,922 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
 | `assets/logo/` | 1 | ~453 |
 | `audits/` | 6 | ~607 |
 | `bench/` | 2 | ~1,772 |
-| `benches/` | 27 | ~80,382 |
+| `benches/` | 28 | ~83,676 |
 | `bench/fft/` | 8 | ~8,060 |
 | `benchmarks/` | 12 | ~20,412 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
@@ -381,11 +381,11 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 8 | ~23,561 |
+| `src/` | 8 | ~23,632 |
 | `src/ast/` | 1 | ~10,205 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
-| `src/build/` | 2 | ~17,847 |
+| `src/build/` | 2 | ~17,846 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 3 | ~10,829 |
 | `src/deps/` | 1 | ~9,345 |
@@ -409,7 +409,7 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 2 | ~20,355 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 3 | ~12,081 |
+| `src/project/` | 3 | ~12,079 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -489,7 +489,7 @@
 - `.bench-pre-pratt.txt` (~32 tok, tiny) — === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
-- `Cargo.toml` (~2110 tok, huge) — [package]
+- `Cargo.toml` (~2123 tok, huge) — [package]
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -550,6 +550,7 @@
 - `cerebras_stencil.rs` (~831 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `compiler.rs` (~3782 tok, huge) — Small program: Simple matrix multiplication
 - `cross_module.rs` (~609 tok, large) — Copyright 2025 STARGA Inc.
+- `det_gemv_q16_mt.rs` (~3294 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `det_matmul_i16.rs` (~4621 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `det_matmul_i8.rs` (~5094 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `det_matmul_q16_mt.rs` (~4049 tok, huge) — Copyright 2025-2026 STARGA Inc.
@@ -3946,7 +3947,7 @@
 ### `src/build/`
 
 - `cache.rs` (~6766 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~11081 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~11080 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/cache/`
 
 - `entry.rs` (~977 tok, large) — Copyright 2025-2026 STARGA Inc.
@@ -4104,7 +4105,7 @@
 - `pipeline.rs` (~5551 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `link.rs` (~2605 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `link.rs` (~2603 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `module_table.rs` (~5820 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~3656 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -4130,7 +4131,7 @@
 - `tensor.rs` (~391 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `target.rs` (~4960 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `target.rs` (~5031 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `src/test/`
 
 - `mod.rs` (~6816 tok, huge) — Copyright 2025 STARGA Inc.

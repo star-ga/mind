@@ -13,13 +13,13 @@
 // Part of the MIND project (Machine Intelligence Native Design).
 
 //! Per-target executable link driver — the single place the final native binary
-//! is produced, dispatched on the target's [`LinkFlavor`].
+//! is produced, dispatched on the target's `LinkFlavor`.
 //!
 //! MIND's deterministic *payload* (the emitted `.o` machine code) is held
 //! byte-identical across every supported target; only the *container* — ELF vs
 //! PE/COFF vs Mach-O — and the flavor-specific link flags differ. This driver is
-//! where that container split lives: [`LinkDriver::link`] matches on
-//! [`Target::link_flavor`] into one private linker invocation per flavor, so a
+//! where that container split lives: `LinkDriver::link` matches on
+//! `Target::link_flavor` into one private linker invocation per flavor, so a
 //! new OS is one new arm, never a scattered `cfg!(target_os)` ladder at the call
 //! site.
 //!
@@ -59,7 +59,7 @@ pub struct LinkCtx<'a> {
     pub runtime_shim: Option<&'a Path>,
 }
 
-/// Produces the final native executable for one [`Target`].
+/// Produces the final native executable for one `Target`.
 pub struct LinkDriver {
     target: Target,
 }

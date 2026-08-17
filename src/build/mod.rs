@@ -142,7 +142,7 @@ pub struct BuildOpts {
     pub paths: Vec<PathBuf>,
     /// Override `[build].target` — the RAW `--target` name (a declared
     /// `[targets.<name>]` block name OR a backend class), resolved against the
-    /// manifest by [`resolve_build_target`]. Raw (not pre-parsed to a
+    /// manifest by `resolve_build_target`. Raw (not pre-parsed to a
     /// [`BuildTarget`]) so a declared block name that is not a backend class
     /// (e.g. `windows`) survives to the manifest-aware resolver instead of being
     /// rejected before the manifest is loaded.

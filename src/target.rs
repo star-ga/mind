@@ -23,9 +23,9 @@
 //!
 //! This type is the single authority those decisions are *converging on*. Two
 //! live target-dependent sites still exist outside it and are being threaded in
-//! incrementally: the `-march` ladder in [`crate::eval::mlir_build`] (extracted
-//! here as [`march_for`] and divergence-guarded against [`Target::march`]) and
-//! `HOST_IS_X86` in [`crate::mlir::lowering`]. Until they are threaded, a unit
+//! incrementally: the `-march` ladder in `crate::eval::mlir_build` (extracted
+//! here as `march_for` and divergence-guarded against [`Target::march`]) and
+//! `HOST_IS_X86` in `crate::mlir::lowering`. Until they are threaded, a unit
 //! test pins them to this authority so the two sources of truth cannot silently
 //! drift. Cross compilation is a data selection
 //! (`[targets.<name>].target = "<triple>"`), not a compile-time host special-case.
@@ -261,7 +261,7 @@ impl Target {
     /// The `-march` for deterministic codegen. Pins the ISA level so operation
     /// selection (and thus the emitted payload) is fixed independent of the host.
     /// This MUST agree with the live `-march` ladder in
-    /// [`crate::eval::mlir_build`] (extracted as [`march_for`]); the two are
+    /// `crate::eval::mlir_build` (extracted as `march_for`); the two are
     /// pinned together by `march_for_agrees_with_target_march` until the backend
     /// is threaded through [`Target`] and the ladder deleted.
     pub fn march(&self) -> &'static str {
@@ -319,6 +319,10 @@ impl Target {
 /// [`Target::march`] by `march_for_agrees_with_target_march`, so the two sources
 /// of truth for the payload-`march` knob cannot silently diverge while the ladder
 /// still exists.
+// Only the `mlir-build` backend calls this (src/eval/mlir_build.rs); under
+// `--no-default-features` that caller is compiled out, leaving only the unit
+// test, so allow dead_code there rather than fail the doc/no-features build.
+#[cfg_attr(not(feature = "mlir-build"), allow(dead_code))]
 pub(crate) fn march_for(triple: Option<&str>) -> Option<&'static str> {
     match triple {
         Some(t) if t.contains("aarch64") || t.contains("arm64") => Some("armv8-a"),
