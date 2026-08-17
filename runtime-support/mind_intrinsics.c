@@ -1908,3 +1908,117 @@ MIND_EXPORT int64_t __mind_gen_free(int64_t handle) {
 
     return 0;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Deterministic thread-pool dispatcher for the multithreaded Q16.16 GEMM /
+ * GEMV kernels (RFC 0006). The emitted MLIR partitions the M output rows into
+ * `n_bands` contiguous OWNER-COMPUTES bands, packs one i64 arg-struct per band
+ * into `argbuf`, then calls this dispatcher instead of spawning a fresh pthread
+ * per band. A persistent pool of worker threads (created once, parked on a
+ * condition variable) runs each band's worker; this call JOINS all bands before
+ * returning — removing the per-call pthread_create/join cost that dominated a
+ * sub-millisecond GEMV.
+ *
+ * Byte-identity: this is a SCHEDULING-only change. The band partition, the
+ * per-band arg structs, and the worker function are identical to the inline-
+ * spawn path; every output element is still written by exactly one thread with
+ * no cross-thread reduction, so the result is byte-for-byte identical to the
+ * single-thread kernel and independent of both the pool size and `n_bands`
+ * (the cross-substrate thread-sweep gate pins this). No clock / rng is touched.
+ *
+ * Concurrency: `mind_mt_dispatch_lock` serializes concurrent callers (routing
+ * scores one query at a time); `mtx` guards the round state; workers run their
+ * band OUTSIDE the lock so the bands execute in parallel.
+ * ───────────────────────────────────────────────────────────────────────── */
+#include <pthread.h>
+#include <stdint.h>
+#include <unistd.h>
+
+#define MIND_MT_POOL_MAX 256
+
+typedef void *(*mind_mt_worker_fn)(void *);
+
+static struct {
+    pthread_mutex_t   mtx;
+    pthread_cond_t    wake; /* main -> workers: a new round is ready */
+    pthread_cond_t    done; /* workers -> main: a band finished */
+    mind_mt_worker_fn fn[MIND_MT_POOL_MAX];
+    void             *arg[MIND_MT_POOL_MAX];
+    long              gen;      /* bumped once per dispatch round */
+    long              active;   /* # bands in the current round */
+    long              finished; /* # bands completed this round */
+    long              pool_n;   /* # worker threads created */
+    pthread_t         threads[MIND_MT_POOL_MAX];
+} mind_mt = {
+    .mtx = PTHREAD_MUTEX_INITIALIZER,
+    .wake = PTHREAD_COND_INITIALIZER,
+    .done = PTHREAD_COND_INITIALIZER,
+};
+
+static pthread_mutex_t mind_mt_dispatch_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void *mind_mt_worker_loop(void *p) {
+    long id = (long)(intptr_t)p;
+    long seen = 0;
+    for (;;) {
+        pthread_mutex_lock(&mind_mt.mtx);
+        while (mind_mt.gen == seen) {
+            pthread_cond_wait(&mind_mt.wake, &mind_mt.mtx);
+        }
+        seen = mind_mt.gen;
+        int inrange = (id < mind_mt.active);
+        mind_mt_worker_fn fn = inrange ? mind_mt.fn[id] : 0;
+        void *arg = inrange ? mind_mt.arg[id] : 0;
+        pthread_mutex_unlock(&mind_mt.mtx);
+        if (inrange) {
+            fn(arg);
+            pthread_mutex_lock(&mind_mt.mtx);
+            mind_mt.finished++;
+            pthread_cond_signal(&mind_mt.done);
+            pthread_mutex_unlock(&mind_mt.mtx);
+        }
+    }
+    return 0;
+}
+
+static void mind_mt_pool_init(void) {
+    long n = sysconf(_SC_NPROCESSORS_ONLN);
+    if (n < 1) n = 1;
+    if (n > MIND_MT_POOL_MAX) n = MIND_MT_POOL_MAX;
+    mind_mt.pool_n = n;
+    for (long i = 0; i < n; i++) {
+        pthread_create(&mind_mt.threads[i], 0, mind_mt_worker_loop,
+                       (void *)(intptr_t)i);
+    }
+}
+
+void __mind_blas_mt_dispatch(mind_mt_worker_fn worker, char *argbuf,
+                             long struct_bytes, long n_bands) {
+    static pthread_once_t once = PTHREAD_ONCE_INIT;
+    if (n_bands <= 0) {
+        return;
+    }
+    pthread_once(&once, mind_mt_pool_init);
+    /* The emitter caps T = min(sysconf, M) <= pool_n, so this never truncates a
+     * band in practice; it is a defensive guard against a pool smaller than the
+     * requested band count (which would otherwise leave rows uncomputed). */
+    if (n_bands > mind_mt.pool_n) {
+        n_bands = mind_mt.pool_n;
+    }
+
+    pthread_mutex_lock(&mind_mt_dispatch_lock);
+    pthread_mutex_lock(&mind_mt.mtx);
+    for (long i = 0; i < n_bands; i++) {
+        mind_mt.fn[i] = worker;
+        mind_mt.arg[i] = argbuf + (intptr_t)i * struct_bytes;
+    }
+    mind_mt.active = n_bands;
+    mind_mt.finished = 0;
+    mind_mt.gen++;
+    pthread_cond_broadcast(&mind_mt.wake);
+    while (mind_mt.finished < n_bands) {
+        pthread_cond_wait(&mind_mt.done, &mind_mt.mtx);
+    }
+    pthread_mutex_unlock(&mind_mt.mtx);
+    pthread_mutex_unlock(&mind_mt_dispatch_lock);
+}

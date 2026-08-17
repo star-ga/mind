@@ -129,6 +129,10 @@ name = "det_matmul_q16_mt"
 harness = false
 
 [[bench]]
+name = "det_gemv_q16_mt"
+harness = false
+
+[[bench]]
 name = "det_matmul_i16"
 harness = false
 
