@@ -21,6 +21,10 @@ use serde::Deserialize;
 #[cfg(feature = "cross-module-imports")]
 pub mod module_table;
 
+/// Per-target executable link driver (ELF / PE-COFF / Mach-O dispatch). Only the
+/// host ELF arm is wired today; the others fail loud until their slice lands.
+mod link;
+
 /// RFC 0005 Phase C — std/*.mind sources baked into the binary at
 /// compile time. The project loader prepends these to the module
 /// table so `use std.vec` resolves in any project, no vendoring
@@ -2992,10 +2996,10 @@ fn native_link(
     runtime_link: &str,
     opts: &BuildOptions,
 ) -> Result<()> {
+    use crate::project::link::{LinkCtx, LinkDriver};
+
     // Find a C compiler for linking
     let cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
-
-    let mut cmd = Command::new(&cc);
 
     // Compile the bundled runtime-support shim (runtime-support/mind_intrinsics.c:
     // printI64 / printNewline / __mind_alloc / __mind_store_i8 / __mind_load_i64 …)
@@ -3007,92 +3011,36 @@ fn native_link(
     //
     // The shim is compiled with the fixed `mind_intrinsics.c` basename +
     // `-ffile-prefix-map` + no debug info (RFC 0015 bit-identity), so it does not
-    // perturb reproducibility. The returned NamedTempFile is bound for the whole
-    // function so the .o survives on disk until the link below finishes.
+    // perturb reproducibility. The NamedTempFile is bound for the whole function
+    // so the .o survives on disk until the driver's link below finishes.
     #[cfg(feature = "mlir-build")]
-    let _runtime_shim_obj = {
+    let runtime_shim_obj = {
         use crate::eval::mlir_build;
         let tools = mlir_build::resolve_tools()
             .map_err(|e| anyhow!("runtime-support shim: MLIR build tools unavailable: {e}"))?;
-        let shim = mlir_build::compile_runtime_support_obj(&tools)
-            .map_err(|e| anyhow!("runtime-support shim compile failed: {e}"))?;
-        cmd.arg(shim.path());
-        shim
+        mlir_build::compile_runtime_support_obj(&tools)
+            .map_err(|e| anyhow!("runtime-support shim compile failed: {e}"))?
+    };
+    #[cfg(feature = "mlir-build")]
+    let runtime_shim: Option<&Path> = Some(runtime_shim_obj.path());
+    #[cfg(not(feature = "mlir-build"))]
+    let runtime_shim: Option<&Path> = None;
+
+    let ctx = LinkCtx {
+        cc: &cc,
+        objects,
+        output,
+        lib_dir,
+        runtime_link,
+        release: opts.release,
+        verbose: opts.verbose,
+        runtime_shim,
     };
 
-    // Add object files
-    for obj in objects {
-        cmd.arg(obj);
-    }
-
-    // Output path
-    cmd.arg("-o").arg(output);
-
-    // Link against runtime library
-    cmd.arg(format!("-L{}", lib_dir.display()));
-    cmd.arg(format!("-l{}", runtime_link));
-
-    // Link standard libraries
-    cmd.arg("-ldl"); // For dlopen on Linux
-    cmd.arg("-lpthread");
-    cmd.arg("-lm");
-
-    // Emitted-artifact hardening — byte-neutral linker directives (SAME class
-    // as the cdylib path's `-Wl,-Bsymbolic-functions` / `-Wl,-z,*`; see the
-    // self-documenting comment in src/eval/mlir_build.rs). These change only
-    // ELF segment permissions and DT_FLAGS bits, not one emitted instruction
-    // byte, and are applied uniformly on every substrate, so the native-ELF
-    // artifact stays byte-identical across builds and substrates (proven via
-    // `objdump -d` .text identity before/after):
-    //   -z relro       : GOT/relocated sections read-only after startup.
-    //   -z now         : eager relocation resolution (BIND_NOW / DF_1_NOW) so
-    //                    RELRO becomes Full — closes the GOT-overwrite vector.
-    //   -z noexecstack : non-executable stack (GNU_STACK without X).
-    cmd.arg("-Wl,-z,relro");
-    cmd.arg("-Wl,-z,now");
-    cmd.arg("-Wl,-z,noexecstack");
-    // deferred: the BYTE-CHANGING hardening pass — `-fstack-protector-strong`
-    // (canary prologue/epilogue machine code) and `-pie` (PC-relative codegen +
-    // ELF type DYN) — perturbs emitted instruction bytes and requires a keystone
-    // (7/7) + cross-substrate re-bless. Upgrade path: land under a fresh
-    // reference_hashes.toml blessing ceremony owned by mind-cross-substrate
-    // (Constitution §I.3), NOT in this byte-neutral dispatch.
-
-    // Add rpath for runtime library lookup
-    #[cfg(target_os = "linux")]
-    {
-        cmd.arg(format!("-Wl,-rpath,{}", lib_dir.display()));
-        cmd.arg("-Wl,-rpath,$ORIGIN/../lib");
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        cmd.arg(format!("-Wl,-rpath,{}", lib_dir.display()));
-        cmd.arg("-Wl,-rpath,@executable_path/../lib");
-    }
-
-    // Optimization flags
-    if opts.release {
-        cmd.arg("-O3");
-        cmd.arg("-flto");
-    }
-
-    if opts.verbose {
-        println!("  Link command: {:?}", cmd);
-    }
-
-    let status = cmd
-        .status()
-        .with_context(|| format!("Failed to run linker: {}", cc))?;
-
-    if !status.success() {
-        return Err(anyhow!(
-            "Linking failed with exit code: {:?}",
-            status.code()
-        ));
-    }
-
-    Ok(())
+    // Only the host target links today. The `[targets.*].target` seam already
+    // rejected any non-host triple fail-loud at `build_project` entry, so the
+    // host driver (ELF on Linux) is the correct — and byte-identical — path.
+    LinkDriver::for_host().link(&ctx)
 }
 
 /// Find the MIND runtime library for a backend.
