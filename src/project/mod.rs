@@ -2105,6 +2105,19 @@ fn build_project_consts(
     std::collections::BTreeMap<String, crate::ast::Node>,
     std::collections::BTreeSet<String>,
 ) {
+    // Two same-named cross-module consts CONFLICT (⇒ poison) only when their
+    // inlined values are PROVABLY different. `ast::Node` carries source spans, so
+    // a whole-node `!=` treats a const defined identically in two modules as a
+    // conflict (its literal `1` has a different span in each file). Compare the
+    // span-free `Literal` instead. A non-literal const value (a const-expr) can't
+    // be cheaply proven different, so it is treated as non-conflicting: first-wins,
+    // the pre-hardening baseline for that rare case — never a FALSE poison.
+    fn const_values_conflict(a: &crate::ast::Node, b: &crate::ast::Node) -> bool {
+        match (a, b) {
+            (crate::ast::Node::Lit(la, _), crate::ast::Node::Lit(lb, _)) => la != lb,
+            _ => false,
+        }
+    }
     fn walk(
         items: &[crate::ast::Node],
         out: &mut std::collections::BTreeMap<String, crate::ast::Node>,
@@ -2135,11 +2148,20 @@ fn build_project_consts(
                         // pub flag, finding 6): two modules sharing a PRIVATE const
                         // name at different values — e.g. std's per-module
                         // `MAX_DEPTH` — is legitimate and must not fail the build.
-                        Some(existing) if *existing != v => {
+                        //
+                        // Conflict is compared on the span-free LITERAL, not the
+                        // whole `Node` — `ast::Node::Lit(lit, Span)` carries a source
+                        // span, so a const defined IDENTICALLY in two modules
+                        // (`ARCH: i64 = 1` in one, `ARCH: u8 = 1` in another; value 1
+                        // in both) has different spans and a whole-node `!=` would
+                        // falsely poison it. Poison only when the values are PROVABLY
+                        // different (both literals, different literal value).
+                        Some(existing) if const_values_conflict(existing, &v) => {
                             out.remove(name);
                             poisoned.insert(name.clone());
                         }
-                        // Identical value across modules is harmless; keep first.
+                        // Same value (or not provably different) across modules is
+                        // harmless; keep first.
                         Some(_) => {}
                         None => {
                             out.insert(name.clone(), v);
