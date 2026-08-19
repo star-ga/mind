@@ -27622,9 +27622,31 @@ pub fn nb_load_addr() -> i64 {
     // LOAD_ADDR = 0x40_0000 (4 MiB)
     4194304
 }
-pub fn nb_hdrs() -> i64 {
-    // 64 (ehdr) + 4*56 (phdrs) = 288
-    288
+pub fn nb_hdrs(rod_len: i64) -> i64 {
+    // 64 (ehdr) + N*56 (phdrs). The 5th rodata PT_LOAD is CONDITIONAL (Fable ruling
+    // 2026-08-18): emitted ONLY when a program has string literals (rod_len>0). A
+    // stringless program stays 4 phdrs / 288 B and thus BYTE-IDENTICAL to the frozen
+    // native-ELF oracles — the LAST independently-produced anchors of the native
+    // backend (Rust mind-native deleted #15), so we never re-bless them. Single
+    // source of truth: every offset-math site derives hdrs from here, and e_phnum is
+    // derived from hdrs. The other rod_len>0 tests (rod_pad/rod_off/phdrs_done) all
+    // read the SAME immutable rod_len local, so every regime decision agrees by
+    // construction — no independently-computed header size exists.
+    let phdrs: i64 = if rod_len > 0 {
+        5
+    } else {
+        4
+    };
+    64 + phdrs * 56
+}
+// Fixed rodata segment base VA (0x800000 = 8 MiB). Lies ABOVE the R+X code
+// segment (which starts at LOAD_ADDR 0x400000 and — even the whole-compiler ELF
+// at ~1.15 MB — ends well below 0x800000) and BELOW the RW arena at 0x1000000.
+// Page-aligned (low 12 bits zero) so a page-aligned rodata FILE offset satisfies
+// the kernel's p_vaddr ≡ p_offset (mod 4096) mmap congruence. A string literal's
+// borrowed handle addr = nb_rodata_addr() + <compile-time first-use offset>.
+pub fn nb_rodata_addr() -> i64 {
+    8388608
 }
 pub fn nb_arena_addr() -> i64 {
     // ARENA_ADDR = 0x100_0000 (16 MiB)
@@ -30010,6 +30032,73 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
     if k == ast_paren() {
         return nb_expr(st, buf, ast_child0(node), params_addr, n_params, calls, lets, lcell);
     }
+    if k == ast_str_lit() {
+        // NATIVE-ELF STRING LITERAL (rodata PT_LOAD slice): append the literal's
+        // raw bytes to the module rodata accumulator (rod, stashed at lcell+104 by
+        // nb_lower_fn) and materialize a BORROWED String handle
+        // { addr = nb_rodata_addr()+off, len, cap = 0 } — three COMPILE-TIME
+        // constants — into this expr's SSA slot, exactly the way ast_struct_lit
+        // materializes a constant-field handle (alloc a 3-word block, store the
+        // fields, VALUE = base ptr). rod == 0 => no rodata channel => fail-closed
+        // REFUSE (poison lcell+80, -1 last_id), never a wrong address.
+        let rod: i64 = __mind_load_i64(lcell + 104);
+        if rod == 0 {
+            __mind_store_i64(lcell + 80, 1);
+            return NbState { code: st.code, next_id: st.next_id, last_id: 0 - 1, ncalls: st.ncalls };
+        }
+        // Content span is [span_lo+1, span_hi-1) — the token span covers both
+        // quotes (lexer scan_string_end + parse_primary_ns's ast_str_lit leaf).
+        // deferred: ESCAPE-FREE literals only. The self-host lexer REFUSES any
+        // backslash (scan_string_end returns -1 -> tk_unsupported -> whole-compile
+        // fail-closed), so no escape byte can reach this arm; copy raw bytes
+        // verbatim. Upgrade path: when the lexer decodes escapes, un-escape
+        // (\n \t \\ \" ...) into the rodata buffer before the copy below.
+        let lo: i64 = ast_span_lo(node) + 1;
+        let hi: i64 = ast_span_hi(node) - 1;
+        let slen: i64 = hi - lo;
+        // off = current accumulator length = THIS literal's compile-time rodata
+        // offset. Append the raw bytes at (rod + 8 + off), then bump the header.
+        let off: i64 = __mind_load_i64(rod);
+        // FAIL-CLOSED rodata-window bound: the rodata segment occupies the fixed
+        // VADDR window [nb_rodata_addr(), nb_arena_addr()) = 8 MiB. If the total
+        // string-literal bytes would reach nb_arena_addr(), the rodata vaddrs
+        // collide into the RW bump-arena — deterministic-but-WRONG output that
+        // reproduces and passes every hash gate. Refuse (0-byte) instead, mirroring
+        // the arm's rod==0 poison. deferred: widen the window / page-relative rodata
+        // layout to lift the 8 MiB per-module literal cap.
+        if off + slen > nb_arena_addr() - nb_rodata_addr() {
+            __mind_store_i64(lcell + 80, 1);
+            return NbState { code: st.code, next_id: st.next_id, last_id: 0 - 1, ncalls: st.ncalls };
+        }
+        let _cp: i64 = nb_rod_copy(rod, 8 + off, buf, lo, 0, slen);
+        __mind_store_i64(rod, off + slen);
+        let addr: i64 = nb_rodata_addr() + off;
+        // Mirror ast_struct_lit: CONST 8 ; CONST 3 ; MUL -> size ;
+        // __mind_alloc(size) -> ptr ; 3 constant field stores. VALUE = ptr slot.
+        let sz_id: i64 = st.next_id;
+        let a1: String = nb_push(st.code, 72);
+        let a2: String = nb_push(a1, 184);
+        let a3: String = nb_i64le(a2, 8);
+        let a4: String = nb_store_rax(a3, nb_slot_disp(sz_id));
+        let nf_id: i64 = sz_id + 1;
+        let b1: String = nb_push(a4, 72);
+        let b2: String = nb_push(b1, 184);
+        let b3: String = nb_i64le(b2, 3);
+        let b4: String = nb_store_rax(b3, nb_slot_disp(nf_id));
+        let mul_id: i64 = nf_id + 1;
+        let m1: String = nb_load_rax(b4, nb_slot_disp(sz_id));
+        let m2: String = nb_arith_rax_mem(m1, op_mul(), nb_slot_disp(nf_id));
+        let m3: String = nb_store_rax(m2, nb_slot_disp(mul_id));
+        let ptr_id: i64 = mul_id + 1;
+        let al1: String = nb_emit_alloc(m3, nb_slot_disp(mul_id));
+        let al2: String = nb_store_rax(al1, nb_slot_disp(ptr_id));
+        let s_alloc: NbState = NbState { code: al2, next_id: ptr_id + 1, last_id: ptr_id, ncalls: st.ncalls };
+        // Field 0 = addr (borrowed rodata vaddr), field 1 = len, field 2 = cap (0).
+        let s_f0: NbState = nb_str_field_const(s_alloc, ptr_id, addr, 0);
+        let s_f1: NbState = nb_str_field_const(s_f0, ptr_id, slen, 1);
+        let s_f2: NbState = nb_str_field_const(s_f1, ptr_id, 0, 2);
+        return NbState { code: s_f2.code, next_id: s_f2.next_id, last_id: ptr_id, ncalls: s_f2.ncalls };
+    }
     if k == ast_struct_lit() {
         // `Name { f0: e0, .. }` for an all-i64 struct (legacy 8-byte-stride path,
         // mirrors eval/lower.rs's StructLit all_i64 arm + the IR the Rust native
@@ -31143,6 +31232,37 @@ pub fn nb_struct_fields(st: NbState, buf: i64, snode: i64, fields_addr: i64, nfi
     }
     let s_after: NbState = nb_struct_field_store_off(sv.code, sv.next_id, ptr_id, val_id, val_nc, i * 8);
     nb_struct_fields(s_after, buf, snode, fields_addr, nfields, i + 1, ptr_id, params_addr, n_params, calls, lets, lcell)
+}
+
+// Append `n` raw source bytes buf[lo..lo+n) into the module rodata accumulator
+// at (rod + base + j). `base` = 8 + off (the 8-byte length header + this literal's
+// compile-time rodata offset). Recursive leaf (self-host subset — no `while`
+// needed); returns 0. Used by nb_expr's ast_str_lit arm.
+pub fn nb_rod_copy(rod: i64, base: i64, buf: i64, lo: i64, j: i64, n: i64) -> i64 {
+    if j >= n {
+        return 0;
+    }
+    __mind_store_i8(rod + base + j, load_byte(buf, lo + j));
+    nb_rod_copy(rod, base, buf, lo, j + 1, n)
+}
+
+// Emit one CONSTANT struct field for the borrowed-String handle: movabs the
+// compile-time constant into a fresh SSA slot (const-i64 shape, 1 id), then store
+// it into the handle at field `i` (field 0 at the base ptr, field i>0 via CONST
+// off + ADD). Reuses nb_struct_field_store0 / nb_struct_field_store_off so the
+// byte layout AND the SSA-id consumption match the ast_struct_lit field stores
+// exactly (field 0 = 2 ids, field i>0 = 4 ids — see nb_count_expr's ast_str_lit).
+pub fn nb_str_field_const(st: NbState, ptr_id: i64, cval: i64, i: i64) -> NbState {
+    let val_id: i64 = st.next_id;
+    let c1: String = nb_push(st.code, 72);
+    let c2: String = nb_push(c1, 184);
+    let c3: String = nb_i64le(c2, cval);
+    let c4: String = nb_store_rax(c3, nb_slot_disp(val_id));
+    let st2: NbState = NbState { code: c4, next_id: val_id + 1, last_id: val_id, ncalls: st.ncalls };
+    if i == 0 {
+        return nb_struct_field_store0(st2.code, st2.next_id, ptr_id, val_id, st2.ncalls);
+    }
+    nb_struct_field_store_off(st2.code, st2.next_id, ptr_id, val_id, st2.ncalls, i * 8)
 }
 
 // Emit field-0's store at the base pointer (offset 0), consuming the store's dst
@@ -33844,6 +33964,15 @@ pub fn nb_count_expr(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
     if k == ast_paren() {
         return nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params, clets, clcell);
     }
+    if k == ast_str_lit() {
+        // Mirror nb_expr's ast_str_lit arm: CONST 8 + CONST 3 + MUL + alloc-ptr
+        // (4 ids), then 3 constant fields — field 0 = val(1)+store(1) = 2, fields
+        // 1 & 2 = val(1)+CONST-off(1)+ADD(1)+store(1) = 4 each => 4+2+4+4 = 14 ids.
+        // The handle VALUE is the alloc-ptr slot (next_id+3); no extra id. main.mind's
+        // own native-emitted source has no string literals, so this never fires during
+        // self-compile and every frame size stays byte-identical.
+        return next_id + 14;
+    }
     if k == ast_struct_lit() {
         // sz + nf + mul + alloc-ptr = 4 ids, then per DECLARED-order field i:
         //   value ids + (i==0 ? 0 : 2 for CONST off + ADD) + 1 store-dst.
@@ -36074,7 +36203,7 @@ pub fn nb_val_epilogue(plan: i64, code: String) -> String {
     c1
 }
 
-pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64, srt: i64, frt: i64, uses_argv: i64, ordered: i64, n_fns: i64) -> NbState {
+pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64, srt: i64, frt: i64, uses_argv: i64, ordered: i64, n_fns: i64, rod: i64) -> NbState {
     let params_addr: i64 = ast_child1(node);
     let n_params: i64 = ast_aux(node) / 2;
     let body: i64 = ast_child2(node);
@@ -36124,8 +36253,13 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // so the count-side let/assign arms read one offset on either cell).
     // Grown 96 -> 104 for the DTK plan pointer at +96 (count-side mirror is 0 —
     // the count walk never emits, so it never consults a reg home; see nb_dtk_plan).
-    let clcell0: i64 = __mind_alloc(104);
+    // Grown 104 -> 112 to mirror the emit lcell's rodata-accumulator slot at +104
+    // (string-literal slice): the count walk emits no bytes so it needs no rodata
+    // channel, but a pre-walk that ALIASES a count cell as an emit lcell would read
+    // +104 — store 0 here so any such read fail-closes (poison), never OOB garbage.
+    let clcell0: i64 = __mind_alloc(112);
     __mind_store_i64(clcell0, 0);
+    __mind_store_i64(clcell0 + 104, 0);
     __mind_store_i64(clcell0 + 96, 0);
     __mind_store_i64(clcell0 + 24, srt);
     // Mirror the emit lcell's frt slot (+16) so nb_count_stmt's nb_let_descriptor
@@ -36226,8 +36360,14 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // Grown 96 -> 104 for the DTK plan pointer at +96 (DTK slice 1, #254): nb_expr
     // and nb_stmt read it to route a reg-homed value's def/use through the nb_val_*
     // wrappers. 0 (empty plan) => stack scheme => byte-identical to pre-DTK.
-    let lcell: i64 = __mind_alloc(104);
+    // Grown 104 -> 112 for the module-level rodata accumulator pointer at +104
+    // (string-literal slice): nb_expr's ast_str_lit arm appends the literal's bytes
+    // there and builds the borrowed {rodata_va, len, 0} handle. 0 => no rodata
+    // channel => a string literal fail-closes (poison). main.mind's native-emitted
+    // source has no string literals, so this is inert during self-compile.
+    let lcell: i64 = __mind_alloc(112);
     __mind_store_i64(lcell, 0);
+    __mind_store_i64(lcell + 104, rod);
     __mind_store_i64(lcell + 96, 0);
     __mind_store_i64(lcell + 88, 0);
     __mind_store_i64(lcell + 80, 0);
@@ -36986,15 +37126,55 @@ pub fn nb_note_hash_bytes(note: String, hash_addr: i64, i: i64) -> String {
     nb_note_hash_bytes(n1, hash_addr, i + 1)
 }
 
-// ---- write_elf: ehdr + 4 phdrs + code + note (mirror src/native write_elf) ----
+// ---- write_elf: ehdr + 5 phdrs + code + note (mirror src/native write_elf) ----
+// The 4-arg thin wrapper: no rodata. Every fp/tensor/scalar selftest driver calls
+// this and gets the always-present (empty) 5th rodata phdr — so their emitted ELFs
+// shift by exactly +56 B (one extra phdr) and are otherwise byte-identical.
 pub fn nb_write_elf(code: String, entry_off: i64, note: String) -> String {
+    nb_write_elf_rod(code, entry_off, note, string_new())
+}
+
+// The rodata-carrying core. `rodata` = the string-literal bytes accumulated in
+// FIRST-USE order during the emit walk (empty for every path that never emits a
+// string literal — including main.mind's own self-compile). The 5th PT_LOAD is
+// CONDITIONAL (Fable ruling 2026-08-18): emitted ONLY when rod_len>0, so a
+// stringless program keeps the 4-phdr / 288 B layout BYTE-IDENTICAL to its frozen
+// oracle (no re-bless of the last independent native-backend anchors). Programs
+// with string literals get the 5th phdr (+56 B) + the page-aligned rodata bytes.
+pub fn nb_write_elf_rod(code: String, entry_off: i64, note: String, rodata: String) -> String {
     let code_len: i64 = string_len(code);
     let note_len: i64 = string_len(note);
+    let rod_len: i64 = string_len(rodata);
     let load_addr: i64 = nb_load_addr();
-    let hdrs: i64 = nb_hdrs();
+    let hdrs: i64 = nb_hdrs(rod_len);
+    // e_phnum derives from hdrs (NOT a second predicate copy): 4 or 5 phdrs.
+    let phdr_count: i64 = (hdrs - 64) / 56;
     let entry: i64 = load_addr + hdrs + entry_off;
+    // FAIL-CLOSED code ceiling: the R+X code segment spans [load_addr,
+    // load_addr + hdrs + code_len). It MUST end below the rodata VADDR
+    // (nb_rodata_addr() = 0x800000) or the two PT_LOADs overlap into a
+    // deterministic-but-WRONG image. The compiler is ~1.15 MB today (far under
+    // the ~4 MiB ceiling), so this never fires in practice; emit a 0-byte ELF
+    // (honest refusal) rather than a colliding one. deferred: relocate rodata /
+    // raise the code ceiling if a real program approaches ~4 MiB of code.
+    if load_addr + hdrs + code_len > nb_rodata_addr() {
+        return string_new();
+    }
     let load_sz: i64 = hdrs + code_len;
     let note_off: i64 = hdrs + code_len;
+    // rodata file placement: bytes go AFTER code+note, page-aligned so p_vaddr (a
+    // page-aligned constant) ≡ p_offset (mod 4096) — the kernel mmap congruence.
+    let rod_raw_off: i64 = hdrs + code_len + note_len;
+    let rod_pad: i64 = if rod_len > 0 {
+        nb_round_up_page(rod_raw_off) - rod_raw_off
+    } else {
+        0
+    };
+    let rod_off: i64 = if rod_len > 0 {
+        rod_raw_off + rod_pad
+    } else {
+        0
+    };
 
     // --- Elf64_Ehdr ---
     let e0: String = string_new();
@@ -37026,8 +37206,8 @@ pub fn nb_write_elf(code: String, entry_off: i64, note: String) -> String {
     // e_ehsize
     let e18: String = nb_u16(e17, 56);
     // e_phentsize
-    let e19: String = nb_u16(e18, 4);
-    // e_phnum = 4
+    let e19: String = nb_u16(e18, phdr_count);
+    // e_phnum = 4 (stringless, byte-identical to frozen oracle) or 5 (+rodata)
     let e20: String = nb_u16(e19, 0);
     // e_shentsize
     let e21: String = nb_u16(e20, 0);
@@ -37107,9 +37287,45 @@ pub fn nb_write_elf(code: String, entry_off: i64, note: String) -> String {
     let i8: String = nb_i64le(i7, 4096);
     // p_align
 
-    // --- code, then the (unmapped) note ---
-    let j1: String = string_push_str(i8, code);
-    string_push_str(j1, note)
+    // --- phdr 5: PT_LOAD (R) — read-only rodata (string literals), CONDITIONAL ---
+    // Emitted ONLY when rod_len>0 (Fable 2026-08-18). A stringless program keeps the
+    // 4-phdr layout byte-identical to its frozen oracle (no re-bless). This guard is
+    // the SAME rod_len>0 predicate nb_hdrs() used, so hdrs/e_phnum and this block can
+    // never disagree.
+    let phdrs_done: String = if rod_len > 0 {
+        let r1: String = nb_u32(i8, 1);
+        // PT_LOAD
+        let r2: String = nb_u32(r1, 4);
+        // R
+        let r3: String = nb_i64le(r2, rod_off);
+        // p_offset (page-aligned)
+        let r4: String = nb_i64le(r3, nb_rodata_addr());
+        // p_vaddr
+        let r5: String = nb_i64le(r4, nb_rodata_addr());
+        // p_paddr
+        let r6: String = nb_i64le(r5, rod_len);
+        // p_filesz
+        let r7: String = nb_i64le(r6, rod_len);
+        // p_memsz
+        nb_i64le(r7, 4096)
+    } else {
+        i8
+    };
+
+    // --- code, then the (unmapped) note, then page-pad + rodata bytes ---
+    let j1: String = string_push_str(phdrs_done, code);
+    let j2: String = string_push_str(j1, note);
+    let j3: String = nb_zeros(j2, rod_pad);
+    string_push_str(j3, rodata)
+}
+
+// Round `off` up to the next 4096 multiple (page size). off >= 0.
+pub fn nb_round_up_page(off: i64) -> i64 {
+    let rem: i64 = off - (off / 4096) * 4096;
+    if rem == 0 {
+        return off;
+    }
+    off + (4096 - rem)
 }
 
 // Append `n` zero bytes.
@@ -38775,8 +38991,18 @@ pub fn selftest_native_elf_hb_from_tokens(tokens: Vec, src_addr: i64, hash_addr:
     if nb_tokens_user_float(tokens, src_addr, 0, tok_count(tokens), user_lo) == 1 {
         return es_new();
     }
+    // Module-level rodata accumulator: an 8-byte length header + a byte buffer that
+    // nb_expr's ast_str_lit arm appends string-literal bytes to (in first-use walk
+    // order). Sized generously; every literal's compile-time offset = the header
+    // length AT THE MOMENT it is emitted. Empty after self-compile (main.mind's
+    // native paths use no string literals) => the 5th rodata segment stays 0-length.
+    // Sized to EXACTLY the 8 MiB rodata VADDR window (nb_arena_addr-nb_rodata_addr)
+    // so the buffer cannot be scribbled past even if a caller skips the arm's
+    // fail-closed window bound.
+    let rod: i64 = __mind_alloc(8 + (nb_arena_addr() - nb_rodata_addr()));
+    __mind_store_i64(rod, 0);
     let acc0: NbState = NbState { code: string_new(), next_id: 0, last_id: 0, ncalls: 0 };
-    let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, entry_idx, srt, frt, uses_argv);
+    let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, entry_idx, srt, frt, uses_argv, rod);
     // SYSTEMIC FAIL-CLOSED top gate: any fn refused during lowering (unsupported
     // construct — arrays/tuples/refs/enums/closures/unbound names/unsupported
     // struct shapes — poisons its lcell, nb_lower_fn returns the -1 sentinel,
@@ -38820,8 +39046,23 @@ pub fn selftest_native_elf_hb_from_tokens(tokens: Vec, src_addr: i64, hash_addr:
     // entry_off = 0 (entry is laid first).
     let note0: String = string_new();
     let note: String = nb_build_note(note0, hash_addr);
-    let elf: String = nb_write_elf(image, 0, note);
+    // Materialize the accumulated rodata bytes into a String and place them in the
+    // 5th PT_LOAD segment. Empty for a string-literal-free module => byte-identical
+    // (modulo the +56 phdr shift) to the pre-rodata layout.
+    let rod_len: i64 = __mind_load_i64(rod);
+    let rodata: String = nb_rod_to_string(string_new(), rod + 8, 0, rod_len);
+    let elf: String = nb_write_elf_rod(image, 0, note, rodata);
     EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
+
+// Copy `n` accumulated rodata bytes (from compile-time buffer `base`) into a String.
+pub fn nb_rod_to_string(acc: String, base: i64, i: i64, n: i64) -> String {
+    if i >= n {
+        return acc;
+    }
+    let b: i64 = __mind_load_i8(base + i);
+    let acc2: String = nb_push(acc, b);
+    nb_rod_to_string(acc2, base, i + 1, n)
 }
 
 // Collect fn_def nodes into fns[]; returns the count.
@@ -38949,7 +39190,7 @@ pub fn nb_is_entry(k: i64, entry_idx: i64) -> i64 {
 // The guard returns the param `acc` (NOT a struct literal) so the body stays
 // inside the self-host nfn-emittable seq subset (a struct-literal guard-return in
 // a multi-statement recursive struct fn is outside it — verified empirically).
-pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, calls: i64, starts: i64, call_owner: i64, entry_idx: i64, srt: i64, frt: i64, uses_argv: i64) -> NbState {
+pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, calls: i64, starts: i64, call_owner: i64, entry_idx: i64, srt: i64, frt: i64, uses_argv: i64, rod: i64) -> NbState {
     if k >= n_fns {
         return acc;
     }
@@ -38958,7 +39199,7 @@ pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, ca
     let ncalls0: i64 = acc.ncalls;
     let image: String = acc.code;
     __mind_store_i64(starts + k * 8, string_len(image));
-    let fr: NbState = nb_lower_fn(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv, ordered, n_fns);
+    let fr: NbState = nb_lower_fn(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv, ordered, n_fns, rod);
     // Record owner for each newly-added call.
     let _o: i64 = nb_set_owners(call_owner, ncalls0, fr.ncalls, k);
     let image2: String = string_push_str(image, fr.code);
@@ -38973,7 +39214,7 @@ pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, ca
     let accn: i64 = acc.next_id;
     let pn: i64 = nb_poison_merge(frn, accn);
     let acc2: NbState = NbState { code: image2, next_id: pn, last_id: 0, ncalls: fr.ncalls };
-    nb_lower_all(acc2, buf, ordered, n_fns, k + 1, calls, starts, call_owner, entry_idx, srt, frt, uses_argv)
+    nb_lower_all(acc2, buf, ordered, n_fns, k + 1, calls, starts, call_owner, entry_idx, srt, frt, uses_argv, rod)
 }
 // The REFUSED-fn sentinel NbState (fail-closed): empty code + next_id == -1.
 // A single-expression helper (the es_new shape) so nb_lower_fn's poison gate
@@ -40543,7 +40784,7 @@ pub fn selftest_native_elf_fp_call(src_addr: i64, src_len: i64) -> EmitState {
 
     // Lower every fn as NON-entry (entry_idx = -1) into one image; f -> g calls recorded.
     let acc0: NbState = NbState { code: string_new(), next_id: 0, last_id: 0, ncalls: 0 };
-    let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, 0 - 1, srt, frt, 0);
+    let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, 0 - 1, srt, frt, 0, 0);
     // FAIL CLOSED (same top gate as selftest_native_elf_hb_from_tokens): a
     // refused fn propagates the -1 sentinel — return the empty EmitState.
     if lr.next_id < 0 {
