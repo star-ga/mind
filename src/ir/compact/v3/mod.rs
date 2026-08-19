@@ -138,6 +138,7 @@ mod emit;
 pub mod evidence;
 pub mod mldsa;
 mod parse;
+pub mod slhdsa;
 
 pub use collapse_receipt::{CollapseReceipt, CollapseReceiptError};
 pub use emit::emit_mic3;

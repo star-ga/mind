@@ -127,6 +127,14 @@ const KEY_SIG_ED25519: &str = "signature.ed25519";
 // sig 3309 B), stored as Bytes.
 const KEY_SIG_MLDSA_PUBKEY: &str = "signature.mldsa_pubkey";
 const KEY_SIG_MLDSA: &str = "signature.mldsa";
+// ML-DSA-87 (FIPS-204, cat-5) + SLH-DSA-SHAKE-256s (FIPS-205, cat-5) — the two
+// legs of the bulletproof PQC-hybrid. Variable length; all four keys start with
+// 's' so they still sort AFTER every `evidence_chain.*` key (the unsigned-prefix
+// byte-identity invariant is preserved).
+const KEY_SIG_MLDSA87_PUBKEY: &str = "signature.mldsa87_pubkey";
+const KEY_SIG_MLDSA87: &str = "signature.mldsa87";
+const KEY_SIG_SLHDSA_PUBKEY: &str = "signature.slhdsa_pubkey";
+const KEY_SIG_SLHDSA: &str = "signature.slhdsa";
 
 /// `alg` tag: classical Ed25519 only (NON-COMPLIANT for the federal PQC mandate;
 /// retained for interop/legacy).
@@ -136,6 +144,13 @@ const SIG_SCHEME_MLDSA65: &str = "ml-dsa-65";
 /// `alg` tag: hybrid — BOTH Ed25519 AND ML-DSA-65 must verify. Preferred for the
 /// PQC transition (defense-in-depth: safe if either primitive is later broken).
 const SIG_SCHEME_HYBRID: &str = "hybrid-ed25519-ml-dsa-65";
+/// `alg` tag: the BULLETPROOF PQC-hybrid — BOTH ML-DSA-87 (FIPS-204, cat-5,
+/// module-lattice) AND SLH-DSA-SHAKE-256s (FIPS-205, cat-5, hash-based) must
+/// verify. Two mathematically INDEPENDENT post-quantum foundations, so no single
+/// cryptanalytic break and no single implementation bug is sufficient to forge.
+/// Ed25519 is deliberately ABSENT: quantum-dead, and keeping it a live tag value
+/// would preserve a downgrade target.
+const SIG_SCHEME_PQC_HYBRID: &str = "pqc-hybrid-ml-dsa-87-slh-dsa-256s";
 
 /// Environment variable holding the 32-byte Ed25519 seed as 64 hex chars.
 /// Never hardcode a key — the seed is supplied out-of-band by the operator.
@@ -162,6 +177,15 @@ pub enum SigningKey {
         ed25519: [u8; 32],
         /// ML-DSA-65 keygen seed ξ.
         mldsa65: [u8; 32],
+    },
+    /// Bulletproof PQC-hybrid: sign with BOTH ML-DSA-87 and SLH-DSA-SHAKE-256s;
+    /// a verifier requires BOTH to verify (AND). Two independent post-quantum
+    /// foundations. The max-security release profile.
+    PqcHybrid {
+        /// ML-DSA-87 keygen seed ξ (32 bytes).
+        mldsa87: [u8; 32],
+        /// SLH-DSA-SHAKE-256s seed (96 bytes: SK.seed ‖ SK.prf ‖ PK.seed).
+        slhdsa: [u8; 96],
     },
 }
 
@@ -420,6 +444,7 @@ fn scheme_for_key(key: &SigningKey) -> &'static str {
         SigningKey::Ed25519(_) => SIG_SCHEME_ED25519,
         SigningKey::MlDsa65(_) => SIG_SCHEME_MLDSA65,
         SigningKey::Hybrid { .. } => SIG_SCHEME_HYBRID,
+        SigningKey::PqcHybrid { .. } => SIG_SCHEME_PQC_HYBRID,
     }
 }
 
@@ -429,6 +454,10 @@ struct SignaturePayload {
     scheme: &'static str,
     ed25519: Option<([u8; 32], [u8; 64])>,
     mldsa: Option<(Vec<u8>, Vec<u8>)>,
+    /// (pubkey, signature) for the ML-DSA-87 leg of the bulletproof PQC-hybrid.
+    mldsa87: Option<(Vec<u8>, Vec<u8>)>,
+    /// (pubkey, signature) for the SLH-DSA-SHAKE-256s leg of the PQC-hybrid.
+    slhdsa: Option<(Vec<u8>, Vec<u8>)>,
 }
 
 /// Sign the canonical provenance `preimage` under `key`, producing the embeddable
@@ -457,21 +486,64 @@ fn compute_signature_payload(
             super::mldsa::sign(seed, preimage),
         ))
     };
+    // Bulletproof-hybrid legs. Both sign the IDENTICAL `preimage` (the scheme tag
+    // is already bound into it — that is the per-algorithm domain separation), so
+    // the two signatures cover exactly the same authenticated bytes.
+    let mldsa87 = |seed: &[u8; 32]| -> Result<(Vec<u8>, Vec<u8>), &'static str> {
+        if !super::mldsa::supported() {
+            return Err(
+                "ML-DSA-87 signing requires the `evidence-mldsa` cargo feature (rebuild with \
+                 --features evidence-mldsa)",
+            );
+        }
+        Ok((
+            super::mldsa::public_key_87(seed),
+            super::mldsa::sign_87(seed, preimage),
+        ))
+    };
+    let slhdsa = |seed: &[u8; 96]| -> Result<(Vec<u8>, Vec<u8>), &'static str> {
+        if !super::slhdsa::supported() {
+            return Err(
+                "SLH-DSA signing requires the `evidence-slhdsa` cargo feature (rebuild with \
+                 --features evidence-slhdsa)",
+            );
+        }
+        Ok((
+            super::slhdsa::public_key(seed),
+            super::slhdsa::sign(seed, preimage),
+        ))
+    };
     match key {
         SigningKey::Ed25519(seed) => Ok(SignaturePayload {
             scheme: SIG_SCHEME_ED25519,
             ed25519: Some(ed(seed)),
             mldsa: None,
+            mldsa87: None,
+            slhdsa: None,
         }),
         SigningKey::MlDsa65(seed) => Ok(SignaturePayload {
             scheme: SIG_SCHEME_MLDSA65,
             ed25519: None,
             mldsa: Some(mldsa(seed)?),
+            mldsa87: None,
+            slhdsa: None,
         }),
         SigningKey::Hybrid { ed25519, mldsa65 } => Ok(SignaturePayload {
             scheme: SIG_SCHEME_HYBRID,
             ed25519: Some(ed(ed25519)),
             mldsa: Some(mldsa(mldsa65)?),
+            mldsa87: None,
+            slhdsa: None,
+        }),
+        SigningKey::PqcHybrid {
+            mldsa87: m87_seed,
+            slhdsa: slh_seed,
+        } => Ok(SignaturePayload {
+            scheme: SIG_SCHEME_PQC_HYBRID,
+            ed25519: None,
+            mldsa: None,
+            mldsa87: Some(mldsa87(m87_seed)?),
+            slhdsa: Some(slhdsa(slh_seed)?),
         }),
     }
 }
@@ -724,6 +796,10 @@ pub struct VerifiedScheme {
     pub ed25519_pubkey: Option<[u8; 32]>,
     /// The ML-DSA-65 public key (1952 bytes), present for `ml-dsa-65` and hybrid.
     pub mldsa_pubkey: Option<Vec<u8>>,
+    /// The ML-DSA-87 public key, present for the `pqc-hybrid-*` scheme.
+    pub mldsa87_pubkey: Option<Vec<u8>>,
+    /// The SLH-DSA-SHAKE-256s public key (64 bytes), present for `pqc-hybrid-*`.
+    pub slhdsa_pubkey: Option<Vec<u8>>,
 }
 
 /// Inspect the optional Ed25519 signature layer of a mic@3 artifact.
@@ -811,7 +887,14 @@ fn signature_status_from_entries(
 
     let want_ed = scheme == SIG_SCHEME_ED25519 || scheme == SIG_SCHEME_HYBRID;
     let want_mldsa = scheme == SIG_SCHEME_MLDSA65 || scheme == SIG_SCHEME_HYBRID;
-    if !want_ed && !want_mldsa {
+    // The bulletproof PQC-hybrid requires BOTH the ML-DSA-87 and SLH-DSA legs.
+    // No scheme value names only one of them, so both flags are true TOGETHER —
+    // the verifier structurally cannot be coaxed into accepting a single leg
+    // (the non-degradability property: a stripped leg fails the presence check
+    // below, never silently collapses the hybrid to one scheme).
+    let want_mldsa87 = scheme == SIG_SCHEME_PQC_HYBRID;
+    let want_slhdsa = scheme == SIG_SCHEME_PQC_HYBRID;
+    if !want_ed && !want_mldsa && !want_mldsa87 && !want_slhdsa {
         // Unknown `alg` — fail closed (never accept a scheme we do not understand).
         return Ok(SignatureStatus::Malformed("signature.scheme"));
     }
@@ -827,10 +910,22 @@ fn signature_status_from_entries(
     let has_mldsa_half = entries
         .iter()
         .any(|e| e.key == KEY_SIG_MLDSA || e.key == KEY_SIG_MLDSA_PUBKEY);
+    let has_mldsa87_half = entries
+        .iter()
+        .any(|e| e.key == KEY_SIG_MLDSA87 || e.key == KEY_SIG_MLDSA87_PUBKEY);
+    let has_slhdsa_half = entries
+        .iter()
+        .any(|e| e.key == KEY_SIG_SLHDSA || e.key == KEY_SIG_SLHDSA_PUBKEY);
     if has_ed_half && !want_ed {
         return Ok(SignatureStatus::Malformed(KEY_SIG_SCHEME));
     }
     if has_mldsa_half && !want_mldsa {
+        return Ok(SignatureStatus::Malformed(KEY_SIG_SCHEME));
+    }
+    if has_mldsa87_half && !want_mldsa87 {
+        return Ok(SignatureStatus::Malformed(KEY_SIG_SCHEME));
+    }
+    if has_slhdsa_half && !want_slhdsa {
         return Ok(SignatureStatus::Malformed(KEY_SIG_SCHEME));
     }
 
@@ -874,10 +969,56 @@ fn signature_status_from_entries(
         mldsa_pubkey = Some(pubkey);
     }
 
+    // ── ML-DSA-87 leg (bulletproof-hybrid lattice foundation, cat-5) ──────────
+    let mut mldsa87_pubkey: Option<Vec<u8>> = None;
+    if want_mldsa87 {
+        let pubkey = match find_bytes_var(entries, KEY_SIG_MLDSA87_PUBKEY)? {
+            Some(pk) => pk,
+            None => return Ok(SignatureStatus::Malformed(KEY_SIG_MLDSA87_PUBKEY)),
+        };
+        let sig = match find_bytes_var(entries, KEY_SIG_MLDSA87)? {
+            Some(s) => s,
+            None => return Ok(SignatureStatus::Malformed(KEY_SIG_MLDSA87)),
+        };
+        if !super::mldsa::supported() {
+            return Ok(SignatureStatus::Unsupported(
+                "artifact requires ML-DSA-87 verification; rebuild with --features evidence-mldsa",
+            ));
+        }
+        if !super::mldsa::verify_87(&pubkey, &preimage, &sig) {
+            return Ok(SignatureStatus::Invalid);
+        }
+        mldsa87_pubkey = Some(pubkey);
+    }
+
+    // ── SLH-DSA-SHAKE-256s leg (bulletproof-hybrid hash-based foundation) ──────
+    let mut slhdsa_pubkey: Option<Vec<u8>> = None;
+    if want_slhdsa {
+        let pubkey = match find_bytes_var(entries, KEY_SIG_SLHDSA_PUBKEY)? {
+            Some(pk) => pk,
+            None => return Ok(SignatureStatus::Malformed(KEY_SIG_SLHDSA_PUBKEY)),
+        };
+        let sig = match find_bytes_var(entries, KEY_SIG_SLHDSA)? {
+            Some(s) => s,
+            None => return Ok(SignatureStatus::Malformed(KEY_SIG_SLHDSA)),
+        };
+        if !super::slhdsa::supported() {
+            return Ok(SignatureStatus::Unsupported(
+                "artifact requires SLH-DSA verification; rebuild with --features evidence-slhdsa",
+            ));
+        }
+        if !super::slhdsa::verify(&pubkey, &preimage, &sig) {
+            return Ok(SignatureStatus::Invalid);
+        }
+        slhdsa_pubkey = Some(pubkey);
+    }
+
     Ok(SignatureStatus::Valid(VerifiedScheme {
         scheme,
         ed25519_pubkey: ed_pubkey,
         mldsa_pubkey,
+        mldsa87_pubkey,
+        slhdsa_pubkey,
     }))
 }
 
@@ -1145,6 +1286,14 @@ fn append_map_epilogue(
         if let Some((ref pubkey, ref sig)) = payload.mldsa {
             entries.push((KEY_SIG_MLDSA_PUBKEY, MapEntryValue::Bytes(pubkey)));
             entries.push((KEY_SIG_MLDSA, MapEntryValue::Bytes(sig)));
+        }
+        if let Some((ref pubkey, ref sig)) = payload.mldsa87 {
+            entries.push((KEY_SIG_MLDSA87_PUBKEY, MapEntryValue::Bytes(pubkey)));
+            entries.push((KEY_SIG_MLDSA87, MapEntryValue::Bytes(sig)));
+        }
+        if let Some((ref pubkey, ref sig)) = payload.slhdsa {
+            entries.push((KEY_SIG_SLHDSA_PUBKEY, MapEntryValue::Bytes(pubkey)));
+            entries.push((KEY_SIG_SLHDSA, MapEntryValue::Bytes(sig)));
         }
     }
     // Lexicographic sort — this is the canonical-encoding invariant.
@@ -2793,6 +2942,163 @@ mod tests {
                 "body tamper breaks trace_hash_valid"
             );
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Bulletproof PQC-hybrid: ML-DSA-87 + SLH-DSA-SHAKE-256s, both-must-verify.
+    // Requires BOTH evidence-mldsa (lattice leg) and evidence-slhdsa (hash leg).
+    // SLH-DSA-256s SIGNING is slow (small-sig variant); SLH-DSA VERIFY is fast, so
+    // each test emits exactly ONCE and reuses the artifact for the fast checks.
+    // -------------------------------------------------------------------------
+
+    /// 96-byte SLH-DSA test seed (SK.seed ‖ SK.prf ‖ PK.seed). NOT a production key.
+    #[cfg(all(feature = "evidence-mldsa", feature = "evidence-slhdsa"))]
+    fn test_slhdsa_seed() -> [u8; 96] {
+        let mut s = [0u8; 96];
+        let mut i = 0;
+        while i < 96 {
+            s[i] = (i as u8).wrapping_mul(7).wrapping_add(0x13);
+            i += 1;
+        }
+        s
+    }
+
+    #[cfg(all(feature = "evidence-mldsa", feature = "evidence-slhdsa"))]
+    fn pqc_hybrid_key() -> SigningKey {
+        SigningKey::PqcHybrid {
+            mldsa87: TEST_MLDSA_SEED,
+            slhdsa: test_slhdsa_seed(),
+        }
+    }
+
+    // (pqc-1) Round-trip Valid + byte-identical unsigned prefix + anchor unchanged.
+    #[cfg(all(feature = "evidence-mldsa", feature = "evidence-slhdsa"))]
+    #[test]
+    fn pqc_hybrid_valid_and_byte_identical() {
+        let ir = mod_binop();
+        let signed = emit_mic3_with_signed_evidence_scheme(
+            &ir,
+            "x86_avx2",
+            None,
+            Determinism::Deterministic,
+            "0.8.0",
+            &pqc_hybrid_key(),
+        )
+        .expect("pqc-hybrid signing available under both features");
+        match mic3_signature_status(&signed).unwrap() {
+            SignatureStatus::Valid(v) => {
+                assert_eq!(v.scheme, "pqc-hybrid-ml-dsa-87-slh-dsa-256s");
+                assert!(
+                    v.ed25519_pubkey.is_none(),
+                    "no classical leg in the PQC-hybrid"
+                );
+                assert!(
+                    v.mldsa_pubkey.is_none(),
+                    "no ml-dsa-65 leg in the PQC-hybrid"
+                );
+                assert!(v.mldsa87_pubkey.is_some(), "ml-dsa-87 pubkey present");
+                assert_eq!(
+                    v.slhdsa_pubkey.as_deref().map(<[u8]>::len),
+                    Some(64),
+                    "slh-dsa-shake-256s pk length"
+                );
+            }
+            other => panic!("expected pqc-hybrid Valid, got {:?}", other),
+        }
+        // Signing never perturbs the mic@3 body/anchor (the byte-identity wedge).
+        let unsigned =
+            emit_mic3_with_evidence(&ir, "x86_avx2", None, Determinism::Deterministic, "0.8.0");
+        let be_u = find_map_sentinel(&unsigned).unwrap();
+        let be_s = find_map_sentinel(&signed).unwrap();
+        assert_eq!(
+            &unsigned[..be_u],
+            &signed[..be_s],
+            "PQC-hybrid signing must not perturb the mic@3 body"
+        );
+        assert_eq!(
+            mic3_evidence_report(&unsigned).unwrap().trace_hash,
+            mic3_evidence_report(&signed).unwrap().trace_hash,
+            "trace_hash anchor unchanged under PQC-hybrid signing"
+        );
+    }
+
+    // (pqc-2) NON-DEGRADABLE (the load-bearing property from the cross-model security review):
+    //         stripping EITHER leg, or tampering EITHER signature, must fail closed
+    //         — the hybrid can never collapse to a valid single-scheme signature.
+    #[cfg(all(feature = "evidence-mldsa", feature = "evidence-slhdsa"))]
+    #[test]
+    fn pqc_hybrid_non_degradable() {
+        let ir = mod_binop();
+        let signed = emit_mic3_with_signed_evidence_scheme(
+            &ir,
+            "x86_avx2",
+            None,
+            Determinism::Deterministic,
+            "0.8.0",
+            &pqc_hybrid_key(),
+        )
+        .unwrap();
+        let body_end = find_map_sentinel(&signed).unwrap();
+        // Control: as-signed it is Valid.
+        let base = parse_map_epilogue(&signed[body_end..]).unwrap();
+        assert!(matches!(
+            signature_status_from_entries(&base).unwrap(),
+            SignatureStatus::Valid(_)
+        ));
+
+        // (a) STRIP the SLH-DSA leg → must NOT collapse to a valid ml-dsa-87-only
+        //     signature; the pqc-hybrid tag still demands the missing leg.
+        let mut stripped_slh = parse_map_epilogue(&signed[body_end..]).unwrap();
+        stripped_slh.retain(|e| e.key != "signature.slhdsa" && e.key != "signature.slhdsa_pubkey");
+        assert!(
+            matches!(
+                signature_status_from_entries(&stripped_slh).unwrap(),
+                SignatureStatus::Malformed(_)
+            ),
+            "stripping the SLH-DSA leg must be Malformed (non-degradable), got {:?}",
+            signature_status_from_entries(&stripped_slh).unwrap()
+        );
+
+        // (b) STRIP the ML-DSA-87 leg → likewise refused.
+        let mut stripped_ml = parse_map_epilogue(&signed[body_end..]).unwrap();
+        stripped_ml.retain(|e| e.key != "signature.mldsa87" && e.key != "signature.mldsa87_pubkey");
+        assert!(
+            matches!(
+                signature_status_from_entries(&stripped_ml).unwrap(),
+                SignatureStatus::Malformed(_)
+            ),
+            "stripping the ML-DSA-87 leg must be Malformed (non-degradable)"
+        );
+
+        // (c) TAMPER the ML-DSA-87 signature → Invalid (both legs required).
+        let mut tam_ml = parse_map_epilogue(&signed[body_end..]).unwrap();
+        for e in tam_ml.iter_mut() {
+            if e.key == "signature.mldsa87" {
+                if let ParsedValue::Bytes(b) = &mut e.value {
+                    b[100] ^= 0x01;
+                }
+            }
+        }
+        assert_eq!(
+            signature_status_from_entries(&tam_ml).unwrap(),
+            SignatureStatus::Invalid,
+            "tampering the ML-DSA-87 leg must fail closed"
+        );
+
+        // (d) TAMPER the SLH-DSA signature → Invalid.
+        let mut tam_slh = parse_map_epilogue(&signed[body_end..]).unwrap();
+        for e in tam_slh.iter_mut() {
+            if e.key == "signature.slhdsa" {
+                if let ParsedValue::Bytes(b) = &mut e.value {
+                    b[100] ^= 0x01;
+                }
+            }
+        }
+        assert_eq!(
+            signature_status_from_entries(&tam_slh).unwrap(),
+            SignatureStatus::Invalid,
+            "tampering the SLH-DSA leg must fail closed"
+        );
     }
 
     // (aa) Cross-substrate: the same IR + same seed yields a byte-identical signed

@@ -1697,16 +1697,36 @@ fn emit_evidence_if_requested(cli: &CompileArgs, products: &libmind::pipeline::C
     use libmind::ir::compact::SigningKey;
     let ed_seed = read_seed_env(libmind::ir::compact::v3::evidence::ENV_ED25519_SEED);
     let mldsa_seed = read_seed_env(libmind::ir::compact::v3::evidence::ENV_MLDSA_SEED);
-    let signing_key: Option<SigningKey> = match (ed_seed, mldsa_seed) {
-        (Some(ed), Some(ml)) => Some(SigningKey::Hybrid {
-            ed25519: ed,
-            mldsa65: ml,
+    // Bulletproof PQC-hybrid (max-security offline release profile): BOTH the
+    // ML-DSA-87 and SLH-DSA-256s seeds must be supplied. It takes precedence over
+    // the transition schemes when present; one leg alone is a partial, NON-
+    // bulletproof config and is refused fail-closed (never a silent downgrade).
+    let mldsa87_seed = read_seed_env(libmind::ir::compact::v3::mldsa::ENV_MLDSA87_SEED);
+    let slhdsa_seed = read_seed_env_96(libmind::ir::compact::v3::slhdsa::ENV_SLHDSA_SEED);
+    let signing_key: Option<SigningKey> = match (mldsa87_seed, slhdsa_seed) {
+        (Some(m87), Some(slh)) => Some(SigningKey::PqcHybrid {
+            mldsa87: m87,
+            slhdsa: slh,
         }),
-        (Some(ed), None) => Some(SigningKey::Ed25519(ed)),
-        (None, Some(ml)) => Some(SigningKey::MlDsa65(ml)),
-        (None, None) => None,
+        (Some(_), None) | (None, Some(_)) => {
+            eprintln!(
+                "error[emit-evidence]: the bulletproof PQC-hybrid needs BOTH \
+                 MIND_EVIDENCE_MLDSA87_KEY and MIND_EVIDENCE_SLHDSA_KEY — one is missing (fail-closed)"
+            );
+            process::exit(1);
+        }
+        (None, None) => match (ed_seed, mldsa_seed) {
+            (Some(ed), Some(ml)) => Some(SigningKey::Hybrid {
+                ed25519: ed,
+                mldsa65: ml,
+            }),
+            (Some(ed), None) => Some(SigningKey::Ed25519(ed)),
+            (None, Some(ml)) => Some(SigningKey::MlDsa65(ml)),
+            (None, None) => None,
+        },
     };
     let sig_label = match &signing_key {
+        Some(SigningKey::PqcHybrid { .. }) => ", pqc-hybrid-ml-dsa-87-slh-dsa-256s-signed",
         Some(SigningKey::Hybrid { .. }) => ", hybrid-ed25519-ml-dsa-65-signed",
         Some(SigningKey::MlDsa65(_)) => ", ml-dsa-65-signed",
         Some(SigningKey::Ed25519(_)) => ", ed25519-signed",
@@ -1851,6 +1871,38 @@ fn parse_ed25519_seed(s: &str) -> Result<[u8; 32], String> {
         ));
     }
     let mut out = [0u8; 32];
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16)
+            .map_err(|_| "seed must be lowercase/uppercase hex".to_string())?;
+    }
+    Ok(out)
+}
+
+/// Read a 96-byte SLH-DSA seed (`SK.seed ‖ SK.prf ‖ PK.seed`, 192 hex chars) from
+/// an env var. Fail-closed: a set-but-invalid value exits non-zero (never a
+/// silently-dropped or truncated key).
+fn read_seed_env_96(var: &str) -> Option<[u8; 96]> {
+    match std::env::var(var) {
+        Ok(hex) => match parse_seed_96(hex.trim()) {
+            Ok(seed) => Some(seed),
+            Err(msg) => {
+                eprintln!("error[emit-evidence]: {var} is set but invalid: {msg}");
+                process::exit(1);
+            }
+        },
+        Err(_) => None,
+    }
+}
+
+/// Decode a 192-hex-char string into a 96-byte seed.
+fn parse_seed_96(s: &str) -> Result<[u8; 96], String> {
+    if s.len() != 192 {
+        return Err(format!(
+            "expected 192 hex chars (96-byte seed), got {}",
+            s.len()
+        ));
+    }
+    let mut out = [0u8; 96];
     for (i, byte) in out.iter_mut().enumerate() {
         *byte = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16)
             .map_err(|_| "seed must be lowercase/uppercase hex".to_string())?;
@@ -2528,7 +2580,21 @@ fn run_verify(
                         if let Some(pk) = &v.mldsa_pubkey {
                             present.push(pk.clone());
                         }
-                        let all_trusted = present.iter().all(|pk| trusted.iter().any(|t| t == pk));
+                        if let Some(pk) = &v.mldsa87_pubkey {
+                            present.push(pk.clone());
+                        }
+                        if let Some(pk) = &v.slhdsa_pubkey {
+                            present.push(pk.clone());
+                        }
+                        // Fail-closed on an empty key set: a pinned allowlist must
+                        // match at least one ACTUAL signer key. `all()` over an empty
+                        // vec is vacuously true, so guard it explicitly — otherwise a
+                        // scheme whose pubkeys we failed to collect would pass the pin.
+                        // For pqc-hybrid this ALSO means BOTH the ML-DSA-87 and SLH-DSA
+                        // keys must be in the allowlist (both are in `present`), so a
+                        // pinned STARGA hybrid identity requires both keys.
+                        let all_trusted = !present.is_empty()
+                            && present.iter().all(|pk| trusted.iter().any(|t| t == pk));
                         if !all_trusted {
                             eprintln!(
                                 "error[verify]: signer key is NOT in the trusted allowlist (--signer-pubkey / MIND_EVIDENCE_VERIFY_PUBKEYS) — refusing to report valid"
@@ -2538,6 +2604,12 @@ fn run_verify(
                             }
                             if let Some(pk) = &v.mldsa_pubkey {
                                 eprintln!("  artifact ml-dsa-65 pubkey: {}", hex_encode(pk));
+                            }
+                            if let Some(pk) = &v.mldsa87_pubkey {
+                                eprintln!("  artifact ml-dsa-87 pubkey: {}", hex_encode(pk));
+                            }
+                            if let Some(pk) = &v.slhdsa_pubkey {
+                                eprintln!("  artifact slh-dsa pubkey:   {}", hex_encode(pk));
                             }
                             return 1;
                         }
@@ -2561,6 +2633,12 @@ fn run_verify(
                                 }
                                 if let Some(pk) = &v.mldsa_pubkey {
                                     eprintln!("  signer ml-dsa-65 pubkey: {}", hex_encode(pk));
+                                }
+                                if let Some(pk) = &v.mldsa87_pubkey {
+                                    eprintln!("  signer ml-dsa-87 pubkey: {}", hex_encode(pk));
+                                }
+                                if let Some(pk) = &v.slhdsa_pubkey {
+                                    eprintln!("  signer slh-dsa pubkey:   {}", hex_encode(pk));
                                 }
                             } else {
                                 eprintln!(
