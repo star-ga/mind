@@ -1930,13 +1930,30 @@ MIND_EXPORT int64_t __mind_gen_free(int64_t handle) {
  * scores one query at a time); `mtx` guards the round state; workers run their
  * band OUTSIDE the lock so the bands execute in parallel.
  * ───────────────────────────────────────────────────────────────────────── */
-#include <pthread.h>
 #include <stdint.h>
+
+typedef void *(*mind_mt_worker_fn)(void *);
+
+#if defined(_WIN32) || defined(_WIN64)
+/* Windows (MSVC ships no <pthread.h> / <unistd.h>): run every band serially on
+ * the calling thread. Byte-identical to the pooled MT path by construction —
+ * owner-computes, each band writes a disjoint row range, so the result is
+ * independent of thread count. Keeps __mind_blas_mt_dispatch defined so emitted
+ * MT kernels link on Windows; the deterministic output is unchanged. */
+void __mind_blas_mt_dispatch(mind_mt_worker_fn worker, char *argbuf,
+                             long struct_bytes, long n_bands) {
+    if (n_bands <= 0) {
+        return;
+    }
+    for (long i = 0; i < n_bands; i++) {
+        worker(argbuf + (intptr_t)i * struct_bytes);
+    }
+}
+#else
+#include <pthread.h>
 #include <unistd.h>
 
 #define MIND_MT_POOL_MAX 256
-
-typedef void *(*mind_mt_worker_fn)(void *);
 
 static struct {
     pthread_mutex_t   mtx;
@@ -2062,3 +2079,4 @@ static void mind_mt_pool_shutdown(void) {
     }
     mind_mt.pool_n = 0;                 /* idempotent: a second call is a no-op */
 }
+#endif  /* !defined(_WIN32) — pthread MT pool (Linux/macOS); Windows uses the serial dispatch above */
