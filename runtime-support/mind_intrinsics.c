@@ -1948,6 +1948,7 @@ static struct {
     long              active;   /* # bands in the current round */
     long              finished; /* # bands completed this round */
     long              pool_n;   /* # worker threads created */
+    int               stop;     /* dlclose/atexit shutdown flag (guarded by mtx) */
     pthread_t         threads[MIND_MT_POOL_MAX];
 } mind_mt = {
     .mtx = PTHREAD_MUTEX_INITIALIZER,
@@ -1966,6 +1967,10 @@ static void *mind_mt_worker_loop(void *p) {
             pthread_cond_wait(&mind_mt.wake, &mind_mt.mtx);
         }
         seen = mind_mt.gen;
+        if (mind_mt.stop) {            /* teardown round: exit the worker loop */
+            pthread_mutex_unlock(&mind_mt.mtx);
+            break;
+        }
         int inrange = (id < mind_mt.active);
         mind_mt_worker_fn fn = inrange ? mind_mt.fn[id] : 0;
         void *arg = inrange ? mind_mt.arg[id] : 0;
@@ -2021,4 +2026,39 @@ void __mind_blas_mt_dispatch(mind_mt_worker_fn worker, char *argbuf,
     }
     pthread_mutex_unlock(&mind_mt.mtx);
     pthread_mutex_unlock(&mind_mt_dispatch_lock);
+}
+
+/* Pool teardown on .so unload (dlclose) / process exit.
+ *
+ * libloading drops the Library (== dlclose) when a consumer unloads the cdylib.
+ * Without this, the pool's parked worker threads keep waiting on a condvar whose
+ * backing code + memory has just been unmapped -> a thread/condvar leak (and a
+ * potential crash) on every load/unload cycle. This destructor poisons the round
+ * generation, wakes every worker, and joins them so no thread outlives the module.
+ *
+ * fork-after-init is UNSUPPORTED in the deterministic path: after the pool is
+ * created the parked workers do not survive a fork(), so a child that then calls
+ * an MT kernel would hang. Callers must create the pool AFTER any fork (the
+ * one-query routing path does; documented, not a bug).
+ *
+ * Init-safe + idempotent: if the pool never initialised (pool_n == 0) there is
+ * nothing to tear down. Runs single-threaded at unload — no dispatch is in flight
+ * (every caller releases mind_mt_dispatch_lock and joins all bands before return),
+ * so all workers are parked on `wake` and observe stop on the next broadcast. */
+__attribute__((destructor))
+static void mind_mt_pool_shutdown(void) {
+    pthread_mutex_lock(&mind_mt.mtx);
+    if (mind_mt.pool_n == 0) {          /* pool never created — nothing to join */
+        pthread_mutex_unlock(&mind_mt.mtx);
+        return;
+    }
+    mind_mt.stop = 1;
+    mind_mt.gen++;                      /* force every parked worker to re-check */
+    pthread_cond_broadcast(&mind_mt.wake);
+    long n = mind_mt.pool_n;
+    pthread_mutex_unlock(&mind_mt.mtx);
+    for (long i = 0; i < n; i++) {
+        pthread_join(mind_mt.threads[i], 0);
+    }
+    mind_mt.pool_n = 0;                 /* idempotent: a second call is a no-op */
 }
