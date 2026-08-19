@@ -1396,12 +1396,18 @@ pub(crate) fn parse_map_epilogue(bytes: &[u8]) -> Result<Vec<ParsedEntry>, Parse
         |r: &std::io::Cursor<&[u8]>| -> usize { total.saturating_sub(r.position() as usize) };
 
     let count = uleb128_read(&mut r).map_err(|_| ParseMapError::Truncated)? as usize;
-    if count > remaining(&r) {
-        // Each entry occupies >= 1 byte; a count beyond the remaining input is
-        // unsatisfiable. Rejects the `Vec::with_capacity` bomb before allocating.
+    // Each MAP entry occupies at least MIN_ENTRY_BYTES on the wire: a >= 1-byte
+    // key-length ULEB, a 1-byte value tag, and a >= 1-byte value payload. A count
+    // beyond `remaining / MIN_ENTRY_BYTES` is therefore unsatisfiable. Rejecting it
+    // here both fails closed on a truncated stream AND caps the `Vec::with_capacity`
+    // below to input-size / MIN_ENTRY_BYTES — closing the allocation-amplification
+    // gap where a multi-MiB artifact could pre-size a several-hundred-MB Vec from an
+    // attacker-chosen `count` before the read loop errored out.
+    const MIN_ENTRY_BYTES: usize = 3;
+    if count > remaining(&r) / MIN_ENTRY_BYTES {
         return Err(ParseMapError::Truncated);
     }
-    let mut entries = Vec::with_capacity(count);
+    let mut entries: Vec<ParsedEntry> = Vec::with_capacity(count);
     for _ in 0..count {
         let key_len = uleb128_read(&mut r).map_err(|_| ParseMapError::Truncated)? as usize;
         if key_len > remaining(&r) {
@@ -1411,6 +1417,16 @@ pub(crate) fn parse_map_epilogue(bytes: &[u8]) -> Result<Vec<ParsedEntry>, Parse
         r.read_exact(&mut key_buf)
             .map_err(|_| ParseMapError::Truncated)?;
         let key = String::from_utf8(key_buf).map_err(|_| ParseMapError::InvalidUtf8)?;
+
+        // The canonical MAP is a SET: emit writes each key exactly once, in sorted
+        // order. A duplicate is off-canon — and because `find_entry` is first-wins
+        // and duplicate copies are filtered out of the signature preimage, an
+        // attacker could append a redundant copy of an already-signed key without
+        // breaking the trace-hash anchor (byte-malleability of an otherwise-Valid
+        // artifact). Reject it fail-closed. (O(n^2), but a MAP has O(10) entries.)
+        if entries.iter().any(|e| e.key == key) {
+            return Err(ParseMapError::DuplicateKey);
+        }
 
         let tag_byte = {
             let mut tb = [0u8];
@@ -1450,6 +1466,14 @@ pub(crate) fn parse_map_epilogue(bytes: &[u8]) -> Result<Vec<ParsedEntry>, Parse
 
         entries.push(ParsedEntry { key, value });
     }
+    // The epilogue is the artifact's final region ([sentinel .. EOF]); emit writes
+    // exactly `count` entries and nothing after the last one. Bytes the loop did not
+    // consume are trailing garbage appended after a valid MAP — a second malleability
+    // vector (they ride inside a Valid artifact, outside the signed preimage). Require
+    // the cursor to have consumed the whole epilogue region.
+    if (r.position() as usize) != total {
+        return Err(ParseMapError::TrailingBytes);
+    }
     Ok(entries)
 }
 
@@ -1460,6 +1484,12 @@ pub(crate) enum ParseMapError {
     Truncated,
     InvalidUtf8,
     UnknownTag(u8),
+    /// A key appeared more than once. The canonical MAP is a set, so a duplicate
+    /// key is off-canon and rejected fail-closed (anti-malleability).
+    DuplicateKey,
+    /// Bytes remained after the last entry. The epilogue must consume its whole
+    /// region; trailing garbage inside a Valid artifact is rejected fail-closed.
+    TrailingBytes,
 }
 
 // ─── Evidence decode + verify ─────────────────────────────────────────────────
@@ -3099,6 +3129,26 @@ mod tests {
             SignatureStatus::Invalid,
             "tampering the SLH-DSA leg must fail closed"
         );
+
+        // (e) DOWNGRADE the scheme tag to a weaker single-leg / legacy-hybrid scheme
+        //     while leaving BOTH pqc-hybrid legs in place → must never verify. The
+        //     scheme tag is length-prefixed into the signed preimage, so whichever
+        //     verifier the flipped tag selects checks a preimage bound to the WRONG
+        //     scheme string (and looks for key material the pqc-hybrid artifact does
+        //     not carry) — the pqc-hybrid AND-path is never re-entered, no collapse.
+        for weaker in ["ed25519", "ml-dsa-65", "hybrid-ed25519-ml-dsa-65"] {
+            let mut flipped = parse_map_epilogue(&signed[body_end..]).unwrap();
+            for e in flipped.iter_mut() {
+                if e.key == KEY_SIG_SCHEME {
+                    e.value = ParsedValue::Str(weaker.to_string());
+                }
+            }
+            let st = signature_status_from_entries(&flipped);
+            assert!(
+                !matches!(st, Ok(SignatureStatus::Valid(_))),
+                "downgrading the pqc-hybrid scheme tag to `{weaker}` must not verify, got {st:?}"
+            );
+        }
     }
 
     // (aa) Cross-substrate: the same IR + same seed yields a byte-identical signed

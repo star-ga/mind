@@ -2437,18 +2437,26 @@ fn run_verify(
     };
     // `sig_label` names the scheme when valid; the failure kind otherwise. The two
     // pubkey fields carry the keys the signature(s) were checked against.
-    let (sig_label, sig_ed_pubkey, sig_mldsa_pubkey): (String, Option<String>, Option<String>) =
-        match &sig_status {
-            SignatureStatus::Absent => ("absent".to_string(), None, None),
-            SignatureStatus::Valid(v) => (
-                v.scheme.clone(),
-                v.ed25519_pubkey.map(|pk| hex_encode(&pk)),
-                v.mldsa_pubkey.as_deref().map(hex_encode),
-            ),
-            SignatureStatus::Invalid => ("invalid".to_string(), None, None),
-            SignatureStatus::Malformed(_) => ("malformed".to_string(), None, None),
-            SignatureStatus::Unsupported(_) => ("unsupported".to_string(), None, None),
-        };
+    #[allow(clippy::type_complexity)]
+    let (sig_label, sig_ed_pubkey, sig_mldsa_pubkey, sig_mldsa87_pubkey, sig_slhdsa_pubkey): (
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) = match &sig_status {
+        SignatureStatus::Absent => ("absent".to_string(), None, None, None, None),
+        SignatureStatus::Valid(v) => (
+            v.scheme.clone(),
+            v.ed25519_pubkey.map(|pk| hex_encode(&pk)),
+            v.mldsa_pubkey.as_deref().map(hex_encode),
+            v.mldsa87_pubkey.as_deref().map(hex_encode),
+            v.slhdsa_pubkey.as_deref().map(hex_encode),
+        ),
+        SignatureStatus::Invalid => ("invalid".to_string(), None, None, None, None),
+        SignatureStatus::Malformed(_) => ("malformed".to_string(), None, None, None, None),
+        SignatureStatus::Unsupported(_) => ("unsupported".to_string(), None, None, None, None),
+    };
     let sig_ok = matches!(
         sig_status,
         SignatureStatus::Absent | SignatureStatus::Valid(_)
@@ -2502,8 +2510,19 @@ fn run_verify(
                     Some(pk) => format!("\"{pk}\""),
                     None => "null".to_string(),
                 };
+                // pqc-hybrid legs: surface both PQC pubkeys so scripted consumers
+                // can out-of-band-pin the hybrid key material from JSON (matching
+                // the ed25519 / ml-dsa-65 fields above).
+                let sig_mldsa87_pubkey_field = match &sig_mldsa87_pubkey {
+                    Some(pk) => format!("\"{pk}\""),
+                    None => "null".to_string(),
+                };
+                let sig_slhdsa_pubkey_field = match &sig_slhdsa_pubkey {
+                    Some(pk) => format!("\"{pk}\""),
+                    None => "null".to_string(),
+                };
                 println!(
-                    "{{\"artifact\":\"{}\",\"substrate\":\"{}\",\"determinism\":\"{determinism}\",\"toolchain\":\"{}\",\"parent\":{parent_field},\"trace_hash\":\"{trace_hash}\",\"trace_hash_kind\":\"{trace_hash_kind}\",\"trace_hash_valid\":{},\"fp_mode\":\"{fp_mode}\",\"ssa_valid\":{ssa_valid},\"ssa_reason\":{ssa_reason_field},\"signature\":\"{sig_label}\",\"signature_ed25519_pubkey\":{sig_ed_pubkey_field},\"signature_mldsa_pubkey\":{sig_mldsa_pubkey_field}}}",
+                    "{{\"artifact\":\"{}\",\"substrate\":\"{}\",\"determinism\":\"{determinism}\",\"toolchain\":\"{}\",\"parent\":{parent_field},\"trace_hash\":\"{trace_hash}\",\"trace_hash_kind\":\"{trace_hash_kind}\",\"trace_hash_valid\":{},\"fp_mode\":\"{fp_mode}\",\"ssa_valid\":{ssa_valid},\"ssa_reason\":{ssa_reason_field},\"signature\":\"{sig_label}\",\"signature_ed25519_pubkey\":{sig_ed_pubkey_field},\"signature_mldsa_pubkey\":{sig_mldsa_pubkey_field},\"signature_mldsa87_pubkey\":{sig_mldsa87_pubkey_field},\"signature_slhdsa_pubkey\":{sig_slhdsa_pubkey_field}}}",
                     json_escape(artifact),
                     json_escape(&report.substrate),
                     json_escape(&report.toolchain),
@@ -2535,6 +2554,12 @@ fn run_verify(
                 }
                 if let Some(pk) = &sig_mldsa_pubkey {
                     println!("signature_mldsa_pubkey:   {pk}");
+                }
+                if let Some(pk) = &sig_mldsa87_pubkey {
+                    println!("signature_mldsa87_pubkey: {pk}");
+                }
+                if let Some(pk) = &sig_slhdsa_pubkey {
+                    println!("signature_slhdsa_pubkey:  {pk}");
                 }
             }
 

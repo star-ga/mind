@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security — post-quantum evidence-chain signing + parser hardening (RFC 0016 Phase C, opt-in)
+- **PQC-hybrid signing scheme `pqc-hybrid-ml-dsa-87-slh-dsa-256s`.** The opt-in evidence
+  signature layer gains a NIST category-5 post-quantum hybrid: **ML-DSA-87** (FIPS-204,
+  lattice) **and** **SLH-DSA-SHAKE-256s** (FIPS-205, hash-based) — BOTH legs must verify
+  (AND-combiner). The verifier is **non-degradable**: stripping or tampering either leg,
+  or rewriting the `signature.scheme` tag to a weaker single-leg scheme, fails closed
+  (`Malformed`/`Invalid`) — the hybrid can never collapse to a single-scheme signature.
+  Both legs sign RNG-free (deterministic-from-seed), so a signed artifact stays
+  byte-identical across substrates. Gated behind the `evidence-mldsa` + `evidence-slhdsa`
+  cargo features (OFF by default): the keystone byte-identity gate never compiles a PQC
+  crate and the determinism wedge is untouched.
+- **mic@3 MAP epilogue parser hardening (anti-malleability).** `parse_map_epilogue` now
+  rejects **duplicate keys** and **trailing bytes** after the last entry, both fail-closed
+  (`ParseMapError::DuplicateKey` / `TrailingBytes`). The canonical MAP is a set with
+  nothing after the final entry and the emit path never produces either, so this is
+  byte-neutral on emit and accepts every artifact any emitter version ever produced; it
+  closes a byte-malleability vector where a redundant copy of a signed key, or trailing
+  garbage, could ride inside an otherwise-`Valid` artifact outside the signed preimage.
+  The entry-count allocation guard is tightened to `remaining / MIN_ENTRY_BYTES`, capping a
+  crafted `count` from pre-sizing a several-hundred-megabyte `Vec`.
+- **`mindc verify` surfaces both PQC pubkeys.** The verify report (JSON and human) now
+  emits `signature_mldsa87_pubkey` / `signature_slhdsa_pubkey` so scripted consumers can
+  out-of-band-pin the hybrid key material, matching the existing ed25519 / ml-dsa-65 fields.
+
 ### Added — Phase 17 numerical research surface (f64 completeness)
 - **`const`-array executable lowering (17.4).** `const NAME: [i64; N] = [...]` with
   indexed reads (`NAME[i]`) now builds and runs — `ConstArray` registers its base as
