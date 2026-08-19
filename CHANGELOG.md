@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — self-host mic@3 emitter: if-block branch-local-`let` scope (keystone)
+- **`emit_mic3_if_block_instr` no longer serializes dead OP_IF branch_binding/merge records for
+  branch-local `let` declarations** (corr2/#287-F2 self-host completion). #287-F2 fixed the Rust
+  `--emit-mic3` oracle and five whole-module self-host arms so a block-scoped `let` inside an
+  if-branch emits no merge record — but the test-harness if-block arm (`selftest_mic3_if_block_fn`)
+  was not ported: it unioned every branch let-env name into the merge set, diverging from the
+  oracle and reddening the keystone `mic3_primitives_smoke.py` gate (main keystone CI red since
+  ~2026-08-17). A new `drop_branch_local_lets` filters the merged-name set by `name_is_prefix_let`
+  (shadow-safe — a `let a` shadowing param `a` is dropped; outer-name assigns still merge),
+  matching the oracle byte-for-byte. The four stale `mic3_primitives_smoke.py` goldens (g/f/h/k)
+  are re-captured and the RI-E1 self-host bootstrap seed re-blessed. Gates: mic3_primitives 122/122,
+  mic3_flip whole-module byte-identical, oracle-parity 30/30, keystone 7/7, cross_substrate,
+  self-host loop stage1==stage2==stage3==frozen.
+
 ### Security — post-quantum evidence-chain signing + parser hardening (RFC 0016 Phase C, opt-in)
 - **PQC-hybrid signing scheme `pqc-hybrid-ml-dsa-87-slh-dsa-256s`.** The opt-in evidence
   signature layer gains a NIST category-5 post-quantum hybrid: **ML-DSA-87** (FIPS-204,

@@ -21953,6 +21953,29 @@ pub fn span_in_list(buf: i64, lo: i64, hi: i64, outspans: i64, oc: i64, i: i64) 
     span_in_list(buf, lo, hi, outspans, oc, i + 1)
 }
 
+// #316/#287-F2: drop branch-local `let` DECLARATIONS from the merged-name set. A `let`
+// is block-scoped and never escapes its branch, so it must emit NO OP_IF branch_binding/
+// merge record (mirrors the 5-arm fix in 5853cdb9 + lower.rs then/else_local_decls). A
+// name declared by a `let` in EITHER branch is branch-local (shadow-safe: a `let a` that
+// shadows param `a` is still dropped); only outer-name ASSIGNS survive to merge. Filters
+// the 16B {lo,hi} spans in-place (kept slots compacted to `oc`); returns the kept count.
+pub fn drop_branch_local_lets(spans: i64, n: i64, buf: i64, then_sa: i64, then_n: i64, else_sa: i64, else_n: i64, oc: i64, i: i64) -> i64 {
+    if i >= n {
+        return oc;
+    }
+    let lo: i64 = __mind_load_i64(spans + i * 16 + 0);
+    let hi: i64 = __mind_load_i64(spans + i * 16 + 8);
+    if name_is_prefix_let(buf, lo, hi, then_sa, then_n, 0) == 1 {
+        return drop_branch_local_lets(spans, n, buf, then_sa, then_n, else_sa, else_n, oc, i + 1);
+    }
+    if name_is_prefix_let(buf, lo, hi, else_sa, else_n, 0) == 1 {
+        return drop_branch_local_lets(spans, n, buf, then_sa, then_n, else_sa, else_n, oc, i + 1);
+    }
+    __mind_store_i64(spans + oc * 16 + 0, lo);
+    __mind_store_i64(spans + oc * 16 + 8, hi);
+    drop_branch_local_lets(spans, n, buf, then_sa, then_n, else_sa, else_n, oc + 1, i + 1)
+}
+
 // Emit the OP_IF body instruction with NON-EMPTY merges. Threads cond -> then(synth
 // +block) -> else(synth+block) -> [per-name then/else placeholders + merge_ids] -> dst,
 // byte-exact vs the oracle. The two branch blocks carry their own let-envs (already
@@ -22015,7 +22038,12 @@ pub fn emit_mic3_if_block_instr(s: EmitState, cond_expr: i64, then_blk: i64, els
     // --- merge pass: merged names, per-name placeholders + merge_ids from after_else ---
     let t_lcount: i64 = __mind_load_i64(t_lc);
     let e_lcount: i64 = __mind_load_i64(e_lc);
-    let mn: i64 = build_merged_names(t_lenv, t_lcount, e_lenv, e_lcount, buf, mspans);
+    let mn_raw: i64 = build_merged_names(t_lenv, t_lcount, e_lenv, e_lcount, buf, mspans);
+    // #316/#287-F2: exclude branch-local `let` DECLARATIONS from the merge set (they are
+    // block-scoped, never escape, emit no OP_IF binding/merge). Only outer-name assigns
+    // survive. build_merged_names unions the raw let-envs; this drops the dead decls,
+    // matching the Rust --emit-mic3 oracle + the whole-module _lv path (5853cdb9).
+    let mn: i64 = drop_branch_local_lets(mspans, mn_raw, buf, ast_child0(then_blk), ast_aux(then_blk), ast_child0(else_blk), ast_aux(else_blk), 0, 0);
     __mind_store_i64(mcount, mn);
     let final_ctr: i64 = assign_merge_vids(mspans, mn, buf, t_lenv, t_lcount, e_lenv, e_lcount, extra, after_else, 0);
     let dst: i64 = final_ctr;
