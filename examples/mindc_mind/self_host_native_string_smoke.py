@@ -46,7 +46,7 @@ _DUMMY_HASH = bytes(range(32))
 
 # (name, source, expected_exit, expected_phdrs). Each binds a string literal and
 # returns an observable i64 (exit code = low 8 bits of the returned value).
-# expected_phdrs pins the CONDITIONAL-EMIT regime (Fable 2026-08-18): a program
+# expected_phdrs pins the CONDITIONAL-EMIT regime (a design decision): a program
 # with a non-empty literal is 5-phdr; an all-empty-literal program stays 4-phdr and
 # byte-identical to the stringless layout.
 FIXTURES = [
@@ -79,7 +79,7 @@ FIXTURES = [
         104,
         5,
     ),
-    # EDGE (Fable audit): an all-EMPTY-literal program appends 0 rodata bytes, so
+    # EDGE (an audit finding): an all-EMPTY-literal program appends 0 rodata bytes, so
     # rod_len stays 0 and the conditional 5th phdr is NOT emitted — the binary stays
     # 4-phdr, byte-identical to the stringless layout. The handle is {0x800000, 0, 0};
     # s.len (s + 8) == 0, so exit 0, and nothing dereferences the (unmapped) addr.
@@ -94,7 +94,7 @@ FIXTURES = [
         0,
         4,
     ),
-    # EDGE (Fable audit): a "" beside a non-empty literal. The "" gets a zero-length
+    # EDGE (an audit finding): a "" beside a non-empty literal. The "" gets a zero-length
     # handle at the rodata base; "hi" drives rod_len>0 so the 5th phdr IS emitted.
     # exit = a.len + b.len = 0 + 2 = 2.
     (
@@ -175,7 +175,7 @@ def main() -> int:
             # (0) STRUCTURAL — conditional-emit regime + the rodata READ-ONLY flag.
             # A wrong p_flags (RW/RX) still runs, still exits correctly, still hashes
             # byte-deterministic — so it is INVISIBLE to the run + determinism checks
-            # below. This is the one gate that carries that information (Fable audit).
+            # below. This is the one gate that carries that information (an audit finding).
             ph = _phdrs(elf)
             struct_ok = len(ph) == expected_phdrs
             detail = ""

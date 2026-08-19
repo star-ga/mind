@@ -27623,7 +27623,7 @@ pub fn nb_load_addr() -> i64 {
     4194304
 }
 pub fn nb_hdrs(rod_len: i64) -> i64 {
-    // 64 (ehdr) + N*56 (phdrs). The 5th rodata PT_LOAD is CONDITIONAL (Fable ruling
+    // 64 (ehdr) + N*56 (phdrs). The 5th rodata PT_LOAD is CONDITIONAL (a design decision
     // 2026-08-18): emitted ONLY when a program has string literals (rod_len>0). A
     // stringless program stays 4 phdrs / 288 B and thus BYTE-IDENTICAL to the frozen
     // native-ELF oracles — the LAST independently-produced anchors of the native
@@ -37137,7 +37137,7 @@ pub fn nb_write_elf(code: String, entry_off: i64, note: String) -> String {
 // The rodata-carrying core. `rodata` = the string-literal bytes accumulated in
 // FIRST-USE order during the emit walk (empty for every path that never emits a
 // string literal — including main.mind's own self-compile). The 5th PT_LOAD is
-// CONDITIONAL (Fable ruling 2026-08-18): emitted ONLY when rod_len>0, so a
+// CONDITIONAL (a design decision): emitted ONLY when rod_len>0, so a
 // stringless program keeps the 4-phdr / 288 B layout BYTE-IDENTICAL to its frozen
 // oracle (no re-bless of the last independent native-backend anchors). Programs
 // with string literals get the 5th phdr (+56 B) + the page-aligned rodata bytes.
@@ -37288,7 +37288,7 @@ pub fn nb_write_elf_rod(code: String, entry_off: i64, note: String, rodata: Stri
     // p_align
 
     // --- phdr 5: PT_LOAD (R) — read-only rodata (string literals), CONDITIONAL ---
-    // Emitted ONLY when rod_len>0 (Fable 2026-08-18). A stringless program keeps the
+    // Emitted ONLY when rod_len>0 (a design decision). A stringless program keeps the
     // 4-phdr layout byte-identical to its frozen oracle (no re-bless). This guard is
     // the SAME rod_len>0 predicate nb_hdrs() used, so hdrs/e_phnum and this block can
     // never disagree.
