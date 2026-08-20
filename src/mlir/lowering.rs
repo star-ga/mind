@@ -11660,6 +11660,14 @@ fn increment_odometer(coord: &mut [usize], sizes: &[usize]) {
 /// f16, …) falls through to `dtype.as_str()`, which is INVALID MLIR and so
 /// fails LOUD at mlir-opt rather than silently miscompiling — the same
 /// fail-closed contract those two arms already enforce.
+///
+/// Gated on `std-surface`: it matches the `ScalarF64`/`ScalarF32` `ValueKind`
+/// variants, which are themselves `#[cfg(feature = "std-surface")]`, and it is
+/// only ever called from the `std-surface`-gated `Instr::While` loop-carry
+/// emitter — so under a non-`std-surface` build (CI's `--no-default-features
+/// --features mlir-lowering` gated-test leg) both the caller and these variants
+/// are absent and the fn is simply not compiled.
+#[cfg(feature = "std-surface")]
 fn loop_carry_mlir_type(kind: Option<&ValueKind>) -> String {
     match kind {
         Some(ValueKind::ScalarF64) => "f64".to_string(),
