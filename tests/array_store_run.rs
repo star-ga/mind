@@ -18,10 +18,15 @@
 //!     block-args), so the post-loop read observes every write. The bufferized
 //!     loop body carries NO per-iteration malloc/memcpy — the iter-arg stays
 //!     in-place — so cross-substrate byte-identity holds.
-//!  3. A store inside a BRANCH body (`if`) still FAILS CLOSED (loud): the
-//!     branch-region exit rebind is the tracked follow-on. Until then the
-//!     compiler REJECTS it rather than emitting a store whose effect is silently
-//!     lost (the exact silent-miscompile the whole #320 line exists to prevent).
+//!  3. A store inside a BRANCH body (`if`/`else`, including different indices per
+//!     branch) RUNS correctly: the mutated `[T; N]` is threaded as a value-semantic
+//!     `tensor<NxT>` `^if_after` merge block-arg (the then-edge carries the stored
+//!     incarnation, the untouched edge the pre-if tensor), so a post-if read sees
+//!     the taken branch's write and the not-taken path preserves the original. The
+//!     post-bufferization profile matches the loop's (one-time buffer
+//!     materialisation, NO per-branch copy), so cross-substrate byte-identity holds.
+//!     `a[i]=v` now works in EVERY position — straight-line, loop, and branch — with
+//!     no silent store-drop and nothing fail-closed.
 
 #![cfg(all(unix, feature = "mlir-build", feature = "std-surface"))]
 
@@ -70,27 +75,6 @@ fn build_and_run(mindc: &Path, src: &str) -> i32 {
         .status
         .code()
         .unwrap_or(-1)
-}
-
-/// True iff the build FAILS to produce a runnable artifact (fail-closed): a
-/// non-zero mindc exit or no/empty output binary. Used to prove that an
-/// unsupported `a[i]=v` position is rejected LOUDLY, never silently miscompiled.
-fn build_fails(mindc: &Path, src: &str) -> bool {
-    let dir = std::env::temp_dir().join(format!("mind_arrstore_fc_{}", src.len()));
-    let _ = std::fs::create_dir_all(&dir);
-    let srcf = dir.join("main.mind");
-    let out = dir.join("p.bin");
-    let _ = std::fs::remove_file(&out);
-    std::fs::write(&srcf, src).expect("write src");
-    let c = Command::new(mindc)
-        .arg("build")
-        .arg("--emit=binary")
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .arg(format!("--out={}", out.display()))
-        .arg(&srcf)
-        .output()
-        .expect("run mindc build");
-    !c.status.success() || !out.exists() || out.metadata().map(|m| m.len() == 0).unwrap_or(true)
 }
 
 #[test]
@@ -189,21 +173,58 @@ fn array_store_in_loop_runs_correctly() {
 }
 
 #[test]
-fn array_store_in_branch_fails_closed_never_silent() {
+fn array_store_in_branch_runs_correctly() {
     let mindc = mindc_bin();
     if !mindc.exists() {
         eprintln!("skip: release mindc not built");
         return;
     }
-    // `if`-body store: the branch-region exit rebind (distinct from the loop
-    // region path) is the tracked follow-on. Until it lands the compiler must
-    // REJECT `a[i]=v` in a branch body — fail-closed, never a silently-dropped
-    // write (the exact silent-miscompile the whole #320 line exists to prevent).
-    assert!(
-        build_fails(
+    // if-taken store is observed: the mutated `[i64; 3]` is threaded as a
+    // value-semantic `tensor<3xi64>` `^if_after` merge block-arg.
+    assert_eq!(
+        build_and_run(
             &mindc,
             "fn main() -> i64 { let mut a: [i64; 3] = [1, 2, 3]; if 1 == 1 { a[0] = 9; } return a[0]; }"
         ),
-        "a[i]=v inside an if-branch body must fail closed, not silently drop the write"
+        9
+    );
+    // untouched sibling element is unchanged even when the branch is taken.
+    assert_eq!(
+        build_and_run(
+            &mindc,
+            "fn main() -> i64 { let mut a: [i64; 3] = [1, 2, 3]; if 1 == 1 { a[0] = 9; } return a[1]; }"
+        ),
+        2
+    );
+    // if NOT taken: the not-taken edge carries the pre-if tensor → original preserved.
+    assert_eq!(
+        build_and_run(
+            &mindc,
+            "fn main() -> i64 { let mut a: [i64; 3] = [1, 2, 3]; if 0 == 1 { a[0] = 9; } return a[0]; }"
+        ),
+        1
+    );
+    // if/else both store the SAME index → the merge phi selects the taken edge.
+    assert_eq!(
+        build_and_run(
+            &mindc,
+            "fn main() -> i64 { let mut a: [i64; 3] = [0, 0, 0]; if 1 == 1 { a[0] = 1; } else { a[0] = 2; } return a[0]; }"
+        ),
+        1
+    );
+    assert_eq!(
+        build_and_run(
+            &mindc,
+            "fn main() -> i64 { let mut a: [i64; 3] = [0, 0, 0]; if 0 == 1 { a[0] = 1; } else { a[0] = 2; } return a[0]; }"
+        ),
+        2
+    );
+    // if/else store DIFFERENT indices → each element carries its branch's value.
+    assert_eq!(
+        build_and_run(
+            &mindc,
+            "fn main() -> i64 { let mut a: [i64; 3] = [0, 0, 0]; if 1 == 1 { a[1] = 5; } else { a[2] = 7; } return a[1]; }"
+        ),
+        5
     );
 }

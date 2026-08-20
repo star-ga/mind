@@ -356,6 +356,39 @@ pub fn array_store_loop(base: i64) -> i64 {
 }
 "#;
 
+// F2 aggregate BRANCH-carry canary source (array-store-branch). Own translation
+// unit for the same reason as `ARRAY_STORE_SRC` (value-tensor ops force the
+// arith-linalg pipeline, incompatible with the vector-reduction kernels in `SRC`).
+//
+// Pins the #320 Step D If-MERGE path (distinct from the loop's `^while_after`):
+// `a[i] = v` inside `if`/`else` branch bodies is threaded as a value-semantic
+// `tensor<8xi64>` `^if_after` merge block-arg (then/else edge = stored incarnation,
+// untouched edge = pre-if tensor). `base` is a RUNTIME arg so the branches are
+// genuinely taken/not-taken (not const-folded), exercising if/else same-slot,
+// no-else (one-sided merge), and a straight-line store in the same fn. Integer
+// store/add/mul are exact + order-independent, and the post-bufferize
+// memref.alloc/copy profile matches the loop baseline (no per-branch copy), so
+// avx2 == neon by construction (RFC 0015 §3.1). A dropped/aliased branch store or
+// a wrong merge incarnation flips the hash.
+const ARRAY_STORE_BRANCH_SRC: &str = r#"
+pub fn array_store_branch(base: i64) -> i64 {
+    let mut a: [i64; 8] = [0, 0, 0, 0, 0, 0, 0, 0]
+    if base > 3 { a[0] = base * 7 } else { a[0] = base + 100 }
+    a[1] = base * 2
+    if base > 100 { a[2] = 999 }
+    if base > 5 { a[3] = base * 11 } else { a[3] = base - 50 }
+    let kk: i64 = 1000003
+    let f0: i64 = a[0]
+    let f1: i64 = f0 * kk + a[1]
+    let f2: i64 = f1 * kk + a[2]
+    let f3: i64 = f2 * kk + a[3]
+    let f4: i64 = f3 * kk + a[4]
+    let f5: i64 = f4 * kk + a[5]
+    let f6: i64 = f5 * kk + a[6]
+    return f6 * kk + a[7]
+}
+"#;
+
 type DotFn = unsafe extern "C" fn(i64, i64, i64) -> i64;
 type MatmulFn = unsafe extern "C" fn(i64, i64, i64, i64, i64) -> i64;
 type GemmFn = unsafe extern "C" fn(i64, i64, i64, i64, i64, i64) -> i64;
@@ -462,6 +495,45 @@ fn build_array_store_so() -> Option<&'static PathBuf> {
         assert!(
             status.success(),
             "mindc --emit-shared failed for the array-store-loop workload"
+        );
+        Some(so_path)
+    })
+    .as_ref()
+}
+
+/// Compile `ARRAY_STORE_BRANCH_SRC` to its OWN temp `.so` (same arith-linalg
+/// isolation rationale as `build_array_store_so`).
+fn build_array_store_branch_so() -> Option<&'static PathBuf> {
+    static SO: OnceLock<Option<PathBuf>> = OnceLock::new();
+    SO.get_or_init(|| {
+        for tool in ["mlir-opt", "mlir-translate", "clang"] {
+            if which::which(tool).is_err() {
+                assert!(
+                    std::env::var_os("MIND_BENCH_REQUIRE").is_none(),
+                    "MIND_BENCH_REQUIRE is set but '{tool}' is not on PATH: the \
+                     cross-substrate gate cannot run. Install the MLIR toolchain \
+                     (mlir-opt / mlir-translate / clang) on this runner."
+                );
+                println!("cross_substrate_identity: {tool} not on PATH; skipping");
+                return None;
+            }
+        }
+        let dir = std::env::temp_dir();
+        let src_path = dir.join("mind_xsi_array_store_branch.mind");
+        let so_path = dir.join("mind_xsi_array_store_branch.so");
+        std::fs::write(&src_path, ARRAY_STORE_BRANCH_SRC)
+            .expect("write array-store-branch .mind source");
+        let status = Command::new(mindc_bin())
+            .args([
+                src_path.to_str().unwrap(),
+                "--emit-shared",
+                so_path.to_str().unwrap(),
+            ])
+            .status()
+            .expect("spawn mindc --emit-shared");
+        assert!(
+            status.success(),
+            "mindc --emit-shared failed for the array-store-branch workload"
         );
         Some(so_path)
     })
@@ -2073,6 +2145,65 @@ fn array_store_loop_reproducibility_gate() {
     // 2. Canonical hash pinned to the committed per-substrate reference. Integer
     //    store/add/mul are exact and order-independent, and the bufferized loop
     //    body has no per-iteration copy → avx2 == neon by construction.
+    let computed = canonical_hash(result);
+    pin_or_bless(id, &computed, result);
+}
+
+/// Rust oracle for `array_store_branch` — the compiled kernel must reproduce it
+/// bit-for-bit. Mirrors the MIND kernel exactly: `if`/`else` + no-else stores
+/// into a fixed `[i64; 8]` (a value-semantic If-merge), then a fixed-order fold.
+fn ref_array_store_branch(base: i64) -> i64 {
+    let mut a = [0i64; 8];
+    a[0] = if base > 3 {
+        base.wrapping_mul(7)
+    } else {
+        base.wrapping_add(100)
+    };
+    a[1] = base.wrapping_mul(2);
+    if base > 100 {
+        a[2] = 999;
+    }
+    a[3] = if base > 5 {
+        base.wrapping_mul(11)
+    } else {
+        base.wrapping_sub(50)
+    };
+    let kk: i64 = 1_000_003;
+    let mut acc = a[0];
+    for &e in &a[1..] {
+        acc = acc.wrapping_mul(kk).wrapping_add(e);
+    }
+    acc
+}
+
+#[test]
+fn array_store_branch_reproducibility_gate() {
+    let id = "array-store-branch";
+
+    let Some(so) = build_array_store_branch_so() else {
+        return; // toolchain shadowed — self-skip
+    };
+    let lib = unsafe { Library::new(so).expect("dlopen array-store-branch workload .so") };
+    let f: Symbol<ArrayStoreFn> = unsafe {
+        lib.get(b"array_store_branch")
+            .expect("array_store_branch symbol")
+    };
+
+    let result = unsafe { f(ARRAY_STORE_BASE) };
+
+    // 1. Within-run exactness vs the Rust oracle: proves the branch-body stores
+    //    landed on the taken edges and the `^if_after` merge carried the right
+    //    incarnation (a dropped/aliased branch store folds a wrong value).
+    let oracle = ref_array_store_branch(ARRAY_STORE_BASE);
+    assert_eq!(
+        result, oracle,
+        "{id}: aggregate branch-carry kernel diverged from the Rust oracle within a \
+         single run (kernel={result}, oracle={oracle}) — a dropped/aliased branch store regressed?"
+    );
+
+    // 2. Canonical hash pinned to the committed per-substrate reference. Integer
+    //    store/add/mul are exact + order-independent, and the bufferized If-merge
+    //    has no per-branch copy (profile matches the loop baseline) → avx2 == neon.
     let computed = canonical_hash(result);
     pin_or_bless(id, &computed, result);
 }

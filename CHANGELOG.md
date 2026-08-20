@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — fixed-array / const-tensor `a[i] = v` now WORKS inside an `if`/`else` BRANCH body (#320 Step D — the last position; store now works EVERYWHERE)
+- **`a[i] = v` on a fixed `[T; N]` / const-literal `tensor<T[N]>` now works inside an `if`/`else`
+  branch body** — the last fail-closed position. With this, the store works in EVERY statement
+  position: straight-line, loop (`for`/`while`/nested), and branch. Nothing is fail-closed for a
+  fixed-aggregate `a[i]=v` any more.
+- **Same Option A+ value-semantic design, applied to the `Instr::If` merge machinery.** New
+  `IndexAssign` arms in both the then- and else-branch statement loops (`src/eval/lower.rs`) emit
+  `Instr::ArrayStore`, rebind the receiver root in the branch env, and record it as a merge write
+  (`record_then_write`/`record_else_write`) — so the aggregate is threaded as a value-semantic
+  `tensor<NxT>` `^if_after` merge block-arg. The then/else edge carries the stored incarnation; the
+  untouched edge carries the pre-if tensor (from the outer env), so a post-if read sees the taken
+  branch's write and the not-taken path preserves the original. The MLIR emitter already types the
+  merge block-arg via `mlir_type` of the unified `Tensor` kind — no change needed there. (The
+  assignment statement's if-VALUE stays unit-i64, so the tensor flows only through `a`'s own merge
+  column, never the i64 if-value column.)
+- **Wedge intact — no per-branch copy.** Design-reviewed GO: the If-merge rides the exact same
+  `cf`-block-arg machinery the loop already proved, so one-shot-bufferize sees no read-after-write
+  conflict and inserts no defensive copy. Verified across a 4-case matrix (`if c {a[i]=v}`, `if/else`,
+  if-inside-loop, `a` read after the if) that the **post-bufferization MLIR `memref.alloc` /
+  `memref.copy` / `alloc_tensor` counts are identical to the CI-green loop baseline** (one-time buffer
+  materialisation, zero per-branch copy), and the LLVM IR confirms an in-place `store` in the taken
+  block. So x86 avx2 == ARM neon by construction.
+- Verified by COMPILE+RUN (`tests/array_store_run.rs`): `if T {a[0]=9} return a[0]`→9, untouched
+  sibling→2, `if F {a[0]=9}`→1 (original preserved), `if/else` same-index→taken edge (1/2),
+  `if/else` different-index→per-element (5). Gates: `array_store_run` 3/3 (all positions) · keystone
+  7/7 byte-identical · mic3_flip whole-module byte-identical (621052 B) · fmt/clippy · all local green.
+- **Additive / byte-neutral:** a branch-body `a[i]=v` on a fixed aggregate previously failed to
+  compile; `main.mind` + `std` self-use zero surface `a[i]=v`, so keystone / self-host / cross-substrate
+  are untouched.
+
 ### Added — fixed-array / const-tensor `a[i] = v` now WORKS inside a LOOP body (#320 Step D, F2 region-exit threading)
 - **`a[i] = v` on a fixed `[T; N]` / const-literal `tensor<T[N]>` now works inside a `for` / `while`
   loop body (including nested loops), not just straight-line** — the F2 region-exit rebind that the

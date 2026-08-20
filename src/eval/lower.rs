@@ -6835,6 +6835,95 @@ fn lower_expr(
                         }
                         then_result = id;
                     }
+                    // F2 aggregate branch-carry (#320 Step D): `a[i] = v` inside an
+                    // if THEN-body. Reference-semantic `array<T>` (vec_set) /
+                    // `bytes[N]` (__mind_store_i8) mutate their base handle IN PLACE
+                    // → lower_expr, no rebind/merge. A value-semantic fixed `[T; N]`
+                    // emits a FRESH aggregate (`Instr::ArrayStore`); rebind the
+                    // receiver root in then_env AND record it as a merge write, so
+                    // the `^if_after` phi threads the stored incarnation on the
+                    // then-edge (the untouched else-edge carries the pre-if tensor
+                    // from `env`). Emitted DIRECTLY (not via `lower_expr`, which
+                    // fails closed for this receiver) so an UNSUPPORTED shape fails
+                    // loud rather than silently dropping the write. Symmetric to the
+                    // scalar `Assign` arm above and the `While`-body arm.
+                    #[cfg(feature = "std-surface")]
+                    node @ ast::Node::IndexAssign {
+                        receiver,
+                        index,
+                        value,
+                        ..
+                    } => {
+                        let sentinel = receiver_collection_sentinel(
+                            receiver,
+                            &then_ir,
+                            &then_struct_env,
+                            receiver_types,
+                        );
+                        if sentinel == Some(ARRAY_VEC_SENTINEL)
+                            || sentinel == Some(FIXED_BYTES_SENTINEL)
+                        {
+                            then_result = lower_expr(
+                                node,
+                                &mut then_ir,
+                                &then_env,
+                                &then_struct_env,
+                                receiver_types,
+                            );
+                        } else if let ast::Node::Lit(Literal::Ident(root), _) = receiver.as_ref() {
+                            let base = lower_expr(
+                                receiver,
+                                &mut then_ir,
+                                &then_env,
+                                &then_struct_env,
+                                receiver_types,
+                            );
+                            let idx = lower_expr(
+                                index,
+                                &mut then_ir,
+                                &then_env,
+                                &then_struct_env,
+                                receiver_types,
+                            );
+                            let val = lower_expr(
+                                value,
+                                &mut then_ir,
+                                &then_env,
+                                &then_struct_env,
+                                receiver_types,
+                            );
+                            let dst = then_ir.fresh();
+                            then_ir.instrs.push(Instr::ArrayStore {
+                                dst,
+                                base,
+                                index: idx,
+                                value: val,
+                            });
+                            then_env.insert(root.clone(), dst);
+                            // Record the merge write only for a genuine outer var; a
+                            // fixed array declared branch-local in this branch is
+                            // block-scoped and excluded from the merge (same guard as
+                            // the scalar `Assign` arm).
+                            if !then_local_decls.iter().any(|n| n == root) {
+                                record_then_write(root, &mut then_writes);
+                            }
+                            // The if-VALUE of an assignment statement is unit (i64 0),
+                            // NOT the fresh tensor — `then_result` types the if-value
+                            // merge column, which must stay i64 to match the else-edge
+                            // (the tensor flows only through `a`'s own merge column).
+                            let unit = then_ir.fresh();
+                            then_ir.instrs.push(Instr::ConstI64(unit, 0));
+                            then_result = unit;
+                        } else {
+                            then_result = lower_expr(
+                                node,
+                                &mut then_ir,
+                                &then_env,
+                                &then_struct_env,
+                                receiver_types,
+                            );
+                        }
+                    }
                     ast::Node::LetTuple { names, value, .. } => {
                         then_result = lower_lettuple_stmt(
                             names,
@@ -7113,6 +7202,85 @@ fn lower_expr(
                             );
                             for nm in names {
                                 record_else_write(nm, &mut else_writes);
+                            }
+                        }
+                        // F2 aggregate branch-carry (#320 Step D): `a[i] = v` inside
+                        // an if ELSE-body — the mirror of the then-branch arm. A
+                        // value-semantic fixed `[T; N]` emits a FRESH aggregate and
+                        // rebinds the receiver root + records the merge write so the
+                        // `^if_after` phi threads the else-edge's stored incarnation.
+                        #[cfg(feature = "std-surface")]
+                        node @ ast::Node::IndexAssign {
+                            receiver,
+                            index,
+                            value,
+                            ..
+                        } => {
+                            let sentinel = receiver_collection_sentinel(
+                                receiver,
+                                &else_ir,
+                                &else_struct_env,
+                                receiver_types,
+                            );
+                            if sentinel == Some(ARRAY_VEC_SENTINEL)
+                                || sentinel == Some(FIXED_BYTES_SENTINEL)
+                            {
+                                else_result = lower_expr(
+                                    node,
+                                    &mut else_ir,
+                                    &else_env,
+                                    &else_struct_env,
+                                    receiver_types,
+                                );
+                            } else if let ast::Node::Lit(Literal::Ident(root), _) =
+                                receiver.as_ref()
+                            {
+                                let base = lower_expr(
+                                    receiver,
+                                    &mut else_ir,
+                                    &else_env,
+                                    &else_struct_env,
+                                    receiver_types,
+                                );
+                                let idx = lower_expr(
+                                    index,
+                                    &mut else_ir,
+                                    &else_env,
+                                    &else_struct_env,
+                                    receiver_types,
+                                );
+                                let val = lower_expr(
+                                    value,
+                                    &mut else_ir,
+                                    &else_env,
+                                    &else_struct_env,
+                                    receiver_types,
+                                );
+                                let dst = else_ir.fresh();
+                                else_ir.instrs.push(Instr::ArrayStore {
+                                    dst,
+                                    base,
+                                    index: idx,
+                                    value: val,
+                                });
+                                else_env.insert(root.clone(), dst);
+                                if !else_local_decls.iter().any(|n| n == root) {
+                                    record_else_write(root, &mut else_writes);
+                                }
+                                // If-value of an assignment statement is unit i64 —
+                                // NOT the tensor (mirror of the then-branch arm; keeps
+                                // the if-value merge column i64 across both edges).
+                                let unit = else_ir.fresh();
+                                else_ir.instrs.push(Instr::ConstI64(unit, 0));
+                                else_result = unit;
+                            } else {
+                                else_result = lower_expr(
+                                    node,
+                                    &mut else_ir,
+                                    &else_env,
+                                    &else_struct_env,
+                                    receiver_types,
+                                );
                             }
                         }
                         other => {
