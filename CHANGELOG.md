@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — silent aggregate index-write miscompile → fail-closed (MLIR/std-surface backend)
+- **`a[i] = v` on a const-literal-initialized aggregate (a plain fixed `[T; N]`, or a
+  `tensor<T[N]> = [..]` literal) no longer silently drops the store on the default MLIR
+  backend.** The `IndexAssign` lowering (`src/eval/lower.rs`) routes real stores only for the
+  growable `array<T>` receiver (→ `vec_set`) and the fixed `bytes[N]` buffer (→
+  `__mind_store_i8`); a plain `[T; N]` / const-literal `tensor<T[N]>` — an immutable
+  `ConstArray` / `ConstDenseTensor` value with no store instruction in the IR — fell through
+  to a `ConstI64(0)` placeholder that emitted **no store** and never rebound the aggregate's
+  SSA value, so every later `a[i]` read observed the pre-write incarnation. This was a LIVE
+  i64/f64 miscompile (`docs/ARRAY_SEMANTICS.md` Q19: "a LIVE i64 miscompile predating f64").
+  The placeholder is replaced by a fail-closed diagnostic — mirroring the existing
+  method-call fail-loud precedent (`lower.rs`) — so the compiler now **rejects the write
+  loudly** instead of miscompiling it, matching the native backend's refusal. Working
+  receivers (`array<T>`, `bytes[N]`) and all array reads are untouched. **Byte-identity
+  neutral:** `main.mind` + all of `std` emit zero surface fixed-aggregate writes (they use the
+  raw `__mind_store_i64` ABI), so the changed arm is dead during self-compile. The real typed
+  store path (`Instr::ArrayStore` + env rebind, or a memref-backed mutable aggregate) is the
+  tracked follow-on (Q19 CANONICAL_DECISION + the Step D aggregate-type invariant); a clean
+  `error[E…]` check-phase diagnostic in place of the build-time panic is a queued UX polish.
+  Gates: functional probe (aggregate writes fail-closed; reads / scalar-reassign / `array<T>`
+  / `bytes[N]` writes green) · mic3_flip whole-module byte-identical (621052 B) · keystone 7/7
+  · oracle-parity · cross_substrate · cargo fmt/clippy/doc.
+
 ### Fixed — self-host mic@3 emitter: if-block branch-local-`let` scope (keystone)
 - **`emit_mic3_if_block_instr` no longer serializes dead OP_IF branch_binding/merge records for
   branch-local `let` declarations** (corr2/#287-F2 self-host completion). #287-F2 fixed the Rust

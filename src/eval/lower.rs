@@ -8801,9 +8801,32 @@ fn lower_expr(
                 });
                 return dst;
             }
-            let id = ir.fresh();
-            ir.instrs.push(Instr::ConstI64(id, 0));
-            id
+            // A plain fixed `[T; N]` (or a const-literal-initialized
+            // `tensor<T[N]>`) receiver is an IMMUTABLE value-aggregate
+            // (`ConstArray` / `ConstDenseTensor`) with NO store path in the IR,
+            // so the old `ConstI64(0)` placeholder here SILENTLY DROPPED the
+            // write — every later `a[i]` read observed the pre-write incarnation
+            // (docs/ARRAY_SEMANTICS.md Q19: "a LIVE i64 miscompile"). Fail LOUD
+            // instead of miscompiling, matching the native backend's fail-closed
+            // refusal and the #306 philosophy. The working mutable receivers
+            // (`array<T>` -> vec_set, `bytes[N]` -> __mind_store_i8) are handled
+            // above and never reach here; `main.mind` + all of std emit ZERO
+            // surface fixed-aggregate writes (they use the raw `__mind_store_i64`
+            // ABI), so the keystone artifact is byte-identical by construction.
+            //
+            // deferred: the real typed store path (`Instr::ArrayStore` + env
+            // rebind, or a memref-backed mutable aggregate) is the upgrade — see
+            // docs/ARRAY_SEMANTICS.md Q19 CANONICAL_DECISION + the aggregate-type
+            // invariant work (Step D).
+            panic!(
+                "index assignment `{}[..] = ..` on a fixed-size array or a \
+                 const-initialized tensor is not yet supported: the aggregate is \
+                 an immutable value with no store path, so emitting the write \
+                 would silently drop it (a miscompile). Use a growable `array<T>`, \
+                 a `bytes[N]` buffer, or a mutable runtime tensor instead. \
+                 (docs/ARRAY_SEMANTICS.md Q19.)",
+                describe_receiver(receiver),
+            )
         }
         // RFC 0010 Phase A — `extern "C" { fn decls }` block.
         //

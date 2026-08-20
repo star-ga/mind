@@ -237,13 +237,13 @@ normative target; `GAP` = distance; `EVIDENCE` = citation/observation.
 - EVIDENCE = `tests/const_f64_array_run.rs` (dlopen exec, exact bits incl. `-0.0` + dynamic index).
 
 ### Q19 — Mutable arrays
-- CURRENT_RUST_MLIR = `let mut a:[T;N]; a[i]=v` on a non-vec/non-bytes receiver **silently drops** the store (IndexAssign lowers to a placeholder) — a LIVE i64 miscompile predating f64.
+- CURRENT_RUST_MLIR = `let mut a:[T;N]; a[i]=v` on a non-vec/non-bytes receiver (a plain fixed `[T;N]` or a const-literal `tensor<T[N]>`) now **fails CLOSED** — the `IndexAssign` lowering panics with an actionable diagnostic instead of the old `ConstI64(0)` placeholder that **silently dropped** the store (was a LIVE i64/f64 miscompile predating f64). Fixed in `lower.rs` IndexAssign else-branch (the `SILENT_STORE_DROP = IMPOSSIBLE_OR_FAIL_CLOSED` interim landed); matches the native backend's refusal. Working mutable receivers (`array<T>` → `vec_set`, `bytes[N]` → `__mind_store_i8`) and all reads are unaffected.
 - CURRENT_SELFHOST = typed `[T;N]` + mutable writes on supported fixed paths (`96562008`), fail-closed elsewhere.
 - CURRENT_EVALUATOR = OPEN.
-- CANONICAL_DECISION = typed contiguous 8-byte cells; loads/stores via typed IR lowering to native f64 memory ops (bitcast only where a generic carrier is genuinely required — never `fptosi`/`sitofp`). Un-drop IndexAssign (fail-closed until a real store path exists).
-- GAP = silent store-drop on the generic receiver; no typed mutable fixed backing.
-- EVIDENCE = `lower.rs` IndexAssign lowers a non-vec/non-bytes receiver to a placeholder; §2.
-- **`SILENT_STORE_DROP` = IMPOSSIBLE_OR_FAIL_CLOSED** is the required end state for i64/f32/f64 alike.
+- CANONICAL_DECISION = typed contiguous 8-byte cells; loads/stores via typed IR lowering to native f64 memory ops (bitcast only where a generic carrier is genuinely required — never `fptosi`/`sitofp`). Un-drop IndexAssign (fail-closed until a real store path exists) — **interim fail-closed DONE**; the real typed store path (`Instr::ArrayStore` + env rebind, or a memref-backed mutable aggregate) is the remaining follow-on (see Step D aggregate-type invariant).
+- GAP = silent store-drop CLOSED (now fail-closed); remaining gap = no typed mutable fixed backing (a real store path is not yet implemented, so the write is rejected rather than performed).
+- EVIDENCE = `lower.rs` IndexAssign else-branch now emits a fail-closed diagnostic (was a `ConstI64(0)` placeholder); §2. Functional probe: `let mut a:[i64;3]=[1,2,3]; a[0]=9; return a[0]` and the `tensor<i64[3]>` twin both fail-closed; reads / scalar-reassign / `array<T>` / `bytes[N]` stay green.
+- **`SILENT_STORE_DROP` = IMPOSSIBLE_OR_FAIL_CLOSED** is the required end state for i64/f32/f64 alike — **the FAIL_CLOSED half is now enforced**.
 
 ### Q20 — Self-host / evaluator parity
 - CURRENT_SELFHOST = native-ELF implements f64 arrays on several fixed surfaces (`1d8b2d4b` literals/indexed-reads/variable-index/arith/`.len()`/exact cells; `96562008` typed `[T;N]`+mutable+fail-closed; `71ecc358` float tensor strict L→R reduction) but diverges on OOB (trap vs clamp), aliasing (unsupported), and fixed-array args (unsupported).
