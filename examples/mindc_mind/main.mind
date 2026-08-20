@@ -44989,9 +44989,12 @@ pub fn selftest_tc_classify_error_code(c1: i64, c2: i64, c3: i64, c4: i64, c5: i
 // Name encoding: a name's first 32 bytes packed little-endian into four i64
 // words (unused high bytes zero) plus the TRUE byte length. For len <= 32 the
 // tuple (w0,w1,w2,w3,len) is a bijection with the name, so tuple equality IS
-// string equality; for len > 32 no table entry can match anyway (the longest
-// registered name is 31 bytes), so length inequality alone decides — the
-// encoding is exact over the whole identifier space. starts_with("__mind_")
+// string equality. For len > 32 the tuple captures only the first 32 bytes +
+// the TRUE length, so equality is exact only when the first 32 bytes AND the
+// length both match; this stays sound because the sole >32-byte entry
+// (__mind_nerve_blas_matmul_score_q16_i64, 38 bytes) shares its first 32 bytes
+// with no other registered name and its length discriminates it from every
+// <=32 entry — so the allowlist lookup is exact over the intrinsic set. starts_with("__mind_")
 // reads the low 7 bytes of w0 (w0 % 2^56, valid: ASCII bytes keep w0 >= 0)
 // once len >= 7. Additive: reached only through
 // selftest_tc_self_host_only_call, never mindc_compile.
@@ -45026,7 +45029,7 @@ pub fn tc_shoc_eq(w0: i64, w1: i64, w2: i64, w3: i64, len: i64, e0: i64, e1: i64
     1
 }
 
-// Membership in the STD_SURFACE_INTRINSICS table (all 36 entries, packed-word
+// Membership in the STD_SURFACE_INTRINSICS table (all 55 entries, packed-word
 // constants generated from the Rust table in src/type_checker/mod.rs — the
 // smoke regenerates them from that same source and cross-checks every case
 // against the live `mindc check` E2024 verdict).
@@ -45173,6 +45176,82 @@ pub fn tc_is_std_surface_intrinsic(w0: i64, w1: i64, w2: i64, w3: i64, len: i64)
     }
     // "byte"
     if tc_shoc_eq(w0, w1, w2, w3, len, 1702132066, 0, 0, 0, 4) == 1 {
+        return 1;
+    }
+    // "__mind_blas_gemv_q16_mt"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7088494763882405727, 8533588363594391916, 32771352996966751, 0, 23) == 1 {
+        return 1;
+    }
+    // "__mind_nerve_blas_attnv_q16_i64"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7953185892337540959, 7020094081027437157, 6878806927302811507, 14696524985807217, 31) == 1 {
+        return 1;
+    }
+    // "__mind_nerve_blas_dot_q16_i64"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7953185892337540959, 7020094081027437157, 3562733733916467059, 224251174710, 29) == 1 {
+        return 1;
+    }
+    // "__mind_nerve_blas_matmul_q16_i64"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7953185892337540959, 7020094081027437157, 7815273074989555571, 3762310396366647647, 32) == 1 {
+        return 1;
+    }
+    // "__mind_nerve_blas_matmul_score_q16_i64" (len>32: first-32-byte pack, unambiguous in the intrinsic set)
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7953185892337540959, 7020094081027437157, 7815273074989555571, 8169359791242834783, 38) == 1 {
+        return 1;
+    }
+    // "__mind_nerve_blas_qkt_q16_i64"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7953185892337540959, 7020094081027437157, 3562733733850210163, 224251174710, 29) == 1 {
+        return 1;
+    }
+    // "__mind_nerve_lut_exp_h"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7953185892337540959, 8391732637654741605, 114759118120287, 0, 22) == 1 {
+        return 1;
+    }
+    // "__mind_nerve_lut_recip_h"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7953185892337540959, 8391732637654741605, 7520853500673487455, 0, 24) == 1 {
+        return 1;
+    }
+    // "__mind_nerve_lut_rsqrt_h"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7953185892337540959, 8391732637654741605, 7520857937610502751, 0, 24) == 1 {
+        return 1;
+    }
+    // "__mind_nerve_lut_tanh_h"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7953185892337540959, 8391732637654741605, 29378299711026271, 0, 23) == 1 {
+        return 1;
+    }
+    // "__mind_nerve_rt_exit"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7953185892337540959, 6878248284951310949, 1953069157, 0, 20) == 1 {
+        return 1;
+    }
+    // "__mind_nerve_rt_file_size"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7953185892337540959, 6878248284951310949, 8820708198742518118, 101, 25) == 1 {
+        return 1;
+    }
+    // "__mind_nerve_rt_getenv"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7953185892337540959, 6878248284951310949, 130216520607079, 0, 22) == 1 {
+        return 1;
+    }
+    // "__mind_nerve_rt_monotonic_ns"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7953185892337540959, 6878248284951310949, 7597132167297003373, 1936613219, 28) == 1 {
+        return 1;
+    }
+    // "__mind_nerve_rt_os_entropy"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7953185892337540959, 6878248284951310949, 8030609103050994543, 31088, 26) == 1 {
+        return 1;
+    }
+    // "__mind_nerve_rt_read_file"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7953185892337540959, 6878248284951310949, 7811887588542866802, 101, 25) == 1 {
+        return 1;
+    }
+    // "__mind_nerve_rt_read_stdin"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7953185892337540959, 6878248284951310949, 7238537354634421618, 28265, 26) == 1 {
+        return 1;
+    }
+    // "__mind_nerve_rt_write_stderr"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7953185892337540959, 6878248284951310949, 8391155420070769271, 1920099684, 28) == 1 {
+        return 1;
+    }
+    // "__mind_nerve_rt_write_stdout"
+    if tc_shoc_eq(w0, w1, w2, w3, len, 7953185892337540959, 6878248284951310949, 8391155420070769271, 1953853284, 28) == 1 {
         return 1;
     }
     0

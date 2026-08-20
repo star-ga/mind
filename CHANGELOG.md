@@ -21,6 +21,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mic3_flip whole-module byte-identical, oracle-parity 30/30, keystone 7/7, cross_substrate,
   self-host loop stage1==stage2==stage3==frozen.
 
+### Fixed — self-host E2024 intrinsic allowlist parity (keystone)
+- **`tc_is_std_surface_intrinsic` (the pure-MIND self-host E2024 rule) synced to the Rust
+  `STD_SURFACE_INTRINSICS` table (36 → 55 entries).** The pure-MIND allowlist in
+  `examples/mindc_mind/main.mind` had fallen 19 intrinsics behind the Rust oracle — the
+  `__mind_nerve_*` runtime/BLAS/LUT C-ABI surface plus `__mind_blas_gemv_q16_mt` — so its
+  `self_host_only_call` (E2024) predicate flagged them as compiler-internal (`got=1`) while
+  the Rust oracle and shipped `mindc check` (which register them as user-callable std-surface
+  intrinsics) returned `0`. This reddened the keystone additive-selftest gate
+  (`self_host_tc_self_host_only_call_smoke.py`: 19/173 divergences, main keystone CI red).
+  The 19 packed-word allowlist entries are added (first-32-bytes-little-endian words + true
+  length, matched via `tc_shoc_eq`), driving all 173 cases to `got==rule==live`. The table is
+  reached only through `selftest_tc_self_host_only_call`, never `mindc_compile`, so the change
+  is byte-identity neutral (Rust `mod.rs` is the authoritative side; E2024 is an advisory
+  `Warning`). The RI-E1 self-host bootstrap seed is re-blessed. Gates: E2024 173/173 · E2012
+  fn-value-call 56/56 (shared table, zero regression) · oracle-parity 30/30 · mic3_flip
+  whole-module byte-identical · keystone 7/7 · tc-differential-fuzz 0 divergences ·
+  self-host loop stage1==stage2==stage3==frozen.
+
 ### Security — post-quantum evidence-chain signing + parser hardening (RFC 0016 Phase C, opt-in)
 - **PQC-hybrid signing scheme `pqc-hybrid-ml-dsa-87-slh-dsa-256s`.** The opt-in evidence
   signature layer gains a NIST category-5 post-quantum hybrid: **ML-DSA-87** (FIPS-204,
