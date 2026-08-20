@@ -42703,6 +42703,52 @@ pub fn nb_sat_cast_i64(code: String, x_disp: i64, raw_disp: i64, mpos_disp: i64,
     nb_store_rax(e5, out_disp)
 }
 
+// SATURATING f64 -> signed NARROW (i8/i16/i32) tail: the integer clamp that the
+// MLIR oracle `emit_saturating_fp_to_narrow` (src/mlir/lowering.rs) applies AFTER
+// the proven saturating f64->i64-signed base (nb_sat_cast_i64, above). MLIR does
+// `maxsi(i64, nmin)` then `minsi(_, nmax)` on the ALREADY-saturated i64; the
+// result is carried SIGN-EXTENDED in the i64 slot (`ScalarI64`), NOT wrapped —
+// so `300.0 as i8` = 127 (clamp), NOT 44 (wrap), matching the live cpu backend
+// (verified: exit 127). nmin/nmax are the SIGNED bounds for width w:
+// nmin = -(2^(w-1)), nmax = 2^(w-1)-1  (i8 [-128,127], i16 [-32768,32767],
+// i32 [INT32_MIN,INT32_MAX]) — all fit in a signed imm32, so the two bound
+// spills reuse the sat base's now-DEAD raw/mpos scratch slots (lo_disp/hi_disp)
+// and no fresh SSA id is consumed by the clamp. Branchless (cmp + cmov, no jump)
+// = fastest + deterministic; adds ZERO jump records to the scaffold.
+//   in: the saturated i64 lives in out_disp (nb_sat_cast_i64's out); lo/hi_disp
+//       are two free scratch frame slots; nmin/nmax the signed width bounds.
+//   out: out_disp holds max(min(sat, nmax), nmin), sign-extended.
+pub fn nb_sat_narrow_clamp(code: String, out_disp: i64, lo_disp: i64, hi_disp: i64, nmin: i64, nmax: i64) -> String {
+    // spill nmin -> lo, nmax -> hi (movabs rax,imm ; store — clobbers rax, which
+    // we reload immediately after, so the clobber is dead).
+    let s0: String = nb_intdot_movimm(code, nmin, lo_disp);
+    let s1: String = nb_intdot_movimm(s0, nmax, hi_disp);
+    let l0: String = nb_load_rax(s1, out_disp);
+    // rax = max(rax, nmin): cmp rax,[lo] (48 3B 85 disp32) ; cmovl rax,[lo]
+    // (48 0F 4C 85 disp32) — if rax < nmin (signed), take nmin.
+    let l1: String = nb_push(l0, 72);
+    let l2: String = nb_push(l1, 59);
+    let l3: String = nb_push(l2, 133);
+    let l4: String = nb_i32le_signed(l3, lo_disp);
+    let l5: String = nb_push(l4, 72);
+    let l6: String = nb_push(l5, 15);
+    let l7: String = nb_push(l6, 76);
+    let l8: String = nb_push(l7, 133);
+    let l9: String = nb_i32le_signed(l8, lo_disp);
+    // rax = min(rax, nmax): cmp rax,[hi] ; cmovg rax,[hi] (48 0F 4F 85 disp32) —
+    // if rax > nmax (signed), take nmax.
+    let h1: String = nb_push(l9, 72);
+    let h2: String = nb_push(h1, 59);
+    let h3: String = nb_push(h2, 133);
+    let h4: String = nb_i32le_signed(h3, hi_disp);
+    let h5: String = nb_push(h4, 72);
+    let h6: String = nb_push(h5, 15);
+    let h7: String = nb_push(h6, 79);
+    let h8: String = nb_push(h7, 133);
+    let h9: String = nb_i32le_signed(h8, hi_disp);
+    nb_store_rax(h9, out_disp)
+}
+
 // One wrapping-polynomial fold step: acc = acc*K + term  (K=-80, term=-120,
 // acc=-128). imul/add wrap in two's complement, matching arith.muli/arith.addi.
 pub fn nb_cast_fold(code: String) -> String {
@@ -42776,6 +42822,68 @@ pub fn selftest_native_elf_scalar_cast_conv(inr_bits: i64, povf_bits: i64, novf_
     let w3: String = nb_emit_write(w2, 0 - 152, 0 - 144, 0 - 160);
     let z0: String = nb_intdot_movimm(w3, 0, 0 - 168);
     let z1: String = nb_load_rax(z0, 0 - 168);
+    let code: String = nb_emit_return(z1, 1);
+    let hbuf: i64 = __mind_alloc(32);
+    let note: String = nb_build_note(string_new(), hbuf);
+    let elf: String = nb_write_elf(code, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
+
+// sat+clamp one spilled f64 at src_disp into out_disp, clamped to the signed
+// narrow range [nmin,nmax] — the composed native primitive that byte-VALUE-
+// matches the MLIR oracle emit_saturating_fp_to_narrow: the proven saturating
+// f64->i64-signed base (nb_sat_cast_i64) THEN the integer maxsi/minsi clamp
+// (nb_sat_narrow_clamp). scratch slots sc0..sc3 hold the sat base's raw/mpos/
+// mnan/max; sc0/sc1 are re-borrowed by the clamp (dead after the base writes out).
+pub fn nb_sat_narrow_at(code: String, src_disp: i64, out_disp: i64, sc0: i64, sc1: i64, sc2: i64, sc3: i64, nmin: i64, nmax: i64) -> String {
+    let c: String = nb_sat_cast_i64(code, src_disp, sc0, sc1, sc2, sc3, out_disp);
+    nb_sat_narrow_clamp(c, out_disp, sc0, sc1, nmin, nmax)
+}
+
+// RI-D / #10 native-float SLICE 1a — native-ELF SATURATING f64 -> signed NARROW
+// (i8/i16/i32) cast, byte-VALUE-identical to the MLIR backend
+// emit_saturating_fp_to_narrow. Emits an ET_EXEC that sat+clamps FOUR emit-time
+// f64 edge bit patterns to [nmin,nmax], folds them in fixed source order via the
+// wrapping polynomial (acc = acc*1000003 + term), and writes the folded i64 as 8
+// LE bytes. The Python gate cross-checks the folded i64 against a Rust/numpy
+// oracle (sat-toward-zero-then-clamp) AND the live `mindc build` cpu backend, so
+// the SATURATE-not-wrap narrow semantics are execution-confirmed with ZERO
+// MLIR/LLVM in the emit chain. All four edges baked at emit time.
+// Slot map (avoids nb_cast_fold's hardcoded acc=-128 / K=-80 / term=-120):
+//   edges -8/-16/-24/-32 ; K -80 ; term -120 ; acc -128 ;
+//   sat scratch raw/-200 mpos/-208 mnan/-216 max/-224 ; write copy/-232 lea/-240
+//   fd/-248 len/-256 exit/-264.
+pub fn selftest_native_elf_scalar_narrow(nmin: i64, nmax: i64, inr_bits: i64, povf_bits: i64, novf_bits: i64, nan_bits: i64) -> EmitState {
+    let p0: String = nb_fp_prologue_frame(string_new(), 512);
+    // Spill the four edge f64 bit patterns to slots -8..-32.
+    let s0: String = nb_fp_const_xmm(p0, inr_bits, 0);
+    let s1: String = nb_fp_movsd_store_xmm0(s0, 0 - 8);
+    let s2: String = nb_fp_const_xmm(s1, povf_bits, 0);
+    let s3: String = nb_fp_movsd_store_xmm0(s2, 0 - 16);
+    let s4: String = nb_fp_const_xmm(s3, novf_bits, 0);
+    let s5: String = nb_fp_movsd_store_xmm0(s4, 0 - 24);
+    let s6: String = nb_fp_const_xmm(s5, nan_bits, 0);
+    let s7: String = nb_fp_movsd_store_xmm0(s6, 0 - 32);
+    // Fold constant K=1000003 into nb_cast_fold's fixed slot -80.
+    let k0: String = nb_intdot_movimm(s7, 1000003, 0 - 80);
+    // e0 = sat+clamp(inr) -> acc (fold seed, slot -128).
+    let e0: String = nb_sat_narrow_at(k0, 0 - 8, 0 - 128, 0 - 200, 0 - 208, 0 - 216, 0 - 224, nmin, nmax);
+    // e1..e3 = sat+clamp(edge) -> term (slot -120) ; fold each.
+    let e1a: String = nb_sat_narrow_at(e0, 0 - 16, 0 - 120, 0 - 200, 0 - 208, 0 - 216, 0 - 224, nmin, nmax);
+    let e1b: String = nb_cast_fold(e1a);
+    let e2a: String = nb_sat_narrow_at(e1b, 0 - 24, 0 - 120, 0 - 200, 0 - 208, 0 - 216, 0 - 224, nmin, nmax);
+    let e2b: String = nb_cast_fold(e2a);
+    let e3a: String = nb_sat_narrow_at(e2b, 0 - 32, 0 - 120, 0 - 200, 0 - 208, 0 - 216, 0 - 224, nmin, nmax);
+    let e3b: String = nb_cast_fold(e3a);
+    // write(1, &acc, 8) ; exit(0).
+    let r0: String = nb_load_rax(e3b, 0 - 128);
+    let r1: String = nb_store_rax(r0, 0 - 232);
+    let w0: String = nb_intdot_lea(r1, 0 - 232, 0 - 240);
+    let w1: String = nb_intdot_movimm(w0, 1, 0 - 248);
+    let w2: String = nb_intdot_movimm(w1, 8, 0 - 256);
+    let w3: String = nb_emit_write(w2, 0 - 248, 0 - 240, 0 - 256);
+    let z0: String = nb_intdot_movimm(w3, 0, 0 - 264);
+    let z1: String = nb_load_rax(z0, 0 - 264);
     let code: String = nb_emit_return(z1, 1);
     let hbuf: i64 = __mind_alloc(32);
     let note: String = nb_build_note(string_new(), hbuf);
