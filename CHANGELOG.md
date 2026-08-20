@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — fixed-array / const-tensor `a[i] = v` now WORKS (straight-line) via `Instr::ArrayStore` (#320 Step D)
+- **`a[i] = v` on a plain fixed `[T; N]` / const-literal `tensor<T[N]>` is now a real, value-semantic
+  store as a top-level statement** — the fix-the-write on top of the 0x2B wire foundation. It lowers
+  to `Instr::ArrayStore` (MLIR `tensor.insert` yielding a FRESH aggregate SSA value with the same
+  `{i64,i32,f32,f64}` element type, same DETERMINISTIC_BOUNDS_TRAP as `ArrayLoad`), and the fn-body
+  statement dispatch rebinds the receiver root name to that fresh id — so a later `a[j]` read observes
+  the write. Verified by COMPILE+RUN (`tests/array_store_run.rs`): `a[0]=9;return a[0]`→9, two-write
+  sum→90, `tensor<i64[3]>` literal store→9, untouched-sibling read→2. Reference-semantic `array<T>`
+  (`vec_set`) / `bytes[N]` (`__mind_store_i8`) and all reads are unchanged.
+- **Inside a LOOP / BRANCH body (or in expression position), `a[i]=v` FAILS CLOSED (loud)** rather
+  than silently dropping the write: the fresh incarnation's rebind is not yet threaded through the
+  F2 region-exit machinery, so a store there would read back the pre-region value (verified — it did,
+  returning 0). The compiler rejects it deterministically; the F2-region-threaded loop/branch store
+  is the tracked follow-on. **Net: the silent store-drop is eliminated in every case** — straight-line
+  stores correctly, loop/branch fails closed, never a silent-wrong.
+- **Byte-identity neutral / wedge intact:** `main.mind` + all of `std` emit zero surface `a[i]=v`
+  (raw `__mind_store_i64` ABI), so `ArrayStore` is inert during self-compile. Gates: `array_store_run`
+  (straight-line RUNS; loop/while fail-closed) · keystone 7/7 byte-identical · mic3_flip whole-module
+  byte-identical (621052 B) · oracle-parity 30/30 · fmt/clippy/rustdoc — all locally green; the
+  cross_substrate canary set is byte-identical (the aggregate-store path does not touch the GEMM /
+  reduction kernels; it was 24/24 on the 0x2B wire foundation) and is re-verified by the CI dual-arch
+  (avx2 + neon) matrix on this push.
+
 ### Added — mic@3 `ArrayStore` opcode (0x2B) + IR variant (#320 Step D aggregate mutation — wire foundation)
 - **New `Instr::ArrayStore { dst, base, index, value }` IR variant + mic@3 opcode `0x2B`** — the
   value-semantic backing for `arr[idx] = value` on a fixed `[T; N]` / const-literal `tensor<T[N]>`:

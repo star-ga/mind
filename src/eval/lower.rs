@@ -6160,6 +6160,85 @@ fn lower_expr(
                         let id = mask_narrow_assign(&mut fn_ir, name, id);
                         fn_env.insert(name.clone(), id);
                     }
+                    // #320 Step D aggregate mutation — `a[i] = v`. A value-semantic
+                    // fixed `[T; N]` / const-literal-tensor store emits an
+                    // `Instr::ArrayStore` (a FRESH aggregate id) and rebinds the
+                    // receiver root name HERE at statement dispatch, so later reads
+                    // in this fn-body scope observe the write (env is `&HashMap`
+                    // inside `lower_expr` — the rebind cannot happen there). We emit
+                    // it DIRECTLY (not via `lower_expr`, which fails closed for this
+                    // receiver) precisely so a loop/branch-body `a[i]=v` — which is
+                    // lowered elsewhere and does NOT reach here — fails loud rather
+                    // than silently dropping the store. Reference-semantic `array<T>`
+                    // (vec_set) / `bytes[N]` (__mind_store_i8) are lowered by
+                    // `lower_expr` and keep the name bound to the same base handle —
+                    // no rebind.
+                    #[cfg(feature = "std-surface")]
+                    node @ ast::Node::IndexAssign {
+                        receiver,
+                        index,
+                        value,
+                        ..
+                    } => {
+                        let sentinel = receiver_collection_sentinel(
+                            receiver,
+                            &fn_ir,
+                            &fn_struct_env,
+                            receiver_types,
+                        );
+                        if sentinel == Some(ARRAY_VEC_SENTINEL)
+                            || sentinel == Some(FIXED_BYTES_SENTINEL)
+                        {
+                            let id = lower_expr(
+                                node,
+                                &mut fn_ir,
+                                &fn_env,
+                                &fn_struct_env,
+                                receiver_types,
+                            );
+                            ret_id = Some(id);
+                        } else if let ast::Node::Lit(Literal::Ident(root), _) = receiver.as_ref() {
+                            let base = lower_expr(
+                                receiver,
+                                &mut fn_ir,
+                                &fn_env,
+                                &fn_struct_env,
+                                receiver_types,
+                            );
+                            let idx = lower_expr(
+                                index,
+                                &mut fn_ir,
+                                &fn_env,
+                                &fn_struct_env,
+                                receiver_types,
+                            );
+                            let val = lower_expr(
+                                value,
+                                &mut fn_ir,
+                                &fn_env,
+                                &fn_struct_env,
+                                receiver_types,
+                            );
+                            let dst = fn_ir.fresh();
+                            fn_ir.instrs.push(Instr::ArrayStore {
+                                dst,
+                                base,
+                                index: idx,
+                                value: val,
+                            });
+                            fn_env.insert(root.clone(), dst);
+                            ret_id = Some(dst);
+                        } else {
+                            let id = lower_expr(
+                                node,
+                                &mut fn_ir,
+                                &fn_env,
+                                &fn_struct_env,
+                                receiver_types,
+                            );
+                            ret_id = Some(id);
+                        }
+                    }
                     other => {
                         let id =
                             lower_expr(other, &mut fn_ir, &fn_env, &fn_struct_env, receiver_types);
@@ -8818,12 +8897,22 @@ fn lower_expr(
             // rebind, or a memref-backed mutable aggregate) is the upgrade — see
             // docs/ARRAY_SEMANTICS.md Q19 CANONICAL_DECISION + the aggregate-type
             // invariant work (Step D).
+            // #320 Step D: a value-semantic fixed-`[T; N]` / const-literal-tensor
+            // `a[i] = v` is emitted (as `Instr::ArrayStore` + a name rebind) ONLY
+            // at fn-body statement dispatch, where the fresh post-store incarnation
+            // can be rebound so later reads observe it. Reaching HERE means the
+            // assignment is in EXPRESSION position or inside a loop / if body — its
+            // rebind would NOT propagate, so a store emitted here would be silently
+            // lost (verified: a loop-body `a[k]=..` without the F2 region rebind
+            // reads back the pre-loop value). Fail CLOSED instead. F2-region-threaded
+            // loop/branch support is the tracked follow-on; docs/ARRAY_SEMANTICS.md Q19.
             panic!(
-                "index assignment `{}[..] = ..` on a fixed-size array or a \
-                 const-initialized tensor is not yet supported: the aggregate is \
-                 an immutable value with no store path, so emitting the write \
-                 would silently drop it (a miscompile). Use a growable `array<T>`, \
-                 a `bytes[N]` buffer, or a mutable runtime tensor instead. \
+                "index assignment `{}[..] = ..` on a fixed-size array / \
+                 const-initialized tensor is only supported as a top-level \
+                 statement in a function body; inside a loop / branch body or in \
+                 expression position it is not yet supported (fail-closed to avoid \
+                 silently dropping the write). Hoist it to a straight-line \
+                 statement, or use a growable `array<T>` / `bytes[N]` buffer. \
                  (docs/ARRAY_SEMANTICS.md Q19.)",
                 describe_receiver(receiver),
             )

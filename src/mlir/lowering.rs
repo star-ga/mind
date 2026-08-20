@@ -4622,6 +4622,104 @@ impl LoweringContext {
                 ));
                 self.values.insert(*dst, kind);
             }
+            // #320 Step D aggregate mutation — array element store. Mirrors the
+            // ArrayLoad bounds discipline (DETERMINISTIC_BOUNDS_TRAP) but emits
+            // `tensor.insert` yielding a FRESH aggregate value `dst` (same tensor
+            // type as `base`), so a later ArrayLoad on the rebound name observes
+            // the write. Only {i64,i32,f32,f64} elements are proven-correct; every
+            // other element type fails closed (matching ArrayLoad).
+            #[cfg(feature = "std-surface")]
+            Instr::ArrayStore {
+                dst,
+                base,
+                index,
+                value,
+            } => {
+                let (elem_dtype, len, shape) = match self.values.get(base) {
+                    Some(ValueKind::Tensor { dtype, shape }) => {
+                        let len = match shape.as_slice() {
+                            [ShapeDim::Known(n)] => *n,
+                            _ => {
+                                return Err(MlirLowerError::ShapeError(format!(
+                                    "ArrayStore base {base:?} is not a rank-1 static array"
+                                )));
+                            }
+                        };
+                        (dtype.clone(), len, shape.clone())
+                    }
+                    _ => {
+                        return Err(MlirLowerError::MissingTypeInfo {
+                            value: *base,
+                            context: "array store base",
+                        });
+                    }
+                };
+                let elem = match elem_dtype {
+                    DType::I64 => "i64",
+                    DType::I32 => "i32",
+                    DType::F32 => "f32",
+                    DType::F64 => "f64",
+                    other => {
+                        return Err(MlirLowerError::ShapeError(format!(
+                            "ArrayStore: element type `{}` is not supported on the \
+                             executable path (only i64/i32/f32/f64); storing into a \
+                             `{}`-typed array element is rejected to avoid a silent \
+                             width-miscompile or invalid IR",
+                            other.as_str(),
+                            other.as_str()
+                        )));
+                    }
+                };
+                if len == 0 {
+                    return Err(MlirLowerError::ShapeError(format!(
+                        "ArrayStore: cannot index an empty (len 0) array {base:?} \
+                         — every index is out of bounds"
+                    )));
+                }
+                // ARRAY_OOB_CONTRACT=DETERMINISTIC_BOUNDS_TRAP, identical to
+                // ArrayLoad: provable const OOB rejected at compile time, runtime
+                // index routed through the single `__mind_oob_check` authority.
+                match self.const_i64_map.get(index).copied() {
+                    Some(c) if c < 0 || c >= len as i64 => {
+                        return Err(MlirLowerError::ShapeError(format!(
+                            "ArrayStore: constant index {c} is out of bounds for a \
+                             length-{len} array {base:?} (valid indices 0..={}) — a \
+                             compile-time-provable out-of-bounds access is rejected \
+                             deterministically, never clamped",
+                            len - 1
+                        )));
+                    }
+                    Some(c) => {
+                        self.emit_line(&format!("  %sidx{0} = arith.constant {c} : index", dst.0));
+                    }
+                    None => {
+                        self.extern_calls
+                            .insert(("__mind_oob_check".to_string(), 2));
+                        self.emit_line(&format!("  %slen{0} = arith.constant {len} : i64", dst.0));
+                        self.emit_line(&format!(
+                            "  %schk{0} = func.call @__mind_oob_check({1}, %slen{0}) : (i64, i64) -> i64",
+                            dst.0, index
+                        ));
+                        self.emit_line(&format!(
+                            "  %sidx{0} = arith.index_cast %schk{0} : i64 to index",
+                            dst.0
+                        ));
+                    }
+                }
+                // `dst` is a NEW aggregate value of the SAME tensor type as base —
+                // register it so a following ArrayLoad on the rebound name types.
+                self.emit_line(&format!(
+                    "  {0} = tensor.insert {1} into {2}[%sidx{3}] : tensor<{4}x{elem}>",
+                    dst, value, base, dst.0, len
+                ));
+                self.values.insert(
+                    *dst,
+                    ValueKind::Tensor {
+                        dtype: elem_dtype,
+                        shape,
+                    },
+                );
+            }
             // RFC 0006 Track B (increment 1) — SIMD vector load.
             //
             // The Option-C ABI gives us i64 opaque addresses; native MLIR
