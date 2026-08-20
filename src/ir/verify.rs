@@ -1280,6 +1280,17 @@ fn validate_operands(
             check_defined(*base)?;
             check_defined(*index)?;
         }
+        // #320 Step D aggregate mutation: array store — base, index, and the
+        // written value must all be defined; `dst` is a fresh post-store
+        // incarnation auto-registered by the shared single-assignment walker.
+        #[cfg(feature = "std-surface")]
+        Instr::ArrayStore {
+            base, index, value, ..
+        } => {
+            check_defined(*base)?;
+            check_defined(*index)?;
+            check_defined(*value)?;
+        }
         // Phase 6.5 Stage 1a: If — condition, then, and else reside in their own
         // sub-instruction streams. Delegate to the shared recursive validator: it
         // walks each branch (catching a duplicate-def / undefined operand INSIDE

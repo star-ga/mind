@@ -330,6 +330,24 @@ fn format_instr(instr: &Instr, out: &mut String) {
             )
             .unwrap();
         }
+        // #320 Step D aggregate mutation — array element store (fresh dst).
+        #[cfg(feature = "std-surface")]
+        Instr::ArrayStore {
+            dst,
+            base,
+            index,
+            value,
+        } => {
+            writeln!(
+                out,
+                "  {} = array.store {} [{}] = {}",
+                value_name(*dst),
+                value_name(*base),
+                value_name(*index),
+                value_name(*value),
+            )
+            .unwrap();
+        }
         // Phase 6.5 Stage 1a — conditional branch.
         #[cfg(feature = "std-surface")]
         Instr::If {

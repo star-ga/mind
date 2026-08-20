@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — mic@3 `ArrayStore` opcode (0x2B) + IR variant (#320 Step D aggregate mutation — wire foundation)
+- **New `Instr::ArrayStore { dst, base, index, value }` IR variant + mic@3 opcode `0x2B`** — the
+  value-semantic backing for `arr[idx] = value` on a fixed `[T; N]` / const-literal `tensor<T[N]>`:
+  it yields a FRESH aggregate SSA value (the post-store incarnation) so a later `arr[j]` read
+  observes the write, unlike the reference-semantic `array<T>` (`vec_set`) / `bytes[N]`
+  (`__mind_store_i8`) paths which keep the name bound to the same base. This is the intended FIRST
+  population target of the #320 Step D canonical aggregate-type invariant (the `value_types` table,
+  landed-but-dormant until now). **Inert in this increment** — no lowering emits `ArrayStore` yet
+  (the MLIR `tensor.insert` lowering + the SSA env-rebind at the `IndexAssign` site are the
+  immediate follow-on), so behaviour is unchanged: `arr[idx] = value` on a fixed aggregate still
+  fails-closed (the interim from the prior entry) until the lowering lands. The opcode is a pure
+  additive append in previously-unused wire space (`0x2A` = `OP_CONST_DENSE_TENSOR` was the prior
+  max), so there is **no `MIC3_VERSION` bump**: every existing byte stream stays byte-identical,
+  PROVEN (not asserted) by keystone 7/7 + all cross_substrate canaries unchanged. Decode is a fixed
+  4×`read_vid` (no untrusted count → no alloc-amplification surface). Wired through `Instr`
+  (`instr_dst`), `verify` (define-before-use on base/index/value), `print`, `evidence`,
+  `ir_canonical` (`for_each_operand` reads base/index/value), and the mic@3 `emit`/`parse`. Gates:
+  new `tests/mic3_array_store_roundtrip.rs` (emit→parse→emit fixed point + 0x2B byte present) ·
+  keystone 7/7 byte-identical · mic3_flip whole-module byte-identical (621052 B) · cross_substrate
+  24/24 canaries unchanged · fmt/clippy/rustdoc clean.
+
 ### Fixed — silent aggregate index-write miscompile → fail-closed (MLIR/std-surface backend)
 - **`a[i] = v` on a const-literal-initialized aggregate (a plain fixed `[T; N]`, or a
   `tensor<T[N]> = [..]` literal) no longer silently drops the store on the default MLIR

@@ -531,6 +531,30 @@ pub enum Instr {
         /// SSA id of the runtime index value.
         index: ValueId,
     },
+    /// Store one element into a fixed-size array at a runtime index, yielding a
+    /// FRESH aggregate value (the post-store incarnation) — the value-semantic
+    /// backing for `arr[idx] = value` on a `[T; N]` / const-literal tensor
+    /// (RFC 0005 Phase 6.2b Gap 2 fix-the-write; #320 Step D aggregate mutation).
+    ///
+    /// `dst` is a NEW aggregate SSA id: later `arr[j]` reads MUST bind `dst`
+    /// (the lowering env-rebinds the aggregate name), so the write is observed —
+    /// unlike the reference-semantic `array<T>` (`vec_set`) / `bytes[N]`
+    /// (`__mind_store_i8`) paths, which keep the name bound to the same base.
+    /// The MLIR backend lowers this to `tensor.insert`; the native backend to a
+    /// base-pointer `__mind_store_i64`. `dst` inherits `base`'s `ArrayType`.
+    ///
+    /// Gated to `std-surface`.
+    #[cfg(feature = "std-surface")]
+    ArrayStore {
+        /// SSA destination: the FRESH aggregate value after the store.
+        dst: ValueId,
+        /// SSA id of the pre-store aggregate base value.
+        base: ValueId,
+        /// SSA id of the runtime index value.
+        index: ValueId,
+        /// SSA id of the scalar element value being written.
+        value: ValueId,
+    },
     /// While loop (RFC 0005 Gap 1).
     ///
     /// Carries the SSA id of the condition value and the sequence of IR
@@ -903,7 +927,9 @@ pub(crate) fn instruction_dst(instr: &Instr) -> Option<ValueId> {
         #[cfg(feature = "std-surface")]
         Instr::Break { .. } | Instr::Continue { .. } => None,
         #[cfg(feature = "std-surface")]
-        Instr::ConstArray { dst, .. } | Instr::ArrayLoad { dst, .. } => Some(*dst),
+        Instr::ConstArray { dst, .. }
+        | Instr::ArrayLoad { dst, .. }
+        | Instr::ArrayStore { dst, .. } => Some(*dst),
         #[cfg(feature = "std-surface")]
         Instr::If { dst, .. } => Some(*dst),
         #[cfg(feature = "std-surface")]

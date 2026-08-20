@@ -79,6 +79,11 @@ pub(super) const OP_CONTINUE: u8 = 0x29;
 /// mic@3 byte streams — and their `trace_hash` — are unchanged (append-only:
 /// 0x01..0x29 are NEVER renumbered).
 pub(super) const OP_CONST_DENSE_TENSOR: u8 = 0x2A;
+/// #320 Step D aggregate mutation — array element store (fresh dst incarnation).
+/// Additive append in previously-unused opcode space; existing byte streams stay
+/// byte-identical (proven by keystone + cross_substrate goldens), so no
+/// `MIC3_VERSION` bump is required.
+pub(super) const OP_ARRAY_STORE: u8 = 0x2B;
 
 // ─── DType byte tags ─────────────────────────────────────────────────────────
 
@@ -1164,6 +1169,21 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable, ver: u8) {
             write_vid(w, *dst).unwrap();
             write_vid(w, *base).unwrap();
             write_vid(w, *index).unwrap();
+        }
+        // #320 Step D aggregate mutation — array element store. Fixed-arity
+        // (4 × write_vid, no untrusted count) so decode adds no DoS surface.
+        #[cfg(feature = "std-surface")]
+        Instr::ArrayStore {
+            dst,
+            base,
+            index,
+            value,
+        } => {
+            w.write_all(&[OP_ARRAY_STORE]).unwrap();
+            write_vid(w, *dst).unwrap();
+            write_vid(w, *base).unwrap();
+            write_vid(w, *index).unwrap();
+            write_vid(w, *value).unwrap();
         }
         #[cfg(feature = "std-surface")]
         Instr::While {
