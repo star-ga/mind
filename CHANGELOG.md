@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added — fixed-array / const-tensor `a[i] = v` now WORKS inside a LOOP body (#320 Step D, F2 region-exit threading)
 - **`a[i] = v` on a fixed `[T; N]` / const-literal `tensor<T[N]>` now works inside a `for` / `while`
   loop body (including nested loops), not just straight-line** — the F2 region-exit rebind that the
-  prior increment left fail-closed. Fable-approved **Option A+ (value-semantic typed tensor
+  prior increment left fail-closed. The design-reviewed **Option A+ (value-semantic typed tensor
   block-arg)**: the mutated aggregate is threaded through the loop as a first-class `tensor<NxT>`
   loop iter-arg. A new `IndexAssign` arm in the `While`-body lowering (`src/eval/lower.rs`) emits
   `Instr::ArrayStore` and records the fresh post-store id as loop-carried (`record_loop_mut`), so the
