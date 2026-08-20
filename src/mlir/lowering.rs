@@ -4036,13 +4036,9 @@ impl LoweringContext {
                 // f64/f32 loop carry emits `: f64`/`: f32` instead of a hardcoded
                 // i64. Narrow ints stay i64 (their ABI is i64-packed) ⇒ for an
                 // all-i64 loop this is byte-identical to the untyped fmt_block_args.
-                let loop_types: Vec<&'static str> = loop_args
+                let loop_types: Vec<String> = loop_args
                     .iter()
-                    .map(|a| match self.values.get(&ValueId(a.init_id)) {
-                        Some(ValueKind::ScalarF64) => "f64",
-                        Some(ValueKind::ScalarF32) => "f32",
-                        _ => "i64",
-                    })
+                    .map(|a| loop_carry_mlir_type(self.values.get(&ValueId(a.init_id))))
                     .collect();
 
                 // Build arg-triple slices consumed by substitute_ids.
@@ -4099,11 +4095,7 @@ impl LoweringContext {
                             // need float block args — a hardcoded i64 makes
                             // `while` over floats invalid MLIR (i64 vs f64).
                             // Narrow ints stay i64 (their ABI is i64-packed).
-                            let ty = match self.values.get(&ValueId(a.init_id)) {
-                                Some(ValueKind::ScalarF64) => "f64",
-                                Some(ValueKind::ScalarF32) => "f32",
-                                _ => "i64",
-                            };
+                            let ty = loop_carry_mlir_type(self.values.get(&ValueId(a.init_id)));
                             format!("%{}: {}", a.head_name, ty)
                         })
                         .collect::<Vec<_>>()
@@ -4235,11 +4227,7 @@ impl LoweringContext {
                     let arg_decls: String = loop_args
                         .iter()
                         .map(|a| {
-                            let ty = match self.values.get(&ValueId(a.init_id)) {
-                                Some(ValueKind::ScalarF64) => "f64",
-                                Some(ValueKind::ScalarF32) => "f32",
-                                _ => "i64",
-                            };
+                            let ty = loop_carry_mlir_type(self.values.get(&ValueId(a.init_id)));
                             format!("%{}: {}", a.body_name, ty)
                         })
                         .collect::<Vec<_>>()
@@ -4380,26 +4368,26 @@ impl LoweringContext {
                     let after_arg_decls: String = loop_args
                         .iter()
                         .map(|a| {
-                            let ty = match self.values.get(&ValueId(a.init_id)) {
-                                Some(ValueKind::ScalarF64) => "f64",
-                                Some(ValueKind::ScalarF32) => "f32",
-                                _ => "i64",
-                            };
+                            let ty = loop_carry_mlir_type(self.values.get(&ValueId(a.init_id)));
                             format!("%{}: {}", a.exit_id, ty)
                         })
                         .collect::<Vec<_>>()
                         .join(", ");
                     self.emit_line(&format!("  ^while_after_{lbl}({after_arg_decls}):"));
                     // Register each exit id with its REAL loop-carried kind so any
-                    // downstream type lookup (e.g. a `return %exit` of an f64 loop
-                    // carry) emits the correct ABI type instead of a hardcoded i64.
-                    // Byte-identical for i64 loops (kind stays ScalarI64).
-                    for (a, t) in loop_args.iter().zip(&loop_types) {
-                        let kind = match *t {
-                            "f64" => ValueKind::ScalarF64,
-                            "f32" => ValueKind::ScalarF32,
-                            _ => ValueKind::ScalarI64,
-                        };
+                    // downstream type lookup emits the correct ABI type instead of a
+                    // hardcoded i64: a `return %exit` of an f64 loop carry needs f64,
+                    // and — F2 aggregate loop-carry (#320 Step D) — a post-loop
+                    // `ArrayLoad` on the exit id of a mutated `[T; N]` needs
+                    // `ValueKind::Tensor` or it fails MissingTypeInfo. Clone the
+                    // pre-loop init kind (invariant across header/body/after); i64
+                    // loops stay byte-identical (kind is ScalarI64 / absent→ScalarI64).
+                    for a in &loop_args {
+                        let kind = self
+                            .values
+                            .get(&ValueId(a.init_id))
+                            .cloned()
+                            .unwrap_or(ValueKind::ScalarI64);
                         self.values.insert(ValueId(a.exit_id), kind);
                     }
                 }
@@ -11652,6 +11640,41 @@ fn increment_odometer(coord: &mut [usize], sizes: &[usize]) {
             return;
         }
         coord[i] = 0;
+    }
+}
+
+/// MLIR type string of a loop-carried value, from its pre-loop `ValueKind`.
+///
+/// F2 aggregate loop-carry (#320 Step D): a fixed `[T; N]` / const-literal
+/// tensor mutated inside a loop body (`for k in .. { a[k] = v }`) is threaded
+/// as a first-class **value-semantic** `tensor<NxT>` loop iter-arg — the header,
+/// body and `^while_after` block-args, and every `cf.br`/`cf.cond_br` operand
+/// list, must carry that tensor type (not the default i64) or mlir-opt rejects
+/// the block-arg/operand type mismatch. BYTE-IDENTICAL for every scalar loop:
+/// f64/f32/i64 carries return the exact same string as the old inline match, so
+/// keystone / self-host / cross-substrate are untouched — only a tensor carry
+/// (which could not compile at all before) takes the new branch.
+///
+/// Element type maps the executable-path-proven set exactly (i64/i32/f32/f64),
+/// matching `ArrayLoad`/`ArrayStore`; an unproven tensor element dtype (Q16,
+/// f16, …) falls through to `dtype.as_str()`, which is INVALID MLIR and so
+/// fails LOUD at mlir-opt rather than silently miscompiling — the same
+/// fail-closed contract those two arms already enforce.
+fn loop_carry_mlir_type(kind: Option<&ValueKind>) -> String {
+    match kind {
+        Some(ValueKind::ScalarF64) => "f64".to_string(),
+        Some(ValueKind::ScalarF32) => "f32".to_string(),
+        Some(ValueKind::Tensor { dtype, shape }) => {
+            let elem = match dtype {
+                DType::I64 => "i64",
+                DType::I32 => "i32",
+                DType::F32 => "f32",
+                DType::F64 => "f64",
+                other => other.as_str(),
+            };
+            tensor_type(shape, elem)
+        }
+        _ => "i64".to_string(),
     }
 }
 

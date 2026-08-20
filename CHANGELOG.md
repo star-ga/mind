@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — fixed-array / const-tensor `a[i] = v` now WORKS inside a LOOP body (#320 Step D, F2 region-exit threading)
+- **`a[i] = v` on a fixed `[T; N]` / const-literal `tensor<T[N]>` now works inside a `for` / `while`
+  loop body (including nested loops), not just straight-line** — the F2 region-exit rebind that the
+  prior increment left fail-closed. Fable-approved **Option A+ (value-semantic typed tensor
+  block-arg)**: the mutated aggregate is threaded through the loop as a first-class `tensor<NxT>`
+  loop iter-arg. A new `IndexAssign` arm in the `While`-body lowering (`src/eval/lower.rs`) emits
+  `Instr::ArrayStore` and records the fresh post-store id as loop-carried (`record_loop_mut`), so the
+  back-edge threads the new incarnation and every post-loop read resolves against the `^while_after`
+  exit id. In the MLIR emitter (`src/mlir/lowering.rs`) a new `loop_carry_mlir_type` helper types
+  every loop-carried block-arg (header / body / `^while_after`) and every `cf.br`/`cf.cond_br`
+  operand by its real `ValueKind` — `tensor<NxT>` for an aggregate carry instead of the default i64 —
+  and each exit id is registered with the carried kind so the post-loop `ArrayLoad` type-resolves.
+  Verified by COMPILE+RUN (`tests/array_store_run.rs`): `for k in 0..3 { a[k]=k*10 } → a[2]`→20,
+  `while k<3 { a[k]=7 } → a[0]`→7, for-loop fill sum→6, nested for-in-for→6.
+- **Wedge intact — no per-iteration copy:** the post-bufferization LLVM IR for a loop-mutating
+  `[i64;N]` fixture was inspected — the `one-shot-bufferize` output threads the tensor iter-arg as a
+  self-cycling memref-descriptor phi with an **in-place `store` in the loop body and NO `malloc` /
+  `memcpy` per iteration** (the one-time buffer materialisation is hoisted to the entry block), so the
+  loop is byte-identical across x86 avx2 / ARM neon by construction. A dedicated cross-substrate
+  canary `tests/cross_substrate_identity/array-store-loop/` (avx2 == neon, RFC 0015 §3.1) locks this,
+  cross-checked against a Rust oracle in-run. Gates: `array_store_run` (loop RUNS correct; branch
+  fail-closed) · `cross_substrate_identity` 25/25 · keystone 7/7 byte-identical · mic3_flip
+  whole-module byte-identical (621052 B) · fmt/clippy — all locally green.
+- **Additive / byte-neutral for every existing program:** a loop-body `a[i]=v` on a fixed aggregate
+  previously failed to compile, so this only turns a compile-error into correct codegen; every scalar
+  (i64/f64/f32) loop emits the exact same MLIR as before (`loop_carry_mlir_type` returns the identical
+  type string), and `main.mind` + `std` self-use zero surface `a[i]=v`, so keystone / self-host /
+  cross-substrate are untouched.
+- **Still fail-closed (tracked follow-on):** `a[i]=v` inside a BRANCH body (`if`) or in expression
+  position — the branch-region exit rebind is the distinct next step; until then the compiler rejects
+  it (loud), never a silent store-drop.
+
 ### Added — fixed-array / const-tensor `a[i] = v` now WORKS (straight-line) via `Instr::ArrayStore` (#320 Step D)
 - **`a[i] = v` on a plain fixed `[T; N]` / const-literal `tensor<T[N]>` is now a real, value-semantic
   store as a top-level statement** — the fix-the-write on top of the 0x2B wire foundation. It lowers

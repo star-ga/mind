@@ -12,11 +12,16 @@
 //!  1. A straight-line store RUNS correctly: a later read observes the write
 //!     (value-semantic — the fresh post-store aggregate incarnation is rebound to
 //!     the receiver name), and an untouched sibling element is unchanged.
-//!  2. A store inside a loop / branch body FAILS CLOSED (loud), never silently
-//!     drops the write. The F2 region-exit rebind that would make loop/branch
-//!     `a[i]=v` correct is the tracked follow-on; until then the compiler must
-//!     REJECT it, not emit a store whose effect is silently lost (the exact
-//!     silent-miscompile the whole #320 line exists to prevent).
+//!  2. A store inside a LOOP body (`for` / `while`, including nested) RUNS
+//!     correctly: the F2 region-exit rebind threads the mutated `[T; N]` as a
+//!     value-semantic `tensor<NxT>` loop iter-arg (typed header/body/`^while_after`
+//!     block-args), so the post-loop read observes every write. The bufferized
+//!     loop body carries NO per-iteration malloc/memcpy — the iter-arg stays
+//!     in-place — so cross-substrate byte-identity holds.
+//!  3. A store inside a BRANCH body (`if`) still FAILS CLOSED (loud): the
+//!     branch-region exit rebind is the tracked follow-on. Until then the
+//!     compiler REJECTS it rather than emitting a store whose effect is silently
+//!     lost (the exact silent-miscompile the whole #320 line exists to prevent).
 
 #![cfg(all(unix, feature = "mlir-build", feature = "std-surface"))]
 
@@ -139,28 +144,66 @@ fn array_store_straight_line_runs_correctly() {
 }
 
 #[test]
-fn array_store_in_loop_or_branch_fails_closed_never_silent() {
+fn array_store_in_loop_runs_correctly() {
     let mindc = mindc_bin();
     if !mindc.exists() {
         eprintln!("skip: release mindc not built");
         return;
     }
-    // for-loop body: without the F2 region-exit rebind the post-loop read would
-    // see the PRE-loop value (verified: it returned 0, a silent miscompile). The
-    // compiler must REJECT it instead — fail-closed, never a silent 0.
-    assert!(
-        build_fails(
+    // for-loop body: the F2 region-exit rebind threads the mutated `[i64; 3]` as
+    // a value-semantic tensor loop iter-arg, so the post-loop read observes every
+    // write. `a[k] = k * 10` for k in 0..3 ⇒ a = [0, 10, 20] ⇒ a[2] == 20.
+    // (Before the rebind this returned 0 — the silent miscompile this proves gone.)
+    assert_eq!(
+        build_and_run(
             &mindc,
             "fn main() -> i64 { let mut a: [i64; 3] = [0, 0, 0]; for k in 0..3 { a[k] = k * 10; } return a[2]; }"
         ),
-        "a[i]=v inside a for-loop body must fail closed, not silently drop the write"
+        20
     );
-    // while-loop body: same guarantee.
-    assert!(
-        build_fails(
+    // while-loop body: same guarantee. a[k] = 7 for k in 0..3 ⇒ a[0] == 7.
+    assert_eq!(
+        build_and_run(
             &mindc,
             "fn main() -> i64 { let mut a: [i64; 3] = [0, 0, 0]; let mut k: i64 = 0; while k < 3 { a[k] = 7; k = k + 1; } return a[0]; }"
         ),
-        "a[i]=v inside a while-loop body must fail closed"
+        7
+    );
+    // whole-array read after a for-loop fill: a[k] = k + 1 ⇒ a = [1, 2, 3] ⇒ sum 6.
+    assert_eq!(
+        build_and_run(
+            &mindc,
+            "fn main() -> i64 { let mut a: [i64; 3] = [0, 0, 0]; for k in 0..3 { a[k] = k + 1; } return a[0] + a[1] + a[2]; }"
+        ),
+        6
+    );
+    // NESTED loops: the tensor iter-arg threads through both loop levels.
+    // a[i*2+j] = i*2+j over i,j in 0..2 ⇒ a = [0, 1, 2, 3] ⇒ sum 6.
+    assert_eq!(
+        build_and_run(
+            &mindc,
+            "fn main() -> i64 { let mut a: [i64; 4] = [0, 0, 0, 0]; for i in 0..2 { for j in 0..2 { a[i * 2 + j] = i * 2 + j; } } return a[0] + a[1] + a[2] + a[3]; }"
+        ),
+        6
+    );
+}
+
+#[test]
+fn array_store_in_branch_fails_closed_never_silent() {
+    let mindc = mindc_bin();
+    if !mindc.exists() {
+        eprintln!("skip: release mindc not built");
+        return;
+    }
+    // `if`-body store: the branch-region exit rebind (distinct from the loop
+    // region path) is the tracked follow-on. Until it lands the compiler must
+    // REJECT `a[i]=v` in a branch body — fail-closed, never a silently-dropped
+    // write (the exact silent-miscompile the whole #320 line exists to prevent).
+    assert!(
+        build_fails(
+            &mindc,
+            "fn main() -> i64 { let mut a: [i64; 3] = [1, 2, 3]; if 1 == 1 { a[0] = 9; } return a[0]; }"
+        ),
+        "a[i]=v inside an if-branch body must fail closed, not silently drop the write"
     );
 }

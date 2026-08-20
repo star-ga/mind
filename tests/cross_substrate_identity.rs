@@ -318,6 +318,44 @@ pub fn u64_ops(a: u64, b: u64) -> i64 {
 }
 "#;
 
+// F2 aggregate loop-carry canary source (array-store-loop). Kept in its OWN
+// translation unit — NOT appended to `SRC` — because `a[k]=v` emits value-tensor
+// ops (`tensor.insert`/`tensor.extract` + a `dense<> : tensor<8xi64>` constant),
+// which flips `preset_for_mlir` to the tensor-aware `arith-linalg` pipeline for
+// the whole module. The shared `SRC` also holds the int-dot kernels that emit
+// `vector.reduction`, and that pipeline drops `convert-vector-to-llvm`, so the
+// two cannot legalise in one `.so`. This kernel gets its own arith-linalg `.so`.
+//
+// Pins #320 Step D: a fixed `[i64; 8]` mutated by `a[k] = v` INSIDE a loop body
+// is threaded as a value-semantic `tensor<8xi64>` loop iter-arg (typed
+// header/body/^while_after block-args), and every post-loop read observes the
+// write. `base` is a RUNTIME arg (rdi) so the stores are not constant-folded;
+// the eight results fold in fixed source order via a wrapping polynomial
+// (K = 1000003). The bufferized loop body carries NO per-iteration malloc/memcpy
+// (the iter-arg stays in-place), and integer store/add/mul are exact +
+// order-independent, so avx2 == neon by construction (RFC 0015 §3.1). A
+// regression that drops a write (the pre-F2 silent-miscompile) or copies per
+// iteration flips this hash.
+const ARRAY_STORE_SRC: &str = r#"
+pub fn array_store_loop(base: i64) -> i64 {
+    let mut a: [i64; 8] = [0, 0, 0, 0, 0, 0, 0, 0]
+    let mut k: i64 = 0
+    while k < 8 {
+        a[k] = base * k + k * k
+        k = k + 1
+    }
+    let kk: i64 = 1000003
+    let f0: i64 = a[0]
+    let f1: i64 = f0 * kk + a[1]
+    let f2: i64 = f1 * kk + a[2]
+    let f3: i64 = f2 * kk + a[3]
+    let f4: i64 = f3 * kk + a[4]
+    let f5: i64 = f4 * kk + a[5]
+    let f6: i64 = f5 * kk + a[6]
+    return f6 * kk + a[7]
+}
+"#;
+
 type DotFn = unsafe extern "C" fn(i64, i64, i64) -> i64;
 type MatmulFn = unsafe extern "C" fn(i64, i64, i64, i64, i64) -> i64;
 type GemmFn = unsafe extern "C" fn(i64, i64, i64, i64, i64, i64) -> i64;
@@ -332,6 +370,9 @@ type ScalarCastNarrowFn = unsafe extern "C" fn(f64, f64, f64, f64, f64, f64) -> 
 /// The unsigned-u64 op kernel: two u64 operands (passed as their i64 bit
 /// patterns), one folded i64 out. Pins the first-class ScalarU64 unsigned lowering.
 type U64OpsFn = unsafe extern "C" fn(i64, i64) -> i64;
+/// The F2 aggregate loop-carry kernel: one i64 `base` in (rdi), one folded i64
+/// out. Pins `a[k]=v` inside a loop (#320 Step D value-semantic tensor iter-arg).
+type ArrayStoreFn = unsafe extern "C" fn(i64) -> i64;
 /// Track #16: a 3-arg → i64 scalar kernel (the Q16.16 arithmetic chain).
 type Arith3Fn = unsafe extern "C" fn(i64, i64, i64) -> i64;
 /// Track #16: a 4-arg → i64 scalar kernel (the struct-by-handle round-trip).
@@ -380,6 +421,47 @@ fn build_dot_so() -> Option<&'static PathBuf> {
         assert!(
             status.success(),
             "mindc --emit-shared failed for the dot-q16 workload"
+        );
+        Some(so_path)
+    })
+    .as_ref()
+}
+
+/// Compile `ARRAY_STORE_SRC` to its OWN temp `.so` once for the whole test
+/// binary. Separate from `build_dot_so` because the aggregate loop-carry kernel
+/// emits value-tensor ops that force the `arith-linalg` pipeline, which is
+/// incompatible in one module with the `vector.reduction` int-dot kernels in
+/// `SRC` (see the `ARRAY_STORE_SRC` note). Same toolchain self-skip contract.
+fn build_array_store_so() -> Option<&'static PathBuf> {
+    static SO: OnceLock<Option<PathBuf>> = OnceLock::new();
+    SO.get_or_init(|| {
+        for tool in ["mlir-opt", "mlir-translate", "clang"] {
+            if which::which(tool).is_err() {
+                assert!(
+                    std::env::var_os("MIND_BENCH_REQUIRE").is_none(),
+                    "MIND_BENCH_REQUIRE is set but '{tool}' is not on PATH: the \
+                     cross-substrate gate cannot run. Install the MLIR toolchain \
+                     (mlir-opt / mlir-translate / clang) on this runner."
+                );
+                println!("cross_substrate_identity: {tool} not on PATH; skipping");
+                return None;
+            }
+        }
+        let dir = std::env::temp_dir();
+        let src_path = dir.join("mind_xsi_array_store.mind");
+        let so_path = dir.join("mind_xsi_array_store.so");
+        std::fs::write(&src_path, ARRAY_STORE_SRC).expect("write array-store .mind source");
+        let status = Command::new(mindc_bin())
+            .args([
+                src_path.to_str().unwrap(),
+                "--emit-shared",
+                so_path.to_str().unwrap(),
+            ])
+            .status()
+            .expect("spawn mindc --emit-shared");
+        assert!(
+            status.success(),
+            "mindc --emit-shared failed for the array-store-loop workload"
         );
         Some(so_path)
     })
@@ -1936,6 +2018,61 @@ fn u64_ops_reproducibility_gate() {
 
     // 2. Canonical hash pinned to the committed per-substrate reference. Unsigned
     //    integer ops are exact and order-independent → avx2 == neon by construction.
+    let computed = canonical_hash(result);
+    pin_or_bless(id, &computed, result);
+}
+
+/// Fixed runtime input for `array_store_loop`. A non-trivial `base` so the
+/// per-slot store `a[k] = base*k + k*k` produces distinct values across all
+/// eight elements (not all zero), making a dropped write observable in the fold.
+const ARRAY_STORE_BASE: i64 = 7;
+
+/// Rust oracle for `array_store_loop` — the compiled kernel must reproduce it
+/// bit-for-bit. Mirrors the MIND kernel exactly: fill `a[k] = base*k + k*k` for
+/// k in 0..8 (a loop-carried fixed `[i64; 8]`), then fold the eight slots in
+/// fixed source order via the wrapping polynomial (K = 1_000_003).
+fn ref_array_store_loop(base: i64) -> i64 {
+    let mut a = [0i64; 8];
+    for (k, slot) in a.iter_mut().enumerate() {
+        let k = k as i64;
+        *slot = base.wrapping_mul(k).wrapping_add(k.wrapping_mul(k));
+    }
+    let kk: i64 = 1_000_003;
+    let mut acc = a[0];
+    for &e in &a[1..] {
+        acc = acc.wrapping_mul(kk).wrapping_add(e);
+    }
+    acc
+}
+
+#[test]
+fn array_store_loop_reproducibility_gate() {
+    let id = "array-store-loop";
+
+    let Some(so) = build_array_store_so() else {
+        return; // toolchain shadowed — self-skip
+    };
+    let lib = unsafe { Library::new(so).expect("dlopen array-store workload .so") };
+    let f: Symbol<ArrayStoreFn> = unsafe {
+        lib.get(b"array_store_loop")
+            .expect("array_store_loop symbol")
+    };
+
+    let result = unsafe { f(ARRAY_STORE_BASE) };
+
+    // 1. Within-run exactness vs the Rust oracle: proves the loop-body stores
+    //    landed (the pre-F2 miscompile dropped them, folding all-zero) and that
+    //    the post-loop reads see the mutated aggregate.
+    let oracle = ref_array_store_loop(ARRAY_STORE_BASE);
+    assert_eq!(
+        result, oracle,
+        "{id}: aggregate loop-carry kernel diverged from the Rust oracle within a \
+         single run (kernel={result}, oracle={oracle}) — a dropped/aliased store regressed?"
+    );
+
+    // 2. Canonical hash pinned to the committed per-substrate reference. Integer
+    //    store/add/mul are exact and order-independent, and the bufferized loop
+    //    body has no per-iteration copy → avx2 == neon by construction.
     let computed = canonical_hash(result);
     pin_or_bless(id, &computed, result);
 }

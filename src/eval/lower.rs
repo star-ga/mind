@@ -8020,6 +8020,94 @@ fn lower_expr(
                             record_loop_mut(name, new_id, &mut mutated, &mut init_ids, pre_init);
                         }
                     }
+                    // F2 aggregate loop-carry (#320 Step D): `a[i] = v` inside a loop
+                    // body. Reference-semantic `array<T>` (vec_set) / `bytes[N]`
+                    // (__mind_store_i8) mutate their base handle IN PLACE, so they
+                    // lower via `lower_expr` and stay bound to the same id — no rebind,
+                    // no loop-carry. A VALUE-semantic fixed `[T; N]` / const-literal
+                    // tensor store emits a FRESH aggregate (`Instr::ArrayStore`); we
+                    // rebind the receiver root to it AND record it loop-carried (post_id
+                    // = the fresh store id) so the back-edge threads the new incarnation
+                    // and the post-loop `^while_after` exit id observes the mutation —
+                    // the region-exit rebind that makes `for k { a[k]=.. }` correct
+                    // instead of fail-closed. Emitted DIRECTLY (not via `lower_expr`,
+                    // which fails closed for this receiver) so an UNSUPPORTED shape
+                    // still fails loud, never a silently-dropped write.
+                    #[cfg(feature = "std-surface")]
+                    node @ ast::Node::IndexAssign {
+                        receiver,
+                        index,
+                        value,
+                        ..
+                    } => {
+                        let sentinel = receiver_collection_sentinel(
+                            receiver,
+                            &body_ir,
+                            &body_struct_env,
+                            receiver_types,
+                        );
+                        if sentinel == Some(ARRAY_VEC_SENTINEL)
+                            || sentinel == Some(FIXED_BYTES_SENTINEL)
+                        {
+                            lower_expr(
+                                node,
+                                &mut body_ir,
+                                &body_env,
+                                &body_struct_env,
+                                receiver_types,
+                            );
+                        } else if let ast::Node::Lit(Literal::Ident(root), _) = receiver.as_ref() {
+                            // Capture the PRE-store incarnation before the rebind — for
+                            // the first store this is the pre-loop init id, which
+                            // `record_loop_mut` threads into `init_ids` (typing the
+                            // header/body/after tensor block-args in the MLIR emitter).
+                            let pre_init = body_env.get(root.as_str()).copied();
+                            let base = lower_expr(
+                                receiver,
+                                &mut body_ir,
+                                &body_env,
+                                &body_struct_env,
+                                receiver_types,
+                            );
+                            let idx = lower_expr(
+                                index,
+                                &mut body_ir,
+                                &body_env,
+                                &body_struct_env,
+                                receiver_types,
+                            );
+                            let val = lower_expr(
+                                value,
+                                &mut body_ir,
+                                &body_env,
+                                &body_struct_env,
+                                receiver_types,
+                            );
+                            let dst = body_ir.fresh();
+                            body_ir.instrs.push(Instr::ArrayStore {
+                                dst,
+                                base,
+                                index: idx,
+                                value: val,
+                            });
+                            body_env.insert(root.clone(), dst);
+                            // Cross the back-edge only for a genuine outer var (same
+                            // guard as the scalar `Assign` arm): a fixed array declared
+                            // inside the loop body is re-initialised each iteration and
+                            // must NOT be loop-carried.
+                            if env.contains_key(root.as_str()) {
+                                record_loop_mut(root, dst, &mut mutated, &mut init_ids, pre_init);
+                            }
+                        } else {
+                            lower_expr(
+                                node,
+                                &mut body_ir,
+                                &body_env,
+                                &body_struct_env,
+                                receiver_types,
+                            );
+                        }
+                    }
                     ast::Node::LetTuple { names, value, .. } => {
                         lower_lettuple_stmt(
                             names,
