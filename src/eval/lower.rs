@@ -2605,26 +2605,96 @@ fn lettuple_elem_tys(
 /// them here would perturb the byte-identical i32 artifact stream), and
 /// `i64`/`u64`/handles are not narrow. Comparisons are excluded by the caller
 /// (they yield `i1`/bool, never a narrow scalar).
+/// Council-decided (2026-08-20, architecture A2) 3-valued narrow-arith
+/// lattice. Distinguishes a definitively-WIDE operand (a non-narrow `i64`/`i32`
+/// VARIABLE or an `as`-to-wide cast — which widens the whole integer expression
+/// to `i64`) from a width-NEUTRAL integer literal (forces no width) from a
+/// NARROW (`i8`/`u8`/`i16`/`u16`) operand (re-masks). The prior `Option<TypeAnn>`
+/// conflated a wide `i64` variable with a literal (both `None`), so
+/// `a_i64 + (b as i8)` was wrongly re-masked to `i8` (-12) instead of widened to
+/// `i64` (244) — a cross-front-end divergence vs the self-host emitter (#329).
+#[cfg(feature = "std-surface")]
+#[derive(Clone)]
+enum NarrowLat {
+    Narrow(TypeAnn),
+    Wide,
+    Neutral,
+}
+
+#[cfg(feature = "std-surface")]
+impl NarrowLat {
+    /// The narrow width to re-mask an arithmetic result to, if it is narrow.
+    fn narrow_ty(self) -> Option<TypeAnn> {
+        match self {
+            NarrowLat::Narrow(t) => Some(t),
+            NarrowLat::Wide | NarrowLat::Neutral => None,
+        }
+    }
+    fn as_narrow_ty(&self) -> Option<&TypeAnn> {
+        match self {
+            NarrowLat::Narrow(t) => Some(t),
+            NarrowLat::Wide | NarrowLat::Neutral => None,
+        }
+    }
+}
+
+/// Join two operand lattice values for an arithmetic binop (`+ - * / %`). Any
+/// `Wide` operand ⇒ `Wide` (a wide `i64`/non-narrow operand widens the whole
+/// expression, so `i64 + (x as i8)` is `i64`, not `i8`). `Narrow` + `Neutral`
+/// (literal) ⇒ that `Narrow` (so `a8 + 1` still re-masks). Two `Narrow`s ⇒ the
+/// WIDEST (preserving the historical `u8`/`u16` asymmetry fix; equal width keeps
+/// the LEFT for byte-stability). All-`Neutral` ⇒ `Wide` (an i64-default
+/// literal-only expression is not re-masked).
+#[cfg(feature = "std-surface")]
+fn join_narrow_lat(l: NarrowLat, r: NarrowLat) -> NarrowLat {
+    use NarrowLat::*;
+    match (l, r) {
+        (Wide, _) | (_, Wide) => Wide,
+        (Narrow(a), Narrow(b)) => {
+            let wa = narrow_named_shift_width(&a).unwrap_or(64);
+            let wb = narrow_named_shift_width(&b).unwrap_or(64);
+            if wb > wa {
+                Narrow(b)
+            } else {
+                Narrow(a)
+            }
+        }
+        (Narrow(a), Neutral) | (Neutral, Narrow(a)) => Narrow(a),
+        (Neutral, Neutral) => Wide,
+    }
+}
+
 #[cfg(feature = "std-surface")]
 fn infer_narrow_arith_ty(
     node: &ast::Node,
     ir: &IRModule,
     struct_env: &HashMap<String, String>,
     receiver_types: &HashMap<crate::ast::Span, String>,
-) -> Option<TypeAnn> {
-    // Perf early-skip: a module with NO narrow-int surface (prescan at
-    // `lower_to_ir` entry) can never yield `Some` here — every leaf arm filters
-    // through `is_named_narrow_sig_ty`, and every source it consults is
-    // narrow-free when the prescan found no narrow mention (proof in
-    // src/eval/narrow_scan.rs). Returning `None` up front skips the recursive
-    // operand-subtree walk that made nested all-i64/float arithmetic O(n²).
+) -> NarrowLat {
+    // Perf early-skip: a narrow-free module can never yield `Narrow`; return
+    // `Neutral` so every join stays non-narrow (no re-mask, all-i64 path
+    // byte-identical) without walking operand subtrees.
     if !MODULE_HAS_NARROW_SURFACE.with(|f| f.get()) {
-        return None;
+        return NarrowLat::Neutral;
     }
+    // A declared type maps to `Narrow` (8/16-bit) or, for a non-narrow named
+    // scalar, the caller-chosen `nonnarrow` value (`Wide` forces widening;
+    // `Neutral` preserves the historical non-forcing behaviour).
+    let classify = |t: Option<TypeAnn>, nonnarrow: NarrowLat| match t {
+        Some(ty) if is_named_narrow_sig_ty(&ty) => NarrowLat::Narrow(ty),
+        _ => nonnarrow,
+    };
     match node {
-        ast::Node::Lit(Literal::Ident(name), _) => NARROW_LOCALS
-            .with(|n| n.borrow().get(name).cloned())
-            .filter(is_named_narrow_sig_ty),
+        // A NARROW local ⇒ `Narrow`; any other (i64/i32/...) variable ⇒ `Wide`
+        // (a wide variable widens the arithmetic — THE #329 fix).
+        ast::Node::Lit(Literal::Ident(name), _) => {
+            match NARROW_LOCALS.with(|n| n.borrow().get(name).cloned()) {
+                Some(ty) if is_named_narrow_sig_ty(&ty) => NarrowLat::Narrow(ty),
+                _ => NarrowLat::Wide,
+            }
+        }
+        // An integer literal is width-NEUTRAL (fits any width; forces nothing).
+        ast::Node::Lit(Literal::Int(_), _) => NarrowLat::Neutral,
         ast::Node::Paren(inner, _) => infer_narrow_arith_ty(inner, ir, struct_env, receiver_types),
         ast::Node::Binary {
             op:
@@ -2632,7 +2702,7 @@ fn infer_narrow_arith_ty(
             left,
             right,
             ..
-        } => join_narrow_tys(
+        } => join_narrow_lat(
             infer_narrow_arith_ty(left, ir, struct_env, receiver_types),
             infer_narrow_arith_ty(right, ir, struct_env, receiver_types),
         ),
@@ -2643,24 +2713,26 @@ fn infer_narrow_arith_ty(
             left,
             ..
         } => infer_narrow_arith_ty(left, ir, struct_env, receiver_types),
-        // Finding 2: a narrow value produced by a CAST (`x as u8`), a CALL to a
-        // fn declared `-> u8`, a struct FIELD of type `u8`, or an `array<u8>`
-        // element read also escapes unmasked without these leaves.
-        ast::Node::As { ty, .. } => Some(ty.clone()).filter(is_named_narrow_sig_ty),
-        ast::Node::Call { callee, .. } => ir
-            .fn_signatures
-            .get(callee)
-            .and_then(|(_, ret)| ret.clone())
-            .filter(is_named_narrow_sig_ty),
-        ast::Node::FieldAccess { .. } => {
-            field_access_scalar_ty(node, ir, struct_env, receiver_types)
-                .filter(is_named_narrow_sig_ty)
-        }
-        ast::Node::IndexAccess { receiver, .. } => {
-            index_element_narrow_ty(receiver, ir, struct_env, receiver_types)
-                .filter(is_named_narrow_sig_ty)
-        }
-        _ => None,
+        // A narrow CAST (`x as u8`) ⇒ `Narrow`; a wide cast (`x as i64`) ⇒ `Wide`
+        // (the explicit widen forces the arithmetic wide — part of the #329 fix).
+        ast::Node::As { ty, .. } => classify(Some(ty.clone()), NarrowLat::Wide),
+        // Finding 2 leaves (CALL `-> u8` / narrow FIELD / narrow `array<u8>`
+        // element) ⇒ `Narrow`; a non-narrow/unknown one keeps the historical
+        // non-forcing `Neutral` (bounds this change's blast radius to the var /
+        // cast leaves that caused the divergence).
+        ast::Node::Call { callee, .. } => classify(
+            ir.fn_signatures.get(callee).and_then(|(_, ret)| ret.clone()),
+            NarrowLat::Neutral,
+        ),
+        ast::Node::FieldAccess { .. } => classify(
+            field_access_scalar_ty(node, ir, struct_env, receiver_types),
+            NarrowLat::Neutral,
+        ),
+        ast::Node::IndexAccess { receiver, .. } => classify(
+            index_element_narrow_ty(receiver, ir, struct_env, receiver_types),
+            NarrowLat::Neutral,
+        ),
+        _ => NarrowLat::Neutral,
     }
 }
 
@@ -2705,35 +2777,13 @@ fn narrow_named_shift_width(ty: &TypeAnn) -> Option<u32> {
         .filter(|&w| w < 64)
 }
 
-/// Join the two inferred narrow operand types of an arithmetic binop
-/// (Finding 7). The old `infer(left).or_else(infer(right))` picked the LEFT
-/// operand's width whenever both sides were narrow, so `(a + b) / 2` with
-/// `a: u8, b: u16` wrapped at 8 bits while `(b + a) / 2` wrapped at 16 — an
-/// ASYMMETRIC result for the same values. The result type is the WIDEST
-/// operand: `(None, x)`/`(x, None)` → `x`; both `Some` → the greater width
-/// (8 vs 16); EQUAL width → the LEFT operand (preserving today's bytes for
-/// `u8+u8` and the mixed-signedness equal-width `i8+u8`). `Shl`/`Shr` stay
-/// LEFT-only (the count's width is irrelevant) and never reach this join.
-#[cfg(feature = "std-surface")]
-fn join_narrow_tys(l: Option<TypeAnn>, r: Option<TypeAnn>) -> Option<TypeAnn> {
-    match (l, r) {
-        (Some(a), Some(b)) => {
-            // Both are `is_named_narrow_sig_ty` (8/16-bit) by construction —
-            // `narrow_named_shift_width` is total on them.
-            let wa = narrow_named_shift_width(&a).unwrap_or(64);
-            let wb = narrow_named_shift_width(&b).unwrap_or(64);
-            if wb > wa { Some(b) } else { Some(a) }
-        }
-        (a, b) => a.or(b),
-    }
-}
-
 /// Re-mask an ARITHMETIC binop result to its inferred narrow width (`i8`/`u8`/
 /// `i16`/`u16`), emitting the same truncate/sign-extend forms as
 /// `mask_narrow_let`. Only `Add`/`Sub`/`Mul`/`Div`/`Mod` are masked — the
 /// comparisons (`Lt`/`Le`/`Gt`/`Ge`/`Eq`/`Ne`) produce `i1`/bool and must not
 /// be truncated. Returns `dst` unchanged when the result is not a narrow
-/// arithmetic value (the byte-identical all-i64 path).
+/// arithmetic value (the byte-identical all-i64 path). A `Wide` operand (a
+/// non-narrow `i64` var or `as i64`) widens the result — it is NOT re-masked.
 #[cfg(feature = "std-surface")]
 fn mask_narrow_binop_result(
     ir: &mut IRModule,
@@ -2744,8 +2794,8 @@ fn mask_narrow_binop_result(
     struct_env: &HashMap<String, String>,
     receiver_types: &HashMap<crate::ast::Span, String>,
 ) -> ValueId {
-    let ty = match op {
-        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => join_narrow_tys(
+    let lat = match op {
+        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => join_narrow_lat(
             infer_narrow_arith_ty(left, ir, struct_env, receiver_types),
             infer_narrow_arith_ty(right, ir, struct_env, receiver_types),
         ),
@@ -2754,9 +2804,9 @@ fn mask_narrow_binop_result(
         BinOp::Shl | BinOp::Shr => infer_narrow_arith_ty(left, ir, struct_env, receiver_types),
         // Comparisons yield `i1`/bool; bitwise And/Or/Xor over in-range narrow
         // operands stay in range — neither needs a width re-mask.
-        _ => None,
+        _ => NarrowLat::Neutral,
     };
-    match ty {
+    match lat.narrow_ty() {
         Some(ty) => mask_narrow_let(ir, &Some(ty), dst),
         None => dst,
     }
@@ -5343,7 +5393,7 @@ fn lower_expr(
             // hits this (empty NARROW_LOCALS).
             if matches!(ir_op, BinOp::Shl | BinOp::Shr) {
                 if let Some(w) = infer_narrow_arith_ty(left, ir, struct_env, receiver_types)
-                    .as_ref()
+                    .as_narrow_ty()
                     .and_then(narrow_named_shift_width)
                 {
                     let mask_id = ir.fresh();
