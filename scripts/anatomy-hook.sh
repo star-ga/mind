@@ -8,6 +8,29 @@
 
 set -euo pipefail
 
+# --- rustfmt gate (2026-08-21) ---------------------------------------------
+# Block fmt drift BEFORE it reaches CI's `Format Check` job. Fmt drift reded
+# main twice in one session; the keystone/build gates a small commit runs do
+# NOT check formatting, so a hand-written file that looks clean fails CI. Runs
+# only when a Rust file is staged; `cargo fmt --check` is a fast parse+compare
+# (no build) in the commit's own worktree (PWD, where git invokes the hook).
+# rustfmt's default reorder_modules can drift even a one-line `pub mod X;`.
+# Check each staged .rs DIRECTLY with rustfmt (not `cargo fmt --check`, which
+# only traverses declared modules and would silently pass an added-but-not-yet-
+# wired file — a fake-green gate).
+if command -v rustfmt >/dev/null 2>&1; then
+  _fmt_bad=""
+  for _f in $(git diff --cached --name-only --diff-filter=ACMR | grep '\.rs$' || true); do
+    [ -f "$_f" ] || continue
+    rustfmt --edition 2021 --check "$_f" >/dev/null 2>&1 || _fmt_bad="$_fmt_bad $_f"
+  done
+  if [ -n "$_fmt_bad" ]; then
+    echo "pre-commit: rustfmt drift in staged Rust:$_fmt_bad" >&2
+    echo "  run 'cargo fmt', then re-stage (fmt drift fails the CI Format Check)." >&2
+    exit 1
+  fi
+fi
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)" \
   || ROOT_DIR="$(git rev-parse --show-toplevel)"
 
