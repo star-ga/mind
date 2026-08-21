@@ -22,7 +22,7 @@
 //! path today, so it changes zero mic@3 bytes and cannot perturb the keystone.
 //! Wiring it into the default-flip decision is a separate, gated slice.
 
-use crate::ir::{IRModule, Instr};
+use crate::ir::{BinOp, IRModule, Instr};
 
 /// The first construct that is NOT in the frozen native profile, named for a
 /// fail-loud diagnostic. `None`-free by construction: `Ok(())` means every
@@ -46,6 +46,48 @@ fn reject(construct: &'static str) -> Result<(), FrozenProfileRejection> {
     Err(FrozenProfileRejection { construct })
 }
 
+/// Admit a `BinOp` by OPERATOR. The byte-identity corpus (the RI-D1 readiness gate's
+/// frozen-profile programs) proves only substrate-invariant integer ops; the operators
+/// whose RESULT can diverge across substrate — or by operand signedness in a way this
+/// type-blind predicate cannot see — are rejected by name:
+///   - Div / Mod: `i64::MIN / -1` overflow, signed-vs-unsigned quotient, sign-of-
+///     remainder — none corpus-proven (this compiler's #99 u64 div/rem/shr family).
+///   - Shl / Shr: shift-count >= bit-width is platform-divergent; Shr is arithmetic
+///     (signed) vs logical (unsigned) — a signedness split (again #99).
+/// Add/Sub/Mul and the bitwise ops are 2's-complement bit-exact and substrate-identical
+/// regardless of signedness; equality (Eq/Ne) is a bit-compare. Ordered comparisons
+/// (Lt/Le/Gt/Ge) ARE signedness-dependent (i64 `<` is corpus-proven; u64 `<` was the #99
+/// miscompile) — admitted here only because the corpus proves the i64 form and rejecting
+/// them would exclude the proven for-loop; the residual u64-comparison gap is the reason
+/// the deferred (op, operand_type) keying below is required before the flip.
+///
+/// Ecosystem fitment (audit directive 2026-08-21): rejecting Shr KEEPS the Q16.16
+/// fixed-point tier — arch-mind metrics, mind-nerve routing, mind-runtime, 512-mind
+/// money-path — OUT of the frozen profile, because Q16.16 multiply is `(a*b) >> 16`
+/// (needs Shr). That exclusion is CORRECT: those consumers are not yet native-byte-
+/// identity-proven, so they must stay on the MLIR backend until Shr is corpus-proven
+/// AND operand-type-keyed. Tensor/GPU consumers (mind-runtime kernels, mind-inference)
+/// are already excluded via the tensor rejections above.
+///
+/// deferred: the SOUND fix is (op, operand_type) keying against a corpus-DERIVED pair
+/// set — the type axis (i64 Lt proven vs u64 Lt = #99) cannot be decided on `op` alone.
+/// Thread `FnDef.value_types` into this predicate; upgrade path tracked in task #313 /
+/// the RI-D1 bijection gate.
+fn admit_binop(op: &BinOp) -> Result<(), FrozenProfileRejection> {
+    match op {
+        BinOp::Add | BinOp::Sub | BinOp::Mul => Ok(()),
+        BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne => Ok(()),
+        BinOp::Div => reject("binop.div"),
+        BinOp::Mod => reject("binop.mod"),
+        #[cfg(feature = "std-surface")]
+        BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => Ok(()),
+        #[cfg(feature = "std-surface")]
+        BinOp::Shl => reject("binop.shl"),
+        #[cfg(feature = "std-surface")]
+        BinOp::Shr => reject("binop.shr"),
+    }
+}
+
 fn admit_instrs(instrs: &[Instr]) -> Result<(), FrozenProfileRejection> {
     for instr in instrs {
         match instr {
@@ -55,11 +97,15 @@ fn admit_instrs(instrs: &[Instr]) -> Result<(), FrozenProfileRejection> {
             // continue, fixed-array subscript). Descend into nested bodies.
             Instr::ConstI64(..)
             | Instr::ConstF64(..)
-            | Instr::BinOp { .. }
             | Instr::Call { .. }
             | Instr::Return { .. }
             | Instr::Param { .. }
             | Instr::Output(..) => {}
+            // BinOp admission is keyed on the OPERATOR, not the constructor (H5, Fable +
+            // corpus audit 2026-08-21). A type-blind `BinOp {..} => {}` admitted the
+            // substrate-/signedness-divergent ops (Div/Mod/Shl/Shr) that the byte-identity
+            // corpus never proves — see admit_binop for the rejection set + fitment note.
+            Instr::BinOp { op, .. } => admit_binop(op)?,
             Instr::FnDef { body, .. } => admit_instrs(body)?,
             #[cfg(feature = "std-surface")]
             Instr::While {
@@ -182,5 +228,64 @@ mod tests {
         // The IRModule wrapper walks module.instrs — smoke it via the helper it
         // delegates to, so this file needs no full IRModule literal.
         assert!(admit_instrs(&[Instr::Output(ValueId(0))]).is_ok());
+    }
+
+    fn binop(op: BinOp) -> Instr {
+        Instr::BinOp {
+            dst: ValueId(2),
+            op,
+            lhs: ValueId(0),
+            rhs: ValueId(1),
+        }
+    }
+
+    #[test]
+    fn corpus_proven_binops_are_admitted() {
+        // The 5-program readiness corpus exercises `+` (Add) and `<` (Lt, the for-loop
+        // desugar); Sub/Mul/other-compares are substrate-invariant on the same axis.
+        for op in [BinOp::Add, BinOp::Sub, BinOp::Mul, BinOp::Lt, BinOp::Eq] {
+            assert_eq!(
+                admit_instrs(&[binop(op)]),
+                Ok(()),
+                "{op:?} should be admitted"
+            );
+        }
+    }
+
+    #[test]
+    fn divergent_binops_are_rejected_by_name() {
+        // The H5 exploit ops: Div/Mod (i64::MIN/-1, sign-of-remainder) are not in the
+        // byte-identity corpus and must be named, not silently admitted.
+        assert_eq!(
+            admit_instrs(&[binop(BinOp::Div)]).unwrap_err().construct,
+            "binop.div"
+        );
+        assert_eq!(
+            admit_instrs(&[binop(BinOp::Mod)]).unwrap_err().construct,
+            "binop.mod"
+        );
+    }
+
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn shifts_are_rejected_by_name() {
+        // Shl (count >= width UB) / Shr (arith-vs-logical signedness split) — the ops
+        // that keep the Q16.16 `(a*b)>>16` ecosystem tier out of the frozen profile.
+        assert_eq!(
+            admit_instrs(&[binop(BinOp::Shl)]).unwrap_err().construct,
+            "binop.shl"
+        );
+        assert_eq!(
+            admit_instrs(&[binop(BinOp::Shr)]).unwrap_err().construct,
+            "binop.shr"
+        );
+    }
+
+    #[test]
+    fn divergent_binop_hidden_in_fn_body_is_rejected() {
+        // The op-blind admission bug: a Div buried in a function body must not slip
+        // through the FnDef recursion.
+        let err = admit_instrs(&[fndef(vec![binop(BinOp::Div)])]).unwrap_err();
+        assert_eq!(err.construct, "binop.div");
     }
 }
