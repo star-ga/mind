@@ -4,7 +4,7 @@
 //!
 //! The load-bearing safety mechanism for making the pure-MIND native-ELF backend
 //! the DEFAULT for a frozen production profile without a silent-miscompile risk.
-//! Fable's spine (council-decided): the frozen profile is a **construct ALLOWLIST
+//! The council-decided spine: the frozen profile is a **construct ALLOWLIST
 //! checked on the canonical IR** — a *positive* statement of what the native path
 //! has been proven on — NOT a "try native then refuse", because the dangerous
 //! failure is not "native refuses" (loud, recoverable) but "native accepts and
@@ -101,8 +101,8 @@ fn admit_instrs(instrs: &[Instr]) -> Result<(), FrozenProfileRejection> {
             | Instr::Return { .. }
             | Instr::Param { .. }
             | Instr::Output(..) => {}
-            // BinOp admission is keyed on the OPERATOR, not the constructor (H5, Fable +
-            // corpus audit 2026-08-21). A type-blind `BinOp {..} => {}` admitted the
+            // BinOp admission is keyed on the OPERATOR, not the constructor (H5, cross-model
+            // + corpus audit 2026-08-21). A type-blind `BinOp {..} => {}` admitted the
             // substrate-/signedness-divergent ops (Div/Mod/Shl/Shr) that the byte-identity
             // corpus never proves — see admit_binop for the rejection set + fitment note.
             Instr::BinOp { op, .. } => admit_binop(op)?,
