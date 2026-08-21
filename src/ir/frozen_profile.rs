@@ -47,19 +47,20 @@ fn reject(construct: &'static str) -> Result<(), FrozenProfileRejection> {
 }
 
 /// Admit a `BinOp` by OPERATOR. The byte-identity corpus (the RI-D1 readiness gate's
-/// frozen-profile programs) proves only substrate-invariant integer ops; the operators
+/// frozen-profile programs) proves only substrate-invariant integer ops, so the operators
 /// whose RESULT can diverge across substrate — or by operand signedness in a way this
-/// type-blind predicate cannot see — are rejected by name:
-///   - Div / Mod: `i64::MIN / -1` overflow, signed-vs-unsigned quotient, sign-of-
-///     remainder — none corpus-proven (this compiler's #99 u64 div/rem/shr family).
-///   - Shl / Shr: shift-count >= bit-width is platform-divergent; Shr is arithmetic
-///     (signed) vs logical (unsigned) — a signedness split (again #99).
-/// Add/Sub/Mul and the bitwise ops are 2's-complement bit-exact and substrate-identical
-/// regardless of signedness; equality (Eq/Ne) is a bit-compare. Ordered comparisons
-/// (Lt/Le/Gt/Ge) ARE signedness-dependent (i64 `<` is corpus-proven; u64 `<` was the #99
-/// miscompile) — admitted here only because the corpus proves the i64 form and rejecting
-/// them would exclude the proven for-loop; the residual u64-comparison gap is the reason
-/// the deferred (op, operand_type) keying below is required before the flip.
+/// type-blind predicate cannot see — are rejected by name. `Div` and `Mod` are rejected
+/// (`i64::MIN / -1` overflow, signed-vs-unsigned quotient, sign-of-remainder — none
+/// corpus-proven; this compiler's #99 u64 div/rem/shr family). `Shl` and `Shr` are
+/// rejected (shift-count >= bit-width is platform-divergent, and `Shr` is arithmetic on
+/// signed vs logical on unsigned — a signedness split, again #99). `Add`/`Sub`/`Mul` and
+/// the bitwise ops are 2's-complement bit-exact and substrate-identical regardless of
+/// signedness, and equality (`Eq`/`Ne`) is a bit-compare, so all are admitted. The
+/// ordered comparisons (`Lt`/`Le`/`Gt`/`Ge`) ARE signedness-dependent (i64 `<` is
+/// corpus-proven; u64 `<` was the #99 miscompile) — admitted here only because the corpus
+/// proves the i64 form and rejecting them would exclude the proven for-loop; that residual
+/// u64-comparison gap is why the deferred (op, operand_type) keying below is required
+/// before the flip.
 ///
 /// Ecosystem fitment (audit directive 2026-08-21): rejecting Shr KEEPS the Q16.16
 /// fixed-point tier — arch-mind metrics, mind-nerve routing, mind-runtime, 512-mind
