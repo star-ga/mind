@@ -20,8 +20,8 @@ use std::fmt;
 
 pub mod compact;
 mod evidence;
-pub mod frozen_profile;
 pub(crate) mod fp_mode;
+pub mod frozen_profile;
 mod print;
 mod verify;
 
