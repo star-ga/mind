@@ -2653,11 +2653,7 @@ fn join_narrow_lat(l: NarrowLat, r: NarrowLat) -> NarrowLat {
         (Narrow(a), Narrow(b)) => {
             let wa = narrow_named_shift_width(&a).unwrap_or(64);
             let wb = narrow_named_shift_width(&b).unwrap_or(64);
-            if wb > wa {
-                Narrow(b)
-            } else {
-                Narrow(a)
-            }
+            if wb > wa { Narrow(b) } else { Narrow(a) }
         }
         (Narrow(a), Neutral) | (Neutral, Narrow(a)) => Narrow(a),
         (Neutral, Neutral) => Wide,
@@ -2721,7 +2717,9 @@ fn infer_narrow_arith_ty(
         // non-forcing `Neutral` (bounds this change's blast radius to the var /
         // cast leaves that caused the divergence).
         ast::Node::Call { callee, .. } => classify(
-            ir.fn_signatures.get(callee).and_then(|(_, ret)| ret.clone()),
+            ir.fn_signatures
+                .get(callee)
+                .and_then(|(_, ret)| ret.clone()),
             NarrowLat::Neutral,
         ),
         ast::Node::FieldAccess { .. } => classify(
