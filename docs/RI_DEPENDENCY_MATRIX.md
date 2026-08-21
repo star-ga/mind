@@ -44,7 +44,16 @@ NATIVE_ELF_RUNS                     = PASS
 REFERENCE_VALUE_PARITY             = PASS
 DETERMINISTIC_BYTES_OR_DECLARED_LINK_VARIANCE = PASS (byte-identical across two builds)
 NO_NATIVE_TO_MLIR_FALLBACK          = TRUE   (tensor/trait → error[backend-native], refuses to write)
+MLIR_UNLINKABLE_NATIVE_STILL_WORKS  = PASS   (mindc built --no-default-features (mlir-build OFF)
+                                              → MLIR physically absent from the 6.5MB binary, yet
+                                              --backend native emits a running ELF (exit 42) with 0
+                                              toolchain; a silent MLIR fallback CANNOT LINK, let alone
+                                              run. gate: scripts/ri_d1_mlir_free_gate.sh)
 ```
+
+The `MLIR_UNLINKABLE_*` row is the strongest leg of rows #4/#5/#6: the earlier
+`*_IN_PROCESS_TREE = 0` proves MLIR is not *invoked* at runtime; the compiled-out
+build proves it is not *present* — fail-closed BY CONSTRUCTION (gate-assertion #1 (council-decided)).
 
 Consumer: `src/bin/mindc.rs::run_native_backend_bridge` (bridge, commit 52bd6d3b) →
 spawns the frozen pure-MIND `stage1.elf`, captures its stdout ELF, writes it. It does
