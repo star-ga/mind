@@ -31,6 +31,21 @@ if command -v rustfmt >/dev/null 2>&1; then
   fi
 fi
 
+# --- no-AI-attribution gate (2026-08-21) -----------------------------------
+# The "No AI-attribution" CI gate (Docs Claims job) reds main on any named-model
+# attribution in a tracked file. It silently reded main for a WHOLE session — a
+# model name in a source comment — because the gate ran only in CI, not here.
+# Run the authoritative CI script at COMMIT time so a leak fails locally first.
+# Runs only where the script exists (this repo); it is a fast git-grep.
+if [ -f scripts/check_no_ai_attribution.sh ]; then
+  if ! bash scripts/check_no_ai_attribution.sh >/dev/null 2>&1; then
+    echo "pre-commit: named-model AI-attribution in a tracked file (STARGA policy)." >&2
+    echo "  run 'bash scripts/check_no_ai_attribution.sh' to see it; replace with" >&2
+    echo "  'recent research' / 'cross-model review' / a neutral 'audit finding'." >&2
+    exit 1
+  fi
+fi
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)" \
   || ROOT_DIR="$(git rev-parse --show-toplevel)"
 

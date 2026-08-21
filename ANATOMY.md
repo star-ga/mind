@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3377 | **Est. tokens:** ~7,919,358
-**Generated:** 2026-08-21 20:21 UTC
+**Files:** 3377 | **Est. tokens:** ~7,919,577
+**Generated:** 2026-08-21 20:23 UTC
 
 ## Token Budget Guide
 
@@ -77,7 +77,7 @@
 | `.github/workflows/` | 9 | ~15,845 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~20,558 |
-| `scripts/` | 10 | ~13,227 |
+| `scripts/` | 10 | ~13,446 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `sdk/ts/mic-map/` | 6 | ~16,202 |
@@ -1131,7 +1131,7 @@
 - `mind_intrinsics.c` (~20558 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
-- `anatomy-hook.sh` (~561 tok, large) — anatomy-hook.sh — Git pre-commit hook to refresh ANATOMY.md
+- `anatomy-hook.sh` (~780 tok, large) — anatomy-hook.sh — Git pre-commit hook to refresh ANATOMY.md
 - `anatomy.sh` (~2011 tok, huge) — anatomy — Generate ANATOMY.md for any repo
 - `check_claims.py` (~2779 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
 - `check_json_not_evidence.sh` (~546 tok, large) — Wedge-integrity gate: JSON is never an evidence-hash preimage.
