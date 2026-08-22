@@ -11,8 +11,12 @@ read-only fixed `[f64; 4]` parameter helper, and f64 loop-carried accumulators
 (add/sub/mul/div, no fast-math / reassociation).
 
 Two authorities, per the RH directive:
-  * MLIR  — the normal Rust-built `mindc` (`--emit=binary`, LLVM/MLIR path). This
-    leg is REQUIRED: a wrong value or a compile failure fails the smoke.
+  * MLIR  — the normal Rust-built `mindc` (LLVM/MLIR path) via `--emit=cdylib`,
+    then the compiled `main` is called through ctypes and its bit-exact result
+    asserted. cdylib (not `--emit=binary`) because it is RH's actual consumer
+    path (`--emit=shared`, cross-module) AND the self-host CI job builds a
+    cdylib-capable mindc with no linked `cpu` runtime for a full executable.
+    This leg is REQUIRED: a wrong value or a compile failure fails the smoke.
   * NATIVE — the pure-MIND self-host / native-ELF backend (`--backend native`,
     the frozen stage1.elf). The fixed-array *store* (`a[i] = v`) and by-value
     fixed-array *parameter* are not yet ported to the native emitter / mic@3
@@ -29,6 +33,7 @@ Usage:
   [MINDC_STD_DIR=std] \
       python3 examples/mindc_mind/rh_f64_aggregate_canary_smoke.py
 """
+import ctypes
 import os
 import pathlib
 import stat
@@ -54,17 +59,27 @@ def _run(p: pathlib.Path) -> int:
 
 
 def _mlir_leg(tmp: pathlib.Path) -> bool:
-    out = tmp / "canary_mlir.bin"
+    so = tmp / "canary_mlir.so"
     r = subprocess.run(
-        [MINDC, "build", str(_CANARY), "--release", "--emit=binary", "--out", str(out)],
+        [MINDC, "build", str(_CANARY), "--release", "--emit=cdylib", "--out", str(so)],
         capture_output=True, text=True, timeout=180,
     )
-    if not _is_elf(out):
-        print(f"FAIL  MLIR: no runnable ELF (rc={r.returncode})\n{r.stderr[-400:]}")
+    if not so.exists() or so.stat().st_size < 256:
+        print(f"FAIL  MLIR(cdylib): no artifact (rc={r.returncode})\n{r.stderr[-400:]}")
         return False
-    got = _run(out)
+    try:
+        lib = ctypes.CDLL(str(so))
+    except OSError as e:
+        print(f"FAIL  MLIR(cdylib): could not load artifact: {e}")
+        return False
+    if not hasattr(lib, "main"):
+        print("FAIL  MLIR(cdylib): exported `main` symbol absent")
+        return False
+    lib.main.restype = ctypes.c_int64
+    lib.main.argtypes = []
+    got = lib.main()
     ok = got == EXPECTED
-    print(f"[{'PASS' if ok else 'FAIL'}] MLIR  `mindc build --emit=binary` exit={got} "
+    print(f"[{'PASS' if ok else 'FAIL'}] MLIR  `mindc build --emit=cdylib` main()={got} "
           f"want={EXPECTED}")
     return ok
 
