@@ -11477,6 +11477,18 @@ fn type_ann_to_abi_mlir(ty: &crate::ast::TypeAnn) -> String {
             };
             tensor_type(&tensor_ann_shape(dims), elem)
         }
+        // A fixed array param/return `[T; N]` lowers to the SAME MLIR
+        // `tensor<NxT>` boundary as a `Tensor` annotation — the build pipeline's
+        // `bufferize-function-boundaries` pass (see the `Tensor` arm) converts
+        // the by-value tensor to a memref out-param at the C ABI, so an
+        // array-param fn links + runs. Previously `[T; N]` fell to the `_ =>`
+        // "i64" default, so `ArrayLoad` on the param found no `ValueKind::Tensor`
+        // and lowering failed with "missing type information for … array load
+        // base". Rank-1, scalar element only (matches the `ArrayLoad` subset).
+        crate::ast::TypeAnn::Array { element, length } => {
+            let elem = type_ann_to_abi_mlir(element);
+            tensor_type(&[ShapeDim::Known(*length as usize)], &elem)
+        }
         _ => "i64".to_string(),
     }
 }
@@ -11516,6 +11528,17 @@ fn type_ann_to_value_kind(ty: &crate::ast::TypeAnn) -> ValueKind {
         | crate::ast::TypeAnn::DiffTensor { dtype, dims } => ValueKind::Tensor {
             dtype: dtype.parse::<DType>().unwrap_or(DType::F32),
             shape: tensor_ann_shape(dims),
+        },
+        // `[T; N]` param seeds the SAME value-tensor kind as a `Tensor`
+        // annotation, so a downstream `ArrayLoad` on the param recovers the
+        // element type + length. Previously the param fell to `ScalarI64` and
+        // `ArrayLoad` failed "missing type information for … array load base".
+        // Rank-1 scalar element (matches `type_ann_to_abi_mlir` + `ArrayLoad`).
+        crate::ast::TypeAnn::Array { element, length } => ValueKind::Tensor {
+            dtype: type_ann_to_abi_mlir(element)
+                .parse::<DType>()
+                .unwrap_or(DType::I64),
+            shape: vec![ShapeDim::Known(*length as usize)],
         },
         _ => ValueKind::ScalarI64,
     }
