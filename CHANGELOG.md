@@ -200,6 +200,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declaration (no IR-node field, no mic@3 wire change). `f64` `const`-array
   definitions fail closed (the i64 heap would silently zero them). Build-and-run gate
   `tests/const_array_run.rs`.
+- **Array-parameter lowering to `cdylib` (17.6).** A function taking a fixed array
+  parameter — `fn dot(a: [i64; N], b: [i64; N]) -> i64 { … a[i] … }` — now compiles to
+  a shared library. `type_ann_to_abi_mlir` + `type_ann_to_value_kind` gained a
+  `TypeAnn::Array` arm, so a `[T; N]` param maps to the same `tensor<NxT>` MLIR
+  boundary a `Tensor` annotation uses (bufferize-function-boundaries → memref C-ABI,
+  the proven tensor-param path) instead of falling to the scalar-`i64` default, where
+  `ArrayLoad` on the param had failed with *"missing type information … array load
+  base"*. Rank-1, scalar element. Additive — array-param programs previously errored,
+  so no working program (including self-host `main.mind`) changes bytes (keystone 7/7
+  byte-identical). Unblocks the head-to-head performance shape (`axpy`/`dot`/`gemv`)
+  against C.
+- **Determinism-with-speed evidence.** The deterministic int8 GEMM kernel runs
+  **~2.02× a single-core OpenBLAS f32 reference, byte-exact** (`bench/RESULTS-int8-2026-06-08.md`);
+  and — vs a *naïve* `clang -O3 -march=x86-64-v3` loop (what `-O3` gives without
+  hand-blocking) — byte-identical output at a large margin, with a `memcmp` correctness
+  gate *before* any timing (`bench/RESULTS-beat-clang-igemm-2026-08-21.md`, reproducible
+  driver `bench/beat_clang_igemm_driver.c`). No `-ffast-math` claim (determinism forbids
+  float reassociation).
 - **Scalar `f64` `sqrt` (17.5)** lowers to the IEEE correctly-rounded `llvm.intr.sqrt`.
   `sqrt` is now a **reserved builtin name (E2031)** — a user `fn sqrt` is rejected at
   check-time (one name, one meaning; removes a silent-shadow / duplicate-symbol class).
