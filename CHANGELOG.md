@@ -31,6 +31,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for non-float element types, so integer arrays keep the exact prior path (keystone 7/7
   self-host byte-identity preserved; `main.mind` uses no float arrays, so its emit is
   unchanged).
+- **Audit hardening (cross-model review):** the f64/f32 `[T; N]` routing now covers **all six**
+  `Let` dispatch sites (fn-body, top-level, while/for-body, then/else-branch, region-local),
+  so a float fixed array declared inside a branch body now compiles instead of hitting the
+  i64 `ConstArray` "missing type information" path. And `lower_fixed_dense_array_binding`
+  now **fails closed on a non-const element** — `let a: [f64; 2] = [x, 1.0]` (a runtime
+  element) previously baked `x` → `0.0` silently; it now falls back to the ordinary path
+  (never a silent zero). Known remaining limit: a float fixed array *declared fresh inside a
+  `while` body* still fails closed (a deeper loop-carry `substitute_ids` value-kind
+  propagation case) — fn-top declaration + in-loop mutation (the common shape) works.
 - **Deterministic canary + fail-closed gate.** `testdata/rh_f64_aggregate_canary.mind`
   performs an LDL^T-style elimination on a 4×4 rational SPD matrix whose entries and every
   factor are exactly representable in binary64, returning the bit-exact `37`;

@@ -1440,6 +1440,15 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                         &struct_env,
                         receiver_types,
                     ),
+                    // RH f64-aggregate: top-level `let a: [f64/f32; N] = [lit..]`
+                    // → typed ConstDenseTensor.
+                    #[cfg(feature = "std-surface")]
+                    Some(TypeAnn::Array { element, length }) => {
+                        match lower_fixed_dense_array_binding(element, *length, value, &mut ir) {
+                            Some(id) => id,
+                            None => lower_expr(value, &mut ir, &env, &struct_env, receiver_types),
+                        }
+                    }
                     // `array<T>` binding whose RHS is an array literal `[..]`:
                     // lower onto the std.vec heap runtime (vec_new + vec_push
                     // chain) instead of the const-array/tensor path.
@@ -1836,6 +1845,16 @@ fn lower_fixed_dense_array_binding(
     // the ordinary path (which surfaces it) rather than silently zero-fill /
     // truncate here.
     if elements.len() != length as usize {
+        return None;
+    }
+    // Fail-closed on a NON-CONST element (audit finding): `dense_elem_bits`
+    // resolves each element via `extract_const_f64(..).unwrap_or(0.0)`, so a
+    // non-literal element (`let a: [f64; 2] = [x, 1.0]`) would be SILENTLY baked
+    // to 0.0 — a wrong-value miscompile. Every element must be a compile-time
+    // const here; otherwise fall back to the ordinary path (a runtime
+    // element-wise init or a loud type error), never a silent zero. `f64`/`f32`
+    // both extract through `extract_const_f64` (see `dense_elem_bits`).
+    if elements.iter().any(|e| extract_const_f64(e).is_none()) {
         return None;
     }
     let data: Vec<u64> = elements
@@ -6521,6 +6540,23 @@ fn lower_expr(
                             &local_struct_env,
                             receiver_types,
                         ),
+                        // RH f64-aggregate: `let a: [f64/f32; N] = [lit..]` declared
+                        // inside a loop body → typed ConstDenseTensor (mirrors the
+                        // fn-body arm). None for i64/i32/non-literal → byte-identical
+                        // default path.
+                        #[cfg(feature = "std-surface")]
+                        Some(TypeAnn::Array { element, length }) => {
+                            match lower_fixed_dense_array_binding(element, *length, value, ir) {
+                                Some(id) => id,
+                                None => lower_expr(
+                                    value,
+                                    ir,
+                                    &local_env,
+                                    &local_struct_env,
+                                    receiver_types,
+                                ),
+                            }
+                        }
                         // `array<T>` binding with an array-literal RHS: lower
                         // onto the std.vec heap runtime.
                         #[cfg(feature = "std-surface")]
@@ -6819,6 +6855,26 @@ fn lower_expr(
                                 &then_struct_env,
                                 receiver_types,
                             ),
+                            // RH f64-aggregate: `let a: [f64/f32; N] = [lit..]` in a
+                            // then/if-arm body → typed ConstDenseTensor.
+                            #[cfg(feature = "std-surface")]
+                            Some(TypeAnn::Array { element, length }) => {
+                                match lower_fixed_dense_array_binding(
+                                    element,
+                                    *length,
+                                    value,
+                                    &mut then_ir,
+                                ) {
+                                    Some(id) => id,
+                                    None => lower_expr(
+                                        value,
+                                        &mut then_ir,
+                                        &then_env,
+                                        &then_struct_env,
+                                        receiver_types,
+                                    ),
+                                }
+                            }
                             // `array<T>` binding with an array-literal RHS: lower
                             // onto the std.vec heap runtime (vec_new + vec_push)
                             // exactly like the top-level and while-body Let arms.
@@ -7180,6 +7236,26 @@ fn lower_expr(
                                         &else_struct_env,
                                         receiver_types,
                                     )
+                                }
+                                // RH f64-aggregate: `let a: [f64/f32; N] = [lit..]` in
+                                // an else/match-arm body → typed ConstDenseTensor.
+                                #[cfg(feature = "std-surface")]
+                                Some(TypeAnn::Array { element, length }) => {
+                                    match lower_fixed_dense_array_binding(
+                                        element,
+                                        *length,
+                                        value,
+                                        &mut else_ir,
+                                    ) {
+                                        Some(id) => id,
+                                        None => lower_expr(
+                                            value,
+                                            &mut else_ir,
+                                            &else_env,
+                                            &else_struct_env,
+                                            receiver_types,
+                                        ),
+                                    }
                                 }
                                 // `array<T> = [..]` inside an else/match-arm body:
                                 // lower onto the std.vec heap runtime, mirroring the
@@ -11694,6 +11770,15 @@ fn lower_stmt_seq(
                         struct_env,
                         receiver_types,
                     ),
+                    // RH f64-aggregate: region-local `let a: [f64/f32; N] = [lit..]`
+                    // → typed ConstDenseTensor.
+                    #[cfg(feature = "std-surface")]
+                    Some(TypeAnn::Array { element, length }) => {
+                        match lower_fixed_dense_array_binding(element, *length, value, ir) {
+                            Some(id) => id,
+                            None => lower_expr(value, ir, env, struct_env, receiver_types),
+                        }
+                    }
                     _ => lower_expr(value, ir, env, struct_env, receiver_types),
                 };
                 // Narrow-typed Region-local: mask to declared width AND record it
