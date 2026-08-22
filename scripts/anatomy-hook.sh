@@ -14,19 +14,18 @@ set -euo pipefail
 # NOT check formatting, so a hand-written file that looks clean fails CI. Runs
 # only when a Rust file is staged; `cargo fmt --check` is a fast parse+compare
 # (no build) in the commit's own worktree (PWD, where git invokes the hook).
-# rustfmt's default reorder_modules can drift even a one-line `pub mod X;`.
-# Check each staged .rs DIRECTLY with rustfmt (not `cargo fmt --check`, which
-# only traverses declared modules and would silently pass an added-but-not-yet-
-# wired file — a fake-green gate).
-if command -v rustfmt >/dev/null 2>&1; then
-  _fmt_bad=""
-  for _f in $(git diff --cached --name-only --diff-filter=ACMR | grep '\.rs$' || true); do
-    [ -f "$_f" ] || continue
-    rustfmt --edition 2021 --check "$_f" >/dev/null 2>&1 || _fmt_bad="$_fmt_bad $_f"
-  done
-  if [ -n "$_fmt_bad" ]; then
-    echo "pre-commit: rustfmt drift in staged Rust:$_fmt_bad" >&2
-    echo "  run 'cargo fmt', then re-stage (fmt drift fails the CI Format Check)." >&2
+# Match the CI `Format Check` gate EXACTLY: `cargo fmt --check` (which respects
+# the crate edition + rustfmt.toml). A per-file `rustfmt --edition X --check`
+# does NOT load rustfmt.toml or the crate's real edition, so it FALSE-POSITIVES
+# on pre-existing lines the CI gate accepts (observed 2026-08-21: an edition-2021
+# per-file check flagged an edition-2024 crate + reformatted an unrelated comment,
+# blocking a `cargo fmt --check`-clean commit). Correctness > the theoretical
+# "undeclared file" gap. Only run when Rust is staged; parse+compare, no build.
+if command -v cargo >/dev/null 2>&1 \
+   && git diff --cached --name-only --diff-filter=ACMR | grep -q '\.rs$'; then
+  if ! cargo fmt --check >/dev/null 2>&1; then
+    echo "pre-commit: rustfmt drift (cargo fmt --check fails the CI Format Check)." >&2
+    echo "  run 'cargo fmt', then re-stage." >&2
     exit 1
   fi
 fi
