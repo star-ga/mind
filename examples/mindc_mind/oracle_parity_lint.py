@@ -203,6 +203,20 @@ ARMS = [
      "single-payload declared-enum ctor as a return value (emit_boxed_enum_record)",
      "enum O { Some(i64), None }\n"
      "pub fn f(p: i64) -> O { return O::Some(p); }"),
+    # #330 array-store guard — a value-semantic fixed `[T; N]` element STORE
+    # (`a[i] = v;`) as a non-final statement (flatten_stmt_seq ast_index_assign
+    # arm -> descriptor kind 12 -> OP_ARRAY_STORE 0x2B). Pins the store note bytes
+    # (dst || base_vid || index_vid || value_vid) + the SSA name-rebind (later reads
+    # resolve to the store's fresh dst) byte-for-byte vs the Rust oracle
+    # (lower.rs IndexAssign + emit.rs Instr::ArrayStore). The first arm isolates the
+    # store emit (trailing const); the second exercises the rebind (trailing read of
+    # the mutated element must resolve to the stored value, same as the oracle).
+    ("s  array-store-i64",
+     "value-semantic fixed [i64; N] element store (a[i] = v; trailing const)",
+     "pub fn f() -> i64 { let mut a: [i64; 4] = [1, 2, 3, 4]; a[1] = 9; 0 }"),
+    ("s  array-store-read",
+     "array store then read the mutated element (store + name-rebind + a[i] read)",
+     "pub fn f() -> i64 { let mut a: [i64; 4] = [1, 2, 3, 4]; a[1] = 9; a[1] }"),
 ]
 
 # i64-REFERENCES arms — NATIVE-ELF-ONLY constructs, parity-by-REFUSAL.

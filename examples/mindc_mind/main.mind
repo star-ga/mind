@@ -14870,6 +14870,57 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
         __mind_store_i64(nplan_cell, p + 1);
         return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
     }
+    if ast_kind(stmt) == ast_index_assign() {
+        // `a[i] = v;` value-semantic fixed-array element STORE as a non-final
+        // statement. Mirrors src/eval/lower.rs IndexAssign fn-body arm EXACTLY:
+        // base = lower(recv), idx = lower(index), val = lower(value), dst = fresh(),
+        // then REBIND the receiver name -> dst so later reads observe the write
+        // (letenv_lookup is last-match-wins, so appending a fresh env entry shadows
+        // the prior binding without disturbing it). IDENT receiver only (a
+        // value-semantic fixed `[T; N]` root) — a non-ident / vec / bytes receiver
+        // fails CLOSED here (return 0 -> whole note refuses -> 0-byte ELF), never a
+        // partial or wrong-byte note. A let-bound array ident resolves via the seq
+        // let-env to its recorded slot WITH NO node (flatten_expr_env), so the store's
+        // own descriptor range [st_start, st_end) is exactly the index + value nodes
+        // followed by the kind-12 store node; that store node takes the LAST vid in
+        // the plain-let range (seq_resolve_range assigns a fresh vid to every non
+        // 0/4/5 kind), byte-exact vs the oracle's `fn_ir.fresh()` after base/idx/val.
+        let st_recv: i64 = ast_child0(stmt);
+        if ast_kind(st_recv) != ast_ident() {
+            return 0;
+        }
+        let st_idx: i64 = ast_child1(stmt);
+        let st_val: i64 = ast_child2(stmt);
+        let st_start: i64 = __mind_load_i64(cursor);
+        let st_base: i64 = flatten_expr_env(st_recv, src, params_addr, n_params, nodes, cursor, env, nlets);
+        if st_base < 0 {
+            return 0;
+        }
+        let st_islot: i64 = flatten_expr_env(st_idx, src, params_addr, n_params, nodes, cursor, env, nlets);
+        if st_islot < 0 {
+            return 0;
+        }
+        let st_vslot: i64 = flatten_expr_env(st_val, src, params_addr, n_params, nodes, cursor, env, nlets);
+        if st_vslot < 0 {
+            return 0;
+        }
+        let st_slot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + st_slot * 32 + 0, 12);
+        __mind_store_i64(nodes + st_slot * 32 + 8, st_base);
+        __mind_store_i64(nodes + st_slot * 32 + 16, st_islot);
+        __mind_store_i64(nodes + st_slot * 32 + 24, st_vslot);
+        __mind_store_i64(cursor, st_slot + 1);
+        let st_end: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(env + nlets * 24 + 0, ast_span_lo(st_recv));
+        __mind_store_i64(env + nlets * 24 + 8, ast_span_hi(st_recv));
+        __mind_store_i64(env + nlets * 24 + 16, st_slot);
+        __mind_store_i64(nlets_cell, nlets + 1);
+        __mind_store_i64(plan + p * 64 + 0, 0);
+        __mind_store_i64(plan + p * 64 + 8, st_start);
+        __mind_store_i64(plan + p * 64 + 16, st_end);
+        __mind_store_i64(nplan_cell, p + 1);
+        return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
+    }
     if ast_kind(stmt) == ast_if() {
         // (type 9) two-sided FALL-THROUGH if-else statement: `if C { lets+bare-calls }
         // else { lets+bare-calls } TRAIL` — both branches pure side-effects (no return,
@@ -19021,6 +19072,26 @@ pub fn emit_mic3_tree_body(s: EmitState, nodes: i64, n_nodes: i64, vidbuf: i64, 
         let sl3: EmitState = emit_uleb128(sl2, base_vid);
         let sl4: EmitState = emit_uleb128(sl3, index_vid);
         return emit_mic3_tree_body(sl4, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
+    }
+    // kind 12 = array element STORE `a[i] = v` -> OP_ARRAY_STORE (0x2B=43): dst ||
+    // base_vid || index_vid || value_vid. record[1]=base_slot, [2]=index_slot,
+    // [3]=value_slot; dst = the store node's OWN fresh vid (consumed unread — mirrors
+    // the Rust lower.rs `dst = fn_ir.fresh()` after lowering base/idx/val, the write's
+    // visibility is the flatten-env name-rebind, NOT this vid). Byte-exact vs
+    // --emit-mic3 (src/ir/compact/v3/emit.rs Instr::ArrayStore: 0x2B + 4x write_vid).
+    if kind == 12 {
+        let st_base_slot: i64 = __mind_load_i64(nodes + i * 32 + 8);
+        let st_index_slot: i64 = __mind_load_i64(nodes + i * 32 + 16);
+        let st_value_slot: i64 = __mind_load_i64(nodes + i * 32 + 24);
+        let st_base_vid: i64 = __mind_load_i64(vidbuf + st_base_slot * 8);
+        let st_index_vid: i64 = __mind_load_i64(vidbuf + st_index_slot * 8);
+        let st_value_vid: i64 = __mind_load_i64(vidbuf + st_value_slot * 8);
+        let ss1: EmitState = es_push(s, 43);
+        let ss2: EmitState = emit_uleb128(ss1, dst);
+        let ss3: EmitState = emit_uleb128(ss2, st_base_vid);
+        let ss4: EmitState = emit_uleb128(ss3, st_index_vid);
+        let ss5: EmitState = emit_uleb128(ss4, st_value_vid);
+        return emit_mic3_tree_body(ss5, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
     }
     // kind 11 = `EXPR as i64` conv call (slice #309) -> OP_CALL (0x16): dst ||
     // name_idx(__mind_conv_i64) || uleb(1) || operand_vid. record[2]=operand slot; the

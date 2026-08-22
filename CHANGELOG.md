@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — pure-MIND `--backend native`: fixed-array element STORE `a[i] = v` mic@3 note-emit (RH f64-aggregate native leg — slice 1)
+- **The self-host compiler now emits the mic@3 `OP_ARRAY_STORE` (0x2B) note for a value-semantic
+  fixed `[T; N]` element store** (`a[i] = v;`) as a non-final statement, so `mindc build
+  --backend native` no longer fails CLOSED on an array store. Previously the whole-module note
+  builder (`nb_build_mic3` → `flatten_stmt_seq`) rejected the store as an unsupported statement,
+  so `nb_trace_hash` returned 0 and the native backend refused the whole program — for `i64`
+  stores as much as `f64`. The new `flatten_stmt_seq` `ast_index_assign` arm mirrors
+  `src/eval/lower.rs`'s `IndexAssign` fn-body lowering exactly: flatten base / index / value,
+  emit a descriptor kind-12 store node that takes a fresh dst vid (`seq_resolve_range`), and
+  **rebind** the receiver name to that dst (`letenv_lookup` is last-match-wins) so later reads
+  observe the write. `emit_mic3_tree_body` gains the kind-12 arm (`OP_ARRAY_STORE` +
+  `dst || base_vid || index_vid || value_vid`), byte-exact vs `src/ir/compact/v3/emit.rs`'s
+  `Instr::ArrayStore`. (`examples/mindc_mind/main.mind`.)
+- **Byte-identical to the Rust oracle, gated.** Two new `oracle_parity_lint.py` arms
+  (`array-store-i64`, `array-store-read`) pin the store note + the name-rebind + a trailing read
+  of the mutated element byte-for-byte vs `mindc --emit-mic3` (parity **32/32**). The frozen
+  self-host `stage1.elf` is re-blessed (`--reseed`; the loop closes stage1==stage2==stage3
+  byte-identical, 2325481 B); keystone 7/7 stays green (`main.mind` uses no `a[i]=v`, so its
+  self-compile is unchanged). A store program (`let mut a:[i64;4]=[1,2,3,4]; a[1]=9; a[1]`) now
+  compiles and RUNS via `--backend native` (exit 9), zero MLIR/LLVM/clang.
+- **Remaining native-leg work (the RH canary):** the f64 element store still needs the SSE
+  `movsd` native codegen (`nb_stmt`), the by-value fixed-array PARAMETER needs its dtype wiring,
+  and the store INSIDE a loop body needs the while-body note path — so the RH canary's
+  `--backend native` leg stays fail-closed (`NATIVE_REQUIRED=False`) until those land. This slice
+  unblocks the note-builder store blocker that gated all of them.
+
 ### Added — fixed `[f64; N]` / `[f32; N]` aggregate surface on the executable MLIR path (RH_REQUIRED_F64_AGGREGATE_SURFACE)
 - **Local floating-point fixed arrays now compile and run correctly on the `mindc build`
   (LLVM/MLIR) path.** A `let mut a: [f64; N] = [lit, ...]` (or `[f32; N]`) now lowers to a
