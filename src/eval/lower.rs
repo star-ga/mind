@@ -1802,6 +1802,57 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     ir
 }
 
+/// Route a local `let a: [f64; N] = [lit, ...]` (or `[f32; N]`) fixed-array
+/// binding to a TYPED `ConstDenseTensor` carrying the exact per-element
+/// IEEE-754 bits, so a following `a[i]` load / `a[i] = v` store recovers a
+/// well-typed `Tensor { dtype: F64/F32, .. }` base. The generic i64
+/// `ConstArray` path (the `_ => lower_expr` default) coerces every float
+/// literal to 0 and registers only `Tensor { I64 }`, so the executable
+/// `ArrayLoad`/`ArrayStore` then fails "missing type information" (or would
+/// mis-read the element as i64). Returns `None` for a non-float element type,
+/// a non-`ArrayLit` RHS, or a length/literal-count mismatch, so the caller
+/// keeps the byte-identical i64/i32 fixed-array path (keystone gate) and real
+/// type errors still surface on the ordinary path. #320 Step D / RH
+/// f64-aggregate surface.
+#[cfg(feature = "std-surface")]
+fn lower_fixed_dense_array_binding(
+    element: &TypeAnn,
+    length: u32,
+    value: &ast::Node,
+    ir: &mut IRModule,
+) -> Option<ValueId> {
+    let dtype = match element {
+        TypeAnn::ScalarF64 => DType::F64,
+        TypeAnn::ScalarF32 => DType::F32,
+        TypeAnn::Named(n) if n == "f64" => DType::F64,
+        TypeAnn::Named(n) if n == "f32" => DType::F32,
+        _ => return None,
+    };
+    let elements = match value {
+        ast::Node::ArrayLit { elements, .. } => elements.as_slice(),
+        _ => return None,
+    };
+    // Fail-closed length parity: a mismatch is a real type error. Fall back to
+    // the ordinary path (which surfaces it) rather than silently zero-fill /
+    // truncate here.
+    if elements.len() != length as usize {
+        return None;
+    }
+    let data: Vec<u64> = elements
+        .iter()
+        .map(|e| dense_elem_bits(e, &dtype))
+        .collect();
+    let shape = vec![ShapeDim::Known(length as usize)];
+    let id = ir.fresh();
+    ir.instrs.push(Instr::ConstDenseTensor {
+        dst: id,
+        dtype,
+        shape,
+        data,
+    });
+    Some(id)
+}
+
 fn lower_tensor_binding(
     ir: &mut IRModule,
     value: &ast::Node,
@@ -5991,6 +6042,29 @@ fn lower_expr(
                                 &fn_struct_env,
                                 receiver_types,
                             ),
+                            // RH f64-aggregate surface: a local `let a: [f64; N] =
+                            // [lit, ...]` (or `[f32; N]`) fixed-array literal routes
+                            // to a TYPED `ConstDenseTensor` so the following `a[i]`
+                            // load / `a[i] = v` store finds a well-typed base. A
+                            // non-float element type (i64/i32) or a non-literal RHS
+                            // returns `None`, so the arm falls back to the
+                            // byte-identical default path (keystone gate). `[T; N]`
+                            // (`TypeAnn::Array`) never matches the `array<T>` surface
+                            // / growable-bytes arms below, so intercepting it here is
+                            // behaviour-preserving.
+                            #[cfg(feature = "std-surface")]
+                            Some(TypeAnn::Array { element, length }) => {
+                                lower_fixed_dense_array_binding(element, *length, value, &mut fn_ir)
+                                    .unwrap_or_else(|| {
+                                        lower_expr(
+                                            value,
+                                            &mut fn_ir,
+                                            &fn_env,
+                                            &fn_struct_env,
+                                            receiver_types,
+                                        )
+                                    })
+                            }
                             // `array<T>` binding with an array-literal RHS:
                             // lower onto the std.vec heap runtime.
                             #[cfg(feature = "std-surface")]

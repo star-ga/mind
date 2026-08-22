@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — fixed `[f64; N]` / `[f32; N]` aggregate surface on the executable MLIR path (RH_REQUIRED_F64_AGGREGATE_SURFACE)
+- **Local floating-point fixed arrays now compile and run correctly on the `mindc build`
+  (LLVM/MLIR) path.** A `let mut a: [f64; N] = [lit, ...]` (or `[f32; N]`) now lowers to a
+  TYPED `ConstDenseTensor` carrying the exact per-element IEEE-754 bits instead of falling
+  through to the i64-only `ConstArray` path — which coerced float literals to 0 and left the
+  base untyped, so a following `a[i]` load failed `MLIR lowering: missing type information
+  … array load base`. With the typed base, the existing dtype-generic `ArrayLoad` /
+  `ArrayStore` emitters (tensor.extract / tensor.insert, both already f64-ready) and the
+  `#320 Step D` aggregate loop-carry work end-to-end: runtime-indexed load `x = a[i]`, store
+  `a[i] = v` (straight-line, inside `for`/`while`, visible after the loop), flat matrices
+  `m[i*n + j]` with nested scalar loops, and f64 loop-carried accumulators (add/sub/mul/div,
+  no fast-math / reassociation — strict IEEE-754). (`src/eval/lower.rs`:
+  `lower_fixed_dense_array_binding` + the fn-body `Let` arm.)
+- **Read-only fixed-array function parameter (aggregate call ABI, minimum).** A fixed array
+  passed by value to a user fn — `fn f(a: [f64; N])`, called `f(a)` — no longer trips the
+  `non-i64 argument to call` reject: the call-site accepts a `Tensor` arg and forwards it as
+  `func.call @f(%a) : (tensor<NxT>) -> ret`, matching the callee's `tensor<NxT>` param type
+  (from `fn_signatures`), and mlir-opt's function-boundary bufferization lowers the internal
+  tensor call. A shape/dtype mismatch stays loud at mlir-opt. Array *returns* remain out of
+  subset. (`src/mlir/lowering.rs`: `Tensor` arm in the call-arg gate.)
+- **`i64`/`i32` fixed arrays are byte-identical** — the new f64/f32 routing returns `None`
+  for non-float element types, so integer arrays keep the exact prior path (keystone 7/7
+  self-host byte-identity preserved; `main.mind` uses no float arrays, so its emit is
+  unchanged).
+- **Deterministic canary + fail-closed gate.** `testdata/rh_f64_aggregate_canary.mind`
+  performs an LDL^T-style elimination on a 4×4 rational SPD matrix whose entries and every
+  factor are exactly representable in binary64, returning the bit-exact `37`;
+  `rh_f64_aggregate_canary_smoke.py` (wired into the `mindcraft_self_host` CI job) requires
+  that on the MLIR path and asserts the pure-MIND `--backend native` leg fails CLOSED — the
+  native fixed-array **store** (`a[i]=v`) and by-value array **parameter** are NOT yet ported
+  to the self-host emitter / mic@3 wire format (no `OP_ARRAY_STORE` opcode); load / accumulate
+  / flat-matrix-read already run natively. That native leg is the remaining RH replay work.
+
 ### Added — fixed-array / const-tensor `a[i] = v` now WORKS inside an `if`/`else` BRANCH body (#320 Step D — the last position; store now works EVERYWHERE)
 - **`a[i] = v` on a fixed `[T; N]` / const-literal `tensor<T[N]>` now works inside an `if`/`else`
   branch body** — the last fail-closed position. With this, the store works in EVERY statement
