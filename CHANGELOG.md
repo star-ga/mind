@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — pure-MIND `--backend native`: f64 fixed-array element STORE SSE codegen (RH f64-aggregate native leg — slice 2, G2)
+- **`mindc build --backend native` now emits a correct SSE `movsd` store for a
+  value-semantic fixed `[f64; N]` element store** (`a[i] = v`). Slice 1 unblocked the
+  mic@3 note; this closes the codegen: `nb_stmt`'s `ast_index_assign` arm previously
+  fail-closed (poisoned) on a float rhs, so `a[i] = 9.5` refused. Now, when the array
+  ELEMENT dtype is float (`nb_index_elem_dtype`) AND the rhs is float, the store lowers
+  to `movsd` — load the rhs value slot into `xmm0` (`nb_fp_movsd_load_xmm0`), keep the
+  UNCHANGED GP element-address arithmetic (`CONST 8` / `MUL` / `ADD` → `rax`), and
+  `movsd [rax], xmm0` (`nb_fp_movsd_store_xmm0_rax`). The i64 store path is byte-for-byte
+  unchanged. SSA-id-neutral (both paths allocate exactly the one consumed-unread store
+  dst), so `nb_count_stmt` needs no mirror change. (`examples/mindc_mind/main.mind`.)
+- **Fail-closed on a genuine type mismatch** — float element + INT rhs (needs an
+  `int→float` conversion not yet ported) and int element + FLOAT rhs (a type error) both
+  still poison, so no wrong-bit GP store into a float cell (or vice versa) is ever
+  emitted. deferred: `int-rhs-into-f64` (`cvtsi2sd`).
+- **Verified + gated.** A top-level f64 store program
+  (`let mut a:[f64;4]=[1.5,2.5,3.0,4.0]; a[1]=9.5; a[1] as i64`) now compiles and RUNS
+  via `--backend native` → exit 9 (was fail-closed), zero MLIR/LLVM/clang; the i64 store
+  still runs → 9 (no regression). oracle-parity 32/32 (codegen change — the note is
+  untouched), keystone 7/7, frozen `stage1.elf` re-blessed (loop closes). BYTE-SAFE for
+  keystone: `main.mind` has no `a[i]=v` node, so neither the SSE branch nor the new
+  mismatch-poison fires during self-compile. Remaining for the RH canary's native leg:
+  the store INSIDE a loop body (while-body note path) and the by-value fixed-array
+  parameter — so `NATIVE_REQUIRED` stays False.
+
 ### Added — pure-MIND `--backend native`: fixed-array element STORE `a[i] = v` mic@3 note-emit (RH f64-aggregate native leg — slice 1)
 - **The self-host compiler now emits the mic@3 `OP_ARRAY_STORE` (0x2B) note for a value-semantic
   fixed `[T; N]` element store** (`a[i] = v;`) as a non-final statement, so `mindc build

@@ -33179,12 +33179,50 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let wa3: String = nb_store_rax(wa2, nb_slot_disp(waddr_id));
         // RHS -> value slot.
         let s_wv: NbState = nb_expr(NbState { code: wa3, next_id: waddr_id + 1, last_id: waddr_id, ncalls: s_wi.ncalls }, buf, w_rhs, params_addr, n_params, calls, lets, lcell);
-        if nb_node_dtype_tbl(w_rhs, wdtbl, lets, lcell, buf, params_addr, n_params) == nb_dtype_float() {
-            __mind_store_i64(lcell + 80, 1)
+        // G2: f64 element store. A value-semantic fixed `[f64; N]` element store
+        // (`a[i] = v`) whose ELEMENT dtype is float AND whose rhs is float lowers to
+        // an SSE `movsd` store instead of the GP `__mind_store_i64`. The rhs value
+        // slot holds the f64 bits (nb_expr computes a float into a stack slot,
+        // consumed via movsd — the same model as float returns / float field reads),
+        // so load it into xmm0 and store to the element address held in rax. The GP
+        // address arithmetic (CONST 8 / MUL / ADD above) is UNCHANGED — only the final
+        // store instruction differs (F2 0F 11 00 = movsd [rax], xmm0). BYTE-SAFE for
+        // keystone: main.mind has no `a[i]=v` node at all, so neither this branch nor
+        // the mismatch-poison below fires during self-compile (integer native-ELF
+        // oracle byte-identical). Fail CLOSED on a genuine mismatch: float element +
+        // INT rhs (needs an int->float conversion not yet ported) and int element +
+        // FLOAT rhs (a type error) both poison, so no wrong-bit GP store into a float
+        // cell (or a float store into an int cell) is ever emitted. deferred:
+        // int-rhs-into-f64 (cvtsi2sd) is a documented follow-up, not a regression.
+        let w_elem_dt: i64 = nb_index_elem_dtype(w_base, buf, lets, lcell);
+        let w_rhs_dt: i64 = nb_node_dtype_tbl(w_rhs, wdtbl, lets, lcell, buf, params_addr, n_params);
+        let w_is_f64_store: i64 = if w_elem_dt == nb_dtype_float() {
+            if w_rhs_dt == nb_dtype_float() {
+                1
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+        if w_is_f64_store == 0 {
+            if w_rhs_dt == nb_dtype_float() {
+                __mind_store_i64(lcell + 80, 1)
+            }
+            if w_elem_dt == nb_dtype_float() {
+                __mind_store_i64(lcell + 80, 1)
+            }
         }
-        // __mind_store_i64(addr, val); the store's dst id is consumed unread.
+        // store — the dst id is consumed unread (matches the i64 store + the Rust
+        // ArrayStore dst; the write's visibility is the memory store, not this id).
         let wdst_id: i64 = s_wv.next_id;
-        let ws1: String = nb_emit_store_i64(s_wv.code, nb_slot_disp(waddr_id), nb_slot_disp(s_wv.last_id));
+        let ws1: String = if w_is_f64_store == 1 {
+            let wsf1: String = nb_fp_movsd_load_xmm0(s_wv.code, nb_slot_disp(s_wv.last_id));
+            let wsf2: String = nb_load_rax(wsf1, nb_slot_disp(waddr_id));
+            nb_fp_movsd_store_xmm0_rax(wsf2)
+        } else {
+            nb_emit_store_i64(s_wv.code, nb_slot_disp(waddr_id), nb_slot_disp(s_wv.last_id))
+        };
         return NbState { code: ws1, next_id: wdst_id + 1, last_id: wdst_id, ncalls: s_wv.ncalls };
     }
     if k == ast_field_assign() {
