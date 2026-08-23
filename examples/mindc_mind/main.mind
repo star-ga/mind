@@ -10903,14 +10903,42 @@ pub fn intern_while_live_names(strbuf: i64, offs: i64, ccell: i64, src: i64, stm
         return 0;
     }
     let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
-    if ast_kind(stmt) != ast_assign() {
-        return intern_while_live_names(strbuf, offs, ccell, src, stmts_addr, stmts_len, i + 1);
+    // A loop-carried write target is a scalar `x = ..` (ast_assign, target = child0)
+    // OR a value-semantic fixed-array element store `a[i] = ..` (ast_index_assign,
+    // target = the receiver array ident child0). The Rust oracle's record_loop_mut
+    // (lower.rs While arm) records BOTH in ONE interleaved first-mutation source-order
+    // pass, and emit.rs interns live_var names in exactly that order — so this single
+    // stmt-ordered walk that handles both kinds matches byte-for-byte. A store receiver
+    // that is NOT a plain ident (nested / field) is never loop-carried by the oracle
+    // (lower.rs:8425 Lit(Ident) guard) -> skip. Anything else is not a carried write.
+    let swk: i64 = ast_kind(stmt);
+    let sw_is_assign: i64 = if swk == ast_assign() {
+        1
+    } else {
+        0
+    };
+    let sw_is_store: i64 = if swk == ast_index_assign() {
+        1
+    } else {
+        0
+    };
+    if sw_is_assign == 0 {
+        if sw_is_store == 0 {
+            return intern_while_live_names(strbuf, offs, ccell, src, stmts_addr, stmts_len, i + 1);
+        }
     }
     let name: i64 = ast_child0(stmt);
+    if sw_is_store == 1 {
+        if ast_kind(name) != ast_ident() {
+            return intern_while_live_names(strbuf, offs, ccell, src, stmts_addr, stmts_len, i + 1);
+        }
+    }
     let lo: i64 = ast_span_lo(name);
     let hi: i64 = ast_span_hi(name);
     // Skip if a body-local `let` declares this name earlier (then it is NOT loop-carried),
-    // or an earlier assign of the same name already interned it (dedup -> first sight only).
+    // or an earlier assign/store of the same name already interned it (dedup -> first sight
+    // only). Kind-agnostic both ways: record_loop_mut matches by NAME, so an earlier
+    // `a[i]=v` suppresses a later `a = ..` and vice versa.
     if while_name_let_or_assigned_before(src, stmts_addr, lo, hi, i, 0) == 1 {
         return intern_while_live_names(strbuf, offs, ccell, src, stmts_addr, stmts_len, i + 1);
     }
@@ -10936,6 +10964,17 @@ pub fn while_name_let_or_assigned_before(src: i64, stmts_addr: i64, lo: i64, hi:
         let nm: i64 = ast_child0(stmt);
         if span_bytes_equal2(src, lo, hi, src, ast_span_lo(nm), ast_span_hi(nm)) == 1 {
             return 1;
+        }
+    }
+    // Kind-agnostic dedup: an earlier value-semantic store `a[i] = ..` to the same
+    // receiver name also suppresses a later carry-intern of that name — the oracle's
+    // record_loop_mut matches by name across scalar Assign AND array IndexAssign.
+    if k == ast_index_assign() {
+        let snm: i64 = ast_child0(stmt);
+        if ast_kind(snm) == ast_ident() {
+            if span_bytes_equal2(src, lo, hi, src, ast_span_lo(snm), ast_span_hi(snm)) == 1 {
+                return 1;
+            }
         }
     }
     while_name_let_or_assigned_before(src, stmts_addr, lo, hi, before, i + 1)
@@ -20482,6 +20521,47 @@ pub fn flatten_ast_lv(node: i64, buf: i64, params_addr: i64, n_params: i64, node
         __mind_store_i64(cursor, slot + 1);
         return slot;
     }
+    if k == ast_index_assign() {
+        // `a[i] = v` value-semantic fixed-array element STORE inside a WHILE/loop body
+        // (lv-env flatten path). Mirrors lower.rs:8402 (#320 Step-D F2 aggregate loop-
+        // carry): base/index/value flatten post-order, then a FRESH aggregate kind-12
+        // store node (= `dst = fn_ir.fresh()` + `Instr::ArrayStore`). The caller
+        // (while_body_(measure|emit) ast_index_assign arm) rebinds the receiver root to
+        // this store node's vid AND records it loop-carried (body_env.insert +
+        // record_loop_mut). IDENT receiver only; NEG base / CALL subtree fails CLOSED.
+        let sr: i64 = ast_child0(node);
+        if ast_kind(sr) != ast_ident() {
+            return 0 - 1;
+        }
+        if subtree_contains_call(sr) == 1 {
+            return 0 - 1;
+        }
+        if subtree_contains_call(ast_child1(node)) == 1 {
+            return 0 - 1;
+        }
+        if subtree_contains_call(ast_child2(node)) == 1 {
+            return 0 - 1;
+        }
+        let sb_slot: i64 = flatten_ast_lv(sr, buf, params_addr, n_params, nodes, cursor, lvenv, nlv);
+        if sb_slot < 0 {
+            return 0 - 1;
+        }
+        let si_slot: i64 = flatten_ast_lv(ast_child1(node), buf, params_addr, n_params, nodes, cursor, lvenv, nlv);
+        if si_slot < 0 {
+            return 0 - 1;
+        }
+        let sv_slot: i64 = flatten_ast_lv(ast_child2(node), buf, params_addr, n_params, nodes, cursor, lvenv, nlv);
+        if sv_slot < 0 {
+            return 0 - 1;
+        }
+        let ss_slot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + ss_slot * 32 + 0, 12);
+        __mind_store_i64(nodes + ss_slot * 32 + 8, sb_slot);
+        __mind_store_i64(nodes + ss_slot * 32 + 16, si_slot);
+        __mind_store_i64(nodes + ss_slot * 32 + 24, sv_slot);
+        __mind_store_i64(cursor, ss_slot + 1);
+        return ss_slot;
+    }
     0 - 1
 }
 
@@ -20617,6 +20697,39 @@ pub fn count_nonparam_nodes_lv(node: i64, buf: i64, params_addr: i64, n_params: 
             return 0 - 1;
         }
         return 1 + b + ix;
+    }
+    if k == ast_index_assign() {
+        // `a[i] = v` STORE -> ONE kind-12 array-store instr + base/index/value subtrees.
+        // MUST count EXACTLY as flatten_ast_lv's ast_index_assign arm emits nodes (base,
+        // index, value, then the store node) or measure/emit desync -> #1 self-host slot-
+        // desync miscompile. Same fail-closed guards. An lv array base counts 0 (kind-0
+        // leaf) so total = 1 + base + index + value.
+        let cr: i64 = ast_child0(node);
+        if ast_kind(cr) != ast_ident() {
+            return 0 - 1;
+        }
+        if subtree_contains_call(cr) == 1 {
+            return 0 - 1;
+        }
+        if subtree_contains_call(ast_child1(node)) == 1 {
+            return 0 - 1;
+        }
+        if subtree_contains_call(ast_child2(node)) == 1 {
+            return 0 - 1;
+        }
+        let cb: i64 = count_nonparam_nodes_lv(cr, buf, params_addr, n_params, lvenv, nlv);
+        if cb < 0 {
+            return 0 - 1;
+        }
+        let ci: i64 = count_nonparam_nodes_lv(ast_child1(node), buf, params_addr, n_params, lvenv, nlv);
+        if ci < 0 {
+            return 0 - 1;
+        }
+        let cv: i64 = count_nonparam_nodes_lv(ast_child2(node), buf, params_addr, n_params, lvenv, nlv);
+        if cv < 0 {
+            return 0 - 1;
+        }
+        return 1 + cb + ci + cv;
     }
     0 - 1
 }
@@ -27151,6 +27264,41 @@ pub fn while_body_measure(stmts_addr: i64, n: i64, idx: i64, buf: i64, params_ad
         __mind_store_i64(body_len_cell, __mind_load_i64(body_len_cell) + nn);
         return while_body_measure(stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, pre_nlv, lv, init, nlv_w_cell, body_len_cell, okcell);
     }
+    if ast_kind(stmt) == ast_index_assign() {
+        // `a[i] = v` value-semantic fixed-array STORE in the loop body. Mirrors the
+        // ast_assign arm above EXACTLY (and lower.rs:8402): receiver root is an already-
+        // bound array ident; flatten the WHOLE store stmt (base/index/value + the kind-12
+        // fresh-aggregate store node) to `sroot` = the store node's vid, rebind receiver
+        // -> sroot, record loop-carried (while_record_carry's slot<pre_nlv guard = the
+        // oracle's env.contains_key). Non-ident receiver fails CLOSED. (The carried NAME
+        // is interned separately by intern_while_live_names' ast_index_assign arm.)
+        let sname: i64 = ast_child0(stmt);
+        if ast_kind(sname) != ast_ident() {
+            __mind_store_i64(okcell, 0);
+            return 0;
+        }
+        let spre_vid: i64 = lvenv_lookup(buf, ast_span_lo(sname), ast_span_hi(sname), wenv, wnlv, 0);
+        if spre_vid < 0 {
+            __mind_store_i64(okcell, 0);
+            return 0;
+        }
+        let sroot: i64 = flatten_branch_lv(stmt, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, cur_base, wenv, wnlv);
+        if sroot < 0 {
+            __mind_store_i64(okcell, 0);
+            return 0;
+        }
+        let snn: i64 = count_nonparam_nodes_lv(stmt, buf, params_addr, n_params, wenv, wnlv);
+        if snn < 0 {
+            __mind_store_i64(okcell, 0);
+            return 0;
+        }
+        let sslot_i: i64 = lvenv_index_of(buf, ast_span_lo(sname), ast_span_hi(sname), wenv, wnlv);
+        __mind_store_i64(wenv + sslot_i * 24 + 16, sroot);
+        let _srec: i64 = while_record_carry(sslot_i, pre_nlv, lv, init, nlv_w_cell, buf, ast_span_lo(sname), ast_span_hi(sname), sroot, spre_vid);
+        __mind_store_i64(base_cell, cur_base + snn);
+        __mind_store_i64(body_len_cell, __mind_load_i64(body_len_cell) + snn);
+        return while_body_measure(stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, pre_nlv, lv, init, nlv_w_cell, body_len_cell, okcell);
+    }
     if ast_kind(stmt) == ast_let() {
         let name: i64 = ast_child0(stmt);
         let linit: i64 = ast_child2(stmt);
@@ -27267,6 +27415,31 @@ pub fn while_body_emit(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
         __mind_store_i64(wenv + slot_i * 24 + 16, root);
         __mind_store_i64(base_cell, cur_base + nn);
         return while_body_emit(s1, stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, strbuf, offs, ncount, okcell);
+    }
+    if ast_kind(stmt) == ast_index_assign() {
+        // `a[i] = v` loop-body STORE — emit mirror of the ast_assign arm above (and the
+        // measure ast_index_assign arm): flatten the WHOLE store stmt to `sroot` (the
+        // kind-12 fresh-aggregate store node vid), emit its instr subtree, then rebind the
+        // receiver root -> sroot so a later read resolves to the mutated incarnation
+        // (oracle body_env.insert). Non-ident receiver fails CLOSED. Loop-carry back-edge/
+        // exit-id is threaded by the measure pass's while_record_carry.
+        let sname: i64 = ast_child0(stmt);
+        if ast_kind(sname) != ast_ident() {
+            __mind_store_i64(okcell, 0);
+            return s;
+        }
+        let sroot: i64 = flatten_branch_lv(stmt, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, cur_base, wenv, wnlv);
+        if sroot < 0 {
+            __mind_store_i64(okcell, 0);
+            return s;
+        }
+        let snn: i64 = count_nonparam_nodes_lv(stmt, buf, params_addr, n_params, wenv, wnlv);
+        let snodes_n: i64 = __mind_load_i64(wcursor);
+        let ss1: EmitState = emit_mic3_tree_body(s, wnodes, snodes_n, wvidbuf, buf, strbuf, offs, ncount, 0);
+        let sslot_i: i64 = lvenv_index_of(buf, ast_span_lo(sname), ast_span_hi(sname), wenv, wnlv);
+        __mind_store_i64(wenv + sslot_i * 24 + 16, sroot);
+        __mind_store_i64(base_cell, cur_base + snn);
+        return while_body_emit(ss1, stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, strbuf, offs, ncount, okcell);
     }
     if ast_kind(stmt) == ast_let() {
         let name: i64 = ast_child0(stmt);

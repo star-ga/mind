@@ -217,6 +217,9 @@ ARMS = [
     ("s  array-store-read",
      "array store then read the mutated element (store + name-rebind + a[i] read)",
      "pub fn f() -> i64 { let mut a: [i64; 4] = [1, 2, 3, 4]; a[1] = 9; a[1] }"),
+    ("s  array-store-in-loop-i64",
+     "fixed [i64; N] element store inside a while loop (lv-env note path)",
+     "pub fn f() -> i64 { let mut a: [i64; 4] = [0, 0, 0, 0]; let mut i: i64 = 0; while i < 3 { a[i] = 7; i = i + 1; } a[1] }"),
 ]
 
 # i64-REFERENCES arms — NATIVE-ELF-ONLY constructs, parity-by-REFUSAL.

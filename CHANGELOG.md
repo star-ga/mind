@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — self-host mic@3: fixed-array element STORE inside a loop body now interns the carried aggregate name (RH f64-aggregate native leg — note leg)
+- **The pure-MIND self-host mic@3 emitter now produces byte-identical output for a
+  value-semantic fixed `[T; N]` element store `a[i] = v` INSIDE a `while` loop body.**
+  The Rust oracle records BOTH a scalar `i = i + 1` and an array store `a[i] = v` as
+  loop-carried mutations (one interleaved first-mutation source-order pass) and interns
+  each carried variable's NAME into the mic@3 string table; the self-host emitter
+  interned the scalar name but NOT the array name, so the string table diverged
+  (oracle `[f, a, i]` vs self-host `[f, i]`) and every downstream string index shifted.
+  Fix = 6 additive, fail-closed arms in `examples/mindc_mind/main.mind`: `intern_while_live_names`
+  and its dedup helper now also treat `ast_index_assign` (carried name = the plain-ident
+  receiver, kind-agnostic dedup across scalar-assign and array-store); and
+  `flatten_ast_lv` / `count_nonparam_nodes_lv` / `while_body_measure` / `while_body_emit`
+  gain `ast_index_assign` arms (kind-12 fresh-aggregate store node, receiver rebind,
+  loop-carry) mirroring the existing scalar-assign arms. Fires only for a value-semantic
+  fixed array (plain-ident receiver); a reference-semantic `array<T>` / `bytes[N]` store
+  is not loop-carried. Gated: oracle-parity **33/33** byte-identical (new
+  `array-store-in-loop-i64` arm matches the Rust `--emit-mic3` oracle byte-for-byte),
+  native-ELF self-host smoke ALL PASS, keystone 7/7, frozen `stage1.elf` re-blessed.
+  BYTE-NEUTRAL for self-compile (`main.mind` has no loop-body store). The native-ELF
+  CODEGEN for a loop-body store is a separate follow-up (the carry pre-walk does not yet
+  recognise a store as a carried mutation) — this change closes the mic@3 evidence leg only.
+
 ### Added — pure-MIND `--backend native`: f64 fixed-array element STORE SSE codegen (RH f64-aggregate native leg — slice 2, G2)
 - **`mindc build --backend native` now emits a correct SSE `movsd` store for a
   value-semantic fixed `[f64; N]` element store** (`a[i] = v`). Slice 1 unblocked the
