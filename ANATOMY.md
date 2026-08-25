@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3382 | **Est. tokens:** ~7,938,607
-**Generated:** 2026-08-25 00:10 UTC
+**Files:** 3385 | **Est. tokens:** ~7,954,003
+**Generated:** 2026-08-25 16:20 UTC
 
 ## Token Budget Guide
 
@@ -42,6 +42,8 @@
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,465 |
 | `docs/` | 34 | ~80,520 |
+| `docs/audits/` | 1 | ~11,040 |
+| `docs/audits/kimi_swarm_2026-08-25/` | 2 | ~4,339 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
@@ -62,7 +64,7 @@
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
 | `examples/mindc_mind/` | 157 | ~377,952 |
-| `examples/mindc_mind/mindfuzz_self_host_staged/` | 3 | ~584 |
+| `examples/mindc_mind/mindfuzz_self_host_staged/` | 3 | ~601 |
 | `examples/mindc_mind/testdata/` | 1 | ~2,452 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 2 | ~415 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
@@ -660,6 +662,15 @@
 
 - `architecture.md` (~965 tok, large) — Architecture
 - `ARRAY_SEMANTICS.md` (~6556 tok, huge) — MIND array semantics — normative architecture record
+### `docs/audits/`
+
+- `KIMI_K3_SWARM_ARCHITECTURE_AUDIT_PROMPT.md` (~11040 tok, huge) — MIND Compiler — SOTA Architecture Audit (Kimi-K3 Swarm Brief)
+### `docs/audits/kimi_swarm_2026-08-25/`
+
+- `FABLE_REVIEW_PROMPT.md` (~3454 tok, huge) — Review brief — adjudicate the Kimi-K3 swarm's partial MIND architecture audit
+- `SWARM_RESULTS_PARTIAL.md` (~885 tok, large) — Kimi-K3 Swarm — MIND SOTA Architecture Audit: PARTIAL results
+### `docs/`
+
 - `autodiff.md` (~595 tok, large) — Static autodiff (public)
 ### `docs/backends/`
 
@@ -897,7 +908,7 @@
 ### `examples/mindc_mind/mindfuzz_self_host_staged/`
 
 - `prog0003.mind` (~325 tok, medium) — mindfuzz_self_host generated program - deterministic seed.
-- `prog0003.minimal.mind` (~61 tok, small) — mindfuzz_self_host generated program - deterministic seed.
+- `prog0003.minimal.mind` (~78 tok, small) — mindfuzz_self_host generated program - deterministic seed.
 - `prog0003.notes.txt` (~198 tok, small) — seed=1234 program=[3]
 ### `examples/mindc_mind/`
 
@@ -909,7 +920,7 @@
 - `param_types_smoke.py` (~1273 tok, large)
 - `_ref_add.note` (~16 tok, tiny) — 6fa59a74687e6bac38c983655d4d93ab1873299f130f68cbe481cf92041f6610
 - `_ref_if_ret.note` (~16 tok, tiny) — 3fdc70390e9e12d8030552d11b2194078e8579fbcfac19b14d1beed77174cb07
-- `_ref_main.note` (~16 tok, tiny) — 42567ffc64c7b60e4207835a2eca8dd381555c80a6f33c53595417dbe219e0fd
+- `_ref_main.note` (~16 tok, tiny) — 8e09ce0d12711f8c1f214aef2f4617a480d5afdae387fc64fdd76cab4c7edd1e
 - `ref_netverify.py` (~1473 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
 - `_ref_recursion.note` (~16 tok, tiny) — 6d125a946243b0550700d9aa6bc2058b51a3b8bf6e536a8b0b3f545d79b7346f
 - `_ref_struct_field.note` (~16 tok, tiny) — 2f7f2ea32ee47138e1b0162bd51f418b4e5005b4569054f5f3c392ebd2258d96

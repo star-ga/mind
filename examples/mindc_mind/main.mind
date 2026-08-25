@@ -13052,10 +13052,11 @@ pub fn emit_if_let_seq_then_instr_lv(s: EmitState, if_node: i64, buf: i64, param
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    // n_segs == 0 is a FALL-THROUGH guard if `if C { let* }` (side-effect lets, no
-    // return/segment) — the lets merge with their values and the block falls through.
-    // emit_if_seq_segments_lv with 0 segments returns last_dst = the last let's vid, so
-    // the merge tail below is identical; no special-casing needed.
+    // n_segs == 0 is a FALL-THROUGH `if C { let* }` (side-effect lets, no return/segment)
+    // — the lets merge with their values and the block falls through. The then_result is
+    // the last leading let's vid; emit_if_seq_segments_lv returns seg_base-1 for 0 segments,
+    // so the last_dst below special-cases n_segs==0 to the last let's ACTUAL stored vid
+    // (see the FALL-THROUGH note there — an aliasing last let's vid != seg_base-1).
     if n_segs < 0 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
@@ -13111,8 +13112,19 @@ pub fn emit_if_let_seq_then_instr_lv(s: EmitState, if_node: i64, buf: i64, param
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    // then_result = last segment's dst.
-    let s9: EmitState = emit_uleb128(s8, last_dst);
+    // then_result = the last leading let's ACTUAL vid (n_segs==0) or the last segment's dst
+    // (n_segs>0). An aliasing last let (`let x = <outer var>`) yields that outer var's LOW
+    // vid; the merge synth/dst below stay seg_base-based (fresh, past the lets). In every
+    // non-alias case the last let's stored vid == last_dst (== seg_base-1), so this is
+    // byte-neutral there — it only corrects the aliasing fall-through then-value, which
+    // previously emitted seg_base-1 instead of the aliased vid (fuzzer-caught byte-55
+    // divergence vs `mindc --emit-mic3`).
+    let then_result: i64 = if n_segs == 0 {
+        __mind_load_i64(lvbuf + (nlv_total - 1) * 24 + 16)
+    } else {
+        last_dst
+    };
+    let s9: EmitState = emit_uleb128(s8, then_result);
     // MERGE TAIL — the leading lets (then_val = own vid) AND the if-segments' bubbled bindings
     // (then_val = inner merge_id, accumulated in t4_acc) BOTH escape; combine them into one acc
     // in source order and apply the fresh/bound rule (a name already live in the outer env
@@ -13254,7 +13266,31 @@ pub fn emit_if_fallthrough_lv(s: EmitState, if_node: i64, buf: i64, params_addr:
     // they would be lost — fail closed (this shape is not yet supported).
     let then_end: i64 = __mind_load_i64(base_cell);
     let then_result: i64 = then_end - 1;
-    let s8: EmitState = emit_uleb128(s7, then_result);
+    // Fall-through then-value fix (same class as emit_if_let_seq_then / _else_fallthrough):
+    // last-stmt-is-`let` -> that let's stored lv-env vid (aliasing last let, e.g.
+    // `let x = <outer var>`). else_synth stays then_end (fresh); byte-neutral for a
+    // non-aliasing last let (its vid == then_end-1). (fuzzer-caught mic@3 divergence.)
+    let ft_last_stmt: i64 = if stmts_len >= 1 {
+        __mind_load_i64(stmts_addr + (stmts_len - 1) * 8)
+    } else {
+        0
+    };
+    let then_result_v: i64 = if ft_last_stmt != 0 {
+        if ast_kind(ft_last_stmt) == ast_let() {
+            let ftn: i64 = ast_child0(ft_last_stmt);
+            let ftv: i64 = lvenv_lookup(buf, ast_span_lo(ftn), ast_span_hi(ftn), lvbuf, __mind_load_i64(e_nlv), 0);
+            if ftv >= 0 {
+                ftv
+            } else {
+                then_result
+            }
+        } else {
+            then_result
+        }
+    } else {
+        then_result
+    };
+    let s8: EmitState = emit_uleb128(s7, then_result_v);
     // ELSE block: synth + one POISON placeholder per ESCAPING binding (acc: direct lets
     // AND if-segment-bubbled bindings — nb >= nlets). The merge then_val comes from
     // acc[+16] (the binding's own value), so a bubbled binding merges with the inner
@@ -13726,7 +13762,33 @@ pub fn emit_if_else_fallthrough_lv(s: EmitState, if_node: i64, buf: i64, params_
     }
     // THEN-side placeholders cover the ELSE-only escaping names (merged idx >= then_nb).
     let s8: EmitState = emit_block_ph(s7, ph_start, then_nb, n_merged, then_nb);
-    let s9: EmitState = emit_uleb128(s8, then_result);
+    // FALL-THROUGH then-value: when the block's LAST statement is a `let`, the block's value
+    // is that let's stored lv-env vid (looked up by name in then_lvbuf, robust to intervening
+    // if-segments). An aliasing last let (`let x = <outer var>`) yields that var's LOW vid,
+    // not then_end-1; else_synth stays then_end (fresh), so only the emitted then_result
+    // changes — byte-neutral for a non-aliasing last let (its vid == then_end-1). (fuzzer-
+    // caught aliasing fall-through then-value divergence vs `mindc --emit-mic3`.)
+    let then_last_stmt: i64 = if then_sl >= 1 {
+        __mind_load_i64(then_sa + (then_sl - 1) * 8)
+    } else {
+        0
+    };
+    let then_result2: i64 = if then_last_stmt != 0 {
+        if ast_kind(then_last_stmt) == ast_let() {
+            let tln: i64 = ast_child0(then_last_stmt);
+            let tlv: i64 = lvenv_lookup(buf, ast_span_lo(tln), ast_span_hi(tln), then_lvbuf, __mind_load_i64(then_e_nlv), 0);
+            if tlv >= 0 {
+                tlv
+            } else {
+                then_result
+            }
+        } else {
+            then_result
+        }
+    } else {
+        then_result
+    };
+    let s9: EmitState = emit_uleb128(s8, then_result2);
     let s10: EmitState = emit_uleb128(s9, else_len);
     let s11: EmitState = emit_mic3_const_i64(s10, else_synth, 0);
     let else_lvbuf: i64 = __mind_alloc((nlv0 + else_sl + 512) * 24);
@@ -13758,7 +13820,30 @@ pub fn emit_if_else_fallthrough_lv(s: EmitState, if_node: i64, buf: i64, params_
     }
     // ELSE-side placeholders cover the THEN-only escaping names (merged idx < then_nb).
     let s13: EmitState = emit_block_ph(s12, ph_start, 0, then_nb, then_nb);
-    let s14: EmitState = emit_uleb128(s13, else_result);
+    // Same fall-through fix for the ELSE branch: last-stmt-is-`let` -> that let's stored
+    // lv-env vid (aliasing else-block last let). dst/merges keep else_result (else_end-1,
+    // fresh); only the emitted else_result changes — byte-neutral for a non-aliasing last let.
+    let else_last_stmt: i64 = if else_sl >= 1 {
+        __mind_load_i64(else_sa + (else_sl - 1) * 8)
+    } else {
+        0
+    };
+    let else_result2: i64 = if else_last_stmt != 0 {
+        if ast_kind(else_last_stmt) == ast_let() {
+            let eln: i64 = ast_child0(else_last_stmt);
+            let elv: i64 = lvenv_lookup(buf, ast_span_lo(eln), ast_span_hi(eln), else_lvbuf, __mind_load_i64(else_e_nlv), 0);
+            if elv >= 0 {
+                elv
+            } else {
+                else_result
+            }
+        } else {
+            else_result
+        }
+    } else {
+        else_result
+    };
+    let s14: EmitState = emit_uleb128(s13, else_result2);
     let s15: EmitState = emit_uleb128(s14, dst);
     // bindings + merges from acc (then escaping then else escaping; direct lets AND bubbled).
     let bb: i64 = __mind_alloc((n_merged + 1) * 40);
