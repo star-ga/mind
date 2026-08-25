@@ -11926,6 +11926,14 @@ pub fn measure_mixed_instrs(stmts_addr: i64, n: i64, idx: i64, buf: i64, params_
         // An if-segment lowers to a single OP_IF instruction.
         return 1 + measure_mixed_instrs(stmts_addr, n, idx + 1, buf, params_addr, n_params, lvbuf, nlv_cell);
     }
+    if ast_kind(stmt) == ast_assign() {
+        // Outer-var REASSIGN `NAME = RHS` (mirror of lower.rs's Assign arm): contributes
+        // the RHS's FULL instr tree (like a bare expression-statement) but binds NO new
+        // name — emit_mixed_walk rebinds the existing binding and records the escape.
+        let as_nlv: i64 = __mind_load_i64(nlv_cell);
+        let as_c: i64 = count_nonparam_nodes_lv(ast_child2(stmt), buf, params_addr, n_params, lvbuf, as_nlv);
+        return as_c + measure_mixed_instrs(stmts_addr, n, idx + 1, buf, params_addr, n_params, lvbuf, nlv_cell);
+    }
     if ast_kind(stmt) != ast_let() {
         // A bare expression-statement contributes its FULL instr tree (not 1) and
         // binds no name (no lv-env entry).
@@ -11948,12 +11956,39 @@ pub fn measure_mixed_instrs(stmts_addr: i64, n: i64, idx: i64, buf: i64, params_
     c + measure_mixed_instrs(stmts_addr, n, idx + 1, buf, params_addr, n_params, lvbuf, nlv_cell)
 }
 
+// Record a WALK assign's escape into the acc accumulator (emit_mixed_walk's assign
+// arm, factored out): an EXISTING acc entry for the name gets its then-value UPDATED
+// to the reassigned root; otherwise, when the name was live before the walk started
+// (apos < nlv0 — an outer let-mut), APPEND a new merge binding (NAME -> RHS root).
+// A name first bound BY the block (apos >= nlv0) is branch-local: NO merge write
+// (lower.rs then_local_decls). Factored into its own fn because a two-sided `if/else`
+// STATEMENT followed by a `return` in ONE enclosing then-block has no seq plan type —
+// inlined here it would fail-close emit_mixed_walk's own mic@3 self-compile.
+pub fn mixed_walk_acc_escape(buf: i64, acc: i64, acc_cell: i64, ae: i64, apos: i64, nlv0: i64, aname: i64, aroot: i64) -> i64 {
+    if ae >= 0 {
+        __mind_store_i64(acc + ae * 24 + 16, aroot);
+        return 0;
+    }
+    if apos >= nlv0 {
+        return 0;
+    }
+    let at0: i64 = __mind_load_i64(acc_cell);
+    __mind_store_i64(acc + at0 * 24 + 0, ast_span_lo(aname));
+    __mind_store_i64(acc + at0 * 24 + 8, ast_span_hi(aname));
+    __mind_store_i64(acc + at0 * 24 + 16, aroot);
+    __mind_store_i64(acc_cell, at0 + 1);
+    0
+}
+
 // Emit walk: process prefix stmts[0..n) in order, threading the vid base (base_cell),
 // the lv-env (lvbuf + nlv_cell), and the ordered escaping-binding NAME accumulator
 // (acc 24B name records + acc_cell count). A let emits its init (if-expr or normal),
 // binds NAME->its value vid, records NAME. A segment emits its OP_IF and appends its
-// bubbled bindings. okcell <- 0 on any wall.
-pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base_cell: i64, lvbuf: i64, nlv_cell: i64, acc: i64, acc_cell: i64, okcell: i64, strbuf: i64, offs: i64, ncount: i64, esc_to_lv: i64) -> EmitState {
+// bubbled bindings. `nlv0` = the lv-env length at walk start (the OUTER env): an
+// assign to a name bound below nlv0 escapes as a merge write (lower.rs Assign arm);
+// a name first bound AT/ABOVE nlv0 is branch-local (no new merge write). okcell <- 0
+// on any wall.
+pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base_cell: i64, lvbuf: i64, nlv_cell: i64, acc: i64, acc_cell: i64, okcell: i64, strbuf: i64, offs: i64, ncount: i64, esc_to_lv: i64, nlv0: i64) -> EmitState {
     if idx >= n {
         return s;
     }
@@ -11990,7 +12025,7 @@ pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
         let _ova: i64 = mixed_while_rebind_acc(buf, acc, __mind_load_i64(acc_cell), w_merge, __mind_load_i64(w_nm), 0);
         // base advances past OP_WHILE vids + the trailing unit (endbase + 1).
         __mind_store_i64(base_cell, __mind_load_i64(w_end) + 1);
-        return emit_mixed_walk(sw2, stmts_addr, n, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv_cell, acc, acc_cell, okcell, strbuf, offs, ncount, esc_to_lv);
+        return emit_mixed_walk(sw2, stmts_addr, n, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv_cell, acc, acc_cell, okcell, strbuf, offs, ncount, esc_to_lv, nlv0);
     }
     if ast_kind(stmt) == ast_if() {
         let seg_cell: i64 = __mind_alloc(8);
@@ -12020,7 +12055,40 @@ pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
             __mind_store_i64(nlv_cell, nlv + __mind_load_i64(seg_nb))
         }
         __mind_store_i64(base_cell, seg_dst + 1);
-        return emit_mixed_walk(s1, stmts_addr, n, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv_cell, acc, acc_cell, okcell, strbuf, offs, ncount, esc_to_lv);
+        return emit_mixed_walk(s1, stmts_addr, n, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv_cell, acc, acc_cell, okcell, strbuf, offs, ncount, esc_to_lv, nlv0);
+    }
+    if ast_kind(stmt) == ast_assign() {
+        // Outer-var REASSIGN `NAME = RHS` — mirror of lower.rs's then-branch Assign arm +
+        // region_exit_rebindings: emit the RHS tree against the PRE-ASSIGN env (the RHS
+        // still reads the incoming binding), REBIND the innermost lv binding of NAME to
+        // the RHS root, and — when NAME was live BEFORE this walk started (index < nlv0,
+        // an outer let-mut) — record it as an escaping MERGE binding (NAME -> RHS root),
+        // so the enclosing fall-through if emits the OP_IF merge phi (then_val = RHS root,
+        // else_val = the incoming NAME vid, dst = merge). A name first bound BY THIS BLOCK
+        // (index >= nlv0) is branch-local: NO new merge write (lower.rs then_local_decls),
+        // but an EXISTING acc entry for it (a branch-local let accumulated by the
+        // esc_to_lv==0 callers, or a bubbled segment binding) gets its then-value UPDATED
+        // to the reassigned root. Undeclared name -> fail closed.
+        let aname: i64 = ast_child0(stmt);
+        let arhs: i64 = ast_child2(stmt);
+        let apos: i64 = lvenv_index_of(buf, ast_span_lo(aname), ast_span_hi(aname), lvbuf, nlv);
+        if apos < 0 {
+            __mind_store_i64(okcell, 0);
+            return s;
+        }
+        let aroot: i64 = flatten_branch_lv(arhs, buf, params_addr, n_params, nodes, cursor, vidbuf, cur_base, lvbuf, nlv);
+        if aroot < 0 {
+            __mind_store_i64(okcell, 0);
+            return s;
+        }
+        let an: i64 = __mind_load_i64(cursor);
+        let ann: i64 = count_nonparam_nodes_lv(arhs, buf, params_addr, n_params, lvbuf, nlv);
+        let as_s: EmitState = emit_mic3_tree_body(s, nodes, an, vidbuf, buf, strbuf, offs, ncount, 0);
+        __mind_store_i64(base_cell, cur_base + ann);
+        __mind_store_i64(lvbuf + apos * 24 + 16, aroot);
+        let ae: i64 = lv_find(acc, __mind_load_i64(acc_cell), buf, ast_span_lo(aname), ast_span_hi(aname));
+        let _aae: i64 = mixed_walk_acc_escape(buf, acc, acc_cell, ae, apos, nlv0, aname, aroot);
+        return emit_mixed_walk(as_s, stmts_addr, n, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv_cell, acc, acc_cell, okcell, strbuf, offs, ncount, esc_to_lv, nlv0);
     }
     if ast_kind(stmt) != ast_let() {
         // Bare expression-statement (call/binop used for its side effect). Emit its
@@ -12034,7 +12102,7 @@ pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
         let be_nn: i64 = count_nonparam_nodes_lv(stmt, buf, params_addr, n_params, lvbuf, nlv);
         let be_s: EmitState = emit_mic3_tree_body(s, nodes, be_n, vidbuf, buf, strbuf, offs, ncount, 0);
         __mind_store_i64(base_cell, cur_base + be_nn);
-        return emit_mixed_walk(be_s, stmts_addr, n, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv_cell, acc, acc_cell, okcell, strbuf, offs, ncount, esc_to_lv);
+        return emit_mixed_walk(be_s, stmts_addr, n, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv_cell, acc, acc_cell, okcell, strbuf, offs, ncount, esc_to_lv, nlv0);
     }
     let name: i64 = ast_child0(stmt);
     let init: i64 = ast_child2(stmt);
@@ -12086,7 +12154,7 @@ pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
         __mind_store_i64(acc + at * 24 + 16, __mind_load_i64(lvbuf + nlv * 24 + 16));
         __mind_store_i64(acc_cell, at + 1)
     }
-    emit_mixed_walk(s2, stmts_addr, n, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv_cell, acc, acc_cell, okcell, strbuf, offs, ncount, esc_to_lv)
+    emit_mixed_walk(s2, stmts_addr, n, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv_cell, acc, acc_cell, okcell, strbuf, offs, ncount, esc_to_lv, nlv0)
 }
 
 // Overlay each loop-carried var (name -> exit_id from `merge`) into the INNERMOST `lvbuf`
@@ -12258,7 +12326,7 @@ pub fn emit_if_mixed_then_instr_lv(s: EmitState, if_node: i64, buf: i64, params_
     __mind_store_i64(acc_cell, 0);
     let w_ok: i64 = __mind_alloc(8);
     __mind_store_i64(w_ok, 1);
-    let s7: EmitState = emit_mixed_walk(s6, then_sa, n_prefix, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, e_nlv, acc, acc_cell, w_ok, strbuf, offs, ncount, 0);
+    let s7: EmitState = emit_mixed_walk(s6, then_sa, n_prefix, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, e_nlv, acc, acc_cell, w_ok, strbuf, offs, ncount, 0, nlv);
     if __mind_load_i64(w_ok) == 0 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
@@ -13176,7 +13244,7 @@ pub fn emit_if_fallthrough_lv(s: EmitState, if_node: i64, buf: i64, params_addr:
     __mind_store_i64(acc_cell, 0);
     let w_ok: i64 = __mind_alloc(8);
     __mind_store_i64(w_ok, 1);
-    let s7: EmitState = emit_mixed_walk(s6, stmts_addr, stmts_len, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, e_nlv, acc, acc_cell, w_ok, strbuf, offs, ncount, 1);
+    let s7: EmitState = emit_mixed_walk(s6, stmts_addr, stmts_len, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, e_nlv, acc, acc_cell, w_ok, strbuf, offs, ncount, 1, nlv0);
     if __mind_load_i64(w_ok) == 0 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
@@ -13196,8 +13264,12 @@ pub fn emit_if_fallthrough_lv(s: EmitState, if_node: i64, buf: i64, params_addr:
     // Fresh/bound merge tail (acc[i] = name + then_val, same layout caseB_layout reads):
     // a binding whose name is already live in the outer env [0,nlv0) keeps that vid on the
     // else side (no placeholder, 1 vid); a fresh name gets a placeholder (2 vids).
+    // NOTE: the lookup env is the PRISTINE outer env `lvenv0`, NOT the walk's `lvbuf` —
+    // an outer-var ASSIGN walked above rebinds its lvbuf entry to the RHS root (the
+    // merge then_val), but the ELSE side must keep the INCOMING vid (lower.rs
+    // region_exit_rebindings: else_val = the pre-if binding), which only lvenv0 holds.
     let lay: i64 = __mind_alloc((nb + 1) * 48);
-    let dst: i64 = caseB_layout(lay, acc, nb, buf, lvbuf, nlv0, 0, else_synth + 1);
+    let dst: i64 = caseB_layout(lay, acc, nb, buf, lvenv0, nlv0, 0, else_synth + 1);
     let else_len: i64 = 1 + caseA_fresh_count(lay, nb, 0);
     let s9: EmitState = emit_uleb128(s8, else_len);
     let s10: EmitState = emit_mic3_const_i64(s9, else_synth, 0);
@@ -13545,6 +13617,23 @@ pub fn emit_if_expr_block_lv(s: EmitState, if_node: i64, buf: i64, params_addr: 
     s21
 }
 
+// The two-sided fall-through merge tail (fill_binds_block) assumes EVERY escaping
+// binding is FRESH (a placeholder + merge per name): a name already live in the OUTER
+// env [0,nlv0) — an outer let-mut REASSIGNED by a branch walk, or a bubbled outer
+// merge — needs the incoming vid on the opposite side (lower.rs else_val = env[name]),
+// which this fixed layout cannot represent. Returns 1 iff every acc name is fresh.
+pub fn fallthrough_escapes_all_fresh(acc: i64, nacc: i64, buf: i64, lvenv0: i64, nlv0: i64, i: i64) -> i64 {
+    if i >= nacc {
+        return 1;
+    }
+    let lo: i64 = __mind_load_i64(acc + i * 24 + 0);
+    let hi: i64 = __mind_load_i64(acc + i * 24 + 8);
+    if lvenv_lookup(buf, lo, hi, lvenv0, nlv0, 0) >= 0 {
+        return 0;
+    }
+    fallthrough_escapes_all_fresh(acc, nacc, buf, lvenv0, nlv0, i + 1)
+}
+
 // Emit a two-sided STATEMENT-level `if C { <lets+bare-calls> } else { <lets+bare-calls> }`
 // that FALLS THROUGH (no trailing value, no return on either side; the OP_IF dst is
 // discarded). Structurally emit_if_expr_block_lv with each block's (lets + value)
@@ -13630,7 +13719,7 @@ pub fn emit_if_else_fallthrough_lv(s: EmitState, if_node: i64, buf: i64, params_
     __mind_store_i64(then_acc_cell, 0);
     let then_ok: i64 = __mind_alloc(8);
     __mind_store_i64(then_ok, 1);
-    let s7: EmitState = emit_mixed_walk(s6, then_sa, then_sl, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, then_base, then_lvbuf, then_e_nlv, then_acc, then_acc_cell, then_ok, strbuf, offs, ncount, 1);
+    let s7: EmitState = emit_mixed_walk(s6, then_sa, then_sl, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, then_base, then_lvbuf, then_e_nlv, then_acc, then_acc_cell, then_ok, strbuf, offs, ncount, 1, nlv0);
     if __mind_load_i64(then_ok) == 0 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
@@ -13651,8 +13740,19 @@ pub fn emit_if_else_fallthrough_lv(s: EmitState, if_node: i64, buf: i64, params_
     __mind_store_i64(else_acc_cell, 0);
     let else_ok: i64 = __mind_alloc(8);
     __mind_store_i64(else_ok, 1);
-    let s12: EmitState = emit_mixed_walk(s11, else_sa, else_sl, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, else_base, else_lvbuf, else_e_nlv, else_acc, else_acc_cell, else_ok, strbuf, offs, ncount, 1);
+    let s12: EmitState = emit_mixed_walk(s11, else_sa, else_sl, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, else_base, else_lvbuf, else_e_nlv, else_acc, else_acc_cell, else_ok, strbuf, offs, ncount, 1, nlv0);
     if __mind_load_i64(else_ok) == 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    // OUTER-name guard: a branch write to a name already live in [0,nlv0) needs the
+    // incoming vid on the opposite side, which this all-fresh layout cannot emit —
+    // fail closed (see fallthrough_escapes_all_fresh).
+    if fallthrough_escapes_all_fresh(then_acc, __mind_load_i64(then_acc_cell), buf, lvenv0, nlv0, 0) == 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    if fallthrough_escapes_all_fresh(else_acc, __mind_load_i64(else_acc_cell), buf, lvenv0, nlv0, 0) == 0 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
@@ -13701,7 +13801,7 @@ pub fn probe_mixed_walk(sa: i64, sl: i64, base: i64, buf: i64, params_addr: i64,
     __mind_store_i64(acc_cell, 0);
     let w_ok: i64 = __mind_alloc(8);
     __mind_store_i64(w_ok, 1);
-    let _sw: EmitState = emit_mixed_walk(es_new(), sa, sl, 0, buf, params_addr, n_params, pn, pc, pv, base_cell, lvbuf, e_nlv, acc, acc_cell, w_ok, strbuf, offs, ncount, 1);
+    let _sw: EmitState = emit_mixed_walk(es_new(), sa, sl, 0, buf, params_addr, n_params, pn, pc, pv, base_cell, lvbuf, e_nlv, acc, acc_cell, w_ok, strbuf, offs, ncount, 1, nlv0);
     if __mind_load_i64(w_ok) == 0 {
         return 0 - 1;
     }
@@ -13887,7 +13987,7 @@ pub fn emit_mixed_value_branch(s: EmitState, sa: i64, sl: i64, buf: i64, params_
     __mind_store_i64(acc_cell, 0);
     let w_ok: i64 = __mind_alloc(8);
     __mind_store_i64(w_ok, 1);
-    let s1: EmitState = emit_mixed_walk(s, sa, sl - 1, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, e_nlv, acc, acc_cell, w_ok, strbuf, offs, ncount, 0);
+    let s1: EmitState = emit_mixed_walk(s, sa, sl - 1, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, e_nlv, acc, acc_cell, w_ok, strbuf, offs, ncount, 0, nlv0);
     if __mind_load_i64(w_ok) == 0 {
         __mind_store_i64(ok_out, 0);
         return s;
@@ -27087,6 +27187,28 @@ pub fn while_body_measure(stmts_addr: i64, n: i64, idx: i64, buf: i64, params_ad
         __mind_store_i64(body_len_cell, __mind_load_i64(body_len_cell) + 2);
         return while_body_measure(stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, pre_nlv, lv, init, nlv_w_cell, body_len_cell, okcell);
     }
+    // NESTED while STATEMENT (lower.rs body-walk `other =>` arm): the nested while
+    // lowers to OP_WHILE + a trailing unit ConstI64 = TWO body instrs. Measure its
+    // layout (no bytes) via while_nested_layout, record each nested merge that is a
+    // PRE-LOOP var here as loop-carried (post = the nested exit id, init = the vid
+    // bound before the nested while) and rebind the body env -> the nested exit ids,
+    // then advance base past the trailing unit (endbase + 1).
+    if ast_kind(stmt) == ast_while() {
+        let nw_ov: i64 = __mind_alloc(64 * 24);
+        let nw_nm: i64 = __mind_alloc(8);
+        let nw_end: i64 = __mind_alloc(8);
+        __mind_store_i64(nw_end, 0 - 1);
+        let nw_ok: i64 = __mind_alloc(8);
+        __mind_store_i64(nw_ok, 1);
+        if while_nested_layout(stmt, buf, params_addr, n_params, cur_base, wenv, wnlv, nw_ov, nw_nm, nw_end, nw_ok) == 0 {
+            __mind_store_i64(okcell, 0);
+            return 0;
+        }
+        let _rc: i64 = while_if_record_merges(nw_ov, __mind_load_i64(nw_nm), pre_nlv, lv, init, nlv_w_cell, wenv, wnlv, buf, 0);
+        __mind_store_i64(base_cell, __mind_load_i64(nw_end) + 1);
+        __mind_store_i64(body_len_cell, __mind_load_i64(body_len_cell) + 2);
+        return while_body_measure(stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, pre_nlv, lv, init, nlv_w_cell, body_len_cell, okcell);
+    }
     // BARE side-effect statement (call/store): flatten, advance base, bind NO name.
     let be_root: i64 = flatten_branch_lv(stmt, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, cur_base, wenv, wnlv);
     if be_root < 0 {
@@ -27120,6 +27242,73 @@ pub fn while_record_carry(slot_i: i64, pre_nlv: i64, lv: i64, init: i64, nlv_w_c
     __mind_store_i64(lv + at * 24 + 16, root);
     __mind_store_i64(init + at * 8, pre_vid);
     __mind_store_i64(nlv_w_cell, at + 1);
+    1
+}
+
+// MEASURE-only layout of a NESTED while STATEMENT (the pure-i64 twin of
+// emit_mic3_while_general's measure pass — no EmitState, no bytes). Flattens the
+// cond at base0, re-walks the body with a FRESH env clone (the nested pre-loop env
+// is the caller's current body env, so a nested carried var = rebound at index <
+// wnlv), allocates the exit ids AFTER the body, and reports the merge overlay
+// (name -> exit_id, 24-byte records), their count, and endbase (the trailing-unit
+// vid = one past the exit ids). Fails closed via okcell.
+pub fn while_nested_layout(stmt: i64, buf: i64, params_addr: i64, n_params: i64, base0: i64, wenv: i64, wnlv: i64, merge_out: i64, nmerge_cell: i64, endbase_cell: i64, okcell: i64) -> i64 {
+    let cond_expr: i64 = ast_child0(stmt);
+    let body_blk: i64 = ast_child1(stmt);
+    let body_sa: i64 = ast_child0(body_blk);
+    let body_sl: i64 = ast_aux(body_blk);
+    let cnodes: i64 = __mind_alloc(256 * 32);
+    let ccursor: i64 = __mind_alloc(8);
+    let cvidbuf: i64 = __mind_alloc(256 * 8);
+    let cond_id: i64 = flatten_branch_lv(cond_expr, buf, params_addr, n_params, cnodes, ccursor, cvidbuf, base0, wenv, wnlv);
+    if cond_id < 0 {
+        __mind_store_i64(okcell, 0);
+        return 0;
+    }
+    let cond_n: i64 = count_nonparam_nodes_lv(cond_expr, buf, params_addr, n_params, wenv, wnlv);
+    if cond_n < 0 {
+        __mind_store_i64(okcell, 0);
+        return 0;
+    }
+    let after_cond: i64 = base0 + cond_n;
+    let nenv: i64 = __mind_alloc((wnlv + body_sl + 64) * 24);
+    let _cp: i64 = lvenv_copy(nenv, wenv, wnlv, 0);
+    let wnodes: i64 = __mind_alloc(1024 * 32);
+    let wcursor: i64 = __mind_alloc(8);
+    let wvidbuf: i64 = __mind_alloc(1024 * 8);
+    let m_wnlv: i64 = __mind_alloc(8);
+    __mind_store_i64(m_wnlv, wnlv);
+    let m_base: i64 = __mind_alloc(8);
+    __mind_store_i64(m_base, after_cond);
+    let lv: i64 = __mind_alloc((body_sl + 8) * 24);
+    let init: i64 = __mind_alloc((body_sl + 8) * 8);
+    let nlv_w: i64 = __mind_alloc(8);
+    __mind_store_i64(nlv_w, 0);
+    let body_len: i64 = __mind_alloc(8);
+    __mind_store_i64(body_len, 0);
+    let m_ok: i64 = __mind_alloc(8);
+    __mind_store_i64(m_ok, 1);
+    let _m: i64 = while_body_measure(body_sa, body_sl, 0, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, m_base, nenv, m_wnlv, wnlv, lv, init, nlv_w, body_len, m_ok);
+    if __mind_load_i64(m_ok) == 0 {
+        __mind_store_i64(okcell, 0);
+        return 0;
+    }
+    let nmerge: i64 = __mind_load_i64(nlv_w);
+    // FAIL CLOSED (not heap-corrupt) when the nested while carries more vars than the
+    // caller's merge_out overlay holds (64 * 24). Everything else in this slice fails
+    // closed via okcell; this guards while_fill_merge_out's unbounded write. Measure runs
+    // before emit and its failure fails the whole note closed, so guarding here is
+    // sufficient — the >64 case never reaches the emit overrun. (defensive fail-close.)
+    if nmerge > 64 {
+        __mind_store_i64(okcell, 0);
+        return 0;
+    }
+    let body_end: i64 = __mind_load_i64(m_base);
+    let exit_ids: i64 = __mind_alloc((nmerge + 1) * 8);
+    let _ei: i64 = while_alloc_exit_ids(exit_ids, nmerge, body_end, 0);
+    let _mo: i64 = while_fill_merge_out(merge_out, lv, exit_ids, nmerge, 0);
+    __mind_store_i64(nmerge_cell, nmerge);
+    __mind_store_i64(endbase_cell, body_end + nmerge);
     1
 }
 
@@ -27209,6 +27398,29 @@ pub fn while_body_emit(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
         __mind_store_i64(base_cell, cur_base + 1);
         let sc2: EmitState = emit_mic3_loop_ctl(sc1, 41, wenv, wnlv, buf, strbuf, offs, ncount, okcell);
         return while_body_emit(sc2, stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, strbuf, offs, ncount, okcell);
+    }
+    // NESTED while STATEMENT — EMIT-side twin of the while_body_measure arm (mirrors
+    // the top-level statement-while setup): ONE OP_WHILE via emit_mic3_while_general
+    // at the CURRENT base, then the trailing unit ConstI64 at endbase, then rebind
+    // the body env -> the nested exit ids so later body stmts resolve to them.
+    if ast_kind(stmt) == ast_while() {
+        let nw_merge: i64 = __mind_alloc(64 * 24);
+        let nw_nm: i64 = __mind_alloc(8);
+        __mind_store_i64(nw_nm, 0);
+        let nw_end: i64 = __mind_alloc(8);
+        __mind_store_i64(nw_end, 0 - 1);
+        let nw_ok: i64 = __mind_alloc(8);
+        __mind_store_i64(nw_ok, 1);
+        let sn: EmitState = emit_mic3_while_general(s, stmt, buf, params_addr, n_params, cur_base, wenv, wnlv, strbuf, offs, ncount, nw_merge, nw_nm, nw_end, nw_ok);
+        if __mind_load_i64(nw_ok) == 0 {
+            __mind_store_i64(okcell, 0);
+            return s;
+        }
+        // trailing unit ConstI64 at endbase (= one past the exit_ids).
+        let sn2: EmitState = emit_mic3_const_i64(sn, __mind_load_i64(nw_end), 0);
+        let _rb: i64 = while_if_rebind(nw_merge, __mind_load_i64(nw_nm), wenv, wnlv, buf, 0);
+        __mind_store_i64(base_cell, __mind_load_i64(nw_end) + 1);
+        return while_body_emit(sn2, stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, strbuf, offs, ncount, okcell);
     }
     let be_root: i64 = flatten_branch_lv(stmt, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, cur_base, wenv, wnlv);
     if be_root < 0 {

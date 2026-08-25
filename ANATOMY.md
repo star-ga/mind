@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3376 | **Est. tokens:** ~7,916,784
-**Generated:** 2026-08-17 22:06 UTC
+**Files:** 3382 | **Est. tokens:** ~7,938,607
+**Generated:** 2026-08-25 00:10 UTC
 
 ## Token Budget Guide
 
@@ -47,7 +47,7 @@
 | `docs/design/` | 3 | ~8,181 |
 | `docs/mindcraft/` | 3 | ~7,086 |
 | `docs/provenance/` | 2 | ~4,035 |
-| `docs/rfcs/` | 32 | ~147,259 |
+| `docs/rfcs/` | 33 | ~154,132 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 28 | ~49,880 |
 | `examples/bimap_currency/` | 3 | ~780 |
@@ -61,7 +61,8 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 155 | ~364,142 |
+| `examples/mindc_mind/` | 157 | ~377,952 |
+| `examples/mindc_mind/mindfuzz_self_host_staged/` | 3 | ~584 |
 | `examples/mindc_mind/testdata/` | 1 | ~2,452 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 2 | ~415 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
@@ -77,7 +78,7 @@
 | `.github/workflows/` | 9 | ~15,845 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~20,558 |
-| `scripts/` | 10 | ~12,924 |
+| `scripts/` | 10 | ~13,480 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `sdk/ts/mic-map/` | 6 | ~16,202 |
@@ -746,6 +747,7 @@
 - `0022-deterministic-io-substrate.md` (~2120 tok, huge) — RFC 0022: Deterministic I/O Substrate — fastest async I/O with bit-identical replay
 - `0024-loop-collapse.md` (~7579 tok, huge) — RFC 0024: Loop Collapse — prove-or-fail closed-form replacement of counted loops (`#[collapse]`)
 - `0025-mind-intent-contracts.md` (~3605 tok, huge) — RFC 0025: MIND Intent — Intent Contracts (goal + constraints → verifiable Contract IR)
+- `0026-deterministic-intent-folding.md` (~6873 tok, huge) — RFC 0026: Deterministic Intent Folding — prove-or-fail compile-time discharge of Contract obligations (`intent_fold`)
 - `DRAFT-deterministic-format-frontend.md` (~10522 tok, huge) — RFC DRAFT: Deterministic Multi-Format Ingest Front-End (JSON / TOON / CSV / TSV / NDJSON / TOML)
 - `DRAFT-deterministic-json-frontend.md` (~5177 tok, huge) — RFC DRAFT: Deterministic Streaming SIMD JSON Structural Front-End
 - `odc-language-primitives.md` (~418 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
@@ -891,6 +893,14 @@
 - `mic3_flip_smoke.py` (~1150 tok, large)
 - `mic3_oracle_smoke.py` (~764 tok, large) — mic@3 self-host convergence — Phase 0 gate: the Rust oracle.
 - `mic3_primitives_smoke.py` (~22501 tok, huge) — mic@3 self-host convergence — Phase 1 gate: pure-MIND ULEB128 / zigzag.
+- `mindfuzz_self_host.py` (~11539 tok, huge)
+### `examples/mindc_mind/mindfuzz_self_host_staged/`
+
+- `prog0003.mind` (~325 tok, medium) — mindfuzz_self_host generated program - deterministic seed.
+- `prog0003.minimal.mind` (~61 tok, small) — mindfuzz_self_host generated program - deterministic seed.
+- `prog0003.notes.txt` (~198 tok, small) — seed=1234 program=[3]
+### `examples/mindc_mind/`
+
 - `mod_operator_smoke.py` (~2100 tok, huge)
 - `multi_let_smoke.py` (~1499 tok, large)
 - `now_ns_smoke.py` (~678 tok, large) — # Copyright 2025 STARGA Inc.
@@ -899,7 +909,7 @@
 - `param_types_smoke.py` (~1273 tok, large)
 - `_ref_add.note` (~16 tok, tiny) — 6fa59a74687e6bac38c983655d4d93ab1873299f130f68cbe481cf92041f6610
 - `_ref_if_ret.note` (~16 tok, tiny) — 3fdc70390e9e12d8030552d11b2194078e8579fbcfac19b14d1beed77174cb07
-- `_ref_main.note` (~16 tok, tiny) — c1636a42a90686186f007a6615ee63f995a2396d07b6be335fd099de7b9665a4
+- `_ref_main.note` (~16 tok, tiny) — 42567ffc64c7b60e4207835a2eca8dd381555c80a6f33c53595417dbe219e0fd
 - `ref_netverify.py` (~1473 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
 - `_ref_recursion.note` (~16 tok, tiny) — 6d125a946243b0550700d9aa6bc2058b51a3b8bf6e536a8b0b3f545d79b7346f
 - `_ref_struct_field.note` (~16 tok, tiny) — 2f7f2ea32ee47138e1b0162bd51f418b4e5005b4569054f5f3c392ebd2258d96
@@ -971,6 +981,7 @@
 - `self_host_native_simd_dot_f32_smoke.py` (~1502 tok, huge) — RI-B2-S11 (#108) — native-ELF PACKED-f32 SIMD (SSE, 128-bit) STRICT-FP DOT-PRODUCT.
 - `self_host_native_simd_dot_i16_smoke.py` (~1130 tok, large) — RI-B2-S12 (#108) — native-ELF PACKED-int16 SIMD DOT-PRODUCT, byte-identity rung.
 - `self_host_native_simd_dot_q16_smoke.py` (~1486 tok, large) — RI-B2-S10 (#108) — native-ELF PACKED-SIMD Q16.16 DOT-PRODUCT, byte-identity rung.
+- `self_host_native_string_smoke.py` (~2271 tok, huge)
 - `self_host_native_tensor_batchsum_smoke.py` (~2372 tok, huge) — C4-T6 — native-ELF 3-D BATCHED SUM (i64), zero MLIR/LLVM. The FIRST N-D
 - `self_host_native_tensor_bcastadd_smoke.py` (~1700 tok, huge) — C4-T5 — native-ELF tensor ROW-VECTOR BROADCAST ADD (i64), zero MLIR/LLVM.
 - `self_host_native_tensor_colsum_smoke.py` (~2094 tok, huge) — C4-T5 — native-ELF tensor COLUMN REDUCTION (i64), zero MLIR/LLVM.
@@ -1130,7 +1141,7 @@
 - `mind_intrinsics.c` (~20558 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
-- `anatomy-hook.sh` (~258 tok, medium) — anatomy-hook.sh — Git pre-commit hook to refresh ANATOMY.md
+- `anatomy-hook.sh` (~814 tok, large) — anatomy-hook.sh — Git pre-commit hook to refresh ANATOMY.md
 - `anatomy.sh` (~2011 tok, huge) — anatomy — Generate ANATOMY.md for any repo
 - `check_claims.py` (~2779 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
 - `check_json_not_evidence.sh` (~546 tok, large) — Wedge-integrity gate: JSON is never an evidence-hash preimage.
