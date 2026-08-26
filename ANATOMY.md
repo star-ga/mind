@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3386 | **Est. tokens:** ~7,957,007
-**Generated:** 2026-08-26 09:51 UTC
+**Files:** 3383 | **Est. tokens:** ~7,956,418
+**Generated:** 2026-08-26 11:55 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 33 | ~25,922 |
+| `./` | 33 | ~25,934 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -64,7 +64,6 @@
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
 | `examples/mindc_mind/` | 157 | ~377,952 |
-| `examples/mindc_mind/mindfuzz_self_host_staged/` | 3 | ~601 |
 | `examples/mindc_mind/testdata/` | 1 | ~2,452 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 2 | ~415 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
@@ -501,7 +500,7 @@
 - `.editorconfig` (~51 tok, small) — root = true
 - `.gitattributes` (~130 tok, small) — # Enforce LF line endings for all text so byte-exact tests (fmt idempotence,
 - `GITHUB_SETUP_INSTRUCTIONS.md` (~240 tok, medium) — GitHub Setup (Quick)
-- `.gitignore` (~599 tok, large) — # Rust
+- `.gitignore` (~611 tok, large) — # Rust
 - `incompatible` (~0 tok, tiny)
 - `LICENSE` (~2573 tok, huge) —                                  Apache License
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
@@ -905,13 +904,6 @@
 - `mic3_oracle_smoke.py` (~764 tok, large) — mic@3 self-host convergence — Phase 0 gate: the Rust oracle.
 - `mic3_primitives_smoke.py` (~22501 tok, huge) — mic@3 self-host convergence — Phase 1 gate: pure-MIND ULEB128 / zigzag.
 - `mindfuzz_self_host.py` (~11539 tok, huge)
-### `examples/mindc_mind/mindfuzz_self_host_staged/`
-
-- `prog0003.mind` (~325 tok, medium) — mindfuzz_self_host generated program - deterministic seed.
-- `prog0003.minimal.mind` (~78 tok, small) — mindfuzz_self_host generated program - deterministic seed.
-- `prog0003.notes.txt` (~198 tok, small) — seed=1234 program=[3]
-### `examples/mindc_mind/`
-
 - `mod_operator_smoke.py` (~2100 tok, huge)
 - `multi_let_smoke.py` (~1499 tok, large)
 - `now_ns_smoke.py` (~678 tok, large) — # Copyright 2025 STARGA Inc.

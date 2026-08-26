@@ -105,3 +105,4 @@ examples/*/target/
 # Stray local build artifacts / tool caches — never belong in the compiler repo
 /a.out
 .wrangler/
+examples/mindc_mind/mindfuzz_self_host_staged/
