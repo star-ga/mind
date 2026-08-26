@@ -29,13 +29,11 @@ from pathlib import Path
 # `benches/compiler.rs`.
 WATCHED = ("small_matmul", "medium_mlp", "large_network")
 
-# Pre-Pratt baseline values (microseconds). Hard-coded so the gate stays
-# usable even when the baseline file is missing or unreadable.
-DEFAULT_BASELINE_US = {
-    "small_matmul": 3.00,
-    "medium_mlp": 6.13,
-    "large_network": 16.82,
-}
+# FAIL-CLOSED input policy: there is no hardcoded baseline fallback. A missing or
+# partial baseline file, or a current run missing any watched bench (e.g. an empty
+# or truncated bench.out), is a MALFORMED gate input — parse_baseline raises and
+# main() returns exit code 4 — never a silent default substitution or a
+# skipped-bench pass-through, either of which would let a broken run go green.
 
 # Default criterion output uses two-line entries:
 #   Benchmarking compiler_pipeline/parse_typecheck_ir/small_matmul: Analyzing
@@ -66,9 +64,12 @@ def _to_us(value: float, unit: str) -> float:
 
 
 def parse_baseline(path: Path) -> dict[str, float]:
-    """Read a baseline file. Falls back to DEFAULT_BASELINE_US."""
+    """Read a baseline file. FAIL-CLOSED: the file must exist and carry every
+    WATCHED bench. A missing file or a missing entry raises (caller exits 4) —
+    it is never a silent hardcoded-default substitution, which would let a
+    broken or stale baseline pass the gate unnoticed."""
     if not path.exists():
-        return dict(DEFAULT_BASELINE_US)
+        raise FileNotFoundError(f"baseline file not found: {path}")
     out: dict[str, float] = {}
     for raw in path.read_text().splitlines():
         line = raw.strip().lstrip("-").strip()
@@ -78,8 +79,9 @@ def parse_baseline(path: Path) -> dict[str, float]:
                 m = re.search(r"([0-9]+\.[0-9]+)\s*(?:µs|us|microseconds)", line)
                 if m:
                     out[name] = float(m.group(1))
-    for name in WATCHED:
-        out.setdefault(name, DEFAULT_BASELINE_US[name])
+    missing = [n for n in WATCHED if n not in out]
+    if missing:
+        raise ValueError(f"baseline {path} is missing watched bench(es): {missing}")
     return out
 
 
@@ -168,8 +170,24 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    baseline = parse_baseline(args.baseline)
+    try:
+        baseline = parse_baseline(args.baseline)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"::error::malformed baseline (gate input): {e}")
+        return 4
     current = parse_current(args.current)
+
+    # FAIL-CLOSED: every watched bench must be present in the current run. An empty
+    # or truncated bench.out (nothing parsed) must NOT skip-then-pass — that is the
+    # vacuous-green hole. Exit 4 = malformed / incomplete gate input.
+    missing_cur = [n for n in WATCHED if current.get(n) is None]
+    if missing_cur:
+        print(
+            f"::error::current bench output missing watched bench(es) {missing_cur} "
+            f"— refusing to pass on incomplete input. Was the bench suite actually "
+            f"run? (empty or truncated bench.out)"
+        )
+        return 4
 
     # (name, baseline_us, current_us, delta, rel_var, verdict)
     #   verdict ∈ {"OK", "FAIL", "NOISY"}
@@ -177,12 +195,8 @@ def main() -> int:
     failed = False
     trusted = 0
     for name in WATCHED:
-        b = baseline.get(name)
-        cv = current.get(name)
-        if b is None or cv is None:
-            print(f"::warning::missing bench for {name} (baseline={b}, current={cv})")
-            continue
-        c, rel_var = cv
+        b = baseline[name]
+        c, rel_var = current[name]
         delta = (c - b) / b
         # A regression only counts when the measurement is TRUSTWORTHY. A run
         # on a busy box has a large (+/- N) spread; a delta from a noisy median
