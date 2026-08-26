@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — self-host native-ELF construct coverage (Rust-Independence)
+- **Nested while-in-while**, and an **outer `let mut` assigned inside a statement-`if`**,
+  now emit a correct, byte-identical native-ELF mic@3 note (previously fail-closed).
+  Gated by oracle-parity, per-fixture byte-identity smoke, the zero-Rust bootstrap loop
+  (`stage1 == stage2 == stage3 == frozen`), and keystone 7/7.
+
+### Fixed — self-host emitter correctness (mic@3)
+- **Aliasing fall-through then/else-value.** A fall-through `if`-branch whose last
+  statement is `let x = <outer var>` (an alias) emitted the branch value at the previous
+  base position instead of the aliased value id — diverging from the Rust `--emit-mic3`
+  oracle. Corrected in three emitters (`emit_if_let_seq_then_instr_lv`,
+  `emit_if_else_fallthrough_lv` both branches, `emit_if_fallthrough_lv`); byte-neutral
+  for non-aliasing lets. A differential fuzzer over the supported construct space
+  (`examples/mindc_mind/mindfuzz_self_host.py`) surfaced the class.
+
+### Fixed — `mindc verify` honesty + bench-gate fail-closed
+- **Two-tier verify verdict.** `verify` no longer prints "evidence chain is intact
+  (untampered)" for an unsigned artifact: `trace_hash` covers only the IR body, so the
+  provenance MAP fields (`substrate`/`toolchain`/`parent`) can be edited without changing
+  it. Output now separates tier-1 (IR body attested / tamper-evident) from tier-2
+  (provenance NOT authenticated unless signed), and `--json` gains
+  `provenance_authenticated`.
+- **`--require-signed`** gate — fail closed (exit 1) unless the artifact carries a valid
+  signature (any signer); weaker than `--signer-pubkey`'s pinned-trust requirement.
+- **RFC 0017 reconciled** with the shipped CLI: removed the documented-but-nonexistent
+  `--check-sig` / `--cross-substrate` / `--format` / `--out` / `--chain`, and corrected
+  the exit-code table (all verification failures → 1; I/O / CLI → 2).
+- **bench-gate fail-closed** (`tools/bench_gate.py`): an empty / truncated / partial
+  `bench.out`, or a missing baseline, now exits 4 (was a vacuous PASS); the hardcoded
+  default-baseline fallback is removed. Contract test `tools/test_bench_gate.py`.
+
+### Added — native `mic@3 → mic@3` optimizer roadmap (C6)
+- `docs/INDEPENDENCE_ROADMAP.md` §C6 now specifies the opt-in native middle-end
+  (SCCP-lite → strength-reduction → region-scoped CSE/GVN → LICM-on-`While` →
+  linear-scan RA), the load-bearing invariant *"optimizer = canonical `mic@3 → mic@3`
+  transform upstream of emitter divergence"* (so both emitters consume identical
+  optimized bytes), and the offline-mine / in-compiler-`egglog`-apply evolvability loop
+  gated by the byte-invariance + cross-substrate oracle.
+
 ### Added — Phase 17 numerical research surface (f64 completeness)
 - **`const`-array executable lowering (17.4).** `const NAME: [i64; N] = [...]` with
   indexed reads (`NAME[i]`) now builds and runs — `ConstArray` registers its base as
