@@ -87,6 +87,7 @@ signature:  Ed25519 [OK] — key-id: <fingerprint>
 | `--require-strict-fp` | Fail (exit 1) unless the FP-contract mode is `strict` (no FMA-contraction / f32-reassociation). Fail-closed on `relaxed` / `unknown` / unattested |
 | `--require-deterministic` | Fail (exit 1) unless the artifact is `deterministic`. The mode is RE-DERIVED from the hashed body (not the forgeable MAP field), so this is fail-closed against a tampered `determinism` label |
 | `--signer-pubkey <hex>` | Trust anchor: pin the expected signer key(s) (repeatable; also `MIND_EVIDENCE_VERIFY_PUBKEYS`). Pinning makes a valid signature REQUIRED — an unsigned / signature-stripped artifact fails closed. A trusted signature authenticates the provenance preimage (`substrate` / `toolchain` / `parent`) |
+| `--require-signed` | Fail (exit 1) unless the artifact carries a VALID signature (any signer). Weaker than `--signer-pubkey`, which also requires the signer be pinned/trusted; use this for an "every artifact must be signed" policy without a specific key allowlist |
 
 **Not shipped** (documented in earlier drafts; superseded or deferred — see *Shipping status*):
 

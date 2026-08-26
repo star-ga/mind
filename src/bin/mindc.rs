@@ -362,6 +362,14 @@ enum Command {
         /// reproducibility opts in.
         #[arg(long)]
         require_deterministic: bool,
+        /// Fail verification (exit 1) unless the artifact carries a VALID signature
+        /// (any signer). Weaker than `--signer-pubkey`, which additionally requires
+        /// the signer be in a pinned allowlist: use `--require-signed` for an "every
+        /// artifact must be signed" policy without pinning a specific key. Fail-closed:
+        /// an unsigned, signature-stripped, or malformed-signature artifact is rejected
+        /// even when its trace_hash is intact. Off by default (signing is opt-in).
+        #[arg(long)]
+        require_signed: bool,
     },
     /// Decode + inspect a mic@3 binary artifact — the consumer/debug counterpart
     /// of `--emit-mic3`. Pretty-prints the canonical IR body plus a structural
@@ -651,6 +659,7 @@ fn main() {
             require_strict_fp,
             signer_pubkey,
             require_deterministic,
+            require_signed,
         }) => {
             let trusted = match collect_trusted_pubkeys(signer_pubkey) {
                 Ok(t) => t,
@@ -664,6 +673,7 @@ fn main() {
                 *json,
                 *require_strict_fp,
                 *require_deterministic,
+                *require_signed,
                 &trusted,
             ));
         }
@@ -2263,6 +2273,7 @@ fn run_verify(
     json: bool,
     require_strict_fp: bool,
     require_deterministic: bool,
+    require_signed: bool,
     trusted: &[Vec<u8>],
 ) -> i32 {
     use libmind::ir::compact::{
@@ -2647,6 +2658,16 @@ fn run_verify(
                 if require_deterministic && !effective_deterministic {
                     eprintln!(
                         "error[verify]: artifact is nondeterministic (re-derived from the hashed body) — deterministic build required"
+                    );
+                    return 1;
+                }
+                // Opt-in signed gate: require a VALID signature (any signer). Weaker
+                // than a pinned --signer-pubkey (which also requires the signer be
+                // trusted); this is the "every artifact must be signed" policy.
+                // Fail-closed on unsigned / signature-stripped / malformed.
+                if require_signed && !matches!(sig_status, SignatureStatus::Valid(_)) {
+                    eprintln!(
+                        "error[verify]: artifact carries no valid signature (signature: {sig_label}) — --require-signed demands a signed artifact"
                     );
                     return 1;
                 }
