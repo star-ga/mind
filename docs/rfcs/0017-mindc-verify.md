@@ -79,13 +79,23 @@ signature:  Ed25519 [OK] — key-id: <fingerprint>
 
 ### Verification flags
 
+**Shipped** (`mindc verify --help` is authoritative):
+
 | Flag | Meaning |
 |---|---|
-| `--check-sig` | Require and validate the Ed25519 signature (fails on unsigned) |
-| `--pubkey <path>` | Provide the verification key explicitly (default: bundled STARGA release key) |
-| `--format text\|json` | Output format; `json` emits a machine-readable receipt |
-| `--out <path>` | Write the JSON receipt to a file |
-| `--chain` | Follow `parent` pointers and verify the full DAG (requires sibling artifacts in the same directory) |
+| `--json` | Emit the report as a JSON object (incl. `trace_hash_valid`, `ssa_valid`, `signature`, `provenance_authenticated`) instead of human-readable text |
+| `--require-strict-fp` | Fail (exit 1) unless the FP-contract mode is `strict` (no FMA-contraction / f32-reassociation). Fail-closed on `relaxed` / `unknown` / unattested |
+| `--require-deterministic` | Fail (exit 1) unless the artifact is `deterministic`. The mode is RE-DERIVED from the hashed body (not the forgeable MAP field), so this is fail-closed against a tampered `determinism` label |
+| `--signer-pubkey <hex>` | Trust anchor: pin the expected signer key(s) (repeatable; also `MIND_EVIDENCE_VERIFY_PUBKEYS`). Pinning makes a valid signature REQUIRED — an unsigned / signature-stripped artifact fails closed. A trusted signature authenticates the provenance preimage (`substrate` / `toolchain` / `parent`) |
+
+**Not shipped** (documented in earlier drafts; superseded or deferred — see *Shipping status*):
+
+| Flag | Status |
+|---|---|
+| `--check-sig`, `--pubkey <path>` | Superseded by `--signer-pubkey <hex>` (pinning a key makes a valid signature required). |
+| `--format text\|json`, `--out <path>` | Superseded by `--json` (stdout only; no file-receipt flag). |
+| `--cross-substrate` | Not a verify subflag: cross-substrate byte-identity is enforced by the `tests/cross_substrate_identity.rs` CI gate against pinned reference hashes. |
+| `--chain` | Deferred (parent-DAG walk); `parent` is emitted and verified per-artifact, but the multi-artifact walk is future work. |
 
 ## 4. Reference-level explanation
 
@@ -183,12 +193,13 @@ and the result is embedded for downstream auditors.
 
 | Exit | Meaning |
 |---|---|
-| `0` | All checks passed. |
-| `1` | `trace_hash` mismatch — artifact body and embedded hash disagree. |
-| `2` | Signature invalid or required but absent. |
-| `3` | Cross-substrate hashes differ (unexpected for a Q16.16 graph). |
-| `4` | Artifact parse error (not a mic@3 file, or truncated). |
-| `5` | Parent chain walk failed (missing sibling artifact in `--chain` mode). |
+**Shipped** (`mindc verify --help` is authoritative):
+
+| `0` | All checks passed — attested → `trace_hash` valid; or unattested-but-SSA-valid with `attested: false` (attestation is opt-in). |
+| `1` | Verification failed: `trace_hash` mismatch (tampered body), malformed artifact, SSA fault, or a failed `--require-strict-fp` / `--require-deterministic` / pinned-signer gate. |
+| `2` | I/O or CLI error (artifact not found, bad flag). |
+
+> Earlier drafts assigned distinct codes (`2` signature, `3` cross-substrate, `4` parse, `5` `--chain` walk). The shipped CLI collapses every verification failure into `1` and reserves `2` for I/O / CLI errors; the distinct codes are deferred together with their (not-yet-shipped) flags.
 
 ### 4.6 JSON receipt schema
 
@@ -287,11 +298,15 @@ a build step; conflating them obscures the audit trail. The correct model is:
    tampered one.
 2. A single flipped byte anywhere in the artifact body causes `trace_hash`
    mismatch and exit 1.
-3. `mindc verify --check-sig <artifact>` exits 2 on an unsigned artifact.
-4. `mindc verify --cross-substrate <avx2> <neon>` exits 0 for two Q16.16
-   artifacts produced from the same source, exits 3 if their `trace_hash` values
-   differ.
-5. `--format json` emits a receipt conforming to §4.6.
+3. Signature trust — SHIPPED as `--signer-pubkey <hex>` (not `--check-sig`):
+   pinning a signer key makes a valid signature REQUIRED, so an unsigned or
+   signature-stripped artifact fails closed (exit 1). Without a pin, an
+   internally-consistent signature passes but authenticity is not claimed.
+4. Cross-substrate byte-identity — NOT a verify subflag: enforced by the
+   `tests/cross_substrate_identity.rs` CI gate against pinned reference hashes,
+   not `mindc verify --cross-substrate`.
+5. `--json` emits a machine-readable receipt (fields per §4.6 and
+   `mindc verify --help`, including `provenance_authenticated`).
 6. The subcommand reuses `mic3_evidence_report` and `verify_evidence_chain` from
    the shipped library core; no new hash or signing primitive is introduced.
 7. Phase B of RFC 0016 (`mindc verify --evidence`) is satisfied by this subcommand
