@@ -17,5 +17,6 @@ pub mod comptime;
 pub mod fold;
 pub mod ir_canonical;
 pub mod memory_layout;
+pub mod native_opt;
 pub mod regalloc_dtk;
 pub mod scev;
