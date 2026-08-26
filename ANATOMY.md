@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3383 | **Est. tokens:** ~7,956,418
-**Generated:** 2026-08-26 11:55 UTC
+**Files:** 3383 | **Est. tokens:** ~7,956,837
+**Generated:** 2026-08-26 12:01 UTC
 
 ## Token Budget Guide
 
@@ -41,7 +41,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,465 |
-| `docs/` | 34 | ~82,105 |
+| `docs/` | 34 | ~82,524 |
 | `docs/audits/` | 1 | ~11,040 |
 | `docs/audits/kimi_swarm_2026-08-25/` | 2 | ~4,339 |
 | `docs/backends/` | 1 | ~1,482 |
@@ -702,7 +702,7 @@
 - `errors.md` (~701 tok, large) — MIND Core Error Model
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
 - `gpu.md` (~387 tok, medium) — GPU backend profile
-- `INDEPENDENCE_ROADMAP.md` (~17585 tok, huge) — MIND Rust-Independence Roadmap
+- `INDEPENDENCE_ROADMAP.md` (~18004 tok, huge) — MIND Rust-Independence Roadmap
 - `install.md` (~1012 tok, large) — Installing mindc
 - `ir.md` (~451 tok, medium) — MIND IR core
 - `ir-mlir.md` (~480 tok, medium) — IR & MLIR Integration
