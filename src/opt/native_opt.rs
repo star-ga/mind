@@ -78,6 +78,7 @@ pub fn optimize_mic3(module: &mut IRModule, level: OptLevel) {
         OptLevel::Basic => {
             let mut next_id = module.next_id;
             const_if_prune(&mut module.instrs, &mut next_id);
+            fold_mul_by_zero(&mut module.instrs);
             module.next_id = next_id;
         }
     }
@@ -198,6 +199,63 @@ fn const_if_prune(instrs: &mut Vec<Instr>, next_id: &mut usize) {
     }
 }
 
+/// SCCP-lite slice 2 — **integer `mul`-by-zero folding**, an in-place algebraic rewrite.
+/// A `BinOp { op: Mul, .. }` one of whose operands is an `i64` constant `0` (defined by a
+/// `ConstI64(id, 0)` in the *same* instruction vector — hence the same SSA value space and
+/// a valid earlier definition) is replaced in place by `ConstI64(dst, 0)`. Provably exact
+/// and type-safe: `x * 0 == 0` for every integer / Q16.16 representation, and matching only
+/// `ConstI64`-0 operands means float multiplies (whose zero is a `ConstF64`, where
+/// `inf*0`/`NaN*0`/`-0.0` differ) are never touched. The result vid is preserved, so no
+/// cross-instruction value remap is needed. Recurses into nested branches / bodies;
+/// conservative across scopes (only same-vector const-0s fold — a safe miss, never a
+/// wrong fold). Deterministic: one forward pass, no hashmap iteration.
+fn fold_mul_by_zero(instrs: &mut Vec<Instr>) {
+    use std::collections::BTreeSet;
+    let zeros: BTreeSet<ValueId> = instrs
+        .iter()
+        .filter_map(|ins| match ins {
+            Instr::ConstI64(id, 0) => Some(*id),
+            _ => None,
+        })
+        .collect();
+    let mut i = 0;
+    while i < instrs.len() {
+        match &mut instrs[i] {
+            Instr::If {
+                cond_instrs,
+                then_instrs,
+                else_instrs,
+                ..
+            } => {
+                fold_mul_by_zero(cond_instrs);
+                fold_mul_by_zero(then_instrs);
+                fold_mul_by_zero(else_instrs);
+            }
+            Instr::While {
+                cond_instrs, body, ..
+            } => {
+                fold_mul_by_zero(cond_instrs);
+                fold_mul_by_zero(body);
+            }
+            Instr::FnDef { body, .. } => fold_mul_by_zero(body),
+            _ => {}
+        }
+        if let Instr::BinOp {
+            dst,
+            op: crate::ir::BinOp::Mul,
+            lhs,
+            rhs,
+        } = &instrs[i]
+        {
+            if zeros.contains(lhs) || zeros.contains(rhs) {
+                let d = *dst;
+                instrs[i] = Instr::ConstI64(d, 0);
+            }
+        }
+        i += 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,6 +343,50 @@ mod tests {
         assert!(
             m.instrs.iter().any(|i| matches!(i, Instr::If { .. })),
             "a non-constant condition must never be pruned (fail-safe)"
+        );
+    }
+
+    #[test]
+    fn basic_folds_integer_mul_by_zero() {
+        use crate::ir::{BinOp, Instr};
+        // %0 = const 0 ; %1 = const 5 ; %2 = %1 * %0 ; output %2  ->  %2 = const 0
+        let mut m = IRModule::new();
+        m.instrs = vec![
+            Instr::ConstI64(ValueId(0), 0),
+            Instr::ConstI64(ValueId(1), 5),
+            Instr::BinOp {
+                dst: ValueId(2),
+                op: BinOp::Mul,
+                lhs: ValueId(1),
+                rhs: ValueId(0),
+            },
+            Instr::Output(ValueId(2)),
+        ];
+        m.next_id = 3;
+
+        // OFF: unchanged (the Mul stays).
+        let mut off = m.clone();
+        optimize_mic3(&mut off, OptLevel::Off);
+        assert!(
+            off.instrs
+                .iter()
+                .any(|i| matches!(i, Instr::BinOp { op: BinOp::Mul, .. })),
+            "OFF must not fold"
+        );
+
+        // Basic: the mul-by-zero folds to `%2 = const 0` in place.
+        optimize_mic3(&mut m, OptLevel::Basic);
+        assert!(
+            !m.instrs
+                .iter()
+                .any(|i| matches!(i, Instr::BinOp { op: BinOp::Mul, .. })),
+            "mul-by-zero must be folded away"
+        );
+        assert!(
+            m.instrs
+                .iter()
+                .any(|i| matches!(i, Instr::ConstI64(id, 0) if *id == ValueId(2))),
+            "the mul's dst (%2) must be bound to const 0 (result vid preserved)"
         );
     }
 
