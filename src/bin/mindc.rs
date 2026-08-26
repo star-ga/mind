@@ -2544,7 +2544,15 @@ fn run_verify(
                     }
                 }
                 if !json {
-                    eprintln!("verified: evidence chain is intact (untampered)");
+                    // Tier 1 (trace_hash-covered, tamper-evident): the canonical IR body,
+                    // plus the determinism / fp_mode labels which are RE-DERIVED from the
+                    // hashed bytes below. The provenance MAP fields (substrate / toolchain /
+                    // parent) sit OUTSIDE trace_hash and are authenticated only by a trusted
+                    // signature (tier 2, in the signature match below). A bare "untampered"
+                    // over-claims for an unsigned artifact whose substrate field is editable.
+                    eprintln!(
+                        "verified: IR body attested (tamper-evident) — trace_hash matches the re-emitted canonical IR"
+                    );
                     eprintln!("verified: IR body is SSA well-formed");
                     match &sig_status {
                         SignatureStatus::Valid(v) => {
@@ -2572,6 +2580,14 @@ fn run_verify(
                         SignatureStatus::Absent => {
                             eprintln!(
                                 "note: artifact carries no signature (unsigned but attested)"
+                            );
+                            // Tier 2 (provenance authentication): the substrate / toolchain /
+                            // parent MAP fields are NOT covered by trace_hash, so on an
+                            // unsigned artifact they are editable without changing the
+                            // (still-valid) trace_hash. Say so plainly — do not let the
+                            // tier-1 attestation imply the provenance is authenticated.
+                            eprintln!(
+                                "note: provenance (substrate/toolchain/parent) is NOT authenticated — these MAP fields sit outside trace_hash; sign the artifact and pin --signer-pubkey to authenticate them"
                             );
                         }
                         _ => {}
