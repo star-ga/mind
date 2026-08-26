@@ -2450,8 +2450,15 @@ fn run_verify(
                     Some(pk) => format!("\"{pk}\""),
                     None => "null".to_string(),
                 };
+                // Tier-2 provenance authentication for scripted consumers: true ONLY when the
+                // artifact carries a valid signature AND a trusted signer key is pinned (the
+                // signature preimage covers substrate/toolchain/parent). Unsigned or
+                // untrusted-signer => false: the provenance MAP fields are not authenticated,
+                // so a consumer must not trust substrate/toolchain/parent from trace_hash alone.
+                let provenance_authenticated =
+                    matches!(sig_status, SignatureStatus::Valid(_)) && !trusted.is_empty();
                 println!(
-                    "{{\"artifact\":\"{}\",\"substrate\":\"{}\",\"determinism\":\"{determinism}\",\"toolchain\":\"{}\",\"parent\":{parent_field},\"trace_hash\":\"{trace_hash}\",\"trace_hash_kind\":\"{trace_hash_kind}\",\"trace_hash_valid\":{},\"fp_mode\":\"{fp_mode}\",\"ssa_valid\":{ssa_valid},\"ssa_reason\":{ssa_reason_field},\"signature\":\"{sig_label}\",\"signature_ed25519_pubkey\":{sig_ed_pubkey_field},\"signature_mldsa_pubkey\":{sig_mldsa_pubkey_field}}}",
+                    "{{\"artifact\":\"{}\",\"substrate\":\"{}\",\"determinism\":\"{determinism}\",\"toolchain\":\"{}\",\"parent\":{parent_field},\"trace_hash\":\"{trace_hash}\",\"trace_hash_kind\":\"{trace_hash_kind}\",\"trace_hash_valid\":{},\"fp_mode\":\"{fp_mode}\",\"ssa_valid\":{ssa_valid},\"ssa_reason\":{ssa_reason_field},\"signature\":\"{sig_label}\",\"signature_ed25519_pubkey\":{sig_ed_pubkey_field},\"signature_mldsa_pubkey\":{sig_mldsa_pubkey_field},\"provenance_authenticated\":{provenance_authenticated}}}",
                     json_escape(artifact),
                     json_escape(&report.substrate),
                     json_escape(&report.toolchain),
