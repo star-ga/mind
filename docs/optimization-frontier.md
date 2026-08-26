@@ -139,6 +139,13 @@ Partition all compilers into two classes: (1) those that permit floating-point r
 - **Effort:** Medium (2–3 weeks)
 - **Sources:** MIND `src/eval/mlir_build.rs` (internal); research on formally-verified SIMD pattern optimization
 
+#### Evolvability adjudication — retarget these onto the mic@3 native path (2026-08-26)
+The e-graph / SMT-synthesis / superopt items above (B1, B3, B7, and §(c) C1/C2/C4) were framed on the **MLIR lowering path** — which Rust-Independence is *removing*. An external SOTA compiler survey plus internal architecture adjudication retarget the evolvability loop onto the **canonical `mic@3` IR** (the RI-native path), because that is where the total correctness oracle actually bites and where both emitters converge. The "beat LLVM" thesis, made executable: LLVM cannot afford saturation-per-compile or oracle-gated rule mining — it has no total oracle; MIND has byte-invariance + cross-substrate diff. The adjudicated split:
+- **egglog IN-COMPILER as the rule *applier*** — deterministic (single-threaded, sorted e-class extraction, integer cost model, pinned iteration bound); a pure `mic@3 → mic@3` function.
+- **Souper / SMT-synthesis OFFLINE as the rule *miner*** — in-compiler SMT is FORBIDDEN (solver timeouts are wall-clock-dependent → non-deterministic codegen, the exact thing the wedge bans).
+- **Loop:** offline discover → cross-substrate-oracle + exhaustive-small-width validate → versioned *frozen* rule set (checked in) → in-compiler egglog replays the frozen set. Souper is the miner, egglog the applier.
+This is the Phase-4 layer of the `mic@3 → mic@3` optimizer in `docs/INDEPENDENCE_ROADMAP.md` §C6 — build it only after the deterministic pass base (SCCP-lite → strength-reduction → CSE/GVN → LICM → linear-scan RA) exists there. B1/B3/B7 stay valid as *techniques*; their **plug-in point moves from `mlir_export`/`mlir_build` to the mic@3 canonical transform**.
+
 #### B8. Iterative Bi-Directional Optimization (IBO) for MLIR Pass Pipeline
 - **Where it plugs in:** `src/opt/mod.rs` (MIND IR pipeline), as an opt-in compilation mode — not the default path
 - **Expected win:** Bi-directional optimization outperforms exhaustive forward phase-order search by escaping local optima that any fixed pass sequence reaches. Estimated 2–10% throughput gain on compute kernels. Compile-speed cost: O(k) overhead where k is iteration count — bounded at 2–3 iterations.

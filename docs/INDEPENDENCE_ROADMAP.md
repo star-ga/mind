@@ -225,7 +225,30 @@ Native-ELF covers only scalar i64/ptr/struct/control-flow. To drop the 12,753-LO
   no byte oracle exists for float since the deleted `src/native` never emitted `ConstF64`); two
   fixtures discriminate strict order from reassociation. CI-green; integer self-compile byte-identical.
 - [ ] **C5** Vectorization (AVX2/NEON SIMD) for performance parity
-- [ ] **C6** ⚠️ **Optimizing backend** — register allocation + instruction scheduling (today LLVM `-O3`). *The multi-year item*; without it native codegen is correct but slow
+- [ ] **C6** ⚠️ **Optimizing backend** — register allocation + instruction scheduling (today LLVM `-O3`). *The multi-year item*; without it native codegen is correct but slow. **Plan below (external SOTA compiler survey + architecture adjudication, 2026-08-26).**
+
+#### C6 — the native `mic@3 → mic@3` optimizer (adjudicated plan)
+
+An external SOTA compiler survey plus internal architecture adjudication. The survey *validated* the wedge (it independently converged on MIND's determinism discipline, pinned-reduction cross-substrate identity, strict-FP tiers, and content-addressed evidence) and supplied a determinism-tagged pass roadmap; the architecture review re-grounded it against MIND's actual seams.
+
+**The load-bearing architectural decision:** the optimizer is a **canonical `mic@3 → mic@3` transform sitting UPSTREAM of emitter divergence** — both the Rust `lower.rs`/mic@3 oracle and the self-host `nb_*` emitter consume identical *optimized* bytes, so each pass is written once and stays oracle-parity-safe by construction (never twice-to-byte-parity). **Opt-in flag, default OFF** (keystone/canaries/frozen seeds untouched until a deliberate reseed); **every landing is one whole-corpus reseed event.**
+
+**Reject the survey's CFG machinery** — MIND IR is structured/region (`Instr::If`/`While` carry regions + explicit `exit_ids`; SSA already holds via monotone `ValueId`). So: SSA-construction is already done; **dominance = region nesting**, **loop preheader = the slot before the `While`**, no φ-insertion problem. Port the pass *intents*, not the block-CFG algorithms (which is easier, not harder).
+
+**Ranked first adoptions (byte-identity-safe, in order):**
+1. **SCCP-lite** — region-recursive const-prop + dead-`If`-arm prune + DCE on mic@3 (moves `opt/fold.rs`/`comptime.rs` semantics to the canonical IR; arm-pruning *shrinks* construct surface → helps RI-D1).
+2. **Strength reduction** — mul/div/mod-by-pow² → shift/mask, directly attacking `nb_*`'s real `imul`/`idiv`. **MUST key `(op, operand_type)`** (the 623b9544 op-keying) or it re-opens the H5 Q16.16 `Shr`-reject finding.
+3. **Region-scoped CSE/GVN** — canonical expression-tuple keys, number by first-insertion `ValueId` (already monotone → already deterministic).
+4. **LICM on `While` regions** — hoist to the pre-`While` slot; only pure ops whose operands dominate the region and are not in `exit_ids` def-chains; **defer anything touching `__mind_load/store`** (alias model).
+5. **Phase-2 RA** — linear-scan over live ranges sorted by `ValueId`, extending `src/opt/regalloc_dtk.rs` (biggest native-quality lever — `nb_*` round-trips through rax/stack — but biggest byte-churn, so LAST, as its own reseed).
+
+**Deferred:** inliner (largest construct-surface churn vs the frozen-profile allowlist⇔corpus bijection), DSE (needs an alias model over raw `__mind_alloc`/`__mind_store_i64`), BURS isel (the `nb_*` tree-directed structure captures most of its value once RA exists).
+
+**Additive prerequisite:** a per-pass Merkle **pass-schedule log** as a MAP-epilogue key (mind-evidence-chain), so `trace_hash` anchors *which* schedule produced the bytes — mandatory the day passes exist.
+
+**#1 determinism trap (MIND-specific):** an iterate-until-fixpoint pass whose convergence depends on traversal order, sitting upstream of `trace_hash` + the dual-emitter parity contract, produces two semantically-correct byte-divergent modules — the wedge breaks with **zero local symptom** (surfaces only as a cross-substrate CI red or forked evidence chain). **Mitigation is structural:** every pass is a pure function with a **pinned schedule** (fixed order + fixed iteration count or a provably order-independent fixpoint — never "loop until quiet"); `trace_hash` anchors post-opt bytes with the schedule in the MAP; `mic3_flip` + reseed treats any pass-behavior change as a whole-corpus reseed in the same commit; and the `(op, operand_type)` RI-D1 keying gates optimizer *output*, not just front-end output.
+
+**Phase 4 — evolvability under the byte-oracle (the "beat LLVM" thesis, made executable):** LLVM cannot afford saturation-per-compile or oracle-gated rule mining because it has no total correctness oracle; MIND does (byte-invariance + cross-substrate diff). **egglog in-compiler (deterministic, single-threaded, sorted e-class extraction, integer cost model) as the rule *applier*; Souper/SMT-synthesis OFFLINE as the rule *miner*** (in-compiler SMT is forbidden — solver timeouts are wall-clock-dependent). Loop: offline discover → cross-substrate-oracle + exhaustive-small-width validate → versioned frozen rule set → in-compiler egglog replay. See `docs/optimization-frontier.md` §(b) B1/B3/B7 (already-planned e-graph / SMT-synthesis / superopt items this sharpens).
 - [ ] **C7** GPU codegen (CUDA/ROCm/Metal) — *commercial mind-runtime territory, hardest*
 - [ ] **C8** Linker + fuller syscall surface (open/close/mmap) for general/multi-object programs
 
