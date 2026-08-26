@@ -2026,3 +2026,159 @@ governance authority. A system may not argue that high confidence justifies rela
 invariant. Predictive machinery answers *was the world model accurate*; governance answers
 *did the system remain legitimate*. Those two questions stay in separate evidence streams,
 permanently.
+
+---
+
+## Phase 19 — Cross-Chain Evidence Anchor (the six chains do not compose)
+
+**Status: gap identified 2026-08-26, not scoped.** This is the highest-ranked
+non-compiler gap in the ecosystem audit. It is not a new subsystem — it is the
+composition layer over six mechanisms that already ship.
+
+### The gap
+
+Every layer of the ecosystem independently answers "what survives transformation,"
+and every one of them answers it correctly and in isolation:
+
+| Layer | Anchors | Mechanism |
+|---|---|---|
+| `mind` compiler | identity of an **artifact** | `trace_hash = mini_sha256(emit_mic3(ir))` on canonical mic@3 bytes (RFC 0016/0021) |
+| Naestro kernel | identity of a **decision** | routing lineage + `kernel.replay` |
+| `mind-mem` | identity of a **belief over time** | governed blocks, provenance chain, contradiction scan |
+| `512-mind` | identity of a **constraint** | I1–I15 invariants, SOP-5 `spec_hash` binding, witness chain |
+| `mind-nerve` | identity of an **intent→capability route** | governed route table, attestation envelope |
+| `arch-mind` | identity of **structural health** | HMAC-SHA256 / Ed25519 session evidence log |
+
+Six chains, six roots, **zero cross-links**. No artifact today can prove the
+conjunction:
+
+> *this binary, produced by this decision, under these constraints, consistent
+> with these beliefs, routed by this rule, at this structural health.*
+
+That conjunction is what a regulated buyer actually procures. Each individual
+chain answers a question nobody asked in isolation.
+
+### Why this is the natural next move rather than a new bet
+
+Nothing here needs to be invented. Every input already exists as a stable hash
+emitted by shipping code. What is missing is a **composition record** binding
+them, and a verifier that re-derives it. The cost is in the seam, not the
+primitives — which is precisely the profile of work worth doing.
+
+### Shape — a spec with pinned vectors, not a shared library
+
+Same conclusion as the Phase 18 precommitment analysis, for the same reason: a
+library spanning six repositories fails badly (version lockstep across the fleet,
+a dependency hub every release gates on); a spec fails softly (implementations
+drift, shared vectors *detect* the drift). This is the mic@3 pattern and it is
+already known to work in this ecosystem.
+
+Proposed surface:
+
+- A **composite preimage** — an ordered, canonically-serialized tuple of the six
+  member hashes plus a chain-format tag. No clock, no randomness, no map
+  iteration order (the 512-mind evidence-preimage discipline applies verbatim).
+- `anchor_hash = mini_sha256(composite_preimage)`, carried as an **additive**
+  mic@3 MAP key so unsigned artifacts stay byte-identical and no `mic@N` bump
+  is required.
+- **Partial anchors are first-class.** A compile with no Naestro decision above
+  it must produce a valid anchor over the members that exist, with absent members
+  explicitly recorded as absent — never silently omitted, never zero-filled.
+  A schema that can only express the full six is a schema nobody can emit.
+- A verifier that re-derives each member hash from its own chain and fails closed
+  on any mismatch. Re-deriving is the whole point; accepting a member hash on
+  faith reduces this to a manifest.
+
+### Firewall — do not cross it
+
+512-mind's **I13** holds: structural admissibility must not enter the
+optimization loop. The composite anchor is an evidence artifact, not a score.
+It must never be reduced to a single quality number, and a high anchor coverage
+must never confer authority to relax an invariant. Six chains agreeing is not
+permission.
+
+### Open questions — answer before this gets a milestone
+
+1. **Ordering and absence.** Is the member tuple positionally fixed (absent =
+   explicit sentinel) or tag-keyed? Positional is simpler to hash; tag-keyed
+   survives adding a seventh layer. This decision is load-bearing for wire
+   stability and cannot be deferred to implementation.
+2. **Who emits.** `mindc` is the only member that sees the artifact, but it does
+   not see the Naestro decision or the mind-mem belief state. Does the anchor get
+   emitted at compile time with the members available and *extended* later, or
+   assembled by a separate tool at release time? An extendable chain is more
+   useful and much harder to keep deterministic.
+3. **Cross-repo hash-format drift.** The six mechanisms do not currently agree
+   on a hash function or an encoding (`mini_sha256` here, HMAC-SHA256 in
+   arch-mind, ECDSA-backed witnesses in 512-mind). The spec must pin one
+   composite format without forcing six migrations.
+4. **Does anyone buy it.** Same honesty test applied to Phase 18: name the
+   buyer who needs the *conjunction* rather than one chain, or this is a demo
+   feature. Candidates to validate rather than assume — regulated-industry
+   procurement, third-party audit, and supply-chain attestation regimes.
+
+**Depends on:** the RFC 0016 operational last mile (below) — an anchor over
+unsigned members is tamper-evident, not attributable.
+
+---
+
+## Phase 19.1 — Signing: the operational last mile
+
+**Status: capability shipped, operations not.** Recorded here because the gap is
+small in engineering terms and large in what may honestly be claimed.
+
+What ships today: RFC 0016 Phase C, crypto-agile (Ed25519 / ML-DSA-65 / hybrid),
+extended by #327 to PQC-hybrid ML-DSA-87 + SLH-DSA-256s. Opt-in via key-seed env
+var, **never signed-by-default**; unsigned artifacts stay byte-identical with no
+`mic@N` bump. `mindc verify --require-signed` is wired and fail-closed.
+
+What does not ship, and is the entire reason the honest phrasing is still
+*"signed (opt-in)"* rather than *"STARGA releases are signed"*:
+
+- [ ] **Offline keygen + key custody** — a documented procedure producing a
+      signing key that has never touched a networked machine, with a stated
+      rotation and revocation story. Absent this, a signature attests a build
+      host, not an organization.
+- [ ] **Published public key** with an independent distribution path. A pubkey
+      served only from the same origin as the artifact adds nothing an attacker
+      who owns that origin cannot forge.
+- [ ] **Signed-reproduction CI gate** — a job that rebuilds a release artifact
+      from source on a second substrate, confirms byte-identity, and verifies the
+      signature over the rebuilt bytes. This is the step that converts the claim
+      from "we signed it" to "anyone can check we signed the thing we say we
+      built."
+
+**Claim discipline:** until all three land, say *"signed (opt-in)"* for the
+capability. Do **not** claim STARGA releases are signed.
+
+---
+
+## Phase 19.2 — Third-party verifier path (determinism an adversary can check)
+
+**Status: gap identified 2026-08-26, not scoped.**
+
+`mindc verify` exists, is correct, and is fail-closed. What does not exist is a
+path by which **someone who does not trust us** takes a shipped artifact, a
+published public key, and independently reproduces the bytes.
+
+This is the difference between the wedge being *true* and the wedge being
+*demonstrable*. Determinism that cannot be checked by an adversary is a promise;
+the entire premise of the evidence chain is that promises are what we replaced.
+
+Minimum surface:
+
+- [ ] A published, versioned **reproduction procedure** — exact toolchain
+      versions, exact flags, exact source revision — sufficient for a third party
+      to rebuild a release artifact and get identical bytes.
+- [ ] A **pinned toolchain manifest** shipped alongside the artifact, so
+      "reproduce it" does not silently mean "guess our clang version." The
+      existing pinned-clang contract (`-O3 -ffp-contract=off -march=…`) is the
+      input; it is not currently published as a consumer-facing artifact.
+- [ ] An **external reproduction run** by someone outside STARGA, recorded. One
+      genuine third-party reproduction is worth more than any amount of internal
+      CI, because internal CI is exactly what a skeptic discounts.
+
+**Sequencing note:** this depends on Phase 19.1 (a reproduction you cannot
+attribute to a key is a weaker claim than one you can), and it is the
+demonstration surface that makes Phase 19 worth building — an anchor nobody
+outside can verify is an internal log.
