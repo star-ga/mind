@@ -560,6 +560,26 @@ pub struct TargetConfig {
     /// only the container (ELF / PE / Mach-O) differs.
     #[serde(default)]
     pub target: Option<String>,
+    /// RI-D1 code-generation backend selector for this target block — the
+    /// CODE-GENERATION path, DISTINCT from the `backend` field above (which is the
+    /// EXECUTION-target CLASS: cpu/gpu/... resolved by [`crate::build::BuildTarget`]).
+    /// Accepts the same names as `mindc build --backend`:
+    ///   - `"mlir"` (or absent): the production MLIR-text → mlir-opt/clang pipeline.
+    ///   - `"frozen"`: the RI-D1 frozen production profile — run the
+    ///     `profile_frozen_admits` allowlist gate on the lowered IR, then hand
+    ///     admitted programs to the pure-MIND native-ELF backend (zero
+    ///     MLIR/LLVM/clang); an out-of-profile construct fail-louds (no silent
+    ///     MLIR fallback).
+    ///   - `"native"`: the raw pure-MIND native-ELF path (no allowlist gate).
+    ///
+    /// This is the RI-D1 opt-in that lets a named production profile build
+    /// native-by-default WITHOUT typing `--backend frozen` on every invocation.
+    /// PRECEDENCE: an explicit CLI `--backend <x>` ALWAYS wins over this field; the
+    /// manifest value applies ONLY when `--backend` is left at its default. The
+    /// GLOBAL default stays `mlir`, so a target with no `codegen` key builds
+    /// byte-identically to the historical path.
+    #[serde(default)]
+    pub codegen: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

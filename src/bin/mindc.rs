@@ -90,9 +90,14 @@ enum Command {
         /// silent MLIR fallback). `frozen` (RI-D1) runs the frozen-profile allowlist
         /// gate (u64-safe, oracle-aligned) first, then `native` only if admitted —
         /// the safe production profile. The default `mlir` build is unaffected.
-        #[arg(long, value_name = "BACKEND", default_value = "mlir",
+        ///
+        /// No default: when omitted the effective backend is resolved from the
+        /// selected `[targets.<name>].codegen` manifest field (RI-D1 named-profile
+        /// default), falling back to `mlir`. An explicit `--backend <x>` ALWAYS wins
+        /// over the manifest `codegen` field.
+        #[arg(long, value_name = "BACKEND",
               value_parser = ["mlir", "native", "frozen"])]
-        backend: String,
+        backend: Option<String>,
         /// Output artifact type: binary | cdylib | object.
         /// Overrides `[build].emit` in Mind.toml.
         #[arg(long, value_name = "EMIT")]
@@ -1050,12 +1055,44 @@ fn run_native_backend_bridge(paths: &[String], out: &Option<String>) {
     );
 }
 
+/// Resolve the RI-D1 code-generation backend declared for the `--target`-selected
+/// `[targets.<name>].codegen` field in the governing `Mind.toml`, if any.
+///
+/// Returns `Some("frozen"|"native"|"mlir"|…)` when the selected target block
+/// declares a `codegen` value, else `None` (the caller then falls back to the
+/// global `mlir` default). This mirrors [`libmind::build`]'s block selection: a
+/// codegen override applies ONLY to an explicitly-named `[targets.<name>]` block
+/// (via `--target <name>`); without `--target` there is no single block to read,
+/// so the historical `mlir` default is preserved unchanged.
+///
+/// Best-effort and side-effect-free: any manifest-discovery/parse failure returns
+/// `None`, so this never changes the error surface of the real build path (which
+/// re-loads the manifest and reports authoritatively). It also never OVERRIDES an
+/// explicit CLI `--backend` — the caller only consults it when `--backend` is
+/// omitted (see the PRECEDENCE comment in [`run_mindc_build`]).
+fn resolve_manifest_codegen(paths: &[String], target: &Option<String>) -> Option<String> {
+    // A codegen override is keyed to an explicitly-named target block.
+    let block_name = target.as_deref()?;
+    // Locate the governing manifest exactly as the build path does: for a
+    // manifest-driven build (no explicit paths) ascend from the cwd; for an
+    // explicit single-file build adopt the repo-bounded governing manifest.
+    let root = if paths.is_empty() {
+        libmind::project::find_project_root().ok()?
+    } else {
+        let entry = std::path::Path::new(&paths[0]);
+        let dir = entry.parent().unwrap_or_else(|| std::path::Path::new("."));
+        libmind::project::find_project_root_for_file(dir)?
+    };
+    let manifest = libmind::project::load_manifest(&root).ok()?;
+    manifest.targets.get(block_name)?.codegen.clone()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_mindc_build(
     paths: &[String],
     release: bool,
     target: &Option<String>,
-    backend: &str,
+    backend: &Option<String>,
     emit: &Option<String>,
     optimize: &Option<String>,
     out: &Option<String>,
@@ -1063,11 +1100,24 @@ fn run_mindc_build(
     package: Option<&str>,
     no_cache: bool,
 ) {
+    // Resolve the effective code-generation backend.
+    //
+    // PRECEDENCE (RI-D1): an explicit CLI `--backend <x>` ALWAYS wins. Only when
+    // `--backend` is omitted do we consult the selected `[targets.<name>].codegen`
+    // manifest field (the named-profile default that lets a project build
+    // native-by-default without typing `--backend frozen`). The GLOBAL fallback
+    // stays `mlir`, so a project with no `codegen` key is byte-identical to today.
+    let eff_backend: String = match backend {
+        Some(b) => b.clone(),
+        None => resolve_manifest_codegen(paths, target).unwrap_or_else(|| "mlir".to_string()),
+    };
+
     // Code-generation backend dispatch (RI-D seam). The default `mlir` path is
     // left fully inert: it falls through to the existing pipeline unchanged.
     // `native` (RI-D Option A) hands the build to the pure-MIND x86-64 native-ELF
     // compiler (zero MLIR/LLVM/clang), fail-closed — never a silent MLIR fallback.
-    match Backend::parse(backend) {
+    // `frozen` (RI-D1) runs the allowlist gate first, then native only if admitted.
+    match Backend::parse(&eff_backend) {
         Ok(Backend::Mlir) => {}
         Ok(Backend::Native) => {
             // RI-D Option A: hand the whole build to the pure-MIND native-ELF
