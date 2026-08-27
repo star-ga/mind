@@ -92,6 +92,21 @@ fn admit_binop(op: &BinOp) -> Result<(), FrozenProfileRejection> {
 fn admit_instrs(instrs: &[Instr]) -> Result<(), FrozenProfileRejection> {
     for instr in instrs {
         match instr {
+            // #99 u64-signedness gate. The identity `__mind_conv_u64` marker is the ONLY
+            // origin of the MLIR oracle's UNSIGNED operator selection (its two `ScalarU64`
+            // tag sites both live in this intrinsic's arm; BinOp propagation needs an already-
+            // tagged operand). So its ABSENCE proves the oracle compares signed everywhere,
+            // making native's signed `Lt/Le/Gt/Ge`/`Shr` oracle-IDENTICAL (flip-safe); its
+            // PRESENCE means the oracle would pick an unsigned variant the native backend does
+            // NOT (it emits `setl`, not `setb` — verified silent miscompile), so reject the
+            // whole module from the frozen profile. This is a COARSE but provably-aligned gate
+            // (keyed on the oracle's own signedness signal, not a heuristic); the (op,
+            // operand_type) keying (task #313) only WIDENS coverage to modules that mention u64
+            // but never order-compare it — it never changes soundness. NOTE: u64/usize fn
+            // PARAMS are untagged, so the oracle itself compares them signed and native matches
+            // (a pre-existing #99 residual in the MLIR backend, filed separately — not a flip
+            // divergence). Guarded arm FIRST so it wins over the blanket `Call` admission below.
+            Instr::Call { name, .. } if name == "__mind_conv_u64" => reject("u64-value")?,
             // ---- IN PROFILE: scalar consts, arithmetic, calls, control flow ----
             // Proven native by the RI-D1 readiness gate (int arith, f64 scalar,
             // struct-return, scalar match/enum, narrow, calls, if/while/break/
@@ -238,6 +253,59 @@ mod tests {
             lhs: ValueId(0),
             rhs: ValueId(1),
         }
+    }
+
+    fn conv_u64(dst: usize) -> Instr {
+        // the #99 identity marker the oracle uses to select unsigned ops
+        Instr::Call {
+            dst: ValueId(dst),
+            name: "__mind_conv_u64".into(),
+            args: vec![ValueId(0)],
+        }
+    }
+
+    fn plain_call(name: &str) -> Instr {
+        Instr::Call {
+            dst: ValueId(3),
+            name: name.into(),
+            args: vec![],
+        }
+    }
+
+    #[test]
+    fn u64_marker_module_is_rejected_by_name() {
+        // A module carrying the __mind_conv_u64 marker means the oracle would select an
+        // unsigned op the native backend does not emit — reject it from the frozen profile.
+        let err = admit_instrs(&[conv_u64(2)]).unwrap_err();
+        assert_eq!(err.construct, "u64-value");
+    }
+
+    #[test]
+    fn u64_marker_hidden_in_fn_body_is_still_rejected() {
+        // The marker must not slip through inside a nested function body.
+        let err = admit_instrs(&[fndef(vec![conv_u64(2)])]).unwrap_err();
+        assert_eq!(err.construct, "u64-value");
+    }
+
+    #[test]
+    fn ordinary_call_is_still_admitted() {
+        // The guarded marker arm must not reject a normal (non-u64-marker) call.
+        assert_eq!(admit_instrs(&[plain_call("g")]), Ok(()));
+        assert_eq!(admit_instrs(&[plain_call("__mind_conv_i64")]), Ok(()));
+    }
+
+    #[test]
+    fn u99_miscompile_shape_is_rejected_not_admitted() {
+        // The exact #99 shape — a u64 order-compare (marker + Lt) — must be REJECTED from
+        // the frozen profile, never admitted (native emits signed `setl`, a silent miscompile).
+        let module = vec![fndef(vec![
+            conv_u64(2),
+            binop(BinOp::Lt),
+            Instr::Return {
+                value: Some(ValueId(2)),
+            },
+        ])];
+        assert_eq!(admit_instrs(&module).unwrap_err().construct, "u64-value");
     }
 
     #[test]
