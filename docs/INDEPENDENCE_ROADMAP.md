@@ -225,7 +225,7 @@ Native-ELF covers only scalar i64/ptr/struct/control-flow. To drop the 12,753-LO
   no byte oracle exists for float since the deleted `src/native` never emitted `ConstF64`); two
   fixtures discriminate strict order from reassociation. CI-green; integer self-compile byte-identical.
 - [ ] **C5** Vectorization (AVX2/NEON SIMD) for performance parity
-- [ ] **C6** ⚠️ **Optimizing backend** — register allocation + instruction scheduling (today LLVM `-O3`). *The multi-year item*; without it native codegen is correct but slow. **Plan below (external SOTA compiler survey + architecture adjudication, 2026-08-26).**
+- [~] **C6** ⚠️ **Optimizing backend** — register allocation + instruction scheduling (today LLVM `-O3`). *The multi-year item*; without it native codegen is correct but slow. **Plan below (external SOTA compiler survey + architecture adjudication, 2026-08-26).** *In progress: the opt-in `mic@3 → mic@3` middle-end (SCCP-lite + CSE/GVN) LANDED 2026-08-26 (default OFF, byte-identical); RA + LICM + strength-reduction remain.*
 
 #### C6 — the native `mic@3 → mic@3` optimizer (adjudicated plan)
 
@@ -236,11 +236,13 @@ An external SOTA compiler survey plus internal architecture adjudication. The su
 **Reject the survey's CFG machinery** — MIND IR is structured/region (`Instr::If`/`While` carry regions + explicit `exit_ids`; SSA already holds via monotone `ValueId`). So: SSA-construction is already done; **dominance = region nesting**, **loop preheader = the slot before the `While`**, no φ-insertion problem. Port the pass *intents*, not the block-CFG algorithms (which is easier, not harder).
 
 **Ranked first adoptions (byte-identity-safe, in order):**
-1. **SCCP-lite** — region-recursive const-prop + dead-`If`-arm prune + DCE on mic@3 (moves `opt/fold.rs`/`comptime.rs` semantics to the canonical IR; arm-pruning *shrinks* construct surface → helps RI-D1).
-2. **Strength reduction** — mul/div/mod-by-pow² → shift/mask, directly attacking `nb_*`'s real `imul`/`idiv`. **MUST key `(op, operand_type)`** (the 623b9544 op-keying) or it re-opens the H5 Q16.16 `Shr`-reject finding.
-3. **Region-scoped CSE/GVN** — canonical expression-tuple keys, number by first-insertion `ValueId` (already monotone → already deterministic).
+1. ✅ **SCCP-lite** *(LANDED 2026-08-26)* — region-recursive const-condition `If`-arm prune (rewrites the region to its surviving child + a complete operand remap) + mul-by-zero + exact integer algebraic-identity elimination, all on mic@3; arm-pruning *shrinks* construct surface → helps RI-D1.
+2. **Strength reduction** — mul/div/mod-by-pow² → shift/mask, directly attacking `nb_*`'s real `imul`/`idiv`. **MUST key `(op, operand_type)`** (the 623b9544 op-keying) or it re-opens the H5 Q16.16 `Shr`-reject finding. *Deferred until an operand-type key rides the mic@3 `BinOp`* — the folds already landed key on `ConstI64` 0/1 (Q16.16's scaled "one" is 65536, never a literal 0/1, so the fixed-point tier is structurally never matched).
+3. ✅ **Region-scoped CSE/GVN** *(LANDED 2026-08-26)* — canonical expression-tuple keys (opcode + operands, operands sorted for commutative opcodes), numbered by first-insertion `ValueId` (already monotone → already deterministic); scoped strictly per straight-line region so cross-region merges are never made; nothing reordered (trap ordering preserved).
 4. **LICM on `While` regions** — hoist to the pre-`While` slot; only pure ops whose operands dominate the region and are not in `exit_ids` def-chains; **defer anything touching `__mind_load/store`** (alias model).
 5. **Phase-2 RA** — linear-scan over live ranges sorted by `ValueId`, extending `src/opt/regalloc_dtk.rs` (biggest native-quality lever — `nb_*` round-trips through rax/stack — but biggest byte-churn, so LAST, as its own reseed).
+
+**Landed shape (`src/opt/native_opt.rs`, opt-in `MIND_NATIVE_OPT=basic`, default OFF byte-identical):** slices 1 + 3 above plus a reusable complete operand-remap primitive (`for_each_operand_mut` mirroring `ir_canonical::for_each_operand`) and a bounded canonical-cleanup finalize (one re-run of `canonicalize_module` for DCE + const-fold cascade — a single pass, not "loop until quiet", so the pinned-schedule determinism contract holds). Every slice keystone 7/7. Remaining: strength-reduction (item 2, gated on the operand-type key), LICM (item 4), RA (item 5).
 
 **Deferred:** inliner (largest construct-surface churn vs the frozen-profile allowlist⇔corpus bijection), DSE (needs an alias model over raw `__mind_alloc`/`__mind_store_i64`), BURS isel (the `nb_*` tree-directed structure captures most of its value once RA exists).
 
