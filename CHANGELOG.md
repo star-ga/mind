@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — opt-in native `mic@3 → mic@3` optimizer (roadmap C6, default OFF)
+- A canonical-IR optimizer (`src/opt/native_opt.rs`) sitting **upstream of emitter
+  divergence**, so both the Rust `--emit-mic3` oracle and the self-host emitter consume
+  identical optimized bytes (each pass written once, oracle-parity-safe by construction).
+  **Default OFF** (`MIND_NATIVE_OPT` unset) is a strict no-op — every emitted byte is
+  byte-identical to the un-optimized IR, so keystone / cross-substrate canaries / frozen
+  self-host seeds are untouched; enabling a level (`=basic`) changes bytes and is a
+  whole-corpus reseed event. Every pass is a pure function with a pinned schedule (fixed
+  order + fixed iteration count, never "loop until quiet"), so the optimized `mic@3` — what
+  `trace_hash` anchors — stays a deterministic function of the input IR across hosts.
+  Slices landed under `basic`: **SCCP-lite const-condition `If`-pruning** (dead-arm removal
+  with a complete operand remap), **integer `mul`-by-zero folding**, **exact integer
+  algebraic-identity elimination** (`x+0`, `x-0`, `x*1`, `x/1`, `x|0`, `x^0`, `x<<0`,
+  `x>>0`), and **region-scoped CSE/GVN of pure `BinOp`s**. All integer-exact and
+  structurally never touching the Q16.16 or float tiers.
+
 ### Added — self-host native-ELF construct coverage (Rust-Independence)
 - **Nested while-in-while**, and an **outer `let mut` assigned inside a statement-`if`**,
   now emit a correct, byte-identical native-ELF mic@3 note (previously fail-closed).
