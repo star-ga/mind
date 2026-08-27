@@ -32546,34 +32546,74 @@ pub fn nb_while_copyin(code: String, carry: i64, ncarry: i64, i: i64, buf: i64, 
 // deferred: nested `if`-region mutations (last_region_exit_rebindings on a nested
 // if) are not collected — string_push_str's branch writes are let/assign + a
 // top-level while only. upgrade path: recurse into a nested if's branches.
+// #318: record an `assign` target as a branch write ONLY when it is not already
+// declared by a prior `let` in this same statement list (ordered shadow rule).
+// Shared by nb_branch_writes (if-branches) and nb_while_live_writes (while bodies)
+// so the two walkers cannot drift apart again -- that drift WAS the bug class.
+pub fn nb_branch_assign_write(buf: i64, sa: i64, upto: i64, stmt: i64, names: i64, n: i64) -> i64 {
+    let nm: i64 = ast_child0(stmt);
+    if nb_prior_let(buf, sa, upto, ast_span_lo(nm), ast_span_hi(nm), 0) == 1 {
+        return n;
+    }
+    nb_writes_add(buf, names, n, nm)
+}
+// Ordered shadow scan (native twin of collect_bwn_prior_let, main.mind:10861):
+// 1 if a `let` earlier in this statement list [0..upto) declares the same name
+// (span-equal) as the given span, else 0.
+pub fn nb_prior_let(buf: i64, sa: i64, upto: i64, lo: i64, hi: i64, j: i64) -> i64 {
+    if j >= upto {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(sa + j * 8);
+    if ast_kind(stmt) == ast_let() {
+        let nm: i64 = ast_child0(stmt);
+        if span_bytes_equal(buf, lo, hi, ast_span_lo(nm), ast_span_hi(nm)) == 1 {
+            return 1;
+        }
+    }
+    nb_prior_let(buf, sa, upto, lo, hi, j + 1)
+}
 pub fn nb_branch_writes(buf: i64, sa: i64, sl: i64, i: i64, names: i64, n: i64) -> i64 {
     if i >= sl {
         return n;
     }
     let stmt: i64 = __mind_load_i64(sa + i * 8);
     let k: i64 = ast_kind(stmt);
-    let new_n: i64 = if k == ast_let() {
-        nb_writes_add(buf, names, n, ast_child0(stmt))
+    // #318 SCOPE FIX (semantic twin of the mic@3 path's collect_branch_write_names,
+    // and of lower.rs then_writes/then_local_decls). THE INVARIANT: a name enters a
+    // region's merge set IFF it denotes a binding that exists in the environment
+    // BEFORE the region begins AND is ASSIGNED (not declared) on some fall-through
+    // path inside it; every other name reads its pre-region value at the join.
+    // Previously `ast_let()` was recorded exactly like `ast_assign()`, so a
+    // branch-local `let` SHADOWING an outer binding entered merged_names and the
+    // if-merge phi carried the shadow instead of the pre-if value -- six measured
+    // silent miscompiles on --backend native (value-if, statement-if, assign-after-
+    // shadow, PARAMETER shadow, nested-if, shadow+while), all answering correctly on
+    // tree-eval and MLIR. A declaration is NEVER a write of the outer name, so the
+    // `ast_let()` arm is gone; an `assign` is a write ONLY when no prior `let` in
+    // this same branch already declared that name (ordered -- an assign BEFORE the
+    // shadow writes the OUTER, an assign AFTER writes the LOCAL).
+    // Dedup ORDER is unchanged (source order, then-writes first, else-only appended)
+    // because this only ever SKIPS a record, never reorders one -- and that order is
+    // phi-order- and id-layout-load-bearing (nb_if_carry_promote indexes merge_base + j).
+    let new_n: i64 = if k == ast_assign() {
+        nb_branch_assign_write(buf, sa, i, stmt, names, n)
     } else {
-        if k == ast_assign() {
-            nb_writes_add(buf, names, n, ast_child0(stmt))
+        if k == ast_while() {
+            nb_while_live_writes(buf, ast_child0(ast_child1(stmt)), ast_aux(ast_child1(stmt)), 0, names, n)
         } else {
-            if k == ast_while() {
-                nb_while_live_writes(buf, ast_child0(ast_child1(stmt)), ast_aux(ast_child1(stmt)), 0, names, n)
+            if k == ast_if() {
+                // F2 outer-var-through-nested-region (lower.rs 4003-4013 `other =>`
+                // arm + last_region_exit_rebindings): a branch statement that is
+                // itself a nested `if` threads that if's branch_bindings — i.e. its
+                // own merged_names (lower.rs 4289 pushes one branch_binding per
+                // merged name) — up as writes of the ENCLOSING branch, so each
+                // enclosing `if` allocates a merge phi for them too. Add those names
+                // (deduped) to the enclosing names table. Recurses through
+                // nb_if_branch_merged_writes -> nb_branch_writes for nested-if tails.
+                nb_if_branch_merged_writes(buf, stmt, names, n)
             } else {
-                if k == ast_if() {
-                    // F2 outer-var-through-nested-region (lower.rs 4003-4013 `other =>`
-                    // arm + last_region_exit_rebindings): a branch statement that is
-                    // itself a nested `if` threads that if's branch_bindings — i.e. its
-                    // own merged_names (lower.rs 4289 pushes one branch_binding per
-                    // merged name) — up as writes of the ENCLOSING branch, so each
-                    // enclosing `if` allocates a merge phi for them too. Add those names
-                    // (deduped) to the enclosing names table. Recurses through
-                    // nb_if_branch_merged_writes -> nb_branch_writes for nested-if tails.
-                    nb_if_branch_merged_writes(buf, stmt, names, n)
-                } else {
-                    n
-                }
+                n
             }
         }
     };
@@ -32626,8 +32666,12 @@ pub fn nb_while_live_writes(buf: i64, body_sa: i64, body_sl: i64, i: i64, names:
     }
     let stmt: i64 = __mind_load_i64(body_sa + i * 8);
     let k: i64 = ast_kind(stmt);
+    // #318: the comment above CLAIMED the let-shadow rule but the code never applied
+    // it -- every assign target was recorded, so `if c { let x = ..; while .. { x = .. } }`
+    // leaked the body-local shadow into the ENCLOSING if's merge set. Same defect as
+    // nb_branch_writes, one nesting level down; same ordered prior-let filter fixes it.
     let new_n: i64 = if k == ast_assign() {
-        nb_writes_add(buf, names, n, ast_child0(stmt))
+        nb_branch_assign_write(buf, body_sa, i, stmt, names, n)
     } else {
         nb_while_live_writes_region(buf, stmt, k, names, n)
     };
@@ -33440,6 +33484,19 @@ pub fn nb_if_stmt_simple(st: NbState, buf: i64, node: i64, params_addr: i64, n_p
     let je_which: i64 = __mind_load_i64(jcell) - 1;
     let s_je: NbState = NbState { code: c_je, next_id: sc.next_id, last_id: sc.last_id, ncalls: sc.ncalls };
 
+    // #318 SIMPLE-PATH SCOPING (mirror of nb_if_stmt_merged's branch_fork_n at :33619).
+    // Branches are MUTUALLY EXCLUSIVE, so a branch-local `let` must not survive into
+    // the sibling branch or past the join. The MERGED emitter has always truncated the
+    // let-env here; the SIMPLE emitter never did, because a merge-bearing branch used to
+    // be impossible on this path ("routes through nb_if_stmt_merged, never here").
+    // The #318 write-set fix makes that comment false: once a branch-local shadow is
+    // correctly EXCLUDED from the merge set, nmerged drops to 0 and the if now routes
+    // HERE -- so the shadow binding leaked into the outer env and a post-if read of the
+    // shadowed name resolved to the branch-local slot (measured: `let x=7; if c { let
+    // x=99; } return x` returned 99 instead of 7 on --backend native).
+    // Byte-neutral for every program without a branch-local binding: with nothing
+    // appended, the restore is a no-op store of the same value.
+    let branch_fork_s: i64 = __mind_load_i64(lcell);
     // then-block: leading const0, then the then-stmts.
     let s_t0: NbState = nb_emit_const0(s_je);
     let s_tb: NbState = nb_block_stmts(s_t0, buf, then_sa, then_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
@@ -33494,6 +33551,9 @@ pub fn nb_if_stmt_simple(st: NbState, buf: i64, node: i64, params_addr: i64, n_p
     let else_at: i64 = string_len(s_tj_code);
     let _pj: i64 = nb_jmp_set_target(jmps, jcell, je_which, else_at);
 
+    // #318: drop the then-branch's local bindings before lowering the else — the
+    // else path can never see them (mirror of :33656).
+    __mind_store_i64(lcell, branch_fork_s);
     // else-block: leading const0, then the else-stmts.
     let s_e0: NbState = nb_emit_const0(s_tj);
     let s_eb: NbState = nb_block_stmts(s_e0, buf, else_sa, else_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
@@ -33501,6 +33561,9 @@ pub fn nb_if_stmt_simple(st: NbState, buf: i64, node: i64, params_addr: i64, n_p
     // dual of then_result (lower.rs 4031-4147). Empty else keeps the leading
     // const0 (s_eb == s_e0), so byte-identical for the synthetic-else subset.
     let else_result: i64 = s_eb.last_id;
+    // #318: drop the else-branch's local bindings at the join (mirror of :33673) so a
+    // post-if read of a shadowed name resolves to the PRE-IF binding.
+    __mind_store_i64(lcell, branch_fork_s);
     let else_diverges: i64 = nb_block_diverges(else_sa, else_sl);
     // else fall-through: copy else_result -> dst (no jmp; it falls to end).
     let s_ej: NbState = nb_if_else_join(s_eb, else_diverges, else_result, dst_id);
@@ -33745,6 +33808,8 @@ pub fn nb_if_value_simple(st: NbState, buf: i64, node: i64, params_addr: i64, n_
     // the `ret` and (worse) patching a join jmp that was never the live edge, so dst
     // read a stale/wrong slot. main.mind's value-ifs never diverge a branch, so both
     // diverges are 0 there and this is byte-identical to the integer native-ELF oracle.
+    // #318 SIMPLE-PATH SCOPING — value-if twin of the statement-if fix above.
+    let branch_fork_vs: i64 = __mind_load_i64(lcell);
     let s_t0: NbState = nb_emit_const0(s_je);
     let s_tb: NbState = nb_block_stmts(s_t0, buf, then_sa, then_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
     let then_result: i64 = s_tb.last_id;
@@ -33770,10 +33835,14 @@ pub fn nb_if_value_simple(st: NbState, buf: i64, node: i64, params_addr: i64, n_
     let else_at: i64 = string_len(s_tj_code);
     let _pj: i64 = nb_jmp_set_target(jmps, jcell, je_which, else_at);
 
+    // #318: the else path can never see the then-branch's local bindings.
+    __mind_store_i64(lcell, branch_fork_vs);
     // else-block: leading const0, then the else value-expr (trailing = else_result).
     let s_e0: NbState = nb_emit_const0(s_tj);
     let s_eb: NbState = nb_block_stmts(s_e0, buf, else_sa, else_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
     let else_result: i64 = s_eb.last_id;
+    // #318: drop the else-branch's local bindings at the join.
+    __mind_store_i64(lcell, branch_fork_vs);
     let else_diverges: i64 = nb_block_diverges(else_sa, else_sl);
     // else fall-through: load else_result; store dst (no jmp; it falls to end) —
     // skipped when the else-branch diverges (its `return` already exited the fn).
