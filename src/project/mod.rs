@@ -393,6 +393,13 @@ pub enum Backend {
     Mlir,
     /// Pure-MIND x86-64 native-ELF path (RI-D: wired for `mindc build` via the frozen pure-MIND compiler).
     Native,
+    /// RI-D1 frozen production profile: run the `profile_frozen_admits` allowlist gate
+    /// (u64-safe, oracle-aligned) on the lowered IR, then — only if admitted — hand the
+    /// build to the pure-MIND native-ELF backend (zero MLIR/LLVM/clang). Rejection
+    /// fail-louds naming the construct. This is the safe production default candidate for
+    /// RI-D1; unlike raw `native`, it refuses u64-order-compare modules the native emitter
+    /// would silently miscompile (signed `setl`).
+    Frozen,
 }
 
 impl Backend {
@@ -401,6 +408,7 @@ impl Backend {
         match self {
             Backend::Mlir => "mlir",
             Backend::Native => "native",
+            Backend::Frozen => "frozen",
         }
     }
 
@@ -409,8 +417,9 @@ impl Backend {
         match s.to_ascii_lowercase().as_str() {
             "mlir" => Ok(Backend::Mlir),
             "native" => Ok(Backend::Native),
+            "frozen" => Ok(Backend::Frozen),
             other => Err(format!(
-                "unknown backend '{}' (expected mlir|native)",
+                "unknown backend '{}' (expected mlir|native|frozen)",
                 other
             )),
         }

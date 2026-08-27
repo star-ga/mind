@@ -87,9 +87,11 @@ enum Command {
         /// `native` (RI-D Option A) bridges the build to the frozen pure-MIND
         /// x86-64 native-ELF compiler for a runnable ELF with zero MLIR/LLVM/clang;
         /// fail-closed on any construct the pure-MIND subset cannot lower (never a
-        /// silent MLIR fallback). The default `mlir` build is unaffected.
+        /// silent MLIR fallback). `frozen` (RI-D1) runs the frozen-profile allowlist
+        /// gate (u64-safe, oracle-aligned) first, then `native` only if admitted —
+        /// the safe production profile. The default `mlir` build is unaffected.
         #[arg(long, value_name = "BACKEND", default_value = "mlir",
-              value_parser = ["mlir", "native"])]
+              value_parser = ["mlir", "native", "frozen"])]
         backend: String,
         /// Output artifact type: binary | cdylib | object.
         /// Overrides `[build].emit` in Mind.toml.
@@ -838,6 +840,59 @@ fn main() {
     emit_shared_if_requested(&cli.compile, &products);
 }
 
+/// RI-D1 frozen production profile (`mindc build --backend frozen`). Lowers the source
+/// to canonical IR in-process, runs the `profile_frozen_admits` allowlist gate (the
+/// u64-safe, oracle-aligned predicate that raw `--backend native` skips), and ONLY on
+/// admission hands the build to the pure-MIND native-ELF backend (zero MLIR/LLVM/clang).
+/// A rejected construct fail-louds by name with the `--backend mlir` escape hatch — never
+/// a silent MLIR fallback (that would fake the dependency cut) and never a native emit of
+/// a construct the profile does not prove byte-identical to the MLIR oracle (e.g. a u64
+/// order-compare, which the native emitter lowers to a signed `setl`).
+fn run_frozen_profile_build(paths: &[String], out: &Option<String>) {
+    // One source file (mirrors the native bridge; multi-file is a later slice).
+    if paths.len() != 1 {
+        eprintln!(
+            "error[backend-frozen]: the frozen profile accepts exactly one source file (got {}).",
+            paths.len()
+        );
+        process::exit(2);
+    }
+    let input = &paths[0];
+    let source = match fs::read_to_string(input) {
+        Ok(src) => src,
+        Err(err) => {
+            eprintln!("error[backend-frozen]: cannot read source '{input}': {err}");
+            process::exit(2);
+        }
+    };
+    // Lower to canonical IR (the same front-end the MLIR path uses) purely to run the
+    // admit gate; the native backend re-lowers for emit. `Default` options: the profile
+    // check is target/func-agnostic.
+    let opts = CompileOptions::default();
+    let products = match compile_source_with_name(&source, Some(input), &opts) {
+        Ok(products) => products,
+        Err(err) => {
+            let diags = err.into_diagnostics(Some(input));
+            DiagnosticEmitter::new(DiagnosticFormat::Human, ColorChoice::Auto)
+                .emit_all(&diags, Some(&source));
+            process::exit(1);
+        }
+    };
+    // THE frozen-profile allowlist gate (u64-safe, oracle-aligned).
+    if let Err(rej) = libmind::ir::frozen_profile::profile_frozen_admits(&products.ir) {
+        eprintln!(
+            "error[backend-frozen]: construct '{}' is not in the frozen native profile — \
+             rerun with `--backend mlir` for the full language surface (the frozen profile \
+             admits only constructs proven byte-identical to the MLIR oracle on the native \
+             backend; no silent MLIR fallback).",
+            rej.construct
+        );
+        process::exit(1);
+    }
+    // Admitted → the pure-MIND native-ELF backend (zero MLIR/LLVM/clang), fail-closed.
+    run_native_backend_bridge(paths, out);
+}
+
 /// RI-D Option A (task #110): bridge `mindc build --backend native` to the frozen
 /// pure-MIND x86-64 native-ELF compiler, producing a runnable ELF with ZERO
 /// MLIR/LLVM/clang in the path. The Rust driver only composes the source image and
@@ -1018,6 +1073,14 @@ fn run_mindc_build(
             // RI-D Option A: hand the whole build to the pure-MIND native-ELF
             // compiler (zero MLIR/LLVM/clang). Returns after writing the artifact.
             run_native_backend_bridge(paths, out);
+            return;
+        }
+        Ok(Backend::Frozen) => {
+            // RI-D1: run the frozen-profile allowlist gate on the lowered IR (the
+            // u64-safe, oracle-aligned admit predicate that raw `native` skips), then
+            // hand admitted programs to the pure-MIND native-ELF backend. Returns after
+            // writing the artifact, or fail-louds naming the out-of-profile construct.
+            run_frozen_profile_build(paths, out);
             return;
         }
         Err(msg) => {
