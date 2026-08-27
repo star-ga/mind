@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3383 | **Est. tokens:** ~7,964,110
-**Generated:** 2026-08-27 01:40 UTC
+**Files:** 3384 | **Est. tokens:** ~7,966,859
+**Generated:** 2026-08-27 12:08 UTC
 
 ## Token Budget Guide
 
@@ -62,7 +62,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 157 | ~378,264 |
+| `examples/mindc_mind/` | 158 | ~380,152 |
 | `examples/mindc_mind/testdata/` | 1 | ~2,452 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 2 | ~415 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
@@ -78,7 +78,7 @@
 | `.github/workflows/` | 9 | ~15,845 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~20,558 |
-| `scripts/` | 10 | ~13,480 |
+| `scripts/` | 10 | ~14,341 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `sdk/ts/mic-map/` | 6 | ~16,202 |
@@ -873,6 +873,7 @@
 
 - `backend_native_bridge_smoke.py` (~1380 tok, large) — RI-D slice 1 gate (task #110): `mindc build --backend native` is a byte-faithful
 - `bootstrap_smoke.py` (~2329 tok, huge)
+- `branch_shadow_crossbackend_smoke.py` (~1888 tok, huge) — #318 — branch-local `let` shadow must not leak across backends (the WEDGE gate).
 - `check_driver.mind` (~9782 tok, huge) — ===========================================================================
 - `closure_netverify.py` (~1423 tok, large) — # Canonical independent net-verify harness for CLOSURES / FN-VALUES / UNRESOLVED
 - `collect_field_strings_smoke.py` (~1161 tok, large)
@@ -1154,7 +1155,7 @@
 - `main.rs` (~2372 tok, huge) — Copyright 2026 STARGA Inc.
 ### `scripts/`
 
-- `preflight.sh` (~1392 tok, large) — preflight.sh — local CI-parity gate. Run before pushing to avoid red CI.
+- `preflight.sh` (~2253 tok, huge) — preflight.sh — local CI-parity gate. Run before pushing to avoid red CI.
 - `quick_perf.sh` (~734 tok, large) — quick_perf.sh — FAST one-sided compile-speed criterion gate.
 - `run_crypto_vectors.sh` (~1751 tok, huge) — Build every pure-MIND crypto/TLS std module to a shared object and run its
 ### `sdk/ts/mic-map/dist/`
