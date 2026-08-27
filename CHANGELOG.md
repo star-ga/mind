@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — RI-D1: `mindc build --backend frozen`, the u64-safe native production profile
+- **`--backend frozen`** lowers the source to canonical IR in-process, runs the
+  `profile_frozen_admits` allowlist gate (previously unwired), and hands ONLY admitted
+  programs to the pure-MIND native-ELF backend (zero MLIR/LLVM/clang/ld — strace-proven,
+  `execve ⊆ {mindc, stage1.elf}`). A rejected construct fail-louds by name with the
+  `--backend mlir` escape hatch — never a silent MLIR fallback (which would fake the
+  dependency cut). Global default stays `mlir`; this is the safe production-profile
+  dispatch, the RI-D1 cutover mechanism (rows 3–7 flip to PASS when it becomes a named
+  profile's default).
+- **#99 u64 flip-safety gate.** `admit_binop`/`admit_instrs` reject any module carrying
+  the identity `__mind_conv_u64` marker — the only origin of the MLIR oracle's unsigned-op
+  selection, which the native emitter lowers to a signed `setl` (a verified silent
+  miscompile for large u64). Marker ABSENCE proves native's signed compare is oracle-
+  identical (flip-safe); PRESENCE rejects the module. Coarse but provably oracle-aligned;
+  the `(op, operand_type)` keying (task #313) only widens coverage, never changes soundness.
+- Gates: `ri_d1_frozen_backend_smoke.py` 3/3 (in-profile admitted native, marked-u64
+  rejected fail-loud, param-u64 admitted native≡oracle), keystone 7/7, byte-neutral.
+
 ### Fixed — self-host mic@3: fixed-array element STORE inside a loop body now interns the carried aggregate name (RH f64-aggregate native leg — note leg)
 - **The pure-MIND self-host mic@3 emitter now produces byte-identical output for a
   value-semantic fixed `[T; N]` element store `a[i] = v` INSIDE a `while` loop body.**

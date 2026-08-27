@@ -112,6 +112,12 @@ GLOBAL_DEFAULT_NATIVE flips only when ALL hold:
    today (approx, grep-bucketed, unverified vs exact diagnostic): native-float completion (14),
    field/method (4). Verify against the corpus before choosing.
 3. **RI-D1 cutover**: flip the frozen production profile to native once the gate is 100% green.
+   **MECHANISM LANDED (2026-08-26):** `mindc build --backend frozen` runs `profile_frozen_admits`
+   (now u64-safe — rejects `__mind_conv_u64`-marked modules the native emitter would lower to a
+   signed `setl`) then the native-ELF backend on admission, else fail-louds naming the construct;
+   strace-proven zero mlir/clang/ld (`execve ⊆ {mindc, stage1.elf}`), gate `ri_d1_frozen_backend_smoke.py`.
+   Rows 3–7 flip PARTIAL→PASS when this becomes a named production profile's DEFAULT (manifest target
+   block) — the remaining thin slice; the global default stays `mlir` until RI-G.
 4. Native **tensor / aggregate** coverage (rows 11–12) — unblocks the 16 tensor/ML programs.
 5. **Register allocation** sufficient for production (row 13).
 6. Remaining **linker / toolchain** dependency removal (rows 6–7 default path).
