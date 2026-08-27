@@ -357,4 +357,48 @@ mod tests {
         let err = admit_instrs(&[fndef(vec![binop(BinOp::Div)])]).unwrap_err();
         assert_eq!(err.construct, "binop.div");
     }
+
+    #[test]
+    fn admit_binop_partition_is_corpus_locked() {
+        use crate::ir::BinOp as B;
+        // Allowlist <=> corpus DRIFT GATE (RI-D1 readiness, architecture-review item). Locks the
+        // EXACT admit/reject partition the byte-identity corpus proves. Flipping any
+        // decision here — or a NEW BinOp variant (which forces a compile error in
+        // admit_binop's wildcard-free match, never a silent default) — fails loudly,
+        // closing the H5 "op-blind admission" drift class before it reaches the flip.
+        // Substrate-invariant 2's-complement arithmetic + bit-compares: ADMITTED.
+        for op in [
+            B::Add,
+            B::Sub,
+            B::Mul,
+            B::Lt,
+            B::Le,
+            B::Gt,
+            B::Ge,
+            B::Eq,
+            B::Ne,
+        ] {
+            assert_eq!(
+                admit_binop(&op),
+                Ok(()),
+                "{op:?} must be admitted (corpus-proven)"
+            );
+        }
+        // Signedness-/overflow-divergent, NOT corpus-proven: REJECTED.
+        for op in [B::Div, B::Mod] {
+            assert!(
+                admit_binop(&op).is_err(),
+                "{op:?} must be rejected (not corpus-proven)"
+            );
+        }
+        #[cfg(feature = "std-surface")]
+        {
+            for op in [B::BitAnd, B::BitOr, B::BitXor] {
+                assert_eq!(admit_binop(&op), Ok(()), "{op:?} must be admitted");
+            }
+            for op in [B::Shl, B::Shr] {
+                assert!(admit_binop(&op).is_err(), "{op:?} must be rejected");
+            }
+        }
+    }
 }
