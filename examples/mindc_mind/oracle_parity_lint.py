@@ -203,6 +203,23 @@ ARMS = [
      "single-payload declared-enum ctor as a return value (emit_boxed_enum_record)",
      "enum O { Some(i64), None }\n"
      "pub fn f(p: i64) -> O { return O::Some(p); }"),
+    # struct-literal CONSTRUCTION arms — pin the new tail-expression constructor
+    # emit (slit_set_annotation / flatten_struct_lit_lv / the emit_mic3_module_fndef_tree
+    # case-(d) vidbuf[root_slot] ret-vid fix) byte-for-byte vs the Rust oracle. Without
+    # these the construction path was protected only by the whole-module flip + isolated
+    # pr_new/tc_new byte-match (neither a durable construction-specific arm) — a future
+    # drift in the alloc size / +8*i store order / ret-vid slot would pass the flip yet
+    # silently miscompile struct-lit programs (the documented #1 gate-coverage risk).
+    # Two shapes: the registry path (struct defined -> srt_count>0) and the source-order
+    # fallback (no struct def -> srt_count==0). Both verified byte-identical to
+    # `mindc --emit-mic3` (14-fixture blind adversarial review, 2026-08-26).
+    ("h  struct-lit-registry-ctor",
+     "struct-literal construction, registry path (struct defined, srt_count>0)",
+     "struct P { a: i64, b: i64 }\n"
+     "pub fn f(x: i64, y: i64) -> P { P { a: x, b: y } }"),
+    ("h  struct-lit-fallback-ctor",
+     "struct-literal construction, source-order fallback (no struct def, srt_count==0)",
+     "pub fn f() -> i64 { P { a: 1, b: 2 } }"),
 ]
 
 # i64-REFERENCES arms — NATIVE-ELF-ONLY constructs, parity-by-REFUSAL.
