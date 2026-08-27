@@ -78,6 +78,7 @@ pub fn optimize_mic3(module: &mut IRModule, level: OptLevel) {
         OptLevel::Basic => {
             const_if_prune(&mut module.instrs);
             fold_mul_by_zero(&mut module.instrs);
+            fold_algebraic_identities(&mut module.instrs);
         }
     }
 }
@@ -232,6 +233,118 @@ fn fold_mul_by_zero(instrs: &mut Vec<Instr>) {
                 let d = *dst;
                 instrs[i] = Instr::ConstI64(d, 0);
             }
+        }
+        i += 1;
+    }
+}
+
+/// The surviving operand of a `BinOp` that is an exact algebraic identity, or `None`.
+/// `zeros`/`ones` are the value ids of same-scope `ConstI64` `0`/`1` definitions — so a
+/// match is always an *integer* identity: a float zero/one is a `ConstF64` (never in these
+/// sets), and every Q16.16 fixed-point identity uses the scaled constant `65536` (its
+/// "one"), never a literal `0`/`1`, so the fixed-point tier is structurally never matched.
+/// Commutativity is respected exactly — `x-0`/`x/1`/`x>>0` fold (but not `0-x`, `1/x`,
+/// `0>>x`, which are negate / reciprocal / different values).
+fn identity_survivor(
+    op: crate::ir::BinOp,
+    lhs: ValueId,
+    rhs: ValueId,
+    zeros: &std::collections::BTreeSet<ValueId>,
+    ones: &std::collections::BTreeSet<ValueId>,
+) -> Option<ValueId> {
+    use crate::ir::BinOp as B;
+    match op {
+        // Additive identity, commutative: x+0 == 0+x == x ; x|0 == x ; x^0 == x.
+        B::Add | B::BitOr | B::BitXor => {
+            if zeros.contains(&rhs) {
+                Some(lhs)
+            } else if zeros.contains(&lhs) {
+                Some(rhs)
+            } else {
+                None
+            }
+        }
+        // Right-identity only (non-commutative): x-0 == x ; x<<0 == x ; x>>0 == x.
+        B::Sub | B::Shl | B::Shr => zeros.contains(&rhs).then_some(lhs),
+        // Multiplicative identity, commutative: x*1 == 1*x == x.
+        B::Mul => {
+            if ones.contains(&rhs) {
+                Some(lhs)
+            } else if ones.contains(&lhs) {
+                Some(rhs)
+            } else {
+                None
+            }
+        }
+        // Right-identity only (non-commutative): x/1 == x (exact for every integer,
+        // including INT_MIN unlike /-1). `1/x` is a reciprocal — never folded.
+        B::Div => ones.contains(&rhs).then_some(lhs),
+        _ => None,
+    }
+}
+
+/// SCCP-lite slice 3 — **exact integer algebraic-identity elimination**. A `BinOp` that is
+/// an identity on one operand (see [`identity_survivor`]) is removed and its `dst` aliased
+/// to the surviving operand at every downstream use via [`remap_operands`] — the survivor's
+/// definition dominates (it was an operand of the removed op), so this is a pure rename with
+/// no copy and no type reasoning. Only same-vector `ConstI64` `0`/`1` operands match, so the
+/// fold is always integer-exact and never touches the Q16.16 or float tiers (a safe miss
+/// across scopes, never a wrong fold). Runs after [`fold_mul_by_zero`], so a folded `x*0`'s
+/// fresh `ConstI64 0` feeds this pass too (e.g. `y + (x*0)` collapses to `y`). Recurses into
+/// nested branches / bodies. Deterministic: one forward pass, no hashmap iteration.
+fn fold_algebraic_identities(instrs: &mut Vec<Instr>) {
+    use std::collections::BTreeSet;
+    let zeros: BTreeSet<ValueId> = instrs
+        .iter()
+        .filter_map(|ins| match ins {
+            Instr::ConstI64(id, 0) => Some(*id),
+            _ => None,
+        })
+        .collect();
+    let ones: BTreeSet<ValueId> = instrs
+        .iter()
+        .filter_map(|ins| match ins {
+            Instr::ConstI64(id, 1) => Some(*id),
+            _ => None,
+        })
+        .collect();
+    let mut i = 0;
+    while i < instrs.len() {
+        // Recurse into nested regions first (their operand interface is remapped below).
+        match &mut instrs[i] {
+            Instr::If {
+                cond_instrs,
+                then_instrs,
+                else_instrs,
+                ..
+            } => {
+                fold_algebraic_identities(cond_instrs);
+                fold_algebraic_identities(then_instrs);
+                fold_algebraic_identities(else_instrs);
+            }
+            Instr::While {
+                cond_instrs, body, ..
+            } => {
+                fold_algebraic_identities(cond_instrs);
+                fold_algebraic_identities(body);
+            }
+            Instr::FnDef { body, .. } => fold_algebraic_identities(body),
+            _ => {}
+        }
+
+        let alias: Option<(ValueId, ValueId)> = match &instrs[i] {
+            Instr::BinOp { dst, op, lhs, rhs } => {
+                identity_survivor(*op, *lhs, *rhs, &zeros, &ones).map(|s| (*dst, s))
+            }
+            _ => None,
+        };
+
+        if let Some((dst, survivor)) = alias {
+            // Remove the identity op and rename its result to the surviving operand at every
+            // enclosing-scope use in the tail (all uses are define-after this point in SSA).
+            instrs.remove(i);
+            remap_operands(&mut instrs[i..], dst, survivor);
+            continue; // a new instruction now occupies index `i`.
         }
         i += 1;
     }
@@ -553,6 +666,142 @@ mod tests {
                 .iter()
                 .any(|i| matches!(i, Instr::ConstI64(id, 0) if *id == ValueId(2))),
             "the mul's dst (%2) must be bound to const 0 (result vid preserved)"
+        );
+    }
+
+    #[test]
+    fn basic_folds_add_zero_via_remap() {
+        use crate::ir::{BinOp, Instr};
+        // %0 = const 5 (x) ; %1 = const 0 ; %2 = %0 + %1 ; output %2  ->  output %0
+        let mut m = IRModule::new();
+        m.instrs = vec![
+            Instr::ConstI64(ValueId(0), 5),
+            Instr::ConstI64(ValueId(1), 0),
+            Instr::BinOp {
+                dst: ValueId(2),
+                op: BinOp::Add,
+                lhs: ValueId(0),
+                rhs: ValueId(1),
+            },
+            Instr::Output(ValueId(2)),
+        ];
+        m.next_id = 3;
+        optimize_mic3(&mut m, OptLevel::Basic);
+        assert!(
+            !m.instrs
+                .iter()
+                .any(|i| matches!(i, Instr::BinOp { op: BinOp::Add, .. })),
+            "x+0 must be eliminated"
+        );
+        assert!(
+            matches!(m.instrs.last(), Some(Instr::Output(id)) if *id == ValueId(0)),
+            "Output must be remapped from the add's dst(%2) to the surviving operand(%0)"
+        );
+    }
+
+    #[test]
+    fn basic_folds_mul_one_commutative() {
+        use crate::ir::{BinOp, Instr};
+        // %0 = const 1 ; %1 = const 7 (x) ; %2 = %0 * %1 (1*x) ; output %2  ->  output %1
+        let mut m = IRModule::new();
+        m.instrs = vec![
+            Instr::ConstI64(ValueId(0), 1),
+            Instr::ConstI64(ValueId(1), 7),
+            Instr::BinOp {
+                dst: ValueId(2),
+                op: BinOp::Mul,
+                lhs: ValueId(0),
+                rhs: ValueId(1),
+            },
+            Instr::Output(ValueId(2)),
+        ];
+        m.next_id = 3;
+        optimize_mic3(&mut m, OptLevel::Basic);
+        assert!(
+            matches!(m.instrs.last(), Some(Instr::Output(id)) if *id == ValueId(1)),
+            "1*x must alias to x (the non-one operand)"
+        );
+    }
+
+    #[test]
+    fn basic_sub_folds_only_right_zero() {
+        use crate::ir::{BinOp, Instr};
+        // 0 - x is NEGATION, never an identity: %0=const 0 ; %1=const 9 (x) ; %2 = %0 - %1.
+        let mut neg = IRModule::new();
+        neg.instrs = vec![
+            Instr::ConstI64(ValueId(0), 0),
+            Instr::ConstI64(ValueId(1), 9),
+            Instr::BinOp {
+                dst: ValueId(2),
+                op: BinOp::Sub,
+                lhs: ValueId(0),
+                rhs: ValueId(1),
+            },
+            Instr::Output(ValueId(2)),
+        ];
+        neg.next_id = 3;
+        optimize_mic3(&mut neg, OptLevel::Basic);
+        assert!(
+            neg.instrs
+                .iter()
+                .any(|i| matches!(i, Instr::BinOp { op: BinOp::Sub, .. })),
+            "0 - x is negation and must NOT be folded"
+        );
+
+        // x - 0 IS x: %0=const 9 (x) ; %1=const 0 ; %2 = %0 - %1 ; output %2 -> output %0.
+        let mut ident = IRModule::new();
+        ident.instrs = vec![
+            Instr::ConstI64(ValueId(0), 9),
+            Instr::ConstI64(ValueId(1), 0),
+            Instr::BinOp {
+                dst: ValueId(2),
+                op: BinOp::Sub,
+                lhs: ValueId(0),
+                rhs: ValueId(1),
+            },
+            Instr::Output(ValueId(2)),
+        ];
+        ident.next_id = 3;
+        optimize_mic3(&mut ident, OptLevel::Basic);
+        assert!(
+            matches!(ident.instrs.last(), Some(Instr::Output(id)) if *id == ValueId(0)),
+            "x - 0 must alias to x"
+        );
+    }
+
+    #[test]
+    fn basic_mul_by_zero_then_add_identity_compounds() {
+        use crate::ir::{BinOp, Instr};
+        // %0=const 3 (x) ; %1=const 0 ; %2 = %0*%1 (=0) ; %3=const 8 (y) ; %4 = %3 + %2 ;
+        // output %4.  mul-by-zero -> %2=const 0 ; then y+0 -> output %3.
+        let mut m = IRModule::new();
+        m.instrs = vec![
+            Instr::ConstI64(ValueId(0), 3),
+            Instr::ConstI64(ValueId(1), 0),
+            Instr::BinOp {
+                dst: ValueId(2),
+                op: BinOp::Mul,
+                lhs: ValueId(0),
+                rhs: ValueId(1),
+            },
+            Instr::ConstI64(ValueId(3), 8),
+            Instr::BinOp {
+                dst: ValueId(4),
+                op: BinOp::Add,
+                lhs: ValueId(3),
+                rhs: ValueId(2),
+            },
+            Instr::Output(ValueId(4)),
+        ];
+        m.next_id = 5;
+        optimize_mic3(&mut m, OptLevel::Basic);
+        assert!(
+            !m.instrs.iter().any(|i| matches!(i, Instr::BinOp { .. })),
+            "both the mul-by-zero and the resulting add-zero must be eliminated"
+        );
+        assert!(
+            matches!(m.instrs.last(), Some(Instr::Output(id)) if *id == ValueId(3)),
+            "the chain must collapse to y (%3)"
         );
     }
 
