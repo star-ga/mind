@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3382 | **Est. tokens:** ~7,963,668
-**Generated:** 2026-08-27 01:25 UTC
+**Files:** 3383 | **Est. tokens:** ~7,964,110
+**Generated:** 2026-08-27 01:40 UTC
 
 ## Token Budget Guide
 
@@ -406,7 +406,7 @@
 | `src/lint/rules/` | 6 | ~9,880 |
 | `src/mlir/` | 3 | ~5,905 |
 | `src/ops/` | 3 | ~4,764 |
-| `src/opt/` | 9 | ~51,457 |
+| `src/opt/` | 9 | ~51,761 |
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 2 | ~20,355 |
 | `src/phf/` | 1 | ~4,955 |
@@ -462,7 +462,7 @@
 | `tests/mindcraft/lint/q16_overflow/` | 3 | ~191 |
 | `tests/mindcraft/lint/shadowing/` | 2 | ~87 |
 | `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
-| `tests/mindfuzz_cross_substrate/staged/` | 16 | ~2,989 |
+| `tests/mindfuzz_cross_substrate/staged/` | 17 | ~3,127 |
 | `tests/runtime/` | 2 | ~135 |
 | `tests/selfhost_gaps/` | 148 | ~9,289 |
 | `tests/selfhost_gaps/never_wrong/` | 9 | ~184 |
@@ -4094,7 +4094,7 @@
 - `ir_canonical.rs` (~5219 tok, huge) — Copyright 2025 STARGA Inc.
 - `memory_layout.rs` (~4110 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~203 tok, medium) — Copyright 2025 STARGA Inc.
-- `native_opt.rs` (~10126 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_opt.rs` (~10430 tok, huge) — Copyright 2025 STARGA Inc.
 - `regalloc_dtk.rs` (~3869 tok, huge) — Copyright 2025 STARGA Inc.
 - `scev.rs` (~8574 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/package/`
@@ -4596,6 +4596,7 @@
 - `mindfuzz_cross_substrate.rs` (~15224 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/mindfuzz_cross_substrate/staged/`
 
+- `fuzz_repro_seed_deadbeef_prog000.mind` (~138 tok, small) — DIVERGENCE REPRODUCER (issue #72 fuzzer)
 - `fuzz_repro_seed_deadbeef_prog006.mind` (~157 tok, small) — DIVERGENCE REPRODUCER (issue #72 fuzzer)
 - `manifest.tsv` (~357 tok, medium) — scalar_arith_step000	f	3735928559	64	5e39820a2a8325417e39057f19ba9bceec01bd2068c
 - `scalar_accum_step000.mind` (~154 tok, small) — MIND-Fuzz seed: scalar accumulator with a return-feeding literal.

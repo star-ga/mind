@@ -38,7 +38,11 @@
 //! SCCP-lite → strength-reduction (`(op, operand_type)`-keyed) → region-scoped CSE/GVN
 //! (state edge in the key) → LICM-on-`While` → linear-scan register allocation.
 
-use crate::ir::{IRModule, Instr, ValueId};
+use crate::ir::IRModule;
+// `Instr`/`ValueId` are used only by the pass internals, which are `std-surface`-gated
+// (they rewrite `If`/`While` regions + bitwise `BinOp`s that don't exist in the minimal build).
+#[cfg(feature = "std-surface")]
+use crate::ir::{Instr, ValueId};
 
 /// Native-optimizer level. `Off` (default) is a strict no-op — byte-identical output.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -76,15 +80,27 @@ pub fn optimize_mic3(module: &mut IRModule, level: OptLevel) {
             // Strict no-op: do not touch `module`. Byte-identity is the contract.
         }
         OptLevel::Basic => {
-            const_if_prune(&mut module.instrs);
-            fold_mul_by_zero(&mut module.instrs);
-            fold_algebraic_identities(&mut module.instrs);
-            cse_binops(&mut module.instrs);
-            // Cleanup: the passes above orphan constants (an eliminated `*1`'s `1`) and
-            // expose new const-const folds. Re-run the audited canonical passes ONCE — a
-            // bounded, deterministic finalize (not "loop until quiet"), reusing
-            // `prune_dead`/`constant_fold`/`reorder` rather than re-implementing DCE.
-            crate::opt::ir_canonical::canonicalize_module(module);
+            // The passes rewrite `If`/`While` regions and bitwise/shift `BinOp`s, all of
+            // which are `std-surface`-gated IR variants. Under the minimal (no-std-surface)
+            // build those constructs cannot exist, so the optimizer is a correct no-op there
+            // — kept byte-identical, which the minimal build wants anyway.
+            #[cfg(feature = "std-surface")]
+            {
+                const_if_prune(&mut module.instrs);
+                fold_mul_by_zero(&mut module.instrs);
+                fold_algebraic_identities(&mut module.instrs);
+                cse_binops(&mut module.instrs);
+                // Cleanup: the passes above orphan constants (an eliminated `*1`'s `1`) and
+                // expose new const-const folds. Re-run the audited canonical passes ONCE — a
+                // bounded, deterministic finalize (not "loop until quiet"), reusing
+                // `prune_dead`/`constant_fold`/`reorder` rather than re-implementing DCE.
+                crate::opt::ir_canonical::canonicalize_module(module);
+            }
+            #[cfg(not(feature = "std-surface"))]
+            {
+                // No `If`/`While`/bitwise IR in the minimal build → nothing to optimize.
+                let _ = module;
+            }
         }
     }
 }
@@ -92,6 +108,7 @@ pub fn optimize_mic3(module: &mut IRModule, level: OptLevel) {
 /// The constant value of an `If` condition, iff `cond_instrs` is exactly one `ConstI64`
 /// that defines `cond_id`. `None` for any non-constant / multi-instruction condition —
 /// fail-safe: an ambiguous condition is never pruned.
+#[cfg(feature = "std-surface")]
 fn const_cond_value(cond_instrs: &[Instr], cond_id: ValueId) -> Option<i64> {
     match cond_instrs {
         [Instr::ConstI64(id, v)] if *id == cond_id => Some(*v),
@@ -111,6 +128,7 @@ fn const_cond_value(cond_instrs: &[Instr], cond_id: ValueId) -> Option<i64> {
 /// left untouched (fail-safe). Recurses into nested branches / loop bodies / fn bodies.
 ///
 /// Deterministic: one forward pass in instruction order, no hashmap iteration. The pinned schedule is "this pass, once".
+#[cfg(feature = "std-surface")]
 fn const_if_prune(instrs: &mut Vec<Instr>) {
     let mut i = 0;
     while i < instrs.len() {
@@ -197,6 +215,7 @@ fn const_if_prune(instrs: &mut Vec<Instr>) {
 /// cross-instruction value remap is needed. Recurses into nested branches / bodies;
 /// conservative across scopes (only same-vector const-0s fold — a safe miss, never a
 /// wrong fold). Deterministic: one forward pass, no hashmap iteration.
+#[cfg(feature = "std-surface")]
 fn fold_mul_by_zero(instrs: &mut Vec<Instr>) {
     use std::collections::BTreeSet;
     let zeros: BTreeSet<ValueId> = instrs
@@ -251,6 +270,7 @@ fn fold_mul_by_zero(instrs: &mut Vec<Instr>) {
 /// "one"), never a literal `0`/`1`, so the fixed-point tier is structurally never matched.
 /// Commutativity is respected exactly — `x-0`/`x/1`/`x>>0` fold (but not `0-x`, `1/x`,
 /// `0>>x`, which are negate / reciprocal / different values).
+#[cfg(feature = "std-surface")]
 fn identity_survivor(
     op: crate::ir::BinOp,
     lhs: ValueId,
@@ -298,6 +318,7 @@ fn identity_survivor(
 /// across scopes, never a wrong fold). Runs after [`fold_mul_by_zero`], so a folded `x*0`'s
 /// fresh `ConstI64 0` feeds this pass too (e.g. `y + (x*0)` collapses to `y`). Recurses into
 /// nested branches / bodies. Deterministic: one forward pass, no hashmap iteration.
+#[cfg(feature = "std-surface")]
 fn fold_algebraic_identities(instrs: &mut Vec<Instr>) {
     use std::collections::BTreeSet;
     let zeros: BTreeSet<ValueId> = instrs
@@ -359,6 +380,7 @@ fn fold_algebraic_identities(instrs: &mut Vec<Instr>) {
 /// The value-numbering key of a pure `BinOp`: its opcode discriminant plus operand value
 /// ids, with the operands sorted for the commutative opcodes so `a+b` and `b+a` collide.
 /// `BinOp` is a field-less enum, so `op as u8` is a stable per-opcode discriminant.
+#[cfg(feature = "std-surface")]
 fn binop_key(op: crate::ir::BinOp, lhs: ValueId, rhs: ValueId) -> (u8, ValueId, ValueId) {
     use crate::ir::BinOp as B;
     let commutative = matches!(
@@ -385,6 +407,7 @@ fn binop_key(op: crate::ir::BinOp, lhs: ValueId, rhs: ValueId) -> (u8, ValueId, 
 /// regions are each an INDEPENDENT CSE scope (a value defined in one branch is not available
 /// in a sibling), so cross-region merges are conservatively never made. Deterministic: one
 /// forward pass keyed on a `BTreeMap`, no iteration-order dependence.
+#[cfg(feature = "std-surface")]
 fn cse_binops(instrs: &mut Vec<Instr>) {
     use std::collections::BTreeMap;
     let mut seen: BTreeMap<(u8, ValueId, ValueId), ValueId> = BTreeMap::new();
@@ -443,6 +466,7 @@ fn cse_binops(instrs: &mut Vec<Instr>) {
 /// hold their own SSA namespace; an enclosing value they read is threaded through
 /// `If.merges` (`then_val`/`else_val`) or `While.init_ids`, which ARE visited here. Used
 /// by [`remap_operands`] to rename a value id everywhere it is *used* (never at a def).
+#[cfg(feature = "std-surface")]
 fn for_each_operand_mut(instr: &mut Instr, mut f: impl FnMut(&mut ValueId)) {
     use crate::ir::Instr as I;
     match instr {
@@ -558,6 +582,7 @@ fn for_each_operand_mut(instr: &mut Instr, mut f: impl FnMut(&mut ValueId)) {
 /// definition — `dst` fields are not visited by [`for_each_operand_mut`]). Used to alias
 /// a pruned `If`'s `dst`/merge ids to the surviving branch's value without a copy or a
 /// type assumption. Deterministic: one forward pass, no hashmap iteration.
+#[cfg(feature = "std-surface")]
 fn remap_operands(instrs: &mut [Instr], from: ValueId, to: ValueId) {
     if from == to {
         return;
@@ -572,6 +597,7 @@ fn remap_operands(instrs: &mut [Instr], from: ValueId, to: ValueId) {
 }
 
 #[cfg(test)]
+#[cfg(feature = "std-surface")]
 mod tests {
     use super::*;
 
