@@ -11417,7 +11417,14 @@ pub fn emit_mic3_module_fndef_tree(s: EmitState, src: i64, strbuf: i64, offs: i6
         return s;
     }
     let n_nodes: i64 = __mind_load_i64(cursor);
-    let root_vid: i64 = tree_resolve_vids(nodes, n_nodes, n_params, vidbuf, 0, n_params);
+    // tree_resolve_vids fills vidbuf and RETURNS the last node's vid. For a single-
+    // rooted expression tree the post-order root IS the last node, so its return
+    // equals vidbuf[root_slot] (byte-identical). But a struct-lit CONSTRUCTION body
+    // flattens to an alloc + LOOSE field stores whose LAST node is the final store,
+    // not the value (the value is the alloc, = flatten's root_slot). Read the vid at
+    // root_slot so the FN_DEF ret_vid is the construction's value for BOTH shapes.
+    let _rv_fill: i64 = tree_resolve_vids(nodes, n_nodes, n_params, vidbuf, 0, n_params);
+    let root_vid: i64 = __mind_load_i64(vidbuf + root_slot * 8);
     // body_len = n_params PARAM instrs + the non-param nodes (CONST leaves + BINOPs).
     // n_nodes over-counts when a param appears more than once (each occurrence is a
     // descriptor node but emits NO instr — emit_mic3_params_mod writes ONE PARAM per
@@ -17901,10 +17908,40 @@ pub fn slit_desugar_module(src: i64, src_len: i64, items_addr: i64, items_len: i
 // can lower it into the alloc/store descriptor subtree with NO srt/span threading. Runs
 // AFTER field_prefold (so field-read field values are already folded) and BEFORE the
 // strtab pass + emit. Unresolvable struct-lits keep node+56 = 0 (flatten fails closed).
+// Copy a struct-lit's field VALUE nodes in AS-WRITTEN source order into `out`
+// (out[j] = fields_addr[j*3+2], the value slot of triple j). Used by the
+// no-registry source-order annotation fallback in slit_set_annotation.
+pub fn slit_copy_source_values(out: i64, fields_addr: i64, nf: i64, j: i64) -> i64 {
+    if j >= nf {
+        return 1;
+    }
+    __mind_store_i64(out + j * 8, __mind_load_i64(fields_addr + (j * 3 + 2) * 8));
+    slit_copy_source_values(out, fields_addr, nf, j + 1)
+}
 pub fn slit_set_annotation(node: i64, src: i64, srt: i64, alo: i64, ahi: i64, slo: i64, shi: i64) -> i64 {
     let k: i64 = srt_find_by_name(srt, src, ast_child0(node), ast_child2(node), 0);
     if k < 0 {
-        return 0;
+        // SOURCE-ORDER FALLBACK. When the module defines NO structs, the Rust
+        // oracle's struct registry is likewise empty, so it lowers every
+        // struct-lit in its AS-WRITTEN field order with n = written field count
+        // (verified byte-identical vs --emit-mic3 on bare constructor fns).
+        // Registry-independent, so no srt/decl-order threading. Gated on
+        // srt_count==0: a module WITH struct defs keeps the fail-closed path for a
+        // genuinely-unresolved type, so a decl-order divergence can never open.
+        if srt_count(srt) != 0 {
+            return 0;
+        }
+        let nfw: i64 = ast_aux(node);
+        let valsrc: i64 = __mind_alloc(nfw * 8 + 8);
+        let _cp: i64 = slit_copy_source_values(valsrc, ast_child1(node), nfw, 0);
+        let ann2: i64 = __mind_alloc(40);
+        __mind_store_i64(ann2 + 0, alo);
+        __mind_store_i64(ann2 + 8, ahi);
+        __mind_store_i64(ann2 + 16, slo);
+        __mind_store_i64(ann2 + 24, shi);
+        __mind_store_i64(ann2 + 32, valsrc);
+        __mind_store_i64(node + 56, ann2);
+        return 1;
     }
     let nf: i64 = srt_field_count(srt, k);
     if ast_aux(node) != nf {
@@ -21133,6 +21170,14 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         __mind_store_i64(nodes + slot * 32 + 24, index_slot);
         __mind_store_i64(cursor, slot + 1);
         return slot;
+    }
+    // Struct-lit CONSTRUCTION in trailing / seq expression position: emit the
+    // alloc + per-field stores inline via flatten_struct_lit_lv (reads the node+56
+    // annotation; fails closed with -1 when unannotated). Same call the array-element
+    // path (flatten_arr_pushes) already makes, threading env/nlets as the lv-env, so
+    // a constructor fn whose body is a single `T { ... }` lowers byte-exact.
+    if k == ast_struct_lit() {
+        return flatten_struct_lit_lv(node, src, params_addr, n_params, nodes, cursor, env, nlets);
     }
     0 - 1
 }

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3384 | **Est. tokens:** ~7,967,391
-**Generated:** 2026-08-27 00:56 UTC
+**Files:** 3382 | **Est. tokens:** ~7,963,356
+**Generated:** 2026-08-27 01:22 UTC
 
 ## Token Budget Guide
 
@@ -48,7 +48,6 @@
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
 | `docs/mindcraft/` | 3 | ~7,086 |
-| `docs/provenance/` | 2 | ~4,035 |
 | `docs/rfcs/` | 33 | ~154,662 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 28 | ~49,880 |
@@ -719,12 +718,6 @@
 - `ops.md` (~604 tok, large) — Core v1 operator coverage
 - `optimization-frontier.md` (~11775 tok, huge) — MIND Optimization Frontier
 - `performance.md` (~880 tok, large) — Performance Guide
-### `docs/provenance/`
-
-- `2026-08-11-kimi-k3-in-c-commit-snapshot.json` (~1265 tok, large) — Keys: captured_at_local, purpose, external_repository, mind_prior_art, current_assessment
-- `2026-08-11-kimi-k3-in-c-commit-snapshot.md` (~2770 tok, huge) — Forensic provenance snapshot — `FareedKhan-dev/kimi-k3-in-c` vs MIND
-### `docs/`
-
 - `README.md` (~162 tok, small) — MIND Documentation
 - `reap-pruning.md` (~901 tok, large) — REAP Expert Pruning
 ### `docs/rfcs/`
@@ -912,7 +905,7 @@
 - `param_types_smoke.py` (~1273 tok, large)
 - `_ref_add.note` (~16 tok, tiny) — 6fa59a74687e6bac38c983655d4d93ab1873299f130f68cbe481cf92041f6610
 - `_ref_if_ret.note` (~16 tok, tiny) — 3fdc70390e9e12d8030552d11b2194078e8579fbcfac19b14d1beed77174cb07
-- `_ref_main.note` (~16 tok, tiny) — 8e09ce0d12711f8c1f214aef2f4617a480d5afdae387fc64fdd76cab4c7edd1e
+- `_ref_main.note` (~16 tok, tiny) — 2c863dfc07ba39244f9fd426dfefb0b98e110a0e31cf0daca4ee8436b982930d
 - `ref_netverify.py` (~1473 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
 - `_ref_recursion.note` (~16 tok, tiny) — 6d125a946243b0550700d9aa6bc2058b51a3b8bf6e536a8b0b3f545d79b7346f
 - `_ref_struct_field.note` (~16 tok, tiny) — 2f7f2ea32ee47138e1b0162bd51f418b4e5005b4569054f5f3c392ebd2258d96
