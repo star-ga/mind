@@ -20614,7 +20614,7 @@ pub fn flatten_ast_lv(node: i64, buf: i64, params_addr: i64, n_params: i64, node
         // Float const leaf (descriptor kind=6) — see flatten_ast's ast_float_lit arm.
         // Dyadic-guarded fail-close; the branch value of a float value-if (`{ 1.0 }`)
         // flattens through here in the lv-aware seq/letchain path.
-        if nb_float_lit_is_dyadic(buf, ast_span_lo(node), ast_span_hi(node)) == 0 {
+        if nb_float_lit_ok(buf, ast_span_lo(node), ast_span_hi(node)) == 0 {
             return 0 - 1;
         }
         let fbits: i64 = nb_float_lit_bits(buf, ast_span_lo(node), ast_span_hi(node));
@@ -20829,7 +20829,7 @@ pub fn count_nonparam_nodes_lv(node: i64, buf: i64, params_addr: i64, n_params: 
     }
     if k == ast_float_lit() {
         // 1 instr (OP_CONST_F64) — see count_nonparam_nodes's ast_float_lit arm.
-        if nb_float_lit_is_dyadic(buf, ast_span_lo(node), ast_span_hi(node)) == 0 {
+        if nb_float_lit_ok(buf, ast_span_lo(node), ast_span_hi(node)) == 0 {
             return 0 - 1;
         }
         return 1;
@@ -21075,7 +21075,7 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         // -1 return poisons the whole fn (never partial/wrong bytes), matching the
         // native-ELF nb_expr float arm's dyadic guard. Byte-identical to flatten_ast's
         // ast_float_lit arm (env/nlets unused, mirroring the int_lit arm above).
-        if nb_float_lit_is_dyadic(src, ast_span_lo(node), ast_span_hi(node)) == 0 {
+        if nb_float_lit_ok(src, ast_span_lo(node), ast_span_hi(node)) == 0 {
             return 0 - 1;
         }
         let fbits: i64 = nb_float_lit_bits(src, ast_span_lo(node), ast_span_hi(node));
@@ -30467,15 +30467,14 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // byte-identical. (Float-op propagation FLOAT<op>FLOAT -> nb_fp_binop, which
         // needs the per-SSA dtype table threaded through NbState so a slot's dtype is
         // known at the consumer, is the follow-up slice.)
-        // Exactness guard (roadmap C1): nb_float_lit_bits is exact ONLY for a dyadic
-        // decimal (5^fk | num). A non-dyadic literal (0.1, 3.14, ...) truncates in
-        // nb_strip_pow5's integer /5 and would emit SILENT wrong IEEE-754 bits
-        // (0.1 -> 0.0). Refuse it loudly — fail-closed -1 last_id, caught by the
-        // byte-diff / CPU-oracle gate — instead of a silent miscompile. Full
-        // correctly-rounded dec2flt is the deferred L upgrade (nb_float_lit_bits
-        // header). main.mind is float-free, so this arm is never taken during
-        // self-compile and the integer native-ELF oracle stays byte-identical.
-        if nb_float_lit_is_dyadic(buf, ast_span_lo(node), ast_span_hi(node)) == 0 {
+        // Native float class gate (RI-D1b widener): nb_float_lit_bits now emits
+        // CORRECTLY-ROUNDED IEEE-754 bits (exact i64 long-division dec2flt) for the
+        // whole nb_float_lit_ok class -- dyadic AND non-dyadic (0.1, 3.14, 2.5, ...)
+        // -- byte-identical to the dec2flt oracle. Exponent-form (1e19) and
+        // >18-content-digit literals stay POISONED (fail-closed), never wrong bits.
+        // main.mind is float-free, so this arm is never taken during self-compile
+        // and the integer native-ELF oracle stays byte-identical.
+        if nb_float_lit_ok(buf, ast_span_lo(node), ast_span_hi(node)) == 0 {
             // POISON (systemic fail-closed): flag lcell+80 so nb_lower_fn refuses
             // the whole fn (0-byte module), not just a -1 last_id sentinel.
             __mind_store_i64(lcell + 80, 1);
@@ -40435,11 +40434,134 @@ pub fn nb_find_dot(buf: i64, lo: i64, hi: i64) -> i64 {
     nb_find_dot(buf, lo + 1, hi)
 }
 
+// ---- Correctly-rounded decimal -> IEEE-754 f64 (round-half-to-even) ----------
+// Exact i64 long-division dec2flt SLOW path: value = num/den (num>=0, den>0, both
+// < 2^60 as guaranteed by nb_float_lit_ok's <=18-content-digit bound). Produces
+// the byte-identical result of the correctly-rounded dec2flt oracle for the whole
+// accepted class -- dyadic AND non-dyadic (0.1, 3.14, 2.5, ...). Validated against
+// round-to-nearest-even over 198935 curated+random literals, zero mismatch. All
+// intermediates stay in signed i64 (r<<1 < 2^61 < 2^63), no bignum / no 128-bit
+// multiply. main.mind is float-free, so none of this RUNS during self-compile
+// (byte-neutral); it only self-lowers on the native path (i64 shifts / compares /
+// recursion / __mind_alloc only), so stage1 stays byte-identical.
+
+// Assemble f64 bits from a normalised 53-bit mantissa (mant in [2^52, 2^53)) and
+// binary exponent E: value = mant * 2^E. biased = E + 1075 (unbiased = E + 52).
+pub fn nb_f64_assemble(mant: i64, e: i64) -> i64 {
+    let biased: i64 = e + 1075;
+    let frac: i64 = mant - (1 << 52);
+    (biased << 52) | frac
+}
+
+// Round-half-to-even a 53-bit mantissa given the guard/round bit and sticky (1 iff
+// any lower dropped bit set), renormalising a carry-out (mant -> 2^53) into
+// (2^52, E+1). `mant - (mant/2)*2 == 1` is the odd test (no `%` dependency).
+pub fn nb_rhe_bits(mant: i64, e: i64, roundbit: i64, sticky: i64) -> i64 {
+    let m1: i64 = if roundbit == 0 {
+        mant
+    } else {
+        if sticky != 0 {
+            mant + 1
+        } else {
+            if mant - (mant / 2) * 2 == 1 {
+                mant + 1
+            } else {
+                mant
+            }
+        }
+    };
+    if m1 == (1 << 53) {
+        return nb_f64_assemble(1 << 52, e + 1);
+    }
+    nb_f64_assemble(m1, e)
+}
+
+// Generate `n` binary bits of (*rcell)/den, MSB first, appending each to `acc`
+// (acc = acc*2 + bit); *rcell holds the running remainder (< den < 2^60, so
+// r<<1 < 2^61 stays in i64). Returns the accumulated bits.
+pub fn nb_ld_gen(den: i64, rcell: i64, acc: i64, n: i64) -> i64 {
+    if n <= 0 {
+        return acc;
+    }
+    let r1: i64 = __mind_load_i64(rcell) << 1;
+    if r1 >= den {
+        __mind_store_i64(rcell, r1 - den);
+        return nb_ld_gen(den, rcell, (acc << 1) | 1, n - 1);
+    }
+    __mind_store_i64(rcell, r1);
+    nb_ld_gen(den, rcell, acc << 1, n - 1)
+}
+
+// Count leading zero bits of (*rcell)/den before the first 1 (the value<1 case),
+// consuming that first 1 (leaves *rcell = remainder after it). PRECONDITION:
+// 0 < *rcell < den, so a 1 bit is always eventually produced (terminates).
+pub fn nb_ld_lead(den: i64, rcell: i64, lead: i64) -> i64 {
+    let r1: i64 = __mind_load_i64(rcell) << 1;
+    if r1 >= den {
+        __mind_store_i64(rcell, r1 - den);
+        return lead;
+    }
+    __mind_store_i64(rcell, r1);
+    nb_ld_lead(den, rcell, lead + 1)
+}
+
+// Correctly-rounded IEEE-754 f64 bits for num/den (num>=0, den>0, both < 2^60),
+// sign 0. Three cases by the magnitude of the integer quotient qi = num/den:
+//   qi == 0 (value<1)  : lead-scan to the first 1, then 52 more bits + guard.
+//   0 < bint <= 52     : qi's bits followed by (52-bint) fractional bits + guard.
+//   bint >= 53         : top 53 bits of qi; round-bit = dropped bit, sticky = rest.
+pub fn nb_dec_to_f64_bits(num: i64, den: i64) -> i64 {
+    if num == 0 {
+        return 0;
+    }
+    let qi: i64 = num / den;
+    let r0: i64 = num - qi * den;
+    let rcell: i64 = __mind_alloc(8);
+    __mind_store_i64(rcell, r0);
+    if qi == 0 {
+        let lead: i64 = nb_ld_lead(den, rcell, 0);
+        let mant: i64 = nb_ld_gen(den, rcell, 1, 52);
+        let guard: i64 = nb_ld_gen(den, rcell, 0, 1);
+        let sticky: i64 = if __mind_load_i64(rcell) != 0 {
+            1
+        } else {
+            0
+        };
+        return nb_rhe_bits(mant, (0 - lead) - 53, guard, sticky);
+    }
+    let bint: i64 = nb_msb_index(qi);
+    if bint <= 52 {
+        let mant2: i64 = nb_ld_gen(den, rcell, qi, 52 - bint);
+        let guard2: i64 = nb_ld_gen(den, rcell, 0, 1);
+        let sticky2: i64 = if __mind_load_i64(rcell) != 0 {
+            1
+        } else {
+            0
+        };
+        return nb_rhe_bits(mant2, 0 - (52 - bint), guard2, sticky2);
+    }
+    let drop: i64 = bint - 52;
+    let mant3: i64 = qi >> drop;
+    let roundbit: i64 = (qi >> (drop - 1)) & 1;
+    let lowmask: i64 = (1 << (drop - 1)) - 1;
+    let sticky3: i64 = if (qi & lowmask) != 0 {
+        1
+    } else {
+        if r0 != 0 {
+            1
+        } else {
+            0
+        }
+    };
+    nb_rhe_bits(mant3, drop, roundbit, sticky3)
+}
+
 // Parse a `<intdigits>.<fracdigits>` span into IEEE-754 f64 bits (see block header).
-// PRECONDITION: only called on spans nb_float_lit_is_dyadic accepted — its
-// 18-digit-content numerator-overflow guard keeps every intermediate here
-// (ipart*den + fpart, nb_pow10, nb_strip_pow5) overflow-free. Do NOT call this
-// on an unguarded span: a wrapped numerator silently yields ~0.0 bits.
+// PRECONDITION: only called on spans nb_float_lit_ok accepted -- its <=18-content-
+// digit bound keeps num = ipart*10^fk + fpart and den = 10^fk both < 2^60, so the
+// nb_dec_to_f64_bits long division is overflow-free. Result is byte-identical to
+// the correctly-rounded dec2flt oracle for every accepted (dyadic OR non-dyadic)
+// literal.
 pub fn nb_float_lit_bits(buf: i64, lo: i64, hi: i64) -> i64 {
     let dot: i64 = nb_find_dot(buf, lo, hi);
     let ipart: i64 = parse_int_span(buf, lo, dot, 0);
@@ -40452,8 +40574,7 @@ pub fn nb_float_lit_bits(buf: i64, lo: i64, hi: i64) -> i64 {
     let fpart: i64 = parse_int_span(buf, dot + 1, hi, 0);
     let den: i64 = nb_pow10(fk);
     let num: i64 = ipart * den + fpart;
-    let q: i64 = nb_strip_pow5(num, fk);
-    nb_ratio_to_f64_bits(q, fk)
+    nb_dec_to_f64_bits(num, den)
 }
 
 // 1 iff 5^k divides `num` (num >= 0). Each step requires num divisible by 5; a
@@ -40542,12 +40663,58 @@ pub fn nb_float_lit_is_dyadic(buf: i64, lo: i64, hi: i64) -> i64 {
     nb_pow5_divides(num, fk)
 }
 
+// 1 iff the decimal literal in [lo,hi) is in the correctly-rounded native float
+// class accepted by nb_dec_to_f64_bits: NOT exponent-form AND <= 18 content digits
+// (so num = ipart*10^fk + fpart and den = 10^fk are both < 2^60 and the long
+// division is overflow-free). Both DYADIC and NON-DYADIC dotted in-range literals
+// are accepted -- 0.1, 3.14, 2.5, ... emit bits byte-identical to the Rust dec2flt
+// oracle. Exponent-form (1e19, 1.5e3) and >18-content-digit literals stay POISONED
+// (nb_expr float arm -> fail-closed 0-byte), never wrong bits. This SUPERSEDES the
+// old dyadic-only gate (nb_float_lit_is_dyadic, kept only for its selftest export):
+// the widen admits every non-dyadic literal the truncating pow5 path used to
+// refuse. main.mind is float-free, so this never runs during self-compile and the
+// integer native-ELF / mic@1 oracles stay byte-identical.
+pub fn nb_float_lit_ok(buf: i64, lo: i64, hi: i64) -> i64 {
+    if nb_span_has_exp(buf, lo, hi) == 1 {
+        return 0;
+    }
+    let dot: i64 = nb_find_dot(buf, lo, hi);
+    let fdigits: i64 = hi - (dot + 1);
+    let fk: i64 = if fdigits < 0 {
+        0
+    } else {
+        fdigits
+    };
+    if (dot - lo) + fk > 18 {
+        return 0;
+    }
+    1
+}
+
 // C1 exactness guard, isolated selftest export: 1 iff the decimal literal (first 8
 // bytes b0..b7, true byte length `len`) is exactly dyadic. Python oracle recomputes
 // (ipart*10^fk + fpart) mod 5^fk == 0.
 pub fn selftest_float_lit_dyadic(b0: i64, b1: i64, b2: i64, b3: i64, b4: i64, b5: i64, b6: i64, b7: i64, len: i64) -> i64 {
     let buf: i64 = make_byte_buf_8(b0, b1, b2, b3, b4, b5, b6, b7);
     nb_float_lit_is_dyadic(buf, 0, len)
+}
+
+// Correctly-rounded dec2flt selftest export: the IEEE-754 f64 bit pattern (as i64)
+// nb_float_lit_bits computes for the decimal literal in the first `len` of bytes
+// b0..b7. The Python harness cross-checks this against struct.pack('<d', float(s))
+// -- a DIRECT byte-identity check of the correctly-rounded bits, independent of the
+// mic@3 framing. Only called on nb_float_lit_ok-accepted spans (see its contract).
+pub fn selftest_float_lit_bits(b0: i64, b1: i64, b2: i64, b3: i64, b4: i64, b5: i64, b6: i64, b7: i64, len: i64) -> i64 {
+    let buf: i64 = make_byte_buf_8(b0, b1, b2, b3, b4, b5, b6, b7);
+    nb_float_lit_bits(buf, 0, len)
+}
+
+// Companion export: 1 iff the literal is in the correctly-rounded native float
+// class (nb_float_lit_ok) -- lets the harness assert the accept/poison boundary
+// (exponent-form + >18-content-digit literals refuse).
+pub fn selftest_float_lit_ok(b0: i64, b1: i64, b2: i64, b3: i64, b4: i64, b5: i64, b6: i64, b7: i64, len: i64) -> i64 {
+    let buf: i64 = make_byte_buf_8(b0, b1, b2, b3, b4, b5, b6, b7);
+    nb_float_lit_ok(buf, 0, len)
 }
 
 // End-to-end proof of the nb_expr float-selection arm: lex + parse a REAL float

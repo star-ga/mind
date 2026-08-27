@@ -270,6 +270,28 @@ ARMS = [
     ("h  struct-lit-fallback-ctor",
      "struct-literal construction, source-order fallback (no struct def, srt_count==0)",
      "pub fn f() -> i64 { P { a: 1, b: 2 } }"),
+    # FLOAT-LITERAL arms (RI-D1b widener): the pure-MIND correctly-rounded dec2flt
+    # (nb_float_lit_bits -> nb_dec_to_f64_bits, exact i64 long division + round-half-
+    # to-even) must emit the ConstF64 IEEE-754 bits BYTE-IDENTICAL to Rust's dec2flt
+    # oracle. NON-DYADIC literals (0.1, 3.14, 2.5, 123.456) are the widen — the old
+    # dyadic-only gate (nb_float_lit_is_dyadic) POISONED them; they now emit correctly.
+    # A dyadic (0.5) is pinned too so the widen never regresses the exactly-
+    # representable case. Exponent-form is fail-closed-by-refusal (REFUSAL_ARMS below).
+    ("f64 lit-nondyadic-0.1",
+     "non-dyadic float literal 0.1 -> correctly-rounded ConstF64 (0x3fb999999999999a)",
+     "pub fn f() -> f64 { 0.1 }"),
+    ("f64 lit-nondyadic-3.14",
+     "non-dyadic float literal 3.14 -> correctly-rounded ConstF64 (0x40091eb851eb851f)",
+     "pub fn f() -> f64 { 3.14 }"),
+    ("f64 lit-nondyadic-2.5",
+     "non-dyadic-parse float literal 2.5 -> correctly-rounded ConstF64",
+     "pub fn f() -> f64 { 2.5 }"),
+    ("f64 lit-nondyadic-123.456",
+     "multi-digit non-dyadic float literal 123.456 -> correctly-rounded ConstF64",
+     "pub fn f() -> f64 { 123.456 }"),
+    ("f64 lit-dyadic-0.5",
+     "dyadic float literal 0.5 (widen must NOT regress the exactly-representable case)",
+     "pub fn f() -> f64 { 0.5 }"),
 ]
 
 # i64-REFERENCES arms — NATIVE-ELF-ONLY constructs, parity-by-REFUSAL.
@@ -315,6 +337,16 @@ REFUSAL_ARMS = [
     ("r  for-shadow-nested",
      "range-for VAR shadows an enclosing loop var (nested `for i { for i {..} }`; must fail closed)",
      "pub fn f(n: i64) -> i64 { let mut s: i64 = 0; for i in 0..n { for i in 0..n { s = s + i; } } s }"),
+    # EXPONENT-FORM float literal (1e9, 1.5e3, ...): the correctly-rounded dec2flt
+    # widener (nb_float_lit_ok) handles only the dotted <int>.<frac> form; an exponent
+    # literal is OUT of class and MUST fail closed (empty buf) rather than mis-parse the
+    # 'e' as a decimal digit and emit wrong bits. The oracle DOES emit a ConstF64 for
+    # it, so this is parity-BY-REFUSAL (no byte assertion): MIND's fail-closed refusal
+    # is the contract until real exponent scaling lands. >18-content-digit literals
+    # share the same fail-closed poison.
+    ("r  f64-exponent-form",
+     "exponent-form float literal `1e9` (out of dec2flt class; mic@3 must fail closed EMPTY)",
+     "pub fn f() -> f64 { 1e9 }"),
 ]
 
 
