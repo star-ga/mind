@@ -136,6 +136,27 @@ if [ "${1:-}" = "--full" ]; then
     bad "mic3_flip_smoke.py MISSING — the FLIP gate cannot run; do NOT push"
   fi
 
+  step "mic@3 primitives / golden-vs-live oracle  [ci.yml mindcraft_self_host — runs it, preflight did not]"
+  # Added 2026-08-27 after CI's KEYSTONE job failed on a gate preflight never ran.
+  # This smoke cross-checks three things: the hardcoded goldens in the .py, a LIVE
+  # regeneration via `mindc --emit-mic3` (the Rust oracle), and the self-host .so's
+  # output. The golden-vs-live half is Rust-only — it does not touch main.mind — so a
+  # failure here is emitter/golden staleness, NOT a self-host regression. Known-red as
+  # of this commit: task #316 (goldens predate the #318 lower.rs merge fix). It is
+  # reported, never silently skipped; see the banked rule "never print KEYSTONE=PASS
+  # while #316 is red".
+  if [ -f examples/mindc_mind/mic3_primitives_smoke.py ]; then
+    if mp_out=$(MINDC_SO="${MINDC_SO:-/tmp/libmindc_mind_self_host.so}" \
+                python3 examples/mindc_mind/mic3_primitives_smoke.py 2>&1); then
+      echo "ok (mic@3 primitives byte-exact vs the live oracle)"
+    else
+      bad "mic@3 primitives smoke FAILED (stale golden vs live oracle — see #316):"
+      printf '%s\n' "$mp_out" | grep -E "FAIL|golden|live" | head -4
+    fi
+  else
+    bad "mic3_primitives_smoke.py MISSING — CI runs it; preflight cannot verify it"
+  fi
+
   step "bench gate (frozen low-level frontend)  [bench-gate.yml, --no-default-features]"
   base=$(ls -t .bench-baseline-*correctness*.txt 2>/dev/null | head -1)
   if [ -n "$base" ] && [ -f tools/bench_gate.py ]; then

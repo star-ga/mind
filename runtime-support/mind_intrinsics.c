@@ -1930,13 +1930,47 @@ MIND_EXPORT int64_t __mind_gen_free(int64_t handle) {
  * scores one query at a time); `mtx` guards the round state; workers run their
  * band OUTSIDE the lock so the bands execute in parallel.
  * ───────────────────────────────────────────────────────────────────────── */
-#include <pthread.h>
 #include <stdint.h>
-#include <unistd.h>
 
 #define MIND_MT_POOL_MAX 256
 
 typedef void *(*mind_mt_worker_fn)(void *);
+
+/* Windows (MSVC) has no <pthread.h> / <unistd.h>, so the POSIX worker pool below
+ * does not compile there — it broke the Windows CI leg with
+ * "fatal error: 'pthread.h' file not found" while every other platform block in
+ * this file was already _WIN32-guarded.
+ *
+ * The fallback runs the bands SEQUENTIALLY, and that is byte-exact rather than a
+ * degraded approximation: this dispatcher's contract is owner-computes M-row
+ * bands with NO cross-band reduction and NO atomics, so band i writes only its
+ * own rows and the emitted values are independent of the number of threads and
+ * of execution order by construction (the cross-substrate thread-sweep gate pins
+ * T in {1,2,4,6,12} to the same hash). Sequential execution is simply T=1.
+ *
+ * deferred: a Win32 CONDITION_VARIABLE / SRWLOCK pool would restore the
+ * parallel speedup on Windows — upgrade path is to mirror mind_mt_pool_init /
+ * mind_mt_worker_loop onto InitializeConditionVariable + SleepConditionVariableSRW,
+ * keeping this same dispatch signature so no caller changes. */
+#if defined(_WIN32) || defined(_WIN64)
+
+void __mind_blas_mt_dispatch(mind_mt_worker_fn worker, char *argbuf,
+                             long struct_bytes, long n_bands) {
+    if (n_bands <= 0) {
+        return;
+    }
+    if (n_bands > MIND_MT_POOL_MAX) {
+        n_bands = MIND_MT_POOL_MAX;
+    }
+    for (long i = 0; i < n_bands; i++) {
+        worker(argbuf + (intptr_t)i * struct_bytes);
+    }
+}
+
+#else /* POSIX: real worker pool */
+
+#include <pthread.h>
+#include <unistd.h>
 
 static struct {
     pthread_mutex_t   mtx;
@@ -2022,3 +2056,5 @@ void __mind_blas_mt_dispatch(mind_mt_worker_fn worker, char *argbuf,
     pthread_mutex_unlock(&mind_mt.mtx);
     pthread_mutex_unlock(&mind_mt_dispatch_lock);
 }
+
+#endif /* _WIN32 || _WIN64 */

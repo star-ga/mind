@@ -51,7 +51,10 @@ pub enum OptLevel {
     /// canonical IR. This is the shipped default until the opt-in passes land + reseed.
     #[default]
     Off,
-    /// SCCP-lite slice 1: const-condition value-`If` pruning (see [`const_if_prune`]).
+    /// SCCP-lite slice 1: const-condition value-`If` pruning (implemented by the
+    /// private `const_if_prune` helper below — not an intra-doc link, because this
+    /// variant is public API and rustdoc rejects a public item linking to a private
+    /// one under `-D warnings`).
     /// Opt-in only (`MIND_NATIVE_OPT=basic`); changes emitted bytes, so enabling it is a
     /// whole-corpus reseed event. More SCCP-lite / strength-reduction / CSE land here.
     Basic,

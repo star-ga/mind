@@ -23,12 +23,22 @@ on:
         type: string
         default: "."
   # Allow direct dispatch for testing the workflow itself.
+  #
+  # The workflow_call default is "." because a DOWNSTREAM repo wants its whole
+  # tree checked. This dispatch default is deliberately NARROWER: it mirrors
+  # ci.yml's own blocking gate (mindcraft_check, ci.yml:828 — "mindc check over
+  # std/ + examples/ must be error-clean"). Dispatching with "." checks this
+  # repo's tests/ fixtures too, and 144 of those carry intentional fmt drift:
+  # tests/selfhost_gaps/*.mind are span-sensitive parser/emitter edge cases whose
+  # exact source layout is what they exist to pin, so `mindc fmt` must NOT be run
+  # over them. Before this default was narrowed, a dispatch of this workflow
+  # against its own repo produced a RED run that looked like a real regression.
   workflow_dispatch:
     inputs:
       paths:
-        description: "Space-separated list of paths to check"
+        description: "Space-separated list of paths to check (repo default mirrors ci.yml's mindcraft_check gate)"
         required: false
-        default: "."
+        default: "std examples"
 
 permissions:
   contents: read

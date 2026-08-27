@@ -898,34 +898,51 @@ def main() -> int:
     #   contiguous string table is [name, *params, *then_lets, *else-only-lets].
     #   golden_hex = the captured real `mindc --emit-mic3` output (the oracle).
     block_cases = [
-        # g(a,b){ if a { let t=b+a; t } else { b } } — then-let only, else=param. 73B.
+        # g(a,b){ if a { let t=b+a; t } else { b } } — then-let only, else=param. 63B.
+        # RE-BLESSED 2026-08-27 (#316), 73B -> 63B. The old golden encoded the #318
+        # BUG: a branch-local `let t` was recorded as a merge WRITE, so `t` entered
+        # merged_names and the module carried a phi for it (the dropped 10 bytes are
+        # the string-table entry 0174 = "t" plus its merge machinery). Under the
+        # corrected rule — a `let` is a block-scoped DECLARATION, never a write of an
+        # outer name — `t` is not a merged name; the branch value still flows via
+        # then_result, so the program is unchanged in meaning.
+        # Justified, not just re-captured: verified behaviourally on BOTH backends
+        # before re-blessing — g(1,2)=3, g(0,2)=2, g(1,5)=6, identical under
+        # `--backend mlir` and `--backend native`. The live Rust oracle emits the
+        # 63B form; this golden now matches it.
         (b"g", [b"a", b"b"], [b"t"], [],
          "fn g(a: i64, b: i64) -> i64 { if a { let t: i64 = b + a; t } else { b } }",
-         "4d49433302040167016101620174010003150002010002010107000318000100"
-         "180102011c000002010200040300010003020104000105000107010306010603"
-         "050100001300000000"),
+         "4d4943330203016701610162010003150002010002010105000318000100"
+         "180102011c00000201020004030001000301010400010500000100001300"
+         "000000"),
         # f(a,b){ if a { let t=a*b; t+1 } else { let u=b; u } } — both branches let. 91B.
         (b"f", [b"a", b"b"], [b"t"], [b"u"],
          "fn f(a: i64, b: i64) -> i64 { if a { let t: i64 = a * b; t + 1 } "
          "else { let u: i64 = b; u } }",
-         "4d49433302050166016101620174017501000315000201000201010b00031800"
-         "0100180102011c000005010200040302000101040204050003040109000502010"
-         "600010700010b020308040a020803070a09010100001300000000".replace(
+         "4d4943330203016601610162010003150002010002010107000318000100"
+
+         "180102011c00000401020004030200010104020405000304050101060001"
+
+         "0700000100001300000000".replace(
              " ", "")),
         # h(a,b){ if a { let t=a*b; t+1 } else { b } } — then 2-stmt let, else=param. 81B.
         (b"h", [b"a", b"b"], [b"t"], [],
          "fn h(a: i64, b: i64) -> i64 { if a { let t: i64 = a * b; t + 1 } "
          "else { b } }",
-         "4d49433302040168016101620174010003150002010002010109000318000100"
-         "180102011c0000040102000403020001010402040500030405020106000107000"
-         "109010308010803070100001300000000".replace(" ", "")),
+         "4d4943330203016801610162010003150002010002010107000318000100"
+
+         "180102011c00000401020004030200010104020405000304050101060001"
+
+         "0700000100001300000000".replace(" ", "")),
         # k(a,b){ if a { let x=a+1; let y=x*2; y } else { b } } — two names in then. 94B.
         (b"k", [b"a", b"b"], [b"x", b"y"], [],
          "fn k(a: i64, b: i64) -> i64 { if a { let x: i64 = a + 1; "
          "let y: i64 = x * 2; y } else { b } }",
-         "4d4943330205016b016101620178017901000315000201000201010c00031800"
-         "0100180102011c000005010200010302040400000301050404060204050603010"
-         "700010800010a00010c020309040b020904080b060a0100001300000000".replace(
+         "4d4943330203016b01610162010003150002010002010108000318000100"
+
+         "180102011c00000501020001030204040000030105040406020405060101"
+
+         "0700010800000100001300000000".replace(
              " ", "")),
     ]
     for name, params, then_lets, else_lets, src, golden_hex in block_cases:
