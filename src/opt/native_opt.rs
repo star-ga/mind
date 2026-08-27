@@ -76,10 +76,8 @@ pub fn optimize_mic3(module: &mut IRModule, level: OptLevel) {
             // Strict no-op: do not touch `module`. Byte-identity is the contract.
         }
         OptLevel::Basic => {
-            let mut next_id = module.next_id;
-            const_if_prune(&mut module.instrs, &mut next_id);
+            const_if_prune(&mut module.instrs);
             fold_mul_by_zero(&mut module.instrs);
-            module.next_id = next_id;
         }
     }
 }
@@ -94,31 +92,19 @@ fn const_cond_value(cond_instrs: &[Instr], cond_id: ValueId) -> Option<i64> {
     }
 }
 
-/// The `i64` constant that a value is defined to be, iff some `ConstI64` in `instrs`
-/// defines `result`. Used to keep the pass PROVABLY type-safe: we only bind the outer
-/// `dst` when we know the branch result is a concrete `i64` constant (so `dst` gets a
-/// `ConstI64`, never a wrongly-typed copy). `None` (skip) otherwise.
-fn i64_const_of(instrs: &[Instr], result: ValueId) -> Option<i64> {
-    instrs.iter().find_map(|ins| match ins {
-        Instr::ConstI64(id, v) if *id == result => Some(*v),
-        _ => None,
-    })
-}
-
 /// SCCP-lite slice 1 — **const-condition value-`If` pruning**, a structural region
 /// rewrite (roadmap C6). When an `If`'s condition is a compile-time constant AND the `If`
-/// rebinds no outer variable (`merges` and `branch_bindings` both empty — a pure value-if)
-/// AND the taken branch's result is a concrete `i64` constant, replace the whole `If`
-/// with the taken branch's instructions followed by `ConstI64(dst, that_value)` — binding
-/// the outer `dst` to the constant. This is PROVABLY correct with no operand-type
-/// reasoning and no cross-instruction value remap: the taken branch's side effects are
-/// preserved by splicing, and `dst` is bound to a known `i64` constant. Every other shape
-/// (non-constant condition, any merges/bindings, non-`i64`-const result) is left untouched
-/// (fail-safe). Recurses into nested branches / loop bodies / fn bodies.
+/// rebinds no outer variable (`merges` and `branch_bindings` both empty — a pure value-if),
+/// replace the whole `If` with the taken branch's instructions and alias the `If`'s outer
+/// `dst` to that branch's result value at every downstream use (via [`remap_operands`]).
+/// Type-agnostic and correct with no copy and no operand-type reasoning: the taken
+/// branch's side effects and result definition are preserved by splicing, and `dst` is a
+/// pure rename to the surviving value (its definition, inside the spliced branch,
+/// dominates the tail). Every other shape (non-constant condition, any merges/bindings) is
+/// left untouched (fail-safe). Recurses into nested branches / loop bodies / fn bodies.
 ///
-/// Deterministic: one forward pass in instruction order, no hashmap iteration; the only
-/// new state is monotonic (`next_id`). The pinned schedule is "this pass, once".
-fn const_if_prune(instrs: &mut Vec<Instr>, next_id: &mut usize) {
+/// Deterministic: one forward pass in instruction order, no hashmap iteration. The pinned schedule is "this pass, once".
+fn const_if_prune(instrs: &mut Vec<Instr>) {
     let mut i = 0;
     while i < instrs.len() {
         // Recurse into nested regions first (a nested const-if becomes prunable too).
@@ -129,65 +115,60 @@ fn const_if_prune(instrs: &mut Vec<Instr>, next_id: &mut usize) {
                 else_instrs,
                 ..
             } => {
-                const_if_prune(cond_instrs, next_id);
-                const_if_prune(then_instrs, next_id);
-                const_if_prune(else_instrs, next_id);
+                const_if_prune(cond_instrs);
+                const_if_prune(then_instrs);
+                const_if_prune(else_instrs);
             }
             Instr::While {
                 cond_instrs, body, ..
             } => {
-                const_if_prune(cond_instrs, next_id);
-                const_if_prune(body, next_id);
+                const_if_prune(cond_instrs);
+                const_if_prune(body);
             }
-            Instr::FnDef { body, .. } => const_if_prune(body, next_id),
+            Instr::FnDef { body, .. } => const_if_prune(body),
             _ => {}
         }
 
         // Decide whether THIS instruction is a prunable const-condition value-if, and if
-        // so which branch is taken and what i64 constant its result is.
-        let plan: Option<(bool, i64)> = match &instrs[i] {
+        // so which branch is taken. Guarded to a pure value-if (no `merges` /
+        // `branch_bindings`) so the only outer reference is `dst`, aliased below via a
+        // remap — no branch-merge / fn-env-binding reasoning.
+        let take_then: Option<bool> = match &instrs[i] {
             Instr::If {
                 cond_id,
                 cond_instrs,
-                then_instrs,
-                then_result,
-                else_instrs,
-                else_result,
                 merges,
                 branch_bindings,
                 ..
             } if merges.is_empty() && branch_bindings.is_empty() => {
-                match const_cond_value(cond_instrs, *cond_id) {
-                    Some(cv) => {
-                        let take_then = cv != 0;
-                        let (branch, result) = if take_then {
-                            (then_instrs, *then_result)
-                        } else {
-                            (else_instrs, *else_result)
-                        };
-                        i64_const_of(branch, result).map(|v| (take_then, v))
-                    }
-                    None => None,
-                }
+                const_cond_value(cond_instrs, *cond_id).map(|cv| cv != 0)
             }
             _ => None,
         };
 
-        if let Some((take_then, const_val)) = plan {
+        if let Some(take_then) = take_then {
             let stolen = instrs.remove(i);
             if let Instr::If {
                 then_instrs,
+                then_result,
                 else_instrs,
+                else_result,
                 dst,
                 ..
             } = stolen
             {
-                let mut branch = if take_then { then_instrs } else { else_instrs };
-                let mut repl: Vec<Instr> = Vec::with_capacity(branch.len() + 1);
-                repl.append(&mut branch);
-                repl.push(Instr::ConstI64(dst, const_val));
-                let n = repl.len();
-                instrs.splice(i..i, repl);
+                let (branch, result) = if take_then {
+                    (then_instrs, then_result)
+                } else {
+                    (else_instrs, else_result)
+                };
+                let n = branch.len();
+                // Splice the surviving branch in place of the `If` …
+                instrs.splice(i..i, branch);
+                // … then alias the `If`'s outer `dst` to that branch's result value at
+                // every downstream use (no copy, no type assumption; `result`'s
+                // definition is inside the just-spliced branch, so it dominates the tail).
+                remap_operands(&mut instrs[i + n..], dst, result);
                 i += n;
                 continue;
             } else {
@@ -256,6 +237,141 @@ fn fold_mul_by_zero(instrs: &mut Vec<Instr>) {
     }
 }
 
+/// Mutable mirror of `crate::opt::ir_canonical::for_each_operand`: visit every
+/// ENCLOSING-SCOPE operand value id of `instr` by mutable reference. It MUST cover the
+/// exact same operand set as `for_each_operand` (they are two views of one audited list)
+/// — deliberately NOT descending into `If`/`While`/`Region`/`FnDef` bodies, because those
+/// hold their own SSA namespace; an enclosing value they read is threaded through
+/// `If.merges` (`then_val`/`else_val`) or `While.init_ids`, which ARE visited here. Used
+/// by [`remap_operands`] to rename a value id everywhere it is *used* (never at a def).
+fn for_each_operand_mut(instr: &mut Instr, mut f: impl FnMut(&mut ValueId)) {
+    use crate::ir::Instr as I;
+    match instr {
+        I::ConstI64(_, _)
+        | I::ConstF64(_, _)
+        | I::ConstTensor(_, _, _, _)
+        | I::ConstDenseTensor { .. } => {}
+        I::BinOp { lhs, rhs, .. } => {
+            f(lhs);
+            f(rhs);
+        }
+        I::Sum { src, .. }
+        | I::Mean { src, .. }
+        | I::Relu { src, .. }
+        | I::Reshape { src, .. }
+        | I::ExpandDims { src, .. }
+        | I::Squeeze { src, .. }
+        | I::Transpose { src, .. }
+        | I::Index { src, .. }
+        | I::Slice { src, .. }
+        | I::SparseAttr { src, .. } => f(src),
+        I::Dot { a, b, .. } | I::MatMul { a, b, .. } => {
+            f(a);
+            f(b);
+        }
+        I::Conv2d { input, filter, .. } => {
+            f(input);
+            f(filter);
+        }
+        I::Conv2dGradInput { dy, filter, .. } => {
+            f(dy);
+            f(filter);
+        }
+        I::Conv2dGradFilter { input, dy, .. } => {
+            f(input);
+            f(dy);
+        }
+        I::ReluGrad { grad, src, .. } => {
+            f(grad);
+            f(src);
+        }
+        I::Gather { src, indices, .. } => {
+            f(src);
+            f(indices);
+        }
+        I::Output(id) => f(id),
+        I::Call { args, .. } => {
+            for a in args.iter_mut() {
+                f(a);
+            }
+        }
+        I::Return { value } => {
+            if let Some(v) = value {
+                f(v);
+            }
+        }
+        I::Param { .. } | I::FnDef { .. } => {}
+        #[cfg(feature = "std-surface")]
+        I::ConstArray { .. } => {}
+        #[cfg(feature = "std-surface")]
+        I::ArrayLoad { base, index, .. } => {
+            f(base);
+            f(index);
+        }
+        #[cfg(feature = "std-surface")]
+        I::While { init_ids, .. } => {
+            for v in init_ids.iter_mut() {
+                f(v);
+            }
+        }
+        #[cfg(feature = "std-surface")]
+        I::If { merges, .. } => {
+            for (_merge, then_val, else_val) in merges.iter_mut() {
+                f(then_val);
+                f(else_val);
+            }
+        }
+        #[cfg(feature = "std-surface")]
+        I::VecLoad { base, offset, .. } | I::VecLoadI32 { base, offset, .. } => {
+            f(base);
+            f(offset);
+        }
+        #[cfg(feature = "std-surface")]
+        I::VecFma { a, b, acc, .. } | I::VecMulAddQ16 { a, b, acc, .. } => {
+            f(a);
+            f(b);
+            f(acc);
+        }
+        #[cfg(feature = "std-surface")]
+        I::VecReduceAdd { src, .. } | I::VecReduceAddI64 { src, .. } => f(src),
+        #[cfg(feature = "std-surface")]
+        I::VecStore {
+            src, base, offset, ..
+        } => {
+            f(src);
+            f(base);
+            f(offset);
+        }
+        #[cfg(feature = "std-surface")]
+        I::ExternFnDecl { .. } => {}
+        #[cfg(feature = "std-surface")]
+        I::Region { .. } => {}
+        #[cfg(feature = "std-surface")]
+        I::Break { live } | I::Continue { live } => {
+            for (_, v) in live.iter_mut() {
+                f(v);
+            }
+        }
+    }
+}
+
+/// Rename value id `from` -> `to` at every ENCLOSING-SCOPE USE in `instrs` (never at a
+/// definition — `dst` fields are not visited by [`for_each_operand_mut`]). Used to alias
+/// a pruned `If`'s `dst`/merge ids to the surviving branch's value without a copy or a
+/// type assumption. Deterministic: one forward pass, no hashmap iteration.
+fn remap_operands(instrs: &mut [Instr], from: ValueId, to: ValueId) {
+    if from == to {
+        return;
+    }
+    for ins in instrs.iter_mut() {
+        for_each_operand_mut(ins, |op| {
+            if *op == from {
+                *op = to;
+            }
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,7 +413,8 @@ mod tests {
             "OFF must not prune"
         );
 
-        // Basic: prune to `dst = const 7` (then taken, cond=1); Output(%3) preserved.
+        // Basic: prune to the then-branch (cond=1). Its ConstI64(%1, 7) survives; the
+        // outer dst (%3) is aliased to the branch result (%1), so Output(%3) -> Output(%1).
         let mut basic = build();
         optimize_mic3(&mut basic, OptLevel::Basic);
         assert!(
@@ -308,12 +425,61 @@ mod tests {
             basic
                 .instrs
                 .iter()
-                .any(|i| matches!(i, Instr::ConstI64(id, 7) if *id == ValueId(3))),
-            "dst must be bound to the taken-branch constant 7"
+                .any(|i| matches!(i, Instr::ConstI64(id, 7) if *id == ValueId(1))),
+            "the taken (then) branch's const 7 (%1) must survive the splice"
         );
         assert!(
-            matches!(basic.instrs.last(), Some(Instr::Output(id)) if *id == ValueId(3)),
-            "Output(%3) must be preserved after the splice"
+            matches!(basic.instrs.last(), Some(Instr::Output(id)) if *id == ValueId(1)),
+            "Output must be remapped from dst(%3) to the branch result(%1)"
+        );
+    }
+
+    #[test]
+    fn basic_prunes_const_if_with_computed_result_via_remap() {
+        use crate::ir::{BinOp, Instr};
+        // params %0,%1 ; if (const 1) { %3 = %0 + %1 } else { const 9 } -> %4 ; output %4
+        // then taken: splice `%3 = %0 + %1`; alias dst(%4) -> result(%3) -> Output(%3).
+        let mut m = IRModule::new();
+        m.instrs = vec![
+            Instr::If {
+                cond_id: ValueId(2),
+                cond_instrs: vec![Instr::ConstI64(ValueId(2), 1)],
+                then_instrs: vec![Instr::BinOp {
+                    dst: ValueId(3),
+                    op: BinOp::Add,
+                    lhs: ValueId(0),
+                    rhs: ValueId(1),
+                }],
+                then_result: ValueId(3),
+                else_instrs: vec![Instr::ConstI64(ValueId(5), 9)],
+                else_result: ValueId(5),
+                dst: ValueId(4),
+                branch_bindings: vec![],
+                merges: vec![],
+            },
+            Instr::Output(ValueId(4)),
+        ];
+        m.next_id = 6;
+        optimize_mic3(&mut m, OptLevel::Basic);
+        assert!(
+            !m.instrs.iter().any(|i| matches!(i, Instr::If { .. })),
+            "the const-condition If must be pruned"
+        );
+        // the then-branch's Add(%3) survives; Output(%4) is remapped to Output(%3).
+        assert!(
+            m.instrs.iter().any(
+                |i| matches!(i, Instr::BinOp { dst, op: BinOp::Add, .. } if *dst == ValueId(3))
+            ),
+            "the taken branch's computation (%3 = %0+%1) must survive"
+        );
+        assert!(
+            matches!(m.instrs.last(), Some(Instr::Output(id)) if *id == ValueId(3)),
+            "Output must be remapped dst(%4) -> branch result(%3)"
+        );
+        // the dead else-branch's const 9 must be gone.
+        assert!(
+            !m.instrs.iter().any(|i| matches!(i, Instr::ConstI64(_, 9))),
+            "the dead else-branch must be dropped"
         );
     }
 
