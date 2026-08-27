@@ -245,6 +245,21 @@ ARMS = [
     ("j  field-read-nested-chain",
      "nested field-access chain `p.q.z` (intermediate struct type resolved)",
      "struct Q { z: i64 }\nstruct P { q: Q, y: i64 }\npub fn f(p: P) -> i64 { p.q.z }"),
+    # range-`for` guard — `for VAR in LO..HI { BODY }` desugars (parse_for) to the
+    # oracle's byte-neutral `let VAR = LO; while VAR < HI { BODY; VAR = VAR + 1 }`
+    # (src/eval/lower.rs, the !needs_hygiene For arm), byte-for-byte vs --emit-mic3.
+    # Taken only for the non-hygienic shapes: no own-`continue`, BODY does not write
+    # VAR, and END is a bare leaf the oracle's range grammar accepts — an ident or an
+    # int-literal (an infix END like `0..m*n` is a PARSE-ERROR in the oracle) that the
+    # body does not mutate. lit-END pins the pre-existing path; ident-END pins the
+    # relaxed byte-neutral END gate (for_end_pure / for_end_reads_assigned). Hygienic
+    # shapes (call/index END, body-writes-VAR, shadowing VAR) stay fail-closed.
+    ("k  for-range-lit",
+     "range-for with an int-literal END (`for i in 0..5`) -> byte-neutral while desugar",
+     "pub fn f() -> i64 { let mut s: i64 = 0; for i in 0..5 { s = s + i; } s }"),
+    ("k  for-range-ident",
+     "range-for with an ident END (`for i in 0..n`) -> byte-neutral while desugar",
+     "pub fn f(n: i64) -> i64 { let mut s: i64 = 0; for i in 0..n { s = s + i; } s }"),
 ]
 
 # i64-REFERENCES arms — NATIVE-ELF-ONLY constructs, parity-by-REFUSAL.
@@ -277,6 +292,19 @@ REFUSAL_ARMS = [
     ("r  field-read-callret",
      "`let s = mk(); s.x` field read on an un-inferrable call-return receiver (must fail closed)",
      "struct P { x: i64 }\nfn mk() -> P { P { x: 5 } }\npub fn f() -> i64 { let s = mk(); s.x }"),
+    # range-`for` whose loop VAR SHADOWS an ENCLOSING loop var (nested `for i { for i
+    # { .. } }`) — the oracle's fourth hygiene trigger (env.contains_key(var)) fires.
+    # for_shadow_scan detects the enclosing for-var at depth < 0 and routes the inner
+    # loop away from the byte-neutral desugar; a nested for-in-for is unsupported by the
+    # nfn (count_nonparam_nodes rejects the inner loop), so the whole fn fails CLOSED
+    # (empty). This pins that: a byte-neutral emit here would clobber the outer counter.
+    # (SINGLE-loop shadow — `let i = 1; for i in 0..n` — is instead routed to the
+    # pre-existing HYGIENIC hidden-counter form: byte-for-byte IDENTICAL to the base
+    # self-host, runtime value verified hygienic (no clobber), mic@3 parity deferred
+    # like every other hidden-counter loop. It is NOT empty, so it is not pinned here.)
+    ("r  for-shadow-nested",
+     "range-for VAR shadows an enclosing loop var (nested `for i { for i {..} }`; must fail closed)",
+     "pub fn f(n: i64) -> i64 { let mut s: i64 = 0; for i in 0..n { for i in 0..n { s = s + i; } } s }"),
 ]
 
 

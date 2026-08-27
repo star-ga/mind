@@ -3217,6 +3217,124 @@ pub fn for_if_assigns_var(node: i64, buf: i64, var_lo: i64, var_hi: i64) -> i64 
     0
 }
 
+// Is the range END a bare leaf the oracle's range grammar accepts — an ident or an
+// int-literal? The Rust front-end parses a range END as a RESTRICTED primary with NO
+// infix precedence: `for i in 0..m * n` / `0..n - 1` PARSE-ERROR at the operator
+// (verified against --emit-mic3, E1001 "expected '{', found '*'"). So the ONLY
+// oracle-valid range ENDs are a single ident (`for i in 0..n`) or an int-literal
+// (`for i in 0..5`); both lower into the `while` condition byte-identically to the
+// oracle's byte-neutral For arm (src/eval/lower.rs, `right: end.clone()`). Anything
+// else — a binop, call, index, field, method — is EXCLUDED (return 0) and falls
+// through to the fail-closed hidden-counter form, never divergent bytes (the oracle
+// rejects the binop shapes outright, and hygiene-desugars call/index ENDs the
+// self-host cannot reproduce). An int-literal END is a leaf, so this strictly
+// SUPERSETS the prior `end_is_lit` gate — no regression, only the ident END added.
+pub fn for_end_pure(node: i64) -> i64 {
+    if node == 0 {
+        return 0;
+    }
+    let k: i64 = ast_kind(node);
+    if k == ast_ident() {
+        return 1;
+    }
+    if k == ast_int_lit() {
+        return 1;
+    }
+    0
+}
+
+// Does the range END read an ident that the loop BODY assigns? Mirrors the oracle's
+// `end_reads_body_assigned` hygiene trigger (src/eval/lower.rs): when END reads a
+// body-mutated name the byte-neutral desugar re-evaluates END per iteration with the
+// mutated value, but the oracle evaluates the bound ONCE via a hidden counter — so it
+// switches to the hygienic form the self-host cannot reproduce byte-for-byte. END is
+// an ident or int-literal by construction (for_end_pure gates it first): an int-lit
+// reads nothing; an ident END is unsafe iff the body writes that same name. Any match
+// -> byte-neutral is UNSAFE -> fall through to the fail-closed hidden-counter form.
+pub fn for_end_reads_assigned(node: i64, sa: i64, sl: i64, buf: i64) -> i64 {
+    if node == 0 {
+        return 0;
+    }
+    if ast_kind(node) == ast_ident() {
+        return for_body_assigns_var(sa, sl, buf, ast_span_lo(node), ast_span_hi(node), 0);
+    }
+    0
+}
+
+// Does the loop VAR SHADOW a binding already live at the `for` header? This is the
+// fourth oracle hygiene trigger — `env.contains_key(var)` (src/eval/lower.rs) — which
+// the parser cannot read through the not-yet-built lowering env. This backward token
+// scan approximates that env with BRACE-DEPTH tracking, from the `for` header (i =
+// pos - 1) back toward the enclosing `fn`. A binder is LIVE iff its declaration sits in
+// the CURRENT or an ENCLOSING still-open block (depth <= 0) — never inside an
+// already-closed sibling block (depth > 0). Scanning backward: `}` raises depth (a
+// closed sibling block whose binders are out of scope), `{` lowers it (crossing out to
+// an enclosing block; depth < 0 means we are INSIDE that block, so its header binders
+// are live). Reports shadow=1 when VAR matches:
+//   - a `let [mut] NAME` at depth <= 0 (NAME = tok after `let`, or after `mut`),
+//   - an ENCLOSING `for VAR` loop var (the `for` keyword read at depth < 0 — so a
+//     SEQUENTIAL `for i {..} for i {..}` does NOT trip: the first loop's `}` was
+//     already crossed, its `for` header is read at depth 0, its scope is closed),
+//   - a PARAM `(NAME :` / `, NAME :` at depth <= 0.
+// The oracle's env is clone-scoped per block (`loop_env = env.clone()`, never flows
+// back), so this depth rule tracks it closely; any residual OVER-trigger routes to the
+// fail-closed hidden-counter form (coverage loss, NEVER wrong bytes). Stops at the
+// enclosing `fn` keyword or the start of the token stream.
+pub fn for_shadow_scan(toks: Vec, i: i64, depth: i64, var_lo: i64, var_hi: i64, buf: i64) -> i64 {
+    if i < 0 {
+        return 0;
+    }
+    let k: i64 = tok_kind(toks, i);
+    if k == tk_kw_fn() {
+        return 0;
+    }
+    if k == tk_rbrace() {
+        return for_shadow_scan(toks, i - 1, depth + 1, var_lo, var_hi, buf);
+    }
+    if k == tk_lbrace() {
+        return for_shadow_scan(toks, i - 1, depth - 1, var_lo, var_hi, buf);
+    }
+    if depth <= 0 {
+        if k == tk_kw_let() {
+            // `let NAME` and `let mut NAME` — check the two tokens after `let`
+            // (`=`/`:` never byte-equal an ident VAR, so the extra probe is safe).
+            if span_bytes_equal(buf, tok_lo(toks, i + 1), tok_hi(toks, i + 1), var_lo, var_hi) == 1 {
+                return 1;
+            }
+            if span_bytes_equal(buf, tok_lo(toks, i + 2), tok_hi(toks, i + 2), var_lo, var_hi) == 1 {
+                return 1;
+            }
+        }
+        if k == tk_colon() {
+            // PARAM binder `(NAME :` or `, NAME :` — NAME at i-1, delimiter at i-2.
+            // (Typed lets `let x: T` are already caught by the `let` rule above.)
+            if i >= 2 {
+                let d: i64 = tok_kind(toks, i - 2);
+                if d == tk_lparen() {
+                    if span_bytes_equal(buf, tok_lo(toks, i - 1), tok_hi(toks, i - 1), var_lo, var_hi) == 1 {
+                        return 1;
+                    }
+                }
+                if d == tk_comma() {
+                    if span_bytes_equal(buf, tok_lo(toks, i - 1), tok_hi(toks, i - 1), var_lo, var_hi) == 1 {
+                        return 1;
+                    }
+                }
+            }
+        }
+        if depth < 0 {
+            if k == tk_ident() {
+                if is_ident_for(buf, tok_lo(toks, i), tok_hi(toks, i)) == 1 {
+                    if span_bytes_equal(buf, tok_lo(toks, i + 1), tok_hi(toks, i + 1), var_lo, var_hi) == 1 {
+                        return 1;
+                    }
+                }
+            }
+        }
+    }
+    for_shadow_scan(toks, i - 1, depth, var_lo, var_hi, buf)
+}
+
 // Parse `for VAR in LO .. HI { BODY }` at `pos` (pos = the `for` ident) and write
 // the desugared `let` node to out+0 and the `while` node to out+8. Returns the
 // token position after the body's closing `}`. LO/HI are parsed with no_struct=1
@@ -3279,20 +3397,53 @@ pub fn parse_for(toks: Vec, pos: i64, buf: i64, out: i64) -> i64 {
     // exactly as the oracle emits it (no hidden counter, no pre-hoisted bound).
     // This is byte-identical to `mindc --emit-mic3`. It is taken ONLY for the
     // shapes the oracle treats as non-hygienic here: no own-`continue`, BODY does
-    // not write VAR, and HI is a plain integer literal (so END cannot read a
-    // body-mutated value nor be a call — the oracle's other hygiene triggers).
-    // Every other shape falls through to the hidden-counter form below, which the
-    // nfn driver refuses (fail-CLOSED — never wrong bytes vs the oracle's
-    // hygienic emit, which the self-host cannot yet reproduce byte-for-byte).
-    let end_is_lit: i64 = if ast_kind(pr_node(hi_res)) == ast_int_lit() {
-        1
+    // not write VAR, and HI is a bare leaf the oracle's range grammar accepts — an
+    // ident or an int-literal (the range END is a RESTRICTED primary: `0..m * n` /
+    // `0..n - 1` PARSE-ERROR in the oracle) — that the body does not mutate, so END
+    // cannot be a call nor re-read a value the body changes (the oracle's other
+    // hygiene triggers). `for i in 0..n`, `for i in 0..5`, `for i in 0..len` qualify.
+    // Every other shape falls through to the hidden-counter form below, which the nfn
+    // driver refuses (fail-CLOSED — never wrong bytes vs the oracle's hygienic emit,
+    // which the self-host cannot yet reproduce byte-for-byte).
+    // Byte-neutral END gate: the oracle keeps the verbatim `let VAR = LO; while VAR
+    // < END { BODY; VAR = VAR + 1 }` desugar (byte-identical to --emit-mic3) unless
+    // needs_hygiene fires. ALL FOUR oracle hygiene triggers are approximated at parse
+    // time: body_assigns_var (body_writes), end_has_call + end_reads_body_assigned
+    // (folded into end_bn: for_end_pure excludes calls, for_end_reads_assigned catches
+    // the mutated-bound read), and env.contains_key(var) — VAR SHADOWS a live binding —
+    // via the depth-aware for_shadow_scan backward token walk. A shadowing range-for
+    // (`let i = 1; for i in 0..n`, or nested `for i { for i { .. } }`) MUST route to the
+    // fail-closed hidden-counter form: the oracle emits its hygienic `__for_i_N` there,
+    // and a byte-neutral emit would BOTH diverge from the oracle AND clobber the outer
+    // binding — a silent wrong-bytes miscompile. Because shadow is a shared conjunct it
+    // also closes the pre-existing LITERAL-END shadow residual (`for i in 0..5` where i
+    // shadows had the same latent bug). end_bn = END is a bare oracle-valid leaf
+    // (ident/int-lit) reading no body-mutated ident AND VAR shadows nothing live.
+    // int-literal END with no shadow reduces to the old accepted path — no regression.
+    // deferred: for_end_pure routes a binop range-END (`0..m*n`) to the fail-closed
+    // hidden-counter form, but the oracle PARSE-REJECTS it (E1001) rather than lowering
+    // it — the self-host parser (parse_expr_ns, full precedence) accepts-what-the-oracle-
+    // rejects here. Pre-existing (parse_for always used parse_expr_ns); harmless for
+    // byte-identity (no oracle-valid program reaches this shape). Upgrade path: restrict
+    // the range-END parse to the oracle's primary-only grammar once the tc walk owns it.
+    let shadow: i64 = for_shadow_scan(toks, pos - 1, 0, var_lo, var_hi, buf);
+    let end_bn: i64 = if for_end_pure(pr_node(hi_res)) == 1 {
+        if for_end_reads_assigned(pr_node(hi_res), sa, sl, buf) == 0 {
+            if shadow == 0 {
+                1
+            } else {
+                0
+            }
+        } else {
+            0
+        }
     } else {
         0
     };
     let body_writes: i64 = for_body_assigns_var(sa, sl, buf, var_lo, var_hi, 0);
     if has_cont == 0 {
         if body_writes == 0 {
-            if end_is_lit == 1 {
+            if end_bn == 1 {
                 let vname: i64 = ast_new_leaf(ast_ident(), var_lo, var_hi);
                 let let_var: i64 = ast_new_let(kw_lo, lo_hi, vname, ty, pr_node(lo_res));
                 let wb0: Vec = for_append_stmts(sa, sl, 0, vec_new());
@@ -3310,8 +3461,8 @@ pub fn parse_for(toks: Vec, pos: i64, buf: i64, out: i64) -> i64 {
     }
 
     // ---- Byte-neutral continue form (oracle !needs_hygiene WITH own-continue) --
-    // Same gate as the fast path (no body write to VAR, literal END) but WITH an
-    // own-level `continue`: the oracle KEEPS the byte-neutral desugar and splices
+    // Same gate as the fast path (no body write to VAR, pure byte-neutral END) but
+    // WITH an own-level `continue`: the oracle KEEPS the byte-neutral desugar and splices
     // `VAR = VAR + 1` before every own-level continue (inject_step_before_continue,
     // lower.rs 3817), then appends the tail increment — NO hidden counter.
     // Verified vs --emit-mic3: `for i in 0..5 { if i > 2 { continue; } s = s + i; }`
@@ -3319,7 +3470,7 @@ pub fn parse_for(toks: Vec, pos: i64, buf: i64, out: i64) -> i64 {
     // s = s + i; i = i + 1; }` (strtab has no `__for_i_N`).
     if has_cont == 1 {
         if body_writes == 0 {
-            if end_is_lit == 1 {
+            if end_bn == 1 {
                 let vname_c: i64 = ast_new_leaf(ast_ident(), var_lo, var_hi);
                 let let_var_c: i64 = ast_new_let(kw_lo, lo_hi, vname_c, ty, pr_node(lo_res));
                 let inj: Vec = for_inject_step(sa, sl, 0, vec_new(), var_lo, var_hi);
@@ -3338,8 +3489,9 @@ pub fn parse_for(toks: Vec, pos: i64, buf: i64, out: i64) -> i64 {
 
     // ---- Hidden-counter form (shapes the oracle lowers HYGIENICALLY) --------
     // Reached when NEITHER byte-neutral form above applies: a body write to VAR,
-    // or a non-literal END (an own-`continue` alone now takes the inject form
-    // above). The oracle emits its hygienic
+    // or an END that is not pure byte-neutral (a call / index / field END, or one
+    // that reads a body-mutated ident) — an own-`continue` alone now takes the inject
+    // form above. The oracle emits its hygienic
     // `__for_i_N` desugar for these, which the self-host cannot yet reproduce
     // byte-for-byte — so the mic@3 nfn emit is NOT byte-exact here. These desugars
     // remain VALID for the native-ELF / MLIR backends
