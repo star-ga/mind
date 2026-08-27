@@ -15,11 +15,11 @@ tracing + byte-diff + run-parity.
 |---|-------|--------|----------------|---------------|------------|---------------------|
 | 1 | SELF_REPRO_CLOSURE | **PASS** | self-host loop | — | `self_host_loop_smoke.py` (stage1==stage2==stage3) | done (scalar subset) |
 | 2 | PURE_MIND_NATIVE_ELF_COMPILER | **PASS** | `testdata/selfhost_loop/stage1.elf` | — | any `--backend=native` build | done |
-| 3 | PRODUCTION_NATIVE_DISPATCH | **PARTIAL** | `mindc build --backend=native` (opt-in) | default backend still MLIR | RI-D0 E2E (below) | RI-D1: flip default for supported subset |
-| 4 | MLIR_OPT_DEPENDENCY | **PARTIAL** | default `mindc build` | opt-in native path already 0 | `strace -e execve … --backend=native` → 0 mlir-opt | RI-D1 default flip |
-| 5 | MLIR_TRANSLATE_DEPENDENCY | **PARTIAL** | default `mindc build` | opt-in native path already 0 | same strace → 0 mlir-translate | RI-D1 default flip |
-| 6 | CLANG_DEPENDENCY | **PARTIAL** | default `mindc build` cdylib/exe | opt-in native path already 0 | same strace → 0 clang | RI-D1 default flip |
-| 7 | LINKER_DEPENDENCY | **PARTIAL** | default path (clang→ld) | native path emits static ELF directly | `file <native.bin>` → "statically linked, no ld in tree" | RI-D1 default flip |
+| 3 | PRODUCTION_NATIVE_DISPATCH | **PASS (frozen profile)** | `mindc build --backend frozen` / `[targets.<t>].codegen="frozen"` | — | ri_d1_frozen_backend_smoke.py + ri_d1_frozen_manifest_codegen_smoke.py (u64-safe allowlist gate → native, else fail-loud) | DONE — the u64-safe production-profile dispatch + named-profile default landed |
+| 4 | MLIR_OPT_DEPENDENCY | **PARTIAL** (frozen profile: CUT) | default `mindc build` (still MLIR); frozen profile → 0 | frozen-profile path already 0 | `strace -e execve … --backend frozen` → 0 mlir-opt (readiness gate: execve ⊆ {mindc, stage1.elf}) | GLOBAL default flip = RI-G |
+| 5 | MLIR_TRANSLATE_DEPENDENCY | **PARTIAL** (frozen profile: CUT) | default `mindc build` (still MLIR); frozen profile → 0 | frozen-profile path already 0 | same strace → 0 mlir-translate | GLOBAL default flip = RI-G |
+| 6 | CLANG_DEPENDENCY | **PARTIAL** (frozen profile: CUT) | default `mindc build` cdylib/exe (still MLIR); frozen profile → 0 | frozen-profile path already 0 | same strace → 0 clang | GLOBAL default flip = RI-G |
+| 7 | LINKER_DEPENDENCY | **PARTIAL** (frozen profile: CUT) | default path (clang→ld); frozen profile emits static ELF directly | frozen-profile path already 0 | same strace → 0 ld; `file <native.bin>` → "statically linked" | GLOBAL default flip = RI-G |
 | 8 | RUST_DRIVER_DEPENDENCY | **NO** | `mindc` (Rust binary) orchestrates + spawns stage1.elf | pure-MIND CLI driver not the shipping entrypoint | `which mindc` is an ELF built by cargo | RI-G: pure-MIND `mindc` replaces Rust driver |
 | 9 | SCALAR_LANGUAGE_COVERAGE | **PASS** | native backend | — | int `7+35`→42, struct-return `3+4`→7 via `--backend=native` | done |
 | 10 | FLOAT_LANGUAGE_COVERAGE | **PARTIAL** | native backend | tensor-float / full f32 vector surface | `2.5+4.0 as i64`→6 native (scalar OK); tensor float NO | RI-E: native tensor float |
