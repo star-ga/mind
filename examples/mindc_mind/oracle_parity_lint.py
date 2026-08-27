@@ -301,8 +301,22 @@ ARMS = [
     # nb_expr pointer-add) can NEVER silently bleed over and zero the mic@3
     # OP_BINOP — a regression here would DRIFT vs the oracle's non-refusing emit.
     ("h  array-add",
-     "elementwise `a + b` on two [i64;N] arrays -> OP_CONST_ARRAY/OP_CONST_ARRAY/OP_BINOP(Add) (mic@3 byte-identical; native-ELF fail-closes)",
+     "elementwise `a + b` on two [i64;N] arrays -> OP_CONST_ARRAY/OP_CONST_ARRAY/OP_BINOP(Add) (mic@3 byte-identical; native-ELF expands it elementwise)",
      "pub fn f() -> i64 { let a = [1, 2, 3, 4]; let b = [5, 6, 7, 8]; let c = a + b; c[0] }"),
+    # RI-E-1 HARDENING. The native-ELF element-wise expansion admits ONLY arrays
+    # whose element kind is a PROVEN scalar i64; a POINTER-valued element (a
+    # nested row, a struct/string literal, an ident bound to one) fail-closes
+    # there — see self_host_native_tensor_ewadd_value_smoke.py. mic@3 is a
+    # different surface and is NOT part of that refusal: it must keep emitting
+    # the oracle's whole-array OP_BINOP bytes for these same shapes. These arms
+    # pin exactly that — a native-ELF safety gate must never bleed across and
+    # zero (or perturb) the mic@3 emit for a shape the oracle still lowers.
+    ("h  array-add-nested",
+     "`a + b` over NESTED arrays (pointer elements; native-ELF fail-closes, mic@3 byte-identical)",
+     "pub fn f() -> i64 { let a = [[1, 2], [3, 4]]; let b = [[5, 6], [7, 8]]; let c = a + b; c[0] }"),
+    ("h  array-add-identelem",
+     "`a + b` over arrays of an ident-bound array (laundered pointer elements; native-ELF fail-closes, mic@3 byte-identical)",
+     "pub fn f() -> i64 { let r = [1, 2]; let a = [r, r]; let b = [r, r]; let c = a + b; c[0] }"),
 ]
 
 # i64-REFERENCES arms — NATIVE-ELF-ONLY constructs, parity-by-REFUSAL.

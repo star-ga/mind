@@ -30210,6 +30210,235 @@ pub fn nb_operand_is_tensor(operand: i64, buf: i64, lets: i64, lcell: i64) -> i6
     0
 }
 
+// RI-E-1. The `[...]` array-literal DESCRIPTOR node behind a tensor operand, or 0
+// when the operand is not an array value: a DIRECT literal is its own descriptor;
+// an ident resolves through the let-env slit binding (the SAME binding
+// nb_operand_is_tensor / nb_index_len read). Single resolution point shared by the
+// emit arm and the count mirror.
+pub fn nb_tensor_desc(operand: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
+    if ast_kind(operand) == ast_array_lit() {
+        return operand;
+    }
+    if ast_kind(operand) != ast_ident() {
+        return 0;
+    }
+    let desc: i64 = nb_lets_lookup_slit(lets, lcell, buf, ast_span_lo(operand), ast_span_hi(operand));
+    if desc == 0 {
+        return 0;
+    }
+    if ast_kind(desc) != ast_array_lit() {
+        return 0;
+    }
+    desc
+}
+
+// RI-E-1 ADMISSION PREDICATE — the element COUNT of a native-ELF ELEMENT-WISE i64
+// tensor add, or -1 when this binop is NOT an admissible ewadd (every other
+// tensor-involving binop then takes the fail-closed poison, never a pointer-add).
+// THE lockstep single source of truth: nb_expr's emit arm and nb_count_expr's
+// binop arm BOTH call this, so the emitted SSA-slot count and the counted frame
+// size can never disagree (a desync here is the #1 self-host corruption class).
+// Admissible iff: operator is `+`; BOTH operands resolve to an `[...]` ARRAY
+// literal descriptor (not a `(...)` tuple — child0 == 1 marker); both element
+// counts are known, equal and >= 1; every element is a PROVEN scalar i64
+// (nb_ewadd_elem_ok — a FLOAT element would GP-add raw IEEE-754 bits, a
+// POINTER-valued element (nested array / struct-lit / string / enum ctor) would
+// GP-add two heap addresses: both refused, fail closed); and n <= the unroll cap
+// (a large array must take a counted loop, a later rung — refusing keeps the
+// frame bounded).
+// `dtbl` is the per-fn SSA dtype table (lcell+8) on the EMIT walk and 0 on the
+// COUNT walk (clcell has no dtype table — the count runs BEFORE nb_lower_fn
+// builds one). That asymmetry is SOUND IN ONE DIRECTION BY CONSTRUCTION and is
+// the only tolerable kind: nb_ewadd_elem_ok requires the AST-only classifier to
+// say INT *and* (when a table is present) the table-aware classifier to say INT,
+// so the EMIT predicate is a strict SUBSET of the COUNT predicate. emit-admits
+// therefore IMPLIES count-admits: the count can only ever OVER-count (a
+// harmlessly oversized frame), never under-count (the SSA-slot-collision class).
+// A table-only FLOAT element (`let p: f64 = 1.5; [p, q]`) is refused at emit,
+// which poisons the whole compile to 0 bytes — the count's admission is moot.
+// main.mind's own source contains ZERO array-valued binops, so this returns -1 for
+// every node during self-compile and the integer native-ELF emission plus every
+// frame size stay byte-identical.
+pub fn nb_ewadd_n(node: i64, buf: i64, lets: i64, lcell: i64, params_addr: i64, n_params: i64, dtbl: i64) -> i64 {
+    if ast_aux(node) != op_add() {
+        return 0 - 1;
+    }
+    let dl: i64 = nb_tensor_desc(ast_child0(node), buf, lets, lcell);
+    if dl == 0 {
+        return 0 - 1;
+    }
+    let dr: i64 = nb_tensor_desc(ast_child1(node), buf, lets, lcell);
+    if dr == 0 {
+        return 0 - 1;
+    }
+    if ast_child0(dl) == 1 {
+        return 0 - 1;
+    }
+    if ast_child0(dr) == 1 {
+        return 0 - 1;
+    }
+    let nl: i64 = ast_aux(dl);
+    if nl < 1 {
+        return 0 - 1;
+    }
+    if nl != ast_aux(dr) {
+        return 0 - 1;
+    }
+    if nl > nb_ewadd_unroll_cap() {
+        return 0 - 1;
+    }
+    // ELEMENT-KIND PROOF (both operands). Element 0 alone is inspected because
+    // nb_array_elems' homogeneity gate already refused any non-homogeneous array,
+    // so element 0's kind IS the array's element kind.
+    if nb_ewadd_elem_ok(__mind_load_i64(ast_child1(dl)), buf, lets, lcell, params_addr, n_params, dtbl) != 1 {
+        return 0 - 1;
+    }
+    if nb_ewadd_elem_ok(__mind_load_i64(ast_child1(dr)), buf, lets, lcell, params_addr, n_params, dtbl) != 1 {
+        return 0 - 1;
+    }
+    nl
+}
+
+// 1 iff `elem` is PROVABLY a scalar i64 value — the only element kind the
+// element-wise add may GP-add. Fail-closed WHITELIST, not a blacklist: anything
+// unproven refuses.
+//
+// Why a whitelist. The AST-only nb_node_dtype has no arm for ast_array_lit /
+// ast_struct_lit / ast_str_lit / ast_enum_ctor and falls through to INT, so a
+// dtype test ALONE admits `[[1,2],[3,4]] + [[5,6],[7,8]]`: those "INT" elements
+// are heap ROW POINTERS, and the emit would add two addresses and store the sum
+// as c[0] — a running ELF with a silently wrong value (the exact fail-open class
+// this gate exists to prevent). Refusing on kind closes it at the root.
+//
+// Two dtype legs, not one:
+//   * the AST-only leg is the one the COUNT walk evaluates (dtbl == 0 there);
+//   * the table-aware leg (the SAME classifier nb_array_elems uses to ACCEPT an
+//     array as genuinely f64) additionally resolves an IDENT/let/param/call to
+//     its tracked dtype, closing `let p: f64 = 1.5; let a = [p, q]; a + a`,
+//     which the AST-only leg calls INT because a bare ident carries no literal.
+// Requiring BOTH keeps the emit predicate a strict subset of the count predicate
+// (see nb_ewadd_n's header) — the count can only over-count, never under-count.
+//
+// The IDENT arm additionally refuses any name bound to an aggregate LITERAL
+// descriptor (nb_lets_lookup_slit — the same binding nb_tensor_desc reads), which
+// closes the ident-laundered pointer case `let r = [1,2]; let a = [r,r]; a + a`
+// that no dtype classifier can see (a row pointer is dtype-INT by construction).
+// main.mind has no array-valued binop, so this never fires during self-compile.
+pub fn nb_ewadd_elem_ok(elem: i64, buf: i64, lets: i64, lcell: i64, params_addr: i64, n_params: i64, dtbl: i64) -> i64 {
+    if nb_node_dtype(elem) != nb_dtype_int() {
+        return 0;
+    }
+    if nb_node_dtype_tbl(elem, dtbl, lets, lcell, buf, params_addr, n_params) != nb_dtype_int() {
+        return 0;
+    }
+    nb_ewadd_elem_kind_ok(elem, buf, lets, lcell)
+}
+
+// The kind half of the element proof. Scalar-producing kinds only: an integer
+// literal, a parenthesised/negated scalar, an arithmetic binop over two proven
+// scalars, or an ident that is NOT bound to an aggregate literal. EVERY other
+// kind — ast_array_lit (nested rows AND tuples), ast_struct_lit, ast_str_lit,
+// ast_enum_ctor, call, field, index, method — refuses: those either produce a
+// heap pointer or cannot be proven scalar from this walk's information.
+// Recursion + if-chain (the self-host subset idiom); no while / no mut.
+pub fn nb_ewadd_elem_kind_ok(elem: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
+    let k: i64 = ast_kind(elem);
+    if k == ast_int_lit() {
+        return 1;
+    }
+    if k == ast_paren() {
+        return nb_ewadd_elem_kind_ok(ast_child0(elem), buf, lets, lcell);
+    }
+    if k == ast_neg() {
+        return nb_ewadd_elem_kind_ok(ast_child0(elem), buf, lets, lcell);
+    }
+    if k == ast_binop() {
+        if nb_ewadd_elem_kind_ok(ast_child0(elem), buf, lets, lcell) != 1 {
+            return 0;
+        }
+        return nb_ewadd_elem_kind_ok(ast_child1(elem), buf, lets, lcell);
+    }
+    if k == ast_ident() {
+        if nb_lets_lookup_slit(lets, lcell, buf, ast_span_lo(elem), ast_span_hi(elem)) != 0 {
+            return 0;
+        }
+        return 1;
+    }
+    0
+}
+
+// Unroll cap for the RI-E-1 element-wise add. Beyond it the binop refuses (fail
+// closed) rather than emitting an unbounded straight-line body; the counted-loop
+// tier is a later rung.
+pub fn nb_ewadd_unroll_cap() -> i64 {
+    64
+}
+
+// SSA ids consumed by ONE unrolled element of the RI-E-1 element-wise add —
+// uniform for every element index (including 0), so the count mirror is a plain
+// multiplication and cannot drift from the emit.
+pub fn nb_ewadd_ids_per_elem() -> i64 {
+    8
+}
+
+// RI-E-1 element loop (emit side). For element `i`, exactly nb_ewadd_ids_per_elem()
+// fresh ids in this fixed order:
+//   off      = CONST 8*i
+//   addr_a   = lhs_base + off
+//   aval     = *addr_a          (__mind_load_i64 through the pointer slot)
+//   addr_b   = rhs_base + off
+//   bval     = *addr_b
+//   cval     = aval + bval
+//   addr_c   = cbase + off
+//   store-dst                   (*addr_c = cval; the dst id is consumed, never read
+//                                — the SAME store shape nb_array_elems uses)
+// The CONST-offset + ADD addressing is byte-for-byte the C2 element ABI the
+// ast_index READ arm already emits, so a later `c[k]` reads exactly what this wrote.
+pub fn nb_ewadd_elems(st: NbState, n: i64, i: i64, lhs_id: i64, rhs_id: i64, cbase_id: i64) -> NbState {
+    if i >= n {
+        return st;
+    }
+    // off = CONST 8*i.
+    let off_id: i64 = st.next_id;
+    let o1: String = nb_push(st.code, 72);
+    let o2: String = nb_push(o1, 184);
+    let o3: String = nb_i64le(o2, 8 * i);
+    let o4: String = nb_store_rax(o3, nb_slot_disp(off_id));
+    // addr_a = lhs_base + off.
+    let aa_id: i64 = off_id + 1;
+    let p1: String = nb_load_rax(o4, nb_slot_disp(lhs_id));
+    let p2: String = nb_arith_rax_mem(p1, op_add(), nb_slot_disp(off_id));
+    let p3: String = nb_store_rax(p2, nb_slot_disp(aa_id));
+    // aval = *addr_a.
+    let av_id: i64 = aa_id + 1;
+    let q1: String = nb_emit_load_i64(p3, nb_slot_disp(aa_id));
+    let q2: String = nb_store_rax(q1, nb_slot_disp(av_id));
+    // addr_b = rhs_base + off.
+    let ab_id: i64 = av_id + 1;
+    let r1: String = nb_load_rax(q2, nb_slot_disp(rhs_id));
+    let r2: String = nb_arith_rax_mem(r1, op_add(), nb_slot_disp(off_id));
+    let r3: String = nb_store_rax(r2, nb_slot_disp(ab_id));
+    // bval = *addr_b.
+    let bv_id: i64 = ab_id + 1;
+    let s1: String = nb_emit_load_i64(r3, nb_slot_disp(ab_id));
+    let s2: String = nb_store_rax(s1, nb_slot_disp(bv_id));
+    // cval = aval + bval (the element-wise op itself).
+    let cv_id: i64 = bv_id + 1;
+    let t1: String = nb_load_rax(s2, nb_slot_disp(av_id));
+    let t2: String = nb_arith_rax_mem(t1, op_add(), nb_slot_disp(bv_id));
+    let t3: String = nb_store_rax(t2, nb_slot_disp(cv_id));
+    // addr_c = cbase + off.
+    let ac_id: i64 = cv_id + 1;
+    let u1: String = nb_load_rax(t3, nb_slot_disp(cbase_id));
+    let u2: String = nb_arith_rax_mem(u1, op_add(), nb_slot_disp(off_id));
+    let u3: String = nb_store_rax(u2, nb_slot_disp(ac_id));
+    // *addr_c = cval.
+    let sd_id: i64 = ac_id + 1;
+    let v1: String = nb_emit_store_i64(u3, nb_slot_disp(ac_id), nb_slot_disp(cv_id));
+    let nx: NbState = NbState { code: v1, next_id: sd_id + 1, last_id: cv_id, ncalls: st.ncalls };
+    nb_ewadd_elems(nx, n, i + 1, lhs_id, rhs_id, cbase_id)
+}
+
 // Resolve a name span to its bound DECLARED width, or 64 if unbound (an unbound
 // name — a param, a temp — is full-width by definition). LAST-match wins,
 // mirroring nb_lets_lookup. The assign arm reads this so `x = x + 1` on a
@@ -31150,6 +31379,50 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // has ZERO array-valued binops (both detectors return 0), so this never
         // fires during self-compile — the integer native-ELF oracle and the mic@3
         // whole-module flip stay byte-identical.
+        // RI-E-1 ELEMENT-WISE TENSOR ADD (the correct emit that replaces the
+        // RI-E-0a refusal for the admissible shape). `a + b` over two [i64; N]
+        // arrays lowers to a SINGLE Instr::BinOp{Add} on the two whole-array
+        // value-ids (src/eval/lower.rs does NOT expand it elementwise), so the
+        // native-ELF backend owns the expansion: allocate a FRESH N-element result
+        // buffer with the SAME CONST 8 ; CONST n ; MUL ; __mind_alloc shape the
+        // ast_array_lit arm uses, then write c[i] = a[i] + b[i] for every i through
+        // the C2 element ABI (base + 8*i). The binop's VALUE is c's base pointer, so
+        // a following `c[k]` index read loads element k of the RESULT. mic@3 is
+        // untouched — the oracle's OP_BINOP bytes and the whole-module flip stay
+        // byte-identical; this is a native-ELF-only expansion.
+        let ew_n: i64 = nb_ewadd_n(node, buf, lets, lcell, params_addr, n_params, __mind_load_i64(lcell + 8));
+        if ew_n > 0 {
+            // CONST 8 (element size).
+            let esz_id: i64 = id;
+            let ea1: String = nb_push(s2.code, 72);
+            let ea2: String = nb_push(ea1, 184);
+            let ea3: String = nb_i64le(ea2, 8);
+            let ea4: String = nb_store_rax(ea3, nb_slot_disp(esz_id));
+            // CONST n (element count).
+            let en_id: i64 = esz_id + 1;
+            let eb1: String = nb_push(ea4, 72);
+            let eb2: String = nb_push(eb1, 184);
+            let eb3: String = nb_i64le(eb2, ew_n);
+            let eb4: String = nb_store_rax(eb3, nb_slot_disp(en_id));
+            // MUL(8, n) -> allocation size in bytes.
+            let emul_id: i64 = en_id + 1;
+            let em1: String = nb_load_rax(eb4, nb_slot_disp(esz_id));
+            let em2: String = nb_arith_rax_mem(em1, op_mul(), nb_slot_disp(en_id));
+            let em3: String = nb_store_rax(em2, nb_slot_disp(emul_id));
+            // __mind_alloc(size) -> the RESULT base pointer (the node's value).
+            let ecb_id: i64 = emul_id + 1;
+            let eal1: String = nb_emit_alloc(em3, nb_slot_disp(emul_id));
+            let eal2: String = nb_store_rax(eal1, nb_slot_disp(ecb_id));
+            let s_ew: NbState = nb_ewadd_elems(NbState { code: eal2, next_id: ecb_id + 1, last_id: ecb_id, ncalls: s2.ncalls }, ew_n, 0, lhs_id, rhs_id, ecb_id);
+            return NbState { code: s_ew.code, next_id: s_ew.next_id, last_id: ecb_id, ncalls: s_ew.ncalls };
+        }
+        // Every OTHER tensor-involving binop (a non-`+` operator, mismatched or
+        // unknown lengths, a float element tier, a tuple, an over-cap length) stays
+        // FAIL-CLOSED: poison lcell+80 -> 0-byte artifact. An honest "not
+        // implemented" is always acceptable; a running ELF that GP-adds two base
+        // POINTERS is a silent wrong-value miscompile and never is. The poison
+        // consumes the SAME single id the scalar path would, so nb_count_expr's
+        // mirror needs no separate refusal case.
         if nb_operand_is_tensor(ast_child0(node), buf, lets, lcell) == 1 {
             __mind_store_i64(lcell + 80, 1);
             return NbState { code: s2.code, next_id: id + 1, last_id: id, ncalls: s2.ncalls };
@@ -34704,6 +34977,23 @@ pub fn nb_count_expr(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
     if k == ast_binop() {
         let l: i64 = nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params, clets, clcell);
         let r: i64 = nb_count_expr(l, buf, ast_child1(node), params_addr, n_params, clets, clcell);
+        // RI-E-1 LOCKSTEP MIRROR of nb_expr's element-wise tensor-add arm. The SAME
+        // admission predicate (nb_ewadd_n, over the count-time let-env, which
+        // records the identical nb_let_descriptor binding emission does) decides,
+        // so emit and count can never disagree about which arm ran. Admitted shape:
+        // 4 ids (CONST 8 ; CONST n ; MUL ; alloc-ptr) + nb_ewadd_ids_per_elem() per
+        // element; the node's VALUE is the alloc-ptr slot, no extra id. Every other
+        // binop — including the fail-closed tensor refusal, which consumes the same
+        // single id the scalar path does — keeps the historical r + 1.
+        // dtbl == 0 here BY DESIGN: the count walk runs before nb_lower_fn builds
+        // the per-fn dtype table, and clcell has no +8 slot. nb_ewadd_elem_ok's
+        // AST-only leg still runs, and the emit's extra table leg can only REFUSE
+        // more — so this count is always >= the emit's need (over-count safe,
+        // never the under-count that collides SSA slots). See nb_ewadd_n's header.
+        let cew: i64 = nb_ewadd_n(node, buf, clets, clcell, params_addr, n_params, 0);
+        if cew > 0 {
+            return r + 4 + nb_ewadd_ids_per_elem() * cew;
+        }
         return r + 1;
     }
     // i64 references: `&NAME` / `*EXPR` each consume exactly ONE fresh id (the
@@ -34952,6 +35242,16 @@ pub fn nb_count_stmt(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         // sees (nb_count_carried snapshot/restores clcell, leaving it at pre_body_n).
         let ncarry: i64 = nb_count_carried(buf, body_sa, body_sl, clets, clcell, pre_body_n, after_cond, params_addr, n_params, srt);
         let after_body: i64 = nb_count_stmts(after_cond, buf, body_sa, body_sl, 0, params_addr, n_params, clets, clcell, srt);
+        // LOCKSTEP SCOPE RESTORE. nb_emit_while drops every body-LOCAL binding at
+        // loop exit (`__mind_store_i64(lcell, body_scope)` after the body emit), so
+        // post-loop code in the EMIT env cannot resolve a body-local name. This walk
+        // used to let those bindings leak past the loop, so the count env resolved
+        // names the emit env had already dropped — the same wrong-way risk as the
+        // assign arm above now that a counted construct (the element-wise tensor
+        // add) reads let-env descriptors. pre_body_n is the count twin of emit's
+        // body_scope: the count walk has no carried-var copy-in rebinds, so the
+        // post-carry-prewalk frontier IS the pre-body scope. Env-only, no id.
+        __mind_store_i64(clcell, pre_body_n);
         return after_body + ncarry + 1;
     }
     if k == ast_assign() {
@@ -34964,6 +35264,21 @@ pub fn nb_count_stmt(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         let after_rhs: i64 = nb_count_expr(next_id, buf, ast_child2(node), params_addr, n_params, clets, clcell);
         let aname_leaf: i64 = ast_child0(node);
         let pw: i64 = nb_lets_lookup_width(clets, clcell, buf, ast_span_lo(aname_leaf), ast_span_hi(aname_leaf));
+        // LOCKSTEP REBIND (env symmetry). nb_stmt's assign arm ALWAYS re-binds NAME
+        // — with slit_node 0 and the pre-assign width — on every one of its three
+        // exits, which ERASES any aggregate-literal descriptor NAME carried (last-
+        // match-wins lookup). This walk used to leave the count-env descriptor
+        // standing, so after `a = t;` the count still "saw" a's old `[...]`
+        // descriptor while emission did not. That asymmetry was benign only by
+        // accident while no counted construct read a descriptor; the element-wise
+        // tensor add is the FIRST whose id count depends on one (nb_ewadd_n
+        // resolves both operands through nb_lets_lookup_slit), and the wrong-way
+        // divergence (emit admits, count refuses) is a frame UNDERSIZE — the SSA
+        // slot-collision class. Mirror the emit bind exactly; slot 0 is the
+        // established count-side placeholder (cf. nb_count_bind_merged), the count
+        // walk never reads a slot value out of clets. Env-only: no id, so the
+        // counted total below is unchanged for every existing program.
+        let _crb: i64 = nb_lets_bind(clets, clcell, ast_span_lo(aname_leaf), ast_span_hi(aname_leaf), 0, 0, pw);
         // i64-REFERENCES: nb_bind_mints_slot folds the narrow wrap slot with the
         // address-taken capture-copy slot (bare-ident RHS naming an address-
         // taken var) — the exact emit-side mint set of nb_stmt's assign arm.
