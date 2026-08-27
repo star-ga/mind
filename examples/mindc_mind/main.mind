@@ -16649,7 +16649,15 @@ pub fn field_recv_ty(fn_node: i64, src: i64, recv_lo: i64, recv_hi: i64) -> i64 
 pub fn field_recv_field_idx(fn_node: i64, src: i64, srt: i64, recv_lo: i64, recv_hi: i64, fld_lo: i64, fld_hi: i64) -> i64 {
     let ty: i64 = field_recv_ty(fn_node, src, recv_lo, recv_hi);
     if ty == 0 {
-        return 0 - 1;
+        // Receiver TYPE could not be affirmatively resolved (not a param, not an
+        // annotated/struct-lit-init let — e.g. a call-return binding `let s = mk(); s.x`).
+        // The Rust oracle resolves such a receiver via return-type inference and emits a
+        // real LOAD, so lowering it to the CONST-0 stub (the -1 arm below) would emit
+        // WRONG bytes (a fail-OPEN silent miscompile). Return a DISTINCT poison sentinel
+        // (-2) so the caller leaves the field-read unrewritten and the whole fn fails
+        // CLOSED — byte-identity-or-fail-closed (Bound by MIND-CONSTITUTION §I.4). The
+        // affirmative-inference upgrade (matching the oracle's LOAD) is a later slice.
+        return 0 - 2;
     }
     let k: i64 = srt_find_by_name(srt, src, ast_span_lo(ty), ast_span_hi(ty), 0);
     if k < 0 {
@@ -16792,9 +16800,19 @@ pub fn field_rewrite_expr(node: i64, src: i64, srt: i64, fn_node: i64, load_lo: 
             return node;
         }
         let fidx: i64 = field_recv_field_idx(fn_node, src, srt, ast_span_lo(bare), ast_span_hi(bare), ast_child1(node), ast_child2(node));
+        if fidx == 0 - 2 {
+            // Receiver TYPE unresolved (poison sentinel from field_recv_field_idx — e.g. a
+            // call-return binding `let s = mk(); s.x`). The oracle emits a real LOAD here, so
+            // the CONST-0 stub below would be WRONG bytes. Leave the ast_field node
+            // UNREWRITTEN: the downstream flattener (flatten_expr_env / count_nonparam_nodes
+            // have no ast_field arm) then fails the whole fn CLOSED — 0 bytes, never a
+            // divergent artifact (Bound by MIND-CONSTITUTION §I.4, fail-closed over miscompile).
+            return node;
+        }
         if fidx < 0 {
-            // Unresolvable field (e.g. `.a` on a non-struct i64 receiver): the oracle lowers
-            // it to a CONST 0 placeholder, not a load. Match that with a synthetic int-lit 0.
+            // Resolvable receiver whose type is NOT a struct (e.g. `.a` on a non-struct i64
+            // receiver, or a field absent from the struct): the oracle lowers it to a CONST 0
+            // placeholder, not a load. Match that with a synthetic int-lit 0.
             return mk_syn_intlit(0);
         }
         return field_build_load_call(bare, fidx, load_lo, load_hi);

@@ -220,6 +220,31 @@ ARMS = [
     ("s  array-store-in-loop-i64",
      "fixed [i64; N] element store inside a while loop (lv-env note path)",
      "pub fn f() -> i64 { let mut a: [i64; 4] = [0, 0, 0, 0]; let mut i: i64 = 0; while i < 3 { a[i] = 7; i = i + 1; } a[1] }"),
+    # field-READ guard — a `recv.field` read desugars (field_prefold pass) to a
+    # `__mind_load_i64(base + 8*field_index)` Call subtree, byte-for-byte vs the Rust
+    # oracle (lower.rs FieldAccess + emit.rs Instr::Call). field0 loads the base
+    # directly (no offset add); field>0 emits CONST(idx*8), Add, then the load call.
+    # Receiver-type resolution covers PARAM receivers, ANNOTATED-let receivers, nested
+    # `a.b.c` chains (intermediate type resolved through the field decl), and field
+    # reads composed inside a binop. A receiver whose struct type CANNOT be
+    # affirmatively resolved (a call-return binding `let s = mk(); s.x`) FAILS CLOSED
+    # — pinned in the REFUSAL_ARMS block below (the oracle emits a load there; matching
+    # it is a later return-type-inference slice, so MIND must refuse, never miscompile).
+    ("j  field-read-idx0",
+     "struct field read at declaration index 0 (direct base load, no offset)",
+     "struct P { x: i64, y: i64 }\npub fn f(p: P) -> i64 { p.x }"),
+    ("j  field-read-idx1",
+     "struct field read at index 1 (CONST 8, Add, load)",
+     "struct P { x: i64, y: i64 }\npub fn f(p: P) -> i64 { p.y }"),
+    ("j  field-read-let-annot",
+     "field read on an annotated-let receiver (`let q: P = p; q.y`)",
+     "struct P { x: i64, y: i64 }\npub fn f(p: P) -> i64 { let q: P = p; q.y }"),
+    ("j  field-read-in-binop",
+     "two field reads composed inside a binop (`p.x + p.y`)",
+     "struct P { x: i64, y: i64 }\npub fn f(p: P) -> i64 { p.x + p.y }"),
+    ("j  field-read-nested-chain",
+     "nested field-access chain `p.q.z` (intermediate struct type resolved)",
+     "struct Q { z: i64 }\nstruct P { q: Q, y: i64 }\npub fn f(p: P) -> i64 { p.q.z }"),
 ]
 
 # i64-REFERENCES arms — NATIVE-ELF-ONLY constructs, parity-by-REFUSAL.
@@ -243,6 +268,15 @@ REFUSAL_ARMS = [
     ("r  field-store",
      "`p.x = v` struct field store (native-ELF-only; mic@3 must fail closed EMPTY)",
      "struct P { x: i64 }\npub fn f() -> i64 { let mut p: P = P { x: 1 }; p.x = 7; return p.x; }"),
+    # field-READ on a call-return receiver whose struct type is NOT affirmatively
+    # resolvable by the field_prefold pass (`let s = mk(); s.x` — no annotation, init
+    # is a call). The Rust oracle resolves this via return-type inference and emits a
+    # LOAD; the pass cannot, so it MUST fail closed (empty buf) rather than emit the
+    # CONST-0 stub (which was a fail-OPEN wrong-bytes miscompile before the ty==0 poison
+    # sentinel). Matching the oracle's load is a later return-type-inference slice.
+    ("r  field-read-callret",
+     "`let s = mk(); s.x` field read on an un-inferrable call-return receiver (must fail closed)",
+     "struct P { x: i64 }\nfn mk() -> P { P { x: 5 } }\npub fn f() -> i64 { let s = mk(); s.x }"),
 ]
 
 
