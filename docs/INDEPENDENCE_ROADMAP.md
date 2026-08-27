@@ -164,7 +164,7 @@ itself byte-identically with zero Rust & zero LLVM in the loop"* (integer/contro
   **DIAGNOSTIC-RULE PORTING COMPLETE (2026-07-24) — every diagnostic code the Rust checker still EMITS is
   now a pure-MIND decision core; the only exclusions are E2007 (feature-gate, no live oracle) and E2014
   (retired #99, u64 first-class) — both ungatable, correctly not ported. The quartet was then HARDENED via
-  a codex `gpt-5.6-sol` audit + kimi K3 hunt + the differential fuzzer + 2 cross-family blind reviews
+  a multi-model audit + hunt + the differential fuzzer + 2 cross-family blind reviews
   (`1701f11f`): closed a 250-binding scope-cap, a match-arm folded-kw under-fire + stmt-kw over-fire, and a
   premature-sentinel fail-open; `tc_differential_fuzz.py` (wired into CI) now gates all four resolution rules
   at 0 divergences vs live mindc, mechanically. B1's remaining frontier is the TYPE-INFERENCE tier: E2001 +
