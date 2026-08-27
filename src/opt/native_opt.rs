@@ -79,6 +79,7 @@ pub fn optimize_mic3(module: &mut IRModule, level: OptLevel) {
             const_if_prune(&mut module.instrs);
             fold_mul_by_zero(&mut module.instrs);
             fold_algebraic_identities(&mut module.instrs);
+            cse_binops(&mut module.instrs);
         }
     }
 }
@@ -344,6 +345,86 @@ fn fold_algebraic_identities(instrs: &mut Vec<Instr>) {
             // enclosing-scope use in the tail (all uses are define-after this point in SSA).
             instrs.remove(i);
             remap_operands(&mut instrs[i..], dst, survivor);
+            continue; // a new instruction now occupies index `i`.
+        }
+        i += 1;
+    }
+}
+
+/// The value-numbering key of a pure `BinOp`: its opcode discriminant plus operand value
+/// ids, with the operands sorted for the commutative opcodes so `a+b` and `b+a` collide.
+/// `BinOp` is a field-less enum, so `op as u8` is a stable per-opcode discriminant.
+fn binop_key(op: crate::ir::BinOp, lhs: ValueId, rhs: ValueId) -> (u8, ValueId, ValueId) {
+    use crate::ir::BinOp as B;
+    let commutative = matches!(
+        op,
+        B::Add | B::Mul | B::BitAnd | B::BitOr | B::BitXor | B::Eq | B::Ne
+    );
+    let (a, b) = if commutative && rhs < lhs {
+        (rhs, lhs)
+    } else {
+        (lhs, rhs)
+    };
+    (op as u8, a, b)
+}
+
+/// CSE/GVN slice — **region-scoped common-subexpression elimination of pure `BinOp`s**.
+/// Within a single instruction vector (one straight-line region body — one basic block for
+/// dominance purposes), a `BinOp` whose value-numbering key ([`binop_key`]) already appeared
+/// is redundant: because value ids are immutable in SSA, identical (opcode, operands) means a
+/// bit-identical result for EVERY operand type (no type reasoning needed). The later op is
+/// removed and its `dst` aliased to the first op's `dst` via [`remap_operands`]; the kept op
+/// dominates (it is earlier in the same block) so this is a pure rename, and nothing is ever
+/// reordered (so trap ordering for `Div`/`Mod` is preserved). Merging compounds: a remap can
+/// make a downstream op newly match an earlier key. Scoped strictly to one vector — nested
+/// regions are each an INDEPENDENT CSE scope (a value defined in one branch is not available
+/// in a sibling), so cross-region merges are conservatively never made. Deterministic: one
+/// forward pass keyed on a `BTreeMap`, no iteration-order dependence.
+fn cse_binops(instrs: &mut Vec<Instr>) {
+    use std::collections::BTreeMap;
+    let mut seen: BTreeMap<(u8, ValueId, ValueId), ValueId> = BTreeMap::new();
+    let mut i = 0;
+    while i < instrs.len() {
+        // Recurse into nested regions first — each is its own independent CSE scope.
+        match &mut instrs[i] {
+            Instr::If {
+                cond_instrs,
+                then_instrs,
+                else_instrs,
+                ..
+            } => {
+                cse_binops(cond_instrs);
+                cse_binops(then_instrs);
+                cse_binops(else_instrs);
+            }
+            Instr::While {
+                cond_instrs, body, ..
+            } => {
+                cse_binops(cond_instrs);
+                cse_binops(body);
+            }
+            Instr::FnDef { body, .. } => cse_binops(body),
+            _ => {}
+        }
+
+        let redundant: Option<(ValueId, ValueId)> = match &instrs[i] {
+            Instr::BinOp { dst, op, lhs, rhs } => {
+                let key = binop_key(*op, *lhs, *rhs);
+                match seen.get(&key) {
+                    Some(&first) => Some((*dst, first)),
+                    None => {
+                        seen.insert(key, *dst);
+                        None
+                    }
+                }
+            }
+            _ => None,
+        };
+
+        if let Some((dst, first)) = redundant {
+            // The kept (first) op dominates in this block; alias the redundant result to it.
+            instrs.remove(i);
+            remap_operands(&mut instrs[i..], dst, first);
             continue; // a new instruction now occupies index `i`.
         }
         i += 1;
@@ -802,6 +883,116 @@ mod tests {
         assert!(
             matches!(m.instrs.last(), Some(Instr::Output(id)) if *id == ValueId(3)),
             "the chain must collapse to y (%3)"
+        );
+    }
+
+    #[test]
+    fn basic_cse_merges_redundant_binop() {
+        use crate::ir::{BinOp, Instr};
+        // %2 = %0 + %1 ; %3 = %0 + %1 (redundant) ; output %3  ->  output %2, one Add.
+        let mut m = IRModule::new();
+        m.instrs = vec![
+            Instr::ConstI64(ValueId(0), 5),
+            Instr::ConstI64(ValueId(1), 6),
+            Instr::BinOp {
+                dst: ValueId(2),
+                op: BinOp::Add,
+                lhs: ValueId(0),
+                rhs: ValueId(1),
+            },
+            Instr::BinOp {
+                dst: ValueId(3),
+                op: BinOp::Add,
+                lhs: ValueId(0),
+                rhs: ValueId(1),
+            },
+            Instr::Output(ValueId(3)),
+        ];
+        m.next_id = 4;
+        optimize_mic3(&mut m, OptLevel::Basic);
+        assert_eq!(
+            m.instrs
+                .iter()
+                .filter(|i| matches!(i, Instr::BinOp { op: BinOp::Add, .. }))
+                .count(),
+            1,
+            "the redundant Add must be eliminated (one survives)"
+        );
+        assert!(
+            matches!(m.instrs.last(), Some(Instr::Output(id)) if *id == ValueId(2)),
+            "the redundant result(%3) must be aliased to the first(%2)"
+        );
+    }
+
+    #[test]
+    fn basic_cse_normalizes_commutative_operands() {
+        use crate::ir::{BinOp, Instr};
+        // %2 = %0 + %1 ; %3 = %1 + %0 (swapped operands) ; output %3  ->  merged, output %2.
+        let mut m = IRModule::new();
+        m.instrs = vec![
+            Instr::ConstI64(ValueId(0), 5),
+            Instr::ConstI64(ValueId(1), 6),
+            Instr::BinOp {
+                dst: ValueId(2),
+                op: BinOp::Add,
+                lhs: ValueId(0),
+                rhs: ValueId(1),
+            },
+            Instr::BinOp {
+                dst: ValueId(3),
+                op: BinOp::Add,
+                lhs: ValueId(1),
+                rhs: ValueId(0),
+            },
+            Instr::Output(ValueId(3)),
+        ];
+        m.next_id = 4;
+        optimize_mic3(&mut m, OptLevel::Basic);
+        assert_eq!(
+            m.instrs
+                .iter()
+                .filter(|i| matches!(i, Instr::BinOp { .. }))
+                .count(),
+            1,
+            "a+b and b+a must value-number to the same expression"
+        );
+        assert!(
+            matches!(m.instrs.last(), Some(Instr::Output(id)) if *id == ValueId(2)),
+            "swapped-operand duplicate must alias to the first"
+        );
+    }
+
+    #[test]
+    fn basic_cse_keeps_noncommutative_distinct() {
+        use crate::ir::{BinOp, Instr};
+        // %2 = %0 - %1 ; %3 = %1 - %0 : different values — must NOT be merged.
+        let mut m = IRModule::new();
+        m.instrs = vec![
+            Instr::ConstI64(ValueId(0), 5),
+            Instr::ConstI64(ValueId(1), 6),
+            Instr::BinOp {
+                dst: ValueId(2),
+                op: BinOp::Sub,
+                lhs: ValueId(0),
+                rhs: ValueId(1),
+            },
+            Instr::BinOp {
+                dst: ValueId(3),
+                op: BinOp::Sub,
+                lhs: ValueId(1),
+                rhs: ValueId(0),
+            },
+            Instr::Output(ValueId(3)),
+        ];
+        m.next_id = 4;
+        optimize_mic3(&mut m, OptLevel::Basic);
+        assert_eq!(
+            m.instrs
+                .iter()
+                .filter(|i| matches!(i, Instr::BinOp { op: BinOp::Sub, .. }))
+                .count(),
+            2,
+            "a-b and b-a are distinct and must both survive"
         );
     }
 
