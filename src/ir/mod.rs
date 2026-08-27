@@ -1470,6 +1470,11 @@ impl fmt::Display for IRModule {
 pub fn prepare_ir_for_backend(module: &mut IRModule) -> Result<(), IrVerifyError> {
     verify::verify_module(module)?;
     crate::opt::ir_canonical::canonicalize_module(module);
+    // Opt-in native mic@3 -> mic@3 optimizer (roadmap C6). Runs on the canonical IR,
+    // UPSTREAM of emitter divergence, so both the Rust and self-host emitters consume
+    // identical optimized bytes. DEFAULT OFF (MIND_NATIVE_OPT unset) -> strict no-op ->
+    // byte-identical, so keystone / canaries / frozen self-host seeds are untouched.
+    crate::opt::native_opt::optimize_mic3(module, crate::opt::native_opt::opt_level_from_env());
     verify::verify_module(module)
 }
 
