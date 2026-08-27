@@ -292,6 +292,17 @@ ARMS = [
     ("f64 lit-dyadic-0.5",
      "dyadic float literal 0.5 (widen must NOT regress the exactly-representable case)",
      "pub fn f() -> f64 { 0.5 }"),
+    # RI-E-0a — array/tensor `+`. The mic@3 emit_mic3 path lowers `a + b` on two
+    # `[i64;N]` arrays as OP_CONST_ARRAY a ; OP_CONST_ARRAY b ; a SINGLE
+    # OP_BINOP(Add, %a, %b) — byte-for-byte the oracle's shape (the elementwise
+    # value is produced at RUNTIME by the interpreter's aggregate-binop dispatch,
+    # not a distinct opcode). This arm PINS that mic@3 byte-identity so the
+    # NATIVE-ELF fail-closed tensor spine (nb_operand_is_tensor poisoning the
+    # nb_expr pointer-add) can NEVER silently bleed over and zero the mic@3
+    # OP_BINOP — a regression here would DRIFT vs the oracle's non-refusing emit.
+    ("h  array-add",
+     "elementwise `a + b` on two [i64;N] arrays -> OP_CONST_ARRAY/OP_CONST_ARRAY/OP_BINOP(Add) (mic@3 byte-identical; native-ELF fail-closes)",
+     "pub fn f() -> i64 { let a = [1, 2, 3, 4]; let b = [5, 6, 7, 8]; let c = a + b; c[0] }"),
 ]
 
 # i64-REFERENCES arms — NATIVE-ELF-ONLY constructs, parity-by-REFUSAL.

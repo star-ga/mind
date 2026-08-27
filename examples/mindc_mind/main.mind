@@ -30184,6 +30184,32 @@ pub fn nb_lets_lookup_slit_rest(lets: i64, n: i64, buf: i64, lo: i64, hi: i64, i
     nb_lets_lookup_slit_rest(lets, n, buf, lo, hi, i + 1, new_best)
 }
 
+// RI-E-0a tensor-operand detector. 1 iff `operand` is an ARRAY/TENSOR value:
+// an `[...]` array LITERAL node directly, OR an ident let-bound to one (its
+// slit-descriptor is an ast_array_lit, exactly the binding nb_let_descriptor
+// records). Mirrors nb_index_len's base classification (direct-literal fast
+// path, then ident -> slit-descriptor lookup with the desc==0 not-found guard
+// BEFORE any ast_kind on the descriptor). Returns 0 for every scalar operand
+// (literal, unbound name, scalar/struct binding), so a plain i64 binop is
+// unaffected. Used by the ast_binop fail-closed spine to refuse a tensor binop
+// rather than GP-add two base pointers.
+pub fn nb_operand_is_tensor(operand: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
+    if ast_kind(operand) == ast_array_lit() {
+        return 1;
+    }
+    if ast_kind(operand) != ast_ident() {
+        return 0;
+    }
+    let desc: i64 = nb_lets_lookup_slit(lets, lcell, buf, ast_span_lo(operand), ast_span_hi(operand));
+    if desc == 0 {
+        return 0;
+    }
+    if ast_kind(desc) == ast_array_lit() {
+        return 1;
+    }
+    0
+}
+
 // Resolve a name span to its bound DECLARED width, or 64 if unbound (an unbound
 // name — a param, a temp — is full-width by definition). LAST-match wins,
 // mirroring nb_lets_lookup. The assign arm reads this so `x = x + 1` on a
@@ -31108,6 +31134,30 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let rhs_id: i64 = s2.last_id;
         let id: i64 = s2.next_id;
         let op: i64 = ast_aux(node);
+        // RI-E-0a fail-closed TENSOR spine (runs BEFORE the INT/FLOAT scalar
+        // classification): an ARRAY/TENSOR-valued operand — an `[...]` literal
+        // or an ident let-bound to one — reaching the scalar GP binop path below
+        // would `mov rax,[lhs]; add rax,[rhs]` two base POINTERS, a RUNNING-ELF
+        // WRONG VALUE (fail-OPEN pointer arithmetic). Refuse it: POISON lcell+80
+        // (the fail-closed 0-byte artifact, per the ast_unsupported marker), NEVER
+        // a pointer-add. The proven per-op native-ELF tensor KERNELS
+        // (selftest_native_elf_tensor_ewadd_i64 et al.) are not yet wired into
+        // this general arbitrary-program dispatch (RI-E-1); until they are, a
+        // tensor binop is an HONEST 0-byte "not implemented", not a silent
+        // miscompile. Poison consumes NO extra SSA id and returns the SAME
+        // (next_id, last_id) shape as the scalar path, so nb_count_expr needs no
+        // mirror (why RI-E-0a is the safe first increment). main.mind's own source
+        // has ZERO array-valued binops (both detectors return 0), so this never
+        // fires during self-compile — the integer native-ELF oracle and the mic@3
+        // whole-module flip stay byte-identical.
+        if nb_operand_is_tensor(ast_child0(node), buf, lets, lcell) == 1 {
+            __mind_store_i64(lcell + 80, 1);
+            return NbState { code: s2.code, next_id: id + 1, last_id: id, ncalls: s2.ncalls };
+        }
+        if nb_operand_is_tensor(ast_child1(node), buf, lets, lcell) == 1 {
+            __mind_store_i64(lcell + 80, 1);
+            return NbState { code: s2.code, next_id: id + 1, last_id: id, ncalls: s2.ncalls };
+        }
         // RI-B1 FLOAT-op-FLOAT arm: when BOTH operands classify FLOAT (nb_node_dtype,
         // which propagates float through paren + scalar-arith binops) and the operator
         // is scalar arithmetic (+ - * /, nb_fp_opsel >= 0), route through the SSE2 f64
