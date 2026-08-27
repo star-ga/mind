@@ -260,6 +260,16 @@ ARMS = [
     ("k  for-range-ident",
      "range-for with an ident END (`for i in 0..n`) -> byte-neutral while desugar",
      "pub fn f(n: i64) -> i64 { let mut s: i64 = 0; for i in 0..n { s = s + i; } s }"),
+    # struct-literal CONSTRUCTION arms (ported from the C6/struct-lit branch): pin the
+    # tail-expression constructor emit (heap alloc n*8 + base+8*i ordered stores + the
+    # emit_mic3_module_fndef_tree case-(d) vidbuf[root_slot] ret-vid) byte-for-byte.
+    ("h  struct-lit-registry-ctor",
+     "struct-literal construction, registry path (struct defined, srt_count>0)",
+     "struct P { a: i64, b: i64 }\n"
+     "pub fn f(x: i64, y: i64) -> P { P { a: x, b: y } }"),
+    ("h  struct-lit-fallback-ctor",
+     "struct-literal construction, source-order fallback (no struct def, srt_count==0)",
+     "pub fn f() -> i64 { P { a: 1, b: 2 } }"),
 ]
 
 # i64-REFERENCES arms — NATIVE-ELF-ONLY constructs, parity-by-REFUSAL.
