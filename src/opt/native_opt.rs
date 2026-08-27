@@ -80,6 +80,11 @@ pub fn optimize_mic3(module: &mut IRModule, level: OptLevel) {
             fold_mul_by_zero(&mut module.instrs);
             fold_algebraic_identities(&mut module.instrs);
             cse_binops(&mut module.instrs);
+            // Cleanup: the passes above orphan constants (an eliminated `*1`'s `1`) and
+            // expose new const-const folds. Re-run the audited canonical passes ONCE — a
+            // bounded, deterministic finalize (not "loop until quiet"), reusing
+            // `prune_dead`/`constant_fold`/`reorder` rather than re-implementing DCE.
+            crate::opt::ir_canonical::canonicalize_module(module);
         }
     }
 }
@@ -681,23 +686,38 @@ mod tests {
     fn basic_is_fail_safe_on_nonconstant_condition() {
         use crate::ir::{BinOp, Instr};
         // if (%0 > %1) { const 7 } else { const 9 } -> non-constant condition: never pruned.
+        // %0/%1 are params (non-const) and Output(%5) keeps the If's result live so the
+        // canonical cleanup's dead-code pass does not remove the whole If.
         let mut m = IRModule::new();
-        m.instrs = vec![Instr::If {
-            cond_id: ValueId(2),
-            cond_instrs: vec![Instr::BinOp {
-                dst: ValueId(2),
-                op: BinOp::Gt,
-                lhs: ValueId(0),
-                rhs: ValueId(1),
-            }],
-            then_instrs: vec![Instr::ConstI64(ValueId(3), 7)],
-            then_result: ValueId(3),
-            else_instrs: vec![Instr::ConstI64(ValueId(4), 9)],
-            else_result: ValueId(4),
-            dst: ValueId(5),
-            branch_bindings: vec![],
-            merges: vec![],
-        }];
+        m.instrs = vec![
+            Instr::Param {
+                dst: ValueId(0),
+                name: "a".into(),
+                index: 0,
+            },
+            Instr::Param {
+                dst: ValueId(1),
+                name: "b".into(),
+                index: 1,
+            },
+            Instr::If {
+                cond_id: ValueId(2),
+                cond_instrs: vec![Instr::BinOp {
+                    dst: ValueId(2),
+                    op: BinOp::Gt,
+                    lhs: ValueId(0),
+                    rhs: ValueId(1),
+                }],
+                then_instrs: vec![Instr::ConstI64(ValueId(3), 7)],
+                then_result: ValueId(3),
+                else_instrs: vec![Instr::ConstI64(ValueId(4), 9)],
+                else_result: ValueId(4),
+                dst: ValueId(5),
+                branch_bindings: vec![],
+                merges: vec![],
+            },
+            Instr::Output(ValueId(5)),
+        ];
         m.next_id = 6;
         optimize_mic3(&mut m, OptLevel::Basic);
         assert!(
@@ -807,11 +827,17 @@ mod tests {
     #[test]
     fn basic_sub_folds_only_right_zero() {
         use crate::ir::{BinOp, Instr};
-        // 0 - x is NEGATION, never an identity: %0=const 0 ; %1=const 9 (x) ; %2 = %0 - %1.
+        // 0 - x is NEGATION, never an identity: %0=const 0 ; %1=param x ; %2 = %0 - %1.
+        // x is a param (not const) so the canonical cleanup cannot const-fold the Sub away —
+        // isolating the identity pass's decision (it correctly leaves 0-x alone).
         let mut neg = IRModule::new();
         neg.instrs = vec![
             Instr::ConstI64(ValueId(0), 0),
-            Instr::ConstI64(ValueId(1), 9),
+            Instr::Param {
+                dst: ValueId(1),
+                name: "x".into(),
+                index: 0,
+            },
             Instr::BinOp {
                 dst: ValueId(2),
                 op: BinOp::Sub,
@@ -829,10 +855,14 @@ mod tests {
             "0 - x is negation and must NOT be folded"
         );
 
-        // x - 0 IS x: %0=const 9 (x) ; %1=const 0 ; %2 = %0 - %1 ; output %2 -> output %0.
+        // x - 0 IS x: %0=param x ; %1=const 0 ; %2 = %0 - %1 ; output %2 -> output %0.
         let mut ident = IRModule::new();
         ident.instrs = vec![
-            Instr::ConstI64(ValueId(0), 9),
+            Instr::Param {
+                dst: ValueId(0),
+                name: "x".into(),
+                index: 0,
+            },
             Instr::ConstI64(ValueId(1), 0),
             Instr::BinOp {
                 dst: ValueId(2),
@@ -892,8 +922,16 @@ mod tests {
         // %2 = %0 + %1 ; %3 = %0 + %1 (redundant) ; output %3  ->  output %2, one Add.
         let mut m = IRModule::new();
         m.instrs = vec![
-            Instr::ConstI64(ValueId(0), 5),
-            Instr::ConstI64(ValueId(1), 6),
+            Instr::Param {
+                dst: ValueId(0),
+                name: "a".into(),
+                index: 0,
+            },
+            Instr::Param {
+                dst: ValueId(1),
+                name: "b".into(),
+                index: 1,
+            },
             Instr::BinOp {
                 dst: ValueId(2),
                 op: BinOp::Add,
@@ -930,8 +968,16 @@ mod tests {
         // %2 = %0 + %1 ; %3 = %1 + %0 (swapped operands) ; output %3  ->  merged, output %2.
         let mut m = IRModule::new();
         m.instrs = vec![
-            Instr::ConstI64(ValueId(0), 5),
-            Instr::ConstI64(ValueId(1), 6),
+            Instr::Param {
+                dst: ValueId(0),
+                name: "a".into(),
+                index: 0,
+            },
+            Instr::Param {
+                dst: ValueId(1),
+                name: "b".into(),
+                index: 1,
+            },
             Instr::BinOp {
                 dst: ValueId(2),
                 op: BinOp::Add,
@@ -968,8 +1014,16 @@ mod tests {
         // %2 = %0 - %1 ; %3 = %1 - %0 : different values — must NOT be merged.
         let mut m = IRModule::new();
         m.instrs = vec![
-            Instr::ConstI64(ValueId(0), 5),
-            Instr::ConstI64(ValueId(1), 6),
+            Instr::Param {
+                dst: ValueId(0),
+                name: "a".into(),
+                index: 0,
+            },
+            Instr::Param {
+                dst: ValueId(1),
+                name: "b".into(),
+                index: 1,
+            },
             Instr::BinOp {
                 dst: ValueId(2),
                 op: BinOp::Sub,
@@ -982,9 +1036,16 @@ mod tests {
                 lhs: ValueId(1),
                 rhs: ValueId(0),
             },
-            Instr::Output(ValueId(3)),
+            // consume BOTH so the cleanup's dead-code pass keeps them live.
+            Instr::BinOp {
+                dst: ValueId(4),
+                op: BinOp::Add,
+                lhs: ValueId(2),
+                rhs: ValueId(3),
+            },
+            Instr::Output(ValueId(4)),
         ];
-        m.next_id = 4;
+        m.next_id = 5;
         optimize_mic3(&mut m, OptLevel::Basic);
         assert_eq!(
             m.instrs
