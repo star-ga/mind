@@ -20176,6 +20176,18 @@ pub fn flatten_stmts(stmts_addr: i64, stmts_len: i64, i: i64, buf: i64, params_a
         return 0 - 1;
     }
     let name_leaf: i64 = ast_child0(stmt);
+    // #316 SHADOW WALL (fail-closed). flatten_expr_env resolves an ident PARAM-FIRST
+    // (:20870 tries resolve_param before letenv_lookup), so a `let a` shadowing param
+    // `a` would bind every post-shadow read of `a` back to the PARAM — silent wrong
+    // bytes, not a diagnostic. Refuse the shape instead of mis-lowering it. Byte-neutral
+    // for every currently-green case (they all use names distinct from their params);
+    // this also protects the fn-body-let path, which shares the same resolver.
+    // deferred: lift this once ident resolution is let-first (a separate slice) — the
+    // upgrade path is to try letenv_lookup before resolve_param and re-derive the
+    // affected goldens against the live oracle.
+    if resolve_param(params_addr, n_params, buf, ast_span_lo(name_leaf), ast_span_hi(name_leaf)) >= 0 {
+        return 0 - 1;
+    }
     let j: i64 = __mind_load_i64(lcount);
     __mind_store_i64(lenv + j * 24 + 0, ast_span_lo(name_leaf));
     __mind_store_i64(lenv + j * 24 + 8, ast_span_hi(name_leaf));
@@ -22245,7 +22257,30 @@ pub fn emit_mic3_if_block_instr(s: EmitState, cond_expr: i64, then_blk: i64, els
     // --- merge pass: merged names, per-name placeholders + merge_ids from after_else ---
     let t_lcount: i64 = __mind_load_i64(t_lc);
     let e_lcount: i64 = __mind_load_i64(e_lc);
-    let mn: i64 = build_merged_names(t_lenv, t_lcount, e_lenv, e_lcount, buf, mspans);
+    // #316 / #318 THE INVARIANT: a name enters a region's merge set IFF it denotes a
+    // binding that EXISTS BEFORE the region AND is ASSIGNED (not declared) inside it.
+    // A `let` CREATES a binding, so it fails the first conjunct by construction —
+    // always, including a `let` that shadows a param (that declares a NEW binding whose
+    // scope dies at `}`; the outer name is never assigned, so it does not merge either).
+    // Measured against the live Rust oracle: `if a { let a = 5; a } else { 7 }` emits
+    // byte-identically to `if a { 5 } else { 7 }` (56B both) — a declaration is never a
+    // merge candidate regardless of any outer binding.
+    // And no ASSIGNMENT can reach here: flatten_stmts (:20170) walls every non-final
+    // statement that is not an `ast_let()` with -1. So on the entire subset this emitter
+    // accepts, the write set is EMPTY BY CONSTRUCTION and mn is identically 0.
+    // This is not a filter — build_merged_names built the merge set out of the let-env,
+    // i.e. out of declarations, which is exactly the bug.
+    // deferred: when an `ast_assign` arm lands in flatten_stmts, thread a parallel
+    // `bwenv`/`bwcount` pair (same 24-byte (lo,hi,slot->vid) layout as lenv, so
+    // lenv_slots_to_vids / lenv_lookup_vid are reused verbatim) and record a target IFF
+    // it does NOT resolve in this branch's own lenv-so-far AND DOES resolve in the outer
+    // scope; then build_merged_names(t_bw, ..., e_bw, ...) keeps its current body and
+    // only its inputs change. WARNING for that slice: assign_merge_vids' zero-const
+    // placeholder on the non-writing edge (:22362) was byte-verified only against the
+    // OLD buggy oracle — a real outer write almost certainly needs the outer binding's
+    // vid there, not a synthetic ConstI64 0. Re-derive that family against fresh
+    // corrected-oracle goldens; do not carry it forward as proven.
+    let mn: i64 = 0;
     __mind_store_i64(mcount, mn);
     let final_ctr: i64 = assign_merge_vids(mspans, mn, buf, t_lenv, t_lcount, e_lenv, e_lcount, extra, after_else, 0);
     let dst: i64 = final_ctr;
@@ -32551,9 +32586,25 @@ pub fn nb_while_copyin(code: String, carry: i64, ncarry: i64, i: i64, buf: i64, 
 // Shared by nb_branch_writes (if-branches) and nb_while_live_writes (while bodies)
 // so the two walkers cannot drift apart again -- that drift WAS the bug class.
 pub fn nb_branch_assign_write(buf: i64, sa: i64, upto: i64, stmt: i64, names: i64, n: i64) -> i64 {
+    nb_branch_assign_write2(buf, sa, upto, 0, 0, stmt, names, n)
+}
+// Two-scope form: a name is region-local if a prior `let` declares it in EITHER the
+// immediately-enclosing statement list (sa, upto) OR an outer one (esa, eupto).
+// The outer pair is what fixes `if c { let x = ..; while .. { x = .. } }`: the while
+// body's assign is walked with body_sa, so the `let` sitting in the ENCLOSING BRANCH is
+// invisible to a single-scope scan and the shadow leaks into the enclosing if's merge
+// set. esa == 0 means "no outer scope" (the direct if-branch walk).
+pub fn nb_branch_assign_write2(buf: i64, sa: i64, upto: i64, esa: i64, eupto: i64, stmt: i64, names: i64, n: i64) -> i64 {
     let nm: i64 = ast_child0(stmt);
-    if nb_prior_let(buf, sa, upto, ast_span_lo(nm), ast_span_hi(nm), 0) == 1 {
+    let lo: i64 = ast_span_lo(nm);
+    let hi: i64 = ast_span_hi(nm);
+    if nb_prior_let(buf, sa, upto, lo, hi, 0) == 1 {
         return n;
+    }
+    if esa != 0 {
+        if nb_prior_let(buf, esa, eupto, lo, hi, 0) == 1 {
+            return n;
+        }
     }
     nb_writes_add(buf, names, n, nm)
 }
@@ -32600,7 +32651,9 @@ pub fn nb_branch_writes(buf: i64, sa: i64, sl: i64, i: i64, names: i64, n: i64) 
         nb_branch_assign_write(buf, sa, i, stmt, names, n)
     } else {
         if k == ast_while() {
-            nb_while_live_writes(buf, ast_child0(ast_child1(stmt)), ast_aux(ast_child1(stmt)), 0, names, n)
+            // Outer scope = THIS branch's statement list up to the while, so a `let`
+            // before the loop hides a body assign to the same name (#318 residual).
+            nb_while_live_writes(buf, ast_child0(ast_child1(stmt)), ast_aux(ast_child1(stmt)), 0, names, n, sa, i)
         } else {
             if k == ast_if() {
                 // F2 outer-var-through-nested-region (lower.rs 4003-4013 `other =>`
@@ -32660,40 +32713,54 @@ pub fn nb_writes_add(buf: i64, names: i64, n: i64, name_leaf: i64) -> i64 {
 // merged it and its post-region read resolved to the stale pre-if slot —
 // `if{ while{ if{x+=1} } }` returned 0 want 3). Assign targets only: a nested
 // `let` of the same name is a region-local shadow, not a write of the outer var.
-pub fn nb_while_live_writes(buf: i64, body_sa: i64, body_sl: i64, i: i64, names: i64, n: i64) -> i64 {
+pub fn nb_while_live_writes(buf: i64, body_sa: i64, body_sl: i64, i: i64, names: i64, n: i64, esa: i64, eupto: i64) -> i64 {
     if i >= body_sl {
         return n;
     }
     let stmt: i64 = __mind_load_i64(body_sa + i * 8);
     let k: i64 = ast_kind(stmt);
     // #318: the comment above CLAIMED the let-shadow rule but the code never applied
-    // it -- every assign target was recorded, so `if c { let x = ..; while .. { x = .. } }`
-    // leaked the body-local shadow into the ENCLOSING if's merge set. Same defect as
-    // nb_branch_writes, one nesting level down; same ordered prior-let filter fixes it.
+    // it -- every assign target was recorded regardless of any prior `let`.
+    // TWO scopes are needed here, and an earlier revision of this fix got that wrong:
+    // this walk receives body_sa (the WHILE-BODY statement list), so a single-scope scan
+    // sees only lets INSIDE the loop. The shape `if c { let x = ..; while .. { x = .. } }`
+    // puts the `let` in the ENCLOSING BRANCH, where body_sa cannot reach it -- so the
+    // body assign still recorded `x` as a write of the outer name and the shadow leaked
+    // into the enclosing if's merge set. MEASURED before this change, against the
+    // reseeded stage1.elf: that program returned 3 on --backend native where tree-eval
+    // and MLIR both return 7.
+    // nb_branch_writes therefore passes (sa, i) -- its own list, up to the while -- as
+    // the OUTER scope, and nb_branch_assign_write2 rejects a name declared in EITHER.
+    // deferred: the chain is TWO levels deep (enclosing branch + this body). A `let`
+    // three or more levels out -- e.g. an if inside a while inside a branch -- is still
+    // invisible, because the region descent forwards the same outer pair rather than
+    // pushing a scope. Upgrade path: replace the (esa, eupto) pair with a heap scope
+    // stack that region descent pushes onto, and test every frame in
+    // nb_branch_assign_write2. That moves the merge set again and needs its own reseed.
     let new_n: i64 = if k == ast_assign() {
-        nb_branch_assign_write(buf, body_sa, i, stmt, names, n)
+        nb_branch_assign_write2(buf, body_sa, i, esa, eupto, stmt, names, n)
     } else {
-        nb_while_live_writes_region(buf, stmt, k, names, n)
+        nb_while_live_writes_region(buf, stmt, k, names, n, esa, eupto)
     };
-    nb_while_live_writes(buf, body_sa, body_sl, i + 1, names, new_n)
+    nb_while_live_writes(buf, body_sa, body_sl, i + 1, names, new_n, esa, eupto)
 }
 
 // Region-descent arm of nb_while_live_writes (early-return form so the value-if
 // above stays 2-way, mic@3 note-emittable): a nested `while` recurses into its
 // body; a nested `if` recurses into both branches; anything else adds nothing.
-pub fn nb_while_live_writes_region(buf: i64, stmt: i64, k: i64, names: i64, n: i64) -> i64 {
+pub fn nb_while_live_writes_region(buf: i64, stmt: i64, k: i64, names: i64, n: i64, esa: i64, eupto: i64) -> i64 {
     if k == ast_while() {
         let wb: i64 = ast_child1(stmt);
-        return nb_while_live_writes(buf, ast_child0(wb), ast_aux(wb), 0, names, n);
+        return nb_while_live_writes(buf, ast_child0(wb), ast_aux(wb), 0, names, n, esa, eupto);
     }
     if k == ast_if() {
         let tb: i64 = ast_child1(stmt);
-        let after_then: i64 = nb_while_live_writes(buf, ast_child0(tb), ast_aux(tb), 0, names, n);
+        let after_then: i64 = nb_while_live_writes(buf, ast_child0(tb), ast_aux(tb), 0, names, n, esa, eupto);
         let eb: i64 = ast_child2(stmt);
         if eb == 0 {
             return after_then;
         }
-        return nb_while_live_writes(buf, ast_child0(eb), ast_aux(eb), 0, names, after_then);
+        return nb_while_live_writes(buf, ast_child0(eb), ast_aux(eb), 0, names, after_then, esa, eupto);
     }
     n
 }

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3384 | **Est. tokens:** ~7,967,993
-**Generated:** 2026-08-27 13:33 UTC
+**Files:** 3384 | **Est. tokens:** ~7,968,887
+**Generated:** 2026-08-28 18:37 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 33 | ~25,934 |
+| `./` | 33 | ~25,976 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -62,7 +62,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 158 | ~380,339 |
+| `examples/mindc_mind/` | 158 | ~380,592 |
 | `examples/mindc_mind/testdata/` | 1 | ~2,452 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 2 | ~415 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
@@ -78,7 +78,7 @@
 | `.github/workflows/` | 9 | ~16,040 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~20,940 |
-| `scripts/` | 10 | ~14,661 |
+| `scripts/` | 10 | ~15,260 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `sdk/ts/mic-map/` | 6 | ~16,202 |
@@ -499,7 +499,7 @@
 - `.editorconfig` (~51 tok, small) — root = true
 - `.gitattributes` (~130 tok, small) — # Enforce LF line endings for all text so byte-exact tests (fmt idempotence,
 - `GITHUB_SETUP_INSTRUCTIONS.md` (~240 tok, medium) — GitHub Setup (Quick)
-- `.gitignore` (~611 tok, large) — # Rust
+- `.gitignore` (~653 tok, large) — # Rust
 - `incompatible` (~0 tok, tiny)
 - `LICENSE` (~2573 tok, huge) —                                  Apache License
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
@@ -873,7 +873,7 @@
 
 - `backend_native_bridge_smoke.py` (~1380 tok, large) — RI-D slice 1 gate (task #110): `mindc build --backend native` is a byte-faithful
 - `bootstrap_smoke.py` (~2329 tok, huge)
-- `branch_shadow_crossbackend_smoke.py` (~1888 tok, huge) — #318 — branch-local `let` shadow must not leak across backends (the WEDGE gate).
+- `branch_shadow_crossbackend_smoke.py` (~2039 tok, huge) — #318 — branch-local `let` shadow must not leak across backends (the WEDGE gate).
 - `check_driver.mind` (~9782 tok, huge) — ===========================================================================
 - `closure_netverify.py` (~1423 tok, large) — # Canonical independent net-verify harness for CLOSURES / FN-VALUES / UNRESOLVED
 - `collect_field_strings_smoke.py` (~1161 tok, large)
@@ -896,7 +896,7 @@
 - `method_calls_smoke.py` (~1294 tok, large)
 - `mic3_flip_smoke.py` (~1150 tok, large)
 - `mic3_oracle_smoke.py` (~764 tok, large) — mic@3 self-host convergence — Phase 0 gate: the Rust oracle.
-- `mic3_primitives_smoke.py` (~22688 tok, huge) — mic@3 self-host convergence — Phase 1 gate: pure-MIND ULEB128 / zigzag.
+- `mic3_primitives_smoke.py` (~22790 tok, huge) — mic@3 self-host convergence — Phase 1 gate: pure-MIND ULEB128 / zigzag.
 - `mindfuzz_self_host.py` (~11539 tok, huge)
 - `mod_operator_smoke.py` (~2100 tok, huge)
 - `multi_let_smoke.py` (~1499 tok, large)
@@ -1155,7 +1155,7 @@
 - `main.rs` (~2372 tok, huge) — Copyright 2026 STARGA Inc.
 ### `scripts/`
 
-- `preflight.sh` (~2573 tok, huge) — preflight.sh — local CI-parity gate. Run before pushing to avoid red CI.
+- `preflight.sh` (~3172 tok, huge) — preflight.sh — local CI-parity gate. Run before pushing to avoid red CI.
 - `quick_perf.sh` (~734 tok, large) — quick_perf.sh — FAST one-sided compile-speed criterion gate.
 - `run_crypto_vectors.sh` (~1751 tok, huge) — Build every pure-MIND crypto/TLS std module to a shared object and run its
 ### `sdk/ts/mic-map/dist/`

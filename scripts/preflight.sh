@@ -22,6 +22,11 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 fail=0
+# Every CI-parity build below goes here instead of ./target. Those builds use
+# different feature sets than a normal dev build, and writing them into the shared
+# target dir silently replaces the working mindc — which caused two false diagnoses
+# (a phantom "1294 check errors" and a phantom "stale golden") before it was found.
+PF_TARGET="${PF_TARGET:-target-preflight}"
 step() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
 bad()  { printf '\033[31mFAIL:\033[0m %s\n' "$1"; fail=1; }
 
@@ -37,8 +42,22 @@ if cargo build --quiet 2>/tmp/preflight-build.err; then echo "ok"; else
 fi
 
 step "mindc check std/ examples/  [ci.yml mindcraft_check — error-severity incl. fmt::drift]"
-if cargo build --release --no-default-features --features "std-surface cross-module-imports" --bin mindc --quiet 2>/dev/null; then
-  errs=$(./target/release/mindc check std/ examples/ 2>&1 | grep -E ': error:' || true)
+# ISOLATED TARGET DIR (2026-08-27). This step must build mindc the way CI does —
+# --no-default-features, i.e. WITHOUT mlir-build — but it used to write that binary
+# into the shared ./target, silently REPLACING the developer's working mindc. Two
+# false diagnoses in one session came from exactly that:
+#   * `mindc check std examples` then reports ~1294 E2003/E2007 "no std surface"
+#     errors where the CI-featured binary reports 0 — same tree, opposite verdict;
+#   * `mindc build --backend mlir` starts emitting a ~16KB LAUNCHER STUB that prints
+#     "[mind-runtime] Parsed ... evaluated ..." and EXITS 0 regardless of the
+#     program's return value, instead of a real ~37KB compiled binary — so every
+#     exit-code-based value check silently reads 0.
+# Detection if you ever suspect it: `strings target/release/mindc | grep -c mlir-opt`
+# is 4 on a full build and 2 on a --no-default-features one.
+# Building into target-preflight/ keeps this gate CI-faithful without corrupting the
+# tree the rest of the session measures against.
+if CARGO_TARGET_DIR="$PF_TARGET" cargo build --release --no-default-features --features "std-surface cross-module-imports" --bin mindc --quiet 2>/dev/null; then
+  errs=$("$PF_TARGET/release/mindc" check std/ examples/ 2>&1 | grep -E ': error:' || true)
   if [ -z "$errs" ]; then echo "ok (warnings allowed)"; else
     bad "mindc check error-severity diagnostics (fmt::drift → mindc fmt <file>; tuple-return → #[repr(C)] struct):"
     printf '%s\n' "$errs" | head
@@ -160,7 +179,18 @@ if [ "${1:-}" = "--full" ]; then
   step "bench gate (frozen low-level frontend)  [bench-gate.yml, --no-default-features]"
   base=$(ls -t .bench-baseline-*correctness*.txt 2>/dev/null | head -1)
   if [ -n "$base" ] && [ -f tools/bench_gate.py ]; then
-    cargo bench --bench compiler --no-default-features -- \
+    # ISOLATED TARGET DIR, same reason as the mindc-check step above — and this one is
+    # nastier, because `cargo bench` builds in the RELEASE profile and this invocation
+    # passes --no-default-features with NO feature flags at all. Run in the shared
+    # ./target it rewrote target/release/mindc WITHOUT std-surface, as preflight's very
+    # LAST step — so the toolchain was left broken at the exact moment preflight printed
+    # "safe to push". The symptom is a loud fail-close on the next MLIR build:
+    #   lower_expr: no IR lowering for `Let` in value position — refusing to emit a
+    #   const-0 placeholder (that would be a silent miscompile)
+    # which reads like a compiler regression and is really just a feature-stripped binary.
+    # The gate is unaffected: bench_gate.py compares against a committed
+    # .bench-baseline-*.txt file, not criterion's own on-disk history.
+    CARGO_TARGET_DIR="$PF_TARGET" cargo bench --bench compiler --no-default-features -- \
       --warm-up-time 3 --measurement-time 8 --output-format bencher > /tmp/preflight-bench.out 2>/dev/null
     if python3 tools/bench_gate.py --baseline "$base" --current /tmp/preflight-bench.out --threshold 0.10; then
       echo "ok (regression <= +10% vs $base; speedups always pass)"

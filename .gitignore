@@ -106,3 +106,7 @@ examples/*/target/
 /a.out
 .wrangler/
 examples/mindc_mind/mindfuzz_self_host_staged/
+
+# preflight builds mindc CI-style (--no-default-features) here so it cannot
+# clobber the working ./target/release/mindc — see scripts/preflight.sh
+/target-preflight/

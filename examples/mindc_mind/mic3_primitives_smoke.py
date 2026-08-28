@@ -946,9 +946,14 @@ def main() -> int:
              " ", "")),
     ]
     for name, params, then_lets, else_lets, src, golden_hex in block_cases:
-        # else_lets restricted to names not already in then (first-seen dedup).
-        else_only = [u for u in else_lets if u not in then_lets]
-        strs = [name] + params + then_lets + else_only
+        # #316: the corrected oracle does NOT intern branch-local `let` names. A `let`
+        # is a block-scoped DECLARATION, never a merged name, so it contributes no
+        # string-table entry — the re-blessed goldens above have string tables of
+        # exactly [fn-name] + params. The then_lets/else_lets columns are retained
+        # because they still document each case's shape (and the fail-closed arm below
+        # keys off them), but they no longer feed the strtab.
+        else_only = [u for u in else_lets if u not in then_lets]  # noqa: F841 (shape doc)
+        strs = [name] + params
         sbuf = b"".join(strs)
         soff = [0]
         for s in strs:

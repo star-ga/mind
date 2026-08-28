@@ -67,6 +67,13 @@ SHAPES = [
         "INVALID IR, 'func.return op must be the last operation in the parent block'; "
         "that is a SEPARATE defect, tracked apart from #318, and would confound this net)"),
 
+    ("J_enclosing_let_while_assigns",
+     "fn f(c: i64) -> i64 {\n    let x: i64 = 7;\n    if c == 1 {\n        let x: i64 = 1;\n        while x < 3 {\n            x = x + 1;\n        }\n    }\n    return x;\n}\nfn main() -> i64 { return f(1); }\n",
+     7, "the TWO-SCOPE shape: the shadowing `let` is in the ENCLOSING branch while the "
+        "loop body ASSIGNS it. A single-scope prior-let scan cannot see it (the while "
+        "walk only receives body_sa), so the shadow leaked into the enclosing if's "
+        "merge set — measured native=3 vs tree-eval/MLIR=7 before the two-scope fix"),
+
     # CONTROL — must be CORRECT before AND after the port. Guards over-firing.
     ("F_control_fresh_local",
      "fn f(cond: i64) -> i64 {\n    let y: i64 = 3;\n    if cond == 1 {\n        let z: i64 = 99;\n        z\n    } else {\n        0\n    }\n    return y;\n}\nfn main() -> i64 { return f(1); }\n",
