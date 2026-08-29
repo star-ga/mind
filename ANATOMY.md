@@ -4,9 +4,9 @@
 > estimates to decide whether you need the full file or the summary is enough.
 > Re-generate with: `anatomy .`
 
-**Project:** `mind`
-**Files:** 3377 | **Est. tokens:** ~7,919,611
-**Generated:** 2026-08-22 11:05 UTC
+**Project:** `mind-wt-gh`
+**Files:** 3397 | **Est. tokens:** ~7,951,982
+**Generated:** 2026-08-29 15:29 UTC
 
 ## Token Budget Guide
 
@@ -22,13 +22,13 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 33 | ~25,922 |
+| `./` | 33 | ~26,263 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
 | `assets/logo/` | 1 | ~453 |
 | `audits/` | 6 | ~607 |
-| `bench/` | 2 | ~1,772 |
+| `bench/` | 4 | ~3,105 |
 | `benches/` | 28 | ~83,676 |
 | `bench/fft/` | 8 | ~8,060 |
 | `benchmarks/` | 12 | ~20,412 |
@@ -41,13 +41,13 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,465 |
-| `docs/` | 34 | ~80,520 |
+| `docs/` | 35 | ~82,222 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
 | `docs/mindcraft/` | 3 | ~7,086 |
 | `docs/provenance/` | 2 | ~4,035 |
-| `docs/rfcs/` | 32 | ~147,259 |
+| `docs/rfcs/` | 33 | ~150,175 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 28 | ~49,880 |
 | `examples/bimap_currency/` | 3 | ~780 |
@@ -61,8 +61,8 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 156 | ~366,413 |
-| `examples/mindc_mind/testdata/` | 1 | ~2,452 |
+| `examples/mindc_mind/` | 159 | ~371,685 |
+| `examples/mindc_mind/testdata/` | 2 | ~3,328 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 2 | ~415 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 2 | ~1,928 |
@@ -74,10 +74,10 @@
 | `.githooks/` | 1 | ~255 |
 | `.github/` | 3 | ~149 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 9 | ~15,845 |
+| `.github/workflows/` | 9 | ~16,084 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
-| `runtime-support/` | 1 | ~20,558 |
-| `scripts/` | 10 | ~13,480 |
+| `runtime-support/` | 1 | ~21,261 |
+| `scripts/` | 11 | ~14,875 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `sdk/ts/mic-map/` | 6 | ~16,202 |
@@ -397,15 +397,15 @@
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~21,737 |
-| `src/ir/` | 5 | ~61,184 |
+| `src/ir/` | 6 | ~64,994 |
 | `src/ir/compact/` | 3 | ~15,282 |
 | `src/ir/compact/v2/` | 8 | ~38,404 |
-| `src/ir/compact/v3/` | 6 | ~55,629 |
+| `src/ir/compact/v3/` | 7 | ~60,372 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,880 |
 | `src/mlir/` | 3 | ~5,905 |
 | `src/ops/` | 3 | ~4,764 |
-| `src/opt/` | 8 | ~41,326 |
+| `src/opt/` | 8 | ~41,375 |
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 2 | ~20,355 |
 | `src/phf/` | 1 | ~4,955 |
@@ -413,18 +413,20 @@
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
-| `src/test/` | 1 | ~6,816 |
+| `src/test/` | 1 | ~7,095 |
 | `src/type_checker/` | 1 | ~15,151 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,332 |
-| `tests/` | 326 | ~558,697 |
+| `tests/` | 331 | ~564,591 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
 | `tests/conformance/gpu_profile/` | 2 | ~11 |
 | `tests/cross_substrate_identity/` | 2 | ~4,113 |
+| `tests/cross_substrate_identity/array-store-branch/` | 2 | ~974 |
+| `tests/cross_substrate_identity/array-store-loop/` | 2 | ~1,081 |
 | `tests/cross_substrate_identity/bimap-phf/` | 2 | ~1,665 |
 | `tests/cross_substrate_identity/collatz/` | 2 | ~962 |
 | `tests/cross_substrate_identity/dot-f32-v-4093/` | 2 | ~1,222 |
@@ -467,7 +469,7 @@
 | `tests/selfhost_gaps/never_wrong/` | 9 | ~184 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
-| `tools/` | 4 | ~4,578 |
+| `tools/` | 4 | ~5,342 |
 | `tools/mindfuzz/` | 7 | ~15,992 |
 | `tools/mindfuzz/seeds/` | 6 | ~1,330 |
 | `tools/mindfuzz/violations/` | 1 | ~0 |
@@ -489,7 +491,7 @@
 - `.bench-pre-pratt.txt` (~32 tok, tiny) — === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
-- `Cargo.toml` (~2123 tok, huge) — [package]
+- `Cargo.toml` (~2464 tok, huge) — [package]
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -532,6 +534,9 @@
 - `arch-mind-v0.4.2.json` (~88 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
 - `arch-mind-v0.4.3.json` (~88 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
 - `arch-mind-v0.4.4.json` (~88 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
+### `bench/`
+
+- `beat_clang_igemm_driver.c` (~494 tok, medium)
 ### `benches/`
 
 - `autodiff.rs` (~1661 tok, huge) — Simple linear function
@@ -648,6 +653,7 @@
 ### `bench/`
 
 - `matmul_det_bench.mind` (~1079 tok, large) — bench/matmul_det_bench.mind — first pure-MIND runtime benchmark for the
+- `RESULTS-beat-clang-igemm-2026-08-21.md` (~839 tok, large) — MIND vs clang -O3 — int8 GEMM head-to-head (2026-08-21)
 - `RESULTS-int8-2026-06-08.md` (~693 tok, large) — MIND int8 VNNI GEMM — single-core vs OpenBLAS f32 (2026-06-08)
 ### `.cargo/`
 
@@ -658,7 +664,7 @@
 ### `docs/`
 
 - `architecture.md` (~965 tok, large) — Architecture
-- `ARRAY_SEMANTICS.md` (~6556 tok, huge) — MIND array semantics — normative architecture record
+- `ARRAY_SEMANTICS.md` (~7417 tok, huge) — MIND array semantics — normative architecture record
 - `autodiff.md` (~595 tok, large) — Static autodiff (public)
 ### `docs/backends/`
 
@@ -696,6 +702,7 @@
 - `ir.md` (~451 tok, medium) — MIND IR core
 - `ir-mlir.md` (~480 tok, medium) — IR & MLIR Integration
 - `ir-stability.md` (~1485 tok, large) — IR stability contract
+- `MHS_ROADMAP.md` (~652 tok, large) — MHS / Governed Device I/O Roadmap
 - `migration-roadmap.md` (~1896 tok, huge) — MIND Migration Roadmap — Any Language → Pure Executing MIND
 ### `docs/mindcraft/`
 
@@ -748,11 +755,12 @@
 - `0025-mind-intent-contracts.md` (~3605 tok, huge) — RFC 0025: MIND Intent — Intent Contracts (goal + constraints → verifiable Contract IR)
 - `DRAFT-deterministic-format-frontend.md` (~10522 tok, huge) — RFC DRAFT: Deterministic Multi-Format Ingest Front-End (JSON / TOON / CSV / TSV / NDJSON / TOML)
 - `DRAFT-deterministic-json-frontend.md` (~5177 tok, huge) — RFC DRAFT: Deterministic Streaming SIMD JSON Structural Front-End
+- `DRAFT-governed-device-io-mhs.md` (~2916 tok, huge) — Draft RFC: Governed Device I/O and MHS Compatibility
 - `odc-language-primitives.md` (~418 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
 
-- `RI_DEPENDENCY_MATRIX.md` (~2494 tok, huge) — Rust-Independence (RI) Dependency Matrix
+- `RI_DEPENDENCY_MATRIX.md` (~2683 tok, huge) — Rust-Independence (RI) Dependency Matrix
 - `runs-burndown-roadmap.md` (~3203 tok, huge) — MIND RUNS Burndown Roadmap
 - `security.md` (~1492 tok, large) — Security Guide
 - `self-host-trace-hash-port.md` (~1406 tok, large) — #17 — Self-compute the native PT_NOTE (pure-MIND trace-hash port)
@@ -890,7 +898,7 @@
 - `method_calls_smoke.py` (~1294 tok, large)
 - `mic3_flip_smoke.py` (~1150 tok, large)
 - `mic3_oracle_smoke.py` (~764 tok, large) — mic@3 self-host convergence — Phase 0 gate: the Rust oracle.
-- `mic3_primitives_smoke.py` (~22501 tok, huge) — mic@3 self-host convergence — Phase 1 gate: pure-MIND ULEB128 / zigzag.
+- `mic3_primitives_smoke.py` (~22435 tok, huge) — mic@3 self-host convergence — Phase 1 gate: pure-MIND ULEB128 / zigzag.
 - `mod_operator_smoke.py` (~2100 tok, huge)
 - `multi_let_smoke.py` (~1499 tok, large)
 - `now_ns_smoke.py` (~678 tok, large) — # Copyright 2025 STARGA Inc.
@@ -904,6 +912,8 @@
 - `_ref_recursion.note` (~16 tok, tiny) — 6d125a946243b0550700d9aa6bc2058b51a3b8bf6e536a8b0b3f545d79b7346f
 - `_ref_struct_field.note` (~16 tok, tiny) — 2f7f2ea32ee47138e1b0162bd51f418b4e5005b4569054f5f3c392ebd2258d96
 - `_ref_value_if.note` (~16 tok, tiny) — ae565a5154b76ee1f44a32c16db2e9a8387f2f60c5fca92bba2dc9bb70afb599
+- `rh_f64_aggregate_canary_smoke.py` (~1443 tok, large) — RH f64-aggregate surface canary (RH_REQUIRED_F64_AGGREGATE_SURFACE).
+- `ri_d1_frozen_profile_gate.py` (~2091 tok, huge) — RI-D1 readiness gate (task #313): prove `mindc build --backend native` is READY to be
 - `self_host_andor_precedence_smoke.py` (~1680 tok, huge) — Front-end PARITY battery for `&&` / `||` precedence + short-circuit.
 - `self_host_andor_smoke.py` (~2142 tok, huge) — Permanent battery for the self-host `&&` / `||` short-circuit operators.
 - `self_host_arena_growth_smoke.py` (~1382 tok, large)
@@ -967,11 +977,12 @@
 - `self_host_native_narrowwrap_smoke.py` (~1673 tok, huge) — Roadmap C2 narrow-int native-ELF rung — user-reachable i8/i16/i32 two's-complement
 - `self_host_native_scalar_f32_smoke.py` (~1342 tok, large) — Phase C1-remainder f32 rung — native-ELF scalar SINGLE-precision chain.
 - `self_host_native_scalar_f64_smoke.py` (~1201 tok, large) — RI-B2 f64 rung (#108) — native-ELF scalar STRICT-FP f64 CHAIN.
+- `self_host_native_scalar_narrow_smoke.py` (~1800 tok, huge) — RI-D / #10 native-float SLICE 1a — native-ELF SATURATING f64 -> signed NARROW
 - `self_host_native_scast_smoke.py` (~1694 tok, huge)
 - `self_host_native_simd_dot_f32_smoke.py` (~1502 tok, huge) — RI-B2-S11 (#108) — native-ELF PACKED-f32 SIMD (SSE, 128-bit) STRICT-FP DOT-PRODUCT.
 - `self_host_native_simd_dot_i16_smoke.py` (~1130 tok, large) — RI-B2-S12 (#108) — native-ELF PACKED-int16 SIMD DOT-PRODUCT, byte-identity rung.
 - `self_host_native_simd_dot_q16_smoke.py` (~1486 tok, large) — RI-B2-S10 (#108) — native-ELF PACKED-SIMD Q16.16 DOT-PRODUCT, byte-identity rung.
-- `self_host_native_string_smoke.py` (~2271 tok, huge)
+- `self_host_native_string_smoke.py` (~2275 tok, huge)
 - `self_host_native_tensor_batchsum_smoke.py` (~2372 tok, huge) — C4-T6 — native-ELF 3-D BATCHED SUM (i64), zero MLIR/LLVM. The FIRST N-D
 - `self_host_native_tensor_bcastadd_smoke.py` (~1700 tok, huge) — C4-T5 — native-ELF tensor ROW-VECTOR BROADCAST ADD (i64), zero MLIR/LLVM.
 - `self_host_native_tensor_colsum_smoke.py` (~2094 tok, huge) — C4-T5 — native-ELF tensor COLUMN REDUCTION (i64), zero MLIR/LLVM.
@@ -1034,6 +1045,9 @@
 - `recursion.elf` (~175 tok, small) — ELF> @@@8
 - `struct_field.elf` (~166 tok, small) — ELF> @@@8
 - `value_if.elf` (~147 tok, small) — ELF> @@@8
+### `examples/mindc_mind/testdata/`
+
+- `rh_f64_aggregate_canary.mind` (~876 tok, large) — RH f64-aggregate self-host/native canary (RH_REQUIRED_F64_AGGREGATE_SURFACE).
 ### `examples/mindc_mind/testdata/selfhost_loop/`
 
 - `MANIFEST.txt` (~102 tok, small) — # Frozen self-host bootstrap ELF (A6/RI-E1): the checked-in pure-MIND stage0
@@ -1113,7 +1127,7 @@
 
 - `bench-gate.yml` (~1442 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~229 tok, medium) — name: Cargo Deny
-- `ci.yml` (~9749 tok, huge) — name: CI
+- `ci.yml` (~9988 tok, huge) — name: CI
 - `crypto-vectors.yml` (~1238 tok, large) — name: Crypto Vectors
 - `docs-claims.yml` (~396 tok, medium) — name: Docs Claims
 - `link-check.yml` (~229 tok, medium) — name: Link Check
@@ -1128,7 +1142,7 @@
 - `verification.mind` (~948 tok, large) — Verification plane for inference consistency (LCU)
 ### `runtime-support/`
 
-- `mind_intrinsics.c` (~20558 tok, huge) — Copyright 2025 STARGA Inc.
+- `mind_intrinsics.c` (~21261 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
 - `anatomy-hook.sh` (~814 tok, large) — anatomy-hook.sh — Git pre-commit hook to refresh ANATOMY.md
@@ -1148,8 +1162,9 @@
 - `main.rs` (~2372 tok, huge) — Copyright 2026 STARGA Inc.
 ### `scripts/`
 
-- `preflight.sh` (~1392 tok, large) — preflight.sh — local CI-parity gate. Run before pushing to avoid red CI.
+- `preflight.sh` (~1693 tok, huge) — preflight.sh — local CI-parity gate. Run before pushing to avoid red CI.
 - `quick_perf.sh` (~734 tok, large) — quick_perf.sh — FAST one-sided compile-speed criterion gate.
+- `ri_d1_mlir_free_gate.sh` (~1094 tok, large) — RI-D1 gate assertion #1 — MLIR is un-linkable on the native path (fail-closed
 - `run_crypto_vectors.sh` (~1751 tok, huge) — Build every pure-MIND crypto/TLS std module to a shared object and run its
 ### `sdk/ts/mic-map/dist/`
 
@@ -4040,17 +4055,19 @@
 
 - `collapse_receipt.rs` (~5109 tok, huge) — Copyright 2025 STARGA Inc.
 - `ed25519.rs` (~6051 tok, huge) — Copyright 2025 STARGA Inc.
-- `emit.rs` (~12213 tok, huge) — Copyright 2025 STARGA Inc.
-- `mldsa.rs` (~1510 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~17822 tok, huge) — Copyright 2025 STARGA Inc.
-- `parse.rs` (~12924 tok, huge) — Copyright 2025 STARGA Inc.
+- `emit.rs` (~12430 tok, huge) — Copyright 2025 STARGA Inc.
+- `mldsa.rs` (~2688 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~17826 tok, huge) — Copyright 2025 STARGA Inc.
+- `parse.rs` (~13067 tok, huge) — Copyright 2025 STARGA Inc.
+- `slhdsa.rs` (~3201 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
-- `evidence.rs` (~5837 tok, huge) — Copyright 2025 STARGA Inc.
+- `evidence.rs` (~5847 tok, huge) — Copyright 2025 STARGA Inc.
 - `fp_mode.rs` (~13711 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
-- `mod.rs` (~16972 tok, huge) — Copyright 2025 STARGA Inc.
-- `print.rs` (~4283 tok, huge) — Copyright 2025 STARGA Inc.
-- `verify.rs` (~20381 tok, huge) — Copyright 2025 STARGA Inc.
+- `frozen_profile.rs` (~3226 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~17299 tok, huge) — Copyright 2025 STARGA Inc.
+- `print.rs` (~4413 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify.rs` (~20498 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `lib.rs` (~1016 tok, large) — Copyright 2025 STARGA Inc.
@@ -4085,7 +4102,7 @@
 - `collapse.rs` (~11442 tok, huge) — Copyright 2025 STARGA Inc.
 - `comptime.rs` (~5868 tok, huge) — Copyright 2025 STARGA Inc.
 - `fold.rs` (~2046 tok, huge) — Copyright 2025 STARGA Inc.
-- `ir_canonical.rs` (~5219 tok, huge) — Copyright 2025 STARGA Inc.
+- `ir_canonical.rs` (~5268 tok, huge) — Copyright 2025 STARGA Inc.
 - `memory_layout.rs` (~4110 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~198 tok, small) — Copyright 2025 STARGA Inc.
 - `regalloc_dtk.rs` (~3869 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4135,7 +4152,7 @@
 - `target.rs` (~5031 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `src/test/`
 
-- `mod.rs` (~6816 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~7095 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
 - `resolve.rs` (~15151 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4199,6 +4216,7 @@
 - `array_ctor_push_get_run.rs` (~907 tok, large) — Copyright 2025 STARGA Inc.
 - `array_load_bounds_and_dtype.rs` (~1394 tok, large) — Copyright 2025 STARGA Inc.
 - `array_oob_trap_run.rs` (~2030 tok, huge) — Copyright 2025 STARGA Inc.
+- `array_store_run.rs` (~2173 tok, huge) — Copyright 2026 STARGA Inc.
 - `array_surface_run.rs` (~875 tok, large) — Copyright 2025 STARGA Inc.
 - `array_u64_element_shift_run.rs` (~1034 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/autodiff/`
@@ -4279,6 +4297,14 @@
 - `cross_module_enum_run.rs` (~1132 tok, large) — Copyright 2025 STARGA Inc.
 - `cross_module_field_access_run.rs` (~1504 tok, huge) — Copyright 2025 STARGA Inc.
 - `cross_module.rs` (~1332 tok, large) — Copyright 2025 STARGA Inc.
+### `tests/cross_substrate_identity/array-store-branch/`
+
+- `manifest.toml` (~564 tok, large) — version = "1"
+- `reference_hashes.toml` (~410 tok, medium) — avx2 = "8a50c515a5de1786b0102fecbb692054299acaa4878a9c2978c7b69cb647561f"
+### `tests/cross_substrate_identity/array-store-loop/`
+
+- `manifest.toml` (~636 tok, large) — version = "1"
+- `reference_hashes.toml` (~445 tok, medium) — avx2 = "50b3efb2da5eb89764302f3781d390e9121c12cb8f87faaa69f5d0f46bf39f31"
 ### `tests/cross_substrate_identity/bimap-phf/`
 
 - `manifest.toml` (~780 tok, large) — version = "1"
@@ -4487,6 +4513,7 @@
 - `match_fallback_fail_closed.rs` (~1750 tok, huge) — Copyright 2025 STARGA Inc.
 - `match_scrutinee_once.rs` (~1521 tok, huge) — Copyright 2025 STARGA Inc.
 - `method_call.rs` (~397 tok, medium) — Copyright 2025 STARGA Inc.
+- `mic3_array_store_roundtrip.rs` (~1054 tok, large) — Copyright 2026 STARGA Inc.
 - `mic3_break_continue_string_roundtrip.rs` (~1668 tok, huge) — Copyright 2026 STARGA Inc.
 - `mic3_cli_emit.rs` (~2431 tok, huge) — Copyright 2025 STARGA Inc.
 - `mic3_const_dense_tensor_roundtrip.rs` (~866 tok, large) — Copyright 2026 STARGA Inc.
@@ -4917,7 +4944,9 @@
 - `stride_gather_grad.rs` (~312 tok, medium) — Copyright 2025 STARGA Inc.
 - `stride_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `stride_types.rs` (~244 tok, medium) — Copyright 2025 STARGA Inc.
+- `string_eq_len_run.rs` (~1012 tok, large) — Copyright 2025 STARGA Inc.
 - `string_escape_decode_run.rs` (~1209 tok, large) — Copyright 2025 STARGA Inc.
+- `string_escape_fail_closed.rs` (~883 tok, large) — Copyright 2025 STARGA Inc.
 - `string_escape_parse.rs` (~483 tok, medium) — Copyright 2025 STARGA Inc.
 - `string_from_bytes_run.rs` (~709 tok, large) — Copyright 2025 STARGA Inc.
 - `string_pattern_escape_decode.rs` (~1069 tok, large) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
@@ -4936,6 +4965,7 @@
 - `tensor_param_fail_loud_run.rs` (~1693 tok, huge) — Copyright 2025 STARGA Inc.
 - `tensor_stdlib.rs` (~549 tok, large) — Copyright 2025 STARGA Inc.
 - `tensor_symbolic.rs` (~542 tok, large) — Copyright 2025 STARGA Inc.
+- `test_harness_root_cause_error.rs` (~772 tok, large) — Copyright 2025 STARGA Inc.
 - `tls13_finished_driver.py` (~3085 tok, huge) — # Official-vector driver for std/tls13_finished.mind (pure-MIND TLS 1.3
 - `tls13_handshake_driver.py` (~6662 tok, huge) — # Official-vector driver for std/tls13_handshake.mind (pure-MIND TLS 1.3
 - `tls13_keyschedule_driver.py` (~2863 tok, huge) — # Official-vector driver for std/tls13_keyschedule.mind (pure-MIND TLS 1.3 key
@@ -4974,7 +5004,7 @@
 ### `tools/`
 
 - `add_copyright_headers.py` (~1132 tok, large) — # Copyright 2025 STARGA Inc.
-- `bench_gate.py` (~2344 tok, huge) — # Copyright 2025 STARGA Inc.
+- `bench_gate.py` (~3108 tok, huge) — # Copyright 2025 STARGA Inc.
 - `cargo-deny-sanitize.sh` (~572 tok, large) — Run cargo-deny but sanitize advisory entries that older cargo-deny versions
 ### `tools/mindfuzz/`
 

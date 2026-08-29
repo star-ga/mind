@@ -3688,7 +3688,15 @@ impl<'a> P<'a> {
                 b'\\' => 92,
                 b'\'' => 39,
                 b'"' => 34,
-                other => other as i64,
+                // Same fail-closed rule as `decode_string_body` — the two escape
+                // tables are deliberately identical, so `'\q'` must not silently
+                // decode to `q` (113) any more than `"\q"` may.
+                other => {
+                    return Err(self.err(format!(
+                        "unknown character escape `\\{}` — MIND supports \\n \\t \\r \\0 \\\\ \\' \\\" only.",
+                        other as char
+                    )));
+                }
             }
         } else {
             // Decode one UTF-8 scalar from the source so a non-ASCII char literal
@@ -3719,11 +3727,12 @@ impl<'a> P<'a> {
     /// `"\n"` pattern stored the 2 bytes `\` `n` and so never matched a decoded
     /// scrutinee (a latent silent-miscompile if string patterns become runnable;
     /// today the runnable lowering rejects string patterns fail-loud).
-    fn decode_string_body(&mut self) -> String {
+    fn decode_string_body(&mut self) -> Result<String, ParseError> {
         let mut decoded: Vec<u8> = Vec::new();
         while self.pos < self.b.len() && self.b[self.pos] != b'"' {
             if self.b[self.pos] == b'\\' && self.pos + 1 < self.b.len() {
                 let esc = self.b[self.pos + 1];
+                let esc_pos = self.pos;
                 self.pos += 2;
                 decoded.push(match esc {
                     b'n' => b'\n',
@@ -3733,7 +3742,24 @@ impl<'a> P<'a> {
                     b'\\' => b'\\',
                     b'\'' => b'\'',
                     b'"' => b'"',
-                    other => other,
+                    // Fail CLOSED on an unknown escape. The prior `other => other`
+                    // kept the escaped byte and DROPPED the backslash, silently
+                    // rewriting the program's data: `"X\u{1f}Y"` became the 5-byte
+                    // `"Xu{1f}Y"`, which type-checked, ran, and which `mindc fmt`
+                    // then wrote back into the source — a wrong string with zero
+                    // diagnostics. That is the same silent-miscompile class the
+                    // lowering guards already refuse, so the parser refuses it too.
+                    // The self-host lexer rejects EVERY backslash, so failing here
+                    // NARROWS the Rust/self-host escape divergence, never widens it.
+                    other => {
+                        self.pos = esc_pos;
+                        return Err(self.err(format!(
+                            "unknown string escape `\\{}` — MIND supports \\n \\t \\r \\0 \\\\ \\' \\\" only. \
+                             `\\u{{..}}` and `\\x..` are not supported; refusing to drop the \
+                             backslash and silently store a different string.",
+                            other as char
+                        )));
+                    }
                 });
             } else {
                 decoded.push(self.b[self.pos]);
@@ -3743,8 +3769,8 @@ impl<'a> P<'a> {
         // Decoded bytes are UTF-8-valid (source was UTF-8; each escape maps to a
         // single ASCII byte; non-escaped multi-byte scalars are copied verbatim);
         // fall back to a lossy decode rather than panic if that ever breaks.
-        String::from_utf8(decoded)
-            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
+        Ok(String::from_utf8(decoded)
+            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
     }
 
     fn parse_string_lit(&mut self) -> Result<Node, ParseError> {
@@ -3767,7 +3793,7 @@ impl<'a> P<'a> {
         // Keystone byte-identity: the bootstrap source uses no string-literal
         // escapes (every `\` in main.mind is in a `//` comment), so the decoder
         // never rewrites anything for it and its emit stays byte-identical.
-        let s = self.decode_string_body();
+        let s = self.decode_string_body()?;
         self.expect(b'"')?;
         let span = Span::new(start, self.pos);
         Ok(Node::Lit(Literal::Str(s), span))
@@ -5658,7 +5684,7 @@ impl<'a> P<'a> {
             // stores the single byte 0x0A — matching how the scrutinee's string
             // literal was decoded. The prior raw-slice copy stored `\` `n`
             // (2 bytes) and so never matched a decoded newline.
-            let s = self.decode_string_body();
+            let s = self.decode_string_body()?;
             if !self.eat(b'"') {
                 return Err(self.err("unterminated string pattern".into()));
             }
