@@ -1528,8 +1528,8 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                     struct_env.insert(name.clone(), s.to_string());
                 }
                 #[cfg(feature = "std-surface")]
-                if let Some(s) = string_sentinel_for_opt(ann) {
-                    struct_env.insert(name.clone(), s.to_string());
+                if matches!(ann, Some(TypeAnn::Named(n)) if n == "string" || n == "String") {
+                    struct_env.insert(name.clone(), "String".to_string());
                 }
                 // `let x = f(...)` / `let x = s.field` — infer x's type from the
                 // RHS so a method on x resolves without an annotation (e.g.
@@ -3301,37 +3301,6 @@ fn map_sentinel_for_opt(ann: &Option<TypeAnn>) -> Option<&'static str> {
     }
 }
 
-/// The `struct_env` tracking sentinel for an explicit `string` annotation
-/// (`let s: string = "abcd"`) — the exact value [`receiver_is_string`] looks
-/// for. Without it an annotated string local was tracked by NOTHING, so
-/// `s.len()` missed the `string_<method>` dispatch, fell through to the
-/// struct/field path, and hit the unresolvable-receiver arm that emits
-/// `const.i64 0` — `"abcd".len()` returned 0 with no diagnostic (#245).
-/// Mirrors `map_sentinel_for_opt` / `set_sentinel_for_opt` so a string
-/// binding is tracked at exactly the same `let` sites as a map/set binding.
-#[cfg(feature = "std-surface")]
-fn string_sentinel_for_opt(ann: &Option<TypeAnn>) -> Option<&'static str> {
-    match ann {
-        Some(TypeAnn::Named(n)) if n == "string" || n == "String" => Some("String"),
-        _ => None,
-    }
-}
-
-/// True when an expression is statically known to evaluate to a `string`: a
-/// string LITERAL, or any receiver [`receiver_is_string`] already recognises
-/// (an annotated/tracked local, a string-typed struct field). Used to route
-/// `==` / `!=` onto `string_eq` instead of comparing heap-record pointers.
-#[cfg(feature = "std-surface")]
-fn is_string_valued(
-    node: &ast::Node,
-    ir: &IRModule,
-    struct_env: &HashMap<String, String>,
-    receiver_types: &HashMap<crate::ast::Span, String>,
-) -> bool {
-    matches!(node, ast::Node::Lit(Literal::Str(_), _))
-        || receiver_is_string(node, ir, struct_env, receiver_types)
-}
-
 /// Lower a map literal `{}` / `{ k: v, … }` onto the std.map heap runtime:
 /// `let _m = map_new(); _m = map_insert(_m, k, v); …; _m`. `map_insert` returns
 /// the (possibly grown) handle, threaded through each entry. Returns the SSA id
@@ -4994,58 +4963,6 @@ fn preprocess_collection_mutations(module: &ast::Module) -> Option<ast::Module> 
     Some(m)
 }
 
-/// Lower `a == b` / `a != b` when BOTH operands are statically known strings,
-/// routing onto the std `string_eq` byte comparison instead of comparing the two
-/// `__mind_alloc` heap-record POINTERS (which are never equal for two distinct
-/// literals — issue #245). Returns `None` for every other comparison, so integer
-/// comparison is untouched and the keystone bootstrap — whose only `== "…"`
-/// occurrences are inside `//` comments — emits byte-identically.
-///
-/// `#[inline(never)]`: see the call site. This exists as its own function so its
-/// locals stay OUT of `lower_expr`'s stack frame, which is replicated once per
-/// level of a deep expression recursion.
-#[cfg(feature = "std-surface")]
-#[inline(never)]
-#[allow(clippy::too_many_arguments)]
-fn try_lower_string_equality(
-    op: &ast::BinOp,
-    left: &ast::Node,
-    right: &ast::Node,
-    ir: &mut IRModule,
-    env: &HashMap<String, ValueId>,
-    struct_env: &HashMap<String, String>,
-    receiver_types: &HashMap<crate::ast::Span, String>,
-) -> Option<ValueId> {
-    if !matches!(op, ast::BinOp::Eq | ast::BinOp::Ne)
-        || !is_string_valued(left, ir, struct_env, receiver_types)
-        || !is_string_valued(right, ir, struct_env, receiver_types)
-    {
-        return None;
-    }
-    let l = lower_expr(left, ir, env, struct_env, receiver_types);
-    let r = lower_expr(right, ir, env, struct_env, receiver_types);
-    let eq = ir.fresh();
-    ir.instrs.push(Instr::Call {
-        dst: eq,
-        name: "string_eq".to_string(),
-        args: vec![l, r],
-    });
-    if matches!(op, ast::BinOp::Eq) {
-        return Some(eq);
-    }
-    // `!=` is the logical negation of `string_eq`'s 1/0 result.
-    let zero = ir.fresh();
-    ir.instrs.push(Instr::ConstI64(zero, 0));
-    let ne = ir.fresh();
-    ir.instrs.push(Instr::BinOp {
-        dst: ne,
-        op: BinOp::Eq,
-        lhs: eq,
-        rhs: zero,
-    });
-    Some(ne)
-}
-
 fn lower_expr(
     node: &ast::Node,
     ir: &mut IRModule,
@@ -5414,22 +5331,6 @@ fn lower_expr(
         ast::Node::Binary {
             op, left, right, ..
         } => {
-            // `==` / `!=` between two STRINGS compared the two `__mind_alloc`
-            // heap-record POINTERS, not their bytes — so `"abc" == "abc"` was
-            // FALSE, with no diagnostic and no JIT-fallback banner (#245).
-            // Delegated to an `#[inline(never)]` helper ON PURPOSE: `lower_expr`
-            // recurses once per expression node, and std/json.mind already nests
-            // deeply enough to sit near the default 8 MiB thread stack. Inlining
-            // this arm's locals into `lower_expr`'s frame grew every frame in
-            // that recursion and overflowed the stack in `std_surface_json` even
-            // though json.mind emits no `string_eq` at all. Keeping it
-            // out-of-line keeps the hot frame the size it was.
-            #[cfg(feature = "std-surface")]
-            if let Some(id) =
-                try_lower_string_equality(op, left, right, ir, env, struct_env, receiver_types)
-            {
-                return id;
-            }
             let lhs = lower_expr(left, ir, env, struct_env, receiver_types);
             let rhs = lower_expr(right, ir, env, struct_env, receiver_types);
             let dst = ir.fresh();
@@ -6310,8 +6211,9 @@ fn lower_expr(
                             fn_struct_env.insert(name.clone(), s.to_string());
                         }
                         #[cfg(feature = "std-surface")]
-                        if let Some(s) = string_sentinel_for_opt(ann) {
-                            fn_struct_env.insert(name.clone(), s.to_string());
+                        if matches!(ann, Some(TypeAnn::Named(n)) if n == "string" || n == "String")
+                        {
+                            fn_struct_env.insert(name.clone(), "String".to_string());
                         }
                         #[cfg(feature = "std-surface")]
                         if let Some(s) = set_sentinel_for_opt(ann) {
@@ -6721,8 +6623,8 @@ fn lower_expr(
                         local_struct_env.insert(name.clone(), s.to_string());
                     }
                     #[cfg(feature = "std-surface")]
-                    if let Some(s) = string_sentinel_for_opt(ann) {
-                        local_struct_env.insert(name.clone(), s.to_string());
+                    if matches!(ann, Some(TypeAnn::Named(n)) if n == "string" || n == "String") {
+                        local_struct_env.insert(name.clone(), "String".to_string());
                     }
                     #[cfg(feature = "std-surface")]
                     if let Some(s) = map_sentinel_for_opt(ann) {
@@ -7061,8 +6963,9 @@ fn lower_expr(
                                 then_struct_env.insert(name.clone(), s.to_string());
                             }
                             #[cfg(feature = "std-surface")]
-                            if let Some(s) = string_sentinel_for_opt(ann) {
-                                then_struct_env.insert(name.clone(), s.to_string());
+                            if matches!(ann, Some(TypeAnn::Named(n)) if n == "string" || n == "String")
+                            {
+                                then_struct_env.insert(name.clone(), "String".to_string());
                             }
                             if let Some(s) = set_sentinel_for_opt(ann) {
                                 then_struct_env.insert(name.clone(), s.to_string());
@@ -7443,8 +7346,9 @@ fn lower_expr(
                                     else_struct_env.insert(name.clone(), s.to_string());
                                 }
                                 #[cfg(feature = "std-surface")]
-                                if let Some(s) = string_sentinel_for_opt(ann) {
-                                    else_struct_env.insert(name.clone(), s.to_string());
+                                if matches!(ann, Some(TypeAnn::Named(n)) if n == "string" || n == "String")
+                                {
+                                    else_struct_env.insert(name.clone(), "String".to_string());
                                 }
                                 if let Some(s) = set_sentinel_for_opt(ann) {
                                     else_struct_env.insert(name.clone(), s.to_string());
@@ -8430,8 +8334,9 @@ fn lower_expr(
                                 body_struct_env.insert(name.clone(), s.to_string());
                             }
                             #[cfg(feature = "std-surface")]
-                            if let Some(s) = string_sentinel_for_opt(ann) {
-                                body_struct_env.insert(name.clone(), s.to_string());
+                            if matches!(ann, Some(TypeAnn::Named(n)) if n == "string" || n == "String")
+                            {
+                                body_struct_env.insert(name.clone(), "String".to_string());
                             }
                             if let Some(s) = set_sentinel_for_opt(ann) {
                                 body_struct_env.insert(name.clone(), s.to_string());

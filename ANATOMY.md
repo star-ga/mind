@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3419 | **Est. tokens:** ~8,077,404
-**Generated:** 2026-08-29 15:36 UTC
+**Files:** 3419 | **Est. tokens:** ~8,077,860
+**Generated:** 2026-08-29 16:14 UTC
 
 ## Token Budget Guide
 
@@ -60,7 +60,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 165 | ~399,232 |
+| `examples/mindc_mind/` | 165 | ~399,326 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,159 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 2 | ~415 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
@@ -71,9 +71,9 @@
 | `examples/zoo/` | 6 | ~12,518 |
 | `experiments/global-vs-local/` | 7 | ~6,487 |
 | `.githooks/` | 1 | ~434 |
-| `.github/` | 4 | ~585 |
+| `.github/` | 4 | ~601 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 9 | ~23,590 |
+| `.github/workflows/` | 9 | ~23,936 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~21,261 |
 | `scripts/` | 18 | ~37,760 |
@@ -911,7 +911,7 @@
 - `_ref_struct_field.note` (~16 tok, tiny) — 2f7f2ea32ee47138e1b0162bd51f418b4e5005b4569054f5f3c392ebd2258d96
 - `_ref_value_if.note` (~16 tok, tiny) — ae565a5154b76ee1f44a32c16db2e9a8387f2f60c5fca92bba2dc9bb70afb599
 - `rh_f64_aggregate_canary_smoke.py` (~1443 tok, large) — RH f64-aggregate surface canary (RH_REQUIRED_F64_AGGREGATE_SURFACE).
-- `ri_d1_frozen_profile_gate.py` (~3026 tok, huge) — RI-D1 readiness gate (task #313): prove `mindc build --backend native` is READY to be
+- `ri_d1_frozen_profile_gate.py` (~3120 tok, huge) — RI-D1 readiness gate (task #313): prove `mindc build --backend native` is READY to be
 - `self_host_andor_precedence_smoke.py` (~1680 tok, huge) — Front-end PARITY battery for `&&` / `||` precedence + short-circuit.
 - `self_host_andor_smoke.py` (~2142 tok, huge) — Permanent battery for the self-host `&&` / `||` short-circuit operators.
 - `self_host_arena_growth_smoke.py` (~1382 tok, large)
@@ -1128,12 +1128,12 @@
 
 - `PULL_REQUEST_TEMPLATE.md` (~55 tok, small) — Summary
 - `release-drafter.yml` (~85 tok, small) — name-template: 'v$NEXT_PATCH_VERSION'
-- `required-ci-jobs.tsv` (~436 tok, medium) — # required-ci-jobs.tsv — the CI jobs that MUST have passed on the exact commit
+- `required-ci-jobs.tsv` (~452 tok, medium) — # required-ci-jobs.tsv — the CI jobs that MUST have passed on the exact commit
 ### `.github/workflows/`
 
 - `bench-gate.yml` (~1442 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~229 tok, medium) — name: Cargo Deny
-- `ci.yml` (~15103 tok, huge) — name: CI
+- `ci.yml` (~15449 tok, huge) — name: CI
 - `crypto-vectors.yml` (~1238 tok, large) — name: Crypto Vectors
 - `docs-claims.yml` (~776 tok, large) — name: Docs Claims
 - `link-check.yml` (~229 tok, medium) — name: Link Check
