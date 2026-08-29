@@ -409,6 +409,18 @@ fn run_eval_once(src: &str, emit_opts: EmitOpts, exec_mode: eval::ExecMode) {
                         eval::ExecMode::Preview => {}
                     }
                     let ir = eval::lower_to_ir(&module);
+                    // deferred: this `mind`-binary AOT/preview path emits artifacts from RAW
+                    // lowered IR — it calls neither `ir::prepare_ir_for_backend` nor even
+                    // `opt::ir_canonical::canonicalize_module`/`verify_module`, so it gets no
+                    // verification, no canonicalization, and no C6 native optimizer. `mindc`
+                    // (`pipeline::compile_source_with_name`) routes through the single
+                    // backend-prep choke point; this path predates it and is NOT wired.
+                    // Deliberately left alone here: unlike the `mindc` fix, adding backend prep
+                    // would change these emitted bytes even with `MIND_NATIVE_OPT` unset (the
+                    // path has never been canonicalized), so it is a behavioural change needing
+                    // its own before/after corpus proof — not a byte-identical rewiring.
+                    // Upgrade path: prove the canonicalization delta over the AOT corpus, then
+                    // call `ir::prepare_ir_for_backend` here and reseed whatever moves.
                     #[allow(unused_mut)]
                     let mut built_mlir: Option<String> = None;
                     #[allow(unused_mut)]

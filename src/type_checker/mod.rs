@@ -2215,207 +2215,16 @@ fn infer_grad(
 
 // RFC 0005 Phase 1 + 1.5 — pure-MIND standard surface intrinsics.
 //
-// The primitives the std surface (`Vec`, `String`, `Map`, `io`)
-// is allowed to bottom out into. All take and return `i64` only (no
-// `Ptr` type — see RFC 0005 P0a; an address is a 64-bit integer).
-// The pair (`__mind_load_i64`, `__mind_store_i64`) was added at Phase
-// 1.5 to resolve P0c — without scalar load/store at address, `vec.push`
-// cannot write the new value into the `__mind_alloc`-returned backing
-// store. Lowered by the gated Phase-0 `Instr::Call` arm in
-// `src/mlir/lowering.rs` to `func.call @__mind_*(%a..) : (i64..) -> i64`,
-// with a matching `func.func private` declaration emitted once per
-// distinct callee in sorted order. Default builds compile out the
-// recogniser entirely.
-#[cfg(feature = "std-surface")]
-const STD_SURFACE_INTRINSICS: &[(&str, usize)] = &[
-    ("__mind_alloc", 1),
-    ("__mind_blas_dot_f32", 3),
-    // RFC 0006 Track B (increment 1): native MLIR vector-dialect
-    // `dot_f32`. Same i64 ABI / arity (3) as the Track A scalar bridge;
-    // the difference is purely in lowering — the `Instr::Call` for this
-    // name emits a `vector`-dialect reduction loop, not a `func.call` to
-    // the runtime-support C shim. Track A's `__mind_blas_dot_f32` stays
-    // registered and is the unchanged scalar/AVX2 fallback.
-    ("__mind_blas_dot_f32_v", 3),
-    // "int-dot" tier: native MLIR vector-dialect int16 dot product. Same i64
-    // ABI / arity (3) as the other vector dots. Inputs are i16 row-major;
-    // byte-identical to the scalar oracle `(i32) sum_k ((i32)a[k]*(i32)b[k])`
-    // for ALL int16 inputs (i64-lane accumulate, no shift, no saturation, no
-    // early narrow). The widen-multiply-accumulate loop is the AVX2 vpmaddwd
-    // idiom at -march=x86-64-v3 — the fast deterministic int GEMM tier.
-    ("__mind_blas_dot_i16_v", 3),
-    ("__mind_blas_dot_l1_f32", 3),
-    // RFC 0006 Track B (increment 2): native MLIR vector-dialect f32 L1
-    // (sum-of-abs) reduction. Same i64 ABI / arity (3) as the Track A
-    // scalar bridge; lowering interception emits an abs-diff + add
-    // reduction loop. Track A's `__mind_blas_dot_l1_f32` is unchanged.
-    ("__mind_blas_dot_l1_f32_v", 3),
-    ("__mind_blas_dot_l1_q16", 3),
-    // RFC 0006 Track B (increment 3): native MLIR vector-dialect Q16.16 L1
-    // (Manhattan, sum-of-abs) reduction. Byte-identical to the Track A
-    // scalar oracle `__mind_blas_dot_l1_q16` at every length (task #57
-    // cross-arch bit-identity gate); closes the Q16.16 vector-path metric
-    // parity deferred in increment 2. Track A's `__mind_blas_dot_l1_q16`
-    // is unchanged.
-    ("__mind_blas_dot_l1_q16_v", 3),
-    ("__mind_blas_dot_linf_f32", 3),
-    // RFC 0006 Track B (increment 2): native MLIR vector-dialect f32 L∞
-    // (max-of-abs) reduction. Track A's `__mind_blas_dot_linf_f32` is
-    // unchanged.
-    ("__mind_blas_dot_linf_f32_v", 3),
-    ("__mind_blas_dot_q16", 3),
-    // RFC 0006 Track B (increment 2): native MLIR vector-dialect Q16.16
-    // dot product. Byte-identical to the Track A scalar oracle
-    // `__mind_blas_dot_q16` at every length (task #57 cross-arch
-    // bit-identity gate). Track A's `__mind_blas_dot_q16` is unchanged.
-    ("__mind_blas_dot_q16_v", 3),
-    ("__mind_blas_matmul_rmajor_f32", 5),
-    // RFC 0006 Track B (increment 3b): native MLIR vector-dialect row-major
-    // f32 matmul.  Outer scf.for over rows, inner vectorised dot_f32_v
-    // (8-lane FMA + scalar tail) inlined per row, stores to caller-allocated
-    // y buffer, returns 0.  Same arity (5) and i64 ABI as Track A.
-    ("__mind_blas_matmul_rmajor_f32_v", 5),
-    // "int-dot" tier: native MLIR vector-dialect row-major int16 matmul.
-    // Outer scf.for over rows, inner int16 dot reduction from emit_vec_dot_i16
-    // (sext i16->i64, i64-lane accumulate, vector.reduction <add>, scalar
-    // tail, trunc) inlined per row, stores i32 to the caller-allocated y
-    // buffer, returns 0. Same arity (5) and i64 ABI as the f32/q16 matmuls.
-    // Byte-identical to the scalar oracle applied per row, for all int16
-    // inputs. Track B vector-dialect only — no Track A i16 matmul extern.
-    ("__mind_blas_matmul_rmajor_i16_v", 5),
-    // RFC 0006 Track B (increment 4): native MLIR vector-dialect row-major
-    // Q16.16 matmul.  Outer scf.for over rows, inner Q16.16 dot reduction
-    // from emit_vec_dot_q16 (widen i32→i64, >> 16, i64-lane accumulate,
-    // vector.reduction <add>, scalar tail, trunc+extsi) inlined per row,
-    // stores i32 to caller-allocated y buffer, returns 0.  Byte-identical
-    // to the scalar oracle __mind_blas_dot_q16 applied per row (cross-arch
-    // bit-identity gate, task #57).  Track B vector-dialect only — there is
-    // no Track A q16 matmul extern; the per-row oracle is __mind_blas_dot_q16.
-    ("__mind_blas_matmul_rmajor_q16_v", 5),
-    // "det.igemm" tier: fused int8 GEMM. A is M×K row-major int8 (1 byte), B
-    // is K×N row-major int8, C is M×N row-major INT32 caller-allocated; arity 6
-    // (a, b, c, m, k, n), i64 ABI, returns 0. Same BLIS-blocked register-tiled
-    // kernel as the Q16 path with i8→i32 sign-extension during the pack and NO
-    // >> 16 shift (int8 is integer, not fixed-point). The C-tile accumulates
-    // i64; the i64→i32 truncation happens once at the store — byte-identical to
-    // the per-element scalar int32 oracle (i32) Σ_k (i32)A[i,k]*(i32)B[k,j] for
-    // all shapes. The same MLIR lowers to vpmaddwd (AVX2) / SDOT (aarch64),
-    // both yielding the identical exact int32 sum.
-    ("__mind_blas_matmul_mm_i8_v", 6),
-    // Multithreaded fused int8 GEMM. Same ABI (arity 6: a, b, c, m, k, n; i64;
-    // returns 0) and byte-for-byte output as __mind_blas_matmul_mm_i8_v,
-    // parallelised over contiguous owner-computes M-row bands with raw POSIX
-    // threads. Output is independent of the thread count (no cross-thread
-    // reduction), so cross-substrate bit-identity holds.
-    ("__mind_blas_matmul_mm_i8_mt_v", 6),
-    // RFC 0006 Track B: fused outer-product Q16.16 GEMM. A is M×K row-major,
-    // B is K×N row-major (un-transposed), C is M×N row-major caller-allocated;
-    // arity 6 (a, b, c, m, k, n), i64 ABI, returns 0. Register-tiled
-    // outer-product microkernel (no horizontal reduction) — byte-identical to
-    // the per-element scalar oracle Σ_k (A[i,k]*B[k,j])>>16 for all shapes.
-    ("__mind_blas_matmul_mm_q16_v", 6),
-    // Multithreaded fused outer-product Q16.16 GEMM. Same ABI (arity 6:
-    // a, b, c, m, k, n; i64; returns 0) and byte-for-byte output as
-    // __mind_blas_matmul_mm_q16_v, parallelised over contiguous owner-computes
-    // M-row bands with raw POSIX threads. Output is independent of the thread
-    // count (no cross-thread reduction), so cross-substrate bit-identity holds.
-    ("__mind_blas_matmul_mm_q16_mt_v", 6),
-    // Multithreaded fused Q16.16 GEMV — the routing SCORE kernel
-    // (`scores[M] = catalog[M×K] · query[K]`, catalog + query packed-i32, scores
-    // i32; arity 5: catalog, query, scores, m, k; i64 ABI, returns 0). Same
-    // owner-computes MT band wrapper as `__mind_blas_matmul_mm_q16_mt_v` with N
-    // pinned to 1, but each band vectorises the K reduction (exact i64 accumulate
-    // + horizontal reduce) instead of the N-columns tile — streaming the catalog
-    // once (memory-bound). Byte-for-byte identical to the per-row scalar dot oracle
-    // `Σ_k (catalog[i,k]*query[k])>>16` and independent of the thread count, so
-    // cross-substrate bit-identity holds.
-    ("__mind_blas_gemv_q16_mt", 5),
-    // mind-nerve C-ABI runtime surface (RFC 0006 pattern, i64 ABI). These nine
-    // symbols are the native encoder's Q16.16 BLAS + LUT-handle bridge, defined
-    // in mind-nerve's `runtime/blas_shims_i64.c` + `runtime/lut_cache.c` and
-    // resolved at .so link time (the C objects are compiled+linked via the
-    // manifest `[build].native_sources` list). Registering them here — same as
-    // any `__mind_blas_*` extern — makes mindc's MLIR backend emit a plain
-    // arity-checked `func.call @__mind_nerve_*` (NOT the E2024 self-host-only
-    // advisory + runtime-JIT fallback), so the kernel/LUT modules that call them
-    // compile NATIVELY. All args + result are i64 (opaque heap addresses / Q16.16
-    // scalars in the low 32 bits); the C side is byte-identical scalar-vs-AVX2
-    // (task #57 cross-arch gate). The four `_lut_*_h` accessors are 0-arity cached
-    // table-handle getters; the five `_blas_*` are Q16.16 dot / score / GEMM /
-    // attention contractions with the un-transposed row-major operand layout.
-    ("__mind_nerve_blas_attnv_q16_i64", 6),
-    ("__mind_nerve_blas_dot_q16_i64", 3),
-    ("__mind_nerve_blas_matmul_q16_i64", 6),
-    ("__mind_nerve_blas_matmul_score_q16_i64", 5),
-    ("__mind_nerve_blas_qkt_q16_i64", 6),
-    ("__mind_nerve_lut_exp_h", 0),
-    ("__mind_nerve_lut_recip_h", 0),
-    ("__mind_nerve_lut_rsqrt_h", 0),
-    ("__mind_nerve_lut_tanh_h", 0),
-    // mind-nerve host/runtime FFI surface (src/runtime_ffi.mind): the envelope
-    // CLI's clock / stdio / file / entropy / exit primitives, defined in the
-    // mind-nerve runtime C shim and statically linked via
-    // `[targets.*].native_sources`. Registered here — same as the
-    // `__mind_nerve_blas_*` / `__mind_nerve_lut_*` surface — so the MLIR backend
-    // emits a plain arity-checked `func.call @__mind_nerve_rt_*` instead of the
-    // E2024 self-host-only advisory + runtime-JIT fallback. All args + result are
-    // i64 (opaque heap addresses / byte counts / status codes); arities match the
-    // `extern fn` decls in runtime_ffi.mind.
-    ("__mind_nerve_rt_exit", 1),
-    ("__mind_nerve_rt_file_size", 2),
-    ("__mind_nerve_rt_getenv", 4),
-    ("__mind_nerve_rt_monotonic_ns", 0),
-    ("__mind_nerve_rt_os_entropy", 2),
-    ("__mind_nerve_rt_read_file", 4),
-    ("__mind_nerve_rt_read_stdin", 2),
-    ("__mind_nerve_rt_write_stderr", 2),
-    ("__mind_nerve_rt_write_stdout", 2),
-    // Phase 17.3 — `f64` bit-cast surface. These three same-width coercions let
-    // an `f64` aggregate be built on the existing i64 heap: `__mind_f64_to_bits`
-    // reinterprets an `f64` as its i64 bit pattern for storage, `__mind_bits_to_f64`
-    // reinterprets a loaded i64 back to `f64`, and `__mind_conv_f64` is the
-    // pure-marker identity used by the enum-payload / declared-type coercion path.
-    // All arity 1. The MLIR backend already lowers them (an `arith.bitcast`, or a
-    // pass-through marker); registering them here lets std / user source name them
-    // through the arity-checked cross-backend surface instead of the type checker
-    // rejecting the call. All three are classified strict in `src/ir/fp_mode.rs`
-    // (STRICT_FLOAT_INTRINSICS / dtype-recovery), so the FP attestation stays honest.
-    ("__mind_bits_to_f64", 1),
-    ("__mind_conv_f64", 1),
-    ("__mind_f64_to_bits", 1),
-    ("__mind_free", 1),
-    ("__mind_load_i64", 1),
-    // RFC 0005 Phase 1.6 (task #306) — single-byte load/store. The
-    // (`__mind_store_i64(base + i, b)` writes one byte / `__mind_load_i64(base + i) & 255`
-    // reads one byte) convention used by `std.string` / `std.sha256` / `std.toml`
-    // / `std.tui` clobbers 7 bytes per store and can read past the buffer. The
-    // store form is currently masked by a 7-byte backing-store pad in runtime-support
-    // (commit `cc5a513`), but the garbage past `len` is a cross-substrate
-    // bit-identity landmine (NEON / RVV may not have the same pad). These two
-    // intrinsics provide a proper one-byte ABI; `load_i8` zero-extends to i64 so
-    // call sites preserve the `& 255` mask semantics during migration.
-    ("__mind_load_i8", 1),
-    ("__mind_load_i32", 1),
-    ("__mind_load_i16", 1),
-    ("__mind_read", 4),
-    ("__mind_realloc", 2),
-    ("__mind_store_i64", 2),
-    ("__mind_store_i8", 2),
-    ("__mind_store_i32", 2),
-    ("__mind_store_i16", 2),
-    ("__mind_write", 4),
-    // `c.byte()` — the byte (low 8 bits) of a char/int receiver. The method-call
-    // type-check validates it as a 1-arg call `byte(recv)`; lowering desugars it
-    // to `recv & 0xFF` (see the MethodCall arm in eval/lower.rs). mind-flow's
-    // lexer relies on it (`'0'.byte()`).
-    ("byte", 1),
-];
-
+// The table itself moved to `crate::intrinsics` so that ONE row carries a
+// primitive's name, its i64 arity, AND whether calling it can make the program's
+// result vary between runs. It used to be split: the arity here, the determinism
+// verdict in two hand-maintained parallel arrays (this module's and
+// `ir::evidence`'s) that drifted identically and let the registered
+// `__mind_nerve_rt_*` clock / entropy / stdin surface be attested
+// `deterministic`. See the `crate::intrinsics` module docs.
 #[cfg(feature = "std-surface")]
 fn std_surface_intrinsic_arity(name: &str) -> Option<usize> {
-    STD_SURFACE_INTRINSICS
-        .iter()
-        .find_map(|(n, arity)| (*n == name).then_some(*arity))
+    crate::intrinsics::std_surface_intrinsic_arity(name)
 }
 
 #[cfg(feature = "std-surface")]
@@ -3287,11 +3096,16 @@ fn const_int_index(node: &Node) -> Option<i64> {
 /// or read as an index) are NOT collected — only a genuine re-binding
 /// invalidates a provable literal shape, and a fixed-length array/tuple literal
 /// cannot change shape through a call in the current surface.
-/// deferred: an in-place mutating grow (`a.push(..)` / `grow(&mut a)`) would also
-/// invalidate an array length — none exists in the std surface today — upgrade
-/// path: also drop the method receiver / `&mut a` arg here once such a mutator
-/// lands. Over-approximate: a drop only ever UNDER-fires E2620/E2621, never
-/// false-positives.
+///
+/// An in-place mutating GROW *does* exist, however (`a.push(x)` lowers onto
+/// std.vec's `vec_push`), so a METHOD RECEIVER is also collected — see the
+/// `Node::MethodCall` arm below. Over-approximate: a drop only ever UNDER-fires
+/// E2620/E2621, never false-positives.
+/// deferred: a free-function mutator taking `&mut a` would invalidate a length
+/// the same way — none exists in the std surface today (no `&mut` parameters),
+/// so `Node::Call` still collects only its argument *expressions* — upgrade
+/// path: collect the `&mut a` argument name here once by-reference parameters
+/// land.
 fn collect_rebound_names(stmts: &[Node], out: &mut HashSet<String>) {
     for stmt in stmts {
         collect_rebound_node(stmt, out);
@@ -3364,6 +3178,25 @@ fn collect_rebound_node(node: &Node, out: &mut HashSet<String>) {
             }
         }
         Node::MethodCall { receiver, args, .. } => {
+            // A method call can GROW its receiver IN PLACE — `a.push(x)` lowers
+            // onto std.vec's `vec_push` — which invalidates any literal-seeded
+            // length still recorded for `a` in the aggregate-shape table. Treat
+            // the receiver as REBOUND so a later `a[k]` is not judged against the
+            // stale pre-push length. Without this, the empty-constructor surface
+            //   `let mut a: array<i64> = []; a.push(7); a.push(8); return a[0]`
+            // was rejected at compile time with a FALSE
+            //   `E2621: index 0 out of bounds for array of length 0`
+            // on code that is correct and runs — the exact over-fire class this
+            // kill-set exists to prevent, just via a mutator instead of a rebind.
+            //
+            // Applied to EVERY method call rather than an allowlist of known
+            // mutators: dropping a shape only ever UNDER-fires E2620/E2621 (the
+            // invariant this whole kill-set is built on), so the conservative
+            // form cannot introduce a false positive, and a mutator added to the
+            // std surface later cannot silently reintroduce the bug.
+            if let Node::Lit(Literal::Ident(name), _) = receiver.as_ref() {
+                out.insert(name.clone());
+            }
             collect_rebound_node(receiver, out);
             for a in args {
                 collect_rebound_node(a, out);
@@ -6378,51 +6211,46 @@ fn collect_call_targets(node: &Node, out: &mut Vec<(String, AstSpan)>) {
 
 /// RFC 0012 §5.1 pt 3 (Phase C.2) — implicit determinism of a callee that is
 /// NOT a user-defined function in the current module (std / imported /
-/// intrinsic). Keyed on the dtype-suffix convention shared by std.blas and the
-/// tensor surface:
-///   `Some(true)`  — implicitly deterministic: `_q16` is the Q16.16
-///                   byte-identical fixed-point path; `__mind_*` are integer
-///                   intrinsics. A `#[deterministic]` caller may use these.
-///   `Some(false)` — implicitly NON-deterministic: `_f32`/`_f64` floating
-///                   reductions are not order-fixed under SIMD.
+/// intrinsic):
+///   `Some(true)`  — implicitly deterministic: an intrinsic the registry
+///                   classifies `Det::Pure`, or the `_q16` byte-identical
+///                   fixed-point path. A `#[deterministic]` caller may use these.
+///   `Some(false)` — implicitly NON-deterministic: an intrinsic the registry
+///                   classifies `Det::World` (clock / entropy / stdin / env), a
+///                   bare PRNG or wall-clock builtin, or an `_f32`/`_f64`
+///                   floating reduction (not order-fixed under SIMD).
 ///   `None`        — unknown surface: conservatively NOT flagged.
-/// Builtins that are nondeterministic by construction: PRNG draws (their result
-/// depends on hidden entropy/seed state) and wall-clock / IO reads (observe the
-/// world). A `#[deterministic]` function may not call any of these, so they map
-/// to `Some(false)` even though they carry no `_f32`/`_f64` dtype suffix — the
-/// suffix heuristic alone let `random`/`rand_*` slip through as `None` (unknown,
-/// not flagged). Matched on the bare callee name AND the `std.rand.*` style
-/// dotted path tail, so `random`, `std.rand.random`, and `rng.rand_uniform`
-/// (recv.method desugar) all resolve to the same nondeterministic verdict.
-const NONDETERMINISTIC_BUILTINS: &[&str] = &[
-    // PRNG draws.
-    "random",
-    "rand",
-    "rand_normal",
-    "rand_uniform",
-    "rand_int",
-    "rand_range",
-    "rand_bytes",
-    "rand_seed",
-    "randn",
-    "shuffle",
-    // Wall-clock / nondeterministic environment reads.
-    "now",
-    "time_now",
-    "system_time",
-    "monotonic_now",
-    "read_line",
-    "read_input",
-];
-
+///
+/// The nondeterministic verdict comes from `crate::intrinsics`, the SAME
+/// classifier `ir::evidence` uses to decide what the evidence chain attests, so
+/// this check and the attestation cannot disagree. Order matters: the registry
+/// is consulted BEFORE the `__mind_*` prefix rule below, because that blanket
+/// rule is precisely what admitted the registered `__mind_nerve_rt_monotonic_ns`
+/// / `_os_entropy` / `_read_stdin` / `_getenv` calls as deterministic.
 fn implicit_external_determinism(callee: &str) -> Option<bool> {
-    // A nondeterministic builtin is flagged regardless of any dtype suffix.
-    // Match the bare name or the last dotted/`::`-qualified path segment so a
-    // qualified call (`std.rand.random`, `rng::rand_uniform`) is caught too.
-    let tail = callee.rsplit(['.', ':']).next().unwrap_or(callee);
-    if NONDETERMINISTIC_BUILTINS.contains(&tail) || NONDETERMINISTIC_BUILTINS.contains(&callee) {
+    // A world-reading intrinsic or bare builtin is flagged regardless of any
+    // dtype suffix or `__mind_` prefix. Matches the bare name or the last
+    // dotted/`::`-qualified path segment, so a qualified call
+    // (`std.rand.random`, `rng::rand_uniform`) is caught too.
+    if crate::intrinsics::callee_is_nondeterministic(callee) {
         return Some(false);
     }
+    // deferred: this check is NAME-only, so it does not see the CALL-SITE half of
+    // the classifier — `crate::intrinsics::fd_dependent_read_arg` /
+    // `read_fd_is_world`, which `ir::evidence` applies to `__mind_read`'s
+    // descriptor argument. Consequence, stated plainly: a hand-written
+    // `#[deterministic] fn f() -> i64 { __mind_read(0, buf, 1, -1) }` is admitted
+    // here by the `__mind_` prefix rule below, even though the ARTIFACT it
+    // produces now correctly attests `nondeterministic` (the evidence chain, the
+    // determinism-by-default build gate and `mindc verify --require-deterministic`
+    // all see it). The annotation is therefore weaker than the attestation, never
+    // the reverse — an under-strict annotation cannot forge an artifact label.
+    // Not closed here because `collect_call_targets` records callee NAMES only:
+    // the descriptor is an argument EXPRESSION, so the AST layer would need its
+    // own constant-folding pass rather than a shared one. Upgrade path: have
+    // `collect_call_targets` carry each call's argument expressions, fold the
+    // descriptor position to a literal, and apply the same two predicates —
+    // failing closed on an unfoldable descriptor exactly as the IR side does.
     if callee.starts_with("__mind_") || callee.contains("_q16") {
         Some(true)
     } else if callee.contains("_f32") || callee.contains("_f64") {
@@ -6648,17 +6476,14 @@ fn check_determinism_annotations(
                         Some(false) => {
                             // PRNG / wall-clock / IO builtins get a precise hint;
                             // float reductions keep the q16-variant guidance.
-                            let nondet_tail =
-                                callee.rsplit(['.', ':']).next().unwrap_or(callee.as_str());
-                            let hint = if NONDETERMINISTIC_BUILTINS.contains(&nondet_tail)
-                                || NONDETERMINISTIC_BUILTINS.contains(&callee.as_str())
-                            {
-                                "it is nondeterministic (PRNG / wall-clock / IO) — \
+                            let hint =
+                                if crate::intrinsics::callee_is_nondeterministic(callee.as_str()) {
+                                    "it is nondeterministic (PRNG / wall-clock / IO) — \
                                  a `#[deterministic]` fn cannot draw entropy or read the world"
-                            } else {
-                                "its floating-point reductions are not deterministic — \
+                                } else {
+                                    "its floating-point reductions are not deterministic — \
                                  use the q16 variant or remove the call"
-                            };
+                                };
                             (true, hint)
                         }
                         _ => (false, ""),

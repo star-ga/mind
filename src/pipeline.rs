@@ -334,9 +334,18 @@ pub fn compile_source_with_name(
     #[cfg(feature = "compile-timings")]
     _tm.mark("ir-lower");
 
-    ir::verify_module(&ir)?;
-    opt::ir_canonical::canonicalize_module(&mut ir);
-    ir::verify_module(&ir)?;
+    // Single backend-prep choke point: verify -> canonicalize -> opt-in native
+    // optimizer (roadmap C6) -> re-verify. This was an inlined copy of
+    // `ir::prepare_ir_for_backend`'s body MINUS the `optimize_mic3` call, which left
+    // the C6 optimizer wired to no artifact-emitting path — `MIND_NATIVE_OPT=basic`
+    // changed zero bytes on `--emit-mic3`. Calling the shared helper puts the
+    // optimizer UPSTREAM of emitter divergence, where its contract says it lives:
+    // the `ir` prepared here becomes `CompileProducts::ir`, the single source for
+    // `--emit-mic3` / `--emit-mic` / `--emit-ir`, the MLIR lowering, and the
+    // evidence chain. With `MIND_NATIVE_OPT` unset the added call is
+    // `OptLevel::Off` -> a strict no-op, so this is byte-identical by default;
+    // `tests/native_opt_wiring.rs` pins BOTH halves of that claim.
+    ir::prepare_ir_for_backend(&mut ir)?;
     #[cfg(feature = "compile-timings")]
     {
         _tm.mark("verify+canon");

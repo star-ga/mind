@@ -4,6 +4,10 @@
 //! mic@2 text format parser with implicit value IDs.
 
 use super::MIC2_HEADER;
+use super::map_limits::{
+    check_map_bytes_len, check_map_entry_count, check_map_key, check_map_nesting_depth,
+    check_map_string_len,
+};
 use super::types::{DType, Graph, Map, MapValue, Opcode, TensorType, Value};
 
 /// Maximum input size in bytes (10 MB).
@@ -382,10 +386,9 @@ impl<'a> Mic2Parser<'a> {
     /// Parse `map_entry*` until the matching `}` line, returning the Map.
     /// `depth` is used for §3.5 nesting limit.
     fn parse_map_entries(&mut self, depth: usize) -> Result<Map, Mic2ParseError> {
-        // §3.5: max nesting depth 4.
-        const MAX_NESTING: usize = 4;
-        const MAX_TOTAL_ENTRIES: usize = 4096;
-
+        // §3.2/§3.5 limits live in ONE place — `super::map_limits` — because the
+        // binary decoder (`v2/binary.rs`) must accept exactly the same `Map`
+        // values. Never re-state a bound here.
         let mut map = Map::new();
 
         loop {
@@ -405,13 +408,8 @@ impl<'a> Mic2Parser<'a> {
                 return Ok(map);
             }
 
-            // §3.5 total entry count.
-            if map.recursive_entry_count() >= MAX_TOTAL_ENTRIES {
-                return Err(self.error(format!(
-                    "MAP entry count exceeds limit {}",
-                    MAX_TOTAL_ENTRIES
-                )));
-            }
+            // §3.5 total entry count, counting the entry about to be parsed.
+            check_map_entry_count(map.recursive_entry_count() + 1).map_err(|e| self.error(e))?;
 
             // Parse `key = value`
             let eq_pos = trimmed
@@ -421,23 +419,8 @@ impl<'a> Mic2Parser<'a> {
             let key_raw = trimmed[..eq_pos].trim();
             let value_raw = trimmed[eq_pos + 1..].trim();
 
-            // Validate key (dotted idents, §3.2 `map_key`).
-            validate_map_key(key_raw)
-                .map_err(|e| self.error(format!("invalid MAP key '{key_raw}': {e}")))?;
-
-            // §3.5: key length limit 256 bytes.
-            if key_raw.len() > 256 {
-                return Err(self.error(format!(
-                    "MAP key too long ({} bytes, max 256): {}",
-                    key_raw.len(),
-                    key_raw
-                )));
-            }
-
-            // §3.5: key depth (dotted segments) ≤ 8.
-            if key_raw.split('.').count() > 8 {
-                return Err(self.error(format!("MAP key depth exceeds 8 segments: {key_raw}")));
-            }
+            // §3.2 key grammar + §3.5 key length / segment-count bounds.
+            check_map_key(key_raw).map_err(|e| self.error(e))?;
 
             let value = if value_raw.starts_with('"') {
                 self.parse_map_string_value(value_raw)?
@@ -446,11 +429,7 @@ impl<'a> Mic2Parser<'a> {
                     .map_err(|e| self.error(format!("invalid MAP bytes value: {e}")))?
             } else if value_raw == "{" {
                 // Nested map.
-                if depth >= MAX_NESTING {
-                    return Err(
-                        self.error(format!("MAP nesting depth exceeds limit {}", MAX_NESTING))
-                    );
-                }
+                check_map_nesting_depth(depth).map_err(|e| self.error(e))?;
                 let inner = self.parse_map_entries(depth + 1)?;
                 MapValue::Nested(inner)
             } else {
@@ -470,15 +449,13 @@ impl<'a> Mic2Parser<'a> {
             return Err(self.error(format!("unterminated MAP string: {raw}")));
         }
         let inner = &raw[1..raw.len() - 1];
-        // §3.5: string ≤ 64 KiB.
-        if inner.len() > 64 * 1024 {
-            return Err(self.error(format!(
-                "MAP string value exceeds 64 KiB: {} bytes",
-                inner.len()
-            )));
-        }
+        // §3.5: string ≤ 64 KiB, measured on the DECODED value so the binary
+        // decoder — which only ever sees the decoded form — enforces the same
+        // bound. `inner` is a slice of the caller's input, and unescaping never
+        // grows a string, so this cannot allocate more than the input already is.
         let s = unescape_json_string(inner)
             .map_err(|e| self.error(format!("invalid MAP string escape: {e}")))?;
+        check_map_string_len(s.len()).map_err(|e| self.error(e))?;
         Ok(MapValue::String(s))
     }
 }
@@ -486,34 +463,6 @@ impl<'a> Mic2Parser<'a> {
 // ---------------------------------------------------------------------------
 // MAP parsing helpers
 // ---------------------------------------------------------------------------
-
-/// Validate that `key` matches `ident ("." ident)*` per §3.2.
-fn validate_map_key(key: &str) -> Result<(), String> {
-    if key.is_empty() {
-        return Err("key is empty".into());
-    }
-    for segment in key.split('.') {
-        if segment.is_empty() {
-            return Err("key segment is empty (double dot or leading/trailing dot)".into());
-        }
-        let mut chars = segment.chars();
-        match chars.next() {
-            Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
-            Some(c) => {
-                return Err(format!(
-                    "segment '{segment}' starts with invalid char '{c}'"
-                ));
-            }
-            None => return Err("empty segment".into()),
-        }
-        for c in chars {
-            if !c.is_ascii_alphanumeric() && c != '_' {
-                return Err(format!("segment '{segment}' contains invalid char '{c}'"));
-            }
-        }
-    }
-    Ok(())
-}
 
 /// Parse `bytes(0xHEXHEX...)` per §3.2.
 fn parse_map_bytes_value(raw: &str) -> Result<MapValue, String> {
@@ -532,14 +481,9 @@ fn parse_map_bytes_value(raw: &str) -> Result<MapValue, String> {
             inner.len()
         ));
     }
-    // §3.5: bytes ≤ 1 MiB.
-    const MAX_BYTES: usize = 1024 * 1024;
-    if inner.len() / 2 > MAX_BYTES {
-        return Err(format!(
-            "bytes() value exceeds 1 MiB: {} bytes",
-            inner.len() / 2
-        ));
-    }
+    // §3.5: bytes ≤ 1 MiB, over the decoded byte count (same unit the binary
+    // decoder reads off the wire).
+    check_map_bytes_len(inner.len() / 2)?;
     if !inner.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(format!("bytes() contains non-hex chars: {raw}"));
     }

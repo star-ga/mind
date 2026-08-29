@@ -25,7 +25,7 @@ CI).
 
 | # | Oracle | Status | What a failure means |
 |---|--------|--------|----------------------|
-| 0 | **cross-substrate byte-identity** | **STUBBED (seam)** | avx2 artifact hash != neon artifact hash = wedge-breaking miscompile. Needs an aarch64 runner; see `cross_substrate_hook`. |
+| 0 | **cross-substrate byte-identity** | **STAGE-AND-REPLAY** (undecidable on one host; asserted on the CI matrix) | avx2 hash != neon hash = wedge-breaking miscompile. This host only STAGES the reference; `mindfuzz_staged_corpus_replay` re-derives and asserts it on both runners. See *Cross-substrate CI / cluster seam*. |
 | 1 | **determinism** (local wedge proxy) | LIVE | Compile the SAME program twice; `mic@3` + `.so` + MLIR text hashes must match. A mismatch = non-determinism in codegen. |
 | 2 | **reference oracle** | LIVE | For the Q16.16 `__mind_blas_*` dot kernels, call the compiled symbol via `ctypes` and compare to a scalar integer reference (the same LCG + scalar oracle as `tests/cross_substrate_identity.rs`). Mismatch = vector path diverged from scalar. |
 | 3 | **mindc verify** | LIVE | Emit a mic@3 evidence artifact, run `mindc verify` (RFC 0017 SSA + RFC 0021 trace_hash). Non-zero exit / `trace_hash_valid:false` = IR / evidence bug. |
@@ -92,14 +92,32 @@ program, the loop falls back to the deterministic template mutator (recorded as
 ## Cross-substrate CI / cluster seam
 
 `oracles.cross_substrate_hook` is the seam for oracle 0 (the wedge). On a single
-host it returns a `DEFERRED` verdict (never a false violation). The real check,
-wired in CI / the cluster:
+host it cannot decide avx2 == neon, so it never raises a violation there; it
+returns a passing `STAGED:` verdict carrying the host's canonical output hash.
+The real check is a two-step handoff, and both steps exist:
 
-1. this host emits `--emit-mic3 host.mic3` and publishes `sha256(host.mic3)`;
-2. an `ubuntu-24.04-arm` (neon) runner compiles the SAME mutated program and
-   computes `sha256(neon.mic3)`;
-3. assert `sha256(neon.mic3) == sha256(host.mic3)` (RFC 0015 §3.1). A mismatch
-   is a wedge-breaking miscompile -- the highest-severity violation MIND-Fuzz
-   can find.
+1. **stage (maintainer, x86 host).** `python3 tools/mindfuzz/ci_batch.py --out
+   tests/mindfuzz_cross_substrate/staged` regenerates the corpus: each survivor
+   `.mind` plus a `manifest.tsv` row
+   `<id>\t<entry>\t<arg_seed>\t<arg_count>\t<avx2_hash>`, where the hash is
+   sha256 over the little-endian i64 returns of `entry` across the canonical
+   argument vector. The result is committed. **CI never runs `ci_batch.py`.**
+2. **replay (CI, both substrates).** `mindfuzz_staged_corpus_replay` in
+   `tests/mindfuzz_cross_substrate.rs` reads that manifest, recompiles each
+   survivor, re-drives the recorded entry over the recorded arguments, and
+   asserts the hash still equals the committed reference. The
+   `cross_substrate_identity` matrix runs it on `ubuntu-24.04` (avx2) and
+   `ubuntu-24.04-arm` (neon), so the neon leg asserts byte-identity against the
+   avx2-blessed hash (RFC 0015 §3.1). A mismatch is a wedge-breaking miscompile
+   -- the highest-severity violation MIND-Fuzz can find, and never a re-bless.
 
-This reuses the existing `cross_substrate_identity` CI job's two-runner shape.
+The same `--test mindfuzz_cross_substrate` run also carries the seeded
+differential fuzzer, whose per-runner batch mic@3 digest the dependent
+`mindfuzz_cross_runner_identity` job byte-compares across the two runners.
+
+Failing runs drop reproducers in the SIBLING directory
+`tests/mindfuzz_cross_substrate/reproducers/`, never in `staged/` (which
+`ci_batch.py` `rmtree`s), and name them by class: `fuzz_divergence_*` when two
+oracles disagreed, `fuzz_oracle_failure_*` when a stage never completed so
+nothing was compared. A build without `mlir-build` cannot run the ELF oracle at
+all; that is reported as a configuration gap and stages nothing.

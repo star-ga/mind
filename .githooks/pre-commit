@@ -19,4 +19,19 @@ if [ -n "$PY" ] && [ -f scripts/check_claims.py ]; then
   fi
 fi
 
+# Public-artifact hygiene gates, mirroring .github/workflows/docs-claims.yml.
+# Both are a whole-tree `git grep` (fast, no build). They ran ONLY in CI, and the
+# workflow's paths filter meant a violation in a source file never even started
+# it — so a named-model attribution, or JSON fed into an evidence preimage, could
+# reach a PUBLIC repo with nothing objecting. Self-contained: skips silently if a
+# script is absent, BLOCKS on a real hit and shows the script's own diagnosis.
+for gate in scripts/check_no_ai_attribution.sh scripts/check_json_not_evidence.sh; do
+  if [ -f "$gate" ]; then
+    if ! bash "$gate"; then
+      echo "pre-commit: $gate failed — commit blocked." >&2
+      exit 1
+    fi
+  fi
+done
+
 exit 0

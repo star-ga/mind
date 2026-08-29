@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the release workflow could publish binaries from a commit CI had never checked
+- `.github/workflows/release.yml` gated publication on `needs: build` alone, and that build
+  job's entire step list was Checkout / Install Rust / Cache / Install cross / Build /
+  Package / Upload — **no test, no keystone, no cross-substrate identity**. Every real gate
+  lives in `ci.yml`, a separate workflow with no `tags:` trigger, so a tag push started no CI
+  run for that ref at all. Two of the last three released tags demonstrate the consequence:
+  `v0.10.1` (`48923595`) and `v0.10.0` (`742546dd`) have **zero** `ci.yml` runs against their
+  commits.
+- The `workflow_dispatch` path additionally minted its own ref: it took a free-text `version`
+  and ran `git tag -a v$version && git push origin v$version` with a workflow-level
+  `contents: write` token, so a dispatch on any branch created a tag at that branch's tip and
+  published a non-draft, five-platform release from it. No repository ruleset or tag
+  protection existed to stop that.
+- Now: a `gate` job resolves the tag (which must already exist — the workflow creates no
+  refs) to its commit and refuses to proceed unless a completed, successful `ci.yml` run
+  exists for **that exact SHA**, from this repository, on a `push`/`workflow_dispatch` event
+  (a `pull_request` run tests a merge commit, not the tagged tree), containing every gate
+  named in the new `.github/required-ci-jobs.tsv` — and unless no other first-party workflow
+  is red on that commit. Absence of a CI run is a block, not a pass. `build` and `release`
+  both depend on the gate and check out the verified SHA; `contents: write` is scoped to the
+  publishing job alone.
+- `scripts/check_release_gating.py` (wired into the Docs Claims job) asserts these properties
+  statically so they cannot silently reopen: no self-minted tags, publish and build both
+  behind the gate, dispatch takes an existing tag, write scoped to the publisher, and
+  `required-ci-jobs.tsv` in agreement with `ci.yml` in both directions — deleting a gate from
+  CI is now a build error rather than a quiet weakening of what a release is verified against.
+- **Not closed:** the two remaining controls are repository *settings*, not workflow code —
+  a tag-protection ruleset on `v*` and required reviewers on the `release` environment. Until
+  the first exists, the guarantee is "the released commit is CI-green and the ref pre-existed",
+  not "the ref was created by an authorized human". Recorded as a `deferred:` marker at the
+  top of `release.yml`.
+
 ### Added — opt-in native `mic@3 → mic@3` optimizer (roadmap C6, default OFF)
 - A canonical-IR optimizer (`src/opt/native_opt.rs`) sitting **upstream of emitter
   divergence**, so both the Rust `--emit-mic3` oracle and the self-host emitter consume
@@ -22,6 +54,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   algebraic-identity elimination** (`x+0`, `x-0`, `x*1`, `x/1`, `x|0`, `x^0`, `x<<0`,
   `x>>0`), and **region-scoped CSE/GVN of pure `BinOp`s**. All integer-exact and
   structurally never touching the Q16.16 or float tiers.
+- **Status correction.** As first landed the optimizer was **not reachable from any
+  artifact-emitting path**, so the "upstream of emitter divergence" sentence above did not
+  hold and `MIND_NATIVE_OPT=basic` changed zero bytes of `--emit-mic3`. That is fixed below;
+  the description above is accurate as of the fix. `basic` remains a **developer flag, not a
+  shipping profile** — one of its four passes has a known defect (next bullet).
+- **Known defect under `=basic`: `fold_algebraic_identities` can emit a dangling SSA use.**
+  Its operand remap does not descend into `If`/`While`/`FnDef` bodies, relying on every
+  enclosing value a region reads being threaded through `If.merges` / `While.init_ids`; that
+  does not hold for every lowered shape. Measured over the 300 corpus sources that compile
+  with the optimizer OFF, **2 fail with it ON** (`examples/geometric_collapse.mind`,
+  `std/toml.mind`), both isolating to this pass alone. **Not a silent miscompile** — the
+  re-verify in `ir::prepare_ir_for_backend` rejects it as `E3001` at compile time. Tracked by
+  a `deferred:` marker on the pass; enabling `basic` by default stays gated on a clean 300/300
+  sweep plus a whole-corpus reseed.
+
+### Fixed — the C6 native optimizer was wired to no artifact-emitting path
+- `optimize_mic3` had a single caller (`ir::prepare_ir_for_backend`) whose only production
+  caller was `project::try_emit_mic` — the **failed-compile** embedded-JIT fallback. The
+  successful-compile pipeline inlined its own copy of backend-prep
+  (`verify → canonicalize → verify`) that **omitted the optimizer call**, so the pass was
+  unreachable from every artifact path (mic@3, mic@1, IR print, MLIR, evidence chain) and
+  `MIND_NATIVE_OPT=basic` was a no-op on emitted bytes. `pipeline::compile_source_with_name`
+  now calls `ir::prepare_ir_for_backend` instead of duplicating it, restoring the single
+  backend-prep choke point. **Byte-identical by default:** verified over the 300 corpus
+  sources that compile, the pre-fix and post-fix binaries emit identical mic@3 with
+  `MIND_NATIVE_OPT` unset (300/300, zero drift).
+- No gate covered this: nothing in `tests/`, `examples/` or `scripts/` set `MIND_NATIVE_OPT`,
+  so the recorded "keystone 7/7" was **vacuously** green — with the pass unreachable the
+  keystone passes for both env states. New gate `tests/native_opt_wiring.rs` pins both halves
+  of the contract: `basic` must change the emitted artifact (wiring, fails closed if the
+  pipeline regrows a private backend-prep copy), and unset — plus any unrecognised value —
+  must be byte-identical (so the canaries and frozen self-host seeds cannot move by accident).
 
 ### Added — self-host native-ELF construct coverage (Rust-Independence)
 - **Nested while-in-while**, and an **outer `let mut` assigned inside a statement-`if`**,
@@ -50,6 +114,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **RFC 0017 reconciled** with the shipped CLI: removed the documented-but-nonexistent
   `--check-sig` / `--cross-substrate` / `--format` / `--out` / `--chain`, and corrected
   the exit-code table (all verification failures → 1; I/O / CLI → 2).
+- **`verify --json` emits ONE stable schema on every arm.** `run_verify` hand-rolled a
+  separate JSON literal at each exit, so `--json` produced five different stdout shapes:
+  a 15-key object on the attested arm, a 4-key `{artifact, ssa_valid, ssa_reason, attested}`
+  on the SSA-fault and — on an exit-**0** success path — the unattested arm, a 4-key
+  `{artifact, canonical, canonical_reason, attested}` on the non-canonical arm, and
+  **nothing at all on stdout** for the three malformed-evidence-chain arms. A consumer
+  written to the documented contract got a `KeyError` on a passing verification and a
+  JSON-decode error on the silent arms. Every `--json` exit now emits one receipt with the
+  same twenty keys; a property that could not be established is an explicit `null` /
+  `false`, never an absent key. New keys: `attested` (now present on every arm — the
+  discriminator), `canonical` / `canonical_reason`, and `verify_result`
+  (`"pass"` / `"fail"`, mirroring the exit code) / `verify_error`. The receipt is emitted
+  AFTER every fail-closed gate, so it can no longer print a verdict the process then
+  contradicts with a different exit code, and a broken evidence chain can no longer be
+  read as a benign unattested artifact. A MAP-less artifact is also now labelled
+  `"signature":"absent"` rather than the `Err`-derived `"malformed"` (reporting only —
+  the fail-closed `sig_status` that gates the attested path is unchanged).
+  RFC 0017 §4.6 documented a draft schema sharing zero keys with any shipped arm; it now
+  describes what ships. Gated by a key-set test and a structural source gate asserting
+  `run_verify` contains no hand-rolled JSON literal (`src/bin/mindc.rs`).
 - **bench-gate fail-closed** (`tools/bench_gate.py`): an empty / truncated / partial
   `bench.out`, or a missing baseline, now exits 4 (was a vacuous PASS); the hardcoded
   default-baseline fallback is removed. Contract test `tools/test_bench_gate.py`.

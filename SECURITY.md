@@ -92,9 +92,23 @@ vulnerability reports about:
   pass-through `fn f(x: i64) -> i64 { x }` vs `fn f(x: f64) -> f64 { x }`, whose
   bodies carry no type-dependent instruction — encode to identical `mic@3` and so
   share a `trace_hash`. This is a **canonicalization-completeness boundary, not a
-  tamper-detection failure**: a *given* artifact's bytes still cannot be altered
-  without changing its hash, and any program that actually uses a scalar (arithmetic
-  or width-sensitive ops) emits type-distinct instructions and does not collide.
+  tamper-detection failure**: any program that actually uses a scalar (arithmetic or
+  width-sensitive ops) emits type-distinct instructions and does not collide.
+  Be precise about what the hash covers, though: `trace_hash` anchors the artifact's
+  **canonical form** — the re-emission of the IR the artifact decodes to — **not its
+  literal bytes**. A mutation the decoder normalises away therefore does *not* change
+  the `trace_hash`: a byte appended after the epilogue, a length re-encoded
+  non-minimally in place, a wire-version byte moved inside the accepted read window.
+  The signature does not cover the literal bytes either — its RFC 0021 preimage is
+  the `trace_hash` + scheme tag + **decoded** provenance entries. Literal-byte
+  integrity is instead enforced by a separate **canonical-form gate**: `mindc verify`
+  re-emits the artifact and byte-compares it against the input, and any difference is
+  a hard failure (exit 1). So a byte-altered artifact is rejected — but by that gate,
+  not by the hash, and a consumer that checks only a stored `trace_hash` (or only a
+  signature) without also enforcing canonical form does **not** get literal-byte
+  integrity. Binding the artifact's literal length/prefix into the signature preimage
+  is tracked as an RFC 0021 revision (it is a preimage change and needs a new scheme
+  tag), not a silent change.
   Authenticity is **opt-in** (RFC 0016 Phase C): an artifact may additionally carry
   a `signature.*` block — Ed25519 (RFC 8032), ML-DSA-65 (FIPS-204 PQC), or the
   hybrid — over the canonical provenance preimage. Signing is **never enabled by

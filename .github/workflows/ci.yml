@@ -192,6 +192,44 @@ jobs:
           cargo test --verbose --no-default-features --features mlir-lowering
           cargo test --verbose --no-default-features --features cpu-buffers
 
+      - name: Run gated tests — ffi-c (mind_sys_* C-ABI surface)
+        # `full` (documented in docs/cli.md + README.md) enables `ffi-c`, but no
+        # matrix row above ever built it, so src/ffi/sys.rs was compiled by
+        # nothing and its tests ran nowhere. That is how a debugger check that
+        # left the process permanently ptrace-traced survived: the test binary
+        # printed a green result and then exited into a zombie its parent could
+        # not reap, so `cargo test` hung forever AFTER reporting success.
+        #   - `timeout` turns a reintroduced hang into a fast, loud failure
+        #     instead of burning the entire job budget on a green-looking run.
+        #   - the count assertion turns a silently cfg'd-out module into a
+        #     failure instead of the "ok. 0 passed" + exit 0 false green.
+        shell: bash
+        run: |
+          set -e
+          timeout 900 cargo test --verbose --no-default-features --features ffi-c --lib
+          out=$(timeout 300 cargo test --no-default-features --features ffi-c --lib ffi::sys)
+          echo "$out"
+          n=$(printf '%s\n' "$out" | sed -n 's/^test result: ok\. \([0-9][0-9]*\) passed.*/\1/p' | head -1)
+          if [ "${n:-0}" -lt 4 ]; then
+            echo "FAIL: expected >=4 ffi::sys tests, saw ${n:-0} - module cfg'd out or guards deleted" >&2
+            exit 1
+          fi
+          echo "ffi::sys guards executed: $n"
+          # tests/ffi_header.rs is `#![cfg(feature = "ffi-c")]`. Both runs above are
+          # `--lib`, which never builds an integration target, so that file compiled
+          # to an EMPTY HARNESS in every CI run — `ok. 0 passed`, exit 0 — and its
+          # C-header symbol contract was asserted by nothing. Same positive-count
+          # discipline as the ffi::sys assert: a `--test` selector alone is not
+          # evidence that the tests inside it existed.
+          hout=$(timeout 300 cargo test --no-default-features --features ffi-c --test ffi_header)
+          echo "$hout"
+          hn=$(printf '%s\n' "$hout" | sed -n 's/^test result: ok\. \([0-9][0-9]*\) passed.*/\1/p' | head -1)
+          if [ "${hn:-0}" -lt 1 ]; then
+            echo "FAIL: tests/ffi_header.rs executed ${hn:-0} tests - cfg'd out (empty harness), not passing" >&2
+            exit 1
+          fi
+          echo "ffi_header tests executed: $hn"
+
       - name: Clippy
         shell: bash
         run: |
@@ -447,6 +485,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Smoke-corpus wiring contract (smoke_wiring_lint.py)
+        # Guards the gate corpus itself. Every examples/mindc_mind/*.py must be
+        # classified in SMOKE_WIRING.tsv with the runners that actually execute
+        # it; the lint re-derives that set from .github/workflows/*.yml,
+        # examples/mindc_mind/fast_keystone.sh and scripts/preflight.sh and fails
+        # on drift in either direction (unclassified file, stale row, wrong
+        # runner set, or an unwired gate with no stated reason). Pure text
+        # analysis — no build artifacts needed, so it runs FIRST in this job,
+        # before the MLIR install and the mindc build, and fails fast.
+        run: python3 examples/mindc_mind/smoke_wiring_lint.py
+        working-directory: ${{ github.workspace }}
+
       - name: Install Rust (nightly)
         uses: dtolnay/rust-toolchain@nightly
 
@@ -673,8 +723,22 @@ jobs:
         # through mindc_compile, so the self-host LOOP + native-ELF byte-identity
         # gates above do NOT cover their correctness — a regression in an additive
         # emitter/rule would otherwise land CI-green. MINDC_SO is set, so every
-        # smoke fails closed (never SKIPs). fast_keystone.sh runs the SAME set
-        # locally; when adding a new additive selftest smoke, wire it into BOTH.
+        # smoke fails closed (never SKIPs).
+        #
+        # WIRING CONTRACT: this comment used to claim "fast_keystone.sh runs the
+        # SAME set locally; when adding a new additive selftest smoke, wire it
+        # into BOTH." That was false in both directions — this loop was a strict
+        # SUBSET of fast_keystone.sh (46 of its 60), CI never invokes
+        # fast_keystone.sh at all, and dozens of smokes ran in neither. Prose
+        # cannot be executed, so it drifted silently.
+        #
+        # The contract is now a CHECKED artifact instead of a claim:
+        # examples/mindc_mind/SMOKE_WIRING.tsv declares, per smoke, which runners
+        # execute it and why, and examples/mindc_mind/smoke_wiring_lint.py
+        # (wired as the first step of this job) recomputes the real wiring from
+        # these workflow files + fast_keystone.sh + scripts/preflight.sh and
+        # fails on ANY divergence. Adding a smoke without classifying it is a
+        # build error, so a new gate can no longer go unwired unnoticed.
         run: |
           set -e
           for s in \
@@ -729,6 +793,187 @@ jobs:
             MINDC_BIN="${{ github.workspace }}/target/release/mindc" \
               python3 "examples/mindc_mind/$s.py"
           done
+        working-directory: ${{ github.workspace }}
+
+
+      - name: Grown-subset capability gates (refs / field stores / enums / Option / closures / fail-closed / branch carry / float ABI)
+        # THE ONLY regression gate for the "grown subset" — constructs main.mind
+        # does not itself use, so neither the self-host LOOP nor the native-ELF
+        # byte-identity keystone above ever exercises them. A miscompile here is
+        # invisible to every other gate in this job and would land CI-green.
+        # (These ran ONLY in the local fast_keystone.sh until this step existed;
+        # examples/mindc_mind/SMOKE_WIRING.tsv is now the checked contract for
+        # where each smoke runs, enforced by smoke_wiring_lint.py.)
+        run: |
+          # pipefail is load-bearing: without it `python3 ... | tee` would
+          # return tee's status and a FAILING smoke would grade as a pass.
+          set -eo pipefail
+          fail=0
+          for s in \
+            closure_netverify \
+            enum_netverify \
+            field_store_netverify \
+            option_netverify \
+            ref_netverify \
+            self_host_failclosed_smoke \
+            self_host_if_region_carry_smoke \
+            self_host_native_fp_call_smoke \
+            self_host_native_fp_field_smoke; do
+            echo "=== $s ==="
+            if MINDC_SO=/tmp/libmindc_mind_self_host.so \
+               MINDC_BIN="${{ github.workspace }}/target/release/mindc" \
+               MINDC="${{ github.workspace }}/target/release/mindc" \
+                 python3 "examples/mindc_mind/$s.py" | tee /tmp/wire_out.txt; then
+              # Fail-closed: a "SKIP <so> not built" line exits 0 and would grade
+              # a MISSING library as a pass. MINDC_SO is set and verified
+              # non-empty above, so a SKIP here means the wiring broke, not that
+              # the gate is inapplicable.
+              if grep -q '^SKIP' /tmp/wire_out.txt; then
+                echo "ERROR: $s SKIPped with MINDC_SO set — vacuous green, failing closed"
+                fail=1
+              fi
+            else
+              echo "ERROR: $s FAILED"
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ]
+        working-directory: ${{ github.workspace }}
+
+      - name: Native-ELF float + SIMD/BLAS kernel value gates
+        # Native-ELF VALUE correctness for the float/SSE + packed-SIMD + integer
+        # kernel surface: the f64/f32 scalar ABI legs (let / param / binop /
+        # dtype-tag), int<->float casts, the strict-FP dot/GEMV/GEMM family and
+        # its Q16.16 and int8/int16 siblings, byte-emit, and SysV stack
+        # alignment. Each asserts a value or a byte-identity against an
+        # independent oracle, so a wrong encoding cannot pass.
+        # NOTE: self_host_native_avx2_dot_f32_smoke needs an AVX2 runner. That is
+        # already a hard dependency of this workflow (the cross_substrate_identity
+        # job runs an `avx2` substrate leg), and it fails closed, never skips.
+        run: |
+          # pipefail is load-bearing: without it `python3 ... | tee` would
+          # return tee's status and a FAILING smoke would grade as a pass.
+          set -eo pipefail
+          fail=0
+          for s in \
+            general_float_netverify \
+            self_host_dtype_tag_smoke \
+            self_host_mic3_float_valueif_smoke \
+            self_host_native_avx2_dot_f32_smoke \
+            self_host_native_blas_dot_i16_smoke \
+            self_host_native_blas_dot_q16_smoke \
+            self_host_native_cast_conv_smoke \
+            self_host_native_dot_f32_smoke \
+            self_host_native_dot_l1_q16_smoke \
+            self_host_native_elf_alignment_smoke \
+            self_host_native_fp_binop_smoke \
+            self_host_native_fp_let_smoke \
+            self_host_native_fp_param_smoke \
+            self_host_native_gemm_i8_smoke \
+            self_host_native_gemm_q16_smoke \
+            self_host_native_gemv_i16_smoke \
+            self_host_native_gemv_q16_smoke \
+            self_host_native_genf32_smoke \
+            self_host_native_intdot_i16_smoke \
+            self_host_native_intdot_q16_smoke \
+            self_host_native_intdot_smoke \
+            self_host_native_matmul_f32_v_smoke \
+            self_host_native_scalar_f64_smoke \
+            self_host_native_simd_dot_f32_smoke \
+            self_host_native_simd_dot_i16_smoke \
+            self_host_native_simd_dot_q16_smoke \
+            self_host_native_tensor_ewadd_f64_smoke \
+            self_host_native_ucast_smoke \
+            self_host_native_write8_smoke \
+            self_host_native_write_f32_smoke; do
+            echo "=== $s ==="
+            if MINDC_SO=/tmp/libmindc_mind_self_host.so \
+               MINDC_BIN="${{ github.workspace }}/target/release/mindc" \
+               MINDC="${{ github.workspace }}/target/release/mindc" \
+                 python3 "examples/mindc_mind/$s.py" | tee /tmp/wire_out.txt; then
+              # Fail-closed: a "SKIP <so> not built" line exits 0 and would grade
+              # a MISSING library as a pass. MINDC_SO is set and verified
+              # non-empty above, so a SKIP here means the wiring broke, not that
+              # the gate is inapplicable.
+              if grep -q '^SKIP' /tmp/wire_out.txt; then
+                echo "ERROR: $s SKIPped with MINDC_SO set — vacuous green, failing closed"
+                fail=1
+              fi
+            else
+              echo "ERROR: $s FAILED"
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ]
+        working-directory: ${{ github.workspace }}
+
+      - name: Self-host front-end + mic@3 + struct/method corpus gates
+        # Front-end + mic@3 + struct/method + control-flow corpus: parse and
+        # lowering shapes (and/or precedence, else-if chains, match, value-if,
+        # arrays, casts, struct literals/fields/returns, method dispatch),
+        # the mic@3 note legs, the OS-boundary entries (argv, open, stdin
+        # driver), and the emitter lockstep/oracle linters.
+        run: |
+          # pipefail is load-bearing: without it `python3 ... | tee` would
+          # return tee's status and a FAILING smoke would grade as a pass.
+          set -eo pipefail
+          fail=0
+          for s in \
+            bootstrap_smoke \
+            branch_shadow_crossbackend_smoke \
+            collect_field_strings_smoke \
+            full_strtab_smoke \
+            lockstep_lint \
+            match_struct_smoke \
+            method_callee_smoke \
+            method_calls_smoke \
+            mic3_oracle_smoke \
+            multi_let_smoke \
+            param_types_smoke \
+            self_host_andor_precedence_smoke \
+            self_host_andor_smoke \
+            self_host_args_from_os_smoke \
+            self_host_argv_smoke \
+            self_host_array_smoke \
+            self_host_arridx_mic3_smoke \
+            self_host_cast_mic3_smoke \
+            self_host_check_driver_smoke \
+            self_host_else_if_smoke \
+            self_host_ifret_chain_mic3_smoke \
+            self_host_letpath_failclose_smoke \
+            self_host_lockstep_smoke \
+            self_host_match_smoke \
+            self_host_matchscalar_mic3_smoke \
+            self_host_narrow_let_mic3_smoke \
+            self_host_not_smoke \
+            self_host_open_smoke \
+            self_host_struct_return_smoke \
+            self_host_value_if_expr_smoke \
+            sha256_hash_smoke \
+            struct_fields_smoke \
+            struct_lit_smoke \
+            unified_dispatch_smoke \
+            validate_real_fns_smoke \
+            while_struct_smoke; do
+            echo "=== $s ==="
+            if MINDC_SO=/tmp/libmindc_mind_self_host.so \
+               MINDC_BIN="${{ github.workspace }}/target/release/mindc" \
+               MINDC="${{ github.workspace }}/target/release/mindc" \
+                 python3 "examples/mindc_mind/$s.py" | tee /tmp/wire_out.txt; then
+              # Fail-closed: a "SKIP <so> not built" line exits 0 and would grade
+              # a MISSING library as a pass. MINDC_SO is set and verified
+              # non-empty above, so a SKIP here means the wiring broke, not that
+              # the gate is inapplicable.
+              if grep -q '^SKIP' /tmp/wire_out.txt; then
+                echo "ERROR: $s SKIPped with MINDC_SO set — vacuous green, failing closed"
+                fail=1
+              fi
+            else
+              echo "ERROR: $s FAILED"
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ]
         working-directory: ${{ github.workspace }}
 
       - name: Differential fuzzer — tc-rule ports vs live mindc (tcdiff)
@@ -834,6 +1079,130 @@ jobs:
           MINDC_SO=/tmp/libci_kernel.so \
             python3 examples/native/ci_kernel_smoke.py
         working-directory: ${{ github.workspace }}
+
+  executable_semantics_tier:
+    name: Executable-semantics test tier (mlir-build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45  # build ~317 test harnesses + run ~1913 tests; bound stalls
+
+    # THE TIER THAT RAN NOWHERE. Measured at f2a2d87d: 123 integration-test files /
+    # 262 test functions were reachable by NO `cargo test` invocation in this
+    # workflow or in scripts/preflight.sh. Every broad `cargo test` above runs
+    # `--no-default-features` with at most {std-surface, cross-module-imports,
+    # autodiff, mlir-lowering, cpu-buffers}; the only runs that enable `mlir-build`
+    # (in cross_substrate_identity, mindfuzz_cross_runner_identity and
+    # mindcraft_self_host) are `--test <single-target>` SELECTORS, and exactly
+    # ONE of the 110 mlir-build-gated files (cross_substrate_identity) is named by
+    # one. A file-level `#![cfg(all(unix, feature = "mlir-build", ...))]` that is
+    # unsatisfied ERASES the file, and cargo still prints `ok. 0 passed` and exits 0.
+    #
+    # Consequence, measured, not theorised:
+    #   $ cargo test --no-default-features --features std-surface,cross-module-imports \
+    #       --test alias_miscompile_run --test array_oob_trap_run
+    #   running 0 tests / test result: ok. 0 passed ...   (alias-miscompile gate)
+    #   running 0 tests / test result: ok. 0 passed ...   (array-OOB trap gate)
+    #   CARGO EXIT=0
+    # The alias-miscompile gate and the ARRAY_OOB_CONTRACT=DETERMINISTIC_BOUNDS_TRAP
+    # gate were EMPTY HARNESSES in every CI run. A lowering regression that made
+    # `a[i]` skip its bounds check, or reintroduced the alias miscompile, was caught
+    # by nothing.
+    #
+    # The gate body lives in scripts/exec_semantics_gate.sh so this job and the
+    # matching preflight step cannot drift apart. It asserts a POSITIVE test count
+    # (>= a floor) — a `--test` selector alone is NOT proof a gate ran — and triages
+    # every failing target against an explicit, shrink-only quarantine list whose
+    # entries each name a root cause. Any failure outside that list reds this job.
+    #
+    # NOT covered here, deliberately:
+    #   * `mlir-gpu` (tests/mlir_gpu.rs) and `mlir-jit` (tests/mlir_jit.rs) — 1 test
+    #     each; both need a GPU / an MLIR JIT runtime that hosted runners do not
+    #     have. Genuinely environment-gated.
+    # Covered by the sibling steps below rather than the main tier, because their
+    # feature combos are disjoint from it:
+    #   * std-surface + mlir-lowering  (8 files, ~53 tests) — no CI run enabled BOTH.
+    #   * pkg                          (2 files, 2 tests)   — CI only `cargo check`ed it.
+
+    env:
+      http_proxy: ""
+      https_proxy: ""
+      no_proxy: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: cfg-gate wiring contract (scripts/cfg_gate_wiring_lint.py)
+        # Guards the SCOPE of this job the way smoke_wiring_lint.py guards the
+        # smoke corpus. The tiers below are a hand-written list of feature sets;
+        # nothing in them notices a NEW `#![cfg(all(unix, feature = "..."))]` test
+        # file whose feature combo no tier enables — cargo would build it as an
+        # empty harness and print `ok. 0 passed`, exit 0, exactly as before.
+        # The lint DERIVES the required set from tests/*.rs, resolves what this
+        # workflow actually enables (including, transitively, the feature graph in
+        # Cargo.toml and the tier feature sets read out of
+        # scripts/exec_semantics_gate.sh itself), and fails on any file no run can
+        # reach. Pure text analysis, so it runs FIRST and fails in seconds instead
+        # of after the ~45-minute build.
+        run: python3 scripts/cfg_gate_wiring_lint.py
+        working-directory: ${{ github.workspace }}
+
+      - name: Install Rust (nightly)
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-exec-sem-${{ hashFiles('**/Cargo.toml', 'src/**/*.rs') }}
+          restore-keys: |
+            ${{ runner.os }}-exec-sem-
+
+      - name: Install MLIR toolchain (Ubuntu 24.04 LLVM 20)
+        run: |
+          # ports.ubuntu.com has transient outages that red a leg on an UPSTREAM
+          # issue, not a code defect. Retry up to 5x with backoff before failing.
+          ok=0
+          for attempt in 1 2 3 4 5; do
+            sudo apt-get update || true
+            if sudo apt-get install -y --fix-missing mlir-20-tools clang-20; then ok=1; break; fi
+            echo "apt attempt $attempt failed (mirror outage?); retry in $((attempt * 20))s"
+            sleep $((attempt * 20))
+          done
+          [ "$ok" = 1 ] || { echo "MLIR toolchain unavailable after 5 attempts (upstream apt mirror outage)"; exit 1; }
+          echo "/usr/lib/llvm-20/bin" >> "$GITHUB_PATH"
+
+      - name: Verify toolchain on PATH
+        # Fail-closed guard: MIND_BENCH_REQUIRE=1 (set by the gate script) turns a
+        # missing MLIR toolchain into a hard failure inside the harnesses, and this
+        # step catches it before the 45-minute build even starts.
+        run: |
+          mlir-opt --version | head -1
+          mlir-translate --version | head -1
+          clang --version | head -1
+
+      - name: Tier 'exec' — executable semantics (mlir-build)
+        # 110 mlir-build-gated files, including the alias-miscompile gate and the
+        # ARRAY_OOB_CONTRACT=DETERMINISTIC_BOUNDS_TRAP gate. measured@f2a2d87d:
+        # 317 harnesses / 1913 tests executed. Floor asserted inside the script.
+        run: scripts/exec_semantics_gate.sh exec
+
+      - name: Tier 'lowering' — std-surface + mlir-lowering
+        # 8 files / ~53 tests carry `#![cfg(all(feature = "std-surface",
+        # feature = "mlir-lowering"))]`. This workflow runs each of those features
+        # ALONE (the 'Test (gated ...)' and 'Run gated tests ...' steps of the
+        # build_test job) and never together, so the whole group was
+        # erased in both runs. measured@f2a2d87d: 318 harnesses / 1663 executed.
+        run: scripts/exec_semantics_gate.sh lowering
+
+      - name: Tier 'pkg' — package resolver
+        # tests/package_basic.rs + tests/package_traversal.rs are `#![cfg(feature =
+        # "pkg")]`. The feature-compile matrix above runs `cargo check --features
+        # pkg` but never `cargo test`, so neither had ever executed.
+        # measured@f2a2d87d: 317 harnesses / 1265 executed.
+        run: scripts/exec_semantics_gate.sh pkg
 
   mindcraft_check:
     name: Mindcraft check (RFC 0007 Phase 6)

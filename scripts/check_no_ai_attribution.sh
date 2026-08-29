@@ -21,6 +21,16 @@ PATTERN='\bfable\b|copilot|chatgpt|[0-9]+[- ]llm consensus|claude/[a-z-]+-[A-Za-
 
 # Excludes: vendored node_modules, the generated file index, and THIS file
 # (which necessarily contains the example patterns above).
+#
+# deferred: SCAN SCOPE is narrower than the tree — .ts (23 files), .yml (10),
+# .js (9), .c (7) and .mojo (4) are tracked but never scanned, so an attribution
+# in an SDK source or a workflow file is still missed. This is a separate gap
+# from the CI TRIGGER scope (closed 2026-08-28 by removing the docs-claims paths
+# filter; scripts/check_gate_wiring.py keeps trigger >= scan). Upgrade path: add
+# '*.ts' '*.js' '*.c' '*.h' '*.yml' here, but MEASURE false positives first —
+# vendored/generated JS and sourcemaps are the risk — and exclude them by
+# pathspec rather than weakening PATTERN. The wiring lint picks up any widening
+# automatically, since it reads this pathspec rather than a second copy of it.
 hits=$(git grep -inE "$PATTERN" -- \
   '*.md' '*.rs' '*.py' '*.mind' '*.sh' '*.toml' '*.rst' '*.txt' \
   ':!node_modules' ':!**/node_modules' ':!ANATOMY.md' \

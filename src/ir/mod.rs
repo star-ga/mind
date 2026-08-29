@@ -581,16 +581,27 @@ pub enum Instr {
         /// block-argument names in the header / body blocks.  Populated by
         /// `lower.rs`; parallel vec always has the same length as `live_vars`.
         init_ids: Vec<ValueId>,
-        /// F2 region-scoped exit env (LOWERING-INTERNAL, not in the mic wire
-        /// format). One fresh SSA id per loop-carried var, parallel to
-        /// `live_vars`. `^while_after_N` declares these as block args, and the
-        /// var is rebound to its `exit_id` for code AFTER the loop — so every
-        /// post-loop reference uses a value that dominates the after-block,
-        /// never a raw id defined inside `^while_body_N`.
+        /// F2 region-scoped exit env. One fresh SSA id per loop-carried var,
+        /// parallel to `live_vars`. `^while_after_N` declares these as block
+        /// args, and the var is rebound to its `exit_id` for code AFTER the
+        /// loop — so every post-loop reference uses a value that dominates the
+        /// after-block, never a raw id defined inside `^while_body_N`.
         ///
-        /// Reconstructed during AST->IR lowering; defaulted to `Vec::new()` on
-        /// compact/v3 parse and ignored by compact/v3 emit (matched via `..`).
-        /// fn bodies are not persisted to mic, so this is hash-neutral.
+        /// WIRE-BEARING AND HASH-BEARING — NOT lowering-internal, NOT
+        /// hash-neutral. Produced by AST->IR lowering and SERIALISED into the
+        /// canonical mic@3 body (a ValueId list appended after `init_ids`) since
+        /// wire version `0x02`; see [`crate::ir::compact::v3::MIC3_VERSION`].
+        /// Emit recurses into `FnDef` bodies, so a loop inside a function is on
+        /// the wire exactly like a top-level one. Because
+        /// `trace_hash = SHA-256(canonical mic@3 bytes)`
+        /// ([`crate::ir::ir_trace_hash`]), changing these ids changes
+        /// both the artifact bytes and the evidence-chain anchor. Only a legacy
+        /// `0x01` artifact — readable, never emitted — decodes back with
+        /// `exit_ids: Vec::new()`.
+        ///
+        /// Anti-drift gate: `byte_sensitivity_while_exit_ids` in
+        /// `ir::compact::v3::tests::std_surface_tests` fails the moment emit
+        /// stops covering this field, so this paragraph cannot silently re-rot.
         exit_ids: Vec<ValueId>,
     },
     /// `break` — exit the innermost enclosing `while`. Carries `live`: a
@@ -637,9 +648,8 @@ pub enum Instr {
         /// Variable bindings produced in either branch and visible after the
         /// if (Gap C: let bindings threaded back to outer fn_env).
         branch_bindings: Vec<(String, ValueId)>,
-        /// F2 merge phi list (LOWERING-INTERNAL, not in the mic wire format).
-        /// One entry per OUTER variable assigned in either branch:
-        /// `(merge_id, then_val, else_val)`. `^if_after_N` declares `merge_id`
+        /// F2 merge phi list. One entry per OUTER variable assigned in either
+        /// branch: `(merge_id, then_val, else_val)`. `^if_after_N` declares `merge_id`
         /// as a block arg; the then-branch `cf.br` passes `then_val` and the
         /// else-branch passes `else_val`. The crux of the F2 dominance fix:
         /// `then_val`/`else_val` are each the value of that variable at the
@@ -648,8 +658,21 @@ pub enum Instr {
         /// a raw value defined inside a deeper nested branch. The variable is
         /// rebound to `merge_id` for code AFTER the if.
         ///
-        /// Reconstructed during AST->IR lowering; defaulted to `Vec::new()` on
-        /// compact/v3 parse and ignored by compact/v3 emit (matched via `..`).
+        /// WIRE-BEARING AND HASH-BEARING — NOT lowering-internal, NOT
+        /// hash-neutral. Produced by AST->IR lowering and SERIALISED into the
+        /// canonical mic@3 body (a `(merge_id, then_val, else_val)` triple list
+        /// appended after `branch_bindings`) since wire version `0x02`; see
+        /// [`crate::ir::compact::v3::MIC3_VERSION`]. Emit recurses into `FnDef`
+        /// bodies, so an `if` inside a function is on the wire exactly like a
+        /// top-level one. Because `trace_hash = SHA-256(canonical mic@3 bytes)`
+        /// ([`crate::ir::ir_trace_hash`]), changing any triple changes
+        /// both the artifact bytes and the evidence-chain anchor. Only a legacy
+        /// `0x01` artifact — readable, never emitted — decodes back with
+        /// `merges: Vec::new()`.
+        ///
+        /// Anti-drift gate: `byte_sensitivity_if_merges` in
+        /// `ir::compact::v3::tests::std_surface_tests` fails the moment emit
+        /// stops covering this field, so this paragraph cannot silently re-rot.
         merges: Vec<(ValueId, ValueId, ValueId)>,
     },
     /// RFC 0006 Track B (increment 1) — load `lanes` contiguous f32 values

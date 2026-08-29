@@ -36,12 +36,21 @@ import ctypes
 import pathlib
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).parent.resolve()))
+from _selfhost_so import resolve_so  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 
 _HERE         = pathlib.Path(__file__).parent.resolve()
-COMBINED_SO   = _HERE / "libmindc_mind.so"
+# Was hard-coded to `_HERE / "libmindc_mind.so"`, an UNTRACKED, gitignored build
+# artifact. That made this smoke un-wireable in CI (a fresh checkout has no such
+# file, and the not-found path reports a misleading "FIRST-DIVERGENCE" verdict)
+# while locally it silently graded against whatever stale .so happened to be on
+# disk. resolve_so() honours MINDC_SO first — the CI contract — then builds a
+# fresh cdylib, and only then falls back to the legacy in-tree path.
+COMBINED_SO   = resolve_so()
 FIXTURE_PATH  = _HERE / "fixture.mind"
 
 # ---------------------------------------------------------------------------

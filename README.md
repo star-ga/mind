@@ -175,8 +175,12 @@ additional features as needed:
 ```bash
 cargo build --features aot        # AOT compilation (--emit-obj, project builds)
 cargo build --features autodiff   # Autodiff support
-cargo build --features full       # All features
+cargo build --features full       # aot + autodiff + cpu-exec + cpu-conv + pkg + ffi-c
 ```
+
+`full` is **not** every feature: it enables 9 of the 25 declared features and
+omits `std-surface` and `cross-module-imports`, so it does not produce the
+compiler that CI gates. See [`docs/cli.md`](docs/cli.md) for the build line to use.
 
 MLIR emission requires the `mlir-lowering` feature. Reverse-mode autodiff
 covers the Core v1 tensor ops (see [`docs/autodiff.md`](docs/autodiff.md)) and

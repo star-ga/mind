@@ -7,8 +7,14 @@
 # gate and the frozen-frontend bench gate (bench-gate.yml, --no-default-features).
 #
 #   scripts/preflight.sh          # FAST (~seconds-min): fmt + build + mindc check
+#                                 #   + the two wiring contracts (cfg-gate + smokes)
 #   scripts/preflight.sh --full   # + keystone 7/7 + cross-substrate determinism
-#                                 #   + self-host LOOP + mic@3 FLIP + bench gate
+#                                 #   + executable-semantics tier + self-host LOOP
+#                                 #   + mic@3 FLIP + bench gate
+#
+# The executable-semantics tier is the long pole (~317 harnesses, ~1900 tests, a full
+# mlir-build compile). Set MIND_PREFLIGHT_SKIP_EXEC_SEMANTICS=1 to opt out explicitly;
+# it then prints "SKIPPED ... this gate did NOT run" rather than passing silently.
 #
 # GATE-EVIDENCE RULE: never accept `exit 0` as proof a gate ran. Every cargo-test
 # gate below asserts a POSITIVE test count. A correct `--test <target>` selector is
@@ -84,6 +90,47 @@ for feats in "" "std-surface" "cross-module-imports" "std-surface,cross-module-i
 done
 [ "$nf_ok" = 1 ] && echo "ok (all CI feature combos compile)"
 
+step "cfg-gate wiring contract  [ci.yml executable_semantics_tier first step]"
+# In the FAST path on purpose: pure text analysis, runs in well under a second, and
+# it is the cheapest possible catch for the most expensive failure shape in this
+# repo. A new `tests/*.rs` carrying a crate-level
+# `#![cfg(all(unix, feature = "..."))]` whose feature combo no CI run enables does
+# NOT fail visibly — cargo builds it as an EMPTY HARNESS, prints `ok. 0 passed` and
+# exits 0. Measured 2026-08-28 before this lint existed: 69 such files / 161 #[test]
+# fns, including tests/alias_miscompile_run.rs and tests/array_oob_trap_run.rs, the
+# dedicated regression gates for a real alias miscompile and for the deterministic
+# array-OOB trap. Both PASS when their features are enabled; neither had ever run.
+# The lint derives the required set from the test sources and the enabling set from
+# ci.yml + Cargo.toml's feature graph + the tier definitions in
+# scripts/exec_semantics_gate.sh, so there is no second hand-maintained list to drift.
+if [ -f scripts/cfg_gate_wiring_lint.py ]; then
+  if cw_out=$(python3 scripts/cfg_gate_wiring_lint.py 2>&1); then
+    printf '%s\n' "$cw_out" | tail -1
+  else
+    bad "cfg-gate wiring contract FAILED — a feature-gated test file runs NOWHERE in CI:"
+    printf '%s\n' "$cw_out" | head -12
+  fi
+else
+  bad "scripts/cfg_gate_wiring_lint.py MISSING — CI runs it; preflight cannot verify it"
+fi
+
+step "smoke-corpus wiring contract  [ci.yml mindcraft_self_host first step]"
+# Same class, other corpus: examples/mindc_mind/*.py is the ONLY regression gate for
+# constructs main.mind does not self-use, and its wiring used to be two hand-copied
+# lists plus a prose claim that they were identical (they were not: 9 gates ran only
+# in fast_keystone.sh and one ran in neither runner). SMOKE_WIRING.tsv is the checked
+# contract; the lint recomputes the real wiring and fails on drift in either direction.
+if [ -f examples/mindc_mind/smoke_wiring_lint.py ]; then
+  if sw_out=$(python3 examples/mindc_mind/smoke_wiring_lint.py 2>&1); then
+    printf '%s\n' "$sw_out" | tail -1
+  else
+    bad "smoke-corpus wiring contract FAILED — a smoke is unclassified or its wiring drifted:"
+    printf '%s\n' "$sw_out" | head -12
+  fi
+else
+  bad "examples/mindc_mind/smoke_wiring_lint.py MISSING — CI runs it; preflight cannot verify it"
+fi
+
 if [ "${1:-}" = "--full" ]; then
   step "no-features test parity  [ci.yml Build & Test 'Test' steps — the fail-close regression class]"
   # A test that feeds lower_to_ir free operands / hits a gated path lowered to a
@@ -125,6 +172,30 @@ if [ "${1:-}" = "--full" ]; then
     echo "ok ($xs_n/24+ reproducibility gates byte-identical)"
   else
     bad "cross-substrate determinism gate did NOT prove itself (passed='${xs_n:-none}', need >=24) — 0 tests means the file was cfg'd out, NOT a pass; do NOT push"
+  fi
+
+  step "executable-semantics tier  [ci.yml executable_semantics_tier — the tier that ran NOWHERE]"
+  # Added 2026-08-28. Measured at f2a2d87d: 123 integration-test files / 262 test
+  # functions were reachable by NO cargo-test invocation in ci.yml OR in this script.
+  # The 8 broad `cargo test` runs never enable mlir-build; the 4 that do are all
+  # `--test <target>` selectors, and exactly ONE of the 110 mlir-build-gated files is
+  # named by one. So the alias-miscompile gate and the array-OOB bounds-TRAP gate both
+  # compiled to EMPTY harnesses and reported `ok. 0 passed` with exit 0 in every run.
+  # The gate body is shared with the CI job (scripts/exec_semantics_gate.sh) so the two
+  # cannot drift; it asserts a POSITIVE test count and triages failures against a
+  # shrink-only quarantine list. Skipped by MIND_PREFLIGHT_SKIP_EXEC_SEMANTICS=1 when
+  # you need the fast path — that is a documented OPT-OUT, never a silent pass.
+  if [ -n "${MIND_PREFLIGHT_SKIP_EXEC_SEMANTICS:-}" ]; then
+    echo "SKIPPED by MIND_PREFLIGHT_SKIP_EXEC_SEMANTICS — this gate did NOT run"
+  elif [ -x scripts/exec_semantics_gate.sh ]; then
+    if es_out=$(scripts/exec_semantics_gate.sh 2>&1); then
+      printf '%s\n' "$es_out" | grep -E '^(harnesses|tests executed|ok:)' | sed 's/^/  /'
+    else
+      bad "executable-semantics tier FAILED (a NON-quarantined target broke, or the tier collapsed to 0):"
+      printf '%s\n' "$es_out" | grep -E '^(FAIL|  - |harnesses|tests executed)' | head -12
+    fi
+  else
+    bad "scripts/exec_semantics_gate.sh MISSING — CI runs it; preflight cannot verify it"
   fi
 
   step "self-host LOOP byte-identity  [examples/mindc_mind/self_host_loop_smoke.py]"

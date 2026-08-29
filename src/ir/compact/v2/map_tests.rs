@@ -485,6 +485,252 @@ fn limit_string_too_large_text() {
 }
 
 // ---------------------------------------------------------------------------
+// 9b. §3.5 limit rejections — BINARY side
+//
+// The text parser enforced every §3.5 rule; the binary decoder enforced none of
+// them. Both serializations encode the same `Map`, so a blob the binary side
+// accepts and the text side would refuse breaks the project's own round trip:
+// `emit_mic2` writes MAP keys RAW and UNESCAPED, so a key carrying a newline
+// re-emits as two valid text entries where the blob carried one. Each test
+// below is the binary mirror of the `*_text` test above it, built with the
+// project's own `emit_micb` so the blob is demonstrably reachable.
+// ---------------------------------------------------------------------------
+
+/// A graph carrying exactly one MAP entry, encoded to MIC-B.
+fn micb_with_single_map_entry(key: &str, value: MapValue) -> Vec<u8> {
+    let mut g = Graph::residual_block();
+    g.map.insert(key, value);
+    emit_micb_bytes(&g)
+}
+
+/// Build `levels` of nested maps below the top-level MAP block.
+/// `levels == 0` is a flat top-level entry; `levels == 4` is the deepest form
+/// the text parser accepts (top level 0 … nested level 4).
+fn nested_map_value(levels: usize) -> MapValue {
+    let mut value = MapValue::Int(1);
+    for _ in 0..levels {
+        let mut m = Map::new();
+        m.insert("n", value);
+        value = MapValue::Nested(m);
+    }
+    value
+}
+
+#[test]
+fn limit_key_syntax_rejected_binary() {
+    // THE round-trip break: this key is a whole text MAP entry plus a newline.
+    let blob = micb_with_single_map_entry("a = 1\ninjected.key", MapValue::Int(7));
+    let err = parse_micb(&mut Cursor::new(&blob))
+        .expect_err("a MAP key that is not a dotted ident must be rejected");
+    assert!(
+        err.message.contains("invalid MAP key"),
+        "expected a key-grammar diagnostic, got: {}",
+        err.message
+    );
+}
+
+#[test]
+fn key_syntax_break_is_a_real_text_round_trip_hazard() {
+    // Non-vacuity for the test above: show WHY the binary decoder must refuse
+    // that key, without depending on the decoder at all. The Map holds ONE
+    // entry; its canonical text form parses back as TWO. If this ever becomes
+    // a faithful round trip, the emitter learned to escape keys and this test
+    // should be replaced, not deleted.
+    let mut g = Graph::residual_block();
+    g.map.insert("a = 1\ninjected.key", MapValue::Int(7));
+    assert_eq!(g.map.len(), 1);
+
+    let text = emit_mic2(&g);
+    let reparsed = parse_mic2(&text).expect("emitted text happens to be parseable");
+    assert_ne!(
+        reparsed.map.len(),
+        g.map.len(),
+        "an unescaped-key round trip is supposed to be lossy here; text was:\n{text}"
+    );
+}
+
+#[test]
+fn limit_key_too_long_rejected_binary() {
+    let blob = micb_with_single_map_entry(&"a".repeat(257), MapValue::Int(1));
+    let err = parse_micb(&mut Cursor::new(&blob)).expect_err("key > 256 bytes must be rejected");
+    assert!(
+        err.message.contains("MAP key too long"),
+        "expected a key-length diagnostic, got: {}",
+        err.message
+    );
+}
+
+#[test]
+fn limit_key_at_max_length_accepted_binary() {
+    // Boundary: 256 bytes is legal, so the rejection above is not off by one.
+    let blob = micb_with_single_map_entry(&"a".repeat(256), MapValue::Int(1));
+    let parsed = parse_micb(&mut Cursor::new(&blob)).expect("256-byte key must be accepted");
+    assert_eq!(parsed.map.len(), 1);
+}
+
+#[test]
+fn limit_key_depth_too_large_rejected_binary() {
+    let blob = micb_with_single_map_entry("a.b.c.d.e.f.g.h.i", MapValue::Int(1));
+    let err = parse_micb(&mut Cursor::new(&blob))
+        .expect_err("key with 9 segments must be rejected (limit 8)");
+    assert!(
+        err.message.contains("MAP key depth"),
+        "expected a key-depth diagnostic, got: {}",
+        err.message
+    );
+}
+
+#[test]
+fn limit_key_depth_at_max_accepted_binary() {
+    let blob = micb_with_single_map_entry("a.b.c.d.e.f.g.h", MapValue::Int(1));
+    let parsed = parse_micb(&mut Cursor::new(&blob)).expect("8 segments must be accepted");
+    assert_eq!(parsed.map.len(), 1);
+}
+
+#[test]
+fn limit_nesting_too_deep_rejected_binary() {
+    // 5 nested levels below the top-level block — the text parser refuses this
+    // (see `limit_nesting_too_deep_text`), so the binary side must too.
+    let blob = micb_with_single_map_entry("a", nested_map_value(5));
+    let err = parse_micb(&mut Cursor::new(&blob)).expect_err("nesting depth > 4 must be rejected");
+    assert!(
+        err.message.contains("nesting depth"),
+        "expected a nesting diagnostic, got: {}",
+        err.message
+    );
+}
+
+#[test]
+fn limit_nesting_at_max_accepted_binary() {
+    // Boundary in the OTHER direction: 4 nested levels is the deepest map the
+    // TEXT parser accepts, so the binary decoder must not be one level stricter
+    // — otherwise text-accepted MAPs fail to survive a binary round trip.
+    let mut g = Graph::residual_block();
+    g.map.insert("a", nested_map_value(4));
+    let blob = emit_micb_bytes(&g);
+    let parsed = parse_micb(&mut Cursor::new(&blob)).expect("4 nested levels must be accepted");
+    assert_eq!(parsed.map, g.map, "deepest legal MAP must round-trip");
+
+    // And the same Map really is accepted by the text parser.
+    let text_parsed = parse_mic2(&emit_mic2(&g)).expect("text side must accept 4 nested levels");
+    assert_eq!(text_parsed.map, g.map);
+}
+
+#[test]
+fn limit_string_too_large_rejected_binary() {
+    let blob = micb_with_single_map_entry("k", MapValue::String("x".repeat(64 * 1024 + 1)));
+    let err = parse_micb(&mut Cursor::new(&blob)).expect_err("string > 64 KiB must be rejected");
+    assert!(
+        err.message.contains("MAP string value exceeds"),
+        "expected a string-size diagnostic, got: {}",
+        err.message
+    );
+}
+
+#[test]
+fn limit_bytes_too_large_rejected_binary() {
+    let blob = micb_with_single_map_entry("b", MapValue::Bytes(vec![0u8; 1024 * 1024 + 1]));
+    let err = parse_micb(&mut Cursor::new(&blob)).expect_err("bytes > 1 MiB must be rejected");
+    assert!(
+        err.message.contains("bytes() value exceeds"),
+        "expected a bytes-size diagnostic, got: {}",
+        err.message
+    );
+}
+
+#[test]
+fn limit_entry_count_too_large_rejected_binary() {
+    // Declared top-level count over the §3.5 budget.
+    let mut g = Graph::residual_block();
+    for i in 0..=4096 {
+        g.map.insert(format!("k{i}"), MapValue::Int(i as i64));
+    }
+    let blob = emit_micb_bytes(&g);
+    let err = parse_micb(&mut Cursor::new(&blob)).expect_err("4097 entries must be rejected");
+    assert!(
+        err.message.contains("MAP entry count exceeds"),
+        "expected an entry-count diagnostic, got: {}",
+        err.message
+    );
+}
+
+#[test]
+fn limit_entry_count_via_nested_subtree_rejected_binary() {
+    // Every DECLARED count here is legal (2 at the top, 4096 in the nested map);
+    // only the RECURSIVE total busts the budget. Catches a fix that checks the
+    // declared count alone.
+    let mut inner = Map::new();
+    for i in 0..4096 {
+        inner.insert(format!("k{i}"), MapValue::Int(i as i64));
+    }
+    let mut g = Graph::residual_block();
+    g.map.insert("nested", MapValue::Nested(inner));
+    g.map.insert("tail", MapValue::Int(0));
+
+    let blob = emit_micb_bytes(&g);
+    let err = parse_micb(&mut Cursor::new(&blob))
+        .expect_err("recursive entry count over 4096 must be rejected");
+    assert!(
+        err.message.contains("MAP entry count exceeds"),
+        "expected an entry-count diagnostic, got: {}",
+        err.message
+    );
+
+    // The text parser refuses the same Map — that agreement is the point.
+    let mut g_text = Graph::residual_block();
+    let mut inner_text = Map::new();
+    for i in 0..4096 {
+        inner_text.insert(format!("k{i}"), MapValue::Int(i as i64));
+    }
+    g_text.map.insert("nested", MapValue::Nested(inner_text));
+    g_text.map.insert("tail", MapValue::Int(0));
+    assert!(
+        parse_mic2(&emit_mic2(&g_text)).is_err(),
+        "text parser must refuse the same over-budget MAP"
+    );
+}
+
+#[test]
+fn string_limit_is_measured_on_the_decoded_value_on_both_sides() {
+    // 40 000 newlines: 40 000 bytes decoded, but 80 000 bytes once the emitter
+    // expands each to `\n` — over 64 KiB on the wire, under it as a value.
+    // The limit is stated over the DECODED value precisely so the two
+    // serializations agree here; measuring the text side's escaped bytes would
+    // make it refuse a Map the binary side accepts, which is the asymmetry
+    // class this whole section exists to close.
+    let mut g = Graph::residual_block();
+    g.map.insert("k", MapValue::String("\n".repeat(40_000)));
+
+    let text = emit_mic2(&g);
+    assert!(
+        text.len() > 64 * 1024,
+        "escaped form must exceed the wire cap"
+    );
+    let from_text = parse_mic2(&text).expect("text side must accept it");
+    assert_eq!(from_text.map, g.map);
+
+    let blob = emit_micb_bytes(&g);
+    let from_binary = parse_micb(&mut Cursor::new(&blob)).expect("binary side must accept it");
+    assert_eq!(from_binary.map, g.map);
+}
+
+#[test]
+fn limit_entry_count_at_max_accepted_binary() {
+    // Boundary: exactly 4096 entries is legal on both sides.
+    let mut g = Graph::residual_block();
+    for i in 0..4096 {
+        g.map.insert(format!("k{i}"), MapValue::Int(i as i64));
+    }
+    let blob = emit_micb_bytes(&g);
+    let parsed = parse_micb(&mut Cursor::new(&blob)).expect("4096 entries must be accepted");
+    assert_eq!(parsed.map.len(), 4096);
+    assert!(
+        parse_mic2(&emit_mic2(&g)).is_ok(),
+        "text parser must also accept exactly 4096 entries"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // 10. §8 compatibility matrix
 // ---------------------------------------------------------------------------
 

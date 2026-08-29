@@ -237,5 +237,8 @@ pub mod capi {
 #[cfg(feature = "ffi-c")]
 pub mod header;
 
-// System-level FFI for protection (anti-debug, platform detection)
+// System-level FFI: debugger detection + platform identification.
+// Gated in its own right, not only by `pub mod ffi;` in lib.rs, so that
+// ungating the parent cannot silently export the `mind_sys_*` symbols.
+#[cfg(feature = "ffi-c")]
 pub mod sys;

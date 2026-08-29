@@ -358,22 +358,27 @@ def oracle_reference(out_so: Path, seed: int = 0xDEADBEEF, src: Path | None = No
 # 0. cross-substrate byte-identity -- THE WEDGE. Now REAL via the CI matrix.
 # --------------------------------------------------------------------------- #
 # The wedge oracle (avx2 artifact == neon artifact) cannot be decided on a
-# single host. Instead of stubbing it, MIND-Fuzz now STAGES every survivor as a
+# single host. Instead of stubbing it, MIND-Fuzz STAGES every survivor as a
 # candidate cross-substrate workload: the surviving program plus the host's
-# canonical output hash. The committed staging dir is then checked by the Rust
-# test `tests/mindfuzz_cross_substrate.rs`, which the EXISTING
+# canonical output hash. The committed staging dir is read back and replayed by
+# `mindfuzz_staged_corpus_replay` in `tests/mindfuzz_cross_substrate.rs` — the
+# named consumer; nothing else in the tree reads staged/ — which the EXISTING
 # `cross_substrate_identity` CI job runs on BOTH the avx2 (ubuntu-24.04) and
-# neon (ubuntu-24.04-arm) runners. Each runner recomputes the survivor's output
-# hash and asserts it equals the committed reference — so the neon runner
-# asserts byte-identity against the avx2-blessed hash. That IS the wedge check
-# (RFC 0015 §3.1), now enforced on real ARM hardware every CI run.
+# neon (ubuntu-24.04-arm) runners. Each runner recompiles the survivor,
+# recomputes its output hash and asserts it equals the committed reference — so
+# the neon runner asserts byte-identity against the avx2-blessed hash. That IS
+# the wedge check (RFC 0015 §3.1), enforced on real ARM hardware every CI run.
 
 # The canonical driver: a survivor that exposes the scalar entry `f(i64)->i64`
 # is exercised over a fixed, deterministic argument vector (the same LCG as
 # tests/cross_substrate_identity.rs) and the returns are hashed as i64-LE bytes.
 # This pins an ISA-relevant value (the integer-SSA lowering result) that MUST be
 # identical on avx2 and neon. The argument set + entry symbol are part of the
-# staged manifest so the Rust gate replays them byte-for-byte.
+# staged manifest so the Rust gate replays them byte-for-byte: `canon_args()` and
+# `canonical_output_hash()` in tests/mindfuzz_cross_substrate.rs are the
+# line-for-line Rust twins of `_canon_args()` / `canonical_output_hash()` below.
+# Changing the LCG, the window, or the hash input here WITHOUT changing them
+# there silently decouples the generator from its only consumer.
 CANON_ENTRY = "f"
 CANON_ARG_SEED = 0xDEADBEEF
 CANON_ARG_COUNT = 64

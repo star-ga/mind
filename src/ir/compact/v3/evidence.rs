@@ -105,6 +105,33 @@ const KEY_TOOLCHAIN: &str = "evidence_chain.toolchain";
 const KEY_TRACE_HASH: &str = "evidence_chain.trace_hash";
 const KEY_TRACE_HASH_KIND: &str = "evidence_chain.trace_hash_kind";
 
+/// Every DEFINED key in the reserved `evidence_chain.` namespace, enumerated ONCE
+/// beside the constants themselves.
+///
+/// The read path allowlisted `signature.*` but nothing checked this namespace, so an
+/// unknown `evidence_chain.<anything>` entry was accepted on every read path. That is
+/// the same malleability shape the `signature.*` allowlist exists to close: the key is
+/// reserved, `validate_app_entries` refuses to EMIT it, and therefore no legitimate
+/// producer writes one — but emit-side validation is not a read-side control, and a
+/// hex editor is not obliged to use our emitter.
+///
+/// Fail-closed is the right default here even though it is strict: a reader that does
+/// not understand an evidence-chain key cannot know whether the key changes the meaning
+/// of the chain, so accepting it silently is worse than refusing the artifact. A new
+/// key (e.g. RFC 0027's `evidence_chain.device_receipts`) MUST be added here in the same
+/// change that starts emitting it, or every artifact carrying it fails verification —
+/// which is the loud direction to fail in.
+const EVIDENCE_CHAIN_KEYS: [&str; 8] = [
+    KEY_COLLAPSE_RECEIPTS,
+    KEY_DETERMINISM,
+    KEY_PARENT,
+    KEY_SCHEMA,
+    KEY_SUBSTRATE,
+    KEY_TOOLCHAIN,
+    KEY_TRACE_HASH,
+    KEY_TRACE_HASH_KIND,
+];
+
 // ─── Signature-layer key constants (RFC 0021 §6, additive/optional) ────────────
 //
 // The `signature.*` prefix is the reserved signing namespace: these keys are an
@@ -1723,6 +1750,10 @@ pub(crate) fn parse_map_epilogue(bytes: &[u8]) -> Result<Vec<ParsedEntry>, Parse
     // covered by no mechanism at all.
     for e in &entries {
         if e.key.starts_with("signature.") && !SIGNATURE_KEYS.contains(&e.key.as_str()) {
+            return Err(ParseMapError::ReservedKey(e.key.clone()));
+        }
+        // Same rule, the other reserved namespace. Previously unchecked on read.
+        if e.key.starts_with("evidence_chain.") && !EVIDENCE_CHAIN_KEYS.contains(&e.key.as_str()) {
             return Err(ParseMapError::ReservedKey(e.key.clone()));
         }
     }
@@ -3802,14 +3833,13 @@ mod tests {
     /// of attacker payload and still verified.
     #[test]
     fn unknown_reserved_signature_key_is_rejected_on_read() {
-        let known = [
-            KEY_SIG_SCHEME,
-            KEY_SIG_PUBKEY,
-            KEY_SIG_ED25519,
-            KEY_SIG_MLDSA_PUBKEY,
-            KEY_SIG_MLDSA,
-        ];
-        for k in known {
+        // Derived from SIGNATURE_KEYS, never re-listed. A hardcoded copy here was
+        // pinned at the original FIVE keys while the allowlist grew to NINE, so the
+        // four PQC keys (ml-dsa-87 / slh-dsa, both pubkey and signature) were never
+        // asserted acceptable — dropping one from SIGNATURE_KEYS would have left this
+        // test green while every artifact of that scheme failed verification. That is
+        // the same "one rule, two lists, one updated" shape this test exists to catch.
+        for k in SIGNATURE_KEYS {
             assert!(
                 k.starts_with("signature."),
                 "{k} must be in the reserved namespace"
@@ -3832,7 +3862,7 @@ mod tests {
             "signature.ed25519_extra",
         ] {
             assert!(
-                !known.contains(&injected),
+                !SIGNATURE_KEYS.contains(&injected),
                 "{injected} must not be a defined signature key"
             );
             let entries = vec![ParsedEntry {
@@ -3915,6 +3945,32 @@ mod tests {
             assert!(
                 mic3_canonical_check(&art).is_err(),
                 "canonical check must still reject it"
+            );
+        }
+
+        // The OTHER reserved namespace. `evidence_chain.*` was allowlisted only on the
+        // emit side (`validate_app_entries`); the read side checked `signature.*` alone,
+        // so an unknown evidence-chain key rode through every read path.
+        for injected in ["evidence_chain.zzz", "evidence_chain.device_receipts"] {
+            assert!(
+                !EVIDENCE_CHAIN_KEYS.contains(&injected),
+                "{injected} must not be a defined evidence-chain key"
+            );
+            let entries = vec![ParsedEntry {
+                key: injected.to_string(),
+                value: ParsedValue::Int(1),
+            }];
+            let mut art = body.clone();
+            art.extend_from_slice(&encode_map_epilogue_canonical(&entries));
+            match parse_map_epilogue(&art[body.len()..]) {
+                Err(ParseMapError::ReservedKey(k)) => assert_eq!(k, injected),
+                other => {
+                    panic!("unknown evidence_chain key must be rejected on READ, got {other:?}")
+                }
+            }
+            assert!(
+                mic3_signature_status(&art).is_err(),
+                "signature_status must not report a verdict over an unknown evidence-chain key"
             );
         }
 

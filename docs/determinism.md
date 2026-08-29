@@ -268,8 +268,31 @@ non-determinism is a **traced, attested opt-in** across three layers:
    `deterministic` label cannot pass. `mindc verify --require-deterministic` fails
    closed for a consumer that requires reproducibility.
 
-The result: the attestation can never lie, and non-determinism is always
-**opt-in and labelled, never by accident**. ✅
+**Scope of the classifier — what "such a builtin" means.** The set is not a prose
+list that can drift away from the compiler. Every `__mind_*` primitive carries its
+determinism class on the same registry row as its name and i64 arity
+(`src/intrinsics.rs`), so adding a primitive without classifying it is a compile
+error; one classifier serves both the build gate and the `#[deterministic]`
+call-graph check, so the two layers cannot disagree; and a test fails until every
+intrinsic the C runtime exports is explicitly classified, so a newly added clock
+or entropy primitive cannot be admitted as deterministic by omission. Two
+non-taints are deliberate, argued in that file, and stated here rather than left
+for a reader to discover:
+
+* the raw-memory intrinsics (`__mind_load_i*` / `__mind_store_i*`), which the
+  compiler only ever generates against an `__mind_alloc` arena base; and
+* **file reads by path or fd**, whose content is treated as a *declared program
+  input* — so a program that reads a file whose bytes change between runs is still
+  attested `deterministic` today. Closing that gap means hashing declared file
+  inputs into the evidence chain as input links (RFC 0016 §4).
+
+Tainting either would attest every std-surface program — mindc's own self-hosted
+build included — as `nondeterministic`, which tells a consumer nothing:
+over-tainting is as dishonest as under-tainting.
+
+The result: non-determinism is always **opt-in and labelled, never by accident**,
+and the attestation cannot lie about any channel the classifier covers — with that
+coverage machine-checked rather than asserted. ✅
 
 ---
 

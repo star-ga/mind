@@ -86,6 +86,63 @@ pub fn uleb128_read<R: Read>(r: &mut R) -> std::io::Result<u64> {
     ))
 }
 
+/// Read an unsigned integer from ULEB128 encoding, REJECTING any non-minimal
+/// (zero-padded) encoding.
+///
+/// [`uleb128_read`] accepts padded forms: `[0x89, 0x00]` decodes to `9` exactly
+/// as the canonical `[0x09]` does. Two distinct byte streams therefore decode to
+/// the same value, which makes every structure whose lengths it reads
+/// byte-MALLEABLE — an attacker can re-encode a length in place without changing
+/// anything the decoder sees. Canonical wire regions (the mic@3 MAP epilogue)
+/// must use this reader instead, so a padded length is a hard parse failure
+/// rather than a silently normalised one.
+///
+/// Minimality rule: the terminating byte (the one without the continuation bit)
+/// must be non-zero, unless the whole encoding is the single byte `0x00`
+/// (the canonical encoding of `0`). A trailing all-zero group contributes no
+/// bits, so its only purpose is padding.
+///
+/// Returns error on: EOF before a complete value, overflow (> 10 bytes), or a
+/// non-minimal encoding.
+pub fn uleb128_read_minimal<R: Read>(r: &mut R) -> std::io::Result<u64> {
+    let mut result: u64 = 0;
+    let mut shift: u32 = 0;
+    let mut buf = [0u8; 1];
+
+    for i in 0..MAX_ULEB128_BYTES {
+        r.read_exact(&mut buf)?;
+        let byte = buf[0];
+        let value = (byte & 0x7F) as u64;
+
+        if shift >= 64 || (shift == 63 && value > 1) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "ULEB128 overflow",
+            ));
+        }
+
+        result |= value << shift;
+        shift += 7;
+
+        if (byte & 0x80) == 0 {
+            // Terminating byte. Minimal iff it carries payload, or it is the
+            // only byte (the canonical encoding of zero).
+            if byte == 0 && i > 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "ULEB128 non-minimal (zero-padded) encoding",
+                ));
+            }
+            return Ok(result);
+        }
+    }
+
+    Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        "ULEB128 too long (> 10 bytes)",
+    ))
+}
+
 /// Encode a signed integer using zigzag encoding.
 ///
 /// Zigzag maps signed integers to unsigned integers:

@@ -321,6 +321,37 @@ fn identity_survivor(
 /// across scopes, never a wrong fold). Runs after [`fold_mul_by_zero`], so a folded `x*0`'s
 /// fresh `ConstI64 0` feeds this pass too (e.g. `y + (x*0)` collapses to `y`). Recurses into
 /// nested branches / bodies. Deterministic: one forward pass, no hashmap iteration.
+///
+/// deferred: this pass can emit IR with a DANGLING SSA USE on sources whose regions read a
+/// loop-invariant enclosing value. `remap_operands` deliberately does not descend into
+/// `If`/`While`/`FnDef` bodies (see `for_each_operand_mut`), on the stated assumption that
+/// every enclosing value a region reads is threaded through `If.merges` / `While.init_ids`,
+/// which ARE remapped. That assumption does not hold for every shape the lowerer produces:
+/// when it fails, the aliased-away `dst` stays referenced inside the region and the module
+/// fails verification. Measured over the 300 corpus sources that compile with the optimizer
+/// OFF, 2 fail with the optimizer ON, and BOTH isolate to this pass alone (the other three
+/// passes each compile them cleanly):
+///
+/// ```text
+/// MIND_NATIVE_OPT=basic mindc examples/geometric_collapse.mind --emit-mic3 /dev/null
+///   -> error[ir-verify][E3001]: use of undefined value %%7 at instruction 2
+/// MIND_NATIVE_OPT=basic mindc std/toml.mind --emit-mic3 /dev/null
+///   -> error[ir-verify][E3001]: use of undefined value %%6 at instruction 0
+/// ```
+///
+/// NOT a silent miscompile: `ir::prepare_ir_for_backend` re-verifies after the pass, so this
+/// fails LOUD at compile time, and the pass is opt-in (`MIND_NATIVE_OPT=basic`) with the
+/// default OFF path byte-identical. Upgrade path — FIRST settle which of the two conflicting
+/// invariants actually holds, because the fix differs: if `ValueId` is unique module-wide
+/// (`verify_module` tracks one flat `defined` set, which suggests it is), `remap_operands`
+/// can simply descend into region bodies and rename enclosing-scope reads; if a region body
+/// really does open its own namespace as `for_each_operand_mut`'s doc claims, a blind descent
+/// would rename an unrelated same-numbered value and the fix is instead to extend the region
+/// INTERFACE (`If.merges` / `While.init_ids`) so every enclosing read is threaded, and to
+/// fail-closed (skip the fold) whenever a `dst` is read by a region whose interface does not
+/// carry it. Either way, re-run the corpus sweep to 300/300 before this pass is called landed.
+/// Until then `basic` is a developer flag, not a shipping profile; enabling it by default
+/// remains gated on that sweep plus a whole-corpus reseed.
 #[cfg(feature = "std-surface")]
 fn fold_algebraic_identities(instrs: &mut Vec<Instr>) {
     use std::collections::BTreeSet;

@@ -22201,6 +22201,22 @@ pub fn span_in_list(buf: i64, lo: i64, hi: i64, outspans: i64, oc: i64, i: i64) 
 // name declared by a `let` in EITHER branch is branch-local (shadow-safe: a `let a` that
 // shadows param `a` is still dropped); only outer-name ASSIGNS survive to merge. Filters
 // the 16B {lo,hi} spans in-place (kept slots compacted to `oc`); returns the kept count.
+// INVARIANT (mirrors the Rust oracle, lower.rs `branch_bindings`):
+//   a name enters the merge set IFF it denotes a binding that EXISTS BEFORE the
+//   region AND is ASSIGNED (not declared) on some fall-through path inside it.
+//
+// deferred: this filter drops a name `let`-declared in EITHER branch, whereas the
+// oracle unions then_writes u else_writes and suppresses only the DECLARING side.
+// So `if c { let x = ..; } else { x = .. }` — a branch-local declaration on one arm
+// and an OUTER-name assignment on the other — merges in Rust (the then edge takes the
+// pre-if env value) and would NOT merge here. That divergence is currently
+// UNREACHABLE: flatten_stmts (:20170) walls every non-final statement that is not an
+// `ast_let()`, so no assignment reaches this pass and `n` is 0 on the whole accepted
+// subset. It becomes REAL the moment an `ast_assign` arm lands in flatten_stmts.
+// Upgrade path: filter by declaring-side only (test the name against the arm it was
+// declared in, not both arms), and land a golden for the shape above BEFORE admitting
+// assignments — do not carry `assign_merge_vids`' zero-const placeholder forward as
+// proven, it was byte-verified only against the pre-fix oracle.
 pub fn drop_branch_local_lets(spans: i64, n: i64, buf: i64, then_sa: i64, then_n: i64, else_sa: i64, else_n: i64, oc: i64, i: i64) -> i64 {
     if i >= n {
         return oc;

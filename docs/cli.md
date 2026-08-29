@@ -44,7 +44,17 @@ Build `mindc` with additional features:
 cargo build --bin mindc                    # Minimal (fast build)
 cargo build --bin mindc --features aot     # AOT compilation support
 cargo build --bin mindc --features autodiff # Autodiff support
-cargo build --bin mindc --features full    # All features
+cargo build --bin mindc --features full    # aot + autodiff + cpu-exec + cpu-conv + pkg + ffi-c
+```
+
+`full` is **not** every feature — it enables 9 of the 25 declared features and
+notably omits `std-surface` and `cross-module-imports`, so a `mindc` built from
+it rejects programs that use the `std` surface or `use std.foo` imports. The
+feature set CI builds and gates, and the one to use for real work, is:
+
+```bash
+cargo build --release --no-default-features \
+  --features "mlir-build std-surface cross-module-imports" --bin mindc
 ```
 
 ### Examples

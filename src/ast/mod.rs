@@ -216,11 +216,34 @@ pub enum TypeAnn {
     },
     /// Raw C pointer: `*const T` or `*mut T`.
     ///
-    /// RFC 0010 Phase A — extern "C" ABI surface. Raw pointers are only
-    /// constructible inside `unsafe` blocks; in Phase A they are accepted
-    /// in `extern "C"` function signatures and lowered to `!llvm.ptr`.
-    /// The pointee type is recorded for documentation/future phases but is
-    /// not used in Phase A lowering (all pointers lower to opaque `!llvm.ptr`).
+    /// RFC 0010 Phase A — extern "C" ABI surface. As implemented, a raw
+    /// pointer is accepted in EVERY type position the grammar admits — it is
+    /// parsed by the general `Parser::type_ann`, so it is legal in an
+    /// `extern "C"` signature, in an ordinary `fn` parameter or return type,
+    /// and in a `let` annotation alike. The pointee type is recorded for
+    /// documentation/future phases but is not used in Phase A lowering (all
+    /// pointers lower to the same opaque `!llvm.ptr`).
+    ///
+    /// deferred: RFC 0010 §4.2 specifies that raw pointers are constructible
+    /// only inside an `unsafe` block or an `unsafe fn` body. That restriction
+    /// is NOT implemented, and this doc comment previously asserted it as
+    /// fact. Two pieces are missing. (1) The language has no `unsafe` BLOCK
+    /// construct at all: the parser's only `unsafe` is the per-symbol tag
+    /// inside an `extern "C"` block (`Parser::parse_extern_fn`), so there is
+    /// no context to require. (2) Nothing type-checks a value against a
+    /// raw-pointer type position, so a bare integer literal is silently
+    /// accepted wherever `*const T` / `*mut T` is declared. Consequence: a
+    /// program with no `unsafe` token anywhere can declare
+    /// `safe fn system(cmd: *const u8)` and call it with an attacker-chosen
+    /// integer; it passes `mindc check` and lowers to a real `system@plt`
+    /// call. Upgrade path: land the `unsafe { … }` block (parser + `Node`
+    /// variant + a context-tracking pass in the type checker), then gate
+    /// `TypeAnn::RawPtr` construction on that context and type-check pointer
+    /// arguments against pointer parameters. Until that lands, a raw pointer
+    /// is an ordinary word-sized type carrying a C-ABI name, and the caller
+    /// carries the whole safety obligation. Pinned by
+    /// `tests/extern_c_safety_tag_informational.rs` so the doc and the
+    /// behaviour cannot drift apart silently.
     RawPtr {
         mutable: bool,
         pointee: Box<TypeAnn>,
@@ -255,10 +278,29 @@ pub enum CallConv {
 /// A single function declaration inside an `extern "C"` block.
 ///
 /// RFC 0010 Phase A. The body is absent — extern declarations have no
-/// body. `is_unsafe` mirrors the `unsafe fn` vs `safe fn` annotation;
+/// body. `is_unsafe` records the `unsafe fn` vs `safe fn` annotation;
 /// `is_varargs` is set when `...` appears after the last concrete parameter.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternFn {
+    /// The `safe fn` / `unsafe fn` annotation, defaulting to `true` for a
+    /// bare `fn` (see `Parser::parse_extern_fn`).
+    ///
+    /// deferred: INFORMATIONAL ONLY — this bit gates nothing. Its sole
+    /// non-test reader is the pretty-printer (`src/fmt/printer.rs`), which
+    /// echoes the keyword back out; no check, type-check, or lowering path
+    /// consults it, and `Instr::ExternFnDecl` has no corresponding field, so
+    /// the tag is dropped at the AST→IR boundary and never reaches mic@3 or
+    /// MLIR. Calling an `unsafe fn` extern therefore requires nothing of the
+    /// caller, and tagging a pointer-taking symbol `safe fn` asserts nothing
+    /// the compiler verifies. Nor is enforcement a flip: the shipped std
+    /// already carries 173 `safe fn` declarations that take or return raw
+    /// pointers (95 in `std/llvm.mind`, 78 in `std/mlir.mind`), using `safe`
+    /// to mean "pure query" rather than "pointer-free", so RFC 0010 §4.2's
+    /// `safe fn` rule would have to be re-decided for those bindings first.
+    /// Upgrade path: same as `TypeAnn::RawPtr` — an `unsafe { … }` block plus
+    /// a context-tracking pass, after which `is_unsafe` becomes the predicate
+    /// that pass tests. Pinned by
+    /// `tests/extern_c_safety_tag_informational.rs`.
     pub is_unsafe: bool,
     pub name: String,
     pub params: Vec<Param>,

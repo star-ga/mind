@@ -73,68 +73,35 @@ pub fn ir_trace_hash(ir: &IRModule) -> [u8; 32] {
     mini_sha256(&emit_mic3(ir))
 }
 
-/// Bare non-deterministic builtins — PRNG draws that read hidden generator state
-/// and wall-clock / stdin reads. A compiled module that calls one is genuinely
-/// non-deterministic (its output is not a pure function of its inputs), so its
-/// evidence chain MUST honestly declare `nondeterministic` rather than forge
-/// `deterministic` (the claim `mind verify` reports). This is the determinism
-/// wedge's honesty invariant: the attestation can never lie.
-///
-/// Kept in sync with `type_checker::mod::NONDETERMINISTIC_BUILTINS` (the AST-side
-/// classifier used by the `#[deterministic]` call-graph check); the two lists
-/// describe the same set from two layers. The legitimate, DETERMINISTIC randomness
-/// API is the SEEDED counter-based form (`randn(shape, seed)`, `Random(seed=…)`,
-/// Philox/Threefry) — those are pure functions of `(seed, index)` and are NOT in
-/// this list. `randn` appears here as the BARE/unseeded draw; a seeded call is
-/// resolved to its explicit generator, not this implicit builtin.
-const NONDETERMINISTIC_BUILTINS: &[&str] = &[
-    "monotonic_now",
-    "now",
-    "rand",
-    "rand_bytes",
-    "rand_int",
-    "rand_normal",
-    "rand_range",
-    "rand_uniform",
-    "randn",
-    "random",
-    "read_input",
-    "read_line",
-    "shuffle",
-    "system_time",
-    "time_now",
-];
-
-// deferred: the raw-memory intrinsics `__mind_load_i{8,16,32,64}` /
-// `__mind_store_i{8,16,32,64}` are NOT in NONDETERMINISTIC_BUILTINS, so a
-// source-level `__mind_load_i64(arbitrary_addr)` reading uninitialized/OOB
-// memory is attested `deterministic`. This is a DELIBERATE non-taint, not an
-// oversight — reason: (1) every compiler-GENERATED use lowers only against a
-// `__mind_alloc`-returned arena base with a prior deterministic store (RFC 0005
-// P0c: `vec.push`/struct-field/`std.string`/`std.sha256` bottom out here), so
-// the load result IS a pure function of program inputs; (2) tainting the names
-// would attest EVERY std-surface program (Vec/String/Map/sha256) as
-// `nondeterministic` — a false-positive that breaks the honesty invariant in
-// the OTHER direction (over-tainting is as dishonest as under-tainting); (3) the
-// AST-side classifier already deliberately maps `__mind_*` to deterministic
-// (`type_checker::mod` ~line 5131, `Some(true)`), so tainting here would
-// contradict it and diverge the two layers this list is kept in sync with. The
-// residual risk is a hand-written source calling these `__`-internal intrinsics
-// on an attacker-chosen address; that is a MEMORY-SAFETY (OOB/uninit-read)
-// violation for the bounds/SSA layer to catch, not a name-match the determinism
-// classifier can soundly distinguish from a legitimate arena load (both are
-// syntactically `Call { name: "__mind_load_i64", args: [addr] }`). Upgrade path:
-// if `__mind_load/store` ever become a public source API, gate them behind a
-// pointer-provenance analysis that proves the address is arena-relative and
-// in-range, and taint only the un-provable case — NOT a blanket name match.
-
-/// Whether `callee` names a bare non-deterministic builtin (matched on the bare
-/// name or the last dotted/`::`-qualified path segment, so `std.rand.random` and
-/// `rng::rand_uniform` are caught too).
-fn callee_is_nondeterministic(callee: &str) -> bool {
-    let tail = callee.rsplit(['.', ':']).next().unwrap_or(callee);
-    NONDETERMINISTIC_BUILTINS.contains(&tail) || NONDETERMINISTIC_BUILTINS.contains(&callee)
-}
+// The determinism classifier: whether `callee` can make the module's result
+// vary between runs on the same declared inputs. A compiled module that reaches
+// one is genuinely non-deterministic, so its evidence chain MUST honestly
+// declare `nondeterministic` rather than forge `deterministic` (the claim
+// `mindc verify` reports). This is the determinism wedge's honesty invariant:
+// the attestation can never lie.
+//
+// It lives in `crate::intrinsics`, on the same row as the intrinsic's name
+// and arity, and the AST-side `#[deterministic]` call-graph check calls the
+// SAME function. Until 2026-08-28 the two layers each kept their own array with
+// a comment asking for them to be kept in sync; they drifted identically, and
+// the registered `__mind_nerve_rt_*` clock / entropy / stdin / getenv surface
+// was classified by neither — so `fn main() -> i64 { __mind_nerve_rt_monotonic_ns() }`
+// emitted an artifact attesting `determinism: deterministic` that PASSED
+// `mindc verify --require-deterministic`. Re-deriving the label from the hashed
+// mic@3 body (below) is no defence when the classifier being re-run is itself
+// incomplete, so there is now exactly one classifier and the registry forces a
+// verdict on every new intrinsic. The `deferred:` blocks in that module record
+// the two deliberate non-taints (raw memory intrinsics; file reads).
+//
+// One verdict cannot be reached by NAME at all. `__mind_read` is the same symbol
+// for a file read and for a stdin read, so its registry row (`Det::Pure`, for the
+// file case) let `__mind_read(0, buf, 1, -1)` pipe stdin into the program's result
+// under a `determinism: deterministic` attestation that passed
+// `mindc verify --require-deterministic`. The descriptor is an IR operand, so that
+// verdict is taken at the CALL SITE — `ScopeConsts` + `call_reads_world_stream`
+// below, against the policy predicates in `crate::intrinsics`. It FAILS CLOSED: a
+// descriptor this module cannot prove constant can be `0`, so it is world-reading.
+use crate::intrinsics::callee_is_nondeterministic;
 
 /// The NAME of the first non-deterministic builtin an instruction stream calls
 /// (searching nested function bodies, loop bodies, and if-branches in
@@ -143,27 +110,61 @@ fn callee_is_nondeterministic(callee: &str) -> bool {
 /// in a fail-loud diagnostic and lets `verify` re-derive the label from the
 /// hashed body.
 fn find_nondeterministic_call(instrs: &[crate::ir::Instr]) -> Option<String> {
+    find_nondeterministic_call_ext(instrs, &std::collections::BTreeSet::new())
+}
+
+/// Scope ENTRY: classify one SSA namespace's instruction stream.
+///
+/// A namespace is the module top level or ONE `FnDef` body — value ids are
+/// numbered per function (`src/ir/verify.rs`: "a body `%0` and an
+/// enclosing/top-level `%0` are distinct values"), so the constant environment
+/// the call-site descriptor check consults is built per namespace, never shared
+/// across a `FnDef` boundary.
+fn find_nondeterministic_call_ext(
+    instrs: &[crate::ir::Instr],
+    externs: &std::collections::BTreeSet<String>,
+) -> Option<String> {
+    scan_scope(instrs, externs, &ScopeConsts::for_scope(instrs, &[]))
+}
+
+/// Classify one instruction stream WITHIN an already-built namespace. `If` /
+/// `While` / `Region` sub-streams are the SAME namespace and reuse `consts`;
+/// a `FnDef` body opens a fresh one.
+fn scan_scope(
+    instrs: &[crate::ir::Instr],
+    externs: &std::collections::BTreeSet<String>,
+    consts: &ScopeConsts,
+) -> Option<String> {
     use crate::ir::Instr;
     for instr in instrs {
         let hit = match instr {
-            Instr::Call { name, .. } if callee_is_nondeterministic(name) => Some(name.clone()),
+            Instr::Call { name, args, .. }
+                if callee_is_nondeterministic(name)
+                    || extern_call_is_unclassified(name, externs)
+                    || call_reads_world_stream(name, args, consts) =>
+            {
+                Some(name.clone())
+            }
             Instr::Call { .. } => None,
-            Instr::FnDef { body, .. } => find_nondeterministic_call(body),
+            Instr::FnDef { params, body, .. } => {
+                let param_ids: Vec<crate::ir::ValueId> =
+                    params.iter().map(|(_name, id)| *id).collect();
+                scan_scope(body, externs, &ScopeConsts::for_scope(body, &param_ids))
+            }
             #[cfg(feature = "std-surface")]
             Instr::While {
                 cond_instrs, body, ..
-            } => {
-                find_nondeterministic_call(cond_instrs).or_else(|| find_nondeterministic_call(body))
-            }
+            } => scan_scope(cond_instrs, externs, consts)
+                .or_else(|| scan_scope(body, externs, consts)),
             #[cfg(feature = "std-surface")]
             Instr::If {
                 cond_instrs,
                 then_instrs,
                 else_instrs,
                 ..
-            } => find_nondeterministic_call(cond_instrs)
-                .or_else(|| find_nondeterministic_call(then_instrs))
-                .or_else(|| find_nondeterministic_call(else_instrs)),
+            } => scan_scope(cond_instrs, externs, consts)
+                .or_else(|| scan_scope(then_instrs, externs, consts))
+                .or_else(|| scan_scope(else_instrs, externs, consts)),
             // RFC 0010 Phase J-A region body carries a FULL nested instruction
             // stream (`src/ir/mod.rs`). A nondeterministic `now()`/`rand()` call
             // inside `region { }` must NOT be invisible to the attestation
@@ -172,7 +173,7 @@ fn find_nondeterministic_call(instrs: &[crate::ir::Instr]) -> Option<String> {
             // `Instr::Region { body, .. }` recursion already in `verify.rs` (SSA)
             // and `fp_mode.rs` (strict-FP taint).
             #[cfg(feature = "std-surface")]
-            Instr::Region { body, .. } => find_nondeterministic_call(body),
+            Instr::Region { body, .. } => scan_scope(body, externs, consts),
             // Remaining instructions carry NO nested instruction stream and are
             // not themselves a builtin call, so they cannot introduce a
             // nondeterministic callee. Enumerated EXHAUSTIVELY (no blanket `_`)
@@ -234,17 +235,223 @@ fn find_nondeterministic_call(instrs: &[crate::ir::Instr]) -> Option<String> {
 /// body — so the `evidence_chain.determinism` MAP field cannot be forged even on
 /// an unsigned artifact.
 pub fn ir_first_nondeterministic_call(module: &IRModule) -> Option<String> {
-    find_nondeterministic_call(&module.instrs)
+    let externs = collect_extern_symbols(&module.instrs);
+    find_nondeterministic_call_ext(&module.instrs, &externs)
+}
+
+/// Every `extern "C"` symbol declared anywhere in the module.
+///
+/// Needed because the determinism classifier is a REGISTRY lookup: a name it does
+/// not recognise returns "deterministic". For a user function that is correct —
+/// its body is in the module and is classified on its own merits. For an
+/// `extern "C"` symbol it is default-ADMIT on an unknown, which is backwards for
+/// an ATTESTATION: the callee's body is outside the artifact entirely, so nothing
+/// in the module can witness what it does. Measured before this: a program
+/// declaring libc `time()` or `getenv()` and calling it emitted evidence attesting
+/// `determinism: deterministic`.
+fn collect_extern_symbols(instrs: &[crate::ir::Instr]) -> std::collections::BTreeSet<String> {
+    use crate::ir::Instr;
+    let mut out = std::collections::BTreeSet::new();
+    fn walk(instrs: &[Instr], out: &mut std::collections::BTreeSet<String>) {
+        for instr in instrs {
+            match instr {
+                #[cfg(feature = "std-surface")]
+                Instr::ExternFnDecl { name, .. } => {
+                    out.insert(name.clone());
+                }
+                Instr::FnDef { body, .. } => walk(body, out),
+                #[cfg(feature = "std-surface")]
+                Instr::While {
+                    cond_instrs, body, ..
+                } => {
+                    walk(cond_instrs, out);
+                    walk(body, out);
+                }
+                #[cfg(feature = "std-surface")]
+                Instr::If {
+                    cond_instrs,
+                    then_instrs,
+                    else_instrs,
+                    ..
+                } => {
+                    walk(cond_instrs, out);
+                    walk(then_instrs, out);
+                    walk(else_instrs, out);
+                }
+                _ => {}
+            }
+        }
+    }
+    walk(instrs, &mut out);
+    out
+}
+
+/// True when a call to `name` must be treated as world-touching because it
+/// crosses the artifact boundary: an `extern "C"` symbol that the intrinsic
+/// registry does not explicitly classify as pure.
+///
+/// `deferred:` the honest end state is RFC 0019 §3.3 decline-to-attest — an
+/// artifact calling an unclassified extern should refuse to make ANY determinism
+/// claim rather than claim nondeterminism. Reporting nondeterministic is the
+/// conservative direction (it can never forge a `deterministic` attestation), so
+/// it is the safe interim; upgrade path is a third `Unknown` verdict threaded
+/// through `ir_declares_deterministic` and the verify surface.
+fn extern_call_is_unclassified(name: &str, externs: &std::collections::BTreeSet<String>) -> bool {
+    externs.contains(name)
+        && crate::intrinsics::intrinsic_determinism(name) != Some(crate::intrinsics::Det::Pure)
+}
+
+/// The constants provable at a single SSA namespace's call sites.
+///
+/// ## Why the classifier needs this
+///
+/// Some intrinsics are not classifiable by NAME. `__mind_read(fd, buf, n, off)`
+/// is the same symbol whether it reads a file the program opened or drains the
+/// stdin stream, and the registry row can only say one thing — it said `Pure`, so
+/// `fn main() -> i64 { __mind_read(0, buf, 1, -1) }` piped a byte of stdin into
+/// its exit code while its evidence chain attested `determinism: deterministic`
+/// and `mindc verify --require-deterministic` exited 0. The descriptor is right
+/// there in the IR as `args[0]`, so the verdict belongs at the call site.
+///
+/// ## What "provable" means here, and why it FAILS CLOSED
+///
+/// A value id is provably `v` only when EVERY definition of it in this namespace
+/// is `ConstI64(id, v)` for the same `v`. Anything else — a parameter, a struct
+/// field load (`std.io`'s `file_read(f, …)` reads `f.fd`), an `If` merge, a
+/// `While` exit id, an arithmetic result, a second `ConstI64` with a different
+/// value — POISONS the id, and a poisoned or unknown descriptor is treated as
+/// world-reading. That direction is forced: an unprovable descriptor CAN be `0`,
+/// and `file_read(stdin(), buf, n, -1)` — a call the shipped `std/io.mind`
+/// surface makes trivial — is exactly how a descriptor-value-only rule would be
+/// walked past. An attestation may over-report nondeterminism; it may never
+/// under-report it.
+///
+/// Poisoning reuses [`crate::ir::verify::expose_region_definitions`] — the SAME
+/// block-arg/result exposure the SSA verifier uses — so this never invents a
+/// second, divergent notion of "defined".
+#[derive(Default)]
+struct ScopeConsts {
+    known: std::collections::BTreeMap<crate::ir::ValueId, i64>,
+    poisoned: std::collections::BTreeSet<crate::ir::ValueId>,
+}
+
+impl ScopeConsts {
+    /// Build the environment for ONE namespace: `instrs` plus, for a function
+    /// body, its parameter ids (which are inputs, never provable constants).
+    /// Descends same-namespace `If`/`While`/`Region` sub-streams and STOPS at
+    /// every `FnDef` (a nested function is a separate namespace).
+    fn for_scope(instrs: &[crate::ir::Instr], params: &[crate::ir::ValueId]) -> Self {
+        let mut out = Self::default();
+        for p in params {
+            out.poison(*p);
+        }
+        out.collect(instrs);
+        out
+    }
+
+    fn poison(&mut self, id: crate::ir::ValueId) {
+        self.known.remove(&id);
+        self.poisoned.insert(id);
+    }
+
+    fn define_const(&mut self, id: crate::ir::ValueId, value: i64) {
+        if self.poisoned.contains(&id) {
+            return;
+        }
+        match self.known.get(&id) {
+            // Re-stating the same constant is not a conflict (a `ConstI64` inside
+            // a loop body is re-executed, not redefined).
+            Some(prev) if *prev == value => {}
+            // Two different constants for one id: malformed or shadowed IR. Fail
+            // closed — the call site cannot know which one it sees.
+            Some(_) => self.poison(id),
+            None => {
+                self.known.insert(id, value);
+            }
+        }
+    }
+
+    fn collect(&mut self, instrs: &[crate::ir::Instr]) {
+        use crate::ir::Instr;
+        for instr in instrs {
+            if let Instr::ConstI64(dst, value) = instr {
+                self.define_const(*dst, *value);
+            } else {
+                // Every id this instruction defines — including an `If`'s merge
+                // ids and a `While`'s exit ids, which are definitions no
+                // `instruction_dst` reports — is unprovable.
+                let mut defs = std::collections::BTreeSet::new();
+                crate::ir::verify::expose_region_definitions(instr, &mut defs);
+                for id in defs {
+                    self.poison(id);
+                }
+            }
+            match instr {
+                #[cfg(feature = "std-surface")]
+                Instr::If {
+                    cond_instrs,
+                    then_instrs,
+                    else_instrs,
+                    ..
+                } => {
+                    self.collect(cond_instrs);
+                    self.collect(then_instrs);
+                    self.collect(else_instrs);
+                }
+                #[cfg(feature = "std-surface")]
+                Instr::While {
+                    cond_instrs, body, ..
+                } => {
+                    self.collect(cond_instrs);
+                    self.collect(body);
+                }
+                #[cfg(feature = "std-surface")]
+                Instr::Region { body, .. } => self.collect(body),
+                // `FnDef` is deliberately NOT descended: its body is a separate
+                // SSA namespace and gets its own `ScopeConsts`.
+                _ => {}
+            }
+        }
+    }
+
+    /// The constant this id provably holds in this namespace, or `None` when the
+    /// call site cannot prove one (the fail-closed case).
+    fn provable(&self, id: crate::ir::ValueId) -> Option<i64> {
+        if self.poisoned.contains(&id) {
+            return None;
+        }
+        self.known.get(&id).copied()
+    }
+}
+
+/// True when THIS call site reads a world channel because of the descriptor it
+/// passes — the call-site half of the determinism classifier.
+///
+/// `crate::intrinsics` owns the policy (which intrinsic, which argument position,
+/// which descriptors are world); this function owns the proof. A descriptor that
+/// cannot be proven constant is world-reading: it can be `0`.
+fn call_reads_world_stream(name: &str, args: &[crate::ir::ValueId], consts: &ScopeConsts) -> bool {
+    let Some(pos) = crate::intrinsics::fd_dependent_read_arg(name) else {
+        return false;
+    };
+    match args.get(pos).and_then(|id| consts.provable(*id)) {
+        Some(fd) => crate::intrinsics::read_fd_is_world(fd),
+        // Unprovable descriptor (a parameter, a `f.fd` field load, an arithmetic
+        // result) — or a call whose arity does not even reach the descriptor
+        // position, i.e. malformed IR. Both fail closed.
+        None => true,
+    }
 }
 
 /// The evidence-chain determinism declaration for a compiled module: `true`
-/// (deterministic) UNLESS the module calls a PRNG / wall-clock / stdin builtin,
-/// in which case `false` (non-deterministic). Honest-by-derivation, not a
-/// hardcoded default — a `random()` / `now()` program cannot forge a
-/// `deterministic` attestation. Deterministic programs (including seeded
+/// (deterministic) UNLESS the module calls a PRNG / wall-clock builtin, or reads
+/// a descriptor it cannot prove is not an inherited standard stream, in which
+/// case `false` (non-deterministic). Honest-by-derivation, not a
+/// hardcoded default — a `random()` / `now()` / `__mind_read(0, …)` program
+/// cannot forge a `deterministic` attestation. Deterministic programs (including seeded
 /// `randn(shape, seed)`) are unaffected.
 pub fn ir_declares_deterministic(module: &IRModule) -> bool {
-    find_nondeterministic_call(&module.instrs).is_none()
+    ir_first_nondeterministic_call(module).is_none()
 }
 
 #[cfg(test)]
@@ -446,6 +653,206 @@ mod tests {
             value_types: std::collections::BTreeMap::new(),
         });
         assert!(!ir_declares_deterministic(&nested));
+    }
+
+    // ---------------------------------------------------------------
+    // Call-site descriptor classification for `__mind_read`
+    // ---------------------------------------------------------------
+
+    /// A module whose `main` reads `count` bytes from the descriptor produced by
+    /// `fd_instr`, exactly as `__mind_read(fd, buf, 1, -1)` lowers.
+    fn read_module(fd_instrs: Vec<Instr>, fd: crate::ir::ValueId) -> IRModule {
+        let mut m = IRModule::new();
+        let size = crate::ir::ValueId(90);
+        let buf = crate::ir::ValueId(91);
+        let off = crate::ir::ValueId(92);
+        let n = crate::ir::ValueId(93);
+        m.instrs.extend(fd_instrs);
+        m.instrs.push(Instr::ConstI64(size, 8));
+        m.instrs.push(Instr::Call {
+            dst: buf,
+            name: "__mind_alloc".to_string(),
+            args: vec![size],
+        });
+        m.instrs.push(Instr::ConstI64(off, -1));
+        m.instrs.push(Instr::Call {
+            dst: n,
+            name: "__mind_read".to_string(),
+            args: vec![fd, buf, size, off],
+        });
+        m.instrs.push(Instr::Output(n));
+        m
+    }
+
+    /// THE regression this call-site rule exists for: reading stdin was attested
+    /// `determinism: deterministic` because the classifier keyed on the NAME
+    /// `__mind_read`, which is `Det::Pure` in the registry (it is also how a file
+    /// is read). A byte of stdin reaching the program's result is world input.
+    #[test]
+    fn stdin_read_is_nondeterministic() {
+        let fd = crate::ir::ValueId(80);
+        let m = read_module(vec![Instr::ConstI64(fd, 0)], fd);
+        assert_eq!(
+            ir_first_nondeterministic_call(&m).as_deref(),
+            Some("__mind_read"),
+            "`__mind_read(0, …)` reads stdin and must be named by the classifier"
+        );
+        assert!(
+            !ir_declares_deterministic(&m),
+            "a module that reads stdin must NOT attest `deterministic`"
+        );
+    }
+
+    /// The other two inherited standard streams are the same channel class — a
+    /// caller can point either at any file or pipe — so neither is a spelling
+    /// that walks past the stdin check.
+    #[test]
+    fn reading_stdout_or_stderr_descriptors_is_nondeterministic() {
+        for stream_fd in [1i64, 2] {
+            let fd = crate::ir::ValueId(80);
+            let m = read_module(vec![Instr::ConstI64(fd, stream_fd)], fd);
+            assert!(
+                !ir_declares_deterministic(&m),
+                "`__mind_read({stream_fd}, …)` reads an inherited standard stream"
+            );
+        }
+    }
+
+    /// CONTROL — the check must reject the BEHAVIOUR, not every read. A read
+    /// from a proven non-standard descriptor keeps the registry's `Det::Pure`
+    /// verdict (the file-read line argued in `crate::intrinsics`), so
+    /// file-processing programs are not blanket-tainted.
+    #[test]
+    fn proven_non_stream_descriptor_read_stays_deterministic() {
+        let fd = crate::ir::ValueId(80);
+        let m = read_module(vec![Instr::ConstI64(fd, 7)], fd);
+        assert_eq!(
+            ir_first_nondeterministic_call(&m),
+            None,
+            "a proven non-standard descriptor must not be tainted (over-taint is \
+             as dishonest as under-taint)"
+        );
+        assert!(ir_declares_deterministic(&m));
+    }
+
+    /// FAIL CLOSED — a descriptor the call site cannot prove constant may BE
+    /// stdin, so it may not be attested deterministic. This is the case
+    /// `std/io.mind` makes trivial: `file_read(f, …)` passes `f.fd`, a struct
+    /// field load, and `file_read(stdin(), …)` is then a stdin read wearing an
+    /// unprovable descriptor.
+    #[test]
+    fn unprovable_descriptor_fails_closed() {
+        // Descriptor from a call result (the shape a `__mind_load_i64(f + 0)`
+        // field read, or an `__mind_open(path)`, lowers to).
+        let addr = crate::ir::ValueId(80);
+        let fd = crate::ir::ValueId(81);
+        let m = read_module(
+            vec![
+                Instr::ConstI64(addr, 4096),
+                Instr::Call {
+                    dst: fd,
+                    name: "__mind_load_i64".to_string(),
+                    args: vec![addr],
+                },
+            ],
+            fd,
+        );
+        assert_eq!(
+            ir_first_nondeterministic_call(&m).as_deref(),
+            Some("__mind_read"),
+            "an unprovable descriptor must fail closed — it can be 0"
+        );
+
+        // Descriptor never defined at all (hand-forged mic@3).
+        let dangling = crate::ir::ValueId(77);
+        let m = read_module(vec![], dangling);
+        assert!(
+            !ir_declares_deterministic(&m),
+            "an undefined descriptor operand must fail closed"
+        );
+    }
+
+    /// Two different constants bound to one id (malformed or shadowed IR) is not
+    /// a proof — the call site cannot know which it sees, so it fails closed.
+    #[test]
+    fn conflicting_constant_descriptor_fails_closed() {
+        let fd = crate::ir::ValueId(80);
+        let m = read_module(vec![Instr::ConstI64(fd, 7), Instr::ConstI64(fd, 0)], fd);
+        assert!(
+            !ir_declares_deterministic(&m),
+            "an id with two different constant definitions must not be provable"
+        );
+    }
+
+    /// Value ids are numbered PER FUNCTION (`src/ir/verify.rs`), so a top-level
+    /// `%0 = const.i64 7` must not make a function body's `%0` — here the `fd`
+    /// PARAMETER — provably 7. A shared constant environment would let a caller
+    /// launder a stdin read through any function that takes a descriptor.
+    #[test]
+    fn function_body_does_not_inherit_enclosing_constants() {
+        let fd = crate::ir::ValueId(0);
+        let size = crate::ir::ValueId(1);
+        let buf = crate::ir::ValueId(2);
+        let n = crate::ir::ValueId(3);
+
+        let mut m = IRModule::new();
+        // Top-level namespace: %0 is the constant 7.
+        m.instrs.push(Instr::ConstI64(fd, 7));
+        m.instrs.push(Instr::Output(fd));
+        // Function namespace: %0 is the `fd` parameter — unprovable.
+        m.instrs.push(Instr::FnDef {
+            name: "slurp".to_string(),
+            params: vec![("fd".to_string(), fd)],
+            ret_id: Some(n),
+            body: vec![
+                Instr::Param {
+                    dst: fd,
+                    name: "fd".to_string(),
+                    index: 0,
+                },
+                Instr::ConstI64(size, 8),
+                Instr::Call {
+                    dst: buf,
+                    name: "__mind_alloc".to_string(),
+                    args: vec![size],
+                },
+                Instr::Call {
+                    dst: n,
+                    name: "__mind_read".to_string(),
+                    args: vec![fd, buf, size, size],
+                },
+                Instr::Return { value: Some(n) },
+            ],
+            reap_threshold: None,
+            #[cfg(feature = "std-surface")]
+            value_types: std::collections::BTreeMap::new(),
+        });
+
+        assert_eq!(
+            ir_first_nondeterministic_call(&m).as_deref(),
+            Some("__mind_read"),
+            "a function parameter is not a provable descriptor, whatever the \
+             enclosing scope binds to the same numeric id"
+        );
+    }
+
+    /// The descriptor proof must survive the mic@3 round trip, or the verify-side
+    /// re-derivation (`mindc verify`, which re-parses the hashed body) would
+    /// disagree with the emit-side label and the attestation could be forged by
+    /// shipping the artifact instead of the source.
+    #[test]
+    fn descriptor_verdict_survives_mic3_round_trip() {
+        for (fd_value, want_deterministic) in [(0i64, false), (7, true)] {
+            let fd = crate::ir::ValueId(80);
+            let m = read_module(vec![Instr::ConstI64(fd, fd_value)], fd);
+            let reparsed = parse_mic3(&emit_mic3(&m)).expect("mic@3 must re-parse");
+            assert_eq!(
+                ir_declares_deterministic(&reparsed),
+                want_deterministic,
+                "re-derived verdict for `__mind_read({fd_value}, …)` must match the \
+                 emit-side verdict"
+            );
+        }
     }
 
     /// A small but non-trivial deterministic IR: `(42 + 10)` output.

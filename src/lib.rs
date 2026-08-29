@@ -47,6 +47,10 @@ pub mod distributed;
 pub mod eval;
 pub mod exec;
 pub mod ir;
+// The intrinsic registry (name, i64 arity, determinism class). Crate-internal:
+// `ir::evidence` and `type_checker` are its only consumers, and it must not
+// widen the Core v1 public surface.
+pub(crate) mod intrinsics;
 // Note: the logos-based lexer module was removed as dead code.
 // The parser (parser/mod.rs) implements its own hand-rolled lexer.
 pub(crate) mod linalg;

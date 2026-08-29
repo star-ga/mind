@@ -23,6 +23,12 @@ or 85 (product) instead of 2 (remainder).
 
 Run:  MINDC_SO=.../libmindc_mind.so MINDC_BIN=.../mindc \
         python3 examples/mindc_mind/mod_operator_smoke.py
+
+Fails closed. A failed --emit-obj or a failed link is a hard FAIL, never a SKIP —
+those are regressions in the MLIR->object path this smoke defends. A genuinely
+absent mindc or C compiler is also a FAIL by default; skipping it is opt-in via
+MIND_SMOKE_ALLOW_ENV_SKIP=1, which is ignored whenever MINDC_SO or MINDC_BIN is
+set so a harness run (CI, fast_keystone.sh) can never skip.
 """
 
 import ctypes
@@ -47,6 +53,37 @@ DIVIDEND, DIVISOR = 17, 5
 WANT_REM = DIVIDEND % DIVISOR          # 2
 QUOTIENT = DIVIDEND // DIVISOR         # 3
 PRODUCT = DIVIDEND * DIVISOR           # 85
+
+# --- fail-closed contract ---------------------------------------------------
+# CI runs this smoke with MINDC_SO/MINDC_BIN set and asserts in ci.yml ("MINDC_SO
+# is set, so every smoke fails closed (never SKIPs)"); fast_keystone.sh exports
+# the same pair locally. Two cases that must never be conflated:
+#   * a tool that RAN and FAILED (--emit-obj rc!=0, link rc!=0) is a REGRESSION in
+#     the very MLIR->object path this smoke defends -> ALWAYS a hard failure,
+#     with no env escape hatch of any kind.
+#   * a tool that is ABSENT (no mindc on disk, no C compiler) is an environment
+#     gap -> still fails closed by DEFAULT; skipping is opt-IN. This is the
+#     MIND_BENCH_REQUIRE pattern (scripts/preflight.sh:109,125) inverted, so the
+#     safe behaviour is the one that needs no env var at all.
+ENV_SKIP_OPT_IN = "MIND_SMOKE_ALLOW_ENV_SKIP"
+
+
+def _env_skip_allowed() -> bool:
+    """True only for a bare local run that explicitly opted in to skipping on a
+    missing toolchain. A harness run (CI or fast_keystone.sh) always sets
+    MINDC_SO/MINDC_BIN, and that DOMINATES the opt-in, so a stray
+    MIND_SMOKE_ALLOW_ENV_SKIP leaking into a CI environment still cannot
+    re-open the hole."""
+    if os.environ.get("MINDC_SO") or os.environ.get("MINDC_BIN"):
+        return False
+    return os.environ.get(ENV_SKIP_OPT_IN) == "1"
+
+
+def _tail(stream: bytes, limit: int = 400) -> str:
+    """Tail of a failed tool's stderr, so the failure line is diagnosable
+    instead of a bare return code."""
+    text = stream.decode("utf-8", "replace").strip()
+    return text[-limit:] if text else "(no stderr)"
 
 
 def _read_es_buf(es: int) -> bytes:
@@ -127,9 +164,15 @@ def mlir_emit_mod(lib) -> int:
     # `--emit=binary` launcher is a non-runnable stub in this environment.
     cc = _which_cc()
     if not MINDC.exists() or cc is None:
-        print("  SKIP  mlir % runtime cross-check: mindc or a C compiler unavailable "
-              "(emit-text remsi assertion above still holds)")
-        return 0
+        missing = f"mindc ({MINDC})" if not MINDC.exists() else "a C compiler (cc/gcc/clang)"
+        if _env_skip_allowed():
+            print(f"  SKIP  mlir % runtime cross-check: {missing} unavailable "
+                  f"({ENV_SKIP_OPT_IN}=1; emit-text remsi assertion above still holds)")
+            return 0
+        print(f"  FAIL  mlir % runtime cross-check: {missing} unavailable — refusing to "
+              f"skip the end-to-end % check. Set {ENV_SKIP_OPT_IN}=1 for a bare local run "
+              "with neither MINDC_SO nor MINDC_BIN set to allow it.")
+        return 1
     with tempfile.TemporaryDirectory() as td:
         srcp = pathlib.Path(td) / "modk.mind"
         srcp.write_text(f"fn m() -> i64 {{\n    return {DIVIDEND} % {DIVISOR};\n}}\n")
@@ -139,8 +182,13 @@ def mlir_emit_mod(lib) -> int:
         drvp.write_text("long m(void);\nint main(void){ return (int)m(); }\n")
         o = subprocess.run([str(MINDC), str(srcp), "--emit-obj", str(objp)], capture_output=True)
         if o.returncode != 0 or not objp.exists():
-            print(f"  SKIP  mlir % runtime cross-check: --emit-obj failed (rc={o.returncode})")
-            return 0
+            # Never a SKIP: mindc RAN, so this is a regression in the MLIR->object
+            # path for `a % b` — precisely the failure this smoke exists to catch.
+            obj = "present" if objp.exists() else "missing"
+            print(f"  FAIL  mlir % runtime cross-check: --emit-obj failed "
+                  f"(rc={o.returncode}, obj {obj}) — MLIR->object regression: "
+                  f"{_tail(o.stderr)}")
+            return 1
         # mindc appends a synthetic @main to the object; --allow-multiple-definition
         # keeps the driver's main (first defined) as the entry that calls m().
         lk = subprocess.run(
@@ -148,8 +196,13 @@ def mlir_emit_mod(lib) -> int:
             capture_output=True,
         )
         if lk.returncode != 0 or not exep.exists():
-            print(f"  SKIP  mlir % runtime cross-check: link failed (rc={lk.returncode})")
-            return 0
+            # Never a SKIP: the C driver compiler RAN. A bad object emitted for
+            # `a % b` shows up here as a link failure, so swallowing it would hide
+            # the same regression one stage later.
+            exe = "present" if exep.exists() else "missing"
+            print(f"  FAIL  mlir % runtime cross-check: link failed "
+                  f"(rc={lk.returncode}, exe {exe}) — {_tail(lk.stderr)}")
+            return 1
         code = subprocess.run([str(exep)]).returncode
     if code != WANT_REM:
         why = {QUOTIENT: "QUOTIENT (divsi)", PRODUCT: "PRODUCT (imul)"}.get(code, "wrong")

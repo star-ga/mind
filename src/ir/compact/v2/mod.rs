@@ -44,6 +44,7 @@
 mod binary;
 mod emit;
 mod evidence;
+mod map_limits;
 #[cfg(test)]
 mod map_tests;
 mod parse;

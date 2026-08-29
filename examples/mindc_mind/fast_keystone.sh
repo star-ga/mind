@@ -97,6 +97,7 @@ chk "narrowint (i8/i16/i32 store/load)"    python3 examples/mindc_mind/self_host
 chk "scalar_f32 (native SSE f32 chain)"    python3 examples/mindc_mind/self_host_native_scalar_f32_smoke.py
 chk "tc_narrowing (E2004 i64->i32 rule)"   python3 examples/mindc_mind/self_host_tc_narrowing_smoke.py
 chk "div_shift_cmp (C3 signed edges)"      python3 examples/mindc_mind/div_shift_cmp_edge_smoke.py
+chk "smoke_wiring (corpus wiring contract vs ci.yml/this file/preflight)" python3 examples/mindc_mind/smoke_wiring_lint.py
 chk "narrowwrap (i8/i16/i32 wrap arith)"   python3 examples/mindc_mind/self_host_native_narrowwrap_smoke.py
 chk "tc_class (E2015 int/float class)"     python3 examples/mindc_mind/self_host_tc_class_mismatch_smoke.py
 chk "tc_class_rules (E2010/11/13/16)"      python3 examples/mindc_mind/self_host_tc_class_rules_smoke.py
@@ -142,8 +143,15 @@ chk "arena_growth (self-host cap headroom)" python3 examples/mindc_mind/self_hos
 chk "toplevel_assign (C: straight-line i64 reassign)" python3 examples/mindc_mind/self_host_native_toplevel_assign_smoke.py
 chk "narrow_paramret (i8/i16/i32 param+return wrap)" python3 examples/mindc_mind/self_host_native_narrow_paramret_smoke.py
 # Grown-subset capability value-correctness gates (main.mind does not USE these
-# features, so the self-host loop never exercises them — these harnesses are their
-# ONLY regression gate; wired here so CI protects each landed rung).
+# features, so the self-host loop never exercises them — these harnesses are
+# their ONLY regression gate).
+#
+# This block used to claim "wired here so CI protects each landed rung". That was
+# false: CI ran NONE of the nine, and CI never invokes this script — being listed
+# here bought no CI protection whatsoever. They are now also a real ci.yml step
+# ("Grown-subset capability gates ..."), and examples/mindc_mind/SMOKE_WIRING.tsv
+# + smoke_wiring_lint.py enforce that this file and the workflows agree, so the
+# claim can no longer drift back out of true.
 chk "ref_netverify (refs value + cycle fail-closed)" python3 examples/mindc_mind/ref_netverify.py
 chk "field_store_netverify (p.x=v mutable structs)"  python3 examples/mindc_mind/field_store_netverify.py
 chk "enum_netverify (C-like enums + match)"          python3 examples/mindc_mind/enum_netverify.py

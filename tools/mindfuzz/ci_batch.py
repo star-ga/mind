@@ -1,18 +1,33 @@
 #!/usr/bin/env python3
-"""MIND-Fuzz deterministic CI batch -> cross-substrate candidate staging.
+"""MIND-Fuzz deterministic batch GENERATOR -> cross-substrate reference corpus.
 
-This is the reproducible batch the `cross_substrate_identity` CI job runs. It
-fuzzes a FIXED set of (seed, iters) pairs with the deterministic template
-mutator (--no-llm equivalent: never calls an LLM, no clock, no RNG, counter-only
-instruction selection), and stages every survivor as a candidate cross-substrate
-workload (the survivor program + the host's canonical output hash).
+This script is the MAINTAINER-RUN generator for the committed corpus. CI does
+NOT invoke it: no workflow, script or gate in this repo runs ci_batch.py. It is
+run by hand when the corpus needs regenerating, and the result is committed.
 
-The staged batch is committed under tests/mindfuzz_cross_substrate/ and checked
-by tests/mindfuzz_cross_substrate.rs, which the EXISTING two-runner
-cross_substrate_identity matrix runs on BOTH avx2 (ubuntu-24.04) and neon
-(ubuntu-24.04-arm). Each runner recomputes each survivor's output hash and
-asserts it equals the committed reference, so the neon runner asserts
-byte-identity against the avx2-blessed hash — that IS the wedge oracle, now real.
+What it does: fuzzes a FIXED set of (seed, iters) pairs with the deterministic
+template mutator (--no-llm equivalent: never calls an LLM, no clock, no RNG,
+counter-only instruction selection), and stages every survivor as a candidate
+cross-substrate workload (the survivor program + the host's canonical output
+hash) under tests/mindfuzz_cross_substrate/staged/.
+
+What CONSUMES the corpus: `mindfuzz_staged_corpus_replay` in
+tests/mindfuzz_cross_substrate.rs. It reads staged/manifest.tsv, recompiles each
+survivor, drives the recorded entry over the recorded canonical argument vector,
+and asserts the sha256 of the little-endian i64 returns equals the committed
+reference hash. The `cross_substrate_identity` CI matrix runs that test file on
+BOTH avx2 (ubuntu-24.04) and neon (ubuntu-24.04-arm), so the neon runner asserts
+byte-identity against the avx2-blessed hash — that IS the wedge oracle.
+
+  History: until this replay existed the staged corpus was WRITE-ONLY. Nothing
+  read staged/ or manifest.tsv, so every reference hash in it was inert and this
+  docstring described a check that was never performed. Do not re-word this back
+  into the passive voice without confirming the reader is named and real.
+
+DESTRUCTIVE: generate() rmtree()s the output directory before regenerating it.
+Keep ONLY generated corpus files in staged/. Ad-hoc crash reproducers from a
+failing gate run go to the sibling tests/mindfuzz_cross_substrate/reproducers/
+precisely so this rmtree can never eat them.
 
 Determinism contract (every run produces byte-identical staging):
   * fixed BATCH below (seed file + iteration budget), in fixed order;
@@ -25,6 +40,11 @@ Usage:
   python3 ci_batch.py --out <staging_dir>          # regenerate the staging dir
   python3 ci_batch.py --out <dir> --check          # fail if it differs from
                                                    #   the committed staging dir
+
+After regenerating, re-run the consumer so the new references are proven to
+replay before they are committed:
+  cargo test --release --features "mlir-build std-surface cross-module-imports" \\
+      --test mindfuzz_cross_substrate -- mindfuzz_staged_corpus_replay --nocapture
 """
 
 from __future__ import annotations

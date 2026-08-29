@@ -452,12 +452,15 @@ struct LoweringContext {
     /// `llvm.func` externs exactly once.
     #[cfg(feature = "std-surface")]
     needs_pthread: bool,
-    /// Set when the int8 BLIS macro-kernel (`emit_mm_i8_blocked`) was lowered,
-    /// so the module assembler emits the `@malloc` / `@free` `llvm.func`
-    /// externs exactly once. The kernel's C-scratch / packed-A / packed-B
-    /// panels are heap-allocated (malloc/free) rather than stack `llvm.alloca`
-    /// so a large MC row block is safe regardless of caller stack depth. Heap
-    /// vs stack is the same computation in a different location — byte-identical.
+    /// Set when a BLIS macro-kernel that heap-allocates its scratch was lowered
+    /// — the int8 `emit_mm_i8_blocked` or the Q16.16 `emit_mm_q16_blocked` — so
+    /// the module assembler emits the `@malloc` / `@free` `llvm.func` externs
+    /// exactly once. Those kernels' C-scratch / packed-A / packed-B panels are
+    /// heap-allocated (malloc/free) rather than stack `llvm.alloca` so a large MC
+    /// row block is safe regardless of caller stack depth, and so that a kernel
+    /// inlined inside a caller's LOOP body does not grow the stack per iteration
+    /// (a non-entry-block alloca is dynamic and cannot be hoisted). Heap vs stack
+    /// is the same computation in a different location — byte-identical.
     #[cfg(feature = "std-surface")]
     needs_malloc: bool,
     /// RFC 0012 §5.1 — function-ABI signature table, threaded in from
@@ -7057,14 +7060,24 @@ impl LoweringContext {
     /// additive identity, and the padded C-scratch rows/cols are never stored.
     /// So packing + padding move data only and perturb no output byte.
     ///
-    /// ## Scratch (private, statically sized)
+    /// ## Scratch (private, heap malloc/free)
     ///
-    /// Three `llvm.alloca` buffers with compile-time-constant extent: the i64
+    /// Three `@malloc` buffers with compile-time-constant BYTE extent: the i64
     /// C-scratch (`MC*NC*8`), the packed A panel (`MC*KC*4`, i32) and the packed
-    /// B panel (`KC*NC*4`, i32). Constant extent ⇒ statically reserved, no
-    /// pointer bits leak into the artifact. Each `alloca` lives in the activation
-    /// of the function the nest is emitted into, so in the multithreaded path
-    /// every worker gets its OWN scratch (no shared accumulator, no data race).
+    /// B panel (`KC*NC*4`, i32) — 256 KiB in total, `@free`d on the kernel's
+    /// single fall-through exit. Constant extent ⇒ no pointer bits leak into the
+    /// artifact. Each `@malloc` is executed by the thread running the nest, so in
+    /// the multithreaded path every worker gets its OWN scratch (no shared
+    /// accumulator, no data race).
+    ///
+    /// Heap rather than stack `llvm.alloca` because this nest is inlined at the
+    /// intrinsic's CALL SITE, which may sit inside a caller's loop body. A
+    /// non-entry-block `alloca` is a DYNAMIC alloca — unhoistable, with no
+    /// `stacksave`/`stackrestore` pair around the loop — so the stack would grow
+    /// 256 KiB per iteration until it hit the guard page. Heap storage is bounded
+    /// by the malloc/free pair regardless of caller loop depth. Every vector
+    /// access on these panels carries an explicit `{alignment = 4|8}` attribute
+    /// (element, not natural-vector, alignment), so the move is byte-identical.
     ///
     /// `prefix` namespaces every SSA value. `ap`/`bp`/`cp` are `!llvm.ptr` SSA
     /// names; `k64`/`n64` are i64 SSA names for K and N; `ki`/`ni` are `index`
@@ -7117,28 +7130,53 @@ impl LoweringContext {
             "    %{p}_zv = arith.constant dense<0> : vector<{NR}xi64>"
         ));
 
-        // ── private scratch (constant-extent alloca) ─────────────────────────
+        // ── private scratch (heap malloc/free) ───────────────────────────────
         // C-scratch: MC*NC i64.  Packed A: MC*KC i32.  Packed B: KC*NC i32.
-        let cs_elems = (MC * NC) as i64;
-        let pa_elems = (MC * KC) as i64;
-        let pb_elems = (KC * NC) as i64;
+        //
+        // These panels are HEAP-allocated via `@malloc` (and `@free`d before the
+        // kernel falls through) rather than stack `llvm.alloca`, mirroring the
+        // int8 sibling `emit_mm_i8_blocked`. The three panels total
+        // MC*NC*8 + MC*KC*4 + KC*NC*4 = 256 KiB, and this macro-kernel is
+        // inlined at the intrinsic's CALL SITE — inside the `scf.if` else-arm of
+        // `emit_vec_matmul_mm_q16`, which may itself sit in a loop body. A
+        // non-entry-block `llvm.alloca` is a DYNAMIC alloca: LLVM cannot hoist
+        // it, emits no `llvm.stacksave`/`stackrestore` pair around the loop, and
+        // the stack therefore grows 256 KiB per iteration until it hits the
+        // guard page (a batched 256×256×256 matmul SIGSEGVs at iteration 32 on
+        // the default 8 MiB stack). Heap storage is bounded by the malloc/free
+        // pair regardless of the caller's loop depth or stack headroom.
+        //
+        // Heap vs stack is the same storage for the same computation in a
+        // different location: every GEP / load / store below is byte-for-byte
+        // unchanged, and every vector access on these panels carries an EXPLICIT
+        // `{alignment = 4|8}` attribute (element alignment, never the vector's
+        // natural 32/64-byte alignment), so codegen never assumed the `alloca`'s
+        // preferred alignment and glibc's 16-byte malloc guarantee is strictly
+        // stronger. The lowering therefore stays byte-identical — the Q16 canary
+        // `92e2cb75` is dispatch-invariant across both arms.
+        //
+        // malloc takes a BYTE count: cs is i64 (8 B/elem), pa/pb are i32
+        // (4 B/elem).
+        let cs_bytes = (MC * NC) as i64 * 8;
+        let pa_bytes = (MC * KC) as i64 * 4;
+        let pb_bytes = (KC * NC) as i64 * 4;
         line(&format!(
-            "    %{p}_csn = llvm.mlir.constant({cs_elems} : i64) : i64"
+            "    %{p}_csn = llvm.mlir.constant({cs_bytes} : i64) : i64"
         ));
         line(&format!(
-            "    %{p}_cs = llvm.alloca %{p}_csn x i64 : (i64) -> !llvm.ptr"
+            "    %{p}_cs = llvm.call @malloc(%{p}_csn) : (i64) -> !llvm.ptr"
         ));
         line(&format!(
-            "    %{p}_pan = llvm.mlir.constant({pa_elems} : i64) : i64"
+            "    %{p}_pan = llvm.mlir.constant({pa_bytes} : i64) : i64"
         ));
         line(&format!(
-            "    %{p}_pa = llvm.alloca %{p}_pan x i32 : (i64) -> !llvm.ptr"
+            "    %{p}_pa = llvm.call @malloc(%{p}_pan) : (i64) -> !llvm.ptr"
         ));
         line(&format!(
-            "    %{p}_pbn = llvm.mlir.constant({pb_elems} : i64) : i64"
+            "    %{p}_pbn = llvm.mlir.constant({pb_bytes} : i64) : i64"
         ));
         line(&format!(
-            "    %{p}_pb = llvm.alloca %{p}_pbn x i32 : (i64) -> !llvm.ptr"
+            "    %{p}_pb = llvm.call @malloc(%{p}_pbn) : (i64) -> !llvm.ptr"
         ));
         // C-scratch column stride (NC) and packed strides as i64 for GEP math.
         line(&format!("    %{p}_ncc = arith.constant {NC} : i64"));
@@ -7673,6 +7711,13 @@ impl LoweringContext {
         line("        }"); // end wr
         line("      }"); // end ic
         line("    }"); // end jc
+        // Free the heap scratch panels — one `@free` per `@malloc`, on the single
+        // fall-through path out of the kernel (all three scf loops have closed and
+        // there are no early returns / branches out of the kernel body, so this is
+        // the only exit). NO LEAK.
+        line(&format!("    llvm.call @free(%{p}_cs) : (!llvm.ptr) -> ()"));
+        line(&format!("    llvm.call @free(%{p}_pa) : (!llvm.ptr) -> ()"));
+        line(&format!("    llvm.call @free(%{p}_pb) : (!llvm.ptr) -> ()"));
     }
 
     /// "det.igemm" tier — emit the fused int8 GEMM
@@ -9357,6 +9402,21 @@ impl LoweringContext {
         // `arith.shrsi >> 16` and the same associative i64 reduction, so the
         // output is bit-identical regardless of which arm runs — the branch only
         // changes tiling, never the math (canary `92e2cb75` is dispatch-invariant).
+        //
+        // deferred: no IN-TREE gate ever EXECUTES the blocked arm. The pinned Q16
+        // canary `gemm-q16-fused-64x64x64` has max(M,N,K) = 64 < Q16_BLIS_MIN_DIM,
+        // so it runs the small arm at run time; the blocked arm is emitted into
+        // the artifact but never executed by any test, which is how a defect in it
+        // could survive the gate. Verified out-of-tree instead, at M=K=N=256 with
+        // the canary's own inputs (`Lcg(0xDEADBEEF)` / `next_q16`, i.e. the
+        // `make_gemm_q16` generator) and its canonical encoding (C's i32 LE bytes
+        // → sha256): the blocked arm returns
+        //   9c5a52f08f26b792069ba332517421f899449afd6909502c11507a3cc9ef2b5b
+        // matching an independent scalar oracle, unchanged across the scratch move
+        // from `llvm.alloca` to `@malloc` above. Upgrade path: add a
+        // `gemm-q16-fused-256x256x256` workload to tests/cross_substrate_identity.rs
+        // alongside the 64³ one and pin that hash as its reference — it is a NEW
+        // id, so it is a first bless and not a re-bless of `92e2cb75`.
         self.emit_line(&format!(
             "    %vmm_thr_{d} = arith.constant {Q16_BLIS_MIN_DIM} : index"
         ));
@@ -9386,6 +9446,9 @@ impl LoweringContext {
         );
         self.body.push_str(&simple);
         self.emit_line("    } else {");
+        // The blocked arm heap-allocates its scratch panels via @malloc/@free;
+        // flag the module assembler to emit those externs once.
+        self.needs_malloc = true;
         let mut blk = String::new();
         Self::emit_mm_q16_blocked(
             &mut blk,
@@ -10204,6 +10267,29 @@ impl LoweringContext {
             "    %mt{d}_band = arith.divsi %mt{d}_msum, %mt{d}_T : i64"
         ));
         // Stack-alloc MAX_THREADS arg structs (MAX_THREADS*56 bytes) + handles.
+        //
+        // deferred: these two stay stack `llvm.alloca` while the blocked-kernel
+        // scratch above moved to the heap. They are the same defect CLASS —
+        // 256*56 + 256*8 = 16 KiB emitted at the intrinsic's call site, so a call
+        // inside a caller's loop body would be a dynamic (unhoistable) alloca and
+        // grow the stack 16 KiB per iteration, blowing an 8 MiB stack at ~512
+        // iterations — but that shape is currently UNREACHABLE, so the migration
+        // cannot be runtime-verified and is not made blind on a threading path.
+        // Measured: the MT intrinsic compiles ONLY as a tail expression, where
+        // these allocas land in the function ENTRY block (statically reserved, no
+        // per-iteration growth); called inside a `while` body the module emits no
+        // `llvm.func @sysconf` declaration and mlir-opt rejects it outright
+        // ("'sysconf' does not reference a symbol in the current scope"). Cause:
+        // a loop/branch body lowers into a SUB-context and `needs_pthread` is not
+        // merged back out of it, and unlike `needs_malloc` (which additionally
+        // buffer-scans for "@malloc(" at assembly time) `needs_pthread` has no
+        // scan fallback, so the extern is simply never declared. Upgrade path:
+        // give `needs_pthread` the same authoritative buffer scan `needs_malloc`
+        // has, which makes the loop shape compile; THEN migrate this argbuf +
+        // handles pair to `@malloc`, `@free`ing both AFTER the join loop (the
+        // workers read argbuf until they are joined, so an earlier free is a
+        // use-after-free), and gate it with a loop repro plus the `gemm-i8-mt`
+        // canary.
         let argbuf_bytes = MAX_THREADS * struct_bytes;
         self.emit_line(&format!(
             "    %mt{d}_abnum = llvm.mlir.constant({argbuf_bytes} : i64) : i64"
@@ -10540,6 +10626,13 @@ impl LoweringContext {
             "    %mi{d}_band = arith.divsi %mi{d}_msum, %mi{d}_T : i64"
         ));
         // Stack-alloc MAX_THREADS arg structs + handles.
+        //
+        // deferred: same 16 KiB call-site alloca as the Q16.16 MT wrapper, and
+        // deferred for the same measured reason — the MT intrinsic only compiles
+        // as a tail expression (where these land in the function ENTRY block), and
+        // the loop shape that would grow the stack per iteration is rejected by
+        // mlir-opt for a missing `@sysconf` extern. See the fuller note at the
+        // Q16.16 MT wrapper's `argbuf_bytes` for the cause and the upgrade path.
         let argbuf_bytes = MAX_THREADS * struct_bytes;
         self.emit_line(&format!(
             "    %mi{d}_abnum = llvm.mlir.constant({argbuf_bytes} : i64) : i64"
@@ -11358,6 +11451,31 @@ pub fn lower_ir_to_mlir_with_entry(
     // silently drops the top-level `ctx.body` here. Today that combination is a
     // hard dup-`@main` error, so nothing relies on it — upgrade path: fail loud on
     // the ambiguous combination rather than silently preferring `fn main`.
+    //
+    // deferred: this synthetic entry is named `@main`, so for a script-style
+    // module it IS the C entry point the runtime start-up calls as
+    // `int main(int, char**, char**)` — but `ret_types` carries ONE slot per
+    // top-level statement, and the SysV return classification changes with the
+    // slot count. Measured on a stock `--backend mlir` binary (pristine
+    // f2a2d87d, straight-line `let v1 = 1 / let v2 = 2 / let v3 = 3 / 40`, i.e.
+    // NO control flow involved):
+    //   1 slot  -> rax                                  runs, exit = the value
+    //   2 slots -> rax,rdx        3 slots -> rax,rdx,rcx  runs, exit = FIRST slot
+    //   >=4 slots -> sret: `main` becomes
+    //       `mov %rdi,%rax ; vmovups %ymm0,(%rdi) ; ret`
+    //     and the start-up passes `rdi = argc = 1`, so the entry stores the
+    //     result tuple to address 1 -> SIGSEGV before a single statement is
+    //     observable.
+    // Two defects, both PRE-EXISTING and independent of any one construct: the
+    // program's value is the TRAILING expression but the exit code reports the
+    // FIRST slot, and a 4-statement script cannot run at all. Not fixed here
+    // because collapsing the entry to a single result changes the emitted MLIR
+    // for every script-style module — i.e. artifact bytes — which is a
+    // cross-substrate canary re-bless, not a local fix. Upgrade path: keep the
+    // N-slot tuple as an internal symbol and emit a separate single-result
+    // `@main` shim that returns the LAST slot, so the entry ABI stops depending
+    // on the statement count; land it with the byte-identity canaries re-derived
+    // in the same change.
     #[cfg(feature = "std-surface")]
     let has_user_main = ctx.defined_fns.contains("main");
     #[cfg(not(feature = "std-surface"))]

@@ -20,6 +20,10 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 
+use super::map_limits::{
+    check_map_bytes_len, check_map_entry_count, check_map_key, check_map_nesting_depth,
+    check_map_string_len,
+};
 use super::types::{DType, Graph, Map, MapValue, Opcode, TensorType, Value};
 use super::varint::{sleb128_read, sleb128_write, uleb128_read, uleb128_write};
 use super::{MICB_MAGIC, MICB_VERSION};
@@ -55,9 +59,15 @@ pub fn emit_micb<W: Write>(graph: &Graph, w: &mut W) -> Result<(), MicbError> {
 }
 
 /// Parse MIC-B v2 binary format into a Graph.
+///
+/// DoS-bounded: the reader is capped at [`MAX_MICB_INPUT`] bytes, and the total
+/// bytes of decoded string clones are capped relative to the string table, so
+/// untrusted input cannot drive unbounded memory use. Both limits are far above
+/// any legitimate artifact and never fire on valid input.
 pub fn parse_micb<R: Read>(r: &mut R) -> Result<Graph, MicbError> {
+    let mut limited = LimitedReader::new(r);
     let mut decoder = MicbDecoder::new();
-    decoder.decode(r)
+    decoder.decode(&mut limited)
 }
 
 /// MIC-B encoder with string table interning.
@@ -325,17 +335,147 @@ fn read_bounded_count<R: Read>(r: &mut R) -> Result<usize, MicbError> {
     Ok(n)
 }
 
+/// Maximum accepted MIC-B input size (bytes).  Mirrors `MAX_MIC3_INPUT` in
+/// the mic@3 parser (`src/ir/compact/v3/parse.rs`) so both binary
+/// serializations are bounded by the same policy.
+///
+/// `MAX_MICB_ELEMENTS` bounds each *individual* count but says nothing about
+/// the *total* input, so a blob well under any single cap could previously
+/// drive unbounded work.  MIC-B encodes tensor graphs (the residual-block
+/// round-trip test uses ~tens of entries), so 10 MiB is ~three orders of
+/// magnitude above any legitimate artifact and is never reached on valid
+/// input — the byte-identity of every ACCEPTED parse is unchanged.
+pub const MAX_MICB_INPUT: usize = 10 * 1024 * 1024;
+
+/// Cap on the total bytes of decoded string CLONES, as a multiple of the
+/// string-table size.  The decoder clones a string-table entry per wire
+/// reference (a 1-byte ULEB index), so a small blob that references a large
+/// entry many times expands into hundreds of megabytes of retained heap — an
+/// allocation bomb.  A total-input bound alone does NOT close this: with a
+/// 10 MiB budget split between a large entry and many references, the product
+/// is still unbounded in practice.  Mirrors `DECODE_AMPLIFICATION_FACTOR` in
+/// the mic@3 parser, keyed here to the string table (the quantity actually
+/// being amplified) rather than the whole input, which is strictly tighter.
+const MICB_CLONE_AMPLIFICATION_FACTOR: usize = 64;
+
+/// Absolute floor for the per-parse clone budget so a small-but-legitimate
+/// graph that re-references short identifiers is never rejected.  Mirrors
+/// `MIN_DECODE_BUDGET` in the mic@3 parser.
+///
+/// deferred: this floor means a crafted blob can still drive ~64 MiB of
+/// retained clones before being refused (measured: 78 MB peak RSS for the
+/// 1 MB bomb, down from 339 MB and now bounded instead of unbounded). That is
+/// the same residual the mic@3 parser already ships, and it is a bounded spike
+/// rather than an OOM — upgrade path: intern the string table into `Rc<str>`
+/// so `Value::Arg`/`Opcode::Custom`/`MapValue::String`/symbols/shape share one
+/// allocation and the per-reference clone disappears entirely, making the
+/// budget unnecessary. Not done here because it changes the public
+/// `compact::v2::types` signatures (a wire-format-adjacent API break), which
+/// needs its own change with the round-trip byte-identity corpus re-run.
+const MICB_MIN_CLONE_BUDGET: usize = 64 * 1024 * 1024;
+
+/// A `Read` adapter that refuses to yield more than [`MAX_MICB_INPUT`] bytes.
+///
+/// `parse_micb` accepts a generic `R: Read` with no known total length, so the
+/// mic@3 trick of checking `data.len()` up front is unavailable.  Counting at
+/// the read boundary gives the same guarantee for a stream: the parser can
+/// never consume — and therefore never allocate proportionally to — more than
+/// the cap, whatever the underlying reader claims to hold.
+struct LimitedReader<'a, R: Read> {
+    inner: &'a mut R,
+    consumed: usize,
+}
+
+impl<'a, R: Read> LimitedReader<'a, R> {
+    fn new(inner: &'a mut R) -> Self {
+        Self { inner, consumed: 0 }
+    }
+}
+
+impl<R: Read> Read for LimitedReader<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        // Never hand the parser a byte past the cap: clamp this read to the
+        // remaining allowance.
+        let remaining = MAX_MICB_INPUT - self.consumed;
+        if remaining == 0 {
+            if buf.is_empty() {
+                return Ok(0);
+            }
+            // The allowance is spent and the parser wants more. Two cases must
+            // be told apart, because the decoder treats EOF as meaningful (an
+            // artifact ending right after the output varint has no MAP
+            // section, §3.4): an input of EXACTLY the cap is legitimate and
+            // must still see a genuine EOF, while an input that continues past
+            // the cap is the oversize case and must be refused. Probing the
+            // inner reader for one byte distinguishes them.
+            let mut probe = [0u8; 1];
+            return match self.inner.read(&mut probe)? {
+                0 => Ok(0), // input was exactly the cap: report real EOF
+                _ => Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("MIC-B input too large: exceeds MAX_MICB_INPUT {MAX_MICB_INPUT} bytes"),
+                )),
+            };
+        }
+        let cap = buf.len().min(remaining);
+        let n = self.inner.read(&mut buf[..cap])?;
+        self.consumed += n;
+        Ok(n)
+    }
+}
+
 // ─── MIC-B decoder ───────────────────────────────────────────────────────────
 
 /// MIC-B decoder.
 struct MicbDecoder {
     strings: Vec<String>,
+    /// Remaining decoded-string-clone budget in bytes for the in-progress
+    /// decode.  Sized from the string table once it is known (see
+    /// [`MICB_CLONE_AMPLIFICATION_FACTOR`]) and charged down at every site
+    /// that clones a string-table entry.  A `Cell` because the map / opcode
+    /// decoders take `&self`.
+    clone_budget: std::cell::Cell<usize>,
 }
 
 impl MicbDecoder {
     fn new() -> Self {
         Self {
             strings: Vec::new(),
+            // Sized for real once the string table is known; until then the
+            // floor applies, so a malformed header can never borrow budget.
+            clone_budget: std::cell::Cell::new(MICB_MIN_CLONE_BUDGET),
+        }
+    }
+
+    /// Clone string-table entry `idx`, charging its length against this parse's
+    /// clone budget.
+    ///
+    /// Every site that materialises a `String` from a 1-byte wire index goes
+    /// through here, so the total retained string bytes are bounded no matter
+    /// how many references the blob contains. The range check stays at each
+    /// call site so its specific diagnostic is preserved; the `get` here is
+    /// defence in depth so a future call site that forgets it cannot panic the
+    /// parser on untrusted input.
+    #[inline]
+    fn clone_string(&self, idx: usize) -> Result<String, MicbError> {
+        let s = self.strings.get(idx).ok_or_else(|| MicbError {
+            message: format!("string index {idx} out of bounds"),
+        })?;
+        match self.clone_budget.get().checked_sub(s.len()) {
+            Some(rest) => {
+                self.clone_budget.set(rest);
+                Ok(s.clone())
+            }
+            None => Err(MicbError {
+                message: format!(
+                    "decoded string clones exceed MIC-B budget: cloning string-table \
+                     entry {} ({} bytes) would exceed the remaining {} bytes \
+                     (possible allocation bomb)",
+                    idx,
+                    s.len(),
+                    self.clone_budget.get()
+                ),
+            }),
         }
     }
 
@@ -374,6 +514,17 @@ impl MicbDecoder {
             self.strings.push(s);
         }
 
+        // Size this parse's decoded-string-clone budget now that the string
+        // table is known. Keyed to the table's own byte size: re-referencing
+        // short identifiers stays far inside the budget, while a blob that
+        // references a large entry thousands of times trips it.
+        let strings_bytes: usize = self.strings.iter().map(|s| s.len()).sum();
+        self.clone_budget.set(
+            strings_bytes
+                .saturating_mul(MICB_CLONE_AMPLIFICATION_FACTOR)
+                .max(MICB_MIN_CLONE_BUDGET),
+        );
+
         // Symbol table
         let n_symbols = read_bounded_count(r)?;
         let mut symbols = Vec::with_capacity(n_symbols);
@@ -384,7 +535,7 @@ impl MicbDecoder {
                     message: format!("symbol string index {} out of bounds", idx),
                 });
             }
-            symbols.push(self.strings[idx].clone());
+            symbols.push(self.clone_string(idx)?);
         }
 
         // Type table
@@ -406,7 +557,7 @@ impl MicbDecoder {
                         message: format!("type dim string index {} out of bounds", idx),
                     });
                 }
-                shape.push(self.strings[idx].clone());
+                shape.push(self.clone_string(idx)?);
             }
 
             types.push(TensorType::new(dtype, shape));
@@ -467,7 +618,7 @@ impl MicbDecoder {
                     });
                 }
 
-                let name = self.strings[name_idx].clone();
+                let name = self.clone_string(name_idx)?;
                 if tag[0] == 0 {
                     Ok(Value::Arg(name, type_idx))
                 } else {
@@ -523,40 +674,63 @@ impl MicbDecoder {
                 ),
             });
         }
-        // MAP marker confirmed — read entries.
-        self.decode_map_entries(r)
+        // MAP marker confirmed — read entries at nesting depth 0.
+        self.decode_map_entries(r, 0)
     }
 
-    fn decode_map_entries<R: Read>(&self, r: &mut R) -> Result<Map, MicbError> {
+    /// Decode one MAP level.
+    ///
+    /// Every §3.2/§3.5 rule applied here comes from `super::map_limits`, which
+    /// the TEXT parser calls at the matching points. That is the whole contract:
+    /// both serializations encode the same `Map`, so anything the text side
+    /// would refuse must not be reachable through the binary side — otherwise
+    /// `binary → Map → emit_mic2 → parse_mic2` stops being the identity (MAP
+    /// keys are emitted raw and unescaped, so a key carrying a newline re-emits
+    /// as two entries). `parse_micb` is a public API documented as accepting
+    /// untrusted input, so the caller cannot be assumed to pre-validate.
+    fn decode_map_entries<R: Read>(&self, r: &mut R, depth: usize) -> Result<Map, MicbError> {
         let count = read_bounded_count(r)?;
+        // §3.5 entry count, on the DECLARED count: refuse before the loop rather
+        // than after decoding a budget's worth of an absurd claim.
+        check_map_entry_count(count).map_err(|message| MicbError { message })?;
+
         let mut map = Map::new();
         for _ in 0..count {
+            // §3.5 entry count again, now recursively: a level whose declared
+            // count is legal can still blow the subtree budget through nested
+            // maps. Mirrors the text parser's per-entry check exactly.
+            check_map_entry_count(map.recursive_entry_count() + 1)
+                .map_err(|message| MicbError { message })?;
+
             let key_idx = uleb128_read(r)? as usize;
-            if key_idx >= self.strings.len() {
-                return Err(MicbError {
-                    message: format!("MAP key string index {key_idx} out of bounds"),
-                });
-            }
-            let key = self.strings[key_idx].clone();
-            let value = self.decode_map_value(r)?;
+            let key = self.strings.get(key_idx).ok_or_else(|| MicbError {
+                message: format!("MAP key string index {key_idx} out of bounds"),
+            })?;
+            // §3.2 grammar + §3.5 key bounds, checked on the BORROWED table
+            // entry so a rejected key never charges the clone budget.
+            check_map_key(key).map_err(|message| MicbError { message })?;
+
+            let key = self.clone_string(key_idx)?;
+            let value = self.decode_map_value(r, depth)?;
             map.insert_unique(key, value)
                 .map_err(|e| MicbError { message: e })?;
         }
         Ok(map)
     }
 
-    fn decode_map_value<R: Read>(&self, r: &mut R) -> Result<MapValue, MicbError> {
+    fn decode_map_value<R: Read>(&self, r: &mut R, depth: usize) -> Result<MapValue, MicbError> {
         let mut tag = [0u8; 1];
         r.read_exact(&mut tag)?;
         match tag[0] {
             0 => {
                 let idx = uleb128_read(r)? as usize;
-                if idx >= self.strings.len() {
-                    return Err(MicbError {
-                        message: format!("MAP string value index {idx} out of bounds"),
-                    });
-                }
-                Ok(MapValue::String(self.strings[idx].clone()))
+                let s = self.strings.get(idx).ok_or_else(|| MicbError {
+                    message: format!("MAP string value index {idx} out of bounds"),
+                })?;
+                // §3.5 string size, on the borrowed entry so an oversize value
+                // never charges the clone budget.
+                check_map_string_len(s.len()).map_err(|message| MicbError { message })?;
+                Ok(MapValue::String(self.clone_string(idx)?))
             }
             1 => {
                 let i = sleb128_read(r)?;
@@ -564,12 +738,22 @@ impl MicbDecoder {
             }
             2 => {
                 let len = read_bounded_count(r)?;
+                // §3.5 bytes size, checked BEFORE the allocation it authorises.
+                check_map_bytes_len(len).map_err(|message| MicbError { message })?;
                 let mut buf = vec![0u8; len];
                 r.read_exact(&mut buf)?;
                 Ok(MapValue::Bytes(buf))
             }
             3 => {
-                let inner = self.decode_map_entries(r)?;
+                // §3.5 nesting, checked at the descend point with the level of
+                // the map we are descending FROM — the same placement the text
+                // parser uses, so the two agree on the deepest legal map rather
+                // than differing by one level. This is also the stack bound on
+                // untrusted input: `decode_map_entries` and `decode_map_value`
+                // are mutually recursive through this arm, and `MAX_MICB_INPUT`
+                // bounds total SIZE while saying nothing about DEPTH.
+                check_map_nesting_depth(depth).map_err(|message| MicbError { message })?;
+                let inner = self.decode_map_entries(r, depth + 1)?;
                 Ok(MapValue::Nested(inner))
             }
             other => Err(MicbError {
@@ -650,7 +834,7 @@ impl MicbDecoder {
                         message: format!("custom opcode name index {} out of bounds", idx),
                     });
                 }
-                Ok(Opcode::Custom(self.strings[idx].clone()))
+                Ok(Opcode::Custom(self.clone_string(idx)?))
             }
             _ => Err(MicbError {
                 message: format!("unknown opcode byte: {}", opcode_byte[0]),

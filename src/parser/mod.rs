@@ -865,9 +865,15 @@ impl<'a> P<'a> {
             self.pos = save;
         }
         // RFC 0010 Phase A: raw pointer types `*const T` / `*mut T`.
-        // These are valid in `extern "C"` signatures. The pointee type is
-        // recorded for documentation; Phase A lowers all raw pointers to
-        // opaque `!llvm.ptr` regardless of pointee.
+        // The pointee type is recorded for documentation; Phase A lowers all
+        // raw pointers to opaque `!llvm.ptr` regardless of pointee.
+        //
+        // deferred: this arm sits in the GENERAL `type_ann`, so a raw pointer
+        // is admitted in every type position (ordinary `fn` params/returns and
+        // `let` annotations too), not just `extern "C"` signatures, and no
+        // `unsafe` context is required — see the `deferred:` note on
+        // `TypeAnn::RawPtr` in `src/ast/mod.rs` for the full gap and the
+        // upgrade path.
         if self.at(b'*') {
             self.pos += 1;
             self.skip_ws();
@@ -2928,6 +2934,12 @@ impl<'a> P<'a> {
         // compatibility with the conservative Phase A baseline; the RFC
         // says every symbol must carry an explicit tag, but we default to
         // unsafe if absent so existing test patterns work.
+        //
+        // deferred: the bit produced here is INFORMATIONAL — nothing reads it
+        // except the pretty-printer, so neither `safe fn` nor `unsafe fn`
+        // changes what the compiler accepts. Enforcing it needs an `unsafe`
+        // block construct that does not exist yet; see the `deferred:` note
+        // on `ExternFn::is_unsafe` in `src/ast/mod.rs`.
         let is_unsafe = if self.at_keyword(b"safe") {
             self.pos += 4;
             self.skip_ws();

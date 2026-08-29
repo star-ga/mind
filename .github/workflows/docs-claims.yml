@@ -7,22 +7,30 @@ name: Docs Claims
 #
 # Runs on its OWN triggers (NOT the main ci.yml matrix) because ci.yml has
 # paths-ignore: ['**.md', 'docs/**'] — a docs-only drift would otherwise slip through.
-# This job's whole point is to gate exactly those doc changes.
+#
+# DELIBERATELY UNFILTERED (no `paths:`). Every gate below inspects the WHOLE
+# tracked tree — check_claims.py re-derives counts from the real tree, and both
+# hygiene scripts are a `git grep` over all tracked files — so their verdict does
+# not depend on which files a push happened to touch. A `paths:` filter on a
+# whole-tree invariant can therefore only ever suppress a real failure; it can
+# never make the answer more correct.
+#
+# It previously carried paths: ['**.md', ...] while check_no_ai_attribution.sh
+# scans .md/.rs/.py/.mind/.sh/.toml/.rst/.txt. Consequence: an AI-attribution
+# landing in ANY source file never started this workflow, and
+# check_json_not_evidence.sh — which scans only *.mind — could never fire at all,
+# because no *.mind path could match the filter. On a PUBLIC repo, with the local
+# pre-commit hook being opt-in, that left no enforcement whatsoever.
+#
+# The fix is removal, not a wider list: a filter enumerating extensions is a
+# second copy of the scan scope that drifts the moment either side changes.
+# scripts/check_gate_wiring.py (run as the first step below) fails the build if a
+# filter is reintroduced or a gate is unwired. The whole job is ~1s of work.
 
 on:
   push:
     branches: [ main ]
-    paths:
-      - '**.md'
-      - 'config/capabilities.toml'
-      - 'scripts/check_claims.py'
-      - '.github/workflows/docs-claims.yml'
   pull_request:
-    paths:
-      - '**.md'
-      - 'config/capabilities.toml'
-      - 'scripts/check_claims.py'
-      - '.github/workflows/docs-claims.yml'
   workflow_dispatch:
 
 permissions:
@@ -41,6 +49,9 @@ jobs:
         with:
           python-version: '3.12'  # tomllib is stdlib from 3.11+
 
+      - name: Gate wiring (these gates must be reachable at all)
+        run: python3 scripts/check_gate_wiring.py
+
       - name: Check claims against capability manifest
         run: python3 scripts/check_claims.py
 
@@ -49,3 +60,11 @@ jobs:
 
       - name: JSON is never an evidence-hash preimage (wedge integrity)
         run: bash scripts/check_json_not_evidence.sh
+
+      - name: Release gating contract (release.yml may only publish CI-green commits)
+        # Whole-tree invariant like the two above, and it belongs on THIS
+        # workflow's unfiltered trigger for the same reason: the contract spans
+        # release.yml + ci.yml + .github/required-ci-jobs.tsv, so a change to any
+        # one of them — including a docs-only commit that ci.yml's paths-ignore
+        # would skip — can break it. Pure text analysis, no build artifacts.
+        run: python3 scripts/check_release_gating.py

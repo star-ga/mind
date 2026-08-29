@@ -1,4 +1,68 @@
-# Draft RFC: Governed Device I/O and MHS Compatibility
+# Draft RFC: Governed Device I/O and MHS Compatibility — SUPERSEDED
+
+> ## SUPERSEDED — do not implement this document
+>
+> **Superseded by [`docs/rfcs/0027-governed-physical-device-plane.md`](0027-governed-physical-device-plane.md)**
+> (2026-08-28), which is the authoritative architecture decision, taken against the live
+> codebase rather than against a proposal document. This draft was written *before* that
+> decision and its central proposal was **rejected on review**. It is kept rather than deleted
+> so the public record shows the change instead of hiding it; the body below is unedited except
+> for the correction callouts marked `> **SUPERSEDED ...**`. Nothing below is a plan of record,
+> and no implementation of either document has shipped.
+>
+> **Which claims here are wrong, specifically:**
+>
+> 1. **[`## Canonical Device IR`](#canonical-device-ir) is rejected in full.** RFC 0027 §0.2
+>    forbids a "Canonical Device IR", a `device.*` opcode, and any `mic@N` bump. Actuation
+>    produces a **record, not a computation**, and records already have a carrier — the MAP
+>    epilogue. The decided design spends exactly **one reserved MAP key**,
+>    `evidence_chain.device_receipts`, reusing the RFC 0024 collapse-receipt pattern
+>    byte-for-byte: a TLV blob, **omitted entirely when empty** (so an artifact that actuates
+>    nothing stays byte-identical to one compiled before the RFC existed, and no `mic@N` bump is
+>    required), **outside** the `trace_hash` preimage (a device outcome is not a property of the
+>    program), and **inside** the signature preimage (a record editable under a valid signature
+>    is worthless). Every object named in that section — `DeviceManifest`,
+>    `PhysicalActionRequest`, `PhysicalActionResult`, `DeviceStateSnapshot` and the rest — is
+>    **not** the schema. The schema is the single `DeviceActionReceipt` of RFC 0027 §4.1.
+>
+> 2. **There is no `device.*` MAP namespace in this codebase, and a bare one would be a forgery
+>    surface.** The reserved prefixes are exactly `["evidence_chain.", "signature."]`. Any other
+>    dotted key is an **application** key: unreserved, and writable by any program. An actuation
+>    record under an application key could be forged by the very program it is supposed to
+>    constrain, so the receipt belongs under the reserved `evidence_chain.` prefix (RFC 0027
+>    §0.2).
+>
+> 3. **The external hardware standard is a boundary codec, never an internal representation.**
+>    The Summary below calls it "an external compatibility surface, while Device IR is the
+>    canonical internal representation". RFC 0027 §0.3 inverts that: the standard is a wire
+>    encoding spoken by **exactly one component** — the gateway edge codec in the private
+>    `mind-runtime` — and it never leaks inward as a type. Conformance to an unpublished
+>    external specification is **not claimed**; the correct public statement is that we speak
+>    *a* device codec at the edge, not that we conform to any named standard. RFC 0027
+>    accordingly names no external vendor and no standard.
+>
+> 4. **A device is a stochastic island — "deterministic device control" is a doc-honesty
+>    violation.** The *decision* is deterministic and bit-identical across substrates; the
+>    *outcome* is not, because a motor stalls, a sensor drifts, a gripper slips (RFC 0027 §0.7).
+>    `OutcomeUnknown` is a **first-class outcome, not an error case**: a command that was issued
+>    but whose result was never observed is the *normal* failure mode of physical hardware, and
+>    a schema that cannot represent it will be lied to. The result vocabulary below has no such
+>    outcome. Verification asserts a record is internally consistent and unforged; it does not
+>    and cannot assert that the device physically moved.
+>
+> 5. **Two replay modes, not three.** *Replay* re-derives and checks an evidence chain and
+>    **never actuates**. *Re-execution* is a new authority requiring a fresh admissibility
+>    proof — not "replay with a flag". The three-mode split below is superseded by RFC 0027
+>    §0.5, and the distinction is enforced by a gate, not by documentation.
+>
+> 6. **Three repos, not a public device stack.** `mind` **defines** (schema + verifier — a
+>    verifier that needs a private repo to know what it is verifying is not a verifier),
+>    `512-mind` **governs** (admissibility), `mind-runtime` **performs** (actuation + edge
+>    codec). Every other repo is a consumer (RFC 0027 §0.1, §0.6). Actuation must not be coupled
+>    to the intent, nerve, flow, or agent components: coupling a physical actuator to a skeleton
+>    component puts a motor behind a build failure (§0.4).
+
+---
 
 > Status: roadmap/specification work. Anthropic announced the Model Hardware Standard (MHS) research preview on 2026-08-27. The final open-source MHS specification is not public yet. This document therefore defines MIND's stable internal boundaries and an MHS compatibility seam without claiming conformance to an unpublished specification. When the normative MHS specification is released, the adapter and conformance layer MUST be reconciled before any interoperability claim is made.
 
@@ -10,6 +74,12 @@ public language/runtime contract. An MHS adapter may translate between this stab
 Anthropic's Model Hardware Standard. The MIND contract is deliberately not a competing wire
 standard: MHS remains an external compatibility surface, while Device IR is the canonical internal
 representation that protects the language from changes in a research-preview protocol.
+
+> **SUPERSEDED (RFC 0027 §0.2, §0.3) —** There is no Device IR. Actuation produces a *record*,
+> not a computation, and the record rides one reserved MAP key,
+> `evidence_chain.device_receipts`. The external hardware standard is a boundary **codec**
+> spoken by one component in the private runtime — never "the canonical internal
+> representation", and never a type that leaks inward.
 
 The core rule is:
 
@@ -34,6 +104,14 @@ MCP invocation MUST NOT be able to masquerade as an unclassified physical effect
 6. Support direct devices, remote devices, lab/manufacturing hardware, robotics, sensors, embedded
    targets, and future device classes without a separate language feature per transport.
 
+> **SUPERSEDED (RFC 0027 §0.2, §0.4, §0.6) —** Goals 1 and 3 are rejected: there is no "one
+> typed representation" for devices, and no physical-effect class is carried through the
+> compiler IR. Goal 4's governance hook survives in shape only — admissibility is issued by
+> `512-mind`, and the gateway accepts a command from **any** producer that carries a valid
+> admissibility proof, so the actuation path must not depend on which planner produced the
+> command. Goal 5's "first-class adapter" is narrowed to a single edge codec in the private
+> runtime.
+
 ## Non-goals
 
 - MIND does not define USB, serial, CAN, ROS, vendor SDK, or instrument protocols.
@@ -53,6 +131,18 @@ This draft composes with, rather than replaces:
 - RFC 0016/0021 evidence + canonical mic@3: compile-time artifact identity remains the root anchor.
 
 ## Canonical Device IR
+
+> **REJECTED IN FULL (RFC 0027 §0.2) —** This section is the rejected part of this document.
+> RFC 0027 §0.2, verbatim: *"Forbidden: a 'Canonical Device IR', a `device.*` opcode, or any
+> `mic@N` bump."* Every object named below is superseded by the single `DeviceActionReceipt`
+> of RFC 0027 §4.1 — a fixed-width TLV record (no floats, no clocks, no locale) carried under
+> the reserved key `evidence_chain.device_receipts`, omitted when empty, outside the
+> `trace_hash` preimage and inside the signature preimage. One actuation binds four hashes into
+> a single preimage — `(ingress_hash, decision_hash, command_bytes_hash, outcome)` — where
+> `command_bytes_hash` is taken *after* codec encoding, so the record covers what the hardware
+> actually received rather than what we intended to send. A receipt whose fields do not bind is
+> not a weaker receipt; it is not a receipt. Everything from here to *Single physical-effect
+> barrier* is retained as historical record only.
 
 The names below are semantic requirements, not frozen surface syntax.
 
@@ -194,6 +284,14 @@ A successful transport write is not sufficient to claim a successful physical ac
 operation declares a readback/postcondition, success requires the declared postcondition to be
 observed or the result is partial/failed.
 
+> **SUPERSEDED (RFC 0027 §0.7, §4.1, §4.2) —** The decided outcome vocabulary is exactly
+> `Completed` | `Refused` | `OutcomeUnknown`, and `OutcomeUnknown` is first-class rather than an
+> error case — a command that was issued but whose result was never observed is the normal
+> failure mode of physical hardware. "A successful transport write is not sufficient to claim a
+> successful physical action" survives as intent, but the conclusion is stronger than
+> `partial/failed`: verification asserts the record is internally consistent and unforged, and
+> it does not and cannot assert that the device physically moved.
+
 ## Single physical-effect barrier
 
 The public contract defines one semantic gateway. Implementations may have many transports behind
@@ -215,7 +313,20 @@ agent/flow -> Device IR request -> governance hook -> device gateway -> adapter 
 
 This is an architectural invariant, not a style preference.
 
+> **SUPERSEDED IN PART (RFC 0027 §0.4) —** The single gateway survives; the required shape
+> above does not. There is no "Device IR request", and the gateway accepts a command from
+> **any** producer carrying a valid admissibility proof — it does not privilege one planner, and
+> planning is orthogonal to the actuation path.
+
 ## MHS compatibility seam
+
+> **SUPERSEDED (RFC 0027 §0.3) —** The external hardware standard is a boundary **codec**, not
+> a representation, and it is spoken by exactly one component: the gateway edge codec in the
+> private `mind-runtime`. There is no public compatibility adapter translating it into a Device
+> IR, because there is no Device IR. Conformance to an unpublished external specification is not
+> claimed — the correct public statement is that we speak *a* device codec at the edge, not that
+> we conform to any named standard. RFC 0027 deliberately names no external vendor and no
+> standard; the naming in this section is retained as historical record, not as a claim.
 
 The MHS research preview publicly describes discoverable device metadata, a shared state/interface,
 read/write-style primitives, MCP/CLI/API access, and deterministic code files for long-running or
@@ -255,6 +366,16 @@ Live replay         a new physical execution and therefore a new action request
 
 A replay command MUST NOT accidentally re-run an actuator.
 
+> **SUPERSEDED (RFC 0027 §0.5, §0.7, §5) —** Two replay modes, not three. **Replay** re-derives
+> and checks an evidence chain and **never actuates**; **re-execution** is a new authority
+> requiring a fresh admissibility proof, not "replay with a flag" — and the distinction is
+> enforced by a gate, not by documentation. On determinism, the honest statement is narrower
+> than the one above: the *decision* is deterministic and bit-identical across substrates, the
+> *physical outcome* is not. A device is a stochastic island. Because receipts sit outside the
+> `trace_hash` preimage, two runs on different substrates produce identical artifacts and may
+> legitimately produce different receipts — which is exactly why receipts are **not** part of
+> the byte-identity gate.
+
 ## Security invariants
 
 - No device credential in model, skill, flow, or intent payloads.
@@ -283,6 +404,14 @@ Planned public surfaces:
 7. Conformance hooks used by private/commercial runtimes without putting vendor SDKs in the public
    compiler.
 
+> **SUPERSEDED (RFC 0027 §0.2, §4.2) —** Items 1, 2, 3, 6 and 7 are rejected: no Device IR
+> encoding library, no effect classification preserved through lowering, no `mindc check`
+> device diagnostics, no manifest -> state -> request -> result hash vectors. `mindc verify`
+> gains exactly **one** check (item 4, narrowed): if `evidence_chain.device_receipts` is
+> present, every receipt must be well-formed, `artifact_trace_hash` must equal the artifact's
+> own `trace_hash`, and `prev_receipt_hash` must chain. Absent the key, behaviour is unchanged —
+> which is why the key is omitted-when-empty.
+
 ## Acceptance gates
 
 - Same mock manifest/action/state produces byte-identical canonical artifacts on x86_64 and ARM64.
@@ -293,6 +422,15 @@ Planned public surfaces:
 - Changing one manifest bound or one pre-state value changes the authorization/request identity.
 - MHS interoperability claims remain disabled until a public normative MHS version is pinned.
 
+> **SUPERSEDED (RFC 0027 §5, §7) —** Receipts are not part of the cross-substrate identity
+> gate; the artifact's bytes are unchanged by actuation, and differing receipts across
+> substrates are legitimate (§5). The decided gate is: **replace the device adapter with a
+> panicking stub and run `mindc verify` — if verify needs the device, the boundary is fake.**
+> It must assert a **positive count** of receipts verified, because a run that verifies zero
+> receipts and exits 0 proves nothing. Second gate: a replay run must actuate **zero** times
+> against that stub — if replay can reach the device, replay is re-execution and the mode
+> distinction is fictional.
+
 ## Open questions
 
 1. Whether effect class lives as a dedicated mic@3 opcode/flag or as a typed standard-library ABI
@@ -302,3 +440,10 @@ Planned public surfaces:
 3. Canonical unit vocabulary and dimensional analysis scope.
 4. Minimum public signature verification surface for an opaque authorization grant.
 5. How much of device discovery belongs in `std.device` versus the host runtime.
+
+> **PARTLY ANSWERED / SUPERSEDED (RFC 0027 §0.2, §8) —** Question 1 is answered and closed:
+> effect class is neither a `mic@3` opcode nor a flag, because there is no new IR at all.
+> Questions 2, 3 and 5 lapse with the Device IR they belong to. The open questions of record are
+> now RFC 0027 §8: receipt batching for high-rate actuators without weakening per-command
+> binding, and whether `512-mind` can issue admissibility proofs at actuation latency — it
+> currently compiles 0 of 144 modules, so this is unmeasured and no schedule should assume it.

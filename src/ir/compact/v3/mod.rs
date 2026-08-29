@@ -143,10 +143,10 @@ pub mod slhdsa;
 pub use collapse_receipt::{CollapseReceipt, CollapseReceiptError};
 pub use emit::emit_mic3;
 pub use evidence::{
-    CollapseVerifyStatus, SignatureStatus, SigningKey, VerifiedScheme, emit_mic3_with_evidence,
-    emit_mic3_with_evidence_and_receipts, emit_mic3_with_signed_evidence,
-    emit_mic3_with_signed_evidence_scheme, mic3_app_metadata, mic3_collapse_verify,
-    mic3_evidence_report, mic3_signature_status, validate_app_entries,
+    CollapseVerifyStatus, Mic3NonCanonical, SignatureStatus, SigningKey, VerifiedScheme,
+    emit_mic3_with_evidence, emit_mic3_with_evidence_and_receipts, emit_mic3_with_signed_evidence,
+    emit_mic3_with_signed_evidence_scheme, mic3_app_metadata, mic3_canonical_check,
+    mic3_collapse_verify, mic3_evidence_report, mic3_signature_status, validate_app_entries,
 };
 pub use parse::{MAX_MIC3_INPUT, Mic3Error, parse_mic3};
 // Re-export the evidence vocabulary at the v3 level for convenience.
@@ -1535,6 +1535,284 @@ mod tests {
                 .any(|i| matches!(i, Instr::If { merges, .. } if !merges.is_empty()));
             assert!(exit_ok, "While.exit_ids stripped on round trip");
             assert!(merge_ok, "If.merges stripped on round trip");
+        }
+
+        // -----------------------------------------------------------------
+        // R11 anti-drift gate — `While.exit_ids` / `If.merges` are on the
+        // canonical wire (since v0x02) and therefore in `trace_hash`. The doc
+        // comments on those two fields claim exactly that; these tests are what
+        // stops the claim from silently rotting back into "lowering-internal,
+        // hash-neutral" the next time an emit arm is refactored.
+        // -----------------------------------------------------------------
+
+        use crate::ir::ValueId;
+
+        /// Which region-exit metadata an R11 fixture carries.
+        #[derive(Clone, Copy)]
+        enum RegionMeta {
+            /// The ids lowering actually produces.
+            Canonical,
+            /// Same arity, DIFFERENT ids — catches an emitter that writes only
+            /// the count and drops the payload.
+            Renamed,
+            /// Stripped, the way a pre-`0x02` artifact decodes.
+            Empty,
+        }
+
+        /// Ids the R11 fixtures allocate. Every fixture calls `r11_ids` first
+        /// and allocates the SAME ids in the SAME order, so two fixtures agree
+        /// on the serialised module-level `next_id` and differ on the wire in
+        /// NOTHING but the one field under test.
+        struct R11Ids {
+            cond: ValueId,
+            init: ValueId,
+            body_v: ValueId,
+            exit_a: ValueId,
+            exit_b: ValueId,
+            if_cond: ValueId,
+            then_r: ValueId,
+            else_r: ValueId,
+            if_dst: ValueId,
+            merge_a: ValueId,
+            merge_b: ValueId,
+            tail: ValueId,
+        }
+
+        fn r11_ids(m: &mut IRModule) -> R11Ids {
+            // Struct-literal fields evaluate in written order, so the
+            // allocation order is exactly this list.
+            R11Ids {
+                cond: m.fresh(),
+                init: m.fresh(),
+                body_v: m.fresh(),
+                exit_a: m.fresh(),
+                exit_b: m.fresh(),
+                if_cond: m.fresh(),
+                then_r: m.fresh(),
+                else_r: m.fresh(),
+                if_dst: m.fresh(),
+                merge_a: m.fresh(),
+                merge_b: m.fresh(),
+                tail: m.fresh(),
+            }
+        }
+
+        fn r11_while(ids: &R11Ids, meta: RegionMeta) -> Instr {
+            Instr::While {
+                cond_id: ids.cond,
+                cond_instrs: vec![Instr::ConstI64(ids.cond, 1)],
+                body: vec![Instr::ConstI64(ids.body_v, 7)],
+                live_vars: vec![("i".into(), ids.body_v)],
+                init_ids: vec![ids.init],
+                exit_ids: match meta {
+                    RegionMeta::Canonical => vec![ids.exit_a],
+                    RegionMeta::Renamed => vec![ids.exit_b],
+                    RegionMeta::Empty => Vec::new(),
+                },
+            }
+        }
+
+        fn r11_if(ids: &R11Ids, meta: RegionMeta) -> Instr {
+            Instr::If {
+                cond_id: ids.if_cond,
+                cond_instrs: vec![Instr::ConstI64(ids.if_cond, 1)],
+                then_instrs: vec![Instr::ConstI64(ids.then_r, 10)],
+                then_result: ids.then_r,
+                else_instrs: vec![Instr::ConstI64(ids.else_r, 20)],
+                else_result: ids.else_r,
+                dst: ids.if_dst,
+                branch_bindings: vec![("x".into(), ids.if_dst)],
+                merges: match meta {
+                    RegionMeta::Canonical => vec![(ids.merge_a, ids.then_r, ids.else_r)],
+                    RegionMeta::Renamed => vec![(ids.merge_b, ids.then_r, ids.else_r)],
+                    RegionMeta::Empty => Vec::new(),
+                },
+            }
+        }
+
+        /// Top-level `While` + `If`, each carrying independently-chosen
+        /// region-exit metadata so one field can be varied with the other held
+        /// fixed.
+        fn r11_top_level(while_meta: RegionMeta, if_meta: RegionMeta) -> IRModule {
+            let mut m = IRModule::new();
+            let ids = r11_ids(&mut m);
+            m.instrs.push(Instr::ConstI64(ids.init, 0));
+            m.instrs.push(r11_while(&ids, while_meta));
+            m.instrs.push(r11_if(&ids, if_meta));
+            m.instrs.push(Instr::Output(ids.if_dst));
+            m
+        }
+
+        /// The same two regions nested inside a `FnDef` body. mic@3 emits fn
+        /// bodies recursively (`emit_instr` recurses through `OP_FN_DEF`), so
+        /// the metadata is on the wire there too.
+        fn r11_in_fn_body(while_meta: RegionMeta, if_meta: RegionMeta) -> IRModule {
+            let mut m = IRModule::new();
+            let ids = r11_ids(&mut m);
+            m.instrs.push(Instr::FnDef {
+                name: "f".into(),
+                params: vec![],
+                ret_id: Some(ids.tail),
+                body: vec![
+                    Instr::ConstI64(ids.init, 0),
+                    r11_while(&ids, while_meta),
+                    r11_if(&ids, if_meta),
+                    Instr::ConstI64(ids.tail, 1),
+                    Instr::Return {
+                        value: Some(ids.tail),
+                    },
+                ],
+                reap_threshold: None,
+                value_types: std::collections::BTreeMap::new(),
+            });
+            m.instrs.push(Instr::ConstI64(ids.cond, 0));
+            m.instrs.push(Instr::Output(ids.cond));
+            m
+        }
+
+        fn r11_first_while_exit_ids(m: &IRModule) -> Vec<ValueId> {
+            m.instrs
+                .iter()
+                .find_map(|i| match i {
+                    Instr::While { exit_ids, .. } => Some(exit_ids.clone()),
+                    _ => None,
+                })
+                .expect("fixture must contain a top-level While")
+        }
+
+        fn r11_first_if_merges(m: &IRModule) -> Vec<(ValueId, ValueId, ValueId)> {
+            m.instrs
+                .iter()
+                .find_map(|i| match i {
+                    Instr::If { merges, .. } => Some(merges.clone()),
+                    _ => None,
+                })
+                .expect("fixture must contain a top-level If")
+        }
+
+        /// Assert that two fixtures differing in ONE region-exit field differ
+        /// in BOTH the canonical mic@3 bytes and the `trace_hash` derived from
+        /// them, and that each stream is still a canonical fixed point (so the
+        /// difference is real content, not a codec asymmetry).
+        fn assert_wire_and_hash_differ(base: &IRModule, variant: &IRModule, what: &str) {
+            let b0 = emit_mic3(base);
+            let b1 = emit_mic3(variant);
+            assert_ne!(
+                b0, b1,
+                "{what}: canonical mic@3 bytes are IDENTICAL — the field is not on the wire"
+            );
+            assert_ne!(
+                crate::ir::evidence::ir_trace_hash(base),
+                crate::ir::evidence::ir_trace_hash(variant),
+                "{what}: trace_hash unchanged — the field would be hash-neutral"
+            );
+            assert_eq!(
+                emit_mic3(&parse_mic3(&b0).expect("base must parse")),
+                b0,
+                "{what}: base is not a mic@3 fixed point"
+            );
+            assert_eq!(
+                emit_mic3(&parse_mic3(&b1).expect("variant must parse")),
+                b1,
+                "{what}: variant is not a mic@3 fixed point"
+            );
+        }
+
+        /// R11: `While.exit_ids` is WIRE-BEARING and HASH-BEARING.
+        ///
+        /// Two modules identical except for a loop's `exit_ids` must emit
+        /// different canonical mic@3 bytes and a different `trace_hash` — at
+        /// module level AND inside a `FnDef` body. If emit ever stops covering
+        /// `exit_ids` (a `..` pattern swallowing it, an arm rewrite), every
+        /// stream below collapses to the same bytes and this fails.
+        #[test]
+        fn byte_sensitivity_while_exit_ids() {
+            // `if_meta` is pinned Canonical, so ONLY `exit_ids` varies.
+            let base = r11_top_level(RegionMeta::Canonical, RegionMeta::Canonical);
+            assert_wire_and_hash_differ(
+                &base,
+                &r11_top_level(RegionMeta::Renamed, RegionMeta::Canonical),
+                "While.exit_ids renamed (module level)",
+            );
+            assert_wire_and_hash_differ(
+                &base,
+                &r11_top_level(RegionMeta::Empty, RegionMeta::Canonical),
+                "While.exit_ids stripped (module level)",
+            );
+
+            let fn_base = r11_in_fn_body(RegionMeta::Canonical, RegionMeta::Canonical);
+            assert_wire_and_hash_differ(
+                &fn_base,
+                &r11_in_fn_body(RegionMeta::Renamed, RegionMeta::Canonical),
+                "While.exit_ids renamed (inside a FnDef body)",
+            );
+            assert_wire_and_hash_differ(
+                &fn_base,
+                &r11_in_fn_body(RegionMeta::Empty, RegionMeta::Canonical),
+                "While.exit_ids stripped (inside a FnDef body)",
+            );
+
+            // The bytes carry the VALUE, not merely an arity.
+            let canon = r11_first_while_exit_ids(&parse_mic3(&emit_mic3(&base)).unwrap());
+            let renamed = r11_first_while_exit_ids(
+                &parse_mic3(&emit_mic3(&r11_top_level(
+                    RegionMeta::Renamed,
+                    RegionMeta::Canonical,
+                )))
+                .unwrap(),
+            );
+            assert_eq!(canon.len(), 1, "exit_ids arity lost on the wire");
+            assert_eq!(renamed.len(), 1, "exit_ids arity lost on the wire");
+            assert_ne!(
+                canon[0], renamed[0],
+                "exit_ids payload not carried: the renamed id decoded as the canonical one"
+            );
+        }
+
+        /// R11: `If.merges` is WIRE-BEARING and HASH-BEARING. Mirror of
+        /// `byte_sensitivity_while_exit_ids` for the `^if_after` phi list.
+        #[test]
+        fn byte_sensitivity_if_merges() {
+            // `while_meta` is pinned Canonical, so ONLY `merges` varies.
+            let base = r11_top_level(RegionMeta::Canonical, RegionMeta::Canonical);
+            assert_wire_and_hash_differ(
+                &base,
+                &r11_top_level(RegionMeta::Canonical, RegionMeta::Renamed),
+                "If.merges renamed (module level)",
+            );
+            assert_wire_and_hash_differ(
+                &base,
+                &r11_top_level(RegionMeta::Canonical, RegionMeta::Empty),
+                "If.merges stripped (module level)",
+            );
+
+            let fn_base = r11_in_fn_body(RegionMeta::Canonical, RegionMeta::Canonical);
+            assert_wire_and_hash_differ(
+                &fn_base,
+                &r11_in_fn_body(RegionMeta::Canonical, RegionMeta::Renamed),
+                "If.merges renamed (inside a FnDef body)",
+            );
+            assert_wire_and_hash_differ(
+                &fn_base,
+                &r11_in_fn_body(RegionMeta::Canonical, RegionMeta::Empty),
+                "If.merges stripped (inside a FnDef body)",
+            );
+
+            // The bytes carry the VALUE, not merely an arity.
+            let canon = r11_first_if_merges(&parse_mic3(&emit_mic3(&base)).unwrap());
+            let renamed = r11_first_if_merges(
+                &parse_mic3(&emit_mic3(&r11_top_level(
+                    RegionMeta::Canonical,
+                    RegionMeta::Renamed,
+                )))
+                .unwrap(),
+            );
+            assert_eq!(canon.len(), 1, "merges arity lost on the wire");
+            assert_eq!(renamed.len(), 1, "merges arity lost on the wire");
+            assert_ne!(
+                canon[0], renamed[0],
+                "merges payload not carried: the renamed triple decoded as the canonical one"
+            );
         }
 
         /// Gate 3 (differential, RFC 0021 §3.2): the consumer verdict on the
