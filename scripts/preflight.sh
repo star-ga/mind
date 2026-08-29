@@ -131,6 +131,26 @@ else
   bad "examples/mindc_mind/smoke_wiring_lint.py MISSING — CI runs it; preflight cannot verify it"
 fi
 
+step "std manifest contract  [examples/mindc_mind/testdata/stdlib_manifest.txt]"
+# Same class again, third corpus: WHICH std/*.mind modules each consumer links used
+# to be 17 hand-copied literal lists (the native bridge in src/bin/mindc.rs + 16
+# copies across examples/mindc_mind/*.py) plus a fourth, DIFFERENT list
+# (STDLIB_MIND_SOURCES, src/project/stdlib.rs) for general `use std.<m>` resolution
+# — with nothing asserting any of them agreed. stdlib_manifest.txt is the checked
+# contract; the lint recomputes each consumer's real membership and fails on drift
+# in BOTH directions, and pins the seed blob's sha256 so a reseed event (which
+# changes the compiled bytes of every native build) cannot land as a quiet edit.
+if [ -f examples/mindc_mind/stdlib_manifest_lint.py ]; then
+  if sm_out=$(python3 examples/mindc_mind/stdlib_manifest_lint.py 2>&1); then
+    printf '%s\n' "$sm_out" | tail -1
+  else
+    bad "std manifest contract FAILED — a std module list drifted, or the seed blob changed:"
+    printf '%s\n' "$sm_out" | head -12
+  fi
+else
+  bad "examples/mindc_mind/stdlib_manifest_lint.py MISSING — CI runs it; preflight cannot verify it"
+fi
+
 if [ "${1:-}" = "--full" ]; then
   step "no-features test parity  [ci.yml Build & Test 'Test' steps — the fail-close regression class]"
   # A test that feeds lower_to_ir free operands / hits a gated path lowered to a
@@ -238,6 +258,26 @@ if [ "${1:-}" = "--full" ]; then
   if [ -f examples/mindc_mind/mic3_primitives_smoke.py ]; then
     if mp_out=$(MINDC_SO="${MINDC_SO:-/tmp/libmindc_mind_self_host.so}" \
                 python3 examples/mindc_mind/mic3_primitives_smoke.py 2>&1); then
+
+# SDLC gates (git-level, no build). Both exist because of a real incident: a merge
+# deleted a security ENFORCEMENT line while its enum variant, Display arm, error
+# mapping AND its test all survived, so nothing failed to compile and the test kept
+# passing over a rule that no longer existed.
+python3 scripts/sdlc/lost_by_merge.py HEAD || { echo "preflight: lost-by-merge gate FAILED"; exit 1; }
+
+# DTK register-allocator cross-implementation parity. The pure-MIND planner SHIPS
+# inside the frozen stage1.elf, so a divergence between it and the Rust reference is
+# a silent wrong-register miscompile. This was the only gate checking that, and it
+# was executed by nothing at all. MINDC_SO is set explicitly so a missing .so FAILS
+# rather than skipping.
+MINDC_SO="${MINDC_SO:-$(ls examples/mindc_mind/libmindc_mind.so 2>/dev/null || echo /tmp/libmindc_mind_self_host.so)}" \
+MIND_DTK_SKIP_RUST_REGEN=1 python3 examples/mindc_mind/testdata/dtk_plan_parity_smoke.py \
+  || { echo "preflight: DTK regalloc parity FAILED"; exit 1; }
+python3 scripts/sdlc/enforcement_bijection.py || { echo "preflight: enforcement/test pairing FAILED"; exit 1; }
+
+# RI-D1 readiness ratchet (#313): native-backend readiness for the frozen profile.
+# Verified green at 9d3d5d41; a regression here must block a push, not surface at flip time.
+python3 examples/mindc_mind/ri_d1_frozen_profile_gate.py || { echo "preflight: RI-D1 readiness gate FAILED"; exit 1; }
       echo "ok (mic@3 primitives byte-exact vs the live oracle)"
     else
       bad "mic@3 primitives smoke FAILED (stale golden vs live oracle — see #316):"

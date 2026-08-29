@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # STARGA author guard (chained first: a wrong-identity commit must never be created).
-bash "/home/n/.githooks-shared/author-guard.sh" || exit 1
+bash "/home/n/mind-sdlc/bin/sdlc" precommit "$(git rev-parse --show-toplevel)" || exit 1
 
 # anatomy-hook.sh — Git pre-commit hook to refresh ANATOMY.md
 # Install: ln -sf ../../scripts/anatomy-hook.sh .git/hooks/pre-commit

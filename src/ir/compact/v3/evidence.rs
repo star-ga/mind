@@ -1749,10 +1749,12 @@ pub(crate) fn parse_map_epilogue(bytes: &[u8]) -> Result<Vec<ParsedEntry>, Parse
     // anchors the BODY, not the epilogue. An unknown `signature.*` key is therefore
     // covered by no mechanism at all.
     for e in &entries {
+        // enforced-by: SIG-RESV-01
         if e.key.starts_with("signature.") && !SIGNATURE_KEYS.contains(&e.key.as_str()) {
             return Err(ParseMapError::ReservedKey(e.key.clone()));
         }
         // Same rule, the other reserved namespace. Previously unchecked on read.
+        // enforced-by: SIG-RESV-02
         if e.key.starts_with("evidence_chain.") && !EVIDENCE_CHAIN_KEYS.contains(&e.key.as_str()) {
             return Err(ParseMapError::ReservedKey(e.key.clone()));
         }
@@ -3832,6 +3834,7 @@ mod tests {
     /// Measured before the fix: a 447-byte signed artifact carried 200,000 bytes
     /// of attacker payload and still verified.
     #[test]
+    // enforces: SIG-RESV-01
     fn unknown_reserved_signature_key_is_rejected_on_read() {
         // Derived from SIGNATURE_KEYS, never re-listed. A hardcoded copy here was
         // pinned at the original FIVE keys while the allowlist grew to NINE, so the
@@ -3948,6 +3951,7 @@ mod tests {
             );
         }
 
+        // enforces: SIG-RESV-02
         // The OTHER reserved namespace. `evidence_chain.*` was allowlisted only on the
         // emit side (`validate_app_entries`); the read side checked `signature.*` alone,
         // so an unknown evidence-chain key rode through every read path.

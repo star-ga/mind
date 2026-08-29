@@ -1,0 +1,176 @@
+# SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind smoke runs.
+#
+# Columns (tab-separated):
+#   smoke    basename of examples/mindc_mind/<smoke>.py
+#   runners  comma-joined subset of {ci, keystone, preflight}, or "none"
+#              ci        executed by a step in .github/workflows/*.yml
+#              keystone  executed by examples/mindc_mind/fast_keystone.sh
+#              preflight executed by scripts/preflight.sh
+#   class    gate   | a standalone pass/fail regression gate
+#            helper | an importable module, never invoked directly
+#            tool   | an analysis/measurement utility with no pass/fail verdict
+#            wip    | landed but unfinished; unwired on purpose
+#   note     free text; REQUIRED for any row whose runners are "none"
+#
+# examples/mindc_mind/smoke_wiring_lint.py re-derives the runners column from the
+# runner scripts themselves and fails the build on any divergence, so this file
+# cannot silently rot the way the prose comments it replaced did (ci.yml claimed
+# fast_keystone.sh "runs the SAME set"; fast_keystone.sh claimed "CI protects
+# each landed rung" — both were false).
+#
+# deferred: six `gate` rows below are UNWIRED because they are RED at this commit,
+# not because they are unimportant. They are recorded here with their exact
+# failing case so the gap is visible instead of implied; wiring them into CI is
+# blocked on FIXING them (each note names what must change). Do not wire a red
+# gate to make this list look tidy, and do not delete a red gate to make CI green.
+_selfhost_so	none	helper	Shared self-host .so resolver imported by the smokes (resolve_so); not a gate — running it directly is a no-op.
+_stdlib_manifest	none	helper	Shared reader for testdata/stdlib_manifest.txt (seed_modules/bundled_modules/seed_blob), imported by the self-host smokes and the twin of mindc.rs::frozen_std_seed_modules; not a gate — running it directly is a no-op.
+backend_native_bridge_smoke	ci	gate	
+bootstrap_smoke	ci	gate	
+branch_shadow_crossbackend_smoke	ci	gate	
+closure_netverify	ci,keystone	gate	
+collect_field_strings_smoke	ci	gate	
+cutover_coverage_measure	none	tool	Analysis only (self-host construct-coverage report, says so in its docstring); prints numbers, has no pass/fail verdict, so there is nothing for a runner to gate on.
+div_shift_cmp_edge_smoke	ci,keystone	gate	
+enum_netverify	ci,keystone	gate	
+field_store_netverify	ci,keystone	gate	
+fixed_point_smoke	none	tool	Scoped Phase-6.5 bootstrap reproducer: requires a hand-produced /tmp/oracle_pure.mlir, so in any clean environment it exits rc=2 VERDICT: BLOCKED. deferred: superseded as a gate by self_host_loop_smoke + mic3_flip_smoke; upgrade path = have it generate its own oracle via `mindc --emit-ir` (as the smokes that replaced it do), then wire it.
+full_strtab_smoke	ci	gate	
+gap_corpus_smoke	ci	gate	
+general_float_netverify	ci	gate	
+lockstep_lint	ci	gate	
+match_struct_smoke	ci	gate	
+method_callee_smoke	ci	gate	
+method_calls_smoke	ci	gate	
+mic3_flip_smoke	ci,keystone,preflight	gate	
+mic3_oracle_smoke	ci	gate	
+mic3_primitives_smoke	ci,keystone,preflight	gate	
+mindfuzz_self_host	none	gate	RED at this commit: real twin-emitter mic@3 divergence over the generated space (measured `--count 12`: 4/6 compared programs diverged, first diverge @ byte 68 selfhost=0x00 rust=0x05; the known if-body-lets SSA-id class, minimal repro staged under tests/mindfuzz_cross_substrate/staged/). deferred: wire into CI once the self-host/Rust mic@3 id-namespace divergence is fixed; a full default run also needs a budget above the ~180s used here.
+mod_operator_smoke	ci,keystone	gate	
+multi_let_smoke	ci	gate	
+now_ns_smoke	none	gate	RED at this commit: `mindc build` cannot lower std.time — warning[type-check][E2024] `__mind_now_ns` is not registered in STD_SURFACE_INTRINSICS, so the substrate compile for std.time fails. deferred: wire once __mind_now_ns is in the Rust/MLIR intrinsic table (or the smoke is retargeted at the native-ELF self-host path that does implement it).
+option_netverify	ci,keystone	gate	
+oracle_parity_lint	ci	gate	
+param_types_smoke	ci	gate	
+ref_netverify	ci,keystone	gate	
+self_host_andor_precedence_smoke	ci	gate	
+self_host_andor_smoke	ci	gate	
+self_host_arena_growth_smoke	ci,keystone	gate	
+self_host_args_from_os_smoke	ci	gate	
+self_host_argv_smoke	ci	gate	
+self_host_array_smoke	ci	gate	
+self_host_arridx_mic3_smoke	ci	gate	
+self_host_body_smoke	ci,keystone	gate	
+self_host_carry_cap_smoke	ci,keystone	gate	
+self_host_cast_mic3_smoke	ci	gate	
+self_host_check_driver_smoke	ci	gate	
+self_host_continue_smoke	none	gate	RED at this commit: nested_for_continue HANGS (the harness reports `HUNG (must fail-close or terminate, never hang)`) — issue #308/#286 regression gate. deferred: wire once nested `continue` inside a range-for either lowers correctly or refuses fail-closed; a hanging case must never be wired into CI as-is.
+self_host_dtype_tag_smoke	ci	gate	
+self_host_else_if_smoke	ci	gate	
+self_host_failclosed_smoke	ci,keystone	gate	
+self_host_float_lit_exact_smoke	ci,keystone	gate	
+self_host_for_smoke	none	gate	RED at this commit: 4 of 16 range-for cases fail — continue_at2 / continue_sum / continue_ge all `native entry failed closed (empty ELF)`, and shadow_outer diverges (self-host exit 3, want 100: the loop VAR stays loop-local instead of restoring the outer binding). deferred: same root cause as self_host_continue_smoke; wire both together once continue-in-for lowers.
+self_host_if_region_carry_smoke	ci,keystone	gate	
+self_host_ifret_chain_mic3_smoke	ci	gate	
+self_host_letpath_failclose_smoke	ci	gate	
+self_host_lockstep_smoke	ci	gate	
+self_host_loop_smoke	ci,preflight	gate	
+self_host_match_smoke	ci	gate	
+self_host_matchscalar_mic3_smoke	ci	gate	
+self_host_mic3_float_valueif_smoke	ci	gate	
+self_host_mlir_smoke	ci,keystone	gate	
+self_host_narrow_let_mic3_smoke	ci	gate	
+self_host_narrow_param_smoke	ci,keystone	gate	
+self_host_native_autowrap_smoke	ci,keystone	gate	
+self_host_native_avx2_dot_f32_smoke	ci	gate	
+self_host_native_blas_dot_i16_smoke	ci	gate	
+self_host_native_blas_dot_q16_smoke	ci	gate	
+self_host_native_cast_conv_smoke	ci	gate	
+self_host_native_diag_smoke	ci	gate	
+self_host_native_dot_f32_smoke	ci	gate	
+self_host_native_dot_l1_q16_smoke	ci	gate	
+self_host_native_elf_alignment_smoke	ci	gate	
+self_host_native_elf_smoke	ci	gate	
+self_host_native_fp_binop_smoke	ci	gate	
+self_host_native_fp_call_smoke	ci,keystone	gate	
+self_host_native_fp_expr_smoke	ci	gate	
+self_host_native_fp_field_smoke	ci,keystone	gate	
+self_host_native_fp_let_smoke	ci	gate	
+self_host_native_fp_param_smoke	ci	gate	
+self_host_native_fp_smoke	ci	gate	
+self_host_native_gemm_i8_smoke	ci	gate	
+self_host_native_gemm_q16_smoke	ci	gate	
+self_host_native_gemv_i16_smoke	ci	gate	
+self_host_native_gemv_q16_smoke	ci	gate	
+self_host_native_genf32_smoke	ci	gate	
+self_host_native_intdot_i16_smoke	ci	gate	
+self_host_native_intdot_q16_smoke	ci	gate	
+self_host_native_intdot_smoke	ci	gate	
+self_host_native_matmul_f32_v_smoke	ci	gate	
+self_host_native_narrow_add_i8_smoke	ci,keystone	gate	
+self_host_native_narrow_arith_batch_smoke	ci,keystone	gate	
+self_host_native_narrow_paramret_smoke	ci,keystone	gate	
+self_host_native_narrowint_smoke	ci,keystone	gate	
+self_host_native_narrowwrap_smoke	ci,keystone	gate	
+self_host_native_scalar_f32_smoke	ci,keystone	gate	
+self_host_native_scalar_f64_smoke	ci	gate	
+self_host_native_scast_smoke	none	gate	RED at this commit: signed-cast precedence — `a + b as i8` must parse as `a + (b as i8)` (300 + (-56) = 244, >>1 = 122) but the pure-MIND emit runs to 122 while live mindc returns 250, i.e. the loose-parse bug is in the Rust reference leg. deferred: wire once the `as` binding-power disagreement between the two front-ends is resolved.
+self_host_native_simd_dot_f32_smoke	ci	gate	
+self_host_native_simd_dot_i16_smoke	ci	gate	
+self_host_native_simd_dot_q16_smoke	ci	gate	
+self_host_native_string_smoke	none	wip	Untracked work-in-progress in the working tree (not yet committed) and currently FAIL. deferred: classify as `gate` and wire when the native-ELF string-literal leg lands; this row exists so the lint does not silently accept an unclassified new file.
+self_host_native_tensor_batchsum_smoke	ci,keystone	gate	
+self_host_native_tensor_bcastadd_smoke	ci,keystone	gate	
+self_host_native_tensor_colsum_smoke	ci,keystone	gate	
+self_host_native_tensor_dot_smoke	ci,keystone	gate	
+self_host_native_tensor_ewadd_f64_smoke	ci	gate	
+self_host_native_tensor_ewadd_smoke	ci,keystone	gate	
+self_host_native_tensor_ewmul_smoke	ci,keystone	gate	
+self_host_native_tensor_matmul_smoke	ci,keystone	gate	
+self_host_native_tensor_maxrowmax_smoke	ci,keystone	gate	
+self_host_native_tensor_relu_smoke	ci,keystone	gate	
+self_host_native_tensor_rowmin_smoke	ci,keystone	gate	
+self_host_native_tensor_rowsum_smoke	ci,keystone	gate	
+self_host_native_tensor_transpose_smoke	ci,keystone	gate	
+self_host_native_toplevel_assign_smoke	ci,keystone	gate	
+self_host_native_ucast_smoke	ci	gate	
+self_host_native_write8_smoke	ci	gate	
+self_host_native_write_f32_smoke	ci	gate	
+self_host_not_smoke	ci	gate	
+self_host_open_smoke	ci	gate	
+self_host_param_mutation_smoke	ci,keystone	gate	
+self_host_standalone_driver_smoke	ci,keystone	gate	
+self_host_struct_return_smoke	ci	gate	
+self_host_tc_class_mismatch_smoke	ci,keystone	gate	
+self_host_tc_class_rules_smoke	ci,keystone	gate	
+self_host_tc_classify_error_code_smoke	ci,keystone	gate	
+self_host_tc_decl_names_smoke	ci,keystone	gate	
+self_host_tc_fixed_bytes_into_vec_smoke	ci,keystone	gate	
+self_host_tc_fn_value_call_smoke	ci,keystone	gate	
+self_host_tc_let_class_mismatch_smoke	ci,keystone	gate	
+self_host_tc_let_infer_ident_smoke	none	gate	RED at this commit: 1/60 three-leg divergence (SEV-1) — `esc-dquote i64->i32 DECLINED in-domain: port=0(raw=-3) leg2=1 live=1`, i.e. the pure-MIND rule port declines a case both the reference legs accept. deferred: wire once the escaped-double-quote identifier case matches live `mindc check`.
+self_host_tc_let_infer_smoke	ci,keystone	gate	
+self_host_tc_narrowing_smoke	ci,keystone	gate	
+self_host_tc_scope_frame_smoke	ci,keystone	gate	
+self_host_tc_self_host_only_call_smoke	ci,keystone	gate	
+self_host_tc_shape_annot_compat_smoke	ci,keystone	gate	
+self_host_tc_shape_rules_smoke	ci,keystone	gate	
+self_host_tc_std_export_smoke	ci,keystone	gate	
+self_host_tc_undeclared_assign_smoke	ci,keystone	gate	
+self_host_tc_unknown_call_smoke	ci,keystone	gate	
+self_host_tc_unknown_ident_smoke	ci,keystone	gate	
+self_host_tc_unknown_variant_smoke	ci,keystone	gate	
+self_host_value_if_expr_smoke	ci	gate	
+sha256_hash_smoke	ci	gate	
+smoke_wiring_lint	ci,keystone,preflight	gate	
+stdlib_manifest_lint	ci,preflight	gate	std-manifest contract: manifest<->std/ on disk and manifest<->STDLIB_MIND_SOURCES both directions, plus the seed-blob sha256 pin that makes a reseed event impossible to land quietly. Pure text analysis, so it needs no .so and is not wired into fast_keystone.sh (which builds artifacts).
+struct_fields_smoke	ci	gate	
+struct_lit_smoke	ci	gate	
+tc_differential_fuzz	ci,keystone	gate	
+unified_dispatch_smoke	ci	gate	
+validate_real_fns_smoke	ci	gate	
+while_struct_smoke	ci	gate	
+rh_f64_aggregate_canary_smoke	ci	gate	RH f64-aggregate executable-path canary. Already executed by a ci.yml step; arrived from origin/main in the 9d3d5d41 merge without a manifest row, which is exactly the drift this lint exists to catch.
+ri_d1_frozen_profile_gate	preflight	gate	RI-D1 readiness gate (#313): proves `mindc build --backend native` is ready to be default FOR THE FROZEN PROFILE. Verified PASSING at 9d3d5d41 and wired into preflight; it is a readiness ratchet, so a regression must block a push rather than only be noticed at flip time.
+self_host_native_scalar_narrow_smoke	keystone	gate	RI-D/#10 native-float slice 1a (saturating f64 -> signed narrow, i8/i16/i32). The earlier `symbol absent (narrow rung not built)` was ENVIRONMENTAL, now proven so: the rung and this gate both landed in 5fdbfbaf, which reached this line only on the SECOND parent of the 9d3d5d41 merge, so the in-tree libmindc_mind.so (built off the first parent, before that merge) genuinely lacks the symbol while a cdylib rebuilt from the current main.mind exports it. Against that fresh .so the smoke is ALL PASS in ~5s (6 native-vs-oracle folds + 15 live-MLIR exits across i8/i16/i32), so it is wired into fast_keystone.sh, which always builds the .so it points MINDC_SO at.
+dtk_plan_parity_smoke	preflight	gate	The ONLY cross-implementation gate for the DTK register allocator: it checks the pure-MIND nb_dtk_* planner (which SHIPS inside the frozen stage1.elf and is consumed by nb_val_store_rax/_load_rax/_arith_rax/_prologue/_epilogue) against the Rust reference plan_module_k, field-exact, plus fail-closed count==0 on every ineligible class. It was referenced by NO runner and — because it sits one directory deeper, under testdata/ — was invisible to this very lint until the scan was widened. tests/regalloc_dtk_parity.rs is Rust-vs-Rust against hardcoded tables and does not substitute for it. Needs MIND_DTK_SKIP_RUST_REGEN=1 and MINDC_SO so a missing .so fails closed instead of skipping.
