@@ -69,7 +69,10 @@ use std::io::Write;
 
 use crate::deps::mini_sha256;
 use crate::ir::IRModule;
-use crate::ir::compact::v2::{uleb128_read, uleb128_write, zigzag_decode, zigzag_encode};
+// `uleb128_read` (the LENIENT reader) is deliberately NOT imported here: every
+// length in the MAP epilogue is canonical-form-critical, so this module reads
+// them with `uleb128_read_minimal`, which rejects zero-padded encodings.
+use crate::ir::compact::v2::{uleb128_read_minimal, uleb128_write, zigzag_decode, zigzag_encode};
 use crate::ir::compact::v3::collapse_receipt::{
     CollapseReceipt, decode_collapse_receipts, encode_collapse_receipts,
 };
@@ -476,6 +479,189 @@ fn compute_signature_payload(
     }
 }
 
+/// Why a mic@3 artifact was rejected as non-canonical by [`mic3_canonical_check`].
+///
+/// Every variant is a byte stream that the decoder would otherwise normalise
+/// away — i.e. a mutation that changes the artifact's bytes (and its SHA-256)
+/// while leaving `trace_hash_valid` and any embedded signature intact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Mic3NonCanonical {
+    /// Input exceeds the mic@3 input cap.
+    Oversize,
+    /// The mic@3 body did not parse; canonicality is undecidable here (the
+    /// parse/SSA path reports the authoritative diagnostic).
+    Unparseable,
+    /// The literal body bytes differ from the canonical re-emission of the IR
+    /// they decode to, first at `offset`. Covers a normalised-away body flip and
+    /// a wire-version downgrade inside the accepted read window.
+    Body { offset: usize },
+    /// Bytes follow the canonical body but do not begin a MAP epilogue.
+    TrailingGarbage { offset: usize },
+    /// The MAP epilogue did not parse (includes leftover bytes and non-minimal
+    /// ULEB lengths, both rejected by `parse_map_epilogue`).
+    MalformedMap,
+    /// A key in the reserved `signature.` namespace that is not one of the five
+    /// defined signature keys. Rejected on READ, not just on emit: the signature
+    /// preimage deliberately EXCLUDES `signature.*` (it cannot sign itself), and
+    /// the canonical byte-compare happily re-encodes any entry that parsed — so
+    /// without this check an injected `signature.<anything>` is authenticated by
+    /// neither mechanism yet rides inside a "signature is valid" artifact.
+    ReservedKey(String),
+    /// A MAP key appears more than once. The emitter never does this, and a
+    /// duplicate makes "the entry for key K" reader-dependent.
+    DuplicateKey(String),
+    /// The MAP epilogue bytes differ from their canonical re-encoding, first at
+    /// `offset` (relative to the epilogue). Covers out-of-order keys and any
+    /// padded length the minimal reader did not already reject.
+    Map { offset: usize },
+}
+
+impl std::fmt::Display for Mic3NonCanonical {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Oversize => write!(f, "artifact exceeds the mic@3 input cap"),
+            Self::Unparseable => write!(f, "mic@3 body did not parse"),
+            Self::Body { offset } => write!(
+                f,
+                "body byte {offset} differs from the canonical re-emission of the IR it decodes to"
+            ),
+            Self::TrailingGarbage { offset } => write!(
+                f,
+                "{offset} bytes of the body are followed by data that is not a MAP epilogue"
+            ),
+            Self::MalformedMap => write!(
+                f,
+                "MAP epilogue is malformed (leftover bytes, or a non-minimal length encoding)"
+            ),
+            Self::DuplicateKey(k) => write!(f, "MAP key `{k}` appears more than once"),
+            Self::ReservedKey(k) => write!(
+                f,
+                "MAP key `{k}` is in the reserved `signature.` namespace but is not a \
+                 defined signature key; the signature preimage cannot cover it"
+            ),
+            Self::Map { offset } => write!(
+                f,
+                "MAP epilogue byte {offset} differs from its canonical re-encoding \
+                 (keys out of canonical order, or a non-canonical value encoding)"
+            ),
+        }
+    }
+}
+
+/// Canonical-form gate: re-emit the artifact from what it decodes to and
+/// byte-compare against the literal input. Any difference is a hard failure.
+///
+/// This is the enforcement point for literal-byte integrity, which neither the
+/// `trace_hash` (it anchors the *re-emission*, not the input bytes) nor the
+/// RFC 0021 signature (its preimage covers decoded entries, not bytes) provides.
+/// Without it a signed artifact is byte-MALLEABLE: appending a byte, padding a
+/// ULEB length in place, downgrading the wire-version byte inside the accepted
+/// read window, or flipping a body byte the decoder normalises away all yield a
+/// different file with a different SHA-256 that still reports
+/// "signature is valid and signer key is trusted".
+///
+/// The discipline mirrors the collapse-receipt guard in this same module
+/// (`re-encode and byte-compare, never trust the received encoding`), widened
+/// from one blob to the whole artifact.
+///
+/// Returns `Ok(())` for an artifact in canonical form — which is every artifact
+/// this compiler emits, since emit is the function being inverted here.
+///
+/// KNOWN, DELIBERATE CONSEQUENCE — legacy wire versions do not pass. The
+/// canonical form of an artifact is its re-emission by THIS toolchain, which
+/// writes `MIC3_VERSION_BASE` / `MIC3_VERSION`; a genuine `0x01` artifact
+/// (readable, since `MIC3_MIN_READ_VERSION` is `0x01`) re-emits at `0x02` and is
+/// therefore reported non-canonical. That is not an oversight to be relaxed: a
+/// `0x02` body whose content has no `exit_ids` / `merges` decodes IDENTICALLY
+/// with the version byte set to `0x01`, so admitting `0x01` is exactly the
+/// downgrade malleability this check exists to close — the two cases are
+/// indistinguishable from the bytes. `parse_mic3` still reads `0x01` for
+/// consumers that only need the IR; it is the canonical-form claim, and hence
+/// `mindc verify`, that a legacy artifact cannot satisfy. Re-emit such an
+/// artifact with a current toolchain to bring it back under attestation.
+pub fn mic3_canonical_check(bytes: &[u8]) -> Result<(), Mic3NonCanonical> {
+    if bytes.len() > super::parse::MAX_MIC3_INPUT {
+        return Err(Mic3NonCanonical::Oversize);
+    }
+    // (1) Body. `parse_mic3` stops at the body/epilogue boundary, so re-emitting
+    // the module it recovers reproduces exactly the canonical body bytes.
+    let ir = super::parse_mic3(bytes).map_err(|_| Mic3NonCanonical::Unparseable)?;
+    let body = super::emit_mic3(&ir);
+    if body.len() > bytes.len() {
+        return Err(Mic3NonCanonical::Body {
+            offset: bytes.len(),
+        });
+    }
+    if let Some(offset) = first_difference(&body, &bytes[..body.len()]) {
+        return Err(Mic3NonCanonical::Body { offset });
+    }
+    let rest = &bytes[body.len()..];
+    if rest.is_empty() {
+        // Plain (unattested) artifact: body is the whole file and it is canonical.
+        return Ok(());
+    }
+    if rest[0] != MAP_SENTINEL {
+        return Err(Mic3NonCanonical::TrailingGarbage { offset: body.len() });
+    }
+
+    // (2) MAP epilogue. `parse_map_epilogue` already rejects leftover bytes and
+    // non-minimal lengths; the re-encode below additionally pins key ORDER and
+    // value encoding, so emit and verify cannot drift.
+    let entries = parse_map_epilogue(rest).map_err(|e| match e {
+        ParseMapError::ReservedKey(k) => Mic3NonCanonical::ReservedKey(k),
+        ParseMapError::DuplicateKey(k) => Mic3NonCanonical::DuplicateKey(k),
+        _ => Mic3NonCanonical::MalformedMap,
+    })?;
+    let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    for e in &entries {
+        if !seen.insert(e.key.as_str()) {
+            return Err(Mic3NonCanonical::DuplicateKey(e.key.clone()));
+        }
+    }
+    // (Reserved-namespace enforcement now lives in `parse_map_epilogue`, the
+    // shared choke point, so every read path gets it — see the note there.)
+    let canonical_map = encode_map_epilogue_canonical(&entries);
+    if canonical_map.len() != rest.len() {
+        return Err(Mic3NonCanonical::Map {
+            offset: canonical_map.len().min(rest.len()),
+        });
+    }
+    if let Some(offset) = first_difference(&canonical_map, rest) {
+        return Err(Mic3NonCanonical::Map { offset });
+    }
+    Ok(())
+}
+
+/// Index of the first differing byte between two equal-length-compared slices.
+fn first_difference(a: &[u8], b: &[u8]) -> Option<usize> {
+    a.iter().zip(b.iter()).position(|(x, y)| x != y)
+}
+
+/// Re-encode parsed MAP entries in canonical form.
+///
+/// Shares [`push_map_value`] with the emit path (`append_map_epilogue`), so the
+/// canonical form has exactly one definition: sentinel, ULEB entry count, then
+/// entries in lexicographic key-byte order, each a ULEB-length-prefixed key
+/// followed by its tagged value.
+fn encode_map_epilogue_canonical(entries: &[ParsedEntry]) -> Vec<u8> {
+    let mut ordered: Vec<&ParsedEntry> = entries.iter().collect();
+    ordered.sort_by(|a, b| a.key.as_bytes().cmp(b.key.as_bytes()));
+
+    let mut out = vec![MAP_SENTINEL];
+    uleb128_write(&mut out, ordered.len() as u64).unwrap();
+    for e in ordered {
+        let kb = e.key.as_bytes();
+        uleb128_write(&mut out, kb.len() as u64).unwrap();
+        out.extend_from_slice(kb);
+        match &e.value {
+            ParsedValue::Str(s) => push_map_value(&mut out, &MapEntryValue::Str(s)),
+            ParsedValue::Int(i) => push_map_value(&mut out, &MapEntryValue::Int(*i)),
+            ParsedValue::Bytes(b) => push_map_value(&mut out, &MapEntryValue::Bytes(b)),
+        }
+    }
+    out
+}
+
 /// Parse a mic@3 artifact (with or without MAP epilogue) and verify the
 /// embedded `evidence_chain` block.
 ///
@@ -486,9 +672,26 @@ fn compute_signature_payload(
 /// not the artifact's literal bytes: a mutation that the decoder normalises away
 /// — a non-minimal ULEB encoding, or trailing bytes after the body — re-emits
 /// identically and still reports `trace_hash_valid = true`. Any byte flip that
-/// changes the recovered IR flips `trace_hash_valid` to `false`. Integrity of
-/// the literal artifact bytes (including semantically-neutral regions) is the
-/// job of the signature, not the trace_hash.
+/// changes the recovered IR flips `trace_hash_valid` to `false`.
+///
+/// The signature does NOT close that gap either: the RFC 0021 preimage (built by
+/// the private `build_signature_preimage`) covers the trace_hash, the scheme tag
+/// and the DECODED provenance entries — the literal artifact bytes never enter
+/// it. So a normalised-away mutation keeps both `trace_hash_valid` AND the
+/// signature valid. Callers that need literal-byte integrity MUST also call
+/// [`mic3_canonical_check`], which re-emits the artifact canonically and
+/// byte-compares; `mindc verify` runs it as a hard gate.
+///
+/// deferred: the literal artifact length / prefix hash is NOT bound into the
+/// RFC 0021 signature preimage. Binding it is a preimage change — every existing
+/// signature would stop verifying — so it needs an RFC 0021 revision plus a new
+/// `signature.scheme` tag to stay crypto-agile, not a silent edit here. Upgrade
+/// path: add a scheme tag whose preimage prepends a hash of the literal artifact
+/// bytes (with the `signature.*` entries elided) to the current preimage, keep
+/// the old tag verifying old artifacts, and retire it on a deprecation clock.
+/// Until then the canonical-form check above is the enforcement point, and it is
+/// a LOCAL re-derivation: it fails closed, but it is not a SIGNED claim, so a
+/// relaying party that only checks the signature does not inherit it.
 ///
 /// Returns [`EvidenceError::Missing`] if no `evidence_chain.*` keys are present.
 pub fn mic3_evidence_report(bytes: &[u8]) -> Result<EvidenceReport, EvidenceError> {
@@ -1227,6 +1430,12 @@ pub(crate) fn find_map_sentinel(bytes: &[u8]) -> Option<usize> {
 
 /// Parse the MAP epilogue bytes (starting with the sentinel byte) into a list
 /// of [`ParsedEntry`] values.
+///
+/// The epilogue runs to the END of the artifact: `bytes` must be consumed
+/// exactly, and every length must be minimally ULEB-encoded. Both are
+/// canonical-form requirements, not merely hygiene — a padded length or a
+/// trailing byte is a second byte stream that decodes to the same entries, i.e.
+/// a signature-preserving mutation.
 pub(crate) fn parse_map_epilogue(bytes: &[u8]) -> Result<Vec<ParsedEntry>, ParseMapError> {
     if bytes.is_empty() || bytes[0] != MAP_SENTINEL {
         return Err(ParseMapError::MissingSentinel);
@@ -1246,7 +1455,7 @@ pub(crate) fn parse_map_epilogue(bytes: &[u8]) -> Result<Vec<ParsedEntry>, Parse
     let remaining =
         |r: &std::io::Cursor<&[u8]>| -> usize { total.saturating_sub(r.position() as usize) };
 
-    let count = uleb128_read(&mut r).map_err(|_| ParseMapError::Truncated)? as usize;
+    let count = uleb128_read_minimal(&mut r).map_err(|_| ParseMapError::Truncated)? as usize;
     if count > remaining(&r) {
         // Each entry occupies >= 1 byte; a count beyond the remaining input is
         // unsatisfiable. Rejects the `Vec::with_capacity` bomb before allocating.
@@ -1254,7 +1463,7 @@ pub(crate) fn parse_map_epilogue(bytes: &[u8]) -> Result<Vec<ParsedEntry>, Parse
     }
     let mut entries = Vec::with_capacity(count);
     for _ in 0..count {
-        let key_len = uleb128_read(&mut r).map_err(|_| ParseMapError::Truncated)? as usize;
+        let key_len = uleb128_read_minimal(&mut r).map_err(|_| ParseMapError::Truncated)? as usize;
         if key_len > remaining(&r) {
             return Err(ParseMapError::Truncated);
         }
@@ -1272,7 +1481,8 @@ pub(crate) fn parse_map_epilogue(bytes: &[u8]) -> Result<Vec<ParsedEntry>, Parse
 
         let value = match tag_byte {
             TAG_STRING => {
-                let val_len = uleb128_read(&mut r).map_err(|_| ParseMapError::Truncated)? as usize;
+                let val_len =
+                    uleb128_read_minimal(&mut r).map_err(|_| ParseMapError::Truncated)? as usize;
                 if val_len > remaining(&r) {
                     return Err(ParseMapError::Truncated);
                 }
@@ -1283,11 +1493,12 @@ pub(crate) fn parse_map_epilogue(bytes: &[u8]) -> Result<Vec<ParsedEntry>, Parse
                 ParsedValue::Str(s)
             }
             TAG_INT => {
-                let encoded = uleb128_read(&mut r).map_err(|_| ParseMapError::Truncated)?;
+                let encoded = uleb128_read_minimal(&mut r).map_err(|_| ParseMapError::Truncated)?;
                 ParsedValue::Int(zigzag_decode(encoded))
             }
             TAG_BYTES => {
-                let blen = uleb128_read(&mut r).map_err(|_| ParseMapError::Truncated)? as usize;
+                let blen =
+                    uleb128_read_minimal(&mut r).map_err(|_| ParseMapError::Truncated)? as usize;
                 if blen > remaining(&r) {
                     return Err(ParseMapError::Truncated);
                 }
@@ -1301,6 +1512,56 @@ pub(crate) fn parse_map_epilogue(bytes: &[u8]) -> Result<Vec<ParsedEntry>, Parse
 
         entries.push(ParsedEntry { key, value });
     }
+    // F1 belt-and-braces: the MAP epilogue is the LAST region of a mic@3
+    // artifact, so anything after the declared entries is unaccounted-for input.
+    // Returning `Ok` while ignoring it made the artifact byte-malleable —
+    // `artifact || b"X"` decoded to exactly the same entries and reported the
+    // same (genuine) signature as valid. Leftover bytes are now a hard parse
+    // failure, which every caller already maps to a fail-closed error.
+    if remaining(&r) != 0 {
+        return Err(ParseMapError::Trailing);
+    }
+    // Duplicate-key enforcement, same reasoning as the reserved-namespace check
+    // below and the same five read entry points. `mic3_canonical_check` had this
+    // rule; the other four did not, so `mic3_signature_status` returned
+    // Valid(ed25519) over a 200 KB stream that was not the signed artifact —
+    // the byte-malleability class reached through a different key class.
+    {
+        let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        for e in &entries {
+            if !seen.insert(e.key.as_str()) {
+                return Err(ParseMapError::DuplicateKey(e.key.clone()));
+            }
+        }
+    }
+    // Reserved-namespace enforcement lives HERE, in the shared parser, not in any
+    // one consumer. `validate_app_entries` enforces this at EMIT; the read side
+    // has FIVE entry points into these bytes (`mic3_canonical_check`,
+    // `mic3_evidence_report`, `mic3_app_metadata`, `mic3_signature_status`, and
+    // the raw callers), and putting the rule in only one of them left the other
+    // four accepting an injected key — `mic3_signature_status` in particular
+    // returned `Valid` for a 200 KB attacker payload, which is exactly what an
+    // out-of-tree consumer calls.
+    //
+    // Why nothing else catches it: `build_signature_preimage` deliberately
+    // FILTERS every `signature.`-prefixed key (a signature cannot sign itself),
+    // the canonical byte-compare re-encodes any entry that legitimately parsed,
+    // and `trace_hash` anchors the BODY, not the epilogue. An unknown
+    // `signature.*` key is therefore covered by no mechanism at all.
+    for e in &entries {
+        if e.key.starts_with("signature.")
+            && !matches!(
+                e.key.as_str(),
+                KEY_SIG_SCHEME
+                    | KEY_SIG_PUBKEY
+                    | KEY_SIG_ED25519
+                    | KEY_SIG_MLDSA_PUBKEY
+                    | KEY_SIG_MLDSA
+            )
+        {
+            return Err(ParseMapError::ReservedKey(e.key.clone()));
+        }
+    }
     Ok(entries)
 }
 
@@ -1311,6 +1572,20 @@ pub(crate) enum ParseMapError {
     Truncated,
     InvalidUtf8,
     UnknownTag(u8),
+    /// Bytes remain after the declared entry count was consumed. The epilogue is
+    /// the artifact's final region, so any leftover is a canonical-form
+    /// violation (see the F1 malleability note on [`mic3_canonical_check`]).
+    Trailing,
+    /// A key in the reserved `signature.` namespace that is not one of the five
+    /// defined signature keys.
+    ReservedKey(String),
+    /// The same key appears more than once. Rejected HERE, in the shared parser,
+    /// not only in the canonical check: the signature preimage excludes
+    /// `signature.*` and `trace_hash`, and every accessor takes the FIRST match,
+    /// so a duplicate of any preimage-excluded key changes the artifact bytes
+    /// WITHOUT changing the preimage — a splitting attack against any consumer
+    /// that disagrees with the verifier.
+    DuplicateKey(String),
 }
 
 // ─── Evidence decode + verify ─────────────────────────────────────────────────
@@ -3170,6 +3445,152 @@ mod tests {
         assert!(
             super::super::mldsa::verify(&pk, &msg, &sig),
             "pinned ML-DSA-65 (pk, sig) must verify over the pinned message"
+        );
+    }
+
+    /// An UNKNOWN key in the reserved `signature.` namespace must be rejected on
+    /// READ, not merely refused at emit.
+    ///
+    /// Why this is its own test rather than a case in the malleation suite: the
+    /// injected entry is a *legitimately parsed* entry, so it survives the
+    /// canonical re-encode byte-for-byte, and `build_signature_preimage` filters
+    /// every `signature.`-prefixed key out of the signed bytes (a signature
+    /// cannot cover itself). An attacker-chosen `signature.pad` was therefore
+    /// authenticated by nothing at all — not the trace_hash (it lives in the
+    /// epilogue, not the body), not the canonical check, not the signature —
+    /// while `mindc verify` still reported "signature is valid and signer key is
+    /// trusted", exit 0, under both `--signer-pubkey` and `--require-signed`.
+    /// Measured before the fix: a 447-byte signed artifact carried 200,000 bytes
+    /// of attacker payload and still verified.
+    #[test]
+    fn unknown_reserved_signature_key_is_rejected_on_read() {
+        let known = [
+            KEY_SIG_SCHEME,
+            KEY_SIG_PUBKEY,
+            KEY_SIG_ED25519,
+            KEY_SIG_MLDSA_PUBKEY,
+            KEY_SIG_MLDSA,
+        ];
+        for k in known {
+            assert!(
+                k.starts_with("signature."),
+                "{k} must be in the reserved namespace"
+            );
+        }
+        // The allowlist is exactly these five and nothing else: a new signature
+        // key added without extending the read-side check would reopen the hole,
+        // so this asserts the pairing rather than trusting it.
+        // END-TO-END: build a real artifact carrying an injected reserved key and
+        // assert the canonical check rejects it. Asserting the allowlist set alone
+        // would not prove the check is WIRED — that is the mistake this whole
+        // finding was about.
+        let m = IRModule::new();
+        let body = emit_mic3(&m);
+
+        for injected in [
+            "signature.pad",
+            "signature.",
+            "signature.x",
+            "signature.ed25519_extra",
+        ] {
+            assert!(
+                !known.contains(&injected),
+                "{injected} must not be a defined signature key"
+            );
+            let entries = vec![ParsedEntry {
+                key: injected.to_string(),
+                // A large attacker-chosen payload: the original report carried
+                // 200,000 bytes this way.
+                value: ParsedValue::Bytes(vec![0x41; 4096]),
+            }];
+            let mut artifact = body.clone();
+            artifact.extend_from_slice(&encode_map_epilogue_canonical(&entries));
+
+            match mic3_canonical_check(&artifact) {
+                Err(Mic3NonCanonical::ReservedKey(k)) => assert_eq!(k, injected),
+                other => panic!(
+                    "injected reserved key `{injected}` must be REJECTED on read, got {other:?}"
+                ),
+            }
+        }
+
+        // EVERY read path must reject, not just the canonical check. The rule lives
+        // in `parse_map_epilogue`, so this asserts the choke point actually covers
+        // the consumers: `mic3_signature_status` is what an out-of-tree caller uses
+        // and it previously returned Valid for exactly this artifact.
+        {
+            let entries = vec![ParsedEntry {
+                key: "signature.pad".to_string(),
+                value: ParsedValue::Bytes(vec![0x41; 4096]),
+            }];
+            let mut art = body.clone();
+            art.extend_from_slice(&encode_map_epilogue_canonical(&entries));
+            assert!(
+                parse_map_epilogue(&art[body.len()..]).is_err(),
+                "the shared parser must reject the injected reserved key"
+            );
+            assert!(
+                mic3_signature_status(&art).is_err(),
+                "mic3_signature_status must NOT report a verdict on an artifact \
+                 carrying an injected reserved key"
+            );
+            assert!(
+                mic3_evidence_report(&art).is_err(),
+                "mic3_evidence_report must reject it too"
+            );
+        }
+
+        // R2: a DUPLICATE key is the same malleability class through a different key
+        // class. The signature preimage excludes `signature.*` and trace_hash, and
+        // every accessor takes the FIRST match, so duplicating a preimage-excluded
+        // key changes artifact bytes without changing the preimage. Measured before
+        // the fix: mic3_signature_status returned Valid(ed25519) over a 200 KB stream
+        // that was not the signed artifact. Rejection must therefore live in the
+        // shared parser, not in mic3_canonical_check alone.
+        {
+            let dup = vec![
+                ParsedEntry {
+                    key: "org.example.k".to_string(),
+                    value: ParsedValue::Int(1),
+                },
+                ParsedEntry {
+                    key: "org.example.k".to_string(),
+                    value: ParsedValue::Bytes(vec![0x41; 4096]),
+                },
+            ];
+            let mut art = body.clone();
+            art.extend_from_slice(&encode_map_epilogue_canonical(&dup));
+            match parse_map_epilogue(&art[body.len()..]) {
+                Err(ParseMapError::DuplicateKey(k)) => assert_eq!(k, "org.example.k"),
+                other => {
+                    panic!("duplicate key must be rejected by the SHARED parser, got {other:?}")
+                }
+            }
+            assert!(
+                mic3_signature_status(&art).is_err(),
+                "mic3_signature_status must not report a verdict over a duplicated-key artifact"
+            );
+            assert!(
+                mic3_evidence_report(&art).is_err(),
+                "evidence_report must reject it too"
+            );
+            assert!(
+                mic3_canonical_check(&art).is_err(),
+                "canonical check must still reject it"
+            );
+        }
+
+        // Control: a non-reserved application key with the same payload is still
+        // accepted, so the check rejects the namespace rather than the size.
+        let ok_entries = vec![ParsedEntry {
+            key: "org.example.note".to_string(),
+            value: ParsedValue::Bytes(vec![0x41; 4096]),
+        }];
+        let mut ok_artifact = body.clone();
+        ok_artifact.extend_from_slice(&encode_map_epilogue_canonical(&ok_entries));
+        assert!(
+            mic3_canonical_check(&ok_artifact).is_ok(),
+            "a non-reserved application key must still be accepted"
         );
     }
 }
