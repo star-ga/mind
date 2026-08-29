@@ -130,6 +130,34 @@ const KEY_SIG_ED25519: &str = "signature.ed25519";
 // sig 3309 B), stored as Bytes.
 const KEY_SIG_MLDSA_PUBKEY: &str = "signature.mldsa_pubkey";
 const KEY_SIG_MLDSA: &str = "signature.mldsa";
+// ML-DSA-87 (FIPS-204, cat-5) + SLH-DSA-SHAKE-256s (FIPS-205, cat-5) — the two
+// legs of the bulletproof PQC-hybrid. Variable length; all four keys start with
+// 's' so they still sort AFTER every `evidence_chain.*` key (the unsigned-prefix
+// byte-identity invariant is preserved).
+const KEY_SIG_MLDSA87_PUBKEY: &str = "signature.mldsa87_pubkey";
+const KEY_SIG_MLDSA87: &str = "signature.mldsa87";
+const KEY_SIG_SLHDSA_PUBKEY: &str = "signature.slhdsa_pubkey";
+const KEY_SIG_SLHDSA: &str = "signature.slhdsa";
+
+/// Every DEFINED key in the reserved `signature.` namespace, in one place, beside
+/// the constants themselves. `parse_map_epilogue` rejects any other `signature.*`
+/// key on read.
+///
+/// This list is the ONLY place the set is enumerated. It sits here rather than at
+/// the check site because the failure mode is a new `KEY_SIG_*` const being added
+/// without the reader learning about it — which is how the ml-dsa-87 / slh-dsa
+/// keys would have been rejected when a 5-key allowlist met a 9-key emitter.
+const SIGNATURE_KEYS: [&str; 9] = [
+    KEY_SIG_SCHEME,
+    KEY_SIG_PUBKEY,
+    KEY_SIG_ED25519,
+    KEY_SIG_MLDSA_PUBKEY,
+    KEY_SIG_MLDSA,
+    KEY_SIG_MLDSA87_PUBKEY,
+    KEY_SIG_MLDSA87,
+    KEY_SIG_SLHDSA_PUBKEY,
+    KEY_SIG_SLHDSA,
+];
 
 /// `alg` tag: classical Ed25519 only (NON-COMPLIANT for the federal PQC mandate;
 /// retained for interop/legacy).
@@ -139,6 +167,13 @@ const SIG_SCHEME_MLDSA65: &str = "ml-dsa-65";
 /// `alg` tag: hybrid — BOTH Ed25519 AND ML-DSA-65 must verify. Preferred for the
 /// PQC transition (defense-in-depth: safe if either primitive is later broken).
 const SIG_SCHEME_HYBRID: &str = "hybrid-ed25519-ml-dsa-65";
+/// `alg` tag: the BULLETPROOF PQC-hybrid — BOTH ML-DSA-87 (FIPS-204, cat-5,
+/// module-lattice) AND SLH-DSA-SHAKE-256s (FIPS-205, cat-5, hash-based) must
+/// verify. Two mathematically INDEPENDENT post-quantum foundations, so no single
+/// cryptanalytic break and no single implementation bug is sufficient to forge.
+/// Ed25519 is deliberately ABSENT: quantum-dead, and keeping it a live tag value
+/// would preserve a downgrade target.
+const SIG_SCHEME_PQC_HYBRID: &str = "pqc-hybrid-ml-dsa-87-slh-dsa-256s";
 
 /// Environment variable holding the 32-byte Ed25519 seed as 64 hex chars.
 /// Never hardcode a key — the seed is supplied out-of-band by the operator.
@@ -165,6 +200,15 @@ pub enum SigningKey {
         ed25519: [u8; 32],
         /// ML-DSA-65 keygen seed ξ.
         mldsa65: [u8; 32],
+    },
+    /// Bulletproof PQC-hybrid: sign with BOTH ML-DSA-87 and SLH-DSA-SHAKE-256s;
+    /// a verifier requires BOTH to verify (AND). Two independent post-quantum
+    /// foundations. The max-security release profile.
+    PqcHybrid {
+        /// ML-DSA-87 keygen seed ξ (32 bytes).
+        mldsa87: [u8; 32],
+        /// SLH-DSA-SHAKE-256s seed (96 bytes: SK.seed ‖ SK.prf ‖ PK.seed).
+        slhdsa: [u8; 96],
     },
 }
 
@@ -423,6 +467,7 @@ fn scheme_for_key(key: &SigningKey) -> &'static str {
         SigningKey::Ed25519(_) => SIG_SCHEME_ED25519,
         SigningKey::MlDsa65(_) => SIG_SCHEME_MLDSA65,
         SigningKey::Hybrid { .. } => SIG_SCHEME_HYBRID,
+        SigningKey::PqcHybrid { .. } => SIG_SCHEME_PQC_HYBRID,
     }
 }
 
@@ -432,6 +477,10 @@ struct SignaturePayload {
     scheme: &'static str,
     ed25519: Option<([u8; 32], [u8; 64])>,
     mldsa: Option<(Vec<u8>, Vec<u8>)>,
+    /// (pubkey, signature) for the ML-DSA-87 leg of the bulletproof PQC-hybrid.
+    mldsa87: Option<(Vec<u8>, Vec<u8>)>,
+    /// (pubkey, signature) for the SLH-DSA-SHAKE-256s leg of the PQC-hybrid.
+    slhdsa: Option<(Vec<u8>, Vec<u8>)>,
 }
 
 /// Sign the canonical provenance `preimage` under `key`, producing the embeddable
@@ -460,21 +509,64 @@ fn compute_signature_payload(
             super::mldsa::sign(seed, preimage),
         ))
     };
+    // Bulletproof-hybrid legs. Both sign the IDENTICAL `preimage` (the scheme tag
+    // is already bound into it — that is the per-algorithm domain separation), so
+    // the two signatures cover exactly the same authenticated bytes.
+    let mldsa87 = |seed: &[u8; 32]| -> Result<(Vec<u8>, Vec<u8>), &'static str> {
+        if !super::mldsa::supported() {
+            return Err(
+                "ML-DSA-87 signing requires the `evidence-mldsa` cargo feature (rebuild with \
+                 --features evidence-mldsa)",
+            );
+        }
+        Ok((
+            super::mldsa::public_key_87(seed),
+            super::mldsa::sign_87(seed, preimage),
+        ))
+    };
+    let slhdsa = |seed: &[u8; 96]| -> Result<(Vec<u8>, Vec<u8>), &'static str> {
+        if !super::slhdsa::supported() {
+            return Err(
+                "SLH-DSA signing requires the `evidence-slhdsa` cargo feature (rebuild with \
+                 --features evidence-slhdsa)",
+            );
+        }
+        Ok((
+            super::slhdsa::public_key(seed),
+            super::slhdsa::sign(seed, preimage),
+        ))
+    };
     match key {
         SigningKey::Ed25519(seed) => Ok(SignaturePayload {
             scheme: SIG_SCHEME_ED25519,
             ed25519: Some(ed(seed)),
             mldsa: None,
+            mldsa87: None,
+            slhdsa: None,
         }),
         SigningKey::MlDsa65(seed) => Ok(SignaturePayload {
             scheme: SIG_SCHEME_MLDSA65,
             ed25519: None,
             mldsa: Some(mldsa(seed)?),
+            mldsa87: None,
+            slhdsa: None,
         }),
         SigningKey::Hybrid { ed25519, mldsa65 } => Ok(SignaturePayload {
             scheme: SIG_SCHEME_HYBRID,
             ed25519: Some(ed(ed25519)),
             mldsa: Some(mldsa(mldsa65)?),
+            mldsa87: None,
+            slhdsa: None,
+        }),
+        SigningKey::PqcHybrid {
+            mldsa87: m87_seed,
+            slhdsa: slh_seed,
+        } => Ok(SignaturePayload {
+            scheme: SIG_SCHEME_PQC_HYBRID,
+            ed25519: None,
+            mldsa: None,
+            mldsa87: Some(mldsa87(m87_seed)?),
+            slhdsa: Some(slhdsa(slh_seed)?),
         }),
     }
 }
@@ -927,6 +1019,10 @@ pub struct VerifiedScheme {
     pub ed25519_pubkey: Option<[u8; 32]>,
     /// The ML-DSA-65 public key (1952 bytes), present for `ml-dsa-65` and hybrid.
     pub mldsa_pubkey: Option<Vec<u8>>,
+    /// The ML-DSA-87 public key, present for the `pqc-hybrid-*` scheme.
+    pub mldsa87_pubkey: Option<Vec<u8>>,
+    /// The SLH-DSA-SHAKE-256s public key (64 bytes), present for `pqc-hybrid-*`.
+    pub slhdsa_pubkey: Option<Vec<u8>>,
 }
 
 /// Inspect the optional Ed25519 signature layer of a mic@3 artifact.
@@ -1014,7 +1110,14 @@ fn signature_status_from_entries(
 
     let want_ed = scheme == SIG_SCHEME_ED25519 || scheme == SIG_SCHEME_HYBRID;
     let want_mldsa = scheme == SIG_SCHEME_MLDSA65 || scheme == SIG_SCHEME_HYBRID;
-    if !want_ed && !want_mldsa {
+    // The bulletproof PQC-hybrid requires BOTH the ML-DSA-87 and SLH-DSA legs.
+    // No scheme value names only one of them, so both flags are true TOGETHER —
+    // the verifier structurally cannot be coaxed into accepting a single leg
+    // (the non-degradability property: a stripped leg fails the presence check
+    // below, never silently collapses the hybrid to one scheme).
+    let want_mldsa87 = scheme == SIG_SCHEME_PQC_HYBRID;
+    let want_slhdsa = scheme == SIG_SCHEME_PQC_HYBRID;
+    if !want_ed && !want_mldsa && !want_mldsa87 && !want_slhdsa {
         // Unknown `alg` — fail closed (never accept a scheme we do not understand).
         return Ok(SignatureStatus::Malformed("signature.scheme"));
     }
@@ -1030,10 +1133,22 @@ fn signature_status_from_entries(
     let has_mldsa_half = entries
         .iter()
         .any(|e| e.key == KEY_SIG_MLDSA || e.key == KEY_SIG_MLDSA_PUBKEY);
+    let has_mldsa87_half = entries
+        .iter()
+        .any(|e| e.key == KEY_SIG_MLDSA87 || e.key == KEY_SIG_MLDSA87_PUBKEY);
+    let has_slhdsa_half = entries
+        .iter()
+        .any(|e| e.key == KEY_SIG_SLHDSA || e.key == KEY_SIG_SLHDSA_PUBKEY);
     if has_ed_half && !want_ed {
         return Ok(SignatureStatus::Malformed(KEY_SIG_SCHEME));
     }
     if has_mldsa_half && !want_mldsa {
+        return Ok(SignatureStatus::Malformed(KEY_SIG_SCHEME));
+    }
+    if has_mldsa87_half && !want_mldsa87 {
+        return Ok(SignatureStatus::Malformed(KEY_SIG_SCHEME));
+    }
+    if has_slhdsa_half && !want_slhdsa {
         return Ok(SignatureStatus::Malformed(KEY_SIG_SCHEME));
     }
 
@@ -1077,10 +1192,56 @@ fn signature_status_from_entries(
         mldsa_pubkey = Some(pubkey);
     }
 
+    // ── ML-DSA-87 leg (bulletproof-hybrid lattice foundation, cat-5) ──────────
+    let mut mldsa87_pubkey: Option<Vec<u8>> = None;
+    if want_mldsa87 {
+        let pubkey = match find_bytes_var(entries, KEY_SIG_MLDSA87_PUBKEY)? {
+            Some(pk) => pk,
+            None => return Ok(SignatureStatus::Malformed(KEY_SIG_MLDSA87_PUBKEY)),
+        };
+        let sig = match find_bytes_var(entries, KEY_SIG_MLDSA87)? {
+            Some(s) => s,
+            None => return Ok(SignatureStatus::Malformed(KEY_SIG_MLDSA87)),
+        };
+        if !super::mldsa::supported() {
+            return Ok(SignatureStatus::Unsupported(
+                "artifact requires ML-DSA-87 verification; rebuild with --features evidence-mldsa",
+            ));
+        }
+        if !super::mldsa::verify_87(&pubkey, &preimage, &sig) {
+            return Ok(SignatureStatus::Invalid);
+        }
+        mldsa87_pubkey = Some(pubkey);
+    }
+
+    // ── SLH-DSA-SHAKE-256s leg (bulletproof-hybrid hash-based foundation) ──────
+    let mut slhdsa_pubkey: Option<Vec<u8>> = None;
+    if want_slhdsa {
+        let pubkey = match find_bytes_var(entries, KEY_SIG_SLHDSA_PUBKEY)? {
+            Some(pk) => pk,
+            None => return Ok(SignatureStatus::Malformed(KEY_SIG_SLHDSA_PUBKEY)),
+        };
+        let sig = match find_bytes_var(entries, KEY_SIG_SLHDSA)? {
+            Some(s) => s,
+            None => return Ok(SignatureStatus::Malformed(KEY_SIG_SLHDSA)),
+        };
+        if !super::slhdsa::supported() {
+            return Ok(SignatureStatus::Unsupported(
+                "artifact requires SLH-DSA verification; rebuild with --features evidence-slhdsa",
+            ));
+        }
+        if !super::slhdsa::verify(&pubkey, &preimage, &sig) {
+            return Ok(SignatureStatus::Invalid);
+        }
+        slhdsa_pubkey = Some(pubkey);
+    }
+
     Ok(SignatureStatus::Valid(VerifiedScheme {
         scheme,
         ed25519_pubkey: ed_pubkey,
         mldsa_pubkey,
+        mldsa87_pubkey,
+        slhdsa_pubkey,
     }))
 }
 
@@ -1349,6 +1510,14 @@ fn append_map_epilogue(
             entries.push((KEY_SIG_MLDSA_PUBKEY, MapEntryValue::Bytes(pubkey)));
             entries.push((KEY_SIG_MLDSA, MapEntryValue::Bytes(sig)));
         }
+        if let Some((ref pubkey, ref sig)) = payload.mldsa87 {
+            entries.push((KEY_SIG_MLDSA87_PUBKEY, MapEntryValue::Bytes(pubkey)));
+            entries.push((KEY_SIG_MLDSA87, MapEntryValue::Bytes(sig)));
+        }
+        if let Some((ref pubkey, ref sig)) = payload.slhdsa {
+            entries.push((KEY_SIG_SLHDSA_PUBKEY, MapEntryValue::Bytes(pubkey)));
+            entries.push((KEY_SIG_SLHDSA, MapEntryValue::Bytes(sig)));
+        }
     }
     // Lexicographic sort — this is the canonical-encoding invariant.
     entries.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
@@ -1456,12 +1625,20 @@ pub(crate) fn parse_map_epilogue(bytes: &[u8]) -> Result<Vec<ParsedEntry>, Parse
         |r: &std::io::Cursor<&[u8]>| -> usize { total.saturating_sub(r.position() as usize) };
 
     let count = uleb128_read_minimal(&mut r).map_err(|_| ParseMapError::Truncated)? as usize;
-    if count > remaining(&r) {
-        // Each entry occupies >= 1 byte; a count beyond the remaining input is
-        // unsatisfiable. Rejects the `Vec::with_capacity` bomb before allocating.
+    // Reader is the MINIMAL variant: a zero-padded ULEB encodes the same value
+    // in different bytes, which is malleability on a signed artifact.
+    // Each MAP entry occupies at least MIN_ENTRY_BYTES on the wire: a >= 1-byte
+    // key-length ULEB, a 1-byte value tag, and a >= 1-byte value payload. A count
+    // beyond `remaining / MIN_ENTRY_BYTES` is therefore unsatisfiable. Rejecting it
+    // here both fails closed on a truncated stream AND caps the `Vec::with_capacity`
+    // below to input-size / MIN_ENTRY_BYTES — closing the allocation-amplification
+    // gap where a multi-MiB artifact could pre-size a several-hundred-MB Vec from an
+    // attacker-chosen `count` before the read loop errored out.
+    const MIN_ENTRY_BYTES: usize = 3;
+    if count > remaining(&r) / MIN_ENTRY_BYTES {
         return Err(ParseMapError::Truncated);
     }
-    let mut entries = Vec::with_capacity(count);
+    let mut entries: Vec<ParsedEntry> = Vec::with_capacity(count);
     for _ in 0..count {
         let key_len = uleb128_read_minimal(&mut r).map_err(|_| ParseMapError::Truncated)? as usize;
         if key_len > remaining(&r) {
@@ -1471,6 +1648,16 @@ pub(crate) fn parse_map_epilogue(bytes: &[u8]) -> Result<Vec<ParsedEntry>, Parse
         r.read_exact(&mut key_buf)
             .map_err(|_| ParseMapError::Truncated)?;
         let key = String::from_utf8(key_buf).map_err(|_| ParseMapError::InvalidUtf8)?;
+
+        // The canonical MAP is a SET: emit writes each key exactly once, in sorted
+        // order. A duplicate is off-canon — and because `find_entry` is first-wins
+        // and duplicate copies are filtered out of the signature preimage, an
+        // attacker could append a redundant copy of an already-signed key without
+        // breaking the trace-hash anchor (byte-malleability of an otherwise-Valid
+        // artifact). Reject it fail-closed. (O(n^2), but a MAP has O(10) entries.)
+        if entries.iter().any(|e| e.key == key) {
+            return Err(ParseMapError::DuplicateKey(key));
+        }
 
         let tag_byte = {
             let mut tb = [0u8];
@@ -1512,53 +1699,30 @@ pub(crate) fn parse_map_epilogue(bytes: &[u8]) -> Result<Vec<ParsedEntry>, Parse
 
         entries.push(ParsedEntry { key, value });
     }
-    // F1 belt-and-braces: the MAP epilogue is the LAST region of a mic@3
-    // artifact, so anything after the declared entries is unaccounted-for input.
-    // Returning `Ok` while ignoring it made the artifact byte-malleable —
-    // `artifact || b"X"` decoded to exactly the same entries and reported the
-    // same (genuine) signature as valid. Leftover bytes are now a hard parse
-    // failure, which every caller already maps to a fail-closed error.
-    if remaining(&r) != 0 {
-        return Err(ParseMapError::Trailing);
-    }
-    // Duplicate-key enforcement, same reasoning as the reserved-namespace check
-    // below and the same five read entry points. `mic3_canonical_check` had this
-    // rule; the other four did not, so `mic3_signature_status` returned
-    // Valid(ed25519) over a 200 KB stream that was not the signed artifact —
-    // the byte-malleability class reached through a different key class.
-    {
-        let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
-        for e in &entries {
-            if !seen.insert(e.key.as_str()) {
-                return Err(ParseMapError::DuplicateKey(e.key.clone()));
-            }
-        }
+    // The epilogue is the artifact's final region ([sentinel .. EOF]); emit writes
+    // exactly `count` entries and nothing after the last one. Bytes the loop did not
+    // consume are trailing garbage appended after a valid MAP — a second malleability
+    // vector (they ride inside a Valid artifact, outside the signed preimage). Require
+    // the cursor to have consumed the whole epilogue region.
+    if (r.position() as usize) != total {
+        return Err(ParseMapError::TrailingBytes);
     }
     // Reserved-namespace enforcement lives HERE, in the shared parser, not in any
-    // one consumer. `validate_app_entries` enforces this at EMIT; the read side
-    // has FIVE entry points into these bytes (`mic3_canonical_check`,
-    // `mic3_evidence_report`, `mic3_app_metadata`, `mic3_signature_status`, and
-    // the raw callers), and putting the rule in only one of them left the other
-    // four accepting an injected key — `mic3_signature_status` in particular
-    // returned `Valid` for a 200 KB attacker payload, which is exactly what an
-    // out-of-tree consumer calls.
+    // one consumer. `validate_app_entries` enforces this at EMIT; the read side has
+    // FIVE entry points into these bytes (`mic3_canonical_check`,
+    // `mic3_evidence_report`, `mic3_app_metadata`, `mic3_signature_status`, and the
+    // raw callers), and putting the rule in only one of them left the other four
+    // accepting an injected key — `mic3_signature_status` in particular returned
+    // `Valid` for a 200 KB attacker payload, which is exactly what an out-of-tree
+    // consumer calls.
     //
-    // Why nothing else catches it: `build_signature_preimage` deliberately
-    // FILTERS every `signature.`-prefixed key (a signature cannot sign itself),
-    // the canonical byte-compare re-encodes any entry that legitimately parsed,
-    // and `trace_hash` anchors the BODY, not the epilogue. An unknown
-    // `signature.*` key is therefore covered by no mechanism at all.
+    // Why nothing else catches it: `build_signature_preimage` deliberately FILTERS
+    // every `signature.`-prefixed key (a signature cannot sign itself), the canonical
+    // byte-compare re-encodes any entry that legitimately parsed, and `trace_hash`
+    // anchors the BODY, not the epilogue. An unknown `signature.*` key is therefore
+    // covered by no mechanism at all.
     for e in &entries {
-        if e.key.starts_with("signature.")
-            && !matches!(
-                e.key.as_str(),
-                KEY_SIG_SCHEME
-                    | KEY_SIG_PUBKEY
-                    | KEY_SIG_ED25519
-                    | KEY_SIG_MLDSA_PUBKEY
-                    | KEY_SIG_MLDSA
-            )
-        {
+        if e.key.starts_with("signature.") && !SIGNATURE_KEYS.contains(&e.key.as_str()) {
             return Err(ParseMapError::ReservedKey(e.key.clone()));
         }
     }
@@ -1572,20 +1736,17 @@ pub(crate) enum ParseMapError {
     Truncated,
     InvalidUtf8,
     UnknownTag(u8),
-    /// Bytes remain after the declared entry count was consumed. The epilogue is
-    /// the artifact's final region, so any leftover is a canonical-form
-    /// violation (see the F1 malleability note on [`mic3_canonical_check`]).
-    Trailing,
-    /// A key in the reserved `signature.` namespace that is not one of the five
-    /// defined signature keys.
-    ReservedKey(String),
-    /// The same key appears more than once. Rejected HERE, in the shared parser,
-    /// not only in the canonical check: the signature preimage excludes
-    /// `signature.*` and `trace_hash`, and every accessor takes the FIRST match,
-    /// so a duplicate of any preimage-excluded key changes the artifact bytes
-    /// WITHOUT changing the preimage — a splitting attack against any consumer
-    /// that disagrees with the verifier.
+    /// A key appeared more than once. The canonical MAP is a set, so a duplicate
+    /// key is off-canon and rejected fail-closed (anti-malleability). Carries the
+    /// offending key so `mindc verify --json` can name it in `canonical_reason`.
     DuplicateKey(String),
+    /// Bytes remained after the last entry. The epilogue must consume its whole
+    /// region; trailing garbage inside a Valid artifact is rejected fail-closed.
+    TrailingBytes,
+    /// A key in the reserved `signature.` namespace that is not one of the five
+    /// defined signature keys. Enforced in the shared parser so all five read
+    /// entry points inherit it, not in one consumer.
+    ReservedKey(String),
 }
 
 // ─── Evidence decode + verify ─────────────────────────────────────────────────
@@ -3066,6 +3227,183 @@ mod tests {
             assert!(
                 !report.trace_hash_valid,
                 "body tamper breaks trace_hash_valid"
+            );
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Bulletproof PQC-hybrid: ML-DSA-87 + SLH-DSA-SHAKE-256s, both-must-verify.
+    // Requires BOTH evidence-mldsa (lattice leg) and evidence-slhdsa (hash leg).
+    // SLH-DSA-256s SIGNING is slow (small-sig variant); SLH-DSA VERIFY is fast, so
+    // each test emits exactly ONCE and reuses the artifact for the fast checks.
+    // -------------------------------------------------------------------------
+
+    /// 96-byte SLH-DSA test seed (SK.seed ‖ SK.prf ‖ PK.seed). NOT a production key.
+    #[cfg(all(feature = "evidence-mldsa", feature = "evidence-slhdsa"))]
+    fn test_slhdsa_seed() -> [u8; 96] {
+        let mut s = [0u8; 96];
+        let mut i = 0;
+        while i < 96 {
+            s[i] = (i as u8).wrapping_mul(7).wrapping_add(0x13);
+            i += 1;
+        }
+        s
+    }
+
+    #[cfg(all(feature = "evidence-mldsa", feature = "evidence-slhdsa"))]
+    fn pqc_hybrid_key() -> SigningKey {
+        SigningKey::PqcHybrid {
+            mldsa87: TEST_MLDSA_SEED,
+            slhdsa: test_slhdsa_seed(),
+        }
+    }
+
+    // (pqc-1) Round-trip Valid + byte-identical unsigned prefix + anchor unchanged.
+    #[cfg(all(feature = "evidence-mldsa", feature = "evidence-slhdsa"))]
+    #[test]
+    fn pqc_hybrid_valid_and_byte_identical() {
+        let ir = mod_binop();
+        let signed = emit_mic3_with_signed_evidence_scheme(
+            &ir,
+            "x86_avx2",
+            None,
+            Determinism::Deterministic,
+            "0.8.0",
+            &pqc_hybrid_key(),
+        )
+        .expect("pqc-hybrid signing available under both features");
+        match mic3_signature_status(&signed).unwrap() {
+            SignatureStatus::Valid(v) => {
+                assert_eq!(v.scheme, "pqc-hybrid-ml-dsa-87-slh-dsa-256s");
+                assert!(
+                    v.ed25519_pubkey.is_none(),
+                    "no classical leg in the PQC-hybrid"
+                );
+                assert!(
+                    v.mldsa_pubkey.is_none(),
+                    "no ml-dsa-65 leg in the PQC-hybrid"
+                );
+                assert!(v.mldsa87_pubkey.is_some(), "ml-dsa-87 pubkey present");
+                assert_eq!(
+                    v.slhdsa_pubkey.as_deref().map(<[u8]>::len),
+                    Some(64),
+                    "slh-dsa-shake-256s pk length"
+                );
+            }
+            other => panic!("expected pqc-hybrid Valid, got {:?}", other),
+        }
+        // Signing never perturbs the mic@3 body/anchor (the byte-identity wedge).
+        let unsigned =
+            emit_mic3_with_evidence(&ir, "x86_avx2", None, Determinism::Deterministic, "0.8.0");
+        let be_u = find_map_sentinel(&unsigned).unwrap();
+        let be_s = find_map_sentinel(&signed).unwrap();
+        assert_eq!(
+            &unsigned[..be_u],
+            &signed[..be_s],
+            "PQC-hybrid signing must not perturb the mic@3 body"
+        );
+        assert_eq!(
+            mic3_evidence_report(&unsigned).unwrap().trace_hash,
+            mic3_evidence_report(&signed).unwrap().trace_hash,
+            "trace_hash anchor unchanged under PQC-hybrid signing"
+        );
+    }
+
+    // (pqc-2) NON-DEGRADABLE (the load-bearing property from the cross-model security review):
+    //         stripping EITHER leg, or tampering EITHER signature, must fail closed
+    //         — the hybrid can never collapse to a valid single-scheme signature.
+    #[cfg(all(feature = "evidence-mldsa", feature = "evidence-slhdsa"))]
+    #[test]
+    fn pqc_hybrid_non_degradable() {
+        let ir = mod_binop();
+        let signed = emit_mic3_with_signed_evidence_scheme(
+            &ir,
+            "x86_avx2",
+            None,
+            Determinism::Deterministic,
+            "0.8.0",
+            &pqc_hybrid_key(),
+        )
+        .unwrap();
+        let body_end = find_map_sentinel(&signed).unwrap();
+        // Control: as-signed it is Valid.
+        let base = parse_map_epilogue(&signed[body_end..]).unwrap();
+        assert!(matches!(
+            signature_status_from_entries(&base).unwrap(),
+            SignatureStatus::Valid(_)
+        ));
+
+        // (a) STRIP the SLH-DSA leg → must NOT collapse to a valid ml-dsa-87-only
+        //     signature; the pqc-hybrid tag still demands the missing leg.
+        let mut stripped_slh = parse_map_epilogue(&signed[body_end..]).unwrap();
+        stripped_slh.retain(|e| e.key != "signature.slhdsa" && e.key != "signature.slhdsa_pubkey");
+        assert!(
+            matches!(
+                signature_status_from_entries(&stripped_slh).unwrap(),
+                SignatureStatus::Malformed(_)
+            ),
+            "stripping the SLH-DSA leg must be Malformed (non-degradable), got {:?}",
+            signature_status_from_entries(&stripped_slh).unwrap()
+        );
+
+        // (b) STRIP the ML-DSA-87 leg → likewise refused.
+        let mut stripped_ml = parse_map_epilogue(&signed[body_end..]).unwrap();
+        stripped_ml.retain(|e| e.key != "signature.mldsa87" && e.key != "signature.mldsa87_pubkey");
+        assert!(
+            matches!(
+                signature_status_from_entries(&stripped_ml).unwrap(),
+                SignatureStatus::Malformed(_)
+            ),
+            "stripping the ML-DSA-87 leg must be Malformed (non-degradable)"
+        );
+
+        // (c) TAMPER the ML-DSA-87 signature → Invalid (both legs required).
+        let mut tam_ml = parse_map_epilogue(&signed[body_end..]).unwrap();
+        for e in tam_ml.iter_mut() {
+            if e.key == "signature.mldsa87" {
+                if let ParsedValue::Bytes(b) = &mut e.value {
+                    b[100] ^= 0x01;
+                }
+            }
+        }
+        assert_eq!(
+            signature_status_from_entries(&tam_ml).unwrap(),
+            SignatureStatus::Invalid,
+            "tampering the ML-DSA-87 leg must fail closed"
+        );
+
+        // (d) TAMPER the SLH-DSA signature → Invalid.
+        let mut tam_slh = parse_map_epilogue(&signed[body_end..]).unwrap();
+        for e in tam_slh.iter_mut() {
+            if e.key == "signature.slhdsa" {
+                if let ParsedValue::Bytes(b) = &mut e.value {
+                    b[100] ^= 0x01;
+                }
+            }
+        }
+        assert_eq!(
+            signature_status_from_entries(&tam_slh).unwrap(),
+            SignatureStatus::Invalid,
+            "tampering the SLH-DSA leg must fail closed"
+        );
+
+        // (e) DOWNGRADE the scheme tag to a weaker single-leg / legacy-hybrid scheme
+        //     while leaving BOTH pqc-hybrid legs in place → must never verify. The
+        //     scheme tag is length-prefixed into the signed preimage, so whichever
+        //     verifier the flipped tag selects checks a preimage bound to the WRONG
+        //     scheme string (and looks for key material the pqc-hybrid artifact does
+        //     not carry) — the pqc-hybrid AND-path is never re-entered, no collapse.
+        for weaker in ["ed25519", "ml-dsa-65", "hybrid-ed25519-ml-dsa-65"] {
+            let mut flipped = parse_map_epilogue(&signed[body_end..]).unwrap();
+            for e in flipped.iter_mut() {
+                if e.key == KEY_SIG_SCHEME {
+                    e.value = ParsedValue::Str(weaker.to_string());
+                }
+            }
+            let st = signature_status_from_entries(&flipped);
+            assert!(
+                !matches!(st, Ok(SignatureStatus::Valid(_))),
+                "downgrading the pqc-hybrid scheme tag to `{weaker}` must not verify, got {st:?}"
             );
         }
     }

@@ -61,6 +61,232 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   transform upstream of emitter divergence"* (so both emitters consume identical
   optimized bytes), and the offline-mine / in-compiler-`egglog`-apply evolvability loop
   gated by the byte-invariance + cross-substrate oracle.
+### Added — fixed `[f64; N]` / `[f32; N]` aggregate surface on the executable MLIR path (RH_REQUIRED_F64_AGGREGATE_SURFACE)
+- **Local floating-point fixed arrays now compile and run correctly on the `mindc build`
+  (LLVM/MLIR) path.** A `let mut a: [f64; N] = [lit, ...]` (or `[f32; N]`) now lowers to a
+  TYPED `ConstDenseTensor` carrying the exact per-element IEEE-754 bits instead of falling
+  through to the i64-only `ConstArray` path — which coerced float literals to 0 and left the
+  base untyped, so a following `a[i]` load failed `MLIR lowering: missing type information
+  … array load base`. With the typed base, the existing dtype-generic `ArrayLoad` /
+  `ArrayStore` emitters (tensor.extract / tensor.insert, both already f64-ready) and the
+  `#320 Step D` aggregate loop-carry work end-to-end: runtime-indexed load `x = a[i]`, store
+  `a[i] = v` (straight-line, inside `for`/`while`, visible after the loop), flat matrices
+  `m[i*n + j]` with nested scalar loops, and f64 loop-carried accumulators (add/sub/mul/div,
+  no fast-math / reassociation — strict IEEE-754). (`src/eval/lower.rs`:
+  `lower_fixed_dense_array_binding` + the fn-body `Let` arm.)
+- **Read-only fixed-array function parameter (aggregate call ABI, minimum).** A fixed array
+  passed by value to a user fn — `fn f(a: [f64; N])`, called `f(a)` — no longer trips the
+  `non-i64 argument to call` reject: the call-site accepts a `Tensor` arg and forwards it as
+  `func.call @f(%a) : (tensor<NxT>) -> ret`, matching the callee's `tensor<NxT>` param type
+  (from `fn_signatures`), and mlir-opt's function-boundary bufferization lowers the internal
+  tensor call. A shape/dtype mismatch stays loud at mlir-opt. Array *returns* remain out of
+  subset. (`src/mlir/lowering.rs`: `Tensor` arm in the call-arg gate.)
+- **`i64`/`i32` fixed arrays are byte-identical** — the new f64/f32 routing returns `None`
+  for non-float element types, so integer arrays keep the exact prior path (keystone 7/7
+  self-host byte-identity preserved; `main.mind` uses no float arrays, so its emit is
+  unchanged).
+- **Audit hardening (cross-model review):** the f64/f32 `[T; N]` routing now covers **all six**
+  `Let` dispatch sites (fn-body, top-level, while/for-body, then/else-branch, region-local),
+  so a float fixed array declared inside a branch body now compiles instead of hitting the
+  i64 `ConstArray` "missing type information" path. And `lower_fixed_dense_array_binding`
+  now **fails closed on a non-const element** — `let a: [f64; 2] = [x, 1.0]` (a runtime
+  element) previously baked `x` → `0.0` silently; it now falls back to the ordinary path
+  (never a silent zero). Known remaining limit: a float fixed array *declared fresh inside a
+  `while` body* still fails closed (a deeper loop-carry `substitute_ids` value-kind
+  propagation case) — fn-top declaration + in-loop mutation (the common shape) works.
+- **Deterministic canary + fail-closed gate.** `testdata/rh_f64_aggregate_canary.mind`
+  performs an LDL^T-style elimination on a 4×4 rational SPD matrix whose entries and every
+  factor are exactly representable in binary64, returning the bit-exact `37`;
+  `rh_f64_aggregate_canary_smoke.py` (wired into the `mindcraft_self_host` CI job) requires
+  that on the MLIR path and asserts the pure-MIND `--backend native` leg fails CLOSED — the
+  native fixed-array **store** (`a[i]=v`) and by-value array **parameter** are NOT yet ported
+  to the self-host emitter / mic@3 wire format (no `OP_ARRAY_STORE` opcode); load / accumulate
+  / flat-matrix-read already run natively. That native leg is the remaining RH replay work.
+
+### Added — fixed-array / const-tensor `a[i] = v` now WORKS inside an `if`/`else` BRANCH body (#320 Step D — the last position; store now works EVERYWHERE)
+- **`a[i] = v` on a fixed `[T; N]` / const-literal `tensor<T[N]>` now works inside an `if`/`else`
+  branch body** — the last fail-closed position. With this, the store works in EVERY statement
+  position: straight-line, loop (`for`/`while`/nested), and branch. Nothing is fail-closed for a
+  fixed-aggregate `a[i]=v` any more.
+- **Same Option A+ value-semantic design, applied to the `Instr::If` merge machinery.** New
+  `IndexAssign` arms in both the then- and else-branch statement loops (`src/eval/lower.rs`) emit
+  `Instr::ArrayStore`, rebind the receiver root in the branch env, and record it as a merge write
+  (`record_then_write`/`record_else_write`) — so the aggregate is threaded as a value-semantic
+  `tensor<NxT>` `^if_after` merge block-arg. The then/else edge carries the stored incarnation; the
+  untouched edge carries the pre-if tensor (from the outer env), so a post-if read sees the taken
+  branch's write and the not-taken path preserves the original. The MLIR emitter already types the
+  merge block-arg via `mlir_type` of the unified `Tensor` kind — no change needed there. (The
+  assignment statement's if-VALUE stays unit-i64, so the tensor flows only through `a`'s own merge
+  column, never the i64 if-value column.)
+- **Wedge intact — no per-branch copy.** Design-reviewed GO: the If-merge rides the exact same
+  `cf`-block-arg machinery the loop already proved, so one-shot-bufferize sees no read-after-write
+  conflict and inserts no defensive copy. Verified across a 4-case matrix (`if c {a[i]=v}`, `if/else`,
+  if-inside-loop, `a` read after the if) that the **post-bufferization MLIR `memref.alloc` /
+  `memref.copy` / `alloc_tensor` counts are identical to the CI-green loop baseline** (one-time buffer
+  materialisation, zero per-branch copy), and the LLVM IR confirms an in-place `store` in the taken
+  block. So x86 avx2 == ARM neon by construction.
+- Verified by COMPILE+RUN (`tests/array_store_run.rs`): `if T {a[0]=9} return a[0]`→9, untouched
+  sibling→2, `if F {a[0]=9}`→1 (original preserved), `if/else` same-index→taken edge (1/2),
+  `if/else` different-index→per-element (5). Gates: `array_store_run` 3/3 (all positions) · keystone
+  7/7 byte-identical · mic3_flip whole-module byte-identical (621052 B) · fmt/clippy · all local green.
+- **Additive / byte-neutral:** a branch-body `a[i]=v` on a fixed aggregate previously failed to
+  compile; `main.mind` + `std` self-use zero surface `a[i]=v`, so keystone / self-host / cross-substrate
+  are untouched.
+
+### Added — fixed-array / const-tensor `a[i] = v` now WORKS inside a LOOP body (#320 Step D, F2 region-exit threading)
+- **`a[i] = v` on a fixed `[T; N]` / const-literal `tensor<T[N]>` now works inside a `for` / `while`
+  loop body (including nested loops), not just straight-line** — the F2 region-exit rebind that the
+  prior increment left fail-closed. The design-reviewed **Option A+ (value-semantic typed tensor
+  block-arg)**: the mutated aggregate is threaded through the loop as a first-class `tensor<NxT>`
+  loop iter-arg. A new `IndexAssign` arm in the `While`-body lowering (`src/eval/lower.rs`) emits
+  `Instr::ArrayStore` and records the fresh post-store id as loop-carried (`record_loop_mut`), so the
+  back-edge threads the new incarnation and every post-loop read resolves against the `^while_after`
+  exit id. In the MLIR emitter (`src/mlir/lowering.rs`) a new `loop_carry_mlir_type` helper types
+  every loop-carried block-arg (header / body / `^while_after`) and every `cf.br`/`cf.cond_br`
+  operand by its real `ValueKind` — `tensor<NxT>` for an aggregate carry instead of the default i64 —
+  and each exit id is registered with the carried kind so the post-loop `ArrayLoad` type-resolves.
+  Verified by COMPILE+RUN (`tests/array_store_run.rs`): `for k in 0..3 { a[k]=k*10 } → a[2]`→20,
+  `while k<3 { a[k]=7 } → a[0]`→7, for-loop fill sum→6, nested for-in-for→6.
+- **Wedge intact — no per-iteration copy:** the post-bufferization LLVM IR for a loop-mutating
+  `[i64;N]` fixture was inspected — the `one-shot-bufferize` output threads the tensor iter-arg as a
+  self-cycling memref-descriptor phi with an **in-place `store` in the loop body and NO `malloc` /
+  `memcpy` per iteration** (the one-time buffer materialisation is hoisted to the entry block), so the
+  loop is byte-identical across x86 avx2 / ARM neon by construction. A dedicated cross-substrate
+  canary `tests/cross_substrate_identity/array-store-loop/` (avx2 == neon, RFC 0015 §3.1) locks this,
+  cross-checked against a Rust oracle in-run. Gates: `array_store_run` (loop RUNS correct; branch
+  fail-closed) · `cross_substrate_identity` 25/25 · keystone 7/7 byte-identical · mic3_flip
+  whole-module byte-identical (621052 B) · fmt/clippy — all locally green.
+- **Additive / byte-neutral for every existing program:** a loop-body `a[i]=v` on a fixed aggregate
+  previously failed to compile, so this only turns a compile-error into correct codegen; every scalar
+  (i64/f64/f32) loop emits the exact same MLIR as before (`loop_carry_mlir_type` returns the identical
+  type string), and `main.mind` + `std` self-use zero surface `a[i]=v`, so keystone / self-host /
+  cross-substrate are untouched.
+- **Still fail-closed (tracked follow-on):** `a[i]=v` inside a BRANCH body (`if`) or in expression
+  position — the branch-region exit rebind is the distinct next step; until then the compiler rejects
+  it (loud), never a silent store-drop.
+
+### Added — fixed-array / const-tensor `a[i] = v` now WORKS (straight-line) via `Instr::ArrayStore` (#320 Step D)
+- **`a[i] = v` on a plain fixed `[T; N]` / const-literal `tensor<T[N]>` is now a real, value-semantic
+  store as a top-level statement** — the fix-the-write on top of the 0x2B wire foundation. It lowers
+  to `Instr::ArrayStore` (MLIR `tensor.insert` yielding a FRESH aggregate SSA value with the same
+  `{i64,i32,f32,f64}` element type, same DETERMINISTIC_BOUNDS_TRAP as `ArrayLoad`), and the fn-body
+  statement dispatch rebinds the receiver root name to that fresh id — so a later `a[j]` read observes
+  the write. Verified by COMPILE+RUN (`tests/array_store_run.rs`): `a[0]=9;return a[0]`→9, two-write
+  sum→90, `tensor<i64[3]>` literal store→9, untouched-sibling read→2. Reference-semantic `array<T>`
+  (`vec_set`) / `bytes[N]` (`__mind_store_i8`) and all reads are unchanged.
+- **Inside a LOOP / BRANCH body (or in expression position), `a[i]=v` FAILS CLOSED (loud)** rather
+  than silently dropping the write: the fresh incarnation's rebind is not yet threaded through the
+  F2 region-exit machinery, so a store there would read back the pre-region value (verified — it did,
+  returning 0). The compiler rejects it deterministically; the F2-region-threaded loop/branch store
+  is the tracked follow-on. **Net: the silent store-drop is eliminated in every case** — straight-line
+  stores correctly, loop/branch fails closed, never a silent-wrong.
+- **Byte-identity neutral / wedge intact:** `main.mind` + all of `std` emit zero surface `a[i]=v`
+  (raw `__mind_store_i64` ABI), so `ArrayStore` is inert during self-compile. Gates: `array_store_run`
+  (straight-line RUNS; loop/while fail-closed) · keystone 7/7 byte-identical · mic3_flip whole-module
+  byte-identical (621052 B) · oracle-parity 30/30 · fmt/clippy/rustdoc — all locally green; the
+  cross_substrate canary set is byte-identical (the aggregate-store path does not touch the GEMM /
+  reduction kernels; it was 24/24 on the 0x2B wire foundation) and is re-verified by the CI dual-arch
+  (avx2 + neon) matrix on this push.
+
+### Added — mic@3 `ArrayStore` opcode (0x2B) + IR variant (#320 Step D aggregate mutation — wire foundation)
+- **New `Instr::ArrayStore { dst, base, index, value }` IR variant + mic@3 opcode `0x2B`** — the
+  value-semantic backing for `arr[idx] = value` on a fixed `[T; N]` / const-literal `tensor<T[N]>`:
+  it yields a FRESH aggregate SSA value (the post-store incarnation) so a later `arr[j]` read
+  observes the write, unlike the reference-semantic `array<T>` (`vec_set`) / `bytes[N]`
+  (`__mind_store_i8`) paths which keep the name bound to the same base. This is the intended FIRST
+  population target of the #320 Step D canonical aggregate-type invariant (the `value_types` table,
+  landed-but-dormant until now). **Inert in this increment** — no lowering emits `ArrayStore` yet
+  (the MLIR `tensor.insert` lowering + the SSA env-rebind at the `IndexAssign` site are the
+  immediate follow-on), so behaviour is unchanged: `arr[idx] = value` on a fixed aggregate still
+  fails-closed (the interim from the prior entry) until the lowering lands. The opcode is a pure
+  additive append in previously-unused wire space (`0x2A` = `OP_CONST_DENSE_TENSOR` was the prior
+  max), so there is **no `MIC3_VERSION` bump**: every existing byte stream stays byte-identical,
+  PROVEN (not asserted) by keystone 7/7 + all cross_substrate canaries unchanged. Decode is a fixed
+  4×`read_vid` (no untrusted count → no alloc-amplification surface). Wired through `Instr`
+  (`instr_dst`), `verify` (define-before-use on base/index/value), `print`, `evidence`,
+  `ir_canonical` (`for_each_operand` reads base/index/value), and the mic@3 `emit`/`parse`. Gates:
+  new `tests/mic3_array_store_roundtrip.rs` (emit→parse→emit fixed point + 0x2B byte present) ·
+  keystone 7/7 byte-identical · mic3_flip whole-module byte-identical (621052 B) · cross_substrate
+  24/24 canaries unchanged · fmt/clippy/rustdoc clean.
+
+### Fixed — silent aggregate index-write miscompile → fail-closed (MLIR/std-surface backend)
+- **`a[i] = v` on a const-literal-initialized aggregate (a plain fixed `[T; N]`, or a
+  `tensor<T[N]> = [..]` literal) no longer silently drops the store on the default MLIR
+  backend.** The `IndexAssign` lowering (`src/eval/lower.rs`) routes real stores only for the
+  growable `array<T>` receiver (→ `vec_set`) and the fixed `bytes[N]` buffer (→
+  `__mind_store_i8`); a plain `[T; N]` / const-literal `tensor<T[N]>` — an immutable
+  `ConstArray` / `ConstDenseTensor` value with no store instruction in the IR — fell through
+  to a `ConstI64(0)` placeholder that emitted **no store** and never rebound the aggregate's
+  SSA value, so every later `a[i]` read observed the pre-write incarnation. This was a LIVE
+  i64/f64 miscompile (`docs/ARRAY_SEMANTICS.md` Q19: "a LIVE i64 miscompile predating f64").
+  The placeholder is replaced by a fail-closed diagnostic — mirroring the existing
+  method-call fail-loud precedent (`lower.rs`) — so the compiler now **rejects the write
+  loudly** instead of miscompiling it, matching the native backend's refusal. Working
+  receivers (`array<T>`, `bytes[N]`) and all array reads are untouched. **Byte-identity
+  neutral:** `main.mind` + all of `std` emit zero surface fixed-aggregate writes (they use the
+  raw `__mind_store_i64` ABI), so the changed arm is dead during self-compile. The real typed
+  store path (`Instr::ArrayStore` + env rebind, or a memref-backed mutable aggregate) is the
+  tracked follow-on (Q19 CANONICAL_DECISION + the Step D aggregate-type invariant); a clean
+  `error[E…]` check-phase diagnostic in place of the build-time panic is a queued UX polish.
+  Gates: functional probe (aggregate writes fail-closed; reads / scalar-reassign / `array<T>`
+  / `bytes[N]` writes green) · mic3_flip whole-module byte-identical (621052 B) · keystone 7/7
+  · oracle-parity · cross_substrate · cargo fmt/clippy/doc.
+
+### Fixed — self-host mic@3 emitter: if-block branch-local-`let` scope (keystone)
+- **`emit_mic3_if_block_instr` no longer serializes dead OP_IF branch_binding/merge records for
+  branch-local `let` declarations** (corr2/#287-F2 self-host completion). #287-F2 fixed the Rust
+  `--emit-mic3` oracle and five whole-module self-host arms so a block-scoped `let` inside an
+  if-branch emits no merge record — but the test-harness if-block arm (`selftest_mic3_if_block_fn`)
+  was not ported: it unioned every branch let-env name into the merge set, diverging from the
+  oracle and reddening the keystone `mic3_primitives_smoke.py` gate (main keystone CI red since
+  ~2026-08-17). A new `drop_branch_local_lets` filters the merged-name set by `name_is_prefix_let`
+  (shadow-safe — a `let a` shadowing param `a` is dropped; outer-name assigns still merge),
+  matching the oracle byte-for-byte. The four stale `mic3_primitives_smoke.py` goldens (g/f/h/k)
+  are re-captured and the RI-E1 self-host bootstrap seed re-blessed. Gates: mic3_primitives 122/122,
+  mic3_flip whole-module byte-identical, oracle-parity 30/30, keystone 7/7, cross_substrate,
+  self-host loop stage1==stage2==stage3==frozen.
+
+### Fixed — self-host E2024 intrinsic allowlist parity (keystone)
+- **`tc_is_std_surface_intrinsic` (the pure-MIND self-host E2024 rule) synced to the Rust
+  `STD_SURFACE_INTRINSICS` table (36 → 55 entries).** The pure-MIND allowlist in
+  `examples/mindc_mind/main.mind` had fallen 19 intrinsics behind the Rust oracle — the
+  `__mind_nerve_*` runtime/BLAS/LUT C-ABI surface plus `__mind_blas_gemv_q16_mt` — so its
+  `self_host_only_call` (E2024) predicate flagged them as compiler-internal (`got=1`) while
+  the Rust oracle and shipped `mindc check` (which register them as user-callable std-surface
+  intrinsics) returned `0`. This reddened the keystone additive-selftest gate
+  (`self_host_tc_self_host_only_call_smoke.py`: 19/173 divergences, main keystone CI red).
+  The 19 packed-word allowlist entries are added (first-32-bytes-little-endian words + true
+  length, matched via `tc_shoc_eq`), driving all 173 cases to `got==rule==live`. The table is
+  reached only through `selftest_tc_self_host_only_call`, never `mindc_compile`, so the change
+  is byte-identity neutral (Rust `mod.rs` is the authoritative side; E2024 is an advisory
+  `Warning`). The RI-E1 self-host bootstrap seed is re-blessed. Gates: E2024 173/173 · E2012
+  fn-value-call 56/56 (shared table, zero regression) · oracle-parity 30/30 · mic3_flip
+  whole-module byte-identical · keystone 7/7 · tc-differential-fuzz 0 divergences ·
+  self-host loop stage1==stage2==stage3==frozen.
+
+### Security — post-quantum evidence-chain signing + parser hardening (RFC 0016 Phase C, opt-in)
+- **PQC-hybrid signing scheme `pqc-hybrid-ml-dsa-87-slh-dsa-256s`.** The opt-in evidence
+  signature layer gains a NIST category-5 post-quantum hybrid: **ML-DSA-87** (FIPS-204,
+  lattice) **and** **SLH-DSA-SHAKE-256s** (FIPS-205, hash-based) — BOTH legs must verify
+  (AND-combiner). The verifier is **non-degradable**: stripping or tampering either leg,
+  or rewriting the `signature.scheme` tag to a weaker single-leg scheme, fails closed
+  (`Malformed`/`Invalid`) — the hybrid can never collapse to a single-scheme signature.
+  Both legs sign RNG-free (deterministic-from-seed), so a signed artifact stays
+  byte-identical across substrates. Gated behind the `evidence-mldsa` + `evidence-slhdsa`
+  cargo features (OFF by default): the keystone byte-identity gate never compiles a PQC
+  crate and the determinism wedge is untouched.
+- **mic@3 MAP epilogue parser hardening (anti-malleability).** `parse_map_epilogue` now
+  rejects **duplicate keys** and **trailing bytes** after the last entry, both fail-closed
+  (`ParseMapError::DuplicateKey` / `TrailingBytes`). The canonical MAP is a set with
+  nothing after the final entry and the emit path never produces either, so this is
+  byte-neutral on emit and accepts every artifact any emitter version ever produced; it
+  closes a byte-malleability vector where a redundant copy of a signed key, or trailing
+  garbage, could ride inside an otherwise-`Valid` artifact outside the signed preimage.
+  The entry-count allocation guard is tightened to `remaining / MIN_ENTRY_BYTES`, capping a
+  crafted `count` from pre-sizing a several-hundred-megabyte `Vec`.
+- **`mindc verify` surfaces both PQC pubkeys.** The verify report (JSON and human) now
+  emits `signature_mldsa87_pubkey` / `signature_slhdsa_pubkey` so scripted consumers can
+  out-of-band-pin the hybrid key material, matching the existing ed25519 / ml-dsa-65 fields.
 
 ### Added — Phase 17 numerical research surface (f64 completeness)
 - **`const`-array executable lowering (17.4).** `const NAME: [i64; N] = [...]` with
@@ -70,6 +296,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declaration (no IR-node field, no mic@3 wire change). `f64` `const`-array
   definitions fail closed (the i64 heap would silently zero them). Build-and-run gate
   `tests/const_array_run.rs`.
+- **Array-parameter lowering to `cdylib` (17.6).** A function taking a fixed array
+  parameter — `fn dot(a: [i64; N], b: [i64; N]) -> i64 { … a[i] … }` — now compiles to
+  a shared library. `type_ann_to_abi_mlir` + `type_ann_to_value_kind` gained a
+  `TypeAnn::Array` arm, so a `[T; N]` param maps to the same `tensor<NxT>` MLIR
+  boundary a `Tensor` annotation uses (bufferize-function-boundaries → memref C-ABI,
+  the proven tensor-param path) instead of falling to the scalar-`i64` default, where
+  `ArrayLoad` on the param had failed with *"missing type information … array load
+  base"*. Rank-1, scalar element. Additive — array-param programs previously errored,
+  so no working program (including self-host `main.mind`) changes bytes (keystone 7/7
+  byte-identical). Unblocks the head-to-head performance shape (`axpy`/`dot`/`gemv`)
+  against C.
+- **Determinism-with-speed evidence.** The deterministic int8 GEMM kernel runs
+  **~2.02× a single-core OpenBLAS f32 reference, byte-exact** (`bench/RESULTS-int8-2026-06-08.md`);
+  and — vs a *naïve* `clang -O3 -march=x86-64-v3` loop (what `-O3` gives without
+  hand-blocking) — byte-identical output at a large margin, with a `memcmp` correctness
+  gate *before* any timing (`bench/RESULTS-beat-clang-igemm-2026-08-21.md`, reproducible
+  driver `bench/beat_clang_igemm_driver.c`). No `-ffast-math` claim (determinism forbids
+  float reassociation).
 - **Scalar `f64` `sqrt` (17.5)** lowers to the IEEE correctly-rounded `llvm.intr.sqrt`.
   `sqrt` is now a **reserved builtin name (E2031)** — a user `fn sqrt` is rejected at
   check-time (one name, one meaning; removes a silent-shadow / duplicate-symbol class).

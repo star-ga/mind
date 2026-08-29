@@ -1,0 +1,96 @@
+// RH f64-aggregate self-host/native canary (RH_REQUIRED_F64_AGGREGATE_SURFACE).
+//
+// Deterministic LDL^T-style elimination on a 4x4 rational symmetric
+// positive-definite matrix whose entries AND every factor (D diagonal, L
+// off-diagonals) are EXACTLY representable in IEEE-754 binary64 (integers and
+// halves), so the result is a bit-exact integer with NO rounding — the same on
+// the Rust/MLIR backend and the pure-MIND self-host/native backend, run-to-run
+// and cross-substrate.
+//
+// Exercises the full required surface:
+//   (A) local fixed `[f64; N]` arrays, runtime-indexed load `x = a[i]` + store
+//       `a[i] = x`, exact f64 semantics (never reinterpreted as i64);
+//   (B) store inside `while` loops, visible after the loop;
+//   (C) flat matrix `[f64; N*N]` addressed `m[i*n + j]` with nested scalar
+//       loops (NO nested arrays);
+//   (D) a helper taking a fixed `[f64; 4]` parameter (read-only), called with a
+//       local array value;
+//   (E) f64 loop state — add / sub / mul / div, comparisons, loop-carried
+//       accumulators, i64<->f64 index conversions — with NO fast-math /
+//       reassociation (strict left-to-right IEEE-754).
+//
+// Expected return value: 37.
+//   D = [4, 4, 4, 5]                          -> sum(D)              = 17
+//   strictly-lower L entries = six halves     -> sum                =  3
+//   checksum = sum(D) + sum(L_lower)                                 = 20
+//   trace4(D) over the fixed [f64;4] param                          = 17
+//   return (checksum + trace4(D)) as i64                             = 37
+
+fn trace4(d: [f64; 4]) -> f64 {
+    let mut s: f64 = 0.0;
+    let mut i: i64 = 0;
+    while i < 4 {
+        s = s + d[i];
+        i = i + 1;
+    }
+    return s;
+}
+
+fn main() -> i64 {
+    let n: i64 = 4;
+
+    // Symmetric SPD matrix A (row-major flat), exactly representable.
+    let mut a: [f64; 16] = [4.0, 2.0, 2.0, 2.0, 2.0, 5.0, 3.0, 3.0, 2.0, 3.0, 6.0, 4.0, 2.0, 3.0, 4.0, 8.0];
+    // L (unit lower-triangular) and D (diagonal), zero-initialised.
+    let mut l: [f64; 16] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    let mut d: [f64; 4] = [0.0, 0.0, 0.0, 0.0];
+
+    // LDL^T factorisation.
+    //   d[j]    = a[j][j] - sum_{k<j} l[j][k]^2 * d[k]
+    //   l[i][j] = (a[i][j] - sum_{k<j} l[i][k]*l[j][k]*d[k]) / d[j]
+    let mut j: i64 = 0;
+    while j < n {
+        let mut dj: f64 = a[j * n + j];
+        let mut k: i64 = 0;
+        while k < j {
+            dj = dj - l[j * n + k] * l[j * n + k] * d[k];
+            k = k + 1;
+        }
+        d[j] = dj;
+        l[j * n + j] = 1.0;
+        let mut i: i64 = j + 1;
+        while i < n {
+            let mut s: f64 = a[i * n + j];
+            let mut k2: i64 = 0;
+            while k2 < j {
+                s = s - l[i * n + k2] * l[j * n + k2] * d[k2];
+                k2 = k2 + 1;
+            }
+            l[i * n + j] = s / dj;
+            i = i + 1;
+        }
+        j = j + 1;
+    }
+
+    // checksum = sum(D) + sum of strictly-lower L entries.
+    let mut checksum: f64 = 0.0;
+    let mut jj: i64 = 0;
+    while jj < n {
+        checksum = checksum + d[jj];
+        jj = jj + 1;
+    }
+    let mut r: i64 = 0;
+    while r < n {
+        let mut c: i64 = 0;
+        while c < r {
+            checksum = checksum + l[r * n + c];
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+
+    // Helper over a fixed [f64; 4] parameter (the diagonal D).
+    let t: f64 = trace4(d);
+
+    return (checksum + t) as i64;
+}

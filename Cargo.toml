@@ -38,7 +38,20 @@ pyo3 = { version = "0.29", optional = true, features = ["extension-module"] }
 # is a vetted, pure-Rust FIPS-204 implementation (integritychain/fips204) — we do
 # NOT reimplement the lattice math. `default-features = false` drops the OS-RNG
 # path: signing is fully deterministic via keygen_from_seed + try_sign_with_seed.
-fips204 = { version = "0.4.6", default-features = false, features = ["ml-dsa-65"], optional = true }
+# ml-dsa-65 = the shipped hybrid's lattice leg + historical-artifact verify.
+# ml-dsa-87 (cat-5) = the lattice leg of the bulletproof PQC-hybrid (RFC 0016
+# max-security profile). Both parameter sets from the same vetted crate.
+fips204 = { version = "0.4.6", default-features = false, features = ["ml-dsa-65", "ml-dsa-87"], optional = true }
+# SLH-DSA (SPHINCS+, FIPS-205) — the hash-based leg of the bulletproof PQC-hybrid.
+# Same vetted-crate policy as fips204: pure-Rust integritychain impl, we do NOT
+# reimplement the hash-tree math. default-features = false drops the OS-RNG path;
+# only slh_dsa_shake_256s (cat-5, small-signature — right for offline low-cadence).
+# Signing is deterministic via keygen_with_seeds + try_sign(hedged = false).
+fips205 = { version = "0.4.1", default-features = false, features = ["slh_dsa_shake_256s"], optional = true }
+# fips205's deterministic sign is exposed only via `try_sign_with_rng`; with
+# hedged = false the RNG is never read (opt_rand = PK.seed), so we feed it a
+# zero RNG. rand_core 0.6.4 matches fips205's own pin — one crate, no duplicate.
+rand_core = { version = "0.6.4", default-features = false, optional = true }
 
 [dev-dependencies]
 criterion = "0.5"
@@ -266,6 +279,10 @@ ffi-examples = []
 # determinism/keystone gate builds WITHOUT this feature, so the trace_hash anchor
 # is untouched (signatures are metadata after the MAP sentinel).
 evidence-mldsa = ["fips204"]
+# Bulletproof PQC-hybrid hash-based leg (SLH-DSA-SHAKE-256s, FIPS-205). OFF by
+# default like evidence-mldsa — the determinism/keystone gate never compiles it.
+# The full max-security scheme is evidence-mldsa + evidence-slhdsa together.
+evidence-slhdsa = ["dep:fips205", "dep:rand_core"]
 pkg = ["tar", "flate2", "sha2"]
 registry = []
 python-bindings = ["pyo3"]

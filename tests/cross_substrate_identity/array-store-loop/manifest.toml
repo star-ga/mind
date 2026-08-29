@@ -1,0 +1,48 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See u64-ops/manifest.toml for
+# the format notes.
+#
+# The F2 aggregate loop-carry canary. Pins #320 Step D: a fixed `[i64; 8]`
+# mutated by `a[k] = v` INSIDE a loop body is threaded as a value-semantic
+# `tensor<8xi64>` loop iter-arg — the loop's header / body / `^while_after`
+# block-args and every `cf.br`/`cf.cond_br` operand list carry the tensor type,
+# and every post-loop read resolves against the exit-id block-arg. Before this
+# (F2), such a store was REJECTED fail-closed because the region-exit rebind left
+# the aggregate untyped; the pre-fail-closed version silently DROPPED the write
+# (the post-loop read saw the pre-loop value).
+#
+# The kernel `array_store_loop(base)` takes `base` as a RUNTIME arg (its i64 bit
+# pattern) so the eight per-slot stores `a[k] = base*k + k*k` are not
+# constant-folded, then folds the eight slots in FIXED source order via a
+# wrapping polynomial (K = 1000003) into one i64.
+#
+# Why avx2 == neon: integer store / add / mul are exact and order-independent
+# (no reassociation, no rounding), and — verified on the post-bufferization LLVM
+# IR — the loop body carries NO per-iteration malloc/memcpy (the tensor iter-arg
+# stays in-place as a self-cycling memref-descriptor phi), so both substrates
+# compute the identical i64 by construction (RFC 0015 §3.1). Any divergence is a
+# real regression (a dropped store, a per-iteration copy, or a wrong incarnation)
+# and a release-blocker.
+
+version = "1"
+name = "array-store-loop"
+description = "Fixed [i64; 8] mutated by a[k]=v inside a loop, folded to one i64 — the byte-identity + correctness pin for #320 Step D value-semantic aggregate loop-carry (F2 tensor iter-arg). A dropped/aliased store or a per-iteration copy flips the result."
+weight = 1.0
+
+# Both substrates share the hash (integer store/add/mul are architecture-
+# independent by construction, RFC 0015 §3.1).
+substrates = ["avx2", "neon"]
+
+# Deterministic input spec: one fixed i64 `base` supplied by the harness as a
+# runtime arg so the per-slot stores are not constant-folded.
+#   base = 7 (a[k] = 7*k + k*k for k in 0..8 ⇒ distinct non-zero slots)
+[input]
+generator = "fixed"
+base = 7
+dtype = "i64-scalar"
+
+[kernel]
+symbol = "array_store_loop"
+ops = "a[k] = base*k + k*k for k in 0..8 (loop-carried fixed [i64; 8] store)"
+fold = "acc = acc*1000003 + a[k], fixed source order over the 8 post-loop reads"
+returns = "i64"                  # the folded i64
+output_encoding = "i64_le"       # i64 as 8 LE bytes, then sha256

@@ -176,6 +176,19 @@ if [ "${1:-}" = "--full" ]; then
     bad "mic3_primitives_smoke.py MISSING — CI runs it; preflight cannot verify it"
   fi
 
+  step "self-host LOOP gate  [ci.yml keystone job — catches main.mind/std drift the frozen seed wasn't re-blessed for]"
+  # The keystone 7/7 above is self-consistent (both sides rebuild from the CURRENT
+  # main.mind), so it PASSES even when a main.mind/std edit left the checked-in frozen
+  # stage0 seed stale. This gate runs the FROZEN pure-MIND ELF on the CURRENT source
+  # (PRIMARY mode — no MINDC_SO needed) and asserts it still reproduces the seed: the
+  # exact drift that reddened main after #10 added main.mind helpers with no --reseed.
+  # Fix on FAIL:  MINDC_SO=<built .so> python3 examples/mindc_mind/self_host_loop_smoke.py --reseed
+  # then commit the re-blessed testdata/selfhost_loop/{stage1.elf,MANIFEST.txt}.
+  loop_rc=0; python3 examples/mindc_mind/self_host_loop_smoke.py >/tmp/preflight-loop.out 2>&1 || loop_rc=$?
+  if [ "$loop_rc" = 0 ]; then echo "ok (frozen seed reproduces current source)"
+  elif [ "$loop_rc" = 2 ]; then echo "skip (frozen bootstrap fixture missing — BLOCKED)"
+  else bad "self-host loop drift — main.mind/std changed but the frozen seed was NOT re-blessed; --reseed in this change (see /tmp/preflight-loop.out)"; tail -3 /tmp/preflight-loop.out; fi
+
   step "bench gate (frozen low-level frontend)  [bench-gate.yml, --no-default-features]"
   base=$(ls -t .bench-baseline-*correctness*.txt 2>/dev/null | head -1)
   if [ -n "$base" ] && [ -f tools/bench_gate.py ]; then

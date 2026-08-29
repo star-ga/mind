@@ -1932,45 +1932,28 @@ MIND_EXPORT int64_t __mind_gen_free(int64_t handle) {
  * ───────────────────────────────────────────────────────────────────────── */
 #include <stdint.h>
 
-#define MIND_MT_POOL_MAX 256
-
 typedef void *(*mind_mt_worker_fn)(void *);
 
-/* Windows (MSVC) has no <pthread.h> / <unistd.h>, so the POSIX worker pool below
- * does not compile there — it broke the Windows CI leg with
- * "fatal error: 'pthread.h' file not found" while every other platform block in
- * this file was already _WIN32-guarded.
- *
- * The fallback runs the bands SEQUENTIALLY, and that is byte-exact rather than a
- * degraded approximation: this dispatcher's contract is owner-computes M-row
- * bands with NO cross-band reduction and NO atomics, so band i writes only its
- * own rows and the emitted values are independent of the number of threads and
- * of execution order by construction (the cross-substrate thread-sweep gate pins
- * T in {1,2,4,6,12} to the same hash). Sequential execution is simply T=1.
- *
- * deferred: a Win32 CONDITION_VARIABLE / SRWLOCK pool would restore the
- * parallel speedup on Windows — upgrade path is to mirror mind_mt_pool_init /
- * mind_mt_worker_loop onto InitializeConditionVariable + SleepConditionVariableSRW,
- * keeping this same dispatch signature so no caller changes. */
 #if defined(_WIN32) || defined(_WIN64)
-
+/* Windows (MSVC ships no <pthread.h> / <unistd.h>): run every band serially on
+ * the calling thread. Byte-identical to the pooled MT path by construction —
+ * owner-computes, each band writes a disjoint row range, so the result is
+ * independent of thread count. Keeps __mind_blas_mt_dispatch defined so emitted
+ * MT kernels link on Windows; the deterministic output is unchanged. */
 void __mind_blas_mt_dispatch(mind_mt_worker_fn worker, char *argbuf,
                              long struct_bytes, long n_bands) {
     if (n_bands <= 0) {
         return;
     }
-    if (n_bands > MIND_MT_POOL_MAX) {
-        n_bands = MIND_MT_POOL_MAX;
-    }
     for (long i = 0; i < n_bands; i++) {
         worker(argbuf + (intptr_t)i * struct_bytes);
     }
 }
-
-#else /* POSIX: real worker pool */
-
+#else
 #include <pthread.h>
 #include <unistd.h>
+
+#define MIND_MT_POOL_MAX 256
 
 static struct {
     pthread_mutex_t   mtx;
@@ -1982,6 +1965,7 @@ static struct {
     long              active;   /* # bands in the current round */
     long              finished; /* # bands completed this round */
     long              pool_n;   /* # worker threads created */
+    int               stop;     /* dlclose/atexit shutdown flag (guarded by mtx) */
     pthread_t         threads[MIND_MT_POOL_MAX];
 } mind_mt = {
     .mtx = PTHREAD_MUTEX_INITIALIZER,
@@ -2000,6 +1984,10 @@ static void *mind_mt_worker_loop(void *p) {
             pthread_cond_wait(&mind_mt.wake, &mind_mt.mtx);
         }
         seen = mind_mt.gen;
+        if (mind_mt.stop) {            /* teardown round: exit the worker loop */
+            pthread_mutex_unlock(&mind_mt.mtx);
+            break;
+        }
         int inrange = (id < mind_mt.active);
         mind_mt_worker_fn fn = inrange ? mind_mt.fn[id] : 0;
         void *arg = inrange ? mind_mt.arg[id] : 0;
@@ -2057,4 +2045,38 @@ void __mind_blas_mt_dispatch(mind_mt_worker_fn worker, char *argbuf,
     pthread_mutex_unlock(&mind_mt_dispatch_lock);
 }
 
-#endif /* _WIN32 || _WIN64 */
+/* Pool teardown on .so unload (dlclose) / process exit.
+ *
+ * libloading drops the Library (== dlclose) when a consumer unloads the cdylib.
+ * Without this, the pool's parked worker threads keep waiting on a condvar whose
+ * backing code + memory has just been unmapped -> a thread/condvar leak (and a
+ * potential crash) on every load/unload cycle. This destructor poisons the round
+ * generation, wakes every worker, and joins them so no thread outlives the module.
+ *
+ * fork-after-init is UNSUPPORTED in the deterministic path: after the pool is
+ * created the parked workers do not survive a fork(), so a child that then calls
+ * an MT kernel would hang. Callers must create the pool AFTER any fork (the
+ * one-query routing path does; documented, not a bug).
+ *
+ * Init-safe + idempotent: if the pool never initialised (pool_n == 0) there is
+ * nothing to tear down. Runs single-threaded at unload — no dispatch is in flight
+ * (every caller releases mind_mt_dispatch_lock and joins all bands before return),
+ * so all workers are parked on `wake` and observe stop on the next broadcast. */
+__attribute__((destructor))
+static void mind_mt_pool_shutdown(void) {
+    pthread_mutex_lock(&mind_mt.mtx);
+    if (mind_mt.pool_n == 0) {          /* pool never created — nothing to join */
+        pthread_mutex_unlock(&mind_mt.mtx);
+        return;
+    }
+    mind_mt.stop = 1;
+    mind_mt.gen++;                      /* force every parked worker to re-check */
+    pthread_cond_broadcast(&mind_mt.wake);
+    long n = mind_mt.pool_n;
+    pthread_mutex_unlock(&mind_mt.mtx);
+    for (long i = 0; i < n; i++) {
+        pthread_join(mind_mt.threads[i], 0);
+    }
+    mind_mt.pool_n = 0;                 /* idempotent: a second call is a no-op */
+}
+#endif  /* !defined(_WIN32) — pthread MT pool (Linux/macOS); Windows uses the serial dispatch above */

@@ -530,6 +530,18 @@ fn for_each_operand_mut(instr: &mut Instr, mut f: impl FnMut(&mut ValueId)) {
         #[cfg(feature = "std-surface")]
         I::ConstArray { .. } => {}
         #[cfg(feature = "std-surface")]
+        I::ArrayStore {
+            base, index, value, ..
+        } => {
+            // Mirrors `for_each_operand`'s ArrayStore arm exactly. `dst` is the
+            // DEF (the fresh aggregate after the store), never an operand, so it
+            // is deliberately not visited — renaming it here would rewrite a
+            // definition and break SSA.
+            f(base);
+            f(index);
+            f(value);
+        }
+        #[cfg(feature = "std-surface")]
         I::ArrayLoad { base, index, .. } => {
             f(base);
             f(index);

@@ -628,6 +628,20 @@ jobs:
             python3 examples/mindc_mind/self_host_native_diag_smoke.py
         working-directory: ${{ github.workspace }}
 
+      - name: RH f64-aggregate surface canary (rh_f64_aggregate_canary_smoke.py)
+        # RH_REQUIRED_F64_AGGREGATE_SURFACE — deterministic LDL^T elimination on a
+        # 4x4 rational SPD matrix (entries + factors exactly representable in
+        # binary64) exercising local `[f64; N]` arrays, runtime load+store, store
+        # inside loops, flat `m[i*n+j]` matrix, a read-only `[f64; 4]` param helper,
+        # and f64 loop accumulators. MLIR leg (`--emit=binary`) is REQUIRED to return
+        # the bit-exact 37; the native leg (`--backend native`) must fail CLOSED until
+        # the fixed-array store + array-param are ported to the pure-MIND emitter
+        # (no silent wrong-value artifact). Uses the mlir-build mindc built above.
+        run: |
+          MINDC_BIN=${{ github.workspace }}/target/release/mindc \
+            python3 examples/mindc_mind/rh_f64_aggregate_canary_smoke.py
+        working-directory: ${{ github.workspace }}
+
       - name: Native-ELF float end-to-end gate (self_host_native_fp_expr_smoke.py)
         # RI-B1 CAPSTONE (roadmap C1): nb_expr now routes an ast_float_lit's value
         # through the SSE2 scalar-double encoders (nb_fp_const_xmm + movsd-store to the

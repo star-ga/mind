@@ -2696,6 +2696,20 @@ impl LoweringContext {
                             // `__mind_conv_u64` marker also flows through here.
                             #[cfg(feature = "std-surface")]
                             Some(ValueKind::ScalarU64) => {}
+                            // RH f64-aggregate surface: a fixed `[T; N]` array passed
+                            // BY VALUE to a user fn is a `Tensor` arg. The callee's
+                            // param type recorded in `fn_signatures` is the matching
+                            // `tensor<NxT>` (TypeAnn::Array lowering, c7d48d7f), and
+                            // the generic emission below forwards the tensor SSA
+                            // value unchanged into `func.call @f(%a) : (tensor<NxT>)
+                            // -> ret`; mlir-opt's function-boundary bufferization
+                            // lowers the internal tensor call. A shape/dtype mismatch
+                            // vs the callee stays loud at mlir-opt (the `_ => ""`
+                            // coercion pass-through), never a silent miscompile. This
+                            // is the read-only fixed-array param ABI (array RETURN is
+                            // still out of subset and rejected elsewhere).
+                            #[cfg(feature = "std-surface")]
+                            Some(ValueKind::Tensor { .. }) => {}
                             _ => {
                                 return Err(MlirLowerError::UnsupportedOp {
                                     instr_index,
@@ -4036,13 +4050,9 @@ impl LoweringContext {
                 // f64/f32 loop carry emits `: f64`/`: f32` instead of a hardcoded
                 // i64. Narrow ints stay i64 (their ABI is i64-packed) ⇒ for an
                 // all-i64 loop this is byte-identical to the untyped fmt_block_args.
-                let loop_types: Vec<&'static str> = loop_args
+                let loop_types: Vec<String> = loop_args
                     .iter()
-                    .map(|a| match self.values.get(&ValueId(a.init_id)) {
-                        Some(ValueKind::ScalarF64) => "f64",
-                        Some(ValueKind::ScalarF32) => "f32",
-                        _ => "i64",
-                    })
+                    .map(|a| loop_carry_mlir_type(self.values.get(&ValueId(a.init_id))))
                     .collect();
 
                 // Build arg-triple slices consumed by substitute_ids.
@@ -4099,11 +4109,7 @@ impl LoweringContext {
                             // need float block args — a hardcoded i64 makes
                             // `while` over floats invalid MLIR (i64 vs f64).
                             // Narrow ints stay i64 (their ABI is i64-packed).
-                            let ty = match self.values.get(&ValueId(a.init_id)) {
-                                Some(ValueKind::ScalarF64) => "f64",
-                                Some(ValueKind::ScalarF32) => "f32",
-                                _ => "i64",
-                            };
+                            let ty = loop_carry_mlir_type(self.values.get(&ValueId(a.init_id)));
                             format!("%{}: {}", a.head_name, ty)
                         })
                         .collect::<Vec<_>>()
@@ -4235,11 +4241,7 @@ impl LoweringContext {
                     let arg_decls: String = loop_args
                         .iter()
                         .map(|a| {
-                            let ty = match self.values.get(&ValueId(a.init_id)) {
-                                Some(ValueKind::ScalarF64) => "f64",
-                                Some(ValueKind::ScalarF32) => "f32",
-                                _ => "i64",
-                            };
+                            let ty = loop_carry_mlir_type(self.values.get(&ValueId(a.init_id)));
                             format!("%{}: {}", a.body_name, ty)
                         })
                         .collect::<Vec<_>>()
@@ -4380,26 +4382,26 @@ impl LoweringContext {
                     let after_arg_decls: String = loop_args
                         .iter()
                         .map(|a| {
-                            let ty = match self.values.get(&ValueId(a.init_id)) {
-                                Some(ValueKind::ScalarF64) => "f64",
-                                Some(ValueKind::ScalarF32) => "f32",
-                                _ => "i64",
-                            };
+                            let ty = loop_carry_mlir_type(self.values.get(&ValueId(a.init_id)));
                             format!("%{}: {}", a.exit_id, ty)
                         })
                         .collect::<Vec<_>>()
                         .join(", ");
                     self.emit_line(&format!("  ^while_after_{lbl}({after_arg_decls}):"));
                     // Register each exit id with its REAL loop-carried kind so any
-                    // downstream type lookup (e.g. a `return %exit` of an f64 loop
-                    // carry) emits the correct ABI type instead of a hardcoded i64.
-                    // Byte-identical for i64 loops (kind stays ScalarI64).
-                    for (a, t) in loop_args.iter().zip(&loop_types) {
-                        let kind = match *t {
-                            "f64" => ValueKind::ScalarF64,
-                            "f32" => ValueKind::ScalarF32,
-                            _ => ValueKind::ScalarI64,
-                        };
+                    // downstream type lookup emits the correct ABI type instead of a
+                    // hardcoded i64: a `return %exit` of an f64 loop carry needs f64,
+                    // and — F2 aggregate loop-carry (#320 Step D) — a post-loop
+                    // `ArrayLoad` on the exit id of a mutated `[T; N]` needs
+                    // `ValueKind::Tensor` or it fails MissingTypeInfo. Clone the
+                    // pre-loop init kind (invariant across header/body/after); i64
+                    // loops stay byte-identical (kind is ScalarI64 / absent→ScalarI64).
+                    for a in &loop_args {
+                        let kind = self
+                            .values
+                            .get(&ValueId(a.init_id))
+                            .cloned()
+                            .unwrap_or(ValueKind::ScalarI64);
                         self.values.insert(ValueId(a.exit_id), kind);
                     }
                 }
@@ -4621,6 +4623,104 @@ impl LoweringContext {
                     dst, base, dst.0, len
                 ));
                 self.values.insert(*dst, kind);
+            }
+            // #320 Step D aggregate mutation — array element store. Mirrors the
+            // ArrayLoad bounds discipline (DETERMINISTIC_BOUNDS_TRAP) but emits
+            // `tensor.insert` yielding a FRESH aggregate value `dst` (same tensor
+            // type as `base`), so a later ArrayLoad on the rebound name observes
+            // the write. Only {i64,i32,f32,f64} elements are proven-correct; every
+            // other element type fails closed (matching ArrayLoad).
+            #[cfg(feature = "std-surface")]
+            Instr::ArrayStore {
+                dst,
+                base,
+                index,
+                value,
+            } => {
+                let (elem_dtype, len, shape) = match self.values.get(base) {
+                    Some(ValueKind::Tensor { dtype, shape }) => {
+                        let len = match shape.as_slice() {
+                            [ShapeDim::Known(n)] => *n,
+                            _ => {
+                                return Err(MlirLowerError::ShapeError(format!(
+                                    "ArrayStore base {base:?} is not a rank-1 static array"
+                                )));
+                            }
+                        };
+                        (dtype.clone(), len, shape.clone())
+                    }
+                    _ => {
+                        return Err(MlirLowerError::MissingTypeInfo {
+                            value: *base,
+                            context: "array store base",
+                        });
+                    }
+                };
+                let elem = match elem_dtype {
+                    DType::I64 => "i64",
+                    DType::I32 => "i32",
+                    DType::F32 => "f32",
+                    DType::F64 => "f64",
+                    other => {
+                        return Err(MlirLowerError::ShapeError(format!(
+                            "ArrayStore: element type `{}` is not supported on the \
+                             executable path (only i64/i32/f32/f64); storing into a \
+                             `{}`-typed array element is rejected to avoid a silent \
+                             width-miscompile or invalid IR",
+                            other.as_str(),
+                            other.as_str()
+                        )));
+                    }
+                };
+                if len == 0 {
+                    return Err(MlirLowerError::ShapeError(format!(
+                        "ArrayStore: cannot index an empty (len 0) array {base:?} \
+                         — every index is out of bounds"
+                    )));
+                }
+                // ARRAY_OOB_CONTRACT=DETERMINISTIC_BOUNDS_TRAP, identical to
+                // ArrayLoad: provable const OOB rejected at compile time, runtime
+                // index routed through the single `__mind_oob_check` authority.
+                match self.const_i64_map.get(index).copied() {
+                    Some(c) if c < 0 || c >= len as i64 => {
+                        return Err(MlirLowerError::ShapeError(format!(
+                            "ArrayStore: constant index {c} is out of bounds for a \
+                             length-{len} array {base:?} (valid indices 0..={}) — a \
+                             compile-time-provable out-of-bounds access is rejected \
+                             deterministically, never clamped",
+                            len - 1
+                        )));
+                    }
+                    Some(c) => {
+                        self.emit_line(&format!("  %sidx{0} = arith.constant {c} : index", dst.0));
+                    }
+                    None => {
+                        self.extern_calls
+                            .insert(("__mind_oob_check".to_string(), 2));
+                        self.emit_line(&format!("  %slen{0} = arith.constant {len} : i64", dst.0));
+                        self.emit_line(&format!(
+                            "  %schk{0} = func.call @__mind_oob_check({1}, %slen{0}) : (i64, i64) -> i64",
+                            dst.0, index
+                        ));
+                        self.emit_line(&format!(
+                            "  %sidx{0} = arith.index_cast %schk{0} : i64 to index",
+                            dst.0
+                        ));
+                    }
+                }
+                // `dst` is a NEW aggregate value of the SAME tensor type as base —
+                // register it so a following ArrayLoad on the rebound name types.
+                self.emit_line(&format!(
+                    "  {0} = tensor.insert {1} into {2}[%sidx{3}] : tensor<{4}x{elem}>",
+                    dst, value, base, dst.0, len
+                ));
+                self.values.insert(
+                    *dst,
+                    ValueKind::Tensor {
+                        dtype: elem_dtype,
+                        shape,
+                    },
+                );
             }
             // RFC 0006 Track B (increment 1) — SIMD vector load.
             //
@@ -11391,6 +11491,18 @@ fn type_ann_to_abi_mlir(ty: &crate::ast::TypeAnn) -> String {
             };
             tensor_type(&tensor_ann_shape(dims), elem)
         }
+        // A fixed array param/return `[T; N]` lowers to the SAME MLIR
+        // `tensor<NxT>` boundary as a `Tensor` annotation — the build pipeline's
+        // `bufferize-function-boundaries` pass (see the `Tensor` arm) converts
+        // the by-value tensor to a memref out-param at the C ABI, so an
+        // array-param fn links + runs. Previously `[T; N]` fell to the `_ =>`
+        // "i64" default, so `ArrayLoad` on the param found no `ValueKind::Tensor`
+        // and lowering failed with "missing type information for … array load
+        // base". Rank-1, scalar element only (matches the `ArrayLoad` subset).
+        crate::ast::TypeAnn::Array { element, length } => {
+            let elem = type_ann_to_abi_mlir(element);
+            tensor_type(&[ShapeDim::Known(*length as usize)], &elem)
+        }
         _ => "i64".to_string(),
     }
 }
@@ -11430,6 +11542,17 @@ fn type_ann_to_value_kind(ty: &crate::ast::TypeAnn) -> ValueKind {
         | crate::ast::TypeAnn::DiffTensor { dtype, dims } => ValueKind::Tensor {
             dtype: dtype.parse::<DType>().unwrap_or(DType::F32),
             shape: tensor_ann_shape(dims),
+        },
+        // `[T; N]` param seeds the SAME value-tensor kind as a `Tensor`
+        // annotation, so a downstream `ArrayLoad` on the param recovers the
+        // element type + length. Previously the param fell to `ScalarI64` and
+        // `ArrayLoad` failed "missing type information for … array load base".
+        // Rank-1 scalar element (matches `type_ann_to_abi_mlir` + `ArrayLoad`).
+        crate::ast::TypeAnn::Array { element, length } => ValueKind::Tensor {
+            dtype: type_ann_to_abi_mlir(element)
+                .parse::<DType>()
+                .unwrap_or(DType::I64),
+            shape: vec![ShapeDim::Known(*length as usize)],
         },
         _ => ValueKind::ScalarI64,
     }
@@ -11554,6 +11677,49 @@ fn increment_odometer(coord: &mut [usize], sizes: &[usize]) {
             return;
         }
         coord[i] = 0;
+    }
+}
+
+/// MLIR type string of a loop-carried value, from its pre-loop `ValueKind`.
+///
+/// F2 aggregate loop-carry (#320 Step D): a fixed `[T; N]` / const-literal
+/// tensor mutated inside a loop body (`for k in .. { a[k] = v }`) is threaded
+/// as a first-class **value-semantic** `tensor<NxT>` loop iter-arg — the header,
+/// body and `^while_after` block-args, and every `cf.br`/`cf.cond_br` operand
+/// list, must carry that tensor type (not the default i64) or mlir-opt rejects
+/// the block-arg/operand type mismatch. BYTE-IDENTICAL for every scalar loop:
+/// f64/f32/i64 carries return the exact same string as the old inline match, so
+/// keystone / self-host / cross-substrate are untouched — only a tensor carry
+/// (which could not compile at all before) takes the new branch.
+///
+/// Element type maps the executable-path-proven set exactly (i64/i32/f32/f64),
+/// matching `ArrayLoad`/`ArrayStore`; an unproven tensor element dtype (Q16,
+/// f16, …) falls through to `dtype.as_str()`, which is INVALID MLIR and so
+/// fails LOUD at mlir-opt rather than silently miscompiling — the same
+/// fail-closed contract those two arms already enforce.
+///
+/// Gated on `std-surface`: it matches the `ScalarF64`/`ScalarF32` `ValueKind`
+/// variants, which are themselves `#[cfg(feature = "std-surface")]`, and it is
+/// only ever called from the `std-surface`-gated `Instr::While` loop-carry
+/// emitter — so under a non-`std-surface` build (CI's `--no-default-features
+/// --features mlir-lowering` gated-test leg) both the caller and these variants
+/// are absent and the fn is simply not compiled.
+#[cfg(feature = "std-surface")]
+fn loop_carry_mlir_type(kind: Option<&ValueKind>) -> String {
+    match kind {
+        Some(ValueKind::ScalarF64) => "f64".to_string(),
+        Some(ValueKind::ScalarF32) => "f32".to_string(),
+        Some(ValueKind::Tensor { dtype, shape }) => {
+            let elem = match dtype {
+                DType::I64 => "i64",
+                DType::I32 => "i32",
+                DType::F32 => "f32",
+                DType::F64 => "f64",
+                other => other.as_str(),
+            };
+            tensor_type(shape, elem)
+        }
+        _ => "i64".to_string(),
     }
 }
 

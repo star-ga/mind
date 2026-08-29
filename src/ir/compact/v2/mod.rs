@@ -59,7 +59,7 @@ pub use evidence::{
 };
 pub use parse::{Mic2ParseError, parse_mic2};
 pub use types::{DType, Graph, GraphEq, Map, MapValue, Opcode, TensorType, Value};
-pub use varint::{uleb128_read, uleb128_write, zigzag_decode, zigzag_encode};
+pub use varint::{uleb128_read, uleb128_read_minimal, uleb128_write, zigzag_decode, zigzag_encode};
 
 /// MIC v2 text format version header.
 pub const MIC2_HEADER: &str = "mic@2";

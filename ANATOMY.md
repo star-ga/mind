@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3396 | **Est. tokens:** ~8,031,707
-**Generated:** 2026-08-29 04:42 UTC
+**Files:** 3396 | **Est. tokens:** ~8,032,187
+**Generated:** 2026-08-29 06:19 UTC
 
 ## Token Budget Guide
 
@@ -76,7 +76,7 @@
 | `.github/workflows/` | 9 | ~22,807 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~20,940 |
-| `scripts/` | 16 | ~33,698 |
+| `scripts/` | 16 | ~33,998 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `sdk/ts/mic-map/` | 6 | ~16,202 |
@@ -396,9 +396,9 @@
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~5,541 |
 | `src/fmt/` | 3 | ~21,737 |
-| `src/ir/` | 5 | ~66,752 |
+| `src/ir/` | 5 | ~66,925 |
 | `src/ir/compact/` | 3 | ~15,292 |
-| `src/ir/compact/v2/` | 9 | ~45,357 |
+| `src/ir/compact/v2/` | 9 | ~45,364 |
 | `src/ir/compact/v3/` | 6 | ~58,597 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,880 |
@@ -1131,9 +1131,9 @@
 - `mind_intrinsics.c` (~20940 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
-- `anatomy-hook.sh` (~814 tok, large) — anatomy-hook.sh — Git pre-commit hook to refresh ANATOMY.md
+- `anatomy-hook.sh` (~851 tok, large) — STARGA author guard (chained first: a wrong-identity commit must never be created).
 - `anatomy.sh` (~2011 tok, huge) — anatomy — Generate ANATOMY.md for any repo
-- `cfg_gate_wiring_lint.py` (~2584 tok, huge) — Fail closed when a feature-gated integration test is wired to no CI selector.
+- `cfg_gate_wiring_lint.py` (~2847 tok, huge) — Fail closed when a feature-gated integration test is wired to no CI selector.
 - `check_claims.py` (~2779 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
 - `check_gate_wiring.py` (~2182 tok, huge) — Wiring lint: a whole-tree gate's CI trigger must cover every path it scans.
 - `check_json_not_evidence.sh` (~546 tok, large) — Wedge-integrity gate: JSON is never an evidence-hash preimage.
@@ -4037,7 +4037,7 @@
 - `parse.rs` (~8124 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/v2/`
 
-- `binary.rs` (~8844 tok, huge) — Copyright 2025 STARGA Inc.
+- `binary.rs` (~8845 tok, huge) — Copyright 2025 STARGA Inc.
 - `emit.rs` (~2445 tok, huge) — Copyright 2025 STARGA Inc.
 - `evidence.rs` (~10501 tok, huge) — Copyright 2025 STARGA Inc.
 - `map_limits.rs` (~1823 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4056,7 +4056,7 @@
 - `parse.rs` (~12924 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
-- `evidence.rs` (~10019 tok, huge) — Copyright 2025 STARGA Inc.
+- `evidence.rs` (~10192 tok, huge) — Copyright 2025 STARGA Inc.
 - `fp_mode.rs` (~13711 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
 - `mod.rs` (~17471 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~4283 tok, huge) — Copyright 2025 STARGA Inc.

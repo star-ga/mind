@@ -30,17 +30,31 @@ EXEMPT = {
     # name: reason
 }
 
-CFG_RE = re.compile(r'^#!\[cfg\((.+)\)\]', re.M)
+# NOT line-anchored: a crate-level attribute is routinely wrapped across lines
+# (`#![cfg(all(\n  unix,\n  feature = "mlir-build",\n))]`). A single-line pattern
+# silently fails to match those, so the file reads as UNCONDITIONAL and is skipped
+# — a false green inside the tool whose job is finding false greens. Measured:
+# 49 of tests/*.rs take the wrapped form. Balance the parens instead.
+CFG_START_RE = re.compile(r'^#!\[cfg\(', re.M)
 FEAT_RE = re.compile(r'feature\s*=\s*"([a-z0-9\-_]+)"')
 
 
 def required_features(src: str) -> set[str] | None:
     """Features a crate-level cfg demands, or None if the file is unconditional."""
-    m = CFG_RE.search(src)
+    m = CFG_START_RE.search(src)
     if not m:
         return None
-    feats = set(FEAT_RE.findall(m.group(1)))
-    return feats or None
+    i = src.index('(', m.start())
+    depth = 0
+    for j in range(i, len(src)):
+        if src[j] == '(':
+            depth += 1
+        elif src[j] == ')':
+            depth -= 1
+            if depth == 0:
+                feats = set(FEAT_RE.findall(src[i + 1:j]))
+                return feats or None
+    raise ValueError('unbalanced crate-level #![cfg(...)] — cannot determine required features')
 
 
 def ci_lines(text: str) -> list[str]:

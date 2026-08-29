@@ -1440,6 +1440,15 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                         &struct_env,
                         receiver_types,
                     ),
+                    // RH f64-aggregate: top-level `let a: [f64/f32; N] = [lit..]`
+                    // → typed ConstDenseTensor.
+                    #[cfg(feature = "std-surface")]
+                    Some(TypeAnn::Array { element, length }) => {
+                        match lower_fixed_dense_array_binding(element, *length, value, &mut ir) {
+                            Some(id) => id,
+                            None => lower_expr(value, &mut ir, &env, &struct_env, receiver_types),
+                        }
+                    }
                     // `array<T>` binding whose RHS is an array literal `[..]`:
                     // lower onto the std.vec heap runtime (vec_new + vec_push
                     // chain) instead of the const-array/tensor path.
@@ -1800,6 +1809,67 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     }
 
     ir
+}
+
+/// Route a local `let a: [f64; N] = [lit, ...]` (or `[f32; N]`) fixed-array
+/// binding to a TYPED `ConstDenseTensor` carrying the exact per-element
+/// IEEE-754 bits, so a following `a[i]` load / `a[i] = v` store recovers a
+/// well-typed `Tensor { dtype: F64/F32, .. }` base. The generic i64
+/// `ConstArray` path (the `_ => lower_expr` default) coerces every float
+/// literal to 0 and registers only `Tensor { I64 }`, so the executable
+/// `ArrayLoad`/`ArrayStore` then fails "missing type information" (or would
+/// mis-read the element as i64). Returns `None` for a non-float element type,
+/// a non-`ArrayLit` RHS, or a length/literal-count mismatch, so the caller
+/// keeps the byte-identical i64/i32 fixed-array path (keystone gate) and real
+/// type errors still surface on the ordinary path. #320 Step D / RH
+/// f64-aggregate surface.
+#[cfg(feature = "std-surface")]
+fn lower_fixed_dense_array_binding(
+    element: &TypeAnn,
+    length: u32,
+    value: &ast::Node,
+    ir: &mut IRModule,
+) -> Option<ValueId> {
+    let dtype = match element {
+        TypeAnn::ScalarF64 => DType::F64,
+        TypeAnn::ScalarF32 => DType::F32,
+        TypeAnn::Named(n) if n == "f64" => DType::F64,
+        TypeAnn::Named(n) if n == "f32" => DType::F32,
+        _ => return None,
+    };
+    let elements = match value {
+        ast::Node::ArrayLit { elements, .. } => elements.as_slice(),
+        _ => return None,
+    };
+    // Fail-closed length parity: a mismatch is a real type error. Fall back to
+    // the ordinary path (which surfaces it) rather than silently zero-fill /
+    // truncate here.
+    if elements.len() != length as usize {
+        return None;
+    }
+    // Fail-closed on a NON-CONST element (audit finding): `dense_elem_bits`
+    // resolves each element via `extract_const_f64(..).unwrap_or(0.0)`, so a
+    // non-literal element (`let a: [f64; 2] = [x, 1.0]`) would be SILENTLY baked
+    // to 0.0 — a wrong-value miscompile. Every element must be a compile-time
+    // const here; otherwise fall back to the ordinary path (a runtime
+    // element-wise init or a loud type error), never a silent zero. `f64`/`f32`
+    // both extract through `extract_const_f64` (see `dense_elem_bits`).
+    if elements.iter().any(|e| extract_const_f64(e).is_none()) {
+        return None;
+    }
+    let data: Vec<u64> = elements
+        .iter()
+        .map(|e| dense_elem_bits(e, &dtype))
+        .collect();
+    let shape = vec![ShapeDim::Known(length as usize)];
+    let id = ir.fresh();
+    ir.instrs.push(Instr::ConstDenseTensor {
+        dst: id,
+        dtype,
+        shape,
+        data,
+    });
+    Some(id)
 }
 
 fn lower_tensor_binding(
@@ -2605,26 +2675,92 @@ fn lettuple_elem_tys(
 /// them here would perturb the byte-identical i32 artifact stream), and
 /// `i64`/`u64`/handles are not narrow. Comparisons are excluded by the caller
 /// (they yield `i1`/bool, never a narrow scalar).
+/// Council-decided (2026-08-20, architecture A2) 3-valued narrow-arith
+/// lattice. Distinguishes a definitively-WIDE operand (a non-narrow `i64`/`i32`
+/// VARIABLE or an `as`-to-wide cast — which widens the whole integer expression
+/// to `i64`) from a width-NEUTRAL integer literal (forces no width) from a
+/// NARROW (`i8`/`u8`/`i16`/`u16`) operand (re-masks). The prior `Option<TypeAnn>`
+/// conflated a wide `i64` variable with a literal (both `None`), so
+/// `a_i64 + (b as i8)` was wrongly re-masked to `i8` (-12) instead of widened to
+/// `i64` (244) — a cross-front-end divergence vs the self-host emitter (#329).
+#[cfg(feature = "std-surface")]
+#[derive(Clone)]
+enum NarrowLat {
+    Narrow(TypeAnn),
+    Wide,
+    Neutral,
+}
+
+#[cfg(feature = "std-surface")]
+impl NarrowLat {
+    /// The narrow width to re-mask an arithmetic result to, if it is narrow.
+    fn narrow_ty(self) -> Option<TypeAnn> {
+        match self {
+            NarrowLat::Narrow(t) => Some(t),
+            NarrowLat::Wide | NarrowLat::Neutral => None,
+        }
+    }
+    fn as_narrow_ty(&self) -> Option<&TypeAnn> {
+        match self {
+            NarrowLat::Narrow(t) => Some(t),
+            NarrowLat::Wide | NarrowLat::Neutral => None,
+        }
+    }
+}
+
+/// Join two operand lattice values for an arithmetic binop (`+ - * / %`). Any
+/// `Wide` operand ⇒ `Wide` (a wide `i64`/non-narrow operand widens the whole
+/// expression, so `i64 + (x as i8)` is `i64`, not `i8`). `Narrow` + `Neutral`
+/// (literal) ⇒ that `Narrow` (so `a8 + 1` still re-masks). Two `Narrow`s ⇒ the
+/// WIDEST (preserving the historical `u8`/`u16` asymmetry fix; equal width keeps
+/// the LEFT for byte-stability). All-`Neutral` ⇒ `Wide` (an i64-default
+/// literal-only expression is not re-masked).
+#[cfg(feature = "std-surface")]
+fn join_narrow_lat(l: NarrowLat, r: NarrowLat) -> NarrowLat {
+    use NarrowLat::*;
+    match (l, r) {
+        (Wide, _) | (_, Wide) => Wide,
+        (Narrow(a), Narrow(b)) => {
+            let wa = narrow_named_shift_width(&a).unwrap_or(64);
+            let wb = narrow_named_shift_width(&b).unwrap_or(64);
+            if wb > wa { Narrow(b) } else { Narrow(a) }
+        }
+        (Narrow(a), Neutral) | (Neutral, Narrow(a)) => Narrow(a),
+        (Neutral, Neutral) => Wide,
+    }
+}
+
 #[cfg(feature = "std-surface")]
 fn infer_narrow_arith_ty(
     node: &ast::Node,
     ir: &IRModule,
     struct_env: &HashMap<String, String>,
     receiver_types: &HashMap<crate::ast::Span, String>,
-) -> Option<TypeAnn> {
-    // Perf early-skip: a module with NO narrow-int surface (prescan at
-    // `lower_to_ir` entry) can never yield `Some` here — every leaf arm filters
-    // through `is_named_narrow_sig_ty`, and every source it consults is
-    // narrow-free when the prescan found no narrow mention (proof in
-    // src/eval/narrow_scan.rs). Returning `None` up front skips the recursive
-    // operand-subtree walk that made nested all-i64/float arithmetic O(n²).
+) -> NarrowLat {
+    // Perf early-skip: a narrow-free module can never yield `Narrow`; return
+    // `Neutral` so every join stays non-narrow (no re-mask, all-i64 path
+    // byte-identical) without walking operand subtrees.
     if !MODULE_HAS_NARROW_SURFACE.with(|f| f.get()) {
-        return None;
+        return NarrowLat::Neutral;
     }
+    // A declared type maps to `Narrow` (8/16-bit) or, for a non-narrow named
+    // scalar, the caller-chosen `nonnarrow` value (`Wide` forces widening;
+    // `Neutral` preserves the historical non-forcing behaviour).
+    let classify = |t: Option<TypeAnn>, nonnarrow: NarrowLat| match t {
+        Some(ty) if is_named_narrow_sig_ty(&ty) => NarrowLat::Narrow(ty),
+        _ => nonnarrow,
+    };
     match node {
-        ast::Node::Lit(Literal::Ident(name), _) => NARROW_LOCALS
-            .with(|n| n.borrow().get(name).cloned())
-            .filter(is_named_narrow_sig_ty),
+        // A NARROW local ⇒ `Narrow`; any other (i64/i32/...) variable ⇒ `Wide`
+        // (a wide variable widens the arithmetic — THE #329 fix).
+        ast::Node::Lit(Literal::Ident(name), _) => {
+            match NARROW_LOCALS.with(|n| n.borrow().get(name).cloned()) {
+                Some(ty) if is_named_narrow_sig_ty(&ty) => NarrowLat::Narrow(ty),
+                _ => NarrowLat::Wide,
+            }
+        }
+        // An integer literal is width-NEUTRAL (fits any width; forces nothing).
+        ast::Node::Lit(Literal::Int(_), _) => NarrowLat::Neutral,
         ast::Node::Paren(inner, _) => infer_narrow_arith_ty(inner, ir, struct_env, receiver_types),
         ast::Node::Binary {
             op:
@@ -2632,7 +2768,7 @@ fn infer_narrow_arith_ty(
             left,
             right,
             ..
-        } => join_narrow_tys(
+        } => join_narrow_lat(
             infer_narrow_arith_ty(left, ir, struct_env, receiver_types),
             infer_narrow_arith_ty(right, ir, struct_env, receiver_types),
         ),
@@ -2643,24 +2779,28 @@ fn infer_narrow_arith_ty(
             left,
             ..
         } => infer_narrow_arith_ty(left, ir, struct_env, receiver_types),
-        // Finding 2: a narrow value produced by a CAST (`x as u8`), a CALL to a
-        // fn declared `-> u8`, a struct FIELD of type `u8`, or an `array<u8>`
-        // element read also escapes unmasked without these leaves.
-        ast::Node::As { ty, .. } => Some(ty.clone()).filter(is_named_narrow_sig_ty),
-        ast::Node::Call { callee, .. } => ir
-            .fn_signatures
-            .get(callee)
-            .and_then(|(_, ret)| ret.clone())
-            .filter(is_named_narrow_sig_ty),
-        ast::Node::FieldAccess { .. } => {
-            field_access_scalar_ty(node, ir, struct_env, receiver_types)
-                .filter(is_named_narrow_sig_ty)
-        }
-        ast::Node::IndexAccess { receiver, .. } => {
-            index_element_narrow_ty(receiver, ir, struct_env, receiver_types)
-                .filter(is_named_narrow_sig_ty)
-        }
-        _ => None,
+        // A narrow CAST (`x as u8`) ⇒ `Narrow`; a wide cast (`x as i64`) ⇒ `Wide`
+        // (the explicit widen forces the arithmetic wide — part of the #329 fix).
+        ast::Node::As { ty, .. } => classify(Some(ty.clone()), NarrowLat::Wide),
+        // Finding 2 leaves (CALL `-> u8` / narrow FIELD / narrow `array<u8>`
+        // element) ⇒ `Narrow`; a non-narrow/unknown one keeps the historical
+        // non-forcing `Neutral` (bounds this change's blast radius to the var /
+        // cast leaves that caused the divergence).
+        ast::Node::Call { callee, .. } => classify(
+            ir.fn_signatures
+                .get(callee)
+                .and_then(|(_, ret)| ret.clone()),
+            NarrowLat::Neutral,
+        ),
+        ast::Node::FieldAccess { .. } => classify(
+            field_access_scalar_ty(node, ir, struct_env, receiver_types),
+            NarrowLat::Neutral,
+        ),
+        ast::Node::IndexAccess { receiver, .. } => classify(
+            index_element_narrow_ty(receiver, ir, struct_env, receiver_types),
+            NarrowLat::Neutral,
+        ),
+        _ => NarrowLat::Neutral,
     }
 }
 
@@ -2705,35 +2845,13 @@ fn narrow_named_shift_width(ty: &TypeAnn) -> Option<u32> {
         .filter(|&w| w < 64)
 }
 
-/// Join the two inferred narrow operand types of an arithmetic binop
-/// (Finding 7). The old `infer(left).or_else(infer(right))` picked the LEFT
-/// operand's width whenever both sides were narrow, so `(a + b) / 2` with
-/// `a: u8, b: u16` wrapped at 8 bits while `(b + a) / 2` wrapped at 16 — an
-/// ASYMMETRIC result for the same values. The result type is the WIDEST
-/// operand: `(None, x)`/`(x, None)` → `x`; both `Some` → the greater width
-/// (8 vs 16); EQUAL width → the LEFT operand (preserving today's bytes for
-/// `u8+u8` and the mixed-signedness equal-width `i8+u8`). `Shl`/`Shr` stay
-/// LEFT-only (the count's width is irrelevant) and never reach this join.
-#[cfg(feature = "std-surface")]
-fn join_narrow_tys(l: Option<TypeAnn>, r: Option<TypeAnn>) -> Option<TypeAnn> {
-    match (l, r) {
-        (Some(a), Some(b)) => {
-            // Both are `is_named_narrow_sig_ty` (8/16-bit) by construction —
-            // `narrow_named_shift_width` is total on them.
-            let wa = narrow_named_shift_width(&a).unwrap_or(64);
-            let wb = narrow_named_shift_width(&b).unwrap_or(64);
-            if wb > wa { Some(b) } else { Some(a) }
-        }
-        (a, b) => a.or(b),
-    }
-}
-
 /// Re-mask an ARITHMETIC binop result to its inferred narrow width (`i8`/`u8`/
 /// `i16`/`u16`), emitting the same truncate/sign-extend forms as
 /// `mask_narrow_let`. Only `Add`/`Sub`/`Mul`/`Div`/`Mod` are masked — the
 /// comparisons (`Lt`/`Le`/`Gt`/`Ge`/`Eq`/`Ne`) produce `i1`/bool and must not
 /// be truncated. Returns `dst` unchanged when the result is not a narrow
-/// arithmetic value (the byte-identical all-i64 path).
+/// arithmetic value (the byte-identical all-i64 path). A `Wide` operand (a
+/// non-narrow `i64` var or `as i64`) widens the result — it is NOT re-masked.
 #[cfg(feature = "std-surface")]
 fn mask_narrow_binop_result(
     ir: &mut IRModule,
@@ -2744,8 +2862,8 @@ fn mask_narrow_binop_result(
     struct_env: &HashMap<String, String>,
     receiver_types: &HashMap<crate::ast::Span, String>,
 ) -> ValueId {
-    let ty = match op {
-        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => join_narrow_tys(
+    let lat = match op {
+        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => join_narrow_lat(
             infer_narrow_arith_ty(left, ir, struct_env, receiver_types),
             infer_narrow_arith_ty(right, ir, struct_env, receiver_types),
         ),
@@ -2754,9 +2872,9 @@ fn mask_narrow_binop_result(
         BinOp::Shl | BinOp::Shr => infer_narrow_arith_ty(left, ir, struct_env, receiver_types),
         // Comparisons yield `i1`/bool; bitwise And/Or/Xor over in-range narrow
         // operands stay in range — neither needs a width re-mask.
-        _ => None,
+        _ => NarrowLat::Neutral,
     };
-    match ty {
+    match lat.narrow_ty() {
         Some(ty) => mask_narrow_let(ir, &Some(ty), dst),
         None => dst,
     }
@@ -5343,7 +5461,7 @@ fn lower_expr(
             // hits this (empty NARROW_LOCALS).
             if matches!(ir_op, BinOp::Shl | BinOp::Shr) {
                 if let Some(w) = infer_narrow_arith_ty(left, ir, struct_env, receiver_types)
-                    .as_ref()
+                    .as_narrow_ty()
                     .and_then(narrow_named_shift_width)
                 {
                     let mask_id = ir.fresh();
@@ -5943,6 +6061,29 @@ fn lower_expr(
                                 &fn_struct_env,
                                 receiver_types,
                             ),
+                            // RH f64-aggregate surface: a local `let a: [f64; N] =
+                            // [lit, ...]` (or `[f32; N]`) fixed-array literal routes
+                            // to a TYPED `ConstDenseTensor` so the following `a[i]`
+                            // load / `a[i] = v` store finds a well-typed base. A
+                            // non-float element type (i64/i32) or a non-literal RHS
+                            // returns `None`, so the arm falls back to the
+                            // byte-identical default path (keystone gate). `[T; N]`
+                            // (`TypeAnn::Array`) never matches the `array<T>` surface
+                            // / growable-bytes arms below, so intercepting it here is
+                            // behaviour-preserving.
+                            #[cfg(feature = "std-surface")]
+                            Some(TypeAnn::Array { element, length }) => {
+                                lower_fixed_dense_array_binding(element, *length, value, &mut fn_ir)
+                                    .unwrap_or_else(|| {
+                                        lower_expr(
+                                            value,
+                                            &mut fn_ir,
+                                            &fn_env,
+                                            &fn_struct_env,
+                                            receiver_types,
+                                        )
+                                    })
+                            }
                             // `array<T>` binding with an array-literal RHS:
                             // lower onto the std.vec heap runtime.
                             #[cfg(feature = "std-surface")]
@@ -6160,6 +6301,85 @@ fn lower_expr(
                         let id = mask_narrow_assign(&mut fn_ir, name, id);
                         fn_env.insert(name.clone(), id);
                     }
+                    // #320 Step D aggregate mutation — `a[i] = v`. A value-semantic
+                    // fixed `[T; N]` / const-literal-tensor store emits an
+                    // `Instr::ArrayStore` (a FRESH aggregate id) and rebinds the
+                    // receiver root name HERE at statement dispatch, so later reads
+                    // in this fn-body scope observe the write (env is `&HashMap`
+                    // inside `lower_expr` — the rebind cannot happen there). We emit
+                    // it DIRECTLY (not via `lower_expr`, which fails closed for this
+                    // receiver) precisely so a loop/branch-body `a[i]=v` — which is
+                    // lowered elsewhere and does NOT reach here — fails loud rather
+                    // than silently dropping the store. Reference-semantic `array<T>`
+                    // (vec_set) / `bytes[N]` (__mind_store_i8) are lowered by
+                    // `lower_expr` and keep the name bound to the same base handle —
+                    // no rebind.
+                    #[cfg(feature = "std-surface")]
+                    node @ ast::Node::IndexAssign {
+                        receiver,
+                        index,
+                        value,
+                        ..
+                    } => {
+                        let sentinel = receiver_collection_sentinel(
+                            receiver,
+                            &fn_ir,
+                            &fn_struct_env,
+                            receiver_types,
+                        );
+                        if sentinel == Some(ARRAY_VEC_SENTINEL)
+                            || sentinel == Some(FIXED_BYTES_SENTINEL)
+                        {
+                            let id = lower_expr(
+                                node,
+                                &mut fn_ir,
+                                &fn_env,
+                                &fn_struct_env,
+                                receiver_types,
+                            );
+                            ret_id = Some(id);
+                        } else if let ast::Node::Lit(Literal::Ident(root), _) = receiver.as_ref() {
+                            let base = lower_expr(
+                                receiver,
+                                &mut fn_ir,
+                                &fn_env,
+                                &fn_struct_env,
+                                receiver_types,
+                            );
+                            let idx = lower_expr(
+                                index,
+                                &mut fn_ir,
+                                &fn_env,
+                                &fn_struct_env,
+                                receiver_types,
+                            );
+                            let val = lower_expr(
+                                value,
+                                &mut fn_ir,
+                                &fn_env,
+                                &fn_struct_env,
+                                receiver_types,
+                            );
+                            let dst = fn_ir.fresh();
+                            fn_ir.instrs.push(Instr::ArrayStore {
+                                dst,
+                                base,
+                                index: idx,
+                                value: val,
+                            });
+                            fn_env.insert(root.clone(), dst);
+                            ret_id = Some(dst);
+                        } else {
+                            let id = lower_expr(
+                                node,
+                                &mut fn_ir,
+                                &fn_env,
+                                &fn_struct_env,
+                                receiver_types,
+                            );
+                            ret_id = Some(id);
+                        }
+                    }
                     other => {
                         let id =
                             lower_expr(other, &mut fn_ir, &fn_env, &fn_struct_env, receiver_types);
@@ -6320,6 +6540,23 @@ fn lower_expr(
                             &local_struct_env,
                             receiver_types,
                         ),
+                        // RH f64-aggregate: `let a: [f64/f32; N] = [lit..]` declared
+                        // inside a loop body → typed ConstDenseTensor (mirrors the
+                        // fn-body arm). None for i64/i32/non-literal → byte-identical
+                        // default path.
+                        #[cfg(feature = "std-surface")]
+                        Some(TypeAnn::Array { element, length }) => {
+                            match lower_fixed_dense_array_binding(element, *length, value, ir) {
+                                Some(id) => id,
+                                None => lower_expr(
+                                    value,
+                                    ir,
+                                    &local_env,
+                                    &local_struct_env,
+                                    receiver_types,
+                                ),
+                            }
+                        }
                         // `array<T>` binding with an array-literal RHS: lower
                         // onto the std.vec heap runtime.
                         #[cfg(feature = "std-surface")]
@@ -6618,6 +6855,26 @@ fn lower_expr(
                                 &then_struct_env,
                                 receiver_types,
                             ),
+                            // RH f64-aggregate: `let a: [f64/f32; N] = [lit..]` in a
+                            // then/if-arm body → typed ConstDenseTensor.
+                            #[cfg(feature = "std-surface")]
+                            Some(TypeAnn::Array { element, length }) => {
+                                match lower_fixed_dense_array_binding(
+                                    element,
+                                    *length,
+                                    value,
+                                    &mut then_ir,
+                                ) {
+                                    Some(id) => id,
+                                    None => lower_expr(
+                                        value,
+                                        &mut then_ir,
+                                        &then_env,
+                                        &then_struct_env,
+                                        receiver_types,
+                                    ),
+                                }
+                            }
                             // `array<T>` binding with an array-literal RHS: lower
                             // onto the std.vec heap runtime (vec_new + vec_push)
                             // exactly like the top-level and while-body Let arms.
@@ -6756,6 +7013,95 @@ fn lower_expr(
                         }
                         then_result = id;
                     }
+                    // F2 aggregate branch-carry (#320 Step D): `a[i] = v` inside an
+                    // if THEN-body. Reference-semantic `array<T>` (vec_set) /
+                    // `bytes[N]` (__mind_store_i8) mutate their base handle IN PLACE
+                    // → lower_expr, no rebind/merge. A value-semantic fixed `[T; N]`
+                    // emits a FRESH aggregate (`Instr::ArrayStore`); rebind the
+                    // receiver root in then_env AND record it as a merge write, so
+                    // the `^if_after` phi threads the stored incarnation on the
+                    // then-edge (the untouched else-edge carries the pre-if tensor
+                    // from `env`). Emitted DIRECTLY (not via `lower_expr`, which
+                    // fails closed for this receiver) so an UNSUPPORTED shape fails
+                    // loud rather than silently dropping the write. Symmetric to the
+                    // scalar `Assign` arm above and the `While`-body arm.
+                    #[cfg(feature = "std-surface")]
+                    node @ ast::Node::IndexAssign {
+                        receiver,
+                        index,
+                        value,
+                        ..
+                    } => {
+                        let sentinel = receiver_collection_sentinel(
+                            receiver,
+                            &then_ir,
+                            &then_struct_env,
+                            receiver_types,
+                        );
+                        if sentinel == Some(ARRAY_VEC_SENTINEL)
+                            || sentinel == Some(FIXED_BYTES_SENTINEL)
+                        {
+                            then_result = lower_expr(
+                                node,
+                                &mut then_ir,
+                                &then_env,
+                                &then_struct_env,
+                                receiver_types,
+                            );
+                        } else if let ast::Node::Lit(Literal::Ident(root), _) = receiver.as_ref() {
+                            let base = lower_expr(
+                                receiver,
+                                &mut then_ir,
+                                &then_env,
+                                &then_struct_env,
+                                receiver_types,
+                            );
+                            let idx = lower_expr(
+                                index,
+                                &mut then_ir,
+                                &then_env,
+                                &then_struct_env,
+                                receiver_types,
+                            );
+                            let val = lower_expr(
+                                value,
+                                &mut then_ir,
+                                &then_env,
+                                &then_struct_env,
+                                receiver_types,
+                            );
+                            let dst = then_ir.fresh();
+                            then_ir.instrs.push(Instr::ArrayStore {
+                                dst,
+                                base,
+                                index: idx,
+                                value: val,
+                            });
+                            then_env.insert(root.clone(), dst);
+                            // Record the merge write only for a genuine outer var; a
+                            // fixed array declared branch-local in this branch is
+                            // block-scoped and excluded from the merge (same guard as
+                            // the scalar `Assign` arm).
+                            if !then_local_decls.iter().any(|n| n == root) {
+                                record_then_write(root, &mut then_writes);
+                            }
+                            // The if-VALUE of an assignment statement is unit (i64 0),
+                            // NOT the fresh tensor — `then_result` types the if-value
+                            // merge column, which must stay i64 to match the else-edge
+                            // (the tensor flows only through `a`'s own merge column).
+                            let unit = then_ir.fresh();
+                            then_ir.instrs.push(Instr::ConstI64(unit, 0));
+                            then_result = unit;
+                        } else {
+                            then_result = lower_expr(
+                                node,
+                                &mut then_ir,
+                                &then_env,
+                                &then_struct_env,
+                                receiver_types,
+                            );
+                        }
+                    }
                     ast::Node::LetTuple { names, value, .. } => {
                         then_result = lower_lettuple_stmt(
                             names,
@@ -6890,6 +7236,26 @@ fn lower_expr(
                                         &else_struct_env,
                                         receiver_types,
                                     )
+                                }
+                                // RH f64-aggregate: `let a: [f64/f32; N] = [lit..]` in
+                                // an else/match-arm body → typed ConstDenseTensor.
+                                #[cfg(feature = "std-surface")]
+                                Some(TypeAnn::Array { element, length }) => {
+                                    match lower_fixed_dense_array_binding(
+                                        element,
+                                        *length,
+                                        value,
+                                        &mut else_ir,
+                                    ) {
+                                        Some(id) => id,
+                                        None => lower_expr(
+                                            value,
+                                            &mut else_ir,
+                                            &else_env,
+                                            &else_struct_env,
+                                            receiver_types,
+                                        ),
+                                    }
                                 }
                                 // `array<T> = [..]` inside an else/match-arm body:
                                 // lower onto the std.vec heap runtime, mirroring the
@@ -7034,6 +7400,85 @@ fn lower_expr(
                             );
                             for nm in names {
                                 record_else_write(nm, &mut else_writes);
+                            }
+                        }
+                        // F2 aggregate branch-carry (#320 Step D): `a[i] = v` inside
+                        // an if ELSE-body — the mirror of the then-branch arm. A
+                        // value-semantic fixed `[T; N]` emits a FRESH aggregate and
+                        // rebinds the receiver root + records the merge write so the
+                        // `^if_after` phi threads the else-edge's stored incarnation.
+                        #[cfg(feature = "std-surface")]
+                        node @ ast::Node::IndexAssign {
+                            receiver,
+                            index,
+                            value,
+                            ..
+                        } => {
+                            let sentinel = receiver_collection_sentinel(
+                                receiver,
+                                &else_ir,
+                                &else_struct_env,
+                                receiver_types,
+                            );
+                            if sentinel == Some(ARRAY_VEC_SENTINEL)
+                                || sentinel == Some(FIXED_BYTES_SENTINEL)
+                            {
+                                else_result = lower_expr(
+                                    node,
+                                    &mut else_ir,
+                                    &else_env,
+                                    &else_struct_env,
+                                    receiver_types,
+                                );
+                            } else if let ast::Node::Lit(Literal::Ident(root), _) =
+                                receiver.as_ref()
+                            {
+                                let base = lower_expr(
+                                    receiver,
+                                    &mut else_ir,
+                                    &else_env,
+                                    &else_struct_env,
+                                    receiver_types,
+                                );
+                                let idx = lower_expr(
+                                    index,
+                                    &mut else_ir,
+                                    &else_env,
+                                    &else_struct_env,
+                                    receiver_types,
+                                );
+                                let val = lower_expr(
+                                    value,
+                                    &mut else_ir,
+                                    &else_env,
+                                    &else_struct_env,
+                                    receiver_types,
+                                );
+                                let dst = else_ir.fresh();
+                                else_ir.instrs.push(Instr::ArrayStore {
+                                    dst,
+                                    base,
+                                    index: idx,
+                                    value: val,
+                                });
+                                else_env.insert(root.clone(), dst);
+                                if !else_local_decls.iter().any(|n| n == root) {
+                                    record_else_write(root, &mut else_writes);
+                                }
+                                // If-value of an assignment statement is unit i64 —
+                                // NOT the tensor (mirror of the then-branch arm; keeps
+                                // the if-value merge column i64 across both edges).
+                                let unit = else_ir.fresh();
+                                else_ir.instrs.push(Instr::ConstI64(unit, 0));
+                                else_result = unit;
+                            } else {
+                                else_result = lower_expr(
+                                    node,
+                                    &mut else_ir,
+                                    &else_env,
+                                    &else_struct_env,
+                                    receiver_types,
+                                );
                             }
                         }
                         other => {
@@ -7941,6 +8386,94 @@ fn lower_expr(
                             record_loop_mut(name, new_id, &mut mutated, &mut init_ids, pre_init);
                         }
                     }
+                    // F2 aggregate loop-carry (#320 Step D): `a[i] = v` inside a loop
+                    // body. Reference-semantic `array<T>` (vec_set) / `bytes[N]`
+                    // (__mind_store_i8) mutate their base handle IN PLACE, so they
+                    // lower via `lower_expr` and stay bound to the same id — no rebind,
+                    // no loop-carry. A VALUE-semantic fixed `[T; N]` / const-literal
+                    // tensor store emits a FRESH aggregate (`Instr::ArrayStore`); we
+                    // rebind the receiver root to it AND record it loop-carried (post_id
+                    // = the fresh store id) so the back-edge threads the new incarnation
+                    // and the post-loop `^while_after` exit id observes the mutation —
+                    // the region-exit rebind that makes `for k { a[k]=.. }` correct
+                    // instead of fail-closed. Emitted DIRECTLY (not via `lower_expr`,
+                    // which fails closed for this receiver) so an UNSUPPORTED shape
+                    // still fails loud, never a silently-dropped write.
+                    #[cfg(feature = "std-surface")]
+                    node @ ast::Node::IndexAssign {
+                        receiver,
+                        index,
+                        value,
+                        ..
+                    } => {
+                        let sentinel = receiver_collection_sentinel(
+                            receiver,
+                            &body_ir,
+                            &body_struct_env,
+                            receiver_types,
+                        );
+                        if sentinel == Some(ARRAY_VEC_SENTINEL)
+                            || sentinel == Some(FIXED_BYTES_SENTINEL)
+                        {
+                            lower_expr(
+                                node,
+                                &mut body_ir,
+                                &body_env,
+                                &body_struct_env,
+                                receiver_types,
+                            );
+                        } else if let ast::Node::Lit(Literal::Ident(root), _) = receiver.as_ref() {
+                            // Capture the PRE-store incarnation before the rebind — for
+                            // the first store this is the pre-loop init id, which
+                            // `record_loop_mut` threads into `init_ids` (typing the
+                            // header/body/after tensor block-args in the MLIR emitter).
+                            let pre_init = body_env.get(root.as_str()).copied();
+                            let base = lower_expr(
+                                receiver,
+                                &mut body_ir,
+                                &body_env,
+                                &body_struct_env,
+                                receiver_types,
+                            );
+                            let idx = lower_expr(
+                                index,
+                                &mut body_ir,
+                                &body_env,
+                                &body_struct_env,
+                                receiver_types,
+                            );
+                            let val = lower_expr(
+                                value,
+                                &mut body_ir,
+                                &body_env,
+                                &body_struct_env,
+                                receiver_types,
+                            );
+                            let dst = body_ir.fresh();
+                            body_ir.instrs.push(Instr::ArrayStore {
+                                dst,
+                                base,
+                                index: idx,
+                                value: val,
+                            });
+                            body_env.insert(root.clone(), dst);
+                            // Cross the back-edge only for a genuine outer var (same
+                            // guard as the scalar `Assign` arm): a fixed array declared
+                            // inside the loop body is re-initialised each iteration and
+                            // must NOT be loop-carried.
+                            if env.contains_key(root.as_str()) {
+                                record_loop_mut(root, dst, &mut mutated, &mut init_ids, pre_init);
+                            }
+                        } else {
+                            lower_expr(
+                                node,
+                                &mut body_ir,
+                                &body_env,
+                                &body_struct_env,
+                                receiver_types,
+                            );
+                        }
+                    }
                     ast::Node::LetTuple { names, value, .. } => {
                         lower_lettuple_stmt(
                             names,
@@ -8801,9 +9334,42 @@ fn lower_expr(
                 });
                 return dst;
             }
-            let id = ir.fresh();
-            ir.instrs.push(Instr::ConstI64(id, 0));
-            id
+            // A plain fixed `[T; N]` (or a const-literal-initialized
+            // `tensor<T[N]>`) receiver is an IMMUTABLE value-aggregate
+            // (`ConstArray` / `ConstDenseTensor`) with NO store path in the IR,
+            // so the old `ConstI64(0)` placeholder here SILENTLY DROPPED the
+            // write — every later `a[i]` read observed the pre-write incarnation
+            // (docs/ARRAY_SEMANTICS.md Q19: "a LIVE i64 miscompile"). Fail LOUD
+            // instead of miscompiling, matching the native backend's fail-closed
+            // refusal and the #306 philosophy. The working mutable receivers
+            // (`array<T>` -> vec_set, `bytes[N]` -> __mind_store_i8) are handled
+            // above and never reach here; `main.mind` + all of std emit ZERO
+            // surface fixed-aggregate writes (they use the raw `__mind_store_i64`
+            // ABI), so the keystone artifact is byte-identical by construction.
+            //
+            // deferred: the real typed store path (`Instr::ArrayStore` + env
+            // rebind, or a memref-backed mutable aggregate) is the upgrade — see
+            // docs/ARRAY_SEMANTICS.md Q19 CANONICAL_DECISION + the aggregate-type
+            // invariant work (Step D).
+            // #320 Step D: a value-semantic fixed-`[T; N]` / const-literal-tensor
+            // `a[i] = v` is emitted (as `Instr::ArrayStore` + a name rebind) ONLY
+            // at fn-body statement dispatch, where the fresh post-store incarnation
+            // can be rebound so later reads observe it. Reaching HERE means the
+            // assignment is in EXPRESSION position or inside a loop / if body — its
+            // rebind would NOT propagate, so a store emitted here would be silently
+            // lost (verified: a loop-body `a[k]=..` without the F2 region rebind
+            // reads back the pre-loop value). Fail CLOSED instead. F2-region-threaded
+            // loop/branch support is the tracked follow-on; docs/ARRAY_SEMANTICS.md Q19.
+            panic!(
+                "index assignment `{}[..] = ..` on a fixed-size array / \
+                 const-initialized tensor is only supported as a top-level \
+                 statement in a function body; inside a loop / branch body or in \
+                 expression position it is not yet supported (fail-closed to avoid \
+                 silently dropping the write). Hoist it to a straight-line \
+                 statement, or use a growable `array<T>` / `bytes[N]` buffer. \
+                 (docs/ARRAY_SEMANTICS.md Q19.)",
+                describe_receiver(receiver),
+            )
         }
         // RFC 0010 Phase A — `extern "C" { fn decls }` block.
         //
@@ -11204,6 +11770,15 @@ fn lower_stmt_seq(
                         struct_env,
                         receiver_types,
                     ),
+                    // RH f64-aggregate: region-local `let a: [f64/f32; N] = [lit..]`
+                    // → typed ConstDenseTensor.
+                    #[cfg(feature = "std-surface")]
+                    Some(TypeAnn::Array { element, length }) => {
+                        match lower_fixed_dense_array_binding(element, *length, value, ir) {
+                            Some(id) => id,
+                            None => lower_expr(value, ir, env, struct_env, receiver_types),
+                        }
+                    }
                     _ => lower_expr(value, ir, env, struct_env, receiver_types),
                 };
                 // Narrow-typed Region-local: mask to declared width AND record it

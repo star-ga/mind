@@ -207,6 +207,7 @@ fn find_nondeterministic_call(instrs: &[crate::ir::Instr]) -> Option<String> {
             #[cfg(feature = "std-surface")]
             Instr::ConstArray { .. }
             | Instr::ArrayLoad { .. }
+            | Instr::ArrayStore { .. }
             | Instr::Break { .. }
             | Instr::Continue { .. }
             | Instr::VecLoad { .. }

@@ -1,0 +1,42 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See array-store-loop/manifest.toml.
+#
+# The F2 aggregate BRANCH-carry canary. Pins the #320 Step D If-MERGE path
+# (distinct from the loop's `^while_after`): `a[i] = v` inside `if`/`else` branch
+# bodies is threaded as a value-semantic `tensor<8xi64>` `^if_after` merge
+# block-arg (then/else edge = stored incarnation, untouched edge = pre-if tensor).
+#
+# The kernel `array_store_branch(base)` takes `base` as a RUNTIME arg so the
+# branches are genuinely taken/not-taken (if/else same-slot, a no-else one-sided
+# merge, and a straight-line store in the same fn), then folds the eight slots in
+# FIXED source order via a wrapping polynomial (K = 1000003).
+#
+# Why avx2 == neon: integer store / add / mul are exact and order-independent,
+# and — verified on the post-bufferization MLIR — the If-merge has the SAME
+# memref.alloc/memref.copy profile as the loop baseline (one-time buffer
+# materialisation, NO per-branch copy), so both substrates compute the identical
+# i64 by construction (RFC 0015 §3.1). A dropped/aliased branch store or a wrong
+# merge incarnation flips the hash — a release-blocker.
+
+version = "1"
+name = "array-store-branch"
+description = "Fixed [i64; 8] mutated by a[i]=v inside if/else + no-else branch bodies, folded to one i64 — the byte-identity + correctness pin for #320 Step D value-semantic aggregate If-merge carry. A dropped/aliased branch store or a per-branch copy flips the result."
+weight = 1.0
+
+# Both substrates share the hash (integer store/add/mul are architecture-
+# independent by construction, RFC 0015 §3.1).
+substrates = ["avx2", "neon"]
+
+# Deterministic input spec: one fixed i64 `base` supplied as a runtime arg so the
+# branch conditions are not constant-folded.
+#   base = 7 (base>3 taken, base>100 not-taken, base>5 taken)
+[input]
+generator = "fixed"
+base = 7
+dtype = "i64-scalar"
+
+[kernel]
+symbol = "array_store_branch"
+ops = "a[0]=if base>3 {base*7} else {base+100}; a[1]=base*2; if base>100 {a[2]=999}; a[3]=if base>5 {base*11} else {base-50}"
+fold = "acc = acc*1000003 + a[k], fixed source order over the 8 post-if reads"
+returns = "i64"                  # the folded i64
+output_encoding = "i64_le"       # i64 as 8 LE bytes, then sha256

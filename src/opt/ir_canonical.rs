@@ -440,6 +440,14 @@ pub(crate) fn for_each_operand(instr: &Instr, mut f: impl FnMut(ValueId)) {
         #[cfg(feature = "std-surface")]
         Instr::ConstArray { .. } => {}
         #[cfg(feature = "std-surface")]
+        Instr::ArrayStore {
+            base, index, value, ..
+        } => {
+            f(*base);
+            f(*index);
+            f(*value);
+        }
+        #[cfg(feature = "std-surface")]
         Instr::ArrayLoad { base, index, .. } => {
             f(*base);
             f(*index);

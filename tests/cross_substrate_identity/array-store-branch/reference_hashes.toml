@@ -1,0 +1,28 @@
+# mind-bench reference hashes — RFC 0020 §5. See array-store-loop/reference_hashes.toml.
+#
+# The F2 aggregate BRANCH-carry canary (#320 Step D If-merge). The kernel
+# `array_store_branch(base=7)` performs `if`/`else` + no-else `a[i]=v` stores into
+# a fixed `[i64; 8]` (the value-semantic `^if_after` merge), then folds the eight
+# post-if reads in fixed source order. The canonical output is the folded i64
+# serialised little-endian (manifest `output_encoding = "i64_le"`), then sha256.
+#
+# This hash is the standing regression pin that the branch-carried aggregate
+# store keeps working: a regression that DROPS a branch store, threads the WRONG
+# merge incarnation, or inserts a per-branch buffer copy flips it, and the in-run
+# oracle assert additionally proves the compiled kernel matches Rust semantics
+# bit-for-bit. Integer store/add/mul are exact and order-independent, and the
+# bufferized If-merge has no per-branch copy (post-bufferize memref.alloc/copy
+# profile matches the loop baseline), so avx2 == neon by construction
+# (RFC 0015 §3.1).
+#
+# Provenance:
+#   avx2 — computed on x86_64 (this reference), verified in CI job
+#          `cross_substrate_identity` (ubuntu-24.04).
+#   neon — SAME hash by construction; recomputed on real ARM hardware (CI job
+#          `cross_substrate_identity`, ubuntu-24.04-arm) per RFC 0020 §10.
+#
+# Re-bless only on an intentional lowering change (RFC 0020 §13): run the gate
+# with MIND_BENCH_BLESS=1 and commit the new hash.
+
+avx2 = "8a50c515a5de1786b0102fecbb692054299acaa4878a9c2978c7b69cb647561f"
+neon = "8a50c515a5de1786b0102fecbb692054299acaa4878a9c2978c7b69cb647561f"
