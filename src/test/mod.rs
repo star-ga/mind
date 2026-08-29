@@ -522,13 +522,33 @@ fn eval_test_fn(entry: &TestEntry) -> Result<(), String> {
     // First pass: evaluate the module through the standard interpreter so that
     // let bindings and arithmetic are properly resolved.
     let mut env = std::collections::HashMap::new();
-    let _result =
+    let first_pass =
         eval::eval_module_value_with_env_mode(&synthetic_module, &mut env, None, ExecMode::Preview);
-    // (Ignore the result; we do assertion checking in the second pass.)
 
     // Second pass: walk the body looking for `assert` nodes and evaluate them
     // against the environment that the first pass populated.
-    eval_asserts_in_stmts(&body_items, &env)
+    match eval_asserts_in_stmts(&body_items, &env) {
+        Ok(()) => Ok(()),
+        // The first pass ABORTS at its first unresolved reference, so every
+        // binding after that point never lands in `env` and the second pass then
+        // blames a correctly-bound name in the CALLER — the reported
+        // `unknown variable: rc` for a `let rc = …` one line above the assert
+        // (#242). The error that actually stopped execution was being discarded
+        // into `_result` and never shown, which sent a downstream debugging
+        // session chasing test bugs that did not exist.
+        //
+        // Surface it as the ROOT CAUSE. The second-pass symptom is retained as a
+        // note, and a module whose first pass SUCCEEDED reports exactly the text
+        // it always did — so no currently-passing test changes verdict and no
+        // genuine assertion failure is reworded.
+        Err(symptom) => Err(match first_pass {
+            Err(root) => format!(
+                "{root}\n       note: the test body aborted at the error above, so bindings \
+                 after that point are unset; the resulting symptom was: {symptom}"
+            ),
+            Ok(_) => symptom,
+        }),
+    }
 }
 
 /// Resolve `import std.X` / `use std::X` declarations of a test module (and,
