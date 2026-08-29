@@ -9158,6 +9158,18 @@ fn lower_expr(
                     // produces a stable IR shape. Step 3 will lift the
                     // remaining cases (heap-allocated fields of struct
                     // type, generics) when std.vec needs them.
+                    //
+                    // KNOWN HOLE (#234): this placeholder is a WRONG-ANSWER
+                    // generator — `fn total(xs: &[i64]) -> i64 { return
+                    // xs.length }` compiles its whole body to `arith.constant
+                    // 0`, builds clean to a real ELF and returns 0 instead of
+                    // 3, with no diagnostic. Fail-closing it here is NOT a
+                    // local change: `std_surface_field_access{,_step2}` pin
+                    // this placeholder as the intended RFC 0005 Step 1/2
+                    // contract, and refusing instead overflows the stack in
+                    // `std_surface_json`. Closing it needs the Step 3 receiver
+                    // resolution (or an explicit decision to retire that
+                    // contract), not a panic bolted onto this arm.
                     let id = ir.fresh();
                     ir.instrs.push(Instr::ConstI64(id, 0));
                     id
