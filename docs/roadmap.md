@@ -73,7 +73,7 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
   goes beyond the earlier `mic@1` MLIR-text fixed-point: the Rust front-end is now
   decorative at the canonical-binary-IR layer (the layer the evidence chain's
   `trace_hash` anchors on). CI-enforced by `mic3_flip_smoke.py`.
-- ✅ **Autodiff Engine** – Reverse-mode AD for the Core v1 tensor ops, single-output `main` entry point; non-Core-v1 ops error rather than emit a silent zero gradient.
+- ⚠️ **Autodiff Engine** – Reverse-mode AD for the Core v1 tensor ops, single-output `main` entry point; non-Core-v1 ops error rather than emit a silent zero gradient. **The engine is implemented; the source path to it is not.** `examples/autodiff_demo.mind` type-checks clean and lowers every function to `const.i64 0`, so the shipped demonstration computes no gradient and still exits 0 — see Phase 19.4.
 - ✅ **FFI Stabilization** – ABI frozen, C header generation.
 - ✅ **Phase 10.5: Governance Logic** – enum, struct, if/else, while,
   const, bitwise/boolean ops, struct literals, enum-variant `::`
@@ -2383,3 +2383,158 @@ systematic version of that accident.
 - Does the substrate dimension multiply or partition? `avx2` and `neon` are not
   flags we set; they are hardware we run on. Cells requiring both may only be
   checkable in the dual-arch CI matrix, not locally.
+
+---
+
+## Phase 19.4 — Autodiff: the surface type-checks, the gradient is empty
+
+Reverse-mode autodiff over the Core-v1 tensor ops is implemented
+(`src/autodiff/`, `differentiate_function`, deterministic gradient IR,
+`docs/autodiff.md`) and is listed as shipped in this document. The engine
+itself is sound: 23 tests across nine files, a fail-loud catch-all
+(`src/autodiff/rules.rs:210`) that errors rather than emitting a silent zero
+gradient, and rules covering add/sub/mul/div, matmul, dot, relu, conv2d, mean,
+sum, and the shape ops.
+
+The problem is not the engine. It is that **nothing reaches it from source.**
+
+### Measured, not inferred (2026-09-02)
+
+`examples/autodiff_demo.mind` is the shipped demonstration of this feature.
+Built with `--features autodiff`:
+
+```
+$ mindc check examples/autodiff_demo.mind
+  (3 naming-convention warnings, exit 0)
+
+$ mindc --autodiff --func scalar_quadratic --emit-grad-ir examples/autodiff_demo.mind
+module {
+  // fn scalar_quadratic
+  %0 = const.i64 0
+  output %0
+  ...
+```
+
+Every function in the demo — `scalar_quadratic`, `vector_dot_product`,
+`matrix_vector_product`, `reduction_mean` — lowers to `const.i64 0` and
+`output`. `--emit-ir` confirms the primal is already empty before autodiff
+runs, so this is a **front-end/lowering gap, not an autodiff gap**: the
+`diff tensor<f32[]>` surface syntax type-checks clean and lowers to nothing.
+`differentiate_function` then dutifully differentiates nothing and returns
+`Ok`.
+
+Two consequences, and the second is the serious one:
+
+1. **The demo is not a demonstration.** It exits 0, prints a gradient module,
+   and computes no gradient. Anyone evaluating this feature by running the
+   example gets a passing result and a wrong impression.
+2. **`Ok` is returned where nothing was differentiated.** The fail-loud
+   guarantee lives in `rules::apply_rule`, but `propagate_gradients`
+   (`src/autodiff/engine.rs:195`) only reaches it for instructions that clear
+   two filters: `instruction_dst` must return `Some`, and an upstream gradient
+   must already exist. `instruction_dst` ends in `_ => None`
+   (`src/autodiff/engine.rs:369`), so anything without a rule — including
+   every control-flow instruction — is `continue`d rather than rejected. An
+   empty or control-flow-carrying primal therefore produces a *successful*
+   empty gradient. Same observable outcome the catch-all exists to prevent,
+   reached around it.
+
+This is the `mindc check` exit-0 pattern in a new place: the surface accepts,
+the pipeline drops, and no gate notices.
+
+### Shape
+
+1. **Make the drop loud.** If `differentiate_function` returns `Ok`, every
+   value the output depends on must have a gradient — and a primal with no
+   differentiable content must be an error, not an empty success. Either
+   `instruction_dst` distinguishes "no destination" from "not differentiable",
+   or `propagate_gradients` pre-scans and rejects.
+2. **Close the front-end gap, or mark the demo aspirational.**
+   `examples/zoo/linear_regression.mind` already carries an explicit
+   `// ASPIRATIONAL DEMO — not yet buildable with the open mindc` banner.
+   `autodiff_demo.mind` carries no such banner and needs one until the
+   `diff tensor<...>` path lowers, otherwise the honest fix is to lower it.
+3. **A gate that runs the demo and asserts non-empty gradient IR.** One
+   assertion — the gradient module contains at least one non-const
+   instruction — would have caught this. It belongs in CI.
+4. **A numerical gradient check.** Exactly one path today
+   (`tests/conv2d_grad.rs`) compares against finite differences, and it tests
+   `conv2d_vjp_nhwc_hwio_f32` directly rather than IR from
+   `differentiate_function`. For mul, div, matmul, relu, mean and transpose
+   nothing establishes the emitted gradient computes the right *number*. Add
+   a mutation control — perturb one rule, watch it go red.
+
+### Firewall — do not cross it
+
+Do not widen op coverage while the source path is disconnected; more rules
+that nothing reaches is not progress. And do not close the control-flow drop
+by differentiating *through* branches — replaying the forward branch in the
+backward pass is a much larger design and is not what this phase is for.
+Rejecting loudly is the deliverable.
+
+### Open questions — answer before this gets a milestone
+
+- Is the `diff tensor<f32[]>` surface intended to lower today, or is it
+  reserved syntax? That decides whether item 2 is a lowering task or a
+  documentation correction. It should not stay ambiguous — it is the
+  difference between a bug and an aspirational example.
+- What tolerance is honest under Q16.16? Finite differences on fixed-point
+  need a representable step; a float-domain epsilon is meaningless there.
+- Should the gradient IR carry the cross-substrate byte-identity guarantee?
+  It is IR like any other and the determinism tests already exist — they just
+  run same-machine. Nobody else in the AD space can make that claim.
+
+## Phase 19.5 — Static memory planning: emit the plan, or stop claiming it
+
+MIND is described externally as doing whole-network lifetime analysis with
+compile-time address reuse and zero runtime allocation. That description is
+in circulation and it is not currently backed by anything a reader can check
+— `docs/roadmap.md` has no memory-planning entry at all, and the claim rests
+on architecture rather than on emitted output.
+
+### The gap
+
+Three questions have no documented answer:
+
+1. **What happens to a shape that is not resolvable at compile time?** There
+   are exactly three honest answers — reject it, require an explicit bound, or
+   fall back to allocation and say so in the artifact. Any of the three is
+   defensible. Having no stated answer is not, because it means the zero-malloc
+   property holds on the cases someone tested and is unknown elsewhere.
+2. **What is the peak?** If the plan is static, the compiler knows the exact
+   high-water mark. It does not print it. A number the compiler already has and
+   does not emit is the cheapest possible piece of evidence being left on the
+   floor.
+3. **Is the plan deterministic across substrates?** Address assignment is a
+   compiler decision, so it falls under the same invariant as everything else:
+   identical IR must produce an identical plan on x86 and ARM. Nothing gates
+   this today.
+
+### Shape
+
+- **`--emit-plan`** — arena layout, per-buffer lifetime intervals, reuse
+  assignments, and peak bytes, in the canonical text form. This converts a
+  design claim into inspectable output, which is the same move the evidence
+  chain makes for provenance: reproduce it and check.
+- **A declared fallback policy**, recorded in the artifact rather than in a
+  doc, so a consumer of a MIND binary can tell whether that binary allocates.
+  A build that fell back should say so; silence must not be readable as zero.
+- **A byte-identity gate on the plan itself**, folded into the existing
+  cross-substrate fixtures rather than given its own runner.
+
+### Firewall — do not cross it
+
+Do not implement a dynamic-shape allocator to make the fallback question go
+away. The correct first deliverable is *knowing and stating* what the compiler
+does today, not changing it. A phase that starts by rejecting unbounded shapes
+loudly is finished and honest; a phase that starts by building an allocator is
+unbounded and has quietly abandoned the property it set out to prove.
+
+### Open questions — answer before this gets a milestone
+
+- Where does the planning actually happen? `src/opt/regalloc_dtk.rs` and
+  `src/eval/interp_mem.rs` both touch allocation, and the interpreter's memory
+  model is not the AOT one. The claim only means something for the emitted
+  binary, so the first task is establishing which path the claim is about.
+- Is the peak a *bound* or an *exact figure*? Those are different claims and
+  only one of them is checkable by rebuilding.
