@@ -134,10 +134,26 @@ every one of:
 A real number is emitted **only** when every gate passes. The hashes are recomputed from
 the emitted bytes, so a proposer cannot self-report its way past the gate.
 
-Note the failure mode this caught on first run (2026-09-03): a non-interactive shell had no
-`~/.cargo/bin` on `PATH`, `cargo` was not found, and the gate returned `gmacs: 0` rather
-than a false green. That is the gate behaving correctly — an environment fault is
-indistinguishable from a bad candidate, and both must discard.
+Two failure modes this caught on its first runs (2026-09-03), both worth recording because
+they are the failures a self-improving loop is *most* likely to mistake for signal:
+
+1. A non-interactive shell had no `~/.cargo/bin` on `PATH`; `cargo` was not found and the
+   gate returned `gmacs: 0` rather than a false green.
+2. Bare `mlir-opt` on `PATH` resolved to **LLVM 18** instead of the pinned **LLVM 20**, so
+   every gate died on `failed to legalize builtin.unrealized_conversion_cast` — and the
+   wrapper reported it as *"BYTE-IDENTITY GATE FAILED — a canary shifted."*
+
+Both correctly discarded, so no false green. But (2) exposed a real defect: **an environment
+fault was being reported as a determinism failure.** Left alone, the search would have spent
+every round hunting a canary drift that never happened. The wrapper now separates the two —
+a toolchain fault still discards (an unmeasurable candidate is worth zero either way) but is
+labelled as such.
+
+The general lesson, and the reason it is written down here: *a fail-closed gate keeps you
+honest about **whether** a candidate passed; it does not automatically keep you honest about
+**why** it failed.* A search optimizes against the reason it is given. Both the campaign
+config and the evaluator now pin `MLIR_OPT` / `MLIR_TRANSLATE` explicitly rather than
+inheriting whatever the launching shell happened to resolve.
 
 ---
 
