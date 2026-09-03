@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1436 | **Est. tokens:** ~2,720,937
-**Generated:** 2026-09-02 10:55 UTC
+**Files:** 1438 | **Est. tokens:** ~2,723,500
+**Generated:** 2026-09-03 08:21 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~31,887 |
+| `./` | 35 | ~32,388 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -41,7 +41,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,465 |
-| `docs/` | 35 | ~90,975 |
+| `docs/` | 36 | ~93,037 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 4 | ~11,498 |
@@ -210,6 +210,7 @@
 - `GITHUB_SETUP_INSTRUCTIONS.md` (~240 tok, medium) — GitHub Setup (Quick)
 - `.gitignore` (~813 tok, large) — # Rust
 - `HANDOFF-2026-09-01.md` (~3795 tok, huge) — Handoff — MIND compiler, branch `fix/tc-let-null-annotation`
+- `HANDOFF-2026-09-02-S1-GLIBC.md` (~501 tok, large) — Handoff for CLAUDE (compiler owner) — S1 Pure-MIND ABI blocker
 - `incompatible` (~0 tok, tiny)
 - `LICENSE` (~2573 tok, huge) —                                  Apache License
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
@@ -470,6 +471,7 @@
 - `RI_DEPENDENCY_MATRIX.md` (~6115 tok, huge) — Rust-Independence (RI) Dependency Matrix
 - `runs-burndown-roadmap.md` (~3203 tok, huge) — MIND RUNS Burndown Roadmap
 - `security.md` (~1492 tok, large) — Security Guide
+- `self-evolution.md` (~2062 tok, huge) — Self-Evolution in MIND
 - `self-host-trace-hash-port.md` (~1406 tok, large) — #17 — Self-compute the native PT_NOTE (pure-MIND trace-hash port)
 - `shapes.md` (~478 tok, medium) — Tensor shape semantics
 - `sparse-tensor-types.md` (~740 tok, large) — Sparse Tensor Types
