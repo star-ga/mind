@@ -47,11 +47,16 @@ keystone bootstrap. **The moat is the examination, not the student.**
 | Fitness gate | `tests/cross_substrate_identity.rs` (26 tests) + `tests/mindfuzz_cross_substrate.rs` | Live and CI-gated |
 | Pinned canaries | int8 `917d353b`, Q16 `92e2cb75`, gemv-i16 `3238e8c7` | Live |
 | L0 search space | `src/mlir/gemm_tuning.rs` (~15 integer constants) | Exists, hand-tuned |
-| L0 campaign harness | `~/mind-lab/autoresearch/config.mind-perf-l0.yaml` + `run_mind_gemm.sh` | Built 2026-09-03, baseline in progress |
+| L0 campaign harness | `~/mind-lab/autoresearch/config.mind-perf-l0.yaml` + `run_mind_gemm.sh` | Built 2026-09-03; **baseline measured: 28.64 GMAC/s, gate green (26/26)** |
 
 Honest gaps, stated rather than smoothed over:
 
-- The RSI campaign has **never been run**. "Written and tested" is not "produced a result."
+- The RSI campaign (L3, `ar_rsi.py`) has **never been run**. "Written and tested" is not
+  "produced a result."
+- L0 now has a measured **baseline** — `28.64 GMAC/s` at `512x512x512`, gate green, on an
+  unmodified tree (2026-09-03, `/tmp/mind-ar-perf` @ `5d0cb086`). A baseline is the number a
+  search is judged against; it is **not** a search result. No candidate has been proposed or
+  kept yet.
 - L1–L3 below are **design, not implementation**.
 - `naestro`'s R11 track assumed two `.mind` modules (`hypothesis.mind`, `self_modify.mind`)
   that **do not exist anywhere** in the ecosystem (verified 2026-09-03). See that repo's
@@ -134,7 +139,7 @@ every one of:
 A real number is emitted **only** when every gate passes. The hashes are recomputed from
 the emitted bytes, so a proposer cannot self-report its way past the gate.
 
-Two failure modes this caught on its first runs (2026-09-03), both worth recording because
+Three failure modes this caught on its first runs (2026-09-03), all worth recording because
 they are the failures a self-improving loop is *most* likely to mistake for signal:
 
 1. A non-interactive shell had no `~/.cargo/bin` on `PATH`; `cargo` was not found and the
@@ -142,18 +147,35 @@ they are the failures a self-improving loop is *most* likely to mistake for sign
 2. Bare `mlir-opt` on `PATH` resolved to **LLVM 18** instead of the pinned **LLVM 20**, so
    every gate died on `failed to legalize builtin.unrealized_conversion_cast` — and the
    wrapper reported it as *"BYTE-IDENTITY GATE FAILED — a canary shifted."*
+3. After (2) was "fixed" by pinning `MLIR_OPT` / `MLIR_TRANSLATE`, the **baseline run on an
+   unmodified tree still failed the gate**: bare `clang` resolved to **LLVM 21**, which
+   removed `mul` constexprs, so `mindc --emit-shared` died on two workloads
+   (`array_store_branch`, `array_store_loop`) — 24 passed / 2 failed. The wrapper again
+   reported *"a canary shifted."* With `CLANG` pinned to LLVM 20, the same tree is **26/26
+   green**.
 
-Both correctly discarded, so no false green. But (2) exposed a real defect: **an environment
-fault was being reported as a determinism failure.** Left alone, the search would have spent
-every round hunting a canary drift that never happened. The wrapper now separates the two —
-a toolchain fault still discards (an unmeasurable candidate is worth zero either way) but is
-labelled as such.
+All three correctly discarded, so no false green. But (2) and (3) exposed the same real
+defect twice: **an environment fault was being reported as a determinism failure.** Left
+alone, the search would have spent every round hunting a canary drift that never happened.
+The wrapper now separates the two — a toolchain fault still discards (an unmeasurable
+candidate is worth zero either way) but is labelled as such.
 
-The general lesson, and the reason it is written down here: *a fail-closed gate keeps you
-honest about **whether** a candidate passed; it does not automatically keep you honest about
-**why** it failed.* A search optimizes against the reason it is given. Both the campaign
-config and the evaluator now pin `MLIR_OPT` / `MLIR_TRANSLATE` explicitly rather than
-inheriting whatever the launching shell happened to resolve.
+Two general lessons, and the reason they are written down here:
+
+*A fail-closed gate keeps you honest about **whether** a candidate passed; it does not
+automatically keep you honest about **why** it failed.* A search optimizes against the
+reason it is given.
+
+*Pinning part of a toolchain is not pinning it.* The first fix pinned `MLIR_OPT` and
+`MLIR_TRANSLATE` and left `clang` inheriting the shell — which is why (3) happened at all.
+The evaluator now defaults **all three** from a single `LLVM_PIN` and preflights each for
+executability before building, so a partial toolchain fails loudly and immediately instead
+of surfacing later as a phantom canary shift.
+
+**Run the baseline on an unmodified tree before trusting any campaign.** The gate failing on
+code nobody touched is the cheapest possible way to find out the harness is measuring the
+environment instead of the change — and in this campaign it was the *only* thing that found
+it.
 
 ---
 
