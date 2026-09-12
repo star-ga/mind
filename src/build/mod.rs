@@ -571,13 +571,30 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
     //
     // Same two checks `run_project` already performs, in the same order.
     if !build_result.entry_native_compiled {
-        return Err(BuildError::Failed(
+        // The "see the [WARN] above" pointer is only true when a diagnostic actually caused
+        // the fallback. Without the `mlir-build` feature there is no native path at all:
+        // `compile_source` takes its `cfg(not(feature = "mlir-build"))` arm and returns
+        // `Ok(false)` unconditionally, emitting nothing. So a default-feature build sent every
+        // user here to look for a warning that was never printed — including on
+        // `examples/detmath_kat`, which passes `mindc check` cleanly. Name the real cause
+        // instead; the refusal itself is correct either way.
+        return Err(BuildError::Failed(if cfg!(feature = "mlir-build") {
             "entry module was not natively compiled (embedded as a runtime-JIT fallback \
              -- see the [WARN] above); refusing to report a successful build for an \
              artifact that is a launcher deferring to the installed mind-runtime, which \
              may exit 0 without executing your program"
-                .to_string(),
-        ));
+                .to_string()
+        } else {
+            "this mindc was built WITHOUT the `mlir-build` feature, so it has no native \
+             compilation path: every module is embedded as a runtime-JIT fallback, whatever \
+             the source says. Refusing to report a successful build for an artifact that is \
+             a launcher deferring to the installed mind-runtime, which may exit 0 without \
+             executing your program. Rebuild with `cargo build --release --features \
+             mlir-build` (needs mlir-opt / mlir-translate / clang on PATH) to produce a real \
+             binary. Nothing is wrong with your source -- `mindc check` remains the \
+             meaningful gate on this build."
+                .to_string()
+        }));
     }
     if !build_result.fallback_sources.is_empty() {
         return Err(BuildError::Failed(format!(
