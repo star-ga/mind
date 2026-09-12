@@ -94,14 +94,15 @@
 //! share the one `narrow_scalar_kind` table; a known-narrow field whose value
 //! cannot be materialised at that width is REFUSED, never returned wide.
 //!
+//! # The fifth mechanism: INTERMEDIATE NARROW ARITHMETIC
+//!
+//! An 8/16-bit binop/shift RESULT re-wraps at a width the SOURCE never declares
+//! (`a: u8 = 250; (a + 10) / 2` is 2); mirrored in the sibling `narrow_arith`
+//! module, reusing this file's `pub(crate)` width tables and registries.
+//!
 //! # Not covered (declared open, not silently half-done)
 //!
-//! INTERMEDIATE NARROW ARITHMETIC. `lower.rs::infer_narrow_arith_ty` re-masks
-//! every 8/16-bit arithmetic RESULT, so with `a: u8 = 250` the artifact
-//! computes `(a + 10) / 2` as 2 (the intermediate wraps to 4 first) while this
-//! evaluator computes 130. That is a fifth locus — a width the SOURCE never
-//! declares, inferred from a 3-valued operand lattice — and needs that lattice
-//! mirrored here, not a declared-width lookup. Also left open.
+//! A `p.f`/`a[i]` via a non-`env`-ident receiver, an unannotated array element, or an aggregate param stays width-NEUTRAL — see `narrow_arith`.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -154,7 +155,7 @@ pub(crate) fn apply_scalar_cast(n: i64, ty: &TypeAnn) -> i64 {
 /// module-local `type` alias resolve first and call this on the target (see
 /// `declared_width::narrow_kind`). Keeping resolution out preserves the
 /// existing `as`-cast behaviour exactly.
-fn narrow_scalar_kind(ty: &TypeAnn) -> Option<NarrowScalar> {
+pub(crate) fn narrow_scalar_kind(ty: &TypeAnn) -> Option<NarrowScalar> {
     match ty {
         TypeAnn::ScalarI32 => Some(NarrowScalar::Signed(32)),
         TypeAnn::ScalarU32 => Some(NarrowScalar::Unsigned(32)),
@@ -178,7 +179,7 @@ fn narrow_scalar_kind(ty: &TypeAnn) -> Option<NarrowScalar> {
 /// mask). Unsignedness is tracked here, alongside the width and never merged
 /// into it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum NarrowScalar {
+pub(crate) enum NarrowScalar {
     Signed(u32),
     Unsigned(u32),
 }
@@ -186,7 +187,7 @@ enum NarrowScalar {
 /// Materialise `n` at a declared narrow width, bit-for-bit as the compiled
 /// path does: truncate + sign-extend for a signed width, mask for an unsigned
 /// one.
-fn apply_narrow_kind(n: i64, kind: NarrowScalar) -> i64 {
+pub(crate) fn apply_narrow_kind(n: i64, kind: NarrowScalar) -> i64 {
     match kind {
         NarrowScalar::Signed(width) => {
             let shift = 64 - width as i64;
@@ -215,7 +216,7 @@ fn apply_narrow_kind(n: i64, kind: NarrowScalar) -> i64 {
 /// directly; only a name the table does not know pays for alias resolution, so
 /// the overwhelmingly common `i64`/float/aggregate annotation costs one failed
 /// match and nothing else.
-fn narrow_kind(ty: &TypeAnn) -> Option<NarrowScalar> {
+pub(crate) fn narrow_kind(ty: &TypeAnn) -> Option<NarrowScalar> {
     if let Some(kind) = narrow_scalar_kind(ty) {
         return Some(kind);
     }
@@ -388,7 +389,7 @@ pub(crate) fn narrow_opt(
 // shadow-clear rule `lower.rs` documents as Finding 1(a)).
 
 thread_local! {
-    static NARROW_LOCALS: RefCell<HashMap<String, NarrowScalar>> = RefCell::new(HashMap::new());
+    pub(crate) static NARROW_LOCALS: RefCell<HashMap<String, NarrowScalar>> = RefCell::new(HashMap::new());
 }
 
 /// Restores the enclosing scope's narrow-locals map on every exit path,
@@ -471,7 +472,7 @@ thread_local! {
     /// whose declared type narrows only. Restored on scope exit by
     /// `StructDefsGuard` so a nested module eval neither sees nor leaks the
     /// caller's schema.
-    static STRUCT_FIELD_TYPES: RefCell<HashMap<String, HashMap<String, TypeAnn>>> =
+    pub(crate) static STRUCT_FIELD_TYPES: RefCell<HashMap<String, HashMap<String, TypeAnn>>> =
         RefCell::new(HashMap::new());
 }
 

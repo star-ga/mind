@@ -17,12 +17,9 @@ use std::collections::BTreeSet;
 use std::collections::HashMap;
 
 use crate::ast::{BinOp, Literal, Module, Node, Span, TensorElemOp, TypeAnn};
-use crate::runtime_interface::{MindRuntime, NoOpRuntime};
-
 use crate::eval::autodiff::TensorEnvEntry;
-use crate::types::DType;
-use crate::types::ShapeDim;
-use crate::types::ValueType;
+use crate::runtime_interface::{MindRuntime, NoOpRuntime};
+use crate::types::{DType, ShapeDim, ValueType};
 
 #[cfg(feature = "cpu-exec")]
 use crate::exec;
@@ -45,6 +42,7 @@ pub mod ir_interp;
 pub mod lower;
 mod module_bindings;
 mod module_globals;
+mod narrow_arith;
 use module_bindings::symbol_owner;
 pub(crate) use module_bindings::{
     BindingKind as EvalBindingKind, Bindings as EvalBindings, BindingsGuard as EvalBindingsGuard,
@@ -1719,7 +1717,8 @@ pub(crate) fn eval_value_expr_mode(
                     return apply_int_op_u64(*op, *a, *b).map(Value::Int);
                 }
             }
-            apply_binary(*op, lv, rv, mode.clone())
+            let result = apply_binary(*op, lv, rv, mode.clone())?;
+            narrow_arith::narrow_binary_result(*op, left, right, result, env)
         }
         Node::Let {
             name, ann, value, ..
@@ -2043,6 +2042,7 @@ pub(crate) fn eval_value_expr_mode(
                     // `>>` stays ARITHMETIC. `<< & | ^` are sign-agnostic.
                     let u64_shr = matches!(op, crate::ast::BitOp::Shr)
                         && (interp_expr_is_u64(left) || interp_expr_is_u64(right));
+                    let b = narrow_arith::narrow_shift_count(*op, left, b, env);
                     let result = match op {
                         crate::ast::BitOp::Or => a | b,
                         crate::ast::BitOp::And => a & b,
@@ -2053,7 +2053,7 @@ pub(crate) fn eval_value_expr_mode(
                         }
                         crate::ast::BitOp::Shr => a.wrapping_shr(b as u32),
                     };
-                    Ok(Value::Int(result))
+                    narrow_arith::narrow_shift_result(*op, left, Value::Int(result), env)
                 }
                 _ => Ok(Value::Int(0)),
             }

@@ -156,6 +156,79 @@ pub fn struct_i64_field_untouched() -> i64 {
     let s: Scal = Scal { b: 1, wide: 5000000000 }
     return s.wide
 }
+
+// --- INTERMEDIATE NARROW ARITHMETIC: the fifth mechanism --------------------
+// An 8/16-bit binop/shift RESULT re-wraps at a width the SOURCE never declares,
+// inferred from a 3-valued operand lattice (`narrow_arith`, mirror of
+// `lower.rs::infer_narrow_arith_ty`). MEASURED against a `.so` emitted by this
+// compiler and read back at full width by a C probe: the intermediate wraps
+// FIRST — `(a + 10)` with `a: u8 = 250` is 4, not 260, so `(a + 10) / 2` is 2.
+struct P { f: u16 }
+pub fn arith_u8_wrap() -> i64 {
+    let a: u8 = 250
+    return (a + 10) / 2
+}
+// The regression case: a u8 local joined with a u16 struct FIELD. The join
+// takes the WIDEST operand (u16), so `a + p.f` wraps at u16: 60250 fits u16 and
+// stays 60250. The pre-fix / under-classified-leaf answer collapses the field
+// to Neutral, joins at u8, and answers 90.
+pub fn arith_u8_plus_u16_field() -> i64 {
+    let a: u8 = 250
+    let p = P { f: 60000 }
+    return a + p.f
+}
+// Shift COUNT mask: `a: u8 = 1; a << 8` masks the count mod 8 (`8 & 7 == 0`),
+// so the result is `1 << 0 == 1`. Masking the RESULT only (the reverted bug)
+// gives `1 << 8 == 256`, then `& 0xFF == 0`.
+pub fn arith_u8_shift_count() -> i64 {
+    let a: u8 = 1
+    return a << 8
+}
+// u16, chained: `b * 2` = 120000 wraps to 54464, then `+ 100` = 54564.
+pub fn arith_u16_chain() -> i64 {
+    let b: u16 = 60000
+    return (b * 2) + 100
+}
+// Signed i8: `c + 100` = 200 wraps to -56 (sign-extend, not zero-fill), so the
+// following `/ 2` is -28, not 100. Collapsing the signedness would give 100.
+pub fn arith_i8_signed() -> i64 {
+    let c: i8 = 100
+    return (c + 100) / 2
+}
+// A SHIFT result carries the LEFT operand's width: `a(u8) << 1` = 400 wraps to
+// 144, then `+ 1` = 145. No narrowing answers 401.
+pub fn arith_u8_shift() -> i64 {
+    let a: u8 = 200
+    return (a << 1) + 1
+}
+
+// --- ADVERSARIAL: the re-mask must NOT over-reach --------------------------
+// A `Wide` operand (an `i64` var) widens the whole expr — no u8 wrap (6350).
+pub fn adv_wide_i64() -> i64 {
+    let a: u8 = 250
+    let b: i64 = 100
+    return (a + b) + 6000
+}
+// An all-literal expression is `Wide` (no narrow operand) — no wrap (130).
+pub fn adv_all_literal() -> i64 {
+    return (250 + 10) / 2
+}
+// `as i64` widens: `(a as i64 + 10) / 2` is 130, not 2.
+pub fn adv_as_wide() -> i64 {
+    let a: u8 = 250
+    return (a as i64 + 10) / 2
+}
+// i32 is NOT in the 8/16-bit arith re-mask set: 100000*100000 stays
+// 10000000000, not a 32-bit wrap.
+pub fn adv_i32_intermediate() -> i64 {
+    let a: i32 = 100000
+    return a * a
+}
+// `as u8` IS a narrow cast, so the intermediate DOES wrap: 2, not 130.
+pub fn adv_as_u8() -> i64 {
+    let x: i64 = 250
+    return ((x as u8) + 10) / 2
+}
 "#;
 
 /// Evaluate `<fn>()` through the tree evaluator by appending a top-level
@@ -198,6 +271,19 @@ const WITNESSES: &[(&str, i64, i64)] = &[
     // the pre-fix wide 182 into 118; the scalar `u8` field wraps 300 to 44.
     ("struct_u8_array", 118, 182),
     ("struct_u8_scalar", 44, 300),
+    // INTERMEDIATE NARROW ARITHMETIC — the fifth mechanism. Each narrow value
+    // is the compiled artifact's answer; the wide value is what the pre-fix
+    // evaluator produced (the intermediate carried full width).
+    ("arith_u8_wrap", 2, 130),
+    // The regression case: u8 local + u16 field. Widest-wins join ⇒ u16 ⇒
+    // 60250. The under-classified-leaf bug joined at u8 and answered 90.
+    ("arith_u8_plus_u16_field", 60_250, 90),
+    // Shift-count mask: `1u8 << 8` == `1 << (8 & 7)` == 1. Masking the result
+    // only (the reverted bug) gives `(1 << 8) & 0xFF` == 0.
+    ("arith_u8_shift_count", 1, 0),
+    ("arith_u16_chain", 54_564, 120_100),
+    ("arith_i8_signed", -28, 100),
+    ("arith_u8_shift", 145, 401),
 ];
 
 #[test]
@@ -214,6 +300,67 @@ fn oracle_wraps_at_the_declared_width() {
              (the pre-fix wide answer was {wide})"
         );
     }
+}
+
+#[test]
+fn intermediate_arith_acceptance() {
+    // The three lane-targeting acceptance cases, artifact-measured values read
+    // through the `-> i64` boundary.
+    //
+    // The regression case — a u8 local joined with a u16 struct FIELD. This is
+    // the case the reverted attempt got WRONG (90): it mapped the FieldAccess
+    // leaf to Neutral, so the join fell back to u8. The widest-wins join must
+    // pick u16.
+    //   MUTATION (join): flip `narrow_arith::join`'s `Narrow(a), Narrow(b)` arm
+    //   to always pick the LEFT (`Narrow(a)` regardless of width) — this test
+    //   goes RED at 90; reverting the flip restores 60250.
+    assert_eq!(
+        eval_call("arith_u8_plus_u16_field"),
+        60_250,
+        "u8 + u16-field must join at the WIDEST (u16 ⇒ 60250), not u8 (⇒ 90)"
+    );
+    // The shift-COUNT mask — masking the result only (the reverted bug) gives 0.
+    //   MUTATION (count mask): delete the `narrow_arith::narrow_shift_count`
+    //   call in the `Node::Bitwise` arm (or make it return `count` for shifts) —
+    //   this test goes RED at 0; restoring the pre-shift count mask restores 1.
+    assert_eq!(
+        eval_call("arith_u8_shift_count"),
+        1,
+        "`1u8 << 8` masks the COUNT mod 8 first ⇒ 1, not `(1<<8)&0xFF` ⇒ 0"
+    );
+    // The original case this lane targets.
+    assert_eq!(
+        eval_call("arith_u8_wrap"),
+        2,
+        "`(a+10)/2` with a:u8=250 wraps the intermediate to 4 first ⇒ 2"
+    );
+}
+
+#[test]
+fn intermediate_arith_does_not_over_narrow() {
+    // The fifth mechanism must re-mask ONLY where the artifact does.
+    //   * a `Wide` i64 operand widens the whole expression (no u8 wrap);
+    assert_eq!(
+        eval_call("adv_wide_i64"),
+        6350,
+        "an i64 operand widens the expr"
+    );
+    //   * an all-literal expression is `Wide` (no narrow operand to re-mask);
+    assert_eq!(
+        eval_call("adv_all_literal"),
+        130,
+        "all-literal must not re-mask"
+    );
+    //   * an `as i64` cast widens;
+    assert_eq!(eval_call("adv_as_wide"), 130, "an `as i64` cast widens");
+    //   * i32 is NOT in the 8/16-bit arith re-mask set;
+    assert_eq!(
+        eval_call("adv_i32_intermediate"),
+        10_000_000_000,
+        "i32 intermediate arithmetic is not re-masked here"
+    );
+    //   * but an `as u8` cast IS narrow, so it DOES re-mask.
+    assert_eq!(eval_call("adv_as_u8"), 2, "an `as u8` cast re-masks");
 }
 
 #[test]
