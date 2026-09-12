@@ -70,16 +70,12 @@ const ANCHOR_SEED: u64 = 0xDEAD_BEEF;
 /// Repeated recomputations to flush out any data race in the parallel partition.
 const STABILITY_RUNS: usize = 256;
 
-/// Conservative single-core integer-MAC ceiling (GMAC/s), matching the GEMM
-/// bench's constant; the all-core roofline denominator is `cores × this`.
-fn isa_peak_gmacs_per_core() -> f64 {
-    if cfg!(target_arch = "x86_64") {
-        56.0
-    } else if cfg!(target_arch = "aarch64") {
-        24.0
-    } else {
-        f64::NAN
-    }
+/// CPUID-gated single-core int-MAC ceiling for the Q16.16 `vpmuldq` GEMV kernel,
+/// matching det_matmul_q16; the all-core roofline denominator is `cores × this`.
+/// Bench-side only — no emitted bytes, not on any canary path.
+#[allow(dead_code)]
+mod roofline {
+    include!("common/roofline_peak.rs");
 }
 
 /// Kernel ABI: `gemvq(catalog, query, scores, m, k) -> 0`.
@@ -289,16 +285,7 @@ fn report_gmacs_gemv(lib: &Library, m: usize, k: usize, seed: u64) {
     let cores = std::thread::available_parallelism()
         .map(|c| c.get())
         .unwrap_or(1) as f64;
-    let per_core = isa_peak_gmacs_per_core();
-    let pct = if per_core.is_finite() {
-        let peak = per_core * cores;
-        format!(
-            "{:.1}% of all-core ISA peak (~{peak:.0} GMAC/s est., {cores:.0}c)",
-            gmacs / peak * 100.0
-        )
-    } else {
-        "ISA peak unknown".to_string()
-    };
+    let pct = roofline::roofline_pct_all_core(gmacs, roofline::IntUop::Vpmuldq, cores);
     eprintln!(
         "det_gemv_q16_mt: ROOFLINE {m}x{k} {gmacs:7.2} GMAC/s  [{pct}]  (median {:.1} µs/call)",
         median * 1e6
