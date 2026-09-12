@@ -62,7 +62,7 @@
 //! (mindc must exist at `target/{debug,release}/mindc`; the line above builds
 //! the debug binary the bench discovers.)
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -85,6 +85,11 @@ const SHAPES: &[usize] = &[64, 256, 512];
 #[allow(dead_code)]
 mod roofline {
     include!("common/roofline_peak.rs");
+}
+
+#[allow(dead_code)]
+mod mindc_probe {
+    include!("common/mindc_probe.rs");
 }
 
 /// The committed byte-identity workload (RFC 0020 §5). The 256×256 row of the
@@ -124,31 +129,15 @@ fn manifest_dir() -> PathBuf {
 }
 
 fn mindc_path() -> Option<PathBuf> {
-    // CARGO_TARGET_DIR FIRST. This probed only `manifest_dir()/target/...`, so a run with
-    // `CARGO_TARGET_DIR=/dev/shm/...` — the normal way to keep build artifacts off a full
-    // disk — put the binary exactly where this function does not look. The bench then
-    // reported "kernel unavailable; no measurements taken" and exited 0, so two separate
-    // attempts to get a number produced nothing and looked like an environment problem.
-    if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
-        let base = PathBuf::from(dir);
-        for profile in ["release", "debug"] {
-            let p = base.join(profile).join("mindc");
-            if p.is_file() {
-                return Some(p);
-            }
-        }
-    }
-    let dbg = manifest_dir().join("target").join("debug").join("mindc");
-    if dbg.exists() {
-        return Some(dbg);
-    }
-    let rel = manifest_dir().join("target").join("release").join("mindc");
-    if rel.exists() { Some(rel) } else { None }
+    let env = std::env::var("CARGO_TARGET_DIR").ok();
+    // Probe order lives in `benches/common/mindc_probe.rs` and is tested by
+    // `tests/mindc_probe_order.rs`. It is NOT tested here: this bench is `harness = false`,
+    // so a `#[test]` in this file would be silently discarded and never run.
+    mindc_probe::mindc_candidates(env.as_deref(), &manifest_dir())
+        .into_iter()
+        .find(|p| p.is_file())
 }
 
-/// Compile the GEMV kernel to a temp `.so` once. Returns `None` (self-skip) if
-/// the MLIR toolchain is shadowed or `mindc` is not built — same contract as the
-/// gated test harnesses.
 fn build_gemv_so() -> Option<&'static PathBuf> {
     static SO: OnceLock<Option<PathBuf>> = OnceLock::new();
     SO.get_or_init(|| {
