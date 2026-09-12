@@ -10,43 +10,48 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! A trailing comment on a struct field must stay on that field.
+//! A comment inside a struct body must stay inside that body.
 //!
-//! KNOWN DEFECT, recorded as an ignored test rather than as prose. `mindc fmt` strips a
-//! comment that sits on the same line as a struct field and re-emits it AFTER the closing
-//! brace, so:
+//! KNOWN DEFECT, recorded as an ignored test rather than as prose. `mindc fmt` moves EVERY
+//! comment that appears inside a struct's braces out past the closing brace:
 //!
 //! ```text
-//! struct S {                          struct S {
-//!     a: i64,  // describes a    ->       a: i64,
-//!     b: i64,  // describes b             b: i64,
-//! }                                   }
-//!                                     // describes a
-//!                                     // describes b
+//! struct S {                        struct S {
+//!     // lead-a               ->        a: i64,
+//!     a: i64, // trail-a            }
+//! }                                 // lead-a
+//!                                   // trail-a
 //! ```
 //!
-//! Both comments survive as text, and they keep their relative order, so nothing is deleted.
-//! What is lost is the ATTACHMENT: "describes a" no longer documents `a`, and a reader of the
-//! formatted file cannot recover which field either line belonged to. On a wire-format record
-//! — `request_id: bytes, // 8 bytes from request_ns` in MindLLM's `governance_bridge.mind` —
-//! that comment is the only statement of the field's encoding.
+//! Both positions are affected — leading and trailing — and the comments keep their relative
+//! order, so nothing is deleted. What is lost is the ATTACHMENT: neither line documents `a`
+//! any more, and a reader of the formatted file cannot recover which field either belonged to.
+//! On a wire-format record — `request_id: bytes, // 8 bytes from request_ns` in MindLLM's
+//! `governance_bridge.mind` — that comment is the only statement of the field's encoding.
 //!
-//! WHY THE EXISTING GATES CANNOT SEE IT, which is the part worth keeping. `fmt` stays
-//! IDEMPOTENT across this transform (the second pass moves nothing further) and the output
-//! still parses, so both halves of the reparse gate pass. That gate was built to catch a lossy
-//! re-emit and it is the right instrument for one; a comment emitted in the wrong PLACE is a
-//! different failure, and it needs an assertion about position rather than about survival.
-//! Same blind spot that let the bool-literal desugar ship: `0` formats to `0` forever.
+//! MEASURED SCOPE (2026-09-12), because the first version of this file got it wrong. It
+//! described only the TRAILING position and asserted, as a positive control, that a LEADING
+//! field comment was handled correctly. That control FAILED, which is how the real scope was
+//! found: a leading comment is displaced identically. The genuine control is a comment ABOVE
+//! the struct, which `fmt` does preserve in place — so the printer's comment machinery works,
+//! and this is specifically about the region between the braces.
+//!
+//! WHY THE EXISTING GATES CANNOT SEE IT. `fmt` stays IDEMPOTENT across this transform (a
+//! second pass moves nothing further) and the output still parses, so both halves of the
+//! reparse gate pass. That gate was built to catch a lossy re-emit and is the right instrument
+//! for one; a comment emitted in the wrong PLACE needs an assertion about position instead of
+//! about survival. Same blind spot that let the bool-literal desugar ship: `0` formats to `0`
+//! forever.
 //!
 //! THE CAUSE is in `src/fmt/printer.rs`. `Trivia::comments_at` is indexed by original source
-//! LINE, and it is consumed only by `emit_leading` before a top-level item. Struct fields are
-//! not top-level items and never consume their own line, so a field's comment sits in the map
-//! until the next item flushes it — which places it after the struct.
+//! LINE and consumed only by `emit_leading` before a TOP-LEVEL item. Struct fields are not
+//! top-level items and never consume their own lines, so every comment between the braces sits
+//! in the map until the next top-level item flushes it — which places it after the struct.
 //!
 //! THE FIX is additive and needs no new AST variant: `ast::Field` already carries a `span`, so
-//! `emit_struct_def` can take the comments at each field's line and emit them as a trailing
-//! comment on that field. Un-ignore this test as the acceptance criterion. The same treatment
-//! is owed to enum variants (`EnumVariant`) and to match arms, which have the same shape.
+//! `emit_struct_def` can consume the comments at each field's line and emit them in place.
+//! Un-ignore the first test as the acceptance criterion. Enum variants (`EnumVariant`) and
+//! match arms have the same shape and the same bug.
 
 use libmind::fmt::format_source;
 use libmind::project::MindcraftFormatConfig;
@@ -56,39 +61,35 @@ fn fmt(src: &str) -> String {
         .unwrap_or_else(|e| panic!("format_source failed on:\n{src}\nerror: {e:?}"))
 }
 
-const SRC: &str = "struct S {\n    a: i64, // describes a\n    b: i64, // describes b\n}\n\npub fn f(s: &S) -> i64 {\n    s.a\n}\n";
+/// `src` with a comment in each in-body position.
+const SRC: &str = "struct S {\n    // lead-a\n    a: i64, // trail-a\n}\n\npub fn f(s: &S) -> i64 {\n    s.a\n}\n";
 
-/// The defect. Remove `#[ignore]` when `emit_struct_def` attaches field comments.
+/// Everything between the braces must stay between the braces.
+///
+/// Remove `#[ignore]` when `emit_struct_def` consumes its fields' comment lines.
 #[test]
-#[ignore = "known defect: fmt detaches a field's trailing comment and emits it after the struct"]
-fn a_field_trailing_comment_stays_on_its_field() {
+#[ignore = "known defect: fmt moves every in-body struct comment out past the closing brace"]
+fn comments_inside_a_struct_body_stay_inside_it() {
     let out = fmt(SRC);
+    let close = out.find("\n}").expect("struct must close");
 
-    // The comment must appear on the same output line as the field it documents.
-    for (field, comment) in [("a: i64", "describes a"), ("b: i64", "describes b")] {
-        let on_same_line = out
-            .lines()
-            .any(|l| l.contains(field) && l.contains(comment));
+    for c in ["lead-a", "trail-a"] {
         assert!(
-            on_same_line,
-            "`// {comment}` must stay on the `{field}` line, not float free of it.\n\
-             --- in ---\n{SRC}\n--- out ---\n{out}"
+            !out[close..].contains(c),
+            "`// {c}` was emitted after the struct's closing brace.\n--- out ---\n{out}"
         );
     }
-
-    // And it must NOT have been pushed outside the struct body.
-    let close = out.find("\n}").expect("struct must close");
+    // The trailing one must land on its field's line, not merely somewhere inside.
     assert!(
-        !out[close..].contains("describes a"),
-        "a field comment was emitted after the struct's closing brace.\n--- out ---\n{out}"
+        out.lines().any(|l| l.contains("a: i64") && l.contains("trail-a")),
+        "`// trail-a` must stay on the `a: i64` line.\n--- out ---\n{out}"
     );
 }
 
-/// The defect is REAL and this file is not testing a straw man.
+/// The defect is REAL, and this pins its exact current shape.
 ///
-/// Runs unignored, and asserts the CURRENT broken behaviour: both comments survive, in order,
-/// but land after the closing brace. If this ever fails, the defect has been fixed (or has
-/// changed shape) and the ignored test above should be re-run rather than trusted.
+/// Runs unignored. If it ever fails, the defect has been fixed or has changed scope — un-ignore
+/// the test above rather than trusting this one.
 #[test]
 fn the_defect_is_currently_present_and_this_is_its_exact_shape() {
     let out = fmt(SRC);
@@ -96,25 +97,25 @@ fn the_defect_is_currently_present_and_this_is_its_exact_shape() {
     let tail = &out[close..];
 
     assert!(
-        tail.contains("describes a") && tail.contains("describes b"),
-        "the recorded defect did not reproduce — fmt no longer emits field comments after the \
-         struct. If this is because it was FIXED, remove the #[ignore] from the test above and \
-         delete this control.\n--- out ---\n{out}"
+        tail.contains("lead-a") && tail.contains("trail-a"),
+        "the recorded defect did not reproduce — fmt no longer displaces in-body struct \
+         comments. If it was FIXED, remove the #[ignore] above and delete this control.\n\
+         --- out ---\n{out}"
     );
 
-    // Nothing is deleted, and relative order holds — this is misplacement, not loss.
-    let ia = out.find("describes a").expect("comment a must survive");
-    let ib = out.find("describes b").expect("comment b must survive");
-    assert!(ia < ib, "comment order must be preserved.\n{out}");
+    // Nothing is deleted and relative order holds: this is misplacement, not loss.
+    let il = out.find("lead-a").expect("lead-a must survive");
+    let it = out.find("trail-a").expect("trail-a must survive");
+    assert!(il < it, "comment order must be preserved.\n{out}");
 
-    // Positive control for the assertions above: a LEADING comment on a field is handled
-    // correctly today, so the printer's comment machinery works and this is specifically
-    // about the trailing position.
-    let leading = fmt("struct S {\n    // describes a\n    a: i64,\n}\n\npub fn f(s: &S) -> i64 {\n    s.a\n}\n");
-    let close2 = leading.find("\n}").expect("struct must close");
+    // POSITIVE CONTROL, and the corrected one. A comment ABOVE the struct is preserved in
+    // place, so the printer's comment machinery works and the defect is scoped to the region
+    // between the braces. The first version of this file used a LEADING FIELD comment here and
+    // it failed — which is what revealed the defect covers both in-body positions.
+    let outside = fmt("// about S\nstruct S {\n    a: i64,\n}\n\npub fn f(s: &S) -> i64 {\n    s.a\n}\n");
     assert!(
-        !leading[close2..].contains("describes a"),
-        "a LEADING field comment was also displaced, so this is broader than the trailing \
-         position and the report above understates it.\n--- out ---\n{leading}"
+        outside.starts_with("// about S"),
+        "a comment ABOVE a struct must stay above it — if this fails, the displacement is \
+         broader than the struct body and this file understates it.\n--- out ---\n{outside}"
     );
 }
