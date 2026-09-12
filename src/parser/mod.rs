@@ -71,6 +71,9 @@ impl std::fmt::Display for ParseError {
 struct P<'a> {
     b: &'a [u8],
     pos: usize,
+    /// Surface spellings the desugars would drop, moved into `Module::spelling` so the
+    /// formatter can print them back. Spelling only — nothing in the compiler reads it.
+    spelling: crate::ast::SourceSpelling,
     /// Module names brought into scope by `import X` / `use X` (the last path
     /// segment). A method call whose receiver is one of these is a MODULE-
     /// QUALIFIED call `mod.fn(args)` — desugared to the bare cross-module call
@@ -292,6 +295,7 @@ impl<'a> P<'a> {
     /// Pass `Vec::new()` for a single-file / no-cross-module parse.
     fn new_with_enums(src: &'a str, global_enums: Vec<String>) -> Self {
         Self {
+            spelling: crate::ast::SourceSpelling::default(),
             b: src.as_bytes(),
             pos: 0,
             imports: Vec::new(),
@@ -1282,7 +1286,10 @@ impl<'a> P<'a> {
                 self.skip_ws();
             }
         }
-        Ok(Module { items })
+        Ok(Module {
+            items,
+            spelling: std::mem::take(&mut self.spelling),
+        })
     }
 
     fn parse_fn_body_stmts(&mut self) -> Result<Vec<Node>, ParseError> {
@@ -1562,6 +1569,58 @@ impl<'a> P<'a> {
         Ok(expr)
     }
 
+    /// Consume an optional `as NAME` rename and return the name.
+    ///
+    /// SHARED BY `parse_import` AND `parse_use`, and it must be, because the formatter
+    /// canonicalises `use` to `import` (`CANONICAL_KEYWORD_REWRITES`) while re-emitting the
+    /// alias — so `import X as Y;` is a form the printer PRODUCES. When only `parse_use`
+    /// understood `as`, formatting a file twice rewrote `import X as Y;` into three statements
+    /// (`import X;` / `as` / `Y`) and WROTE IT TO DISK, exit 0. That is the same corruption the
+    /// unconsumed-`as` defect caused in the first place, reintroduced on the second pass, and
+    /// the identifier-loss guard cannot see it because nothing is deleted — the tokens are
+    /// merely reparsed as separate statements.
+    fn parse_optional_as_alias(&mut self) -> Result<Option<String>, ParseError> {
+        self.skip_ws();
+        if !self.at_keyword(b"as") {
+            return Ok(None);
+        }
+        self.pos += 2; // "as"
+        self.skip_ws();
+        let name = self
+            .word()
+            .ok_or_else(|| self.err("expected a name after `as`".into()))?
+            .to_string();
+        self.skip_ws();
+        Ok(Some(name))
+    }
+
+    /// Register the qualifier a later `q.fn(args)` call desugars through: the alias when one is
+    /// written, the last path segment otherwise.
+    fn register_import_qualifier(&mut self, path: &[String], alias: Option<&str>) {
+        let qualifier = alias
+            .map(str::to_string)
+            .unwrap_or_else(|| path.last().cloned().unwrap_or_default());
+        if !qualifier.is_empty() && !self.imports.iter().any(|s| s == &qualifier) {
+            self.imports.push(qualifier);
+        }
+        // The unaliased last segment stays registered TOO when an alias renames it. Dropping it
+        // silently broke any file that wrote both spellings: the original name fell through to a
+        // MethodCall whose receiver has no struct type and tripped the #306 fail-closed guard.
+        if alias.is_some() {
+            if let Some(last) = path.last() {
+                if !last.is_empty() && !self.imports.iter().any(|s| s == last) {
+                    self.imports.push(last.clone());
+                }
+            }
+        }
+        if path.len() > 1 {
+            let dotted = path.join(".");
+            if !self.import_paths.iter().any(|s| s == &dotted) {
+                self.import_paths.push(dotted);
+            }
+        }
+    }
+
     fn parse_import(&mut self) -> Result<Node, ParseError> {
         let start = self.pos;
         self.pos += 6; // "import"
@@ -1577,26 +1636,13 @@ impl<'a> P<'a> {
                 .ok_or_else(|| self.err("expected module name after '.'".into()))?;
             path.push(part.to_string());
         }
-        self.skip_ws();
+        // `import X as Y` — the form the FORMATTER emits for `use X as Y`. See
+        // `parse_optional_as_alias`.
+        let alias = self.parse_optional_as_alias()?;
         self.eat(b';'); // optional semicolon
-        // Record the qualifier (last path segment) so a later `mod.fn(args)`
-        // call desugars to the bare cross-module `fn(args)`.
-        if let Some(last) = path.last() {
-            if !self.imports.iter().any(|s| s == last) {
-                self.imports.push(last.clone());
-            }
-        }
-        // A multi-segment import ALSO records its full dotted path so a call
-        // spelled through the whole path (`bridge.mcp.call(x)`) desugars the
-        // same way as the qualifier form (`mcp.call(x)`).
-        if path.len() > 1 {
-            let dotted = path.join(".");
-            if !self.import_paths.iter().any(|s| s == &dotted) {
-                self.import_paths.push(dotted);
-            }
-        }
+        self.register_import_qualifier(&path, alias.as_deref());
         let span = Span::new(start, self.pos);
-        Ok(Node::Import { path, span })
+        Ok(Node::Import { path, alias, span })
     }
 
     fn parse_use(&mut self) -> Result<Node, ParseError> {
@@ -1633,22 +1679,11 @@ impl<'a> P<'a> {
                 break;
             }
         }
-        self.skip_ws();
+        let alias = self.parse_optional_as_alias()?;
         self.eat(b';'); // optional semicolon
-        if let Some(last) = path.last() {
-            if !self.imports.iter().any(|s| s == last) {
-                self.imports.push(last.clone());
-            }
-        }
-        // Full-dotted-path twin of the qualifier record — see parse_import.
-        if path.len() > 1 {
-            let dotted = path.join(".");
-            if !self.import_paths.iter().any(|s| s == &dotted) {
-                self.import_paths.push(dotted);
-            }
-        }
+        self.register_import_qualifier(&path, alias.as_deref());
         let span = Span::new(start, self.pos);
-        Ok(Node::Import { path, span })
+        Ok(Node::Import { path, alias, span })
     }
 
     // ── Phase 10.5 Tier-1 / Tier-2 declarations ──────────────────────
@@ -1884,12 +1919,12 @@ impl<'a> P<'a> {
     /// Per architect review: no AST module-decl node; pure unwrap.
     fn parse_module_block(
         &mut self,
-        _attrs: Vec<crate::ast::Attribute>,
+        attrs: Vec<crate::ast::Attribute>,
     ) -> Result<Node, ParseError> {
         let start = self.pos;
         self.pos += 6; // "module"
         self.skip_ws();
-        let _name = self
+        let mut path = self
             .word()
             .ok_or_else(|| self.err("expected module name".into()))?
             .to_string();
@@ -1900,8 +1935,14 @@ impl<'a> P<'a> {
         // consume it. (Keystone has no dotted module decls → byte-identical.)
         while self.at(b'.') {
             self.pos += 1; // '.'
-            self.word()
-                .ok_or_else(|| self.err("expected module path segment after `.`".into()))?;
+            let seg = self
+                .word()
+                .ok_or_else(|| self.err("expected module path segment after `.`".into()))?
+                .to_string();
+            // Reassembled, not just consumed: `module backends.tool` must format back with
+            // both segments. Consuming and discarding is what made the formatter lossy.
+            path.push('.');
+            path.push_str(&seg);
         }
         self.skip_ws_and_newlines();
         if !self.eat(b'{') {
@@ -1913,6 +1954,14 @@ impl<'a> P<'a> {
             // file-level module decls, so this branch never fires there → the
             // bootstrap fixed point is byte-identical.)
             let span = Span::new(start, self.pos);
+            // Record the header HERE TOO. This early return is the braceless file-level
+            // `module NAME` form, and the push below it never ran for that shape — so the
+            // formatter deleted the header from exactly the files `mindc build` accepts but
+            // `check` sees as a bare marker.
+            self.spelling.module_headers.push((span, path));
+            if !attrs.is_empty() {
+                self.spelling.module_attrs.push((span, attrs));
+            }
             return Ok(Node::Block {
                 stmts: Vec::new(),
                 span,
@@ -1933,6 +1982,14 @@ impl<'a> P<'a> {
             return Err(self.err("expected `}` to close module".into()));
         }
         let span = Span::new(start, self.pos);
+        // Record the header for the formatter BEFORE returning. The node itself stays a bare
+        // transparent Block, so every downstream walker sees exactly what it saw before.
+        self.spelling.module_headers.push((span, path));
+        // The attribute list was previously dropped here (the parameter was `_attrs`), which
+        // deleted `#[protection]` from every module-wrapped file the formatter touched.
+        if !attrs.is_empty() {
+            self.spelling.module_attrs.push((span, attrs));
+        }
         // Wrap the items in a Block node; downstream module walker treats
         // a top-level Block as transparent (a do-nothing item list).
         Ok(Node::Block { stmts, span })
@@ -1949,6 +2006,7 @@ impl<'a> P<'a> {
         self.pos += 6; // "export"
         self.skip_ws();
         let mut names = Vec::new();
+        let mut category: Option<String> = None;
         if self.eat(b'{') {
             self.skip_ws_and_newlines();
             while !self.at(b'}') && !self.at_end() {
@@ -1969,11 +2027,13 @@ impl<'a> P<'a> {
                 return Err(self.err("expected `}` to close export list".into()));
             }
         } else {
-            // Optional category keyword: const | type | fn | struct | enum
-            // The category is recorded as a synthetic prefix (currently dropped).
+            // Optional category keyword: const | type | fn | struct | enum.
+            // KEPT, not dropped — it is part of what the source says, and the formatter
+            // prints this AST back out.
             for kw in ["const", "type", "fn", "struct", "enum"] {
                 if self.at_keyword(kw.as_bytes()) {
                     self.pos += kw.len();
+                    category = Some((*kw).to_string());
                     self.skip_ws();
                     break;
                 }
@@ -1992,7 +2052,11 @@ impl<'a> P<'a> {
         self.skip_ws();
         self.eat(b';');
         let span = Span::new(start, self.pos);
-        Ok(Node::Export { names, span })
+        Ok(Node::Export {
+            names,
+            category,
+            span,
+        })
     }
 
     /// Parse `invariant NAME { ... }` — a governance/DIFC contract declaration.
@@ -3991,7 +4055,20 @@ impl<'a> P<'a> {
                         // type-check via reduce_shape and lower to the reduction
                         // IR). `sum`/`mean` are reserved as zero-arg reduction
                         // methods; axis-specified and `.max` are future work.
-                        if args.is_empty() && (method == "sum" || method == "mean") {
+                        // A RECEIVER NAMING AN IMPORTED MODULE IS A NAMESPACE, NEVER A
+                        // TENSOR, and this guard has to come BEFORE the reduction desugar.
+                        // Without it, `use bytes; … bytes.sum()` was rewritten on disk to
+                        // `tensor.sum(bytes, axes=[])` with exit 0 — a SILENT source rewrite the
+                        // identifier-loss guard cannot see, because `tensor` and `axes` are
+                        // ADDED rather than anything being deleted. That makes it worse than the
+                        // refusals: a refusal leaves the file alone.
+                        let recv_is_module = match &node {
+                            Node::Lit(Literal::Ident(n), _) => {
+                                self.imports.iter().any(|s| s == n)
+                            }
+                            _ => false,
+                        };
+                        if !recv_is_module && args.is_empty() && (method == "sum" || method == "mean") {
                             let x = Box::new(node);
                             node = if method == "sum" {
                                 Node::CallTensorSum {
@@ -4021,6 +4098,14 @@ impl<'a> P<'a> {
                         // MethodCall path untouched.
                         if let Node::Lit(Literal::Ident(recv_name), _) = &node {
                             if self.imports.iter().any(|s| s == recv_name) {
+                                // Record the receiver AS WRITTEN before it is desugared away.
+                                // `bytes.append(b, 1)` and `append(b, 1)` produce the identical
+                                // Call node, so without this the formatter emits the second
+                                // spelling for the first source — 80 lost qualifiers in one
+                                // MindLLM module alone.
+                                self.spelling
+                                    .call_qualifiers
+                                    .push((span, recv_name.clone()));
                                 node = Node::Call {
                                     callee: method,
                                     args,
@@ -4064,6 +4149,14 @@ impl<'a> P<'a> {
                         {
                             if let Some(dotted) = ident_chain_dotted(&node) {
                                 if self.import_paths.iter().any(|s| s == &dotted) {
+                                    // The FULL dotted receiver as written — `mind.core.hash`,
+                                    // not just its last segment. Same loss as the
+                                    // single-segment form, spread over several identifiers:
+                                    // `rfn_bridge.mind` alone lost `mind` x2, `core` x2,
+                                    // `hash` and `io`.
+                                    self.spelling
+                                        .call_qualifiers
+                                        .push((span, dotted.clone()));
                                     node = Node::Call {
                                         callee: method,
                                         args,
@@ -4106,6 +4199,12 @@ impl<'a> P<'a> {
                         if let Node::Lit(Literal::Ident(recv_name), _) = &node {
                             if self.imports.iter().any(|s| s == recv_name) {
                                 let span = Span::new(node.span_start(), self.pos);
+                                // Same loss as the qualified CALL above, one node kind over:
+                                // `config.MAX_DEPTH` becomes a bare `MAX_DEPTH` Ident and the
+                                // qualifier is gone. Recorded against this node's span.
+                                self.spelling
+                                    .call_qualifiers
+                                    .push((span, recv_name.clone()));
                                 node = Node::Lit(Literal::Ident(method), span);
                                 continue;
                             }
@@ -4617,7 +4716,14 @@ impl<'a> P<'a> {
                 // so this path never fires for the keystone self-compile.
                 if ident == "true" || ident == "false" {
                     let span = Span::new(start, self.pos);
-                    let v = if ident == "true" { 1 } else { 0 };
+                    let is_true = ident == "true";
+                    // The VALUE stays `Int(1)`/`Int(0)`, so lowering, folding, comptime and
+                    // SCEV see exactly the literal they always saw. Only the SPELLING is
+                    // recorded, in the formatter's side table — a `Literal::Bool` variant was
+                    // tried first and silently broke five value consumers plus `mindc build`
+                    // (see `ast::SourceSpelling::bool_literals`).
+                    self.spelling.bool_literals.push((span, is_true));
+                    let v = if is_true { 1 } else { 0 };
                     return Ok(Node::Lit(Literal::Int(v), span));
                 }
                 // Phase 10.6: identifiers that contain `::` segment

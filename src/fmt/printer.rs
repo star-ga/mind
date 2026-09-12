@@ -114,6 +114,12 @@ struct Printer<'a> {
     stripped_idx: LineIndex,
     /// Last trivia line we've already consumed, to avoid double-emit.
     last_trivia_line: usize,
+    /// `true`/`false` spellings the parser desugared to integers, keyed by the literal's span.
+    bool_literals: std::collections::HashMap<(usize, usize), bool>,
+    /// Module qualifiers the parser desugared away, keyed by the desugared node's exact span.
+    /// See `ast::SourceSpelling`. Keyed on `(start, end)` rather than `start` alone because a
+    /// desugared call and its callee can share a start offset.
+    qualifiers: std::collections::HashMap<(usize, usize), String>,
 }
 
 impl<'a> Printer<'a> {
@@ -125,7 +131,19 @@ impl<'a> Printer<'a> {
             trivia: trivia_map,
             stripped_idx: LineIndex::build(stripped_src),
             last_trivia_line: 0,
+            qualifiers: std::collections::HashMap::new(),
+            bool_literals: std::collections::HashMap::new(),
         }
+    }
+
+    /// The `true`/`false` spelling of the literal at this span, if it was written as a bool.
+    fn bool_for(&self, span: &Span) -> Option<bool> {
+        self.bool_literals.get(&(span.start(), span.end())).copied()
+    }
+
+    /// The module qualifier written before this node, if the parser desugared one away.
+    fn qualifier_for(&self, span: &Span) -> Option<String> {
+        self.qualifiers.get(&(span.start(), span.end())).cloned()
     }
 
     fn indent_str(&self) -> String {
@@ -189,6 +207,18 @@ pub fn print_module(
 
     let trivia_map = TriviaMap::build(trivia, orig_src);
     let mut p = Printer::new(cfg, trivia_map, &stripped);
+    p.qualifiers = module
+        .spelling
+        .call_qualifiers
+        .iter()
+        .map(|(sp, q)| ((sp.start(), sp.end()), q.clone()))
+        .collect();
+    p.bool_literals = module
+        .spelling
+        .bool_literals
+        .iter()
+        .map(|(sp, b)| ((sp.start(), sp.end()), *b))
+        .collect();
 
     // Emit the file-top copyright/license header (trivia before line 0 or any
     // comment group that precedes the first item).
@@ -212,7 +242,43 @@ pub fn print_module(
         p.emit_leading_trivia(item_line);
 
         // Emit the item itself.
-        emit_node(&mut p, item, 0);
+        // A `module NAME { … }` wrapper: parsed to a transparent Block with its name recorded
+        // in the side table (see `Module::module_headers`). Re-emit the header and the closing
+        // brace around the block's own statements, indented one level. Without this the
+        // formatter deleted the wrapper, the identifier-loss guard refused the write, and no
+        // module-wrapped file could ever clear `fmt::drift`.
+        let header = module
+            .spelling
+            .module_headers
+            .iter()
+            .find(|(sp, _)| sp.start() == item.span_start())
+            .map(|(_, path)| path.clone());
+        match (header, item) {
+            (Some(path), Node::Block { stmts, span }) => {
+                // Attributes come before the header, at the same indentation.
+                if let Some((_, attrs)) = module
+                    .spelling
+                    .module_attrs
+                    .iter()
+                    .find(|(sp, _)| sp.start() == span.start())
+                {
+                    emit_attrs(&mut p, attrs);
+                }
+                p.push(&format!("module {path} {{\n"));
+                p.indent += 1;
+                let close_line = p.stripped_idx.line_of(span.end());
+                emit_block_stmts(&mut p, stmts, close_line);
+                p.indent -= 1;
+                // The body emitter may or may not leave a trailing newline depending on
+                // whether the block was empty; normalise so `}` always starts its own line
+                // and an empty `module X { }` does not collapse into `module X {}`.
+                if !p.out.ends_with('\n') {
+                    p.push("\n");
+                }
+                p.push("}");
+            }
+            _ => emit_node(&mut p, item, 0),
+        }
         p.push("\n");
 
         // After the last item, flush any trailing trivia (comments that
@@ -339,11 +405,11 @@ fn emit_node(p: &mut Printer, node: &Node, _extra_indent: usize) {
         } => {
             emit_type_alias(p, name, target, attrs);
         }
-        Node::Import { path, .. } => {
-            emit_import(p, path);
+        Node::Import { path, alias, .. } => {
+            emit_import(p, path, alias.as_deref());
         }
-        Node::Export { names, .. } => {
-            emit_export(p, names);
+        Node::Export { names, category, .. } => {
+            emit_export(p, names, category.as_deref());
         }
         Node::Let {
             name,
@@ -645,20 +711,41 @@ fn emit_type_alias(p: &mut Printer, name: &str, target: &TypeAnn, attrs: &[Attri
     emit_type_ann(p, target);
 }
 
-fn emit_import(p: &mut Printer, path: &[String]) {
+fn emit_import(p: &mut Printer, path: &[String], alias: Option<&str>) {
     let ind = p.indent_str();
     p.push(&ind);
     p.push("import ");
     p.push(&path.join("."));
+    // `as NAME` is re-emitted, not canonicalised away: the alias is the name every call site
+    // in the file uses, so dropping it changes what the source means rather than how it looks.
+    // (The `use` -> `import` keyword swap IS a deliberate canonicalisation, and is the one
+    // rewrite `CANONICAL_KEYWORD_REWRITES` permits the loss guard to accept.)
+    if let Some(name) = alias {
+        p.push(" as ");
+        p.push(name);
+    }
     p.push(";");
 }
 
-fn emit_export(p: &mut Printer, names: &[String]) {
+fn emit_export(p: &mut Printer, names: &[String], category: Option<&str>) {
     let ind = p.indent_str();
     p.push(&ind);
-    p.push("export { ");
-    p.push(&names.join(", "));
-    p.push(" }");
+    p.push("export ");
+    // `export fn a, b` is the CATEGORY form and has no braces; `export { a, b }` is the block
+    // form. Printing the block form for a categorised export would delete the category word,
+    // which is what it used to do.
+    match category {
+        Some(kw) => {
+            p.push(kw);
+            p.push(" ");
+            p.push(&names.join(", "));
+        }
+        None => {
+            p.push("{ ");
+            p.push(&names.join(", "));
+            p.push(" }");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1214,7 +1301,21 @@ fn emit_match_inline(p: &mut Printer, scrutinee: &Node, arms: &[MatchArm]) {
 
 fn emit_expr(p: &mut Printer, node: &Node) {
     match node {
-        Node::Lit(lit, _) => emit_literal(p, lit),
+        Node::Lit(lit, span) => {
+            // A `true`/`false` source literal reaches here as `Int(1)`/`Int(0)`; the spelling
+            // lives in the side table. Checked BEFORE the qualifier, because the two cannot
+            // both apply to one literal and a bool needs no `q.` prefix.
+            if let Some(spelled) = p.bool_for(span) {
+                p.push(if spelled { "true" } else { "false" });
+                return;
+            }
+            // `q.CONST` desugars to a bare Ident; restore the qualifier the same way.
+            if let Some(q) = p.qualifier_for(span) {
+                p.push(&q);
+                p.push(".");
+            }
+            emit_literal(p, lit)
+        }
         #[cfg(feature = "std-surface")]
         Node::Break { .. } => p.push("break"),
         #[cfg(feature = "std-surface")]
@@ -1277,7 +1378,15 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             p.push("~");
             emit_expr(p, operand);
         }
-        Node::Call { callee, args, .. } => emit_call(p, callee, args),
+        Node::Call { callee, args, span } => {
+            // Re-emit `q.` when the source wrote a module-qualified call. The desugared node is
+            // indistinguishable from an unqualified call, so the span lookup is the only record.
+            if let Some(q) = p.qualifier_for(span) {
+                p.push(&q);
+                p.push(".");
+            }
+            emit_call(p, callee, args)
+        }
         Node::MethodCall {
             receiver,
             method,
@@ -1645,8 +1754,22 @@ fn emit_expr(p: &mut Printer, node: &Node) {
         Node::Const { name, .. } => p.push(name),
         Node::ExternConst { name, .. } => p.push(name),
         Node::TypeAlias { name, .. } => p.push(name),
-        Node::Import { path, .. } => p.push(&path.join(".")),
-        Node::Export { names, .. } => p.push(&names.join(", ")),
+        Node::Import { path, alias, .. } => {
+            p.push(&path.join("."));
+            if let Some(name) = alias {
+                p.push(" as ");
+                p.push(name);
+            }
+        }
+        Node::Export { names, category, .. } => {
+            // The category belongs here too — the item-position arm restores it, and an
+            // expression-position export that dropped it would reopen the same deletion.
+            if let Some(kw) = category {
+                p.push(kw);
+                p.push(" ");
+            }
+            p.push(&names.join(", "));
+        }
         Node::Assign { name, value, .. } => {
             p.push(name);
             p.push(" = ");

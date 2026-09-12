@@ -186,6 +186,7 @@ fn parse_tensor_i64_dtype() {
 fn shape_dim_mismatch_diagnostic() {
     let module = Module {
         items: vec![let_tensor("x", "f32", &["4", "16"], "src")],
+        ..Default::default()
     };
     // src: Tensor<f32,[4,8]> — dim 1 mismatch (annotation=16, inferred=8)
     let env = env_with(&[("src", DType::F32, &[4, 8])]);
@@ -214,6 +215,7 @@ fn shape_dim_mismatch_diagnostic() {
 fn shape_rank_mismatch_diagnostic() {
     let module = Module {
         items: vec![let_tensor("x", "f32", &["4", "8", "16"], "src")],
+        ..Default::default()
     };
     // src: Tensor<f32,[4,8]> — rank 2 vs annotation rank 3
     let env = env_with(&[("src", DType::F32, &[4, 8])]);
@@ -243,6 +245,7 @@ fn shape_rank_mismatch_diagnostic() {
 fn shape_dtype_mismatch_f32_ann_q16_inferred() {
     let module = Module {
         items: vec![let_tensor("x", "f32", &["4"], "q_src")],
+        ..Default::default()
     };
     let env = env_with(&[("q_src", DType::Q16, &[4])]);
     let src = "let x: Tensor<f32, [4]> = q_src";
@@ -271,6 +274,7 @@ fn shape_dtype_mismatch_f32_ann_q16_inferred() {
 fn shape_dtype_mismatch_q16_ann_f32_inferred() {
     let module = Module {
         items: vec![let_tensor("x", "q16", &["4"], "f32_src")],
+        ..Default::default()
     };
     let env = env_with(&[("f32_src", DType::F32, &[4])]);
     let src = "let x: Tensor<q16, [4]> = f32_src";
@@ -294,6 +298,7 @@ fn shape_dtype_mismatch_q16_ann_f32_inferred() {
 fn compatible_tensor_binding_no_diag() {
     let module = Module {
         items: vec![let_tensor("x", "f32", &["4", "8"], "src")],
+        ..Default::default()
     };
     let env = env_with(&[("src", DType::F32, &[4, 8])]);
     let src = "let x: Tensor<f32, [4, 8]> = src";
@@ -316,6 +321,7 @@ fn compatible_tensor_binding_no_diag() {
 fn q16_compatible_binding_no_diag() {
     let module = Module {
         items: vec![let_tensor("x", "q16", &["8"], "q_vec")],
+        ..Default::default()
     };
     let env = env_with(&[("q_vec", DType::Q16, &[8])]);
     let src = "let x: Tensor<q16, [8]> = q_vec";
@@ -400,6 +406,7 @@ fn symbolic_dim_same_n_no_conflict() {
     };
     let module = Module {
         items: vec![fn_node, let_x, let_y, call_node],
+        ..Default::default()
     };
 
     let mut env = TypeEnv::default();
@@ -491,6 +498,7 @@ fn symbolic_dim_mismatch_n_conflict() {
     };
     let module = Module {
         items: vec![fn_node, let_x, let_y, call_node],
+        ..Default::default()
     };
 
     let mut env = TypeEnv::default();
@@ -529,6 +537,7 @@ fn symbolic_dim_mismatch_n_conflict() {
 fn shape_diag_channel_verification() {
     let module = Module {
         items: vec![let_tensor("x", "f32", &["4", "16"], "src")],
+        ..Default::default()
     };
     let env = env_with(&[("src", DType::F32, &[4, 8])]);
     let src = "let x: Tensor<f32, [4, 16]> = src";
@@ -587,6 +596,7 @@ fn shape_check_inside_fn_body() {
     );
     let module = Module {
         items: vec![fn_node],
+        ..Default::default()
     };
     let env = env_with(&[("body_src", DType::F32, &[4, 8])]);
     let src = "fn check_body() -> i32 { let x: Tensor<f32, [4, 16]> = body_src return 0 }";
@@ -615,6 +625,7 @@ fn shape_annotation_does_not_change_value_type() {
     // Annotated let binding — annotation matches inferred type exactly.
     let module_annotated = Module {
         items: vec![let_tensor("x", "f32", &["4", "8"], "src")],
+        ..Default::default()
     };
     let mut env = TypeEnv::default();
     env.insert("src".to_string(), expected_vt.clone());
@@ -638,6 +649,7 @@ fn shape_annotation_does_not_change_value_type() {
             value: Box::new(Node::Lit(Literal::Ident("src".to_string()), sp())),
             span: sp(),
         }],
+        ..Default::default()
     };
     let src2 = "let y = src";
     let diags_unannotated = check_module(&module_unannotated, src2, &env);
@@ -666,6 +678,7 @@ fn dtype_q16_roundtrip() {
 fn q16_tensor_value_type_round_trip() {
     let module = Module {
         items: vec![let_tensor("v", "q16", &["8"], "q_vec")],
+        ..Default::default()
     };
     let env = env_with(&[("q_vec", DType::Q16, &[8])]);
     let src = "let v: Tensor<q16, [8]> = q_vec";
@@ -688,6 +701,7 @@ fn shape_dtype_mismatch_diagnostic() {
     // Annotation: Tensor<q16, [4]> — inferred: Tensor<f32, [4]>
     let module = Module {
         items: vec![let_tensor("x", "q16", &["4"], "f32_vec")],
+        ..Default::default()
     };
     let env = env_with(&[("f32_vec", DType::F32, &[4])]);
     let src = "let x: Tensor<q16, [4]> = f32_vec";

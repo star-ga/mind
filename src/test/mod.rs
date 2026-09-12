@@ -535,6 +535,7 @@ fn eval_test_fn(entry: &TestEntry) -> Result<(), String> {
 
     let synthetic_module = Module {
         items: synthetic_items,
+        spelling: Default::default(),
     };
 
     // First pass: evaluate the module through the standard interpreter so that

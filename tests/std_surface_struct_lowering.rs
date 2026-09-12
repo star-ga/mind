@@ -88,6 +88,7 @@ fn struct_def_populates_schema_registry() {
             attrs: vec![],
             span: sp(),
         }],
+        ..Default::default()
     };
 
     let ir = lower_to_ir(&module);
@@ -132,6 +133,7 @@ fn struct_lit_emits_alloc_plus_n_stores() {
                 span: sp(),
             },
         ],
+        ..Default::default()
     };
 
     let ir = lower_to_ir(&module);
@@ -180,6 +182,7 @@ fn struct_lit_reorders_out_of_order_fields_into_canonical_order() {
                 span: sp(),
             },
         ],
+        ..Default::default()
     };
 
     let ir = lower_to_ir(&module);
@@ -238,6 +241,7 @@ fn struct_lit_without_struct_def_falls_back_to_literal_order() {
             }),
             span: sp(),
         }],
+        ..Default::default()
     };
 
     let ir = lower_to_ir(&module);
@@ -279,6 +283,7 @@ fn struct_lit_alloc_uses_8_times_field_count_bytes() {
                 span: sp(),
             },
         ],
+        ..Default::default()
     };
 
     let ir = lower_to_ir(&module);

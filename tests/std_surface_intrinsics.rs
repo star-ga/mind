@@ -40,7 +40,7 @@ fn call(name: &str, args: Vec<Node>) -> Node {
 }
 
 fn module_of(stmts: Vec<Node>) -> Module {
-    Module { items: stmts }
+    Module { items: stmts, ..Default::default() }
 }
 
 fn scalar(m: &mut IRModule, v: i64) -> ValueId {

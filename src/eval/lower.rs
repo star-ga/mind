@@ -12683,6 +12683,7 @@ mod undefined_ident_tests {
                 Literal::Ident("nope".to_string()),
                 ast::Span::new(0, 0),
             )],
+            ..Default::default()
         };
         let _ = lower_to_ir(&module);
     }

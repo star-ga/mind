@@ -5027,7 +5027,7 @@ fn check_module_types_in_file_impl(
             // identifier lookups resolve across the file boundary.
             // Default build: byte-identical no-op (the arm compiles to
             // a discarded pattern binding, zero runtime cost).
-            Node::Import { path, span } => {
+            Node::Import { path, span, .. } => {
                 #[cfg(feature = "cross-module-imports")]
                 cm_inject_imported_symbols(&mut tenv, path);
                 // FAIL LOUD at the import/std-path resolution layer: a
@@ -5198,6 +5198,7 @@ fn check_module_types_in_file_impl(
                     for inner in stmts {
                         let inner_module = Module {
                             items: vec![inner.clone()],
+                            spelling: Default::default(),
                         };
                         errs.extend(check_module_types_in_file_impl(
                             &inner_module,
@@ -5211,6 +5212,7 @@ fn check_module_types_in_file_impl(
                         std::collections::BTreeSet::new();
                     let block_module = Module {
                         items: stmts.clone(),
+                        spelling: Default::default(),
                     };
                     resolve::collect_decl_names(&block_module, &mut sibling_decls);
                     let mut inner_env = env.clone();
@@ -5222,6 +5224,7 @@ fn check_module_types_in_file_impl(
                     for inner in stmts {
                         let inner_module = Module {
                             items: vec![inner.clone()],
+                            spelling: Default::default(),
                         };
                         let inner_errs =
                             check_module_types_in_file_impl(&inner_module, src, file, &inner_env);
@@ -5267,6 +5270,7 @@ fn check_module_types_in_file_impl(
                 // level walker recursively (same path as Node::Block above).
                 let body_module = Module {
                     items: body.clone(),
+                    spelling: Default::default(),
                 };
                 // Bug #38 follow-up — record this body's fixed-`bytes[N]` local
                 // bindings so a buffer flowed through an alias (`let buf:

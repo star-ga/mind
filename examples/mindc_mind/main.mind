@@ -2191,8 +2191,10 @@ pub fn parse_primary_ns(toks: Vec, pos: i64, buf: i64, no_struct: i64) -> ParseR
         // Bool literals `true` / `false` fold to a SYNTHETIC int-lit here (the
         // parser is the designated fold point — classify_ident leaves them as
         // tk_ident; see tc_lit_is_bool). bool is i64-backed in the native path
-        // (true=1, false=0), matching the comparison path's 1/0 result and
-        // mindc-Rust's `fmt` which rewrites the source `true`->`1`/`false`->`0`.
+        // (true=1, false=0), matching the comparison path's 1/0 result. The AST
+        // value is `Int(1)`/`Int(0)` in mindc-Rust too; its `fmt` no longer
+        // rewrites the SOURCE, because the spelling is carried beside the tree
+        // (`ast::SourceSpelling::bool_literals`) rather than lost to the desugar.
         // Reuses the proven child1==1 int-lit form (mk_syn_intlit) -> zero new
         // AST kind, zero new emit surface: conditions/lets/returns/arithmetic
         // all flow through the existing i64 int path. Checked FIRST so a bool

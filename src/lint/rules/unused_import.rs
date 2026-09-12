@@ -59,11 +59,16 @@ impl LintRule for UnusedImport {
         let source = ctx.source;
 
         for item in &ctx.module.items {
-            let Node::Import { path, span } = item else {
+            let Node::Import { path, alias, span } = item else {
                 continue;
             };
-            let local_name = match path.last() {
-                Some(n) => n.as_str(),
+            // The name a USE SITE writes is the alias when the import was renamed
+            // (`use mindllm_config as config` → call sites say `config.…`). Checking the last
+            // path segment instead would report every aliased import as unused, and — worse —
+            // would miss a genuinely unused one whose path segment happens to appear elsewhere
+            // in the file.
+            let local_name = match alias.as_deref().or_else(|| path.last().map(|n| n.as_str())) {
+                Some(n) => n,
                 None => continue,
             };
 

@@ -557,6 +557,16 @@ pub enum Node {
     /// Import statement: `import std.io;`
     Import {
         path: Vec<String>,
+        /// The `as NAME` rename, when the source wrote one (`use mindllm_config as config`).
+        ///
+        /// Dropped entirely before this field existed, with two consequences. The formatter
+        /// round-trips through this AST, so `as config` vanished from the output — and because
+        /// `parse_use` also never CONSUMED the `as NAME` tokens, they were left to parse as two
+        /// stray statements (`as;`, `config;`). That is the source corruption recorded against
+        /// `mindc fmt`. Second and worse: the alias was never registered as an importable
+        /// qualifier, so every `config.load()` call site failed to desugar to a cross-module
+        /// call — a semantic defect, not a cosmetic one.
+        alias: Option<String>,
         span: Span,
     },
     /// Array literal: `[1.0, 2.0, 3.0]`
@@ -702,6 +712,14 @@ pub enum Node {
     /// Phase 10.5 Tier-1.
     Export {
         names: Vec<String>,
+        /// The category keyword in `export <const|type|fn|struct|enum> a, b`, when written.
+        ///
+        /// The parser consumed and DISCARDED it — its own comment said so ("recorded as a
+        /// synthetic prefix (currently dropped)"). Because the formatter round-trips through
+        /// this AST, `export struct ModelLock` came back as `export { ModelLock }` and the word
+        /// `struct` was deleted from the file. Five MindLLM modules were blocked on exactly
+        /// this, each losing one `fn` and one `struct`.
+        category: Option<String>,
         span: Span,
     },
     /// Struct declaration: `struct Name { f: T, g: U }`
@@ -1152,7 +1170,85 @@ impl Node {
     }
 }
 
+/// Surface spelling the parser's desugars would otherwise throw away.
+///
+/// FOUR SEPARATE DEFECTS TRACED TO ONE PATTERN (2026-09-11). The parser performs semantic
+/// desugars and discards how the source was written; the FORMATTER round-trips through this
+/// same AST, so every discarded spelling became text `mindc fmt` deleted:
+///
+///   1. `true` / `false` parsed to `Literal::Int(1)` / `Int(0)` — fixed with `Literal::Bool`.
+///   2. `module NAME { … }` dropped its name — `module_headers` below.
+///   3. `use X as Y` never consumed `as Y` — fixed with `Import::alias`.
+///   4. `q.fn(args)` on an imported module desugared to `fn(args)`, dropping `q` —
+///      `call_qualifiers` below.
+///
+/// Each is caught by the identifier-loss guard, which refuses to write rather than corrupt the
+/// file — so the visible symptom was always the same: a source that can never clear
+/// `fmt::drift`, and therefore can never pass `mindc check` at all.
+///
+/// These tables are keyed by SPAN and carry spelling ONLY. Nothing in the compiler reads them,
+/// so the AST the type checker and lowering see is byte-for-byte what it was. They are a side
+/// table rather than fields on the nodes themselves because `Node::Block` has 74
+/// construct/match sites and `Node::Call` has 245 — and a new enum variant would be silently
+/// swallowed by `_ =>` arms, which for a module block means its items quietly stop compiling.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SourceSpelling {
+    /// `(span of the desugared literal, the spelling)` per `true` / `false` source literal.
+    ///
+    /// The parser emits `Literal::Int(1)` / `Int(0)` for these, so every value consumer —
+    /// lowering, constant folding, comptime evaluation, SCEV — sees exactly the integer it
+    /// always saw, and the printer recovers the spelling from here.
+    ///
+    /// THIS WAS FIRST TRIED AS A `Literal::Bool` VARIANT, AND THAT BROKE `mindc build`.
+    /// `mindc check` returned 0 while `build` PANICKED — "no IR lowering for `Lit` in value
+    /// position" — because `lower.rs` had arms for `Literal::Int` and none for the new
+    /// variant. Eight further consumers (`opt/fold.rs`, `opt/comptime.rs`, `opt/scev.rs`,
+    /// `eval/autodiff.rs`) silently stopped treating a bool as a constant, which changes the
+    /// optimisation path and therefore the mic@3 digest of any program containing `true`.
+    /// The keystone gate could not see any of it: the parser's own comment records that this
+    /// path never fires for the keystone self-compile.
+    ///
+    /// HENCE THE RULE for the next spelling that needs preserving, which is the thing the
+    /// first version of this design left unstated:
+    ///
+    /// * A new FIELD on an existing node is safe — it is additive, and every existing match
+    ///   arm keeps compiling and keeps meaning what it meant. `Import::alias` and
+    ///   `Export::category` are that shape.
+    /// * A new VARIANT in an enum that consumers match is NOT safe. Exhaustive matches fail
+    ///   loudly (fine), but every `_ =>` and every `if let` that tested only the old variant
+    ///   fails SILENTLY — which is how a bool literal stopped being a constant in five files.
+    ///   Spelling that would need a new variant belongs HERE instead.
+    pub bool_literals: Vec<(Span, bool)>,
+    /// KNOWN GAP, measured rather than assumed: a bool in a MATCH PATTERN (`match b { true => … }`)
+    /// is still desugared to `Pattern::Literal(Literal::Int(1))` and still prints as `1`, so such
+    /// a file still cannot clear `fmt::drift`. It is not recorded here because `Pattern::Literal`
+    /// carries no span to key on, and giving it one means touching 22 match sites — the same enum
+    /// churn whose first attempt panicked lowering.
+    ///
+    /// deferred: measured 2026-09-12 — ZERO files across MindLLM, `mind/std`, 512-mind,
+    /// mind-inference and rfn-mind use a bool in a match pattern, so this blocks nothing today.
+    /// Upgrade path: add a `Span` to `Pattern::Literal` (or key on the enclosing `MatchArm::span`
+    /// for the single-pattern case) and record it alongside `bool_literals`. Do it when a source
+    /// actually needs it, and add the round-trip case to `fmt_bool_literal_roundtrip.rs`.
+    ///
+    /// `(span of the transparent Block, dotted module path)` per `module NAME { … }` header.
+    pub module_headers: Vec<(Span, String)>,
+    /// `(span of the transparent Block, attributes)` per ATTRIBUTED `module NAME { … }` header.
+    ///
+    /// `parse_module_block` took its attribute list as `_attrs` and dropped it, so
+    /// `#[protection] module governance_bridge { … }` came back out of the printer without the
+    /// attribute. Verified against a positive control: `#[deterministic]` on a plain `fn` already
+    /// round-tripped, because `parse_fn_def_with_attrs` keeps its list.
+    pub module_attrs: Vec<(Span, Vec<Attribute>)>,
+    /// `(span of the desugared node, receiver as written)` per module-qualified reference —
+    /// both `q.fn(args)` calls and `q.CONST` value reads, which desugar to a bare `Call` and a
+    /// bare `Ident` respectively and lose `q` either way.
+    pub call_qualifiers: Vec<(Span, String)>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Module {
     pub items: Vec<Node>,
+    /// Formatter-only record of spellings the desugars dropped. See [`SourceSpelling`].
+    pub spelling: SourceSpelling,
 }
