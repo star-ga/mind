@@ -130,6 +130,20 @@ fn manifest_dir() -> PathBuf {
 }
 
 fn mindc_path() -> Option<PathBuf> {
+    // CARGO_TARGET_DIR FIRST. This probed only `manifest_dir()/target/...`, so a run with
+    // `CARGO_TARGET_DIR=/dev/shm/...` — the normal way to keep build artifacts off a full
+    // disk — put the binary exactly where this function does not look. The bench then
+    // reported "kernel unavailable; no measurements taken" and exited 0, so two separate
+    // attempts to get a number produced nothing and looked like an environment problem.
+    if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
+        let base = PathBuf::from(dir);
+        for profile in ["release", "debug"] {
+            let p = base.join(profile).join("mindc");
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
     let dbg = manifest_dir().join("target").join("debug").join("mindc");
     if dbg.exists() {
         return Some(dbg);
@@ -388,7 +402,23 @@ fn report_gmacs_i16(lib: &Library, n: usize, seed: u64) {
 
 fn bench_det_matmul_i16(c: &mut Criterion) {
     let Some(so) = build_gemv_so() else {
-        // Toolchain shadowed or mindc unbuilt — register no benchmarks, exit clean.
+        // Toolchain shadowed or mindc unbuilt — register no benchmarks.
+        //
+        // FAIL-CLOSED UNDER MIND_BENCH_REQUIRE, matching the repo idiom already used by
+        // `tests/mindfuzz_cross_substrate.rs` and honoured by `scripts/preflight.sh` and
+        // `scripts/exec_semantics_gate.sh`. It previously returned unconditionally, so a run
+        // that measured NOTHING exited 0 and read as a pass — and two consecutive attempts to
+        // produce a roofline number did exactly that, silently, because of the
+        // CARGO_TARGET_DIR probe defect fixed in `mindc_path()` above. An empty measurement
+        // set is not a result; under the env var that CI and any deliberate measurement run
+        // set, it is now a failure that names its own cause.
+        assert!(
+            std::env::var_os("MIND_BENCH_REQUIRE").is_none(),
+            "MIND_BENCH_REQUIRE is set but the GEMV kernel could not be built: no \
+             measurements were taken, so there is no number to report. Check that mindc is \
+             built (and that CARGO_TARGET_DIR, if set, is where it landed) and that the MLIR \
+             toolchain is on PATH."
+        );
         eprintln!("det_matmul_i16: kernel unavailable; no measurements taken.");
         return;
     };
