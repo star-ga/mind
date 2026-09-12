@@ -81,15 +81,20 @@
 //! `lower.rs::mask_narrow_let`. Adding a width means adding it THERE, once,
 //! where both readers see it.
 //!
-//! # Not covered (declared open, not silently half-done)
+//! # The fourth mechanism: STRUCT FIELDS
 //!
-//! STRUCT FIELDS. `Node::StructLit` evaluates its field expressions with no
-//! type information, so a `[u8; N]` or `u8` field is stored at full width.
-//! Narrowing those needs a field-type schema keyed by struct name that the
-//! evaluator's `Value::Struct` does not carry; it is a fourth locus, not one
-//! of the three scalar mechanisms above, and is left to its own slice rather
-//! than half-fixed here. MEASURED still open: a `[u8; 4]` field holding 300
-//! reads back 44 from the artifact and 300 from this evaluator.
+//! `Node::StructLit` had no field types, so a `[u8; N]` / `u8` field was stored
+//! and read at full width — a `[u8; 4]` holding 300 read 44 from the artifact
+//! but 300 here (MEASURED). `Value::Struct` carries no field types, so
+//! `install_struct_defs` builds a per-struct narrow-field SCHEMA once per module
+//! eval from its `StructDef` nodes, and the `Node::StructLit` arm runs each
+//! field through `narrow_struct_field` at CONSTRUCTION (so every later read/copy
+//! sees the wrapped value, mirroring the artifact's stored byte). A scalar
+//! narrow field and a narrow-element aggregate (`[u8; N]`, `&[u8]`, nested)
+//! share the one `narrow_scalar_kind` table; a known-narrow field whose value
+//! cannot be materialised at that width is REFUSED, never returned wide.
+//!
+//! # Not covered (declared open, not silently half-done)
 //!
 //! INTERMEDIATE NARROW ARITHMETIC. `lower.rs::infer_narrow_arith_ty` re-masks
 //! every 8/16-bit arithmetic RESULT, so with `a: u8 = 250` the artifact
@@ -101,7 +106,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use crate::ast::TypeAnn;
+use crate::ast::{Node, TypeAnn};
 
 use super::{EvalError, Value};
 
@@ -447,6 +452,165 @@ pub(crate) fn narrow_reassign(name: &str, value: Value) -> Result<Value, EvalErr
     match declared {
         Some(kind) => narrow_with(kind, value, What::Binding, name),
         None => Ok(value),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The fourth mechanism: STRUCT FIELDS
+// ---------------------------------------------------------------------------
+//
+// `Value::Struct` carries no field types, so narrowing a `u8` / `[u8; N]` field
+// needs a schema keyed by struct name, built ONCE per module eval from its
+// `StructDef` nodes (`install_struct_defs`) and read at construction
+// (`narrow_struct_field`). Only ACTUALLY-narrowing fields are recorded, so the
+// schema is empty for most modules and construction pays one `is_empty()` test
+// with no allocation — the same discipline the narrow-locals registry uses.
+
+thread_local! {
+    /// `struct name -> (field name -> declared narrowing type)`, for the fields
+    /// whose declared type narrows only. Restored on scope exit by
+    /// `StructDefsGuard` so a nested module eval neither sees nor leaks the
+    /// caller's schema.
+    static STRUCT_FIELD_TYPES: RefCell<HashMap<String, HashMap<String, TypeAnn>>> =
+        RefCell::new(HashMap::new());
+}
+
+/// Restores the enclosing eval's struct-field schema on every exit path.
+pub(crate) struct StructDefsGuard(HashMap<String, HashMap<String, TypeAnn>>);
+
+impl Drop for StructDefsGuard {
+    fn drop(&mut self) {
+        STRUCT_FIELD_TYPES.with(|m| *m.borrow_mut() = std::mem::take(&mut self.0));
+    }
+}
+
+/// Collect the narrow-field schema from a module's `StructDef` items and make
+/// it the active schema for the eval, returning a guard that restores the
+/// previous one. Only fields whose declared type actually narrows (a narrow
+/// scalar, or an array/slice whose element narrows, recursively) are recorded,
+/// so the common non-narrow struct contributes nothing and construction stays
+/// on the empty-map fast path.
+pub(crate) fn install_struct_defs(items: &[Node]) -> StructDefsGuard {
+    let mut schema: HashMap<String, HashMap<String, TypeAnn>> = HashMap::new();
+    for item in items {
+        if let Node::StructDef { name, fields, .. } = item {
+            let mut narrow_fields: HashMap<String, TypeAnn> = HashMap::new();
+            for f in fields {
+                if type_needs_narrowing(&f.ty) {
+                    narrow_fields.insert(f.name.clone(), f.ty.clone());
+                }
+            }
+            if !narrow_fields.is_empty() {
+                // Last definition wins, matching the fn table; a module's own
+                // duplicate `StructDef` is a checker concern, not this layer's.
+                schema.insert(name.clone(), narrow_fields);
+            }
+        }
+    }
+    STRUCT_FIELD_TYPES.with(|m| {
+        let previous = std::mem::replace(&mut *m.borrow_mut(), schema);
+        StructDefsGuard(previous)
+    })
+}
+
+/// Does a declared field type require any sub-64-bit materialisation? True for
+/// a narrow scalar and for an array/slice whose element (recursively) narrows;
+/// false for everything the i64 slot already represents exactly. Alias
+/// resolution rides on `narrow_kind`, so a `type Byte = u8` field is seen.
+fn type_needs_narrowing(ty: &TypeAnn) -> bool {
+    if narrow_kind(ty).is_some() {
+        return true;
+    }
+    match ty {
+        TypeAnn::Array { element, .. } | TypeAnn::Slice { element, .. } => {
+            type_needs_narrowing(element)
+        }
+        _ => false,
+    }
+}
+
+/// Narrow a struct field's constructed value to its declared width, at struct
+/// construction. A field with no recorded narrow declaration — and every field
+/// of an unregistered struct — passes through untouched; a recorded field is
+/// materialised by `narrow_field_value`, which refuses rather than answering
+/// wide when the value cannot be materialised at the declared width.
+pub(crate) fn narrow_struct_field(
+    struct_name: &str,
+    field: &str,
+    value: Value,
+) -> Result<Value, EvalError> {
+    STRUCT_FIELD_TYPES.with(|m| {
+        let schema = m.borrow();
+        if schema.is_empty() {
+            return Ok(value);
+        }
+        match schema.get(struct_name).and_then(|f| f.get(field)) {
+            Some(ty) => narrow_field_value(ty, value, struct_name, field),
+            None => Ok(value),
+        }
+    })
+}
+
+/// Materialise `value` at the declared field type `ty`, recursively:
+///
+/// * a narrow scalar type narrows an `Int` (as the three scalar mechanisms do);
+/// * an array/slice of a narrowing element narrows each element of a `Tuple`
+///   (`[u8; N]`, `&[u8]`, and nesting thereof — the interpreter carries every
+///   array/slice value as `Value::Tuple`);
+/// * a non-narrowing declared type returns `value` verbatim;
+/// * a narrow-declared field whose value cannot be materialised at that width
+///   (a non-int scalar, a non-tuple aggregate) is REFUSED — the one thing this
+///   layer must never do is answer at full width.
+fn narrow_field_value(
+    ty: &TypeAnn,
+    value: Value,
+    struct_name: &str,
+    field: &str,
+) -> Result<Value, EvalError> {
+    if let Some(kind) = narrow_kind(ty) {
+        return match value {
+            Value::Int(n) => Ok(Value::Int(apply_narrow_kind(n, kind))),
+            other => Err(refuse_field(struct_name, field, &kind_name(kind), &other)),
+        };
+    }
+    match ty {
+        TypeAnn::Array { element, .. } | TypeAnn::Slice { element, .. } => {
+            if !type_needs_narrowing(element) {
+                return Ok(value);
+            }
+            match value {
+                Value::Tuple(items) => {
+                    let mut narrowed = Vec::with_capacity(items.len());
+                    for item in items {
+                        narrowed.push(narrow_field_value(element, item, struct_name, field)?);
+                    }
+                    Ok(Value::Tuple(narrowed))
+                }
+                other => Err(refuse_field(struct_name, field, &type_display(ty), &other)),
+            }
+        }
+        _ => Ok(value),
+    }
+}
+
+/// Fail-closed refusal for a struct field the schema says narrows but whose
+/// value cannot be materialised at the declared width.
+fn refuse_field(struct_name: &str, field: &str, declared: &str, got: &Value) -> EvalError {
+    EvalError::UnsupportedMsg(format!(
+        "field `{field}` of struct `{struct_name}` is declared `{declared}`, but evaluation \
+         produced a {}, which this evaluator cannot materialise at that width; refusing rather \
+         than answering at full width",
+        value_kind(got)
+    ))
+}
+
+/// Best-effort source spelling of an aggregate field type, for refusals.
+fn type_display(ty: &TypeAnn) -> String {
+    match ty {
+        TypeAnn::Array { element, .. } => format!("[{}; N]", type_display(element)),
+        TypeAnn::Slice { element, .. } => format!("[{}]", type_display(element)),
+        TypeAnn::Named(name) => name.clone(),
+        other => format!("{other:?}"),
     }
 }
 

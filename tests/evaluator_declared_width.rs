@@ -127,6 +127,35 @@ pub fn w_param_reassigned() -> i64 { return param_reassigned(200) }
 // i32 boundary stays -1; the same -1 through a u32 boundary is 4294967295.
 pub fn w_neg_through_i32() -> i64 { return param_i32(0 - 1) }
 pub fn w_neg_through_u32() -> i64 { return param_u32(0 - 1) }
+
+// --- STRUCT FIELDS: the fourth mechanism ------------------------------------
+// A `[u8; N]` field's ELEMENTS wrap at u8 at construction, and a scalar `u8`
+// field wraps too; an `i64` field keeps every bit. MEASURED: the compiled
+// artifact stores one byte per element, so [0, 128, 255, 300] becomes
+// [0, 128, 255, 44] (sum 683 -> 427), i.e. this probe answers 118 not 182.
+struct Packet { pre: i64, bytes: [u8; 4], post: i64 }
+fn total_bytes(p: Packet) -> i64 {
+    let mut i: i64 = 0
+    let mut s: i64 = 0
+    while i < 4 {
+        s = s + p.bytes[i]
+        i = i + 1
+    }
+    return s
+}
+pub fn struct_u8_array() -> i64 {
+    let p: Packet = Packet { pre: 5, bytes: [0, 128, 255, 300], post: 7 }
+    return total_bytes(p) / 4 + p.pre + p.post
+}
+struct Scal { b: u8, wide: i64 }
+pub fn struct_u8_scalar() -> i64 {
+    let s: Scal = Scal { b: 300, wide: 1 }
+    return s.b
+}
+pub fn struct_i64_field_untouched() -> i64 {
+    let s: Scal = Scal { b: 1, wide: 5000000000 }
+    return s.wide
+}
 "#;
 
 /// Evaluate `<fn>()` through the tree evaluator by appending a top-level
@@ -165,6 +194,10 @@ const WITNESSES: &[(&str, i64, i64)] = &[
     ("local_i32", 705_032_704, 5_000_000_000),
     ("local_u32", 705_032_704, 5_000_000_000),
     ("local_reassigned", -1_794_967_296, 2_500_000_000),
+    // STRUCT FIELDS — the fourth mechanism. The `[u8; 4]` element wrap turns
+    // the pre-fix wide 182 into 118; the scalar `u8` field wraps 300 to 44.
+    ("struct_u8_array", 118, 182),
+    ("struct_u8_scalar", 44, 300),
 ];
 
 #[test]
@@ -189,6 +222,8 @@ fn full_width_declarations_are_not_narrowed() {
     assert_eq!(eval_call("w_ret_i64"), 5_000_000_000);
     assert_eq!(eval_call("w_param_i64"), 5_000_000_000);
     assert_eq!(eval_call("local_i64"), 5_000_000_000);
+    // …including a full-width struct field alongside a narrow sibling.
+    assert_eq!(eval_call("struct_i64_field_untouched"), 5_000_000_000);
 }
 
 #[test]

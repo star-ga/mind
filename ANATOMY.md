@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1812 | **Est. tokens:** ~3,460,837
-**Generated:** 2026-09-12 23:50 UTC
+**Files:** 1812 | **Est. tokens:** ~3,462,954
+**Generated:** 2026-09-12 23:53 UTC
 
 ## Token Budget Guide
 
@@ -106,7 +106,7 @@
 | `src/diagnostics/` | 3 | ~14,085 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 34 | ~133,217 |
+| `src/eval/` | 34 | ~134,991 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -135,7 +135,7 @@
 | `src/types/` | 10 | ~20,740 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 397 | ~811,234 |
+| `tests/` | 397 | ~811,577 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -1183,7 +1183,7 @@
 - `canonical_producers.rs` (~734 tok, large) — Copyright 2026 STARGA Inc.
 - `closures.rs` (~9338 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
-- `declared_width.rs` (~6475 tok, huge) — Copyright 2025 STARGA Inc.
+- `declared_width.rs` (~8249 tok, huge) — Copyright 2025 STARGA Inc.
 - `field_access.rs` (~4734 tok, huge) — Copyright 2026 STARGA Inc.
 - `field_assign_refusal_tests.rs` (~349 tok, medium) — This test targets the module executor's dispatch. Its hand-built
 - `fixed_array.rs` (~1478 tok, large) — Copyright 2026 STARGA Inc.
@@ -1712,7 +1712,7 @@
 - `enum_match_run.rs` (~2310 tok, huge) — Copyright 2025 STARGA Inc.
 - `enum_soundness.rs` (~1411 tok, large) — Copyright 2025 STARGA Inc.
 - `enum_struct_variant_run.rs` (~1280 tok, large) — Copyright 2025 STARGA Inc.
-- `evaluator_declared_width.rs` (~3046 tok, huge) — Copyright 2025 STARGA Inc.
+- `evaluator_declared_width.rs` (~3389 tok, huge) — Copyright 2025 STARGA Inc.
 - `exec_basic.rs` (~785 tok, large) — Copyright 2025 STARGA Inc.
 - `expr_parser.rs` (~916 tok, large) — Copyright 2025 STARGA Inc.
 - `extern_c_phase_a.rs` (~2686 tok, huge) — Copyright 2025 STARGA Inc.

@@ -473,6 +473,10 @@ pub fn eval_module_value_with_env_mode(
     #[cfg(feature = "std-surface")]
     let _aliases = type_aliases::LocalTypeAliases::new(&m.items).install();
     let _narrow_scope = declared_width::enter_function_scope();
+    // Fourth declared-width mechanism (struct fields): build the per-struct
+    // narrow-field schema from this module's `StructDef`s so `Node::StructLit`
+    // materialises a `u8` / `[u8; N]` field. Restored on drop (no leak).
+    let _struct_defs = declared_width::install_struct_defs(&m.items);
     let _fn_prev = fn_table_install(m);
     // Register module-level `const`s AFTER the fn table (an initializer may
     // call a const-evaluable fn); called fn bodies resolve them through the
@@ -2062,10 +2066,14 @@ pub(crate) fn eval_value_expr_mode(
         Node::StructLit { name, fields, .. } => {
             let mut items = Vec::with_capacity(fields.len());
             for f in fields {
-                items.push((
-                    f.name.clone(),
-                    eval_value_expr_mode(&f.value, env, tensor_env, mode.clone())?,
-                ));
+                let value = eval_value_expr_mode(&f.value, env, tensor_env, mode.clone())?;
+                // Fourth declared-width mechanism: materialise a narrow field
+                // (`u8`, `[u8; N]`, …) at CONSTRUCTION so every later read/copy
+                // sees the wrapped value. Non-narrow fields and unregistered
+                // structs pass through; an unmaterialisable narrow field is
+                // refused, never returned wide (`declared_width` module docs).
+                let value = declared_width::narrow_struct_field(name, &f.name, value)?;
+                items.push((f.name.clone(), value));
             }
             Ok(Value::Struct {
                 name: name.clone(),
