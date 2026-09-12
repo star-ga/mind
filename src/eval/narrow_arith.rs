@@ -202,7 +202,12 @@ fn infer(node: &Node, env: &HashMap<String, Value>) -> NarrowLat {
             left,
             ..
         } => infer(left, env),
-        Node::As { ty, .. } => classify_neutral(cast_kind(ty)),
+        // A narrow `as u8`/`as u16` cast ⇒ `Narrow`; ANY other cast target (a
+        // wide `i64`/`i32`/`u32`, an unresolved type) ⇒ `Wide` — the explicit
+        // widen forces the whole arithmetic wide (#329). Mirrors `lower.rs`
+        // `classify(Some(ty), Wide)`; the Neutral fallback here silently
+        // OVER-narrowed `a_u8 + (10 as i64)` to 4 instead of widening to 260.
+        Node::As { ty, .. } => classify_wide(cast_kind(ty)),
         // Finding 2 leaves: `Narrow` when resolved to an 8/16-bit type, else the
         // historical non-forcing `Neutral`.
         Node::Call { callee, .. } => classify_neutral(call_ret_kind(callee)),
@@ -220,6 +225,20 @@ fn classify_neutral(kind: Option<NarrowScalar>) -> NarrowLat {
     match kind {
         Some(kind) => NarrowLat::Narrow(kind),
         None => NarrowLat::Neutral,
+    }
+}
+
+/// The `lower.rs` `classify(Some(ty), Wide)` arm for an `as` cast: a resolved
+/// narrow (8/16-bit) target ⇒ `Narrow`; ANY other cast target (a wide
+/// `i64`/`i32`/`u32`, an unresolved type) ⇒ `Wide`. NOT `Neutral`: a wide cast
+/// must WIDEN the whole arithmetic (#329), so `let a: u8 = 250; a + (10 as i64)`
+/// stays 260 (join(Narrow, Wide) = Wide, no re-mask) rather than re-masking to
+/// u8 (4, from join(Narrow, Neutral) = Narrow).
+#[cfg(feature = "std-surface")]
+fn classify_wide(kind: Option<NarrowScalar>) -> NarrowLat {
+    match kind {
+        Some(kind) => NarrowLat::Narrow(kind),
+        None => NarrowLat::Wide,
     }
 }
 

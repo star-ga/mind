@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1813 | **Est. tokens:** ~3,468,157
-**Generated:** 2026-09-12 23:55 UTC
+**Files:** 1813 | **Est. tokens:** ~3,468,800
+**Generated:** 2026-09-12 23:56 UTC
 
 ## Token Budget Guide
 
@@ -106,7 +106,7 @@
 | `src/diagnostics/` | 3 | ~14,085 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 35 | ~138,715 |
+| `src/eval/` | 35 | ~138,973 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -135,7 +135,7 @@
 | `src/types/` | 10 | ~20,740 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 397 | ~813,056 |
+| `tests/` | 397 | ~813,441 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -1201,7 +1201,7 @@
 - `mlir_run.rs` (~1535 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_bindings.rs` (~1211 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `module_globals.rs` (~1160 tok, large) — Copyright 2026 STARGA Inc.
-- `narrow_arith.rs` (~3710 tok, huge) — Copyright 2025 STARGA Inc.
+- `narrow_arith.rs` (~3968 tok, huge) — Copyright 2025 STARGA Inc.
 - `narrow_scan.rs` (~3042 tok, huge) — Module-wide narrow-int SURFACE prescan (compile-speed early-skip).
 - `slice_abi.rs` (~325 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/eval/stdlib/`
@@ -1713,7 +1713,7 @@
 - `enum_match_run.rs` (~2310 tok, huge) — Copyright 2025 STARGA Inc.
 - `enum_soundness.rs` (~1411 tok, large) — Copyright 2025 STARGA Inc.
 - `enum_struct_variant_run.rs` (~1280 tok, large) — Copyright 2025 STARGA Inc.
-- `evaluator_declared_width.rs` (~4868 tok, huge) — Copyright 2025 STARGA Inc.
+- `evaluator_declared_width.rs` (~5253 tok, huge) — Copyright 2025 STARGA Inc.
 - `exec_basic.rs` (~785 tok, large) — Copyright 2025 STARGA Inc.
 - `expr_parser.rs` (~916 tok, large) — Copyright 2025 STARGA Inc.
 - `extern_c_phase_a.rs` (~2686 tok, huge) — Copyright 2025 STARGA Inc.

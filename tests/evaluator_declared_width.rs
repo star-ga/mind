@@ -229,6 +229,22 @@ pub fn adv_as_u8() -> i64 {
     let x: i64 = 250
     return ((x as u8) + 10) / 2
 }
+// A wide `as i64` cast joined DIRECTLY with a narrow local must WIDEN the whole
+// expression — `lower.rs` `As` arm is `classify(Some(ty), Wide)`, so
+// join(Narrow(u8), Wide) = Wide ⇒ NO re-mask ⇒ 260. The reverted-bug `As` arm
+// mapped a wide cast to Neutral, giving join(Narrow(u8), Neutral) = Narrow(u8)
+// ⇒ 260 & 0xFF = 4. (adv_as_wide above does NOT catch this: its cast is joined
+// with a LITERAL, so the whole expr collapses to Wide via Neutral+Neutral.)
+pub fn adv_as_i64_mixed() -> i64 {
+    let a: u8 = 250
+    return a + (10 as i64)
+}
+// Same divergence via an `as i32` cast — i32 is not in the 8/16 re-mask set, so
+// the cast is Wide too ⇒ 260, not 4.
+pub fn adv_as_i32_mixed() -> i64 {
+    let a: u8 = 250
+    return a + (10 as i32)
+}
 "#;
 
 /// Evaluate `<fn>()` through the tree evaluator by appending a top-level
@@ -353,6 +369,22 @@ fn intermediate_arith_does_not_over_narrow() {
     );
     //   * an `as i64` cast widens;
     assert_eq!(eval_call("adv_as_wide"), 130, "an `as i64` cast widens");
+    //   * a wide cast joined DIRECTLY with a narrow local widens the whole expr
+    //     (the third leaf-classification regression: the `As` arm must fall
+    //     back to Wide, not Neutral — `lower.rs` `classify(Some(ty), Wide)`).
+    //     MUTATION: revert the `narrow_arith::infer` `Node::As` arm to
+    //     `classify_neutral(cast_kind(ty))` — this assertion goes RED at 4;
+    //     restoring `classify_wide(cast_kind(ty))` restores 260.
+    assert_eq!(
+        eval_call("adv_as_i64_mixed"),
+        260,
+        "a wide `as i64` cast joined with a u8 local widens (260), not re-masks (4)"
+    );
+    assert_eq!(
+        eval_call("adv_as_i32_mixed"),
+        260,
+        "a wide `as i32` cast joined with a u8 local widens (260), not re-masks (4)"
+    );
     //   * i32 is NOT in the 8/16-bit arith re-mask set;
     assert_eq!(
         eval_call("adv_i32_intermediate"),
