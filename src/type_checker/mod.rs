@@ -233,6 +233,9 @@ const AS_BOOL_CODE: &str = "E2016";
 /// arg has a provable class (`confident_scalar_class` is `Some`), so enum-ctor
 /// and loose-typed args are never flagged.
 const ARG_CLASS_MISMATCH_CODE: &str = "E2027";
+/// A method call whose receiver type does not resolve, reported where lowering would
+/// otherwise panic. See `check_method_arg_classes`.
+const UNRESOLVED_METHOD_RECEIVER_CODE: &str = "type_check::E2016";
 
 /// A user `fn` named after a built-in primitive conversion (`u64`, `bool`, …).
 /// The parser desugars a one-argument call written with a scalar type name —
@@ -4115,6 +4118,36 @@ fn check_method_arg_classes(
     file: Option<&str>,
     errs: &mut Vec<Pretty>,
 ) {
+    // An unresolved receiver with ARGS is what `lower_expr` PANICS on, and `mindc check`
+    // used to accept it — so `check` passed and `build` died on the same nine-line file.
+    // That divergence is the defect: a gate that is more permissive than the compiler it
+    // gates tells the user their source is fine right up until it is not.
+    //
+    // Scoped to the same condition lowering refuses on: a method call WITH arguments whose
+    // receiver type does not resolve. A zero-arg call still takes lowering's historical
+    // const-0 placeholder path, so flagging it here would reject code that builds today.
+    //
+    // The resolution source is `METHOD_RECV_TYPES`, the same `FieldAccessTypes` map lowering
+    // consults, so this fires where lowering looks — but lowering has further fallbacks
+    // (string receivers, collection sentinels) BEFORE the panic. The acceptance test is
+    // therefore empirical and not a proof: all 35 check-clean `std/*.mind` files must stay
+    // clean, since none of them build-panics on this message.
+    if method_receiver_type(span).is_none() && !args.is_empty() {
+        errs.push(diag_from_span(
+            src,
+            file,
+            format!(
+                "method call `.{method}(...)` has an unresolved receiver type, so it cannot \
+                 desugar to a `<type>_{method}` free function. Annotate the receiver's type, \
+                 or call the free function directly. (Reported here because lowering refuses \
+                 to emit a const-0 placeholder for it, and a `check` that accepted this left \
+                 `build` to fail instead.)"
+            ),
+            span,
+            UNRESOLVED_METHOD_RECEIVER_CODE,
+        ));
+        return;
+    }
     if let Some(t) = method_receiver_type(span) {
         let mangled = format!("{}_{}", t.to_lowercase(), method);
         if let Some(sig) = intra_lookup_fn(&mangled) {
