@@ -36,6 +36,10 @@ mod assert_check;
 pub mod autodiff;
 pub mod closures;
 pub mod conv2d_grad;
+/// Declared-width materialisation for the tree evaluator (the `mindc test`
+/// oracle): the layer that makes an `i32`/`u32` declaration wrap exactly where
+/// the compiled backends wrap.
+pub(crate) mod declared_width;
 pub mod interp_mem;
 pub mod ir_interp;
 pub mod lower;
@@ -463,6 +467,12 @@ pub fn eval_module_value_with_env_mode(
 
     // Register all top-level functions so calls can dispatch to them (generic or
     // not). Restored after the module finishes so nested module evals don't leak.
+    // A declared width may be spelled through a `type` alias, so this module's
+    // alias table must be active for the whole evaluation, and the narrow-locals
+    // registry must start fresh (`declared_width`, which documents both).
+    #[cfg(feature = "std-surface")]
+    let _aliases = type_aliases::LocalTypeAliases::new(&m.items).install();
+    let _narrow_scope = declared_width::enter_function_scope();
     let _fn_prev = fn_table_install(m);
     // Register module-level `const`s AFTER the fn table (an initializer may
     // call a const-evaluable fn); called fn bodies resolve them through the
@@ -513,6 +523,8 @@ pub fn eval_module_value_with_env_mode(
                     | Some(TypeAnn::FnPtr { .. })
                     | None => rhs,
                 };
+                // LOCAL mechanism at module scope.
+                let stored = declared_width::bind_let(ann, name, stored)?;
                 // issue #99: track (or clear, on a non-u64 shadow) the binding's
                 // declared u64-ness so a later `b > c` / `b >> n` on this name
                 // picks the UNSIGNED interpreter path (matching the artifact).
@@ -552,6 +564,7 @@ pub fn eval_module_value_with_env_mode(
             }
             Node::Assign { name, value, .. } => {
                 let rhs = eval_value_expr_mode(value, &venv, &tensor_env, mode.clone())?;
+                let rhs = declared_width::narrow_reassign(name, rhs)?;
                 if let Value::Int(n) = rhs {
                     env.insert(name.clone(), n);
                     venv.insert(name.clone(), Value::Int(n));
@@ -912,8 +925,12 @@ fn exec_threaded_stmt(
     local_names: &mut std::collections::HashSet<String>,
 ) -> Result<Value, EvalError> {
     match stmt {
-        Node::Let { name, value, .. } => {
+        Node::Let {
+            name, ann, value, ..
+        } => {
             let v = eval_value_expr_mode(value, env, tensor_env, mode.clone())?;
+            // LOCAL mechanism (`lower.rs::mask_narrow_let`'s shift pair).
+            let v = declared_width::bind_let(ann, name, v)?;
             // Record the pre-block value once in the CALLER-OWNED frame, so a
             // shadowing block-`let` is restored when that frame's owner (the
             // enclosing `exec_block_scoped` / fn body) exits.
@@ -925,6 +942,9 @@ fn exec_threaded_stmt(
         }
         Node::Assign { name, value, .. } => {
             let v = eval_value_expr_mode(value, env, tensor_env, mode.clone())?;
+            // A reassignment carries no annotation, but the binding's declared
+            // width still applies (`lower.rs::mask_narrow_assign`).
+            let v = declared_width::narrow_reassign(name, v)?;
             env.insert(name.clone(), v.clone());
             Ok(v)
         }
@@ -1100,6 +1120,9 @@ fn exec_block_scoped(
 ) -> Result<Value, EvalError> {
     let mut saves: Vec<(String, Option<Value>)> = Vec::new();
     let mut names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // A block-local `let a: i32` must not re-type an enclosing `a` after the
+    // block, the same way its VALUE is restored below.
+    let _narrow_scope = declared_width::enter_block_scope();
     let outcome = (|| -> Result<Value, EvalError> {
         let mut result = Value::Int(0);
         for stmt in stmts {
@@ -1232,10 +1255,13 @@ pub(crate) fn eval_value_expr_mode(
                     env,
                     tensor_env,
                 );
-                for ((p, is_string), a) in func
+                let mut bound_params: Vec<(&String, Value, &TypeAnn)> =
+                    Vec::with_capacity(func.params.len());
+                for (((p, is_string), pty), a) in func
                     .params
                     .iter()
                     .zip(func.string_params.iter())
+                    .zip(func.param_types.iter())
                     .zip(args.iter())
                 {
                     let mut v = eval_value_expr_mode(a, env, tensor_env, mode.clone())?;
@@ -1248,12 +1274,22 @@ pub(crate) fn eval_value_expr_mode(
                             v = Value::Int(rec);
                         }
                     }
-                    module_globals::bind_parameter(&mut call_env, &mut call_tensor_env, p, v);
+                    // PARAM mechanism: materialise the argument at the
+                    // declared width before it reaches the body.
+                    let v = declared_width::narrow(pty, v, declared_width::What::Parameter, p)?;
+                    bound_params.push((p, v, pty));
                 }
                 // Arguments were evaluated above in the caller. The body uses
                 // the callee's lexical module without consumer/sibling capture.
                 let _function_scope = module_globals::enter_function();
                 let _owner = EvalOwnerGuard::enter(func.owner.as_deref());
+                // Empty registry for the callee; restored on every exit path,
+                // `ReturnFlow` included.
+                let _narrow_scope = declared_width::enter_function_scope();
+                for (p, v, pty) in bound_params {
+                    declared_width::record(p, Some(pty));
+                    module_globals::bind_parameter(&mut call_env, &mut call_tensor_env, p, v);
+                }
                 // Thread body mutations; ReturnFlow catches early returns here.
                 let mut result = Value::Int(0);
                 let mut fn_local_saves: Vec<(String, Option<Value>)> = Vec::new();
@@ -1269,11 +1305,15 @@ pub(crate) fn eval_value_expr_mode(
                         &mut fn_local_names,
                     ) {
                         Ok(v) => result = v,
-                        Err(EvalError::ReturnFlow(v)) => return Ok(*v),
+                        // RETURN mechanism: the use site must see exactly what
+                        // an `extsi`/`extui` of the truncated result carries.
+                        Err(EvalError::ReturnFlow(v)) => {
+                            return declared_width::narrow_return(&func.ret_type, callee, *v);
+                        }
                         Err(e) => return Err(e),
                     }
                 }
-                return Ok(result);
+                return declared_width::narrow_return(&func.ret_type, callee, result);
             }
             // Deterministic linear-memory intrinsics (`__mind_alloc` /
             // `__mind_load_*` / `__mind_store_*` / `__mind_free`): interpreted
@@ -1677,9 +1717,17 @@ pub(crate) fn eval_value_expr_mode(
             }
             apply_binary(*op, lv, rv, mode.clone())
         }
-        Node::Let { value, .. } | Node::Assign { value, .. } | Node::LetTuple { value, .. } => {
-            eval_value_expr_mode(value, env, tensor_env, mode.clone())
+        Node::Let {
+            name, ann, value, ..
+        } => {
+            let v = eval_value_expr_mode(value, env, tensor_env, mode.clone())?;
+            declared_width::bind_let(ann, name, v)
         }
+        Node::Assign { name, value, .. } => {
+            let v = eval_value_expr_mode(value, env, tensor_env, mode.clone())?;
+            declared_width::narrow_reassign(name, v)
+        }
+        Node::LetTuple { value, .. } => eval_value_expr_mode(value, env, tensor_env, mode.clone()),
         // Function definitions and control flow - placeholder implementation
         Node::FnDef(..) => Ok(Value::Int(0)), // Functions are not executed as expressions
         // Salov C3 (#179): an early `return X` must STOP the enclosing function
@@ -1794,12 +1842,16 @@ pub(crate) fn eval_value_expr_mode(
                         Node::Assign { name, value, .. } => {
                             let val =
                                 eval_value_expr_mode(value, &loop_env, tensor_env, mode.clone())?;
+                            let val = declared_width::narrow_reassign(name, val)?;
                             loop_env.insert(name.clone(), val.clone());
                             result = val;
                         }
-                        Node::Let { name, value, .. } => {
+                        Node::Let {
+                            name, ann, value, ..
+                        } => {
                             let val =
                                 eval_value_expr_mode(value, &loop_env, tensor_env, mode.clone())?;
+                            let val = declared_width::bind_let(ann, name, val)?;
                             loop_env.insert(name.clone(), val.clone());
                             result = val;
                         }
@@ -1932,7 +1984,7 @@ pub(crate) fn eval_value_expr_mode(
                     Some(_) if interp_expr_is_u64(expr) => Ok(Value::Float((n as u64) as f64)),
                     Some(_) => Ok(Value::Float(n as f64)),
                     // int → int: existing narrowing (or i64 identity).
-                    None => Ok(Value::Int(apply_scalar_cast(n, ty))),
+                    None => Ok(Value::Int(declared_width::apply_scalar_cast(n, ty))),
                 },
                 Value::Float(f) => {
                     if let Some(bits) = float_to_int_cast_bits(f, ty) {
@@ -2233,9 +2285,19 @@ pub(crate) fn eval_value_expr_mode(
                     // Propagate `let`/`assign` into the loop scope so the next
                     // condition check sees the update (same handling as `For`).
                     match stmt {
-                        Node::Assign { name, value, .. } | Node::Let { name, value, .. } => {
+                        Node::Let {
+                            name, ann, value, ..
+                        } => {
                             let val =
                                 eval_value_expr_mode(value, &loop_env, tensor_env, mode.clone())?;
+                            let val = declared_width::bind_let(ann, name, val)?;
+                            loop_env.insert(name.clone(), val.clone());
+                            result = val;
+                        }
+                        Node::Assign { name, value, .. } => {
+                            let val =
+                                eval_value_expr_mode(value, &loop_env, tensor_env, mode.clone())?;
+                            let val = declared_width::narrow_reassign(name, val)?;
                             loop_env.insert(name.clone(), val.clone());
                             result = val;
                         }
@@ -2297,15 +2359,19 @@ pub(crate) fn eval_value_expr_mode(
             let mut result = Value::Int(0);
             for stmt in body {
                 match stmt {
-                    Node::Let { name, value, .. } => {
+                    Node::Let {
+                        name, ann, value, ..
+                    } => {
                         let val =
                             eval_value_expr_mode(value, &region_env, tensor_env, mode.clone())?;
+                        let val = declared_width::bind_let(ann, name, val)?;
                         region_env.insert(name.clone(), val.clone());
                         result = val;
                     }
                     Node::Assign { name, value, .. } => {
                         let val =
                             eval_value_expr_mode(value, &region_env, tensor_env, mode.clone())?;
+                        let val = declared_width::narrow_reassign(name, val)?;
                         region_env.insert(name.clone(), val.clone());
                         result = val;
                     }
@@ -2775,63 +2841,6 @@ fn float_to_int_cast_bits(f: f64, ty: &TypeAnn) -> Option<i64> {
         "u64" => f as u64 as i64,
         _ => return None,
     })
-}
-
-/// Apply a scalar `as`-cast to an i64-carried interpreter value, matching the
-/// codegen path (`src/eval/lower.rs` `Node::As` + `scalar_int_cast_width` /
-/// `scalar_uint_cast_width`) bit-for-bit so the interpreter never diverges from
-/// the runnable artifact.
-///
-///   * SIGNED narrow (`i8`/`i16`/`i32`, also `TypeAnn::ScalarI32`): truncate to
-///     the low `W` bits then sign-extend — `(n << (64-W)) >> (64-W)` with an
-///     arithmetic right shift, exactly the codegen shift pair.
-///   * UNSIGNED narrow (`u8`/`u16`/`u32`, also `TypeAnn::ScalarU32`): zero-extend
-///     by masking the low `W` bits — `n & ((1<<W)-1)`.
-///   * `i64`/`u64`/floats/pointers/aliases / any non-narrowing target: returned
-///     unchanged (the transparent codegen fall-through).
-fn apply_scalar_cast(n: i64, ty: &TypeAnn) -> i64 {
-    // Signed narrowing widths (mirror of lower.rs::scalar_int_cast_width).
-    let signed_width = match ty {
-        TypeAnn::ScalarI32 => Some(32u32),
-        TypeAnn::ScalarI64 => Some(64),
-        TypeAnn::Named(name) => match name.as_str() {
-            "i8" => Some(8),
-            "i16" => Some(16),
-            "i32" => Some(32),
-            "i64" => Some(64),
-            _ => None,
-        },
-        _ => None,
-    };
-    if let Some(width) = signed_width {
-        if width < 64 {
-            let shift = 64 - width as i64;
-            return (n << shift) >> shift;
-        }
-        return n;
-    }
-    // Unsigned narrowing widths (mirror of lower.rs::scalar_uint_cast_width).
-    let unsigned_width = match ty {
-        TypeAnn::ScalarU32 => Some(32u32),
-        TypeAnn::Named(name) => match name.as_str() {
-            "u8" => Some(8),
-            "u16" => Some(16),
-            "u32" => Some(32),
-            _ => None,
-        },
-        _ => None,
-    };
-    if let Some(width) = unsigned_width {
-        if width < 64 {
-            let mask: i64 = if width == 32 {
-                0xFFFF_FFFF
-            } else {
-                (1i64 << width) - 1
-            };
-            return n & mask;
-        }
-    }
-    n
 }
 
 fn apply_tensor_scalar(
@@ -3693,6 +3702,11 @@ struct UserFn {
     params: Vec<String>,
     /// Whether each parameter uses the native string record ABI.
     string_params: Vec<bool>,
+    /// Each parameter's DECLARED type, for the PARAM mechanism.
+    param_types: Vec<TypeAnn>,
+    /// The declared return type, for the RETURN mechanism (applied at every
+    /// exit of the body, `return` and fall-through alike).
+    ret_type: Option<TypeAnn>,
     body: Vec<Node>,
 }
 
@@ -3722,6 +3736,8 @@ fn fn_table_install(m: &Module) -> HashMap<String, UserFn> {
                         .iter()
                         .map(|p| matches!(&p.ty, TypeAnn::Named(n) if n == "string"))
                         .collect(),
+                    param_types: params.iter().map(|p| p.ty.clone()).collect(),
+                    ret_type: fd.ret_type.clone(),
                     body: body.clone(),
                 },
             );
