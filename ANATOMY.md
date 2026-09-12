@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1813 | **Est. tokens:** ~3,468,800
-**Generated:** 2026-09-12 23:56 UTC
+**Files:** 1815 | **Est. tokens:** ~3,471,437
+**Generated:** 2026-09-12 23:57 UTC
 
 ## Token Budget Guide
 
@@ -29,8 +29,8 @@
 | `assets/logo/` | 1 | ~453 |
 | `audits/` | 6 | ~607 |
 | `bench/` | 5 | ~7,574 |
-| `benches/` | 28 | ~84,242 |
-| `benches/common/` | 1 | ~668 |
+| `benches/` | 28 | ~83,855 |
+| `benches/common/` | 2 | ~2,995 |
 | `bench/fft/` | 8 | ~8,060 |
 | `benchmarks/` | 13 | ~28,066 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
@@ -135,7 +135,7 @@
 | `src/types/` | 10 | ~20,740 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 397 | ~813,441 |
+| `tests/` | 398 | ~814,138 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -282,15 +282,16 @@
 ### `benches/common/`
 
 - `mod.rs` (~668 tok, large) — Shared self-skip probe for criterion bench targets.
+- `roofline_peak.rs` (~2327 tok, huge) — Shared roofline denominator for the deterministic GEMM / int-dot benches.
 ### `benches/`
 
 - `compiler.rs` (~3786 tok, huge) — Small program: Simple matrix multiplication
 - `cross_module.rs` (~605 tok, large) — Copyright 2025 STARGA Inc.
-- `det_gemv_q16_mt.rs` (~3295 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `det_matmul_i16.rs` (~4621 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `det_matmul_i8.rs` (~5094 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `det_gemv_q16_mt.rs` (~3229 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `det_matmul_i16.rs` (~4549 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `det_matmul_i8.rs` (~4988 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `det_matmul_q16_mt.rs` (~4049 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `det_matmul_q16.rs` (~4972 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `det_matmul_q16.rs` (~4829 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `fft_q16.rs` (~5352 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mindcraft_fmt.rs` (~1079 tok, large) — File readers
 - `operations.rs` (~1200 tok, large) — Element-wise operations
@@ -2138,6 +2139,7 @@
 - `rfc0012_phase_a_shape_types.rs` (~6711 tok, huge) — Copyright 2025 STARGA Inc.
 - `rfc0012_phase_b_operators.rs` (~4737 tok, huge) — Copyright 2025 STARGA Inc.
 - `rfc0012_phase_c_annotations.rs` (~2405 tok, huge) — Copyright 2025 STARGA Inc.
+- `roofline_peak.rs` (~697 tok, large) — Correctness proof for the CPUID-gated roofline denominator (B4).
 - `rsa_pss_driver.py` (~2692 tok, huge) — # Ground-truth driver for std/rsa_pss.mind (pure-MIND RSASSA-PSS-VERIFY,
 ### `tests/runtime/`
 

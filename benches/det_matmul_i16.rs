@@ -76,21 +76,15 @@ use sha2::{Digest, Sha256};
 /// committed reference.
 const SHAPES: &[usize] = &[64, 256, 512];
 
-/// Documented, conservative single-core int16 multiply-accumulate ceiling for
-/// the host ISA (GMAC/s) — the roofline `%-of-ISA-peak` denominator
-/// (`docs/benchmarking.md` §3). An **estimate against a documented constant**,
-/// not a certified hardware peak. int16 `vpmaddwd` on AVX2 does 16 i16-MACs/op:
-/// at the reference clock (~3.5 GHz, ~2 such ops/cyc) ≈ 112 GMAC/s. neon SDOT/
-/// widen-MAC is taken conservatively at ~48 GMAC/s. Single-core; comparability
-/// aid only.
-fn isa_peak_gmacs() -> f64 {
-    if cfg!(target_arch = "x86_64") {
-        112.0
-    } else if cfg!(target_arch = "aarch64") {
-        48.0
-    } else {
-        f64::NAN
-    }
+/// CPUID-gated single-core roofline denominator for the `%-of-ISA-peak` axis
+/// (`docs/benchmarking.md` §3). int16 `vpmaddwd` does 16 i16-MACs/uop, issuing on
+/// ONE integer-vector port on Haswell/Broadwell and TWO on Skylake+/Zen2+; the
+/// ceiling is clock × MACs/uop × ports (56 GMAC/s 1-port, 112 GMAC/s 2-port
+/// @3.5 GHz) and is bracketed (both ceilings printed) on an unclassified host.
+/// Bench-side only — no emitted bytes, not on any canary path.
+#[allow(dead_code)]
+mod roofline {
+    include!("common/roofline_peak.rs");
 }
 
 /// The committed byte-identity workload (RFC 0020 §5). The 256×256 row of the
@@ -371,15 +365,7 @@ fn report_gmacs_i16(lib: &Library, n: usize, seed: u64) {
     let median = samples[REPS / 2];
     let macs = (n as f64) * (n as f64);
     let gmacs = macs / median / 1e9;
-    let peak = isa_peak_gmacs();
-    let pct = if peak.is_finite() {
-        format!(
-            "{:.1}% of ISA peak (~{peak:.0} GMAC/s est.)",
-            gmacs / peak * 100.0
-        )
-    } else {
-        "ISA peak unknown".to_string()
-    };
+    let pct = roofline::roofline_pct_single(gmacs, roofline::IntUop::Vpmaddwd);
     eprintln!(
         "det_matmul_i16: ROOFLINE {n}x{n} {gmacs:7.2} GMAC/s  [{pct}]  (median {:.3} µs/call)",
         median * 1e6

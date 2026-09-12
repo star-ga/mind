@@ -81,25 +81,15 @@ use sha2::{Digest, Sha256};
 /// byte-identity anchor — its hash is pinned to the committed reference.
 const SHAPES: &[usize] = &[16, 64, 128, 256, 512];
 
-/// Documented, conservative single-core integer multiply-accumulate ceiling for
-/// the host ISA — the denominator of the roofline `%-of-ISA-peak` axis (see
-/// `docs/benchmarking.md` §3). This is an **estimate against a documented
-/// constant**, not a vendor-certified hardware peak: it is the reference clock
-/// times the widen-multiply-accumulate MACs the fused outer-product microkernel
-/// can retire per cycle on this ISA. Reported as a comparability aid only.
-///
-/// avx2: commodity x86 CPU @ 3.5 GHz, AVX2 8×i32 widen-MAC ≈ 2 fused ops/cyc on the
-/// Q16.16 outer-product path → ~3.5e9·8·2 ≈ 56 GMAC/s. neon: a conservative
-/// 4×i32 MAC at 3.0 GHz ≈ 24 GMAC/s. Single-core; the MT bench divides instead
-/// by `cores × this`.
-fn isa_peak_gmacs() -> f64 {
-    if cfg!(target_arch = "x86_64") {
-        56.0
-    } else if cfg!(target_arch = "aarch64") {
-        24.0
-    } else {
-        f64::NAN
-    }
+/// CPUID-gated single-core roofline denominator for the `%-of-ISA-peak` axis (see
+/// `docs/benchmarking.md` §3). The Q16.16 outer-product kernel retires `vpmuldq`
+/// (4 i64-MACs/uop), issuing on ONE integer-vector port on Haswell/Broadwell and
+/// TWO on Skylake+/Zen2+; the ceiling is clock × MACs/uop × ports and is bracketed
+/// (both ceilings printed) on an unclassified host. Bench-side only — no emitted
+/// bytes, not on any canary path.
+#[allow(dead_code)]
+mod roofline {
+    include!("common/roofline_peak.rs");
 }
 
 /// The committed byte-identity workload (RFC 0020 §5). The 64×64×64 row of the
@@ -387,15 +377,7 @@ fn report_gmacs_q16(lib: &Library, n: usize, seed: u64) {
     let median = samples[REPS / 2];
     let macs = (n as f64) * (n as f64) * (n as f64);
     let gmacs = macs / median / 1e9;
-    let peak = isa_peak_gmacs();
-    let pct = if peak.is_finite() {
-        format!(
-            "{:.1}% of ISA peak (~{peak:.0} GMAC/s est.)",
-            gmacs / peak * 100.0
-        )
-    } else {
-        "ISA peak unknown".to_string()
-    };
+    let pct = roofline::roofline_pct_single(gmacs, roofline::IntUop::Vpmuldq);
     eprintln!(
         "det_matmul_q16: ROOFLINE {n}x{n}x{n} {gmacs:7.2} GMAC/s  [{pct}]  (median {:.2} µs/call)",
         median * 1e6
