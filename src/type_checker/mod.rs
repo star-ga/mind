@@ -1842,6 +1842,27 @@ fn infer_expr_inner(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), 
         // `Neg`). Bitwise complement is only meaningful on integers; the operand
         // is validated by inferring it.
         Node::BitNot { operand, .. } => infer_expr(operand, env),
+        // Slice 0 (deref-assign track): `*expr` and `*p = value` are parsed and
+        // formatted, but have NO executable support — the reference/place ABI
+        // (Slice 1) is unimplemented and under architecture review. Refuse
+        // LOUDLY here so no program containing a dereference is silently
+        // type-checked, lowered, or interpreted. Record-identity place
+        // replacement (mind-spec v1.0/types.md:65-99) is NOT a field copy; the
+        // meaning is deliberately not defined by an executable arm yet.
+        Node::Deref { span, .. } => Err(TypeErrSpan {
+            msg: "dereference `*expr` is not supported yet: the reference/place ABI is \
+                  unimplemented (deref-assign Slice 1 is under review). It is a \
+                  parse/format-only construct today."
+                .to_string(),
+            span: *span,
+        }),
+        Node::DerefAssign { span, .. } => Err(TypeErrSpan {
+            msg: "assignment through a dereference `*p = value` is not supported yet: the \
+                  mutable-place ABI is unimplemented (deref-assign Slice 1 is under review). \
+                  Record-identity place replacement is not a field copy."
+                .to_string(),
+            span: *span,
+        }),
         Node::MethodCall { receiver, span, .. } => {
             // Static/associated type-name call (`string.from_utf8_bytes(..)`): the
             // receiver is a TYPE name, not a value — don't resolve it as an
@@ -4500,6 +4521,50 @@ fn check_module_types_in_file_impl(
     >,
 ) -> Vec<Pretty> {
     let mut errs = Vec::new();
+
+    // Slice 0 (deref-assign track): refuse `*p` and `*p = value` LOUDLY at check
+    // time. There is NO executable support — the reference/place ABI is
+    // unimplemented and under architecture review — so accepting these at
+    // `mindc check` would be apparent executable support (a later build/lower
+    // would panic or refuse). This whole-module scan is a GUARANTEED refusal
+    // independent of expression-inference coverage: `*p` is parse/format-only
+    // today, and record-identity place replacement is deliberately NOT defined
+    // as a field copy. This scan ACCUMULATES the refusal diagnostic(s) into
+    // `errs` up front; it does NOT short-circuit the remaining type-checking, so
+    // a module containing a deref still collects its other diagnostics — the
+    // E2028/E2029 entry is what makes the overall check fail.
+    {
+        fn scan_deref(node: &Node, src: &str, file: Option<&str>, out: &mut Vec<Pretty>) {
+            match node {
+                Node::Deref { span, .. } => out.push(diag_from_span(
+                    src,
+                    file,
+                    "dereference `*expr` is not supported yet: the reference/place ABI is \
+                     unimplemented (deref-assign is under architecture review). It is a \
+                     parse/format-only construct today."
+                        .to_string(),
+                    *span,
+                    "E2028",
+                )),
+                Node::DerefAssign { span, .. } => out.push(diag_from_span(
+                    src,
+                    file,
+                    "assignment through a dereference `*p = value` is not supported yet: the \
+                     mutable-place ABI is unimplemented (deref-assign is under architecture \
+                     review). Record-identity place replacement is not a field copy."
+                        .to_string(),
+                    *span,
+                    "E2029",
+                )),
+                _ => {}
+            }
+            nerve_walk::for_each_child(node, &mut |child| scan_deref(child, src, file, out));
+        }
+        for item in &module.items {
+            scan_deref(item, src, file, &mut errs);
+        }
+    }
+
     let mut tenv = env.clone();
 
     // E2023 — the `__mind_` prefix is reserved for compiler intrinsics (RFC 0005

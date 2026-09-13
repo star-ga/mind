@@ -375,6 +375,14 @@ fn emit_node(p: &mut Printer, node: &Node, _extra_indent: usize) {
         } => {
             emit_field_assign(p, receiver, field, value);
         }
+        // Slice 0 (deref-assign track): `*target = value`. Round-trips even
+        // though it is refused downstream at type-check.
+        Node::DerefAssign { target, value, .. } => {
+            p.push("*");
+            emit_expr(p, target);
+            p.push(" = ");
+            emit_expr(p, value);
+        }
         Node::Return { value, .. } => {
             emit_return(p, value.as_deref());
         }
@@ -899,6 +907,12 @@ fn emit_stmt(p: &mut Printer, node: &Node) {
             p.push(" = ");
             emit_expr(p, value);
         }
+        Node::DerefAssign { target, value, .. } => {
+            p.push("*");
+            emit_expr(p, target);
+            p.push(" = ");
+            emit_expr(p, value);
+        }
         Node::Return { value, .. } => {
             p.push("return");
             if let Some(v) = value {
@@ -1278,6 +1292,12 @@ fn emit_expr(p: &mut Printer, node: &Node) {
         }
         Node::BitNot { operand, .. } => {
             p.push("~");
+            emit_expr(p, operand);
+        }
+        // Slice 0 (deref-assign track): prefix dereference `*expr`. Round-trips
+        // faithfully even though it is refused downstream at type-check.
+        Node::Deref { operand, .. } => {
+            p.push("*");
             emit_expr(p, operand);
         }
         Node::Call { callee, args, .. } => emit_call(p, callee, args),
@@ -1676,6 +1696,12 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             emit_expr(p, receiver);
             p.push(".");
             p.push(field);
+            p.push(" = ");
+            emit_expr(p, value);
+        }
+        Node::DerefAssign { target, value, .. } => {
+            p.push("*");
+            emit_expr(p, target);
             p.push(" = ");
             emit_expr(p, value);
         }

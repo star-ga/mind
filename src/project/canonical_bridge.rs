@@ -337,8 +337,13 @@ fn collect_node_calls(
         | Node::CallExpandDims { x: inner, .. }
         | Node::CallSqueeze { x: inner, .. }
         | Node::CallTranspose { x: inner, .. }
-        | Node::CallIndex { x: inner, .. } => {
+        | Node::CallIndex { x: inner, .. }
+        | Node::Deref { operand: inner, .. } => {
             collect_node_calls(inner, owner, scope, eval_refs, calls, declarations)?;
+        }
+        Node::DerefAssign { target, value, .. } => {
+            collect_node_calls(target, owner, scope, eval_refs, calls, declarations)?;
+            collect_node_calls(value, owner, scope, eval_refs, calls, declarations)?;
         }
         Node::Tuple { elements, .. }
         | Node::ArrayLit { elements, .. }

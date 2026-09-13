@@ -575,8 +575,13 @@ pub(crate) fn node_children_mut(node: &mut Node) -> Vec<&mut Node> {
         | Node::Not { operand: inner, .. }
         | Node::BitNot { operand: inner, .. }
         | Node::Ref { inner, .. }
+        | Node::Deref { operand: inner, .. }
         | Node::As { expr: inner, .. }
         | Node::Try { inner, .. } => out.push(inner),
+        Node::DerefAssign { target, value, .. } => {
+            out.push(target);
+            out.push(value);
+        }
         // ── Single value-bearing statements ──────────────────────────────
         Node::Let { value, .. }
         | Node::Assign { value, .. }
@@ -789,8 +794,13 @@ pub(crate) fn node_children_ref(node: &Node) -> Vec<&Node> {
         | Node::Not { operand: inner, .. }
         | Node::BitNot { operand: inner, .. }
         | Node::Ref { inner, .. }
+        | Node::Deref { operand: inner, .. }
         | Node::As { expr: inner, .. }
         | Node::Try { inner, .. } => out.push(inner),
+        Node::DerefAssign { target, value, .. } => {
+            out.push(target);
+            out.push(value);
+        }
         Node::Let { value, .. }
         | Node::Assign { value, .. }
         | Node::LetTuple { value, .. }

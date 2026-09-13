@@ -1188,6 +1188,15 @@ pub(crate) fn eval_value_expr_mode(
         Node::Lit(Literal::Int(n), _) => Ok(Value::Int(*n)),
         Node::Lit(Literal::Float(f), _) => Ok(Value::Float(*f)),
         Node::Lit(Literal::Str(s), _) => Ok(Value::Str(s.clone())),
+        // Slice 0 (deref-assign track): the interpreter REFUSES a dereference or
+        // assignment-through-dereference loudly — there is no executable support
+        // (the reference/place ABI is unimplemented). The type checker already
+        // rejects these before evaluation; this is the defense-in-depth backstop.
+        Node::Deref { .. } | Node::DerefAssign { .. } => Err(EvalError::UnsupportedMsg(
+            "dereference `*p` / assignment-through-dereference `*p = v` is not supported: \
+             the reference/place ABI is unimplemented"
+                .to_string(),
+        )),
         Node::Lit(Literal::Ident(name), span) => {
             // Resolve a qualified value's owner/span binding before caller
             // locals; ordinary unqualified names retain local-first shadowing.

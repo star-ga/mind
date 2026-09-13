@@ -654,6 +654,32 @@ pub enum Node {
         operand: Box<Node>,
         span: Span,
     },
+    /// Slice 0 (deref-assign track): prefix dereference `*operand`. Parsed,
+    /// formatted, and carried in the AST ONLY. The type checker, lowering, and
+    /// interpreter REFUSE it with a spanned diagnostic — there is no executable
+    /// support. Target semantics (NOT yet implemented, Slice 1 under review):
+    /// `*p` where `p: &mut T` / `&T` reads the record the reference denotes,
+    /// preserving record identity (mind-spec v1.0/types.md:65-99). It is NOT a
+    /// clone. The infix `*` (multiply) is a separate Pratt op; this variant is
+    /// produced only from prefix position.
+    Deref {
+        operand: Box<Node>,
+        span: Span,
+    },
+    /// Slice 0 (deref-assign track): assignment through a dereference,
+    /// `*target = value`. Parsed, formatted, carried in the AST ONLY; refused
+    /// at type-check/lowering/interpreter (no executable support). Target
+    /// semantics (NOT yet implemented, Slice 1 under review): binding-/place-
+    /// replacement — the place `target` denotes is made to denote `value`'s
+    /// record; other aliases keep the old record; later mutations of `value`'s
+    /// record are visible through the place. This is NOT a field-wise clone.
+    DerefAssign {
+        /// The reference expression `p` in `*p = value` (the operand of the
+        /// dereferenced place).
+        target: Box<Node>,
+        value: Box<Node>,
+        span: Span,
+    },
     /// Method call
     MethodCall {
         receiver: Box<Node>,
@@ -1113,6 +1139,8 @@ impl Node {
             | Node::Neg { span, .. }
             | Node::Not { span, .. }
             | Node::BitNot { span, .. }
+            | Node::Deref { span, .. }
+            | Node::DerefAssign { span, .. }
             | Node::MethodCall { span, .. }
             | Node::FieldAccess { span, .. }
             | Node::Const { span, .. }

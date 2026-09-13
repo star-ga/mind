@@ -909,6 +909,14 @@ impl<'a> Resolver<'a> {
                 }
             }
             Node::Lit(_, _) => {}
+            // Slice 0 (deref-assign track): resolve the child references so a
+            // program containing `*p` / `*p = v` still gets name-resolution
+            // (the type checker refuses the construct separately).
+            Node::Deref { operand, .. } => self.walk(operand),
+            Node::DerefAssign { target, value, .. } => {
+                self.walk(target);
+                self.walk(value);
+            }
             Node::Call { callee, args, span } => {
                 let qualified_call = qcall(*span, callee);
                 // Advisory, orthogonal to the resolvable/unresolved decision

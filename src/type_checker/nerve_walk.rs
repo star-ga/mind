@@ -64,6 +64,7 @@ pub fn for_each_child<'a, F: FnMut(&'a Node)>(node: &'a Node, f: &mut F) {
         | Node::Ref { inner, .. }
         | Node::Assert { cond: inner, .. }
         | Node::As { expr: inner, .. }
+        | Node::Deref { operand: inner, .. }
         | Node::Let { value: inner, .. }
         | Node::LetTuple { value: inner, .. }
         | Node::Assign { value: inner, .. }
@@ -147,6 +148,10 @@ pub fn for_each_child<'a, F: FnMut(&'a Node)>(node: &'a Node, f: &mut F) {
             receiver, value, ..
         } => {
             f(receiver);
+            f(value);
+        }
+        Node::DerefAssign { target, value, .. } => {
+            f(target);
             f(value);
         }
 

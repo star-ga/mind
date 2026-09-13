@@ -165,8 +165,12 @@ fn node_mentions_narrow(node: &Node) -> bool {
         Node::While { cond, body, .. } => node_mentions_narrow(cond) || any(body),
         Node::Break { .. } | Node::Continue { .. } => false,
         Node::Print { args, .. } => any(args),
-        Node::Neg { operand, .. } | Node::Not { operand, .. } | Node::BitNot { operand, .. } => {
-            node_mentions_narrow(operand)
+        Node::Neg { operand, .. }
+        | Node::Not { operand, .. }
+        | Node::BitNot { operand, .. }
+        | Node::Deref { operand, .. } => node_mentions_narrow(operand),
+        Node::DerefAssign { target, value, .. } => {
+            node_mentions_narrow(target) || node_mentions_narrow(value)
         }
         Node::MethodCall { receiver, args, .. } => node_mentions_narrow(receiver) || any(args),
         Node::FieldAccess { receiver, .. } => node_mentions_narrow(receiver),

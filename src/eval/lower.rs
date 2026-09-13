@@ -1242,7 +1242,60 @@ pub fn lower_to_ir_with_limits(
     context.refusal.map_or(Ok(ir), Err)
 }
 
+/// Slice 0 (deref-assign track): find the first `*expr` / `*p = v` anywhere in
+/// a node (recursing fn/closure bodies, which `node_children_ref` treats as
+/// leaves). Used to give `lower_to_ir_with_limits` — a public Result API — a
+/// STRUCTURED refusal for these unsupported nodes instead of the generic
+/// `lower_expr_inner` panic catch-all. The typed CLI already rejects a deref at
+/// type-check (E2028/E2029) before lowering; this closes the direct-call path.
+fn first_deref_span(node: &ast::Node) -> Option<(usize, usize)> {
+    use ast::Node as N;
+    match node {
+        N::Deref { span, .. } | N::DerefAssign { span, .. } => {
+            return Some((span.start(), span.end()));
+        }
+        N::FnDef(fd, _) => {
+            for s in &fd.body {
+                if let Some(hit) = first_deref_span(s) {
+                    return Some(hit);
+                }
+            }
+        }
+        N::Closure(cd, _) => {
+            for s in &cd.body {
+                if let Some(hit) = first_deref_span(s) {
+                    return Some(hit);
+                }
+            }
+        }
+        _ => {
+            for child in crate::eval::closures::node_children_ref(node) {
+                if let Some(hit) = first_deref_span(child) {
+                    return Some(hit);
+                }
+            }
+        }
+    }
+    None
+}
+
 pub(super) fn lower_to_ir_inner(module: &ast::Module, context: &mut LoweringContext) -> IRModule {
+    // Slice 0 structured refusal: a `*expr` / `*p = v` has no lowering (the
+    // reference/place ABI is unimplemented). Fail via `context.refusal` — a
+    // clean `Err` from `lower_to_ir_with_limits` — rather than reaching the
+    // `lower_expr_inner` panic catch-all when a caller invokes this public
+    // entrypoint on un-type-checked AST.
+    for item in &module.items {
+        if let Some((start, end)) = first_deref_span(item) {
+            context.refusal = Some(MaterializationRefusal::UnsupportedLoweringOperation {
+                operation: "dereference / deref-assign: the reference/place ABI is \
+                            unimplemented (deref-assign under architecture review)",
+                start,
+                end,
+            });
+            return IRModule::new();
+        }
+    }
     // PURE-SCALAR FAST LANE. For a module whose every item passes
     // `is_pure_scalar_arith_item` (the `scalar_math` compile-speed floor:
     // `1 + 2 * 3 - 4 / 2`) AND an empty whole-project registry, every setup
@@ -4725,6 +4778,11 @@ fn descend_for_continue(node: &mut ast::Node, step: &ast::Node) {
         }
         N::As { expr, .. } => descend_for_continue(expr, step),
         N::Ref { inner, .. } => descend_for_continue(inner, step),
+        N::Deref { operand, .. } => descend_for_continue(operand, step),
+        N::DerefAssign { target, value, .. } => {
+            descend_for_continue(target, step);
+            descend_for_continue(value, step);
+        }
         N::Tuple { elements, .. } | N::ArrayLit { elements, .. } | N::SetLit { elements, .. } => {
             for e in elements.iter_mut() {
                 descend_for_continue(e, step);

@@ -1591,6 +1591,21 @@ impl<'a> P<'a> {
                         span,
                     });
                 }
+                // Slice 0 (deref-assign track): `*p = value` -> DerefAssign.
+                // Carried in the AST + formatted only; refused at
+                // type-check/lowering/interpreter (no executable support). The
+                // `target` is the reference expression `p` (the Deref operand).
+                Node::Deref { operand, .. } => {
+                    self.advance(); // consume '='
+                    self.skip_ws_and_newlines();
+                    let value = self.parse_expr()?;
+                    let span = Span::new(start, self.pos);
+                    return Ok(Node::DerefAssign {
+                        target: operand,
+                        value: Box::new(value),
+                        span,
+                    });
+                }
                 other => return Ok(other),
             }
         }
@@ -4499,6 +4514,27 @@ impl<'a> P<'a> {
             return Ok(Node::Ref {
                 mutable,
                 inner: Box::new(inner),
+                span,
+            });
+        }
+        // Slice 0 (deref-assign track): prefix dereference `*expr`.
+        //
+        // Disambiguation: `*` is also the infix multiply operator, but that is
+        // handled by `peek_binop` in *infix* position only (after a left operand
+        // is already parsed by the Pratt loop). Here in *prefix* position
+        // (`parse_primary`, before the Pratt loop) a leading `*` is unambiguously
+        // a dereference. The raw-pointer TYPE forms `*const T` / `*mut T` are
+        // parsed by `type_ann` (a distinct context), never here. Slice 0 only
+        // builds the AST node + formats it; type-check/lowering/interpreter
+        // refuse it — there is no executable support yet.
+        if self.at(b'*') {
+            let start = self.pos;
+            self.pos += 1; // consume `*`
+            self.skip_ws();
+            let operand = self.parse_atom()?;
+            let span = Span::new(start, self.pos);
+            return Ok(Node::Deref {
+                operand: Box::new(operand),
                 span,
             });
         }
