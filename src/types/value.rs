@@ -23,6 +23,18 @@ pub enum ValueType {
     ScalarBool,
     Tensor(TensorType),
     GradMap(Vec<(String, TensorType)>),
+    /// Deref-assign track D2: a typed reference capability `&T` / `&mut T` whose
+    /// `target` is the canonical (module-qualified) name of the referenced
+    /// record type — the identity used for owner-exact parameter comparison.
+    /// `mutable` distinguishes `&mut T` (may drive `*p = v` / `(*p).f = v`) from
+    /// `&T` (read-only; may not produce a writable place by coercion). The
+    /// carrier is an i64 address at runtime, but this capability MUST survive
+    /// field projection, dereference, casts, and call boundaries so a read-only
+    /// reference can never be laundered into a writable record.
+    Ref {
+        mutable: bool,
+        target: String,
+    },
 }
 
 impl ValueType {

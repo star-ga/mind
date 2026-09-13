@@ -50,6 +50,15 @@ pub(super) fn describe_value_type(v: &ValueType) -> String {
         ValueType::ScalarF32 => "Scalar[f32]".to_string(),
         ValueType::ScalarF64 => "Scalar[f64]".to_string(),
         ValueType::ScalarBool => "Scalar[bool]".to_string(),
+        ValueType::Ref { mutable, target } => {
+            let m = if *mutable { "mut " } else { "" };
+            let t = if target.is_empty() {
+                "<ref>"
+            } else {
+                target.as_str()
+            };
+            format!("&{m}{t}")
+        }
         ValueType::Tensor(tensor) => describe_tensor(tensor),
         ValueType::GradMap(entries) => {
             let mut parts = Vec::new();

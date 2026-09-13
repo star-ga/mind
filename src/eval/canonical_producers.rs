@@ -71,7 +71,8 @@ pub(super) fn semantic_type(
         ValueType::ScalarF32 => ScalarType::F32,
         ValueType::ScalarF64 => ScalarType::F64,
         ValueType::ScalarBool => ScalarType::Bool,
-        ValueType::Tensor(_) | ValueType::GradMap(_) => return None,
+        // A reference capability has no scalar semantic type (deref-assign D2).
+        ValueType::Tensor(_) | ValueType::GradMap(_) | ValueType::Ref { .. } => return None,
     };
     Some(SemanticType::Scalar(scalar))
 }

@@ -853,6 +853,21 @@ fn closest_identifier(name: &str, env: &TypeEnv) -> Option<String> {
     best.map(|(_, k)| k.clone())
 }
 
+/// Deref-assign D2/D3: the canonical (module-qualified) name of the type a
+/// `&expr` / `&mut expr` references, for owner-exact parameter comparison. D2
+/// preserves the reference CAPABILITY (mutability + ref-ness) so it cannot be
+/// erased to a scalar; exact target resolution for `&mut r.f` field places
+/// (receiver admissibility, struct field-type lookup, alias/import
+/// canonicalization) is D3.
+///
+/// deferred: resolve `r.f` to its declared struct field type via the struct
+/// field-type table and canonicalize imported owners — implemented in D3. Until
+/// then the target is empty and D3's comparison treats an empty target as
+/// unresolved (refused), never as a match.
+fn ref_target_name(_inner: &Node) -> Option<String> {
+    None
+}
+
 fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeErrSpan> {
     let result = infer_expr_inner(node, env);
     mind_cf!(canonical_facts::record(node, &result));
@@ -2104,14 +2119,29 @@ fn infer_expr_inner(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), 
             // inference error.
             Ok((result_ty.unwrap_or(ValueType::ScalarI32), *span))
         }
-        // Phase 10.7: `&expr` / `&mut expr` reference-taking.
+        // Phase 10.7 / deref-assign D2: `&expr` / `&mut expr` reference-taking.
         //
-        // v1: type-check the inner expression; return `ScalarI32` as a
-        // stable placeholder. Full `ValueType::Ref { mutable, inner }`
-        // propagation is a follow-up that requires extending `ValueType`.
-        Node::Ref { inner, span, .. } => {
+        // The inner expression is validated, then a TYPED reference capability
+        // `ValueType::Ref { mutable, target }` is returned instead of an erased
+        // scalar — so a `&T` cannot be laundered into a writable record and a
+        // `&mut T` carries its write capability through projections/calls (D3
+        // enforces admissibility + owner-exact comparison). `target` is the
+        // canonical name of the referenced type where resolvable; D3 refines
+        // receiver admissibility and rejects unsupported reference shapes.
+        Node::Ref {
+            inner,
+            mutable,
+            span,
+        } => {
             infer_expr(inner, env)?;
-            Ok((ValueType::ScalarI32, *span))
+            let target = ref_target_name(inner).unwrap_or_default();
+            Ok((
+                ValueType::Ref {
+                    mutable: *mutable,
+                    target,
+                },
+                *span,
+            ))
         }
         // RFC 0005 Gap 1: while loop type. The body may change mutable
         // variables; the while expression itself is unit-typed (ScalarI32
@@ -2785,6 +2815,9 @@ fn same_scalar_class(a: &ValueType, b: &ValueType) -> bool {
             ValueType::ScalarF32 | ValueType::ScalarF64 => 1,
             ValueType::Tensor(_) => 2,
             ValueType::GradMap(_) => 3,
+            // A reference capability is its own class (deref-assign D2); it is
+            // never in the same class as a scalar/tensor for match-arm unifying.
+            ValueType::Ref { .. } => 4,
         }
     }
     class(a) == class(b)
