@@ -292,10 +292,16 @@ offset field is the same integer type, so a permutation among them is invisible
 to a signature assertion. The conformance controls
 (`tests/tensor_param_descriptor_abi_run.rs`) therefore EXECUTE the boundary via
 ctypes with unequal sizes, a non-zero offset, non-unit and mutually-unequal
-strides, and distinct element values chosen so any transposition of the size,
-stride, or offset fields yields a different scalar result; a matching scalar
-positive control proves the harness is not vacuously green. Rank-1 and rank-2 are
-kept as distinct observations.
+strides, and safe in-bounds element values. The rank-1 and rank-2 reductions
+prove that the emitted code performs the admitted offset/strided reads, but a
+sum is commutative: a coherent axis-pair permutation can select the same set
+of elements, and a runtime size-field permutation is not claimed to be checked
+when the static declared shape is the caller's contract. An index-sensitive
+rank-2 control uses a one-hot buffer to distinguish the tested axis-pair map.
+A scalar positive control proves the harness is not vacuously green. These
+controls do not establish malformed-descriptor, out-of-bounds, negative-stride,
+or unused-size-field rejection behavior. Rank-1 and rank-2 are kept as distinct
+observations.
 
 Versioning is an OPEN item, not settled by this label. A "v1" mention in prose
 neither exposes the boundary to consumers nor prevents an unversioned change (e.g.
