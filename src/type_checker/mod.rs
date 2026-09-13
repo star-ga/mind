@@ -1864,17 +1864,54 @@ fn infer_expr_inner(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), 
         // type-checked, lowered, or interpreted. Record-identity place
         // replacement (mind-spec v1.0/types.md:65-99) is NOT a field copy; the
         // meaning is deliberately not defined by an executable arm yet.
+        // Deref-assign carve-out: `*p` where `p` is a reference infers to the
+        // i64 referent carrier (record base address). The AUTHORITATIVE
+        // admit/refuse decision — bare `&mut <struct>` param, region, escape,
+        // owner-exactness — is `slice_abi::deref_check` (E2028), not this arm; a
+        // deref of a NON-reference operand (`*5`, `*(a+b)`) is still a hard
+        // error here. Under non-std-surface the reference ABI does not exist, so
+        // every deref stays a hard error.
+        #[cfg(feature = "std-surface")]
+        Node::Deref { operand, span } => match infer_expr(operand, env) {
+            Ok((ValueType::Ref { .. }, _)) => Ok((ValueType::ScalarI64, *span)),
+            _ => Err(TypeErrSpan {
+                msg: "dereference `*expr` requires a reference operand (a `&mut <struct>` \
+                      parameter in the deref-assign field-first subset)."
+                    .to_string(),
+                span: *span,
+            }),
+        },
+        #[cfg(not(feature = "std-surface"))]
         Node::Deref { span, .. } => Err(TypeErrSpan {
-            msg: "dereference `*expr` is not supported yet: the reference/place ABI is \
-                  unimplemented (deref-assign Slice 1 is under review). It is a \
-                  parse/format-only construct today."
+            msg: "dereference `*expr` is not supported: the reference/place ABI requires \
+                  the std-surface feature."
                 .to_string(),
             span: *span,
         }),
+        // `*p = v` is a statement-shaped place replacement; it yields unit
+        // (i64 carrier). deref_check (E2029) validates the target and value
+        // owner. Infer the value for its own diagnostics.
+        #[cfg(feature = "std-surface")]
+        Node::DerefAssign {
+            target,
+            value,
+            span,
+        } => {
+            let _ = infer_expr(value, env);
+            match infer_expr(target, env) {
+                Ok((ValueType::Ref { .. }, _)) => Ok((ValueType::ScalarI64, *span)),
+                _ => Err(TypeErrSpan {
+                    msg: "assignment through a dereference `*p = value` requires a `&mut` \
+                          reference target."
+                        .to_string(),
+                    span: *span,
+                }),
+            }
+        }
+        #[cfg(not(feature = "std-surface"))]
         Node::DerefAssign { span, .. } => Err(TypeErrSpan {
-            msg: "assignment through a dereference `*p = value` is not supported yet: the \
-                  mutable-place ABI is unimplemented (deref-assign Slice 1 is under review). \
-                  Record-identity place replacement is not a field copy."
+            msg: "assignment through a dereference `*p = value` is not supported: the \
+                  mutable-place ABI requires the std-surface feature."
                 .to_string(),
             span: *span,
         }),
@@ -2719,9 +2756,20 @@ fn valuetype_from_ann(ann: &crate::ast::TypeAnn) -> Option<ValueType> {
         // type at call sites.
         crate::ast::TypeAnn::Slice { .. }
         | crate::ast::TypeAnn::Array { .. }
-        | crate::ast::TypeAnn::Ref { .. }
         | crate::ast::TypeAnn::Generic { .. }
         | crate::ast::TypeAnn::Tuple { .. } => None,
+        // Deref-assign D2: a `&T` / `&mut T` parameter carries its write
+        // capability + referent owner as `ValueType::Ref` (anti-laundering: a
+        // `&T` can never be inferred writable). `target` is the referent's
+        // canonical type name where nominal, else empty. Byte-identity-safe: no
+        // keystone/std source declares a reference parameter type.
+        crate::ast::TypeAnn::Ref { mutable, target } => Some(ValueType::Ref {
+            mutable: *mutable,
+            target: match target.as_ref() {
+                crate::ast::TypeAnn::Named(n) => n.clone(),
+                _ => String::new(),
+            },
+        }),
         // SparseTensor: runtime resolves layout; return None so callers
         // fall through to the runtime resolver path (same pattern as Slice).
         crate::ast::TypeAnn::SparseTensor { .. } => None,
@@ -4555,17 +4603,15 @@ fn check_module_types_in_file_impl(
 ) -> Vec<Pretty> {
     let mut errs = Vec::new();
 
-    // Slice 0 (deref-assign track): refuse `*p` and `*p = value` LOUDLY at check
-    // time. There is NO executable support — the reference/place ABI is
-    // unimplemented and under architecture review — so accepting these at
-    // `mindc check` would be apparent executable support (a later build/lower
-    // would panic or refuse). This whole-module scan is a GUARANTEED refusal
-    // independent of expression-inference coverage: `*p` is parse/format-only
-    // today, and record-identity place replacement is deliberately NOT defined
-    // as a field copy. This scan ACCUMULATES the refusal diagnostic(s) into
-    // `errs` up front; it does NOT short-circuit the remaining type-checking, so
-    // a module containing a deref still collects its other diagnostics — the
-    // E2028/E2029 entry is what makes the overall check fail.
+    // Deref-assign: under NON-std-surface the reference/place ABI does not
+    // exist, so refuse every `*p` / `*p = value` LOUDLY here (E2028/E2029) — a
+    // whole-module scan independent of inference coverage. Under std-surface
+    // this blanket refusal is REMOVED: `slice_abi::deref_check` (wired per-fn
+    // below) is the sole, precise gate — it admits the field-first subset
+    // (`&mut r.f` cell + callee `*p`/`*p = v`) and refuses everything else
+    // (owner-exactness, capability, region, escape). The two must never both
+    // run, or the blanket refusal would mask the admitted shape.
+    #[cfg(not(feature = "std-surface"))]
     {
         fn scan_deref(node: &Node, src: &str, file: Option<&str>, out: &mut Vec<Pretty>) {
             match node {
@@ -5199,12 +5245,14 @@ fn check_module_types_in_file_impl(
                     &mut errs,
                 );
 
-                // Deref-assign D3: classify `*p` / `*p = v` / `&mut r.f` in this
-                // fn (owner-exact, capability survival, region + escape refusals).
-                // Runs additively for now — the blanket Slice-0 refusal above
-                // still governs admit/reject until the coupled D4 carve-out lands
-                // (see D3-DESIGN-GROUNDING.md). Wiring it here validates the pass
-                // integrates and stays byte-identical.
+                // Deref-assign D3/D4 carve-out: this pass is now the SOLE gate
+                // under std-surface (the blanket Slice-0 refusal above is
+                // compiled out). It admits the field-first subset — `&mut r.f`
+                // (depth-one struct field → D4 cell address) and a callee `*p` /
+                // `*p = v` on a `&mut <struct>` parameter with exact-owner value
+                // — and refuses everything else (immutable/scalar/depth-two
+                // field, unknown owner, region interior, and the `let q = p` /
+                // `return p` escapes). See D3-DESIGN-GROUNDING.md.
                 #[cfg(feature = "std-surface")]
                 slice_abi::deref_check_fn(fd, &struct_field_types, src, file, &mut errs);
 

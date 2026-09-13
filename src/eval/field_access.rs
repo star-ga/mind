@@ -424,3 +424,74 @@ pub(super) fn lower_field_assign(
         None => refuse_unrepresentable_field(ir, context, "struct field assignment", span),
     }
 }
+
+/// Deref-assign D4: the CELL ADDRESS of a struct field place `r.f` — `base +
+/// declared_offset` — for lowering an admitted `&mut r.f` (validated by
+/// `slice_abi::deref_check`). Returns the address `ValueId`, or `None` when the
+/// owner/layout is unresolvable so the caller REFUSES (there is deliberately NO
+/// `idx * 8` fallback — a cell must sit at the declared offset or not at all).
+///
+/// This duplicates the (base, index, offset) resolution of `lower_field_assign`
+/// on purpose: that function is on the keystone byte-identity path and must not
+/// be refactored. This helper only READS layout and emits the same
+/// `ConstI64 + BinOp::Add` address arithmetic used everywhere else, so it adds
+/// no new IR opcode and cannot perturb an existing field store.
+#[cfg(feature = "std-surface")]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn lower_field_cell_addr(
+    receiver: &ast::Node,
+    field: &str,
+    span: &ast::Span,
+    ir: &mut IRModule,
+    env: &HashMap<String, ValueId>,
+    struct_env: &HashMap<String, String>,
+    receiver_types: &HashMap<ast::Span, String>,
+    context: &mut LoweringContext,
+) -> Option<ValueId> {
+    // (base addr source, field index, struct key) — same two-step resolution as
+    // lower_field_assign: step 1 an Ident receiver via struct_env; step 2 the
+    // receiver-type side table.
+    let step1 = match receiver {
+        ast::Node::Lit(Literal::Ident(var_name), _) => struct_env.get(var_name).and_then(|sn| {
+            let key = struct_key_for(ir, sn);
+            ir.struct_defs
+                .get(key)
+                .and_then(|fields| fields.iter().position(|f| f == field))
+                .map(|idx| (Some(var_name.clone()), idx, key.to_string()))
+        }),
+        _ => None,
+    };
+    let step2 = if step1.is_none() {
+        receiver_types.get(span).and_then(|sn| {
+            let key = struct_key_for(ir, sn);
+            ir.struct_defs
+                .get(key)
+                .and_then(|fields| fields.iter().position(|f| f == field))
+                .map(|idx| (None::<String>, idx, key.to_string()))
+        })
+    } else {
+        None
+    };
+    let (var_name_opt, idx, struct_name) = step1.or(step2)?;
+    // DECLARED offset only — no idx*8 fallback. Unknown layout → None → refuse.
+    let (offset, _width, _signed) =
+        struct_layout(ir, &struct_name).and_then(|(l, _, _)| l.get(idx).copied())?;
+    let addr = match var_name_opt {
+        Some(var_name) => *env.get(&var_name)?,
+        None => lower_expr(receiver, ir, env, struct_env, receiver_types, context),
+    };
+    if offset == 0 {
+        Some(addr)
+    } else {
+        let off = ir.fresh();
+        ir.instrs.push(Instr::ConstI64(off, offset));
+        let sum = ir.fresh();
+        ir.instrs.push(Instr::BinOp {
+            dst: sum,
+            op: BinOp::Add,
+            lhs: addr,
+            rhs: off,
+        });
+        Some(sum)
+    }
+}

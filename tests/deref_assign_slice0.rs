@@ -68,17 +68,113 @@ fn deref_assign_round_trips_and_is_refused_with_E2029() {
 }
 
 #[test]
-fn record_deref_assign_is_refused_not_cloned_E2029() {
-    // Real motivation is records (identity-preserving place replacement), NOT a
-    // field copy. Slice 0 refuses with E2029 rather than defining a clone.
+fn record_deref_assign_on_struct_is_admitted() {
+    // Carve-out: the callee-side record place replacement `*p = next`, where `p`
+    // is a `&mut <struct>` parameter and `next` is a record of the EXACT owner,
+    // is the ADMITTED shape (identity-preserving, not a field copy). It must
+    // round-trip AND type-check with no deref diagnostic. (Executable identity
+    // semantics are proven by the compiled fixture below.)
     let src = "struct Cell {\n    a: i64,\n    b: i64\n}\nfn r(p: &mut Cell, next: Cell) {\n    *p = next\n}\n";
     assert!(
         fmt(src).contains("*p = next"),
         "record deref-assign must round-trip"
     );
+    let cs = codes(src);
+    assert!(
+        !cs.iter()
+            .any(|c| c == "E2028" || c == "E2029" || c == "E2037"),
+        "admitted record `*p = next` must have no deref diagnostic; got {cs:?}"
+    );
+}
+
+#[test]
+fn scalar_deref_assign_stays_refused_E2029() {
+    // A scalar `&mut i64` is NOT in the field-first struct subset: `*p = v`
+    // still refuses with E2029 (referent is not a declared struct).
+    let src = "fn f(p: &mut i64, v: i64) {\n    *p = v\n}\n";
     assert!(
         codes(src).contains(&"E2029".to_string()),
-        "record `*p = next` must be E2029"
+        "scalar `*p = v` must stay E2029; got {:?}",
+        codes(src)
+    );
+}
+
+#[test]
+fn field_ref_and_forward_call_is_admitted() {
+    // The full caller shape: `&mut h.pt` (depth-one struct field) forwarded as a
+    // direct call argument to a `&mut Pair` callee. Both the field-ref and the
+    // callee store are admitted → no deref diagnostic.
+    let src = "struct Pair {\n    x: i64,\n    y: i64\n}\nstruct H {\n    pt: Pair\n}\nfn replace(p: &mut Pair, new: Pair) {\n    *p = new\n}\nfn caller(h: H, new: Pair) {\n    replace(&mut h.pt, new)\n}\n";
+    let cs = codes(src);
+    assert!(
+        !cs.iter()
+            .any(|c| c == "E2028" || c == "E2029" || c == "E2037"),
+        "admitted `&mut h.pt` + callee `*p = new` must have no deref diagnostic; got {cs:?}"
+    );
+}
+
+#[test]
+fn immutable_field_ref_is_refused_E2037() {
+    // Capability: an IMMUTABLE `&h.pt` (struct field) may not become a writable
+    // place — no laundering. Refused E2037 even though the field is a struct.
+    let src = "struct Pair {\n    x: i64,\n    y: i64\n}\nstruct H {\n    pt: Pair\n}\nfn f(h: H) {\n    let c = &h.pt\n}\n";
+    assert!(
+        codes(src).contains(&"E2037".to_string()),
+        "immutable `&h.pt` must be E2037; got {:?}",
+        codes(src)
+    );
+}
+
+#[test]
+fn depth_two_field_ref_is_refused_E2037() {
+    // `&mut h.pt.x` (depth-two) is refused — only depth-one is admitted.
+    let src = "struct Pair {\n    x: i64,\n    y: i64\n}\nstruct H {\n    pt: Pair\n}\nfn f(h: H) {\n    let c = &mut h.pt.x\n}\n";
+    assert!(
+        codes(src).contains(&"E2037".to_string()),
+        "depth-two `&mut h.pt.x` must be E2037; got {:?}",
+        codes(src)
+    );
+}
+
+#[test]
+fn region_interior_field_ref_is_refused_E2037() {
+    // A `&mut h.pt` captured inside a region is refused (no lifetime provenance).
+    let src = "struct Pair {\n    x: i64,\n    y: i64\n}\nstruct H {\n    pt: Pair\n}\nfn f(h: H) {\n    region {\n        let c = &mut h.pt\n    }\n}\n";
+    assert!(
+        codes(src).contains(&"E2037".to_string()),
+        "region-interior `&mut h.pt` must be E2037; got {:?}",
+        codes(src)
+    );
+}
+
+#[test]
+fn let_bind_and_return_of_ref_param_are_refused_E2029() {
+    // Escape: a `&mut` parameter may only be a direct call argument — never
+    // let-bound (`let q = p`) or returned (`return p`).
+    let alias =
+        "struct Pair {\n    x: i64,\n    y: i64\n}\nfn f(p: &mut Pair) {\n    let q = p\n}\n";
+    assert!(
+        codes(alias).contains(&"E2029".to_string()),
+        "`let q = p` (alias escape) must be E2029; got {:?}",
+        codes(alias)
+    );
+    let ret = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn f(p: &mut Pair) -> &mut Pair {\n    return p\n}\n";
+    assert!(
+        codes(ret).contains(&"E2029".to_string()),
+        "`return p` (escape) must be E2029; got {:?}",
+        codes(ret)
+    );
+}
+
+#[test]
+fn cross_owner_deref_assign_is_refused_E2029() {
+    // Owner-exactness: `*p = v` where `v` is a DIFFERENT owner than `p`'s
+    // referent is refused (no cross-owner place replacement).
+    let src = "struct Pair {\n    x: i64,\n    y: i64\n}\nstruct Other {\n    z: i64\n}\nfn f(p: &mut Pair, other: Other) {\n    *p = other\n}\n";
+    assert!(
+        codes(src).contains(&"E2029".to_string()),
+        "cross-owner `*p = other` must be E2029; got {:?}",
+        codes(src)
     );
 }
 

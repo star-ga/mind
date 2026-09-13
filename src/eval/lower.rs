@@ -1251,8 +1251,30 @@ pub fn lower_to_ir_with_limits(
 fn first_deref_span(node: &ast::Node) -> Option<(usize, usize)> {
     use ast::Node as N;
     match node {
-        N::Deref { span, .. } | N::DerefAssign { span, .. } => {
-            return Some((span.start(), span.end()));
+        // Deref-assign carve-out: a BARE `*p` / `*p = v` (operand/target is a
+        // plain identifier) is the admitted field-first shape — it flows to the
+        // D4 load/store arms, and `slice_abi::deref_check` has already validated
+        // its semantics on the type-checked path. Only a NON-bare deref
+        // (`*x.y`, `*(expr)`, `**p`) remains structurally unsupported and is
+        // refused here (belt-and-suspenders for an un-type-checked caller).
+        N::Deref { operand, span } => {
+            if !matches!(operand.as_ref(), N::Lit(crate::ast::Literal::Ident(_), _)) {
+                return Some((span.start(), span.end()));
+            }
+        }
+        N::DerefAssign {
+            target,
+            value,
+            span,
+        } => {
+            if !matches!(target.as_ref(), N::Lit(crate::ast::Literal::Ident(_), _)) {
+                return Some((span.start(), span.end()));
+            }
+            // Admitted bare target: still scan the assigned value for a nested
+            // unsupported deref.
+            if let Some(hit) = first_deref_span(value) {
+                return Some(hit);
+            }
         }
         N::FnDef(fd, _) => {
             for s in &fd.body {
@@ -8306,9 +8328,52 @@ pub(super) fn lower_expr_inner(
             }
             last_id
         }
-        // Phase 10.7: `&expr` / `&mut expr` — no-op metadata wrapper in
-        // v1. The inner expression lowers directly; the ref tag is only
-        // meaningful to the type-checker.
+        // Deref-assign D4: an admitted `&mut r.f` (a mutable, depth-one,
+        // struct-typed field place — validated by `slice_abi::deref_check`)
+        // lowers to the field's CELL ADDRESS (`base + declared_offset`), NOT the
+        // loaded value. The callee's `*p` / `*p = v` then load/store through this
+        // address, giving identity-preserving place replacement. If the layout
+        // cannot be resolved the lowering REFUSES (no `idx*8` fallback).
+        //
+        // Every OTHER `&expr` (`&NAME` whole-variable address-of, `&(expr)`) is
+        // the Phase-10.7 no-op metadata wrapper: the inner expression lowers
+        // directly and the ref tag is only meaningful to the type-checker.
+        #[cfg(feature = "std-surface")]
+        ast::Node::Ref {
+            inner,
+            mutable: true,
+            ..
+        } if matches!(inner.as_ref(), ast::Node::FieldAccess { .. }) => {
+            let ast::Node::FieldAccess {
+                receiver,
+                field,
+                span: fspan,
+            } = inner.as_ref()
+            else {
+                unreachable!("guarded by the matches! above")
+            };
+            match field_access::lower_field_cell_addr(
+                receiver,
+                field,
+                fspan,
+                ir,
+                env,
+                struct_env,
+                receiver_types,
+                context,
+            ) {
+                Some(cell) => cell,
+                None => {
+                    context.refusal = Some(MaterializationRefusal::UnsupportedLoweringOperation {
+                        operation: "`&mut r.f`: the field owner/layout could not be resolved to a \
+                                    declared cell offset (deref-assign field-first subset)",
+                        start: fspan.start(),
+                        end: fspan.end(),
+                    });
+                    ir.fresh()
+                }
+            }
+        }
         ast::Node::Ref { inner, .. } => {
             lower_expr(inner, ir, env, struct_env, receiver_types, context)
         }
