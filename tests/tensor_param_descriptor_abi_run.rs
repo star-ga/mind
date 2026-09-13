@@ -41,11 +41,8 @@ pub fn rsum1(t: tensor<f64[3]>) -> f64 {
 pub fn rsum2(t: tensor<f64[2,3]>) -> f64 {
     return t.sum()
 }
-pub fn rpick2(t: tensor<f64[2,3]>) -> f64 {
-    return tensor.slice(
-        tensor.slice(t, axis=0, start=1, end=2),
-        axis=1, start=2, end=3
-    ).sum()
+pub fn rpick2(t: tensor<f64[2,3]>, w: tensor<f64[3,1]>) -> f64 {
+    return tensor.matmul(t, w).sum()
 }
 pub fn sc(x: f64) -> f64 {
     return x + x
@@ -163,11 +160,14 @@ fn rank2_unequal_sizes_offset_and_unequal_strides_are_honored() {
     );
 }
 
-/// Rank-2 index-sensitive control: nested slices select logical element [1,2],
-/// which is physical index 10 under (offset=1, strides=5,2). A coherent
-/// axis-pair permutation (sizes=3,2; strides=2,5) selects physical index 13
-/// instead. A one-hot in-bounds buffer makes the distinction observable despite
-/// reductions being permutation-invariant.
+/// Rank-2 index-sensitive control: a runtime weight tensor makes the one-hot
+/// logical [1,2] contribution observable at physical index 10 under
+/// (offset=1, strides=5,2). A stride-field permutation with the declared sizes
+/// held at (2,3) (strides=2,5) reads physical indices [1,3,6,8,11,13]
+/// instead. A mostly-one buffer with an extra unit at physical index 10 makes
+/// the correct and permuted weighted sums 18 and 14 respectively, avoiding a
+/// zero-result/vacuous control. Both tensor descriptors are passed through the
+/// public static-shape C ABI; runtime size-field validation is not asserted.
 #[test]
 fn rank2_index_sensitive_field_map_is_honored() {
     let dir = crate::common::scratch_dir("tensor-param-descriptor-rank2-index");
@@ -181,14 +181,19 @@ fn rank2_index_sensitive_field_map_is_honored() {
          f = lib.rpick2\n\
          f.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_longlong,\n\
          \x20             ctypes.c_longlong, ctypes.c_longlong,\n\
+         \x20             ctypes.c_longlong, ctypes.c_longlong,\n\
+         \x20             ctypes.c_void_p, ctypes.c_void_p, ctypes.c_longlong,\n\
+         \x20             ctypes.c_longlong, ctypes.c_longlong,\n\
          \x20             ctypes.c_longlong, ctypes.c_longlong]\n\
          f.restype = ctypes.c_double\n\
-         buf = (ctypes.c_double * 16)(*[1.0 if k == 10 else 0.0 for k in range(16)])\n\
+         buf = (ctypes.c_double * 16)(*[1.0 + (1.0 if k == 10 else 0.0) for k in range(16)])\n\
          p = ctypes.cast(buf, ctypes.c_void_p)\n\
-         good = f(p, p, 1, 2, 3, 5, 2)\n\
-         permuted = f(p, p, 1, 3, 2, 2, 5)\n\
-         assert good == 1.0, 'rpick2(correct)=' + repr(good)\n\
-         assert permuted == 0.0, 'rpick2(axis-permuted)=' + repr(permuted)\n\
+         weights = (ctypes.c_double * 3)(1.0, 2.0, 4.0)\n\
+         wp = ctypes.cast(weights, ctypes.c_void_p)\n\
+         good = f(p, p, 1, 2, 3, 5, 2, wp, wp, 0, 3, 1, 1, 1)\n\
+         permuted = f(p, p, 1, 2, 3, 2, 5, wp, wp, 0, 3, 1, 1, 1)\n\
+         assert good == 18.0, 'rpick2(correct)=' + repr(good)\n\
+         assert permuted == 14.0, 'rpick2(stride-permuted)=' + repr(permuted)\n\
          print('ok')\n",
         so.to_string_lossy()
     );
