@@ -6,10 +6,12 @@
 > **No fake wins:** every claim in this file is gated on a runnable, byte-verifiable
 > artifact — not a byte-comparison that was never executed.
 >
-> **Measured state (2026-07-21 gap-map):** B-frontend ~30% (type-checker 10 of 22 diagnostic
+> **Historical estimates (2026-07-21 gap-map; not current measured completion):** B-frontend ~30% (type-checker 10 of 22 diagnostic
 > rule families ported as pure-MIND decision cores; parser ~40% by construct), C-backend ~35%
 > for the static x86-64 product (~15–20% for the full axis). True long poles, in order: C6
-> optimizing backend (measured ~9.6× vs MLIR+clang `-O3` — deleting LLVM waits behind it, multi-year),
+> optimizing backend (historical ~9.6× estimate vs MLIR+clang `-O3`; **unverified**: the
+> driver, fixture, hardware, compiler/source hash, and timing recipe were not located in the reviewed sources — deleting
+> LLVM waits behind it, multi-year),
 > B2 `infer_expr` + heavy constructs (quarters), the aarch64 second encoder family (months, cheaply
 > de-risked now), C7 GPU. Three distinct finish lines, not to be conflated: (a) 100% Rust-independent
 > static x86-64 mindc (~2–3 quarters of serial reseed-gated rungs); (b) + cross-substrate (aarch64,
