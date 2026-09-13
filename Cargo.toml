@@ -101,6 +101,14 @@ bench = false
 name = "stmt_keyword_recognizer"
 required-features = ["std-surface"]
 
+# The declared-width evaluator fixture uses the std-surface-gated `while`
+# statement. Keep it out of `--no-default-features` jobs, where the parser
+# intentionally does not recognize that statement; the std-surface CI run
+# executes the full eight-test target.
+[[test]]
+name = "evaluator_declared_width"
+required-features = ["std-surface"]
+
 # The G2 differential gate drives the pure-MIND compiler through its cdylib and
 # compares it against the Rust oracle, both of which exist only under
 # `mlir-build`. Without the feature the harness still COMPILES and RUNS, finds no

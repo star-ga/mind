@@ -27,8 +27,9 @@
 //! `assert_eq!` on the number, never a `-> i64` MIND test body (which always
 //! passes: only an `assert` inside a MIND test can fail it).
 //!
-//! Gate: `cargo test --test evaluator_declared_width` — no cfg gate, so this
-//! file can never compile out to a vacuous zero-test pass.
+//! Gate: `cargo test --no-default-features --features std-surface --test
+//! evaluator_declared_width`. Cargo's required-features declaration keeps this
+//! target out of no-feature jobs, while this command executes all eight tests.
 
 use std::collections::HashMap;
 
