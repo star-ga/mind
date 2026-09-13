@@ -2,29 +2,13 @@
 // Licensed under the Apache License, Version 2.0.
 // Part of the MIND project (Machine Intelligence Native Design).
 
-//! Track #15 — a `tensor`-typed function parameter/return is NOT in the runnable
-//! i64-scalar ABI subset. A fleet audit feared `mindc x.mind --emit-ir` emitting
-//! `const.i64 0` for `pub fn r(x: tensor<f32[2]>) -> tensor<f32[2]> { tensor.relu(x) }`
-//! was a SILENT MISCOMPILE. Investigation showed `--emit-ir` prints only the
-//! module-TOP IR — a function-only module emits the FnDef declaration's unit
-//! placeholder (`const.i64 0`), IDENTICAL for a scalar `fn r(x: i64) -> i64`, so
-//! that output is benign inspection, not a tensor-specific miscompile.
+//! Tensor-boundary refusal controls for executable shared artifacts.
 //!
-//! The RUNNABLE paths already fail LOUD (the #306 fail-closed philosophy).
-//! A tensor param/return is refused by the ABI gate (`lower::non_i64_param` /
-//! `lower::non_i64_return`, file:line span); a tensor used INTERNALLY in an
-//! i64-signature fn is refused at MLIR lowering (`error[mlir]: missing type
-//! information ... while lowering relu`).
-//! In both cases `--emit-shared` exits non-zero and writes NO `.so` — never a
-//! wrong artifact. This test PINS that contract so a future ABI change cannot
-//! silently regress it into a const-0 (or any other) miscompiled artifact.
-//!
-//! deferred: real tensor-param ABI (carry `TypeAnn::Tensor{dtype,dims}` through
-//! FnDef params + `func.call` results into `tensor<...>` / memref descriptors,
-//! lowered via `one-shot-bufferize{bufferize-function-boundaries=true}` so the
-//! body emits a real relu and the artifact is ctypes-callable). Until then the
-//! fail-loud refusal IS the correct contract — upgrade path: implement the
-//! tensor function-boundary ABI, then flip these asserts to a compiled+run smoke.
+//! Static-shape tensor parameters have an admitted memref descriptor path.
+//! These tests cover that positive path and the tensor returns, nested tensor
+//! composites, and unsupported internal operation that must still be refused.
+//! An unsupported boundary must exit non-zero and write no shared artifact.
+//! Module-top `--emit-ir` unit placeholders are not executable tensor evidence.
 //!
 //! Gate: `cargo test --features "std-surface mlir-build cross-module-imports"
 //!                   --test tensor_param_fail_loud_run`

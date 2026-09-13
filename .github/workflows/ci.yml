@@ -509,14 +509,15 @@ jobs:
         # Both descriptor execution and fail-loud tensor-boundary controls are
         # mandatory on each runner in this matrix.  The job-level
         # MIND_BENCH_REQUIRE=1 turns a missing backend into a failure, so these
-        # selectors cannot pass as capability skips or empty harnesses.
+        # selectors cannot pass as capability skips or empty harnesses. Reuse
+        # the debug profile built above; CARGO_BIN_EXE_mindc binds that artifact.
         shell: bash
         run: |
           set -euo pipefail
-          timeout 600 cargo test --release --no-default-features \
+          timeout 600 cargo test --no-default-features \
             --features "mlir-build std-surface cross-module-imports" \
             --test tensor_param_descriptor_abi_run -- --nocapture
-          timeout 600 cargo test --release --no-default-features \
+          timeout 600 cargo test --no-default-features \
             --features "mlir-build std-surface cross-module-imports" \
             --test tensor_param_fail_loud_run -- --nocapture
 

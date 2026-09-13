@@ -276,8 +276,9 @@ admits strided/offset views — it does NOT require, and must not be documented 
 row-major contiguous storage. Contiguity is one admissible caller choice, not a
 guarantee of the ABI.
 
-Caller obligations and the limits of the evidence. The only validated operation
-is a READ-ONLY reduction (`t.sum()`), over the elements named by the descriptor.
+Caller obligations and the limits of the evidence. Validated operations are
+read-only reductions (`t.sum()`) and a runtime-weighted matrix multiplication
+followed by a reduction (`tensor.matmul(t, w).sum()`).
 The callee reads through `aligned_base`; it does not write, does not retain the
 pointer past the call, and does not free caller memory. The caller owns the
 allocation and its lifetime for the duration of the call. A null `alloc_base` was
@@ -296,8 +297,11 @@ strides, and safe in-bounds element values. The rank-1 and rank-2 reductions
 prove that the emitted code performs the admitted offset/strided reads, but a
 sum is commutative: a coherent axis-pair permutation can select the same set
 of elements, and a runtime size-field permutation is not claimed to be checked
-when the static declared shape is the caller's contract. An index-sensitive
-rank-2 control uses a one-hot buffer to distinguish the tested axis-pair map.
+when the static declared shape is the caller's contract. A weighted rank-2
+control holds declared sizes fixed and swaps the two stride fields: a buffer
+of ones with one extra unit and runtime weights yields 18 for the admitted
+layout and 14 for the swapped layout. This checks the selected stride mapping;
+it does not establish detection of every descriptor-field permutation.
 A scalar positive control proves the harness is not vacuously green. These
 controls do not establish malformed-descriptor, out-of-bounds, negative-stride,
 or unused-size-field rejection behavior. Rank-1 and rank-2 are kept as distinct

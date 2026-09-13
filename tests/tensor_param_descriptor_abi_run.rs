@@ -12,7 +12,7 @@
 //! offset/size/stride values where the rank permits. The rank-2 reduction is
 //! retained as a positive strided-read control; reductions are commutative, so
 //! it is NOT a universal field-permutation oracle. An index-sensitive rank-2
-//! element read supplies the non-commutative control for the field map.
+//! weighted matrix operation distinguishes the tested stride-field mapping.
 //! Rank-1 and rank-2 are kept as distinct observations. A scalar positive
 //! control proves the ctypes harness + build path are not vacuously green.
 //!
