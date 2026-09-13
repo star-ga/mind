@@ -9201,6 +9201,38 @@ pub(super) fn lower_expr_inner(
             receiver_types,
             context,
         ),
+        // Deref-assign D4: `*p` reads the record address the reference cell
+        // currently holds. `p` (a `&mut Named` parameter) carries the cell
+        // address; the load yields the referenced record. Reached ONLY for the
+        // admitted field-first shape — the `lower_to_ir_inner` early refusal
+        // rejects any deref until the coupled carve-out narrows it to the
+        // admitted shape (which `slice_abi::deref_check` has already validated).
+        ast::Node::Deref { operand, .. } => {
+            let p = lower_expr(operand, ir, env, struct_env, receiver_types, context);
+            let dst = ir.fresh();
+            ir.instrs.push(Instr::legacy_call(
+                dst,
+                "__mind_load_i64".to_string(),
+                vec![p],
+            ));
+            dst
+        }
+        // Deref-assign D4: `*p = v` makes the referenced PLACE denote `v`'s
+        // record by storing `v`'s record address into the cell — identity-
+        // preserving place replacement (mind-spec v1.0/types.md:65-99), NOT a
+        // field-wise clone. Other aliases keep the old record; later mutations
+        // of `v`'s record are visible through the place.
+        ast::Node::DerefAssign { target, value, .. } => {
+            let p = lower_expr(target, ir, env, struct_env, receiver_types, context);
+            let v = lower_expr(value, ir, env, struct_env, receiver_types, context);
+            let dst = ir.fresh();
+            ir.instrs.push(Instr::legacy_call(
+                dst,
+                "__mind_store_i64".to_string(),
+                vec![p, v],
+            ));
+            dst
+        }
         // RFC 0005 Phase 6.2b Gap 2 — anonymous array literal `[v0, v1, …]`
         // in expression position.  Elements are extracted iteratively
         // (not by recursing once per element) so a 4,096-entry literal
