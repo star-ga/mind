@@ -21,6 +21,8 @@ use super::{
 };
 
 mod borrow_flow;
+#[cfg(feature = "std-surface")]
+mod deref_check;
 mod owner_assignment;
 mod provenance;
 pub(super) use borrow_flow::type_contains_collection_owner;
@@ -30,6 +32,8 @@ use borrow_flow::{
     value_contains_borrow,
 };
 pub(super) use borrow_flow::{check_fn, check_struct_fields};
+#[cfg(feature = "std-surface")]
+pub(super) use deref_check::check_fn as deref_check_fn;
 pub(super) use owner_assignment::{StructFieldTypes, struct_field_types};
 use provenance::{compatible_source, expr_kind, expr_type, same_type};
 

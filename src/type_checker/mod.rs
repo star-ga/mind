@@ -5199,6 +5199,15 @@ fn check_module_types_in_file_impl(
                     &mut errs,
                 );
 
+                // Deref-assign D3: classify `*p` / `*p = v` / `&mut r.f` in this
+                // fn (owner-exact, capability survival, region + escape refusals).
+                // Runs additively for now — the blanket Slice-0 refusal above
+                // still governs admit/reject until the coupled D4 carve-out lands
+                // (see D3-DESIGN-GROUNDING.md). Wiring it here validates the pass
+                // integrates and stays byte-identical.
+                #[cfg(feature = "std-surface")]
+                slice_abi::deref_check_fn(fd, &struct_field_types, src, file, &mut errs);
+
                 // Build a local env that extends the module env with the
                 // function's parameters, mapping each param name to its
                 // ValueType (defaulting to ScalarI64 for unsupported anns).
