@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1817 | **Est. tokens:** ~3481996
-**Generated:** 2026-09-13 06:56 UTC
+**Files:** 1817 | **Est. tokens:** ~3482012
+**Generated:** 2026-09-13 07:02 UTC
 
 ## Token Budget Guide
 
@@ -46,7 +46,7 @@
 | `benchmarks/mojo/` | 8 | ~4276 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4880 |
 | `config/` | 2 | ~3347 |
-| `docs/` | 37 | ~104794 |
+| `docs/` | 37 | ~104810 |
 | `docs/backends/` | 1 | ~1482 |
 | `docs/benchmarks/` | 3 | ~9042 |
 | `docs/design/` | 4 | ~11498 |
@@ -432,7 +432,7 @@
 
 - `ARRAY_SEMANTICS.md` (~8111 tok, huge) — MIND array semantics — normative architecture record
 - `ENGINE_CONSUMER_LIST.md` (~9442 tok, huge) — Engine consumer list — the evidence pack for every hand-written semantics engine
-- `INDEPENDENCE_ROADMAP.md` (~18812 tok, huge) — MIND Rust-Independence Roadmap
+- `INDEPENDENCE_ROADMAP.md` (~18828 tok, huge) — MIND Rust-Independence Roadmap
 - `MHS_ROADMAP.md` (~2657 tok, huge) — MHS / Governed Device I/O Roadmap — SUPERSEDED
 - `README.md` (~162 tok, small) — MIND Documentation
 - `RI_DEPENDENCY_MATRIX.md` (~6279 tok, huge) — Rust-Independence (RI) Dependency Matrix
