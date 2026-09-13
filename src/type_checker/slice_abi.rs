@@ -34,6 +34,8 @@ use borrow_flow::{
 pub(super) use borrow_flow::{check_fn, check_struct_fields};
 #[cfg(feature = "std-surface")]
 pub(super) use deref_check::check_fn as deref_check_fn;
+#[cfg(feature = "std-surface")]
+pub(super) use deref_check::fn_param_sigs;
 pub(super) use owner_assignment::{StructFieldTypes, struct_field_types};
 use provenance::{compatible_source, expr_kind, expr_type, same_type};
 

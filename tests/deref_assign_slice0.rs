@@ -339,3 +339,67 @@ fn whole_var_address_of_is_not_refused_E2037() {
         codes(src)
     );
 }
+
+// ── Root U1 D4 rejection regressions: four forbidden forms that had compiled
+//    to native artifacts. Each must now REFUSE at type-check (no lowering, no
+//    artifact). All share a `replace(p: &mut Pair, new: Pair)` callee so the
+//    call-site owner/capability checks have a signature to compare against.
+const PAIR_H_REPLACE: &str = "struct Pair {\n    x: i64,\n    y: i64\n}\nstruct Other {\n    z: i64\n}\nstruct H {\n    pt: Pair,\n    other: Other\n}\nfn replace(p: &mut Pair, new: Pair) {\n    *p = new\n}\n";
+
+#[test]
+fn ref_through_immutable_receiver_is_refused() {
+    // (1) `&mut h.pt` through `h: &H` (immutable ref receiver) launders a write
+    //     capability — refused.
+    let src = format!(
+        "{PAIR_H_REPLACE}fn caller(h: &H, new: Pair) {{\n    replace(&mut h.pt, new)\n}}\n"
+    );
+    assert!(
+        codes(&src).contains(&"E2037".to_string()),
+        "`&mut h.pt` through `&H` must be E2037; got {:?}",
+        codes(&src)
+    );
+}
+
+#[test]
+fn ref_to_wrong_owner_callee_param_is_refused() {
+    // (2) `&mut h.other` (owner Other) passed where the callee expects
+    //     `&mut Pair` — call-site owner mismatch, refused.
+    let src = format!(
+        "{PAIR_H_REPLACE}fn caller(h: H, new: Pair) {{\n    replace(&mut h.other, new)\n}}\n"
+    );
+    // (H has no `other` field; even if it did with type Other, the owner would
+    //  mismatch the &mut Pair parameter.) Must refuse, no admit.
+    assert!(
+        codes(&src).contains(&"E2037".to_string()),
+        "cross-owner `&mut h.other` to `&mut Pair` must be E2037; got {:?}",
+        codes(&src)
+    );
+}
+
+#[test]
+fn let_bound_field_ref_is_refused() {
+    // (3) `let q = &mut h.pt; replace(q, new)` — the field ref is let-bound
+    //     (not a direct call argument). Refused at the let.
+    let src = format!(
+        "{PAIR_H_REPLACE}fn caller(h: H, new: Pair) {{\n    let q = &mut h.pt\n    replace(q, new)\n}}\n"
+    );
+    assert!(
+        codes(&src).contains(&"E2037".to_string()),
+        "let-bound `&mut h.pt` must be E2037; got {:?}",
+        codes(&src)
+    );
+}
+
+#[test]
+fn cast_laundered_field_ref_is_refused() {
+    // (4) `let q = (&mut h.pt) as i64; replace(q, new)` — the field ref is cast
+    //     to i64 (capability/owner provenance laundered). Refused at the cast.
+    let src = format!(
+        "{PAIR_H_REPLACE}fn caller(h: H, new: Pair) {{\n    let q = (&mut h.pt) as i64\n    replace(q, new)\n}}\n"
+    );
+    assert!(
+        codes(&src).contains(&"E2037".to_string()),
+        "cast-laundered `(&mut h.pt) as i64` must be E2037; got {:?}",
+        codes(&src)
+    );
+}

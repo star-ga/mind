@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1821 | **Est. tokens:** ~3,495,668
-**Generated:** 2026-09-13 12:43 UTC
+**Files:** 1821 | **Est. tokens:** ~3,495,886
+**Generated:** 2026-09-13 13:08 UTC
 
 ## Token Budget Guide
 
@@ -130,12 +130,12 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 4 | ~14,244 |
-| `src/type_checker/` | 18 | ~61,657 |
-| `src/type_checker/slice_abi/` | 4 | ~16,705 |
+| `src/type_checker/` | 18 | ~61,675 |
+| `src/type_checker/slice_abi/` | 4 | ~16,252 |
 | `src/types/` | 10 | ~20,911 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 402 | ~824,900 |
+| `tests/` | 402 | ~825,553 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -1420,12 +1420,12 @@
 ### `src/type_checker/slice_abi/`
 
 - `borrow_flow.rs` (~7081 tok, huge) — Copyright 2025 STARGA Inc.
-- `deref_check.rs` (~5460 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `deref_check.rs` (~5007 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `owner_assignment.rs` (~1145 tok, large) — Copyright 2026 STARGA Inc.
 - `provenance.rs` (~3019 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/type_checker/`
 
-- `slice_abi.rs` (~7619 tok, huge) — Copyright 2025 STARGA Inc.
+- `slice_abi.rs` (~7637 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib_signatures.rs` (~620 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `struct_bindings.rs` (~1070 tok, large) — Copyright 2026 STARGA Inc.
 - `type_display.rs` (~698 tok, large) — Copyright 2026 STARGA Inc.
@@ -1704,7 +1704,7 @@
 - `crypto_vectors_driver.py` (~2653 tok, huge) — # Official-vector driver for std/aes_gcm.mind + std/hkdf.mind (pure-MIND crypto).
 - `deref_assign_cross_module_owner.rs` (~1813 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `deref_assign_identity_run.rs` (~974 tok, large) — Copyright 2025-2026 STARGA Inc.
-- `deref_assign_slice0.rs` (~3423 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `deref_assign_slice0.rs` (~4076 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `determinism_veto_control.rs` (~1490 tok, large) — Copyright 2025 STARGA Inc.
 - `diagnostic_code_contract.rs` (~558 tok, large) — Copyright 2026 STARGA Inc.
 - `diagnostics_parse.rs` (~1112 tok, large) — Copyright 2025 STARGA Inc.

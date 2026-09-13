@@ -4725,6 +4725,11 @@ fn check_module_types_in_file_impl(
     let mut has_enum = false;
     #[cfg(feature = "std-surface")]
     let struct_field_types = slice_abi::struct_field_types(&module.items, inherited_struct_fields);
+    // Deref-assign D4: fn name -> param types, so `deref_check` can validate that
+    // a `&mut r.f` call argument targets a `&mut <owner>` callee parameter
+    // (call-site owner exactness). Built from this module's items.
+    #[cfg(feature = "std-surface")]
+    let deref_fn_sigs = slice_abi::fn_param_sigs(&module.items);
     #[cfg(feature = "std-surface")]
     let struct_fields_have_owner = struct_field_types
         .values()
@@ -5254,7 +5259,14 @@ fn check_module_types_in_file_impl(
                 // field, unknown owner, region interior, and the `let q = p` /
                 // `return p` escapes). See D3-DESIGN-GROUNDING.md.
                 #[cfg(feature = "std-surface")]
-                slice_abi::deref_check_fn(fd, &struct_field_types, src, file, &mut errs);
+                slice_abi::deref_check_fn(
+                    fd,
+                    &struct_field_types,
+                    &deref_fn_sigs,
+                    src,
+                    file,
+                    &mut errs,
+                );
 
                 // Build a local env that extends the module env with the
                 // function's parameters, mapping each param name to its
