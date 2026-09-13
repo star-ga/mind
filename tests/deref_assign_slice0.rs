@@ -2,12 +2,20 @@
 // Licensed under the Apache License, Version 2.0.
 // Part of the MIND project (Machine Intelligence Native Design).
 
-//! Slice 0 (deref-assign track): `*p` and `*p = v` PARSE, FORMAT (round-trip),
-//! and are carried in the AST — but are REFUSED with the EXACT diagnostics
-//! `E2028` (dereference) / `E2029` (deref-assign), with NO executable support:
-//! the reference/place ABI is unimplemented and under architecture review.
-//! Record-identity place replacement (mind-spec v1.0/types.md:65-99) is NOT a
-//! field copy; this slice defines no executable meaning.
+//! Deref-assign field-first subset (D3/D4 carve-out). `*p` / `*p = v` / `&mut r.f`
+//! PARSE, FORMAT (round-trip), and are carried in the AST. Under std-surface the
+//! ADMITTED subset now has executable meaning: `&mut r.f` (a depth-one,
+//! struct-typed field of a resolvable-owner receiver) lowers to the field's cell
+//! address, and a callee `*p` / `*p = v` on a `&mut <struct>` parameter with an
+//! exact-owner value loads/stores through it — identity-preserving place
+//! replacement (mind-spec v1.0/types.md:65-99), NOT a field copy.
+//!
+//! Everything OUTSIDE that subset is refused with the exact codes: `E2028`
+//! (unsupported deref), `E2029` (unsupported deref-assign — scalar referent,
+//! cross-owner value, `let q = p` / `return p` escape), `E2037` (unsupported
+//! field/element address-of — immutable, scalar, depth-two, region-interior,
+//! unknown owner). Scalar `&mut i64` deref stays refused; it is not in the
+//! struct field-first subset.
 //!
 //! Generic types only — no private consumer (MindLLM/PageTable) source here.
 

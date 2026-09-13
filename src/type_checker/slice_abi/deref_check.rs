@@ -457,15 +457,6 @@ fn classify(
     }
 }
 
-/// Is `operand` a bare reference to a `&mut Named` parameter (`*p` where `p` is
-/// that param)? A `*x.y` or `*(expr)` is not this shape.
-fn deref_operand_is_mut_ref_param(
-    operand: &Node,
-    mrefs: &std::collections::BTreeMap<String, String>,
-) -> bool {
-    matches!(operand, Node::Lit(crate::ast::Literal::Ident(name), _) if mrefs.contains_key(name))
-}
-
 /// The canonical referent-owner name a `*p`/`*p = v` target points to, when the
 /// target is a bare `&mut <struct>` parameter; `None` otherwise.
 fn deref_param_referent_owner(
