@@ -132,7 +132,12 @@ fn deref_assign_emits_no_artifact_while_valid_control_does() {
         return;
     }
     let dir = tempfile::TempDir::new().expect("unique temp dir");
-    let emit = |name: &str, body: &str| -> (bool, bool, String) {
+    // Preserve the FULL Output so a positive compile is classified by
+    // `gate::compiled` (recognized capability-unavailable → skip, but under
+    // MIND_BENCH_REQUIRE=1 a skip HARD-FAILS; a real compiler/CLI/linker error
+    // fails loudly) rather than mislabeling any failure as "toolchain
+    // unavailable".
+    let run = |name: &str, body: &str| -> (std::process::Output, bool, String) {
         let src = dir.path().join(format!("{name}.mind"));
         let so = dir.path().join(format!("{name}.so"));
         std::fs::write(&src, body).expect("write src");
@@ -145,33 +150,34 @@ fn deref_assign_emits_no_artifact_while_valid_control_does() {
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        (out.status.success(), so.exists(), text)
+        (out, so.exists(), text)
     };
 
-    // (a) Valid control through the SAME entrypoint. If native emission is
-    //     unavailable here, treat as NOT EXECUTED rather than proof.
-    let (ok, so, ctrl_text) = emit(
+    // (a) Valid control through the SAME entrypoint. `gate::compiled` classifies
+    //     the Output: a genuine unavailable backend skips (NOT proof), but with
+    //     MIND_BENCH_REQUIRE=1 that skip is a hard failure and a real
+    //     compiler/linker error always fails — so a broken backend can never
+    //     make the negative case below look green.
+    let (v_out, v_so, v_text) = run(
         "valid_control",
         "fn f(a: i64, v: i64) -> i64 {\n    return a + v;\n}\n",
     );
-    if !ok {
-        crate::common::gate::skipped(
-            "deref_assign_slice0",
-            "native --emit-shared backend unavailable for the valid control; not executed",
-        );
+    if !crate::common::gate::compiled("deref_assign_slice0", &v_out) {
+        // Classified as an unavailable backend AND not enforced — not executed.
         return;
     }
     assert!(
-        so,
-        "valid control must emit a `.so` through --emit-shared:\n{ctrl_text}"
+        v_so,
+        "valid control compiled but emitted no `.so` through --emit-shared:\n{v_text}"
     );
 
     // (b) Deref-assign through the SAME entrypoint: must FAIL with the intended
     //     E2029 refusal and write NO artifact.
-    let (d_ok, d_so, d_text) = emit(
+    let (d_out, d_so, d_text) = run(
         "deref_assign",
         "fn f(p: &mut i64, v: i64) {\n    *p = v;\n}\n",
     );
+    let d_ok = d_out.status.success();
     assert!(
         !d_ok,
         "deref-assign must NOT emit an artifact; got success:\n{d_text}"
