@@ -1136,6 +1136,13 @@ pub fn lower_to_ir(module: &ast::Module) -> Result<IRModule, MaterializationRefu
 pub struct LoweringContext {
     pub(super) budget: MaterializationBudget,
     pub(super) refusal: Option<MaterializationRefusal>,
+    /// Deref-assign: whether `*p` / `*p = v` have passed the D3/D4 semantic
+    /// admission (owner/capability/region/call-context) at type-check time. The
+    /// direct lowering API (`lower_to_ir` / `lower_to_ir_with_limits`) leaves
+    /// this `false` and REFUSES every deref (fail closed — an un-type-checked
+    /// caller must not lower a place operation). Only the type-checked pipeline
+    /// (`lower_to_ir_admitted`, invoked AFTER `check_module_types`) sets it true.
+    pub(super) deref_admitted: bool,
     #[cfg(feature = "cross-module-imports")]
     pub(super) canonical: Option<canonical_lowering::CanonicalLoweringState>,
 }
@@ -1145,6 +1152,7 @@ impl LoweringContext {
         Self {
             budget: MaterializationBudget::new(limits),
             refusal: None,
+            deref_admitted: false,
             #[cfg(feature = "cross-module-imports")]
             canonical: None,
         }
@@ -1242,23 +1250,41 @@ pub fn lower_to_ir_with_limits(
     context.refusal.map_or(Ok(ir), Err)
 }
 
+/// Type-checked-pipeline lowering entry: identical to `lower_to_ir_with_limits`
+/// except it marks derefs as SEMANTICALLY ADMITTED. Call this ONLY after
+/// `check_module_types` has passed (so `slice_abi::deref_check` has enforced the
+/// owner/capability/region/call-context contract) — it is what allows the
+/// admitted field-first `*p` / `*p = v` shapes to lower. The plain
+/// `lower_to_ir_with_limits` / `lower_to_ir` stay fail-closed for the direct
+/// (un-type-checked) API: they refuse every deref.
+pub fn lower_to_ir_admitted(
+    module: &ast::Module,
+    limits: MaterializationLimits,
+) -> Result<IRModule, MaterializationRefusal> {
+    let mut context = LoweringContext::new(limits);
+    context.deref_admitted = true;
+    let ir = lower_to_ir_inner(module, &mut context);
+    context.refusal.map_or(Ok(ir), Err)
+}
+
 /// Slice 0 (deref-assign track): find the first `*expr` / `*p = v` anywhere in
 /// a node (recursing fn/closure bodies, which `node_children_ref` treats as
 /// leaves). Used to give `lower_to_ir_with_limits` — a public Result API — a
 /// STRUCTURED refusal for these unsupported nodes instead of the generic
 /// `lower_expr_inner` panic catch-all. The typed CLI already rejects a deref at
 /// type-check (E2028/E2029) before lowering; this closes the direct-call path.
-fn first_deref_span(node: &ast::Node) -> Option<(usize, usize)> {
+fn first_deref_span(node: &ast::Node, admitted: bool) -> Option<(usize, usize)> {
     use ast::Node as N;
     match node {
-        // Deref-assign carve-out: a BARE `*p` / `*p = v` (operand/target is a
-        // plain identifier) is the admitted field-first shape — it flows to the
-        // D4 load/store arms, and `slice_abi::deref_check` has already validated
-        // its semantics on the type-checked path. Only a NON-bare deref
-        // (`*x.y`, `*(expr)`, `**p`) remains structurally unsupported and is
-        // refused here (belt-and-suspenders for an un-type-checked caller).
+        // Deref-assign: when `admitted` is false (the direct lowering API, which
+        // has NOT run D3 semantic admission) EVERY `*p` / `*p = v` is refused —
+        // fail closed. When `admitted` is true (the type-checked pipeline), a
+        // BARE `*p` / `*p = v` (operand/target a plain identifier) flows to the
+        // D4 load/store arms (deref_check already validated owner/capability/
+        // region/call-context); only a NON-bare deref (`*x.y`, `*(expr)`, `**p`)
+        // stays structurally unsupported.
         N::Deref { operand, span } => {
-            if !matches!(operand.as_ref(), N::Lit(crate::ast::Literal::Ident(_), _)) {
+            if !admitted || !matches!(operand.as_ref(), N::Lit(crate::ast::Literal::Ident(_), _)) {
                 return Some((span.start(), span.end()));
             }
         }
@@ -1267,32 +1293,32 @@ fn first_deref_span(node: &ast::Node) -> Option<(usize, usize)> {
             value,
             span,
         } => {
-            if !matches!(target.as_ref(), N::Lit(crate::ast::Literal::Ident(_), _)) {
+            if !admitted || !matches!(target.as_ref(), N::Lit(crate::ast::Literal::Ident(_), _)) {
                 return Some((span.start(), span.end()));
             }
             // Admitted bare target: still scan the assigned value for a nested
             // unsupported deref.
-            if let Some(hit) = first_deref_span(value) {
+            if let Some(hit) = first_deref_span(value, admitted) {
                 return Some(hit);
             }
         }
         N::FnDef(fd, _) => {
             for s in &fd.body {
-                if let Some(hit) = first_deref_span(s) {
+                if let Some(hit) = first_deref_span(s, admitted) {
                     return Some(hit);
                 }
             }
         }
         N::Closure(cd, _) => {
             for s in &cd.body {
-                if let Some(hit) = first_deref_span(s) {
+                if let Some(hit) = first_deref_span(s, admitted) {
                     return Some(hit);
                 }
             }
         }
         _ => {
             for child in crate::eval::closures::node_children_ref(node) {
-                if let Some(hit) = first_deref_span(child) {
+                if let Some(hit) = first_deref_span(child, admitted) {
                     return Some(hit);
                 }
             }
@@ -1308,10 +1334,11 @@ pub(super) fn lower_to_ir_inner(module: &ast::Module, context: &mut LoweringCont
     // `lower_expr_inner` panic catch-all when a caller invokes this public
     // entrypoint on un-type-checked AST.
     for item in &module.items {
-        if let Some((start, end)) = first_deref_span(item) {
+        if let Some((start, end)) = first_deref_span(item, context.deref_admitted) {
             context.refusal = Some(MaterializationRefusal::UnsupportedLoweringOperation {
-                operation: "dereference / deref-assign: the reference/place ABI is \
-                            unimplemented (deref-assign under architecture review)",
+                operation: "dereference / deref-assign: unsupported here (a place \
+                            operation requires the type-checked pipeline; the direct \
+                            lowering API does not admit it)",
                 start,
                 end,
             });

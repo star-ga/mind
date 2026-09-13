@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1821 | **Est. tokens:** ~3,495,886
-**Generated:** 2026-09-13 13:08 UTC
+**Files:** 1821 | **Est. tokens:** ~3,496,244
+**Generated:** 2026-09-13 13:22 UTC
 
 ## Token Budget Guide
 
@@ -93,7 +93,7 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 11 | ~51,968 |
+| `src/` | 11 | ~51,967 |
 | `src/ast/` | 1 | ~11,335 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
@@ -135,7 +135,7 @@
 | `src/types/` | 10 | ~20,911 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 402 | ~825,553 |
+| `tests/` | 402 | ~825,912 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -1349,7 +1349,7 @@
 - `mod.rs` (~4955 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `pipeline.rs` (~7372 tok, huge) — Copyright 2025 STARGA Inc.
+- `pipeline.rs` (~7371 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
 - `active_module_table.rs` (~3677 tok, huge) — Copyright 2025-2026 STARGA Inc.
@@ -1703,8 +1703,8 @@
 - `cross_substrate_reference_consistency.rs` (~3141 tok, huge) — Copyright 2025 STARGA Inc.
 - `crypto_vectors_driver.py` (~2653 tok, huge) — # Official-vector driver for std/aes_gcm.mind + std/hkdf.mind (pure-MIND crypto).
 - `deref_assign_cross_module_owner.rs` (~1813 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `deref_assign_identity_run.rs` (~974 tok, large) — Copyright 2025-2026 STARGA Inc.
-- `deref_assign_slice0.rs` (~4076 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `deref_assign_identity_run.rs` (~1103 tok, large) — Copyright 2025-2026 STARGA Inc.
+- `deref_assign_slice0.rs` (~4306 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `determinism_veto_control.rs` (~1490 tok, large) — Copyright 2025 STARGA Inc.
 - `diagnostic_code_contract.rs` (~558 tok, large) — Copyright 2026 STARGA Inc.
 - `diagnostics_parse.rs` (~1112 tok, large) — Copyright 2025 STARGA Inc.

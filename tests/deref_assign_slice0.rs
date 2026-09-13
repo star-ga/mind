@@ -403,3 +403,25 @@ fn cast_laundered_field_ref_is_refused() {
         codes(&src)
     );
 }
+
+#[test]
+fn direct_lowering_api_fails_closed_on_deref() {
+    // Root U1 source review: the public DIRECT lowering API (no type-check, so
+    // no D3 semantic admission) must FAIL CLOSED on any deref — a place
+    // operation may only be lowered through the type-checked pipeline. Even the
+    // admitted field-first shape refuses here, because no checker ran.
+    use libmind::eval::lower_to_ir;
+    let scalar = parser::parse("fn f(p: &mut i64, v: i64) {\n    *p = v\n}\n").expect("parse");
+    assert!(
+        lower_to_ir(&scalar).is_err(),
+        "direct lower_to_ir must refuse `*p = v`"
+    );
+    let record = parser::parse(
+        "struct Pair {\n    x: i64,\n    y: i64\n}\nfn r(p: &mut Pair, n: Pair) {\n    *p = n\n}\n",
+    )
+    .expect("parse");
+    assert!(
+        lower_to_ir(&record).is_err(),
+        "direct lower_to_ir must refuse even an admitted-shape deref (no type-check ran)"
+    );
+}

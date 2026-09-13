@@ -80,10 +80,14 @@ fn deref_assign_identity_replacement_runs() {
         );
         return;
     }
-    let dir = std::env::temp_dir();
-    let src = dir.join("mind_deref_assign_identity_run.mind");
-    let so = dir.join("mind_deref_assign_identity_run.so");
+    // Unique per-run TempDir (root U1 review: fixed temp filenames let a stale
+    // successful `.so` from a prior run pass a no-emission compiler). The `.so`
+    // must be FRESHLY created by this compile.
+    let dir = tempfile::TempDir::new().expect("unique temp dir");
+    let src = dir.path().join("mind_deref_assign_identity_run.mind");
+    let so = dir.path().join("mind_deref_assign_identity_run.so");
     std::fs::write(&src, SRC).expect("write src");
+    assert!(!so.exists(), "temp dir must start without the artifact");
 
     let out = Command::new(&mindc)
         .args([src.to_str().unwrap(), "--emit-shared", so.to_str().unwrap()])
@@ -92,6 +96,12 @@ fn deref_assign_identity_replacement_runs() {
     if !crate::common::gate::compiled("deref_assign_identity_run", &out) {
         return;
     }
+    assert!(
+        so.exists(),
+        "identity compile produced no fresh `.so`:\n{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
 
     // identity => 10_001_077; a field copy would give 10_001_010 and fail.
     let py = format!(

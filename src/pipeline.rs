@@ -454,7 +454,7 @@ fn compile_source_with_name_and_limits(
     #[cfg(feature = "compile-timings")]
     _tm.mark("typecheck");
 
-    let mut ir = eval::lower_to_ir_with_limits(&module, limits)?;
+    let mut ir = eval::lower_to_ir_admitted(&module, limits)?;
     // RFC 0002 D3: merge manifest-declared exports into the IR set so
     // both `export { ... }` source blocks and `Mind.toml [exports]
     // c_abi` reach the same codegen pass. Empty in the default code
