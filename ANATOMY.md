@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1819 | **Est. tokens:** ~3,488,197
-**Generated:** 2026-09-13 11:17 UTC
+**Files:** 1819 | **Est. tokens:** ~3,489,623
+**Generated:** 2026-09-13 11:34 UTC
 
 ## Token Budget Guide
 
@@ -131,11 +131,11 @@
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 4 | ~14,244 |
 | `src/type_checker/` | 18 | ~61,657 |
-| `src/type_checker/slice_abi/` | 4 | ~14,327 |
+| `src/type_checker/slice_abi/` | 4 | ~15,310 |
 | `src/types/` | 10 | ~20,911 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 400 | ~820,538 |
+| `tests/` | 400 | ~820,981 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -1420,7 +1420,7 @@
 ### `src/type_checker/slice_abi/`
 
 - `borrow_flow.rs` (~7081 tok, huge) — Copyright 2025 STARGA Inc.
-- `deref_check.rs` (~3082 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `deref_check.rs` (~4065 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `owner_assignment.rs` (~1145 tok, large) — Copyright 2026 STARGA Inc.
 - `provenance.rs` (~3019 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/type_checker/`
@@ -1702,7 +1702,7 @@
 - `cross_substrate_receipts.rs` (~2546 tok, huge) — Copyright 2025 STARGA Inc.
 - `cross_substrate_reference_consistency.rs` (~3141 tok, huge) — Copyright 2025 STARGA Inc.
 - `crypto_vectors_driver.py` (~2653 tok, huge) — # Official-vector driver for std/aes_gcm.mind + std/hkdf.mind (pure-MIND crypto).
-- `deref_assign_slice0.rs` (~1848 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `deref_assign_slice0.rs` (~2291 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `determinism_veto_control.rs` (~1490 tok, large) — Copyright 2025 STARGA Inc.
 - `diagnostic_code_contract.rs` (~558 tok, large) — Copyright 2026 STARGA Inc.
 - `diagnostics_parse.rs` (~1112 tok, large) — Copyright 2025 STARGA Inc.

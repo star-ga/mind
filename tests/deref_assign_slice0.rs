@@ -191,3 +191,47 @@ fn deref_assign_emits_no_artifact_while_valid_control_does() {
         "no `.so` may be written for a refused deref-assign:\n{d_text}"
     );
 }
+
+#[test]
+fn field_address_of_is_refused_E2037() {
+    // `&r.f` / `&mut r.f` (field address-of) is the field-first subset's target
+    // shape but is REFUSED until the D4 cell-address lowering lands (coupled).
+    // Closes the lower.rs Phase-10.7 no-op-value hole.
+    let imm = "struct Cell {\n    a: i64,\n    b: i64\n}\nfn f(c: Cell) -> i64 {\n    let p = &c.a\n    return 0\n}\n";
+    assert!(
+        codes(imm).contains(&"E2037".to_string()),
+        "`&c.a` must be E2037; got {:?}",
+        codes(imm)
+    );
+    let mutf = "struct Cell {\n    a: i64,\n    b: i64\n}\nfn f(c: Cell) -> i64 {\n    let p = &mut c.a\n    return 0\n}\n";
+    assert!(
+        codes(mutf).contains(&"E2037".to_string()),
+        "`&mut c.a` must be E2037; got {:?}",
+        codes(mutf)
+    );
+}
+
+#[test]
+fn element_address_of_is_refused_E2037() {
+    // `&a[i]` (element address-of) is deferred in the subset (no element cell
+    // lowering yet) — matches the self-host emitter's deferred set.
+    let src = "fn f(a: [i64; 4]) -> i64 {\n    let p = &a[0]\n    return 0\n}\n";
+    assert!(
+        codes(src).contains(&"E2037".to_string()),
+        "`&a[0]` must be E2037; got {:?}",
+        codes(src)
+    );
+}
+
+#[test]
+fn whole_var_address_of_is_not_refused_E2037() {
+    // The carve: a bare `&name` (whole-variable address-of) is the self-host
+    // supported form and OUT of this subset's scope — it must NOT draw E2037.
+    // (If this ever fires, the Node::Ref arm has over-reached into `&NAME`.)
+    let src = "struct Cell {\n    a: i64,\n    b: i64\n}\nfn f(c: Cell) -> i64 {\n    let p = &c\n    return 0\n}\n";
+    assert!(
+        !codes(src).contains(&"E2037".to_string()),
+        "`&c` (whole variable) must NOT be E2037; got {:?}",
+        codes(src)
+    );
+}

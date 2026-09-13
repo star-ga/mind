@@ -26,17 +26,30 @@
 //!
 //! STATUS — this pass is INCOMPLETE and runs ONLY additively; the blanket
 //! Slice-0 refusal (type_checker/mod.rs) is what actually rejects every deref
-//! today, so nothing below is yet a load-bearing admission gate. IMPLEMENTED so
-//! far: the region refusal, and a refusal for a `*p` / `*p = v` whose operand is
-//! not a bare `&mut <struct>` parameter. NOT YET implemented (tracked, must land
-//! WITH the D4 lowering before the blanket refusal is removed): owner-exact
-//! target comparison (canonical_struct_name only clones today; ref_target_name
-//! returns None), caller-side `Node::Ref` classification (`&mut r.f` admit +
-//! depth/index/call-result/scalar-field/escape refusals — `admitted_field_place`
-//! is not yet called), `*p = v` value-owner validation, and shadowing-aware
-//! parameter tracking. Do NOT carve the admitted shape out of the blanket
-//! refusal until these are complete AND the D4 lowering for the same shape
-//! exists (root D3->D4 direction, 2026-09-13).
+//! today, so no admission below is yet a load-bearing gate. IMPLEMENTED:
+//!   * region refusal (a deref / ref-take inside `region { .. }`);
+//!   * `*p` / `*p = v` refusal when the operand is not a bare `&mut <struct>`
+//!     parameter;
+//!   * owner canonicalization in `canonical_struct_name` (crate.-prefix, so a
+//!     same-named struct of a different module does not compare equal);
+//!   * shadowing / reassignment refusal (a `let` / `=` / `for` var naming a
+//!     `&mut` reference parameter);
+//!   * caller-side `Node::Ref` refusal for a field address-of (`&r.f` /
+//!     `&mut r.f`) and an element address-of (`&a[i]`) — closing the lower.rs
+//!     Phase-10.7 no-op-value hole; a bare `&NAME` is untouched.
+//! NOT YET (tracked; must land WITH the D4 cell-address lowering, in the SAME
+//! increment that carves the admitted shape out of the blanket refusal):
+//!   * `ref_target_name` real resolution (still returns None) — so owner-EXACT
+//!     comparison is not yet exercised, because nothing is admitted yet;
+//!   * the depth-one struct-field carve-out (`admitted_field_place` is defined
+//!     but NOT called — every field address-of refuses today; the carve-out and
+//!     its `&mut r.f` cell lowering land together);
+//!   * `*p = v` value-owner validation;
+//!   * a distinct call-result address-of refusal (`&mk()` is currently recursed
+//!     as a temporary, not yet a named refusal).
+//! Do NOT carve the admitted shape out of the blanket refusal until the
+//! predicates above are complete AND the D4 lowering for the same shape exists
+//! (root D3->D4 direction, 2026-09-13).
 
 #![cfg(feature = "std-surface")]
 
@@ -48,6 +61,17 @@ use super::{Env, StructFieldTypes};
 
 const DEREF_CODE: &str = "E2028";
 const DEREF_ASSIGN_CODE: &str = "E2029";
+/// Unsupported reference-take form: a field address-of (`&r.f` / `&mut r.f`) or
+/// an element address-of (`&a[i]`). Both are the field-first subset's eventual
+/// target shapes, but they are REFUSED until the D4 cell-address lowering for
+/// the same shape exists — matching the self-host emitter (main.mind), which
+/// already defers `&p.f` / `&a[i]` in its `&NAME` address-of subset. Without
+/// this refusal the Rust path silently lowered `&mut r.f` to the *loaded field
+/// value* (lower.rs Phase 10.7 no-op wrapper), a latent miscompile whenever the
+/// reference is not immediately consumed by an (E2028/E2029-refused) callee
+/// deref. A bare `&NAME` (whole-variable address-of) is NOT refused here — it is
+/// the self-host supported form and out of this subset's scope.
+const REF_FORM_CODE: &str = "E2037";
 
 /// Canonical (owner-qualified) name of a declared struct type annotation, or
 /// `None` if it is not a nominal struct type. Applies the `crate.`-prefix
@@ -282,6 +306,44 @@ fn classify(
                 );
             }
             classify(value, env, mrefs, in_region, src, file, errs);
+        }
+        // Caller-side reference-take classification (gaps 2/4/6). A field
+        // address-of (`&r.f` / `&mut r.f`, any depth, struct- OR scalar-field)
+        // and an element address-of (`&a[i]`) are the field-first subset's
+        // eventual target shapes, but ADMISSION is coupled to the D4 cell-address
+        // lowering (root D3->D4 direction): until that lowering exists for the
+        // same shape, they are REFUSED — closing the lower.rs Phase-10.7 no-op
+        // hole and matching the self-host emitter's deferred `&p.f` / `&a[i]`.
+        // A bare `&NAME` (whole-variable address-of) is the self-host supported
+        // form and stays untouched: recurse into the operand only.
+        //
+        // NOTE: `admitted_field_place` (depth-one struct-field discrimination)
+        // is intentionally NOT called yet — every field-address-of refuses in
+        // this increment, so the depth-one carve-out lands together with D4.
+        Node::Ref { inner, span, .. } => {
+            match inner.as_ref() {
+                Node::FieldAccess { .. } => refuse(
+                    errs,
+                    src,
+                    file,
+                    *span,
+                    REF_FORM_CODE,
+                    "taking the address of a field (`&r.f` / `&mut r.f`) is not supported here: the field-first mutable-reference subset admits this shape only together with its cell-address lowering, which is not yet present; a bare `&name` (whole variable) is unaffected.",
+                ),
+                Node::IndexAccess { .. } => refuse(
+                    errs,
+                    src,
+                    file,
+                    *span,
+                    REF_FORM_CODE,
+                    "taking the address of an element (`&a[i]`) is not supported here: element address-of is deferred in the field-first mutable-reference subset (no element cell-address lowering yet); a bare `&name` (whole variable) is unaffected.",
+                ),
+                // `&NAME` whole-variable address-of, `&(expr)` temporaries, etc.:
+                // not this subset's concern. Fall through to operand recursion so
+                // a deref buried inside (`&(*p)`) is still classified.
+                _ => {}
+            }
+            classify(inner, env, mrefs, in_region, src, file, errs);
         }
         _ => {
             // Generic child recursion for everything else (call args, binops,
