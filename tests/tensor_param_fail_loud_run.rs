@@ -235,3 +235,102 @@ fn scalar_i64_fn_still_compiles() {
         "track15: an i64 signature must NOT trigger the tensor ABI gate:\n{output}"
     );
 }
+
+/// A tensor NESTED inside a composite type (`&tensor`, `(tensor, i64)`,
+/// `Option<tensor>`, `[tensor; N]`, `&[tensor]`) must ALSO fail loud. Before the
+/// recursive `sig_non_i64` fix (src/eval/abi_gate.rs) the ABI gate matched a
+/// tensor ONLY as the outermost type node, so every one of these fell to
+/// `_ => None`, `type_ann_to_abi_mlir` lowered the composite to `i64`, and
+/// `--emit-shared` wrote an rc=0 `.so` whose C signature did not match the
+/// declared type — a silent miscompile of an evidence-signable artifact
+/// (MEASURED rc=0 + `.so` on the pre-fix binary for all five). The
+/// `-> i64 { return t }` case additionally leaked the raw i64 slot as the
+/// result (`r3(0x1234) == 0x1234`). Each must now be a loud refusal, no `.so`.
+#[test]
+fn nested_tensor_in_composite_fails_loud() {
+    let mindc = mindc_bin();
+    if !mindc.exists() {
+        crate::common::gate::skipped(
+            "tensor_param_fail_loud_run",
+            "track15: mindc not found; skipping",
+        );
+        return;
+    }
+    // (tag, source) — every one currently mis-lowered to a raw i64 slot.
+    let cases = [
+        (
+            "ref_param",
+            "pub fn r1(t: &tensor<f32[4]>) -> i64 { return 0 }\n",
+        ),
+        (
+            "tuple_param",
+            "pub fn tp(t: (tensor<f32[4]>, i64)) -> i64 { return 0 }\n",
+        ),
+        (
+            "option_param",
+            "pub fn og(t: Option<tensor<f32[4]>>) -> i64 { return 0 }\n",
+        ),
+        (
+            "slice_param",
+            "pub fn sp(t: &[tensor<f32[4]>]) -> i64 { return 0 }\n",
+        ),
+        // The raw-slot RETURN leak: the param gate fires first, so this is
+        // refused before the erased return can ship a wrong value.
+        (
+            "ret_leak",
+            "pub fn r3(t: &tensor<f32[4]>) -> i64 {\n    return t\n}\n",
+        ),
+    ];
+    for (tag, src) in cases {
+        let (ok, so_written, output) = emit_shared(src, tag);
+        assert!(
+            !ok,
+            "track15/{tag}: a tensor nested in a composite must FAIL to lower to a \
+             runnable artifact, but it succeeded (silent miscompile)\n{output}"
+        );
+        assert!(
+            !so_written,
+            "track15/{tag}: no `.so` may be written when a nested-tensor boundary is \
+             refused (would be a silent miscompile)\n{output}"
+        );
+        assert!(
+            output.contains("tensor-typed parameter/return"),
+            "track15/{tag}: the refusal must name the tensor construct, got:\n{output}"
+        );
+    }
+}
+
+/// No false positive from the recursive gate: a composite that carries NO tensor
+/// must not trigger the tensor ABI gate. The recursion added to `sig_non_i64`
+/// descends `Ref` / `Slice` / `Array` / `Generic` / `Tuple`, so this pins that
+/// it fires ONLY on a tensor, never on an all-scalar/struct composite.
+#[test]
+fn non_tensor_composite_does_not_trigger_tensor_gate() {
+    let mindc = mindc_bin();
+    if !mindc.exists() {
+        crate::common::gate::skipped(
+            "tensor_param_fail_loud_run",
+            "track15: mindc not found; skipping",
+        );
+        return;
+    }
+    let cases = [
+        ("slice_i64", "pub fn a(x: &[i64]) -> i64 { return 0 }\n"),
+        ("tuple_i64", "pub fn b(x: (i64, i64)) -> i64 { return 0 }\n"),
+        (
+            "option_i64",
+            "pub fn c(x: Option<i64>) -> i64 { return 0 }\n",
+        ),
+    ];
+    for (tag, src) in cases {
+        let (_ok, _so, output) = emit_shared(src, tag);
+        // May or may not lower for unrelated reasons; the ONLY claim here is
+        // that the recursive tensor gate does not misfire on a tensor-free
+        // composite.
+        assert!(
+            !output.contains("tensor-typed parameter/return"),
+            "track15/{tag}: a tensor-free composite must NOT trigger the tensor ABI \
+             gate, but it did:\n{output}"
+        );
+    }
+}

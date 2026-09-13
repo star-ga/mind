@@ -134,6 +134,27 @@ fn sig_non_i64(ty: &TypeAnn) -> Option<&'static str> {
              integer",
         ),
         TypeAnn::DiffTensor { .. } => Some("a diff-tensor parameter/return erases to the i64 ABI"),
+        // A tensor NESTED inside a composite type also erases to the raw i64
+        // slot: `type_ann_to_abi_mlir` lowers the composite's ABI to `i64` and
+        // the tensor is never materialised, so `--emit-shared` wrote an rc=0
+        // `.so` whose C signature does not match the declared type (measured:
+        // `&tensor`, `(tensor, i64)`, `Option<tensor>`, `[tensor; N]`, and a
+        // `-> i64 { return t }` that leaks the raw slot). The top-level match
+        // above misses every one of these. Recurse structurally so any tensor
+        // anywhere in the annotation fails LOUD — the third instance of the
+        // silent sub-i64-ABI miscompile class, and a fail-closed breach.
+        //
+        // Recursion is over the type-CARRYING composites only. RawPtr / FnPtr
+        // are deliberately NOT recursed: they lower to an opaque `!llvm.ptr`
+        // (the extern-C ABI contract), so `*const tensor` is a real pointer,
+        // not an erased tensor. `Named` is opaque here (resolved later in
+        // typecheck) — an alias/struct that itself contains a tensor is a
+        // separate, unaudited slice, left as-is. `SparseTensor` is likewise
+        // out of this measured slice (runtime-resolved layout).
+        TypeAnn::Slice { element, .. } | TypeAnn::Array { element, .. } => sig_non_i64(element),
+        TypeAnn::Ref { target, .. } => sig_non_i64(target),
+        TypeAnn::Generic { args, .. } => args.iter().find_map(|a| sig_non_i64(a)),
+        TypeAnn::Tuple { elements } => elements.iter().find_map(sig_non_i64),
         // i8/u8/i16/u16 (as `Named`) params + returns now lower correctly via
         // the i64-SLOT narrow-signature ABI (`src/eval/lower.rs`): a param is
         // materialised at its declared width on fn entry (zext mask / sext
