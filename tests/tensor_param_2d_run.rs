@@ -5,7 +5,7 @@
 //! Track #15 — 2-D STATIC-SHAPE tensor PARAMETER ABI run smoke.
 //!
 //! The static-shape tensor-parameter ABI (`param_non_i64` in
-//! `src/eval/abi_gate.rs`) is rank-generic: a `tensor<f64[R,C]>` parameter
+//! `src/eval/abi_gate_tensor.rs`) is rank-generic: a `tensor<f64[R,C]>` parameter
 //! lowers through the same `one-shot-bufferize{bufferize-function-boundaries=
 //! true}` boundary conversion and the same rank-generic pinned canonical fold
 //! (`MlirEmitter::emit_tensor_reduce_pinned`, an odometer over all dims) that

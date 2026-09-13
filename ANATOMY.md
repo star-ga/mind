@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1816 | **Est. tokens:** ~3479105
-**Generated:** 2026-09-13 05:05 UTC
+**Files:** 1817 | **Est. tokens:** ~3479221
+**Generated:** 2026-09-13 05:48 UTC
 
 ## Token Budget Guide
 
@@ -106,7 +106,7 @@
 | `src/diagnostics/` | 3 | ~14085 |
 | `src/distributed/` | 6 | ~7725 |
 | `src/doc/` | 3 | ~11002 |
-| `src/eval/` | 35 | ~139364 |
+| `src/eval/` | 36 | ~139475 |
 | `src/eval/stdlib/` | 2 | ~8586 |
 | `src/eval/struct_resolver/` | 1 | ~2555 |
 | `src/exec/` | 3 | ~5522 |
@@ -135,7 +135,7 @@
 | `src/types/` | 10 | ~20740 |
 | `src/workspace/` | 1 | ~4906 |
 | `std/` | 42 | ~202387 |
-| `tests/` | 399 | ~818685 |
+| `tests/` | 399 | ~818690 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12308 |
@@ -1173,8 +1173,9 @@
 - `mod.rs` (~7402 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/`
 
-- `abi_gate.rs` (~12450 tok, huge) — Runnable-artifact ABI gate (release-readiness P1.1).
+- `abi_gate.rs` (~11329 tok, huge) — Runnable-artifact ABI gate (release-readiness P1.1).
 - `abi_gate_struct_ops.rs` (~2875 tok, huge) — Copyright 2026 STARGA Inc.
+- `abi_gate_tensor.rs` (~1232 tok, large) — Tensor-shape admission rules for the runnable artifact ABI gate.
 - `assert_check.rs` (~989 tok, large) — Copyright 2025 STARGA Inc.
 - `autodiff.rs` (~14268 tok, huge) — Copyright 2025 STARGA Inc.
 - `callable_exports.rs` (~596 tok, large) — Copyright 2026 STARGA Inc.
@@ -2423,9 +2424,9 @@
 - `tensor_broadcast.rs` (~995 tok, large) — Copyright 2025 STARGA Inc.
 - `tensor_buffers.rs` (~517 tok, large) — Copyright 2025 STARGA Inc.
 - `tensor_eval.rs` (~457 tok, medium) — Copyright 2025 STARGA Inc.
-- `tensor_param_2d_run.rs` (~952 tok, large) — Copyright 2025 STARGA Inc.
+- `tensor_param_2d_run.rs` (~954 tok, large) — Copyright 2025 STARGA Inc.
 - `tensor_param_descriptor_abi_run.rs` (~2466 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `tensor_param_fail_loud_run.rs` (~3293 tok, huge) — Copyright 2025 STARGA Inc.
+- `tensor_param_fail_loud_run.rs` (~3296 tok, huge) — Copyright 2025 STARGA Inc.
 - `tensor_stdlib.rs` (~549 tok, large) — Copyright 2025 STARGA Inc.
 - `tensor_symbolic.rs` (~542 tok, large) — Copyright 2025 STARGA Inc.
 - `test_harness_root_cause_error.rs` (~758 tok, large) — Copyright 2025 STARGA Inc.

@@ -86,7 +86,7 @@ fn tensor_param_emit_shared_fails_loud() {
     //
     // This previously required `lower::non_i64_param`. Commit f9f68e5b ("allow
     // static-shape tensor param") deliberately split `param_non_i64` out of
-    // `sig_non_i64` (src/eval/abi_gate.rs:107) so a STATIC-SHAPE tensor PARAMETER
+    // `sig_non_i64` (src/eval/abi_gate_tensor.rs) so a STATIC-SHAPE tensor PARAMETER
     // lowers through a real memref C ABI. For this fixture the parameter
     // therefore no longer gates and the RETURN does, so the old assertion pinned
     // a rejection the compiler had intentionally stopped making.
@@ -112,7 +112,7 @@ fn tensor_param_emit_shared_fails_loud() {
 
 /// A static-shape tensor PARAMETER must lower even when the body never TOUCHES it.
 ///
-/// `param_non_i64` (src/eval/abi_gate.rs:107) deliberately admits a static-shape
+/// `param_non_i64` (src/eval/abi_gate_tensor.rs) deliberately admits a static-shape
 /// tensor parameter, on the stated grounds that bufferization converts the
 /// boundary to a memref. That conversion only happens under the `arith-linalg`
 /// preset, and `preset_for_mlir` (src/eval/mlir_build.rs) chose it by scanning the
@@ -222,7 +222,7 @@ fn scalar_i64_fn_still_compiles() {
 
 /// A tensor NESTED inside a composite type (`&tensor`, `(tensor, i64)`,
 /// `Option<tensor>`, `[tensor; N]`, `&[tensor]`) must ALSO fail loud. Before the
-/// recursive `sig_non_i64` fix (src/eval/abi_gate.rs) the ABI gate matched a
+/// recursive `sig_non_i64` fix (src/eval/abi_gate_tensor.rs) the ABI gate matched a
 /// tensor ONLY as the outermost type node, so every one of these fell to
 /// `_ => None`, `type_ann_to_abi_mlir` lowered the composite to `i64`, and
 /// `--emit-shared` wrote an rc=0 `.so` whose C signature did not match the
