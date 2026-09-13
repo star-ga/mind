@@ -4,26 +4,23 @@
 |---|---|
 | RFC | 0015 |
 | Title | Cross-Substrate Bit-Identity Proof Obligation |
-| Status | **Accepted — enforced by CI** (the proof obligation is binding; the Q16.16 + exact-integer surface is gated cross-ISA on `avx2` ↔ `neon` per §3.1 — see *Conformance Evidence* below. f32 paths remain carved out, RFC 0012 §8.4. Higher-tier substrates, CUDA/Cerebras, and the per-target framework remain Draft in RFC 0014.) |
+| Status | **Accepted — enforced by CI** for the committed Q16.16, exact-integer, and scoped strict f32/f64 workloads on `avx2` ↔ `neon` (§5A). General floating-point coverage, CUDA/Cerebras, and the per-target framework remain outside this shipped claim. |
 | Authors | STARGA Inc. |
 | Created | 2026-05-25 |
 | Supersedes | — |
 | Superseded by | — |
-| Related | RFC 0006 §5.2 (mind-blas + Q16.16 cross-arch task #57), RFC 0012 §8.4 (cross-substrate f32 carve-out), RFC 0014 (per-substrate lowering tier system — pair RFC) |
+| Related | RFC 0006 §5.2 (mind-blas + Q16.16 cross-arch task #57), RFC 0012 §8.4 (Q16.16 compatibility) and §10.5 (floating-point reduction-order question), RFC 0014 (per-substrate lowering tier system — pair RFC) |
 
-> **Status note (2026-06-05).** The proof obligation below is **shipped and
-> CI-enforced** for the Q16.16 and exact-integer (int8 `det.igemm`) surface
-> across the **x86-`avx2` ↔ ARM-`neon`** substrate pair — a *stronger* result
-> than the CPU↔CPU (x86-Linux ↔ x86-Windows) pair the original §1 narrative
-> below was written against, since `avx2` and `neon` are different ISAs with
-> different vector reductions yet produce a byte-identical hash. The §1 matrix
-> table ("x86 ↔ CUDA / Cerebras = No test") and the §5/§8/§9 forward-looking
-> language describe substrates and phases **still in progress**; they are
-> retained as the roadmap for higher-tier targets and do **not** gate this
-> RFC's acceptance. The shipped slice is enumerated in *Conformance Evidence*
-> (new §5A). The f32 carve-out (§7, RFC 0012 §8.4) is unchanged: only
-> exact-integer / Q16.16 reductions are byte-identical across ISAs — f32
-> tree-reductions are **not**, and nothing here claims otherwise.
+> **Status note (2026-09-13).** The internal gate enforces computational-output
+> bit-identity across **x86-`avx2` ↔ ARM-`neon`** for the committed workloads,
+> including the strict f32 dot and matrix-vector kernels and scalar f64 chain
+> in §5A.3. Their references record real ARM verification: 2026-07-14 for the
+> two f32 fixtures and 2026-07-05 for scalar f64. The earlier blanket exclusion
+> of floating point understated this evidence. It is replaced by the precise
+> scope in §5A.4; arbitrary floating-point programs and additional chips still
+> require their own coverage and execution evidence. §1 records the original
+> motivation; §5 and §8–§9 retain the broader infrastructure roadmap. Neither
+> native machine-code bytes nor target-specific MLIR must match across ISAs.
 
 ## 1. Motivation
 
@@ -39,10 +36,10 @@ bit-identity claims at the dialect level. JAX/XLA explicitly disclaim
 cross-device determinism. EigenAI (arXiv 2602.00182) and TBIK
 (arXiv 2511.17826) claim bit-identity but only single-substrate.
 
-**But:** no test in `tests/` cross-checks Q16.16 byte-identity
+**At this RFC's creation (2026-05-25):** no test in `tests/` cross-checked Q16.16 byte-identity
 across two targets. The CPU↔CPU half of task #57 closed at `mind@19e4028`
 (Linux gcc ↔ Windows clang), but the multi-substrate matrix has zero
-coverage:
+coverage. This historical matrix is superseded for the x86/ARM pair by §5A:
 
 | Pair | Status |
 |---|---|
@@ -66,14 +63,14 @@ proofs possible.
 - **Substrate tier definitions** — RFC 0014 (pair RFC).
 - **Fusion-induced byte drift** — Phase D fusion's bit-identity gate is a
   separate concern; this RFC scopes pre-fusion identity.
-- **f32 / floating-point bit-identity** — RFC 0012 §8.4 carves f32 out as
-  "within-substrate reproducible, not cross-substrate byte-identical." This
-  RFC's scope is **Q16.16 fixed-point only** (and BitNet ternary, per RFC
-  0001, via a stricter sub-contract — see §6).
+- **Universal floating-point coverage** — the three strict f32/f64 output
+  fixtures in §5A are in scope. They do not establish identity for arbitrary
+  reductions, transcendental functions, all floating-point inputs, or GPU
+  execution. RFC 0012 §10.5's general reduction-order question remains open.
 - **Runtime-side determinism** — EigenAI/TBIK address runtime determinism;
-  this RFC addresses **compile-target** bit-identity (the compiler emits
-  the same MLIR that produces the same bytes on every substrate). The
-  runtime then executes that MLIR deterministically per its own contract.
+  this RFC requires the compiled workload to produce the same canonical
+  output bytes on each covered target. Target-specific MLIR may differ
+  (§3.1); runtime behavior must also meet the workload's declared contract.
 
 ## 3. The Proof Obligation
 
@@ -114,7 +111,7 @@ matrix:
 - BitNet ternary primitives (per RFC 0001)
 
 The exact workload manifest is maintained at
-`tests/cross_substrate_identity/manifest.toml`.
+per-workload `tests/cross_substrate_identity/<id>/manifest.toml` files.
 
 ### 3.3 What "in scope" means
 
@@ -165,8 +162,11 @@ accumulator state MUST follow the left-fold rule (§4.2).
 
 ## 5. Oracle Infrastructure
 
-### 5.1 Bit-Identity Test Harness
-A new test crate `tests/cross_substrate_identity/` contains:
+### 5.1 Original infrastructure proposal (partially superseded by §5A)
+
+The original proposal called for a test crate `tests/cross_substrate_identity/`
+with the following files. These are proposed names, not an inventory of
+shipped paths; §5A.1 identifies their implemented counterparts:
 - `manifest.toml` — workload list, per-target coverage declarations
 - `oracle.rs` — runs the manifest across all locally-available Tier 1+
   substrates, collects output hashes, compares pairwise
@@ -214,18 +214,21 @@ claim from the repository alone.
   single-source-of-truth §3.2 references; the shipped file is `manifest.toml`,
   the §5.1 `expected.toml` role is filled by `reference_hashes.toml`).
 - **Committed references:** `tests/cross_substrate_identity/<id>/reference_hashes.toml`,
-  one identical hash per substrate (`avx2 = …`, `neon = …`). Per §3.1 a Q16.16
-  / exact-integer workload MUST yield the **same** content hash on every
+  one identical hash per covered substrate (`avx2 = …`, `neon = …`). Per §3.1
+  a workload in the declared identity scope MUST yield the **same** content hash on every
   substrate, so the two lines carrying one value *are* the cross-substrate
   bit-identity claim made inspectable.
-- **Run:** `cargo test --no-default-features --features
-  "mlir-build std-surface cross-module-imports" --test cross_substrate_identity`.
+- **Run (asserting):** `MIND_BENCH_REQUIRE=1 cargo test --no-default-features
+  --features "mlir-build std-surface cross-module-imports"
+  --test cross_substrate_identity` with `MIND_BENCH_BLESS` unset.
 
-The harness builds each kernel with `mindc --emit-shared`, regenerates the
-seeded input via the shared LCG, runs the native vector-dialect path,
-cross-checks it against an independent scalar oracle **within the run** (§4
-associativity), then pins the canonical output hash to the committed
-per-substrate reference (byte-identity **across builds, machines, and time**).
+The native output fixtures build kernels with `mindc --emit-shared`, supply
+the specified seeded or fixed inputs, and compare outputs with independent
+oracles **within the run**. Each fixture defines its canonical byte encoding
+before SHA-256 comparison with the committed reference (byte-identity
+**across builds, machines, and time**). The separate `bimap-phf` construction
+fixture pins a canonical mic@3 trace hash; it is not a floating-point output
+test or a comparison of native binaries.
 
 ### 5A.2 CI job (the cross-ISA gate)
 
@@ -250,9 +253,18 @@ self-skip. This closes the §5.3 toolchain-free downgrade vulnerability for this
 gate: it cannot pass vacuously — it either runs the kernel and matches the hash
 or it fails the build.
 
+CI also runs `tests/cross_substrate_receipts.rs` against the measured/deferred
+receipts and manifest inventory. The subsequent bless-mode hash harvest is
+an evidence collection step, **not** an asserting gate. Unsupported workload
+coverage, including the hardware-specific VNNI case, must remain explicit;
+an inventory count is not a claim that every host executes every fixture.
+
 ### 5A.3 Committed reference hashes (the load-bearing constants)
 
-The five enforced workloads and their pinned `avx2 == neon` hashes:
+The original five Q16.16/int8 workloads below are a baseline subset, not the
+complete inventory. The current tree contains 25 workload manifests and 26
+tests in `cross_substrate_identity.rs`; per-workload manifests and receipts
+define coverage.
 
 | Workload id | Shape / dtype | Reference hash (`avx2` == `neon`) |
 |---|---|---|
@@ -262,6 +274,23 @@ The five enforced workloads and their pinned `avx2 == neon` hashes:
 | `gemm-q16-64x64x64` | Q16.16 gemm | `92e2cb75d74d83a4a398d78d9ac560f195279c31814972c892f856f675faea0f` |
 | `gemm-i8-64x64x64` | int8 `det.igemm`, i32 out | `917d353b18fd7f5ea4dab7dd02b786f5ccc4a2d954f695084ca0a88214d699c7` |
 
+The three floating-point output fixtures also pin `avx2 == neon`:
+
+| Workload id | Operation / canonical output encoding | Reference hash (`avx2` == `neon`) |
+|---|---|---|
+| `scalar-float-f64` | Fixed scalar `a + b - c * d / a`; result's IEEE-754 bits in 8 little-endian bytes | `7592a52a5e10a2f24469765f71ce1f9f8ebd9efb51904cf9a18f310d33b3c92d` |
+| `dot-f32-v-4093` | Strict f32 dot, length 4093; result bits packed into an i64, 8 little-endian bytes | `a132f7b970b647cd158f591d764c19ec41a8cf27c398c87758f74efb5a8a22c0` |
+| `matmul-f32-v-64x64` | Strict f32 64×64 matrix-vector product; 64 result bit patterns, 4 little-endian bytes each | `ec5adb991372fcfc16b964ba566f05fb44701fcf8bbde2a5453fed294e1d0175` |
+
+The f32 kernels use separate multiply/add operations, eight accumulation
+lanes and a fixed left-to-right lane fold. The length-4093 dot also exercises
+the scalar tail; the 64-column matrix-vector fixture has no remainder. The within-run
+checks compare `to_bits()` exactly; no tolerance substitutes for bit-identity.
+The f64 fixture pins a fixed strict operation sequence, including a rounded
+division. See each fixture's `reference_hashes.toml` for its recorded hardware
+provenance. Those executions establish the listed fixture coverage, not a
+proof over every floating-point input or machine.
+
 A re-bless (`MIND_BENCH_BLESS=1`) is permitted **only** on an intentional
 lowering change (RFC 0020 §13) and must be documented in the release notes.
 
@@ -269,14 +298,20 @@ lowering change (RFC 0020 §13) and must be documented in the release notes.
 
 What §5A enforces today, stated precisely:
 
-- **In scope (Accepted, gated):** Q16.16 fixed-point and exact-integer (int8)
-  reductions, on the **`avx2` ↔ `neon`** substrate pair (one substrate — CPU —
-  exercised across two ISAs). These are byte-identical by construction
-  (integer reduction is associative) and the gate proves the lowering preserves
-  it.
-- **Out of scope (still Draft / forward-looking):** f32 / floating-point paths
-  (carved out, §7 + RFC 0012 §8.4 — **not** byte-identical across ISAs);
-  CUDA, Cerebras, and all Tier 0 targets (§1 matrix, RFC 0014 §3); BitNet
+- **In scope (Accepted, gated):** the manifest-defined Q16.16 and exact-integer
+  native output workloads, plus the three strict floating-point output fixtures in §5A.3,
+  on **`avx2` ↔ `neon`**. For the float fixtures, identity depends on strict
+  operations and the specified fold order; floating-point associativity is
+  not assumed. Canonical output bytes must match exactly.
+- **Separate evidence classes:** `bimap-phf` compares canonical compiler
+  construction hashes. The VNNI-specific fixture requires the corresponding
+  hardware capability and can be explicitly deferred; its presence in the
+  inventory does not prove native execution on every runner. Neither case
+  extends the three floating-point output fixtures' scope.
+- **Out of scope (still Draft / forward-looking):** unlisted floating-point
+  programs or inputs, arbitrary reductions, transcendental functions, and
+  general NaN-payload/subnormal/rounding-mode coverage; CUDA, Cerebras, and
+  all Tier 0 targets (§1 matrix, RFC 0014 §3); BitNet
   ternary as a *gated* workload (the §6 sub-contract is specified but not yet
   in the manifest); and the per-substrate lowering **framework** itself
   (RFC 0014 §4 — `LoweringRegistry`, unified target enum, 3-way diagnostic —
@@ -304,19 +339,21 @@ class**, not just the baseline. The exception clauses (§3.3 per-target
 scoping) apply if a substrate cannot run BitNet at all, but a substrate
 that runs BitNet MUST do so bit-identically.
 
-## 7. Relationship to RFC 0012 §8.4
+## 7. Relationship to RFC 0012
 
-RFC 0012 §8.4 carves f32 functions out of cross-substrate bit-identity:
+RFC 0012 §8.4 preserves the existing Q16.16 gate when tensor syntax lowers
+to the same operations. Its §10.5 discusses the general floating-point
+reduction-order problem and proposes annotation behavior; that proposal is
+not a blanket exclusion of the strict kernels now covered here.
 
-> Functions annotated f32 are within-substrate reproducible, not
-> cross-substrate byte-identical.
-
-That carve-out is an **exception clause without a base clause**. This RFC
-provides the base clause:
-
-- **Q16.16 functions**: cross-substrate bit-identical (this RFC).
-- **f32 functions**: within-substrate reproducible (RFC 0012 §8.4).
-- **BitNet functions**: cross-substrate bit-identical (this RFC §6).
+- **Manifest-covered Q16.16 / exact-integer workloads:** cross-substrate
+  bit-identity is gated as specified in §5A.
+- **The three strict f32/f64 output fixtures:** cross-substrate bit-identity
+  is also gated (§5A.3); this supersedes this RFC's earlier blanket f32 carve-out.
+- **Other floating-point functions:** require a defined strict computation,
+  output encoding and real-target evidence before claiming identity.
+- **BitNet functions:** the broader sub-contract remains specified in §6;
+  it must not be represented as a shipped workload gate without evidence.
 
 Any annotation conflict (a function annotated with both `#[q16]` and
 implicit f32 ops) MUST be a compile error per RFC 0012's
@@ -327,8 +364,9 @@ implicit-determinism predicate.
 1. **Mixed-precision functions**: a function may legitimately use both
    Q16.16 and f32 (e.g., Q16.16 model with f32 input normalization). What's
    the bit-identity contract for such a function? Tentative answer:
-   identity holds only on the Q16.16 portion; f32 portions fall under RFC
-   0012 §8.4. Boundary handling is the open question.
+   coverage of the Q16.16 portion or a strict f32 fixture alone does not prove
+   the composed function. Its conversions, reduction order and final output
+   need their own cross-target gate. Boundary handling remains open.
 
 2. **Floating-point intermediates in Q16.16 paths**: some substrates may
    convert Q16.16 to f32 internally for performance (e.g., GPU tensor
@@ -407,8 +445,8 @@ implicit-determinism predicate.
   downgrade vulnerability this RFC closes
 - RFC 0001 — BitNet ternary primitives (stricter sub-contract, §6)
 - RFC 0006 §5.2 — mind-blas Q16.16 cross-arch baseline
-- RFC 0012 §8.4 — f32 carve-out (exception clause this RFC pairs with a
-  base clause)
+- RFC 0012 §8.4 — Q16.16 compatibility; §10.5 — general floating-point
+  reduction-order question (scoped strict-float evidence is in §5A here)
 - RFC 0014 (pair) — per-substrate lowering tier system
 - EigenAI bit-exact inference: arXiv 2602.00182 (single-substrate
   precedent)
