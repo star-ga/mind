@@ -119,6 +119,20 @@ required-features = ["std-surface"]
 name = "g2_differential_mlir"
 required-features = ["mlir-build"]
 
+# The static-shape tensor-parameter descriptor gate shells out to the MLIR
+# backend and calls the resulting ELF through ctypes.  Keep it structurally
+# absent from feature combinations that cannot produce that artifact; the
+# cross-substrate CI job selects these features explicitly on x86 and ARM.
+[[test]]
+name = "tensor_param_descriptor_abi_run"
+required-features = ["mlir-build", "std-surface"]
+
+# The companion tensor-parameter refusal gate exercises the same runnable
+# `--emit-shared` path and the cross-module surface used by its fixtures.
+[[test]]
+name = "tensor_param_fail_loud_run"
+required-features = ["mlir-build", "std-surface", "cross-module-imports"]
+
 # The #72 cross-substrate determinism fuzzer drives `mindc --emit-shared`, which
 # errors with "requires building with the 'mlir-build' feature" without it — so in
 # any other feature combo EVERY generated program fails identically, for a reason

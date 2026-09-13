@@ -271,7 +271,7 @@ pub fn preset_for_mlir(mlir: &str) -> &'static str {
         || mlir.contains("tensor.extract")
         || (mlir.contains("dense<") && mlir.contains(": tensor<"));
     // A tensor-typed SIGNATURE needs the same pipeline even with no tensor OP in
-    // the body. `param_non_i64` (src/eval/abi_gate.rs:107) admits a static-shape
+    // the body. `param_non_i64` (src/eval/abi_gate_tensor.rs) admits a static-shape
     // tensor parameter precisely because bufferization converts the boundary to a
     // memref — but that only happens under `arith-linalg`, whose
     // `one-shot-bufferize{bufferize-function-boundaries=true}` does the conversion.

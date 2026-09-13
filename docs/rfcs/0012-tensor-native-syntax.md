@@ -236,6 +236,95 @@ The backing allocation follows the RFC 0010 three-tier model: a tensor whose
 lifetime is lexically bounded is region-interior; a tensor that outlives its
 enclosing scope is `GenRef<Tensor<...>>`.
 
+### 3.4.1 Implementation status: static-shape tensor-parameter boundary (measured)
+
+> Status: IMPLEMENTATION NOTE, not a normative consumer contract. It records what
+> the shipped compiler currently emits for ONE narrow case, measured at a specific
+> revision and target. It confers no forward-compatibility promise and adds no new
+> ABI capability. Dynamic-shape tensors, tensor RETURNS, and every consumer
+> (GPU/runtime) contract remain open.
+
+Scope. Only a function PARAMETER typed `tensor<dtype[d0..d(R-1)]>` whose extents
+are ALL compile-time integer literals is affected (`param_non_i64`,
+`src/eval/abi_gate.rs`). Such a parameter is admitted by the runnable ABI gate and
+lowered — via `one-shot-bufferize{bufferize-function-boundaries=true}`
+(`src/eval/mlir_build.rs`) — to an MLIR memref descriptor. Every other tensor
+position (dynamic/symbolic extent, a tensor anywhere inside a composite `&T` /
+`(T,..)` / `Option<T>` / `[T]` / `[T;N]`, and any tensor RETURN) still fails LOUD
+at the gate (`tests/tensor_param_fail_loud_run.rs`) and is NOT covered here. This
+note does NOT claim this is the only fat-pointer boundary in the language, nor
+that dynamic tensors have an implemented storage contract; §3.4's i64-address
+heap model continues to govern the erased/interpreted path.
+
+Measured descriptor (target x86-64 SysV LP64, LLVM/MLIR 20.x). For rank R the
+boundary is the unpacked MLIR memref descriptor, in this field order:
+
+    (ptr alloc_base, ptr aligned_base, iN offset, iN size_0 .. size_(R-1), iN stride_0 .. stride_(R-1))
+
+- Pointer width and the index width `iN` are the TESTED target's widths only:
+  64-bit pointers and a 64-bit (`i64`) index under the x86-64 SysV calling
+  convention. The "two pointers + (1 + 2R) index words" shape is NOT asserted for
+  other targets — Win64, ILP32/32-bit, and alternate MLIR lowering conventions
+  would need their own measured evidence and are explicitly out of scope.
+- `aligned_base` is the pointer actually dereferenced. `offset` and each
+  `stride_i` are in ELEMENTS.
+
+Layout: logical indexing, not a contiguity requirement. Element `[i0..i(R-1)]`
+is read at `aligned_base[offset + Σ i_k * stride_k]`. Non-unit and mutually
+unequal strides and a non-zero offset are honored (measured), so the boundary
+admits strided/offset views — it does NOT require, and must not be documented as,
+row-major contiguous storage. Contiguity is one admissible caller choice, not a
+guarantee of the ABI.
+
+Caller obligations and the limits of the evidence. Validated operations are
+read-only reductions (`t.sum()`) and a runtime-weighted matrix multiplication
+followed by a reduction (`tensor.matmul(t, w).sum()`).
+The callee reads through `aligned_base`; it does not write, does not retain the
+pointer past the call, and does not free caller memory. The caller owns the
+allocation and its lifetime for the duration of the call. A null `alloc_base` was
+accepted for this read-only reduction ONLY (the dereferenced pointer is
+`aligned_base`); null is NOT authorized for `alloc_base` in general and never for
+`aligned_base`. Nothing here establishes aliasing, bounds, negative-stride, or
+empty-tensor (rank-0 / zero-extent) behavior — those are unspecified and untested.
+
+Field-order verification requires EXECUTION, not just a signature. An LLVM/C
+signature check catches a change in field COUNT or TYPE, but every size/stride/
+offset field is the same integer type, so a permutation among them is invisible
+to a signature assertion. The conformance controls
+(`tests/tensor_param_descriptor_abi_run.rs`) therefore EXECUTE the boundary via
+ctypes with unequal sizes, a non-zero offset, non-unit and mutually-unequal
+strides, and safe in-bounds element values. The rank-1 and rank-2 reductions
+prove that the emitted code performs the admitted offset/strided reads, but a
+sum is commutative: a coherent axis-pair permutation can select the same set
+of elements, and a runtime size-field permutation is not claimed to be checked
+when the static declared shape is the caller's contract. A weighted rank-2
+control holds declared sizes fixed and swaps the two stride fields: a buffer
+of ones with one extra unit and runtime weights yields 18 for the admitted
+layout and 14 for the swapped layout. This checks the selected stride mapping;
+it does not establish detection of every descriptor-field permutation.
+A scalar positive control proves the harness is not vacuously green. These
+controls do not establish malformed-descriptor, out-of-bounds, negative-stride,
+or unused-size-field rejection behavior. Rank-1 and rank-2 are kept as distinct
+observations.
+
+Versioning is an OPEN item, not settled by this label. A "v1" mention in prose
+neither exposes the boundary to consumers nor prevents an unversioned change (e.g.
+a future bufferize pass-option change would silently alter the C signature). The
+compatible fix is to add the descriptor-ABI identity to the EXISTING artifact
+capability/version surface (the receipt/feature inventory), NOT to invent a
+parallel scheme and NOT to alter any `MAP`/`mic@N` hash preimage or release seed
+(the byte-identity gate and historical references must be untouched). Inventorying
+that surface and proposing the metadata addition is tracked separately; until it
+lands, this boundary is compiler-internal and no consumer should bind to it.
+
+Cross-substrate. The conformance control must run on each named substrate with
+the same tool/profile provenance. The ARM hosted runner already builds the
+compiler baseline, so the aarch64 leg is to be RUN there rather than left a
+permanent deferred placeholder; a substrate whose canary has not actually run is
+reported as not-yet-verified, never silently marked passed, and no historical
+reference is re-blessed merely to make a test green.
+
+
 ### 3.5 Decision: `Tensor<dtype, [dims]>` not shape-prefix or type-suffix form
 
 Three syntactic options were considered:

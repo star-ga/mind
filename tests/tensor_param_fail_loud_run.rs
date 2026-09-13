@@ -2,29 +2,13 @@
 // Licensed under the Apache License, Version 2.0.
 // Part of the MIND project (Machine Intelligence Native Design).
 
-//! Track #15 — a `tensor`-typed function parameter/return is NOT in the runnable
-//! i64-scalar ABI subset. A fleet audit feared `mindc x.mind --emit-ir` emitting
-//! `const.i64 0` for `pub fn r(x: tensor<f32[2]>) -> tensor<f32[2]> { tensor.relu(x) }`
-//! was a SILENT MISCOMPILE. Investigation showed `--emit-ir` prints only the
-//! module-TOP IR — a function-only module emits the FnDef declaration's unit
-//! placeholder (`const.i64 0`), IDENTICAL for a scalar `fn r(x: i64) -> i64`, so
-//! that output is benign inspection, not a tensor-specific miscompile.
+//! Tensor-boundary refusal controls for executable shared artifacts.
 //!
-//! The RUNNABLE paths already fail LOUD (the #306 fail-closed philosophy).
-//! A tensor param/return is refused by the ABI gate (`lower::non_i64_param` /
-//! `lower::non_i64_return`, file:line span); a tensor used INTERNALLY in an
-//! i64-signature fn is refused at MLIR lowering (`error[mlir]: missing type
-//! information ... while lowering relu`).
-//! In both cases `--emit-shared` exits non-zero and writes NO `.so` — never a
-//! wrong artifact. This test PINS that contract so a future ABI change cannot
-//! silently regress it into a const-0 (or any other) miscompiled artifact.
-//!
-//! deferred: real tensor-param ABI (carry `TypeAnn::Tensor{dtype,dims}` through
-//! FnDef params + `func.call` results into `tensor<...>` / memref descriptors,
-//! lowered via `one-shot-bufferize{bufferize-function-boundaries=true}` so the
-//! body emits a real relu and the artifact is ctypes-callable). Until then the
-//! fail-loud refusal IS the correct contract — upgrade path: implement the
-//! tensor function-boundary ABI, then flip these asserts to a compiled+run smoke.
+//! Static-shape tensor parameters have an admitted memref descriptor path.
+//! These tests cover that positive path and the tensor returns, nested tensor
+//! composites, and unsupported internal operation that must still be refused.
+//! An unsupported boundary must exit non-zero and write no shared artifact.
+//! Module-top `--emit-ir` unit placeholders are not executable tensor evidence.
 //!
 //! Gate: `cargo test --features "std-surface mlir-build cross-module-imports"
 //!                   --test tensor_param_fail_loud_run`
@@ -102,7 +86,7 @@ fn tensor_param_emit_shared_fails_loud() {
     //
     // This previously required `lower::non_i64_param`. Commit f9f68e5b ("allow
     // static-shape tensor param") deliberately split `param_non_i64` out of
-    // `sig_non_i64` (src/eval/abi_gate.rs:107) so a STATIC-SHAPE tensor PARAMETER
+    // `sig_non_i64` (src/eval/abi_gate_tensor.rs) so a STATIC-SHAPE tensor PARAMETER
     // lowers through a real memref C ABI. For this fixture the parameter
     // therefore no longer gates and the RETURN does, so the old assertion pinned
     // a rejection the compiler had intentionally stopped making.
@@ -128,7 +112,7 @@ fn tensor_param_emit_shared_fails_loud() {
 
 /// A static-shape tensor PARAMETER must lower even when the body never TOUCHES it.
 ///
-/// `param_non_i64` (src/eval/abi_gate.rs:107) deliberately admits a static-shape
+/// `param_non_i64` (src/eval/abi_gate_tensor.rs) deliberately admits a static-shape
 /// tensor parameter, on the stated grounds that bufferization converts the
 /// boundary to a memref. That conversion only happens under the `arith-linalg`
 /// preset, and `preset_for_mlir` (src/eval/mlir_build.rs) chose it by scanning the
@@ -234,4 +218,103 @@ fn scalar_i64_fn_still_compiles() {
         !output.contains("lower::non_i64_param") && !output.contains("lower::non_i64_return"),
         "track15: an i64 signature must NOT trigger the tensor ABI gate:\n{output}"
     );
+}
+
+/// A tensor NESTED inside a composite type (`&tensor`, `(tensor, i64)`,
+/// `Option<tensor>`, `[tensor; N]`, `&[tensor]`) must ALSO fail loud. Before the
+/// recursive `sig_non_i64` fix (src/eval/abi_gate_tensor.rs) the ABI gate matched a
+/// tensor ONLY as the outermost type node, so every one of these fell to
+/// `_ => None`, `type_ann_to_abi_mlir` lowered the composite to `i64`, and
+/// `--emit-shared` wrote an rc=0 `.so` whose C signature did not match the
+/// declared type — a silent miscompile of an evidence-signable artifact
+/// (MEASURED rc=0 + `.so` on the pre-fix binary for all five). The
+/// `-> i64 { return t }` case additionally leaked the raw i64 slot as the
+/// result (`r3(0x1234) == 0x1234`). Each must now be a loud refusal, no `.so`.
+#[test]
+fn nested_tensor_in_composite_fails_loud() {
+    let mindc = mindc_bin();
+    if !mindc.exists() {
+        crate::common::gate::skipped(
+            "tensor_param_fail_loud_run",
+            "track15: mindc not found; skipping",
+        );
+        return;
+    }
+    // (tag, source) — every one currently mis-lowered to a raw i64 slot.
+    let cases = [
+        (
+            "ref_param",
+            "pub fn r1(t: &tensor<f32[4]>) -> i64 { return 0 }\n",
+        ),
+        (
+            "tuple_param",
+            "pub fn tp(t: (tensor<f32[4]>, i64)) -> i64 { return 0 }\n",
+        ),
+        (
+            "option_param",
+            "pub fn og(t: Option<tensor<f32[4]>>) -> i64 { return 0 }\n",
+        ),
+        (
+            "slice_param",
+            "pub fn sp(t: &[tensor<f32[4]>]) -> i64 { return 0 }\n",
+        ),
+        // The raw-slot RETURN leak: the param gate fires first, so this is
+        // refused before the erased return can ship a wrong value.
+        (
+            "ret_leak",
+            "pub fn r3(t: &tensor<f32[4]>) -> i64 {\n    return t\n}\n",
+        ),
+    ];
+    for (tag, src) in cases {
+        let (ok, so_written, output) = emit_shared(src, tag);
+        assert!(
+            !ok,
+            "track15/{tag}: a tensor nested in a composite must FAIL to lower to a \
+             runnable artifact, but it succeeded (silent miscompile)\n{output}"
+        );
+        assert!(
+            !so_written,
+            "track15/{tag}: no `.so` may be written when a nested-tensor boundary is \
+             refused (would be a silent miscompile)\n{output}"
+        );
+        assert!(
+            output.contains("tensor-typed parameter/return"),
+            "track15/{tag}: the refusal must name the tensor construct, got:\n{output}"
+        );
+    }
+}
+
+/// No false positive from the recursive gate: a composite that carries NO tensor
+/// must not trigger the tensor ABI gate. The recursion added to `sig_non_i64`
+/// descends `Ref` / `Slice` / `Array` / `Generic` / `Tuple`, so this pins that
+/// it fires ONLY on a tensor, never on an all-scalar/struct composite.
+#[test]
+fn non_tensor_composite_does_not_trigger_tensor_gate() {
+    let mindc = mindc_bin();
+    if !mindc.exists() {
+        crate::common::gate::skipped(
+            "tensor_param_fail_loud_run",
+            "track15: mindc not found; skipping",
+        );
+        return;
+    }
+    let cases = [
+        ("slice_i64", "pub fn a(x: &[i64]) -> i64 { return 0 }\n"),
+        ("tuple_i64", "pub fn b(x: (i64, i64)) -> i64 { return 0 }\n"),
+        (
+            "option_i64",
+            "pub fn c(x: Option<i64>) -> i64 { return 0 }\n",
+        ),
+    ];
+    for (tag, src) in cases {
+        let (_ok, _so, output) = emit_shared(src, tag);
+        // May or may not lower for unrelated reasons; the ONLY claim here is
+        // that the recursive tensor gate does not misfire on a tensor-free
+        // composite.
+        assert!(
+            !output.contains("tensor-typed parameter/return"),
+            "track15/{tag}: a tensor-free composite must NOT trigger the tensor ABI \
+             gate, but it did:\n{output}"
+        );
+    }
 }

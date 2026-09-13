@@ -38,6 +38,9 @@
 use crate::ast::{Module, Node, Span as AstSpan, TypeAnn};
 use crate::diagnostics::{Diagnostic, Span};
 
+#[path = "abi_gate_tensor.rs"]
+mod tensor_admission;
+
 const PHASE: &str = "lower";
 const HELP: &str = "the shipped backend lowers only the i64-scalar ABI; this construct is not yet \
      lowerable to a runnable artifact (RUNS burndown). Run it with the `mind` interpreter, or keep \
@@ -57,7 +60,7 @@ pub fn check_runnable_lowerable(
         };
         let (name, params, ret_type) = (&fd.name, &fd.params, &fd.ret_type);
         for p in params {
-            if let Some(reason) = param_non_i64(&p.ty) {
+            if let Some(reason) = tensor_admission::param_non_i64(&p.ty) {
                 out.push(mk(
                     src,
                     file,
@@ -71,7 +74,7 @@ pub fn check_runnable_lowerable(
                 ));
             }
         }
-        if let Some(reason) = ret_type.as_ref().and_then(sig_non_i64) {
+        if let Some(reason) = ret_type.as_ref().and_then(tensor_admission::sig_non_i64) {
             out.push(mk(
                 src,
                 file,
@@ -88,60 +91,6 @@ pub fn check_runnable_lowerable(
         module, _ir, src, file, &mut out,
     );
     out
-}
-
-/// Reason a function PARAMETER `TypeAnn` cannot lower in the runnable ABI, or
-/// `None` when it lowers correctly. Identical to [`sig_non_i64`] EXCEPT that a
-/// STATIC-SHAPE (all extents compile-time-known) `tensor` parameter is now
-/// allowed: it lowers to a real memref/tensor C ABI (ptr + baked-in static
-/// extents), not the erased i64 scalar. The `func.func` signature carries the
-/// true `tensor<..>` type (`type_ann_to_abi_mlir`), the param seeds a real
-/// `ValueKind::Tensor` (`type_ann_to_value_kind`), the build routes to the
-/// `arith-linalg` preset whose `one-shot-bufferize{bufferize-function-
-/// boundaries=true}` converts the boundary to a memref, and the pinned
-/// reduction fold reads it via `tensor.extract %param[..]`. A DYNAMIC/symbolic
-/// dim still gates (no static extent to bake into the memref descriptor), and a
-/// `diff tensor` param still gates (autodiff boundary is a separate change).
-/// Tensor RETURNS are unchanged — still routed through [`sig_non_i64`] and
-/// gated (the out-param C ABI is a separate, larger slice).
-fn param_non_i64(ty: &TypeAnn) -> Option<&'static str> {
-    match ty {
-        TypeAnn::Tensor { dims, .. } if tensor_dims_all_static(dims) => None,
-        _ => sig_non_i64(ty),
-    }
-}
-
-/// `true` when a tensor annotation's dims are all statically-known numeric
-/// extents (`tensor<f64[4]>` → `["4"]`), so the shape can be baked into a memref
-/// descriptor with no dynamic dim. A rank-0 tensor (`dims` empty) is NOT treated
-/// as static-lowerable here (there is no reduction surface for it yet), and a
-/// symbolic dim (`["N"]`) makes the whole annotation dynamic.
-fn tensor_dims_all_static(dims: &[String]) -> bool {
-    !dims.is_empty() && dims.iter().all(|d| d.parse::<usize>().is_ok())
-}
-
-/// Reason a function parameter/return `TypeAnn` cannot lower in the runnable
-/// i64 ABI, or `None` when it lowers correctly (`i64`, `f32`, `f64`, `bool`,
-/// a struct handle (`Named`), slice/ref/array/tuple — handled elsewhere or
-/// already loud).
-fn sig_non_i64(ty: &TypeAnn) -> Option<&'static str> {
-    match ty {
-        // `i32`/`u32` params & returns now lower correctly (real i32 MLIR with
-        // signed/unsigned op selection + deterministic two's-complement wrap), so
-        // they are no longer gated.
-        TypeAnn::Tensor { .. } => Some(
-            "a tensor-typed parameter/return erases to the i64 ABI and is treated as a scalar \
-             integer",
-        ),
-        TypeAnn::DiffTensor { .. } => Some("a diff-tensor parameter/return erases to the i64 ABI"),
-        // i8/u8/i16/u16 (as `Named`) params + returns now lower correctly via
-        // the i64-SLOT narrow-signature ABI (`src/eval/lower.rs`): a param is
-        // materialised at its declared width on fn entry (zext mask / sext
-        // shift-pair) and a return is masked to its declared width at every
-        // return site, so the width and unsigned semantics are preserved —
-        // they are no longer gated.
-        _ => None,
-    }
 }
 
 fn mk(src: &str, file: Option<&str>, span: AstSpan, code: &'static str, msg: String) -> Diagnostic {
