@@ -3,8 +3,8 @@
 This directory is the **internal** half of mind-bench (RFC 0020 §10): the
 in-tree merge gate that pins MIND's cross-substrate bit-identity property to
 committed reference hashes. It is the single source of truth that the future
-public `mind-bench` CLI (RFC 0020 §3) and the published
-`mind-spec/wedge-reference-hashes/<version>.txt` manifest both consume.
+public `mind-bench` CLI and versioned reference bundle (RFC 0020 §§3–5) will
+consume. Public packaging and signed-reference integration remain pending.
 
 ## What it proves
 
@@ -30,6 +30,9 @@ The harness is `tests/cross_substrate_identity.rs`.
 
 ## Workloads
 
+The table is a selected subset. The per-workload manifests and execution
+receipts define the complete inventory and supported/deferred coverage.
+
 | id | shape | kernel | output |
 |----|-------|--------|--------|
 | `dot-l2-q16` | dot product, len 65536 | `__mind_blas_dot_q16_v` | scalar i64 |
@@ -39,6 +42,8 @@ The harness is `tests/cross_substrate_identity.rs`.
 | `gemm-i8-64x64x64` | int8 matrix×matrix, 64×64×64 | `__mind_blas_matmul_mm_i8_v` | 64×64 i32 matrix |
 | `gemv-i16-256x256` | int16 matrix×vector, 256×256 | `__mind_blas_matmul_rmajor_i16_v` | 256-vector |
 | `scalar-float-f64` | scalar IEEE chain | `scalar_f64_chain` (`a+b-c*d/a`) | scalar f64 |
+| `dot-f32-v-4093` | strict f32 dot, len 4093 | `__mind_blas_dot_f32_v` | f32 bits packed into i64 |
+| `matmul-f32-v-64x64` | strict f32 matrix×vector, 64×64 | `__mind_blas_matmul_rmajor_f32_v` | 64 f32 bit patterns |
 | `dot-i16-4096` | int16 dot, len 4096 | `__mind_blas_dot_i16_v` | scalar i64 |
 | `gemm-q16-fused-64x64x64` | fused matrix×matrix, 64×64×64 | `__mind_blas_matmul_mm_q16_v` | 64×64 matrix |
 | `q16-arith-chain` | scalar Q16.16 arith chain | `q16_arith_chain` (`(x*y)>>16`) | scalar i64 |
@@ -64,14 +69,17 @@ lowering), and the struct-by-handle alloc/store/load round-trip
 ## Running
 
 ```
-cargo test --features "mlir-build std-surface cross-module-imports" \
+MIND_BENCH_REQUIRE=1 cargo test --no-default-features \
+      --features "mlir-build std-surface cross-module-imports" \
       --test cross_substrate_identity
 ```
 
-Self-skips if the MLIR toolchain (`mlir-opt` / `mlir-translate` / `clang`) is
-not on PATH — the property is verified by STARGA engineers on a
-toolchain-equipped host and on the per-substrate CI runners (RFC 0020 §10), not
-on stock runners. `avx2` is verified on x86_64 hosts; `neon` on aarch64.
+Run with `MIND_BENCH_BLESS` unset. `MIND_BENCH_REQUIRE=1` makes a missing
+MLIR toolchain (`mlir-opt` / `mlir-translate` / `clang`) fail closed, as in CI.
+An optional local run without that requirement can self-skip and does not
+establish a pass. `avx2` is verified on x86_64 hosts; `neon` on aarch64.
+CI also runs `cross_substrate_receipts` to verify coverage, and keeps the
+non-asserting bless-mode harvest separate from the asserting gate.
 
 ## Adding a workload
 
@@ -84,12 +92,18 @@ on stock runners. `avx2` is verified on x86_64 hosts; `neon` on aarch64.
 4. Re-run without `MIND_BENCH_BLESS` — it must pass.
 
 Re-bless only on an **intentional** lowering change (RFC 0020 §13); document the
-transition in the release notes. Ed25519 signing of the hashes (RFC 0020 §5.3)
-lands with the pure-MIND CLI once std-crypto exists.
+transition in the release notes. Public reference signing must use the exact
+PQC hybrid in RFC 0020 §5.3. The compiler capability is implemented opt-in;
+public harness integration, trust-anchor publication and operational release
+signing remain pending. These committed reference files are unsigned.
 
-## Why only Q16.16 integer workloads
+## Floating-point scope
 
-Only exact-integer reductions qualify as byte-identity workloads. The f32 L1/L∞
-paths use tree-shaped reductions that reorder summation, so they are *not*
-bit-exact across substrates — they belong in the approximate-comparison surface
-(RFC 0020 §8 `compare`), never as a byte-identity reference.
+Exact-integer workloads and the three strict floating-point output fixtures
+above have matching committed `avx2`/`neon` hashes (RFC 0015 §5A). The f32
+dot and matrix-vector kernels use separate multiply/add operations and a
+fixed lane fold; the f64 fixture pins a strict scalar operation sequence.
+Each compares IEEE bit patterns exactly, without a tolerance. This coverage
+does not establish bit-identity for arbitrary floating-point reductions,
+transcendental functions, all inputs, or GPU execution. New cases require
+their own strict computation, encoding and real-substrate evidence.
