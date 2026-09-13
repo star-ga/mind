@@ -11,12 +11,12 @@
 //! ONLY when every condition below holds; anything unresolved or unrecognized
 //! is refused.
 //!
-//! Scope (root field-first ruling + FABLE_FIELD_FIRST_CONTRACT §2.3-§2.7 +
-//! LUNA F1-F3):
+//! Target scope (root field-first ruling + FABLE_FIELD_FIRST_CONTRACT §2.3-§2.7
+//! + LUNA F1-F3) — the full contract this pass is being built toward:
 //!   * owner exactness — `&mut r.f` target is the field's declared struct type,
 //!     canonicalized; a same-named struct of a different owner does not match;
 //!   * read-only capability survival — a `&R` (immutable) reference may not
-//!     drive `*p = v` / `p.f = v`;
+//!     drive `*p = v` / `p.f = v` / projection / cast / by-value coercion;
 //!   * explicit region refusal — a deref / `&mut r.f` inside an explicit
 //!     `region { .. }` is refused until lifetime provenance exists;
 //!   * escape — a reference is only a parameter type / a direct call argument;
@@ -24,11 +24,19 @@
 //!   * depth-one struct field only — `&mut h.pt.a`, `&mut xs[i].pt`,
 //!     `&mut mk().pt`, `&mut h.n` (scalar field) are refused.
 //!
-//! NOTE (D3/D4 coupling): admitting a shape here is only sound once D4 lowers
-//! it. Until the coupled D4 increment lands, the caller keeps the blanket Slice-0
-//! refusal in place, so this pass runs additively (its admits are not yet
-//! consulted to suppress that refusal). Wiring the carve-out is the D4-paired
-//! step.
+//! STATUS — this pass is INCOMPLETE and runs ONLY additively; the blanket
+//! Slice-0 refusal (type_checker/mod.rs) is what actually rejects every deref
+//! today, so nothing below is yet a load-bearing admission gate. IMPLEMENTED so
+//! far: the region refusal, and a refusal for a `*p` / `*p = v` whose operand is
+//! not a bare `&mut <struct>` parameter. NOT YET implemented (tracked, must land
+//! WITH the D4 lowering before the blanket refusal is removed): owner-exact
+//! target comparison (canonical_struct_name only clones today; ref_target_name
+//! returns None), caller-side `Node::Ref` classification (`&mut r.f` admit +
+//! depth/index/call-result/scalar-field/escape refusals — `admitted_field_place`
+//! is not yet called), `*p = v` value-owner validation, and shadowing-aware
+//! parameter tracking. Do NOT carve the admitted shape out of the blanket
+//! refusal until these are complete AND the D4 lowering for the same shape
+//! exists (root D3->D4 direction, 2026-09-13).
 
 #![cfg(feature = "std-surface")]
 
@@ -47,7 +55,16 @@ const DEREF_ASSIGN_CODE: &str = "E2029";
 /// `crate.`-qualified form compare equal.
 fn canonical_struct_name(ty: &TypeAnn) -> Option<String> {
     match ty {
-        TypeAnn::Named(name) => Some(name.clone()),
+        // Canonicalize the owner exactly as `provenance::field_type` does: an
+        // intra-module dotted owner without the `crate.` prefix is normalized to
+        // `crate.<owner>` so a same-named struct from a *different* module does
+        // NOT compare equal (owner exactness). A bare (undotted) name is a
+        // local struct and stays as-is.
+        TypeAnn::Named(name) => Some(if name.contains('.') && !name.starts_with("crate.") {
+            format!("crate.{name}")
+        } else {
+            name.clone()
+        }),
         _ => None,
     }
 }
@@ -215,11 +232,55 @@ fn classify(
             classify(cond, env, mrefs, in_region, src, file, errs);
             walk(body, env, mrefs, in_region, src, file, errs);
         }
-        Node::For { body, .. } | Node::ForEach { body, .. } => {
+        Node::For {
+            var, body, span, ..
+        }
+        | Node::ForEach {
+            var, body, span, ..
+        } => {
+            if mrefs.contains_key(var) {
+                refuse(
+                    errs,
+                    src,
+                    file,
+                    *span,
+                    DEREF_ASSIGN_CODE,
+                    "a `for` loop variable may not shadow a `&mut` reference parameter in the deref-assign subset; rename it.",
+                );
+            }
             walk(body, env, mrefs, in_region, src, file, errs);
         }
         Node::Return { value: Some(v), .. } => classify(v, env, mrefs, in_region, src, file, errs),
-        Node::Let { value, .. } | Node::Assign { value, .. } => {
+        // Shadowing / reassignment of a `&mut` parameter is refused (§2.5): the
+        // lowering env is string-keyed, so a `let p = ..` / `p = ..` naming a
+        // `&mut` param would make the flat param map unsound. Refuse rather than
+        // add binding-identity machinery in this slice.
+        Node::Let {
+            name, value, span, ..
+        } => {
+            if mrefs.contains_key(name) {
+                refuse(
+                    errs,
+                    src,
+                    file,
+                    *span,
+                    DEREF_ASSIGN_CODE,
+                    "a `let` binding may not shadow a `&mut` reference parameter in the deref-assign subset; rename it.",
+                );
+            }
+            classify(value, env, mrefs, in_region, src, file, errs);
+        }
+        Node::Assign { name, value, span } => {
+            if mrefs.contains_key(name) {
+                refuse(
+                    errs,
+                    src,
+                    file,
+                    *span,
+                    DEREF_ASSIGN_CODE,
+                    "a `&mut` reference parameter may not be reassigned in the deref-assign subset.",
+                );
+            }
             classify(value, env, mrefs, in_region, src, file, errs);
         }
         _ => {
