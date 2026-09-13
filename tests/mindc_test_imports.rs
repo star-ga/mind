@@ -44,6 +44,35 @@ fn run(root: &Path) -> Output {
         .expect("run mindc test")
 }
 
+fn explicit_source_project(name: &str, test_source: &str) -> PathBuf {
+    let root = common::scratch_dir("mindc-test-imports-explicit").join(name);
+    fs::create_dir_all(root.join(".git")).expect("create project boundary");
+    fs::write(
+        root.join("Mind.toml"),
+        format!(
+            "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n\
+             [build]\nentry = \"consumer.mind\"\n\n\
+             [targets.cpu]\nbackend = \"cpu\"\nsources = [\"provider.mind\", \"consumer.mind\"]\n"
+        ),
+    )
+    .expect("write explicit source manifest");
+    fs::write(
+        root.join("provider.mind"),
+        "export { VALUE, double }\nconst VALUE: i64 = 11;\nfn double(x: i64) -> i64 { return x + x; }\nfn hidden(x: i64) -> i64 { return x + x; }\n",
+    )
+    .expect("write explicit imported module");
+    fs::write(root.join("consumer.mind"), test_source).expect("write explicit test source");
+    root
+}
+
+fn run_explicit(root: &Path) -> Output {
+    Command::new(common::mindc_bin())
+        .args(["test", "consumer.mind"])
+        .current_dir(root)
+        .output()
+        .expect("run explicit-source mindc test")
+}
+
 fn run_with_threads(root: &Path, threads: usize) -> Output {
     Command::new(common::mindc_bin())
         .args([
@@ -88,6 +117,148 @@ fn imported_function_executes() {
     assert!(output.status.success(), "{text}");
     assert!(text.contains("running 2 tests"), "{text}");
     assert!(text.contains("2 passed; 0 failed"), "{text}");
+}
+
+#[test]
+fn path_syntax_imported_call_and_value_execute_from_explicit_file_entry() {
+    let root = explicit_source_project(
+        "eval_explicit_path_syntax",
+        r#"
+import provider;
+
+#[test]
+fn imported_path_call_executes() {
+    assert provider::double(7) == 14, "path imported function";
+    assert provider::VALUE == 11, "path imported constant";
+}
+"#,
+    );
+    let output = run_explicit(&root);
+    let text = output_text(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(text.contains("running 1 test"), "{text}");
+    assert!(text.contains("1 passed; 0 failed"), "{text}");
+}
+
+#[test]
+fn nested_path_alias_and_local_enum_remain_distinct() {
+    let root = common::scratch_dir("mindc-test-imports-nested-path")
+        .join(format!("nested_path_{}", std::process::id()));
+    fs::create_dir_all(root.join(".git")).expect("create project boundary");
+    fs::create_dir_all(root.join("src")).expect("create nested source directory");
+    fs::write(
+        root.join("Mind.toml"),
+        "[package]\nname = \"nested_path\"\nversion = \"0.1.0\"\n\n\
+         [build]\nentry = \"consumer.mind\"\n\n\
+         [targets.cpu]\nbackend = \"cpu\"\nsources = [\"src/provider.mind\", \"consumer.mind\"]\n",
+    )
+    .expect("write nested path manifest");
+    fs::write(
+        root.join("src/provider.mind"),
+        "export { double }\nfn double(x: i64) -> i64 { return x + x; }\n",
+    )
+    .expect("write nested provider");
+    fs::write(
+        root.join("consumer.mind"),
+        r#"
+use crate.src.provider;
+enum Side { Left(i64), Right }
+fn local_constructor() -> i64 {
+    let side = Side::Left(3);
+    match side {
+        Side::Left(value) => value,
+        Side::Right => 0,
+    }
+}
+
+#[test]
+fn nested_path_call_executes() {
+    assert crate::src::provider::double(8) == 16, "nested path imported function";
+}
+"#,
+    )
+    .expect("write nested path test source");
+    let output = Command::new(common::mindc_bin())
+        .args(["test", "consumer.mind"])
+        .current_dir(&root)
+        .output()
+        .expect("run nested path mindc test");
+    let text = output_text(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(text.contains("1 passed; 0 failed"), "{text}");
+}
+
+#[test]
+fn path_syntax_private_and_wrong_arity_fail_closed() {
+    let private_root = explicit_source_project(
+        "eval_explicit_path_private",
+        r#"
+import provider;
+
+#[test]
+fn private_path_symbol_is_refused() {
+    assert provider::hidden(7) == 14, "must not execute";
+}
+"#,
+    );
+    let private_output = run_explicit(&private_root);
+    let private_text = output_text(&private_output);
+    assert!(!private_output.status.success(), "{private_text}");
+    assert!(private_text.contains("E2003"), "{private_text}");
+
+    let arity_root = explicit_source_project(
+        "eval_explicit_path_arity",
+        r#"
+import provider;
+
+#[test]
+fn path_wrong_arity_is_refused() {
+    assert provider::double() == 0, "must not execute";
+}
+"#,
+    );
+    let arity_output = run_explicit(&arity_root);
+    let arity_text = output_text(&arity_output);
+    assert!(!arity_output.status.success(), "{arity_text}");
+    assert!(
+        arity_text.contains("arity") || arity_text.contains("expects 1"),
+        "{arity_text}"
+    );
+}
+
+#[test]
+fn standalone_path_import_still_requires_a_manifest() {
+    let root = common::scratch_dir("mindc-test-imports-standalone-path")
+        .join(format!("standalone_path_{}", std::process::id()));
+    fs::create_dir_all(&root).expect("create standalone project");
+    fs::write(
+        root.join("provider.mind"),
+        "export { double }\nfn double(x: i64) -> i64 { return x + x; }\n",
+    )
+    .expect("write standalone provider");
+    fs::write(
+        root.join("consumer.mind"),
+        r#"
+import provider;
+
+#[test]
+fn standalone_path_import_is_refused() {
+    assert provider::double(7) == 14, "must not execute";
+}
+"#,
+    )
+    .expect("write standalone path test");
+    let output = Command::new(common::mindc_bin())
+        .args(["test", "consumer.mind"])
+        .current_dir(&root)
+        .output()
+        .expect("run standalone path mindc test");
+    let text = output_text(&output);
+    assert!(!output.status.success(), "{text}");
+    assert!(
+        text.contains("E2003") && text.contains("Mind.toml"),
+        "{text}"
+    );
 }
 
 #[test]

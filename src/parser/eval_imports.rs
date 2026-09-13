@@ -17,7 +17,7 @@
 //! identifier. The test evaluator requests this companion data so it can keep
 //! lexical module ownership without changing the ordinary parser result.
 
-use crate::ast::{Module, Span};
+use crate::ast::{Module, Node, Span};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EvalImportRefKind {
@@ -52,6 +52,47 @@ pub(crate) struct EvalParsedModule {
     /// Full paths, ordered. A last-segment view must never become the authority
     /// -- `a.helper` and `b.helper` are different modules.
     pub(crate) import_paths: Vec<String>,
+}
+
+impl<'a> crate::parser::P<'a> {
+    pub(crate) fn capture_path_call(&mut self, node: &Node) {
+        let Node::Call { callee, span, .. } = node else {
+            return;
+        };
+        let Some((qualifier, symbol)) = callee.rsplit_once("::") else {
+            return;
+        };
+        self.capture_path_ref(*span, qualifier, symbol, EvalImportRefKind::Call);
+    }
+
+    pub(crate) fn capture_path_value(&mut self, ident: &str, span: Span) {
+        let Some((qualifier, symbol)) = ident.rsplit_once("::") else {
+            return;
+        };
+        self.capture_path_ref(span, qualifier, symbol, EvalImportRefKind::Value);
+    }
+
+    fn capture_path_ref(
+        &mut self,
+        span: Span,
+        qualifier: &str,
+        symbol: &str,
+        kind: EvalImportRefKind,
+    ) {
+        if self.eval_import_refs.is_none() {
+            return;
+        }
+        let qualifier = if self.imports.iter().any(|item| item == qualifier) {
+            vec![qualifier.to_string()]
+        } else {
+            let dotted = qualifier.replace("::", ".");
+            if !self.import_paths.iter().any(|item| item == &dotted) {
+                return;
+            }
+            dotted.split('.').map(str::to_string).collect()
+        };
+        self.record_eval_import_ref(span, qualifier, symbol, kind);
+    }
 }
 
 impl EvalParsedModule {
@@ -116,5 +157,41 @@ mod tests {
         assert_eq!(captured.import_refs[1].qualifier, ["dep"]);
         assert_eq!(captured.import_refs[1].symbol, "call");
         assert_eq!(captured.import_refs[1].kind, EvalImportRefKind::Call);
+    }
+
+    /// Regression: the PATH-syntax forms `dep::call(...)` and `dep::VALUE` must
+    /// record the same evaluator import refs the dot forms do. Before this a
+    /// path-spelled imported call/const carried NO binding and failed the tree
+    /// evaluator with a bare "unsupported operation" (call) / "unknown variable"
+    /// (value). The AST is
+    /// still unchanged by the capture (refs are side data, not AST).
+    #[test]
+    fn evaluator_capture_records_path_syntax_refs() {
+        let source = "use crate.src.dep; fn f() -> i64 { return dep::call(dep::VALUE); }";
+        let ordinary = crate::parser::parse(source).expect("ordinary parse");
+        let captured = crate::parser::parse_for_eval(source).expect("evaluator parse");
+        assert_eq!(captured.module, ordinary);
+        assert_eq!(captured.import_refs.len(), 2);
+        assert_eq!(captured.import_refs[0].qualifier, ["dep"]);
+        assert_eq!(captured.import_refs[0].symbol, "VALUE");
+        assert_eq!(captured.import_refs[0].kind, EvalImportRefKind::Value);
+        assert_eq!(captured.import_refs[1].qualifier, ["dep"]);
+        assert_eq!(captured.import_refs[1].symbol, "call");
+        assert_eq!(captured.import_refs[1].kind, EvalImportRefKind::Call);
+    }
+
+    /// An enum unit-variant path (`Color::Red`) whose leading segment is a TYPE,
+    /// not a declared import, must NOT be captured as an evaluator import ref —
+    /// the import-qualifier guard is what keeps the `::` value arm from
+    /// shadowing enum-variant resolution.
+    #[test]
+    fn evaluator_capture_skips_enum_variant_paths() {
+        let source = "fn f() -> i64 { let c = Color::Red; return 0; }";
+        let captured = crate::parser::parse_for_eval(source).expect("evaluator parse");
+        assert!(
+            captured.import_refs.is_empty(),
+            "enum-variant path must not be an import ref: {:?}",
+            captured.import_refs
+        );
     }
 }

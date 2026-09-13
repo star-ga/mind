@@ -4701,16 +4701,18 @@ impl<'a> P<'a> {
                 // Phase 10.6: identifiers that contain `::` segment
                 // separators (enum variant access — e.g.
                 // `config.AddressingMode::Content`) keep the full path
-                // as an identifier; the catch-all backtrack below
-                // would slice off everything after the first `.` which
-                // would corrupt the path.
+                // as an identifier; the catch-all backtrack below would slice off
+                // everything after the first `.`.
                 if ident.contains("::") {
                     if self.at(b'(') {
-                        return self.parse_generic_call(ident, start);
+                        let node = self.parse_generic_call(ident, start)?;
+                        self.capture_path_call(&node);
+                        return Ok(node);
                     } else if self.at(b'{') && self.struct_lit_body_ahead() {
                         return self.parse_struct_literal(ident, start);
                     } else {
                         let span = Span::new(start, self.pos);
+                        self.capture_path_value(&ident, span);
                         return Ok(Node::Lit(Literal::Ident(ident), span));
                     }
                 }
