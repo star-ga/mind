@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1832 | **Est. tokens:** ~3503746
-**Generated:** 2026-09-14 07:28 UTC
+**Files:** 1832 | **Est. tokens:** ~3503788
+**Generated:** 2026-09-14 07:50 UTC
 
 ## Token Budget Guide
 
@@ -36,7 +36,7 @@
 | `bench/` | 5 | ~7574 |
 | `bench/fft/` | 8 | ~8060 |
 | `benches/` | 28 | ~83855 |
-| `benches/common/` | 2 | ~2995 |
+| `benches/common/` | 2 | ~3037 |
 | `benchmarks/` | 13 | ~28066 |
 | `benchmarks/autograd_comparison/` | 8 | ~9411 |
 | `benchmarks/cupy_comparison/` | 6 | ~7733 |
@@ -331,7 +331,7 @@
 ### `benches/common/`
 
 - `mod.rs` (~668 tok, large) — Shared self-skip probe for criterion bench targets.
-- `roofline_peak.rs` (~2327 tok, huge) — Shared roofline denominator for the deterministic GEMM / int-dot benches.
+- `roofline_peak.rs` (~2369 tok, huge) — Shared roofline denominator for the deterministic GEMM / int-dot benches.
 ### `benches/`
 
 - `compiler.rs` (~3786 tok, huge) — Small program: Simple matrix multiplication

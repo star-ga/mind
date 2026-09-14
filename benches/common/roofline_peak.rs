@@ -124,7 +124,9 @@ pub fn isa_peak_gmacs(family: u32, model: u32, ghz: f64, macs_per_uop: f64) -> I
 #[cfg(target_arch = "x86_64")]
 pub fn host_family_model() -> (u32, u32) {
     // CPUID leaf 1 is architectural on every x86_64 CPU; `__cpuid` is safe here.
-    let r = std::arch::x86_64::__cpuid(1);
+    // The intrinsic is safe for this architectural leaf, but the operation is
+    // explicitly unsafe in Rust 2024 and must remain scoped at the call site.
+    let r = unsafe { std::arch::x86_64::__cpuid(1) };
     let eax = r.eax;
     let base_family = (eax >> 8) & 0xF;
     let base_model = (eax >> 4) & 0xF;
