@@ -442,7 +442,7 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
             value: Some(v),
             span,
         } => {
-            if ident_names_ref_param(v, ctx.refs) {
+            if contains_ref_param(v, ctx.refs) {
                 refuse(
                     errs,
                     ctx,
@@ -465,7 +465,7 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
                     "a `let` binding may not shadow a reference parameter in the deref-assign subset; rename it.",
                 );
             }
-            if ident_names_ref_param(value, ctx.refs) {
+            if contains_ref_param(value, ctx.refs) {
                 refuse(
                     errs,
                     ctx,
@@ -484,6 +484,15 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
                     *span,
                     DEREF_ASSIGN_CODE,
                     "a reference parameter may not be reassigned in the deref-assign subset.",
+                );
+            }
+            if contains_ref_param(value, ctx.refs) {
+                refuse(
+                    errs,
+                    ctx,
+                    *span,
+                    DEREF_ASSIGN_CODE,
+                    "a reference parameter may not be assigned into another binding in the deref-assign subset: a reference may only appear as a direct call argument.",
                 );
             }
             classify(value, ctx, in_region, errs);

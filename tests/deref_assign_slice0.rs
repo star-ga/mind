@@ -479,6 +479,21 @@ fn immutable_reference_shadow_and_wrappers_are_refused() {
         "a cast reference parameter may not reach a scalar formal; got {:?}",
         codes(cast)
     );
+
+    let escaped = "struct Pair {
+    x: i64,
+    y: i64
+}
+fn caller(p: &mut Pair) {
+    let q = (p)
+    return (p)
+}
+";
+    assert!(
+        codes(escaped).contains(&"E2029".to_string()),
+        "a wrapped reference parameter may not escape through bindings or return; got {:?}",
+        codes(escaped)
+    );
 }
 
 #[test]
