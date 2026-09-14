@@ -66,11 +66,17 @@ const REF_FORM_CODE: &str = "E2037";
 /// `&mut r.f` call argument targets a callee parameter that is `&mut <owner>`.
 pub(crate) type FnParamSigs = BTreeMap<String, Vec<TypeAnn>>;
 
+/// Every reference parameter in the current function, including immutable and
+/// non-nominal references. A call-site must prove both capability and nominal
+/// owner before forwarding one of these values.
+type RefParamSigs = BTreeMap<String, (bool, Option<String>)>;
+
 /// Invariant per-function context threaded through the walk (everything except
 /// the region flag and the diagnostic sink).
 struct Ctx<'a> {
     env: &'a Env,
     mrefs: &'a BTreeMap<String, String>,
+    refs: &'a RefParamSigs,
     fn_sigs: &'a FnParamSigs,
     src: &'a str,
     file: Option<&'a str>,
@@ -143,6 +149,16 @@ fn mut_ref_params(fd: &FnDefData) -> BTreeMap<String, String> {
             if let Some(name) = canonical_struct_name(target) {
                 out.insert(p.name.clone(), name);
             }
+        }
+    }
+    out
+}
+
+fn ref_params(fd: &FnDefData) -> RefParamSigs {
+    let mut out = BTreeMap::new();
+    for p in &fd.params {
+        if let TypeAnn::Ref { mutable, target } = &p.ty {
+            out.insert(p.name.clone(), (*mutable, canonical_struct_name(target)));
         }
     }
     out
@@ -249,9 +265,11 @@ pub(crate) fn check_fn(
         env.types.insert(p.name.clone(), p.ty.clone());
     }
     let mrefs = mut_ref_params(fd);
+    let refs = ref_params(fd);
     let ctx = Ctx {
         env: &env,
         mrefs: &mrefs,
+        refs: &refs,
         fn_sigs,
         src,
         file,
@@ -319,6 +337,24 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
         Node::Call { callee, args, .. } => {
             for (i, arg) in args.iter().enumerate() {
                 match arg {
+                    Node::Lit(crate::ast::Literal::Ident(name), span)
+                        if ctx.refs.contains_key(name) =>
+                    {
+                        let (mutable, owner) = ctx.refs.get(name).expect("reference checked");
+                        let admitted = *mutable
+                            && owner.as_deref().is_some_and(|o| {
+                                callee_param_is_mut_owner(ctx.fn_sigs, callee, i, o)
+                            });
+                        if !admitted {
+                            refuse(
+                                errs,
+                                ctx,
+                                *span,
+                                REF_FORM_CODE,
+                                "unsupported reference argument: a reference parameter may only be forwarded as a mutable, nominal `&mut <owner>` to a known callee parameter of the EXACT same `&mut <owner>` type; scalar, immutable, wrong-owner, non-reference, or unknown-signature calls are refused.",
+                            );
+                        }
+                    }
                     Node::Ref {
                         mutable,
                         inner,

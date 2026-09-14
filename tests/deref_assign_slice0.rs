@@ -405,6 +405,66 @@ fn cast_laundered_field_ref_is_refused() {
 }
 
 #[test]
+fn reference_param_to_scalar_callee_is_refused() {
+    let src = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn sink(x: i64) {\n}\nfn caller(p: &mut Pair) {\n    sink(p)\n}\n";
+    assert!(
+        codes(src).contains(&"E2037".to_string()),
+        "a reference parameter passed to a scalar formal must be E2037; got {:?}",
+        codes(src)
+    );
+}
+
+#[test]
+fn readonly_reference_param_to_mutable_callee_is_refused() {
+    let src = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn replace(p: &mut Pair, next: Pair) {\n    *p = next\n}\nfn caller(p: &Pair, next: Pair) {\n    replace(p, next)\n}\n";
+    assert!(
+        codes(src).contains(&"E2037".to_string()),
+        "an immutable reference cannot flow to a mutable formal; got {:?}",
+        codes(src)
+    );
+}
+
+#[test]
+fn mutable_reference_forwarding_to_exact_formal_is_admitted() {
+    let src = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn replace(p: &mut Pair, next: Pair) {\n    *p = next\n}\nfn caller(p: &mut Pair, next: Pair) {\n    replace(p, next)\n}\n";
+    let cs = codes(src);
+    assert!(
+        !cs.iter()
+            .any(|c| c == "E2028" || c == "E2029" || c == "E2037"),
+        "an exact mutable reference forwarding call must remain admitted; got {cs:?}"
+    );
+}
+
+#[test]
+fn reference_forwarding_to_unknown_callee_is_refused() {
+    let src =
+        "struct Pair {\n    x: i64,\n    y: i64\n}\nfn caller(p: &mut Pair) {\n    unknown(p)\n}\n";
+    assert!(
+        codes(src).contains(&"E2037".to_string()),
+        "an unknown callee cannot establish reference capability/owner; got {:?}",
+        codes(src)
+    );
+}
+
+#[test]
+fn admitted_lowering_helper_is_not_an_external_api() {
+    let lower = include_str!("../src/eval/lower.rs");
+    let eval = include_str!("../src/eval/mod.rs");
+    assert!(
+        lower.contains("pub(crate) fn lower_to_ir_admitted"),
+        "the checker-dependent lowering helper must remain crate-private"
+    );
+    assert!(
+        eval.contains("pub(crate) use lower::lower_to_ir_admitted;"),
+        "the pipeline needs an internal re-export for the checker-dependent helper"
+    );
+    assert!(
+        !eval.contains("pub use lower::{lower_to_ir, lower_to_ir_admitted"),
+        "the checker-dependent helper must not be externally re-exported"
+    );
+}
+
+#[test]
 fn direct_lowering_api_fails_closed_on_deref() {
     // Root U1 source review: the public DIRECT lowering API (no type-check, so
     // no D3 semantic admission) must FAIL CLOSED on any deref — a place

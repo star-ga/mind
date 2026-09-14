@@ -234,7 +234,8 @@ mod enum_value_tests {
 
 pub use closures::desugar_closures;
 pub use ir_interp::eval_ir;
-pub use lower::{lower_to_ir, lower_to_ir_admitted, lower_to_ir_with_limits};
+pub use lower::{lower_to_ir, lower_to_ir_with_limits};
+pub(crate) use lower::lower_to_ir_admitted;
 #[cfg(feature = "mlir-build")]
 pub use mlir_build::BuildError as MlirBuildError;
 #[cfg(feature = "mlir-build")]

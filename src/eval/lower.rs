@@ -1257,7 +1257,7 @@ pub fn lower_to_ir_with_limits(
 /// admitted field-first `*p` / `*p = v` shapes to lower. The plain
 /// `lower_to_ir_with_limits` / `lower_to_ir` stay fail-closed for the direct
 /// (un-type-checked) API: they refuse every deref.
-pub fn lower_to_ir_admitted(
+pub(crate) fn lower_to_ir_admitted(
     module: &ast::Module,
     limits: MaterializationLimits,
 ) -> Result<IRModule, MaterializationRefusal> {
