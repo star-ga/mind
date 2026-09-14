@@ -1129,6 +1129,13 @@ fn register_enums_in_block(ir: &mut IRModule, stmts: &[ast::Node]) {
     }
 }
 
+/// Lower an AST through the untyped public entry point.
+///
+/// The checker-dependent entry is deliberately private to this crate:
+///
+/// ```compile_fail
+/// let _ = libmind::eval::lower_to_ir_admitted;
+/// ```
 pub fn lower_to_ir(module: &ast::Module) -> Result<IRModule, MaterializationRefusal> {
     lower_to_ir_with_limits(module, MaterializationLimits::default())
 }

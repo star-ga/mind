@@ -36,7 +36,7 @@
 //!     survive a cast / projection / by-value / forwarding launder: such forms
 //!     fail closed.
 //!
-//!   * escapes — a `&mut` parameter may not be let-bound (`let q = p`),
+//!   * escapes — a reference parameter may not be let-bound (`let q = p`),
 //!     reassigned, shadowed by a let/for var, or returned.
 //!
 //! `&NAME` (whole-variable address-of) and `&(expr)` are NOT this subset's
@@ -342,6 +342,7 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
                     {
                         let (mutable, owner) = ctx.refs.get(name).expect("reference checked");
                         let admitted = *mutable
+                            && !in_region
                             && owner.as_deref().is_some_and(|o| {
                                 callee_param_is_mut_owner(ctx.fn_sigs, callee, i, o)
                             });
@@ -386,6 +387,15 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
                             classify(r, ctx, in_region, errs);
                         }
                     }
+                    _ if contains_ref_param(arg, ctx.refs) => {
+                        refuse(
+                            errs,
+                            ctx,
+                            arg.span(),
+                            REF_FORM_CODE,
+                            "unsupported reference argument: a reference parameter must be a bare identifier at a known exact mutable-reference formal; parentheses, casts, nested expressions, and unknown signatures are refused.",
+                        );
+                    }
                     _ => classify(arg, ctx, in_region, errs),
                 }
             }
@@ -417,13 +427,13 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
         | Node::ForEach {
             var, body, span, ..
         } => {
-            if ctx.mrefs.contains_key(var) {
+            if ctx.refs.contains_key(var) {
                 refuse(
                     errs,
                     ctx,
                     *span,
                     DEREF_ASSIGN_CODE,
-                    "a `for` loop variable may not shadow a `&mut` reference parameter in the deref-assign subset; rename it.",
+                    "a `for` loop variable may not shadow a reference parameter in the deref-assign subset; rename it.",
                 );
             }
             walk(body, ctx, in_region, errs);
@@ -432,13 +442,13 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
             value: Some(v),
             span,
         } => {
-            if ident_names_mut_ref_param(v, ctx.mrefs) {
+            if ident_names_ref_param(v, ctx.refs) {
                 refuse(
                     errs,
                     ctx,
                     *span,
                     DEREF_ASSIGN_CODE,
-                    "a `&mut` reference parameter may not be returned in the deref-assign subset: a reference may only appear as a direct call argument.",
+                    "a reference parameter may not be returned in the deref-assign subset: a reference may only appear as a direct call argument.",
                 );
             }
             classify(v, ctx, in_region, errs);
@@ -446,34 +456,34 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
         Node::Let {
             name, value, span, ..
         } => {
-            if ctx.mrefs.contains_key(name) {
+            if ctx.refs.contains_key(name) {
                 refuse(
                     errs,
                     ctx,
                     *span,
                     DEREF_ASSIGN_CODE,
-                    "a `let` binding may not shadow a `&mut` reference parameter in the deref-assign subset; rename it.",
+                    "a `let` binding may not shadow a reference parameter in the deref-assign subset; rename it.",
                 );
             }
-            if ident_names_mut_ref_param(value, ctx.mrefs) {
+            if ident_names_ref_param(value, ctx.refs) {
                 refuse(
                     errs,
                     ctx,
                     *span,
                     DEREF_ASSIGN_CODE,
-                    "a `&mut` reference parameter may not be let-bound (`let q = p`) in the deref-assign subset: a reference may only appear as a direct call argument.",
+                    "a reference parameter may not be let-bound (`let q = p`) in the deref-assign subset: a reference may only appear as a direct call argument.",
                 );
             }
             classify(value, ctx, in_region, errs);
         }
         Node::Assign { name, value, span } => {
-            if ctx.mrefs.contains_key(name) {
+            if ctx.refs.contains_key(name) {
                 refuse(
                     errs,
                     ctx,
                     *span,
                     DEREF_ASSIGN_CODE,
-                    "a `&mut` reference parameter may not be reassigned in the deref-assign subset.",
+                    "a reference parameter may not be reassigned in the deref-assign subset.",
                 );
             }
             classify(value, ctx, in_region, errs);
@@ -523,8 +533,24 @@ fn deref_param_referent_owner(target: &Node, mrefs: &BTreeMap<String, String>) -
     }
 }
 
-/// Is `node` a bare identifier naming a `&mut` reference parameter? Used to
-/// refuse the escaping forms `let q = p` and `return p`.
-fn ident_names_mut_ref_param(node: &Node, mrefs: &BTreeMap<String, String>) -> bool {
-    matches!(node, Node::Lit(crate::ast::Literal::Ident(name), _) if mrefs.contains_key(name))
+/// Is `node` a bare identifier naming a reference parameter? Used to refuse
+/// the escaping forms `let q = p` and `return p` for either capability.
+fn ident_names_ref_param(node: &Node, refs: &RefParamSigs) -> bool {
+    matches!(node, Node::Lit(crate::ast::Literal::Ident(name), _) if refs.contains_key(name))
+}
+
+/// Find a reference-parameter occurrence inside a call argument. Only a bare
+/// identifier can be forwarded: parentheses/casts must not launder a
+/// capability into an untyped call expression.
+fn contains_ref_param(node: &Node, refs: &RefParamSigs) -> bool {
+    if ident_names_ref_param(node, refs) {
+        return true;
+    }
+    let mut found = false;
+    super::super::nerve_walk::for_each_child(node, &mut |child| {
+        if contains_ref_param(child, refs) {
+            found = true;
+        }
+    });
+    found
 }

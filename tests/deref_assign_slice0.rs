@@ -447,20 +447,37 @@ fn reference_forwarding_to_unknown_callee_is_refused() {
 }
 
 #[test]
-fn admitted_lowering_helper_is_not_an_external_api() {
-    let lower = include_str!("../src/eval/lower.rs");
-    let eval = include_str!("../src/eval/mod.rs");
+fn reference_forwarding_inside_region_is_refused() {
+    let src = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn replace(p: &mut Pair, next: Pair) {\n    *p = next\n}\nfn caller(p: &mut Pair, next: Pair) {\n    region {\n        replace(p, next)\n    }\n}\n";
     assert!(
-        lower.contains("pub(crate) fn lower_to_ir_admitted"),
-        "the checker-dependent lowering helper must remain crate-private"
+        codes(src).contains(&"E2037".to_string()),
+        "reference forwarding inside a region must be E2037; got {:?}",
+        codes(src)
     );
+}
+
+#[test]
+fn immutable_reference_shadow_and_wrappers_are_refused() {
+    let shadow =
+        "struct Pair {\n    x: i64,\n    y: i64\n}\nfn caller(p: &Pair) {\n    let p = 1\n}\n";
     assert!(
-        eval.contains("pub(crate) use lower::lower_to_ir_admitted;"),
-        "the pipeline needs an internal re-export for the checker-dependent helper"
+        codes(shadow).contains(&"E2029".to_string()),
+        "an immutable reference parameter may not be shadowed; got {:?}",
+        codes(shadow)
     );
+
+    let wrapped = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn replace(p: &mut Pair, next: Pair) {\n    *p = next\n}\nfn caller(p: &mut Pair, next: Pair) {\n    replace((p), next)\n}\n";
     assert!(
-        !eval.contains("pub use lower::{lower_to_ir, lower_to_ir_admitted"),
-        "the checker-dependent helper must not be externally re-exported"
+        codes(wrapped).contains(&"E2037".to_string()),
+        "a parenthesized reference parameter may not bypass the direct-call rule; got {:?}",
+        codes(wrapped)
+    );
+
+    let cast = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn sink(x: i64) {\n}\nfn caller(p: &mut Pair) {\n    sink(p as i64)\n}\n";
+    assert!(
+        codes(cast).contains(&"E2037".to_string()),
+        "a cast reference parameter may not reach a scalar formal; got {:?}",
+        codes(cast)
     );
 }
 
@@ -483,5 +500,12 @@ fn direct_lowering_api_fails_closed_on_deref() {
     assert!(
         lower_to_ir(&record).is_err(),
         "direct lower_to_ir must refuse even an admitted-shape deref (no type-check ran)"
+    );
+
+    let ordinary = parser::parse("fn inc(a: i64) -> i64 {\n    return a + 1\n}\n")
+        .expect("parse ordinary scalar control");
+    assert!(
+        lower_to_ir(&ordinary).is_ok(),
+        "public lowering must retain the ordinary scalar positive control"
     );
 }
