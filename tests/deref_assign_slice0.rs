@@ -175,6 +175,58 @@ fn let_bind_and_return_of_ref_param_are_refused_E2029() {
 }
 
 #[test]
+fn reference_return_tail_and_cycle_are_refused_E2037() {
+    // A final expression has no Node::Return wrapper, and a mutually recursive
+    // call has no finite callee summary. Both still declare reference results,
+    // so D4 must reject them before lowering rather than infer a safe lifetime.
+    let tail = "struct Pair {
+    x: i64,
+    y: i64
+}
+fn leak(p: &mut Pair) -> &mut Pair {
+    p
+}
+";
+    let tail_codes = codes(tail);
+    assert!(
+        tail_codes.contains(&"E2037".to_string()),
+        "nominal reference tail return must be refused; got {tail_codes:?}"
+    );
+
+    let cycle = "struct Pair {
+    x: i64,
+    y: i64
+}
+fn alpha(p: &mut Pair) -> &mut Pair {
+    beta(p)
+}
+fn beta(p: &mut Pair) -> &mut Pair {
+    alpha(p)
+}
+";
+    let cycle_codes = codes(cycle);
+    assert!(
+        cycle_codes.iter().filter(|c| *c == "E2037").count() >= 2,
+        "each nominal reference-returning cycle function must be refused; got {cycle_codes:?}"
+    );
+}
+
+#[test]
+fn scalar_reference_return_tail_is_refused_E2037() {
+    // The same boundary applies to scalar references; D4's value-producing
+    // surface does not gain a scalar-reference return loophole.
+    let scalar = "fn leak(p: &mut i64) -> &mut i64 {
+    p
+}
+";
+    let scalar_codes = codes(scalar);
+    assert!(
+        scalar_codes.contains(&"E2037".to_string()),
+        "scalar reference tail returns must be refused; got {scalar_codes:?}"
+    );
+}
+
+#[test]
 fn cross_owner_deref_assign_is_refused_E2029() {
     // Owner-exactness: `*p = v` where `v` is a DIFFERENT owner than `p`'s
     // referent is refused (no cross-owner place replacement).

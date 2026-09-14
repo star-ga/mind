@@ -274,6 +274,27 @@ pub(crate) fn check_fn(
         src,
         file,
     };
+    // D4 admits only value-producing functions.  A reference return is an
+    // escape even when its expression is a tail value or a call: those forms
+    // do not pass through the explicit `Node::Return` escape check, and call
+    // summaries are intentionally too weak to prove termination or lifetime
+    // safety across cycles.  Refuse the declared type up front for both
+    // nominal and scalar referents; exact mutable-reference forwarding remains
+    // admitted only at call arguments, never as a function result.
+    if matches!(fd.ret_type.as_ref(), Some(TypeAnn::Ref { .. })) {
+        let span = fd
+            .body
+            .first()
+            .map(Node::span)
+            .unwrap_or_else(|| crate::ast::Span::new(0, 0));
+        refuse(
+            errs,
+            &ctx,
+            span,
+            REF_FORM_CODE,
+            "reference-returning functions are outside the D4 deref-assign subset: references may be forwarded only as direct arguments to known exact mutable-reference formals, never returned.",
+        );
+    }
     walk(&fd.body, &ctx, false, errs);
 }
 
