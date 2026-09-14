@@ -9,9 +9,15 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 // Part of the MIND project (Machine Intelligence Native Design).
+
 use crate::types::ConvPadding;
 use crate::types::ShapeDim;
+
+#[path = "span.rs"]
+mod span;
+
 /// Storage layout for a sparse tensor.
 ///
 /// v1 ships CSR as the only concrete layout; the remaining variants are
@@ -30,34 +36,17 @@ pub enum SparseLayout {
     /// Block Sparse Row — tiled extension of CSR for structured sparsity.
     Bsr,
 }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {
     start: usize,
     end: usize,
-}
-impl Span {
-    pub fn new(start: usize, end: usize) -> Self {
-        Self { start, end }
-    }
-    pub fn start(&self) -> usize {
-        self.start
-    }
-
-    pub fn end(&self) -> usize {
-        self.end
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Spanned<T> {
     pub node: T,
     pub span: Span,
-}
-
-impl<T> Spanned<T> {
-    pub fn new(node: T, span: Span) -> Self {
-        Self { node, span }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -648,10 +637,17 @@ pub enum Node {
         operand: Box<Node>,
         span: Span,
     },
-    #[rustfmt::skip]
-    Deref { operand: Box<Node>, span: Span },
-    #[rustfmt::skip]
-    DerefAssign { target: Box<Node>, value: Box<Node>, span: Span },
+    /// Prefix dereference admitted by the checked D4 field-first subset.
+    Deref {
+        operand: Box<Node>,
+        span: Span,
+    },
+    /// Identity-preserving place replacement through a checked dereference.
+    DerefAssign {
+        target: Box<Node>,
+        value: Box<Node>,
+        span: Span,
+    },
     /// Method call
     MethodCall {
         receiver: Box<Node>,

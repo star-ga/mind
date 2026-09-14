@@ -11,12 +11,14 @@
 // limitations under the License.
 
 // Part of the MIND project (Machine Intelligence Native Design).
+
 //! # Example
 //! ```
 //! use libmind::{parser, eval};
 //! let module = parser::parse("1 + 2 * 3").unwrap();
 //! assert_eq!(eval::eval_first_expr(&module).unwrap(), 7);
 //! ```
+
 use crate::ast::{
     BinOp, CallConv, ExternFn, Literal, MatchArm, Module, Node, Param, Pattern, Span, TensorElemOp,
     TypeAnn,
@@ -34,6 +36,9 @@ use trivia::{TriviaCollector, strip_comments_with_trivia};
 
 #[path = "deref.rs"]
 mod deref;
+#[path = "errors.rs"]
+mod errors;
+pub use errors::ParseError;
 
 /// Diagnostic for bitwise operators in a build without `std-surface`.
 ///
@@ -67,19 +72,6 @@ fn bitwise_parse_error(parser: &P<'_>, op: BitToken, compound: bool) -> ParseErr
     error
 }
 
-#[derive(Debug, Clone)]
-pub struct ParseError {
-    pub offset: usize,
-    pub message: String,
-    /// Stable cause code for diagnostics whose parser boundary has a
-    /// feature-specific contract. Ordinary parse errors remain `None`.
-    pub cause_code: Option<&'static str>,
-}
-impl std::fmt::Display for ParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "at offset {}: {}", self.offset, self.message)
-    }
-}
 pub(crate) struct P<'a> {
     b: &'a [u8],
     pos: usize,
@@ -133,6 +125,7 @@ enum PrattOp {
     /// elementwise tensor operators.
     TensorElem(TensorElemOp),
 }
+
 /// A compound-assignment operator (`+= -= *= /= %= &= |= ^= <<= >>=`). These
 /// are NOT infix binary operators: `peek_binop` refuses to bind an `OP=` shape
 /// so the Pratt parse stops at the LHS, and `parse_stmt` desugars
@@ -152,6 +145,7 @@ enum BitToken {
     Shl,
     Shr,
 }
+
 #[cfg(feature = "std-surface")]
 impl From<BitToken> for crate::ast::BitOp {
     fn from(token: BitToken) -> Self {
@@ -164,6 +158,7 @@ impl From<BitToken> for crate::ast::BitOp {
         }
     }
 }
+
 /// The closed set of statement-leading keywords `parse_stmt` dispatches on.
 ///
 /// The set is fixed at compile time and every member is spelled here exactly
@@ -197,6 +192,7 @@ enum StmtKw {
     Trait,
     Impl,
 }
+
 /// Recognise a statement-leading keyword from the identifier run at the cursor.
 ///
 /// This is a **compile-time perfect-hash keyword recogniser** in the classic
@@ -275,6 +271,7 @@ fn stmt_keyword(w: &[u8]) -> Option<StmtKw> {
     };
     if w == cand { Some(kw) } else { None }
 }
+
 impl<'a> P<'a> {
     /// Construct a parser, capturing the active cross-module enum registry as an
     /// explicit snapshot. The snapshot is taken ONCE here (not re-read per

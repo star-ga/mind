@@ -3,7 +3,7 @@
 
 /// Recurse into a node's children looking for statement Vecs that hold a
 /// `continue` targeting the enclosing loop, splicing the loop `step` before each
-/// (via [`inject_step_before_continue`]). The match is EXHAUSTIVE (no silent
+/// (via [`super::inject_step_before_continue`]). The match is EXHAUSTIVE (no silent
 /// catch-all) so a future `crate::ast::Node` variant forces a compile error here rather
 /// than silently re-opening the infinite-loop hazard. Boundaries that are NOT
 /// descended: a nested `while`/`for`/`for-each` BODY (its `continue`s target the

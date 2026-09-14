@@ -58,6 +58,9 @@ pub(super) fn first_deref_span(node: &crate::ast::Node, admitted: bool) -> Optio
     None
 }
 
+/// Lower an admitted `&mut r.f` as the field cell address. This preserves the
+/// D4 place contract: the callee's dereference loads/stores the cell's record
+/// address, and unresolved layout refuses instead of guessing an offset.
 #[cfg(feature = "std-surface")]
 pub(super) fn lower_mut_field_ref(
     inner: &crate::ast::Node,
@@ -97,6 +100,7 @@ pub(super) fn lower_mut_field_ref(
     }
 }
 
+/// Lower an admitted bare dereference through the existing scalar load ABI.
 pub(super) fn lower_deref(
     operand: &crate::ast::Node,
     ir: &mut super::IRModule,
@@ -115,6 +119,8 @@ pub(super) fn lower_deref(
     dst
 }
 
+/// Lower admitted place replacement through the existing scalar store ABI;
+/// aliases retain their identity because only the reference cell is rebound.
 pub(super) fn lower_deref_assign(
     target: &crate::ast::Node,
     value: &crate::ast::Node,

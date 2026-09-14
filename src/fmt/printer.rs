@@ -25,38 +25,16 @@ use crate::ast::{
 use crate::parser::{TriviaKind, TriviaStream};
 use crate::project::MindcraftFormatConfig;
 
+#[path = "line_index.rs"]
+mod line_index;
+use line_index::LineIndex;
+
 #[path = "deref.rs"]
 mod deref;
 
 // ---------------------------------------------------------------------------
 // Line-number index
 // ---------------------------------------------------------------------------
-/// Byte-offset-to-line-number index built from a source string.
-///
-/// `line_of(offset)` returns the zero-based line number for `offset`.
-struct LineIndex {
-    /// Byte offsets of each line's first character.  `starts[0] == 0` always.
-    starts: Vec<usize>,
-}
-impl LineIndex {
-    fn build(src: &str) -> Self {
-        let mut starts = vec![0usize];
-        for (i, &b) in src.as_bytes().iter().enumerate() {
-            if b == b'\n' {
-                starts.push(i + 1);
-            }
-        }
-        Self { starts }
-    }
-
-    /// Zero-based line number for `byte_offset`.
-    fn line_of(&self, byte_offset: usize) -> usize {
-        match self.starts.binary_search(&byte_offset) {
-            Ok(i) => i,
-            Err(i) => i.saturating_sub(1),
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Trivia attachment
@@ -287,6 +265,7 @@ fn strip_for_lines(src: &str) -> String {
 // ---------------------------------------------------------------------------
 // Node emission
 // ---------------------------------------------------------------------------
+
 fn emit_node(p: &mut Printer, node: &Node, _extra_indent: usize) {
     match node {
         Node::FnDef(fd, span) => {

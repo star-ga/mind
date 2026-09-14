@@ -9,16 +9,19 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 // Part of the MIND project (Machine Intelligence Native Design).
-use crate::ast::{BinOp, Literal, Module, Node, Span, TensorElemOp, TypeAnn};
-use crate::eval::autodiff::TensorEnvEntry;
-#[cfg(feature = "cpu-exec")]
-use crate::exec;
-use crate::runtime_interface::{MindRuntime, NoOpRuntime};
-use crate::types::{DType, ShapeDim, ValueType};
+
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
+
+use crate::ast::{BinOp, Literal, Module, Node, Span, TensorElemOp, TypeAnn};
+use crate::eval::autodiff::TensorEnvEntry;
+use crate::types::{DType, ShapeDim, ValueType};
+
+#[cfg(feature = "cpu-exec")]
+use crate::exec;
 
 #[cfg(feature = "cpu-buffers")]
 use value::Buffer;
@@ -63,6 +66,8 @@ pub(crate) mod type_aliases;
 // RFC 0005 P0f Step 2 — pre-pass that builds a span-keyed side-table
 // of `FieldAccess` receiver struct types so lowering can resolve
 // chained access, fn returns, and struct-typed parameters.
+#[path = "evaluator.rs"]
+mod evaluator;
 #[cfg(test)]
 mod field_assign_refusal_tests;
 #[cfg(feature = "mlir-build")]
@@ -78,33 +83,7 @@ pub mod mlir_run;
 #[cfg(feature = "std-surface")]
 pub mod struct_resolver;
 pub mod value;
-/// Top-level evaluation context used by the compiler front-end.
-///
-/// Carries a handle to the runtime implementation. In the open-core
-/// build the default runtime is `NoOpRuntime`; production CPU/GPU
-/// backends are provided by the proprietary `mind-runtime` crate.
-pub struct Evaluator {
-    pub runtime: Box<dyn MindRuntime>,
-}
-impl Default for Evaluator {
-    fn default() -> Self {
-        Self {
-            runtime: Box::new(NoOpRuntime),
-        }
-    }
-}
-
-impl Evaluator {
-    /// Construct an evaluator with the default no-op runtime.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Construct an evaluator with an explicit runtime implementation.
-    pub fn with_runtime(runtime: Box<dyn MindRuntime>) -> Self {
-        Self { runtime }
-    }
-}
+pub use evaluator::Evaluator;
 
 #[cfg(test)]
 mod tensor_tests {
