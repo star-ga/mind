@@ -20,6 +20,7 @@ mod array_lengths;
 pub(crate) mod canonical_facts;
 #[cfg(feature = "cross-module-imports")]
 mod cross_module_types;
+mod deref_types;
 mod duplicate_structs;
 #[cfg(feature = "std-surface")]
 pub(crate) mod lowering_refusals;
@@ -851,21 +852,6 @@ fn closest_identifier(name: &str, env: &TypeEnv) -> Option<String> {
         }
     }
     best.map(|(_, k)| k.clone())
-}
-
-/// Deref-assign D2/D3: the canonical (module-qualified) name of the type a
-/// `&expr` / `&mut expr` references, for owner-exact parameter comparison. D2
-/// preserves the reference CAPABILITY (mutability + ref-ness) so it cannot be
-/// erased to a scalar; exact target resolution for `&mut r.f` field places
-/// (receiver admissibility, struct field-type lookup, alias/import
-/// canonicalization) is D3.
-///
-/// deferred: resolve `r.f` to its declared struct field type via the struct
-/// field-type table and canonicalize imported owners — implemented in D3. Until
-/// then the target is empty and D3's comparison treats an empty target as
-/// unresolved (refused), never as a match.
-fn ref_target_name(_inner: &Node) -> Option<String> {
-    None
 }
 
 fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeErrSpan> {
@@ -1857,64 +1843,9 @@ fn infer_expr_inner(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), 
         // `Neg`). Bitwise complement is only meaningful on integers; the operand
         // is validated by inferring it.
         Node::BitNot { operand, .. } => infer_expr(operand, env),
-        // Slice 0 (deref-assign track): `*expr` and `*p = value` are parsed and
-        // formatted, but have NO executable support — the reference/place ABI
-        // (Slice 1) is unimplemented and under architecture review. Refuse
-        // LOUDLY here so no program containing a dereference is silently
-        // type-checked, lowered, or interpreted. Record-identity place
-        // replacement (mind-spec v1.0/types.md:65-99) is NOT a field copy; the
-        // meaning is deliberately not defined by an executable arm yet.
-        // Deref-assign carve-out: `*p` where `p` is a reference infers to the
-        // i64 referent carrier (record base address). The AUTHORITATIVE
-        // admit/refuse decision — bare `&mut <struct>` param, region, escape,
-        // owner-exactness — is `slice_abi::deref_check` (E2028), not this arm; a
-        // deref of a NON-reference operand (`*5`, `*(a+b)`) is still a hard
-        // error here. Under non-std-surface the reference ABI does not exist, so
-        // every deref stays a hard error.
-        #[cfg(feature = "std-surface")]
-        Node::Deref { operand, span } => match infer_expr(operand, env) {
-            Ok((ValueType::Ref { .. }, _)) => Ok((ValueType::ScalarI64, *span)),
-            _ => Err(TypeErrSpan {
-                msg: "dereference `*expr` requires a reference operand (a `&mut <struct>` \
-                      parameter in the deref-assign field-first subset)."
-                    .to_string(),
-                span: *span,
-            }),
-        },
-        #[cfg(not(feature = "std-surface"))]
-        Node::Deref { span, .. } => Err(TypeErrSpan {
-            msg: "dereference `*expr` is not supported: the reference/place ABI requires \
-                  the std-surface feature."
-                .to_string(),
-            span: *span,
-        }),
-        // `*p = v` is a statement-shaped place replacement; it yields unit
-        // (i64 carrier). deref_check (E2029) validates the target and value
-        // owner. Infer the value for its own diagnostics.
-        #[cfg(feature = "std-surface")]
-        Node::DerefAssign {
-            target,
-            value,
-            span,
-        } => {
-            let _ = infer_expr(value, env);
-            match infer_expr(target, env) {
-                Ok((ValueType::Ref { .. }, _)) => Ok((ValueType::ScalarI64, *span)),
-                _ => Err(TypeErrSpan {
-                    msg: "assignment through a dereference `*p = value` requires a `&mut` \
-                          reference target."
-                        .to_string(),
-                    span: *span,
-                }),
-            }
+        Node::Deref { .. } | Node::DerefAssign { .. } => {
+            deref_types::infer_deref(node, env, infer_expr)
         }
-        #[cfg(not(feature = "std-surface"))]
-        Node::DerefAssign { span, .. } => Err(TypeErrSpan {
-            msg: "assignment through a dereference `*p = value` is not supported: the \
-                  mutable-place ABI requires the std-surface feature."
-                .to_string(),
-            span: *span,
-        }),
         Node::MethodCall { receiver, span, .. } => {
             // Static/associated type-name call (`string.from_utf8_bytes(..)`): the
             // receiver is a TYPE name, not a value — don't resolve it as an
@@ -2156,30 +2087,13 @@ fn infer_expr_inner(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), 
             // inference error.
             Ok((result_ty.unwrap_or(ValueType::ScalarI32), *span))
         }
-        // Phase 10.7 / deref-assign D2: `&expr` / `&mut expr` reference-taking.
-        //
-        // The inner expression is validated, then a TYPED reference capability
-        // `ValueType::Ref { mutable, target }` is returned instead of an erased
-        // scalar — so a `&T` cannot be laundered into a writable record and a
-        // `&mut T` carries its write capability through projections/calls (D3
-        // enforces admissibility + owner-exact comparison). `target` is the
-        // canonical name of the referenced type where resolvable; D3 refines
-        // receiver admissibility and rejects unsupported reference shapes.
+        // Reference capability typing is kept as one helper so inference and
+        // annotation conversion use the same erased-target contract.
         Node::Ref {
             inner,
             mutable,
             span,
-        } => {
-            infer_expr(inner, env)?;
-            let target = ref_target_name(inner).unwrap_or_default();
-            Ok((
-                ValueType::Ref {
-                    mutable: *mutable,
-                    target,
-                },
-                *span,
-            ))
-        }
+        } => deref_types::reference_type(inner, *mutable, *span, env, infer_expr),
         // RFC 0005 Gap 1: while loop type. The body may change mutable
         // variables; the while expression itself is unit-typed (ScalarI32
         // placeholder) until Gap 1 lands full control-flow typing.
@@ -2758,18 +2672,9 @@ fn valuetype_from_ann(ann: &crate::ast::TypeAnn) -> Option<ValueType> {
         | crate::ast::TypeAnn::Array { .. }
         | crate::ast::TypeAnn::Generic { .. }
         | crate::ast::TypeAnn::Tuple { .. } => None,
-        // Deref-assign D2: a `&T` / `&mut T` parameter carries its write
-        // capability + referent owner as `ValueType::Ref` (anti-laundering: a
-        // `&T` can never be inferred writable). `target` is the referent's
-        // canonical type name where nominal, else empty. Byte-identity-safe: no
-        // keystone/std source declares a reference parameter type.
-        crate::ast::TypeAnn::Ref { mutable, target } => Some(ValueType::Ref {
-            mutable: *mutable,
-            target: match target.as_ref() {
-                crate::ast::TypeAnn::Named(n) => n.clone(),
-                _ => String::new(),
-            },
-        }),
+        crate::ast::TypeAnn::Ref { mutable, target } => {
+            Some(deref_types::value_type_for_ref(*mutable, target))
+        }
         // SparseTensor: runtime resolves layout; return None so callers
         // fall through to the runtime resolver path (same pattern as Slice).
         crate::ast::TypeAnn::SparseTensor { .. } => None,
@@ -2863,8 +2768,6 @@ fn same_scalar_class(a: &ValueType, b: &ValueType) -> bool {
             ValueType::ScalarF32 | ValueType::ScalarF64 => 1,
             ValueType::Tensor(_) => 2,
             ValueType::GradMap(_) => 3,
-            // A reference capability is its own class (deref-assign D2); it is
-            // never in the same class as a scalar/tensor for match-arm unifying.
             ValueType::Ref { .. } => 4,
         }
     }
@@ -4603,46 +4506,8 @@ fn check_module_types_in_file_impl(
 ) -> Vec<Pretty> {
     let mut errs = Vec::new();
 
-    // Deref-assign: under NON-std-surface the reference/place ABI does not
-    // exist, so refuse every `*p` / `*p = value` LOUDLY here (E2028/E2029) — a
-    // whole-module scan independent of inference coverage. Under std-surface
-    // this blanket refusal is REMOVED: `slice_abi::deref_check` (wired per-fn
-    // below) is the sole, precise gate — it admits the field-first subset
-    // (`&mut r.f` cell + callee `*p`/`*p = v`) and refuses everything else
-    // (owner-exactness, capability, region, escape). The two must never both
-    // run, or the blanket refusal would mask the admitted shape.
     #[cfg(not(feature = "std-surface"))]
-    {
-        fn scan_deref(node: &Node, src: &str, file: Option<&str>, out: &mut Vec<Pretty>) {
-            match node {
-                Node::Deref { span, .. } => out.push(diag_from_span(
-                    src,
-                    file,
-                    "dereference `*expr` is not supported yet: the reference/place ABI is \
-                     unimplemented (deref-assign is under architecture review). It is a \
-                     parse/format-only construct today."
-                        .to_string(),
-                    *span,
-                    "E2028",
-                )),
-                Node::DerefAssign { span, .. } => out.push(diag_from_span(
-                    src,
-                    file,
-                    "assignment through a dereference `*p = value` is not supported yet: the \
-                     mutable-place ABI is unimplemented (deref-assign is under architecture \
-                     review). Record-identity place replacement is not a field copy."
-                        .to_string(),
-                    *span,
-                    "E2029",
-                )),
-                _ => {}
-            }
-            nerve_walk::for_each_child(node, &mut |child| scan_deref(child, src, file, out));
-        }
-        for item in &module.items {
-            scan_deref(item, src, file, &mut errs);
-        }
-    }
+    errs.extend(deref_types::scan_module_derefs(module, src, file));
 
     let mut tenv = env.clone();
 
@@ -4725,9 +4590,6 @@ fn check_module_types_in_file_impl(
     let mut has_enum = false;
     #[cfg(feature = "std-surface")]
     let struct_field_types = slice_abi::struct_field_types(&module.items, inherited_struct_fields);
-    // Deref-assign D4: fn name -> param types, so `deref_check` can validate that
-    // a `&mut r.f` call argument targets a `&mut <owner>` callee parameter
-    // (call-site owner exactness). Built from this module's items.
     #[cfg(feature = "std-surface")]
     let deref_fn_sigs = slice_abi::fn_param_sigs(&module.items);
     #[cfg(feature = "std-surface")]
@@ -5250,14 +5112,6 @@ fn check_module_types_in_file_impl(
                     &mut errs,
                 );
 
-                // Deref-assign D3/D4 carve-out: this pass is now the SOLE gate
-                // under std-surface (the blanket Slice-0 refusal above is
-                // compiled out). It admits the field-first subset — `&mut r.f`
-                // (depth-one struct field → D4 cell address) and a callee `*p` /
-                // `*p = v` on a `&mut <struct>` parameter with exact-owner value
-                // — and refuses everything else (immutable/scalar/depth-two
-                // field, unknown owner, region interior, and the `let q = p` /
-                // `return p` escapes). See D3-DESIGN-GROUNDING.md.
                 #[cfg(feature = "std-surface")]
                 slice_abi::deref_check_fn(
                     fd,

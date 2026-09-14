@@ -11,14 +11,12 @@
 // limitations under the License.
 
 // Part of the MIND project (Machine Intelligence Native Design).
-
 //! # Example
 //! ```
 //! use libmind::{parser, eval};
 //! let module = parser::parse("1 + 2 * 3").unwrap();
 //! assert_eq!(eval::eval_first_expr(&module).unwrap(), 7);
 //! ```
-
 use crate::ast::{
     BinOp, CallConv, ExternFn, Literal, MatchArm, Module, Node, Param, Pattern, Span, TensorElemOp,
     TypeAnn,
@@ -33,6 +31,9 @@ mod trivia;
 pub(crate) use eval_imports::{EvalImportRef, EvalImportRefKind, EvalParsedModule};
 pub use trivia::{Trivia, TriviaKind, TriviaStream};
 use trivia::{TriviaCollector, strip_comments_with_trivia};
+
+#[path = "deref.rs"]
+mod deref;
 
 /// Diagnostic for bitwise operators in a build without `std-surface`.
 ///
@@ -74,13 +75,11 @@ pub struct ParseError {
     /// feature-specific contract. Ordinary parse errors remain `None`.
     pub cause_code: Option<&'static str>,
 }
-
 impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "at offset {}: {}", self.offset, self.message)
     }
 }
-
 pub(crate) struct P<'a> {
     b: &'a [u8],
     pos: usize,
@@ -134,7 +133,6 @@ enum PrattOp {
     /// elementwise tensor operators.
     TensorElem(TensorElemOp),
 }
-
 /// A compound-assignment operator (`+= -= *= /= %= &= |= ^= <<= >>=`). These
 /// are NOT infix binary operators: `peek_binop` refuses to bind an `OP=` shape
 /// so the Pratt parse stops at the LHS, and `parse_stmt` desugars
@@ -146,7 +144,6 @@ enum CompoundOp {
     Arith(BinOp),
     Bit(BitToken),
 }
-
 #[derive(Debug, Clone, Copy)]
 enum BitToken {
     Or,
@@ -155,7 +152,6 @@ enum BitToken {
     Shl,
     Shr,
 }
-
 #[cfg(feature = "std-surface")]
 impl From<BitToken> for crate::ast::BitOp {
     fn from(token: BitToken) -> Self {
@@ -168,7 +164,6 @@ impl From<BitToken> for crate::ast::BitOp {
         }
     }
 }
-
 /// The closed set of statement-leading keywords `parse_stmt` dispatches on.
 ///
 /// The set is fixed at compile time and every member is spelled here exactly
@@ -202,7 +197,6 @@ enum StmtKw {
     Trait,
     Impl,
 }
-
 /// Recognise a statement-leading keyword from the identifier run at the cursor.
 ///
 /// This is a **compile-time perfect-hash keyword recogniser** in the classic
@@ -281,7 +275,6 @@ fn stmt_keyword(w: &[u8]) -> Option<StmtKw> {
     };
     if w == cand { Some(kw) } else { None }
 }
-
 impl<'a> P<'a> {
     /// Construct a parser, capturing the active cross-module enum registry as an
     /// explicit snapshot. The snapshot is taken ONCE here (not re-read per
@@ -1591,20 +1584,8 @@ impl<'a> P<'a> {
                         span,
                     });
                 }
-                // Slice 0 (deref-assign track): `*p = value` -> DerefAssign.
-                // Carried in the AST + formatted only; refused at
-                // type-check/lowering/interpreter (no executable support). The
-                // `target` is the reference expression `p` (the Deref operand).
                 Node::Deref { operand, .. } => {
-                    self.advance(); // consume '='
-                    self.skip_ws_and_newlines();
-                    let value = self.parse_expr()?;
-                    let span = Span::new(start, self.pos);
-                    return Ok(Node::DerefAssign {
-                        target: operand,
-                        value: Box::new(value),
-                        span,
-                    });
+                    return deref::parse_assignment(self, operand, start);
                 }
                 other => return Ok(other),
             }
@@ -4517,26 +4498,8 @@ impl<'a> P<'a> {
                 span,
             });
         }
-        // Slice 0 (deref-assign track): prefix dereference `*expr`.
-        //
-        // Disambiguation: `*` is also the infix multiply operator, but that is
-        // handled by `peek_binop` in *infix* position only (after a left operand
-        // is already parsed by the Pratt loop). Here in *prefix* position
-        // (`parse_primary`, before the Pratt loop) a leading `*` is unambiguously
-        // a dereference. The raw-pointer TYPE forms `*const T` / `*mut T` are
-        // parsed by `type_ann` (a distinct context), never here. Slice 0 only
-        // builds the AST node + formats it; type-check/lowering/interpreter
-        // refuse it — there is no executable support yet.
-        if self.at(b'*') {
-            let start = self.pos;
-            self.pos += 1; // consume `*`
-            self.skip_ws();
-            let operand = self.parse_atom()?;
-            let span = Span::new(start, self.pos);
-            return Ok(Node::Deref {
-                operand: Box::new(operand),
-                span,
-            });
+        if let Some(node) = deref::parse_prefix(self)? {
+            return Ok(node);
         }
         if self.peek().is_some_and(|c| c.is_ascii_digit()) {
             return self.parse_number_lit();

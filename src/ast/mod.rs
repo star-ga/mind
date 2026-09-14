@@ -9,12 +9,9 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 // Part of the MIND project (Machine Intelligence Native Design).
-
 use crate::types::ConvPadding;
 use crate::types::ShapeDim;
-
 /// Storage layout for a sparse tensor.
 ///
 /// v1 ships CSR as the only concrete layout; the remaining variants are
@@ -33,18 +30,15 @@ pub enum SparseLayout {
     /// Block Sparse Row — tiled extension of CSR for structured sparsity.
     Bsr,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {
     start: usize,
     end: usize,
 }
-
 impl Span {
     pub fn new(start: usize, end: usize) -> Self {
         Self { start, end }
     }
-
     pub fn start(&self) -> usize {
         self.start
     }
@@ -654,32 +648,10 @@ pub enum Node {
         operand: Box<Node>,
         span: Span,
     },
-    /// Slice 0 (deref-assign track): prefix dereference `*operand`. Parsed,
-    /// formatted, and carried in the AST ONLY. The type checker, lowering, and
-    /// interpreter REFUSE it with a spanned diagnostic — there is no executable
-    /// support. Target semantics (NOT yet implemented, Slice 1 under review):
-    /// `*p` where `p: &mut T` / `&T` reads the record the reference denotes,
-    /// preserving record identity (mind-spec v1.0/types.md:65-99). It is NOT a
-    /// clone. The infix `*` (multiply) is a separate Pratt op; this variant is
-    /// produced only from prefix position.
-    Deref {
-        operand: Box<Node>,
-        span: Span,
-    },
-    /// Slice 0 (deref-assign track): assignment through a dereference,
-    /// `*target = value`. Parsed, formatted, carried in the AST ONLY; refused
-    /// at type-check/lowering/interpreter (no executable support). Target
-    /// semantics (NOT yet implemented, Slice 1 under review): binding-/place-
-    /// replacement — the place `target` denotes is made to denote `value`'s
-    /// record; other aliases keep the old record; later mutations of `value`'s
-    /// record are visible through the place. This is NOT a field-wise clone.
-    DerefAssign {
-        /// The reference expression `p` in `*p = value` (the operand of the
-        /// dereferenced place).
-        target: Box<Node>,
-        value: Box<Node>,
-        span: Span,
-    },
+    #[rustfmt::skip]
+    Deref { operand: Box<Node>, span: Span },
+    #[rustfmt::skip]
+    DerefAssign { target: Box<Node>, value: Box<Node>, span: Span },
     /// Method call
     MethodCall {
         receiver: Box<Node>,

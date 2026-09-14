@@ -25,10 +25,12 @@ use crate::ast::{
 use crate::parser::{TriviaKind, TriviaStream};
 use crate::project::MindcraftFormatConfig;
 
+#[path = "deref.rs"]
+mod deref;
+
 // ---------------------------------------------------------------------------
 // Line-number index
 // ---------------------------------------------------------------------------
-
 /// Byte-offset-to-line-number index built from a source string.
 ///
 /// `line_of(offset)` returns the zero-based line number for `offset`.
@@ -36,7 +38,6 @@ struct LineIndex {
     /// Byte offsets of each line's first character.  `starts[0] == 0` always.
     starts: Vec<usize>,
 }
-
 impl LineIndex {
     fn build(src: &str) -> Self {
         let mut starts = vec![0usize];
@@ -286,7 +287,6 @@ fn strip_for_lines(src: &str) -> String {
 // ---------------------------------------------------------------------------
 // Node emission
 // ---------------------------------------------------------------------------
-
 fn emit_node(p: &mut Printer, node: &Node, _extra_indent: usize) {
     match node {
         Node::FnDef(fd, span) => {
@@ -375,14 +375,7 @@ fn emit_node(p: &mut Printer, node: &Node, _extra_indent: usize) {
         } => {
             emit_field_assign(p, receiver, field, value);
         }
-        // Slice 0 (deref-assign track): `*target = value`. Round-trips even
-        // though it is refused downstream at type-check.
-        Node::DerefAssign { target, value, .. } => {
-            p.push("*");
-            emit_expr(p, target);
-            p.push(" = ");
-            emit_expr(p, value);
-        }
+        Node::DerefAssign { target, value, .. } => deref::emit_assign(p, target, value),
         Node::Return { value, .. } => {
             emit_return(p, value.as_deref());
         }
@@ -516,7 +509,6 @@ fn emit_fn_def(
     p.push(&ind);
     p.push("}");
 }
-
 fn emit_struct_def(
     p: &mut Printer,
     is_pub: bool,
@@ -550,7 +542,6 @@ fn emit_struct_def(
     p.push(&ind);
     p.push("}");
 }
-
 fn emit_enum_def(
     p: &mut Printer,
     is_pub: bool,
@@ -614,7 +605,6 @@ fn emit_enum_def(
     p.push(&ind);
     p.push("}");
 }
-
 fn emit_const(
     p: &mut Printer,
     name: &str,
@@ -634,7 +624,6 @@ fn emit_const(
     p.push(" = ");
     emit_expr(p, value);
 }
-
 fn emit_extern_const(p: &mut Printer, name: &str, ty: &TypeAnn, attrs: &[Attribute]) {
     emit_attrs(p, attrs);
     let ind = p.indent_str();
@@ -907,12 +896,7 @@ fn emit_stmt(p: &mut Printer, node: &Node) {
             p.push(" = ");
             emit_expr(p, value);
         }
-        Node::DerefAssign { target, value, .. } => {
-            p.push("*");
-            emit_expr(p, target);
-            p.push(" = ");
-            emit_expr(p, value);
-        }
+        Node::DerefAssign { target, value, .. } => deref::emit_assign(p, target, value),
         Node::Return { value, .. } => {
             p.push("return");
             if let Some(v) = value {
@@ -1294,12 +1278,7 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             p.push("~");
             emit_expr(p, operand);
         }
-        // Slice 0 (deref-assign track): prefix dereference `*expr`. Round-trips
-        // faithfully even though it is refused downstream at type-check.
-        Node::Deref { operand, .. } => {
-            p.push("*");
-            emit_expr(p, operand);
-        }
+        Node::Deref { operand, .. } => deref::emit_deref(p, operand),
         Node::Call { callee, args, .. } => emit_call(p, callee, args),
         Node::MethodCall {
             receiver,
@@ -1699,12 +1678,7 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             p.push(" = ");
             emit_expr(p, value);
         }
-        Node::DerefAssign { target, value, .. } => {
-            p.push("*");
-            emit_expr(p, target);
-            p.push(" = ");
-            emit_expr(p, value);
-        }
+        Node::DerefAssign { target, value, .. } => deref::emit_assign(p, target, value),
         Node::For {
             var,
             start,

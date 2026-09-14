@@ -38,6 +38,10 @@ mod canonical_lowering;
 #[cfg(feature = "cross-module-imports")]
 #[path = "canonical_producers.rs"]
 mod canonical_producers;
+#[path = "deref_lower.rs"]
+mod deref_lower;
+#[path = "loop_control.rs"]
+mod loop_control;
 #[path = "lower_entry.rs"]
 mod lower_entry;
 use crate::ir::BinOp;
@@ -1274,66 +1278,6 @@ pub(crate) fn lower_to_ir_admitted(
     context.refusal.map_or(Ok(ir), Err)
 }
 
-/// Slice 0 (deref-assign track): find the first `*expr` / `*p = v` anywhere in
-/// a node (recursing fn/closure bodies, which `node_children_ref` treats as
-/// leaves). Used to give `lower_to_ir_with_limits` — a public Result API — a
-/// STRUCTURED refusal for these unsupported nodes instead of the generic
-/// `lower_expr_inner` panic catch-all. The typed CLI already rejects a deref at
-/// type-check (E2028/E2029) before lowering; this closes the direct-call path.
-fn first_deref_span(node: &ast::Node, admitted: bool) -> Option<(usize, usize)> {
-    use ast::Node as N;
-    match node {
-        // Deref-assign: when `admitted` is false (the direct lowering API, which
-        // has NOT run D3 semantic admission) EVERY `*p` / `*p = v` is refused —
-        // fail closed. When `admitted` is true (the type-checked pipeline), a
-        // BARE `*p` / `*p = v` (operand/target a plain identifier) flows to the
-        // D4 load/store arms (deref_check already validated owner/capability/
-        // region/call-context); only a NON-bare deref (`*x.y`, `*(expr)`, `**p`)
-        // stays structurally unsupported.
-        N::Deref { operand, span } => {
-            if !admitted || !matches!(operand.as_ref(), N::Lit(crate::ast::Literal::Ident(_), _)) {
-                return Some((span.start(), span.end()));
-            }
-        }
-        N::DerefAssign {
-            target,
-            value,
-            span,
-        } => {
-            if !admitted || !matches!(target.as_ref(), N::Lit(crate::ast::Literal::Ident(_), _)) {
-                return Some((span.start(), span.end()));
-            }
-            // Admitted bare target: still scan the assigned value for a nested
-            // unsupported deref.
-            if let Some(hit) = first_deref_span(value, admitted) {
-                return Some(hit);
-            }
-        }
-        N::FnDef(fd, _) => {
-            for s in &fd.body {
-                if let Some(hit) = first_deref_span(s, admitted) {
-                    return Some(hit);
-                }
-            }
-        }
-        N::Closure(cd, _) => {
-            for s in &cd.body {
-                if let Some(hit) = first_deref_span(s, admitted) {
-                    return Some(hit);
-                }
-            }
-        }
-        _ => {
-            for child in crate::eval::closures::node_children_ref(node) {
-                if let Some(hit) = first_deref_span(child, admitted) {
-                    return Some(hit);
-                }
-            }
-        }
-    }
-    None
-}
-
 pub(super) fn lower_to_ir_inner(module: &ast::Module, context: &mut LoweringContext) -> IRModule {
     // Slice 0 structured refusal: a `*expr` / `*p = v` has no lowering (the
     // reference/place ABI is unimplemented). Fail via `context.refusal` — a
@@ -1341,7 +1285,7 @@ pub(super) fn lower_to_ir_inner(module: &ast::Module, context: &mut LoweringCont
     // `lower_expr_inner` panic catch-all when a caller invokes this public
     // entrypoint on un-type-checked AST.
     for item in &module.items {
-        if let Some((start, end)) = first_deref_span(item, context.deref_admitted) {
+        if let Some((start, end)) = deref_lower::first_deref_span(item, context.deref_admitted) {
             context.refusal = Some(MaterializationRefusal::UnsupportedLoweringOperation {
                 operation: "dereference / deref-assign: unsupported here (a place \
                             operation requires the type-checked pipeline; the direct \
@@ -4770,203 +4714,11 @@ fn inject_step_before_continue(body: &mut Vec<ast::Node>, step: &ast::Node) {
         // Otherwise recurse into the statement's children to reach nested
         // statement Vecs (the `continue` may hide behind any expression wrapper —
         // `{ if … { continue } }` parses as a `SetLit` holding an `if`, etc.).
-        descend_for_continue(&mut body[i], step);
+        loop_control::descend_for_continue(&mut body[i], step);
         i += 1;
     }
 }
 
-/// Recurse into a node's children looking for statement Vecs that hold a
-/// `continue` targeting the enclosing loop, splicing the loop `step` before each
-/// (via [`inject_step_before_continue`]). The match is EXHAUSTIVE (no silent
-/// catch-all) so a future `ast::Node` variant forces a compile error here rather
-/// than silently re-opening the infinite-loop hazard. Boundaries that are NOT
-/// descended: a nested `while`/`for`/`for-each` BODY (its `continue`s target the
-/// inner loop, stepped when that loop is lowered) and a nested `fn` body (a
-/// different scope). A nested loop's header/range/collection expression IS
-/// descended — a `continue` there still targets THIS loop.
-#[cfg(feature = "std-surface")]
-fn descend_for_continue(node: &mut ast::Node, step: &ast::Node) {
-    use ast::Node as N;
-    match node {
-        // ---- statement-Vec holders: splice-check inside ------------------
-        N::If {
-            cond,
-            then_branch,
-            else_branch,
-            ..
-        } => {
-            descend_for_continue(cond, step);
-            inject_step_before_continue(then_branch, step);
-            if let Some(eb) = else_branch {
-                inject_step_before_continue(eb, step);
-            }
-        }
-        N::Match {
-            scrutinee, arms, ..
-        } => {
-            descend_for_continue(scrutinee, step);
-            for arm in arms.iter_mut() {
-                inject_step_before_continue_arm(&mut arm.body, step);
-            }
-        }
-        N::Region { body, .. } => inject_step_before_continue(body, step),
-        N::Block { stmts, .. } => inject_step_before_continue(stmts, step),
-        // ---- nested loops: header IS ours, BODY is a boundary ------------
-        N::While { cond, .. } => descend_for_continue(cond, step),
-        N::For { start, end, .. } => {
-            descend_for_continue(start, step);
-            descend_for_continue(end, step);
-        }
-        N::ForEach { collection, .. } => descend_for_continue(collection, step),
-        // ---- pure expression wrappers: recurse into operands -------------
-        N::Binary { left, right, .. } | N::Logical { left, right, .. } => {
-            descend_for_continue(left, step);
-            descend_for_continue(right, step);
-        }
-        #[cfg(feature = "std-surface")]
-        N::Bitwise { left, right, .. } => {
-            descend_for_continue(left, step);
-            descend_for_continue(right, step);
-        }
-        N::Paren(inner, _) => descend_for_continue(inner, step),
-        N::Neg { operand, .. } | N::Not { operand, .. } | N::BitNot { operand, .. } => {
-            descend_for_continue(operand, step)
-        }
-        N::As { expr, .. } => descend_for_continue(expr, step),
-        N::Ref { inner, .. } => descend_for_continue(inner, step),
-        N::Deref { operand, .. } => descend_for_continue(operand, step),
-        N::DerefAssign { target, value, .. } => {
-            descend_for_continue(target, step);
-            descend_for_continue(value, step);
-        }
-        N::Tuple { elements, .. } | N::ArrayLit { elements, .. } | N::SetLit { elements, .. } => {
-            for e in elements.iter_mut() {
-                descend_for_continue(e, step);
-            }
-        }
-        N::MapLit { entries, .. } => {
-            for (k, v) in entries.iter_mut() {
-                descend_for_continue(k, step);
-                descend_for_continue(v, step);
-            }
-        }
-        N::StructLit { fields, .. } => {
-            for f in fields.iter_mut() {
-                descend_for_continue(&mut f.value, step);
-            }
-        }
-        N::Call { args, .. } | N::Print { args, .. } => {
-            for a in args.iter_mut() {
-                descend_for_continue(a, step);
-            }
-        }
-        N::MethodCall { receiver, args, .. } => {
-            descend_for_continue(receiver, step);
-            for a in args.iter_mut() {
-                descend_for_continue(a, step);
-            }
-        }
-        N::FieldAccess { receiver, .. } => descend_for_continue(receiver, step),
-        N::IndexAccess {
-            receiver, index, ..
-        } => {
-            descend_for_continue(receiver, step);
-            descend_for_continue(index, step);
-        }
-        N::SliceRange {
-            receiver,
-            start,
-            end,
-            ..
-        } => {
-            descend_for_continue(receiver, step);
-            descend_for_continue(start, step);
-            descend_for_continue(end, step);
-        }
-        N::Let { value, .. }
-        | N::LetTuple { value, .. }
-        | N::Assign { value, .. }
-        | N::Const { value, .. } => descend_for_continue(value, step),
-        N::FieldAssign {
-            receiver, value, ..
-        } => {
-            descend_for_continue(receiver, step);
-            descend_for_continue(value, step);
-        }
-        N::IndexAssign {
-            receiver,
-            index,
-            value,
-            ..
-        } => {
-            descend_for_continue(receiver, step);
-            descend_for_continue(index, step);
-            descend_for_continue(value, step);
-        }
-        N::Return { value, .. } => {
-            if let Some(v) = value {
-                descend_for_continue(v, step);
-            }
-        }
-        N::Assert { cond, .. } => descend_for_continue(cond, step),
-        // W1.5f: postfix `?` wraps a single operand expression — descend into
-        // it (a loop-targeting `continue` may hide behind `f(if c {continue})?`).
-        N::Try { inner, .. } => descend_for_continue(inner, step),
-        // ---- tensor / autodiff call wrappers (Box<Node> operands) --------
-        N::CallGrad { loss, .. } => descend_for_continue(loss, step),
-        N::CallTensorSum { x, .. }
-        | N::CallTensorMean { x, .. }
-        | N::CallReshape { x, .. }
-        | N::CallExpandDims { x, .. }
-        | N::CallSqueeze { x, .. }
-        | N::CallTranspose { x, .. }
-        | N::CallIndex { x, .. }
-        | N::CallSlice { x, .. }
-        | N::CallSliceStride { x, .. }
-        | N::CallTensorRelu { x, .. } => descend_for_continue(x, step),
-        N::CallGather { x, idx, .. } => {
-            descend_for_continue(x, step);
-            descend_for_continue(idx, step);
-        }
-        N::CallDot { a, b, .. } | N::CallMatMul { a, b, .. } => {
-            descend_for_continue(a, step);
-            descend_for_continue(b, step);
-        }
-        N::TensorMatmul { lhs, rhs, .. } | N::TensorElemwise { lhs, rhs, .. } => {
-            descend_for_continue(lhs, step);
-            descend_for_continue(rhs, step);
-        }
-        N::CallTensorConv2d { x, w, .. } => {
-            descend_for_continue(x, step);
-            descend_for_continue(w, step);
-        }
-        // ---- leaves / boundaries: nothing to descend --------------------
-        // `Break`/`Continue` (Continue handled by the caller's splice), literals,
-        // imports, declarations, a nested `fn` body (different scope), and
-        // childless tensor ops carry no loop-targeting `continue`.
-        N::Continue { .. }
-        | N::Break { .. }
-        | N::Lit(..)
-        | N::Import { .. }
-        | N::FnDef(..)
-        // A closure body is a different scope (like a nested `fn`); it is also
-        // desugared away before lowering, so this is unreachable in practice.
-        | N::Closure { .. }
-        // #268: trait/impl are desugared away before lowering (unreachable here).
-        | N::TraitDef { .. }
-        | N::ImplBlock { .. }
-        | N::StructDef { .. }
-        | N::EnumDef { .. }
-        | N::TypeAlias { .. }
-        | N::Export { .. }
-        | N::ExternConst { .. }
-        | N::ExternBlock { .. }
-        | N::CallTensorRand { .. } => {}
-    }
-}
-
-/// A `match` arm body is a single `Node`, not a statement `Vec`. Route each
-/// shape to the same in-scope-`continue` rewrite (see [`inject_step_before_continue`]).
 #[cfg(feature = "std-surface")]
 fn inject_step_before_continue_arm(arm_body: &mut ast::Node, step: &ast::Node) {
     match arm_body {
@@ -4986,7 +4738,7 @@ fn inject_step_before_continue_arm(arm_body: &mut ast::Node, step: &ast::Node) {
         }
         // Any other arm body (bare `if`, bare nested `match`, an expression
         // wrapping an `if`/`match`): recurse to reach its statement Vecs.
-        other => descend_for_continue(other, step),
+        other => loop_control::descend_for_continue(other, step),
     }
 }
 
@@ -8362,51 +8114,13 @@ pub(super) fn lower_expr_inner(
             }
             last_id
         }
-        // Deref-assign D4: an admitted `&mut r.f` (a mutable, depth-one,
-        // struct-typed field place — validated by `slice_abi::deref_check`)
-        // lowers to the field's CELL ADDRESS (`base + declared_offset`), NOT the
-        // loaded value. The callee's `*p` / `*p = v` then load/store through this
-        // address, giving identity-preserving place replacement. If the layout
-        // cannot be resolved the lowering REFUSES (no `idx*8` fallback).
-        //
-        // Every OTHER `&expr` (`&NAME` whole-variable address-of, `&(expr)`) is
-        // the Phase-10.7 no-op metadata wrapper: the inner expression lowers
-        // directly and the ref tag is only meaningful to the type-checker.
         #[cfg(feature = "std-surface")]
         ast::Node::Ref {
             inner,
             mutable: true,
             ..
         } if matches!(inner.as_ref(), ast::Node::FieldAccess { .. }) => {
-            let ast::Node::FieldAccess {
-                receiver,
-                field,
-                span: fspan,
-            } = inner.as_ref()
-            else {
-                unreachable!("guarded by the matches! above")
-            };
-            match field_access::lower_field_cell_addr(
-                receiver,
-                field,
-                fspan,
-                ir,
-                env,
-                struct_env,
-                receiver_types,
-                context,
-            ) {
-                Some(cell) => cell,
-                None => {
-                    context.refusal = Some(MaterializationRefusal::UnsupportedLoweringOperation {
-                        operation: "`&mut r.f`: the field owner/layout could not be resolved to a \
-                                    declared cell offset (deref-assign field-first subset)",
-                        start: fspan.start(),
-                        end: fspan.end(),
-                    });
-                    ir.fresh()
-                }
-            }
+            deref_lower::lower_mut_field_ref(inner, ir, env, struct_env, receiver_types, context)
         }
         ast::Node::Ref { inner, .. } => {
             lower_expr(inner, ir, env, struct_env, receiver_types, context)
@@ -9300,38 +9014,21 @@ pub(super) fn lower_expr_inner(
             receiver_types,
             context,
         ),
-        // Deref-assign D4: `*p` reads the record address the reference cell
-        // currently holds. `p` (a `&mut Named` parameter) carries the cell
-        // address; the load yields the referenced record. Reached ONLY for the
-        // admitted field-first shape — the `lower_to_ir_inner` early refusal
-        // rejects any deref until the coupled carve-out narrows it to the
-        // admitted shape (which `slice_abi::deref_check` has already validated).
+        // Admitted D4 dereference/place operations use the existing scalar
+        // load/store ABI; the helper keeps this large branch out of the
+        // ratcheted lowering module.
         ast::Node::Deref { operand, .. } => {
-            let p = lower_expr(operand, ir, env, struct_env, receiver_types, context);
-            let dst = ir.fresh();
-            ir.instrs.push(Instr::legacy_call(
-                dst,
-                "__mind_load_i64".to_string(),
-                vec![p],
-            ));
-            dst
+            deref_lower::lower_deref(operand, ir, env, struct_env, receiver_types, context)
         }
-        // Deref-assign D4: `*p = v` makes the referenced PLACE denote `v`'s
-        // record by storing `v`'s record address into the cell — identity-
-        // preserving place replacement (mind-spec v1.0/types.md:65-99), NOT a
-        // field-wise clone. Other aliases keep the old record; later mutations
-        // of `v`'s record are visible through the place.
-        ast::Node::DerefAssign { target, value, .. } => {
-            let p = lower_expr(target, ir, env, struct_env, receiver_types, context);
-            let v = lower_expr(value, ir, env, struct_env, receiver_types, context);
-            let dst = ir.fresh();
-            ir.instrs.push(Instr::legacy_call(
-                dst,
-                "__mind_store_i64".to_string(),
-                vec![p, v],
-            ));
-            dst
-        }
+        ast::Node::DerefAssign { target, value, .. } => deref_lower::lower_deref_assign(
+            target,
+            value,
+            ir,
+            env,
+            struct_env,
+            receiver_types,
+            context,
+        ),
         // RFC 0005 Phase 6.2b Gap 2 — anonymous array literal `[v0, v1, …]`
         // in expression position.  Elements are extracted iteratively
         // (not by recursing once per element) so a 4,096-entry literal

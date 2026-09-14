@@ -9,20 +9,16 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 // Part of the MIND project (Machine Intelligence Native Design).
-
+use crate::ast::{BinOp, Literal, Module, Node, Span, TensorElemOp, TypeAnn};
+use crate::eval::autodiff::TensorEnvEntry;
+#[cfg(feature = "cpu-exec")]
+use crate::exec;
+use crate::runtime_interface::{MindRuntime, NoOpRuntime};
+use crate::types::{DType, ShapeDim, ValueType};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
-
-use crate::ast::{BinOp, Literal, Module, Node, Span, TensorElemOp, TypeAnn};
-use crate::eval::autodiff::TensorEnvEntry;
-use crate::runtime_interface::{MindRuntime, NoOpRuntime};
-use crate::types::{DType, ShapeDim, ValueType};
-
-#[cfg(feature = "cpu-exec")]
-use crate::exec;
 
 #[cfg(feature = "cpu-buffers")]
 use value::Buffer;
@@ -37,6 +33,8 @@ pub mod conv2d_grad;
 /// oracle): the layer that makes an `i32`/`u32` declaration wrap exactly where
 /// the compiled backends wrap.
 pub(crate) mod declared_width;
+#[path = "deref_eval.rs"]
+mod deref_eval;
 pub mod interp_mem;
 pub mod ir_interp;
 pub mod lower;
@@ -1189,15 +1187,7 @@ pub(crate) fn eval_value_expr_mode(
         Node::Lit(Literal::Int(n), _) => Ok(Value::Int(*n)),
         Node::Lit(Literal::Float(f), _) => Ok(Value::Float(*f)),
         Node::Lit(Literal::Str(s), _) => Ok(Value::Str(s.clone())),
-        // Slice 0 (deref-assign track): the interpreter REFUSES a dereference or
-        // assignment-through-dereference loudly — there is no executable support
-        // (the reference/place ABI is unimplemented). The type checker already
-        // rejects these before evaluation; this is the defense-in-depth backstop.
-        Node::Deref { .. } | Node::DerefAssign { .. } => Err(EvalError::UnsupportedMsg(
-            "dereference `*p` / assignment-through-dereference `*p = v` is not supported: \
-             the reference/place ABI is unimplemented"
-                .to_string(),
-        )),
+        Node::Deref { .. } | Node::DerefAssign { .. } => Err(deref_eval::unsupported()),
         Node::Lit(Literal::Ident(name), span) => {
             // Resolve a qualified value's owner/span binding before caller
             // locals; ordinary unqualified names retain local-first shadowing.

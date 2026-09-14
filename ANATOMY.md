@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1821 | **Est. tokens:** ~3498985
-**Generated:** 2026-09-14 06:17 UTC
+**Files:** 1828 | **Est. tokens:** ~3503208
+**Generated:** 2026-09-14 07:20 UTC
 
 ## Token Budget Guide
 
@@ -94,7 +94,7 @@
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6002 |
 | `src/` | 11 | ~51967 |
-| `src/ast/` | 1 | ~11335 |
+| `src/ast/` | 1 | ~11019 |
 | `src/autodiff/` | 3 | ~6624 |
 | `src/bin/` | 1 | ~9878 |
 | `src/bin/mindc/` | 1 | ~204 |
@@ -106,12 +106,12 @@
 | `src/diagnostics/` | 3 | ~14085 |
 | `src/distributed/` | 6 | ~7725 |
 | `src/doc/` | 3 | ~11002 |
-| `src/eval/` | 36 | ~140358 |
+| `src/eval/` | 40 | ~143685 |
 | `src/eval/stdlib/` | 2 | ~8586 |
 | `src/eval/struct_resolver/` | 1 | ~2555 |
 | `src/exec/` | 3 | ~5522 |
 | `src/ffi/` | 3 | ~5541 |
-| `src/fmt/` | 3 | ~24289 |
+| `src/fmt/` | 4 | ~24262 |
 | `src/ir/` | 9 | ~95624 |
 | `src/ir/compact/` | 3 | ~15351 |
 | `src/ir/compact/v2/` | 9 | ~45363 |
@@ -123,19 +123,19 @@
 | `src/ops/` | 3 | ~4764 |
 | `src/opt/` | 9 | ~53642 |
 | `src/package/` | 2 | ~1877 |
-| `src/parser/` | 4 | ~25256 |
+| `src/parser/` | 5 | ~25499 |
 | `src/phf/` | 1 | ~4955 |
 | `src/project/` | 18 | ~59126 |
 | `src/runtime/` | 3 | ~1485 |
 | `src/shapes/` | 2 | ~6052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 4 | ~14244 |
-| `src/type_checker/` | 18 | ~61675 |
+| `src/type_checker/` | 19 | ~62680 |
 | `src/type_checker/slice_abi/` | 4 | ~17471 |
 | `src/types/` | 10 | ~20911 |
 | `src/workspace/` | 1 | ~4906 |
 | `std/` | 42 | ~202387 |
-| `tests/` | 402 | ~827434 |
+| `tests/` | 402 | ~827425 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12308 |
@@ -1102,7 +1102,7 @@
 - `SKILL.md` (~6002 tok, huge) — Write MIND Code
 ### `src/ast/`
 
-- `mod.rs` (~11335 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~11019 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~3890 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1181,9 +1181,12 @@
 - `callable_exports.rs` (~596 tok, large) — Copyright 2026 STARGA Inc.
 - `canonical_lowering.rs` (~4108 tok, huge) — Copyright 2026 STARGA Inc.
 - `canonical_producers.rs` (~760 tok, large) — Copyright 2026 STARGA Inc.
-- `closures.rs` (~9422 tok, huge) — Copyright 2025 STARGA Inc.
+- `closure_children.rs` (~3306 tok, huge) — Copyright 2025 STARGA Inc.
+- `closures.rs` (~6240 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `declared_width.rs` (~8263 tok, huge) — Copyright 2025 STARGA Inc.
+- `deref_eval.rs` (~73 tok, small) — Copyright 2025 STARGA Inc.
+- `deref_lower.rs` (~1157 tok, large) — Copyright 2025 STARGA Inc.
 - `field_access.rs` (~5465 tok, huge) — Copyright 2026 STARGA Inc.
 - `field_assign_refusal_tests.rs` (~349 tok, medium) — This test targets the module executor's dispatch. Its hand-built
 - `fixed_array.rs` (~1478 tok, large) — Copyright 2026 STARGA Inc.
@@ -1191,6 +1194,7 @@
 - `import_collision_gate.rs` (~427 tok, medium) — Copyright 2026 STARGA Inc.
 - `interp_mem.rs` (~3817 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~4212 tok, huge) — Copyright 2025 STARGA Inc.
+- `loop_control.rs` (~1973 tok, huge) — Copyright 2025 STARGA Inc.
 - `lower_entry.rs` (~359 tok, medium) — Copyright 2026 STARGA Inc.
 - `materialization.rs` (~5006 tok, huge) — Copyright 2026 STARGA Inc.
 - `mlir_build.rs` (~10897 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1233,8 +1237,9 @@
 ### `src/fmt/`
 
 - `cli.rs` (~4013 tok, huge) — Copyright 2025 STARGA Inc.
+- `deref.rs` (~119 tok, small) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~2739 tok, huge) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~17537 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~17391 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `intrinsic_contract.rs` (~2968 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1338,6 +1343,7 @@
 - `mod.rs` (~1567 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/parser/`
 
+- `deref.rs` (~243 tok, medium) — Copyright 2025-2026 STARGA Inc.
 - `eval_imports.rs` (~2137 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `expand_bimap.rs` (~16544 tok, huge) — An `#[bimap]` attribute on an `enum` declares a one-to-one correspondence
 - `import_list_tests.rs` (~2764 tok, huge) — Completeness of the parser-owned import list.
@@ -1404,6 +1410,7 @@
 - `canonical_facts.rs` (~2797 tok, huge) — Copyright 2026 STARGA Inc.
 - `canonical_macro.rs` (~58 tok, small) — Copyright 2026 STARGA Inc.
 - `cross_module_types.rs` (~453 tok, medium) — Copyright 2026 STARGA Inc.
+- `deref_types.rs` (~1005 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `duplicate_structs.rs` (~424 tok, medium) — Copyright 2026 STARGA Inc.
 - `lowering_refusals.rs` (~6770 tok, huge) — Copyright 2026 STARGA Inc.
 - `lowering_refusals_tests.rs` (~4372 tok, huge) — Copyright 2026 STARGA Inc.
@@ -2054,7 +2061,7 @@
 - `module_decl_run.rs` (~597 tok, large) — Copyright 2025 STARGA Inc.
 - `module_enum_match_run.rs` (~984 tok, large) — Copyright 2025 STARGA Inc.
 - `module_non_fn_call_reject.rs` (~1215 tok, large) — Copyright 2025 STARGA Inc.
-- `module_size_ratchet.rs` (~3984 tok, huge) — Copyright 2025 STARGA Inc.
+- `module_size_ratchet.rs` (~3975 tok, huge) — Copyright 2025 STARGA Inc.
 - `multimodule_determinism_run.rs` (~4275 tok, huge) — Copyright 2025 STARGA Inc.
 - `narrow_call_abi.rs` (~1344 tok, large) — Copyright 2025 STARGA Inc.
 - `narrow_local_mask_run.rs` (~879 tok, large) — Copyright 2025 STARGA Inc.
