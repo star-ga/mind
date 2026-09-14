@@ -579,7 +579,17 @@ fn ident_names_ref_param(node: &Node, refs: &RefParamSigs) -> bool {
 /// type checker. D4 functions that return a reference are rejected at their
 /// own return site, so a value-producing nested call cannot carry `p` out.
 fn contains_unconsumed_ref_param(node: &Node, refs: &RefParamSigs) -> bool {
-    if matches!(node, Node::Deref { .. } | Node::Call { .. }) {
+    // A field/index projection reads a value from the referent; it does not
+    // carry the reference parameter itself into the enclosing expression.
+    // Keep reference-taking nodes subject to the direct-call checks above,
+    // while treating ordinary value projections like dereference/call results.
+    if matches!(
+        node,
+        Node::Deref { .. }
+            | Node::Call { .. }
+            | Node::FieldAccess { .. }
+            | Node::IndexAccess { .. }
+    ) {
         return false;
     }
     if ident_names_ref_param(node, refs) {
