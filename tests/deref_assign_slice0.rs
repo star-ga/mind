@@ -494,6 +494,25 @@ fn caller(p: &mut Pair) {
         "a wrapped reference parameter may not escape through bindings or return; got {:?}",
         codes(escaped)
     );
+
+    let consumed = "struct Pair {
+    x: i64,
+    y: i64
+}
+fn consume(value: Pair) {
+}
+fn caller(p: &mut Pair) {
+    let q = *p
+    consume(*p)
+}
+";
+    let consumed_codes = codes(consumed);
+    assert!(
+        !consumed_codes
+            .iter()
+            .any(|code| code == "E2028" || code == "E2029" || code == "E2037"),
+        "an admitted dereference consumed by value must not be classified as a reference escape; got {consumed_codes:?}"
+    );
 }
 
 #[test]

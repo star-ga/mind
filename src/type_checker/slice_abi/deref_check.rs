@@ -387,7 +387,7 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
                             classify(r, ctx, in_region, errs);
                         }
                     }
-                    _ if contains_ref_param(arg, ctx.refs) => {
+                    _ if contains_unconsumed_ref_param(arg, ctx.refs) => {
                         refuse(
                             errs,
                             ctx,
@@ -442,7 +442,7 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
             value: Some(v),
             span,
         } => {
-            if contains_ref_param(v, ctx.refs) {
+            if contains_unconsumed_ref_param(v, ctx.refs) {
                 refuse(
                     errs,
                     ctx,
@@ -465,7 +465,7 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
                     "a `let` binding may not shadow a reference parameter in the deref-assign subset; rename it.",
                 );
             }
-            if contains_ref_param(value, ctx.refs) {
+            if contains_unconsumed_ref_param(value, ctx.refs) {
                 refuse(
                     errs,
                     ctx,
@@ -486,7 +486,7 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
                     "a reference parameter may not be reassigned in the deref-assign subset.",
                 );
             }
-            if contains_ref_param(value, ctx.refs) {
+            if contains_unconsumed_ref_param(value, ctx.refs) {
                 refuse(
                     errs,
                     ctx,
@@ -548,16 +548,21 @@ fn ident_names_ref_param(node: &Node, refs: &RefParamSigs) -> bool {
     matches!(node, Node::Lit(crate::ast::Literal::Ident(name), _) if refs.contains_key(name))
 }
 
-/// Find a reference-parameter occurrence inside a call argument. Only a bare
-/// identifier can be forwarded: parentheses/casts must not launder a
-/// capability into an untyped call expression.
-fn contains_ref_param(node: &Node, refs: &RefParamSigs) -> bool {
+/// Find an unconsumed reference-parameter occurrence inside an expression.
+/// Only a bare identifier can be forwarded: parentheses/casts must not launder
+/// a capability into an untyped call expression. A dereference consumes the
+/// capability as a by-value result; its own owner/region admission is checked
+/// by the `Node::Deref` arm instead of being rejected as a reference escape.
+fn contains_unconsumed_ref_param(node: &Node, refs: &RefParamSigs) -> bool {
+    if matches!(node, Node::Deref { .. }) {
+        return false;
+    }
     if ident_names_ref_param(node, refs) {
         return true;
     }
     let mut found = false;
     super::super::nerve_walk::for_each_child(node, &mut |child| {
-        if contains_ref_param(child, refs) {
+        if contains_unconsumed_ref_param(child, refs) {
             found = true;
         }
     });
