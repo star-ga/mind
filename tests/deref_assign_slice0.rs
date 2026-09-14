@@ -513,6 +513,28 @@ fn caller(p: &mut Pair) {
             .any(|code| code == "E2028" || code == "E2029" || code == "E2037"),
         "an admitted dereference consumed by value must not be classified as a reference escape; got {consumed_codes:?}"
     );
+
+    let nested_call = "struct Pair {
+    x: i64,
+    y: i64
+}
+fn snapshot(p: &mut Pair) -> Pair {
+    return *p
+}
+fn consume(value: Pair) -> i64 {
+    return value.x
+}
+fn caller(p: &mut Pair) -> i64 {
+    return consume(snapshot(p))
+}
+";
+    let nested_codes = codes(nested_call);
+    assert!(
+        !nested_codes
+            .iter()
+            .any(|code| code == "E2028" || code == "E2029" || code == "E2037"),
+        "a value-producing nested call must consume the reference at its direct formal; got {nested_codes:?}"
+    );
 }
 
 #[test]

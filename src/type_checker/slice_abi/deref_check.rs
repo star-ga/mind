@@ -553,8 +553,12 @@ fn ident_names_ref_param(node: &Node, refs: &RefParamSigs) -> bool {
 /// a capability into an untyped call expression. A dereference consumes the
 /// capability as a by-value result; its own owner/region admission is checked
 /// by the `Node::Deref` arm instead of being rejected as a reference escape.
+/// A call is also a value boundary: its arguments are classified recursively
+/// by the call walker, while the call's return type is checked by the ordinary
+/// type checker. D4 functions that return a reference are rejected at their
+/// own return site, so a value-producing nested call cannot carry `p` out.
 fn contains_unconsumed_ref_param(node: &Node, refs: &RefParamSigs) -> bool {
-    if matches!(node, Node::Deref { .. }) {
+    if matches!(node, Node::Deref { .. } | Node::Call { .. }) {
         return false;
     }
     if ident_names_ref_param(node, refs) {
