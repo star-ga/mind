@@ -277,9 +277,17 @@ fn nested_tensor_in_composite_fails_loud() {
             "track15/{tag}: no `.so` may be written when a nested-tensor boundary is \
              refused (would be a silent miscompile)\n{output}"
         );
+        // `ret_leak` is now refused earlier by the D4 type-check gate because
+        // returning any reference is outside the admitted subset.  That
+        // fail-closed diagnostic legitimately precedes the later runnable
+        // tensor ABI gate; the other four cases still require the tensor
+        // boundary wording itself.
+        let names_tensor = output.contains("tensor-typed parameter/return");
+        let is_earlier_d4_refusal =
+            tag == "ret_leak" && output.contains("reference parameter may not be returned");
         assert!(
-            output.contains("tensor-typed parameter/return"),
-            "track15/{tag}: the refusal must name the tensor construct, got:\n{output}"
+            names_tensor || is_earlier_d4_refusal,
+            "track15/{tag}: the refusal must identify the tensor boundary or the earlier D4 reference-return guard, got:\n{output}"
         );
     }
 }

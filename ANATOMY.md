@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1832 | **Est. tokens:** ~3503893
-**Generated:** 2026-09-14 08:20 UTC
+**Files:** 1832 | **Est. tokens:** ~3504037
+**Generated:** 2026-09-14 08:27 UTC
 
 ## Token Budget Guide
 
@@ -135,7 +135,7 @@
 | `src/types/` | 10 | ~20911 |
 | `src/workspace/` | 1 | ~4906 |
 | `std/` | 42 | ~202387 |
-| `tests/` | 402 | ~827425 |
+| `tests/` | 402 | ~827569 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12308 |
@@ -2441,7 +2441,7 @@
 - `tensor_eval.rs` (~457 tok, medium) — Copyright 2025 STARGA Inc.
 - `tensor_param_2d_run.rs` (~954 tok, large) — Copyright 2025 STARGA Inc.
 - `tensor_param_descriptor_abi_run.rs` (~2466 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `tensor_param_fail_loud_run.rs` (~3296 tok, huge) — Copyright 2025 STARGA Inc.
+- `tensor_param_fail_loud_run.rs` (~3440 tok, huge) — Copyright 2025 STARGA Inc.
 - `tensor_stdlib.rs` (~549 tok, large) — Copyright 2025 STARGA Inc.
 - `tensor_symbolic.rs` (~542 tok, large) — Copyright 2025 STARGA Inc.
 - `test_harness_root_cause_error.rs` (~758 tok, large) — Copyright 2025 STARGA Inc.
