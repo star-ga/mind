@@ -29,11 +29,9 @@ FIVE claims, each asserted per program via strace -f -e trace=execve:
                  the ELF, also pinned by exact count — this is the gap between what the
                  allowlist promises and what the shipped artifact delivers, so it is the
                  one a readiness claim must not lose track of.
-  CONTROL     -> every unsigned div/mod negative (and the unsigned-compare known gap) is
-                 paired with an i64 twin in IN_PROFILE that differs ONLY in the type
-                 annotation, so a verdict is attributable to signedness, not to shape.
-  KNOWN-GAP   -> an unsigned ORDERED compare, admitted today (#99), pinned by exact count
-                 and asserted to BUILD, so closing the gap is a deliberate change.
+  CONTROL     -> every unsigned OUT-PROFILE negative is paired with an i64 twin in
+                 IN_PROFILE that differs ONLY in the type annotation, so a refusal is
+                 attributable to the unsigned taint rather than to the program's shape.
 
 THE DEFERRED LIST (2026-09-16). Three programs that shipped in IN_PROFILE — float_as_i64,
 struct_return, narrow_u8_wrap — are refused by fence 1 as `closure.unresolved_edge`: they
@@ -203,6 +201,9 @@ OUT_PROFILE = [
     ("u64_param_div",
      "fn d(a:u64,b:u64)->u64{return a / b;} fn main()->i64{return 0;}",
      "first", "binop.div_mod_unsigned"),
+    ("u64_param_lt",
+     "fn lt(a:u64,b:u64)->i64{return a < b;} fn main()->i64{return 0;}",
+     "first", "binop.ordered_compare_unsigned"),
     ("u64_ret_mod",
      "fn m(a:i64,b:i64)->u64{return a % b;} fn main()->i64{return 0;}",
      "first", "binop.div_mod_unsigned"),
@@ -274,24 +275,6 @@ DEFERRED_FROZEN_ELF_LAG = [
      "fn main()->i64{let a:i64=1; let b:i64=2; if a == 1 && b == 2 { return 5; } return 0;}"),
     ("elf_lag_else_join",
      "fn main()->i64{let x:i64=3; let mut y:i64=0; if x > 2 { y = 1; } else { y = 2; } return y;}"),
-]
-
-# KNOWN, DELIBERATELY UNCLOSED miscompile class: an ORDERED compare on a full-width
-# unsigned operand. The native emitter has only the signed `setcc` family, so for
-# operands with the high bit set it answers the opposite of MLIR's `ult`/`ugt` (#99,
-# measured for `u64 <`: native 1 vs MLIR 0). These programs are ADMITTED today, and
-# this list asserts exactly that, pinned by exact count.
-#
-# Why it is not refused: fence 1 admits the WHOLE merged std + user image (root's
-# whole-module ruling), and the std seed itself does this — `std/json.mind::num_u64`
-# guards with `if v > 9223372036854775807` on a u64 parameter — so refusing the class
-# refuses every native build. Closing it needs a native unsigned setcc arm + reseed, a
-# ruling that signedness checks may be reachability-scoped, or a std rewrite (reseed).
-# When one lands, these fixtures must move to OUT_PROFILE, and the exact-count pin and
-# the "must build" assertion make sure nobody forgets.
-KNOWN_UNSIGNED_COMPARE_GAP = [
-    ("u64_param_lt_admitted",
-     "fn lt(a:u64,b:u64)->i64{return a < b;} fn main()->i64{return 0;}"),
 ]
 
 EXECVE_PATH = re.compile(r'execve\("([^"]+)"')
@@ -455,8 +438,7 @@ def main() -> int:
             f"digest fixture's pinned exit ({digest_exit})"
         )
         return 1
-    PINNED_OUT_PROFILE = 8
-    PINNED_UNSIGNED_COMPARE_GAP = 1
+    PINNED_OUT_PROFILE = 9
     # EXACT, not floors. Both lists are known GAPS, so neither may grow silently (more
     # refusal = capability regression) nor shrink silently (something became buildable,
     # which owes an IN_PROFILE entry with a real expected exit before anyone may call it
@@ -474,12 +456,6 @@ def main() -> int:
             f"FAIL  deferred over-rejection list is {len(DEFERRED_OVER_REJECTED)}, pinned at "
             f"{PINNED_DEFERRED}. Growing it is a capability regression; shrinking it means a "
             "construct became admitted and owes an IN_PROFILE entry with an expected exit."
-        )
-        return 1
-    if len(KNOWN_UNSIGNED_COMPARE_GAP) != PINNED_UNSIGNED_COMPARE_GAP:
-        print(
-            f"FAIL  known unsigned-compare gap list is {len(KNOWN_UNSIGNED_COMPARE_GAP)}, "
-            f"pinned at {PINNED_UNSIGNED_COMPARE_GAP}. Change it only together with the fence."
         )
         return 1
     if len(DEFERRED_FROZEN_ELF_LAG) != PINNED_ELF_LAG:
@@ -535,21 +511,6 @@ def main() -> int:
             else:
                 print(f"  ok   DEFERRED    {name:20} rc={rc} over-rejected as "
                       f"'{want_construct}' (known gap, pinned)")
-
-        for name, src in KNOWN_UNSIGNED_COMPARE_GAP:
-            rc, art, serr, execs = strace_native_build(name, src, td)
-            if rc != 0 or not art:
-                fails.append(
-                    f"gap/{name}: build rc={rc} artifact={len(art)}B — the unsigned-compare "
-                    "gap now REFUSES. If that was intentional, move this fixture to "
-                    "OUT_PROFILE with its construct and drop the pin; otherwise fence 1 "
-                    "regressed into refusing every loop."
-                )
-            elif toolchain_hits(execs):
-                fails.append(f"gap/{name}: SPAWNED TOOLCHAIN {toolchain_hits(execs)}")
-            else:
-                print(f"  ok   KNOWN-GAP   {name:20} rc=0 admitted (unsigned ordered compare "
-                      "— known #99 gap, pinned)")
 
         for name, src in DEFERRED_FROZEN_ELF_LAG:
             # want_fence="second": fence 1 must ADMIT it (no "out-of-profile construct:"

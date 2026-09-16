@@ -50,9 +50,10 @@ pub fn profile_frozen_admits(module: &IRModule) -> Result<(), FrozenProfileRejec
     // order-independence reason `fp_mode::collect_extern_float_rets` is a pre-pass: a
     // comparison can appear textually before the float literal that types its operands.
     let float_taint = module_has_float_literal(&module.instrs);
-    // Unsigned taint for SIGNED-only Div/Mod admission (RH-native, 2026-09-16).
-    // The native emitter has ONLY a signed `idiv`; on a full-width UNSIGNED operand
-    // it silently disagrees with MLIR's `divui`/`remui` (the #99 family). The doors a
+    // Unsigned taint for SIGNED-only Div/Mod and ordered-compare admission (RH-native,
+    // 2026-09-16). The native emitter has ONLY a signed `idiv` and signed `setcc`; on a
+    // full-width UNSIGNED operand it silently disagrees with MLIR's `divui`/`remui`/
+    // `ult`/`ugt` (the #99 family). The doors a
     // full-width unsigned value enters a function body through, and how each is shut:
     //   * a PARAMETER of that function      -> its own `fn_signatures` entry
     //   * the RESULT of a call it makes     -> the callee's `fn_signatures` return
@@ -61,10 +62,13 @@ pub fn profile_frozen_admits(module: &IRModule) -> Result<(), FrozenProfileRejec
     //     in the bridge; `call.undefined_or_builtin` here) — LOAD-BEARING, see
     //     `admit_call`'s note.
     // The taint is therefore computed PER FUNCTION BODY, not per module. It used to
-    // be module-wide, which was sound for a single file but wrong once the fence
-    // began walking the merged std + user image: `std/json.mind` declares
-    // `num_u64(v: u64)` and `get_u64(..) -> u64`, so EVERY native program was
-    // tainted and every `/` refused — including programs that never touch json.
+    // be module-wide, which was wrong on main: the bridge walks only the composed
+    // USER region, but lowering injects the std seed's SIGNATURES into
+    // `fn_signatures` (`lower.rs`, `cm_all_imported_fn_signatures` /
+    // `bundled_std_fn_signatures`), and `std/json.mind` declares `num_u64(v: u64)` and
+    // `get_u64(..) -> u64`. A module-wide scan saw those, so EVERY native program was
+    // tainted — every `/`, `%` and loop compare refused. Std BODIES are never walked
+    // here (calls into the seed refuse as `closure.unresolved_edge`).
     let doors = UnsignedDoors::from_module(module);
     let top_taint = doors.body_taint(None, &module.instrs);
     admit_instrs_in(&module.instrs, &defined, float_taint, top_taint, &doors)
@@ -106,35 +110,26 @@ impl UnsignedDoors {
     }
 }
 
-/// Does `body` call any function in `callees`? Descends into control-flow bodies but
-/// NOT into a nested `FnDef`: a nested function is its own body with its own taint,
-/// and its calls do not put a value into THIS body.
+/// Does `body` call any function in `callees`? Descends into every nested body via the
+/// single enumeration `crate::ir::instr_bodies` (While / If / Region), but NOT into a
+/// nested `FnDef`: a nested function is its own body with its own taint, and its calls
+/// do not put a value into THIS body. Using the shared enumeration rather than a local
+/// match keeps a future body-carrying variant from being invisible here.
 #[cfg(feature = "std-surface")]
 fn calls_any(body: &[Instr], callees: &std::collections::BTreeSet<String>) -> bool {
     body.iter().any(|instr| match instr {
         Instr::Call { name, .. } => callees.contains(name),
         Instr::FnDef { .. } => false,
-        Instr::While {
-            cond_instrs, body, ..
-        } => calls_any(cond_instrs, callees) || calls_any(body, callees),
-        Instr::If {
-            cond_instrs,
-            then_instrs,
-            else_instrs,
-            ..
-        } => {
-            calls_any(cond_instrs, callees)
-                || calls_any(then_instrs, callees)
-                || calls_any(else_instrs, callees)
-        }
-        _ => false,
+        other => crate::ir::instr_bodies(other)
+            .iter()
+            .any(|nested| calls_any(nested, callees)),
     })
 }
 
 /// Without `std-surface` the IR carries NO `fn_signatures` side-table (the field is
 /// `#[cfg(feature = "std-surface")]` on `IRModule`), so no door can be inspected.
 /// An uninspectable door is treated as OPEN: every body is tainted, which REFUSES
-/// Div/Mod instead of admitting it unchecked — "undecidable => refuse". (Found by
+/// Div/Mod and ordered compares instead of admitting them unchecked — "undecidable => refuse". (Found by
 /// `cargo check --no-default-features`, which the std-surface unit gate could not see.)
 #[cfg(not(feature = "std-surface"))]
 struct UnsignedDoors;
@@ -330,28 +325,19 @@ fn admit_binop(
                 Ok(())
             }
         }
-        // ORDERED compares emit a signed `setcc`; an unsigned operand needs
-        // `setb`/`seta`. That is a LIVE, KNOWN gap (the #99 divergence, measured for
-        // `u64 <`: native 1 vs MLIR 0) and it is deliberately NOT closed here.
-        //
-        // Why not: the fence admits the WHOLE merged std + user image (root's
-        // whole-module ruling — reachability is diagnostic only), and the std seed
-        // itself contains an unsigned ordered compare: `std/json.mind::num_u64` guards
-        // with `if v > 9223372036854775807` on a `u64` parameter. Refusing it would
-        // refuse EVERY native build. (That guard is therefore itself a latent native
-        // miscompile — the high-bit value it exists to reject passes it — reachable
-        // only by a program that calls `json.num_u64`.)
-        //
-        // deferred: close it by ONE of (a) a native unsigned `setcc` arm keyed on
-        // operand dtype in `nb_setcc_opcode` + a stage1.elf reseed, (b) an arch ruling
-        // that signedness checks may be scoped to the reachable closure, or (c)
-        // rewriting the std guard without a u64 ordered compare (a seed-blob change,
-        // i.e. a reseed event). Tracked as a pinned gap fixture in
-        // `ri_d1_frozen_profile_gate.py` (KNOWN_UNSIGNED_COMPARE_GAP) so closing it is
-        // noticed. All three are root-owned; none is done in this slice.
+        // ORDERED compares emit a signed `setcc`; an unsigned operand needs `setb`/`seta`
+        // (the #99 divergence, measured live for `u64 <`: native 1 vs MLIR 0). Refused in
+        // an unsigned-tainted FUNCTION BODY — the same per-body taint as Div/Mod.
+        // (An earlier revision of this port left the gap open on the claim that the std
+        // seed's own `json.num_u64` compare would refuse every native build. That was
+        // wrong: std bodies are never walked by this fence, only std SIGNATURES reach
+        // `fn_signatures`, and a per-body taint does not see them. Corrected on arch
+        // review.) Eq/Ne are bit compares — sign-agnostic — and stay admitted.
         BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
             if float_taint {
                 reject("binop.compare_in_float_module")
+            } else if unsigned_taint {
+                reject("binop.ordered_compare_unsigned")
             } else {
                 Ok(())
             }
@@ -619,6 +605,10 @@ mod tests {
         }
     }
 
+    // std-surface only: without it there is no signature table, so the unsigned
+    // taint fails closed and ordered compares are refused (see
+    // `without_std_surface_the_unsigned_taint_fails_closed`).
+    #[cfg(feature = "std-surface")]
     #[test]
     fn corpus_proven_binops_are_admitted() {
         // The 5-program readiness corpus exercises `+` (Add) and `<` (Lt, the for-loop
@@ -736,28 +726,65 @@ mod tests {
         );
     }
 
-    /// Ordered compares on an unsigned operand are a KNOWN, DELIBERATELY UNCLOSED gap
-    /// (see `admit_binop`: closing it under whole-image admission refuses every native
-    /// build, because `std/json.mind::num_u64` compares a u64). This pins the CURRENT
-    /// behaviour so that closing the gap is a visible, deliberate test change rather
-    /// than something that happens by accident.
+    /// Ordered compares are refused in an unsigned-tainted body (signed `setcc` vs MLIR
+    /// `ult`/`ugt`, #99) — per body, like Div/Mod — while Eq/Ne (bit compares) and the
+    /// same compares in an UNtainted body stay admitted.
     #[cfg(feature = "std-surface")]
     #[test]
-    fn ordered_compare_on_unsigned_signature_is_a_pinned_known_gap() {
-        for op in [
-            BinOp::Lt,
-            BinOp::Le,
-            BinOp::Gt,
-            BinOp::Ge,
-            BinOp::Eq,
-            BinOp::Ne,
-        ] {
+    fn ordered_compare_rejected_in_unsigned_body_but_eq_ne_ok() {
+        for op in [BinOp::Lt, BinOp::Le, BinOp::Gt, BinOp::Ge] {
             let m = module_with_sigs(
                 &[fndef_named("lt", vec![binop(op)])],
                 &[("lt", &["u64", "u64"], Some("i64"))],
             );
-            assert_eq!(construct(&m), None, "{op:?}: known gap — admitted today");
+            assert_eq!(
+                construct(&m),
+                Some("binop.ordered_compare_unsigned"),
+                "{op:?}"
+            );
+            // Control: the same body under an i64 signature is admitted.
+            let m = module_with_sigs(
+                &[fndef_named("lt", vec![binop(op)])],
+                &[("lt", &["i64", "i64"], Some("i64"))],
+            );
+            assert_eq!(construct(&m), None, "{op:?} under i64 must be admitted");
         }
+        for op in [BinOp::Eq, BinOp::Ne] {
+            let m = module_with_sigs(
+                &[fndef_named("eq", vec![binop(op)])],
+                &[("eq", &["u64", "u64"], Some("i64"))],
+            );
+            assert_eq!(construct(&m), None, "{op:?} is sign-agnostic");
+        }
+        // A u64 SIGNATURE elsewhere (std/json's `num_u64` shape) does not refuse a loop
+        // compare in an unrelated body.
+        let m = module_with_sigs(
+            &[
+                fndef_named("num_u64", vec![binop(BinOp::Gt)]),
+                fndef_named("main", vec![binop(BinOp::Lt)]),
+            ],
+            &[
+                ("num_u64", &["u64"], Some("i64")),
+                ("main", &[], Some("i64")),
+            ],
+        );
+        assert_eq!(
+            construct(&m),
+            Some("binop.ordered_compare_unsigned"),
+            "num_u64's own body IS tainted when it is walked"
+        );
+        let m = module_with_sigs(
+            &[fndef_named("main", vec![binop(BinOp::Lt)])],
+            &[
+                ("num_u64", &["u64"], Some("i64")),
+                ("main", &[], Some("i64")),
+            ],
+        );
+        assert_eq!(
+            construct(&m),
+            None,
+            "a signature-only std fn must not taint `main`"
+        );
     }
 
     #[cfg(feature = "std-surface")]
@@ -830,10 +857,10 @@ mod tests {
         assert_eq!(admits(&[fndef(vec![]), call("f")]), Ok(()));
     }
 
-    /// Without `std-surface` there is no signature table to inspect, so the Div/Mod
-    /// taint must fail CLOSED. Ordered compares are unaffected (the known gap applies
-    /// in both configurations). Mutation-sensitive: returning `false` from the
-    /// non-std-surface `UnsignedDoors::body_taint` admits Div/Mod and turns this red.
+    /// Without `std-surface` there is no signature table to inspect, so the unsigned
+    /// taint must fail CLOSED: Div/Mod and ordered compares refused, bit compares kept.
+    /// Mutation-sensitive: returning `false` from the non-std-surface
+    /// `UnsignedDoors::body_taint` admits all six and turns this red.
     #[cfg(not(feature = "std-surface"))]
     #[test]
     fn without_std_surface_the_unsigned_taint_fails_closed() {
@@ -851,7 +878,15 @@ mod tests {
                 "{op:?} must be refused when the signature door cannot be inspected"
             );
         }
-        for op in [BinOp::Lt, BinOp::Eq, BinOp::Ne, BinOp::Add] {
+        for op in [BinOp::Lt, BinOp::Le, BinOp::Gt, BinOp::Ge] {
+            assert_eq!(
+                profile_frozen_admits(&m(&[binop(op)]))
+                    .unwrap_err()
+                    .construct,
+                "binop.ordered_compare_unsigned"
+            );
+        }
+        for op in [BinOp::Eq, BinOp::Ne, BinOp::Add] {
             assert_eq!(profile_frozen_admits(&m(&[binop(op)])), Ok(()));
         }
     }
@@ -919,6 +954,10 @@ mod tests {
 
     /// Integer comparisons keep the profile's proven for-loop (`array_idx_loop`) — the
     /// rejection must be conditional on the float, never unconditional.
+    // std-surface only: without it there is no signature table, so the unsigned
+    // taint fails closed and ordered compares are refused (see
+    // `without_std_surface_the_unsigned_taint_fails_closed`).
+    #[cfg(feature = "std-surface")]
     #[test]
     fn integer_comparison_without_float_is_still_admitted() {
         assert_eq!(admits(&[binop(BinOp::Lt)]), Ok(()));
