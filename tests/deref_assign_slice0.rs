@@ -510,11 +510,16 @@ fn reference_forwarding_inside_region_is_refused() {
 
 #[test]
 fn immutable_reference_shadow_and_wrappers_are_refused() {
+    // The shadow hazard is the MUTABLE case: the flat param table the `*p`
+    // admission consults is not updated by a rebind, so shadowing a `&mut`
+    // param would let a later `*p` mis-store through the stale slot. An
+    // immutable `&T` param has no `*p` store and is unrestricted (pristine
+    // parity — see immutable_ref_shadow_is_admitted); so this case is `&mut`.
     let shadow =
-        "struct Pair {\n    x: i64,\n    y: i64\n}\nfn caller(p: &Pair) {\n    let p = 1\n}\n";
+        "struct Pair {\n    x: i64,\n    y: i64\n}\nfn caller(p: &mut Pair) {\n    let p = 1\n}\n";
     assert!(
         codes(shadow).contains(&"E2029".to_string()),
-        "an immutable reference parameter may not be shadowed; got {:?}",
+        "a mutable reference parameter may not be shadowed; got {:?}",
         codes(shadow)
     );
 
@@ -743,10 +748,25 @@ fn mut_param_forwarded_to_method_or_scalar_is_refused_F4() {
         "`sink(p)` (&mut param into scalar formal) must be E2037; got {:?}",
         codes(scal)
     );
-    let tup = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn f(p: &mut Pair) {\n    let (p, q) = (7, 0)\n    *p = q\n}\n";
+    let tup = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn f(p: &mut Pair) {\n    let (p, q) = (7, 0)\n}\n";
     assert!(
         codes(tup).contains(&"E2029".to_string()),
         "tuple-let shadow of &mut param must be E2029; got {:?}",
         codes(tup)
+    );
+}
+
+#[test]
+fn immutable_ref_shadow_is_admitted() {
+    // Corrected contract (pristine parity, execution-verified against 460f888c):
+    // an immutable `&T` parameter has no `*p` store, so shadowing it (`let p =
+    // 1`) is harmless and MUST NOT be refused. Only the `&mut` shadow is a
+    // hazard (see immutable_reference_shadow_and_wrappers_are_refused).
+    let src =
+        "struct Pair {\n    x: i64,\n    y: i64\n}\nfn caller(p: &Pair) {\n    let p = 1\n}\n";
+    assert!(
+        !codes(src).iter().any(|c| c == "E2029" || c == "E2037"),
+        "immutable `&Pair` shadow must be admitted; got {:?}",
+        codes(src)
     );
 }
