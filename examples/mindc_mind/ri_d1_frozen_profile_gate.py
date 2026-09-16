@@ -29,15 +29,18 @@ FIVE claims, each asserted per program via strace -f -e trace=execve:
                  the ELF, also pinned by exact count — this is the gap between what the
                  allowlist promises and what the shipped artifact delivers, so it is the
                  one a readiness claim must not lose track of.
-  CONTROL     -> every unsigned OUT-PROFILE negative is paired with an i64 twin in
-                 IN_PROFILE that differs ONLY in the type annotation, so a refusal is
-                 attributable to the unsigned taint rather than to the program's shape.
+  CONTROL     -> every unsigned div/mod negative (and the unsigned-compare known gap) is
+                 paired with an i64 twin in IN_PROFILE that differs ONLY in the type
+                 annotation, so a verdict is attributable to signedness, not to shape.
+  KNOWN-GAP   -> an unsigned ORDERED compare, admitted today (#99), pinned by exact count
+                 and asserted to BUILD, so closing the gap is a deliberate change.
 
 THE DEFERRED LIST (2026-09-16). Three programs that shipped in IN_PROFILE — float_as_i64,
-struct_return, narrow_u8_wrap — are refused by fence 1 as `call.undefined_or_builtin`:
-they lower to compiler-synthesised intrinsic calls (`__mind_conv_i64`, `__mind_alloc` /
-`__mind_store_i64` / `__mind_load_i64`) and `admit_call` admits only callees DEFINED in the
-module. The frozen ELF compiles all three; the Rust predicate is simply stricter than the
+struct_return, narrow_u8_wrap — are refused by fence 1 as `closure.unresolved_edge`: they
+lower to compiler-synthesised intrinsic calls (`__mind_conv_i64`, `__mind_alloc` /
+`__mind_store_i64` / `__mind_load_i64`) that have no definition in the admission closure
+(and that `admit_call` would refuse as `call.undefined_or_builtin` if the closure did not
+get there first). The frozen ELF compiles all three; the Rust predicate is simply stricter than the
 corpus. That is OVER-rejection: fail-closed, loud, recoverable — the safe direction — but
 it means the allowlist is not in bijection with the corpus, which is what kept this gate
 RED. Deleting the three fixtures would have turned the gate green by forgetting the gap.
@@ -148,15 +151,15 @@ IN_PROFILE += _SHARED
 # docstring, "THE DEFERRED LIST".
 DEFERRED_OVER_REJECTED = [
     # `(2.5+4.0) as i64` -> `__mind_conv_i64`, a callee not defined in the module.
-    ("float_as_i64", "fn main()->i64{return (2.5+4.0) as i64;}", "call.undefined_or_builtin"),
+    ("float_as_i64", "fn main()->i64{return (2.5+4.0) as i64;}", "closure.unresolved_edge"),
     # Aggregate ABI: `__mind_alloc` / `__mind_store_i64` / `__mind_load_i64`.
     ("struct_return",
      "struct P{a:i64,b:i64} fn mk()->P{return P{a:3,b:4};} "
-     "fn main()->i64{let p=mk(); return p.a+p.b;}", "call.undefined_or_builtin"),
+     "fn main()->i64{let p=mk(); return p.a+p.b;}", "closure.unresolved_edge"),
     # u8 200+100 wraps to 44 (mod 256); the `as i64` widening is the synthesised call.
     ("narrow_u8_wrap",
      "fn main()->i64{let x:u8=200; let y:u8=100; return (x+y) as i64;}",
-     "call.undefined_or_builtin"),
+     "closure.unresolved_edge"),
 ]
 
 # Out-of-profile: matrix-declared NOT in the native subset (row 11 tensor = NO / RI-E,
@@ -187,7 +190,7 @@ OUT_PROFILE = [
     # its own gives the tensor.* rejection arms NO coverage, which is why the annotated
     # form below is also pinned: `let t: Tensor[f32,(2,3)] = 0` does reach `const-tensor`.
     ("tensor_ctor_call", "fn main()->i64{let t=zeros([4]); return 0;}",
-     "first", "call.undefined_or_builtin"),
+     "first", "closure.unresolved_edge"),
     ("tensor_const", "fn main()->i64{let t: Tensor[f32,(2,3)] = 0; return 0;}",
      "first", "const-tensor"),
 
@@ -203,9 +206,6 @@ OUT_PROFILE = [
     ("u64_ret_mod",
      "fn m(a:i64,b:i64)->u64{return a % b;} fn main()->i64{return 0;}",
      "first", "binop.div_mod_unsigned"),
-    ("u64_param_lt",
-     "fn lt(a:u64,b:u64)->i64{return a < b;} fn main()->i64{return 0;}",
-     "first", "binop.ordered_compare_unsigned"),
     # The `let x: u64 = y as u64` door: no u64 appears in any fn signature, so the
     # signature taint cannot see it. It is closed instead by `admit_call` refusing the
     # synthesised `__mind_conv_u64` — the LOAD-BEARING coupling documented in
@@ -214,11 +214,11 @@ OUT_PROFILE = [
     ("u64_cast_then_div",
      "fn main()->i64{let y:i64=84; let x:u64=y as u64; let z:u64=2 as u64; "
      "let q:u64=x / z; return 0;}",
-     "first", "call.undefined_or_builtin"),
+     "first", "closure.unresolved_edge"),
 
     # Used to be declared a SECOND-fence fixture and was a vacuous pass for it: the
-    # Rust front end cannot parse `trait`/`impl`, so mindc refuses at "cannot determine
-    # frozen-profile admission" and stage1.elf is never execve'd (measured 2026-09-16).
+    # Rust front end cannot parse `trait`/`impl`, so the bridge refuses with the parser's
+    # own `error[parse]` and stage1.elf is never execve'd (measured 2026-09-16).
     # It is honest coverage of the UNDECIDABLE arm and nothing else, so it says so.
     ("trait",
      "trait T{fn f(self)->i64;} struct S{} impl T for S{fn f(self)->i64{return 1;}} "
@@ -276,13 +276,38 @@ DEFERRED_FROZEN_ELF_LAG = [
      "fn main()->i64{let x:i64=3; let mut y:i64=0; if x > 2 { y = 1; } else { y = 2; } return y;}"),
 ]
 
+# KNOWN, DELIBERATELY UNCLOSED miscompile class: an ORDERED compare on a full-width
+# unsigned operand. The native emitter has only the signed `setcc` family, so for
+# operands with the high bit set it answers the opposite of MLIR's `ult`/`ugt` (#99,
+# measured for `u64 <`: native 1 vs MLIR 0). These programs are ADMITTED today, and
+# this list asserts exactly that, pinned by exact count.
+#
+# Why it is not refused: fence 1 admits the WHOLE merged std + user image (root's
+# whole-module ruling), and the std seed itself does this — `std/json.mind::num_u64`
+# guards with `if v > 9223372036854775807` on a u64 parameter — so refusing the class
+# refuses every native build. Closing it needs a native unsigned setcc arm + reseed, a
+# ruling that signedness checks may be reachability-scoped, or a std rewrite (reseed).
+# When one lands, these fixtures must move to OUT_PROFILE, and the exact-count pin and
+# the "must build" assertion make sure nobody forgets.
+KNOWN_UNSIGNED_COMPARE_GAP = [
+    ("u64_param_lt_admitted",
+     "fn lt(a:u64,b:u64)->i64{return a < b;} fn main()->i64{return 0;}"),
+]
+
 EXECVE_PATH = re.compile(r'execve\("([^"]+)"')
 # The first fence's diagnostic shape (src/bin/mindc.rs): "... (out-of-profile construct: X)".
-FIRST_FENCE_CONSTRUCT = re.compile(r"out-of-profile construct: ([A-Za-z0-9_.\-]+)")
+# Fence 1 is two Rust-side checks in the bridge (src/build/native_bridge.rs), run in
+# order: the entry-rooted admission CLOSURE (`... (closure.<kind>)`), then the frozen
+# PROFILE predicate (`... (out-of-profile construct: <label>)`). Both are the Rust
+# fence — neither is the frozen ELF — so either label counts as a first-fence refusal.
+FIRST_FENCE_CONSTRUCT = re.compile(
+    r"out-of-profile construct: ([A-Za-z0-9_.\-]+)|\((closure\.[a-z_]+)\)"
+)
 # The frozen stage1.elf's own refusal, relayed by the bridge.
 SECOND_FENCE_REFUSAL = "unsupported construct"
-# mindc's refusal when fence 1 cannot lower the module at all (src/bin/mindc.rs).
-UNDECIDABLE_REFUSAL = "cannot determine frozen-profile admission"
+# The bridge's refusal when fence 1 cannot even parse the merged module: it relays the
+# front end's own parse diagnostic (src/build/native_bridge.rs, `admit_merged_program`).
+UNDECIDABLE_REFUSAL = "error[parse]"
 # Exact row count of the shared corpus, pinned identically in every reader.
 CORPUS_ROWS = 13
 
@@ -359,9 +384,9 @@ def check_refusal(name, src, td, want_fence, want_construct):
                 "and name the construct, but it did not — this fixture gives the first "
                 "fence no coverage"
             )
-        elif want_construct is not None and named.group(1) != want_construct:
+        elif want_construct is not None and (named.group(1) or named.group(2)) != want_construct:
             problems.append(
-                f"first fence named construct '{named.group(1)}' but this fixture is the "
+                f"first fence named construct '{(named.group(1) or named.group(2))}' but this fixture is the "
                 f"coverage for '{want_construct}' — it is being refused for the wrong "
                 "reason, so the rule it is supposed to test is untested"
             )
@@ -369,7 +394,7 @@ def check_refusal(name, src, td, want_fence, want_construct):
         if named:
             problems.append(
                 f"expected the SECOND fence (the pure-MIND compiler) to refuse, but the "
-                f"Rust predicate caught it first as '{named.group(1)}' — the fixture no "
+                f"Rust predicate caught it first as '{(named.group(1) or named.group(2))}' — the fixture no "
                 "longer exercises the compiler's own fail-closed path"
             )
         # "No first-fence construct named" is NOT evidence the second fence ran: a
@@ -430,7 +455,8 @@ def main() -> int:
             f"digest fixture's pinned exit ({digest_exit})"
         )
         return 1
-    PINNED_OUT_PROFILE = 9
+    PINNED_OUT_PROFILE = 8
+    PINNED_UNSIGNED_COMPARE_GAP = 1
     # EXACT, not floors. Both lists are known GAPS, so neither may grow silently (more
     # refusal = capability regression) nor shrink silently (something became buildable,
     # which owes an IN_PROFILE entry with a real expected exit before anyone may call it
@@ -448,6 +474,12 @@ def main() -> int:
             f"FAIL  deferred over-rejection list is {len(DEFERRED_OVER_REJECTED)}, pinned at "
             f"{PINNED_DEFERRED}. Growing it is a capability regression; shrinking it means a "
             "construct became admitted and owes an IN_PROFILE entry with an expected exit."
+        )
+        return 1
+    if len(KNOWN_UNSIGNED_COMPARE_GAP) != PINNED_UNSIGNED_COMPARE_GAP:
+        print(
+            f"FAIL  known unsigned-compare gap list is {len(KNOWN_UNSIGNED_COMPARE_GAP)}, "
+            f"pinned at {PINNED_UNSIGNED_COMPARE_GAP}. Change it only together with the fence."
         )
         return 1
     if len(DEFERRED_FROZEN_ELF_LAG) != PINNED_ELF_LAG:
@@ -503,6 +535,21 @@ def main() -> int:
             else:
                 print(f"  ok   DEFERRED    {name:20} rc={rc} over-rejected as "
                       f"'{want_construct}' (known gap, pinned)")
+
+        for name, src in KNOWN_UNSIGNED_COMPARE_GAP:
+            rc, art, serr, execs = strace_native_build(name, src, td)
+            if rc != 0 or not art:
+                fails.append(
+                    f"gap/{name}: build rc={rc} artifact={len(art)}B — the unsigned-compare "
+                    "gap now REFUSES. If that was intentional, move this fixture to "
+                    "OUT_PROFILE with its construct and drop the pin; otherwise fence 1 "
+                    "regressed into refusing every loop."
+                )
+            elif toolchain_hits(execs):
+                fails.append(f"gap/{name}: SPAWNED TOOLCHAIN {toolchain_hits(execs)}")
+            else:
+                print(f"  ok   KNOWN-GAP   {name:20} rc=0 admitted (unsigned ordered compare "
+                      "— known #99 gap, pinned)")
 
         for name, src in DEFERRED_FROZEN_ELF_LAG:
             # want_fence="second": fence 1 must ADMIT it (no "out-of-profile construct:"

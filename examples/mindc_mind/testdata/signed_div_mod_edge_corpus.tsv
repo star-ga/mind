@@ -8,7 +8,7 @@
 #   tests/signed_div_mod_cross_backend_parity_run.rs   -> MLIR backend executable
 #   tests/signed_div_mod_interpreter_corpus_run.rs     -> tree-walking INTERPRETER
 #
-# NOT a consumer: the IR conformance oracle `eval_ir` (it does not call `main`, so
+# NOT a consumer: the IR preview evaluator `eval_ir` (it does not call `main`, so
 # it cannot run these programs) and the operand-level unit tests in src/eval/ —
 # those hold the same CONTRACT with their own operand lists and are not
 # structurally coupled to this file.

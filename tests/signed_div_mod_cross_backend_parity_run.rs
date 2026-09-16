@@ -24,7 +24,7 @@
 //! most expensive recurring defect class, and one that a passing test suite never
 //! catches, because both lists keep passing while they drift apart. A single corpus
 //! makes the agreement structural: a fixture can only be edited for every tier at once.
-//! (The IR conformance oracle `eval_ir` does not call `main`, so it cannot run these
+//! (The IR preview evaluator `eval_ir` does not call `main`, so it cannot run these
 //! programs; its arms are held to the same contract by its own unit test, which is a
 //! separate operand list and is NOT structurally coupled to this corpus.)
 //!

@@ -41,6 +41,12 @@ fn roots(names: &[&str]) -> Vec<String> {
 
 /// Whole-module admission REFUSES an uncalled out-of-profile body.
 ///
+/// The out-of-profile construct in these fixtures is `>>` (`binop.shr`). It used to be
+/// `/` (`binop.div`), but signed i64 Div/Mod joined the frozen profile on 2026-09-16
+/// (RH native slice), so `/` no longer demonstrates a refusal. The rulings under test
+/// are about whole-module admission and reachability, not about which operator is out
+/// of profile; `>>` is refused unconditionally, which keeps every fixture meaningful.
+///
 /// This test previously asserted the opposite -- that entry-rooted admission
 /// should ACCEPT such a program -- under a ruling that has since been reversed.
 /// Root preserves whole-user-program admission: the image is not pruned, so an
@@ -50,7 +56,7 @@ fn roots(names: &[&str]) -> Vec<String> {
 #[test]
 fn whole_module_admission_refuses_an_uncalled_out_of_profile_body() {
     let ir = lower(
-        "fn unused_div(x: i64) -> i64 {\n    return x / 2;\n}\n\n\
+        "fn unused_div(x: i64) -> i64 {\n    return x >> 2;\n}\n\n\
          fn main() -> i64 {\n    return 7;\n}\n",
     );
     let verdict = profile_frozen_admits(&ir);
@@ -58,7 +64,7 @@ fn whole_module_admission_refuses_an_uncalled_out_of_profile_body() {
         verdict.is_err(),
         "an uncalled out-of-profile body must still refuse under whole-module admission"
     );
-    assert_eq!(verdict.unwrap_err().construct, "binop.div");
+    assert_eq!(verdict.unwrap_err().construct, "binop.shr");
 }
 
 /// The same body, now reachable, must still refuse. This is the half of the
@@ -66,15 +72,15 @@ fn whole_module_admission_refuses_an_uncalled_out_of_profile_body() {
 #[test]
 fn reachable_out_of_profile_body_still_refuses() {
     let ir = lower(
-        "fn halve(x: i64) -> i64 {\n    return x / 2;\n}\n\n\
+        "fn halve(x: i64) -> i64 {\n    return x >> 2;\n}\n\n\
          fn main() -> i64 {\n    return halve(14);\n}\n",
     );
     let reach = reachable_from(&ir, &roots(&["main"])).expect("main must resolve");
     assert!(reach.contains("halve"), "halve IS called from main");
     let restricted = restrict_to_reachable(&ir, &reach);
     let verdict = profile_frozen_admits(&restricted);
-    assert!(verdict.is_err(), "a reachable `/` must refuse");
-    assert_eq!(verdict.unwrap_err().construct, "binop.div");
+    assert!(verdict.is_err(), "a reachable `>>` must refuse");
+    assert_eq!(verdict.unwrap_err().construct, "binop.shr");
 }
 
 /// Transitive reachability: main -> mid -> leaf. An out-of-profile construct two
@@ -82,14 +88,14 @@ fn reachable_out_of_profile_body_still_refuses() {
 #[test]
 fn transitive_reachability_reaches_two_hops() {
     let ir = lower(
-        "fn leaf(x: i64) -> i64 {\n    return x / 2;\n}\n\n\
+        "fn leaf(x: i64) -> i64 {\n    return x >> 2;\n}\n\n\
          fn mid(x: i64) -> i64 {\n    return leaf(x);\n}\n\n\
          fn main() -> i64 {\n    return mid(8);\n}\n",
     );
     let reach = reachable_from(&ir, &roots(&["main"])).expect("main must resolve");
     assert!(reach.contains("leaf"), "leaf is reachable through mid");
     let verdict = profile_frozen_admits(&restrict_to_reachable(&ir, &reach));
-    assert_eq!(verdict.unwrap_err().construct, "binop.div");
+    assert_eq!(verdict.unwrap_err().construct, "binop.shr");
 }
 
 /// Reachability must follow a call made inside a nested control-flow body, not
@@ -98,7 +104,7 @@ fn transitive_reachability_reaches_two_hops() {
 #[test]
 fn reachability_follows_calls_nested_in_control_flow() {
     let ir = lower(
-        "fn hidden(x: i64) -> i64 {\n    return x / 2;\n}\n\n\
+        "fn hidden(x: i64) -> i64 {\n    return x >> 2;\n}\n\n\
          fn main() -> i64 {\n    let mut t: i64 = 0;\n    \
          if 1 < 2 {\n        t = hidden(4);\n    }\n    return t;\n}\n",
     );
@@ -139,7 +145,7 @@ fn missing_entry_root_is_refused() {
 #[test]
 fn restriction_does_not_pretend_the_body_is_gone() {
     let ir = lower(
-        "fn unused_div(x: i64) -> i64 {\n    return x / 2;\n}\n\n\
+        "fn unused_div(x: i64) -> i64 {\n    return x >> 2;\n}\n\n\
          fn main() -> i64 {\n    return 7;\n}\n",
     );
     let all = defined_fn_names(&ir);
@@ -168,9 +174,9 @@ fn restriction_does_not_pretend_the_body_is_gone() {
 /// the two programs, and it must decide admission.
 #[test]
 fn removing_the_reachability_edge_flips_admission() {
-    const REACHING: &str = "fn halve(x: i64) -> i64 {\n    return x / 2;\n}\n\n\
+    const REACHING: &str = "fn halve(x: i64) -> i64 {\n    return x >> 2;\n}\n\n\
                             fn main() -> i64 {\n    return halve(14);\n}\n";
-    const NOT_REACHING: &str = "fn halve(x: i64) -> i64 {\n    return x / 2;\n}\n\n\
+    const NOT_REACHING: &str = "fn halve(x: i64) -> i64 {\n    return x >> 2;\n}\n\n\
                                 fn main() -> i64 {\n    return 7;\n}\n";
 
     let reaching = lower(REACHING);
@@ -188,7 +194,7 @@ fn removing_the_reachability_edge_flips_admission() {
 #[test]
 fn exported_functions_are_roots() {
     const SRC: &str = "export { exposed }\n\n\
-                       fn exposed(x: i64) -> i64 {\n    return x / 2;\n}\n\n\
+                       fn exposed(x: i64) -> i64 {\n    return x >> 2;\n}\n\n\
                        fn main() -> i64 {\n    return 7;\n}\n";
     let ir = lower(SRC);
     assert!(
@@ -211,14 +217,14 @@ fn exported_functions_are_roots() {
         verdict.is_err(),
         "an exported out-of-profile body must refuse"
     );
-    assert_eq!(verdict.unwrap_err().construct, "binop.div");
+    assert_eq!(verdict.unwrap_err().construct, "binop.shr");
 }
 
 /// Control for the above: with no export, the same body is unreachable and the
 /// program is admitted. So the refusal is caused by the export, not the body.
 #[test]
 fn without_the_export_the_same_body_is_admitted() {
-    const SRC: &str = "fn exposed(x: i64) -> i64 {\n    return x / 2;\n}\n\n\
+    const SRC: &str = "fn exposed(x: i64) -> i64 {\n    return x >> 2;\n}\n\n\
                        fn main() -> i64 {\n    return 7;\n}\n";
     let ir = lower(SRC);
     assert!(ir.exports.is_empty());
@@ -285,7 +291,7 @@ fn an_under_approximated_closure_refuses_rather_than_admits() {
 #[test]
 fn reachability_follows_a_call_in_a_while_condition() {
     let ir = lower(
-        "fn limit() -> i64 {\n    return 3 / 1;\n}\n\n\
+        "fn limit() -> i64 {\n    return 3 >> 1;\n}\n\n\
          fn main() -> i64 {\n    let mut i: i64 = 0;\n    \
          while i < limit() {\n        i = i + 1;\n    }\n    return i;\n}\n",
     );
@@ -304,7 +310,7 @@ fn reachability_follows_a_call_in_a_while_condition() {
 /// fixture stopped exercising the gap), and the entry point MUST catch it.
 #[test]
 fn top_level_calls_are_roots() {
-    const SRC: &str = "fn side(x: i64) -> i64 {\n    return x / 2;\n}\n\n\
+    const SRC: &str = "fn side(x: i64) -> i64 {\n    return x >> 2;\n}\n\n\
                        fn main() -> i64 {\n    return 7;\n}\n\n\
                        side(8);\n";
     let ast = libmind::parser::parse(SRC).expect("fixture must parse");
@@ -323,7 +329,7 @@ fn top_level_calls_are_roots() {
         verdict.is_err(),
         "a top-level call reaches `side`, whose body is out of profile"
     );
-    assert_eq!(verdict.unwrap_err().construct, "binop.div");
+    assert_eq!(verdict.unwrap_err().construct, "binop.shr");
 }
 
 /// The one entry point refuses ambiguity BEFORE walking, so a duplicated name can
@@ -331,7 +337,7 @@ fn top_level_calls_are_roots() {
 #[test]
 fn the_entry_point_refuses_ambiguity_before_walking() {
     const SRC: &str = "fn v() -> i64 {\n    return 10;\n}\n\n\
-                       fn v() -> i64 {\n    return 20 / 2;\n}\n\n\
+                       fn v() -> i64 {\n    return 20 >> 2;\n}\n\n\
                        fn main() -> i64 {\n    return v();\n}\n";
     let ast = libmind::parser::parse(SRC).expect("parses");
     let ir = lower(SRC);

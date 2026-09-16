@@ -2754,8 +2754,9 @@ fn apply_int_op(op: BinOp, left: i64, right: i64) -> Result<i64, EvalError> {
         BinOp::Mul => left.wrapping_mul(right),
         // Signed integer division is TOTAL and deterministic on every tier —
         // the interpreter now emits the SAME contract both compiled backends
-        // already do, so `mindc test`, the conformance oracle (`eval_ir`) and
-        // the artifact agree instead of the interpreter erroring where the
+        // already do, so `mindc test`, the conformance value oracle (which IS
+        // this AST evaluator — `conformance::VALUE_ORACLE_ENGINE`) and the
+        // artifact agree instead of the interpreter erroring where the
         // artifact returns a value:
         //   * `x / 0 == 0`, `x % 0 == 0` — the native emitter's branchless
         //     zero-guard (`nb_div_guarded`, pinned by
@@ -3816,7 +3817,9 @@ mod tests {
         match eval_module_value_with_env(&module, &mut env, Some(src)) {
             Ok(Value::Int(n)) => assert_eq!(n, 0, "`7 / 0` evaluates to 0, as the artifact does"),
             Ok(other) => panic!("expected Int(0), got {other:?}"),
-            Err(e) => panic!("`7 / 0` must not be an interpreter error (got {e:?}) — the compiled artifact returns 0, so an error here is a cross-tier divergence"),
+            Err(e) => panic!(
+                "`7 / 0` must not be an interpreter error (got {e:?}) — the compiled artifact returns 0, so an error here is a cross-tier divergence"
+            ),
         }
     }
 }

@@ -184,17 +184,17 @@ fn reachable_out_of_profile_import_is_refused_by_the_fence() {
     let p = Project::new("reach_div");
     p.write(
         "src/helper.mind",
-        "pub fn halve(x: i64) -> i64 {\n    return x / 2;\n}\n",
+        "pub fn halve(x: i64) -> i64 {\n    return x >> 2;\n}\n",
     );
     p.write(
         "src/main.mind",
         "import helper;\n\nfn main() -> i64 {\n    return halve(14);\n}\n",
     );
     let (code, err, artifact) = p.build_native("src/main.mind");
-    assert_ne!(code, 0, "a reachable `/` must refuse: {err}");
+    assert_ne!(code, 0, "a reachable `>>` must refuse: {err}");
     assert!(artifact.is_none());
     assert!(
-        err.contains("frozen native profile") || err.contains("binop.div"),
+        err.contains("frozen native profile") || err.contains("binop.shr"),
         "the FENCE must own this refusal, not the frozen parser: {err}"
     );
 }

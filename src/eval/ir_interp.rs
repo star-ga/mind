@@ -264,12 +264,12 @@ pub fn eval_ir(ir: &IRModule) -> Value {
 
 fn eval_binop(op: BinOp, left: Value, right: Value) -> Value {
     match (left, right) {
-        // SIGNED i64 integer arms match `eval::apply_int_op` — this is the
-        // conformance oracle (`src/conformance.rs`, and the `--- Result ---` path
-        // of `mindc <file>`), so any arm that disagrees with the tree-walking
-        // evaluator or with the emitted artifact turns the oracle into a second
-        // opinion instead of a witness. Before these arms wrapped, a literal
-        // `i64::MIN / -1` or a constant-folded `x / 0` PANICKED the compiler here.
+        // SIGNED i64 integer arms match `eval::apply_int_op`. This evaluator is the
+        // constant-fill preview behind `mindc <file>`'s `--- Result ---` (the
+        // conformance VALUE oracle is the AST evaluator — see
+        // `conformance::VALUE_ORACLE_ENGINE`), so a disagreeing arm prints a wrong
+        // result. Before these arms wrapped, a literal `i64::MIN / -1` or a
+        // constant-folded `x / 0` PANICKED `mindc <file>` here.
         // deferred: this oracle is type-blind — it has no u64 notion, so for a
         // `ScalarU64` operand it answers the SIGNED `/ % < >>` where the artifact
         // emits `divui`/`remui`/`ult`/`shrui` (e.g. u64::MAX / 2 -> 0 here,
@@ -484,7 +484,7 @@ fn broadcast_matmul_shape(a: &[ShapeDim], b: &[ShapeDim]) -> Vec<ShapeDim> {
 mod tests {
     use super::*;
 
-    /// Evaluate `a <op> b` through the IR oracle exactly as `conformance.rs`
+    /// Evaluate `a <op> b` through the IR preview evaluator exactly as `mindc <file>`
     /// does — two constants and one `BinOp`, read back from `eval_ir`'s result.
     fn ir_int_binop(op: BinOp, a: i64, b: i64) -> i64 {
         let mut m = IRModule::new();
@@ -504,7 +504,7 @@ mod tests {
         }
     }
 
-    /// `eval_ir` is the CONFORMANCE ORACLE (`src/conformance.rs`). An oracle
+    /// `eval_ir` prints `mindc <file>`'s `--- Result ---`. An evaluator
     /// that disagrees with the artifact it is asked to judge is worse than no
     /// oracle, so these are the same edge values the native backend is pinned
     /// against in `examples/mindc_mind/div_shift_cmp_edge_smoke.py` and that
@@ -556,7 +556,11 @@ mod tests {
     #[cfg(feature = "std-surface")]
     #[test]
     fn ir_oracle_shift_right_is_arithmetic_and_masks_the_amount() {
-        assert_eq!(ir_int_binop(BinOp::Shr, -256, 2), -64, "-256>>2 == -64 (sar)");
+        assert_eq!(
+            ir_int_binop(BinOp::Shr, -256, 2),
+            -64,
+            "-256>>2 == -64 (sar)"
+        );
         assert_eq!(ir_int_binop(BinOp::Shr, 100, 3), 12, "100>>3 == 12");
         assert_eq!(
             ir_int_binop(BinOp::Shr, 1, 64),

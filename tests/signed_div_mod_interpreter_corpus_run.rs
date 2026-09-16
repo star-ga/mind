@@ -21,7 +21,11 @@
 //! which Linux truncates to the low byte. The interpreter hands back the full i64, so
 //! it is compared as `value & 0xFF` — the exact observation the other two legs make.
 //!
-//! NOT covered here: `eval::eval_ir` (the IR conformance oracle). It evaluates a flat
+//! This evaluator is also the conformance suite's VALUE oracle
+//! (`conformance::VALUE_ORACLE_ENGINE == AstEvaluator`), so this test is what holds
+//! conformance's expected values to the compiled contract for div/mod.
+//!
+//! NOT covered here: `eval::eval_ir` (the `mindc <file>` preview). It evaluates a flat
 //! instruction list and does not call `main`, so it cannot run these programs; its
 //! integer arms are held to the same values by
 //! `eval::ir_interp::tests::ir_oracle_integer_arms_match_apply_int_op_and_the_artifact`.
