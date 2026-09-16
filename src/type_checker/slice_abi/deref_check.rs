@@ -25,8 +25,10 @@
 //!           writable place);
 //!       (b) `r.f` is depth-one, struct-typed, with a resolvable declared owner
 //!           (no idx*8 / scalar fallback);
-//!       (c) the receiver `r` has mutable/owning capability — it is NOT an
-//!           immutable `&T` reference (capability provenance);
+//!       (c) the receiver `r` is a BY-VALUE owning place — NOT a reference of
+//!           any kind: an immutable `&T` can't launder write capability, and a
+//!           `&mut T` param holds a CELL address so `addr(r)+offset` would
+//!           OOB-store (load-before-field is unimplemented);
 //!       (d) the callee's corresponding parameter is `&mut <owner>` with an
 //!           EXACT owner match (call-site owner exactness).
 //!     A field/element address-of in ANY other position — let-bound
@@ -196,12 +198,17 @@ fn admitted_field_place(node: &Node, env: &Env) -> Option<String> {
 fn receiver_capability_ok(receiver: &Node, env: &Env) -> bool {
     match receiver {
         Node::Lit(crate::ast::Literal::Ident(name), _) => match env.types.get(name) {
-            // An immutable reference receiver cannot yield a writable field.
-            Some(TypeAnn::Ref { mutable: false, .. }) => false,
-            // A `&mut T` receiver, or a by-value owning place of known type.
-            Some(_) => true,
-            // Unknown binding (e.g. an untracked local) — fail closed.
-            None => false,
+            // A REFERENCE receiver (immutable OR mutable) cannot yield an
+            // admitted field cell: an immutable `&T` can't launder write
+            // capability, and a `&mut T` PARAMETER holds a CELL address (a
+            // pointer to the record), so `&mut recv.f` -> addr(recv)+offset is a
+            // wrong-slot / out-of-bounds store — the record needs load-before-
+            // field, which is unimplemented (same hazard the direct `p.f` F2
+            // refusal guards). Admit ONLY a by-value owning nominal place.
+            Some(TypeAnn::Ref { .. }) => false,
+            Some(TypeAnn::Named(_)) => true,
+            // Other by-value types (scalars, generics, unknown binding) — fail closed.
+            _ => false,
         },
         // Any non-identifier receiver (`*p`, a call result, etc.) is not an
         // owning place we can prove capability for here — fail closed.
@@ -250,14 +257,18 @@ pub(crate) fn check_fn(
         src,
         file,
     };
-    // D4 admits only value-producing functions.  A reference return is an
-    // escape even when its expression is a tail value or a call: those forms
-    // do not pass through the explicit `Node::Return` escape check, and call
-    // summaries are intentionally too weak to prove termination or lifetime
-    // safety across cycles.  Refuse the declared type up front for both
-    // nominal and scalar referents; exact mutable-reference forwarding remains
-    // admitted only at call arguments, never as a function result.
-    if matches!(fd.ret_type.as_ref(), Some(TypeAnn::Ref { .. })) {
+    // A MUTABLE reference return is an escape even when its expression is a tail
+    // value or a call: those forms do not pass through the explicit
+    // `Node::Return` escape check, and call summaries are too weak to prove
+    // lifetime safety across cycles. Refuse a declared `&mut` result up front.
+    // An IMMUTABLE `&T` return is read-only and pristine-valid (identity on a
+    // borrow, e.g. `fn f(p: &Point) -> &Point { return p }`) — it must NOT be
+    // refused (immutable refs are unrestricted; over-refusing returns was an
+    // audit finding). Only `&mut` results are refused here.
+    if matches!(
+        fd.ret_type.as_ref(),
+        Some(TypeAnn::Ref { mutable: true, .. })
+    ) {
         let span = fd
             .body
             .first()
@@ -586,11 +597,8 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
         }
         // F3: a tuple-`let` binder may not shadow a `&mut` parameter (the flat
         // param table the `*p` admission consults is not updated by a rebind, so
-        // the shadow would make `*p` mis-store through the stale param slot).
-        // deferred: `Node::Match` arm-pattern binders that shadow a `&mut` param
-        // are not yet checked (needs Pattern-name extraction); no keystone/std
-        // code has `&mut` params, so this is inert today — upgrade path: walk
-        // MatchArm patterns for binder names and apply the same refusal.
+        // the shadow would make `*p` mis-store through the stale param slot). The
+        // `match`-arm-binder analogue is handled in the `Node::Match` arm below.
         Node::LetTuple {
             names, value, span, ..
         } => {
@@ -613,6 +621,35 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
                 );
             }
             classify(value, ctx, in_region, errs);
+        }
+        // F3 (match analogue): a `match` arm-pattern binder that shadows a `&mut`
+        // parameter is refused. A binder rebinds the param name, but the flat
+        // param table the `*p` / forwarding admission consults is NOT updated, so
+        // a `*p` / `*p = v` / forward inside the arm mis-stores or launders
+        // through the stale param slot (verified: bare-ident, tuple, and
+        // enum-payload binders all do). Refusing the whole match covers the read
+        // (Deref), store (DerefAssign) and alias (forward) facets at once.
+        Node::Match {
+            scrutinee,
+            arms,
+            span,
+        } => {
+            classify(scrutinee, ctx, in_region, errs);
+            for arm in arms {
+                if pattern_binds_mut_ref(&arm.pattern, ctx.mrefs) {
+                    refuse(
+                        errs,
+                        ctx,
+                        *span,
+                        DEREF_ASSIGN_CODE,
+                        "a `match` arm pattern may not bind a name that shadows a `&mut` reference parameter in the deref-assign subset; rename the binder.",
+                    );
+                }
+                if let Some(g) = &arm.guard {
+                    classify(g, ctx, in_region, errs);
+                }
+                classify(&arm.body, ctx, in_region, errs);
+            }
         }
 
         // A reference-take reaching here is NOT a direct call argument (the Call
@@ -668,6 +705,23 @@ fn deref_param_referent_owner(target: &Node, mrefs: &BTreeMap<String, String>) -
 fn ident_names_ref_param(node: &Node, refs: &RefParamSigs) -> bool {
     matches!(node, Node::Lit(crate::ast::Literal::Ident(name), _)
         if refs.get(name).is_some_and(|(mutable, _)| *mutable))
+}
+
+/// Does a `match` arm pattern bind any name that shadows a `&mut` reference
+/// parameter? Walks Ident / Tuple / EnumVariant / EnumStruct sub-patterns. A
+/// binder colliding with a `&mut` param name would rebind it without updating
+/// the flat param table, so `*p` / forwarding inside the arm mis-stores through
+/// the stale slot — refuse such an arm.
+fn pattern_binds_mut_ref(pat: &crate::ast::Pattern, mrefs: &BTreeMap<String, String>) -> bool {
+    use crate::ast::Pattern as P;
+    match pat {
+        P::Ident(name) => mrefs.contains_key(name),
+        P::Tuple(ps) | P::EnumVariant { args: ps, .. } => {
+            ps.iter().any(|p| pattern_binds_mut_ref(p, mrefs))
+        }
+        P::EnumStruct { fields, .. } => fields.iter().any(|(_, p)| pattern_binds_mut_ref(p, mrefs)),
+        P::Literal(_) | P::Wildcard => false,
+    }
 }
 
 /// Is `receiver` a bare identifier naming a `&mut` reference parameter? Used to

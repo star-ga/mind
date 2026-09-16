@@ -770,3 +770,83 @@ fn immutable_ref_shadow_is_admitted() {
         codes(src)
     );
 }
+
+// ── Adversarial-verify follow-ups (audit findings the exec tier + fixtures missed). ──
+
+#[test]
+fn immutable_ref_return_is_admitted() {
+    // AUDIT (over-refusal): an immutable `&T` return is read-only and
+    // pristine-valid (identity on a borrow). It must NOT be refused — the
+    // over-refusal fix previously covered forwarding/binding but not returns.
+    let src = "struct Point {\n    x: i64\n}\nfn f(p: &Point) -> &Point {\n    return p\n}\n";
+    assert!(
+        !codes(src).iter().any(|c| c == "E2037" || c == "E2029"),
+        "immutable `&Point` return must be admitted; got {:?}",
+        codes(src)
+    );
+    // The two-borrow selector is also universally safe.
+    let sel = "struct Point {\n    x: i64\n}\nfn first(a: &Point, b: &Point) -> &Point {\n    return a\n}\n";
+    assert!(
+        !codes(sel).iter().any(|c| c == "E2037" || c == "E2029"),
+        "immutable two-borrow selector return must be admitted; got {:?}",
+        codes(sel)
+    );
+}
+
+#[test]
+fn mut_ref_return_stays_refused() {
+    // The MUTABLE-ref return remains refused (escape).
+    let src = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn f(p: &mut Pair) -> &mut Pair {\n    return p\n}\n";
+    assert!(
+        codes(src).iter().any(|c| c == "E2037" || c == "E2029"),
+        "`&mut Pair` return must stay refused; got {:?}",
+        codes(src)
+    );
+}
+
+#[test]
+fn mut_field_ref_through_mut_receiver_is_refused_memsafety() {
+    // AUDIT (HIGH memory-safety): `&mut h.pt` where h is a `&mut H` PARAMETER was
+    // admitted — but a `&mut H` param holds a CELL address, so the field-cell
+    // computes addr(h)+offset (wrong-slot/OOB store) with no load-before-field.
+    // Must be refused (same hazard as direct `p.f` on a `&mut` param).
+    let src = "struct Pair {\n    x: i64,\n    y: i64\n}\nstruct H {\n    pt: Pair\n}\nfn replace(p: &mut Pair, new: Pair) {\n    *p = new\n}\nfn attack(h: &mut H, new: Pair) {\n    replace(&mut h.pt, new)\n}\n";
+    assert!(
+        codes(src).contains(&"E2037".to_string()),
+        "`&mut h.pt` through a `&mut H` receiver must be E2037 (memory-safety); got {:?}",
+        codes(src)
+    );
+}
+
+#[test]
+fn mut_field_ref_through_byvalue_receiver_still_admitted() {
+    // The intended positive must SURVIVE the RC1 tightening: `&mut h.pt` where h
+    // is a BY-VALUE H (owning place) is admitted (addr(h)+offset is correct).
+    let src = "struct Pair {\n    x: i64,\n    y: i64\n}\nstruct H {\n    pt: Pair\n}\nfn replace(p: &mut Pair, new: Pair) {\n    *p = new\n}\nfn caller(h: H, new: Pair) {\n    replace(&mut h.pt, new)\n}\n";
+    assert!(
+        !codes(src)
+            .iter()
+            .any(|c| c == "E2037" || c == "E2028" || c == "E2029"),
+        "`&mut h.pt` through a by-value H receiver must stay admitted; got {:?}",
+        codes(src)
+    );
+}
+
+#[test]
+fn match_binder_shadow_of_mut_param_is_refused() {
+    // AUDIT (HIGH): a `match` arm binder shadowing a `&mut` param launders/
+    // mis-stores through the stale param slot. Bare-ident and enum-payload
+    // binders both refused (E2029).
+    let bare = "struct Owner {\n    a: i64\n}\nfn store(p: &mut Owner, sel: i64) {\n    match sel {\n        p => {\n            *p = Owner { a: 5 }\n        }\n    }\n}\n";
+    assert!(
+        codes(bare).contains(&"E2029".to_string()),
+        "bare match-binder shadow of &mut param must be E2029; got {:?}",
+        codes(bare)
+    );
+    let payload = "struct Owner {\n    a: i64\n}\nenum E {\n    V(i64)\n}\nfn store(p: &mut Owner, e: E) {\n    match e {\n        E::V(p) => {\n            *p = Owner { a: 1 }\n        }\n    }\n}\n";
+    assert!(
+        codes(payload).contains(&"E2029".to_string()),
+        "enum-payload match-binder shadow of &mut param must be E2029; got {:?}",
+        codes(payload)
+    );
+}
