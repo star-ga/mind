@@ -264,16 +264,35 @@ pub fn eval_ir(ir: &IRModule) -> Value {
 
 fn eval_binop(op: BinOp, left: Value, right: Value) -> Value {
     match (left, right) {
+        // Integer arms mirror `eval::apply_int_op` EXACTLY — this is the
+        // conformance oracle (`src/conformance.rs`), so any arm that disagrees
+        // with the tree-walking evaluator or with the emitted artifact turns the
+        // oracle into a second opinion instead of a witness.
+        //   * `+ − ×`: MIND integer overflow is defined two's-complement
+        //     wraparound (== `arith.addi`, no nsw/nuw). Bare `a + b` PANICS in a
+        //     debug build and wraps in release — the oracle must not depend on
+        //     the profile it was compiled with.
+        //   * `/ %`: total and deterministic — `x/0 == 0`, `x%0 == 0`, and
+        //     `i64::MIN / -1 == i64::MIN` (`% -1 == 0`), matching the native
+        //     `nb_div_guarded` zero-guard and the MLIR `div_zero_guard`. Bare
+        //     `a / b` here trapped on a zero divisor and panicked on the
+        //     INT_MIN/-1 pair, both of which the artifact answers with a value.
         (Value::Int(a), Value::Int(b)) => Value::Int(match op {
-            BinOp::Add => a + b,
-            BinOp::Sub => a - b,
-            BinOp::Mul => a * b,
-            BinOp::Div => a / b,
+            BinOp::Add => a.wrapping_add(b),
+            BinOp::Sub => a.wrapping_sub(b),
+            BinOp::Mul => a.wrapping_mul(b),
+            BinOp::Div => {
+                if b == 0 {
+                    0
+                } else {
+                    a.wrapping_div(b)
+                }
+            }
             BinOp::Mod => {
                 if b == 0 {
                     0
                 } else {
-                    a % b
+                    a.wrapping_rem(b)
                 }
             }
             BinOp::Lt => (a < b) as i64,
@@ -291,8 +310,12 @@ fn eval_binop(op: BinOp, left: Value, right: Value) -> Value {
             BinOp::BitXor => a ^ b,
             #[cfg(feature = "std-surface")]
             BinOp::Shl => a.wrapping_shl(b as u32),
+            // `wrapping_shr` masks the shift amount to 0..63, matching both the
+            // sibling `wrapping_shl` above and the hardware the artifact runs on
+            // (x86 `sar rax,cl` masks CL to 6 bits). Bare `a >> b` panics in a
+            // debug build for `b >= 64`.
             #[cfg(feature = "std-surface")]
-            BinOp::Shr => a >> b,
+            BinOp::Shr => a.wrapping_shr(b as u32),
         }),
         (Value::Tensor(t), Value::Int(s)) => tensor_scalar(op, t, s as f64, true),
         (Value::Int(s), Value::Tensor(t)) => tensor_scalar(op, t, s as f64, false),
@@ -444,4 +467,90 @@ fn broadcast_matmul_shape(a: &[ShapeDim], b: &[ShapeDim]) -> Vec<ShapeDim> {
     out.extend_from_slice(a);
     out.extend_from_slice(b);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Evaluate `a <op> b` through the IR oracle exactly as `conformance.rs`
+    /// does — two constants and one `BinOp`, read back from `eval_ir`'s result.
+    fn ir_int_binop(op: BinOp, a: i64, b: i64) -> i64 {
+        let mut m = IRModule::new();
+        m.instrs = vec![
+            Instr::ConstI64(ValueId(0), a),
+            Instr::ConstI64(ValueId(1), b),
+            Instr::BinOp {
+                dst: ValueId(2),
+                op,
+                lhs: ValueId(0),
+                rhs: ValueId(1),
+            },
+        ];
+        match eval_ir(&m) {
+            Value::Int(n) => n,
+            other => panic!("expected Int from the IR oracle, got {other:?}"),
+        }
+    }
+
+    /// `eval_ir` is the CONFORMANCE ORACLE (`src/conformance.rs`). An oracle
+    /// that disagrees with the artifact it is asked to judge is worse than no
+    /// oracle, so these are the same edge values the native backend is pinned
+    /// against in `examples/mindc_mind/div_shift_cmp_edge_smoke.py` and that
+    /// `eval::apply_int_op` now answers identically.
+    ///
+    /// Every case below either trapped (`a / b` on a zero divisor) or panicked
+    /// (`INT_MIN / -1`, and `+ − ×` overflow in a debug build) before the
+    /// wrapping arms landed — so this test is mutation-sensitive against a
+    /// revert in either direction.
+    #[test]
+    fn ir_oracle_integer_arms_match_apply_int_op_and_the_artifact() {
+        // Total division: a value, never a trap.
+        assert_eq!(ir_int_binop(BinOp::Div, 7, 0), 0, "7/0 == 0");
+        assert_eq!(ir_int_binop(BinOp::Mod, 7, 0), 0, "7%0 == 0");
+        assert_eq!(
+            ir_int_binop(BinOp::Div, i64::MIN, -1),
+            i64::MIN,
+            "INT_MIN/-1 == INT_MIN (defined wrap, no panic)"
+        );
+        assert_eq!(ir_int_binop(BinOp::Mod, i64::MIN, -1), 0, "INT_MIN%-1 == 0");
+
+        // Signed truncation / remainder sign — unchanged behaviour, pinned so a
+        // future "simplification" to unsigned ops is caught here too.
+        assert_eq!(ir_int_binop(BinOp::Div, -17, 5), -3, "-17/5 == -3");
+        assert_eq!(ir_int_binop(BinOp::Mod, -17, 5), -2, "-17%5 == -2");
+
+        // Defined two's-complement wraparound on `+ − ×` (== `arith.addi`, no
+        // nsw/nuw). A debug build panicked on each of these before.
+        assert_eq!(
+            ir_int_binop(BinOp::Add, i64::MAX, 1),
+            i64::MIN,
+            "MAX+1 wraps to MIN"
+        );
+        assert_eq!(
+            ir_int_binop(BinOp::Sub, i64::MIN, 1),
+            i64::MAX,
+            "MIN-1 wraps to MAX"
+        );
+        assert_eq!(
+            ir_int_binop(BinOp::Mul, i64::MAX, 2),
+            -2,
+            "MAX*2 wraps to -2"
+        );
+    }
+
+    /// `>>` is ARITHMETIC (sign-extending) and its shift amount is masked to
+    /// 0..63 — the `sar rax,cl` the artifact runs. A bare `a >> b` panicked for
+    /// `b >= 64` in a debug build.
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn ir_oracle_shift_right_is_arithmetic_and_masks_the_amount() {
+        assert_eq!(ir_int_binop(BinOp::Shr, -256, 2), -64, "-256>>2 == -64 (sar)");
+        assert_eq!(ir_int_binop(BinOp::Shr, 100, 3), 12, "100>>3 == 12");
+        assert_eq!(
+            ir_int_binop(BinOp::Shr, 1, 64),
+            1,
+            "shift amount masks to 0 (CL & 63), matching the sibling `Shl` arm"
+        );
+    }
 }

@@ -1,0 +1,55 @@
+// RH Tier-0 TOTALITY-VERIFIER DRIVER — the DIGEST fixture (miscompile canary).
+//
+// Identical sweep to `rh_totality_tier0_verdict.mind`, returning the digest
+// ITSELF instead of a 0/1 verdict. Expected exit: 229.
+//
+// Why both exist: the verdict fixture answers 0 or 1, and a single bit is a
+// weak witness — many different wrong programs land on it. This one puts the
+// whole accumulated stopping-time sum (mod 251) on the exit-code channel, so a
+// miscompiled `/`, `%`, `*`, `+` or loop condition anywhere in the sweep shows
+// up as a DIFFERENT NUMBER rather than as a coin flip. Same corpus, same
+// arithmetic; only the reporting differs.
+//
+// See rh_totality_tier0_verdict.mind for the full contract, the derivation of
+// 229, the measured frozen-ELF shape constraints that dictate this structure,
+// and the scope note (this is the Tier-0 channel fixture, not root's L70-MACH
+// driver).
+
+fn stop_time(x: i64, s: i64, budget: i64) -> i64 {
+    if x == 1 {
+        return s;
+    }
+    if s >= budget {
+        return 0 - 1;
+    }
+    if x % 2 == 0 {
+        return stop_time(x / 2, s + 1, budget);
+    }
+    return stop_time(3 * x + 1, s + 1, budget);
+}
+
+fn main() -> i64 {
+    let n_max: i64 = 200;
+    let budget: i64 = 500;
+
+    let mut n: i64 = 4;
+    let mut s: i64 = 0;
+    let mut digest: i64 = 0;
+    let mut over: i64 = 0;
+
+    while n <= n_max {
+        s = stop_time(n, 0, budget);
+        if s < 0 {
+            over = 1;
+        }
+        if s >= 0 {
+            digest = (digest + s) % 251;
+        }
+        n = n + 2;
+    }
+
+    if over != 0 {
+        return 2;
+    }
+    return digest;
+}

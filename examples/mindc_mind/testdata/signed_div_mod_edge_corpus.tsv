@@ -1,0 +1,56 @@
+# Signed i64 div/mod edge corpus — ONE source of truth for three tiers.
+#
+# enforced-by: RI-D1-PROFILE
+#
+# Consumers, all reading THIS file rather than a copy of it:
+#   examples/mindc_mind/ri_d1_frozen_profile_gate.py   -> frozen-profile NATIVE ELF
+#   tests/signed_div_mod_cross_backend_parity_run.rs   -> MLIR backend executable
+#   src/eval/mod.rs / src/eval/ir_interp.rs unit tests -> the two INTERPRETER tiers
+#     (same operand values, asserted on `apply_int_op` / `eval_ir` directly)
+#
+# "native == MLIR" is worth nothing if it is two lists that merely look alike and
+# drift apart in one commit. A shared corpus makes the agreement structural: a
+# fixture can only be edited for every tier at once, and a tier that stops reading
+# this file stops being covered in a way `git diff` shows.
+#
+# The operand values are the ones the native emitter is pinned against in
+# div_shift_cmp_edge_smoke.py (`nb_div_guarded`), extended with the two INT_MIN
+# cases. The contract they encode, identical on every tier:
+#   * truncation toward zero; remainder takes the sign of the DIVIDEND
+#   * x / 0 == 0 and x % 0 == 0 — guarded, never a #DE / SIGFPE trap
+#   * i64::MIN / -1 == i64::MIN and i64::MIN % -1 == 0 — the defined
+#     two's-complement wrap (both backends substitute divisor 1)
+#
+# Every expected value is in 0..255, because the oracle is the process exit code
+# (`fn main() -> i64` -> exit(rax), of which Linux keeps the low byte). A signal
+# death reports a NEGATIVE returncode and is therefore always distinguishable
+# from a legitimate answer — which is what makes "no trap" a testable claim.
+#
+# INT_MIN is built by negating INT_MAX and subtracting 1: `1 << 63` would be the
+# obvious spelling but `Shl` is out of the frozen profile, and a most-negative
+# literal has its own parse edge. The `==` comparison is what proves the VALUE,
+# since an 8-bit exit code could not distinguish INT_MIN from 0.
+#
+# Columns (TAB-separated): name  expected_exit  kind  payload
+#   kind=src   -> payload is the MIND source, on one line
+#   kind=file  -> payload is a .mind filename in this directory
+#
+# Lines starting with '#' and blank lines are ignored by every reader.
+
+div_basic	3	src	fn main()->i64{let a:i64=7; let b:i64=2; return a / b;}
+mod_basic	2	src	fn main()->i64{let a:i64=17; let b:i64=5; return a % b;}
+div_neg_dividend	253	src	fn main()->i64{let a:i64=0-17; let b:i64=5; return a / b;}
+mod_neg_dividend	254	src	fn main()->i64{let a:i64=0-17; let b:i64=5; return a % b;}
+mod_neg_divisor	2	src	fn main()->i64{let a:i64=17; let b:i64=0-5; return a % b;}
+div_both_neg	3	src	fn main()->i64{let a:i64=0-17; let b:i64=0-5; return a / b;}
+div_by_zero	0	src	fn main()->i64{let z:i64=5-5; return 7 / z;}
+mod_by_zero	0	src	fn main()->i64{let z:i64=5-5; return 7 % z;}
+intmin_div_neg1	42	src	fn main()->i64{let m:i64=9223372036854775807; let a:i64=0-m; let b:i64=a-1; let n1:i64=0-1; let q:i64=b / n1; if q == b { return 42; } return 7;}
+intmin_mod_neg1	43	src	fn main()->i64{let m:i64=9223372036854775807; let a:i64=0-m; let b:i64=a-1; let n1:i64=0-1; let r:i64=b % n1; if r == 0 { return 43; } return 8;}
+
+# Tier-0 RH totality-verifier drivers — the consumer these edges exist for. Their
+# whole point is that the same sweep must mean the same thing on both backends, so
+# they belong in the cross-backend corpus and not only in the native gate.
+rh_tier0_verdict	0	file	rh_totality_tier0_verdict.mind
+rh_tier0_digest	229	file	rh_totality_tier0_digest.mind
+rh_tier0_budget	2	file	rh_totality_tier0_budget.mind

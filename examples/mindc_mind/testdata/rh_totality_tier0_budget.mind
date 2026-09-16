@@ -1,0 +1,59 @@
+// RH Tier-0 TOTALITY-VERIFIER DRIVER — the COUNTEREXAMPLE-CLASS fixture.
+//
+// Identical sweep to `rh_totality_tier0_verdict.mind` with BUDGET lowered from
+// 500 to 3, so n = 6 (whose trajectory 6 -> 3 -> 10 -> 5 -> ... needs 8 steps)
+// exceeds the budget, `stop_time` returns -1, and the driver reports the
+// counterexample-class verdict. Expected exit: 2.
+//
+// This is the POSITIVE CONTROL for the verdict channel. `rh_totality_tier0_-
+// verdict.mind` asserts "exit 0", i.e. that nothing went wrong — an assertion a
+// driver that never entered its loop would satisfy just as well, and one that
+// proves nothing about whether the nonzero verdicts are even REACHABLE. Here
+// the budget arm is forced to fire, so the gate observes the compiled artifact
+// actually returning a nonzero counterexample code. Entering the bad state and
+// proving it is reported is the round trip, not just the happy path; see
+// `~/.claude/rules/common/wiring-discipline.md` rules 6 and 11.
+//
+// It also pins the recursive early-return arm (`return 0 - 1` on a budget
+// exceedance) on the native path — the shape root's L70-MACH driver needs the
+// moment it finds a real counterexample, and the one path the all-clear
+// fixtures never take.
+
+fn stop_time(x: i64, s: i64, budget: i64) -> i64 {
+    if x == 1 {
+        return s;
+    }
+    if s >= budget {
+        return 0 - 1;
+    }
+    if x % 2 == 0 {
+        return stop_time(x / 2, s + 1, budget);
+    }
+    return stop_time(3 * x + 1, s + 1, budget);
+}
+
+fn main() -> i64 {
+    let n_max: i64 = 200;
+    let budget: i64 = 3;
+
+    let mut n: i64 = 4;
+    let mut s: i64 = 0;
+    let mut digest: i64 = 0;
+    let mut over: i64 = 0;
+
+    while n <= n_max {
+        s = stop_time(n, 0, budget);
+        if s < 0 {
+            over = 1;
+        }
+        if s >= 0 {
+            digest = (digest + s) % 251;
+        }
+        n = n + 2;
+    }
+
+    if over != 0 {
+        return 2;
+    }
+    return digest;
+}

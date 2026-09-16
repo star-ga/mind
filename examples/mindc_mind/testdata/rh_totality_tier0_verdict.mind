@@ -1,0 +1,128 @@
+// RH Tier-0 TOTALITY-VERIFIER DRIVER — the verdict fixture.
+//
+// Tier 0 (RH_NATIVE_CAPABILITY_MAP, "output closure"): a native totality
+// verifier reports through the ONE i64 channel the frozen-profile native ELF
+// already closes — `fn main() -> i64`, whose return value reaches the entry
+// epilogue `nb_emit_return(code, is_entry=1)` as `exit(rax)`. The kernel keeps
+// only the low 8 bits, so the verdict is deliberately a SMALL STATUS:
+//
+//     0 = totality holds over the whole even-n sweep, AND the stopping-time
+//         digest matches the pinned reference
+//     1 = the sweep completed but the digest DISAGREES — a miscompile of the
+//         loop arithmetic, not a mathematical counterexample
+//     2 = counterexample class: some n exceeded the step budget
+//
+// This needs NO new emitter capability, NO printI64, and NO stage1.elf reseed —
+// same shape as the already-proven `rh_f64_aggregate_canary.mind` (exit 37).
+// What it DOES need, and why it could not be written before 2026-09-16, is
+// signed i64 `/` and `%` on the native path: the step is `x / 2` and the parity
+// test is `x % 2`. Fence 2 (the frozen stage1.elf) has emitted guarded signed
+// idiv/mod all along (`nb_div_guarded`, run-verified by
+// div_shift_cmp_edge_smoke.py); fence 1 (`src/ir/frozen_profile.rs::admit_binop`)
+// is what used to refuse them.
+//
+// THE PROPERTY, stated exactly. For every even n in [4, N] the iteration
+//     x -> x / 2      when x is even
+//     x -> 3 * x + 1  when x is odd
+// reaches 1 within BUDGET steps. `digest` accumulates each n's stopping time
+// modulo 251 (a prime < 256, so the digest is always a legal exit status).
+//
+// PINNED REFERENCE (N = 200, BUDGET = 500): digest == 229.
+// Independently computed, and re-derivable in one line:
+//   python3 -c "d=0
+//   for n in range(4,201,2):
+//    x=n;s=0
+//    while x!=1: x=x//2 if x%2==0 else 3*x+1; s+=1
+//    d=(d+s)%251
+//   print(d)"
+//
+// WHY A DIGEST AND NOT JUST `return 0`: a verifier that returns 0 on success
+// returns 0 for a great many reasons, including a miscompiled loop that never
+// ran. The digest is a function of EVERY stopping time in the sweep, so a wrong
+// quotient anywhere moves it. Two sibling fixtures make the other verdicts
+// reachable and pinned:
+//   rh_totality_tier0_digest.mind  — returns the digest itself (exit 229)
+//   rh_totality_tier0_budget.mind  — forces the counterexample class (exit 2)
+// A state machine whose failure states are never entered is not verified; see
+// `~/.claude/rules/common/wiring-discipline.md` rules 6 and 11.
+//
+// ---------------------------------------------------------------------------
+// SHAPE CONSTRAINTS — why this is written the way it is. MEASURED against the
+// shipped stage1.elf on 2026-09-16 (fence 1 ADMITS all of these; fence 2, the
+// frozen ELF, refuses them with "unsupported construct"):
+//
+//   * `return` INSIDE a `while` body — unsupported, with or without an `if`.
+//     So the sweep cannot early-exit; it sets `over` and runs to the end, and
+//     every `return` sits at the top level of a function body.
+//   * `&&` / `||` in ANY condition — unsupported. So `while n <= n_max && over
+//     == 0` is not available either; the guard is a plain single comparison.
+//   * `else` whose branches do not both `return` — unsupported (an `else` that
+//     needs a JOIN). So the parity split is two `if`s with no `else`.
+//   * two `break`s in one function — unsupported. This driver uses none.
+//
+// What IS proven and used here: nested/single `while`, `if` with assignment,
+// `if cond { return v; }` at function top level, recursion, and i64 `+ - * / %`
+// with the six signed comparisons. Recursion replaces the early exit: the
+// per-n stopping time is computed by `stop_time`, which returns -1 for
+// budget-exceeded because a function CAN return early from its own top level.
+//
+// These limits are pinned as fixtures in `ri_d1_frozen_profile_gate.py`
+// (DEFERRED_FROZEN_ELF_LAG), so a stage1.elf reseed that lifts one is noticed
+// instead of silently widening the profile.
+// ---------------------------------------------------------------------------
+//
+// SCOPE — read this before citing the file. This is the Tier-0 CHANNEL and its
+// proof fixture, NOT root's L70-MACH driver: that one sweeps ~149527 nodes and
+// root owns its content and its bound. This file proves the pipeline root's
+// driver will ride — frozen-profile admission, native-ELF build with zero
+// toolchain, exit-code verdict — on a sweep small enough to gate on every run.
+// Note for that driver: the "report the counterexample and stop" shape it
+// naturally wants is exactly the `return`-inside-a-loop the frozen ELF cannot
+// compile today. The flag-and-finish structure below is the workaround.
+
+// Stopping time of `x` under the 3n+1 iteration, counted from `s`, or -1 when
+// it would exceed `budget`. Recursive rather than a loop because a `return`
+// from inside a `while` is not compilable by the frozen ELF (see above), while
+// a `return` at a function's top level is.
+fn stop_time(x: i64, s: i64, budget: i64) -> i64 {
+    if x == 1 {
+        return s;
+    }
+    if s >= budget {
+        return 0 - 1;
+    }
+    if x % 2 == 0 {
+        return stop_time(x / 2, s + 1, budget);
+    }
+    return stop_time(3 * x + 1, s + 1, budget);
+}
+
+fn main() -> i64 {
+    let n_max: i64 = 200;
+    let budget: i64 = 500;
+    let expect: i64 = 229;
+
+    let mut n: i64 = 4;
+    let mut s: i64 = 0;
+    let mut digest: i64 = 0;
+    let mut over: i64 = 0;
+
+    while n <= n_max {
+        s = stop_time(n, 0, budget);
+        if s < 0 {
+            over = 1;
+        }
+        if s >= 0 {
+            digest = (digest + s) % 251;
+        }
+        n = n + 2;
+    }
+
+    if over != 0 {
+        return 2;
+    }
+    if digest == expect {
+        return 0;
+    }
+    return 1;
+}
