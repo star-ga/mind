@@ -64,8 +64,18 @@ import tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parent.parent
-MINDC = REPO / "target" / "release" / "mindc"
-STAGE1 = HERE / "testdata" / "selfhost_loop" / "stage1.elf"
+# Honour the corpus-wide MINDC_BIN / MINDC and MINDC_NATIVE_ELF handles before the
+# in-tree defaults. Reading only target/release/mindc (and forcing the frozen seed)
+# made this gate report success against whatever happened to be lying in the tree —
+# including when the caller had said, explicitly, that no compiler was available:
+# `scripts/run_gate.py --vacuity-sweep` measured it as VACUOUS (exit 0 with every
+# compiler handle pointed at a missing path).
+_ENV_MINDC = os.environ.get("MINDC_BIN") or os.environ.get("MINDC")
+MINDC = pathlib.Path(_ENV_MINDC) if _ENV_MINDC else REPO / "target" / "release" / "mindc"
+_ENV_ELF = os.environ.get("MINDC_NATIVE_ELF")
+STAGE1 = (
+    pathlib.Path(_ENV_ELF) if _ENV_ELF else HERE / "testdata" / "selfhost_loop" / "stage1.elf"
+)
 
 # Binaries the toolchain-free native path must NEVER spawn. A hit here means the build
 # fell back to the MLIR pipeline — the exact regression RI-D1 must rule out.
