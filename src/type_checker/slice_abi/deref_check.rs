@@ -209,30 +209,6 @@ fn receiver_capability_ok(receiver: &Node, env: &Env) -> bool {
     }
 }
 
-/// Is the `arg_index`-th parameter of `callee` a `&mut <owner>` matching the
-/// borrowed field's canonical owner? Unknown callee / arity / non-`&mut` /
-/// wrong-owner → false (fail closed). This is call-site owner exactness.
-fn callee_param_is_mut_owner(
-    fn_sigs: &FnParamSigs,
-    callee: &str,
-    arg_index: usize,
-    field_owner: &str,
-) -> bool {
-    let Some(params) = fn_sigs.get(callee) else {
-        return false;
-    };
-    let Some(ty) = params.get(arg_index) else {
-        return false;
-    };
-    match ty {
-        TypeAnn::Ref {
-            mutable: true,
-            target,
-        } => canonical_struct_name(target).as_deref() == Some(field_owner),
-        _ => false,
-    }
-}
-
 /// Report a refusal.
 fn refuse(
     errs: &mut Vec<Diagnostic>,
@@ -351,59 +327,63 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
             }
             classify(value, ctx, in_region, errs);
         }
-        // A call: the ONLY position where a `&mut r.f` borrow is admitted. Each
-        // reference argument is validated against the callee's parameter here;
-        // any reference reaching the standalone `Node::Ref` arm below is NOT a
-        // direct call argument and is refused.
+        // A call: the only position where a mutable reference may appear. The
+        // check is FORMAL-keyed (not argument-shape-keyed): for each argument we
+        // look at what the callee's parameter DENOTES.
+        //   * formal `&mut <O>`  -> the argument MUST be an admitted `&mut r.f`
+        //     (owner O, capable receiver) or a bare `&mut O` parameter; anything
+        //     else (a value, scalar, immutable reference, wrong owner, element
+        //     `&a[i]`, wrapped/cast) is refused (audit finding F1 / root case (1): a
+        //     non-reference argument into a `&mut` formal is an arbitrary write).
+        //   * any other formal (`&T` immutable / value / unknown callee) imposes
+        //     NO restriction on immutable references or values -- pristine
+        //     behaviour (restricting immutable `&T` forwarding was root's
+        //     over-refusal). Only a MUTABLE reference parameter or a field
+        //     address-of may not escape here; both travel solely to a `&mut O`
+        //     formal, handled above.
         Node::Call { callee, args, .. } => {
             for (i, arg) in args.iter().enumerate() {
-                match arg {
-                    Node::Lit(crate::ast::Literal::Ident(name), span)
-                        if ctx.refs.contains_key(name) =>
-                    {
-                        let (mutable, owner) = ctx.refs.get(name).expect("reference checked");
-                        let admitted = *mutable
-                            && !in_region
-                            && owner.as_deref().is_some_and(|o| {
-                                callee_param_is_mut_owner(ctx.fn_sigs, callee, i, o)
-                            });
-                        if !admitted {
-                            refuse(
-                                errs,
-                                ctx,
-                                *span,
-                                REF_FORM_CODE,
-                                "unsupported reference argument: a reference parameter may only be forwarded as a mutable, nominal `&mut <owner>` to a known callee parameter of the EXACT same `&mut <owner>` type; scalar, immutable, wrong-owner, non-reference, or unknown-signature calls are refused.",
-                            );
-                        }
+                let formal = ctx.fn_sigs.get(callee).and_then(|params| params.get(i));
+                if let Some(TypeAnn::Ref {
+                    mutable: true,
+                    target,
+                }) = formal
+                {
+                    let admitted = canonical_struct_name(target)
+                        .as_deref()
+                        .is_some_and(|o| arg_is_admitted_mut_ref_to_owner(arg, o, ctx, in_region));
+                    if !admitted {
+                        refuse(
+                            errs,
+                            ctx,
+                            arg.span(),
+                            REF_FORM_CODE,
+                            "unsupported argument at a `&mut <owner>` formal: only `&mut r.f` (that owner, owning/`&mut` receiver) or a bare `&mut <owner>` parameter is admitted; a value, scalar, immutable reference, wrong owner, element address, or wrapped/cast argument would forge a writable place and is refused.",
+                        );
                     }
-                    Node::Ref {
-                        mutable,
-                        inner,
-                        span,
-                    } if matches!(
-                        inner.as_ref(),
-                        Node::FieldAccess { .. } | Node::IndexAccess { .. }
-                    ) =>
-                    {
-                        let owner = admitted_field_place(inner, ctx.env);
-                        let admitted = !in_region
-                            && *mutable
-                            && owner.as_deref().is_some_and(|o| {
-                                receiver_field_receiver(inner)
-                                    .is_some_and(|r| receiver_capability_ok(r, ctx.env))
-                                    && callee_param_is_mut_owner(ctx.fn_sigs, callee, i, o)
-                            });
-                        if !admitted {
-                            refuse(
-                                errs,
-                                ctx,
-                                *span,
-                                REF_FORM_CODE,
-                                "unsupported reference argument: only `&mut r.f` — a mutable, depth-one, struct-typed field of an owning/`&mut` receiver, passed to a callee parameter of the EXACT `&mut <owner>` type — is admitted; an immutable receiver, a scalar/depth-two/element field, an owner mismatch, or a non-reference callee parameter is refused.",
-                            );
+                    if let Node::Ref { inner, .. } = arg {
+                        if let Some(r) = receiver_field_receiver(inner) {
+                            classify(r, ctx, in_region, errs);
                         }
-                        // Recurse into the receiver for any nested deref.
+                    } else {
+                        classify(arg, ctx, in_region, errs);
+                    }
+                    continue;
+                }
+                match arg {
+                    Node::Ref { inner, span, .. }
+                        if matches!(
+                            inner.as_ref(),
+                            Node::FieldAccess { .. } | Node::IndexAccess { .. }
+                        ) =>
+                    {
+                        refuse(
+                            errs,
+                            ctx,
+                            *span,
+                            REF_FORM_CODE,
+                            "a field/element address-of (`&mut r.f`, `&a[i]`) may only be passed to a known callee parameter of the EXACT `&mut <owner>` type; here the formal is not `&mut <owner>` or the callee signature is unknown.",
+                        );
                         if let Some(r) = receiver_field_receiver(inner) {
                             classify(r, ctx, in_region, errs);
                         }
@@ -414,13 +394,14 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
                             ctx,
                             arg.span(),
                             REF_FORM_CODE,
-                            "unsupported reference argument: a reference parameter must be a bare identifier at a known exact mutable-reference formal; parentheses, casts, nested expressions, and unknown signatures are refused.",
+                            "a `&mut` reference parameter may only be forwarded as a bare identifier to a known callee parameter of the EXACT `&mut <owner>` type; a non-`&mut`-owner formal, an unknown signature, or a wrapped/cast form is refused.",
                         );
                     }
                     _ => classify(arg, ctx, in_region, errs),
                 }
             }
         }
+
         // Region bodies flip in_region so any deref / &mut r.f inside is refused.
         #[cfg(feature = "std-surface")]
         Node::Region { body, .. } => walk(body, ctx, true, errs),
@@ -448,7 +429,7 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
         | Node::ForEach {
             var, body, span, ..
         } => {
-            if ctx.refs.contains_key(var) {
+            if ctx.mrefs.contains_key(var) {
                 refuse(
                     errs,
                     ctx,
@@ -477,7 +458,7 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
         Node::Let {
             name, value, span, ..
         } => {
-            if ctx.refs.contains_key(name) {
+            if ctx.mrefs.contains_key(name) {
                 refuse(
                     errs,
                     ctx,
@@ -498,7 +479,7 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
             classify(value, ctx, in_region, errs);
         }
         Node::Assign { name, value, span } => {
-            if ctx.refs.contains_key(name) {
+            if ctx.mrefs.contains_key(name) {
                 refuse(
                     errs,
                     ctx,
@@ -518,6 +499,122 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
             }
             classify(value, ctx, in_region, errs);
         }
+        // F2: field access / assignment THROUGH a `&mut` parameter is refused
+        // until load-before-field lowering exists (a `&mut Pair` param holds a
+        // CELL address, not a record address, so `p.f` / `p.f = v` mislower to
+        // the wrong slot). Immutable `&T` receivers are unaffected (a `&Point`
+        // field read stays admitted); non-`&mut`-param receivers recurse below.
+        Node::FieldAccess { receiver, span, .. } if receiver_is_mut_ref_param(receiver, ctx) => {
+            refuse(
+                errs,
+                ctx,
+                *span,
+                DEREF_CODE,
+                "field access `p.f` through a `&mut` parameter is not supported yet: dereference the parameter first (`*p`); field-cell addressing for `&mut` receivers is unimplemented.",
+            );
+        }
+        Node::FieldAssign {
+            receiver,
+            value,
+            span,
+            ..
+        } => {
+            if receiver_is_mut_ref_param(receiver, ctx) {
+                refuse(
+                    errs,
+                    ctx,
+                    *span,
+                    DEREF_ASSIGN_CODE,
+                    "field assignment `p.f = v` through a `&mut` parameter is not supported yet: dereference the parameter first (`*p`).",
+                );
+            } else {
+                classify(receiver, ctx, in_region, errs);
+            }
+            if contains_unconsumed_ref_param(value, ctx.refs) {
+                refuse(
+                    errs,
+                    ctx,
+                    *span,
+                    DEREF_ASSIGN_CODE,
+                    "a `&mut` reference parameter may not be stored into a field (escape): a reference may only appear as a direct call argument.",
+                );
+            }
+            classify(value, ctx, in_region, errs);
+        }
+        Node::IndexAssign {
+            receiver,
+            index,
+            value,
+            span,
+        } => {
+            classify(receiver, ctx, in_region, errs);
+            classify(index, ctx, in_region, errs);
+            if contains_unconsumed_ref_param(value, ctx.refs) {
+                refuse(
+                    errs,
+                    ctx,
+                    *span,
+                    DEREF_ASSIGN_CODE,
+                    "a `&mut` reference parameter may not be stored into an array element (escape): a reference may only appear as a direct call argument.",
+                );
+            }
+            classify(value, ctx, in_region, errs);
+        }
+        // F4: a method-call argument is not a checkable exact `&mut <owner>`
+        // formal (UFCS resolution is not modeled here), so a `&mut` parameter
+        // may not be forwarded through one; refuse fail-closed. Receiver and
+        // value args are classified normally.
+        Node::MethodCall {
+            receiver,
+            args,
+            span,
+            ..
+        } => {
+            classify(receiver, ctx, in_region, errs);
+            for arg in args {
+                if contains_unconsumed_ref_param(arg, ctx.refs) {
+                    refuse(
+                        errs,
+                        ctx,
+                        *span,
+                        REF_FORM_CODE,
+                        "a `&mut` reference parameter may not be forwarded through a method call: a reference may only be a direct argument to a known exact `&mut <owner>` free-function formal.",
+                    );
+                }
+                classify(arg, ctx, in_region, errs);
+            }
+        }
+        // F3: a tuple-`let` binder may not shadow a `&mut` parameter (the flat
+        // param table the `*p` admission consults is not updated by a rebind, so
+        // the shadow would make `*p` mis-store through the stale param slot).
+        // deferred: `Node::Match` arm-pattern binders that shadow a `&mut` param
+        // are not yet checked (needs Pattern-name extraction); no keystone/std
+        // code has `&mut` params, so this is inert today — upgrade path: walk
+        // MatchArm patterns for binder names and apply the same refusal.
+        Node::LetTuple {
+            names, value, span, ..
+        } => {
+            if names.iter().any(|n| ctx.mrefs.contains_key(n)) {
+                refuse(
+                    errs,
+                    ctx,
+                    *span,
+                    DEREF_ASSIGN_CODE,
+                    "a tuple-`let` binder may not shadow a `&mut` reference parameter in the deref-assign subset; rename it.",
+                );
+            }
+            if contains_unconsumed_ref_param(value, ctx.refs) {
+                refuse(
+                    errs,
+                    ctx,
+                    *span,
+                    DEREF_ASSIGN_CODE,
+                    "a `&mut` reference parameter may not be tuple-let-bound (escape): a reference may only appear as a direct call argument.",
+                );
+            }
+            classify(value, ctx, in_region, errs);
+        }
+
         // A reference-take reaching here is NOT a direct call argument (the Call
         // arm handles those). A field/element address-of in any such position —
         // let value, cast operand, return, arithmetic, index — is refused; this
@@ -563,10 +660,50 @@ fn deref_param_referent_owner(target: &Node, mrefs: &BTreeMap<String, String>) -
     }
 }
 
-/// Is `node` a bare identifier naming a reference parameter? Used to refuse
-/// the escaping forms `let q = p` and `return p` for either capability.
+/// Is `node` a bare identifier naming a MUTABLE reference parameter? Only a
+/// `&mut` parameter carries write capability + identity concerns, so only it is
+/// subject to the escape/forwarding refusals. An immutable `&T` parameter is
+/// read-only and unrestricted (pristine behaviour) — restricting it was the
+/// over-refusal root found (`fn evaluate(r: &Request) { validate(r) }`).
 fn ident_names_ref_param(node: &Node, refs: &RefParamSigs) -> bool {
-    matches!(node, Node::Lit(crate::ast::Literal::Ident(name), _) if refs.contains_key(name))
+    matches!(node, Node::Lit(crate::ast::Literal::Ident(name), _)
+        if refs.get(name).is_some_and(|(mutable, _)| *mutable))
+}
+
+/// Is `receiver` a bare identifier naming a `&mut` reference parameter? Used to
+/// refuse field access/assignment through a `&mut` parameter until load-before-
+/// field lowering exists (a `&mut Pair` param holds a CELL address, not a record
+/// address, so `p.f` would mislower). Immutable `&T` receivers are unaffected.
+fn receiver_is_mut_ref_param(receiver: &Node, ctx: &Ctx) -> bool {
+    matches!(receiver, Node::Lit(crate::ast::Literal::Ident(name), _)
+        if ctx.mrefs.contains_key(name))
+}
+
+/// Is `arg` an ADMITTED argument for a callee `&mut <want>` formal? Either a
+/// depth-one `&mut r.f` field address-of of owner `want` (capable receiver), or
+/// a bare `&mut <want>` reference parameter forwarded. Everything else — a
+/// value, a scalar, an immutable reference, a wrong owner, an element `&a[i]`,
+/// or a wrapped/cast form — is NOT admitted (closes the non-reference-into-
+/// `&mut`-formal hole, audit finding F1 / root case (1) respelled).
+fn arg_is_admitted_mut_ref_to_owner(arg: &Node, want: &str, ctx: &Ctx, in_region: bool) -> bool {
+    if in_region {
+        return false;
+    }
+    match arg {
+        Node::Ref {
+            mutable: true,
+            inner,
+            ..
+        } if matches!(inner.as_ref(), Node::FieldAccess { .. }) => {
+            admitted_field_place(inner, ctx.env).as_deref() == Some(want)
+                && receiver_field_receiver(inner)
+                    .is_some_and(|r| receiver_capability_ok(r, ctx.env))
+        }
+        Node::Lit(crate::ast::Literal::Ident(name), _) => {
+            ctx.mrefs.get(name).map(String::as_str) == Some(want)
+        }
+        _ => false,
+    }
 }
 
 /// Find an unconsumed reference-parameter occurrence inside an expression.

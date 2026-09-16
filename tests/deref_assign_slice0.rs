@@ -617,3 +617,136 @@ fn direct_lowering_api_fails_closed_on_deref() {
         "public lowering must retain the ordinary scalar positive control"
     );
 }
+
+// ── Post-takeover fixes (root over-refusal + audit finding F1/F2/F4). ─────────────────
+
+#[test]
+fn immutable_ref_param_forwarding_is_admitted() {
+    // ROOT OVER-REFUSAL REGRESSION GUARD (execution-verified by root): an
+    // immutable `&T` parameter forwarded to another `&T` callee is valid,
+    // pristine behaviour and MUST NOT be refused. This was wrongly E2037 when
+    // the escape/forwarding checks keyed on ALL refs instead of `&mut` only.
+    let src = "struct Request {\n    id: i64\n}\nfn validate(r: &Request) {\n}\nfn evaluate(r: &Request) {\n    validate(r)\n}\n";
+    let cs = codes(src);
+    assert!(
+        !cs.iter()
+            .any(|c| c == "E2037" || c == "E2028" || c == "E2029"),
+        "immutable `&T` forwarding `validate(r)` must be admitted; got {cs:?}"
+    );
+}
+
+#[test]
+fn immutable_ref_param_let_and_return_are_admitted() {
+    // Immutable refs are unrestricted: let-binding / returning them is fine.
+    let l = "struct Request {\n    id: i64\n}\nfn f(r: &Request) -> i64 {\n    let q = r\n    return 0\n}\n";
+    assert!(
+        !codes(l).iter().any(|c| c == "E2029" || c == "E2037"),
+        "immutable `let q = r` must be admitted; got {:?}",
+        codes(l)
+    );
+}
+
+const MUT_REPLACE: &str = "struct Pair {\n    x: i64,\n    y: i64\n}\nstruct Other {\n    z: i64\n}\nstruct H {\n    pt: Pair,\n    other: Other\n}\nfn replace(p: &mut Pair, new: Pair) {\n    *p = new\n}\n";
+
+#[test]
+fn value_argument_into_mut_formal_is_refused_F1() {
+    // audit finding F1: a by-value record into a `&mut Pair` formal would forge a
+    // writable place (field-copy corruption). Refused.
+    let src = format!("{MUT_REPLACE}fn c(a: Pair, new: Pair) {{\n    replace(a, new)\n}}\n");
+    assert!(
+        codes(&src).contains(&"E2037".to_string()),
+        "value arg `replace(a,new)` into &mut formal must be E2037; got {:?}",
+        codes(&src)
+    );
+}
+
+#[test]
+fn scalar_argument_into_mut_formal_is_refused_F1() {
+    // audit finding F1: an i64 into a `&mut Pair` formal = arbitrary-address store.
+    let src = format!("{MUT_REPLACE}fn c(addr: i64, new: Pair) {{\n    replace(addr, new)\n}}\n");
+    assert!(
+        codes(&src).contains(&"E2037".to_string()),
+        "scalar arg `replace(addr,new)` into &mut formal must be E2037; got {:?}",
+        codes(&src)
+    );
+}
+
+#[test]
+fn immutable_receiver_projection_into_mut_formal_is_refused_F1() {
+    // audit finding F1 / root case (1) respelled: `h.pt` from an immutable `&H` into a
+    // `&mut Pair` formal launders a read-only receiver into a writable place.
+    let src = format!("{MUT_REPLACE}fn c(h: &H, new: Pair) {{\n    replace(h.pt, new)\n}}\n");
+    assert!(
+        codes(&src).contains(&"E2037".to_string()),
+        "`replace(h.pt,new)` (h:&H) must be E2037; got {:?}",
+        codes(&src)
+    );
+}
+
+#[test]
+fn admitted_mut_field_ref_and_param_forwarding_still_pass() {
+    // Positive controls the F1 gate must NOT over-refuse: `&mut h.pt` (owning
+    // receiver) and a bare `&mut Pair` param forwarded to the exact formal.
+    let field = format!("{MUT_REPLACE}fn c(h: H, new: Pair) {{\n    replace(&mut h.pt, new)\n}}\n");
+    assert!(
+        !codes(&field).iter().any(|c| c == "E2037"),
+        "admitted `replace(&mut h.pt,new)` must pass; got {:?}",
+        codes(&field)
+    );
+    let fwd = format!("{MUT_REPLACE}fn c(p: &mut Pair, new: Pair) {{\n    replace(p, new)\n}}\n");
+    assert!(
+        !codes(&fwd).iter().any(|c| c == "E2037"),
+        "admitted `&mut Pair` param forwarding must pass; got {:?}",
+        codes(&fwd)
+    );
+}
+
+#[test]
+fn field_access_through_mut_param_is_refused_F2() {
+    // audit finding F2: `p.x` on a `&mut Pair` param mislowers (cell vs record address).
+    // Refused until load-before-field lands.
+    let rd = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn getx(p: &mut Pair) -> i64 {\n    return p.x\n}\n";
+    assert!(
+        codes(rd).contains(&"E2028".to_string()),
+        "`p.x` read on &mut param must be E2028; got {:?}",
+        codes(rd)
+    );
+    let wr = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn setx(p: &mut Pair) {\n    p.x = 5\n}\n";
+    assert!(
+        codes(wr).contains(&"E2029".to_string()),
+        "`p.x = 5` on &mut param must be E2029; got {:?}",
+        codes(wr)
+    );
+}
+
+#[test]
+fn immutable_ref_field_read_is_admitted_F2_boundary() {
+    // The F2 refusal must NOT touch immutable `&T` field reads — this is exactly
+    // the cross_module_field_access shape that must stay green.
+    let src = "struct Point {\n    x: i64,\n    y: i64\n}\nfn ry(p: &Point) -> i64 {\n    return p.y\n}\n";
+    assert!(
+        !codes(src)
+            .iter()
+            .any(|c| c == "E2028" || c == "E2029" || c == "E2037"),
+        "immutable `&Point` field read must be admitted; got {:?}",
+        codes(src)
+    );
+}
+
+#[test]
+fn mut_param_forwarded_to_method_or_scalar_is_refused_F4() {
+    // audit finding F4: a `&mut` param forwarded through a scalar formal or a method
+    // call escapes; refused.
+    let scal = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn sink(x: i64) {\n}\nfn f(p: &mut Pair) {\n    sink(p)\n}\n";
+    assert!(
+        codes(scal).contains(&"E2037".to_string()),
+        "`sink(p)` (&mut param into scalar formal) must be E2037; got {:?}",
+        codes(scal)
+    );
+    let tup = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn f(p: &mut Pair) {\n    let (p, q) = (7, 0)\n    *p = q\n}\n";
+    assert!(
+        codes(tup).contains(&"E2029".to_string()),
+        "tuple-let shadow of &mut param must be E2029; got {:?}",
+        codes(tup)
+    );
+}
