@@ -249,6 +249,10 @@ const BARE_LEGACY_PARSE_SKIPS: &[&str] = &[
     "examples/mandelbrot.mind",
     "examples/mandelbrot_strict.mind",
     "examples/mindc_mind/testdata/rh_f64_aggregate_canary.mind",
+    // The RH Tier-0 totality drivers use `while`, which is std-surface grammar.
+    "examples/mindc_mind/testdata/rh_totality_tier0_budget.mind",
+    "examples/mindc_mind/testdata/rh_totality_tier0_digest.mind",
+    "examples/mindc_mind/testdata/rh_totality_tier0_verdict.mind",
     "examples/native/ci_kernel.mind",
     "examples/native/loop.mind",
     // The native bridge corpus includes a while loop.  `while` belongs to the

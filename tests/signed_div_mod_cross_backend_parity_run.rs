@@ -54,12 +54,6 @@ use std::process::Command;
 /// Exact row count of the shared corpus, pinned in every reader.
 const CORPUS_ROWS: usize = 13;
 
-/// Opt-out for a host that compiles `mlir-build` but has no MLIR toolchain on PATH.
-/// Without it a missing toolchain is a FAILURE: a skip that prints to a captured
-/// stdout is indistinguishable from a pass, which is the vacuous-green this corpus
-/// exists to rule out.
-const ALLOW_SKIP_ENV: &str = "MIND_DIVMOD_PARITY_ALLOW_SKIP";
-
 fn corpus_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/mindc_mind/testdata")
 }
@@ -115,52 +109,16 @@ fn load_corpus() -> Vec<(String, String, i32)> {
     out
 }
 
-/// True when this build can actually drive the MLIR pipeline. Probes with a program
-/// containing NO division, so a failure can only mean "no toolchain", never "the thing
-/// under test is broken" — a probe that the bug could also fail is not a probe.
-fn mlir_build_available(mindc: &PathBuf, dir: &std::path::Path) -> bool {
-    if !mindc.exists() {
-        return false;
-    }
-    let s = dir.join("parity_probe.mind");
-    if std::fs::write(&s, "fn main()->i64{return 0;}\n").is_err() {
-        return false;
-    }
-    Command::new(mindc)
-        .args([
-            s.to_str().unwrap(),
-            "--emit-shared",
-            dir.join("parity_probe.so").to_str().unwrap(),
-        ])
-        .output()
-        .map(|o| {
-            let e = String::from_utf8_lossy(&o.stderr).to_string();
-            !(e.contains("mlir-build") && e.contains("requires"))
-        })
-        .unwrap_or(false)
-}
-
 #[test]
 fn signed_div_mod_edges_agree_between_the_mlir_backend_and_the_pinned_native_values() {
     let mindc = mindc_bin();
-    let tmp = std::env::temp_dir().join("mind_divmod_parity");
-    std::fs::create_dir_all(&tmp).expect("create temp dir");
+    // Per-process scratch dir: a fixed shared path would let a concurrent test process
+    // truncate an artifact this one is about to run.
+    let tmp = crate::common::scratch_dir("signed_div_mod_cross_backend_parity_run");
 
-    // Load (and length-check) the corpus BEFORE deciding to skip, so even an
-    // opted-out run still proves the shared file is intact.
+    // Load (and length-check) the corpus FIRST, so even a run that ends in a
+    // capability skip has proven the shared file is intact.
     let corpus = load_corpus();
-
-    if !mlir_build_available(&mindc, &tmp) {
-        assert!(
-            std::env::var_os(ALLOW_SKIP_ENV).is_some(),
-            "div/mod parity: this mindc cannot drive the MLIR pipeline (no mlir-opt / \
-             mlir-translate / clang), so 0 of {CORPUS_ROWS} fixtures would run. Refusing to \
-             report that as a pass. Install the toolchain, or set {ALLOW_SKIP_ENV}=1 to skip \
-             deliberately."
-        );
-        eprintln!("div/mod parity: SKIPPED by {ALLOW_SKIP_ENV} — 0/{CORPUS_ROWS} fixtures ran");
-        return;
-    }
 
     let mut failures = Vec::new();
     for (name, src, expect) in &corpus {
@@ -176,7 +134,13 @@ fn signed_div_mod_edges_agree_between_the_mlir_backend_and_the_pinned_native_val
             .args(["build", s.to_str().unwrap(), "--out", exe.to_str().unwrap()])
             .output()
             .expect("run mindc build");
-        if !build.status.success() || !exe.exists() {
+        // A missing native backend / toolchain is decided by the fail-CLOSED shared
+        // gate (it honours MIND_BENCH_REQUIRE=1, so the exec tier cannot pass
+        // vacuously); any other build failure panics there as a regression.
+        if !crate::common::gate::compiled("signed_div_mod_cross_backend_parity_run", &build) {
+            return;
+        }
+        if !exe.exists() {
             failures.push(format!(
                 "{name}: MLIR build produced no artifact\n    {}",
                 String::from_utf8_lossy(&build.stderr).trim()

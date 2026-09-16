@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1823 | **Est. tokens:** ~3,500,691
-**Generated:** 2026-09-16 17:38 UTC
+**Files:** 1825 | **Est. tokens:** ~3,502,609
+**Generated:** 2026-09-16 18:27 UTC
 
 ## Token Budget Guide
 
@@ -106,17 +106,18 @@
 | `src/diagnostics/` | 3 | ~14,085 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 36 | ~140,912 |
+| `src/eval/` | 37 | ~142,601 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
 | `src/ffi/` | 3 | ~5,541 |
 | `src/fmt/` | 3 | ~24,052 |
-| `src/ir/` | 9 | ~99,779 |
+| `src/ir/` | 9 | ~96,736 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
 | `src/ir/compact/v3/` | 15 | ~76,625 |
 | `src/ir/compact/v3/v04/` | 3 | ~13,696 |
+| `src/ir/frozen_profile/` | 1 | ~3,541 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~10,017 |
 | `src/mlir/` | 3 | ~6,625 |
@@ -135,7 +136,7 @@
 | `src/types/` | 10 | ~20,740 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 401 | ~823,379 |
+| `tests/` | 401 | ~823,110 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -1195,6 +1196,7 @@
 - `fixed_array.rs` (~1478 tok, large) — Copyright 2026 STARGA Inc.
 - `fixed_array_struct.rs` (~5770 tok, huge) — Copyright 2026 STARGA Inc.
 - `import_collision_gate.rs` (~427 tok, medium) — Copyright 2026 STARGA Inc.
+- `int_div.rs` (~1689 tok, huge) — Copyright 2025 STARGA Inc.
 - `interp_mem.rs` (~3817 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~5649 tok, huge) — Copyright 2025 STARGA Inc.
 - `lower_entry.rs` (~359 tok, medium) — Copyright 2026 STARGA Inc.
@@ -1293,7 +1295,12 @@
 
 - `evidence.rs` (~13387 tok, huge) — Copyright 2025 STARGA Inc.
 - `fp_mode.rs` (~13664 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
-- `frozen_profile.rs` (~11845 tok, huge) — Copyright 2025 STARGA Inc.
+- `frozen_profile.rs` (~8802 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/ir/frozen_profile/`
+
+- `unsigned_taint.rs` (~3541 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/ir/`
+
 - `mod.rs` (~17720 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_closure.rs` (~4270 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~4421 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1852,7 +1859,7 @@
 ### `tests/`
 
 - `fmt_comment_placement.rs` (~2772 tok, huge) — Copyright 2025 STARGA Inc.
-- `fmt_idempotence.rs` (~4886 tok, huge) — Copyright 2025 STARGA Inc.
+- `fmt_idempotence.rs` (~4956 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_ir_preservation.rs` (~3956 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_module_block_item_preserved.rs` (~926 tok, large) — Regression: `mindc fmt` must not drop item declarations nested inside a
 - `fmt_stdlib_stability.rs` (~2754 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2365,7 +2372,7 @@
 ### `tests/`
 
 - `shapes.rs` (~1132 tok, large) — Copyright 2025 STARGA Inc.
-- `signed_div_mod_cross_backend_parity_run.rs` (~2337 tok, huge) — Copyright 2025 STARGA Inc.
+- `signed_div_mod_cross_backend_parity_run.rs` (~1998 tok, huge) — Copyright 2025 STARGA Inc.
 - `signed_div_mod_interpreter_corpus_run.rs` (~1527 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/skip_shape_scan/`
 

@@ -37,6 +37,7 @@ pub mod conv2d_grad;
 /// oracle): the layer that makes an `i32`/`u32` declaration wrap exactly where
 /// the compiled backends wrap.
 pub(crate) mod declared_width;
+mod int_div;
 pub mod interp_mem;
 pub mod ir_interp;
 pub mod lower;
@@ -2752,53 +2753,9 @@ fn apply_int_op(op: BinOp, left: i64, right: i64) -> Result<i64, EvalError> {
         BinOp::Add => left.wrapping_add(right),
         BinOp::Sub => left.wrapping_sub(right),
         BinOp::Mul => left.wrapping_mul(right),
-        // Signed integer division is TOTAL and deterministic on every tier —
-        // the interpreter now emits the SAME contract both compiled backends
-        // already do, so `mindc test`, the conformance value oracle (which IS
-        // this AST evaluator — `conformance::VALUE_ORACLE_ENGINE`) and the
-        // artifact agree instead of the interpreter erroring where the
-        // artifact returns a value:
-        //   * `x / 0 == 0`, `x % 0 == 0` — the native emitter's branchless
-        //     zero-guard (`nb_div_guarded`, pinned by
-        //     examples/mindc_mind/div_shift_cmp_edge_smoke.py) and the MLIR
-        //     `div_zero_guard` (divisor substituted to 1, result forced to 0)
-        //     both yield 0 rather than trapping on `#DE`.
-        //   * `i64::MIN / -1 == i64::MIN`, `i64::MIN % -1 == 0` — the defined
-        //     two's-complement wrap that both backends produce by substituting
-        //     divisor 1. Rust's `/` and `%` PANIC on exactly that operand pair,
-        //     so `wrapping_div`/`wrapping_rem` are load-bearing here, not
-        //     cosmetic.
-        // `apply_int_op_u64` already implemented this contract for the unsigned
-        // dispatcher (issue #99). The constant folders agree: `opt::comptime` and
-        // `opt::fold` leave a ZERO divisor unfolded for the run-time guard and fold
-        // `i64::MIN / -1` to the same wrapped value via `wrapping_div`.
-        //
-        // Scope, stated so it is not over-read: this is the contract at i64 WIDTH.
-        // Floats are a different contract (`apply_float_op` still reports
-        // `DivZero`, as IEEE division has no guard in either backend), so `7 / 0`
-        // and `7.0 / 0` deliberately disagree here.
-        // deferred: narrow signed widths are NOT yet in agreement — this function
-        // divides at 64 bits, while the MLIR narrow arm divides at i32, so
-        // `f(i32::MIN, -1)` is `+2147483648` here and `i32::MIN` in the artifact.
-        // The tree evaluator re-masks only at `Node::As`, so it has no narrow
-        // result type to wrap to. Pre-existing (bare `/` gave the same value).
-        // Upgrade path: thread the operand's declared width into the Binary arm
-        // (the same (op, operand_type) keying `frozen_profile` defers as task
-        // #313) and wrap the quotient to that width here.
-        BinOp::Div => {
-            if right == 0 {
-                0
-            } else {
-                left.wrapping_div(right)
-            }
-        }
-        BinOp::Mod => {
-            if right == 0 {
-                0
-            } else {
-                left.wrapping_rem(right)
-            }
-        }
+        // Total signed division — the contract and its rationale live in `int_div`.
+        BinOp::Div => int_div::total_div(left, right),
+        BinOp::Mod => int_div::total_rem(left, right),
         BinOp::Lt => (left < right) as i64,
         BinOp::Le => (left <= right) as i64,
         BinOp::Gt => (left > right) as i64,
@@ -3730,96 +3687,6 @@ mod tests {
         match eval_module_value_with_env(&module, &mut env, Some(src)).unwrap() {
             Value::Int(n) => assert_eq!(n, 0, "bare `return;` yields unit (0) and skips the rest"),
             other => panic!("expected Int, got {other:?}"),
-        }
-    }
-
-    /// Signed i64 division is TOTAL and matches both compiled backends. Unit-level
-    /// check of the arithmetic helper with its own operand list (including cases
-    /// the program corpus cannot express, like `MIN / 0`). The STRUCTURAL
-    /// cross-tier check — the interpreter running the very corpus the native gate
-    /// and the MLIR parity test run — is
-    /// `tests/signed_div_mod_interpreter_corpus_run.rs`; this test is not coupled
-    /// to that corpus and does not claim to be. The MLIR tier emits the same values via the
-    /// `div_zero_guard` in `mlir::lowering` (divisor substituted to 1 on both
-    /// `== 0` and the `INT_MIN / -1` overflow, result forced to 0 on the zero
-    /// case).
-    ///
-    /// Mutation-sensitive by construction: restoring `Err(DivZero)` for a zero
-    /// divisor, or swapping `wrapping_div` back to `/`, fails this test (the
-    /// latter by panicking on the `INT_MIN / -1` pair rather than returning).
-    #[test]
-    fn signed_int_div_mod_are_total_and_match_the_compiled_backends() {
-        // `EvalError` is not `PartialEq`, and the point of this test is that the
-        // Err arm is GONE — so unwrap loudly and compare the value.
-        let div = |a: i64, b: i64| {
-            apply_int_op(BinOp::Div, a, b)
-                .unwrap_or_else(|e| panic!("{a}/{b} must be total, got error {e:?}"))
-        };
-        let rem = |a: i64, b: i64| {
-            apply_int_op(BinOp::Mod, a, b)
-                .unwrap_or_else(|e| panic!("{a}%{b} must be total, got error {e:?}"))
-        };
-
-        // Zero divisor: a VALUE, never an error — the artifact cannot report one.
-        assert_eq!(div(7, 0), 0, "7/0 == 0 (zero-guard)");
-        assert_eq!(rem(7, 0), 0, "7%0 == 0 (zero-guard)");
-        assert_eq!(div(0, 0), 0, "0/0 == 0");
-        assert_eq!(div(i64::MIN, 0), 0, "MIN/0 == 0");
-
-        // INT_MIN / -1: the quotient is unrepresentable. Rust's `/` PANICS here;
-        // x86 `idiv` raises #DE; both backends substitute divisor 1 and so yield
-        // the defined two's-complement wrap.
-        assert_eq!(
-            div(i64::MIN, -1),
-            i64::MIN,
-            "INT_MIN/-1 == INT_MIN (defined wrap, no trap)"
-        );
-        assert_eq!(
-            rem(i64::MIN, -1),
-            0,
-            "INT_MIN%-1 == 0 (INT_MIN%1 after the divisor substitution)"
-        );
-
-        // Ordinary signed edges are UNCHANGED: truncation toward zero, and a
-        // remainder that takes the sign of the DIVIDEND.
-        assert_eq!(div(-17, 5), -3, "-17/5 == -3");
-        assert_eq!(rem(-17, 5), -2, "-17%5 == -2");
-        assert_eq!(rem(17, -5), 2, "17%-5 == 2");
-        assert_eq!(div(-17, -5), 3, "-17/-5 == 3");
-        assert_eq!(div(100, 7), 14, "100/7 == 14");
-        assert_eq!(rem(100, 7), 2, "100%7 == 2");
-
-        // The signed and unsigned dispatchers agree wherever signedness cannot
-        // matter — the zero divisor is exactly such a case, and the unsigned
-        // side has shipped this contract since issue #99.
-        assert_eq!(
-            div(7, 0),
-            apply_int_op_u64(BinOp::Div, 7, 0).unwrap(),
-            "signed and unsigned zero-divisor contracts must not diverge"
-        );
-        assert_eq!(
-            rem(7, 0),
-            apply_int_op_u64(BinOp::Mod, 7, 0).unwrap(),
-            "signed and unsigned zero-modulus contracts must not diverge"
-        );
-    }
-
-    /// The same contract reached through the WHOLE interpreter path (parse →
-    /// eval), not just the arithmetic helper — `apply_int_op` being right is
-    /// worth nothing if the expression path never reaches it.
-    #[cfg(feature = "std-surface")]
-    #[test]
-    fn interpreter_end_to_end_div_by_zero_yields_zero_not_an_error() {
-        let src = "pub fn f(a: i64, b: i64) -> i64 { return a / b }\n\
-                   let __probe: i64 = f(7, 0)\n";
-        let module = parser::parse(src).unwrap();
-        let mut env = HashMap::new();
-        match eval_module_value_with_env(&module, &mut env, Some(src)) {
-            Ok(Value::Int(n)) => assert_eq!(n, 0, "`7 / 0` evaluates to 0, as the artifact does"),
-            Ok(other) => panic!("expected Int(0), got {other:?}"),
-            Err(e) => panic!(
-                "`7 / 0` must not be an interpreter error (got {e:?}) — the compiled artifact returns 0, so an error here is a cross-tier divergence"
-            ),
         }
     }
 }
