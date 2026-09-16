@@ -264,10 +264,19 @@ pub fn eval_ir(ir: &IRModule) -> Value {
 
 fn eval_binop(op: BinOp, left: Value, right: Value) -> Value {
     match (left, right) {
-        // Integer arms mirror `eval::apply_int_op` EXACTLY — this is the
-        // conformance oracle (`src/conformance.rs`), so any arm that disagrees
-        // with the tree-walking evaluator or with the emitted artifact turns the
-        // oracle into a second opinion instead of a witness.
+        // SIGNED i64 integer arms match `eval::apply_int_op` — this is the
+        // conformance oracle (`src/conformance.rs`, and the `--- Result ---` path
+        // of `mindc <file>`), so any arm that disagrees with the tree-walking
+        // evaluator or with the emitted artifact turns the oracle into a second
+        // opinion instead of a witness. Before these arms wrapped, a literal
+        // `i64::MIN / -1` or a constant-folded `x / 0` PANICKED the compiler here.
+        // deferred: this oracle is type-blind — it has no u64 notion, so for a
+        // `ScalarU64` operand it answers the SIGNED `/ % < >>` where the artifact
+        // emits `divui`/`remui`/`ult`/`shrui` (e.g. u64::MAX / 2 -> 0 here,
+        // 2^63-1 in the artifact), and it masks shifts to 63 where the i32 narrow
+        // arm masks to 31. Upgrade path: carry the per-ValueId scalar dtype into
+        // `eval_binop` (task #313's dtype threading) and dispatch like
+        // `apply_int_op_u64`.
         //   * `+ − ×`: MIND integer overflow is defined two's-complement
         //     wraparound (== `arith.addi`, no nsw/nuw). Bare `a + b` PANICS in a
         //     debug build and wraps in release — the oracle must not depend on
@@ -310,10 +319,12 @@ fn eval_binop(op: BinOp, left: Value, right: Value) -> Value {
             BinOp::BitXor => a ^ b,
             #[cfg(feature = "std-surface")]
             BinOp::Shl => a.wrapping_shl(b as u32),
-            // `wrapping_shr` masks the shift amount to 0..63, matching both the
-            // sibling `wrapping_shl` above and the hardware the artifact runs on
-            // (x86 `sar rax,cl` masks CL to 6 bits). Bare `a >> b` panics in a
-            // debug build for `b >= 64`.
+            // `wrapping_shr` masks the shift amount to 0..63 and shifts
+            // ARITHMETICALLY, matching the sibling `wrapping_shl` above and the
+            // signed i64 artifact (`andi rhs, 63` + `shrsi`; x86 `sar rax,cl`).
+            // A u64 operand would need a LOGICAL shift — see the deferred note at
+            // the top of this match. Bare `a >> b` panicked in a debug build for
+            // `b >= 64`.
             #[cfg(feature = "std-surface")]
             BinOp::Shr => a.wrapping_shr(b as u32),
         }),

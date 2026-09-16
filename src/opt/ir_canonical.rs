@@ -319,8 +319,11 @@ fn constant_fold(instrs: &mut [Instr], n: usize) {
                         BinOp::BitXor => l ^ r,
                         #[cfg(feature = "std-surface")]
                         BinOp::Shl => l.wrapping_shl(r as u32),
+                        // `wrapping_shr` masks the count to 0..63 like the sibling
+                        // `wrapping_shl` arm and like the emitted `andi rhs, 63` +
+                        // `shrsi`; bare `l >> r` panics in a debug build for r >= 64.
                         #[cfg(feature = "std-surface")]
-                        BinOp::Shr => l >> r,
+                        BinOp::Shr => l.wrapping_shr(r as u32),
                     };
                     *instr = Instr::ConstI64(dst_id, folded);
                     if let Some(slot) = constants.get_mut(dst_id.0) {

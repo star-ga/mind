@@ -22,6 +22,7 @@
 //! path today, so it changes zero mic@3 bytes and cannot perturb the keystone.
 //! Wiring it into the default-flip decision is a separate, gated slice.
 
+#[cfg(feature = "std-surface")]
 use crate::ast::TypeAnn;
 use crate::ir::{BinOp, IRModule, Instr};
 
@@ -74,6 +75,7 @@ pub fn profile_frozen_admits(module: &IRModule) -> Result<(), FrozenProfileRejec
 /// whose high bit is set (u64/usize) can diverge. `usize` is included as
 /// future-proofing: MLIR seeds it `ScalarI64` (signed) today so it does not
 /// diverge yet, but a later usize->unsigned fix would silently split the backends.
+#[cfg(feature = "std-surface")]
 fn module_has_unsigned_signature(module: &IRModule) -> bool {
     module
         .fn_signatures
@@ -81,6 +83,22 @@ fn module_has_unsigned_signature(module: &IRModule) -> bool {
         .any(|(params, ret)| params.iter().chain(ret.iter()).any(is_unsigned_wide_type))
 }
 
+/// Without `std-surface` the IR carries NO `fn_signatures` side-table (the field
+/// is `#[cfg(feature = "std-surface")]` on `IRModule`), so the one door a
+/// full-width unsigned value enters through cannot be inspected at all. An
+/// uninspectable door is treated as OPEN: report the module unsigned-tainted, which
+/// REFUSES Div/Mod and ordered compares instead of admitting them unchecked —
+/// the same "undecidable => refuse" rule the native bridge applies to a module it
+/// cannot lower. This costs nothing real: `While`/`If` are themselves
+/// std-surface-only, so a non-std-surface module has no loop for an ordered
+/// compare to guard. (Found by `cargo check --no-default-features`, which the
+/// std-surface-only unit gate could not see.)
+#[cfg(not(feature = "std-surface"))]
+fn module_has_unsigned_signature(_module: &IRModule) -> bool {
+    true
+}
+
+#[cfg(feature = "std-surface")]
 fn is_unsigned_wide_type(ty: &TypeAnn) -> bool {
     matches!(ty, TypeAnn::Named(n) if n == "u64" || n == "usize")
 }
@@ -532,6 +550,7 @@ mod tests {
     /// A module whose `main` signature declares a full-width `u64` parameter,
     /// carrying the given instrs — exercises `module_has_unsigned_signature`
     /// (the bare-slice `admits` helper cannot express `fn_signatures`).
+    #[cfg(feature = "std-surface")]
     fn module_with_u64_sig(instrs: &[Instr]) -> IRModule {
         let mut m = IRModule::new();
         m.instrs = instrs.to_vec();
@@ -542,6 +561,7 @@ mod tests {
         m
     }
 
+    #[cfg(feature = "std-surface")]
     #[test]
     fn signed_div_mod_admitted_but_float_and_unsigned_rejected() {
         // RH-native (arch review 2026-09-16): SIGNED i64 Div/Mod are
@@ -571,6 +591,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "std-surface")]
     #[test]
     fn ordered_compare_rejected_under_unsigned_sig_but_eq_ne_ok() {
         // ORDERED compares emit signed setcc — an unsigned operand needs setb/seta
@@ -664,6 +685,41 @@ mod tests {
         assert_eq!(admits(&[fndef(vec![]), call("f")]), Ok(()));
     }
 
+    /// Without `std-surface` there is no signature table to inspect, so the taint
+    /// must fail CLOSED: Div/Mod and ordered compares refused, bit compares kept.
+    /// Mutation-sensitive: returning `false` from the non-std-surface
+    /// `module_has_unsigned_signature` admits all six and turns this red.
+    #[cfg(not(feature = "std-surface"))]
+    #[test]
+    fn without_std_surface_the_unsigned_taint_fails_closed() {
+        let m = |instrs: &[Instr]| {
+            let mut m = IRModule::new();
+            m.instrs = instrs.to_vec();
+            m
+        };
+        for op in [BinOp::Div, BinOp::Mod] {
+            assert_eq!(
+                profile_frozen_admits(&m(&[binop(op)]))
+                    .unwrap_err()
+                    .construct,
+                "binop.div_mod_unsigned",
+                "{op:?} must be refused when the signature door cannot be inspected"
+            );
+        }
+        for op in [BinOp::Lt, BinOp::Le, BinOp::Gt, BinOp::Ge] {
+            assert_eq!(
+                profile_frozen_admits(&m(&[binop(op)]))
+                    .unwrap_err()
+                    .construct,
+                "binop.ordered_compare_unsigned"
+            );
+        }
+        for op in [BinOp::Eq, BinOp::Ne, BinOp::Add] {
+            assert_eq!(profile_frozen_admits(&m(&[binop(op)])), Ok(()));
+        }
+    }
+
+    #[cfg(feature = "std-surface")]
     #[test]
     fn divergent_binop_hidden_in_fn_body_is_rejected() {
         // The op-blind admission bug: a divergent op buried in a function body must

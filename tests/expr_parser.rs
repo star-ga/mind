@@ -29,8 +29,14 @@ fn division_and_zero_guard() {
     let module = parser::parse("8 / 2").unwrap();
     assert_eq!(eval::eval_first_expr(&module).unwrap(), 4);
 
+    // Integer division by zero is a VALUE, not an error: `x / 0 == 0`. That is the
+    // language contract both compiled backends implement — the native emitter's
+    // `nb_div_guarded` zero-guard (pinned by examples/mindc_mind/div_shift_cmp_edge_smoke.py)
+    // and the MLIR `div_zero_guard` (tests/narrow_unsigned_div_zero_run.rs) — and the
+    // interpreter now honours it too. This assertion used to require an error, which
+    // pinned the interpreter DISAGREEING with the artifact it models.
     let module = parser::parse("1 / 0").unwrap();
-    assert!(eval::eval_first_expr(&module).is_err());
+    assert_eq!(eval::eval_first_expr(&module).unwrap(), 0);
 }
 
 /// A `!` welded to an identifier is a macro invocation, and MIND has no macros.

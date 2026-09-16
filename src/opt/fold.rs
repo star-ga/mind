@@ -76,7 +76,14 @@ pub fn fold(node: &Node) -> Node {
                                 span: *span,
                             };
                         } else {
-                            a / b
+                            // `wrapping_div`, not `/`: Rust's `/` PANICS on
+                            // `i64::MIN / -1` in every build profile (division
+                            // overflow is not gated by `overflow-checks`), which would
+                            // abort the compiler on a literal source expression. The
+                            // wrapped value `i64::MIN` is also the defined answer both
+                            // backends and the interpreter give at run time, and
+                            // exactly what `opt::comptime` folds it to.
+                            a.wrapping_div(*b)
                         }
                     }
                     BinOp::Mod => {
@@ -88,7 +95,9 @@ pub fn fold(node: &Node) -> Node {
                                 span: *span,
                             };
                         } else {
-                            a % b
+                            // See the Div arm: `i64::MIN % -1` panics with `%`; the
+                            // defined value is 0.
+                            a.wrapping_rem(*b)
                         }
                     }
                     BinOp::Lt => (a < b) as i64,

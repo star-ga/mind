@@ -18,14 +18,15 @@
 //!
 //! # Why the corpus is a file and not a list in this source
 //!
-//! Both legs read `examples/mindc_mind/testdata/signed_div_mod_edge_corpus.tsv`. Two
+//! All three legs read `examples/mindc_mind/testdata/signed_div_mod_edge_corpus.tsv`
+//! (native gate, this test, and `tests/signed_div_mod_interpreter_corpus_run.rs`). Two
 //! hand-maintained lists asserted to agree are a claim about two lists — this repo's
 //! most expensive recurring defect class, and one that a passing test suite never
 //! catches, because both lists keep passing while they drift apart. A single corpus
 //! makes the agreement structural: a fixture can only be edited for every tier at once.
-//! The interpreter tiers are held to the same operand values by
-//! `eval::tests::signed_int_div_mod_are_total_and_match_the_compiled_backends` and
-//! `eval::ir_interp::tests::ir_oracle_integer_arms_match_apply_int_op_and_the_artifact`.
+//! (The IR conformance oracle `eval_ir` does not call `main`, so it cannot run these
+//! programs; its arms are held to the same contract by its own unit test, which is a
+//! separate operand list and is NOT structurally coupled to this corpus.)
 //!
 //! # The contract under test
 //!
@@ -49,6 +50,15 @@ use common::mindc_bin;
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::PathBuf;
 use std::process::Command;
+
+/// Exact row count of the shared corpus, pinned in every reader.
+const CORPUS_ROWS: usize = 13;
+
+/// Opt-out for a host that compiles `mlir-build` but has no MLIR toolchain on PATH.
+/// Without it a missing toolchain is a FAILURE: a skip that prints to a captured
+/// stdout is indistinguishable from a pass, which is the vacuous-green this corpus
+/// exists to rule out.
+const ALLOW_SKIP_ENV: &str = "MIND_DIVMOD_PARITY_ALLOW_SKIP";
 
 fn corpus_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/mindc_mind/testdata")
@@ -95,9 +105,12 @@ fn load_corpus() -> Vec<(String, String, i32)> {
         };
         out.push((name, src, expect));
     }
-    assert!(
-        !out.is_empty(),
-        "the shared corpus parsed to ZERO fixtures — a vacuous pass, not a clean run"
+    assert_eq!(
+        out.len(),
+        CORPUS_ROWS,
+        "shared corpus has {} rows, pinned at {CORPUS_ROWS} — a deleted row must fail, \
+         not shrink",
+        out.len()
     );
     out
 }
@@ -133,12 +146,22 @@ fn signed_div_mod_edges_agree_between_the_mlir_backend_and_the_pinned_native_val
     let tmp = std::env::temp_dir().join("mind_divmod_parity");
     std::fs::create_dir_all(&tmp).expect("create temp dir");
 
+    // Load (and length-check) the corpus BEFORE deciding to skip, so even an
+    // opted-out run still proves the shared file is intact.
+    let corpus = load_corpus();
+
     if !mlir_build_available(&mindc, &tmp) {
-        println!("div/mod parity: mindc/mlir-build unavailable; skipping");
+        assert!(
+            std::env::var_os(ALLOW_SKIP_ENV).is_some(),
+            "div/mod parity: this mindc cannot drive the MLIR pipeline (no mlir-opt / \
+             mlir-translate / clang), so 0 of {CORPUS_ROWS} fixtures would run. Refusing to \
+             report that as a pass. Install the toolchain, or set {ALLOW_SKIP_ENV}=1 to skip \
+             deliberately."
+        );
+        eprintln!("div/mod parity: SKIPPED by {ALLOW_SKIP_ENV} — 0/{CORPUS_ROWS} fixtures ran");
         return;
     }
 
-    let corpus = load_corpus();
     let mut failures = Vec::new();
     for (name, src, expect) in &corpus {
         let s = tmp.join(format!("{name}.mind"));

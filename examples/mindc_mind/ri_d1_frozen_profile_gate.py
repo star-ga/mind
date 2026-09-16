@@ -79,8 +79,8 @@ CORPUS_TSV = HERE / "testdata" / "signed_div_mod_edge_corpus.tsv"
 
 def load_shared_corpus():
     """The signed i64 div/mod edge corpus, shared with the MLIR-backend parity test
-    (tests/signed_div_mod_cross_backend_parity_run.rs) and with the interpreter unit
-    tests. Returns [(name, src, expected_exit)].
+    (tests/signed_div_mod_cross_backend_parity_run.rs) and the interpreter corpus test
+    (tests/signed_div_mod_interpreter_corpus_run.rs). Returns [(name, src, expected_exit)].
 
     Reading the corpus instead of restating it is the point: "native == MLIR" asserted
     over two hand-maintained lists is a claim about two lists, and this repo's most
@@ -138,7 +138,9 @@ IN_PROFILE = [
 # answers "all clear" proves neither that its loop ran nor that a FAILING verdict is
 # reachable. The digest is the miscompile canary; the budget fixture forces the
 # counterexample arm. See testdata/rh_totality_tier0_verdict.mind for the contract.
-IN_PROFILE += load_shared_corpus()
+_SHARED = load_shared_corpus()
+CORPUS_NAMES = {name for name, _src, _exit in _SHARED}
+IN_PROFILE += _SHARED
 
 # Programs the frozen stage1.elf COMPILES but fence 1 currently OVER-rejects. Not a
 # silent deletion and not a pass — each is asserted to be refused by the FIRST fence
@@ -169,6 +171,10 @@ DEFERRED_OVER_REJECTED = [
 # rejected a u64 division for the wrong reason (or rejected every program) still passed.
 #   "first"  -> the Rust frozen-profile predicate must refuse and name `construct`
 #   "second" -> the pure-MIND compiler must be the one that rejects (`construct` is None)
+#   "undecidable" -> fence 1 could not even LOWER the module (a front-end parse
+#               failure) and refused under "undecidable => refuse". Neither the
+#               predicate nor the pure-MIND compiler judged the construct, so such a
+#               fixture must NOT be counted as coverage for either fence.
 # enforces: RI-D1-PROFILE
 OUT_PROFILE = [
     # The TEST for the Rust-side frozen-profile fence: accepted by the pure-MIND
@@ -210,9 +216,13 @@ OUT_PROFILE = [
      "let q:u64=x / z; return 0;}",
      "first", "call.undefined_or_builtin"),
 
+    # Used to be declared a SECOND-fence fixture and was a vacuous pass for it: the
+    # Rust front end cannot parse `trait`/`impl`, so mindc refuses at "cannot determine
+    # frozen-profile admission" and stage1.elf is never execve'd (measured 2026-09-16).
+    # It is honest coverage of the UNDECIDABLE arm and nothing else, so it says so.
     ("trait",
      "trait T{fn f(self)->i64;} struct S{} impl T for S{fn f(self)->i64{return 1;}} "
-     "fn main()->i64{let s=S{}; return s.f();}", "second", None),
+     "fn main()->i64{let s=S{}; return s.f();}", "undecidable", None),
     # Row 10 FLOAT_LANGUAGE_COVERAGE — the float COMPARISON, which the two backends
     # answer DIFFERENTLY. Native lowers it to `ucomisd` + an UNSIGNED setcc
     # (main.mind::nb_fp_setcc_opcode), and an unordered compare sets CF=ZF=PF=1, so
@@ -269,6 +279,12 @@ DEFERRED_FROZEN_ELF_LAG = [
 EXECVE_PATH = re.compile(r'execve\("([^"]+)"')
 # The first fence's diagnostic shape (src/bin/mindc.rs): "... (out-of-profile construct: X)".
 FIRST_FENCE_CONSTRUCT = re.compile(r"out-of-profile construct: ([A-Za-z0-9_.\-]+)")
+# The frozen stage1.elf's own refusal, relayed by the bridge.
+SECOND_FENCE_REFUSAL = "unsupported construct"
+# mindc's refusal when fence 1 cannot lower the module at all (src/bin/mindc.rs).
+UNDECIDABLE_REFUSAL = "cannot determine frozen-profile admission"
+# Exact row count of the shared corpus, pinned identically in every reader.
+CORPUS_ROWS = 13
 
 
 def strace_native_build(name, src, td):
@@ -298,7 +314,9 @@ def toolchain_hits(execs):
 
 
 def unexpected_bins(execs):
-    return [b for b in execs if not any(b == a or a in b for a in ALLOWED_BINS)]
+    # EXACT basename match. A substring test let any binary whose name merely contains
+    # "mindc" or "stage1.elf" pass as allowed.
+    return [b for b in execs if b not in ALLOWED_BINS]
 
 
 def check_refusal(name, src, td, want_fence, want_construct):
@@ -354,6 +372,29 @@ def check_refusal(name, src, td, want_fence, want_construct):
                 f"Rust predicate caught it first as '{named.group(1)}' — the fixture no "
                 "longer exercises the compiler's own fail-closed path"
             )
+        # "No first-fence construct named" is NOT evidence the second fence ran: a
+        # front-end parse failure also names none. Require the frozen ELF to have
+        # actually been spawned AND to have produced its own refusal.
+        if "stage1.elf" not in execs:
+            problems.append(
+                f"stage1.elf was never execve'd (execve={execs}) — the refusal came from "
+                "mindc before the second fence, so this fixture tests nothing about it"
+            )
+        if SECOND_FENCE_REFUSAL not in serr:
+            problems.append(
+                f"no '{SECOND_FENCE_REFUSAL}' from the frozen ELF — refused for some other "
+                "reason (parse error, crash, missing file) that merely looks the same"
+            )
+        if UNDECIDABLE_REFUSAL in serr:
+            problems.append("fence 1 could not lower the module (undecidable), not a fence-2 refusal")
+    elif want_fence == "undecidable":
+        if UNDECIDABLE_REFUSAL not in serr:
+            problems.append(
+                f"expected the undecidable-admission refusal ('{UNDECIDABLE_REFUSAL}'), "
+                "but it did not occur"
+            )
+        if "stage1.elf" in execs:
+            problems.append("stage1.elf was spawned — the module was decidable after all")
     return problems, rc, execs
 
 
@@ -370,6 +411,25 @@ def main() -> int:
     # toolchain execve. Pin the corpus size so a silently-deleted fixture is a FAILURE,
     # not a vacuous pass. Bump deliberately when the allowlist+corpus grow together.
     PINNED_IN_PROFILE = 18
+    corpus_rows = len([e for e in IN_PROFILE if e[0] in CORPUS_NAMES])
+    if corpus_rows != CORPUS_ROWS:
+        print(
+            f"FAIL  shared corpus contributed {corpus_rows} rows, pinned at {CORPUS_ROWS} — a "
+            "deleted corpus row cannot be hidden by adding an inline fixture."
+        )
+        return 1
+    # The verdict driver hard-codes the reference digest it compares against; the
+    # digest driver's pinned exit IS that reference. Two copies of one number, so tie
+    # them: editing either without the other is a failure, not a silent disagreement.
+    verdict_src = (HERE / "testdata" / "rh_totality_tier0_verdict.mind").read_text()
+    m = re.search(r"let expect: i64 = (\d+);", verdict_src)
+    digest_exit = next((e for n, _s, e in IN_PROFILE if n == "rh_tier0_digest"), None)
+    if not m or digest_exit is None or int(m.group(1)) != digest_exit:
+        print(
+            f"FAIL  verdict driver reference digest ({m.group(1) if m else 'missing'}) != "
+            f"digest fixture's pinned exit ({digest_exit})"
+        )
+        return 1
     PINNED_OUT_PROFILE = 9
     # EXACT, not floors. Both lists are known GAPS, so neither may grow silently (more
     # refusal = capability regression) nor shrink silently (something became buildable,
@@ -377,7 +437,7 @@ def main() -> int:
     # proven). A gap that can be closed by deleting its fixture is not tracked.
     PINNED_DEFERRED = 3
     PINNED_ELF_LAG = 3
-    if len(IN_PROFILE) < PINNED_IN_PROFILE or len(OUT_PROFILE) < PINNED_OUT_PROFILE:
+    if len(IN_PROFILE) != PINNED_IN_PROFILE or len(OUT_PROFILE) < PINNED_OUT_PROFILE:
         print(
             f"FAIL  corpus shrank below pinned floor: in={len(IN_PROFILE)}<{PINNED_IN_PROFILE} "
             f"or out={len(OUT_PROFILE)}<{PINNED_OUT_PROFILE} — a deleted fixture is a failure."

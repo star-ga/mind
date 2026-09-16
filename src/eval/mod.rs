@@ -2768,9 +2768,22 @@ fn apply_int_op(op: BinOp, left: i64, right: i64) -> Result<i64, EvalError> {
         //     so `wrapping_div`/`wrapping_rem` are load-bearing here, not
         //     cosmetic.
         // `apply_int_op_u64` already implemented this contract for the unsigned
-        // dispatcher (issue #99) and `opt::comptime` already refuses to fold the
-        // two edge pairs; the signed interpreter arm was the last tier out of
-        // agreement.
+        // dispatcher (issue #99). The constant folders agree: `opt::comptime` and
+        // `opt::fold` leave a ZERO divisor unfolded for the run-time guard and fold
+        // `i64::MIN / -1` to the same wrapped value via `wrapping_div`.
+        //
+        // Scope, stated so it is not over-read: this is the contract at i64 WIDTH.
+        // Floats are a different contract (`apply_float_op` still reports
+        // `DivZero`, as IEEE division has no guard in either backend), so `7 / 0`
+        // and `7.0 / 0` deliberately disagree here.
+        // deferred: narrow signed widths are NOT yet in agreement — this function
+        // divides at 64 bits, while the MLIR narrow arm divides at i32, so
+        // `f(i32::MIN, -1)` is `+2147483648` here and `i32::MIN` in the artifact.
+        // The tree evaluator re-masks only at `Node::As`, so it has no narrow
+        // result type to wrap to. Pre-existing (bare `/` gave the same value).
+        // Upgrade path: thread the operand's declared width into the Binary arm
+        // (the same (op, operand_type) keying `frozen_profile` defers as task
+        // #313) and wrap the quotient to that width here.
         BinOp::Div => {
             if right == 0 {
                 0
@@ -3719,12 +3732,13 @@ mod tests {
         }
     }
 
-    /// The signed integer division contract is TOTAL and identical on all three
-    /// tiers. The operand corpus is deliberately the SAME one the native-ELF
-    /// backend is pinned against in
-    /// `examples/mindc_mind/div_shift_cmp_edge_smoke.py` (`nb_div_guarded`), so
-    /// interpreter and artifact are held to one corpus rather than two that
-    /// merely look alike. The MLIR tier emits the same values via the
+    /// Signed i64 division is TOTAL and matches both compiled backends. Unit-level
+    /// check of the arithmetic helper with its own operand list (including cases
+    /// the program corpus cannot express, like `MIN / 0`). The STRUCTURAL
+    /// cross-tier check — the interpreter running the very corpus the native gate
+    /// and the MLIR parity test run — is
+    /// `tests/signed_div_mod_interpreter_corpus_run.rs`; this test is not coupled
+    /// to that corpus and does not claim to be. The MLIR tier emits the same values via the
     /// `div_zero_guard` in `mlir::lowering` (divisor substituted to 1 on both
     /// `== 0` and the `INT_MIN / -1` overflow, result forced to 0 on the zero
     /// case).

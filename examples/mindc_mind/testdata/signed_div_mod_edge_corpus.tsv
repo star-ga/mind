@@ -2,11 +2,16 @@
 #
 # enforced-by: RI-D1-PROFILE
 #
-# Consumers, all reading THIS file rather than a copy of it:
+# Consumers, all reading THIS file rather than a copy of it, each pinning the row
+# count (13) so a deleted row fails in every tier:
 #   examples/mindc_mind/ri_d1_frozen_profile_gate.py   -> frozen-profile NATIVE ELF
 #   tests/signed_div_mod_cross_backend_parity_run.rs   -> MLIR backend executable
-#   src/eval/mod.rs / src/eval/ir_interp.rs unit tests -> the two INTERPRETER tiers
-#     (same operand values, asserted on `apply_int_op` / `eval_ir` directly)
+#   tests/signed_div_mod_interpreter_corpus_run.rs     -> tree-walking INTERPRETER
+#
+# NOT a consumer: the IR conformance oracle `eval_ir` (it does not call `main`, so
+# it cannot run these programs) and the operand-level unit tests in src/eval/ —
+# those hold the same CONTRACT with their own operand lists and are not
+# structurally coupled to this file.
 #
 # "native == MLIR" is worth nothing if it is two lists that merely look alike and
 # drift apart in one commit. A shared corpus makes the agreement structural: a
@@ -14,8 +19,9 @@
 # this file stops being covered in a way `git diff` shows.
 #
 # The operand values are the ones the native emitter is pinned against in
-# div_shift_cmp_edge_smoke.py (`nb_div_guarded`), extended with the two INT_MIN
-# cases. The contract they encode, identical on every tier:
+# div_shift_cmp_edge_smoke.py (`nb_div_guarded`), plus `div_basic`, `mod_basic`
+# and the `%` twin of the INT_MIN case. That smoke keeps its OWN list (it drives
+# the self-host .so, not a CLI build) and is NOT coupled to this file. The contract they encode, identical on every tier:
 #   * truncation toward zero; remainder takes the sign of the DIVIDEND
 #   * x / 0 == 0 and x % 0 == 0 — guarded, never a #DE / SIGFPE trap
 #   * i64::MIN / -1 == i64::MIN and i64::MIN % -1 == 0 — the defined

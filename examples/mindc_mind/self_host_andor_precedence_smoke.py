@@ -101,6 +101,18 @@ CASES += [("cmp_or", _e, P4, dict(e=_e, p=p, q=q, r=r, s=s),
           for (p, q, r, s) in [(1, 2, 3, 4), (1, 1, 3, 4), (1, 2, 3, 3), (0, 0, 0, 0)]]
 
 # Short-circuit RHS-would-fault (div by zero in RHS): must not evaluate RHS.
+#
+# VACUOUS as a short-circuit witness, and has been since the div guards landed:
+# `x / 0 == 0` on every tier (native `nb_div_guarded`, MLIR `div_zero_guard`,
+# and the interpreter since 2026-09-16), so the RHS no longer FAULTS. With
+# short-circuiting broken, `sc_and_divzero` still yields `false && (0 > 5)` = 0 and
+# `sc_or_divzero` still yields `true || ...` = 7 — both pass either way. They remain
+# valid VALUE checks for `&&`/`||`; they prove nothing about evaluation order.
+# deferred: re-arm with an RHS that still faults deterministically — an
+# out-of-bounds fixed-array read (ARRAY_OOB_CONTRACT=DETERMINISTIC_BOUNDS_TRAP), e.g.
+# `x < 4 && a[x] > 5` with x = 9 — once the native ELF path is confirmed to trap on
+# OOB (`array_oob_trap_run.rs` covers the MLIR path only). Not done here because
+# an unverified trap would just replace one vacuous fixture with another.
 SC = [
     ("sc_and_divzero",
      b"fn g(x: i64) -> i64 { if x != 0 && (100 / x) > 5 { return 1; } else { return 0; } } "
