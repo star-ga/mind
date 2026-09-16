@@ -2478,10 +2478,7 @@ impl LoweringContext {
                 let b_info = self.tensor_info(b, "matmul rhs")?;
                 let (out_shape, m_ty, n_ty, result_ty) =
                     matmul_shapes(&a_info.shape, &b_info.shape, a_info.dtype.as_str())?;
-                self.emit_line(&format!(
-                    "    %tmp{} = tensor.empty() : {}",
-                    dst.0, result_ty
-                ));
+                self.emit_zeroed_init(dst.0, &a_info.dtype, &result_ty);
                 // Grouped `ins(%a, %b : ta, tb)` form — the only one mlir-opt's
                 // linalg named-op parser accepts (a per-operand `ins(%a : ta, %b : tb)`
                 // is rejected as "expected non-function type").
@@ -2509,10 +2506,7 @@ impl LoweringContext {
                 let filter_info = self.tensor_info(filter, "conv2d filter")?;
                 let (out_shape, input_ty, filter_ty, result_ty) =
                     conv2d_shapes(&input_info, &filter_info, *stride_h, *stride_w, *padding)?;
-                self.emit_line(&format!(
-                    "    %tmp{} = tensor.empty() : {}",
-                    dst.0, result_ty
-                ));
+                self.emit_zeroed_init(dst.0, &input_info.dtype, &result_ty);
                 // Grouped `ins(%a, %b : ta, tb)` form (see MatMul above).
                 self.emit_line(&format!(
                     "    %{} = linalg.conv_2d_nhwc_hwcf ins(%{}, %{} : {}, {}) outs(%tmp{} : {}) -> {}",
@@ -11240,6 +11234,33 @@ impl LoweringContext {
 
         // The intrinsic returns 0 (i64).
         self.emit_line(&format!("    %{d} = arith.constant 0 : i64"));
+    }
+
+    /// Emit `%tmp<id>`: a ZERO-FILLED init tensor for a linalg named op that
+    /// ACCUMULATES into its `outs` operand. `linalg.matmul` computes
+    /// `C(i,j) += A(i,k) * B(k,j)` and `linalg.conv_2d_nhwc_hwcf` computes
+    /// `O += I * K`, so the output must start at 0. Handing them a bare
+    /// `tensor.empty()` (uninitialised heap memory) made the result depend on
+    /// whatever the allocator returned: measured, the SAME call with the SAME
+    /// inputs returned `14.0` and `1.7785929385049709e+47` on successive calls — a
+    /// non-deterministic miscompile, and the cause of the flaky
+    /// `tensor_param_descriptor_abi_run::rank2_index_sensitive_field_map_is_honored`.
+    fn emit_zeroed_init(&mut self, id: usize, dtype: &DType, tensor_ty: &str) {
+        let elem = dtype.as_str();
+        self.emit_line(&format!(
+            "    %zinit{} = arith.constant {} : {}",
+            id,
+            format_fill(None, dtype),
+            elem
+        ));
+        self.emit_line(&format!(
+            "    %zempty{} = tensor.empty() : {}",
+            id, tensor_ty
+        ));
+        self.emit_line(&format!(
+            "    %tmp{} = linalg.fill ins(%zinit{} : {}) outs(%zempty{} : {}) -> {}",
+            id, id, elem, id, tensor_ty, tensor_ty
+        ));
     }
 
     fn tensor_info(

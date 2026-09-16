@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1825 | **Est. tokens:** ~3,502,609
-**Generated:** 2026-09-16 18:27 UTC
+**Files:** 1825 | **Est. tokens:** ~3,502,755
+**Generated:** 2026-09-16 19:37 UTC
 
 ## Token Budget Guide
 
@@ -136,7 +136,7 @@
 | `src/types/` | 10 | ~20,740 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 401 | ~823,110 |
+| `tests/` | 401 | ~823,256 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -2080,7 +2080,7 @@
 - `mlir_file_and_lower.rs` (~611 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~314 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_jit.rs` (~285 tok, medium) — Copyright 2025 STARGA Inc.
-- `mlir_lowering.rs` (~1490 tok, large)
+- `mlir_lowering.rs` (~1636 tok, huge) — a bare `tensor.empty()` fed straight into `outs` returned heap garbage.
 - `mlir_opt.rs` (~474 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlkem768_driver.py` (~1699 tok, huge) — # Reference-vector driver for std/mlkem768.mind (pure-MIND ML-KEM-768,
 - `module_const_run.rs` (~729 tok, large) — Copyright 2025 STARGA Inc.
