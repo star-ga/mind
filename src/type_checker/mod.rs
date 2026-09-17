@@ -4195,6 +4195,36 @@ fn collect_fixed_bytes_locals(stmts: &[Node], out: &mut BTreeSet<String>) {
     }
 }
 
+#[cfg(feature = "std-surface")]
+thread_local! {
+    /// Callee signatures of the module enclosing the function body currently being
+    /// re-checked as a mini-module (see `deref_fn_sigs`).
+    static DEREF_ENCLOSING_FN_SIGS: std::cell::RefCell<Option<slice_abi::FnParamSigs>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Installs the enclosing module's callee signatures for the duration of a nested
+/// body check; restores the previous value on drop (nesting-safe).
+#[cfg(feature = "std-surface")]
+struct DerefEnclosingFnSigsGuard {
+    prev: Option<slice_abi::FnParamSigs>,
+}
+
+#[cfg(feature = "std-surface")]
+impl DerefEnclosingFnSigsGuard {
+    fn install(sigs: slice_abi::FnParamSigs) -> Self {
+        let prev = DEREF_ENCLOSING_FN_SIGS.with(|cell| cell.borrow_mut().replace(sigs));
+        DerefEnclosingFnSigsGuard { prev }
+    }
+}
+
+#[cfg(feature = "std-surface")]
+impl Drop for DerefEnclosingFnSigsGuard {
+    fn drop(&mut self) {
+        DEREF_ENCLOSING_FN_SIGS.with(|cell| *cell.borrow_mut() = self.prev.take());
+    }
+}
+
 /// RAII guard that installs the fixed-`bytes[N]` local set into the thread-local
 /// for the duration of a fn-body check and restores the previous value on drop.
 /// Merges onto any parent set (child names win) so a nested block's recursive
@@ -4590,8 +4620,19 @@ fn check_module_types_in_file_impl(
     let mut has_enum = false;
     #[cfg(feature = "std-surface")]
     let struct_field_types = slice_abi::struct_field_types(&module.items, inherited_struct_fields);
+    // Callee signatures for the deref-assign formal-keyed check. A nested function
+    // body is re-checked below as a mini-module whose `items` are only that body, so
+    // the ENCLOSING module's signatures are inherited (installed by the FnDef arm);
+    // without them `replace(p, new)` inside a nested fn saw an unknown callee and was
+    // admitted unclassified (audit 2026-09-16). Local definitions shadow inherited ones.
     #[cfg(feature = "std-surface")]
-    let deref_fn_sigs = slice_abi::fn_param_sigs(&module.items);
+    let deref_fn_sigs = {
+        let mut sigs = DEREF_ENCLOSING_FN_SIGS
+            .with(|cell| cell.borrow().clone())
+            .unwrap_or_default();
+        sigs.extend(slice_abi::fn_param_sigs(&module.items));
+        sigs
+    };
     #[cfg(feature = "std-surface")]
     let struct_fields_have_owner = struct_field_types
         .values()
@@ -5143,6 +5184,8 @@ fn check_module_types_in_file_impl(
                 // bindings so a buffer flowed through an alias (`let buf:
                 // bytes[32] = …; take_bytes(buf)`) is caught by the same E2006
                 // guard as the direct `bytes[N].zero()` form. Restored on drop.
+                #[cfg(feature = "std-surface")]
+                let _deref_sigs_guard = DerefEnclosingFnSigsGuard::install(deref_fn_sigs.clone());
                 let _fixed_bytes_guard = {
                     let mut locals = BTreeSet::new();
                     collect_fixed_bytes_locals(body, &mut locals);
@@ -5212,6 +5255,13 @@ fn check_module_types_in_file_impl(
                         || d.code == SCALAR_INTO_STRUCT_CODE
                         || d.code == TUPLE_ARITY_CODE
                         || d.code == INDEX_OOB_CODE
+                        // Deref-assign admission (E2028 / E2029 / E2037) for a NESTED
+                        // function: its body is classified only by this recursion, so
+                        // dropping these would silently admit a nested deref/store.
+                        // Sound-condition refusals, not the generic mismatch path.
+                        || d.code == "E2028"
+                        || d.code == "E2029"
+                        || d.code == "E2037"
                 }));
 
                 // Early check-phase diagnostics that fail closed LATE at

@@ -531,3 +531,77 @@ fn mut_field_ref_through_byvalue_receiver_still_admitted() {
         codes(src)
     );
 }
+
+/// Parentheses must not hide a `&mut` parameter receiver (audit 2026-09-16). The
+/// struct resolver walks through `Paren`, so `(p).y = v` lowers to the same
+/// `store addr(p)+8` as `p.y = v` — a wrong-slot write through a CELL address —
+/// and must be refused exactly like the bare form, at any nesting depth, for both
+/// the store and the read.
+#[test]
+fn parenthesised_mut_ref_receiver_is_refused_like_the_bare_form() {
+    let pre = "struct Pair {\n    x: i64,\n    y: i64\n}\n";
+    for (form, code) in [
+        ("fn s(p: &mut Pair, v: i64) {\n    (p).y = v\n}\n", "E2029"),
+        (
+            "fn s(p: &mut Pair, v: i64) {\n    ((p)).y = v\n}\n",
+            "E2029",
+        ),
+        (
+            "fn s(p: &mut Pair) -> i64 {\n    return (p).y\n}\n",
+            "E2028",
+        ),
+    ] {
+        let src = format!("{pre}{form}");
+        let cs = codes(&src);
+        assert!(
+            cs.contains(&code.to_string()),
+            "{form:?} must be {code}; got {cs:?}"
+        );
+    }
+    // Positive control: the same parenthesised read on a BY-VALUE receiver is not a
+    // `&mut` cell and stays admitted.
+    let ok = format!("{pre}fn r(p: Pair) -> i64 {{\n    return (p).y\n}}\n");
+    let cs = codes(&ok);
+    assert!(
+        !cs.iter().any(|c| c == "E2028" || c == "E2029"),
+        "by-value `(p).y` must stay admitted; got {cs:?}"
+    );
+}
+
+/// A NESTED function's calls are classified with ITS OWN parameters and the
+/// enclosing module's callee signatures (audit 2026-09-16). Before, the nested body
+/// was classified under the OUTER `&mut` table and its own check ran without the
+/// module's signatures, so `replace(p, new)` with an `i64` `p` was admitted.
+#[test]
+fn nested_fn_calls_are_classified_by_their_own_params() {
+    let src = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn replace(p: &mut Pair, new: Pair) {\n    *p = new\n}\nfn outer(p: &mut Pair, new: Pair) {\n    fn inner(p: i64, new: Pair) {\n        replace(p, new)\n    }\n}\n";
+    let cs = codes(src);
+    assert!(
+        cs.contains(&"E2037".to_string()),
+        "an i64 `p` into a `&mut Pair` formal inside a nested fn must be E2037; got {cs:?}"
+    );
+    // Control: the identical call at top level is refused the same way, so the
+    // nested verdict is not an artefact of nesting.
+    let top = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn replace(p: &mut Pair, new: Pair) {\n    *p = new\n}\nfn inner(p: i64, new: Pair) {\n    replace(p, new)\n}\n";
+    assert!(codes(top).contains(&"E2037".to_string()));
+}
+
+/// Positive control for the std-surface admission (moved from `deref_assign_slice0.rs`:
+/// without std-surface the same shapes are now refused with E2037 by design).
+#[test]
+fn admitted_mut_field_ref_and_param_forwarding_still_pass() {
+    // Positive controls the F1 gate must NOT over-refuse: `&mut h.pt` (owning
+    // receiver) and a bare `&mut Pair` param forwarded to the exact formal.
+    let field = format!("{MUT_REPLACE}fn c(h: H, new: Pair) {{\n    replace(&mut h.pt, new)\n}}\n");
+    assert!(
+        !codes(&field).iter().any(|c| c == "E2037"),
+        "admitted `replace(&mut h.pt,new)` must pass; got {:?}",
+        codes(&field)
+    );
+    let fwd = format!("{MUT_REPLACE}fn c(p: &mut Pair, new: Pair) {{\n    replace(p, new)\n}}\n");
+    assert!(
+        !codes(&fwd).iter().any(|c| c == "E2037"),
+        "admitted `&mut Pair` param forwarding must pass; got {:?}",
+        codes(&fwd)
+    );
+}

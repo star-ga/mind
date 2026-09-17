@@ -287,26 +287,6 @@ fn immutable_ref_param_let_and_return_are_admitted() {
     );
 }
 
-const MUT_REPLACE: &str = "struct Pair {\n    x: i64,\n    y: i64\n}\nstruct Other {\n    z: i64\n}\nstruct H {\n    pt: Pair,\n    other: Other\n}\nfn replace(p: &mut Pair, new: Pair) {\n    *p = new\n}\n";
-
-#[test]
-fn admitted_mut_field_ref_and_param_forwarding_still_pass() {
-    // Positive controls the F1 gate must NOT over-refuse: `&mut h.pt` (owning
-    // receiver) and a bare `&mut Pair` param forwarded to the exact formal.
-    let field = format!("{MUT_REPLACE}fn c(h: H, new: Pair) {{\n    replace(&mut h.pt, new)\n}}\n");
-    assert!(
-        !codes(&field).iter().any(|c| c == "E2037"),
-        "admitted `replace(&mut h.pt,new)` must pass; got {:?}",
-        codes(&field)
-    );
-    let fwd = format!("{MUT_REPLACE}fn c(p: &mut Pair, new: Pair) {{\n    replace(p, new)\n}}\n");
-    assert!(
-        !codes(&fwd).iter().any(|c| c == "E2037"),
-        "admitted `&mut Pair` param forwarding must pass; got {:?}",
-        codes(&fwd)
-    );
-}
-
 #[test]
 fn immutable_ref_field_read_is_admitted_F2_boundary() {
     // The F2 refusal must NOT touch immutable `&T` field reads — this is exactly
@@ -375,4 +355,19 @@ fn match_binder_shadow_of_mut_param_is_refused() {
         "enum-payload match-binder shadow of &mut param must be E2029; got {:?}",
         codes(payload)
     );
+}
+
+/// Without `std-surface` the field/element address-of admission check is not
+/// compiled, and lowering would read `&mut r.f` as a plain VALUE. Admission must not
+/// depend on a cargo feature, so the base scan refuses it with the same E2037
+/// (audit 2026-09-16).
+#[cfg(not(feature = "std-surface"))]
+#[test]
+fn mut_field_address_of_is_refused_without_std_surface() {
+    let src = "struct Pair {\n    x: i64,\n    y: i64\n}\nstruct H {\n    pt: Pair\n}\nfn f(h: H) {\n    let c = &mut h.pt.x\n}\n";
+    let cs = codes(src);
+    assert!(cs.contains(&"E2037".to_string()), "got {cs:?}");
+    // Control: an immutable address-of is untouched by this refusal.
+    let imm = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn f(p: Pair) {\n    let c = &p\n}\n";
+    assert!(!codes(imm).contains(&"E2037".to_string()));
 }

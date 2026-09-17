@@ -313,6 +313,16 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
         }
         // `*p = v` (store): identity place replacement. Referent a declared
         // struct; value a record of the EXACT canonical owner.
+        //
+        // deferred: no LIFETIME check on `v`. Identity replacement stores the record's
+        // address, so a record allocated inside a `region { }` and passed (via a
+        // by-value parameter) into a store whose referent outlives the region would
+        // dangle once the region frees. Unreachable today — measured 2026-09-16, any
+        // `region` containing a struct literal fails at mlir-opt ("redefinition of SSA
+        // value") on main 5724a6ee, so no such program builds. Upgrade path: the fix
+        // that makes region+struct lowering compile MUST land with a refusal of
+        // region-local records flowing into a `&mut`-formal call (or an escape analysis
+        // over by-value record params); do not fix one without the other.
         Node::DerefAssign {
             target,
             value,
@@ -672,6 +682,14 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
             }
             classify(inner, ctx, in_region, errs);
         }
+        // A NESTED function is its own scope with its own parameters: classifying its
+        // body under THIS function's `&mut` parameter table would admit or refuse by
+        // the wrong names (audit 2026-09-16: `fn outer(p: &mut Pair, ..) { fn inner(p:
+        // i64) { replace(p, new) } }` admitted `replace(p, new)` against the OUTER `p`).
+        // The nested body gets its own `check_fn` pass from the type checker's
+        // per-FnDef recursion, whose deref diagnostics are kept (see the body-errors
+        // whitelist in `type_checker::mod`).
+        Node::FnDef(..) => {}
         _ => {
             super::super::nerve_walk::for_each_child(node, &mut |child| {
                 classify(child, ctx, in_region, errs)
@@ -703,7 +721,8 @@ fn deref_param_referent_owner(target: &Node, mrefs: &BTreeMap<String, String>) -
 /// read-only and unrestricted (pristine behaviour) — restricting it was the
 /// over-refusal root found (`fn evaluate(r: &Request) { validate(r) }`).
 fn ident_names_ref_param(node: &Node, refs: &RefParamSigs) -> bool {
-    matches!(node, Node::Lit(crate::ast::Literal::Ident(name), _)
+    // Refusal-side, so parentheses are peeled: `(p)` escapes exactly as `p` does.
+    matches!(strip_parens(node), Node::Lit(crate::ast::Literal::Ident(name), _)
         if refs.get(name).is_some_and(|(mutable, _)| *mutable))
 }
 
@@ -729,8 +748,22 @@ fn pattern_binds_mut_ref(pat: &crate::ast::Pattern, mrefs: &BTreeMap<String, Str
 /// field lowering exists (a `&mut Pair` param holds a CELL address, not a record
 /// address, so `p.f` would mislower). Immutable `&T` receivers are unaffected.
 fn receiver_is_mut_ref_param(receiver: &Node, ctx: &Ctx) -> bool {
-    matches!(receiver, Node::Lit(crate::ast::Literal::Ident(name), _)
+    // Parentheses must not HIDE a `&mut` parameter from this refusal: the struct
+    // resolver walks through `Paren`, so `(p).y = v` lowers to exactly the same
+    // `store addr(p)+8` as `p.y = v` — a wrong-slot / out-of-bounds write through
+    // a CELL address (audit 2026-09-16). Only the refusal side strips parens; every
+    // admission check stays keyed on the bare identifier, so a wrapped form is
+    // never ADMITTED.
+    matches!(strip_parens(receiver), Node::Lit(crate::ast::Literal::Ident(name), _)
         if ctx.mrefs.contains_key(name))
+}
+
+/// Peel any number of `( … )` wrappers.
+fn strip_parens(mut node: &Node) -> &Node {
+    while let Node::Paren(inner, _) = node {
+        node = inner;
+    }
+    node
 }
 
 /// Is `arg` an ADMITTED argument for a callee `&mut <want>` formal? Either a

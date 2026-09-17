@@ -33,6 +33,8 @@ use borrow_flow::{
 };
 pub(super) use borrow_flow::{check_fn, check_struct_fields};
 #[cfg(feature = "std-surface")]
+pub(super) use deref_check::FnParamSigs;
+#[cfg(feature = "std-surface")]
 pub(super) use deref_check::check_fn as deref_check_fn;
 #[cfg(feature = "std-surface")]
 pub(super) use deref_check::fn_param_sigs;
