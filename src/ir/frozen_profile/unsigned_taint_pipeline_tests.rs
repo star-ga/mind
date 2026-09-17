@@ -176,6 +176,42 @@ const COMPARE_SHAPES: &[(&str, &str, bool, bool)] = &[
         true,
         false,
     ),
+    (
+        "`a & b` of two u64 params is not a mask",
+        "fn f(a: u64, b: u64) -> i64 {\n    let m = a & b\n    if m < 10 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        true,
+    ),
+    (
+        "arithmetic on a masked value re-taints it",
+        "fn f(a: u64) -> i64 {\n    let m = a & 255\n    let t = m - 256\n    if t < 10 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        true,
+    ),
+    (
+        "an all-ones constant is not a mask",
+        "fn f(a: u64) -> i64 {\n    let m = a & 18446744073709551615\n    if m < 10 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        true,
+    ),
+    (
+        "an if-join of two masks stays a mask",
+        "fn f(a: u64, c: i64) -> i64 {\n    let m = a & 15\n    if c == 1 {\n        m = a & 255\n    }\n    if m < 10 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        false,
+    ),
+    (
+        "xor of a mask with a non-negative constant stays a mask",
+        "fn f(a: u64) -> i64 {\n    let m = a & 255\n    let t = m ^ 9223372036854775807\n    if t < 10 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        false,
+    ),
+    (
+        "or of a mask with an unmasked u64 is not a mask",
+        "fn f(a: u64, b: u64) -> i64 {\n    let m = a & 255\n    let t = m | b\n    if t < 10 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        true,
+    ),
 ];
 
 /// The fence refuses an ordered compare ONLY where MLIR emits an unsigned predicate
@@ -221,6 +257,15 @@ fn pipeline_division_uses_the_wide_taint() {
     assert_eq!(fence(after_loop), Some("binop.div_mod_unsigned"));
     let merge_div = "fn f(a: u64, c: i64) -> i64 {\n    let m = 1\n    if c == 1 {\n        m = a\n    }\n    return 10 / m\n}\nfn main() -> i64 {\n    return 0\n}\n";
     assert_eq!(fence(merge_div), Some("binop.div_mod_unsigned"));
+    // A mask clears bit 63, so `(a & 255) / 2` is admitted; subtracting afterwards makes
+    // the value negative again and MLIR divides it `divui` (audit 2026-09-16: native 0 vs
+    // MLIR 255 for `((a & 255) - 256) / 2` while the mask exemption leaked into `/`).
+    let masked_div = "fn f(a: u64) -> i64 {\n    let m = a & 255\n    return m / 2\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(fence(masked_div), None);
+    let resigned_div = "fn f(a: u64) -> i64 {\n    let m = a & 255\n    let t = m - 256\n    return t / 2\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(fence(resigned_div), Some("binop.div_mod_unsigned"));
+    let resigned_mod = "fn f(a: u64) -> i64 {\n    let m = a & 255\n    let t = m - 256\n    return t % 7\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(fence(resigned_mod), Some("binop.div_mod_unsigned"));
 }
 
 /// The literal band the frozen native ELF mis-encodes (measured: `9223372036854775808`

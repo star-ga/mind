@@ -362,7 +362,7 @@ fn admit_instrs_in(
             // corpus never proves — see admit_binop for the rejection set + fitment note.
             Instr::BinOp { op, lhs, rhs, .. } => admit_binop(op, float_taint, taint, [*lhs, *rhs])?,
             // A function body gets its OWN unsigned taint (its parameters + the calls it
-            // makes), seeded with the enclosing scope's (a superset — sound).
+            // makes); ValueIds restart per function, so no id set is inherited.
             Instr::FnDef {
                 name, params, body, ..
             } => {

@@ -11,6 +11,11 @@
 use crate::ast::TypeAnn;
 use crate::ir::{IRModule, Instr, ValueId};
 
+#[cfg(feature = "std-surface")]
+mod mask;
+#[cfg(feature = "std-surface")]
+use mask::{collect_nonneg_consts, mark_masked};
+
 /// Which call results and parameters carry a full-width UNSIGNED (`u64`) value, at two
 /// precisions (see [`Taint`]). NARROW unsigned (`u8`/`u16`/`u32`) is deliberately NOT
 /// tainted: it is masked to its width and zero-extends into a NON-NEGATIVE i64, so signed
@@ -30,8 +35,6 @@ pub(crate) struct UnsignedDoors {
     ret_wide: std::collections::BTreeSet<String>,
     /// Every function DEFINED in the module (at any nesting depth).
     defined: std::collections::BTreeSet<String>,
-    /// Every `ConstI64` value id holding a NON-NEGATIVE constant (any depth).
-    nonneg_consts: std::collections::BTreeSet<ValueId>,
 }
 
 /// The values of ONE body that may hold a full-width unsigned value at run time, at two
@@ -62,6 +65,10 @@ pub(crate) enum Taint {
     Values {
         cmp: std::collections::BTreeSet<ValueId>,
         div: std::collections::BTreeSet<ValueId>,
+        /// Values provably in `[0, 2^63)` — bit 63 clear, so signed and unsigned
+        /// operators agree on them. Consulted only at the USE site: a masked value stays
+        /// in `cmp`/`div` so anything computed FROM it (`m - 256`) is tainted again.
+        masked: std::collections::BTreeSet<ValueId>,
     },
 }
 
@@ -71,6 +78,7 @@ impl Taint {
         Taint::Values {
             cmp: Default::default(),
             div: Default::default(),
+            masked: Default::default(),
         }
     }
 
@@ -78,7 +86,9 @@ impl Taint {
     pub(crate) fn any_cmp(&self, ids: &[ValueId]) -> bool {
         match self {
             Taint::All => true,
-            Taint::Values { cmp, .. } => ids.iter().any(|id| cmp.contains(id)),
+            Taint::Values { cmp, masked, .. } => ids
+                .iter()
+                .any(|id| cmp.contains(id) && !masked.contains(id)),
         }
     }
 
@@ -86,7 +96,9 @@ impl Taint {
     pub(crate) fn any_div(&self, ids: &[ValueId]) -> bool {
         match self {
             Taint::All => true,
-            Taint::Values { div, .. } => ids.iter().any(|id| div.contains(id)),
+            Taint::Values { div, masked, .. } => ids
+                .iter()
+                .any(|id| div.contains(id) && !masked.contains(id)),
         }
     }
 }
@@ -110,10 +122,8 @@ impl UnsignedDoors {
             ret_exact: Default::default(),
             ret_wide: Default::default(),
             defined: Default::default(),
-            nonneg_consts: Default::default(),
         };
         collect_defined(&module.instrs, &mut doors.defined);
-        collect_nonneg_consts(&module.instrs, &mut doors.nonneg_consts);
         for (name, (ps, r)) in &module.fn_signatures {
             doors
                 .params_exact
@@ -132,7 +142,7 @@ impl UnsignedDoors {
     }
 
     /// The tainted values of the body of `owner` (the module's top level for `None`),
-    /// starting from `inherited` (the enclosing body's taint).
+    /// `inherited` only carries the no-signature-table answer (see below).
     ///
     /// UNDECIDABLE => REFUSE (audit 2026-09-16), at both precisions. A parameter of a
     /// function whose own signature is unknown, and the result of a call to a
@@ -149,10 +159,15 @@ impl UnsignedDoors {
         body: &[Instr],
         inherited: &Taint,
     ) -> Taint {
-        let (mut cmp, mut div) = match inherited {
-            Taint::All => return Taint::All,
-            Taint::Values { cmp, div } => (cmp.clone(), div.clone()),
-        };
+        // ValueIds RESTART in every function (`lower.rs` builds each body in a fresh
+        // `IRModule`), so a body never refers to an enclosing scope's ids: nothing but the
+        // "no signature table" answer is inherited (audit 2026-09-16 — module-wide id sets
+        // matched the wrong values).
+        if let Taint::All = inherited {
+            return Taint::All;
+        }
+        let mut cmp = std::collections::BTreeSet::new();
+        let mut div = std::collections::BTreeSet::new();
         for (precision, set) in [(Precision::Exact, &mut cmp), (Precision::Wide, &mut div)] {
             let table = match precision {
                 Precision::Exact => &self.params_exact,
@@ -173,7 +188,11 @@ impl UnsignedDoors {
             // use, so propagate to a fixpoint (the set only grows; bounded by the ids).
             while self.propagate(body, &param_tainted, set, precision) {}
         }
-        Taint::Values { cmp, div }
+        let mut nonneg = std::collections::BTreeSet::new();
+        collect_nonneg_consts(body, &mut nonneg);
+        let mut masked = std::collections::BTreeSet::new();
+        while mark_masked(body, &nonneg, &mut masked) {}
+        Taint::Values { cmp, div, masked }
     }
 
     /// One forward pass over `body`; returns whether the set grew. Covers exactly the
@@ -205,14 +224,10 @@ impl UnsignedDoors {
                     mark(set, *dst)
                 }
                 // A compare yields 0/1 — identical signed and unsigned — so, as in MLIR,
-                // it does not propagate the kind. `x & c` with a NON-NEGATIVE constant `c`
-                // has bit 63 clear, so signed and unsigned operators agree on it even
-                // where MLIR kinds it `ScalarU64` (audit 2026-09-16: `m = a & 255; m < 10`
-                // is correct natively on main for every input and was refused).
+                // it does not propagate the kind. A MASKED result still propagates (see
+                // `Taint::Values::masked`).
                 Instr::BinOp { dst, op, lhs, rhs }
-                    if !is_compare(op)
-                        && !self.masks_to_nonnegative(op, lhs, rhs)
-                        && (set.contains(lhs) || set.contains(rhs)) =>
+                    if !is_compare(op) && (set.contains(lhs) || set.contains(rhs)) =>
                 {
                     mark(set, *dst)
                 }
@@ -292,30 +307,6 @@ impl UnsignedDoors {
             }
         }
         grew || nested_grew
-    }
-}
-
-#[cfg(feature = "std-surface")]
-impl UnsignedDoors {
-    /// Is `lhs op rhs` a bitwise AND with a non-negative constant (bit 63 cleared)?
-    fn masks_to_nonnegative(&self, op: &crate::ir::BinOp, lhs: &ValueId, rhs: &ValueId) -> bool {
-        matches!(op, crate::ir::BinOp::BitAnd)
-            && (self.nonneg_consts.contains(lhs) || self.nonneg_consts.contains(rhs))
-    }
-}
-
-/// Every non-negative `ConstI64` id in `instrs`, at any depth.
-#[cfg(feature = "std-surface")]
-fn collect_nonneg_consts(instrs: &[Instr], out: &mut std::collections::BTreeSet<ValueId>) {
-    for instr in instrs {
-        if let Instr::ConstI64(id, v) = instr {
-            if *v >= 0 {
-                out.insert(*id);
-            }
-        }
-        for nested in crate::ir::instr_bodies(instr) {
-            collect_nonneg_consts(nested, out);
-        }
     }
 }
 
@@ -711,6 +702,61 @@ mod tests {
         assert_eq!(
             profile_frozen_admits(&m).unwrap_err().construct,
             "binop.div_mod_unsigned"
+        );
+    }
+
+    /// ValueIds restart per function, and the top level mints a placeholder
+    /// `ConstI64(id, 0)` per `FnDef`, so ValueId(0) is a "non-negative constant" at the top
+    /// level while being a PARAMETER inside `f`. A module-wide constant set exempted
+    /// `a & b` on `f`'s first two params from the taint (audit 2026-09-16). Positive
+    /// control: the same body with a constant defined in `f` itself IS exempt.
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn mask_constants_are_per_body_not_module_wide() {
+        let and_params = Instr::BinOp {
+            dst: ValueId(2),
+            op: BinOp::BitAnd,
+            lhs: ValueId(0),
+            rhs: ValueId(1),
+        };
+        let lt = Instr::BinOp {
+            dst: ValueId(3),
+            op: BinOp::Lt,
+            lhs: ValueId(2),
+            rhs: ValueId(1),
+        };
+        let m = module_with_sigs(
+            &[
+                Instr::ConstI64(ValueId(0), 0),
+                fndef_params("f", 2, vec![and_params.clone(), lt.clone()]),
+            ],
+            &[("f", &["u64", "u64"], Some("i64"))],
+        );
+        assert_eq!(construct(&m), Some("binop.ordered_compare_unsigned"));
+        let mask = Instr::BinOp {
+            dst: ValueId(2),
+            op: BinOp::BitAnd,
+            lhs: ValueId(0),
+            rhs: ValueId(9),
+        };
+        let lt_masked = Instr::BinOp {
+            dst: ValueId(3),
+            op: BinOp::Lt,
+            lhs: ValueId(2),
+            rhs: ValueId(9),
+        };
+        let m = module_with_sigs(
+            &[fndef_params(
+                "f",
+                2,
+                vec![Instr::ConstI64(ValueId(9), 255), mask, lt_masked],
+            )],
+            &[("f", &["u64", "u64"], Some("i64"))],
+        );
+        assert_eq!(
+            construct(&m),
+            None,
+            "`a & 255` defined in the body is a mask"
         );
     }
 }
