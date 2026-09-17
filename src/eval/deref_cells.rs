@@ -56,8 +56,13 @@ pub(crate) fn cell_ref_params(items: &[Node]) -> CellParams {
         for stmt in &fd.body {
             scan(stmt, &mut_params, &fd.name, &mut seeds, &mut forwards);
         }
+        // UNION, never overwrite: two functions may share a name (a nested fn and a
+        // top-level one), and the type checker merges per-scope results by union — an
+        // overwrite here made lowering pass a POINTER where the checker had admitted a
+        // CELL (audit 2026-09-16). The union is the strict side: both bodies then treat
+        // the index as a cell, so neither may use it as a pointer.
         if !seeds.is_empty() {
-            cells.insert(fd.name.clone(), seeds);
+            cells.entry(fd.name.clone()).or_default().extend(seeds);
         }
     }
     // Fixpoint: forwarding a parameter into a cell formal makes it a cell.
@@ -176,6 +181,18 @@ mod tests {
             "transitive + parenthesised forwarding: {c:?}"
         );
         assert!(is_cell(&c, "reader", 0), "a deref READ is a cell use too");
+    }
+
+    #[test]
+    fn same_named_functions_union_their_cells() {
+        let c = cells(
+            "struct Pair {\n    x: i64,\n    y: i64\n}\nfn h2(a: &mut Pair, b: &mut Pair, m: Pair) {\n    *a = m\n}\nfn outer(p: Pair) {\n    fn h2(a: &mut Pair, b: &mut Pair, m: Pair) {\n        *b = m\n    }\n}\n",
+        );
+        assert!(is_cell(&c, "h2", 0), "{c:?}");
+        assert!(
+            is_cell(&c, "h2", 1),
+            "the later definition must not erase the earlier cell: {c:?}"
+        );
     }
 
     #[test]

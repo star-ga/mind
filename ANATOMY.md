@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1835 | **Est. tokens:** ~3,517,072
-**Generated:** 2026-09-17 02:37 UTC
+**Files:** 1836 | **Est. tokens:** ~3,517,510
+**Generated:** 2026-09-17 03:29 UTC
 
 ## Token Budget Guide
 
@@ -106,7 +106,7 @@
 | `src/diagnostics/` | 3 | ~14,085 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 42 | ~145,779 |
+| `src/eval/` | 42 | ~146,014 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -131,7 +131,8 @@
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 4 | ~14,244 |
 | `src/type_checker/` | 19 | ~62,699 |
-| `src/type_checker/slice_abi/` | 4 | ~20,739 |
+| `src/type_checker/slice_abi/` | 4 | ~19,284 |
+| `src/type_checker/slice_abi/deref_check/` | 1 | ~1,658 |
 | `src/types/` | 10 | ~20,911 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
@@ -1188,7 +1189,7 @@
 - `closures.rs` (~6240 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `declared_width.rs` (~8263 tok, huge) — Copyright 2025 STARGA Inc.
-- `deref_cells.rs` (~1798 tok, huge) — Copyright 2025 STARGA Inc.
+- `deref_cells.rs` (~2033 tok, huge) — Copyright 2025 STARGA Inc.
 - `deref_eval.rs` (~73 tok, small) — Copyright 2025 STARGA Inc.
 - `deref_lower.rs` (~1273 tok, large) — Copyright 2025 STARGA Inc.
 - `evaluator.rs` (~178 tok, small) — Copyright 2025 STARGA Inc.
@@ -1432,7 +1433,12 @@
 ### `src/type_checker/slice_abi/`
 
 - `borrow_flow.rs` (~7081 tok, huge) — Copyright 2025 STARGA Inc.
-- `deref_check.rs` (~9494 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `deref_check.rs` (~8039 tok, huge) — Copyright 2025-2026 STARGA Inc.
+### `src/type_checker/slice_abi/deref_check/`
+
+- `shapes.rs` (~1658 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/type_checker/slice_abi/`
+
 - `owner_assignment.rs` (~1145 tok, large) — Copyright 2026 STARGA Inc.
 - `provenance.rs` (~3019 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/type_checker/`
