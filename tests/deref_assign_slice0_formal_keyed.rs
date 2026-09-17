@@ -10,12 +10,15 @@
 //! exact-owner value loads/stores through it — identity-preserving place
 //! replacement (mind-spec v1.0/types.md:65-99), NOT a field copy.
 //!
-//! Everything OUTSIDE that subset is refused with the exact codes: `E2028`
-//! (unsupported deref), `E2029` (unsupported deref-assign — scalar referent,
-//! cross-owner value, `let q = p` / `return p` escape), `E2037` (unsupported
-//! field/element address-of — immutable, scalar, depth-two, region-interior,
-//! unknown owner). Scalar `&mut i64` deref stays refused; it is not in the
-//! struct field-first subset.
+//! A `&mut` parameter is a CELL only when its function dereferences it or forwards it
+//! to a cell formal (`eval::deref_cells`); every other `&mut` parameter, and every
+//! `&r.f` / `&mut r.f` / `&a[i]` outside a cell argument, keeps main's POINTER meaning
+//! and is admitted exactly as on main 5724a6ee. The deref-assign rules bind cells:
+//! `E2028` (unsupported deref), `E2029` (unsupported deref-assign — scalar referent,
+//! cross-owner value, `let q = p` / `return p` escape of a cell, `pub` cell function),
+//! `E2037` (unsupported cell argument — immutable, scalar, depth-two, region-interior,
+//! element, bound or cast reference, unknown owner). Scalar `&mut i64` deref stays
+//! refused; it is not in the struct field-first subset.
 //!
 //! Generic types only — no private consumer (MindLLM/PageTable) source here.
 //!
@@ -50,6 +53,17 @@ fn codes(src: &str) -> Vec<String> {
         .iter()
         .map(|d| d.code.to_string())
         .collect()
+}
+
+/// Pointer parity with main 5724a6ee: no deref-assign refusal. A `&mut` parameter that is
+/// never dereferenced is a plain pointer, exactly as on main (see `eval::deref_cells`).
+fn assert_pointer_parity(src: &str) {
+    let cs = codes(src);
+    assert!(
+        !cs.iter()
+            .any(|c| c == "E2028" || c == "E2029" || c == "E2037"),
+        "pointer form must be admitted as on main; got {cs:?}\n{src}"
+    );
 }
 
 fn fmt(src: &str) -> String {
@@ -90,139 +104,138 @@ fn field_ref_and_forward_call_is_admitted() {
     );
 }
 
+/// Pointer parity: `let c = &h.pt` is main's pointer value and is admitted, as on
+/// main 5724a6ee. The capability rule still binds where a CELL is required: that bound
+/// reference may not be passed to a cell formal.
 #[test]
 fn immutable_field_ref_is_refused_E2037() {
-    // Capability: an IMMUTABLE `&h.pt` (struct field) may not become a writable
-    // place — no laundering. Refused E2037 even though the field is a struct.
-    let src = "struct Pair {\n    x: i64,\n    y: i64\n}\nstruct H {\n    pt: Pair\n}\nfn f(h: H) {\n    let c = &h.pt\n}\n";
+    assert_pointer_parity(
+        "struct Pair {\n    x: i64,\n    y: i64\n}\nstruct H {\n    pt: Pair\n}\nfn f(h: H) {\n    let c = &h.pt\n}\n",
+    );
+    let cell = "struct Pair {\n    x: i64,\n    y: i64\n}\nstruct H {\n    pt: Pair\n}\nfn replace(p: &mut Pair, new: Pair) {\n    *p = new\n}\nfn f(h: H, b: Pair) {\n    let c = &h.pt\n    replace(c, b)\n}\n";
     assert!(
-        codes(src).contains(&"E2037".to_string()),
-        "immutable `&h.pt` must be E2037; got {:?}",
-        codes(src)
+        codes(cell).contains(&"E2037".to_string()),
+        "a bound immutable ref into a cell formal must be E2037; got {:?}",
+        codes(cell)
     );
 }
 
+/// Pointer parity: `let c = &mut h.pt.x` is admitted as on main. A depth-two place is
+/// still refused as a CELL argument (only depth-one struct fields have a cell).
 #[test]
 fn depth_two_field_ref_is_refused_E2037() {
-    // `&mut h.pt.x` (depth-two) is refused — only depth-one is admitted.
-    let src = "struct Pair {\n    x: i64,\n    y: i64\n}\nstruct H {\n    pt: Pair\n}\nfn f(h: H) {\n    let c = &mut h.pt.x\n}\n";
+    assert_pointer_parity(
+        "struct Pair {\n    x: i64,\n    y: i64\n}\nstruct H {\n    pt: Pair\n}\nfn f(h: H) {\n    let c = &mut h.pt.x\n}\n",
+    );
+    let cell = "struct Pair {\n    x: i64,\n    y: i64\n}\nstruct H {\n    pt: Pair\n}\nstruct G {\n    h: H\n}\nfn replace(p: &mut Pair, new: Pair) {\n    *p = new\n}\nfn f(g: G, b: Pair) {\n    replace(&mut g.h.pt, b)\n}\n";
     assert!(
-        codes(src).contains(&"E2037".to_string()),
-        "depth-two `&mut h.pt.x` must be E2037; got {:?}",
-        codes(src)
+        codes(cell).contains(&"E2037".to_string()),
+        "a depth-two cell argument must be E2037; got {:?}",
+        codes(cell)
     );
 }
 
+/// Pointer parity: a `&mut h.pt` value taken inside a region is admitted as on main. A
+/// cell argument inside a region is still refused (no lifetime provenance).
 #[test]
 fn region_interior_field_ref_is_refused_E2037() {
-    // A `&mut h.pt` captured inside a region is refused (no lifetime provenance).
-    let src = "struct Pair {\n    x: i64,\n    y: i64\n}\nstruct H {\n    pt: Pair\n}\nfn f(h: H) {\n    region {\n        let c = &mut h.pt\n    }\n}\n";
+    assert_pointer_parity(
+        "struct Pair {\n    x: i64,\n    y: i64\n}\nstruct H {\n    pt: Pair\n}\nfn f(h: H) {\n    region {\n        let c = &mut h.pt\n    }\n}\n",
+    );
+    let cell = "struct Pair {\n    x: i64,\n    y: i64\n}\nstruct H {\n    pt: Pair\n}\nfn replace(p: &mut Pair, new: Pair) {\n    *p = new\n}\nfn f(h: H, b: Pair) {\n    region {\n        replace(&mut h.pt, b)\n    }\n}\n";
     assert!(
-        codes(src).contains(&"E2037".to_string()),
-        "region-interior `&mut h.pt` must be E2037; got {:?}",
-        codes(src)
+        codes(cell).contains(&"E2037".to_string()),
+        "a cell argument inside a region must be E2037; got {:?}",
+        codes(cell)
     );
 }
 
+/// Escape rules bind CELL parameters. A pointer `&mut` parameter may be let-bound or
+/// returned exactly as on main; once the function dereferences it, it may not.
 #[test]
 fn let_bind_and_return_of_ref_param_are_refused_E2029() {
-    // Escape: a `&mut` parameter may only be a direct call argument — never
-    // let-bound (`let q = p`) or returned (`return p`).
-    let alias =
-        "struct Pair {\n    x: i64,\n    y: i64\n}\nfn f(p: &mut Pair) {\n    let q = p\n}\n";
+    assert_pointer_parity(
+        "struct Pair {\n    x: i64,\n    y: i64\n}\nfn f(p: &mut Pair) {\n    let q = p\n}\n",
+    );
+    assert_pointer_parity(
+        "struct Pair {\n    x: i64,\n    y: i64\n}\nfn f(p: &mut Pair) -> &mut Pair {\n    return p\n}\n",
+    );
+    let alias = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn f(p: &mut Pair) {\n    let v = *p\n    let q = p\n}\n";
     assert!(
         codes(alias).contains(&"E2029".to_string()),
-        "`let q = p` (alias escape) must be E2029; got {:?}",
+        "`let q = p` of a cell must be E2029; got {:?}",
         codes(alias)
     );
-    let ret = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn f(p: &mut Pair) -> &mut Pair {\n    return p\n}\n";
+    let ret = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn f(p: &mut Pair) -> &mut Pair {\n    let v = *p\n    return p\n}\n";
     assert!(
-        codes(ret).contains(&"E2029".to_string()),
-        "`return p` (escape) must be E2029; got {:?}",
+        codes(ret).iter().any(|c| c == "E2029" || c == "E2037"),
+        "`return p` of a cell must be refused; got {:?}",
         codes(ret)
     );
 }
 
+/// A `&mut` result is refused only for functions with CELL parameters; the pointer
+/// tail/cycle forms are admitted as on main.
 #[test]
 fn reference_return_tail_and_cycle_are_refused_E2037() {
-    // A final expression has no Node::Return wrapper, and a mutually recursive
-    // call has no finite callee summary. Both still declare reference results,
-    // so D4 must reject them before lowering rather than infer a safe lifetime.
-    let tail = "struct Pair {
-    x: i64,
-    y: i64
-}
-fn leak(p: &mut Pair) -> &mut Pair {
-    p
-}
-";
-    let tail_codes = codes(tail);
-    assert!(
-        tail_codes.contains(&"E2037".to_string()),
-        "nominal reference tail return must be refused; got {tail_codes:?}"
+    assert_pointer_parity(
+        "struct Pair {\n    x: i64,\n    y: i64\n}\nfn leak(p: &mut Pair) -> &mut Pair {\n    p\n}\n",
     );
-
-    let cycle = "struct Pair {
-    x: i64,
-    y: i64
-}
-fn alpha(p: &mut Pair) -> &mut Pair {
-    beta(p)
-}
-fn beta(p: &mut Pair) -> &mut Pair {
-    alpha(p)
-}
-";
+    let tail = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn leak(p: &mut Pair) -> &mut Pair {\n    let v = *p\n    p\n}\n";
+    assert!(
+        codes(tail).contains(&"E2037".to_string()),
+        "cell reference tail return must be E2037; got {:?}",
+        codes(tail)
+    );
+    let cycle = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn alpha(p: &mut Pair) -> &mut Pair {\n    let v = *p\n    beta(p)\n}\nfn beta(p: &mut Pair) -> &mut Pair {\n    alpha(p)\n}\n";
     let cycle_codes = codes(cycle);
     assert!(
         cycle_codes.iter().filter(|c| *c == "E2037").count() >= 2,
-        "each nominal reference-returning cycle function must be refused; got {cycle_codes:?}"
+        "each cell reference-returning cycle function must be refused; got {cycle_codes:?}"
     );
 }
 
+/// A scalar `&mut i64` tail return is admitted as on main (pointer). Dereferencing a
+/// scalar reference is refused regardless (E2028).
 #[test]
 fn scalar_reference_return_tail_is_refused_E2037() {
-    // The same boundary applies to scalar references; D4's value-producing
-    // surface does not gain a scalar-reference return loophole.
-    let scalar = "fn leak(p: &mut i64) -> &mut i64 {
-    p
-}
-";
-    let scalar_codes = codes(scalar);
+    assert_pointer_parity("fn leak(p: &mut i64) -> &mut i64 {\n    p\n}\n");
+    let deref = "fn leak(p: &mut i64) -> i64 {\n    return *p\n}\n";
     assert!(
-        scalar_codes.contains(&"E2037".to_string()),
-        "scalar reference tail returns must be refused; got {scalar_codes:?}"
+        codes(deref).contains(&"E2028".to_string()),
+        "scalar deref must be E2028; got {:?}",
+        codes(deref)
     );
 }
 
+/// Pointer parity: `let p = &c.a` / `&mut c.a` are admitted as on main. A scalar field
+/// address can never be a cell argument.
 #[test]
 fn field_address_of_is_refused_E2037() {
-    // `&r.f` / `&mut r.f` (field address-of) is the field-first subset's target
-    // shape but is REFUSED until the D4 cell-address lowering lands (coupled).
-    // Closes the lower.rs Phase-10.7 no-op-value hole.
-    let imm = "struct Cell {\n    a: i64,\n    b: i64\n}\nfn f(c: Cell) -> i64 {\n    let p = &c.a\n    return 0\n}\n";
-    assert!(
-        codes(imm).contains(&"E2037".to_string()),
-        "`&c.a` must be E2037; got {:?}",
-        codes(imm)
+    assert_pointer_parity(
+        "struct Cell {\n    a: i64,\n    b: i64\n}\nfn f(c: Cell) -> i64 {\n    let p = &c.a\n    return 0\n}\n",
     );
-    let mutf = "struct Cell {\n    a: i64,\n    b: i64\n}\nfn f(c: Cell) -> i64 {\n    let p = &mut c.a\n    return 0\n}\n";
+    assert_pointer_parity(
+        "struct Cell {\n    a: i64,\n    b: i64\n}\nfn f(c: Cell) -> i64 {\n    let p = &mut c.a\n    return 0\n}\n",
+    );
+    let cell = "struct Pair {\n    x: i64,\n    y: i64\n}\nstruct Cell {\n    a: i64,\n    b: i64\n}\nfn replace(p: &mut Pair, new: Pair) {\n    *p = new\n}\nfn f(c: Cell, b: Pair) {\n    replace(&mut c.a, b)\n}\n";
     assert!(
-        codes(mutf).contains(&"E2037".to_string()),
-        "`&mut c.a` must be E2037; got {:?}",
-        codes(mutf)
+        codes(cell).contains(&"E2037".to_string()),
+        "a scalar field as a cell argument must be E2037; got {:?}",
+        codes(cell)
     );
 }
 
+/// Pointer parity: `let p = &a[0]` is admitted as on main. An element address is never a
+/// cell argument (no element cell lowering).
 #[test]
 fn element_address_of_is_refused_E2037() {
-    // `&a[i]` (element address-of) is deferred in the subset (no element cell
-    // lowering yet) — matches the self-host emitter's deferred set.
-    let src = "fn f(a: [i64; 4]) -> i64 {\n    let p = &a[0]\n    return 0\n}\n";
+    assert_pointer_parity("fn f(a: [i64; 4]) -> i64 {\n    let p = &a[0]\n    return 0\n}\n");
+    let cell = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn replace(p: &mut Pair, new: Pair) {\n    *p = new\n}\nfn f(a: [Pair; 2], b: Pair) {\n    replace(&mut a[0], b)\n}\n";
     assert!(
-        codes(src).contains(&"E2037".to_string()),
-        "`&a[0]` must be E2037; got {:?}",
-        codes(src)
+        codes(cell).contains(&"E2037".to_string()),
+        "an element address as a cell argument must be E2037; got {:?}",
+        codes(cell)
     );
 }
 
@@ -284,13 +297,18 @@ fn cast_laundered_field_ref_is_refused() {
     );
 }
 
+/// A pointer parameter passed to a scalar formal is admitted as on main; a CELL
+/// parameter may only reach an exact `&mut <owner>` cell formal.
 #[test]
 fn reference_param_to_scalar_callee_is_refused() {
-    let src = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn sink(x: i64) {\n}\nfn caller(p: &mut Pair) {\n    sink(p)\n}\n";
+    assert_pointer_parity(
+        "struct Pair {\n    x: i64,\n    y: i64\n}\nfn sink(x: i64) {\n}\nfn caller(p: &mut Pair) {\n    sink(p)\n}\n",
+    );
+    let cell = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn sink(x: i64) {\n}\nfn caller(p: &mut Pair) {\n    let v = *p\n    sink(p)\n}\n";
     assert!(
-        codes(src).contains(&"E2037".to_string()),
-        "a reference parameter passed to a scalar formal must be E2037; got {:?}",
-        codes(src)
+        codes(cell).contains(&"E2037".to_string()),
+        "a cell into a scalar formal must be E2037; got {:?}",
+        codes(cell)
     );
 }
 
@@ -315,14 +333,21 @@ fn mutable_reference_forwarding_to_exact_formal_is_admitted() {
     );
 }
 
+/// An unknown callee is refused (E2003) exactly as on main, pointer or cell.
 #[test]
 fn reference_forwarding_to_unknown_callee_is_refused() {
     let src =
         "struct Pair {\n    x: i64,\n    y: i64\n}\nfn caller(p: &mut Pair) {\n    unknown(p)\n}\n";
     assert!(
-        codes(src).contains(&"E2037".to_string()),
-        "an unknown callee cannot establish reference capability/owner; got {:?}",
+        codes(src).contains(&"E2003".to_string()),
+        "unknown callee must be refused; got {:?}",
         codes(src)
+    );
+    let cell = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn caller(p: &mut Pair) {\n    let v = *p\n    unknown(p)\n}\n";
+    assert!(
+        codes(cell).contains(&"E2003".to_string()),
+        "unknown callee with a cell must be refused; got {:?}",
+        codes(cell)
     );
 }
 
@@ -336,89 +361,49 @@ fn reference_forwarding_inside_region_is_refused() {
     );
 }
 
+/// Shadow / wrapper / escape rules bind CELL parameters (a later `*p` would store through
+/// a stale slot). The pointer forms are admitted as on main; the cell forms stay refused,
+/// and an admitted by-value dereference is never mistaken for an escape.
 #[test]
 fn immutable_reference_shadow_and_wrappers_are_refused() {
-    // The shadow hazard is the MUTABLE case: the flat param table the `*p`
-    // admission consults is not updated by a rebind, so shadowing a `&mut`
-    // param would let a later `*p` mis-store through the stale slot. An
-    // immutable `&T` param has no `*p` store and is unrestricted (pristine
-    // parity — see immutable_ref_shadow_is_admitted); so this case is `&mut`.
-    let shadow =
-        "struct Pair {\n    x: i64,\n    y: i64\n}\nfn caller(p: &mut Pair) {\n    let p = 1\n}\n";
+    assert_pointer_parity(
+        "struct Pair {\n    x: i64,\n    y: i64\n}\nfn caller(p: &mut Pair) {\n    let p = 1\n}\n",
+    );
+    let shadow = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn caller(p: &mut Pair) {\n    let v = *p\n    let p = 1\n}\n";
     assert!(
         codes(shadow).contains(&"E2029".to_string()),
-        "a mutable reference parameter may not be shadowed; got {:?}",
+        "a cell may not be shadowed; got {:?}",
         codes(shadow)
     );
-
     let wrapped = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn replace(p: &mut Pair, next: Pair) {\n    *p = next\n}\nfn caller(p: &mut Pair, next: Pair) {\n    replace((p), next)\n}\n";
     assert!(
         codes(wrapped).contains(&"E2037".to_string()),
-        "a parenthesized reference parameter may not bypass the direct-call rule; got {:?}",
+        "a parenthesized cell may not bypass the direct-call rule; got {:?}",
         codes(wrapped)
     );
-
-    let cast = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn sink(x: i64) {\n}\nfn caller(p: &mut Pair) {\n    sink(p as i64)\n}\n";
+    assert_pointer_parity(
+        "struct Pair {\n    x: i64,\n    y: i64\n}\nfn sink(x: i64) {\n}\nfn caller(p: &mut Pair) {\n    sink(p as i64)\n}\n",
+    );
+    let cast = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn sink(x: i64) {\n}\nfn caller(p: &mut Pair) {\n    let v = *p\n    sink(p as i64)\n}\n";
     assert!(
         codes(cast).contains(&"E2037".to_string()),
-        "a cast reference parameter may not reach a scalar formal; got {:?}",
+        "a cast cell may not reach a scalar formal; got {:?}",
         codes(cast)
     );
-
-    let escaped = "struct Pair {
-    x: i64,
-    y: i64
-}
-fn caller(p: &mut Pair) {
-    let q = (p)
-    return (p)
-}
-";
+    assert_pointer_parity(
+        "struct Pair {\n    x: i64,\n    y: i64\n}\nfn caller(p: &mut Pair) {\n    let q = (p)\n    return (p)\n}\n",
+    );
+    let escaped = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn caller(p: &mut Pair) {\n    let v = *p\n    let q = (p)\n    return (p)\n}\n";
     assert!(
         codes(escaped).contains(&"E2029".to_string()),
-        "a wrapped reference parameter may not escape through bindings or return; got {:?}",
+        "a wrapped cell may not escape; got {:?}",
         codes(escaped)
     );
-
-    let consumed = "struct Pair {
-    x: i64,
-    y: i64
-}
-fn consume(value: Pair) {
-}
-fn caller(p: &mut Pair) {
-    let q = *p
-    consume(*p)
-}
-";
-    let consumed_codes = codes(consumed);
-    assert!(
-        !consumed_codes
-            .iter()
-            .any(|code| code == "E2028" || code == "E2029" || code == "E2037"),
-        "an admitted dereference consumed by value must not be classified as a reference escape; got {consumed_codes:?}"
+    assert_pointer_parity(
+        "struct Pair {\n    x: i64,\n    y: i64\n}\nfn consume(value: Pair) {\n}\nfn caller(p: &mut Pair) {\n    let q = *p\n    consume(*p)\n}\n",
     );
-
-    let nested_call = "struct Pair {
-    x: i64,
-    y: i64
-}
-fn snapshot(p: &mut Pair) -> Pair {
-    return *p
-}
-fn consume(value: Pair) -> i64 {
-    return value.x
-}
-fn caller(p: &mut Pair) -> i64 {
-    return consume(snapshot(p))
-}
-";
-    let nested_codes = codes(nested_call);
-    assert!(
-        !nested_codes
-            .iter()
-            .any(|code| code == "E2028" || code == "E2029" || code == "E2037"),
-        "a value-producing nested call must consume the reference at its direct formal; got {nested_codes:?}"
+    assert_pointer_parity(
+        "struct Pair {\n    x: i64,\n    y: i64\n}\nfn snapshot(p: &mut Pair) -> Pair {\n    return *p\n}\nfn consume(value: Pair) -> i64 {\n    return value.x\n}\nfn caller(p: &mut Pair) -> i64 {\n    return consume(snapshot(p))\n}\n",
     );
 }
 
@@ -457,49 +442,64 @@ fn immutable_receiver_projection_into_mut_formal_is_refused_F1() {
     );
 }
 
+/// F2 binds CELL parameters (a cell holds the slot address, so `p.x` would read the wrong
+/// slot). On a pointer parameter `p.x` / `p.x = 5` compile and run as on main.
 #[test]
 fn field_access_through_mut_param_is_refused_F2() {
-    // audit finding F2: `p.x` on a `&mut Pair` param mislowers (cell vs record address).
-    // Refused until load-before-field lands.
-    let rd = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn getx(p: &mut Pair) -> i64 {\n    return p.x\n}\n";
+    assert_pointer_parity(
+        "struct Pair {\n    x: i64,\n    y: i64\n}\nfn getx(p: &mut Pair) -> i64 {\n    return p.x\n}\n",
+    );
+    assert_pointer_parity(
+        "struct Pair {\n    x: i64,\n    y: i64\n}\nfn setx(p: &mut Pair) {\n    p.x = 5\n}\n",
+    );
+    let rd = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn getx(p: &mut Pair) -> i64 {\n    let v = *p\n    return p.x\n}\n";
     assert!(
         codes(rd).contains(&"E2028".to_string()),
-        "`p.x` read on &mut param must be E2028; got {:?}",
+        "`p.x` on a cell must be E2028; got {:?}",
         codes(rd)
     );
-    let wr = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn setx(p: &mut Pair) {\n    p.x = 5\n}\n";
+    let wr = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn setx(p: &mut Pair) {\n    let v = *p\n    p.x = 5\n}\n";
     assert!(
         codes(wr).contains(&"E2029".to_string()),
-        "`p.x = 5` on &mut param must be E2029; got {:?}",
+        "`p.x = 5` on a cell must be E2029; got {:?}",
         codes(wr)
     );
 }
 
+/// F4 binds CELL parameters; the pointer forms are admitted as on main.
 #[test]
 fn mut_param_forwarded_to_method_or_scalar_is_refused_F4() {
-    // audit finding F4: a `&mut` param forwarded through a scalar formal or a method
-    // call escapes; refused.
-    let scal = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn sink(x: i64) {\n}\nfn f(p: &mut Pair) {\n    sink(p)\n}\n";
+    assert_pointer_parity(
+        "struct Pair {\n    x: i64,\n    y: i64\n}\nfn sink(x: i64) {\n}\nfn f(p: &mut Pair) {\n    sink(p)\n}\n",
+    );
+    assert_pointer_parity(
+        "struct Pair {\n    x: i64,\n    y: i64\n}\nfn f(p: &mut Pair) {\n    let (p, q) = (7, 0)\n}\n",
+    );
+    let scal = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn sink(x: i64) {\n}\nfn f(p: &mut Pair) {\n    let v = *p\n    sink(p)\n}\n";
     assert!(
         codes(scal).contains(&"E2037".to_string()),
-        "`sink(p)` (&mut param into scalar formal) must be E2037; got {:?}",
+        "a cell into a scalar formal must be E2037; got {:?}",
         codes(scal)
     );
-    let tup = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn f(p: &mut Pair) {\n    let (p, q) = (7, 0)\n}\n";
+    let tup = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn f(p: &mut Pair) {\n    let v = *p\n    let (p, q) = (7, 0)\n}\n";
     assert!(
         codes(tup).contains(&"E2029".to_string()),
-        "tuple-let shadow of &mut param must be E2029; got {:?}",
+        "tuple-let shadow of a cell must be E2029; got {:?}",
         codes(tup)
     );
 }
 
+/// A `&mut` return stays refused for a function with a CELL parameter; the pointer form is
+/// admitted as on main.
 #[test]
 fn mut_ref_return_stays_refused() {
-    // The MUTABLE-ref return remains refused (escape).
-    let src = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn f(p: &mut Pair) -> &mut Pair {\n    return p\n}\n";
+    assert_pointer_parity(
+        "struct Pair {\n    x: i64,\n    y: i64\n}\nfn f(p: &mut Pair) -> &mut Pair {\n    return p\n}\n",
+    );
+    let src = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn f(p: &mut Pair) -> &mut Pair {\n    let v = *p\n    return p\n}\n";
     assert!(
         codes(src).iter().any(|c| c == "E2037" || c == "E2029"),
-        "`&mut Pair` return must stay refused; got {:?}",
+        "cell `&mut Pair` return must stay refused; got {:?}",
         codes(src)
     );
 }
@@ -532,40 +532,38 @@ fn mut_field_ref_through_byvalue_receiver_still_admitted() {
     );
 }
 
-/// Parentheses must not hide a `&mut` parameter receiver (audit 2026-09-16). The
-/// struct resolver walks through `Paren`, so `(p).y = v` lowers to the same
-/// `store addr(p)+8` as `p.y = v` — a wrong-slot write through a CELL address —
-/// and must be refused exactly like the bare form, at any nesting depth, for both
-/// the store and the read.
+/// Parentheses must not hide a CELL receiver: `(p).y = v` lowers exactly like `p.y = v`,
+/// a wrong-slot write through a cell address, so it is refused like the bare form at any
+/// depth, store and read (audit 2026-09-16). On a POINTER parameter `(p).y` is correct and
+/// admitted as on main.
 #[test]
 fn parenthesised_mut_ref_receiver_is_refused_like_the_bare_form() {
-    let pre = "struct Pair {\n    x: i64,\n    y: i64\n}\n";
-    for (form, code) in [
-        ("fn s(p: &mut Pair, v: i64) {\n    (p).y = v\n}\n", "E2029"),
+    assert_pointer_parity(
+        "struct Pair {\n    x: i64,\n    y: i64\n}\nfn s(p: &mut Pair, v: i64) {\n    (p).y = v\n}\n",
+    );
+    assert_pointer_parity(
+        "struct Pair {\n    x: i64,\n    y: i64\n}\nfn s(p: &mut Pair) -> i64 {\n    return (p).y\n}\n",
+    );
+    for (src, code) in [
         (
-            "fn s(p: &mut Pair, v: i64) {\n    ((p)).y = v\n}\n",
+            "struct Pair {\n    x: i64,\n    y: i64\n}\nfn s(p: &mut Pair, v: i64) {\n    let c = *p\n    (p).y = v\n}\n",
             "E2029",
         ),
         (
-            "fn s(p: &mut Pair) -> i64 {\n    return (p).y\n}\n",
+            "struct Pair {\n    x: i64,\n    y: i64\n}\nfn s(p: &mut Pair, v: i64) {\n    let c = *p\n    ((p)).y = v\n}\n",
+            "E2029",
+        ),
+        (
+            "struct Pair {\n    x: i64,\n    y: i64\n}\nfn s(p: &mut Pair) -> i64 {\n    let c = *p\n    return (p).y\n}\n",
             "E2028",
         ),
     ] {
-        let src = format!("{pre}{form}");
-        let cs = codes(&src);
+        let cs = codes(src);
         assert!(
             cs.contains(&code.to_string()),
-            "{form:?} must be {code}; got {cs:?}"
+            "{src:?} must be {code}; got {cs:?}"
         );
     }
-    // Positive control: the same parenthesised read on a BY-VALUE receiver is not a
-    // `&mut` cell and stays admitted.
-    let ok = format!("{pre}fn r(p: Pair) -> i64 {{\n    return (p).y\n}}\n");
-    let cs = codes(&ok);
-    assert!(
-        !cs.iter().any(|c| c == "E2028" || c == "E2029"),
-        "by-value `(p).y` must stay admitted; got {cs:?}"
-    );
 }
 
 /// A NESTED function's calls are classified with ITS OWN parameters and the
@@ -586,8 +584,8 @@ fn nested_fn_calls_are_classified_by_their_own_params() {
     assert!(codes(top).contains(&"E2037".to_string()));
 }
 
-/// Positive control for the std-surface admission (moved from `deref_assign_slice0.rs`:
-/// without std-surface the same shapes are now refused with E2037 by design).
+/// Positive control for the std-surface cell admission (moved from
+/// `deref_assign_slice0.rs`, which also runs without std-surface).
 #[test]
 fn admitted_mut_field_ref_and_param_forwarding_still_pass() {
     // Positive controls the F1 gate must NOT over-refuse: `&mut h.pt` (owning
@@ -603,5 +601,46 @@ fn admitted_mut_field_ref_and_param_forwarding_still_pass() {
         !codes(&fwd).iter().any(|c| c == "E2037"),
         "admitted `&mut Pair` param forwarding must pass; got {:?}",
         codes(&fwd)
+    );
+}
+
+/// A `pub` function may not have a CELL parameter: a caller in another module runs its
+/// own cell inference and would pass a plain pointer where this body loads a slot. The
+/// same function without `pub` is admitted, and a `pub` POINTER function stays admitted.
+#[test]
+fn pub_fn_with_cell_parameter_is_refused() {
+    let public = "struct Pair {\n    x: i64,\n    y: i64\n}\npub fn replace(p: &mut Pair, new: Pair) {\n    *p = new\n}\n";
+    assert!(
+        codes(public).contains(&"E2029".to_string()),
+        "a `pub` cell function must be E2029; got {:?}",
+        codes(public)
+    );
+    let private = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn replace(p: &mut Pair, new: Pair) {\n    *p = new\n}\n";
+    assert!(
+        !codes(private)
+            .iter()
+            .any(|c| c == "E2028" || c == "E2029" || c == "E2037"),
+        "the private cell function must be admitted; got {:?}",
+        codes(private)
+    );
+    assert_pointer_parity(
+        "struct Pair {\n    x: i64,\n    y: i64\n}\npub fn set(p: &mut Pair) {\n    p.x = 5\n}\n",
+    );
+}
+
+/// A CELL must never reach a POINTER formal: the callee would treat the slot address as
+/// the record and `p.x = 5` would overwrite the slot (memory corruption). Refused, while
+/// the same forwarding from a pointer parameter is admitted as on main.
+#[test]
+fn cell_parameter_into_pointer_formal_is_refused() {
+    let set = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn set(p: &mut Pair) {\n    p.x = 5\n}\n";
+    assert_pointer_parity(&format!(
+        "{set}fn caller(p: &mut Pair) {{\n    set(p)\n}}\n"
+    ));
+    let cell = format!("{set}fn caller(p: &mut Pair) {{\n    let v = *p\n    set(p)\n}}\n");
+    assert!(
+        codes(&cell).contains(&"E2037".to_string()),
+        "a cell into a pointer formal must be E2037; got {:?}",
+        codes(&cell)
     );
 }

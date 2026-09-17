@@ -56,7 +56,7 @@ use crate::diagnostics::Diagnostic;
 use super::provenance;
 use super::{Env, StructFieldTypes};
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const DEREF_CODE: &str = "E2028";
 const DEREF_ASSIGN_CODE: &str = "E2029";
@@ -80,6 +80,10 @@ struct Ctx<'a> {
     mrefs: &'a BTreeMap<String, String>,
     refs: &'a RefParamSigs,
     fn_sigs: &'a FnParamSigs,
+    /// Which callee parameters are CELLS (see `crate::eval::deref_cells`). Every
+    /// deref-assign restriction below applies to cell parameters only; a `&mut`
+    /// parameter that is never dereferenced keeps main's pointer semantics.
+    cells: &'a crate::eval::deref_cells::CellParams,
     src: &'a str,
     file: Option<&'a str>,
 }
@@ -236,6 +240,7 @@ pub(crate) fn check_fn(
     fd: &FnDefData,
     struct_fields: &std::rc::Rc<StructFieldTypes>,
     fn_sigs: &FnParamSigs,
+    cells: &crate::eval::deref_cells::CellParams,
     src: &str,
     file: Option<&str>,
     errs: &mut Vec<Diagnostic>,
@@ -247,16 +252,54 @@ pub(crate) fn check_fn(
     for p in &fd.params {
         env.types.insert(p.name.clone(), p.ty.clone());
     }
-    let mrefs = mut_ref_params(fd);
-    let refs = ref_params(fd);
+    // Only CELL parameters (dereferenced, or forwarded to a cell formal) are subject
+    // to the deref-assign rules. A `&mut` parameter this function never dereferences
+    // is a plain POINTER exactly as on main 5724a6ee, where `p.x`, `p.x = v`,
+    // forwarding, `let q = p` and `return p` all compile and run correctly; refusing
+    // them regressed eight measured main-correct programs (2026-09-16).
+    let cell_names: BTreeSet<String> = cells
+        .get(&fd.name)
+        .map(|idxs| {
+            idxs.iter()
+                .filter_map(|i| fd.params.get(*i).map(|p| p.name.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mrefs: BTreeMap<String, String> = mut_ref_params(fd)
+        .into_iter()
+        .filter(|(name, _)| cell_names.contains(name))
+        .collect();
+    let refs: RefParamSigs = ref_params(fd)
+        .into_iter()
+        .filter(|(name, (mutable, _))| !*mutable || cell_names.contains(name))
+        .collect();
     let ctx = Ctx {
         env: &env,
         mrefs: &mrefs,
         refs: &refs,
         fn_sigs,
+        cells,
         src,
         file,
     };
+    // A CELL parameter must not be reachable from another module: callers there run
+    // their own inference and would pass a POINTER where this body loads a cell. A
+    // non-`pub` function is not callable across modules (E2003); a `pub` one is, so
+    // it may not use cells. (New capability only — `*p` did not parse on main.)
+    if fd.is_pub && !cell_names.is_empty() {
+        let span = fd
+            .body
+            .first()
+            .map(Node::span)
+            .unwrap_or_else(|| crate::ast::Span::new(0, 0));
+        refuse(
+            errs,
+            &ctx,
+            span,
+            DEREF_ASSIGN_CODE,
+            "a `pub` function may not dereference a `&mut` parameter (`*p` / `*p = v`) in the deref-assign subset: callers in other modules would pass a plain reference, not the place cell this body replaces through. Keep the dereferencing function private and call it from this module.",
+        );
+    }
     // A MUTABLE reference return is an escape even when its expression is a tail
     // value or a call: those forms do not pass through the explicit
     // `Node::Return` escape check, and call summaries are too weak to prove
@@ -265,10 +308,14 @@ pub(crate) fn check_fn(
     // borrow, e.g. `fn f(p: &Point) -> &Point { return p }`) — it must NOT be
     // refused (immutable refs are unrestricted; over-refusing returns was an
     // audit finding). Only `&mut` results are refused here.
-    if matches!(
-        fd.ret_type.as_ref(),
-        Some(TypeAnn::Ref { mutable: true, .. })
-    ) {
+    // Scoped to functions WITH cell parameters: a pointer-only `fn f(p: &mut Pair) ->
+    // &mut Pair { return p }` compiles and runs on main and stays admitted.
+    if !cell_names.is_empty()
+        && matches!(
+            fd.ret_type.as_ref(),
+            Some(TypeAnn::Ref { mutable: true, .. })
+        )
+    {
         let span = fd
             .body
             .first()
@@ -365,10 +412,14 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
         Node::Call { callee, args, .. } => {
             for (i, arg) in args.iter().enumerate() {
                 let formal = ctx.fn_sigs.get(callee).and_then(|params| params.get(i));
-                if let Some(TypeAnn::Ref {
-                    mutable: true,
-                    target,
-                }) = formal
+                let cell_formal = crate::eval::deref_cells::is_cell(ctx.cells, callee, i);
+                if let (
+                    true,
+                    Some(TypeAnn::Ref {
+                        mutable: true,
+                        target,
+                    }),
+                ) = (cell_formal, formal)
                 {
                     let admitted = canonical_struct_name(target)
                         .as_deref()
@@ -391,24 +442,10 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
                     }
                     continue;
                 }
+                // A field/element address-of passed to a NON-cell formal is main's
+                // pointer argument (`set(&mut h.pt)` with `p.x = 5` inside returns 5 on
+                // main) — no longer refused; its operand is still classified.
                 match arg {
-                    Node::Ref { inner, span, .. }
-                        if matches!(
-                            inner.as_ref(),
-                            Node::FieldAccess { .. } | Node::IndexAccess { .. }
-                        ) =>
-                    {
-                        refuse(
-                            errs,
-                            ctx,
-                            *span,
-                            REF_FORM_CODE,
-                            "a field/element address-of (`&mut r.f`, `&a[i]`) may only be passed to a known callee parameter of the EXACT `&mut <owner>` type; here the formal is not `&mut <owner>` or the callee signature is unknown.",
-                        );
-                        if let Some(r) = receiver_field_receiver(inner) {
-                            classify(r, ctx, in_region, errs);
-                        }
-                    }
                     _ if contains_unconsumed_ref_param(arg, ctx.refs) => {
                         refuse(
                             errs,
@@ -662,24 +699,13 @@ fn classify(node: &Node, ctx: &Ctx, in_region: bool, errs: &mut Vec<Diagnostic>)
             }
         }
 
-        // A reference-take reaching here is NOT a direct call argument (the Call
-        // arm handles those). A field/element address-of in any such position —
-        // let value, cast operand, return, arithmetic, index — is refused; this
-        // closes the let-bind / cast launder holes. `&NAME` (whole-variable) and
-        // `&(expr)` are out of this subset's scope: recurse only.
-        Node::Ref { inner, span, .. } => {
-            if matches!(
-                inner.as_ref(),
-                Node::FieldAccess { .. } | Node::IndexAccess { .. }
-            ) {
-                refuse(
-                    errs,
-                    ctx,
-                    *span,
-                    REF_FORM_CODE,
-                    "a field/element address-of (`&mut r.f`, `&a[i]`) is only admitted as a DIRECT call argument in the deref-assign subset; it may not be let-bound, cast, returned, stored, or used in an expression (capability/owner provenance would be laundered).",
-                );
-            }
+        // Outside a direct cell-formal argument, `&r.f` / `&mut r.f` / `&a[i]` is main's
+        // POINTER value (`let r = &mut h.pt; r.x = 6` gives 6 on main) and is not
+        // refused. It can never become a cell: the only cell producer is the admitted
+        // direct argument in the Call arm, and a bound or cast reference passed to a
+        // cell formal is refused there. The operand is still classified (so `&mut p.x`
+        // through a CELL `p` is refused by the F2 arm).
+        Node::Ref { inner, .. } => {
             classify(inner, ctx, in_region, errs);
         }
         // A NESTED function is its own scope with its own parameters: classifying its

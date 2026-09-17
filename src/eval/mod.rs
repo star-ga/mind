@@ -36,6 +36,9 @@ pub mod conv2d_grad;
 /// oracle): the layer that makes an `i32`/`u32` declaration wrap exactly where
 /// the compiled backends wrap.
 pub(crate) mod declared_width;
+/// Cell-vs-pointer inference for `&mut` parameters (deref-assign subset).
+#[cfg(feature = "std-surface")]
+pub(crate) mod deref_cells;
 #[path = "deref_eval.rs"]
 mod deref_eval;
 pub mod interp_mem;

@@ -93,16 +93,6 @@ pub(super) fn scan_module_derefs(
         match node {
             Node::Deref { span, .. } => out.push(super::diag_from_span(src, file, "dereference `*expr` is not supported yet: the reference/place ABI is unimplemented (deref-assign is under architecture review). It is a parse/format-only construct today.".into(), *span, "E2028")),
             Node::DerefAssign { span, .. } => out.push(super::diag_from_span(src, file, "assignment through a dereference `*p = value` is not supported yet: the mutable-place ABI is unimplemented (deref-assign is under architecture review). Record-identity place replacement is not a field copy.".into(), *span, "E2029")),
-            // `&mut r.f` / `&mut a[i]`: the field/element address-of admission lives in
-            // the std-surface-only `slice_abi::deref_check`. Without it this build would
-            // lower the form as a plain VALUE read (`Node::Ref { inner } => lower_expr`),
-            // silently dropping the reference — admission must not depend on a cargo
-            // feature, so refuse it here with the same code (audit 2026-09-16).
-            Node::Ref { mutable: true, inner, span }
-                if matches!(inner.as_ref(), Node::FieldAccess { .. } | Node::IndexAccess { .. }) =>
-            {
-                out.push(super::diag_from_span(src, file, "a field/element address-of `&mut r.f` / `&mut a[i]` is not supported in this build: the place ABI is compiled only with the std-surface feature.".into(), *span, "E2037"))
-            }
             _ => {}
         }
         super::nerve_walk::for_each_child(node, &mut |child| scan(child, src, file, out));

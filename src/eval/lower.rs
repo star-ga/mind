@@ -1154,6 +1154,11 @@ pub struct LoweringContext {
     /// caller must not lower a place operation). Only the type-checked pipeline
     /// (`lower_to_ir_admitted`, invoked AFTER `check_module_types`) sets it true.
     pub(super) deref_admitted: bool,
+    /// Which callee parameters are CELLS (`crate::eval::deref_cells`). A `&mut r.f`
+    /// argument lowers to a field-cell address ONLY for a cell formal; every other
+    /// reference argument lowers to its pointer value, exactly as on main.
+    #[cfg(feature = "std-surface")]
+    pub(super) deref_cells: crate::eval::deref_cells::CellParams,
     #[cfg(feature = "cross-module-imports")]
     pub(super) canonical: Option<canonical_lowering::CanonicalLoweringState>,
 }
@@ -1164,6 +1169,8 @@ impl LoweringContext {
             budget: MaterializationBudget::new(limits),
             refusal: None,
             deref_admitted: false,
+            #[cfg(feature = "std-surface")]
+            deref_cells: Default::default(),
             #[cfg(feature = "cross-module-imports")]
             canonical: None,
         }
@@ -1279,6 +1286,13 @@ pub(crate) fn lower_to_ir_admitted(
 }
 
 pub(super) fn lower_to_ir_inner(module: &ast::Module, context: &mut LoweringContext) -> IRModule {
+    // Cell-parameter inference over this translation unit (see `deref_cells`): decides
+    // at each call site whether a `&mut r.f` argument is a field-cell address (cell
+    // formal) or main's pointer value (every other formal).
+    #[cfg(feature = "std-surface")]
+    {
+        context.deref_cells = crate::eval::deref_cells::cell_ref_params(&module.items);
+    }
     // Slice 0 structured refusal: a `*expr` / `*p = v` has no lowering (the
     // reference/place ABI is unimplemented). Fail via `context.refusal` — a
     // clean `Err` from `lower_to_ir_with_limits` — rather than reaching the
@@ -7973,6 +7987,25 @@ pub(super) fn lower_expr_inner(
                             );
                         }
                     }
+                    if let ast::Node::Ref {
+                        inner,
+                        mutable: true,
+                        ..
+                    } = a
+                    {
+                        if matches!(inner.as_ref(), ast::Node::FieldAccess { .. })
+                            && crate::eval::deref_cells::is_cell(&context.deref_cells, callee, i)
+                        {
+                            return deref_lower::lower_mut_field_ref(
+                                inner,
+                                ir,
+                                env,
+                                struct_env,
+                                receiver_types,
+                                context,
+                            );
+                        }
+                    }
                     lower_expr(a, ir, env, struct_env, receiver_types, context)
                 })
                 .collect();
@@ -8114,14 +8147,9 @@ pub(super) fn lower_expr_inner(
             }
             last_id
         }
-        #[cfg(feature = "std-surface")]
-        ast::Node::Ref {
-            inner,
-            mutable: true,
-            ..
-        } if matches!(inner.as_ref(), ast::Node::FieldAccess { .. }) => {
-            deref_lower::lower_mut_field_ref(inner, ir, env, struct_env, receiver_types, context)
-        }
+        // A reference lowers to its operand's POINTER value (main's semantics). The one
+        // exception — `&mut r.f` as a direct argument to a CELL formal, which needs the
+        // field-cell address — is handled at the call site, where the formal is known.
         ast::Node::Ref { inner, .. } => {
             lower_expr(inner, ir, env, struct_env, receiver_types, context)
         }

@@ -10,12 +10,15 @@
 //! exact-owner value loads/stores through it — identity-preserving place
 //! replacement (mind-spec v1.0/types.md:65-99), NOT a field copy.
 //!
-//! Everything OUTSIDE that subset is refused with the exact codes: `E2028`
-//! (unsupported deref), `E2029` (unsupported deref-assign — scalar referent,
-//! cross-owner value, `let q = p` / `return p` escape), `E2037` (unsupported
-//! field/element address-of — immutable, scalar, depth-two, region-interior,
-//! unknown owner). Scalar `&mut i64` deref stays refused; it is not in the
-//! struct field-first subset.
+//! A `&mut` parameter is a CELL only when its function dereferences it or forwards it
+//! to a cell formal (`eval::deref_cells`); every other `&mut` parameter, and every
+//! `&r.f` / `&mut r.f` / `&a[i]` outside a cell argument, keeps main's POINTER meaning
+//! and is admitted exactly as on main 5724a6ee. The deref-assign rules bind cells:
+//! `E2028` (unsupported deref), `E2029` (unsupported deref-assign — scalar referent,
+//! cross-owner value, `let q = p` / `return p` escape of a cell, `pub` cell function),
+//! `E2037` (unsupported cell argument — immutable, scalar, depth-two, region-interior,
+//! element, bound or cast reference, unknown owner). Scalar `&mut i64` deref stays
+//! refused; it is not in the struct field-first subset.
 //!
 //! Generic types only — no private consumer (MindLLM/PageTable) source here.
 
@@ -357,17 +360,17 @@ fn match_binder_shadow_of_mut_param_is_refused() {
     );
 }
 
-/// Without `std-surface` the field/element address-of admission check is not
-/// compiled, and lowering would read `&mut r.f` as a plain VALUE. Admission must not
-/// depend on a cargo feature, so the base scan refuses it with the same E2037
-/// (audit 2026-09-16).
+/// Without `std-surface`, a mutable field address-of is main's pointer argument and the
+/// type check must accept it exactly as main 5724a6ee does (parity measured 2026-09-16:
+/// main's `mindc check` is clean for these). Only `*p` / `*p = v` are refused here.
 #[cfg(not(feature = "std-surface"))]
 #[test]
-fn mut_field_address_of_is_refused_without_std_surface() {
-    let src = "struct Pair {\n    x: i64,\n    y: i64\n}\nstruct H {\n    pt: Pair\n}\nfn f(h: H) {\n    let c = &mut h.pt.x\n}\n";
+fn mut_field_address_of_matches_main_without_std_surface() {
+    let src = "struct Pair {\n    x: i64,\n    y: i64\n}\nstruct H {\n    pt: Pair\n}\nfn set(p: &mut Pair) {\n    p.x = 5\n}\nfn f(h: H) {\n    set(&mut h.pt)\n}\n";
     let cs = codes(src);
-    assert!(cs.contains(&"E2037".to_string()), "got {cs:?}");
-    // Control: an immutable address-of is untouched by this refusal.
-    let imm = "struct Pair {\n    x: i64,\n    y: i64\n}\nfn f(p: Pair) {\n    let c = &p\n}\n";
-    assert!(!codes(imm).contains(&"E2037".to_string()));
+    assert!(
+        !cs.iter()
+            .any(|c| c == "E2028" || c == "E2029" || c == "E2037"),
+        "got {cs:?}"
+    );
 }

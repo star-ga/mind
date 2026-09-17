@@ -4199,20 +4199,24 @@ fn collect_fixed_bytes_locals(stmts: &[Node], out: &mut BTreeSet<String>) {
 thread_local! {
     /// Callee signatures of the module enclosing the function body currently being
     /// re-checked as a mini-module (see `deref_fn_sigs`).
-    static DEREF_ENCLOSING_FN_SIGS: std::cell::RefCell<Option<slice_abi::FnParamSigs>> =
+    static DEREF_ENCLOSING_FN_SIGS: std::cell::RefCell<Option<DerefEnclosing>> =
         const { std::cell::RefCell::new(None) };
 }
+
+/// Callee signatures + cell-parameter inference of the enclosing module.
+#[cfg(feature = "std-surface")]
+type DerefEnclosing = (slice_abi::FnParamSigs, crate::eval::deref_cells::CellParams);
 
 /// Installs the enclosing module's callee signatures for the duration of a nested
 /// body check; restores the previous value on drop (nesting-safe).
 #[cfg(feature = "std-surface")]
 struct DerefEnclosingFnSigsGuard {
-    prev: Option<slice_abi::FnParamSigs>,
+    prev: Option<DerefEnclosing>,
 }
 
 #[cfg(feature = "std-surface")]
 impl DerefEnclosingFnSigsGuard {
-    fn install(sigs: slice_abi::FnParamSigs) -> Self {
+    fn install(sigs: DerefEnclosing) -> Self {
         let prev = DEREF_ENCLOSING_FN_SIGS.with(|cell| cell.borrow_mut().replace(sigs));
         DerefEnclosingFnSigsGuard { prev }
     }
@@ -4626,12 +4630,17 @@ fn check_module_types_in_file_impl(
     // without them `replace(p, new)` inside a nested fn saw an unknown callee and was
     // admitted unclassified (audit 2026-09-16). Local definitions shadow inherited ones.
     #[cfg(feature = "std-surface")]
-    let deref_fn_sigs = {
-        let mut sigs = DEREF_ENCLOSING_FN_SIGS
+    let (deref_fn_sigs, deref_cells) = {
+        let (mut sigs, mut cells) = DEREF_ENCLOSING_FN_SIGS
             .with(|cell| cell.borrow().clone())
             .unwrap_or_default();
         sigs.extend(slice_abi::fn_param_sigs(&module.items));
-        sigs
+        // Cell inference for this unit, merged over the enclosing module's (a nested
+        // body's calls resolve against both).
+        for (name, idxs) in crate::eval::deref_cells::cell_ref_params(&module.items) {
+            cells.entry(name).or_default().extend(idxs);
+        }
+        (sigs, cells)
     };
     #[cfg(feature = "std-surface")]
     let struct_fields_have_owner = struct_field_types
@@ -5158,6 +5167,7 @@ fn check_module_types_in_file_impl(
                     fd,
                     &struct_field_types,
                     &deref_fn_sigs,
+                    &deref_cells,
                     src,
                     file,
                     &mut errs,
@@ -5185,7 +5195,10 @@ fn check_module_types_in_file_impl(
                 // bytes[32] = …; take_bytes(buf)`) is caught by the same E2006
                 // guard as the direct `bytes[N].zero()` form. Restored on drop.
                 #[cfg(feature = "std-surface")]
-                let _deref_sigs_guard = DerefEnclosingFnSigsGuard::install(deref_fn_sigs.clone());
+                let _deref_sigs_guard = DerefEnclosingFnSigsGuard::install((
+                    deref_fn_sigs.clone(),
+                    deref_cells.clone(),
+                ));
                 let _fixed_bytes_guard = {
                     let mut locals = BTreeSet::new();
                     collect_fixed_bytes_locals(body, &mut locals);
