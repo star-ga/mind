@@ -126,7 +126,7 @@ path enforces with a flag the native path satisfies by having nothing to contrac
 **Refused, loud (fail-closed, correct).** `f32`, non-dyadic literals (`0.1`), literals ≥2^63,
 mixed int/float binops, `float % float`, narrowing float casts, `as f64` from a float source,
 bare float if/while conditions, all tensor/SIMD float. Note *which* fence catches each:
-`binop.div` and (today) every `__mind_conv_*` cast are stopped by the FIRST fence, while
+a float-module division (`binop.div_mod_in_float_module`; signed i64 `/` and `%` are admitted unless the module has a float literal or an operand may be full-width `u64`) and (today) every `__mind_conv_*` cast are stopped by the FIRST fence, while
 `f32` / non-dyadic literal / mixed binop pass the first fence and are stopped only by the
 frozen ELF. `Instr::ConstF64` is admitted for **every** f64 bit pattern; the dyadic
 restriction lives solely in the second fence.

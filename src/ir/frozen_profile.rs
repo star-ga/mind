@@ -24,7 +24,7 @@
 
 mod unsigned_taint;
 use crate::ir::{BinOp, IRModule, Instr};
-use unsigned_taint::UnsignedDoors;
+use unsigned_taint::{Taint, UnsignedDoors};
 
 /// The first construct that is NOT in the frozen native profile, named for a
 /// fail-loud diagnostic. `None`-free by construction: `Ok(())` means every
@@ -61,8 +61,8 @@ pub fn profile_frozen_admits(module: &IRModule) -> Result<(), FrozenProfileRejec
     //     `__mind_conv_u64` call, refused before this walk (`closure.unresolved_edge`
     //     in the bridge; `call.undefined_or_builtin` here) — LOAD-BEARING, see
     //     `admit_call`'s note.
-    // The taint is therefore computed PER FUNCTION BODY, not per module. It used to
-    // be module-wide, which was wrong on main: the bridge walks only the composed
+    // The taint is computed per VALUE within each function body (see `Taint`), never
+    // per module. It used to be module-wide, which was wrong on main: the bridge walks only the composed
     // USER region, but lowering injects the std seed's SIGNATURES into
     // `fn_signatures` (`lower.rs`, `cm_all_imported_fn_signatures` /
     // `bundled_std_fn_signatures`), and `std/json.mind` declares `num_u64(v: u64)` and
@@ -70,8 +70,13 @@ pub fn profile_frozen_admits(module: &IRModule) -> Result<(), FrozenProfileRejec
     // tainted — every `/`, `%` and loop compare refused. Std BODIES are never walked
     // here (calls into the seed refuse as `closure.unresolved_edge`).
     let doors = UnsignedDoors::from_module(module);
-    let top_taint = doors.body_taint(None, &module.instrs);
-    admit_instrs_in(&module.instrs, &defined, float_taint, top_taint, &doors)
+    let top_taint = doors.body_taint(
+        None,
+        &[],
+        &module.instrs,
+        &Taint::Values(Default::default()),
+    );
+    admit_instrs_in(&module.instrs, &defined, float_taint, &top_taint, &doors)
 }
 
 fn collect_fn_names(instrs: &[Instr], out: &mut std::collections::BTreeSet<String>) {
@@ -237,7 +242,7 @@ fn reject(construct: &'static str) -> Result<(), FrozenProfileRejection> {
 fn admit_binop(
     op: &BinOp,
     float_taint: bool,
-    unsigned_taint: bool,
+    unsigned_operand: bool,
 ) -> Result<(), FrozenProfileRejection> {
     match op {
         BinOp::Add | BinOp::Sub | BinOp::Mul => Ok(()),
@@ -250,17 +255,24 @@ fn admit_binop(
             }
         }
         // ORDERED compares emit a signed `setcc`; an unsigned operand needs `setb`/`seta`
-        // (the #99 divergence, measured live for `u64 <`: native 1 vs MLIR 0). Refused in
-        // an unsigned-tainted FUNCTION BODY — the same per-body taint as Div/Mod.
+        // (the #99 divergence, measured live for `u64 <`: native 1 vs MLIR 0; on main
+        // 5724a6ee `f(1, 18446744073709551615)` with `a < b` returns 0 natively and 1 on
+        // MLIR). Refused when an OPERAND may be full-width unsigned — the same value-level
+        // taint as Div/Mod — so an i64 loop guard in a `u64` function stays admitted.
         // (An earlier revision of this port left the gap open on the claim that the std
         // seed's own `json.num_u64` compare would refuse every native build. That was
         // wrong: std bodies are never walked by this fence, only std SIGNATURES reach
-        // `fn_signatures`, and a per-body taint does not see them. Corrected on arch
+        // `fn_signatures`, and a body's value taint does not see them. Corrected on arch
         // review.) Eq/Ne are bit compares — sign-agnostic — and stay admitted.
         BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
             if float_taint {
                 reject("binop.compare_in_float_module")
-            } else if unsigned_taint {
+            } else if unsigned_operand && cfg!(feature = "std-surface") {
+                // Without std-surface there is no signature table, so the taint is the
+                // fail-closed "unknown" value — and main 5724a6ee ADMITTED ordered
+                // compares in that configuration. Refusing them here would take away
+                // something main had (every loop guard), so the no-std arm keeps main's
+                // verdict for compares; Div/Mod stay refused there, exactly as on main.
                 reject("binop.ordered_compare_unsigned")
             } else {
                 Ok(())
@@ -269,13 +281,13 @@ fn admit_binop(
         // RH-native (arch review 2026-09-16): the native emitter's guarded
         // signed `idiv`/mod is emitter-proven byte/edge-correct and native==MLIR
         // for SIGNED i64 (div_shift_cmp_edge_smoke). Admit it, but reject in a
-        // float-tainted module or an unsigned-tainted FUNCTION BODY — there is no
-        // unsigned `div` arm, so `idiv` on an unsigned operand would silently
-        // miscompile. `unsigned_taint` here is per body (see `UnsignedDoors`).
+        // float-tainted module or when an OPERAND may be full-width unsigned — there is
+        // no unsigned `div` arm, so `idiv` on an unsigned operand would silently
+        // miscompile. The operand taint is per value (see `unsigned_taint::Taint`).
         BinOp::Div | BinOp::Mod => {
             if float_taint {
                 reject("binop.div_mod_in_float_module")
-            } else if unsigned_taint {
+            } else if unsigned_operand {
                 reject("binop.div_mod_unsigned")
             } else {
                 Ok(())
@@ -294,7 +306,7 @@ fn admit_instrs_in(
     instrs: &[Instr],
     defined: &std::collections::BTreeSet<String>,
     float_taint: bool,
-    unsigned_taint: bool,
+    taint: &Taint,
     doors: &UnsignedDoors,
 ) -> Result<(), FrozenProfileRejection> {
     for instr in instrs {
@@ -335,19 +347,23 @@ fn admit_instrs_in(
             // + corpus audit 2026-08-21). A type-blind `BinOp {..} => {}` admitted the
             // substrate-/signedness-divergent ops (Div/Mod/Shl/Shr) that the byte-identity
             // corpus never proves — see admit_binop for the rejection set + fitment note.
-            Instr::BinOp { op, .. } => admit_binop(op, float_taint, unsigned_taint)?,
-            // A function body gets its OWN unsigned taint (its signature + the calls it
-            // makes), never its enclosing scope's.
-            Instr::FnDef { name, body, .. } => {
-                let body_taint = doors.body_taint(Some(name), body);
-                admit_instrs_in(body, defined, float_taint, body_taint, doors)?
+            Instr::BinOp { op, lhs, rhs, .. } => {
+                admit_binop(op, float_taint, taint.any(&[*lhs, *rhs]))?
+            }
+            // A function body gets its OWN unsigned taint (its parameters + the calls it
+            // makes), seeded with the enclosing scope's (a superset — sound).
+            Instr::FnDef {
+                name, params, body, ..
+            } => {
+                let body_taint = doors.body_taint(Some(name), params, body, taint);
+                admit_instrs_in(body, defined, float_taint, &body_taint, doors)?
             }
             #[cfg(feature = "std-surface")]
             Instr::While {
                 cond_instrs, body, ..
             } => {
-                admit_instrs_in(cond_instrs, defined, float_taint, unsigned_taint, doors)?;
-                admit_instrs_in(body, defined, float_taint, unsigned_taint, doors)?;
+                admit_instrs_in(cond_instrs, defined, float_taint, taint, doors)?;
+                admit_instrs_in(body, defined, float_taint, taint, doors)?;
             }
             #[cfg(feature = "std-surface")]
             Instr::If {
@@ -356,9 +372,9 @@ fn admit_instrs_in(
                 else_instrs,
                 ..
             } => {
-                admit_instrs_in(cond_instrs, defined, float_taint, unsigned_taint, doors)?;
-                admit_instrs_in(then_instrs, defined, float_taint, unsigned_taint, doors)?;
-                admit_instrs_in(else_instrs, defined, float_taint, unsigned_taint, doors)?;
+                admit_instrs_in(cond_instrs, defined, float_taint, taint, doors)?;
+                admit_instrs_in(then_instrs, defined, float_taint, taint, doors)?;
+                admit_instrs_in(else_instrs, defined, float_taint, taint, doors)?;
             }
             #[cfg(feature = "std-surface")]
             Instr::ConstArray { .. }
@@ -459,8 +475,8 @@ mod tests {
         // SAME way production derives it, so without `std-surface` a bare slice is
         // tainted too (the fail-closed arm) rather than silently assumed clean.
         let doors = UnsignedDoors::from_module(&IRModule::new());
-        let top_taint = doors.body_taint(None, instrs);
-        admit_instrs_in(instrs, &defined, float_taint, top_taint, &doors)
+        let top_taint = doors.body_taint(None, &[], instrs, &Taint::Values(Default::default()));
+        admit_instrs_in(instrs, &defined, float_taint, &top_taint, &doors)
     }
 
     fn fndef(body: Vec<Instr>) -> Instr {
@@ -529,10 +545,6 @@ mod tests {
         }
     }
 
-    // std-surface only: without it there is no signature table, so the unsigned
-    // taint fails closed and ordered compares are refused (see
-    // `without_std_surface_the_unsigned_taint_fails_closed`).
-    #[cfg(feature = "std-surface")]
     #[test]
     fn corpus_proven_binops_are_admitted() {
         // The 5-program readiness corpus exercises `+` (Add) and `<` (Lt, the for-loop
@@ -658,10 +670,6 @@ mod tests {
 
     /// Integer comparisons keep the profile's proven for-loop (`array_idx_loop`) — the
     /// rejection must be conditional on the float, never unconditional.
-    // std-surface only: without it there is no signature table, so the unsigned
-    // taint fails closed and ordered compares are refused (see
-    // `without_std_surface_the_unsigned_taint_fails_closed`).
-    #[cfg(feature = "std-surface")]
     #[test]
     fn integer_comparison_without_float_is_still_admitted() {
         assert_eq!(admits(&[binop(BinOp::Lt)]), Ok(()));

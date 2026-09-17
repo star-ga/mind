@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1825 | **Est. tokens:** ~3,502,922
-**Generated:** 2026-09-16 20:12 UTC
+**Files:** 1825 | **Est. tokens:** ~3,508,066
+**Generated:** 2026-09-17 02:47 UTC
 
 ## Token Budget Guide
 
@@ -42,7 +42,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,347 |
-| `docs/` | 37 | ~104,810 |
+| `docs/` | 37 | ~104,849 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/design/` | 4 | ~11,498 |
@@ -62,8 +62,8 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 174 | ~455,624 |
-| `examples/mindc_mind/testdata/` | 7 | ~7,503 |
+| `examples/mindc_mind/` | 174 | ~456,166 |
+| `examples/mindc_mind/testdata/` | 7 | ~7,484 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2,926 |
@@ -82,7 +82,7 @@
 | `.github/workflows/` | 9 | ~37,428 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~21,930 |
-| `scripts/` | 31 | ~116,920 |
+| `scripts/` | 31 | ~116,908 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -112,12 +112,12 @@
 | `src/exec/` | 3 | ~5,522 |
 | `src/ffi/` | 3 | ~5,541 |
 | `src/fmt/` | 3 | ~24,052 |
-| `src/ir/` | 9 | ~96,736 |
+| `src/ir/` | 9 | ~96,843 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
 | `src/ir/compact/v3/` | 15 | ~76,625 |
 | `src/ir/compact/v3/v04/` | 3 | ~13,696 |
-| `src/ir/frozen_profile/` | 1 | ~3,541 |
+| `src/ir/frozen_profile/` | 1 | ~8,028 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~10,017 |
 | `src/mlir/` | 3 | ~6,625 |
@@ -500,7 +500,7 @@
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
 
-- `RI_DEPENDENCY_MATRIX.md` (~6279 tok, huge) — Rust-Independence (RI) Dependency Matrix
+- `RI_DEPENDENCY_MATRIX.md` (~6318 tok, huge) — Rust-Independence (RI) Dependency Matrix
 - `runs-burndown-roadmap.md` (~3203 tok, huge) — MIND RUNS Burndown Roadmap
 - `security.md` (~1492 tok, large) — Security Guide
 - `self-host-trace-hash-port.md` (~1406 tok, large) — #17 — Self-compute the native PT_NOTE (pure-MIND trace-hash port)
@@ -657,7 +657,7 @@
 - `_ref_struct_field.note` (~16 tok, tiny) — 2f7f2ea32ee47138e1b0162bd51f418b4e5005b4569054f5f3c392ebd2258d96
 - `_ref_value_if.note` (~16 tok, tiny) — ae565a5154b76ee1f44a32c16db2e9a8387f2f60c5fca92bba2dc9bb70afb599
 - `rh_f64_aggregate_canary_smoke.py` (~1597 tok, huge) — RH f64-aggregate surface canary (RH_REQUIRED_F64_AGGREGATE_SURFACE).
-- `ri_d1_frozen_profile_gate.py` (~8025 tok, huge) — RI-D1 readiness gate (task #313): prove `mindc build --backend native` is READY to be
+- `ri_d1_frozen_profile_gate.py` (~8590 tok, huge) — RI-D1 readiness gate (task #313): prove `mindc build --backend native` is READY to be
 - `self_host_alias_controls_smoke.py` (~1447 tok, large) — Focused native alias-environment controls.
 - `self_host_andor_precedence_smoke.py` (~1902 tok, huge) — Front-end PARITY battery for `&&` / `||` precedence + short-circuit.
 - `self_host_andor_smoke.py` (~2142 tok, huge) — Permanent battery for the self-host `&&` / `||` short-circuit operators.
@@ -778,7 +778,7 @@
 - `self_host_value_if_expr_smoke.py` (~1557 tok, huge)
 - `sha256_hash_smoke.py` (~1284 tok, large) — # Copyright 2025 STARGA Inc.
 - `smoke_wiring_lint.py` (~8534 tok, huge) — smoke_wiring_lint.py — machine-checked contract for WHERE each
-- `SMOKE_WIRING.tsv` (~3822 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
+- `SMOKE_WIRING.tsv` (~3799 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
 - `stdlib_manifest_lint.py` (~2431 tok, huge) — stdlib_manifest_lint.py — machine-checked contract for WHICH std/*.mind
 - `_stdlib_manifest.py` (~1129 tok, large) — Shared reader for the committed std/*.mind manifest.
 - `struct_fields_smoke.py` (~1076 tok, large)
@@ -870,7 +870,7 @@
 - `rh_f64_aggregate_canary.mind` (~876 tok, large) — RH f64-aggregate self-host/native canary (RH_REQUIRED_F64_AGGREGATE_SURFACE).
 - `rh_totality_tier0_budget.mind` (~489 tok, medium) — RH Tier-0 TOTALITY-VERIFIER DRIVER — the COUNTEREXAMPLE-CLASS fixture.
 - `rh_totality_tier0_digest.mind` (~406 tok, medium) — RH Tier-0 TOTALITY-VERIFIER DRIVER — the DIGEST fixture (miscompile canary).
-- `rh_totality_tier0_verdict.mind` (~1464 tok, large) — RH Tier-0 TOTALITY-VERIFIER DRIVER — the verdict fixture.
+- `rh_totality_tier0_verdict.mind` (~1445 tok, large) — RH Tier-0 TOTALITY-VERIFIER DRIVER — the verdict fixture.
 ### `examples/mindc_mind/testdata/selfhost_loop/`
 
 - `MANIFEST.txt` (~312 tok, medium) — # Frozen self-host bootstrap ELF (A6/RI-E1): the checked-in pure-MIND stage0
@@ -1015,7 +1015,7 @@
 - `operand_visitor_parity_lint.py` (~1198 tok, large) — Fail closed when the two IR operand visitors drift apart.
 - `pqc_hybrid_ci.sh` (~663 tok, large) — Required-CI execution gate for the existing MIC3 two-leg PQC-hybrid controls.
 - `pqc_hybrid_cli_ci.sh` (~1160 tok, large) — Required-CI execution gate for the actual-CLI PQC-hybrid signing controls.
-- `preflight.sh` (~9404 tok, huge) — preflight.sh — local CI-parity gate. Run before pushing to avoid red CI.
+- `preflight.sh` (~9392 tok, huge) — preflight.sh — local CI-parity gate. Run before pushing to avoid red CI.
 - `quick_perf.sh` (~734 tok, large) — quick_perf.sh — FAST one-sided compile-speed criterion gate.
 - `ri_d1_mlir_free_gate.sh` (~2136 tok, huge) — RI-D1 gate assertion #1 — MLIR is un-linkable on the native path (fail-closed
 - `run_crypto_vectors.sh` (~3204 tok, huge) — Build every pure-MIND crypto/TLS std module to a shared object and run its
@@ -1295,10 +1295,10 @@
 
 - `evidence.rs` (~13387 tok, huge) — Copyright 2025 STARGA Inc.
 - `fp_mode.rs` (~13664 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
-- `frozen_profile.rs` (~8802 tok, huge) — Copyright 2025 STARGA Inc.
+- `frozen_profile.rs` (~8909 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/frozen_profile/`
 
-- `unsigned_taint.rs` (~3541 tok, huge) — Copyright 2025 STARGA Inc.
+- `unsigned_taint.rs` (~8028 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
 - `mod.rs` (~17720 tok, huge) — Copyright 2025 STARGA Inc.

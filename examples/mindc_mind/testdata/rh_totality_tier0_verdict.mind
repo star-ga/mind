@@ -58,7 +58,6 @@
 //     == 0` is not available either; the guard is a plain single comparison.
 //   * `else` whose branches do not both `return` — unsupported (an `else` that
 //     needs a JOIN). So the parity split is two `if`s with no `else`.
-//   * two `break`s in one function — unsupported. This driver uses none.
 //
 // What IS proven and used here: nested/single `while`, `if` with assignment,
 // `if cond { return v; }` at function top level, recursion, and i64 `+ - * / %`

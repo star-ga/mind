@@ -447,13 +447,12 @@ if [ "${1:-}" = "--full" ]; then
 #
 # DTK parity now ALSO runs in ci.yml's KEYSTONE job against the .so that job
 # builds, so its coverage no longer depends on a developer remembering `--full`.
-# The RI-D1 ratchet is deliberately NOT in CI: it is RED at this commit (3 of its
-# 5 in-profile programs are over-rejected `call.undefined_or_builtin`; see the
-# deferral in src/ir/frozen_profile.rs::admit_instrs_in), and wiring a red gate
-# would block every push on a known, recorded gap rather than gate a regression.
-# examples/mindc_mind/SMOKE_WIRING.tsv carries that exemption with its own
-# `deferred:` marker, which smoke_wiring_lint.py requires before a class=gate row
-# is allowed to reach no CI at all.
+# The RI-D1 ratchet is not yet in CI. It is GREEN (the three over-rejected
+# programs are tracked as a pinned DEFERRED list instead of failing the gate), but
+# it needs the frozen stage1.elf, strace and a native-capable mindc on the runner,
+# which no CI job provides today. examples/mindc_mind/SMOKE_WIRING.tsv carries that
+# exemption with its own `deferred:` marker, which smoke_wiring_lint.py requires
+# before a class=gate row is allowed to reach no CI at all.
 
 # DTK register-allocator cross-implementation parity. The pure-MIND planner SHIPS
 # inside the frozen stage1.elf, so a divergence between it and the Rust reference is

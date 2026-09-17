@@ -29,9 +29,12 @@ FIVE claims, each asserted per program via strace -f -e trace=execve:
                  the ELF, also pinned by exact count — this is the gap between what the
                  allowlist promises and what the shipped artifact delivers, so it is the
                  one a readiness claim must not lose track of.
-  CONTROL     -> every unsigned OUT-PROFILE negative is paired with an i64 twin in
-                 IN_PROFILE that differs ONLY in the type annotation, so a refusal is
-                 attributable to the unsigned taint rather than to the program's shape.
+  CONTROL     -> three of the four unsigned OUT-PROFILE negatives (param div, param
+                 mod, param `<`) have an i64 twin in IN_PROFILE differing ONLY in the
+                 type annotation, so those refusals are attributable to the unsigned
+                 taint. The fourth (`as u64` then div) has no meaningful twin: its i64
+                 spelling also emits a synthesised conversion call, so it covers the
+                 closure's refusal of `__mind_conv_u64`, not the taint.
 
 THE DEFERRED LIST (2026-09-16). Three programs that shipped in IN_PROFILE — float_as_i64,
 struct_return, narrow_u8_wrap — are refused by fence 1 as `closure.unresolved_edge`: they
@@ -133,10 +136,22 @@ IN_PROFILE = [
     # would look identical. With them, the pair isolates the one variable.
     ("ctl_i64_param_div",
      "fn d(a:i64,b:i64)->i64{return a / b;} fn main()->i64{return d(84,2);}", 42),
-    ("ctl_i64_ret_mod",
+    ("ctl_i64_param_mod",
      "fn m(a:i64,b:i64)->i64{return a % b;} fn main()->i64{return m(47,5);}", 2),
     ("ctl_i64_param_lt",
      "fn lt(a:i64,b:i64)->i64{return a < b;} fn main()->i64{return lt(3,5);}", 1),
+
+    # ---- VALUE-level unsigned taint: what main 5724a6ee compiled must still compile ----
+    # The taint follows OPERANDS (as MLIR's `divui`/`ult` selection does), not the
+    # signature. A body-level taint refused both of these; measured 2026-09-16, main's
+    # native build returns 3 for the loop and MLIR emits `remsi` for the u64-returning
+    # signed `%` (native == MLIR == 2).
+    ("i64_guard_in_u64_fn",
+     "fn f(a:u64)->i64{let mut i:i64=0; while i < 3 {i=i+1;} return i;} "
+     "fn main()->i64{return f(7);}", 3),
+    ("u64_ret_signed_mod",
+     "fn m(a:i64,b:i64)->u64{return a % b;} "
+     "fn main()->i64{let r=m(47,5); if r == 2 {return 2;} return 0;}", 2),
 ]
 
 # ---- signed i64 div/mod edge corpus + the Tier-0 RH totality drivers ----
@@ -205,7 +220,8 @@ OUT_PROFILE = [
     # ---- UNSIGNED negatives (issue #99 family; admitted-Div/Mod counterweight) ----
     # The native emitter has ONLY signed `idiv` and signed `setcc`. On a full-width
     # unsigned operand that silently disagrees with MLIR's `divui` / `setb` — measured
-    # live for `u64 <` (native 1 vs MLIR 0). Signed i64 Div/Mod became admitted on
+    # live for `u64 <` (native 1 vs MLIR 0), and on main 5724a6ee `f(1, 2^64-1)` with
+    # `a < b` returns 0 natively vs 1 on MLIR. Signed i64 Div/Mod became admitted on
     # 2026-09-16; these four are what keeps that admission SIGNED-ONLY. Each has an
     # i64 twin in IN_PROFILE (`ctl_*`) proving the shape itself is fine.
     ("u64_param_div",
@@ -214,8 +230,8 @@ OUT_PROFILE = [
     ("u64_param_lt",
      "fn lt(a:u64,b:u64)->i64{return a < b;} fn main()->i64{return 0;}",
      "first", "binop.ordered_compare_unsigned"),
-    ("u64_ret_mod",
-     "fn m(a:i64,b:i64)->u64{return a % b;} fn main()->i64{return 0;}",
+    ("u64_param_mod",
+     "fn m(a:u64,b:i64)->i64{return a % b;} fn main()->i64{return 0;}",
      "first", "binop.div_mod_unsigned"),
     # The `let x: u64 = y as u64` door: no u64 appears in any fn signature, so the
     # signature taint cannot see it. It is closed instead by `admit_call` refusing the
@@ -278,6 +294,11 @@ OUT_PROFILE = [
 # Pinned by EXACT count: a stage1.elf reseed that LIFTS one must promote it to
 # IN_PROFILE with a real expected exit rather than quietly deleting the fixture, and a
 # reseed that BREAKS something new must add it here deliberately.
+# The ELF the lag list below was MEASURED against. A lag is a property of one specific
+# frozen compiler, so a reseed must invalidate the list explicitly instead of letting
+# stale entries pass (or fail) for the wrong reason (architecture review 2026-09-16).
+ELF_LAG_MEASURED_ON_SHA256 = "2e3d4bf28fb087100d76ef89f117babbf0e864ab8d65fd09dbb92e6faa3eee4c"
+
 DEFERRED_FROZEN_ELF_LAG = [
     ("elf_lag_loop_early_return",
      "fn main()->i64{let mut i:i64=0; while i < 5 { if i > 2 { return 7; } i = i + 1; } return 0;}"),
@@ -416,6 +437,11 @@ def check_refusal(name, src, td, want_fence, want_construct):
     return problems, rc, execs
 
 
+def sha256_of(path):
+    import hashlib
+    return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
+
+
 def main() -> int:
     for label, p in (("mindc", MINDC), ("stage1.elf", STAGE1)):
         if not p.exists():
@@ -428,7 +454,7 @@ def main() -> int:
     # Positive-count floor (anti-false-green): a job that builds NOTHING also shows zero
     # toolchain execve. Pin the corpus size so a silently-deleted fixture is a FAILURE,
     # not a vacuous pass. Bump deliberately when the allowlist+corpus grow together.
-    PINNED_IN_PROFILE = 18
+    PINNED_IN_PROFILE = 20
     corpus_rows = len([e for e in IN_PROFILE if e[0] in CORPUS_NAMES])
     if corpus_rows != CORPUS_ROWS:
         print(
@@ -455,6 +481,19 @@ def main() -> int:
     # proven). A gap that can be closed by deleting its fixture is not tracked.
     PINNED_DEFERRED = 3
     PINNED_ELF_LAG = 3
+    # PROVENANCE: say exactly which compiler and which frozen ELF this run certified.
+    # A shared target directory once let this gate read another worktree's binary;
+    # a receipt that records these hashes can be re-checked, a bare "PASS" cannot.
+    mindc_sha, elf_sha = sha256_of(MINDC), sha256_of(STAGE1)
+    print(f"provenance: mindc={MINDC} sha256={mindc_sha}")
+    print(f"provenance: stage1.elf={STAGE1} sha256={elf_sha}")
+    if elf_sha != ELF_LAG_MEASURED_ON_SHA256:
+        print(
+            f"FAIL  the frozen-ELF lag list was measured on stage1.elf sha256 "
+            f"{ELF_LAG_MEASURED_ON_SHA256}, but this run uses {elf_sha}. Re-measure every "
+            "DEFERRED_FROZEN_ELF_LAG entry against this ELF and update the pin."
+        )
+        return 1
     if len(IN_PROFILE) != PINNED_IN_PROFILE or len(OUT_PROFILE) < PINNED_OUT_PROFILE:
         print(
             f"FAIL  corpus shrank below pinned floor: in={len(IN_PROFILE)}<{PINNED_IN_PROFILE} "
