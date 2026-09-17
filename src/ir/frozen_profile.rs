@@ -23,6 +23,8 @@
 //! Wiring it into the default-flip decision is a separate, gated slice.
 
 mod unsigned_taint;
+#[cfg(all(test, feature = "std-surface"))]
+mod unsigned_taint_pipeline_tests;
 use crate::ir::{BinOp, IRModule, Instr};
 use unsigned_taint::{Taint, UnsignedDoors};
 
@@ -70,13 +72,13 @@ pub fn profile_frozen_admits(module: &IRModule) -> Result<(), FrozenProfileRejec
     // tainted — every `/`, `%` and loop compare refused. Std BODIES are never walked
     // here (calls into the seed refuse as `closure.unresolved_edge`).
     let doors = UnsignedDoors::from_module(module);
-    let top_taint = doors.body_taint(
-        None,
-        &[],
-        &module.instrs,
-        &Taint::Values(Default::default()),
-    );
+    let top_taint = doors.body_taint(None, &[], &module.instrs, &Taint::empty());
     admit_instrs_in(&module.instrs, &defined, float_taint, &top_taint, &doors)
+}
+
+/// Is `v` in the literal band the frozen native ELF mis-encodes (see `admit_instrs_in`)?
+fn in_misencoded_literal_band(v: i64) -> bool {
+    (i64::MIN..=i64::MIN + 254).contains(&v)
 }
 
 fn collect_fn_names(instrs: &[Instr], out: &mut std::collections::BTreeSet<String>) {
@@ -242,7 +244,8 @@ fn reject(construct: &'static str) -> Result<(), FrozenProfileRejection> {
 fn admit_binop(
     op: &BinOp,
     float_taint: bool,
-    unsigned_operand: bool,
+    taint: &Taint,
+    operands: [crate::ir::ValueId; 2],
 ) -> Result<(), FrozenProfileRejection> {
     match op {
         BinOp::Add | BinOp::Sub | BinOp::Mul => Ok(()),
@@ -257,8 +260,9 @@ fn admit_binop(
         // ORDERED compares emit a signed `setcc`; an unsigned operand needs `setb`/`seta`
         // (the #99 divergence, measured live for `u64 <`: native 1 vs MLIR 0; on main
         // 5724a6ee `f(1, 18446744073709551615)` with `a < b` returns 0 natively and 1 on
-        // MLIR). Refused when an OPERAND may be full-width unsigned — the same value-level
-        // taint as Div/Mod — so an i64 loop guard in a `u64` function stays admitted.
+        // MLIR). Refused exactly when MLIR kinds an OPERAND `ScalarU64` (`Taint::any_cmp`),
+        // so an i64 loop guard in a `u64` function, a loop-carried accumulator and a
+        // `[u64; N]` element — all compared signed by MLIR too — stay admitted as on main.
         // (An earlier revision of this port left the gap open on the claim that the std
         // seed's own `json.num_u64` compare would refuse every native build. That was
         // wrong: std bodies are never walked by this fence, only std SIGNATURES reach
@@ -267,7 +271,7 @@ fn admit_binop(
         BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
             if float_taint {
                 reject("binop.compare_in_float_module")
-            } else if unsigned_operand && cfg!(feature = "std-surface") {
+            } else if taint.any_cmp(&operands) && cfg!(feature = "std-surface") {
                 // Without std-surface there is no signature table, so the taint is the
                 // fail-closed "unknown" value — and main 5724a6ee ADMITTED ordered
                 // compares in that configuration. Refusing them here would take away
@@ -283,11 +287,12 @@ fn admit_binop(
         // for SIGNED i64 (div_shift_cmp_edge_smoke). Admit it, but reject in a
         // float-tainted module or when an OPERAND may be full-width unsigned — there is
         // no unsigned `div` arm, so `idiv` on an unsigned operand would silently
-        // miscompile. The operand taint is per value (see `unsigned_taint::Taint`).
+        // miscompile. The operand taint is the WIDE set (`Taint::any_div`): any value whose
+        // declared type is or contains `u64`; main refused every native division.
         BinOp::Div | BinOp::Mod => {
             if float_taint {
                 reject("binop.div_mod_in_float_module")
-            } else if unsigned_operand {
+            } else if taint.any_div(&operands) {
                 reject("binop.div_mod_unsigned")
             } else {
                 Ok(())
@@ -338,6 +343,14 @@ fn admit_instrs_in(
             // `admit_binop` already defers — thread `FnDef.value_types` through
             // first. Tracked on matrix row 12 / the RI-D1 bijection gate.
             Instr::Call { name, .. } => admit_call(name, defined)?,
+            // The frozen stage1.elf encodes an integer LITERAL whose value lies in
+            // [i64::MIN, i64::MIN + 254] — decimal 9223372036854775808 ..=
+            // 9223372036854776062 — as `movabs 0x7fffffffffffffXX` (measured
+            // 2026-09-16 by disassembling main 5724a6ee's native output; 2^63+255 and
+            // above encode correctly). Main compiled these silently wrong.
+            Instr::ConstI64(_, v) if in_misencoded_literal_band(*v) => {
+                reject("const.i64_min_band_literal")?
+            }
             Instr::ConstI64(..)
             | Instr::ConstF64(..)
             | Instr::Return { .. }
@@ -347,9 +360,7 @@ fn admit_instrs_in(
             // + corpus audit 2026-08-21). A type-blind `BinOp {..} => {}` admitted the
             // substrate-/signedness-divergent ops (Div/Mod/Shl/Shr) that the byte-identity
             // corpus never proves — see admit_binop for the rejection set + fitment note.
-            Instr::BinOp { op, lhs, rhs, .. } => {
-                admit_binop(op, float_taint, taint.any(&[*lhs, *rhs]))?
-            }
+            Instr::BinOp { op, lhs, rhs, .. } => admit_binop(op, float_taint, taint, [*lhs, *rhs])?,
             // A function body gets its OWN unsigned taint (its parameters + the calls it
             // makes), seeded with the enclosing scope's (a superset — sound).
             Instr::FnDef {
@@ -375,6 +386,13 @@ fn admit_instrs_in(
                 admit_instrs_in(cond_instrs, defined, float_taint, taint, doors)?;
                 admit_instrs_in(then_instrs, defined, float_taint, taint, doors)?;
                 admit_instrs_in(else_instrs, defined, float_taint, taint, doors)?;
+            }
+            #[cfg(feature = "std-surface")]
+            #[cfg(feature = "std-surface")]
+            Instr::ConstArray { values, .. }
+                if values.iter().any(|v| in_misencoded_literal_band(*v)) =>
+            {
+                reject("const.i64_min_band_literal")?
             }
             #[cfg(feature = "std-surface")]
             Instr::ConstArray { .. }
@@ -475,7 +493,7 @@ mod tests {
         // SAME way production derives it, so without `std-surface` a bare slice is
         // tainted too (the fail-closed arm) rather than silently assumed clean.
         let doors = UnsignedDoors::from_module(&IRModule::new());
-        let top_taint = doors.body_taint(None, &[], instrs, &Taint::Values(Default::default()));
+        let top_taint = doors.body_taint(None, &[], instrs, &Taint::empty());
         admit_instrs_in(instrs, &defined, float_taint, &top_taint, &doors)
     }
 

@@ -3,89 +3,145 @@
 //! Unsigned taint for the frozen native profile's signedness-sensitive operators.
 //!
 //! A submodule of `frozen_profile` split out (module-size budget) because it is one self-contained
-//! question: can a full-width UNSIGNED (`u64` / `usize`) value reach a given function
-//! body? The native emitter has only signed `idiv` and signed `setcc`, so `/`, `%`, and
-//! the ordered compares are admitted only in bodies where the answer is no. See the
+//! question: can a full-width UNSIGNED (`u64`) value reach a given OPERAND? The native emitter has only signed `idiv` and signed `setcc`, so `/`, `%`, and
+//! the ordered compares are admitted only where the answer is no. See the
 //! rationale at `frozen_profile::profile_frozen_admits`.
 
 #[cfg(feature = "std-surface")]
 use crate::ast::TypeAnn;
 use crate::ir::{IRModule, Instr, ValueId};
 
-/// Which call results and parameters carry a full-width UNSIGNED (`u64`) value.
-/// NARROW unsigned (`u8`/`u16`/`u32`) is deliberately NOT tainted: it is masked to its
-/// width and zero-extends into a NON-NEGATIVE i64, so signed `idiv`/`setcc` give the
-/// same result as the unsigned op — only a full-width carrier whose high bit is set can
-/// diverge. `usize` is NOT tainted either: MLIR lowers it as a SIGNED i64 today
-/// (`arith.cmpi "slt"`, pinned by `usize_is_signed_on_the_mlir_backend_too`), so native
-/// and MLIR agree, and main 5724a6ee compiles a `usize` compare natively.
+/// Which call results and parameters carry a full-width UNSIGNED (`u64`) value, at two
+/// precisions (see [`Taint`]). NARROW unsigned (`u8`/`u16`/`u32`) is deliberately NOT
+/// tainted: it is masked to its width and zero-extends into a NON-NEGATIVE i64, so signed
+/// `idiv`/`setcc` give the same result as the unsigned op — only a full-width carrier
+/// whose high bit is set can diverge. `usize` is NOT tainted either: MLIR lowers it as a
+/// SIGNED i64 today (`arith.cmpi "slt"`, pinned by `usize_is_signed_on_the_mlir_backend_too`),
+/// so native and MLIR agree, and main 5724a6ee compiles a `usize` compare natively.
 #[cfg(feature = "std-surface")]
 pub(crate) struct UnsignedDoors {
-    /// Callee name -> is each parameter full-width unsigned?
-    params: std::collections::BTreeMap<String, Vec<bool>>,
-    /// Callees whose RESULT is full-width unsigned.
-    ret: std::collections::BTreeSet<String>,
+    /// Callee name -> is each parameter `u64` exactly (MLIR seeds `ScalarU64`)?
+    params_exact: std::collections::BTreeMap<String, Vec<bool>>,
+    /// Callee name -> does each parameter type CONTAIN `u64` (array/ref/tuple/generic)?
+    params_wide: std::collections::BTreeMap<String, Vec<bool>>,
+    /// Callees whose RESULT is `u64` exactly.
+    ret_exact: std::collections::BTreeSet<String>,
+    /// Callees whose result type contains `u64`.
+    ret_wide: std::collections::BTreeSet<String>,
     /// Every function DEFINED in the module (at any nesting depth).
     defined: std::collections::BTreeSet<String>,
+    /// Every `ConstI64` value id holding a NON-NEGATIVE constant (any depth).
+    nonneg_consts: std::collections::BTreeSet<ValueId>,
 }
 
-/// The values of ONE body that may hold a full-width unsigned value at run time.
+/// The values of ONE body that may hold a full-width unsigned value at run time, at two
+/// precisions, one per refused operator family.
 ///
-/// VALUE-level, mirroring how the MLIR backend chooses `divui`/`ult` (operand kind
-/// `ScalarU64`, seeded by `u64` parameters and `u64` call results, propagated through
-/// non-compare arithmetic and joins). It used to be BODY-level — any `u64` in the
-/// signature refused every `/`, `%` and ordered compare in the body — which refused
-/// programs main 5724a6ee compiles and runs correctly natively (measured 2026-09-16:
-/// `fn f(a: u64) -> i64 { let i = 0 while i < 3 { i = i + 1 } return i }` returns 3
-/// on main, native and MLIR alike).
+/// * `cmp` — ordered compares. EXACTLY the values the MLIR backend kinds `ScalarU64`
+///   (its `ult`/`slt` choice): seeded by `u64` parameters and `u64` call results,
+///   propagated through non-compare arithmetic and `if` joins (signedness absorption),
+///   but NOT into a loop-carried variable (MLIR's header/exit block args keep the init
+///   kind) and NOT into an array element (`[u64; N]` loads as `ScalarI64`). Refusing
+///   more than this refuses programs main 5724a6ee compiles natively with the same
+///   result as MLIR (audit 2026-09-16: `let s = 0 while .. { s = s + a }` then
+///   `s < 100` — native == MLIR == 1 on main). Each rule is pinned against the emitted
+///   MLIR by the `mlir_*_signedness` tests, so a change to MLIR's kinds turns them red.
+/// * `div` — `/` and `%`. A conservative SUPERSET: also array elements and loop-carried
+///   variables. Main refused every native division, so over-refusing here loses nothing
+///   main had, and it keeps the newly admitted division away from values whose DECLARED
+///   type is unsigned even where MLIR itself divides them signed.
+///
+/// It used to be one BODY-level bit — any `u64` in the signature refused every `/`, `%`
+/// and ordered compare in the body — which refused `fn f(a: u64) -> i64 { let i = 0
+/// while i < 3 { i = i + 1 } return i }` (3 on main, native and MLIR alike).
 pub(crate) enum Taint {
     /// No signature table: every value is treated as possibly unsigned.
     #[cfg_attr(feature = "std-surface", allow(dead_code))]
     All,
     #[cfg_attr(not(feature = "std-surface"), allow(dead_code))]
-    Values(std::collections::BTreeSet<ValueId>),
+    Values {
+        cmp: std::collections::BTreeSet<ValueId>,
+        div: std::collections::BTreeSet<ValueId>,
+    },
 }
 
 impl Taint {
-    /// May any of `ids` hold a full-width unsigned value?
-    pub(crate) fn any(&self, ids: &[ValueId]) -> bool {
-        match self {
-            Taint::All => true,
-            Taint::Values(set) => ids.iter().any(|id| set.contains(id)),
+    /// The taint of a scope with no unsigned value in it.
+    pub(crate) fn empty() -> Self {
+        Taint::Values {
+            cmp: Default::default(),
+            div: Default::default(),
         }
     }
+
+    /// May an ORDERED COMPARE over `ids` diverge between native and MLIR?
+    pub(crate) fn any_cmp(&self, ids: &[ValueId]) -> bool {
+        match self {
+            Taint::All => true,
+            Taint::Values { cmp, .. } => ids.iter().any(|id| cmp.contains(id)),
+        }
+    }
+
+    /// May a `/` or `%` over `ids` see a full-width unsigned value?
+    pub(crate) fn any_div(&self, ids: &[ValueId]) -> bool {
+        match self {
+            Taint::All => true,
+            Taint::Values { div, .. } => ids.iter().any(|id| div.contains(id)),
+        }
+    }
+}
+
+/// Which of the two [`Taint`] sets a propagation pass computes.
+#[cfg(feature = "std-surface")]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Precision {
+    /// MLIR's `ScalarU64` kind, exactly.
+    Exact,
+    /// Any value whose declared type is or contains `u64`.
+    Wide,
 }
 
 #[cfg(feature = "std-surface")]
 impl UnsignedDoors {
     pub(crate) fn from_module(module: &IRModule) -> Self {
-        let mut params = std::collections::BTreeMap::new();
-        let mut ret = std::collections::BTreeSet::new();
-        let mut defined = std::collections::BTreeSet::new();
-        collect_defined(&module.instrs, &mut defined);
+        let mut doors = Self {
+            params_exact: Default::default(),
+            params_wide: Default::default(),
+            ret_exact: Default::default(),
+            ret_wide: Default::default(),
+            defined: Default::default(),
+            nonneg_consts: Default::default(),
+        };
+        collect_defined(&module.instrs, &mut doors.defined);
+        collect_nonneg_consts(&module.instrs, &mut doors.nonneg_consts);
         for (name, (ps, r)) in &module.fn_signatures {
-            params.insert(name.clone(), ps.iter().map(is_unsigned_wide_type).collect());
-            if r.iter().any(is_unsigned_wide_type) {
-                ret.insert(name.clone());
+            doors
+                .params_exact
+                .insert(name.clone(), ps.iter().map(is_u64).collect());
+            doors
+                .params_wide
+                .insert(name.clone(), ps.iter().map(contains_u64).collect());
+            if r.as_ref().is_some_and(is_u64) {
+                doors.ret_exact.insert(name.clone());
+            }
+            if r.as_ref().is_some_and(contains_u64) {
+                doors.ret_wide.insert(name.clone());
             }
         }
-        Self {
-            params,
-            ret,
-            defined,
-        }
+        doors
     }
 
     /// The tainted values of the body of `owner` (the module's top level for `None`),
     /// starting from `inherited` (the enclosing body's taint).
     ///
-    /// UNDECIDABLE => REFUSE (audit 2026-09-16). A parameter of a function whose own
-    /// signature is unknown, and the result of a call to a module-DEFINED function
-    /// whose signature is unknown, are tainted. Measured before this rule: a NESTED
-    /// `fn inner(x: u64) -> i64 { return x / 2 }` has no `fn_signatures` entry
-    /// (signature collection does not recurse into bodies), so it read as untainted
-    /// and fence 1 admitted the unsigned division — stopped only by the frozen ELF's
-    /// refusal of nested functions, i.e. a first fence deferring to the second.
+    /// UNDECIDABLE => REFUSE (audit 2026-09-16), at both precisions. A parameter of a
+    /// function whose own signature is unknown, and the result of a call to a
+    /// module-DEFINED function whose signature is unknown, are tainted. Measured before
+    /// this rule: a NESTED `fn inner(x: u64) -> i64 { return x / 2 }` has no
+    /// `fn_signatures` entry (signature collection does not recurse into bodies), so it
+    /// read as untainted and fence 1 admitted the unsigned division — stopped only by
+    /// the frozen ELF's refusal of nested functions, i.e. a first fence deferring to the
+    /// second.
     pub(crate) fn body_taint(
         &self,
         owner: Option<&str>,
@@ -93,26 +149,31 @@ impl UnsignedDoors {
         body: &[Instr],
         inherited: &Taint,
     ) -> Taint {
-        let mut set = match inherited {
+        let (mut cmp, mut div) = match inherited {
             Taint::All => return Taint::All,
-            Taint::Values(s) => s.clone(),
+            Taint::Values { cmp, div } => (cmp.clone(), div.clone()),
         };
-        let param_tainted = |index: usize| match owner {
-            None => false,
-            Some(name) => self
-                .params
-                .get(name)
-                .is_none_or(|ps| ps.get(index).copied().unwrap_or(true)),
-        };
-        for (index, (_, id)) in fn_params.iter().enumerate() {
-            if param_tainted(index) {
-                set.insert(*id);
+        for (precision, set) in [(Precision::Exact, &mut cmp), (Precision::Wide, &mut div)] {
+            let table = match precision {
+                Precision::Exact => &self.params_exact,
+                Precision::Wide => &self.params_wide,
+            };
+            let param_tainted = |index: usize| match owner {
+                None => false,
+                Some(name) => table
+                    .get(name)
+                    .is_none_or(|ps| ps.get(index).copied().unwrap_or(true)),
+            };
+            for (index, (_, id)) in fn_params.iter().enumerate() {
+                if param_tainted(index) {
+                    set.insert(*id);
+                }
             }
+            // Loop back-edges carry a value defined LATER in the body into an earlier
+            // use, so propagate to a fixpoint (the set only grows; bounded by the ids).
+            while self.propagate(body, &param_tainted, set, precision) {}
         }
-        // Loop back-edges carry a value defined LATER in the body into an earlier use,
-        // so propagate to a fixpoint (the set only grows; it is bounded by the ids).
-        while self.propagate(body, &param_tainted, &mut set) {}
-        Taint::Values(set)
+        Taint::Values { cmp, div }
     }
 
     /// One forward pass over `body`; returns whether the set grew. Covers exactly the
@@ -124,7 +185,14 @@ impl UnsignedDoors {
         body: &[Instr],
         param_tainted: &dyn Fn(usize) -> bool,
         set: &mut std::collections::BTreeSet<ValueId>,
+        precision: Precision,
     ) -> bool {
+        let ret = match precision {
+            Precision::Exact => &self.ret_exact,
+            Precision::Wide => &self.ret_wide,
+        };
+        let unknown_sig =
+            |name: &str| self.defined.contains(name) && !self.params_exact.contains_key(name);
         let mut nested_grew = false;
         let mut grew = false;
         let mut mark = |set: &mut std::collections::BTreeSet<ValueId>, id: ValueId| {
@@ -133,20 +201,28 @@ impl UnsignedDoors {
         for instr in body {
             match instr {
                 Instr::Param { dst, index, .. } if param_tainted(*index) => mark(set, *dst),
-                Instr::Call { dst, name, .. }
-                    if self.ret.contains(name)
-                        || (self.defined.contains(name) && !self.params.contains_key(name)) =>
-                {
+                Instr::Call { dst, name, .. } if ret.contains(name) || unknown_sig(name) => {
                     mark(set, *dst)
                 }
                 // A compare yields 0/1 — identical signed and unsigned — so, as in MLIR,
-                // it does not propagate the kind.
+                // it does not propagate the kind. `x & c` with a NON-NEGATIVE constant `c`
+                // has bit 63 clear, so signed and unsigned operators agree on it even
+                // where MLIR kinds it `ScalarU64` (audit 2026-09-16: `m = a & 255; m < 10`
+                // is correct natively on main for every input and was refused).
                 Instr::BinOp { dst, op, lhs, rhs }
-                    if !is_compare(op) && (set.contains(lhs) || set.contains(rhs)) =>
+                    if !is_compare(op)
+                        && !self.masks_to_nonnegative(op, lhs, rhs)
+                        && (set.contains(lhs) || set.contains(rhs)) =>
                 {
                     mark(set, *dst)
                 }
-                Instr::ArrayLoad { dst, base, .. } if set.contains(base) => mark(set, *dst),
+                // MLIR loads a `[u64; N]` element as `ScalarI64` (the element maps to the
+                // i64 ABI type), so only the wide set follows an element.
+                Instr::ArrayLoad { dst, base, .. }
+                    if precision == Precision::Wide && set.contains(base) =>
+                {
+                    mark(set, *dst)
+                }
                 Instr::If {
                     cond_instrs,
                     then_instrs,
@@ -158,8 +234,9 @@ impl UnsignedDoors {
                     ..
                 } => {
                     for nested in [cond_instrs, then_instrs, else_instrs] {
-                        nested_grew |= self.propagate(nested, param_tainted, set);
+                        nested_grew |= self.propagate(nested, param_tainted, set, precision);
                     }
+                    // Signedness ABSORPTION at the join (MLIR: I64 ⊔ U64 = U64).
                     if set.contains(then_result) || set.contains(else_result) {
                         mark(set, *dst);
                     }
@@ -178,23 +255,35 @@ impl UnsignedDoors {
                     ..
                 } => {
                     for nested in [cond_instrs, loop_body] {
-                        nested_grew |= self.propagate(nested, param_tainted, set);
+                        nested_grew |= self.propagate(nested, param_tainted, set, precision);
                     }
-                    // A carried variable is one value across the header block: its
-                    // pre-loop id (which the condition and body reference), its
-                    // post-body id, any `break`/`continue` snapshot of it, and its exit
-                    // id. If any of them is tainted, all of them are.
                     let mut exits = Vec::new();
-                    collect_loop_exits(loop_body, &mut exits);
+                    if precision == Precision::Wide {
+                        collect_loop_exits(loop_body, &mut exits);
+                    }
                     for (k, (var, post)) in live_vars.iter().enumerate() {
                         let init = init_ids.get(k).copied();
                         let exit = exit_ids.get(k).copied();
-                        let carried = init.is_some_and(|i| set.contains(&i))
-                            || set.contains(post)
-                            || exits.iter().any(|(n, id)| n == var && set.contains(id));
-                        if carried {
-                            for id in [init, Some(*post), exit].into_iter().flatten() {
-                                mark(set, id);
+                        let init_tainted = init.is_some_and(|i| set.contains(&i));
+                        match precision {
+                            // MLIR types the header and exit block args by the INIT
+                            // kind; the post-body value does not absorb into them.
+                            Precision::Exact => {
+                                if let (true, Some(exit)) = (init_tainted, exit) {
+                                    mark(set, exit);
+                                }
+                            }
+                            // Wide: the variable is one value across the header — its
+                            // init, post-body id, any break/continue snapshot and exit.
+                            Precision::Wide => {
+                                let carried = init_tainted
+                                    || set.contains(post)
+                                    || exits.iter().any(|(n, id)| n == var && set.contains(id));
+                                if carried {
+                                    for id in [init, Some(*post), exit].into_iter().flatten() {
+                                        mark(set, id);
+                                    }
+                                }
                             }
                         }
                     }
@@ -203,6 +292,30 @@ impl UnsignedDoors {
             }
         }
         grew || nested_grew
+    }
+}
+
+#[cfg(feature = "std-surface")]
+impl UnsignedDoors {
+    /// Is `lhs op rhs` a bitwise AND with a non-negative constant (bit 63 cleared)?
+    fn masks_to_nonnegative(&self, op: &crate::ir::BinOp, lhs: &ValueId, rhs: &ValueId) -> bool {
+        matches!(op, crate::ir::BinOp::BitAnd)
+            && (self.nonneg_consts.contains(lhs) || self.nonneg_consts.contains(rhs))
+    }
+}
+
+/// Every non-negative `ConstI64` id in `instrs`, at any depth.
+#[cfg(feature = "std-surface")]
+fn collect_nonneg_consts(instrs: &[Instr], out: &mut std::collections::BTreeSet<ValueId>) {
+    for instr in instrs {
+        if let Instr::ConstI64(id, v) = instr {
+            if *v >= 0 {
+                out.insert(*id);
+            }
+        }
+        for nested in crate::ir::instr_bodies(instr) {
+            collect_nonneg_consts(nested, out);
+        }
     }
 }
 
@@ -274,8 +387,14 @@ impl UnsignedDoors {
     }
 }
 
+/// `u64` exactly: the one annotation MLIR seeds as `ScalarU64` (`type_ann_to_value_kind`).
 #[cfg(feature = "std-surface")]
-fn is_unsigned_wide_type(ty: &TypeAnn) -> bool {
+fn is_u64(ty: &TypeAnn) -> bool {
+    matches!(ty, TypeAnn::Named(n) if n == "u64")
+}
+
+#[cfg(feature = "std-surface")]
+fn contains_u64(ty: &TypeAnn) -> bool {
     // Recurse through every type constructor that can CARRY a full-width unsigned
     // value into a body: an array/slice element, a reference target, a tuple element,
     // a generic argument. A bare `Named("u64")` match missed `fn f(a: [u64; 2]) ->
@@ -283,12 +402,10 @@ fn is_unsigned_wide_type(ty: &TypeAnn) -> bool {
     // (audit 2026-09-16).
     match ty {
         TypeAnn::Named(n) => n == "u64",
-        TypeAnn::Slice { element, .. } | TypeAnn::Array { element, .. } => {
-            is_unsigned_wide_type(element)
-        }
-        TypeAnn::Ref { target, .. } => is_unsigned_wide_type(target),
-        TypeAnn::Tuple { elements, .. } => elements.iter().any(is_unsigned_wide_type),
-        TypeAnn::Generic { args, .. } => args.iter().any(is_unsigned_wide_type),
+        TypeAnn::Slice { element, .. } | TypeAnn::Array { element, .. } => contains_u64(element),
+        TypeAnn::Ref { target, .. } => contains_u64(target),
+        TypeAnn::Tuple { elements, .. } => elements.iter().any(contains_u64),
+        TypeAnn::Generic { args, .. } => args.iter().any(contains_u64),
         _ => false,
     }
 }
@@ -595,136 +712,5 @@ mod tests {
             profile_frozen_admits(&m).unwrap_err().construct,
             "binop.div_mod_unsigned"
         );
-    }
-
-    /// Lower real source through the production pipeline and ask the fence. These
-    /// tests pin the module SHAPE lowering actually produces — the hand-built-IR tests
-    /// above can insert a signature that lowering never provides (which is exactly how
-    /// the nested-function door stayed open).
-    #[cfg(feature = "std-surface")]
-    fn fence(src: &str) -> Option<&'static str> {
-        let module = crate::parser::parse(src).expect("fixture must parse");
-        let ir = crate::eval::lower_to_ir(&module).expect("fixture must lower");
-        profile_frozen_admits(&ir).err().map(|r| r.construct)
-    }
-
-    #[cfg(feature = "std-surface")]
-    #[test]
-    fn pipeline_nested_fn_with_u64_param_is_refused() {
-        // Before: admitted by fence 1 (no `fn_signatures` entry for `inner`).
-        let nested = "fn main() -> i64 {\n    fn inner(x: u64) -> i64 {\n        return x / 2\n    }\n    return 0\n}\n";
-        assert!(fence(nested).is_some(), "nested u64 div must be refused");
-        // Undecidable => refuse also covers a nested i64 body (its signature is equally
-        // unknown). No capability is lost: the frozen ELF refuses nested fns anyway.
-        let nested_i64 = "fn main() -> i64 {\n    fn inner(x: i64) -> i64 {\n        return x / 2\n    }\n    return 0\n}\n";
-        assert!(fence(nested_i64).is_some());
-        // Control: the same helper at TOP level has a known i64 signature and stays
-        // admitted, so the refusal above is about nesting, not about `/`.
-        let top = "fn inner(x: i64) -> i64 {\n    return x / 2\n}\nfn main() -> i64 {\n    return inner(8)\n}\n";
-        assert_eq!(
-            fence(top),
-            None,
-            "top-level signed division must stay admitted"
-        );
-        let top_u64 =
-            "fn inner(x: u64) -> i64 {\n    return x / 2\n}\nfn main() -> i64 {\n    return 0\n}\n";
-        assert_eq!(fence(top_u64), Some("binop.div_mod_unsigned"));
-    }
-
-    #[cfg(feature = "std-surface")]
-    #[test]
-    fn pipeline_u64_inside_an_array_param_taints_the_body() {
-        let arr = "fn f(a: [u64; 2]) -> i64 {\n    return a[0] / a[1]\n}\nfn main() -> i64 {\n    return 0\n}\n";
-        assert_eq!(fence(arr), Some("binop.div_mod_unsigned"));
-        let arr_i64 = "fn f(a: [i64; 2]) -> i64 {\n    return a[0] / a[1]\n}\nfn main() -> i64 {\n    return 0\n}\n";
-        assert_eq!(fence(arr_i64), None, "the i64 twin must stay admitted");
-    }
-
-    /// The `let x: u64` / `as u64` door is shut by `admit_call` refusing the synthesised
-    /// `__mind_conv_u64`, INDEPENDENTLY of the native bridge's closure check. Pinned by
-    /// name because nothing else asserts it: an intrinsic allowlist added to
-    /// `admit_call` by analogy with `__mind_conv_i64` would silently reopen the
-    /// unsigned-division hole (audit 2026-09-16).
-    #[cfg(feature = "std-surface")]
-    #[test]
-    fn conv_u64_call_is_refused_by_the_fence_itself() {
-        let cast =
-            "fn main() -> i64 {\n    let y: i64 = 84\n    let x: u64 = y as u64\n    return 0\n}\n";
-        let module = crate::parser::parse(cast).expect("parse");
-        let ir = crate::eval::lower_to_ir(&module).expect("fixture must lower");
-        fn has_conv_u64(instrs: &[Instr]) -> bool {
-            instrs.iter().any(|i| {
-                matches!(i, Instr::Call { name, .. } if name == "__mind_conv_u64")
-                    || crate::ir::instr_bodies(i).iter().any(|b| has_conv_u64(b))
-            })
-        }
-        assert!(
-            has_conv_u64(&ir.instrs),
-            "positive control: lowering emits __mind_conv_u64"
-        );
-        assert_eq!(fence(cast), Some("call.undefined_or_builtin"));
-    }
-
-    /// PARITY with main 5724a6ee (measured 2026-09-16: native and MLIR both return 3):
-    /// an i64 loop guard in a function with a `u64` parameter is not an unsigned
-    /// compare. The body-level taint refused it.
-    #[cfg(feature = "std-surface")]
-    #[test]
-    fn pipeline_i64_compare_beside_a_u64_param_is_admitted() {
-        let src = "fn f(a: u64) -> i64 {\n    let i = 0\n    while i < 3 {\n        i = i + 1\n    }\n    return i\n}\nfn main() -> i64 {\n    return f(7)\n}\n";
-        assert_eq!(fence(src), None);
-    }
-
-    /// `usize` is signed on BOTH backends today, so it is not tainted (main compiles
-    /// `a < b` on `usize` natively, returning 1 for `f(1, 2)`). If MLIR ever selects an
-    /// unsigned predicate for `usize`, this fails and `is_unsigned_wide_type` must add it.
-    #[cfg(feature = "std-surface")]
-    #[test]
-    fn usize_is_signed_on_the_mlir_backend_too() {
-        let src = "fn f(a: usize, b: usize) -> i64 {\n    if a < b {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return f(1, 2)\n}\n";
-        assert_eq!(fence(src), None);
-        // The MLIR half needs the lowering module; the `mlir-build` tiers run it.
-        #[cfg(any(feature = "mlir-lowering", feature = "mlir-build"))]
-        {
-            let module = crate::parser::parse(src).expect("parse");
-            let mut ir = crate::eval::lower_to_ir(&module).expect("lower");
-            let text = crate::mlir::compile_ir_to_mlir_text(&mut ir).expect("mlir text");
-            assert!(
-                text.contains("cmpi \"slt\""),
-                "usize compare must be signed:\n{text}"
-            );
-            assert!(
-                !text.contains("cmpi \"ult\""),
-                "usize compare turned unsigned:\n{text}"
-            );
-        }
-    }
-
-    /// The miscompile the compare refusal exists for, measured on main 5724a6ee: with
-    /// `b = 18446744073709551615`, `a < b` gives 0 natively and 1 on MLIR, and
-    /// `big() > 5` gives 0 natively and 1 on MLIR.
-    #[cfg(feature = "std-surface")]
-    #[test]
-    fn pipeline_unsigned_operand_compares_are_refused() {
-        let param = "fn f(a: u64, b: u64) -> i64 {\n    if a < b {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return f(1, 18446744073709551615)\n}\n";
-        assert_eq!(fence(param), Some("binop.ordered_compare_unsigned"));
-        let ret = "fn big() -> u64 {\n    return 18446744073709551615\n}\nfn main() -> i64 {\n    if big() > 5 {\n        return 1\n    }\n    return 0\n}\n";
-        assert_eq!(fence(ret), Some("binop.ordered_compare_unsigned"));
-    }
-
-    /// The taint follows the value through arithmetic, an `if` merge, and a loop-carried
-    /// variable — including a use in the loop CONDITION of a value that only becomes
-    /// unsigned on the back-edge (the fixpoint).
-    #[cfg(feature = "std-surface")]
-    #[test]
-    fn pipeline_taint_follows_arithmetic_merges_and_loops() {
-        let arith = "fn f(a: u64) -> i64 {\n    let s = a + 1\n    if s > 5 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n";
-        assert_eq!(fence(arith), Some("binop.ordered_compare_unsigned"));
-        let merge = "fn f(a: u64, c: i64) -> i64 {\n    let m = 0\n    if c == 1 {\n        m = a\n    }\n    if m > 5 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n";
-        assert_eq!(fence(merge), Some("binop.ordered_compare_unsigned"));
-        let back_edge = "fn f(a: u64) -> i64 {\n    let s = 0\n    while s < 100 {\n        s = s + a\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n";
-        assert_eq!(fence(back_edge), Some("binop.ordered_compare_unsigned"));
-        let after_loop = "fn f(a: u64) -> i64 {\n    let s = 0\n    let i = 0\n    while i < 3 {\n        s = s + a\n        i = i + 1\n    }\n    return s / 2\n}\nfn main() -> i64 {\n    return 0\n}\n";
-        assert_eq!(fence(after_loop), Some("binop.div_mod_unsigned"));
     }
 }

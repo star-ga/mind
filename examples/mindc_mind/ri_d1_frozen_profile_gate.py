@@ -142,8 +142,8 @@ IN_PROFILE = [
      "fn lt(a:i64,b:i64)->i64{return a < b;} fn main()->i64{return lt(3,5);}", 1),
 
     # ---- VALUE-level unsigned taint: what main 5724a6ee compiled must still compile ----
-    # The taint follows OPERANDS (as MLIR's `divui`/`ult` selection does), not the
-    # signature. A body-level taint refused both of these; measured 2026-09-16, main's
+    # The compare taint follows OPERANDS exactly as MLIR's `ult`/`slt` selection does,
+    # not the signature. A body-level taint refused both of these; measured 2026-09-16, main's
     # native build returns 3 for the loop and MLIR emits `remsi` for the u64-returning
     # signed `%` (native == MLIR == 2).
     ("i64_guard_in_u64_fn",
@@ -152,6 +152,20 @@ IN_PROFILE = [
     ("u64_ret_signed_mod",
      "fn m(a:i64,b:i64)->u64{return a % b;} "
      "fn main()->i64{let r=m(47,5); if r == 2 {return 2;} return 0;}", 2),
+    # MLIR compares a loop-carried accumulator by its INIT kind and a `[u64; N]` element
+    # as i64, so both are signed on BOTH backends and main compiles them natively
+    # (audit 2026-09-16: an over-wide taint refused these).
+    ("loop_carried_signed_lt",
+     "fn f(a:u64)->i64{let mut s=0; while s < 100 {s=s+a;} return 1;} "
+     "fn main()->i64{return f(7);}", 1),
+    ("u64_array_elem_lt",
+     "fn f(a:[u64;2])->i64{if a[0] < a[1] {return 1;} return 0;} "
+     "fn main()->i64{return 0;}", 0),
+    # `a & 255` has bit 63 clear, so the signed native compare is right for every input
+    # even though MLIR kinds it unsigned; main compiled it natively.
+    ("u64_masked_lt",
+     "fn f(a:u64)->i64{let m=a & 255; if m < 10 {return 1;} return 0;} "
+     "fn main()->i64{return f(5);}", 1),
 ]
 
 # ---- signed i64 div/mod edge corpus + the Tier-0 RH totality drivers ----
@@ -233,6 +247,11 @@ OUT_PROFILE = [
     ("u64_param_mod",
      "fn m(a:u64,b:i64)->i64{return a % b;} fn main()->i64{return 0;}",
      "first", "binop.div_mod_unsigned"),
+    # The frozen ELF encodes a literal in [2^63, 2^63+254] as 0x7fffffffffffffXX
+    # (measured by disassembly on main 5724a6ee, which compiled it silently wrong).
+    ("int_literal_min_band",
+     "fn g(a:u64)->i64{return 0;} fn main()->i64{return g(9223372036854775808);}",
+     "first", "const.i64_min_band_literal"),
     # The `let x: u64 = y as u64` door: no u64 appears in any fn signature, so the
     # signature taint cannot see it. It is closed instead by `admit_call` refusing the
     # synthesised `__mind_conv_u64` — the LOAD-BEARING coupling documented in
@@ -454,7 +473,7 @@ def main() -> int:
     # Positive-count floor (anti-false-green): a job that builds NOTHING also shows zero
     # toolchain execve. Pin the corpus size so a silently-deleted fixture is a FAILURE,
     # not a vacuous pass. Bump deliberately when the allowlist+corpus grow together.
-    PINNED_IN_PROFILE = 20
+    PINNED_IN_PROFILE = 23
     corpus_rows = len([e for e in IN_PROFILE if e[0] in CORPUS_NAMES])
     if corpus_rows != CORPUS_ROWS:
         print(
@@ -474,7 +493,7 @@ def main() -> int:
             f"digest fixture's pinned exit ({digest_exit})"
         )
         return 1
-    PINNED_OUT_PROFILE = 9
+    PINNED_OUT_PROFILE = 10
     # EXACT, not floors. Both lists are known GAPS, so neither may grow silently (more
     # refusal = capability regression) nor shrink silently (something became buildable,
     # which owes an IN_PROFILE entry with a real expected exit before anyone may call it
