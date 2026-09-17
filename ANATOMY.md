@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1832 | **Est. tokens:** ~3,508,902
-**Generated:** 2026-09-16 08:33 UTC
+**Files:** 1833 | **Est. tokens:** ~3,509,693
+**Generated:** 2026-09-17 00:39 UTC
 
 ## Token Budget Guide
 
@@ -135,7 +135,7 @@
 | `src/types/` | 10 | ~20,911 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 402 | ~830,170 |
+| `tests/` | 403 | ~830,961 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -1715,7 +1715,8 @@
 - `crypto_vectors_driver.py` (~2653 tok, huge) — # Official-vector driver for std/aes_gcm.mind + std/hkdf.mind (pure-MIND crypto).
 - `deref_assign_cross_module_owner.rs` (~1813 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `deref_assign_identity_run.rs` (~1103 tok, large) — Copyright 2025-2026 STARGA Inc.
-- `deref_assign_slice0.rs` (~8429 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `deref_assign_slice0_formal_keyed.rs` (~5275 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `deref_assign_slice0.rs` (~3945 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `determinism_veto_control.rs` (~1490 tok, large) — Copyright 2025 STARGA Inc.
 - `diagnostic_code_contract.rs` (~558 tok, large) — Copyright 2026 STARGA Inc.
 - `diagnostics_parse.rs` (~1112 tok, large) — Copyright 2025 STARGA Inc.
