@@ -14,7 +14,7 @@ use crate::ir::{IRModule, Instr, ValueId};
 #[cfg(feature = "std-surface")]
 mod mask;
 #[cfg(feature = "std-surface")]
-use mask::{collect_nonneg_consts, mark_masked};
+use mask::{collect_loop_inits, collect_nonneg_consts, mark_masked};
 
 /// Which call results and parameters carry a full-width UNSIGNED (`u64`) value, at two
 /// precisions (see [`Taint`]). NARROW unsigned (`u8`/`u16`/`u32`) is deliberately NOT
@@ -191,7 +191,9 @@ impl UnsignedDoors {
         let mut nonneg = std::collections::BTreeSet::new();
         collect_nonneg_consts(body, &mut nonneg);
         let mut masked = std::collections::BTreeSet::new();
-        while mark_masked(body, &nonneg, &mut masked) {}
+        let mut poisoned = std::collections::BTreeSet::new();
+        collect_loop_inits(body, &mut poisoned);
+        while mark_masked(body, &nonneg, &poisoned, &mut masked) {}
         Taint::Values { cmp, div, masked }
     }
 

@@ -212,6 +212,42 @@ const COMPARE_SHAPES: &[(&str, &str, bool, bool)] = &[
         true,
         true,
     ),
+    (
+        "a masked loop variable modified in the body is not a mask (compare in body)",
+        "fn f(a: u64) -> i64 {\n    let m = a & 255\n    let i = 0\n    let r = 0\n    while i < 2 {\n        if m < 0 {\n            r = 1\n        }\n        m = m - 256\n        i = i + 1\n    }\n    return r\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        true,
+    ),
+    (
+        "a masked loop variable compared in the loop CONDITION is not a mask",
+        "fn f(a: u64) -> i64 {\n    let m = a & 255\n    let i = 0\n    while m < 300 {\n        m = m - 256\n        i = i + 1\n        if i > 5 {\n            m = 1000\n        }\n    }\n    return i\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        true,
+    ),
+    (
+        "a loop-carried constant is not a non-negative constant",
+        "fn f(a: u64) -> i64 {\n    let c = 255\n    let i = 0\n    let r = 0\n    while i < 2 {\n        let m = a & c\n        if m < 0 {\n            r = 1\n        }\n        c = -1\n        i = i + 1\n    }\n    return r\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        true,
+    ),
+    (
+        "an if-join with a loop variable inside the loop is not a mask",
+        "fn f(a: u64, c: i64) -> i64 {\n    let m = a & 255\n    let i = 0\n    let r = 0\n    while i < 2 {\n        if c == 1 {\n            m = a & 15\n        }\n        if m < 0 {\n            r = 1\n        }\n        m = m - 256\n        i = i + 1\n    }\n    return r\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        true,
+    ),
+    (
+        "or with a loop variable is not a mask",
+        "fn f(a: u64) -> i64 {\n    let m = a & 255\n    let i = 0\n    let r = 0\n    while i < 2 {\n        let t = m | (a & 15)\n        if t < 0 {\n            r = 1\n        }\n        m = m - 256\n        i = i + 1\n    }\n    return r\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        true,
+    ),
+    (
+        "a mask read inside a loop but never reassigned stays a mask",
+        "fn f(a: u64) -> i64 {\n    let m = a & 255\n    let i = 0\n    let r = 0\n    while i < 2 {\n        if m < 0 {\n            r = 1\n        }\n        i = i + 1\n    }\n    return r\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        false,
+    ),
 ];
 
 /// The fence refuses an ordered compare ONLY where MLIR emits an unsigned predicate
@@ -266,6 +302,12 @@ fn pipeline_division_uses_the_wide_taint() {
     assert_eq!(fence(resigned_div), Some("binop.div_mod_unsigned"));
     let resigned_mod = "fn f(a: u64) -> i64 {\n    let m = a & 255\n    let t = m - 256\n    return t % 7\n}\nfn main() -> i64 {\n    return 0\n}\n";
     assert_eq!(fence(resigned_mod), Some("binop.div_mod_unsigned"));
+    // A loop init id names the header argument, which holds the POST-body value from the
+    // second iteration on (audit 2026-09-16: native 0 vs MLIR divui 255 for both).
+    let loop_masked_div = "fn f(a: u64) -> i64 {\n    let m = a & 255\n    let i = 0\n    let r = 0\n    while i < 2 {\n        r = m / 2\n        m = m - 256\n        i = i + 1\n    }\n    return r\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(fence(loop_masked_div), Some("binop.div_mod_unsigned"));
+    let loop_const_div = "fn f(a: u64) -> i64 {\n    let c = 255\n    let i = 0\n    let r = 0\n    while i < 2 {\n        r = (a & c) / 2\n        c = -1\n        i = i + 1\n    }\n    return r\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(fence(loop_const_div), Some("binop.div_mod_unsigned"));
 }
 
 /// The literal band the frozen native ELF mis-encodes (measured: `9223372036854775808`
