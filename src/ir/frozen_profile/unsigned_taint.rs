@@ -11,10 +11,13 @@
 use crate::ast::TypeAnn;
 use crate::ir::{IRModule, Instr, ValueId};
 
+mod taint;
+pub(crate) use taint::Taint;
+
 #[cfg(feature = "std-surface")]
 mod mask;
 #[cfg(feature = "std-surface")]
-use mask::{collect_loop_inits, collect_nonneg_consts, mark_masked};
+use mask::{collect_consts, collect_loop_inits, mark_masked};
 
 /// Which call results and parameters carry a full-width UNSIGNED (`u64`) value, at two
 /// precisions (see [`Taint`]). NARROW unsigned (`u8`/`u16`/`u32`) is deliberately NOT
@@ -33,77 +36,15 @@ pub(crate) struct UnsignedDoors {
     ret_exact: std::collections::BTreeSet<String>,
     /// Callees whose result type contains `u64`.
     ret_wide: std::collections::BTreeSet<String>,
+    /// Callee name -> is each parameter `u32` (MLIR seeds `ScalarU32`)?
+    params_u32: std::collections::BTreeMap<String, Vec<bool>>,
+    /// Callees whose RESULT is `u32`.
+    ret_u32: std::collections::BTreeSet<String>,
     /// Every function DEFINED in the module (at any nesting depth).
     defined: std::collections::BTreeSet<String>,
 }
 
-/// The values of ONE body that may hold a full-width unsigned value at run time, at two
-/// precisions, one per refused operator family.
-///
-/// * `cmp` — ordered compares. EXACTLY the values the MLIR backend kinds `ScalarU64`
-///   (its `ult`/`slt` choice): seeded by `u64` parameters and `u64` call results,
-///   propagated through non-compare arithmetic and `if` joins (signedness absorption),
-///   but NOT into a loop-carried variable (MLIR's header/exit block args keep the init
-///   kind) and NOT into an array element (`[u64; N]` loads as `ScalarI64`). Refusing
-///   more than this refuses programs main 5724a6ee compiles natively with the same
-///   result as MLIR (audit 2026-09-16: `let s = 0 while .. { s = s + a }` then
-///   `s < 100` — native == MLIR == 1 on main). Each rule is pinned against the emitted
-///   MLIR by the `mlir_*_signedness` tests, so a change to MLIR's kinds turns them red.
-/// * `div` — `/` and `%`. A conservative SUPERSET: also array elements and loop-carried
-///   variables. Main refused every native division, so over-refusing here loses nothing
-///   main had, and it keeps the newly admitted division away from values whose DECLARED
-///   type is unsigned even where MLIR itself divides them signed.
-///
-/// It used to be one BODY-level bit — any `u64` in the signature refused every `/`, `%`
-/// and ordered compare in the body — which refused `fn f(a: u64) -> i64 { let i = 0
-/// while i < 3 { i = i + 1 } return i }` (3 on main, native and MLIR alike).
-pub(crate) enum Taint {
-    /// No signature table: every value is treated as possibly unsigned.
-    #[cfg_attr(feature = "std-surface", allow(dead_code))]
-    All,
-    #[cfg_attr(not(feature = "std-surface"), allow(dead_code))]
-    Values {
-        cmp: std::collections::BTreeSet<ValueId>,
-        div: std::collections::BTreeSet<ValueId>,
-        /// Values provably in `[0, 2^63)` — bit 63 clear, so signed and unsigned
-        /// operators agree on them. Consulted only at the USE site: a masked value stays
-        /// in `cmp`/`div` so anything computed FROM it (`m - 256`) is tainted again.
-        masked: std::collections::BTreeSet<ValueId>,
-    },
-}
-
-impl Taint {
-    /// The taint of a scope with no unsigned value in it.
-    pub(crate) fn empty() -> Self {
-        Taint::Values {
-            cmp: Default::default(),
-            div: Default::default(),
-            masked: Default::default(),
-        }
-    }
-
-    /// May an ORDERED COMPARE over `ids` diverge between native and MLIR?
-    pub(crate) fn any_cmp(&self, ids: &[ValueId]) -> bool {
-        match self {
-            Taint::All => true,
-            Taint::Values { cmp, masked, .. } => ids
-                .iter()
-                .any(|id| cmp.contains(id) && !masked.contains(id)),
-        }
-    }
-
-    /// May a `/` or `%` over `ids` see a full-width unsigned value?
-    pub(crate) fn any_div(&self, ids: &[ValueId]) -> bool {
-        match self {
-            Taint::All => true,
-            Taint::Values { div, masked, .. } => ids
-                .iter()
-                .any(|id| div.contains(id) && !masked.contains(id)),
-        }
-    }
-}
-
-/// Which of the two [`Taint`] sets a propagation pass computes.
+/// Which taint set a propagation pass computes.
 #[cfg(feature = "std-surface")]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Precision {
@@ -111,6 +52,8 @@ enum Precision {
     Exact,
     /// Any value whose declared type is or contains `u64`.
     Wide,
+    /// An over-approximation of MLIR's `ScalarU32` kind.
+    Narrow,
 }
 
 #[cfg(feature = "std-surface")]
@@ -121,6 +64,8 @@ impl UnsignedDoors {
             params_wide: Default::default(),
             ret_exact: Default::default(),
             ret_wide: Default::default(),
+            params_u32: Default::default(),
+            ret_u32: Default::default(),
             defined: Default::default(),
         };
         collect_defined(&module.instrs, &mut doors.defined);
@@ -136,6 +81,13 @@ impl UnsignedDoors {
             }
             if r.as_ref().is_some_and(contains_u64) {
                 doors.ret_wide.insert(name.clone());
+            }
+            let is_u32 = |ty: &TypeAnn| matches!(ty, TypeAnn::ScalarU32);
+            doors
+                .params_u32
+                .insert(name.clone(), ps.iter().map(is_u32).collect());
+            if r.as_ref().is_some_and(is_u32) {
+                doors.ret_u32.insert(name.clone());
             }
         }
         doors
@@ -168,10 +120,16 @@ impl UnsignedDoors {
         }
         let mut cmp = std::collections::BTreeSet::new();
         let mut div = std::collections::BTreeSet::new();
-        for (precision, set) in [(Precision::Exact, &mut cmp), (Precision::Wide, &mut div)] {
+        let mut narrow = std::collections::BTreeSet::new();
+        for (precision, set) in [
+            (Precision::Exact, &mut cmp),
+            (Precision::Wide, &mut div),
+            (Precision::Narrow, &mut narrow),
+        ] {
             let table = match precision {
                 Precision::Exact => &self.params_exact,
                 Precision::Wide => &self.params_wide,
+                Precision::Narrow => &self.params_u32,
             };
             let param_tainted = |index: usize| match owner {
                 None => false,
@@ -188,13 +146,27 @@ impl UnsignedDoors {
             // use, so propagate to a fixpoint (the set only grows; bounded by the ids).
             while self.propagate(body, &param_tainted, set, precision) {}
         }
-        let mut nonneg = std::collections::BTreeSet::new();
-        collect_nonneg_consts(body, &mut nonneg);
-        let mut masked = std::collections::BTreeSet::new();
         let mut poisoned = std::collections::BTreeSet::new();
         collect_loop_inits(body, &mut poisoned);
-        while mark_masked(body, &nonneg, &poisoned, &mut masked) {}
-        Taint::Values { cmp, div, masked }
+        // A loop init id is a header block argument, not a literal (see mask.rs).
+        let mut consts = std::collections::BTreeMap::new();
+        collect_consts(body, &mut consts);
+        consts.retain(|id, _| !poisoned.contains(id));
+        let nonneg_consts: std::collections::BTreeSet<ValueId> = consts
+            .iter()
+            .filter(|(_, v)| **v >= 0)
+            .map(|(id, _)| *id)
+            .collect();
+        let mut masked = std::collections::BTreeSet::new();
+        while mark_masked(body, &nonneg_consts, &poisoned, &mut masked) {}
+        let nonneg = masked.union(&nonneg_consts).copied().collect();
+        Taint::Values {
+            cmp,
+            div,
+            narrow,
+            nonneg,
+            consts,
+        }
     }
 
     /// One forward pass over `body`; returns whether the set grew. Covers exactly the
@@ -211,6 +183,7 @@ impl UnsignedDoors {
         let ret = match precision {
             Precision::Exact => &self.ret_exact,
             Precision::Wide => &self.ret_wide,
+            Precision::Narrow => &self.ret_u32,
         };
         let unknown_sig =
             |name: &str| self.defined.contains(name) && !self.params_exact.contains_key(name);
@@ -275,7 +248,7 @@ impl UnsignedDoors {
                         nested_grew |= self.propagate(nested, param_tainted, set, precision);
                     }
                     let mut exits = Vec::new();
-                    if precision == Precision::Wide {
+                    if precision != Precision::Exact {
                         collect_loop_exits(loop_body, &mut exits);
                     }
                     for (k, (var, post)) in live_vars.iter().enumerate() {
@@ -292,7 +265,7 @@ impl UnsignedDoors {
                             }
                             // Wide: the variable is one value across the header — its
                             // init, post-body id, any break/continue snapshot and exit.
-                            Precision::Wide => {
+                            Precision::Wide | Precision::Narrow => {
                                 let carried = init_tainted
                                     || set.contains(post)
                                     || exits.iter().any(|(n, id)| n == var && set.contains(id));

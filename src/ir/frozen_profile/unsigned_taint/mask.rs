@@ -6,21 +6,18 @@
 
 use crate::ir::{Instr, ValueId};
 
-/// Non-negative `ConstI64` ids DEFINED in `instrs` (through `if`/`while` bodies, never
+/// Every `ConstI64` DEFINED in `instrs`, id -> value (through `if`/`while` bodies, never
 /// into a nested `FnDef`, whose ids are a different namespace).
-pub(super) fn collect_nonneg_consts(
-    instrs: &[Instr],
-    out: &mut std::collections::BTreeSet<ValueId>,
-) {
+pub(super) fn collect_consts(instrs: &[Instr], out: &mut std::collections::BTreeMap<ValueId, i64>) {
     for instr in instrs {
         match instr {
-            Instr::ConstI64(id, v) if *v >= 0 => {
-                out.insert(*id);
+            Instr::ConstI64(id, v) => {
+                out.insert(*id, *v);
             }
             Instr::FnDef { .. } => {}
             other => {
                 for nested in crate::ir::instr_bodies(other) {
-                    collect_nonneg_consts(nested, out);
+                    collect_consts(nested, out);
                 }
             }
         }

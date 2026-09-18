@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1827 | **Est. tokens:** ~3,514,442
-**Generated:** 2026-09-17 08:02 UTC
+**Files:** 1828 | **Est. tokens:** ~3,516,379
+**Generated:** 2026-09-18 19:36 UTC
 
 ## Token Budget Guide
 
@@ -117,8 +117,8 @@
 | `src/ir/compact/v2/` | 9 | ~45,363 |
 | `src/ir/compact/v3/` | 15 | ~76,625 |
 | `src/ir/compact/v3/v04/` | 3 | ~13,696 |
-| `src/ir/frozen_profile/` | 2 | ~12,440 |
-| `src/ir/frozen_profile/unsigned_taint/` | 1 | ~1,377 |
+| `src/ir/frozen_profile/` | 2 | ~13,170 |
+| `src/ir/frozen_profile/unsigned_taint/` | 2 | ~2,584 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~10,017 |
 | `src/mlir/` | 3 | ~6,625 |
@@ -1299,11 +1299,14 @@
 - `frozen_profile.rs` (~9213 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/frozen_profile/unsigned_taint/`
 
-- `mask.rs` (~1377 tok, large) — Copyright 2025 STARGA Inc.
+- `mask.rs` (~1371 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/ir/frozen_profile/`
 
-- `unsigned_taint_pipeline_tests.rs` (~4496 tok, huge) — Copyright 2025 STARGA Inc.
-- `unsigned_taint.rs` (~7944 tok, huge) — Copyright 2025 STARGA Inc.
+- `unsigned_taint_pipeline_tests.rs` (~5649 tok, huge) — Copyright 2025 STARGA Inc.
+- `unsigned_taint.rs` (~7521 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/ir/frozen_profile/unsigned_taint/`
+
+- `taint.rs` (~1213 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
 - `mod.rs` (~17720 tok, huge) — Copyright 2025 STARGA Inc.

@@ -248,6 +248,66 @@ const COMPARE_SHAPES: &[(&str, &str, bool, bool)] = &[
         true,
         false,
     ),
+    (
+        "a masked operand beside a negative literal",
+        "fn f(a: u64) -> i64 {\n    let m = a & 255\n    if m < -1 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        true,
+    ),
+    (
+        "a masked operand beside an i64 param",
+        "fn f(a: u64, b: i64) -> i64 {\n    let m = a & 255\n    if b < m {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        true,
+    ),
+    (
+        "a masked operand beside a loop counter",
+        "fn f(a: u64) -> i64 {\n    let m = a & 255\n    let k = 1\n    let i = 0\n    let r = 0\n    while i < 3 {\n        if m > k {\n            r = r + 1\n        }\n        k = k - 1\n        i = i + 1\n    }\n    return r\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        true,
+    ),
+    (
+        "two masked operands",
+        "fn f(a: u64, b: u64) -> i64 {\n    let m = a & 255\n    let n = b & 15\n    if m < n {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        false,
+    ),
+    (
+        "a masked operand beside a non-negative literal",
+        "fn f(a: u64) -> i64 {\n    let m = a & 255\n    if m < 10 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        false,
+    ),
+    (
+        "u32 beside a negative literal (i32 ult on the truncated literal)",
+        "fn f(a: u32) -> i64 {\n    if a < -1 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        true,
+    ),
+    (
+        "u32 beside a literal at or above 2^32 (truncated)",
+        "fn f(a: u32) -> i64 {\n    if a < 4294967296 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        true,
+    ),
+    (
+        "u32 beside a literal in [0, 2^32) agrees",
+        "fn f(a: u32) -> i64 {\n    if a < 3000000000 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        false,
+    ),
+    (
+        "u32 beside a u32 agrees (both zero-extend)",
+        "fn f(a: u32, b: u32) -> i64 {\n    if a < b {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        false,
+    ),
+    (
+        "u32 beside a non-literal i64 widens signed",
+        "fn f(a: u32, b: i64) -> i64 {\n    if a < b {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        false,
+        false,
+    ),
 ];
 
 /// The fence refuses an ordered compare ONLY where MLIR emits an unsigned predicate
@@ -306,6 +366,33 @@ fn pipeline_division_uses_the_wide_taint() {
     // second iteration on (audit 2026-09-16: native 0 vs MLIR divui 255 for both).
     let loop_masked_div = "fn f(a: u64) -> i64 {\n    let m = a & 255\n    let i = 0\n    let r = 0\n    while i < 2 {\n        r = m / 2\n        m = m - 256\n        i = i + 1\n    }\n    return r\n}\nfn main() -> i64 {\n    return 0\n}\n";
     assert_eq!(fence(loop_masked_div), Some("binop.div_mod_unsigned"));
+    // Every operand must be non-negative: MLIR goes `divui` when ANY operand is u64-kinded
+    // (audit 2026-09-16: `(a & 255) / -2` native -127 vs MLIR 0, main refused).
+    let masked_by_neg = "fn f(a: u64) -> i64 {\n    let m = a & 255\n    return m / -2\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(fence(masked_by_neg), Some("binop.div_mod_unsigned"));
+    let masked_mod_param = "fn f(a: u64, b: i64) -> i64 {\n    let m = a & 255\n    return m % b\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(fence(masked_mod_param), Some("binop.div_mod_unsigned"));
+    let param_by_masked = "fn f(a: u64, b: i64) -> i64 {\n    let m = a & 255\n    return b / m\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(fence(param_by_masked), Some("binop.div_mod_unsigned"));
+    let masked_by_masked = "fn f(a: u64, b: u64) -> i64 {\n    let m = a & 255\n    let n = b & 15\n    return m / n\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(fence(masked_by_masked), None);
+    // u32 meets a LITERAL in i32 width, unsigned, truncated (`a / -2` native -127 vs MLIR
+    // divui 0, main refused); a non-literal i64 divisor widens signed and agrees.
+    let u32_by_neg =
+        "fn f(a: u32) -> i64 {\n    return a / -2\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(fence(u32_by_neg), Some("binop.div_mod_unsigned"));
+    let u32_mod_neg =
+        "fn f(a: u32) -> i64 {\n    return a % -3\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(fence(u32_mod_neg), Some("binop.div_mod_unsigned"));
+    let u32_by_param =
+        "fn f(a: u32, b: i64) -> i64 {\n    return a / b\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(fence(u32_by_param), None);
+    let u32_by_pos =
+        "fn f(a: u32) -> i64 {\n    return a / 2\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(fence(u32_by_pos), None);
+    let u8_by_neg =
+        "fn f(a: u8) -> i64 {\n    return a / -2\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(fence(u8_by_neg), None, "u8 is i64-kinded in MLIR (divsi)");
     let loop_const_div = "fn f(a: u64) -> i64 {\n    let c = 255\n    let i = 0\n    let r = 0\n    while i < 2 {\n        r = (a & c) / 2\n        c = -1\n        i = i + 1\n    }\n    return r\n}\nfn main() -> i64 {\n    return 0\n}\n";
     assert_eq!(fence(loop_const_div), Some("binop.div_mod_unsigned"));
 }
