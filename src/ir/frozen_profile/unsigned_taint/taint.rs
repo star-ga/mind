@@ -3,7 +3,9 @@
 //! The per-body unsigned taint and its USE-SITE rules (`Taint::any_cmp` / `any_div`).
 //! Split from `unsigned_taint.rs` for the module-size budget.
 
-use crate::ir::ValueId;
+#[cfg(feature = "std-surface")]
+use super::narrow::Narrow;
+use crate::ir::{BinOp, ValueId};
 
 /// The values of ONE body that may hold a full-width unsigned value at run time, at two
 /// precisions, one per refused operator family.
@@ -29,12 +31,14 @@ pub(crate) enum Taint {
     /// No signature table: every value is treated as possibly unsigned.
     #[cfg_attr(feature = "std-surface", allow(dead_code))]
     All,
-    #[cfg_attr(not(feature = "std-surface"), allow(dead_code))]
+    /// Without `std-surface` there is no `While`/`If` IR and no signature table, so
+    /// this variant is never built there (`body_taint` returns `All`).
+    #[cfg(feature = "std-surface")]
     Values {
         cmp: std::collections::BTreeSet<ValueId>,
         div: std::collections::BTreeSet<ValueId>,
-        /// Over-approximation of MLIR's `ScalarU32` values.
-        narrow: std::collections::BTreeSet<ValueId>,
+        /// Values MLIR computes at 32/1 bits (see `narrow.rs`).
+        narrow: Narrow,
         /// Values provably in `[0, 2^63)`: masks (`unsigned_taint/mask.rs`) and
         /// non-negative literals of this body. A masked value stays in `cmp`/`div`, so
         /// arithmetic on it is tainted again.
@@ -46,6 +50,7 @@ pub(crate) enum Taint {
 
 impl Taint {
     /// The taint of a scope with no unsigned value in it.
+    #[cfg(feature = "std-surface")]
     pub(crate) fn empty() -> Self {
         Taint::Values {
             cmp: Default::default(),
@@ -56,31 +61,72 @@ impl Taint {
         }
     }
 
+    /// Without a signature table nothing is decidable.
+    #[cfg(not(feature = "std-surface"))]
+    pub(crate) fn empty() -> Self {
+        Taint::All
+    }
+
     /// May an ORDERED COMPARE over `ids` diverge between native and MLIR?
-    pub(crate) fn any_cmp(&self, ids: &[ValueId]) -> bool {
+    pub(crate) fn any_cmp(&self, op: &BinOp, ids: &[ValueId]) -> bool {
+        #[cfg(not(feature = "std-surface"))]
+        let _ = (op, ids);
         match self {
             Taint::All => true,
-            Taint::Values { cmp, .. } => self.diverges(ids, cmp),
+            #[cfg(feature = "std-surface")]
+            Taint::Values { cmp, .. } => self.diverges(op, ids, cmp),
+        }
+    }
+
+    /// May an `==` / `!=` over `ids` diverge? Bit compares are sign-agnostic, but MLIR
+    /// truncates a literal beside a narrow operand and wraps narrow arithmetic.
+    pub(crate) fn any_eq(&self, op: &BinOp, ids: &[ValueId]) -> bool {
+        #[cfg(not(feature = "std-surface"))]
+        let _ = (op, ids);
+        match self {
+            // Main 5724a6ee admitted `==`/`!=` in every configuration; without a
+            // signature table there is no narrow value to see.
+            Taint::All => false,
+            #[cfg(feature = "std-surface")]
+            Taint::Values { narrow, consts, .. } => narrow.diverges(op, ids, consts),
+        }
+    }
+
+    /// Is a literal argument of this call outside its narrow formal's range?
+    pub(crate) fn narrow_arg_out_of_range(&self, callee: &str, args: &[ValueId]) -> bool {
+        #[cfg(not(feature = "std-surface"))]
+        let _ = (callee, args);
+        match self {
+            Taint::All => false,
+            #[cfg(feature = "std-surface")]
+            Taint::Values { narrow, consts, .. } => narrow.arg_out_of_range(callee, args, consts),
         }
     }
 
     /// May a `/` or `%` over `ids` diverge between native and MLIR?
-    pub(crate) fn any_div(&self, ids: &[ValueId]) -> bool {
+    pub(crate) fn any_div(&self, op: &BinOp, ids: &[ValueId]) -> bool {
+        #[cfg(not(feature = "std-surface"))]
+        let _ = (op, ids);
         match self {
             Taint::All => true,
-            Taint::Values { div, .. } => self.diverges(ids, div),
+            #[cfg(feature = "std-surface")]
+            Taint::Values { div, .. } => self.diverges(op, ids, div),
         }
     }
 
     /// Signed and unsigned `/ % < <= > >=` agree iff EVERY operand is in `[0, 2^63)`.
     /// MLIR goes unsigned when ANY operand is `u64`-kinded, so one masked operand is not
     /// enough (audit 2026-09-16: `(a & 255) / -2` native -127 vs MLIR `divui` 0). A
-    /// `u32`-kinded operand meets a literal in i32 width, unsigned, with the literal
-    /// TRUNCATED to 32 bits; native compares the zero-extended `u32` against the exact
-    /// literal as signed i64. Those agree iff the literal is in `[0, 2^32)` (`a / -2`:
-    /// native -127 vs MLIR 0; `a < 4294967296`: native true, MLIR compares against 0).
-    /// Beside a non-literal `i64` MLIR widens and stays signed, which agrees.
-    fn diverges(&self, ids: &[ValueId], set: &std::collections::BTreeSet<ValueId>) -> bool {
+    /// narrow (`u32`/`i32`/`bool`) operand is decided by `narrow.rs`: MLIR computes it at
+    /// 32/1 bits and truncates literals and `u32` call arguments to that width, native
+    /// computes at 64 bits.
+    #[cfg(feature = "std-surface")]
+    fn diverges(
+        &self,
+        op: &BinOp,
+        ids: &[ValueId],
+        set: &std::collections::BTreeSet<ValueId>,
+    ) -> bool {
         let Taint::Values {
             narrow,
             nonneg,
@@ -92,8 +138,6 @@ impl Taint {
         };
         let wide =
             ids.iter().any(|id| set.contains(id)) && !ids.iter().all(|id| nonneg.contains(id));
-        let bad_literal = |id: &ValueId| consts.get(id).is_some_and(|v| !(0..1 << 32).contains(v));
-        let narrow_hit = ids.iter().any(|id| narrow.contains(id)) && ids.iter().any(bad_literal);
-        wide || narrow_hit
+        wide || narrow.diverges(op, ids, consts)
     }
 }

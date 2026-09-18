@@ -253,6 +253,10 @@ fn admit_binop(
         BinOp::Eq | BinOp::Ne => {
             if float_taint {
                 reject("binop.compare_in_float_module")
+            } else if taint.any_eq(op, &operands) {
+                // A narrow operand: MLIR truncates the literal (`a == 4294967296` is
+                // `a == 0` there) or wrapped the operand at 32 bits.
+                reject("binop.compare_narrow_width")
             } else {
                 Ok(())
             }
@@ -271,7 +275,7 @@ fn admit_binop(
         BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
             if float_taint {
                 reject("binop.compare_in_float_module")
-            } else if taint.any_cmp(&operands) && cfg!(feature = "std-surface") {
+            } else if taint.any_cmp(op, &operands) && cfg!(feature = "std-surface") {
                 // Without std-surface there is no signature table, so the taint is the
                 // fail-closed "unknown" value — and main 5724a6ee ADMITTED ordered
                 // compares in that configuration. Refusing them here would take away
@@ -292,7 +296,7 @@ fn admit_binop(
         BinOp::Div | BinOp::Mod => {
             if float_taint {
                 reject("binop.div_mod_in_float_module")
-            } else if taint.any_div(&operands) {
+            } else if taint.any_div(op, &operands) {
                 reject("binop.div_mod_unsigned")
             } else {
                 Ok(())
@@ -342,7 +346,15 @@ fn admit_instrs_in(
             // needs the operand/field type, i.e. the same (op, operand_type) keying
             // `admit_binop` already defers — thread `FnDef.value_types` through
             // first. Tracked on matrix row 12 / the RI-D1 bijection gate.
-            Instr::Call { name, .. } => admit_call(name, defined)?,
+            Instr::Call { name, args, .. } => {
+                admit_call(name, defined)?;
+                if taint.narrow_arg_out_of_range(name, args) {
+                    // MLIR truncates a literal argument to a `u32`/`i32`/`bool` formal
+                    // at the call site; the frozen ELF passes it raw (`f(-1)` into a
+                    // `u32` then `a < 5`: main native 1 vs MLIR 0, audit 2026-09-18).
+                    reject("call.narrow_arg_out_of_range")?
+                }
+            }
             // The frozen stage1.elf encodes an integer LITERAL whose value lies in
             // [i64::MIN, i64::MIN + 254] — decimal 9223372036854775808 ..=
             // 9223372036854776062 — as `movabs 0x7fffffffffffffXX` (measured

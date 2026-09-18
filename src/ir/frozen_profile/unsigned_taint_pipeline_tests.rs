@@ -308,6 +308,36 @@ const COMPARE_SHAPES: &[(&str, &str, bool, bool)] = &[
         false,
         false,
     ),
+    (
+        "u32 plus a non-literal i64 widens to signed i64",
+        "fn f(a: u32, b: i64) -> i64 {\n    let t = a + b\n    if t < -1 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        false,
+        false,
+    ),
+    (
+        "u32 plus an i32 widens to signed i64",
+        "fn f(a: u32, b: i32) -> i64 {\n    let t = a + b\n    if t < -1 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        false,
+        false,
+    ),
+    (
+        "an if-join of a literal and a u32 widens",
+        "fn f(a: u32, c: i64) -> i64 {\n    let s = 5\n    if c > 0 {\n        s = a\n    }\n    if s < -1 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        false,
+        false,
+    ),
+    (
+        "a loop accumulating a u32 into an i64 init widens",
+        "fn f(a: u32) -> i64 {\n    let s = 0\n    let i = 0\n    while i < 2 {\n        s = s + a\n        i = i + 1\n    }\n    if s < -1 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        false,
+        false,
+    ),
+    (
+        "a u32 call result plus an i64 widens",
+        "fn g() -> u32 {\n    return 7\n}\nfn f(b: i64) -> i64 {\n    let x = g()\n    let t = x + b\n    if t <= -1 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        false,
+        false,
+    ),
 ];
 
 /// The fence refuses an ordered compare ONLY where MLIR emits an unsigned predicate
@@ -343,6 +373,46 @@ fn compare_taint_refuses_only_mlir_unsigned_predicates() {
             );
         }
     }
+}
+
+/// A narrow operand that may have WRAPPED (u32 + u32 is 32-bit on MLIR, 64-bit
+/// natively: `s = a + b; s < 5` with `f(4294967295, 1)` — main native 0 vs MLIR 1) or
+/// a literal MLIR truncates (`a == 4294967296` is `a == 0` there — main native 0 vs
+/// MLIR 1) is refused for every compare, `==`/`!=` included; a bare narrow parameter
+/// compared in range is admitted (it is exact on both backends for in-range callers).
+#[test]
+fn narrow_wrapped_or_truncated_compares_are_refused() {
+    let wrapped_lt = "fn f(a: u32, b: u32) -> i64 {\n    let s = a + b\n    if s < 5 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(fence(wrapped_lt), Some("binop.ordered_compare_unsigned"));
+    let truncated_eq = "fn f(a: u32) -> i64 {\n    if a == 4294967296 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(fence(truncated_eq), Some("binop.compare_narrow_width"));
+    let wrapped_eq = "fn f(a: u32, b: u32) -> i64 {\n    let s = a + b\n    if s == 0 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(fence(wrapped_eq), Some("binop.compare_narrow_width"));
+    let i32_wrapped = "fn f(a: i32, b: i32) -> i64 {\n    let s = a + b\n    if s < 0 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(fence(i32_wrapped), Some("binop.ordered_compare_unsigned"));
+    let i32_far_literal = "fn f(a: i32) -> i64 {\n    if a < 2147483648 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(
+        fence(i32_far_literal),
+        Some("binop.ordered_compare_unsigned")
+    );
+    // The call boundary: a literal outside the formal's range is refused at the CALL
+    // (`f(-1)` into u32: main native 1 vs MLIR 0); an in-range literal is admitted.
+    let bad_arg = "fn f(a: u32) -> i64 {\n    if a < 5 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return f(-1)\n}\n";
+    assert_eq!(fence(bad_arg), Some("call.narrow_arg_out_of_range"));
+    let big_arg =
+        "fn f(a: u32) -> i64 {\n    return 0\n}\nfn main() -> i64 {\n    return f(4294967296)\n}\n";
+    assert_eq!(fence(big_arg), Some("call.narrow_arg_out_of_range"));
+    let bool_arg =
+        "fn f(b: bool) -> i64 {\n    return 0\n}\nfn main() -> i64 {\n    return f(2)\n}\n";
+    assert_eq!(fence(bool_arg), Some("call.narrow_arg_out_of_range"));
+    let good_arg = "fn f(a: u32) -> i64 {\n    if a < 5 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return f(4294967295)\n}\n";
+    assert_eq!(fence(good_arg), None);
+    let bare_param = "fn f(a: u32) -> i64 {\n    if a < 5 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(fence(bare_param), None, "in range on both backends");
+    let i32_in_range = "fn f(a: i32) -> i64 {\n    if a < -5 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(fence(i32_in_range), None);
+    let eq_in_range = "fn f(a: u32) -> i64 {\n    if a == 4294967295 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(fence(eq_in_range), None);
 }
 
 /// Division stays on the WIDE set: a loop-carried accumulator of a `u64` is refused
@@ -386,13 +456,40 @@ fn pipeline_division_uses_the_wide_taint() {
     assert_eq!(fence(u32_mod_neg), Some("binop.div_mod_unsigned"));
     let u32_by_param =
         "fn f(a: u32, b: i64) -> i64 {\n    return a / b\n}\nfn main() -> i64 {\n    return 0\n}\n";
-    assert_eq!(fence(u32_by_param), None);
+    // MLIR truncates the u32 ARGUMENT at the call site (`f(-1)` arrives as 4294967295)
+    // where native passes it raw, and computes u32 arithmetic at 32 bits: every narrow
+    // operand of `/` `%` is refused (audit 2026-09-18; main refused every native division).
+    assert_eq!(fence(u32_by_param), Some("binop.div_mod_unsigned"));
     let u32_by_pos =
         "fn f(a: u32) -> i64 {\n    return a / 2\n}\nfn main() -> i64 {\n    return 0\n}\n";
-    assert_eq!(fence(u32_by_pos), None);
+    assert_eq!(fence(u32_by_pos), Some("binop.div_mod_unsigned"));
     let u8_by_neg =
         "fn f(a: u8) -> i64 {\n    return a / -2\n}\nfn main() -> i64 {\n    return 0\n}\n";
     assert_eq!(fence(u8_by_neg), None, "u8 is i64-kinded in MLIR (divsi)");
+    // 32-bit wrap on MLIR, 64-bit on native (audit 2026-09-18, main refused all five).
+    for (label, src) in [
+        (
+            "u32 sum",
+            "fn f(a: u32, b: u32) -> i64 {\n    let s = a + b\n    let q = s / 2\n    if q == 0 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        ),
+        (
+            "i32 sum",
+            "fn f(a: i32, b: i32) -> i64 {\n    let s = a + b\n    return s / 3\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        ),
+        (
+            "u32 minus literal",
+            "fn f(a: u32) -> i64 {\n    let s = a - 1\n    return s % 1000\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        ),
+    ] {
+        assert_eq!(fence(src), Some("binop.div_mod_unsigned"), "{label}");
+    }
+    let bool_div =
+        "fn f(b: bool) -> i64 {\n    return b / 1\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(
+        fence(bool_div),
+        Some("binop.div_mod_unsigned"),
+        "bool is 1-bit in MLIR"
+    );
     let loop_const_div = "fn f(a: u64) -> i64 {\n    let c = 255\n    let i = 0\n    let r = 0\n    while i < 2 {\n        r = (a & c) / 2\n        c = -1\n        i = i + 1\n    }\n    return r\n}\nfn main() -> i64 {\n    return 0\n}\n";
     assert_eq!(fence(loop_const_div), Some("binop.div_mod_unsigned"));
 }

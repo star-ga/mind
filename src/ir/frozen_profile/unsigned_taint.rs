@@ -17,13 +17,15 @@ pub(crate) use taint::Taint;
 #[cfg(feature = "std-surface")]
 mod mask;
 #[cfg(feature = "std-surface")]
+pub(crate) mod narrow;
+#[cfg(feature = "std-surface")]
 use mask::{collect_consts, collect_loop_inits, mark_masked};
 
 /// Which call results and parameters carry a full-width UNSIGNED (`u64`) value, at two
-/// precisions (see [`Taint`]). NARROW unsigned (`u8`/`u16`/`u32`) is deliberately NOT
-/// tainted: it is masked to its width and zero-extends into a NON-NEGATIVE i64, so signed
-/// `idiv`/`setcc` give the same result as the unsigned op — only a full-width carrier
-/// whose high bit is set can diverge. `usize` is NOT tainted either: MLIR lowers it as a
+/// precisions (see [`Taint`]). `u8`/`u16` are NOT tainted: MLIR kinds them i64 and both
+/// backends compute them at 64 bits, so they agree. `u32`/`i32`/`bool` are tracked
+/// separately (`narrow.rs`): MLIR computes them at 32/1 bits, native at 64. `usize` is
+/// NOT tainted either: MLIR lowers it as a
 /// SIGNED i64 today (`arith.cmpi "slt"`, pinned by `usize_is_signed_on_the_mlir_backend_too`),
 /// so native and MLIR agree, and main 5724a6ee compiles a `usize` compare natively.
 #[cfg(feature = "std-surface")]
@@ -36,10 +38,10 @@ pub(crate) struct UnsignedDoors {
     ret_exact: std::collections::BTreeSet<String>,
     /// Callees whose result type contains `u64`.
     ret_wide: std::collections::BTreeSet<String>,
-    /// Callee name -> is each parameter `u32` (MLIR seeds `ScalarU32`)?
-    params_u32: std::collections::BTreeMap<String, Vec<bool>>,
-    /// Callees whose RESULT is `u32`.
-    ret_u32: std::collections::BTreeSet<String>,
+    /// Callee name -> the narrow kind of each parameter (`u32`/`i32`/`bool`).
+    params_narrow: std::collections::BTreeMap<String, Vec<Option<narrow::NarrowKind>>>,
+    /// Callees whose RESULT is narrow.
+    ret_narrow: std::collections::BTreeMap<String, narrow::NarrowKind>,
     /// Every function DEFINED in the module (at any nesting depth).
     defined: std::collections::BTreeSet<String>,
 }
@@ -52,8 +54,6 @@ enum Precision {
     Exact,
     /// Any value whose declared type is or contains `u64`.
     Wide,
-    /// An over-approximation of MLIR's `ScalarU32` kind.
-    Narrow,
 }
 
 #[cfg(feature = "std-surface")]
@@ -64,8 +64,8 @@ impl UnsignedDoors {
             params_wide: Default::default(),
             ret_exact: Default::default(),
             ret_wide: Default::default(),
-            params_u32: Default::default(),
-            ret_u32: Default::default(),
+            params_narrow: Default::default(),
+            ret_narrow: Default::default(),
             defined: Default::default(),
         };
         collect_defined(&module.instrs, &mut doors.defined);
@@ -82,12 +82,12 @@ impl UnsignedDoors {
             if r.as_ref().is_some_and(contains_u64) {
                 doors.ret_wide.insert(name.clone());
             }
-            let is_u32 = |ty: &TypeAnn| matches!(ty, TypeAnn::ScalarU32);
-            doors
-                .params_u32
-                .insert(name.clone(), ps.iter().map(is_u32).collect());
-            if r.as_ref().is_some_and(is_u32) {
-                doors.ret_u32.insert(name.clone());
+            doors.params_narrow.insert(
+                name.clone(),
+                ps.iter().map(narrow::NarrowKind::of).collect(),
+            );
+            if let Some(k) = r.as_ref().and_then(narrow::NarrowKind::of) {
+                doors.ret_narrow.insert(name.clone(), k);
             }
         }
         doors
@@ -120,16 +120,10 @@ impl UnsignedDoors {
         }
         let mut cmp = std::collections::BTreeSet::new();
         let mut div = std::collections::BTreeSet::new();
-        let mut narrow = std::collections::BTreeSet::new();
-        for (precision, set) in [
-            (Precision::Exact, &mut cmp),
-            (Precision::Wide, &mut div),
-            (Precision::Narrow, &mut narrow),
-        ] {
+        for (precision, set) in [(Precision::Exact, &mut cmp), (Precision::Wide, &mut div)] {
             let table = match precision {
                 Precision::Exact => &self.params_exact,
                 Precision::Wide => &self.params_wide,
-                Precision::Narrow => &self.params_u32,
             };
             let param_tainted = |index: usize| match owner {
                 None => false,
@@ -160,6 +154,17 @@ impl UnsignedDoors {
         let mut masked = std::collections::BTreeSet::new();
         while mark_masked(body, &nonneg_consts, &poisoned, &mut masked) {}
         let nonneg = masked.union(&nonneg_consts).copied().collect();
+        let param_kind = |index: usize| {
+            owner.and_then(|name| self.params_narrow.get(name)?.get(index).copied().flatten())
+        };
+        let narrow = narrow::Narrow::of_body(
+            fn_params,
+            &param_kind,
+            &self.ret_narrow,
+            &self.params_narrow,
+            &consts,
+            body,
+        );
         Taint::Values {
             cmp,
             div,
@@ -183,7 +188,6 @@ impl UnsignedDoors {
         let ret = match precision {
             Precision::Exact => &self.ret_exact,
             Precision::Wide => &self.ret_wide,
-            Precision::Narrow => &self.ret_u32,
         };
         let unknown_sig =
             |name: &str| self.defined.contains(name) && !self.params_exact.contains_key(name);
@@ -248,7 +252,7 @@ impl UnsignedDoors {
                         nested_grew |= self.propagate(nested, param_tainted, set, precision);
                     }
                     let mut exits = Vec::new();
-                    if precision != Precision::Exact {
+                    if precision == Precision::Wide {
                         collect_loop_exits(loop_body, &mut exits);
                     }
                     for (k, (var, post)) in live_vars.iter().enumerate() {
@@ -265,7 +269,7 @@ impl UnsignedDoors {
                             }
                             // Wide: the variable is one value across the header — its
                             // init, post-body id, any break/continue snapshot and exit.
-                            Precision::Wide | Precision::Narrow => {
+                            Precision::Wide => {
                                 let carried = init_tainted
                                     || set.contains(post)
                                     || exits.iter().any(|(n, id)| n == var && set.contains(id));
