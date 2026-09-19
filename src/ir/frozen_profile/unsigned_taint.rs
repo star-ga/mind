@@ -85,8 +85,13 @@ impl UnsignedDoors {
                 name.clone(),
                 ps.iter().map(narrow::NarrowKind::of).collect(),
             );
+            // A `-> bool` RESULT is i64 on both backends (MLIR collapses the bool return
+            // kind at the call result; native does not truncate it), so it is not narrow
+            // as a call result — only as this function's own return kind (round 7).
             if let Some(k) = r.as_ref().and_then(narrow::NarrowKind::of) {
-                doors.ret_narrow.insert(name.clone(), k);
+                if k != narrow::NarrowKind::Bool {
+                    doors.ret_narrow.insert(name.clone(), k);
+                }
             }
         }
         doors
@@ -161,6 +166,7 @@ impl UnsignedDoors {
             &param_kind,
             &self.ret_narrow,
             &self.params_narrow,
+            // (`-> bool` is absent here, so a wrapped bool return is never exempt.)
             owner.and_then(|name| self.ret_narrow.get(name).copied()),
             &consts,
             body,

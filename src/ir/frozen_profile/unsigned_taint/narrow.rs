@@ -69,6 +69,24 @@ impl NarrowKind {
             (Self::U32, Self::I32) | (Self::I32, Self::U32)
         )
     }
+
+    /// Physical width in bits.
+    fn width(self) -> u32 {
+        match self {
+            Self::U32 | Self::I32 => 32,
+            Self::U16 => 16,
+            Self::U8 => 8,
+            Self::Bool => 1,
+        }
+    }
+
+    /// Does MLIR TRUNCATE a literal beside a value of this kind? `u32`/`i32`/`bool` are
+    /// width-typed (i32 / i1) so a literal is cast to that width; `u8`/`u16` are
+    /// i64-physical with masks inserted after arithmetic only, so a literal beside
+    /// them is exact (`a == 256` on u8 agrees on both backends — round 7).
+    fn truncates_literals(self) -> bool {
+        !matches!(self, Self::U8 | Self::U16)
+    }
 }
 
 /// The narrow values of one body.
@@ -132,8 +150,9 @@ impl Narrow {
                     if let Some(k) = self.narrow_mode(&[*lhs, *rhs], consts) {
                         grew |= self.kind.insert(*dst, k).is_none();
                         let operands = [*lhs, *rhs];
-                        let literal_in_range =
-                            |id: &ValueId| consts.get(id).is_none_or(|v| k.holds(*v));
+                        let literal_in_range = |id: &ValueId| {
+                            !k.truncates_literals() || consts.get(id).is_none_or(|v| k.holds(*v))
+                        };
                         let all_unwrapped = operands.iter().all(|id| !self.wrapped.contains(id));
                         let all_narrow = operands.iter().all(|id| self.kind.contains_key(id));
                         // `& | ^` cannot leave the kind's range (with an in-range
@@ -208,14 +227,22 @@ impl Narrow {
 
     /// The kind MLIR computes a binop in, if it stays narrow: at least one operand is
     /// narrow and every non-literal operand has that same kind (a literal is truncated
-    /// to it). Mixed kinds and a non-literal i64 widen to i64 (`None`).
+    /// to it). `u8` beside `u16` is masked at the WIDER width (the lowering's narrow
+    /// lattice — round 7); every other mix and a non-literal i64 widen to i64 (`None`).
     fn narrow_mode(&self, ids: &[ValueId], consts: &BTreeMap<ValueId, i64>) -> Option<NarrowKind> {
-        let mut kind = None;
+        let mut kind: Option<NarrowKind> = None;
+        let bytes = |a: NarrowKind, b: NarrowKind| {
+            matches!(
+                (a, b),
+                (NarrowKind::U8, NarrowKind::U16) | (NarrowKind::U16, NarrowKind::U8)
+            )
+        };
         for id in ids {
             match self.kind.get(id) {
                 Some(k) => match kind {
                     None => kind = Some(*k),
                     Some(prev) if prev == *k => {}
+                    Some(prev) if bytes(prev, *k) => kind = Some(NarrowKind::U16),
                     Some(_) => return None,
                 },
                 None if consts.contains_key(id) => {}
@@ -256,13 +283,18 @@ impl Narrow {
     pub(crate) fn wrapped_escapes(&self, instr: &Instr, consts: &BTreeMap<ValueId, i64>) -> bool {
         let wrapped = |id: &ValueId| self.wrapped.contains(id);
         match instr {
-            // Native TRUNCATES a `-> u32` / `-> i32` return (measured, round 6), so a
-            // wrapped value of exactly that kind leaves through it intact. `-> bool` is
-            // not truncated natively (`bool + bool` returned: 2 vs 0), nor is `-> i64`.
+            // Native TRUNCATES / masks a `-> u32` / `-> i32` / `-> u16` / `-> u8` return
+            // (measured, rounds 6-7). MLIR holds the value reduced to its kind's width,
+            // native the 64-bit one; reducing both to the return width gives the same
+            // bits iff the return width is NOT wider than the value's kind (`u32 + u32`
+            // through `-> i32`: exact; `u8 + u8` through `-> i32`: 257 vs 1). `-> bool`
+            // is not truncated natively (`bool + bool` returned: 2 vs 0), nor is `-> i64`.
             Instr::Return { value: Some(v) } => {
-                wrapped(v)
-                    && !(matches!(self.ret_kind, Some(NarrowKind::U32 | NarrowKind::I32))
-                        && self.kind.get(v).copied() == self.ret_kind)
+                let exact_through_return = match (self.ret_kind, self.kind.get(v)) {
+                    (Some(r), Some(k)) if r != NarrowKind::Bool => r.width() <= k.width(),
+                    _ => false,
+                };
+                wrapped(v) && !exact_through_return
             }
             Instr::Call { args, .. } => args.iter().any(wrapped),
             Instr::ArrayLoad { index, .. } => wrapped(index),
@@ -292,10 +324,14 @@ impl Narrow {
         }
     }
 
-    /// Is a LITERAL argument of `callee` outside the range of its narrow formal? MLIR
-    /// truncates it at the call site (`f(-1)` into `u32` arrives as 4294967295); the
-    /// frozen ELF passes it raw. A computed out-of-range argument is not visible here —
-    /// that is the front end's job (it admits any i64 into a `u32` formal today).
+    /// Does an argument of `callee` reach its narrow formal changed on one backend only?
+    /// MLIR truncates at the call site (`u32`/`i32`/`bool`: `f(-1)` into `u32` arrives as
+    /// 4294967295) or masks at callee entry (`u8`/`u16`); the frozen ELF passes it raw.
+    /// Visible here: a LITERAL outside the formal's range, and a narrow VALUE of a
+    /// different kind that the formal is narrower than or differs in signedness from
+    /// (`u32` into a `u8` formal at 300: native 0 vs MLIR 1; `i32` -1 into `u32`:
+    /// native -1 vs MLIR 4294967295 — round 7). A computed i64 argument is not visible
+    /// here — that is the front end's job (it admits any i64 into a `u32` formal today).
     pub(crate) fn arg_out_of_range(
         &self,
         callee: &str,
@@ -306,10 +342,18 @@ impl Narrow {
             return false;
         };
         args.iter().enumerate().any(|(i, arg)| {
-            let (Some(Some(kind)), Some(v)) = (kinds.get(i), consts.get(arg)) else {
+            let Some(Some(formal)) = kinds.get(i) else {
                 return false;
             };
-            !kind.holds(*v)
+            if let Some(v) = consts.get(arg) {
+                return !formal.holds(*v);
+            }
+            match self.kind.get(arg) {
+                Some(k) if *k == *formal => false,
+                // A narrower, or same-width-other-signedness, formal changes the value.
+                Some(k) => formal.width() < k.width() || formal.same_width(*k),
+                None => false,
+            }
         })
     }
 
@@ -343,9 +387,10 @@ impl Narrow {
             && ids.iter().any(|id| self.diff.contains(id))
             && ids.iter().any(|id| consts.get(id) == Some(&0));
         (!eq_zero_of_diff && ids.iter().any(|id| self.wrapped.contains(id)))
-            || ids
-                .iter()
-                .any(|id| consts.get(id).is_some_and(|v| !kind.holds(*v)))
+            || (kind.truncates_literals()
+                && ids
+                    .iter()
+                    .any(|id| consts.get(id).is_some_and(|v| !kind.holds(*v))))
     }
 }
 

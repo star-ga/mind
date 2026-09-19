@@ -569,6 +569,100 @@ fn wrapped_narrow_values_may_not_escape() {
     }
 }
 
+/// Round 7. `-> bool` RESULTS are i64 on both backends (MLIR collapses the bool return
+/// kind at the call result, native does not truncate it), so predicate arithmetic and
+/// compares are exact and admitted (main compiles them). `u8`/`u16` are i64-physical on
+/// MLIR with masks after arithmetic only, so a literal beside them is never truncated
+/// (`a == 256` on u8 agrees) and `-> u8` / `-> u16` returns mask natively too; a wrapped
+/// value is exact through any return not wider than its kind. A narrow VALUE passed to
+/// a narrower or other-signedness narrow formal is changed on MLIR only (call-site
+/// truncation / callee-entry mask) and is refused; `u8 + u16` is masked at 16 on MLIR.
+#[test]
+fn narrow_round_7_shapes() {
+    for (label, src) in [
+        (
+            "bool results added and returned",
+            "fn g(a: i64, b: i64) -> bool {\n    return a < b\n}\nfn main() -> i64 {\n    let x = g(1, 2)\n    let y = g(1, 2)\n    let s = x + y\n    return s\n}\n",
+        ),
+        (
+            "bool results ordered-compared",
+            "fn g(a: i64, b: i64) -> bool {\n    return a < b\n}\nfn main() -> i64 {\n    let x = g(2, 1)\n    let y = g(1, 2)\n    if x < y {\n        return 1\n    }\n    return 0\n}\n",
+        ),
+        (
+            "bool results ==",
+            "fn g(a: i64, b: i64) -> bool {\n    return a < b\n}\nfn main() -> i64 {\n    let x = g(1, 2)\n    let y = g(1, 2)\n    if x == y {\n        return 1\n    }\n    return 0\n}\n",
+        ),
+        (
+            "u8 == literal 256",
+            "fn f(a: u8) -> i64 {\n    if a == 256 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return f(0)\n}\n",
+        ),
+        (
+            "u16 < literal 70000",
+            "fn f(a: u16) -> i64 {\n    if a < 70000 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return f(5)\n}\n",
+        ),
+        (
+            "u8 | 256 returned",
+            "fn f(a: u8) -> i64 {\n    let m = a | 256\n    return m\n}\nfn main() -> i64 {\n    let r = f(1)\n    if r == 257 {\n        return 1\n    }\n    return 0\n}\n",
+        ),
+        (
+            "u16 sum through -> u16",
+            "fn g(a: u16, b: u16) -> u16 {\n    return a + b\n}\nfn main() -> i64 {\n    let s = g(65535, 2)\n    if s == 1 {\n        return 1\n    }\n    return 0\n}\n",
+        ),
+        (
+            "u8 sum through -> u8",
+            "fn g(a: u8, b: u8) -> u8 {\n    return a + b\n}\nfn main() -> i64 {\n    let s = g(255, 2)\n    if s == 1 {\n        return 1\n    }\n    return 0\n}\n",
+        ),
+        (
+            "u32 sum through -> i32",
+            "fn g(a: u32, b: u32) -> i32 {\n    return a + b\n}\nfn main() -> i64 {\n    let s = g(4294967295, 2)\n    if s == 1 {\n        return 1\n    }\n    return 0\n}\n",
+        ),
+        (
+            "u8 param passed to an i64 call",
+            "fn h(x: i64) -> i64 {\n    return x\n}\nfn f(a: u8) -> i64 {\n    return h(a)\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        ),
+        (
+            "u8 param into a u16 formal (wider)",
+            "fn h(x: u16) -> i64 {\n    return x\n}\nfn f(a: u8) -> i64 {\n    return h(a)\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        ),
+    ] {
+        assert_eq!(fence(src), None, "{label}");
+    }
+    for (label, src, want) in [
+        (
+            "u32 value into a u8 formal",
+            "fn h(x: u8) -> i64 {\n    return x\n}\nfn f(a: u32) -> i64 {\n    return h(a)\n}\nfn main() -> i64 {\n    let r = f(300)\n    if r == 44 {\n        return 1\n    }\n    return 0\n}\n",
+            "call.narrow_arg_out_of_range",
+        ),
+        (
+            "i32 value into a u32 formal",
+            "fn h(x: u32) -> i64 {\n    if x == 4294967295 {\n        return 1\n    }\n    return 0\n}\nfn f(a: i32) -> i64 {\n    return h(a)\n}\nfn main() -> i64 {\n    return f(-1)\n}\n",
+            "call.narrow_arg_out_of_range",
+        ),
+        (
+            "u32 value into a bool formal",
+            "fn h(x: bool) -> i64 {\n    if x == 0 {\n        return 1\n    }\n    return 0\n}\nfn f(a: u32) -> i64 {\n    return h(a)\n}\nfn main() -> i64 {\n    return f(2)\n}\n",
+            "call.narrow_arg_out_of_range",
+        ),
+        (
+            "u8 + u16 returned (masked at 16 on MLIR)",
+            "fn f(a: u8, b: u16) -> i64 {\n    let s = a + b\n    return s\n}\nfn main() -> i64 {\n    let r = f(255, 65535)\n    if r == 254 {\n        return 1\n    }\n    return 0\n}\n",
+            "narrow.wrapped_value_escapes",
+        ),
+        (
+            "literal 300 into a u8 formal",
+            "fn f(a: u8) -> i64 {\n    return a\n}\nfn main() -> i64 {\n    let r = f(300)\n    if r == 44 {\n        return 1\n    }\n    return 0\n}\n",
+            "call.narrow_arg_out_of_range",
+        ),
+        (
+            "u8 sum through -> i32 (wider)",
+            "fn g(a: u8, b: u8) -> i32 {\n    return a + b\n}\nfn main() -> i64 {\n    return 0\n}\n",
+            "narrow.wrapped_value_escapes",
+        ),
+    ] {
+        assert_eq!(fence(src), Some(want), "{label}");
+    }
+}
+
 /// Division stays on the WIDE set: a loop-carried accumulator of a `u64` is refused
 /// for `/` even though its compare is admitted (main refused every native division).
 #[test]
