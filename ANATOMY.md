@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1829 | **Est. tokens:** ~3,526,649
-**Generated:** 2026-09-19 01:35 UTC
+**Files:** 1830 | **Est. tokens:** ~3,528,666
+**Generated:** 2026-09-19 02:21 UTC
 
 ## Token Budget Guide
 
@@ -112,13 +112,13 @@
 | `src/exec/` | 3 | ~5,522 |
 | `src/ffi/` | 3 | ~5,541 |
 | `src/fmt/` | 3 | ~24,052 |
-| `src/ir/` | 9 | ~97,418 |
+| `src/ir/` | 9 | ~97,437 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
 | `src/ir/compact/v3/` | 15 | ~76,625 |
 | `src/ir/compact/v3/v04/` | 3 | ~13,696 |
-| `src/ir/frozen_profile/` | 2 | ~18,177 |
-| `src/ir/frozen_profile/unsigned_taint/` | 3 | ~7,576 |
+| `src/ir/frozen_profile/` | 3 | ~19,312 |
+| `src/ir/frozen_profile/unsigned_taint/` | 3 | ~8,439 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~10,017 |
 | `src/mlir/` | 3 | ~6,625 |
@@ -1296,14 +1296,15 @@
 
 - `evidence.rs` (~13387 tok, huge) — Copyright 2025 STARGA Inc.
 - `fp_mode.rs` (~13664 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
-- `frozen_profile.rs` (~9484 tok, huge) — Copyright 2025 STARGA Inc.
+- `frozen_profile.rs` (~9503 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/frozen_profile/unsigned_taint/`
 
 - `mask.rs` (~1371 tok, large) — Copyright 2025 STARGA Inc.
-- `narrow.rs` (~4524 tok, huge) — Copyright 2025 STARGA Inc.
+- `narrow.rs` (~5387 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/frozen_profile/`
 
-- `unsigned_taint_pipeline_tests.rs` (~10523 tok, huge) — Copyright 2025 STARGA Inc.
+- `unsigned_taint_narrow_tests.rs` (~4877 tok, huge) — Copyright 2025 STARGA Inc.
+- `unsigned_taint_pipeline_tests.rs` (~6781 tok, huge) — Copyright 2025 STARGA Inc.
 - `unsigned_taint.rs` (~7654 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/frozen_profile/unsigned_taint/`
 

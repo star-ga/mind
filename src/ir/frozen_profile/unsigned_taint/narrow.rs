@@ -96,9 +96,17 @@ pub(crate) struct Narrow {
     pub(crate) kind: BTreeMap<ValueId, NarrowKind>,
     /// Narrow values that are the RESULT of narrow arithmetic (may have wrapped).
     pub(crate) wrapped: BTreeSet<ValueId>,
+    /// For a wrapped value: the NARROWEST width MLIR masked it (or a wrapped input) at.
+    /// A wrapped `u8` promoted into `u16` mode was masked at 8 already; only a return
+    /// no wider than 8 bits reconciles it with native's 64-bit value (round 8).
+    pub(crate) wrap_width: BTreeMap<ValueId, u32>,
     /// `x - y` of two UNWRAPPED same-kind narrows: |x - y| < 2^width, so the wrapped
     /// difference is 0 iff x == y — `== 0` / `!= 0` on it never diverges (round 6).
     pub(crate) diff: BTreeSet<ValueId>,
+    /// `u8`/`u16` bitwise results with an out-of-range literal (`a | 256`): exact
+    /// everywhere on MLIR (no mask after a bitwise op) EXCEPT at a `u8`/`u16` formal,
+    /// whose entry mask MLIR applies and native does not (round 8).
+    pub(crate) oor: BTreeSet<ValueId>,
     /// Callee -> the narrow kind of each formal, for the call-site literal check.
     pub(crate) formals: BTreeMap<String, Vec<Option<NarrowKind>>>,
     /// This function's declared narrow return kind, if any.
@@ -158,12 +166,44 @@ impl Narrow {
                         // `& | ^` cannot leave the kind's range (with an in-range
                         // literal), so MLIR's masked result equals native's.
                         let bitwise = matches!(op, BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor);
-                        if bitwise && operands.iter().all(literal_in_range) {
+                        // `x & m` where the low `width` bits of the literal are all ones
+                        // is the identity in the kind's width (`b & 255` on a bool is what
+                        // the lowering emits for a `-> u8` return of a bool — round 8) —
+                        // for the UNSIGNED kinds, whose native value is in range too. A
+                        // signed `i32` is sign-extended natively, so only `& -1` is exact
+                        // (`a & 4294967295` at -1: native 4294967295, MLIR -1).
+                        let identity_mask = matches!(op, BinOp::BitAnd)
+                            && operands.iter().any(|id| {
+                                consts.get(id).is_some_and(|m| {
+                                    let low = (1i64 << k.width()) - 1;
+                                    if k == NarrowKind::I32 {
+                                        *m == -1
+                                    } else {
+                                        m & low == low
+                                    }
+                                })
+                            });
+                        let narrowest = operands
+                            .iter()
+                            .filter_map(|id| self.wrap_width.get(id).copied())
+                            .min()
+                            .unwrap_or(k.width())
+                            .min(k.width());
+                        if bitwise && operands.iter().all(literal_in_range) || identity_mask {
                             if !all_unwrapped {
                                 grew |= self.wrapped.insert(*dst);
+                                grew |= self.wrap_width.insert(*dst, narrowest).is_none();
+                            }
+                            if !k.truncates_literals()
+                                && operands
+                                    .iter()
+                                    .any(|id| consts.get(id).is_some_and(|v| !k.holds(*v)))
+                            {
+                                grew |= self.oor.insert(*dst);
                             }
                         } else {
                             grew |= self.wrapped.insert(*dst);
+                            grew |= self.wrap_width.insert(*dst, narrowest).is_none();
                             if matches!(op, BinOp::Sub) && all_unwrapped && all_narrow {
                                 grew |= self.diff.insert(*dst);
                             }
@@ -228,7 +268,8 @@ impl Narrow {
     /// The kind MLIR computes a binop in, if it stays narrow: at least one operand is
     /// narrow and every non-literal operand has that same kind (a literal is truncated
     /// to it). `u8` beside `u16` is masked at the WIDER width (the lowering's narrow
-    /// lattice — round 7); every other mix and a non-literal i64 widen to i64 (`None`).
+    /// lattice — round 7; a wrapped `u8` input keeps its 8-bit `wrap_width`). Every
+    /// other mix and a non-literal i64 widen to i64 (`None`).
     fn narrow_mode(&self, ids: &[ValueId], consts: &BTreeMap<ValueId, i64>) -> Option<NarrowKind> {
         let mut kind: Option<NarrowKind> = None;
         let bytes = |a: NarrowKind, b: NarrowKind| {
@@ -271,6 +312,12 @@ impl Narrow {
         let mut grew = self.kind.insert(dst, kind).is_none();
         if a != b || arms.iter().any(|v| self.wrapped.contains(v)) {
             grew |= self.wrapped.insert(dst);
+            let narrowest = arms
+                .iter()
+                .filter_map(|v| self.wrap_width.get(v).copied())
+                .min()
+                .unwrap_or(kind.width());
+            grew |= self.wrap_width.insert(dst, narrowest).is_none();
         }
         grew
     }
@@ -291,7 +338,9 @@ impl Narrow {
             // is not truncated natively (`bool + bool` returned: 2 vs 0), nor is `-> i64`.
             Instr::Return { value: Some(v) } => {
                 let exact_through_return = match (self.ret_kind, self.kind.get(v)) {
-                    (Some(r), Some(k)) if r != NarrowKind::Bool => r.width() <= k.width(),
+                    (Some(r), Some(k)) if r != NarrowKind::Bool => {
+                        r.width() <= self.wrap_width.get(v).copied().unwrap_or(k.width())
+                    }
                     _ => false,
                 };
                 wrapped(v) && !exact_through_return
@@ -345,12 +394,19 @@ impl Narrow {
             let Some(Some(formal)) = kinds.get(i) else {
                 return false;
             };
+            // Native sign-extends an `i32` formal at entry (measured: 4294967295 and a
+            // u32 value both read -1 on both backends), so `i32` formals are exact for
+            // any literal or u32 value; a `u32` formal is not zero-extended natively.
+            if *formal == NarrowKind::I32 {
+                return false;
+            }
             if let Some(v) = consts.get(arg) {
                 return !formal.holds(*v);
             }
             match self.kind.get(arg) {
-                Some(k) if *k == *formal => false,
-                // A narrower, or same-width-other-signedness, formal changes the value.
+                // An out-of-range bitwise result meets the u8/u16 ENTRY mask on MLIR only.
+                Some(k) if *k == *formal => !formal.truncates_literals() && self.oor.contains(arg),
+                // A narrower formal, or a `u32` formal fed an `i32`, changes the value.
                 Some(k) => formal.width() < k.width() || formal.same_width(*k),
                 None => false,
             }

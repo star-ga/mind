@@ -24,6 +24,8 @@
 
 mod unsigned_taint;
 #[cfg(all(test, feature = "std-surface"))]
+mod unsigned_taint_narrow_tests;
+#[cfg(all(test, feature = "std-surface"))]
 mod unsigned_taint_pipeline_tests;
 use crate::ir::{BinOp, IRModule, Instr};
 use unsigned_taint::{Taint, UnsignedDoors};
