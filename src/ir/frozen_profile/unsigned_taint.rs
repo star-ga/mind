@@ -22,10 +22,9 @@ pub(crate) mod narrow;
 use mask::{collect_consts, collect_loop_inits, mark_masked};
 
 /// Which call results and parameters carry a full-width UNSIGNED (`u64`) value, at two
-/// precisions (see [`Taint`]). `u8`/`u16` are NOT tainted: MLIR kinds them i64 and both
-/// backends compute them at 64 bits, so they agree. `u32`/`i32`/`bool` are tracked
-/// separately (`narrow.rs`): MLIR computes them at 32/1 bits, native at 64. `usize` is
-/// NOT tainted either: MLIR lowers it as a
+/// precisions (see [`Taint`]). `u32`/`i32`/`u16`/`u8`/`bool` are tracked separately
+/// (`narrow.rs`): MLIR computes them at 32/16/8/1 bits (u16/u8 through width masks the
+/// Rust lowering inserts), native at 64. `usize` is NOT tainted either: MLIR lowers it as a
 /// SIGNED i64 today (`arith.cmpi "slt"`, pinned by `usize_is_signed_on_the_mlir_backend_too`),
 /// so native and MLIR agree, and main 5724a6ee compiles a `usize` compare natively.
 #[cfg(feature = "std-surface")]
@@ -162,6 +161,7 @@ impl UnsignedDoors {
             &param_kind,
             &self.ret_narrow,
             &self.params_narrow,
+            owner.and_then(|name| self.ret_narrow.get(name).copied()),
             &consts,
             body,
         );

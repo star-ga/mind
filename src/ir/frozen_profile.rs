@@ -319,6 +319,12 @@ fn admit_instrs_in(
     doors: &UnsignedDoors,
 ) -> Result<(), FrozenProfileRejection> {
     for instr in instrs {
+        // A wrapped narrow value (`u32 + u32`, `bool + bool`, ...) is 32/16/8/1-bit on
+        // MLIR and 64-bit natively; it may only be consumed by narrow operators, never
+        // returned, passed on, indexed with, or widened (audit 2026-09-18 round 6).
+        if taint.narrow_wrapped_escapes(instr) {
+            reject("narrow.wrapped_value_escapes")?
+        }
         match instr {
             // ---- IN PROFILE: scalar consts, arithmetic, calls, control flow ----
             // Proven native by the RI-D1 readiness gate: int arith, scalar match,

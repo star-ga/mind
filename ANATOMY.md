@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1829 | **Est. tokens:** ~3,520,975
-**Generated:** 2026-09-18 20:18 UTC
+**Files:** 1829 | **Est. tokens:** ~3,524,715
+**Generated:** 2026-09-19 00:52 UTC
 
 ## Token Budget Guide
 
@@ -112,13 +112,13 @@
 | `src/exec/` | 3 | ~5,522 |
 | `src/ffi/` | 3 | ~5,541 |
 | `src/fmt/` | 3 | ~24,052 |
-| `src/ir/` | 9 | ~97,325 |
+| `src/ir/` | 9 | ~97,418 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
 | `src/ir/compact/v3/` | 15 | ~76,625 |
 | `src/ir/compact/v3/v04/` | 3 | ~13,696 |
-| `src/ir/frozen_profile/` | 2 | ~14,691 |
-| `src/ir/frozen_profile/unsigned_taint/` | 3 | ~5,481 |
+| `src/ir/frozen_profile/` | 2 | ~16,805 |
+| `src/ir/frozen_profile/unsigned_taint/` | 3 | ~7,014 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~10,017 |
 | `src/mlir/` | 3 | ~6,625 |
@@ -1296,18 +1296,18 @@
 
 - `evidence.rs` (~13387 tok, huge) — Copyright 2025 STARGA Inc.
 - `fp_mode.rs` (~13664 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
-- `frozen_profile.rs` (~9391 tok, huge) — Copyright 2025 STARGA Inc.
+- `frozen_profile.rs` (~9484 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/frozen_profile/unsigned_taint/`
 
 - `mask.rs` (~1371 tok, large) — Copyright 2025 STARGA Inc.
-- `narrow.rs` (~2537 tok, huge) — Copyright 2025 STARGA Inc.
+- `narrow.rs` (~3962 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/frozen_profile/`
 
-- `unsigned_taint_pipeline_tests.rs` (~7151 tok, huge) — Copyright 2025 STARGA Inc.
-- `unsigned_taint.rs` (~7540 tok, huge) — Copyright 2025 STARGA Inc.
+- `unsigned_taint_pipeline_tests.rs` (~9257 tok, huge) — Copyright 2025 STARGA Inc.
+- `unsigned_taint.rs` (~7548 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/frozen_profile/unsigned_taint/`
 
-- `taint.rs` (~1573 tok, huge) — Copyright 2025 STARGA Inc.
+- `taint.rs` (~1681 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
 - `mod.rs` (~17720 tok, huge) — Copyright 2025 STARGA Inc.

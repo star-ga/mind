@@ -92,6 +92,17 @@ impl Taint {
         }
     }
 
+    /// Does a wrapped narrow value escape the narrow world in `instr`?
+    pub(crate) fn narrow_wrapped_escapes(&self, instr: &crate::ir::Instr) -> bool {
+        #[cfg(not(feature = "std-surface"))]
+        let _ = instr;
+        match self {
+            Taint::All => false,
+            #[cfg(feature = "std-surface")]
+            Taint::Values { narrow, consts, .. } => narrow.wrapped_escapes(instr, consts),
+        }
+    }
+
     /// Is a literal argument of this call outside its narrow formal's range?
     pub(crate) fn narrow_arg_out_of_range(&self, callee: &str, args: &[ValueId]) -> bool {
         #[cfg(not(feature = "std-surface"))]

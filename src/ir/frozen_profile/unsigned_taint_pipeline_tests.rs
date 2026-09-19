@@ -338,6 +338,42 @@ const COMPARE_SHAPES: &[(&str, &str, bool, bool)] = &[
         false,
         false,
     ),
+    (
+        "u32 & literal is narrow but not wrapped (round 6)",
+        "fn f(a: u32) -> i64 {\n    let m = a & 255\n    if m < 3 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        false,
+    ),
+    (
+        "mask then + 1 is wrapped again",
+        "fn f(a: u32) -> i64 {\n    let m = a & 255\n    let n = m + 1\n    if n < 300 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        true,
+    ),
+    (
+        "u32 loop counter seeded from a param (MLIR cannot build it; main correct)",
+        "fn f(a: u32, n: u32) -> i64 {\n    let i = a\n    let acc = 0\n    while i < n {\n        acc = acc + 1\n        i = i + 1\n    }\n    return acc\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        false,
+    ),
+    (
+        "u8 compare in range agrees (MLIR masks, native zero-extends)",
+        "fn f(a: u8, b: u8) -> i64 {\n    if a < b {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        false,
+        false,
+    ),
+    (
+        "u32 join of two u32 params compared in range",
+        "fn f(a: u32, b: u32, c: i64) -> i64 {\n    let x = b\n    if c == 1 {\n        x = a\n    }\n    if x < 5 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        false,
+    ),
+    (
+        "an i32 ⊔ u32 join absorbs to u32 on MLIR (ult on a negative)",
+        "fn f(a: i32, b: u32, c: i64) -> i64 {\n    let x = b\n    if c == 1 {\n        x = a\n    }\n    if x < 0 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        true,
+        true,
+    ),
 ];
 
 /// The fence refuses an ordered compare ONLY where MLIR emits an unsigned predicate
@@ -407,12 +443,130 @@ fn narrow_wrapped_or_truncated_compares_are_refused() {
     assert_eq!(fence(bool_arg), Some("call.narrow_arg_out_of_range"));
     let good_arg = "fn f(a: u32) -> i64 {\n    if a < 5 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return f(4294967295)\n}\n";
     assert_eq!(fence(good_arg), None);
+    // `bool < bool`: MLIR compares i1 SIGNED (true is -1 there), so `false < true` is 0
+    // on MLIR and 1 natively — the one refusal of a compare MLIR emits signed.
+    let bool_lt = "fn f(b: bool, c: bool) -> i64 {\n    if b < c {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(fence(bool_lt), Some("binop.ordered_compare_unsigned"));
     let bare_param = "fn f(a: u32) -> i64 {\n    if a < 5 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n";
     assert_eq!(fence(bare_param), None, "in range on both backends");
     let i32_in_range = "fn f(a: i32) -> i64 {\n    if a < -5 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n";
     assert_eq!(fence(i32_in_range), None);
     let eq_in_range = "fn f(a: u32) -> i64 {\n    if a == 4294967295 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n";
     assert_eq!(fence(eq_in_range), None);
+    // Round 6: bitwise results are exact on both backends; `x - y == 0` on two
+    // unwrapped same-kind narrows is exact too (|x - y| < 2^width); an out-of-range
+    // literal in a bitwise op still diverges (`a & 4294967295` on i32 is `a & -1` there).
+    for (label, src) in [
+        (
+            "u32 & literal == 2",
+            "fn f(a: u32) -> i64 {\n    let m = a & 255\n    if m == 2 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        ),
+        (
+            "bool & bool == 1",
+            "fn f(b: bool, c: bool) -> i64 {\n    let m = b & c\n    if m == 1 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        ),
+        (
+            "u32 | u32 == 7",
+            "fn f(a: u32, b: u32) -> i64 {\n    let m = a | b\n    if m == 7 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        ),
+        (
+            "u32 - u32 == 0",
+            "fn f(a: u32, b: u32) -> i64 {\n    let s = a - b\n    if s == 0 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        ),
+        (
+            "i32 - i32 == 0",
+            "fn f(a: i32, b: i32) -> i64 {\n    let s = a - b\n    if s == 0 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        ),
+    ] {
+        assert_eq!(fence(src), None, "{label}");
+    }
+    let diff_eq_five = "fn f(a: u32, b: u32) -> i64 {\n    let s = a - b\n    if s == 5 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(
+        fence(diff_eq_five),
+        Some("binop.compare_narrow_width"),
+        "only == 0 is exact"
+    );
+    let i32_and_far = "fn f(a: i32) -> i64 {\n    let m = a & 4294967295\n    return m\n}\nfn main() -> i64 {\n    let r = f(-1)\n    if r == -1 {\n        return 1\n    }\n    return 0\n}\n";
+    assert_eq!(fence(i32_and_far), Some("narrow.wrapped_value_escapes"));
+    // u8/u16 are masked at 8/16 bits by the Rust lowering (invisible to the native
+    // front end): `a + b == 0` at 255 + 1 is main native 0 vs MLIR 1.
+    let u8_wrapped = "fn f(a: u8, b: u8) -> i64 {\n    let s = a + b\n    if s == 0 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(fence(u8_wrapped), Some("binop.compare_narrow_width"));
+    let u8_arg = "fn f(a: u8) -> i64 {\n    if a < 100 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return f(300)\n}\n";
+    assert_eq!(fence(u8_arg), Some("call.narrow_arg_out_of_range"));
+}
+
+/// A WRAPPED narrow value may not leave the narrow world: MLIR carries the wrapped
+/// value on, native the 64-bit one (`u32 + u32` returned as i64: native 0 vs MLIR 1 at
+/// 2^32-1 + 1; `bool + bool` returned: native 2 vs MLIR 0 — round 6).
+#[test]
+fn wrapped_narrow_values_may_not_escape() {
+    for (label, src) in [
+        (
+            "u32 sum returned",
+            "fn f(a: u32, b: u32) -> i64 {\n    let s = a + b\n    return s\n}\nfn main() -> i64 {\n    let r = f(4294967295, 1)\n    if r == 0 {\n        return 1\n    }\n    return 0\n}\n",
+        ),
+        (
+            "bool sum returned",
+            "fn f(b: bool, c: bool) -> i64 {\n    let s = b + c\n    return s\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        ),
+        (
+            "bool sum returned as bool",
+            "fn g(b: bool, c: bool) -> bool {\n    return b + c\n}\nfn main() -> i64 {\n    let x = g(true, true)\n    if x == 0 {\n        return 1\n    }\n    return 0\n}\n",
+        ),
+        (
+            "u32 sum into an i64 if-join",
+            "fn f(a: u32, b: u32, c: i64) -> i64 {\n    let s = a + b\n    let x = 5\n    if c == 1 {\n        x = s\n    }\n    if x == 0 {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return f(4294967295, 1, 1)\n}\n",
+        ),
+        (
+            "u32 sum passed to a call",
+            "fn h(x: i64) -> i64 {\n    return x\n}\nfn f(a: u32, b: u32) -> i64 {\n    let s = a + b\n    return h(s)\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        ),
+        (
+            "u32 sum widened by an i64",
+            "fn f(a: u32, b: u32, c: i64) -> i64 {\n    let s = a + b\n    let t = s + c\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        ),
+    ] {
+        assert_eq!(fence(src), Some("narrow.wrapped_value_escapes"), "{label}");
+    }
+    let bool_cond = "fn f(b: bool, c: bool) -> i64 {\n    let s = b + c\n    if s {\n        return 1\n    }\n    return 0\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(
+        fence(bool_cond),
+        Some("narrow.wrapped_value_escapes"),
+        "wrapped bool condition"
+    );
+    // Native truncates a `-> u32` / `-> i32` return, so a wrapped value of that exact
+    // kind returned through it is exact (measured round 6); `-> bool` is not truncated.
+    let ret_u32 =
+        "fn g(a: u32, b: u32) -> u32 {\n    return a + b\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(fence(ret_u32), None, "wrapped u32 through -> u32");
+    let ret_i32 =
+        "fn g(a: i32) -> i32 {\n    return a * 2\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(fence(ret_i32), None, "wrapped i32 through -> i32");
+    let ret_bool = "fn g(b: bool, c: bool) -> bool {\n    return b + c\n}\nfn main() -> i64 {\n    return 0\n}\n";
+    assert_eq!(
+        fence(ret_bool),
+        Some("narrow.wrapped_value_escapes"),
+        "-> bool is not truncated natively"
+    );
+    // An UNWRAPPED narrow value escapes freely (a bare param returned, a mask returned):
+    // native truncates `-> u32` returns, and a u32 param fits an i64.
+    for (label, src) in [
+        (
+            "u32 param returned",
+            "fn f(a: u32) -> i64 {\n    return a\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        ),
+        (
+            "mask returned",
+            "fn f(a: u32) -> i64 {\n    let m = a & 255\n    return m\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        ),
+        (
+            "u32 param passed to a call",
+            "fn h(x: i64) -> i64 {\n    return x\n}\nfn f(a: u32) -> i64 {\n    return h(a)\n}\nfn main() -> i64 {\n    return 0\n}\n",
+        ),
+    ] {
+        assert_eq!(fence(src), None, "{label}");
+    }
 }
 
 /// Division stays on the WIDE set: a loop-carried accumulator of a `u64` is refused
@@ -465,7 +619,11 @@ fn pipeline_division_uses_the_wide_taint() {
     assert_eq!(fence(u32_by_pos), Some("binop.div_mod_unsigned"));
     let u8_by_neg =
         "fn f(a: u8) -> i64 {\n    return a / -2\n}\nfn main() -> i64 {\n    return 0\n}\n";
-    assert_eq!(fence(u8_by_neg), None, "u8 is i64-kinded in MLIR (divsi)");
+    assert_eq!(
+        fence(u8_by_neg),
+        Some("binop.div_mod_unsigned"),
+        "u8 is masked to 8 bits by the Rust lowering (round 6)"
+    );
     // 32-bit wrap on MLIR, 64-bit on native (audit 2026-09-18, main refused all five).
     for (label, src) in [
         (
