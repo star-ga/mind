@@ -1,0 +1,43 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes; see scalar-float-f64/manifest.toml for the scalar
+# IEEE non-integer precedent.
+#
+# examples/quant/implied_vol_surface — SVI total-variance parameterisation,
+# `svi_total_variance`. w(k) = a + b*(rho*(k-m) + sqrt((k-m)^2 + p_sigma^2)),
+# straight-line scalar IEEE, the inner bracket summed left-to-right BEFORE the
+# single multiplication by b (the manifest's own load-bearing evaluation-order
+# comment: distributing b across the bracket is algebraically identical and
+# numerically different).
+#
+# Why avx2 == neon: no loop, no reduction, straight-line scalar IEEE `+ - * /`
+# plus one dm_sqrt call in a fixed source order — the same RFC 0015 §3.1
+# scalar-IEEE argument as scalar-float-f64.
+
+version = "1"
+name = "quant-implied-vol-surface"
+description = "SVI total implied variance (examples/quant/implied_vol_surface): svi_total_variance(k,a,b,rho,m,p_sigma) over an 8-point deterministic grid, folded to one hash. Straight-line scalar IEEE, inner bracket summed left-to-right before the single multiply by b (pinned evaluation order)."
+weight = 1.0
+substrates = ["avx2", "neon"]
+
+[input]
+generator = "fixed"
+grid_len = 8
+dtype = "f64"
+# grid[i] = (k, a, b, rho, m, p_sigma)
+grid = [
+    [0.0, 0.04, 0.4, -0.3, 0.0, 0.2],
+    [0.1, 0.04, 0.4, -0.3, 0.0, 0.2],
+    [-0.1, 0.04, 0.4, -0.3, 0.0, 0.2],
+    [0.2, 0.05, 0.3, -0.5, 0.05, 0.15],
+    [-0.2, 0.05, 0.3, -0.5, 0.05, 0.15],
+    [0.0, 0.02, 0.2, 0.0, 0.0, 0.3],
+    [0.05, 0.03, 0.25, -0.2, -0.02, 0.1],
+    [0.3, 0.04, 0.4, -0.3, 0.0, 0.2],
+]
+
+[kernel]
+symbol = "svi_total_variance"
+source = "examples/quant/implied_vol_surface/main.mind"
+returns = "f64"
+oracle = "within-run Rust port of svi_total_variance/svi_params_valid/svi_w_min_raw, byte-exact per-op"
+output_encoding = "f64_bits_i64_le_grid"

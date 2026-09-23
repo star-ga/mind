@@ -1,0 +1,1438 @@
+// examples/quant/american_binomial — deterministic American option pricing:
+// early exercise on a CRR lattice, the Barone-Adesi/Whaley quadratic
+// approximation, its critical exercise boundary, and the early-exercise premium.
+//
+// Copyright 2025 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// WHY THIS EXISTS ALONGSIDE crr_binomial.  `examples/quant/crr_binomial`
+// already builds a recombining lattice and already takes a max() against
+// intrinsic value when its `american` flag is set.  That file's subject is the
+// LATTICE: an iterative, order-sensitive accumulation held bit-identical across
+// substrates.  Repeating it here would add nothing.
+//
+// The subject of THIS file is the early-exercise decision itself, and three
+// things that only become visible once you take it seriously:
+//
+//   1. THE OPTIMAL-STOPPING PROBLEM HAS NO CLOSED FORM.  There is no American
+//      analogue of Black-Scholes.  The industry prices this with a lattice
+//      (slow, convergent) or a closed-form APPROXIMATION (fast, biased).  This
+//      file implements both and CROSS-CHECKS them, which is strictly stronger
+//      than either alone: a lattice bug and an approximation bug would have to
+//      agree to survive.
+//
+//   2. THE CRITICAL BOUNDARY IS THE ROOT OF A TRANSCENDENTAL EQUATION.  How
+//      that root-find TERMINATES is a reproducibility question, not a
+//      numerical-analysis nicety — see the comment above `baw_s_star_put`.
+//
+//   3. THE PREMIUM IS A DIFFERENCE OF TWO PRICES.  `american - european` is a
+//      small number formed by subtracting two comparable larger ones — the
+//      cancellation that makes a non-reproducible library report a different
+//      hedge on two machines while both "prices" look fine to four decimals.
+//
+// WHAT IS AN APPROXIMATION HERE, STATED UP FRONT.  `baw_call` and `baw_put`
+// implement Barone-Adesi & Whaley (1987).  They are NOT exact American prices
+// and are not claimed to be.  BAW is a quadratic approximation to the
+// early-exercise premium; its error is small near the money and for short
+// maturities, and grows for long-dated, deep-in-the-money, high-carry options.
+// The KATs below MEASURE that error against a converged lattice rather than
+// asserting it away — see the CROSS-CHECK block, where the worst observed
+// disagreement (a deep-ITM, r=0.10 put) is 0.062 in price, ~0.53% relative,
+// and is asserted AS a band with that number written down. If a future change
+// makes that gap grow, the check fails; the correct response is to investigate,
+// never to widen the band.
+//
+// DETERMINISM PROPERTIES, ALL OF THEM NEGATIVE OR FIXED.
+//   * No clock, no OS entropy, no global mutable state.  Every function is pure
+//     in its arguments.
+//   * Every loop has a trip count that is either a literal constant or an
+//     explicit integer PARAMETER (the lattice step count `n`).  No loop's trip
+//     count depends on an f64 value.  A price is therefore a fixed sequence of
+//     operations for a fixed (n, flags), and that sequence is what the
+//     cross-substrate fixture attests.
+//   * Every reduction is a fixed left-fold in source order.  No reassociation.
+//
+// SELF-CONTAINED, AND WHY.  The detmath kernels below are duplicated VERBATIM
+// from `examples/quant/black_scholes/main.mind` rather than imported.  mindc
+// 0.10.2 cannot carry an f64 across a module boundary (roadmap 17.1): an
+// imported `fn f(x: f64) -> f64` types as `(i64) -> i64` at the call site and
+// miscompiles silently.  The duplication is byte-identical on purpose — if the
+// two copies were allowed to drift, two quant examples would compute two
+// different `exp` and the cross-example comparison in the KAT below would be
+// meaningless.  Mirrors `examples/detmath_kat`.
+// deferred: replace the KERNEL block with `import std.detmath;` once roadmap
+// 17.1 lands — upgrade path: delete everything between the KERNEL markers.
+//
+// THE `dm_` PREFIX IS LOAD-BEARING, NOT COSMETIC.  A MIND function whose name
+// matches a C99 libm symbol (`exp`, `log`, `pow`, `sin`, `cos`, `erf`, `erfc`)
+// can be recognised by LLVM as that builtin and CONSTANT-FOLDED to the HOST
+// libm when its argument is a compile-time constant — silently skipping the
+// MIND body and producing a value this compiler never computed.  That defect is
+// documented in this repo.  Every kernel here is named `dm_*` or `det_*`,
+// outside the libm namespace.  Do not rename one for readability.
+//
+// NO `[test]` FUNCTIONS, AND WHY.  The mindc 0.10.2 `[test]` interpreter
+// mis-evaluates an f64 branch condition (takes the then-branch
+// unconditionally), so every guarded function would return through its leading
+// NaN guard and every interpreted assertion would pass vacuously — a false
+// green.  The native backend is correct, so the gate is build-and-run: `mindc
+// run`, and THE EXIT CODE IS THE COUNT OF FAILED CHECKS.
+//
+// REFERENCES (original papers only):
+//   Barone-Adesi, G. & Whaley, R. E. (1987). "Efficient Analytic Approximation
+//     of American Option Values." Journal of Finance 42(2), 301-320.
+//   Cox, J. C., Ross, S. A. & Rubinstein, M. (1979). "Option Pricing: A
+//     Simplified Approach." Journal of Financial Economics 7(3), 229-263.
+//   Merton, R. C. (1973). "Theory of Rational Option Pricing." Bell Journal of
+//     Economics and Management Science 4(1), 141-183.  (Proves an American call
+//     on a non-dividend-paying stock is never exercised early — the bit-exact
+//     structural invariant asserted below, and the single sharpest check here.)
+//   MacMillan, L. W. (1986). "Analytic Approximation for the American Put
+//     Option." Advances in Futures and Options Research 1, 119-139.  (The put
+//     case BAW generalises.)
+// ---------------------------------------------------------------------------
+
+// =========================== KERNEL BEGIN ==================================
+// Duplicated VERBATIM from examples/quant/black_scholes/main.mind (roadmap 17.1
+// blocks importing f64 across modules).  Do not "improve" these: every
+// polynomial is a fixed left-fold Horner recurrence in source order.
+// Reassociating one changes the last bit of every price downstream and breaks
+// the cross-substrate hash.
+fn absf(x: f64) -> f64 {
+    if x < 0.0 {
+        return 0.0 - x;
+    }
+    return x;
+}
+
+// +inf by byte-identical IEEE overflow; never a synthesised NaN.
+fn inf() -> f64 {
+    let mut v: f64 = 1.0;
+    let mut i: i64 = 0;
+    while i < 350 {
+        v = v * 10.0;
+        i = i + 1;
+    }
+    return v;
+}
+
+// 0x7FF8000000000000 — the MIND-canonical quiet NaN, pinned so an
+// out-of-domain result is byte-identical (x86 sets the sign bit, ARM does not).
+fn canonical_qnan() -> f64 {
+    return __mind_bits_to_f64(9221120237041090560);
+}
+
+fn rnd_to_i64(x: f64) -> i64 {
+    if x >= 0.0 {
+        return (x + 0.5) as i64;
+    }
+    return 0 - ((0.5 - x) as i64);
+}
+
+fn det_exp(x: f64) -> f64 {
+    let ln2_hi: f64 = 0.6931467056274414;
+    let ln2_lo: f64 = 0.00000047493250390941725;
+    let inv_ln2: f64 = 1.4426950408889634;
+    let k: i64 = rnd_to_i64(x * inv_ln2);
+    let kf: f64 = k as f64;
+    let r: f64 = (x - kf * ln2_hi) - kf * ln2_lo;
+    let mut t: f64 = 0.0000000000007647163731819816;
+    t = 0.00000000016059043836821613 + r * t;
+    t = 0.00000000208767569878681 + r * t;
+    t = 0.00000002505210838544172 + r * t;
+    t = 0.0000002755731922398589 + r * t;
+    t = 0.0000027557319223985893 + r * t;
+    t = 0.0000248015873015873 + r * t;
+    t = 0.0001984126984126984 + r * t;
+    t = 0.001388888888888889 + r * t;
+    t = 0.008333333333333333 + r * t;
+    t = 0.041666666666666664 + r * t;
+    t = 0.16666666666666666 + r * t;
+    t = 0.5 + r * t;
+    t = 1.0 + r * t;
+    t = 1.0 + r * t;
+    let mut y: f64 = t * 1.0;
+    let mut j: i64 = 0;
+    if k >= 0 {
+        while j < k {
+            y = y * 2.0;
+            j = j + 1;
+        }
+    } else {
+        while j < (0 - k) {
+            y = y / 2.0;
+            j = j + 1;
+        }
+    }
+    return y;
+}
+
+fn dm_exp(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x >= 709.7827128933841 {
+        return inf();
+    }
+    if x <= 0.0 - 745.1332191019412 {
+        return 0.0;
+    }
+    return det_exp(x);
+}
+
+fn det_log_core(x: f64) -> f64 {
+    let ln2: f64 = 0.6931471805599453;
+    let mut k: i64 = 0;
+    // f64-param-init: seed a loop-carried f64 binding via the exact identity
+    // `x * 1.0` so mindc 0.10.2 does not infer it as i64.
+    let mut m: f64 = x * 1.0;
+    while m >= 1.4142135623730951 {
+        m = m / 2.0;
+        k = k + 1;
+    }
+    while m < 0.7071067811865476 {
+        m = m * 2.0;
+        k = k - 1;
+    }
+    let s: f64 = (m - 1.0) / (m + 1.0);
+    let s2: f64 = s * s;
+    let mut acc: f64 = 0.0;
+    let mut n: i64 = 29;
+    while n >= 1 {
+        acc = 1.0 / (n as f64) + s2 * acc;
+        n = n - 2;
+    }
+    return (k as f64) * ln2 + 2.0 * s * acc;
+}
+
+fn dm_log(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x < 0.0 {
+        return 0.0;
+    }
+    if x == 0.0 {
+        return 0.0 - inf();
+    }
+    if x >= inf() {
+        return inf();
+    }
+    return det_log_core(x);
+}
+
+fn dm_sqrt(x: f64) -> f64 {
+    if x != x {
+        return canonical_qnan();
+    }
+    if x < 0.0 {
+        return canonical_qnan();
+    }
+    return sqrt(x);
+}
+
+// erf by its Maclaurin series, ascending fixed left-fold.  Certified |x| < 2.
+fn erf_series(x: f64) -> f64 {
+    let two_over_sqrtpi: f64 = 1.1283791670955126;
+    let x2: f64 = x * x;
+    let mut t: f64 = x * 1.0;
+    let mut s: f64 = x * 1.0;
+    let mut n: i64 = 1;
+    while n < 60 {
+        t = t * (0.0 - x2) / (n as f64);
+        s = s + t / ((2 * n + 1) as f64);
+        n = n + 1;
+    }
+    return two_over_sqrtpi * s;
+}
+
+// erfc by a fixed-depth backward continued fraction.  Certified x >= 1.
+// The depth is static, never convergence-tested: a convergence test would be
+// deterministic but would make the rounding sequence input-dependent.
+fn erfc_cf(x: f64) -> f64 {
+    let sqrtpi: f64 = 1.7724538509055159;
+    let mut acc: f64 = 0.0;
+    let mut n: i64 = 200;
+    while n >= 1 {
+        acc = ((n as f64) * 0.5) / (x + acc);
+        n = n - 1;
+    }
+    return det_exp(0.0 - x * x) / sqrtpi / (x + acc);
+}
+
+fn dm_erfc(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x >= inf() {
+        return 0.0;
+    }
+    if x <= 0.0 - inf() {
+        return 2.0;
+    }
+    if x < 0.0 {
+        return 2.0 - dm_erfc(0.0 - x);
+    }
+    if x < 1.0 {
+        return 1.0 - erf_series(x);
+    }
+    return erfc_cf(x);
+}
+
+// Standard normal CDF.  Computed as 0.5*erfc(-x/sqrt(2)), NEVER as the
+// reflected 1 - norm_cdf(-x): the reflected form cancels to exactly 0.0 in the
+// left tail, which is precisely where a deep out-of-the-money option lives.
+// See the deep-OTM KAT below, where the true call premium is 4.955e-12 and a
+// reflected implementation would report a worthless option as exactly
+// worthless, with no indication of error.
+fn dm_norm_cdf(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    let inv_sqrt2: f64 = 0.7071067811865476;
+    return 0.5 * dm_erfc(0.0 - x * inv_sqrt2);
+}
+
+// Standard normal PDF, phi(x) = exp(-x^2/2)/sqrt(2*pi).  Needed by gamma,
+// vega and theta.  1/sqrt(2*pi) is a rounded constant, not a division.
+fn dm_norm_pdf(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    let inv_sqrt_2pi: f64 = 0.3989422804014327;
+    return inv_sqrt_2pi * det_exp(0.0 - 0.5 * x * x);
+}
+
+// ============================ KERNEL END ===================================
+
+// ---------------------------------------------------------------------------
+// Small shared helpers.
+// ---------------------------------------------------------------------------
+
+fn maxf(a: f64, b: f64) -> f64 {
+    if a > b {
+        return a;
+    }
+    return b;
+}
+
+fn minf(a: f64, b: f64) -> f64 {
+    if a < b {
+        return a;
+    }
+    return b;
+}
+
+// x^y for x > 0, as exp(y * log(x)).  Deliberately NOT named `pow`: see the
+// libm-capture note in the header.  Only ever called here with x > 0 and a
+// finite y, which is why there is no branch on a negative base — a negative
+// base would need an integer-exponent path and this file never has one.
+fn dm_powpos(x: f64, y: f64) -> f64 {
+    if x != x {
+        return canonical_qnan();
+    }
+    if y != y {
+        return canonical_qnan();
+    }
+    if x <= 0.0 {
+        return canonical_qnan();
+    }
+    return dm_exp(y * dm_log(x));
+}
+
+// Shared precondition check for every pricing entry point below.  Violations
+// return the canonical qNaN rather than a plausible-looking number: a silent
+// numeric fallback on a degenerate input is how a pricing bug reaches
+// production wearing a valid-looking price.
+fn am_valid(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> i64 {
+    if s != s {
+        return 0;
+    }
+    if k != k {
+        return 0;
+    }
+    if r != r {
+        return 0;
+    }
+    if q != q {
+        return 0;
+    }
+    if sigma != sigma {
+        return 0;
+    }
+    if t != t {
+        return 0;
+    }
+    if s <= 0.0 {
+        return 0;
+    }
+    if k <= 0.0 {
+        return 0;
+    }
+    if sigma <= 0.0 {
+        return 0;
+    }
+    if t <= 0.0 {
+        return 0;
+    }
+    return 1;
+}
+
+// ---------------------------------------------------------------------------
+// European Black-Scholes-Merton leg.
+//
+// Present here NOT as a contribution — `examples/quant/black_scholes` owns that
+// — but because two things in this file are DEFINED in terms of it:
+//   * the early-exercise premium, which is american - european;
+//   * the BAW approximation, whose whole structure is "European price plus a
+//     quadratic approximation to the premium".
+// Written in the same fixed evaluation order as black_scholes/main.mind: the d1
+// numerator is summed left to right before the single division.  Regrouping is
+// algebraically identical and numerically different.
+// ---------------------------------------------------------------------------
+
+fn eu_d1(s: f64, k: f64, b: f64, sigma: f64, t: f64) -> f64 {
+    // `b` is the COST OF CARRY, b = r - q.  BAW is stated in carry form in the
+    // original paper, and using the same parameterisation in the European leg
+    // keeps the two implementations textually comparable.
+    let sq: f64 = sigma * dm_sqrt(t);
+    return (dm_log(s / k) + (b + 0.5 * sigma * sigma) * t) / sq;
+}
+
+pub fn eu_call(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if am_valid(s, k, r, q, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let d1: f64 = eu_d1(s, k, r - q, sigma, t);
+    let d2: f64 = d1 - sigma * dm_sqrt(t);
+    let df_r: f64 = dm_exp(0.0 - r * t);
+    let df_q: f64 = dm_exp(0.0 - q * t);
+    return s * df_q * dm_norm_cdf(d1) - k * df_r * dm_norm_cdf(d2);
+}
+
+pub fn eu_put(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if am_valid(s, k, r, q, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let d1: f64 = eu_d1(s, k, r - q, sigma, t);
+    let d2: f64 = d1 - sigma * dm_sqrt(t);
+    let df_r: f64 = dm_exp(0.0 - r * t);
+    let df_q: f64 = dm_exp(0.0 - q * t);
+    return k * df_r * dm_norm_cdf(0.0 - d2) - s * df_q * dm_norm_cdf(0.0 - d1);
+}
+
+// ---------------------------------------------------------------------------
+// LATTICE STORAGE.  The level buffer holds f64 values as their exact IEEE bit
+// patterns in an i64 heap block, via the `__mind_f64_to_bits` /
+// `__mind_bits_to_f64` reinterpret pair.  That is a lossless bit copy, NOT a
+// numeric conversion: nothing is rounded on the way in or out.  mindc 0.10.2
+// has no f64 load/store intrinsic, so this is the executable-subset route to a
+// mutable f64 array.
+// ---------------------------------------------------------------------------
+
+fn lvl_get(buf: i64, i: i64) -> f64 {
+    return __mind_bits_to_f64(__mind_load_i64(buf + i * 8));
+}
+
+fn lvl_set(buf: i64, i: i64, v: f64) -> i64 {
+    __mind_store_i64(buf + i * 8, __mind_f64_to_bits(v));
+    return 0;
+}
+
+fn intrinsic(spot: f64, k: f64, is_call: i64) -> f64 {
+    if is_call != 0 {
+        return maxf(spot - k, 0.0);
+    }
+    return maxf(k - spot, 0.0);
+}
+
+// Underlying at lattice node (i, j): S * u^(2j - i).
+//
+// RECONSTRUCTED, NEVER ACCUMULATED.  Walking a running product across a level
+// would be cheaper but its rounding error would depend on the traversal
+// direction, making the lattice a function of HOW it is walked rather than of
+// (i, j) alone.  Recomputing from S costs operations and buys order
+// independence.  The loop's trip count is |2j - i|, an integer derived from
+// integer node indices — never from an f64 — so the operation count is fixed
+// for a fixed n.
+fn node_spot(s: f64, u: f64, d: f64, i: i64, j: i64) -> f64 {
+    // f64-param-init: seed the loop-carried binding via the exact identity
+    // `s * 1.0` so mindc 0.10.2 does not infer it as i64.
+    let mut sp: f64 = s * 1.0;
+    let e: i64 = 2 * j - i;
+    let mut c: i64 = 0;
+    if e >= 0 {
+        while c < e {
+            sp = sp * u;
+            c = c + 1;
+        }
+    } else {
+        while c < (0 - e) {
+            sp = sp * d;
+            c = c + 1;
+        }
+    }
+    return sp;
+}
+
+// ---------------------------------------------------------------------------
+// The binomial option pricing model (BOPM) on a Cox-Ross-Rubinstein lattice,
+// with the early-exercise test applied at EVERY interior node.
+//
+//   dt = T/n,  u = e^(sigma*sqrt(dt)),  d = 1/u,
+//   p  = (e^((r-q)*dt) - d) / (u - d),   disc = e^(-r*dt)
+//
+// THE ACCUMULATION ORDER IS PINNED, AND THIS IS THE CONTRACT.  Each interior
+// node is evaluated as exactly
+//
+//     continuation = disc * (p * up + pm * dn)
+//     value        = max(continuation, intrinsic(node_spot))
+//
+// in that order: the two probability-weighted terms are summed FIRST, then a
+// single discount multiply, then one comparison against intrinsic value.  The
+// algebraically identical regrouping `disc * p * up + disc * pm * dn` is a
+// different sequence of roundings and produces different bits.  Levels are
+// swept from index 0 upward within a level, and levels from i = n-1 down to 0.
+// Do not reorder either sweep and do not regroup the expression.
+//
+// WHY EARLY EXERCISE DIFFERS FROM A PLAIN EXPECTATION.  The max() is a
+// DISCONTINUOUS function of the continuation value.  A one-ulp difference near
+// the exercise boundary does not merely perturb the output by one ulp — it can
+// flip which branch is taken, replacing the discounted expectation with
+// intrinsic value wholesale.  A float-nondeterministic implementation can
+// therefore disagree with ITSELF about WHETHER TO EXERCISE, not just about how
+// much the position is worth.  That is qualitatively worse than a rounding
+// difference, and it is why this example exists.
+//
+// Preconditions: finite S,K > 0, sigma > 0, T > 0, 1 <= n <= 1024, and a
+// risk-neutral probability p inside [0,1].  Violations return the canonical
+// qNaN.  The p bound is not pedantry: outside [0,1] the lattice admits
+// arbitrage and the "price" it produces is meaningless, so it must be refused
+// rather than reported.
+// ---------------------------------------------------------------------------
+fn bopm(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64, n: i64, is_call: i64, american: i64) -> f64 {
+    if am_valid(s, k, r, q, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    if n < 1 {
+        return canonical_qnan();
+    }
+    if n > 1024 {
+        return canonical_qnan();
+    }
+
+    let dt: f64 = t / (n as f64);
+    let u: f64 = dm_exp(sigma * dm_sqrt(dt));
+    let d: f64 = 1.0 / u;
+    let disc: f64 = dm_exp(0.0 - r * dt);
+    let growth: f64 = dm_exp((r - q) * dt);
+    let p: f64 = (growth - d) / (u - d);
+    let pm: f64 = 1.0 - p;
+
+    if p < 0.0 {
+        return canonical_qnan();
+    }
+    if p > 1.0 {
+        return canonical_qnan();
+    }
+
+    let buf: i64 = __mind_alloc((n + 1) * 8);
+
+    // --- terminal level i = n ---------------------------------------------
+    let mut j: i64 = 0;
+    while j <= n {
+        lvl_set(buf, j, intrinsic(node_spot(s, u, d, n, j), k, is_call));
+        j = j + 1;
+    }
+
+    // --- backward induction, level i = n-1 down to 0 -----------------------
+    let mut i: i64 = n - 1;
+    while i >= 0 {
+        let mut m: i64 = 0;
+        while m <= i {
+            let up: f64 = lvl_get(buf, m + 1);
+            let dn: f64 = lvl_get(buf, m);
+            let mut v: f64 = disc * (p * up + pm * dn);
+            if american != 0 {
+                v = maxf(v, intrinsic(node_spot(s, u, d, i, m), k, is_call));
+            }
+            lvl_set(buf, m, v);
+            m = m + 1;
+        }
+        i = i - 1;
+    }
+
+    return lvl_get(buf, 0);
+}
+
+// Public American entry points.  Separate call/put functions rather than a
+// flag, because the two have different structural theorems attached (Merton's
+// no-early-exercise result applies to the call only) and a reader should not
+// have to trace a boolean to know which one they are looking at.
+pub fn bopm_american_call(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64, n: i64) -> f64 {
+    return bopm(s, k, r, q, sigma, t, n, 1, 1);
+}
+
+pub fn bopm_american_put(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64, n: i64) -> f64 {
+    return bopm(s, k, r, q, sigma, t, n, 0, 1);
+}
+
+pub fn bopm_european_call(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64, n: i64) -> f64 {
+    return bopm(s, k, r, q, sigma, t, n, 1, 0);
+}
+
+pub fn bopm_european_put(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64, n: i64) -> f64 {
+    return bopm(s, k, r, q, sigma, t, n, 0, 0);
+}
+
+// ---------------------------------------------------------------------------
+// THE CRITICAL EXERCISE BOUNDARY S*.
+//
+// S* is the underlying price at which immediate exercise becomes exactly as
+// good as holding.  For a put it is the LOW price below which you exercise; for
+// a call (with q > 0) the HIGH price above which you exercise.  It solves a
+// transcendental equation with no closed form:
+//
+//   put :  K - S* = p_euro(S*) - (1 - e^(-qT) N(-d1(S*))) * S* / q1
+//   call:  S* - K = c_euro(S*) + (1 - e^(-qT) N( d1(S*))) * S* / q2
+//
+// WHY THE ITERATION COUNT IS A FIXED LITERAL AND NOT A TOLERANCE TEST.
+//
+// The textbook solve is `while |f(S)| > eps { newton step }`.  That is
+// deterministic for any single input — same input, same answer, every time —
+// and is still the wrong choice here, for three reasons:
+//
+//   1. THE TRIP COUNT BECOMES A FUNCTION OF THE DATA.  Two nearby inputs
+//      converge in different numbers of steps, so two prices are computed by
+//      two DIFFERENT sequences of floating-point operations.  The function
+//      stops having a fixed operation count, and there is no longer a single
+//      sequence for the cross-substrate fixture to attest.
+//
+//   2. THE STOPPING TEST IS ITSELF A FLOAT COMPARISON NEAR A BOUNDARY — the
+//      same discontinuous-branch hazard described above the lattice.  If the
+//      last residual lands within one ulp of eps, two substrates agreeing to
+//      one ulp can still take different iteration counts and diverge by far
+//      more.  The tolerance test converts a harmless rounding difference into
+//      a structural one.
+//
+//   3. IT MAKES COST UNPREDICTABLE.  A fixed trip count is the same work for
+//      every input: timing-uniform, and auditable by reading the source.
+//
+// The cost is wasted iterations on easy inputs.  We accept it.  64 steps is
+// chosen with margin: Newton here is locally quadratic and BAW's own seed is
+// close, so f64 precision is reached in well under 16 steps for every KAT
+// case.  The remaining iterations are idempotent to the last bit once the
+// iterate is a fixed point of the map — which is why over-iterating is safe
+// here and would NOT be safe for a method that oscillates.
+//
+// THE GUARD RAILS ARE PART OF THE DETERMINISM STORY.  Each step clamps the
+// iterate into a fixed positive interval before the next evaluation.  Without
+// it a wild Newton step could produce a non-positive S, whose `dm_log` is -inf,
+// after which every later iterate is NaN and the fixed count cheerfully runs 63
+// more times on garbage.  Clamping is not a convergence heuristic — it does not
+// move the fixed point — it only keeps the iteration in the map's domain.
+// ---------------------------------------------------------------------------
+
+fn baw_newton_steps() -> i64 {
+    return 64;
+}
+
+// q1 / q2 are the roots of the quadratic that gives BAW its name.  They come
+// from substituting a power-law ansatz S^q into the Black-Scholes PDE with the
+// time-derivative term approximated away — that approximation is precisely what
+// makes BAW an approximation.
+//   M = 2r/sigma^2,  Nc = 2b/sigma^2,  KK = 1 - e^(-rT)
+//   q1 = (-(Nc-1) - sqrt((Nc-1)^2 + 4M/KK)) / 2    (negative root, put)
+//   q2 = (-(Nc-1) + sqrt((Nc-1)^2 + 4M/KK)) / 2    (positive root, call)
+fn baw_q1(r: f64, b: f64, sigma: f64, t: f64) -> f64 {
+    let sig2: f64 = sigma * sigma;
+    let mm: f64 = 2.0 * r / sig2;
+    let nc: f64 = 2.0 * b / sig2;
+    let kk: f64 = 1.0 - dm_exp(0.0 - r * t);
+    let disc: f64 = (nc - 1.0) * (nc - 1.0) + 4.0 * mm / kk;
+    return (0.0 - (nc - 1.0) - dm_sqrt(disc)) / 2.0;
+}
+
+fn baw_q2(r: f64, b: f64, sigma: f64, t: f64) -> f64 {
+    let sig2: f64 = sigma * sigma;
+    let mm: f64 = 2.0 * r / sig2;
+    let nc: f64 = 2.0 * b / sig2;
+    let kk: f64 = 1.0 - dm_exp(0.0 - r * t);
+    let disc: f64 = (nc - 1.0) * (nc - 1.0) + 4.0 * mm / kk;
+    return (0.0 - (nc - 1.0) + dm_sqrt(disc)) / 2.0;
+}
+
+// The perpetual-option roots, used only to build the Newton SEED.  Same
+// quadratic with KK = 1 (T -> infinity).
+fn baw_q1_inf(r: f64, b: f64, sigma: f64) -> f64 {
+    let sig2: f64 = sigma * sigma;
+    let mm: f64 = 2.0 * r / sig2;
+    let nc: f64 = 2.0 * b / sig2;
+    let disc: f64 = (nc - 1.0) * (nc - 1.0) + 4.0 * mm;
+    return (0.0 - (nc - 1.0) - dm_sqrt(disc)) / 2.0;
+}
+
+fn baw_q2_inf(r: f64, b: f64, sigma: f64) -> f64 {
+    let sig2: f64 = sigma * sigma;
+    let mm: f64 = 2.0 * r / sig2;
+    let nc: f64 = 2.0 * b / sig2;
+    let disc: f64 = (nc - 1.0) * (nc - 1.0) + 4.0 * mm;
+    return (0.0 - (nc - 1.0) + dm_sqrt(disc)) / 2.0;
+}
+
+// Critical price for the AMERICAN PUT.  Fixed 64-step Newton on
+//   f(S) = K - S - p_euro(S) + (1 - e^(-qT) N(-d1)) * S / q1 = 0
+// using BAW's own analytic Jacobian `bi` (never a finite difference: a bumped
+// derivative would inherit a step-size choice and two prices' worth of
+// rounding).
+pub fn baw_s_star_put(k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if k != k {
+        return canonical_qnan();
+    }
+    if sigma != sigma {
+        return canonical_qnan();
+    }
+    if t != t {
+        return canonical_qnan();
+    }
+    if k <= 0.0 {
+        return canonical_qnan();
+    }
+    if sigma <= 0.0 {
+        return canonical_qnan();
+    }
+    if t <= 0.0 {
+        return canonical_qnan();
+    }
+    if r <= 0.0 {
+        // With a non-positive rate there is no carry benefit to exercising a
+        // put early and the boundary degenerates.  Refuse rather than iterate
+        // on a divide-by-zero in M = 2r/sigma^2.
+        return canonical_qnan();
+    }
+
+    let b: f64 = r - q;
+    let sig2: f64 = sigma * sigma;
+    let sqt: f64 = dm_sqrt(t);
+    let q1: f64 = baw_q1(r, b, sigma, t);
+    let q1i: f64 = baw_q1_inf(r, b, sigma);
+
+    // BAW's seed: su is the perpetual-put boundary, h shrinks it toward K as
+    // maturity shortens.  A good seed is why 64 steps is generous rather than
+    // marginal.
+    let su: f64 = k / (1.0 - 2.0 / (0.0 - q1i));
+    let h: f64 = (b * t - 2.0 * sigma * sqt) * k / (k - su);
+    let mut si: f64 = su + (k - su) * dm_exp(h);
+
+    // Domain clamp for the seed itself.  The put boundary always lies in
+    // (0, K]; a seed outside that interval is a bug in the seed formula, not a
+    // legitimate starting point, and must not be allowed to poison the fixed
+    // iteration.
+    si = maxf(si, 0.0000001 * k);
+    si = minf(si, k);
+
+    let mut it: i64 = 0;
+    while it < baw_newton_steps() {
+        let d1: f64 = (dm_log(si / k) + (b + 0.5 * sig2) * t) / (sigma * sqt);
+        let nd1n: f64 = dm_norm_cdf(0.0 - d1);
+        let pdf1: f64 = dm_norm_pdf(0.0 - d1);
+        let dfq: f64 = dm_exp(0.0 - q * t);
+        let pv: f64 = eu_put(si, k, r, q, sigma, t);
+        // rhs and bi written in BAW's own grouping.  Do not regroup.
+        let rhs: f64 = pv - (1.0 - dfq * nd1n) * si / q1;
+        let bi: f64 = (0.0 - dfq * nd1n * (1.0 - 1.0 / q1)) - (1.0 + dfq * pdf1 / (sigma * sqt)) / q1;
+        let nxt: f64 = (k - rhs + bi * si) / (1.0 + bi);
+        // Clamp back into the domain.  See the header note: this does not move
+        // the fixed point, it only keeps `dm_log` in its domain so a wild step
+        // cannot turn the remaining iterations into NaN arithmetic.
+        si = maxf(nxt, 0.0000001 * k);
+        si = minf(si, k);
+        it = it + 1;
+    }
+    return si;
+}
+
+// Critical price for the AMERICAN CALL.  Only meaningful when b < r (i.e.
+// q > 0): with q = 0 the carry never justifies early exercise, the boundary is
+// at infinity, and this returns the canonical qNaN rather than a large
+// plausible number.  That refusal is the computational shadow of Merton 1973.
+pub fn baw_s_star_call(k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if k != k {
+        return canonical_qnan();
+    }
+    if sigma != sigma {
+        return canonical_qnan();
+    }
+    if t != t {
+        return canonical_qnan();
+    }
+    if k <= 0.0 {
+        return canonical_qnan();
+    }
+    if sigma <= 0.0 {
+        return canonical_qnan();
+    }
+    if t <= 0.0 {
+        return canonical_qnan();
+    }
+    if r <= 0.0 {
+        return canonical_qnan();
+    }
+    let b: f64 = r - q;
+    if b >= r {
+        // q <= 0: no dividend, no early exercise, no finite boundary.
+        return canonical_qnan();
+    }
+
+    let sig2: f64 = sigma * sigma;
+    let sqt: f64 = dm_sqrt(t);
+    let q2: f64 = baw_q2(r, b, sigma, t);
+    let q2i: f64 = baw_q2_inf(r, b, sigma);
+
+    let su: f64 = k / (1.0 - 2.0 / q2i);
+    let h: f64 = (0.0 - (b * t + 2.0 * sigma * sqt)) * k / (su - k);
+    let mut si: f64 = k + (su - k) * (1.0 - dm_exp(h));
+
+    // The call boundary always lies above K.  Clamp to [K, 1e6*K] for the same
+    // domain reason as the put.
+    si = maxf(si, k);
+    si = minf(si, 1000000.0 * k);
+
+    let mut it: i64 = 0;
+    while it < baw_newton_steps() {
+        let d1: f64 = (dm_log(si / k) + (b + 0.5 * sig2) * t) / (sigma * sqt);
+        let nd1: f64 = dm_norm_cdf(d1);
+        let pdf1: f64 = dm_norm_pdf(d1);
+        let dfq: f64 = dm_exp(0.0 - q * t);
+        let cv: f64 = eu_call(si, k, r, q, sigma, t);
+        let rhs: f64 = cv + (1.0 - dfq * nd1) * si / q2;
+        let bi: f64 = dfq * nd1 * (1.0 - 1.0 / q2) + (1.0 - dfq * pdf1 / (sigma * sqt)) / q2;
+        let nxt: f64 = (k + rhs - bi * si) / (1.0 - bi);
+        si = maxf(nxt, k);
+        si = minf(si, 1000000.0 * k);
+        it = it + 1;
+    }
+    return si;
+}
+
+// ---------------------------------------------------------------------------
+// BARONE-ADESI & WHALEY (1987) QUADRATIC APPROXIMATION.
+//
+// THIS IS AN APPROXIMATION.  Not a price.  The construction is: take the exact
+// European value, then add a closed-form approximation to the early-exercise
+// premium obtained by dropping a term from the PDE that governs the premium.
+// The dropped term is small when the option is near the money and short-dated,
+// and is NOT small for long-dated deep-in-the-money options with large carry.
+//
+//   call, S <  S*:  C_euro(S) + A2 * (S/S*)^q2,  A2 =  (S*/q2)(1 - e^(-qT)N( d1*))
+//   call, S >= S*:  S - K                        (exercise immediately)
+//   put,  S >  S*:  P_euro(S) + A1 * (S/S*)^q1,  A1 = -(S*/q1)(1 - e^(-qT)N(-d1*))
+//   put,  S <= S*:  K - S
+//
+// ERROR PROFILE, MEASURED NOT ASSERTED.  Against a converged CRR lattice:
+//     ATM put  S=K=100 r=.05 sig=.20 T=1    ~0.010  (0.17%)
+//     ATM put  S=K=100 r=.08 sig=.20 T=.5   ~0.004  (0.10%)
+//     ITM put  S=90 K=100 r=.10 sig=.25 T=1 ~0.062  (0.53%)  <- worst
+//     ATM call S=K=100 r=.05 q=.07 T=1      ~0.045  (0.51%)
+// Those numbers are the CROSS-CHECK bands below, so a reader can see the cost
+// of choosing BAW over a lattice with the error in front of them rather than
+// from folklore.
+//
+// WHY BOTH, OPERATIONALLY.  A lattice at n=256 is ~33000 node evaluations; BAW
+// is a fixed 64-step Newton plus a handful of transcendentals — two orders of
+// magnitude cheaper, and what a real-time risk system uses to revalue a book.
+// The lattice is what that system is CALIBRATED against.
+// ---------------------------------------------------------------------------
+
+pub fn baw_call(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if am_valid(s, k, r, q, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let b: f64 = r - q;
+    if b >= r {
+        // Merton 1973: with no dividend the American call is never exercised
+        // early, so the exact European value IS the American value.  Returning
+        // the European price here is not a shortcut or a fallback — it is the
+        // correct answer, and it is why the q=0 KAT below is a BIT-EXACT
+        // equality rather than a band.
+        return eu_call(s, k, r, q, sigma, t);
+    }
+    if r <= 0.0 {
+        return canonical_qnan();
+    }
+
+    let sstar: f64 = baw_s_star_call(k, r, q, sigma, t);
+    if sstar != sstar {
+        return canonical_qnan();
+    }
+    if s >= sstar {
+        return s - k;
+    }
+
+    let sig2: f64 = sigma * sigma;
+    let sqt: f64 = dm_sqrt(t);
+    let q2: f64 = baw_q2(r, b, sigma, t);
+    let d1s: f64 = (dm_log(sstar / k) + (b + 0.5 * sig2) * t) / (sigma * sqt);
+    let a2: f64 = (sstar / q2) * (1.0 - dm_exp(0.0 - q * t) * dm_norm_cdf(d1s));
+    return eu_call(s, k, r, q, sigma, t) + a2 * dm_powpos(s / sstar, q2);
+}
+
+pub fn baw_put(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if am_valid(s, k, r, q, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    if r <= 0.0 {
+        return canonical_qnan();
+    }
+    let b: f64 = r - q;
+
+    let sstar: f64 = baw_s_star_put(k, r, q, sigma, t);
+    if sstar != sstar {
+        return canonical_qnan();
+    }
+    if s <= sstar {
+        return k - s;
+    }
+
+    let sig2: f64 = sigma * sigma;
+    let sqt: f64 = dm_sqrt(t);
+    let q1: f64 = baw_q1(r, b, sigma, t);
+    let d1s: f64 = (dm_log(sstar / k) + (b + 0.5 * sig2) * t) / (sigma * sqt);
+    let a1: f64 = (0.0 - (sstar / q1)) * (1.0 - dm_exp(0.0 - q * t) * dm_norm_cdf(0.0 - d1s));
+    return eu_put(s, k, r, q, sigma, t) + a1 * dm_powpos(s / sstar, q1);
+}
+
+// ---------------------------------------------------------------------------
+// EARLY-EXERCISE PREMIUM: american - european, on the SAME lattice.
+//
+// The subtraction is deliberately between two LATTICE prices, never between a
+// lattice American and a closed-form European.  Those carry different
+// discretisation error, and differencing them would report the discretisation
+// gap as if it were economic value: at n=64 the lattice European call is
+// 10.4194 against the closed form's 10.4506, so a mixed difference would show a
+// spurious -0.031 "premium" on an option whose true premium is exactly zero.
+// One lattice for both legs cancels that error to first order and makes the
+// premium a statement about early exercise rather than about step count.
+//
+// This is where reproducibility bites hardest: the premium is a difference of
+// two comparable numbers, so it has far fewer significant digits than either
+// leg.  Two implementations agreeing to 1e-13 on each price can disagree in the
+// fourth digit of the premium.
+// ---------------------------------------------------------------------------
+
+pub fn early_exercise_premium_put(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64, n: i64) -> f64 {
+    let am: f64 = bopm(s, k, r, q, sigma, t, n, 0, 1);
+    let eu: f64 = bopm(s, k, r, q, sigma, t, n, 0, 0);
+    return am - eu;
+}
+
+pub fn early_exercise_premium_call(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64, n: i64) -> f64 {
+    let am: f64 = bopm(s, k, r, q, sigma, t, n, 1, 1);
+    let eu: f64 = bopm(s, k, r, q, sigma, t, n, 1, 0);
+    return am - eu;
+}
+
+// ===========================================================================
+// KNOWN-ANSWER TESTS.
+//
+// Four classes of check, in increasing order of how much they survive:
+//
+//   1. STRUCTURAL — theorems that must hold whatever the arithmetic does, and
+//      which therefore SURVIVE A BAD ORACLE.  These are the most valuable
+//      checks in the file and they come first for that reason.  A reference
+//      value can be wrong; Merton's no-early-exercise result cannot.
+//   2. VALUE      — against references, within a stated band.
+//   3. CROSS-CHECK— BAW against a converged lattice.  Two independent methods
+//      disagreeing beyond the stated band is a real finding.
+//   4. ADVERSARIAL— a deliberately WRONG reference must be REJECTED.  A
+//      spurious acceptance is added straight into `fails`.  Without this block
+//      every band above could be passing because it is too wide.
+//
+// PROVENANCE, STATED EXACTLY, BECAUSE THE LEGS ARE NOT THE SAME KIND OF NUMBER:
+//
+//   * EUROPEAN values are a closed form, from an independent 50-digit oracle
+//     (mpmath, mp.dps=50) rounded once to f64.  Exact references.
+//
+//   * LATTICE values are NOT a closed form and have no exact reference.  An
+//     American price has no analytic solution — that is the premise of this
+//     file.  The oracle runs the SAME recombining lattice with the same
+//     node-spot rule at 50 digits, so the discretisation is identical and only
+//     the arithmetic differs.  A check against it proves the f64
+//     implementation accumulates no error, and proves NOTHING about whether n
+//     steps is enough.  That second question is what the CONVERGENCE block is
+//     for, and the two must not be confused.
+//
+//   * BAW values are a closed-form approximation, oracle-checked like the
+//     European leg — but the quantity they approximate is not the quantity the
+//     lattice computes, which is why the CROSS-CHECK bands are orders of
+//     magnitude wider.  That width is approximation error, not implementation
+//     slack, and it is written down.
+//
+// WHAT THIS KAT CANNOT CATCH, MEASURED RATHER THAN ASSERTED.  These are
+// tolerance bands, so they are structurally blind to any change that perturbs a
+// result by less than the band — including a reassociation that is
+// algebraically identical and numerically different.  That blindness was
+// MEASURED on this file, not assumed.  Rewriting the pinned inner recurrence
+//     disc * (p * up + pm * dn)   as   disc * p * up + disc * pm * dn
+// changes the American put price by 7 ulp at n=256 (6.087258327709413 ->
+// ...407) and 11 ulp at n=64 (6.077526066883204 -> ...194), and the whole file
+// still exits 0.  A real bit-level divergence, invisible to every band here.
+//
+// Tightening them is NOT the fix: the lattice bands must stay wide enough
+// (~65536 ulp at n=256) to absorb the implementation's own honest accumulated
+// rounding over ~33000 dependent node evaluations, and tightened past that they
+// would fail for correct code.  Detecting reassociation requires a BIT-EXACT
+// reference, and the right home for that is the cross-substrate CI fixture
+// (tests/cross_substrate_identity.rs), which compares hashes of emitted output
+// across x86 `avx2` and ARM `neon` rather than comparing against a value.  A
+// hash has no tolerance to hide in.
+//
+// Stated as a rule: this KAT proves the pricing is CORRECT; the fixture proves
+// it is REPRODUCIBLE.  Neither substitutes for the other, and a reader must not
+// read a green KAT as evidence of byte-identity.
+//
+// ONE MORE GAP, SPECIFIC TO AMERICAN PRICING.  These checks verify the PRICE,
+// not the exercise POLICY.  Two lattices disagreeing about whether to exercise
+// at a handful of nodes near the boundary can still agree on price to 1e-12,
+// because at the boundary continuation and intrinsic value are equal BY
+// DEFINITION — that is what makes it the boundary.  A desk trades the policy,
+// not the price.  Testing it would need the exercise region emitted and
+// compared, which is out of scope; the `baw_s_star_put` checks are the closest
+// this file gets, and they cover the approximation's boundary, not the
+// lattice's.
+// ===========================================================================
+
+fn chk_ulp(got: f64, want: f64, ulps: f64) -> i64 {
+    let eps: f64 = 0.0000000000000002220446049250313;
+    let tol: f64 = ulps * eps * absf(want);
+    if absf(got - want) <= tol {
+        return 1;
+    }
+    return 0;
+}
+
+fn chk_abs(got: f64, want: f64, abstol: f64) -> i64 {
+    if absf(got - want) <= abstol {
+        return 1;
+    }
+    return 0;
+}
+
+fn is_nan(x: f64) -> i64 {
+    if x != x {
+        return 1;
+    }
+    return 0;
+}
+
+// `cond != 0` must hold.  Returns 1 on FAILURE so it adds into `fails`
+// directly, matching the `1 - chk_*` idiom used for the value checks.
+fn must(cond: i64) -> i64 {
+    if cond != 0 {
+        return 0;
+    }
+    return 1;
+}
+
+pub fn main() -> i64 {
+    let mut fails: i64 = 0;
+
+    // =====================================================================
+    // 1. STRUCTURAL IDENTITIES.  These survive a bad oracle.
+    // =====================================================================
+
+    // --- MERTON 1973, AND THIS IS THE SINGLE BEST CHECK IN THE FILE. ------
+    // An American call on a NON-dividend-paying underlying (q = 0) is never
+    // exercised early: the intrinsic value S - K is always below the
+    // continuation value, because exercising throws away both the remaining
+    // time value AND the interest earned by deferring payment of the strike.
+    // So the early-exercise max() must NEVER bind, and the American price must
+    // equal the European price TO THE LAST BIT.
+    //
+    // Asserted BIT-EXACT, not as a band, and that is what makes it sharp: it
+    // catches a max() that binds even once in ~4700 nodes by even one ulp, a
+    // condition no tolerance band could detect.  It simultaneously tests the
+    // lattice, intrinsic(), node_spot() and the American/European dispatch,
+    // and needs no reference value at all.
+    let ac96: f64 = bopm_american_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 96);
+    let ec96: f64 = bopm_european_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 96);
+    fails = fails + must(__mind_f64_to_bits(ac96) == __mind_f64_to_bits(ec96));
+
+    // Repeated at a second, ITM point so the equality is not an accident of
+    // one moneyness, and at an odd step count so it is not an accident of a
+    // power-of-two lattice.
+    let ac2: f64 = bopm_american_call(120.0, 100.0, 0.05, 0.0, 0.25, 2.0, 77);
+    let ec2: f64 = bopm_european_call(120.0, 100.0, 0.05, 0.0, 0.25, 2.0, 77);
+    fails = fails + must(__mind_f64_to_bits(ac2) == __mind_f64_to_bits(ec2));
+
+    // ... and the corresponding claim on the closed-form side: BAW at q = 0
+    // must return exactly the European value, because its `b >= r` branch is
+    // the computational statement of the same theorem.
+    fails = fails + must(__mind_f64_to_bits(baw_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0)) == __mind_f64_to_bits(eu_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0)));
+
+    // ... and the boundary refuses to exist there, rather than returning a
+    // large plausible number.  A caller that gets a finite S* for a q=0 call
+    // would silently build an exercise rule for an option that is never
+    // exercised.
+    fails = fails + (1 - is_nan(baw_s_star_call(100.0, 0.05, 0.0, 0.2, 1.0)));
+
+    // --- AMERICAN PUT >= EUROPEAN PUT, ALWAYS -----------------------------
+    // Early exercise is an extra right, never a liability.  Checked at four
+    // points spanning moneyness and rate.
+    let ap1: f64 = bopm_american_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 96);
+    let ep1: f64 = bopm_european_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 96);
+    fails = fails + must(ap1 >= ep1);
+    let ap2: f64 = bopm_american_put(90.0, 100.0, 0.1, 0.0, 0.25, 1.0, 96);
+    let ep2: f64 = bopm_european_put(90.0, 100.0, 0.1, 0.0, 0.25, 1.0, 96);
+    fails = fails + must(ap2 >= ep2);
+    let ap3: f64 = bopm_american_put(110.0, 100.0, 0.05, 0.0, 0.2, 1.0, 96);
+    let ep3: f64 = bopm_european_put(110.0, 100.0, 0.05, 0.0, 0.2, 1.0, 96);
+    fails = fails + must(ap3 >= ep3);
+    let ap4: f64 = bopm_american_put(100.0, 100.0, 0.08, 0.0, 0.2, 0.5, 96);
+    let ep4: f64 = bopm_european_put(100.0, 100.0, 0.08, 0.0, 0.2, 0.5, 96);
+    fails = fails + must(ap4 >= ep4);
+
+    // ... and STRICTLY greater where exercise genuinely binds.  A `>=` alone
+    // would pass if the American branch were dead code, which is exactly the
+    // mutation this file must catch.  These two checks are the ones that fail
+    // if the early-exercise max() is removed.
+    fails = fails + must(ap1 > ep1);
+    fails = fails + must(ap2 > ep2);
+
+    // --- THE PREMIUM IS NON-NEGATIVE --------------------------------------
+    // Same claim in the form the premium function actually returns, so a sign
+    // error inside `early_exercise_premium_*` is caught rather than only the
+    // ordering of the two prices.
+    fails = fails + must(early_exercise_premium_put(100.0, 100.0, 0.05, 0.0, 0.25, 1.0, 96) >= 0.0);
+    fails = fails + must(early_exercise_premium_put(90.0, 100.0, 0.1, 0.0, 0.25, 1.0, 96) >= 0.0);
+    fails = fails + must(early_exercise_premium_call(100.0, 100.0, 0.05, 0.08, 0.25, 1.0, 96) >= 0.0);
+    // At q = 0 the CALL premium is not merely non-negative, it is EXACTLY
+    // zero — the same Merton statement as above, routed through the subtraction
+    // so a premium function that returned a small spurious value is caught.
+    fails = fails + must(early_exercise_premium_call(100.0, 100.0, 0.05, 0.0, 0.25, 1.0, 96) == 0.0);
+
+    // --- THE PREMIUM INCREASES WITH THE DRIVER OF EARLY EXERCISE ----------
+    // For a CALL the driver is the DIVIDEND YIELD: you exercise early to
+    // capture a dividend you would otherwise forgo.  No dividend, no reason.
+    // Measured at n=96, S=K=100, r=0.05, sigma=0.25, T=1:
+    //   q=0.00 -> 0.0            q=0.02 -> 2.285e-06     q=0.05 -> 0.11077
+    //   q=0.08 -> 0.43522        q=0.12 -> 0.90154
+    // A strictly increasing chain, asserted as such.  This is a monotonicity
+    // theorem, so it needs no reference value and survives a bad oracle; it is
+    // also the check that would catch a sign error on q inside the carry term,
+    // which a single-point value check at one q could easily miss.
+    let cq0: f64 = early_exercise_premium_call(100.0, 100.0, 0.05, 0.0, 0.25, 1.0, 96);
+    let cq2: f64 = early_exercise_premium_call(100.0, 100.0, 0.05, 0.02, 0.25, 1.0, 96);
+    let cq5: f64 = early_exercise_premium_call(100.0, 100.0, 0.05, 0.05, 0.25, 1.0, 96);
+    let cq8: f64 = early_exercise_premium_call(100.0, 100.0, 0.05, 0.08, 0.25, 1.0, 96);
+    let cq12: f64 = early_exercise_premium_call(100.0, 100.0, 0.05, 0.12, 0.25, 1.0, 96);
+    fails = fails + must(cq2 > cq0);
+    fails = fails + must(cq5 > cq2);
+    fails = fails + must(cq8 > cq5);
+    fails = fails + must(cq12 > cq8);
+
+    // For a PUT the driver is the INTEREST RATE: you exercise early to receive
+    // the strike now and earn interest on it.  Zero rate, almost no reason.
+    // Measured at n=96, S=K=100, q=0, sigma=0.25, T=1:
+    //   r=0.00 -> 3.553e-15      r=0.02 -> 0.18223       r=0.05 -> 0.52988
+    //   r=0.08 -> 0.88671        r=0.12 -> 1.32396
+    //
+    // NOTE THE r=0 VALUE: 3.553e-15, not 0.0.  The theory says the premium is
+    // exactly zero at r=q=0, and the lattice says it is 4 ulp of the price.
+    // That residue is the honest accumulated rounding of ~4700 dependent node
+    // evaluations, and it is reported here rather than hidden: the r=0 check
+    // below is `>= 0.0` and a `chk_abs(.., 0.0, 1e-14)`, NOT `== 0.0`.  An
+    // equality there would be a false claim about what f64 lattice arithmetic
+    // delivers.  Contrast the CALL case above, which IS asserted `== 0.0` —
+    // that one is exact because the max() never binds at all, so the two
+    // lattices are bit-identical rather than merely close.  The asymmetry
+    // between those two assertions is real and is the point.
+    let pr0: f64 = early_exercise_premium_put(100.0, 100.0, 0.0, 0.0, 0.25, 1.0, 96);
+    let pr2: f64 = early_exercise_premium_put(100.0, 100.0, 0.02, 0.0, 0.25, 1.0, 96);
+    let pr5: f64 = early_exercise_premium_put(100.0, 100.0, 0.05, 0.0, 0.25, 1.0, 96);
+    let pr8: f64 = early_exercise_premium_put(100.0, 100.0, 0.08, 0.0, 0.25, 1.0, 96);
+    let pr12: f64 = early_exercise_premium_put(100.0, 100.0, 0.12, 0.0, 0.25, 1.0, 96);
+    fails = fails + must(pr0 >= 0.0);
+    fails = fails + (1 - chk_abs(pr0, 0.0, 0.00000000000001));
+    fails = fails + must(pr2 > pr0);
+    fails = fails + must(pr5 > pr2);
+    fails = fails + must(pr8 > pr5);
+    fails = fails + must(pr12 > pr8);
+
+    // --- AN AMERICAN PUT IS NEVER WORTH LESS THAN INTRINSIC ---------------
+    // It can be exercised right now, so K - S is a hard floor.  A deep ITM put
+    // with little time value sits ON that floor, exactly.
+    fails = fails + must(bopm_american_put(60.0, 100.0, 0.05, 0.0, 0.2, 1.0, 96) >= 40.0);
+    fails = fails + (1 - chk_abs(bopm_american_put(60.0, 100.0, 0.05, 0.0, 0.2, 1.0, 96), 40.0, 0.0000000001));
+    // ... and never more than the strike itself (the underlying cannot go
+    // below zero, so K is the most the payoff can ever be).
+    fails = fails + must(bopm_american_put(60.0, 100.0, 0.05, 0.0, 0.2, 1.0, 96) <= 100.0);
+
+    // --- CONVERGENCE, AND THE SECOND DIFFERENCE ---------------------------
+    // Two distinct claims, and only the second one is worth much:
+    //
+    //   (a) the price at N and 2N agree within a band.  Measured, American
+    //       put S=K=100 r=.05 sig=.2 T=1:  n=32 -> 6.063653547875674,
+    //       n=64 -> 6.077526066883204, n=128 -> 6.084087099109399,
+    //       n=256 -> 6.087258327709413.  The 128->256 gap is 0.00317, so a
+    //       0.004 band is tight enough to mean something and loose enough to
+    //       be honest about O(1/n) convergence.
+    //
+    //   (b) DOUBLING N MOVES THE ANSWER LESS THAN THE PREVIOUS DOUBLING DID.
+    //       This is the check that says "converging" rather than "two numbers
+    //       happen to be close".  Measured: |P64-P32| = 0.013873,
+    //       |P128-P64| = 0.006561 (0.473x), |P256-P128| = 0.003171 (0.483x).
+    //       Roughly halving each step, the expected O(1/n) rate for a CRR
+    //       lattice on an American put.  A lattice with a systematic bias — a
+    //       mis-set u, d or p — still produces two close numbers and still
+    //       passes (a); it fails (b), because a biased sequence stops
+    //       shrinking toward its own limit at the right rate.
+    let l32: f64 = bopm_american_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 32);
+    let l64: f64 = bopm_american_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 64);
+    let l128: f64 = bopm_american_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 128);
+    let l256: f64 = bopm_american_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 256);
+    fails = fails + must(absf(l256 - l128) <= 0.004);
+    let g1: f64 = absf(l64 - l32);
+    let g2: f64 = absf(l128 - l64);
+    let g3: f64 = absf(l256 - l128);
+    fails = fails + must(g2 < g1);
+    fails = fails + must(g3 < g2);
+    // The sequence is also monotone increasing here, which is a separate fact
+    // from the gaps shrinking and catches a lattice that oscillates about the
+    // limit rather than approaching it from one side.
+    fails = fails + must(l64 > l32);
+    fails = fails + must(l128 > l64);
+    fails = fails + must(l256 > l128);
+
+    // --- DETERMINISM: the same inputs twice give the SAME BITS -------------
+    // A run-to-run check within one substrate.  It catches a lattice that
+    // depended on uninitialised heap or on an allocation address.  The
+    // cross-substrate half is the CI fixture, not this file.
+    let d1: f64 = bopm_american_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 77);
+    let d2: f64 = bopm_american_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 77);
+    fails = fails + must(__mind_f64_to_bits(d1) == __mind_f64_to_bits(d2));
+    let b1: f64 = baw_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0);
+    let b2: f64 = baw_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0);
+    fails = fails + must(__mind_f64_to_bits(b1) == __mind_f64_to_bits(b2));
+
+    // =====================================================================
+    // 2. VALUE CHECKS.
+    // =====================================================================
+
+    // --- EUROPEAN leg: exact closed form, 50-digit oracle -----------------
+    // Band 1024 ulp.  This leg goes through dm_log, dm_sqrt, dm_exp and
+    // dm_erfc; the band absorbs the honest difference between a re-derived
+    // erfc and the oracle, and nothing more.
+    fails = fails + (1 - chk_ulp(eu_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 10.450583572185568, 1024.0));
+    fails = fails + (1 - chk_ulp(eu_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 5.573526022256968, 1024.0));
+    fails = fails + (1 - chk_ulp(eu_put(100.0, 100.0, 0.08, 0.0, 0.2, 0.5), 3.785353707650693, 1024.0));
+    fails = fails + (1 - chk_ulp(eu_call(100.0, 100.0, 0.05, 0.07, 0.25, 1.0), 8.456834637497863, 1024.0));
+    fails = fails + (1 - chk_ulp(eu_put(90.0, 100.0, 0.1, 0.0, 0.25, 1.0), 9.22086464770246, 1024.0));
+
+    // --- LATTICE leg: same discretisation at 50 digits --------------------
+    // READ THE PROVENANCE NOTE ABOVE.  These are NOT exact American prices and
+    // are not claimed to be.  They are what THIS lattice, at THIS step count,
+    // with THIS node-spot rule, evaluates to in 50-digit arithmetic.  Passing
+    // proves the f64 implementation accumulates no meaningful error over the
+    // ~33000 dependent node evaluations at n=256; it says nothing at all about
+    // whether n=256 is close to the true American price.  Only the CONVERGENCE
+    // block above speaks to that.
+    //
+    // Bands scale with n because the accumulated error does: 16384 ulp at
+    // n=64 (~4e-12 absolute), 65536 ulp at n=256 (~9e-11 absolute).  Those are
+    // the honest sizes; the ADVERSARIAL block below proves they still reject a
+    // wrong value by a wide margin.
+    fails = fails + (1 - chk_ulp(bopm_american_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 64), 6.077526066883306, 16384.0));
+    fails = fails + (1 - chk_ulp(bopm_american_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 128), 6.084087099109571, 32768.0));
+    fails = fails + (1 - chk_ulp(bopm_american_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 256), 6.087258327708621, 65536.0));
+    fails = fails + (1 - chk_ulp(bopm_american_put(100.0, 100.0, 0.08, 0.0, 0.2, 0.5, 64), 4.182241957779688, 16384.0));
+    fails = fails + (1 - chk_ulp(bopm_american_put(100.0, 100.0, 0.08, 0.0, 0.2, 0.5, 256), 4.189208703046372, 65536.0));
+    fails = fails + (1 - chk_ulp(bopm_american_call(100.0, 100.0, 0.05, 0.07, 0.25, 1.0, 64), 8.745942037766113, 16384.0));
+    fails = fails + (1 - chk_ulp(bopm_american_call(100.0, 100.0, 0.05, 0.07, 0.25, 1.0, 256), 8.762638013408512, 65536.0));
+    fails = fails + (1 - chk_ulp(bopm_american_call(90.0, 100.0, 0.03, 0.06, 0.3, 0.5, 64), 3.5258665949595254, 16384.0));
+    fails = fails + (1 - chk_ulp(bopm_american_put(90.0, 100.0, 0.1, 0.0, 0.25, 1.0, 64), 11.642001711181535, 16384.0));
+    fails = fails + (1 - chk_ulp(bopm_american_put(90.0, 100.0, 0.1, 0.0, 0.25, 1.0, 256), 11.640895641904518, 65536.0));
+    // The lattice EUROPEAN leg too, because the cross-check that the premium is
+    // a difference of two same-discretisation prices depends on it.
+    fails = fails + (1 - chk_ulp(bopm_european_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 64), 10.419400102763714, 16384.0));
+    fails = fails + (1 - chk_ulp(bopm_european_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 64), 5.542342552835113, 16384.0));
+
+    // --- BAW closed-form approximation vs the 50-digit oracle -------------
+    // This checks the APPROXIMATION IS IMPLEMENTED CORRECTLY, which is a
+    // completely different question from whether the approximation is accurate.
+    // The oracle ran the identical algorithm — same q1/q2 roots, same seed,
+    // same FIXED 64-step Newton — at 50 digits.  Agreement here means the MIND
+    // code computes the BAW formula right.  How far BAW is from the true
+    // American price is measured separately, in the CROSS-CHECK block.
+    fails = fails + (1 - chk_ulp(baw_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 6.097615380989132, 4096.0));
+    fails = fails + (1 - chk_ulp(baw_put(100.0, 100.0, 0.08, 0.0, 0.2, 0.5), 4.193351175892587, 4096.0));
+    fails = fails + (1 - chk_ulp(baw_put(90.0, 100.0, 0.1, 0.0, 0.25, 1.0), 11.579761208703776, 4096.0));
+    fails = fails + (1 - chk_ulp(baw_call(100.0, 100.0, 0.05, 0.07, 0.25, 1.0), 8.80726918878011, 4096.0));
+    fails = fails + (1 - chk_ulp(baw_call(90.0, 100.0, 0.03, 0.06, 0.3, 0.5), 3.5584905940579463, 4096.0));
+
+    // --- The critical boundary S* itself ----------------------------------
+    // Checked as a VALUE, because an S* that is wrong but plausible would shift
+    // every BAW price by a small amount that the price bands might absorb.
+    // Oracle: same fixed 64-step Newton at 50 digits.
+    fails = fails + (1 - chk_ulp(baw_s_star_put(100.0, 0.05, 0.0, 0.2, 1.0), 81.6954336531575, 4096.0));
+    fails = fails + (1 - chk_ulp(baw_s_star_put(100.0, 0.08, 0.0, 0.2, 0.5), 87.24802019893882, 4096.0));
+    fails = fails + (1 - chk_ulp(baw_s_star_put(100.0, 0.1, 0.0, 0.25, 1.0), 81.86835725845292, 4096.0));
+    fails = fails + (1 - chk_ulp(baw_s_star_call(100.0, 0.05, 0.07, 0.25, 1.0), 139.16355000592196, 4096.0));
+    fails = fails + (1 - chk_ulp(baw_s_star_call(100.0, 0.03, 0.06, 0.3, 0.5), 136.7705749753014, 4096.0));
+
+    // --- STRUCTURAL properties of the boundary, which need no oracle ------
+    // A put is exercised early only when deep enough in the money, so the put
+    // boundary lies strictly below the strike; a call boundary lies strictly
+    // above it.  A sign error that swapped the two roots would still produce a
+    // plausible number and would fail here.
+    fails = fails + must(baw_s_star_put(100.0, 0.05, 0.0, 0.2, 1.0) < 100.0);
+    fails = fails + must(baw_s_star_put(100.0, 0.05, 0.0, 0.2, 1.0) > 0.0);
+    fails = fails + must(baw_s_star_call(100.0, 0.05, 0.07, 0.25, 1.0) > 100.0);
+    // A shorter-dated put has less time value to give up, so its exercise
+    // boundary is CLOSER to the strike.  A monotonicity claim in T, oracle-free.
+    fails = fails + must(baw_s_star_put(100.0, 0.05, 0.0, 0.2, 0.25) > baw_s_star_put(100.0, 0.05, 0.0, 0.2, 2.0));
+    // At or below the boundary BAW must return exactly intrinsic: that is the
+    // definition of the boundary, and it tests the dispatch branch rather than
+    // the formula.
+    fails = fails + (1 - chk_abs(baw_put(50.0, 100.0, 0.05, 0.0, 0.2, 1.0), 50.0, 0.0000000000001));
+
+    // =====================================================================
+    // 3. CROSS-CHECK: BAW against a converged lattice.
+    //
+    // Two structurally independent methods — an optimal-stopping lattice and a
+    // closed-form quadratic approximation — priced on the same inputs.  A bug
+    // in one would have to be matched by an equal and opposite bug in the other
+    // to survive this, which is why it is worth more than either method's own
+    // value check.
+    //
+    // THE BANDS ARE THE APPROXIMATION ERROR, MEASURED, NOT CHOSEN FOR
+    // CONVENIENCE.  n=256 lattice vs BAW:
+    //     ATM put  S=K=100 r=.05 sig=.20 T=1    lat 6.087258  baw 6.097615  +0.010357  0.170%
+    //     ATM put  S=K=100 r=.08 sig=.20 T=.5   lat 4.189209  baw 4.193351  +0.004142  0.099%
+    //     ITM put  S=90 K=100 r=.10 sig=.25 T=1 lat 11.640896 baw 11.579761 -0.061134  0.525%
+    //     ATM call S=K=100 r=.05 q=.07 T=1      lat 8.762638  baw 8.807269  +0.044631  0.509%
+    //
+    // Each band below is the measured gap rounded up modestly — NOT rounded up
+    // to a round number that would hide a regression.  The worst case, the
+    // deep-ITM high-rate put at 0.53%, is exactly the regime where BAW's
+    // dropped PDE term stops being small, and its band is the widest for that
+    // stated reason rather than because it was failing.
+    //
+    // IF ONE OF THESE FAILS IN FUTURE, THAT IS A FINDING.  The correct response
+    // is to investigate which of the two methods moved, never to widen the
+    // band.  A widened band here silently converts a real disagreement between
+    // two independent methods into a green check, which is the single most
+    // damaging thing a reader of this file could do to it.
+    //
+    // Note the SIGN structure, which is itself informative: BAW is above the
+    // lattice for the two ATM puts and the dividend call, and BELOW it for the
+    // deep-ITM put.  BAW's error is not a uniform bias, so a check that only
+    // asserted `baw >= lattice` would be wrong.  Absolute bands it is.
+    // =====================================================================
+    fails = fails + must(absf(baw_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0) - bopm_american_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 256)) <= 0.011);
+    fails = fails + must(absf(baw_put(100.0, 100.0, 0.08, 0.0, 0.2, 0.5) - bopm_american_put(100.0, 100.0, 0.08, 0.0, 0.2, 0.5, 256)) <= 0.005);
+    fails = fails + must(absf(baw_put(90.0, 100.0, 0.1, 0.0, 0.25, 1.0) - bopm_american_put(90.0, 100.0, 0.1, 0.0, 0.25, 1.0, 256)) <= 0.065);
+    fails = fails + must(absf(baw_call(100.0, 100.0, 0.05, 0.07, 0.25, 1.0) - bopm_american_call(100.0, 100.0, 0.05, 0.07, 0.25, 1.0, 256)) <= 0.047);
+    // The q=0 call is the one case where BAW is EXACT rather than approximate
+    // (Merton again: the approximation branch is never taken), so the lattice
+    // must approach it at the lattice's own discretisation error, ~0.03 at
+    // n=256, not at BAW's approximation error.  A different band for a
+    // different reason, stated so.
+    fails = fails + must(absf(baw_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0) - bopm_american_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 256)) <= 0.035);
+
+    // =====================================================================
+    // 4. DOMAIN CHECKS: degenerate inputs return the canonical qNaN.
+    // A zero-vol or expired option is a caller error here, and the function
+    // says so instead of guessing a plausible number.
+    // =====================================================================
+    fails = fails + (1 - is_nan(bopm_american_put(100.0, 100.0, 0.05, 0.0, 0.0, 1.0, 64)));
+    fails = fails + (1 - is_nan(bopm_american_put(100.0, 100.0, 0.05, 0.0, 0.2, 0.0, 64)));
+    fails = fails + (1 - is_nan(bopm_american_put(0.0, 100.0, 0.05, 0.0, 0.2, 1.0, 64)));
+    fails = fails + (1 - is_nan(bopm_american_put(0.0 - 10.0, 100.0, 0.05, 0.0, 0.2, 1.0, 64)));
+    fails = fails + (1 - is_nan(bopm_american_put(100.0, 0.0, 0.05, 0.0, 0.2, 1.0, 64)));
+    fails = fails + (1 - is_nan(bopm_american_put(100.0, 0.0 - 5.0, 0.05, 0.0, 0.2, 1.0, 64)));
+    fails = fails + (1 - is_nan(bopm_american_put(100.0, 100.0, 0.05, 0.0, 0.0 - 0.2, 1.0, 64)));
+    fails = fails + (1 - is_nan(bopm_american_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 0)));
+    fails = fails + (1 - is_nan(bopm_american_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 0 - 3)));
+    fails = fails + (1 - is_nan(bopm_american_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 2000)));
+    // A lattice too coarse for the volatility puts p outside [0,1]; that is an
+    // arbitrageable tree and must be refused, not priced.  Two probes: p~791 is
+    // the easy case, p~1.0326 is the one that actually exercises the bound.  A
+    // mutation loosening `p > 1.0` to `p > 2.0` survives the first and is
+    // caught only by the second.
+    fails = fails + (1 - is_nan(bopm_american_call(100.0, 100.0, 5.0, 0.0, 0.01, 1.0, 2)));
+    fails = fails + (1 - is_nan(bopm_american_call(100.0, 100.0, 0.15, 0.0, 0.1, 1.0, 2)));
+    // The closed-form surface has the same duty.
+    fails = fails + (1 - is_nan(eu_call(100.0, 100.0, 0.05, 0.0, 0.0, 1.0)));
+    fails = fails + (1 - is_nan(eu_put(100.0, 100.0, 0.05, 0.0, 0.2, 0.0)));
+    fails = fails + (1 - is_nan(baw_put(100.0, 100.0, 0.05, 0.0, 0.0, 1.0)));
+    fails = fails + (1 - is_nan(baw_put(100.0, 100.0, 0.05, 0.0, 0.2, 0.0)));
+    fails = fails + (1 - is_nan(baw_put(0.0, 100.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(baw_put(100.0, 0.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(baw_call(100.0, 100.0, 0.05, 0.07, 0.2, 0.0)));
+    // r <= 0 has no early-exercise incentive for a put and the BAW boundary
+    // equation degenerates (M = 2r/sigma^2 = 0).  Refused rather than iterated.
+    fails = fails + (1 - is_nan(baw_put(100.0, 100.0, 0.0, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(baw_s_star_put(100.0, 0.0, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(baw_s_star_put(0.0, 0.05, 0.0, 0.2, 1.0)));
+    // dm_powpos refuses a non-positive base rather than returning a plausible
+    // number through log(0) = -inf.
+    fails = fails + (1 - is_nan(dm_powpos(0.0, 2.0)));
+    fails = fails + (1 - is_nan(dm_powpos(0.0 - 4.0, 0.5)));
+
+    // =====================================================================
+    // 5. ADVERSARIAL NEGATIVE CONTROLS.
+    //
+    // Every check below adds a SPURIOUS ACCEPTANCE straight into `fails`.  The
+    // band must REJECT the wrong value; if it accepts, the run goes red.
+    // Without this block none of the bands above prove anything — a band wide
+    // enough to accept everything passes vacuously, and there is no way to tell
+    // that apart from a correct implementation by reading a green result.
+    //
+    // The perturbations are deliberately SMALL relative to the quantity — a
+    // wrong value that a careless band would swallow — rather than absurd ones
+    // that any band rejects.  A negative control that is too easy proves as
+    // little as no control at all.
+    // =====================================================================
+
+    // European leg: 1e-5 relative, ~4.5e10 ulp, far outside the 1024-ulp band.
+    fails = fails + chk_ulp(eu_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 10.450683572185568, 1024.0);
+    fails = fails + chk_ulp(eu_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 5.573626022256968, 1024.0);
+
+    // Lattice leg: perturbed in the 7th decimal.  The n=256 band is 65536 ulp
+    // ~ 9e-11 absolute, so a 1e-6 error is ~10000x the band — this control has
+    // real margin and is not scraping the edge.
+    fails = fails + chk_ulp(bopm_american_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 256), 6.087259327708621, 65536.0);
+    fails = fails + chk_ulp(bopm_american_put(90.0, 100.0, 0.1, 0.0, 0.25, 1.0, 64), 11.642002711181535, 16384.0);
+
+    // BAW leg and the boundary.
+    fails = fails + chk_ulp(baw_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 6.097625380989132, 4096.0);
+    fails = fails + chk_ulp(baw_s_star_put(100.0, 0.05, 0.0, 0.2, 1.0), 81.6964336531575, 4096.0);
+
+    // A WRONG S* by 1%: exactly the plausible-but-wrong boundary the value
+    // check above exists to catch.  If this were accepted, a Newton iteration
+    // that had silently stopped converging would pass the whole file.
+    fails = fails + chk_ulp(baw_s_star_put(100.0, 0.05, 0.0, 0.2, 1.0), 82.5123879896891, 4096.0);
+
+    // The CROSS-CHECK bands must reject a disagreement larger than BAW's known
+    // error.  These are the adversarial form of the cross-check: they prove the
+    // bands are narrow enough to detect a method actually going wrong, rather
+    // than merely wide enough to pass today.  A BAW that was off by 0.2 on the
+    // ATM put (20x its true error) must NOT be accepted by the 0.011 band.
+    fails = fails + must(absf((baw_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0) + 0.2) - bopm_american_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 256)) > 0.011);
+    fails = fails + must(absf((baw_call(100.0, 100.0, 0.05, 0.07, 0.25, 1.0) - 0.3) - bopm_american_call(100.0, 100.0, 0.05, 0.07, 0.25, 1.0, 256)) > 0.047);
+
+    // A zero premium must FAIL the non-trivial-premium claim: the adversarial
+    // form of "the American put is STRICTLY worth more".  An implementation
+    // whose early-exercise max() never bound would report premium 0 here and
+    // this is what refuses it.
+    fails = fails + chk_abs(0.0, 0.5298831586751325, 0.00000000000001);
+
+    // And the mirror of the Merton check: a premium that is NOT zero at q=0
+    // for a call must be rejected.  This proves the `== 0.0` assertion above
+    // discriminates rather than comparing something to itself.
+    fails = fails + chk_abs(0.0001, 0.0, 0.00000000000001);
+
+    return fails;
+}

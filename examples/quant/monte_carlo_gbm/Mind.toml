@@ -1,0 +1,6 @@
+[package]
+name = "monte_carlo_gbm"
+version = "0.1.0"
+
+[build]
+entry = "main.mind"

@@ -1,0 +1,59 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes; see scalar-float-f64/manifest.toml for the scalar
+# IEEE non-integer precedent.
+#
+# examples/quant/american_binomial — American put via a recombining CRR
+# lattice with early exercise, `bopm_american_put`. A backward induction loop
+# over n levels, each level a fixed sequential `while` walk over the level's
+# node buffer (`lvl_set`/`lvl_get`), taking max(hold, intrinsic) at each node.
+#
+# NO WITHIN-RUN RUST ORACLE for this fixture (manifest instruction: state this
+# plainly rather than paper over it). The lattice backward-induction is a
+# multi-hundred-line iterative buffer-walk (level allocation, discount-factor
+# powers, per-node max/interpolation) that would require re-deriving the exact
+# same node-indexing and rounding sequence in Rust to be a meaningful
+# byte-exact cross-check — a near-miss port would only prove the port agrees
+# with itself, not that it caught a real divergence. examples/quant's own KAT
+# (scripts/run_quant_examples.sh) already independently value-checks this
+# kernel against a 50-digit oracle and against the Barone-Adesi/Whaley
+# closed-form approximation; THIS fixture's job is narrower and different — it
+# pins the exact output BYTES so a lowering change (FMA fusion, reassociation,
+# a reordered reduction) that a value-tolerance KAT cannot see still fails
+# closed here.
+#
+# Why avx2 == neon is still argued (even with no Rust oracle): every operation
+# in the lattice walk is scalar IEEE `+ - * /` plus one dm_sqrt/dm_exp call,
+# executed by a `while` loop whose trip count is the literal/parameter `n` —
+# fixed at compile time by the input, never data-dependent — and whose
+# per-level accumulation is a strict sequential node-by-node walk (RFC 0015
+# §3.1's scalar-IEEE-fixed-order argument, same as bond_curve's coupon loop).
+# No FMA fusion, no fastmath/reassoc flags anywhere in the call graph.
+
+version = "1"
+name = "quant-american-binomial"
+description = "American put pricing via CRR lattice with early exercise (examples/quant/american_binomial): bopm_american_put(s,k,r,q,sigma,t,n) over an 8-point deterministic grid, folded to one hash. Backward-induction buffer walk, scalar IEEE, fixed sequential per-level node order. NO within-run Rust oracle — pinned-hash only; see comment above."
+weight = 1.0
+substrates = ["avx2", "neon"]
+
+[input]
+generator = "fixed"
+grid_len = 8
+dtype = "mixed-f64-i64"
+# grid[i] = (s, k, r, q, sigma, t, n: i64)
+grid = [
+    [100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 100],
+    [90.0, 100.0, 0.05, 0.0, 0.2, 1.0, 100],
+    [110.0, 100.0, 0.05, 0.0, 0.2, 1.0, 100],
+    [100.0, 100.0, 0.1, 0.02, 0.3, 0.5, 50],
+    [100.0, 100.0, 0.05, 0.0, 0.4, 2.0, 200],
+    [80.0, 100.0, 0.08, 0.01, 0.25, 1.0, 100],
+    [100.0, 100.0, 0.05, 0.0, 0.2, 0.1, 30],
+    [120.0, 100.0, 0.06, 0.02, 0.35, 1.5, 150],
+]
+
+[kernel]
+symbol = "bopm_american_put"
+source = "examples/quant/american_binomial/main.mind"
+returns = "f64"
+oracle = "none — pinned committed hash only (see manifest header)"
+output_encoding = "f64_bits_i64_le_grid"

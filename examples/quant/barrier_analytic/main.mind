@@ -1,0 +1,1321 @@
+// examples/quant/barrier_analytic — deterministic closed-form barrier option
+// pricing: the eight vanilla knock types under continuous monitoring.
+//
+// Copyright 2025 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// WHAT THIS DEMONSTRATES, AND WHY IT IS DIFFERENT FROM THE OTHER QUANT
+// EXAMPLES.  `examples/quant/black_scholes` prices the determinism claim in a
+// unit a risk officer reads without translation.  `greeks_higher_order` pushes
+// the same claim two derivatives deeper, into the place where floating-point
+// error compounds worst.  This file does something neither of those can: it
+// prices an instrument whose value is a DIFFERENCE OF LARGE, NEARLY EQUAL
+// TERMS, and which therefore carries an exact structural identity that the
+// arithmetic must satisfy to full precision no matter what any oracle says.
+//
+// A barrier price is assembled from the Reiner-Rubinstein building blocks as
+// combinations like `A - B + C - D`.  At a barrier far from spot those four
+// terms are each of order the vanilla premium while their signed sum is of
+// order 1e-5, or 1e-27, or 1e-117.  The U_FAR case below has a knock-in value
+// of 5.4e-27 formed by cancelling terms of order 10: that is twenty-six orders
+// of magnitude of cancellation in a single expression.  Nothing in the other
+// quant examples asks the kernel for that.
+//
+// AND THE PAYOFF FOR IT IS THE IN-OUT PARITY:
+//     knock_in(X) + knock_out(X) == vanilla(X),   exactly, for every X
+// because a contract that pays if the barrier is touched plus one that pays if
+// it is not is just the unconditional contract.  This is a THEOREM, not a
+// calibration.  It holds independently of r, q, sigma, T, S, K and H; it holds
+// independently of whether my transcription of Reiner-Rubinstein is right; and
+// it is violated by essentially every sign error, every swapped eta, and every
+// mis-assembled branch of the eight-way type table.  It is the single most
+// valuable check in this file, and unlike a tolerance band against a reference
+// number it cannot be satisfied by a wrong implementation that happens to be
+// wrong consistently.  See KAT section 2.
+//
+// A FINDING THAT SHAPED THIS FILE, RECORDED BECAUSE IT IS THE INTERESTING PART.
+// While validating the closed forms at 50 digits, the formulas were evaluated
+// with the barrier on the WRONG SIDE of spot — a "down" barrier placed above
+// the spot price, which means the contract has ALREADY knocked at inception.
+// The formulas returned, in full 50-digit glory:
+//     down-and-out call,  S=100, H=120:  -55.19    (a negative option price)
+//     down-and-in  call,  S=100, H=1000:  313230.17 (30000x the vanilla)
+// and IN-OUT PARITY HELD TO 1e-49 ON BOTH.  That is the whole lesson in one
+// line: the identity this file leans on is a real theorem and it is still not
+// sufficient, because a decomposition can be internally consistent and
+// economically meaningless at the same time.  Parity constrains the SUM of the
+// two halves; it says nothing about whether either half is a price.
+//
+// The fix is a DOMAIN GUARD, not a wider tolerance.  A down barrier requires
+// H < S and an up barrier requires H > S; outside that the contract has
+// already triggered and the closed form is answering a question about a
+// contract that no longer exists.  `bar_valid_down` / `bar_valid_up` return
+// the canonical qNaN there rather than a confident negative number.  KAT
+// section 5 asserts exactly that, and the adversarial block in section 6
+// asserts that the parity check CANNOT catch it — a negative control on the
+// file's own headline identity.
+//
+// WHY THIS IS NOT A LIBRARY.  The formulas are standard and unremarkable
+// (Merton 1973 for the down-and-out call; Reiner & Rubinstein 1991 for the
+// complete eight-type table).  Nothing here is a contribution to finance.  The
+// contribution is that every transcendental on the path — exp, log, sqrt, erfc
+// — is rebuilt from `+ - * /` on the strict scalar path, so a barrier premium
+// is reproducible bit-for-bit on a different ISA rather than merely close.
+//
+// THE CLAIM, STATED EXACTLY.  This module does NOT claim to match any host
+// libm, SciPy, or a vendor pricing library in the last bits.  It cannot, and it
+// is not trying to: a re-derived erfc rounds differently from Cephes, and both
+// are within their stated accuracy.  The claim is narrower and harder:
+//     the same source, compiled for two different ISAs, produces byte-identical
+//     output, with a stated accuracy bound against a 50-digit oracle.
+// Accuracy and reproducibility are orthogonal properties.  Determinism is what
+// makes an error analysis meaningful, not a substitute for one.
+//
+// REBATE IS ZERO, AND WHY THAT IS A SCOPE DECISION RATHER THAN AN OMISSION.
+// The full Reiner-Rubinstein decomposition has six blocks, A through F.  E and
+// F exist ONLY to price a rebate — the cash paid when a knock-out is
+// extinguished (F) or when a knock-in never activates (E).  With a zero rebate
+// both are multiplied by zero and contribute nothing to any of the eight
+// prices below, so they are not implemented.  That is deliberate: an
+// unexercised E and F would be code the KAT cannot reach, and untested code
+// inside a file whose entire purpose is to be a known-answer test is worse
+// than absent code.  A non-zero rebate also needs the `lambda` exponent and
+// a second pair of x/y arguments, which would roughly double the surface for a
+// feature no check here would constrain.
+// deferred: rebate support (blocks E and F, plus the lambda exponent) is out of
+// scope — upgrade path: add `rr_e`/`rr_f` taking the rebate K, extend each of
+// the eight assemblies with its rebate term per Reiner-Rubinstein Table 2, and
+// extend the KAT with a rebate sweep whose limit as rebate -> 0 reproduces
+// every constant in this file.
+//
+// SELF-CONTAINED, AND WHY.  The detmath kernels are duplicated below instead of
+// imported.  mindc 0.10.2 cannot carry an f64 across a module boundary (roadmap
+// 17.1): an imported `fn f(x: f64) -> f64` types as `(i64) -> i64` at the call
+// site and miscompiles silently.  This mirrors `examples/detmath_kat`,
+// `examples/quant/black_scholes` and `examples/quant/greeks_higher_order`.  The
+// kernel block is copied BYTE-IDENTICALLY from black_scholes so the two
+// examples cannot silently drift to different kernels and disagree on a price.
+// deferred: replace the duplicated kernel block with `import std.detmath;` once
+// roadmap 17.1 lands — upgrade path: delete the block between the KERNEL BEGIN
+// and KERNEL END markers and call the std surface directly.
+//
+// KERNELS ARE NAMED `dm_*` DELIBERATELY.  A kernel named `exp`, `log`, `pow`
+// or `erfc` collides with the C99 libm name and can be constant-folded by the
+// host toolchain at a call site with literal arguments, silently substituting
+// the platform's rounding for ours — which is the exact bug this whole example
+// exists to rule out.  The `dm_` prefix makes that collision impossible.  Note
+// that this file needs a POWER function (the `(H/S)^(2*mu)` factors), and it is
+// named `dm_powf` for precisely this reason: a MIND function named `pow` is a
+// live miscompilation hazard, not a hypothetical one.
+//
+// NO `[test]` FUNCTIONS, AND WHY.  The mindc 0.10.2 `[test]` interpreter
+// mis-evaluates an f64 comparison in a function body (it takes the then-branch
+// unconditionally).  Every guarded function here would return through its
+// leading `if x != x` guard and every interpreted assertion would pass
+// vacuously — a false green.  The native backend evaluates f64 branches
+// correctly, so the gate is build-and-run: `mindc run`, exit code 0 means every
+// check passed.  The count of failures is the exit code, so a partial failure
+// is never rounded to success.
+//
+// REFERENCES (original papers only):
+//   Merton, R. C. (1973). "Theory of Rational Option Pricing." Bell Journal of
+//     Economics and Management Science 4(1), 141-183.  — the down-and-out call,
+//     the first closed-form barrier price.
+//   Reiner, E. & Rubinstein, M. (1991). "Breaking Down the Barriers." Risk 4(8),
+//     28-35. — the complete (phi, eta) parameterisation used here.
+//   Black, F. & Scholes, M. (1973). "The Pricing of Options and Corporate
+//     Liabilities." Journal of Political Economy 81(3), 637-654.
+// ---------------------------------------------------------------------------
+
+// =========================== KERNEL BEGIN ==================================
+// Duplicated verbatim from std/detmath.mind (roadmap 17.1 blocks importing).
+// Do not "improve" these: every polynomial is a fixed left-fold Horner
+// recurrence in source order.  Reassociating one changes the last bit of every
+// price downstream and breaks the cross-substrate hash.
+
+fn absf(x: f64) -> f64 {
+    if x < 0.0 {
+        return 0.0 - x;
+    }
+    return x;
+}
+
+// +inf by byte-identical IEEE overflow; never a synthesised NaN.
+fn inf() -> f64 {
+    let mut v: f64 = 1.0;
+    let mut i: i64 = 0;
+    while i < 350 {
+        v = v * 10.0;
+        i = i + 1;
+    }
+    return v;
+}
+
+// 0x7FF8000000000000 — the MIND-canonical quiet NaN, pinned so an
+// out-of-domain result is byte-identical (x86 sets the sign bit, ARM does not).
+fn canonical_qnan() -> f64 {
+    return __mind_bits_to_f64(9221120237041090560);
+}
+
+fn rnd_to_i64(x: f64) -> i64 {
+    if x >= 0.0 {
+        return (x + 0.5) as i64;
+    }
+    return 0 - ((0.5 - x) as i64);
+}
+
+fn det_exp(x: f64) -> f64 {
+    let ln2_hi: f64 = 0.6931467056274414;
+    let ln2_lo: f64 = 0.00000047493250390941725;
+    let inv_ln2: f64 = 1.4426950408889634;
+    let k: i64 = rnd_to_i64(x * inv_ln2);
+    let kf: f64 = k as f64;
+    let r: f64 = (x - kf * ln2_hi) - kf * ln2_lo;
+    let mut t: f64 = 0.0000000000007647163731819816;
+    t = 0.00000000016059043836821613 + r * t;
+    t = 0.00000000208767569878681 + r * t;
+    t = 0.00000002505210838544172 + r * t;
+    t = 0.0000002755731922398589 + r * t;
+    t = 0.0000027557319223985893 + r * t;
+    t = 0.0000248015873015873 + r * t;
+    t = 0.0001984126984126984 + r * t;
+    t = 0.001388888888888889 + r * t;
+    t = 0.008333333333333333 + r * t;
+    t = 0.041666666666666664 + r * t;
+    t = 0.16666666666666666 + r * t;
+    t = 0.5 + r * t;
+    t = 1.0 + r * t;
+    t = 1.0 + r * t;
+    let mut y: f64 = t * 1.0;
+    let mut j: i64 = 0;
+    if k >= 0 {
+        while j < k {
+            y = y * 2.0;
+            j = j + 1;
+        }
+    } else {
+        while j < (0 - k) {
+            y = y / 2.0;
+            j = j + 1;
+        }
+    }
+    return y;
+}
+
+fn dm_exp(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x >= 709.7827128933841 {
+        return inf();
+    }
+    if x <= 0.0 - 745.1332191019412 {
+        return 0.0;
+    }
+    return det_exp(x);
+}
+
+fn det_log_core(x: f64) -> f64 {
+    let ln2: f64 = 0.6931471805599453;
+    let mut k: i64 = 0;
+    // f64-param-init: seed a loop-carried f64 binding via the exact identity
+    // `x * 1.0` so mindc 0.10.2 does not infer it as i64.
+    let mut m: f64 = x * 1.0;
+    while m >= 1.4142135623730951 {
+        m = m / 2.0;
+        k = k + 1;
+    }
+    while m < 0.7071067811865476 {
+        m = m * 2.0;
+        k = k - 1;
+    }
+    let s: f64 = (m - 1.0) / (m + 1.0);
+    let s2: f64 = s * s;
+    let mut acc: f64 = 0.0;
+    let mut n: i64 = 29;
+    while n >= 1 {
+        acc = 1.0 / (n as f64) + s2 * acc;
+        n = n - 2;
+    }
+    return (k as f64) * ln2 + 2.0 * s * acc;
+}
+
+fn dm_log(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x < 0.0 {
+        return 0.0;
+    }
+    if x == 0.0 {
+        return 0.0 - inf();
+    }
+    if x >= inf() {
+        return inf();
+    }
+    return det_log_core(x);
+}
+
+fn dm_sqrt(x: f64) -> f64 {
+    if x != x {
+        return canonical_qnan();
+    }
+    if x < 0.0 {
+        return canonical_qnan();
+    }
+    return sqrt(x);
+}
+
+// erf by its Maclaurin series, ascending fixed left-fold.  Certified |x| < 2.
+fn erf_series(x: f64) -> f64 {
+    let two_over_sqrtpi: f64 = 1.1283791670955126;
+    let x2: f64 = x * x;
+    let mut t: f64 = x * 1.0;
+    let mut s: f64 = x * 1.0;
+    let mut n: i64 = 1;
+    while n < 60 {
+        t = t * (0.0 - x2) / (n as f64);
+        s = s + t / ((2 * n + 1) as f64);
+        n = n + 1;
+    }
+    return two_over_sqrtpi * s;
+}
+
+// erfc by a fixed-depth backward continued fraction.  Certified x >= 1.
+// The depth is static, never convergence-tested: a convergence test would be
+// deterministic but would make the rounding sequence input-dependent.
+fn erfc_cf(x: f64) -> f64 {
+    let sqrtpi: f64 = 1.7724538509055159;
+    let mut acc: f64 = 0.0;
+    let mut n: i64 = 200;
+    while n >= 1 {
+        acc = ((n as f64) * 0.5) / (x + acc);
+        n = n - 1;
+    }
+    return det_exp(0.0 - x * x) / sqrtpi / (x + acc);
+}
+
+fn dm_erfc(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x >= inf() {
+        return 0.0;
+    }
+    if x <= 0.0 - inf() {
+        return 2.0;
+    }
+    if x < 0.0 {
+        return 2.0 - dm_erfc(0.0 - x);
+    }
+    if x < 1.0 {
+        return 1.0 - erf_series(x);
+    }
+    return erfc_cf(x);
+}
+
+// Standard normal CDF.  Computed as 0.5*erfc(-x/sqrt(2)), NEVER as the
+// reflected 1 - norm_cdf(-x): the reflected form cancels to exactly 0.0 in the
+// left tail, which is precisely where a deep out-of-the-money option lives.
+// See the deep-OTM KAT below, where the true call premium is 4.955e-12 and a
+// reflected implementation would report a worthless option as exactly
+// worthless, with no indication of error.
+fn dm_norm_cdf(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    let inv_sqrt2: f64 = 0.7071067811865476;
+    return 0.5 * dm_erfc(0.0 - x * inv_sqrt2);
+}
+
+// Standard normal PDF, phi(x) = exp(-x^2/2)/sqrt(2*pi).  Needed by gamma,
+// vega and theta.  1/sqrt(2*pi) is a rounded constant, not a division.
+fn dm_norm_pdf(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    let inv_sqrt_2pi: f64 = 0.3989422804014327;
+    return inv_sqrt_2pi * det_exp(0.0 - 0.5 * x * x);
+}
+
+
+// ---------------------------------------------------------------------------
+// Deterministic real power, x^y for x > 0.
+//
+// NAMED `dm_powf`, NOT `pow`.  A MIND function named `pow` matches the C99
+// libm symbol and can be captured by the host toolchain and constant-folded to
+// the platform's `pow` at any call site with literal arguments, silently
+// replacing this body.  That is not a hypothetical: it is a documented defect
+// class in this repo, and it is why every kernel here carries the `dm_` prefix.
+//
+// Built as exp(y * log(x)) on the deterministic kernels rather than by a
+// dedicated algorithm.  This is the accuracy-honest choice AND the
+// determinism-honest one: it composes two functions whose rounding is already
+// pinned, instead of introducing a third independent approximation whose error
+// would have to be characterised separately.  It costs roughly one extra ulp
+// per operand versus a fused implementation, which is inside every band below
+// — and the barrier exponents `2*mu` and `2*(mu+1)` are the one place in this
+// file where the input to the power is a ratio near 1, so the log is
+// well-conditioned exactly where it is used.
+//
+// Only x > 0 is supported, which is all the barrier formulas ever ask for:
+// the base is always H/S, a ratio of two positive prices.  A non-positive base
+// returns the canonical qNaN rather than a plausible number.
+// ---------------------------------------------------------------------------
+
+fn dm_powf(x: f64, y: f64) -> f64 {
+    if x != x {
+        return canonical_qnan();
+    }
+    if y != y {
+        return canonical_qnan();
+    }
+    if x <= 0.0 {
+        return canonical_qnan();
+    }
+    return dm_exp(y * dm_log(x));
+}
+
+// ---------------------------------------------------------------------------
+// Black-Scholes-Merton vanilla scaffolding with a continuous dividend yield q.
+//
+// These are duplicated from `examples/quant/black_scholes` and are NOT the
+// deliverable of this module.  They are here because the in-out parity check —
+// the headline identity of this file — needs a vanilla price to compare
+// against, and computing that vanilla price with the SAME kernels as the
+// barrier prices is what makes the comparison meaningful.  A parity check
+// against an externally supplied vanilla constant would be a value check
+// wearing an identity's clothes: it would fold the kernel's own error into the
+// residual and force a loose band, destroying the very tightness that makes
+// parity worth asserting.  Computed in-file, parity holds to ~1e-13 absolute
+// on prices of order 10, which is near machine precision.
+//
+// EVALUATION ORDER IS PART OF THE CONTRACT.  d1 is formed exactly as in
+// `examples/quant/black_scholes`, with the numerator summed left to right
+// before the single division.  Regrouping it is algebraically identical and
+// numerically different, and would change the last bit of every price below.
+// Do not "simplify" these expressions.
+// ---------------------------------------------------------------------------
+
+fn bs_valid(s: f64, k: f64, sigma: f64, t: f64) -> i64 {
+    if s != s {
+        return 0;
+    }
+    if k != k {
+        return 0;
+    }
+    if sigma != sigma {
+        return 0;
+    }
+    if t != t {
+        return 0;
+    }
+    if s <= 0.0 {
+        return 0;
+    }
+    if k <= 0.0 {
+        return 0;
+    }
+    if sigma <= 0.0 {
+        return 0;
+    }
+    if t <= 0.0 {
+        return 0;
+    }
+    return 1;
+}
+
+fn bs_d1(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    let sq: f64 = sigma * dm_sqrt(t);
+    return (dm_log(s / k) + (r - q + 0.5 * sigma * sigma) * t) / sq;
+}
+
+fn bs_d2(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    return bs_d1(s, k, r, q, sigma, t) - sigma * dm_sqrt(t);
+}
+
+pub fn bs_call(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bs_valid(s, k, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let d1: f64 = bs_d1(s, k, r, q, sigma, t);
+    let d2: f64 = d1 - sigma * dm_sqrt(t);
+    let df_r: f64 = dm_exp(0.0 - r * t);
+    let df_q: f64 = dm_exp(0.0 - q * t);
+    return s * df_q * dm_norm_cdf(d1) - k * df_r * dm_norm_cdf(d2);
+}
+
+pub fn bs_put(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bs_valid(s, k, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let d1: f64 = bs_d1(s, k, r, q, sigma, t);
+    let d2: f64 = d1 - sigma * dm_sqrt(t);
+    let df_r: f64 = dm_exp(0.0 - r * t);
+    let df_q: f64 = dm_exp(0.0 - q * t);
+    return k * df_r * dm_norm_cdf(0.0 - d2) - s * df_q * dm_norm_cdf(0.0 - d1);
+}
+
+// ===========================================================================
+// THE REINER-RUBINSTEIN DECOMPOSITION.
+//
+// Continuously-monitored single-barrier options, zero rebate.  Every one of the
+// eight prices is a signed combination of four building blocks A, B, C, D,
+// each parameterised by two sign flags:
+//
+//     phi = +1 for a CALL payoff, -1 for a PUT payoff
+//     eta = +1 for a DOWN barrier, -1 for an UP barrier
+//
+// The single (phi, eta) parameterisation is the reason this file is short
+// rather than eight transcriptions of eight formulas.  It is also the reason a
+// single swapped eta breaks four prices at once and is caught immediately by
+// the parity check — a benefit of shared structure that eight independent
+// transcriptions would not have.
+//
+// The common quantities:
+//     mu     = (r - q - sigma^2/2) / sigma^2
+//     sigt   = sigma * sqrt(T)
+//     x1 = log(S/K)/sigt     + (1+mu)*sigt
+//     x2 = log(S/H)/sigt     + (1+mu)*sigt
+//     y1 = log(H^2/(S*K))/sigt + (1+mu)*sigt
+//     y2 = log(H/S)/sigt     + (1+mu)*sigt
+//
+// and the blocks themselves:
+//     A = phi*S*e^(-qT)*N(phi*x1) - phi*K*e^(-rT)*N(phi*x1 - phi*sigt)
+//     B = phi*S*e^(-qT)*N(phi*x2) - phi*K*e^(-rT)*N(phi*x2 - phi*sigt)
+//     C = phi*S*e^(-qT)*(H/S)^(2(mu+1))*N(eta*y1)
+//         - phi*K*e^(-rT)*(H/S)^(2mu)*N(eta*y1 - eta*sigt)
+//     D = phi*S*e^(-qT)*(H/S)^(2(mu+1))*N(eta*y2)
+//         - phi*K*e^(-rT)*(H/S)^(2mu)*N(eta*y2 - eta*sigt)
+//
+// A is the vanilla premium.  C and D are its image under the reflection that
+// implements the method of images for the absorbing boundary at H; the
+// `(H/S)^(2mu)` factors are the Girsanov weight that reflection carries.
+//
+// WHY EACH BLOCK IS ITS OWN FUNCTION rather than one function returning four
+// values: mindc 0.10.2 has no tuple return, and more importantly this keeps
+// each block independently readable against the paper.  The cost is that the
+// shared sub-expressions (mu, sigt, the x/y arguments) are recomputed per
+// block.  That is deliberate and must NOT be "optimised" by hoisting them into
+// a shared mutable scratch: recomputation is the only way to guarantee each
+// block sees the identical rounding of each sub-expression regardless of call
+// order, which is exactly the property the cross-substrate hash depends on.
+//
+// CANCELLATION IS THE NORMAL CASE HERE, NOT THE EDGE CASE.  Look at U_FAR in
+// the KAT: H = 1000 against S = 100, and the up-and-in call is 5.4e-27 while A
+// and B are both ~10.45.  The assembled expression `B - C + D` must cancel
+// twenty-six significant digits' worth of leading terms to land on the right
+// answer.  This is the single most demanding thing any example in the quant
+// set asks of the erfc kernel, and it is why the far-barrier limit checks in
+// KAT section 4 use ABSOLUTE rather than relative bands: a relative band around
+// 5.4e-27 is not a meaningful statement about an f64 computation whose inputs
+// are of order 10.
+// ===========================================================================
+
+fn bar_mu(r: f64, q: f64, sigma: f64) -> f64 {
+    return (r - q - 0.5 * sigma * sigma) / (sigma * sigma);
+}
+
+fn rr_a(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64, phi: f64) -> f64 {
+    let sigt: f64 = sigma * dm_sqrt(t);
+    let mu: f64 = bar_mu(r, q, sigma);
+    let x1: f64 = dm_log(s / k) / sigt + (1.0 + mu) * sigt;
+    let df_q: f64 = dm_exp(0.0 - q * t);
+    let df_r: f64 = dm_exp(0.0 - r * t);
+    return phi * s * df_q * dm_norm_cdf(phi * x1) - phi * k * df_r * dm_norm_cdf(phi * x1 - phi * sigt);
+}
+
+fn rr_b(s: f64, k: f64, h: f64, r: f64, q: f64, sigma: f64, t: f64, phi: f64) -> f64 {
+    let sigt: f64 = sigma * dm_sqrt(t);
+    let mu: f64 = bar_mu(r, q, sigma);
+    let x2: f64 = dm_log(s / h) / sigt + (1.0 + mu) * sigt;
+    let df_q: f64 = dm_exp(0.0 - q * t);
+    let df_r: f64 = dm_exp(0.0 - r * t);
+    return phi * s * df_q * dm_norm_cdf(phi * x2) - phi * k * df_r * dm_norm_cdf(phi * x2 - phi * sigt);
+}
+
+fn rr_c(s: f64, k: f64, h: f64, r: f64, q: f64, sigma: f64, t: f64, phi: f64, eta: f64) -> f64 {
+    let sigt: f64 = sigma * dm_sqrt(t);
+    let mu: f64 = bar_mu(r, q, sigma);
+    let y1: f64 = dm_log(h * h / (s * k)) / sigt + (1.0 + mu) * sigt;
+    let df_q: f64 = dm_exp(0.0 - q * t);
+    let df_r: f64 = dm_exp(0.0 - r * t);
+    let hs: f64 = h / s;
+    let w_s: f64 = dm_powf(hs, 2.0 * (mu + 1.0));
+    let w_k: f64 = dm_powf(hs, 2.0 * mu);
+    return phi * s * df_q * w_s * dm_norm_cdf(eta * y1) - phi * k * df_r * w_k * dm_norm_cdf(eta * y1 - eta * sigt);
+}
+
+fn rr_d(s: f64, k: f64, h: f64, r: f64, q: f64, sigma: f64, t: f64, phi: f64, eta: f64) -> f64 {
+    let sigt: f64 = sigma * dm_sqrt(t);
+    let mu: f64 = bar_mu(r, q, sigma);
+    let y2: f64 = dm_log(h / s) / sigt + (1.0 + mu) * sigt;
+    let df_q: f64 = dm_exp(0.0 - q * t);
+    let df_r: f64 = dm_exp(0.0 - r * t);
+    let hs: f64 = h / s;
+    let w_s: f64 = dm_powf(hs, 2.0 * (mu + 1.0));
+    let w_k: f64 = dm_powf(hs, 2.0 * mu);
+    return phi * s * df_q * w_s * dm_norm_cdf(eta * y2) - phi * k * df_r * w_k * dm_norm_cdf(eta * y2 - eta * sigt);
+}
+
+// ---------------------------------------------------------------------------
+// DOMAIN VALIDITY, AND THE FINDING THAT MOTIVATES IT.
+//
+// The closed forms above price a contract that has NOT YET TOUCHED its barrier.
+// That is a precondition of the derivation, not a detail: the method of images
+// places an absorbing boundary at H and computes the measure of paths that
+// have never reached it.  If the barrier is already on the wrong side of spot
+// at inception, there are no such paths and the formula is extrapolating past
+// its own construction.
+//
+// It does not fail loudly when you do this.  Measured at 50 digits during the
+// oracle validation for this file:
+//     down-and-out call, S=100 H=120  ->  -55.19      (negative price)
+//     down-and-in  call, S=100 H=1000 ->  313230.17   (30000x the vanilla)
+// and in-out parity held to 1e-49 for both.  A file that checked only parity
+// and a handful of well-placed value points would ship this happily.
+//
+// So the guard is structural: a DOWN barrier requires H < S, an UP barrier
+// requires H > S.  Outside that the functions return the canonical qNaN.
+//
+// WHY NOT RETURN THE ALREADY-KNOCKED VALUE INSTEAD?  A down-and-in call whose
+// barrier sits above spot has already knocked in, so arguably it is worth
+// exactly the vanilla, and a down-and-out one is worth zero.  That is true and
+// it is still the wrong thing to return here, for the same reason
+// `examples/quant/black_scholes` returns qNaN for T=0 rather than the intrinsic
+// value: this function's contract is "price a live barrier option", and a
+// caller who reaches this branch has a state-management bug — they are pricing
+// a contract whose status they have not tracked.  Answering the question they
+// accidentally asked, with a number that looks exactly like a price, is how
+// that bug reaches production.  qNaN says so instead.
+// deferred: an already-knocked pricing surface would be a separate, explicitly
+// named pair of functions — upgrade path: add `bar_knocked_in_value` /
+// `bar_knocked_out_value` returning the vanilla and 0.0 respectively, so the
+// caller states which regime they believe they are in and the type signature
+// records the claim.
+//
+// H is also required to be strictly positive and finite: H = 0 is not a
+// barrier a price can ever touch, and it makes log(H/S) = -inf.
+// ---------------------------------------------------------------------------
+
+fn bar_base_valid(s: f64, k: f64, h: f64, sigma: f64, t: f64) -> i64 {
+    if bs_valid(s, k, sigma, t) == 0 {
+        return 0;
+    }
+    if h != h {
+        return 0;
+    }
+    if h <= 0.0 {
+        return 0;
+    }
+    if h >= inf() {
+        return 0;
+    }
+    return 1;
+}
+
+// A DOWN barrier must sit strictly below spot, else it has already knocked.
+fn bar_valid_down(s: f64, k: f64, h: f64, sigma: f64, t: f64) -> i64 {
+    if bar_base_valid(s, k, h, sigma, t) == 0 {
+        return 0;
+    }
+    if h >= s {
+        return 0;
+    }
+    return 1;
+}
+
+// An UP barrier must sit strictly above spot, else it has already knocked.
+fn bar_valid_up(s: f64, k: f64, h: f64, sigma: f64, t: f64) -> i64 {
+    if bar_base_valid(s, k, h, sigma, t) == 0 {
+        return 0;
+    }
+    if h <= s {
+        return 0;
+    }
+    return 1;
+}
+
+// ===========================================================================
+// THE EIGHT ASSEMBLIES.
+//
+// Each type selects its blocks by whether the strike is above or below the
+// barrier, because the payoff region and the knocked region overlap
+// differently in the two cases.  The `K > H` / `K <= H` split below is the
+// standard Reiner-Rubinstein table, transcribed with phi and eta fixed per
+// type.  The transcription was validated at 50 digits against an INDEPENDENT
+// derivation (numerical integration of the absorbed transition density of the
+// log-price, a completely different derivation path) before any constant in
+// the KAT was recorded; see the KAT header.
+//
+// Sign conventions, fixed here and asserted below:
+//     call: phi = +1        put: phi = -1
+//     down: eta = +1        up:  eta = -1
+// ===========================================================================
+
+// --- DOWN-AND-IN CALL -------------------------------------------------------
+// Pays a call if the spot ever falls to H.  With K > H the option can only be
+// in the money after having been knocked in from below, so the whole value is
+// the reflected block C.
+pub fn bar_dic(s: f64, k: f64, h: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bar_valid_down(s, k, h, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let a: f64 = rr_a(s, k, r, q, sigma, t, 1.0);
+    let b: f64 = rr_b(s, k, h, r, q, sigma, t, 1.0);
+    let c: f64 = rr_c(s, k, h, r, q, sigma, t, 1.0, 1.0);
+    let d: f64 = rr_d(s, k, h, r, q, sigma, t, 1.0, 1.0);
+    if k > h {
+        return c;
+    }
+    return a - b + d;
+}
+
+// --- DOWN-AND-OUT CALL ------------------------------------------------------
+// The Merton (1973) case, and the oldest closed-form barrier price.  Worth
+// strictly less than the vanilla call: knocking out can only remove value.
+pub fn bar_doc(s: f64, k: f64, h: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bar_valid_down(s, k, h, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let a: f64 = rr_a(s, k, r, q, sigma, t, 1.0);
+    let b: f64 = rr_b(s, k, h, r, q, sigma, t, 1.0);
+    let c: f64 = rr_c(s, k, h, r, q, sigma, t, 1.0, 1.0);
+    let d: f64 = rr_d(s, k, h, r, q, sigma, t, 1.0, 1.0);
+    if k > h {
+        return a - c;
+    }
+    return b - d;
+}
+
+// --- UP-AND-IN CALL ---------------------------------------------------------
+// Pays a call if spot ever rises to H.  With K > H the barrier is below the
+// strike, so any path that finishes in the money has necessarily crossed H:
+// the knock-in is certain conditional on the payoff, and the value collapses
+// to the vanilla block A.  That degeneracy is asserted in the KAT.
+pub fn bar_uic(s: f64, k: f64, h: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bar_valid_up(s, k, h, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let a: f64 = rr_a(s, k, r, q, sigma, t, 1.0);
+    let b: f64 = rr_b(s, k, h, r, q, sigma, t, 1.0);
+    let c: f64 = rr_c(s, k, h, r, q, sigma, t, 1.0, 0.0 - 1.0);
+    let d: f64 = rr_d(s, k, h, r, q, sigma, t, 1.0, 0.0 - 1.0);
+    if k > h {
+        return a;
+    }
+    return b - c + d;
+}
+
+// --- UP-AND-OUT CALL --------------------------------------------------------
+// The mirror of the above: with K > H every in-the-money path has already
+// knocked out, so the option is worth EXACTLY ZERO.  Not approximately zero —
+// exactly, as a matter of the payoff's structure rather than of arithmetic.
+// The KAT asserts the exact 0.0 rather than a band, because a band here would
+// hide a formula that returned a small non-zero number for the wrong reason.
+pub fn bar_uoc(s: f64, k: f64, h: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bar_valid_up(s, k, h, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let a: f64 = rr_a(s, k, r, q, sigma, t, 1.0);
+    let b: f64 = rr_b(s, k, h, r, q, sigma, t, 1.0);
+    let c: f64 = rr_c(s, k, h, r, q, sigma, t, 1.0, 0.0 - 1.0);
+    let d: f64 = rr_d(s, k, h, r, q, sigma, t, 1.0, 0.0 - 1.0);
+    if k > h {
+        return 0.0;
+    }
+    return a - b + c - d;
+}
+
+// --- DOWN-AND-IN PUT --------------------------------------------------------
+// The mirror image of the up-and-in call: with K <= H every in-the-money put
+// path has already crossed the down barrier, so the value is the vanilla A.
+pub fn bar_dip(s: f64, k: f64, h: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bar_valid_down(s, k, h, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let a: f64 = rr_a(s, k, r, q, sigma, t, 0.0 - 1.0);
+    let b: f64 = rr_b(s, k, h, r, q, sigma, t, 0.0 - 1.0);
+    let c: f64 = rr_c(s, k, h, r, q, sigma, t, 0.0 - 1.0, 1.0);
+    let d: f64 = rr_d(s, k, h, r, q, sigma, t, 0.0 - 1.0, 1.0);
+    if k > h {
+        return b - c + d;
+    }
+    return a;
+}
+
+// --- DOWN-AND-OUT PUT -------------------------------------------------------
+// With K <= H the put is worth exactly zero: the barrier sits at or above the
+// strike, so the option cannot finish in the money without first knocking out.
+pub fn bar_dop(s: f64, k: f64, h: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bar_valid_down(s, k, h, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let a: f64 = rr_a(s, k, r, q, sigma, t, 0.0 - 1.0);
+    let b: f64 = rr_b(s, k, h, r, q, sigma, t, 0.0 - 1.0);
+    let c: f64 = rr_c(s, k, h, r, q, sigma, t, 0.0 - 1.0, 1.0);
+    let d: f64 = rr_d(s, k, h, r, q, sigma, t, 0.0 - 1.0, 1.0);
+    if k > h {
+        return a - b + c - d;
+    }
+    return 0.0;
+}
+
+// --- UP-AND-IN PUT ----------------------------------------------------------
+pub fn bar_uip(s: f64, k: f64, h: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bar_valid_up(s, k, h, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let a: f64 = rr_a(s, k, r, q, sigma, t, 0.0 - 1.0);
+    let b: f64 = rr_b(s, k, h, r, q, sigma, t, 0.0 - 1.0);
+    let c: f64 = rr_c(s, k, h, r, q, sigma, t, 0.0 - 1.0, 0.0 - 1.0);
+    let d: f64 = rr_d(s, k, h, r, q, sigma, t, 0.0 - 1.0, 0.0 - 1.0);
+    if k > h {
+        return a - b + d;
+    }
+    return c;
+}
+
+// --- UP-AND-OUT PUT ---------------------------------------------------------
+pub fn bar_uop(s: f64, k: f64, h: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bar_valid_up(s, k, h, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let a: f64 = rr_a(s, k, r, q, sigma, t, 0.0 - 1.0);
+    let b: f64 = rr_b(s, k, h, r, q, sigma, t, 0.0 - 1.0);
+    let c: f64 = rr_c(s, k, h, r, q, sigma, t, 0.0 - 1.0, 0.0 - 1.0);
+    let d: f64 = rr_d(s, k, h, r, q, sigma, t, 0.0 - 1.0, 0.0 - 1.0);
+    if k > h {
+        return b - d;
+    }
+    return a - c;
+}
+
+// ===========================================================================
+// KNOWN-ANSWER TESTS.
+//
+// THE ORACLE.  Every reference value below was produced by an INDEPENDENT
+// 50-digit oracle — mpmath 1.3.0 at `mp.dps = 50`, evaluating the
+// Reiner-Rubinstein forms with N(x) = erfc(-x/sqrt(2))/2 in 50-digit
+// arithmetic, then rounded ONCE to f64.  Never by this implementation.  A KAT
+// generated from the code it tests proves only that the code is unchanged, not
+// that it is correct.
+//
+// THE ORACLE WAS ITSELF VALIDATED AGAINST AN INDEPENDENT DERIVATION, which
+// matters more here than in the other quant examples because the eight-way
+// (phi, eta, K vs H) table is exactly the kind of thing that is easy to
+// transcribe wrongly and then freeze permanently.  Each closed form was
+// cross-checked, offline at 50 digits, against a numerical integration of the
+// ABSORBED TRANSITION DENSITY of the log-price — the method-of-images density
+//     p(x) = [ exp(-(x-nu*T)^2 / 2*sigma^2*T)
+//              - exp(2*nu*b/sigma^2) * exp(-(x-2b-nu*T)^2 / 2*sigma^2*T) ]
+//            / (sigma*sqrt(2*pi*T))
+// integrated against the payoff over the surviving region.  That is a wholly
+// different derivation path from the closed form: it shares no algebra with
+// Reiner-Rubinstein beyond the underlying model.  Agreement was to 1e-48
+// relative or better on down-and-out call (two parameter sets), up-and-out
+// call (two parameter sets), and down-and-out put.  Only after that agreement
+// were any constants recorded.  None of that integration is in the shipped
+// code; it lived in a throwaway oracle script.
+//
+// FIVE CLASSES OF CHECK, deliberately:
+//   1. VALUE       — against the oracle, within a stated ulp band.
+//   2. IN-OUT PARITY — knock_in + knock_out == vanilla.  A THEOREM, which
+//                    holds independently of the oracle and is violated by
+//                    almost every sign error.  The most valuable block here.
+//   3. LIMITS      — barrier far from spot: knock-out -> vanilla, knock-in -> 0.
+//   4. STRUCTURE   — monotonicity and the no-arbitrage inequalities between
+//                    barrier and vanilla prices.
+//   5. DOMAIN      — degenerate and already-knocked inputs give canonical qNaN.
+// plus 6. ADVERSARIAL negative controls, which is what makes 1-4 mean anything.
+//
+// WHAT THIS KAT CANNOT CATCH, STATED PLAINLY.
+//
+// (a) The tolerance bands are structurally blind to any change that perturbs a
+//     result by less than the band — including a reassociation of an expression
+//     that is algebraically identical and numerically different.  Tightening
+//     the bands is not the fix: they must stay wide enough to absorb the honest
+//     difference between a re-derived erfc and the 50-digit oracle.  Detecting
+//     reassociation requires a BIT-EXACT reference, which is the job of the
+//     cross-substrate CI fixture: a hash has no tolerance to hide in.  This KAT
+//     proves the pricing is CORRECT; the fixture proves it is REPRODUCIBLE.  A
+//     green KAT is not evidence of byte-identity.
+//
+// (b) THE PARITY CHECK CANNOT DETECT AN OUT-OF-DOMAIN BARRIER.  This is not a
+//     hypothetical limitation, it is the measured one that produced the domain
+//     guard above: at S=100, H=120, the down-and-out call is -55.19 and the
+//     down-and-in call is 65.64, and they sum to the vanilla 10.45 to 49
+//     digits.  Parity constrains the SUM of the two halves and says nothing
+//     about whether either half is a price.  Section 6 asserts this blindness
+//     explicitly rather than leaving it as a comment, so that a future change
+//     which "fixes" the domain guard by deleting it is caught by section 5
+//     rather than passing section 2.
+//
+// (c) Nothing here tests a rebate, because a rebate is not implemented (see the
+//     file header).  The E and F blocks are absent, not stubbed.
+//
+// (d) Nothing here tests DISCRETE monitoring.  These are continuously-monitored
+//     prices, and a discretely-monitored barrier is materially different — the
+//     standard Broadie-Glasserman-Kou barrier shift is a real correction, not a
+//     rounding detail.  A caller applying these formulas to a daily-monitored
+//     contract is making a modelling error this file cannot see.
+// ===========================================================================
+
+fn chk_ulp(got: f64, want: f64, ulps: f64) -> i64 {
+    let eps: f64 = 0.0000000000000002220446049250313;
+    let tol: f64 = ulps * eps * absf(want);
+    if absf(got - want) <= tol {
+        return 1;
+    }
+    return 0;
+}
+
+fn chk_abs(got: f64, want: f64, abstol: f64) -> i64 {
+    if absf(got - want) <= abstol {
+        return 1;
+    }
+    return 0;
+}
+
+fn is_nan(x: f64) -> i64 {
+    if x != x {
+        return 1;
+    }
+    return 0;
+}
+
+// Assert a strict inequality, counting a violation as one failure.  Written as
+// a helper because the same shape recurs a dozen times in section 4 and an
+// inline if/else per case would bury the actual claim in punctuation.
+fn chk_lt(a: f64, b: f64) -> i64 {
+    if a < b {
+        return 0;
+    }
+    return 1;
+}
+
+fn chk_ge(a: f64, b: f64) -> i64 {
+    if a >= b {
+        return 0;
+    }
+    return 1;
+}
+
+pub fn main() -> i64 {
+    let mut fails: i64 = 0;
+
+    // =====================================================================
+    // 1. VALUE CHECKS against the 50-digit oracle.
+    //
+    // THE PARAMETER POINTS, AND WHY EACH ONE IS HERE:
+    //   D_ATM  S=100 K=100 H=90  r=.05 q=0   sig=.20 T=1    — textbook down.
+    //   D_DIV  S=100 K=95  H=90  r=.05 q=.02 sig=.25 T=.5   — the only q != 0
+    //          point, so the only one where the dividend drift in `mu` is
+    //          exercised at all.  Without it every (H/S)^(2mu) weight is
+    //          computed with q = 0 and a dropped q would be invisible.
+    //   D_ITMK S=100 K=110 H=90  r=.05 q=0   sig=.20 T=1    — K > H > S-ish;
+    //          exercises the `k > h` branch of every down type.
+    //   D_NEAR S=100 K=100 H=99  r=.05 q=0   sig=.20 T=1    — barrier 1% away.
+    //          The knock-out is 1.367 against a 10.45 vanilla and the
+    //          down-and-out PUT is 1.58e-05: near-certain knockout, which is
+    //          where the C and D reflection terms nearly cancel A and B.
+    //   U_ATM  S=100 K=100 H=120 r=.05 q=0   sig=.20 T=1    — textbook up.
+    //   U_WING S=95  K=100 H=110 r=.03 q=.01 sig=.30 T=.75  — OTM strike, high
+    //          vol, q != 0, and a barrier between spot and strike.
+    //   U_OTMK S=100 K=90  H=120 r=.05 q=0   sig=.20 T=1    — K < H, the other
+    //          branch of the up table.
+    //   U_NEAR S=100 K=100 H=101 r=.05 q=0   sig=.20 T=1    — barrier 1% away;
+    //          up-and-out call is 1.54e-05, five orders below the vanilla.
+    // =====================================================================
+
+    // --- D_ATM: S=100 K=100 H=90 r=0.05 q=0 sigma=0.2 T=1 -----------------
+    // Oracle doc = 8.665471658245667541555143...
+    fails = fails + (1 - chk_ulp(bar_dic(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0), 1.7851119139398992, 4096.0));
+    fails = fails + (1 - chk_ulp(bar_doc(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0), 8.665471658245668, 4096.0));
+    fails = fails + (1 - chk_ulp(bar_dip(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0), 5.422305645817085, 4096.0));
+    fails = fails + (1 - chk_ulp(bar_dop(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0), 0.15122037643988243, 8192.0));
+
+    // --- D_DIV: q=0.02, sigma=0.25, T=0.5, K=95 ---------------------------
+    // The only q != 0 down point; the (H/S)^(2mu) weights carry the dividend.
+    fails = fails + (1 - chk_ulp(bar_dic(100.0, 95.0, 90.0, 0.05, 0.02, 0.25, 0.5), 1.7808268716118203, 4096.0));
+    fails = fails + (1 - chk_ulp(bar_doc(100.0, 95.0, 90.0, 0.05, 0.02, 0.25, 0.5), 8.611602812379989, 4096.0));
+    fails = fails + (1 - chk_ulp(bar_dip(100.0, 95.0, 90.0, 0.05, 0.02, 0.25, 0.5), 4.011536624540996, 4096.0));
+    fails = fails + (1 - chk_ulp(bar_dop(100.0, 95.0, 90.0, 0.05, 0.02, 0.25, 0.5), 0.03035132722561154, 16384.0));
+
+    // --- D_ITMK: K=110 > H, exercises the k > h branch of the down table --
+    fails = fails + (1 - chk_ulp(bar_dic(100.0, 110.0, 90.0, 0.05, 0.0, 0.2, 1.0), 0.7439073109286202, 8192.0));
+    fails = fails + (1 - chk_ulp(bar_doc(100.0, 110.0, 90.0, 0.05, 0.0, 0.2, 1.0), 5.296180818795616, 4096.0));
+    fails = fails + (1 - chk_ulp(bar_dip(100.0, 110.0, 90.0, 0.05, 0.0, 0.2, 1.0), 9.620463617003319, 4096.0));
+    fails = fails + (1 - chk_ulp(bar_dop(100.0, 110.0, 90.0, 0.05, 0.0, 0.2, 1.0), 1.0548612077994586, 8192.0));
+
+    // --- D_NEAR: barrier 1% below spot, near-certain knockout -------------
+    // dop = 1.58e-05 against a 5.57 vanilla put: five orders of cancellation.
+    fails = fails + (1 - chk_ulp(bar_dic(100.0, 100.0, 99.0, 0.05, 0.0, 0.2, 1.0), 9.083128722307734, 4096.0));
+    fails = fails + (1 - chk_ulp(bar_doc(100.0, 100.0, 99.0, 0.05, 0.0, 0.2, 1.0), 1.3674548498778336, 16384.0));
+    fails = fails + (1 - chk_ulp(bar_dop(100.0, 100.0, 99.0, 0.05, 0.0, 0.2, 1.0), 0.000015826387883905697, 1048576.0));
+
+    // --- U_ATM: S=100 K=100 H=120 r=0.05 q=0 sigma=0.2 T=1 ----------------
+    fails = fails + (1 - chk_ulp(bar_uic(100.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0), 9.274518172535203, 4096.0));
+    fails = fails + (1 - chk_ulp(bar_uoc(100.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0), 1.1760653996503636, 16384.0));
+    fails = fails + (1 - chk_ulp(bar_uip(100.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0), 0.21339815060914935, 16384.0));
+    fails = fails + (1 - chk_ulp(bar_uop(100.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0), 5.360127871647818, 4096.0));
+
+    // --- U_WING: S=95 K=100 H=110 r=0.03 q=0.01 sigma=0.3 T=0.75 ----------
+    // OTM strike, high vol, q != 0, barrier between spot and strike.
+    fails = fails + (1 - chk_ulp(bar_uic(95.0, 100.0, 110.0, 0.03, 0.01, 0.3, 0.75), 8.200992702840212, 4096.0));
+    fails = fails + (1 - chk_ulp(bar_uoc(95.0, 100.0, 110.0, 0.03, 0.01, 0.3, 0.75), 0.07835181931228669, 65536.0));
+    fails = fails + (1 - chk_ulp(bar_uip(95.0, 100.0, 110.0, 0.03, 0.01, 0.3, 0.75), 2.253711088251066, 4096.0));
+    fails = fails + (1 - chk_ulp(bar_uop(95.0, 100.0, 110.0, 0.03, 0.01, 0.3, 0.75), 9.510591945416918, 4096.0));
+
+    // --- U_OTMK: K=90 < H=120, the other branch of the up table -----------
+    fails = fails + (1 - chk_ulp(bar_uic(100.0, 90.0, 120.0, 0.05, 0.0, 0.2, 1.0), 13.029507938371133, 4096.0));
+    fails = fails + (1 - chk_ulp(bar_uoc(100.0, 90.0, 120.0, 0.05, 0.0, 0.2, 1.0), 3.6699404700448652, 16384.0));
+    fails = fails + (1 - chk_ulp(bar_uip(100.0, 90.0, 120.0, 0.05, 0.0, 0.2, 1.0), 0.042550479004087975, 65536.0));
+    fails = fails + (1 - chk_ulp(bar_uop(100.0, 90.0, 120.0, 0.05, 0.0, 0.2, 1.0), 2.2675461344761705, 4096.0));
+
+    // --- U_NEAR: barrier 1% above spot ------------------------------------
+    // uoc = 1.54e-05 against a 10.45 vanilla call: six orders of cancellation,
+    // and the tightest thing in this file short of the FAR limits.
+    fails = fails + (1 - chk_ulp(bar_uic(100.0, 100.0, 101.0, 0.05, 0.0, 0.2, 1.0), 10.45056817457969, 4096.0));
+    fails = fails + (1 - chk_ulp(bar_uoc(100.0, 100.0, 101.0, 0.05, 0.0, 0.2, 1.0), 0.000015397605876996758, 1048576.0));
+    fails = fails + (1 - chk_ulp(bar_uip(100.0, 100.0, 101.0, 0.05, 0.0, 0.2, 1.0), 4.954133796917194, 4096.0));
+    fails = fails + (1 - chk_ulp(bar_uop(100.0, 100.0, 101.0, 0.05, 0.0, 0.2, 1.0), 0.6193922253397739, 8192.0));
+
+    // =====================================================================
+    // 2. IN-OUT PARITY — the headline identity.
+    //
+    //     knock_in(X) + knock_out(X) == vanilla(X)
+    //
+    // A theorem, not a calibration: a contract paying if the barrier is touched
+    // plus one paying if it is not is the unconditional contract.  It holds for
+    // every parameter set, it is independent of the oracle, and it is violated
+    // by a swapped eta, a wrong phi, a mis-assembled K-vs-H branch, and any
+    // sign error in the A-B+C-D combinations.  This is the block that survives
+    // a bad reference.
+    //
+    // The band is ABSOLUTE and tight (1e-10 on prices of order 10, roughly
+    // 1e-11 relative), which is only possible because the vanilla is computed
+    // with the SAME kernels — the erfc error is common to both sides and
+    // cancels in the residual.  A parity check against an external constant
+    // would need a band a thousand times looser and would prove far less.
+    //
+    // Checked at all eight points, both call and put, both directions: 16
+    // independent parity assertions.  Note that each one constrains the pair
+    // jointly, so a single assertion catches an error in EITHER half.
+    // =====================================================================
+
+    let vc_atm: f64 = bs_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0);
+    let vp_atm: f64 = bs_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0);
+
+    // D_ATM, call and put.
+    fails = fails + (1 - chk_abs(bar_dic(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0) + bar_doc(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0), vc_atm, 0.0000000001));
+    fails = fails + (1 - chk_abs(bar_dip(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0) + bar_dop(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0), vp_atm, 0.0000000001));
+    // U_ATM, call and put.
+    fails = fails + (1 - chk_abs(bar_uic(100.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0) + bar_uoc(100.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0), vc_atm, 0.0000000001));
+    fails = fails + (1 - chk_abs(bar_uip(100.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0) + bar_uop(100.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0), vp_atm, 0.0000000001));
+
+    // D_DIV — the q != 0 point, so this parity also constrains the dividend
+    // drift inside mu and the (H/S)^(2mu) weights.
+    let vc_div: f64 = bs_call(100.0, 95.0, 0.05, 0.02, 0.25, 0.5);
+    let vp_div: f64 = bs_put(100.0, 95.0, 0.05, 0.02, 0.25, 0.5);
+    fails = fails + (1 - chk_abs(bar_dic(100.0, 95.0, 90.0, 0.05, 0.02, 0.25, 0.5) + bar_doc(100.0, 95.0, 90.0, 0.05, 0.02, 0.25, 0.5), vc_div, 0.0000000001));
+    fails = fails + (1 - chk_abs(bar_dip(100.0, 95.0, 90.0, 0.05, 0.02, 0.25, 0.5) + bar_dop(100.0, 95.0, 90.0, 0.05, 0.02, 0.25, 0.5), vp_div, 0.0000000001));
+
+    // D_ITMK — the k > h branch of the down table.
+    let vc_itm: f64 = bs_call(100.0, 110.0, 0.05, 0.0, 0.2, 1.0);
+    let vp_itm: f64 = bs_put(100.0, 110.0, 0.05, 0.0, 0.2, 1.0);
+    fails = fails + (1 - chk_abs(bar_dic(100.0, 110.0, 90.0, 0.05, 0.0, 0.2, 1.0) + bar_doc(100.0, 110.0, 90.0, 0.05, 0.0, 0.2, 1.0), vc_itm, 0.0000000001));
+    fails = fails + (1 - chk_abs(bar_dip(100.0, 110.0, 90.0, 0.05, 0.0, 0.2, 1.0) + bar_dop(100.0, 110.0, 90.0, 0.05, 0.0, 0.2, 1.0), vp_itm, 0.0000000001));
+
+    // U_WING — OTM strike, high vol, q != 0.
+    let vc_wing: f64 = bs_call(95.0, 100.0, 0.03, 0.01, 0.3, 0.75);
+    let vp_wing: f64 = bs_put(95.0, 100.0, 0.03, 0.01, 0.3, 0.75);
+    fails = fails + (1 - chk_abs(bar_uic(95.0, 100.0, 110.0, 0.03, 0.01, 0.3, 0.75) + bar_uoc(95.0, 100.0, 110.0, 0.03, 0.01, 0.3, 0.75), vc_wing, 0.0000000001));
+    fails = fails + (1 - chk_abs(bar_uip(95.0, 100.0, 110.0, 0.03, 0.01, 0.3, 0.75) + bar_uop(95.0, 100.0, 110.0, 0.03, 0.01, 0.3, 0.75), vp_wing, 0.0000000001));
+
+    // U_OTMK — K < H, the other branch of the up table.
+    let vc_otk: f64 = bs_call(100.0, 90.0, 0.05, 0.0, 0.2, 1.0);
+    let vp_otk: f64 = bs_put(100.0, 90.0, 0.05, 0.0, 0.2, 1.0);
+    fails = fails + (1 - chk_abs(bar_uic(100.0, 90.0, 120.0, 0.05, 0.0, 0.2, 1.0) + bar_uoc(100.0, 90.0, 120.0, 0.05, 0.0, 0.2, 1.0), vc_otk, 0.0000000001));
+    fails = fails + (1 - chk_abs(bar_uip(100.0, 90.0, 120.0, 0.05, 0.0, 0.2, 1.0) + bar_uop(100.0, 90.0, 120.0, 0.05, 0.0, 0.2, 1.0), vp_otk, 0.0000000001));
+
+    // D_NEAR and U_NEAR — the near-barrier regime, where the knock-out half is
+    // five to six orders of magnitude below the knock-in half.  Parity here is
+    // the strongest single statement in the file: the tiny half has to be
+    // RIGHT, not merely small, or the sum misses the vanilla.
+    fails = fails + (1 - chk_abs(bar_dic(100.0, 100.0, 99.0, 0.05, 0.0, 0.2, 1.0) + bar_doc(100.0, 100.0, 99.0, 0.05, 0.0, 0.2, 1.0), vc_atm, 0.0000000001));
+    fails = fails + (1 - chk_abs(bar_dip(100.0, 100.0, 99.0, 0.05, 0.0, 0.2, 1.0) + bar_dop(100.0, 100.0, 99.0, 0.05, 0.0, 0.2, 1.0), vp_atm, 0.0000000001));
+    fails = fails + (1 - chk_abs(bar_uic(100.0, 100.0, 101.0, 0.05, 0.0, 0.2, 1.0) + bar_uoc(100.0, 100.0, 101.0, 0.05, 0.0, 0.2, 1.0), vc_atm, 0.0000000001));
+    fails = fails + (1 - chk_abs(bar_uip(100.0, 100.0, 101.0, 0.05, 0.0, 0.2, 1.0) + bar_uop(100.0, 100.0, 101.0, 0.05, 0.0, 0.2, 1.0), vp_atm, 0.0000000001));
+
+    // POSITIVE CONTROL for the parity block.  Every assertion above would pass
+    // vacuously if both halves were zero, or if one half were silently the
+    // whole vanilla and the other exactly 0.0 by a short-circuit.  These lines
+    // prove the split is REAL at D_ATM: both halves are individually large and
+    // neither is the whole.  Without this, "in + out == vanilla" is satisfiable
+    // by an implementation that returns the vanilla for `in` and 0.0 for `out`
+    // at every parameter point — which is wrong everywhere and passes parity
+    // everywhere.
+    let di_a: f64 = bar_dic(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0);
+    let do_a: f64 = bar_doc(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0);
+    fails = fails + chk_lt(0.5, di_a);
+    fails = fails + chk_lt(0.5, do_a);
+    fails = fails + chk_lt(di_a, vc_atm - 0.5);
+    fails = fails + chk_lt(do_a, vc_atm - 0.5);
+
+    // =====================================================================
+    // 3. LIMIT BEHAVIOUR: a barrier far from spot is no barrier at all.
+    //
+    // As H -> 0 for a down barrier (or H -> infinity for an up barrier), the
+    // probability of touching it goes to zero, so
+    //     knock_out -> vanilla      and      knock_in -> 0.
+    // This is a limit, so the checks are ABSOLUTE with a stated tolerance
+    // rather than relative: the knock-in values out here are 1e-27 and 1e-117,
+    // and a relative band around 1e-117 computed in f64 from terms of order 10
+    // is not a meaningful claim.  The honest statement is "indistinguishable
+    // from zero at 1e-12", and that is what is asserted.
+    //
+    // H = 10 against S = 100 is 2.3 standard deviations per year times ten
+    // years of drift away; H = 1000 is further still.  These are the most
+    // extreme cancellations in the file.
+    // =====================================================================
+
+    // DOWN, H = 10: knock-out must recover the vanilla, knock-in must vanish.
+    fails = fails + (1 - chk_abs(bar_doc(100.0, 100.0, 10.0, 0.05, 0.0, 0.2, 1.0), vc_atm, 0.000000000001));
+    fails = fails + (1 - chk_abs(bar_dic(100.0, 100.0, 10.0, 0.05, 0.0, 0.2, 1.0), 0.0, 0.000000000001));
+    fails = fails + (1 - chk_abs(bar_dop(100.0, 100.0, 10.0, 0.05, 0.0, 0.2, 1.0), vp_atm, 0.000000000001));
+    fails = fails + (1 - chk_abs(bar_dip(100.0, 100.0, 10.0, 0.05, 0.0, 0.2, 1.0), 0.0, 0.000000000001));
+
+    // UP, H = 1000: same claim, mirrored.
+    fails = fails + (1 - chk_abs(bar_uoc(100.0, 100.0, 1000.0, 0.05, 0.0, 0.2, 1.0), vc_atm, 0.000000000001));
+    fails = fails + (1 - chk_abs(bar_uic(100.0, 100.0, 1000.0, 0.05, 0.0, 0.2, 1.0), 0.0, 0.000000000001));
+    fails = fails + (1 - chk_abs(bar_uop(100.0, 100.0, 1000.0, 0.05, 0.0, 0.2, 1.0), vp_atm, 0.000000000001));
+    fails = fails + (1 - chk_abs(bar_uip(100.0, 100.0, 1000.0, 0.05, 0.0, 0.2, 1.0), 0.0, 0.000000000001));
+
+    // The limit must be approached MONOTONICALLY, not merely reached.  A
+    // formula that returned the vanilla unconditionally would pass every
+    // absolute check above; these lines say the barrier still bites at a
+    // moderate distance, so "converges to vanilla" is a limit and not a
+    // constant function.
+    fails = fails + chk_lt(bar_doc(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0), bar_doc(100.0, 100.0, 80.0, 0.05, 0.0, 0.2, 1.0));
+    fails = fails + chk_lt(bar_doc(100.0, 100.0, 80.0, 0.05, 0.0, 0.2, 1.0), bar_doc(100.0, 100.0, 70.0, 0.05, 0.0, 0.2, 1.0));
+    fails = fails + chk_lt(bar_doc(100.0, 100.0, 70.0, 0.05, 0.0, 0.2, 1.0), vc_atm);
+
+    // =====================================================================
+    // 4. STRUCTURAL INEQUALITIES.
+    //
+    // Relations that must hold from the shape of the payoff, independent of
+    // both the oracle and the parity identity.  Each is a statement a trader
+    // would recognise, and each is violated by a different class of error than
+    // parity is.
+    // =====================================================================
+
+    // (a) A knock-out is worth strictly less than the vanilla: extinguishing a
+    //     contract on some paths can only remove value.  Equivalently the
+    //     knock-in is strictly positive.
+    fails = fails + chk_lt(bar_doc(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0), vc_atm);
+    fails = fails + chk_lt(bar_uoc(100.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0), vc_atm);
+    fails = fails + chk_lt(bar_dop(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0), vp_atm);
+    fails = fails + chk_lt(bar_uop(100.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0), vp_atm);
+
+    // (b) Every one of the eight prices is non-negative.  An option cannot be
+    //     worth less than nothing.  This is the check that would have caught
+    //     the out-of-domain barrier finding described in the header (doc =
+    //     -55.19) had the domain guard not been added — and it is kept as a
+    //     standing assertion precisely because parity cannot make it.
+    fails = fails + chk_ge(bar_dic(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0), 0.0);
+    fails = fails + chk_ge(bar_doc(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0), 0.0);
+    fails = fails + chk_ge(bar_dip(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0), 0.0);
+    fails = fails + chk_ge(bar_dop(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0), 0.0);
+    fails = fails + chk_ge(bar_uic(100.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0), 0.0);
+    fails = fails + chk_ge(bar_uoc(100.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0), 0.0);
+    fails = fails + chk_ge(bar_uip(100.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0), 0.0);
+    fails = fails + chk_ge(bar_uop(100.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0), 0.0);
+    // The same non-negativity at the near-barrier points, where the knock-out
+    // halves are 1e-05 and a sign error would be easiest to miss by eye.
+    fails = fails + chk_ge(bar_dop(100.0, 100.0, 99.0, 0.05, 0.0, 0.2, 1.0), 0.0);
+    fails = fails + chk_ge(bar_uoc(100.0, 100.0, 101.0, 0.05, 0.0, 0.2, 1.0), 0.0);
+
+    // (c) An up-and-out call is NON-INCREASING IN SPOT near the barrier.  This
+    //     is the counter-intuitive one and the reason it is worth asserting: a
+    //     vanilla call rises with spot, but an up-and-out call near its barrier
+    //     FALLS with spot, because the dominant effect of a higher spot is a
+    //     higher probability of being extinguished.  The delta is negative on
+    //     a long call.  An implementation with a swapped eta would very likely
+    //     get this direction wrong while still satisfying parity.
+    //     Oracle values, H=120 K=100: S=110 -> 0.7033, S=114 -> 0.4274,
+    //     S=118 -> 0.1402, S=119 -> 0.0695.  Strictly decreasing.
+    fails = fails + chk_lt(bar_uoc(114.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0), bar_uoc(110.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0));
+    fails = fails + chk_lt(bar_uoc(118.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0), bar_uoc(114.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0));
+    fails = fails + chk_lt(bar_uoc(119.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0), bar_uoc(118.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0));
+    // And the contrast that makes the claim non-trivial: the VANILLA call over
+    // the same spots is strictly INCREASING.  Without this line the decreasing
+    // sequence above could be blamed on something generic about the pricer.
+    fails = fails + chk_lt(bs_call(110.0, 100.0, 0.05, 0.0, 0.2, 1.0), bs_call(114.0, 100.0, 0.05, 0.0, 0.2, 1.0));
+    fails = fails + chk_lt(bs_call(114.0, 100.0, 0.05, 0.0, 0.2, 1.0), bs_call(118.0, 100.0, 0.05, 0.0, 0.2, 1.0));
+
+    // (d) A knock-in is monotonically INCREASING as the barrier moves toward
+    //     spot: a nearer barrier is easier to touch.  For a down-and-in call,
+    //     raising H from 70 toward 99 must raise the price.
+    fails = fails + chk_lt(bar_dic(100.0, 100.0, 70.0, 0.05, 0.0, 0.2, 1.0), bar_dic(100.0, 100.0, 80.0, 0.05, 0.0, 0.2, 1.0));
+    fails = fails + chk_lt(bar_dic(100.0, 100.0, 80.0, 0.05, 0.0, 0.2, 1.0), bar_dic(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0));
+    fails = fails + chk_lt(bar_dic(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0), bar_dic(100.0, 100.0, 99.0, 0.05, 0.0, 0.2, 1.0));
+
+    // (e) The exact-zero degeneracies.  With K > H an up-and-out call cannot
+    //     pay: every in-the-money path has crossed H first.  With K <= H a
+    //     down-and-out put cannot pay.  These are EXACT, asserted with a zero
+    //     tolerance, because they are facts about the payoff's support rather
+    //     than about arithmetic — a small non-zero answer here would mean the
+    //     branch structure is wrong, not that the kernel rounded.
+    fails = fails + (1 - chk_abs(bar_uoc(95.0, 110.0, 100.0, 0.05, 0.0, 0.2, 1.0), 0.0, 0.0));
+    fails = fails + (1 - chk_abs(bar_uoc(100.0, 130.0, 120.0, 0.05, 0.0, 0.2, 1.0), 0.0, 0.0));
+    fails = fails + (1 - chk_abs(bar_dop(105.0, 95.0, 100.0, 0.05, 0.0, 0.2, 1.0), 0.0, 0.0));
+    // ...and their parity consequence: if the knock-out is exactly zero, the
+    // knock-in must be exactly the vanilla.  Checked with the tight parity band.
+    fails = fails + (1 - chk_abs(bar_uic(95.0, 110.0, 100.0, 0.05, 0.0, 0.2, 1.0), bs_call(95.0, 110.0, 0.05, 0.0, 0.2, 1.0), 0.0000000001));
+    fails = fails + (1 - chk_abs(bar_dip(105.0, 95.0, 100.0, 0.05, 0.0, 0.2, 1.0), bs_put(105.0, 95.0, 0.05, 0.0, 0.2, 1.0), 0.0000000001));
+
+    // =====================================================================
+    // 5. DOMAIN CHECKS: degenerate and out-of-domain inputs give qNaN.
+    //
+    // Not a plausible-looking number.  Zero vol, an expired option, a
+    // non-positive spot, strike or barrier are caller errors, and so is a
+    // barrier already on the wrong side of spot.  Every one returns the SAME
+    // bit pattern — 0x7FF8000000000000, pinned as a literal in the kernel
+    // block, because x86 and ARM disagree on the sign bit of a synthesised NaN
+    // and a quiet divergence there would break byte-identity on exactly the
+    // error path nobody tests.
+    // =====================================================================
+
+    // Zero and negative volatility.
+    fails = fails + (1 - is_nan(bar_doc(100.0, 100.0, 90.0, 0.05, 0.0, 0.0, 1.0)));
+    fails = fails + (1 - is_nan(bar_dic(100.0, 100.0, 90.0, 0.05, 0.0, 0.0, 1.0)));
+    fails = fails + (1 - is_nan(bar_uoc(100.0, 100.0, 120.0, 0.05, 0.0, 0.0, 1.0)));
+    fails = fails + (1 - is_nan(bar_uop(100.0, 100.0, 120.0, 0.05, 0.0, 0.0 - 0.2, 1.0)));
+    // Expired and negative time.
+    fails = fails + (1 - is_nan(bar_doc(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 0.0)));
+    fails = fails + (1 - is_nan(bar_dop(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 0.0)));
+    fails = fails + (1 - is_nan(bar_uic(100.0, 100.0, 120.0, 0.05, 0.0, 0.2, 0.0)));
+    fails = fails + (1 - is_nan(bar_uip(100.0, 100.0, 120.0, 0.05, 0.0, 0.2, 0.0 - 1.0)));
+    // Non-positive spot and strike.
+    fails = fails + (1 - is_nan(bar_doc(0.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(bar_dic(100.0, 0.0, 90.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(bar_uoc(0.0 - 100.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(bar_uip(100.0, 0.0 - 100.0, 120.0, 0.05, 0.0, 0.2, 1.0)));
+    // NON-POSITIVE BARRIER.  H = 0 is not a level a positive price can touch,
+    // and it makes log(H/S) = -inf.
+    fails = fails + (1 - is_nan(bar_doc(100.0, 100.0, 0.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(bar_dic(100.0, 100.0, 0.0 - 90.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(bar_dip(100.0, 100.0, 0.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(bar_dop(100.0, 100.0, 0.0 - 1.0, 0.05, 0.0, 0.2, 1.0)));
+
+    // ALREADY-KNOCKED BARRIERS — the finding from the header, asserted.
+    // A DOWN barrier at or above spot has already been touched; an UP barrier
+    // at or below spot likewise.  These are the inputs that produced -55.19 and
+    // 313230.17 at 50 digits while satisfying parity to 1e-49.  All sixteen
+    // combinations must be qNaN.
+    fails = fails + (1 - is_nan(bar_dic(100.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(bar_doc(100.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(bar_dip(100.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(bar_dop(100.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(bar_dic(100.0, 100.0, 1000.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(bar_doc(100.0, 100.0, 1000.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(bar_uic(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(bar_uoc(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(bar_uip(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(bar_uop(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(bar_uic(100.0, 100.0, 10.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(bar_uoc(100.0, 100.0, 10.0, 0.05, 0.0, 0.2, 1.0)));
+    // The EXACT boundary, H == S.  A barrier exactly at spot is touched at
+    // t = 0 by definition, so it is out of domain for both directions.  This is
+    // the off-by-one case: a `>` where the code needs `>=` would let it
+    // through, and the formula at H == S is not merely inaccurate, it is
+    // pricing a contract that has already terminated.
+    fails = fails + (1 - is_nan(bar_doc(100.0, 100.0, 100.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(bar_dic(100.0, 100.0, 100.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(bar_uoc(100.0, 100.0, 100.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(bar_uic(100.0, 100.0, 100.0, 0.05, 0.0, 0.2, 1.0)));
+
+    // POSITIVE CONTROL for the whole domain block.  Every `is_nan` assertion
+    // above passes if the function returns qNaN for EVERY input — including a
+    // valid one.  A guard inverted from `h >= s` to `h <= s` would make all of
+    // section 5 green and all of sections 1-4 red, but a guard that simply
+    // returned qNaN unconditionally would need this line to be caught as such.
+    // So: a valid input must NOT be NaN.
+    fails = fails + is_nan(bar_doc(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0));
+    fails = fails + is_nan(bar_uoc(100.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0));
+    fails = fails + is_nan(bar_dip(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0));
+    fails = fails + is_nan(bar_uip(100.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0));
+
+    // =====================================================================
+    // 6. ADVERSARIAL NEGATIVE CONTROLS.
+    //
+    // Each line below asks a check to accept something WRONG, and adds the
+    // result straight into `fails` — so a spurious acceptance IS a failure.
+    // This is the only thing that makes sections 1-4 mean anything: without it,
+    // every value check could be passing because the tolerance is wide enough
+    // to admit anything, and the file would be a green test that cannot go red.
+    // =====================================================================
+
+    // (a) Value bands must reject a reference wrong in the 4th digit.
+    fails = fails + chk_ulp(bar_doc(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0), 8.675471658245668, 4096.0);
+    fails = fails + chk_ulp(bar_dic(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0), 1.7951119139398992, 4096.0);
+    fails = fails + chk_ulp(bar_uoc(100.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0), 1.1860653996503636, 16384.0);
+    fails = fails + chk_ulp(bar_uop(100.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0), 5.370127871647818, 4096.0);
+
+    // (b) The near-barrier bands are the widest in the file (2^20 ulps on a
+    //     1e-05 quantity).  They must STILL reject a value wrong by 1%, or the
+    //     D_NEAR and U_NEAR checks are decorative.
+    fails = fails + chk_ulp(bar_dop(100.0, 100.0, 99.0, 0.05, 0.0, 0.2, 1.0), 0.000015984651762744755, 1048576.0);
+    fails = fails + chk_ulp(bar_uoc(100.0, 100.0, 101.0, 0.05, 0.0, 0.2, 1.0), 0.000015551581935766726, 1048576.0);
+
+    // (c) A flush-to-zero near-barrier value must FAIL its band.  This is the
+    //     adversarial form of the cancellation claim: it proves the D_NEAR and
+    //     U_NEAR checks can actually catch a kernel that loses the number
+    //     entirely, rather than passing because a relative band around 1e-05 is
+    //     easy to satisfy.
+    fails = fails + chk_ulp(0.0, 0.000015826387883905697, 1048576.0);
+    fails = fails + chk_ulp(0.0, 0.000015397605876996758, 1048576.0);
+
+    // (d) The parity band must reject a vanilla that is wrong by 1e-6 — three
+    //     orders above the 1e-10 band but far below anything a human would spot
+    //     in a price of 10.45.  Without this the parity block could be passing
+    //     on a band so loose that a genuinely broken decomposition slips
+    //     through.
+    fails = fails + chk_abs(bar_dic(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0) + bar_doc(100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0), vc_atm + 0.000001, 0.0000000001);
+
+    // (e) THE PARITY BLINDNESS CONTROL — the most important line in this
+    //     section, and the one that encodes the header's finding as an
+    //     executable claim rather than a comment.
+    //
+    //     Assertion: in-out parity is satisfied EXACTLY by the out-of-domain
+    //     barrier values that the domain guard now rejects.  The pair
+    //     (-55.19, 65.64) sums to the vanilla 10.4506 to well inside the parity
+    //     band, and -55.19 is not a price.  Feeding that sum to the parity
+    //     check must therefore be ACCEPTED (returning 1) — and we add
+    //     `1 - that` so the line passes when parity is blind, which is the
+    //     truth being recorded.
+    //
+    //     Why assert a limitation rather than silently rely on the guard: if a
+    //     future change weakens `bar_valid_down` back to a no-op, section 5
+    //     goes red and this line stays green, which correctly localises the
+    //     regression to the guard rather than to parity.  Documenting a check's
+    //     blind spot in the check suite is how the blind spot stays known.
+    fails = fails + (1 - chk_abs(0.0 - 55.189440693051736 + 65.6400242652373, vc_atm, 0.0000000001));
+
+    // (f) The monotonicity direction must be REAL.  If the up-and-out call
+    //     were increasing in spot near the barrier — the vanilla's direction,
+    //     and the sign a swapped eta would most plausibly produce — then this
+    //     deliberately reversed comparison would hold.  Asserting that it does
+    //     NOT hold is what makes check 4(c) a discriminating test rather than a
+    //     coincidence of two nearby numbers.
+    fails = fails + (1 - chk_lt(bar_uoc(114.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0), bar_uoc(118.0, 100.0, 120.0, 0.05, 0.0, 0.2, 1.0)));
+
+    // (g) The exact-zero checks in 4(e) use a ZERO tolerance, so they cannot be
+    //     satisfied by a small non-zero number.  Prove that: a value of 1e-300
+    //     must be rejected by a zero-tolerance comparison against 0.0.
+    fails = fails + chk_abs(0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001, 0.0, 0.0);
+
+    return fails;
+}

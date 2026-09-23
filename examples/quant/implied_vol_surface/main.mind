@@ -1,0 +1,1403 @@
+// examples/quant/implied_vol_surface — the raw SVI volatility surface and the
+// closed-form no-arbitrage conditions on it.
+//
+// Copyright 2025 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// HOW THIS DIFFERS FROM `examples/quant/implied_vol`, STATED UP FRONT.  The two
+// modules share a name and almost nothing else, and conflating them is the
+// obvious mistake a reader makes, so:
+//
+//   * `examples/quant/implied_vol` inverts ONE price at ONE strike and ONE
+//     maturity into ONE number.  Its subject is the ITERATION: a fixed-count
+//     bracketed root-find, and the argument that its trip count cannot depend on
+//     a datum.  It says nothing about whether the resulting vols, taken
+//     together, are a coherent surface.
+//
+//   * THIS module never inverts anything as its primary job.  It takes a
+//     PARAMETRIC SMILE — five numbers that describe total implied variance
+//     across all strikes at one maturity — and asks the question a single
+//     inversion cannot: is the surface these numbers describe ARBITRAGE-FREE?
+//     A desk can invert a thousand quotes flawlessly and still end up with a
+//     surface that implies a negative risk-neutral density, which is a
+//     free-money machine for whoever trades against it.
+//
+// The two are complementary and deliberately kept apart.  The BS round-trip KAT
+// at the bottom of this file is the single place they touch: it prices an option
+// at an SVI vol and recovers that vol with a solver of the `implied_vol` shape,
+// which is what ties the parametric surface back to a tradeable price.
+//
+// THE MODEL.  Raw SVI (Gatheral 2004), in TOTAL IMPLIED VARIANCE:
+//
+//     w(k) = a + b * ( rho*(k - m) + sqrt((k - m)^2 + sigma^2) )
+//
+// where k = log(K/F) is log-moneyness and w(k) = sigma_BS(k)^2 * T.  Five
+// parameters: a (vertical level), b (wing slope scale), rho (skew/rotation, in
+// (-1,1)), m (horizontal translation), sigma (curvature at the vertex; NOT a
+// volatility, despite the name the literature uses — hence `p_sigma` in the
+// signatures below, to keep it visibly distinct from a Black-Scholes sigma).
+//
+// WHY TOTAL VARIANCE AND NOT VOL.  Both arbitrage conditions are natural in w
+// and unnatural in sigma_BS.  Calendar-spread arbitrage is exactly "w must be
+// non-decreasing in T at fixed k"; in vol terms that is "sigma^2*T must be
+// non-decreasing", which is the same statement wearing a disguise that invites
+// the error of testing sigma instead of sigma^2*T.  Butterfly arbitrage is the
+// Durrleman condition, which is a polynomial in w, w' and w''.  Parameterising
+// in w means neither condition needs a conversion step where a sign can be lost.
+//
+// WHY THIS IS NOT A LIBRARY.  Raw SVI is published, standard, and nothing here
+// is a contribution to finance.  A production surface would fit the five
+// parameters to quotes, use SSVI or eSSVI to enforce no-calendar-arbitrage
+// across slices by construction, and clamp into Gatheral & Jacquier's (2014)
+// sufficient-condition region.  None of that is here.  The contribution is that
+// w, w', w'', the Durrleman function g, and the Black-Scholes round-trip that
+// anchors them are all built from `+ - * /` and a re-derived sqrt/exp/log/erfc
+// on the strict scalar path, so a surface declared arbitrage-free on x86 is
+// bit-for-bit the same surface declared arbitrage-free on ARM.
+//
+// WHY THAT MATTERS MORE HERE THAN FOR A PRICE.  A price is a number that two
+// systems can disagree about in the last bit without anyone caring.  `g(k) >= 0`
+// is a BOOLEAN.  When g is genuinely near zero — which is exactly where a fitted
+// surface sits, because a well-calibrated fit presses right up against the
+// no-arbitrage boundary — the last bit of g decides whether the risk system says
+// "tradeable" or "reject".  Two substrates that differ by one ulp in g at that
+// boundary produce two different regulatory answers from the same inputs, and
+// there is no reconciliation report that can explain it.  Determinism converts
+// that from an irreproducible incident into a property.
+//
+// ANALYTIC DERIVATIVES, NOT FINITE DIFFERENCES.  w' and w'' below are the exact
+// derivatives of the closed form.  A bumped-and-revalued w'' would carry two
+// subtractions of nearly-equal numbers AND a step-size choice, and the step size
+// would become a second thing g depends on.  Since g is a sign test, a
+// step-size-dependent g is a step-size-dependent arbitrage verdict.
+//
+//     w'(k)  = b * ( rho + (k-m)/sqrt((k-m)^2 + sigma^2) )
+//     w''(k) = b * sigma^2 / ((k-m)^2 + sigma^2)^(3/2)
+//
+// Note w'' > 0 everywhere for b > 0, sigma > 0: raw SVI is convex in k by
+// construction.  Convexity is NOT sufficient for no butterfly arbitrage, which
+// is precisely why g has to be computed rather than assumed — see the VIOLATING
+// parameter set in the KAT, which is convex everywhere and still admits
+// butterflies.
+//
+// THE libm NAME-CAPTURE HAZARD.  Every kernel below is named `dm_*` or `det_*`,
+// and every SVI entry point `svi_*`.  A MIND function whose name matches a C99
+// libm symbol (exp, log, pow, sin, cos, erf, erfc) can be captured by LLVM and
+// constant-folded to the HOST libm when its argument is a compile-time constant,
+// silently skipping the MIND body — which would substitute a non-deterministic
+// host routine for the deterministic one on exactly the inputs a KAT uses.  The
+// prefix discipline is load-bearing, not cosmetic.  Do not rename these.
+//
+// SELF-CONTAINED, AND WHY.  The detmath kernels and the Black-Scholes pricer are
+// duplicated below instead of imported.  mindc 0.10.2 cannot carry an f64 across
+// a module boundary (roadmap 17.1): an imported `fn f(x: f64) -> f64` types as
+// `(i64) -> i64` at the call site and miscompiles silently.  This mirrors
+// `examples/detmath_kat`, `examples/quant/black_scholes` and
+// `examples/quant/implied_vol`.  The kernel block is copied BYTE-IDENTICALLY
+// from `examples/quant/black_scholes/main.mind` so the kernels cannot silently
+// diverge between examples; a diff of the two blocks must come back empty.
+// deferred: replace the duplicated kernel block with `import std.detmath;` once
+// roadmap 17.1 lands — upgrade path: delete the block between the KERNEL BEGIN
+// and KERNEL END markers and call the std surface directly.
+//
+// NO `[test]` FUNCTIONS, AND WHY.  The mindc 0.10.2 `[test]` interpreter
+// mis-evaluates an f64 comparison in a function body (it takes the then-branch
+// unconditionally).  Every guarded function here would return through its
+// leading `if x != x` guard and every interpreted assertion would pass
+// vacuously — a false green.  That failure is especially poisonous for this
+// module: the entire deliverable is a family of SIGN TESTS on g, and an
+// interpreter that takes every then-branch would report every surface as
+// arbitrage-free, including the one constructed below specifically to violate.
+// The native backend evaluates f64 branches correctly, so the gate is
+// build-and-run: `mindc run`, exit code 0 means every check passed.  The count
+// of failures is the exit code, so a partial failure is never rounded to
+// success.
+//
+// REFERENCES (original papers only):
+//   Gatheral, J. (2004). "A Parsimonious Arbitrage-Free Implied Volatility
+//     Parameterization with Application to the Valuation of Volatility
+//     Derivatives." Presentation, Global Derivatives & Risk Management, Madrid.
+//     (The raw SVI form used here.)
+//   Durrleman, V. (2010). "From Implied to Spot Volatilities." Finance and
+//     Stochastics 14(2), 157-177.  (The g(k) >= 0 butterfly condition.)
+//   Gatheral, J. & Jacquier, A. (2014). "Arbitrage-Free SVI Volatility
+//     Surfaces." Quantitative Finance 14(1), 59-71.  (Necessary and sufficient
+//     conditions; the SSVI family that removes calendar arbitrage by
+//     construction.)
+//   Lee, R. W. (2004). "The Moment Formula for Implied Volatility at Extreme
+//     Strikes." Mathematical Finance 14(3), 469-480.  (Why the wings must be
+//     linear in k and bounded by 2 — the asymptotic KAT below.)
+//   Black, F. & Scholes, M. (1973). "The Pricing of Options and Corporate
+//     Liabilities." Journal of Political Economy 81(3), 637-654.
+// ---------------------------------------------------------------------------
+
+// =========================== KERNEL BEGIN ==================================
+// Duplicated verbatim from std/detmath.mind (roadmap 17.1 blocks importing).
+// Do not "improve" these: every polynomial is a fixed left-fold Horner
+// recurrence in source order.  Reassociating one changes the last bit of every
+// price downstream and breaks the cross-substrate hash.
+
+fn absf(x: f64) -> f64 {
+    if x < 0.0 {
+        return 0.0 - x;
+    }
+    return x;
+}
+
+// +inf by byte-identical IEEE overflow; never a synthesised NaN.
+fn inf() -> f64 {
+    let mut v: f64 = 1.0;
+    let mut i: i64 = 0;
+    while i < 350 {
+        v = v * 10.0;
+        i = i + 1;
+    }
+    return v;
+}
+
+// 0x7FF8000000000000 — the MIND-canonical quiet NaN, pinned so an
+// out-of-domain result is byte-identical (x86 sets the sign bit, ARM does not).
+fn canonical_qnan() -> f64 {
+    return __mind_bits_to_f64(9221120237041090560);
+}
+
+fn rnd_to_i64(x: f64) -> i64 {
+    if x >= 0.0 {
+        return (x + 0.5) as i64;
+    }
+    return 0 - ((0.5 - x) as i64);
+}
+
+fn det_exp(x: f64) -> f64 {
+    let ln2_hi: f64 = 0.6931467056274414;
+    let ln2_lo: f64 = 0.00000047493250390941725;
+    let inv_ln2: f64 = 1.4426950408889634;
+    let k: i64 = rnd_to_i64(x * inv_ln2);
+    let kf: f64 = k as f64;
+    let r: f64 = (x - kf * ln2_hi) - kf * ln2_lo;
+    let mut t: f64 = 0.0000000000007647163731819816;
+    t = 0.00000000016059043836821613 + r * t;
+    t = 0.00000000208767569878681 + r * t;
+    t = 0.00000002505210838544172 + r * t;
+    t = 0.0000002755731922398589 + r * t;
+    t = 0.0000027557319223985893 + r * t;
+    t = 0.0000248015873015873 + r * t;
+    t = 0.0001984126984126984 + r * t;
+    t = 0.001388888888888889 + r * t;
+    t = 0.008333333333333333 + r * t;
+    t = 0.041666666666666664 + r * t;
+    t = 0.16666666666666666 + r * t;
+    t = 0.5 + r * t;
+    t = 1.0 + r * t;
+    t = 1.0 + r * t;
+    let mut y: f64 = t * 1.0;
+    let mut j: i64 = 0;
+    if k >= 0 {
+        while j < k {
+            y = y * 2.0;
+            j = j + 1;
+        }
+    } else {
+        while j < (0 - k) {
+            y = y / 2.0;
+            j = j + 1;
+        }
+    }
+    return y;
+}
+
+fn dm_exp(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x >= 709.7827128933841 {
+        return inf();
+    }
+    if x <= 0.0 - 745.1332191019412 {
+        return 0.0;
+    }
+    return det_exp(x);
+}
+
+fn det_log_core(x: f64) -> f64 {
+    let ln2: f64 = 0.6931471805599453;
+    let mut k: i64 = 0;
+    // f64-param-init: seed a loop-carried f64 binding via the exact identity
+    // `x * 1.0` so mindc 0.10.2 does not infer it as i64.
+    let mut m: f64 = x * 1.0;
+    while m >= 1.4142135623730951 {
+        m = m / 2.0;
+        k = k + 1;
+    }
+    while m < 0.7071067811865476 {
+        m = m * 2.0;
+        k = k - 1;
+    }
+    let s: f64 = (m - 1.0) / (m + 1.0);
+    let s2: f64 = s * s;
+    let mut acc: f64 = 0.0;
+    let mut n: i64 = 29;
+    while n >= 1 {
+        acc = 1.0 / (n as f64) + s2 * acc;
+        n = n - 2;
+    }
+    return (k as f64) * ln2 + 2.0 * s * acc;
+}
+
+fn dm_log(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x < 0.0 {
+        return 0.0;
+    }
+    if x == 0.0 {
+        return 0.0 - inf();
+    }
+    if x >= inf() {
+        return inf();
+    }
+    return det_log_core(x);
+}
+
+fn dm_sqrt(x: f64) -> f64 {
+    if x != x {
+        return canonical_qnan();
+    }
+    if x < 0.0 {
+        return canonical_qnan();
+    }
+    return sqrt(x);
+}
+
+// erf by its Maclaurin series, ascending fixed left-fold.  Certified |x| < 2.
+fn erf_series(x: f64) -> f64 {
+    let two_over_sqrtpi: f64 = 1.1283791670955126;
+    let x2: f64 = x * x;
+    let mut t: f64 = x * 1.0;
+    let mut s: f64 = x * 1.0;
+    let mut n: i64 = 1;
+    while n < 60 {
+        t = t * (0.0 - x2) / (n as f64);
+        s = s + t / ((2 * n + 1) as f64);
+        n = n + 1;
+    }
+    return two_over_sqrtpi * s;
+}
+
+// erfc by a fixed-depth backward continued fraction.  Certified x >= 1.
+// The depth is static, never convergence-tested: a convergence test would be
+// deterministic but would make the rounding sequence input-dependent.
+fn erfc_cf(x: f64) -> f64 {
+    let sqrtpi: f64 = 1.7724538509055159;
+    let mut acc: f64 = 0.0;
+    let mut n: i64 = 200;
+    while n >= 1 {
+        acc = ((n as f64) * 0.5) / (x + acc);
+        n = n - 1;
+    }
+    return det_exp(0.0 - x * x) / sqrtpi / (x + acc);
+}
+
+fn dm_erfc(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x >= inf() {
+        return 0.0;
+    }
+    if x <= 0.0 - inf() {
+        return 2.0;
+    }
+    if x < 0.0 {
+        return 2.0 - dm_erfc(0.0 - x);
+    }
+    if x < 1.0 {
+        return 1.0 - erf_series(x);
+    }
+    return erfc_cf(x);
+}
+
+// Standard normal CDF.  Computed as 0.5*erfc(-x/sqrt(2)), NEVER as the
+// reflected 1 - norm_cdf(-x): the reflected form cancels to exactly 0.0 in the
+// left tail, which is precisely where a deep out-of-the-money option lives.
+// See the deep-OTM KAT below, where the true call premium is 4.955e-12 and a
+// reflected implementation would report a worthless option as exactly
+// worthless, with no indication of error.
+fn dm_norm_cdf(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    let inv_sqrt2: f64 = 0.7071067811865476;
+    return 0.5 * dm_erfc(0.0 - x * inv_sqrt2);
+}
+
+// Standard normal PDF, phi(x) = exp(-x^2/2)/sqrt(2*pi).  Needed by gamma,
+// vega and theta.  1/sqrt(2*pi) is a rounded constant, not a division.
+fn dm_norm_pdf(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    let inv_sqrt_2pi: f64 = 0.3989422804014327;
+    return inv_sqrt_2pi * det_exp(0.0 - 0.5 * x * x);
+}
+
+// ============================ KERNEL END ===================================
+
+// ---------------------------------------------------------------------------
+// Black-Scholes-Merton, re-declared here as the ANCHOR of the round-trip KAT.
+//
+// Copied verbatim from `examples/quant/black_scholes` (roadmap 17.1: an f64
+// that crossed a module boundary would be silently miscompiled).  Only the
+// four functions the round-trip needs are carried over: `bs_valid`, `bs_d1`,
+// `bs_call` and `bs_vega`.  This file does not re-export a second public
+// definition of a Black-Scholes price; these stay private so there is nothing
+// here that could drift from the sibling example's public surface.
+// ---------------------------------------------------------------------------
+
+fn bs_valid(s: f64, k: f64, sigma: f64, t: f64) -> i64 {
+    if s != s {
+        return 0;
+    }
+    if k != k {
+        return 0;
+    }
+    if sigma != sigma {
+        return 0;
+    }
+    if t != t {
+        return 0;
+    }
+    if s <= 0.0 {
+        return 0;
+    }
+    if k <= 0.0 {
+        return 0;
+    }
+    if sigma <= 0.0 {
+        return 0;
+    }
+    if t <= 0.0 {
+        return 0;
+    }
+    return 1;
+}
+
+fn bs_d1(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    let sq: f64 = sigma * dm_sqrt(t);
+    return (dm_log(s / k) + (r - q + 0.5 * sigma * sigma) * t) / sq;
+}
+
+fn bs_d2(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    return bs_d1(s, k, r, q, sigma, t) - sigma * dm_sqrt(t);
+}
+
+fn bs_call(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bs_valid(s, k, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let d1: f64 = bs_d1(s, k, r, q, sigma, t);
+    let d2: f64 = d1 - sigma * dm_sqrt(t);
+    let df_r: f64 = dm_exp(0.0 - r * t);
+    let df_q: f64 = dm_exp(0.0 - q * t);
+    return s * df_q * dm_norm_cdf(d1) - k * df_r * dm_norm_cdf(d2);
+}
+
+fn bs_vega(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bs_valid(s, k, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let sqt: f64 = dm_sqrt(t);
+    let d1: f64 = bs_d1(s, k, r, q, sigma, t);
+    return s * dm_exp(0.0 - q * t) * dm_norm_pdf(d1) * sqt;
+}
+
+// ===========================================================================
+// THE SVI SURFACE.
+//
+// PARAMETER ADMISSIBILITY.  Every entry point below returns the canonical qNaN
+// on an inadmissible parameter set rather than a plausible-looking number.  The
+// conditions are not stylistic:
+//
+//   b >= 0        — b is the wing scale.  A negative b inverts both wings, so
+//                   total variance DECREASES without bound as |k| grows and the
+//                   surface has no lower bound at all.  b = 0 is admitted: it
+//                   is the flat slice w = a, which is degenerate but not
+//                   arbitrageable, and refusing it would refuse the zero-skew
+//                   limit that a fit legitimately approaches.
+//   |rho| < 1     — STRICT.  At |rho| = 1 one wing of w is flat and the other
+//                   has slope 2b, which is Lee's (2004) moment-formula boundary:
+//                   the surface is at the edge where the underlying's second
+//                   moment ceases to exist.  Strict rejection also keeps
+//                   sqrt(1 - rho^2) in `svi_k_min` away from a divide by zero.
+//   p_sigma > 0   — STRICT.  p_sigma = 0 collapses the hyperbola to its two
+//                   asymptotes joined at a corner: w'' is a Dirac spike at
+//                   k = m, and the Durrleman function is undefined there rather
+//                   than merely large.
+//   a + b*p_sigma*sqrt(1-rho^2) >= 0
+//                 — the MINIMUM of w must be non-negative.  This is the one
+//                   that is easy to omit, because `a >= 0` looks like the
+//                   obvious level condition and is neither necessary nor
+//                   sufficient: a can be negative if the wings lift the vertex
+//                   back above zero, and a positive a can still give negative
+//                   variance if b*rho pulls it down.  Negative total variance
+//                   is not a near-miss; it is an imaginary volatility, and
+//                   `svi_implied_vol` would hand back a NaN from sqrt() with no
+//                   indication of which parameter caused it.
+//
+// The last condition is checked HERE, at the parameter level, exactly so the
+// failure is attributed to the parameters rather than surfacing later as a NaN
+// from an unrelated-looking sqrt.
+// ===========================================================================
+
+// The minimum of w, the closed form.  Setting w'(k) = 0 gives
+//     rho + (k-m)/sqrt((k-m)^2 + sigma^2) = 0
+//  => (k-m)/sqrt((k-m)^2 + sigma^2) = -rho
+//  => k = m - rho*sigma/sqrt(1 - rho^2)
+// and the minimum value is w(k_min) = a + b*sigma*sqrt(1 - rho^2).  Both are
+// exact; neither is a search.  `svi_k_min` is asserted against w'(k_min) == 0
+// in the KAT, which is the cheapest possible check that w' is really the
+// derivative of w.
+fn svi_k_min_raw(rho: f64, m: f64, p_sigma: f64) -> f64 {
+    return m - rho * p_sigma / dm_sqrt(1.0 - rho * rho);
+}
+
+fn svi_w_min_raw(a: f64, b: f64, rho: f64, p_sigma: f64) -> f64 {
+    return a + b * p_sigma * dm_sqrt(1.0 - rho * rho);
+}
+
+fn svi_params_valid(a: f64, b: f64, rho: f64, m: f64, p_sigma: f64) -> i64 {
+    if a != a {
+        return 0;
+    }
+    if b != b {
+        return 0;
+    }
+    if rho != rho {
+        return 0;
+    }
+    if m != m {
+        return 0;
+    }
+    if p_sigma != p_sigma {
+        return 0;
+    }
+    if b < 0.0 {
+        return 0;
+    }
+    if rho <= 0.0 - 1.0 {
+        return 0;
+    }
+    if rho >= 1.0 {
+        return 0;
+    }
+    if p_sigma <= 0.0 {
+        return 0;
+    }
+    // Non-negative minimum total variance.  See the block comment above for why
+    // `a >= 0` is the wrong test.
+    if svi_w_min_raw(a, b, rho, p_sigma) < 0.0 {
+        return 0;
+    }
+    return 1;
+}
+
+// --- w(k): total implied variance -------------------------------------------
+//     w(k) = a + b*( rho*(k-m) + sqrt((k-m)^2 + p_sigma^2) )
+// EVALUATION ORDER IS PART OF THE CONTRACT.  The inner bracket is summed left
+// to right before the single multiplication by b.  Distributing b across the
+// bracket is algebraically identical and numerically different, and here that
+// difference lands directly on a sign test (see g below), not merely on a
+// displayed value.  Do not "simplify" this expression.
+pub fn svi_total_variance(k: f64, a: f64, b: f64, rho: f64, m: f64, p_sigma: f64) -> f64 {
+    if svi_params_valid(a, b, rho, m, p_sigma) == 0 {
+        return canonical_qnan();
+    }
+    if k != k {
+        return canonical_qnan();
+    }
+    let km: f64 = k - m;
+    return a + b * (rho * km + dm_sqrt(km * km + p_sigma * p_sigma));
+}
+
+// --- w'(k): the exact first derivative ---------------------------------------
+//     w'(k) = b*( rho + (k-m)/sqrt((k-m)^2 + p_sigma^2) )
+// The quotient is bounded in (-1, 1), so w' is bounded in (b*(rho-1),
+// b*(rho+1)) — the two wing slopes asserted in the KAT.
+pub fn svi_w_prime(k: f64, a: f64, b: f64, rho: f64, m: f64, p_sigma: f64) -> f64 {
+    if svi_params_valid(a, b, rho, m, p_sigma) == 0 {
+        return canonical_qnan();
+    }
+    if k != k {
+        return canonical_qnan();
+    }
+    let km: f64 = k - m;
+    let d: f64 = dm_sqrt(km * km + p_sigma * p_sigma);
+    return b * (rho + km / d);
+}
+
+// --- w''(k): the exact second derivative -------------------------------------
+//     w''(k) = b*p_sigma^2 / ((k-m)^2 + p_sigma^2)^(3/2)
+// Written as `d*d*d` from a single sqrt rather than as a pow(.,1.5): pow is one
+// of the libm names that LLVM can capture (see the header), and a cubed sqrt is
+// both deterministic and cheaper.  Strictly positive for b > 0 — raw SVI is
+// convex in k always.  Convexity is NOT no-arbitrage; see the VIOLATING set.
+pub fn svi_w_prime2(k: f64, a: f64, b: f64, rho: f64, m: f64, p_sigma: f64) -> f64 {
+    if svi_params_valid(a, b, rho, m, p_sigma) == 0 {
+        return canonical_qnan();
+    }
+    if k != k {
+        return canonical_qnan();
+    }
+    let km: f64 = k - m;
+    let d: f64 = dm_sqrt(km * km + p_sigma * p_sigma);
+    return b * p_sigma * p_sigma / (d * d * d);
+}
+
+// --- Black-Scholes implied vol implied BY the surface ------------------------
+//     sigma_BS(k, t) = sqrt(w(k) / t)
+// This is a DEFINITION, not an inversion: it is the vol that, plugged into
+// Black-Scholes at maturity t, reproduces the total variance the surface
+// declares.  The KAT asserts `svi_implied_vol(...)^2 * t == svi_total_variance`
+// as an exact-ish consistency check, and separately round-trips it through a
+// real price and a real solver — the second is the one that could fail if this
+// definition were wrong in a way squaring would hide.
+pub fn svi_implied_vol(k: f64, t: f64, a: f64, b: f64, rho: f64, m: f64, p_sigma: f64) -> f64 {
+    if svi_params_valid(a, b, rho, m, p_sigma) == 0 {
+        return canonical_qnan();
+    }
+    if t != t {
+        return canonical_qnan();
+    }
+    if t <= 0.0 {
+        return canonical_qnan();
+    }
+    let w: f64 = svi_total_variance(k, a, b, rho, m, p_sigma);
+    if w != w {
+        return canonical_qnan();
+    }
+    return dm_sqrt(w / t);
+}
+
+// The location of the minimum, public because a caller checking a fit wants it.
+pub fn svi_k_min(a: f64, b: f64, rho: f64, m: f64, p_sigma: f64) -> f64 {
+    if svi_params_valid(a, b, rho, m, p_sigma) == 0 {
+        return canonical_qnan();
+    }
+    return svi_k_min_raw(rho, m, p_sigma);
+}
+
+// ===========================================================================
+// NO-BUTTERFLY ARBITRAGE: the Durrleman condition.
+//
+//     g(k) = ( 1 - k*w'(k)/(2*w(k)) )^2
+//            - ( w'(k)^2 / 4 ) * ( 1/w(k) + 1/4 )
+//            + w''(k)/2
+//
+// g(k) >= 0 for all k is equivalent to the risk-neutral density implied by the
+// slice being non-negative, i.e. to the absence of butterfly arbitrage.  It is
+// not an approximation and not a sufficient-condition heuristic: g is, up to a
+// strictly positive factor, the implied density itself.
+//
+// WHY EACH TERM MATTERS, since the temptation is always to drop one:
+//
+//   * The `(1 - k*w'/(2w))^2` term is the only one that is positive by
+//     construction and the only one carrying k explicitly.  Dropping it makes
+//     g negative nearly everywhere and the check fires constantly — a loud
+//     failure, therefore the safe one to get wrong.
+//
+//   * The `-(w'^2/4)(1/w + 1/4)` term is the destabiliser: it is the one that
+//     drives g negative on a steep slice.  Dropping it makes g >= 0 almost
+//     always, which reads as "our surfaces are always clean" — a SILENT
+//     failure, and the dangerous one.
+//
+//   * The `+w''/2` term is the convexity rescue.  Since w'' > 0 always for raw
+//     SVI, dropping it makes g strictly smaller everywhere, so the check
+//     becomes conservative — it rejects surfaces that are actually fine.  That
+//     is the mutation used to verify this gate can go red, because it is the
+//     only one whose direction is unambiguous.
+//
+// A HARD LIMITATION, STATED PLAINLY.  This function evaluates g AT A POINT.
+// "g(k) >= 0 for all k" is a statement over the whole real line, and no finite
+// grid can establish it.  A pointwise scan can only ever FALSIFY no-arbitrage,
+// never certify it: a violation narrower than the grid spacing is invisible.
+// Certification needs the Gatheral-Jacquier (2014) parameter-domain conditions,
+// which are algebraic in (a,b,rho,m,sigma) and not implemented here.  The KAT
+// below is therefore honest about what it proves — it demonstrates that the
+// detector FIRES on a known-bad slice and stays quiet on a known-good one, not
+// that any slice is arbitrage-free.
+// ===========================================================================
+pub fn svi_durrleman_g(k: f64, a: f64, b: f64, rho: f64, m: f64, p_sigma: f64) -> f64 {
+    if svi_params_valid(a, b, rho, m, p_sigma) == 0 {
+        return canonical_qnan();
+    }
+    if k != k {
+        return canonical_qnan();
+    }
+    let w: f64 = svi_total_variance(k, a, b, rho, m, p_sigma);
+    // w == 0 makes 1/w infinite.  It can only happen when a + b*p_sigma*
+    // sqrt(1-rho^2) == 0 exactly, i.e. on the boundary `svi_params_valid`
+    // admits.  Refuse rather than return an infinity that would compare
+    // "greater than zero" and be read as arbitrage-free.
+    if w <= 0.0 {
+        return canonical_qnan();
+    }
+    let w1: f64 = svi_w_prime(k, a, b, rho, m, p_sigma);
+    let w2: f64 = svi_w_prime2(k, a, b, rho, m, p_sigma);
+    let t1: f64 = 1.0 - k * w1 / (2.0 * w);
+    let t2: f64 = (w1 * w1 / 4.0) * (1.0 / w + 0.25);
+    return t1 * t1 - t2 + w2 / 2.0;
+}
+
+// Scan g over a FIXED grid and return 1 if no violation was found, 0 if one
+// was.  The trip count is a compile-time constant derived from `steps`, which
+// every call site passes as a literal: there is no convergence test and no
+// early exit, so both arms of the loop do the same work and the number of
+// iterations cannot depend on a datum.
+//
+// The loop runs to completion even after a violation is found.  An early
+// `return 0` would make the number of floating-point operations depend on WHERE
+// the violation sits, which is a datum-dependent trip count wearing a different
+// hat.  The cost is a handful of wasted evaluations; the benefit is that the
+// instruction trace of a scan is a function of `steps` alone.
+//
+// Returns 0 (violation) if g is NaN anywhere, which is the fail-closed reading:
+// a surface whose arbitrage condition could not be evaluated is not a surface
+// that has been shown to be free of arbitrage.
+pub fn svi_butterfly_ok(k_lo: f64, k_hi: f64, steps: i64, a: f64, b: f64, rho: f64, m: f64, p_sigma: f64) -> i64 {
+    if svi_params_valid(a, b, rho, m, p_sigma) == 0 {
+        return 0;
+    }
+    if steps < 1 {
+        return 0;
+    }
+    if k_lo != k_lo {
+        return 0;
+    }
+    if k_hi != k_hi {
+        return 0;
+    }
+    let mut ok: i64 = 1;
+    let span: f64 = k_hi - k_lo;
+    let mut i: i64 = 0;
+    while i <= steps {
+        let frac: f64 = (i as f64) / (steps as f64);
+        let k: f64 = k_lo + span * frac;
+        let g: f64 = svi_durrleman_g(k, a, b, rho, m, p_sigma);
+        if g != g {
+            ok = 0;
+        } else {
+            if g < 0.0 {
+                ok = 0;
+            }
+        }
+        i = i + 1;
+    }
+    return ok;
+}
+
+// ===========================================================================
+// NO-CALENDAR-SPREAD ARBITRAGE.
+//
+// Total implied variance must be NON-DECREASING in maturity at fixed
+// log-moneyness:
+//     w(k, T2) >= w(k, T1)   for all k, whenever T2 > T1.
+//
+// The economics: a calendar spread is long the far-dated option and short the
+// near-dated one at the same strike.  If total variance fell with maturity, that
+// spread would have a negative price for a payoff that is non-negative in every
+// state — a riskless profit, taken by anyone who notices.
+//
+// WHY THIS IS TESTED ON w AND NOT ON sigma.  Implied VOL routinely decreases
+// with maturity (an inverted term structure is ordinary and not arbitrageable);
+// implied VARIANCE times maturity must not.  Testing sigma instead of sigma^2*T
+// would reject every inverted term structure as arbitrage and pass some genuine
+// violations.  This is the single most common error in a hand-rolled surface
+// check, and it is the reason this module parameterises in w.
+//
+// Note the asymmetry with the butterfly check, which is deliberate: the
+// butterfly condition constrains ONE slice, so it needs g.  The calendar
+// condition relates TWO slices, so it needs two parameter sets and a
+// maturity-ordering check.  A module that only implements g has checked half
+// the problem and will happily certify a surface that is arbitrageable across
+// maturities.
+//
+// Same limitation as the butterfly scan, stated with the same plainness: this
+// is a pointwise scan over a fixed grid.  It can falsify, not certify.
+// ===========================================================================
+pub fn svi_calendar_ok(k_lo: f64, k_hi: f64, steps: i64, t1: f64, a1: f64, b1: f64, rho1: f64, m1: f64, s1: f64, t2: f64, a2: f64, b2: f64, rho2: f64, m2: f64, s2: f64) -> i64 {
+    if svi_params_valid(a1, b1, rho1, m1, s1) == 0 {
+        return 0;
+    }
+    if svi_params_valid(a2, b2, rho2, m2, s2) == 0 {
+        return 0;
+    }
+    if t1 != t1 {
+        return 0;
+    }
+    if t2 != t2 {
+        return 0;
+    }
+    if t1 <= 0.0 {
+        return 0;
+    }
+    // The near slice must genuinely be nearer.  Handing the two slices over in
+    // the wrong order would otherwise "prove" no arbitrage by testing the
+    // inequality backwards, which is the failure mode a caller cannot see.
+    if t2 <= t1 {
+        return 0;
+    }
+    if steps < 1 {
+        return 0;
+    }
+    let mut ok: i64 = 1;
+    let span: f64 = k_hi - k_lo;
+    let mut i: i64 = 0;
+    while i <= steps {
+        let frac: f64 = (i as f64) / (steps as f64);
+        let k: f64 = k_lo + span * frac;
+        let w1: f64 = svi_total_variance(k, a1, b1, rho1, m1, s1);
+        let w2: f64 = svi_total_variance(k, a2, b2, rho2, m2, s2);
+        if w1 != w1 {
+            ok = 0;
+        } else {
+            if w2 != w2 {
+                ok = 0;
+            } else {
+                if w2 < w1 {
+                    ok = 0;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return ok;
+}
+
+// ===========================================================================
+// THE ROUND-TRIP SOLVER — fixed iteration count, bracketed.
+//
+// Present only to close the loop between the parametric surface and a real
+// price: price an option at the SVI vol, then recover that vol from the price.
+// The full argument for the design lives in `examples/quant/implied_vol`; the
+// part that must be restated here because it is a HARD CONSTRAINT:
+//
+//   the trip count is a compile-time CONSTANT (60), never a convergence test.
+//
+// A tolerance loop — `while absf(f) > tol { ... }` — runs a number of times
+// decided by a floating-point comparison.  On a substrate where `absf(f)` lands
+// one ulp on the other side of `tol`, the loop runs one more time or one fewer
+// and returns a different number.  The divergence is not bounded by an ulp,
+// because the extra step moves the iterate; and it is unrecoverable after the
+// fact, since "how many iterations did the other machine take" is not
+// deducible from the answer.  A fixed count costs wasted arithmetic and buys a
+// trip count no input can influence.  That trade is the whole point.
+//
+// The bracket invariant is what keeps a fixed count correct: [lo, hi] contains
+// the root at entry and at every step, because the Black-Scholes price is
+// strictly increasing in sigma, so the sign test can only discard the half that
+// cannot contain it.  A Newton step is accepted only when it lands STRICTLY
+// inside the current bracket; otherwise the step is discarded and the iteration
+// bisects.  Branch choice is data-dependent; iteration count is not.
+// ===========================================================================
+fn rt_iters() -> i64 {
+    return 60;
+}
+
+fn rt_solve_call(price: f64, s: f64, k: f64, r: f64, q: f64, t: f64) -> f64 {
+    if price != price {
+        return canonical_qnan();
+    }
+    if price <= 0.0 {
+        return canonical_qnan();
+    }
+    if t != t {
+        return canonical_qnan();
+    }
+    if t <= 0.0 {
+        return canonical_qnan();
+    }
+    if s <= 0.0 {
+        return canonical_qnan();
+    }
+    if k <= 0.0 {
+        return canonical_qnan();
+    }
+    let p_lo: f64 = bs_call(s, k, r, q, 0.0001, t);
+    let p_hi: f64 = bs_call(s, k, r, q, 5.0, t);
+    if p_lo != p_lo {
+        return canonical_qnan();
+    }
+    if p_hi != p_hi {
+        return canonical_qnan();
+    }
+    // A price outside [p(lo), p(hi)] has no root in the bracket, and bisection
+    // on a rootless bracket converges confidently to an endpoint.  That is the
+    // most dangerous failure a root-find has, because the answer looks
+    // converged.  Refuse it.
+    if price < p_lo {
+        return canonical_qnan();
+    }
+    if price > p_hi {
+        return canonical_qnan();
+    }
+    // f64-param-init: seed each loop-carried f64 binding via `x * 1.0`.
+    let mut lo: f64 = 0.0001 * 1.0;
+    let mut hi: f64 = 5.0 * 1.0;
+    let mut sigma: f64 = 0.5 * (lo + hi);
+    let mut i: i64 = 0;
+    while i < rt_iters() {
+        let f: f64 = bs_call(s, k, r, q, sigma, t) - price;
+        if f > 0.0 {
+            hi = sigma;
+        } else {
+            lo = sigma;
+        }
+        let v: f64 = bs_vega(s, k, r, q, sigma, t);
+        let mut cand: f64 = 0.5 * (lo + hi);
+        if v > 0.0 {
+            let n: f64 = sigma - f / v;
+            if n > lo {
+                if n < hi {
+                    cand = n;
+                }
+            }
+        }
+        sigma = cand;
+        i = i + 1;
+    }
+    return sigma;
+}
+
+// ===========================================================================
+// KNOWN-ANSWER TESTS.
+//
+// THE ORACLE.  Every reference value below was produced by an INDEPENDENT
+// 50-digit oracle — mpmath 1.3.0 at `mp.dps = 50`, evaluating w, w', w'', g and
+// the Black-Scholes call in 50-digit arithmetic and rounded ONCE to f64.  None
+// was produced by this implementation, and none was recalled from memory.  A
+// KAT generated from the code it tests proves only that the code is unchanged,
+// not that it is correct.
+//
+// THE TWO PARAMETER SETS, AND WHY BOTH ARE REQUIRED:
+//
+//   FREE   a=0.04  b=0.10  rho=-0.30  m=0.0  p_sigma=0.20
+//          A typical index slice: modest level, gentle negative skew, wide
+//          vertex.  g ranges 0.49 .. 1.25 over k in [-0.5, 0.5] — comfortably
+//          positive, nowhere near the boundary.
+//
+//   VIOL   a=0.01  b=0.90  rho=-0.75  m=0.1  p_sigma=0.05
+//          A butterfly-ARBITRAGEABLE slice: large b and strongly negative rho
+//          give a left wing of slope b*(1-rho) = 1.575, which is above Lee's
+//          moment-formula bound of 2 only in the limit but is already steep
+//          enough, against a total variance of 0.178 at the money, to drive g
+//          negative.  Oracle: g(0.0) = -1.406, g(-0.25) = -0.787,
+//          g(-0.5) = -0.448.  Note it is still CONVEX everywhere (w'' > 0 by
+//          construction), which is exactly why convexity cannot substitute for
+//          the Durrleman condition.
+//
+// A NO-ARBITRAGE CHECK THAT NEVER FIRES IS NOT A CHECK.  The FREE/VIOL pair is
+// the single most valuable thing in this file.  Asserting only that a good
+// surface passes is satisfied by `return 1;`.  Asserting that a bad surface is
+// caught is satisfied by `return 0;`.  Only the pair together says the detector
+// discriminates, and each half of the pair is a positive control for the other.
+//
+// FIVE CLASSES OF CHECK, deliberately:
+//   1. STRUCTURAL IDENTITIES — butterfly +/-, calendar +/-, wing asymptotics,
+//      w'(k_min) == 0, vol/variance consistency.  These hold regardless of the
+//      oracle and therefore survive a mistyped reference, which at this level
+//      of algebra is the likeliest error of all.  For this module they are not
+//      a supplement to the value checks; they ARE the deliverable.
+//   2. ROUND-TRIP THROUGH A PRICE — price at the SVI vol, recover it with the
+//      fixed-count solver.  Ties the parametric surface to something tradeable.
+//   3. VALUE CHECKS — against the 50-digit oracle, within a stated ulp band.
+//   4. DOMAIN — every inadmissible parameter set returns the canonical qNaN.
+//   5. ADVERSARIAL — a deliberately WRONG reference must be REJECTED, counted
+//      POSITIVELY into `fails`.  Without these the bands prove nothing.
+//
+// WHAT THIS KAT CANNOT CATCH, STATED PLAINLY.  Three things, and none of them
+// is fixable by tightening a band:
+//
+//   (a) The scans are POINTWISE over a finite grid.  `svi_butterfly_ok`
+//       returning 1 does NOT mean the slice is arbitrage-free; it means no
+//       violation was found at 41 points.  A violation narrower than the grid
+//       spacing is invisible.  Certification requires the Gatheral-Jacquier
+//       parameter-domain conditions, which are not implemented here.
+//
+//   (b) The value bands are tolerances, so they are structurally blind to any
+//       change that perturbs a result by less than the band — including a
+//       reassociation that is algebraically identical and numerically
+//       different.  Tightening them is not the fix: they must stay wide enough
+//       to absorb the honest difference between a re-derived sqrt/erfc and a
+//       50-digit oracle.
+//
+//   (c) A tolerance band is ALSO blind to a change in the solver's iteration
+//       count, because the iteration has converged well inside the band by
+//       step 60.  Changing `rt_iters` from 60 to 50 would not redden a single
+//       check here.  That is not a defect in the test; it is precisely why the
+//       count must be a source-level constant a reader can see, rather than a
+//       property a band could certify.
+//
+// Detecting (b) or (c) requires a BIT-EXACT reference, which is the job of the
+// cross-substrate CI fixture (tests/cross_substrate_identity.rs): it compares
+// hashes across x86 `avx2` and ARM `neon`, and a hash has no tolerance to hide
+// in.  This KAT proves the surface algebra is CORRECT; the fixture proves it is
+// REPRODUCIBLE.  A green KAT is not evidence of byte-identity.
+// ===========================================================================
+
+fn chk_ulp(got: f64, want: f64, ulps: f64) -> i64 {
+    let eps: f64 = 0.0000000000000002220446049250313;
+    let tol: f64 = ulps * eps * absf(want);
+    if absf(got - want) <= tol {
+        return 1;
+    }
+    return 0;
+}
+
+fn chk_abs(got: f64, want: f64, abstol: f64) -> i64 {
+    if absf(got - want) <= abstol {
+        return 1;
+    }
+    return 0;
+}
+
+fn is_nan(x: f64) -> i64 {
+    if x != x {
+        return 1;
+    }
+    return 0;
+}
+
+// `cond` must be 1.  Returns 1 on failure so it can be added into `fails`.
+fn expect_true(cond: i64) -> i64 {
+    if cond == 1 {
+        return 0;
+    }
+    return 1;
+}
+
+// `cond` must be 0.  The negative-control form: used wherever the claim is
+// "this check FIRES", which is the half of a detector that is never exercised
+// by a happy-path test.
+fn expect_false(cond: i64) -> i64 {
+    if cond == 0 {
+        return 0;
+    }
+    return 1;
+}
+
+fn gt_zero(x: f64) -> i64 {
+    if x > 0.0 {
+        return 1;
+    }
+    return 0;
+}
+
+fn lt_zero(x: f64) -> i64 {
+    if x < 0.0 {
+        return 1;
+    }
+    return 0;
+}
+
+pub fn main() -> i64 {
+    let mut fails: i64 = 0;
+
+    // FREE slice — arbitrage-free.
+    let fa: f64 = 0.04;
+    let fb: f64 = 0.1;
+    let frho: f64 = 0.0 - 0.3;
+    let fm: f64 = 0.0;
+    let fs: f64 = 0.2;
+
+    // VIOL slice — butterfly-arbitrageable.  Admissible as PARAMETERS (b >= 0,
+    // |rho| < 1, p_sigma > 0, min variance 0.0397 > 0), which is the point: the
+    // parameter guard cannot see butterfly arbitrage, only g can.
+    let va: f64 = 0.01;
+    let vb: f64 = 0.9;
+    let vrho: f64 = 0.0 - 0.75;
+    let vm: f64 = 0.1;
+    let vs: f64 = 0.05;
+
+    // =======================================================================
+    // 1. STRUCTURAL IDENTITIES.
+    // =======================================================================
+
+    // --- NO-BUTTERFLY, POSITIVE HALF: the FREE slice must pass --------------
+    // Oracle g over k in [-0.5, 0.5]: min 0.4925 at k = -0.5, max 1.2462 at
+    // k = 0.  Asserted pointwise at the five oracle points AND as a 41-point
+    // scan, because the scan is the function a caller actually uses and it has
+    // its own loop that could be wrong independently of g.
+    fails = fails + expect_true(gt_zero(svi_durrleman_g(0.0 - 0.5, fa, fb, frho, fm, fs)));
+    fails = fails + expect_true(gt_zero(svi_durrleman_g(0.0 - 0.25, fa, fb, frho, fm, fs)));
+    fails = fails + expect_true(gt_zero(svi_durrleman_g(0.0, fa, fb, frho, fm, fs)));
+    fails = fails + expect_true(gt_zero(svi_durrleman_g(0.25, fa, fb, frho, fm, fs)));
+    fails = fails + expect_true(gt_zero(svi_durrleman_g(0.5, fa, fb, frho, fm, fs)));
+    fails = fails + expect_true(svi_butterfly_ok(0.0 - 0.5, 0.5, 40, fa, fb, frho, fm, fs));
+    // Wider window: the FREE slice is clean well beyond the quoted strikes too.
+    fails = fails + expect_true(svi_butterfly_ok(0.0 - 1.5, 1.5, 60, fa, fb, frho, fm, fs));
+
+    // --- NO-BUTTERFLY, NEGATIVE HALF: the VIOL slice must be CAUGHT ---------
+    // This is the half that makes the half above mean something.  A detector
+    // that returns 1 unconditionally passes every check in the positive block
+    // and fails every check here.
+    // Oracle: g(0.0) = -1.4061, g(-0.25) = -0.7872, g(-0.5) = -0.4475.
+    fails = fails + expect_true(lt_zero(svi_durrleman_g(0.0, va, vb, vrho, vm, vs)));
+    fails = fails + expect_true(lt_zero(svi_durrleman_g(0.0 - 0.25, va, vb, vrho, vm, vs)));
+    fails = fails + expect_true(lt_zero(svi_durrleman_g(0.0 - 0.5, va, vb, vrho, vm, vs)));
+    fails = fails + expect_false(svi_butterfly_ok(0.0 - 0.5, 0.5, 40, va, vb, vrho, vm, vs));
+    // ... and the VIOL slice's PARAMETERS are perfectly admissible, so the
+    // violation is genuinely invisible to the parameter guard.  If this check
+    // ever fails, the negative control above has become vacuous: it would be
+    // passing because the parameters were rejected, not because g fired.
+    fails = fails + expect_true(gt_zero(svi_total_variance(0.0, va, vb, vrho, vm, vs)));
+    fails = fails + is_nan(svi_total_variance(0.0, va, vb, vrho, vm, vs));
+    fails = fails + is_nan(svi_durrleman_g(0.0, va, vb, vrho, vm, vs));
+    // The VIOL slice is CONVEX everywhere (w'' > 0), which is why a convexity
+    // test would certify it as fine.  Assert the convexity, so the claim that
+    // convexity is insufficient is demonstrated rather than merely asserted in
+    // a comment.
+    fails = fails + expect_true(gt_zero(svi_w_prime2(0.0, va, vb, vrho, vm, vs)));
+    fails = fails + expect_true(gt_zero(svi_w_prime2(0.0 - 0.5, va, vb, vrho, vm, vs)));
+    fails = fails + expect_true(gt_zero(svi_w_prime2(0.5, va, vb, vrho, vm, vs)));
+    // Part of the VIOL slice IS clean — g(0.25) = +0.442.  Assert it, so the
+    // negative control is known to be catching a LOCAL violation rather than a
+    // function that returns negative everywhere.
+    fails = fails + expect_true(gt_zero(svi_durrleman_g(0.25, va, vb, vrho, vm, vs)));
+
+    // --- CALENDAR SPREAD, POSITIVE HALF -------------------------------------
+    // Near slice T1 = 1.0 with the FREE parameters; far slice T2 = 2.0 with a
+    // higher level (a = 0.06) and slightly wider wings.  Oracle: the far-minus-
+    // near difference in w is between +0.0242 and +0.0266 over k in [-0.5, 0.5]
+    // — strictly positive everywhere, so non-decreasing holds with room.
+    let ga: f64 = 0.06;
+    let gb: f64 = 0.11;
+    let grho: f64 = 0.0 - 0.28;
+    let gm: f64 = 0.0;
+    let gs: f64 = 0.22;
+    fails = fails + expect_true(svi_calendar_ok(0.0 - 0.5, 0.5, 40, 1.0, fa, fb, frho, fm, fs, 2.0, ga, gb, grho, gm, gs));
+
+    // --- CALENDAR SPREAD, NEGATIVE HALF: a violating pair must be CAUGHT ----
+    // Same shape, LOWER level at the longer maturity (a = 0.02 against 0.04).
+    // Oracle: w_far - w_near = -0.02 at every k, uniformly.  Total variance
+    // falling with maturity is exactly the calendar-spread arbitrage.
+    let ba: f64 = 0.02;
+    fails = fails + expect_false(svi_calendar_ok(0.0 - 0.5, 0.5, 40, 1.0, fa, fb, frho, fm, fs, 2.0, ba, fb, frho, fm, fs));
+    // The violating far slice is itself a perfectly valid, butterfly-free
+    // slice — the arbitrage is purely between the two maturities.  Asserting
+    // this keeps the negative control from passing for the wrong reason (e.g.
+    // because the far parameters were rejected outright).
+    fails = fails + expect_true(svi_butterfly_ok(0.0 - 0.5, 0.5, 40, ba, fb, frho, fm, fs));
+    // Maturity ORDER is checked, not assumed: handing the slices over backwards
+    // must be refused rather than silently testing the inequality the wrong way.
+    fails = fails + expect_false(svi_calendar_ok(0.0 - 0.5, 0.5, 40, 2.0, fa, fb, frho, fm, fs, 1.0, ga, gb, grho, gm, gs));
+    // Equal maturities are also refused: "non-decreasing between T and T" is
+    // vacuously true and would let a caller certify a surface it never tested.
+    fails = fails + expect_false(svi_calendar_ok(0.0 - 0.5, 0.5, 40, 1.0, fa, fb, frho, fm, fs, 1.0, ga, gb, grho, gm, gs));
+    // Direct pointwise confirmation of both directions, independent of the scan
+    // function, so a bug in the scan's loop cannot hide a bug in the ordering.
+    let w_near: f64 = svi_total_variance(0.0, fa, fb, frho, fm, fs);
+    let w_far_ok: f64 = svi_total_variance(0.0, ga, gb, grho, gm, gs);
+    let w_far_bad: f64 = svi_total_variance(0.0, ba, fb, frho, fm, fs);
+    fails = fails + expect_true(gt_zero(w_far_ok - w_near));
+    fails = fails + expect_true(lt_zero(w_far_bad - w_near));
+
+    // --- WING ASYMPTOTICS ---------------------------------------------------
+    // As k -> +inf, w'(k) -> b*(1+rho); as k -> -inf, w'(k) -> b*(1-rho).  Both
+    // follow from (k-m)/sqrt((k-m)^2 + p_sigma^2) -> +/-1.  For the FREE slice
+    // those limits are 0.07 and 0.13.
+    //
+    // This identity is the sharpest available check on the SIGN of rho.  A
+    // flipped rho leaves w(0) nearly unchanged (it shifts by 2*b*rho*m, which
+    // is ZERO at m = 0) and leaves w'' completely unchanged, so a value check
+    // at the money would not see it at all.  It swaps the two wing slopes, and
+    // only this check notices.
+    //
+    // The convergence is algebraic, not exponential: at k = 200 the oracle
+    // gives w'(200) = 0.0699999500000375, i.e. 5e-8 short of 0.07.  The band is
+    // stated as an ABSOLUTE 1e-6 rather than in ulps for exactly that reason —
+    // an ulp band would be asserting that a finite k is infinity, which is
+    // false.  1e-6 is 20x the true residual at k = 200, wide enough to be
+    // honest and narrow enough that a swapped wing (0.07 against 0.13, a gap of
+    // 0.06) is rejected by five orders of magnitude.
+    fails = fails + (1 - chk_abs(svi_w_prime(200.0, fa, fb, frho, fm, fs), 0.07, 0.000001));
+    fails = fails + (1 - chk_abs(svi_w_prime(0.0 - 200.0, fa, fb, frho, fm, fs), 0.0 - 0.13, 0.000001));
+    // Same limits, one order of magnitude closer in, to show the approach is
+    // monotone rather than a coincidence at one point.  Oracle at k = 50:
+    // 0.06999920000959987 and -0.12999920000959989.
+    fails = fails + (1 - chk_abs(svi_w_prime(50.0, fa, fb, frho, fm, fs), 0.07, 0.00001));
+    fails = fails + (1 - chk_abs(svi_w_prime(0.0 - 50.0, fa, fb, frho, fm, fs), 0.0 - 0.13, 0.00001));
+    // w itself must GROW LINEARLY, not merely have a bounded slope.  Oracle:
+    // w(200) = 14.0400099999975, w(-200) = 26.0400099999975.  A surface whose
+    // w saturated would satisfy the slope limits nowhere and this check
+    // everywhere it was wrong; together they pin the wing shape.
+    fails = fails + (1 - chk_ulp(svi_total_variance(200.0, fa, fb, frho, fm, fs), 14.0400099999975, 1024.0));
+    fails = fails + (1 - chk_ulp(svi_total_variance(0.0 - 200.0, fa, fb, frho, fm, fs), 26.0400099999975, 1024.0));
+    // The wing slopes must also be OPPOSITE in sign about the vertex — a slice
+    // whose w' had the same sign on both sides would be monotone, not a smile.
+    fails = fails + expect_true(gt_zero(svi_w_prime(200.0, fa, fb, frho, fm, fs)));
+    fails = fails + expect_true(lt_zero(svi_w_prime(0.0 - 200.0, fa, fb, frho, fm, fs)));
+
+    // --- MINIMUM: w'(k_min) must be exactly zero ----------------------------
+    //     k_min = m - rho*p_sigma/sqrt(1 - rho^2)
+    // The cheapest possible check that w' really is the derivative of w: the
+    // closed-form stationary point is derived from w' = 0, so if w' were the
+    // derivative of something else, this would not vanish.  The oracle at 50
+    // digits gives exactly 0 at k_min, and the f64 evaluation reproduces it to
+    // better than 1e-17, so an absolute band is used (a relative one against a
+    // target of zero is undefined).
+    let kmin: f64 = svi_k_min(fa, fb, frho, fm, fs);
+    fails = fails + (1 - chk_ulp(kmin, 0.0628970902033151, 1024.0));
+    fails = fails + (1 - chk_abs(svi_w_prime(kmin, fa, fb, frho, fm, fs), 0.0, 0.0000000000001));
+    // ... and it is a MINIMUM, not a maximum or a saddle: w'' > 0 there, and w
+    // is strictly larger on both sides.  Asserting only w' == 0 would be
+    // satisfied by a w' that is identically zero.
+    fails = fails + expect_true(gt_zero(svi_w_prime2(kmin, fa, fb, frho, fm, fs)));
+    let w_at_min: f64 = svi_total_variance(kmin, fa, fb, frho, fm, fs);
+    fails = fails + (1 - chk_ulp(w_at_min, 0.05907878402833891, 1024.0));
+    fails = fails + expect_true(gt_zero(svi_total_variance(kmin + 0.1, fa, fb, frho, fm, fs) - w_at_min));
+    fails = fails + expect_true(gt_zero(svi_total_variance(kmin - 0.1, fa, fb, frho, fm, fs) - w_at_min));
+    // The VIOL slice has a minimum too, at a different place.  Checking both
+    // stops `svi_k_min` from passing by returning a constant that happens to
+    // suit the FREE parameters.
+    let kmin_v: f64 = svi_k_min(va, vb, vrho, vm, vs);
+    fails = fails + (1 - chk_ulp(kmin_v, 0.1566946709513841, 1024.0));
+    fails = fails + (1 - chk_abs(svi_w_prime(kmin_v, va, vb, vrho, vm, vs), 0.0, 0.0000000000001));
+
+    // --- CONSISTENCY: iv^2 * t == w -----------------------------------------
+    // `svi_implied_vol` is sqrt(w/t) by definition, so squaring it and
+    // multiplying by t must return w to within the rounding of one sqrt and one
+    // square — a few ulps, not a tolerance.  Checked at three maturities and
+    // three log-moneyness points so a t- or k-dependent error cannot hide.
+    let ivs: f64 = svi_implied_vol(0.0 - 0.3, 0.5, fa, fb, frho, fm, fs);
+    fails = fails + (1 - chk_ulp(ivs * ivs * 0.5, svi_total_variance(0.0 - 0.3, fa, fb, frho, fm, fs), 16.0));
+    let ivm: f64 = svi_implied_vol(0.0, 1.0, fa, fb, frho, fm, fs);
+    fails = fails + (1 - chk_ulp(ivm * ivm * 1.0, svi_total_variance(0.0, fa, fb, frho, fm, fs), 16.0));
+    let ivl: f64 = svi_implied_vol(0.3, 2.0, fa, fb, frho, fm, fs);
+    fails = fails + (1 - chk_ulp(ivl * ivl * 2.0, svi_total_variance(0.3, fa, fb, frho, fm, fs), 16.0));
+    // The term structure of VOL falls here (0.3464 at T=0.5 down to 0.1732 at
+    // T=2) even though total VARIANCE rises with T by construction.  This is
+    // the inverted-term-structure case that a naive sigma-based calendar check
+    // would flag as arbitrage.  Asserting it makes the w-versus-sigma argument
+    // in the calendar block a demonstrated fact rather than a claim.
+    let iv_t05: f64 = svi_implied_vol(0.0, 0.5, fa, fb, frho, fm, fs);
+    let iv_t20: f64 = svi_implied_vol(0.0, 2.0, fa, fb, frho, fm, fs);
+    fails = fails + expect_true(lt_zero(iv_t20 - iv_t05));
+
+    // =======================================================================
+    // 2. ROUND-TRIP THROUGH A BLACK-SCHOLES PRICE.
+    //
+    // Price a European call at S = 100, r = q = 0, T = 1, strike K = S*e^k, with
+    // the vol the surface declares at that k.  Then recover the implied vol from
+    // that price with the fixed-count solver and assert it returns the SVI vol.
+    //
+    // This is the only place the parametric surface touches a tradeable
+    // quantity.  Without it, every check above could pass on a surface whose
+    // "vol" was an internally consistent number that no option was ever priced
+    // at.  With r = q = 0 the forward equals the spot, so k = log(K/S) is
+    // exactly the log-moneyness the surface is parameterised in — using a
+    // non-zero rate without discounting the strike would silently shift k and
+    // the round-trip would recover a vol from the wrong point on the smile.
+    //
+    // Bands are stated per case and track 1/vega, as in
+    // `examples/quant/implied_vol`: the at-the-money case is best-conditioned,
+    // the out-of-the-money case worst.  Measured recovery error on this
+    // implementation is quoted per line.
+    // =======================================================================
+
+    // k = 0 (ATM).  Oracle: sigma = 0.2449489742783178, call = 9.747674982232057.
+    let k0_sig: f64 = svi_implied_vol(0.0, 1.0, fa, fb, frho, fm, fs);
+    fails = fails + (1 - chk_ulp(k0_sig, 0.2449489742783178, 64.0));
+    let k0_px: f64 = bs_call(100.0, 100.0, 0.0, 0.0, k0_sig, 1.0);
+    fails = fails + (1 - chk_ulp(k0_px, 9.747674982232057, 512.0));
+    fails = fails + (1 - chk_ulp(rt_solve_call(k0_px, 100.0, 100.0, 0.0, 0.0, 1.0), k0_sig, 64.0));
+
+    // k = -0.2 (in the money).  K = 81.87307530779819.
+    // Oracle: sigma = 0.2725514102833847, call = 21.435511790221017.
+    let km_sig: f64 = svi_implied_vol(0.0 - 0.2, 1.0, fa, fb, frho, fm, fs);
+    fails = fails + (1 - chk_ulp(km_sig, 0.2725514102833847, 64.0));
+    let km_px: f64 = bs_call(100.0, 81.87307530779819, 0.0, 0.0, km_sig, 1.0);
+    fails = fails + (1 - chk_ulp(km_px, 21.435511790221017, 512.0));
+    fails = fails + (1 - chk_ulp(rt_solve_call(km_px, 100.0, 81.87307530779819, 0.0, 0.0, 1.0), km_sig, 128.0));
+
+    // k = +0.2 (out of the money).  K = 122.14027581601698.
+    // Oracle: sigma = 0.24956816953983113, call = 3.2922608980022843.
+    let kp_sig: f64 = svi_implied_vol(0.2, 1.0, fa, fb, frho, fm, fs);
+    fails = fails + (1 - chk_ulp(kp_sig, 0.24956816953983113, 64.0));
+    let kp_px: f64 = bs_call(100.0, 122.14027581601698, 0.0, 0.0, kp_sig, 1.0);
+    fails = fails + (1 - chk_ulp(kp_px, 3.2922608980022843, 512.0));
+    fails = fails + (1 - chk_ulp(rt_solve_call(kp_px, 100.0, 122.14027581601698, 0.0, 0.0, 1.0), kp_sig, 256.0));
+
+    // The smile is a SMILE: the recovered vols differ across strikes, and the
+    // in-the-money (k < 0) vol is the highest — the negative-rho skew the FREE
+    // parameters encode.  A flat-vol bug would round-trip every case perfectly
+    // and fail only here.
+    fails = fails + expect_true(gt_zero(km_sig - k0_sig));
+    fails = fails + expect_true(gt_zero(kp_sig - k0_sig));
+    fails = fails + expect_true(gt_zero(km_sig - kp_sig));
+
+    // =======================================================================
+    // 3. VALUE CHECKS against the 50-digit oracle.
+    //
+    // w, w', w'' and g at five log-moneyness points on the FREE slice, and g at
+    // three points on the VIOL slice.  Bands: w and w' are two or three
+    // arithmetic operations from a single sqrt and sit at 256 ulps, the same as
+    // the black_scholes anchors.  g is a difference of squares divided by w and
+    // carries a genuine cancellation, so it gets 4096 — the same band the
+    // higher-order Greeks use, and for the same reason.
+    // =======================================================================
+
+    // FREE, k = 0: the vertex-adjacent point where w' is small (-0.03) and w''
+    // is at its largest (0.5).
+    fails = fails + (1 - chk_ulp(svi_total_variance(0.0, fa, fb, frho, fm, fs), 0.06, 256.0));
+    fails = fails + (1 - chk_ulp(svi_w_prime(0.0, fa, fb, frho, fm, fs), 0.0 - 0.03, 256.0));
+    fails = fails + (1 - chk_ulp(svi_w_prime2(0.0, fa, fb, frho, fm, fs), 0.5, 256.0));
+    fails = fails + (1 - chk_ulp(svi_durrleman_g(0.0, fa, fb, frho, fm, fs), 1.24619375, 4096.0));
+
+    // FREE, k = -0.25 and k = +0.25.
+    fails = fails + (1 - chk_ulp(svi_total_variance(0.0 - 0.25, fa, fb, frho, fm, fs), 0.07951562118716424, 256.0));
+    fails = fails + (1 - chk_ulp(svi_w_prime(0.0 - 0.25, fa, fb, frho, fm, fs), 0.0 - 0.10808688094430303, 256.0));
+    fails = fails + (1 - chk_ulp(svi_w_prime2(0.0 - 0.25, fa, fb, frho, fm, fs), 0.12189171659598522, 256.0));
+    fails = fails + (1 - chk_ulp(svi_durrleman_g(0.0 - 0.25, fa, fb, frho, fm, fs), 0.7125264923848175, 4096.0));
+    fails = fails + (1 - chk_ulp(svi_total_variance(0.25, fa, fb, frho, fm, fs), 0.06451562118716424, 256.0));
+    fails = fails + (1 - chk_ulp(svi_w_prime(0.25, fa, fb, frho, fm, fs), 0.04808688094430303, 256.0));
+    fails = fails + (1 - chk_ulp(svi_durrleman_g(0.25, fa, fb, frho, fm, fs), 0.8741832613223867, 4096.0));
+
+    // FREE, k = -0.5 and k = +0.5 — the wings of the quoted range.  Note w is
+    // NOT symmetric about k = 0 (0.1089 against 0.0789): the asymmetry is
+    // exactly b*rho*2k, and a lost rho would make these two equal.
+    fails = fails + (1 - chk_ulp(svi_total_variance(0.0 - 0.5, fa, fb, frho, fm, fs), 0.10885164807134504, 256.0));
+    fails = fails + (1 - chk_ulp(svi_w_prime(0.0 - 0.5, fa, fb, frho, fm, fs), 0.0 - 0.12284766908852593, 256.0));
+    fails = fails + (1 - chk_ulp(svi_w_prime2(0.0 - 0.5, fa, fb, frho, fm, fs), 0.025613150093386463, 256.0));
+    fails = fails + (1 - chk_ulp(svi_durrleman_g(0.0 - 0.5, fa, fb, frho, fm, fs), 0.4925187420907028, 4096.0));
+    fails = fails + (1 - chk_ulp(svi_total_variance(0.5, fa, fb, frho, fm, fs), 0.07885164807134504, 256.0));
+    fails = fails + (1 - chk_ulp(svi_w_prime(0.5, fa, fb, frho, fm, fs), 0.06284766908852593, 256.0));
+    fails = fails + (1 - chk_ulp(svi_durrleman_g(0.5, fa, fb, frho, fm, fs), 0.6412225429860161, 4096.0));
+
+    // VIOL, the three negative-g points.  These are value checks on the
+    // MAGNITUDE of the violation, not just its sign: a g that was negative for
+    // the wrong reason (say, a dropped w''/2 term) would have the right sign
+    // and the wrong number, and only these lines would notice.
+    fails = fails + (1 - chk_ulp(svi_durrleman_g(0.0, va, vb, vrho, vm, vs), 0.0 - 1.4061272595161562, 4096.0));
+    fails = fails + (1 - chk_ulp(svi_durrleman_g(0.0 - 0.25, va, vb, vrho, vm, vs), 0.0 - 0.7872340678453167, 4096.0));
+    fails = fails + (1 - chk_ulp(svi_durrleman_g(0.0 - 0.5, va, vb, vrho, vm, vs), 0.0 - 0.4475327977402055, 4096.0));
+    fails = fails + (1 - chk_ulp(svi_total_variance(0.0, va, vb, vrho, vm, vs), 0.17812305898749053, 256.0));
+    fails = fails + (1 - chk_ulp(svi_w_prime(0.0, va, vb, vrho, vm, vs), 0.0 - 1.4799844718999242, 256.0));
+    fails = fails + (1 - chk_ulp(svi_w_prime2(0.0, va, vb, vrho, vm, vs), 1.6099689437998486, 256.0));
+
+    // Implied vols at three maturities on the FREE slice.
+    fails = fails + (1 - chk_ulp(svi_implied_vol(0.0 - 0.3, 0.5, fa, fb, frho, fm, fs), 0.41244517879262427, 256.0));
+    fails = fails + (1 - chk_ulp(svi_implied_vol(0.0, 1.0, fa, fb, frho, fm, fs), 0.2449489742783178, 256.0));
+    fails = fails + (1 - chk_ulp(svi_implied_vol(0.3, 2.0, fa, fb, frho, fm, fs), 0.18310586112224794, 256.0));
+
+    // =======================================================================
+    // 4. DOMAIN: every inadmissible parameter set returns the canonical qNaN.
+    //
+    // 0x7FF8000000000000 exactly, from an explicit bit literal — never a NaN
+    // synthesised by 0.0/0.0, whose sign bit differs between x86 and ARM and
+    // would break byte-identity on precisely the error path nobody inspects.
+    // =======================================================================
+
+    // b < 0: both wings inverted, w unbounded below.
+    fails = fails + (1 - is_nan(svi_total_variance(0.0, fa, 0.0 - 0.1, frho, fm, fs)));
+    fails = fails + (1 - is_nan(svi_w_prime(0.0, fa, 0.0 - 0.1, frho, fm, fs)));
+    fails = fails + (1 - is_nan(svi_durrleman_g(0.0, fa, 0.0 - 0.1, frho, fm, fs)));
+    // |rho| >= 1: Lee's moment boundary, and a divide by zero in k_min.
+    fails = fails + (1 - is_nan(svi_total_variance(0.0, fa, fb, 1.0, fm, fs)));
+    fails = fails + (1 - is_nan(svi_total_variance(0.0, fa, fb, 0.0 - 1.0, fm, fs)));
+    fails = fails + (1 - is_nan(svi_total_variance(0.0, fa, fb, 1.5, fm, fs)));
+    fails = fails + (1 - is_nan(svi_k_min(fa, fb, 1.0, fm, fs)));
+    // p_sigma <= 0: the hyperbola degenerates to a corner; w'' is a spike.
+    fails = fails + (1 - is_nan(svi_total_variance(0.0, fa, fb, frho, fm, 0.0)));
+    fails = fails + (1 - is_nan(svi_total_variance(0.0, fa, fb, frho, fm, 0.0 - 0.2)));
+    fails = fails + (1 - is_nan(svi_w_prime2(0.0, fa, fb, frho, fm, 0.0)));
+    // Negative MINIMUM total variance.  a = -0.05 with b*p_sigma*sqrt(1-rho^2)
+    // = 0.1*0.2*0.9539 = 0.01908 leaves a minimum of -0.0309: imaginary vol.
+    // Note `a < 0` alone is NOT the test — the next check proves a negative a
+    // is accepted when the wings lift the vertex back above zero.
+    fails = fails + (1 - is_nan(svi_total_variance(0.0, 0.0 - 0.05, fb, frho, fm, fs)));
+    // ... and the positive control for that guard: a = -0.01 gives a minimum of
+    // +0.00908, which is admissible.  Without this line, a guard that rejected
+    // every negative `a` would pass the check above and be silently wrong.
+    fails = fails + is_nan(svi_total_variance(0.0, 0.0 - 0.01, fb, frho, fm, fs));
+    fails = fails + expect_true(gt_zero(svi_total_variance(0.0, 0.0 - 0.01, fb, frho, fm, fs)));
+    // t <= 0 in the vol conversion.
+    fails = fails + (1 - is_nan(svi_implied_vol(0.0, 0.0, fa, fb, frho, fm, fs)));
+    fails = fails + (1 - is_nan(svi_implied_vol(0.0, 0.0 - 1.0, fa, fb, frho, fm, fs)));
+    // A NaN anywhere in the inputs propagates; it is never swallowed.
+    fails = fails + (1 - is_nan(svi_total_variance(canonical_qnan(), fa, fb, frho, fm, fs)));
+    fails = fails + (1 - is_nan(svi_total_variance(0.0, canonical_qnan(), fb, frho, fm, fs)));
+    fails = fails + (1 - is_nan(svi_durrleman_g(0.0, fa, fb, canonical_qnan(), fm, fs)));
+    fails = fails + (1 - is_nan(svi_implied_vol(0.0, canonical_qnan(), fa, fb, frho, fm, fs)));
+    // The scans fail CLOSED on bad parameters: an unevaluatable surface is not
+    // a surface shown to be arbitrage-free.
+    fails = fails + expect_false(svi_butterfly_ok(0.0 - 0.5, 0.5, 40, fa, 0.0 - 0.1, frho, fm, fs));
+    fails = fails + expect_false(svi_butterfly_ok(0.0 - 0.5, 0.5, 0, fa, fb, frho, fm, fs));
+    fails = fails + expect_false(svi_butterfly_ok(canonical_qnan(), 0.5, 40, fa, fb, frho, fm, fs));
+    fails = fails + expect_false(svi_calendar_ok(0.0 - 0.5, 0.5, 40, 1.0, fa, fb, 1.0, fm, fs, 2.0, ga, gb, grho, gm, gs));
+    // b = 0 is the flat slice and IS admitted — degenerate but not
+    // arbitrageable.  Included so the b guard is known to reject only b < 0.
+    fails = fails + is_nan(svi_total_variance(0.3, fa, 0.0, frho, fm, fs));
+    fails = fails + (1 - chk_ulp(svi_total_variance(0.3, fa, 0.0, frho, fm, fs), 0.04, 256.0));
+
+    // =======================================================================
+    // 5. ADVERSARIAL NEGATIVE CONTROLS.
+    //
+    // Each line below adds `chk_ulp(...)` to `fails` POSITIVELY: a return of 1
+    // means the band ACCEPTED a value known to be wrong, and that counts as a
+    // failure.  Without this block every band above could be wide enough to
+    // accept anything and the whole file would be green and worthless.
+    //
+    // The wrong values are chosen to sit just OUTSIDE the corresponding band,
+    // so each is a real test of that band rather than of an absurd number.
+    // =======================================================================
+
+    // (a) w at the vertex, wrong in the 10th decimal.  Band is 256 ulps of
+    //     0.06, about 3.4e-15; the control is off by 1e-10, roughly 30000x.
+    fails = fails + chk_ulp(svi_total_variance(0.0, fa, fb, frho, fm, fs), 0.0600000001, 256.0);
+    // (b) w' at the vertex with the SIGN flipped.  A sign error in the rho term
+    //     is the single likeliest transcription error in this file.
+    fails = fails + chk_ulp(svi_w_prime(0.0, fa, fb, frho, fm, fs), 0.03, 256.0);
+    // (c) g at the vertex, wrong in the 8th decimal.  g carries the widest band
+    //     in the file (4096 ulps of 1.246, about 1.1e-12), and a wide band is
+    //     exactly where a vacuous pass hides.
+    fails = fails + chk_ulp(svi_durrleman_g(0.0, fa, fb, frho, fm, fs), 1.2461937600000002, 4096.0);
+    // (d) The SWAPPED WING control.  b*(1+rho) = 0.07 must not be accepted as
+    //     the LEFT wing slope, whose true limit is -0.13.  This is the
+    //     adversarial form of the rho-sign claim: a flipped rho leaves w(0)
+    //     and w'' untouched and is caught only here.
+    fails = fails + chk_abs(svi_w_prime(0.0 - 200.0, fa, fb, frho, fm, fs), 0.0 - 0.07, 0.000001);
+    fails = fails + chk_abs(svi_w_prime(200.0, fa, fb, frho, fm, fs), 0.13, 0.000001);
+    // (e) A DROPPED-w''-TERM control, stated as a value.  g(0) without the
+    //     +w''/2 term would be 1.24619375 - 0.25 = 0.99619375.  The band must
+    //     reject it; if it did not, the mutation test on this file could not
+    //     distinguish a correct g from a convex-but-conservative one.
+    fails = fails + chk_ulp(svi_durrleman_g(0.0, fa, fb, frho, fm, fs), 0.99619375, 4096.0);
+    // (f) A DROPPED-DESTABILISER control.  g(0) without the -(w'^2/4)(1/w+1/4)
+    //     term would be 1.24619375 + 0.00376875 = 1.2499625.  This is the
+    //     SILENT mutation — the one that makes every surface look clean — so
+    //     it gets its own control.  The oracle value of the dropped term at
+    //     k = 0 is (0.03^2/4)*(1/0.06 + 0.25) = 0.00376875 exactly.
+    fails = fails + chk_ulp(svi_durrleman_g(0.0, fa, fb, frho, fm, fs), 1.2499625, 4096.0);
+    // (g) A FLAT-VOL control: the surface's ATM vol must not be accepted as its
+    //     k = -0.2 vol.  A smile collapsed to a single number passes every
+    //     round-trip in section 2 and fails only this.
+    fails = fails + chk_ulp(svi_implied_vol(0.0 - 0.2, 1.0, fa, fb, frho, fm, fs), 0.2449489742783178, 64.0);
+    // (h) A WRONG-MATURITY control: the T=1 vol must not be accepted as the
+    //     T=2 vol.  Catches a dropped or inverted 1/t in the conversion, which
+    //     the iv^2*t == w consistency check would NOT catch if t were dropped
+    //     from both sides.
+    fails = fails + chk_ulp(svi_implied_vol(0.0, 2.0, fa, fb, frho, fm, fs), 0.2449489742783178, 256.0);
+    // (i) A WRONG-PARAMETER-SET control: the VIOL slice's w at the vertex must
+    //     not be accepted as the FREE slice's.  Proves the parameters are
+    //     actually reaching the arithmetic rather than being ignored in favour
+    //     of a hard-coded slice.
+    fails = fails + chk_ulp(svi_total_variance(0.0, va, vb, vrho, vm, vs), 0.06, 256.0);
+    // (j) A FLUSH-TO-ZERO control on the minimum: w'(k_min) is asserted against
+    //     an absolute 1e-13 band, so confirm that band rejects a value that is
+    //     merely small rather than zero.
+    fails = fails + chk_abs(0.0000001, 0.0, 0.0000000000001);
+
+    return fails;
+}

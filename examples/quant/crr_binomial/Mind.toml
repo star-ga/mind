@@ -1,0 +1,6 @@
+[package]
+name = "crr_binomial"
+version = "0.1.0"
+
+[build]
+entry = "main.mind"

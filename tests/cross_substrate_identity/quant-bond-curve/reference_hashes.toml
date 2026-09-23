@@ -1,0 +1,12 @@
+# mind-bench reference hashes — RFC 0020 §5. See dot-l2-q16/reference_hashes.toml
+# for full provenance/signing notes.
+#
+# avx2 hash copied verbatim from the MIND_BENCH_BLESS=1 run output (never hand-written).
+#
+# avx2 — blessed on this x86_64 host (MIND_BENCH_BLESS=1, cross_substrate_identity.rs).
+# neon — VERIFIED on real aarch64 hardware (GCE t2a-standard-4, Ampere Altra,
+#        LLVM/MLIR 20): the full cross_substrate_identity suite passed 36/36 with
+#        MIND_BENCH_REQUIRE=1, recomputing this hash natively and matching it.
+
+avx2 = "b63f8f3f4491bb768b4a960536546a8e7ca17f9e5bbddf84a3a0789d85f77ef4"
+neon = "b63f8f3f4491bb768b4a960536546a8e7ca17f9e5bbddf84a3a0789d85f77ef4"

@@ -1,0 +1,1416 @@
+// examples/quant/bond_curve — deterministic fixed-income analytics.
+//
+// Copyright 2025 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// WHAT THIS DEMONSTRATES, AND WHY IT IS NOT ANOTHER OPTION MODEL.  The other
+// examples under `examples/quant` all price optionality: Black-Scholes, the
+// higher-order Greeks, a binomial lattice, an implied-vol root-find.  Every one
+// of them is an EQUITY DERIVATIVES witness.  A fixed-income risk desk does not
+// read those; it reads a price, a yield, a duration and a convexity, and it is
+// asked to reproduce all four on demand.
+//
+// This module is that witness.  Nothing here is optional, stochastic, or
+// model-dependent: a bond's price given a yield is an arithmetic identity, and
+// so is its duration.  That is exactly what makes it valuable as a determinism
+// artifact.  When a regulator asks "reproduce the 31 March duration of this
+// position", there is no model assumption to hide behind — either the number
+// comes back bit-for-bit or the firm's reproduction claim is false.  The
+// quantities below are the ones actually asked for.
+//
+// THE CLAIM, STATED EXACTLY.  This module does NOT claim to match Bloomberg, a
+// vendor analytics library, or any particular market convention in the last
+// bits.  It cannot, and it is not trying to: market conventions differ on day
+// count, settlement, and accrued interest, and two correct systems following
+// different conventions produce different numbers for good reasons.  The claim
+// is narrower and harder:
+//     the same source, compiled for two different ISAs, produces byte-identical
+//     output, with a stated accuracy bound against a 50-digit oracle.
+// Accuracy and reproducibility are orthogonal properties.  Determinism is what
+// makes a reproduction claim meaningful, not a substitute for a convention.
+//
+// SCOPE, STATED SO IT IS NOT OVER-READ.  This is a CLEAN-PRICE, WHOLE-PERIOD
+// model: cashflows land on exact period boundaries i/freq for i = 1..n, and
+// there is no settlement date, no accrued interest, and no day-count fraction.
+// A real desk needs all three.  They are deliberately absent because each one
+// is a CONVENTION (30/360 vs ACT/ACT vs ACT/360), and baking one convention
+// into a numeric contract is how two systems that agree on the mathematics
+// disagree on the number.  Adding them is a wrapper around this core, not a
+// change to it.
+//
+// NO `pow`, AND WHY THAT IS A SAFETY PROPERTY, NOT A LIMITATION.  Every
+// discount factor here is (1 + y/f)^(-i) for an INTEGER i, and is built by a
+// fixed left-to-right repeated multiply rather than by a transcendental power.
+// Two reasons, both load-bearing:
+//   1. An integer power by repeated multiplication is a finite sequence of
+//      exact-order IEEE multiplies.  A `pow` built on exp(log(x)*y) rounds
+//      twice through two transcendentals and is strictly worse here.
+//   2. A MIND function whose name matches a C99 libm symbol (exp, log, pow,
+//      sin, cos, erf, erfc) can be constant-folded to the HOST libm by LLVM
+//      when the argument is a compile-time constant, silently skipping the MIND
+//      body and destroying cross-substrate identity.  This is a documented
+//      defect in this repo.  Every kernel below is therefore named `dm_*` or
+//      `det_*`, never the bare libm name.  Keep that discipline.
+//
+// SELF-CONTAINED, AND WHY.  The detmath kernels are duplicated below instead of
+// imported.  mindc 0.10.2 cannot carry an f64 across a module boundary (roadmap
+// 17.1): an imported `fn f(x: f64) -> f64` types as `(i64) -> i64` at the call
+// site and miscompiles silently.  This mirrors `examples/quant/black_scholes`
+// and `examples/detmath_kat`.  The block between the KERNEL BEGIN and KERNEL
+// END markers is copied BYTE-IDENTICALLY from
+// `examples/quant/black_scholes/main.mind`, so the two examples cannot silently
+// diverge in their kernels.  Only the subset actually used here is vendored:
+// erf, erfc, norm_cdf and norm_pdf are absent because a bond has no normal
+// distribution in it, and vendoring an unused kernel is dead code that nothing
+// gates.
+// deferred: replace the duplicated kernel block with `import std.detmath;` once
+// roadmap 17.1 lands — upgrade path: delete the block between the KERNEL BEGIN
+// and KERNEL END markers and call the std surface directly.
+//
+// NO `[test]` FUNCTIONS, AND WHY.  The mindc 0.10.2 `[test]` interpreter
+// mis-evaluates an f64 comparison in a function body (it takes the then-branch
+// unconditionally).  Every guarded function here would return through its
+// leading `if x != x` guard and every interpreted assertion would pass
+// vacuously — a false green.  The native backend evaluates f64 branches
+// correctly, so the gate is build-and-run: `mindc run`, exit code 0 means every
+// check passed.  The count of failures is the exit code, so a partial failure
+// is never rounded to success.
+//
+// REFERENCES (original sources only):
+//   Macaulay, F. R. (1938). "Some Theoretical Problems Suggested by the
+//     Movements of Interest Rates, Bond Yields and Stock Prices in the United
+//     States since 1856." NBER.  (Defines the duration measure.)
+//   Hicks, J. R. (1939). "Value and Capital." Oxford.  (Independently derives
+//     the same measure as the elasticity of price to the discount factor —
+//     the modified-duration form.)
+//   Redington, F. M. (1952). "Review of the Principles of Life-Office
+//     Valuations." Journal of the Institute of Actuaries 78(3), 286-340.
+//     (Second-order matching; the reason convexity is a reported number.)
+// ---------------------------------------------------------------------------
+
+// =========================== KERNEL BEGIN ==================================
+// Duplicated verbatim from std/detmath.mind (roadmap 17.1 blocks importing).
+// Do not "improve" these: every polynomial is a fixed left-fold Horner
+// recurrence in source order.  Reassociating one changes the last bit of every
+// price downstream and breaks the cross-substrate hash.
+
+fn absf(x: f64) -> f64 {
+    if x < 0.0 {
+        return 0.0 - x;
+    }
+    return x;
+}
+
+// +inf by byte-identical IEEE overflow; never a synthesised NaN.
+fn inf() -> f64 {
+    let mut v: f64 = 1.0;
+    let mut i: i64 = 0;
+    while i < 350 {
+        v = v * 10.0;
+        i = i + 1;
+    }
+    return v;
+}
+
+// 0x7FF8000000000000 — the MIND-canonical quiet NaN, pinned so an
+// out-of-domain result is byte-identical (x86 sets the sign bit, ARM does not).
+fn canonical_qnan() -> f64 {
+    return __mind_bits_to_f64(9221120237041090560);
+}
+
+fn rnd_to_i64(x: f64) -> i64 {
+    if x >= 0.0 {
+        return (x + 0.5) as i64;
+    }
+    return 0 - ((0.5 - x) as i64);
+}
+
+fn det_exp(x: f64) -> f64 {
+    let ln2_hi: f64 = 0.6931467056274414;
+    let ln2_lo: f64 = 0.00000047493250390941725;
+    let inv_ln2: f64 = 1.4426950408889634;
+    let k: i64 = rnd_to_i64(x * inv_ln2);
+    let kf: f64 = k as f64;
+    let r: f64 = (x - kf * ln2_hi) - kf * ln2_lo;
+    let mut t: f64 = 0.0000000000007647163731819816;
+    t = 0.00000000016059043836821613 + r * t;
+    t = 0.00000000208767569878681 + r * t;
+    t = 0.00000002505210838544172 + r * t;
+    t = 0.0000002755731922398589 + r * t;
+    t = 0.0000027557319223985893 + r * t;
+    t = 0.0000248015873015873 + r * t;
+    t = 0.0001984126984126984 + r * t;
+    t = 0.001388888888888889 + r * t;
+    t = 0.008333333333333333 + r * t;
+    t = 0.041666666666666664 + r * t;
+    t = 0.16666666666666666 + r * t;
+    t = 0.5 + r * t;
+    t = 1.0 + r * t;
+    t = 1.0 + r * t;
+    let mut y: f64 = t * 1.0;
+    let mut j: i64 = 0;
+    if k >= 0 {
+        while j < k {
+            y = y * 2.0;
+            j = j + 1;
+        }
+    } else {
+        while j < (0 - k) {
+            y = y / 2.0;
+            j = j + 1;
+        }
+    }
+    return y;
+}
+
+fn dm_exp(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x >= 709.7827128933841 {
+        return inf();
+    }
+    if x <= 0.0 - 745.1332191019412 {
+        return 0.0;
+    }
+    return det_exp(x);
+}
+
+fn det_log_core(x: f64) -> f64 {
+    let ln2: f64 = 0.6931471805599453;
+    let mut k: i64 = 0;
+    // f64-param-init: seed a loop-carried f64 binding via the exact identity
+    // `x * 1.0` so mindc 0.10.2 does not infer it as i64.
+    let mut m: f64 = x * 1.0;
+    while m >= 1.4142135623730951 {
+        m = m / 2.0;
+        k = k + 1;
+    }
+    while m < 0.7071067811865476 {
+        m = m * 2.0;
+        k = k - 1;
+    }
+    let s: f64 = (m - 1.0) / (m + 1.0);
+    let s2: f64 = s * s;
+    let mut acc: f64 = 0.0;
+    let mut n: i64 = 29;
+    while n >= 1 {
+        acc = 1.0 / (n as f64) + s2 * acc;
+        n = n - 2;
+    }
+    return (k as f64) * ln2 + 2.0 * s * acc;
+}
+
+fn dm_log(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x < 0.0 {
+        return 0.0;
+    }
+    if x == 0.0 {
+        return 0.0 - inf();
+    }
+    if x >= inf() {
+        return inf();
+    }
+    return det_log_core(x);
+}
+
+// ============================ KERNEL END ===================================
+
+// ---------------------------------------------------------------------------
+// DISCOUNTING PRIMITIVES.
+//
+// A bond's discount factor is (1 + y/f)^(-i) for an INTEGER period index i.
+// `df_periodic` builds it as a fixed left-to-right repeated multiply of the
+// single-period factor.  The loop runs exactly i times, ascending, and the
+// accumulation order is part of the contract: multiplying the same factors in a
+// different order is algebraically identical and numerically different, and
+// would change the last bit of every price, duration and convexity below.
+//
+// The single-period factor is formed ONCE as `1.0 / (1.0 + y / f)` and then
+// reused, rather than recomputing the division inside the loop.  That is not an
+// optimisation — it is a determinism requirement: one division rounded once,
+// then multiplied, is a fixed rounding sequence, whereas a division per step
+// would be a different one, and the two disagree in the last bits.
+// ---------------------------------------------------------------------------
+
+// Single-period discount factor v = 1/(1 + y/f).
+fn df_single(ytm: f64, freq: f64) -> f64 {
+    return 1.0 / (1.0 + ytm / freq);
+}
+
+// v^i by repeated multiply, ascending, fixed order.  i is an i64 period COUNT,
+// never a real exponent: there is no `pow` on this path and there must not be.
+fn df_pow(v: f64, i: i64) -> f64 {
+    // f64-param-init: seed the loop-carried binding via the exact identity
+    // `x * 1.0` so mindc 0.10.2 does not infer it as i64.
+    let mut acc: f64 = 1.0 * 1.0;
+    let mut j: i64 = 0;
+    while j < i {
+        acc = acc * v;
+        j = j + 1;
+    }
+    return acc;
+}
+
+// ---------------------------------------------------------------------------
+// ADMISSIBILITY.
+//
+// Every public function returns the canonical qNaN on a degenerate input rather
+// than a plausible-looking number.  A silent numeric fallback is how a pricing
+// bug reaches production wearing a valid-looking price — and in fixed income
+// the valid-looking price is the one that gets booked.
+//
+// The yield condition is `1 + y/f > 0`, not `y > 0`.  Negative yields are real
+// and must price: a -50bp two-year Bund is an ordinary instrument.  What is
+// inadmissible is a yield at or below -f, where the single-period factor is
+// infinite or negative and the "price" is arithmetic noise.
+// ---------------------------------------------------------------------------
+fn bond_valid(face: f64, coupon_rate: f64, ytm: f64, freq: i64, n_periods: i64) -> i64 {
+    if face != face {
+        return 0;
+    }
+    if coupon_rate != coupon_rate {
+        return 0;
+    }
+    if ytm != ytm {
+        return 0;
+    }
+    if freq <= 0 {
+        return 0;
+    }
+    if n_periods <= 0 {
+        return 0;
+    }
+    if face <= 0.0 {
+        return 0;
+    }
+    if coupon_rate < 0.0 {
+        return 0;
+    }
+    let f: f64 = freq as f64;
+    if 1.0 + ytm / f <= 0.0 {
+        return 0;
+    }
+    return 1;
+}
+
+// ---------------------------------------------------------------------------
+// 1. BOND PRICE.
+//
+//   P = sum_{i=1..n} (face * c / f) * v^i  +  face * v^n,     v = 1/(1 + y/f)
+//
+// SUMMATION ORDER IS PINNED, AND THIS IS THE LOAD-BEARING COMMENT OF THE FILE.
+// The coupon leg is accumulated strictly ascending in i, one `acc = acc + term`
+// per period, and the principal repayment is added LAST as a separate
+// statement after the loop.  This order is part of the numeric contract:
+//
+//   * Summing descending (longest cashflow first) is algebraically identical
+//     and numerically different — it is in fact slightly MORE accurate, because
+//     it adds the small terms together before they meet the large ones.  It is
+//     still forbidden here, because "more accurate" is not the property being
+//     defended.  Reproducibility is.
+//   * A compiler permitted to reassociate this sum (a vectorised tree
+//     reduction, four partial accumulators summed at the end) would produce a
+//     different last bit on a machine with a different vector width.  That is
+//     precisely the cross-substrate divergence this repository exists to
+//     prevent: the same source would price the same bond differently on x86
+//     `avx2` and ARM `neon`.
+//   * The principal is added after the loop rather than folded into the final
+//     coupon term for the same reason: it is a distinct rounding step, and
+//     which step it is must not depend on how the loop was compiled.
+//
+// So: do not reassociate, do not reorder, do not fuse.  The scalar strict-FP
+// path is the contract, not an implementation detail.
+// ---------------------------------------------------------------------------
+pub fn bond_price(face: f64, coupon_rate: f64, ytm: f64, freq: i64, n_periods: i64) -> f64 {
+    if bond_valid(face, coupon_rate, ytm, freq, n_periods) == 0 {
+        return canonical_qnan();
+    }
+    let f: f64 = freq as f64;
+    let v: f64 = df_single(ytm, f);
+    let cpn: f64 = face * coupon_rate / f;
+    // f64-param-init: `0.0 * 1.0` seeds the accumulator as f64 under 0.10.2.
+    let mut acc: f64 = 0.0 * 1.0;
+    let mut i: i64 = 1;
+    while i <= n_periods {
+        acc = acc + cpn * df_pow(v, i);
+        i = i + 1;
+    }
+    // Principal repayment, added LAST and as its own rounding step.
+    acc = acc + face * df_pow(v, n_periods);
+    return acc;
+}
+
+// ---------------------------------------------------------------------------
+// 2. YIELD TO MATURITY.
+//
+// The inverse of `bond_price` in y.  There is no closed form for n > 4, so this
+// is a root-find, and a root-find is where reproducibility is usually lost.
+//
+// WHY THE ITERATION COUNT IS FIXED, AND WHY A TOLERANCE LOOP IS FORBIDDEN.
+// The obvious implementation is
+//     while |f(y)| > tol { y = y - f(y)/f'(y); }
+// and it is NOT reproducible, for a reason that has nothing to do with the
+// tolerance being loose.  The number of times that loop runs is a function of
+// the ROUNDING of f(y).  Two substrates that agree on the mathematics but
+// differ by one ulp in a single intermediate — because one fused a
+// multiply-add and the other did not, or because a library exp rounded
+// differently — will cross the tolerance on DIFFERENT iterations.  One does 7
+// steps, the other does 8.  The extra step changes the answer in the last bits,
+// and now the two substrates disagree.
+//
+// The divergence is worse than it first appears: the trip count is a CONTROL
+// FLOW property, so it is not bounded by the size of the numeric perturbation
+// that caused it.  A one-ulp difference does not produce a one-ulp difference
+// in the answer; it produces a whole extra Newton step.
+//
+// So the trip count here is a compile-time literal.  It is chosen once, for the
+// widest admissible bracket, and paid unconditionally on every call — including
+// on the calls that converged after four steps.  The cost is a few dozen
+// multiplies.  The purchase is that the control flow is identical on every
+// substrate for every input, which is the only way the answer can be.
+//
+// THE THREE CONSTANTS ARE THE ENTIRE CONTROL-FLOW CONTRACT.  None is derived
+// from an input; none is compared against a tolerance.
+//   YTM_LO    = -0.9   — below this, `1 + y/f` is non-positive for f = 1 and the
+//                        price is not defined.  Deeply negative yields inside
+//                        this bound still price, by design.
+//   YTM_HI    =  2.0   — 200% annualised.  A bond quoted at a yield above this
+//                        is in default, not in a pricing model.
+//   YTM_ITERS =  80    — FIXED.  80 guaranteed-or-better halvings of a width-2.9
+//                        interval reach 2.4e-24, far below one ulp of any yield
+//                        in range; the accepted Newton steps only make it
+//                        converge sooner.  The count does not vary with the
+//                        inputs.
+//
+// The structure mirrors `examples/quant/implied_vol`: a bracketed Newton with a
+// bisection fallback, where the bracket is updated BEFORE the Newton candidate
+// is vetted, so an overshooting Newton step is rejected rather than trusted.
+// ---------------------------------------------------------------------------
+
+fn ytm_lo() -> f64 {
+    return 0.0 - 0.9;
+}
+
+fn ytm_hi() -> f64 {
+    return 2.0;
+}
+
+fn ytm_iters() -> i64 {
+    return 80;
+}
+
+// dP/dy, analytic.  Used as the Newton derivative.
+//
+//   dP/dy = -(1/f) * sum_{i=1..n} i * cf_i * v^(i+1)
+//
+// Analytic, NOT a finite difference: a bumped-and-revalued derivative would
+// inherit two prices' worth of rounding AND a step-size choice, and the step
+// size would become one more thing the iteration's trajectory depends on —
+// i.e. one more way two substrates could take different paths.
+fn bond_dprice_dy(face: f64, coupon_rate: f64, ytm: f64, freq: i64, n_periods: i64) -> f64 {
+    if bond_valid(face, coupon_rate, ytm, freq, n_periods) == 0 {
+        return canonical_qnan();
+    }
+    let f: f64 = freq as f64;
+    let v: f64 = df_single(ytm, f);
+    let cpn: f64 = face * coupon_rate / f;
+    let mut acc: f64 = 0.0 * 1.0;
+    let mut i: i64 = 1;
+    while i <= n_periods {
+        acc = acc + (i as f64) * cpn * df_pow(v, i + 1);
+        i = i + 1;
+    }
+    acc = acc + (n_periods as f64) * face * df_pow(v, n_periods + 1);
+    return 0.0 - acc / f;
+}
+
+// Admissibility for the inverse.  Returns 1 only when a yield in
+// [YTM_LO, YTM_HI] can actually reproduce `price`.
+//
+// The bounds are computed with the SAME pricer the solver inverts, so a price
+// admitted here is one the pricer can actually produce.  Bisection on a bracket
+// that contains no root converges confidently to an endpoint — that is the
+// single most dangerous failure mode of a root-find, because the answer looks
+// converged and carries no evidence that it is wrong.  Reject instead.
+//
+// Note the direction: price is strictly DECREASING in yield, so the price at
+// YTM_LO is the HIGH price and the price at YTM_HI is the LOW one.  Getting
+// this comparison backwards would reject every valid input, which the KAT
+// catches, and admit every invalid one, which only the domain checks catch.
+fn ytm_admissible(price: f64, face: f64, coupon_rate: f64, freq: i64, n_periods: i64) -> i64 {
+    if price != price {
+        return 0;
+    }
+    if price <= 0.0 {
+        return 0;
+    }
+    if bond_valid(face, coupon_rate, ytm_lo(), freq, n_periods) == 0 {
+        return 0;
+    }
+    if bond_valid(face, coupon_rate, ytm_hi(), freq, n_periods) == 0 {
+        return 0;
+    }
+    let p_hi: f64 = bond_price(face, coupon_rate, ytm_lo(), freq, n_periods);
+    let p_lo: f64 = bond_price(face, coupon_rate, ytm_hi(), freq, n_periods);
+    if p_hi != p_hi {
+        return 0;
+    }
+    if p_lo != p_lo {
+        return 0;
+    }
+    if price > p_hi {
+        return 0;
+    }
+    if price < p_lo {
+        return 0;
+    }
+    return 1;
+}
+
+// The fixed-count bracketed Newton/bisection hybrid.
+//
+// INVARIANT, maintained at every step: the root lies in [lo, hi].  It holds at
+// entry because `ytm_admissible` proved the price is between p(hi) and p(lo),
+// and the price is strictly monotone decreasing in yield for a non-negative
+// coupon.  It is preserved by the sign test, which discards only the half that
+// cannot contain the root.
+//
+// The loop body is branch-balanced: every iteration evaluates the price once
+// and the derivative once, regardless of which branch it takes.  The only
+// input-dependent thing is WHICH of the two updates is applied, never HOW MANY
+// times the body runs.
+pub fn bond_ytm(price: f64, face: f64, coupon_rate: f64, freq: i64, n_periods: i64) -> f64 {
+    if ytm_admissible(price, face, coupon_rate, freq, n_periods) == 0 {
+        return canonical_qnan();
+    }
+    // f64-param-init: seed each loop-carried f64 binding via the exact identity
+    // `x * 1.0` so mindc 0.10.2 does not infer it as i64.
+    let mut lo: f64 = ytm_lo() * 1.0;
+    let mut hi: f64 = ytm_hi() * 1.0;
+    let mut y: f64 = 0.5 * (lo + hi);
+    let mut i: i64 = 0;
+    while i < ytm_iters() {
+        let fy: f64 = bond_price(face, coupon_rate, y, freq, n_periods) - price;
+        // Bracket update FIRST.  Price DECREASES in yield, so an overpriced
+        // model value (fy > 0) means the yield is too LOW: move the lower
+        // bound up.  This is the sign that is easiest to get backwards, and
+        // getting it backwards still "converges" — to the wrong endpoint.
+        if fy > 0.0 {
+            lo = y;
+        } else {
+            hi = y;
+        }
+        let d: f64 = bond_dprice_dy(face, coupon_rate, y, freq, n_periods);
+        // Newton candidate, defaulting to the bisection midpoint.  Guarded on
+        // d < 0.0 (the derivative is strictly negative for an ordinary bond)
+        // because a zero or positive derivative would send the step out of the
+        // bracket on exactly the iteration where the bracket is the only thing
+        // keeping the iteration honest.
+        let mut cand: f64 = 0.5 * (lo + hi);
+        if d < 0.0 {
+            let nn: f64 = y - fy / d;
+            // STRICTLY inside.  A candidate equal to an endpoint is rejected:
+            // accepting it would let the iterate stall on a bracket edge for
+            // the remaining fixed iterations without the interval shrinking.
+            if nn > lo {
+                if nn < hi {
+                    cand = nn;
+                }
+            }
+        }
+        y = cand;
+        i = i + 1;
+    }
+    return y;
+}
+
+// ---------------------------------------------------------------------------
+// 3. DURATION AND CONVEXITY — ANALYTIC, NOT BUMPED.
+//
+//   Macaulay D  = ( sum_i t_i * cf_i * v^i ) / P,          t_i = i / f
+//   Modified D  = D / (1 + y/f)
+//   Convexity C = ( sum_i t_i * (t_i + 1/f) * cf_i * v^(i+2) ) / P
+//
+// These are the closed-form sums, evaluated in the SAME pinned ascending order
+// as the price.  They are not finite differences of the pricer, for the reason
+// stated throughout this repository: a bumped-and-revalued sensitivity inherits
+// two prices' worth of rounding plus a step-size choice, and the step size then
+// becomes part of the numeric contract without being written down anywhere.
+//
+// The convexity convention here is the standard one: the second derivative of
+// price with respect to yield, divided by price, with the periodic compounding
+// carried correctly through the (t + 1/f) factor.  It is quoted per 1.00 of
+// yield, NOT per 100bp.  A desk wanting "per basis point" divides at the call
+// site; scaling it here would bake a presentation convention into a numeric
+// contract.
+//
+// The finite difference appears exactly ONCE in this file: in the KAT, as a
+// CHECK on modified duration.  That is the appropriate use of a bump — to
+// falsify an analytic formula, never to implement one.
+// ---------------------------------------------------------------------------
+
+pub fn macaulay_duration(face: f64, coupon_rate: f64, ytm: f64, freq: i64, n_periods: i64) -> f64 {
+    if bond_valid(face, coupon_rate, ytm, freq, n_periods) == 0 {
+        return canonical_qnan();
+    }
+    let f: f64 = freq as f64;
+    let v: f64 = df_single(ytm, f);
+    let cpn: f64 = face * coupon_rate / f;
+    let p: f64 = bond_price(face, coupon_rate, ytm, freq, n_periods);
+    let mut acc: f64 = 0.0 * 1.0;
+    let mut i: i64 = 1;
+    while i <= n_periods {
+        let t: f64 = (i as f64) / f;
+        acc = acc + t * cpn * df_pow(v, i);
+        i = i + 1;
+    }
+    let tn: f64 = (n_periods as f64) / f;
+    acc = acc + tn * face * df_pow(v, n_periods);
+    return acc / p;
+}
+
+pub fn modified_duration(face: f64, coupon_rate: f64, ytm: f64, freq: i64, n_periods: i64) -> f64 {
+    if bond_valid(face, coupon_rate, ytm, freq, n_periods) == 0 {
+        return canonical_qnan();
+    }
+    let f: f64 = freq as f64;
+    let d: f64 = macaulay_duration(face, coupon_rate, ytm, freq, n_periods);
+    return d / (1.0 + ytm / f);
+}
+
+pub fn convexity(face: f64, coupon_rate: f64, ytm: f64, freq: i64, n_periods: i64) -> f64 {
+    if bond_valid(face, coupon_rate, ytm, freq, n_periods) == 0 {
+        return canonical_qnan();
+    }
+    let f: f64 = freq as f64;
+    let v: f64 = df_single(ytm, f);
+    let cpn: f64 = face * coupon_rate / f;
+    let p: f64 = bond_price(face, coupon_rate, ytm, freq, n_periods);
+    let inv_f: f64 = 1.0 / f;
+    let mut acc: f64 = 0.0 * 1.0;
+    let mut i: i64 = 1;
+    while i <= n_periods {
+        let t: f64 = (i as f64) / f;
+        // Exponent i+2, NOT i+1.  Differentiating v^i = (1+y/f)^(-i) twice with
+        // respect to y brings down two factors of (1+y/f)^(-1), so the second
+        // derivative carries v^(i+2).  The i+1 form is the FIRST derivative's
+        // exponent and is a textbook-looking, entirely plausible, wrong answer:
+        // it overstates convexity by a factor of (1+y/f), which is 3.5% here.
+        // See the KAT's finite-difference check, which is what caught it.
+        acc = acc + t * (t + inv_f) * cpn * df_pow(v, i + 2);
+        i = i + 1;
+    }
+    let tn: f64 = (n_periods as f64) / f;
+    acc = acc + tn * (tn + inv_f) * face * df_pow(v, n_periods + 2);
+    return acc / p;
+}
+
+// ---------------------------------------------------------------------------
+// 4. TERM STRUCTURE — PRICING OFF A ZERO CURVE.
+//
+// A yield-to-maturity is a single number that reprices one bond.  It is not a
+// term structure: two bonds with the same maturity and different coupons have
+// different yields even in an arbitrage-free market.  A desk discounts each
+// cashflow at ITS OWN maturity's zero rate, which is what this section does.
+//
+// THE KNOTS ARE EXPLICIT SCALARS, AND WHY.  The curve is passed as four
+// (t, z) pairs rather than as an array.  Two reasons:
+//   1. mindc 0.10.2 has no f64 load/store intrinsic, so an f64 array must be
+//      carried as IEEE bit patterns in an i64 heap block (see
+//      `examples/quant/crr_binomial`).  That is correct and proven, but it puts
+//      a reinterpret layer between the reader and the curve in the one example
+//      whose audience is a risk officer rather than a compiler engineer.
+//   2. Four knots — 6M, 2Y, 5Y, 10Y — is a real benchmark curve shape, and
+//      making them positional parameters means the KAT below states the entire
+//      curve at every call site, with nothing hidden in a constructor.
+// A production curve has more knots and belongs in a heap block; this is an
+// example, and its job is to be checkable by eye.
+//
+// INTERPOLATION IS LINEAR IN THE ZERO RATE, deterministically.  The weight is
+// formed ONCE as (t - t0) / (t1 - t0) and applied as z0 + w * (z1 - z0), never
+// as the algebraically-equal (1-w)*z0 + w*z1.  The two disagree in the last
+// bits, and the first form is exact at both endpoints (w = 0 gives exactly z0,
+// w = 1 gives exactly z0 + (z1 - z0), which is z1 up to one rounding) while the
+// second is not.  Endpoint exactness is what makes the knot-value KAT checks
+// below meaningful rather than approximate.
+//
+// Linear-in-z is a CHOICE, and a contestable one: linear in the log discount
+// factor, or monotone cubic on the forwards, are both defensible and produce
+// different numbers.  It is stated here rather than assumed, because an
+// interpolation convention is exactly the kind of undocumented decision that
+// makes two correct systems disagree.
+//
+// EXTRAPOLATION IS FLAT.  Outside [t0, t3] the nearest knot's rate is used
+// unchanged.  Flat extrapolation is the conservative choice — a linear
+// extrapolation off the long end can produce negative discount factors at long
+// maturities, which is an arbitrage, not a curve.
+//
+// Discounting is CONTINUOUS: df = exp(-z * t).  That is why `dm_exp` is
+// vendored above.  Note the naming discipline: it is `dm_exp`, never `exp`, for
+// the libm-capture reason in the header.
+// ---------------------------------------------------------------------------
+
+fn curve_valid(t0: f64, t1: f64, t2: f64, t3: f64) -> i64 {
+    if t0 != t0 {
+        return 0;
+    }
+    if t1 != t1 {
+        return 0;
+    }
+    if t2 != t2 {
+        return 0;
+    }
+    if t3 != t3 {
+        return 0;
+    }
+    if t0 <= 0.0 {
+        return 0;
+    }
+    // Knots must be strictly increasing, or the interpolation weight divides by
+    // zero or by a negative number and the "curve" is not a function of time.
+    if t1 <= t0 {
+        return 0;
+    }
+    if t2 <= t1 {
+        return 0;
+    }
+    if t3 <= t2 {
+        return 0;
+    }
+    return 1;
+}
+
+// Zero rate at maturity t by deterministic linear interpolation between knots,
+// flat outside.  Fixed comparison ladder, ascending: the branch taken is a
+// function of t alone and nothing else.
+pub fn zero_rate(t: f64, t0: f64, z0: f64, t1: f64, z1: f64, t2: f64, z2: f64, t3: f64, z3: f64) -> f64 {
+    if t != t {
+        return canonical_qnan();
+    }
+    if curve_valid(t0, t1, t2, t3) == 0 {
+        return canonical_qnan();
+    }
+    if t <= t0 {
+        return z0;
+    }
+    if t >= t3 {
+        return z3;
+    }
+    if t <= t1 {
+        let w: f64 = (t - t0) / (t1 - t0);
+        return z0 + w * (z1 - z0);
+    }
+    if t <= t2 {
+        let w: f64 = (t - t1) / (t2 - t1);
+        return z1 + w * (z2 - z1);
+    }
+    let w: f64 = (t - t2) / (t3 - t2);
+    return z2 + w * (z3 - z2);
+}
+
+// Price off the term structure.  Same pinned ascending summation order as
+// `bond_price`, same principal-last discipline, same reassociation prohibition.
+// The only difference is the discount factor: exp(-z(t) * t) instead of v^i.
+pub fn price_from_zero_curve(face: f64, coupon_rate: f64, freq: i64, n_periods: i64, t0: f64, z0: f64, t1: f64, z1: f64, t2: f64, z2: f64, t3: f64, z3: f64) -> f64 {
+    if face != face {
+        return canonical_qnan();
+    }
+    if coupon_rate != coupon_rate {
+        return canonical_qnan();
+    }
+    if freq <= 0 {
+        return canonical_qnan();
+    }
+    if n_periods <= 0 {
+        return canonical_qnan();
+    }
+    if face <= 0.0 {
+        return canonical_qnan();
+    }
+    if coupon_rate < 0.0 {
+        return canonical_qnan();
+    }
+    if curve_valid(t0, t1, t2, t3) == 0 {
+        return canonical_qnan();
+    }
+    let f: f64 = freq as f64;
+    let cpn: f64 = face * coupon_rate / f;
+    let mut acc: f64 = 0.0 * 1.0;
+    let mut i: i64 = 1;
+    while i <= n_periods {
+        let t: f64 = (i as f64) / f;
+        let z: f64 = zero_rate(t, t0, z0, t1, z1, t2, z2, t3, z3);
+        acc = acc + cpn * dm_exp(0.0 - z * t);
+        i = i + 1;
+    }
+    // Principal repayment, added LAST and as its own rounding step.
+    let tn: f64 = (n_periods as f64) / f;
+    let zn: f64 = zero_rate(tn, t0, z0, t1, z1, t2, z2, t3, z3);
+    acc = acc + face * dm_exp(0.0 - zn * tn);
+    return acc;
+}
+
+// ---------------------------------------------------------------------------
+// 5. IMPLIED FORWARD RATE.
+//
+//   f(t1, t2) = (z2 * t2 - z1 * t1) / (t2 - t1)
+//
+// The continuously-compounded forward rate implied by two zeros, by the
+// no-arbitrage condition that investing to t2 directly must equal investing to
+// t1 and rolling forward:  exp(z2*t2) = exp(z1*t1) * exp(f*(t2-t1)).
+//
+// The numerator `z2*t2 - z1*t1` is a genuine difference of two same-order
+// quantities and it is the cancellation-sensitive term here: for closely-spaced
+// maturities with similar rates, the two products agree in their leading digits
+// and the difference is formed from what is left.  Dividing that by a small
+// (t2 - t1) amplifies whatever error survived.  This is the one function in the
+// file whose conditioning is genuinely bad, and it is bad for a structural
+// reason rather than an implementation one — no rearrangement fixes it, because
+// the quantity itself is a difference over a difference.  A curve with knots
+// one day apart will produce a noisy forward in ANY implementation; that is a
+// property of the question, not of the arithmetic.
+//
+// Stated plainly so it is not mistaken for a defect to be fixed later: this
+// function is deterministic (the same inputs give the same bits everywhere),
+// and it is ill-conditioned (nearby inputs give distant outputs).  Those are
+// different properties and this file only claims the first.
+// ---------------------------------------------------------------------------
+pub fn forward_rate(z1: f64, t1: f64, z2: f64, t2: f64) -> f64 {
+    if z1 != z1 {
+        return canonical_qnan();
+    }
+    if t1 != t1 {
+        return canonical_qnan();
+    }
+    if z2 != z2 {
+        return canonical_qnan();
+    }
+    if t2 != t2 {
+        return canonical_qnan();
+    }
+    if t1 < 0.0 {
+        return canonical_qnan();
+    }
+    // Strictly increasing, not merely non-equal: t2 == t1 divides by zero, and
+    // t2 < t1 silently returns a backwards forward that looks plausible.
+    if t2 <= t1 {
+        return canonical_qnan();
+    }
+    return (z2 * t2 - z1 * t1) / (t2 - t1);
+}
+
+// ===========================================================================
+// KNOWN-ANSWER TESTS.
+//
+// THE ORACLE.  Every reference value below was produced by an INDEPENDENT
+// 50-digit oracle (mpmath, mp.dps = 50) evaluating the closed form in
+// near-exact arithmetic and rounded ONCE to f64 — never by this implementation.
+// A KAT generated from the code it tests proves only that the code is
+// unchanged, not that it is correct.  The oracle script was a throwaway: it is
+// not committed, and nothing in this example imports it.
+//
+// FOUR CLASSES OF CHECK, deliberately, in descending order of value:
+//
+//   1. STRUCTURAL IDENTITY — relations that must hold regardless of the oracle,
+//      and which therefore SURVIVE A BAD REFERENCE.  These are the real
+//      deliverable.  A value check tells you the code agrees with one number
+//      someone computed; the par-bond identity tells you the discounting is
+//      self-consistent, and no amount of wrong reference data can make it pass.
+//      The six here are:
+//        PAR BOND       — coupon == yield implies price == face, EXACTLY.
+//        ROUND TRIP     — ytm(price(y)) == y.  Pricer and solver are mutually
+//                         consistent, or one of them is wrong.
+//        MONOTONICITY   — price strictly decreasing in yield.
+//        CONVEXITY SIGN — strictly positive for a plain vanilla bond.
+//        DURATION AS A  — modified duration equals -(1/P) dP/dy, checked
+//        SENSITIVITY      against a central finite difference of the pricer.
+//        ZERO-COUPON    — a zero's Macaulay duration is EXACTLY its maturity.
+//
+//   2. VALUE — against the 50-digit oracle, within a stated ulp band.
+//
+//   3. ADVERSARIAL — a deliberately WRONG reference must be REJECTED.  The
+//      acceptance is added straight into `fails`, so a spurious acceptance IS a
+//      failure.  Without this block every band above could be passing because
+//      it is too wide, and the file would be decorative.
+//
+//   4. DOMAIN — degenerate inputs return the canonical qNaN, not a plausible
+//      number.
+//
+// ON THE BANDS.  They are TIGHTER here than in the option examples, and that is
+// a finding rather than a boast: there is no erfc on this path.  A bond price
+// is a sum of products of exactly-rounded divisions and multiplications, so the
+// only error is accumulated rounding over n terms, not a re-derived
+// transcendental's honest disagreement with a 50-digit reference.  The one
+// exception is the curve pricer, which goes through `dm_exp` and therefore
+// carries the detmath kernel's error — its bands are correspondingly wider, and
+// that difference is visible in the source rather than averaged away by a
+// single global tolerance.
+//
+// WHAT THIS KAT CANNOT CATCH, STATED PLAINLY.
+//
+//   * REASSOCIATION.  These are tolerance bands, so they are structurally blind
+//     to any change that perturbs the result by less than the band — including
+//     the summation-order changes that the comments above spend the most words
+//     forbidding.  Summing the coupon leg descending instead of ascending would
+//     pass every check in this file.  Detecting that requires a BIT-EXACT
+//     reference, which is the job of the cross-substrate CI fixture
+//     (tests/cross_substrate_identity.rs): it compares hashes across x86 `avx2`
+//     and ARM `neon`, and a hash has no tolerance to hide in.  This KAT proves
+//     the analytics are CORRECT; the fixture proves they are REPRODUCIBLE.  A
+//     green KAT is not evidence of byte-identity, and must never be cited as
+//     such.
+//
+//   * CONVENTION ERRORS.  Everything here is whole-period and clean-price.  If
+//     the surrounding system computes accrued interest wrongly, or uses 30/360
+//     where the prospectus says ACT/ACT, every check in this file still passes
+//     and the booked number is still wrong.  This file gates the arithmetic,
+//     not the contract.
+//
+//   * THE SOLVER'S PATH.  The round-trip identity proves `bond_ytm` finds the
+//     right root.  It does not prove the iteration took the same PATH it took
+//     yesterday — a change from 80 to 90 iterations, or a different Newton
+//     guard, would still converge to a yield inside the round-trip band.  Only
+//     the cross-substrate hash pins the path.
+// ===========================================================================
+
+fn chk_ulp(got: f64, want: f64, ulps: f64) -> i64 {
+    let eps: f64 = 0.0000000000000002220446049250313;
+    let tol: f64 = ulps * eps * absf(want);
+    if absf(got - want) <= tol {
+        return 1;
+    }
+    return 0;
+}
+
+fn chk_abs(got: f64, want: f64, abstol: f64) -> i64 {
+    if absf(got - want) <= abstol {
+        return 1;
+    }
+    return 0;
+}
+
+fn is_nan(x: f64) -> i64 {
+    if x != x {
+        return 1;
+    }
+    return 0;
+}
+
+// Strict inequality as a counted check: 1 when `a > b`, else 0.  Written as a
+// helper so the monotonicity block below reads as a sequence of claims rather
+// than a wall of if/else, and so a mis-typed comparison is in ONE place.
+fn chk_gt(a: f64, b: f64) -> i64 {
+    if a > b {
+        return 1;
+    }
+    return 0;
+}
+
+// The accumulation bound for an n-term sum of quantities of magnitude `scale`.
+//
+// DERIVED, NOT TUNED, and this distinction is the whole point of the function
+// existing.  Summing n terms left to right accumulates at most n roundings,
+// each of at most eps/2 relative to the running total, so the absolute error is
+// bounded by about n * eps * scale.  The factor 4 is engineering margin for the
+// per-term rounding in `df_pow` (which is itself a chain of multiplies) on top
+// of the summation itself.
+//
+// This matters because the par-bond identity below is EXACT in real arithmetic
+// and only approximate in f64.  The temptation is to write a round number like
+// 1e-12 and move on.  That was in fact the first draft, and it FAILED: the
+// measured residue for the 10-year semiannual par bond is 1.56e-13, which is
+// comfortable against 1e-12 until you try the 15-year quarterly bond, where the
+// residue is 3.18e-12 and a flat 1e-12 band rejects a CORRECT price.  A band
+// that has to be widened whenever a new case is added is not a band, it is a
+// record of which cases have been tried.  Deriving it from n and the scale
+// makes it predict rather than follow.
+fn accum_band(n_periods: i64, scale: f64) -> f64 {
+    let eps: f64 = 0.0000000000000002220446049250313;
+    return 4.0 * (n_periods as f64) * eps * scale;
+}
+
+pub fn main() -> i64 {
+    let mut fails: i64 = 0;
+
+    // The benchmark curve used by every curve check below: 6M at 3.00%, 2Y at
+    // 3.50%, 5Y at 4.00%, 10Y at 4.30%.  An ordinary upward-sloping shape.
+    let ct0: f64 = 0.5;
+    let cz0: f64 = 0.03;
+    let ct1: f64 = 2.0;
+    let cz1: f64 = 0.035;
+    let ct2: f64 = 5.0;
+    let cz2: f64 = 0.04;
+    let ct3: f64 = 10.0;
+    let cz3: f64 = 0.043;
+
+    // =====================================================================
+    // 1. STRUCTURAL IDENTITIES.  These survive a bad oracle.
+    // =====================================================================
+
+    // --- PAR BOND: coupon == yield implies price == face, EXACTLY ----------
+    // The strongest self-checking identity available for a bond.  It is a
+    // theorem, not a reference value: the coupon leg is an annuity worth
+    // face*(1 - v^n) and the principal is worth face*v^n, and the two sum to
+    // face for any n and any f whenever c == y.  A sign error, a missing
+    // principal repayment, an off-by-one in the period index, or a discount
+    // factor raised to the wrong power all break it, and NONE of them requires
+    // a correct reference number to detect.
+    //
+    // The band is the DERIVED accumulation bound `accum_band(n, face)`, not a
+    // round number — see that function's comment for why the round number was
+    // wrong.  The identity is exact in real arithmetic; the residue is the n
+    // roundings of the f64 sum, and asserting exact equality would be asserting
+    // something false about floating point rather than something true about
+    // the bond.
+    fails = fails + (1 - chk_abs(bond_price(100.0, 0.05, 0.05, 2, 20), 100.0, accum_band(20, 100.0)));
+    fails = fails + (1 - chk_abs(bond_price(100.0, 0.07, 0.07, 2, 20), 100.0, accum_band(20, 100.0)));
+    fails = fails + (1 - chk_abs(bond_price(1000.0, 0.03, 0.03, 4, 60), 1000.0, accum_band(60, 1000.0)));
+    fails = fails + (1 - chk_abs(bond_price(100.0, 0.06, 0.06, 1, 7), 100.0, accum_band(7, 100.0)));
+    // Par at a very low yield, where `1 + y/f` is close to 1 and the repeated
+    // multiply in `df_pow` has the least per-step rounding to work with.
+    //
+    // NOTE ON THE CASE THAT IS NOT HERE, because its absence is a design
+    // decision rather than an oversight.  The natural next case is par at a
+    // NEGATIVE yield — a -1% two-year Bund is an ordinary instrument and the
+    // pricer must handle it, which it does (see the monotonicity chain below,
+    // whose first point is y = -1%).  But the PAR identity requires c == y, and
+    // `bond_valid` rejects a negative COUPON: a bond that charges its holder a
+    // coupon is not an instrument, it is a malformed request, and the guard
+    // says so.  So par-at-negative-yield is unreachable by construction, and
+    // the negative-rate claim is carried by the monotonicity chain instead.
+    // The first draft of this file asserted it anyway; it failed, and the
+    // failure was the guard working correctly.
+    fails = fails + (1 - chk_abs(bond_price(100.0, 0.001, 0.001, 2, 10), 100.0, accum_band(10, 100.0)));
+
+    // --- ROUND TRIP: bond_ytm(bond_price(y)) == y --------------------------
+    // Proves the pricer and the solver are mutually consistent.  Neither can be
+    // wrong alone and still pass: the solver inverts the pricer, so a shared
+    // error would have to be an error that is its own inverse.
+    //
+    // Band 1e-12 absolute on a yield, i.e. a hundredth of a basis point of a
+    // basis point.  Deliberately far tighter than any economically meaningful
+    // tolerance — this is a numerical identity, not a market quote, and a loose
+    // band here would let a genuinely broken solver through.
+    let rt_a: f64 = bond_price(100.0, 0.05, 0.07, 2, 20);
+    fails = fails + (1 - chk_abs(bond_ytm(rt_a, 100.0, 0.05, 2, 20), 0.07, 0.000000000001));
+    let rt_b: f64 = bond_price(100.0, 0.05, 0.03, 2, 20);
+    fails = fails + (1 - chk_abs(bond_ytm(rt_b, 100.0, 0.05, 2, 20), 0.03, 0.000000000001));
+    let rt_c: f64 = bond_price(1000.0, 0.065, 0.0425, 2, 30);
+    fails = fails + (1 - chk_abs(bond_ytm(rt_c, 1000.0, 0.065, 2, 30), 0.0425, 0.000000000001));
+    let rt_d: f64 = bond_price(100.0, 0.08, 0.06, 4, 40);
+    fails = fails + (1 - chk_abs(bond_ytm(rt_d, 100.0, 0.08, 4, 40), 0.06, 0.000000000001));
+    // At par: the round trip must return the coupon exactly, which is the
+    // intersection of the two identities above.
+    let rt_e: f64 = bond_price(100.0, 0.05, 0.05, 2, 20);
+    fails = fails + (1 - chk_abs(bond_ytm(rt_e, 100.0, 0.05, 2, 20), 0.05, 0.000000000001));
+    // A zero-coupon bond, where the yield has a closed form and the Newton
+    // derivative is a single term.  Included because a solver that relies on
+    // the coupon leg to shape the objective degenerates here.
+    let rt_f: f64 = bond_price(100.0, 0.0, 0.04, 1, 10);
+    fails = fails + (1 - chk_abs(bond_ytm(rt_f, 100.0, 0.0, 1, 10), 0.04, 0.000000000001));
+    // A deeply discounted long bond: yield well above coupon, 30 years.  The
+    // bracket must survive a price far from par.
+    let rt_g: f64 = bond_price(100.0, 0.02, 0.09, 2, 60);
+    fails = fails + (1 - chk_abs(bond_ytm(rt_g, 100.0, 0.02, 2, 60), 0.09, 0.000000000001));
+
+    // --- PRICE / YIELD MONOTONICITY: strictly DECREASING in yield ----------
+    // The single most basic property of a bond, and the one a sign error
+    // destroys first.  Asserted as a chain of strict inequalities across the
+    // whole admissible range including negative yields, not just at two points:
+    // a chain catches a non-monotone kink that a single pair would step over.
+    let m1: f64 = bond_price(100.0, 0.05, 0.0 - 0.01, 2, 20);
+    let m2: f64 = bond_price(100.0, 0.05, 0.01, 2, 20);
+    let m3: f64 = bond_price(100.0, 0.05, 0.03, 2, 20);
+    let m4: f64 = bond_price(100.0, 0.05, 0.05, 2, 20);
+    let m5: f64 = bond_price(100.0, 0.05, 0.07, 2, 20);
+    let m6: f64 = bond_price(100.0, 0.05, 0.12, 2, 20);
+    let m7: f64 = bond_price(100.0, 0.05, 0.25, 2, 20);
+    fails = fails + (1 - chk_gt(m1, m2));
+    fails = fails + (1 - chk_gt(m2, m3));
+    fails = fails + (1 - chk_gt(m3, m4));
+    fails = fails + (1 - chk_gt(m4, m5));
+    fails = fails + (1 - chk_gt(m5, m6));
+    fails = fails + (1 - chk_gt(m6, m7));
+    // The same chain for a zero-coupon bond, where there is no coupon leg to
+    // mask a broken principal discount factor.
+    let z1p: f64 = bond_price(100.0, 0.0, 0.01, 1, 10);
+    let z2p: f64 = bond_price(100.0, 0.0, 0.04, 1, 10);
+    let z3p: f64 = bond_price(100.0, 0.0, 0.09, 1, 10);
+    fails = fails + (1 - chk_gt(z1p, z2p));
+    fails = fails + (1 - chk_gt(z2p, z3p));
+
+    // --- CONVEXITY SIGN: strictly positive for a plain vanilla bond --------
+    // A positive-cashflow instrument has a price that is a positive-weighted
+    // sum of convex discount functions, so its convexity is strictly positive
+    // everywhere.  Negative convexity is a real phenomenon — callable bonds and
+    // mortgage-backed securities have it — but it cannot arise here, so a
+    // non-positive value is a bug and not a market feature.
+    fails = fails + (1 - chk_gt(convexity(100.0, 0.05, 0.05, 2, 20), 0.0));
+    fails = fails + (1 - chk_gt(convexity(100.0, 0.05, 0.12, 2, 20), 0.0));
+    fails = fails + (1 - chk_gt(convexity(100.0, 0.0, 0.04, 1, 10), 0.0));
+    fails = fails + (1 - chk_gt(convexity(1000.0, 0.065, 0.0425, 2, 30), 0.0));
+    fails = fails + (1 - chk_gt(convexity(100.0, 0.05, 0.0 - 0.01, 2, 20), 0.0));
+    // Duration is strictly positive too, and strictly less than maturity for
+    // any coupon-bearing bond (the coupons pull the average cashflow time in).
+    // That inequality is a second structural claim on the same number.
+    fails = fails + (1 - chk_gt(macaulay_duration(100.0, 0.05, 0.05, 2, 20), 0.0));
+    fails = fails + (1 - chk_gt(10.0, macaulay_duration(100.0, 0.05, 0.05, 2, 20)));
+
+    // --- DURATION AS A SENSITIVITY: modified D vs a central difference ------
+    // Modified duration is DEFINED as -(1/P) dP/dy.  The analytic sum above is
+    // one way to compute it; a central finite difference of the pricer is a
+    // genuinely independent one, sharing only the pricer itself.  Agreement
+    // between them falsifies the whole family of algebra errors in the duration
+    // formula — a missing 1/f, a t_i off by one period, the modified/Macaulay
+    // division applied to the wrong quantity.
+    //
+    // THIS IS THE ONLY FINITE DIFFERENCE IN THE FILE, and it is a CHECK, never
+    // an implementation.  See the section-3 comment.
+    //
+    // THE BAND IS DERIVED, NOT TUNED.  A central difference has truncation
+    // error (h^2/6) * P'''/P and rounding error about (2*eps*P)/(2*h*P).  With
+    // h = 1e-5 and a third derivative of order D^3 ~ 500 for these bonds:
+    //   truncation ~ 1e-10/6 * 500      ~ 8e-9
+    //   rounding    ~ 2.2e-16 / 1e-5    ~ 2.2e-11
+    // so about 1e-8 in total, against a duration of order 8.  The band below is
+    // 1e-6 absolute — two orders of magnitude of headroom over the derived
+    // bound, because the point of this check is to catch a structurally wrong
+    // formula (which is wrong by 1/f, or by a factor of 1+y/f, i.e. by
+    // PERCENT), not to measure the finite difference.  A band tight enough to
+    // resolve the difference scheme would be a check on the difference scheme.
+    let h: f64 = 0.00001;
+    let fd_p_up: f64 = bond_price(100.0, 0.05, 0.07 + h, 2, 20);
+    let fd_p_dn: f64 = bond_price(100.0, 0.05, 0.07 - h, 2, 20);
+    let fd_p_0: f64 = bond_price(100.0, 0.05, 0.07, 2, 20);
+    let fd_md: f64 = 0.0 - (fd_p_up - fd_p_dn) / (2.0 * h) / fd_p_0;
+    fails = fails + (1 - chk_abs(modified_duration(100.0, 0.05, 0.07, 2, 20), fd_md, 0.000001));
+
+    // Same check at a second point and a different frequency, so a coincidence
+    // at one yield cannot carry the claim.
+    let g_up: f64 = bond_price(1000.0, 0.065, 0.0425 + h, 2, 30);
+    let g_dn: f64 = bond_price(1000.0, 0.065, 0.0425 - h, 2, 30);
+    let g_0: f64 = bond_price(1000.0, 0.065, 0.0425, 2, 30);
+    let g_md: f64 = 0.0 - (g_up - g_dn) / (2.0 * h) / g_0;
+    fails = fails + (1 - chk_abs(modified_duration(1000.0, 0.065, 0.0425, 2, 30), g_md, 0.000001));
+
+    let q_up: f64 = bond_price(100.0, 0.08, 0.06 + h, 4, 40);
+    let q_dn: f64 = bond_price(100.0, 0.08, 0.06 - h, 4, 40);
+    let q_0: f64 = bond_price(100.0, 0.08, 0.06, 4, 40);
+    let q_md: f64 = 0.0 - (q_up - q_dn) / (2.0 * h) / q_0;
+    fails = fails + (1 - chk_abs(modified_duration(100.0, 0.08, 0.06, 4, 40), q_md, 0.000001));
+
+    // Convexity against a SECOND central difference of the pricer.
+    //
+    // THIS CHECK FOUND A REAL BUG, and the bug is worth recording because it is
+    // exactly the kind a value check cannot find.  The first draft of
+    // `convexity` used the discount exponent v^(i+1).  That is the FIRST
+    // derivative's exponent; differentiating v^i twice brings down two factors
+    // of (1+y/f)^(-1), so the second derivative carries v^(i+2).  The i+1 form
+    // overstates convexity by exactly (1+y/f) — 3.5% here — and it looks
+    // completely plausible.  It also matched the 50-digit oracle, because the
+    // oracle script was derived from the same wrong algebra.  A value check
+    // whose reference shares the implementation's error is not a check at all;
+    // this finite difference, which shares only the PRICER, is what caught it.
+    // That is the argument for structural checks in one concrete instance.
+    //
+    // THE STEP SIZE IS ITS OWN, AND LARGER THAN THE FIRST-DIFFERENCE ONE.  A
+    // second difference divides a threefold cancellation by h^2, so its
+    // rounding error scales as eps/h^2 rather than eps/h: at h = 1e-5 that is
+    // 2.2e-6 relative on a quantity of order 70, i.e. about 3e-5 absolute, and
+    // at h = 1e-3 the truncation term (h^2/12)*P''''/P has grown to 6e-4.  The
+    // minimum sits near h = 1e-4, where the measured disagreement with the
+    // analytic form is 6.1e-6.  The band below is 1e-3 absolute — about 160x
+    // that measured error, and still 2400x SMALLER than the 2.45 absolute
+    // discrepancy the v^(i+1) bug produced.  Headroom over the noise, decisive
+    // against the bug: that is what a useful band looks like.
+    let h2: f64 = 0.0001;
+    let cv_up: f64 = bond_price(100.0, 0.05, 0.07 + h2, 2, 20);
+    let cv_dn: f64 = bond_price(100.0, 0.05, 0.07 - h2, 2, 20);
+    let cv_2nd: f64 = (cv_up - 2.0 * fd_p_0 + cv_dn) / (h2 * h2) / fd_p_0;
+    fails = fails + (1 - chk_abs(convexity(100.0, 0.05, 0.07, 2, 20), cv_2nd, 0.001));
+    // The adversarial twin, inline: the v^(i+1) bug scaled convexity by
+    // (1 + y/f) = 1.035.  Feeding that scaling to the same band must be
+    // REJECTED, which proves this check would have caught the bug it did in
+    // fact catch — and will catch it again if someone "simplifies" the exponent
+    // back.  A regression test for a fixed bug is only worth having if it is
+    // known to fail on the bug.
+    fails = fails + chk_abs(convexity(100.0, 0.05, 0.07, 2, 20) * 1.035, cv_2nd, 0.001);
+
+    // --- ZERO-COUPON: Macaulay duration EXACTLY equals maturity ------------
+    // With one cashflow at t = n/f, the weighted average time is that cashflow's
+    // time, and the weight is 1 by construction.  The division acc/P is then a
+    // quantity divided by itself times t, so the result is t to within one
+    // rounding — this is the tightest identity in the file and the band says so.
+    fails = fails + (1 - chk_abs(macaulay_duration(100.0, 0.0, 0.04, 1, 10), 10.0, 0.0000000000001));
+    fails = fails + (1 - chk_abs(macaulay_duration(100.0, 0.0, 0.07, 2, 20), 10.0, 0.0000000000001));
+    fails = fails + (1 - chk_abs(macaulay_duration(1000.0, 0.0, 0.02, 4, 30), 7.5, 0.0000000000001));
+    // And its modified duration is exactly maturity / (1 + y/f).
+    fails = fails + (1 - chk_abs(modified_duration(100.0, 0.0, 0.04, 1, 10), 10.0 / 1.04, 0.0000000000001));
+
+    // =====================================================================
+    // 2. VALUE CHECKS against the 50-digit oracle (mpmath, mp.dps = 50).
+    // =====================================================================
+
+    // --- Case A: face=100 c=5% y=5% semiannual 10y (AT PAR) ----------------
+    // Oracle price is exactly 100 (see the par identity above); duration and
+    // convexity are not, and are checked here as values.
+    // Oracle macaulay  = 7.989445671393989756961995...
+    // Oracle modified  = 7.794581142823404630385210...
+    // Oracle convexity = 73.62873142656359731544489...  (v^(i+2) form; see the
+    // finite-difference check above, which is what established the exponent)
+    fails = fails + (1 - chk_ulp(macaulay_duration(100.0, 0.05, 0.05, 2, 20), 7.98944567139399, 256.0));
+    fails = fails + (1 - chk_ulp(modified_duration(100.0, 0.05, 0.05, 2, 20), 7.794581142823405, 256.0));
+    fails = fails + (1 - chk_ulp(convexity(100.0, 0.05, 0.05, 2, 20), 73.6287314265636, 256.0));
+
+    // --- Case B: face=100 c=5% y=7% semiannual 10y (DISCOUNT) --------------
+    // Oracle price = 85.78759669804770709874087...
+    fails = fails + (1 - chk_ulp(bond_price(100.0, 0.05, 0.07, 2, 20), 85.78759669804771, 256.0));
+    fails = fails + (1 - chk_ulp(macaulay_duration(100.0, 0.05, 0.07, 2, 20), 7.797649249801262, 256.0));
+    fails = fails + (1 - chk_ulp(modified_duration(100.0, 0.05, 0.07, 2, 20), 7.533960627827306, 256.0));
+    fails = fails + (1 - chk_ulp(convexity(100.0, 0.05, 0.07, 2, 20), 69.94360735422342, 256.0));
+
+    // --- Case C: face=100 c=5% y=3% semiannual 10y (PREMIUM) ---------------
+    // Oracle price = 117.1686387850819335867448...
+    fails = fails + (1 - chk_ulp(bond_price(100.0, 0.05, 0.03, 2, 20), 117.16863878508194, 256.0));
+    fails = fails + (1 - chk_ulp(macaulay_duration(100.0, 0.05, 0.03, 2, 20), 8.169425098281543, 256.0));
+    fails = fails + (1 - chk_ulp(modified_duration(100.0, 0.05, 0.03, 2, 20), 8.048694678109895, 256.0));
+    fails = fails + (1 - chk_ulp(convexity(100.0, 0.05, 0.03, 2, 20), 77.31559697849131, 256.0));
+
+    // --- Case D: face=1000 c=6.5% y=4.25% semiannual 15y -------------------
+    // A long premium bond at a non-round yield: 30 periods, so the accumulated
+    // rounding in the ascending sum is at its largest in this file.
+    // Oracle price = 1247.682798367062294291032...
+    fails = fails + (1 - chk_ulp(bond_price(1000.0, 0.065, 0.0425, 2, 30), 1247.6827983670623, 256.0));
+    fails = fails + (1 - chk_ulp(macaulay_duration(1000.0, 0.065, 0.0425, 2, 30), 10.393494633137566, 256.0));
+    fails = fails + (1 - chk_ulp(modified_duration(1000.0, 0.065, 0.0425, 2, 30), 10.17722852694009, 256.0));
+    fails = fails + (1 - chk_ulp(convexity(1000.0, 0.065, 0.0425, 2, 30), 133.78712621661745, 256.0));
+
+    // --- Case E: face=100 ZERO COUPON y=4% annual 10y ----------------------
+    // Oracle price = 67.55641688257988511113267...
+    fails = fails + (1 - chk_ulp(bond_price(100.0, 0.0, 0.04, 1, 10), 67.55641688257988, 256.0));
+    fails = fails + (1 - chk_ulp(modified_duration(100.0, 0.0, 0.04, 1, 10), 9.615384615384615, 256.0));
+    fails = fails + (1 - chk_ulp(convexity(100.0, 0.0, 0.04, 1, 10), 101.70118343195266, 256.0));
+
+    // --- Case F: face=100 c=8% y=6% QUARTERLY 10y --------------------------
+    // The only f = 4 value case: 40 periods, and the one that catches a 1/f
+    // dropped from a time index (which is invisible at f = 1 and off by a
+    // factor of 2 at f = 2).
+    // Oracle price = 114.9579226020872867040604...
+    fails = fails + (1 - chk_ulp(bond_price(100.0, 0.08, 0.06, 4, 40), 114.9579226020873, 256.0));
+    fails = fails + (1 - chk_ulp(macaulay_duration(100.0, 0.08, 0.06, 4, 40), 7.206103213052824, 256.0));
+    fails = fails + (1 - chk_ulp(modified_duration(100.0, 0.08, 0.06, 4, 40), 7.099609076899334, 256.0));
+    fails = fails + (1 - chk_ulp(convexity(100.0, 0.08, 0.06, 4, 40), 63.26780838641731, 256.0));
+
+    // --- Case G: face=100 c=3% y=5.5% ANNUAL 5y ----------------------------
+    // Short and annual: the smallest n in the file, where a per-period error
+    // has the least room to average out.
+    // Oracle price = 89.32428881095223697618195...
+    fails = fails + (1 - chk_ulp(bond_price(100.0, 0.03, 0.055, 1, 5), 89.32428881095224, 256.0));
+    fails = fails + (1 - chk_ulp(macaulay_duration(100.0, 0.03, 0.055, 1, 5), 4.697822262022155, 256.0));
+    fails = fails + (1 - chk_ulp(modified_duration(100.0, 0.03, 0.055, 1, 5), 4.452912096703464, 256.0));
+    fails = fails + (1 - chk_ulp(convexity(100.0, 0.03, 0.055, 1, 5), 24.795931073172472, 256.0));
+
+    // --- ZERO CURVE: interpolation at and between the knots ----------------
+    // AT the knots the interpolation must return the knot rate EXACTLY, which
+    // is why the weight is applied as z0 + w*(z1 - z0) rather than the
+    // algebraically-equal (1-w)*z0 + w*z1 — see the section-4 comment.  These
+    // are exact-equality-band checks (1e-18), not tolerance checks.
+    fails = fails + (1 - chk_abs(zero_rate(0.5, ct0, cz0, ct1, cz1, ct2, cz2, ct3, cz3), 0.03, 0.000000000000000001));
+    fails = fails + (1 - chk_abs(zero_rate(2.0, ct0, cz0, ct1, cz1, ct2, cz2, ct3, cz3), 0.035, 0.000000000000000001));
+    fails = fails + (1 - chk_abs(zero_rate(5.0, ct0, cz0, ct1, cz1, ct2, cz2, ct3, cz3), 0.04, 0.000000000000000001));
+    fails = fails + (1 - chk_abs(zero_rate(10.0, ct0, cz0, ct1, cz1, ct2, cz2, ct3, cz3), 0.043, 0.000000000000000001));
+    // BETWEEN the knots, against the 50-digit oracle.
+    // Oracle zr(1.0)  = 0.03166666666666666666666667...
+    fails = fails + (1 - chk_ulp(zero_rate(1.0, ct0, cz0, ct1, cz1, ct2, cz2, ct3, cz3), 0.03166666666666667, 64.0));
+    fails = fails + (1 - chk_ulp(zero_rate(1.25, ct0, cz0, ct1, cz1, ct2, cz2, ct3, cz3), 0.0325, 64.0));
+    fails = fails + (1 - chk_ulp(zero_rate(3.5, ct0, cz0, ct1, cz1, ct2, cz2, ct3, cz3), 0.0375, 64.0));
+    fails = fails + (1 - chk_ulp(zero_rate(7.0, ct0, cz0, ct1, cz1, ct2, cz2, ct3, cz3), 0.0412, 64.0));
+    // OUTSIDE the knots, flat extrapolation both ends.
+    fails = fails + (1 - chk_abs(zero_rate(0.25, ct0, cz0, ct1, cz1, ct2, cz2, ct3, cz3), 0.03, 0.000000000000000001));
+    fails = fails + (1 - chk_abs(zero_rate(12.0, ct0, cz0, ct1, cz1, ct2, cz2, ct3, cz3), 0.043, 0.000000000000000001));
+    // Monotone curve, monotone interpolation: the rate is non-decreasing in t
+    // on this upward-sloping curve.  A structural claim on the interpolator
+    // that no reference value can supply.
+    fails = fails + (1 - chk_gt(zero_rate(3.5, ct0, cz0, ct1, cz1, ct2, cz2, ct3, cz3), zero_rate(1.0, ct0, cz0, ct1, cz1, ct2, cz2, ct3, cz3)));
+    fails = fails + (1 - chk_gt(zero_rate(7.0, ct0, cz0, ct1, cz1, ct2, cz2, ct3, cz3), zero_rate(3.5, ct0, cz0, ct1, cz1, ct2, cz2, ct3, cz3)));
+
+    // --- CURVE PRICING -----------------------------------------------------
+    // Wider bands than the yield-based prices: this path goes through `dm_exp`,
+    // so it carries the detmath kernel's honest disagreement with the 50-digit
+    // oracle on top of the summation rounding.  The difference in band width
+    // between these checks and the ones above is exactly the cost of the
+    // transcendental, made visible rather than averaged away.
+    // Oracle H = 104.4723057871062524554271...
+    fails = fails + (1 - chk_ulp(price_from_zero_curve(100.0, 0.05, 2, 10, ct0, cz0, ct1, cz1, ct2, cz2, ct3, cz3), 104.47230578710625, 4096.0));
+    // Oracle I = 97.27466692859226398403442...
+    fails = fails + (1 - chk_ulp(price_from_zero_curve(100.0, 0.04, 1, 10, ct0, cz0, ct1, cz1, ct2, cz2, ct3, cz3), 97.27466692859227, 4096.0));
+    // Oracle J = 89.58341352965282506768546...  (3y zero coupon off the curve)
+    fails = fails + (1 - chk_ulp(price_from_zero_curve(100.0, 0.0, 1, 3, ct0, cz0, ct1, cz1, ct2, cz2, ct3, cz3), 89.58341352965283, 4096.0));
+
+    // --- CURVE IDENTITY: a FLAT curve must reprice as continuous discounting -
+    // With all four knots at the same rate z, every cashflow discounts at
+    // exp(-z*t) regardless of interpolation, so the curve price must equal the
+    // hand-built sum.  This is a structural check on the interpolation and the
+    // cashflow schedule TOGETHER, and it holds whatever the oracle says.
+    let flat_z: f64 = 0.04;
+    let flat_curve: f64 = price_from_zero_curve(100.0, 0.05, 1, 5, 0.5, flat_z, 2.0, flat_z, 5.0, flat_z, 10.0, flat_z);
+    // The same five cashflows, discounted by hand in the same ascending order.
+    let mut flat_hand: f64 = 0.0 * 1.0;
+    let mut fi: i64 = 1;
+    while fi <= 5 {
+        let ft: f64 = (fi as f64) / 1.0;
+        flat_hand = flat_hand + 5.0 * dm_exp(0.0 - flat_z * ft);
+        fi = fi + 1;
+    }
+    flat_hand = flat_hand + 100.0 * dm_exp(0.0 - flat_z * 5.0);
+    fails = fails + (1 - chk_abs(flat_curve, flat_hand, 0.0000000001));
+
+    // --- CURVE IDENTITY: a higher curve prices lower ------------------------
+    // Monotonicity in the level of the curve, the term-structure analogue of
+    // the price/yield monotonicity above.
+    let lvl_lo: f64 = price_from_zero_curve(100.0, 0.05, 2, 10, 0.5, 0.02, 2.0, 0.025, 5.0, 0.03, 10.0, 0.033);
+    let lvl_hi: f64 = price_from_zero_curve(100.0, 0.05, 2, 10, 0.5, 0.05, 2.0, 0.055, 5.0, 0.06, 10.0, 0.063);
+    fails = fails + (1 - chk_gt(lvl_lo, lvl_hi));
+
+    // --- FORWARD RATES ------------------------------------------------------
+    // Oracle f(1,2) from z=3% and z=4% is exactly 5%: (0.04*2 - 0.03*1)/1.
+    fails = fails + (1 - chk_ulp(forward_rate(0.03, 1.0, 0.04, 2.0), 0.05, 256.0));
+    // Oracle f(2,5)  = 0.04333333333333333250066606...
+    fails = fails + (1 - chk_ulp(forward_rate(0.035, 2.0, 0.04, 5.0), 0.043333333333333335, 256.0));
+    // Oracle f(5,10) = 0.04599999999999999228394998...
+    fails = fails + (1 - chk_ulp(forward_rate(0.04, 5.0, 0.043, 10.0), 0.04599999999999999, 256.0));
+    // STRUCTURAL: on an upward-sloping curve the forward is above the far zero,
+    // which is the no-arbitrage statement that forwards lead spots.  This holds
+    // by construction for any increasing z(t) and needs no reference value.
+    fails = fails + (1 - chk_gt(forward_rate(0.035, 2.0, 0.04, 5.0), 0.04));
+    fails = fails + (1 - chk_gt(forward_rate(0.04, 5.0, 0.043, 10.0), 0.043));
+    // STRUCTURAL: on a FLAT curve the forward equals the zero, exactly.  A
+    // degenerate case that catches a transposed t1/t2 in the numerator, which
+    // the sloping cases above would only show as a plausible wrong number.
+    fails = fails + (1 - chk_abs(forward_rate(0.04, 1.0, 0.04, 5.0), 0.04, 0.0000000000001));
+
+    // =====================================================================
+    // 3. ADVERSARIAL: the bands MUST reject wrong values.
+    //
+    // Each line adds the ACCEPTANCE to `fails`, so a spurious acceptance is a
+    // failure.  Without this block every check above could be passing because
+    // its band is too wide, and a green exit code would mean nothing.  The
+    // wrong values are deliberately close to the right ones — a few parts in
+    // 1e4, not orders of magnitude — because a band that only rejects absurd
+    // values is not a band.
+    // =====================================================================
+
+    // Price, wrong in the third decimal.
+    fails = fails + chk_ulp(bond_price(100.0, 0.05, 0.07, 2, 20), 85.78859669804771, 256.0);
+    // Duration, wrong in the fourth decimal.
+    fails = fails + chk_ulp(macaulay_duration(100.0, 0.05, 0.07, 2, 20), 7.798649249801262, 256.0);
+    // Modified duration confused with Macaulay: the two differ by the factor
+    // (1 + y/f), i.e. by 3.5% here.  This is THE most common implementation
+    // error in a duration routine and it must not pass.
+    fails = fails + chk_ulp(modified_duration(100.0, 0.05, 0.07, 2, 20), 7.797649249801262, 256.0);
+    // Convexity, wrong by one part in 1e4.
+    fails = fails + chk_ulp(convexity(100.0, 0.05, 0.07, 2, 20), 69.95360735422342, 256.0);
+    // A par bond that is NOT 100: the par identity's derived band must reject a
+    // price one part in 1e10 away.  `accum_band(20, 100.0)` is 1.78e-12, so the
+    // 1e-8 offset is about 5600x outside it — the check proves the DERIVED band
+    // discriminates, which matters more than the flat one did, because a
+    // derived band is the kind that silently grows if the derivation is wrong.
+    fails = fails + chk_abs(bond_price(100.0, 0.05, 0.05, 2, 20), 100.00000001, accum_band(20, 100.0));
+    // A round trip that returns the wrong yield by a tenth of a basis point.
+    // The round-trip band is 1e-12; 1e-4 is eight orders of magnitude outside
+    // it, and a solver that returned this would look entirely plausible on a
+    // trading screen.
+    fails = fails + chk_abs(bond_ytm(rt_a, 100.0, 0.05, 2, 20), 0.0701, 0.000000000001);
+    // A zero-coupon Macaulay duration that is not the maturity.  This is the
+    // adversarial form of the tightest identity in the file.
+    fails = fails + chk_abs(macaulay_duration(100.0, 0.0, 0.04, 1, 10), 10.0000001, 0.0000000000001);
+    // A curve price wrong in the fourth decimal, against the WIDER 4096-ulp
+    // band — proving that even the loosest band in the file discriminates.
+    fails = fails + chk_ulp(price_from_zero_curve(100.0, 0.05, 2, 10, ct0, cz0, ct1, cz1, ct2, cz2, ct3, cz3), 104.47330578710626, 4096.0);
+    // A forward rate computed with t1 and t2 transposed in the numerator:
+    // (z2*t1 - z1*t2)/(t2-t1) instead of (z2*t2 - z1*t1)/(t2-t1).  For the
+    // (2y, 5y) pair the wrong form gives -0.03166..., so this one is far from
+    // the right answer — which is the point: the check proves the band cannot
+    // be argued into accepting a sign-scale error.
+    fails = fails + chk_ulp(forward_rate(0.035, 2.0, 0.04, 5.0), 0.0 - 0.03166666666666667, 256.0);
+    // The finite-difference duration check, fed a duration wrong by 1/f.  A
+    // dropped 1/f is the second most common duration bug and it is a factor-of-2
+    // error at semiannual frequency; the 1e-6 band must reject it decisively.
+    fails = fails + chk_abs(fd_md * 2.0, fd_md, 0.000001);
+    // The flat-curve identity, fed a hand sum missing its principal repayment.
+    // This is the adversarial twin of the mutation test run against this file:
+    // dropping the principal is the single most damaging silent error in a
+    // cashflow pricer, and the identity must not survive it.
+    fails = fails + chk_abs(flat_curve, flat_hand - 100.0 * dm_exp(0.0 - flat_z * 5.0), 0.0000000001);
+
+    // =====================================================================
+    // 4. DOMAIN: degenerate inputs must return the canonical qNaN.
+    //
+    // Not a plausible-looking number.  Every one of these is a caller error,
+    // and the function says so instead of guessing.  A bond priced with zero
+    // periods is not worth its face value; it is a malformed request.
+    // =====================================================================
+
+    fails = fails + (1 - is_nan(bond_price(100.0, 0.05, 0.05, 0, 20)));
+    fails = fails + (1 - is_nan(bond_price(100.0, 0.05, 0.05, 0 - 2, 20)));
+    fails = fails + (1 - is_nan(bond_price(100.0, 0.05, 0.05, 2, 0)));
+    fails = fails + (1 - is_nan(bond_price(100.0, 0.05, 0.05, 2, 0 - 20)));
+    fails = fails + (1 - is_nan(bond_price(0.0, 0.05, 0.05, 2, 20)));
+    fails = fails + (1 - is_nan(bond_price(0.0 - 100.0, 0.05, 0.05, 2, 20)));
+    fails = fails + (1 - is_nan(bond_price(100.0, 0.0 - 0.05, 0.05, 2, 20)));
+    // Yield at or below -f: the single-period discount factor is infinite or
+    // negative and the "price" would be arithmetic noise.  At f = 2 the bound
+    // is y = -2.0.
+    fails = fails + (1 - is_nan(bond_price(100.0, 0.05, 0.0 - 2.0, 2, 20)));
+    fails = fails + (1 - is_nan(bond_price(100.0, 0.05, 0.0 - 3.0, 2, 20)));
+
+    fails = fails + (1 - is_nan(macaulay_duration(100.0, 0.05, 0.05, 0, 20)));
+    fails = fails + (1 - is_nan(modified_duration(100.0, 0.05, 0.05, 2, 0)));
+    fails = fails + (1 - is_nan(convexity(0.0, 0.05, 0.05, 2, 20)));
+
+    // The solver's domain: a price no yield in the bracket can produce must be
+    // REFUSED, not converged to an endpoint.
+    //
+    // THE BRACKET IS WIDER THAN IT LOOKS, and a draft of this block asserted
+    // otherwise.  For the 10-year 5% semiannual bond the admissible price band
+    // is [2.50, 16452320.43]: the upper end is the price at YTM_LO = -90%,
+    // where the discount factor is 1/(1 - 0.45) per period compounded twenty
+    // times.  A price of 1,000,000 is therefore INSIDE the bracket and the
+    // solver correctly returns a yield for it — absurd as an instrument, but a
+    // legitimate inverse.  Asserting qNaN there was asserting a fact about the
+    // model that is not true, and the check failed until it was measured rather
+    // than assumed.  The rejection cases below are outside the MEASURED band.
+    fails = fails + (1 - is_nan(bond_ytm(0.0, 100.0, 0.05, 2, 20)));
+    fails = fails + (1 - is_nan(bond_ytm(0.0 - 50.0, 100.0, 0.05, 2, 20)));
+    // Above the price at YTM_LO = -90% (16,452,320.43), so unreachable.
+    fails = fails + (1 - is_nan(bond_ytm(100000000.0, 100.0, 0.05, 2, 20)));
+    fails = fails + (1 - is_nan(bond_ytm(85.0, 100.0, 0.05, 0, 20)));
+    fails = fails + (1 - is_nan(bond_ytm(85.0, 100.0, 0.05, 2, 0)));
+    // Below the price at YTM_HI = 200% (2.50), so likewise unreachable.
+    fails = fails + (1 - is_nan(bond_ytm(0.0000001, 100.0, 0.05, 2, 20)));
+    // And the POSITIVE CONTROL for this whole block: a price that IS in the
+    // bracket must NOT be refused.  Without it, a `bond_ytm` that returned qNaN
+    // unconditionally would pass every rejection check above — the classic
+    // vacuous negative assertion.
+    fails = fails + is_nan(bond_ytm(85.78759669804771, 100.0, 0.05, 2, 20));
+
+    // Curve domain: non-increasing knots are not a curve.
+    fails = fails + (1 - is_nan(zero_rate(1.0, 2.0, 0.03, 2.0, 0.035, 5.0, 0.04, 10.0, 0.043)));
+    fails = fails + (1 - is_nan(zero_rate(1.0, 0.5, 0.03, 0.25, 0.035, 5.0, 0.04, 10.0, 0.043)));
+    fails = fails + (1 - is_nan(zero_rate(1.0, 0.0 - 1.0, 0.03, 2.0, 0.035, 5.0, 0.04, 10.0, 0.043)));
+    fails = fails + (1 - is_nan(price_from_zero_curve(100.0, 0.05, 0, 10, ct0, cz0, ct1, cz1, ct2, cz2, ct3, cz3)));
+    fails = fails + (1 - is_nan(price_from_zero_curve(100.0, 0.05, 2, 0, ct0, cz0, ct1, cz1, ct2, cz2, ct3, cz3)));
+    fails = fails + (1 - is_nan(price_from_zero_curve(0.0, 0.05, 2, 10, ct0, cz0, ct1, cz1, ct2, cz2, ct3, cz3)));
+
+    // Forward-rate domain: equal or inverted maturities.
+    fails = fails + (1 - is_nan(forward_rate(0.03, 2.0, 0.04, 2.0)));
+    fails = fails + (1 - is_nan(forward_rate(0.03, 5.0, 0.04, 2.0)));
+    fails = fails + (1 - is_nan(forward_rate(0.03, 0.0 - 1.0, 0.04, 2.0)));
+
+    return fails;
+}

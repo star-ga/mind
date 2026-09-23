@@ -1,0 +1,1669 @@
+// examples/quant/portfolio_risk — deterministic Value-at-Risk, Expected
+// Shortfall, portfolio volatility and Euler risk attribution.
+//
+// Copyright 2025 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// WHAT THIS DEMONSTRATES, AND WHY IT IS THE MOST DIRECTLY LEGIBLE CASE IN THE
+// QUANT SET.  `examples/quant/black_scholes` prices the determinism claim as an
+// option premium; `examples/quant/greeks_higher_order` pushes it to the
+// worst-conditioned corner of the pricing surface.  Both are arguments to a
+// quant.  This module is an argument to a REGULATOR.
+//
+// Value-at-Risk and Expected Shortfall are not internal numbers.  They are the
+// figures an institution REPORTS — to a supervisor, in a capital calculation,
+// under a legal signature.  "Reproduce the VaR you reported on this date" is a
+// literal audit request, and the only honest answer is to re-run the
+// computation and get the same number.  Not a close number.  The SAME number.
+//
+// That is the whole claim, and it is why this example is written in a language
+// whose transcendentals are rebuilt from `+ - * /` rather than delegated to
+// whatever libm the reporting host happened to link that quarter.  A risk
+// figure recomputed on a different machine and landing in a different last bit
+// is not a reproduction; it is a second, differently-wrong number that happens
+// to be nearby, and there is no principled place to draw the line between "the
+// audit reproduced" and "the audit did not".  Determinism removes the question.
+//
+// WHY THIS IS NOT A LIBRARY.  Parametric VaR, the closed-form normal ES, the
+// Euler allocation and the historical order statistic are all textbook (Artzner
+// et al. 1999 for the coherence framework; Acerbi & Tasche 2002 for ES; Tasche
+// 1999 for Euler attribution).  Nothing here is a contribution to finance.  The
+// contribution is that the inverse normal CDF, the sort, and the covariance
+// accumulation are all pinned to a fixed operation order, so the reported
+// figure is reproducible bit-for-bit on a different ISA rather than merely
+// close.
+//
+// THE CLAIM, STATED EXACTLY.  This module does NOT claim to match SciPy,
+// RiskMetrics, or a vendor risk engine in the last bits.  It cannot, and it is
+// not trying to: a re-derived erfc rounds differently from Cephes, and both are
+// within their stated accuracy.  The claim is narrower and harder:
+//     the same source, compiled for two different ISAs, produces byte-identical
+//     output, with a stated accuracy bound against a 50-digit oracle.
+// Accuracy and reproducibility are orthogonal properties.  Determinism is what
+// makes an error analysis meaningful, not a substitute for one.
+//
+// SIGN CONVENTION, STATED ONCE AND USED THROUGHOUT.  Everything in this file is
+// expressed in LOSSES, positive = money lost.  `var_normal(mu, sigma, alpha)`
+// therefore returns a POSITIVE number for a typical alpha, being the alpha
+// quantile of the loss distribution.  This is the regulatory convention and the
+// opposite of the P&L convention used by most trading desks; mixing the two is
+// the single most common way two systems that agree on the mathematics report
+// different numbers.  It is fixed here and asserted in the KAT.
+//
+// SELF-CONTAINED, AND WHY.  The detmath kernels are duplicated below instead of
+// imported.  mindc 0.10.2 cannot carry an f64 across a module boundary (roadmap
+// 17.1): an imported `fn f(x: f64) -> f64` types as `(i64) -> i64` at the call
+// site and miscompiles silently.  This mirrors `examples/detmath_kat`,
+// `examples/quant/black_scholes` and `examples/quant/greeks_higher_order`, and
+// the block below is copied BYTE-IDENTICALLY from black_scholes so the kernels
+// cannot silently diverge between examples.
+// deferred: replace the duplicated kernel block with `import std.detmath;` once
+// roadmap 17.1 lands — upgrade path: delete the block between the KERNEL BEGIN
+// and KERNEL END markers and call the std surface directly.
+//
+// KERNELS ARE NAMED `dm_*` DELIBERATELY.  A kernel named `exp`, `log`, `erf` or
+// `erfc` collides with the C99 libm name and can be constant-folded by the host
+// toolchain at a call site with literal arguments, silently substituting the
+// platform's rounding for ours — which is the exact bug this whole example
+// exists to rule out.  The `dm_` / `det_` prefixes make that collision
+// impossible.  This is not hypothetical: it is a measured defect in this repo's
+// own toolchain history, and it is why no function below is named after a libm
+// symbol.
+//
+// SEQUENCES LIVE IN A HEAP BLOCK, NOT IN `[f64; N]`.  Historical VaR needs an
+// indexable, MUTABLE f64 sequence.  mindc 0.10.2 lowers a local `[f64; N]`
+// through a tensor-bufferization pass that rejects ANY function in the module
+// with more than one `return` — which is every guarded kernel in this file.
+// So the sample is held as f64 BIT PATTERNS in an i64 heap block via the
+// `__mind_f64_to_bits` / `__mind_bits_to_f64` reinterpret pair, exactly as
+// `examples/quant/crr_binomial` does.  That is a lossless bit copy, NOT a
+// numeric conversion: no rounding happens on the way in or out.
+// deferred: use `[f64; N]` directly once the bufferization pass accepts
+// multi-return functions — upgrade path: replace `vget`/`vset` with indexing.
+//
+// NO `[test]` FUNCTIONS, AND WHY.  The mindc 0.10.2 `[test]` interpreter
+// mis-evaluates an f64 comparison in a function body (it takes the then-branch
+// unconditionally).  Every guarded function here would return through its
+// leading `if x != x` guard and every interpreted assertion would pass
+// vacuously — a false green.  The native backend evaluates f64 branches
+// correctly, so the gate is build-and-run: `mindc run`, exit code 0 means every
+// check passed.  The count of failures is the exit code, so a partial failure
+// is never rounded to success.
+//
+// REFERENCES:
+//   Artzner, P., Delbaen, F., Eber, J.-M. & Heath, D. (1999). "Coherent
+//     Measures of Risk." Mathematical Finance 9(3), 203-228.  — the paper that
+//     established VaR is not subadditive and ES is; demonstrated below in code.
+//   Acerbi, C. & Tasche, D. (2002). "On the Coherence of Expected Shortfall."
+//     Journal of Banking & Finance 26(7), 1487-1503.
+//   Tasche, D. (1999). "Risk Contributions and Performance Measurement."
+//     — the Euler allocation asserted below.
+//   Acklam, P. J. (2003). "An algorithm for computing the inverse normal
+//     cumulative distribution function."  — the rational seed refined below.
+// ---------------------------------------------------------------------------
+
+// =========================== KERNEL BEGIN ==================================
+// Duplicated verbatim from std/detmath.mind (roadmap 17.1 blocks importing).
+// Do not "improve" these: every polynomial is a fixed left-fold Horner
+// recurrence in source order.  Reassociating one changes the last bit of every
+// risk figure downstream and breaks the cross-substrate hash.
+
+fn absf(x: f64) -> f64 {
+    if x < 0.0 {
+        return 0.0 - x;
+    }
+    return x;
+}
+
+// +inf by byte-identical IEEE overflow; never a synthesised NaN.
+fn inf() -> f64 {
+    let mut v: f64 = 1.0;
+    let mut i: i64 = 0;
+    while i < 350 {
+        v = v * 10.0;
+        i = i + 1;
+    }
+    return v;
+}
+
+// 0x7FF8000000000000 — the MIND-canonical quiet NaN, pinned so an
+// out-of-domain result is byte-identical (x86 sets the sign bit, ARM does not).
+fn canonical_qnan() -> f64 {
+    return __mind_bits_to_f64(9221120237041090560);
+}
+
+fn rnd_to_i64(x: f64) -> i64 {
+    if x >= 0.0 {
+        return (x + 0.5) as i64;
+    }
+    return 0 - ((0.5 - x) as i64);
+}
+
+fn det_exp(x: f64) -> f64 {
+    let ln2_hi: f64 = 0.6931467056274414;
+    let ln2_lo: f64 = 0.00000047493250390941725;
+    let inv_ln2: f64 = 1.4426950408889634;
+    let k: i64 = rnd_to_i64(x * inv_ln2);
+    let kf: f64 = k as f64;
+    let r: f64 = (x - kf * ln2_hi) - kf * ln2_lo;
+    let mut t: f64 = 0.0000000000007647163731819816;
+    t = 0.00000000016059043836821613 + r * t;
+    t = 0.00000000208767569878681 + r * t;
+    t = 0.00000002505210838544172 + r * t;
+    t = 0.0000002755731922398589 + r * t;
+    t = 0.0000027557319223985893 + r * t;
+    t = 0.0000248015873015873 + r * t;
+    t = 0.0001984126984126984 + r * t;
+    t = 0.001388888888888889 + r * t;
+    t = 0.008333333333333333 + r * t;
+    t = 0.041666666666666664 + r * t;
+    t = 0.16666666666666666 + r * t;
+    t = 0.5 + r * t;
+    t = 1.0 + r * t;
+    t = 1.0 + r * t;
+    let mut y: f64 = t * 1.0;
+    let mut j: i64 = 0;
+    if k >= 0 {
+        while j < k {
+            y = y * 2.0;
+            j = j + 1;
+        }
+    } else {
+        while j < (0 - k) {
+            y = y / 2.0;
+            j = j + 1;
+        }
+    }
+    return y;
+}
+
+fn dm_exp(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x >= 709.7827128933841 {
+        return inf();
+    }
+    if x <= 0.0 - 745.1332191019412 {
+        return 0.0;
+    }
+    return det_exp(x);
+}
+
+fn det_log_core(x: f64) -> f64 {
+    let ln2: f64 = 0.6931471805599453;
+    let mut k: i64 = 0;
+    // f64-param-init: seed a loop-carried f64 binding via the exact identity
+    // `x * 1.0` so mindc 0.10.2 does not infer it as i64.
+    let mut m: f64 = x * 1.0;
+    while m >= 1.4142135623730951 {
+        m = m / 2.0;
+        k = k + 1;
+    }
+    while m < 0.7071067811865476 {
+        m = m * 2.0;
+        k = k - 1;
+    }
+    let s: f64 = (m - 1.0) / (m + 1.0);
+    let s2: f64 = s * s;
+    let mut acc: f64 = 0.0;
+    let mut n: i64 = 29;
+    while n >= 1 {
+        acc = 1.0 / (n as f64) + s2 * acc;
+        n = n - 2;
+    }
+    return (k as f64) * ln2 + 2.0 * s * acc;
+}
+
+fn dm_log(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x < 0.0 {
+        return 0.0;
+    }
+    if x == 0.0 {
+        return 0.0 - inf();
+    }
+    if x >= inf() {
+        return inf();
+    }
+    return det_log_core(x);
+}
+
+fn dm_sqrt(x: f64) -> f64 {
+    if x != x {
+        return canonical_qnan();
+    }
+    if x < 0.0 {
+        return canonical_qnan();
+    }
+    return sqrt(x);
+}
+
+// erf by its Maclaurin series, ascending fixed left-fold.  Certified |x| < 2.
+fn erf_series(x: f64) -> f64 {
+    let two_over_sqrtpi: f64 = 1.1283791670955126;
+    let x2: f64 = x * x;
+    let mut t: f64 = x * 1.0;
+    let mut s: f64 = x * 1.0;
+    let mut n: i64 = 1;
+    while n < 60 {
+        t = t * (0.0 - x2) / (n as f64);
+        s = s + t / ((2 * n + 1) as f64);
+        n = n + 1;
+    }
+    return two_over_sqrtpi * s;
+}
+
+// erfc by a fixed-depth backward continued fraction.  Certified x >= 1.
+// The depth is static, never convergence-tested: a convergence test would be
+// deterministic but would make the rounding sequence input-dependent.
+fn erfc_cf(x: f64) -> f64 {
+    let sqrtpi: f64 = 1.7724538509055159;
+    let mut acc: f64 = 0.0;
+    let mut n: i64 = 200;
+    while n >= 1 {
+        acc = ((n as f64) * 0.5) / (x + acc);
+        n = n - 1;
+    }
+    return det_exp(0.0 - x * x) / sqrtpi / (x + acc);
+}
+
+fn dm_erfc(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x >= inf() {
+        return 0.0;
+    }
+    if x <= 0.0 - inf() {
+        return 2.0;
+    }
+    if x < 0.0 {
+        return 2.0 - dm_erfc(0.0 - x);
+    }
+    if x < 1.0 {
+        return 1.0 - erf_series(x);
+    }
+    return erfc_cf(x);
+}
+
+// Standard normal CDF.  Computed as 0.5*erfc(-x/sqrt(2)), NEVER as the
+// reflected 1 - norm_cdf(-x): the reflected form cancels to exactly 0.0 in the
+// left tail, which is precisely where a deep out-of-the-money option lives.
+// See the deep-OTM KAT below, where the true call premium is 4.955e-12 and a
+// reflected implementation would report a worthless option as exactly
+// worthless, with no indication of error.
+fn dm_norm_cdf(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    let inv_sqrt2: f64 = 0.7071067811865476;
+    return 0.5 * dm_erfc(0.0 - x * inv_sqrt2);
+}
+
+// Standard normal PDF, phi(x) = exp(-x^2/2)/sqrt(2*pi).  Needed by gamma,
+// vega and theta.  1/sqrt(2*pi) is a rounded constant, not a division.
+fn dm_norm_pdf(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    let inv_sqrt_2pi: f64 = 0.3989422804014327;
+    return inv_sqrt_2pi * det_exp(0.0 - 0.5 * x * x);
+}
+
+// ============================ KERNEL END ===================================
+
+// ---------------------------------------------------------------------------
+// HEAP-BACKED f64 SEQUENCE.
+//
+// A lossless bit reinterpret in both directions.  `vset` returns i64 rather
+// than nothing because mindc 0.10.2 wants every call in expression position;
+// the return value is never read.  See the header for why `[f64; N]` is not
+// used.
+// ---------------------------------------------------------------------------
+
+fn vget(buf: i64, i: i64) -> f64 {
+    return __mind_bits_to_f64(__mind_load_i64(buf + i * 8));
+}
+
+fn vset(buf: i64, i: i64, v: f64) -> i64 {
+    __mind_store_i64(buf + i * 8, __mind_f64_to_bits(v));
+    return 0;
+}
+
+// ===========================================================================
+// THE INVERSE NORMAL CDF.
+//
+// This is the numerically interesting function in the file and the one every
+// parametric VaR figure depends on.  It is built in two stages:
+//
+//   1. A RATIONAL SEED (Acklam 2003): two 6/5-term rational approximations, one
+//      for the central region and one for each tail, giving about 9 correct
+//      digits.  Every polynomial is a fixed left-fold Horner recurrence in
+//      source order, exactly as in the kernel block.
+//
+//   2. A FIXED NUMBER OF HALLEY STEPS against this module's own `dm_norm_cdf`,
+//      which lifts it to the accuracy of that CDF.
+//
+// WHY A FIXED TRIP COUNT AND NOT A TOLERANCE LOOP.  This is the central design
+// decision here, so it is worth stating plainly.  A `while absf(err) > tol`
+// loop is perfectly deterministic in the ordinary sense — same input, same
+// machine, same answer.  It is NOT deterministic in the sense this project
+// means, because the NUMBER OF ITERATIONS becomes a function of the input's
+// low-order bits.  Two substrates whose `dm_norm_cdf` agree to within one ulp
+// can straddle the tolerance on some input, take a different number of steps,
+// and emit two different f64s.  Byte-identity would then hold for almost every
+// input and fail for a few — which is the worst possible failure mode, because
+// it survives every test anyone writes and appears in production.
+//
+// A fixed trip count makes the ENTIRE sequence of floating-point operations a
+// function of the input VALUE alone, with no data-dependent control flow.  The
+// cost is that the loop runs the worst case every time.  That cost is the price
+// of the guarantee and it is not negotiable.  The same reasoning is why
+// `erfc_cf` above has a static depth of 200 rather than a convergence test.
+//
+// TWO STEPS, MEASURED NOT GUESSED.  Halley's method is cubically convergent,
+// so the ~9-digit seed reaches full double precision in one step and is at a
+// fixed point by the second.  The count was measured offline against a 50-digit
+// oracle across p in {1e-9 ... 1-1e-6}: step 1 reaches the accuracy floor of
+// the underlying CDF and steps 2 and 3 are bit-identical to it.  Two are used
+// rather than one so the result is at a verified fixed point rather than merely
+// close to one — a seed regression would then still converge instead of
+// silently shifting every VaR figure.
+// ===========================================================================
+
+// The Acklam rational seed.  Accurate to roughly 1.1e-9 relative over the whole
+// open interval; the Halley steps below do the rest.  The break points
+// 0.02425 / 0.97575 are Acklam's and are part of the published constant set:
+// moving one invalidates the coefficients.
+fn inv_norm_seed(p: f64) -> f64 {
+    let p_low: f64 = 0.02425;
+    let p_high: f64 = 0.97575;
+    if p < p_low {
+        // Lower tail: q = sqrt(-2*log(p)).
+        let q: f64 = dm_sqrt(0.0 - 2.0 * dm_log(p));
+        let mut nn: f64 = 0.0 - 0.007784894002430293;
+        nn = 0.0 - 0.3223964580411365 + q * nn;
+        nn = 0.0 - 2.400758277161838 + q * nn;
+        nn = 0.0 - 2.549732539343734 + q * nn;
+        nn = 4.374664141464968 + q * nn;
+        nn = 2.938163982698783 + q * nn;
+        let mut dd: f64 = 0.007784695709041462;
+        dd = 0.3224671290700398 + q * dd;
+        dd = 2.445134137142996 + q * dd;
+        dd = 3.754408661907416 + q * dd;
+        dd = 1.0 + q * dd;
+        return nn / dd;
+    }
+    if p > p_high {
+        // Upper tail by reflection on 1-p.  Note this reflection is EXACT in
+        // the argument (1-p is a single rounding) and the sign flip at the end
+        // is exact, so it introduces no asymmetry between the two tails beyond
+        // the unavoidable rounding of 1-p itself.
+        let q: f64 = dm_sqrt(0.0 - 2.0 * dm_log(1.0 - p));
+        let mut nn: f64 = 0.0 - 0.007784894002430293;
+        nn = 0.0 - 0.3223964580411365 + q * nn;
+        nn = 0.0 - 2.400758277161838 + q * nn;
+        nn = 0.0 - 2.549732539343734 + q * nn;
+        nn = 4.374664141464968 + q * nn;
+        nn = 2.938163982698783 + q * nn;
+        let mut dd: f64 = 0.007784695709041462;
+        dd = 0.3224671290700398 + q * dd;
+        dd = 2.445134137142996 + q * dd;
+        dd = 3.754408661907416 + q * dd;
+        dd = 1.0 + q * dd;
+        return 0.0 - nn / dd;
+    }
+    // Central region, in q = p - 0.5 and r = q*q.
+    let q: f64 = p - 0.5;
+    let r: f64 = q * q;
+    let mut nn: f64 = 0.0 - 39.69683028665376;
+    nn = 220.9460984245205 + r * nn;
+    nn = 0.0 - 275.9285104469687 + r * nn;
+    nn = 138.357751867269 + r * nn;
+    nn = 0.0 - 30.66479806614716 + r * nn;
+    nn = 2.506628277459239 + r * nn;
+    let mut dd: f64 = 0.0 - 54.47609879822406;
+    dd = 161.5858368580409 + r * dd;
+    dd = 0.0 - 155.6989798598866 + r * dd;
+    dd = 66.80131188771972 + r * dd;
+    dd = 0.0 - 13.28068155288572 + r * dd;
+    dd = 1.0 + r * dd;
+    return nn * q / dd;
+}
+
+// Inverse standard normal CDF.  Domain is the OPEN interval (0,1): p = 0 and
+// p = 1 map to -inf and +inf, which are not risk figures, so they return the
+// canonical qNaN rather than an infinity that would propagate silently into a
+// capital number.
+pub fn dm_inv_norm_cdf(p: f64) -> f64 {
+    if p != p {
+        return canonical_qnan();
+    }
+    if p <= 0.0 {
+        return canonical_qnan();
+    }
+    if p >= 1.0 {
+        return canonical_qnan();
+    }
+    let mut x: f64 = inv_norm_seed(p);
+    // FIXED trip count — see the block comment above.  Never a tolerance test.
+    let mut i: i64 = 0;
+    while i < 2 {
+        let e: f64 = dm_norm_cdf(x) - p;
+        let d: f64 = dm_norm_pdf(x);
+        // Halley's correction: u = e/phi(x), step = u / (1 + x*u/2).  The
+        // second-order term costs one multiply and removes the Newton method's
+        // slow tail convergence, where phi(x) is tiny and the raw Newton step
+        // overshoots.
+        let u: f64 = e / d;
+        x = x - u / (1.0 + x * u * 0.5);
+        i = i + 1;
+    }
+    return x;
+}
+
+// ===========================================================================
+// PARAMETRIC (VARIANCE-COVARIANCE) VaR AND EXPECTED SHORTFALL.
+//
+// The loss L is modelled as L ~ Normal(mu, sigma^2), with LOSSES POSITIVE (see
+// the header).  Then, with z = Phi^-1(alpha):
+//
+//     VaR_alpha = mu + sigma * z
+//     ES_alpha  = mu + sigma * phi(z) / (1 - alpha)
+//
+// The ES closed form is the mean of the normal above its alpha quantile and is
+// exact, not an approximation — it is the reason ES is cheap to compute under a
+// normal assumption despite being an integral.  Deriving it requires only that
+// the integral of x*phi(x) is -phi(x).
+//
+// EVALUATION ORDER IS PART OF THE CONTRACT.  `mu + sigma * z` is formed with
+// the multiply first and the single add second, and `sigma * phi(z) / (1-alpha)`
+// multiplies BEFORE dividing.  Regrouping either is algebraically identical and
+// numerically different, and would change the last bit of a reported figure.
+// Do not "simplify" these expressions.
+// ===========================================================================
+
+// Shared precondition: sigma must be strictly positive and finite, alpha must
+// lie strictly inside (0,1).  A zero-sigma "risk-free" position and an
+// alpha of exactly 1 are both caller errors, and both would otherwise produce a
+// plausible-looking number (0, and +inf respectively) that flows straight into
+// a capital calculation.
+fn pr_valid(mu: f64, sigma: f64, alpha: f64) -> i64 {
+    if mu != mu {
+        return 0;
+    }
+    if sigma != sigma {
+        return 0;
+    }
+    if alpha != alpha {
+        return 0;
+    }
+    if sigma <= 0.0 {
+        return 0;
+    }
+    if alpha <= 0.0 {
+        return 0;
+    }
+    if alpha >= 1.0 {
+        return 0;
+    }
+    return 1;
+}
+
+pub fn var_normal(mu: f64, sigma: f64, alpha: f64) -> f64 {
+    if pr_valid(mu, sigma, alpha) == 0 {
+        return canonical_qnan();
+    }
+    let z: f64 = dm_inv_norm_cdf(alpha);
+    return mu + sigma * z;
+}
+
+pub fn es_normal(mu: f64, sigma: f64, alpha: f64) -> f64 {
+    if pr_valid(mu, sigma, alpha) == 0 {
+        return canonical_qnan();
+    }
+    let z: f64 = dm_inv_norm_cdf(alpha);
+    return mu + sigma * dm_norm_pdf(z) / (1.0 - alpha);
+}
+
+// ===========================================================================
+// PORTFOLIO VOLATILITY FROM WEIGHTS AND A COVARIANCE MATRIX.
+//
+//     sigma_p = sqrt( w' C w ) = sqrt( sum_i sum_j w_i C_ij w_j )
+//
+// THE ACCUMULATION ORDER IS PINNED: i ascending in the outer loop, j ascending
+// in the inner, one `+=` per (i,j) pair in exactly that sequence.  Floating
+// point addition is not associative, so a different traversal — column-major, a
+// symmetric-half optimisation that doubles the off-diagonals, a pairwise or
+// blocked summation — produces a DIFFERENT LAST BIT and therefore a different
+// reported volatility.  Every one of those alternatives is faster and all of
+// them are wrong for this file's purpose.
+//
+// Note in particular that exploiting symmetry (summing only j <= i and doubling
+// the strictly-lower terms) is algebraically exact and numerically different,
+// because `2*(a+b)` and `a+b+a+b` round differently.  It is not done.
+//
+// The matrix is passed as a flat row-major heap block, `c[i*n + j]`, matching
+// the layout used throughout this repo for matrices.
+// ===========================================================================
+
+// Covariance quadratic form w' C w, in the pinned order.  Returns the VARIANCE,
+// not the volatility, so callers that need the variance do not pay a sqrt and
+// then square it back.
+fn quad_form(w: i64, c: i64, n: i64) -> f64 {
+    let mut acc: f64 = 0.0;
+    let mut i: i64 = 0;
+    while i < n {
+        let mut j: i64 = 0;
+        while j < n {
+            acc = acc + vget(w, i) * vget(c, i * n + j) * vget(w, j);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+// Portfolio volatility.  A covariance matrix that is not positive
+// semi-definite can produce a negative quadratic form; `dm_sqrt` returns the
+// canonical qNaN there rather than a NaN with an unspecified sign bit, so a
+// broken correlation estimate surfaces as an unmistakable non-number instead of
+// a small positive volatility.
+pub fn portfolio_vol(w: i64, c: i64, n: i64) -> f64 {
+    if n < 1 {
+        return canonical_qnan();
+    }
+    return dm_sqrt(quad_form(w, c, n));
+}
+
+// Two-asset portfolio volatility as an explicit function of the correlation.
+// Written out rather than routed through `quad_form` because the two-asset case
+// is the one every risk textbook uses to explain diversification, and having it
+// in closed form makes the rho = +1 and rho = -1 limits checkable exactly:
+//
+//     sigma_p^2 = w1^2 s1^2 + w2^2 s2^2 + 2 w1 w2 rho s1 s2
+//
+// At rho = 1 this is (w1 s1 + w2 s2)^2 exactly; at rho = -1 it is
+// (w1 s1 - w2 s2)^2 exactly.  Both are asserted in the KAT.
+pub fn two_asset_vol(w1: f64, w2: f64, s1: f64, s2: f64, rho: f64) -> f64 {
+    if s1 != s1 {
+        return canonical_qnan();
+    }
+    if s2 != s2 {
+        return canonical_qnan();
+    }
+    if rho != rho {
+        return canonical_qnan();
+    }
+    if s1 < 0.0 {
+        return canonical_qnan();
+    }
+    if s2 < 0.0 {
+        return canonical_qnan();
+    }
+    // A correlation outside [-1,1] is not a correlation.  Accepting it would
+    // yield a negative variance and a NaN volatility several steps later, at
+    // which point the cause is no longer visible.
+    if rho < 0.0 - 1.0 {
+        return canonical_qnan();
+    }
+    if rho > 1.0 {
+        return canonical_qnan();
+    }
+    let v: f64 = w1 * w1 * s1 * s1 + w2 * w2 * s2 * s2 + 2.0 * w1 * w2 * rho * s1 * s2;
+    return dm_sqrt(v);
+}
+
+// ===========================================================================
+// EULER (COMPONENT) RISK ATTRIBUTION.
+//
+// Portfolio volatility is positively homogeneous of degree 1 in the weights, so
+// Euler's theorem gives an EXACT additive decomposition:
+//
+//     sigma_p = sum_i w_i * d(sigma_p)/d(w_i)
+//     d(sigma_p)/d(w_i) = (C w)_i / sigma_p
+//
+// and because parametric VaR and ES are both sigma_p times a constant that does
+// not depend on the weights, the same decomposition carries through unchanged:
+//
+//     VaR_p = sum_i w_i * (C w)_i / sigma_p * z_alpha
+//
+// WHY THIS IS THE STRONGEST CHECK IN THE FILE.  The additivity is not a
+// tolerance-band claim about one number against one oracle; it is a structural
+// identity that must hold for ANY weights and ANY positive-definite C.  If the
+// covariance accumulation, the marginal derivative and the volatility disagree
+// with each other in any way at all, the sum stops matching the total.  It
+// therefore survives a mistyped reference value, which a pure value check does
+// not.
+//
+// This is also exactly the number a desk sees: "which book is consuming the
+// limit" is answered by the component VaR, and a decomposition that does not
+// add up to the total is a number no risk manager can defend in a meeting.
+// ===========================================================================
+
+// (C w)_i, the i-th row of the covariance matrix dotted with the weights, in
+// the pinned ascending-j order.
+fn cov_row_dot(w: i64, c: i64, n: i64, i: i64) -> f64 {
+    let mut acc: f64 = 0.0;
+    let mut j: i64 = 0;
+    while j < n {
+        acc = acc + vget(c, i * n + j) * vget(w, j);
+        j = j + 1;
+    }
+    return acc;
+}
+
+// Marginal volatility: d(sigma_p)/d(w_i) = (C w)_i / sigma_p.
+pub fn marginal_vol(w: i64, c: i64, n: i64, i: i64) -> f64 {
+    if n < 1 {
+        return canonical_qnan();
+    }
+    if i < 0 {
+        return canonical_qnan();
+    }
+    if i >= n {
+        return canonical_qnan();
+    }
+    let sp: f64 = portfolio_vol(w, c, n);
+    if sp <= 0.0 {
+        // A zero-volatility portfolio has no well-defined risk attribution:
+        // every marginal is 0/0.  Say so rather than dividing.
+        return canonical_qnan();
+    }
+    return cov_row_dot(w, c, n, i) / sp;
+}
+
+// Component VaR: w_i * d(VaR)/d(w_i), the i-th asset's additive share of the
+// portfolio VaR.  Written as w_i * marginal_vol * z so it visibly shares the
+// SAME `marginal_vol` the identity is asserted against — a component VaR that
+// computed its own covariance row would be able to drift from the total.
+pub fn component_var(w: i64, c: i64, n: i64, i: i64, alpha: f64) -> f64 {
+    if alpha <= 0.0 {
+        return canonical_qnan();
+    }
+    if alpha >= 1.0 {
+        return canonical_qnan();
+    }
+    let m: f64 = marginal_vol(w, c, n, i);
+    if m != m {
+        return canonical_qnan();
+    }
+    let z: f64 = dm_inv_norm_cdf(alpha);
+    return vget(w, i) * m * z;
+}
+
+// Portfolio parametric VaR at alpha with zero mean, from the covariance matrix.
+// The mu = 0 convention is deliberate: a one-day horizon drift is far smaller
+// than its own estimation error, and carrying a mu here would invite callers to
+// net a return forecast against a capital figure.  A caller who wants a drift
+// adds it at the call site, where it is visible.
+pub fn portfolio_var(w: i64, c: i64, n: i64, alpha: f64) -> f64 {
+    if alpha <= 0.0 {
+        return canonical_qnan();
+    }
+    if alpha >= 1.0 {
+        return canonical_qnan();
+    }
+    let sp: f64 = portfolio_vol(w, c, n);
+    if sp != sp {
+        return canonical_qnan();
+    }
+    return sp * dm_inv_norm_cdf(alpha);
+}
+
+// ===========================================================================
+// HISTORICAL VaR AND EXPECTED SHORTFALL.
+//
+// No distributional assumption: the sample IS the distribution.  This requires
+// sorting the loss sample, and the sort is where determinism is won or lost.
+//
+// THE SORT IS AN EXPLICIT INSERTION SORT WITH A FULLY SPECIFIED TIE-BREAK.
+// Specifically: an element moves left past its predecessor if and only if the
+// predecessor is STRICTLY GREATER.  On a tie the scan stops, so equal elements
+// retain their original relative order — the sort is STABLE, and stability here
+// is not a performance note, it is a correctness requirement.
+//
+// WHY.  Consider a sample containing the same loss three times, which is
+// entirely normal in a historical window (a quiet day repeats a rounded
+// return).  An unstable sort — quicksort with any pivot rule, heapsort, or an
+// insertion sort written with `>=` instead of `>` — may place those three equal
+// elements in any of several orders.  Every ORDER is a different array, and
+// although the VaR order statistic happens to be the same value either way, the
+// ES is a SUM over a tail slice and floating-point addition is not associative:
+// summing the same multiset in a different order can give a different last bit.
+// The reported ES would then depend on an implementation detail of the sort.
+//
+// Equally, a comparison-ambiguous sort (one whose behaviour on equal keys is
+// unspecified, as most library sorts are) cannot be reasoned about at all: two
+// standard libraries may both be "correct" and produce different byte output.
+// That is precisely the kind of quiet cross-substrate divergence this project
+// exists to eliminate, so the sort is written out here rather than delegated.
+//
+// COMPLEXITY, HONESTLY.  Insertion sort is O(n^2).  For a regulatory historical
+// window — 250 or 500 observations — that is a few tens of thousands of
+// comparisons and entirely irrelevant.  A merge sort would be O(n log n) and
+// equally specifiable; insertion sort is chosen because its tie-break is
+// visible in four lines rather than buried in a merge condition, and this file
+// is meant to be READ by someone deciding whether to trust the number.
+// ===========================================================================
+
+// Sort the n elements of `buf` ascending, in place, stably.
+// Returns the number of elements sorted so the call sits in expression
+// position; the value is not otherwise meaningful.
+fn sort_ascending(buf: i64, n: i64) -> i64 {
+    let mut i: i64 = 1;
+    while i < n {
+        let key: f64 = vget(buf, i);
+        // `pos` tracks where `key` will land.  It is carried explicitly rather
+        // than read off `j` after the loop, because the loop exits by forcing
+        // `j` negative and the post-loop value of `j` would then be a sentinel
+        // rather than an index.  This is the fully-specified form: no reliance
+        // on what `j` happens to hold on exit.
+        let mut pos: i64 = i;
+        let mut j: i64 = i - 1;
+        while j >= 0 {
+            // STRICTLY greater — this single character is the tie-break.  With
+            // `>=` the sort would still produce a sorted array but would swap
+            // equal elements, destroying stability and with it the
+            // reproducibility of any tail SUM over the result.
+            if vget(buf, j) > key {
+                vset(buf, j + 1, vget(buf, j));
+                pos = j;
+                j = j - 1;
+            } else {
+                j = 0 - 1;
+            }
+        }
+        vset(buf, pos, key);
+        i = i + 1;
+    }
+    return n;
+}
+
+// Integer ceiling of alpha*n, used to pick the order statistic.  Computed
+// through a comparison rather than a library ceil so there is no dependence on
+// a rounding mode: truncate toward zero, then add one if anything was lost.
+// alpha*n is a product of two exactly-representable-ish quantities and the
+// truncation is the only place a boundary case can bite; `k` is clamped into
+// [1, n] immediately afterwards so a boundary miss can never index out of the
+// array.
+fn ceil_index(alpha: f64, n: i64) -> i64 {
+    let x: f64 = alpha * (n as f64);
+    let t: i64 = x as i64;
+    let mut k: i64 = t;
+    if (t as f64) < x {
+        k = t + 1;
+    }
+    if k < 1 {
+        k = 1;
+    }
+    if k > n {
+        k = n;
+    }
+    return k;
+}
+
+// Historical VaR: the alpha order statistic of the sorted loss sample.
+//
+// CONVENTION, STATED BECAUSE IT IS NOT UNIQUE.  This uses the "lower"
+// order-statistic convention: with the sample sorted ASCENDING and
+// k = ceil(alpha*n), VaR is the k-th smallest loss, i.e. `sorted[k-1]`.  There
+// are at least three other defensible conventions (interpolated quantile,
+// upper order statistic, and the Basel "next worse observation" rule) and they
+// differ by a whole observation on a 250-day window, which is a material
+// difference in a reported figure.  Fixing it here in the source, visibly, is
+// the point: an undocumented quantile convention is a reproducibility failure
+// even when the arithmetic is perfect.
+//
+// `buf` is sorted IN PLACE.  The caller owns the block and must expect it to be
+// reordered; this is stated rather than hidden behind a copy because an
+// allocation inside a risk function is a place where a non-deterministic
+// allocator could otherwise enter the computation.
+pub fn hist_var(buf: i64, n: i64, alpha: f64) -> f64 {
+    if n < 1 {
+        return canonical_qnan();
+    }
+    if alpha != alpha {
+        return canonical_qnan();
+    }
+    if alpha <= 0.0 {
+        return canonical_qnan();
+    }
+    if alpha >= 1.0 {
+        return canonical_qnan();
+    }
+    sort_ascending(buf, n);
+    let k: i64 = ceil_index(alpha, n);
+    return vget(buf, k - 1);
+}
+
+// Historical ES: the mean of the losses at or above the VaR order statistic.
+//
+// The tail slice is `sorted[k-1 .. n-1]`, INCLUSIVE of the VaR point itself,
+// which is the convention that matches the "average of the worst (1-alpha)
+// fraction" description and guarantees ES >= VaR for every sample (the VaR
+// point is in the average, and everything else in the average is >= it).
+//
+// The sum runs ASCENDING over the tail — from the VaR point up to the worst
+// loss — and that order is pinned for the same reason every other accumulation
+// here is pinned.  Summing the tail descending is algebraically identical and
+// can differ in the last bit.
+pub fn hist_es(buf: i64, n: i64, alpha: f64) -> f64 {
+    if n < 1 {
+        return canonical_qnan();
+    }
+    if alpha != alpha {
+        return canonical_qnan();
+    }
+    if alpha <= 0.0 {
+        return canonical_qnan();
+    }
+    if alpha >= 1.0 {
+        return canonical_qnan();
+    }
+    sort_ascending(buf, n);
+    let k: i64 = ceil_index(alpha, n);
+    let mut acc: f64 = 0.0;
+    let mut i: i64 = k - 1;
+    while i < n {
+        acc = acc + vget(buf, i);
+        i = i + 1;
+    }
+    let cnt: i64 = n - (k - 1);
+    return acc / (cnt as f64);
+}
+
+// Sample mean, ascending order pinned.
+pub fn sample_mean(buf: i64, n: i64) -> f64 {
+    if n < 1 {
+        return canonical_qnan();
+    }
+    let mut acc: f64 = 0.0;
+    let mut i: i64 = 0;
+    while i < n {
+        acc = acc + vget(buf, i);
+        i = i + 1;
+    }
+    return acc / (n as f64);
+}
+
+// Sample standard deviation with the (n-1) Bessel correction, two-pass.
+//
+// TWO PASSES DELIBERATELY.  The one-pass "sum of squares minus square of sum"
+// shortcut is catastrophically cancellation-prone when the mean is large
+// relative to the spread — which is the normal case for a price series and a
+// common case for a P&L series with a drift.  It is also the textbook example
+// of an algebraically-identical rearrangement that destroys accuracy.  The
+// second pass costs one more traversal and removes the failure mode entirely.
+pub fn sample_stdev(buf: i64, n: i64) -> f64 {
+    if n < 2 {
+        return canonical_qnan();
+    }
+    let m: f64 = sample_mean(buf, n);
+    let mut acc: f64 = 0.0;
+    let mut i: i64 = 0;
+    while i < n {
+        let d: f64 = vget(buf, i) - m;
+        acc = acc + d * d;
+        i = i + 1;
+    }
+    return dm_sqrt(acc / ((n - 1) as f64));
+}
+
+// ===========================================================================
+// KNOWN-ANSWER TESTS.
+//
+// THE ORACLE.  Every reference value below was produced by an INDEPENDENT
+// 50-digit oracle — mpmath 1.3.0 at `mp.dps = 50`, evaluating the closed forms
+// with N(x) = erfc(-x/sqrt(2))/2, phi(x) = exp(-x^2/2)/sqrt(2*pi) and
+// Phi^-1(p) = sqrt(2)*erfinv(2p-1) in 50-digit arithmetic, then rounded ONCE to
+// f64.  Never by this implementation.  A KAT generated from the code it tests
+// proves only that the code is unchanged, not that it is correct.
+//
+// FOUR CLASSES OF CHECK, deliberately:
+//   1. STRUCTURAL IDENTITIES — relations that must hold no matter what the
+//      oracle says, and which therefore survive a mistyped reference.  These
+//      are the real value of this file and are listed first.
+//   2. VALUE      — against the oracle, within a stated ulp band.
+//   3. DOMAIN     — degenerate inputs return the canonical qNaN.
+//   4. ADVERSARIAL— a deliberately WRONG reference must be REJECTED.  A
+//      spurious acceptance is counted as a failure, which is what proves the
+//      bands discriminate rather than passing vacuously.
+//
+// WHAT THIS KAT CANNOT CATCH, STATED PLAINLY.  These are tolerance bands, so
+// they are structurally blind to any change that perturbs the result by less
+// than the band — including a reassociation of an expression that is
+// algebraically identical and numerically different.  Tightening the bands is
+// not the fix: they must stay wide enough to absorb the honest difference
+// between a re-derived erfc and the 50-digit oracle.
+//
+// ON TESTING THE SORT'S STABILITY, WHICH IS HARDER THAN IT LOOKS.  The
+// duplicate-heavy sample below makes the stable and unstable orderings differ
+// as PERMUTATIONS — with the three 0.005 entries ending up in input order
+// (2,7,14) under the strict `>` tie-break and reversed (14,7,2) under `>=`.
+// But no assertion on VALUES can see that difference, because the two
+// permutations produce an identical sequence of numbers.  That was verified
+// the hard way: mutating `>` to `>=` left every other check in this file green.
+//
+// A check that cannot fail is not a check, so stability is tested separately
+// and directly, using the one pair of f64 values that compare EQUAL while
+// remaining bit-distinct: -0.0 and +0.0.  IEEE-754 requires `-0.0 == +0.0` to
+// be true, so no comparison-based sort may reorder them on ordering grounds;
+// only the tie-break decides which comes out first, and their BIT PATTERNS say
+// which one did.  See IDENTITY 9.  That check goes red under the `>=` mutation
+// and green under `>`, which is what makes the stability requirement enforced
+// here rather than merely asserted in a comment.
+//
+// Detecting reassociation requires a BIT-EXACT reference, which is the job of
+// the cross-substrate CI fixture (tests/cross_substrate_identity.rs): it
+// compares hashes across x86 `avx2` and ARM `neon`, and a hash has no tolerance
+// to hide in.  This KAT proves the risk measures are CORRECT; the fixture
+// proves they are REPRODUCIBLE.  A green KAT is not evidence of byte-identity.
+// ===========================================================================
+
+fn chk_ulp(got: f64, want: f64, ulps: f64) -> i64 {
+    let eps: f64 = 0.0000000000000002220446049250313;
+    let tol: f64 = ulps * eps * absf(want);
+    if absf(got - want) <= tol {
+        return 1;
+    }
+    return 0;
+}
+
+fn chk_abs(got: f64, want: f64, abstol: f64) -> i64 {
+    if absf(got - want) <= abstol {
+        return 1;
+    }
+    return 0;
+}
+
+fn is_nan(x: f64) -> i64 {
+    if x != x {
+        return 1;
+    }
+    return 0;
+}
+
+// Assert a strict inequality, returning 1 on FAILURE so it adds into `fails`
+// exactly like the `1 - chk_*` forms.
+fn bad_if_not(cond: i64) -> i64 {
+    if cond != 0 {
+        return 0;
+    }
+    return 1;
+}
+
+fn gt(a: f64, b: f64) -> i64 {
+    if a > b {
+        return 1;
+    }
+    return 0;
+}
+
+// Negative zero, 0x8000000000000000, built from its bit pattern.  It CANNOT be
+// written as `0.0 - 0.0`: IEEE-754 round-to-nearest gives `+0.0` for that
+// expression (the sign of an exact-zero sum is positive in every rounding mode
+// but round-toward-negative), which was confirmed on this toolchain before this
+// helper was written.  It is needed only by the sort-stability check.
+fn neg_zero() -> f64 {
+    return __mind_bits_to_f64(0 - 9223372036854775807 - 1);
+}
+
+fn is_neg_zero(x: f64) -> i64 {
+    if __mind_f64_to_bits(x) == 0 - 9223372036854775807 - 1 {
+        return 1;
+    }
+    return 0;
+}
+
+fn ge(a: f64, b: f64) -> i64 {
+    if a >= b {
+        return 1;
+    }
+    return 0;
+}
+
+fn le(a: f64, b: f64) -> i64 {
+    if a <= b {
+        return 1;
+    }
+    return 0;
+}
+
+// Load the 20-observation historical loss sample used by the historical VaR
+// checks.  The sample contains 0.005 THREE TIMES, deliberately: duplicates are
+// what exercise the sort's tie-break, and a sample of distinct values would
+// make the stability discussion above untestable even in principle.
+// Losses are positive; negative entries are gains.
+fn load_sample(buf: i64) -> i64 {
+    vset(buf, 0, 0.0 - 0.031);
+    vset(buf, 1, 0.012);
+    vset(buf, 2, 0.005);
+    vset(buf, 3, 0.0 - 0.008);
+    vset(buf, 4, 0.027);
+    vset(buf, 5, 0.041);
+    vset(buf, 6, 0.0 - 0.019);
+    vset(buf, 7, 0.005);
+    vset(buf, 8, 0.033);
+    vset(buf, 9, 0.0 - 0.002);
+    vset(buf, 10, 0.018);
+    vset(buf, 11, 0.062);
+    vset(buf, 12, 0.0 - 0.045);
+    vset(buf, 13, 0.009);
+    vset(buf, 14, 0.005);
+    vset(buf, 15, 0.024);
+    vset(buf, 16, 0.0 - 0.013);
+    vset(buf, 17, 0.051);
+    vset(buf, 18, 0.037);
+    vset(buf, 19, 0.0 - 0.006);
+    return 20;
+}
+
+// The 3-asset covariance matrix used by the portfolio checks.
+//   sigma = (0.20, 0.30, 0.15), correlations rho_12=0.3, rho_13=0.1,
+//   rho_23=-0.2.  C_ij = sigma_i * sigma_j * rho_ij, each entry exactly
+//   representable at the printed precision.  The negative rho_23 is deliberate:
+//   a covariance matrix with only positive entries would let a sign error in
+//   the quadratic form pass unnoticed.
+fn load_cov3(c: i64) -> i64 {
+    vset(c, 0, 0.04);
+    vset(c, 1, 0.018);
+    vset(c, 2, 0.003);
+    vset(c, 3, 0.018);
+    vset(c, 4, 0.09);
+    vset(c, 5, 0.0 - 0.009);
+    vset(c, 6, 0.003);
+    vset(c, 7, 0.0 - 0.009);
+    vset(c, 8, 0.0225);
+    return 9;
+}
+
+fn load_w3(w: i64) -> i64 {
+    vset(w, 0, 0.5);
+    vset(w, 1, 0.3);
+    vset(w, 2, 0.2);
+    return 3;
+}
+
+pub fn main() -> i64 {
+    let mut fails: i64 = 0;
+
+    // =====================================================================
+    // 1. STRUCTURAL IDENTITIES.
+    //
+    // These come FIRST because they are the checks that survive a bad oracle.
+    // A value check confirms one number against one reference; an identity
+    // confirms a RELATION that must hold regardless, and a mistyped reference
+    // is the likeliest error in a file full of hand-transcribed constants.
+    // =====================================================================
+
+    // --- IDENTITY 1: the inverse round trip -------------------------------
+    //   norm_cdf(inv_norm_cdf(p)) == p
+    // This is the single best check on the inverse implementation: it is
+    // self-referential in the right way (it pins the inverse to THIS module's
+    // CDF, which is the CDF every VaR figure is actually defined against), and
+    // it holds at every p without needing an external quantile table.
+    //
+    // Checked across the full open interval INCLUDING both tails, because the
+    // Acklam seed uses three different rational branches and a broken branch
+    // boundary would show up nowhere else.  1e-6 and 1-1e-6 sit deep in the
+    // tail branches; 0.02425 and 0.97575 are the branch points themselves.
+    //
+    // The band is RELATIVE to p, which is the honest form: an absolute band of
+    // 1e-12 would be trivially satisfied at p = 1e-6 and would prove nothing
+    // about the lower tail.
+    fails = fails + (1 - chk_ulp(dm_norm_cdf(dm_inv_norm_cdf(0.5)), 0.5, 1024.0));
+    fails = fails + (1 - chk_ulp(dm_norm_cdf(dm_inv_norm_cdf(0.95)), 0.95, 1024.0));
+    fails = fails + (1 - chk_ulp(dm_norm_cdf(dm_inv_norm_cdf(0.99)), 0.99, 1024.0));
+    fails = fails + (1 - chk_ulp(dm_norm_cdf(dm_inv_norm_cdf(0.975)), 0.975, 1024.0));
+    fails = fails + (1 - chk_ulp(dm_norm_cdf(dm_inv_norm_cdf(0.999)), 0.999, 1024.0));
+    fails = fails + (1 - chk_ulp(dm_norm_cdf(dm_inv_norm_cdf(0.05)), 0.05, 1024.0));
+    fails = fails + (1 - chk_ulp(dm_norm_cdf(dm_inv_norm_cdf(0.01)), 0.01, 1024.0));
+    fails = fails + (1 - chk_ulp(dm_norm_cdf(dm_inv_norm_cdf(0.001)), 0.001, 1024.0));
+    // The branch points themselves.
+    fails = fails + (1 - chk_ulp(dm_norm_cdf(dm_inv_norm_cdf(0.02425)), 0.02425, 1024.0));
+    fails = fails + (1 - chk_ulp(dm_norm_cdf(dm_inv_norm_cdf(0.97575)), 0.97575, 4096.0));
+    // Deep tails.  The lower tail is the well-conditioned direction for this
+    // round trip (norm_cdf is computed from erfc directly there); the upper
+    // tail at 1-1e-6 must subtract two nearly-equal quantities, so its band is
+    // necessarily wider and the file says so rather than hiding it.
+    fails = fails + (1 - chk_ulp(dm_norm_cdf(dm_inv_norm_cdf(0.000001)), 0.000001, 4096.0));
+    fails = fails + (1 - chk_ulp(dm_norm_cdf(dm_inv_norm_cdf(0.999999)), 0.999999, 4096.0));
+
+    // --- IDENTITY 2: ES >= VaR, always ------------------------------------
+    // ES is the mean of the loss distribution ABOVE the VaR quantile, so it
+    // cannot be smaller than the quantile itself.  This holds for every mu,
+    // every sigma and every alpha, and a sign error in the ES tail term breaks
+    // it immediately.  It is the cheapest possible check on the ES formula and
+    // needs no reference value at all.
+    fails = fails + bad_if_not(ge(es_normal(0.0, 1.0, 0.95), var_normal(0.0, 1.0, 0.95)));
+    fails = fails + bad_if_not(ge(es_normal(0.0, 1.0, 0.99), var_normal(0.0, 1.0, 0.99)));
+    fails = fails + bad_if_not(ge(es_normal(0.0005, 0.02, 0.99), var_normal(0.0005, 0.02, 0.99)));
+    fails = fails + bad_if_not(ge(es_normal(0.0 - 0.001, 0.015, 0.975), var_normal(0.0 - 0.001, 0.015, 0.975)));
+    fails = fails + bad_if_not(ge(es_normal(0.0, 1.0, 0.999), var_normal(0.0, 1.0, 0.999)));
+    // Positive control for the four lines above: the gap is a real, non-zero
+    // number (0.418 at alpha=0.95 for the standard normal), so the assertion is
+    // not passing because both sides are equal.  Without this a degenerate
+    // implementation returning VaR from both functions would pass every `>=`.
+    fails = fails + bad_if_not(gt(es_normal(0.0, 1.0, 0.95) - var_normal(0.0, 1.0, 0.95), 0.4));
+    // Historical ES >= historical VaR on a real sample, for the same reason.
+    let hb: i64 = __mind_alloc(20 * 8);
+    load_sample(hb);
+    fails = fails + bad_if_not(ge(hist_es(hb, 20, 0.95), hist_var(hb, 20, 0.95)));
+    load_sample(hb);
+    fails = fails + bad_if_not(ge(hist_es(hb, 20, 0.9), hist_var(hb, 20, 0.9)));
+    load_sample(hb);
+    fails = fails + bad_if_not(ge(hist_es(hb, 20, 0.75), hist_var(hb, 20, 0.75)));
+    // ...and its positive control at alpha=0.90, where the tail holds three
+    // observations and the ES strictly exceeds the VaR by 0.0103.
+    load_sample(hb);
+    fails = fails + bad_if_not(gt(hist_es(hb, 20, 0.9) - hist_var(hb, 20, 0.9), 0.005));
+
+    // --- IDENTITY 3: SUBADDITIVITY of Expected Shortfall ------------------
+    // ES(A+B) <= ES(A) + ES(B).  This is the coherence property (Artzner et al.
+    // 1999) and it is THE reason the Basel framework moved its market-risk
+    // capital measure from VaR to ES.
+    //
+    // Under a joint normal model the portfolio sigma is `two_asset_vol`, and
+    // subadditivity of ES reduces to sub-additivity of the portfolio vol, which
+    // holds for every rho <= 1 with equality exactly at rho = 1.  Checked at
+    // three correlations spanning the range.
+    let sa: f64 = 0.2;
+    let sb: f64 = 0.3;
+    let es_a: f64 = es_normal(0.0, sa, 0.99);
+    let es_b: f64 = es_normal(0.0, sb, 0.99);
+    // rho = 0.5: strict diversification benefit.
+    let v_half: f64 = two_asset_vol(1.0, 1.0, sa, sb, 0.5);
+    fails = fails + bad_if_not(le(es_normal(0.0, v_half, 0.99), es_a + es_b));
+    // rho = 0: more benefit still.
+    let v_zero: f64 = two_asset_vol(1.0, 1.0, sa, sb, 0.0);
+    fails = fails + bad_if_not(le(es_normal(0.0, v_zero, 0.99), es_a + es_b));
+    // rho = -1: maximum benefit, the combined vol is |0.2 - 0.3| = 0.1.
+    let v_neg: f64 = two_asset_vol(1.0, 1.0, sa, sb, 0.0 - 1.0);
+    fails = fails + bad_if_not(le(es_normal(0.0, v_neg, 0.99), es_a + es_b));
+    // rho = +1: the EQUALITY case, the boundary of the inequality.  If the
+    // implementation had an error that made the combined vol slightly too
+    // large, the three checks above could still pass while this one fails.
+    // Including the boundary is what makes the inequality checks non-vacuous.
+    let v_one: f64 = two_asset_vol(1.0, 1.0, sa, sb, 1.0);
+    fails = fails + bad_if_not(le(es_normal(0.0, v_one, 0.99), es_a + es_b));
+    fails = fails + (1 - chk_abs(v_one, sa + sb, 0.0000000000001));
+    // Positive control: at rho = 0.5 the benefit is REAL, not zero — the
+    // diversified ES is strictly below the sum by a visible margin.  Without
+    // this line, an implementation where every vol collapsed to the same number
+    // would satisfy all four `<=` checks above.
+    fails = fails + bad_if_not(gt(es_a + es_b - es_normal(0.0, v_half, 0.99), 0.1));
+
+    // --- IDENTITY 4: VaR subadditivity CAN FAIL ---------------------------
+    //
+    // This is the most important block in the file, and it is a check that a
+    // property does NOT hold.  It is the textbook counterexample that motivated
+    // the whole coherent-risk-measure programme, computed here rather than
+    // asserted in prose.
+    //
+    // THE CONSTRUCTION.  Two INDEPENDENT defaultable bonds.  Each defaults with
+    // probability p = 0.04 and loses 100; otherwise it loses 0.  Take
+    // alpha = 0.95.
+    //
+    //   Single bond: P(loss = 0) = 1 - p = 0.96, which EXCEEDS 0.95.  So the
+    //     95% quantile of the loss falls in the no-default atom:
+    //         VaR_0.95(A) = VaR_0.95(B) = 0.
+    //
+    //   The two together: P(neither defaults) = 0.96^2 = 0.9216, which is BELOW
+    //     0.95, so the 95% quantile is no longer in the no-default atom.
+    //     P(at most one default) = 0.9216 + 2*0.04*0.96 = 0.9984 > 0.95, so:
+    //         VaR_0.95(A+B) = 100.
+    //
+    //   Therefore  VaR(A+B) = 100  >  0 = VaR(A) + VaR(B).
+    //   Diversifying INCREASED the measured risk from zero to one hundred.
+    //
+    // A bank whose capital rule is VaR at 95% holds nothing against either bond
+    // alone and one hundred against the pair.  That is not a rounding artefact
+    // or a modelling choice; it is a structural defect in the risk measure, and
+    // it is why ES replaced VaR in the Basel market-risk framework.
+    //
+    // The probabilities below are exactly representable products of 0.04 and
+    // 0.96, so this block involves no transcendental and no tolerance beyond
+    // the quantile comparison itself.  It is checked by evaluating the discrete
+    // quantiles directly, not by calling the normal-model functions — those
+    // assume a continuous distribution and could never exhibit this.
+    let pdf_def: f64 = 0.04;
+    let pdf_ok: f64 = 1.0 - pdf_def;
+    let p_none: f64 = pdf_ok * pdf_ok;
+    let p_one_or_none: f64 = p_none + 2.0 * pdf_def * pdf_ok;
+    let conf: f64 = 0.95;
+    // Single-bond VaR at 0.95 is 0 because the no-default atom already covers
+    // more than alpha.
+    fails = fails + bad_if_not(gt(pdf_ok, conf));
+    // Portfolio VaR at 0.95 is 100 because the no-default atom does NOT.
+    fails = fails + bad_if_not(gt(conf, p_none));
+    fails = fails + bad_if_not(gt(p_one_or_none, conf));
+    // The violation itself, stated as the inequality it is:
+    //   VaR(A+B) = 100  >  VaR(A) + VaR(B) = 0.
+    let var_single: f64 = 0.0;
+    let var_joint: f64 = 100.0;
+    fails = fails + bad_if_not(gt(var_joint, var_single + var_single));
+    //
+    // AND THE CONTRAST: ES on the SAME distribution is subadditive.
+    //   Portfolio loss: 0 w.p. 0.9216, 100 w.p. 0.0768, 200 w.p. 0.0016.
+    //   ES_0.95 = ( E[L 1{L > VaR}] + VaR*(P(L <= VaR) - alpha) ) / (1 - alpha)
+    //           = ( 200*0.0016 + 100*(0.9984 - 0.95) ) / 0.05 = 103.2
+    //   Single bond: VaR = 0, so
+    //   ES_0.95 = ( 100*0.04 + 0*(0.96 - 0.95) ) / 0.05 = 80.0
+    //   ES(A) + ES(B) = 160.0 >= 103.2.  Subadditivity holds.
+    // Both figures were confirmed against the 50-digit oracle.
+    let es_joint: f64 = (200.0 * pdf_def * pdf_def + var_joint * (p_one_or_none - conf)) / (1.0 - conf);
+    let es_single: f64 = (100.0 * pdf_def + 0.0 * (pdf_ok - conf)) / (1.0 - conf);
+    fails = fails + (1 - chk_ulp(es_joint, 103.2, 256.0));
+    fails = fails + (1 - chk_ulp(es_single, 80.0, 256.0));
+    fails = fails + bad_if_not(le(es_joint, es_single + es_single));
+    // And the positive control that makes the contrast real rather than
+    // coincidental: ES is STRICTLY subadditive here (103.2 < 160), by a wide
+    // margin, on the very distribution where VaR failed.
+    fails = fails + bad_if_not(gt(es_single + es_single - es_joint, 50.0));
+
+    // --- IDENTITY 5: EULER ALLOCATION sums to the total -------------------
+    // sum_i componentVaR_i == portfolioVaR, exactly (to a tight band).
+    //
+    // This is the strongest structural check in the file: it ties the
+    // covariance accumulation, the marginal derivative, the volatility and the
+    // quantile together, and any disagreement between any two of them breaks
+    // the sum.  The band is tight (1e-13 absolute on a figure of order 0.36)
+    // because the identity is exact in real arithmetic — the only slack it
+    // needs is the accumulated rounding of a three-term sum.
+    let wb: i64 = __mind_alloc(3 * 8);
+    let cb: i64 = __mind_alloc(9 * 8);
+    load_w3(wb);
+    load_cov3(cb);
+
+    let pv99: f64 = portfolio_var(wb, cb, 3, 0.99);
+    let cv0: f64 = component_var(wb, cb, 3, 0, 0.99);
+    let cv1: f64 = component_var(wb, cb, 3, 1, 0.99);
+    let cv2: f64 = component_var(wb, cb, 3, 2, 0.99);
+    fails = fails + (1 - chk_abs(cv0 + cv1 + cv2, pv99, 0.0000000000001));
+    // Again at a different confidence, so the identity cannot pass by a
+    // coincidence of the particular z value.
+    let pv95: f64 = portfolio_var(wb, cb, 3, 0.95);
+    let q0: f64 = component_var(wb, cb, 3, 0, 0.95);
+    let q1: f64 = component_var(wb, cb, 3, 1, 0.95);
+    let q2: f64 = component_var(wb, cb, 3, 2, 0.95);
+    fails = fails + (1 - chk_abs(q0 + q1 + q2, pv95, 0.0000000000001));
+    // The same allocation at the volatility level, without the quantile:
+    //   sum_i w_i * marginalVol_i == portfolioVol.
+    let pvol: f64 = portfolio_vol(wb, cb, 3);
+    let mc: f64 = vget(wb, 0) * marginal_vol(wb, cb, 3, 0) + vget(wb, 1) * marginal_vol(wb, cb, 3, 1) + vget(wb, 2) * marginal_vol(wb, cb, 3, 2);
+    fails = fails + (1 - chk_abs(mc, pvol, 0.0000000000001));
+    // Positive control: the three components are genuinely DIFFERENT and all
+    // non-zero, so the sum is not matching because everything collapsed to
+    // zero or because the three terms are identical.  Asset 1 (sigma=0.30,
+    // w=0.3) and asset 2 (sigma=0.15, w=0.2) differ by more than an order of
+    // magnitude in contribution.
+    fails = fails + bad_if_not(gt(cv0, 0.1));
+    fails = fails + bad_if_not(gt(cv1, 0.1));
+    fails = fails + bad_if_not(gt(cv2, 0.0));
+    fails = fails + bad_if_not(gt(cv0 - cv1, 0.01));
+    fails = fails + bad_if_not(gt(cv1 - cv2, 0.1));
+
+    // --- IDENTITY 6: MONOTONICITY -----------------------------------------
+    // VaR must increase with sigma (more risk, more capital) and with alpha
+    // (more confidence, more capital).  Both are one-line consequences of the
+    // formula and both catch a sign error in the quantile immediately.
+    fails = fails + bad_if_not(gt(var_normal(0.0, 0.03, 0.99), var_normal(0.0, 0.02, 0.99)));
+    fails = fails + bad_if_not(gt(var_normal(0.0, 0.02, 0.99), var_normal(0.0, 0.01, 0.99)));
+    fails = fails + bad_if_not(gt(var_normal(0.0, 1.0, 0.99), var_normal(0.0, 1.0, 0.95)));
+    fails = fails + bad_if_not(gt(var_normal(0.0, 1.0, 0.999), var_normal(0.0, 1.0, 0.99)));
+    // ES inherits both monotonicities.
+    fails = fails + bad_if_not(gt(es_normal(0.0, 1.0, 0.99), es_normal(0.0, 1.0, 0.95)));
+    fails = fails + bad_if_not(gt(es_normal(0.0, 0.03, 0.99), es_normal(0.0, 0.02, 0.99)));
+    // Historical VaR is monotone in alpha too — non-strictly, because the
+    // order statistic can repeat when the window is short.  `>=` is the honest
+    // assertion here; claiming strictness would be wrong for a discrete sample
+    // and the check would then be testing the sample, not the code.
+    load_sample(hb);
+    let hv90: f64 = hist_var(hb, 20, 0.9);
+    load_sample(hb);
+    let hv95: f64 = hist_var(hb, 20, 0.95);
+    load_sample(hb);
+    let hv99: f64 = hist_var(hb, 20, 0.99);
+    fails = fails + bad_if_not(ge(hv95, hv90));
+    fails = fails + bad_if_not(ge(hv99, hv95));
+
+    // --- IDENTITY 7: PERFECT CORRELATION LIMITS ----------------------------
+    // At rho = +1 there is NO diversification: the portfolio vol equals the
+    // weighted sum of the individual vols, exactly.  At rho = -1 with matched
+    // weighted vols it is exactly ZERO — the positions cancel.
+    //
+    // These are the two boundary cases where a wrong cross term is impossible
+    // to hide: any error in the `2*w1*w2*rho*s1*s2` term breaks one or both.
+    // The rho = -1 case is a genuine exact zero (not a small number), because
+    // 0.5*0.2 - 0.5*0.2 cancels exactly in binary and sqrt(0) is 0.
+    fails = fails + (1 - chk_abs(two_asset_vol(0.6, 0.4, 0.2, 0.3, 1.0), 0.6 * 0.2 + 0.4 * 0.3, 0.0000000000001));
+    fails = fails + (1 - chk_abs(two_asset_vol(0.5, 0.5, 0.2, 0.2, 0.0 - 1.0), 0.0, 0.0000000000001));
+    // And a matched-weight rho=+1 case where the answer is a round number.
+    fails = fails + (1 - chk_abs(two_asset_vol(0.5, 0.5, 0.2, 0.2, 1.0), 0.2, 0.0000000000001));
+    // Diversification is monotone in rho: lower correlation, lower vol.  This
+    // is the practical statement of the two limits above and it must hold
+    // strictly for every rho pair with distinct values.
+    fails = fails + bad_if_not(gt(two_asset_vol(0.6, 0.4, 0.2, 0.3, 1.0), two_asset_vol(0.6, 0.4, 0.2, 0.3, 0.5)));
+    fails = fails + bad_if_not(gt(two_asset_vol(0.6, 0.4, 0.2, 0.3, 0.5), two_asset_vol(0.6, 0.4, 0.2, 0.3, 0.0)));
+    fails = fails + bad_if_not(gt(two_asset_vol(0.6, 0.4, 0.2, 0.3, 0.0), two_asset_vol(0.6, 0.4, 0.2, 0.3, 0.0 - 0.5)));
+
+    // --- IDENTITY 8: the sort actually sorts, and is stable ----------------
+    // A sorted array must be non-decreasing at every adjacent pair.  This is
+    // the positive control for every historical figure below: if the sort
+    // silently skipped a pass, the order statistic would be drawn from an
+    // unsorted array and could still look plausible.
+    load_sample(hb);
+    sort_ascending(hb, 20);
+    let mut si: i64 = 1;
+    while si < 20 {
+        fails = fails + bad_if_not(ge(vget(hb, si), vget(hb, si - 1)));
+        si = si + 1;
+    }
+    // The endpoints, against the oracle's sorted sample: min = -0.045,
+    // max = 0.062.  A sort that lost an element or stopped early fails here.
+    fails = fails + (1 - chk_abs(vget(hb, 0), 0.0 - 0.045, 0.0000000000001));
+    fails = fails + (1 - chk_abs(vget(hb, 19), 0.062, 0.0000000000001));
+    // The three duplicated 0.005 entries must land contiguously at positions
+    // 7, 8, 9 of the ascending sample.  This is the observable half of the
+    // stability claim: their VALUES are pinned here; their ORDER is
+    // indistinguishable by construction (they are equal), which is exactly why
+    // the stability argument lives in the source comment and is enforced by the
+    // cross-substrate hash rather than by this assertion.
+    fails = fails + (1 - chk_abs(vget(hb, 7), 0.005, 0.0000000000001));
+    fails = fails + (1 - chk_abs(vget(hb, 8), 0.005, 0.0000000000001));
+    fails = fails + (1 - chk_abs(vget(hb, 9), 0.005, 0.0000000000001));
+    // Sorting is idempotent: re-sorting a sorted array changes nothing.  A sort
+    // that reordered equal elements on a second pass would fail this.
+    sort_ascending(hb, 20);
+    fails = fails + (1 - chk_abs(vget(hb, 7), 0.005, 0.0));
+    fails = fails + (1 - chk_abs(vget(hb, 8), 0.005, 0.0));
+    fails = fails + (1 - chk_abs(vget(hb, 19), 0.062, 0.0));
+
+    // --- IDENTITY 9: the sort is STABLE, proved on equal-but-distinct keys -
+    //
+    // The tie-break documented on `sort_ascending` is the one property of that
+    // function no VALUE assertion can reach: two orderings of equal elements
+    // produce the same sequence of numbers.  Mutating the `>` to `>=` was
+    // measured to leave every other check in this file green.
+    //
+    // -0.0 and +0.0 are the escape.  IEEE-754 makes `-0.0 == +0.0` TRUE, so a
+    // comparison sort has no ordering basis to separate them and the tie-break
+    // alone decides the outcome — but they are DIFFERENT BIT PATTERNS, so the
+    // outcome is observable.  With -0.0 placed first in the input, a stable
+    // sort must leave it first in the output.
+    //
+    // This is the only place in the file that inspects a bit pattern, and it is
+    // the right tool here precisely because the distinction being tested is
+    // invisible to arithmetic.
+    let zb: i64 = __mind_alloc(4 * 8);
+    vset(zb, 0, neg_zero());
+    vset(zb, 1, 0.0);
+    vset(zb, 2, 1.0);
+    vset(zb, 3, 2.0);
+    sort_ascending(zb, 4);
+    // The premise: the two keys really do compare equal, so this is a test of
+    // stability and not of ordering.  Without this line a sort that ordered
+    // -0.0 below +0.0 numerically would pass the next two for the wrong reason.
+    fails = fails + bad_if_not(chk_abs(vget(zb, 0), vget(zb, 1), 0.0));
+    // The claim: input order preserved among the tied pair.
+    fails = fails + bad_if_not(is_neg_zero(vget(zb, 0)));
+    // ...and the +0.0 did NOT move into its place.
+    fails = fails + is_neg_zero(vget(zb, 1));
+    // And the sort still sorted: the non-tied elements are in ascending order.
+    fails = fails + (1 - chk_abs(vget(zb, 2), 1.0, 0.0));
+    fails = fails + (1 - chk_abs(vget(zb, 3), 2.0, 0.0));
+
+    // =====================================================================
+    // 2. VALUE CHECKS against the 50-digit oracle.
+    //
+    // Every constant below was computed at mp.dps = 50 and rounded once to
+    // f64; none was recalled from memory or generated by this implementation.
+    // =====================================================================
+
+    // --- Standard normal quantiles, the numbers on every risk report -------
+    // Oracle: Phi^-1(0.95) = 1.6448536269514722340012...
+    fails = fails + (1 - chk_ulp(dm_inv_norm_cdf(0.95), 1.6448536269514726, 4096.0));
+    fails = fails + (1 - chk_ulp(dm_inv_norm_cdf(0.99), 2.326347874040841, 4096.0));
+    fails = fails + (1 - chk_ulp(dm_inv_norm_cdf(0.975), 1.9599639845400543, 4096.0));
+    fails = fails + (1 - chk_ulp(dm_inv_norm_cdf(0.999), 3.0902323061678136, 4096.0));
+    fails = fails + (1 - chk_ulp(dm_inv_norm_cdf(0.9997), 3.431614403623269, 4096.0));
+    fails = fails + (1 - chk_ulp(dm_inv_norm_cdf(0.025), 0.0 - 1.9599639845400543, 4096.0));
+    fails = fails + (1 - chk_ulp(dm_inv_norm_cdf(0.01), 0.0 - 2.326347874040841, 4096.0));
+    // The deep tails, where the Acklam tail branch is the only thing running.
+    fails = fails + (1 - chk_ulp(dm_inv_norm_cdf(0.000001), 0.0 - 4.753424308822899, 8192.0));
+    fails = fails + (1 - chk_ulp(dm_inv_norm_cdf(0.999999), 4.753424308822899, 8192.0));
+    // The median is EXACTLY zero, by symmetry.  An absolute band of 0 here is
+    // legitimate and is the one place in this file where an exact comparison
+    // is the right assertion: the central rational is odd in q = p - 0.5, so
+    // q = 0 gives exactly 0.0, and the Halley steps leave it there.
+    fails = fails + (1 - chk_abs(dm_inv_norm_cdf(0.5), 0.0, 0.0));
+
+    // --- Parametric VaR and ES for the standard normal ---------------------
+    // Oracle: ES_0.95 = 2.0627128075074256... , ES_0.99 = 2.6652142203458053...
+    fails = fails + (1 - chk_ulp(var_normal(0.0, 1.0, 0.95), 1.6448536269514726, 4096.0));
+    fails = fails + (1 - chk_ulp(es_normal(0.0, 1.0, 0.95), 2.062712807507426, 4096.0));
+    fails = fails + (1 - chk_ulp(var_normal(0.0, 1.0, 0.99), 2.326347874040841, 4096.0));
+    fails = fails + (1 - chk_ulp(es_normal(0.0, 1.0, 0.99), 2.665214220345805, 4096.0));
+    fails = fails + (1 - chk_ulp(var_normal(0.0, 1.0, 0.999), 3.0902323061678136, 4096.0));
+    fails = fails + (1 - chk_ulp(es_normal(0.0, 1.0, 0.999), 3.3670900770639904, 4096.0));
+
+    // --- A realistic desk case: daily P&L, mu = 5bp, sigma = 2% ------------
+    // The mu != 0 cases matter because they are the only ones that can catch a
+    // drift term dropped from the VaR or ES formula: with mu = 0 an
+    // implementation that forgot `mu +` passes everything above.
+    fails = fails + (1 - chk_ulp(var_normal(0.0005, 0.02, 0.99), 0.047026957480816825, 4096.0));
+    fails = fails + (1 - chk_ulp(es_normal(0.0005, 0.02, 0.99), 0.0538042844069161, 4096.0));
+    fails = fails + (1 - chk_ulp(var_normal(0.0005, 0.02, 0.95), 0.03339707253902945, 4096.0));
+    fails = fails + (1 - chk_ulp(es_normal(0.0005, 0.02, 0.95), 0.04175425615014852, 4096.0));
+    // A NEGATIVE drift, so the sign of the mu term is pinned in both
+    // directions.  A `mu -` typo passes the positive-drift cases within a wide
+    // band only if the band is abused; it cannot pass both.
+    fails = fails + (1 - chk_ulp(var_normal(0.0 - 0.001, 0.015, 0.975), 0.028399459768100814, 4096.0));
+    fails = fails + (1 - chk_ulp(es_normal(0.0 - 0.001, 0.015, 0.975), 0.03406704188302122, 4096.0));
+    // A large-sigma case, for scale invariance of the quantile term.
+    fails = fails + (1 - chk_ulp(var_normal(0.0, 0.25, 0.99), 0.5815869685102103, 4096.0));
+    fails = fails + (1 - chk_ulp(es_normal(0.0, 0.25, 0.99), 0.6663035550864512, 4096.0));
+
+    // --- The ES/VaR ratio, a pure number a regulator recognises ------------
+    // For a zero-mean normal this ratio is a universal constant at each
+    // confidence level, independent of sigma: 1.2540 at 95%, 1.1457 at 99%.
+    // It is a scale-free check and catches a sigma that leaked into only one
+    // of the two functions.
+    fails = fails + (1 - chk_ulp(es_normal(0.0, 1.0, 0.95) / var_normal(0.0, 1.0, 0.95), 1.2540403435960452, 4096.0));
+    fails = fails + (1 - chk_ulp(es_normal(0.0, 0.25, 0.99) / var_normal(0.0, 0.25, 0.99), 1.1456645199483242, 4096.0));
+
+    // --- Portfolio volatility, 3 assets, full covariance -------------------
+    // Oracle: w'Cw = 0.02392 exactly (all terms are exact binary products at
+    // this precision), vol = 0.15466091943344965...
+    fails = fails + (1 - chk_ulp(quad_form(wb, cb, 3), 0.02392, 1024.0));
+    fails = fails + (1 - chk_ulp(portfolio_vol(wb, cb, 3), 0.15466091943344965, 1024.0));
+    // Marginal vols, d(vol)/dw_i = (Cw)_i / vol.
+    fails = fails + (1 - chk_ulp(marginal_vol(wb, cb, 3, 0), 0.1681096950363583, 2048.0));
+    fails = fails + (1 - chk_ulp(marginal_vol(wb, cb, 3, 1), 0.22112890654782516, 2048.0));
+    fails = fails + (1 - chk_ulp(marginal_vol(wb, cb, 3, 2), 0.021336999754614706, 4096.0));
+    // Portfolio VaR and its three component contributions at 99%.
+    fails = fails + (1 - chk_ulp(pv99, 0.3597951011212074, 4096.0));
+    fails = fails + (1 - chk_ulp(cv0, 0.19554081582674313, 4096.0));
+    fails = fails + (1 - chk_ulp(cv1, 0.15432682849095267, 4096.0));
+    fails = fails + (1 - chk_ulp(cv2, 0.009927456803511574, 8192.0));
+    // ...and at 95%.
+    fails = fails + (1 - chk_ulp(pv95, 0.25439457427775913, 4096.0));
+    fails = fails + (1 - chk_ulp(q0, 0.13825792080312999, 4096.0));
+    fails = fails + (1 - chk_ulp(q1, 0.10911740518770104, 4096.0));
+    fails = fails + (1 - chk_ulp(q2, 0.007019248286928137, 8192.0));
+
+    // --- Two-asset volatility across the correlation range -----------------
+    fails = fails + (1 - chk_ulp(two_asset_vol(0.6, 0.4, 0.2, 0.3, 0.5), 0.20784609690826528, 1024.0));
+    fails = fails + (1 - chk_ulp(two_asset_vol(0.6, 0.4, 0.2, 0.3, 0.0), 0.16970562748477142, 1024.0));
+    fails = fails + (1 - chk_ulp(two_asset_vol(0.6, 0.4, 0.2, 0.3, 0.0 - 0.5), 0.12, 1024.0));
+
+    // --- Historical VaR and ES on the 20-observation sample ----------------
+    // Oracle sorted sample (ascending):
+    //   -0.045 -0.031 -0.019 -0.013 -0.008 -0.006 -0.002 0.005 0.005 0.005
+    //    0.009  0.012  0.018  0.024  0.027  0.033  0.037  0.041  0.051 0.062
+    // With k = ceil(alpha*20):
+    //   alpha=0.95 -> k=19 -> VaR = sorted[18] = 0.051, ES = mean(0.051,0.062)
+    //   alpha=0.90 -> k=18 -> VaR = sorted[17] = 0.041, ES over 3 obs
+    //   alpha=0.99 -> k=20 -> VaR = sorted[19] = 0.062, ES over 1 obs = VaR
+    //   alpha=0.75 -> k=15 -> VaR = sorted[14] = 0.027, ES over 6 obs
+    load_sample(hb);
+    fails = fails + (1 - chk_abs(hist_var(hb, 20, 0.95), 0.051, 0.0000000000001));
+    load_sample(hb);
+    fails = fails + (1 - chk_ulp(hist_es(hb, 20, 0.95), 0.0565, 1024.0));
+    load_sample(hb);
+    fails = fails + (1 - chk_abs(hist_var(hb, 20, 0.9), 0.041, 0.0000000000001));
+    load_sample(hb);
+    fails = fails + (1 - chk_ulp(hist_es(hb, 20, 0.9), 0.051333333333333335, 1024.0));
+    // alpha=0.99: the tail holds exactly ONE observation, so ES == VaR.  This
+    // is the degenerate end of the historical estimator and it is included
+    // because it is where an off-by-one in `ceil_index` would index past the
+    // end of the array.
+    load_sample(hb);
+    fails = fails + (1 - chk_abs(hist_var(hb, 20, 0.99), 0.062, 0.0000000000001));
+    load_sample(hb);
+    fails = fails + (1 - chk_abs(hist_es(hb, 20, 0.99), 0.062, 0.0000000000001));
+    load_sample(hb);
+    fails = fails + (1 - chk_abs(hist_var(hb, 20, 0.75), 0.027, 0.0000000000001));
+    load_sample(hb);
+    fails = fails + (1 - chk_ulp(hist_es(hb, 20, 0.75), 0.041833333333333333, 2048.0));
+
+    // --- Sample moments ----------------------------------------------------
+    // Oracle: mean = 0.01025, sample stdev (n-1) = 0.0271755985747276.
+    load_sample(hb);
+    fails = fails + (1 - chk_ulp(sample_mean(hb, 20), 0.01025, 1024.0));
+    load_sample(hb);
+    fails = fails + (1 - chk_ulp(sample_stdev(hb, 20), 0.0271755985747276, 1024.0));
+
+    // =====================================================================
+    // 3. DOMAIN CHECKS: degenerate inputs must return the canonical qNaN.
+    //
+    // Not a plausible-looking number.  Every one of these is a caller error
+    // that would otherwise produce something that LOOKS like a risk figure and
+    // flows straight into a capital calculation: a zero-sigma VaR of exactly
+    // mu, an alpha of 1 giving +inf, an empty sample averaging 0/0.  Each
+    // returns the SAME bit pattern — 0x7FF8000000000000, pinned as a literal
+    // in the kernel block — because x86 and ARM disagree on the sign bit of a
+    // synthesised NaN and a quiet divergence there would break byte-identity
+    // on exactly the error path nobody tests.
+    // =====================================================================
+
+    // sigma <= 0.
+    fails = fails + (1 - is_nan(var_normal(0.0, 0.0, 0.99)));
+    fails = fails + (1 - is_nan(es_normal(0.0, 0.0, 0.99)));
+    fails = fails + (1 - is_nan(var_normal(0.0, 0.0 - 0.02, 0.99)));
+    fails = fails + (1 - is_nan(es_normal(0.0, 0.0 - 0.02, 0.99)));
+    // alpha outside the open interval (0,1).
+    fails = fails + (1 - is_nan(var_normal(0.0, 0.02, 0.0)));
+    fails = fails + (1 - is_nan(var_normal(0.0, 0.02, 1.0)));
+    fails = fails + (1 - is_nan(es_normal(0.0, 0.02, 0.0)));
+    fails = fails + (1 - is_nan(es_normal(0.0, 0.02, 1.0)));
+    fails = fails + (1 - is_nan(var_normal(0.0, 0.02, 0.0 - 0.1)));
+    fails = fails + (1 - is_nan(es_normal(0.0, 0.02, 1.5)));
+    // The inverse CDF itself, at and beyond both endpoints.
+    fails = fails + (1 - is_nan(dm_inv_norm_cdf(0.0)));
+    fails = fails + (1 - is_nan(dm_inv_norm_cdf(1.0)));
+    fails = fails + (1 - is_nan(dm_inv_norm_cdf(0.0 - 0.5)));
+    fails = fails + (1 - is_nan(dm_inv_norm_cdf(2.0)));
+    // Empty / too-small samples.
+    fails = fails + (1 - is_nan(hist_var(hb, 0, 0.95)));
+    fails = fails + (1 - is_nan(hist_es(hb, 0, 0.95)));
+    fails = fails + (1 - is_nan(sample_mean(hb, 0)));
+    fails = fails + (1 - is_nan(sample_stdev(hb, 0)));
+    fails = fails + (1 - is_nan(sample_stdev(hb, 1)));
+    // Historical estimators with an out-of-range alpha.
+    fails = fails + (1 - is_nan(hist_var(hb, 20, 0.0)));
+    fails = fails + (1 - is_nan(hist_var(hb, 20, 1.0)));
+    fails = fails + (1 - is_nan(hist_es(hb, 20, 1.0)));
+    // Correlation outside [-1,1] is not a correlation.
+    fails = fails + (1 - is_nan(two_asset_vol(0.5, 0.5, 0.2, 0.3, 1.5)));
+    fails = fails + (1 - is_nan(two_asset_vol(0.5, 0.5, 0.2, 0.3, 0.0 - 1.5)));
+    // Negative volatilities.
+    fails = fails + (1 - is_nan(two_asset_vol(0.5, 0.5, 0.0 - 0.2, 0.3, 0.5)));
+    fails = fails + (1 - is_nan(two_asset_vol(0.5, 0.5, 0.2, 0.0 - 0.3, 0.5)));
+    // Empty portfolio, and an attribution index outside the portfolio.
+    fails = fails + (1 - is_nan(portfolio_vol(wb, cb, 0)));
+    fails = fails + (1 - is_nan(marginal_vol(wb, cb, 3, 3)));
+    fails = fails + (1 - is_nan(marginal_vol(wb, cb, 3, 0 - 1)));
+    fails = fails + (1 - is_nan(component_var(wb, cb, 3, 5, 0.99)));
+    fails = fails + (1 - is_nan(component_var(wb, cb, 3, 0, 1.0)));
+    fails = fails + (1 - is_nan(portfolio_var(wb, cb, 3, 0.0)));
+
+    // =====================================================================
+    // 4. ADVERSARIAL NEGATIVE CONTROLS.
+    //
+    // Each line below asks a band to accept a value that is WRONG, and adds
+    // the result straight into `fails` — so a spurious acceptance IS a
+    // failure.  This is the only thing that makes the bands above mean
+    // anything: without it, every value check could be passing because the
+    // tolerance is wide enough to admit anything, and the file would be a
+    // green test that cannot go red.
+    //
+    // The perturbations are chosen just large enough to be outside the stated
+    // band and far smaller than anything a human would notice on a report —
+    // which is the realistic failure mode for a risk figure.  A VaR wrong in
+    // the fourth digit is a VaR nobody questions.
+    // =====================================================================
+
+    // The 99% quantile off in the 5th digit (2.32634 -> 2.32734).  A capital
+    // number sized on this is 0.04% wrong and passes every eyeball check.
+    fails = fails + chk_ulp(dm_inv_norm_cdf(0.99), 2.327347874040841, 4096.0);
+    // The 95% quantile off in the 4th digit.
+    fails = fails + chk_ulp(dm_inv_norm_cdf(0.95), 1.6458536269514725, 4096.0);
+    // ES at 99% off in the 4th digit (2.6652 -> 2.6662).
+    fails = fails + chk_ulp(es_normal(0.0, 1.0, 0.99), 2.666214220345805, 4096.0);
+    // ES reported as VaR — the classic conflation, and the single most likely
+    // real-world error in this domain.  If the band accepted it, every
+    // `ES >= VaR` identity above would still pass while the reported number
+    // was the wrong measure entirely.
+    fails = fails + chk_ulp(es_normal(0.0, 1.0, 0.99), 2.326347874040841, 4096.0);
+    // A SIGN error on the quantile, the other classic: reporting the 1%
+    // quantile where the 99% was asked for.  This is the loss/P&L convention
+    // bug from the header, and it must be rejected.
+    fails = fails + chk_ulp(var_normal(0.0, 1.0, 0.99), 0.0 - 2.326347874040841, 4096.0);
+    // The drift dropped from the parametric VaR: reporting sigma*z where
+    // mu + sigma*z was asked for.  0.047027 vs 0.046527 — a 1% error, and
+    // invisible without the reference.
+    fails = fails + chk_ulp(var_normal(0.0005, 0.02, 0.99), 0.046526957480816825, 4096.0);
+    // Portfolio vol computed WITHOUT the off-diagonal covariance terms — i.e.
+    // assuming independence.  sqrt(0.25*0.04 + 0.09*0.09 + 0.04*0.0225)
+    // = 0.1396... against the true 0.15466.  This is the most common real
+    // portfolio-risk bug (a correlation matrix that silently loaded as the
+    // identity) and it MUST be outside the band.
+    fails = fails + chk_ulp(portfolio_vol(wb, cb, 3), 0.13964240763, 1024.0);
+    // A component VaR off by 1% — an attribution that would misdirect a limit
+    // conversation without breaking the Euler sum by enough to notice by eye.
+    fails = fails + chk_ulp(cv0, 0.19754081582674313, 4096.0);
+    // The historical VaR taken one observation too far into the tail
+    // (0.051 -> 0.062), i.e. an off-by-one in `ceil_index`.  Both are real
+    // observations in the sample, so this is exactly the error that produces a
+    // defensible-looking wrong number.
+    load_sample(hb);
+    fails = fails + chk_abs(hist_var(hb, 20, 0.95), 0.062, 0.0000000000001);
+    // The historical ES taken over the wrong tail slice (excluding the VaR
+    // point rather than including it), which for alpha=0.95 gives 0.062
+    // instead of 0.0565.
+    load_sample(hb);
+    fails = fails + chk_ulp(hist_es(hb, 20, 0.95), 0.062, 1024.0);
+    // The perfect-correlation limit reported with a diversification benefit it
+    // does not have: 0.24 is the true rho=1 answer, 0.2078 is the rho=0.5 one.
+    fails = fails + chk_abs(two_asset_vol(0.6, 0.4, 0.2, 0.3, 1.0), 0.20784609690826528, 0.0000000000001);
+    // And the rho=-1 exact-zero case reported as a small positive number: a
+    // fully hedged pair must be exactly zero, not nearly zero.
+    fails = fails + chk_abs(two_asset_vol(0.5, 0.5, 0.2, 0.2, 0.0 - 1.0), 0.001, 0.0000000000001);
+    // The population (n) stdev where the sample (n-1) stdev was asked for:
+    // 0.026487 vs 0.027176, a 2.6% difference that is invisible on a report
+    // and is a genuine, frequently-shipped bug.
+    load_sample(hb);
+    fails = fails + chk_ulp(sample_stdev(hb, 20), 0.026487497050495353, 1024.0);
+    // A round-trip that does NOT round trip: if the inverse were broken, this
+    // is the kind of value it would return.  Proves IDENTITY 1's band is not
+    // wide enough to accept anything.
+    fails = fails + chk_ulp(dm_norm_cdf(dm_inv_norm_cdf(0.99)), 0.9901, 1024.0);
+
+    return fails;
+}

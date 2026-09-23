@@ -1,0 +1,43 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes; see scalar-float-f64/manifest.toml for the scalar
+# IEEE non-integer precedent.
+#
+# examples/quant/portfolio_risk — two-asset portfolio volatility,
+# `two_asset_vol`. sigma_p^2 = w1^2 s1^2 + w2^2 s2^2 + 2*w1*w2*rho*s1*s2, then
+# one dm_sqrt. Straight-line scalar IEEE, no loop, no buffer (the buffer-taking
+# N-asset siblings `portfolio_vol`/`marginal_vol`/`component_var` are
+# deliberately NOT picked here — this fixture stays a pure scalar-in
+# kernel, matching every other quant-* fixture's ABI shape).
+#
+# Why avx2 == neon: no loop, no reduction, straight-line scalar IEEE `+ - * /`
+# plus one dm_sqrt in a fixed source order — the same RFC 0015 §3.1 scalar-IEEE
+# argument as scalar-float-f64.
+
+version = "1"
+name = "quant-portfolio-risk"
+description = "Two-asset portfolio volatility (examples/quant/portfolio_risk): two_asset_vol(w1,w2,s1,s2,rho) over an 8-point deterministic grid, folded to one hash. Straight-line scalar IEEE closed form, no loop, no buffer ABI."
+weight = 1.0
+substrates = ["avx2", "neon"]
+
+[input]
+generator = "fixed"
+grid_len = 8
+dtype = "f64"
+# grid[i] = (w1, w2, s1, s2, rho)
+grid = [
+    [0.5, 0.5, 0.2, 0.3, 0.4],
+    [0.7, 0.3, 0.15, 0.25, -0.2],
+    [0.3, 0.7, 0.2, 0.2, 1.0],
+    [0.5, 0.5, 0.2, 0.3, -1.0],
+    [1.0, 0.0, 0.2, 0.3, 0.0],
+    [0.6, 0.4, 0.1, 0.5, 0.6],
+    [0.25, 0.75, 0.3, 0.1, -0.5],
+    [0.9, 0.1, 0.18, 0.35, 0.1],
+]
+
+[kernel]
+symbol = "two_asset_vol"
+source = "examples/quant/portfolio_risk/main.mind"
+returns = "f64"
+oracle = "within-run Rust port of two_asset_vol, byte-exact per-op"
+output_encoding = "f64_bits_i64_le_grid"

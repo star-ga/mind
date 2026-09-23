@@ -1,0 +1,64 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes; see scalar-float-f64/manifest.toml for the scalar
+# IEEE non-integer precedent.
+#
+# examples/quant/implied_vol — bracketed Newton/bisection hybrid root-find,
+# `implied_vol_call`. `iv_solve` runs a FIXED iteration count (`iv_iters()`,
+# not a convergence test — the file's own load-bearing comment: "the only
+# input-dependent thing is WHICH of the two updates is applied, never HOW MANY
+# times the body runs"), each iteration evaluating bs price + bs_vega once and
+# choosing between a bisection midpoint and a vetted Newton step.
+#
+# NO WITHIN-RUN RUST ORACLE for this fixture. Unlike the closed-form fixtures
+# above, `iv_solve`'s control flow is genuinely input-dependent (the branch
+# taken each iteration depends on the sign of `f` and on whether the Newton
+# candidate falls strictly inside the bracket) — porting it to Rust means
+# reproducing that exact branch sequence, which is precisely the kind of
+# control-flow transcription that risks a silent mismatch rather than a
+# meaningful cross-check. The fixed ITERATION COUNT (never a tolerance test) is
+# exactly what makes the result reproducible across substrates in the first
+# place; examples/quant's own KAT already value-checks the recovered vol
+# against the price that produced it. This fixture pins the exact BYTES.
+#
+# Why avx2 == neon: every arithmetic op inside iv_solve's loop body is scalar
+# IEEE `+ - * /` (the price/vega evaluation reuses the same bs_d1/dm_exp/
+# dm_norm_cdf/dm_norm_pdf call graph already pinned by quant-black-scholes),
+# and the loop runs a FIXED, input-independent number of times. The sequence of
+# BRANCHES taken can differ from run to run in principle only if a float
+# comparison itself differed across substrates — but comparisons on IEEE
+# scalars with identical bit patterns are exact-equality operations, not
+# subject to reassociation, so the branch sequence — and therefore the exact
+# arithmetic performed — is substrate-independent by the same RFC 0015 §3.1
+# scalar-IEEE argument.
+
+version = "1"
+name = "quant-implied-vol"
+description = "Bracketed Newton/bisection implied-vol solve (examples/quant/implied_vol): implied_vol_call(price,s,k,r,q,t) over an 8-point deterministic grid, folded to one hash. FIXED iteration count (never a convergence test), input-dependent branch sequence over scalar IEEE ops. NO within-run Rust oracle — pinned-hash only; see comment above."
+weight = 1.0
+substrates = ["avx2", "neon"]
+
+[input]
+generator = "fixed"
+grid_len = 8
+dtype = "f64"
+# grid[i] = (price, s, k, r, q, t). The first 4 rows use the exact
+# quant-black-scholes ATM/ITM/OTM/dividend call prices, so implied_vol_call
+# should recover sigma close to the price's own generating vol (a value-level
+# sanity fact, not something this byte-identity fixture asserts).
+grid = [
+    [10.450583572185568, 100.0, 100.0, 0.05, 0.0, 1.0],
+    [26.169043946847296, 120.0, 100.0, 0.05, 0.0, 1.0],
+    [1.859419572812186, 80.0, 100.0, 0.05, 0.0, 1.0],
+    [14.883718105064894, 100.0, 100.0, 0.05, 0.03, 2.0],
+    [0.42448595543281803, 100.0, 100.0, 0.05, 0.0, 0.0027397260273972603],
+    [5.0, 100.0, 100.0, 0.05, 0.0, 1.0],
+    [20.0, 100.0, 100.0, 0.05, 0.0, 1.0],
+    [2.5, 90.0, 100.0, 0.03, 0.0, 0.5],
+]
+
+[kernel]
+symbol = "implied_vol_call"
+source = "examples/quant/implied_vol/main.mind"
+returns = "f64"
+oracle = "none — pinned committed hash only (see manifest header)"
+output_encoding = "f64_bits_i64_le_grid"

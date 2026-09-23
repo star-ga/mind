@@ -1,0 +1,58 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes; see scalar-float-f64/manifest.toml for the scalar
+# IEEE non-integer precedent this fixture extends.
+#
+# examples/quant/black_scholes — European option pricing, `bs_call`. The
+# closed-form Black-Scholes-Merton call price over an 8-point deterministic
+# grid of exact-representable f64 inputs (s, k, r, q, sigma, t). Every
+# transcendental on the path (dm_exp, dm_log, dm_sqrt, dm_erfc, dm_norm_cdf) is
+# rebuilt from `+ - * /` on the strict scalar path — no host libm call — so the
+# kernel is scalar IEEE `+ - * / ` all the way down, same determinism class as
+# `scalar-float-f64`.
+#
+# Why avx2 == neon: every operation in the call graph (bs_d1/bs_d2/dm_exp/
+# dm_log/dm_sqrt/dm_erfc/dm_norm_cdf, and the Horner polynomials + fixed-depth
+# continued fraction inside dm_exp/dm_erfc) is scalar IEEE `+ - * /` in a FIXED
+# source order — no FMA fusion, no fastmath/reassoc flags, no reduction whose
+# grouping could differ across substrates (every loop in the call graph is a
+# fixed-trip-count Horner/continued-fraction recurrence, not an order-sensitive
+# accumulation over data). Round-to-nearest-even IEEE ops have one
+# fully-specified result per the RFC 0015 §3.1 scalar-IEEE argument, so avx2 ==
+# neon by the same construction as `scalar-float-f64`, extended through a much
+# longer (but still purely scalar) call graph.
+
+version = "1"
+name = "quant-black-scholes"
+description = "European option pricing (Black-Scholes-Merton, examples/quant/black_scholes): bs_call(s,k,r,q,sigma,t) over an 8-point deterministic grid, folded to one hash. Strict scalar IEEE f64 call graph — det_exp/det_log/dm_sqrt/dm_erfc/dm_norm_cdf rebuilt from +-*/, no FMA, no fastmath."
+weight = 1.0
+substrates = ["avx2", "neon"]
+
+# Deterministic input spec: 8 fixed exact-representable f64 tuples (s, k, r, q,
+# sigma, t), supplied directly by the harness (no LCG — matches the
+# scalar-float-f64 / q16-arith-chain fixed-input precedent for scalar canaries).
+[input]
+generator = "fixed"
+grid_len = 8
+dtype = "f64"
+# grid[i] = (s, k, r, q, sigma, t)
+grid = [
+    [100.0, 100.0, 0.05, 0.0, 0.2, 1.0],
+    [120.0, 100.0, 0.05, 0.0, 0.2, 1.0],
+    [80.0, 100.0, 0.05, 0.0, 0.2, 1.0],
+    [100.0, 100.0, 0.05, 0.03, 0.25, 2.0],
+    [50.0, 100.0, 0.05, 0.0, 0.2, 0.25],
+    [100.0, 100.0, 0.01, 0.0, 0.05, 0.5],
+    [100.0, 100.0, 0.05, 0.0, 0.2, 0.0027397260273972603],
+    [100.0, 80.0, 0.05, 0.0, 0.3, 1.5],
+]
+
+# Kernel under test (examples/quant/black_scholes/main.mind, mindc --emit-shared).
+[kernel]
+symbol = "bs_call"
+source = "examples/quant/black_scholes/main.mind"
+returns = "f64"
+oracle = "within-run Rust port of the identical bs_call call graph (bs_d1/bs_d2/dm_exp/dm_log/dm_sqrt/dm_erfc/dm_norm_cdf), byte-exact per-op"
+# Each grid point's f64 result, IEEE bit pattern as i64, 8 LE bytes, in fixed
+# grid order, concatenated, then sha256 — the vector-of-scalars extension of
+# scalar-float-f64's `f64_bits_i64_le` encoding.
+output_encoding = "f64_bits_i64_le_grid"

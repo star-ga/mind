@@ -1,0 +1,50 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes; see scalar-float-f64/manifest.toml for the scalar
+# IEEE non-integer precedent.
+#
+# examples/quant/bond_curve — fixed-coupon bond pricing, `bond_price`. Sums a
+# coupon leg with a FIXED ascending loop order (`acc = acc + cpn * df_pow(v,i)`,
+# i = 1..n_periods) then adds the principal repayment as a separate final
+# statement — the manifest's own load-bearing comment: "do not reassociate, do
+# not reorder, do not fuse."
+#
+# Why avx2 == neon: the coupon sum is an f64 accumulation, but its GROUPING is
+# fixed by source (a strict sequential `while` loop, one `acc = acc + term` per
+# iteration, never a tree/pairwise/vectorised reduction), and every `term` is
+# itself scalar IEEE `+ - * /` (df_single = 1/(1+y/f), df_pow = repeated
+# multiply ascending). A scalar loop with a FIXED sequential accumulation order
+# is not the order-sensitive case the constitution warns about (that concern is
+# for a REDUCTION whose grouping the compiler or ISA is free to choose, e.g. a
+# vector.reduction or SIMD tree-fold); here the source itself pins one
+# left-to-right order that both avx2 and neon execute identically, so this is
+# the same determinism class as scalar-float-f64's scalar `+ - * /` argument,
+# extended over a fixed-trip-count loop instead of a straight-line chain.
+
+version = "1"
+name = "quant-bond-curve"
+description = "Fixed-coupon bond pricing (examples/quant/bond_curve): bond_price(face,coupon_rate,ytm,freq,n_periods) over an 8-point deterministic grid, folded to one hash. Coupon leg is a FIXED sequential ascending sum (never reassociated/vectorised); principal added as a separate final rounding step."
+weight = 1.0
+substrates = ["avx2", "neon"]
+
+[input]
+generator = "fixed"
+grid_len = 8
+dtype = "mixed-f64-i64"
+# grid[i] = (face, coupon_rate, ytm, freq: i64, n_periods: i64)
+grid = [
+    [100.0, 0.05, 0.05, 2, 10],
+    [100.0, 0.04, 0.05, 2, 10],
+    [1000.0, 0.03, 0.02, 1, 5],
+    [100.0, 0.0, 0.05, 2, 10],
+    [100.0, 0.06, 0.06, 4, 20],
+    [100.0, 0.05, -0.01, 2, 6],
+    [100.0, 0.05, 0.05, 12, 3],
+    [500.0, 0.045, 0.03, 2, 8],
+]
+
+[kernel]
+symbol = "bond_price"
+source = "examples/quant/bond_curve/main.mind"
+returns = "f64"
+oracle = "within-run Rust port of bond_price/df_single/df_pow, byte-exact per-op, same fixed ascending loop order"
+output_encoding = "f64_bits_i64_le_grid"

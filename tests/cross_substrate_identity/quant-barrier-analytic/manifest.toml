@@ -1,0 +1,55 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes; see scalar-float-f64/manifest.toml for the scalar
+# IEEE non-integer precedent.
+#
+# examples/quant/barrier_analytic — Reiner-Rubinstein closed-form barrier
+# option pricing, `bar_doc` (down-and-out call). Assembled from the four
+# standard blocks (rr_a/rr_b/rr_c/rr_d), each itself a composition of
+# bs_d1-family terms, dm_exp, dm_norm_cdf. No loop at the bar_doc level (rr_a..d
+# are straight-line); the underlying dm_exp/dm_erfc primitives use their own
+# FIXED-trip-count Horner/continued-fraction loops (already pinned by
+# quant-black-scholes / scalar-float-f64).
+#
+# NO WITHIN-RUN RUST ORACLE for this fixture (manifest instruction: state this
+# plainly). The rr_a/b/c/d block assembly is a large (~250-line) transcription
+# of the Reiner-Rubinstein table with phi/eta sign conventions selected by
+# call/put and up/down; porting it faithfully to Rust risks a transcription
+# mismatch that would either mask a real divergence (if the port makes the same
+# mistake) or produce a false negative (if it doesn't, on a difference the MIND
+# kernel does not actually have). examples/quant's own KAT independently
+# validates bar_doc's VALUE against a 50-digit oracle; this fixture pins the
+# exact BYTES, which a value-tolerance KAT cannot do.
+#
+# Why avx2 == neon: every operation in rr_a/b/c/d and their bs_d1/dm_exp/
+# dm_norm_cdf dependencies is scalar IEEE `+ - * /` in fixed source order — the
+# same RFC 0015 §3.1 argument as quant-black-scholes, which this fixture's
+# call graph is a superset of.
+
+version = "1"
+name = "quant-barrier-analytic"
+description = "Reiner-Rubinstein down-and-out call barrier pricing (examples/quant/barrier_analytic): bar_doc(s,k,h,r,q,sigma,t) over an 8-point deterministic grid, folded to one hash. Straight-line scalar IEEE block assembly (rr_a/b/c/d) over the shared bs_d1/dm_exp/dm_norm_cdf call graph. NO within-run Rust oracle — pinned-hash only; see comment above."
+weight = 1.0
+substrates = ["avx2", "neon"]
+
+[input]
+generator = "fixed"
+grid_len = 8
+dtype = "f64"
+# grid[i] = (s, k, h, r, q, sigma, t)
+grid = [
+    [100.0, 100.0, 90.0, 0.05, 0.0, 0.2, 1.0],
+    [100.0, 90.0, 85.0, 0.05, 0.0, 0.2, 1.0],
+    [100.0, 110.0, 95.0, 0.05, 0.0, 0.25, 0.5],
+    [100.0, 100.0, 95.0, 0.05, 0.02, 0.3, 2.0],
+    [100.0, 100.0, 99.0, 0.05, 0.0, 0.2, 1.0],
+    [100.0, 105.0, 90.0, 0.03, 0.0, 0.2, 1.0],
+    [100.0, 100.0, 80.0, 0.05, 0.0, 0.2, 0.25],
+    [100.0, 95.0, 92.0, 0.05, 0.01, 0.22, 1.0],
+]
+
+[kernel]
+symbol = "bar_doc"
+source = "examples/quant/barrier_analytic/main.mind"
+returns = "f64"
+oracle = "none — pinned committed hash only (see manifest header)"
+output_encoding = "f64_bits_i64_le_grid"

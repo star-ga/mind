@@ -1,0 +1,49 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes; see scalar-float-f64/manifest.toml for the scalar
+# IEEE non-integer precedent.
+#
+# examples/quant/crr_binomial — recombining CRR lattice, `crr_price`
+# (call/put, European/American selected by flags). Same lattice-walk shape as
+# quant-american-binomial (a distinct implementation, not the same code —
+# crr_binomial is this repository's OTHER lattice, cross-checked against
+# american_binomial's BAW approximation in examples/quant's own KAT).
+#
+# NO WITHIN-RUN RUST ORACLE (same reasoning as quant-american-binomial): a
+# faithful Rust port of the backward-induction buffer walk risks a
+# transcription mismatch; the examples/quant KAT already value-checks this
+# kernel against a 50-digit oracle and against american_binomial's BAW
+# approximation. This fixture pins the exact BYTES.
+#
+# Why avx2 == neon: scalar IEEE `+ - * /` plus dm_exp/dm_sqrt calls, fixed
+# sequential per-level node walk with trip count = the literal/parameter `n`
+# (RFC 0015 §3.1 scalar-IEEE-fixed-order argument, same as
+# quant-american-binomial / bond_curve).
+
+version = "1"
+name = "quant-crr-binomial"
+description = "CRR recombining lattice option pricing (examples/quant/crr_binomial): crr_price(s,k,r,q,sigma,t,n,is_call,american) over an 8-point deterministic grid (mixing European/American, call/put), folded to one hash. Fixed sequential per-level node walk, scalar IEEE. NO within-run Rust oracle — pinned-hash only; see comment above."
+weight = 1.0
+substrates = ["avx2", "neon"]
+
+[input]
+generator = "fixed"
+grid_len = 8
+dtype = "mixed-f64-i64"
+# grid[i] = (s, k, r, q, sigma, t, n: i64, is_call: i64, american: i64)
+grid = [
+    [100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 100, 1, 0],
+    [100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 100, 0, 1],
+    [90.0, 100.0, 0.05, 0.0, 0.2, 1.0, 200, 1, 0],
+    [110.0, 100.0, 0.05, 0.0, 0.2, 1.0, 200, 0, 1],
+    [100.0, 100.0, 0.1, 0.02, 0.3, 0.5, 50, 1, 1],
+    [80.0, 100.0, 0.08, 0.01, 0.25, 1.0, 100, 0, 0],
+    [100.0, 100.0, 0.05, 0.0, 0.2, 0.1, 30, 1, 0],
+    [120.0, 100.0, 0.06, 0.02, 0.35, 1.5, 150, 0, 1],
+]
+
+[kernel]
+symbol = "crr_price"
+source = "examples/quant/crr_binomial/main.mind"
+returns = "f64"
+oracle = "none — pinned committed hash only (see manifest header)"
+output_encoding = "f64_bits_i64_le_grid"

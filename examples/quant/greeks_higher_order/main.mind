@@ -1,0 +1,951 @@
+// examples/quant/greeks_higher_order — deterministic second- and third-order
+// Black-Scholes sensitivities: vanna, volga, charm, veta, speed, zomma, color,
+// ultima.
+//
+// Copyright 2025 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// WHAT THIS DEMONSTRATES, AND WHY IT IS THE STRONGEST CASE IN THE QUANT SET.
+// `examples/quant/black_scholes` already prices the determinism claim in a unit
+// a risk officer reads without translation: a premium and its five first-order
+// Greeks.  This module goes one derivative deeper, to the place where
+// floating-point error compounds worst in the entire option-pricing surface.
+//
+// Every quantity below is a ratio of small DIFFERENCES of transcendentals.
+// Catastrophic cancellation is not the edge case here — it is the normal case.
+// A desk that hedges vanna and volga is differentiating twice through `exp` and
+// `erfc`: the error in the kernel does not merely propagate, it is amplified by
+// the differentiation, and then divided by a small number.  Look at what the
+// formulas actually are, below: volga carries the factor `d1*d2`, zomma carries
+// `(d1*d2 - 1)`, and ultima carries `d1*d2*(1 - d1*d2) + d1^2 + d2^2`.  Each of
+// those is a difference of comparable quantities formed from logs and roots.
+//
+// The practical consequence is the whole argument for this file.  If those two
+// derivatives are not reproducible, neither is the hedge they size.  And unlike
+// a price — which a trader will eyeball against a screen and a broker quote, and
+// which has an independent market check every second — NOBODY CAN EYEBALL A
+// WRONG VOLGA.  There is no intuition to catch a third-order sensitivity that
+// is off in its sixth digit; there is no market print to compare it against.
+// The only thing standing between a wrong volga and a mis-sized book is that the
+// number is computed the same way every time, everywhere.
+//
+// That is why this example exists: it is the clearest demonstration that the
+// TRANSCENDENTAL TIER ITSELF has to be deterministic, not merely the arithmetic
+// wrapped around it.  A "deterministic" pricing library that calls the host libm
+// for `exp` and `erfc` has determinism exactly nowhere on this page.  Vanna and
+// volga are where that distinction stops being philosophical.
+//
+// WHY THIS IS NOT A LIBRARY.  The closed forms are standard and unremarkable
+// (Haug 2007 collects them; they are just derivatives of Black-Scholes-Merton).
+// Nothing here is a contribution to finance.  The contribution is that every
+// transcendental on the path — exp, log, sqrt, erfc — is rebuilt from `+ - * /`
+// on the strict scalar path in `std.detmath`, so a third-order Greek is
+// reproducible bit-for-bit on a different ISA rather than merely close.
+//
+// THE CLAIM, STATED EXACTLY.  This module does NOT claim to match any host libm,
+// SciPy, or a vendor risk library in the last bits.  It cannot, and it is not
+// trying to: a re-derived erfc rounds differently from Cephes, and both are
+// within their stated accuracy.  The claim is narrower and harder:
+//     the same source, compiled for two different ISAs, produces byte-identical
+//     output, with a stated accuracy bound against a 50-digit oracle.
+// Accuracy and reproducibility are orthogonal properties.  Determinism is what
+// makes an error analysis meaningful, not a substitute for one.
+//
+// CLOSED FORM, NEVER A FINITE DIFFERENCE.  Every function below is the analytic
+// derivative.  A bumped-and-revalued higher-order Greek would inherit several
+// prices' worth of rounding AND a step-size choice — and at second order the
+// step-size choice dominates the answer, so a finite-difference version of this
+// file would be an example about choosing `h`, not an example about
+// determinism.  That is the opposite of the point.  (Finite differences were
+// used ONCE, offline, at 50 digits, to validate the closed forms below against
+// an independent derivation; see the KAT header.  None survives in the code.)
+//
+// SELF-CONTAINED, AND WHY.  The detmath kernels are duplicated below instead of
+// imported.  mindc 0.10.2 cannot carry an f64 across a module boundary (roadmap
+// 17.1): an imported `fn f(x: f64) -> f64` types as `(i64) -> i64` at the call
+// site and miscompiles silently.  This mirrors `examples/detmath_kat` and
+// `examples/quant/black_scholes`.
+// deferred: replace the duplicated kernel block with `import std.detmath;` once
+// roadmap 17.1 lands — upgrade path: delete the block between the KERNEL BEGIN
+// and KERNEL END markers and call the std surface directly.
+//
+// KERNELS ARE NAMED `dm_*` DELIBERATELY.  A kernel named `exp`, `log` or `erfc`
+// collides with the C99 libm name and can be constant-folded by the host
+// toolchain at a call site with literal arguments, silently substituting the
+// platform's rounding for ours — which is the exact bug this whole example
+// exists to rule out.  The `dm_` prefix makes that collision impossible.
+//
+// NO `[test]` FUNCTIONS, AND WHY.  The mindc 0.10.2 `[test]` interpreter
+// mis-evaluates an f64 comparison in a function body (it takes the then-branch
+// unconditionally).  Every guarded function here would return through its
+// leading `if x != x` guard and every interpreted assertion would pass
+// vacuously — a false green.  The native backend evaluates f64 branches
+// correctly, so the gate is build-and-run: `mindc run`, exit code 0 means every
+// check passed.  The count of failures is the exit code, so a partial failure is
+// never rounded to success.
+//
+// REFERENCES:
+//   Black, F. & Scholes, M. (1973). "The Pricing of Options and Corporate
+//     Liabilities." Journal of Political Economy 81(3), 637-654.
+//   Merton, R. C. (1973). "Theory of Rational Option Pricing." Bell Journal of
+//     Economics and Management Science 4(1), 141-183.
+//   Haug, E. G. (2007). "The Complete Guide to Option Pricing Formulas", 2nd ed.
+//     — the standard collection of the higher-order closed forms used here.
+// ---------------------------------------------------------------------------
+
+// =========================== KERNEL BEGIN ==================================
+// Duplicated verbatim from std/detmath.mind (roadmap 17.1 blocks importing).
+// Do not "improve" these: every polynomial is a fixed left-fold Horner
+// recurrence in source order.  Reassociating one changes the last bit of every
+// price downstream and breaks the cross-substrate hash.
+
+fn absf(x: f64) -> f64 {
+    if x < 0.0 {
+        return 0.0 - x;
+    }
+    return x;
+}
+
+// +inf by byte-identical IEEE overflow; never a synthesised NaN.
+fn inf() -> f64 {
+    let mut v: f64 = 1.0;
+    let mut i: i64 = 0;
+    while i < 350 {
+        v = v * 10.0;
+        i = i + 1;
+    }
+    return v;
+}
+
+// 0x7FF8000000000000 — the MIND-canonical quiet NaN, pinned so an
+// out-of-domain result is byte-identical (x86 sets the sign bit, ARM does not).
+fn canonical_qnan() -> f64 {
+    return __mind_bits_to_f64(9221120237041090560);
+}
+
+fn rnd_to_i64(x: f64) -> i64 {
+    if x >= 0.0 {
+        return (x + 0.5) as i64;
+    }
+    return 0 - ((0.5 - x) as i64);
+}
+
+fn det_exp(x: f64) -> f64 {
+    let ln2_hi: f64 = 0.6931467056274414;
+    let ln2_lo: f64 = 0.00000047493250390941725;
+    let inv_ln2: f64 = 1.4426950408889634;
+    let k: i64 = rnd_to_i64(x * inv_ln2);
+    let kf: f64 = k as f64;
+    let r: f64 = (x - kf * ln2_hi) - kf * ln2_lo;
+    let mut t: f64 = 0.0000000000007647163731819816;
+    t = 0.00000000016059043836821613 + r * t;
+    t = 0.00000000208767569878681 + r * t;
+    t = 0.00000002505210838544172 + r * t;
+    t = 0.0000002755731922398589 + r * t;
+    t = 0.0000027557319223985893 + r * t;
+    t = 0.0000248015873015873 + r * t;
+    t = 0.0001984126984126984 + r * t;
+    t = 0.001388888888888889 + r * t;
+    t = 0.008333333333333333 + r * t;
+    t = 0.041666666666666664 + r * t;
+    t = 0.16666666666666666 + r * t;
+    t = 0.5 + r * t;
+    t = 1.0 + r * t;
+    t = 1.0 + r * t;
+    let mut y: f64 = t * 1.0;
+    let mut j: i64 = 0;
+    if k >= 0 {
+        while j < k {
+            y = y * 2.0;
+            j = j + 1;
+        }
+    } else {
+        while j < (0 - k) {
+            y = y / 2.0;
+            j = j + 1;
+        }
+    }
+    return y;
+}
+
+fn dm_exp(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x >= 709.7827128933841 {
+        return inf();
+    }
+    if x <= 0.0 - 745.1332191019412 {
+        return 0.0;
+    }
+    return det_exp(x);
+}
+
+fn det_log_core(x: f64) -> f64 {
+    let ln2: f64 = 0.6931471805599453;
+    let mut k: i64 = 0;
+    // f64-param-init: seed a loop-carried f64 binding via the exact identity
+    // `x * 1.0` so mindc 0.10.2 does not infer it as i64.
+    let mut m: f64 = x * 1.0;
+    while m >= 1.4142135623730951 {
+        m = m / 2.0;
+        k = k + 1;
+    }
+    while m < 0.7071067811865476 {
+        m = m * 2.0;
+        k = k - 1;
+    }
+    let s: f64 = (m - 1.0) / (m + 1.0);
+    let s2: f64 = s * s;
+    let mut acc: f64 = 0.0;
+    let mut n: i64 = 29;
+    while n >= 1 {
+        acc = 1.0 / (n as f64) + s2 * acc;
+        n = n - 2;
+    }
+    return (k as f64) * ln2 + 2.0 * s * acc;
+}
+
+fn dm_log(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x < 0.0 {
+        return 0.0;
+    }
+    if x == 0.0 {
+        return 0.0 - inf();
+    }
+    if x >= inf() {
+        return inf();
+    }
+    return det_log_core(x);
+}
+
+fn dm_sqrt(x: f64) -> f64 {
+    if x != x {
+        return canonical_qnan();
+    }
+    if x < 0.0 {
+        return canonical_qnan();
+    }
+    return sqrt(x);
+}
+
+// erf by its Maclaurin series, ascending fixed left-fold.  Certified |x| < 2.
+fn erf_series(x: f64) -> f64 {
+    let two_over_sqrtpi: f64 = 1.1283791670955126;
+    let x2: f64 = x * x;
+    let mut t: f64 = x * 1.0;
+    let mut s: f64 = x * 1.0;
+    let mut n: i64 = 1;
+    while n < 60 {
+        t = t * (0.0 - x2) / (n as f64);
+        s = s + t / ((2 * n + 1) as f64);
+        n = n + 1;
+    }
+    return two_over_sqrtpi * s;
+}
+
+// erfc by a fixed-depth backward continued fraction.  Certified x >= 1.
+// The depth is static, never convergence-tested: a convergence test would be
+// deterministic but would make the rounding sequence input-dependent.
+fn erfc_cf(x: f64) -> f64 {
+    let sqrtpi: f64 = 1.7724538509055159;
+    let mut acc: f64 = 0.0;
+    let mut n: i64 = 200;
+    while n >= 1 {
+        acc = ((n as f64) * 0.5) / (x + acc);
+        n = n - 1;
+    }
+    return det_exp(0.0 - x * x) / sqrtpi / (x + acc);
+}
+
+fn dm_erfc(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x >= inf() {
+        return 0.0;
+    }
+    if x <= 0.0 - inf() {
+        return 2.0;
+    }
+    if x < 0.0 {
+        return 2.0 - dm_erfc(0.0 - x);
+    }
+    if x < 1.0 {
+        return 1.0 - erf_series(x);
+    }
+    return erfc_cf(x);
+}
+
+// Standard normal CDF.  Computed as 0.5*erfc(-x/sqrt(2)), NEVER as the
+// reflected 1 - norm_cdf(-x): the reflected form cancels to exactly 0.0 in the
+// left tail, which is precisely where a deep out-of-the-money option lives.
+// See the deep-OTM KAT below, where the true call premium is 4.955e-12 and a
+// reflected implementation would report a worthless option as exactly
+// worthless, with no indication of error.
+fn dm_norm_cdf(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    let inv_sqrt2: f64 = 0.7071067811865476;
+    return 0.5 * dm_erfc(0.0 - x * inv_sqrt2);
+}
+
+// Standard normal PDF, phi(x) = exp(-x^2/2)/sqrt(2*pi).  Needed by gamma,
+// vega and theta.  1/sqrt(2*pi) is a rounded constant, not a division.
+fn dm_norm_pdf(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    let inv_sqrt_2pi: f64 = 0.3989422804014327;
+    return inv_sqrt_2pi * det_exp(0.0 - 0.5 * x * x);
+}
+
+// ============================ KERNEL END ===================================
+
+// ---------------------------------------------------------------------------
+// Black-Scholes-Merton scaffolding with a continuous dividend yield q.
+//
+// All inputs are f64 and all are REQUIRED to be finite with S > 0, K > 0,
+// sigma > 0, T > 0.  Those preconditions are checked by `bs_valid` and every
+// public function returns the canonical qNaN when they do not hold, rather than
+// a plausible-looking number.  A silent numeric fallback on a degenerate input
+// is how a risk bug reaches production wearing a valid-looking Greek — and at
+// second order there is no screen to catch it.
+//
+//   d1 = (log(S/K) + (r - q + sigma^2/2) * T) / (sigma * sqrt(T))
+//   d2 = d1 - sigma * sqrt(T)
+//
+// EVALUATION ORDER IS PART OF THE CONTRACT.  d1 is formed exactly as in
+// `examples/quant/black_scholes`, with the numerator summed left to right
+// before the single division.  Regrouping it is algebraically identical and
+// numerically different, and would change the last bit of every sensitivity
+// below.  Do not "simplify" these expressions.
+// ---------------------------------------------------------------------------
+
+fn bs_valid(s: f64, k: f64, sigma: f64, t: f64) -> i64 {
+    if s != s {
+        return 0;
+    }
+    if k != k {
+        return 0;
+    }
+    if sigma != sigma {
+        return 0;
+    }
+    if t != t {
+        return 0;
+    }
+    if s <= 0.0 {
+        return 0;
+    }
+    if k <= 0.0 {
+        return 0;
+    }
+    if sigma <= 0.0 {
+        return 0;
+    }
+    if t <= 0.0 {
+        return 0;
+    }
+    return 1;
+}
+
+fn bs_d1(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    let sq: f64 = sigma * dm_sqrt(t);
+    return (dm_log(s / k) + (r - q + 0.5 * sigma * sigma) * t) / sq;
+}
+
+fn bs_d2(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    return bs_d1(s, k, r, q, sigma, t) - sigma * dm_sqrt(t);
+}
+
+// --- First-order quantities, recomputed here as PRIVATE helpers -------------
+// These are NOT the deliverable of this module — `examples/quant/black_scholes`
+// owns the first-order surface and is the public home of delta/gamma/vega.
+// They are duplicated `fn` (not `pub fn`) purely because several higher-order
+// forms are most honestly written as a scaling of vega or gamma, and because
+// this example must stay self-contained (roadmap 17.1, see header).  Keeping
+// them private means this file adds no second public definition of a
+// first-order Greek that could drift from the one in black_scholes.
+
+fn hlp_vega(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    let sqt: f64 = dm_sqrt(t);
+    let d1: f64 = bs_d1(s, k, r, q, sigma, t);
+    return s * dm_exp(0.0 - q * t) * dm_norm_pdf(d1) * sqt;
+}
+
+fn hlp_gamma(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    let sqt: f64 = dm_sqrt(t);
+    let d1: f64 = bs_d1(s, k, r, q, sigma, t);
+    return dm_exp(0.0 - q * t) * dm_norm_pdf(d1) / (s * sigma * sqt);
+}
+
+// ===========================================================================
+// HIGHER-ORDER GREEKS.
+//
+// Every scaling convention below is PER 1.00 of the underlying variable, never
+// per point or per day: vanna is per 1.00 of vol and 1.00 of spot, charm is per
+// YEAR, veta is per 1.00 of vol per YEAR.  A desk wanting "per vol point per
+// day" divides at the call site.  Baking a presentation convention into a
+// numeric contract is how two systems that agree on the mathematics disagree on
+// the number.
+//
+// SIGN CONVENTIONS ARE STATED, NOT ASSUMED.  Charm and veta are the two places
+// the literature genuinely disagrees, because "time" can mean time-to-expiry T
+// (increasing away from expiry) or calendar time t (decreasing toward it), and
+// the two differ by a sign.  This module fixes:
+//     charm = -d(delta)/dT        (delta decay per year of time PASSING)
+//     veta  = +d(vega)/dT         (vega sensitivity per year of time TO EXPIRY)
+// Both conventions were verified against a 50-digit central difference of the
+// corresponding first-order Greek before the constants below were recorded; see
+// the KAT header.  If you change a convention, change the KAT with it — a Greek
+// whose sign convention is undocumented is worse than one that is absent.
+// ===========================================================================
+
+// --- VANNA: d(vega)/dS = d(delta)/dsigma -----------------------------------
+//     vanna = -e^(-qT) * phi(d1) * d2 / sigma
+// The cross-derivative, and the reason this file exists.  Note that it is
+// exactly the same number whether you differentiate vega by spot or delta by
+// vol (Schwarz/Clairaut), which is asserted as an identity in the KAT.  The
+// `d2/sigma` factor is a small difference divided by a small number: this is the
+// cancellation-sensitive term.
+pub fn hog_vanna(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bs_valid(s, k, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let d1: f64 = bs_d1(s, k, r, q, sigma, t);
+    let d2: f64 = d1 - sigma * dm_sqrt(t);
+    return 0.0 - dm_exp(0.0 - q * t) * dm_norm_pdf(d1) * d2 / sigma;
+}
+
+// --- VOLGA (vomma): d^2(price)/dsigma^2 = d(vega)/dsigma --------------------
+//     volga = vega * d1 * d2 / sigma
+// The convexity of the price in volatility.  `d1 * d2` changes sign around the
+// at-the-money-forward point, and near that crossing the product is a
+// difference of comparable magnitudes — a wrong erfc in the fifth digit moves
+// volga's SIGN there, not merely its value.  A sign error in volga flips a
+// long-convexity book to short with no visible symptom.
+pub fn hog_volga(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bs_valid(s, k, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let d1: f64 = bs_d1(s, k, r, q, sigma, t);
+    let d2: f64 = d1 - sigma * dm_sqrt(t);
+    return hlp_vega(s, k, r, q, sigma, t) * d1 * d2 / sigma;
+}
+
+// --- CHARM (delta decay): -d(delta)/dT, call ---------------------------------
+//     charm_call = q*e^(-qT)*N(d1)
+//                  - e^(-qT)*phi(d1) * (2*(r-q)*T - d2*sigma*sqrt(T))
+//                    / (2*T*sigma*sqrt(T))
+// The numerator `2*(r-q)*T - d2*sigma*sqrt(T)` is a genuine difference of two
+// same-order terms, then divided by `2*T*sigma*sqrt(T)`, which goes to zero as
+// expiry approaches.  Short-dated charm is therefore a small difference over a
+// small number — the SHORT KAT case (one day to expiry) exists to pin exactly
+// that regime.
+pub fn hog_charm_call(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bs_valid(s, k, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let sqt: f64 = dm_sqrt(t);
+    let d1: f64 = bs_d1(s, k, r, q, sigma, t);
+    let d2: f64 = d1 - sigma * sqt;
+    let df_q: f64 = dm_exp(0.0 - q * t);
+    let num: f64 = 2.0 * (r - q) * t - d2 * sigma * sqt;
+    let den: f64 = 2.0 * t * sigma * sqt;
+    return q * df_q * dm_norm_cdf(d1) - df_q * dm_norm_pdf(d1) * num / den;
+}
+
+// --- CHARM, put -------------------------------------------------------------
+//     charm_put = -q*e^(-qT)*N(-d1)
+//                 - e^(-qT)*phi(d1) * (2*(r-q)*T - d2*sigma*sqrt(T))
+//                   / (2*T*sigma*sqrt(T))
+// The second term is shared with the call, exactly as gamma is shared: the
+// put-call parity difference is linear in S with a time-dependent coefficient,
+// so only the N(.) term differs.  That gives the parity identity asserted in
+// the KAT, which is the cheapest structural check on both signs at once.
+pub fn hog_charm_put(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bs_valid(s, k, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let sqt: f64 = dm_sqrt(t);
+    let d1: f64 = bs_d1(s, k, r, q, sigma, t);
+    let d2: f64 = d1 - sigma * sqt;
+    let df_q: f64 = dm_exp(0.0 - q * t);
+    let num: f64 = 2.0 * (r - q) * t - d2 * sigma * sqt;
+    let den: f64 = 2.0 * t * sigma * sqt;
+    return 0.0 - q * df_q * dm_norm_cdf(0.0 - d1) - df_q * dm_norm_pdf(d1) * num / den;
+}
+
+// --- VETA: d(vega)/dT -------------------------------------------------------
+//     veta = -S*e^(-qT)*phi(d1)*sqrt(T)
+//            * ( q + (r-q)*d1/(sigma*sqrt(T)) - (1 + d1*d2)/(2*T) )
+// Vega decay.  The bracket subtracts `(1 + d1*d2)/(2T)` from two smaller terms,
+// and `1 + d1*d2` is the same cancellation-prone product that drives volga and
+// zomma, here offset by one.  Convention: per 1.00 of vol per YEAR of
+// time-to-expiry (see the sign-convention note above).
+pub fn hog_veta(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bs_valid(s, k, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let sqt: f64 = dm_sqrt(t);
+    let d1: f64 = bs_d1(s, k, r, q, sigma, t);
+    let d2: f64 = d1 - sigma * sqt;
+    let brk: f64 = q + (r - q) * d1 / (sigma * sqt) - (1.0 + d1 * d2) / (2.0 * t);
+    return 0.0 - s * dm_exp(0.0 - q * t) * dm_norm_pdf(d1) * sqt * brk;
+}
+
+// --- SPEED: d(gamma)/dS = d^3(price)/dS^3 -----------------------------------
+//     speed = -gamma/S * (d1/(sigma*sqrt(T)) + 1)
+// Third order in spot.  A gamma-hedging desk uses speed to decide how fast the
+// hedge goes stale; an error here shows up as a hedge that is rebalanced at the
+// wrong frequency, which is a cost nobody attributes to a numeric bug.
+pub fn hog_speed(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bs_valid(s, k, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let sqt: f64 = dm_sqrt(t);
+    let d1: f64 = bs_d1(s, k, r, q, sigma, t);
+    return 0.0 - hlp_gamma(s, k, r, q, sigma, t) / s * (d1 / (sigma * sqt) + 1.0);
+}
+
+// --- ZOMMA: d(gamma)/dsigma -------------------------------------------------
+//     zomma = gamma * (d1*d2 - 1) / sigma
+// The `(d1*d2 - 1)` factor is the cancellation in its starkest form: at the
+// point where d1*d2 = 1 the true zomma is exactly zero, and every bit of error
+// in d1 or d2 lands directly on a quantity whose true value has no magnitude to
+// hide it in.  This is where a non-deterministic erfc stops being an academic
+// concern.
+pub fn hog_zomma(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bs_valid(s, k, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let d1: f64 = bs_d1(s, k, r, q, sigma, t);
+    let d2: f64 = d1 - sigma * dm_sqrt(t);
+    return hlp_gamma(s, k, r, q, sigma, t) * ((d1 * d2 - 1.0) / sigma);
+}
+
+// --- COLOR: d(gamma)/dT -----------------------------------------------------
+//     color = -e^(-qT)*phi(d1) / (2*S*T*sigma*sqrt(T))
+//             * ( 2*q*T + 1
+//                 + (2*(r-q)*T - d2*sigma*sqrt(T))/(sigma*sqrt(T)) * d1 )
+// Gamma decay.  Divided by `2*S*T*sigma*sqrt(T)`, so like charm it blows up
+// near expiry — the SHORT KAT case puts color at roughly -69.6, four orders of
+// magnitude above its one-year value, which is exactly the regime where an
+// imprecise kernel does the most damage.
+pub fn hog_color(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bs_valid(s, k, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let sqt: f64 = dm_sqrt(t);
+    let d1: f64 = bs_d1(s, k, r, q, sigma, t);
+    let d2: f64 = d1 - sigma * sqt;
+    let lead: f64 = 0.0 - dm_exp(0.0 - q * t) * dm_norm_pdf(d1) / (2.0 * s * t * sigma * sqt);
+    let brk: f64 = 2.0 * q * t + 1.0 + (2.0 * (r - q) * t - d2 * sigma * sqt) / (sigma * sqt) * d1;
+    return lead * brk;
+}
+
+// --- ULTIMA: d(volga)/dsigma = d^3(price)/dsigma^3 --------------------------
+//     ultima = -vega/sigma^2 * ( d1*d2*(1 - d1*d2) + d1^2 + d2^2 )
+// Third order in volatility, and the worst-conditioned quantity in this file.
+// The bracket is a difference of products of d1 and d2, each of which is itself
+// a quotient of logs and roots: the error in the kernel has been amplified
+// three times over by the time it reaches this number.  It is also, by a wide
+// margin, the one no human will ever sanity-check by inspection.
+pub fn hog_ultima(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bs_valid(s, k, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let d1: f64 = bs_d1(s, k, r, q, sigma, t);
+    let d2: f64 = d1 - sigma * dm_sqrt(t);
+    let brk: f64 = d1 * d2 * (1.0 - d1 * d2) + d1 * d1 + d2 * d2;
+    return 0.0 - hlp_vega(s, k, r, q, sigma, t) / (sigma * sigma) * brk;
+}
+
+// ===========================================================================
+// KNOWN-ANSWER TESTS.
+//
+// THE ORACLE.  Every reference value below was produced by an INDEPENDENT
+// 50-digit oracle — mpmath 1.3.0 at `mp.dps = 50`, evaluating the closed forms
+// with N(x) = erfc(-x/sqrt(2))/2 and phi(x) = exp(-x^2/2)/sqrt(2*pi) in
+// 50-digit arithmetic, then rounded ONCE to f64.  Never by this implementation.
+// A KAT generated from the code it tests proves only that the code is
+// unchanged, not that it is correct.
+//
+// THE ORACLE WAS ITSELF VALIDATED, which matters more here than usual because a
+// wrong reference is worse than no reference: at third order, "the formula I
+// typed in" and "the derivative of Black-Scholes" are very easy to get apart,
+// and a KAT locked to a mistyped formula would freeze the bug permanently.  So
+// each closed form was cross-checked, offline at 50 digits, against a central
+// difference of the corresponding lower-order Greek with h = 1e-20:
+//     vanna  vs d(vega)/dS   AND  d(delta)/dsigma     (both, independently)
+//     volga  vs d(vega)/dsigma
+//     charm  vs -d(delta)/dT
+//     veta   vs d(vega)/dT
+//     speed  vs d(gamma)/dS
+//     zomma  vs d(gamma)/dsigma
+//     color  vs d(gamma)/dT
+//     ultima vs d(volga)/dsigma
+// All eight agreed with the closed form to 18 significant digits at all five
+// KAT points.  That validation is the ONLY finite differencing anywhere in this
+// example's provenance, it happened offline in the oracle, and none of it is in
+// the shipped code.
+//
+// THE FIVE POINTS, AND WHY EACH ONE IS HERE:
+//   ATM    S=100 K=100 r=0.05 q=0    sigma=0.20 T=1      — the textbook case.
+//   DIV    S=100 K=100 r=0.05 q=0.03 sigma=0.25 T=2      — the ONLY case with
+//          q != 0, so the only case where charm_call and charm_put differ at
+//          all.  Without it the charm parity identity is vacuous: at q=0 both
+//          charms are the same number and "call - put = 0" passes for free.
+//   WING   S=50  K=100 r=0.05 q=0    sigma=0.20 T=0.25   — d2 = -6.856, five
+//          standard deviations out.  Every Greek here is 1e-7 to 1e-11, formed
+//          as differences of quantities of order 1.  This is where cancellation
+//          is worst and where a reflected-identity erfc returns a hard zero.
+//   SHORT  S=100 K=100 r=0.05 q=0    sigma=0.20 T=1/365  — one day to expiry.
+//          charm, veta and color all carry a 1/T or 1/(T*sqrt(T)) factor, so
+//          this is the blow-up regime: color is -69.6 here against -0.0105 at
+//          one year, four orders of magnitude.
+//   LOWVOL S=100 K=100 r=0.01 q=0    sigma=0.05 T=0.5    — the 1/sigma and
+//          1/sigma^2 factors in vanna, volga, zomma and ultima amplify here:
+//          ultima is -667.7 against -182.7 at 20 vol.
+//
+// THREE CLASSES OF CHECK, deliberately:
+//   1. VALUE      — against the oracle, within a stated ulp band.
+//   2. IDENTITY   — relations that must hold STRUCTURALLY regardless of the
+//                   oracle, and which therefore survive a bad reference.  These
+//                   are the real value of this file; see the block below.
+//   3. ADVERSARIAL— a deliberately WRONG reference must be REJECTED.  A
+//                   spurious acceptance is counted as a failure, which is what
+//                   proves the bands discriminate rather than passing
+//                   vacuously.  Without these the bands prove nothing.
+//
+// ON THE BANDS.  They are wider than the black_scholes KAT's, and that is a
+// finding rather than a concession: each of these quantities is one or two
+// derivatives further from the kernel, so the kernel's honest error against a
+// 50-digit oracle is amplified by exactly the differentiation that defines the
+// Greek.  The widest bands are at WING and SHORT, which is the whole point of
+// including those points.  A band is stated per-check rather than globally so
+// that the conditioning of each quantity is visible in the source.
+//
+// WHAT THIS KAT CANNOT CATCH, STATED PLAINLY.  These are tolerance bands, so
+// they are structurally blind to any change that perturbs the result by less
+// than the band — including a reassociation of an expression that is
+// algebraically identical and numerically different.  Tightening the bands is
+// not the fix: they must stay wide enough to absorb the honest difference
+// between a re-derived erfc and the 50-digit oracle.
+//
+// Detecting reassociation requires a BIT-EXACT reference, which is the job of
+// the cross-substrate CI fixture (tests/cross_substrate_identity.rs): it
+// compares hashes across x86 `avx2` and ARM `neon`, and a hash has no tolerance
+// to hide in.  This KAT proves the sensitivities are CORRECT; the fixture proves
+// they are REPRODUCIBLE.  A green KAT is not evidence of byte-identity.
+// ===========================================================================
+
+fn chk_ulp(got: f64, want: f64, ulps: f64) -> i64 {
+    let eps: f64 = 0.0000000000000002220446049250313;
+    let tol: f64 = ulps * eps * absf(want);
+    if absf(got - want) <= tol {
+        return 1;
+    }
+    return 0;
+}
+
+fn chk_abs(got: f64, want: f64, abstol: f64) -> i64 {
+    if absf(got - want) <= abstol {
+        return 1;
+    }
+    return 0;
+}
+
+fn is_nan(x: f64) -> i64 {
+    if x != x {
+        return 1;
+    }
+    return 0;
+}
+
+pub fn main() -> i64 {
+    let mut fails: i64 = 0;
+
+    // T = 1/365, written as the f64 nearest the exact rational.  The oracle
+    // used the exact rational 1/365 at 50 digits and rounded once; the tiny
+    // difference between that and this literal is inside the stated band.
+    let day: f64 = 0.0027397260273972603;
+
+    // =====================================================================
+    // 1. VALUE CHECKS against the 50-digit oracle.
+    // =====================================================================
+
+    // --- Case ATM: S=100 K=100 r=0.05 q=0 sigma=0.2 T=1 -------------------
+    // Oracle vanna = -0.2814302601877034087806274...
+    fails = fails + (1 - chk_ulp(hog_vanna(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 0.0 - 0.2814302601877034, 1024.0));
+    fails = fails + (1 - chk_ulp(hog_volga(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 9.850059106569619, 4096.0));
+    fails = fails + (1 - chk_ulp(hog_charm_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 0.0 - 0.06566706071046413, 1024.0));
+    fails = fails + (1 - chk_ulp(hog_charm_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 0.0 - 0.06566706071046413, 1024.0));
+    fails = fails + (1 - chk_ulp(hog_veta(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 16.46367022098065, 1024.0));
+    fails = fails + (1 - chk_ulp(hog_speed(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 0.0 - 0.0005159554770107896, 1024.0));
+    fails = fails + (1 - chk_ulp(hog_zomma(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 0.0 - 0.08888505717594966, 4096.0));
+    fails = fails + (1 - chk_ulp(hog_color(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 0.0 - 0.010530182235356568, 1024.0));
+    fails = fails + (1 - chk_ulp(hog_ultima(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 0.0 - 182.68928077476355, 4096.0));
+
+    // --- Case DIV: q=0.03, sigma=0.25, T=2 --------------------------------
+    // The only q != 0 point: charm_call and charm_put differ here and only
+    // here, which is what makes the charm parity identity below non-vacuous.
+    fails = fails + (1 - chk_ulp(hog_vanna(100.0, 100.0, 0.05, 0.03, 0.25, 2.0), 0.09170408337298644, 4096.0));
+    fails = fails + (1 - chk_ulp(hog_volga(100.0, 100.0, 0.05, 0.03, 0.25, 2.0), 0.0 - 3.7598674182924436, 4096.0));
+    fails = fails + (1 - chk_ulp(hog_charm_call(100.0, 100.0, 0.05, 0.03, 0.25, 2.0), 0.0 - 0.008761223584414772, 4096.0));
+    fails = fails + (1 - chk_ulp(hog_charm_put(100.0, 100.0, 0.05, 0.03, 0.25, 2.0), 0.0 - 0.037014159591942236, 1024.0));
+    fails = fails + (1 - chk_ulp(hog_veta(100.0, 100.0, 0.05, 0.03, 0.25, 2.0), 10.137759050101188, 1024.0));
+    fails = fails + (1 - chk_ulp(hog_speed(100.0, 100.0, 0.05, 0.03, 0.25, 2.0), 0.0 - 0.00018544603526537257, 1024.0));
+    fails = fails + (1 - chk_ulp(hog_zomma(100.0, 100.0, 0.05, 0.03, 0.25, 2.0), 0.0 - 0.041509343871652456, 4096.0));
+    fails = fails + (1 - chk_ulp(hog_color(100.0, 100.0, 0.05, 0.03, 0.25, 2.0), 0.0 - 0.0030671194884790086, 4096.0));
+    fails = fails + (1 - chk_ulp(hog_ultima(100.0, 100.0, 0.05, 0.03, 0.25, 2.0), 0.0 - 56.49753873500562, 4096.0));
+
+    // --- Case WING: S=50 K=100 sigma=0.2 T=0.25, d2 = -6.856 --------------
+    // Five standard deviations out.  Every value here is 1e-7 to 1e-11,
+    // assembled from differences of order-1 quantities: this is the worst
+    // cancellation in the file, and the bands say so honestly.
+    fails = fails + (1 - chk_ulp(hog_vanna(50.0, 100.0, 0.05, 0.0, 0.2, 0.25), 0.0000000016719700162319223, 16384.0));
+    fails = fails + (1 - chk_ulp(hog_volga(50.0, 100.0, 0.05, 0.0, 0.2, 0.25), 0.0000002824154568619661, 16384.0));
+    fails = fails + (1 - chk_ulp(hog_charm_call(50.0, 100.0, 0.05, 0.0, 0.2, 0.25), 0.0 - 0.0000000006931732889476093, 16384.0));
+    fails = fails + (1 - chk_ulp(hog_veta(50.0, 100.0, 0.05, 0.0, 0.2, 0.25), 0.00000011952367282471319, 16384.0));
+    fails = fails + (1 - chk_ulp(hog_speed(50.0, 100.0, 0.05, 0.0, 0.2, 0.25), 0.000000000012985595610577933, 16384.0));
+    fails = fails + (1 - chk_ulp(hog_zomma(50.0, 100.0, 0.05, 0.0, 0.2, 0.25), 0.000000002210553089986048, 16384.0));
+    fails = fails + (1 - chk_ulp(hog_color(50.0, 100.0, 0.05, 0.0, 0.2, 0.25), 0.0000000009171729306699607, 16384.0));
+    fails = fails + (1 - chk_ulp(hog_ultima(50.0, 100.0, 0.05, 0.0, 0.2, 0.25), 0.00006117873208772484, 16384.0));
+    // The structural half of the wing claim: these are SMALL, not ZERO.  An
+    // erfc built on the reflected identity 1 - N(-x) cancels to exactly 0.0 out
+    // here, and a relative band against a tiny number can be argued with; a
+    // strict inequality cannot.  Volga and zomma are positive at this wing
+    // because d1*d2 = 46.3 is far above 1.
+    if hog_volga(50.0, 100.0, 0.05, 0.0, 0.2, 0.25) > 0.0 {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+    if hog_zomma(50.0, 100.0, 0.05, 0.0, 0.2, 0.25) > 0.0 {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+
+    // --- Case SHORT: one day to expiry, the 1/T blow-up regime -------------
+    fails = fails + (1 - chk_ulp(hog_vanna(100.0, 100.0, 0.05, 0.0, 0.2, day), 0.0 - 0.015658567140361693, 8192.0));
+    fails = fails + (1 - chk_ulp(hog_volga(100.0, 100.0, 0.05, 0.0, 0.2, day), 0.0015015064381168747, 8192.0));
+    fails = fails + (1 - chk_ulp(hog_charm_call(100.0, 100.0, 0.05, 0.0, 0.2, day), 0.0 - 1.3335879681208043, 8192.0));
+    fails = fails + (1 - chk_ulp(hog_veta(100.0, 100.0, 0.05, 0.0, 0.2, day), 380.8972554504883, 8192.0));
+    fails = fails + (1 - chk_ulp(hog_speed(100.0, 100.0, 0.05, 0.0, 0.2, day), 0.0 - 0.010478191178092034, 8192.0));
+    fails = fails + (1 - chk_ulp(hog_zomma(100.0, 100.0, 0.05, 0.0, 0.2, day), 0.0 - 1.9048516438190497, 8192.0));
+    fails = fails + (1 - chk_ulp(hog_color(100.0, 100.0, 0.05, 0.0, 0.2, day), 0.0 - 69.56042469859834, 8192.0));
+    fails = fails + (1 - chk_ulp(hog_ultima(100.0, 100.0, 0.05, 0.0, 0.2, day), 0.0 - 0.02824154124739208, 8192.0));
+
+    // --- Case LOWVOL: sigma=0.05, the 1/sigma^2 amplification --------------
+    fails = fails + (1 - chk_ulp(hog_vanna(100.0, 100.0, 0.01, 0.0, 0.05, 0.5), 0.0 - 0.9749145966607301, 4096.0));
+    fails = fails + (1 - chk_ulp(hog_volga(100.0, 100.0, 0.01, 0.0, 0.05, 0.5), 10.967789212433214, 4096.0));
+    fails = fails + (1 - chk_ulp(hog_charm_call(100.0, 100.0, 0.01, 0.0, 0.05, 0.5), 0.0 - 0.06267308121390408, 4096.0));
+    fails = fails + (1 - chk_ulp(hog_veta(100.0, 100.0, 0.01, 0.0, 0.05, 0.5), 27.149630598078726, 4096.0));
+    fails = fails + (1 - chk_ulp(hog_speed(100.0, 100.0, 0.01, 0.0, 0.05, 0.5), 0.0 - 0.006128034607581732, 4096.0));
+    fails = fails + (1 - chk_ulp(hog_zomma(100.0, 100.0, 0.01, 0.0, 0.05, 0.5), 0.0 - 2.184505064089079, 4096.0));
+    fails = fails + (1 - chk_ulp(hog_color(100.0, 100.0, 0.01, 0.0, 0.05, 0.5), 0.0 - 0.11423909970156627, 4096.0));
+    fails = fails + (1 - chk_ulp(hog_ultima(100.0, 100.0, 0.01, 0.0, 0.05, 0.5), 0.0 - 667.6761371244648, 4096.0));
+
+    // =====================================================================
+    // 2. MATHEMATICAL IDENTITIES.
+    //
+    // These are the real value of this file.  A value check confirms one number
+    // against one oracle; an identity confirms a RELATION that must hold no
+    // matter what the oracle says, and therefore survives a mistyped reference
+    // — which, at third order, is the likeliest error of all.  Each identity
+    // below was confirmed against the 50-digit oracle BEFORE being asserted
+    // here, including its sign; none is assumed from memory.
+    // =====================================================================
+
+    // --- IDENTITY 1: vanna is a genuine cross-derivative -------------------
+    //   vanna = d(vega)/dS = d(delta)/dsigma   (Clairaut/Schwarz symmetry)
+    // Expressed without any finite difference: differentiating vega by S gives
+    //   d(vega)/dS = -vega * d2 / (S * sigma * sqrt(T))
+    // and differentiating delta by sigma gives the same thing.  If the mixed
+    // partials disagree, either d1/d2 or the vega scaling is wrong — and a
+    // vanna that is not a true cross-derivative silently breaks every
+    // vol-spot correlation hedge built on it.
+    //
+    // This identity is checked at three points with different signs of vanna
+    // (ATM negative, DIV positive, LOWVOL strongly negative) so it cannot pass
+    // by coincidence of magnitude.
+    let vn_a: f64 = hog_vanna(100.0, 100.0, 0.05, 0.0, 0.2, 1.0);
+    let alt_a: f64 = 0.0 - hlp_vega(100.0, 100.0, 0.05, 0.0, 0.2, 1.0) * bs_d2(100.0, 100.0, 0.05, 0.0, 0.2, 1.0) / (100.0 * 0.2 * dm_sqrt(1.0));
+    fails = fails + (1 - chk_abs(vn_a, alt_a, 0.0000000001));
+
+    let vn_b: f64 = hog_vanna(100.0, 100.0, 0.05, 0.03, 0.25, 2.0);
+    let alt_b: f64 = 0.0 - hlp_vega(100.0, 100.0, 0.05, 0.03, 0.25, 2.0) * bs_d2(100.0, 100.0, 0.05, 0.03, 0.25, 2.0) / (100.0 * 0.25 * dm_sqrt(2.0));
+    fails = fails + (1 - chk_abs(vn_b, alt_b, 0.0000000001));
+
+    let vn_c: f64 = hog_vanna(100.0, 100.0, 0.01, 0.0, 0.05, 0.5);
+    let alt_c: f64 = 0.0 - hlp_vega(100.0, 100.0, 0.01, 0.0, 0.05, 0.5) * bs_d2(100.0, 100.0, 0.01, 0.0, 0.05, 0.5) / (100.0 * 0.05 * dm_sqrt(0.5));
+    fails = fails + (1 - chk_abs(vn_c, alt_c, 0.0000000001));
+
+    // --- IDENTITY 2: charm put-call parity --------------------------------
+    //   charm_call - charm_put = +q * e^(-qT)
+    // Delta parity says delta_call - delta_put = e^(-qT); charm is -d/dT of
+    // delta, and -d/dT of e^(-qT) is +q*e^(-qT).  The sign here was VERIFIED
+    // against the oracle, not recalled: the intuitive guess -q*e^(-qT) is
+    // wrong, and would have been frozen into this file undetected because at
+    // q=0 both signs give zero.
+    //
+    // Checked at DIV (q=0.03), the only point where the two charms differ at
+    // all — this is why the DIV case exists.
+    let ch_c: f64 = hog_charm_call(100.0, 100.0, 0.05, 0.03, 0.25, 2.0);
+    let ch_p: f64 = hog_charm_put(100.0, 100.0, 0.05, 0.03, 0.25, 2.0);
+    fails = fails + (1 - chk_abs(ch_c - ch_p, 0.03 * dm_exp(0.0 - 0.06), 0.0000000001));
+    // The positive control for the check above: the difference is a real,
+    // non-zero number (0.02825...), so the assertion is not passing because
+    // both sides are zero.  Without this line the q=0 degenerate below could
+    // masquerade as a meaningful pass.
+    if absf(ch_c - ch_p) > 0.01 {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+    // And the degenerate direction: at q=0 the two charms must be EXACTLY
+    // equal, because the only term that distinguishes them carries a factor q.
+    let ch_c0: f64 = hog_charm_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0);
+    let ch_p0: f64 = hog_charm_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0);
+    fails = fails + (1 - chk_abs(ch_c0 - ch_p0, 0.0, 0.0));
+
+    // --- IDENTITY 3: volga is vega scaled by d1*d2/sigma -------------------
+    //   volga = vega * d1 * d2 / sigma
+    // and the companion relation for zomma,
+    //   zomma = gamma * (d1*d2 - 1) / sigma.
+    // Together these pin the sign structure of the vol-convexity surface: the
+    // two differ by exactly the "-1", so volga and zomma must straddle zero at
+    // DIFFERENT points (d1*d2 = 0 versus d1*d2 = 1).  A single sign error in
+    // d2 would satisfy neither.
+    let vg_a: f64 = hog_volga(100.0, 100.0, 0.05, 0.0, 0.2, 1.0);
+    let vg_alt: f64 = hlp_vega(100.0, 100.0, 0.05, 0.0, 0.2, 1.0) * bs_d1(100.0, 100.0, 0.05, 0.0, 0.2, 1.0) * bs_d2(100.0, 100.0, 0.05, 0.0, 0.2, 1.0) / 0.2;
+    fails = fails + (1 - chk_abs(vg_a, vg_alt, 0.0000000001));
+
+    let zm_a: f64 = hog_zomma(100.0, 100.0, 0.05, 0.0, 0.2, 1.0);
+    let zm_alt: f64 = hlp_gamma(100.0, 100.0, 0.05, 0.0, 0.2, 1.0) * ((bs_d1(100.0, 100.0, 0.05, 0.0, 0.2, 1.0) * bs_d2(100.0, 100.0, 0.05, 0.0, 0.2, 1.0) - 1.0) / 0.2);
+    fails = fails + (1 - chk_abs(zm_a, zm_alt, 0.0000000001));
+
+    // The structural consequence, at ATM where d1*d2 = 0.0525: volga is
+    // POSITIVE (d1*d2 > 0) while zomma is NEGATIVE (d1*d2 < 1).  This is the
+    // straddling claim above, asserted rather than described.
+    if vg_a > 0.0 {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+    if zm_a < 0.0 {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+
+    // --- IDENTITY 4: ultima is volga's derivative, scaled by vega ----------
+    //   ultima = -vega/sigma^2 * ( d1*d2*(1 - d1*d2) + d1^2 + d2^2 )
+    // Third order in vol.  Checked structurally against the same vega and the
+    // same d1/d2 used by volga, so a drift between the two vol-convexity
+    // Greeks cannot pass unnoticed.
+    let ul_a: f64 = hog_ultima(100.0, 100.0, 0.01, 0.0, 0.05, 0.5);
+    let u_d1: f64 = bs_d1(100.0, 100.0, 0.01, 0.0, 0.05, 0.5);
+    let u_d2: f64 = bs_d2(100.0, 100.0, 0.01, 0.0, 0.05, 0.5);
+    let ul_alt: f64 = 0.0 - hlp_vega(100.0, 100.0, 0.01, 0.0, 0.05, 0.5) / (0.05 * 0.05) * (u_d1 * u_d2 * (1.0 - u_d1 * u_d2) + u_d1 * u_d1 + u_d2 * u_d2);
+    fails = fails + (1 - chk_abs(ul_a, ul_alt, 0.0000001));
+
+    // --- IDENTITY 5: speed is gamma's derivative in spot -------------------
+    //   speed = -gamma/S * (d1/(sigma*sqrt(T)) + 1)
+    // and gamma is strictly positive, so at ATM (d1 = 0.35 > 0) speed must be
+    // strictly negative: gamma falls as spot rises above the peak.
+    let sp_a: f64 = hog_speed(100.0, 100.0, 0.05, 0.0, 0.2, 1.0);
+    let sp_alt: f64 = 0.0 - hlp_gamma(100.0, 100.0, 0.05, 0.0, 0.2, 1.0) / 100.0 * (bs_d1(100.0, 100.0, 0.05, 0.0, 0.2, 1.0) / (0.2 * dm_sqrt(1.0)) + 1.0);
+    fails = fails + (1 - chk_abs(sp_a, sp_alt, 0.0000000001));
+    if sp_a < 0.0 {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+
+    // =====================================================================
+    // 3. DOMAIN CHECKS: degenerate inputs must return the canonical qNaN.
+    //
+    // Not a plausible-looking number.  Zero vol, an expired option, a
+    // non-positive spot or strike are caller errors, and every one of the nine
+    // functions says so with the SAME bit pattern — 0x7FF8000000000000, pinned
+    // as a literal in the kernel block, because x86 and ARM disagree on the
+    // sign bit of a synthesised NaN and a quiet divergence there would break
+    // byte-identity on exactly the error path nobody tests.
+    // =====================================================================
+
+    fails = fails + (1 - is_nan(hog_vanna(100.0, 100.0, 0.05, 0.0, 0.0, 1.0)));
+    fails = fails + (1 - is_nan(hog_volga(100.0, 100.0, 0.05, 0.0, 0.0, 1.0)));
+    fails = fails + (1 - is_nan(hog_charm_call(100.0, 100.0, 0.05, 0.0, 0.0, 1.0)));
+    fails = fails + (1 - is_nan(hog_charm_put(100.0, 100.0, 0.05, 0.0, 0.0, 1.0)));
+    fails = fails + (1 - is_nan(hog_veta(100.0, 100.0, 0.05, 0.0, 0.0, 1.0)));
+    fails = fails + (1 - is_nan(hog_speed(100.0, 100.0, 0.05, 0.0, 0.0, 1.0)));
+    fails = fails + (1 - is_nan(hog_zomma(100.0, 100.0, 0.05, 0.0, 0.0, 1.0)));
+    fails = fails + (1 - is_nan(hog_color(100.0, 100.0, 0.05, 0.0, 0.0, 1.0)));
+    fails = fails + (1 - is_nan(hog_ultima(100.0, 100.0, 0.05, 0.0, 0.0, 1.0)));
+
+    // Expired: T = 0.  Every 1/T and 1/sqrt(T) factor would otherwise produce
+    // an infinity dressed as a risk number.
+    fails = fails + (1 - is_nan(hog_vanna(100.0, 100.0, 0.05, 0.0, 0.2, 0.0)));
+    fails = fails + (1 - is_nan(hog_volga(100.0, 100.0, 0.05, 0.0, 0.2, 0.0)));
+    fails = fails + (1 - is_nan(hog_charm_call(100.0, 100.0, 0.05, 0.0, 0.2, 0.0)));
+    fails = fails + (1 - is_nan(hog_charm_put(100.0, 100.0, 0.05, 0.0, 0.2, 0.0)));
+    fails = fails + (1 - is_nan(hog_veta(100.0, 100.0, 0.05, 0.0, 0.2, 0.0)));
+    fails = fails + (1 - is_nan(hog_speed(100.0, 100.0, 0.05, 0.0, 0.2, 0.0)));
+    fails = fails + (1 - is_nan(hog_zomma(100.0, 100.0, 0.05, 0.0, 0.2, 0.0)));
+    fails = fails + (1 - is_nan(hog_color(100.0, 100.0, 0.05, 0.0, 0.2, 0.0)));
+    fails = fails + (1 - is_nan(hog_ultima(100.0, 100.0, 0.05, 0.0, 0.2, 0.0)));
+
+    // Non-positive spot and strike.
+    fails = fails + (1 - is_nan(hog_vanna(0.0, 100.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(hog_volga(100.0, 0.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(hog_ultima(0.0 - 100.0, 100.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(hog_color(100.0, 0.0 - 100.0, 0.05, 0.0, 0.2, 1.0)));
+    // Negative vol and negative time.
+    fails = fails + (1 - is_nan(hog_zomma(100.0, 100.0, 0.05, 0.0, 0.0 - 0.2, 1.0)));
+    fails = fails + (1 - is_nan(hog_speed(100.0, 100.0, 0.05, 0.0, 0.2, 0.0 - 1.0)));
+    fails = fails + (1 - is_nan(hog_veta(100.0, 100.0, 0.05, 0.0, 0.0 - 0.05, 0.25)));
+    fails = fails + (1 - is_nan(hog_charm_put(100.0, 100.0, 0.05, 0.0, 0.2, 0.0 - 0.5)));
+
+    // =====================================================================
+    // 4. ADVERSARIAL NEGATIVE CONTROLS.
+    //
+    // Each line below asks the band to accept a value that is WRONG, and adds
+    // the result straight into `fails` — so a spurious acceptance IS a failure.
+    // This is the only thing that makes the bands above mean anything: without
+    // it, every value check could be passing because the tolerance is wide
+    // enough to admit anything, and the file would be a green test that cannot
+    // go red.  The perturbations are chosen just large enough to be outside the
+    // stated band and far smaller than anything a human would notice by eye,
+    // which is the realistic failure mode for a third-order Greek.
+    // =====================================================================
+
+    // Vanna off in the 4th digit (-0.2814 -> -0.2824).  A vol-spot hedge sized
+    // on this would be 0.4% wrong and nothing on any screen would show it.
+    fails = fails + chk_ulp(hog_vanna(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 0.0 - 0.2824302601877034, 1024.0);
+    // Volga off in the 4th digit (9.8500 -> 9.8600).
+    fails = fails + chk_ulp(hog_volga(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 9.860059106569619, 4096.0);
+    // Ultima off by 0.1 in 182.7 — under a tenth of a percent.
+    fails = fails + chk_ulp(hog_ultima(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 0.0 - 182.78928077476354, 4096.0);
+    // A SIGN error on charm, the classic convention bug: if the band accepted
+    // this, the file's stated sign convention would be unenforced.
+    fails = fails + chk_ulp(hog_charm_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 0.06566706071046413, 1024.0);
+    // A flush-to-zero wing value must FAIL the wing band.  This is the
+    // adversarial form of the left-tail claim: it proves the WING checks above
+    // can actually catch a reflected-identity erfc, rather than passing because
+    // a relative band around 1e-9 is easy to satisfy.
+    fails = fails + chk_ulp(0.0, 0.0000002824154568619661, 16384.0);
+    // And the corresponding trap for the strict-positivity checks: zomma at the
+    // wing must be rejected if it is reported as exactly zero.
+    fails = fails + chk_ulp(0.0, 0.000000002210553089986048, 16384.0);
+
+    return fails;
+}

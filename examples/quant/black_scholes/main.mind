@@ -1,0 +1,617 @@
+// examples/quant/black_scholes — deterministic European option pricing.
+//
+// Copyright 2025 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// WHAT THIS DEMONSTRATES.  `examples/lorenz_f64.mind` already proves the wedge
+// on the hardest possible input: a chaotic integrator whose trajectory diverges
+// exponentially, held bit-identical across x86 `avx2` and ARM `neon`.  That is
+// a stronger proof than this one.  It is also unreadable as evidence to the
+// people who actually carry the risk, because no institution has ever had to
+// defend a Lorenz attractor to an examiner.
+//
+// This module prices the same determinism claim in a unit a risk officer reads
+// without translation: a European option premium, its five first-order Greeks,
+// and the no-arbitrage bounds that must hold around them.  The compiler is
+// unchanged; only the legibility of the witness changes.
+//
+// WHY THIS IS NOT A LIBRARY.  The Black-Scholes-Merton formula is closed-form
+// and unremarkable (Black & Scholes 1973; Merton 1973).  Nothing here is a
+// contribution to finance.  The contribution is that every transcendental on
+// the path — exp, log, sqrt, erfc — is rebuilt from `+ - * /` on the strict
+// scalar path in `std.detmath`, so the premium is reproducible bit-for-bit on
+// a different ISA rather than merely close.
+//
+// THE CLAIM, STATED EXACTLY.  This module does NOT claim to match any host
+// libm, SciPy, or a vendor pricing library in the last bits.  It cannot, and
+// it is not trying to: a re-derived erfc rounds differently from Cephes, and
+// both are within their stated accuracy.  The claim is narrower and harder:
+//     the same source, compiled for two different ISAs, produces byte-identical
+//     output, with a stated accuracy bound against a 50-digit oracle.
+// Accuracy and reproducibility are orthogonal properties.  Determinism is what
+// makes an error analysis meaningful, not a substitute for one.
+//
+// SELF-CONTAINED, AND WHY.  The detmath kernels are duplicated below instead of
+// imported.  mindc 0.10.2 cannot carry an f64 across a module boundary (roadmap
+// 17.1): an imported `fn f(x: f64) -> f64` types as `(i64) -> i64` at the call
+// site and miscompiles silently.  This mirrors `examples/detmath_kat`.
+// deferred: replace the duplicated kernel block with `import std.detmath;` once
+// roadmap 17.1 lands — upgrade path: delete the block between the KERNEL BEGIN
+// and KERNEL END markers and call the std surface directly.
+//
+// NO `[test]` FUNCTIONS, AND WHY.  The mindc 0.10.2 `[test]` interpreter
+// mis-evaluates an f64 comparison in a function body (it takes the then-branch
+// unconditionally).  Every guarded function here would return through its
+// leading `if x != x` guard and every interpreted assertion would pass
+// vacuously — a false green.  The native backend evaluates f64 branches
+// correctly, so the gate is build-and-run: `mindc run`, exit code 0 means every
+// check passed.  The count of failures is the exit code, so a partial failure
+// is never rounded to success.
+//
+// REFERENCES (original papers only):
+//   Black, F. & Scholes, M. (1973). "The Pricing of Options and Corporate
+//     Liabilities." Journal of Political Economy 81(3), 637-654.
+//   Merton, R. C. (1973). "Theory of Rational Option Pricing." Bell Journal of
+//     Economics and Management Science 4(1), 141-183.
+// ---------------------------------------------------------------------------
+
+// =========================== KERNEL BEGIN ==================================
+// Duplicated verbatim from std/detmath.mind (roadmap 17.1 blocks importing).
+// Do not "improve" these: every polynomial is a fixed left-fold Horner
+// recurrence in source order.  Reassociating one changes the last bit of every
+// price downstream and breaks the cross-substrate hash.
+
+fn absf(x: f64) -> f64 {
+    if x < 0.0 {
+        return 0.0 - x;
+    }
+    return x;
+}
+
+// +inf by byte-identical IEEE overflow; never a synthesised NaN.
+fn inf() -> f64 {
+    let mut v: f64 = 1.0;
+    let mut i: i64 = 0;
+    while i < 350 {
+        v = v * 10.0;
+        i = i + 1;
+    }
+    return v;
+}
+
+// 0x7FF8000000000000 — the MIND-canonical quiet NaN, pinned so an
+// out-of-domain result is byte-identical (x86 sets the sign bit, ARM does not).
+fn canonical_qnan() -> f64 {
+    return __mind_bits_to_f64(9221120237041090560);
+}
+
+fn rnd_to_i64(x: f64) -> i64 {
+    if x >= 0.0 {
+        return (x + 0.5) as i64;
+    }
+    return 0 - ((0.5 - x) as i64);
+}
+
+fn det_exp(x: f64) -> f64 {
+    let ln2_hi: f64 = 0.6931467056274414;
+    let ln2_lo: f64 = 0.00000047493250390941725;
+    let inv_ln2: f64 = 1.4426950408889634;
+    let k: i64 = rnd_to_i64(x * inv_ln2);
+    let kf: f64 = k as f64;
+    let r: f64 = (x - kf * ln2_hi) - kf * ln2_lo;
+    let mut t: f64 = 0.0000000000007647163731819816;
+    t = 0.00000000016059043836821613 + r * t;
+    t = 0.00000000208767569878681 + r * t;
+    t = 0.00000002505210838544172 + r * t;
+    t = 0.0000002755731922398589 + r * t;
+    t = 0.0000027557319223985893 + r * t;
+    t = 0.0000248015873015873 + r * t;
+    t = 0.0001984126984126984 + r * t;
+    t = 0.001388888888888889 + r * t;
+    t = 0.008333333333333333 + r * t;
+    t = 0.041666666666666664 + r * t;
+    t = 0.16666666666666666 + r * t;
+    t = 0.5 + r * t;
+    t = 1.0 + r * t;
+    t = 1.0 + r * t;
+    let mut y: f64 = t * 1.0;
+    let mut j: i64 = 0;
+    if k >= 0 {
+        while j < k {
+            y = y * 2.0;
+            j = j + 1;
+        }
+    } else {
+        while j < (0 - k) {
+            y = y / 2.0;
+            j = j + 1;
+        }
+    }
+    return y;
+}
+
+fn dm_exp(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x >= 709.7827128933841 {
+        return inf();
+    }
+    if x <= 0.0 - 745.1332191019412 {
+        return 0.0;
+    }
+    return det_exp(x);
+}
+
+fn det_log_core(x: f64) -> f64 {
+    let ln2: f64 = 0.6931471805599453;
+    let mut k: i64 = 0;
+    // f64-param-init: seed a loop-carried f64 binding via the exact identity
+    // `x * 1.0` so mindc 0.10.2 does not infer it as i64.
+    let mut m: f64 = x * 1.0;
+    while m >= 1.4142135623730951 {
+        m = m / 2.0;
+        k = k + 1;
+    }
+    while m < 0.7071067811865476 {
+        m = m * 2.0;
+        k = k - 1;
+    }
+    let s: f64 = (m - 1.0) / (m + 1.0);
+    let s2: f64 = s * s;
+    let mut acc: f64 = 0.0;
+    let mut n: i64 = 29;
+    while n >= 1 {
+        acc = 1.0 / (n as f64) + s2 * acc;
+        n = n - 2;
+    }
+    return (k as f64) * ln2 + 2.0 * s * acc;
+}
+
+fn dm_log(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x < 0.0 {
+        return 0.0;
+    }
+    if x == 0.0 {
+        return 0.0 - inf();
+    }
+    if x >= inf() {
+        return inf();
+    }
+    return det_log_core(x);
+}
+
+fn dm_sqrt(x: f64) -> f64 {
+    if x != x {
+        return canonical_qnan();
+    }
+    if x < 0.0 {
+        return canonical_qnan();
+    }
+    return sqrt(x);
+}
+
+// erf by its Maclaurin series, ascending fixed left-fold.  Certified |x| < 2.
+fn erf_series(x: f64) -> f64 {
+    let two_over_sqrtpi: f64 = 1.1283791670955126;
+    let x2: f64 = x * x;
+    let mut t: f64 = x * 1.0;
+    let mut s: f64 = x * 1.0;
+    let mut n: i64 = 1;
+    while n < 60 {
+        t = t * (0.0 - x2) / (n as f64);
+        s = s + t / ((2 * n + 1) as f64);
+        n = n + 1;
+    }
+    return two_over_sqrtpi * s;
+}
+
+// erfc by a fixed-depth backward continued fraction.  Certified x >= 1.
+// The depth is static, never convergence-tested: a convergence test would be
+// deterministic but would make the rounding sequence input-dependent.
+fn erfc_cf(x: f64) -> f64 {
+    let sqrtpi: f64 = 1.7724538509055159;
+    let mut acc: f64 = 0.0;
+    let mut n: i64 = 200;
+    while n >= 1 {
+        acc = ((n as f64) * 0.5) / (x + acc);
+        n = n - 1;
+    }
+    return det_exp(0.0 - x * x) / sqrtpi / (x + acc);
+}
+
+fn dm_erfc(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x >= inf() {
+        return 0.0;
+    }
+    if x <= 0.0 - inf() {
+        return 2.0;
+    }
+    if x < 0.0 {
+        return 2.0 - dm_erfc(0.0 - x);
+    }
+    if x < 1.0 {
+        return 1.0 - erf_series(x);
+    }
+    return erfc_cf(x);
+}
+
+// Standard normal CDF.  Computed as 0.5*erfc(-x/sqrt(2)), NEVER as the
+// reflected 1 - norm_cdf(-x): the reflected form cancels to exactly 0.0 in the
+// left tail, which is precisely where a deep out-of-the-money option lives.
+// See the deep-OTM KAT below, where the true call premium is 4.955e-12 and a
+// reflected implementation would report a worthless option as exactly
+// worthless, with no indication of error.
+fn dm_norm_cdf(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    let inv_sqrt2: f64 = 0.7071067811865476;
+    return 0.5 * dm_erfc(0.0 - x * inv_sqrt2);
+}
+
+// Standard normal PDF, phi(x) = exp(-x^2/2)/sqrt(2*pi).  Needed by gamma,
+// vega and theta.  1/sqrt(2*pi) is a rounded constant, not a division.
+fn dm_norm_pdf(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    let inv_sqrt_2pi: f64 = 0.3989422804014327;
+    return inv_sqrt_2pi * det_exp(0.0 - 0.5 * x * x);
+}
+
+// ============================ KERNEL END ===================================
+
+// ---------------------------------------------------------------------------
+// Black-Scholes-Merton with a continuous dividend yield q.
+//
+// All six inputs are f64 and all are REQUIRED to be finite with S > 0, K > 0,
+// sigma > 0, T > 0.  Those preconditions are checked by `bs_valid` and the
+// pricing functions return the canonical qNaN when they do not hold, rather
+// than a plausible-looking number.  A silent numeric fallback on a degenerate
+// input is how a pricing bug reaches production wearing a valid-looking price.
+//
+//   d1 = (log(S/K) + (r - q + sigma^2/2) * T) / (sigma * sqrt(T))
+//   d2 = d1 - sigma * sqrt(T)
+//   call = S*e^(-qT)*N(d1) - K*e^(-rT)*N(d2)
+//   put  = K*e^(-rT)*N(-d2) - S*e^(-qT)*N(-d1)
+//
+// EVALUATION ORDER IS PART OF THE CONTRACT.  d1 is formed as written, with the
+// numerator summed left to right before the single division.  Regrouping it
+// (for instance distributing the division across the sum) is algebraically
+// identical and numerically different, and would change the last bit of every
+// price and Greek below.  Do not "simplify" these expressions.
+// ---------------------------------------------------------------------------
+
+fn bs_valid(s: f64, k: f64, sigma: f64, t: f64) -> i64 {
+    if s != s {
+        return 0;
+    }
+    if k != k {
+        return 0;
+    }
+    if sigma != sigma {
+        return 0;
+    }
+    if t != t {
+        return 0;
+    }
+    if s <= 0.0 {
+        return 0;
+    }
+    if k <= 0.0 {
+        return 0;
+    }
+    if sigma <= 0.0 {
+        return 0;
+    }
+    if t <= 0.0 {
+        return 0;
+    }
+    return 1;
+}
+
+fn bs_d1(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    let sq: f64 = sigma * dm_sqrt(t);
+    return (dm_log(s / k) + (r - q + 0.5 * sigma * sigma) * t) / sq;
+}
+
+fn bs_d2(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    return bs_d1(s, k, r, q, sigma, t) - sigma * dm_sqrt(t);
+}
+
+pub fn bs_call(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bs_valid(s, k, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let d1: f64 = bs_d1(s, k, r, q, sigma, t);
+    let d2: f64 = d1 - sigma * dm_sqrt(t);
+    let df_r: f64 = dm_exp(0.0 - r * t);
+    let df_q: f64 = dm_exp(0.0 - q * t);
+    return s * df_q * dm_norm_cdf(d1) - k * df_r * dm_norm_cdf(d2);
+}
+
+pub fn bs_put(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bs_valid(s, k, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let d1: f64 = bs_d1(s, k, r, q, sigma, t);
+    let d2: f64 = d1 - sigma * dm_sqrt(t);
+    let df_r: f64 = dm_exp(0.0 - r * t);
+    let df_q: f64 = dm_exp(0.0 - q * t);
+    return k * df_r * dm_norm_cdf(0.0 - d2) - s * df_q * dm_norm_cdf(0.0 - d1);
+}
+
+// --- Greeks (first-order sensitivities) ------------------------------------
+// Each is the closed-form analytic derivative, NOT a finite difference.  A
+// bumped-and-revalued Greek would inherit two prices' worth of rounding and a
+// step-size choice; the analytic form has neither and stays byte-identical.
+
+pub fn bs_delta_call(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bs_valid(s, k, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    return dm_exp(0.0 - q * t) * dm_norm_cdf(bs_d1(s, k, r, q, sigma, t));
+}
+
+pub fn bs_delta_put(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bs_valid(s, k, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    return dm_exp(0.0 - q * t) * (dm_norm_cdf(bs_d1(s, k, r, q, sigma, t)) - 1.0);
+}
+
+// Gamma is identical for the call and the put (the put-call parity difference
+// is linear in S, so its second derivative vanishes).
+pub fn bs_gamma(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bs_valid(s, k, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let sqt: f64 = dm_sqrt(t);
+    let d1: f64 = bs_d1(s, k, r, q, sigma, t);
+    return dm_exp(0.0 - q * t) * dm_norm_pdf(d1) / (s * sigma * sqt);
+}
+
+// Vega, per 1.00 of volatility (NOT per volatility point).  A caller wanting
+// "per 1% vol" divides by 100 at the call site; scaling it here would bake a
+// presentation convention into a numeric contract.
+pub fn bs_vega(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bs_valid(s, k, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let sqt: f64 = dm_sqrt(t);
+    let d1: f64 = bs_d1(s, k, r, q, sigma, t);
+    return s * dm_exp(0.0 - q * t) * dm_norm_pdf(d1) * sqt;
+}
+
+// Theta, per 1.00 of time (per YEAR, not per day).  Same reasoning as vega:
+// the /365 is a convention and belongs at the call site.
+pub fn bs_theta_call(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bs_valid(s, k, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let sqt: f64 = dm_sqrt(t);
+    let d1: f64 = bs_d1(s, k, r, q, sigma, t);
+    let d2: f64 = d1 - sigma * sqt;
+    let df_r: f64 = dm_exp(0.0 - r * t);
+    let df_q: f64 = dm_exp(0.0 - q * t);
+    let decay: f64 = 0.0 - s * df_q * dm_norm_pdf(d1) * sigma / (2.0 * sqt);
+    let carry_k: f64 = 0.0 - r * k * df_r * dm_norm_cdf(d2);
+    let carry_s: f64 = q * s * df_q * dm_norm_cdf(d1);
+    return decay + carry_k + carry_s;
+}
+
+// Rho, per 1.00 of rate.
+pub fn bs_rho_call(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    if bs_valid(s, k, sigma, t) == 0 {
+        return canonical_qnan();
+    }
+    let d2: f64 = bs_d2(s, k, r, q, sigma, t);
+    return k * t * dm_exp(0.0 - r * t) * dm_norm_cdf(d2);
+}
+
+// ===========================================================================
+// KNOWN-ANSWER TESTS.
+//
+// Every reference value below was produced by an INDEPENDENT 50-digit oracle
+// (mpmath, mp.dps=50) evaluating the closed form in exact-ish arithmetic and
+// rounded once to f64 — never by this implementation.  A KAT generated from
+// the code it tests proves only that the code is unchanged, not that it is
+// correct.
+//
+// Three classes of check, deliberately:
+//   1. VALUE   — against the oracle, within a stated ulp band.
+//   2. IDENTITY— put-call parity and the no-arbitrage bounds, which must hold
+//                structurally regardless of the oracle.  These catch a whole
+//                class of sign and discounting errors that a value check on a
+//                single case can miss.
+//   3. ADVERSARIAL — a deliberately WRONG reference must be REJECTED.  A
+//                spurious acceptance counts as a failure, which is what proves
+//                the bands discriminate rather than passing vacuously.
+//
+// WHAT THIS KAT CANNOT CATCH, STATED PLAINLY.  These are tolerance bands, so
+// they are structurally blind to any change that perturbs the result by less
+// than the band — including a reassociation of an expression that is
+// algebraically identical and numerically different.  Tightening the bands is
+// not the fix: they must stay wide enough to absorb the honest difference
+// between a re-derived erfc and the 50-digit oracle.
+//
+// Detecting reassociation requires a BIT-EXACT reference, which is the job of
+// the cross-substrate CI fixture (tests/cross_substrate_identity.rs): it
+// compares hashes across x86 `avx2` and ARM `neon`, and a hash has no
+// tolerance to hide in.  This KAT proves the pricing is CORRECT; the fixture
+// proves it is REPRODUCIBLE.  A green KAT is not evidence of byte-identity.
+// ===========================================================================
+
+fn chk_ulp(got: f64, want: f64, ulps: f64) -> i64 {
+    let eps: f64 = 0.0000000000000002220446049250313;
+    let tol: f64 = ulps * eps * absf(want);
+    if absf(got - want) <= tol {
+        return 1;
+    }
+    return 0;
+}
+
+fn chk_abs(got: f64, want: f64, abstol: f64) -> i64 {
+    if absf(got - want) <= abstol {
+        return 1;
+    }
+    return 0;
+}
+
+fn is_nan(x: f64) -> i64 {
+    if x != x {
+        return 1;
+    }
+    return 0;
+}
+
+pub fn main() -> i64 {
+    let mut fails: i64 = 0;
+
+    // --- Case ATM: S=100 K=100 r=0.05 q=0 sigma=0.2 T=1 --------------------
+    // The textbook reference case.  Oracle: call=10.450583572185567346...
+    fails = fails + (1 - chk_ulp(bs_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 10.450583572185568, 256.0));
+    fails = fails + (1 - chk_ulp(bs_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 5.573526022256968, 256.0));
+    fails = fails + (1 - chk_ulp(bs_delta_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 0.6368306511756191, 256.0));
+    fails = fails + (1 - chk_ulp(bs_delta_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 0.0 - 0.3631693488243809, 256.0));
+    fails = fails + (1 - chk_ulp(bs_gamma(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 0.01876201734584689, 256.0));
+    fails = fails + (1 - chk_ulp(bs_vega(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 37.524034691693785, 256.0));
+    fails = fails + (1 - chk_ulp(bs_theta_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 0.0 - 6.414027546438196, 256.0));
+    fails = fails + (1 - chk_ulp(bs_rho_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 53.23248154537634, 256.0));
+
+    // --- Case ITM call: S=120 --------------------------------------------
+    fails = fails + (1 - chk_ulp(bs_call(120.0, 100.0, 0.05, 0.0, 0.2, 1.0), 26.16904394684731, 256.0));
+    fails = fails + (1 - chk_ulp(bs_put(120.0, 100.0, 0.05, 0.0, 0.2, 1.0), 1.291986396918712, 512.0));
+    fails = fails + (1 - chk_ulp(bs_delta_call(120.0, 100.0, 0.05, 0.0, 0.2, 1.0), 0.8964550230770805, 256.0));
+
+    // --- Case OTM call: S=80 ---------------------------------------------
+    fails = fails + (1 - chk_ulp(bs_call(80.0, 100.0, 0.05, 0.0, 0.2, 1.0), 1.8594195728121836, 256.0));
+    fails = fails + (1 - chk_ulp(bs_put(80.0, 100.0, 0.05, 0.0, 0.2, 1.0), 16.982362022883585, 256.0));
+
+    // --- Case DEEP OTM: the left-tail case that motivates the erfc form ---
+    // S=50 K=100 sigma=0.2 T=0.25 puts d2 at -6.86, where the reflected
+    // identity 1 - N(-x) cancels to exactly zero.  The true premium is
+    // 4.955e-12: economically negligible, but an implementation that returns
+    // a HARD ZERO here has not rounded, it has lost the number entirely, and
+    // will report every deep-OTM book position as exactly worthless.
+    // This check is the reason norm_cdf is built on erfc and not on erf.
+    fails = fails + (1 - chk_ulp(bs_call(50.0, 100.0, 0.05, 0.0, 0.2, 0.25), 0.0000000000049551018535136585, 4096.0));
+    fails = fails + (1 - chk_ulp(bs_delta_call(50.0, 100.0, 0.05, 0.0, 0.2, 0.25), 0.000000000007069623959989261, 4096.0));
+    // ... and the structural half of the same claim: it must be > 0, not just
+    // close to the oracle.  A flush-to-zero implementation passes a loose
+    // relative band against a tiny number only if the band is abused; it can
+    // never pass this.
+    if bs_call(50.0, 100.0, 0.05, 0.0, 0.2, 0.25) > 0.0 {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+
+    // --- Case SHORT T: one day to expiry (T = 1/365) ----------------------
+    fails = fails + (1 - chk_ulp(bs_call(100.0, 100.0, 0.05, 0.0, 0.2, 0.0027397260273972603), 0.42448595543281803, 512.0));
+    fails = fails + (1 - chk_ulp(bs_gamma(100.0, 100.0, 0.05, 0.0, 0.2, 0.0027397260273972603), 0.3810251337488012, 512.0));
+
+    // --- Case with dividend yield q=0.03, T=2, sigma=0.25 -----------------
+    fails = fails + (1 - chk_ulp(bs_call(100.0, 100.0, 0.05, 0.03, 0.25, 2.0), 14.883718105064894, 256.0));
+    fails = fails + (1 - chk_ulp(bs_put(100.0, 100.0, 0.05, 0.03, 0.25, 2.0), 11.19100655023598, 256.0));
+    fails = fails + (1 - chk_ulp(bs_delta_call(100.0, 100.0, 0.05, 0.03, 0.25, 2.0), 0.5782988940131288, 256.0));
+
+    // --- Case LOW VOL: sigma=0.05, r=0.01, T=0.5 --------------------------
+    fails = fails + (1 - chk_ulp(bs_call(100.0, 100.0, 0.01, 0.0, 0.05, 0.5), 1.6703032717521085, 256.0));
+    fails = fails + (1 - chk_ulp(bs_vega(100.0, 100.0, 0.01, 0.0, 0.05, 0.5), 27.854702761735147, 256.0));
+
+    // --- IDENTITY: put-call parity ----------------------------------------
+    //   C - P = S*e^(-qT) - K*e^(-rT)
+    // This must hold to near machine precision independently of the oracle,
+    // and it is sensitive to exactly the sign/discounting errors a single
+    // value check would miss.
+    let c1: f64 = bs_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0);
+    let p1: f64 = bs_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0);
+    let par1: f64 = 100.0 * dm_exp(0.0) - 100.0 * dm_exp(0.0 - 0.05);
+    fails = fails + (1 - chk_abs(c1 - p1, par1, 0.0000000001));
+
+    let c2: f64 = bs_call(100.0, 100.0, 0.05, 0.03, 0.25, 2.0);
+    let p2: f64 = bs_put(100.0, 100.0, 0.05, 0.03, 0.25, 2.0);
+    let par2: f64 = 100.0 * dm_exp(0.0 - 0.06) - 100.0 * dm_exp(0.0 - 0.1);
+    fails = fails + (1 - chk_abs(c2 - p2, par2, 0.0000000001));
+
+    let c3: f64 = bs_call(80.0, 100.0, 0.05, 0.0, 0.2, 1.0);
+    let p3: f64 = bs_put(80.0, 100.0, 0.05, 0.0, 0.2, 1.0);
+    let par3: f64 = 80.0 - 100.0 * dm_exp(0.0 - 0.05);
+    fails = fails + (1 - chk_abs(c3 - p3, par3, 0.0000000001));
+
+    // --- IDENTITY: delta relation, delta_call - delta_put = e^(-qT) --------
+    let dc: f64 = bs_delta_call(100.0, 100.0, 0.05, 0.03, 0.25, 2.0);
+    let dp: f64 = bs_delta_put(100.0, 100.0, 0.05, 0.03, 0.25, 2.0);
+    fails = fails + (1 - chk_abs(dc - dp, dm_exp(0.0 - 0.06), 0.0000000001));
+
+    // --- IDENTITY: no-arbitrage bounds ------------------------------------
+    // max(S*e^(-qT) - K*e^(-rT), 0) <= C <= S*e^(-qT)
+    let cb: f64 = bs_call(120.0, 100.0, 0.05, 0.0, 0.2, 1.0);
+    let lower: f64 = 120.0 - 100.0 * dm_exp(0.0 - 0.05);
+    if cb >= lower {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+    if cb <= 120.0 {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+    // A put is never worth more than the discounted strike.
+    let pb: f64 = bs_put(50.0, 100.0, 0.05, 0.0, 0.2, 0.25);
+    if pb <= 100.0 * dm_exp(0.0 - 0.0125) {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+
+    // --- IDENTITY: monotonicity in S (call delta is positive) -------------
+    let ca: f64 = bs_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0);
+    let cbb: f64 = bs_call(101.0, 100.0, 0.05, 0.0, 0.2, 1.0);
+    if cbb > ca {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+    // --- IDENTITY: monotonicity in sigma (vega is positive) ---------------
+    let cv1: f64 = bs_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0);
+    let cv2: f64 = bs_call(100.0, 100.0, 0.05, 0.0, 0.3, 1.0);
+    if cv2 > cv1 {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+
+    // --- DOMAIN: degenerate inputs must return the canonical qNaN ---------
+    // Not a plausible-looking number.  A zero-vol or expired option is a
+    // caller error here, and the function says so instead of guessing.
+    fails = fails + (1 - is_nan(bs_call(100.0, 100.0, 0.05, 0.0, 0.0, 1.0)));
+    fails = fails + (1 - is_nan(bs_call(100.0, 100.0, 0.05, 0.0, 0.2, 0.0)));
+    fails = fails + (1 - is_nan(bs_call(0.0, 100.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(bs_call(100.0, 0.0, 0.05, 0.0, 0.2, 1.0)));
+    fails = fails + (1 - is_nan(bs_put(100.0, 100.0, 0.05, 0.0, 0.0 - 0.2, 1.0)));
+    fails = fails + (1 - is_nan(bs_gamma(100.0, 100.0, 0.05, 0.0, 0.2, 0.0)));
+
+    // --- ADVERSARIAL: the bands MUST reject wrong values -------------------
+    // A spurious acceptance here is counted as a failure.  Without this block
+    // every check above could be passing because the tolerance is too wide.
+    fails = fails + chk_ulp(bs_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 10.460583572185568, 256.0);
+    fails = fails + chk_ulp(bs_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 5.583526022256968, 256.0);
+    fails = fails + chk_ulp(bs_vega(100.0, 100.0, 0.05, 0.0, 0.2, 1.0), 37.62403469169379, 256.0);
+    // A flush-to-zero deep-OTM premium must FAIL the deep-OTM band.  This is
+    // the adversarial form of the left-tail claim: it proves the check above
+    // is actually capable of catching the reflected-identity bug.
+    fails = fails + chk_ulp(0.0, 0.0000000000049551018535136585, 4096.0);
+
+    return fails;
+}

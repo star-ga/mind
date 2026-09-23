@@ -68,7 +68,7 @@ fn write_vnni_receipt(dir: &Path, outcome: &str, required_isa: &str) {
 #[test]
 fn manifest_inventory_names_every_case_and_only_the_narrow_deferral() {
     let inventory = xsi_gate::load_inventory(&xsi_gate::workload_root()).expect("load inventory");
-    assert_eq!(inventory.len(), 25);
+    assert_eq!(inventory.len(), 35);
     let compile_only: Vec<_> = inventory
         .values()
         .filter(|p| p.evidence == EvidenceKind::CompilerConstruction)

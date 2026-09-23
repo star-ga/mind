@@ -1,0 +1,64 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes; see scalar-float-f64/manifest.toml for the scalar
+# IEEE non-integer precedent.
+#
+# examples/quant/monte_carlo_gbm — Monte Carlo option pricing by simulated
+# terminal GBM paths, `mc_call`. A path-count loop (`npath`, a literal/
+# parameter, never data-dependent) generating each path from an in-kernel
+# deterministic LCG seeded by the `seed` argument (NOT the host RNG / clock /
+# any OS entropy source), payoff accumulated by a FIXED sequential left-to-right
+# fold — the file's own load-bearing comment: "Do not reorder this loop."
+#
+# NO WITHIN-RUN RUST ORACLE for this fixture. `mc_call`'s value depends on the
+# exact byte sequence its in-kernel LCG produces and on the exact
+# uniform-to-normal transform (`gbm_terminal`) applied to each draw; porting
+# that generator faithfully to Rust is possible but adds a large surface (the
+# LCG state recurrence, the transform, the exact per-path payoff/accumulate
+# order) whose own correctness would need to be established before it could
+# serve as a meaningful cross-check — for a MONTE CARLO kernel specifically,
+# it is more valuable to lean on the pinned hash (which catches ANY divergence
+# in the LCG, the transform, or the accumulation) than on a partial Rust port.
+# examples/quant's own KAT already checks mc_call's VALUE (with its known
+# Monte Carlo standard error) against the closed-form Black-Scholes price.
+#
+# Why avx2 == neon: the LCG recurrence is pure integer/bit arithmetic (no
+# floating multiply-accumulate ambiguity in the generator itself), the
+# uniform->normal transform and the GBM terminal-value formula are scalar IEEE
+# `+ - * /` plus dm_exp/dm_sqrt/dm_log (already pinned by quant-black-scholes),
+# and the payoff accumulation is a FIXED sequential `acc = acc + pay` fold over
+# `npath` iterations — the same RFC 0015 §3.1 scalar-IEEE-fixed-order argument
+# as bond_curve's coupon loop, applied to a Monte Carlo accumulator instead of
+# a coupon sum. The `npath` trip count is a fixture input (500, held small so
+# the fixed accumulation stays fast), never a convergence-dependent count.
+
+version = "1"
+name = "quant-monte-carlo-gbm"
+description = "Monte Carlo GBM call pricing (examples/quant/monte_carlo_gbm): mc_call(s,k,r,q,sigma,t,npath,seed) over an 8-point deterministic grid (npath=500, fixed per-fixture seeds), folded to one hash. In-kernel deterministic LCG (not host RNG), FIXED sequential payoff accumulation — 'do not reorder this loop' per the source. NO within-run Rust oracle — pinned-hash only; see comment above."
+weight = 1.0
+substrates = ["avx2", "neon"]
+
+[input]
+generator = "fixed"
+grid_len = 8
+dtype = "mixed-f64-i64"
+# grid[i] = (s, k, r, q, sigma, t, npath: i64, seed: i64). npath is fixed at
+# 500 across the grid (kept small so the fixture stays fast in
+# CI); seed varies per row so the fixture exercises different
+# in-kernel LCG streams, all still fully deterministic.
+grid = [
+    [100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 500, 12345],
+    [100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 500, 7],
+    [90.0, 100.0, 0.05, 0.0, 0.2, 1.0, 500, 42],
+    [110.0, 100.0, 0.05, 0.0, 0.2, 1.0, 500, 99],
+    [100.0, 100.0, 0.1, 0.02, 0.3, 0.5, 500, 2024],
+    [80.0, 100.0, 0.08, 0.01, 0.25, 1.0, 500, 555],
+    [100.0, 100.0, 0.05, 0.0, 0.2, 0.1, 500, 1],
+    [120.0, 100.0, 0.06, 0.02, 0.35, 1.5, 500, 8675309],
+]
+
+[kernel]
+symbol = "mc_call"
+source = "examples/quant/monte_carlo_gbm/main.mind"
+returns = "f64"
+oracle = "none — pinned committed hash only (see manifest header)"
+output_encoding = "f64_bits_i64_le_grid"

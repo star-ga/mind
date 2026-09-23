@@ -1,0 +1,6 @@
+[package]
+name = "greeks_higher_order"
+version = "0.1.0"
+
+[build]
+entry = "main.mind"

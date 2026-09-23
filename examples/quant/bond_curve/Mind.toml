@@ -1,0 +1,6 @@
+[package]
+name = "bond_curve"
+version = "0.1.0"
+
+[build]
+entry = "main.mind"

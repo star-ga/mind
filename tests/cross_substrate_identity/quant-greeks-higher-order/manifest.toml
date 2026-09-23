@@ -1,0 +1,43 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes; see scalar-float-f64/manifest.toml for the scalar
+# IEEE non-integer precedent.
+#
+# examples/quant/greeks_higher_order — cross-derivative option Greeks,
+# `hog_vanna`. vanna = -e^(-qT) * phi(d1) * d2 / sigma, straight-line scalar
+# IEEE composition of bs_d1/dm_exp/dm_norm_pdf — no loop, no reduction.
+#
+# Why avx2 == neon: identical rationale to quant-black-scholes — the entire
+# call graph is scalar IEEE `+ - * /` in a fixed source order (RFC 0015 §3.1
+# scalar-IEEE argument extended through the shared bs_d1/dm_exp/dm_norm_pdf
+# call graph already pinned by quant-black-scholes and scalar-float-f64).
+
+version = "1"
+name = "quant-greeks-higher-order"
+description = "Cross-derivative option Greek (examples/quant/greeks_higher_order): hog_vanna(s,k,r,q,sigma,t) over an 8-point deterministic grid, folded to one hash. Straight-line scalar IEEE composition of bs_d1/dm_exp/dm_norm_pdf, no loop, no reduction."
+weight = 1.0
+substrates = ["avx2", "neon"]
+
+[input]
+generator = "fixed"
+grid_len = 8
+dtype = "f64"
+# grid[i] = (s, k, r, q, sigma, t) — same grid as quant-black-scholes (shared
+# bs_valid/bs_d1 call graph), reused so the two fixtures are directly
+# comparable point-by-point.
+grid = [
+    [100.0, 100.0, 0.05, 0.0, 0.2, 1.0],
+    [120.0, 100.0, 0.05, 0.0, 0.2, 1.0],
+    [80.0, 100.0, 0.05, 0.0, 0.2, 1.0],
+    [100.0, 100.0, 0.05, 0.03, 0.25, 2.0],
+    [50.0, 100.0, 0.05, 0.0, 0.2, 0.25],
+    [100.0, 100.0, 0.01, 0.0, 0.05, 0.5],
+    [100.0, 100.0, 0.05, 0.0, 0.2, 0.0027397260273972603],
+    [100.0, 80.0, 0.05, 0.0, 0.3, 1.5],
+]
+
+[kernel]
+symbol = "hog_vanna"
+source = "examples/quant/greeks_higher_order/main.mind"
+returns = "f64"
+oracle = "within-run Rust port of hog_vanna/bs_d1/dm_exp/dm_norm_pdf, byte-exact per-op"
+output_encoding = "f64_bits_i64_le_grid"

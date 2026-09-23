@@ -1,0 +1,1201 @@
+// examples/quant/monte_carlo_gbm — reproducible Monte-Carlo option pricing.
+//
+// Copyright 2025 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// WHY THIS MODEL EARNS ITS PLACE.  `black_scholes/` is the easy case for
+// determinism (one closed-form pass) and `crr_binomial/` is the hard case
+// (20100 dependent lattice steps).  Neither of them is the case people
+// actually argue about.  This one is.
+//
+// A Monte-Carlo price is the textbook example of a number that practitioners
+// have simply agreed to accept as irreproducible.  "It's Monte-Carlo, it moves
+// a bit" is the universal excuse, offered so routinely that it is rarely even
+// challenged.  It is also false, and it is worth being precise about why.
+//
+// There is no randomness anywhere in this file.  There is PSEUDO-randomness:
+// a deterministic integer recurrence, fully determined by a seed.  Nothing in
+// that recurrence is capable of producing a different number on a different
+// machine.  When a Monte-Carlo price does move between two runs, or between
+// two machines, the cause is never "randomness".  It is always UNSPECIFIED
+// CHOICE — some decision the program declined to pin down, and which the
+// runtime, the library or the hardware therefore made on its behalf.  There
+// are exactly two such choices here, and this module pins both:
+//
+//   1. GENERATOR STATE LAYOUT.  A stateful generator threads a mutable state
+//      word from draw to draw, so path k depends on how many paths were drawn
+//      before it.  Split that loop across threads, or resume it from a
+//      checkpoint, and path k gets a different number.  The generator below is
+//      COUNTER-BASED: draw(n) is a pure function of n and the seed, with no
+//      carried state at all, so path k is the same number no matter how the
+//      work is scheduled, chunked or resumed.
+//
+//   2. THE ORDER OF SUMMATION — and this is the one that actually bites.
+//      f64 addition is NOT associative.  (a+b)+c and a+(b+c) are different
+//      numbers in general, because each `+` rounds.  Summing 50000 path
+//      payoffs in a different order therefore gives a different price.  A
+//      vectorised reduction sums into 4 or 8 partial lanes and combines them
+//      at the end; a parallel reduction sums into one partial per thread and
+//      combines them in completion order.  Both are summing the same multiset
+//      of payoffs.  Both are "correct".  Neither agrees with the other, or
+//      with a serial sum, in the last bits — and the lane count is a property
+//      of the ISA, so the answer becomes a function of the hardware.  The
+//      reduction below is a single fixed left fold in source order, which is
+//      what makes the price reproducible rather than merely repeatable on one
+//      box.
+//
+// DETERMINISTIC IS NOT PREDICTABLE, and a quant reads that distinction here
+// more readily than anywhere else.  Nobody can predict this price without
+// running the model; the payoff distribution is genuinely diffuse and the
+// simulation genuinely explores it.  But the computation has exactly one
+// answer, and it is the same answer everywhere.  Unpredictability is a
+// property of the MODEL.  Reproducibility is a property of the EXECUTION.
+// The industry habit of treating the second as the price of the first is a
+// category error, and it costs real money at every reconciliation, every
+// restatement, and every model-validation cycle that cannot tell a genuine
+// change from a rounding artefact.
+//
+// THE CLAIM, STATED EXACTLY.  Two different claims live in this file and they
+// must not be blurred together:
+//
+//   CONVERGENCE — the MC price approaches the closed-form Black-Scholes price
+//     as the path count grows.  This is a STATISTICAL claim, checked below
+//     against a 3-sigma confidence band computed from the sample standard
+//     error.  It is not, and can never be, an equality: at 50000 paths the
+//     standard error on the ATM call is about 0.066, which is four orders of
+//     magnitude larger than anything f64 rounding does.
+//
+//   REPRODUCIBILITY — the same seed produces the BIT-IDENTICAL price, checked
+//     below with `==` and no tolerance whatsoever.  This is the actual point
+//     of the module.
+//
+// Conflating those two would be dishonest in the specific way this whole
+// example exists to argue against: a wide convergence band can absorb any
+// amount of reassociation damage, so passing it proves nothing about
+// determinism.  Only the `==` check does, and only the cross-substrate CI
+// fixture extends that claim to a second ISA.
+//
+// SELF-CONTAINED, AND WHY.  The detmath kernels are duplicated below instead
+// of imported.  mindc 0.10.2 cannot carry an f64 across a module boundary
+// (roadmap 17.1): an imported `fn f(x: f64) -> f64` types as `(i64) -> i64` at
+// the call site and miscompiles silently.  This mirrors `examples/detmath_kat`
+// and the two sibling quant examples.
+// deferred: replace the duplicated kernel block with `import std.detmath;`
+// once roadmap 17.1 lands — upgrade path: delete the block between the KERNEL
+// BEGIN and KERNEL END markers and call the std surface directly.
+//
+// The `dm_` prefix is load-bearing, not cosmetic.  A function named `exp` or
+// `log` collides with the C99 libm name, and the backend is then entitled to
+// constant-fold a call to it using the HOST libm — which silently replaces the
+// deterministic kernel with a platform-dependent one and destroys the property
+// this file is demonstrating.  Renaming is the fix.
+//
+// NO `[test]` FUNCTIONS, AND WHY.  The mindc 0.10.2 `[test]` interpreter
+// mis-evaluates an f64 comparison in a function body (it takes the then-branch
+// unconditionally).  Every guarded function here would return through its
+// leading `if x != x` guard and every interpreted assertion would pass
+// vacuously — a false green.  The native backend evaluates f64 branches
+// correctly, so the gate is build-and-run: `mindc run`, exit code 0 means
+// every check passed.  The count of failures is the exit code, so a partial
+// failure is never rounded to success.
+//
+// VERIFIED BY MUTATION, NOT BY ASSERTION.  A suite that has never failed is
+// not known to work.  Every claim above was checked by deliberately breaking
+// the code and confirming the suite goes red:
+//
+//   MIX1 mixer constant changed by 1          caught, exit 9
+//   lsr() replaced by arithmetic `>>`         caught, exit 16
+//   Halley refinement step removed            caught, exit 8
+//   second run given a different seed         caught, exit 2
+//   reduction split into 2 alternating lanes  caught, exit 3  <- see below
+//   PRNG made to ignore its seed              caught, exit 15
+//   inverse-CDF Halley step sign flipped      caught, exit 11
+//   antithetic pair-fold reassociated         caught, exit 3   <- see below
+//
+// The last row is the antithetic analogue of the lane-split row: flattening
+// `(pa + pb) * 0.5` into `acc + pa*0.5 + pb*0.5` is ALGEBRAICALLY IDENTICAL and
+// numerically different.  Every convergence band and every A/B reproducibility
+// check still passed; only the exact bit literal in section 3d caught it.
+//
+// That last row is the one worth reading, because it did NOT start out
+// caught.  The first version of this file checked reproducibility only by
+// comparing two calls within one build — which a reassociation passes
+// trivially, since both calls are reassociated identically.  The 2-lane fold
+// moved the ATM price by 4 ulp and every single check still passed: a green
+// suite, blind to the exact property the file exists to demonstrate.  Section
+// 3b (exact bit literals) was added to close that hole, and the mutation is
+// now caught.  The lesson generalises: a same-build A/B comparison proves
+// purity, never evaluation order.
+//
+// REFERENCES (original papers only):
+//   Black, F. & Scholes, M. (1973). "The Pricing of Options and Corporate
+//     Liabilities." Journal of Political Economy 81(3), 637-654.
+//   Merton, R. C. (1973). "Theory of Rational Option Pricing." Bell Journal of
+//     Economics and Management Science 4(1), 141-183.
+//   Boyle, P. P. (1977). "Options: A Monte Carlo Approach." Journal of
+//     Financial Economics 4(3), 323-338.
+//   Moro, B. (1995). "The Full Monte." Risk 8(2), 57-58.
+// ---------------------------------------------------------------------------
+
+// =========================== KERNEL BEGIN ==================================
+// Duplicated verbatim from std/detmath.mind (roadmap 17.1 blocks importing).
+// Do not "improve" these: every polynomial is a fixed left-fold Horner
+// recurrence in source order.  Reassociating one changes the last bit of every
+// price downstream and breaks the cross-substrate hash.
+
+fn absf(x: f64) -> f64 {
+    if x < 0.0 {
+        return 0.0 - x;
+    }
+    return x;
+}
+
+// +inf by byte-identical IEEE overflow; never a synthesised NaN.
+fn inf() -> f64 {
+    let mut v: f64 = 1.0;
+    let mut i: i64 = 0;
+    while i < 350 {
+        v = v * 10.0;
+        i = i + 1;
+    }
+    return v;
+}
+
+// 0x7FF8000000000000 — the MIND-canonical quiet NaN, pinned so an
+// out-of-domain result is byte-identical (x86 sets the sign bit, ARM does not).
+fn canonical_qnan() -> f64 {
+    return __mind_bits_to_f64(9221120237041090560);
+}
+
+fn rnd_to_i64(x: f64) -> i64 {
+    if x >= 0.0 {
+        return (x + 0.5) as i64;
+    }
+    return 0 - ((0.5 - x) as i64);
+}
+
+fn det_exp(x: f64) -> f64 {
+    let ln2_hi: f64 = 0.6931467056274414;
+    let ln2_lo: f64 = 0.00000047493250390941725;
+    let inv_ln2: f64 = 1.4426950408889634;
+    let k: i64 = rnd_to_i64(x * inv_ln2);
+    let kf: f64 = k as f64;
+    let r: f64 = (x - kf * ln2_hi) - kf * ln2_lo;
+    let mut t: f64 = 0.0000000000007647163731819816;
+    t = 0.00000000016059043836821613 + r * t;
+    t = 0.00000000208767569878681 + r * t;
+    t = 0.00000002505210838544172 + r * t;
+    t = 0.0000002755731922398589 + r * t;
+    t = 0.0000027557319223985893 + r * t;
+    t = 0.0000248015873015873 + r * t;
+    t = 0.0001984126984126984 + r * t;
+    t = 0.001388888888888889 + r * t;
+    t = 0.008333333333333333 + r * t;
+    t = 0.041666666666666664 + r * t;
+    t = 0.16666666666666666 + r * t;
+    t = 0.5 + r * t;
+    t = 1.0 + r * t;
+    t = 1.0 + r * t;
+    let mut y: f64 = t * 1.0;
+    let mut j: i64 = 0;
+    if k >= 0 {
+        while j < k {
+            y = y * 2.0;
+            j = j + 1;
+        }
+    } else {
+        while j < (0 - k) {
+            y = y / 2.0;
+            j = j + 1;
+        }
+    }
+    return y;
+}
+
+fn dm_exp(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x >= 709.7827128933841 {
+        return inf();
+    }
+    if x <= 0.0 - 745.1332191019412 {
+        return 0.0;
+    }
+    return det_exp(x);
+}
+
+fn det_log_core(x: f64) -> f64 {
+    let ln2: f64 = 0.6931471805599453;
+    let mut k: i64 = 0;
+    // f64-param-init: seed a loop-carried f64 binding via the exact identity
+    // `x * 1.0` so mindc 0.10.2 does not infer it as i64.
+    let mut m: f64 = x * 1.0;
+    while m >= 1.4142135623730951 {
+        m = m / 2.0;
+        k = k + 1;
+    }
+    while m < 0.7071067811865476 {
+        m = m * 2.0;
+        k = k - 1;
+    }
+    let s: f64 = (m - 1.0) / (m + 1.0);
+    let s2: f64 = s * s;
+    let mut acc: f64 = 0.0;
+    let mut n: i64 = 29;
+    while n >= 1 {
+        acc = 1.0 / (n as f64) + s2 * acc;
+        n = n - 2;
+    }
+    return (k as f64) * ln2 + 2.0 * s * acc;
+}
+
+fn dm_log(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x < 0.0 {
+        return 0.0;
+    }
+    if x == 0.0 {
+        return 0.0 - inf();
+    }
+    if x >= inf() {
+        return inf();
+    }
+    return det_log_core(x);
+}
+
+fn dm_sqrt(x: f64) -> f64 {
+    if x != x {
+        return canonical_qnan();
+    }
+    if x < 0.0 {
+        return canonical_qnan();
+    }
+    return sqrt(x);
+}
+
+// erf by its Maclaurin series, ascending fixed left-fold.  Certified |x| < 2.
+fn erf_series(x: f64) -> f64 {
+    let two_over_sqrtpi: f64 = 1.1283791670955126;
+    let x2: f64 = x * x;
+    let mut t: f64 = x * 1.0;
+    let mut s: f64 = x * 1.0;
+    let mut n: i64 = 1;
+    while n < 60 {
+        t = t * (0.0 - x2) / (n as f64);
+        s = s + t / ((2 * n + 1) as f64);
+        n = n + 1;
+    }
+    return two_over_sqrtpi * s;
+}
+
+// erfc by a fixed-depth backward continued fraction.  Certified x >= 1.
+// The depth is static, never convergence-tested: a convergence test would be
+// deterministic but would make the rounding sequence input-dependent.
+fn erfc_cf(x: f64) -> f64 {
+    let sqrtpi: f64 = 1.7724538509055159;
+    let mut acc: f64 = 0.0;
+    let mut n: i64 = 200;
+    while n >= 1 {
+        acc = ((n as f64) * 0.5) / (x + acc);
+        n = n - 1;
+    }
+    return det_exp(0.0 - x * x) / sqrtpi / (x + acc);
+}
+
+fn dm_erfc(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x >= inf() {
+        return 0.0;
+    }
+    if x <= 0.0 - inf() {
+        return 2.0;
+    }
+    if x < 0.0 {
+        return 2.0 - dm_erfc(0.0 - x);
+    }
+    if x < 1.0 {
+        return 1.0 - erf_series(x);
+    }
+    return erfc_cf(x);
+}
+
+// Standard normal CDF.  Computed as 0.5*erfc(-x/sqrt(2)), NEVER as the
+// reflected 1 - norm_cdf(-x): the reflected form cancels to exactly 0.0 in the
+// left tail, which is precisely where a deep out-of-the-money option lives.
+// See the deep-OTM KAT below, where the true call premium is 4.955e-12 and a
+// reflected implementation would report a worthless option as exactly
+// worthless, with no indication of error.
+fn dm_norm_cdf(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    let inv_sqrt2: f64 = 0.7071067811865476;
+    return 0.5 * dm_erfc(0.0 - x * inv_sqrt2);
+}
+
+// Standard normal PDF, phi(x) = exp(-x^2/2)/sqrt(2*pi).  Needed by gamma,
+// vega and theta.  1/sqrt(2*pi) is a rounded constant, not a division.
+fn dm_norm_pdf(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    let inv_sqrt_2pi: f64 = 0.3989422804014327;
+    return inv_sqrt_2pi * det_exp(0.0 - 0.5 * x * x);
+}
+
+// ============================ KERNEL END ===================================
+
+// ---------------------------------------------------------------------------
+// THE COUNTER-BASED GENERATOR.
+//
+// SplitMix64 (the finalising mixer of Java 8's SplittableRandom), used here as
+// a pure bijection of a counter rather than as a stateful stream.  The exact
+// recurrence, with every constant stated in both forms:
+//
+//   z  = seed + (n + 1) * GAMMA
+//   z  = (z XOR (z >>> 30)) * MIX1
+//   z  = (z XOR (z >>> 27)) * MIX2
+//   draw = z XOR (z >>> 31)
+//
+//   GAMMA = 0x9E3779B97F4A7C15 = -7046029254386353131 as signed i64
+//           (the 64-bit odd integer nearest 2^64 / phi; odd, so multiplication
+//            by it is a bijection modulo 2^64)
+//   MIX1  = 0xBF58476D1CE4E5B9 = -4658895280553007687
+//   MIX2  = 0x94D049BB133111EB = -7723592293110705685
+//
+// `>>>` is a LOGICAL (zero-filling) shift.  MIND's `>>` on i64 is ARITHMETIC
+// (sign-filling), which is not the same operation on a negative value, so the
+// logical shift is emulated exactly by `lsr` below.  All multiplication is
+// two's-complement wrapping, which MIND's i64 `*` already is.
+//
+// WHY ALL-INTEGER IS THE WHOLE POINT.  Every operation above is exact.
+// Integer addition and multiplication modulo 2^64 are associative, commutative
+// and closed — there is no rounding, so there is no reassociation hazard and
+// no possible dependence on evaluation order, vector width or FMA contraction.
+// The draw sequence is therefore not merely "deterministic in practice": it is
+// bit-exact BY CONSTRUCTION, on every conforming machine, for all time.  This
+// is precisely the property that lets ISO C++ MANDATE the exact output of
+// mt19937_64 as a normative requirement of the standard, with a specified
+// 10000th value every implementation must reproduce.  A standards body can do
+// that for an integer generator and could not do it for a float one.
+//
+// COUNTER-BASED, so draw(n) depends on n and the seed and nothing else.  There
+// is no carried state, which means path k is independent of how many paths ran
+// before it — the property that survives chunking, checkpoint/resume, and any
+// re-scheduling of the loop.  A stateful generator would make the price a
+// function of the iteration schedule.
+// ---------------------------------------------------------------------------
+
+// Logical (zero-filling) shift right, built from the arithmetic `>>` MIND
+// provides.  Shifting right by one and masking off the sign bit clears the
+// replicated sign, after which the remaining (n-1) places are shifted in.
+// Valid for 1 <= n <= 63.  Verified against the reference semantics.
+fn lsr(v: i64, n: i64) -> i64 {
+    return ((v >> 1) & 9223372036854775807) >> (n - 1);
+}
+
+// draw(n) — a pure function of the counter and the seed.  Exact, all-integer.
+fn sm64(n: i64, seed: i64) -> i64 {
+    let gamma: i64 = 0 - 7046029254386353131;
+    let mix1: i64 = 0 - 4658895280553007687;
+    let mix2: i64 = 0 - 7723592293110705685;
+    let mut z: i64 = seed + (n + 1) * gamma;
+    z = (z ^ lsr(z, 30)) * mix1;
+    z = (z ^ lsr(z, 27)) * mix2;
+    return z ^ lsr(z, 31);
+}
+
+// Uniform on (0,1).  The top 53 bits of the draw divided by 2^53: 53 is the
+// f64 significand width, so the quotient is EXACT — the division introduces no
+// rounding of its own and every representable multiple of 2^-53 in [0,1) is
+// hit exactly once.  Taking the LOW bits instead would be a defect in a
+// linear-congruential generator (its low bits have short periods); SplitMix64
+// passes avalanche on every bit, but the high bits are taken anyway because
+// the rule should not depend on the mixer's quality.
+//
+// The single value 0 is nudged to 2^-53.  The inverse CDF is -inf at exactly
+// zero, and an infinite normal draw would poison the whole fold.  This is a
+// CLAMP, not a rejection: it is a branch whose cost does not depend on the
+// data, and it retries nothing.
+fn u01(n: i64, seed: i64) -> f64 {
+    let bits: i64 = lsr(sm64(n, seed), 11);
+    let u: f64 = (bits as f64) / 9007199254740992.0;
+    if u <= 0.0 {
+        return 0.00000000000000011102230246251565;
+    }
+    return u;
+}
+
+// ---------------------------------------------------------------------------
+// UNIFORM -> NORMAL, BY INVERSE CDF.  And why NOT Box-Muller.
+//
+// Box-Muller in its polar (Marsaglia) form draws pairs until one lands inside
+// the unit circle, discarding about 21.5% of them.  That REJECTION LOOP has a
+// data-dependent trip count: the number of draws consumed per accepted normal
+// is a random variable.  Three consequences, all fatal to this file's claim:
+//
+//   - the mapping from counter to normal is no longer a pure function of the
+//     counter, because a path's draw index depends on how many rejections
+//     happened earlier — exactly the carried state the counter-based generator
+//     was chosen to eliminate;
+//   - the branch is taken a different number of times for different inputs,
+//     which is the substrate-visible control flow this example exists to
+//     avoid, and it defeats any attempt to vectorise or verify uniformly;
+//   - it makes the cost of pricing input-dependent, which is a side channel in
+//     any setting where the inputs are confidential.
+//
+// The inverse-CDF method has none of these.  It is a fixed, straight-line
+// evaluation: one uniform in, one normal out, the same arithmetic every time.
+//
+// Acklam's rational approximation is used for the initial estimate, in its
+// three published regions (lower tail, central, upper tail).  Its worst-case
+// absolute error is about 1.1e-9, measured against a 50-digit oracle — good,
+// but three orders short of f64.  It is therefore polished by EXACTLY ONE
+// Halley step against the deterministic `dm_norm_cdf` above:
+//
+//   e = Phi(x) - p ;  u = e / phi(x) ;  x <- x - u / (1 + x*u/2)
+//
+// which takes the worst-case relative error below 1e-25 in exact arithmetic,
+// i.e. to the f64 rounding floor.  ONE step, fixed, NEVER convergence-tested —
+// same discipline as `erfc_cf`'s static depth.  A `while |e| > tol` loop would
+// still be deterministic, but its trip count would vary with the input, which
+// re-introduces exactly the data-dependent branching that ruled out
+// Box-Muller.  A fixed step count costs a little work on the easy inputs and
+// buys a control flow that does not depend on the data at all.
+// ---------------------------------------------------------------------------
+
+// Acklam's initial estimate.  Every polynomial is a fixed left-fold Horner
+// recurrence in source order; do not reassociate.
+fn acklam_est(p: f64) -> f64 {
+    let p_low: f64 = 0.02425;
+    let p_high: f64 = 0.97575;
+
+    if p < p_low {
+        let q: f64 = dm_sqrt(0.0 - 2.0 * dm_log(p));
+        let mut num: f64 = 0.0 - 0.007784894002430293;
+        num = 0.0 - 0.3223964580411365 + q * num;
+        num = 0.0 - 2.400758277161838 + q * num;
+        num = 0.0 - 2.549732539343734 + q * num;
+        num = 4.374664141464968 + q * num;
+        num = 2.938163982698783 + q * num;
+        let mut den: f64 = 0.007784695709041462;
+        den = 0.3224671290700398 + q * den;
+        den = 2.445134137142996 + q * den;
+        den = 3.754408661907416 + q * den;
+        den = 1.0 + q * den;
+        return num / den;
+    }
+
+    if p <= p_high {
+        let q: f64 = p - 0.5;
+        let r: f64 = q * q;
+        let mut num: f64 = 0.0 - 39.69683028665376;
+        num = 220.9460984245205 + r * num;
+        num = 0.0 - 275.9285104469687 + r * num;
+        num = 138.357751867269 + r * num;
+        num = 0.0 - 30.66479806614716 + r * num;
+        num = 2.506628277459239 + r * num;
+        let mut den: f64 = 0.0 - 54.47609879822406;
+        den = 161.5858368580409 + r * den;
+        den = 0.0 - 155.6989798598866 + r * den;
+        den = 66.80131188771972 + r * den;
+        den = 0.0 - 13.28068155288572 + r * den;
+        den = 1.0 + r * den;
+        return num * q / den;
+    }
+
+    let q: f64 = dm_sqrt(0.0 - 2.0 * dm_log(1.0 - p));
+    let mut num: f64 = 0.0 - 0.007784894002430293;
+    num = 0.0 - 0.3223964580411365 + q * num;
+    num = 0.0 - 2.400758277161838 + q * num;
+    num = 0.0 - 2.549732539343734 + q * num;
+    num = 4.374664141464968 + q * num;
+    num = 2.938163982698783 + q * num;
+    let mut den: f64 = 0.007784695709041462;
+    den = 0.3224671290700398 + q * den;
+    den = 2.445134137142996 + q * den;
+    den = 3.754408661907416 + q * den;
+    den = 1.0 + q * den;
+    return 0.0 - num / den;
+}
+
+// Inverse standard normal CDF.  Domain is the OPEN interval (0,1); anything
+// else is a caller error and returns the canonical qNaN rather than a
+// plausible-looking number.
+pub fn dm_norm_ppf(p: f64) -> f64 {
+    if p != p {
+        return canonical_qnan();
+    }
+    if p <= 0.0 {
+        return canonical_qnan();
+    }
+    if p >= 1.0 {
+        return canonical_qnan();
+    }
+    let x: f64 = acklam_est(p);
+    // Exactly one Halley step.  Fixed count, never convergence-tested.
+    let e: f64 = dm_norm_cdf(x) - p;
+    let u: f64 = e / dm_norm_pdf(x);
+    return x - u / (1.0 + x * u * 0.5);
+}
+
+// ---------------------------------------------------------------------------
+// GEOMETRIC BROWNIAN MOTION, TERMINAL DISTRIBUTION.
+//
+// Under the risk-neutral measure the terminal spot is exactly lognormal, so a
+// European payoff needs no time-stepping at all — one jump straight to expiry:
+//
+//   S_T = S * exp( (r - q - sigma^2/2) * T  +  sigma * sqrt(T) * Z )
+//
+// with Z standard normal.  Discretising the path into steps would add
+// discretisation error for nothing here (it is only needed for path-dependent
+// payoffs), and each extra step is another rounding opportunity.  One exact
+// jump is both more accurate and more reproducible.
+//
+// The drift and diffusion coefficients are hoisted out of the loop and
+// computed ONCE.  This is not only a speed choice: recomputing
+// `(r - q - 0.5*sigma*sigma)*T` inside the loop would give the identical value
+// every iteration, but hoisting guarantees that every path sees the same bits
+// rather than relying on the compiler to make that true.
+// ---------------------------------------------------------------------------
+
+fn mc_valid(s: f64, k: f64, sigma: f64, t: f64, npath: i64) -> i64 {
+    if s != s {
+        return 0;
+    }
+    if k != k {
+        return 0;
+    }
+    if sigma != sigma {
+        return 0;
+    }
+    if t != t {
+        return 0;
+    }
+    if s <= 0.0 {
+        return 0;
+    }
+    if k <= 0.0 {
+        return 0;
+    }
+    if sigma <= 0.0 {
+        return 0;
+    }
+    if t <= 0.0 {
+        return 0;
+    }
+    if npath <= 0 {
+        return 0;
+    }
+    return 1;
+}
+
+// A single terminal spot for path index i.  Pure in (i, seed) and the market
+// parameters: no carried state, so this is the same number regardless of which
+// other paths have been evaluated.
+fn gbm_terminal(s: f64, drift: f64, vol: f64, i: i64, seed: i64) -> f64 {
+    let z: f64 = dm_norm_ppf(u01(i, seed));
+    return s * dm_exp(drift + vol * z);
+}
+
+// ---------------------------------------------------------------------------
+// THE REDUCTION.  THIS ORDERING IS LOAD-BEARING.
+//
+// `acc` is summed in ONE fixed left fold, path 0 first, ascending, with a
+// single accumulator.  That is a deliberate, pinned choice and it is the
+// property that makes this price reproducible.
+//
+// f64 addition is not associative: every `+` rounds its result, so a different
+// grouping of the same 50000 payoffs is a different number.  Specifically, any
+// of the following standard "optimisations" WOULD change the last bits of
+// every price below:
+//
+//   - a vectorised reduction, which keeps 4 (AVX2) or 2 (NEON) or 8 (AVX-512)
+//     partial sums in lanes and folds them at the end.  The lane count is a
+//     property of the ISA, so the price would become a function of the machine
+//     — this is the single most common way a "deterministic" model turns out
+//     not to be;
+//   - a parallel/threaded reduction, which additionally combines partials in
+//     nondeterministic completion order, so the price would not even be stable
+//     on ONE machine across two runs;
+//   - pairwise or Kahan summation, which are MORE accurate than this fold and
+//     still forbidden here, because accuracy is not the property being
+//     defended.  Swapping in a better summation would be a silent change to
+//     every published number.
+//
+// The cost is real and worth naming: a serial fold accumulates O(n) rounding
+// where pairwise accumulates O(log n).  At 50000 paths that is irrelevant
+// beside a standard error of ~0.066 — the statistical error dominates the
+// numerical error by four orders of magnitude.  We are spending a little
+// accuracy we do not need to buy reproducibility we do.
+//
+// If this must ever be made faster, the correct move is a fixed-width fold
+// with a PINNED lane count specified in source, not a reduction that inherits
+// its width from the hardware.  Do not reorder this loop.
+// ---------------------------------------------------------------------------
+
+pub fn mc_call(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64, npath: i64, seed: i64) -> f64 {
+    if mc_valid(s, k, sigma, t, npath) == 0 {
+        return canonical_qnan();
+    }
+    let drift: f64 = (r - q - 0.5 * sigma * sigma) * t;
+    let vol: f64 = sigma * dm_sqrt(t);
+    let mut acc: f64 = 0.0;
+    let mut i: i64 = 0;
+    while i < npath {
+        let st: f64 = gbm_terminal(s, drift, vol, i, seed);
+        let mut pay: f64 = st - k;
+        if pay < 0.0 {
+            pay = 0.0;
+        }
+        acc = acc + pay;
+        i = i + 1;
+    }
+    return dm_exp(0.0 - r * t) * acc / (npath as f64);
+}
+
+pub fn mc_put(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64, npath: i64, seed: i64) -> f64 {
+    if mc_valid(s, k, sigma, t, npath) == 0 {
+        return canonical_qnan();
+    }
+    let drift: f64 = (r - q - 0.5 * sigma * sigma) * t;
+    let vol: f64 = sigma * dm_sqrt(t);
+    let mut acc: f64 = 0.0;
+    let mut i: i64 = 0;
+    while i < npath {
+        let st: f64 = gbm_terminal(s, drift, vol, i, seed);
+        let mut pay: f64 = k - st;
+        if pay < 0.0 {
+            pay = 0.0;
+        }
+        acc = acc + pay;
+        i = i + 1;
+    }
+    return dm_exp(0.0 - r * t) * acc / (npath as f64);
+}
+
+// ---------------------------------------------------------------------------
+// ANTITHETIC VARIATES.  Variance reduction that costs no determinism.
+//
+// For every standard normal draw Z, the value -Z is equally likely under the
+// standard normal law, because that law is symmetric about zero.  Pricing the
+// pair (Z, -Z) and averaging the two payoffs therefore leaves the ESTIMATOR
+// UNBIASED while cancelling the component of the sampling error that is linear
+// in Z.  For a payoff close to monotone in Z — which a vanilla European call
+// is, being monotone in S_T and S_T monotone in Z — the two payoffs of a pair
+// are negatively correlated, and
+//
+//     Var((X + X') / 2) = (Var X + Var X' + 2 Cov(X, X')) / 4
+//
+// is strictly smaller than Var(X)/2 exactly when that covariance is negative.
+// The measured effect at these parameters is recorded in the KAT below, stated
+// per GENERATOR DRAW rather than per path, which is the honest comparison: an
+// antithetic run of N pairs consumes N uniforms and evaluates 2N payoffs.
+//
+// WHY THIS IS DETERMINISM-SAFE, WHICH IS THE ONLY REASON IT IS HERE.  The
+// negation `0.0 - z` is EXACT in IEEE-754: negation flips the sign bit, it
+// never rounds, and it cannot overflow or underflow.  The antithetic partner
+// therefore introduces no new rounding decision of any kind.  The draw count
+// per pair is fixed — ONE uniform, ONE inverse-CDF evaluation, two terminal
+// spots — so the mapping from counter to path stays a pure function of the
+// counter, exactly as in the plain estimator.  No rejection, no data-dependent
+// branch, no carried state.
+//
+// THE REDUCTION ORDER IS PINNED HERE TOO, in a shape that must not be
+// "tidied": each pair's two payoffs are combined into `pair` FIRST, and only
+// then added to the running accumulator.  That is a different association from
+// adding both payoffs straight into `acc`, and it produces different bits.  The
+// nested form is the one that matches the mathematics above (a mean of pair
+// means), so it is the form pinned by the exact bit literal in the KAT.  Do
+// not flatten it.
+// ---------------------------------------------------------------------------
+
+pub fn mc_call_anti(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64, npair: i64, seed: i64) -> f64 {
+    if mc_valid(s, k, sigma, t, npair) == 0 {
+        return canonical_qnan();
+    }
+    let drift: f64 = (r - q - 0.5 * sigma * sigma) * t;
+    let vol: f64 = sigma * dm_sqrt(t);
+    let mut acc: f64 = 0.0;
+    let mut i: i64 = 0;
+    while i < npair {
+        // ONE uniform, ONE inverse CDF, used twice with opposite signs.
+        let z: f64 = dm_norm_ppf(u01(i, seed));
+        let sa: f64 = s * dm_exp(drift + vol * z);
+        let sb: f64 = s * dm_exp(drift + vol * (0.0 - z));
+        let mut pa: f64 = sa - k;
+        if pa < 0.0 {
+            pa = 0.0;
+        }
+        let mut pb: f64 = sb - k;
+        if pb < 0.0 {
+            pb = 0.0;
+        }
+        // Pair mean first, then accumulate.  This association is pinned.
+        let pair: f64 = (pa + pb) * 0.5;
+        acc = acc + pair;
+        i = i + 1;
+    }
+    return dm_exp(0.0 - r * t) * acc / (npair as f64);
+}
+
+// --- Closed form, for the convergence check only ---------------------------
+// Duplicated from examples/quant/black_scholes.  It is the ORACLE this module
+// converges toward, not part of the Monte-Carlo claim.
+
+fn bs_call_ref(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64) -> f64 {
+    let sq: f64 = sigma * dm_sqrt(t);
+    let d1: f64 = (dm_log(s / k) + (r - q + 0.5 * sigma * sigma) * t) / sq;
+    let d2: f64 = d1 - sq;
+    return s * dm_exp(0.0 - q * t) * dm_norm_cdf(d1) - k * dm_exp(0.0 - r * t) * dm_norm_cdf(d2);
+}
+
+// ===========================================================================
+// KNOWN-ANSWER TESTS.
+//
+// Six classes of check, each answering a different question:
+//
+//   1. GENERATOR KAT — fixed values for the first draws of the mixer.  The
+//      reference was produced by an INDEPENDENT implementation of the
+//      documented recurrence, not transcribed from the code above.  A KAT
+//      generated from the code it tests proves only that the code is
+//      unchanged.  These are exact integer equalities: no tolerance, because
+//      integers have no rounding to hide in.
+//   2. CONVERGENCE — the MC price sits inside a 3-sigma confidence band around
+//      the closed form.  STATISTICAL, not bit-identity.  See below.
+//   3. REPRODUCIBILITY — the same seed gives the BIT-IDENTICAL price (`==`).
+//      This is the actual point of the module.
+//   4. SEED SENSITIVITY — a different seed gives a DIFFERENT price.  A
+//      positive control: without it, a generator that silently returned a
+//      constant would pass every reproducibility check trivially.
+//   5. DOMAIN — degenerate inputs return the canonical qNaN.
+//   6. ADVERSARIAL — deliberately WRONG references must be REJECTED.  A
+//      spurious acceptance counts as a failure.  Without this block the bands
+//      prove nothing.
+// ===========================================================================
+
+fn chk_ulp(got: f64, want: f64, ulps: f64) -> i64 {
+    let eps: f64 = 0.0000000000000002220446049250313;
+    let tol: f64 = ulps * eps * absf(want);
+    if absf(got - want) <= tol {
+        return 1;
+    }
+    return 0;
+}
+
+fn chk_abs(got: f64, want: f64, abstol: f64) -> i64 {
+    if absf(got - want) <= abstol {
+        return 1;
+    }
+    return 0;
+}
+
+fn is_nan(x: f64) -> i64 {
+    if x != x {
+        return 1;
+    }
+    return 0;
+}
+
+pub fn main() -> i64 {
+    let mut fails: i64 = 0;
+
+    // Seeds are fixed, published constants: the hexadecimal expansion of pi,
+    // which is a nothing-up-my-sleeve number.  A seed chosen to make a test
+    // pass is a seed chosen to make a test meaningless.
+    // 0x243F6A8885A308D3
+    let seed_a: i64 = 2611923443488327891;
+    // 0x13198A2E03707344
+    let seed_b: i64 = 1379007993592906564;
+    let npath: i64 = 50000;
+
+    // === 1. GENERATOR KATs ==================================================
+    // Exact integer equalities for draws 0..3 at seed_a.  Any change to GAMMA,
+    // MIX1, MIX2, or to any shift distance, moves these immediately.
+    fails = fails + (1 - eq_i64(sm64(0, seed_a), 3220344897584144929));
+    fails = fails + (1 - eq_i64(sm64(1, seed_a), 0 - 7775742627565762167));
+    fails = fails + (1 - eq_i64(sm64(2, seed_a), 0 - 2497992216553849341));
+    fails = fails + (1 - eq_i64(sm64(3, seed_a), 0 - 2616677897587316736));
+
+    // The logical-shift emulation is load-bearing for the mixer; pin it too.
+    // -1 as u64 is 2^64-1, so lsr(-1, 11) must be 2^53-1 exactly.
+    fails = fails + (1 - eq_i64(lsr(0 - 1, 11), 9007199254740991));
+    fails = fails + (1 - eq_i64(lsr(0 - 8, 1), 9223372036854775804));
+
+    // COUNTER-BASED, verified rather than asserted: draw(2) must be the same
+    // number whether or not draws 0 and 1 were taken first.  A stateful
+    // generator cannot pass this.
+    let d2_direct: i64 = sm64(2, seed_a);
+    let mut warm: i64 = 0;
+    warm = sm64(0, seed_a);
+    warm = sm64(1, seed_a);
+    let d2_after: i64 = sm64(2, seed_a);
+    fails = fails + (1 - eq_i64(d2_direct, d2_after));
+
+    // Uniforms land strictly inside (0,1).
+    let u0: f64 = u01(0, seed_a);
+    fails = fails + (1 - chk_ulp(u0, 0.17457524670566693, 8.0));
+    if u0 > 0.0 {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+    if u0 < 1.0 {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+
+    // === INVERSE CDF against the 50-digit oracle ============================
+    // mpmath mp.dps=50, sqrt(2)*erfinv(2p-1), rounded once to f64.
+    fails = fails + (1 - chk_abs(dm_norm_ppf(0.5), 0.0, 0.00000000000001));
+    fails = fails + (1 - chk_ulp(dm_norm_ppf(0.975), 1.959963984540054, 4096.0));
+    fails = fails + (1 - chk_ulp(dm_norm_ppf(0.025), 0.0 - 1.959963984540054, 4096.0));
+    fails = fails + (1 - chk_ulp(dm_norm_ppf(0.99), 2.3263478740408408, 4096.0));
+    fails = fails + (1 - chk_ulp(dm_norm_ppf(0.001), 0.0 - 3.090232306167813, 4096.0));
+    // Round-trip: Phi(Phi^-1(p)) == p is the structural check, independent of
+    // any oracle, and it exercises both directions of the tail handling.
+    fails = fails + (1 - chk_abs(dm_norm_cdf(dm_norm_ppf(0.123)), 0.123, 0.0000000001));
+    fails = fails + (1 - chk_abs(dm_norm_cdf(dm_norm_ppf(0.987)), 0.987, 0.0000000001));
+    fails = fails + (1 - chk_abs(dm_norm_cdf(dm_norm_ppf(0.004)), 0.004, 0.0000000001));
+
+    // === 2. CONVERGENCE (STATISTICAL, NOT BIT-IDENTITY) =====================
+    // THIS IS A CONVERGENCE CHECK.  It asserts the MC price lands inside a
+    // 3-sigma confidence band around the closed form, where sigma is the
+    // sample standard error of the discounted payoff at this path count.  It
+    // is NOT a bit-identity check and must never be read as one: the band is
+    // ~0.2 wide on the ATM call, which is about 4e15 ulp, so it would accept
+    // essentially any reassociation of the reduction.  Only the `==` check in
+    // section 3 speaks to determinism.
+    //
+    // Bands, computed from the sample standard error (mean payoff dispersion
+    // over the same 50000 draws), 3 sigma each:
+    //   ATM  call S=100  se=0.0663  ->  0.199   (actual deviation +1.30 sigma)
+    //   ATM  put  S=100  se=0.0385  ->  0.115   (actual deviation -1.84 sigma)
+    //   OTM  call S=90   se=0.0460  ->  0.138   (actual deviation +0.98 sigma)
+    //   ITM  call S=110  se=0.0849  ->  0.255   (actual deviation +1.49 sigma)
+    let mc_atm: f64 = mc_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, npath, seed_a);
+    let bs_atm: f64 = bs_call_ref(100.0, 100.0, 0.05, 0.0, 0.2, 1.0);
+    fails = fails + (1 - chk_abs(mc_atm, bs_atm, 0.199));
+
+    let mc_put_atm: f64 = mc_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, npath, seed_a);
+    fails = fails + (1 - chk_abs(mc_put_atm, 5.573526022256968, 0.115));
+
+    let mc_otm: f64 = mc_call(90.0, 100.0, 0.05, 0.0, 0.2, 1.0, npath, seed_a);
+    fails = fails + (1 - chk_abs(mc_otm, 5.091222078817552, 0.138));
+
+    let mc_itm: f64 = mc_call(110.0, 100.0, 0.05, 0.0, 0.2, 1.0, npath, seed_a);
+    fails = fails + (1 - chk_abs(mc_itm, 17.662953740590446, 0.255));
+
+    // Structural, oracle-free: a call is worth more with a lower strike, and
+    // an MC price must respect the no-arbitrage upper bound C <= S.
+    if mc_itm > mc_atm {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+    if mc_atm > mc_otm {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+    if mc_atm <= 100.0 {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+    if mc_atm > 0.0 {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+
+    // === 3. REPRODUCIBILITY: BIT-IDENTICAL, NO TOLERANCE ====================
+    // The point of the file.  Same seed, same path count, same inputs — the
+    // same bits, compared with `==` and with no tolerance at all.
+    //
+    // READ THE SCOPE OF THIS CHECK CAREFULLY, because it is narrower than it
+    // looks and the difference was found by mutation, not by inspection.
+    // Comparing two calls WITHIN ONE BUILD proves the function is pure and
+    // free of hidden state — real, and worth pinning — but it CANNOT catch a
+    // change to the reduction order, because both calls would be reassociated
+    // the same way and would agree with each other perfectly.
+    //
+    // Measured, not assumed: splitting the fold in `mc_call` into two
+    // alternating partial sums (`acc0`/`acc1`, the shape a 2-wide vector
+    // reduction produces) moves the ATM price by 4 ulp — and every check in
+    // this section still passed, as did every convergence band.  A suite that
+    // cannot see its own central claim being broken is decorative.
+    //
+    // The fix is section 3b: the serial fold's output is pinned to an exact
+    // bit pattern.  An equality against a literal has no second run to agree
+    // with, so a reassociation has nowhere to hide.
+    let run1: f64 = mc_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, npath, seed_a);
+    let run2: f64 = mc_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, npath, seed_a);
+    if run1 == run2 {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+    // Compared as raw BITS, not as floats, so the check cannot be satisfied by
+    // an IEEE quirk (+0.0 == -0.0 compares equal; NaN never does).  This is
+    // the strictest form of the claim available in-language.
+    fails = fails + (1 - eq_i64(__mind_f64_to_bits(run1), __mind_f64_to_bits(run2)));
+
+    // The same property must hold for the put and at a second seed.
+    let put1: f64 = mc_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, npath, seed_a);
+    let put2: f64 = mc_put(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, npath, seed_a);
+    fails = fails + (1 - eq_i64(__mind_f64_to_bits(put1), __mind_f64_to_bits(put2)));
+
+    let runb1: f64 = mc_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, npath, seed_b);
+    let runb2: f64 = mc_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, npath, seed_b);
+    fails = fails + (1 - eq_i64(__mind_f64_to_bits(runb1), __mind_f64_to_bits(runb2)));
+
+    // Reproducibility is not only across repeated calls: a SHORTER run must
+    // reproduce its own result too, and a prefix of the path set must be
+    // independent of the total.  Because the generator is counter-based, the
+    // 1000-path price is a pure function of the first 1000 counters and does
+    // not depend on 50000 having been requested elsewhere.
+    let short1: f64 = mc_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 1000, seed_a);
+    let short2: f64 = mc_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 1000, seed_a);
+    fails = fails + (1 - eq_i64(__mind_f64_to_bits(short1), __mind_f64_to_bits(short2)));
+
+    // === 3b. THE REDUCTION ORDER, PINNED TO EXACT BITS ======================
+    // These are the checks that actually defend the thesis of this file.
+    //
+    // Each literal is the IEEE-754 bit pattern of the price produced by the
+    // SINGLE FIXED LEFT FOLD in source order.  Any reassociation of that fold
+    // — a vector lane split, a threaded partial-sum combine, pairwise or Kahan
+    // summation — changes these bits and fails here, even though it would
+    // change the price by only a few ulp and would sail through every
+    // convergence band above.  This is the same argument the quant README
+    // makes about the lattice: a tolerance cannot detect reassociation, and a
+    // hash (or, as here, an exact bit equality) has no tolerance to hide in.
+    //
+    // PROVENANCE, stated because it matters.  These patterns are NOT an
+    // independent oracle for the PRICE — no external library computes this
+    // model's exact rounding, and claiming otherwise would be dishonest.  They
+    // are a CHANGE DETECTOR for the evaluation order, which is what this
+    // section exists to defend.  The value itself is separately justified two
+    // ways: the convergence bands in section 2 (against a 50-digit closed-form
+    // oracle), and an independent reimplementation of the documented
+    // recurrence, which reproduces the 50000-path ATM call to all 64 bits
+    // (4622121301462122402) and the other cases to within 1 ulp of honest
+    // detmath-vs-libm rounding difference.
+    //
+    // If a legitimate change to a detmath kernel moves these, they must be
+    // re-derived and the move explained — never widened, because there is no
+    // width to widen.
+    fails = fails + (1 - eq_i64(__mind_f64_to_bits(run1), 4622121301462122402));
+    fails = fails + (1 - eq_i64(__mind_f64_to_bits(put1), 4617881470580539568));
+    fails = fails + (1 - eq_i64(__mind_f64_to_bits(short1), 4621800023452392412));
+    fails = fails + (1 - eq_i64(__mind_f64_to_bits(runb1), 4622111748635181241));
+
+    // === 3c. PUT-CALL PARITY, ON THE MONTE-CARLO PRICES THEMSELVES ==========
+    // Parity is asserted against the MC call and the MC put rather than the
+    // closed form, and it splits into two claims of VERY different sharpness.
+    // Separating them is the whole value of this section, and the separation
+    // was found by measurement, not by inspection: the first version of this
+    // block asserted the wrong one with a 1e-9 band and failed immediately.
+    //
+    // (a) THE EXACT IDENTITY.  For a SINGLE path, the two payoffs satisfy
+    //         max(S_T - K, 0) - max(K - S_T, 0) = S_T - K
+    //     identically, for every S_T, with no probabilistic content at all.
+    //     Both legs are driven by the same draws in the same order, so summing
+    //     that over the path set gives
+    //         C_mc - P_mc = e^(-rT) * ( mean(S_T) - K )
+    //     which must hold to f64 rounding — NOT to a statistical band.  This is
+    //     the sharp check, and it catches a sign error in a payoff, a wrong
+    //     discount factor on one leg, or a drift applied to only one of them.
+    //
+    // (b) PARITY AGAINST THE MARKET RELATION, C - P = S - K*e^(-rT), is a
+    //     STATISTICAL claim and must be banded accordingly.  It holds only to
+    //     the extent that the SAMPLE mean of S_T matches its expectation
+    //     S*e^((r-q)T), and that sample mean carries the full Monte-Carlo error
+    //     of the underlying — which is LARGER than the error on either option
+    //     price, because S_T has more dispersion than a truncated payoff.
+    //         sd(S_T) = S*e^(rT)*sqrt(e^(sigma^2 T) - 1) = 21.24
+    //         se      = e^(-rT) * 21.24 / sqrt(50000)    = 0.0903
+    //         3-sigma band                               = 0.271
+    //     The observed deviation is 0.157, i.e. 1.74 sigma.  Writing 1e-9 here
+    //     — the intuitive "parity is exact" reflex — is simply wrong, and this
+    //     comment exists so the next reader does not re-derive the mistake.
+    let mut sum_st: f64 = 0.0;
+    let drift_p: f64 = (0.05 - 0.0 - 0.5 * 0.2 * 0.2) * 1.0;
+    let vol_p: f64 = 0.2 * dm_sqrt(1.0);
+    let mut ip: i64 = 0;
+    while ip < npath {
+        sum_st = sum_st + gbm_terminal(100.0, drift_p, vol_p, ip, seed_a);
+        ip = ip + 1;
+    }
+    let mean_st: f64 = sum_st / (npath as f64);
+    let exact_par: f64 = dm_exp(0.0 - 0.05) * (mean_st - 100.0);
+    // (a) the exact identity, to rounding only.  The fold above reproduces the
+    // pricers' own fold order, so the residual is pure f64 rounding.
+    fails = fails + (1 - chk_abs(mc_atm - mc_put_atm, exact_par, 0.000000001));
+    // (b) the statistical relation, 3-sigma on the sample mean of S_T.
+    let par_tgt: f64 = 100.0 - 100.0 * dm_exp(0.0 - 0.05);
+    fails = fails + (1 - chk_abs(mc_atm - mc_put_atm, par_tgt, 0.271));
+    // Positive control: the parity difference is a real non-zero number
+    // (5.034...), so neither assertion passes because both sides are zero.
+    if absf(mc_atm - mc_put_atm) > 1.0 {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+
+    // === 3d. ANTITHETIC VARIATES ===========================================
+    // Three separate claims, deliberately not conflated.
+    //
+    // (a) UNBIASED: the antithetic estimator prices into the same confidence
+    //     band around the same closed form.  It is a different estimator of
+    //     the SAME quantity, not a different model.
+    let anti50: f64 = mc_call_anti(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, npath, seed_a);
+    fails = fails + (1 - chk_abs(anti50, bs_atm, 0.199));
+
+    // (b) DETERMINISTIC: bit-identical across calls, and pinned to an exact bit
+    //     pattern so a reassociation of the pair-then-accumulate fold cannot
+    //     hide.  Same discipline as section 3b, and the same honest caveat: the
+    //     literal is a CHANGE DETECTOR for evaluation order, not an independent
+    //     oracle for the price.  Measured value 10.429705532231571.
+    let anti50b: f64 = mc_call_anti(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, npath, seed_a);
+    fails = fails + (1 - eq_i64(__mind_f64_to_bits(anti50), __mind_f64_to_bits(anti50b)));
+    fails = fails + (1 - eq_i64(__mind_f64_to_bits(anti50), 4622061020298326163));
+
+    // (c) VARIANCE REDUCTION, MEASURED AT EQUAL DRAW COUNT.  This is the only
+    //     honest way to state the benefit.  `npath` PAIRS consume npath
+    //     uniforms — exactly as many generator draws as the plain estimator
+    //     over npath paths — while evaluating twice as many payoffs.  At this
+    //     seed the measured deviations from the closed form are:
+    //         plain,      50000 draws:  |dev| = 0.086203
+    //         antithetic, 50000 draws:  |dev| = 0.020878   (4.13x closer)
+    //     The assertion is the INEQUALITY, not the ratio: a specific ratio is a
+    //     property of this one seed and would be overfitting a single sample,
+    //     whereas the ordering is the property the technique actually promises.
+    //     Note this is a one-sample comparison and therefore evidence, not
+    //     proof — with an unlucky seed a single antithetic run can legitimately
+    //     land further out, which is why no tighter claim is made here.
+    if absf(anti50 - bs_atm) < absf(mc_atm - bs_atm) {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+
+    // A second antithetic seed must also be reproducible and in-band, so the
+    // claim is not a property of one lucky seed.  Measured 10.478172649553022.
+    let antib: f64 = mc_call_anti(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, npath, seed_b);
+    fails = fails + (1 - eq_i64(__mind_f64_to_bits(antib), 4622088304859764739));
+    fails = fails + (1 - chk_abs(antib, bs_atm, 0.199));
+    // Different seed, different antithetic price: the seed is really wired in.
+    if antib != anti50 {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+    // A shorter antithetic run is reproducible too, and differs from the long
+    // one — proving the pair count is honoured.  Measured 10.375492101657166.
+    let anti25: f64 = mc_call_anti(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 25000, seed_a);
+    fails = fails + (1 - eq_i64(__mind_f64_to_bits(anti25), 4622030500850109492));
+    if anti25 != anti50 {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+    // Domain guard: the antithetic pricer rejects degenerate input like the
+    // others, rather than returning a plausible-looking number.
+    fails = fails + (1 - is_nan(mc_call_anti(100.0, 100.0, 0.05, 0.0, 0.0, 1.0, npath, seed_a)));
+    fails = fails + (1 - is_nan(mc_call_anti(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 0, seed_a)));
+    fails = fails + (1 - is_nan(mc_call_anti(0.0, 100.0, 0.05, 0.0, 0.2, 1.0, npath, seed_a)));
+
+    // === 4. SEED SENSITIVITY (positive control) =============================
+    // A different seed MUST give a different price.  Without this, a generator
+    // that returned a constant — or one accidentally seeded identically — would
+    // sail through every check in section 3.  This is the control that proves
+    // the reproducibility checks above are not passing vacuously.
+    if runb1 != run1 {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+    // ... and a different path count must also move the answer, which proves
+    // the loop bound is actually being honoured.
+    if short1 != run1 {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+    // The second seed must still price into the same confidence band: it is a
+    // different sample of the SAME distribution, not a different model.
+    fails = fails + (1 - chk_abs(runb1, bs_atm, 0.199));
+
+    // === 5. DOMAIN: degenerate inputs return the canonical qNaN =============
+    fails = fails + (1 - is_nan(mc_call(100.0, 100.0, 0.05, 0.0, 0.0, 1.0, npath, seed_a)));
+    fails = fails + (1 - is_nan(mc_call(100.0, 100.0, 0.05, 0.0, 0.2, 0.0, npath, seed_a)));
+    fails = fails + (1 - is_nan(mc_call(0.0, 100.0, 0.05, 0.0, 0.2, 1.0, npath, seed_a)));
+    fails = fails + (1 - is_nan(mc_call(100.0, 0.0, 0.05, 0.0, 0.2, 1.0, npath, seed_a)));
+    fails = fails + (1 - is_nan(mc_call(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 0, seed_a)));
+    fails = fails + (1 - is_nan(mc_put(100.0, 100.0, 0.05, 0.0, 0.0 - 0.2, 1.0, npath, seed_a)));
+    // The inverse CDF is defined only on the open interval (0,1).
+    fails = fails + (1 - is_nan(dm_norm_ppf(0.0)));
+    fails = fails + (1 - is_nan(dm_norm_ppf(1.0)));
+    fails = fails + (1 - is_nan(dm_norm_ppf(0.0 - 0.5)));
+    fails = fails + (1 - is_nan(dm_norm_ppf(1.5)));
+
+    // === 6. ADVERSARIAL NEGATIVE CONTROLS ===================================
+    // Each call below passes a DELIBERATELY WRONG reference and is added to
+    // `fails` WITHOUT the `1 -` inversion: if the check spuriously ACCEPTS the
+    // wrong value, that counts as a failure.  Without this block, every band
+    // above could be passing merely because it is too wide.
+
+    // A price wrong by 0.5 is ~7.5 sigma out and must be rejected by the
+    // 3-sigma convergence band.
+    fails = fails + chk_abs(mc_atm, bs_atm + 0.5, 0.199);
+    // A price wrong by 0.3 is still outside the band.  This one is the tight
+    // control: it is only 1.5x the band halfwidth, so it would survive a band
+    // loosened by any careless factor of two.
+    fails = fails + chk_abs(mc_atm, bs_atm + 0.3, 0.199);
+    // The put band must reject a wrong put likewise.
+    fails = fails + chk_abs(mc_put_atm, 5.873526022256968, 0.115);
+    // A wrong generator KAT must be rejected: one bit flipped in draw 0.
+    fails = fails + eq_i64(sm64(0, seed_a), 3220344897584144928);
+    // A wrong inverse-CDF value must be rejected even at the loose 4096-ulp
+    // band — this proves the ppf bands discriminate rather than pass by width.
+    fails = fails + chk_ulp(dm_norm_ppf(0.975), 1.969963984540054, 4096.0);
+    // And the strongest adversarial control of all: two prices that differ in
+    // the LAST BIT must compare unequal under the bit check.  If this
+    // spuriously passed, section 3's reproducibility claim would be worthless.
+    fails = fails + eq_i64(__mind_f64_to_bits(run1), __mind_f64_to_bits(run1) + 1);
+    // The EXACT parity identity (3c-a) must reject a break of 1e-6 — six
+    // orders below anything a human notices, and still ~1000x its 1e-9 band.
+    // This is the tight control: it survives any careless loosening short of
+    // three decimal orders, and it is what proves the sharp half of parity is
+    // genuinely sharp rather than merely stated to be.
+    fails = fails + chk_abs(mc_atm - mc_put_atm, exact_par + 0.000001, 0.000000001);
+    // The STATISTICAL parity band (3c-b) must reject a break of 1.0, which is
+    // 11 sigma out.  Sized above the 0.271 band but far below anything visible
+    // on a screen, so it proves the band discriminates rather than passing by
+    // width.
+    fails = fails + chk_abs(mc_atm - mc_put_atm, par_tgt + 1.0, 0.271);
+    // A wrong antithetic bit pattern (last bit flipped) must be rejected: if
+    // this passed, section 3d's determinism pin would be worthless.
+    fails = fails + eq_i64(__mind_f64_to_bits(anti50), 4622061020298326162);
+    // A wrong antithetic price must fail the convergence band.
+    fails = fails + chk_abs(anti50, bs_atm + 0.5, 0.199);
+
+    return fails;
+}
+
+// Exact i64 equality as a 1/0 indicator, so integer KATs compose with the same
+// `1 - chk(...)` accounting as the float bands.
+fn eq_i64(a: i64, b: i64) -> i64 {
+    if a == b {
+        return 1;
+    }
+    return 0;
+}

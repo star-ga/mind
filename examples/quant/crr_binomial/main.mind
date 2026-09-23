@@ -1,0 +1,489 @@
+// examples/quant/crr_binomial — deterministic Cox-Ross-Rubinstein lattice.
+//
+// Copyright 2025 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// WHY THIS EXISTS ALONGSIDE black_scholes.  Black-Scholes is a closed form: one
+// pass, a handful of operations, no accumulated state.  It is the easy case for
+// a determinism claim.  A binomial lattice is the hard case, and is the reason
+// this second example is worth its weight:
+//
+//   * It is ITERATIVE.  An n-step tree performs n*(n+1)/2 backward-induction
+//     steps — 20100 discounted expectations at n=200 — each consuming the
+//     previous step's rounded output.  Any reassociation, any fused-multiply-add
+//     contraction, any change in traversal order perturbs a low bit early and
+//     carries it through every remaining level.  This is the same structural
+//     hazard as the Lorenz integrator, in a financial unit.
+//   * It is PATH-DEPENDENT under early exercise.  The American branch takes a
+//     max() against intrinsic value at every node, so a one-ulp difference does
+//     not merely perturb the price — it can flip an exercise decision, changing
+//     the discrete path taken through the lattice.  A float-nondeterministic
+//     implementation can therefore disagree with itself about WHETHER TO
+//     EXERCISE, not just by how much a position is worth.
+//
+// Every operation below is +, -, *, /, or a comparison on the strict scalar
+// path, plus exp/sqrt from the detmath tier.  No reduction is reassociated and
+// the traversal order is fixed, so the lattice is bit-identical across x86
+// `avx2` and ARM `neon`.
+//
+// LATTICE STORAGE.  The level buffer holds f64 values as their exact IEEE bit
+// patterns in an i64 heap block, via the `__mind_f64_to_bits` /
+// `__mind_bits_to_f64` reinterpret pair.  That is a lossless bit copy, NOT a
+// numeric conversion: nothing is rounded on the way in or out.  mindc 0.10.2
+// has no f64 load/store intrinsic, so this is the executable-subset route to a
+// mutable f64 array.
+//
+// SELF-CONTAINED, AND WHY.  The detmath kernels are duplicated rather than
+// imported: mindc 0.10.2 cannot carry an f64 across a module boundary (roadmap
+// 17.1) — an imported `fn f(x: f64) -> f64` types as `(i64) -> i64` at the call
+// site and miscompiles silently.  Mirrors `examples/detmath_kat`.
+// deferred: replace the KERNEL block with `import std.detmath;` once roadmap
+// 17.1 lands — upgrade path: delete between the KERNEL markers.
+//
+// NO `[test]` FUNCTIONS: the mindc 0.10.2 `[test]` interpreter mis-evaluates an
+// f64 branch condition (takes the then-branch unconditionally), so interpreted
+// assertions here would pass vacuously.  The gate is build-and-run: `mindc
+// run`, and the exit code is the count of failed checks.
+//
+// REFERENCES (original papers only):
+//   Cox, J. C., Ross, S. A. & Rubinstein, M. (1979). "Option Pricing: A
+//     Simplified Approach." Journal of Financial Economics 7(3), 229-263.
+//   Merton, R. C. (1973). "Theory of Rational Option Pricing." Bell Journal of
+//     Economics and Management Science 4(1), 141-183.  (Establishes that an
+//     American call on a non-dividend-paying stock is never exercised early —
+//     the structural invariant asserted in the KATs below.)
+// ---------------------------------------------------------------------------
+
+// =========================== KERNEL BEGIN ==================================
+
+fn absf(x: f64) -> f64 {
+    if x < 0.0 {
+        return 0.0 - x;
+    }
+    return x;
+}
+
+fn inf() -> f64 {
+    let mut v: f64 = 1.0;
+    let mut i: i64 = 0;
+    while i < 350 {
+        v = v * 10.0;
+        i = i + 1;
+    }
+    return v;
+}
+
+fn canonical_qnan() -> f64 {
+    return __mind_bits_to_f64(9221120237041090560);
+}
+
+fn rnd_to_i64(x: f64) -> i64 {
+    if x >= 0.0 {
+        return (x + 0.5) as i64;
+    }
+    return 0 - ((0.5 - x) as i64);
+}
+
+fn det_exp(x: f64) -> f64 {
+    let ln2_hi: f64 = 0.6931467056274414;
+    let ln2_lo: f64 = 0.00000047493250390941725;
+    let inv_ln2: f64 = 1.4426950408889634;
+    let k: i64 = rnd_to_i64(x * inv_ln2);
+    let kf: f64 = k as f64;
+    let r: f64 = (x - kf * ln2_hi) - kf * ln2_lo;
+    let mut t: f64 = 0.0000000000007647163731819816;
+    t = 0.00000000016059043836821613 + r * t;
+    t = 0.00000000208767569878681 + r * t;
+    t = 0.00000002505210838544172 + r * t;
+    t = 0.0000002755731922398589 + r * t;
+    t = 0.0000027557319223985893 + r * t;
+    t = 0.0000248015873015873 + r * t;
+    t = 0.0001984126984126984 + r * t;
+    t = 0.001388888888888889 + r * t;
+    t = 0.008333333333333333 + r * t;
+    t = 0.041666666666666664 + r * t;
+    t = 0.16666666666666666 + r * t;
+    t = 0.5 + r * t;
+    t = 1.0 + r * t;
+    t = 1.0 + r * t;
+    let mut y: f64 = t * 1.0;
+    let mut j: i64 = 0;
+    if k >= 0 {
+        while j < k {
+            y = y * 2.0;
+            j = j + 1;
+        }
+    } else {
+        while j < (0 - k) {
+            y = y / 2.0;
+            j = j + 1;
+        }
+    }
+    return y;
+}
+
+fn dm_exp(x: f64) -> f64 {
+    if x != x {
+        return x;
+    }
+    if x >= 709.7827128933841 {
+        return inf();
+    }
+    if x <= 0.0 - 745.1332191019412 {
+        return 0.0;
+    }
+    return det_exp(x);
+}
+
+fn dm_sqrt(x: f64) -> f64 {
+    if x != x {
+        return canonical_qnan();
+    }
+    if x < 0.0 {
+        return canonical_qnan();
+    }
+    return sqrt(x);
+}
+
+// ============================ KERNEL END ===================================
+
+// ---------------------------------------------------------------------------
+// Lattice helpers.
+// ---------------------------------------------------------------------------
+
+fn maxf(a: f64, b: f64) -> f64 {
+    if a > b {
+        return a;
+    }
+    return b;
+}
+
+// f64 <-> i64-heap slot accessors.  Exact bit reinterpret, never a conversion.
+fn lvl_get(buf: i64, i: i64) -> f64 {
+    return __mind_bits_to_f64(__mind_load_i64(buf + i * 8));
+}
+
+fn lvl_set(buf: i64, i: i64, v: f64) -> i64 {
+    __mind_store_i64(buf + i * 8, __mind_f64_to_bits(v));
+    return 0;
+}
+
+// Payoff at a terminal or exercise node.  `is_call != 0` selects the call.
+fn payoff(spot: f64, k: f64, is_call: i64) -> f64 {
+    if is_call != 0 {
+        return maxf(spot - k, 0.0);
+    }
+    return maxf(k - spot, 0.0);
+}
+
+// ---------------------------------------------------------------------------
+// Cox-Ross-Rubinstein binomial price.
+//
+//   dt = T/n,  u = e^(sigma*sqrt(dt)),  d = 1/u,
+//   p  = (e^((r-q)*dt) - d) / (u - d),   disc = e^(-r*dt)
+//
+// Backward induction over a single rolling level buffer of n+1 slots.
+//
+// SPOT IS RECONSTRUCTED, NOT ACCUMULATED.  The underlying at node (i,j) is
+// computed as S * u^(2j-i) by an explicit fixed-count multiply loop from S,
+// rather than by walking a running product across the level.  An accumulated
+// product would be ~n multiplications of drift, and its rounding error would
+// depend on the traversal direction; recomputing from S makes each node's spot
+// a function of (i,j) alone, so the lattice is independent of how it is walked.
+// This costs operations and buys order-independence, which is the point.
+//
+// `american != 0` applies the early-exercise max() at every interior node.
+//
+// Preconditions: finite S,K > 0, sigma > 0, T > 0, 1 <= n <= 1024.  Violations
+// return the canonical qNaN rather than a plausible-looking number.
+// ---------------------------------------------------------------------------
+pub fn crr_price(s: f64, k: f64, r: f64, q: f64, sigma: f64, t: f64, n: i64, is_call: i64, american: i64) -> f64 {
+    if s != s {
+        return canonical_qnan();
+    }
+    if k != k {
+        return canonical_qnan();
+    }
+    if sigma != sigma {
+        return canonical_qnan();
+    }
+    if t != t {
+        return canonical_qnan();
+    }
+    if s <= 0.0 {
+        return canonical_qnan();
+    }
+    if k <= 0.0 {
+        return canonical_qnan();
+    }
+    if sigma <= 0.0 {
+        return canonical_qnan();
+    }
+    if t <= 0.0 {
+        return canonical_qnan();
+    }
+    if n < 1 {
+        return canonical_qnan();
+    }
+    if n > 1024 {
+        return canonical_qnan();
+    }
+
+    let dt: f64 = t / (n as f64);
+    let u: f64 = dm_exp(sigma * dm_sqrt(dt));
+    let d: f64 = 1.0 / u;
+    let disc: f64 = dm_exp(0.0 - r * dt);
+    let growth: f64 = dm_exp((r - q) * dt);
+    let p: f64 = (growth - d) / (u - d);
+    let pm: f64 = 1.0 - p;
+
+    // Risk-neutral probability must lie in [0,1]; outside it the lattice is
+    // arbitrageable and the "price" is meaningless.  Fail loudly.
+    if p < 0.0 {
+        return canonical_qnan();
+    }
+    if p > 1.0 {
+        return canonical_qnan();
+    }
+
+    let buf: i64 = __mind_alloc((n + 1) * 8);
+
+    // --- terminal level i = n ---------------------------------------------
+    let mut j: i64 = 0;
+    while j <= n {
+        // spot = S * u^j * d^(n-j), formed as S * u^(2j-n) via a fixed loop.
+        let mut sp: f64 = s * 1.0;
+        let e: i64 = 2 * j - n;
+        let mut c: i64 = 0;
+        if e >= 0 {
+            while c < e {
+                sp = sp * u;
+                c = c + 1;
+            }
+        } else {
+            while c < (0 - e) {
+                sp = sp * d;
+                c = c + 1;
+            }
+        }
+        lvl_set(buf, j, payoff(sp, k, is_call));
+        j = j + 1;
+    }
+
+    // --- backward induction, level i = n-1 down to 0 ----------------------
+    let mut i: i64 = n - 1;
+    while i >= 0 {
+        let mut m: i64 = 0;
+        while m <= i {
+            // Discounted risk-neutral expectation.  Written in this exact
+            // order: the two probability-weighted terms are summed before the
+            // single discount multiply.  Do not regroup.
+            let up: f64 = lvl_get(buf, m + 1);
+            let dn: f64 = lvl_get(buf, m);
+            let mut v: f64 = disc * (p * up + pm * dn);
+            if american != 0 {
+                let mut sp: f64 = s * 1.0;
+                let e: i64 = 2 * m - i;
+                let mut c: i64 = 0;
+                if e >= 0 {
+                    while c < e {
+                        sp = sp * u;
+                        c = c + 1;
+                    }
+                } else {
+                    while c < (0 - e) {
+                        sp = sp * d;
+                        c = c + 1;
+                    }
+                }
+                v = maxf(v, payoff(sp, k, is_call));
+            }
+            lvl_set(buf, m, v);
+            m = m + 1;
+        }
+        i = i - 1;
+    }
+
+    return lvl_get(buf, 0);
+}
+
+// ===========================================================================
+// KNOWN-ANSWER TESTS.
+//
+// Reference values come from an INDEPENDENT 50-digit oracle (mpmath,
+// mp.dps=50) running the same recombining lattice in exact-ish arithmetic and
+// rounded once to f64 — never from this implementation.
+//
+// The structural checks matter at least as much as the values here, because
+// they encode theorems that must hold whatever the arithmetic does:
+//   * An American call on a non-dividend-paying stock equals its European
+//     counterpart EXACTLY (Merton 1973) — early exercise is never optimal, so
+//     the max() must never bind.  This is a bit-exact equality, not a band.
+//   * An American put is worth at least its European counterpart, and at least
+//     its intrinsic value.
+//   * A deep in-the-money American put with no time value equals intrinsic
+//     exactly.
+//   * The lattice converges toward the Black-Scholes closed form as n grows.
+//
+// An ADVERSARIAL block closes the loop: a deliberately wrong reference MUST be
+// rejected, so a spurious acceptance is counted as a failure.
+//
+// WHAT THIS KAT CANNOT CATCH, STATED PLAINLY.  These checks are tolerance
+// bands against an oracle, and the bands must be wide enough (~4096 ulp) to
+// absorb the lattice's own accumulated rounding, which grows with n.  That
+// makes them structurally BLIND to a reassociation of the inner recurrence.
+// Measured, not assumed: rewriting
+//     disc * (p * up + pm * dn)   as   disc * p * up + disc * pm * dn
+// changes the result in 5 of 6 test cases at ~500 ulp (~1e-13 relative) — a
+// real bit-level difference that every band here still accepts.
+//
+// This is not a gap to be closed by tightening the bands; tightening them past
+// the accumulated error would make the KAT fail for correct code.  Detecting
+// reassociation requires a BIT-EXACT reference, and the right home for that is
+// the cross-substrate CI fixture (tests/cross_substrate_identity.rs), which
+// compares hashes of the emitted output across x86 `avx2` and ARM `neon`
+// rather than comparing against a value.  A hash has no tolerance to hide in.
+//
+// Stated as a rule: this KAT proves the lattice is CORRECT; the CI fixture
+// proves it is REPRODUCIBLE.  Neither substitutes for the other, and a reader
+// should not read a green KAT as evidence of byte-identity.
+// ===========================================================================
+
+fn chk_ulp(got: f64, want: f64, ulps: f64) -> i64 {
+    let eps: f64 = 0.0000000000000002220446049250313;
+    let tol: f64 = ulps * eps * absf(want);
+    if absf(got - want) <= tol {
+        return 1;
+    }
+    return 0;
+}
+
+fn chk_abs(got: f64, want: f64, abstol: f64) -> i64 {
+    if absf(got - want) <= abstol {
+        return 1;
+    }
+    return 0;
+}
+
+fn is_nan(x: f64) -> i64 {
+    if x != x {
+        return 1;
+    }
+    return 0;
+}
+
+pub fn main() -> i64 {
+    let mut fails: i64 = 0;
+
+    // --- VALUE: European call/put, n=50, S=K=100 r=0.05 sigma=0.2 T=1 -----
+    fails = fails + (1 - chk_ulp(crr_price(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 50, 1, 0), 10.41069154073249, 4096.0));
+    fails = fails + (1 - chk_ulp(crr_price(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 50, 0, 0), 5.533633990803891, 4096.0));
+
+    // --- VALUE: European call, n=200 (closer to the closed form) ----------
+    fails = fails + (1 - chk_ulp(crr_price(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 200, 1, 0), 10.440591259859357, 8192.0));
+
+    // --- VALUE: American put, where early exercise genuinely binds --------
+    fails = fails + (1 - chk_ulp(crr_price(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 50, 0, 1), 6.073727985724954, 4096.0));
+    fails = fails + (1 - chk_ulp(crr_price(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 200, 0, 1), 6.0863827499162, 8192.0));
+
+    // --- VALUE: European ITM call, n=100 ----------------------------------
+    fails = fails + (1 - chk_ulp(crr_price(120.0, 100.0, 0.05, 0.0, 0.2, 1.0, 100, 1, 0), 26.17769158054901, 8192.0));
+
+    // --- STRUCTURAL: Merton 1973. An American call on a non-dividend stock
+    //     is NEVER exercised early, so it must equal the European price to the
+    //     LAST BIT.  Not a tolerance band — an exact equality.  If the max()
+    //     ever bound, this fails.  This is the sharpest single check here.
+    let ec: f64 = crr_price(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 50, 1, 0);
+    let ac: f64 = crr_price(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 50, 1, 1);
+    if ac == ec {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+    let ec2: f64 = crr_price(120.0, 100.0, 0.05, 0.0, 0.2, 1.0, 100, 1, 0);
+    let ac2: f64 = crr_price(120.0, 100.0, 0.05, 0.0, 0.2, 1.0, 100, 1, 1);
+    if ac2 == ec2 {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+
+    // --- STRUCTURAL: American put >= European put (early exercise is an
+    //     extra right, never a liability) -----------------------------------
+    let ep: f64 = crr_price(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 50, 0, 0);
+    let ap: f64 = crr_price(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 50, 0, 1);
+    if ap >= ep {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+    // ... and STRICTLY greater here, where exercise really does bind.  A
+    // greater-or-equal alone would pass if the American branch were dead code.
+    if ap > ep {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+
+    // --- STRUCTURAL: a deep ITM American put with negligible time value is
+    //     worth exactly its intrinsic value, K - S = 20 --------------------
+    fails = fails + (1 - chk_abs(crr_price(80.0, 100.0, 0.05, 0.0, 0.2, 1.0, 100, 0, 1), 20.0, 0.0000000001));
+
+    // --- STRUCTURAL: every option value is non-negative -------------------
+    if crr_price(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 64, 1, 0) >= 0.0 {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+
+    // --- STRUCTURAL: convergence toward Black-Scholes.  The n=200 European
+    //     call must be closer to the closed-form 10.450583572185568 than the
+    //     n=50 one.  This is a property of the METHOD, independent of both
+    //     oracles, and it fails if the lattice is systematically biased.
+    let bs_ref: f64 = 10.450583572185568;
+    let e50: f64 = crr_price(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 50, 1, 0);
+    let e200: f64 = crr_price(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 200, 1, 0);
+    if absf(e200 - bs_ref) < absf(e50 - bs_ref) {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+
+    // --- DETERMINISM: the same inputs twice must give the SAME BITS.  This
+    //     is a run-to-run check within one substrate; the cross-substrate half
+    //     is the CI fixture.  It would catch a lattice that depended on
+    //     uninitialised heap or on allocation address.
+    let r1: f64 = crr_price(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 77, 0, 1);
+    let r2: f64 = crr_price(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 77, 0, 1);
+    if __mind_f64_to_bits(r1) == __mind_f64_to_bits(r2) {
+        fails = fails + 0;
+    } else {
+        fails = fails + 1;
+    }
+
+    // --- DOMAIN: degenerate inputs return the canonical qNaN ---------------
+    fails = fails + (1 - is_nan(crr_price(100.0, 100.0, 0.05, 0.0, 0.0, 1.0, 50, 1, 0)));
+    fails = fails + (1 - is_nan(crr_price(100.0, 100.0, 0.05, 0.0, 0.2, 0.0, 50, 1, 0)));
+    fails = fails + (1 - is_nan(crr_price(0.0, 100.0, 0.05, 0.0, 0.2, 1.0, 50, 1, 0)));
+    fails = fails + (1 - is_nan(crr_price(100.0, 0.0, 0.05, 0.0, 0.2, 1.0, 50, 1, 0)));
+    fails = fails + (1 - is_nan(crr_price(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 0, 1, 0)));
+    fails = fails + (1 - is_nan(crr_price(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 2000, 1, 0)));
+    // A lattice too coarse for the volatility makes p fall outside [0,1];
+    // that must be refused, not priced.  Two probes deliberately:
+    //   * r=5.0 sigma=0.01 n=2 gives p ~ 791 — far outside, the easy case.
+    //   * r=0.15 sigma=0.1 n=2 gives p ~ 1.0326 — only just outside, which is
+    //     the case that actually exercises the bound.  A mutation loosening
+    //     the guard from `p > 1.0` to `p > 2.0` survives the first probe and
+    //     is caught only by this one.  (Measured: that exact mutation passed
+    //     a suite containing only the p~791 probe.)
+    fails = fails + (1 - is_nan(crr_price(100.0, 100.0, 5.0, 0.0, 0.01, 1.0, 2, 1, 0)));
+    fails = fails + (1 - is_nan(crr_price(100.0, 100.0, 0.15, 0.0, 0.1, 1.0, 2, 1, 0)));
+
+    // --- ADVERSARIAL: the bands MUST reject wrong values -------------------
+    fails = fails + chk_ulp(crr_price(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 50, 1, 0), 10.42069154073249, 4096.0);
+    fails = fails + chk_ulp(crr_price(100.0, 100.0, 0.05, 0.0, 0.2, 1.0, 50, 0, 1), 6.083727985724954, 4096.0);
+    fails = fails + chk_abs(crr_price(80.0, 100.0, 0.05, 0.0, 0.2, 1.0, 100, 0, 1), 20.5, 0.0000000001);
+
+    return fails;
+}

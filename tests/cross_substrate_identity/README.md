@@ -50,6 +50,16 @@ receipts define the complete inventory and supported/deferred coverage.
 | `struct-handle-roundtrip` | alloc/store/load round-trip | `struct_handle_roundtrip` | scalar i64 |
 | `collatz` | integer Collatz (3n+1) hash over [1, 1000] | `collatz_hash` (examples/collatz.mind) | scalar i64 |
 | `galperin-pi` | billiard-π collision count, n=5 → 31415 | `galperin_collisions` (examples/galperin_pi.mind) | scalar i64 |
+| `quant-black-scholes` | Black-Scholes-Merton call, 8-point grid | `bs_call` (examples/quant/black_scholes) | folded hash |
+| `quant-crr-binomial` | CRR lattice, Euro/American call/put, 8-point grid | `crr_price` (examples/quant/crr_binomial) | folded hash |
+| `quant-american-binomial` | American put via CRR lattice, 8-point grid | `bopm_american_put` (examples/quant/american_binomial) | folded hash |
+| `quant-barrier-analytic` | down-and-out call barrier, 8-point grid | `bar_doc` (examples/quant/barrier_analytic) | folded hash |
+| `quant-implied-vol` | fixed-iteration implied-vol solve, 8-point grid | `implied_vol_call` (examples/quant/implied_vol) | folded hash |
+| `quant-implied-vol-surface` | SVI total implied variance, 8-point grid | `svi_total_variance` (examples/quant/implied_vol_surface) | folded hash |
+| `quant-greeks-higher-order` | vanna, 8-point grid | `hog_vanna` (examples/quant/greeks_higher_order) | folded hash |
+| `quant-monte-carlo-gbm` | Monte Carlo GBM call, in-kernel LCG, 8-point grid | `mc_call` (examples/quant/monte_carlo_gbm) | folded hash |
+| `quant-bond-curve` | fixed-coupon bond price, 8-point grid | `bond_price` (examples/quant/bond_curve) | folded hash |
+| `quant-portfolio-risk` | two-asset portfolio volatility, 8-point grid | `two_asset_vol` (examples/quant/portfolio_risk) | folded hash |
 
 The GEMM is the first matmul-MATMUL workload; it composes the proven gemv
 intrinsic (`C[i,:] = gemv(Bᵀ, A[i,:])`), so its byte-identity is inherited from
