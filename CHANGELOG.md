@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — native f64 comparisons are IEEE-ordered for NaN
+- The pure-MIND native x86-64 backend now lowers `<`, `<=`, `>`, `>=`, `==` and `!=` on f64
+  to the IEEE predicates (all false on NaN except `!=`), matching the MLIR path. Proven
+  native == MLIR == an independent IEEE oracle over NaN, +-0.0 and +-inf rows.
+- The frozen native profile now admits comparisons in modules carrying float literals
+  (formerly `binop.compare_in_float_module`). Division, remainder and shifts stay refused.
+
 ### Changed — retire classical evidence signing
 - Ed25519 and the historical Ed25519 + ML-DSA-65 hybrid now refuse at the
   checked signing APIs and at trust verification. Historical artifacts remain

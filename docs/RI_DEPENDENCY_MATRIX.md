@@ -22,7 +22,7 @@ tracing + byte-diff + run-parity.
 | 7 | LINKER_DEPENDENCY | **PARTIAL** | default path (clang→ld) | native path emits static ELF directly | `file <native.bin>` → "statically linked, no ld in tree" | RI-D1 default flip |
 | 8 | RUST_DRIVER_DEPENDENCY | **NO** | `mindc` (Rust binary) orchestrates + spawns stage1.elf | pure-MIND CLI driver not the shipping entrypoint | `which mindc` is an ELF built by cargo | RI-G: pure-MIND `mindc` replaces Rust driver |
 | 9 | SCALAR_LANGUAGE_COVERAGE | **PASS** | native backend | — | int `7+35`→42, struct-return `3+4`→7 via `--backend=native` | done |
-| 10 | FLOAT_LANGUAGE_COVERAGE | **PARTIAL** | native backend | scalar f64 `+ − ×` only; float COMPARE is NaN-divergent vs MLIR (now out of profile); f32 / non-dyadic literal / mixed int-float / `%` / tensor-float all refused | `2.5+4.0 as i64`→6 native; NaN compare → `binop.compare_in_float_module` refusal (was: native 3 vs MLIR 0) | RI-E: native tensor float + a NaN-aware `nb_fp_setcc_opcode` |
+| 10 | FLOAT_LANGUAGE_COVERAGE | **PARTIAL** | native backend | scalar f64 `+ − ×` and f64 COMPARE (`< <= > >= == !=`, IEEE-ordered, native == MLIR incl. NaN / ±0.0 / ±inf); f32 / non-dyadic literal / mixed int-float / `/` / `%` / tensor-float all refused | `2.5+4.0 as i64`→6 native; NaN compare native 0 == MLIR 0 (was native 3); 14-pair f64 compare truth table native == MLIR == IEEE in `ri_d1_frozen_profile_gate.py` | RI-E: native tensor float + f32 compare proof + `(op, operand_type)` keying (#313) |
 | 11 | TENSOR_LANGUAGE_COVERAGE | **NO** | native backend | tensor lowering not in stage1.elf subset | tensor prog `--backend=native` → FAIL-CLOSED `error[backend-native]` | RI-E: native tensor lowering |
 | 12 | AGGREGATE_ENUM_COVERAGE | **PARTIAL** | native backend | aggregate ABI is intrinsic-call-shaped; array WRITE + enum values unported | fixed-array READ native OK; struct/enum → FAIL-CLOSED (see row-12 measured map) | RI-F: native trait/enum-payload dispatch |
 | 13 | REGALLOC | **PARTIAL** | native emitter | production-grade allocation | DTK (Deterministic Top-K) first slice landed (#254) | RI-C-REGALLOC: production allocator |
@@ -164,8 +164,8 @@ findings, and the same root shape: **admission keyed on the constructor rather t
 the construct denotes.** `BinOp::Lt` denotes `cmpi slt` on i64 and `ucomisd`+`setb` on f64;
 one is corpus-proven and one is not IEEE.
 
-**Closed by** `src/ir/frozen_profile.rs`: a module carrying any `Instr::ConstF64` now rejects
-every comparison as `binop.compare_in_float_module`. The taint is module-scoped and rejects
+**Closed first by** `src/ir/frozen_profile.rs` (now superseded — see below): a module
+carrying any `Instr::ConstF64` rejected every comparison as `binop.compare_in_float_module`. The taint was module-scoped and rejected
 integer comparisons too, because `Instr::Param { dst, name, index }` carries **no type** — a
 callee `fn lt(x:f64,y:f64)->i64{ if x<y {…} }` holds a float compare with no float literal in
 its own body. Over-rejection is the loud, recoverable direction. Regression pinned as
@@ -178,6 +178,17 @@ masking for `==`/`!=`, swapped-operand `seta`/`setae` for `<`/`<=`), the taint i
 real `(op, operand_type)` keying (task #313), and a NaN program moves to `IN_PROFILE` proving
 native == MLIR. **Row 10 stays PARTIAL** — this removed an unsound admission, it did not add
 coverage.
+
+**Native fix landed (supersedes the taint rejection):** `nb_fp_setcc_opcode` now emits the
+IEEE-ordered forms — `a < b` / `a <= b` as `ucomisd b,a` + `seta` / `setae` (operands
+swapped, false when unordered), `a == b` as `sete AND setnp`, `a != b` as `setne OR setp`.
+The float-compare taint is gone and comparisons are admitted in float modules;
+`float_nan_compare` moved to `IN_PROFILE` (expected exit 0) alongside a 14-pair f64
+truth-table corpus (NaN left / right / both, NaN vs ±inf, finite incl. two negatives,
+-0.0 vs +0.0 both ways, -inf vs +inf, inf vs inf, inf vs finite). Each builds through the
+frozen stage1.elf and must match both the MLIR backend and an independent IEEE-754 oracle.
+Still open: f32 compare (unproven; unreachable today because `__mind_conv_f32` is refused by
+`admit_call`) and the u64 ordered-compare gap, both behind `(op, operand_type)` keying (#313).
 
 **Residual, NOT closed (INFERRED from source, not proven).** The float-returning-`main`
 epilogue is a raw `cvttsd2si` (`nb_fp_trunc_rax_xmm0` = `F2 48 0F 2C C0`, no clamp), whereas

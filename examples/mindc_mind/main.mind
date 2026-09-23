@@ -34392,14 +34392,27 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
                 // compare of the raw IEEE-754 bits, which is INVERTED for two negatives (IEEE-754
                 // is sign-magnitude) and wrong for -0.0/+0.0 and NaN. Route it through ucomisd +
                 // an UNSIGNED setcc (comisd sets CF/ZF like an unsigned compare), materializing
-                // the same i64 0/1 boolean the rest of the pipeline consumes. Correct for all
-                // FINITE operands; deferred: NaN-ordering edge cases (see nb_fp_setcc_opcode).
+                // the same i64 0/1 boolean the rest of the pipeline consumes. IEEE-ordered for
+                // NaN (matches MLIR arith.cmpf olt/ole/ogt/oge/oeq/une): `<`/`<=` compare with
+                // SWAPPED operands under seta/setae (false when unordered), `==` masks sete
+                // with setnp and `!=` joins setne with setp (see nb_fp_setcc_opcode).
                 // main.mind is float-free, so this arm never fires during self-compile — the
                 // integer native-ELF emission stays byte-identical.
                 let fcc: i64 = nb_fp_setcc_opcode(op);
                 if fcc >= 0 {
-                    let g1: String = nb_fp_movsd_load_xmm0(s2.code, nb_slot_disp(lhs_id));
-                    let g2: String = nb_fp_cmp_xmm0_mem(g1, fcc, nb_slot_disp(rhs_id));
+                    let fswap: i64 = nb_fp_cmp_swaps(op);
+                    let xa_disp: i64 = if fswap == 1 {
+                        nb_slot_disp(rhs_id)
+                    } else {
+                        nb_slot_disp(lhs_id)
+                    };
+                    let mb_disp: i64 = if fswap == 1 {
+                        nb_slot_disp(lhs_id)
+                    } else {
+                        nb_slot_disp(rhs_id)
+                    };
+                    let g1: String = nb_fp_movsd_load_xmm0(s2.code, xa_disp);
+                    let g2: String = nb_fp_cmp_xmm0_mem(g1, fcc, mb_disp, nb_fp_parity_fix(op));
                     let g3: String = nb_store_rax(g2, nb_slot_disp(id));
                     return NbState { code: g3, next_id: id + 1, last_id: id, ncalls: s2.ncalls };
                 }
@@ -44250,12 +44263,14 @@ pub fn nb_fp_binop_xmm0_mem(code: String, op_sel: i64, disp: i64) -> String {
     nb_i32le_signed(c4, disp)
 }
 
-// FIX #168 encoder: `ucomisd xmm0, [rbp+disp32] ; set<cc> al ; movzx eax, al` — lhs
-// already in xmm0. Leaves the i64 0/1 boolean in rax (mirror of nb_cmp_rax_mem, but the
-// unordered-compare SSE form + an UNSIGNED setcc since comisd/ucomisd set CF/ZF like an
-// unsigned compare). Correct for all FINITE operands.
+// FIX #168 encoder: `ucomisd xmm0, [rbp+disp32] ; set<cc> al ; [parity fix] ;
+// movzx eax, al` — the first operand already in xmm0. Leaves the i64 0/1 boolean in rax
+// (mirror of nb_cmp_rax_mem, but the unordered-compare SSE form + an UNSIGNED setcc since
+// comisd/ucomisd set CF/ZF like an unsigned compare). `pfix` (nb_fp_parity_fix) folds the
+// unordered flag PF into the result so a NaN operand answers like MLIR's ordered/unordered
+// predicates: 1 = `==` (oeq): AND with setnp ; 2 = `!=` (une): OR with setp ; 0 = none.
 //   ucomisd = 66 0F 2E 85 <disp32> ; set<cc> al = 0F <setcc> C0 ; movzx eax,al = 0F B6 C0
-pub fn nb_fp_cmp_xmm0_mem(code: String, setcc: i64, rhs_disp: i64) -> String {
+pub fn nb_fp_cmp_xmm0_mem(code: String, setcc: i64, rhs_disp: i64, pfix: i64) -> String {
     let c1: String = nb_push(code, 102);
     let c2: String = nb_push(c1, 15);
     let c3: String = nb_push(c2, 46);
@@ -44263,10 +44278,35 @@ pub fn nb_fp_cmp_xmm0_mem(code: String, setcc: i64, rhs_disp: i64) -> String {
     let c5: String = nb_i32le_signed(c4, rhs_disp);
     let c6: String = nb_push(c5, 15);
     let c7: String = nb_push(c6, setcc);
-    let c8: String = nb_push(c7, 192);
+    let c8a: String = nb_push(c7, 192);
+    let c8: String = nb_fp_parity_mask_al(c8a, pfix);
     let c9: String = nb_push(c8, 15);
     let c10: String = nb_push(c9, 182);
     nb_push(c10, 192)
+}
+
+// Fold ucomisd's unordered flag (PF=1 iff an operand is NaN) into the setcc byte in al,
+// using ah as the scratch byte (rax is overwritten by the result anyway, so no live
+// register is clobbered):
+//   pfix 1 (`==`, oeq): setnp ah = 0F 9B C4 ; and al,ah = 20 E0  -> ZF=1 AND ordered
+//   pfix 2 (`!=`, une): setp  ah = 0F 9A C4 ; or  al,ah = 08 E0  -> ZF=0 OR unordered
+//   pfix 0: no bytes (the seta/setae forms are already false when unordered).
+pub fn nb_fp_parity_mask_al(code: String, pfix: i64) -> String {
+    if pfix == 1 {
+        let a1: String = nb_push(code, 15);
+        let a2: String = nb_push(a1, 155);
+        let a3: String = nb_push(a2, 196);
+        let a4: String = nb_push(a3, 32);
+        return nb_push(a4, 224);
+    }
+    if pfix == 2 {
+        let o1: String = nb_push(code, 15);
+        let o2: String = nb_push(o1, 154);
+        let o3: String = nb_push(o2, 196);
+        let o4: String = nb_push(o3, 8);
+        return nb_push(o4, 224);
+    }
+    code
 }
 
 // push rbp ; mov rbp,rsp ; sub rsp,frame(imm32)  =  55 48 89 E5 48 81 EC <imm32>
@@ -44586,16 +44626,19 @@ pub fn nb_fp_opsel(op: i64) -> i64 {
     0 - 1
 }
 
-// FIX #168: map a FLOAT-operand relational/equality operator to the UNSIGNED set<cc>
-// opcode byte used after ucomisd (comisd/ucomisd set CF/ZF like an unsigned compare, so
-// the GP SIGNED setcc of nb_setcc_opcode would be wrong). For xmm0 <op> mem:
-//   >  -> seta  (0x97 = 151, CF=0 & ZF=0)   >= -> setae (0x93 = 147, CF=0)
-//   <  -> setb  (0x92 = 146, CF=1)          <= -> setbe (0x96 = 150, CF=1 | ZF=1)
-//   == -> sete  (0x94 = 148, ZF=1)          != -> setne (0x95 = 149, ZF=0)
-// These are exact for FINITE operands. deferred: NaN edge cases — an unordered ucomisd
-// sets CF=ZF=PF=1, so setb/setbe/sete read TRUE for a NaN operand; a fully NaN-aware
-// predicate (parity-flag masking for ==/!=, swapped-operand seta/setae for </<=) is the
-// upgrade path. main.mind is float-free so this arm never fires during self-compile.
+// FIX #168 + NaN: map a FLOAT-operand relational/equality operator to the UNSIGNED
+// set<cc> opcode byte used after ucomisd (comisd/ucomisd set CF/ZF like an unsigned
+// compare, so the GP SIGNED setcc of nb_setcc_opcode would be wrong). An UNORDERED
+// ucomisd (either operand NaN) sets CF=ZF=PF=1, so only seta/setae read FALSE on it
+// unaided. IEEE-ordered lowering, matching MLIR's arith.cmpf predicates:
+//   a >  b -> ucomisd a,b ; seta  (0x97 = 151)            ogt
+//   a >= b -> ucomisd a,b ; setae (0x93 = 147)            oge
+//   a <  b -> ucomisd b,a ; seta  (0x97 = 151, SWAPPED)   olt (nb_fp_cmp_swaps)
+//   a <= b -> ucomisd b,a ; setae (0x93 = 147, SWAPPED)   ole (nb_fp_cmp_swaps)
+//   a == b -> ucomisd a,b ; sete  (0x94 = 148) AND setnp  oeq (nb_fp_parity_fix 1)
+//   a != b -> ucomisd a,b ; setne (0x95 = 149) OR  setp   une (nb_fp_parity_fix 2)
+// ucomisd treats -0.0 == +0.0 (ZF=1), matching IEEE. main.mind is float-free so this arm
+// never fires during self-compile.
 pub fn nb_fp_setcc_opcode(op: i64) -> i64 {
     if op == op_gt() {
         return 151;
@@ -44604,10 +44647,10 @@ pub fn nb_fp_setcc_opcode(op: i64) -> i64 {
         return 147;
     }
     if op == op_lt() {
-        return 146;
+        return 151;
     }
     if op == op_le() {
-        return 150;
+        return 147;
     }
     if op == op_eq() {
         return 148;
@@ -44616,6 +44659,30 @@ pub fn nb_fp_setcc_opcode(op: i64) -> i64 {
         return 149;
     }
     0 - 1
+}
+
+// `<` / `<=` are emitted as the mirrored `>` / `>=` with the operands SWAPPED (1), so the
+// NaN-false seta/setae forms serve them; every other operator keeps lhs in xmm0 (0).
+pub fn nb_fp_cmp_swaps(op: i64) -> i64 {
+    if op == op_lt() {
+        return 1;
+    }
+    if op == op_le() {
+        return 1;
+    }
+    0
+}
+
+// Parity fix-up selector for nb_fp_parity_mask_al: 1 = `==` (AND setnp), 2 = `!=`
+// (OR setp), 0 = none (seta/setae are already false when unordered).
+pub fn nb_fp_parity_fix(op: i64) -> i64 {
+    if op == op_eq() {
+        return 1;
+    }
+    if op == op_ne() {
+        return 2;
+    }
+    0
 }
 
 // A per-SSA dtype table: `n` i64 slots indexed by SSA id, all initialised to INT

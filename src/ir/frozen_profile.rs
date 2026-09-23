@@ -44,11 +44,7 @@ pub fn profile_frozen_admits(module: &IRModule) -> Result<(), FrozenProfileRejec
     // not, and cannot be assumed proven. See `admit_call`.
     let mut defined = std::collections::BTreeSet::new();
     collect_fn_names(&module.instrs, &mut defined);
-    // Float taint is computed over the WHOLE module before the walk, for the same
-    // order-independence reason `fp_mode::collect_extern_float_rets` is a pre-pass: a
-    // comparison can appear textually before the float literal that types its operands.
-    let float_taint = module_has_float_literal(&module.instrs);
-    admit_instrs_in(&module.instrs, &defined, float_taint)
+    admit_instrs_in(&module.instrs, &defined)
 }
 
 fn collect_fn_names(instrs: &[Instr], out: &mut std::collections::BTreeSet<String>) {
@@ -89,61 +85,6 @@ fn admit_call(
     }
 }
 
-/// Does this module contain a float literal anywhere?
-///
-/// This is the float-COMPARE taint seed (see [`admit_binop`]). It is deliberately
-/// MODULE-scoped rather than per-`FnDef`: `Instr::Param` carries `{dst, name, index}` and
-/// NO type, so a callee like `fn lt(x: f64, y: f64) -> i64 { if x < y {…} }` holds a float
-/// comparison with no float literal in its own body — the float literal sits in the
-/// CALLER. A per-body scan would admit exactly that function. Module scope is the
-/// fail-CLOSED reading of the same fact.
-///
-/// Complete because the profile admits no other float producer: the tensor / SIMD arms
-/// reject every vector and tensor float, `binop.div` is rejected, and `admit_call` admits
-/// only module-DEFINED callees — so the conv-to-float intrinsics `__mind_conv_f32` /
-/// `__mind_conv_f64` (the `as f32` / `as f64` lowering, `src/eval/lower.rs`) are refused
-/// and `Instr::ConstF64` is the only door a float can come through.
-///
-/// LOAD-BEARING for whoever relaxes `admit_call`: the moment a compiler-synthesised
-/// callee allowlist is introduced there (the deferred bijection fix noted in
-/// `admit_instrs_in`), `__mind_conv_f32` / `__mind_conv_f64` MUST stay off it, or this
-/// seed must additionally taint from their `dst` — otherwise `let f: f64 = x as f64;`
-/// re-opens the float-compare hole with no `ConstF64` anywhere in the module.
-fn module_has_float_literal(instrs: &[Instr]) -> bool {
-    instrs.iter().any(|instr| match instr {
-        Instr::ConstF64(..) => true,
-        // The body-carrying admitted variants: a float literal must not hide in a nest.
-        Instr::FnDef { body, .. } => module_has_float_literal(body),
-        #[cfg(feature = "std-surface")]
-        Instr::While {
-            cond_instrs, body, ..
-        } => module_has_float_literal(cond_instrs) || module_has_float_literal(body),
-        #[cfg(feature = "std-surface")]
-        Instr::If {
-            cond_instrs,
-            then_instrs,
-            else_instrs,
-            ..
-        } => {
-            module_has_float_literal(cond_instrs)
-                || module_has_float_literal(then_instrs)
-                || module_has_float_literal(else_instrs)
-        }
-        // Everything else. This blanket arm is the one place in this file that is NOT an
-        // exhaustive match, so it owes an argument: a variant reached here is either
-        //   (a) one of the remaining IN-profile arms of `admit_instrs_in` — `Call`,
-        //       `ConstI64`, `Return`, `Param`, `Output`, `BinOp`, `ConstArray`,
-        //       `ArrayLoad`, `Break`, `Continue`, `ExternFnDecl` — none of which carries
-        //       an f64 payload or a nested body; or
-        //   (b) OUT of profile, in which case `admit_instrs_in` rejects the module before
-        //       any comparison verdict is reachable, so a missed seed cannot matter.
-        // A future variant is therefore forced through the exhaustive match in
-        // `admit_instrs_in` first: admitting it is the deliberate decision point, and
-        // whoever makes it must ask here whether it can carry or produce a float.
-        _ => false,
-    })
-}
-
 fn reject(construct: &'static str) -> Result<(), FrozenProfileRejection> {
     Err(FrozenProfileRejection { construct })
 }
@@ -172,50 +113,53 @@ fn reject(construct: &'static str) -> Result<(), FrozenProfileRejection> {
 /// AND operand-type-keyed. Tensor/GPU consumers (mind-runtime kernels, mind-inference)
 /// are already excluded via the tensor rejections above.
 ///
-/// FLOAT COMPARISON — WEDGE-BREAKING, rejected (row 10 FLOAT_LANGUAGE_COVERAGE).
-/// `float_taint` is true when the module contains a float literal
-/// ([`module_has_float_literal`]); every ordered/equality comparison in such a module is
-/// refused, because the native path's float compare is NOT IEEE and DISAGREES WITH THE
-/// MLIR PATH on the same source:
+/// FLOAT COMPARISON — admitted, native == MLIR proven for IEEE NaN / +-0.0 / +-inf
+/// (row 10 FLOAT_LANGUAGE_COVERAGE). This arm used to refuse every comparison in a module
+/// carrying a float literal, because the native lowering was NOT IEEE and DISAGREED WITH
+/// THE MLIR PATH on the same source:
 ///
-///   native (`examples/mindc_mind/main.mind::nb_fp_setcc_opcode`): `ucomisd` + an UNSIGNED
-///     `setcc`. An unordered compare sets CF=ZF=PF=1, so `setb`(Lt) / `setbe`(Le) /
-///     `sete`(Eq) read TRUE for a NaN operand and `setne`(Ne) reads FALSE.
-///   MLIR (`src/mlir/lowering.rs`): `arith.cmpf "olt"/"ole"/"oeq"` and `"une"` — the
-///     ORDERED/IEEE predicates, all false for NaN (Ne true).
+///   old native (`examples/mindc_mind/main.mind::nb_fp_setcc_opcode`): `ucomisd` + a bare
+///     UNSIGNED `setcc`. An unordered compare sets CF=ZF=PF=1, so `setb`(Lt) / `setbe`(Le)
+///     / `sete`(Eq) read TRUE for a NaN operand and `setne`(Ne) read FALSE.
+///   MLIR (`src/mlir/lowering.rs`): `arith.cmpf "olt"/"ole"/"ogt"/"oge"/"oeq"` and `"une"`
+///     — the IEEE predicates, all false for NaN except `!=`.
 ///
-/// MEASURED, both backends built from this tree, one source file:
-///   `let a: f64 = 65536.0; …6 squarings→ +inf; let n = h - h;  // NaN`
-///   `if n == 0.0 { if n < 0.0 { return 3; } return 1; } if n < 0.0 { return 2; } return 0;`
-///   native exit 3 (`n == 0.0` AND `n < 0.0` BOTH true — impossible for any real number,
-///   the ucomisd-unordered signature) vs MLIR exit 0. Per-operator: Lt/Le/Eq/Ne diverge,
-///   Gt/Ge agree. Every construct in that program (`ConstF64`, `Mul`, `Sub`, `Lt`, `Eq`)
-///   was ADMITTED by this predicate and the frozen stage1.elf compiled it, so BOTH fences
-///   passed and the native artifact carried a silently wrong value — precisely the failure
-///   mode the allowlist exists to prevent.
+/// MEASURED on `let n = h - h; /* NaN */ if n == 0.0 { if n < 0.0 { return 3; } return 1; }
+/// if n < 0.0 { return 2; } return 0;` — old native exit 3 (`n == 0.0` AND `n < 0.0` both
+/// true, the ucomisd-unordered signature) vs MLIR exit 0.
 ///
-/// The rejection is module-wide (integer comparisons included) rather than float-only
-/// because `Instr::Param` carries no type — see [`module_has_float_literal`]. That is
-/// over-rejection: loud and recoverable, the safe direction.
+/// The native lowering now emits the IEEE-ordered forms: `a < b` / `a <= b` as
+/// `ucomisd b, a` + `seta` / `setae` (operands SWAPPED; both false when unordered),
+/// `a == b` as `sete AND setnp`, `a != b` as `setne OR setp`; `>` / `>=` were already
+/// `seta` / `setae`. PROVEN by `ri_d1_frozen_profile_gate.py::IN_PROFILE`: the historical
+/// program above plus a truth-table corpus (all six predicates over a NaN on the left, on
+/// the right, on both sides, NaN vs +-inf, ordinary finite pairs including two negatives,
+/// -0.0 vs +0.0 both ways, -inf vs +inf, inf vs inf, inf vs finite) builds through the
+/// frozen stage1.elf and returns the SAME exit as the MLIR backend AND as an IEEE-754
+/// oracle computed independently of both backends. The proof covers f64 only: the profile
+/// admits no other float type (`Instr::ConstF64` is the only float producer — the
+/// `as f32` / `as f64` conversion intrinsics are refused by `admit_call`). LOAD-BEARING
+/// for whoever relaxes `admit_call`: admitting `__mind_conv_f32` would let an f32 operand
+/// reach this arm, and the f32 compare lowering has NO native == MLIR proof — add f32 rows
+/// to the gate corpus first.
 ///
-/// deferred: the SOUND fix is (op, operand_type) keying against a corpus-DERIVED pair
-/// set — the type axis (i64 Lt proven vs u64 Lt = #99, f64 Lt = the NaN divergence above)
-/// cannot be decided on `op` alone. Thread `FnDef.value_types` into this predicate;
-/// upgrade path tracked in task #313 / the RI-D1 bijection gate. The float half of it
-/// additionally needs a NaN-aware native predicate (parity-flag masking for `==`/`!=`,
-/// swapped-operand `seta`/`setae` for `<`/`<=`) landed in `nb_fp_setcc_opcode` FIRST —
-/// only then may this arm relax, and only with a NaN program added to
-/// `ri_d1_frozen_profile_gate.py::IN_PROFILE` proving native == MLIR.
-fn admit_binop(op: &BinOp, float_taint: bool) -> Result<(), FrozenProfileRejection> {
+/// FENCE OWNERSHIP: with the module-scoped taint gone, this profile no longer backstops the
+/// operand type of a comparison. Keeping a float compare on the f64 path is now owned
+/// entirely by the native side: the per-slot float classifier in `main.mind` (params from
+/// the signature, calls from the return registry, lets, fields, index, cast, neg, if),
+/// its mixed-dtype poison, and type-checker E2013. Whoever edits that classifier edits the
+/// fence. Encoding hazard in the same lowering: the parity fix-up (`setnp ah` / `setp ah`,
+/// then `and`/`or al, ah`) relies on NO REX prefix on those bytes; a REX byte would turn
+/// `ah` into `spl` and silently drop the NaN mask.
+///
+/// deferred: the SOUND fix for the residual u64-comparison gap noted above is
+/// (op, operand_type) keying against a corpus-DERIVED pair set — the type axis (i64 Lt
+/// proven vs u64 Lt = #99) cannot be decided on `op` alone. Thread `FnDef.value_types`
+/// into this predicate; upgrade path tracked in task #313 / the RI-D1 bijection gate.
+fn admit_binop(op: &BinOp) -> Result<(), FrozenProfileRejection> {
     match op {
         BinOp::Add | BinOp::Sub | BinOp::Mul => Ok(()),
-        BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne => {
-            if float_taint {
-                reject("binop.compare_in_float_module")
-            } else {
-                Ok(())
-            }
-        }
+        BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne => Ok(()),
         BinOp::Div => reject("binop.div"),
         BinOp::Mod => reject("binop.mod"),
         #[cfg(feature = "std-surface")]
@@ -230,7 +174,6 @@ fn admit_binop(op: &BinOp, float_taint: bool) -> Result<(), FrozenProfileRejecti
 fn admit_instrs_in(
     instrs: &[Instr],
     defined: &std::collections::BTreeSet<String>,
-    float_taint: bool,
 ) -> Result<(), FrozenProfileRejection> {
     for instr in instrs {
         match instr {
@@ -270,14 +213,14 @@ fn admit_instrs_in(
             // + corpus audit 2026-08-21). A type-blind `BinOp {..} => {}` admitted the
             // substrate-/signedness-divergent ops (Div/Mod/Shl/Shr) that the byte-identity
             // corpus never proves — see admit_binop for the rejection set + fitment note.
-            Instr::BinOp { op, .. } => admit_binop(op, float_taint)?,
-            Instr::FnDef { body, .. } => admit_instrs_in(body, defined, float_taint)?,
+            Instr::BinOp { op, .. } => admit_binop(op)?,
+            Instr::FnDef { body, .. } => admit_instrs_in(body, defined)?,
             #[cfg(feature = "std-surface")]
             Instr::While {
                 cond_instrs, body, ..
             } => {
-                admit_instrs_in(cond_instrs, defined, float_taint)?;
-                admit_instrs_in(body, defined, float_taint)?;
+                admit_instrs_in(cond_instrs, defined)?;
+                admit_instrs_in(body, defined)?;
             }
             #[cfg(feature = "std-surface")]
             Instr::If {
@@ -286,9 +229,9 @@ fn admit_instrs_in(
                 else_instrs,
                 ..
             } => {
-                admit_instrs_in(cond_instrs, defined, float_taint)?;
-                admit_instrs_in(then_instrs, defined, float_taint)?;
-                admit_instrs_in(else_instrs, defined, float_taint)?;
+                admit_instrs_in(cond_instrs, defined)?;
+                admit_instrs_in(then_instrs, defined)?;
+                admit_instrs_in(else_instrs, defined)?;
             }
             #[cfg(feature = "std-surface")]
             Instr::ConstArray { .. }
@@ -383,8 +326,7 @@ mod tests {
     fn admits(instrs: &[Instr]) -> Result<(), FrozenProfileRejection> {
         let mut defined = std::collections::BTreeSet::new();
         collect_fn_names(instrs, &mut defined);
-        let float_taint = module_has_float_literal(instrs);
-        admit_instrs_in(instrs, &defined, float_taint)
+        admit_instrs_in(instrs, &defined)
     }
 
     fn fndef(body: Vec<Instr>) -> Instr {
@@ -567,12 +509,13 @@ mod tests {
         assert_eq!(admits(&instrs), Ok(()));
     }
 
-    /// The wedge-breaking admission. Native lowers a float compare to `ucomisd` + an
-    /// UNSIGNED `setcc`, which reads TRUE for a NaN operand on `<`/`<=`/`==`; MLIR lowers
-    /// it to `arith.cmpf "olt"/"ole"/"oeq"`, all FALSE for NaN. Measured native exit 3 vs
-    /// MLIR exit 0 on one source file. Both fences passed it before this rejection.
+    /// A float comparison is now IN profile: the native lowering is IEEE-ordered
+    /// (swapped-operand `seta`/`setae` for `<`/`<=`, `sete AND setnp` for `==`,
+    /// `setne OR setp` for `!=`) and `ri_d1_frozen_profile_gate.py` proves native == MLIR
+    /// == an IEEE oracle over NaN / +-0.0 / +-inf. Before that proof this exact shape was
+    /// refused as `binop.compare_in_float_module` (old native exit 3 vs MLIR exit 0).
     #[test]
-    fn comparison_in_a_float_module_is_rejected() {
+    fn comparison_in_a_float_module_is_admitted() {
         for op in [
             BinOp::Lt,
             BinOp::Le,
@@ -583,29 +526,44 @@ mod tests {
         ] {
             let instrs = vec![fndef(vec![
                 Instr::ConstF64(ValueId(0), 0.0),
-                Instr::ConstF64(ValueId(1), 1.0),
+                Instr::ConstF64(ValueId(1), f64::NAN),
                 binop(op),
             ])];
             assert_eq!(
-                admits(&instrs).unwrap_err().construct,
-                "binop.compare_in_float_module",
-                "{op:?} must not be admitted while the module carries a float"
+                admits(&instrs),
+                Ok(()),
+                "{op:?} over f64 operands is native == MLIR proven and must be admitted"
             );
         }
     }
 
-    /// Integer comparisons keep the profile's proven for-loop (`array_idx_loop`) — the
-    /// rejection must be conditional on the float, never unconditional.
+    /// Relaxing the float-COMPARE arm must not relax the operators it never proved:
+    /// `Div` (and `Mod`) in a float module stay refused by name, exactly as in an
+    /// integer module.
+    #[test]
+    fn div_in_a_float_module_is_still_rejected() {
+        for (op, label) in [(BinOp::Div, "binop.div"), (BinOp::Mod, "binop.mod")] {
+            let instrs = vec![fndef(vec![
+                Instr::ConstF64(ValueId(0), 1.0),
+                Instr::ConstF64(ValueId(1), 3.0),
+                binop(BinOp::Lt),
+                binop(op),
+            ])];
+            assert_eq!(admits(&instrs).unwrap_err().construct, label);
+        }
+    }
+
+    /// Integer comparisons keep the profile's proven for-loop (`array_idx_loop`).
     #[test]
     fn integer_comparison_without_float_is_still_admitted() {
         assert_eq!(admits(&[binop(BinOp::Lt)]), Ok(()));
     }
 
-    /// The taint is MODULE-scoped on purpose: `Instr::Param` carries no type, so a callee
-    /// holding `x < y` over float params has no float literal in its OWN body — the
-    /// literal is in the caller. A per-body scan would admit exactly that function.
+    /// A comparison over float params whose literal sits in ANOTHER fn (the shape the old
+    /// module-scoped taint existed for) is admitted too — the admission no longer depends
+    /// on where a float literal appears.
     #[test]
-    fn float_in_caller_taints_a_comparison_in_another_fn() {
+    fn float_in_caller_with_comparison_in_another_fn_is_admitted() {
         let caller = Instr::FnDef {
             name: "main".into(),
             params: vec![],
@@ -616,24 +574,7 @@ mod tests {
             #[cfg(feature = "std-surface")]
             value_types: Default::default(),
         };
-        // `f`'s body is float-literal-free; only the caller names a float.
         let callee = fndef(vec![binop(BinOp::Lt)]);
-        assert_eq!(
-            admits(&[caller, callee]).unwrap_err().construct,
-            "binop.compare_in_float_module"
-        );
-    }
-
-    /// The float seed must not hide inside a nested body.
-    #[test]
-    fn float_nested_in_a_fn_body_still_taints() {
-        let instrs = vec![
-            fndef(vec![Instr::ConstF64(ValueId(0), 1.5)]),
-            binop(BinOp::Eq),
-        ];
-        assert_eq!(
-            admits(&instrs).unwrap_err().construct,
-            "binop.compare_in_float_module"
-        );
+        assert_eq!(admits(&[caller, callee]), Ok(()));
     }
 }

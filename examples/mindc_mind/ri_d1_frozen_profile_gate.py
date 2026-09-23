@@ -53,7 +53,77 @@ IN_PROFILE = [
     ("narrow_u8_wrap", "fn main()->i64{let x:u8=200; let y:u8=100; return (x+y) as i64;}", 44),
     ("array_idx_loop",
      "fn main()->i64{let a=[1,2,3,4]; let mut s:i64=0; for i in 0..4 {s=s+a[i];} return s;}", 10),
+    # Row 10 FLOAT_LANGUAGE_COVERAGE — the float COMPARISON, formerly OUT_PROFILE. Native
+    # used to lower it to `ucomisd` + a bare UNSIGNED setcc; an unordered compare sets
+    # CF=ZF=PF=1, so `<`/`<=`/`==` read TRUE for a NaN and `!=` FALSE (measured: native
+    # exit 3 vs MLIR exit 0 on this exact source). main.mind::nb_fp_setcc_opcode now
+    # emits the IEEE-ordered forms (swapped-operand seta/setae for `<`/`<=`, sete AND
+    # setnp for `==`, setne OR setp for `!=`). NaN comes from profile-only constructs:
+    # six squarings of 65536.0 overflow to +inf and `+inf - +inf` is NaN.
+    ("float_nan_compare",
+     "fn main()->i64{let a:f64=65536.0; let b:f64=a*a; let c:f64=b*b; let d:f64=c*c; "
+     "let e:f64=d*d; let g:f64=e*e; let h:f64=g*g; let n:f64=h-h; "
+     "if n == 0.0 { if n < 0.0 { return 3; } return 1; } if n < 0.0 { return 2; } return 0;}",
+     0),
 ]
+
+# Float-comparison truth-table corpus. Each program asks ALL SIX predicates of one
+# operand pair and returns them as a bitmask (the exit code):
+#   lt=1  le=2  gt=4  ge=8  eq=16  ne=32
+# The expected mask is computed from PYTHON's float comparisons (IEEE-754 binary64,
+# NaN-ordered exactly like MLIR's arith.cmpf olt/ole/ogt/oge/oeq/une) — an oracle
+# derived independently of both compiler backends. Each program is additionally built
+# with the MLIR backend and must return the SAME exit (see `mlir_exit`): native == IEEE
+# == MLIR, three ways. Special values come from profile-only constructs: `h` = +inf
+# (six squarings of 65536.0), `n` = NaN (`h - h`), `ni` = -inf, `nz` = -0.0.
+_FCMP_VALUES = {
+    "n": float("nan"), "h": float("inf"), "ni": float("-inf"), "nz": -0.0,
+    "1.0": 1.0, "1.5": 1.5, "3.0": 3.0, "0.0": 0.0,
+    "m1": -1.0, "m2": -2.0, "m3": -3.0,
+}
+_FCMP_PRELUDE = (
+    "let a:f64=65536.0; let b:f64=a*a; let c:f64=b*b; let d:f64=c*c; let e:f64=d*d; "
+    "let g:f64=e*e; let h:f64=g*g; let n:f64=h-h; let ni:f64=0.0-h; "
+    "let m1:f64=0.0-1.0; let m2:f64=0.0-2.0; let m3:f64=0.0-3.0; let nz:f64=0.0*m1; "
+)
+_FCMP_FN = (
+    "fn k(x:f64, y:f64)->i64{let mut r:i64=0; if x<y {r=r+1;} if x<=y {r=r+2;} "
+    "if x>y {r=r+4;} if x>=y {r=r+8;} if x==y {r=r+16;} if x!=y {r=r+32;} return r;} "
+)
+# (fixture name, lhs, rhs): NaN on each side and both, NaN vs inf, ordinary finite
+# (incl. two negatives — the #168 sign-magnitude case), +/-0.0, and +/-inf.
+_FCMP_PAIRS = [
+    ("fcmp_nan_lhs", "n", "1.0"),
+    ("fcmp_nan_rhs", "1.0", "n"),
+    ("fcmp_nan_both", "n", "n"),
+    ("fcmp_nan_vs_inf", "n", "h"),
+    ("fcmp_inf_vs_nan", "ni", "n"),
+    ("fcmp_finite_lt", "1.0", "1.5"),
+    ("fcmp_finite_gt", "3.0", "m3"),
+    ("fcmp_finite_eq", "1.5", "1.5"),
+    ("fcmp_two_negs", "m2", "m1"),
+    ("fcmp_signed_zero", "nz", "0.0"),
+    ("fcmp_zero_signed", "0.0", "nz"),
+    ("fcmp_ninf_pinf", "ni", "h"),
+    ("fcmp_inf_eq", "h", "h"),
+    ("fcmp_inf_vs_fin", "h", "3.0"),
+]
+
+
+def _fcmp_mask(x: float, y: float) -> int:
+    return ((x < y) * 1 + (x <= y) * 2 + (x > y) * 4 + (x >= y) * 8
+            + (x == y) * 16 + (x != y) * 32)
+
+
+FCMP_PROGRAMS = [
+    (name, _FCMP_FN + "fn main()->i64{" + _FCMP_PRELUDE + f"return k({lhs}, {rhs});}}",
+     _fcmp_mask(_FCMP_VALUES[lhs], _FCMP_VALUES[rhs]))
+    for name, lhs, rhs in _FCMP_PAIRS
+]
+IN_PROFILE += FCMP_PROGRAMS
+# Every float-comparison program (the truth table + the historical NaN program) must
+# ALSO agree with the MLIR backend — this is the cross-backend half of the claim.
+MLIR_CROSSCHECK = {name for name, _s, _e in FCMP_PROGRAMS} | {"float_nan_compare"}
 
 # Out-of-profile: matrix-declared NOT in the native subset (row 11 tensor = NO / RI-E,
 # row 12 trait dispatch = PARTIAL / RI-F). Must fail-closed with zero toolchain spawn.
@@ -75,29 +145,6 @@ OUT_PROFILE = [
     ("trait",
      "trait T{fn f(self)->i64;} struct S{} impl T for S{fn f(self)->i64{return 1;}} "
      "fn main()->i64{let s=S{}; return s.f();}"),
-    # Row 10 FLOAT_LANGUAGE_COVERAGE — the float COMPARISON, which the two backends
-    # answer DIFFERENTLY. Native lowers it to `ucomisd` + an UNSIGNED setcc
-    # (main.mind::nb_fp_setcc_opcode), and an unordered compare sets CF=ZF=PF=1, so
-    # `<` / `<=` / `==` read TRUE for a NaN operand and `!=` reads FALSE. MLIR lowers
-    # it to `arith.cmpf "olt"/"ole"/"oeq"` + `"une"` — the ORDERED IEEE predicates,
-    # which are false for NaN (true for `!=`).
-    #
-    # This source reaches NaN using ONLY profile constructs (f64 literal, `*`, `-`):
-    # six squarings of 65536.0 overflow to +inf, and `+inf - +inf` is NaN. It then asks
-    # two questions no real number can both answer yes: `n == 0.0` AND `n < 0.0`.
-    # Measured before the rejection landed: native exit 3 (BOTH true — the
-    # ucomisd-unordered signature), MLIR exit 0. Both fences admitted it, so the native
-    # artifact carried a silently wrong value. Per-operator: Lt/Le/Eq/Ne diverge,
-    # Gt/Ge agree.
-    #
-    # Gate meaning: this MUST stay fail-closed until `nb_fp_setcc_opcode` grows a
-    # NaN-aware predicate (parity masking for ==/!=, swapped-operand seta/setae for
-    # </<=). Only then may it move to IN_PROFILE, with an expected exit of 0 matching
-    # the MLIR path.
-    ("float_nan_compare",
-     "fn main()->i64{let a:f64=65536.0; let b:f64=a*a; let c:f64=b*b; let d:f64=c*c; "
-     "let e:f64=d*d; let g:f64=e*e; let h:f64=g*g; let n:f64=h-h; "
-     "if n == 0.0 { if n < 0.0 { return 3; } return 1; } if n < 0.0 { return 2; } return 0;}"),
 ]
 
 EXECVE_PATH = re.compile(r'execve\("([^"]+)"')
@@ -125,6 +172,25 @@ def strace_native_build(name, src, td):
     return r.returncode, artifact, strace_txt, execs
 
 
+def mlir_exit(name, src, td):
+    """Build `src` with the DEFAULT (MLIR) backend and run it; return (exit, error).
+    The oracle half of the float-comparison claim: the native artifact must answer
+    exactly what `arith.cmpf` answers. A failed MLIR build is reported, never skipped —
+    a cross-check that did not run is not a cross-check that passed."""
+    srcf = td / f"{name}_mlir.mind"
+    outf = td / f"{name}_mlir.elf"
+    srcf.write_text(src)
+    env = dict(os.environ, MINDC_STD_DIR=str(REPO / "std"))
+    env.pop("MINDC_NATIVE_ELF", None)
+    r = subprocess.run([str(MINDC), "build", str(srcf), "--out", str(outf)],
+                       env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if r.returncode != 0 or not outf.exists():
+        tail = r.stderr.decode(errors="replace").strip().splitlines()[-1:]
+        return None, f"MLIR build rc={r.returncode} {tail}"
+    outf.chmod(0o755)
+    return subprocess.run([str(outf)]).returncode, None
+
+
 def toolchain_hits(execs):
     return [b for b in execs if any(t in b for t in TOOLCHAIN_BINS)]
 
@@ -145,7 +211,7 @@ def main() -> int:
     # Positive-count floor (anti-false-green): a job that builds NOTHING also shows zero
     # toolchain execve. Pin the corpus size so a silently-deleted fixture is a FAILURE,
     # not a vacuous pass. Bump deliberately when the allowlist+corpus grow together.
-    PINNED_IN_PROFILE = 5
+    PINNED_IN_PROFILE = 20
     PINNED_OUT_PROFILE = 3
     if len(IN_PROFILE) < PINNED_IN_PROFILE or len(OUT_PROFILE) < PINNED_OUT_PROFILE:
         print(
@@ -177,8 +243,19 @@ def main() -> int:
             got = subprocess.run([str(runf)]).returncode
             if got != expect_exit:
                 fails.append(f"in/{name}: emitted ELF exit={got} expected {expect_exit}")
-            else:
-                print(f"  ok   in-profile  {name:16} rc=0 exit={got} execve={execs} 0-toolchain")
+                continue
+            if name in MLIR_CROSSCHECK:
+                mgot, merr = mlir_exit(name, src, td)
+                if merr is not None:
+                    fails.append(f"in/{name}: MLIR cross-check did not run: {merr}")
+                    continue
+                if mgot != got:
+                    fails.append(f"in/{name}: native exit={got} != MLIR exit={mgot}")
+                    continue
+                print(f"  ok   in-profile  {name:16} rc=0 exit={got} == MLIR {mgot} "
+                      f"execve={execs} 0-toolchain")
+                continue
+            print(f"  ok   in-profile  {name:16} rc=0 exit={got} execve={execs} 0-toolchain")
 
         for entry in OUT_PROFILE:
             # A fixture may declare WHICH fence must refuse it. Optional, so existing
@@ -241,7 +318,8 @@ def main() -> int:
     print(
         f"\nPASS  RI-D1 readiness: {len(IN_PROFILE)}/{len(IN_PROFILE)} in-profile programs "
         f"build+run toolchain-free (execve ⊆ {{mindc, stage1.elf}}), "
-        f"{len(OUT_PROFILE)}/{len(OUT_PROFILE)} out-of-profile fail-closed with no MLIR fallback.\n"
+        f"{len(OUT_PROFILE)}/{len(OUT_PROFILE)} out-of-profile fail-closed with no MLIR fallback; "
+        f"{len(MLIR_CROSSCHECK)} float-comparison programs native == IEEE == MLIR.\n"
         "Native backend is READY to be default FOR THIS FROZEN PROFILE (default NOT flipped)."
     )
     return 0
