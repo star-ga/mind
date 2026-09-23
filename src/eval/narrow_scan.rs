@@ -56,63 +56,92 @@
 
 use crate::ast::{self, Node, TypeAnn};
 
+/// A type name the walk reaches at a leaf. Built-in scalar variants arrive as their
+/// canonical spelling, so one walk serves every name-keyed scan; a tensor element
+/// dtype arrives separately because not every scan treats it as a scalar mention.
+#[derive(Clone, Copy)]
+enum TypeLeaf<'a> {
+    Scalar(&'a str),
+    TensorDtype(&'a str),
+}
+
+type LeafPred = fn(TypeLeaf<'_>) -> bool;
+
 /// True when `name` is one of the four narrow integer type names that
 /// `is_named_narrow_sig_ty` (lower.rs) recognises.
 fn is_narrow_name(name: &str) -> bool {
     matches!(name, "i8" | "u8" | "i16" | "u16")
 }
 
-/// True when a `TypeAnn` mentions a narrow integer type anywhere inside it
+/// The narrow scan counts tensor dtypes too (over-approximation — see module doc).
+fn is_narrow_leaf(leaf: TypeLeaf<'_>) -> bool {
+    match leaf {
+        TypeLeaf::Scalar(n) | TypeLeaf::TensorDtype(n) => is_narrow_name(n),
+    }
+}
+
+/// A SCALAR floating-point type other than `f64`. Tensor element dtypes are not
+/// counted: a tensor is out of the frozen profile on its own, and the refusal
+/// should name the tensor rather than its element type.
+fn is_non_f64_float_scalar(leaf: TypeLeaf<'_>) -> bool {
+    match leaf {
+        TypeLeaf::Scalar(n) => matches!(n, "f32" | "F32" | "f16" | "F16" | "bf16" | "BF16"),
+        TypeLeaf::TensorDtype(_) => false,
+    }
+}
+
+/// True when a `TypeAnn` mentions a type `pred` accepts anywhere inside it
 /// (recursively through generic args, tuple elements, element/target types and
 /// fn-pointer signatures). Tensor dtypes are STRINGS, checked with the same
 /// name test (over-approximation — see module doc).
-fn ty_mentions_narrow(ty: &TypeAnn) -> bool {
+fn ty_mentions(pred: LeafPred, ty: &TypeAnn) -> bool {
     match ty {
-        TypeAnn::ScalarI32
-        | TypeAnn::ScalarI64
-        | TypeAnn::ScalarF32
-        | TypeAnn::ScalarF64
-        | TypeAnn::ScalarBool
-        | TypeAnn::ScalarU32 => false,
-        TypeAnn::Named(n) => is_narrow_name(n),
-        TypeAnn::Tensor { dtype, .. } | TypeAnn::DiffTensor { dtype, .. } => is_narrow_name(dtype),
-        TypeAnn::Slice { element, .. } | TypeAnn::Array { element, .. } => {
-            ty_mentions_narrow(element)
+        TypeAnn::ScalarI32 => pred(TypeLeaf::Scalar("i32")),
+        TypeAnn::ScalarI64 => pred(TypeLeaf::Scalar("i64")),
+        TypeAnn::ScalarF32 => pred(TypeLeaf::Scalar("f32")),
+        TypeAnn::ScalarF64 => pred(TypeLeaf::Scalar("f64")),
+        TypeAnn::ScalarBool => pred(TypeLeaf::Scalar("bool")),
+        TypeAnn::ScalarU32 => pred(TypeLeaf::Scalar("u32")),
+        TypeAnn::Named(n) => pred(TypeLeaf::Scalar(n)),
+        TypeAnn::Tensor { dtype, .. } | TypeAnn::DiffTensor { dtype, .. } => {
+            pred(TypeLeaf::TensorDtype(dtype))
         }
-        TypeAnn::Ref { target, .. } => ty_mentions_narrow(target),
-        TypeAnn::RawPtr { pointee, .. } => ty_mentions_narrow(pointee),
-        TypeAnn::SparseTensor { element, .. } => ty_mentions_narrow(element),
-        TypeAnn::Generic { args, .. } => args.iter().any(ty_mentions_narrow),
-        TypeAnn::Tuple { elements } => elements.iter().any(ty_mentions_narrow),
+        TypeAnn::Slice { element, .. } | TypeAnn::Array { element, .. } => {
+            ty_mentions(pred, element)
+        }
+        TypeAnn::Ref { target, .. } => ty_mentions(pred, target),
+        TypeAnn::RawPtr { pointee, .. } => ty_mentions(pred, pointee),
+        TypeAnn::SparseTensor { element, .. } => ty_mentions(pred, element),
+        TypeAnn::Generic { args, .. } => args.iter().any(|t| ty_mentions(pred, t)),
+        TypeAnn::Tuple { elements } => elements.iter().any(|t| ty_mentions(pred, t)),
         TypeAnn::FnPtr { params, ret } => {
-            params.iter().any(ty_mentions_narrow) || ret.as_deref().is_some_and(ty_mentions_narrow)
+            params.iter().any(|t| ty_mentions(pred, t))
+                || ret.as_deref().is_some_and(|t| ty_mentions(pred, t))
         }
     }
 }
 
 /// Optional-annotation helper (`let` / `const` / return types).
-fn opt_ty_mentions_narrow(ty: &Option<TypeAnn>) -> bool {
-    ty.as_ref().is_some_and(ty_mentions_narrow)
+fn opt_ty_mentions(pred: LeafPred, ty: &Option<TypeAnn>) -> bool {
+    ty.as_ref().is_some_and(|t| ty_mentions(pred, t))
 }
 
 /// Params helper (fn defs, extern fns, closures, trait method signatures).
-fn params_mention_narrow(params: &[ast::Param]) -> bool {
-    params.iter().any(|p| ty_mentions_narrow(&p.ty))
+fn params_mention(pred: LeafPred, params: &[ast::Param]) -> bool {
+    params.iter().any(|p| ty_mentions(pred, &p.ty))
 }
 
 /// True when any `TypeAnn` reachable from `node` (annotations first, then all
-/// child expressions/statements, recursively) mentions a narrow integer type.
-fn node_mentions_narrow(node: &Node) -> bool {
-    let any = |nodes: &[Node]| nodes.iter().any(node_mentions_narrow);
+/// child expressions/statements, recursively) mentions a type `pred` accepts.
+fn node_mentions(pred: LeafPred, node: &Node) -> bool {
+    let any = |nodes: &[Node]| nodes.iter().any(|n| node_mentions(pred, n));
     match node {
         Node::Lit(_, _) => false,
-        Node::Binary { left, right, .. } => {
-            node_mentions_narrow(left) || node_mentions_narrow(right)
-        }
-        Node::Paren(inner, _) => node_mentions_narrow(inner),
+        Node::Binary { left, right, .. } => node_mentions(pred, left) || node_mentions(pred, right),
+        Node::Paren(inner, _) => node_mentions(pred, inner),
         Node::Tuple { elements, .. } => any(elements),
         Node::Call { args, .. } => any(args),
-        Node::CallGrad { loss, .. } => node_mentions_narrow(loss),
+        Node::CallGrad { loss, .. } => node_mentions(pred, loss),
         Node::CallTensorSum { x, .. }
         | Node::CallTensorMean { x, .. }
         | Node::CallReshape { x, .. }
@@ -122,24 +151,22 @@ fn node_mentions_narrow(node: &Node) -> bool {
         | Node::CallIndex { x, .. }
         | Node::CallSlice { x, .. }
         | Node::CallSliceStride { x, .. }
-        | Node::CallTensorRelu { x, .. } => node_mentions_narrow(x),
-        Node::CallGather { x, idx, .. } => node_mentions_narrow(x) || node_mentions_narrow(idx),
+        | Node::CallTensorRelu { x, .. } => node_mentions(pred, x),
+        Node::CallGather { x, idx, .. } => node_mentions(pred, x) || node_mentions(pred, idx),
         Node::CallDot { a, b, .. } | Node::CallMatMul { a, b, .. } => {
-            node_mentions_narrow(a) || node_mentions_narrow(b)
+            node_mentions(pred, a) || node_mentions(pred, b)
         }
         Node::TensorMatmul { lhs, rhs, .. } | Node::TensorElemwise { lhs, rhs, .. } => {
-            node_mentions_narrow(lhs) || node_mentions_narrow(rhs)
+            node_mentions(pred, lhs) || node_mentions(pred, rhs)
         }
         Node::CallTensorRand { .. } => false,
-        Node::CallTensorConv2d { x, w, .. } => node_mentions_narrow(x) || node_mentions_narrow(w),
-        Node::Let { ann, value, .. } => opt_ty_mentions_narrow(ann) || node_mentions_narrow(value),
-        Node::LetTuple { value, .. } | Node::Assign { value, .. } => node_mentions_narrow(value),
+        Node::CallTensorConv2d { x, w, .. } => node_mentions(pred, x) || node_mentions(pred, w),
+        Node::Let { ann, value, .. } => opt_ty_mentions(pred, ann) || node_mentions(pred, value),
+        Node::LetTuple { value, .. } | Node::Assign { value, .. } => node_mentions(pred, value),
         Node::FnDef(fd, _) => {
-            params_mention_narrow(&fd.params)
-                || opt_ty_mentions_narrow(&fd.ret_type)
-                || any(&fd.body)
+            params_mention(pred, &fd.params) || opt_ty_mentions(pred, &fd.ret_type) || any(&fd.body)
         }
-        Node::Return { value, .. } => value.as_deref().is_some_and(node_mentions_narrow),
+        Node::Return { value, .. } => value.as_deref().is_some_and(|n| node_mentions(pred, n)),
         Node::Block { stmts, .. } => any(stmts),
         Node::If {
             cond,
@@ -147,59 +174,57 @@ fn node_mentions_narrow(node: &Node) -> bool {
             else_branch,
             ..
         } => {
-            node_mentions_narrow(cond)
+            node_mentions(pred, cond)
                 || any(then_branch)
-                || else_branch.as_deref().is_some_and(any)
+                || else_branch.as_deref().is_some_and(&any)
         }
         Node::Import { .. } => false,
         Node::ArrayLit { elements, .. } | Node::SetLit { elements, .. } => any(elements),
         Node::MapLit { entries, .. } => entries
             .iter()
-            .any(|(k, v)| node_mentions_narrow(k) || node_mentions_narrow(v)),
+            .any(|(k, v)| node_mentions(pred, k) || node_mentions(pred, v)),
         Node::For {
             start, end, body, ..
-        } => node_mentions_narrow(start) || node_mentions_narrow(end) || any(body),
+        } => node_mentions(pred, start) || node_mentions(pred, end) || any(body),
         Node::ForEach {
             collection, body, ..
-        } => node_mentions_narrow(collection) || any(body),
-        Node::While { cond, body, .. } => node_mentions_narrow(cond) || any(body),
+        } => node_mentions(pred, collection) || any(body),
+        Node::While { cond, body, .. } => node_mentions(pred, cond) || any(body),
         Node::Break { .. } | Node::Continue { .. } => false,
         Node::Print { args, .. } => any(args),
         Node::Neg { operand, .. } | Node::Not { operand, .. } | Node::BitNot { operand, .. } => {
-            node_mentions_narrow(operand)
+            node_mentions(pred, operand)
         }
-        Node::MethodCall { receiver, args, .. } => node_mentions_narrow(receiver) || any(args),
-        Node::FieldAccess { receiver, .. } => node_mentions_narrow(receiver),
-        Node::Const { ty, value, .. } => opt_ty_mentions_narrow(ty) || node_mentions_narrow(value),
-        Node::ExternConst { ty, .. } => ty_mentions_narrow(ty),
-        Node::TypeAlias { target, .. } => ty_mentions_narrow(target),
+        Node::MethodCall { receiver, args, .. } => node_mentions(pred, receiver) || any(args),
+        Node::FieldAccess { receiver, .. } => node_mentions(pred, receiver),
+        Node::Const { ty, value, .. } => opt_ty_mentions(pred, ty) || node_mentions(pred, value),
+        Node::ExternConst { ty, .. } => ty_mentions(pred, ty),
+        Node::TypeAlias { target, .. } => ty_mentions(pred, target),
         Node::Export { .. } => false,
-        Node::StructDef { fields, .. } => fields.iter().any(|f| ty_mentions_narrow(&f.ty)),
+        Node::StructDef { fields, .. } => fields.iter().any(|f| ty_mentions(pred, &f.ty)),
         Node::EnumDef { variants, .. } => variants
             .iter()
-            .any(|v| v.payload.iter().any(ty_mentions_narrow)),
-        Node::Assert { cond, .. } => node_mentions_narrow(cond),
-        Node::As { expr, ty, .. } => ty_mentions_narrow(ty) || node_mentions_narrow(expr),
+            .any(|v| v.payload.iter().any(|t| ty_mentions(pred, t))),
+        Node::Assert { cond, .. } => node_mentions(pred, cond),
+        Node::As { expr, ty, .. } => ty_mentions(pred, ty) || node_mentions(pred, expr),
         Node::Logical { left, right, .. } => {
-            node_mentions_narrow(left) || node_mentions_narrow(right)
+            node_mentions(pred, left) || node_mentions(pred, right)
         }
         #[cfg(feature = "std-surface")]
         Node::Bitwise { left, right, .. } => {
-            node_mentions_narrow(left) || node_mentions_narrow(right)
+            node_mentions(pred, left) || node_mentions(pred, right)
         }
-        Node::StructLit { fields, .. } => fields.iter().any(|f| node_mentions_narrow(&f.value)),
+        Node::StructLit { fields, .. } => fields.iter().any(|f| node_mentions(pred, &f.value)),
         Node::IndexAccess {
             receiver, index, ..
-        } => node_mentions_narrow(receiver) || node_mentions_narrow(index),
+        } => node_mentions(pred, receiver) || node_mentions(pred, index),
         Node::SliceRange {
             receiver,
             start,
             end,
             ..
         } => {
-            node_mentions_narrow(receiver)
-                || node_mentions_narrow(start)
-                || node_mentions_narrow(end)
+            node_mentions(pred, receiver) || node_mentions(pred, start) || node_mentions(pred, end)
         }
         Node::IndexAssign {
             receiver,
@@ -207,36 +232,36 @@ fn node_mentions_narrow(node: &Node) -> bool {
             value,
             ..
         } => {
-            node_mentions_narrow(receiver)
-                || node_mentions_narrow(index)
-                || node_mentions_narrow(value)
+            node_mentions(pred, receiver)
+                || node_mentions(pred, index)
+                || node_mentions(pred, value)
         }
         Node::FieldAssign {
             receiver, value, ..
-        } => node_mentions_narrow(receiver) || node_mentions_narrow(value),
+        } => node_mentions(pred, receiver) || node_mentions(pred, value),
         Node::Match {
             scrutinee, arms, ..
         } => {
-            node_mentions_narrow(scrutinee)
+            node_mentions(pred, scrutinee)
                 || arms.iter().any(|arm| {
-                    arm.guard.as_ref().is_some_and(node_mentions_narrow)
-                        || node_mentions_narrow(&arm.body)
+                    arm.guard.as_ref().is_some_and(|n| node_mentions(pred, n))
+                        || node_mentions(pred, &arm.body)
                 })
         }
-        Node::Try { inner, .. } => node_mentions_narrow(inner),
-        Node::Ref { inner, .. } => node_mentions_narrow(inner),
+        Node::Try { inner, .. } => node_mentions(pred, inner),
+        Node::Ref { inner, .. } => node_mentions(pred, inner),
         Node::ExternBlock { fns, .. } => fns
             .iter()
-            .any(|ef| params_mention_narrow(&ef.params) || opt_ty_mentions_narrow(&ef.ret_type)),
+            .any(|ef| params_mention(pred, &ef.params) || opt_ty_mentions(pred, &ef.ret_type)),
         Node::Region { body, .. } => any(body),
         Node::Closure(data, _) => {
-            params_mention_narrow(&data.params)
-                || opt_ty_mentions_narrow(&data.ret_type)
+            params_mention(pred, &data.params)
+                || opt_ty_mentions(pred, &data.ret_type)
                 || any(&data.body)
         }
         Node::TraitDef { methods, .. } => methods
             .iter()
-            .any(|m| params_mention_narrow(&m.params) || opt_ty_mentions_narrow(&m.ret_type)),
+            .any(|m| params_mention(pred, &m.params) || opt_ty_mentions(pred, &m.ret_type)),
         Node::ImplBlock { methods, .. } => any(methods),
     }
 }
@@ -245,5 +270,21 @@ fn node_mentions_narrow(node: &Node) -> bool {
 /// `true` when ANY narrow-int type is mentioned anywhere — see the module doc
 /// for why `false` proves every `infer_narrow_arith_ty` call returns `None`.
 pub(crate) fn module_mentions_narrow(module: &ast::Module) -> bool {
-    module.items.iter().any(node_mentions_narrow)
+    module
+        .items
+        .iter()
+        .any(|n| node_mentions(is_narrow_leaf, n))
+}
+
+/// `true` when ANY type annotation in the module names a scalar float type other
+/// than `f64` (`f32`, `f16`, `bf16`), including cast targets and the call-form cast
+/// `f32(x)`, which the parser desugars to `As`. The frozen native profile uses it:
+/// its IR carries no scalar float width (`ConstF64` is the only float producer
+/// and a declared `f32` lives only in the AST), and the native comparison and
+/// arithmetic lowerings are proven for f64 alone.
+pub(crate) fn module_mentions_non_f64_float(module: &ast::Module) -> bool {
+    module
+        .items
+        .iter()
+        .any(|n| node_mentions(is_non_f64_float_scalar, n))
 }

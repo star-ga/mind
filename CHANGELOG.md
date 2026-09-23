@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   native == MLIR == an independent IEEE oracle over NaN, +-0.0 and +-inf rows.
 - The frozen native profile now admits comparisons in modules carrying float literals
   (formerly `binop.compare_in_float_module`). Division, remainder and shifts stay refused.
+- The frozen profile's first fence refuses any scalar `f32`, `f16` or `bf16` type in the
+  source as `type.non_f64_float`. The IR lowers a declared-f32 literal to the same
+  `ConstF64` as f64, so the IR predicate alone admitted `let x: f32 = ..; if x < y`, and
+  only the pure-MIND compiler refused it, without naming the construct.
 
 ### Changed — retire classical evidence signing
 - Ed25519 and the historical Ed25519 + ML-DSA-65 hybrid now refuse at the

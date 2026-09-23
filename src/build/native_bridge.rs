@@ -263,8 +263,8 @@ pub fn run_native_backend_bridge(paths: &[String], out: &Option<String>, emit: &
             process::exit(3);
         }
     }
-    let merged_ir = match admit_merged_program(&paths[0], &fence_source, &reserved) {
-        Ok(ir) => ir,
+    let (merged_ast, merged_ir) = match admit_merged_program(&paths[0], &fence_source, &reserved) {
+        Ok(lowered) => lowered,
         Err(msg) => {
             eprintln!("error[backend-native]: {msg}");
             process::exit(3);
@@ -274,7 +274,10 @@ pub fn run_native_backend_bridge(paths: &[String], out: &Option<String>, emit: &
     // so an uncalled out-of-profile body still becomes bytes in the
     // artifact; reachability informs diagnostics, it does not narrow admission.
     // enforced-by: RI-D1-PROFILE
-    match crate::ir::frozen_profile::profile_frozen_admits(&merged_ir) {
+    // The source check covers what the IR cannot carry (a declared f32 width).
+    match crate::ir::frozen_profile::profile_frozen_admits_source(&merged_ast)
+        .and_then(|()| crate::ir::frozen_profile::profile_frozen_admits(&merged_ir))
+    {
         Ok(()) => {}
         Err(rejection) => {
             eprintln!(
@@ -386,7 +389,7 @@ fn admit_merged_program(
     path: &str,
     merged: &[u8],
     reserved: &BTreeSet<String>,
-) -> Result<crate::ir::IRModule, String> {
+) -> Result<(crate::ast::Module, crate::ir::IRModule), String> {
     let text = std::str::from_utf8(merged)
         .map_err(|e| format!("`{path}`: source is not valid UTF-8: {e}"))?;
     let ast = match crate::parser::parse(text) {
@@ -434,5 +437,5 @@ fn admit_merged_program(
     crate::ir::native_closure::admit_native_closure(&ast, &ir, "main", reserved)
         .map_err(|r| format!("{} ({})", r.detail, r.kind))?;
     let _ = path;
-    Ok(ir)
+    Ok((ast, ir))
 }

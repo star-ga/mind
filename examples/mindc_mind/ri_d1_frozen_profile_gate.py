@@ -141,6 +141,11 @@ OUT_PROFILE = [
     # enforcement/test pairing lint requires: a rule whose removal something notices.
     ("div_first_fence", "fn main()->i64{let a:i64=7; let b:i64=2; return a / b;}", "first"),
     ("shr_first_fence", "fn main()->i64{let x:i64=256; return x >> 2;}", "first"),
+    # A declared f32 lowers to the same ConstF64 + Lt IR as f64, so only the source-level
+    # half of the fence (profile_frozen_admits_source) can name it. The pure-MIND compiler
+    # refuses it too, without a name; this row fails if the first fence stops naming it.
+    ("f32_compare_first_fence",
+     "fn main()->i64{let x:f32=1.0; let y:f32=2.0; if x < y {return 1;} return 0;}", "first"),
     ("tensor", "fn main()->i64{let t=zeros([4]); return 0;}", "first"),
     ("trait",
      "trait T{fn f(self)->i64;} struct S{} impl T for S{fn f(self)->i64{return 1;}} "

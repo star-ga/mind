@@ -47,6 +47,22 @@ pub fn profile_frozen_admits(module: &IRModule) -> Result<(), FrozenProfileRejec
     admit_instrs_in(&module.instrs, &defined)
 }
 
+/// Admit the SOURCE-level facts the IR cannot carry. Today that is the float width:
+/// any `f32` / `f16` / `bf16` type anywhere in the program is out of profile, because
+/// the IR records a scalar float only as `ConstF64` and every native float lowering is
+/// proven for f64 alone (see [`admit_binop`]). The frozen stage1.elf refuses the same
+/// programs on its own (`nb_user_float_tok` in `main.mind`); this makes the first fence
+/// refuse them too, and name the construct.
+pub fn profile_frozen_admits_source(
+    module: &crate::ast::Module,
+) -> Result<(), FrozenProfileRejection> {
+    if crate::eval::narrow_scan::module_mentions_non_f64_float(module) {
+        reject("type.non_f64_float")
+    } else {
+        Ok(())
+    }
+}
+
 fn collect_fn_names(instrs: &[Instr], out: &mut std::collections::BTreeSet<String>) {
     for instr in instrs {
         if let Instr::FnDef { name, body, .. } = instr {
@@ -136,16 +152,17 @@ fn reject(construct: &'static str) -> Result<(), FrozenProfileRejection> {
 /// the right, on both sides, NaN vs +-inf, ordinary finite pairs including two negatives,
 /// -0.0 vs +0.0 both ways, -inf vs +inf, inf vs inf, inf vs finite) builds through the
 /// frozen stage1.elf and returns the SAME exit as the MLIR backend AND as an IEEE-754
-/// oracle computed independently of both backends. The proof covers f64 only: the profile
-/// admits no other float type (`Instr::ConstF64` is the only float producer — the
-/// `as f32` / `as f64` conversion intrinsics are refused by `admit_call`). LOAD-BEARING
-/// for whoever relaxes `admit_call`: admitting `__mind_conv_f32` would let an f32 operand
-/// reach this arm, and the f32 compare lowering has NO native == MLIR proof — add f32 rows
-/// to the gate corpus first.
+/// oracle computed independently of both backends. The proof covers f64 only, and this
+/// arm is type-blind, so it cannot keep an f32 operand out by itself: a float literal
+/// lowers to `Instr::ConstF64` whatever its declared width, so `let x: f32 = 1.0;
+/// let y: f32 = 2.0; if x < y {..}` reaches here as two `ConstF64` and an `Lt` with no
+/// conversion call for `admit_call` to refuse. The f32 exclusion is therefore made on the
+/// SOURCE by [`profile_frozen_admits_source`], which the native bridge runs next to this
+/// predicate. Add f32 rows to the gate corpus before relaxing that.
 ///
 /// FENCE OWNERSHIP: with the module-scoped taint gone, this profile no longer backstops the
-/// operand type of a comparison. Keeping a float compare on the f64 path is now owned
-/// entirely by the native side: the per-slot float classifier in `main.mind` (params from
+/// operand type of an f64-vs-integer comparison. Keeping a float compare on the f64 path is
+/// owned by the native side: the per-slot float classifier in `main.mind` (params from
 /// the signature, calls from the return registry, lets, fields, index, cast, neg, if),
 /// its mixed-dtype poison, and type-checker E2013. Whoever edits that classifier edits the
 /// fence. Encoding hazard in the same lowering: the parity fix-up (`setnp ah` / `setp ah`,
@@ -576,5 +593,64 @@ mod tests {
         };
         let callee = fndef(vec![binop(BinOp::Lt)]);
         assert_eq!(admits(&[caller, callee]), Ok(()));
+    }
+
+    fn source_admits(src: &str) -> Result<(), FrozenProfileRejection> {
+        let module = crate::parser::parse(src).expect("test source parses");
+        profile_frozen_admits_source(&module)
+    }
+
+    /// The IR half cannot see a declared f32: both literals lower to `ConstF64` and the
+    /// compare to a bare `Lt`, so the IR predicate admits it. The source half refuses it.
+    #[test]
+    fn declared_f32_comparison_is_rejected_on_the_source() {
+        let src = "fn main() -> i64 { let x: f32 = 1.0; let y: f32 = 2.0; \
+                   if x < y { return 1; } return 0; }";
+        let module = crate::parser::parse(src).expect("parses");
+        let ir = crate::eval::lower_to_ir(&module).expect("lowers");
+        assert_eq!(profile_frozen_admits(&ir), Ok(()), "IR half is type-blind");
+        assert_eq!(
+            source_admits(src).unwrap_err().construct,
+            "type.non_f64_float"
+        );
+    }
+
+    /// Every spelling that puts a non-f64 float into the program is refused: params,
+    /// returns, casts, the call-form cast, struct fields and nested element types.
+    #[test]
+    fn every_non_f64_float_spelling_is_rejected() {
+        for src in [
+            "fn f(x: f32) -> i64 { return 0; }",
+            "fn f() -> f32 { return 1.0; }",
+            "fn main() -> i64 { let a: f64 = 1.0; let b = a as f32; return 0; }",
+            "fn main() -> i64 { let a: f64 = 1.0; let b = f32(a); return 0; }",
+            "struct P { x: f32 }",
+            "fn f(xs: [f32; 4]) -> i64 { return 0; }",
+            "fn f(x: f16) -> i64 { return 0; }",
+            "fn f(x: bf16) -> i64 { return 0; }",
+        ] {
+            assert_eq!(
+                source_admits(src).map_err(|r| r.construct),
+                Err("type.non_f64_float"),
+                "{src}"
+            );
+        }
+    }
+
+    /// Positive control: f64 and integer programs, including f64 comparisons, pass.
+    #[test]
+    fn f64_and_integer_sources_are_admitted() {
+        for src in [
+            "fn main() -> i64 { let x: f64 = 1.0; let y: f64 = 2.0; \
+             if x < y { return 1; } return 0; }",
+            "fn d(x: f64, y: f64) -> f64 { return x * y; }",
+            "fn main() -> i64 { let n: i64 = 3; return n; }",
+            "fn main() -> i64 { let a: f64 = 1.5; return a as i64; }",
+            // A tensor element dtype is not a scalar width; the tensor itself is refused
+            // elsewhere, under its own name.
+            "fn sink(x: Tensor<f32, [4]>) -> i64 { return 0; }",
+        ] {
+            assert_eq!(source_admits(src), Ok(()), "{src}");
+        }
     }
 }
