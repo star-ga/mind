@@ -264,6 +264,18 @@ const BARE_LEGACY_PARSE_SKIPS: &[&str] = &[
     "examples/mindc_mind/testdata/native_record_array/reference_u8.mind",
     "examples/mindc_mind/testdata/native_record_array/u8_direct_loop.mind",
     "examples/policy.mind",
+    // The quant examples use `while` and the `__mind_*` intrinsics, which belong to
+    // the std-surface grammar; the enabled-profile pass formats them.
+    "examples/quant/american_binomial/main.mind",
+    "examples/quant/barrier_analytic/main.mind",
+    "examples/quant/black_scholes/main.mind",
+    "examples/quant/bond_curve/main.mind",
+    "examples/quant/crr_binomial/main.mind",
+    "examples/quant/greeks_higher_order/main.mind",
+    "examples/quant/implied_vol/main.mind",
+    "examples/quant/implied_vol_surface/main.mind",
+    "examples/quant/monte_carlo_gbm/main.mind",
+    "examples/quant/portfolio_risk/main.mind",
     "examples/remizov_benchmark.mind",
     "examples/remizov_gpu.mind",
     "examples/remizov_inverse.mind",
