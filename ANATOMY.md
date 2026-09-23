@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1858 | **Est. tokens:** ~3,632,440
-**Generated:** 2026-09-23 11:31 UTC
+**Files:** 1861 | **Est. tokens:** ~3,644,346
+**Generated:** 2026-09-23 11:34 UTC
 
 ## Token Budget Guide
 
@@ -216,6 +216,7 @@
 | `tests/skip_shape_scan/` | 2 | ~10,401 |
 | `tests/support/` | 9 | ~19,407 |
 | `tests/type_checker/` | 2 | ~140 |
+| `tests/xsi_quant/` | 3 | ~11,906 |
 | `tools/` | 5 | ~13,565 |
 | `tools/mindfuzz/` | 7 | ~16,763 |
 | `tools/mindfuzz/seeds/` | 6 | ~1,330 |
@@ -2610,6 +2611,11 @@
 - `x25519mlkem768_driver.py` (~2378 tok, huge) — # Known-answer driver for std/x25519mlkem768.mind (pure-MIND X25519MLKEM768
 - `x25519_vectors_driver.py` (~1525 tok, huge) — # Official-vector driver for std/x25519.mind (pure-MIND Curve25519 ECDH).
 - `x509_vectors_driver.py` (~3593 tok, huge) — # Real-certificate driver for std/x509.mind (pure-MIND X.509 DER parsing + RSA
+### `tests/xsi_quant/`
+
+- `gates.rs` (~4100 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~4375 tok, huge) — Copyright 2025 STARGA Inc.
+- `oracle.rs` (~3431 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tools/`
 
 - `add_copyright_headers.py` (~1132 tok, large) — # Copyright 2025 STARGA Inc.
