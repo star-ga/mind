@@ -55,16 +55,18 @@ analysis meaningful — not a substitute for one.
 ```sh
 cd examples/quant/black_scholes && mindc run   # exit 0 == every check passed
 
-# or run the whole corpus, each from a clean build directory:
-./scripts/run_quant_examples.sh
+# or run the whole corpus, each from a fresh copy (x86_64, MLIR toolchain on PATH):
+MIND_BENCH_REQUIRE=1 cargo test --no-default-features \
+  --features "mlir-build std-surface cross-module-imports" \
+  --test cross_substrate_identity quant_
 ```
 
 **Delete `target/` before trusting an exit code.** A stale build directory makes
 `mindc run` report the exit status of a *previously* built artifact rather than
 the current source — measured, in one session, as three different exit codes (0,
 1, 7) from one unmodified file, which reads exactly like nondeterminism and is
-not. `run_quant_examples.sh` removes `target/` before and after every example
-for this reason.
+not. The `quant_examples_known_answer_suites_pass` test runs every example from a
+fresh copy for this reason.
 
 The exit code is the **count of failed checks**, so a partial failure is never
 rounded up to success.

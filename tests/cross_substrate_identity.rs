@@ -686,6 +686,173 @@ fn build_quant_so(name: &str) -> Option<PathBuf> {
     result
 }
 
+/// The quant examples every test below reads, in stable order.
+fn quant_example_dirs() -> Vec<PathBuf> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .join("quant");
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(&root)
+        .unwrap_or_else(|e| panic!("read {}: {e}", root.display()))
+        .map(|entry| entry.expect("quant dir entry").path())
+        .filter(|dir| dir.join("main.mind").is_file())
+        .collect();
+    dirs.sort();
+    assert!(
+        !dirs.is_empty(),
+        "no quant examples under {}",
+        root.display()
+    );
+    dirs
+}
+
+/// Brace-matched text of `fn name(...) { ... }` in `src`, or None if absent.
+/// A `}` inside a nested block must not end the function early.
+fn extract_mind_fn<'a>(src: &'a str, name: &str) -> Option<&'a str> {
+    let start = src
+        .lines()
+        .scan(0usize, |offset, line| {
+            let at = *offset;
+            *offset += line.len() + 1;
+            Some((at, line))
+        })
+        .find_map(|(at, line)| {
+            let rest = line.strip_prefix("pub ").unwrap_or(line);
+            let rest = rest.strip_prefix("fn ")?.strip_prefix(name)?;
+            rest.trim_start().starts_with('(').then_some(at)
+        })?;
+    let open = start + src[start..].find('{')?;
+    let mut depth = 0usize;
+    for (offset, ch) in src[open..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&src[start..=open + offset]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Every quant example vendors its own copy of the deterministic math kernels
+/// on purpose, so each stays readable and runnable alone. That only holds while
+/// the copies are IDENTICAL: an edit to one example's `dm_erfc` would make two
+/// examples price the same option differently, each with a green KAT, because
+/// each KAT checks its own copy. An example may OMIT a kernel it does not use;
+/// it may not define a different one.
+#[test]
+fn quant_shared_kernels_byte_identical_across_examples() {
+    const SHARED_KERNELS: [&str; 11] = [
+        "dm_exp",
+        "dm_log",
+        "dm_sqrt",
+        "dm_erf",
+        "dm_erfc",
+        "dm_norm_cdf",
+        "dm_norm_pdf",
+        "absf",
+        "canonical_qnan",
+        "bs_d1",
+        "bs_d2",
+    ];
+    let sources: Vec<(String, String)> = quant_example_dirs()
+        .into_iter()
+        .map(|dir| {
+            let name = dir.file_name().unwrap().to_string_lossy().into_owned();
+            let src = std::fs::read_to_string(dir.join("main.mind"))
+                .unwrap_or_else(|e| panic!("read quant/{name}/main.mind: {e}"));
+            (name, src)
+        })
+        .collect();
+
+    let mut diverged = Vec::new();
+    let mut shared = 0usize;
+    for kernel in SHARED_KERNELS {
+        let mut variants: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
+        for (name, src) in &sources {
+            if let Some(body) = extract_mind_fn(src, kernel) {
+                variants.entry(body).or_default().push(name);
+            }
+        }
+        if variants.values().map(Vec::len).sum::<usize>() > 1 {
+            shared += 1;
+        }
+        if variants.len() > 1 {
+            let owners: Vec<String> = variants.values().map(|v| v.join(", ")).collect();
+            diverged.push(format!(
+                "{kernel}: {} definitions [{}]",
+                variants.len(),
+                owners.join(" | ")
+            ));
+        }
+    }
+    assert!(
+        diverged.is_empty(),
+        "quant examples disagree about a shared kernel -- copy the intended \
+         definition verbatim into every example that defines it:\n  {}",
+        diverged.join("\n  ")
+    );
+    // Positive control: the check is vacuous if nothing is actually shared.
+    assert!(
+        shared >= 5,
+        "only {shared} kernels are shared; the extractor found nothing to compare"
+    );
+}
+
+/// Each quant example's `main` is a known-answer suite whose exit code is its
+/// count of failed checks. Run every one from a fresh copy so a stale `target/`
+/// can never report an earlier artifact's status.
+///
+/// x86_64 only: the examples' `mindc run` path links the host CPU runtime, which
+/// is not built for aarch64 yet. The neon leg is covered by the byte-identity
+/// fixtures above, which compile each kernel to a shared object instead.
+/// deferred: would also run on aarch64, skipped because the CPU runtime is
+/// x86_64-only -- upgrade path: drop this cfg once that runtime builds for ARM.
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn quant_examples_known_answer_suites_pass() {
+    for tool in ["mlir-opt", "mlir-translate", "clang"] {
+        if which::which(tool).is_err() {
+            assert!(
+                std::env::var_os("MIND_BENCH_REQUIRE").is_none(),
+                "MIND_BENCH_REQUIRE is set but '{tool}' is not on PATH"
+            );
+            println!("cross_substrate_identity: {tool} not on PATH; skipping quant KAT runs");
+            return;
+        }
+    }
+    let mut failed = Vec::new();
+    for dir in quant_example_dirs() {
+        let name = dir.file_name().unwrap().to_string_lossy().into_owned();
+        let work = tempfile::tempdir().expect("tempdir for quant KAT run");
+        for file in ["Mind.toml", "main.mind"] {
+            std::fs::copy(dir.join(file), work.path().join(file))
+                .unwrap_or_else(|e| panic!("copy quant/{name}/{file}: {e}"));
+        }
+        let out = Command::new(mindc_bin())
+            .arg("run")
+            .current_dir(work.path())
+            .output()
+            .unwrap_or_else(|e| panic!("spawn mindc run for quant/{name}: {e}"));
+        if !out.status.success() {
+            failed.push(format!(
+                "{name}: exit {:?} (count of failed checks, or a build error)\n{}{}",
+                out.status.code(),
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ));
+        }
+    }
+    assert!(
+        failed.is_empty(),
+        "quant known-answer suites red:\n{}",
+        failed.join("\n")
+    );
+}
+
 /// Deterministic LCG — byte-for-byte the generator `blas_vec_q16_smoke.rs`
 /// uses, so the workload's input distribution is shared and reproducible.
 struct Lcg(u64);
@@ -3525,7 +3692,7 @@ fn galperin_pi_reproducibility_gate() {
 // --- shared math kernel oracle, ported verbatim from
 // examples/quant/black_scholes/main.mind's KERNEL BEGIN..END block (every
 // quant example vendors a byte-identical copy of this block — see
-// scripts/quant_kernel_parity_lint.py, which enforces that byte-identity
+// quant_shared_kernels_byte_identical_across_examples, which enforces that byte-identity
 // across the ten .mind sources; this Rust port targets that one shared
 // definition, not ten separate ones). Every step below reproduces the MIND
 // kernel's exact op order and constants; `sqrt` is MIND's `llvm.intr.sqrt`

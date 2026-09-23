@@ -14,7 +14,7 @@
 # same node-indexing and rounding sequence in Rust to be a meaningful
 # byte-exact cross-check — a near-miss port would only prove the port agrees
 # with itself, not that it caught a real divergence. examples/quant's own KAT
-# (scripts/run_quant_examples.sh) already independently value-checks this
+# (quant_examples_known_answer_suites_pass) already independently value-checks this
 # kernel against a 50-digit oracle and against the Barone-Adesi/Whaley
 # closed-form approximation; THIS fixture's job is narrower and different — it
 # pins the exact output BYTES so a lowering change (FMA fusion, reassociation,

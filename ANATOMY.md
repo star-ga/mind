@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1860 | **Est. tokens:** ~3,634,701
-**Generated:** 2026-09-23 11:03 UTC
+**Files:** 1858 | **Est. tokens:** ~3,632,282
+**Generated:** 2026-09-23 11:07 UTC
 
 ## Token Budget Guide
 
@@ -73,7 +73,7 @@
 | `examples/mind_mirror_v04/testdata/` | 2 | ~3,862 |
 | `examples/native/` | 4 | ~1,440 |
 | `examples/parser/` | 5 | ~17,923 |
-| `examples/quant/` | 1 | ~3,261 |
+| `examples/quant/` | 1 | ~3,302 |
 | `examples/quant/american_binomial/` | 2 | ~17,234 |
 | `examples/quant/barrier_analytic/` | 2 | ~17,440 |
 | `examples/quant/black_scholes/` | 2 | ~6,320 |
@@ -93,7 +93,7 @@
 | `.github/workflows/` | 9 | ~37,428 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~21,930 |
-| `scripts/` | 33 | ~119,383 |
+| `scripts/` | 31 | ~116,920 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -173,7 +173,7 @@
 | `tests/cross_substrate_identity/lorenz-q16/` | 2 | ~1,243 |
 | `tests/cross_substrate_identity/matmul-f32-v-64x64/` | 2 | ~1,115 |
 | `tests/cross_substrate_identity/q16-arith-chain/` | 2 | ~788 |
-| `tests/cross_substrate_identity/quant-american-binomial/` | 2 | ~954 |
+| `tests/cross_substrate_identity/quant-american-binomial/` | 2 | ~957 |
 | `tests/cross_substrate_identity/quant-barrier-analytic/` | 2 | ~865 |
 | `tests/cross_substrate_identity/quant-black-scholes/` | 2 | ~944 |
 | `tests/cross_substrate_identity/quant-bond-curve/` | 2 | ~781 |
@@ -970,7 +970,7 @@
 - `Mind.toml` (~21 tok, tiny) — [package]
 ### `examples/quant/`
 
-- `README.md` (~3261 tok, huge) — examples/quant — deterministic derivative pricing
+- `README.md` (~3302 tok, huge) — examples/quant — deterministic derivative pricing
 ### `examples/`
 
 - `README.md` (~2066 tok, huge) — MIND Examples
@@ -1077,12 +1077,10 @@
 - `pqc_hybrid_ci.sh` (~663 tok, large) — Required-CI execution gate for the existing MIC3 two-leg PQC-hybrid controls.
 - `pqc_hybrid_cli_ci.sh` (~1160 tok, large) — Required-CI execution gate for the actual-CLI PQC-hybrid signing controls.
 - `preflight.sh` (~9404 tok, huge) — preflight.sh — local CI-parity gate. Run before pushing to avoid red CI.
-- `quant_kernel_parity_lint.py` (~1399 tok, large) — Fail closed when the quant examples' vendored math kernels drift apart.
 - `quick_perf.sh` (~734 tok, large) — quick_perf.sh — FAST one-sided compile-speed criterion gate.
 - `ri_d1_mlir_free_gate.sh` (~2136 tok, huge) — RI-D1 gate assertion #1 — MLIR is un-linkable on the native path (fail-closed
 - `run_crypto_vectors.sh` (~3204 tok, huge) — Build every pure-MIND crypto/TLS std module to a shared object and run its
 - `run_gate.py` (~8072 tok, huge) — run_gate.py — the shared gate runner that makes a VACUOUS PASS structurally fail.
-- `run_quant_examples.sh` (~1064 tok, large) — Execute every quant example's KAT and fail closed on the first red one.
 ### `scripts/sdlc/`
 
 - `enforcement_bijection.py` (~1504 tok, huge) — A test must never outlive the rule it asserts.
@@ -1738,7 +1736,7 @@
 - `reference_hashes.toml` (~356 tok, medium) — avx2 = "ce93cdeb0e650c1c8e0cd05687ed986bbdbac691b6a8742e155b8ffd65997d78"
 ### `tests/cross_substrate_identity/quant-american-binomial/`
 
-- `manifest.toml` (~780 tok, large) — version = "1"
+- `manifest.toml` (~783 tok, large) — version = "1"
 - `reference_hashes.toml` (~174 tok, small) — avx2 = "88a57cd53930a73b38ad474101fceaa523e5ba8a9069bf4debdd18ef8b60bb25"
 ### `tests/cross_substrate_identity/quant-barrier-analytic/`
 
