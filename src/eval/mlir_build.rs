@@ -143,7 +143,7 @@ pub fn build_all_with_objects(
     extra_objects: &[std::path::PathBuf],
 ) -> Result<BuildProducts, BuildError> {
     let preset_name = opts.preset;
-    let lowered = crate::eval::mlir_export::apply_lowering(mlir_src, preset_name)
+    let lowered = crate::mlir::nobuiltin::lower_for_native_build(mlir_src, preset_name)
         .map_err(BuildError::Internal)?;
 
     let combined_pipeline = combine_pipelines(preset_name, opts.opt_pipeline);

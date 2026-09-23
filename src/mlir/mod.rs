@@ -24,6 +24,7 @@
 pub mod gemm_tuning;
 
 mod lowering;
+pub mod nobuiltin;
 
 #[cfg(feature = "ffi-c-user")]
 pub mod c_export;

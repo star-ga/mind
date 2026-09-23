@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1861 | **Est. tokens:** ~3,646,274
-**Generated:** 2026-09-23 20:21 UTC
+**Files:** 1863 | **Est. tokens:** ~3,649,439
+**Generated:** 2026-09-23 22:50 UTC
 
 ## Token Budget Guide
 
@@ -117,7 +117,7 @@
 | `src/diagnostics/` | 3 | ~14,085 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 36 | ~139,987 |
+| `src/eval/` | 36 | ~139,989 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -130,7 +130,7 @@
 | `src/ir/compact/v3/v04/` | 3 | ~13,696 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~10,017 |
-| `src/mlir/` | 3 | ~6,625 |
+| `src/mlir/` | 4 | ~8,460 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 9 | ~53,642 |
 | `src/package/` | 2 | ~1,877 |
@@ -146,7 +146,7 @@
 | `src/types/` | 10 | ~20,740 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 399 | ~818,848 |
+| `tests/` | 400 | ~820,176 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -1262,7 +1262,7 @@
 - `ir_interp.rs` (~4212 tok, huge) — Copyright 2025 STARGA Inc.
 - `lower_entry.rs` (~359 tok, medium) — Copyright 2026 STARGA Inc.
 - `materialization.rs` (~5006 tok, huge) — Copyright 2026 STARGA Inc.
-- `mlir_build.rs` (~10897 tok, huge) — Copyright 2025 STARGA Inc.
+- `mlir_build.rs` (~10899 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~12220 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
@@ -1384,7 +1384,8 @@
 
 - `c_export.rs` (~2651 tok, huge) — Copyright 2025 STARGA Inc.
 - `gemm_tuning.rs` (~3639 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `mod.rs` (~335 tok, medium) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~340 tok, medium) — Copyright 2025 STARGA Inc.
+- `nobuiltin.rs` (~1830 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ops/`
 
 - `cerebras.rs` (~2713 tok, huge) — Copyright 2025-2026 STARGA Inc.
@@ -2010,6 +2011,7 @@
 - `valid_identifiers.mind` (~72 tok, small) — Lexical test: Valid identifier formats
 ### `tests/`
 
+- `libm_name_capture_run.rs` (~1328 tok, large) — Copyright 2025 STARGA Inc.
 - `linalg_grad.rs` (~315 tok, medium) — Copyright 2025 STARGA Inc.
 - `linalg_preview.rs` (~291 tok, medium) — Copyright 2025 STARGA Inc.
 - `lint_infrastructure.rs` (~2540 tok, huge) — Copyright 2025 STARGA Inc.
