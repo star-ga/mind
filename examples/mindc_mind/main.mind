@@ -9705,7 +9705,8 @@ pub fn emit_mic3_const_i64(s: EmitState, dst: i64, v: i64) -> EmitState {
 
 // Push the low `n` bytes of `v` little-endian onto the EmitState buffer. Mirrors
 // the native-ELF nb_le idiom EXACTLY: `& 255` isolates the low byte (correct for
-// any sign) and the step MUST be a floor divide (`(v-255)/256` when v<0) — NOT the
+// any sign) and the step MUST be a floor divide (`-((-(v+1))/256)-1` when v<0, which
+// cannot overflow — the older `(v-255)/256` wrapped for v near i64::MIN) — NOT the
 // language's trunc-toward-zero `/` — so a NEGATIVE i64 f64 bit pattern (e.g. -inf =
 // 0xFFF0000000000000, a small-magnitude signed i64) keeps its sign bytes. For v>=0
 // floor == trunc.
@@ -9715,7 +9716,7 @@ pub fn emit_le_es(s: EmitState, v: i64, n: i64) -> EmitState {
     }
     let s1: EmitState = es_push(s, v & 255);
     let next: i64 = if v < 0 {
-        (v - 255) / 256
+        (0 - ((0 - (v + 1)) / 256)) - 1
     } else {
         v / 256
     };
@@ -31307,14 +31308,17 @@ pub fn nb_push(code: String, b: i64) -> String {
 // f64 bit pattern -inf = 0xFFF0000000000000 (small-magnitude signed i64) truncated
 // to 0x00F0000000000000, so `x as i64` of -inf mis-emitted. For v>=0 floor == trunc
 // (every ELF-header/disp32 caller is unaffected, byte-identical); for v<0 use
-// (v-255)/256 == floor(v/256) == an arithmetic 8-bit right shift.
+// -((-(v+1))/256)-1 == floor(v/256) == an arithmetic 8-bit right shift, for EVERY
+// negative v. The older `(v-255)/256` form overflowed for v in [i64::MIN, i64::MIN+254]
+// (v-255 wraps positive), so the sign-bit pattern of -0.0 (0x8000000000000000) encoded
+// as the NaN 0x7fffffffffffff00; -(v+1) is in [0, i64::MAX] and cannot overflow.
 pub fn nb_le(code: String, v: i64, n: i64) -> String {
     if n <= 0 {
         return code;
     }
     let c1: String = string_push_byte(code, v & 255);
     let next: i64 = if v < 0 {
-        (v - 255) / 256
+        (0 - ((0 - (v + 1)) / 256)) - 1
     } else {
         v / 256
     };

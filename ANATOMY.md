@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1861 | **Est. tokens:** ~3,646,275
-**Generated:** 2026-09-23 17:54 UTC
+**Files:** 1861 | **Est. tokens:** ~3,646,274
+**Generated:** 2026-09-23 19:50 UTC
 
 ## Token Budget Guide
 
@@ -68,7 +68,7 @@
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2,926 |
 | `examples/mindc_mind/testdata/native_record_trace/` | 13 | ~2,127 |
-| `examples/mindc_mind/testdata/selfhost_loop/` | 2 | ~2,138 |
+| `examples/mindc_mind/testdata/selfhost_loop/` | 2 | ~2,137 |
 | `examples/mind_mirror_v04/` | 2 | ~3,836 |
 | `examples/mind_mirror_v04/testdata/` | 2 | ~3,862 |
 | `examples/native/` | 4 | ~1,440 |
@@ -891,7 +891,7 @@
 - `rh_f64_aggregate_canary.mind` (~876 tok, large) — RH f64-aggregate self-host/native canary (RH_REQUIRED_F64_AGGREGATE_SURFACE).
 ### `examples/mindc_mind/testdata/selfhost_loop/`
 
-- `MANIFEST.txt` (~312 tok, medium) — # Frozen self-host bootstrap ELF (A6/RI-E1): the checked-in pure-MIND stage0
+- `MANIFEST.txt` (~311 tok, medium) — # Frozen self-host bootstrap ELF (A6/RI-E1): the checked-in pure-MIND stage0
 - `PROVENANCE_298_f64_selfhost_mlir.md` (~1826 tok, huge) — #298 self-host f64 MLIR emit — self-host loop seed refreeze provenance
 ### `examples/mindc_mind/testdata/`
 

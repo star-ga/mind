@@ -50,7 +50,7 @@ pub fn profile_frozen_admits(module: &IRModule) -> Result<(), FrozenProfileRejec
 /// Admit the SOURCE-level facts the IR cannot carry. Today that is the float width:
 /// any `f32` / `f16` / `bf16` type anywhere in the program is out of profile, because
 /// the IR records a scalar float only as `ConstF64` and every native float lowering is
-/// proven for f64 alone (see [`admit_binop`]). The frozen stage1.elf refuses the same
+/// proven for f64 alone (see `admit_binop`). The frozen stage1.elf refuses the same
 /// programs on its own (`nb_user_float_tok` in `main.mind`); this makes the first fence
 /// refuse them too, and name the construct.
 pub fn profile_frozen_admits_source(
