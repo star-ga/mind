@@ -51,10 +51,8 @@ pub(crate) use module_bindings::{
 use module_bindings::{OwnerGuard as EvalOwnerGuard, bound_symbol as eval_bound_symbol};
 use module_bindings::{current_owner as current_eval_owner, symbol_display_name};
 pub mod materialization;
-/// Module-wide narrow-int surface prescan — the compile-speed early-skip gate
-/// for `infer_narrow_arith_ty` (see narrow_scan.rs for the byte-identity proof).
-/// Compiled in every feature set: the frozen profile's source fence
-/// (`module_mentions_non_f64_float`) must refuse f32/f16/bf16 in all builds.
+/// Narrow-int surface prescan (see narrow_scan.rs); always compiled because the
+/// frozen profile's non-f64 float fence must refuse f32/f16/bf16 in every build.
 #[cfg_attr(not(feature = "std-surface"), allow(dead_code))]
 pub(crate) mod narrow_scan;
 #[cfg(feature = "std-surface")]
