@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1861 | **Est. tokens:** ~3,646,245
-**Generated:** 2026-09-23 17:34 UTC
+**Files:** 1861 | **Est. tokens:** ~3,646,275
+**Generated:** 2026-09-23 17:54 UTC
 
 ## Token Budget Guide
 
@@ -117,7 +117,7 @@
 | `src/diagnostics/` | 3 | ~14,085 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 36 | ~139,957 |
+| `src/eval/` | 36 | ~139,987 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -1271,7 +1271,7 @@
 - `module_bindings.rs` (~1211 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `module_globals.rs` (~1160 tok, large) — Copyright 2026 STARGA Inc.
 - `narrow_arith.rs` (~3968 tok, huge) — Copyright 2025 STARGA Inc.
-- `narrow_scan.rs` (~3524 tok, huge) — Module-wide narrow-int SURFACE prescan (compile-speed early-skip).
+- `narrow_scan.rs` (~3554 tok, huge) — Module-wide narrow-int SURFACE prescan (compile-speed early-skip).
 - `slice_abi.rs` (~325 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/eval/stdlib/`
 

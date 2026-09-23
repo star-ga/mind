@@ -53,7 +53,9 @@ use module_bindings::{current_owner as current_eval_owner, symbol_display_name};
 pub mod materialization;
 /// Module-wide narrow-int surface prescan — the compile-speed early-skip gate
 /// for `infer_narrow_arith_ty` (see narrow_scan.rs for the byte-identity proof).
-#[cfg(feature = "std-surface")]
+/// Compiled in every feature set: the frozen profile's source fence
+/// (`module_mentions_non_f64_float`) must refuse f32/f16/bf16 in all builds.
+#[cfg_attr(not(feature = "std-surface"), allow(dead_code))]
 pub(crate) mod narrow_scan;
 #[cfg(feature = "std-surface")]
 pub(crate) mod slice_abi;

@@ -189,7 +189,9 @@ fn node_mentions(pred: LeafPred, node: &Node) -> bool {
         Node::ForEach {
             collection, body, ..
         } => node_mentions(pred, collection) || any(body),
+        #[cfg(feature = "std-surface")]
         Node::While { cond, body, .. } => node_mentions(pred, cond) || any(body),
+        #[cfg(feature = "std-surface")]
         Node::Break { .. } | Node::Continue { .. } => false,
         Node::Print { args, .. } => any(args),
         Node::Neg { operand, .. } | Node::Not { operand, .. } | Node::BitNot { operand, .. } => {
@@ -253,6 +255,7 @@ fn node_mentions(pred: LeafPred, node: &Node) -> bool {
         Node::ExternBlock { fns, .. } => fns
             .iter()
             .any(|ef| params_mention(pred, &ef.params) || opt_ty_mentions(pred, &ef.ret_type)),
+        #[cfg(feature = "std-surface")]
         Node::Region { body, .. } => any(body),
         Node::Closure(data, _) => {
             params_mention(pred, &data.params)
