@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1875 | **Est. tokens:** ~3,673,834
-**Generated:** 2026-10-01 06:21 UTC
+**Files:** 1875 | **Est. tokens:** ~3,674,176
+**Generated:** 2026-10-01 06:43 UTC
 
 ## Token Budget Guide
 
@@ -42,7 +42,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,347 |
-| `docs/` | 38 | ~109,485 |
+| `docs/` | 38 | ~109,827 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/design/` | 4 | ~11,498 |
@@ -462,7 +462,7 @@
 ### `docs/`
 
 - `gpu.md` (~387 tok, medium) — GPU backend profile
-- `independence-audit-plan-20260925.md` (~4417 tok, huge) — Independence audit and plan — 2026-09-25
+- `independence-audit-plan-20260925.md` (~4759 tok, huge) — Independence audit and plan — 2026-09-25
 - `INDEPENDENCE_ROADMAP.md` (~18828 tok, huge) — MIND Rust-Independence Roadmap
 - `install.md` (~1012 tok, large) — Installing mindc
 - `ir.md` (~451 tok, medium) — MIND IR core

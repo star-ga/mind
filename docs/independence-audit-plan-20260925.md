@@ -77,6 +77,17 @@ come from downstream reports against `9c231f5` and are confirmed before they are
 | 17 | The native bridge rejects `src/`-relative imports, `/ % << >>` and `__mind_*` intrinsics | narrow native reach | `src/build/native_bridge.rs`, `src/ir/frozen_profile.rs` |
 | 18 | *(reported)* KAT packages cannot use `../` sources; path dependencies do not resolve `import` of their modules | packaging | `src/project`, `src/deps` |
 
+### Status (2026-10-01)
+
+| # | State |
+|---|---|
+| 1 | Fixed in `eb872eaf` (refuse to write when formatting would delete source) and `f2fc890d` (the six lossy desugars) |
+| 2 | Fixed in `11bdd07f`: the arity message of a call resolved through the project module table now maps to E2005 |
+| 3 | Fixed in `fbb08821`: failures that stop `check` before any file is checked reach the JSON and LSP reporters |
+| 9 | Fixed in `a7ffedbb` for colliding names that no other module references; a `pub` visibility rule is decision 6 in §7 |
+| 12 | Not reproduced on `9c231f5` or later. Nine shapes through the MLIR build, `mindc test` and the native bridge all scope the shadowing `let` to its block (`f(10)` returns 10; `s + x` returns 15). Open until a reproducing program is supplied |
+| 13 | Fixed in `90b2611e`. The failing shapes were a `return` directly in a `while` body (one inside an `if` already worked) and any statement after a `return`, `break` or `continue` |
+
 ## 4. Branches
 
 | Branch | Disposition |
@@ -217,12 +228,16 @@ an integrated linker per OS; split the single `main.mind` into modules before in
 
 ## 7. Decisions for the owner
 
-1. Parameter-shadowing scope: adopt proper block scoping (finding 12). The self-host currently
-   reproduces the leaking behaviour and must follow.
+1. Parameter-shadowing scope: confirm block scoping as the language rule. The Rust compiler
+   already block-scopes on `9c231f5` (finding 12 did not reproduce); the self-host must match it.
 2. WASM and RISC-V were deferred in an earlier plan; this plan puts them in Tier 2.
 3. Tier-1 hosts as in §5 Track 3.
 4. Machine-IR extraction before AArch64, rather than porting `nb_*` per ISA.
 5. `cfg(target_os)` only outside the portable profile.
+6. Module visibility: `pub` has no visibility meaning today (`docs/type-system.md`), and `check`
+   accepts a call from one module to another module's non-`pub` fn. Making non-`pub` items
+   module-private (rejected by `check`, internal at link) would close finding 9 completely; it is
+   a language change and breaks programs that rely on the current behaviour.
 
 ## 8. Stale public statements to correct
 
