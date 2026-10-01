@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1876 | **Est. tokens:** ~3,655,877
-**Generated:** 2026-10-06 14:13 UTC
+**Files:** 1878 | **Est. tokens:** ~3,669,206
+**Generated:** 2026-10-07 06:29 UTC
 
 ## Token Budget Guide
 
@@ -137,7 +137,7 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 5 | ~26,479 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 19 | ~61,957 |
+| `src/project/` | 20 | ~69,350 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -148,7 +148,7 @@
 | `src/types/` | 10 | ~20,740 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 407 | ~833,438 |
+| `tests/` | 408 | ~839,374 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -1434,18 +1434,19 @@
 - `build_lock.rs` (~1630 tok, huge) — Copyright 2026 STARGA Inc.
 - `call_bindings.rs` (~5326 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `canonical_bridge.rs` (~5927 tok, huge) — Copyright 2026 STARGA Inc.
-- `compiled_sources.rs` (~461 tok, medium) — Copyright 2025 STARGA Inc.
+- `compiled_sources.rs` (~530 tok, large) — Copyright 2025 STARGA Inc.
 - `embedded_entry.rs` (~670 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `identity.rs` (~1719 tok, huge) — Copyright 2026 STARGA Inc.
 - `link.rs` (~2598 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `module_table.rs` (~7745 tok, huge) — Copyright 2025 STARGA Inc.
-- `private_linkage.rs` (~2901 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_sources.rs` (~718 tok, large) — Copyright 2026 STARGA Inc.
+- `private_linkage.rs` (~7330 tok, huge) — Copyright 2026 STARGA Inc.
 - `runtime_link.rs` (~1621 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `single_file_scope.rs` (~6601 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `single_file_scope.rs` (~6604 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `source_snapshot.rs` (~608 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `sources.rs` (~5153 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~3656 tok, huge) — Copyright 2025 STARGA Inc.
-- `substrate_link.rs` (~2330 tok, huge) — Copyright 2025 STARGA Inc.
+- `substrate_link.rs` (~4504 tok, huge) — Copyright 2025 STARGA Inc.
 - `toolchain_pin.rs` (~3657 tok, huge) — The `[mind]` table is the ONLY *declared* cross-repo compatibility contract
 ### `src/`
 
@@ -2506,6 +2507,7 @@
 - `stdlib_tensor.rs` (~256 tok, medium) — Copyright 2025 STARGA Inc.
 - `std_llvm_bindings_smoke.rs` (~2673 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_mlir_bindings_smoke.rs` (~4872 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_substrate_native_link.rs` (~5936 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_surface_arena.rs` (~1351 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_array_literals.rs` (~3383 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_async.rs` (~4342 tok, huge) — Copyright 2025 STARGA Inc.

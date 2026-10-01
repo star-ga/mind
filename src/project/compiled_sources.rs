@@ -21,6 +21,10 @@ use crate::diagnostics::capability::FallbackReason;
 pub struct CompiledSources {
     /// The native object files to link, in compile order.
     pub objects: Vec<PathBuf>,
+    /// The std substrate archive (see `substrate_link::SubstrateArchive`), to
+    /// link after EVERY object — the native_sources C objects included, since
+    /// an archive only resolves references from objects that precede it.
+    pub substrate_archive: Option<PathBuf>,
     /// Whether the ENTRY module was natively compiled.
     ///
     /// `false` means it was embedded as a runtime-JIT fallback, and every

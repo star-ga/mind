@@ -51,6 +51,8 @@ pub(crate) mod build_lock;
 mod compiled_sources;
 mod embedded_entry;
 mod link;
+#[cfg(feature = "mlir-build")]
+mod native_sources;
 #[cfg_attr(not(feature = "mlir-build"), allow(dead_code))]
 mod private_linkage;
 mod runtime_link;
@@ -1030,9 +1032,18 @@ fn build_project_locked_inner(
         });
     }
 
+    // Manifest-declared native C-ABI runtime sources, compiled BEFORE the
+    // `.mind` sources: the names they call feed the internal-linkage plan.
+    #[cfg(feature = "mlir-build")]
+    let native_objects =
+        native_sources::compile(&project_root, supplied_build_inputs, target_config)?;
+    #[cfg(not(feature = "mlir-build"))]
+    let native_objects: Vec<PathBuf> = Vec::new();
+
     // Build each source file and link
     let CompiledSources {
         objects: compiled,
+        substrate_archive,
         entry_native_compiled,
         fallback_sources,
         fallback_reason,
@@ -1044,60 +1055,16 @@ fn build_project_locked_inner(
         opts,
         explicit_sources,
         cc_target_triple,
+        &native_objects,
     )?;
 
-    // Compile any manifest-declared native C-ABI runtime sources
-    // (`[targets.*].native_sources`) and add their objects to the link, so a
-    // project whose `.mind` modules call C-ABI runtime shims (registered in
-    // `STD_SURFACE_INTRINSICS`, lowered to `func.call @__mind_nerve_*`) has
-    // those symbols DEFINED at link time instead of failing native_link and
-    // dropping to a launcher stub. An absent/empty list leaves the object set
-    // unchanged — byte-identical to the historical link (keystone-safe).
-    //
-    // Bound through a cfg-gated shadow so `compiled` stays immutable on the
-    // `--no-default-features` path (no `mlir-build` ⇒ nothing is ever pushed),
-    // where a `mut` binding would be an `unused_mut` under `-D warnings`.
-    #[cfg(feature = "mlir-build")]
-    let compiled = {
-        let mut compiled = compiled;
-        let native_srcs: Vec<PathBuf> = match supplied_build_inputs {
-            Some(inputs) => inputs
-                .native_source_paths()
-                .map(Path::to_path_buf)
-                .collect(),
-            None => target_config
-                .and_then(|cfg| cfg.native_sources.as_deref())
-                .unwrap_or_default()
-                .iter()
-                .map(|rel| project_root.join(rel))
-                .collect(),
-        };
-        if !native_srcs.is_empty() {
-            use crate::eval::mlir_build;
-            let tools = mlir_build::resolve_tools()
-                .map_err(|e| anyhow!("native_sources: MLIR build tools unavailable: {e}"))?;
-            let obj_dir = project_root.join("target").join("obj");
-            fs::create_dir_all(&obj_dir)?;
-            for src in native_srcs {
-                if !src.exists() {
-                    return Err(anyhow!(
-                        "native_sources: declared C source not found: {}",
-                        src.display()
-                    ));
-                }
-                let stem = src
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .ok_or_else(|| anyhow!("native_sources: invalid path {}", src.display()))?;
-                let obj = obj_dir.join(format!("__native_{stem}.o"));
-                mlir_build::compile_native_c_obj(&tools, &src, &obj, None).map_err(|e| {
-                    anyhow!("native_sources: compile failed for {}: {e}", src.display())
-                })?;
-                compiled.push(obj);
-            }
-        }
-        compiled
-    };
+    // Link order: the `.mind` objects, the native objects, then the std
+    // substrate archive after every object that may reference it.
+    let compiled: Vec<PathBuf> = compiled
+        .into_iter()
+        .chain(native_objects)
+        .chain(substrate_archive)
+        .collect();
 
     // Link into final binary.
     //
@@ -1312,41 +1279,44 @@ fn build_cdylib_from_entry(
         target_triple: None,
     };
 
-    // Native cross-module linking: compile any imported self-contained `std`
-    // substrate module to its own object so the consumer's external symbols
-    // (canon_*, ring_*, arena_*, reactor_*) resolve natively in the .so rather
-    // than staying unresolved. Each substrate module imports nothing, so its
-    // object is complete. An empty set leaves the link byte-identical to the
-    // historical single-entry path (the keystone never imports these).
+    // Native cross-module linking: compile every imported `std` substrate
+    // module into one archive so the consumer's external symbols (canon_*,
+    // ring_*, arena_*, reactor_*, …) resolve natively in the .so rather than
+    // staying unresolved. The walk lives in `project::substrate_link`, shared
+    // with the flat `mindc <file> --emit-shared` emitter, and is seeded from
+    // the entry and every project sibling it links: a linked non-entry module
+    // importing a substrate module needs it linked even when the entry never
+    // imports it, while a source the entry does not import is not in the `.so`
+    // and concerns neither the closure nor the linkage plan. The archive is
+    // held here until the link below is done. Empty closure ⇒ byte-identical
+    // single-entry link (keystone-safe). The embedded stdlib exists only under
+    // `cross-module-imports`; without it nothing can import a substrate module.
+    #[cfg(feature = "cross-module-imports")]
+    let substrate = {
+        // A project-supplied `std/<m>.mind` does NOT replace the bundled module
+        // here: siblings are linked by import from the entry, and a `std.*`
+        // import never names a project sibling, so the project's copy would
+        // not be linked and the symbol would stay undefined at `dlopen`.
+        let linked: Vec<&single_file_scope::CapturedSource> =
+            project_scope.linked_sources().collect();
+        let closure = substrate_link::substrate_closure(linked.iter().map(|s| s.source()));
+        let c_abi: std::collections::BTreeSet<String> =
+            opts.manifest_exports.iter().cloned().collect();
+        substrate_link::compile_substrate_objects(
+            &closure,
+            linked.iter().map(|s| (s.path(), s.source())),
+            &private_linkage::LinkSurface::shared_library(&c_abi),
+            target,
+            &tools,
+        )?
+    };
     let extra_objects: Vec<PathBuf> = {
-        // The substrate-object link path below reads the embedded stdlib
-        // sources, which exist only under `cross-module-imports`. Without that
-        // feature (e.g. the keystone's `mlir-build`-only build) nothing can
-        // import a substrate module, so the object set is empty and the link
-        // stays byte-identical to the historical single-entry path.
         #[cfg(feature = "cross-module-imports")]
         {
-            // The substrate walk itself lives in `project::substrate_link` so
-            // the flat `mindc <file> --emit-shared` emitter runs the SAME
-            // closure + object build (it previously had none, which is how a
-            // single-file `std/io_canon.mind` emit shipped an `.so` with an
-            // undefined `sha256`). Seed from the UNION of every project
-            // source's substrate imports, not just the entry: a non-entry
-            // module importing a substrate module needs that module's `.o`
-            // linked even when the entry never imports it. Empty closure ⇒
-            // byte-identical single-entry link (keystone-safe).
-            let texts: Vec<&str> = project_scope
-                .sources()
-                .iter()
-                .map(single_file_scope::CapturedSource::source)
-                .collect();
-            let closure = substrate_link::substrate_closure(texts.iter().copied());
             let obj_dir = output
                 .parent()
                 .map(|p| p.to_path_buf())
                 .unwrap_or_else(|| PathBuf::from("."));
-            let mut objs =
-                substrate_link::compile_substrate_objects(&closure, &obj_dir, target, &tools)?;
             // #302 layer 2 (sibling body linking): compile every NON-entry
             // project sibling module the entry imports (transitively) to its own
             // LIBRARY object (`@main` suppressed) and link it, so a
@@ -1354,9 +1324,16 @@ fn build_cdylib_from_entry(
             // an undefined symbol at `dlopen`. Import-scoped: a build whose entry
             // imports no project sibling (the self-host `.so`) yields an empty
             // set → byte-identical link.
-            let mut sib =
-                compile_project_sibling_objects(&project_scope, &obj_dir, target, &tools)?;
-            objs.append(&mut sib);
+            let mut objs = compile_project_sibling_objects(
+                &project_scope,
+                &obj_dir,
+                target,
+                &tools,
+                Some(&substrate),
+            )?;
+            // The archive goes LAST so a sibling's substrate references pull
+            // their members too.
+            objs.extend(substrate.link_inputs());
             objs
         }
         #[cfg(not(feature = "cross-module-imports"))]
@@ -1368,7 +1345,13 @@ fn build_cdylib_from_entry(
         }
     };
 
-    mlir_build::build_all_with_objects(&mlir.primal_mlir, &tools, &build_opts, &extra_objects)
+    // The entry's own non-`pub` fns that collide with (or are referenced by)
+    // a linked std module get internal linkage, as on the executable path.
+    #[cfg(feature = "cross-module-imports")]
+    let entry_mlir = substrate.apply_linkage(project_scope.entry(), &mlir.primal_mlir);
+    #[cfg(not(feature = "cross-module-imports"))]
+    let entry_mlir = mlir.primal_mlir.clone();
+    mlir_build::build_all_with_objects(&entry_mlir, &tools, &build_opts, &extra_objects)
         .map_err(|e| anyhow!("cdylib link failed: {e}"))?;
     #[cfg(feature = "compile-timings")]
     {
@@ -1399,6 +1382,7 @@ pub fn compile_project_sibling_objects(
     obj_dir: &Path,
     target: crate::runtime::types::BackendTarget,
     tools: &crate::eval::mlir_build::BuildTools,
+    linkage: Option<&substrate_link::SubstrateArchive>,
 ) -> Result<Vec<PathBuf>> {
     use crate::eval::mlir_build;
     use crate::pipeline::{CompileOptions, compile_source_with_name, lower_to_mlir_with_entry};
@@ -1458,8 +1442,14 @@ pub fn compile_project_sibling_objects(
             },
         );
         let obj_path = obj_dir.join(format!("{object_key}.o"));
+        // The sibling's non-`pub` fns that collide with (or are referenced by)
+        // a linked std module get internal linkage, as the entry's do.
+        let mlir = match linkage {
+            Some(linkage) => linkage.apply_linkage(src_path, &sub_mlir.primal_mlir),
+            None => sub_mlir.primal_mlir.clone(),
+        };
         let sub_bo = mlir_build::BuildOptions {
-            preset: mlir_build::preset_for_mlir(&sub_mlir.primal_mlir),
+            preset: mlir_build::preset_for_mlir(&mlir),
             emit_mlir_file: None,
             emit_llvm_file: None,
             emit_obj_file: Some(&obj_path),
@@ -1467,7 +1457,7 @@ pub fn compile_project_sibling_objects(
             opt_pipeline: None,
             target_triple: None,
         };
-        mlir_build::build_all(&sub_mlir.primal_mlir, tools, &sub_bo)
+        mlir_build::build_all(&mlir, tools, &sub_bo)
             .map_err(|e| anyhow!("sibling object build for {}: {e}", source.module_path()))?;
         objs.push(obj_path);
     }
@@ -1509,6 +1499,7 @@ fn build_cdylib_from_entry(
 /// stem-named objects byte-unchanged (self-host + std depend on it).
 ///
 /// Every member of the result is documented once, on [`CompiledSources`].
+#[allow(clippy::too_many_arguments)]
 fn compile_sources(
     project_root: &Path,
     snapshot: &source_snapshot::SourceSnapshot,
@@ -1517,6 +1508,7 @@ fn compile_sources(
     opts: &BuildOptions,
     explicit_sources: bool,
     cc_target_triple: Option<&str>,
+    native_objects: &[PathBuf],
 ) -> Result<CompiledSources> {
     let obj_dir = project_root.join("target").join("obj");
     fs::create_dir_all(&obj_dir)?;
@@ -1653,9 +1645,44 @@ fn compile_sources(
         _table_guard: project_table_guard,
     };
 
+    #[cfg(feature = "cross-module-imports")]
+    let module_root: &Path = if explicit_sources {
+        project_root
+    } else {
+        entry_path.parent().unwrap_or(project_root)
+    };
+    // Every std substrate module any project source imports (and the ones those
+    // import), minus a module the project supplies itself: the user's
+    // `std.<m>` source shadows the bundled one, as it does in the module table.
+    #[cfg(all(feature = "cross-module-imports", feature = "mlir-build"))]
+    let substrate_closure = {
+        let mut closure = substrate_link::substrate_closure(snapshot.iter().map(|(_, t)| t));
+        let own: Vec<String> = snapshot
+            .iter()
+            .map(|(p, _)| crate::project::module_table::module_path_of(p, module_root))
+            .collect();
+        substrate_link::drop_project_supplied(&mut closure, own.iter().map(String::as_str));
+        closure
+    };
     // Non-`pub` fns whose names collide across modules get internal linkage
-    // (see `private_linkage`); empty for every project that links today.
-    let linkage_plan = private_linkage::plan(snapshot.iter());
+    // (see `private_linkage`); the linked std modules take part, so a project
+    // helper sharing a name with one of theirs does not break the link, and a
+    // name the native objects call stays global. An executable exports nothing,
+    // so `[exports]` and `export { … }` lists play no part. Empty for every
+    // project that links today.
+    #[cfg(feature = "mlir-build")]
+    let native_refs = private_linkage::native_undefined(native_objects);
+    #[cfg(not(feature = "mlir-build"))]
+    let native_refs = {
+        // Native objects are only compiled under `mlir-build`.
+        let _ = native_objects;
+        Some(std::collections::BTreeSet::new())
+    };
+    let link = private_linkage::LinkSurface::executable(native_refs.as_ref());
+    #[cfg(all(feature = "cross-module-imports", feature = "mlir-build"))]
+    let linkage_plan = substrate_link::linkage_plan(snapshot.iter(), &substrate_closure, &link);
+    #[cfg(not(all(feature = "cross-module-imports", feature = "mlir-build")))]
+    let linkage_plan = private_linkage::plan(snapshot.iter(), &link);
     let mut objects = Vec::new();
     // Tracks whether the manifest ENTRY module lowered to a real native object.
     // Stays `true` for a project with no discoverable entry among `sources`
@@ -1671,13 +1698,6 @@ fn compile_sources(
     // only site that knows the answer, and threaded out — never re-derived at
     // the refusal, which would be a second implementation of the same rule.
     let mut fallback_reason: Option<FallbackReason> = None;
-
-    #[cfg(feature = "cross-module-imports")]
-    let module_root: &Path = if explicit_sources {
-        project_root
-    } else {
-        entry_path.parent().unwrap_or(project_root)
-    };
 
     for (source, source_code) in snapshot.iter() {
         // Object filename. The walk/default case keeps the historical
@@ -1759,17 +1779,21 @@ fn compile_sources(
     // runs before the project-table teardown so the substrate compiles still see
     // the seeded stdlib table. Mirrors `build_cdylib_from_entry`'s extra-objects
     // scan, but emits relocatable objects for the executable link path.
+    // Seeded from EVERY project source, not just the entry: a non-entry
+    // module importing a substrate module (e.g. `src/ir.mind` doing
+    // `import std.sha256; sha256.hash(x)`) needs that module linked even when
+    // the entry itself never imports it. Returned apart from `objects` so the
+    // link puts it after every object.
     #[cfg(all(feature = "cross-module-imports", feature = "mlir-build"))]
-    {
-        // Seed the substrate BFS from EVERY project source, not just the entry:
-        // a non-entry module importing a substrate module (e.g. `src/ir.mind`
-        // doing `import std.sha256; sha256.hash(x)`) needs that module's `.o`
-        // linked even when the entry itself never imports it.
-        let source_texts: Vec<String> = snapshot.iter().map(|(_, text)| text.to_string()).collect();
-        let mut subs =
-            compile_substrate_objects(&source_texts, &obj_dir, backend, opts, cc_target_triple)?;
-        objects.append(&mut subs);
-    }
+    let substrate_archive = compile_substrate_objects(
+        &substrate_closure,
+        &linkage_plan,
+        &obj_dir,
+        backend,
+        cc_target_triple,
+    )?;
+    #[cfg(not(all(feature = "cross-module-imports", feature = "mlir-build")))]
+    let substrate_archive = None;
 
     // Teardown of the seeded project-resolution state is handled by
     // `_project_guard` (Drop) so it runs on every return path — including the
@@ -1777,98 +1801,41 @@ fn compile_sources(
 
     Ok(CompiledSources {
         objects,
+        substrate_archive,
         entry_native_compiled,
         fallback_sources,
         fallback_reason,
     })
 }
 
-/// Compile every `std` substrate module transitively imported by ANY project
-/// source to its own native relocatable LIBRARY object (no `@main`), returning
-/// the object paths to link alongside the per-file objects.
+/// Compile every `std` substrate module in `closure` (see `compile_sources`) to
+/// its own native relocatable LIBRARY object (no `@main`) and pack them into one
+/// archive, returning its path to link after the per-file objects (`None` when
+/// the closure is empty).
 ///
-/// This is the executable-path counterpart to the substrate-object scan in
-/// [`build_cdylib_from_entry`]: it BFS-walks the substrate import graph (an
-/// entry importing `std.io_canon`, which itself imports `std.sha256`, pulls
-/// both), compiles each self-contained substrate module through the SAME rich
-/// canonical emitter, and lowers it with `suppress_module_entry = true` so the
-/// object exports its `pub fn` symbols globally but emits NO synthetic `@main`
-/// (a pure library object — no `objcopy` symbol-localisation needed).
-///
-/// The BFS seed is the UNION of the substrate imports of EVERY project source,
-/// not just the entry: a non-entry module (e.g. `src/ir.mind` doing
-/// `import std.sha256; sha256.hash(x)`) whose module-qualified call the parser
-/// rewrites to a bare `hash`/`sha256` symbol needs `__std_sha256.o` linked even
-/// when the entry never imports `std.sha256`. Seeding from the entry alone left
-/// that symbol undefined at native link. When NO project source imports any
-/// substrate module the seed set is empty and the executable link stays
-/// byte-identical to the historical single-object path (the keystone imports no
-/// substrate module in any of its sources).
+/// This is the executable-path counterpart to
+/// [`substrate_link::compile_substrate_objects`]: it compiles each substrate
+/// module through the SAME rich canonical emitter and lowers it with
+/// `suppress_module_entry = true`, so the object exports its `pub fn` symbols
+/// but emits NO synthetic `@main` (no `objcopy` localisation needed). The
+/// planned colliding non-`pub` fns get internal linkage, as the project's own
+/// objects do. When NO project source imports a substrate module the closure is
+/// empty and the executable link stays byte-identical to the historical
+/// single-object path (the keystone imports no substrate module).
 #[cfg(all(feature = "cross-module-imports", feature = "mlir-build"))]
 fn compile_substrate_objects(
-    source_texts: &[String],
+    closure: &std::collections::BTreeSet<&'static str>,
+    linkage_plan: &private_linkage::LinkagePlan,
     obj_dir: &Path,
     backend: &str,
-    opts: &BuildOptions,
     cc_target_triple: Option<&str>,
-) -> Result<Vec<PathBuf>> {
+) -> Result<Option<PathBuf>> {
     use crate::eval::mlir_build;
     use crate::pipeline::{CompileOptions, compile_source_with_name};
     use crate::runtime::types::BackendTarget;
-    use std::collections::BTreeSet;
 
-    // Substrate modules whose `.o` we compile + link when imported. These are
-    // self-contained (they import nothing outside this set), so each object is
-    // complete on its own.
-    const SUBSTRATE: &[&str] = &[
-        "std.arena",
-        "std.io_canon",
-        "std.iouring",
-        "std.reactor",
-        "std.ring",
-        "std.sha256",
-        "std.time",
-    ];
-    fn scan_substrate_imports(src: &str) -> Vec<&'static str> {
-        let mut found = Vec::new();
-        if let Ok(ast) = crate::parser::parse(src) {
-            for item in &ast.items {
-                if let crate::ast::Node::Import { path, .. } = item {
-                    let key = path.join(".");
-                    for &name in SUBSTRATE {
-                        if key == name {
-                            found.push(name);
-                        }
-                    }
-                }
-            }
-        }
-        found
-    }
-
-    // BFS the substrate import graph (union of every project source's substrate
-    // imports + their transitive substrate deps).
-    let mut imported: BTreeSet<&'static str> = BTreeSet::new();
-    let mut worklist: Vec<&'static str> = Vec::new();
-    for text in source_texts {
-        worklist.extend(scan_substrate_imports(text));
-    }
-    while let Some(modname) = worklist.pop() {
-        if imported.insert(modname) {
-            if let Some((_, src)) = crate::project::stdlib::STDLIB_MIND_SOURCES
-                .iter()
-                .find(|(n, _)| *n == modname)
-            {
-                for dep in scan_substrate_imports(src) {
-                    if !imported.contains(dep) {
-                        worklist.push(dep);
-                    }
-                }
-            }
-        }
-    }
-    if imported.is_empty() {
-        return Ok(Vec::new());
+    if closure.is_empty() {
+        return Ok(None);
     }
 
     let target = match backend {
@@ -1889,10 +1856,11 @@ fn compile_substrate_objects(
 
     let tools =
         mlir_build::resolve_tools().map_err(|e| anyhow!("MLIR build tools unavailable: {e}"))?;
-    let _ = opts;
 
+    // Std resolves against std alone, never the project's own names.
+    let _std_scope = substrate_link::std_only_scope();
     let mut objs: Vec<PathBuf> = Vec::new();
-    for modname in imported {
+    for &modname in closure {
         if let Some((_, src)) = crate::project::stdlib::STDLIB_MIND_SOURCES
             .iter()
             .find(|(n, _)| *n == modname)
@@ -1918,10 +1886,14 @@ fn compile_substrate_objects(
             #[cfg(not(feature = "autodiff"))]
             let sub_mlir = crate::pipeline::lower_to_mlir_with_entry(&prod.ir, true)
                 .map_err(|e| anyhow!("substrate MLIR lowering for {modname}: {e}"))?;
+            let mlir = {
+                let _linkage = private_linkage::install(linkage_plan.get(Path::new(modname)));
+                private_linkage::apply(&sub_mlir.primal_mlir)
+            };
             let short = modname.rsplit('.').next().unwrap_or(modname);
             let obj_path = obj_dir.join(format!("__std_{short}.o"));
             let sub_bo = mlir_build::BuildOptions {
-                preset: mlir_build::preset_for_mlir(&sub_mlir.primal_mlir),
+                preset: mlir_build::preset_for_mlir(&mlir),
                 emit_mlir_file: None,
                 emit_llvm_file: None,
                 emit_obj_file: Some(&obj_path),
@@ -1929,12 +1901,17 @@ fn compile_substrate_objects(
                 opt_pipeline: None,
                 target_triple: cc_target_triple,
             };
-            mlir_build::build_all(&sub_mlir.primal_mlir, &tools, &sub_bo)
+            mlir_build::build_all(&mlir, &tools, &sub_bo)
                 .map_err(|e| anyhow!("substrate object build for {modname}: {e}"))?;
             objs.push(obj_path);
         }
     }
-    Ok(objs)
+    // One archive, so the link pulls a module only when something references
+    // it (see `substrate_link::SubstrateArchive`). `target/obj` is private to
+    // this project build, which holds the project's build lock.
+    let archive = obj_dir.join("libmind_std_substrate.a");
+    substrate_link::pack_archive(&objs, &archive, &tools)?;
+    Ok(Some(archive))
 }
 
 /// Build whole-project metadata, then replace its legacy enum-name maps with

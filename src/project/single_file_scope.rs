@@ -207,7 +207,7 @@ impl ProjectTableGuard {
         }
     }
 
-    fn install_with_enums(
+    pub(crate) fn install_with_enums(
         table: super::module_table::ModuleTable,
         enums: crate::ir::GlobalEnums,
     ) -> Self {

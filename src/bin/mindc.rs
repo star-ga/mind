@@ -3004,44 +3004,67 @@ fn emit_shared_if_requested(
         target_triple: None,
     };
 
-    // Cross-module substrate objects. Fail-loud: a substrate module that will
-    // not compile must abort the build, never yield an `.so` whose symbol is
-    // still undefined at `dlopen`.
+    // The cross-module substrate archive, seeded and planned over the entry
+    // and the project siblings it links (the scope's entry comes first). Held
+    // until the link below is done, and dropped before any failing exit (an
+    // exit skips destructors and would leave its private directory behind).
+    // Fail-loud: a module that will not compile must abort the build, never
+    // yield an `.so` whose symbol is still undefined at `dlopen`.
     #[cfg(feature = "cross-module-imports")]
-    let extra_objects: Vec<std::path::PathBuf> = {
+    let substrate = {
+        let linked_siblings: Vec<(&Path, &str)> = project_scope
+            .map(|scope| {
+                scope
+                    .linked_sources()
+                    .skip(1)
+                    .map(|s| (s.path(), s.source()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        match libmind::project::substrate_link::substrate_objects_for_entry(
+            source,
+            &linked_siblings,
+            libmind::runtime::types::BackendTarget::Cpu,
+            &tools,
+        ) {
+            Ok(archive) => archive,
+            Err(err) => {
+                eprintln!("error[build]: {err}");
+                process::exit(1);
+            }
+        }
+    };
+    // Project sibling objects, with the archive's internal-linkage plan.
+    #[cfg(feature = "cross-module-imports")]
+    let mut extra_objects: Vec<std::path::PathBuf> = {
         let obj_dir = Path::new(shared_path)
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| std::path::PathBuf::from("."));
-        let mut objects = match libmind::project::substrate_link::substrate_objects_for_entry(
-            source,
-            &obj_dir,
-            libmind::runtime::types::BackendTarget::Cpu,
-            &tools,
-        ) {
-            Ok(objs) => objs,
-            Err(err) => {
-                eprintln!("error[build]: {err}");
-                process::exit(1);
-            }
-        };
+        let mut objects = Vec::new();
         if let Some(scope) = project_scope {
             match libmind::project::compile_project_sibling_objects(
                 scope,
                 &obj_dir,
                 libmind::runtime::types::BackendTarget::Cpu,
                 &tools,
+                Some(&substrate),
             ) {
                 Ok(mut siblings) => objects.append(&mut siblings),
                 Err(err) => {
                     eprintln!("error[build]: {err}");
+                    drop(substrate);
                     process::exit(1);
                 }
             }
         }
         objects
     };
+    // The archive goes LAST so a sibling's substrate references pull their
+    // members too.
+    #[cfg(feature = "cross-module-imports")]
+    extra_objects.extend(substrate.link_inputs());
     #[cfg(not(feature = "cross-module-imports"))]
     let extra_objects: Vec<std::path::PathBuf> = {
         // No embedded stdlib without `cross-module-imports`, so no substrate
@@ -3051,12 +3074,26 @@ fn emit_shared_if_requested(
         Vec::new()
     };
 
-    match libmind::eval::mlir_build::build_all_with_objects(
+    // The entry's own non-`pub` fns that collide with (or are referenced by)
+    // a linked std module get internal linkage.
+    #[cfg(feature = "cross-module-imports")]
+    let entry_mlir = substrate.apply_linkage(
+        Path::new(libmind::project::substrate_link::ENTRY_KEY),
         &mlir.primal_mlir,
+    );
+    #[cfg(not(feature = "cross-module-imports"))]
+    let entry_mlir = mlir.primal_mlir.clone();
+    let linked = libmind::eval::mlir_build::build_all_with_objects(
+        &entry_mlir,
         &tools,
         &opts,
         &extra_objects,
-    ) {
+    );
+    // Remove the private substrate directory before a failing exit, which
+    // would otherwise skip its destructor and leave it behind.
+    #[cfg(feature = "cross-module-imports")]
+    drop(substrate);
+    match linked {
         Ok(_) => {
             eprintln!("Wrote shared library: {}", shared_path);
         }
