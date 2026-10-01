@@ -18,6 +18,7 @@
 //!
 //! Public entry point: [`run_check`].
 
+mod early_failure;
 pub mod gitignore;
 pub mod reporter;
 
@@ -191,8 +192,8 @@ pub fn run_check(opts: &CheckOptions) -> i32 {
     let files = match resolve_paths(&opts.paths, &config) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("error[check]: {e}");
-            return 1;
+            let first = opts.paths.first().map(Path::new);
+            return early_failure::report(opts.reporter, first, &format!("error[check]: {e}"));
         }
     };
 
@@ -207,8 +208,8 @@ pub fn run_check(opts: &CheckOptions) -> i32 {
     let captured = match capture_sources(&files) {
         Ok(captured) => captured,
         Err(err) => {
-            eprintln!("error[check]: {err}");
-            return 1;
+            let first = files.first().map(PathBuf::as_path);
+            return early_failure::report(opts.reporter, first, &format!("error[check]: {err}"));
         }
     };
 
@@ -216,8 +217,8 @@ pub fn run_check(opts: &CheckOptions) -> i32 {
     let _project_guard = match crate::project::single_file_scope::install_for_check(&captured) {
         Ok(guard) => guard,
         Err(err) => {
-            eprintln!("{err}");
-            return 1;
+            let first = captured.first().map(|(path, _)| path.as_path());
+            return early_failure::report(opts.reporter, first, &err.to_string());
         }
     };
 
