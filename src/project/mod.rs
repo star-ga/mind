@@ -51,6 +51,8 @@ pub(crate) mod build_lock;
 mod compiled_sources;
 mod embedded_entry;
 mod link;
+#[cfg_attr(not(feature = "mlir-build"), allow(dead_code))]
+mod private_linkage;
 mod runtime_link;
 #[cfg(feature = "cross-module-imports")]
 pub mod single_file_scope;
@@ -1651,6 +1653,9 @@ fn compile_sources(
         _table_guard: project_table_guard,
     };
 
+    // Non-`pub` fns whose names collide across modules get internal linkage
+    // (see `private_linkage`); empty for every project that links today.
+    let linkage_plan = private_linkage::plan(snapshot.iter());
     let mut objects = Vec::new();
     // Tracks whether the manifest ENTRY module lowered to a real native object.
     // Stays `true` for a project with no discoverable entry among `sources`
@@ -1717,6 +1722,7 @@ fn compile_sources(
             crate::project::module_table::module_path_of(source, module_root),
         );
 
+        let _linkage_guard = private_linkage::install(linkage_plan.get(source));
         // Compile with appropriate mode
         let outcome = compile_single_source(
             source,
@@ -2361,7 +2367,7 @@ fn compile_single_source(
                 let mlir_products =
                     crate::pipeline::lower_to_mlir_with_entry(&products.ir, !is_entry)
                         .map_err(|e| anyhow!("MLIR lowering failed: {e}"))?;
-                let mlir = mlir_products.primal_mlir;
+                let mlir = private_linkage::apply(&mlir_products.primal_mlir);
 
                 let build_opts = mlir_build::BuildOptions {
                     preset: mlir_build::preset_for_mlir(&mlir),

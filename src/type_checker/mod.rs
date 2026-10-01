@@ -24,7 +24,7 @@ mod duplicate_structs;
 #[cfg(feature = "std-surface")]
 pub(crate) mod lowering_refusals;
 pub mod nerve_lint;
-mod nerve_walk;
+pub(crate) mod nerve_walk;
 mod qualified_enums;
 mod qualified_imports;
 mod return_checks;

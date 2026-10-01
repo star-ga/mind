@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1873 | **Est. tokens:** ~3,670,117
-**Generated:** 2026-10-01 06:11 UTC
+**Files:** 1875 | **Est. tokens:** ~3,673,834
+**Generated:** 2026-10-01 06:21 UTC
 
 ## Token Budget Guide
 
@@ -137,7 +137,7 @@
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 5 | ~26,479 |
 | `src/phf/` | 1 | ~4,955 |
-| `src/project/` | 18 | ~59,056 |
+| `src/project/` | 19 | ~61,957 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -147,7 +147,7 @@
 | `src/types/` | 10 | ~20,740 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 405 | ~829,446 |
+| `tests/` | 406 | ~830,262 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -1439,6 +1439,7 @@
 - `identity.rs` (~1719 tok, huge) — Copyright 2026 STARGA Inc.
 - `link.rs` (~2598 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `module_table.rs` (~7745 tok, huge) — Copyright 2025 STARGA Inc.
+- `private_linkage.rs` (~2901 tok, huge) — Copyright 2026 STARGA Inc.
 - `runtime_link.rs` (~1621 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `single_file_scope.rs` (~6601 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `source_snapshot.rs` (~608 tok, large) — Copyright 2025-2026 STARGA Inc.
@@ -2241,6 +2242,7 @@
 - `phase_g_keystone_bootstrap.rs` (~7667 tok, huge) — Copyright 2025 STARGA Inc.
 - `pipeline.rs` (~1476 tok, large) — Copyright 2025 STARGA Inc.
 - `pqc_hybrid_cli_signing.rs` (~7885 tok, huge) — End-to-end CLI controls for post-quantum hybrid artifact signing.
+- `private_fn_link_collision_run.rs` (~816 tok, large) — Copyright 2026 STARGA Inc.
 - `project_function_resolution.rs` (~1475 tok, large) — Copyright 2026 STARGA Inc.
 - `public_cpu_native_link.rs` (~1528 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `qualified_enum_run.rs` (~3922 tok, huge) — Copyright 2025 STARGA Inc.
