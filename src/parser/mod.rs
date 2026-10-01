@@ -29,6 +29,7 @@ use crate::types::ConvPadding;
 mod eval_imports;
 pub(crate) use eval_imports::parse_with_imports;
 pub(crate) mod expand_bimap;
+mod spelling;
 mod trivia;
 pub(crate) use eval_imports::{EvalImportRef, EvalImportRefKind, EvalParsedModule};
 pub use trivia::{Trivia, TriviaKind, TriviaStream};
@@ -84,6 +85,8 @@ impl std::fmt::Display for ParseError {
 pub(crate) struct P<'a> {
     b: &'a [u8],
     pos: usize,
+    /// Surface spellings the desugars drop, handed to the formatter via `Module::spelling`.
+    spelling: crate::ast::SourceSpelling,
     /// Last segments imported as module qualifiers. Kept linear because import
     /// lists are tiny and this avoids a hasher on the parser hot path.
     imports: Vec<String>,
@@ -291,6 +294,7 @@ impl<'a> P<'a> {
     /// empty for single-file parses.
     fn new(src: &'a str) -> Self {
         Self {
+            spelling: crate::ast::SourceSpelling::default(),
             b: src.as_bytes(),
             pos: 0,
             imports: Vec::new(),
@@ -1312,7 +1316,8 @@ impl<'a> P<'a> {
                 self.skip_ws();
             }
         }
-        Ok(Module { items })
+        let spelling = std::mem::take(&mut self.spelling);
+        Ok(Module { items, spelling })
     }
 
     fn parse_fn_body_stmts(&mut self) -> Result<Vec<Node>, ParseError> {
@@ -1612,24 +1617,11 @@ impl<'a> P<'a> {
                 .ok_or_else(|| self.err("expected module name after '.'".into()))?;
             path.push(part.to_string());
         }
-        self.skip_ws();
+        let alias = self.parse_optional_as_alias()?;
         self.eat(b';'); // optional semicolon
-        // Record the qualifier (last path segment) so a later `mod.fn(args)`
-        // call desugars to the bare cross-module `fn(args)`.
-        if let Some(last) = path.last() {
-            if !self.imports.iter().any(|s| s == last) {
-                self.imports.push(last.clone());
-            }
-        }
-        // A multi-segment import ALSO records its full dotted path so a call
-        // spelled through the whole path (`bridge.mcp.call(x)`) desugars the
-        // same way as the qualifier form (`mcp.call(x)`).
-        let dotted = path.join(".");
-        if !self.import_paths.iter().any(|s| s == &dotted) {
-            self.import_paths.push(dotted);
-        }
+        self.register_import_qualifier(&path, alias.as_deref());
         let span = Span::new(start, self.pos);
-        Ok(Node::Import { path, span })
+        Ok(Node::Import { path, alias, span })
     }
 
     fn parse_use(&mut self) -> Result<Node, ParseError> {
@@ -1666,20 +1658,11 @@ impl<'a> P<'a> {
                 break;
             }
         }
-        self.skip_ws();
+        let alias = self.parse_optional_as_alias()?;
         self.eat(b';'); // optional semicolon
-        if let Some(last) = path.last() {
-            if !self.imports.iter().any(|s| s == last) {
-                self.imports.push(last.clone());
-            }
-        }
-        // Full-dotted-path twin of the qualifier record — see parse_import.
-        let dotted = path.join(".");
-        if !self.import_paths.iter().any(|s| s == &dotted) {
-            self.import_paths.push(dotted);
-        }
+        self.register_import_qualifier(&path, alias.as_deref());
         let span = Span::new(start, self.pos);
-        Ok(Node::Import { path, span })
+        Ok(Node::Import { path, alias, span })
     }
 
     // ── Phase 10.5 Tier-1 / Tier-2 declarations ──────────────────────
@@ -1915,12 +1898,12 @@ impl<'a> P<'a> {
     /// Per architect review: no AST module-decl node; pure unwrap.
     fn parse_module_block(
         &mut self,
-        _attrs: Vec<crate::ast::Attribute>,
+        attrs: Vec<crate::ast::Attribute>,
     ) -> Result<Node, ParseError> {
         let start = self.pos;
         self.pos += 6; // "module"
         self.skip_ws();
-        let _name = self
+        let mut path = self
             .word()
             .ok_or_else(|| self.err("expected module name".into()))?
             .to_string();
@@ -1931,8 +1914,10 @@ impl<'a> P<'a> {
         // consume it. (Keystone has no dotted module decls → byte-identical.)
         while self.at(b'.') {
             self.pos += 1; // '.'
-            self.word()
+            let seg = self
+                .word()
                 .ok_or_else(|| self.err("expected module path segment after `.`".into()))?;
+            path = format!("{path}.{seg}"); // reassembled for the formatter, not just consumed
         }
         self.skip_ws_and_newlines();
         if !self.eat(b'{') {
@@ -1944,6 +1929,7 @@ impl<'a> P<'a> {
             // file-level module decls, so this branch never fires there → the
             // bootstrap fixed point is byte-identical.)
             let span = Span::new(start, self.pos);
+            self.record_module_header(span, path, attrs);
             return Ok(Node::Block {
                 stmts: Vec::new(),
                 span,
@@ -1964,6 +1950,7 @@ impl<'a> P<'a> {
             return Err(self.err("expected `}` to close module".into()));
         }
         let span = Span::new(start, self.pos);
+        self.record_module_header(span, path, attrs);
         // Wrap the items in a Block node; downstream module walker treats
         // a top-level Block as transparent (a do-nothing item list).
         Ok(Node::Block { stmts, span })
@@ -1980,6 +1967,7 @@ impl<'a> P<'a> {
         self.pos += 6; // "export"
         self.skip_ws();
         let mut names = Vec::new();
+        let mut category: Option<String> = None;
         if self.eat(b'{') {
             self.skip_ws_and_newlines();
             while !self.at(b'}') && !self.at_end() {
@@ -2000,11 +1988,11 @@ impl<'a> P<'a> {
                 return Err(self.err("expected `}` to close export list".into()));
             }
         } else {
-            // Optional category keyword: const | type | fn | struct | enum
-            // The category is recorded as a synthetic prefix (currently dropped).
+            // Optional category keyword: const | type | fn | struct | enum, kept for the printer.
             for kw in ["const", "type", "fn", "struct", "enum"] {
                 if self.at_keyword(kw.as_bytes()) {
                     self.pos += kw.len();
+                    category = Some((*kw).to_string());
                     self.skip_ws();
                     break;
                 }
@@ -2023,7 +2011,11 @@ impl<'a> P<'a> {
         self.skip_ws();
         self.eat(b';');
         let span = Span::new(start, self.pos);
-        Ok(Node::Export { names, span })
+        Ok(Node::Export {
+            names,
+            category,
+            span,
+        })
     }
 
     /// Parse `invariant NAME { ... }` — a governance/DIFC contract declaration.
@@ -4048,7 +4040,10 @@ impl<'a> P<'a> {
                         // type-check via reduce_shape and lower to the reduction
                         // IR). `sum`/`mean` are reserved as zero-arg reduction
                         // methods; axis-specified and `.max` are future work.
-                        if args.is_empty() && (method == "sum" || method == "mean") {
+                        if !self.is_import_qualifier(&node)
+                            && args.is_empty()
+                            && (method == "sum" || method == "mean")
+                        {
                             let x = Box::new(node);
                             node = if method == "sum" {
                                 Node::CallTensorSum {
@@ -4078,6 +4073,7 @@ impl<'a> P<'a> {
                                         EvalImportRefKind::Call,
                                     );
                                 }
+                                self.record_qualifier(span, recv_name);
                                 node = Node::Call {
                                     callee: method,
                                     args,
@@ -4111,6 +4107,7 @@ impl<'a> P<'a> {
                                             EvalImportRefKind::Call,
                                         );
                                     }
+                                    self.record_qualifier(span, &dotted);
                                     node = Node::Call {
                                         callee: method,
                                         args,
@@ -4152,6 +4149,7 @@ impl<'a> P<'a> {
                                         EvalImportRefKind::Value,
                                     );
                                 }
+                                self.record_qualifier(span, recv_name);
                                 node = Node::Lit(Literal::Ident(method), span);
                                 continue;
                             }
@@ -4695,6 +4693,8 @@ impl<'a> P<'a> {
                 // so this path never fires for the keystone self-compile.
                 if ident == "true" || ident == "false" {
                     let span = Span::new(start, self.pos);
+                    // Value stays an integer; the spelling is for fmt (`ast::SourceSpelling`).
+                    self.spelling.bool_literals.push((span, ident == "true"));
                     let v = if ident == "true" { 1 } else { 0 };
                     return Ok(Node::Lit(Literal::Int(v), span));
                 }

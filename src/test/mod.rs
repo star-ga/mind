@@ -519,6 +519,7 @@ fn eval_test_fn(entry: &TestEntry, support: Option<&EvalSupport>) -> Result<(), 
     });
     let synthetic_module = Module {
         items: synthetic_items,
+        spelling: Default::default(),
     };
 
     // Assertion checking is ON for exactly this evaluation. The guard drops on

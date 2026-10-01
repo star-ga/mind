@@ -306,6 +306,7 @@ fn typecheck_accepts_fn_ptr_in_extern_signature() {
             fns: vec![efn],
             span: sp(),
         }],
+        ..Default::default()
     };
     let diags = check_module_types_in_file(&module, "", None, &TypeEnv::default());
     assert!(

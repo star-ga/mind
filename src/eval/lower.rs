@@ -12733,11 +12733,10 @@ mod undefined_ident_tests {
     #[test]
     #[should_panic(expected = "undefined identifier")]
     fn undefined_identifier_panics_instead_of_const_zero() {
+        let item = ast::Node::Lit(Literal::Ident("nope".to_string()), ast::Span::new(0, 0));
         let module = ast::Module {
-            items: vec![ast::Node::Lit(
-                Literal::Ident("nope".to_string()),
-                ast::Span::new(0, 0),
-            )],
+            items: vec![item],
+            ..Default::default()
         };
         let _ = lower_to_ir(&module);
     }

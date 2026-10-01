@@ -14,6 +14,8 @@
 
 use crate::types::ConvPadding;
 use crate::types::ShapeDim;
+mod spelling;
+pub use spelling::SourceSpelling;
 
 /// Storage layout for a sparse tensor.
 ///
@@ -558,6 +560,9 @@ pub enum Node {
     /// Import statement: `import std.io;`
     Import {
         path: Vec<String>,
+        /// The `as NAME` rename (`use app_config as config`). Call sites qualify through it,
+        /// and the formatter prints it back; see `ast::SourceSpelling` for the field-vs-variant rule.
+        alias: Option<String>,
         span: Span,
     },
     /// Array literal: `[1.0, 2.0, 3.0]`
@@ -703,6 +708,9 @@ pub enum Node {
     /// Phase 10.5 Tier-1.
     Export {
         names: Vec<String>,
+        /// The category keyword in `export <const|type|fn|struct|enum> a, b`, when written,
+        /// so the formatter does not print `export struct S` back as `export { S }`.
+        category: Option<String>,
         span: Span,
     },
     /// Struct declaration: `struct Name { f: T, g: U }`
@@ -1158,4 +1166,6 @@ impl Node {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Module {
     pub items: Vec<Node>,
+    /// Formatter-only record of spellings the desugars dropped. See [`SourceSpelling`].
+    pub spelling: SourceSpelling,
 }

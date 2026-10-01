@@ -25,6 +25,8 @@ use crate::ast::{
 use crate::parser::{TriviaKind, TriviaStream};
 use crate::project::MindcraftFormatConfig;
 
+mod spelling;
+
 // ---------------------------------------------------------------------------
 // Line-number index
 // ---------------------------------------------------------------------------
@@ -116,6 +118,8 @@ struct Printer<'a> {
     stripped_idx: LineIndex,
     /// Last trivia line we've already consumed, to avoid double-emit.
     last_trivia_line: usize,
+    /// Spellings the parser's desugars dropped (see `ast::SourceSpelling`).
+    spelling: spelling::SpellingTables,
 }
 
 impl<'a> Printer<'a> {
@@ -127,6 +131,7 @@ impl<'a> Printer<'a> {
             trivia: trivia_map,
             stripped_idx: LineIndex::build(stripped_src),
             last_trivia_line: 0,
+            spelling: Default::default(),
         }
     }
 
@@ -191,6 +196,7 @@ pub fn print_module(
 
     let trivia_map = TriviaMap::build(trivia, orig_src);
     let mut p = Printer::new(cfg, trivia_map, &stripped);
+    p.spelling = spelling::SpellingTables::from_module(module);
 
     // Emit the file-top copyright/license header (trivia before line 0 or any
     // comment group that precedes the first item).
@@ -213,8 +219,10 @@ pub fn print_module(
         // emitting blank separators between items and between comment groups.
         p.emit_leading_trivia(item_line);
 
-        // Emit the item itself.
-        emit_node(&mut p, item, 0);
+        // Emit the item itself (a `module NAME { … }` wrapper is a recorded transparent block).
+        if !spelling::emit_module_wrapper(&mut p, module, item) {
+            emit_node(&mut p, item, 0);
+        }
         p.push("\n");
 
         // After the last item, flush any trailing trivia (comments that
@@ -341,12 +349,7 @@ fn emit_node(p: &mut Printer, node: &Node, _extra_indent: usize) {
         } => {
             emit_type_alias(p, name, target, attrs);
         }
-        Node::Import { path, .. } => {
-            emit_import(p, path);
-        }
-        Node::Export { names, .. } => {
-            emit_export(p, names);
-        }
+        Node::Import { .. } | Node::Export { .. } => spelling::emit_import_export(p, node),
         Node::Let {
             name,
             mutable,
@@ -645,22 +648,6 @@ fn emit_type_alias(p: &mut Printer, name: &str, target: &TypeAnn, attrs: &[Attri
     p.push(name);
     p.push(" = ");
     emit_type_ann(p, target);
-}
-
-fn emit_import(p: &mut Printer, path: &[String]) {
-    let ind = p.indent_str();
-    p.push(&ind);
-    p.push("import ");
-    p.push(&path.join("."));
-    p.push(";");
-}
-
-fn emit_export(p: &mut Printer, names: &[String]) {
-    let ind = p.indent_str();
-    p.push(&ind);
-    p.push("export { ");
-    p.push(&names.join(", "));
-    p.push(" }");
 }
 
 // ---------------------------------------------------------------------------
@@ -1216,7 +1203,13 @@ fn emit_match_inline(p: &mut Printer, scrutinee: &Node, arms: &[MatchArm]) {
 
 fn emit_expr(p: &mut Printer, node: &Node) {
     match node {
-        Node::Lit(lit, _) => emit_literal(p, lit),
+        Node::Lit(lit, span) => {
+            // A bool needs no `q.` prefix, so the two spellings never both apply.
+            if !spelling::emit_bool_spelling(p, span) {
+                spelling::emit_qualifier(p, span);
+                emit_literal(p, lit)
+            }
+        }
         #[cfg(feature = "std-surface")]
         Node::Break { .. } => p.push("break"),
         #[cfg(feature = "std-surface")]
@@ -1280,7 +1273,10 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             p.push("~");
             emit_expr(p, operand);
         }
-        Node::Call { callee, args, .. } => emit_call(p, callee, args),
+        Node::Call { callee, args, span } => {
+            spelling::emit_qualifier(p, span);
+            emit_call(p, callee, args)
+        }
         Node::MethodCall {
             receiver,
             method,
@@ -1648,8 +1644,7 @@ fn emit_expr(p: &mut Printer, node: &Node) {
         Node::Const { name, .. } => p.push(name),
         Node::ExternConst { name, .. } => p.push(name),
         Node::TypeAlias { name, .. } => p.push(name),
-        Node::Import { path, .. } => p.push(&path.join(".")),
-        Node::Export { names, .. } => p.push(&names.join(", ")),
+        Node::Import { .. } | Node::Export { .. } => spelling::push_import_export_expr(p, node),
         Node::Assign { name, value, .. } => {
             p.push(name);
             p.push(" = ");

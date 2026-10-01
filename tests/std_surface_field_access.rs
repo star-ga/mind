@@ -106,7 +106,10 @@ fn module_with_field_reads(read_fields: &[&str]) -> Module {
         });
     }
 
-    Module { items }
+    Module {
+        items,
+        ..Default::default()
+    }
 }
 
 #[test]
@@ -242,6 +245,7 @@ fn field_access_unknown_receiver_fails_closed() {
                 span: sp(),
             },
         ],
+        ..Default::default()
     };
 
     let refusal = lower_to_ir(&module).expect_err("unknown receiver must fail closed");
@@ -281,6 +285,7 @@ fn field_access_unknown_struct_field_fails_closed() {
                 span: sp(),
             },
         ],
+        ..Default::default()
     };
 
     let refusal = lower_to_ir(&module).expect_err("unknown struct field must fail closed");
@@ -307,6 +312,7 @@ fn field_assign_unknown_receiver_fails_closed() {
                 span: sp(),
             },
         ],
+        ..Default::default()
     };
 
     let refusal = lower_to_ir(&module).expect_err("unknown assignment receiver must fail closed");
@@ -360,6 +366,7 @@ fn field_access_module_scope_binding_visible_inside_fn_body() {
                 sp(),
             ),
         ],
+        ..Default::default()
     };
 
     let ir = lower_to_ir(&module).expect("lowering");

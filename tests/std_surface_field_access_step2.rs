@@ -138,6 +138,7 @@ fn step2_struct_typed_parameter_resolves_field_access() {
                 sp(),
             ),
         ],
+        ..Default::default()
     };
 
     let ir = lower_to_ir(&module).expect("lowering");
@@ -206,6 +207,7 @@ fn step2_fn_return_receiver_resolves_field_access() {
                 span: sp(),
             },
         ],
+        ..Default::default()
     };
 
     let ir = lower_to_ir(&module).expect("lowering");
@@ -259,6 +261,7 @@ fn step2_fn_with_non_struct_return_fails_closed() {
                 span: sp(),
             },
         ],
+        ..Default::default()
     };
 
     let refusal = lower_to_ir(&module).expect_err("non-struct return field must fail closed");
@@ -321,6 +324,7 @@ fn step2_chained_access_on_scalar_fails_closed() {
                 span: sp(),
             },
         ],
+        ..Default::default()
     };
 
     let refusal = lower_to_ir(&module).expect_err("scalar chained field must fail closed");
@@ -429,6 +433,7 @@ fn step1_path_still_used_when_receiver_is_bound_ident() {
                 span: sp(),
             },
         ],
+        ..Default::default()
     };
 
     let ir = lower_to_ir(&module).expect("lowering");

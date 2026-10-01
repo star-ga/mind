@@ -283,6 +283,7 @@ fn collect_decl_names_into<S: Extend<String>>(module: &Module, out: &mut S) {
             Node::Block { stmts, .. } => {
                 let inner = Module {
                     items: stmts.clone(),
+                    spelling: Default::default(),
                 };
                 collect_decl_names_into(&inner, out);
             }
@@ -307,6 +308,7 @@ fn collect_enum_variants(module: &Module, out: &mut FxMap<FxSet>) {
             Node::Block { stmts, .. } => {
                 let inner = Module {
                     items: stmts.clone(),
+                    spelling: Default::default(),
                 };
                 collect_enum_variants(&inner, out);
             }
@@ -349,6 +351,7 @@ fn collect_non_fn_decl_names(module: &Module, out: &mut FxSet, fns: &mut FxSet) 
             Node::Block { stmts, .. } => {
                 let inner = Module {
                     items: stmts.clone(),
+                    spelling: Default::default(),
                 };
                 collect_non_fn_decl_names(&inner, out, fns);
             }

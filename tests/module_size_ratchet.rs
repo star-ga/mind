@@ -117,7 +117,9 @@ const LEGACY_BUDGETS: &[(&str, usize)] = &[
     // retains fail-closed escapes and adjacent-macro refusal; lowering retains
     // annotated-string environments, and the test runner retains root-cause
     // diagnostics. Pin only this reviewed growth; the 800-line ceiling stays.
-    ("src/ast/mod.rs", 1161),
+    // `ast/mod.rs` also carries `Import::alias` / `Export::category`, which must be
+    // node fields (see `ast::SourceSpelling`); the side table lives in `ast/spelling.rs`.
+    ("src/ast/mod.rs", 1171),
     ("src/bin/mind-ai.rs", 1101),
     ("src/bin/mindc.rs", 3343),
     ("src/build/mod.rs", 943),
@@ -132,7 +134,7 @@ const LEGACY_BUDGETS: &[(&str, usize)] = &[
     ("src/eval/mlir_export.rs", 1447),
     ("src/eval/mod.rs", 3918),
     ("src/eval/stdlib/tensor.rs", 1097),
-    ("src/fmt/printer.rs", 2229),
+    ("src/fmt/printer.rs", 2224),
     ("src/ir/compact/parse.rs", 967),
     ("src/ir/compact/v2/binary.rs", 960),
     ("src/ir/compact/v2/evidence.rs", 1052),
