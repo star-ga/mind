@@ -537,6 +537,28 @@ fn instr_is_block_terminator(i: &Instr) -> bool {
 }
 
 impl LoweringContext {
+    /// Emit one straight-line instruction list (a fn body, a loop body or an `if` branch),
+    /// stopping after the first instruction that terminates its block. Returns whether the
+    /// list ended in a terminator.
+    ///
+    /// Whatever follows a `return`/`break`/`continue` at the same level is unreachable, and
+    /// emitting it put ops after the terminator in the same MLIR block, which mlir-opt rejects
+    /// ("'func.return' op must be the last operation in the parent block"). That took down any
+    /// program with a `return` directly in a `while` body (lowering appends the loop's
+    /// trailing unit value after it) and any statement written after a `return` or `break`.
+    fn emit_instr_list(&mut self, instrs: &[Instr]) -> Result<bool, MlirLowerError> {
+        for (idx, instr) in instrs.iter().enumerate() {
+            self.emit_instr(idx, instr)?;
+            #[cfg(feature = "std-surface")]
+            if instr_is_block_terminator(instr) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}
+
+impl LoweringContext {
     fn new() -> Self {
         Self {
             values: BTreeMap::new(),
@@ -3762,9 +3784,7 @@ impl LoweringContext {
                     };
                     sub.values.insert(*pid, kind);
                 }
-                for (idx, inner) in body.iter().enumerate() {
-                    sub.emit_instr(idx, inner)?;
-                }
+                sub.emit_instr_list(body)?;
 
                 let sig_args: Vec<String> = params
                     .iter()
@@ -4309,9 +4329,7 @@ impl LoweringContext {
                 for (vid, kind) in &self.values {
                     body_sub.values.insert(*vid, kind.clone());
                 }
-                for (idx, bi) in body.iter().enumerate() {
-                    body_sub.emit_instr(idx, bi)?;
-                }
+                let body_ended_in_terminator = body_sub.emit_instr_list(body)?;
                 self.while_label = body_sub.while_label;
                 let body_text = substitute_ids(&body_sub.body, &body_args);
                 self.body.push_str(&body_text);
@@ -4358,7 +4376,8 @@ impl LoweringContext {
                         .find(|l| !l.trim().is_empty())
                         .unwrap_or("")
                         .trim();
-                    let body_terminated = last_body_line.starts_with("return")
+                    let body_terminated = body_ended_in_terminator
+                        || last_body_line.starts_with("return")
                         || last_body_line.starts_with("llvm.return")
                         || last_body_line.starts_with("cf.br ")
                         || last_body_line.starts_with("cf.cond_br ");
@@ -5101,9 +5120,7 @@ impl LoweringContext {
                 for (vid, kind) in &self.values {
                     then_sub.values.insert(*vid, kind.clone());
                 }
-                for (idx, ti) in then_instrs.iter().enumerate() {
-                    then_sub.emit_instr(idx, ti)?;
-                }
+                let then_terminated = then_sub.emit_instr_list(then_instrs)?;
                 self.while_label = then_sub.while_label;
                 let mut then_body = std::mem::take(&mut then_sub.body);
                 for (vid, kind) in then_sub.values {
@@ -5127,10 +5144,7 @@ impl LoweringContext {
                 for (vid, v) in then_sub.const_i64_map {
                     self.const_i64_map.insert(vid, v);
                 }
-                let then_ends_with_return = then_instrs
-                    .last()
-                    .map(instr_is_block_terminator)
-                    .unwrap_or(false);
+                let then_ends_with_return = then_terminated;
 
                 // --- Lower the ELSE branch into its own buffer. ---
                 let mut else_sub = LoweringContext::new();
@@ -5150,9 +5164,7 @@ impl LoweringContext {
                 for (vid, kind) in &self.values {
                     else_sub.values.insert(*vid, kind.clone());
                 }
-                for (idx, ei) in else_instrs.iter().enumerate() {
-                    else_sub.emit_instr(idx, ei)?;
-                }
+                let else_terminated = else_sub.emit_instr_list(else_instrs)?;
                 self.while_label = else_sub.while_label;
                 let mut else_body = std::mem::take(&mut else_sub.body);
                 for (vid, kind) in else_sub.values {
@@ -5171,10 +5183,7 @@ impl LoweringContext {
                 for (vid, v) in else_sub.const_i64_map {
                     self.const_i64_map.insert(vid, v);
                 }
-                let else_ends_with_return = else_instrs
-                    .last()
-                    .map(instr_is_block_terminator)
-                    .unwrap_or(false);
+                let else_ends_with_return = else_terminated;
 
                 // --- Resolve the merge type of every column. ---
                 // Column 0 is the if-value (then_result / else_result → dst).

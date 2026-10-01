@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1872 | **Est. tokens:** ~3,668,720
-**Generated:** 2026-10-01 06:10 UTC
+**Files:** 1873 | **Est. tokens:** ~3,670,117
+**Generated:** 2026-10-01 06:11 UTC
 
 ## Token Budget Guide
 
@@ -147,7 +147,7 @@
 | `src/types/` | 10 | ~20,740 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 404 | ~828,049 |
+| `tests/` | 405 | ~829,446 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -2192,6 +2192,7 @@
 - `mlir_jit.rs` (~285 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_lowering.rs` (~1490 tok, large)
 - `mlir_opt.rs` (~474 tok, medium) — Copyright 2025 STARGA Inc.
+- `mlir_terminator_last_op.rs` (~1397 tok, large) — Copyright 2026 STARGA Inc.
 - `mlkem768_driver.py` (~1699 tok, huge) — # Reference-vector driver for std/mlkem768.mind (pure-MIND ML-KEM-768,
 - `module_const_run.rs` (~729 tok, large) — Copyright 2025 STARGA Inc.
 - `module_decl_run.rs` (~597 tok, large) — Copyright 2025 STARGA Inc.
