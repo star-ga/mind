@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1875 | **Est. tokens:** ~3,674,176
-**Generated:** 2026-10-01 06:43 UTC
+**Files:** 1877 | **Est. tokens:** ~3,680,706
+**Generated:** 2026-10-01 07:03 UTC
 
 ## Token Budget Guide
 
@@ -104,7 +104,7 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 11 | ~51,968 |
+| `src/` | 11 | ~52,927 |
 | `src/ast/` | 2 | ~12,214 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
@@ -142,12 +142,13 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 4 | ~14,254 |
-| `src/type_checker/` | 18 | ~61,445 |
+| `src/type_checker/` | 18 | ~62,271 |
+| `src/type_checker/resolve/` | 1 | ~1,569 |
 | `src/type_checker/slice_abi/` | 3 | ~11,245 |
 | `src/types/` | 10 | ~20,740 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 406 | ~830,262 |
+| `tests/` | 407 | ~833,438 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -1450,7 +1451,7 @@
 ### `src/`
 
 - `python.rs` (~1082 tok, large) — Copyright 2025 STARGA Inc.
-- `qualified_enums.rs` (~5560 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `qualified_enums.rs` (~6519 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `src/runtime/`
 
 - `gpu.rs` (~288 tok, medium) — Experimental GPU backend contract for MIND.
@@ -1490,9 +1491,14 @@
 - `lowering_refusals_tests.rs` (~4372 tok, huge) — Copyright 2026 STARGA Inc.
 - `nerve_lint.rs` (~7669 tok, huge) — Copyright 2025 STARGA Inc.
 - `nerve_walk.rs` (~2232 tok, huge) — Copyright 2025 STARGA Inc.
-- `qualified_enums.rs` (~3239 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `qualified_enums.rs` (~4072 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `qualified_imports.rs` (~268 tok, medium) — Feature-neutral span-scoped qualified import predicates for name resolution.
-- `resolve.rs` (~15133 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/type_checker/resolve/`
+
+- `fn_values.rs` (~1569 tok, huge) — Copyright 2026 STARGA Inc.
+### `src/type_checker/`
+
+- `resolve.rs` (~15126 tok, huge) — Copyright 2025 STARGA Inc.
 - `return_checks.rs` (~1244 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/slice_abi/`
 
@@ -1665,6 +1671,7 @@
 - `conv2d_types.rs` (~360 tok, medium) — Copyright 2025 STARGA Inc.
 - `cross_module_cdylib_compose.rs` (~4092 tok, huge) — Copyright 2025 STARGA Inc.
 - `cross_module_enum_run.rs` (~1089 tok, large) — Copyright 2025 STARGA Inc.
+- `cross_module_enum_variant_lowering.rs` (~3176 tok, huge) — Copyright 2026 STARGA Inc.
 - `cross_module_field_access_run.rs` (~4530 tok, huge) — Copyright 2025 STARGA Inc.
 - `cross_module.rs` (~1332 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/cross_substrate_identity/array-store-branch/`

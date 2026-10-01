@@ -84,9 +84,81 @@ impl Registry {
         let (type_spelling, variant) = spelling
             .rsplit_once("::")
             .or_else(|| spelling.rsplit_once('.'))?;
-        let enum_key = self.resolve_type_in(type_spelling, imports, current)?;
+        let enum_key = if is_bare_name(type_spelling) {
+            // A bare head (`Table::RawResponses`) written outside the enum's
+            // module names an IMPORTED enum whose registry key is owner-qualified
+            // because another module declares the same enum name. Left bare, the
+            // spelling misses the registry and lowering finds no tag for it. A
+            // type the current module declares keeps lexical precedence and its
+            // historical spelling (lowering resolves that one against the current
+            // module); a non-colliding key equals the bare head and is unchanged.
+            let current = current?;
+            if self
+                .declared_types
+                .contains(&format!("{current}.{type_spelling}"))
+            {
+                return None;
+            }
+            match self.imported_enum_key(type_spelling, imports) {
+                Ok(Some(key)) if key != type_spelling => key,
+                _ => return None,
+            }
+        } else {
+            self.resolve_type_in(type_spelling, imports, current)?
+        };
         let key = format!("{enum_key}::{variant}");
         self.variant_tags.contains_key(&key).then_some(key)
+    }
+
+    /// Resolve a bare type name through the importing module's imports alone:
+    /// `Ok(Some(key))` when exactly one import exports it and it is an enum,
+    /// `Ok(None)` when exactly one exports it as a non-enum type, and
+    /// `Err(exporters)` with the number of exporters (0, or 2 and more)
+    /// otherwise.
+    fn imported_enum_key(&self, name: &str, imports: &[String]) -> Result<Option<String>, usize> {
+        let owners: BTreeSet<String> = imports
+            .iter()
+            .map(|import| format!("{}.{name}", canonical_module(import)))
+            .filter(|source| self.exported_types.contains(source))
+            .collect();
+        match owners.first() {
+            Some(source) if owners.len() == 1 => Ok(self.type_keys.get(source).cloned()),
+            _ => Err(owners.len()),
+        }
+    }
+
+    /// Why a bare-headed `Enum::Variant` path that names ANOTHER module's enum
+    /// cannot be lowered, or `None` when it resolves or names no project enum.
+    /// `declared_locally` is true when the writing module declares a type of
+    /// that name (lexical precedence; checked by the resolver instead). Lets
+    /// the checker refuse with a located diagnostic where lowering would
+    /// otherwise stop at its fail-closed panic.
+    pub(crate) fn bare_variant_problem(
+        &self,
+        path: &str,
+        imports: &[String],
+        declared_locally: bool,
+    ) -> Option<BareVariantProblem> {
+        let (head, variant) = path.split_once("::")?;
+        if declared_locally
+            || !is_bare_name(head)
+            || variant.contains("::")
+            || matches!(head, "Option" | "Result")
+        {
+            return None;
+        }
+        let project_enum = || {
+            self.type_keys
+                .keys()
+                .any(|source| source.rsplit_once('.').is_some_and(|(_, n)| n == head))
+        };
+        match self.imported_enum_key(head, imports) {
+            Ok(Some(key)) => (!self.variant_tags.contains_key(&format!("{key}::{variant}")))
+                .then_some(BareVariantProblem::UnknownVariant),
+            Ok(None) => None,
+            Err(0) => project_enum().then_some(BareVariantProblem::NotVisible),
+            Err(_) => project_enum().then_some(BareVariantProblem::Ambiguous),
+        }
     }
 
     fn bare_visible(&self, name: &str, imports: &[String], current: Option<&str>) -> bool {
@@ -274,6 +346,22 @@ pub(crate) fn resolve_alias_target(name: &str, imports: &[String]) -> Option<Typ
             .qualified
             .resolve_alias_in(name, imports, current.as_deref())
     })
+}
+
+/// A bare-headed `Enum::Variant` path that names a project enum but cannot be
+/// resolved from the module that writes it.
+#[cfg(feature = "cross-module-imports")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BareVariantProblem {
+    NotVisible,
+    Ambiguous,
+    UnknownVariant,
+}
+
+/// A single identifier segment: no module qualifier and no `::` path.
+#[cfg(feature = "cross-module-imports")]
+fn is_bare_name(name: &str) -> bool {
+    !name.is_empty() && !name.contains('.') && !name.contains("::")
 }
 
 #[cfg(feature = "cross-module-imports")]

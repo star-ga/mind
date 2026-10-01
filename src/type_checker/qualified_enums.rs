@@ -4,6 +4,9 @@
 
 //! Module-qualified type validation and enum payload resolution.
 
+#[cfg(feature = "cross-module-imports")]
+use std::collections::BTreeSet;
+
 use crate::ast::{Module, Node, Pattern, TypeAnn};
 use crate::diagnostics::Diagnostic;
 
@@ -22,6 +25,8 @@ pub(super) fn validate(module: &Module, src: &str, file: Option<&str>) -> Vec<Di
     let mut errors = Vec::new();
     #[cfg(feature = "cross-module-imports")]
     let imports = crate::qualified_enums::module_imports(module);
+    #[cfg(feature = "cross-module-imports")]
+    let local_types = local_type_names(module);
     let mut pending: Vec<&Node> = module.items.iter().rev().collect();
     while let Some(node) = pending.pop() {
         match node {
@@ -191,9 +196,15 @@ pub(super) fn validate(module: &Module, src: &str, file: Option<&str>) -> Vec<Di
                         file,
                         #[cfg(feature = "cross-module-imports")]
                         &imports,
+                        #[cfg(feature = "cross-module-imports")]
+                        &local_types,
                         &mut errors,
                     );
                 }
+            }
+            #[cfg(feature = "cross-module-imports")]
+            Node::Lit(crate::ast::Literal::Ident(path), span) => {
+                check_bare_variant_path(path, *span, src, file, &imports, &local_types, &mut errors)
             }
             _ => {}
         }
@@ -308,6 +319,7 @@ fn validate_pattern(
     src: &str,
     file: Option<&str>,
     #[cfg(feature = "cross-module-imports")] imports: &[String],
+    #[cfg(feature = "cross-module-imports")] local_types: &BTreeSet<String>,
     errors: &mut Vec<Diagnostic>,
 ) {
     let mut pending = vec![pattern];
@@ -334,6 +346,7 @@ fn validate_pattern(
         if !path.contains('.') {
             #[cfg(feature = "cross-module-imports")]
             {
+                check_bare_variant_path(path, span, src, file, imports, local_types, errors);
                 let (visible, exists) = crate::ir::with_global_enums(|g| {
                     (
                         g.qualified.bare_variant_is_visible(
@@ -376,4 +389,75 @@ fn validate_pattern(
             ));
         }
     }
+}
+
+/// Refuse a bare-headed `Enum::Variant` value or pattern that names another
+/// module's enum but does not resolve from this module: the enum is not
+/// imported, several imports export the name, or the variant does not exist.
+/// Lowering has no tag for such a path and would otherwise stop at its
+/// fail-closed undefined-identifier / dangling-variant panic. Reported as
+/// E2002 (an unresolved reference): the project builder refuses to embed a
+/// module with that code as a runtime fallback, so `mindc build` fails closed
+/// instead of lowering the module anyway.
+#[cfg(feature = "cross-module-imports")]
+fn check_bare_variant_path(
+    path: &str,
+    span: crate::ast::Span,
+    src: &str,
+    file: Option<&str>,
+    imports: &[String],
+    local_types: &BTreeSet<String>,
+    errors: &mut Vec<Diagnostic>,
+) {
+    use crate::qualified_enums::BareVariantProblem;
+    let Some((head, variant)) = path.split_once("::") else {
+        return;
+    };
+    let declared_locally = local_types.contains(head);
+    let problem = crate::ir::with_global_enums(|g| {
+        g.qualified
+            .bare_variant_problem(path, imports, declared_locally)
+    });
+    let message = match problem {
+        None => return,
+        Some(BareVariantProblem::NotVisible) => format!(
+            "enum `{head}` in `{path}` is not visible in this module; \
+             import the module that declares it"
+        ),
+        Some(BareVariantProblem::Ambiguous) => format!(
+            "ambiguous enum `{head}` in `{path}`: several imported modules \
+             export it; qualify it with its module"
+        ),
+        Some(BareVariantProblem::UnknownVariant) => {
+            format!("unknown variant `{variant}` of imported enum `{head}`")
+        }
+    };
+    errors.push(super::diag_from_span(
+        src,
+        file,
+        message,
+        span,
+        super::resolve::UNKNOWN_IDENT_CODE,
+    ));
+}
+
+/// Type names (enum, struct, alias) the module declares itself, including
+/// inside `module { … }` blocks. They take lexical precedence over imported
+/// types of the same name.
+#[cfg(feature = "cross-module-imports")]
+fn local_type_names(module: &Module) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    let mut pending: Vec<&Node> = module.items.iter().collect();
+    while let Some(item) = pending.pop() {
+        match item {
+            Node::EnumDef { name, .. }
+            | Node::StructDef { name, .. }
+            | Node::TypeAlias { name, .. } => {
+                names.insert(name.clone());
+            }
+            Node::Block { stmts, .. } => pending.extend(stmts),
+            _ => {}
+        }
+    }
+    names
 }

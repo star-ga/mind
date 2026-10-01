@@ -55,6 +55,8 @@ use std::sync::OnceLock;
 use super::qualified_imports::{call as qcall, current_symbol as cse, value as qvalue};
 use crate::ast::{Literal, Module, Node, Pattern, TypeAnn};
 
+mod fn_values;
+
 /// Deterministic FxHash-backed tables for the lookup-only symbol sets built
 /// per `resolve_fn_body` call (the type checker's `FxBuild` — the same
 /// deterministic hasher swap that sped the per-compile side tables). BTree
@@ -176,9 +178,9 @@ pub struct Unresolved {
     /// `true` iff this is an assignment to a name bound nowhere — selects the
     /// `UNDECLARED_ASSIGN_CODE` diagnostic.
     pub undeclared_assign: bool,
-    /// `true` iff this is a call whose callee resolves ONLY as a local lexical
-    /// binding (a function value) and to nothing emittable — selects the
-    /// `FN_VALUE_CALL_CODE` diagnostic.
+    /// `true` iff a call's callee resolves ONLY as a local binding (a function
+    /// value) — `FN_VALUE_CALL_CODE` — or, with `is_call == false`, a function
+    /// name is used as a value (`fn_values`) — `super::FN_AS_VALUE_CODE`.
     pub fn_value_call: bool,
     /// `true` iff this is a call whose callee is a MODULE-LEVEL NON-FUNCTION
     /// declaration (const / module-`let` / struct / enum-type / type-alias name)
@@ -221,6 +223,8 @@ struct ModuleSyms {
     /// `names`/`enums` siblings) is byte-neutral and drops the per-`contains`
     /// O(log n) BTree string-compare to O(1).
     non_fn_decls: FxSet,
+    /// Module-level names declared ONLY as functions (see `fn_values`).
+    fns: FxSet,
 }
 
 impl ModuleSyms {
@@ -449,11 +453,13 @@ fn collect_module_syms(module: &Module, injected: &BTreeSet<String>) -> ModuleSy
     let mut non_fn_decls: FxSet = FxSet::default();
     let mut fn_decls: FxSet = FxSet::default();
     collect_non_fn_decl_names(module, &mut non_fn_decls, &mut fn_decls);
+    let fns = fn_values::only_fns(&fn_decls, &non_fn_decls);
     non_fn_decls.retain(|n| !fn_decls.contains(n));
     ModuleSyms {
         names,
         enums,
         non_fn_decls,
+        fns,
     }
 }
 
@@ -874,43 +880,38 @@ impl<'a> Resolver<'a> {
         self.scopes.pop();
     }
 
+    /// Resolve one bare identifier. `value` is false for a member-access
+    /// receiver, which may name a module (`sha256.hash(..)`) instead of a value.
+    fn check_ident(&mut self, name: &str, span: crate::ast::Span, value: bool) {
+        // A qualified `Enum::Variant` value whose head is a local enum
+        // but whose variant is unknown is a silent-miscompile typo
+        // (folds to tag 0) — flag it before the generic resolvability
+        // check, which `::` otherwise makes pass unconditionally.
+        let variant_of = self.unknown_variant(name);
+        if variant_of.is_some() || (!self.ident_resolvable(name) && !qvalue(span, name)) {
+            let suggestion = suggest(name, &self.scopes, self.syms);
+            self.out.push(Unresolved {
+                name: name.to_string(),
+                span,
+                is_call: false,
+                suggestion,
+                variant_of,
+                undeclared_assign: false,
+                fn_value_call: false,
+                non_fn_call: false,
+            });
+        } else if value && self.fn_used_as_value(name, span) {
+            self.push_fn_as_value(name, span);
+        }
+    }
+
     /// Visit a node: register any binding it introduces (into the CURRENT
     /// frame, for sequential visibility) and recurse into sub-expressions,
     /// reporting unresolved references.
     fn walk(&mut self, node: &Node) {
         match node {
             // ── Reference sites ───────────────────────────────────────────
-            Node::Lit(Literal::Ident(name), span) => {
-                // A qualified `Enum::Variant` value whose head is a local enum
-                // but whose variant is unknown is a silent-miscompile typo
-                // (folds to tag 0) — flag it before the generic resolvability
-                // check, which `::` otherwise makes pass unconditionally.
-                if let Some(enum_name) = self.unknown_variant(name) {
-                    let suggestion = suggest(name, &self.scopes, self.syms);
-                    self.out.push(Unresolved {
-                        name: name.clone(),
-                        span: *span,
-                        is_call: false,
-                        suggestion,
-                        variant_of: Some(enum_name),
-                        undeclared_assign: false,
-                        fn_value_call: false,
-                        non_fn_call: false,
-                    });
-                } else if !self.ident_resolvable(name) && !qvalue(*span, name) {
-                    let suggestion = suggest(name, &self.scopes, self.syms);
-                    self.out.push(Unresolved {
-                        name: name.clone(),
-                        span: *span,
-                        is_call: false,
-                        suggestion,
-                        variant_of: None,
-                        undeclared_assign: false,
-                        fn_value_call: false,
-                        non_fn_call: false,
-                    });
-                }
-            }
+            Node::Lit(Literal::Ident(name), span) => self.check_ident(name, *span, true),
             Node::Lit(_, _) => {}
             Node::Call { callee, args, span } => {
                 let qualified_call = qcall(*span, callee);
@@ -1169,13 +1170,13 @@ impl<'a> Resolver<'a> {
                         if (n == "string" || n == "String") && !self.ident_resolvable(n)
                 );
                 if !static_type_recv {
-                    self.walk(receiver);
+                    self.walk_receiver(receiver);
                 }
                 for a in args {
                     self.walk(a);
                 }
             }
-            Node::FieldAccess { receiver, .. } => self.walk(receiver),
+            Node::FieldAccess { receiver, .. } => self.walk_receiver(receiver),
             Node::FieldAssign {
                 receiver, value, ..
             } => {

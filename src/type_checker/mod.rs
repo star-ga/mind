@@ -341,6 +341,15 @@ const INDEX_OOB_CODE: &str = "E2621";
 #[cfg(not(any(feature = "std-surface", feature = "cross-module-imports")))]
 const STD_IMPORT_NO_SURFACE_CODE: &str = "E2007";
 
+/// A function name used as a VALUE (`let x = null`, where `null` is the
+/// `std.json` constructor function). First-class functions do not exist, so
+/// lowering has no value to materialise and stops at its fail-closed
+/// undefined-identifier panic. A code of its own rather than E2002/E2012: the
+/// name IS resolvable and no call is made, and those two rules keep their
+/// existing verdict at this position. The project builder refuses to embed a
+/// module carrying it as a runtime fallback, since the embed lowers it too.
+pub(crate) const FN_AS_VALUE_CODE: &str = "E2037";
+
 /// True for the RFC 0012 shape-diagnostic codes. Used to keep the
 /// additive FnDef-body shape pass from contributing non-shape errors
 /// (see the FnDef arm in `check_module_types_in_file`).
@@ -5299,6 +5308,14 @@ fn check_module_types_in_file_impl(
                         (
                             format!("`{}` is not a function", u.name),
                             resolve::FN_VALUE_CALL_CODE,
+                        )
+                    } else if u.fn_value_call && !u.is_call {
+                        (
+                            format!(
+                                "`{}` is a function, not a value: first-class functions are not yet supported",
+                                u.name
+                            ),
+                            FN_AS_VALUE_CODE,
                         )
                     } else if u.fn_value_call {
                         (

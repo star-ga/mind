@@ -2299,8 +2299,13 @@ fn compile_single_source(
                 // discipline as `reject_runnable_blockers`), so an unresolved name is a
                 // clean non-zero build, never a panic. Legitimately-unsupported
                 // constructs (E2024 self-host-only, parse-only forms) still fall through
-                // to the JIT embed below — only a genuine undefined-reference is fatal.
-                if diags.iter().any(|d| d.code == "E2002") {
+                // to the JIT embed below — only a genuine undefined-reference is fatal,
+                // and so is a function name used as a value (FN_AS_VALUE_CODE): it has
+                // no value to lower and reaches the same panic.
+                if diags
+                    .iter()
+                    .any(|d| d.code == "E2002" || d.code == crate::type_checker::FN_AS_VALUE_CODE)
+                {
                     use crate::diagnostics::{ColorChoice, DiagnosticEmitter, DiagnosticFormat};
                     DiagnosticEmitter::new(DiagnosticFormat::Human, ColorChoice::Auto)
                         .emit_all(&diags, Some(source_code));
