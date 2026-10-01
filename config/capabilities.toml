@@ -111,7 +111,7 @@ mindcraft   = ["mindc lint src/", "mindc lint --rule"]
 # Keep this section conservative: only declare counts a maintainer is willing
 # to have block a commit. Floor + tolerance keep the false-positive rate low.
 [counts.rust_test_files]
-declared          = 378
+declared          = 403
 mode              = "floor"
 # Ratchet bound: `declared` may sit at most this far below the tree before the
 # gate demands it be raised. A floor that is never re-raised turns its slack

@@ -6432,8 +6432,15 @@ fn classify_error_code(msg: &str) -> &'static str {
         SHAPE_BROADCAST_CODE
     } else if msg.contains("rank mismatch") {
         SHAPE_RANK_CODE
-    } else if msg.starts_with("function `") && msg.contains("argument(s); got") {
-        // Intra-module call arity mismatch (RFC 0005 Phase B).
+    } else if (msg.starts_with("function `") || msg.starts_with("imported `"))
+        && msg.contains("argument(s); got")
+    {
+        // Call arity mismatch (RFC 0005 Phase B), against a same-module
+        // signature or one resolved through the project module table. Under
+        // `cross-module-imports` a same-file callee resolves through the module
+        // table as well, so its message starts with "imported `". Both must map
+        // to E2005: the fn-body pass keeps only whitelisted codes, and a
+        // generic code here made every arity error inside a body disappear.
         CALL_ARITY_CODE
     } else if msg.starts_with("non-exhaustive `match`") {
         // Non-exhaustive enum match.
