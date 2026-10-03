@@ -427,6 +427,29 @@ Demonstrate performance, determinism, and flexibility. Introduce cloud-assisted 
   (cache-blocked GEMM, AVX2/AVX-512 VNNI, NEON SDOT/SMMLA, AMX/SME as roadmap
   rungs) attached to [RFC 0006](rfcs/0006-mind-blas.md), so every rung's tiling
   choice cites a primary source.
+- Kernel ablation harness for `det.igemm` (int8) and the Q16 GEMM: criterion
+  variants that time **compute-only** (operands resident, no pack/load) and
+  **pack/load-only** (no MAC) next to the full kernel, so the bottleneck stage is
+  measured before any `gemm_tuning.rs` change. Size the prize first: a stage that
+  is ≤10% of runtime is not worth optimizing.
+- Inference-shaped bench cases: add decode shapes (small M = 1..256, large N/K, the
+  GEMV regime) and prefill shapes (M = 2k..8k) taken from the real layer
+  dimensions `mind-inference` runs. Today `det_matmul_i8` covers square 16..512
+  only, which does not represent either phase.
+- Re-sweep blocking constants (`I8_MC/KC/NC`, `Q16_*`) after every structural
+  kernel change — each value is pinned by one sweep against one kernel shape, and
+  the optimum moves when the bottleneck moves. Record the noise floor of the sweep
+  and report null results alongside wins.
+- Evaluate grouped tile order for the owner-computes thread bands (neighbouring
+  cores walk tiles that share B panels in L2/L3). Changes only *where/when* work
+  runs, not the K-accumulation order, so it is byte-identity-neutral — measure
+  before adopting.
+- **Determinism guardrail — split-K / stream-K.** Any future split-K or stream-K
+  decomposition MUST combine partial sums in a fixed, shape-determined tree
+  (never atomics, never arrival order). Integer partials are associative and stay
+  byte-identical under a fixed tree; float partials are Relaxed-tier unless the
+  tree is pinned. A split-K change gates on `cross_substrate_identity` like any
+  other kernel change.
 - Add deterministic build mode documentation
 - Prototype cloud compiler endpoint:
   - `mind build --remote`
