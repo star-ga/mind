@@ -419,6 +419,14 @@ Demonstrate performance, determinism, and flexibility. Introduce cloud-assisted 
   - compile-time comparison (MIND vs PyTorch 2.0 AOT)
   - memory footprint analysis
 - Publish results under `docs/benchmarks/*`
+- Full machine-state reporting for every published T0 number: microarchitecture,
+  SMT, turbo/governor state, exact compiler flags, baseline, and measurement
+  method (the 7-field rule in [`docs/benchmarking.md`](benchmarking.md) §4).
+  Backfill the existing GMAC/s numbers before they are cited externally.
+- Per-ISA kernel reference set for the deterministic GEMM/int-dot ladder
+  (cache-blocked GEMM, AVX2/AVX-512 VNNI, NEON SDOT/SMMLA, AMX/SME as roadmap
+  rungs) attached to [RFC 0006](rfcs/0006-mind-blas.md), so every rung's tiling
+  choice cites a primary source.
 - Add deterministic build mode documentation
 - Prototype cloud compiler endpoint:
   - `mind build --remote`

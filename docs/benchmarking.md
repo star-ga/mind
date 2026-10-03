@@ -141,4 +141,20 @@ Before a MIND performance number leaves the repo:
 - [ ] **Persistent-service (T3) numbers report `(cold, steady)`**, both labelled.
 - [ ] **Execution (T0) numbers report GMAC/s + roofline %**, with the ISA-peak
       constant cited as an estimate.
-- [ ] **The environment is recorded** (CPU, clock, ISA, OS, rustc, sample count).
+- [ ] **The machine state is recorded in full**, not just the CPU name. A T0
+      number without these fields is not publishable:
+      1. CPU model **and microarchitecture** (e.g. i7-5930K / Haswell-E)
+      2. Physical cores used, and whether **SMT** was on
+      3. Frequency regime: base clock, **turbo on/off**, scaling **governor**
+         (`performance` vs `powersave`/`schedutil`), core pinning if any
+      4. Compiler and **exact flags** (rustc version, `mindc` commit, clang
+         `-O`/`-march`/`-ffp-contract` as actually passed)
+      5. Workload (shape, dtype, tier, warm vs cold cache)
+      6. Baseline it is compared against, tier-matched (§2)
+      7. Measurement method (harness, sample count, statistic reported,
+         run-to-run spread)
+- [ ] **OS and sample count** are recorded alongside the above.
+- [ ] **Hardware performance counters are labelled as measurement, not
+      execution.** Counter readings vary run to run even when the kernel's
+      output bytes do not; never present a counter value as a determinism
+      claim.

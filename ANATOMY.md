@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1877 | **Est. tokens:** ~3,680,706
-**Generated:** 2026-10-01 07:03 UTC
+**Files:** 1877 | **Est. tokens:** ~3,680,951
+**Generated:** 2026-10-03 07:12 UTC
 
 ## Token Budget Guide
 
@@ -42,7 +42,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,347 |
-| `docs/` | 38 | ~109,827 |
+| `docs/` | 38 | ~110,072 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/design/` | 4 | ~11,498 |
@@ -430,7 +430,7 @@
 - `cerebras-stencil.md` (~1482 tok, large) — `mind.cerebras.stencil_tile` — Op Surface and Lowering Contract
 ### `docs/`
 
-- `benchmarking.md` (~1917 tok, huge) — Benchmarking methodology — tiers and comparable metrics
+- `benchmarking.md` (~2162 tok, huge) — Benchmarking methodology — tiers and comparable metrics
 ### `docs/benchmarks/`
 
 - `compiler_performance.md` (~4363 tok, huge) — MIND Compiler Performance Benchmarks
