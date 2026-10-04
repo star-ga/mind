@@ -2437,3 +2437,60 @@ moves, the reviewer has to reconstruct what changed by hand.
 
 Firewall: the report describes gate results; it never decides them. No gate may
 read the report.
+
+## Phase 20 — Hypercomplex number library (proposed, 2026-10-04)
+
+`std/` has no complex, quaternion or dual-number type. The only complex arithmetic in
+the tree is inline Q16.16 code in `examples/fft_q16.mind`. Every hypercomplex system is
+a fixed-width tuple of scalars with its own multiplication table, which makes the whole
+family a natural fit for the wedge: once the table is pinned, every product is
+byte-identical on every substrate.
+
+### Order of work
+
+| Step | Types | Why this order |
+|---|---|---|
+| 20.1 | Complex ℂ, dual numbers (ε² = 0) | ℂ is already needed (FFT, signal work). Dual numbers give forward-mode autodiff with a pinned evaluation order — deterministic derivatives, directly on the compiler-integrated-autodiff line. |
+| 20.2 | Quaternions ℍ | 3D rotation for robotics and graphics, bit-identical across x86/ARM/GPU. Noncommutative, so `ij = k`, `ji = −k` is a required vector. |
+| 20.3 | Split-complex (j² = +1), bicomplex | Same shape as ℂ with a different sign rule; near-free once 20.1 exists. |
+| 20.4 | Generic Cayley–Dickson doubling → octonions 𝕆, sedenions 𝕊 | One doubling rule builds each level from the one below — one implementation, not four. |
+| 20.5 | Clifford / geometric algebra Cl(p,q) | Subsumes most of the above as special cases; largest surface, so last. |
+
+### Rules for every type
+
+- **Two tiers.** A Q16.16 fixed-point form (bit-identical by construction) and a strict
+  `f64` form. The `f64` form depends on 17.3: until `f64` struct fields lower, it is built
+  on the i64 heap through `__mind_bits_to_f64` / `__mind_f64_to_bits`.
+- **Pinned multiplication order.** Each product's sum-of-terms order is fixed in source
+  and never reassociated; `f64` paths stay under strict `fp_mode` (no contraction).
+- **Value oracle, not just byte-identity.** Per the Phase 17 meta-lesson, sameness is not
+  correctness. Each type ships known-answer vectors cross-checked once against an
+  independent reference: `i² = −1`, `ij = k` / `ji = −k`, the octonion Fano-plane table,
+  dual-number derivatives of polynomials, and a known sedenion zero-divisor pair.
+- **Division fails closed.** Sedenions and bicomplex numbers have zero divisors;
+  division on a zero divisor returns an error, never a garbage quotient. `f64`
+  out-of-domain results follow the Phase 17 partial-domain policy (one pinned qNaN).
+- **Algebraic properties as tests.** Each type asserts what it keeps and what it loses:
+  ℍ associative but not commutative, 𝕆 alternative but not associative, 𝕊 only
+  power-associative. A property that should fail is tested to fail.
+- **Executes, not AOT-only.** Every function in the library must run on `mindc run`, in
+  the existing executable subset.
+
+### Language follow-up (separate RFC)
+
+Until then the API is function-call form (`quat_mul(a, b)`). Writing `a * b` on these
+types needs operator overloading for user-defined types: today the type checker defines
+operators only for scalars and tensors (`@`, `.+ .- .* ./`, RFC 0012). That change touches
+the type checker and all three backends plus the self-host mirror, so it gets its own RFC
+and is not a prerequisite for 20.1–20.5.
+
+### Gates
+
+Keystone 7/7, cross-substrate identity on the new fixtures (avx2 + neon), the value-oracle
+vectors above, and `mindc run` execution of every exported function.
+
+### Out of scope
+
+Arbitrary-precision variants, symbolic algebra, and any claim beyond "these operations
+are deterministic and match the reference vectors". No performance claim without a
+criterion number.
