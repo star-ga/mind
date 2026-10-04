@@ -2417,3 +2417,23 @@ systematic version of that accident.
 - Does the substrate dimension multiply or partition? `avx2` and `neon` are not
   flags we set; they are hardware we run on. Cells requiring both may only be
   checkable in the dual-arch CI matrix, not locally.
+
+## Conformance-change report in CI (proposed, 2026-10-03)
+
+Keystone, oracle-parity and cross-substrate gates report pass or fail. When a gate
+moves, the reviewer has to reconstruct what changed by hand.
+
+- **Per-gate diff against the base branch.** CI compares each gate's per-fixture
+  results with the same run on the merge base and writes a short Markdown summary:
+  fixtures newly passing, newly failing, hashes that changed, and which arms of the
+  oracle-parity lint moved. Posted to the PR and kept as a CI artifact.
+- **A changed hash is never silently green.** A canary or reference hash that moved
+  is listed by name even when the gate passes because it was re-blessed in the same
+  change, so a re-bless is always visible in review.
+- **Execution-path parity as an oracle.** Where the compiler has more than one way
+  to execute the same IR (interpreter, MLIR-lowered `.so`, native ELF), all of them
+  run the same fixtures and must agree bit-for-bit; disagreement is reported in the
+  same summary. This extends the three-oracle mindfuzz idea to the regular fixture set.
+
+Firewall: the report describes gate results; it never decides them. No gate may
+read the report.

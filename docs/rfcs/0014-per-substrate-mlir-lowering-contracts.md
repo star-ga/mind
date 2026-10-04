@@ -352,6 +352,17 @@ This is a Tier 0 cleanup, can land independent of the rest of this RFC.
    target tier or a compilation profile? Decision needed before unification
    in §4.2.
 
+   *Addendum (2026-10-03):* RFC 0018 rejected WASM as the embedded transport
+   because interpreters introduce nondeterminism. That objection is about the
+   runtime, not the format: spec-compliant interpreters built for certified
+   systems now exist with deterministic execution and no dependencies beyond a
+   math library. If Wasm becomes a target, the determinism contract would need
+   (a) pinned canonical NaN bit patterns on every float op that can produce one,
+   (b) no relaxed-SIMD or threads proposals in the strict profile, and
+   (c) a Wasm leg in the cross-substrate identity gate, run under at least one
+   interpreter and one JIT, both required to match the x86/ARM reference hashes.
+   Open: whether this is worth a tier before any consumer asks for it.
+
 2. **`BackendTarget::Gpu` granularity**: today `Gpu` is a single variant but
    the runtime backends (`mind-runtime/src/backend/{cuda,rocm,metal,webgpu}/`)
    are 4 different paths. Does the compiler enum need

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1877 | **Est. tokens:** ~3,680,951
-**Generated:** 2026-10-03 07:45 UTC
+**Files:** 1877 | **Est. tokens:** ~3,681,144
+**Generated:** 2026-10-04 01:35 UTC
 
 ## Token Budget Guide
 
@@ -48,7 +48,7 @@
 | `docs/design/` | 4 | ~11,498 |
 | `docs/gates/` | 1 | ~3,910 |
 | `docs/mindcraft/` | 3 | ~7,086 |
-| `docs/rfcs/` | 35 | ~171,213 |
+| `docs/rfcs/` | 35 | ~171,406 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 28 | ~49,880 |
 | `examples/bimap_currency/` | 3 | ~780 |
@@ -504,7 +504,7 @@
 - `0011-async-and-structured-concurrency.md` (~4891 tok, huge) — RFC 0011: Async + Structured Concurrency Model
 - `0012-tensor-native-syntax.md` (~12947 tok, huge) — RFC 0012: Tensor-Native Surface Syntax — the Differentiation Layer
 - `0013-cli-agent-harness-stack.md` (~6776 tok, huge) — RFC 0013: CLI Agent Harness Stack
-- `0014-per-substrate-mlir-lowering-contracts.md` (~5412 tok, huge) — RFC 0014: Per-Substrate MLIR Lowering Pipeline Contracts
+- `0014-per-substrate-mlir-lowering-contracts.md` (~5605 tok, huge) — RFC 0014: Per-Substrate MLIR Lowering Pipeline Contracts
 - `0015-cross-substrate-bit-identity.md` (~5971 tok, huge) — RFC 0015: Cross-Substrate Bit-Identity Proof Obligation
 - `0016-evidence-chain-emission.md` (~6998 tok, huge) — RFC 0016: Compile-Time Evidence-Chain Emission
 - `0017-mindc-verify.md` (~4360 tok, huge) — RFC 0017: `mindc verify` — Artifact Verification Surface
