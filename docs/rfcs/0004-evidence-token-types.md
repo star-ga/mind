@@ -5,7 +5,7 @@
 - **Status**: Draft
 - **Target Release**: v0.4.0 (post self-hosting prerequisites)
 - **Normative reference**: `mind-spec` RFC-0007 (FFI/ABI) for symbol
-  interaction; `512-mind` governance model for the invariant identifier
+  interaction; `mind-law` governance model for the invariant identifier
   namespace.
 
 ## Summary
@@ -51,7 +51,7 @@ MIND's existing invariant + evidence + determinism core.
 ## Guide-level explanation
 
 ```mind
-// An invariant key lives in the governance namespace (512-mind owns
+// An invariant key lives in the governance namespace (MIND-Law owns
 // the registry; the compiler only needs the nominal identifier).
 type Invariant_5 = invariant_key;
 
@@ -133,7 +133,7 @@ of functions) this is sub-microsecond.
 
 - A third feature gate to maintain alongside `ffi-c-user` and
   `mlir-build`.
-- The invariant-key namespace must be agreed with `512-mind`;
+- The invariant-key namespace must be agreed with `mind-law`;
   divergence there is a cross-repo coordination cost.
 - Over-use could push users toward "evidence-type soup" in
   non-governance code; the sugar form is deliberately the only
@@ -163,9 +163,9 @@ of functions) this is sub-microsecond.
 2. Land the evidence-DAG reachability pass, gated.
 3. Wire `[invariant(n)]` desugaring to `Evidence[Invariant_n]` in
    the return type.
-4. 512-mind publishes the canonical invariant-key namespace; mindc
+4. MIND-Law publishes the canonical invariant-key namespace; mindc
    consumes it as nominal identifiers only.
-5. mind-runtime / mind-agents / 512-mind governed paths adopt the
+5. mind-runtime / mind-agents / MIND-Law governed paths adopt the
    typed form; runtime emit stays for the evidence *chain*, now
    provably non-omittable.
 

@@ -289,7 +289,7 @@ a build step; conflating them obscures the audit trail. The correct model is:
   content-addressed artifact registry.
 - **`verify.*` block as a CI badge input**: the JSON receipt populates a
   `shields.io`-style badge on mindlang.dev (linked to RFC 0020 §12.8).
-- **Governance integration**: 512-mind DIFC `proof_chain` records the
+- **Governance integration**: MIND-Law DIFC `proof_chain` records the
   `trace_hash` from a `mindc verify` pass as a proof input (RFC 0016 §7 / RFC 0021
   §3.4 convergence deliverable).
 

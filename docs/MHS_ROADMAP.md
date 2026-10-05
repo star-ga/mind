@@ -50,7 +50,7 @@
 >
 > 6. **Ownership is three repos, not a public device stack.** `mind` **defines** (schema +
 >    verifier — a verifier that needs a private repo to know what it is verifying is not a
->    verifier), `512-mind` **governs** (admissibility), `mind-runtime` **performs** (actuation +
+>    verifier), `mind-law` **governs** (admissibility), `mind-runtime` **performs** (actuation +
 >    edge codec). Every other repo is a consumer (RFC 0027 §0.1, §0.6). Actuation must not be
 >    coupled to the intent, nerve, flow, or agent components: coupling a physical actuator to a
 >    skeleton component puts a motor behind a build failure (§0.4).
@@ -70,7 +70,7 @@ orchestration.
 > for an external standard, because conformance to an unpublished external specification is not
 > claimed (§0.3). What is correct is the negative half: production drivers, enterprise policy,
 > fleet management and device orchestration are not this repo's — actuation and the edge codec
-> live in the private `mind-runtime`, and admissibility in `512-mind` (§0.6).
+> live in the private `mind-runtime`, and admissibility in `mind-law` (§0.6).
 
 ## M0 — Contract freeze
 

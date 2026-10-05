@@ -288,7 +288,7 @@ scope.
   §7, §8).
 - **`mindc build --emit-hex`** for Intel HEX format, the standard embedded
   programming format.
-- **512-mind DIFC integration**: governance modules that run on bare-metal
+- **MIND-Law DIFC integration**: governance modules that run on bare-metal
   microcontrollers at safety-critical nodes (industrial control, financial terminal).
 
 ## 12. References

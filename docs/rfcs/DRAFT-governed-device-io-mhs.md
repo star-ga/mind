@@ -57,7 +57,7 @@
 >
 > 6. **Three repos, not a public device stack.** `mind` **defines** (schema + verifier — a
 >    verifier that needs a private repo to know what it is verifying is not a verifier),
->    `512-mind` **governs** (admissibility), `mind-runtime` **performs** (actuation + edge
+>    `mind-law` **governs** (admissibility), `mind-runtime` **performs** (actuation + edge
 >    codec). Every other repo is a consumer (RFC 0027 §0.1, §0.6). Actuation must not be coupled
 >    to the intent, nerve, flow, or agent components: coupling a physical actuator to a skeleton
 >    component puts a motor behind a build failure (§0.4).
@@ -107,7 +107,7 @@ MCP invocation MUST NOT be able to masquerade as an unclassified physical effect
 > **SUPERSEDED (RFC 0027 §0.2, §0.4, §0.6) —** Goals 1 and 3 are rejected: there is no "one
 > typed representation" for devices, and no physical-effect class is carried through the
 > compiler IR. Goal 4's governance hook survives in shape only — admissibility is issued by
-> `512-mind`, and the gateway accepts a command from **any** producer that carries a valid
+> `mind-law`, and the gateway accepts a command from **any** producer that carries a valid
 > admissibility proof, so the actuation path must not depend on which planner produced the
 > command. Goal 5's "first-class adapter" is narrowed to a single edge codec in the private
 > runtime.
@@ -445,5 +445,5 @@ Planned public surfaces:
 > effect class is neither a `mic@3` opcode nor a flag, because there is no new IR at all.
 > Questions 2, 3 and 5 lapse with the Device IR they belong to. The open questions of record are
 > now RFC 0027 §8: receipt batching for high-rate actuators without weakening per-command
-> binding, and whether `512-mind` can issue admissibility proofs at actuation latency — it
+> binding, and whether `mind-law` can issue admissibility proofs at actuation latency — it
 > currently compiles 0 of 144 modules, so this is unmeasured and no schedule should assume it.

@@ -746,7 +746,7 @@ Introduce language-level support for observation-dependent computation. MIND alr
 ### Integration
 - MIND compiler validates `@axis` annotations at type-check time
 - MLIR lowering preserves axis metadata for runtime evidence chain
-- 512-mind governance modules use `@axis` to declare invariant coverage
+- MIND-Law governance modules use `@axis` to declare invariant coverage
 
 ---
 
@@ -2119,7 +2119,7 @@ the fleet, a dependency hub every release gates on. A spec (preimage layout, cha
 vectors) fails softly: implementations drift, but shared vectors *detect* drift, whereas
 coupling is structural. This is the mic@3 pattern and it is already known to work here.
 
-**Firewall — do not cross it.** 512-mind's I13 states that structural admissibility must not
+**Firewall — do not cross it.** MIND-Law's I13 states that structural admissibility must not
 enter the optimization loop: no gradient, no reward, no penalty term, separate evidence
 stream, no action identifiers — "the moment a structural boundary becomes a metric, it
 ceases to function as a boundary." Prediction confidence must therefore never confer
@@ -2146,7 +2146,7 @@ and every one of them answers it correctly and in isolation:
 | `mind` compiler | identity of an **artifact** | `trace_hash = mini_sha256(emit_mic3(ir))` on canonical mic@3 bytes (RFC 0016/0021) |
 | Naestro kernel | identity of a **decision** | routing lineage + `kernel.replay` |
 | `mind-mem` | identity of a **belief over time** | governed blocks, provenance chain, contradiction scan |
-| `512-mind` | identity of a **constraint** | I1–I15 invariants, SOP-5 `spec_hash` binding, witness chain |
+| `mind-law` | identity of a **constraint** | I1–I15 invariants, SOP-5 `spec_hash` binding, witness chain |
 | `mind-nerve` | identity of an **intent→capability route** | governed route table, attestation envelope |
 | `arch-mind` | identity of **structural health** | HMAC-SHA256 / Ed25519 session evidence log |
 
@@ -2178,7 +2178,7 @@ Proposed surface:
 
 - A **composite preimage** — an ordered, canonically-serialized tuple of the six
   member hashes plus a chain-format tag. No clock, no randomness, no map
-  iteration order (the 512-mind evidence-preimage discipline applies verbatim).
+  iteration order (the MIND-Law evidence-preimage discipline applies verbatim).
 - `anchor_hash = mini_sha256(composite_preimage)`, carried as an **additive**
   mic@3 MAP key so unsigned artifacts stay byte-identical and no `mic@N` bump
   is required.
@@ -2192,7 +2192,7 @@ Proposed surface:
 
 ### Firewall — do not cross it
 
-512-mind's **I13** holds: structural admissibility must not enter the
+MIND-Law's **I13** holds: structural admissibility must not enter the
 optimization loop. The composite anchor is an evidence artifact, not a score.
 It must never be reduced to a single quality number, and a high anchor coverage
 must never confer authority to relax an invariant. Six chains agreeing is not
@@ -2211,7 +2211,7 @@ permission.
    useful and much harder to keep deterministic.
 3. **Cross-repo hash-format drift.** The six mechanisms do not currently agree
    on a hash function or an encoding (`mini_sha256` here, HMAC-SHA256 in
-   arch-mind, ECDSA-backed witnesses in 512-mind). The spec must pin one
+   arch-mind, ECDSA-backed witnesses in MIND-Law). The spec must pin one
    composite format without forcing six migrations.
 4. **Does anyone buy it.** Same honesty test applied to Phase 18: name the
    buyer who needs the *conjunction* rather than one chain, or this is a demo

@@ -27,7 +27,7 @@ RFC 0016 §7 establishes a three-layer evidence spine:
 
 > **Compile → Runtime/agent → Governance**
 
-Phase A/B of RFC 0016 shipped the compile layer. The governance layer (512-mind
+Phase A/B of RFC 0016 shipped the compile layer. The governance layer (MIND-Law
 `proof_chain`) is a tracked deliverable. The runtime/agent layer — `agent.*` — is
 the missing link that connects compile-time evidence to runtime reproducibility.
 
@@ -175,9 +175,9 @@ Exit 0 on pass; nonzero with a specific exit code per §4.4.
 Exit codes 10–14 are in the `agent.*` namespace; exit codes 1–5 (RFC 0017) cover
 artifact verification. Ranges are non-overlapping.
 
-### 4.5 Relationship to governance (512-mind `proof_chain`)
+### 4.5 Relationship to governance (MIND-Law `proof_chain`)
 
-RFC 0016 §7 and RFC 0021 §3.4 state that 512-mind's DIFC `proof_chain` should
+RFC 0016 §7 and RFC 0021 §3.4 state that MIND-Law's DIFC `proof_chain` should
 record `evidence_chain.trace_hash` as a proof input. The `agent.*` layer extends
 this: a governed decision that references an agent step records
 `agent.step_hash` as the proof input, so the governance chain is anchored on the
@@ -185,7 +185,7 @@ this: a governed decision that references an agent step records
 
 This is a **tracked deliverable**, not a shipped fact. The present state (RFC 0021
 §3.4): two chains, convergence in progress. This RFC is the specification of the
-`agent.*` block that makes the convergence possible; wiring it into 512-mind's
+`agent.*` block that makes the convergence possible; wiring it into MIND-Law's
 `EvidenceChain` consumer is a separate cross-repo task.
 
 ### 4.6 Session DAG
@@ -283,7 +283,7 @@ provenance — desync risk and no artifact inseparability.
   single step.
 - **mind-bench `agent-state-replay` workloads**: RFC 0020 §4.2 workloads that
   use `agent.*` records as the verification unit instead of raw artifact hashes.
-- **Governance wiring**: 512-mind `proof_chain` records `agent.step_hash` as a
+- **Governance wiring**: MIND-Law `proof_chain` records `agent.step_hash` as a
   proof input (RFC 0021 §3.4 convergence deliverable).
 - **Cross-agent session correlation**: multiple agent instances sharing a
   `session_id` produce step records whose `parent` pointers form a multi-agent
@@ -313,7 +313,7 @@ RFC 0016 §3.3 (the fold definition — `H(mic1_ir_hash || replay_trace_hash)`),
 §7 (agent layer in the one-chain ecosystem design);
 RFC 0020 §4.2 (`agent-state-replay-*` future workloads);
 RFC 0021 §3.2 (mic@3 MAP epilogue — the container `agent.*` is a namespace in),
-§3.4 (512-mind governance convergence — `agent.step_hash` as proof input);
+§3.4 (MIND-Law governance convergence — `agent.step_hash` as proof input);
 RFC 0017 (the verifier surface that will grow to cover `--agent-step`);
 `src/ir/compact/v3/evidence.rs` (the `mic3_evidence_report` library the verifier
 builds on); W3C PROV-O (prior art); OpenTelemetry span model (prior art for

@@ -173,16 +173,16 @@ Rejected alternative `mic@1e` (text fence on mic@1) is recorded in §3.0.
 
 ### 3.3 Demote v2 `Graph` to a model-exchange format: **`mind-model@2`**
 The v2 lineage is honest as a *tensor model-exchange* format for the graphs that **are**
-expressible in its dataflow opcodes — rfn-mind / MindLLM tensor graphs, and 512-mind's
+expressible in its dataflow opcodes — rfn-mind / MindLLM tensor graphs, and MIND-Law's
 MAP `dump` (its only documented v2 use). Rename the lineage in docs to break the
 "compiler IR" implication; keep `emit_micb`/`parse_micb` for that role. It is **not**
 the compiled-artifact IR and **not** the general evidence anchor.
 
 ### 3.4 Honesty about the governance chains (supersedes RFC 0016 §7's aspiration)
-512-mind ships its **own** DIFC evidence chain (`observer.mind::EvidenceChain`,
+MIND-Law ships its **own** DIFC evidence chain (`observer.mind::EvidenceChain`,
 sha3_512 / Hash512) — today it is a **genuinely separate** chain, not a consumer of
 the mic@3 `trace_hash`. RFC 0016 §7's "consumes, does not parallel" is **aspirational
-until wired**. Action: 512-mind records the mic@3 `trace_hash` as a proof input, or
+until wired**. Action: MIND-Law records the mic@3 `trace_hash` as a proof input, or
 the RFC stops claiming unification. State the present truth plainly: **two chains
 today; convergence is a tracked deliverable**, not a shipped fact.
 
@@ -249,11 +249,11 @@ today; convergence is a tracked deliverable**, not a shipped fact.
    detected from the artifact's MAP epilogue.)
 5. **Demote** v2 `Graph` → `mind-model@2`. ⚠️ **This is a byte-preserving cross-repo
    migration, NOT a doc rename** (arch review 2026-05-27). The v2 `Graph`/MIC-B is a
-   published `mind-spec` wire contract with live external consumers: **512-mind** hashes
+   published `mind-spec` wire contract with live external consumers: **MIND-Law** hashes
    over the MIC-B byte layout (`canonical_ir.mind:142` `SPEC_HASH`), **mind-mem** ships a
    second implementation (`src/mind_mem/mic_map.py`, `MICB_VERSION=0x02`), **mind-nerve**
    uses mic@2-text IPC. The rename must **not** change `MICB_VERSION` or byte layout, and
-   must land as a coordinated `mind-spec` version bump with 512-mind's `SPEC_HASH` +
+   must land as a coordinated `mind-spec` version bump with MIND-Law's `SPEC_HASH` +
    mind-mem's pin updated in lockstep — tracked as cross-repo deliverables. Resolve the
    `MICB_VERSION`/`Mind.toml` drift first (#308).
 6. **`oracle.rs`** + CI wiring for the bit-identity gate (#307).

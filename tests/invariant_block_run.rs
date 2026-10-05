@@ -4,7 +4,7 @@
 
 //! `invariant NAME { ... }` governance-declaration RUNTIME gate.
 //!
-//! An `invariant` block is a 512-mind governance/DIFC contract declaration (a
+//! An `invariant` block is a MIND-Law governance/DIFC contract declaration (a
 //! `description` plus one or more `check(...)` predicates). It produces NO
 //! executable code: the native compiler accepts the whole `{ ... }` body as a
 //! transparent marker (brace-balanced, string/comment-aware) and emits an empty

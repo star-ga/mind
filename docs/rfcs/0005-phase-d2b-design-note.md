@@ -135,7 +135,7 @@ without going through raw i64) breaks. Triage:
 - The bundled `std/*.mind` modules don't do this internally.
 - mind-nerve doesn't do this (Phase 1 PyTorch path; native MIND path
   Phase 2 will adopt D₂b semantics from the start).
-- 512-mind / MindLLM consumers — check for cross-Named coercion
+- MIND-Law / MindLLM consumers — check for cross-Named coercion
   before tagging.
 
 ## Tag

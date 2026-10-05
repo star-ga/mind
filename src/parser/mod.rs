@@ -1383,9 +1383,9 @@ impl<'a> P<'a> {
             Some(StmtKw::Module) => return self.parse_module_block(Vec::new()),
             Some(StmtKw::Export) => return self.parse_export_block(),
             // `invariant NAME { ... }` — a governance/DIFC contract declaration
-            // (512-mind invariant system). It produces NO executable code: the
+            // (MIND-Law invariant system). It produces NO executable code: the
             // native compiler accepts it as a transparent marker and the governance
-            // tooling (arch-mind / the 512-mind runtime) consumes the body.
+            // tooling (arch-mind / the MIND-Law runtime) consumes the body.
             // std-surface-gated; the keystone source has no invariants, so its emit
             // stays byte-identical.
             // deferred: the `check(...)` body is currently skipped, not lowered —
@@ -2020,7 +2020,7 @@ impl<'a> P<'a> {
 
     /// Parse `invariant NAME { ... }` — a governance/DIFC contract declaration.
     ///
-    /// The invariant is a 512-mind governance construct (a `description` plus one
+    /// The invariant is a MIND-Law governance construct (a `description` plus one
     /// or more `check(...)` predicates). It is NOT part of the executable lowering:
     /// the native compiler accepts the whole `{ ... }` body as opaque and emits a
     /// transparent empty block, so a module that declares invariants compiles to

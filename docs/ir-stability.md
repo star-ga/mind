@@ -136,7 +136,7 @@ but the current workflow supplies only the correctness floor.
 
 - `mind-runtime` consumes `ir::load`; do not call `parser::parse` from
   runtime hot paths.
-- `512-mind`, `rfn-mind`, `mind-inference`, `MindLLM`, `ctp-mind`,
+- `mind-law`, `rfn-mind`, `mind-inference`, `MindLLM`, `ctp-mind`,
   `bitnet-mind-governance` may emit `mic@1` from `mindc` and ship it
   alongside the source for ahead-of-time deployment.
 - `mindlang.dev/docs/ir/` mirrors this document.

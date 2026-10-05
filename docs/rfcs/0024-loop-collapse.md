@@ -496,7 +496,7 @@ while i <= n { acc = acc + (3*i + 1); i = i + 1; }
 - **Q16.16 series collapse** feeding numeric kernels (`examples/fft_q16.mind`,
   `examples/mandelbrot.mind` shapes) where a bounded fixed-point series has an exact
   closed form.
-- **Governance integration.** A collapsed bounded-ledger sum in a 512-mind DIFC path
+- **Governance integration.** A collapsed bounded-ledger sum in a MIND-Law DIFC path
   carries its `evidence_chain.collapse.*` receipt into the governance `proof_chain`
   (RFC 0016 §7), so "this constant-time total is the exact sum of the ledger" is an
   auditable fact.

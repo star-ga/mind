@@ -9,7 +9,7 @@
 | Created | 2026-05-26 |
 | Task | #288 |
 | Carrier | mic@3 MAP `evidence_chain.*` namespace (namespace specified for mic@2.1 MAP: [mic2.1-spec.md](https://github.com/star-ga/mind-spec/blob/main/spec/mic/mic2.1-spec.md) §4, §6; `trace_hash` re-anchored to canonical mic@3 bytes 2026-05-31 — see §3.3) |
-| Related | RFC 0011 (ReplayScheduler trace-hash — the runtime trace source), RFC 0014 (per-substrate lowering — the `substrate` field), RFC 0015 (cross-substrate bit-identity — the attested property), RFC 0017 (`mindc verify` — the cross-target certificate the chain can carry), RFC 0019 / #294 (deterministic agent substrate — `agent.*` links INTO the chain), RFC 0020 (#303 mind-bench — the public wedge-score is a chain link), 512-mind DIFC `proof_chain` (governance consumer, NOT a parallel chain) |
+| Related | RFC 0011 (ReplayScheduler trace-hash — the runtime trace source), RFC 0014 (per-substrate lowering — the `substrate` field), RFC 0015 (cross-substrate bit-identity — the attested property), RFC 0017 (`mindc verify` — the cross-target certificate the chain can carry), RFC 0019 / #294 (deterministic agent substrate — `agent.*` links INTO the chain), RFC 0020 (#303 mind-bench — the public wedge-score is a chain link), MIND-Law DIFC `proof_chain` (governance consumer, NOT a parallel chain) |
 
 ---
 
@@ -52,7 +52,7 @@ for RFC 0019 to build on.
   One primitive across mind-mem / mic@2.1 / evidence-chain (anti-fragmentation; §7).
 - **Not a new hash chain.** `evidence_chain` reuses the IR canonical hash
   (**canonical mic@3 bytes** since the 2026-05-31 re-anchor — see §3.3; originally
-  the mic@2.1 binary) and the RFC 0011 trace-hash. 512-mind's `proof_chain` and mind-mem's
+  the mic@2.1 binary) and the RFC 0011 trace-hash. MIND-Law's `proof_chain` and mind-mem's
   governed-write **consume** evidence-chain hashes; they do not parallel them (§7).
 - **Not a network/consensus protocol.** No distributed ledger, no global ordering.
   An evidence chain is a local, per-artifact Merkle-DAG; trust is rooted in the
@@ -245,11 +245,11 @@ makes them one chain with three consumers:
 |---|---|---|
 | **Compile** | RFC 0016 `evidence_chain.*` (this RFC) | The chain itself. |
 | **Runtime / agent** | RFC 0019 `agent.*` (#294) | An agent step's `agent.trace` links to the `evidence_chain.trace_hash` of the IR that ran (the §3.3 fold). Agent cognition inherits compile-time evidence. |
-| **Governance** | 512-mind DIFC `proof_chain` (Hash256/Hash512) | **Consumes** evidence-chain hashes as proof inputs; does NOT re-derive a parallel chain. A governed write records the `evidence_chain.trace_hash` it authorized. |
+| **Governance** | MIND-Law DIFC `proof_chain` (Hash256/Hash512) | **Consumes** evidence-chain hashes as proof inputs; does NOT re-derive a parallel chain. A governed write records the `evidence_chain.trace_hash` it authorized. |
 
 Signer unification: **one** Ed25519 chain (mind-mem `model_signing`) signs mic@2.1
 artifacts, mind-mem manifests, RFC 0020 wedge-score receipts, and these evidence
-chains. 512-mind's Hash256/512 are *content* hashes feeding its DIFC proofs, not a
+chains. MIND-Law's Hash256/512 are *content* hashes feeding its DIFC proofs, not a
 competing signature authority — they reference evidence_chain outputs. **No fourth
 chain is introduced; #288 closes the fragmentation risk rather than opening it.**
 
@@ -326,7 +326,7 @@ MAP and rooted in one signer.
   requires explicit `#[nondeterministic]`, the §5.2 refusal-marker becomes the
   default-deny surface: an unmarked nondeterministic graph fails to emit a
   `deterministic` link and is caught at the gate.
-- **Phase E — agent + governance links.** RFC 0019 `agent.*` and 512-mind
+- **Phase E — agent + governance links.** RFC 0019 `agent.*` and MIND-Law
   `proof_chain` consume evidence hashes (§7). Long-horizon.
 
 ## 9. Acceptance
@@ -358,7 +358,7 @@ MAP and rooted in one signer.
 ## 10. Open questions
 
 1. **`trace_hash` function — RESOLVED: SHA-256, not BLAKE3.** mind-mem
-   `model_signing` and 512-mind use SHA-256/Hash256, the Rust bootstrap has a
+   `model_signing` and MIND-Law use SHA-256/Hash256, the Rust bootstrap has a
    FIPS-180-4 SHA-256 (`src/deps/mod.rs`), and `std.sha256` shipped pure-MIND
    FIPS-180-4. SHA-256 is now **load-bearing for the Rust↔MIND duality**: the
    bootstrap and the self-host endpoint must compute bit-identical `trace_hash`
@@ -386,6 +386,6 @@ mic@2.1 spec §4 (reserved `evidence_chain.*`), §5 (canonicalisation byte-ident
 property + the same-hash-across-substrates gate); RFC 0017 (`mindc verify` +
 `verify.*` certificates); RFC 0019 / #294 (`agent.*` links); RFC 0020 / #303
 (mind-bench wedge-score as a chain link); `mind/src/ir/compact/v2/` (MAP reference
-impl); `mind-mem/src/mind_mem/model_signing.py` (the one signer); 512-mind DIFC
+impl); `mind-mem/src/mind_mem/model_signing.py` (the one signer); MIND-Law DIFC
 `proof_chain` (governance consumer); internal cross-review (evidence-chain
 convergence).

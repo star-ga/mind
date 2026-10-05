@@ -16,7 +16,7 @@
 | **mind-mem** | `~/mind-mem` | `pyproject.toml` | **4.0.15** | n/a (Python package) | uses `mic_map.py` (MICB_VERSION=0x02 / mic@2) | PyPI `mind-mem 4.0.15`. `__version__ = "4.0.15"`. MICB_VERSION pin is mic@2 — see drift flag. |
 | **mind-nerve** | `~/mind-nerve` | `Mind.toml` | **0.1.0-alpha.2** | mindc ≥0.10.2, <0.11.0 (`[mind]` pin, now ENFORCED) | mic@2 (`ir-format = "mic@2"`) | Python package: `pyproject.toml` uses dynamic version via `mind_nerve.__version__`; `__version__ = "0.3.0b8"`. The `ir-format` pin is REFUSED by mindc: no invocation emits mic@2 (see `docs/ir-stability.md`). See drift flag. |
 | **mind-inference** | `~/mind-inference` | `Mind.toml` | **0.2.0** | not pinned (see drift flag) | mic@1 (standard pipeline) | STARGA Commercial license. No CI verified as of last audit. |
-| **512-mind** | `~/512-mind` | CHANGELOG.md | **1.10.1** | mindc 0.2.5 (CHANGELOG §v1.10.1) | MIC-B / mic@2 (`canonical_ir.serialize_mic_b`) | DIFC governance framework. 65+ .mind source modules. See drift flag on mindc target. |
+| **MIND-Law** | `~/mind-law` | CHANGELOG.md | **1.10.1** | mindc 0.2.5 (CHANGELOG §v1.10.1) | MIC-B / mic@2 (`canonical_ir.serialize_mic_b`) | DIFC governance framework. 65+ .mind source modules. See drift flag on mindc target. |
 | **mindlang.dev** | `~/mindlang.dev` | `package.json` | **0.1.0** | n/a (Next.js / Cloudflare Pages) | n/a | Site name in package.json is `"v2"`, version `"0.1.0"`. TypeScript/Next.js. |
 
 ---
@@ -61,46 +61,46 @@ add a note to Mind.toml clarifying the scope of each version string.
 
 ---
 
-### FLAG-3: 512-mind mindc target is mindc 0.2.5, compiler is at 0.7.0
+### FLAG-3: MIND-Law mindc target is mindc 0.2.5, compiler is at 0.7.0
 
 | File | Value |
 |---|---|
-| `~/512-mind/CHANGELOG.md` §v1.10.1 | `mindc 0.2.5 alignment` (last recorded bump) |
+| `~/mind-law/CHANGELOG.md` §v1.10.1 | `mindc 0.2.5 alignment` (last recorded bump) |
 | `~/mind/Cargo.toml` | `mindc 0.7.0` |
 
-**Assessment:** 512-mind targets mindc 0.2.5, which is 5 minor versions behind the
+**Assessment:** MIND-Law targets mindc 0.2.5, which is 5 minor versions behind the
 current compiler. The gap is large: mindc 0.3.x through 0.7.x added the full
 pure-MIND stdlib (RFC 0005), mind-blas (RFC 0006), Mindcraft (RFC 0007), `mindc build`
 (RFC 0008), extern "C" + SysV ABI (RFC 0010), `mic@2.1`/`mic@3` (RFC 0014/0021),
-and evidence chains (RFC 0016). 512-mind's .mind source (1863 bitwise ops, 65+
+and evidence chains (RFC 0016). MIND-Law's .mind source (1863 bitwise ops, 65+
 modules) may compile on the current mindc but this has not been verified after each
 major RFC ship.
 
 The existing audit (2026-05-29 genesis audit) found that 65/67 modules compile; 2
-fail. The mindc target version in the CHANGELOG is informational (512-mind has no
+fail. The mindc target version in the CHANGELOG is informational (MIND-Law has no
 `Mind.toml` at the repo root), so there is no machine-enforced compatibility gate.
 
-**Action (P1):** Test 512-mind against the current mindc 0.7.x to confirm/refute
+**Action (P1):** Test MIND-Law against the current mindc 0.7.x to confirm/refute
 the 65/67 compile claim and identify which two modules fail. Create a `Mind.toml`
 at the repo root with a `mindc-min` / `mindc-max` range so future mindc upgrades
 are gated mechanically.
 
 ---
 
-### FLAG-4: 512-mind and mind-mem both consume mic@2 (MIC-B) — not mic@3
+### FLAG-4: MIND-Law and mind-mem both consume mic@2 (MIC-B) — not mic@3
 
 | Component | mic format consumed |
 |---|---|
-| `~/512-mind/src/spec_hash.mind` | `canonical_ir.serialize_mic_b` (MIC-B = mic@2) |
+| `~/mind-law/src/spec_hash.mind` | `canonical_ir.serialize_mic_b` (MIC-B = mic@2) |
 | `~/mind-mem/src/mind_mem/mic_map.py` | `MICB_VERSION = 0x02` |
 
 **Assessment:** RFC 0021 §4.5 identifies this as a **byte-preserving cross-repo
 migration** requirement: the mic@2 / MIC-B wire format must not change bytes during
-the `mic@2` → `mind-model@2` rename, and both 512-mind and mind-mem must update their
+the `mic@2` → `mind-model@2` rename, and both MIND-Law and mind-mem must update their
 `SPEC_HASH` / `MICB_VERSION` pins in a coordinated version bump. This flag is already
 tracked in RFC 0021 step 5 as a blocker on the rename.
 
-**Action:** Coordinate the mic@2 → `mind-model@2` migration across mind-spec, 512-mind,
+**Action:** Coordinate the mic@2 → `mind-model@2` migration across mind-spec, MIND-Law,
 and mind-mem as a single cross-repo PR set. Do not rename until all three are ready.
 
 ---
@@ -133,7 +133,7 @@ with the range used in mind-nerve (`0.5.0` ≤ mindc < `0.8.0`). Low-cost hygien
 | mind-mem PyPI version | 4.0.15 | `mind-mem/pyproject.toml` |
 | mind-nerve Python __version__ | 0.3.0b8 | `mind-nerve/python/mind_nerve/__init__.py` |
 | mind-nerve Mind.toml version | 0.1.0-alpha.2 | `mind-nerve/Mind.toml` |
-| 512-mind version | 1.10.1 | `512-mind/CHANGELOG.md` §v1.10.1 |
-| 512-mind last mindc bump | 0.2.5 | `512-mind/CHANGELOG.md` §v1.10.1 |
+| MIND-Law version | 1.10.1 | `mind-law/CHANGELOG.md` §v1.10.1 |
+| MIND-Law last mindc bump | 0.2.5 | `mind-law/CHANGELOG.md` §v1.10.1 |
 | mind-inference version | 0.2.0 | `mind-inference/Mind.toml` |
 | mindlang.dev version | 0.1.0 | `mindlang.dev/package.json` |

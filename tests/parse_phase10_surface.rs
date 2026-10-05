@@ -285,7 +285,7 @@ fn parses_slice_of_qualified_type() {
 // borrowed `&[T]` and from the fixed-size `[T; N]`: the length is not
 // part of the type. Reuses the `Slice` representation so the type
 // checker treats it as a contiguous run of `T`. (mindc parser gap that
-// blocked ~half of the 512-mind modules from parsing.)
+// blocked ~half of the MIND-Law modules from parsing.)
 #[test]
 fn parses_bare_dynamic_slice_in_param() {
     let src = "module m { fn s(xs: [i32]) -> i32 { 0 } }\n";

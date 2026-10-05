@@ -7,7 +7,7 @@
 | Status | **Draft — Architecture Decided** (D0). The load-bearing architecture (§0) was decided against the live codebase by the architecture decision authority; §4–§6 record those decisions. **No implementation has shipped.** |
 | Authors | STARGA Inc. |
 | Created | 2026-08-28 |
-| Repo | `mind` (public) defines the schema and the verifier; `512-mind` governs admissibility; `mind-runtime` (private) performs actuation and speaks the external codec |
+| Repo | `mind` (public) defines the schema and the verifier; `mind-law` governs admissibility; `mind-runtime` (private) performs actuation and speaks the external codec |
 | Depends | RFC 0015 (cross-substrate bit-identity), RFC 0016 (evidence-chain emission), RFC 0017 (`mindc verify`), RFC 0021 (canonical mic@3 IR + MAP epilogue), RFC 0024 (the collapse-receipt carrier pattern this reuses verbatim) |
 
 > **Supersedes** `docs/rfcs/DRAFT-governed-device-io-mhs.md` and `docs/MHS_ROADMAP.md`. Both were
@@ -82,7 +82,7 @@ The distinction is enforced by §7's gate, not by documentation.
 
 ### 0.6 Three repos, not seventeen
 
-`mind` **defines** (schema + verifier). `512-mind` **governs** (admissibility). `mind-runtime`
+`mind` **defines** (schema + verifier). `mind-law` **governs** (admissibility). `mind-runtime`
 **performs** (actuation + edge codec). Every other repo is a consumer.
 
 ### 0.7 A device is a stochastic island — use the determinism vocabulary we already have
@@ -133,7 +133,7 @@ all already ship. This RFC spends one reserved key and reuses the rest.
 A governed device action has four parties and one rule.
 
 1. A **producer** proposes a command. Any producer; the gateway does not privilege one (§0.4).
-2. **512-mind** issues an *admissibility proof* — this command, from this state, is permitted.
+2. **MIND-Law** issues an *admissibility proof* — this command, from this state, is permitted.
 3. The **gateway** in `mind-runtime` validates the proof, encodes the command through the edge codec
    (§0.3), actuates, and observes.
 4. The gateway emits a **`DeviceActionReceipt`** into `evidence_chain.device_receipts`.
@@ -204,5 +204,5 @@ can reach the device, replay is re-execution and the mode distinction is fiction
 
 - Receipt batching for high-rate actuators: one MAP entry per command will not hold at kHz rates.
   Batching must not weaken per-command binding.
-- Whether `512-mind` can issue admissibility proofs at actuation latency. It currently compiles
+- Whether `mind-law` can issue admissibility proofs at actuation latency. It currently compiles
   0 of 144 modules, so this is unmeasured, and no schedule should assume it.

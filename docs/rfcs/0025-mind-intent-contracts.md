@@ -284,4 +284,4 @@ privately.
 - I6: binding the `contract_id` hash into the economic ICL (`intent.commit.*`) without
   changing its semantics.
 - Contract composition across agents (hierarchical contracts, §4.8) as a governance surface
-  shared with 512-mind.
+  shared with MIND-Law.

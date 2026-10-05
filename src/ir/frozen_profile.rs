@@ -122,7 +122,7 @@ fn reject(construct: &'static str) -> Result<(), FrozenProfileRejection> {
 /// before the flip.
 ///
 /// Ecosystem fitment (audit directive 2026-08-21): rejecting Shr KEEPS the Q16.16
-/// fixed-point tier — arch-mind metrics, mind-nerve routing, mind-runtime, 512-mind
+/// fixed-point tier — arch-mind metrics, mind-nerve routing, mind-runtime, MIND-Law
 /// money-path — OUT of the frozen profile, because Q16.16 multiply is `(a*b) >> 16`
 /// (needs Shr). That exclusion is CORRECT: those consumers are not yet native-byte-
 /// identity-proven, so they must stay on the MLIR backend until Shr is corpus-proven
