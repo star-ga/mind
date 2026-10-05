@@ -174,9 +174,7 @@ fn node_mentions(pred: LeafPred, node: &Node) -> bool {
             else_branch,
             ..
         } => {
-            node_mentions(pred, cond)
-                || any(then_branch)
-                || else_branch.as_deref().is_some_and(&any)
+            node_mentions(pred, cond) || any(then_branch) || else_branch.as_deref().is_some_and(any)
         }
         Node::Import { .. } => false,
         Node::ArrayLit { elements, .. } | Node::SetLit { elements, .. } => any(elements),
