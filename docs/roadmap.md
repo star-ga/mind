@@ -2494,3 +2494,84 @@ vectors above, and `mindc run` execution of every exported function.
 Arbitrary-precision variants, symbolic algebra, and any claim beyond "these operations
 are deterministic and match the reference vectors". No performance claim without a
 criterion number.
+
+## Phase 19.6 — Benchmark discipline and GEMM epilogue fusion
+
+Two gaps, one theme: a speed number is only worth publishing if the method
+behind it would survive a hostile reader, and the cheapest remaining GEMM win
+is one that keeps the reduction order untouched.
+
+### 19.6.1 — Every optimization ships behind a quality gate, and the misses are logged
+
+A speedup is kept only if a fixed quality check holds across the full
+fixture set, not on the case that motivated it. For the kernel tiers that
+check is byte-identity; for any lossy tier (quantized inference, approximate
+math) it is a declared accuracy metric with a declared tolerance, calibrated
+on development data and never on the held-out set it is reported against.
+
+The ideas that failed are written down next to the ones that shipped, with
+the measurement that killed them. A results document that only lists wins
+cannot be distinguished from a cherry-picked one; a document that also lists
+the losses can.
+
+- **Deliverable:** a `## Tried and rejected` section in every benchmark
+  report under `benchmarks/`, plus a short template the bench harness fills in.
+
+### 19.6.2 — A measurement protocol strict enough to publish
+
+Every public speed claim (MIND vs Rust/C, kernel GMAC/s, inference
+throughput) is measured under one written protocol:
+
+- baseline and candidate run in the same session, on the same machine,
+  interleaved rather than back-to-back;
+- a fixed heat-soak before timing begins, so the first run is not measured on
+  a cold chip and the last on a throttled one;
+- default clocks, no manual boost or frequency pinning unless stated;
+- energy, where reported, is measured at the wall and net of idle draw;
+- the exact command and raw tool output accompany the number.
+
+- **Deliverable:** `docs/benchmarks.md` gains a "Measurement protocol"
+  section; numbers not produced under it are labelled as such.
+
+### 19.6.3 — Positioning: our benchmarks have no run-to-run noise
+
+Elsewhere, an accuracy delta is routinely reported as "within run-to-run
+noise". A deterministic build has no run-to-run noise: the same benchmark
+gives one exact answer every time, on every substrate. Every benchmark report
+we publish should state this explicitly and show the repeated-run hashes,
+because it turns a methodological caveat other projects have to carry into a
+property we can demonstrate.
+
+### 19.6.4 — Fuse the post-GEMM work into the kernel epilogue
+
+Today the fused Q16.16 and `det.igemm` kernels write the full output tile,
+and any activation, requantize, or residual add runs as a separate pass that
+reads it back. Fusing those element-wise steps into the GEMM epilogue keeps
+the tile in registers and removes a full write and re-read of the largest
+intermediate tensor.
+
+This is compatible with byte-identity because the epilogue is element-wise:
+it does not change the reduction order of the accumulation, only what happens
+to each finished accumulator before it is stored. The order of the epilogue
+operations themselves must be fixed and identical on every backend.
+
+- **Shape:** an epilogue descriptor (activation, requantize scale/shift,
+  optional residual pointer) passed to the existing emitters in
+  `src/mlir/lowering.rs`; no new kernel family.
+- **Gate:** the pinned cross-substrate canaries stay byte-identical with the
+  epilogue off, and a new fused-vs-unfused fixture proves the fused output is
+  byte-identical to the two-pass output on x86 and ARM.
+
+### Firewall — do not cross it
+
+Do not reorder, split, or widen the accumulation to make the epilogue fit.
+If a fusion only works by changing how the dot product is summed, it is a
+different kernel and goes through the full re-bless protocol, not this phase.
+
+### Open questions — answer before this gets a milestone
+
+- Which consumers actually run an element-wise op after GEMM today
+  (mind-inference layers, MIND-Law scoring)? That decides which epilogue ops
+  are worth supporting first.
+- Is the measured cost of the second pass large enough to matter at the
+  sizes we ship? Measure under 19.6.2 before building.
