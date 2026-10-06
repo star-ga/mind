@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1876 | **Est. tokens:** ~3,655,806
-**Generated:** 2026-10-06 04:46 UTC
+**Files:** 1876 | **Est. tokens:** ~3,655,877
+**Generated:** 2026-10-06 04:52 UTC
 
 ## Token Budget Guide
 
@@ -88,9 +88,9 @@
 | `examples/zoo/` | 6 | ~12,518 |
 | `experiments/global-vs-local/` | 7 | ~6,487 |
 | `.githooks/` | 4 | ~1,755 |
-| `.github/` | 4 | ~894 |
+| `.github/` | 4 | ~903 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 8 | ~12,098 |
+| `.github/workflows/` | 8 | ~12,160 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~21,930 |
 | `scripts/` | 31 | ~116,920 |
@@ -1026,7 +1026,7 @@
 ### `.github/`
 
 - `PULL_REQUEST_TEMPLATE.md` (~55 tok, small) — Summary
-- `release-drafter.yml` (~85 tok, small) — name-template: 'v$NEXT_PATCH_VERSION'
+- `release-drafter.yml` (~94 tok, small) — name-template: 'v$NEXT_PATCH_VERSION'
 - `required-ci-jobs.tsv` (~745 tok, large) — # required-ci-jobs.tsv — the CI jobs that MUST have passed on the exact commit
 ### `.github/workflows/`
 
@@ -1036,7 +1036,7 @@
 - `docs-claims.yml` (~2668 tok, huge) — name: Docs Claims
 - `link-check.yml` (~253 tok, medium) — name: Link Check
 - `mindcraft.yml` (~933 tok, large) — name: Mindcraft Check
-- `release-drafter.yml` (~102 tok, small) — name: Release Drafter
+- `release-drafter.yml` (~164 tok, small) — name: Release Drafter
 - `release.yml` (~3761 tok, huge) — name: Release
 ### `mind/std/cognitive/`
 

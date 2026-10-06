@@ -14,5 +14,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: release-drafter/release-drafter@72967cdc98ddd3160f1fc3dff619de365e137dd0 # v7.9.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # A pull request's merge ref is ephemeral, so v7 never publishes from
+          # it; say so explicitly. On a PR this run validates the config and
+          # the computed draft; only a push to main updates the draft release.
+          dry-run: ${{ github.event_name == 'pull_request' }}
