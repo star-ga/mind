@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1877 | **Est. tokens:** ~3,681,136
-**Generated:** 2026-10-05 16:00 UTC
+**Files:** 1876 | **Est. tokens:** ~3,655,806
+**Generated:** 2026-10-06 04:46 UTC
 
 ## Token Budget Guide
 
@@ -90,7 +90,7 @@
 | `.githooks/` | 4 | ~1,755 |
 | `.github/` | 4 | ~894 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 9 | ~37,428 |
+| `.github/workflows/` | 8 | ~12,098 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~21,930 |
 | `scripts/` | 31 | ~116,920 |
@@ -1030,15 +1030,14 @@
 - `required-ci-jobs.tsv` (~745 tok, large) — # required-ci-jobs.tsv — the CI jobs that MUST have passed on the exact commit
 ### `.github/workflows/`
 
-- `bench-gate.yml` (~2417 tok, huge) — name: Bench gate
-- `cargo-deny.yml` (~293 tok, medium) — name: Cargo Deny
-- `ci.yml` (~25572 tok, huge) — name: CI
-- `crypto-vectors.yml` (~1590 tok, huge) — name: Crypto Vectors
-- `docs-claims.yml` (~2645 tok, huge) — name: Docs Claims
-- `link-check.yml` (~229 tok, medium) — name: Link Check
-- `mindcraft.yml` (~910 tok, large) — name: Mindcraft Check
-- `release-drafter.yml` (~91 tok, small) — name: Release Drafter
-- `release.yml` (~3681 tok, huge) — name: Release
+- `bench-gate.yml` (~2440 tok, huge) — name: Bench gate
+- `cargo-deny.yml` (~316 tok, medium) — name: Cargo Deny
+- `crypto-vectors.yml` (~1625 tok, huge) — name: Crypto Vectors
+- `docs-claims.yml` (~2668 tok, huge) — name: Docs Claims
+- `link-check.yml` (~253 tok, medium) — name: Link Check
+- `mindcraft.yml` (~933 tok, large) — name: Mindcraft Check
+- `release-drafter.yml` (~102 tok, small) — name: Release Drafter
+- `release.yml` (~3761 tok, huge) — name: Release
 ### `mind/std/cognitive/`
 
 - `batch_scheduler.mind` (~850 tok, large) — Batch scheduling for inference workloads

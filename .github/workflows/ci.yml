@@ -97,20 +97,20 @@ env:
 jobs:
   pqc_hybrid_signing:
     name: PQC hybrid signing controls
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry
-        uses: actions/cache@v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -134,11 +134,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             name: Linux x86_64
-          - os: macos-latest
+          - os: macos-26
             name: macOS arm64
-          - os: windows-latest
+          - os: windows-2025
             name: Windows x86_64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
@@ -147,13 +147,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry
-        uses: actions/cache@v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -200,22 +200,22 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             name: Linux x86_64
-          - os: macos-latest
+          - os: macos-26
             target: x86_64-apple-darwin
             name: macOS x86_64
-          - os: macos-14
+          - os: macos-15
             target: aarch64-apple-darwin
             name: macOS ARM64
-          - os: windows-latest
+          - os: windows-2025
             target: x86_64-pc-windows-msvc
             name: Windows x86_64
 
     runs-on: ${{ matrix.os }}
     # Healthy matrix jobs finish in 4-9 min (Windows is slowest at ~8m); GitHub's
-    # default cap is 6 HOURS. A scarce macos-14 ARM64 runner that stalls in
+    # default cap is 6 HOURS. A scarce macos-15 ARM64 runner that stalls in
     # `cargo test` therefore burns hours before being killed and reported as an
     # opaque "failure". Bound it so a stall fails fast and legibly as `timed_out`
     # in 30 min (~4x headroom) — without masking any genuine test failure.
@@ -229,7 +229,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust (nightly)
         uses: dtolnay/rust-toolchain@nightly
@@ -239,7 +239,7 @@ jobs:
 
       - name: Cache cargo registry (Unix)
         if: runner.os != 'Windows'
-        uses: actions/cache@v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -251,7 +251,7 @@ jobs:
 
       - name: Cache cargo registry (Windows)
         if: runner.os == 'Windows'
-        uses: actions/cache@v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~\.cargo\registry
@@ -261,19 +261,18 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Remove git proxies (Linux/macOS)
-        if: runner.os != 'Windows'
+      # `git config --unset` exits 5 when the key is absent (the normal case on a
+      # hosted runner), so unset only what is actually set. A real unset failure
+      # still fails the step; nothing here is allowed to fail silently.
+      - name: Remove git proxies
+        shell: bash
         run: |
-          git config --global --unset-all http.proxy  || true
-          git config --global --unset-all https.proxy || true
-
-      - name: Remove git proxies (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          git config --global --unset http.proxy 2>&1 | Out-Null
-          git config --global --unset https.proxy 2>&1 | Out-Null
-        continue-on-error: true
+          for key in http.proxy https.proxy; do
+            if git config --global --get-all "$key" >/dev/null; then
+              git config --global --unset-all "$key"
+              echo "removed global git $key"
+            fi
+          done
 
       - name: Cargo metadata (smoke)
         shell: bash
@@ -445,13 +444,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust (nightly)
         uses: dtolnay/rust-toolchain@nightly
 
       - name: Cache cargo registry
-        uses: actions/cache@v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -541,7 +540,7 @@ jobs:
 
       - name: Preserve asserting cross-substrate evidence
         if: ${{ always() && steps.xsi_gate.outputs.receipt_dir != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cross-substrate-evidence-${{ matrix.substrate }}-${{ github.sha }}
           path: ${{ steps.xsi_gate.outputs.receipt_dir }}
@@ -578,7 +577,7 @@ jobs:
           cat "$MIND_BENCH_HASHES_OUT"
 
       - name: Upload per-substrate canary hashes (${{ matrix.substrate }})
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: canary-hashes-${{ matrix.substrate }}
           path: ${{ github.workspace }}/canary_hashes_${{ matrix.substrate }}.txt
@@ -606,7 +605,7 @@ jobs:
       - name: Upload fuzzer batch mic@3 digest (${{ matrix.substrate }})
         # One artifact per substrate; the cross-runner job downloads both and
         # byte-compares them. A per-substrate name keeps the two uploads distinct.
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: mindfuzz-digest-${{ matrix.substrate }}
           path: ${{ github.workspace }}/mindfuzz_digest_${{ matrix.substrate }}.txt
@@ -624,18 +623,18 @@ jobs:
     # §I.4). `needs:` gates it on both matrix legs producing their artifact.
     name: Fuzzer cross-runner mic@3 identity (avx2 == neon)
     needs: cross_substrate_identity
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
 
     steps:
       - name: Download avx2 digest
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: mindfuzz-digest-avx2
           path: avx2
 
       - name: Download neon digest
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: mindfuzz-digest-neon
           path: neon
@@ -694,11 +693,11 @@ jobs:
 
   format:
     name: Format Check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
@@ -710,11 +709,11 @@ jobs:
 
   docs:
     name: Documentation
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust (nightly)
         uses: dtolnay/rust-toolchain@nightly
@@ -726,7 +725,7 @@ jobs:
 
   mindcraft_self_host:
     name: Mindcraft self-host (RFC 0008 Phase G — KEYSTONE)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     # MIND_BENCH_REQUIRE=1 makes the keystone fail-closed: a missing MLIR
@@ -741,10 +740,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Python for numerical smoke oracles
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
 
@@ -831,7 +830,7 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
 
       - name: Cache cargo registry
-        uses: actions/cache@v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -1477,7 +1476,7 @@ jobs:
 
   executable_miscompile_gate:
     name: Executable miscompile gate (compile + run + assert)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     # Compile a tiny deterministic MIND kernel to a cdylib, dlopen it, call it,
@@ -1496,13 +1495,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust (nightly)
         uses: dtolnay/rust-toolchain@nightly
 
       - name: Cache cargo registry
-        uses: actions/cache@v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -1561,7 +1560,7 @@ jobs:
 
   executable_semantics_tier:
     name: Executable-semantics test tier (mlir-build)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45  # build ~317 test harnesses + run ~1913 tests; bound stalls
 
     # THE TIER THAT RAN NOWHERE. Measured at f2a2d87d: 123 integration-test files /
@@ -1611,7 +1610,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: cfg-gate wiring contract (scripts/cfg_gate_wiring_lint.py)
         # Guards the SCOPE of this job the way smoke_wiring_lint.py guards the
@@ -1647,7 +1646,7 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
 
       - name: Cache cargo registry
-        uses: actions/cache@v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -1720,7 +1719,7 @@ jobs:
 
       - name: Upload raw executable-semantics tier logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: exec-semantics-tier-logs-${{ github.run_id }}-${{ github.run_attempt }}
           path: /tmp/mind-tier-*.log
@@ -1735,7 +1734,7 @@ jobs:
   # test kept passing over a rule that no longer existed.
   ri_d1_mlir_free:
     name: RI-D1 MLIR-free native path (MLIR compiled out)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     # THE STRONGEST LEG OF THE RI DEPENDENCY-CUT, and until now it was asserted
@@ -1754,13 +1753,13 @@ jobs:
     # second, MLIR-free cargo profile (target/mlir-free). Sharing a job would
     # share a target dir and blur exactly the distinction being proved.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust (nightly)
         uses: dtolnay/rust-toolchain@nightly
 
       - name: Cache cargo registry
-        uses: actions/cache@v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -1807,9 +1806,9 @@ jobs:
 
   sdlc_integrity:
     name: SDLC gate integrity (merge + enforcement pairing)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # lost_by_merge needs BOTH parents of a merge commit; a shallow clone
           # would silently reduce the check to "not a merge, ran=0" — which the
@@ -1900,7 +1899,7 @@ jobs:
 
   conformance:
     name: Core v1 conformance suite
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     # Blocking gate for the Core v1 conformance suite (docs/versioning.md sells a
     # passing profile as evidence of API/IR/MLIR stability for that profile, so
@@ -1911,13 +1910,13 @@ jobs:
     #      `mlir-gpu` feature and therefore has zero GPU cases compiled in.
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust (nightly)
         uses: dtolnay/rust-toolchain@nightly
 
       - name: Cache cargo registry
-        uses: actions/cache@v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -1960,7 +1959,7 @@ jobs:
 
   mindcraft_check:
     name: Mindcraft check (RFC 0007 Phase 6)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     # Blocking gate: `mindc check` over std/ + production examples/ must be
     # error-clean. Deliberate native record-array refusal/reference programs
@@ -1974,13 +1973,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust (nightly)
         uses: dtolnay/rust-toolchain@nightly
 
       - name: Cache cargo registry
-        uses: actions/cache@v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -2009,10 +2008,10 @@ jobs:
   # Will re-enable when stable Rust supports edition 2024 let-chains
   # msrv:
   #   name: Minimum Supported Rust Version
-  #   runs-on: ubuntu-latest
+  #   runs-on: ubuntu-24.04
   #   steps:
   #     - name: Checkout
-  #       uses: actions/checkout@v5
+  #       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
   #
   #     - name: Install Rust 1.85
   #       uses: dtolnay/rust-toolchain@1.85
