@@ -300,6 +300,25 @@ pub(super) fn is_blank_line(bytes: &[u8]) -> bool {
     bytes.iter().all(|&b| b == b' ' || b == b'\t' || b == b'\r')
 }
 
+/// [`parse_with_trivia`](super::parse_with_trivia) with no cross-module resolution: the
+/// parse a standalone `mindc fmt` sees, whatever project table the caller has installed.
+///
+/// A layout formatter must print what the source says. `mindc check` formats inside a
+/// project scope, where the parser rewrote an imported type `a.E` to its registry key, so the
+/// printed file lost `a.` and the formatter refused it; `check` then reported nothing.
+pub fn parse_for_format(
+    input: &str,
+) -> Result<(super::Module, TriviaStream), Vec<super::ParseError>> {
+    let mut collector = Some(TriviaCollector::new());
+    let (stripped, _offset_map) = strip_comments_with_trivia(input, &mut collector);
+    let stream = collector
+        .expect("collector must be Some after strip_comments_with_trivia")
+        .into_stream();
+    let mut p = super::P::new(&stripped);
+    p.enum_scope = crate::qualified_enums::ParseScope::default();
+    p.parse_module().map(|m| (m, stream)).map_err(|e| vec![e])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

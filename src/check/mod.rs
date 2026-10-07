@@ -19,6 +19,7 @@
 //! Public entry point: [`run_check`].
 
 mod early_failure;
+mod fmt_pass;
 pub mod gitignore;
 pub mod reporter;
 
@@ -26,7 +27,6 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::fmt::format_source;
 use crate::lint::rules::register_defaults;
 use crate::lint::{check_source as lint_source, rule::RuleRegistry};
 use crate::project::{MindcraftConfig, RuleSeverity, find_project_root, load_manifest};
@@ -731,7 +731,7 @@ fn check_file(
 
     // ── Format-check pass ───────────────────────────────────────────────────
     if opts.run_fmt {
-        check_fmt(path, source, config, &mut out);
+        fmt_pass::check_fmt(path, source, config, &mut out);
     }
 
     // ── Lint pass ───────────────────────────────────────────────────────────
@@ -745,35 +745,6 @@ fn check_file(
     }
 
     out
-}
-
-/// Format-check: parse + format; if output differs from source, emit a
-/// `fmt::drift` diagnostic pointing at the first differing line.
-fn check_fmt(path: &Path, source: &str, config: &MindcraftConfig, out: &mut Vec<CheckDiagnostic>) {
-    let formatted = match format_source(source, &config.format) {
-        Ok(f) => f,
-        Err(_) => return, // parse error — let type-check surface it
-    };
-
-    if formatted == source {
-        return;
-    }
-
-    // Find the first differing line for a precise location.
-    let (line, col) = first_diff_position(source, &formatted);
-
-    out.push(CheckDiagnostic {
-        file: path.to_path_buf(),
-        line,
-        col,
-        severity: CheckSeverity::Error,
-        message: "file is not formatted; run `mindc fmt` to fix".to_string(),
-        rule_id: "fmt::drift".to_string(),
-        phase: CheckPhase::Fmt,
-        help: Some("run `mindc fmt <file>` to auto-format".to_string()),
-        // fmt::drift is fixed by rewriting the whole file; no byte-range fix.
-        auto_fix: None,
-    });
 }
 
 /// Lint pass: run all registered rules via `check_source`.
@@ -922,16 +893,4 @@ pub fn offset_to_line_col(source: &str, offset: usize) -> (usize, usize) {
         count += ch.len_utf8();
     }
     (line, col)
-}
-
-/// Find the (1-based line, 1-based col) of the first byte where `a` and `b`
-/// differ. Falls back to (1, 1) if identical (should not occur when called
-/// after a drift check).
-fn first_diff_position(a: &str, b: &str) -> (usize, usize) {
-    let diff_offset = a
-        .bytes()
-        .zip(b.bytes())
-        .position(|(x, y)| x != y)
-        .unwrap_or_else(|| a.len().min(b.len()));
-    offset_to_line_col(a, diff_offset)
 }

@@ -33,7 +33,7 @@ pub(crate) mod expand_bimap;
 mod spelling;
 mod trivia;
 pub(crate) use eval_imports::{EvalImportRef, EvalImportRefKind, EvalParsedModule};
-pub use trivia::{Trivia, TriviaKind, TriviaStream};
+pub use trivia::{Trivia, TriviaKind, TriviaStream, parse_for_format};
 use trivia::{TriviaCollector, strip_comments_with_trivia};
 
 /// Diagnostic for bitwise operators in a build without `std-surface`.

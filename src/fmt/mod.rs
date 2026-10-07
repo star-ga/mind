@@ -26,7 +26,7 @@
 pub mod cli;
 mod printer;
 
-use crate::parser::{ParseError, parse_with_trivia};
+use crate::parser::{ParseError, parse_for_format};
 use crate::project::MindcraftFormatConfig;
 
 /// Error type for formatting operations.
@@ -88,7 +88,7 @@ impl std::error::Error for FmtError {}
 ///
 /// Returns [`FmtError::ParseError`] when `src` cannot be parsed.
 pub fn format_source(src: &str, cfg: &MindcraftFormatConfig) -> Result<String, FmtError> {
-    let (module, trivia) = parse_with_trivia(src).map_err(FmtError::ParseError)?;
+    let (module, trivia) = parse_for_format(src).map_err(FmtError::ParseError)?;
     let out = printer::print_module(&module, &trivia, cfg, src);
     // FAIL CLOSED ON DATA LOSS. See `FmtError::LossyFormat`.
     if let Some(lost) = lost_identifiers(src, &out) {

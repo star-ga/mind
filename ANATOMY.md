@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1883 | **Est. tokens:** ~3,674,573
-**Generated:** 2026-10-07 08:04 UTC
+**Files:** 1885 | **Est. tokens:** ~3,676,183
+**Generated:** 2026-10-07 08:46 UTC
 
 ## Token Budget Guide
 
@@ -112,7 +112,7 @@
 | `src/build/` | 13 | ~48,441 |
 | `src/build/cache/` | 3 | ~3,150 |
 | `src/cache/` | 4 | ~3,682 |
-| `src/check/` | 4 | ~11,447 |
+| `src/check/` | 5 | ~12,177 |
 | `src/deps/` | 1 | ~9,388 |
 | `src/diagnostics/` | 3 | ~14,085 |
 | `src/distributed/` | 6 | ~7,725 |
@@ -148,7 +148,7 @@
 | `src/types/` | 10 | ~20,740 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 411 | ~842,484 |
+| `tests/` | 412 | ~843,364 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -1217,6 +1217,7 @@
 ### `src/check/`
 
 - `early_failure.rs` (~1132 tok, large) — Copyright 2025 STARGA Inc.
+- `fmt_pass.rs` (~730 tok, large) — Copyright 2026 STARGA Inc.
 - `gitignore.rs` (~2345 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~7596 tok, huge) — Copyright 2025 STARGA Inc.
 - `reporter.rs` (~374 tok, medium) — Copyright 2025 STARGA Inc.
@@ -1622,6 +1623,7 @@
 - `chacha20_poly1305_smoke.rs` (~2259 tok, huge) — Copyright 2025 STARGA Inc.
 - `char_literal_run.rs` (~944 tok, large) — Copyright 2025 STARGA Inc.
 - `check_claims_gate_tests.py` (~6681 tok, huge) — Gate tests for scripts/check_claims.py — its two DERIVED numbers must bite.
+- `check_fmt_drift_reported.rs` (~880 tok, large) — Copyright 2026 STARGA Inc.
 - `check_reporter_early_failure.rs` (~1577 tok, huge) — Copyright 2025 STARGA Inc.
 - `cli_buffers.rs` (~422 tok, medium) — Copyright 2025 STARGA Inc.
 - `cli_build.rs` (~648 tok, large) — Copyright 2025 STARGA Inc.
