@@ -87,14 +87,13 @@ pub enum BuildError {
 #[cfg(feature = "mlir-build")]
 pub fn resolve_tools() -> Result<BuildTools, BuildError> {
     fn resolve(env: &str, default: &str, label: &'static str) -> Result<String, BuildError> {
-        if let Ok(value) = std::env::var(env) {
-            if !value.trim().is_empty() {
-                if which::which(&value).is_ok() {
-                    return Ok(value);
-                } else {
-                    return Err(BuildError::ToolMissing(label));
-                }
+        match std::env::var(env) {
+            Ok(value) if !value.trim().is_empty() => {
+                return which::which(&value)
+                    .map(|_| value)
+                    .map_err(|_| BuildError::ToolMissing(label));
             }
+            _ => {}
         }
         let path = which::which(default).map_err(|_| BuildError::ToolMissing(label))?;
         Ok(path.to_string_lossy().into_owned())
@@ -312,9 +311,10 @@ fn run_mlir_opt(input: &str, pipeline: &str, tools: &BuildTools) -> Result<Strin
         "mlir-opt",
     )?;
     if !output.status.success() {
+        let stderr = decode_to_string(&output.stderr);
         return Err(BuildError::Subprocess {
             tool: "mlir-opt",
-            stderr: decode_to_string(&output.stderr),
+            stderr: crate::diagnostics::toolchain::with_bufferize_hint(&tools.mlir_opt, stderr),
         });
     }
     Ok(decode_to_string(&output.stdout))

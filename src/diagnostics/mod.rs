@@ -16,6 +16,7 @@
 
 pub mod capability;
 pub mod refusal;
+pub mod toolchain;
 
 use std::fmt::Write as _;
 use std::io::{IsTerminal, Write};

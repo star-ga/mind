@@ -42,8 +42,12 @@ on your `PATH`:
 - `clang`
 
 If they are absent, codegen fails with a clear `tool not found` error rather than
-silently degrading. On Debian/Ubuntu: `apt install mlir-<ver>-tools clang`; on
-macOS: `brew install llvm` (and add its `bin` to `PATH`).
+silently degrading; a build names the missing tool and any installed copy under
+`/usr/lib/llvm-<N>/bin`. Use LLVM/MLIR 20, the version CI tests with: MLIR 18
+builds most programs but cannot bufferize a tensor carried across a loop or
+returned from several exits. On Debian/Ubuntu: `apt install mlir-20-tools
+clang-20` and put `/usr/lib/llvm-20/bin` on `PATH`; on macOS: `brew install llvm`
+(and add its `bin` to `PATH`).
 
 Note: `https://mindlang.dev/install.sh` is a redirect to the canonical
 `scripts/install.sh` in this repository. The redirect is configured separately

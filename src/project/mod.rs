@@ -2698,11 +2698,8 @@ fn link_binary(
     if runtime.is_none() {
         if let Some(cause) = compile_cause {
             let _ = fs::remove_file(output);
-            return Err(anyhow::Error::new(CodedRefusal::new(
-                cause,
-                "public CPU executable requires every source module to compile natively; \
-                 refusing to link a runtime-JIT fallback object",
-            )));
+            let message = crate::diagnostics::toolchain::fallback_link_refusal(cause);
+            return Err(anyhow::Error::new(CodedRefusal::new(cause, message)));
         }
     }
 
