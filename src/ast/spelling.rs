@@ -74,4 +74,7 @@ pub struct SourceSpelling {
     /// Spans of the `assert` statements written `assert(cond, "msg")`: the condition and the
     /// message inside one pair of parentheses, which the parser splits into both fields.
     pub paren_asserts: Vec<Span>,
+    /// Spans in `call_qualifiers` whose qualifier was written with `::` (`m::f(x)`) rather
+    /// than `.`.
+    pub path_qualifiers: Vec<Span>,
 }

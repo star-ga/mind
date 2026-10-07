@@ -5,7 +5,7 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1887 | **Est. tokens:** ~3,678,422
+**Files:** 1889 | **Est. tokens:** ~3,679,824
 **Generated:** 2026-10-07 10:00 UTC
 
 ## Token Budget Guide
@@ -105,7 +105,7 @@
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
 | `src/` | 11 | ~52,927 |
-| `src/ast/` | 2 | ~12,268 |
+| `src/ast/` | 2 | ~12,305 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
 | `src/bin/mindc/` | 1 | ~204 |
@@ -123,7 +123,7 @@
 | `src/exec/` | 3 | ~5,522 |
 | `src/ffi/` | 3 | ~5,541 |
 | `src/fmt/` | 3 | ~25,460 |
-| `src/fmt/printer/` | 1 | ~1,821 |
+| `src/fmt/printer/` | 1 | ~1,878 |
 | `src/ir/` | 9 | ~95,728 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
@@ -135,7 +135,7 @@
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 9 | ~53,642 |
 | `src/package/` | 2 | ~1,877 |
-| `src/parser/` | 6 | ~27,573 |
+| `src/parser/` | 7 | ~28,268 |
 | `src/phf/` | 1 | ~4,955 |
 | `src/project/` | 20 | ~69,350 |
 | `src/runtime/` | 3 | ~1,485 |
@@ -148,7 +148,7 @@
 | `src/types/` | 10 | ~20,740 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 413 | ~843,889 |
+| `tests/` | 414 | ~844,502 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -1174,7 +1174,7 @@
 ### `src/ast/`
 
 - `mod.rs` (~11113 tok, huge) — Copyright 2025 STARGA Inc.
-- `spelling.rs` (~1155 tok, large) — Copyright 2025 STARGA Inc.
+- `spelling.rs` (~1192 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~3890 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1313,7 +1313,7 @@
 - `printer.rs` (~17248 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/fmt/printer/`
 
-- `spelling.rs` (~1821 tok, huge) — Copyright 2025 STARGA Inc.
+- `spelling.rs` (~1878 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `intrinsic_contract.rs` (~2968 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1422,6 +1422,7 @@
 - `eval_imports.rs` (~2137 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `expand_bimap.rs` (~16544 tok, huge) — An `#[bimap]` attribute on an `enum` declares a one-to-one correspondence
 - `import_list_tests.rs` (~2764 tok, huge) — Completeness of the parser-owned import list.
+- `paths.rs` (~695 tok, large) — Copyright 2026 STARGA Inc.
 - `spelling.rs` (~1223 tok, large) — Copyright 2025 STARGA Inc.
 - `trivia.rs` (~4061 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/phf/`
@@ -2214,6 +2215,7 @@
 - `module_decl_run.rs` (~597 tok, large) — Copyright 2025 STARGA Inc.
 - `module_enum_match_run.rs` (~984 tok, large) — Copyright 2025 STARGA Inc.
 - `module_non_fn_call_reject.rs` (~1215 tok, large) — Copyright 2025 STARGA Inc.
+- `module_path_reference.rs` (~613 tok, large) — Copyright 2026 STARGA Inc.
 - `module_size_ratchet.rs` (~4028 tok, huge) — Copyright 2025 STARGA Inc.
 - `multimodule_determinism_run.rs` (~4275 tok, huge) — Copyright 2025 STARGA Inc.
 - `narrow_call_abi.rs` (~1344 tok, large) — Copyright 2025 STARGA Inc.

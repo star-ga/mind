@@ -32,6 +32,7 @@ pub(super) struct SpellingTables {
     bool_literals: HashMap<(usize, usize), bool>,
     qualifiers: HashMap<(usize, usize), String>,
     paren_asserts: HashSet<(usize, usize)>,
+    path_qualifiers: HashSet<(usize, usize)>,
 }
 
 impl SpellingTables {
@@ -50,6 +51,7 @@ impl SpellingTables {
                 .map(|(sp, q)| (key(sp), q.clone()))
                 .collect(),
             paren_asserts: s.paren_asserts.iter().map(key).collect(),
+            path_qualifiers: s.path_qualifiers.iter().map(key).collect(),
         }
     }
 }
@@ -86,17 +88,18 @@ pub(super) fn emit_bool_spelling(p: &mut Printer, span: &Span) -> bool {
     }
 }
 
-/// Emit `q.` before a node whose module qualifier the parser desugared away. The desugared
-/// node is indistinguishable from an unqualified one, so the span lookup is the only record.
+/// Emit `q.` (or `q::`, as written) before a node whose module qualifier the parser
+/// desugared away. The desugared node is indistinguishable from an unqualified one, so the
+/// span lookup is the only record.
 pub(super) fn emit_qualifier(p: &mut Printer, span: &Span) {
-    if let Some(q) = p
-        .spelling
-        .qualifiers
-        .get(&(span.start(), span.end()))
-        .cloned()
-    {
+    let key = (span.start(), span.end());
+    if let Some(q) = p.spelling.qualifiers.get(&key).cloned() {
         p.push(&q);
-        p.push(".");
+        p.push(if p.spelling.path_qualifiers.contains(&key) {
+            "::"
+        } else {
+            "."
+        });
     }
 }
 

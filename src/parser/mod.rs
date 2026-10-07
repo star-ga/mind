@@ -28,6 +28,7 @@ use crate::types::ConvPadding;
 
 mod assert;
 mod eval_imports;
+mod paths;
 pub(crate) use eval_imports::parse_with_imports;
 pub(crate) mod expand_bimap;
 mod spelling;
@@ -4657,23 +4658,11 @@ impl<'a> P<'a> {
                     let v = if ident == "true" { 1 } else { 0 };
                     return Ok(Node::Lit(Literal::Int(v), span));
                 }
-                // Phase 10.6: identifiers that contain `::` segment
-                // separators (enum variant access — e.g.
-                // `config.AddressingMode::Content`) keep the full path
-                // as an identifier; the catch-all backtrack below would slice off
+                // `::` paths (an enum variant, or an imported module's member):
+                // `paths.rs`. Before the dot backtrack below, which would slice off
                 // everything after the first `.`.
                 if ident.contains("::") {
-                    if self.at(b'(') {
-                        let node = self.parse_generic_call(ident, start)?;
-                        self.capture_path_call(&node);
-                        return Ok(node);
-                    } else if self.at(b'{') && self.struct_lit_body_ahead() {
-                        return self.parse_struct_literal(ident, start);
-                    } else {
-                        let span = Span::new(start, self.pos);
-                        self.capture_path_value(&ident, span);
-                        return Ok(Node::Lit(Literal::Ident(ident), span));
-                    }
+                    return self.parse_path_expr(ident, start);
                 }
                 // If the ident contains a dot and the first segment is not a known
                 // namespace like "tensor", backtrack to the first segment so
