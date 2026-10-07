@@ -24,6 +24,11 @@ type HashMap<K, V, S = crate::type_checker::FxBuild> = StdHashMap<K, V, S>;
 #[cfg(feature = "ffi-c-user")]
 #[path = "callable_exports.rs"]
 mod callable_exports;
+#[cfg(feature = "std-surface")]
+#[path = "for_hygiene.rs"]
+mod for_hygiene;
+#[cfg(feature = "std-surface")]
+use self::for_hygiene::{body_redeclares, expr_contains_call};
 use crate::ast;
 use crate::ast::Literal;
 use crate::ast::TensorElemOp;
@@ -4227,75 +4232,6 @@ fn collect_assign_targets(stmts: &[ast::Node], out: &mut Vec<String>) {
             }
             _ => {}
         }
-    }
-}
-
-/// Does expression `node` contain a function/method call (or any tensor
-/// builtin call) anywhere?
-///
-/// Used by the range-`for` hygiene gate: the interpreter oracle evaluates the
-/// loop's `END` bound EXACTLY ONCE (`eval` For arm, `src/eval/mod.rs`), while
-/// the byte-neutral desugar re-lowers `END` into the `while` condition
-/// submodule and therefore re-evaluates it EVERY iteration. When `END` is a
-/// pure arithmetic expression over consts/idents that are not written in the
-/// body, once-vs-per-iteration are observationally identical and the old
-/// desugar is kept verbatim. A CALL in `END` breaks that equivalence (a side
-/// effect, or a counter/observable that differs between evaluations), so the
-/// presence of a call forces the hygienic form that pre-lowers `END` once.
-///
-/// The match mirrors [`ast_reads_ident`]'s traversal so a call buried under any
-/// expression wrapper is still detected; only genuine leaves / declarations
-/// (which cannot host a range-endpoint call) fall through to `false`.
-#[cfg(feature = "std-surface")]
-fn expr_contains_call(node: &ast::Node) -> bool {
-    use ast::Node as N;
-    match node {
-        // Any call-like node: this is exactly what breaks once-vs-per-iter.
-        N::Call { .. }
-        | N::MethodCall { .. }
-        | N::CallGrad { .. }
-        | N::CallTensorSum { .. }
-        | N::CallTensorMean { .. }
-        | N::CallReshape { .. }
-        | N::CallExpandDims { .. }
-        | N::CallSqueeze { .. }
-        | N::CallTranspose { .. }
-        | N::CallIndex { .. }
-        | N::CallSlice { .. }
-        | N::CallSliceStride { .. }
-        | N::CallGather { .. }
-        | N::CallDot { .. }
-        | N::CallMatMul { .. }
-        | N::CallTensorRelu { .. }
-        | N::CallTensorRand { .. }
-        | N::CallTensorConv2d { .. }
-        | N::TensorMatmul { .. }
-        | N::TensorElemwise { .. } => true,
-        N::Lit(..) => false,
-        N::Binary { left, right, .. } | N::Logical { left, right, .. } => {
-            expr_contains_call(left) || expr_contains_call(right)
-        }
-        #[cfg(feature = "std-surface")]
-        N::Bitwise { left, right, .. } => expr_contains_call(left) || expr_contains_call(right),
-        N::Paren(inner, _)
-        | N::Neg { operand: inner, .. }
-        | N::Not { operand: inner, .. }
-        | N::Ref { inner, .. }
-        | N::As { expr: inner, .. } => expr_contains_call(inner),
-        N::Tuple { elements, .. } | N::ArrayLit { elements, .. } | N::SetLit { elements, .. } => {
-            elements.iter().any(expr_contains_call)
-        }
-        N::FieldAccess { receiver, .. } => expr_contains_call(receiver),
-        N::IndexAccess {
-            receiver, index, ..
-        } => expr_contains_call(receiver) || expr_contains_call(index),
-        N::StructLit { fields, .. } => fields.iter().any(|f| expr_contains_call(&f.value)),
-        N::MapLit { entries, .. } => entries
-            .iter()
-            .any(|(k, v)| expr_contains_call(k) || expr_contains_call(v)),
-        // Leaves / declarations / statements that cannot appear as a range
-        // endpoint expression carry no relevant call.
-        _ => false,
     }
 }
 
@@ -10239,10 +10175,12 @@ pub(super) fn lower_expr_inner(
             //     `VAR = …` mutates the loop counter — the interpreter binds `VAR`
             //     FRESH each iteration from the range counter, so body writes are
             //     scoped to that iteration and the counter is untouched.
+            //  3. A top-level body `let VAR` shadows the counter, so the step
+            //     advances the shadow and the loop never ends (`body_redeclares`).
             //
             // For the overwhelmingly common case — `END` is a pure expression over
             // consts/idents unwritten in the body, `VAR` is a fresh name, and the
-            // body never assigns `VAR` — once-vs-per-iteration are observationally
+            // body neither assigns nor re-declares `VAR` — once-vs-per-iteration are observationally
             // identical and `VAR` never escapes observably. There the OLD desugar
             // is kept BYTE-FOR-BYTE (the keystone + cross-substrate canaries prove
             // zero drift). Only when one of the divergence preconditions holds do
@@ -10256,8 +10194,10 @@ pub(super) fn lower_expr_inner(
                     body_assign_targets.iter().cloned().collect();
                 ast_reads_ident(end, &set)
             };
+            let body_declares_var = body_redeclares(body, var);
             let needs_hygiene = env.contains_key(var)
                 || body_assigns_var
+                || body_declares_var
                 || end_has_call
                 || end_reads_body_assigned;
             // deferred: `end_reads_body_assigned` uses `collect_assign_targets`,

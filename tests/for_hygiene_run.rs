@@ -15,7 +15,9 @@
 //!     shadowed outer binding; a body write `VAR = …` corrupted the counter.
 //!
 //! The `For` arm in `src/eval/lower.rs` now branches on a hygiene gate:
-//! `env.contains_key(var) || body_assigns(var) || end_has_call || end_reads_body_assigned`.
+//! `env.contains_key(var) || body_assigns(var) || body_declares(var) || end_has_call ||
+//! end_reads_body_assigned` (the body re-declaring `VAR` is covered by
+//! `tests/for_body_redeclares_var_run.rs`).
 //! Gate OFF keeps the old desugar BYTE-FOR-BYTE (keystone + cross-substrate
 //! canaries prove zero drift); gate ON emits a hygienic form (span-unique
 //! counter, `END` pre-lowered ONCE, per-iteration `let mut VAR` copy).
