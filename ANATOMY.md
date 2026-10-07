@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1892 | **Est. tokens:** ~3684269
-**Generated:** 2026-10-07 12:32 UTC
+**Files:** 1892 | **Est. tokens:** ~3684510
+**Generated:** 2026-10-07 22:19 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 33 | ~30979 |
+| `./` | 33 | ~31123 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
 | `.cargo/` | 1 | ~130 |
@@ -37,7 +37,7 @@
 | `bench/fft/` | 8 | ~8060 |
 | `benches/` | 28 | ~83855 |
 | `benches/common/` | 2 | ~2995 |
-| `benchmarks/` | 13 | ~28066 |
+| `benchmarks/` | 13 | ~28163 |
 | `benchmarks/autograd_comparison/` | 8 | ~9411 |
 | `benchmarks/cupy_comparison/` | 6 | ~7733 |
 | `benchmarks/determinism/` | 3 | ~4601 |
@@ -251,7 +251,7 @@
 - `LICENSE` (~2573 tok, huge) —                                  Apache License
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
 - `Mind.toml` (~108 tok, small) — [package]
-- `README.md` (~7278 tok, huge) — MIND — Machine Intelligence Native Design
+- `README.md` (~7422 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
 - `SECURITY.md` (~1903 tok, huge) — Security Policy
 - `STATUS.md` (~4457 tok, huge) — MIND Compiler Status
@@ -373,7 +373,7 @@
 - `std_surface.rs` (~1090 tok, large) — Copyright 2025 STARGA Inc.
 ### `benchmarks/`
 
-- `BENCHMARK_RESULTS.md` (~4559 tok, huge) — MIND Benchmark Results
+- `BENCHMARK_RESULTS.md` (~4656 tok, huge) — MIND Benchmark Results
 - `MIC_MAP_BENCHMARK_README.md` (~675 tok, large) — MIC/MAP Patent Reference Benchmark
 - `README.md` (~1168 tok, large) — MIND Performance Benchmarks
 - `RUN_GUIDE.md` (~1563 tok, huge) — MIND Patent Benchmarks - Environment Guide

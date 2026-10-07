@@ -155,8 +155,19 @@ All 4 tests passed with 100% bit-identical SHA256 hashes across 10 runs each:
 | mic@1 | 119 | 3.4x | 70% | 2.26 us |
 | **mic@2** | **71** | **5.6x** | **82%** | **—** |
 
-**mic@2 is the most token-efficient text format; the reference binary encoding of the
-same IR is 90 bytes — 12.4x fewer bytes than JSON's 1,117.**
+**mic@2 is the most token-efficient text format. The canonical `mic@3` binary of the same
+network is 87 bytes:** `mindc mlp.mind --emit-mic3 mlp.mic3` at compiler `83ed6a11`, where
+`mlp.mind` is
+
+```text
+let input: Tensor[f32,(B,784)] = 0;
+let weight: Tensor[f32,(784,256)] = 0;
+let bias: Tensor[f32,(256)] = 0;
+tensor.relu(tensor.matmul(input, weight) + bias)
+```
+
+(output SHA-256 `73beda1df272f7cb54bdf15270ced149517cad954919d96840461dcdcbac2d28`). No byte
+ratio against JSON is stated: the compiler has no JSON encoding of that IR.
 
 Parse speed above is a Python reference-parser micro-benchmark: JSON is parsed by the
 C `json` module, MIC/TOON by pure-Python reference parsers. It is indicative of format

@@ -457,13 +457,27 @@ anchors on. `mic@2`/`mic@2.1` are a legacy `Graph` dataflow lane, demoted to
 | **`mic@1`** (canonical text) | **119** | **3.4x** | **2.26 us** | **$208** |
 | `mic@2` (legacy Graph, demoted) | 71 | 5.6x | — | $124 |
 
-**Binary serialization** — reference-model encoding of the same 6-node IR (byte size, full module):
+**Binary serialization** — canonical `mic@3` (the `trace_hash` anchor) of the same network, measured with the compiler:
 
-| Format | Size | vs JSON | Status |
-|--------|------|---------|--------|
-| JSON (text) | 1,117 B | baseline | — |
-| **binary `IRModule`** | **90 B** | **12.4x smaller** | reference encoder in `benchmarks/mic_map_benchmark_v2.py`; the shipping canonical binary form is `mic@3` (the `trace_hash` anchor), emitted by `mindc --emit-mic3` |
-| `mic@4` | — | target: smaller + faster than `mic@3` | roadmap — successor wire format ([Roadmap](docs/roadmap.md)) |
+| Format | Size | Status |
+|--------|------|--------|
+| **`mic@3`** (canonical binary `IRModule`) | **87 B** | `mindc mlp.mind --emit-mic3 mlp.mic3` at compiler `83ed6a11`; program and output hash below |
+| `mic@4` | — | roadmap — successor wire format ([Roadmap](docs/roadmap.md)) |
+
+`mlp.mind`, the same matmul + bias + relu network, which the compiler lowers to six
+instructions over three tensor constants:
+
+```text
+let input: Tensor[f32,(B,784)] = 0;
+let weight: Tensor[f32,(784,256)] = 0;
+let bias: Tensor[f32,(256)] = 0;
+tensor.relu(tensor.matmul(input, weight) + bias)
+```
+
+`mindc mlp.mind --emit-mic3 mlp.mic3` prints `Wrote mic@3 artifact: mlp.mic3 (87 bytes)`;
+the output's SHA-256 is `73beda1df272f7cb54bdf15270ced149517cad954919d96840461dcdcbac2d28`
+(two separately built `mindc` binaries at that commit produced the same bytes). No byte ratio against JSON is stated: the compiler has no JSON encoding of that IR (the
+benchmark script's 1,117-byte JSON encodes the script's own model of the network).
 
 | Protocol | Tokens (`cl100k_base`) | vs JSON-RPC |
 |----------|------------------------|-------------|
