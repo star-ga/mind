@@ -69,6 +69,10 @@ pub struct ProjectScope {
     resolved_imports: BTreeMap<(String, Vec<String>), String>,
     table: super::module_table::ModuleTable,
     enums: Box<crate::ir::GlobalEnums>,
+    /// Every module-level `const` of the project, by name, for inlining a
+    /// sibling's const at lowering (`ir::set_project_consts`), as the
+    /// executable build does.
+    consts: std::collections::BTreeMap<String, crate::ast::Node>,
 }
 
 impl ProjectScope {
@@ -135,12 +139,43 @@ impl ProjectScope {
             .first()
             .map(|source| source.module_path().to_string())
             .unwrap_or_else(|| "crate".to_string());
-        ProjectTableGuard::install_with_scope(
+        let mut guard = ProjectTableGuard::install_with_scope(
             self.table.clone(),
             (*self.enums).clone(),
             self.resolved_imports.clone(),
             entry_module,
-        )
+        );
+        guard._consts = Some(ConstsGuard::install(&self.consts));
+        guard
+    }
+}
+
+thread_local! {
+    /// How many [`ConstsGuard`]s are live on this thread.
+    static CONSTS_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Seeds the project's cross-module consts for lowering while a scope is
+/// installed. A sibling `a.K` reached the flat `--emit-*` and cdylib lowering
+/// with no value and panicked ("undefined identifier `K` reached lowering"):
+/// only the executable build seeded them. Nested installs of a scope (its
+/// siblings' compiles) keep the outermost table; the last guard clears it.
+struct ConstsGuard;
+
+impl ConstsGuard {
+    fn install(consts: &std::collections::BTreeMap<String, crate::ast::Node>) -> Self {
+        if CONSTS_DEPTH.with(|d| d.replace(d.get() + 1)) == 0 {
+            crate::ir::set_project_consts(consts.clone());
+        }
+        ConstsGuard
+    }
+}
+
+impl Drop for ConstsGuard {
+    fn drop(&mut self) {
+        if CONSTS_DEPTH.with(|d| d.replace(d.get() - 1)) == 1 {
+            crate::ir::clear_project_consts();
+        }
     }
 }
 
@@ -195,6 +230,7 @@ pub struct ProjectTableGuard {
     _enums: Option<crate::qualified_enums::GlobalGuard>,
     _resolved_imports: Option<super::active_module_table::ResolvedImportsGuard>,
     _module_path: Option<crate::qualified_enums::ModuleGuard>,
+    _consts: Option<ConstsGuard>,
 }
 
 impl ProjectTableGuard {
@@ -204,6 +240,7 @@ impl ProjectTableGuard {
             _enums: None,
             _resolved_imports: None,
             _module_path: None,
+            _consts: None,
         }
     }
 
@@ -216,6 +253,7 @@ impl ProjectTableGuard {
             _enums: Some(crate::qualified_enums::GlobalGuard::install(enums)),
             _resolved_imports: None,
             _module_path: None,
+            _consts: None,
         }
     }
 
@@ -232,6 +270,7 @@ impl ProjectTableGuard {
                 resolved_imports,
             )),
             _module_path: Some(crate::qualified_enums::ModuleGuard::install(module_path)),
+            _consts: None,
         }
     }
 }
@@ -519,6 +558,11 @@ fn capture_scope<'a>(
         .map(|(path, module)| (path.clone(), module))
         .collect::<Vec<_>>();
     let table = super::module_table::build_module_table(&refs);
+    // Cross-module const values for lowering. A name two modules define with
+    // different values is left out of the table (`build_project_consts`), so
+    // lowering never inlines the wrong owner's value; owner-qualified
+    // references (`left.VALUE`) still check and evaluate.
+    let (consts, _ambiguous) = super::build_project_consts(&parsed);
     // Build qualified type visibility with the same owner bindings used by
     // native linking; raw basenames are insufficient for a root-level entry.
     let _resolved_guard =
@@ -531,6 +575,7 @@ fn capture_scope<'a>(
         resolved_imports,
         table,
         enums: Box::new(enums),
+        consts,
     })
 }
 
