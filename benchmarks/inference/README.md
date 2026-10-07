@@ -116,7 +116,7 @@ Total-time comparisons require both end-to-end compilation and inference measure
 
 ### PyTorch too old
 ```bash
-pip install 'torch>=1.0'
+pip install 'torch>=2.13'
 ```
 
 ### CUDA errors

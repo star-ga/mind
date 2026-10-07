@@ -123,7 +123,7 @@ Future work: Add numerical gradient verification tests.
 
 ### PyTorch too old
 ```bash
-pip install 'torch>=1.0'
+pip install 'torch>=2.13'
 ```
 
 ### Out of memory

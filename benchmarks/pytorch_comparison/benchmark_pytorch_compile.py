@@ -359,7 +359,7 @@ def main():
     torch_version = tuple(map(int, torch.__version__.split('.')[:2]))
     if torch_version < (2, 0):
         print(f"ERROR: PyTorch 2.0+ required (found {torch.__version__})")
-        print("Install with: pip install 'torch>=2.0'")
+        print("Install with: pip install 'torch>=2.13'")
         return 1
 
     # System info

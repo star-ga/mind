@@ -84,7 +84,7 @@ Both are measuring **compilation time**, not execution time.
 
 ### PyTorch too old
 ```bash
-pip install 'torch>=2.0'
+pip install 'torch>=2.13'
 ```
 
 ### CUDA errors

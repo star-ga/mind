@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1890 | **Est. tokens:** ~3681140
-**Generated:** 2026-10-07 11:23 UTC
+**Files:** 1889 | **Est. tokens:** ~3680689
+**Generated:** 2026-10-07 11:33 UTC
 
 ## Token Budget Guide
 
@@ -22,14 +22,14 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 33 | ~30937 |
+| `./` | 33 | ~30979 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
 | `.cargo/` | 1 | ~130 |
 | `.githooks/` | 4 | ~1755 |
 | `.github/` | 4 | ~903 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 8 | ~12160 |
+| `.github/workflows/` | 8 | ~12146 |
 | `agents/` | 1 | ~436 |
 | `assets/logo/` | 1 | ~453 |
 | `audits/` | 6 | ~607 |
@@ -46,7 +46,7 @@
 | `benchmarks/mojo/` | 8 | ~4276 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4880 |
 | `config/` | 2 | ~3347 |
-| `docs/` | 38 | ~110143 |
+| `docs/` | 38 | ~110236 |
 | `docs/backends/` | 1 | ~1482 |
 | `docs/benchmarks/` | 3 | ~9042 |
 | `docs/design/` | 4 | ~11498 |
@@ -219,7 +219,7 @@
 | `tests/support/` | 9 | ~19407 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tests/xsi_quant/` | 3 | ~11906 |
-| `tools/` | 5 | ~13565 |
+| `tools/` | 4 | ~12993 |
 | `tools/mindfuzz/` | 7 | ~16763 |
 | `tools/mindfuzz/seeds/` | 6 | ~1330 |
 | `tools/mindfuzz/violations/` | 1 | ~0 |
@@ -258,7 +258,7 @@
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
 - `clippy.toml` (~25 tok, tiny)
-- `deny.toml` (~89 tok, small) — [advisories]
+- `deny.toml` (~131 tok, small) — [advisories]
 - `incompatible` (~0 tok, tiny)
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
@@ -295,7 +295,7 @@
 ### `.github/workflows/`
 
 - `bench-gate.yml` (~2440 tok, huge) — name: Bench gate
-- `cargo-deny.yml` (~316 tok, medium) — name: Cargo Deny
+- `cargo-deny.yml` (~302 tok, medium) — name: Cargo Deny
 - `crypto-vectors.yml` (~1625 tok, huge) — name: Crypto Vectors
 - `docs-claims.yml` (~2668 tok, huge) — name: Docs Claims
 - `link-check.yml` (~253 tok, medium) — name: Link Check
@@ -386,7 +386,7 @@
 - `benchmark_python_bindings.py` (~1566 tok, huge)
 - `benchmark_real_autograd.py` (~2304 tok, huge)
 - `real_autograd_results.json` (~328 tok, medium) — Keys: system_info, methodology, benchmarks
-- `requirements.txt` (~7 tok, tiny) — torch>=1.0.0
+- `requirements.txt` (~7 tok, tiny) — torch>=2.13.0
 ### `benchmarks/`
 
 - `criterion_ci_sweep.txt` (~4095 tok, huge) — CRITERION CI-EQUIVALENT SWEEP — recorded output
@@ -411,7 +411,7 @@
 - `README.md` (~1149 tok, large) — Inference Speed Benchmark
 - `benchmark_inference.py` (~2423 tok, huge)
 - `inference_results.json` (~473 tok, medium) — Keys: system_info, benchmarks
-- `requirements.txt` (~4 tok, tiny) — torch>=1.0.0
+- `requirements.txt` (~4 tok, tiny) — torch>=2.13.0
 ### `benchmarks/jax_comparison/`
 
 - `README.md` (~1109 tok, large) — JAX Compilation Benchmark
@@ -440,7 +440,7 @@
 - `README.md` (~866 tok, large) — PyTorch Compilation Benchmark
 - `benchmark_pytorch_compile.py` (~3420 tok, huge)
 - `pytorch_results.json` (~590 tok, large) — Keys: system_info, benchmarks
-- `requirements.txt` (~4 tok, tiny) — torch>=2.0.0
+- `requirements.txt` (~4 tok, tiny) — torch>=2.13.0
 ### `benchmarks/`
 
 - `resnet.md` (~74 tok, small) — ResNet Benchmarks (Preliminary)
@@ -554,7 +554,7 @@
 ### `docs/`
 
 - `runs-burndown-roadmap.md` (~3203 tok, huge) — MIND RUNS Burndown Roadmap
-- `security.md` (~1492 tok, large) — Security Guide
+- `security.md` (~1585 tok, huge) — Security Guide
 - `self-host-trace-hash-port.md` (~1406 tok, large) — #17 — Self-compute the native PT_NOTE (pure-MIND trace-hash port)
 - `shapes.md` (~478 tok, medium) — Tensor shape semantics
 - `sparse-tensor-types.md` (~740 tok, large) — Sparse Tensor Types
@@ -2625,7 +2625,6 @@
 
 - `add_copyright_headers.py` (~1132 tok, large) — # Copyright 2025 STARGA Inc.
 - `bench_gate.py` (~5201 tok, huge) — # Copyright 2025 STARGA Inc.
-- `cargo-deny-sanitize.sh` (~572 tok, large) — Run cargo-deny but sanitize advisory entries that older cargo-deny versions
 ### `tools/mindfuzz/`
 
 - `.gitignore` (~7 tok, tiny) — tools/mindfuzz/__pycache__/
