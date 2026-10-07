@@ -102,7 +102,8 @@ impl<'a> LinkSurface<'a> {
 /// One parsed module's top-level fn definitions and the names it calls.
 struct ModuleNames {
     /// `(name, is_candidate)`: a candidate is non-`pub`, not `main`, and carries
-    /// no attribute (an attribute may export or test it).
+    /// no attribute but `#[test]` (another attribute may export it; a test fn is
+    /// run by `mindc test`'s evaluator, never referenced by symbol).
     defs: Vec<(String, bool)>,
     defined: BTreeSet<String>,
     /// Call and method-call targets. Plain identifiers are not counted: there
@@ -150,7 +151,9 @@ fn collect_defs(items: &[Node], names: &mut ModuleNames) {
     for item in items {
         match item {
             Node::FnDef(fd, _) => {
-                let candidate = !fd.is_pub && fd.name != "main" && fd.attrs.is_empty();
+                let candidate = !fd.is_pub
+                    && fd.name != "main"
+                    && fd.attrs.iter().all(|attr| attr.name == "test");
                 names.defs.push((fd.name.clone(), candidate));
                 names.defined.insert(fd.name.clone());
             }
@@ -502,6 +505,15 @@ mod tests {
     fn a_private_fn_without_a_collision_is_left_alone() {
         let main = "import a;\n\nfn main() -> i64 {\n    return a.fa(1);\n}\n";
         assert!(plan_of(&[("main.mind", main), ("a.mind", A)]).is_empty());
+    }
+
+    #[test]
+    fn colliding_test_fns_are_internal() {
+        let a = "#[test]\nfn t_one() {\n    assert 1 == 1;\n}\n";
+        let b = "#[test]\nfn t_one() {\n    assert 2 == 2;\n}\n";
+        let plan = plan_of(&[("a.mind", a), ("b.mind", b)]);
+        assert_eq!(plan.get(Path::new("a.mind")), Some(&names(&["t_one"])));
+        assert_eq!(plan.get(Path::new("b.mind")), Some(&names(&["t_one"])));
     }
 
     #[test]
