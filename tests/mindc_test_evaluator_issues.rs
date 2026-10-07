@@ -590,12 +590,12 @@ fn struct_store_loop_refuses() {
     assert_line(&out, "0 passed; 1 failed");
 }
 
-/// `assert(cond, "msg")` — the parenthesised comma form — parses as a 2-tuple
-/// CONDITION. It graded `ok` regardless of `cond` before the fix. Now it fails
-/// closed, for a TRUE and a FALSE `cond` alike, with a message that names the
-/// form and the spelling that works. (The grammar is a separate report.)
+/// `assert(cond, "msg")` — the parenthesised comma form — parsed as a 2-tuple
+/// CONDITION and graded `ok` regardless of `cond`; the evaluator then refused it
+/// for a TRUE and a FALSE `cond` alike. The parser now splits it into the
+/// condition and the message, so it asserts `cond` like `assert cond, "msg"`.
 #[test]
-fn issue240_parenthesised_comma_form_is_refused_never_vacuously_passed() {
+fn issue240_parenthesised_comma_form_asserts_its_condition() {
     let src = r#"
 struct Pair {
     a: i64,
@@ -620,14 +620,13 @@ fn tuple_form_false_cond() {
 "#;
     let (code, out) = run_mindc_test("issue240_tuple_form", src);
     assert_ne!(code, 0, "exit code must be non-zero:\n{out}");
-    assert_line(&out, "issue240_tuple_form::tuple_form_true_cond ... FAILED");
+    assert_line(&out, "issue240_tuple_form::tuple_form_true_cond ... ok");
     assert_line(
         &out,
         "issue240_tuple_form::tuple_form_false_cond ... FAILED",
     );
-    assert_line(&out, "assert condition is a 2-tuple, not a boolean");
-    assert_line(&out, "write `assert cond, \"msg\"`");
-    assert_line(&out, "0 passed; 2 failed");
+    assert_line(&out, "message");
+    assert_line(&out, "1 passed; 1 failed");
 }
 
 // ---------------------------------------------------------------------------

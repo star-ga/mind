@@ -18,9 +18,9 @@
 //! back so `mindc fmt` prints `true`, `q.f(x)`, `module m { … }`, `import X as Y` and
 //! `export fn a` instead of deleting the words the AST no longer carries.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use super::{Printer, emit_attrs, emit_block_stmts};
+use super::{Printer, emit_attrs, emit_block_stmts, emit_expr};
 use crate::ast::{Module, Node, Span};
 
 /// The span-keyed spelling tables, indexed for lookup while printing.
@@ -31,6 +31,7 @@ use crate::ast::{Module, Node, Span};
 pub(super) struct SpellingTables {
     bool_literals: HashMap<(usize, usize), bool>,
     qualifiers: HashMap<(usize, usize), String>,
+    paren_asserts: HashSet<(usize, usize)>,
 }
 
 impl SpellingTables {
@@ -48,7 +49,28 @@ impl SpellingTables {
                 .iter()
                 .map(|(sp, q)| (key(sp), q.clone()))
                 .collect(),
+            paren_asserts: s.paren_asserts.iter().map(key).collect(),
         }
+    }
+}
+
+/// Emit `assert cond, "msg"`, or `assert (cond, "msg")` for an assert the source wrote with
+/// its condition and message in one pair of parentheses (the spelling the formatter has
+/// always printed for that form).
+pub(super) fn emit_assert(p: &mut Printer, cond: &Node, msg: Option<&str>, span: &Span) {
+    let paren = p
+        .spelling
+        .paren_asserts
+        .contains(&(span.start(), span.end()));
+    p.push(if paren { "assert (" } else { "assert " });
+    emit_expr(p, cond);
+    if let Some(m) = msg {
+        p.push(", \"");
+        p.push(m);
+        p.push("\"");
+    }
+    if paren {
+        p.push(")");
     }
 }
 

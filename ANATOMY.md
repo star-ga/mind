@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1880 | **Est. tokens:** ~3,671,674
-**Generated:** 2026-10-07 06:30 UTC
+**Files:** 1882 | **Est. tokens:** ~3,673,898
+**Generated:** 2026-10-07 07:24 UTC
 
 ## Token Budget Guide
 
@@ -105,7 +105,7 @@
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
 | `src/` | 11 | ~52,927 |
-| `src/ast/` | 2 | ~12,214 |
+| `src/ast/` | 2 | ~12,268 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
 | `src/bin/mindc/` | 1 | ~204 |
@@ -122,8 +122,8 @@
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
 | `src/ffi/` | 3 | ~5,541 |
-| `src/fmt/` | 3 | ~25,571 |
-| `src/fmt/printer/` | 1 | ~1,628 |
+| `src/fmt/` | 3 | ~25,460 |
+| `src/fmt/printer/` | 1 | ~1,821 |
 | `src/ir/` | 9 | ~95,728 |
 | `src/ir/compact/` | 3 | ~15,351 |
 | `src/ir/compact/v2/` | 9 | ~45,363 |
@@ -135,7 +135,7 @@
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 9 | ~53,642 |
 | `src/package/` | 2 | ~1,877 |
-| `src/parser/` | 5 | ~26,479 |
+| `src/parser/` | 6 | ~27,323 |
 | `src/phf/` | 1 | ~4,955 |
 | `src/project/` | 20 | ~69,350 |
 | `src/runtime/` | 3 | ~1,485 |
@@ -148,7 +148,7 @@
 | `src/types/` | 10 | ~20,740 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 409 | ~840,723 |
+| `tests/` | 410 | ~841,967 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -1174,7 +1174,7 @@
 ### `src/ast/`
 
 - `mod.rs` (~11113 tok, huge) — Copyright 2025 STARGA Inc.
-- `spelling.rs` (~1101 tok, large) — Copyright 2025 STARGA Inc.
+- `spelling.rs` (~1155 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~3890 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1308,10 +1308,10 @@
 
 - `cli.rs` (~4013 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~4199 tok, huge) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~17359 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~17248 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/fmt/printer/`
 
-- `spelling.rs` (~1628 tok, huge) — Copyright 2025 STARGA Inc.
+- `spelling.rs` (~1821 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `intrinsic_contract.rs` (~2968 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1416,6 +1416,7 @@
 - `mod.rs` (~1567 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/parser/`
 
+- `assert.rs` (~844 tok, large) — Copyright 2026 STARGA Inc.
 - `eval_imports.rs` (~2137 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `expand_bimap.rs` (~16544 tok, huge) — An `#[bimap]` attribute on an `enum` declares a one-to-one correspondence
 - `import_list_tests.rs` (~2764 tok, huge) — Completeness of the parser-owned import list.
@@ -1582,6 +1583,7 @@
 - `array_store_run.rs` (~2201 tok, huge) — Copyright 2026 STARGA Inc.
 - `array_surface_run.rs` (~829 tok, large) — Copyright 2025 STARGA Inc.
 - `array_u64_element_shift_run.rs` (~989 tok, large) — Copyright 2025 STARGA Inc.
+- `assert_parenthesised_message.rs` (~1270 tok, large) — Copyright 2026 STARGA Inc.
 ### `tests/autodiff/`
 
 - `matmul_gradient.mind` (~167 tok, small) — Autodiff test: MatMul gradient computation
@@ -2151,7 +2153,7 @@
 
 - `mindc.rs` (~2105 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_symlinked_project_identity.rs` (~2222 tok, huge) — Copyright 2026 STARGA Inc.
-- `mindc_test_evaluator_issues.rs` (~6043 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc_test_evaluator_issues.rs` (~6017 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_test_imports.rs` (~5926 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mindc_test_nested_modules.rs` (~1901 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mindc_test_phase_b.rs` (~3574 tok, huge) — Copyright 2025 STARGA Inc.

@@ -26,6 +26,7 @@ use crate::ast::{
 use crate::diagnostics::{Diagnostic as PrettyDiagnostic, Span as DiagnosticSpan};
 use crate::types::ConvPadding;
 
+mod assert;
 mod eval_imports;
 pub(crate) use eval_imports::parse_with_imports;
 pub(crate) mod expand_bimap;
@@ -3178,48 +3179,6 @@ impl<'a> P<'a> {
 
     /// Parse `assert <expr>[, "message"]`.
     /// Phase 10.5 stretch.
-    fn parse_assert(&mut self) -> Result<Node, ParseError> {
-        let start = self.pos;
-        self.pos += 6; // "assert"
-        self.skip_ws();
-        let cond = self.parse_expr()?;
-        self.skip_ws();
-        let msg = if self.eat(b',') {
-            self.skip_ws_and_newlines();
-            // Expect a string literal
-            if self.at(b'"') {
-                self.pos += 1;
-                let m_start = self.pos;
-                while self.pos < self.b.len() && self.b[self.pos] != b'"' {
-                    if self.b[self.pos] == b'\\' && self.pos + 1 < self.b.len() {
-                        self.pos += 2;
-                    } else {
-                        self.pos += 1;
-                    }
-                }
-                let s = std::str::from_utf8(&self.b[m_start..self.pos])
-                    .unwrap_or("")
-                    .to_string();
-                if !self.eat(b'"') {
-                    return Err(self.err("unterminated assert message string".into()));
-                }
-                Some(s)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        self.skip_ws();
-        self.eat(b';');
-        let span = Span::new(start, self.pos);
-        Ok(Node::Assert {
-            cond: Box::new(cond),
-            msg,
-            span,
-        })
-    }
-
     fn parse_let(&mut self) -> Result<Node, ParseError> {
         let start = self.pos;
         self.pos += 3; // "let"

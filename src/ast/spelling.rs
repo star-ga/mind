@@ -71,4 +71,7 @@ pub struct SourceSpelling {
     /// both `q.fn(args)` calls and `q.CONST` value reads, which desugar to a bare `Call` and a
     /// bare `Ident` respectively and lose `q` either way.
     pub call_qualifiers: Vec<(Span, String)>,
+    /// Spans of the `assert` statements written `assert(cond, "msg")`: the condition and the
+    /// message inside one pair of parentheses, which the parser splits into both fields.
+    pub paren_asserts: Vec<Span>,
 }

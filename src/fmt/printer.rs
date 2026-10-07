@@ -416,8 +416,10 @@ fn emit_node(p: &mut Printer, node: &Node, _extra_indent: usize) {
         Node::Region { body, span } => {
             emit_region(p, body, *span);
         }
-        Node::Assert { cond, msg, .. } => {
-            emit_assert(p, cond, msg.as_deref());
+        Node::Assert { cond, msg, span } => {
+            let ind = p.indent_str();
+            p.push(&ind);
+            spelling::emit_assert(p, cond, msg.as_deref(), span);
         }
         Node::Print { args, .. } => {
             emit_print(p, args);
@@ -893,14 +895,8 @@ fn emit_stmt(p: &mut Printer, node: &Node) {
                 emit_expr(p, v);
             }
         }
-        Node::Assert { cond, msg, .. } => {
-            p.push("assert ");
-            emit_expr(p, cond);
-            if let Some(m) = msg {
-                p.push(", \"");
-                p.push(m);
-                p.push("\"");
-            }
+        Node::Assert { cond, msg, span } => {
+            spelling::emit_assert(p, cond, msg.as_deref(), span);
         }
         Node::Print { args, .. } => {
             p.push("print(");
@@ -980,18 +976,6 @@ fn emit_return(p: &mut Printer, value: Option<&Node>) {
     if let Some(v) = value {
         p.push(" ");
         emit_expr(p, v);
-    }
-}
-
-fn emit_assert(p: &mut Printer, cond: &Node, msg: Option<&str>) {
-    let ind = p.indent_str();
-    p.push(&ind);
-    p.push("assert ");
-    emit_expr(p, cond);
-    if let Some(m) = msg {
-        p.push(", \"");
-        p.push(m);
-        p.push("\"");
     }
 }
 
@@ -1628,14 +1612,8 @@ fn emit_expr(p: &mut Printer, node: &Node) {
                 emit_expr(p, v);
             }
         }
-        Node::Assert { cond, msg, .. } => {
-            p.push("assert ");
-            emit_expr(p, cond);
-            if let Some(m) = msg {
-                p.push(", \"");
-                p.push(m);
-                p.push("\"");
-            }
+        Node::Assert { cond, msg, span } => {
+            spelling::emit_assert(p, cond, msg.as_deref(), span);
         }
         // Items that shouldn't appear as expressions; emit placeholder
         Node::FnDef(fd, _) => p.push(&fd.name),
