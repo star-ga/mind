@@ -2575,3 +2575,52 @@ different kernel and goes through the full re-bless protocol, not this phase.
   are worth supporting first.
 - Is the measured cost of the second pass large enough to matter at the
   sizes we ship? Measure under 19.6.2 before building.
+
+## Phase 21 — Deterministic forward-only training (proposed, 2026-10-07)
+
+Recent research shows a zeroth-order method that pretrains transformer language models
+about as well as backpropagation. Instead of running the chain rule backwards, it adds
+small Gaussian noise to the output of every linear layer, independently at every token,
+and scores each token's noise by how much the loss changed at that token. Averaged over
+many draws, the reward-weighted noise estimates each layer's output error; its outer
+product with the layer's input is the weight gradient. Every token in one forward pass
+is a separate trial, so one pass runs thousands of them.
+
+Why this matters for MIND specifically:
+
+- **It needs only forward passes.** Training then needs nothing the inference path does
+  not already have, plus a seeded noise source. MIND's forward path is already
+  byte-identical across substrates.
+- **It does not need a differentiable model.** Q16.16 fixed-point, int8 and ternary
+  models train directly, with no straight-through estimators or float shadow weights.
+  That is the model family where MIND's determinism is strongest.
+- **The noise can be deterministic.** With a counter-based generator keyed on
+  (seed, step, layer, token), every perturbation is reproducible. That makes the whole
+  training trajectory byte-identical on x86, ARM and GPU, so a run can be replayed and
+  audited step by step. No other framework offers that.
+
+### Order of work
+
+| Step | Work | Gate |
+|---|---|---|
+| 21.1 | Counter-based Gaussian noise in `std/` (Q16.16 and strict `f64` tiers), pinned to known-answer vectors | Same vectors on avx2 and neon |
+| 21.2 | Forward-only gradient estimator for one linear layer, checked against reverse-mode autodiff on a fixed seed | Cosine alignment with the autodiff gradient reported as a number, not asserted |
+| 21.3 | Small transformer (≤ 10M params) trained end to end in MIND both ways: autodiff vs forward-only | Loss curves plus byte-identical trajectory on avx2 and neon |
+| 21.4 | Q16.16 / int8 model trained forward-only, which reverse-mode autodiff cannot train directly | Converges, and the trajectory hash matches across substrates |
+| 21.5 | Scale probe at ~100M params on local GPUs | Compute per unit of loss vs autodiff, measured |
+
+### Firewall — do not cross it
+
+- No claim that this beats backprop. The research result is a match at large population
+  sizes, which costs more compute, not less. Report compute per unit of loss honestly.
+- The noise source must never read a clock or an unseeded RNG; a non-reproducible draw
+  breaks the wedge.
+- Reverse-mode autodiff stays the default training path. This is an additional mode.
+
+### Open questions — answer before this gets a milestone
+
+- How many draws per update does a Q16.16 model need before the estimate is useful, given
+  fixed-point quantization noise on the reward?
+- Do attention internals need their own credit rule in MIND, or does the output-layer
+  estimate suffice at small scale?
+- Can the per-token reward reduction stay order-pinned on GPU without losing the speedup?
