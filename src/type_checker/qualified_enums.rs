@@ -213,6 +213,17 @@ pub(super) fn validate(module: &Module, src: &str, file: Option<&str>) -> Vec<Di
     errors
 }
 
+/// The width of an `iN` / `uN` integer type name wider than 64 bits (`i128`). No backend
+/// represents one: the annotation was accepted and the value lowered as `i64`, so
+/// `(a * 4 / 2) / a` with `a = i64::MAX` returned 0.
+fn wider_than_64_bits(name: &str) -> Option<u32> {
+    let digits = name.strip_prefix('i').or_else(|| name.strip_prefix('u'))?;
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse::<u32>().ok().filter(|bits| *bits > 64)
+}
+
 fn validate_type(
     ann: &TypeAnn,
     span: crate::ast::Span,
@@ -224,7 +235,22 @@ fn validate_type(
     let mut pending = vec![ann];
     while let Some(ann) = pending.pop() {
         let name = match ann {
-            TypeAnn::Named(name) => Some(name.as_str()),
+            TypeAnn::Named(name) => {
+                if let Some(bits) = wider_than_64_bits(name) {
+                    errors.push(super::diag_from_span(
+                        src,
+                        file,
+                        format!(
+                            "`{name}` is not supported: integer types are at most 64 bits wide, \
+                             and a {bits}-bit value would be computed in 64 bits"
+                        ),
+                        span,
+                        super::resolve::UNKNOWN_IDENT_CODE,
+                    ));
+                    continue;
+                }
+                Some(name.as_str())
+            }
             TypeAnn::Tensor { dtype, .. } | TypeAnn::DiffTensor { dtype, .. } => {
                 Some(dtype.as_str())
             }

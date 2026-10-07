@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1882 | **Est. tokens:** ~3,673,898
-**Generated:** 2026-10-07 07:24 UTC
+**Files:** 1883 | **Est. tokens:** ~3,674,573
+**Generated:** 2026-10-07 08:04 UTC
 
 ## Token Budget Guide
 
@@ -112,7 +112,7 @@
 | `src/build/` | 13 | ~48,441 |
 | `src/build/cache/` | 3 | ~3,150 |
 | `src/cache/` | 4 | ~3,682 |
-| `src/check/` | 4 | ~11,820 |
+| `src/check/` | 4 | ~11,447 |
 | `src/deps/` | 1 | ~9,388 |
 | `src/diagnostics/` | 3 | ~14,085 |
 | `src/distributed/` | 6 | ~7,725 |
@@ -135,20 +135,20 @@
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 9 | ~53,642 |
 | `src/package/` | 2 | ~1,877 |
-| `src/parser/` | 6 | ~27,323 |
+| `src/parser/` | 6 | ~27,573 |
 | `src/phf/` | 1 | ~4,955 |
 | `src/project/` | 20 | ~69,350 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 4 | ~14,254 |
-| `src/type_checker/` | 18 | ~62,271 |
+| `src/type_checker/` | 18 | ~62,552 |
 | `src/type_checker/resolve/` | 1 | ~1,569 |
 | `src/type_checker/slice_abi/` | 3 | ~11,245 |
 | `src/types/` | 10 | ~20,740 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 410 | ~841,967 |
+| `tests/` | 411 | ~842,484 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -1218,7 +1218,7 @@
 
 - `early_failure.rs` (~1132 tok, large) — Copyright 2025 STARGA Inc.
 - `gitignore.rs` (~2345 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~7969 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~7596 tok, huge) — Copyright 2025 STARGA Inc.
 - `reporter.rs` (~374 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/`
 
@@ -1421,7 +1421,7 @@
 - `expand_bimap.rs` (~16544 tok, huge) — An `#[bimap]` attribute on an `enum` declares a one-to-one correspondence
 - `import_list_tests.rs` (~2764 tok, huge) — Completeness of the parser-owned import list.
 - `spelling.rs` (~1223 tok, large) — Copyright 2025 STARGA Inc.
-- `trivia.rs` (~3811 tok, huge) — Copyright 2025 STARGA Inc.
+- `trivia.rs` (~4061 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/phf/`
 
 - `mod.rs` (~4955 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1493,7 +1493,7 @@
 - `lowering_refusals_tests.rs` (~4372 tok, huge) — Copyright 2026 STARGA Inc.
 - `nerve_lint.rs` (~7669 tok, huge) — Copyright 2025 STARGA Inc.
 - `nerve_walk.rs` (~2232 tok, huge) — Copyright 2025 STARGA Inc.
-- `qualified_enums.rs` (~4072 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `qualified_enums.rs` (~4353 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `qualified_imports.rs` (~268 tok, medium) — Feature-neutral span-scoped qualified import predicates for name resolution.
 ### `src/type_checker/resolve/`
 
@@ -2637,6 +2637,7 @@
 - `verify_pinned_signer.rs` (~993 tok, large) — Copyright 2025 STARGA Inc.
 - `verify_require_signed.rs` (~1966 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify_ssa.rs` (~7389 tok, huge) — Copyright 2025 STARGA Inc.
+- `wide_integer_types.rs` (~517 tok, large) — Copyright 2026 STARGA Inc.
 - `x25519mlkem768_driver.py` (~2378 tok, huge) — # Known-answer driver for std/x25519mlkem768.mind (pure-MIND X25519MLKEM768
 - `x25519_vectors_driver.py` (~1525 tok, huge) — # Official-vector driver for std/x25519.mind (pure-MIND Curve25519 ECDH).
 - `x509_vectors_driver.py` (~3593 tok, huge) — # Real-certificate driver for std/x509.mind (pure-MIND X.509 DER parsing + RSA
