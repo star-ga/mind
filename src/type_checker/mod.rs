@@ -92,6 +92,12 @@ impl std::hash::Hasher for FxHasher {
 /// `BuildHasher` for the type checker's hot maps (see `FxHasher`).
 pub type FxBuild = std::hash::BuildHasherDefault<FxHasher>;
 
+/// An empty name map sized for `n` entries: a pass that binds about one name per
+/// top-level item fills it without rehashing (each rehash reallocates the table).
+pub(crate) fn name_map<V>(n: usize) -> HashMap<String, V, FxBuild> {
+    HashMap::with_capacity_and_hasher(n, FxBuild::default())
+}
+
 use crate::ast::BinOp;
 
 use crate::ast::Literal;
@@ -406,15 +412,45 @@ fn shape_op_for_binop(op: &BinOp) -> &'static str {
     }
 }
 
-fn concrete_shape(shape: &[ShapeDim]) -> Option<Vec<usize>> {
-    let mut out = Vec::with_capacity(shape.len());
-    for dim in shape {
-        match dim {
-            ShapeDim::Known(n) => out.push(*n),
-            ShapeDim::Sym(_) => return None,
+/// A fully known tensor shape, held inline up to rank 8: the shape engine reads
+/// operands as slices, so a matmul or broadcast check needs no scratch `Vec`
+/// per operand. A higher rank falls back to the heap.
+enum ConcreteShape {
+    Inline { dims: [usize; 8], rank: usize },
+    Heap(Vec<usize>),
+}
+
+impl std::ops::Deref for ConcreteShape {
+    type Target = [usize];
+
+    fn deref(&self) -> &[usize] {
+        match self {
+            ConcreteShape::Inline { dims, rank } => &dims[..*rank],
+            ConcreteShape::Heap(dims) => dims,
         }
     }
-    Some(out)
+}
+
+fn concrete_shape(shape: &[ShapeDim]) -> Option<ConcreteShape> {
+    let known = |dim: &ShapeDim| match dim {
+        ShapeDim::Known(n) => Some(*n),
+        ShapeDim::Sym(_) => None,
+    };
+    let mut dims = [0; 8];
+    if shape.len() > dims.len() {
+        return shape
+            .iter()
+            .map(known)
+            .collect::<Option<_>>()
+            .map(ConcreteShape::Heap);
+    }
+    for (slot, dim) in dims.iter_mut().zip(shape) {
+        *slot = known(dim)?;
+    }
+    Some(ConcreteShape::Inline {
+        dims,
+        rank: shape.len(),
+    })
 }
 
 fn shape_from_usize(shape: &[usize]) -> Vec<ShapeDim> {
@@ -4510,6 +4546,7 @@ fn check_module_types_in_file_impl(
 ) -> Vec<Pretty> {
     let mut errs = Vec::new();
     let mut tenv = env.clone();
+    tenv.reserve(module.items.len());
 
     // E2023 — the `__mind_` prefix is reserved for compiler intrinsics (RFC 0005
     // i64-ABI surface: `__mind_alloc` / `__mind_load_i8` / …). A user `fn` with

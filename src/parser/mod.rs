@@ -28,6 +28,7 @@ use crate::types::ConvPadding;
 
 mod assert;
 mod eval_imports;
+mod lexeme;
 mod paths;
 pub(crate) use eval_imports::parse_with_imports;
 pub(crate) mod expand_bimap;
@@ -85,6 +86,7 @@ impl std::fmt::Display for ParseError {
 }
 
 pub(crate) struct P<'a> {
+    src: &'a str,
     b: &'a [u8],
     pos: usize,
     /// Surface spellings the desugars drop, handed to the formatter via `Module::spelling`.
@@ -297,6 +299,7 @@ impl<'a> P<'a> {
     fn new(src: &'a str) -> Self {
         Self {
             spelling: crate::ast::SourceSpelling::default(),
+            src,
             b: src.as_bytes(),
             pos: 0,
             imports: Vec::new(),
@@ -469,140 +472,6 @@ impl<'a> P<'a> {
 
     fn starts_with(&self, s: &[u8]) -> bool {
         self.b[self.pos..].starts_with(s)
-    }
-
-    fn is_ident_start(ch: u8) -> bool {
-        ch.is_ascii_alphabetic() || ch == b'_'
-    }
-
-    fn is_ident_cont(ch: u8) -> bool {
-        ch.is_ascii_alphanumeric() || ch == b'_'
-    }
-
-    /// Read an identifier word (no dots). Returns None if not at an ident.
-    fn word(&mut self) -> Option<&'a str> {
-        let start = self.pos;
-        if self.pos >= self.b.len() || !Self::is_ident_start(self.b[self.pos]) {
-            return None;
-        }
-        while self.pos < self.b.len() && Self::is_ident_cont(self.b[self.pos]) {
-            self.pos += 1;
-        }
-        Some(std::str::from_utf8(&self.b[start..self.pos]).unwrap())
-    }
-
-    /// Issue #205: at the current position (immediately after an integer
-    /// literal's digits), try to consume a trailing integer-type suffix
-    /// (`u8`/`u16`/`u32`/`u64`/`i8`/`i16`/`i32`/`i64`) so `2u32`, `-1i32`,
-    /// `0xFFu8` and friends parse in any expression position. The suffix must
-    /// end at a word boundary (no trailing ident-cont byte) so `2u32x` is not
-    /// silently split. On a match the position is advanced past the suffix and
-    /// the corresponding `TypeAnn` is returned; otherwise the position is left
-    /// untouched and `None` is returned. The literal is desugared by the caller
-    /// into `Node::As`, reusing the existing `expr as type` typecheck/codegen
-    /// path exactly — no new IR is introduced, so suffix-free sources (e.g. the
-    /// keystone) are byte-identical.
-    fn int_type_suffix(&mut self) -> Option<TypeAnn> {
-        // Fast path: an integer type suffix can only begin with `u` or `i`. For
-        // the overwhelmingly common UNSUFFIXED literal the next byte is
-        // whitespace, an operator, `)`, `,`, `;`, … — bail before the 8-way
-        // compare so unsuffixed literals (incl. the entire keystone) pay ~one
-        // byte check, keeping compile_small at the nanosecond floor.
-        if self.pos >= self.b.len() || !matches!(self.b[self.pos], b'u' | b'i') {
-            return None;
-        }
-        // Each candidate suffix and the `TypeAnn` it maps to. `u32`/`i32`/`i64`
-        // have dedicated scalar variants; the remaining widths (incl. the
-        // pointer-sized `usize`/`isize`, #263 surface 2 — `0usize` in a match
-        // arm) ride through the `Named` path (same as writing `as u64`). The
-        // type checker already recognises `usize`/`isize` as integer-class
-        // named scalars, so the desugared `as`-cast type-checks unchanged. Order
-        // is irrelevant: the word-boundary check rejects a shorter prefix like
-        // `u8` against `usize` (the `s` after `u` is an ident-cont byte).
-        const SUFFIXES: &[&str] = &[
-            "usize", "isize", "u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64",
-        ];
-        for lit in SUFFIXES {
-            let bytes = lit.as_bytes();
-            let end = self.pos + bytes.len();
-            if end <= self.b.len()
-                && &self.b[self.pos..end] == bytes
-                && (end >= self.b.len() || !Self::is_ident_cont(self.b[end]))
-            {
-                self.pos = end;
-                return Some(match *lit {
-                    "u32" => TypeAnn::ScalarU32,
-                    "i32" => TypeAnn::ScalarI32,
-                    "i64" => TypeAnn::ScalarI64,
-                    other => TypeAnn::Named(other.to_string()),
-                });
-            }
-        }
-        None
-    }
-
-    /// Read a dotted identifier like `tensor.matmul` or `foo.bar.baz`.
-    fn dotted_ident(&mut self) -> Option<String> {
-        let first = self.word()?;
-        let mut name = first.to_string();
-        loop {
-            if self.pos < self.b.len() && self.b[self.pos] == b'.' {
-                let saved = self.pos;
-                self.pos += 1; // skip '.'
-                match self.word() {
-                    Some(part) => {
-                        name.push('.');
-                        name.push_str(part);
-                    }
-                    None => {
-                        self.pos = saved;
-                        break;
-                    }
-                }
-                continue;
-            }
-            // Phase 10.6: accept `Type::Variant` path segments
-            // (`config.AddressingMode::Content`, `Side::Left`, etc.).
-            // We accumulate the `::Variant` into the identifier so the
-            // expression node carries the full path string; the type
-            // checker resolves it later.
-            if self.pos + 1 < self.b.len()
-                && self.b[self.pos] == b':'
-                && self.b[self.pos + 1] == b':'
-            {
-                let saved = self.pos;
-                self.pos += 2;
-                match self.word() {
-                    Some(part) => {
-                        name.push_str("::");
-                        name.push_str(part);
-                    }
-                    None => {
-                        self.pos = saved;
-                        break;
-                    }
-                }
-                continue;
-            }
-            break;
-        }
-        Some(name)
-    }
-
-    /// Read digits as a string.
-    fn digits(&mut self) -> Option<String> {
-        let start = self.pos;
-        while self.pos < self.b.len() && self.b[self.pos].is_ascii_digit() {
-            self.pos += 1;
-        }
-        if self.pos == start {
-            return None;
-        }
-        Some(
-            std::str::from_utf8(&self.b[start..self.pos])
-                .unwrap()
-                .to_string(),
-        )
     }
 
     /// Parse a decimal digit string as an i64 literal.
@@ -787,7 +656,7 @@ impl<'a> P<'a> {
     fn dim_value(&mut self) -> Result<String, ParseError> {
         self.skip_ws();
         if let Some(d) = self.digits() {
-            return Ok(d);
+            return Ok(d.to_string());
         }
         if let Some(w) = self.word() {
             return Ok(w.to_string());
@@ -821,27 +690,22 @@ impl<'a> P<'a> {
 
     fn dtype(&mut self) -> Result<String, ParseError> {
         self.skip_ws();
-        for (kw, name) in [
-            (&b"bf16"[..], "bf16"),
-            (b"BF16", "bf16"),
-            (b"f16", "f16"),
-            (b"F16", "f16"),
-            (b"f32", "f32"),
-            (b"F32", "f32"),
-            (b"f64", "f64"),
-            (b"F64", "f64"),
-            (b"i32", "i32"),
-            (b"I32", "i32"),
-            // RFC 0012 §3.2 — additional dtypes
-            (b"i64", "i64"),
-            (b"I64", "i64"),
-            (b"q16", "q16"),
-            (b"Q16", "q16"),
-        ] {
-            if self.at_keyword(kw) {
-                self.pos += kw.len();
-                return Ok(name.into());
-            }
+        // One scan of the identifier at the cursor, matched against the builtin
+        // spellings (lower or upper case; RFC 0012 §3.2 adds i64 and q16). Each
+        // spelling is as long as its canonical name, so the cursor advances by it.
+        let builtin = match self.cur_word() {
+            b"bf16" | b"BF16" => Some("bf16"),
+            b"f16" | b"F16" => Some("f16"),
+            b"f32" | b"F32" => Some("f32"),
+            b"f64" | b"F64" => Some("f64"),
+            b"i32" | b"I32" => Some("i32"),
+            b"i64" | b"I64" => Some("i64"),
+            b"q16" | b"Q16" => Some("q16"),
+            _ => None,
+        };
+        if let Some(name) = builtin {
+            self.pos += name.len();
+            return Ok(name.into());
         }
         // Fallback: a NAMED element type — a builtin int not in the table above
         // (`i8`, `u8`, `u32`, …), a local type alias, or an imported/qualified
@@ -849,20 +713,17 @@ impl<'a> P<'a> {
         // opaque at parse time; the string is carried through and resolved by the
         // type-checker. Accepts a dotted qualified path so `Tensor<mod.Type>`
         // works. Anything that is not an identifier is still the original error.
-        if let Some(first) = self.word() {
-            let mut dt = first.to_string();
+        let start = self.pos;
+        if self.word().is_some() {
             while self.at(b'.') {
                 let save = self.pos;
                 self.pos += 1; // consume `.`
-                if let Some(seg) = self.word() {
-                    dt.push('.');
-                    dt.push_str(seg);
-                } else {
+                if self.word().is_none() {
                     self.pos = save;
                     break;
                 }
             }
-            return Ok(dt);
+            return Ok(self.text(start, self.pos).to_string());
         }
         Err(self.err("expected dtype".into()))
     }
@@ -4779,9 +4640,12 @@ impl<'a> P<'a> {
             let span = Span::new(start, self.pos);
             return Ok(Node::Lit(Literal::Int(val), span));
         }
-        let mut d = self
-            .digits()
-            .ok_or_else(|| self.err("expected number".into()))?;
+        // Borrowed until a separator, fraction or exponent needs a spliced copy:
+        // a plain integer literal parses straight from the source.
+        let mut d = std::borrow::Cow::Borrowed(
+            self.digits()
+                .ok_or_else(|| self.err("expected number".into()))?,
+        );
         // Digit separators in DECIMAL literals: `120_000`, `1_000_000`. An `_` is
         // part of the literal ONLY between two digits (`d _ d`); a trailing `_` or
         // an `_` before a non-digit is left for the surrounding parse. The `_`s are
@@ -4794,7 +4658,7 @@ impl<'a> P<'a> {
         {
             self.pos += 1; // consume the `_`
             if let Some(more) = self.digits() {
-                d.push_str(&more);
+                d.to_mut().push_str(more);
             }
         }
         // Check for decimal point → float literal. A `.` is a decimal point ONLY
@@ -4810,9 +4674,9 @@ impl<'a> P<'a> {
         {
             self.pos += 1; // skip '.'
             let frac = self.digits().unwrap_or_default();
-            let mut num_str = d;
+            let mut num_str = d.into_owned();
             num_str.push('.');
-            num_str.push_str(&frac);
+            num_str.push_str(frac);
             // Optional exponent: 1.0e-5
             if self.pos < self.b.len() && (self.b[self.pos] == b'e' || self.b[self.pos] == b'E') {
                 num_str.push('e');
@@ -4825,7 +4689,7 @@ impl<'a> P<'a> {
                 let exp = self
                     .digits()
                     .ok_or_else(|| self.err("expected exponent digits".into()))?;
-                num_str.push_str(&exp);
+                num_str.push_str(exp);
             }
             // Cross-substrate byte-identity (THE WEDGE): `str::parse::<f64>()`
             // is std's `FromStr for f64`, which is spec'd to round to the
@@ -4845,7 +4709,7 @@ impl<'a> P<'a> {
         }
         // Optional exponent without decimal: 1e5
         if self.pos < self.b.len() && (self.b[self.pos] == b'e' || self.b[self.pos] == b'E') {
-            let mut num_str = d;
+            let mut num_str = d.into_owned();
             num_str.push('e');
             self.pos += 1;
             if self.pos < self.b.len() && (self.b[self.pos] == b'-' || self.b[self.pos] == b'+') {
@@ -4855,7 +4719,7 @@ impl<'a> P<'a> {
             let exp = self
                 .digits()
                 .ok_or_else(|| self.err("expected exponent digits".into()))?;
-            num_str.push_str(&exp);
+            num_str.push_str(exp);
             // Deterministic across substrates for the same reason as the
             // decimal-point case above: std's correctly-rounded, locale-free
             // `f64::from_str`. See the note at the `1.0` site.
@@ -5758,7 +5622,7 @@ impl<'a> P<'a> {
             let d = self
                 .digits()
                 .ok_or_else(|| self.err("expected digits after `-` in pattern".into()))?;
-            let v = self.parse_i64_pattern(&d)?;
+            let v = self.parse_i64_pattern(d)?;
             return Ok(Pattern::Literal(Literal::Int(-v)));
         }
         if self.peek().is_some_and(|c| c.is_ascii_digit()) {
@@ -5812,7 +5676,7 @@ impl<'a> P<'a> {
                     .map_err(|_| self.err("float parse error in pattern".into()))?;
                 return Ok(Pattern::Literal(Literal::Float(f)));
             }
-            let v = self.parse_i64_pattern(&d)?;
+            let v = self.parse_i64_pattern(d)?;
             let _ = self.int_type_suffix(); // discard a trailing width suffix (e.g. `0u8`)
             return Ok(Pattern::Literal(Literal::Int(v)));
         }

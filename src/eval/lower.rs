@@ -1485,7 +1485,7 @@ pub(super) fn lower_to_ir_inner(module: &ast::Module, context: &mut LoweringCont
     #[cfg(feature = "std-surface")]
     MODULE_HAS_NARROW_SURFACE
         .with(|f| f.set(crate::eval::narrow_scan::module_mentions_narrow(module)));
-    let mut env: HashMap<String, ValueId> = HashMap::default();
+    let mut env: HashMap<String, ValueId> = crate::type_checker::name_map(module.items.len());
     // RFC 0005 P0f Step 1 — track `let x = Foo { ... }` so a later
     // `x.field` can resolve `Foo`'s canonical field-name order from
     // `ir.struct_defs` and emit the correct heap-record load offset.

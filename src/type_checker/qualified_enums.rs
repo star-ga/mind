@@ -232,8 +232,11 @@ fn validate_type(
     #[cfg(feature = "cross-module-imports")] imports: &[String],
     errors: &mut Vec<Diagnostic>,
 ) {
-    let mut pending = vec![ann];
-    while let Some(ann) = pending.pop() {
+    // The root is visited without a heap worklist: a scalar or tensor
+    // annotation (the common case) has no nested types to queue.
+    let mut pending: Vec<&TypeAnn> = Vec::new();
+    let mut next = Some(ann);
+    while let Some(ann) = next.take().or_else(|| pending.pop()) {
         let name = match ann {
             TypeAnn::Named(name) => {
                 if let Some(bits) = wider_than_64_bits(name) {

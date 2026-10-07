@@ -17,6 +17,9 @@ use std::collections::BTreeSet;
 use crate::ir::{IRModule, Instr, ValueId, instruction_dst};
 use crate::opt::ir_canonical::instruction_operands;
 
+#[path = "verify_ids.rs"]
+mod ids;
+
 /// Which SSA rule a [`SsaViolation`] reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SsaRule {
@@ -1000,7 +1003,7 @@ fn check_nested_fndef_tables(instrs: &[Instr]) -> Result<(), IrVerifyError> {
 
 pub fn verify_module(module: &IRModule) -> Result<(), IrVerifyError> {
     crate::ir::verify_canonical_metadata(module).map_err(IrVerifyError::CanonicalMetadata)?;
-    let mut defined: BTreeSet<ValueId> = BTreeSet::new();
+    let mut defined = ids::ValueIdSet::with_bound(module.next_id);
     let mut saw_output = false;
     let mut max_seen = 0usize;
 
@@ -1150,10 +1153,10 @@ fn validate_while_backedges(
 fn validate_operands(
     instr_index: usize,
     instr: &Instr,
-    defined: &BTreeSet<ValueId>,
+    defined: &ids::ValueIdSet,
 ) -> Result<(), IrVerifyError> {
     let check_defined = |value: ValueId| {
-        if !defined.contains(&value) {
+        if !defined.contains(value) {
             Err(IrVerifyError::UseBeforeDefinition { value, instr_index })
         } else {
             Ok(())
@@ -1299,7 +1302,7 @@ fn validate_operands(
         // so post-loop reads of a loop-carried var resolve. Gated.
         #[cfg(feature = "std-surface")]
         Instr::While { .. } => {
-            let mut scope = defined.clone();
+            let mut scope = defined.to_btree_set();
             validate_ssa_stream(std::slice::from_ref(instr), &mut scope)?;
         }
         // Loop control markers: NOT operand-free. Break/Continue snapshot the
@@ -1348,7 +1351,7 @@ fn validate_operands(
         // resolve. Gated.
         #[cfg(feature = "std-surface")]
         Instr::If { .. } => {
-            let mut scope = defined.clone();
+            let mut scope = defined.to_btree_set();
             validate_ssa_stream(std::slice::from_ref(instr), &mut scope)?;
         }
         // RFC 0006 Track B: SIMD vector primitives. Each operand is an
@@ -1404,7 +1407,7 @@ fn validate_operands(
         // Gated.
         #[cfg(feature = "std-surface")]
         Instr::Region { .. } => {
-            let mut scope = defined.clone();
+            let mut scope = defined.to_btree_set();
             validate_ssa_stream(std::slice::from_ref(instr), &mut scope)?;
         }
     }

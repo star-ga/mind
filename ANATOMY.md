@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1889 | **Est. tokens:** ~3680689
-**Generated:** 2026-10-07 11:34 UTC
+**Files:** 1892 | **Est. tokens:** ~3684269
+**Generated:** 2026-10-07 12:32 UTC
 
 ## Token Budget Guide
 
@@ -117,14 +117,14 @@
 | `src/diagnostics/` | 4 | ~15658 |
 | `src/distributed/` | 6 | ~7725 |
 | `src/doc/` | 3 | ~11002 |
-| `src/eval/` | 37 | ~141117 |
+| `src/eval/` | 38 | ~141393 |
 | `src/eval/stdlib/` | 2 | ~8586 |
 | `src/eval/struct_resolver/` | 1 | ~2555 |
 | `src/exec/` | 3 | ~5522 |
 | `src/ffi/` | 3 | ~5541 |
 | `src/fmt/` | 3 | ~25460 |
 | `src/fmt/printer/` | 1 | ~1878 |
-| `src/ir/` | 9 | ~95728 |
+| `src/ir/` | 10 | ~97464 |
 | `src/ir/compact/` | 3 | ~15351 |
 | `src/ir/compact/v2/` | 9 | ~45363 |
 | `src/ir/compact/v3/` | 15 | ~76625 |
@@ -135,20 +135,20 @@
 | `src/ops/` | 3 | ~4764 |
 | `src/opt/` | 9 | ~53642 |
 | `src/package/` | 2 | ~1877 |
-| `src/parser/` | 7 | ~28268 |
+| `src/parser/` | 8 | ~29774 |
 | `src/phf/` | 1 | ~4955 |
 | `src/project/` | 20 | ~69954 |
 | `src/runtime/` | 3 | ~1485 |
 | `src/shapes/` | 2 | ~6052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 4 | ~14254 |
-| `src/type_checker/` | 18 | ~62552 |
+| `src/type_checker/` | 18 | ~62604 |
 | `src/type_checker/resolve/` | 1 | ~1569 |
 | `src/type_checker/slice_abi/` | 3 | ~11245 |
-| `src/types/` | 10 | ~20740 |
+| `src/types/` | 10 | ~20759 |
 | `src/workspace/` | 1 | ~4906 |
 | `std/` | 42 | ~202387 |
-| `tests/` | 415 | ~845214 |
+| `tests/` | 415 | ~845205 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12308 |
@@ -1254,7 +1254,7 @@
 - `callable_exports.rs` (~596 tok, large) — Copyright 2026 STARGA Inc.
 - `canonical_lowering.rs` (~4108 tok, huge) — Copyright 2026 STARGA Inc.
 - `canonical_producers.rs` (~734 tok, large) — Copyright 2026 STARGA Inc.
-- `closures.rs` (~9338 tok, huge) — Copyright 2025 STARGA Inc.
+- `closures.rs` (~6164 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `declared_width.rs` (~8263 tok, huge) — Copyright 2025 STARGA Inc.
 - `field_access.rs` (~4734 tok, huge) — Copyright 2026 STARGA Inc.
@@ -1277,6 +1277,7 @@
 - `module_globals.rs` (~1160 tok, large) — Copyright 2026 STARGA Inc.
 - `narrow_arith.rs` (~3968 tok, huge) — Copyright 2025 STARGA Inc.
 - `narrow_scan.rs` (~3546 tok, huge) — Module-wide narrow-int SURFACE prescan (compile-speed early-skip).
+- `node_children.rs` (~3450 tok, huge) — Copyright 2025 STARGA Inc.
 - `slice_abi.rs` (~325 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/eval/stdlib/`
 
@@ -1368,7 +1369,8 @@
 - `mod.rs` (~17720 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_closure.rs` (~4270 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~4421 tok, huge) — Copyright 2025 STARGA Inc.
-- `verify.rs` (~21216 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify.rs` (~21232 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify_ids.rs` (~1720 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `lib.rs` (~1118 tok, large) — Copyright 2025 STARGA Inc.
@@ -1420,6 +1422,7 @@
 - `eval_imports.rs` (~2137 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `expand_bimap.rs` (~16544 tok, huge) — An `#[bimap]` attribute on an `enum` declares a one-to-one correspondence
 - `import_list_tests.rs` (~2764 tok, huge) — Completeness of the parser-owned import list.
+- `lexeme.rs` (~1506 tok, huge) — Copyright 2025 STARGA Inc.
 - `paths.rs` (~695 tok, large) — Copyright 2026 STARGA Inc.
 - `spelling.rs` (~1223 tok, large) — Copyright 2025 STARGA Inc.
 - `trivia.rs` (~4061 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1492,7 +1495,7 @@
 - `lowering_refusals_tests.rs` (~4372 tok, huge) — Copyright 2026 STARGA Inc.
 - `nerve_lint.rs` (~7669 tok, huge) — Copyright 2025 STARGA Inc.
 - `nerve_walk.rs` (~2232 tok, huge) — Copyright 2025 STARGA Inc.
-- `qualified_enums.rs` (~4353 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `qualified_enums.rs` (~4405 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `qualified_imports.rs` (~268 tok, medium) — Feature-neutral span-scoped qualified import predicates for name resolution.
 - `resolve.rs` (~15126 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/resolve/`
@@ -1522,7 +1525,7 @@
 - `canonical_types.rs` (~6538 tok, huge) — Copyright 2025 STARGA Inc.
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
 - `intern.rs` (~1554 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~1132 tok, large) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~1151 tok, large) — Copyright 2025 STARGA Inc.
 - `value.rs` (~297 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/workspace/`
 
@@ -2191,7 +2194,7 @@
 - `module_enum_match_run.rs` (~984 tok, large) — Copyright 2025 STARGA Inc.
 - `module_non_fn_call_reject.rs` (~1215 tok, large) — Copyright 2025 STARGA Inc.
 - `module_path_reference.rs` (~613 tok, large) — Copyright 2026 STARGA Inc.
-- `module_size_ratchet.rs` (~4028 tok, huge) — Copyright 2025 STARGA Inc.
+- `module_size_ratchet.rs` (~4019 tok, huge) — Copyright 2025 STARGA Inc.
 - `multimodule_determinism_run.rs` (~4275 tok, huge) — Copyright 2025 STARGA Inc.
 - `narrow_call_abi.rs` (~1344 tok, large) — Copyright 2025 STARGA Inc.
 - `narrow_local_mask_run.rs` (~879 tok, large) — Copyright 2025 STARGA Inc.

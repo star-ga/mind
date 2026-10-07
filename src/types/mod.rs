@@ -55,16 +55,19 @@ pub enum DType {
 
 impl DType {
     fn parse_name(name: &str) -> Option<Self> {
-        match name.to_ascii_lowercase().as_str() {
-            "i32" => Some(DType::I32),
-            "i64" => Some(DType::I64),
-            "f32" => Some(DType::F32),
-            "f64" => Some(DType::F64),
-            "bf16" => Some(DType::BF16),
-            "f16" => Some(DType::F16),
-            "q16" => Some(DType::Q16),
-            _ => None,
-        }
+        // Case-insensitive, compared in place: lowering resolves a dtype per
+        // tensor binding, so allocating a lowercased copy here sat on the hot path.
+        [
+            DType::I32,
+            DType::I64,
+            DType::F32,
+            DType::F64,
+            DType::BF16,
+            DType::F16,
+            DType::Q16,
+        ]
+        .into_iter()
+        .find(|dtype| name.eq_ignore_ascii_case(dtype.as_str()))
     }
 
     pub fn parse(name: &str) -> Option<Self> {
