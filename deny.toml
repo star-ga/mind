@@ -1,9 +1,9 @@
 [advisories]
 version = 2
-ignore = [
-  # Current cargo-deny release cannot parse CVSS v4 metadata; ignore until tooling is updated
-  "RUSTSEC-2024-0445",
-]
+# No ignores: every RustSec advisory that matches the resolved graph fails the
+# check. CI resolves with --all-features, so an optional dependency a release
+# can ship (evidence-*, mlir-jit, ...) is audited like a default one.
+ignore = []
 
 [licenses]
 version = 2
@@ -11,7 +11,8 @@ allow = [
   "MIT",
   "Apache-2.0",
   "Apache-2.0 WITH LLVM-exception",
-  "BSD-2-Clause",
+  # libloading (dev-dependency, and the optional mlir-jit backend).
+  "ISC",
   "MPL-2.0",
   "Unicode-3.0",
 ]

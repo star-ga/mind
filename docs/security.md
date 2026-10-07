@@ -54,25 +54,27 @@ fn process(input: Tensor<f32, [batch, 224, 224, 3]>) -> Tensor<f32, _> {
 
 ## Supply Chain Security
 
-MIND uses `cargo-deny` for dependency auditing:
+MIND uses `cargo-deny` (0.20.2, the version CI pins) for dependency auditing:
 
 ```bash
-# Check for known vulnerabilities
-tools/cargo-deny-sanitize.sh check
-
-# Audit all dependencies
-cargo audit
+# RustSec advisories, licenses, bans and sources, over every feature
+cargo deny --all-features check
 ```
 
-> **Note:** Until `cargo-deny` ships CVSS v4 support, run it through
-> `tools/cargo-deny-sanitize.sh` so the advisory database is sanitized (the
-> script removes CVSS v4 lines from affected advisories after `cargo deny
-> fetch`). This keeps the check working without mutating the ignore list.
+`--all-features` matters: the optional dependencies a release build can ship
+(the `evidence-*` signers, `mlir-jit`) are held to the same policy as the
+default graph. The repository tracks no `Cargo.lock`, so CI resolves the newest
+compatible versions on every run and audits exactly that graph.
 
 The `deny.toml` configuration enforces:
-- License compliance
-- No unmaintained dependencies
-- CVE blocking
+- Every RustSec advisory that matches the resolved graph fails the check; the
+  ignore list is empty
+- License compliance against an explicit allow list
+- No wildcard version requirements
+
+The TypeScript SDK (`sdk/ts/mic-map`) is audited with `npm audit`, and the
+Python benchmark harnesses pin floors at the first release that patches every
+fixed advisory for their dependency (`benchmarks/*/requirements.txt`).
 
 ## Sandboxed Execution
 
