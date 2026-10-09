@@ -44,11 +44,16 @@
 /// The MLIR passthrough entry that becomes LLVM's `nobuiltin` fn attribute.
 const NOBUILTIN_ENTRY: &str = "\"nobuiltin\"";
 
-/// Lower `mlir` with `preset` for the native build, then mark every MIND
-/// definition `nobuiltin` (see the module docs for why the build driver, not
-/// the emitter, applies it).
+/// Lower `mlir` with `preset` for the native build, mark every MIND definition
+/// `nobuiltin` (see the module docs for why the build driver, not the emitter,
+/// applies it), and pin the order of bufferized dense constants
+/// ([`crate::mlir::const_globals`]) so the artifact cannot depend on ASLR.
 pub fn lower_for_native_build(mlir: &str, preset: &str) -> Result<String, String> {
-    crate::eval::mlir_export::apply_lowering(mlir, preset).map(|l| mark_definitions_nobuiltin(&l))
+    crate::eval::mlir_export::apply_lowering(mlir, preset).map(|l| {
+        crate::mlir::const_globals::predeclare_dense_constant_globals(&mark_definitions_nobuiltin(
+            &l,
+        ))
+    })
 }
 
 /// Mark every `func.func` DEFINITION in `mlir` as `nobuiltin`.

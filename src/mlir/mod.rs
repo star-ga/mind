@@ -23,6 +23,7 @@
 /// surface). Public so a sweep harness can read/override the chosen point.
 pub mod gemm_tuning;
 
+pub mod const_globals;
 mod lowering;
 pub mod nobuiltin;
 
