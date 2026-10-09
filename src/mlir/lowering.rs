@@ -11246,14 +11246,12 @@ impl LoweringContext {
     }
 
     /// Emit `%tmp<id>`: a ZERO-FILLED init tensor for a linalg named op that
-    /// ACCUMULATES into its `outs` operand. `linalg.matmul` computes
-    /// `C(i,j) += A(i,k) * B(k,j)` and `linalg.conv_2d_nhwc_hwcf` computes
-    /// `O += I * K`, so the output must start at 0. Handing them a bare
-    /// `tensor.empty()` (uninitialised heap memory) made the result depend on
-    /// whatever the allocator returned: measured, the SAME call with the SAME
-    /// inputs returned `14.0` and `1.7785929385049709e+47` on successive calls — a
-    /// non-deterministic miscompile, and the cause of the flaky
-    /// `tensor_param_descriptor_abi_run::rank2_index_sensitive_field_map_is_honored`.
+    /// ACCUMULATES into its `outs` operand (`linalg.matmul`: `C += A*B`;
+    /// `linalg.conv_2d_nhwc_hwcf`: `O += I*K`), so the output must start at 0. A
+    /// bare `tensor.empty()` is uninitialised heap memory: the SAME call with the
+    /// SAME inputs returned `14.0` and `1.7785929385049709e+47` on successive
+    /// calls. Guarded by `tensor_param_descriptor_abi_run::
+    /// accumulating_matmul_ignores_a_dirty_output_allocation`.
     fn emit_zeroed_init(&mut self, id: usize, dtype: &DType, tensor_ty: &str) {
         let elem = dtype.as_str();
         self.emit_line(&format!(
