@@ -14,6 +14,9 @@ use std::collections::BTreeSet;
 use std::process;
 
 #[cfg(feature = "std-surface")]
+mod child;
+
+#[cfg(feature = "std-surface")]
 /// The `native_seed` column of the committed std manifest, in FILE ORDER.
 ///
 /// enforced-by: STDLIB-MANIFEST
@@ -57,8 +60,6 @@ pub fn run_native_backend_bridge(_paths: &[String], _out: &Option<String>, _emit
 /// `MINDC_NATIVE_ELF` overrides the committed seed; unsupported programs refuse.
 #[cfg(feature = "std-surface")]
 pub fn run_native_backend_bridge(paths: &[String], out: &Option<String>, emit: &Option<String>) {
-    use std::io::Write as _;
-
     // EXECUTABLE TARGETS ONLY. The frozen compiler emits a static ET_EXEC and
     // this bridge asserts that shape before writing. Until it can emit a library
     // container, a library request is REFUSED rather than satisfied with an
@@ -307,7 +308,7 @@ pub fn run_native_backend_bridge(paths: &[String], out: &Option<String>, emit: &
         process::exit(2);
     }
 
-    let mut child = match std::process::Command::new(&elf)
+    let child = match std::process::Command::new(&elf)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -319,33 +320,14 @@ pub fn run_native_backend_bridge(paths: &[String], out: &Option<String>, emit: &
             process::exit(2);
         }
     };
-    if let Some(mut si) = child.stdin.take() {
-        if let Err(e) = si.write_all(&image) {
-            eprintln!("error[backend-native]: failed to stream source image to compiler: {e}");
-            process::exit(2);
-        }
-    }
-    let output = match child.wait_with_output() {
-        Ok(o) => o,
-        Err(e) => {
-            eprintln!("error[backend-native]: compiler ELF did not complete: {e}");
-            process::exit(2);
-        }
+    // Stream, drain and ALWAYS reap. A broken pipe is only a symptom of the
+    // child's fate (a loader ENOMEM under an address-space cap ends in SIGSEGV
+    // before stdin is read), so the report carries the reaped outcome.
+    let run = child::supervise(child, &image, child::REAP_GRACE);
+    let elf_bytes = match finish_compiler_run(run) {
+        Ok(bytes) => bytes,
+        Err(code) => process::exit(code),
     };
-
-    // Fail-closed: propagate the pure-MIND compiler's diagnostic + exit; no artifact.
-    if !output.status.success() {
-        let code = output.status.code().unwrap_or(1);
-        if !output.stderr.is_empty() {
-            let _ = std::io::stderr().write_all(&output.stderr);
-        }
-        eprintln!(
-            "error[backend-native]: pure-MIND compiler rejected the program (exit {code}); \
-             no artifact written (native backend is fail-closed — no MLIR fallback)."
-        );
-        process::exit(if code == 0 { 1 } else { code });
-    }
-    let elf_bytes = output.stdout;
     // A real static ELF (magic + ET_EXEC), never an empty/garbage artifact.
     if elf_bytes.len() < 256 || &elf_bytes[0..4] != b"\x7fELF" {
         eprintln!(
@@ -376,6 +358,79 @@ pub fn run_native_backend_bridge(paths: &[String], out: &Option<String>, emit: &
         out_path,
         elf_bytes.len()
     );
+}
+
+#[cfg(feature = "std-surface")]
+/// Turn a supervised compiler run into the artifact bytes, or print the real
+/// outcome and return the exit code. Fail-closed: no artifact on any failure,
+/// and never an MLIR fallback.
+fn finish_compiler_run(run: child::ChildRun) -> Result<Vec<u8>, i32> {
+    let ok_status = matches!(&run.reaped, child::Reaped::Exited(s) if s.success());
+    if run.failure.is_none() && ok_status {
+        // Both pipes reached EOF, so stdout is complete.
+        return Ok(run.stdout.unwrap_or_default());
+    }
+    if let Some(failure) = &run.failure {
+        eprintln!("error[backend-native]: {failure}");
+        eprintln!(
+            "  compiler process: {}",
+            child::describe_reaped(&run.reaped)
+        );
+    }
+    print_compiler_stderr(run.stderr.as_ref(), run.failure.is_some());
+    let code = match &run.reaped {
+        child::Reaped::Exited(s) | child::Reaped::KilledAfterGrace { status: s, .. } => {
+            // A stream failure is the bridge's own error when the child itself
+            // reported success: its input was incomplete.
+            child::exit_code_for(s, if run.failure.is_some() { 2 } else { 1 })
+        }
+        child::Reaped::WaitFailed(_) => 2,
+    };
+    match (&run.failure, &run.reaped) {
+        (None, child::Reaped::Exited(s)) if s.code().is_some() => eprintln!(
+            "error[backend-native]: pure-MIND compiler rejected the program (exit {code}); \
+             no artifact written (native backend is fail-closed — no MLIR fallback)."
+        ),
+        (None, reaped) => eprintln!(
+            "error[backend-native]: pure-MIND compiler {}; no artifact written (native \
+             backend is fail-closed — no MLIR fallback).",
+            child::describe_reaped(reaped)
+        ),
+        (Some(_), _) => eprintln!(
+            "error[backend-native]: no artifact written (native backend is fail-closed — \
+             no MLIR fallback)."
+        ),
+    }
+    Err(code)
+}
+
+#[cfg(feature = "std-surface")]
+/// Re-emit the child's captured stderr, stating truncation or unavailability.
+fn print_compiler_stderr(capture: Option<&child::BoundedCapture>, after_failure: bool) {
+    use std::io::Write as _;
+    match capture {
+        Some(cap) => {
+            if !cap.bytes.is_empty() {
+                let _ = std::io::stderr().write_all(&cap.bytes);
+                if !cap.bytes.ends_with(b"\n") {
+                    eprintln!();
+                }
+            } else if after_failure {
+                eprintln!("  compiler stderr: (empty)");
+            }
+            if cap.dropped > 0 {
+                eprintln!(
+                    "  [{} bytes of compiler stderr truncated after the first {}]",
+                    cap.dropped,
+                    cap.bytes.len()
+                );
+            }
+        }
+        None => eprintln!(
+            "  compiler stderr: unavailable (its pipe was still held open after the \
+             process was reaped)"
+        ),
+    }
 }
 
 #[cfg(feature = "std-surface")]

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1893 | **Est. tokens:** ~3,687,148
-**Generated:** 2026-10-09 08:24 UTC
+**Files:** 1896 | **Est. tokens:** ~3,695,999
+**Generated:** 2026-10-09 08:25 UTC
 
 ## Token Budget Guide
 
@@ -109,8 +109,9 @@
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
 | `src/bin/mindc/` | 1 | ~204 |
-| `src/build/` | 13 | ~48,441 |
+| `src/build/` | 13 | ~49,031 |
 | `src/build/cache/` | 3 | ~3,150 |
+| `src/build/native_bridge/` | 2 | ~4,881 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 5 | ~12,177 |
 | `src/deps/` | 1 | ~9,388 |
@@ -148,7 +149,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 416 | ~847,862 |
+| `tests/` | 417 | ~851,242 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -1200,7 +1201,13 @@
 - `driver_error.rs` (~699 tok, large) — Copyright 2025 STARGA Inc.
 - `error.rs` (~2022 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~9611 tok, huge) — Copyright 2025 STARGA Inc.
-- `native_bridge.rs` (~5296 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/build/native_bridge/`
+
+- `child.rs` (~3650 tok, huge) — Copyright 2025 STARGA Inc.
+- `child_tests.rs` (~1231 tok, large) — Copyright 2025 STARGA Inc.
+### `src/build/`
+
+- `native_bridge.rs` (~5886 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_image.rs` (~2018 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_scope.rs` (~6258 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_scope_tests.rs` (~5219 tok, huge) — Seam tests for the captured-source snapshot and its module identities.
@@ -2233,6 +2240,7 @@
 - `narrow_signedness_batch_run.rs` (~1629 tok, huge) — Copyright 2025 STARGA Inc.
 - `narrow_tuple_pr216_run.rs` (~1409 tok, large) — Copyright 2025 STARGA Inc.
 - `narrow_unsigned_div_zero_run.rs` (~1247 tok, large) — Copyright 2025 STARGA Inc.
+- `native_bridge_child_status.rs` (~3380 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/native_bridge_support/`
 
 - `draining_native_compiler.rs` (~300 tok, medium) — Host-native compiler fixture for admission-only controls.
