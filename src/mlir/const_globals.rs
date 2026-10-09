@@ -111,7 +111,7 @@ fn collect(mlir: &str) -> (Vec<DenseConst<'_>>, usize) {
     let mut body_start = 0usize;
     for (n, line) in lines.iter().enumerate() {
         let t = line.trim();
-        if t.starts_with("func.func @") && t.ends_with('{') {
+        if is_function_header(t) && t.ends_with('{') {
             func += 1;
             body_start = n + 1;
             continue;
@@ -144,7 +144,7 @@ fn collect(mlir: &str) -> (Vec<DenseConst<'_>>, usize) {
 fn used_in_body(body: &[&str], def: usize, result: &str) -> bool {
     for line in &body[def + 1..] {
         let t = line.trim();
-        if t.starts_with("func.func @") {
+        if is_function_header(t) {
             return false;
         }
         let used = t.match_indices(result).any(|(i, _)| {
@@ -157,6 +157,17 @@ fn used_in_body(body: &[&str], def: usize, result: &str) -> bool {
         }
     }
     false
+}
+
+/// True iff the trimmed line opens a function in ANY header form — public or
+/// `private`, with or without a body, of any dialect (`func.func`,
+/// `llvm.func`, `gpu.func`, ...). SSA names are function-scoped, so a use scan
+/// that ran past such a header would credit a dead constant with a use of a
+/// same-named value in the next function.
+fn is_function_header(t: &str) -> bool {
+    t.split_whitespace()
+        .next()
+        .is_some_and(|op| op.ends_with(".func"))
 }
 
 /// One parsed `%r = arith.constant dense<...> : tensor<shape> [loc(...)]` line.
@@ -318,6 +329,22 @@ mod tests {
         let got = pre(src2);
         assert!(got.contains("= dense<[7, 8]>"), "{got}");
         assert!(!got.contains("memref<2xi64> = dense<[5, 6]>"), "{got}");
+    }
+
+    #[test]
+    fn a_dead_constant_is_not_used_by_a_same_named_value_in_a_later_function() {
+        // `%cst` is dead in @a. @b is a PRIVATE definition whose own `%cst`
+        // is used; the scan must stop at @b's header whatever its form, so
+        // the dead `dense<[9, 9, 9]>` is never declared. @b and @c keep the
+        // two live constants across two functions, so the rewrite does run.
+        let src = "module {\n  func.func @a(%i: index) -> i64 {\n    %cst = arith.constant dense<[9, 9, 9]> : tensor<3xi64>\n    %z = arith.constant 0 : i64\n    return %z : i64\n  }\n  func.func private @b(%i: index) -> i64 {\n    %cst = arith.constant dense<[1, 2]> : tensor<2xi64>\n    %0 = tensor.extract %cst[%i] : tensor<2xi64>\n    return %0 : i64\n  }\n  llvm.func @d() {\n    llvm.return\n  }\n  func.func @c(%i: index) -> i64 {\n    %k = arith.constant dense<[3, 4, 5]> : tensor<3xi64>\n    %0 = tensor.extract %k[%i] : tensor<3xi64>\n    return %0 : i64\n  }\n}\n";
+        let got = pre(src);
+        assert!(got.contains("= dense<[1, 2]>"), "{got}");
+        assert!(got.contains("memref<3xi64> = dense<[3, 4, 5]>"), "{got}");
+        assert!(
+            !got.contains("memref<3xi64> = dense<[9, 9, 9]>"),
+            "a dead constant was declared:\n{got}"
+        );
     }
 
     #[test]

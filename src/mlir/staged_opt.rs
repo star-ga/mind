@@ -40,11 +40,12 @@
 //! written back as `<stdin>` — what a one-invocation run printed — so a
 //! diagnostic reads exactly as before and never cites a generated line.
 //!
-//! TOOLCHAIN. Bufferizing needs MLIR
-//! [`crate::diagnostics::toolchain::MIN_MLIR_MAJOR`] or newer; an older
-//! `mlir-opt` is refused up front, naming the version found, the one required
-//! and where a usable one is installed, instead of failing inside
-//! bufferization.
+//! TOOLCHAIN. The tensor pipeline is supported on MLIR
+//! [`crate::diagnostics::toolchain::MIN_MLIR_MAJOR`] or newer. An older
+//! `mlir-opt` is NOT refused — MLIR is an optional backend and many tensor
+//! programs build correctly on it — but it draws a one-line warning, and if
+//! `mlir-opt` then fails, the error carries the E5004 explanation: the version
+//! found, the one needed and where a usable one is installed.
 
 use std::io::Write;
 
@@ -62,10 +63,10 @@ const STDIN_NAME: &str = "<stdin>";
 pub fn run_pipeline(input: &str, pipeline: &str, tools: &BuildTools) -> Result<String, BuildError> {
     let passes = split_passes(pipeline);
     let Some(cut) = passes.iter().position(|p| p.starts_with(BUFFERIZE_PASS)) else {
-        return run_opt(tools, pipeline, Some(input), &[], None);
+        return run_opt(tools, pipeline, Some(input), &[], None, None);
     };
-    toolchain::require_bufferizing_mlir_opt(&tools.mlir_opt)
-        .map_err(BuildError::ToolchainIncompatible)?;
+    let note = toolchain::tensor_pipeline_note(&tools.mlir_opt);
+    let note = note.as_deref();
 
     let mut file = tempfile::Builder::new()
         .prefix("mind-opt-")
@@ -76,22 +77,24 @@ pub fn run_pipeline(input: &str, pipeline: &str, tools: &BuildTools) -> Result<S
     let path = file.path().to_string_lossy().into_owned();
     let stage_a_args = [String::from("--mlir-print-debuginfo"), path.clone()];
     let head = passes[..cut].join(",");
-    let folded = run_opt(tools, &head, None, &stage_a_args, Some(&path))?;
+    let folded = run_opt(tools, &head, None, &stage_a_args, Some(&path), note)?;
     let declared = crate::mlir::const_globals::predeclare_dense_constant_globals(&folded);
     let tail = passes[cut..].join(",");
-    let out = run_opt(tools, &tail, Some(&declared), &[], Some(&path));
+    let out = run_opt(tools, &tail, Some(&declared), &[], Some(&path), note);
     drop(file);
     out
 }
 
 /// One `mlir-opt` run. `input` goes on stdin when given (else `extra` names
-/// the input file); `rename` is a path to report as `<stdin>` on failure.
+/// the input file); `rename` is a path to report as `<stdin>` on failure, and
+/// `note` an old-toolchain explanation to append to a failure.
 fn run_opt(
     tools: &BuildTools,
     pipeline: &str,
     input: Option<&str>,
     extra: &[String],
     rename: Option<&str>,
+    note: Option<&str>,
 ) -> Result<String, BuildError> {
     // MLIR 18+ requires the pass pipeline to be wrapped with an anchor op.
     let mut args = vec![format!("--pass-pipeline=builtin.module({pipeline})")];
@@ -108,9 +111,13 @@ fn run_opt(
         if let Some(path) = rename {
             stderr = stderr.replace(path, STDIN_NAME);
         }
+        let stderr = match note {
+            Some(note) => format!("{stderr}\nnote: {note}"),
+            None => toolchain::with_bufferize_hint(&tools.mlir_opt, stderr),
+        };
         return Err(BuildError::Subprocess {
             tool: "mlir-opt",
-            stderr: toolchain::with_bufferize_hint(&tools.mlir_opt, stderr),
+            stderr,
         });
     }
     Ok(decode_to_string(&output.stdout))

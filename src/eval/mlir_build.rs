@@ -76,10 +76,6 @@ pub enum BuildError {
     ToolMissing(&'static str),
     #[error("subprocess {tool} failed: {stderr}")]
     Subprocess { tool: &'static str, stderr: String },
-    /// The resolved tool cannot run this program's pipeline (an `mlir-opt`
-    /// older than the bufferization it needs). Host capability, coded alike.
-    #[error("[{code}] {0}", code = crate::diagnostics::capability::NATIVE_TOOLCHAIN_ABSENT)]
-    ToolchainIncompatible(String),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
     #[error("timeout while running {0}")]
