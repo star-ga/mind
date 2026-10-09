@@ -26,6 +26,8 @@ pub mod gemm_tuning;
 pub mod const_globals;
 mod lowering;
 pub mod nobuiltin;
+#[cfg(feature = "mlir-build")]
+pub mod staged_opt;
 
 #[cfg(feature = "ffi-c-user")]
 pub mod c_export;

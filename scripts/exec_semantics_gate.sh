@@ -123,7 +123,7 @@ CRITICAL_exec=(
   "harness_scratch_isolation 3"     # scratch isolation for every wedge gate's artifacts
   "module_size_ratchet 5"           # the 800-line ceiling and its budget table
   "mindc_cache_build_inputs 3"      # explicit entry, manifest exports, native sources
-  "const_table_build_determinism 1" # 8 ASLR-on builds of a const-table .so -> 1 hash
+  "const_table_build_determinism 8" # 8 cases x 8 ASLR-on builds -> 1 hash each
 )
 # The two largest members of the std-surface+mlir-lowering group that no CI run
 # enabled BOTH features for; 26 of the group's 57 tests live in these two files.

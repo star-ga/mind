@@ -977,6 +977,10 @@ fn run_mindc_build(
                 output.artifact_path.display()
             );
             println!("   Artifact: {} bytes", output.byte_count);
+            #[cfg(feature = "mlir-build")]
+            if let Ok(tools) = libmind::eval::mlir_build::resolve_tools() {
+                println!("  Toolchain: {}", toolchain_line(&tools));
+            }
         }
         Err(err) => {
             // `render()` owns the prefix so a coded refusal keeps its code on
@@ -3096,12 +3100,24 @@ fn emit_shared_if_requested(
     match linked {
         Ok(_) => {
             eprintln!("Wrote shared library: {}", shared_path);
+            eprintln!("Toolchain: {}", toolchain_line(&tools));
         }
         Err(err) => {
             eprintln!("error[build]: {err}");
             process::exit(1);
         }
     }
+}
+
+/// The tools an MLIR build ran with — resolved path and LLVM major of each —
+/// so the artifact's toolchain is on record next to it.
+#[cfg(feature = "mlir-build")]
+fn toolchain_line(tools: &libmind::eval::mlir_build::BuildTools) -> String {
+    libmind::diagnostics::toolchain::describe_toolchain(&[
+        ("mlir-opt", &tools.mlir_opt),
+        ("mlir-translate", &tools.mlir_translate),
+        ("clang", &tools.clang),
+    ])
 }
 
 #[cfg(not(feature = "mlir-build"))]

@@ -521,9 +521,9 @@ jobs:
             --test tensor_param_fail_loud_run -- --nocapture
 
       - name: Constant-table build reproducibility (x86/ARM)
-        # Eight separate `mindc --emit-shared` processes, ASLR on, must produce
-        # ONE shared library for a program whose constant tables live in several
-        # functions. One-shot bufferization used to order their globals by heap
+        # Eight separate builds per case, ASLR on, must produce ONE artifact:
+        # constant tables, constants folded by canonicalize, a multi-module
+        # project. One-shot bufferization used to order their globals by heap
         # address; run on both substrates because the pass is substrate-blind
         # and the reproducibility claim is per runner. Job-level
         # MIND_BENCH_REQUIRE=1 makes a missing backend a failure, not a skip.

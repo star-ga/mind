@@ -102,6 +102,86 @@ pub fn with_bufferize_hint(path: &str, mut stderr: String) -> String {
     stderr
 }
 
+/// [`llvm_major`] of `tool`, probed once per process and path: a project build
+/// compiles many modules, and the answer cannot change under a running build.
+fn cached_major(tool: &str) -> Option<u32> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static SEEN: OnceLock<Mutex<HashMap<String, Option<u32>>>> = OnceLock::new();
+    let seen = SEEN.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(major) = seen.lock().ok().and_then(|m| m.get(tool).copied()) {
+        return major;
+    }
+    let major = llvm_major(tool);
+    if let Ok(mut m) = seen.lock() {
+        m.insert(tool.to_string(), major);
+    }
+    major
+}
+
+/// The refusal for bufferizing with the `mlir-opt` at `path`, of LLVM `major`
+/// (`None` when its `--version` states none), or `None` when it is new enough.
+/// `newer` is an installed `mlir-opt` that would do.
+pub fn bufferize_refusal(
+    path: &str,
+    major: Option<u32>,
+    newer: Option<(u32, PathBuf)>,
+) -> Option<String> {
+    if major.is_some_and(|m| m >= MIN_MLIR_MAJOR) {
+        return None;
+    }
+    let found = match major {
+        Some(m) => format!("LLVM {m}"),
+        None => "a version its `--version` output does not state".to_string(),
+    };
+    let switch = match newer {
+        Some((m, bin)) => format!("LLVM {m} is installed in {}: {SWITCH}", bin.display()),
+        None => {
+            format!("install mlir-{MIN_MLIR_MAJOR}-tools and clang-{MIN_MLIR_MAJOR}, then {SWITCH}")
+        }
+    };
+    Some(format!(
+        "incompatible mlir-opt: this program needs the tensor pipeline \
+         (one-shot-bufferize), which requires MLIR/LLVM {MIN_MLIR_MAJOR} or newer; \
+         the mlir-opt in use ({path}) is {found}. {switch}"
+    ))
+}
+
+/// `Ok(major)` when the `mlir-opt` at `path` can run the tensor pipeline, else
+/// the [`bufferize_refusal`] text.
+pub fn require_bufferizing_mlir_opt(path: &str) -> Result<u32, String> {
+    let major = cached_major(path);
+    let newer = || {
+        installed("mlir-opt")
+            .into_iter()
+            .find(|(m, _)| *m >= MIN_MLIR_MAJOR)
+    };
+    match (major, bufferize_refusal(path, major, None)) {
+        (Some(m), None) => Ok(m),
+        _ => Err(bufferize_refusal(path, major, newer()).unwrap_or_default()),
+    }
+}
+
+/// The toolchain a native build ran with — each tool's resolved path and LLVM
+/// major — as one line, e.g.
+/// `mlir-opt /usr/lib/llvm-20/bin/mlir-opt (LLVM 20); ...`.
+#[cfg(feature = "mlir-subprocess")]
+pub fn describe_toolchain(tools: &[(&str, &str)]) -> String {
+    tools
+        .iter()
+        .map(|(name, tool)| {
+            let path = which::which(tool)
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| tool.to_string());
+            match cached_major(tool) {
+                Some(m) => format!("{name} {path} (LLVM {m})"),
+                None => format!("{name} {path} (LLVM version unknown)"),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 /// The refusal for a CPU executable one of whose modules fell back to the
 /// runtime-JIT object, naming the missing tool when that was the `cause`.
 pub fn fallback_link_refusal(cause: FallbackReason) -> String {
@@ -158,5 +238,26 @@ mod tests {
         );
         assert_eq!(bufferize_note(err, 20, None), None, "MLIR 20 needs no note");
         assert_eq!(bufferize_note("error: unknown op", 18, None), None);
+    }
+
+    #[test]
+    fn refuses_to_bufferize_below_the_minimum_and_names_both_versions() {
+        let msg = bufferize_refusal("/usr/bin/mlir-opt", Some(18), None).expect("refused");
+        assert!(msg.contains("requires MLIR/LLVM 20 or newer"), "{msg}");
+        assert!(msg.contains("(/usr/bin/mlir-opt) is LLVM 18"), "{msg}");
+        assert!(msg.contains("mlir-20-tools"), "{msg}");
+        let newer = Some((20, PathBuf::from("/usr/lib/llvm-20/bin")));
+        let msg = bufferize_refusal("mlir-opt", Some(18), newer).expect("refused");
+        assert!(
+            msg.contains("LLVM 20 is installed in /usr/lib/llvm-20/bin"),
+            "{msg}"
+        );
+        assert!(
+            bufferize_refusal("x", None, None)
+                .expect("unknown refused")
+                .contains("does not state")
+        );
+        assert_eq!(bufferize_refusal("x", Some(20), None), None);
+        assert_eq!(bufferize_refusal("x", Some(21), None), None);
     }
 }
