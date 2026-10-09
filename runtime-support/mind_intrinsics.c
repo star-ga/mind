@@ -359,10 +359,9 @@ MIND_EXPORT int64_t __mind_open(int64_t path_addr) {
     if (path_addr == 0) {
         return -1;
     }
-    /* MUTATION C (temporary): ignore the error, hand back a bogus fd. */
     const char *path = (const char *)(uintptr_t)path_addr;
     int fd = MIND_OPEN_RDONLY(path);
-    return fd < 0 ? (int64_t)999 : (int64_t)fd;
+    return fd < 0 ? (int64_t)-1 : (int64_t)fd;
 }
 
 // __mind_read(fd, buf_addr, count, offset) — POSIX read/pread.
