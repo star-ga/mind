@@ -15,6 +15,8 @@ use std::process;
 
 #[cfg(feature = "std-surface")]
 mod child;
+#[cfg(feature = "std-surface")]
+mod seed;
 
 #[cfg(feature = "std-surface")]
 /// The `native_seed` column of the committed std manifest, in FILE ORDER.
@@ -225,21 +227,12 @@ pub fn run_native_backend_bridge_profile(
         );
         process::exit(2);
     }
-    let std_dir = std::env::var("MINDC_STD_DIR").unwrap_or_else(|_| "std".to_string());
-    let mut std_sources: Vec<Vec<u8>> = Vec::with_capacity(std_modules.len());
-    for m in std_modules.iter() {
-        let p = format!("{std_dir}/{m}.mind");
-        match std::fs::read(&p) {
-            Ok(b) => std_sources.push(b),
-            Err(e) => {
-                eprintln!(
-                    "error[backend-native]: cannot read std module '{p}': {e} \
-                     (set MINDC_STD_DIR to the std/ directory)"
-                );
-                process::exit(2);
-            }
-        }
-    }
+    // `MINDC_STD_DIR` when set, otherwise the copy embedded in this binary,
+    // verified against the manifest's SEED_BLOB_SHA256 pin before use.
+    let std_sources = seed::std_seed_sources(&std_modules).unwrap_or_else(|e| {
+        eprintln!("error[backend-native]: {e}");
+        process::exit(2);
+    });
 
     // Composition goes through `native_image` so the single-file path and the
     // coming multi-module path build the image with the SAME code. With one
@@ -364,20 +357,14 @@ pub fn run_native_backend_bridge_profile(
     // The stdin image was composed above by `native_image::compose_image`.
     let image = image.bytes;
 
-    // Resolve the pure-MIND compiler ELF (the RI-D shell-out target).
-    let default_seed = if layout.is_some() {
-        BOUNDED_SEED_PATH
-    } else {
-        "examples/mindc_mind/testdata/selfhost_loop/stage1.elf"
-    };
-    let elf = std::env::var("MINDC_NATIVE_ELF").unwrap_or_else(|_| default_seed.to_string());
-    if !std::path::Path::new(&elf).exists() {
-        eprintln!(
-            "error[backend-native]: pure-MIND compiler ELF not found at '{elf}' \
-             (set MINDC_NATIVE_ELF)"
-        );
+    // Resolve the pure-MIND compiler ELF (the RI-D shell-out target):
+    // `MINDC_NATIVE_ELF` when set, otherwise the embedded seed of the requested
+    // profile, verified against its committed MANIFEST pin before it runs.
+    let compiler = seed::compiler_elf(layout.is_some()).unwrap_or_else(|e| {
+        eprintln!("error[backend-native]: {e}");
         process::exit(2);
-    }
+    });
+    let elf = compiler.path.display().to_string();
 
     let child = match std::process::Command::new(&elf)
         .stdin(std::process::Stdio::piped())
@@ -387,6 +374,7 @@ pub fn run_native_backend_bridge_profile(
     {
         Ok(c) => c,
         Err(e) => {
+            drop(compiler);
             eprintln!("error[backend-native]: failed to spawn compiler ELF '{elf}': {e}");
             process::exit(2);
         }
@@ -395,6 +383,8 @@ pub fn run_native_backend_bridge_profile(
     // child's fate (a loader ENOMEM under an address-space cap ends in SIGSEGV
     // before stdin is read), so the report carries the reaped outcome.
     let run = child::supervise(child, &image, child::REAP_GRACE);
+    // Remove an unpacked embedded seed now: every later exit skips destructors.
+    drop(compiler);
     let elf_bytes = match finish_compiler_run(run) {
         Ok(bytes) => bytes,
         Err(code) => process::exit(code),

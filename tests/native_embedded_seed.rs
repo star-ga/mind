@@ -1,0 +1,158 @@
+// Copyright 2025 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+
+//! `mindc build --backend native` from outside the repository, with a clean
+//! environment.
+//!
+//! The bridge used to read the std seed from `./std` and the compiler from a
+//! repo-relative `stage1.elf`, so outside a checkout it failed with "cannot
+//! read std module 'std/arena.mind'" unless `MINDC_STD_DIR` and
+//! `MINDC_NATIVE_ELF` were set. Both are now embedded in `mindc` and verified
+//! against their committed pins before use. These controls build from a fresh
+//! temp directory with every variable cleared except `PATH` and `TMPDIR`, and
+//! require the result to equal, byte for byte, the build that names the
+//! in-repo seed and std explicitly.
+#![cfg(all(feature = "std-surface", target_os = "linux", target_arch = "x86_64"))]
+
+mod native_bridge_support;
+use native_bridge_support::{MINDC, repo_path, run};
+use std::path::Path;
+use std::process::Command;
+
+const PROGRAM: &str = "fn twice(x: i64) -> i64 { return x + x; }\n\
+                       fn main() -> i64 { return twice(3) + 1; }\n";
+
+/// Build `prog.mind` in `dir` natively. `explicit` names the in-repo seed and
+/// std through the environment; otherwise the environment is cleared.
+fn build(dir: &Path, tmp: &Path, profile: &str, explicit: bool) -> (i32, String, Option<Vec<u8>>) {
+    std::fs::write(dir.join("prog.mind"), PROGRAM).expect("write program");
+    let out = dir.join(format!("prog-{profile}-{explicit}.elf"));
+    let mut cmd = Command::new(MINDC);
+    cmd.env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("TMPDIR", tmp)
+        .current_dir(dir)
+        .args([
+            "build",
+            "prog.mind",
+            "--backend",
+            "native",
+            "--native-profile",
+        ])
+        .arg(profile)
+        .arg("--out")
+        .arg(&out);
+    if explicit {
+        let seed = if profile == "bounded" {
+            "examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf"
+        } else {
+            "examples/mindc_mind/testdata/selfhost_loop/stage1.elf"
+        };
+        cmd.env("MINDC_STD_DIR", repo_path("std"))
+            .env("MINDC_NATIVE_ELF", repo_path(seed));
+    }
+    let res = cmd.output().expect("spawn mindc");
+    (
+        res.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&res.stderr).into_owned(),
+        std::fs::read(&out).ok(),
+    )
+}
+
+fn check_profile(profile: &str) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let tmp = tempfile::tempdir().expect("private TMPDIR");
+    assert!(
+        !dir.path().starts_with(env!("CARGO_MANIFEST_DIR")),
+        "the control must run outside the repository"
+    );
+    let (code, stderr, embedded) = build(dir.path(), tmp.path(), profile, false);
+    assert_eq!(
+        code, 0,
+        "{profile}: clean-env native build failed:\n{stderr}"
+    );
+    let embedded = embedded.expect("artifact");
+    assert_eq!(run(&embedded), 7, "{profile}: embedded-seed artifact exit");
+    // The unpacked seed is removed once the compiler has run.
+    let leftovers: Vec<_> = std::fs::read_dir(tmp.path())
+        .expect("read TMPDIR")
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "{profile}: unpacked seed left behind: {leftovers:?}"
+    );
+
+    let (code, stderr, explicit) = build(dir.path(), tmp.path(), profile, true);
+    assert_eq!(
+        code, 0,
+        "{profile}: explicit-seed native build failed:\n{stderr}"
+    );
+    assert_eq!(
+        Some(embedded),
+        explicit,
+        "{profile}: the embedded seed must produce the in-repo seed's exact bytes"
+    );
+}
+
+#[test]
+fn a_clean_env_native_build_outside_the_repo_uses_the_embedded_default_seed() {
+    check_profile("default");
+}
+
+#[test]
+fn a_clean_env_native_build_outside_the_repo_uses_the_embedded_bounded_seed() {
+    check_profile("bounded");
+}
+
+#[test]
+fn an_explicit_missing_compiler_override_is_still_refused() {
+    // The override keeps its meaning: a named compiler that does not exist is
+    // an error, never a silent switch to the embedded copy.
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("prog.mind"), PROGRAM).expect("write");
+    let res = Command::new(MINDC)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("MINDC_NATIVE_ELF", dir.path().join("no-such-stage1.elf"))
+        .current_dir(dir.path())
+        .args([
+            "build",
+            "prog.mind",
+            "--backend",
+            "native",
+            "--out",
+            "x.elf",
+        ])
+        .output()
+        .expect("spawn mindc");
+    let stderr = String::from_utf8_lossy(&res.stderr);
+    assert_eq!(res.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("MINDC_NATIVE_ELF is set"), "{stderr}");
+    assert!(!dir.path().join("x.elf").exists());
+}
+
+#[test]
+fn an_explicit_missing_std_override_is_still_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("prog.mind"), PROGRAM).expect("write");
+    let res = Command::new(MINDC)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("MINDC_STD_DIR", dir.path().join("no-such-std"))
+        .current_dir(dir.path())
+        .args([
+            "build",
+            "prog.mind",
+            "--backend",
+            "native",
+            "--out",
+            "x.elf",
+        ])
+        .output()
+        .expect("spawn mindc");
+    let stderr = String::from_utf8_lossy(&res.stderr);
+    assert_eq!(res.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("MINDC_STD_DIR is set"), "{stderr}");
+    assert!(!dir.path().join("x.elf").exists());
+}
