@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the native bridge reports the compiler child's real outcome
+- When streaming the source image to the native compiler fails, the bridge no longer
+  exits on the bare `Broken pipe`. It closes the pipe, reaps the child (5 s grace, then
+  SIGKILL and reap), and reports the actual outcome: exit status, or terminating signal
+  name and number with the core flag, plus up to 64 KiB of the child's stderr. The exit
+  stays nonzero (the child's own code, `128 + signal`, or 2) and no artifact is written.
+  Measured: the committed seed under `RLIMIT_AS = 2 GiB` now reports
+  `terminated by signal 11 (SIGSEGV)` (its execve fails with ENOMEM).
+- Both output pipes are drained while the image is written. A compiler that filled its
+  stderr before reading stdin used to deadlock the bridge.
+- A compiler killed by a signal on the normal path is reported by signal and exits
+  `128 + signal`, instead of "rejected the program (exit 1)".
+
 ### Fixed — native f64 comparisons are IEEE-ordered for NaN
 - The pure-MIND native x86-64 backend now lowers `<`, `<=`, `>`, `>=`, `==` and `!=` on f64
   to the IEEE predicates (all false on NaN except `!=`), matching the MLIR path. Proven
