@@ -1000,6 +1000,19 @@ jobs:
             python3 scripts/run_gate.py --min-asserted 2 examples/mindc_mind/self_host_loop_smoke.py
         working-directory: ${{ github.workspace }}
 
+      - name: Bounded native profile gate — seed + programs under RLIMIT_AS=2GiB (self_host_bounded_profile_smoke.py)
+        # The pinned bounded seed must (a) be what the frozen default seed emits
+        # for the v2 layout header, (b) reproduce itself stage1==stage2==stage3
+        # under a 2 GiB address-space cap, (c) compile and run the scalar
+        # evaluator harness under the cap, and (d) refuse over-cap allocation,
+        # stack overflow and malformed layouts fail-closed (incl. the fill_0..fill_4
+        # arena-cap boundary). 21 verdicts; the
+        # bridge leg needs MINDC_BIN, so a missing binary is a red SKIP.
+        run: |
+          MINDC_BIN=${{ github.workspace }}/target/release/mindc \
+            python3 scripts/run_gate.py --min-asserted 21 examples/mindc_mind/self_host_bounded_profile_smoke.py
+        working-directory: ${{ github.workspace }}
+
       - name: Native-ELF scalar-f64 execution gate (self_host_native_fp_smoke.py)
         # RI-B1 native-ELF float column (roadmap C1). No frozen float byte-oracle
         # can exist (the deleted Rust native backend rejected ConstF64), so the CPU

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1896 | **Est. tokens:** ~3,695,999
-**Generated:** 2026-10-09 08:25 UTC
+**Files:** 1898 | **Est. tokens:** ~3,704,660
+**Generated:** 2026-10-09 08:26 UTC
 
 ## Token Budget Guide
 
@@ -42,7 +42,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,347 |
-| `docs/` | 38 | ~110,236 |
+| `docs/` | 38 | ~110,799 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/design/` | 4 | ~11,498 |
@@ -62,13 +62,14 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 174 | ~451,653 |
+| `examples/mindc_mind/` | 175 | ~456,534 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,159 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2,926 |
 | `examples/mindc_mind/testdata/native_record_trace/` | 13 | ~2,127 |
-| `examples/mindc_mind/testdata/selfhost_loop/` | 2 | ~2,137 |
+| `examples/mindc_mind/testdata/selfhost_loop/` | 2 | ~2,138 |
+| `examples/mindc_mind/testdata/selfhost_loop_bounded/` | 1 | ~269 |
 | `examples/mind_mirror_v04/` | 2 | ~3,836 |
 | `examples/mind_mirror_v04/testdata/` | 2 | ~3,862 |
 | `examples/native/` | 4 | ~1,440 |
@@ -109,7 +110,7 @@
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
 | `src/bin/mindc/` | 1 | ~204 |
-| `src/build/` | 13 | ~49,031 |
+| `src/build/` | 13 | ~51,978 |
 | `src/build/cache/` | 3 | ~3,150 |
 | `src/build/native_bridge/` | 2 | ~4,881 |
 | `src/cache/` | 4 | ~3,682 |
@@ -445,7 +446,7 @@
 ### `docs/`
 
 - `byte-store-migration.md` (~3357 tok, huge) — Byte-Store Migration — closing `#306`
-- `cli.md` (~747 tok, large) — MIND CLI Reference
+- `cli.md` (~1310 tok, large) — MIND CLI Reference
 ### `docs/design/`
 
 - `execution-plan-performance-mode.md` (~8045 tok, huge) — Design: PerformanceMode + ExecutionPlan + ExecutionProvider
@@ -693,11 +694,12 @@
 - `self_host_array_smoke.py` (~1425 tok, large)
 - `self_host_arridx_mic3_smoke.py` (~1864 tok, huge)
 - `self_host_body_smoke.py` (~3055 tok, huge)
+- `self_host_bounded_profile_smoke.py` (~4122 tok, huge) — Bounded native memory profile gate: the compiler seed AND its programs load
 - `self_host_carry_cap_smoke.py` (~1169 tok, large) — Cap-guard smoke for the self-host loop-carry / loop-frame scratch tables.
 - `self_host_cast_mic3_smoke.py` (~4680 tok, huge)
 - `self_host_check_driver_smoke.py` (~2879 tok, huge)
 - `self_host_continue_smoke.py` (~1384 tok, large) — Regression gate for #308 (closes #286's break/continue fixtures): the pure-MIND
-- `selfhost_driver.mind` (~4121 tok, huge) — ===========================================================================
+- `selfhost_driver.mind` (~4772 tok, huge) — ===========================================================================
 - `self_host_dtype_tag_smoke.py` (~780 tok, large) — RI-B1 per-SSA dtype-tag gate (parser <-> nb_fp_* encoder connecting construct).
 - `self_host_else_if_smoke.py` (~1715 tok, huge)
 - `self_host_failclosed_smoke.py` (~9902 tok, huge) — self_host_failclosed_smoke.py — the fail-closed boundary of the pure-MIND
@@ -803,7 +805,7 @@
 - `self_host_value_if_expr_smoke.py` (~1557 tok, huge)
 - `sha256_hash_smoke.py` (~1284 tok, large) — # Copyright 2025 STARGA Inc.
 - `smoke_wiring_lint.py` (~8534 tok, huge) — smoke_wiring_lint.py — machine-checked contract for WHERE each
-- `SMOKE_WIRING.tsv` (~3822 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
+- `SMOKE_WIRING.tsv` (~3930 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
 - `stdlib_manifest_lint.py` (~2431 tok, huge) — stdlib_manifest_lint.py — machine-checked contract for WHICH std/*.mind
 - `_stdlib_manifest.py` (~1129 tok, large) — Shared reader for the committed std/*.mind manifest.
 - `struct_fields_smoke.py` (~1076 tok, large)
@@ -893,9 +895,12 @@
 ### `examples/mindc_mind/testdata/`
 
 - `rh_f64_aggregate_canary.mind` (~876 tok, large) — RH f64-aggregate self-host/native canary (RH_REQUIRED_F64_AGGREGATE_SURFACE).
+### `examples/mindc_mind/testdata/selfhost_loop_bounded/`
+
+- `MANIFEST.txt` (~269 tok, medium) — # Frozen BOUNDED-profile self-host compiler seed: the pure-MIND compiler
 ### `examples/mindc_mind/testdata/selfhost_loop/`
 
-- `MANIFEST.txt` (~311 tok, medium) — # Frozen self-host bootstrap ELF (A6/RI-E1): the checked-in pure-MIND stage0
+- `MANIFEST.txt` (~312 tok, medium) — # Frozen self-host bootstrap ELF (A6/RI-E1): the checked-in pure-MIND stage0
 - `PROVENANCE_298_f64_selfhost_mlir.md` (~1826 tok, huge) — #298 self-host f64 MLIR emit — self-host loop seed refreeze provenance
 ### `examples/mindc_mind/testdata/`
 
@@ -1207,8 +1212,8 @@
 - `child_tests.rs` (~1231 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
-- `native_bridge.rs` (~5886 tok, huge) — Copyright 2025 STARGA Inc.
-- `native_image.rs` (~2018 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_bridge.rs` (~6555 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_image.rs` (~4296 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_scope.rs` (~6258 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_scope_tests.rs` (~5219 tok, huge) — Seam tests for the captured-source snapshot and its module identities.
 - `project_transaction.rs` (~1908 tok, huge) — Copyright 2026 STARGA Inc.

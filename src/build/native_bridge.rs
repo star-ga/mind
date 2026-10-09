@@ -55,11 +55,56 @@ pub fn run_native_backend_bridge(_paths: &[String], _out: &Option<String>, _emit
     process::exit(3);
 }
 
+/// Refuse native requests when the build lacks the closure-admission surface.
+#[cfg(not(feature = "std-surface"))]
+pub fn run_native_backend_bridge_profile(
+    paths: &[String],
+    out: &Option<String>,
+    emit: &Option<String>,
+    _profile: &str,
+) {
+    run_native_backend_bridge(paths, out, emit)
+}
+
+/// The committed BOUNDED-profile compiler seed (see `NativeLayout::BOUNDED`).
+pub const BOUNDED_SEED_PATH: &str = "examples/mindc_mind/testdata/selfhost_loop_bounded/stage1.elf";
+
+/// Default-profile entry point (no explicit layout): byte-identical behavior.
+#[cfg(feature = "std-surface")]
+pub fn run_native_backend_bridge(paths: &[String], out: &Option<String>, emit: &Option<String>) {
+    run_native_backend_bridge_profile(paths, out, emit, "default")
+}
+
 /// Compose and validate the captured source image, then invoke the pure-MIND
 /// native compiler. Its stdout is the executable artifact without wrapper bytes.
 /// `MINDC_NATIVE_ELF` overrides the committed seed; unsupported programs refuse.
+///
+/// `profile` selects the memory layout of the emitted image (`--native-profile`):
+/// `default` sends the v1 header (historical layout, byte-identical images);
+/// `bounded` sends `NativeLayout::BOUNDED` in a v2 header, runs the committed
+/// bounded seed unless `MINDC_NATIVE_ELF` overrides it, and refuses an artifact
+/// whose arena/stack segments do not match the requested layout.
 #[cfg(feature = "std-surface")]
-pub fn run_native_backend_bridge(paths: &[String], out: &Option<String>, emit: &Option<String>) {
+pub fn run_native_backend_bridge_profile(
+    paths: &[String],
+    out: &Option<String>,
+    emit: &Option<String>,
+    profile: &str,
+) {
+    let layout = match crate::build::native_image::NativeLayout::from_profile(profile) {
+        Ok(l) => l,
+        Err(msg) => {
+            eprintln!("error[backend-native]: {msg}");
+            process::exit(2);
+        }
+    };
+    if let Some(l) = &layout {
+        if let Err(msg) = l.validate() {
+            eprintln!("error[backend-native]: invalid native layout: {msg}");
+            process::exit(2);
+        }
+    }
+
     // EXECUTABLE TARGETS ONLY. The frozen compiler emits a static ET_EXEC and
     // this bridge asserts that shape before writing. Until it can emit a library
     // container, a library request is REFUSED rather than satisfied with an
@@ -201,7 +246,11 @@ pub fn run_native_backend_bridge(paths: &[String], out: &Option<String>, emit: &
     // source the joiner contributes nothing, which is what makes "single-file
     // bytes did not move" a mechanical check instead of an argument.
     let std_blob = crate::build::native_image::compose_std_blob(&std_sources);
-    let image = crate::build::native_image::compose_image(&std_blob, &user_sources);
+    let image = crate::build::native_image::compose_image_with_layout(
+        &std_blob,
+        &user_sources,
+        layout.as_ref(),
+    );
 
     // Admission and emission use the same captured, composed user region.
     // The exhaustive frozen-profile allowlist checks every retained user body,
@@ -298,8 +347,12 @@ pub fn run_native_backend_bridge(paths: &[String], out: &Option<String>, emit: &
     let image = image.bytes;
 
     // Resolve the pure-MIND compiler ELF (the RI-D shell-out target).
-    let elf = std::env::var("MINDC_NATIVE_ELF")
-        .unwrap_or_else(|_| "examples/mindc_mind/testdata/selfhost_loop/stage1.elf".to_string());
+    let default_seed = if layout.is_some() {
+        BOUNDED_SEED_PATH
+    } else {
+        "examples/mindc_mind/testdata/selfhost_loop/stage1.elf"
+    };
+    let elf = std::env::var("MINDC_NATIVE_ELF").unwrap_or_else(|_| default_seed.to_string());
     if !std::path::Path::new(&elf).exists() {
         eprintln!(
             "error[backend-native]: pure-MIND compiler ELF not found at '{elf}' \
@@ -336,6 +389,25 @@ pub fn run_native_backend_bridge(paths: &[String], out: &Option<String>, emit: &
             elf_bytes.len()
         );
         process::exit(1);
+    }
+
+    // The artifact must carry exactly the requested layout. A seed that predates
+    // v2 headers (or ignores them) would otherwise hand back a default-layout
+    // image for a bounded request -- one that cannot load under the cap.
+    if let Some(l) = &layout {
+        let want = l.expected_bss_segments().to_vec();
+        match crate::build::native_image::rw_load_segments(&elf_bytes) {
+            Some(got) if got == want => {}
+            got => {
+                eprintln!(
+                    "error[backend-native]: compiler '{elf}' produced an image whose \
+                     arena/stack segments {got:?} do not match the requested `{profile}` \
+                     layout {want:?} (vaddr, memsz); refusing to write. Use a seed built \
+                     for explicit layouts."
+                );
+                process::exit(1);
+            }
+        }
     }
 
     let out_path = out.clone().unwrap_or_else(|| "a.out".to_string());

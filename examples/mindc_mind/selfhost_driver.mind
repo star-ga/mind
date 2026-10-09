@@ -18,6 +18,8 @@
 // stdin protocol (fd 0):  [8-byte user_lo LE][8-byte src_len LE][src bytes]
 //   src = 21 std/*.mind sources concatenated, then main.mind, then this file;
 //   user_lo = byte length of the std prefix (the reachability-prune seam).
+//   v2 (explicit memory layout, see nb_main_v2 below) prefixes the magic and the
+//   arena/stack/guard sizes: [magic][arena][stack][guard][user_lo][src_len][src].
 // The ELF is written to fd 1 (raw __mind_write, no libc). The note hash is the
 // self-computed nb_trace_hash — the loop needs determinism, not Rust-oracle
 // parity (the mic@3-vs-Rust match is a separate, non-blocking track).
@@ -416,11 +418,54 @@ pub fn nb_report_unsupported(src: i64, user_lo: i64, src_len: i64) -> i64 {
     return 3;
 }
 
-pub fn main() -> i64 {
-    let hdr: i64 = __mind_alloc(16);
-    let _h: i64 = nb_read_fully(0, hdr, 16, 0);
-    let user_lo: i64 = __mind_load_i64(hdr);
-    let src_len: i64 = __mind_load_i64(hdr + 8);
+// Native layout v2 (bounded / explicit memory profile). When the stdin image
+// starts with nb_layout_magic() the header is 48 bytes:
+//   [magic][arena_bytes][stack_bytes][guard_bytes][user_lo][src_len]
+// and the requested layout is validated (nb_layout_check) and published in the
+// layout cell before anything is compiled, so EVERY layout-derived byte of the
+// emitted image (PT_LOAD sizes, stack vaddr, entry rsp, allocation guards) comes
+// from the same three values. Without the magic the 16-byte v1 header is read
+// exactly as before and the default layout applies. A refused request writes a
+// diagnostic to fd 2 and exits 64 + the nb_layout_check reason (65..75); no
+// image bytes are written.
+pub fn nb_layout_refuse(reason: i64) -> i64 {
+    let m: i64 = __mind_alloc(64);
+    __mind_store_i64(m + 0, 7020649416171352677);
+    __mind_store_i64(m + 8, 8746390893561801076);
+    __mind_store_i64(m + 16, 7955925651774797167);
+    __mind_store_i64(m + 24, 8241904408702247286);
+    __mind_store_i64(m + 32, 7161132920560774757);
+    __mind_store_i64(m + 40, 2334116269791850347);
+    __mind_store_i64(m + 48, 8223700967308747116);
+    __mind_store_i64(m + 56, 2942788739363173);
+    let _w: i64 = __mind_write(2, m, 63, 0 - 1);
+    64 + reason
+}
+
+pub fn nb_main_v2(lay: i64, hdr: i64) -> i64 {
+    let got: i64 = nb_read_fully(0, hdr + 16, 32, 0);
+    if got != 32 {
+        return nb_layout_refuse(11);
+    }
+    if lay != nb_layout_cell() {
+        return nb_layout_refuse(11);
+    }
+    let arena: i64 = __mind_load_i64(hdr + 8);
+    let stack: i64 = __mind_load_i64(hdr + 16);
+    let guard: i64 = __mind_load_i64(hdr + 24);
+    let bad: i64 = nb_layout_check(arena, stack, guard);
+    if bad != 0 {
+        return nb_layout_refuse(bad);
+    }
+    __mind_store_i64(lay + 8, arena);
+    __mind_store_i64(lay + 16, stack);
+    __mind_store_i64(lay + 24, guard);
+    __mind_store_i64(lay + 32, 1);
+    __mind_store_i64(lay, nb_layout_magic());
+    nb_compile_image(__mind_load_i64(hdr + 32), __mind_load_i64(hdr + 40))
+}
+
+pub fn nb_compile_image(user_lo: i64, src_len: i64) -> i64 {
     let src: i64 = __mind_alloc(src_len + 16);
     let _r: i64 = nb_read_fully(0, src, src_len, 0);
     let es: EmitState = selftest_native_elf_u(src, src_len, user_lo);
@@ -430,4 +475,17 @@ pub fn main() -> i64 {
         return 0;
     }
     return nb_report_unsupported(src, user_lo, src_len);
+}
+
+pub fn main() -> i64 {
+    // The layout cell is the FIRST allocation, so in a native run it sits at
+    // nb_layout_cell() (the bump allocator hands out arena+16 first). It stays
+    // zero (no magic) unless a v2 header publishes a validated layout.
+    let lay: i64 = __mind_alloc(40);
+    let hdr: i64 = __mind_alloc(48);
+    let _h: i64 = nb_read_fully(0, hdr, 16, 0);
+    if __mind_load_i64(hdr) == nb_layout_magic() {
+        return nb_main_v2(lay, hdr);
+    }
+    nb_compile_image(__mind_load_i64(hdr), __mind_load_i64(hdr + 8))
 }

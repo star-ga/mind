@@ -94,6 +94,18 @@ enum Command {
         #[arg(long, value_name = "BACKEND", default_value = "mlir",
               value_parser = ["mlir", "native"])]
         backend: String,
+        /// Memory layout of a `--backend native` image: default | bounded.
+        ///
+        /// `default` keeps the historical layout (1 GiB arena, 4 GiB stack) and
+        /// byte-identical artifacts. `bounded` emits a 768 MiB arena, 1 MiB
+        /// unmapped guard and 384 MiB stack, compiles with the committed bounded
+        /// seed (`MINDC_NATIVE_ELF` still overrides it), and verifies the
+        /// artifact's segments, so both the compiler and the program load under
+        /// `RLIMIT_AS` = 2 GiB. An over-cap allocation in a bounded image exits
+        /// 70 with "error: native arena exhausted" instead of trapping.
+        #[arg(long, value_name = "PROFILE", default_value = "default",
+              value_parser = ["default", "bounded"])]
+        native_profile: String,
         /// Output artifact type: binary | cdylib | object.
         /// Overrides `[build].emit` in Mind.toml.
         #[arg(long, value_name = "EMIT")]
@@ -537,6 +549,7 @@ fn mindc_main() {
             release,
             target,
             backend,
+            native_profile,
             emit,
             optimize,
             out,
@@ -545,11 +558,18 @@ fn mindc_main() {
             workspace: _,
             no_cache,
         }) => {
+            if native_profile != "default" && backend != "native" {
+                eprintln!(
+                    "error[build]: --native-profile {native_profile} requires --backend native"
+                );
+                process::exit(2);
+            }
             run_mindc_build(
                 paths,
                 *release,
                 target,
                 backend,
+                native_profile,
                 emit,
                 optimize,
                 out,
@@ -889,6 +909,7 @@ fn run_mindc_build(
     release: bool,
     target: &Option<String>,
     backend: &str,
+    native_profile: &str,
     emit: &Option<String>,
     optimize: &Option<String>,
     out: &Option<String>,
@@ -905,7 +926,12 @@ fn run_mindc_build(
         Ok(Backend::Native) => {
             // RI-D Option A: hand the whole build to the pure-MIND native-ELF
             // compiler (zero MLIR/LLVM/clang). Returns after writing the artifact.
-            libmind::build::native_bridge::run_native_backend_bridge(paths, out, emit);
+            libmind::build::native_bridge::run_native_backend_bridge_profile(
+                paths,
+                out,
+                emit,
+                native_profile,
+            );
             return;
         }
         Err(msg) => {

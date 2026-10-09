@@ -57,6 +57,38 @@ cargo build --release --no-default-features \
   --features "mlir-build std-surface cross-module-imports" --bin mindc
 ```
 
+### Native backend memory profile (`mindc build --backend native`)
+
+`--native-profile <default|bounded>` selects the memory layout of the emitted
+native image. It is a build flag like `--backend`, and it is only accepted with
+`--backend native`.
+
+| Profile | Arena | Guard gap | Stack | Load reservation | Seed used |
+|---------|-------|-----------|-------|------------------|-----------|
+| `default` | 1 GiB | 4 KiB | 4 GiB | 5,371,158,528 B page-rounded (whole compiler) | `testdata/selfhost_loop/stage1.elf` |
+| `bounded` | 768 MiB | 1 MiB (unmapped) | 384 MiB | about 1.15 GiB | `testdata/selfhost_loop_bounded/stage1.elf` |
+
+`default` images are byte-identical to the images built before profiles existed.
+`bounded` images, and the bounded compiler seed itself, load and run under
+`RLIMIT_AS` = 2 GiB. The arena and stack sizes come from one table in
+`examples/mindc_mind/main.mind` (`nb_arena_bytes`, `nb_stack_bytes`,
+`nb_guard_bytes`). The PT_LOAD headers, the stack address, the entry stack
+pointer and every allocation guard all read that table, so the layout is never
+patched into the headers after emission. The bridge checks that the artifact's
+segments match the requested layout before it writes the file.
+`MINDC_NATIVE_ELF` still overrides the seed.
+
+How a bounded image fails:
+
+| Condition | Outcome |
+|-----------|---------|
+| allocation past the arena cap | `error: native arena exhausted` on stderr and exit status 70, including when the arena is full to its last 8 bytes: the bounded allocator checks that header and payload fit before it writes anything. A default image keeps its historical sequence (header written before the check), so it runs `ud2` (SIGILL) at the same point, or takes SIGSEGV in the guard gap when the cursor is already at the arena end. Either way it stops; it never returns a block. |
+| stack overflow | SIGSEGV on the unmapped guard gap. A frame larger than the 1 MiB guard could step over it; the largest frame in the compiler seed is 15,216 B. |
+| malformed layout request (raw seed protocol) | `error[native-layout]: ...` on stderr, exit status 64 + reason, no image written |
+
+`examples/mindc_mind/self_host_bounded_profile_smoke.py` gates the profile, and
+its `--bless` mode re-pins the bounded seed.
+
 ### Examples
 
 ```bash
