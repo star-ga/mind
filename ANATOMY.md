@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1908 | **Est. tokens:** ~3,734,960
-**Generated:** 2026-10-09 14:08 UTC
+**Files:** 1909 | **Est. tokens:** ~3,735,674
+**Generated:** 2026-10-09 14:34 UTC
 
 ## Token Budget Guide
 
@@ -62,9 +62,10 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 175 | ~456,734 |
+| `examples/mindc_mind/` | 175 | ~457,084 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,159 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
+| `examples/mindc_mind/testdata/mindfuzz_regress/` | 1 | ~364 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2,926 |
 | `examples/mindc_mind/testdata/native_record_trace/` | 13 | ~2,127 |
@@ -669,7 +670,7 @@
 - `mic3_flip_smoke.py` (~1150 tok, large)
 - `mic3_oracle_smoke.py` (~1060 tok, large) — mic@3 self-host convergence — Phase 0 gate: the Rust oracle.
 - `mic3_primitives_smoke.py` (~22604 tok, huge) — mic@3 self-host convergence — Phase 1 gate: pure-MIND ULEB128 / zigzag.
-- `mindfuzz_self_host.py` (~11855 tok, huge)
+- `mindfuzz_self_host.py` (~12205 tok, huge)
 - `mod_operator_smoke.py` (~2871 tok, huge)
 - `multi_let_smoke.py` (~1539 tok, huge)
 - `now_ns_smoke.py` (~1008 tok, large) — # Copyright 2025 STARGA Inc.
@@ -678,7 +679,7 @@
 - `param_types_smoke.py` (~1273 tok, large)
 - `_ref_add.note` (~16 tok, tiny) — fff4fc7e1d90f40c4fa6bac3799795d51008132c65cca0ff7b3b4496cf1a58af
 - `_ref_if_ret.note` (~16 tok, tiny) — 63b7ec7b7f87e25de1aa2fb591affbb2b25d10c37908ae9d711f1653af0efe64
-- `_ref_main.note` (~16 tok, tiny) — d55b044957c106637d6be812b7cb48254b73a33ea52ce4593d40c5991d242b3a
+- `_ref_main.note` (~16 tok, tiny) — 297bfc4e6fd2ed31e6e0fc0d84be039f86da180a3a83dc5237166653841ccfa1
 - `ref_netverify.py` (~1473 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
 - `_ref_recursion.note` (~16 tok, tiny) — babd5f8c4d6e3539fc61392e8ff14d4c8523e04e6424a528d1c823948745b9f7
 - `_ref_struct_field.note` (~16 tok, tiny) — dfcf7fa7f8ec57cf5f499ffa47833530ed978bbf38a424ec69feeede26516b27
@@ -826,6 +827,9 @@
 ### `examples/mindc_mind/testdata/`
 
 - `dtk_plan_parity_smoke.py` (~2452 tok, huge)
+### `examples/mindc_mind/testdata/mindfuzz_regress/`
+
+- `alias_break.mind` (~364 tok, medium) — Regression fixture: loop-carried ALIAS-BREAK (src/eval/lower.rs While arm).
 ### `examples/mindc_mind/testdata/native_elf_oracle/`
 
 - `add.elf` (~123 tok, small) — ELF> @@@8

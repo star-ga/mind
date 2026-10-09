@@ -14261,6 +14261,14 @@ pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
         __mind_store_i64(w_end, 0 - 1);
         let w_ok: i64 = __mind_alloc(8);
         __mind_store_i64(w_ok, 1);
+        // deferred: the mixed-block measure (measure_mixed_instrs) counts a while as 2
+        // instrs and sees name-only vids, so it cannot size alias-break copies — fail
+        // closed when this while needs any (upgrade path: thread real vids into the
+        // measure and count 2 + 2k there).
+        if while_alias_break_count(stmt, buf, params_addr, n_params, lvbuf, nlv) != 0 {
+            __mind_store_i64(okcell, 0);
+            return s;
+        }
         let sw: EmitState = emit_mic3_while_general(s, stmt, buf, params_addr, n_params, cur_base, lvbuf, nlv, strbuf, offs, ncount, w_merge, w_nm, w_end, w_ok);
         if __mind_load_i64(w_ok) == 0 {
             __mind_store_i64(okcell, 0);
@@ -17435,7 +17443,9 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                 __mind_store_i64(nodes + dst_slot * 32 + 0, 0);
                 __mind_store_i64(nodes + dst_slot * 32 + 8, 0);
                 __mind_store_i64(nodes + dst_slot * 32 + 16, 0);
-                __mind_store_i64(nodes + dst_slot * 32 + 24, 0);
+                // +24 = 1 marks a SYNTHETIC rebind slot (vs a kind-0 param leaf) for
+                // seq_env_to_lvenv_pseudo; kind-0 emit/resolve never read +24.
+                __mind_store_i64(nodes + dst_slot * 32 + 24, 1);
                 __mind_store_i64(cursor, dst_slot + 1);
                 __mind_store_i64(env + nlets * 24 + 0, ast_span_lo(name));
                 __mind_store_i64(env + nlets * 24 + 8, ast_span_hi(name));
@@ -17873,7 +17883,7 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
     // node + params. Pass B advances base by the delta; emit calls the general emitter.
     if ast_kind(stmt) == ast_while() {
         let w_probe_lv: i64 = __mind_alloc((nlets + 1) * 24);
-        let _wpl: i64 = seq_env_to_lvenv(env, nlets, 0, w_probe_lv, 0, 0);
+        let _wpl: i64 = seq_env_to_lvenv_pseudo(env, nlets, nodes, w_probe_lv, 0);
         let w_merge: i64 = __mind_alloc(64 * 24);
         let w_nm: i64 = __mind_alloc(8);
         __mind_store_i64(w_nm, 0);
@@ -17939,7 +17949,7 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                 __mind_store_i64(nodes + a7_slot * 32 + 0, 0);
                 __mind_store_i64(nodes + a7_slot * 32 + 8, 0);
                 __mind_store_i64(nodes + a7_slot * 32 + 16, 0);
-                __mind_store_i64(nodes + a7_slot * 32 + 24, 0);
+                __mind_store_i64(nodes + a7_slot * 32 + 24, 1);
                 __mind_store_i64(cursor, a7_slot + 1);
                 __mind_store_i64(env + nlets * 24 + 0, ast_span_lo(aname));
                 __mind_store_i64(env + nlets * 24 + 8, ast_span_hi(aname));
@@ -18026,6 +18036,50 @@ pub fn seq_env_to_lvenv(env: i64, nlets: i64, vidbuf: i64, lvbuf: i64, resolve: 
     };
     __mind_store_i64(lvbuf + i * 24 + 16, v);
     seq_env_to_lvenv(env, nlets, vidbuf, lvbuf, resolve, i + 1)
+}
+
+// Like seq_env_to_lvenv(resolve=0) but with ALIAS-FAITHFUL pseudo vids for the
+// pre-Pass-B while probes: a param leaf -> its param index (its real vid), any
+// other slot -> 2^30 + slot. Two names share a pseudo vid iff they share a real
+// one (an alias `let b = a` / `b = a` reuses a's slot), which is all the loop
+// alias-break needs to size its copies before Pass B assigns the real vids.
+// A copy of an n-entry lv-env whose vids are all distinct (2^31 + index).
+pub fn lvenv_unique_vids(src: i64, n: i64) -> i64 {
+    let dst: i64 = __mind_alloc((n + 1) * 24);
+    let _cp: i64 = lvenv_copy(dst, src, n, 0);
+    lvenv_unique_vids_loop(dst, n, 0)
+}
+pub fn lvenv_unique_vids_loop(dst: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return dst;
+    }
+    __mind_store_i64(dst + i * 24 + 16, 2147483648 + i);
+    lvenv_unique_vids_loop(dst, n, i + 1)
+}
+
+pub fn seq_env_to_lvenv_pseudo(env: i64, nlets: i64, nodes: i64, lvbuf: i64, i: i64) -> i64 {
+    if i >= nlets {
+        return nlets;
+    }
+    __mind_store_i64(lvbuf + i * 24 + 0, __mind_load_i64(env + i * 24 + 0));
+    __mind_store_i64(lvbuf + i * 24 + 8, __mind_load_i64(env + i * 24 + 8));
+    let slot: i64 = __mind_load_i64(env + i * 24 + 16);
+    let is_param: i64 = if __mind_load_i64(nodes + slot * 32) == 0 {
+        if __mind_load_i64(nodes + slot * 32 + 24) == 0 {
+            1
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+    let v: i64 = if is_param == 1 {
+        __mind_load_i64(nodes + slot * 32 + 8)
+    } else {
+        1073741824 + slot
+    };
+    __mind_store_i64(lvbuf + i * 24 + 16, v);
+    seq_env_to_lvenv_pseudo(env, nlets, nodes, lvbuf, i + 1)
 }
 
 // PRE-PASS (between flatten and Pass B): correct each divergent segment's vid delta for
@@ -18225,10 +18279,38 @@ pub fn seq_fix_deltas(src: i64, plan: i64, nplan: i64, env: i64, names_buf: i64,
         __mind_store_i64(w_eb, 0 - 1);
         let w_ok: i64 = __mind_alloc(8);
         __mind_store_i64(w_ok, 1);
-        let _w10: EmitState = emit_mic3_while_general(es_new(), w_node10, src, pa10, np10, 0, names_buf, nnames, 0, 0, 0, w_mo, w_nm, w_eb, w_ok);
+        // Alias-faithful probe env: the position-aware names are env[0..env_k] (the
+        // escapes in names_buf are the same names as env's flatten-time overlays), so
+        // re-derive them from env with pseudo vids that preserve id sharing.
+        let w_pl10: i64 = __mind_alloc((env_k + 1) * 24);
+        let _wpl10: i64 = seq_env_to_lvenv_pseudo(env, env_k, nodes, w_pl10, 0);
+        // Should the two name lists ever disagree, probe with UNIQUE vids (no alias
+        // sharing, so no copies) — valid only when the alias-faithful env needs none;
+        // otherwise fail closed rather than size the copies from the wrong env.
+        let w_lv10: i64 = if env_k == nnames {
+            w_pl10
+        } else {
+            lvenv_unique_vids(names_buf, nnames)
+        };
+        if env_k != nnames {
+            if while_alias_break_count(w_node10, src, pa10, np10, w_pl10, env_k) != 0 {
+                return 0 - 1;
+            }
+        }
+        let _w10: EmitState = emit_mic3_while_general(es_new(), w_node10, src, pa10, np10, 0, w_lv10, nnames, 0, 0, 0, w_mo, w_nm, w_eb, w_ok);
         if __mind_load_i64(w_ok) == 1 {
             __mind_store_i64(plan + i * 64 + 16, __mind_load_i64(w_eb) + 1);
             let nb10: i64 = __mind_load_i64(w_nm);
+            // Record the alias-break pair count for seq_body_len (2 + 2k top-level instrs)
+            // in the overlay slot array's spare record (seq_flatten_overlay allocates
+            // nb+1 records; record nb is unused). A count mismatch fails closed below.
+            let k10: i64 = while_alias_break_count(w_node10, src, pa10, np10, w_lv10, nnames);
+            if k10 < 0 {
+                return 0 - 1;
+            }
+            if nb10 == __mind_load_i64(plan + i * 64 + 48) {
+                __mind_store_i64(__mind_load_i64(plan + i * 64 + 56) + nb10 * 32, k10)
+            }
             let _ap10: i64 = lvenv_append_escapes(names_buf, nnames, w_mo, nb10, 0);
             if seq_overlay_refit(src, plan, i, w_mo, nb10) == 0 {
                 return 0 - 1;
@@ -18391,7 +18473,8 @@ pub fn synth_rebind_slots(bo: i64, nb: i64, nodes: i64, cursor: i64, slots_out: 
     __mind_store_i64(nodes + dst_slot * 32 + 0, 0);
     __mind_store_i64(nodes + dst_slot * 32 + 8, 0);
     __mind_store_i64(nodes + dst_slot * 32 + 16, 0);
-    __mind_store_i64(nodes + dst_slot * 32 + 24, 0);
+    // +24 = 1: synthetic rebind slot marker (see seq_env_to_lvenv_pseudo).
+    __mind_store_i64(nodes + dst_slot * 32 + 24, 1);
     __mind_store_i64(cursor, dst_slot + 1);
     __mind_store_i64(slots_out + i * 32 + 0, lo);
     __mind_store_i64(slots_out + i * 32 + 8, hi);
@@ -18434,6 +18517,9 @@ pub fn seq_flatten_overlay(bo: i64, nb: i64, nodes: i64, cursor: i64, env: i64, 
         return 0;
     }
     let slots: i64 = __mind_alloc((nb + 1) * 32);
+    // Spare record nb, word 0 = a type-10 while's alias-break pair count (0 until
+    // seq_fix_deltas records it; read by seq_body_len).
+    __mind_store_i64(slots + nb * 32, 0);
     let _ss: i64 = synth_rebind_slots(bo, nb, nodes, cursor, slots, 0);
     let _ce: i64 = copy_rebind_to_tenv(env, nlets, slots, nb, 0);
     __mind_store_i64(nlets_cell, nlets + nb);
@@ -19139,9 +19225,13 @@ pub fn seq_body_len(nodes: i64, plan: i64, nplan: i64, i: i64) -> i64 {
         let bend: i64 = __mind_load_i64(plan + i * 64 + 16);
         return count_descriptor_nonparam_range(nodes, bstart, bend) + seq_body_len(nodes, plan, nplan, i + 1);
     }
-    // (type 10) top-level statement while: OP_WHILE + trailing unit ConstI64 = 2 instrs.
+    // (type 10) top-level statement while: OP_WHILE + trailing unit ConstI64 = 2 instrs,
+    // plus 2 per loop alias-break copy (ConstI64 0 + BinOp Add ahead of the While; the
+    // pair count sits in the overlay slot array's spare record nb, set by seq_fix_deltas).
     if ty == 10 {
-        return 2 + seq_body_len(nodes, plan, nplan, i + 1);
+        let w_nb: i64 = __mind_load_i64(plan + i * 64 + 48);
+        let w_k: i64 = __mind_load_i64(__mind_load_i64(plan + i * 64 + 56) + w_nb * 32);
+        return 2 + 2 * w_k + seq_body_len(nodes, plan, nplan, i + 1);
     }
     1 + seq_body_len(nodes, plan, nplan, i + 1)
 }
@@ -30847,13 +30937,16 @@ pub fn while_body_measure(stmts_addr: i64, n: i64, idx: i64, buf: i64, params_ad
         __mind_store_i64(nw_end, 0 - 1);
         let nw_ok: i64 = __mind_alloc(8);
         __mind_store_i64(nw_ok, 1);
-        if while_nested_layout(stmt, buf, params_addr, n_params, cur_base, wenv, wnlv, nw_ov, nw_nm, nw_end, nw_ok) == 0 {
+        let nw_abk: i64 = __mind_alloc(8);
+        __mind_store_i64(nw_abk, 0);
+        if while_nested_layout(stmt, buf, params_addr, n_params, cur_base, wenv, wnlv, nw_ov, nw_nm, nw_end, nw_abk, nw_ok) == 0 {
             __mind_store_i64(okcell, 0);
             return 0;
         }
         let _rc: i64 = while_if_record_merges(nw_ov, __mind_load_i64(nw_nm), pre_nlv, lv, init, nlv_w_cell, wenv, wnlv, buf, 0);
         __mind_store_i64(base_cell, __mind_load_i64(nw_end) + 1);
-        __mind_store_i64(body_len_cell, __mind_load_i64(body_len_cell) + 2);
+        // OP_WHILE + trailing unit, plus the alias-break const/add pairs ahead of it.
+        __mind_store_i64(body_len_cell, __mind_load_i64(body_len_cell) + 2 + 2 * __mind_load_i64(nw_abk));
         return while_body_measure(stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, pre_nlv, lv, init, nlv_w_cell, body_len_cell, okcell);
     }
     // BARE side-effect statement (call/store): flatten, advance base, bind NO name.
@@ -30899,7 +30992,19 @@ pub fn while_record_carry(slot_i: i64, pre_nlv: i64, lv: i64, init: i64, nlv_w_c
 // wnlv), allocates the exit ids AFTER the body, and reports the merge overlay
 // (name -> exit_id, 24-byte records), their count, and endbase (the trailing-unit
 // vid = one past the exit ids). Fails closed via okcell.
-pub fn while_nested_layout(stmt: i64, buf: i64, params_addr: i64, n_params: i64, base0: i64, wenv: i64, wnlv: i64, merge_out: i64, nmerge_cell: i64, endbase_cell: i64, okcell: i64) -> i64 {
+pub fn while_nested_layout(stmt: i64, buf: i64, params_addr: i64, n_params: i64, base_in: i64, wenv_in: i64, wnlv: i64, merge_out: i64, nmerge_cell: i64, endbase_cell: i64, abk_cell: i64, okcell: i64) -> i64 {
+    // Alias-break (emit_mic3_while_general's twin): the copies are body instrs of the
+    // ENCLOSING loop placed before this While; abk_cell reports their pair count.
+    let wenv: i64 = __mind_alloc((wnlv + 1) * 24);
+    let _ac: i64 = lvenv_copy(wenv, wenv_in, wnlv, 0);
+    let ab_ids: i64 = __mind_alloc(256 * 8);
+    let ab_k: i64 = ab_apply(stmt, buf, params_addr, n_params, wenv, wnlv, base_in, ab_ids);
+    if ab_k < 0 {
+        __mind_store_i64(okcell, 0);
+        return 0;
+    }
+    __mind_store_i64(abk_cell, ab_k);
+    let base0: i64 = base_in + 2 * ab_k;
     let cond_expr: i64 = ast_child0(stmt);
     let body_blk: i64 = ast_child1(stmt);
     let body_sa: i64 = ast_child0(body_blk);
@@ -31142,7 +31247,368 @@ pub fn emit_while_vid_vec(s: EmitState, vec: i64, n: i64, i: i64) -> EmitState {
 // name -> exit_id in its env so post-loop reads hit the dominating exit id. The body
 // env starts as a clone of `lvenv[0..nlv]`; loop-carried vars are those rebound at an
 // index < nlv. Fails closed via okcell (set to 0) on any wall. okcell unchanged on ok.
-pub fn emit_mic3_while_general(s: EmitState, while_node: i64, buf: i64, params_addr: i64, n_params: i64, base0: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64, merge_out: i64, nmerge_cell: i64, endbase_cell: i64, okcell: i64) -> EmitState {
+// ---------------------------------------------------------------------------
+// LOOP-CARRIED ALIAS-BREAK — mirror of the src/eval/lower.rs While arm's
+// "Alias-break for loop-carried variables". `let mut b = a` / `b = a` makes `b`
+// share `a`'s ValueId. When such a `b` is assigned in the loop body (a
+// candidate: collect_assign_targets, descending into if-branches and nested
+// loops) and ANOTHER visible name sharing its id is READ in the cond or body
+// (ast_reads_ident), Rust materialises `%zero = const 0; %copy = b + %zero` in
+// the PARENT block (before the While) and rebinds `b -> %copy` in the loop's
+// seed env only. Candidates are processed in byte-sorted name order against
+// the progressively updated seed. Any construct the read-walk cannot classify
+// fails CLOSED (-1), never a guessed answer.
+// ---------------------------------------------------------------------------
+
+// Bytewise lexicographic order of two source spans (Rust `String` Ord): -1/0/1.
+pub fn ab_span_cmp(buf: i64, alo: i64, ahi: i64, blo: i64, bhi: i64) -> i64 {
+    if alo >= ahi {
+        if blo >= bhi {
+            return 0;
+        }
+        return 0 - 1;
+    }
+    if blo >= bhi {
+        return 1;
+    }
+    let a: i64 = load_byte(buf, alo);
+    let b: i64 = load_byte(buf, blo);
+    if a < b {
+        return 0 - 1;
+    }
+    if a > b {
+        return 1;
+    }
+    ab_span_cmp(buf, alo + 1, ahi, blo + 1, bhi)
+}
+
+// Is (lo,hi) already among the n 16-byte candidate records?
+pub fn ab_cand_has(buf: i64, cands: i64, n: i64, lo: i64, hi: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    if span_bytes_equal2(buf, lo, hi, buf, __mind_load_i64(cands + i * 16), __mind_load_i64(cands + i * 16 + 8)) == 1 {
+        return 1;
+    }
+    ab_cand_has(buf, cands, n, lo, hi, i + 1)
+}
+
+// collect_assign_targets over a statement list. 0 ok, -1 = candidate overflow.
+pub fn ab_collect_stmts(stmts_addr: i64, n: i64, i: i64, buf: i64, cands: i64, ncell: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    if ab_collect_node(__mind_load_i64(stmts_addr + i * 8), buf, cands, ncell) < 0 {
+        return 0 - 1;
+    }
+    ab_collect_stmts(stmts_addr, n, i + 1, buf, cands, ncell)
+}
+
+// A block (its statements) or a bare statement node (an `else if` arm); 0 = none.
+pub fn ab_collect_blockish(node: i64, buf: i64, cands: i64, ncell: i64) -> i64 {
+    if node == 0 {
+        return 0;
+    }
+    if ast_kind(node) == ast_block() {
+        return ab_collect_stmts(ast_child0(node), ast_aux(node), 0, buf, cands, ncell);
+    }
+    ab_collect_node(node, buf, cands, ncell)
+}
+
+pub fn ab_collect_node(stmt: i64, buf: i64, cands: i64, ncell: i64) -> i64 {
+    if stmt == 0 {
+        return 0;
+    }
+    let k: i64 = ast_kind(stmt);
+    if k == ast_assign() {
+        let name: i64 = ast_child0(stmt);
+        let n: i64 = __mind_load_i64(ncell);
+        if ab_cand_has(buf, cands, n, ast_span_lo(name), ast_span_hi(name), 0) == 1 {
+            return 0;
+        }
+        if n >= 256 {
+            return 0 - 1;
+        }
+        __mind_store_i64(cands + n * 16, ast_span_lo(name));
+        __mind_store_i64(cands + n * 16 + 8, ast_span_hi(name));
+        __mind_store_i64(ncell, n + 1);
+        return 0;
+    }
+    if k == ast_if() {
+        if ab_collect_blockish(ast_child1(stmt), buf, cands, ncell) < 0 {
+            return 0 - 1;
+        }
+        return ab_collect_blockish(ast_child2(stmt), buf, cands, ncell);
+    }
+    if k == ast_while() {
+        return ab_collect_blockish(ast_child1(stmt), buf, cands, ncell);
+    }
+    if k == ast_block() {
+        return ab_collect_blockish(stmt, buf, cands, ncell);
+    }
+    0
+}
+
+// ast_reads_ident: does `node` READ a name (other than the candidate clo..chi) whose
+// visible binding in the seed env (lv-env innermost, else param) has ValueId `id`?
+// 1 = read, 0 = not read, -1 = unclassified construct (fail closed).
+pub fn ab_reads(node: i64, buf: i64, params_addr: i64, n_params: i64, env: i64, nlv: i64, id: i64, clo: i64, chi: i64) -> i64 {
+    if node == 0 {
+        return 0;
+    }
+    let k: i64 = ast_kind(node);
+    if k == ast_ident() {
+        if span_bytes_equal2(buf, ast_span_lo(node), ast_span_hi(node), buf, clo, chi) == 1 {
+            return 0;
+        }
+        let v: i64 = lvenv_lookup(buf, ast_span_lo(node), ast_span_hi(node), env, nlv, 0);
+        if v >= 0 {
+            if v == id {
+                return 1;
+            }
+            return 0;
+        }
+        let p: i64 = resolve_param(params_addr, n_params, buf, ast_span_lo(node), ast_span_hi(node));
+        if p >= 0 {
+            if p == id {
+                return 1;
+            }
+        }
+        return 0;
+    }
+    if k == ast_int_lit() {
+        return 0;
+    }
+    if k == ast_float_lit() {
+        return 0;
+    }
+    if k == ast_str_lit() {
+        return 0;
+    }
+    if k == ast_break() {
+        return 0;
+    }
+    if k == ast_continue() {
+        return 0;
+    }
+    if k == ast_binop() {
+        return ab_reads_pair(ast_child0(node), ast_child1(node), buf, params_addr, n_params, env, nlv, id, clo, chi);
+    }
+    if k == ast_index() {
+        return ab_reads_pair(ast_child0(node), ast_child1(node), buf, params_addr, n_params, env, nlv, id, clo, chi);
+    }
+    if k == ast_paren() {
+        return ab_reads(ast_child0(node), buf, params_addr, n_params, env, nlv, id, clo, chi);
+    }
+    if k == ast_neg() {
+        return ab_reads(ast_child0(node), buf, params_addr, n_params, env, nlv, id, clo, chi);
+    }
+    if k == ast_not() {
+        return ab_reads(ast_child0(node), buf, params_addr, n_params, env, nlv, id, clo, chi);
+    }
+    if k == ast_cast() {
+        return ab_reads(ast_child0(node), buf, params_addr, n_params, env, nlv, id, clo, chi);
+    }
+    if k == ast_field() {
+        return ab_reads(ast_child0(node), buf, params_addr, n_params, env, nlv, id, clo, chi);
+    }
+    if k == ast_return() {
+        return ab_reads(ast_child0(node), buf, params_addr, n_params, env, nlv, id, clo, chi);
+    }
+    if k == ast_let() {
+        return ab_reads(ast_child2(node), buf, params_addr, n_params, env, nlv, id, clo, chi);
+    }
+    if k == ast_assign() {
+        return ab_reads(ast_child2(node), buf, params_addr, n_params, env, nlv, id, clo, chi);
+    }
+    if k == ast_call() {
+        // Only the ARGS are reads (Rust Call { args }); the callee is a fn name.
+        return ab_reads_list(ast_child1(node), ast_aux(node), 0, buf, params_addr, n_params, env, nlv, id, clo, chi);
+    }
+    if k == ast_block() {
+        return ab_reads_list(ast_child0(node), ast_aux(node), 0, buf, params_addr, n_params, env, nlv, id, clo, chi);
+    }
+    if k == ast_if() {
+        let c: i64 = ab_reads(ast_child0(node), buf, params_addr, n_params, env, nlv, id, clo, chi);
+        if c != 0 {
+            return c;
+        }
+        return ab_reads_pair(ast_child1(node), ast_child2(node), buf, params_addr, n_params, env, nlv, id, clo, chi);
+    }
+    if k == ast_while() {
+        return ab_reads_pair(ast_child0(node), ast_child1(node), buf, params_addr, n_params, env, nlv, id, clo, chi);
+    }
+    0 - 1
+}
+
+pub fn ab_reads_pair(a: i64, b: i64, buf: i64, params_addr: i64, n_params: i64, env: i64, nlv: i64, id: i64, clo: i64, chi: i64) -> i64 {
+    let r: i64 = ab_reads(a, buf, params_addr, n_params, env, nlv, id, clo, chi);
+    if r != 0 {
+        return r;
+    }
+    ab_reads(b, buf, params_addr, n_params, env, nlv, id, clo, chi)
+}
+
+pub fn ab_reads_list(addr: i64, n: i64, i: i64, buf: i64, params_addr: i64, n_params: i64, env: i64, nlv: i64, id: i64, clo: i64, chi: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    let r: i64 = ab_reads(__mind_load_i64(addr + i * 8), buf, params_addr, n_params, env, nlv, id, clo, chi);
+    if r != 0 {
+        return r;
+    }
+    ab_reads_list(addr, n, i + 1, buf, params_addr, n_params, env, nlv, id, clo, chi)
+}
+
+// Index of the smallest candidate strictly greater than (plo,phi) (any, when
+// has_prev == 0); -1 when none is left.
+pub fn ab_pick_next(buf: i64, cands: i64, n: i64, plo: i64, phi: i64, has_prev: i64, i: i64, best: i64) -> i64 {
+    if i >= n {
+        return best;
+    }
+    let lo: i64 = __mind_load_i64(cands + i * 16);
+    let hi: i64 = __mind_load_i64(cands + i * 16 + 8);
+    let after_prev: i64 = if has_prev == 0 {
+        1
+    } else {
+        if ab_span_cmp(buf, lo, hi, plo, phi) > 0 {
+            1
+        } else {
+            0
+        }
+    };
+    if after_prev == 0 {
+        return ab_pick_next(buf, cands, n, plo, phi, has_prev, i + 1, best);
+    }
+    if best < 0 {
+        return ab_pick_next(buf, cands, n, plo, phi, has_prev, i + 1, i);
+    }
+    let blo: i64 = __mind_load_i64(cands + best * 16);
+    let bhi: i64 = __mind_load_i64(cands + best * 16 + 8);
+    if ab_span_cmp(buf, lo, hi, blo, bhi) < 0 {
+        return ab_pick_next(buf, cands, n, plo, phi, has_prev, i + 1, i);
+    }
+    ab_pick_next(buf, cands, n, plo, phi, has_prev, i + 1, best)
+}
+
+// Does a visible name other than the candidate (clo..chi) bind ValueId `id`? An env
+// entry counts only when it is the INNERMOST binding of its name; a param counts when
+// no env entry shadows it. (Rust: the `sources` set is non-empty.)
+pub fn ab_has_source(buf: i64, env: i64, nlv: i64, params_addr: i64, n_params: i64, id: i64, clo: i64, chi: i64) -> i64 {
+    if ab_env_source(buf, env, nlv, id, clo, chi, 0) == 1 {
+        return 1;
+    }
+    ab_param_source(buf, env, nlv, params_addr, n_params, id, clo, chi, 0)
+}
+
+pub fn ab_env_source(buf: i64, env: i64, nlv: i64, id: i64, clo: i64, chi: i64, i: i64) -> i64 {
+    if i >= nlv {
+        return 0;
+    }
+    let lo: i64 = __mind_load_i64(env + i * 24 + 0);
+    let hi: i64 = __mind_load_i64(env + i * 24 + 8);
+    if __mind_load_i64(env + i * 24 + 16) == id {
+        if span_bytes_equal2(buf, lo, hi, buf, clo, chi) == 0 {
+            if lvenv_index_of(buf, lo, hi, env, nlv) == i {
+                return 1;
+            }
+        }
+    }
+    ab_env_source(buf, env, nlv, id, clo, chi, i + 1)
+}
+
+pub fn ab_param_source(buf: i64, env: i64, nlv: i64, params_addr: i64, n_params: i64, id: i64, clo: i64, chi: i64, i: i64) -> i64 {
+    if i >= n_params {
+        return 0;
+    }
+    if i == id {
+        let pname: i64 = ast_child0(__mind_load_i64(params_addr + i * 8));
+        let plo: i64 = ast_span_lo(pname);
+        let phi: i64 = ast_span_hi(pname);
+        if span_bytes_equal2(buf, plo, phi, buf, clo, chi) == 0 {
+            if lvenv_index_of(buf, plo, phi, env, nlv) < 0 {
+                return 1;
+            }
+        }
+    }
+    ab_param_source(buf, env, nlv, params_addr, n_params, id, clo, chi, i + 1)
+}
+
+// Process the candidates in sorted order. Each break records the shared id in
+// ids[k] and rebinds the candidate (innermost env slot) to copy = base0 + 2k + 1.
+// Returns the break count k, or -1 (fail closed).
+pub fn ab_apply_loop(while_node: i64, buf: i64, params_addr: i64, n_params: i64, env: i64, nlv: i64, base0: i64, ids: i64, cands: i64, nc: i64, plo: i64, phi: i64, has_prev: i64, k: i64) -> i64 {
+    let ci: i64 = ab_pick_next(buf, cands, nc, plo, phi, has_prev, 0, 0 - 1);
+    if ci < 0 {
+        return k;
+    }
+    let lo: i64 = __mind_load_i64(cands + ci * 16);
+    let hi: i64 = __mind_load_i64(cands + ci * 16 + 8);
+    let slot: i64 = lvenv_index_of(buf, lo, hi, env, nlv);
+    if slot < 0 {
+        return ab_apply_loop(while_node, buf, params_addr, n_params, env, nlv, base0, ids, cands, nc, lo, hi, 1, k);
+    }
+    let id: i64 = __mind_load_i64(env + slot * 24 + 16);
+    // No other visible name shares the id -> no source to clobber (Rust `continue`s
+    // before scanning the body), so the read-walk never runs on alias-free loops.
+    if ab_has_source(buf, env, nlv, params_addr, n_params, id, lo, hi) == 0 {
+        return ab_apply_loop(while_node, buf, params_addr, n_params, env, nlv, base0, ids, cands, nc, lo, hi, 1, k);
+    }
+    let r: i64 = ab_reads_pair(ast_child0(while_node), ast_child1(while_node), buf, params_addr, n_params, env, nlv, id, lo, hi);
+    if r < 0 {
+        return 0 - 1;
+    }
+    if r == 0 {
+        return ab_apply_loop(while_node, buf, params_addr, n_params, env, nlv, base0, ids, cands, nc, lo, hi, 1, k);
+    }
+    __mind_store_i64(ids + k * 8, id);
+    __mind_store_i64(env + slot * 24 + 16, base0 + 2 * k + 1);
+    ab_apply_loop(while_node, buf, params_addr, n_params, env, nlv, base0, ids, cands, nc, lo, hi, 1, k + 1)
+}
+
+// Apply the alias-break to `env` (a WRITABLE copy of the while's pre-loop env) with
+// the copies allocated from base0. ids must hold 256 entries. k or -1.
+pub fn ab_apply(while_node: i64, buf: i64, params_addr: i64, n_params: i64, env: i64, nlv: i64, base0: i64, ids: i64) -> i64 {
+    let cands: i64 = __mind_alloc(256 * 16);
+    let ncell: i64 = __mind_alloc(8);
+    __mind_store_i64(ncell, 0);
+    if ab_collect_blockish(ast_child1(while_node), buf, cands, ncell) < 0 {
+        return 0 - 1;
+    }
+    ab_apply_loop(while_node, buf, params_addr, n_params, env, nlv, base0, ids, cands, __mind_load_i64(ncell), 0, 0, 0, 0)
+}
+
+// Emit the k alias-break copies: ConstI64(base0+2j, 0); BinOp Add(base0+2j+1, ids[j], base0+2j).
+pub fn ab_emit(s: EmitState, ids: i64, k: i64, base0: i64, j: i64) -> EmitState {
+    if j >= k {
+        return s;
+    }
+    let s1: EmitState = emit_mic3_const_i64(s, base0 + 2 * j, 0);
+    let s2: EmitState = emit_mic3_binop(s1, base0 + 2 * j + 1, 0, __mind_load_i64(ids + j * 8), base0 + 2 * j);
+    ab_emit(s2, ids, k, base0, j + 1)
+}
+
+// Alias-break count of a while against a read-only env (scratch copy; -1 = unclassified).
+pub fn while_alias_break_count(while_node: i64, buf: i64, params_addr: i64, n_params: i64, lvenv: i64, nlv: i64) -> i64 {
+    let env: i64 = __mind_alloc((nlv + 1) * 24);
+    let _cp: i64 = lvenv_copy(env, lvenv, nlv, 0);
+    let ids: i64 = __mind_alloc(256 * 8);
+    ab_apply(while_node, buf, params_addr, n_params, env, nlv, 0, ids)
+}
+
+pub fn emit_mic3_while_general(s: EmitState, while_node: i64, buf: i64, params_addr: i64, n_params: i64, base_in: i64, lvenv_in: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64, merge_out: i64, nmerge_cell: i64, endbase_cell: i64, okcell: i64) -> EmitState {
+    // Alias-break first: the copies precede the While in the parent block, so the
+    // cond/body ids start after them, and the seed env (a private copy — the
+    // caller's env is untouched, exactly like Rust's `seed_env`) carries them.
+    let lvenv: i64 = __mind_alloc((nlv + 1) * 24);
+    let _ac: i64 = lvenv_copy(lvenv, lvenv_in, nlv, 0);
+    let ab_ids: i64 = __mind_alloc(256 * 8);
+    let ab_k: i64 = ab_apply(while_node, buf, params_addr, n_params, lvenv, nlv, base_in, ab_ids);
+    if ab_k < 0 {
+        __mind_store_i64(okcell, 0);
+        return s;
+    }
+    let base0: i64 = base_in + 2 * ab_k;
     let cond_expr: i64 = ast_child0(while_node);
     let body_blk: i64 = ast_child1(while_node);
     let body_sa: i64 = ast_child0(body_blk);
@@ -31192,8 +31658,10 @@ pub fn emit_mic3_while_general(s: EmitState, while_node: i64, buf: i64, params_a
     // exit_ids: one fresh id per live_var, allocated AFTER cond+body (lower.rs 4801).
     let exit_ids: i64 = __mind_alloc((nmerge + 1) * 8);
     let _ei: i64 = while_alloc_exit_ids(exit_ids, nmerge, body_end, 0);
-    // --- EMIT pass: OP_WHILE header + cond + body (re-walk a FRESH body env) + tails. ---
-    let s1: EmitState = es_push(s, 27);
+    // --- EMIT pass: alias-break copies, then OP_WHILE header + cond + body (re-walk a
+    // FRESH body env) + tails. ---
+    let s0: EmitState = ab_emit(s, ab_ids, ab_k, base_in, 0);
+    let s1: EmitState = es_push(s0, 27);
     let s2: EmitState = emit_uleb128(s1, cond_id);
     let s3: EmitState = emit_uleb128(s2, cond_n);
     let cond_emit_n: i64 = __mind_load_i64(ccursor);

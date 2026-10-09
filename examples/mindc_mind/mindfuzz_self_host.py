@@ -124,6 +124,11 @@ _STDLIB_MODULES = [
 _RUST_REF_TEST = "_ref_mic3_dump"
 _RUST_REF_FEATURES = "std-surface cross-module-imports"
 
+# Committed regression corpus: shapes that once diverged between the twin
+# emitters. Each must MATCH on EVERY run, independent of --seed/--count, so a
+# seed advance can never silently drop a fixed divergence class.
+_REGRESS_DIR = _HERE / "testdata" / "mindfuzz_regress"
+
 DEFAULT_COUNT = 200
 DEFAULT_SEED = 1234
 DEFAULT_BATCH = 8
@@ -979,6 +984,27 @@ def main() -> int:
 
         print(f"[mindfuzz_self_host] seed={args.seed} count={count} batch={batch} "
               f"so={so.name} std_blob={len(std)}B")
+
+        # --- PHASE 0: the committed regression corpus (every fixture must be
+        #     accepted by BOTH emitters with byte-identical notes; a refusal or a
+        #     Rust rejection is a failure here, not a skip — these programs are
+        #     known-good shapes, so anything but MATCH is a regression). --------
+        fixtures = sorted(_REGRESS_DIR.glob("*.mind"))
+        if not fixtures:
+            print(f"FAIL  BLOCKED: no regression fixtures under {_REGRESS_DIR} — "
+                  "the corpus gate would compare nothing")
+            return 1
+        for fx in fixtures:
+            st, shn, rn = harness.check_source(fx.read_text())
+            if st != MATCH:
+                lines = [f"FAIL  [regress] {fx.name}: status={st} "
+                         f"selfhost={shn.hex() if shn else '-'} "
+                         f"rust={rn.hex() if rn else '-'}"]
+                if st == MISMATCH:
+                    harness.diagnose(fx.read_text(), lines)
+                print("\n".join(lines))
+                return 1
+            print(f"  PASS  [regress] {fx.name} note {shn.hex()[:12]}... identical")
 
         # --- PHASE 1: generate + self-host acceptance (cheap, in-process) ----
         programs = []          # (id, fns, src, sh_note)
