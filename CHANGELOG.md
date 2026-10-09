@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — checked process wait and spawn_capture descriptors
+- `std.process.wait` retries `EINTR` and returns an error record when `waitpid`
+  fails. Waiting on a non-child is no longer reported as exit 0 / signal 0.
+- Exit, signal, core-dump and stopped statuses stay distinct. `wait_flags`
+  passes the `waitpid` options through (`WNOHANG`, `WUNTRACED`).
+- `spawn` and `spawn_capture` publish a failed `exec` on `child_exec_errno`
+  via a close-on-exec pipe. Exit status 127 by itself is not that failure.
+- `spawn_capture` reads pipe ends as full ints and closes every end it opened
+  when `pipe` or `fork` fails, including descriptors at or above 65536.
+
 ### Fixed — native f64 comparisons are IEEE-ordered for NaN
 - The pure-MIND native x86-64 backend now lowers `<`, `<=`, `>`, `>=`, `==` and `!=` on f64
   to the IEEE predicates (all false on NaN except `!=`), matching the MLIR path. Proven
