@@ -125,6 +125,92 @@ IN_PROFILE += FCMP_PROGRAMS
 # ALSO agree with the MLIR backend — this is the cross-backend half of the claim.
 MLIR_CROSSCHECK = {name for name, _s, _e in FCMP_PROGRAMS} | {"float_nan_compare"}
 
+# W1 — the memory / I-O intrinsics the frozen stage1.elf expands inline
+# (`nb_intrinsic_id`), admitted by CALLEE + ARITY in frozen_profile.rs
+# (FROZEN_NATIVE_INTRINSICS). One behaviour row per admitted callee: each program
+# allocates / stores / loads / writes and exits with a value computed from the
+# results. The expected exit is computed HERE, independently of both backends;
+# every row MLIR can build is also built with MLIR and must agree (native == oracle
+# == MLIR). `argc`/`argv` (native-only contract rows) and `wrap_*` (not in the
+# Rust/MLIR intrinsic table) are native-only: native == oracle.
+_PATH_DEV_ZERO = "".join(
+    f"__mind_store_i8(path + {i}, {b}); " for i, b in enumerate(b"/dev/zero\0")
+)
+INTRINSIC_PROGRAMS = [
+    ("intr_alloc_store_load_i64",
+     "fn main()->i64{let p:i64=__mind_alloc(24); __mind_store_i64(p, 40); "
+     "__mind_store_i64(p+16, 2); return __mind_load_i64(p)+__mind_load_i64(p+16);}",
+     40 + 2),
+    ("intr_store_load_i8",
+     "fn main()->i64{let p:i64=__mind_alloc(8); __mind_store_i8(p, 300); "
+     "__mind_store_i8(p+1, 7); return __mind_load_i8(p)+__mind_load_i8(p+1);}",
+     (300 & 0xFF) + 7),
+    # load16 ZERO-extends; store16 writes exactly 2 bytes (byte 2 keeps 0xFF).
+    ("intr_store_load_i16",
+     "fn main()->i64{let p:i64=__mind_alloc(8); __mind_store_i64(p, 0-1); "
+     "__mind_store_i16(p, 70000); let a:i64=__mind_load_i16(p); "
+     "if __mind_load_i8(p+2) != 255 {return 1;} return a - 4400;}",
+     (70000 & 0xFFFF) - 4400),
+    # load32 ZERO-extends (-2 reads back as 2^32 - 2).
+    ("intr_store_load_i32",
+     "fn main()->i64{let p:i64=__mind_alloc(8); __mind_store_i32(p, 0-2); "
+     "let b:i64=__mind_load_i32(p); return b - 4294967200;}",
+     (2**32 - 2) - 4294967200),
+    ("intr_realloc_preserves",
+     "fn main()->i64{let p:i64=__mind_alloc(16); __mind_store_i64(p+8, 55); "
+     "let q:i64=__mind_realloc(p, 256); __mind_store_i64(q+200, 1); "
+     "return __mind_load_i64(q+8)+__mind_load_i64(q+200);}",
+     55 + 1),
+    ("intr_free_returns_zero",
+     "fn main()->i64{let p:i64=__mind_alloc(8); let f:i64=__mind_free(p); return 9+f;}",
+     9),
+    # write(2) with the -1 offset sentinel; the exit is the byte count it returned.
+    ("intr_write_stdout",
+     "fn main()->i64{let p:i64=__mind_alloc(8); __mind_store_i8(p, 79); "
+     "__mind_store_i8(p+1, 75); __mind_store_i8(p+2, 10); "
+     "return __mind_write(1, p, 3, 0 - 1);}",
+     3),
+    # open(2) O_RDONLY on a NUL-terminated path, then read(2) with the -1 sentinel.
+    ("intr_open_read",
+     "fn main()->i64{let path:i64=__mind_alloc(16); " + _PATH_DEV_ZERO +
+     "let fd:i64=__mind_open(path); if fd < 3 {return 1;} "
+     "let buf:i64=__mind_alloc(16); __mind_store_i64(buf, 99); "
+     "let n:i64=__mind_read(fd, buf, 8, 0 - 1); return n*10 + __mind_load_i64(buf);}",
+     8 * 10 + 0),
+    # argv[0] is the absolute artifact path the gate runs; argc is 1.
+    ("intr_argc_argv",
+     "fn main()->i64{let n:i64=__mind_argc(); let a:i64=__mind_argv(0); "
+     "return n*10 + __mind_load_i8(a) - 47 + 1;}",
+     1 * 10 + 1),
+    ("intr_wrap",
+     "fn main()->i64{return __mind_wrap_i8(300) + __mind_wrap_i16(65535) + "
+     "__mind_wrap_i32(4294967297) + 100;}",
+     ((300 + 128) % 256 - 128) + ((65535 + 2**15) % 2**16 - 2**15)
+     + ((4294967297 + 2**31) % 2**32 - 2**31) + 100),
+]
+IN_PROFILE += INTRINSIC_PROGRAMS
+MLIR_CROSSCHECK |= {name for name, _s, _e in INTRINSIC_PROGRAMS} - {
+    "intr_argc_argv", "intr_wrap"}
+# The exact stdout a row's artifact must print (both backends).
+STDOUT_EXPECT = {"intr_write_stdout": b"OK\n"}
+
+# W3 / W3b — std seed linkage. A program may define a name the std seed also
+# defines when it does not import that std module and no retained std function
+# calls the name (the MIND-Lab evidence shape: its own `bsig0` / `rotr32`); a call
+# INTO seed std resolves and the std bodies run.
+STD_LINK_PROGRAMS = [
+    ("std_shadow_unimported",
+     "fn rotr32(x:i64, n:i64)->i64{return x+n;} fn bsig0(x:i64)->i64{return rotr32(x,2)+1;} "
+     "fn main()->i64{return bsig0(39);}",
+     42),
+    ("std_call_vec",
+     "import std.vec;\nfn main()->i64{let v=vec_new(); let w=vec_push(v, 7); "
+     "let x=vec_push(w, 35); return vec_get(x, 0)+vec_get(x, 1);}",
+     42),
+]
+IN_PROFILE += STD_LINK_PROGRAMS
+MLIR_CROSSCHECK |= {name for name, _s, _e in STD_LINK_PROGRAMS}
+
 # Out-of-profile: matrix-declared NOT in the native subset (row 11 tensor = NO / RI-E,
 # row 12 trait dispatch = PARTIAL / RI-F). Must fail-closed with zero toolchain spawn.
 OUT_PROFILE = [
@@ -147,6 +233,28 @@ OUT_PROFILE = [
     ("f32_compare_first_fence",
      "fn main()->i64{let x:f32=1.0; let y:f32=2.0; if x < y {return 1;} return 0;}", "first"),
     ("tensor", "fn main()->i64{let t=zeros([4]); return 0;}", "first"),
+    # W1 negatives: a store's result is never written natively (read it -> refuse);
+    # read/write ignore the offset natively (anything but a proven -1 -> refuse); the
+    # arity is part of the key; a name outside nb_intrinsic_id stays refused.
+    ("intr_store_result_read",
+     "fn main()->i64{let p:i64=__mind_alloc(8); let r:i64=__mind_store_i64(p, 5); "
+     "return r+3;}", "first"),
+    ("intr_write_offset_zero",
+     "fn main()->i64{let p:i64=__mind_alloc(8); return __mind_write(1, p, 1, 0);}", "first"),
+    ("intr_alloc_wrong_arity",
+     "fn main()->i64{let p:i64=__mind_alloc(8, 1); return 0;}", "first"),
+    ("intr_outside_table",
+     "fn main()->i64{let x:i64=__mind_vec_zeroed(4); return 0;}", "closure"),
+    # W3 negatives: an imported std module's name redefined; a retained std function
+    # calling a redefined name; a linked std body outside the profile.
+    ("std_import_collision",
+     "import std.vec;\nfn vec_len(v:i64)->i64{return 3;} fn main()->i64{return vec_len(0);}",
+     "closure"),
+    ("std_callee_shadowed",
+     "import std.io;\nfn string_push_byte(s:i64, b:i64)->i64{return b;} "
+     "fn main()->i64{let s=string_push_ansi_sgr(string_push_byte(0, 1), 31); return 0;}",
+     "closure"),
+    ("std_body_fenced", "import std.sha256;\nfn main()->i64{return bsig0(5);}", "first"),
     ("trait",
      "trait T{fn f(self)->i64;} struct S{} impl T for S{fn f(self)->i64{return 1;}} "
      "fn main()->i64{let s=S{}; return s.f();}"),
@@ -193,7 +301,10 @@ def mlir_exit(name, src, td):
         tail = r.stderr.decode(errors="replace").strip().splitlines()[-1:]
         return None, f"MLIR build rc={r.returncode} {tail}"
     outf.chmod(0o755)
-    return subprocess.run([str(outf)]).returncode, None
+    r = subprocess.run([str(outf)], stdout=subprocess.PIPE)
+    if name in STDOUT_EXPECT and r.stdout != STDOUT_EXPECT[name]:
+        return None, f"MLIR stdout {r.stdout!r} != expected {STDOUT_EXPECT[name]!r}"
+    return r.returncode, None
 
 
 def toolchain_hits(execs):
@@ -216,8 +327,8 @@ def main() -> int:
     # Positive-count floor (anti-false-green): a job that builds NOTHING also shows zero
     # toolchain execve. Pin the corpus size so a silently-deleted fixture is a FAILURE,
     # not a vacuous pass. Bump deliberately when the allowlist+corpus grow together.
-    PINNED_IN_PROFILE = 20
-    PINNED_OUT_PROFILE = 3
+    PINNED_IN_PROFILE = 32
+    PINNED_OUT_PROFILE = 12
     if len(IN_PROFILE) < PINNED_IN_PROFILE or len(OUT_PROFILE) < PINNED_OUT_PROFILE:
         print(
             f"FAIL  corpus shrank below pinned floor: in={len(IN_PROFILE)}<{PINNED_IN_PROFILE} "
@@ -245,7 +356,12 @@ def main() -> int:
             runf = td / f"{name}.run.elf"
             runf.write_bytes(art)
             runf.chmod(0o755)
-            got = subprocess.run([str(runf)]).returncode
+            ran = subprocess.run([str(runf)], stdout=subprocess.PIPE)
+            got = ran.returncode
+            if name in STDOUT_EXPECT and ran.stdout != STDOUT_EXPECT[name]:
+                fails.append(f"in/{name}: emitted ELF stdout {ran.stdout!r} != "
+                             f"expected {STDOUT_EXPECT[name]!r}")
+                continue
             if got != expect_exit:
                 fails.append(f"in/{name}: emitted ELF exit={got} expected {expect_exit}")
                 continue
@@ -302,6 +418,14 @@ def main() -> int:
                         "expected the FIRST fence (the Rust frozen-profile predicate) to "
                         "refuse and name the construct, but it did not — this fixture "
                         "gives the first fence no coverage"
+                    )
+            elif want_fence == "closure":
+                # The closure admission (native_closure.rs) names its refusals
+                # `(closure.<kind>)`; no other refusal path prints that label.
+                if "(closure." not in serr:
+                    problems.append(
+                        "expected the CLOSURE admission to refuse with a `(closure.*)` "
+                        "label, but it did not"
                     )
             elif want_fence == "second":
                 if "out-of-profile construct:" in serr:

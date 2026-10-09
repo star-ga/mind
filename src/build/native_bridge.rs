@@ -18,6 +18,10 @@ mod admission;
 #[cfg(feature = "std-surface")]
 mod child;
 #[cfg(feature = "std-surface")]
+mod linkage;
+#[cfg(feature = "std-surface")]
+use linkage::{fence_std_seed_fn, std_seed_for_linkage};
+#[cfg(feature = "std-surface")]
 mod seed;
 
 #[cfg(feature = "std-surface")]
@@ -249,9 +253,9 @@ pub fn run_native_backend_bridge_profile(
 
     // Admission and emission use the same captured, composed user region.
     // The exhaustive frozen-profile allowlist checks every retained user body,
-    // including uncalled functions. The current bridge does not admit calls into
-    // the seed standard library: unresolved edges and seed-name collisions refuse.
-    // The seed compiler's own refusal is a second fence, with no backend fallback.
+    // including uncalled functions, AND every std seed body the program links
+    // (see `native_closure::admit_native_closure_linked`). The seed compiler's
+    // own refusal is a second fence, with no backend fallback.
     let fence_source = crate::build::native_image::compose_user_region(&user_sources);
 
     // ADMISSION over the merged program. The fence must reason about the same
@@ -260,13 +264,14 @@ pub fn run_native_backend_bridge_profile(
     // modules (IRModule::default starts next_id at 0, so that would alias
     // ValueIds and corrupt value_types).
     //
-    // Reserved names come from the std blob TEXT rather than by parsing std: the
-    // backend must keep working on a build whose feature set the Rust parser
-    // would reject, and the scan over-approximates, which is the safe direction
-    // for a set whose only use is to refuse.
-    let reserved = crate::ir::native_closure::reserved_names_from_text(&String::from_utf8_lossy(
-        std_blob.as_bytes(),
-    ));
+    // The std seed, for linkage: each module's names come from its TEXT (the scan
+    // over-approximates, the safe direction for names used to refuse), and the
+    // blob is parsed and lowered once so calls into std resolve and the linked
+    // bodies can be fenced. A seed this build cannot lower falls back to
+    // reserving every seed name, which only refuses. Built BEFORE the project
+    // scope is installed, on its own thread, so no lowering state leaks between
+    // the seed and the program.
+    let seed = std_seed_for_linkage(&std_modules, &std_sources, std_blob.as_bytes());
     // ONE parse, ONE lower. The admitted module is handed straight to the fence
     // rather than re-derived: two lowerings of the same text are two chances to
     // reason about different programs, and the whole point of this path is that
@@ -308,13 +313,14 @@ pub fn run_native_backend_bridge_profile(
             process::exit(3);
         }
     }
-    let (merged_ast, merged_ir) = match admit_merged_program(&paths[0], &fence_source, &reserved) {
-        Ok(lowered) => lowered,
-        Err(msg) => {
-            eprintln!("error[backend-native]: {msg}");
-            process::exit(3);
-        }
-    };
+    let (merged_ast, merged_ir, std_linked) =
+        match admit_merged_program(&paths[0], &fence_source, &seed) {
+            Ok(lowered) => lowered,
+            Err(msg) => {
+                eprintln!("error[backend-native]: {msg}");
+                process::exit(3);
+            }
+        };
     // DIALECT FENCE: an import the frozen compiler would read as a DIFFERENT
     // extent than the admission parser did. Admission above reasoned about the
     // Rust parse; the ELF is built from the frozen parse of the same bytes, so
@@ -344,9 +350,9 @@ pub fn run_native_backend_bridge_profile(
     // artifact; reachability informs diagnostics, it does not narrow admission.
     // enforced-by: RI-D1-PROFILE
     // The source check covers what the IR cannot carry (a declared f32 width).
-    match crate::ir::frozen_profile::profile_frozen_admits_source(&merged_ast)
-        .and_then(|()| crate::ir::frozen_profile::profile_frozen_admits(&merged_ir))
-    {
+    match crate::ir::frozen_profile::profile_frozen_admits_source(&merged_ast).and_then(|()| {
+        crate::ir::frozen_profile::profile_frozen_admits_linked(&merged_ir, &std_linked)
+    }) {
         Ok(()) => {}
         Err(rejection) => {
             eprintln!(
@@ -356,6 +362,22 @@ pub fn run_native_backend_bridge_profile(
                  construct allowlist. Rerun with `--backend mlir` for the full \
                  surface. This is a refusal, not a fallback: silently compiling an \
                  unproven construct is the failure this fence exists to prevent.",
+                paths[0], rejection.construct
+            );
+            process::exit(3);
+        }
+    }
+    // Every linked std seed body is fenced exactly like a user body: the call to it
+    // was admitted above only on that basis. Sorted order, so the first offender
+    // named is deterministic.
+    for name in &std_linked {
+        if let Err(rejection) = fence_std_seed_fn(&seed, name, &std_linked) {
+            eprintln!(
+                "error[backend-native]: `{}` links std seed function `{name}`, which is not \
+                 in the frozen native profile (out-of-profile construct: {}).\n  \
+                 The native backend is proven byte-identical only on the frozen \
+                 construct allowlist. Rerun with `--backend mlir` for the full \
+                 surface. This is a refusal, not a fallback.",
                 paths[0], rejection.construct
             );
             process::exit(3);
@@ -692,8 +714,8 @@ mod entry_stub_tests {
 fn admit_merged_program(
     path: &str,
     merged: &[u8],
-    reserved: &BTreeSet<String>,
-) -> Result<(crate::ast::Module, crate::ir::IRModule), String> {
+    seed: &crate::ir::native_closure::StdSeed,
+) -> Result<(crate::ast::Module, crate::ir::IRModule, BTreeSet<String>), String> {
     let text = std::str::from_utf8(merged)
         .map_err(|e| format!("`{path}`: source is not valid UTF-8: {e}"))?;
     let ast = match crate::parser::parse(text) {
@@ -742,8 +764,9 @@ fn admit_merged_program(
     // refusals, which the construct fence cannot express. Its restricted module is
     // deliberately DISCARDED: admission is whole-module, so the fence must see the
     // full lowering, not a reachability-narrowed subset.
-    crate::ir::native_closure::admit_native_closure(&ast, &ir, "main", reserved)
+    // The std seed functions it links are returned: the fence must check each.
+    let linked = crate::ir::native_closure::admit_native_closure_linked(&ast, &ir, "main", seed)
         .map_err(|r| format!("{} ({})", r.detail, r.kind))?;
     let _ = path;
-    Ok((ast, ir))
+    Ok((ast, ir, linked.std_linked))
 }

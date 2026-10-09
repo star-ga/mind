@@ -154,27 +154,46 @@ fn duplicate_bare_name_is_refused_by_admission_when_never_called() {
     );
 }
 
-/// A user module defining a name the std seed blob already defines is refused:
-/// the flat image would resolve it last-definition-wins with no diagnostic.
+/// A user module defining a name the std seed blob already defines.
+///
+/// The flat image resolves every call last-definition-wins, so the user's
+/// definition is the one that runs. That is admitted when the program does NOT
+/// import the std module (no retained std code calls the name — see
+/// `native_closure::admit_native_closure_linked`), and refused when it does: the
+/// program asked for `std.toml` and redefined one of its members.
 #[test]
 fn std_symbol_collision_is_refused() {
-    let p = Project::new("stdcollide");
     // `bytes_eq` is shipped unprefixed by std/toml.mind.
+    let helper = "pub fn bytes_eq(a: i64, b: i64) -> i64 {\n    return a;\n}\n";
+
+    let p = Project::new("stdcollide");
+    p.write("src/helper.mind", helper);
     p.write(
-        "src/helper.mind",
-        "pub fn bytes_eq(a: i64, b: i64) -> i64 {\n    return a;\n}\n",
+        "src/main.mind",
+        "import helper;\nimport std.toml;\n\nfn main() -> i64 {\n    return bytes_eq(1, 2);\n}\n",
     );
-    p.write(
+    let (code, err, artifact) = p.build_native("src/main.mind");
+    assert_ne!(
+        code, 0,
+        "a collision with an imported std module must refuse: {err}"
+    );
+    assert!(artifact.is_none());
+    assert!(
+        err.contains("closure.std_symbol_collision") && err.contains("std.toml"),
+        "refusal must be owned by the std-collision rule and name the module: {err}"
+    );
+
+    // Without the import the program's definition shadows std's and runs.
+    let q = Project::new("stdshadow");
+    q.write("src/helper.mind", helper);
+    q.write(
         "src/main.mind",
         "import helper;\n\nfn main() -> i64 {\n    return bytes_eq(1, 2);\n}\n",
     );
-    let (code, err, artifact) = p.build_native("src/main.mind");
-    assert_ne!(code, 0, "a std-name collision must refuse: {err}");
-    assert!(artifact.is_none());
-    assert!(
-        err.contains("closure.std_symbol_collision"),
-        "refusal must be owned by the std-collision rule: {err}"
-    );
+    let (code, err, artifact) = q.build_native("src/main.mind");
+    assert_eq!(code, 0, "an unimported std name may be shadowed: {err}");
+    let bytes = artifact.expect("artifact");
+    assert_native_result(&q, &bytes, 1, "the program's bytes_eq runs");
 }
 
 /// An out-of-profile construct in a REACHABLE imported body refuses, and the

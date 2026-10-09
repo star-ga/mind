@@ -25,6 +25,7 @@ mod canonical_verify_tests;
 pub mod compact;
 mod evidence;
 pub(crate) mod fp_mode;
+pub(crate) mod frozen_intrinsics;
 pub mod frozen_profile;
 pub mod native_closure;
 mod print;

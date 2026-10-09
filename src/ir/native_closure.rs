@@ -178,12 +178,26 @@ pub fn executable_roots(module: &IRModule, entry: &str) -> Vec<String> {
 /// Functions reachable from `roots` by direct call edges.
 ///
 /// Refuses on a missing root and on any call to a name with no definition. The
-/// latter covers builtins, intrinsics and externs, which the fence rejects anyway
-/// (`admit_call` admits only callees defined in the same module) — refusing here
-/// keeps the two in agreement and names the callee, which the fence cannot.
+/// latter covers builtins, externs and every intrinsic the frozen emitter does not
+/// know, which the fence rejects anyway — refusing here keeps the two in agreement
+/// and names the callee, which the fence cannot. A call to one of the frozen
+/// emitter's own intrinsics (`frozen_intrinsics::FROZEN_NATIVE_INTRINSICS`) is a
+/// resolved LEAF: the stage1 emitter expands it inline, and the fence checks its
+/// arity and operands.
 pub fn reachable_from(
     module: &IRModule,
     roots: &[String],
+) -> Result<BTreeSet<String>, ClosureRejection> {
+    reachable_from_linked(module, roots, &BTreeSet::new())
+}
+
+/// [`reachable_from`] where a call may also resolve to a `linked` name defined
+/// outside `module` (a std seed function). Linked callees are leaves here: their
+/// bodies live in the std seed and are walked by [`admit_native_closure_linked`].
+fn reachable_from_linked(
+    module: &IRModule,
+    roots: &[String],
+    linked: &BTreeSet<String>,
 ) -> Result<BTreeSet<String>, ClosureRejection> {
     let defined = defined_fn_names(module);
     let mut seen: BTreeSet<String> = BTreeSet::new();
@@ -213,6 +227,9 @@ pub fn reachable_from(
         direct_calls(body, &mut callees);
         for callee in callees {
             if !defined.contains(&callee) {
+                if is_frozen_intrinsic(&callee) || linked.contains(&callee) {
+                    continue;
+                }
                 return reject(
                     "closure.unresolved_edge",
                     format!("`{current}` calls `{callee}`, which has no definition in the closure"),
@@ -385,4 +402,243 @@ pub fn admit_native_closure(
     let roots: Vec<String> = root_set.into_iter().collect();
     let reachable = reachable_from(ir, &roots)?;
     Ok(restrict_to_reachable(ir, &reachable))
+}
+
+fn is_frozen_intrinsic(name: &str) -> bool {
+    crate::ir::frozen_intrinsics::frozen_native_intrinsic(name).is_some()
+}
+
+/// What the std seed blob contributes to closure admission.
+///
+/// The frozen compiler compiles `std blob ++ user region` as ONE flat program: it
+/// prunes to the functions reachable from EVERY user function (all user functions
+/// are its roots), and it resolves every call — including a call written inside a
+/// std function — to the LAST definition of that name. A user definition therefore
+/// shadows a std function of the same name everywhere, which is exactly what makes
+/// shadowing safe when no retained std code calls the shadowed name, and exactly
+/// what makes it a silent wrong binding when some does.
+pub struct StdSeed {
+    /// Seed modules in manifest order, each with the function names its text
+    /// defines (the textual scan of [`reserved_names_from_text`]).
+    pub modules: Vec<(String, BTreeSet<String>)>,
+    /// The seed blob parsed and lowered ONCE, as one program. `None` when this
+    /// build could not: then no call resolves into std and every seed name stays
+    /// reserved — the behaviour before std linkage existed, which only refuses.
+    pub lowered: Option<(crate::ast::Module, IRModule)>,
+}
+
+impl StdSeed {
+    /// Every function name any seed module's text defines.
+    pub fn all_names(&self) -> BTreeSet<String> {
+        self.modules
+            .iter()
+            .flat_map(|(_, names)| names.iter().cloned())
+            .collect()
+    }
+
+    /// The parsed definition of seed function `name`, as a one-item module, for the
+    /// source-level half of the fence. `None` when the seed is not lowered or the
+    /// name is not a top-level seed function.
+    pub fn fn_source(&self, name: &str) -> Option<crate::ast::Module> {
+        let (ast, _) = self.lowered.as_ref()?;
+        let item = ast
+            .items
+            .iter()
+            .find(|item| matches!(item, crate::ast::Node::FnDef(f, _) if f.name == name))?;
+        Some(crate::ast::Module {
+            items: vec![item.clone()],
+            spelling: Default::default(),
+        })
+    }
+
+    /// The lowered body of seed function `name` alone, for the IR half of the fence.
+    pub fn fn_ir(&self, name: &str) -> Option<IRModule> {
+        let (_, ir) = self.lowered.as_ref()?;
+        let keep: BTreeSet<String> = std::iter::once(name.to_string()).collect();
+        find_body(&ir.instrs, name)?;
+        let mut only = restrict_to_reachable(ir, &keep);
+        only.instrs.retain(|i| matches!(i, Instr::FnDef { .. }));
+        Some(only)
+    }
+}
+
+/// A closure admitted with std linkage.
+pub struct LinkedClosure {
+    /// The program restricted to what its roots reach (diagnostic view, as for
+    /// [`admit_native_closure`]).
+    pub restricted: IRModule,
+    /// The std seed functions the frozen compiler will retain for this program —
+    /// every seed function reachable from ANY user function. Each one's body must
+    /// pass the frozen-profile fence; calls to them are admitted only on that basis.
+    pub std_linked: BTreeSet<String>,
+}
+
+/// The `std.<module>` names `ast` imports, at any depth.
+fn imported_std_modules(ast: &crate::ast::Module) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for item in &ast.items {
+        crate::type_checker::nerve_walk::walk(item, &mut |node| {
+            if let crate::ast::Node::Import { path, .. } = node {
+                if path.first().map(String::as_str) == Some("std") {
+                    if let Some(module) = path.get(1) {
+                        out.insert(module.clone());
+                    }
+                }
+            }
+        });
+    }
+    out
+}
+
+/// Every call name anywhere in `instrs`, including inside function bodies.
+fn all_calls(instrs: &[Instr], out: &mut Vec<String>) {
+    for instr in instrs {
+        if let Instr::Call { name, .. } = instr {
+            out.push(name.clone());
+        }
+        for body in instr_bodies(instr) {
+            all_calls(body, out);
+        }
+    }
+}
+
+/// Admission for one merged program WITH std linkage, in the only correct order:
+///
+/// 1. a duplicate user definition is refused (as in [`admit_native_closure`]);
+/// 2. a user definition of a frozen intrinsic name is refused — the frozen
+///    emitter expands the intrinsic at every call site, lowering drops the user
+///    body, so the definition could never be the one that runs;
+/// 3. a user definition of a name that an IMPORTED std module defines is refused:
+///    the program asked for `std.<m>` and redefined one of its members, so which
+///    one a call means is ambiguous (`closure.std_symbol_collision`);
+/// 4. entry-rooted reachability, where a call may resolve to a user function, a
+///    frozen intrinsic, or a std seed function;
+/// 5. std linkage: the seed functions reachable from every user function. One
+///    that calls a name the program redefines is refused
+///    (`closure.std_callee_shadowed`) — the frozen compiler would bind that call
+///    to the program's definition. One that calls a name with no definition is
+///    refused (`closure.unresolved_edge`).
+///
+/// A user definition that shadows a seed name the program does not import, and
+/// that no retained seed function calls, is admitted: the frozen compiler binds
+/// every call to it and retains no std code that could mean the other one.
+///
+/// Without a lowered seed (`StdSeed::lowered == None`) this is exactly
+/// [`admit_native_closure`] with every seed name reserved.
+pub fn admit_native_closure_linked(
+    ast: &crate::ast::Module,
+    ir: &IRModule,
+    entry: &str,
+    seed: &StdSeed,
+) -> Result<LinkedClosure, ClosureRejection> {
+    let Some((_, std_ir)) = &seed.lowered else {
+        let restricted = admit_native_closure(ast, ir, entry, &seed.all_names())?;
+        return Ok(LinkedClosure {
+            restricted,
+            std_linked: BTreeSet::new(),
+        });
+    };
+    let counts = ast_definition_counts(ast);
+    reject_ambiguous_ast(ast, &BTreeSet::new())?;
+    if let Some(name) = counts.keys().find(|name| is_frozen_intrinsic(name)) {
+        return reject(
+            "closure.intrinsic_redefinition",
+            format!(
+                "`{name}` is a compiler intrinsic the native backend expands inline at \
+                 every call site; a program definition of it would never run"
+            ),
+        );
+    }
+    let user_names: BTreeSet<String> = counts.into_keys().collect();
+    let imported = imported_std_modules(ast);
+    for (module, names) in &seed.modules {
+        if !imported.contains(module) {
+            continue;
+        }
+        if let Some(name) = names.intersection(&user_names).next() {
+            return reject(
+                "closure.std_symbol_collision",
+                format!(
+                    "`{name}` is defined by this program and by `std.{module}`, which it \
+                     imports; rename the program's `{name}` or drop the import"
+                ),
+            );
+        }
+    }
+
+    let user_ir_defined = defined_fn_names(ir);
+    let std_defined = defined_fn_names(std_ir);
+    // A user call binds to std only when no user definition (in IR or source)
+    // claims the name and it is not an intrinsic: last-definition-wins.
+    let std_callable: BTreeSet<String> = std_defined
+        .iter()
+        .filter(|name| !user_names.contains(*name) && !is_frozen_intrinsic(name))
+        .cloned()
+        .collect();
+
+    let mut root_set: BTreeSet<String> = executable_roots(ir, entry).into_iter().collect();
+    let mut top_level = Vec::new();
+    direct_calls(&ir.instrs, &mut top_level);
+    root_set.extend(top_level);
+    let roots: Vec<String> = root_set.into_iter().collect();
+    let reachable = reachable_from_linked(ir, &roots, &std_callable)?;
+
+    // Std linkage is seeded from EVERY user function, not only the reachable ones:
+    // the frozen compiler roots its prune at every user function, so a std body an
+    // uncalled user function names is still emitted.
+    let mut calls = Vec::new();
+    all_calls(&ir.instrs, &mut calls);
+    let mut std_linked: BTreeSet<String> = BTreeSet::new();
+    let mut queue: VecDeque<String> = VecDeque::new();
+    for callee in calls {
+        if !user_ir_defined.contains(&callee)
+            && std_callable.contains(&callee)
+            && std_linked.insert(callee.clone())
+        {
+            queue.push_back(callee);
+        }
+    }
+    while let Some(current) = queue.pop_front() {
+        let Some(body) = find_body(&std_ir.instrs, &current) else {
+            return reject(
+                "closure.missing_body",
+                format!("std seed function `{current}` is named but has no body"),
+            );
+        };
+        let mut callees = Vec::new();
+        direct_calls(body, &mut callees);
+        for callee in callees {
+            if user_names.contains(&callee) {
+                return reject(
+                    "closure.std_callee_shadowed",
+                    format!(
+                        "std seed function `{current}`, which this program reaches, calls \
+                         `{callee}`, and this program also defines `{callee}`. The native \
+                         backend binds every call to the LAST definition of a name, so \
+                         `{current}` would call the program's `{callee}` instead of std's. \
+                         Rename the program's `{callee}`"
+                    ),
+                );
+            }
+            if is_frozen_intrinsic(&callee) {
+                continue;
+            }
+            if !std_defined.contains(&callee) {
+                return reject(
+                    "closure.unresolved_edge",
+                    format!(
+                        "std seed function `{current}` calls `{callee}`, which has no \
+                         definition in the closure"
+                    ),
+                );
+            }
+            if std_linked.insert(callee.clone()) {
+                queue.push_back(callee);
+            }
+        }
+    }
+    Ok(LinkedClosure {
+        restricted: restrict_to_reachable(ir, &reachable),
+        std_linked,
+    })
 }

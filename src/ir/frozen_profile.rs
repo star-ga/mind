@@ -22,7 +22,10 @@
 //! path today, so it changes zero mic@3 bytes and cannot perturb the keystone.
 //! Wiring it into the default-flip decision is a separate, gated slice.
 
-use crate::ir::{BinOp, IRModule, Instr};
+use crate::ir::frozen_intrinsics::{
+    admit_discard_only_results, admit_intrinsic_call, fold_const, frozen_native_intrinsic,
+};
+use crate::ir::{BinOp, IRModule, Instr, ValueId};
 
 /// The first construct that is NOT in the frozen native profile, named for a
 /// fail-loud diagnostic. `None`-free by construction: `Ok(())` means every
@@ -39,12 +42,26 @@ pub struct FrozenProfileRejection {
 /// construct otherwise. Recurses into function bodies, loop bodies, and if-
 /// branches so a rejected construct cannot hide inside a nested region.
 pub fn profile_frozen_admits(module: &IRModule) -> Result<(), FrozenProfileRejection> {
+    profile_frozen_admits_linked(module, &std::collections::BTreeSet::new())
+}
+
+/// [`profile_frozen_admits`] for a module whose calls may also bind to `linked`
+/// functions defined OUTSIDE it — the std seed functions the native closure
+/// resolved (`native_closure::admit_native_closure_linked`). A call to a linked
+/// name is admitted here only because the caller fences each linked body with
+/// this same predicate; passing a name whose body is not fenced is the caller's
+/// soundness bug, not something this predicate can detect.
+pub fn profile_frozen_admits_linked(
+    module: &IRModule,
+    linked: &std::collections::BTreeSet<String>,
+) -> Result<(), FrozenProfileRejection> {
     // Collect the functions this module DEFINES. A call to one of them is in-profile
     // because its body is walked by this same predicate; a call to anything else is
     // not, and cannot be assumed proven. See `admit_call`.
-    let mut defined = std::collections::BTreeSet::new();
+    let mut defined = linked.clone();
     collect_fn_names(&module.instrs, &mut defined);
-    admit_instrs_in(&module.instrs, &defined)
+    admit_instrs_in(&module.instrs, &defined)?;
+    admit_discard_only_results(&module.instrs)
 }
 
 /// Admit the SOURCE-level facts the IR cannot carry. Today that is the float width:
@@ -84,21 +101,28 @@ fn collect_fn_names(instrs: &[Instr], out: &mut std::collections::BTreeSet<Strin
 /// fence is not a fence.
 ///
 /// In-profile: a call to a function DEFINED in this module (the readiness-gate corpus
-/// proves user-function calls, and the callee's body is walked by this predicate).
-/// Out-of-profile: everything else — builtins, intrinsics, and any extern — because
-/// "proven for user calls" is not "proven for every name that can appear in a call".
+/// proves user-function calls, and the callee's body is walked by this predicate),
+/// and a call to one of the `frozen_intrinsics::FROZEN_NATIVE_INTRINSICS` with exactly that row's
+/// arity and, for `read`/`write`, an offset operand proven to be `-1`.
+/// Out-of-profile: everything else — builtins, any other intrinsic, and any extern —
+/// because "proven for user calls" is not "proven for every name that can appear in
+/// a call".
 fn admit_call(
     name: &str,
+    args: &[ValueId],
     defined: &std::collections::BTreeSet<String>,
+    consts: &std::collections::BTreeMap<ValueId, i64>,
 ) -> Result<(), FrozenProfileRejection> {
     if defined.contains(name) {
-        Ok(())
-    } else {
+        return Ok(());
+    }
+    let Some(spec) = frozen_native_intrinsic(name) else {
         // Leaked as a stable label rather than the raw name so the diagnostic is
         // deterministic; the CLI prints the construct class, and the callee appears
         // in the compiler's own error when the second fence also refuses.
-        reject("call.undefined_or_builtin")
-    }
+        return reject("call.undefined_or_builtin");
+    };
+    admit_intrinsic_call(spec, args, consts)
 }
 
 fn reject(construct: &'static str) -> Result<(), FrozenProfileRejection> {
@@ -192,35 +216,24 @@ fn admit_instrs_in(
     instrs: &[Instr],
     defined: &std::collections::BTreeSet<String>,
 ) -> Result<(), FrozenProfileRejection> {
+    let mut consts = std::collections::BTreeMap::new();
     for instr in instrs {
+        fold_const(instr, &mut consts);
         match instr {
             // ---- IN PROFILE: scalar consts, arithmetic, calls, control flow ----
             // Proven native by the RI-D1 readiness gate: int arith, scalar match,
             // if/while/break/continue, user-function calls, and fixed-array
             // subscript READS. Descend into nested bodies.
             //
-            // NOT listed here any more, and deliberately: struct-return, f64
-            // scalar, and narrow (`as`) casts. The earlier version of this comment
-            // claimed them, but they all lower to compiler intrinsic `Instr::Call`s
-            // (`__mind_alloc` / `__mind_store_i64` / `__mind_load_i64` for the
-            // aggregate ABI, `__mind_conv_i64` for a full-width cast), and
-            // `admit_call` admits only callees DEFINED in the module. Measured
-            // 2026-08-29: 3 of the 5 `IN_PROFILE` readiness-gate programs
-            // (`float_as_i64`, `struct_return`, `narrow_u8_wrap`) are refused
-            // `call.undefined_or_builtin`. That is an OVER-rejection — fail-closed
-            // and safe, but it means the allowlist is not in bijection with the
-            // corpus and `ri_d1_frozen_profile_gate.py` is RED.
-            //
-            // deferred: restore them by extending `admit_call` with the
-            // corpus-DERIVED intrinsic set {__mind_alloc, __mind_store_i64,
-            // __mind_load_i64, __mind_conv_i64}. NOT done here because a name-keyed
-            // intrinsic admission repeats the very defect this file keeps fixing:
-            // the corpus proves `__mind_store_i64` only for an i64 struct field,
-            // and an f64 field is a different native store path. The sound form
-            // needs the operand/field type, i.e. the same (op, operand_type) keying
-            // `admit_binop` already defers — thread `FnDef.value_types` through
-            // first. Tracked on matrix row 12 / the RI-D1 bijection gate.
-            Instr::Call { name, .. } => admit_call(name, defined)?,
+            // Intrinsic calls are admitted by CALLEE and ARITY against
+            // `FROZEN_NATIVE_INTRINSICS` — the names the frozen `nb_intrinsic_id`
+            // recognises, each proven by an `IN_PROFILE` behaviour row. That covers
+            // the aggregate ABI (`__mind_alloc` / `__mind_store_i64` /
+            // `__mind_load_i64`) behind struct return. A full-width cast still
+            // lowers to `__mind_conv_i64`, which `nb_intrinsic_id` does not know, so
+            // `float_as_i64` stays refused `call.undefined_or_builtin` until a seed
+            // batch adds that id (W8c).
+            Instr::Call { name, args, .. } => admit_call(name, args, defined, &consts)?,
             Instr::ConstI64(..)
             | Instr::ConstF64(..)
             | Instr::Return { .. }
@@ -490,11 +503,11 @@ mod tests {
 
     #[test]
     fn intrinsic_callee_is_rejected_but_user_callee_is_admitted() {
-        // The aggregate ABI reaches the IR as intrinsic calls; pin BOTH directions
-        // so a future intrinsic allowlist has to update this test deliberately.
+        // Intrinsics outside the frozen emitter's table stay refused; pin BOTH
+        // directions so widening the allowlist has to update this test deliberately.
         let call = |name: &str| Instr::legacy_call(ValueId(1), name, vec![]);
         assert_eq!(
-            admits(&[call("__mind_alloc")]).unwrap_err().construct,
+            admits(&[call("__mind_conv_i64")]).unwrap_err().construct,
             "call.undefined_or_builtin"
         );
         // `f` IS defined by `fndef`, so a call to it is in profile.
