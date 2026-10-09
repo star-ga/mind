@@ -162,4 +162,56 @@ print('ok', fdm, st_m, st_r, nm)
             "mind_open_missing_path_fails_at_every_layer: {result}"
         );
     }
+
+    /// The I/O intrinsics' FAILURE values are `-errno`, the raw-syscall contract
+    /// the frozen native emitter has always had (`nb_emit_open` / `nb_emit_read` /
+    /// `nb_emit_write` store the syscall's `rax`). The C runtime used to return -1
+    /// (and 0 for a null buffer or a count <= 0 without any syscall), so the same
+    /// program exited differently on the two backends. Each value is pinned exactly,
+    /// with a positive control per call so a never-working intrinsic cannot pass.
+    #[test]
+    fn mind_io_failures_return_negative_errno() {
+        let Some(so) = compile_fs_with_probe("mind_io_negative_errno") else {
+            return;
+        };
+        let script = format!(
+            r#"
+import ctypes, errno, os
+lib = ctypes.CDLL('{so}')
+for f, n in (('__mind_open', 1), ('__mind_read', 4), ('__mind_write', 4), ('__mind_alloc', 1)):
+    fn = getattr(lib, f); fn.restype = ctypes.c_int64; fn.argtypes = [ctypes.c_int64] * n
+
+def cstr(s):
+    b = s.encode() + b'\x00'
+    return (ctypes.c_uint8 * len(b))(*b)
+
+buf = lib.__mind_alloc(64)
+assert buf != 0
+got = {{}}
+missing = cstr('/nonexistent-mind-dir/no/such/file')
+got['open_missing'] = (lib.__mind_open(ctypes.addressof(missing)), -errno.ENOENT)
+got['open_null'] = (lib.__mind_open(0), -errno.EFAULT)
+got['read_badfd'] = (lib.__mind_read(99, buf, 1, -1), -errno.EBADF)
+got['write_badfd'] = (lib.__mind_write(99, buf, 1, -1), -errno.EBADF)
+got['write_badfd_empty'] = (lib.__mind_write(99, buf, 0, -1), -errno.EBADF)
+got['pread_badfd'] = (lib.__mind_read(99, buf, 1, 0), -errno.EBADF)
+zero = cstr('/dev/zero')
+fd = lib.__mind_open(ctypes.addressof(zero))
+assert fd >= 3, f'positive control: open(/dev/zero) must succeed, got {{fd}}'
+got['read_null'] = (lib.__mind_read(fd, 0, 8, -1), -errno.EFAULT)
+got['read_ok'] = (lib.__mind_read(fd, buf, 8, -1), 8)
+got['read_empty'] = (lib.__mind_read(fd, buf, 0, -1), 0)
+os.close(fd)
+bad = {{k: v for k, v in got.items() if v[0] != v[1]}}
+assert not bad, f'(got, want): {{bad}}'
+print('ok', len(got))
+"#,
+            so = so.to_string_lossy(),
+        );
+        let result = py(&script);
+        assert_eq!(
+            result, "ok 9",
+            "mind_io_failures_return_negative_errno: {result}"
+        );
+    }
 }

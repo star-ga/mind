@@ -163,6 +163,12 @@ fn cdylib_has_no_undefined_mind_symbols() {
         // not a MIND-semantic symbol. Added when that intrinsic landed; the gate
         // caught it immediately, which is the list working as intended.
         "open",
+        // The libc `errno` accessor (glibc `__errno_location`, Darwin `__error`):
+        // the I/O intrinsics above return the raw `-errno` on failure, the value
+        // the native-ELF backend's direct syscalls return. Reading the error code of
+        // a call this list already admits grants the loader nothing new.
+        "__errno_location",
+        "__error",
         // THREADING — the deterministic multi-threaded BLAS kernels
         // (`__mind_blas_mt_dispatch`) spawn owner-computes thread bands, and
         // `sysconf` reads the CPU count to size them. Grouped and admitted as one

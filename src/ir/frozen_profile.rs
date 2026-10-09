@@ -23,7 +23,8 @@
 //! Wiring it into the default-flip decision is a separate, gated slice.
 
 use crate::ir::frozen_intrinsics::{
-    admit_discard_only_results, admit_intrinsic_call, fold_const, frozen_native_intrinsic,
+    admit_discard_only_results, admit_intrinsic_call, admit_intrinsic_operand_types, fold_const,
+    frozen_native_intrinsic,
 };
 use crate::ir::{BinOp, IRModule, Instr, ValueId};
 
@@ -61,7 +62,8 @@ pub fn profile_frozen_admits_linked(
     let mut defined = linked.clone();
     collect_fn_names(&module.instrs, &mut defined);
     admit_instrs_in(&module.instrs, &defined)?;
-    admit_discard_only_results(&module.instrs)
+    admit_discard_only_results(&module.instrs)?;
+    admit_intrinsic_operand_types(module)
 }
 
 /// Admit the SOURCE-level facts the IR cannot carry. Today that is the float width:
@@ -103,7 +105,8 @@ fn collect_fn_names(instrs: &[Instr], out: &mut std::collections::BTreeSet<Strin
 /// In-profile: a call to a function DEFINED in this module (the readiness-gate corpus
 /// proves user-function calls, and the callee's body is walked by this predicate),
 /// and a call to one of the `frozen_intrinsics::FROZEN_NATIVE_INTRINSICS` with exactly that row's
-/// arity and, for `read`/`write`, an offset operand proven to be `-1`.
+/// arity, for `read`/`write` an offset operand proven to be `-1`, for `alloc`/`realloc` a
+/// size proven `> 0`, and (checked module-wide afterwards) every operand proven an i64 slot.
 /// Out-of-profile: everything else — builtins, any other intrinsic, and any extern —
 /// because "proven for user calls" is not "proven for every name that can appear in
 /// a call".

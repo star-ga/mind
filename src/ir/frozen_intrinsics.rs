@@ -30,6 +30,15 @@ pub(crate) fn admit_intrinsic_call(
     if args.len() != spec.arity {
         return reject("call.intrinsic_arity");
     }
+    if let Some(at) = spec.size_arg {
+        // `__mind_alloc(n <= 0)` is 0 by contract (`runtime-support/mind_intrinsics.c`,
+        // relied on by std/vec.mind) and `realloc(p, n <= 0)` frees and returns 0 on
+        // the C runtime, while the frozen bump arena hands back a fresh pointer for
+        // both. Only a size PROVEN positive means the same thing on both backends.
+        if !consts.get(&args[at]).is_some_and(|n| *n > 0) {
+            return reject("call.alloc_size_not_proven_positive");
+        }
+    }
     if let Some(at) = spec.offset_arg {
         // The frozen emitter IGNORES the offset and always issues plain read(2) /
         // write(2); the Rust/MLIR runtime issues pread/pwrite for an offset >= 0.
@@ -66,7 +75,12 @@ pub(crate) struct FrozenIntrinsic {
     pub(crate) result: FrozenResult,
     /// The argument the frozen emitter ignores and therefore admits only as `-1`.
     pub(crate) offset_arg: Option<usize>,
+    /// The byte-size argument, admitted only when proven `> 0` (`alloc`, `realloc`).
+    pub(crate) size_arg: Option<usize>,
 }
+
+const VALUE: FrozenResult = FrozenResult::Value;
+const DISCARD: FrozenResult = FrozenResult::DiscardOnly;
 
 const fn fi(
     name: &'static str,
@@ -74,6 +88,7 @@ const fn fi(
     arity: usize,
     result: FrozenResult,
     offset_arg: Option<usize>,
+    size_arg: Option<usize>,
 ) -> FrozenIntrinsic {
     FrozenIntrinsic {
         name,
@@ -81,6 +96,7 @@ const fn fi(
         arity,
         result,
         offset_arg,
+        size_arg,
     }
 }
 
@@ -100,38 +116,40 @@ const fn fi(
 /// is out of scope: it needs a new seed intrinsic id and stays a clean
 /// `call.undefined_or_builtin` refusal.
 ///
-/// Known divergences admitted with these rows, all outside the value domain the
-/// corpus proves (callers test `< 0` / `> 0`, never the exact error value):
-/// `read`/`write`/`open` return `-errno` natively and `-1` from the C runtime on
-/// failure; `read`/`write` with a null buffer or `count <= 0` return 0 from the C
-/// runtime without a syscall, natively the syscall's own result; `alloc(n <= 0)`
-/// returns 0 from the C runtime and a fresh arena pointer natively; `free` is a
-/// no-op on the native bump arena.
+/// Where the two runtimes could disagree, the rows close the gap or refuse:
+/// `alloc`/`realloc` are admitted only with a size proven `> 0` (`size_arg`), since
+/// a size `<= 0` is 0 from the C runtime and a fresh pointer natively;
+/// `read`/`write` only with an offset proven `-1` (`offset_arg`); every operand
+/// must be proven an i64 slot ([`admit_intrinsic_operand_types`]), since a float
+/// reaches the frozen emitter as its raw bits; and the C runtime returns the raw
+/// syscall's `-errno` on an I/O failure, exactly as the native syscalls do.
 ///
-/// deferred: these rows key on name + arity only. The memory rows do not see the
-/// operand's DECLARED type (an f64 stored through `store_i64` is a bit pattern,
-/// not a conversion), the same (op, operand_type) gap `admit_binop` defers — upgrade
-/// path: thread `FnDef.value_types` into this predicate (task #313).
+/// Divergences that remain are outside defined behaviour or are resource limits,
+/// and are recorded rather than proven: `free` is a no-op on the native bump arena
+/// (a use-after-free or double free is undefined on the C runtime); fresh native
+/// memory reads as zero where `malloc` memory is indeterminate; and a native
+/// allocation past the fixed arena exits 70 ("native arena exhausted") where
+/// `malloc` returns 0.
 pub(crate) const FROZEN_NATIVE_INTRINSICS: [FrozenIntrinsic; 19] = [
-    fi("__mind_alloc", 1, 1, FrozenResult::Value, None),
-    fi("__mind_store_i64", 2, 2, FrozenResult::DiscardOnly, None),
-    fi("__mind_load_i64", 3, 1, FrozenResult::Value, None),
-    fi("__mind_store_i8", 4, 2, FrozenResult::DiscardOnly, None),
-    fi("__mind_load_i8", 5, 1, FrozenResult::Value, None),
-    fi("__mind_realloc", 6, 2, FrozenResult::Value, None),
-    fi("__mind_free", 7, 1, FrozenResult::Value, None),
-    fi("__mind_write", 8, 4, FrozenResult::Value, Some(3)),
-    fi("__mind_read", 9, 4, FrozenResult::Value, Some(3)),
-    fi("__mind_argc", 10, 0, FrozenResult::Value, None),
-    fi("__mind_argv", 11, 1, FrozenResult::Value, None),
-    fi("__mind_open", 12, 1, FrozenResult::Value, None),
-    fi("__mind_store_i16", 13, 2, FrozenResult::DiscardOnly, None),
-    fi("__mind_load_i16", 14, 1, FrozenResult::Value, None),
-    fi("__mind_store_i32", 15, 2, FrozenResult::DiscardOnly, None),
-    fi("__mind_load_i32", 16, 1, FrozenResult::Value, None),
-    fi("__mind_wrap_i8", 17, 1, FrozenResult::Value, None),
-    fi("__mind_wrap_i16", 18, 1, FrozenResult::Value, None),
-    fi("__mind_wrap_i32", 19, 1, FrozenResult::Value, None),
+    fi("__mind_alloc", 1, 1, VALUE, None, Some(0)),
+    fi("__mind_store_i64", 2, 2, DISCARD, None, None),
+    fi("__mind_load_i64", 3, 1, VALUE, None, None),
+    fi("__mind_store_i8", 4, 2, DISCARD, None, None),
+    fi("__mind_load_i8", 5, 1, VALUE, None, None),
+    fi("__mind_realloc", 6, 2, VALUE, None, Some(1)),
+    fi("__mind_free", 7, 1, VALUE, None, None),
+    fi("__mind_write", 8, 4, VALUE, Some(3), None),
+    fi("__mind_read", 9, 4, VALUE, Some(3), None),
+    fi("__mind_argc", 10, 0, VALUE, None, None),
+    fi("__mind_argv", 11, 1, VALUE, None, None),
+    fi("__mind_open", 12, 1, VALUE, None, None),
+    fi("__mind_store_i16", 13, 2, DISCARD, None, None),
+    fi("__mind_load_i16", 14, 1, VALUE, None, None),
+    fi("__mind_store_i32", 15, 2, DISCARD, None, None),
+    fi("__mind_load_i32", 16, 1, VALUE, None, None),
+    fi("__mind_wrap_i8", 17, 1, VALUE, None, None),
+    fi("__mind_wrap_i16", 18, 1, VALUE, None, None),
+    fi("__mind_wrap_i32", 19, 1, VALUE, None, None),
 ];
 
 /// The frozen-emitter row for `name`, if `nb_intrinsic_id` recognises it.
@@ -286,288 +304,8 @@ pub(crate) fn fold_const(instr: &Instr, consts: &mut std::collections::BTreeMap<
     }
 }
 
+mod operand_types;
+pub(crate) use operand_types::admit_intrinsic_operand_types;
+
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::ir::IRModule;
-    use crate::ir::frozen_profile::profile_frozen_admits;
-
-    /// The production entry over a bare instruction list.
-    fn admits(instrs: &[Instr]) -> Result<(), FrozenProfileRejection> {
-        let module = IRModule {
-            instrs: instrs.to_vec(),
-            ..IRModule::default()
-        };
-        profile_frozen_admits(&module)
-    }
-
-    fn fndef(body: Vec<Instr>) -> Instr {
-        Instr::FnDef {
-            name: "f".into(),
-            params: vec![],
-            ret_id: None,
-            body,
-            reap_threshold: None,
-            semantic_types: None,
-            #[cfg(feature = "std-surface")]
-            value_types: Default::default(),
-        }
-    }
-
-    fn call_with(name: &str, n: usize) -> Instr {
-        Instr::legacy_call(ValueId(100), name, (0..n).map(ValueId).collect())
-    }
-
-    /// Admission is keyed on CALLEE and ARITY: every row is admitted at its own
-    /// arity, refused at any other, and a name `nb_intrinsic_id` does not know is
-    /// refused at every arity.
-    #[test]
-    fn intrinsic_admission_is_keyed_on_callee_and_arity() {
-        for row in FROZEN_NATIVE_INTRINSICS {
-            if row.offset_arg.is_some() {
-                continue; // read/write: covered with a proven offset below
-            }
-            assert_eq!(
-                admits(&[call_with(row.name, row.arity)]),
-                Ok(()),
-                "{}",
-                row.name
-            );
-            assert_eq!(
-                admits(&[call_with(row.name, row.arity + 1)])
-                    .unwrap_err()
-                    .construct,
-                "call.intrinsic_arity",
-                "{}",
-                row.name
-            );
-        }
-        for name in [
-            "__mind_conv_i64",
-            "__mind_conv_f64",
-            "__mind_bits_to_f64",
-            "__mind_f64_to_bits",
-            "__mind_vec_zeroed",
-            "__mind_now_ns",
-            "__mind_calloc",
-        ] {
-            for n in 0..5 {
-                assert_eq!(
-                    admits(&[call_with(name, n)]).unwrap_err().construct,
-                    "call.undefined_or_builtin",
-                    "{name}/{n}"
-                );
-            }
-        }
-    }
-
-    /// `read`/`write` are admitted only with an offset proven `-1` in the same
-    /// straight-line slice: the frozen emitter ignores the offset, the runtime
-    /// honours it.
-    #[test]
-    fn io_offset_must_be_proven_minus_one() {
-        let io = |offset: Vec<Instr>, name: &str| {
-            let mut body = vec![
-                Instr::ConstI64(ValueId(0), 1),
-                Instr::ConstI64(ValueId(1), 4096),
-                Instr::ConstI64(ValueId(2), 3),
-            ];
-            body.extend(offset);
-            body.push(Instr::legacy_call(
-                ValueId(9),
-                name,
-                vec![ValueId(0), ValueId(1), ValueId(2), ValueId(3)],
-            ));
-            admits(&[fndef(body)])
-        };
-        let minus_one = || vec![Instr::ConstI64(ValueId(3), -1)];
-        let zero_minus_one = || {
-            vec![
-                Instr::ConstI64(ValueId(5), 0),
-                Instr::ConstI64(ValueId(6), 1),
-                Instr::BinOp {
-                    dst: ValueId(3),
-                    op: BinOp::Sub,
-                    lhs: ValueId(5),
-                    rhs: ValueId(6),
-                },
-            ]
-        };
-        for name in ["__mind_write", "__mind_read"] {
-            assert_eq!(io(minus_one(), name), Ok(()), "{name}");
-            assert_eq!(io(zero_minus_one(), name), Ok(()), "{name}");
-            // A proven non-sentinel offset (pread/pwrite on MLIR) and an unproven one.
-            assert_eq!(
-                io(vec![Instr::ConstI64(ValueId(3), 0)], name)
-                    .unwrap_err()
-                    .construct,
-                "call.io_offset_not_minus_one"
-            );
-            assert_eq!(
-                io(
-                    vec![Instr::Param {
-                        dst: ValueId(3),
-                        name: "off".into(),
-                        index: 0
-                    }],
-                    name
-                )
-                .unwrap_err()
-                .construct,
-                "call.io_offset_not_minus_one"
-            );
-        }
-    }
-
-    /// The two lists that must agree: this table and the frozen emitter's own
-    /// `nb_intrinsic_id`. Every id that function returns is a row, every row's id
-    /// is returned, and every `__mind_*` name its body mentions is a row.
-    #[test]
-    fn frozen_intrinsics_match_the_seed_emitter() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/mindc_mind/main.mind");
-        let src = std::fs::read_to_string(path).expect("main.mind");
-        let start = src
-            .find("pub fn nb_intrinsic_id(")
-            .expect("nb_intrinsic_id in main.mind");
-        let len = src[start..].find("\n}\n").expect("end of nb_intrinsic_id");
-        let body = &src[start..start + len];
-        let mut ids = std::collections::BTreeSet::new();
-        for piece in body.split("return ").skip(1) {
-            let digits: String = piece.chars().take_while(|c| c.is_ascii_digit()).collect();
-            if !digits.is_empty() && piece[digits.len()..].starts_with(';') {
-                ids.insert(digits.parse::<u8>().expect("id"));
-            }
-        }
-        let rows: std::collections::BTreeSet<u8> =
-            FROZEN_NATIVE_INTRINSICS.iter().map(|r| r.seed_id).collect();
-        assert_eq!(ids, rows, "nb_intrinsic_id ids vs FROZEN_NATIVE_INTRINSICS");
-        assert_eq!(
-            rows.len(),
-            FROZEN_NATIVE_INTRINSICS.len(),
-            "duplicate seed id"
-        );
-        let mut mentioned = std::collections::BTreeSet::new();
-        for (at, _) in body.match_indices("__mind_") {
-            let name: String = body[at..]
-                .chars()
-                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                .collect();
-            if name.len() > "__mind_".len() {
-                mentioned.insert(name);
-            }
-        }
-        let names: std::collections::BTreeSet<String> = FROZEN_NATIVE_INTRINSICS
-            .iter()
-            .map(|r| r.name.to_string())
-            .collect();
-        assert_eq!(
-            mentioned, names,
-            "names nb_intrinsic_id documents vs the table"
-        );
-    }
-
-    /// Every row the canonical intrinsic registry also describes agrees with it on
-    /// seed id, arity, result-use and offset policy.
-    #[test]
-    fn frozen_intrinsics_agree_with_the_contract_registry() {
-        use crate::intrinsic_contract::{IntrinsicImplementation, IntrinsicResult};
-        let mut checked = 0;
-        for spec in crate::intrinsics::STD_SURFACE_INTRINSICS {
-            let Some(contract) = spec.contract.as_ref() else {
-                continue;
-            };
-            let IntrinsicImplementation::FrozenNative { seed_id } = contract.implementation;
-            let row = frozen_native_intrinsic(spec.physical_name)
-                .unwrap_or_else(|| panic!("{} has a FrozenNative contract", spec.physical_name));
-            assert_eq!(row.seed_id, seed_id, "{}", row.name);
-            assert_eq!(row.arity, spec.arity, "{}", row.name);
-            assert_eq!(
-                row.result == FrozenResult::DiscardOnly,
-                contract.result == IntrinsicResult::DiscardOnly,
-                "{}",
-                row.name
-            );
-            assert_eq!(
-                row.offset_arg.is_some(),
-                contract.offset_policy
-                    == crate::intrinsic_contract::IntrinsicOffsetPolicy::MustBeMinusOneIgnored,
-                "{}",
-                row.name
-            );
-            checked += 1;
-        }
-        assert_eq!(checked, 10, "the registry's FrozenNative rows");
-        // Rows the registry describes only as legacy keep the registry's arity.
-        for spec in crate::intrinsics::STD_SURFACE_INTRINSICS {
-            if let Some(row) = frozen_native_intrinsic(spec.physical_name) {
-                assert_eq!(row.arity, spec.arity, "{}", row.name);
-            }
-        }
-    }
-
-    #[cfg(feature = "std-surface")]
-    fn lowered_admits(src: &str) -> Result<(), FrozenProfileRejection> {
-        let module = crate::parser::parse(src).expect("test source parses");
-        let ir = crate::eval::lower_to_ir(&module).expect("lowers");
-        profile_frozen_admits(&ir)
-    }
-
-    /// The idioms consumers write: a statement store, a store as the last
-    /// statement of an `if`/`while` branch, `0 - 1` written inside a loop.
-    #[cfg(feature = "std-surface")]
-    #[test]
-    fn statement_stores_and_loop_io_are_admitted() {
-        for src in [
-            "fn main() -> i64 { let p: i64 = __mind_alloc(16); __mind_store_i64(p, 5); \
-             return __mind_load_i64(p); }",
-            "fn main() -> i64 { let p: i64 = __mind_alloc(16); let c: i64 = 1; \
-             if c == 1 { __mind_store_i64(p, 5); } return __mind_load_i64(p); }",
-            "fn main() -> i64 { let p: i64 = __mind_alloc(16); let c: i64 = 1; \
-             if c == 1 { __mind_store_i8(p, 5); } else { __mind_store_i8(p, 6); } \
-             return __mind_load_i8(p); }",
-            "fn main() -> i64 { let p: i64 = __mind_alloc(8); let mut i: i64 = 0; \
-             while i < 8 { __mind_store_i8(p + i, 65); i = i + 1; } \
-             let mut sent: i64 = 0; \
-             while sent < 8 { let n: i64 = __mind_write(1, p + sent, 8 - sent, 0 - 1); \
-             sent = sent + n; } return 0; }",
-            "fn set(c: i64, v: i64) -> i64 { __mind_store_i64(c, v); 0 } \
-             fn main() -> i64 { let p: i64 = __mind_alloc(8); return set(p, 3); }",
-        ] {
-            assert_eq!(lowered_admits(src), Ok(()), "{src}");
-        }
-    }
-
-    /// Reading a store's result, directly or through an `if` value, is refused.
-    #[cfg(feature = "std-surface")]
-    #[test]
-    fn reading_a_discard_only_result_is_refused() {
-        for src in [
-            "fn main() -> i64 { let p: i64 = __mind_alloc(16); \
-             let r: i64 = __mind_store_i64(p, 5); return r + 3; }",
-            "fn main() -> i64 { let p: i64 = __mind_alloc(16); \
-             return __mind_store_i32(p, 5); }",
-            "fn main() -> i64 { let p: i64 = __mind_alloc(16); let c: i64 = 1; \
-             let x: i64 = if c == 1 { __mind_store_i16(p, 5) } else { 0 }; return x; }",
-            "fn f(p: i64) -> i64 { __mind_store_i8(p, 1) } \
-             fn main() -> i64 { return f(__mind_alloc(8)); }",
-        ] {
-            assert_eq!(
-                lowered_admits(src).unwrap_err().construct,
-                "call.discard_only_result_used",
-                "{src}"
-            );
-        }
-    }
-
-    /// A variable offset — the shape three consumer readers use — is refused.
-    #[cfg(feature = "std-surface")]
-    #[test]
-    fn a_variable_io_offset_is_refused_from_source() {
-        let src = "fn rd(fd: i64, p: i64, off: i64) -> i64 { return __mind_read(fd, p, 8, off); } \
-                   fn main() -> i64 { let p: i64 = __mind_alloc(8); return rd(0, p, 0 - 1); }";
-        assert_eq!(
-            lowered_admits(src).unwrap_err().construct,
-            "call.io_offset_not_minus_one"
-        );
-    }
-}
+mod tests;

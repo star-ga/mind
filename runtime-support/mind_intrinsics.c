@@ -39,6 +39,7 @@
 // Growth policy is fixed at "doubling, min-cap 4" (deterministic for the
 // evidence chain and bootstrap fixed point).
 
+#include <errno.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -334,16 +335,41 @@ MIND_EXPORT int64_t __mind_store_i16(int64_t addr, int64_t val) {
     return 0;
 }
 
+// The I/O intrinsics return what the raw system call returns: the result, or
+// `-errno` on failure. That is the contract the frozen native-ELF emitter has
+// always had — `nb_emit_open` / `nb_emit_read` / `nb_emit_write` in
+// `examples/mindc_mind/main.mind` issue the `syscall` and store `rax` — and the
+// MLIR backend links THIS file, so both backends must agree on every value, the
+// failure values included. libc reports a failure as -1 with the code in `errno`;
+// `mind_syscall_result` turns that back into the raw `-errno`. There is
+// deliberately no short-circuit for a null buffer or a count <= 0: the kernel
+// decides (a bad fd is EBADF whatever the count, a null buffer is EFAULT), exactly
+// as it does for the native artifact.
+static int64_t mind_syscall_result(int64_t r) {
+    return r < 0 ? -(int64_t)errno : r;
+}
+
+// The Windows CRT does not fail a null buffer or an over-INT_MAX count with an
+// errno: it calls its invalid-parameter handler, which terminates the process.
+// Report the codes the Linux kernel reports instead. POSIX builds compile this to
+// nothing, so the kernel stays the only judge there.
+#if defined(_WIN32)
+#  define MIND_WIN32_IO_ARGS_GUARD(buf, count)                       \
+    do {                                                               \
+        if ((count) < 0 || (count) > 0x7fffffff) return -(int64_t)EFAULT; \
+        if ((buf) == NULL && (count) != 0) return -(int64_t)EFAULT;   \
+    } while (0)
+#else
+#  define MIND_WIN32_IO_ARGS_GUARD(buf, count) ((void)0)
+#endif
+
 // __mind_open(path_addr) — open(2) with O_RDONLY on a NUL-terminated C string.
 //
 // The contract is fixed by std/fs.mind:274-285 and by the native-ELF self-host
 // emitter's intrinsic slot 12 (`examples/mindc_mind/main.mind` nb_intrinsic_id):
 // ONE argument, read-only, path is a NUL-TERMINATED C string, returns the fd, or
-// a NEGATIVE value on error. Callers test `fd < 0` and nothing finer, which is
-// what lets the two backends disagree harmlessly on the exact negative value: the
-// raw `open` syscall the native-ELF path emits returns `-errno`, while libc's
-// `open` here returns -1 and parks the code in `errno`. Neither value is ever
-// observed by MIND source, so no program output depends on which backend ran.
+// `-errno` on error (callers in std test `fd < 0`). A null path is EFAULT, as the
+// raw syscall reports it; it is answered here without handing libc a null pointer.
 //
 // Determinism: registered `Det::Pure` in `src/intrinsics.rs`, the same NAME-level
 // verdict `__mind_read` carries. A path is a declared program input; the fd is an
@@ -357,33 +383,32 @@ MIND_EXPORT int64_t __mind_store_i16(int64_t addr, int64_t val) {
 // intrinsic row and native-ELF slot would be a half-wired third backend.
 MIND_EXPORT int64_t __mind_open(int64_t path_addr) {
     if (path_addr == 0) {
-        return -1;
+        return -(int64_t)EFAULT;
     }
     const char *path = (const char *)(uintptr_t)path_addr;
-    int fd = MIND_OPEN_RDONLY(path);
-    return fd < 0 ? (int64_t)-1 : (int64_t)fd;
+    return mind_syscall_result((int64_t)MIND_OPEN_RDONLY(path));
 }
 
 // __mind_read(fd, buf_addr, count, offset) — POSIX read/pread.
 // offset == -1 means "use current stream position" (plain read).
 MIND_EXPORT int64_t __mind_read(int64_t fd, int64_t buf_addr, int64_t count, int64_t offset) {
-    if (buf_addr == 0 || count <= 0) return 0;
     void *buf = (void *)(uintptr_t)buf_addr;
+    MIND_WIN32_IO_ARGS_GUARD(buf, count);
     if (offset < 0) {
-        return (int64_t)MIND_READ((int)fd, buf, (size_t)count);
+        return mind_syscall_result((int64_t)MIND_READ((int)fd, buf, (size_t)count));
     }
-    return (int64_t)MIND_PREAD((int)fd, buf, (size_t)count, offset);
+    return mind_syscall_result((int64_t)MIND_PREAD((int)fd, buf, (size_t)count, offset));
 }
 
 // __mind_write(fd, buf_addr, count, offset) — POSIX write/pwrite.
 // offset == -1 means "use current stream position" (plain write).
 MIND_EXPORT int64_t __mind_write(int64_t fd, int64_t buf_addr, int64_t count, int64_t offset) {
-    if (buf_addr == 0 || count <= 0) return 0;
-    void *buf = (void *)(uintptr_t)buf_addr;
+    const void *buf = (const void *)(uintptr_t)buf_addr;
+    MIND_WIN32_IO_ARGS_GUARD(buf, count);
     if (offset < 0) {
-        return (int64_t)MIND_WRITE((int)fd, buf, (size_t)count);
+        return mind_syscall_result((int64_t)MIND_WRITE((int)fd, buf, (size_t)count));
     }
-    return (int64_t)MIND_PWRITE((int)fd, buf, (size_t)count, offset);
+    return mind_syscall_result((int64_t)MIND_PWRITE((int)fd, buf, (size_t)count, offset));
 }
 
 // print_bytes — convenience: write `count` bytes from `buf_addr` to stdout.

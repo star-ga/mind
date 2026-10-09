@@ -188,6 +188,29 @@ INTRINSIC_PROGRAMS = [
      ((300 + 128) % 256 - 128) + ((65535 + 2**15) % 2**16 - 2**15)
      + ((4294967297 + 2**31) % 2**32 - 2**31) + 100),
 ]
+# Error paths: the frozen emitter returns the raw syscall's -errno, and so does the C
+# runtime the MLIR backend links (ENOENT 2, EBADF 9, EFAULT 14). A count of 0 on a bad
+# fd is still EBADF (the fd is checked first), and a null buffer is EFAULT.
+_PATH_MISSING = "".join(
+    f"__mind_store_i8(path + {i}, {b}); "
+    for i, b in enumerate(b"/nonexistent-mind-dir/no/such/file\0")
+)
+INTRINSIC_PROGRAMS += [
+    ("intr_open_missing",
+     "fn main()->i64{let path:i64=__mind_alloc(64); " + _PATH_MISSING +
+     "let fd:i64=__mind_open(path); return fd + 100;}",
+     100 - 2),
+    ("intr_io_bad_fd",
+     "fn main()->i64{let buf:i64=__mind_alloc(8); __mind_store_i8(buf, 65); "
+     "let w:i64=__mind_write(99, buf, 1, 0 - 1); let r:i64=__mind_read(99, buf, 1, 0 - 1); "
+     "let e:i64=__mind_write(99, buf, 0, 0 - 1); return w + 100 + r * 3 + e * 2;}",
+     -9 + 100 - 27 - 18),
+    ("intr_read_null_buf",
+     "fn main()->i64{let path:i64=__mind_alloc(16); " + _PATH_DEV_ZERO +
+     "let fd:i64=__mind_open(path); if fd < 3 {return 1;} "
+     "return __mind_read(fd, 0, 8, 0 - 1) + 100;}",
+     100 - 14),
+]
 IN_PROFILE += INTRINSIC_PROGRAMS
 MLIR_CROSSCHECK |= {name for name, _s, _e in INTRINSIC_PROGRAMS} - {
     "intr_argc_argv", "intr_wrap"}
@@ -204,8 +227,7 @@ STD_LINK_PROGRAMS = [
      "fn main()->i64{return bsig0(39);}",
      42),
     ("std_call_vec",
-     "import std.vec;\nfn main()->i64{let v=vec_new(); let w=vec_push(v, 7); "
-     "let x=vec_push(w, 35); return vec_get(x, 0)+vec_get(x, 1);}",
+     "import std.vec;\nfn main()->i64{let v=vec_new(); return vec_len(v)+vec_cap(v)+42;}",
      42),
 ]
 IN_PROFILE += STD_LINK_PROGRAMS
@@ -243,6 +265,34 @@ OUT_PROFILE = [
      "fn main()->i64{let p:i64=__mind_alloc(8); return __mind_write(1, p, 1, 0);}", "first"),
     ("intr_alloc_wrong_arity",
      "fn main()->i64{let p:i64=__mind_alloc(8, 1); return 0;}", "first"),
+    # Round-2 blockers: a size not proven positive (alloc(n <= 0) is 0 on the C
+    # runtime, a fresh arena pointer natively) and a non-i64 operand (an f64 reaches
+    # the frozen emitter as raw IEEE bits; MLIR refuses the type) name their construct.
+    ("intr_alloc_zero",
+     "fn main()->i64{let p:i64=__mind_alloc(0); if p == 0 {return 1;} return 2;}",
+     "first", "call.alloc_size_not_proven_positive"),
+    ("intr_alloc_variable",
+     "fn mk(n:i64)->i64{return __mind_alloc(n);} fn main()->i64{return mk(8);}",
+     "first", "call.alloc_size_not_proven_positive"),
+    ("intr_realloc_zero",
+     "fn main()->i64{let p:i64=__mind_alloc(16); let q:i64=__mind_realloc(p, 0); "
+     "if q == 0 {return 1;} return 2;}",
+     "first", "call.alloc_size_not_proven_positive"),
+    ("intr_wrap_f64",
+     "fn main()->i64{let x:f64=300.0; return __mind_wrap_i8(x);}",
+     "first", "call.intrinsic_operand_not_i64"),
+    ("intr_store_f64",
+     "fn main()->i64{let p:i64=__mind_alloc(8); let x:f64=1.5; __mind_store_i64(p, x); "
+     "return __mind_load_i64(p);}",
+     "first", "call.intrinsic_operand_not_i64"),
+    ("intr_load_as_f64",
+     "fn main()->i64{let p:i64=__mind_alloc(8); __mind_store_i64(p, 4609434218613702656); "
+     "let y:f64=__mind_load_i64(p); if y == 1.5 {return 1;} return 2;}",
+     "first", "call.intrinsic_result_not_i64"),
+    ("std_vec_push_fenced",
+     "import std.vec;\nfn main()->i64{let v=vec_new(); let w=vec_push(v, 7); "
+     "return vec_get(w, 0);}",
+     "first", "call.alloc_size_not_proven_positive"),
     ("intr_outside_table",
      "fn main()->i64{let x:i64=__mind_vec_zeroed(4); return 0;}", "closure"),
     # W3 negatives: an imported std module's name redefined; a retained std function
@@ -327,8 +377,8 @@ def main() -> int:
     # Positive-count floor (anti-false-green): a job that builds NOTHING also shows zero
     # toolchain execve. Pin the corpus size so a silently-deleted fixture is a FAILURE,
     # not a vacuous pass. Bump deliberately when the allowlist+corpus grow together.
-    PINNED_IN_PROFILE = 32
-    PINNED_OUT_PROFILE = 12
+    PINNED_IN_PROFILE = 35
+    PINNED_OUT_PROFILE = 19
     if len(IN_PROFILE) < PINNED_IN_PROFILE or len(OUT_PROFILE) < PINNED_OUT_PROFILE:
         print(
             f"FAIL  corpus shrank below pinned floor: in={len(IN_PROFILE)}<{PINNED_IN_PROFILE} "
@@ -381,7 +431,10 @@ def main() -> int:
         for entry in OUT_PROFILE:
             # A fixture may declare WHICH fence must refuse it. Optional, so existing
             # two-field fixtures keep working; when present it is asserted.
-            if len(entry) == 3:
+            want_construct = None
+            if len(entry) == 4:
+                name, src, want_fence, want_construct = entry
+            elif len(entry) == 3:
                 name, src, want_fence = entry
             else:
                 name, src = entry
@@ -418,6 +471,13 @@ def main() -> int:
                         "expected the FIRST fence (the Rust frozen-profile predicate) to "
                         "refuse and name the construct, but it did not — this fixture "
                         "gives the first fence no coverage"
+                    )
+                elif want_construct is not None and (
+                    f"out-of-profile construct: {want_construct})" not in serr
+                ):
+                    problems.append(
+                        f"expected the first fence to name `{want_construct}`, but it "
+                        "named a different construct"
                     )
             elif want_fence == "closure":
                 # The closure admission (native_closure.rs) names its refusals

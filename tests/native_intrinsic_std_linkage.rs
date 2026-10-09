@@ -149,6 +149,179 @@ fn an_intrinsic_outside_the_frozen_table_stays_refused() {
     );
 }
 
+/// Round-2 blocker 1: `__mind_alloc(n <= 0)` is 0 on the C runtime and a fresh
+/// arena pointer natively, so a size that is not proven positive is refused.
+#[test]
+fn an_alloc_size_not_proven_positive_is_refused() {
+    for (name, src) in [
+        (
+            "w1_alloc_zero",
+            "fn main() -> i64 {\n    let p: i64 = __mind_alloc(0);\n    if p == 0 {\n        \
+             return 1;\n    }\n    return 2;\n}\n",
+        ),
+        (
+            "w1_alloc_negative",
+            "fn main() -> i64 {\n    let p: i64 = __mind_alloc(16);\n    __mind_store_i64(p, 7);\n    \
+             let q: i64 = __mind_alloc(0 - 16);\n    if q == 0 {\n        return 1;\n    }\n    \
+             __mind_store_i64(q, 99);\n    return __mind_load_i64(p);\n}\n",
+        ),
+        (
+            "w1_alloc_variable",
+            "fn mk(n: i64) -> i64 {\n    return __mind_alloc(n);\n}\n\n\
+             fn main() -> i64 {\n    let p: i64 = mk(0);\n    if p == 0 {\n        return 1;\n    }\n    \
+             return 2;\n}\n",
+        ),
+        (
+            "w1_realloc_zero",
+            "fn main() -> i64 {\n    let p: i64 = __mind_alloc(16);\n    \
+             let q: i64 = __mind_realloc(p, 0);\n    if q == 0 {\n        return 1;\n    }\n    \
+             return 2;\n}\n",
+        ),
+    ] {
+        refused(name, src, "call.alloc_size_not_proven_positive");
+    }
+}
+
+/// Round-2 blocker 3: an f64 operand reached the frozen emitter as raw IEEE bits
+/// (`wrap_i8(300.0)` ran and exited 0; `alloc(16.0)` exhausted the arena) while
+/// MLIR refuses the type mismatch. An operand must be proven i64.
+#[test]
+fn a_float_operand_to_an_intrinsic_is_refused() {
+    for (name, src, kind) in [
+        (
+            "w1_wrap_f64",
+            "fn main() -> i64 {\n    let x: f64 = 300.0;\n    return __mind_wrap_i8(x);\n}\n",
+            "call.intrinsic_operand_not_i64",
+        ),
+        (
+            // The size is a float, so it is not a proven positive integer constant
+            // either; the size check runs first and names itself.
+            "w1_alloc_f64",
+            "fn main() -> i64 {\n    let n: f64 = 16.0;\n    let p: i64 = __mind_alloc(n);\n    \
+             __mind_store_i64(p, 3);\n    return __mind_load_i64(p);\n}\n",
+            "call.alloc_size_not_proven_positive",
+        ),
+        (
+            "w1_store_f64",
+            "fn main() -> i64 {\n    let p: i64 = __mind_alloc(8);\n    let x: f64 = 1.5;\n    \
+             __mind_store_i64(p, x);\n    let v: i64 = __mind_load_i64(p);\n    \
+             if v == 1 {\n        return 1;\n    }\n    if v == 0 {\n        return 0;\n    }\n    \
+             return 2;\n}\n",
+            "call.intrinsic_operand_not_i64",
+        ),
+        (
+            "w1_load_f64_addr",
+            "fn main() -> i64 {\n    let p: f64 = 8.0;\n    return __mind_load_i8(p);\n}\n",
+            "call.intrinsic_operand_not_i64",
+        ),
+    ] {
+        refused(name, src, kind);
+    }
+}
+
+/// The result side of the same rule: `let y: f64 = __mind_load_i64(p)` compared
+/// the loaded bits as a double natively (exit 1) while the MLIR backend refuses the
+/// program (`mlir-opt`: i64 vs f64). An intrinsic's result must stay an i64.
+#[test]
+fn an_intrinsic_result_used_as_a_float_is_refused() {
+    refused(
+        "w1_load_as_f64",
+        "fn main() -> i64 {\n    let p: i64 = __mind_alloc(8);\n    \
+         __mind_store_i64(p, 4609434218613702656);\n    let y: f64 = __mind_load_i64(p);\n    \
+         if y == 1.5 {\n        return 1;\n    }\n    if y > 1000.0 {\n        return 3;\n    }\n    \
+         return 2;\n}\n",
+        "call.intrinsic_result_not_i64",
+    );
+}
+
+/// Builds `src` with the MLIR backend and returns the artifact's exit code.
+#[cfg(all(feature = "mlir-build", target_os = "linux", target_arch = "x86_64"))]
+fn mlir_exit(p: &Project, name: &str) -> Option<i32> {
+    let out = p.root().join("mlir.out");
+    let res = std::process::Command::new(native_bridge_support::MINDC)
+        .args(["build", "src/main.mind", "--out"])
+        .arg(&out)
+        .current_dir(p.root())
+        .env("MINDC_STD_DIR", native_bridge_support::repo_path("std"))
+        .output()
+        .expect("spawn mindc (mlir)");
+    if !res.status.success() {
+        let stderr = String::from_utf8_lossy(&res.stderr);
+        // A host without the MLIR toolchain cannot produce the reference; that is a
+        // capability gap, reported loudly, and a hard failure when the gate demands it.
+        assert!(
+            std::env::var_os("MIND_BENCH_REQUIRE").is_none() && stderr.contains("PATH"),
+            "{name}: the MLIR reference build failed:\n{stderr}"
+        );
+        eprintln!("{name}: MLIR toolchain unavailable, parity leg skipped:\n{stderr}");
+        return None;
+    }
+    let bytes = std::fs::read(&out).expect("mlir artifact");
+    Some(native_bridge_support::run(&bytes))
+}
+
+/// Round-2 blocker 2: on failure the frozen emitter's raw syscalls return
+/// `-errno`, and so must the C runtime the MLIR backend links. Each program builds
+/// on both backends and exits with the same value, equal to an oracle derived from
+/// the Linux errno numbers (ENOENT 2, EBADF 9, EFAULT 14).
+#[cfg(all(feature = "mlir-build", target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn io_error_results_match_the_mlir_backend() {
+    let missing_path: String = b"/nonexistent-mind-dir/no/such/file\0"
+        .iter()
+        .enumerate()
+        .map(|(i, b)| format!("    __mind_store_i8(path + {i}, {b});\n"))
+        .collect();
+    let dev_zero: String = b"/dev/zero\0"
+        .iter()
+        .enumerate()
+        .map(|(i, b)| format!("    __mind_store_i8(path + {i}, {b});\n"))
+        .collect();
+    let open_missing = format!(
+        "fn main() -> i64 {{\n    let path: i64 = __mind_alloc(64);\n{missing_path}    \
+         let fd: i64 = __mind_open(path);\n    return fd + 100;\n}}\n"
+    );
+    let cases: [(&str, String, i32); 3] = [
+        ("w1_open_missing", open_missing, 100 - 2),
+        (
+            "w1_bad_fd",
+            "fn main() -> i64 {\n    let buf: i64 = __mind_alloc(8);\n    __mind_store_i8(buf, 65);\n    \
+             let w: i64 = __mind_write(99, buf, 1, 0 - 1);\n    \
+             let r: i64 = __mind_read(99, buf, 1, 0 - 1);\n    \
+             let z: i64 = __mind_write(1, buf, 0, 0 - 1);\n    return w + 100 + r * 3 + z;\n}\n"
+                .to_string(),
+            -9 + 100 - 27,
+        ),
+        (
+            "w1_null_and_empty",
+            format!(
+                "fn main() -> i64 {{\n    let path: i64 = __mind_alloc(16);\n{dev_zero}    \
+                 let fd: i64 = __mind_open(path);\n    if fd < 3 {{\n        return 1;\n    }}\n    \
+                 let buf: i64 = __mind_alloc(8);\n    \
+                 let a: i64 = __mind_read(fd, 0, 8, 0 - 1);\n    \
+                 let b: i64 = __mind_write(99, buf, 0, 0 - 1);\n    \
+                 let c: i64 = __mind_write(1, buf, 0 - 5, 0 - 1);\n    \
+                 let d: i64 = if c < 0 {{ 0 }} else {{ 50 }};\n    \
+                 return 200 + a + b * 2 + d;\n}}\n"
+            ),
+            // read(fd, NULL, 8) on /dev/zero = -EFAULT; write(99, buf, 0) = -EBADF
+            // (the fd is checked before the count); a negative count fails.
+            200 - 14 - 18,
+        ),
+    ];
+    for (name, src, expected) in cases {
+        let p = Project::new(name);
+        p.write("src/main.mind", &src);
+        let (code, stderr, bytes) = p.build_native("src/main.mind");
+        assert_eq!(code, 0, "{name}: expected a native build:\n{stderr}");
+        let native = native_bridge_support::run(&bytes.expect("artifact"));
+        assert_eq!(native, expected, "{name}: native exit");
+        if let Some(mlir) = mlir_exit(&p, name) {
+            assert_eq!(mlir, native, "{name}: MLIR exit != native exit");
+        }
+    }
+}
+
 // ---- W3 / W3b: the evidence shape and calls into std ----------------------
 
 /// The evidence programs define their own SHA-256 helpers under names std.sha256
@@ -171,9 +344,23 @@ fn a_call_into_seed_std_resolves_and_runs() {
     build_ok(
         "w3b_vec",
         "import std.vec;\n\n\
-         fn main() -> i64 {\n    let v = vec_new();\n    let w = vec_push(v, 7);\n    \
-         let x = vec_push(w, 35);\n    return vec_get(x, 0) + vec_get(x, 1);\n}\n",
+         fn main() -> i64 {\n    let v = vec_new();\n    \
+         return vec_len(v) + vec_cap(v) + 42;\n}\n",
         42,
+    );
+}
+
+/// `vec_push` grows through `__mind_realloc(v.addr, new_cap * 8)`, a size the
+/// fence cannot prove positive, so the linked body is refused (the frozen arena
+/// returns a pointer where the C runtime returns 0 for a size <= 0).
+#[test]
+fn a_linked_std_body_with_an_unproven_alloc_size_is_refused() {
+    refused(
+        "w3b_vec_push",
+        "import std.vec;\n\n\
+         fn main() -> i64 {\n    let v = vec_new();\n    let w = vec_push(v, 7);\n    \
+         return vec_get(w, 0);\n}\n",
+        "call.alloc_size_not_proven_positive",
     );
 }
 
