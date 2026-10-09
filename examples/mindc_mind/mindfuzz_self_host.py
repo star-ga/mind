@@ -59,16 +59,28 @@ Generator subset (seeded, deterministic; every program terminates)
 
 Semantics of disagreement / refusal
 -----------------------------------
-  * EITHER oracle fail-closes a program (self-host len-0 ELF / Rust parse or
-    lower rejection)  -> SKIPPED (logged + counted), NOT a failure: the
-    fuzzer targets the intersection both accept. A skip histogram is printed.
+  * the SELF-HOST emitter fail-closes a program (len-0 ELF)  -> refused
+    (logged + counted), NOT a failure: a refusal is the emitter's documented
+    fail-closed contract (never a wrong note). The count is printed.
+  * the self-host EMITS a note but the Rust oracle rejects the program
+    (dump_ref parse/lower failure)  -> FAIL exit 1. The self-host accepted a
+    program the reference rejects — that is a divergence too, and a gate that
+    let it through as a "skip" could measure nothing (it did, for a month,
+    while the dump_ref oracle was broken).
   * both accept, notes differ -> MINIMIZE (delta-debounce over the AST), print
     the minimal reproducer + note hex + first-diverging mic@3 bytes, stage it
     under mindfuzz_self_host_staged/, exit 1.
   * both accept, notes agree  -> counted toward K.
   * K == 0 (nothing both accept) -> FAIL exit 1: a fuzzer that compared
     nothing proves nothing — never a silent green.
-  * .so unbuildable / cargo absent -> BLOCKED exit 2 (honest, no fake pass).
+  * .so unbuildable / cargo absent / the `add` sanity fixture does not match
+    -> FAIL exit 1, labelled BLOCKED (the oracle mechanism is unavailable; a
+    gate that cannot compare anything is a failed gate, never a skipped one).
+
+Gate use (CI): the seed and count are pinned on the command line
+(`--seed 1234 --count 200`); an explicit `--count` always wins over the
+$MINDFUZZ_SELFHOST_ITERS default override, so the gate is deterministic.
+Every compared batch / program prints one PASS or MISMATCH verdict line.
 
 Batching (speed): accepted programs are grouped (--batch, default 8) into ONE
 combined source (entries renamed fzN + one synthetic main calling fz0 — every
@@ -903,9 +915,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description="Differential fuzzer: pure-MIND self-host mic@3 note vs the "
                     "Rust emit_mic3 reference note over generated programs.")
-    ap.add_argument("--count", type=int, default=DEFAULT_COUNT,
+    ap.add_argument("--count", type=int, default=None,
                     help=f"number of programs to generate (default {DEFAULT_COUNT}; "
-                         f"$MINDFUZZ_SELFHOST_ITERS overrides the default)")
+                         f"$MINDFUZZ_SELFHOST_ITERS overrides the DEFAULT only — an "
+                         f"explicit --count always wins)")
     ap.add_argument("--seed", type=int, default=DEFAULT_SEED,
                     help=f"PRNG seed — runs are fully reproducible (default {DEFAULT_SEED})")
     ap.add_argument("--batch", type=int, default=DEFAULT_BATCH,
@@ -916,11 +929,14 @@ def main() -> int:
     args = ap.parse_args()
 
     count = args.count
-    if count == DEFAULT_COUNT and os.environ.get("MINDFUZZ_SELFHOST_ITERS"):
-        try:
-            count = max(1, int(os.environ["MINDFUZZ_SELFHOST_ITERS"]))
-        except ValueError:
-            pass
+    if count is None:
+        count = DEFAULT_COUNT
+        if os.environ.get("MINDFUZZ_SELFHOST_ITERS"):
+            try:
+                count = max(1, int(os.environ["MINDFUZZ_SELFHOST_ITERS"]))
+            except ValueError:
+                print("FAIL  $MINDFUZZ_SELFHOST_ITERS is not an integer")
+                return 1
     if count < 1:
         print("FAIL  --count must be >= 1")
         return 1
@@ -929,18 +945,18 @@ def main() -> int:
     # --- oracle setup (fail LOUD / BLOCKED, never a fake pass) ---------------
     so = resolve_so()  # MINDC_SO verbatim; else FRESH mindc-built .so; else legacy
     if not so.exists():
-        print(f"BLOCKED: self-host .so unavailable ({so}) — cannot build/load "
+        print(f"FAIL  BLOCKED: self-host .so unavailable ({so}) — cannot build/load "
               f"libmindc_mind.so (set MINDC_SO or build target/release/mindc)")
-        return 2
+        return 1
     try:
         sh = SelfHost(so)
     except OSError as e:
-        print(f"BLOCKED: dlopen({so}) failed: {e}")
-        return 2
+        print(f"FAIL  BLOCKED: dlopen({so}) failed: {e}")
+        return 1
     if shutil.which("cargo") is None:
-        print("BLOCKED: cargo not on PATH — the Rust emit_mic3 reference note "
+        print("FAIL  BLOCKED: cargo not on PATH — the Rust emit_mic3 reference note "
               "cannot be derived (no frozen-note fallback in this fuzzer)")
-        return 2
+        return 1
 
     std = std_blob()
     gen = Gen(args.seed)
@@ -956,10 +972,10 @@ def main() -> int:
                   "fn main() -> i64 {\n    return add(2, 3);\n}\n")
         st, _shn, _run = harness.check_source(sanity)
         if st != MATCH:
-            print(f"BLOCKED: sanity fixture `add` did not MATCH across the twin "
+            print(f"FAIL  BLOCKED: sanity fixture `add` did not MATCH across the twin "
                   f"emitters (status={st}) — the oracle mechanism itself is broken; "
                   "refusing to fuzz on top of it")
-            return 2
+            return 1
 
         print(f"[mindfuzz_self_host] seed={args.seed} count={count} batch={batch} "
               f"so={so.name} std_blob={len(std)}B")
@@ -976,7 +992,7 @@ def main() -> int:
             if sh_note is None:
                 skipped_sh += 1
                 if args.verbose:
-                    print(f"  [{i:4}] SKIP  self-host fail-closed (len-0 / malformed)")
+                    print(f"  [{i:4}] refused: self-host fail-closed (len-0 / malformed)")
                 continue
             programs.append((i, fns, src, sh_note))
             if args.verbose:
@@ -1002,13 +1018,12 @@ def main() -> int:
                 rust_note = rust.seeded_note(src, tmp)
                 if rust_note is None:
                     skipped_rust += 1
-                    if args.verbose:
-                        print(f"  [{i:4}] SKIP  rust rejected (dump_ref failed/panicked)")
+                    print(f"  [{i:4}] REJECTED-BY-RUST (dump_ref failed/panicked) "
+                          f"after the self-host emitted a note")
                     continue
                 if rust_note == sh_note:
                     matched += 1
-                    if args.verbose:
-                        print(f"  [{i:4}] MATCH note {sh_note.hex()[:12]}...")
+                    print(f"  PASS  [{i:4}] note {sh_note.hex()[:12]}... identical")
                 else:
                     failing.append((i, fns, src, sh_note, rust_note))
                     print(f"  [{i:4}] MISMATCH selfhost={sh_note.hex()[:12]}... "
@@ -1023,9 +1038,8 @@ def main() -> int:
             bnote_ru = rust.seeded_note(bsrc, tmp) if bnote_sh is not None else None
             if bnote_sh is not None and bnote_ru is not None and bnote_sh == bnote_ru:
                 matched += len(group)
-                if args.verbose:
-                    print(f"  [batch {gi}] MATCH {len(group)} programs "
-                          f"(note {bnote_sh.hex()[:12]}...)")
+                print(f"  PASS  [batch {gi}] {len(group)} programs "
+                      f"(ids {ids[0]}..{ids[-1]}) note {bnote_sh.hex()[:12]}... identical")
                 continue
 
             # Fast path failed (batch closed / rust rejected / batch mismatch):
@@ -1038,19 +1052,17 @@ def main() -> int:
                 rust_note = rust.seeded_note(src, tmp)
                 if rust_note is None:
                     skipped_rust += 1
-                    if args.verbose:
-                        print(f"  [{i:4}] SKIP  rust rejected")
+                    print(f"  [{i:4}] REJECTED-BY-RUST (dump_ref failed/panicked) "
+                          f"after the self-host emitted a note")
                     continue
                 if rust_note == sh_note:
                     matched += 1
-                    if args.verbose:
-                        print(f"  [{i:4}] MATCH (fallback) note {sh_note.hex()[:12]}...")
+                    print(f"  PASS  [{i:4}] (fallback) note {sh_note.hex()[:12]}... identical")
                 else:
                     failing.append((i, fns, src, sh_note, rust_note))
                     print(f"  [{i:4}] MISMATCH selfhost={sh_note.hex()[:12]}... "
                           f"rust={rust_note.hex()[:12]}...")
 
-        skipped = skipped_sh + skipped_rust
 
         # --- verdict ----------------------------------------------------------
         if failing:
@@ -1080,6 +1092,12 @@ def main() -> int:
                   "mic@3 divergence over the generated space")
             return 1
 
+        if skipped_rust:
+            print(f"\nFAIL  {skipped_rust} program(s) the self-host EMITTED a note for were "
+                  f"rejected by the Rust dump_ref oracle — an accept/reject divergence "
+                  f"(or a broken oracle); never counted as a skip  [seed={args.seed}]")
+            return 1
+
         if matched == 0:
             print(f"\nFAIL  0 of {count} generated programs were accepted by BOTH "
                   f"oracles ({skipped_sh} self-host fail-closed, {skipped_rust} "
@@ -1087,10 +1105,10 @@ def main() -> int:
                   "refusing a silent green")
             return 1
 
-        print(f"\nPASS  mindfuzz_self_host: {count} generated, {matched} "
-              f"accepted-and-matched (mic@3 notes byte-identical across the twin "
-              f"emitters), {skipped} skipped ({skipped_sh} self-host fail-closed / "
-              f"{skipped_rust} rust-rejected)  [seed={args.seed}]")
+        print(f"\nmindfuzz_self_host: 0 divergences — {count} generated, {matched} "
+              f"compared with mic@3 notes byte-identical across the twin emitters, "
+              f"{skipped_sh} refused by the self-host (fail-closed), 0 rust-rejected  "
+              f"[seed={args.seed} count={count}]")
         return 0
 
 

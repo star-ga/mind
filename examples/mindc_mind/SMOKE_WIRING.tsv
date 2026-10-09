@@ -49,7 +49,7 @@ method_calls_smoke	ci	gate
 mic3_flip_smoke	ci,keystone,preflight	gate	
 mic3_oracle_smoke	ci	gate	
 mic3_primitives_smoke	ci,keystone,preflight	gate	
-mindfuzz_self_host	none	gate	RED at this commit: real twin-emitter mic@3 divergence over the generated space (measured `--count 12`: 4/6 compared programs diverged, first diverge @ byte 68 selfhost=0x00 rust=0x05; the known if-body-lets SSA-id class, minimal repro staged under tests/mindfuzz_cross_substrate/staged/). deferred: wire into CI once the self-host/Rust mic@3 id-namespace divergence is fixed; a full default run also needs a budget above the ~180s used here.
+mindfuzz_self_host	ci	gate	
 mod_operator_smoke	ci,keystone	gate	
 multi_let_smoke	ci	gate	
 now_ns_smoke	none	gate	RED at this commit: `mindc build` cannot lower std.time — warning[type-check][E2024] `__mind_now_ns` is not registered in STD_SURFACE_INTRINSICS, so the substrate compile for std.time fails. deferred: wire once __mind_now_ns is in the Rust/MLIR intrinsic table (or the smoke is retargeted at the native-ELF self-host path that does implement it).

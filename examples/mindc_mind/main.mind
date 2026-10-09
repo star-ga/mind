@@ -14293,7 +14293,15 @@ pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
             __mind_store_i64(okcell, 0);
             return s;
         }
-        let _ap: i64 = bind_append(acc, acc_cell, seg_bind, __mind_load_i64(seg_nb), 0);
+        // FALL-THROUGH walks (esc_to_lv==1): a bubbled binding of a name this block already
+        // DECLARED with `let` is a write to that branch-local declaration — lower.rs keeps
+        // it in `then_local_decls`, out of the merge set — so it must not enter `acc` (it
+        // still rebinds the lv-env below, so later reads in the block see the merge id).
+        let _ap: i64 = if esc_to_lv == 1 {
+            bind_append_nonlocal(acc, acc_cell, seg_bind, __mind_load_i64(seg_nb), stmts_addr, idx, buf, 0)
+        } else {
+            bind_append(acc, acc_cell, seg_bind, __mind_load_i64(seg_nb), 0)
+        };
         // FALL-THROUGH walks (esc_to_lv==1): a segment's escaping bindings are LIVE for the
         // rest of the block, so a later statement that REDEFINES one of these names (a shadow)
         // sees the outer vid in the env and its own merge reuses it (bound, no placeholder).
@@ -15041,6 +15049,48 @@ pub fn bind_append(acc_bind: i64, acc_cell: i64, src: i64, n: i64, i: i64) -> i6
     bind_append(acc_bind, acc_cell, src, n, i + 1)
 }
 
+// bind_append for a FALL-THROUGH walk: skip records whose NAME is declared by a top-level
+// `let` among the block's statements [0, upto) — those names are branch-local (see
+// emit_mixed_walk) — and fold a name already in `acc` into its existing record.
+pub fn bind_append_nonlocal(acc_bind: i64, acc_cell: i64, src: i64, n: i64, stmts_addr: i64, upto: i64, buf: i64, i: i64) -> i64 {
+    if i >= n {
+        return __mind_load_i64(acc_cell);
+    }
+    let lo: i64 = __mind_load_i64(src + i * 24 + 0);
+    let hi: i64 = __mind_load_i64(src + i * 24 + 8);
+    if block_lets_name_before(stmts_addr, upto, buf, lo, hi, 0) == 0 {
+        // One merge per name (F2): a name this block already escapes (an earlier assign or
+        // segment) keeps its FIRST position and takes the LATER value, as lower.rs's
+        // merged_names / branch-exit env does — never a second binding for the same name.
+        let at: i64 = __mind_load_i64(acc_cell);
+        let dup: i64 = binddup_find(acc_bind, at, buf, lo, hi, 0);
+        if dup >= 0 {
+            __mind_store_i64(acc_bind + dup * 24 + 16, __mind_load_i64(src + i * 24 + 16))
+        } else {
+            __mind_store_i64(acc_bind + at * 24 + 0, lo);
+            __mind_store_i64(acc_bind + at * 24 + 8, hi);
+            __mind_store_i64(acc_bind + at * 24 + 16, __mind_load_i64(src + i * 24 + 16));
+            __mind_store_i64(acc_cell, at + 1)
+        }
+    }
+    bind_append_nonlocal(acc_bind, acc_cell, src, n, stmts_addr, upto, buf, i + 1)
+}
+
+// Is buf[lo..hi) the name of a top-level `let` among stmts[j..upto)? Returns 1 / 0.
+pub fn block_lets_name_before(stmts_addr: i64, upto: i64, buf: i64, lo: i64, hi: i64, j: i64) -> i64 {
+    if j >= upto {
+        return 0;
+    }
+    let st: i64 = __mind_load_i64(stmts_addr + j * 8);
+    if ast_kind(st) == ast_let() {
+        let nm: i64 = ast_child0(st);
+        if span_bytes_equal(buf, lo, hi, ast_span_lo(nm), ast_span_hi(nm)) == 1 {
+            return 1;
+        }
+    }
+    block_lets_name_before(stmts_addr, upto, buf, lo, hi, j + 1)
+}
+
 // Find a 24-byte (name_lo, name_hi, *) record in `acc` [0,n) whose NAME (compared by
 // content in `buf`) equals buf[lo..hi). Returns its index or -1.
 pub fn binddup_find(acc: i64, n: i64, buf: i64, lo: i64, hi: i64, i: i64) -> i64 {
@@ -15384,9 +15434,12 @@ pub fn emit_if_let_seq_then_instr_lv(s: EmitState, if_node: i64, buf: i64, param
     // so they do NOT escape. Drop acc_copy_lvbuf(nlets leading lets); the escape set is only
     // the if-segments' bubbled bindings (real outer-assignment escapes from nested ifs). The
     // let INITS still emit above (emit_let_inits_lv) — only the spurious escape record drops.
-    let raw_nb: i64 = t4_nb;
-    let raw: i64 = __mind_alloc((raw_nb + 1) * 24);
-    let _c2: i64 = acc_copy_acc(raw, 0, t4_acc, t4_nb, 0);
+    // A bubbled binding whose name is DECLARED by one of this block's leading lets is a
+    // write to that branch-local declaration, not to an outer name — eval/lower.rs records
+    // it in `then_local_decls` and excludes it from the merge set (block-scoped). Keep only
+    // bubbled bindings of names declared OUTSIDE this block.
+    let raw: i64 = __mind_alloc((t4_nb + 1) * 24);
+    let raw_nb: i64 = acc_drop_local_decls(raw, 0, t4_acc, t4_nb, buf, lvbuf + nlv0 * 24, nlets, 0);
     // Dedup same-name escaping bindings (a leading let shadowed by a same-name bubbled
     // if-segment binding, e.g. `let x=..; if c { let x=.. }`) into ONE merge per name:
     // first-seen position, LAST value wins (SSA F2 — the name's value after the block is
@@ -15416,6 +15469,24 @@ pub fn emit_if_let_seq_then_instr_lv(s: EmitState, if_node: i64, buf: i64, param
     s18
 }
 
+// Copy the 24-byte acc records of `src[0..n)` into `dst` from index `k`, SKIPPING any
+// whose name is bound in the `nloc`-entry lv-env `locals` (the enclosing block's own
+// leading-let declarations). Returns the number of records kept.
+pub fn acc_drop_local_decls(dst: i64, k: i64, src: i64, n: i64, buf: i64, locals: i64, nloc: i64, i: i64) -> i64 {
+    if i >= n {
+        return k;
+    }
+    let lo: i64 = __mind_load_i64(src + i * 24 + 0);
+    let hi: i64 = __mind_load_i64(src + i * 24 + 8);
+    if lvenv_lookup(buf, lo, hi, locals, nloc, 0) >= 0 {
+        return acc_drop_local_decls(dst, k, src, n, buf, locals, nloc, i + 1);
+    }
+    __mind_store_i64(dst + k * 24 + 0, lo);
+    __mind_store_i64(dst + k * 24 + 8, hi);
+    __mind_store_i64(dst + k * 24 + 16, __mind_load_i64(src + i * 24 + 16));
+    acc_drop_local_decls(dst, k + 1, src, n, buf, locals, nloc, i + 1)
+}
+
 // Copy `n` 24-byte lv-env entries from src to dst. Returns 1.
 pub fn lvenv_copy(dst: i64, src: i64, n: i64, i: i64) -> i64 {
     if i >= n {
@@ -15443,6 +15514,22 @@ pub fn fallthrough_all_sidefx(stmts_addr: i64, stmts_len: i64, i: i64) -> i64 {
         return 0;
     }
     fallthrough_all_sidefx(stmts_addr, stmts_len, i + 1)
+}
+
+// Fall-through block value: eval/lower.rs's lower_stmt_seq returns the LAST statement's
+// value id, and a `let x = E` / reassign `x = E` both bind `x` to E's id — so for either
+// form the block value is the name's stored lv-env vid. That differs from then_end-1 only
+// when E emits no instruction (an alias `x = <live var>`); a reassign must take the same
+// path as a let or the emitted then/else_result diverges from `mindc --emit-mic3`.
+pub fn stmt_binds_name_last(stmt: i64) -> i64 {
+    let k: i64 = ast_kind(stmt);
+    if k == ast_let() {
+        return 1;
+    }
+    if k == ast_assign() {
+        return 1;
+    }
+    0
 }
 
 // Emit an else-less `if C { <lets + bare-call side-effects> }` whose then-block FALLS
@@ -15525,7 +15612,7 @@ pub fn emit_if_fallthrough_lv(s: EmitState, if_node: i64, buf: i64, params_addr:
         0
     };
     let then_result_v: i64 = if ft_last_stmt != 0 {
-        if ast_kind(ft_last_stmt) == ast_let() {
+        if stmt_binds_name_last(ft_last_stmt) == 1 {
             let ftn: i64 = ast_child0(ft_last_stmt);
             let ftv: i64 = lvenv_lookup(buf, ast_span_lo(ftn), ast_span_hi(ftn), lvbuf, __mind_load_i64(e_nlv), 0);
             if ftv >= 0 {
@@ -16073,7 +16160,7 @@ pub fn emit_if_else_fallthrough_lv(s: EmitState, if_node: i64, buf: i64, params_
         0
     };
     let then_result2: i64 = if then_last_stmt != 0 {
-        if ast_kind(then_last_stmt) == ast_let() {
+        if stmt_binds_name_last(then_last_stmt) == 1 {
             let tln: i64 = ast_child0(then_last_stmt);
             let tlv: i64 = lvenv_lookup(buf, ast_span_lo(tln), ast_span_hi(tln), then_lvbuf, __mind_load_i64(then_e_nlv), 0);
             if tlv >= 0 {
@@ -16128,7 +16215,7 @@ pub fn emit_if_else_fallthrough_lv(s: EmitState, if_node: i64, buf: i64, params_
         0
     };
     let else_result2: i64 = if else_last_stmt != 0 {
-        if ast_kind(else_last_stmt) == ast_let() {
+        if stmt_binds_name_last(else_last_stmt) == 1 {
             let eln: i64 = ast_child0(else_last_stmt);
             let elv: i64 = lvenv_lookup(buf, ast_span_lo(eln), ast_span_hi(eln), else_lvbuf, __mind_load_i64(else_e_nlv), 0);
             if elv >= 0 {
@@ -17417,6 +17504,7 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                     let _i9lv: i64 = seq_env_to_lvenv(env, nlets, 0, i9_lvenv, 0, 0);
                     let i9_bo: i64 = __mind_alloc(64 * 24);
                     let i9_nb: i64 = __mind_alloc(8);
+                    __mind_store_i64(i9_nb, 0);
                     let i9p: EmitState = emit_if_else_fallthrough_lv(es_new(), stmt, src, params_addr, n_params, i9_nodes, i9_cursor, i9_vidbuf, 0, i9_cell, i9_lvenv, nlets, 0, 0, 0, 0, i9_bo, i9_nb);
                     let i9_dst: i64 = __mind_load_i64(i9_cell);
                     if i9_dst >= 0 {
@@ -17426,6 +17514,9 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                         __mind_store_i64(plan + p * 64 + 24, params_addr);
                         __mind_store_i64(plan + p * 64 + 32, n_params);
                         __mind_store_i64(nplan_cell, p + 1);
+                        if seq_flatten_overlay(i9_bo, __mind_load_i64(i9_nb), nodes, cursor, env, nlets_cell, plan, p) == 0 {
+                            return 0;
+                        }
                         return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
                     }
                 }
@@ -17461,6 +17552,7 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                 let g_lvbuf: i64 = __mind_alloc((nlets + g_nlets + 8) * 24);
                 let g_bo: i64 = __mind_alloc(64 * 24);
                 let g_nb: i64 = __mind_alloc(8);
+                __mind_store_i64(g_nb, 0);
                 let gp: EmitState = emit_if_let_seq_then_instr_lv(es_new(), stmt, src, params_addr, n_params, g_nodes, g_cursor, g_vidbuf, 0, g_cell, g_lvenv, nlets, g_lvbuf, 0, 0, 0, g_bo, g_nb);
                 let g_dst: i64 = __mind_load_i64(g_cell);
                 if g_dst >= 0 {
@@ -17470,6 +17562,9 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                     __mind_store_i64(plan + p * 64 + 24, params_addr);
                     __mind_store_i64(plan + p * 64 + 32, n_params);
                     __mind_store_i64(nplan_cell, p + 1);
+                    if seq_flatten_overlay(g_bo, __mind_load_i64(g_nb), nodes, cursor, env, nlets_cell, plan, p) == 0 {
+                        return 0;
+                    }
                     return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
                 }
             }
@@ -17489,6 +17584,7 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                 let ft_lvbuf: i64 = __mind_alloc((nlets + then_sl + 512) * 24);
                 let ft_bo: i64 = __mind_alloc(64 * 24);
                 let ft_nb: i64 = __mind_alloc(8);
+                __mind_store_i64(ft_nb, 0);
                 let ftp: EmitState = emit_if_fallthrough_lv(es_new(), stmt, src, params_addr, n_params, ft_nodes, ft_cursor, ft_vidbuf, 0, ft_cell, ft_lvenv, nlets, ft_lvbuf, 0, 0, 0, ft_bo, ft_nb);
                 let ft_dst: i64 = __mind_load_i64(ft_cell);
                 if ft_dst >= 0 {
@@ -17498,6 +17594,9 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                     __mind_store_i64(plan + p * 64 + 24, params_addr);
                     __mind_store_i64(plan + p * 64 + 32, n_params);
                     __mind_store_i64(nplan_cell, p + 1);
+                    if seq_flatten_overlay(ft_bo, __mind_load_i64(ft_nb), nodes, cursor, env, nlets_cell, plan, p) == 0 {
+                        return 0;
+                    }
                     return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
                 }
             }
@@ -17524,6 +17623,7 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                         let p4_lvbuf: i64 = __mind_alloc((nlets + t4_nlets + 8) * 24);
                         let p4_bo: i64 = __mind_alloc(64 * 24);
                         let p4_nb: i64 = __mind_alloc(8);
+                        __mind_store_i64(p4_nb, 0);
                         let p4: EmitState = emit_if_let_seq_then_instr_lv(es_new(), stmt, src, params_addr, n_params, p4_nodes, p4_cursor, p4_vidbuf, 0, p4_cell, p4_lvenv, nlets, p4_lvbuf, 0, 0, 0, p4_bo, p4_nb);
                         let p4_dst: i64 = __mind_load_i64(p4_cell);
                         if p4_dst >= 0 {
@@ -17533,6 +17633,9 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                             __mind_store_i64(plan + p * 64 + 24, params_addr);
                             __mind_store_i64(plan + p * 64 + 32, n_params);
                             __mind_store_i64(nplan_cell, p + 1);
+                            if seq_flatten_overlay(p4_bo, __mind_load_i64(p4_nb), nodes, cursor, env, nlets_cell, plan, p) == 0 {
+                                return 0;
+                            }
                             return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
                         }
                     }
@@ -17553,6 +17656,7 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                         let _q5lv: i64 = seq_env_to_lvenv(env, nlets, 0, q5_lvenv, 0, 0);
                         let q5_bindout: i64 = __mind_alloc(64 * 24);
                         let q5_nbind: i64 = __mind_alloc(8);
+                        __mind_store_i64(q5_nbind, 0);
                         let q5: EmitState = emit_if_chain_instr_lv(es_new(), stmt, src, params_addr, n_params, q5_nodes, q5_cursor, q5_vidbuf, 0, q5_cell, q5_lvenv, nlets, 0, 0, 0, q5_bindout, q5_nbind);
                         let q5_dst: i64 = __mind_load_i64(q5_cell);
                         if q5_dst >= 0 {
@@ -17562,6 +17666,9 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                             __mind_store_i64(plan + p * 64 + 24, params_addr);
                             __mind_store_i64(plan + p * 64 + 32, n_params);
                             __mind_store_i64(nplan_cell, p + 1);
+                            if seq_flatten_overlay(q5_bindout, __mind_load_i64(q5_nbind), nodes, cursor, env, nlets_cell, plan, p) == 0 {
+                                return 0;
+                            }
                             return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
                         }
                     }
@@ -17602,6 +17709,7 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                 let _p6lv: i64 = seq_env_to_lvenv(env, nlets, 0, p6_lvenv, 0, 0);
                 let p6_bindout: i64 = __mind_alloc(64 * 24);
                 let p6_nbind: i64 = __mind_alloc(8);
+                __mind_store_i64(p6_nbind, 0);
                 let p6: EmitState = emit_if_mixed_then_instr_lv(es_new(), stmt, src, params_addr, n_params, p6_nodes, p6_cursor, p6_vidbuf, 0, p6_cell, p6_lvenv, nlets, 0, 0, 0, p6_bindout, p6_nbind);
                 let p6_dst: i64 = __mind_load_i64(p6_cell);
                 if p6_dst >= 0 {
@@ -17611,6 +17719,9 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                     __mind_store_i64(plan + p * 64 + 24, params_addr);
                     __mind_store_i64(plan + p * 64 + 32, n_params);
                     __mind_store_i64(nplan_cell, p + 1);
+                    if seq_flatten_overlay(p6_bindout, __mind_load_i64(p6_nbind), nodes, cursor, env, nlets_cell, plan, p) == 0 {
+                        return 0;
+                    }
                     return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
                 }
                 return 0;
@@ -17631,6 +17742,7 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
             let fs_lvbuf: i64 = __mind_alloc((nlets + then_sl + 512) * 24);
             let fs_bo: i64 = __mind_alloc(64 * 24);
             let fs_nb: i64 = __mind_alloc(8);
+            __mind_store_i64(fs_nb, 0);
             let fsp: EmitState = emit_if_fallthrough_lv(es_new(), stmt, src, params_addr, n_params, fs_nodes, fs_cursor, fs_vidbuf, 0, fs_cell, fs_lvenv, nlets, fs_lvbuf, 0, 0, 0, fs_bo, fs_nb);
             let fs_dst: i64 = __mind_load_i64(fs_cell);
             if fs_dst >= 0 {
@@ -17640,6 +17752,9 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                 __mind_store_i64(plan + p * 64 + 24, params_addr);
                 __mind_store_i64(plan + p * 64 + 32, n_params);
                 __mind_store_i64(nplan_cell, p + 1);
+                if seq_flatten_overlay(fs_bo, __mind_load_i64(fs_nb), nodes, cursor, env, nlets_cell, plan, p) == 0 {
+                    return 0;
+                }
                 return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
             }
         }
@@ -17681,6 +17796,7 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                 let _p5lv: i64 = seq_env_to_lvenv(env, nlets, 0, p5_lvenv, 0, 0);
                 let p5_bindout: i64 = __mind_alloc(64 * 24);
                 let p5_nbind: i64 = __mind_alloc(8);
+                __mind_store_i64(p5_nbind, 0);
                 let p5: EmitState = emit_if_chain_instr_lv(es_new(), stmt, src, params_addr, n_params, p5_nodes, p5_cursor, p5_vidbuf, 0, p5_cell, p5_lvenv, nlets, 0, 0, 0, p5_bindout, p5_nbind);
                 let p5_dst: i64 = __mind_load_i64(p5_cell);
                 if p5_dst >= 0 {
@@ -17690,6 +17806,9 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                     __mind_store_i64(plan + p * 64 + 24, params_addr);
                     __mind_store_i64(plan + p * 64 + 32, n_params);
                     __mind_store_i64(nplan_cell, p + 1);
+                    if seq_flatten_overlay(p5_bindout, __mind_load_i64(p5_nbind), nodes, cursor, env, nlets_cell, plan, p) == 0 {
+                        return 0;
+                    }
                     return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
                 }
                 return 0;
@@ -17774,6 +17893,9 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
             __mind_store_i64(plan + p * 64 + 32, n_params);
             __mind_store_i64(plan + p * 64 + 48, 0);
             __mind_store_i64(nplan_cell, p + 1);
+            if seq_flatten_overlay(w_merge, __mind_load_i64(w_nm), nodes, cursor, env, nlets_cell, plan, p) == 0 {
+                return 0;
+            }
             return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
         }
     }
@@ -17972,16 +18094,15 @@ pub fn seq_fix_deltas(src: i64, plan: i64, nplan: i64, env: i64, names_buf: i64,
             __mind_store_i64(plan + i * 64 + 16, p_dst + 1);
             let nb: i64 = __mind_load_i64(p_nb);
             let _ap: i64 = lvenv_append_escapes(names_buf, nnames, p_bo, nb, 0);
+            let fit5: i64 = seq_overlay_refit(src, plan, i, p_bo, nb);
             let _pr: i64 = nb_arena_reclaim(p_ckpt);
-            let p_slots: i64 = __mind_alloc((nb + 1) * 32);
-            let _ps: i64 = synth_rebind_slots(names_buf + nnames * 24, nb, nodes, cursor, p_slots, 0);
-            __mind_store_i64(plan + i * 64 + 48, nb);
-            __mind_store_i64(plan + i * 64 + 56, p_slots);
-            return seq_fix_deltas(src, plan, nplan, env, names_buf, nnames + nb, env_k, i + 1, nodes, cursor);
+            if fit5 == 0 {
+                return 0 - 1;
+            }
+            return seq_fix_deltas(src, plan, nplan, env, names_buf, nnames + nb, env_k + __mind_load_i64(plan + i * 64 + 40), i + 1, nodes, cursor);
         }
-        __mind_store_i64(plan + i * 64 + 48, 0);
         let _pr0: i64 = nb_arena_reclaim(p_ckpt);
-        return seq_fix_deltas(src, plan, nplan, env, names_buf, nnames, env_k, i + 1, nodes, cursor);
+        return seq_fix_deltas_miss(src, plan, nplan, env, names_buf, nnames, env_k, i, nodes, cursor);
     }
     if ty == 8 {
         let if8: i64 = __mind_load_i64(plan + i * 64 + 8);
@@ -18003,14 +18124,12 @@ pub fn seq_fix_deltas(src: i64, plan: i64, nplan: i64, env: i64, names_buf: i64,
             __mind_store_i64(plan + i * 64 + 16, q_dst + 1);
             let nb8: i64 = __mind_load_i64(q_nb);
             let _ap8: i64 = lvenv_append_escapes(names_buf, nnames, q_bo, nb8, 0);
-            let q_slots: i64 = __mind_alloc((nb8 + 1) * 32);
-            let _qs: i64 = synth_rebind_slots(q_bo, nb8, nodes, cursor, q_slots, 0);
-            __mind_store_i64(plan + i * 64 + 48, nb8);
-            __mind_store_i64(plan + i * 64 + 56, q_slots);
-            return seq_fix_deltas(src, plan, nplan, env, names_buf, nnames + nb8, env_k, i + 1, nodes, cursor);
+            if seq_overlay_refit(src, plan, i, q_bo, nb8) == 0 {
+                return 0 - 1;
+            }
+            return seq_fix_deltas(src, plan, nplan, env, names_buf, nnames + nb8, env_k + __mind_load_i64(plan + i * 64 + 40), i + 1, nodes, cursor);
         }
-        __mind_store_i64(plan + i * 64 + 48, 0);
-        return seq_fix_deltas(src, plan, nplan, env, names_buf, nnames, env_k, i + 1, nodes, cursor);
+        return seq_fix_deltas_miss(src, plan, nplan, env, names_buf, nnames, env_k, i, nodes, cursor);
     }
     if ty == 4 {
         let if4: i64 = __mind_load_i64(plan + i * 64 + 8);
@@ -18033,14 +18152,12 @@ pub fn seq_fix_deltas(src: i64, plan: i64, nplan: i64, env: i64, names_buf: i64,
             __mind_store_i64(plan + i * 64 + 16, r_dst + 1);
             let nb4: i64 = __mind_load_i64(r_nb);
             let _ap4: i64 = lvenv_append_escapes(names_buf, nnames, r_bo, nb4, 0);
-            let r_slots: i64 = __mind_alloc((nb4 + 1) * 32);
-            let _rs: i64 = synth_rebind_slots(r_bo, nb4, nodes, cursor, r_slots, 0);
-            __mind_store_i64(plan + i * 64 + 48, nb4);
-            __mind_store_i64(plan + i * 64 + 56, r_slots);
-            return seq_fix_deltas(src, plan, nplan, env, names_buf, nnames + nb4, env_k, i + 1, nodes, cursor);
+            if seq_overlay_refit(src, plan, i, r_bo, nb4) == 0 {
+                return 0 - 1;
+            }
+            return seq_fix_deltas(src, plan, nplan, env, names_buf, nnames + nb4, env_k + __mind_load_i64(plan + i * 64 + 40), i + 1, nodes, cursor);
         }
-        __mind_store_i64(plan + i * 64 + 48, 0);
-        return seq_fix_deltas(src, plan, nplan, env, names_buf, nnames, env_k, i + 1, nodes, cursor);
+        return seq_fix_deltas_miss(src, plan, nplan, env, names_buf, nnames, env_k, i, nodes, cursor);
     }
     if ty == 6 {
         let if6: i64 = __mind_load_i64(plan + i * 64 + 8);
@@ -18060,14 +18177,12 @@ pub fn seq_fix_deltas(src: i64, plan: i64, nplan: i64, env: i64, names_buf: i64,
             __mind_store_i64(plan + i * 64 + 16, u_dst + 1);
             let nb6: i64 = __mind_load_i64(u_nb);
             let _ap6: i64 = lvenv_append_escapes(names_buf, nnames, u_bo, nb6, 0);
-            let u_slots: i64 = __mind_alloc((nb6 + 1) * 32);
-            let _us: i64 = synth_rebind_slots(u_bo, nb6, nodes, cursor, u_slots, 0);
-            __mind_store_i64(plan + i * 64 + 48, nb6);
-            __mind_store_i64(plan + i * 64 + 56, u_slots);
-            return seq_fix_deltas(src, plan, nplan, env, names_buf, nnames + nb6, env_k, i + 1, nodes, cursor);
+            if seq_overlay_refit(src, plan, i, u_bo, nb6) == 0 {
+                return 0 - 1;
+            }
+            return seq_fix_deltas(src, plan, nplan, env, names_buf, nnames + nb6, env_k + __mind_load_i64(plan + i * 64 + 40), i + 1, nodes, cursor);
         }
-        __mind_store_i64(plan + i * 64 + 48, 0);
-        return seq_fix_deltas(src, plan, nplan, env, names_buf, nnames, env_k, i + 1, nodes, cursor);
+        return seq_fix_deltas_miss(src, plan, nplan, env, names_buf, nnames, env_k, i, nodes, cursor);
     }
     if ty == 9 {
         let if9: i64 = __mind_load_i64(plan + i * 64 + 8);
@@ -18087,14 +18202,12 @@ pub fn seq_fix_deltas(src: i64, plan: i64, nplan: i64, env: i64, names_buf: i64,
             __mind_store_i64(plan + i * 64 + 16, w_dst + 1);
             let nb9: i64 = __mind_load_i64(w_nb);
             let _ap9: i64 = lvenv_append_escapes(names_buf, nnames, w_bo, nb9, 0);
-            let w_slots: i64 = __mind_alloc((nb9 + 1) * 32);
-            let _ws: i64 = synth_rebind_slots(w_bo, nb9, nodes, cursor, w_slots, 0);
-            __mind_store_i64(plan + i * 64 + 48, nb9);
-            __mind_store_i64(plan + i * 64 + 56, w_slots);
-            return seq_fix_deltas(src, plan, nplan, env, names_buf, nnames + nb9, env_k, i + 1, nodes, cursor);
+            if seq_overlay_refit(src, plan, i, w_bo, nb9) == 0 {
+                return 0 - 1;
+            }
+            return seq_fix_deltas(src, plan, nplan, env, names_buf, nnames + nb9, env_k + __mind_load_i64(plan + i * 64 + 40), i + 1, nodes, cursor);
         }
-        __mind_store_i64(plan + i * 64 + 48, 0);
-        return seq_fix_deltas(src, plan, nplan, env, names_buf, nnames, env_k, i + 1, nodes, cursor);
+        return seq_fix_deltas_miss(src, plan, nplan, env, names_buf, nnames, env_k, i, nodes, cursor);
     }
     if ty == 10 {
         // top-level statement while: re-probe at base0=0 against the position-aware lv-env
@@ -18117,14 +18230,12 @@ pub fn seq_fix_deltas(src: i64, plan: i64, nplan: i64, env: i64, names_buf: i64,
             __mind_store_i64(plan + i * 64 + 16, __mind_load_i64(w_eb) + 1);
             let nb10: i64 = __mind_load_i64(w_nm);
             let _ap10: i64 = lvenv_append_escapes(names_buf, nnames, w_mo, nb10, 0);
-            let w_slots: i64 = __mind_alloc((nb10 + 1) * 32);
-            let _ws10: i64 = synth_rebind_slots(w_mo, nb10, nodes, cursor, w_slots, 0);
-            __mind_store_i64(plan + i * 64 + 48, nb10);
-            __mind_store_i64(plan + i * 64 + 56, w_slots);
-            return seq_fix_deltas(src, plan, nplan, env, names_buf, nnames + nb10, env_k, i + 1, nodes, cursor);
+            if seq_overlay_refit(src, plan, i, w_mo, nb10) == 0 {
+                return 0 - 1;
+            }
+            return seq_fix_deltas(src, plan, nplan, env, names_buf, nnames + nb10, env_k + __mind_load_i64(plan + i * 64 + 40), i + 1, nodes, cursor);
         }
-        __mind_store_i64(plan + i * 64 + 48, 0);
-        return seq_fix_deltas(src, plan, nplan, env, names_buf, nnames, env_k, i + 1, nodes, cursor);
+        return seq_fix_deltas_miss(src, plan, nplan, env, names_buf, nnames, env_k, i, nodes, cursor);
     }
     // Tail: types 1/2 (if-return) and 11 (bare expression statement) all land here
     // UNCHANGED (nnames/env_k pass through) — none of them binds a name, so none of
@@ -18301,6 +18412,76 @@ pub fn seq_set_rebind_vids(vidbuf: i64, slots: i64, nb: i64, base: i64, i: i64) 
     seq_set_rebind_vids(vidbuf, slots, nb, base, i + 1)
 }
 
+// FLATTEN-TIME SHADOW-MERGE OVERLAY. An escaping segment (plan types 4/5/6/8/9/10)
+// rebinds names: an if's F2 merge ids, a while's loop-carried exit ids. A LATER
+// sequence-level `let`/reassign init is flattened in Pass A against `env`, so the
+// overlay must already be in `env` when that init is flattened — otherwise the
+// init resolves the name to the PRE-segment slot (the stale binding) while
+// eval/lower.rs rebinds it (`env.insert(name, exit_id)` / the merge id). For each
+// escape record in `bo` (name_lo, name_hi, merge/exit id) synthesise a rebind slot
+// (synth_rebind_slots) and append (name_lo, name_hi, slot) to `env` so
+// letenv_lookup's last-match resolves later reads to it. plan+40 records how many
+// env entries this segment owns (the env-lockstep walkers skip that many),
+// plan+48/+56 the slot count + records; seq_fix_deltas re-fits each slot's
+// base0-relative id (seq_overlay_refit) and Pass B sets its vid
+// (seq_set_rebind_vids). Fails closed (0) if `env` would overflow its 512 entries.
+pub fn seq_flatten_overlay(bo: i64, nb: i64, nodes: i64, cursor: i64, env: i64, nlets_cell: i64, plan: i64, p: i64) -> i64 {
+    let nlets: i64 = __mind_load_i64(nlets_cell);
+    if nb < 0 {
+        return 0;
+    }
+    if nlets + nb > 500 {
+        return 0;
+    }
+    let slots: i64 = __mind_alloc((nb + 1) * 32);
+    let _ss: i64 = synth_rebind_slots(bo, nb, nodes, cursor, slots, 0);
+    let _ce: i64 = copy_rebind_to_tenv(env, nlets, slots, nb, 0);
+    __mind_store_i64(nlets_cell, nlets + nb);
+    __mind_store_i64(plan + p * 64 + 40, nb);
+    __mind_store_i64(plan + p * 64 + 48, nb);
+    __mind_store_i64(plan + p * 64 + 56, slots);
+    1
+}
+
+// seq_fix_deltas re-probe of an escaping segment against the position-aware name env:
+// the escapes must be the SAME names in the SAME order as the flatten-time overlay
+// (both probes see the same names — env carries the overlays too); copy the re-probed
+// base0-relative merge/exit id into each pre-created slot. Any disagreement returns 0
+// (fail closed — the overlay slots would otherwise carry an unset vid).
+// seq_fix_deltas re-probe MISS for an escaping segment (the position-aware probe failed
+// closed). A segment that owns flatten-time overlay slots cannot leave them with an unset
+// vid: fail the whole sequence closed (-1). One with no overlay keeps the prior behaviour
+// (no rebind slots, env_k/nnames unchanged) and continues at the next plan entry.
+pub fn seq_fix_deltas_miss(src: i64, plan: i64, nplan: i64, env: i64, names_buf: i64, nnames: i64, env_k: i64, i: i64, nodes: i64, cursor: i64) -> i64 {
+    if __mind_load_i64(plan + i * 64 + 40) > 0 {
+        return 0 - 1;
+    }
+    __mind_store_i64(plan + i * 64 + 48, 0);
+    seq_fix_deltas(src, plan, nplan, env, names_buf, nnames, env_k, i + 1, nodes, cursor)
+}
+
+pub fn seq_overlay_refit(src: i64, plan: i64, i: i64, bo: i64, nb: i64) -> i64 {
+    if nb != __mind_load_i64(plan + i * 64 + 48) {
+        return 0;
+    }
+    seq_overlay_refit_loop(src, __mind_load_i64(plan + i * 64 + 56), bo, nb, 0)
+}
+
+pub fn seq_overlay_refit_loop(src: i64, slots: i64, bo: i64, nb: i64, k: i64) -> i64 {
+    if k >= nb {
+        return 1;
+    }
+    let s_lo: i64 = __mind_load_i64(slots + k * 32 + 0);
+    let s_hi: i64 = __mind_load_i64(slots + k * 32 + 8);
+    let b_lo: i64 = __mind_load_i64(bo + k * 24 + 0);
+    let b_hi: i64 = __mind_load_i64(bo + k * 24 + 8);
+    if span_bytes_equal(src, s_lo, s_hi, b_lo, b_hi) == 0 {
+        return 0;
+    }
+    __mind_store_i64(slots + k * 32 + 24, __mind_load_i64(bo + k * 24 + 16));
+    seq_overlay_refit_loop(src, slots, bo, nb, k + 1)
+}
+
 // Copy `n` rebind slots' (name_lo, name_hi, dst_slot) from 32-byte `slots` records into
 // the 24-byte trailing-env `tenv` at `at`; return at+n. Used by build_trail_env.
 pub fn copy_rebind_to_tenv(tenv: i64, at: i64, slots: i64, n: i64, i: i64) -> i64 {
@@ -18342,12 +18523,16 @@ pub fn build_trail_env(plan: i64, nplan: i64, env: i64, tenv: i64, env_k: i64, t
     // unconditional tail below UNCHANGED — none of them bind a name, so none contributes an
     // env entry or a rebind slot; env_k/tk must NOT advance for them.)
     if seq_ty_escapes(ty) == 1 {
+        // The segment's flatten-time overlay owns plan+40 `env` entries (the same slots
+        // as the rebind records copied here) — skip them so env_k stays in lockstep.
+        let ek: i64 = env_k + __mind_load_i64(plan + i * 64 + 40);
         let rb_nb: i64 = __mind_load_i64(plan + i * 64 + 48);
         if rb_nb > 0 {
             let slots: i64 = __mind_load_i64(plan + i * 64 + 56);
             let tk2: i64 = copy_rebind_to_tenv(tenv, tk, slots, rb_nb, 0);
-            return build_trail_env(plan, nplan, env, tenv, env_k, tk2, i + 1);
+            return build_trail_env(plan, nplan, env, tenv, ek, tk2, i + 1);
         }
+        return build_trail_env(plan, nplan, env, tenv, ek, tk, i + 1);
     }
     build_trail_env(plan, nplan, env, tenv, env_k, tk, i + 1)
 }
@@ -18463,7 +18648,7 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let s4i: EmitState = emit_if_let_seq_then_instr_lv(s, if_node4, src, pa4, np4, e4_nodes, e4_cursor, e4_vidbuf, base, e4_cell, seq_lvbuf, seq_nlv, e4_lvbuf, strbuf, offs, ncount, e4_bo, e4_nb);
         let e4_n: i64 = __mind_load_i64(e4_nb);
         let _ap4: i64 = lvenv_append_escapes(seq_lvbuf, seq_nlv, e4_bo, e4_n, 0);
-        return emit_stmt_seq(s4i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta4, i + 1, seq_lvbuf, seq_nlv + e4_n, seqr, envk);
+        return emit_stmt_seq(s4i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta4, i + 1, seq_lvbuf, seq_nlv + e4_n, seqr, envk + __mind_load_i64(plan + i * 64 + 40));
     }
     if ty == 5 {
         // single nested-if-chain segment of ARBITRARY depth -> ONE OP_IF via the
@@ -18483,7 +18668,7 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let s5i: EmitState = emit_if_chain_instr_lv(s, if_node5, src, pa5, np5, e5_nodes, e5_cursor, e5_vidbuf, base, e5_cell, seq_lvbuf, seq_nlv, strbuf, offs, ncount, e5_bindout, e5_nbind);
         let e5_n: i64 = __mind_load_i64(e5_nbind);
         let _ap5: i64 = lvenv_append_escapes(seq_lvbuf, seq_nlv, e5_bindout, e5_n, 0);
-        return emit_stmt_seq(s5i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta5, i + 1, seq_lvbuf, seq_nlv + e5_n, seqr, envk);
+        return emit_stmt_seq(s5i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta5, i + 1, seq_lvbuf, seq_nlv + e5_n, seqr, envk + __mind_load_i64(plan + i * 64 + 40));
     }
     if ty == 7 {
         // let = if-EXPRESSION -> ONE OP_IF (value). Self-contained scratch; the seq
@@ -18518,7 +18703,7 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let s6i: EmitState = emit_if_mixed_then_instr_lv(s, if_node6, src, pa6, np6, e6_nodes, e6_cursor, e6_vidbuf, base, e6_cell, seq_lvbuf, seq_nlv, strbuf, offs, ncount, e6_bindout, e6_nbind);
         let e6_n: i64 = __mind_load_i64(e6_nbind);
         let _ap6: i64 = lvenv_append_escapes(seq_lvbuf, seq_nlv, e6_bindout, e6_n, 0);
-        return emit_stmt_seq(s6i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta6, i + 1, seq_lvbuf, seq_nlv + e6_n, seqr, envk);
+        return emit_stmt_seq(s6i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta6, i + 1, seq_lvbuf, seq_nlv + e6_n, seqr, envk + __mind_load_i64(plan + i * 64 + 40));
     }
     if ty == 8 {
         // FALL-THROUGH side-effect block `if C { lets + bare-calls }` -> ONE OP_IF whose
@@ -18540,7 +18725,7 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let s8i: EmitState = emit_if_fallthrough_lv(s, if_node8, src, pa8, np8, e8_nodes, e8_cursor, e8_vidbuf, base, e8_cell, seq_lvbuf, seq_nlv, e8_lvbuf, strbuf, offs, ncount, e8_bo, e8_nb);
         let e8_n: i64 = __mind_load_i64(e8_nb);
         let _ap8: i64 = lvenv_append_escapes(seq_lvbuf, seq_nlv, e8_bo, e8_n, 0);
-        return emit_stmt_seq(s8i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta8, i + 1, seq_lvbuf, seq_nlv + e8_n, seqr, envk);
+        return emit_stmt_seq(s8i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta8, i + 1, seq_lvbuf, seq_nlv + e8_n, seqr, envk + __mind_load_i64(plan + i * 64 + 40));
     }
     if ty == 9 {
         // Two-sided FALL-THROUGH if-else statement -> ONE OP_IF with both branches' side
@@ -18559,7 +18744,7 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let s9i: EmitState = emit_if_else_fallthrough_lv(s, if_node9, src, pa9, np9, e9_nodes, e9_cursor, e9_vidbuf, base, e9_cell, seq_lvbuf, seq_nlv, 0, strbuf, offs, ncount, e9_bo, e9_nb);
         let e9_n: i64 = __mind_load_i64(e9_nb);
         let _ap9: i64 = lvenv_append_escapes(seq_lvbuf, seq_nlv, e9_bo, e9_n, 0);
-        return emit_stmt_seq(s9i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta9, i + 1, seq_lvbuf, seq_nlv + e9_n, seqr, envk);
+        return emit_stmt_seq(s9i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta9, i + 1, seq_lvbuf, seq_nlv + e9_n, seqr, envk + __mind_load_i64(plan + i * 64 + 40));
     }
     if ty == 10 {
         // top-level statement while -> OP_WHILE (via emit_mic3_while_general) + trailing
@@ -18583,7 +18768,7 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         // trailing expression already does through build_trail_env.
         let w_n: i64 = __mind_load_i64(w_nm);
         let _ap10: i64 = lvenv_append_escapes(seq_lvbuf, seq_nlv, w_merge, w_n, 0);
-        return emit_stmt_seq(sw2, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + w_delta, i + 1, seq_lvbuf, seq_nlv + w_n, seqr, envk);
+        return emit_stmt_seq(sw2, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + w_delta, i + 1, seq_lvbuf, seq_nlv + w_n, seqr, envk + __mind_load_i64(plan + i * 64 + 40));
     }
     if ty == 2 {
         // NESTED if-return segment -> ONE outer OP_IF whose then-branch is `synth +
@@ -18711,6 +18896,12 @@ pub fn emit_mic3_module_fndef_seq(s: EmitState, src: i64, fn_node: i64, nidx: i6
     // into the plan (+48/+56), so a later Pass-A read of a name SHADOWED inside a
     // fall-through if can resolve to the merge vid (set in Pass B) not the outer slot.
     let _fd: i64 = seq_fix_deltas(src, plan, nplan, env, fix_names, 0, 0, 0, nodes, cursor);
+    // -1 = an escaping segment's re-probe disagreed with its flatten-time overlay (or
+    // missed): its rebind slots would carry an unset vid, so fail the fn closed.
+    if _fd < 0 {
+        __mind_store_i64(ok_cell, 0);
+        return s;
+    }
     // Build the POSITION-ORDERED trailing env (type-0/7 lets + rebind overlay slots, in
     // plan order) so the FN_DEF result expression resolves a shadowed name to its latest
     // binding via letenv_lookup's last-match (a later seq let shadows an earlier merge).
