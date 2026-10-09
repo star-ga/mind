@@ -22,7 +22,8 @@
 use libmind::ir::IRModule;
 use libmind::ir::frozen_profile::profile_frozen_admits;
 use libmind::ir::native_closure::{
-    admit_native_closure, defined_fn_names, executable_roots, reachable_from, restrict_to_reachable,
+    StdSeed, admit_native_closure, admit_native_closure_linked, defined_fn_names, executable_roots,
+    reachable_from, restrict_to_reachable,
 };
 use std::collections::BTreeSet;
 
@@ -359,4 +360,33 @@ fn a_reachable_nested_definition_keeps_its_enclosing_parent() {
         kept.contains("inner"),
         "a kept nested definition must survive restriction, got {kept:?}"
     );
+}
+
+/// Without a lowered std seed the linked admission falls back to the pre-linkage
+/// policy: every seed name is reserved. A program definition of a frozen
+/// intrinsic is refused on BOTH paths — it does not depend on the seed lowering.
+#[test]
+fn an_unlowered_seed_reserves_every_name_and_still_refuses_intrinsic_redefinition() {
+    let seed = StdSeed {
+        modules: vec![(
+            "toml".to_string(),
+            std::iter::once("bytes_eq".to_string()).collect(),
+        )],
+        lowered: None,
+    };
+    let collide = "fn bytes_eq(a: i64) -> i64 {\n    return a;\n}\n\n\
+                   fn main() -> i64 {\n    return bytes_eq(1);\n}\n";
+    let ast = libmind::parser::parse(collide).expect("parses");
+    let err = admit_native_closure_linked(&ast, &lower(collide), "main", &seed)
+        .err()
+        .expect("a reserved seed name must refuse without linkage");
+    assert_eq!(err.kind, "closure.std_symbol_collision");
+
+    let redefine = "fn __mind_alloc(x: i64) -> i64 {\n    return 0;\n}\n\n\
+                    fn main() -> i64 {\n    return 1;\n}\n";
+    let ast = libmind::parser::parse(redefine).expect("parses");
+    let err = admit_native_closure_linked(&ast, &lower(redefine), "main", &seed)
+        .err()
+        .expect("an intrinsic redefinition must refuse without linkage");
+    assert_eq!(err.kind, "closure.intrinsic_redefinition");
 }

@@ -531,15 +531,10 @@ pub fn admit_native_closure_linked(
     entry: &str,
     seed: &StdSeed,
 ) -> Result<LinkedClosure, ClosureRejection> {
-    let Some((_, std_ir)) = &seed.lowered else {
-        let restricted = admit_native_closure(ast, ir, entry, &seed.all_names())?;
-        return Ok(LinkedClosure {
-            restricted,
-            std_linked: BTreeSet::new(),
-        });
-    };
     let counts = ast_definition_counts(ast);
     reject_ambiguous_ast(ast, &BTreeSet::new())?;
+    // Before the seed branch: the frozen emitter expands an intrinsic whether or
+    // not std linkage is available, so the refusal must not depend on it.
     if let Some(name) = counts.keys().find(|name| is_frozen_intrinsic(name)) {
         return reject(
             "closure.intrinsic_redefinition",
@@ -549,6 +544,13 @@ pub fn admit_native_closure_linked(
             ),
         );
     }
+    let Some((_, std_ir)) = &seed.lowered else {
+        let restricted = admit_native_closure(ast, ir, entry, &seed.all_names())?;
+        return Ok(LinkedClosure {
+            restricted,
+            std_linked: BTreeSet::new(),
+        });
+    };
     let user_names: BTreeSet<String> = counts.into_keys().collect();
     let imported = imported_std_modules(ast);
     for (module, names) in &seed.modules {
