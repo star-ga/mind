@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1909 | **Est. tokens:** ~3,735,674
-**Generated:** 2026-10-09 14:34 UTC
+**Files:** 1929 | **Est. tokens:** ~3,738,842
+**Generated:** 2026-10-09 15:26 UTC
 
 ## Token Budget Guide
 
@@ -62,10 +62,10 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 175 | ~457,084 |
+| `examples/mindc_mind/` | 175 | ~457,443 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,159 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
-| `examples/mindc_mind/testdata/mindfuzz_regress/` | 1 | ~364 |
+| `examples/mindc_mind/testdata/mindfuzz_regress/` | 21 | ~3,173 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2,926 |
 | `examples/mindc_mind/testdata/native_record_trace/` | 13 | ~2,127 |
@@ -670,7 +670,7 @@
 - `mic3_flip_smoke.py` (~1150 tok, large)
 - `mic3_oracle_smoke.py` (~1060 tok, large) — mic@3 self-host convergence — Phase 0 gate: the Rust oracle.
 - `mic3_primitives_smoke.py` (~22604 tok, huge) — mic@3 self-host convergence — Phase 1 gate: pure-MIND ULEB128 / zigzag.
-- `mindfuzz_self_host.py` (~12205 tok, huge)
+- `mindfuzz_self_host.py` (~12564 tok, huge)
 - `mod_operator_smoke.py` (~2871 tok, huge)
 - `multi_let_smoke.py` (~1539 tok, huge)
 - `now_ns_smoke.py` (~1008 tok, large) — # Copyright 2025 STARGA Inc.
@@ -679,7 +679,7 @@
 - `param_types_smoke.py` (~1273 tok, large)
 - `_ref_add.note` (~16 tok, tiny) — fff4fc7e1d90f40c4fa6bac3799795d51008132c65cca0ff7b3b4496cf1a58af
 - `_ref_if_ret.note` (~16 tok, tiny) — 63b7ec7b7f87e25de1aa2fb591affbb2b25d10c37908ae9d711f1653af0efe64
-- `_ref_main.note` (~16 tok, tiny) — 297bfc4e6fd2ed31e6e0fc0d84be039f86da180a3a83dc5237166653841ccfa1
+- `_ref_main.note` (~16 tok, tiny) — afbd791123b52edd3f579dc084fe92c18b4a61128d574374774aceeb221bc9fd
 - `ref_netverify.py` (~1473 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
 - `_ref_recursion.note` (~16 tok, tiny) — babd5f8c4d6e3539fc61392e8ff14d4c8523e04e6424a528d1c823948745b9f7
 - `_ref_struct_field.note` (~16 tok, tiny) — dfcf7fa7f8ec57cf5f499ffa47833530ed978bbf38a424ec69feeede26516b27
@@ -830,6 +830,26 @@
 ### `examples/mindc_mind/testdata/mindfuzz_regress/`
 
 - `alias_break.mind` (~364 tok, medium) — Regression fixture: loop-carried ALIAS-BREAK (src/eval/lower.rs While arm).
+- `block_local_seg_then_let.mind` (~89 tok, small) — Regression class: block-local names (a then-block `let` shadowing an outer
+- `block_local_then_assign.mind` (~68 tok, small) — Regression class: block-local names (a then-block `let` shadowing an outer
+- `branch_alias_value_if_then.mind` (~75 tok, small) — Regression class: an if-branch alias value (`b = a`) feeding a later loop
+- `idcollide_copy_chain3.mind` (~138 tok, small) — Regression: loop alias-break copy vids (base0 + 2k + 1) collided with param
+- `idcollide_copy_vs_param_k1.mind` (~135 tok, small) — Regression: loop alias-break copy vids (base0 + 2k + 1) collided with param
+- `idcollide_copy_vs_param_noread.mind` (~119 tok, small) — Regression: loop alias-break copy vids (base0 + 2k + 1) collided with param
+- `idcollide_copy_vs_param_p11.mind` (~119 tok, small) — Regression: loop alias-break copy vids (base0 + 2k + 1) collided with param
+- `idcollide_nested_while_n_4_3.mind` (~175 tok, small) — Regression: nested while inside a top-level while in a >=4-param fn. The
+- `idcollide_nested_while_n_5_3.mind` (~178 tok, small) — Regression: nested while inside a top-level while in a >=4-param fn. The
+- `idcollide_nested_while_n_5_4.mind` (~178 tok, small) — Regression: nested while inside a top-level while in a >=4-param fn. The
+- `idcollide_nested_while_n_6_3.mind` (~181 tok, small) — Regression: nested while inside a top-level while in a >=4-param fn. The
+- `idcollide_nested_while_n_6_4.mind` (~181 tok, small) — Regression: nested while inside a top-level while in a >=4-param fn. The
+- `idcollide_nested_while_n_7_3.mind` (~184 tok, small) — Regression: nested while inside a top-level while in a >=4-param fn. The
+- `idcollide_nested_while_n_7_4.mind` (~184 tok, small) — Regression: nested while inside a top-level while in a >=4-param fn. The
+- `idcollide_nested_while_n_8_3.mind` (~187 tok, small) — Regression: nested while inside a top-level while in a >=4-param fn. The
+- `idcollide_nested_while_n_8_4.mind` (~187 tok, small) — Regression: nested while inside a top-level while in a >=4-param fn. The
+- `idcollide_triple_nested_while.mind` (~199 tok, small) — Regression: triple-nested while + a post-loop alias in a 5-param fn (body-local
+- `merge_binding_if_then_while_read.mind` (~73 tok, small) — Regression class: an if's merge binding read by a later while cond/body.
+- `postloop_gap2_freeze.mind` (~64 tok, small) — Regression class: post-loop reads resolve to the while's dominating exit ids.
+- `postloop_read_after_two_loops.mind` (~95 tok, small) — Regression class: post-loop reads resolve to the while's dominating exit ids.
 ### `examples/mindc_mind/testdata/native_elf_oracle/`
 
 - `add.elf` (~123 tok, small) — ELF> @@@8

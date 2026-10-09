@@ -14265,7 +14265,7 @@ pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
         // instrs and sees name-only vids, so it cannot size alias-break copies — fail
         // closed when this while needs any (upgrade path: thread real vids into the
         // measure and count 2 + 2k there).
-        if while_alias_break_count(stmt, buf, params_addr, n_params, lvbuf, nlv) != 0 {
+        if while_alias_break_count(stmt, buf, params_addr, n_params, lvbuf, nlv, cur_base) != 0 {
             __mind_store_i64(okcell, 0);
             return s;
         }
@@ -18038,11 +18038,6 @@ pub fn seq_env_to_lvenv(env: i64, nlets: i64, vidbuf: i64, lvbuf: i64, resolve: 
     seq_env_to_lvenv(env, nlets, vidbuf, lvbuf, resolve, i + 1)
 }
 
-// Like seq_env_to_lvenv(resolve=0) but with ALIAS-FAITHFUL pseudo vids for the
-// pre-Pass-B while probes: a param leaf -> its param index (its real vid), any
-// other slot -> 2^30 + slot. Two names share a pseudo vid iff they share a real
-// one (an alias `let b = a` / `b = a` reuses a's slot), which is all the loop
-// alias-break needs to size its copies before Pass B assigns the real vids.
 // A copy of an n-entry lv-env whose vids are all distinct (2^31 + index).
 pub fn lvenv_unique_vids(src: i64, n: i64) -> i64 {
     let dst: i64 = __mind_alloc((n + 1) * 24);
@@ -18057,6 +18052,13 @@ pub fn lvenv_unique_vids_loop(dst: i64, n: i64, i: i64) -> i64 {
     lvenv_unique_vids_loop(dst, n, i + 1)
 }
 
+// Like seq_env_to_lvenv(resolve=0) but with ALIAS-FAITHFUL pseudo vids for the
+// pre-Pass-B while probes: a param leaf -> its param index (its real vid), any
+// other slot -> 2^30 + slot. Two names share a pseudo vid iff they share a real
+// one (an alias `let b = a` / `b = a` reuses a's slot), which is all the loop
+// alias-break needs to size its copies before Pass B assigns the real vids.
+// Because params keep their real vids 0..n_params-1, a probe over this env must
+// allocate fresh ids from base0 >= n_params (never 0) or it aliases a param.
 pub fn seq_env_to_lvenv_pseudo(env: i64, nlets: i64, nodes: i64, lvbuf: i64, i: i64) -> i64 {
     if i >= nlets {
         return nlets;
@@ -18264,7 +18266,7 @@ pub fn seq_fix_deltas(src: i64, plan: i64, nplan: i64, env: i64, names_buf: i64,
         return seq_fix_deltas_miss(src, plan, nplan, env, names_buf, nnames, env_k, i, nodes, cursor);
     }
     if ty == 10 {
-        // top-level statement while: re-probe at base0=0 against the position-aware lv-env
+        // top-level statement while: re-probe (base0-relative, see below) against the position-aware lv-env
         // to learn (a) its vid delta and (b) the loop-carried EXIT-id overlay. Each carried
         // var's post-loop value is its exit_id; append the (name, exit_id_rel) overlay (a
         // SHADOW of the earlier seq let) + synth rebind slots so a later read / the trailing
@@ -18293,18 +18295,27 @@ pub fn seq_fix_deltas(src: i64, plan: i64, nplan: i64, env: i64, names_buf: i64,
             lvenv_unique_vids(names_buf, nnames)
         };
         if env_k != nnames {
-            if while_alias_break_count(w_node10, src, pa10, np10, w_pl10, env_k) != 0 {
+            if while_alias_break_count(w_node10, src, pa10, np10, w_pl10, env_k, np10) != 0 {
                 return 0 - 1;
             }
         }
-        let _w10: EmitState = emit_mic3_while_general(es_new(), w_node10, src, pa10, np10, 0, w_lv10, nnames, 0, 0, 0, w_mo, w_nm, w_eb, w_ok);
+        // Probe at base0 = n_params, NOT 0: params are vids 0..n_params-1 in the probe
+        // env, so a probe numbered from 0 hands a body-local let / an alias-break copy a
+        // param's vid and the alias-break counts a phantom copy (the delta grows by 2 per
+        // phantom). The flatten-time probe already runs at n_params; the delta and the
+        // exit-id overlay are rebased back to base0-relative below.
+        let w_abk: i64 = __mind_alloc(8);
+        __mind_store_i64(w_abk, 0 - 1);
+        let _w10: EmitState = emit_mic3_while_general_k(es_new(), w_node10, src, pa10, np10, np10, w_lv10, nnames, 0, 0, 0, w_mo, w_nm, w_eb, w_ok, w_abk);
         if __mind_load_i64(w_ok) == 1 {
-            __mind_store_i64(plan + i * 64 + 16, __mind_load_i64(w_eb) + 1);
+            __mind_store_i64(plan + i * 64 + 16, __mind_load_i64(w_eb) - np10 + 1);
             let nb10: i64 = __mind_load_i64(w_nm);
+            let _rb10: i64 = overlay_rebase_ids(w_mo, nb10, np10, 0);
             // Record the alias-break pair count for seq_body_len (2 + 2k top-level instrs)
             // in the overlay slot array's spare record (seq_flatten_overlay allocates
-            // nb+1 records; record nb is unused). A count mismatch fails closed below.
-            let k10: i64 = while_alias_break_count(w_node10, src, pa10, np10, w_lv10, nnames);
+            // nb+1 records; record nb is unused). emit_stmt_seq re-checks it against the
+            // count the emit actually produces; a mismatch fails closed there.
+            let k10: i64 = __mind_load_i64(w_abk);
             if k10 < 0 {
                 return 0 - 1;
             }
@@ -18443,6 +18454,16 @@ pub fn seq_lvenv_append_one(live: i64, at: i64, seqr: i64, k: i64) -> i64 {
 // in a divergent if-then-block stays LIVE after the block as its merge result (SSA
 // F2), so a later segment that rebinds the same name merges against this vid — and a
 // later segment merely referencing it resolves to it. Mirrors src/eval/lower.rs.
+// Subtract `by` from the id word of each of the n 24-byte (name_lo, name_hi, id)
+// overlay records in bo — rebases a probe run at base0 = by to base0-relative ids.
+pub fn overlay_rebase_ids(bo: i64, n: i64, by: i64, i: i64) -> i64 {
+    if i >= n {
+        return n;
+    }
+    __mind_store_i64(bo + i * 24 + 16, __mind_load_i64(bo + i * 24 + 16) - by);
+    overlay_rebase_ids(bo, n, by, i + 1)
+}
+
 pub fn lvenv_append_escapes(live: i64, at: i64, bo: i64, n: i64, i: i64) -> i64 {
     if i >= n {
         return at + n;
@@ -18529,11 +18550,6 @@ pub fn seq_flatten_overlay(bo: i64, nb: i64, nodes: i64, cursor: i64, env: i64, 
     1
 }
 
-// seq_fix_deltas re-probe of an escaping segment against the position-aware name env:
-// the escapes must be the SAME names in the SAME order as the flatten-time overlay
-// (both probes see the same names — env carries the overlays too); copy the re-probed
-// base0-relative merge/exit id into each pre-created slot. Any disagreement returns 0
-// (fail closed — the overlay slots would otherwise carry an unset vid).
 // seq_fix_deltas re-probe MISS for an escaping segment (the position-aware probe failed
 // closed). A segment that owns flatten-time overlay slots cannot leave them with an unset
 // vid: fail the whole sequence closed (-1). One with no overlay keeps the prior behaviour
@@ -18546,6 +18562,11 @@ pub fn seq_fix_deltas_miss(src: i64, plan: i64, nplan: i64, env: i64, names_buf:
     seq_fix_deltas(src, plan, nplan, env, names_buf, nnames, env_k, i + 1, nodes, cursor)
 }
 
+// seq_fix_deltas re-probe of an escaping segment against the position-aware name env:
+// the escapes must be the SAME names in the SAME order as the flatten-time overlay
+// (both probes see the same names — env carries the overlays too); copy the re-probed
+// base0-relative merge/exit id into each pre-created slot. Any disagreement returns 0
+// (fail closed — the overlay slots would otherwise carry an unset vid).
 pub fn seq_overlay_refit(src: i64, plan: i64, i: i64, bo: i64, nb: i64) -> i64 {
     if nb != __mind_load_i64(plan + i * 64 + 48) {
         return 0;
@@ -18670,7 +18691,7 @@ pub fn seq_ty_escapes(ty: i64) -> i64 {
 // its escaped bindings, so a segment sees exactly what is live AT its source position
 // (position-aware scoping — NOT the static full-sequence env, which would expose
 // forward-defined lets and miss prior segments' escapes).
-pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i64, offs: i64, ncount: i64, plan: i64, nplan: i64, base: i64, i: i64, seq_lvbuf: i64, seq_nlv: i64, seqr: i64, envk: i64) -> EmitState {
+pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i64, offs: i64, ncount: i64, plan: i64, nplan: i64, base: i64, i: i64, seq_lvbuf: i64, seq_nlv: i64, seqr: i64, envk: i64, eok: i64) -> EmitState {
     if i >= nplan {
         return s;
     }
@@ -18681,7 +18702,7 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let nb: i64 = seq_resolve_range(nodes, start, end, vidbuf, base);
         let s1: EmitState = emit_mic3_tree_body(s, nodes, end, vidbuf, src, strbuf, offs, ncount, start);
         let _ap0: i64 = seq_lvenv_append_one(seq_lvbuf, seq_nlv, seqr, envk);
-        return emit_stmt_seq(s1, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, nb, i + 1, seq_lvbuf, seq_nlv + 1, seqr, envk + 1);
+        return emit_stmt_seq(s1, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, nb, i + 1, seq_lvbuf, seq_nlv + 1, seqr, envk + 1, eok);
     }
     // (type 11) bare expression statement (no bound name) — emit its [start,end)
     // tree exactly like type 0, but bind NO name: no seq_lvenv_append_one, seq_nlv
@@ -18693,7 +18714,7 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let bend: i64 = __mind_load_i64(plan + i * 64 + 16);
         let bnb: i64 = seq_resolve_range(nodes, bstart, bend, vidbuf, base);
         let bs1: EmitState = emit_mic3_tree_body(s, nodes, bend, vidbuf, src, strbuf, offs, ncount, bstart);
-        return emit_stmt_seq(bs1, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, bnb, i + 1, seq_lvbuf, seq_nlv, seqr, envk);
+        return emit_stmt_seq(bs1, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, bnb, i + 1, seq_lvbuf, seq_nlv, seqr, envk, eok);
     }
     if ty == 3 {
         // if-with-SEQ-then-block -> ONE outer OP_IF whose then-branch is a sequence
@@ -18710,7 +18731,7 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let e3_cell: i64 = __mind_alloc(8);
         __mind_store_i64(e3_cell, 0 - 1);
         let s3i: EmitState = emit_if_seq_then_instr_lv(s, if_node3, src, pa3, np3, e3_nodes, e3_cursor, e3_vidbuf, base, e3_cell, seq_lvbuf, seq_nlv, strbuf, offs, ncount);
-        return emit_stmt_seq(s3i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta3, i + 1, seq_lvbuf, seq_nlv, seqr, envk);
+        return emit_stmt_seq(s3i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta3, i + 1, seq_lvbuf, seq_nlv, seqr, envk, eok);
     }
     if ty == 4 {
         // if-with-LET-then-block (merge tail) -> ONE outer OP_IF. Self-contained
@@ -18734,7 +18755,7 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let s4i: EmitState = emit_if_let_seq_then_instr_lv(s, if_node4, src, pa4, np4, e4_nodes, e4_cursor, e4_vidbuf, base, e4_cell, seq_lvbuf, seq_nlv, e4_lvbuf, strbuf, offs, ncount, e4_bo, e4_nb);
         let e4_n: i64 = __mind_load_i64(e4_nb);
         let _ap4: i64 = lvenv_append_escapes(seq_lvbuf, seq_nlv, e4_bo, e4_n, 0);
-        return emit_stmt_seq(s4i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta4, i + 1, seq_lvbuf, seq_nlv + e4_n, seqr, envk + __mind_load_i64(plan + i * 64 + 40));
+        return emit_stmt_seq(s4i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta4, i + 1, seq_lvbuf, seq_nlv + e4_n, seqr, envk + __mind_load_i64(plan + i * 64 + 40), eok);
     }
     if ty == 5 {
         // single nested-if-chain segment of ARBITRARY depth -> ONE OP_IF via the
@@ -18754,7 +18775,7 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let s5i: EmitState = emit_if_chain_instr_lv(s, if_node5, src, pa5, np5, e5_nodes, e5_cursor, e5_vidbuf, base, e5_cell, seq_lvbuf, seq_nlv, strbuf, offs, ncount, e5_bindout, e5_nbind);
         let e5_n: i64 = __mind_load_i64(e5_nbind);
         let _ap5: i64 = lvenv_append_escapes(seq_lvbuf, seq_nlv, e5_bindout, e5_n, 0);
-        return emit_stmt_seq(s5i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta5, i + 1, seq_lvbuf, seq_nlv + e5_n, seqr, envk + __mind_load_i64(plan + i * 64 + 40));
+        return emit_stmt_seq(s5i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta5, i + 1, seq_lvbuf, seq_nlv + e5_n, seqr, envk + __mind_load_i64(plan + i * 64 + 40), eok);
     }
     if ty == 7 {
         // let = if-EXPRESSION -> ONE OP_IF (value). Self-contained scratch; the seq
@@ -18770,7 +18791,7 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         __mind_store_i64(e7_cell, 0 - 1);
         let s7i: EmitState = emit_if_expr_any_lv(s, init7, src, pa7, np7, e7_nodes, e7_cursor, e7_vidbuf, base, e7_cell, seq_lvbuf, seq_nlv, strbuf, offs, ncount, 0, 0);
         let _ap7: i64 = seq_lvenv_append_one(seq_lvbuf, seq_nlv, seqr, envk);
-        return emit_stmt_seq(s7i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta7, i + 1, seq_lvbuf, seq_nlv + 1, seqr, envk + 1);
+        return emit_stmt_seq(s7i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta7, i + 1, seq_lvbuf, seq_nlv + 1, seqr, envk + 1, eok);
     }
     if ty == 6 {
         // MIXED returning then-block -> ONE OP_IF (segments + lets + Return + poison
@@ -18789,7 +18810,7 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let s6i: EmitState = emit_if_mixed_then_instr_lv(s, if_node6, src, pa6, np6, e6_nodes, e6_cursor, e6_vidbuf, base, e6_cell, seq_lvbuf, seq_nlv, strbuf, offs, ncount, e6_bindout, e6_nbind);
         let e6_n: i64 = __mind_load_i64(e6_nbind);
         let _ap6: i64 = lvenv_append_escapes(seq_lvbuf, seq_nlv, e6_bindout, e6_n, 0);
-        return emit_stmt_seq(s6i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta6, i + 1, seq_lvbuf, seq_nlv + e6_n, seqr, envk + __mind_load_i64(plan + i * 64 + 40));
+        return emit_stmt_seq(s6i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta6, i + 1, seq_lvbuf, seq_nlv + e6_n, seqr, envk + __mind_load_i64(plan + i * 64 + 40), eok);
     }
     if ty == 8 {
         // FALL-THROUGH side-effect block `if C { lets + bare-calls }` -> ONE OP_IF whose
@@ -18811,7 +18832,7 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let s8i: EmitState = emit_if_fallthrough_lv(s, if_node8, src, pa8, np8, e8_nodes, e8_cursor, e8_vidbuf, base, e8_cell, seq_lvbuf, seq_nlv, e8_lvbuf, strbuf, offs, ncount, e8_bo, e8_nb);
         let e8_n: i64 = __mind_load_i64(e8_nb);
         let _ap8: i64 = lvenv_append_escapes(seq_lvbuf, seq_nlv, e8_bo, e8_n, 0);
-        return emit_stmt_seq(s8i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta8, i + 1, seq_lvbuf, seq_nlv + e8_n, seqr, envk + __mind_load_i64(plan + i * 64 + 40));
+        return emit_stmt_seq(s8i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta8, i + 1, seq_lvbuf, seq_nlv + e8_n, seqr, envk + __mind_load_i64(plan + i * 64 + 40), eok);
     }
     if ty == 9 {
         // Two-sided FALL-THROUGH if-else statement -> ONE OP_IF with both branches' side
@@ -18830,7 +18851,7 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let s9i: EmitState = emit_if_else_fallthrough_lv(s, if_node9, src, pa9, np9, e9_nodes, e9_cursor, e9_vidbuf, base, e9_cell, seq_lvbuf, seq_nlv, 0, strbuf, offs, ncount, e9_bo, e9_nb);
         let e9_n: i64 = __mind_load_i64(e9_nb);
         let _ap9: i64 = lvenv_append_escapes(seq_lvbuf, seq_nlv, e9_bo, e9_n, 0);
-        return emit_stmt_seq(s9i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta9, i + 1, seq_lvbuf, seq_nlv + e9_n, seqr, envk + __mind_load_i64(plan + i * 64 + 40));
+        return emit_stmt_seq(s9i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta9, i + 1, seq_lvbuf, seq_nlv + e9_n, seqr, envk + __mind_load_i64(plan + i * 64 + 40), eok);
     }
     if ty == 10 {
         // top-level statement while -> OP_WHILE (via emit_mic3_while_general) + trailing
@@ -18846,7 +18867,31 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         __mind_store_i64(w_end, 0 - 1);
         let w_ok: i64 = __mind_alloc(8);
         __mind_store_i64(w_ok, 1);
-        let sw: EmitState = emit_mic3_while_general(s, w_node, src, pa10, np10, base, seq_lvbuf, seq_nlv, strbuf, offs, ncount, w_merge, w_nm, w_end, w_ok);
+        let w_abk: i64 = __mind_alloc(8);
+        __mind_store_i64(w_abk, 0 - 1);
+        let sw: EmitState = emit_mic3_while_general_k(s, w_node, src, pa10, np10, base, seq_lvbuf, seq_nlv, strbuf, offs, ncount, w_merge, w_nm, w_end, w_ok, w_abk);
+        // Cross-check the emitted layout against the pre-pass plan: the while emitted,
+        // its alias-break copy count equals the planned k (seq_body_len sized the body
+        // with it), it spans exactly the planned vid delta, and it escapes the planned
+        // number of carried vars. Any disagreement = refuse, never wrong bytes.
+        let w_planned_nb: i64 = __mind_load_i64(plan + i * 64 + 48);
+        let w_planned_k: i64 = __mind_load_i64(__mind_load_i64(plan + i * 64 + 56) + w_planned_nb * 32);
+        if __mind_load_i64(w_ok) == 0 {
+            __mind_store_i64(eok, 0);
+            return s;
+        }
+        if __mind_load_i64(w_abk) != w_planned_k {
+            __mind_store_i64(eok, 0);
+            return s;
+        }
+        if __mind_load_i64(w_end) - base + 1 != w_delta {
+            __mind_store_i64(eok, 0);
+            return s;
+        }
+        if __mind_load_i64(w_nm) != w_planned_nb {
+            __mind_store_i64(eok, 0);
+            return s;
+        }
         // trailing unit ConstI64 at endbase (= one past the exit_ids).
         let sw2: EmitState = emit_mic3_const_i64(sw, __mind_load_i64(w_end), 0);
         // Publish each carried exit value to the position-aware live env. A later
@@ -18854,7 +18899,7 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         // trailing expression already does through build_trail_env.
         let w_n: i64 = __mind_load_i64(w_nm);
         let _ap10: i64 = lvenv_append_escapes(seq_lvbuf, seq_nlv, w_merge, w_n, 0);
-        return emit_stmt_seq(sw2, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + w_delta, i + 1, seq_lvbuf, seq_nlv + w_n, seqr, envk + __mind_load_i64(plan + i * 64 + 40));
+        return emit_stmt_seq(sw2, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + w_delta, i + 1, seq_lvbuf, seq_nlv + w_n, seqr, envk + __mind_load_i64(plan + i * 64 + 40), eok);
     }
     if ty == 2 {
         // NESTED if-return segment -> ONE outer OP_IF whose then-branch is `synth +
@@ -18916,7 +18961,7 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let q26: EmitState = emit_uleb128(q25, n2_outer_dst);
         let q27: EmitState = emit_uleb128(q26, 0);
         let q28: EmitState = emit_uleb128(q27, 0);
-        return emit_stmt_seq(q28, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, n2_outer_dst + 1, i + 1, seq_lvbuf, seq_nlv, seqr, envk);
+        return emit_stmt_seq(q28, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, n2_outer_dst + 1, i + 1, seq_lvbuf, seq_nlv, seqr, envk, eok);
     }
     // if-return block. Recompute the same vid layout as Pass B to learn synth/dst.
     let cstart: i64 = __mind_load_i64(plan + i * 64 + 8);
@@ -18953,7 +18998,7 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
     let s13: EmitState = emit_uleb128(s12, dst);
     let s14: EmitState = emit_uleb128(s13, 0);
     let s15: EmitState = emit_uleb128(s14, 0);
-    emit_stmt_seq(s15, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, dst + 1, i + 1, seq_lvbuf, seq_nlv, seqr, envk)
+    emit_stmt_seq(s15, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, dst + 1, i + 1, seq_lvbuf, seq_nlv, seqr, envk, eok)
 }
 
 // Emit ONE fn's FN_DEF whose body is a general statement sequence (lets and
@@ -19169,7 +19214,13 @@ pub fn emit_mic3_module_fndef_seq(s: EmitState, src: i64, fn_node: i64, nidx: i6
     let s5: EmitState = es_push(s4, 0);
     let s6: EmitState = emit_uleb128(s5, body_len);
     let s7: EmitState = emit_mic3_params_mod(s6, pstr, n_params, 0);
-    let s8: EmitState = emit_stmt_seq(s7, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, n_params, 0, live, 0, seqr, 0);
+    let seq_ok: i64 = __mind_alloc(8);
+    __mind_store_i64(seq_ok, 1);
+    let s8: EmitState = emit_stmt_seq(s7, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, n_params, 0, live, 0, seqr, 0, seq_ok);
+    if __mind_load_i64(seq_ok) == 0 {
+        __mind_store_i64(ok_cell, 0);
+        return s;
+    }
     let s9: EmitState = if trail_is_if == 1 {
         let ie_nodes: i64 = __mind_alloc(256 * 32);
         let ie_cursor: i64 = __mind_alloc(8);
@@ -31589,14 +31640,24 @@ pub fn ab_emit(s: EmitState, ids: i64, k: i64, base0: i64, j: i64) -> EmitState 
 }
 
 // Alias-break count of a while against a read-only env (scratch copy; -1 = unclassified).
-pub fn while_alias_break_count(while_node: i64, buf: i64, params_addr: i64, n_params: i64, lvenv: i64, nlv: i64) -> i64 {
+// base0 = the vid the copies are allocated from. It MUST be past every vid the env can
+// hold (params are vids 0..n_params-1): a copy that lands on a live vid makes the two
+// names look aliased and counts a phantom break. Pseudo/unique-vid envs -> n_params;
+// a real-vid env -> the current threaded base.
+pub fn while_alias_break_count(while_node: i64, buf: i64, params_addr: i64, n_params: i64, lvenv: i64, nlv: i64, base0: i64) -> i64 {
     let env: i64 = __mind_alloc((nlv + 1) * 24);
     let _cp: i64 = lvenv_copy(env, lvenv, nlv, 0);
     let ids: i64 = __mind_alloc(256 * 8);
-    ab_apply(while_node, buf, params_addr, n_params, env, nlv, 0, ids)
+    ab_apply(while_node, buf, params_addr, n_params, env, nlv, base0, ids)
 }
 
 pub fn emit_mic3_while_general(s: EmitState, while_node: i64, buf: i64, params_addr: i64, n_params: i64, base_in: i64, lvenv_in: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64, merge_out: i64, nmerge_cell: i64, endbase_cell: i64, okcell: i64) -> EmitState {
+    emit_mic3_while_general_k(s, while_node, buf, params_addr, n_params, base_in, lvenv_in, nlv, strbuf, offs, ncount, merge_out, nmerge_cell, endbase_cell, okcell, 0)
+}
+
+// emit_mic3_while_general that also reports (abk_cell != 0) the alias-break copy-pair
+// count it EMITTED, so a caller that planned the count earlier can cross-check it.
+pub fn emit_mic3_while_general_k(s: EmitState, while_node: i64, buf: i64, params_addr: i64, n_params: i64, base_in: i64, lvenv_in: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64, merge_out: i64, nmerge_cell: i64, endbase_cell: i64, okcell: i64, abk_cell: i64) -> EmitState {
     // Alias-break first: the copies precede the While in the parent block, so the
     // cond/body ids start after them, and the seed env (a private copy — the
     // caller's env is untouched, exactly like Rust's `seed_env`) carries them.
@@ -31607,6 +31668,9 @@ pub fn emit_mic3_while_general(s: EmitState, while_node: i64, buf: i64, params_a
     if ab_k < 0 {
         __mind_store_i64(okcell, 0);
         return s;
+    }
+    if abk_cell != 0 {
+        __mind_store_i64(abk_cell, ab_k)
     }
     let base0: i64 = base_in + 2 * ab_k;
     let cond_expr: i64 = ast_child0(while_node);
@@ -31681,6 +31745,13 @@ pub fn emit_mic3_while_general(s: EmitState, while_node: i64, buf: i64, params_a
     __mind_store_i64(e_ok, 1);
     let s6: EmitState = while_body_emit(s5, body_sa, body_sl, 0, buf, params_addr, n_params, wnodes2, wcursor2, wvidbuf2, e_base, wenv2, e_wnlv, strbuf, offs, ncount, e_ok);
     if __mind_load_i64(e_ok) == 0 {
+        __mind_store_i64(okcell, 0);
+        return s;
+    }
+    // The MEASURE walk sized body_len / the exit ids (incl. every nested while's planned
+    // alias-break pairs); the EMIT walk must land on the same end vid, else a nested
+    // while emitted a different copy count than was planned -> fail closed.
+    if __mind_load_i64(e_base) != body_end {
         __mind_store_i64(okcell, 0);
         return s;
     }

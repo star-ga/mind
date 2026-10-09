@@ -132,6 +132,12 @@ _REGRESS_DIR = _HERE / "testdata" / "mindfuzz_regress"
 DEFAULT_COUNT = 200
 DEFAULT_SEED = 1234
 DEFAULT_BATCH = 8
+# Floor on programs actually COMPARED (accepted by both emitters) for the pinned
+# (DEFAULT_SEED, DEFAULT_COUNT) corpus. A self-host that fail-closes everything is
+# "0 divergences" too; this floor makes that a FAIL instead of a green. Set just
+# under the measured count (refusals are legitimate, a collapse is not); raise it
+# when the emitter accepts more, never lower it to absorb a regression.
+PINNED_MIN_COMPARED = 80
 _STMT_BUDGET = 40  # hard cap on total generated statements per program
 
 _ARITH = ["+", "-", "*", "/", "%", "<<", ">>", "|"]
@@ -462,9 +468,13 @@ class Gen:
         n_helpers = r.choices([0, 1, 2], weights=[55, 30, 15], k=1)[0]
         for _ in range(n_helpers):
             self.helper_seq += 1
-            params = [f"x{self.helper_seq}"]
-            if r.randrange(100) < 35:
-                params.append(f"y{self.helper_seq}")
+            # 1-5 params. Wide helpers matter: a param is vid 0..n-1 inside the
+            # body, so >=3 params is what reaches id-collision classes between
+            # param vids and body-local / loop alias-break copy vids (the fixed
+            # n_4_3 / t3_ctrl_noread / q12_chain_collide3 regressions).
+            roll = r.randrange(100)
+            n_par = 1 if roll < 40 else 2 if roll < 60 else 3 + r.randrange(3)
+            params = [f"{pfx}{self.helper_seq}" for pfx in "xyzwu"[:n_par]]
             fn, _sc = self.gen_fn(f"fzh{self.helper_seq}", params, budget)
             fns.append(fn)
 
@@ -931,6 +941,10 @@ def main() -> int:
                          "1 = per-program, the strictest and slowest mode)")
     ap.add_argument("--verbose", action="store_true",
                     help="one status line per program")
+    ap.add_argument("--min-compared", type=int, default=None,
+                    help=f"FAIL unless at least this many generated programs were "
+                         f"compared (default {PINNED_MIN_COMPARED} for the pinned "
+                         f"seed={DEFAULT_SEED}/count={DEFAULT_COUNT} corpus, else 1)")
     args = ap.parse_args()
 
     count = args.count
@@ -946,6 +960,11 @@ def main() -> int:
         print("FAIL  --count must be >= 1")
         return 1
     batch = max(1, args.batch)
+    min_compared = args.min_compared
+    if min_compared is None:
+        pinned = args.seed == DEFAULT_SEED and count == DEFAULT_COUNT
+        min_compared = PINNED_MIN_COMPARED if pinned else 1
+    min_compared = max(1, min_compared)
 
     # --- oracle setup (fail LOUD / BLOCKED, never a fake pass) ---------------
     so = resolve_so()  # MINDC_SO verbatim; else FRESH mindc-built .so; else legacy
@@ -1124,17 +1143,17 @@ def main() -> int:
                   f"(or a broken oracle); never counted as a skip  [seed={args.seed}]")
             return 1
 
-        if matched == 0:
-            print(f"\nFAIL  0 of {count} generated programs were accepted by BOTH "
-                  f"oracles ({skipped_sh} self-host fail-closed, {skipped_rust} "
-                  "rust-rejected) — the generator produced nothing comparable; "
-                  "refusing a silent green")
+        if matched < min_compared:
+            print(f"\nFAIL  only {matched} of {count} generated programs were compared "
+                  f"(floor {min_compared}; {skipped_sh} self-host fail-closed, "
+                  f"{skipped_rust} rust-rejected) — a collapse in what the twin "
+                  f"emitters both accept is a regression, not a pass  [seed={args.seed}]")
             return 1
 
         print(f"\nmindfuzz_self_host: 0 divergences — {count} generated, {matched} "
               f"compared with mic@3 notes byte-identical across the twin emitters, "
-              f"{skipped_sh} refused by the self-host (fail-closed), 0 rust-rejected  "
-              f"[seed={args.seed} count={count}]")
+              f"{skipped_sh} refused by the self-host (fail-closed), 0 rust-rejected, "
+              f"compared floor {min_compared}  [seed={args.seed} count={count}]")
         return 0
 
 

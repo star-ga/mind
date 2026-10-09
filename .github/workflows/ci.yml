@@ -1065,13 +1065,18 @@ jobs:
         # the Rust oracle rejects, and a broken oracle (the `add` sanity fixture)
         # fails as BLOCKED instead of skipping — that skip is how this gate
         # measured nothing for a month while dump_ref was broken. Self-host
-        # fail-closed refusals are counted, never compared, never a pass.
+        # fail-closed refusals are counted, never compared, never a pass — and
+        # --min-compared floors how many programs must actually be compared, so a
+        # self-host that refuses everything cannot pass as "0 divergences".
+        # run_gate's own per-gate timeout defaults to 900 s; give it 1500 s so the
+        # step's timeout-minutes (not run_gate) is the binding limit.
         timeout-minutes: 25
         run: |
           MINDC_SO=/tmp/libmindc_mind_self_host.so \
           MINDC_BIN=${{ github.workspace }}/target/release/mindc \
-            python3 scripts/run_gate.py --min-asserted 2 \
-              examples/mindc_mind/mindfuzz_self_host.py --seed 1234 --count 200
+            python3 scripts/run_gate.py --min-asserted 2 --timeout 1500 \
+              examples/mindc_mind/mindfuzz_self_host.py --seed 1234 --count 200 \
+              --min-compared 80
         working-directory: ${{ github.workspace }}
 
       - name: RI-D seam gates — mindc build --backend=native (bridge + exact fail-close diagnostics)
