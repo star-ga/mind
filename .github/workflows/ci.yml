@@ -520,6 +520,20 @@ jobs:
             --features "mlir-build std-surface cross-module-imports" \
             --test tensor_param_fail_loud_run -- --nocapture
 
+      - name: Constant-table build reproducibility (x86/ARM)
+        # Eight separate builds per case, ASLR on, must produce ONE artifact:
+        # constant tables, constants folded by canonicalize, a multi-module
+        # project. One-shot bufferization used to order their globals by heap
+        # address; run on both substrates because the pass is substrate-blind
+        # and the reproducibility claim is per runner. Job-level
+        # MIND_BENCH_REQUIRE=1 makes a missing backend a failure, not a skip.
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 600 cargo test --no-default-features \
+            --features "mlir-build std-surface cross-module-imports" \
+            --test const_table_build_determinism -- --nocapture
+
       - name: Cross-substrate reproducibility gate
         id: xsi_gate
         # Host substrate (avx2 on x86_64, neon on aarch64) is verified here;

@@ -147,7 +147,7 @@ pub fn build_all_with_objects(
 
     let combined_pipeline = combine_pipelines(preset_name, opts.opt_pipeline);
     let optimized_mlir = if let Some(pipeline) = combined_pipeline {
-        run_mlir_opt(&lowered, &pipeline, tools)?
+        crate::mlir::staged_opt::run_pipeline(&lowered, &pipeline, tools)?
     } else {
         lowered
     };
@@ -297,27 +297,6 @@ pub fn preset_for_mlir(mlir: &str) -> &'static str {
     } else {
         "core"
     }
-}
-
-#[cfg(feature = "mlir-build")]
-fn run_mlir_opt(input: &str, pipeline: &str, tools: &BuildTools) -> Result<String, BuildError> {
-    // MLIR 18+ requires pass pipeline to be wrapped with anchor operation
-    let args = vec![format!("--pass-pipeline=builtin.module({pipeline})")];
-    let output = run_command(
-        &tools.mlir_opt,
-        &args,
-        Some(input.as_bytes()),
-        tools.timeout,
-        "mlir-opt",
-    )?;
-    if !output.status.success() {
-        let stderr = decode_to_string(&output.stderr);
-        return Err(BuildError::Subprocess {
-            tool: "mlir-opt",
-            stderr: crate::diagnostics::toolchain::with_bufferize_hint(&tools.mlir_opt, stderr),
-        });
-    }
-    Ok(decode_to_string(&output.stdout))
 }
 
 #[cfg(feature = "mlir-build")]
@@ -868,10 +847,10 @@ fn run_clang_codegen(
 }
 
 #[cfg(feature = "mlir-build")]
-struct CommandOutput {
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
-    status: std::process::ExitStatus,
+pub(crate) struct CommandOutput {
+    pub(crate) stdout: Vec<u8>,
+    pub(crate) stderr: Vec<u8>,
+    pub(crate) status: std::process::ExitStatus,
 }
 
 /// Spawn `program` with `args`, optionally feed `input` on stdin, and collect
@@ -884,7 +863,7 @@ struct CommandOutput {
 /// dedicated threads while the main thread writes stdin and polls for
 /// termination, eliminating the deadlock.
 #[cfg(feature = "mlir-build")]
-fn run_command(
+pub(crate) fn run_command(
     program: &str,
     args: &[String],
     input: Option<&[u8]>,
@@ -993,7 +972,7 @@ fn write_text_file(path: &Path, contents: &str) -> Result<(), BuildError> {
 }
 
 #[cfg(feature = "mlir-build")]
-fn decode_to_string(bytes: &[u8]) -> String {
+pub(crate) fn decode_to_string(bytes: &[u8]) -> String {
     if bytes.is_empty() {
         String::new()
     } else {

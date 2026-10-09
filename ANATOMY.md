@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1905 | **Est. tokens:** ~3,719,457
-**Generated:** 2026-10-09 11:03 UTC
+**Files:** 1908 | **Est. tokens:** ~3,733,656
+**Generated:** 2026-10-09 13:02 UTC
 
 ## Token Budget Guide
 
@@ -94,7 +94,7 @@
 | `.github/workflows/` | 8 | ~12,146 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~21,911 |
-| `scripts/` | 31 | ~116,950 |
+| `scripts/` | 31 | ~116,970 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `scripts/sdlc/` | 2 | ~2,845 |
@@ -116,10 +116,10 @@
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 5 | ~12,177 |
 | `src/deps/` | 1 | ~9,388 |
-| `src/diagnostics/` | 4 | ~15,658 |
+| `src/diagnostics/` | 4 | ~16,999 |
 | `src/distributed/` | 6 | ~7,725 |
 | `src/doc/` | 3 | ~11,002 |
-| `src/eval/` | 38 | ~141,393 |
+| `src/eval/` | 38 | ~141,227 |
 | `src/eval/stdlib/` | 2 | ~8,586 |
 | `src/eval/struct_resolver/` | 1 | ~2,555 |
 | `src/exec/` | 3 | ~5,522 |
@@ -133,7 +133,7 @@
 | `src/ir/compact/v3/v04/` | 3 | ~13,696 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~10,129 |
-| `src/mlir/` | 4 | ~8,460 |
+| `src/mlir/` | 6 | ~14,931 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 9 | ~53,642 |
 | `src/package/` | 2 | ~1,877 |
@@ -150,7 +150,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~205,452 |
-| `tests/` | 419 | ~853,532 |
+| `tests/` | 420 | ~860,065 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -1068,7 +1068,7 @@
 - `check_release_gating.py` (~4342 tok, huge) — check_release_gating.py — machine-checked supply-chain contract for the
 - `commit-msg-hook.sh` (~866 tok, large) — commit-msg-hook.sh — local commit-msg hook: refuse a commit whose MESSAGE
 - `enumeration_drift_lint.py` (~2544 tok, huge) — Fail closed when a comment's ENUMERATION drifts from the code it describes.
-- `exec_semantics_gate.sh` (~10025 tok, huge) — exec_semantics_gate.sh — run the test tiers CI could not reach, and PROVE they ran.
+- `exec_semantics_gate.sh` (~10045 tok, huge) — exec_semantics_gate.sh — run the test tiers CI could not reach, and PROVE they ran.
 - `gate_assert.py` (~3627 tok, huge) — gate_assert.py — the ONE definition of "did this gate actually assert anything?"
 - `gate_runner_wiring_lint.py` (~6454 tok, huge) — Wiring lint: a workflow may reach a gate ONLY through scripts/run_gate.py.
 - `install.ps1` (~1856 tok, huge) — # install.ps1 - mindc one-line installer for Windows (PowerShell)
@@ -1245,7 +1245,7 @@
 - `capability.rs` (~9002 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~3733 tok, huge) — Copyright 2025 STARGA Inc.
 - `refusal.rs` (~1354 tok, large) — Copyright 2025 STARGA Inc.
-- `toolchain.rs` (~1569 tok, huge) — Copyright 2026 STARGA Inc.
+- `toolchain.rs` (~2910 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/distributed/`
 
 - `allgather.rs` (~813 tok, large) — Copyright 2025-2026 STARGA Inc.
@@ -1282,7 +1282,7 @@
 - `ir_interp.rs` (~4212 tok, huge) — Copyright 2025 STARGA Inc.
 - `lower_entry.rs` (~359 tok, medium) — Copyright 2026 STARGA Inc.
 - `materialization.rs` (~5006 tok, huge) — Copyright 2026 STARGA Inc.
-- `mlir_build.rs` (~10916 tok, huge) — Copyright 2025 STARGA Inc.
+- `mlir_build.rs` (~10750 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~12220 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
@@ -1408,9 +1408,11 @@
 ### `src/mlir/`
 
 - `c_export.rs` (~2651 tok, huge) — Copyright 2025 STARGA Inc.
+- `const_globals.rs` (~4744 tok, huge) — Copyright 2025 STARGA Inc.
 - `gemm_tuning.rs` (~3639 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `mod.rs` (~340 tok, medium) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~359 tok, medium) — Copyright 2025 STARGA Inc.
 - `nobuiltin.rs` (~1830 tok, huge) — Copyright 2025 STARGA Inc.
+- `staged_opt.rs` (~1708 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ops/`
 
 - `cerebras.rs` (~2713 tok, huge) — Copyright 2025-2026 STARGA Inc.
@@ -1688,6 +1690,7 @@
 - `const_array_run.rs` (~834 tok, large) — Copyright 2025 STARGA Inc.
 - `const_f64_array_run.rs` (~1097 tok, large) — Copyright 2025 STARGA Inc.
 - `const_folding.rs` (~246 tok, medium) — Copyright 2025 STARGA Inc.
+- `const_table_build_determinism.rs` (~5288 tok, huge) — Copyright 2025 STARGA Inc.
 - `continue_in_match_arm_run.rs` (~1176 tok, large) — Copyright 2025 STARGA Inc.
 - `conv2d_exec.rs` (~583 tok, large) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~3194 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2226,7 +2229,7 @@
 - `mlir_lowering.rs` (~1636 tok, huge) — a bare `tensor.empty()` fed straight into `outs` returned heap garbage.
 - `mlir_opt.rs` (~474 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_terminator_last_op.rs` (~1397 tok, large) — Copyright 2026 STARGA Inc.
-- `mlir_toolchain_diagnostics.rs` (~525 tok, large) — Copyright 2026 STARGA Inc.
+- `mlir_toolchain_diagnostics.rs` (~1770 tok, huge) — Copyright 2026 STARGA Inc.
 - `mlkem768_driver.py` (~1699 tok, huge) — # Reference-vector driver for std/mlkem768.mind (pure-MIND ML-KEM-768,
 - `module_const_run.rs` (~729 tok, large) — Copyright 2025 STARGA Inc.
 - `module_decl_run.rs` (~597 tok, large) — Copyright 2025 STARGA Inc.
