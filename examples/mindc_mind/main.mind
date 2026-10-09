@@ -816,19 +816,61 @@ pub fn match_punct(b: i64) -> i64 {
 
 // ===== Main scan loop (tail-recursive) =====
 
+// The lexer is a STEP function driven by a bounded two-level recursion, not one
+// frame per lexeme. scan_one lexes exactly one step (one whitespace byte, one
+// comment, or one token) and publishes the next byte offset through the `cur`
+// cell (-1 once EOF has been pushed). The native backend has no tail-call
+// elimination, so the former self-recursive scan held one ~3.5 KB frame per
+// step: about one million frames (3.5 GiB of stack, measured) on the
+// self-host source. The drive below keeps at most scan_chunk_steps() step frames
+// plus one small frame per chunk live, so stack use no longer scales with the
+// source length. The token stream is unchanged: the same scan_one decisions run
+// in the same order.
+pub fn scan_chunk_steps() -> i64 {
+    4096
+}
+pub fn scan_yield(cur: i64, next: i64, toks: Vec) -> Vec {
+    __mind_store_i64(cur, next);
+    toks
+}
+pub fn scan_chunk(buf: i64, i: i64, buf_len: i64, toks: Vec, cur: i64, budget: i64) -> Vec {
+    let t: Vec = scan_one(buf, i, buf_len, toks, cur);
+    if budget <= 1 {
+        return t;
+    }
+    let nx: i64 = __mind_load_i64(cur);
+    if nx < 0 {
+        return t;
+    }
+    scan_chunk(buf, nx, buf_len, t, cur, budget - 1)
+}
+pub fn scan_drive(buf: i64, buf_len: i64, toks: Vec, cur: i64) -> Vec {
+    let nx: i64 = __mind_load_i64(cur);
+    if nx < 0 {
+        return toks;
+    }
+    let t: Vec = scan_chunk(buf, nx, buf_len, toks, cur, scan_chunk_steps());
+    scan_drive(buf, buf_len, t, cur)
+}
 pub fn scan(buf: i64, i: i64, buf_len: i64, toks: Vec) -> Vec {
+    let cur: i64 = __mind_alloc(8);
+    __mind_store_i64(cur, i);
+    scan_drive(buf, buf_len, toks, cur)
+}
+pub fn scan_one(buf: i64, i: i64, buf_len: i64, toks: Vec, cur: i64) -> Vec {
     if i >= buf_len {
+        __mind_store_i64(cur, 0 - 1);
         return push_token(toks, tk_eof(), buf_len, buf_len);
     }
     let b: i64 = load_byte(buf, i);
     if is_space(b) == 1 {
-        return scan(buf, i + 1, buf_len, toks);
+        return scan_yield(cur, i + 1, toks);
     }
     if b == 47 {
         if i + 1 < buf_len {
             if load_byte(buf, i + 1) == 47 {
                 let after: i64 = scan_comment_end(buf, i + 2, buf_len);
-                return scan(buf, after, buf_len, toks);
+                return scan_yield(cur, after, toks);
             }
         }
     }
@@ -836,7 +878,7 @@ pub fn scan(buf: i64, i: i64, buf_len: i64, toks: Vec) -> Vec {
         let hi: i64 = scan_ident_end(buf, i + 1, buf_len);
         let kind: i64 = classify_ident(buf, i, hi);
         let next_toks: Vec = push_token(toks, kind, i, hi);
-        return scan(buf, hi, buf_len, next_toks);
+        return scan_yield(cur, hi, next_toks);
     }
     if is_digit(b) == 1 {
         let hi: i64 = scan_dec_end(buf, i + 1, buf_len);
@@ -856,10 +898,10 @@ pub fn scan(buf: i64, i: i64, buf_len: i64, toks: Vec) -> Vec {
                     let fe: i64 = scan_float_exp(buf, fhi, buf_len);
                     if fe >= 0 {
                         let fetoks: Vec = push_token(toks, tk_float(), i, fe);
-                        return scan(buf, fe, buf_len, fetoks);
+                        return scan_yield(cur, fe, fetoks);
                     }
                     let ftoks: Vec = push_token(toks, tk_float(), i, fhi);
-                    return scan(buf, fhi, buf_len, ftoks);
+                    return scan_yield(cur, fhi, ftoks);
                 }
             }
         }
@@ -871,16 +913,16 @@ pub fn scan(buf: i64, i: i64, buf_len: i64, toks: Vec) -> Vec {
         let ee: i64 = scan_float_exp(buf, hi, buf_len);
         if ee >= 0 {
             let etoks: Vec = push_token(toks, tk_float(), i, ee);
-            return scan(buf, ee, buf_len, etoks);
+            return scan_yield(cur, ee, etoks);
         }
         let next_toks: Vec = push_token(toks, tk_int(), i, hi);
-        return scan(buf, hi, buf_len, next_toks);
+        return scan_yield(cur, hi, next_toks);
     }
     if b == 45 {
         if i + 1 < buf_len {
             if load_byte(buf, i + 1) == 62 {
                 let next_toks: Vec = push_token(toks, tk_arrow(), i, i + 2);
-                return scan(buf, i + 2, buf_len, next_toks);
+                return scan_yield(cur, i + 2, next_toks);
             }
         }
     }
@@ -888,7 +930,7 @@ pub fn scan(buf: i64, i: i64, buf_len: i64, toks: Vec) -> Vec {
         if i + 1 < buf_len {
             if load_byte(buf, i + 1) == 61 {
                 let next_toks: Vec = push_token(toks, tk_eqeq(), i, i + 2);
-                return scan(buf, i + 2, buf_len, next_toks);
+                return scan_yield(cur, i + 2, next_toks);
             }
         }
     }
@@ -896,7 +938,7 @@ pub fn scan(buf: i64, i: i64, buf_len: i64, toks: Vec) -> Vec {
         if i + 1 < buf_len {
             if load_byte(buf, i + 1) == 61 {
                 let next_toks: Vec = push_token(toks, tk_le(), i, i + 2);
-                return scan(buf, i + 2, buf_len, next_toks);
+                return scan_yield(cur, i + 2, next_toks);
             }
         }
     }
@@ -904,7 +946,7 @@ pub fn scan(buf: i64, i: i64, buf_len: i64, toks: Vec) -> Vec {
         if i + 1 < buf_len {
             if load_byte(buf, i + 1) == 61 {
                 let next_toks: Vec = push_token(toks, tk_ge(), i, i + 2);
-                return scan(buf, i + 2, buf_len, next_toks);
+                return scan_yield(cur, i + 2, next_toks);
             }
         }
     }
@@ -912,7 +954,7 @@ pub fn scan(buf: i64, i: i64, buf_len: i64, toks: Vec) -> Vec {
         if i + 1 < buf_len {
             if load_byte(buf, i + 1) == 61 {
                 let next_toks: Vec = push_token(toks, tk_ne(), i, i + 2);
-                return scan(buf, i + 2, buf_len, next_toks);
+                return scan_yield(cur, i + 2, next_toks);
             }
         }
     }
@@ -922,7 +964,7 @@ pub fn scan(buf: i64, i: i64, buf_len: i64, toks: Vec) -> Vec {
         if i + 1 < buf_len {
             if load_byte(buf, i + 1) == 60 {
                 let next_toks: Vec = push_token(toks, tk_shl(), i, i + 2);
-                return scan(buf, i + 2, buf_len, next_toks);
+                return scan_yield(cur, i + 2, next_toks);
             }
         }
     }
@@ -931,7 +973,7 @@ pub fn scan(buf: i64, i: i64, buf_len: i64, toks: Vec) -> Vec {
         if i + 1 < buf_len {
             if load_byte(buf, i + 1) == 62 {
                 let next_toks: Vec = push_token(toks, tk_shr(), i, i + 2);
-                return scan(buf, i + 2, buf_len, next_toks);
+                return scan_yield(cur, i + 2, next_toks);
             }
         }
     }
@@ -941,7 +983,7 @@ pub fn scan(buf: i64, i: i64, buf_len: i64, toks: Vec) -> Vec {
         if i + 1 < buf_len {
             if load_byte(buf, i + 1) == 38 {
                 let next_toks: Vec = push_token(toks, tk_andand(), i, i + 2);
-                return scan(buf, i + 2, buf_len, next_toks);
+                return scan_yield(cur, i + 2, next_toks);
             }
         }
     }
@@ -951,7 +993,7 @@ pub fn scan(buf: i64, i: i64, buf_len: i64, toks: Vec) -> Vec {
         if i + 1 < buf_len {
             if load_byte(buf, i + 1) == 124 {
                 let next_toks: Vec = push_token(toks, tk_oror(), i, i + 2);
-                return scan(buf, i + 2, buf_len, next_toks);
+                return scan_yield(cur, i + 2, next_toks);
             }
         }
     }
@@ -977,7 +1019,7 @@ pub fn scan(buf: i64, i: i64, buf_len: i64, toks: Vec) -> Vec {
             if load_byte(buf, i + 1) == 92 {
                 if load_byte(buf, i + 3) == 39 {
                     let etoks: Vec = push_token(toks, tk_int(), i, i + 4);
-                    return scan(buf, i + 4, buf_len, etoks);
+                    return scan_yield(cur, i + 4, etoks);
                 }
             }
         }
@@ -991,7 +1033,7 @@ pub fn scan(buf: i64, i: i64, buf_len: i64, toks: Vec) -> Vec {
                 if load_byte(buf, i + 1) != 92 {
                     if load_byte(buf, i + 2) == 39 {
                         let ctoks: Vec = push_token(toks, tk_int(), i, i + 3);
-                        return scan(buf, i + 3, buf_len, ctoks);
+                        return scan_yield(cur, i + 3, ctoks);
                     }
                 }
             }
@@ -1004,12 +1046,12 @@ pub fn scan(buf: i64, i: i64, buf_len: i64, toks: Vec) -> Vec {
         let se: i64 = scan_string_end(buf, i + 1, buf_len);
         if se > 0 {
             let stoks: Vec = push_token(toks, tk_str(), i, se);
-            return scan(buf, se, buf_len, stoks);
+            return scan_yield(cur, se, stoks);
         }
     }
     let kind: i64 = match_punct(b);
     let next_toks: Vec = push_token(toks, kind, i, i + 1);
-    scan(buf, i + 1, buf_len, next_toks)
+    scan_yield(cur, i + 1, next_toks)
 }
 
 // Decode one supported string escape through the same byte table as char
@@ -31278,17 +31320,114 @@ pub fn nb_arena_addr() -> i64 {
     // ARENA_ADDR = 0x100_0000 (16 MiB)
     16777216
 }
-pub fn nb_arena_bytes() -> i64 {
+// ---- per-image memory layout: ONE source of truth ----
+// Every layout-dependent byte of an emitted image derives from nb_arena_bytes(),
+// nb_stack_bytes() and nb_guard_bytes(): the arena PT_LOAD memsz, the stack
+// PT_LOAD vaddr+memsz, the entry rsp (nb_stack_top) and the immediate of every
+// inlined allocation guard (nb_emit_alloc_core). Nothing else hard-codes them.
+//
+// DEFAULT (no layout requested): 1 GiB arena, 4 KiB unmapped guard gap, 4 GiB
+// stack — exactly the historical constants, so every default-profile image is
+// byte-identical to before this table existed.
+//
+// EXPLICIT layout: the self-host driver (selfhost_driver.mind) accepts a v2
+// stdin header carrying arena/stack/guard sizes, validates them, and publishes
+// them in the LAYOUT CELL — the first allocation of the running native
+// compiler, at nb_arena_addr()+16 by construction of the bump allocator — tagged
+// with nb_layout_magic(). The emitter reads the cell only when it is running as
+// a native image (`__mind_alloc(0)` is an arena address there; the malloc-backed
+// .so returns 0 and never has a cell, so it always emits the default layout).
+// An explicit layout also turns the allocation-guard trap into a diagnostic
+// exit (nb_emit_arena_check), so a bounded image that exhausts its arena says
+// so on stderr instead of dying on a bare ud2.
+pub fn nb_arena_bytes_default() -> i64 {
     // ARENA_BYTES = 1024*1024*1024 = 1 GiB
     1073741824
 }
-pub fn nb_stack_bytes() -> i64 {
+pub fn nb_stack_bytes_default() -> i64 {
     // STACK_BYTES = 4 GiB
     4294967296
 }
+pub fn nb_guard_bytes_default() -> i64 {
+    // unmapped gap between the arena end and the stack bottom = 0x1000
+    4096
+}
+// "MINDLAY\x01" little-endian: tags both the v2 stdin header and the layout cell.
+pub fn nb_layout_magic() -> i64 {
+    97180662784477517
+}
+pub fn nb_layout_cell() -> i64 {
+    nb_arena_addr() + 16
+}
+// Word k of the published layout cell (1 arena, 2 stack, 3 guard, 4 explicit),
+// or `dflt` when no layout was published (always the case in the .so).
+pub fn nb_layout_word(k: i64, dflt: i64) -> i64 {
+    let probe: i64 = __mind_alloc(0);
+    if probe < nb_layout_cell() {
+        return dflt;
+    }
+    if __mind_load_i64(nb_layout_cell()) != nb_layout_magic() {
+        return dflt;
+    }
+    __mind_load_i64(nb_layout_cell() + k * 8)
+}
+pub fn nb_arena_bytes() -> i64 {
+    nb_layout_word(1, nb_arena_bytes_default())
+}
+pub fn nb_stack_bytes() -> i64 {
+    nb_layout_word(2, nb_stack_bytes_default())
+}
+pub fn nb_guard_bytes() -> i64 {
+    nb_layout_word(3, nb_guard_bytes_default())
+}
+// 1 iff the image being emitted carries an explicitly requested layout.
+pub fn nb_layout_explicit() -> i64 {
+    nb_layout_word(4, 0)
+}
+// Validate a requested layout: 0 = accepted, else a nonzero refusal reason.
+// Sizes are whole pages (the PT_LOAD p_align is 4096); the arena must hold the
+// 16 reserved header bytes and real work (>= 1 MiB); the stack must hold the
+// entry frames (>= 64 KiB); the guard gap must be at least one unmapped page.
+// Each size is capped at 1 TiB so the sums below cannot overflow i64, and the
+// stack top must stay far below the 47-bit user address limit. The arena starts
+// above the code and rodata windows (nb_arena_addr) and the stack starts after
+// arena+guard, so with positive sizes the three regions cannot overlap.
+pub fn nb_layout_check(arena: i64, stack: i64, guard: i64) -> i64 {
+    if arena < 1048576 {
+        return 1;
+    }
+    if stack < 65536 {
+        return 2;
+    }
+    if guard < 4096 {
+        return 3;
+    }
+    if arena > 1099511627776 {
+        return 4;
+    }
+    if stack > 1099511627776 {
+        return 5;
+    }
+    if guard > 1099511627776 {
+        return 6;
+    }
+    if arena % 4096 != 0 {
+        return 7;
+    }
+    if stack % 4096 != 0 {
+        return 8;
+    }
+    if guard % 4096 != 0 {
+        return 9;
+    }
+    if nb_arena_addr() + arena + guard + stack > 70368744177664 {
+        return 10;
+    }
+    0
+}
 pub fn nb_stack_addr() -> i64 {
-    // STACK_ADDR = ARENA_ADDR + ARENA_BYTES + 0x1000
-    nb_arena_addr() + nb_arena_bytes() + 4096
+    // STACK_ADDR = ARENA_ADDR + ARENA_BYTES + GUARD (default 0x1000)
+    nb_arena_addr() + nb_arena_bytes() + nb_guard_bytes()
 }
 pub fn nb_stack_top() -> i64 {
     // STACK_TOP = STACK_ADDR + STACK_BYTES
@@ -31634,6 +31773,9 @@ pub fn nb_cmp_rax_mem(code: String, setcc: i64, rhs_disp: i64) -> String {
 //   add rax,8 ; mov rdx,rcx ; add rdx,rdi ; movabs r8,ARENA_DATA_BYTES ;
 //   cmp r8,rdx ; jae +2 ; ud2 ; movabs r9,ARENA_ADDR ; mov [r9],rdx
 pub fn nb_emit_alloc_core(code: String) -> String {
+    if nb_layout_explicit() == 1 {
+        return nb_emit_alloc_core_checked(code);
+    }
     // mov rdi,rsi = 48 89 F7 ; add rdi,8 = 48 83 C7 08
     let c1: String = nb_push(code, 72);
     let c2: String = nb_push(c1, 137);
@@ -31679,18 +31821,11 @@ pub fn nb_emit_alloc_core(code: String) -> String {
     let c36: String = nb_push(c35, 73);
     let c37: String = nb_push(c36, 184);
     let c38: String = nb_i64le(c37, nb_arena_bytes() - 8);
-    // cmp r8,rdx = 49 39 D0 ; jae +2 = 0F 83 02 00 00 00 ; ud2 = 0F 0B
+    // cmp r8,rdx = 49 39 D0 ; then the over-cap path (nb_emit_arena_check)
     let c39: String = nb_push(c38, 73);
     let c40: String = nb_push(c39, 57);
     let c41: String = nb_push(c40, 208);
-    let c42: String = nb_push(c41, 15);
-    let c43: String = nb_push(c42, 131);
-    let c44: String = nb_push(c43, 2);
-    let c45: String = nb_push(c44, 0);
-    let c46: String = nb_push(c45, 0);
-    let c47: String = nb_push(c46, 0);
-    let c48: String = nb_push(c47, 15);
-    let c49: String = nb_push(c48, 11);
+    let c49: String = nb_emit_arena_check(c41);
     // movabs r9,ARENA_ADDR = 49 B9 <imm64> ; mov [r9],rdx = 49 89 11
     let c50: String = nb_push(c49, 73);
     let c51: String = nb_push(c50, 185);
@@ -31698,6 +31833,130 @@ pub fn nb_emit_alloc_core(code: String) -> String {
     let c53: String = nb_push(c52, 73);
     let c54: String = nb_push(c53, 137);
     nb_push(c54, 17)
+}
+
+// EXPLICIT-layout alloc core: the bounds check runs BEFORE any write. The default
+// sequence above stores the block header first, so with the cursor at the arena
+// end the header lands in the unmapped guard gap and the image dies on SIGSEGV
+// before reaching the over-cap check. Here the new cursor (old + header + data)
+// is compared against ARENA_DATA_BYTES first; only a block that fits entirely is
+// written. Same inputs (rsi = rounded data size), same result (rax = DATA ptr)
+// and the same clobbers (rax rcx rdx rdi r8 r9) as the default sequence.
+// deferred: the default layout keeps the historical write-then-check order so
+// every default-profile image (and the frozen native oracles) stays
+// byte-identical; it still fails closed (SIGSEGV in the guard gap, or ud2) but
+// without the diagnostic — upgrade path: switch the default to this order in a
+// deliberate oracle re-bless.
+//   mov rdi,rsi ; add rdi,8 ; movabs rax,ARENA_ADDR ; mov rcx,[rax] ;
+//   mov rdx,rcx ; add rdx,rdi ; movabs r8,ARENA_DATA_BYTES ; cmp r8,rdx ;
+//   <nb_emit_arena_check> ; movabs rax,ARENA_DATA ; add rax,rcx ;
+//   mov [rax],rsi ; add rax,8 ; movabs r9,ARENA_ADDR ; mov [r9],rdx
+pub fn nb_emit_alloc_core_checked(code: String) -> String {
+    // mov rdi,rsi = 48 89 F7 ; add rdi,8 = 48 83 C7 08
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 137);
+    let c3: String = nb_push(c2, 247);
+    let c4: String = nb_push(c3, 72);
+    let c5: String = nb_push(c4, 131);
+    let c6: String = nb_push(c5, 199);
+    let c7: String = nb_push(c6, 8);
+    // movabs rax,ARENA_ADDR = 48 B8 <imm64> ; mov rcx,[rax] = 48 8B 08
+    let c8: String = nb_push(c7, 72);
+    let c9: String = nb_push(c8, 184);
+    let c10: String = nb_i64le(c9, nb_arena_addr());
+    let c11: String = nb_push(c10, 72);
+    let c12: String = nb_push(c11, 139);
+    let c13: String = nb_push(c12, 8);
+    // mov rdx,rcx = 48 89 CA ; add rdx,rdi = 48 01 FA
+    let c14: String = nb_push(c13, 72);
+    let c15: String = nb_push(c14, 137);
+    let c16: String = nb_push(c15, 202);
+    let c17: String = nb_push(c16, 72);
+    let c18: String = nb_push(c17, 1);
+    let c19: String = nb_push(c18, 250);
+    // movabs r8,ARENA_DATA_BYTES = 49 B8 <imm64> ; cmp r8,rdx = 49 39 D0
+    let c20: String = nb_push(c19, 73);
+    let c21: String = nb_push(c20, 184);
+    let c22: String = nb_i64le(c21, nb_arena_bytes() - 8);
+    let c23: String = nb_push(c22, 73);
+    let c24: String = nb_push(c23, 57);
+    let c25: String = nb_push(c24, 208);
+    let c26: String = nb_emit_arena_check(c25);
+    // movabs rax,ARENA_DATA = 48 B8 <imm64> ; add rax,rcx = 48 01 C8
+    let c27: String = nb_push(c26, 72);
+    let c28: String = nb_push(c27, 184);
+    let c29: String = nb_i64le(c28, nb_arena_addr() + 8);
+    let c30: String = nb_push(c29, 72);
+    let c31: String = nb_push(c30, 1);
+    let c32: String = nb_push(c31, 200);
+    // mov [rax],rsi = 48 89 30 ; add rax,8 = 48 83 C0 08
+    let c33: String = nb_push(c32, 72);
+    let c34: String = nb_push(c33, 137);
+    let c35: String = nb_push(c34, 48);
+    let c36: String = nb_push(c35, 72);
+    let c37: String = nb_push(c36, 131);
+    let c38: String = nb_push(c37, 192);
+    let c39: String = nb_push(c38, 8);
+    // movabs r9,ARENA_ADDR = 49 B9 <imm64> ; mov [r9],rdx = 49 89 11
+    let c40: String = nb_push(c39, 73);
+    let c41: String = nb_push(c40, 185);
+    let c42: String = nb_i64le(c41, nb_arena_addr());
+    let c43: String = nb_push(c42, 73);
+    let c44: String = nb_push(c43, 137);
+    nb_push(c44, 17)
+}
+
+// The over-cap branch after `cmp r8,rdx` in nb_emit_alloc_core.
+// DEFAULT layout: jae +2 = 0F 83 02 00 00 00 ; ud2 = 0F 0B (unchanged bytes).
+// EXPLICIT layout: jae over a diagnostic block that writes
+// "error: native arena exhausted\n" to fd 2 and exit_group(70) — a clear,
+// fail-closed refusal instead of a bare SIGILL. The message is pushed as four
+// imm64 words (no rodata), so the block is position-independent (jae rel32 over
+// a 78-byte block):
+//   4 x (movabs rax,imm64 = 48 B8 <8> ; push rax = 50)
+//   mov eax,1 = B8 01 00 00 00 ; mov edi,2 = BF 02 00 00 00 ; mov rsi,rsp = 48 89 E6
+//   mov edx,30 = BA 1E 00 00 00 ; syscall = 0F 05
+//   mov eax,231 = B8 E7 00 00 00 ; mov edi,70 = BF 46 00 00 00 ; syscall = 0F 05
+//   ud2 = 0F 0B (unreachable)
+pub fn nb_emit_arena_check(code: String) -> String {
+    let c1: String = nb_push(code, 15);
+    let c2: String = nb_push(c1, 131);
+    if nb_layout_explicit() == 0 {
+        let d3: String = nb_u32(c2, 2);
+        let d4: String = nb_push(d3, 15);
+        return nb_push(d4, 11);
+    }
+    let c3: String = nb_u32(c2, 78);
+    let w1: String = nb_emit_push_imm64(c3, 11426315137909);
+    let w2: String = nb_emit_push_imm64(w1, 7018992394987204197);
+    let w3: String = nb_emit_push_imm64(w2, 8241904413215126625);
+    let w4: String = nb_emit_push_imm64(w3, 7935406806597268069);
+    let s1: String = nb_push(w4, 184);
+    let s2: String = nb_u32(s1, 1);
+    let s3: String = nb_push(s2, 191);
+    let s4: String = nb_u32(s3, 2);
+    let s5: String = nb_push(s4, 72);
+    let s6: String = nb_push(s5, 137);
+    let s7: String = nb_push(s6, 230);
+    let s8: String = nb_push(s7, 186);
+    let s9: String = nb_u32(s8, 30);
+    let s10: String = nb_push(s9, 15);
+    let s11: String = nb_push(s10, 5);
+    let e1: String = nb_push(s11, 184);
+    let e2: String = nb_u32(e1, 231);
+    let e3: String = nb_push(e2, 191);
+    let e4: String = nb_u32(e3, 70);
+    let e5: String = nb_push(e4, 15);
+    let e6: String = nb_push(e5, 5);
+    let e7: String = nb_push(e6, 15);
+    nb_push(e7, 11)
+}
+// movabs rax,imm64 = 48 B8 <imm64> ; push rax = 50
+pub fn nb_emit_push_imm64(code: String, v: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 184);
+    let c3: String = nb_i64le(c2, v);
+    nb_push(c3, 80)
 }
 
 // emit_alloc(bytes_disp): round the requested size up to the 8-byte stride into
@@ -43585,7 +43844,9 @@ pub fn nb_arena_reclaim(ckpt: i64) -> i64 {
     if ckpt < nb_arena_addr() + 16 {
         return 0;
     }
-    if ckpt >= nb_arena_addr() + nb_arena_bytes() {
+    // Upper bound of the RUNNING compiler's own arena (no profile is larger than
+    // the default), not the layout requested for the image being emitted.
+    if ckpt >= nb_arena_addr() + nb_arena_bytes_default() {
         return 0;
     }
     let _r: i64 = __mind_store_i64(nb_arena_addr(), ckpt - nb_arena_addr() - 8);
