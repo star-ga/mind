@@ -18,9 +18,9 @@ mod admission;
 #[cfg(feature = "std-surface")]
 mod child;
 #[cfg(feature = "std-surface")]
-mod loop_shadow;
-#[cfg(feature = "std-surface")]
 mod seed;
+#[cfg(feature = "std-surface")]
+mod shadow;
 
 #[cfg(feature = "std-surface")]
 /// The `native_seed` column of the committed std manifest, in FILE ORDER.
@@ -341,11 +341,12 @@ pub fn run_native_backend_bridge_profile(
         eprintln!("error[backend-native]: {msg}");
         process::exit(3);
     }
-    // A loop-body binding that re-declares an enclosing name would be merged
-    // into the outer binding by the frozen compiler: refuse, never miscompile.
+    // A nested binding that re-declares an enclosing name would be merged into
+    // the outer binding by the frozen compiler: refuse, never miscompile.
     // `admit_merged_program` already proved the image is UTF-8, so this is exact.
     let fence_text = String::from_utf8_lossy(&fence_source);
-    if let Err(msg) = admission::refuse_loop_body_shadowing(&merged_ast, &fence_text, &paths[0]) {
+    let origins = shadow_origins(&source_set, &paths[0]);
+    if let Err(msg) = admission::refuse_shadowing(&merged_ast, &fence_text, &origins) {
         eprintln!("error[backend-native]: {msg}");
         process::exit(3);
     }
@@ -542,6 +543,32 @@ fn print_compiler_stderr(capture: Option<&child::BoundedCapture>, after_failure:
             "  compiler stderr: unavailable (its pipe was still held open after the \
              process was reaped)"
         ),
+    }
+}
+
+/// Each user source's display path and its start offset in the composed user
+/// region (`native_image::compose_user_region` joins them with one `\n`), so a
+/// refusal can name the file and line a binding came from.
+#[cfg(feature = "std-surface")]
+fn shadow_origins(
+    set: &crate::build::native_scope::NativeSourceSet,
+    entry: &str,
+) -> Vec<(String, usize)> {
+    match set {
+        crate::build::native_scope::NativeSourceSet::SingleFile { .. } => {
+            vec![(entry.to_string(), 0)]
+        }
+        crate::build::native_scope::NativeSourceSet::Project { sources } => {
+            let mut start = 0;
+            sources
+                .iter()
+                .map(|s| {
+                    let origin = (s.path.display().to_string(), start);
+                    start += s.source.len() + 1;
+                    origin
+                })
+                .collect()
+        }
     }
 }
 

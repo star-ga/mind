@@ -303,18 +303,33 @@ fn the_first_probe_names_the_inner_let_line() {
 /// value the MLIR build of the same source exits with (measured).
 const LOOP_BODY_SHADOW_CONTROLS: &[(&str, &str, i32)] = &[
     (
-        // Shadowing in a plain `if` outside any loop.
-        "if_block_shadow_outside_loop",
-        "fn main() -> i64 {\n    let mut x: i64 = 5;\n    let c: i64 = 1;\n    \
-         if c == 1 {\n        let mut x: i64 = 7;\n        x = 3;\n    }\n    return x;\n}\n",
-        5,
+        // A parameter re-declared at the function's top level (one frame with
+        // the parameters), then written from a nested `if`: native 40, MLIR 40.
+        "param_redeclared_at_function_top",
+        "fn f(x: i64, c: i64) -> i64 {\n    let mut x: i64 = x + 1;\n    if c == 1 {\n        \
+         if c == 1 {\n            x = 40;\n        }\n    }\n    return x;\n}\n\
+         fn main() -> i64 { return f(5, 1); }\n",
+        40,
     ),
     (
-        // A parameter shadowed in a plain `if` outside any loop.
-        "if_block_param_shadow_outside_loop",
-        "fn f(x: i64, c: i64) -> i64 {\n    if c == 1 {\n        let mut x: i64 = 7;\n        \
-         x = 3;\n    }\n    return x;\n}\nfn main() -> i64 { return f(5, 1); }\n",
-        5,
+        // A same-frame re-declaration, then a loop inside a nested `if` that
+        // writes the name: native 9, MLIR 9.
+        "same_frame_redeclare_loop_in_nested_if",
+        "fn main() -> i64 {\n    let mut x: i64 = 5;\n    let mut x: i64 = x + 2;\n    \
+         let c: i64 = 1;\n    let mut k: i64 = 0;\n    if c == 1 {\n        if c == 1 {\n            \
+         while k < 2 { k = k + 1; x = x + 1; }\n        }\n    }\n    return x;\n}\n",
+        9,
+    ),
+    (
+        // Sibling `if` blocks binding the same name, no outer binding, written
+        // from a nested `if` and a nested loop: native 29, MLIR 29.
+        "sibling_if_blocks_same_name",
+        "fn main() -> i64 {\n    let c: i64 = 1;\n    let mut s: i64 = 0;\n    if c == 1 {\n        \
+         let mut t: i64 = 3;\n        if c == 1 {\n            t = t + 4;\n        }\n        \
+         s = s + t;\n    }\n    if c == 1 {\n        let mut t: i64 = 20;\n        if c == 1 {\n            \
+         let mut k: i64 = 0;\n            while k < 2 { k = k + 1; t = t + 1; }\n        }\n        \
+         s = s + t;\n    }\n    return s;\n}\n",
+        29,
     ),
     (
         // A loop-local `let` of a NEW name.
@@ -360,7 +375,7 @@ const LOOP_BODY_SHADOW_CONTROLS: &[(&str, &str, i32)] = &[
 ];
 
 #[test]
-fn shadowing_outside_loops_and_new_loop_locals_still_build_and_run() {
+fn same_frame_redeclarations_and_new_loop_locals_still_build_and_run() {
     for (name, src, expected) in LOOP_BODY_SHADOW_CONTROLS {
         let p = Project::new(name);
         p.write("src/main.mind", src);
@@ -369,4 +384,120 @@ fn shadowing_outside_loops_and_new_loop_locals_still_build_and_run() {
         let bytes = bytes.expect("artifact");
         assert_native_result(&p, &bytes, *expected, name);
     }
+}
+
+/// A binding in a nested block OUTSIDE any loop that re-declares an enclosing
+/// name. The frozen compiler resolves a write from a further-nested block (an
+/// inner `if`, or a loop inside one) to the OUTER binding, so these built
+/// natively and exited with the inner value (measured on the 0.10.3 candidate,
+/// native / MLIR in each comment). A single-level `if` shadow happens to run
+/// correctly today, but that was measured at one nesting only, so every
+/// cross-frame re-declaration is refused (`native.block_shadow`).
+const BLOCK_SHADOW_CASES: &[(&str, &str, &str)] = &[
+    (
+        // native 11, MLIR 5: a loop inside a nested `if` carries `x` by name.
+        "if_shadow_loop_in_nested_if",
+        "fn main() -> i64 {\n    let mut x: i64 = 5;\n    let c: i64 = 1;\n    if c == 1 {\n        \
+         let mut x: i64 = 9;\n        if c == 1 {\n            let mut k: i64 = 0;\n            \
+         while k < 2 {\n                k = k + 1;\n                x = x + 1;\n            }\n        \
+         }\n    }\n    return x;\n}\n",
+        "`x`",
+    ),
+    (
+        // native 112, MLIR 6.
+        "if_shadow_loop_in_nested_if_then_writes",
+        "fn main() -> i64 {\n    let mut x: i64 = 5;\n    let c: i64 = 1;\n    if c == 1 {\n        \
+         let mut x: i64 = 9;\n        if c == 1 {\n            let mut k: i64 = 0;\n            \
+         while k < 2 {\n                k = k + 1;\n                x = x + 1;\n            }\n        \
+         }\n        x = x + 100;\n    }\n    x = x + 1;\n    return x;\n}\n",
+        "`x`",
+    ),
+    (
+        // native 40, MLIR 5: a write in a nested `if` lands on the outer `x`.
+        "if_shadow_write_in_nested_if",
+        "fn main() -> i64 {\n    let mut x: i64 = 5;\n    let c: i64 = 1;\n    if c == 1 {\n        \
+         let mut x: i64 = 9;\n        if c == 1 {\n            x = 40;\n        }\n    }\n    \
+         return x;\n}\n",
+        "`x`",
+    ),
+    (
+        // native 40, MLIR 5: the same with a parameter.
+        "param_if_shadow_write_in_nested_if",
+        "fn f(x: i64, c: i64) -> i64 {\n    if c == 1 {\n        let mut x: i64 = 9;\n        \
+         if c == 1 {\n            x = 40;\n        }\n    }\n    return x;\n}\n\
+         fn main() -> i64 {\n    return f(5, 1);\n}\n",
+        "`x`",
+    ),
+    (
+        // native 99, MLIR 3: in a helper called from `main`.
+        "helper_if_shadow_write_in_nested_if",
+        "fn h(a: i64) -> i64 {\n    let mut acc: i64 = a;\n    if a > 0 {\n        \
+         let mut acc: i64 = 0;\n        if a > 1 {\n            acc = 99;\n        }\n    }\n    \
+         return acc;\n}\nfn main() -> i64 {\n    return h(3);\n}\n",
+        "`acc`",
+    ),
+    (
+        // native 229, MLIR 28: a parameter carried by an earlier loop.
+        "loop_param_if_shadow_write_in_nested_if",
+        "fn f(n: i64, c: i64) -> i64 {\n    let mut s: i64 = 0;\n    let mut k: i64 = 0;\n    \
+         while k < 3 {\n        k = k + 1;\n        s = s + n;\n    }\n    if c == 1 {\n        \
+         let mut n: i64 = 1000;\n        if c == 1 {\n            n = 2000;\n        }\n        \
+         s = s + 0;\n    }\n    return s + n;\n}\nfn main() -> i64 {\n    return f(7, 1);\n}\n",
+        "`n`",
+    ),
+    (
+        // Runs correctly today (native 5, MLIR 5) but only at this single
+        // nesting level; refused because the family is not proven.
+        "if_block_shadow_outside_loop",
+        "fn main() -> i64 {\n    let mut x: i64 = 5;\n    let c: i64 = 1;\n    \
+         if c == 1 {\n        let mut x: i64 = 7;\n        x = 3;\n    }\n    return x;\n}\n",
+        "`x`",
+    ),
+    (
+        // As above, with a parameter (native 5, MLIR 5).
+        "if_block_param_shadow_outside_loop",
+        "fn f(x: i64, c: i64) -> i64 {\n    if c == 1 {\n        let mut x: i64 = 7;\n        \
+         x = 3;\n    }\n    return x;\n}\nfn main() -> i64 { return f(5, 1); }\n",
+        "`x`",
+    ),
+];
+
+#[test]
+fn a_block_binding_shadowing_an_enclosing_name_is_refused() {
+    for (name, src, shadowed) in BLOCK_SHADOW_CASES {
+        let stderr = assert_refused(name, src, "native.block_shadow");
+        assert!(
+            stderr.contains(shadowed),
+            "{name}: shadowed name {shadowed} not named:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("main.mind:"),
+            "{name}: no source location:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("--backend mlir"),
+            "{name}: hint missing:\n{stderr}"
+        );
+    }
+}
+
+#[test]
+fn a_block_shadow_in_an_imported_module_is_refused() {
+    // native 99, MLIR 3: the shadow sits in `helper.mind`, not the entry.
+    let p = Project::new("imported_block_shadow");
+    p.write(
+        "src/helper.mind",
+        "pub fn hv(a: i64) -> i64 {\n    let mut acc: i64 = a;\n    if a > 0 {\n        \
+         let mut acc: i64 = 0;\n        if a > 1 {\n            acc = 99;\n        }\n    }\n    \
+         return acc;\n}\n",
+    );
+    p.write(
+        "src/main.mind",
+        "import helper;\n\nfn main() -> i64 {\n    return hv(3);\n}\n",
+    );
+    let (code, stderr, bytes) = p.build_native("src/main.mind");
+    assert_eq!(code, 3, "expected a refusal (exit 3):\n{stderr}");
+    assert!(stderr.contains("native.block_shadow"), "{stderr}");
+    assert!(stderr.contains("`acc`"), "{stderr}");
+    assert!(bytes.is_none(), "a refused build wrote an artifact");
 }

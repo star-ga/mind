@@ -2,33 +2,46 @@
 // Licensed under the Apache License, Version 2.0.
 // Part of the MIND project (Machine Intelligence Native Design).
 
-//! Scope walk behind the `native.loop_body_shadow` refusal.
+//! Scope walk behind the `native.loop_body_shadow` / `native.block_shadow`
+//! refusals.
 //!
-//! The frozen native compiler resolves loop-carried variables by NAME. A
-//! binding introduced inside a loop (a `let`, a `let (a, b)`, a `for`/for-each
-//! induction variable, a `match` arm binding, a closure parameter) whose name
-//! is already bound in an ENCLOSING scope is merged into that outer binding:
-//! `let mut x = 5; while .. { let mut x = 7; x = 3; } return x;` exits 3
-//! natively and 5 under MLIR. This walk finds every such binding so the bridge
-//! can refuse the program instead of emitting it.
+//! The frozen native compiler resolves variables by NAME across nested
+//! blocks. A binding that re-declares a name already bound in an ENCLOSING
+//! scope is merged with that outer binding:
+//!
+//! * inside a loop (a `let`, a `let (a, b)`, a `for`/for-each induction
+//!   variable, a `match` arm binding, a closure parameter):
+//!   `let mut x = 5; while .. { let mut x = 7; x = 3; } return x;` exits 3
+//!   natively and 5 under MLIR;
+//! * outside any loop, once the name is written from a further-nested block:
+//!   `let mut x = 5; if c { let mut x = 9; if c { x = 40; } } return x;`
+//!   exits 40 natively and 5 under MLIR (also with a loop in the inner `if`).
+//!
+//! A single-level `if` shadow happens to run correctly, but that was measured
+//! at one nesting only, so the walk reports EVERY cross-frame re-declaration.
 //!
 //! Soundness over precision: an enclosing scope is ANY lexical frame outside
 //! the binding's own -- module constants, function parameters, outer `let`s,
-//! an enclosing loop body or `if` block, a loop's own induction variable.
-//! Only a re-declaration inside the SAME frame is admitted (it means the same
-//! thing under name-merging and under lexical scoping). Loop conditions and
-//! closure bodies are treated as inside the loop. Unknown nodes are walked
-//! through the exhaustive `nerve_walk::for_each_child`, so a new statement
-//! container is still searched (in the current frame, the conservative side).
+//! an enclosing loop body, `if` block, `match` arm or `{ }` block, a loop's own
+//! induction variable. Admitted are only a re-declaration inside the SAME
+//! frame, and a `let` at a function's top level re-declaring a parameter: the
+//! parameters share the body's top frame, because nothing after the body can
+//! observe the parameter again, so name-merging and lexical scoping agree
+//! (measured: a top-level `let mut x = x + 1` written from a nested `if` runs
+//! the same natively and under MLIR). Unknown nodes are walked through the
+//! exhaustive `nerve_walk::for_each_child` inside a frame of their own, so a
+//! binding in a statement container this walk does not model is checked
+//! against every outer frame, including the one it appears in (the refusing
+//! side).
 
 use std::collections::BTreeMap;
 
 use crate::ast::{Module, Node, Pattern, Span};
 use crate::type_checker::nerve_walk::for_each_child;
 
-/// One binding found inside a loop that re-declares an enclosing name.
+/// One binding that re-declares a name bound in an enclosing scope.
 #[derive(Debug, Clone, PartialEq)]
-pub(super) struct LoopShadow {
+pub(super) struct Shadow {
     /// The re-declared name.
     pub name: String,
     /// The function whose body holds the inner binding.
@@ -41,6 +54,8 @@ pub(super) struct LoopShadow {
     pub outer_kind: &'static str,
     /// Span of the enclosing binding.
     pub outer: Span,
+    /// True when the inner binding sits inside a loop (header or body).
+    pub in_loop: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -55,11 +70,11 @@ struct Walk<'a> {
     /// Number of loops enclosing the current position in the current function.
     loop_depth: usize,
     fn_name: &'a str,
-    found: Vec<LoopShadow>,
+    found: Vec<Shadow>,
 }
 
-/// Every loop-introduced binding of `module` that re-declares an enclosing name.
-pub(super) fn find(module: &Module) -> Vec<LoopShadow> {
+/// Every binding of `module` that re-declares a name from an enclosing scope.
+pub(super) fn find(module: &Module) -> Vec<Shadow> {
     let mut module_frame = BTreeMap::new();
     for item in &module.items {
         match item {
@@ -92,21 +107,20 @@ impl<'a> Walk<'a> {
         if name == "_" {
             return;
         }
-        if self.loop_depth > 0 {
-            let enclosing = self.frames[..self.frames.len() - 1]
-                .iter()
-                .rev()
-                .find_map(|f| f.get(name).copied());
-            if let Some(outer) = enclosing {
-                self.found.push(LoopShadow {
-                    name: name.to_string(),
-                    fn_name: self.fn_name.to_string(),
-                    inner_kind: kind,
-                    inner: span,
-                    outer_kind: outer.kind,
-                    outer: outer.span,
-                });
-            }
+        let enclosing = self.frames[..self.frames.len() - 1]
+            .iter()
+            .rev()
+            .find_map(|f| f.get(name).copied());
+        if let Some(outer) = enclosing {
+            self.found.push(Shadow {
+                name: name.to_string(),
+                fn_name: self.fn_name.to_string(),
+                inner_kind: kind,
+                inner: span,
+                outer_kind: outer.kind,
+                outer: outer.span,
+                in_loop: self.loop_depth > 0,
+            });
         }
         if let Some(frame) = self.frames.last_mut() {
             frame.insert(name, Binding { kind, span });
@@ -159,11 +173,16 @@ impl<'a> Walk<'a> {
         let saved_frames = self.frames.split_off(1);
         let saved_depth = std::mem::replace(&mut self.loop_depth, 0);
         let saved_name = std::mem::replace(&mut self.fn_name, name);
+        // The parameters share the body's top frame: a top-level `let` that
+        // re-declares one is a same-frame re-declaration (nothing after the
+        // body can observe the parameter again).
         self.frames.push(BTreeMap::new());
         for p in params {
             self.bind(&p.name, p.span, "parameter");
         }
-        self.scoped(body);
+        for s in body {
+            self.node(s);
+        }
         self.frames.pop();
         self.fn_name = saved_name;
         self.loop_depth = saved_depth;
@@ -242,8 +261,8 @@ impl<'a> Walk<'a> {
             }
             Node::Closure(cd, _) => {
                 // Conservative: the closure body keeps the enclosing chain and
-                // loop depth, so a parameter or `let` in a closure written inside
-                // a loop is checked like any other loop-body binding.
+                // loop depth, so a closure parameter or `let` that re-declares a
+                // captured-scope name is reported like any nested binding.
                 self.frames.push(BTreeMap::new());
                 for p in &cd.params {
                     self.bind(&p.name, p.span, "closure parameter");
@@ -251,7 +270,15 @@ impl<'a> Walk<'a> {
                 self.scoped(&cd.body);
                 self.frames.pop();
             }
-            _ => for_each_child(n, &mut |child| self.node(child)),
+            _ => {
+                // Any other node's children get a frame of their own, so a
+                // binding inside a statement container this walk does not
+                // know is checked against EVERY frame outside it -- including
+                // the current one -- and a re-declaration there is refused.
+                self.frames.push(BTreeMap::new());
+                for_each_child(n, &mut |child| self.node(child));
+                self.frames.pop();
+            }
         }
     }
 }
