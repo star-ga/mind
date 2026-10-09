@@ -18,6 +18,8 @@ mod admission;
 #[cfg(feature = "std-surface")]
 mod child;
 #[cfg(feature = "std-surface")]
+mod loop_shadow;
+#[cfg(feature = "std-surface")]
 mod seed;
 
 #[cfg(feature = "std-surface")]
@@ -336,6 +338,14 @@ pub fn run_native_backend_bridge_profile(
     // An entry `main` with parameters would run with them all 0 (the frozen
     // compiler does not bind them to argc/argv): refuse it, never miscompile.
     if let Err(msg) = admission::refuse_entry_main_with_params(&merged_ast, &paths[0]) {
+        eprintln!("error[backend-native]: {msg}");
+        process::exit(3);
+    }
+    // A loop-body binding that re-declares an enclosing name would be merged
+    // into the outer binding by the frozen compiler: refuse, never miscompile.
+    // `admit_merged_program` already proved the image is UTF-8, so this is exact.
+    let fence_text = String::from_utf8_lossy(&fence_source);
+    if let Err(msg) = admission::refuse_loop_body_shadowing(&merged_ast, &fence_text, &paths[0]) {
         eprintln!("error[backend-native]: {msg}");
         process::exit(3);
     }

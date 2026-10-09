@@ -49,6 +49,61 @@ pub(super) fn refuse_entry_main_with_params(ast: &Module, path: &str) -> Result<
     Ok(())
 }
 
+/// Refuse a binding inside a loop that re-declares an enclosing name.
+///
+/// The frozen native compiler resolves loop-carried variables by name, so it
+/// merges such a binding into the outer one: `let mut x = 5; while k < 2 {
+/// k = k + 1; let mut x = 7; x = 3; } return x;` built natively and exited 3
+/// where the MLIR build exits 5. Refused (with every offending binding named)
+/// until the seed scopes loop-body bindings. The scope rules are in
+/// `loop_shadow`; when unsure they refuse.
+pub(super) fn refuse_loop_body_shadowing(
+    ast: &Module,
+    text: &str,
+    path: &str,
+) -> Result<(), String> {
+    let shadows = super::loop_shadow::find(ast);
+    if shadows.is_empty() {
+        return Ok(());
+    }
+    let line_of = |offset: usize| text[..offset.min(text.len())].matches('\n').count() + 1;
+    let found: Vec<Diagnostic> = shadows
+        .iter()
+        .map(|s| {
+            let mut d = Diagnostic::error(
+                "native",
+                "native.loop_body_shadow",
+                format!(
+                    "{} `{}` inside a loop in fn `{}` re-declares `{}`, already bound as a {} \
+                     at line {}; the frozen native compiler resolves loop-carried variables by \
+                     name and would merge the two bindings (a silent miscompile)",
+                    s.inner_kind,
+                    s.name,
+                    s.fn_name,
+                    s.name,
+                    s.outer_kind,
+                    line_of(s.outer.start())
+                ),
+            );
+            let start = s.inner.start().min(text.len());
+            let end = s.inner.end().min(text.len()).max(start);
+            d.span = Some(Span::from_offsets(text, start, end, Some(path)));
+            d.help = Some(format!(
+                "rename the inner `{}`, or rerun with `--backend mlir`",
+                s.name
+            ));
+            d
+        })
+        .collect();
+    let names: BTreeSet<&str> = shadows.iter().map(|s| s.name.as_str()).collect();
+    Err(format!(
+        "{}\n`{path}`: binding(s) {names:?} inside a loop re-declare a name from an enclosing \
+         scope; the native backend would merge them with the outer binding. Rerun with \
+         `--backend mlir`. No artifact written. (native.loop_body_shadow)",
+        render(&found, text)
+    ))
+}
+
 /// The type-check codes whose construct lowering cannot materialise.
 const NAME_FATAL_CODES: [&str; 3] = [
     resolve::UNKNOWN_IDENT_CODE,
@@ -220,6 +275,76 @@ mod tests {
         let bad =
             crate::parser::parse("fn main(argc: i64) -> i64 { return argc; }\n").expect("parse");
         assert!(refuse_entry_main_with_params(&bad, "t.mind").is_err());
+    }
+
+    fn shadowed(src: &str) -> Vec<String> {
+        let ast = crate::parser::parse(src).expect("parse");
+        super::super::loop_shadow::find(&ast)
+            .into_iter()
+            .map(|s| format!("{}:{}<{}", s.name, s.inner_kind, s.outer_kind))
+            .collect()
+    }
+
+    #[test]
+    fn loop_body_shadows_are_found_at_every_nesting() {
+        let w = "fn main() -> i64 { let mut x = 5; let mut k = 0; \
+                 while k < 2 { k = k + 1; let mut x = 7; x = 3; } return x; }";
+        assert_eq!(shadowed(w), ["x:let<let"]);
+        let p = "fn f(x: i64) -> i64 { for i in 0..2 { let x = 1; } return x; }";
+        assert_eq!(shadowed(p), ["x:let<parameter"]);
+        let in_if = "fn f(x: i64) -> i64 { while x < 2 { if x == 1 { let x = 1; } } return x; }";
+        assert_eq!(shadowed(in_if), ["x:let<parameter"]);
+        let nested = "fn f() -> i64 { while 1 { let a = 1; while 1 { let a = 2; } } return 0; }";
+        assert_eq!(shadowed(nested), ["a:let<let"]);
+        let for_var = "fn f() -> i64 { for i in 0..3 { let i = 10; } return 0; }";
+        assert_eq!(shadowed(for_var), ["i:let<for variable"]);
+        let nested_for = "fn f() -> i64 { for i in 0..3 { for i in 0..2 { } } return 0; }";
+        assert_eq!(shadowed(nested_for), ["i:for variable<for variable"]);
+        let header = "fn f(i: i64) -> i64 { for i in 0..3 { } return i; }";
+        assert_eq!(shadowed(header), ["i:for variable<parameter"]);
+        let tuple = "fn f(b: i64) -> i64 { while 1 { let (a, b) = (1, 2); } return b; }";
+        assert_eq!(shadowed(tuple), ["b:let<parameter"]);
+        let konst = "const N: i64 = 4;\nfn f() -> i64 { while 1 { let N = 3; } return N; }";
+        assert_eq!(shadowed(konst), ["N:let<const"]);
+    }
+
+    #[test]
+    fn non_loop_shadows_and_fresh_loop_locals_are_admitted() {
+        for ok in [
+            "fn f(x: i64) -> i64 { if x == 1 { let x = 7; } return x; }",
+            "fn f() -> i64 { let mut s = 0; while s < 3 { let t = 1; s = s + t; } return s; }",
+            "fn f() -> i64 { while 1 { let t = 1; } while 1 { let t = 2; } return 0; }",
+            "fn f() -> i64 { while 1 { let a = 1; let a = a + 1; } return 0; }",
+            "fn f() -> i64 { while 1 { let t = 1; } let t = 2; return t; }",
+            "fn f() -> i64 { for j in 0..2 { } for j in 0..4 { } return 0; }",
+            "fn f() -> i64 { while 1 { if 1 { let q = 1; } let q = 2; } return 0; }",
+            "fn f() -> i64 { while 1 { let _ = 1; let _ = 2; } return 0; }",
+        ] {
+            assert_eq!(shadowed(ok), Vec::<String>::new(), "{ok}");
+        }
+    }
+
+    #[test]
+    fn each_function_starts_a_fresh_scope_chain() {
+        // `x` is a parameter of `g` only; the loop in `h` binds a fresh `x`.
+        let src = "fn g(x: i64) -> i64 { return x; }\n\
+                   fn h() -> i64 { while 1 { let x = 1; } return 0; }";
+        assert_eq!(shadowed(src), Vec::<String>::new());
+    }
+
+    #[test]
+    fn the_refusal_names_the_binding_and_its_line() {
+        let src = "fn main() -> i64 {\n    let mut x: i64 = 5;\n    while 1 {\n        \
+                   let mut x: i64 = 7;\n    }\n    return x;\n}\n";
+        let ast = crate::parser::parse(src).expect("parse");
+        let err = refuse_loop_body_shadowing(&ast, src, "t.mind").unwrap_err();
+        assert!(err.contains("native.loop_body_shadow"), "{err}");
+        assert!(err.contains("t.mind:4:"), "{err}");
+        assert!(err.contains("at line 2"), "{err}");
+        assert!(
+            err.contains("`x`") && err.contains("--backend mlir"),
+            "{err}"
+        );
     }
 
     #[test]
