@@ -3,16 +3,34 @@
 // Subprocess spawning via fork/execvp + pipe, environment variable access,
 // working directory, and process exit via libc extern "C".
 //
-// Child heap record layout (40 bytes):
-//   offset  0: pid    (i64)
-//   offset  8: stdin  (i64) — write-end of pipe to child stdin (or -1)
-//   offset 16: stdout (i64) — read-end of pipe from child stdout (or -1)
-//   offset 24: stderr (i64) — read-end of pipe from child stderr (or -1)
-//   offset 32: flags  (i64) — bit 0 = capture mode
+// Child heap record layout (56 bytes):
+//   offset  0: pid         (i64)
+//   offset  8: stdin       (i64) — write-end of the stdin pipe, or -1
+//   offset 16: stdout      (i64) — read-end of the stdout pipe, or -1
+//   offset 24: stderr      (i64) — read-end of the stderr pipe, or -1
+//   offset 32: flags       (i64) — bit 0 = capture mode
+//   offset 40: exec_errno  (i64) — 0 if exec succeeded; else the errno
+//                                  written by the child (ENOENT = 2)
+//   offset 48: spawn_errno (i64) — 0 if fork created a child; else errno
+//                                  from pipe/fork setup (EAGAIN = 11,
+//                                  EMFILE = 24). Linux errno numbers,
+//                                  same on x86_64 and aarch64.
 //
-// ExitStatus heap record layout (16 bytes):
-//   offset 0: code   (i64) — exit code (0 = success)
-//   offset 8: signal (i64) — signal number that terminated the child, or 0
+// A failed exec is not "the child was never created". pid stays positive
+// so the caller can reap the _exit(127) zombie, exec_errno carries the
+// reason, and capture fds are set back to -1 so an empty pipe is not a
+// successful capture. A program that really exits 127 has exec_errno 0.
+//
+// ExitStatus heap record layout (40 bytes):
+//   offset  0: code    (i64) — WEXITSTATUS, or -1 if signaled, stopped,
+//                              waitpid failed, or WNOHANG saw no status
+//   offset  8: signal  (i64) — WTERMSIG, or WSTOPSIG when stopped, else 0
+//   offset 16: error   (i64) — 0 if a status was collected; positive errno
+//                              if waitpid failed (ECHILD = 10); -1 if
+//                              WNOHANG returned 0 (child still running).
+//                              EINTR (4) is retried and not returned.
+//   offset 24: core    (i64) — 1 if the core-dump bit (0x80) is set
+//   offset 32: stopped (i64) — 1 if WIFSTOPPED (low byte 0x7f)
 //
 // String-returning functions return a heap record [addr, len, cap].
 // Empty (addr=0, len=0) means "not set" or error.
@@ -27,14 +45,19 @@ extern "C" {
     unsafe fn waitpid(pid: i32, status: *mut i32, options: i32) -> i32;
     unsafe fn kill(pid: i32, sig: i32) -> i32;
     unsafe fn pipe(pipefd: *mut i32) -> i32;
+    unsafe fn pipe2(pipefd: *mut i32, flags: i32) -> i32;
     unsafe fn dup2(oldfd: i32, newfd: i32) -> i32;
     unsafe fn close(fd: i32) -> i32;
+    unsafe fn read(fd: i32, buf: *mut u8, count: i64) -> i64;
+    unsafe fn write(fd: i32, buf: *const u8, count: i64) -> i64;
+    unsafe fn __errno_location() -> *mut i32;
     unsafe fn getenv(name: *const u8) -> *mut u8;
     unsafe fn setenv(name: *const u8, value: *const u8, overwrite: i32) -> i32;
     unsafe fn unsetenv(name: *const u8) -> i32;
     unsafe fn getcwd(buf: *mut u8, size: i64) -> *mut u8;
     unsafe fn chdir(path: *const u8) -> i32;
     safe fn exit(status: i32);
+    safe fn _exit(status: i32);
     unsafe fn getpid() -> i32;
     unsafe fn memset(ptr: *mut u8, value: i32, num: i64) -> *mut u8;
 }
@@ -74,19 +97,83 @@ fn proc_heap_copy(src_addr: i64, src_len: i64) -> i64 {
     dst
 }
 
-// Decode a waitpid(2) status word into an ExitStatus heap record.
+// Linux wait status (same encoding on x86_64 and aarch64):
+//   exited:   low 7 bits == 0, code in the next byte
+//   signaled: low 7 bits is the signal, bit 7 is the core-dump flag
+//   stopped:  low byte == 0x7f, stop signal in the next byte
+fn proc_status_record(code: i64, signal_no: i64, err: i64, core: i64, stopped: i64) -> i64 {
+    let rec: i64 = __mind_alloc(40);
+    __mind_store_i64(rec + 0, code);
+    __mind_store_i64(rec + 8, signal_no);
+    __mind_store_i64(rec + 16, err);
+    __mind_store_i64(rec + 24, core);
+    __mind_store_i64(rec + 32, stopped);
+    rec
+}
+
 fn proc_decode_status(status: i64) -> i64 {
-    let rec: i64 = __mind_alloc(16);
+    let low8: i64 = status & 255;
     let low7: i64 = status & 127;
+    if low8 == 127 {
+        let stopsig: i64 = (status >> 8) & 255;
+        return proc_status_record(0 - 1, stopsig, 0, 0, 1);
+    }
     if low7 == 0 {
         let code: i64 = (status >> 8) & 255;
-        __mind_store_i64(rec + 0, code);
-        __mind_store_i64(rec + 8, 0)
-    } else {
-        __mind_store_i64(rec + 0, 0 - 1);
-        __mind_store_i64(rec + 8, low7)
+        return proc_status_record(code, 0, 0, 0, 0);
     }
-    rec
+    let core: i64 = if (status & 128) != 0 {
+        1
+    } else {
+        0
+    };
+    proc_status_record(0 - 1, low7, 0, core, 0)
+}
+
+fn proc_status_fail(err: i64) -> i64 {
+    proc_status_record(0 - 1, 0, err, 0, 0)
+}
+
+// WNOHANG and the child has not changed state. error -1 is not an errno.
+fn proc_status_pending() -> i64 {
+    proc_status_record(0 - 1, 0, 0 - 1, 0, 0)
+}
+
+fn proc_errno() -> i64 {
+    let slot: i64 = __errno_location() as i64;
+    let value: i64 = __mind_load_i32(slot) as i64;
+    if value < 0 {
+        value & 4294967295
+    } else {
+        value
+    }
+}
+
+fn proc_load_fd(addr: i64) -> i64 {
+    // pipe(2) stores two signed int values. Keep the full 32-bit number.
+    // A 16-bit mask drops every descriptor above 65535.
+    let value: i64 = __mind_load_i32(addr) as i64;
+    if value < 0 {
+        value & 4294967295
+    } else {
+        value
+    }
+}
+
+fn proc_close_fd(fd: i64) -> i64 {
+    if fd >= 0 {
+        close(fd as i32) as i64
+    } else {
+        0
+    }
+}
+
+fn proc_close_above(fd: i64) -> i64 {
+    if fd > 2 {
+        close(fd as i32) as i64
+    } else {
+        0
+    }
 }
 
 // Copy argv_vec_len pointers from argv_vec_addr into arr starting at index 1.
@@ -109,6 +196,162 @@ fn proc_build_argv(prog_addr: i64, argv_vec_addr: i64, argv_vec_len: i64) -> i64
     let _ = proc_fill_argv_rec(arr, argv_vec_addr, argv_vec_len, 0);
     __mind_store_i64(arr + (argv_vec_len + 1) * 8, 0);
     arr
+}
+
+fn proc_child_new(flags: i64) -> i64 {
+    let child: i64 = __mind_alloc(56);
+    __mind_store_i64(child + 0, 0 - 1);
+    __mind_store_i64(child + 8, 0 - 1);
+    __mind_store_i64(child + 16, 0 - 1);
+    __mind_store_i64(child + 24, 0 - 1);
+    __mind_store_i64(child + 32, flags);
+    __mind_store_i64(child + 40, 0);
+    __mind_store_i64(child + 48, 0);
+    child
+}
+
+fn proc_write_errno(ew: i64, ebuf: i64, err: i64) -> i64 {
+    __mind_store_i32(ebuf, err);
+    let mut off: i64 = 0;
+    while off < 4 {
+        let n: i64 = write(ew as i32, (ebuf + off) as *const u8, 4 - off) as i64;
+        if n > 0 {
+            off = off + n;
+        } else {
+            if n < 0 {
+                let werr: i64 = proc_errno();
+                if werr != 4 {
+                    off = 4;
+                }
+            } else {
+                off = 4;
+            }
+        }
+    }
+    0
+}
+
+fn proc_child_fail(ew: i64, ebuf: i64, err: i64) {
+    let _ = proc_write_errno(ew, ebuf, err);
+    _exit(127)
+}
+
+// Child side. Blocks the parent on the read end until exec closes the
+// write end (O_CLOEXEC) or this path writes the errno and _exit's.
+fn proc_child_exec(prog: i64, argv: i64, er: i64, ew: i64, ebuf: i64) {
+    let _ = proc_close_above(er);
+    let exec_rc: i64 = execvp(prog as *const u8, argv as *const *const u8) as i64;
+    let exec_err: i64 = proc_errno();
+    let _ = exec_rc;
+    proc_child_fail(ew, ebuf, exec_err)
+}
+
+fn proc_child_capture_exec(prog: i64, argv: i64, er: i64, ew: i64, ebuf: i64, pin_r: i64, pin_w: i64, pout_r: i64, pout_w: i64, perr_r: i64, perr_w: i64) {
+    let d0: i64 = dup2(pin_r as i32, 0) as i64;
+    if d0 < 0 {
+        let d0err: i64 = proc_errno();
+        proc_child_fail(ew, ebuf, d0err)
+    }
+    let d1: i64 = dup2(pout_w as i32, 1) as i64;
+    if d1 < 0 {
+        let d1err: i64 = proc_errno();
+        proc_child_fail(ew, ebuf, d1err)
+    }
+    let d2: i64 = dup2(perr_w as i32, 2) as i64;
+    if d2 < 0 {
+        let d2err: i64 = proc_errno();
+        proc_child_fail(ew, ebuf, d2err)
+    }
+    let _ = proc_close_above(pin_r);
+    let _ = proc_close_above(pin_w);
+    let _ = proc_close_above(pout_r);
+    let _ = proc_close_above(pout_w);
+    let _ = proc_close_above(perr_r);
+    let _ = proc_close_above(perr_w);
+    proc_child_exec(prog, argv, er, ew, ebuf)
+}
+
+// Read the exec-error pipe. 0 means exec succeeded (EOF from O_CLOEXEC).
+// A positive value is the errno the child wrote. A negative value is the
+// negated errno of a failed read.
+fn proc_read_exec_errno(er: i64) -> i64 {
+    let buf: i64 = __mind_alloc(4);
+    __mind_store_i32(buf, 0);
+    let mut off: i64 = 0;
+    let mut result: i64 = 0;
+    let mut reading: i64 = 1;
+    while reading == 1 {
+        let n: i64 = read(er as i32, (buf + off) as *mut u8, 4 - off) as i64;
+        if n == 0 {
+            reading = 0;
+            if off != 0 {
+                result = 0 - 5;
+            }
+        } else {
+            if n < 0 {
+                let rerr: i64 = proc_errno();
+                if rerr != 4 {
+                    reading = 0;
+                    result = 0 - rerr;
+                }
+            } else {
+                off = off + n;
+                if off >= 4 {
+                    reading = 0;
+                    let raw: i64 = __mind_load_i32(buf) as i64;
+                    if raw < 0 {
+                        result = raw & 4294967295;
+                    } else {
+                        result = raw;
+                    }
+                }
+            }
+        }
+    }
+    let _ = __mind_free(buf);
+    result
+}
+
+fn proc_take_exec_errno(er: i64, ew: i64) -> i64 {
+    let _ = proc_close_fd(ew);
+    let ex: i64 = proc_read_exec_errno(er);
+    let _ = proc_close_fd(er);
+    ex
+}
+
+// Open an O_CLOEXEC pipe. Returns 0 and fills slot, or a negative errno.
+// slot layout: +0 read fd, +8 write fd, +16 errno scratch buffer.
+fn proc_open_exec_pipe(slot: i64) -> i64 {
+    let ep: i64 = __mind_alloc(8);
+    __mind_store_i32(ep, 0);
+    __mind_store_i32(ep + 4, 0);
+    // 0x80000 is O_CLOEXEC.
+    let rc: i64 = pipe2(ep as *mut i32, 524288) as i64;
+    if rc != 0 {
+        let err: i64 = proc_errno();
+        let _ = __mind_free(ep);
+        return 0 - err;
+    }
+    let er: i64 = proc_load_fd(ep);
+    let ew: i64 = proc_load_fd(ep + 4);
+    let ebuf: i64 = __mind_alloc(4);
+    __mind_store_i32(ebuf, 0);
+    __mind_store_i64(slot + 0, er);
+    __mind_store_i64(slot + 8, ew);
+    __mind_store_i64(slot + 16, ebuf);
+    let _ = __mind_free(ep);
+    0
+}
+
+fn proc_store_exec_result(child: i64, ex: i64) -> i64 {
+    if ex > 0 {
+        __mind_store_i64(child + 40, ex)
+    } else {
+        if ex < 0 {
+            __mind_store_i64(child + 48, 0 - ex)
+        }
+    }
+    ex
 }
 
 // ---------------------------------------------------------------------------
@@ -143,6 +386,26 @@ pub fn exit_signal(s: i64) -> i64 {
     __mind_load_i64(s + 8)
 }
 
+pub fn exit_error(s: i64) -> i64 {
+    __mind_load_i64(s + 16)
+}
+
+pub fn exit_core(s: i64) -> i64 {
+    __mind_load_i64(s + 24)
+}
+
+pub fn exit_stopped(s: i64) -> i64 {
+    __mind_load_i64(s + 32)
+}
+
+pub fn child_exec_errno(c: i64) -> i64 {
+    __mind_load_i64(c + 40)
+}
+
+pub fn child_spawn_errno(c: i64) -> i64 {
+    __mind_load_i64(c + 48)
+}
+
 // ---------------------------------------------------------------------------
 // Public: spawn / wait / kill
 // ---------------------------------------------------------------------------
@@ -151,96 +414,210 @@ pub fn exit_signal(s: i64) -> i64 {
 // prog_addr: NUL-terminated program name (resolved via PATH).
 // argv_vec_addr: packed array of NUL-terminated arg string addresses.
 // argv_vec_len: number of extra args (not counting prog).
-// Returns a Child heap record. On fork failure, pid = -1.
+// Returns a Child heap record. On fork or pipe failure, pid = -1 and
+// spawn_errno is set. On exec failure, pid > 0 and exec_errno is set.
 pub fn spawn(prog_addr: i64, argv_vec_addr: i64, argv_vec_len: i64) -> i64 {
-    let child: i64 = __mind_alloc(40);
-    __mind_store_i64(child + 0, 0 - 1);
-    __mind_store_i64(child + 8, 0 - 1);
-    __mind_store_i64(child + 16, 0 - 1);
-    __mind_store_i64(child + 24, 0 - 1);
-    __mind_store_i64(child + 32, 0);
+    let child: i64 = proc_child_new(0);
+    let slot: i64 = __mind_alloc(24);
+    let opened: i64 = proc_open_exec_pipe(slot);
+    if opened != 0 {
+        __mind_store_i64(child + 48, 0 - opened);
+        let _ = __mind_free(slot);
+        return child;
+    }
+    let er: i64 = __mind_load_i64(slot + 0);
+    let ew: i64 = __mind_load_i64(slot + 8);
+    let ebuf: i64 = __mind_load_i64(slot + 16);
     let argv: i64 = proc_build_argv(prog_addr, argv_vec_addr, argv_vec_len);
     let pid: i64 = fork() as i64;
     if pid < 0 {
+        let ferr: i64 = proc_errno();
+        let _ = proc_close_fd(er);
+        let _ = proc_close_fd(ew);
+        __mind_store_i64(child + 48, ferr);
+        let _ = __mind_free(ebuf);
+        let _ = __mind_free(argv);
+        let _ = __mind_free(slot);
         return child;
     }
     if pid == 0 {
-        let _ = execvp(prog_addr as *const u8, argv as *const *const u8);
-        exit(127)
+        proc_child_exec(prog_addr, argv, er, ew, ebuf);
+        _exit(127)
     }
+    let ex: i64 = proc_take_exec_errno(er, ew);
+    let _ = proc_store_exec_result(child, ex);
     __mind_store_i64(child + 0, pid);
+    let _ = __mind_free(ebuf);
+    let _ = __mind_free(argv);
+    let _ = __mind_free(slot);
     child
 }
 
+// Drop every capture end opened so far. -1 means "not opened".
+fn proc_close_capture(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64) -> i64 {
+    let _ = proc_close_fd(a);
+    let _ = proc_close_fd(b);
+    let _ = proc_close_fd(c);
+    let _ = proc_close_fd(d);
+    let _ = proc_close_fd(e);
+    let _ = proc_close_fd(f);
+    0
+}
+
 // spawn_capture — fork + exec with stdin/stdout/stderr captured via pipes.
-// Returns a Child heap record with valid stdin/stdout/stderr fd fields.
+// On success the three parent ends are stored. On pipe, fork, or exec
+// failure those ends are closed and left at -1, so a failed spawn does not
+// look like an empty successful capture. pid = -1 only when no child exists.
 pub fn spawn_capture(prog_addr: i64, argv_vec_addr: i64, argv_vec_len: i64) -> i64 {
-    let child: i64 = __mind_alloc(40);
-    __mind_store_i64(child + 0, 0 - 1);
-    __mind_store_i64(child + 8, 0 - 1);
-    __mind_store_i64(child + 16, 0 - 1);
-    __mind_store_i64(child + 24, 0 - 1);
-    __mind_store_i64(child + 32, 1);
+    let child: i64 = proc_child_new(1);
     let p_in: i64 = __mind_alloc(8);
     let p_out: i64 = __mind_alloc(8);
     let p_err: i64 = __mind_alloc(8);
-    let _ = memset(p_in as *mut u8, 0, 8);
-    let _ = memset(p_out as *mut u8, 0, 8);
-    let _ = memset(p_err as *mut u8, 0, 8);
+    __mind_store_i32(p_in, 0);
+    __mind_store_i32(p_in + 4, 0);
+    __mind_store_i32(p_out, 0);
+    __mind_store_i32(p_out + 4, 0);
+    __mind_store_i32(p_err, 0);
+    __mind_store_i32(p_err + 4, 0);
     let r1: i64 = pipe(p_in as *mut i32) as i64;
-    let r2: i64 = pipe(p_out as *mut i32) as i64;
-    let r3: i64 = pipe(p_err as *mut i32) as i64;
     if r1 != 0 {
+        let e1: i64 = proc_errno();
+        __mind_store_i64(child + 48, e1);
+        let _ = __mind_free(p_in);
+        let _ = __mind_free(p_out);
+        let _ = __mind_free(p_err);
         return child;
     }
+    let pin_r: i64 = proc_load_fd(p_in);
+    let pin_w: i64 = proc_load_fd(p_in + 4);
+    let r2: i64 = pipe(p_out as *mut i32) as i64;
     if r2 != 0 {
+        let e2: i64 = proc_errno();
+        let _ = proc_close_capture(pin_r, pin_w, 0 - 1, 0 - 1, 0 - 1, 0 - 1);
+        __mind_store_i64(child + 48, e2);
+        let _ = __mind_free(p_in);
+        let _ = __mind_free(p_out);
+        let _ = __mind_free(p_err);
         return child;
     }
+    let pout_r: i64 = proc_load_fd(p_out);
+    let pout_w: i64 = proc_load_fd(p_out + 4);
+    let r3: i64 = pipe(p_err as *mut i32) as i64;
     if r3 != 0 {
+        let e3: i64 = proc_errno();
+        let _ = proc_close_capture(pin_r, pin_w, pout_r, pout_w, 0 - 1, 0 - 1);
+        __mind_store_i64(child + 48, e3);
+        let _ = __mind_free(p_in);
+        let _ = __mind_free(p_out);
+        let _ = __mind_free(p_err);
         return child;
     }
-    let pin_r: i64 = __mind_load_i64(p_in + 0) & 65535;
-    let pin_w: i64 = __mind_load_i64(p_in + 4) & 65535;
-    let pout_r: i64 = __mind_load_i64(p_out + 0) & 65535;
-    let pout_w: i64 = __mind_load_i64(p_out + 4) & 65535;
-    let perr_r: i64 = __mind_load_i64(p_err + 0) & 65535;
-    let perr_w: i64 = __mind_load_i64(p_err + 4) & 65535;
+    let perr_r: i64 = proc_load_fd(p_err);
+    let perr_w: i64 = proc_load_fd(p_err + 4);
+    let _ = __mind_free(p_in);
+    let _ = __mind_free(p_out);
+    let _ = __mind_free(p_err);
+    let slot: i64 = __mind_alloc(24);
+    let opened: i64 = proc_open_exec_pipe(slot);
+    if opened != 0 {
+        let _ = proc_close_capture(pin_r, pin_w, pout_r, pout_w, perr_r, perr_w);
+        __mind_store_i64(child + 48, 0 - opened);
+        let _ = __mind_free(slot);
+        return child;
+    }
+    let er: i64 = __mind_load_i64(slot + 0);
+    let ew: i64 = __mind_load_i64(slot + 8);
+    let ebuf: i64 = __mind_load_i64(slot + 16);
     let argv: i64 = proc_build_argv(prog_addr, argv_vec_addr, argv_vec_len);
     let pid: i64 = fork() as i64;
     if pid < 0 {
+        let ferr: i64 = proc_errno();
+        let _ = proc_close_fd(er);
+        let _ = proc_close_fd(ew);
+        let _ = proc_close_capture(pin_r, pin_w, pout_r, pout_w, perr_r, perr_w);
+        __mind_store_i64(child + 48, ferr);
+        let _ = __mind_free(ebuf);
+        let _ = __mind_free(argv);
+        let _ = __mind_free(slot);
         return child;
     }
     if pid == 0 {
-        let _ = dup2(pin_r as i32, 0);
-        let _ = dup2(pout_w as i32, 1);
-        let _ = dup2(perr_w as i32, 2);
-        let _ = close(pin_w as i32);
-        let _ = close(pout_r as i32);
-        let _ = close(perr_r as i32);
-        let _ = execvp(prog_addr as *const u8, argv as *const *const u8);
-        exit(127)
+        proc_child_capture_exec(prog_addr, argv, er, ew, ebuf, pin_r, pin_w, pout_r, pout_w, perr_r, perr_w);
+        _exit(127)
     }
-    let _ = close(pin_r as i32);
-    let _ = close(pout_w as i32);
-    let _ = close(perr_w as i32);
+    let _ = proc_close_fd(pin_r);
+    let _ = proc_close_fd(pout_w);
+    let _ = proc_close_fd(perr_w);
+    let ex: i64 = proc_take_exec_errno(er, ew);
+    let _ = proc_store_exec_result(child, ex);
     __mind_store_i64(child + 0, pid);
-    __mind_store_i64(child + 8, pin_w);
-    __mind_store_i64(child + 16, pout_r);
-    __mind_store_i64(child + 24, perr_r);
+    if ex == 0 {
+        __mind_store_i64(child + 8, pin_w);
+        __mind_store_i64(child + 16, pout_r);
+        __mind_store_i64(child + 24, perr_r)
+    } else {
+        // Exec or the handshake failed. Do not hand back pipes that look
+        // like a successful empty capture.
+        let _ = proc_close_fd(pin_w);
+        let _ = proc_close_fd(pout_r);
+        let _ = proc_close_fd(perr_r);
+    }
+    let _ = __mind_free(ebuf);
+    let _ = __mind_free(argv);
+    let _ = __mind_free(slot);
     child
+}
+
+// wait_flags — waitpid with explicit options. Retries EINTR. A failure is
+// an error record (exit_error != 0), never a decoded zero status.
+// options: 0 blocks; 1 is WNOHANG; 2 is WUNTRACED. Values are Linux's.
+pub fn wait_flags(c: i64, options: i64) -> i64 {
+    let pid: i64 = child_pid(c);
+    // pid -1 is the spawn-failure sentinel. waitpid(-1) would collect an
+    // unrelated child, and waitpid(0) waits for the process group.
+    if pid <= 0 {
+        return proc_status_fail(10);
+    }
+    let status_buf: i64 = __mind_alloc(4);
+    __mind_store_i32(status_buf, 0);
+    let mut pending: i64 = 1;
+    let mut failed: i64 = 0;
+    let mut fail_err: i64 = 0;
+    while pending == 1 {
+        let rc: i64 = waitpid(pid as i32, status_buf as *mut i32, options as i32) as i64;
+        if rc > 0 {
+            pending = 0;
+        } else {
+            if rc == 0 {
+                pending = 0;
+                failed = 2;
+            } else {
+                let werr: i64 = proc_errno();
+                // 4 = EINTR. Keep waiting; the status word is not a result.
+                if werr != 4 {
+                    pending = 0;
+                    failed = 1;
+                    fail_err = werr;
+                }
+            }
+        }
+    }
+    if failed == 1 {
+        let _ = __mind_free(status_buf);
+        return proc_status_fail(fail_err);
+    }
+    if failed == 2 {
+        let _ = __mind_free(status_buf);
+        return proc_status_pending();
+    }
+    let raw: i64 = __mind_load_i32(status_buf) as i64;
+    let _ = __mind_free(status_buf);
+    proc_decode_status(raw)
 }
 
 // wait — wait for a Child to finish. Returns an ExitStatus heap record.
 pub fn wait(c: i64) -> i64 {
-    let pid: i64 = child_pid(c);
-    let status_buf: i64 = __mind_alloc(4);
-    __mind_store_i8(status_buf + 0, 0);
-    __mind_store_i8(status_buf + 1, 0);
-    __mind_store_i8(status_buf + 2, 0);
-    __mind_store_i8(status_buf + 3, 0);
-    let _ = waitpid(pid as i32, status_buf as *mut i32, 0);
-    let raw: i64 = __mind_load_i64(status_buf) & 65535;
-    proc_decode_status(raw)
+    wait_flags(c, 0)
 }
 
 // proc_kill — send signal sig to child process. Returns 1 on success.

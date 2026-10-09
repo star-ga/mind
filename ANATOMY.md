@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1899 | **Est. tokens:** ~3,707,984
-**Generated:** 2026-10-09 08:28 UTC
+**Files:** 1901 | **Est. tokens:** ~3,718,039
+**Generated:** 2026-10-09 08:30 UTC
 
 ## Token Budget Guide
 
@@ -149,8 +149,8 @@
 | `src/type_checker/slice_abi/` | 3 | ~11,245 |
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 42 | ~202,387 |
-| `tests/` | 418 | ~852,557 |
+| `std/` | 42 | ~205,452 |
+| `tests/` | 418 | ~852,594 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -218,6 +218,7 @@
 | `tests/selfhost_gaps/never_wrong/` | 18 | ~338 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/skip_shape_scan/` | 2 | ~10,401 |
+| `tests/std_process_wait/` | 2 | ~6,953 |
 | `tests/support/` | 9 | ~19,407 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tests/xsi_quant/` | 3 | ~11,906 |
@@ -1571,7 +1572,7 @@
 - `mlir.mind` (~11056 tok, huge) — std/mlir.mind — RFC 0010 Phase E: hand-written MIND extern "C" bindings
 - `mlkem768.mind` (~6449 tok, huge) — std/mlkem768.mind — ML-KEM-768 (FIPS 203, "Kyber") in pure MIND.
 - `net.mind` (~2381 tok, huge) — std/net.mind — Task #268: POSIX socket surface in pure MIND.
-- `process.mind` (~3084 tok, huge) — std/process.mind — Task #268: subprocess + process environment in pure MIND.
+- `process.mind` (~6149 tok, huge) — std/process.mind — Task #268: subprocess + process environment in pure MIND.
 - `reactor.mind` (~1420 tok, large) — std.reactor — deterministic per-connection request-id allocation.
 - `regex.mind` (~9536 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
 - `ring.mind` (~1407 tok, large) — std.ring — fixed-capacity byte ring buffer (FIFO).
@@ -2535,6 +2536,12 @@
 - `stdlib_tensor.rs` (~256 tok, medium) — Copyright 2025 STARGA Inc.
 - `std_llvm_bindings_smoke.rs` (~2673 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_mlir_bindings_smoke.rs` (~4872 tok, huge) — Copyright 2025 STARGA Inc.
+### `tests/std_process_wait/`
+
+- `accept.py` (~6344 tok, huge) — # Author: STARGA Inc.
+- `run_cases.sh` (~609 tok, large) — Author: STARGA Inc.
+### `tests/`
+
 - `std_substrate_native_link.rs` (~5936 tok, huge) — Copyright 2026 STARGA Inc.
 - `std_surface_arena.rs` (~1351 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_array_literals.rs` (~3383 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2563,7 +2570,7 @@
 - `std_surface_logical_ops.rs` (~1207 tok, large) — Copyright 2026 STARGA Inc.
 - `std_surface_map_module.rs` (~2020 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_method_call.rs` (~2963 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_net_fs_process.rs` (~8341 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_net_fs_process.rs` (~8378 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_c_stdlib_bundle.rs` (~1466 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_d_env_override.rs` (~1597 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_promotion_compose.rs` (~5656 tok, huge) — Copyright 2025 STARGA Inc.
