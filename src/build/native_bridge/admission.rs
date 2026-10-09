@@ -18,6 +18,10 @@
 //!   `K` is only a dimension of a parameter's type) is refused. The type
 //!   checker deliberately lets the name resolve, but lowering has no value for
 //!   it and panicked on the same undefined-identifier guard.
+//! * A binding that re-declares a name from an enclosing scope is refused
+//!   (`native.loop_body_shadow` inside a loop, `native.block_shadow` outside
+//!   one). The frozen compiler resolves nested bindings by name and merges the
+//!   two, so such programs built and ran with the inner value.
 //! * Lowering itself runs behind a panic boundary, so any other construct that
 //!   still reaches a lowering `panic!` becomes a refusal with its message, not
 //!   an exit 101.
@@ -47,6 +51,97 @@ pub(super) fn refuse_entry_main_with_params(ast: &Module, path: &str) -> Result<
         ));
     }
     Ok(())
+}
+
+/// Refuse a binding that re-declares a name from an enclosing scope.
+///
+/// The frozen native compiler resolves variables by name across nested
+/// blocks, so it merges such a binding into the outer one. Inside a loop:
+/// `let mut x = 5; while k < 2 { k = k + 1; let mut x = 7; x = 3; } return x;`
+/// built natively and exited 3 where the MLIR build exits 5
+/// (`native.loop_body_shadow`). Outside any loop, a write from a further-nested
+/// block lands on the outer binding: `let mut x = 5; if c { let mut x = 9;
+/// if c { x = 40; } } return x;` exited 40 natively, 5 under MLIR
+/// (`native.block_shadow`). Refused, with every offending binding named, until
+/// the seed scopes nested bindings. The scope rules are in `shadow`; when
+/// unsure they refuse.
+///
+/// `origins` maps the composed user region back to its source files: each
+/// entry is a file's display path and the byte offset where it starts in
+/// `text`, in ascending order, so a binding in an imported module is reported
+/// at that module's own file and line.
+pub(super) fn refuse_shadowing(
+    ast: &Module,
+    text: &str,
+    origins: &[(String, usize)],
+) -> Result<(), String> {
+    let shadows = super::shadow::find(ast);
+    if shadows.is_empty() {
+        return Ok(());
+    }
+    let locate = |offset: usize| {
+        let offset = offset.min(text.len());
+        let i = origins
+            .iter()
+            .rposition(|(_, start)| *start <= offset)
+            .unwrap_or(0);
+        let (path, start) = origins
+            .get(i)
+            .map_or(("<input>", 0), |(p, s)| (p.as_str(), *s));
+        let end = origins.get(i + 1).map_or(text.len(), |(_, s)| *s);
+        (path, start.min(text.len()), end.min(text.len()))
+    };
+    let mut rendered = Vec::new();
+    for s in &shadows {
+        let (code, place) = if s.in_loop {
+            ("native.loop_body_shadow", "inside a loop")
+        } else {
+            ("native.block_shadow", "in a nested block")
+        };
+        let (outer_path, outer_lo, _) = locate(s.outer.start());
+        let outer_end = s.outer.start().clamp(outer_lo, text.len());
+        let outer_line = text
+            .get(outer_lo..outer_end)
+            .map_or(0, |t| t.matches('\n').count())
+            + 1;
+        let mut d = Diagnostic::error(
+            "native",
+            code,
+            format!(
+                "{} `{}` {place} in fn `{}` re-declares `{}`, already bound as a {} at \
+                 {outer_path}:{outer_line}; the frozen native compiler resolves nested \
+                 bindings by name and would merge the two (a silent miscompile)",
+                s.inner_kind, s.name, s.fn_name, s.name, s.outer_kind,
+            ),
+        );
+        let (path, lo, hi) = locate(s.inner.start());
+        // `text` is valid UTF-8 and every origin starts a file, so `lo..hi` is
+        // on char boundaries; a `\n` joiner at `hi - 1` is outside the file.
+        let file = text.get(lo..hi).unwrap_or("");
+        let start = s.inner.start().saturating_sub(lo).min(file.len());
+        let end = s.inner.end().saturating_sub(lo).min(file.len()).max(start);
+        d.span = Some(Span::from_offsets(file, start, end, Some(path)));
+        d.help = Some(format!(
+            "rename the inner `{}`, or rerun with `--backend mlir`",
+            s.name
+        ));
+        rendered.push(render(std::slice::from_ref(&d), file));
+    }
+    let names: BTreeSet<&str> = shadows.iter().map(|s| s.name.as_str()).collect();
+    let mut codes: Vec<&str> = Vec::new();
+    if shadows.iter().any(|s| s.in_loop) {
+        codes.push("native.loop_body_shadow");
+    }
+    if shadows.iter().any(|s| !s.in_loop) {
+        codes.push("native.block_shadow");
+    }
+    Err(format!(
+        "{}\nbinding(s) {names:?} re-declare a name from an enclosing scope; the native \
+         backend would merge them with the outer binding. Rerun with `--backend mlir`. \
+         No artifact written. ({})",
+        rendered.join("\n"),
+        codes.join(", ")
+    ))
 }
 
 /// The type-check codes whose construct lowering cannot materialise.
@@ -220,6 +315,123 @@ mod tests {
         let bad =
             crate::parser::parse("fn main(argc: i64) -> i64 { return argc; }\n").expect("parse");
         assert!(refuse_entry_main_with_params(&bad, "t.mind").is_err());
+    }
+
+    fn shadowed(src: &str) -> Vec<String> {
+        let ast = crate::parser::parse(src).expect("parse");
+        super::super::shadow::find(&ast)
+            .into_iter()
+            .map(|s| {
+                let place = if s.in_loop { "loop" } else { "block" };
+                format!("{}:{}<{}@{place}", s.name, s.inner_kind, s.outer_kind)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn loop_body_shadows_are_found_at_every_nesting() {
+        let w = "fn main() -> i64 { let mut x = 5; let mut k = 0; \
+                 while k < 2 { k = k + 1; let mut x = 7; x = 3; } return x; }";
+        assert_eq!(shadowed(w), ["x:let<let@loop"]);
+        let p = "fn f(x: i64) -> i64 { for i in 0..2 { let x = 1; } return x; }";
+        assert_eq!(shadowed(p), ["x:let<parameter@loop"]);
+        let in_if = "fn f(x: i64) -> i64 { while x < 2 { if x == 1 { let x = 1; } } return x; }";
+        assert_eq!(shadowed(in_if), ["x:let<parameter@loop"]);
+        let nested = "fn f() -> i64 { while 1 { let a = 1; while 1 { let a = 2; } } return 0; }";
+        assert_eq!(shadowed(nested), ["a:let<let@loop"]);
+        let for_var = "fn f() -> i64 { for i in 0..3 { let i = 10; } return 0; }";
+        assert_eq!(shadowed(for_var), ["i:let<for variable@loop"]);
+        let nested_for = "fn f() -> i64 { for i in 0..3 { for i in 0..2 { } } return 0; }";
+        assert_eq!(shadowed(nested_for), ["i:for variable<for variable@loop"]);
+        let header = "fn f(i: i64) -> i64 { for i in 0..3 { } return i; }";
+        assert_eq!(shadowed(header), ["i:for variable<parameter@loop"]);
+        let tuple = "fn f(b: i64) -> i64 { while 1 { let (a, b) = (1, 2); } return b; }";
+        assert_eq!(shadowed(tuple), ["b:let<parameter@loop"]);
+        let konst = "const N: i64 = 4;\nfn f() -> i64 { while 1 { let N = 3; } return N; }";
+        assert_eq!(shadowed(konst), ["N:let<const@loop"]);
+    }
+
+    #[test]
+    fn block_shadows_outside_loops_are_found_at_every_nesting() {
+        let one = "fn f(x: i64) -> i64 { if x == 1 { let x = 7; } return x; }";
+        assert_eq!(shadowed(one), ["x:let<parameter@block"]);
+        let two = "fn f() -> i64 { let mut x = 5; if 1 { let mut x = 9; if 1 { x = 40; } } \
+                   return x; }";
+        assert_eq!(shadowed(two), ["x:let<let@block"]);
+        let deeper = "fn f() -> i64 { let x = 5; if 1 { if 1 { let x = 9; } } return x; }";
+        assert_eq!(shadowed(deeper), ["x:let<let@block"]);
+        let els = "fn f() -> i64 { let x = 5; if 1 { } else { let x = 9; } return x; }";
+        assert_eq!(shadowed(els), ["x:let<let@block"]);
+        let arm = "fn f(v: i64) -> i64 { let y = 5; match v { y => { return y; } } }";
+        assert_eq!(shadowed(arm), ["y:match binding<let@block"]);
+        let konst = "const N: i64 = 4;\nfn f() -> i64 { let N = 3; return N; }";
+        assert_eq!(shadowed(konst), ["N:let<const@block"]);
+        let param_konst = "const N: i64 = 4;\nfn f(N: i64) -> i64 { return N; }";
+        assert_eq!(shadowed(param_konst), ["N:parameter<const@block"]);
+        let block_then_loop = "fn f() -> i64 { let x = 5; if 1 { let x = 9; while 1 { } } \
+                               return x; }";
+        assert_eq!(shadowed(block_then_loop), ["x:let<let@block"]);
+    }
+
+    #[test]
+    fn same_frame_redeclarations_and_fresh_names_are_admitted() {
+        for ok in [
+            "fn f(x: i64) -> i64 { let x = x + 1; if x == 1 { x = 7; } return x; }",
+            "fn f() -> i64 { let x = 1; let x = x + 1; if 1 { if 1 { x = 3; } } return x; }",
+            "fn f() -> i64 { if 1 { let t = 1; } if 1 { let t = 2; if 1 { t = 3; } } return 0; }",
+            "fn f() -> i64 { let mut s = 0; while s < 3 { let t = 1; s = s + t; } return s; }",
+            "fn f() -> i64 { while 1 { let t = 1; } while 1 { let t = 2; } return 0; }",
+            "fn f() -> i64 { while 1 { let a = 1; let a = a + 1; } return 0; }",
+            "fn f() -> i64 { while 1 { let t = 1; } let t = 2; return t; }",
+            "fn f() -> i64 { for j in 0..2 { } for j in 0..4 { } return 0; }",
+            "fn f() -> i64 { while 1 { if 1 { let q = 1; } let q = 2; } return 0; }",
+            "fn f() -> i64 { while 1 { let _ = 1; let _ = 2; } return 0; }",
+        ] {
+            assert_eq!(shadowed(ok), Vec::<String>::new(), "{ok}");
+        }
+    }
+
+    #[test]
+    fn each_function_starts_a_fresh_scope_chain() {
+        // `x` is a parameter of `g` only; the loop in `h` binds a fresh `x`.
+        let src = "fn g(x: i64) -> i64 { return x; }\n\
+                   fn h() -> i64 { while 1 { let x = 1; } return 0; }";
+        assert_eq!(shadowed(src), Vec::<String>::new());
+    }
+
+    #[test]
+    fn the_refusal_names_the_binding_and_its_line() {
+        let src = "fn main() -> i64 {\n    let mut x: i64 = 5;\n    while 1 {\n        \
+                   let mut x: i64 = 7;\n    }\n    return x;\n}\n";
+        let ast = crate::parser::parse(src).expect("parse");
+        let err = refuse_shadowing(&ast, src, &[("t.mind".to_string(), 0)]).unwrap_err();
+        assert!(err.contains("native.loop_body_shadow"), "{err}");
+        assert!(!err.contains("native.block_shadow"), "{err}");
+        assert!(err.contains("t.mind:4:"), "{err}");
+        assert!(err.contains("at t.mind:2"), "{err}");
+        assert!(
+            err.contains("`x`") && err.contains("--backend mlir"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_refusal_in_a_second_file_names_that_file_and_its_own_line() {
+        // Two files joined with one `\n`, as `compose_user_region` does.
+        let main = "fn main() -> i64 {\n    return h(3);\n}\n";
+        let helper = "fn h(a: i64) -> i64 {\n    let mut acc: i64 = a;\n    if a > 0 {\n        \
+                      let mut acc: i64 = 0;\n    }\n    return acc;\n}\n";
+        let text = format!("{main}\n{helper}");
+        let ast = crate::parser::parse(&text).expect("parse");
+        let origins = [
+            ("src/main.mind".to_string(), 0),
+            ("src/helper.mind".to_string(), main.len() + 1),
+        ];
+        let err = refuse_shadowing(&ast, &text, &origins).unwrap_err();
+        assert!(err.contains("native.block_shadow"), "{err}");
+        assert!(err.contains("src/helper.mind:4:"), "{err}");
+        assert!(err.contains("at src/helper.mind:2"), "{err}");
+        assert!(!err.contains("src/main.mind:"), "{err}");
     }
 
     #[test]
