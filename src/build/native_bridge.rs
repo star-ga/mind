@@ -14,7 +14,11 @@ use std::collections::BTreeSet;
 use std::process;
 
 #[cfg(feature = "std-surface")]
+mod admission;
+#[cfg(feature = "std-surface")]
 mod child;
+#[cfg(feature = "std-surface")]
+mod seed;
 
 #[cfg(feature = "std-surface")]
 /// The `native_seed` column of the committed std manifest, in FILE ORDER.
@@ -225,21 +229,12 @@ pub fn run_native_backend_bridge_profile(
         );
         process::exit(2);
     }
-    let std_dir = std::env::var("MINDC_STD_DIR").unwrap_or_else(|_| "std".to_string());
-    let mut std_sources: Vec<Vec<u8>> = Vec::with_capacity(std_modules.len());
-    for m in std_modules.iter() {
-        let p = format!("{std_dir}/{m}.mind");
-        match std::fs::read(&p) {
-            Ok(b) => std_sources.push(b),
-            Err(e) => {
-                eprintln!(
-                    "error[backend-native]: cannot read std module '{p}': {e} \
-                     (set MINDC_STD_DIR to the std/ directory)"
-                );
-                process::exit(2);
-            }
-        }
-    }
+    // `MINDC_STD_DIR` when set, otherwise the copy embedded in this binary,
+    // verified against the manifest's SEED_BLOB_SHA256 pin before use.
+    let std_sources = seed::std_seed_sources(&std_modules).unwrap_or_else(|e| {
+        eprintln!("error[backend-native]: {e}");
+        process::exit(2);
+    });
 
     // Composition goes through `native_image` so the single-file path and the
     // coming multi-module path build the image with the SAME code. With one
@@ -338,6 +333,12 @@ pub fn run_native_backend_bridge_profile(
         );
         process::exit(3);
     }
+    // An entry `main` with parameters would run with them all 0 (the frozen
+    // compiler does not bind them to argc/argv): refuse it, never miscompile.
+    if let Err(msg) = admission::refuse_entry_main_with_params(&merged_ast, &paths[0]) {
+        eprintln!("error[backend-native]: {msg}");
+        process::exit(3);
+    }
     // Whole-module admission over that single lowering. The image is not pruned,
     // so an uncalled out-of-profile body still becomes bytes in the
     // artifact; reachability informs diagnostics, it does not narrow admission.
@@ -364,20 +365,14 @@ pub fn run_native_backend_bridge_profile(
     // The stdin image was composed above by `native_image::compose_image`.
     let image = image.bytes;
 
-    // Resolve the pure-MIND compiler ELF (the RI-D shell-out target).
-    let default_seed = if layout.is_some() {
-        BOUNDED_SEED_PATH
-    } else {
-        "examples/mindc_mind/testdata/selfhost_loop/stage1.elf"
-    };
-    let elf = std::env::var("MINDC_NATIVE_ELF").unwrap_or_else(|_| default_seed.to_string());
-    if !std::path::Path::new(&elf).exists() {
-        eprintln!(
-            "error[backend-native]: pure-MIND compiler ELF not found at '{elf}' \
-             (set MINDC_NATIVE_ELF)"
-        );
+    // Resolve the pure-MIND compiler ELF (the RI-D shell-out target):
+    // `MINDC_NATIVE_ELF` when set, otherwise the embedded seed of the requested
+    // profile, verified against its committed MANIFEST pin before it runs.
+    let compiler = seed::compiler_elf(layout.is_some()).unwrap_or_else(|e| {
+        eprintln!("error[backend-native]: {e}");
         process::exit(2);
-    }
+    });
+    let elf = compiler.path.display().to_string();
 
     let child = match std::process::Command::new(&elf)
         .stdin(std::process::Stdio::piped())
@@ -387,6 +382,7 @@ pub fn run_native_backend_bridge_profile(
     {
         Ok(c) => c,
         Err(e) => {
+            drop(compiler);
             eprintln!("error[backend-native]: failed to spawn compiler ELF '{elf}': {e}");
             process::exit(2);
         }
@@ -395,6 +391,8 @@ pub fn run_native_backend_bridge_profile(
     // child's fate (a loader ENOMEM under an address-space cap ends in SIGSEGV
     // before stdin is read), so the report carries the reaped outcome.
     let run = child::supervise(child, &image, child::REAP_GRACE);
+    // Remove an unpacked embedded seed now: every later exit skips destructors.
+    drop(compiler);
     let elf_bytes = match finish_compiler_run(run) {
         Ok(bytes) => bytes,
         Err(code) => process::exit(code),
@@ -734,8 +732,12 @@ fn admit_merged_program(
     // native-backend diagnostic like every other refusal here rather than as a
     // panic or an empty module. `InvalidLoweringReceiver` in particular is the
     // structured form of the old "refusing to emit const 0" abort.
-    let ir = crate::eval::lower_to_ir(&ast)
-        .map_err(|refusal| format!("`{path}`: {refusal} (lower.materialization_refused)"))?;
+    // The name checks the MLIR path runs before lowering, plus symbolic
+    // dimensions read as values: each used to reach a lowering `panic!` (exit
+    // 101). Lowering then runs behind a panic boundary for anything else.
+    admission::refuse_unresolved_names(&ast, text, path)?;
+    admission::refuse_symbolic_dims_read_as_values(&ast, text, path)?;
+    let ir = admission::lower_without_panicking(&ast, path)?;
     // Closure admission runs for its ownership, ambiguity and unresolved-edge
     // refusals, which the construct fence cannot express. Its restricted module is
     // deliberately DISCARDED: admission is whole-module, so the fence must see the
