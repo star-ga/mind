@@ -154,9 +154,8 @@ fn duplicate_bare_name_is_refused_by_admission_when_never_called() {
     );
 }
 
-/// A user module defining a name the std seed blob already defines.
-///
-/// The flat image resolves every call last-definition-wins, so the user's
+/// A user module defining a name the std seed blob already defines. The flat
+/// image resolves every call last-definition-wins, so the user's
 /// definition is the one that runs. That is admitted when the program does NOT
 /// import the std module (no retained std code calls the name — see
 /// `native_closure::admit_native_closure_linked`), and refused when it does: the

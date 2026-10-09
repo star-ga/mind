@@ -144,7 +144,8 @@ const LEGACY_BUDGETS: &[(&str, usize)] = &[
     ("src/ir/compact/v3/parse.rs", 1354),
     ("src/ir/evidence.rs", 1216),
     ("src/ir/fp_mode.rs", 1217),
-    ("src/ir/mod.rs", 1519),
+    // +1: the `frozen_intrinsics` module declaration (native intrinsic admission).
+    ("src/ir/mod.rs", 1520),
     ("src/ir/verify.rs", 1849),
     ("src/mlir/lowering.rs", 12230),
     ("src/opt/collapse.rs", 1228),

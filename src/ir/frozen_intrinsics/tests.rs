@@ -340,6 +340,54 @@ fn reading_a_discard_only_result_is_refused() {
     }
 }
 
+/// A loop-carried variable inside the body is the header block argument, whose
+/// value on every iteration after the first is the BACK-EDGE value. An i64
+/// pre-loop value does not prove it: `x` starts as 1 and becomes 2.5.
+#[cfg(feature = "std-surface")]
+#[test]
+fn a_loop_carried_value_needs_its_back_edge_proven() {
+    let with_back_edge = |back: Instr| {
+        let body = vec![
+            Instr::ConstI64(ValueId(0), 1),
+            Instr::ConstI64(ValueId(1), 0),
+            Instr::While {
+                cond_id: ValueId(3),
+                cond_instrs: vec![
+                    Instr::ConstI64(ValueId(2), 3),
+                    Instr::BinOp {
+                        dst: ValueId(3),
+                        op: BinOp::Lt,
+                        lhs: ValueId(1),
+                        rhs: ValueId(2),
+                    },
+                ],
+                body: vec![
+                    Instr::legacy_call(ValueId(4), "__mind_wrap_i8", vec![ValueId(0)]),
+                    back,
+                    Instr::ConstI64(ValueId(6), 1),
+                    Instr::BinOp {
+                        dst: ValueId(7),
+                        op: BinOp::Add,
+                        lhs: ValueId(1),
+                        rhs: ValueId(6),
+                    },
+                ],
+                live_vars: vec![("x".into(), ValueId(5)), ("i".into(), ValueId(7))],
+                init_ids: vec![ValueId(0), ValueId(1)],
+                exit_ids: vec![ValueId(8), ValueId(9)],
+            },
+        ];
+        admits(&[fndef(body)])
+    };
+    assert_eq!(
+        with_back_edge(Instr::ConstF64(ValueId(5), 2.5))
+            .unwrap_err()
+            .construct,
+        "call.intrinsic_operand_not_i64"
+    );
+    assert_eq!(with_back_edge(Instr::ConstI64(ValueId(5), 2)), Ok(()));
+}
+
 /// A declared signature is trusted for a parameter only when it lists exactly the
 /// function's parameters: one recorded without an implicit receiver would shift
 /// the f64 `x` (index 1) onto the i64 declared for `y`.
