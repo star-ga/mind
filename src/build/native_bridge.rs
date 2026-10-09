@@ -320,6 +320,24 @@ pub fn run_native_backend_bridge_profile(
             process::exit(3);
         }
     };
+    // DIALECT FENCE: an import the frozen compiler would read as a DIFFERENT
+    // extent than the admission parser did. Admission above reasoned about the
+    // Rust parse; the ELF is built from the frozen parse of the same bytes, so
+    // where the two disagree on where an item ends they compile different
+    // programs. Refused before the frozen compiler ever sees the image.
+    let unterminated = unterminated_imports(&merged_ast, &fence_source);
+    if !unterminated.is_empty() {
+        eprintln!(
+            "error[backend-native]: `{}`: import item(s) {unterminated:?} are not \
+             `;`-terminated. The frozen native compiler ends an `import`/`use` item at \
+             the next `;` token, so it would swallow the items that follow (including \
+             `main`) and emit a different program than the one admitted. Write the `;` \
+             (e.g. `import helper;`), or rerun with `--backend mlir`. No artifact \
+             written. (native.import_not_semicolon_terminated)",
+            paths[0]
+        );
+        process::exit(3);
+    }
     // Whole-module admission over that single lowering. The image is not pruned,
     // so an uncalled out-of-profile body still becomes bytes in the
     // artifact; reachability informs diagnostics, it does not narrow admission.
@@ -389,6 +407,20 @@ pub fn run_native_backend_bridge_profile(
             elf_bytes.len()
         );
         process::exit(1);
+    }
+    // BACKSTOP: admission already proved the program defines `main` (a missing
+    // root is refused as closure.missing_entry_root), so an artifact whose entry
+    // is the frozen compiler's no-`main` library stub means the compiler did not
+    // see the `main` that was admitted. Whatever the cause, that artifact is a
+    // silent `exit(0)` and never a correct build of this program.
+    if let Err(why) = check_entry_is_not_no_main_stub(&elf_bytes) {
+        eprintln!(
+            "error[backend-native]: `{}`: {why}; the source declares `main`, so this \
+             artifact would not run the admitted program. No artifact written. \
+             (native.entry_is_no_main_stub)",
+            paths[0]
+        );
+        process::exit(3);
     }
 
     // The artifact must carry exactly the requested layout. A seed that predates
@@ -502,6 +534,153 @@ fn print_compiler_stderr(capture: Option<&child::BoundedCapture>, after_failure:
             "  compiler stderr: unavailable (its pipe was still held open after the \
              process was reaped)"
         ),
+    }
+}
+
+#[cfg(feature = "std-surface")]
+/// The `import`/`use` items whose extent the frozen compiler reads differently.
+///
+/// The Rust parser treats the `;` after an import path as optional; the frozen
+/// compiler's `parse_use` (`examples/mindc_mind/main.mind`, `skip_to_semi`) ends
+/// the item at the next `;` TOKEN, wherever that is. The two agree exactly when
+/// the first non-whitespace byte at or after the Rust item's end is that `;`.
+/// Anything else -- a newline then `fn main`, a comment, end of input -- makes the
+/// frozen parse swallow source the Rust parse admitted as separate items.
+///
+/// Every `Import` node is checked, at any depth (a statement-position import is
+/// consumed with the same scan). A comment between the path and its `;` is
+/// refused although harmless: over-refusal is the safe direction here.
+fn unterminated_imports(ast: &crate::ast::Module, text: &[u8]) -> Vec<String> {
+    let mut out = Vec::new();
+    for item in &ast.items {
+        crate::type_checker::nerve_walk::walk(item, &mut |node| {
+            if let crate::ast::Node::Import { span, .. } = node {
+                let end = span.end().min(text.len());
+                let start = span.start().min(end);
+                let next = text[end..].iter().find(|b| !b.is_ascii_whitespace());
+                let terminated = text[..end].last() == Some(&b';') || next == Some(&b';');
+                if !terminated {
+                    out.push(
+                        String::from_utf8_lossy(&text[start..end])
+                            .trim()
+                            .to_string(),
+                    );
+                }
+            }
+        });
+    }
+    out
+}
+
+/// The frozen compiler's synthesized no-`main` entry:
+/// `xor edi,edi ; mov eax,60 ; syscall` (`main.mind::nb_synth_entry`).
+#[cfg(feature = "std-surface")]
+const NO_MAIN_ENTRY_STUB: [u8; 9] = [0x31, 0xFF, 0xB8, 0x3C, 0x00, 0x00, 0x00, 0x0F, 0x05];
+
+/// Refuse an x86-64 executable whose entry point is the no-`main` stub, or whose
+/// entry cannot be located in a loaded segment.
+///
+/// Scoped to `EM_X86_64` images because that is the only machine the frozen
+/// compiler emits; the host-native transport fixture used on other CI hosts
+/// writes a fixed `\x7fELF` + zeros anchor (machine 0) that carries no code.
+#[cfg(feature = "std-surface")]
+fn check_entry_is_not_no_main_stub(elf: &[u8]) -> Result<(), String> {
+    const EM_X86_64: u16 = 62;
+    const PT_LOAD: u32 = 1;
+    let u16_at = |o: usize| elf.get(o..o + 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
+    let u32_at = |o: usize| {
+        elf.get(o..o + 4)
+            .map(|b| u32::from_le_bytes(b.try_into().expect("4-byte slice")))
+    };
+    let u64_at = |o: usize| {
+        elf.get(o..o + 8)
+            .map(|b| u64::from_le_bytes(b.try_into().expect("8-byte slice")))
+    };
+    if u16_at(18) != Some(EM_X86_64) {
+        return Ok(());
+    }
+    let malformed = || "the emitted ELF's entry point lies in no loaded segment".to_string();
+    let entry = u64_at(24).ok_or_else(malformed)?;
+    let phoff = u64_at(32).ok_or_else(malformed)? as usize;
+    let phentsize = u16_at(54).ok_or_else(malformed)? as usize;
+    let phnum = u16_at(56).ok_or_else(malformed)? as usize;
+    for i in 0..phnum {
+        let ph = phoff.saturating_add(i.saturating_mul(phentsize));
+        if u32_at(ph) != Some(PT_LOAD) {
+            continue;
+        }
+        let (Some(off), Some(vaddr), Some(filesz)) =
+            (u64_at(ph + 8), u64_at(ph + 16), u64_at(ph + 32))
+        else {
+            return Err(malformed());
+        };
+        if entry < vaddr || entry - vaddr >= filesz {
+            continue;
+        }
+        let at = off.saturating_add(entry - vaddr) as usize;
+        let code = elf
+            .get(at..at + NO_MAIN_ENTRY_STUB.len())
+            .ok_or_else(malformed)?;
+        if code == NO_MAIN_ENTRY_STUB {
+            return Err(
+                "the frozen compiler emitted its no-`main` library entry stub \
+                        (`exit(0)`), so it did not see the admitted `main`"
+                    .to_string(),
+            );
+        }
+        return Ok(());
+    }
+    Err(malformed())
+}
+
+#[cfg(all(test, feature = "std-surface"))]
+mod entry_stub_tests {
+    use super::{NO_MAIN_ENTRY_STUB, check_entry_is_not_no_main_stub};
+
+    /// A minimal ELF64 x86-64 image: one PT_LOAD at file 0 / vaddr 0x400000,
+    /// entry 0x400078 (file offset 120, right after the header and one phdr).
+    fn elf_with_entry_code(machine: u16, code: &[u8]) -> Vec<u8> {
+        let mut b = vec![0u8; 120];
+        b[0..4].copy_from_slice(b"\x7fELF");
+        b[18..20].copy_from_slice(&machine.to_le_bytes());
+        b[24..32].copy_from_slice(&0x400078u64.to_le_bytes());
+        b[32..40].copy_from_slice(&64u64.to_le_bytes());
+        b[54..56].copy_from_slice(&56u16.to_le_bytes());
+        b[56..58].copy_from_slice(&1u16.to_le_bytes());
+        b[64..68].copy_from_slice(&1u32.to_le_bytes());
+        b[64 + 16..64 + 24].copy_from_slice(&0x400000u64.to_le_bytes());
+        b.extend_from_slice(code);
+        b.resize(400, 0);
+        let len = b.len() as u64;
+        b[64 + 32..64 + 40].copy_from_slice(&len.to_le_bytes());
+        b
+    }
+
+    #[test]
+    fn the_no_main_stub_at_the_entry_is_refused() {
+        let elf = elf_with_entry_code(62, &NO_MAIN_ENTRY_STUB);
+        assert!(check_entry_is_not_no_main_stub(&elf).is_err());
+    }
+
+    #[test]
+    fn a_real_main_prologue_at_the_entry_is_admitted() {
+        // movabs rsp, STACK_TOP -- the first bytes of every frozen `main`.
+        let elf = elf_with_entry_code(62, &[0x48, 0xBC, 0xF8, 0x0F, 0x00, 0x41, 0x01, 0, 0]);
+        assert_eq!(check_entry_is_not_no_main_stub(&elf), Ok(()));
+    }
+
+    #[test]
+    fn an_entry_outside_every_segment_is_refused() {
+        let mut elf = elf_with_entry_code(62, &NO_MAIN_ENTRY_STUB);
+        elf[24..32].copy_from_slice(&0x900000u64.to_le_bytes());
+        assert!(check_entry_is_not_no_main_stub(&elf).is_err());
+    }
+
+    #[test]
+    fn a_non_x86_64_transport_anchor_is_not_inspected() {
+        let mut anchor = b"\x7fELF".to_vec();
+        anchor.resize(397, 0);
+        assert_eq!(check_entry_is_not_no_main_stub(&anchor), Ok(()));
     }
 }
 

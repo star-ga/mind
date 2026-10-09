@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1898 | **Est. tokens:** ~3,704,660
-**Generated:** 2026-10-09 08:26 UTC
+**Files:** 1899 | **Est. tokens:** ~3,707,984
+**Generated:** 2026-10-09 08:28 UTC
 
 ## Token Budget Guide
 
@@ -110,7 +110,7 @@
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
 | `src/bin/mindc/` | 1 | ~204 |
-| `src/build/` | 13 | ~51,978 |
+| `src/build/` | 13 | ~53,987 |
 | `src/build/cache/` | 3 | ~3,150 |
 | `src/build/native_bridge/` | 2 | ~4,881 |
 | `src/cache/` | 4 | ~3,682 |
@@ -150,7 +150,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~202,387 |
-| `tests/` | 417 | ~851,242 |
+| `tests/` | 418 | ~852,557 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -1212,7 +1212,7 @@
 - `child_tests.rs` (~1231 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
-- `native_bridge.rs` (~6555 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_bridge.rs` (~8564 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_image.rs` (~4296 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_scope.rs` (~6258 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_scope_tests.rs` (~5219 tok, huge) — Seam tests for the captured-source snapshot and its module identities.
@@ -2254,6 +2254,7 @@
 
 - `native_closure_admission.rs` (~3941 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_default_profile_imports.rs` (~3506 tok, huge) — Default-feature-profile controls for the native backend's import admission.
+- `native_import_terminator_controls.rs` (~1315 tok, large) — Native bridge controls: an `import`/`use` item the frozen compiler would
 - `native_module_bridge_controls.rs` (~8330 tok, huge) — Native module-bridge controls: SOURCE RESOLUTION and ADMISSION.
 - `native_module_bridge_visibility_controls.rs` (~3913 tok, huge) — Native module-bridge controls: VISIBILITY, EMIT KIND, CROSS-INVOCATION
 - `native_opt_wiring.rs` (~1953 tok, huge) — Copyright 2025 STARGA Inc.
