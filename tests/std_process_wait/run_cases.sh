@@ -6,7 +6,7 @@ set -u
 MODE="${1:?mode}"
 SO="${2:?so}"
 OUT="${3:?outdir}"
-PY="/home/n/mind-wt/std-process-wait/tests/std_process_wait/accept.py"
+PY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/accept.py"
 mkdir -p "$OUT"
 chmod +x "$PY" || true
 
@@ -67,13 +67,13 @@ for case in "${CASES[@]}"; do
   /usr/bin/time -f "TIME case=${case} wall_sec=%e max_rss_kb=%M exit=%x" \
     -o "$timef" \
     nice -n 15 prlimit --as=2147483648 \
-    python3 - "$MODE" "$SO" "$case" "$log" "$timeout" << 'PY'
+    python3 - "$MODE" "$SO" "$case" "$log" "$timeout" "$PY" << 'PY'
 import os, signal, subprocess, sys
-mode, so, case, log, timeout = sys.argv[1:]
+mode, so, case, log, timeout, accept = sys.argv[1:]
 timeout = int(timeout)
 out = log + ".result"
 proc = subprocess.Popen(
-    [sys.executable, "/home/n/mind-wt/std-process-wait/tests/std_process_wait/accept.py",
+    [sys.executable, accept,
      "--mode", mode, "--so", so, "--case", case, "--out", out],
     start_new_session=True,
 )

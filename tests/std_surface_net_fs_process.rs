@@ -135,12 +135,6 @@ fn process_mind_parses_and_lowers() {
         "child_stderr",
         "exit_code",
         "exit_signal",
-        "exit_error",
-        "exit_core",
-        "exit_stopped",
-        "wait_flags",
-        "child_exec_errno",
-        "child_spawn_errno",
     ] {
         assert!(
             has_fn(&ir, want),
