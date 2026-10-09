@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1908 | **Est. tokens:** ~3,733,656
-**Generated:** 2026-10-09 13:02 UTC
+**Files:** 1996 | **Est. tokens:** ~3,751,861
+**Generated:** 2026-10-09 22:13 UTC
 
 ## Token Budget Guide
 
@@ -62,9 +62,11 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 175 | ~456,534 |
+| `examples/mindc_mind/` | 175 | ~461,417 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,159 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
+| `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
+| `examples/mindc_mind/testdata/mindfuzz_regress_failclosed/` | 14 | ~2,935 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2,926 |
 | `examples/mindc_mind/testdata/native_record_trace/` | 13 | ~2,127 |
@@ -150,7 +152,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~205,452 |
-| `tests/` | 420 | ~860,065 |
+| `tests/` | 420 | ~861,169 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -669,20 +671,20 @@
 - `mic3_flip_smoke.py` (~1150 tok, large)
 - `mic3_oracle_smoke.py` (~1060 tok, large) — mic@3 self-host convergence — Phase 0 gate: the Rust oracle.
 - `mic3_primitives_smoke.py` (~22604 tok, huge) — mic@3 self-host convergence — Phase 1 gate: pure-MIND ULEB128 / zigzag.
-- `mindfuzz_self_host.py` (~11539 tok, huge)
+- `mindfuzz_self_host.py` (~16538 tok, huge)
 - `mod_operator_smoke.py` (~2871 tok, huge)
 - `multi_let_smoke.py` (~1539 tok, huge)
 - `now_ns_smoke.py` (~1008 tok, large) — # Copyright 2025 STARGA Inc.
 - `option_netverify.py` (~2321 tok, huge) — # Canonical independent net-verify harness for SINGLE-PAYLOAD ENUMS (the
 - `oracle_parity_lint.py` (~4516 tok, huge)
 - `param_types_smoke.py` (~1273 tok, large)
-- `_ref_add.note` (~16 tok, tiny) — 6fa59a74687e6bac38c983655d4d93ab1873299f130f68cbe481cf92041f6610
-- `_ref_if_ret.note` (~16 tok, tiny) — 3fdc70390e9e12d8030552d11b2194078e8579fbcfac19b14d1beed77174cb07
-- `_ref_main.note` (~16 tok, tiny) — 641c06d594084dc29762eaee24589dfb484dfea00ddcad6575e14335e1df8004
+- `_ref_add.note` (~16 tok, tiny) — fff4fc7e1d90f40c4fa6bac3799795d51008132c65cca0ff7b3b4496cf1a58af
+- `_ref_if_ret.note` (~16 tok, tiny) — 63b7ec7b7f87e25de1aa2fb591affbb2b25d10c37908ae9d711f1653af0efe64
+- `_ref_main.note` (~16 tok, tiny) — c7c797380c714c82415dbfce54eeae617b85fdc30d99c6491623b777a75a4ab5
 - `ref_netverify.py` (~1473 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
-- `_ref_recursion.note` (~16 tok, tiny) — 6d125a946243b0550700d9aa6bc2058b51a3b8bf6e536a8b0b3f545d79b7346f
-- `_ref_struct_field.note` (~16 tok, tiny) — 2f7f2ea32ee47138e1b0162bd51f418b4e5005b4569054f5f3c392ebd2258d96
-- `_ref_value_if.note` (~16 tok, tiny) — ae565a5154b76ee1f44a32c16db2e9a8387f2f60c5fca92bba2dc9bb70afb599
+- `_ref_recursion.note` (~16 tok, tiny) — babd5f8c4d6e3539fc61392e8ff14d4c8523e04e6424a528d1c823948745b9f7
+- `_ref_struct_field.note` (~16 tok, tiny) — dfcf7fa7f8ec57cf5f499ffa47833530ed978bbf38a424ec69feeede26516b27
+- `_ref_value_if.note` (~16 tok, tiny) — 52ffae963503ad85946c606998b7086d786b48ba8c990042357fb4af423df02b
 - `rh_f64_aggregate_canary_smoke.py` (~1597 tok, huge) — RH f64-aggregate surface canary (RH_REQUIRED_F64_AGGREGATE_SURFACE).
 - `ri_d1_frozen_profile_gate.py` (~4276 tok, huge) — RI-D1 readiness gate (task #313): prove `mindc build --backend native` is READY to be
 - `self_host_alias_controls_smoke.py` (~1447 tok, large) — Focused native alias-environment controls.
@@ -806,7 +808,7 @@
 - `self_host_value_if_expr_smoke.py` (~1557 tok, huge)
 - `sha256_hash_smoke.py` (~1284 tok, large) — # Copyright 2025 STARGA Inc.
 - `smoke_wiring_lint.py` (~8534 tok, huge) — smoke_wiring_lint.py — machine-checked contract for WHERE each
-- `SMOKE_WIRING.tsv` (~3930 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
+- `SMOKE_WIRING.tsv` (~3819 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
 - `stdlib_manifest_lint.py` (~2431 tok, huge) — stdlib_manifest_lint.py — machine-checked contract for WHICH std/*.mind
 - `_stdlib_manifest.py` (~1129 tok, large) — Shared reader for the committed std/*.mind manifest.
 - `struct_fields_smoke.py` (~1076 tok, large)
@@ -826,6 +828,100 @@
 ### `examples/mindc_mind/testdata/`
 
 - `dtk_plan_parity_smoke.py` (~2452 tok, huge)
+### `examples/mindc_mind/testdata/mindfuzz_regress/`
+
+- `alias_break.mind` (~364 tok, medium) — Regression fixture: loop-carried ALIAS-BREAK (src/eval/lower.rs While arm).
+- `block_local_seg_then_let.mind` (~89 tok, small) — Regression class: block-local names (a then-block `let` shadowing an outer
+- `block_local_then_assign.mind` (~68 tok, small) — Regression class: block-local names (a then-block `let` shadowing an outer
+- `branch_alias_value_if_then.mind` (~75 tok, small) — Regression class: an if-branch alias value (`b = a`) feeding a later loop
+### `examples/mindc_mind/testdata/mindfuzz_regress_failclosed/`
+
+- `rv3_e7_outer_else_nonempty.mind` (~200 tok, medium) — Regression class (twin-emitter review round 3): read of an earlier loop's exit id inside a while nested in an else-branc
+- `rv3_e8_no_outer_else.mind` (~189 tok, small) — Regression class (twin-emitter review round 3): read of an earlier loop's exit id inside a while nested in an else-branc
+- `rv3_h1_pad1.mind` (~181 tok, small) — Regression class (twin-emitter review round 3): phantom alias-break ids (padding variant).
+- `rv3_h2_pad2.mind` (~188 tok, small) — Regression class (twin-emitter review round 3): phantom alias-break ids (padding variant).
+- `rv3_pcand_cond_read.mind` (~84 tok, small) — Regression class (twin-emitter review round 3): alias-break over a PARAMETER candidate (cond read).
+- `rv3_pcand_min.mind` (~77 tok, small) — Regression class (twin-emitter review round 3): alias-break over a PARAMETER candidate.
+- `rv3_pcand_nested.mind` (~110 tok, small) — Regression class (twin-emitter review round 3): alias-break over a PARAMETER candidate (nested loop).
+- `rv3_r20_helper_only.mind` (~223 tok, medium) — Regression class (twin-emitter review round 3): minimized blind-review reproducer.
+- `rv3_rand_110_20_m0.mind` (~415 tok, medium) — Regression class (twin-emitter review round 3): random-program reproducer (blind review round 2).
+- `rv3_rand_412_4_m2.mind` (~149 tok, small) — Regression class (twin-emitter review round 3): random-program reproducer (blind review round 2).
+- `rv3_rand_530_61_m0_main_only.mind` (~311 tok, medium) — Regression class (twin-emitter review round 3): minimized blind-review reproducer.
+- `rv3_rand_530_61_m0.mind` (~521 tok, large) — Regression class (twin-emitter review round 3): random-program reproducer (blind review round 2).
+- `rv3_reg_min.mind` (~189 tok, small) — Regression class (twin-emitter review round 3): read of an earlier loop's exit id inside a while nested in an else-branc
+- `rv3_s3_412_helper.mind` (~98 tok, small) — Regression class (twin-emitter review round 3): alias-break over a PARAMETER candidate (+ native shadow value).
+### `examples/mindc_mind/testdata/mindfuzz_regress/`
+
+- `idcollide_copy_chain3.mind` (~138 tok, small) — Regression: loop alias-break copy vids (base0 + 2k + 1) collided with param
+- `idcollide_copy_vs_param_k1.mind` (~135 tok, small) — Regression: loop alias-break copy vids (base0 + 2k + 1) collided with param
+- `idcollide_copy_vs_param_noread.mind` (~119 tok, small) — Regression: loop alias-break copy vids (base0 + 2k + 1) collided with param
+- `idcollide_copy_vs_param_p11.mind` (~119 tok, small) — Regression: loop alias-break copy vids (base0 + 2k + 1) collided with param
+- `idcollide_nested_while_n_4_3.mind` (~175 tok, small) — Regression: nested while inside a top-level while in a >=4-param fn. The
+- `idcollide_nested_while_n_5_3.mind` (~178 tok, small) — Regression: nested while inside a top-level while in a >=4-param fn. The
+- `idcollide_nested_while_n_5_4.mind` (~178 tok, small) — Regression: nested while inside a top-level while in a >=4-param fn. The
+- `idcollide_nested_while_n_6_3.mind` (~181 tok, small) — Regression: nested while inside a top-level while in a >=4-param fn. The
+- `idcollide_nested_while_n_6_4.mind` (~181 tok, small) — Regression: nested while inside a top-level while in a >=4-param fn. The
+- `idcollide_nested_while_n_7_3.mind` (~184 tok, small) — Regression: nested while inside a top-level while in a >=4-param fn. The
+- `idcollide_nested_while_n_7_4.mind` (~184 tok, small) — Regression: nested while inside a top-level while in a >=4-param fn. The
+- `idcollide_nested_while_n_8_3.mind` (~187 tok, small) — Regression: nested while inside a top-level while in a >=4-param fn. The
+- `idcollide_nested_while_n_8_4.mind` (~187 tok, small) — Regression: nested while inside a top-level while in a >=4-param fn. The
+- `idcollide_triple_nested_while.mind` (~199 tok, small) — Regression: triple-nested while + a post-loop alias in a 5-param fn (body-local
+- `merge_binding_if_then_while_read.mind` (~73 tok, small) — Regression class: an if's merge binding read by a later while cond/body.
+- `postloop_gap2_freeze.mind` (~64 tok, small) — Regression class: post-loop reads resolve to the while's dominating exit ids.
+- `postloop_read_after_two_loops.mind` (~95 tok, small) — Regression class: post-loop reads resolve to the while's dominating exit ids.
+- `rv3_loop_in_then_assigns_outer_and_shadow.mind` (~115 tok, small) — Regression class (twin-emitter review round 3): loop in an if-then writes an outer var first seen inside the loop (+ blo
+- `rv3_native_shadow.mind` (~78 tok, small) — Regression class (twin-emitter review round 3): native ELF: a loop-body let shadowing an outer name must leave the outer
+- `rv3_native_shadow_param.mind` (~82 tok, small) — Regression class (twin-emitter review round 3): native ELF: a loop-body let shadowing a PARAMETER must leave the paramet
+- `rv3_prog0093_minimal.mind` (~177 tok, small) — Regression class (twin-emitter review round 3): nested-if merge bindings read by a later sequence-level let (seed 99991)
+- `rv3_prog0178_minimal.mind` (~222 tok, medium) — Regression class (twin-emitter review round 3): nested-if merge bindings read by a later sequence-level let (seed 4242).
+- `rv3_r20_min.mind` (~87 tok, small) — Regression class (twin-emitter review round 3): minimized blind-review reproducer.
+- `rv3_rand_230_52_m0_main_only.mind` (~98 tok, small) — Regression class (twin-emitter review round 3): minimized blind-review reproducer.
+- `rv3_rand_230_52_m0.mind` (~332 tok, medium) — Regression class (twin-emitter review round 3): random-program reproducer (blind review round 2).
+- `rv3_rt_break_flush_carried.mind` (~101 tok, small) — Regression class (twin-emitter review round 3, runtime leg): native ELF break must flush carried values written before i
+- `rv3_rt_carried_ident_assign.mind` (~88 tok, small) — Regression class (twin-emitter review round 3, runtime leg): native ELF carried var assigned from a bare ident after a b
+- `rv3_rt_dtk_b1_selfassign_helper.mind` (~60 tok, small) — round-2 blocker: helper top-level bare-ident assign (w = y) under the DTK register plan; notes matched, native ELF exite
+- `rv3_rt_dtk_b2_otherassign_helper.mind` (~66 tok, small) — round-2 blocker: helper top-level bare-ident assign (w = y) under the DTK register plan; notes matched, native ELF exite
+- `rv3_rt_dtk_b3_selfassign_param.mind` (~63 tok, small) — round-2 blocker: helper top-level bare-ident assign (w = y) under the DTK register plan; notes matched, native ELF exite
+- `rv3_rt_dtk_b6_assign_ident_then_add.mind` (~68 tok, small) — round-2 blocker: helper top-level bare-ident assign (w = y) under the DTK register plan; notes matched, native ELF exite
+- `rv3_rt_dtk_c3_toplevel_then_use.mind` (~69 tok, small) — round-2 blocker: helper top-level bare-ident assign (w = y) under the DTK register plan; notes matched, native ELF exite
+- `rv3_rt_dtk_c5_two_helpers.mind` (~64 tok, small) — round-2 blocker: helper top-level bare-ident assign (w = y) under the DTK register plan; notes matched, native ELF exite
+- `rv3_rt_dtk_letcopy_dtk_1_13.mind` (~94 tok, small) — round-3 blocker: bare-ident let of a reassigned source in a DTK-eligible helper (LET copy slot not modelled by the regis
+- `rv3_rt_dtk_letcopy_dtk_1_15.mind` (~97 tok, small) — round-3 blocker: bare-ident let of a reassigned source in a DTK-eligible helper (LET copy slot not modelled by the regis
+- `rv3_rt_dtk_letcopy_dtk_1_20.mind` (~90 tok, small) — round-3 blocker: bare-ident let of a reassigned source in a DTK-eligible helper (LET copy slot not modelled by the regis
+- `rv3_rt_dtk_letcopy_dtk_1_48.mind` (~105 tok, small) — round-3 blocker: bare-ident let of a reassigned source in a DTK-eligible helper (LET copy slot not modelled by the regis
+- `rv3_rt_dtk_letcopy_dtk_1_58.mind` (~91 tok, small) — round-3 blocker: bare-ident let of a reassigned source in a DTK-eligible helper (LET copy slot not modelled by the regis
+- `rv3_rt_dtk_letcopy_gen1234_p144.mind` (~428 tok, medium) — round-3 blocker, generator-caught (seed 1234 prog 144, three-mode gen_dtk_fn mode 1): bare-ident let of a reassigned sou
+- `rv3_rt_dtk_letcopy_m1.mind` (~82 tok, small) — round-3 blocker: bare-ident let of a reassigned source in a DTK-eligible helper (LET copy slot not modelled by the regis
+- `rv3_rt_dtk_letcopy_m3.mind` (~90 tok, small) — round-3 blocker: bare-ident let of a reassigned source in a DTK-eligible helper (LET copy slot not modelled by the regis
+- `rv3_rt_dtk_letcopy_m4.mind` (~80 tok, small) — round-3 blocker: bare-ident let of a reassigned source in a DTK-eligible helper (LET copy slot not modelled by the regis
+- `rv3_rt_dtk_letcopy_m7.mind` (~78 tok, small) — round-3 blocker: bare-ident let of a reassigned source in a DTK-eligible helper (LET copy slot not modelled by the regis
+- `rv3_rt_dtk_letcopy_rand_31_72.mind` (~132 tok, small) — round-3 blocker: bare-ident let of a reassigned source in a DTK-eligible helper (LET copy slot not modelled by the regis
+- `rv3_rt_dtk_v_101_52.mind` (~91 tok, small) — round-2 blocker: helper top-level bare-ident assign (w = y) under the DTK register plan; notes matched, native ELF exite
+- `rv3_rt_dtk_v_32_169.mind` (~120 tok, small) — round-2 blocker: helper top-level bare-ident assign (w = y) under the DTK register plan; notes matched, native ELF exite
+- `rv3_rt_let_alias_of_carried.mind` (~78 tok, small) — Regression class (twin-emitter review round 3, runtime leg): native ELF let alias of a carried var must not observe the 
+- `rv3_rt_nested_carry_init_s4242_p0231.mind` (~241 tok, medium) — Regression class (twin-emitter review round 3, runtime leg): native ELF nested-loop carry init must come from the pre-lo
+- `rv3_rt_shadow_nested_carry_s1234_p0105.mind` (~514 tok, large) — Regression class (twin-emitter review round 3, runtime leg): native ELF nested-region writes to a body-local shadow are 
+- `rv3_shadow_then_loop_outer_assigned_in_loop.mind` (~97 tok, small) — Regression class (twin-emitter review round 3): loop in an if-then writes an outer var first seen inside the loop (+ blo
+- `rv3_v1_noshadow.mind` (~83 tok, small) — Regression class (twin-emitter review round 3): minimized blind-review reproducer.
+- `rv3_v6_let_then_loop_only_outer.mind` (~82 tok, small) — Regression class (twin-emitter review round 3): minimized blind-review reproducer.
+- `rv3_v7_fn_param.mind` (~95 tok, small) — Regression class (twin-emitter review round 3): loop in an if-then writes an outer var first seen inside the loop (param
+- `rv3_wit_call_after.mind` (~95 tok, small) — Regression class (twin-emitter review round 3): loop in an if-then writes an outer var first seen inside the loop.
+- `rv3_wit_nested_if_in_loop_in_then.mind` (~94 tok, small) — Regression class (twin-emitter review round 3): loop in an if-then writes an outer var first seen inside the loop.
+- `rv3_wit_nested_while_in_loop_in_then.mind` (~110 tok, small) — Regression class (twin-emitter review round 3): loop in an if-then writes an outer var first seen inside the loop.
+- `rv3_wit_outer_counter.mind` (~77 tok, small) — Regression class (twin-emitter review round 3): loop in an if-then writes an outer var first seen inside the loop.
+- `rv3_wit_then_seq_after_if.mind` (~112 tok, small) — Regression class (twin-emitter review round 3): loop in an if-then writes an outer var first seen inside the loop.
+- `rv3_wit_two_outer_one_prewritten.mind` (~101 tok, small) — Regression class (twin-emitter review round 3): loop in an if-then writes an outer var first seen inside the loop.
+- `shadow_assign_before_if.mind` (~100 tok, small) — Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
+- `shadow_assign_before_inner_block.mind` (~95 tok, small) — Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
+- `shadow_assign_before_in_while.mind` (~81 tok, small) — Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
+- `shadow_assign_before_nested_if.mind` (~86 tok, small) — Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
+- `shadow_assign_before_noassign.mind` (~65 tok, small) — Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
+- `shadow_assign_before_prog0040.mind` (~95 tok, small) — Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
+- `shadow_assign_before_reads.mind` (~97 tok, small) — Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
+- `shadow_assign_before_rmw.mind` (~89 tok, small) — Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
+- `shadow_assign_before_twice.mind` (~87 tok, small) — Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
+- `shadow_assign_before_two_names.mind` (~96 tok, small) — Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
+- `shadow_assign_before_while_after.mind` (~92 tok, small) — Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
 ### `examples/mindc_mind/testdata/native_elf_oracle/`
 
 - `add.elf` (~123 tok, small) — ELF> @@@8
@@ -910,7 +1006,7 @@
 
 - `unified_dispatch_smoke.py` (~1598 tok, huge)
 - `validate_real_fns_smoke.py` (~2734 tok, huge)
-- `VERDICT_SHAPE_RESIDUAL.txt` (~1100 tok, large) — # VERDICT_SHAPE_RESIDUAL.txt — the DECLARED, shrink-only residual of the
+- `VERDICT_SHAPE_RESIDUAL.txt` (~1095 tok, large) — # VERDICT_SHAPE_RESIDUAL.txt — the DECLARED, shrink-only residual of the
 - `while_struct_smoke.py` (~1031 tok, large)
 ### `examples/mind_mirror_v04/`
 
@@ -2288,7 +2384,7 @@
 - `reap_threshold.rs` (~2108 tok, huge) — Copyright 2025 STARGA Inc.
 - `reductions_grad.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
 - `reductions_preview.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
-- `_ref_mic3_dump.rs` (~1821 tok, huge) — Committed self-host reference generator (A9b): reconstruct
+- `_ref_mic3_dump.rs` (~2925 tok, huge) — Committed self-host reference generator (A9b): reconstruct
 - `regalloc_dtk_parity.rs` (~3134 tok, huge) — DTK slice 1 (#254) — parity consumer for src/opt/regalloc_dtk.rs.
 - `region_phase_ja.rs` (~4263 tok, huge) — Copyright 2025 STARGA Inc.
 - `relu_exec.rs` (~434 tok, medium) — Copyright 2025 STARGA Inc.

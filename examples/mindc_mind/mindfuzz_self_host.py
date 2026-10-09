@@ -57,18 +57,55 @@ Generator subset (seeded, deterministic; every program terminates)
   + - * / % << >> | with divisors forced odd (`d | 1`) and shift amounts
     bounded to 0..5, and all six comparisons as loop/if conditions.
 
+RUNTIME leg (a matching note can never hide a wrong value)
+---------------------------------------------------------
+The PT_NOTE is the self-host's mic@3 emitter; the ELF CODE next to it comes from
+a DIFFERENT pure-MIND emitter (the nb_* native-ELF backend). A note can agree
+with Rust while the machine code computes something else (measured: a loop-body
+`let mut x` shadowing an outer `x` exited 3 where Rust/MLIR exits 5, note
+identical). So every COMPARED program (and every regression fixture the
+self-host emits) is also EXECUTED both ways: the self-host ELF, and the
+`mindc build --backend mlir --emit=binary` binary of the same source. Exit codes
+must be equal; a mismatch, a crash or timeout on either side, or an MLIR build
+failure on a program both emitters accepted is a FAIL.
+
+Shared-gap blindness (documented limit, not a gap in this gate)
+---------------------------------------------------------------
+Both legs are measured AGAINST the Rust lowering (src/eval/lower.rs): the note
+leg compares to Rust's emit_mic3, and the runtime leg's reference binary is
+built from that same Rust IR via MLIR. A defect that lives in the Rust lowering
+itself and that the self-host faithfully mirrors produces equal notes AND equal
+exit codes, so this fuzzer cannot see it. That is by design — the oracle
+comparison IS the gate: "correct" here means "agrees with the bootstrap
+reference". Rust-side semantic bugs are the job of the Rust-side suites
+(tree-eval vs MLIR cross-checks, tests/mindfuzz_cross_substrate.rs).
+
 Semantics of disagreement / refusal
 -----------------------------------
-  * EITHER oracle fail-closes a program (self-host len-0 ELF / Rust parse or
-    lower rejection)  -> SKIPPED (logged + counted), NOT a failure: the
-    fuzzer targets the intersection both accept. A skip histogram is printed.
+  * the SELF-HOST emitter fail-closes a program (EMPTY ELF)  -> refused
+    (logged + counted), NOT a failure: a refusal is the emitter's documented
+    fail-closed contract (never a wrong note). The count is printed. Only an
+    EMPTY result is a refusal: a NON-EMPTY image that is not a well-formed
+    MIND-noted ELF is a malformed artifact and FAILS the run.
+  * the self-host EMITS a note but the Rust oracle rejects the program
+    (dump_ref parse/lower failure)  -> FAIL exit 1. The self-host accepted a
+    program the reference rejects — that is a divergence too, and a gate that
+    let it through as a "skip" could measure nothing (it did, for a month,
+    while the dump_ref oracle was broken).
   * both accept, notes differ -> MINIMIZE (delta-debounce over the AST), print
     the minimal reproducer + note hex + first-diverging mic@3 bytes, stage it
     under mindfuzz_self_host_staged/, exit 1.
   * both accept, notes agree  -> counted toward K.
   * K == 0 (nothing both accept) -> FAIL exit 1: a fuzzer that compared
     nothing proves nothing — never a silent green.
-  * .so unbuildable / cargo absent -> BLOCKED exit 2 (honest, no fake pass).
+  * .so unbuildable / cargo absent / the `add` sanity fixture does not match
+    -> FAIL exit 1, labelled BLOCKED (the oracle mechanism is unavailable; a
+    gate that cannot compare anything is a failed gate, never a skipped one).
+
+Gate use (CI): the seed and count are pinned on the command line
+(`--seed 1234 --count 200`); an explicit `--count` always wins over the
+$MINDFUZZ_SELFHOST_ITERS default override, so the gate is deterministic.
+Every compared batch / program prints one PASS or MISMATCH verdict line.
 
 Batching (speed): accepted programs are grouped (--batch, default 8) into ONE
 combined source (entries renamed fzN + one synthetic main calling fz0 — every
@@ -112,9 +149,25 @@ _STDLIB_MODULES = [
 _RUST_REF_TEST = "_ref_mic3_dump"
 _RUST_REF_FEATURES = "std-surface cross-module-imports"
 
+# Committed regression corpus: shapes that once diverged between the twin
+# emitters. Each must MATCH on EVERY run, independent of --seed/--count, so a
+# seed advance can never silently drop a fixed divergence class.
+_REGRESS_DIR = _HERE / "testdata" / "mindfuzz_regress"
+# Reproducers of divergence classes the self-host currently answers by REFUSING
+# (fail closed). Each must be MATCH or a self-host refusal — never a different
+# note, never a self-host accept the Rust oracle rejects — and runtime-equal
+# whenever emitted. Move a fixture to _REGRESS_DIR once the emitter ports it.
+_FAILCLOSED_DIR = _HERE / "testdata" / "mindfuzz_regress_failclosed"
+
 DEFAULT_COUNT = 200
 DEFAULT_SEED = 1234
 DEFAULT_BATCH = 8
+# Floor on programs actually COMPARED (accepted by both emitters) for the pinned
+# (DEFAULT_SEED, DEFAULT_COUNT) corpus. A self-host that fail-closes everything is
+# "0 divergences" too; this floor makes that a FAIL instead of a green. Set just
+# under the measured count (refusals are legitimate, a collapse is not); raise it
+# when the emitter accepts more, never lower it to absorb a regression.
+PINNED_MIN_COMPARED = 80
 _STMT_BUDGET = 40  # hard cap on total generated statements per program
 
 _ARITH = ["+", "-", "*", "/", "%", "<<", ">>", "|"]
@@ -200,6 +253,11 @@ class Scope:
         return out
 
 
+def params_of(sc: "Scope") -> list:
+    """The function's parameter names (the outermost frame's immutable entries)."""
+    return [n for n, m in sc.frames[0] if not m] if sc.frames else []
+
+
 class Gen:
     """Seeded generator over the supported subset. Every draw comes from
     self.r — random.Random(seed) — so a (seed, count) pair is fully
@@ -207,9 +265,28 @@ class Gen:
 
     def __init__(self, seed: int):
         self.r = random.Random(seed)
+        # SECOND stream for the round-3 probe shapes (a while inside an if-branch,
+        # a body-local shadow-then-assign in a loop). Drawing those decisions and
+        # their contents from r2 leaves the main stream — and so every program
+        # without a probe — exactly as before, keeping the pinned corpus's compared
+        # floor meaningful while the probes still land at a fixed rate.
+        self.r2 = random.Random(seed * 7919 + 17)
+        # THIRD stream for the straight-line register-plan probe helper (see
+        # gen_dtk_fn): same isolation contract as r2.
+        self.r3 = random.Random(seed * 104729 + 31)
+        self._ops = None  # restricted (ops, weights) while generating a DTK probe
         self.helper_seq = 0
         self.var_seq = 0
         self.ctr_seq = 0
+
+    def _on_r2(self, f):
+        """Run a generator step on the probe stream r2 (main stream untouched)."""
+        saved = self.r
+        self.r = self.r2
+        try:
+            return f()
+        finally:
+            self.r = saved
 
     # -- expressions ---------------------------------------------------------
 
@@ -217,7 +294,8 @@ class Gen:
         r = self.r
         if depth <= 0 or r.randrange(100) < 45:
             return self.leaf(sc)
-        op = r.choices(_ARITH, weights=_ARITH_W, k=1)[0]
+        ops, wts = self._ops if self._ops else (_ARITH, _ARITH_W)
+        op = r.choices(ops, weights=wts, k=1)[0]
         lhs = self.expr(sc, depth - 1)
         if op in ("/", "%"):
             # provably non-zero divisor: (d | 1) is always odd (MIN/-1 overflow
@@ -306,6 +384,14 @@ class Gen:
                 if budget[0] <= 0:
                     break
                 budget[0] -= 1
+                if style == "mixed" and budget[0] >= 6 and self.r2.randrange(100) < 8:
+                    # A WHILE inside an if-branch (statement-level, any style):
+                    # the loop writes outer vars first seen inside it, reads
+                    # earlier loops' exit ids, and nests under else-branches —
+                    # the classes behind the e7/h1/v1/wit/r20 reproducers.
+                    budget[0] += 1  # gen_while charges its own 2
+                    stmts.extend(self._on_r2(lambda: self.gen_while(sc, budget, loop_depth + 1)))
+                    continue
                 roll = r.randrange(100)
                 if style in ("assign", "assign-probe"):
                     stmts.append(self.gen_assign(sc) if sc.mut_names()
@@ -369,6 +455,22 @@ class Gen:
                 budget[0] -= 1
                 body.append(("assign", nm, self.expr(sc, 2)))
 
+        # BODY-LOCAL SHADOW then assign (r2 probe): `let mut p = E; p = E2;` over
+        # an outer name — preferring a PARAMETER (the pcand / s3_412 class: the
+        # assign is a candidate for the loop's alias-break yet writes the
+        # per-iteration shadow, never the outer binding; the native ELF must leave
+        # the outer binding untouched).
+        if sc.shadowable() and budget[0] >= 3 and self.r2.randrange(100) < 10:
+            budget[0] -= 2
+            r2 = self.r2
+            outer = [n for n in sc.shadowable() if n in params_of(sc)]
+            name = r2.choice(outer if (outer and r2.randrange(100) < 70)
+                             else sc.shadowable())
+            init = self._on_r2(lambda: self.expr(sc, 2))
+            sc.push(name, True)
+            body.append(("let", True, name, init))
+            body.append(("assign", name, self._on_r2(lambda: self.expr(sc, 2))))
+
         # generic body statements (nested whiles 2-3 deep, ifs, break/continue)
         extra = 1 + r.randrange(4)
         for _ in range(extra):
@@ -390,6 +492,7 @@ class Gen:
                 guard = ("cmp", r.choice(_CMPS), ("var", ctr),
                          ("const", r.randrange(bound + 1)))
                 body.append(("if", guard, [("break",)], None))
+
             elif sc.mut_names():
                 budget[0] -= 1
                 body.append(self.gen_assign(sc))
@@ -407,6 +510,86 @@ class Gen:
         return out
 
     # -- functions / programs ------------------------------------------------
+
+    def gen_dtk_fn(self, name: str, params: list):
+        """Straight-line helper (lets / assigns / tail return, register-plan-safe
+        ops only) — the ONLY shape the native emitter's DTK callee-saved register
+        plan accepts, so it is what exercises rbx/r12-homed values. Assign RHS is
+        a bare ident half the time (`w = y`): that shape mints a copy slot the
+        plan must not reg-home (round-2 blocker: helper `w = y; return w` exited
+        0 vs Rust 2 with byte-identical notes). Drawn wholly from r3.
+
+        THREE modes (r3-drawn), because ONE bare-ident assign anywhere makes the
+        whole helper plan-ineligible — round 2 always appended `tgt = src`, so
+        every probe silently fell back to the stack scheme and the register plan
+        was never exercised (round-3 review found the plan bug this way):
+          0 (40%) no bare-ident RHS at all: the plan is ELIGIBLE, values are
+            register-homed (the only mode that exercises rbx/r12 homes).
+          1 (30%) bare-ident LETs of reassigned sources, no bare-ident assign:
+            `let v = m; m = <expr>; .. v` (round-3 blocker: helper `let q = p;
+            let e = q; q = 5; return e` exited 0, Rust 3 — the LET copy slot was
+            read from a register-homed source's stale stack home).
+          2 (30%) bare-ident assigns `w = y` (round-2 blocker shape)."""
+        def body():
+            mode = self.r.choices([0, 1, 2], weights=[40, 30, 30], k=1)[0]
+
+            def nv(e):  # never a bare ident (modes 0/1): `y` -> `(y + 0)`
+                return ("bin", "+", e, ("const", 0)) if e[0] == "var" else e
+
+            sc = Scope()
+            for p in params:
+                sc.push(p, False)
+            saved = self._ops
+            self._ops = (["+", "-", "*", "|"], [30, 20, 15, 5])
+            try:
+                # a guaranteed mut local, so an assign always has a target
+                acc = self.fresh_var()
+                stmts = [("let", True, acc, nv(self.expr(sc, 2)))]
+                sc.push(acc, True)
+                for _ in range(1 + self.r.randrange(4)):
+                    muts = sc.mut_names()  # a non-mut shadow can hide every mut
+                    if muts and self.r.randrange(100) < 55:
+                        tgt = self.r.choice(muts)
+                        if mode == 2 and self.r.randrange(100) < 60:
+                            stmts.append(("assign", tgt, ("var", self.r.choice(sc.names()))))
+                        else:
+                            stmts.append(("assign", tgt, nv(self.expr(sc, 2))))
+                    elif mode == 1 and muts and self.r.randrange(100) < 50:
+                        v = self.fresh_var()
+                        stmts.append(("let", self.r.randrange(2) == 0, v, ("var", self.r.choice(muts))))
+                        sc.push(v, stmts[-1][1])
+                    else:
+                        v = self.fresh_var()
+                        mut = self.r.randrange(100) < 60
+                        stmts.append(("let", mut, v, nv(self.expr(sc, 2))))
+                        sc.push(v, mut)
+                if not sc.mut_names():
+                    acc = self.fresh_var()
+                    stmts.append(("let", True, acc, nv(self.expr(sc, 2))))
+                    sc.push(acc, True)
+                tgt = self.r.choice(sc.mut_names())
+                if mode == 1:
+                    # the full trigger: copy a mut source, then overwrite it
+                    v = self.fresh_var()
+                    stmts.append(("let", self.r.randrange(2) == 0, v, ("var", tgt)))
+                    sc.push(v, stmts[-1][1])
+                    stmts.append(("assign", tgt, nv(self.expr(sc, 2))))
+                    ret = ("var", v) if self.r.randrange(100) < 60 else ("bin", "+", ("var", v), ("var", tgt))
+                elif mode == 2:
+                    stmts.append(("assign", tgt, ("var", self.r.choice(sc.names()))))
+                    ret = ("var", tgt) if self.r.randrange(100) < 60 else self.expr(sc, 2)
+                else:
+                    stmts.append(("assign", tgt, nv(self.expr(sc, 2))))
+                    ret = ("var", tgt) if self.r.randrange(100) < 60 else self.expr(sc, 2)
+            finally:
+                self._ops = saved
+            return ("fn", name, params, stmts, ret)
+        saved = self.r
+        self.r = self.r3
+        try:
+            return body()
+        finally:
+            self.r = saved
 
     def gen_fn(self, name: str, params: list, budget: int):
         # helpers get a FRESH scope holding only their params, like real MIND fns
@@ -445,9 +628,13 @@ class Gen:
         n_helpers = r.choices([0, 1, 2], weights=[55, 30, 15], k=1)[0]
         for _ in range(n_helpers):
             self.helper_seq += 1
-            params = [f"x{self.helper_seq}"]
-            if r.randrange(100) < 35:
-                params.append(f"y{self.helper_seq}")
+            # 1-5 params. Wide helpers matter: a param is vid 0..n-1 inside the
+            # body, so >=3 params is what reaches id-collision classes between
+            # param vids and body-local / loop alias-break copy vids (the fixed
+            # n_4_3 / t3_ctrl_noread / q12_chain_collide3 regressions).
+            roll = r.randrange(100)
+            n_par = 1 if roll < 40 else 2 if roll < 60 else 3 + r.randrange(3)
+            params = [f"{pfx}{self.helper_seq}" for pfx in "xyzwu"[:n_par]]
             fn, _sc = self.gen_fn(f"fzh{self.helper_seq}", params, budget)
             fns.append(fn)
 
@@ -479,6 +666,15 @@ class Gen:
             ret = ("call", callee[1], args)
         else:
             ret = self.expr(main_sc, 2)
+        # Register-plan probe (r3 stream; main stream untouched): 30% of programs
+        # whose return is not already a call return a straight-line helper.
+        if ret[0] != "call" and self.r3.randrange(100) < 30:
+            self.helper_seq += 1
+            n_par = 1 + self.r3.randrange(3)
+            params = [f"{pfx}{self.helper_seq}" for pfx in "xyz"[:n_par]]
+            probe = self.gen_dtk_fn(f"fzd{self.helper_seq}", params)
+            fns.append(probe)
+            ret = ("call", probe[1], [("const", self.r3.randrange(9)) for _ in params])
         fns.append(("fn", "main", [], stmts, ret))
         return fns
 
@@ -621,13 +817,20 @@ class SelfHost:
         return self._call(self.lib.selftest_nb_mic3, combined, ulo)
 
 
+class MalformedElf(Exception):
+    """A NON-EMPTY self-host image that is not a well-formed MIND-noted ELF."""
+
+
 def note_of_elf(elf: bytes) -> bytes | None:
-    """Validate the ELF + note structure (magic, MIND note name) and return the
-    self-computed 32-byte PT_NOTE, or None if the image is structurally wrong."""
-    if len(elf) < 64 or elf[:4] != b"\x7fELF":
+    """Return the self-computed 32-byte PT_NOTE. None ONLY for the empty image
+    (the entry's fail-closed refusal); a non-empty image without the ELF magic
+    or the trailing `MIND` note raises MalformedElf — a broken artifact is a
+    failure, never a quiet refusal."""
+    if len(elf) == 0:
         return None
-    if len(elf) < 52 or elf[-40:-36] != b"MIND":
-        return None
+    if len(elf) < 64 or elf[:4] != b"\x7fELF" or elf[-40:-36] != b"MIND":
+        raise MalformedElf(f"{len(elf)}-byte self-host image is not a MIND-noted ELF "
+                           f"(head {elf[:4].hex()}, note-name {elf[-40:-36].hex()})")
     return elf[-32:]
 
 
@@ -708,6 +911,55 @@ class RustRef:
 # ---------------------------------------------------------------------------
 
 # status strings
+class RuntimeCheck:
+    """Execute a program both ways and compare exit codes: the self-host ELF
+    (seeded, exactly the image whose note was compared) vs the Rust/MLIR binary
+    (`mindc build --backend mlir --emit=binary`). Returns None when equal, else a
+    one-line failure description."""
+
+    def __init__(self, mindc: pathlib.Path, tmp: pathlib.Path):
+        self.mindc = mindc
+        self.tmp = tmp
+        self.runs = 0
+
+    @staticmethod
+    def _run(path: pathlib.Path):
+        try:
+            return subprocess.run([str(path)], capture_output=True, timeout=20).returncode
+        except subprocess.TimeoutExpired:
+            return "timeout"
+        except OSError as e:
+            return f"exec-error {e}"
+
+    def check(self, prog_src: str, elf: bytes) -> str | None:
+        d = self.tmp / "rt"
+        d.mkdir(exist_ok=True)
+        src = d / "prog.mind"
+        src.write_text(prog_src)
+        shp = d / "selfhost.elf"
+        shp.write_bytes(elf)
+        shp.chmod(0o755)
+        binp = d / "rust.bin"
+        if binp.exists():
+            binp.unlink()
+        try:
+            b = subprocess.run(
+                [str(self.mindc), "build", str(src), "--release", "--backend", "mlir",
+                 "--emit=binary", f"--out={binp}"],
+                capture_output=True, text=True, timeout=300, cwd=str(d))
+        except (subprocess.TimeoutExpired, OSError) as e:
+            return f"Rust/MLIR build failed to run: {e}"
+        if b.returncode != 0 or not binp.exists():
+            return (f"Rust/MLIR build rejected a program both emitters accepted "
+                    f"(exit {b.returncode}): {(b.stderr or b.stdout).strip()[-300:]}")
+        self.runs += 1
+        sh_rc = self._run(shp)
+        ru_rc = self._run(binp)
+        if not isinstance(sh_rc, int) or not isinstance(ru_rc, int) or sh_rc != ru_rc:
+            return f"RUNTIME MISMATCH: self-host ELF exit={sh_rc} Rust/MLIR exit={ru_rc}"
+        return None
+
+
 MATCH = "match"
 MISMATCH = "mismatch"
 SKIP_SELFHOST = "skip-selfhost-closed"
@@ -738,9 +990,13 @@ class Harness:
         self.tmp = tmp
         self.verbose = verbose
 
+    def seeded_elf(self, prog_src: str) -> bytes:
+        return self.sh.seeded_elf(self.std + prog_src.encode(), len(self.std))
+
     def check_source(self, prog_src: str) -> tuple:
         """Run BOTH oracles on one source. Returns (status, sh_note, rust_note).
-        status in {MATCH, MISMATCH, SKIP_SELFHOST, SKIP_RUST}."""
+        status in {MATCH, MISMATCH, SKIP_SELFHOST, SKIP_RUST}. A non-empty
+        malformed self-host image raises MalformedElf (a FAIL, never a skip)."""
         combined = self.std + prog_src.encode()
         ulo = len(self.std)
         elf = self.sh.seeded_elf(combined, ulo)
@@ -759,7 +1015,10 @@ class Harness:
         lines.append("notes (32B PT_NOTE = sha256 of seeded+pruned mic@3):")
         combined = self.std + prog_src.encode()
         elf = self.sh.seeded_elf(combined, len(self.std))
-        sh_note = note_of_elf(elf) or b""
+        try:
+            sh_note = note_of_elf(elf) or b""
+        except MalformedElf:
+            sh_note = b""
         rust_note = self.rust.seeded_note(prog_src, self.tmp) or b""
         lines.append(f"  selfhost: {sh_note.hex()}")
         lines.append(f"  rust-ref: {rust_note.hex()}")
@@ -903,9 +1162,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description="Differential fuzzer: pure-MIND self-host mic@3 note vs the "
                     "Rust emit_mic3 reference note over generated programs.")
-    ap.add_argument("--count", type=int, default=DEFAULT_COUNT,
+    ap.add_argument("--count", type=int, default=None,
                     help=f"number of programs to generate (default {DEFAULT_COUNT}; "
-                         f"$MINDFUZZ_SELFHOST_ITERS overrides the default)")
+                         f"$MINDFUZZ_SELFHOST_ITERS overrides the DEFAULT only — an "
+                         f"explicit --count always wins)")
     ap.add_argument("--seed", type=int, default=DEFAULT_SEED,
                     help=f"PRNG seed — runs are fully reproducible (default {DEFAULT_SEED})")
     ap.add_argument("--batch", type=int, default=DEFAULT_BATCH,
@@ -913,34 +1173,46 @@ def main() -> int:
                          "1 = per-program, the strictest and slowest mode)")
     ap.add_argument("--verbose", action="store_true",
                     help="one status line per program")
+    ap.add_argument("--min-compared", type=int, default=None,
+                    help=f"FAIL unless at least this many generated programs were "
+                         f"compared (default {PINNED_MIN_COMPARED} for the pinned "
+                         f"seed={DEFAULT_SEED}/count={DEFAULT_COUNT} corpus, else 1)")
     args = ap.parse_args()
 
     count = args.count
-    if count == DEFAULT_COUNT and os.environ.get("MINDFUZZ_SELFHOST_ITERS"):
-        try:
-            count = max(1, int(os.environ["MINDFUZZ_SELFHOST_ITERS"]))
-        except ValueError:
-            pass
+    if count is None:
+        count = DEFAULT_COUNT
+        if os.environ.get("MINDFUZZ_SELFHOST_ITERS"):
+            try:
+                count = max(1, int(os.environ["MINDFUZZ_SELFHOST_ITERS"]))
+            except ValueError:
+                print("FAIL  $MINDFUZZ_SELFHOST_ITERS is not an integer")
+                return 1
     if count < 1:
         print("FAIL  --count must be >= 1")
         return 1
     batch = max(1, args.batch)
+    min_compared = args.min_compared
+    if min_compared is None:
+        pinned = args.seed == DEFAULT_SEED and count == DEFAULT_COUNT
+        min_compared = PINNED_MIN_COMPARED if pinned else 1
+    min_compared = max(1, min_compared)
 
     # --- oracle setup (fail LOUD / BLOCKED, never a fake pass) ---------------
     so = resolve_so()  # MINDC_SO verbatim; else FRESH mindc-built .so; else legacy
     if not so.exists():
-        print(f"BLOCKED: self-host .so unavailable ({so}) — cannot build/load "
+        print(f"FAIL  BLOCKED: self-host .so unavailable ({so}) — cannot build/load "
               f"libmindc_mind.so (set MINDC_SO or build target/release/mindc)")
-        return 2
+        return 1
     try:
         sh = SelfHost(so)
     except OSError as e:
-        print(f"BLOCKED: dlopen({so}) failed: {e}")
-        return 2
+        print(f"FAIL  BLOCKED: dlopen({so}) failed: {e}")
+        return 1
     if shutil.which("cargo") is None:
-        print("BLOCKED: cargo not on PATH — the Rust emit_mic3 reference note "
+        print("FAIL  BLOCKED: cargo not on PATH — the Rust emit_mic3 reference note "
               "cannot be derived (no frozen-note fallback in this fuzzer)")
-        return 2
+        return 1
 
     std = std_blob()
     gen = Gen(args.seed)
@@ -949,6 +1221,12 @@ def main() -> int:
         tmp = pathlib.Path(td)
         rust = RustRef(_REPO)
         harness = Harness(sh, rust, std, tmp, args.verbose)
+        if not rust.mindc.exists():
+            print(f"FAIL  BLOCKED: {rust.mindc} absent — the runtime leg (Rust/MLIR "
+                  "binary exit code) cannot run; a note-only comparison can hide a "
+                  "wrong value")
+            return 1
+        rt = RuntimeCheck(rust.mindc, tmp)
 
         # Mechanism sanity: the fixed `add` fixture must derive + match before
         # any fuzz verdict is trusted (catches a wholesale dump_ref breakage).
@@ -956,16 +1234,70 @@ def main() -> int:
                   "fn main() -> i64 {\n    return add(2, 3);\n}\n")
         st, _shn, _run = harness.check_source(sanity)
         if st != MATCH:
-            print(f"BLOCKED: sanity fixture `add` did not MATCH across the twin "
+            print(f"FAIL  BLOCKED: sanity fixture `add` did not MATCH across the twin "
                   f"emitters (status={st}) — the oracle mechanism itself is broken; "
                   "refusing to fuzz on top of it")
-            return 2
+            return 1
 
         print(f"[mindfuzz_self_host] seed={args.seed} count={count} batch={batch} "
               f"so={so.name} std_blob={len(std)}B")
 
+        # --- PHASE 0b (below): the fail-closed corpus — reproducers the
+        #     self-host may REFUSE (fail closed) but must never emit a
+        #     different note for; runtime-checked whenever emitted.
+        # --- PHASE 0: the committed regression corpus (every fixture must be
+        #     accepted by BOTH emitters with byte-identical notes; a refusal or a
+        #     Rust rejection is a failure here, not a skip — these programs are
+        #     known-good shapes, so anything but MATCH is a regression). --------
+        fixtures = sorted(_REGRESS_DIR.glob("*.mind"))
+        if not fixtures:
+            print(f"FAIL  BLOCKED: no regression fixtures under {_REGRESS_DIR} — "
+                  "the corpus gate would compare nothing")
+            return 1
+        for fx in fixtures:
+            st, shn, rn = harness.check_source(fx.read_text())
+            if st != MATCH:
+                lines = [f"FAIL  [regress] {fx.name}: status={st} "
+                         f"selfhost={shn.hex() if shn else '-'} "
+                         f"rust={rn.hex() if rn else '-'}"]
+                if st == MISMATCH:
+                    harness.diagnose(fx.read_text(), lines)
+                print("\n".join(lines))
+                return 1
+            why = rt.check(fx.read_text(), harness.seeded_elf(fx.read_text()))
+            if why:
+                print(f"FAIL  [regress] {fx.name}: {why}")
+                return 1
+            print(f"  PASS  [regress] {fx.name} note {shn.hex()[:12]}... identical, "
+                  "runtime exit equal")
+
+        fc_fixtures = sorted(_FAILCLOSED_DIR.glob("*.mind"))
+        if not fc_fixtures:
+            print(f"FAIL  BLOCKED: no fail-closed fixtures under {_FAILCLOSED_DIR}")
+            return 1
+        for fx in fc_fixtures:
+            st, shn, rn = harness.check_source(fx.read_text())
+            if st == SKIP_SELFHOST:
+                print(f"  PASS  [failclosed] {fx.name} refused (fail-closed)")
+                continue
+            if st != MATCH:
+                lines = [f"FAIL  [failclosed] {fx.name}: status={st} "
+                         f"selfhost={shn.hex() if shn else '-'} "
+                         f"rust={rn.hex() if rn else '-'}"]
+                if st == MISMATCH:
+                    harness.diagnose(fx.read_text(), lines)
+                print("\n".join(lines))
+                return 1
+            why = rt.check(fx.read_text(), harness.seeded_elf(fx.read_text()))
+            if why:
+                print(f"FAIL  [failclosed] {fx.name}: {why}")
+                return 1
+            print(f"  PASS  [failclosed] {fx.name} note {shn.hex()[:12]}... identical, "
+                  "runtime exit equal")
+
         # --- PHASE 1: generate + self-host acceptance (cheap, in-process) ----
         programs = []          # (id, fns, src, sh_note)
+        elfs = {}              # id -> the exact self-host image whose note was compared
         skipped_sh = 0
         for i in range(count):
             fns = gen.program()
@@ -976,9 +1308,10 @@ def main() -> int:
             if sh_note is None:
                 skipped_sh += 1
                 if args.verbose:
-                    print(f"  [{i:4}] SKIP  self-host fail-closed (len-0 / malformed)")
+                    print(f"  [{i:4}] refused: self-host fail-closed (len-0 / malformed)")
                 continue
             programs.append((i, fns, src, sh_note))
+            elfs[i] = elf
             if args.verbose:
                 print(f"  [{i:4}] ACC   self-host emitted ({len(elf)}B ELF, "
                       f"note {sh_note.hex()[:12]}...)")
@@ -992,6 +1325,7 @@ def main() -> int:
         matched = 0
         skipped_rust = 0
         failing = []           # (id, fns, src, sh_note, rust_note)
+        rt_fail = []           # (id, src, why) — runtime-leg failures
         solo = batch == 1
         groups = [programs[g:g + batch] for g in range(0, len(programs), batch)] \
             if not solo else [[p] for p in programs]
@@ -1002,13 +1336,16 @@ def main() -> int:
                 rust_note = rust.seeded_note(src, tmp)
                 if rust_note is None:
                     skipped_rust += 1
-                    if args.verbose:
-                        print(f"  [{i:4}] SKIP  rust rejected (dump_ref failed/panicked)")
+                    print(f"  [{i:4}] REJECTED-BY-RUST (dump_ref failed/panicked) "
+                          f"after the self-host emitted a note")
                     continue
                 if rust_note == sh_note:
                     matched += 1
-                    if args.verbose:
-                        print(f"  [{i:4}] MATCH note {sh_note.hex()[:12]}...")
+                    print(f"  PASS  [{i:4}] note {sh_note.hex()[:12]}... identical")
+                    why = rt.check(src, elfs[i])
+                    if why:
+                        rt_fail.append((i, src, why))
+                        print(f"  [{i:4}] {why}")
                 else:
                     failing.append((i, fns, src, sh_note, rust_note))
                     print(f"  [{i:4}] MISMATCH selfhost={sh_note.hex()[:12]}... "
@@ -1023,9 +1360,13 @@ def main() -> int:
             bnote_ru = rust.seeded_note(bsrc, tmp) if bnote_sh is not None else None
             if bnote_sh is not None and bnote_ru is not None and bnote_sh == bnote_ru:
                 matched += len(group)
-                if args.verbose:
-                    print(f"  [batch {gi}] MATCH {len(group)} programs "
-                          f"(note {bnote_sh.hex()[:12]}...)")
+                print(f"  PASS  [batch {gi}] {len(group)} programs "
+                      f"(ids {ids[0]}..{ids[-1]}) note {bnote_sh.hex()[:12]}... identical")
+                for (i, _f, src, _n) in group:
+                    why = rt.check(src, elfs[i])
+                    if why:
+                        rt_fail.append((i, src, why))
+                        print(f"  [{i:4}] {why}")
                 continue
 
             # Fast path failed (batch closed / rust rejected / batch mismatch):
@@ -1038,19 +1379,21 @@ def main() -> int:
                 rust_note = rust.seeded_note(src, tmp)
                 if rust_note is None:
                     skipped_rust += 1
-                    if args.verbose:
-                        print(f"  [{i:4}] SKIP  rust rejected")
+                    print(f"  [{i:4}] REJECTED-BY-RUST (dump_ref failed/panicked) "
+                          f"after the self-host emitted a note")
                     continue
                 if rust_note == sh_note:
                     matched += 1
-                    if args.verbose:
-                        print(f"  [{i:4}] MATCH (fallback) note {sh_note.hex()[:12]}...")
+                    print(f"  PASS  [{i:4}] (fallback) note {sh_note.hex()[:12]}... identical")
+                    why = rt.check(src, elfs[i])
+                    if why:
+                        rt_fail.append((i, src, why))
+                        print(f"  [{i:4}] {why}")
                 else:
                     failing.append((i, fns, src, sh_note, rust_note))
                     print(f"  [{i:4}] MISMATCH selfhost={sh_note.hex()[:12]}... "
                           f"rust={rust_note.hex()[:12]}...")
 
-        skipped = skipped_sh + skipped_rust
 
         # --- verdict ----------------------------------------------------------
         if failing:
@@ -1080,19 +1423,45 @@ def main() -> int:
                   "mic@3 divergence over the generated space")
             return 1
 
-        if matched == 0:
-            print(f"\nFAIL  0 of {count} generated programs were accepted by BOTH "
-                  f"oracles ({skipped_sh} self-host fail-closed, {skipped_rust} "
-                  "rust-rejected) — the generator produced nothing comparable; "
-                  "refusing a silent green")
+        if rt_fail:
+            (i, src, why) = rt_fail[0]
+            staged = _HERE / "mindfuzz_self_host_staged"
+            staged.mkdir(exist_ok=True)
+            (staged / f"prog{i:04}.runtime.mind").write_text(src)
+            print(f"\n===== RUNTIME DIVERGENCE (program [{i}]) =====\n{src}\n{why}")
+            print(f"\nFAIL  {len(rt_fail)}/{matched} compared programs ran to a different "
+                  f"exit code than the Rust/MLIR binary although the notes matched "
+                  f"(staged {staged.name}/prog{i:04}.runtime.mind)  [seed={args.seed}]")
             return 1
 
-        print(f"\nPASS  mindfuzz_self_host: {count} generated, {matched} "
-              f"accepted-and-matched (mic@3 notes byte-identical across the twin "
-              f"emitters), {skipped} skipped ({skipped_sh} self-host fail-closed / "
-              f"{skipped_rust} rust-rejected)  [seed={args.seed}]")
+        if skipped_rust:
+            print(f"\nFAIL  {skipped_rust} program(s) the self-host EMITTED a note for were "
+                  f"rejected by the Rust dump_ref oracle — an accept/reject divergence "
+                  f"(or a broken oracle); never counted as a skip  [seed={args.seed}]")
+            return 1
+
+        if matched < min_compared:
+            print(f"\nFAIL  only {matched} of {count} generated programs were compared "
+                  f"(floor {min_compared}; {skipped_sh} self-host fail-closed, "
+                  f"{skipped_rust} rust-rejected) — a collapse in what the twin "
+                  f"emitters both accept is a regression, not a pass  [seed={args.seed}]")
+            return 1
+
+        print(f"\nmindfuzz_self_host: 0 divergences — {count} generated, {matched} "
+              f"compared with mic@3 notes byte-identical across the twin emitters "
+              f"and {rt.runs} runtime exit codes equal (self-host ELF vs Rust/MLIR), "
+              f"{skipped_sh} refused by the self-host (fail-closed), 0 rust-rejected, "
+              f"compared floor {min_compared}  [seed={args.seed} count={count}]")
         return 0
 
 
+def main_guarded() -> int:
+    try:
+        return main()
+    except MalformedElf as e:
+        print(f"FAIL  malformed self-host artifact (not a refusal): {e}")
+        return 1
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main_guarded())

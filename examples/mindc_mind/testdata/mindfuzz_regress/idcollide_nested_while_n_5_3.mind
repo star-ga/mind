@@ -1,0 +1,23 @@
+// Regression: nested while inside a top-level while in a >=4-param fn. The
+// seq_fix_deltas while probe numbered vids from 0 while params are vids
+// 0..n-1, so a body-local let aliased a param, the inner alias-break counted a
+// phantom copy and the outer vid delta grew by 2 (wrong FN_DEF ids).
+fn fz(p0: i64, p1: i64, p2: i64, p3: i64, p4: i64) -> i64 {
+    let mut s: i64 = 0;
+    let mut c: i64 = 0;
+    while c < 2 {
+        let t: i64 = (c + 1);
+        let mut u: i64 = t;
+        let mut d: i64 = 0;
+        while d < 2 {
+            u = (u + p3);
+            d = (d + 1);
+        }
+        s = (s + u);
+        c = (c + 1);
+    }
+    return s;
+}
+fn main() -> i64 {
+    return fz(0, 1, 2, 3, 4);
+}

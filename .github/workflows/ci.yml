@@ -740,7 +740,9 @@ jobs:
   mindcraft_self_host:
     name: Mindcraft self-host (RFC 0008 Phase G — KEYSTONE)
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # 30 min for the keystone + self-host smokes, plus up to 25 for the twin-emitter
+    # fuzzer step (nested debug `cargo test` build of the dump_ref oracle).
+    timeout-minutes: 55
 
     # MIND_BENCH_REQUIRE=1 makes the keystone fail-closed: a missing MLIR
     # toolchain or a launcher-stub artifact becomes a hard failure instead of a
@@ -1052,6 +1054,33 @@ jobs:
         run: |
           MINDC_SO=/tmp/libmindc_mind_self_host.so \
             python3 scripts/run_gate.py examples/mindc_mind/self_host_native_elf_smoke.py
+        working-directory: ${{ github.workspace }}
+
+      - name: Twin-emitter mic@3 differential fuzzer (mindfuzz_self_host.py)
+        # Generated-program agreement of the pure-MIND self-host mic@3 note
+        # (selftest_native_elf_u) with the Rust emit_mic3 reference note
+        # (tests/_ref_mic3_dump.rs::dump_ref, one nested debug `cargo test` per
+        # batch). Seed and count are pinned so the corpus is deterministic. Any
+        # note divergence fails; so does a program the self-host emits for but
+        # the Rust oracle rejects, and a broken oracle (the `add` sanity fixture)
+        # fails as BLOCKED instead of skipping — that skip is how this gate
+        # measured nothing for a month while dump_ref was broken. Self-host
+        # fail-closed refusals are counted, never compared, never a pass — and
+        # --min-compared floors how many programs must actually be compared, so a
+        # self-host that refuses everything cannot pass as "0 divergences".
+        # Every compared program (and every emitted regression fixture) is ALSO
+        # executed: the self-host ELF's exit code must equal the Rust/MLIR
+        # binary's (`mindc build --backend mlir --emit=binary`), so a matching
+        # note can never hide a wrong runtime value from the native-ELF code.
+        # run_gate's own per-gate timeout defaults to 900 s; give it 1500 s so the
+        # step's timeout-minutes (not run_gate) is the binding limit.
+        timeout-minutes: 25
+        run: |
+          MINDC_SO=/tmp/libmindc_mind_self_host.so \
+          MINDC_BIN=${{ github.workspace }}/target/release/mindc \
+            python3 scripts/run_gate.py --min-asserted 2 --timeout 1500 \
+              examples/mindc_mind/mindfuzz_self_host.py --seed 1234 --count 200 \
+              --min-compared 80
         working-directory: ${{ github.workspace }}
 
       - name: RI-D seam gates — mindc build --backend=native (bridge + exact fail-close diagnostics)

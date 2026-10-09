@@ -1,0 +1,11 @@
+// round-3 blocker: bare-ident let of a reassigned source in a DTK-eligible helper (LET copy slot not modelled by the register plan); notes matched, native ELF exited wrong.
+fn h(p: i64) -> i64 {
+    let mut v0: i64 = p;
+    let mut v1: i64 = v0;
+    let mut v2: i64 = (v0 + 3);
+    v0 = (p * 2);
+    return v0 + v1 + p;
+}
+fn main() -> i64 {
+    return h(8);
+}

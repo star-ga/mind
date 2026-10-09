@@ -1,0 +1,52 @@
+// round-3 blocker, generator-caught (seed 1234 prog 144, three-mode gen_dtk_fn mode 1): bare-ident let of a reassigned source under the DTK register plan; pre-fix self-host exit 13 vs Rust/MLIR 16.
+// mindfuzz_self_host generated program - deterministic seed.
+fn fzd404(x404: i64, y404: i64) -> i64 {
+    let mut v5227: i64 = (6 * 6);
+    let v5228: i64 = 7;
+    v5227 = ((v5228 - 9) + 5);
+    let mut v5229: i64 = v5227;
+    v5227 = ((v5228 + v5227) + 3);
+    return (v5229 + v5227);
+}
+fn main() -> i64 {
+    let mut c1840: i64 = 0;
+    while c1840 < 8 {
+        let mut v5224: i64 = 0;
+        v5224 = (1 - 2);
+        if ((1 >> 4) * (9 + 3)) != v5224 {
+            v5224 = (c1840 - ((c1840 >> 3) >> 3));
+            v5224 = v5224;
+        } else {
+            v5224 = ((c1840 % (v5224 | 1)) + 3);
+            v5224 = v5224;
+            v5224 = (((v5224 + c1840) + (v5224 - c1840)) - c1840);
+        }
+        c1840 = (c1840 + 1);
+    }
+    let mut v5225: i64 = ((c1840 % (c1840 | 1)) >> 3);
+    let mut c1841: i64 = 0;
+    while c1841 < 3 {
+        c1841 = (c1841 + 1);
+        let mut c1842: i64 = 0;
+        while c1842 < 2 {
+            let mut v5225: i64 = (c1841 + (v5225 * c1842));
+            v5225 = c1841;
+            if c1842 < 2 {
+                break;
+            }
+            c1842 = (c1842 + 1);
+        }
+    }
+    if (1 - (0 - 2)) <= c1841 {
+        if 0 < c1840 {
+            let v5225: i64 = ((c1840 % (v5225 | 1)) % (6 | 1));
+            let v5226: i64 = ((v5225 * c1841) + c1841);
+        } else {
+            let mut v5225: i64 = (c1841 + 2);
+        }
+        v5225 = (((v5225 - 4) | (9 * v5225)) * (4 - 3));
+        v5225 = c1841;
+    }
+    v5225 = v5225;
+    return fzd404(2, 8);
+}

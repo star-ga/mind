@@ -1,0 +1,15 @@
+// Regression class (twin-emitter review round 3): alias-break over a PARAMETER candidate (+ native shadow value).
+fn fzh(p: i64, q0: i64, Pz: i64, a0: i64) -> i64 {
+    let mut x2: i64 = a0;
+    x2 = q0;
+    let mut k0: i64 = 0;
+    while k0 < 2 {
+        k0 = (k0 + 1);
+        let mut q0: i64 = x2;
+        q0 = 3;
+    }
+    return q0;
+}
+fn main() -> i64 {
+    return fzh(1, 2, 3, 4);
+}
