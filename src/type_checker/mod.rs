@@ -31,7 +31,7 @@ mod return_checks;
 mod struct_bindings;
 use qualified_enums::variant_payload_of;
 use struct_bindings::{StructNamesGuard, struct_name_in_scope};
-mod resolve;
+pub(crate) mod resolve;
 mod type_display;
 #[cfg(feature = "cross-module-imports")]
 use cross_module_types::{cm_arg_compatible, cm_typeann_to_valuetype, describe_param_type};

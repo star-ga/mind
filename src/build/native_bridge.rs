@@ -14,6 +14,8 @@ use std::collections::BTreeSet;
 use std::process;
 
 #[cfg(feature = "std-surface")]
+mod admission;
+#[cfg(feature = "std-surface")]
 mod child;
 #[cfg(feature = "std-surface")]
 mod seed;
@@ -329,6 +331,12 @@ pub fn run_native_backend_bridge_profile(
              written. (native.import_not_semicolon_terminated)",
             paths[0]
         );
+        process::exit(3);
+    }
+    // An entry `main` with parameters would run with them all 0 (the frozen
+    // compiler does not bind them to argc/argv): refuse it, never miscompile.
+    if let Err(msg) = admission::refuse_entry_main_with_params(&merged_ast, &paths[0]) {
+        eprintln!("error[backend-native]: {msg}");
         process::exit(3);
     }
     // Whole-module admission over that single lowering. The image is not pruned,
@@ -724,8 +732,12 @@ fn admit_merged_program(
     // native-backend diagnostic like every other refusal here rather than as a
     // panic or an empty module. `InvalidLoweringReceiver` in particular is the
     // structured form of the old "refusing to emit const 0" abort.
-    let ir = crate::eval::lower_to_ir(&ast)
-        .map_err(|refusal| format!("`{path}`: {refusal} (lower.materialization_refused)"))?;
+    // The name checks the MLIR path runs before lowering, plus symbolic
+    // dimensions read as values: each used to reach a lowering `panic!` (exit
+    // 101). Lowering then runs behind a panic boundary for anything else.
+    admission::refuse_unresolved_names(&ast, text, path)?;
+    admission::refuse_symbolic_dims_read_as_values(&ast, text, path)?;
+    let ir = admission::lower_without_panicking(&ast, path)?;
     // Closure admission runs for its ownership, ambiguity and unresolved-edge
     // refusals, which the construct fence cannot express. Its restricted module is
     // deliberately DISCARDED: admission is whole-module, so the fence must see the
