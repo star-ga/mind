@@ -211,9 +211,25 @@ INTRINSIC_PROGRAMS += [
      "return __mind_read(fd, 0, 8, 0 - 1) + 100;}",
      100 - 14),
 ]
+# Round 3: facts proven across a call. An i64 reaching an intrinsic through a
+# user wrapper, and an alloc/free that runs once (the arena total is bounded).
+INTRINSIC_PROGRAMS += [
+    ("intr_wrap_through_fn",
+     "fn w8(x:i64)->i64{return __mind_wrap_i8(x);} "
+     "fn main()->i64{let a:i64=300; return w8(a)+50;}",
+     94),
+    ("intr_store_through_fn",
+     "fn put(p:i64, v:i64)->i64{__mind_store_i64(p, v); return 0;} "
+     "fn main()->i64{let p:i64=__mind_alloc(8); put(p, 77); return __mind_load_i64(p);}",
+     77),
+    ("intr_alloc_free_once",
+     "fn main()->i64{let p:i64=__mind_alloc(1000000); __mind_store_i64(p+999992, 30); "
+     "let v:i64=__mind_load_i64(p+999992); let f:i64=__mind_free(p); return v+f+3;}",
+     33),
+]
 IN_PROFILE += INTRINSIC_PROGRAMS
 MLIR_CROSSCHECK |= {name for name, _s, _e in INTRINSIC_PROGRAMS} - {
-    "intr_argc_argv", "intr_wrap"}
+    "intr_argc_argv", "intr_wrap", "intr_wrap_through_fn"}
 # The exact stdout a row's artifact must print (both backends).
 STDOUT_EXPECT = {"intr_write_stdout": b"OK\n"}
 
@@ -289,6 +305,33 @@ OUT_PROFILE = [
      "fn main()->i64{let p:i64=__mind_alloc(8); __mind_store_i64(p, 4609434218613702656); "
      "let y:f64=__mind_load_i64(p); if y == 1.5 {return 1;} return 2;}",
      "first", "call.intrinsic_result_not_i64"),
+    # Round-3 blockers. A declared i64 parameter / return is proven only at the
+    # other end of the call (an f64 reached the intrinsic through a wrapper as its
+    # IEEE bits); a std function's i64 parameter takes only a proven value; and the
+    # bump arena never reuses memory, so the total ever allocated must be bounded
+    # statically (an alloc/free loop exhausted the arena natively, exit 70, while
+    # MLIR, O(peak), exited 33).
+    ("intr_wrap_f64_through_fn",
+     "fn w8(x:i64)->i64{return __mind_wrap_i8(x);} "
+     "fn main()->i64{let f:f64=300.0; return w8(f)+50;}",
+     "first", "call.intrinsic_operand_not_i64"),
+    ("intr_f64_returned_as_i64",
+     "fn g()->i64{let f:f64=2.5; return f;} "
+     "fn main()->i64{let p:i64=__mind_alloc(8); __mind_store_i64(p, g()); "
+     "if __mind_load_i64(p) == 2 {return 1;} return 3;}",
+     "first", "call.intrinsic_operand_not_i64"),
+    ("std_arg_f64",
+     "import std.sha256;\nfn main()->i64{let x:f64=1.5; if mask32(x) == 0 {return 1;} return 2;}",
+     "first", "call.std_argument_not_i64"),
+    ("intr_alloc_free_loop",
+     "fn main()->i64{let mut i:i64=0; let mut a:i64=0; while i < 2000 { "
+     "let p:i64=__mind_alloc(1000000); __mind_store_i64(p, i); "
+     "a=a+__mind_load_i64(p)-i; let f:i64=__mind_free(p); a=a+f; i=i+1; } return a+33;}",
+     "first", "alloc.in_loop"),
+    ("intr_alloc_over_budget",
+     "fn main()->i64{let p:i64=__mind_alloc(900000000); if p == 0 {return 5;} "
+     "__mind_store_i64(p+899999992, 9); return __mind_load_i64(p+899999992);}",
+     "first", "alloc.total_over_budget"),
     ("std_vec_push_fenced",
      "import std.vec;\nfn main()->i64{let v=vec_new(); let w=vec_push(v, 7); "
      "return vec_get(w, 0);}",
@@ -377,8 +420,8 @@ def main() -> int:
     # Positive-count floor (anti-false-green): a job that builds NOTHING also shows zero
     # toolchain execve. Pin the corpus size so a silently-deleted fixture is a FAILURE,
     # not a vacuous pass. Bump deliberately when the allowlist+corpus grow together.
-    PINNED_IN_PROFILE = 35
-    PINNED_OUT_PROFILE = 19
+    PINNED_IN_PROFILE = 38
+    PINNED_OUT_PROFILE = 24
     if len(IN_PROFILE) < PINNED_IN_PROFILE or len(OUT_PROFILE) < PINNED_OUT_PROFILE:
         print(
             f"FAIL  corpus shrank below pinned floor: in={len(IN_PROFILE)}<{PINNED_IN_PROFILE} "

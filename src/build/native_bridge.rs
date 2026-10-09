@@ -20,7 +20,7 @@ mod child;
 #[cfg(feature = "std-surface")]
 mod linkage;
 #[cfg(feature = "std-surface")]
-use linkage::{fence_std_seed_fn, std_seed_for_linkage};
+use linkage::{admit_linked_program, fence_std_seed_fn, std_seed_for_linkage};
 #[cfg(feature = "std-surface")]
 mod seed;
 
@@ -382,6 +382,16 @@ pub fn run_native_backend_bridge_profile(
             );
             process::exit(3);
         }
+    }
+    // Then the facts that hold only across calls, over user + linked std together.
+    if let Err(rejection) = admit_linked_program(&seed, &merged_ir, &std_linked) {
+        eprintln!(
+            "error[backend-native]: `{}` is not in the frozen native profile \
+             (out-of-profile construct: {}).\n  Rerun with `--backend mlir` for the \
+             full surface. This is a refusal, not a fallback.",
+            paths[0], rejection.construct
+        );
+        process::exit(3);
     }
 
     // The stdin image was composed above by `native_image::compose_image`.

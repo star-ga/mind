@@ -120,16 +120,20 @@ const fn fi(
 /// `alloc`/`realloc` are admitted only with a size proven `> 0` (`size_arg`), since
 /// a size `<= 0` is 0 from the C runtime and a fresh pointer natively;
 /// `read`/`write` only with an offset proven `-1` (`offset_arg`); every operand
-/// must be proven an i64 slot ([`admit_intrinsic_operand_types`]), since a float
-/// reaches the frozen emitter as its raw bits; and the C runtime returns the raw
-/// syscall's `-errno` on an I/O failure, exactly as the native syscalls do.
+/// must be proven an i64 slot over the whole program ([`admit_frozen_program`]:
+/// a declared `i64` parameter counts only when every call site passes a proven
+/// value), since a float reaches the frozen emitter as its raw bits; and the C
+/// runtime returns the raw syscall's `-errno` on an I/O failure, exactly as the
+/// native syscalls do.
 ///
-/// Divergences that remain are outside defined behaviour or are resource limits,
-/// and are recorded rather than proven: `free` is a no-op on the native bump arena
-/// (a use-after-free or double free is undefined on the C runtime); fresh native
-/// memory reads as zero where `malloc` memory is indeterminate; and a native
-/// allocation past the fixed arena exits 70 ("native arena exhausted") where
-/// `malloc` returns 0.
+/// `free` is a no-op on the native bump arena, so native memory grows with every
+/// byte EVER allocated while `malloc` memory grows with the peak. The two agree
+/// only while the arena never runs out, so [`admit_frozen_program`] admits a
+/// program only with a static proof that its total allocation fits a fixed budget
+/// (no allocation in a loop or through recursion; `alloc_budget.rs`). Divergences
+/// that remain are outside defined behaviour: a use-after-free or double free is
+/// undefined on the C runtime, and fresh native memory reads as zero where
+/// `malloc` memory is indeterminate.
 pub(crate) const FROZEN_NATIVE_INTRINSICS: [FrozenIntrinsic; 19] = [
     fi("__mind_alloc", 1, 1, VALUE, None, Some(0)),
     fi("__mind_store_i64", 2, 2, DISCARD, None, None),
@@ -304,8 +308,23 @@ pub(crate) fn fold_const(instr: &Instr, consts: &mut std::collections::BTreeMap<
     }
 }
 
+mod alloc_budget;
 mod operand_types;
-pub(crate) use operand_types::admit_intrinsic_operand_types;
+mod program;
 
+/// The whole-program half of the W1 fence, over the user module (`parts[0]`) and
+/// every linked std seed function: the operand / result proof
+/// (`operand_types::admit_program_operand_types`, which follows values across calls)
+/// and the static allocation bound (`alloc_budget::admit_alloc_budget`).
+pub(crate) fn admit_frozen_program(
+    parts: &[&crate::ir::IRModule],
+) -> Result<(), FrozenProfileRejection> {
+    let prog = program::Program::new(parts);
+    operand_types::admit_program_operand_types(&prog)?;
+    alloc_budget::admit_alloc_budget(&prog)
+}
+
+#[cfg(test)]
+mod program_tests;
 #[cfg(test)]
 mod tests;

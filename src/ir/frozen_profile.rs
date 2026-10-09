@@ -23,7 +23,7 @@
 //! Wiring it into the default-flip decision is a separate, gated slice.
 
 use crate::ir::frozen_intrinsics::{
-    admit_discard_only_results, admit_intrinsic_call, admit_intrinsic_operand_types, fold_const,
+    admit_discard_only_results, admit_frozen_program, admit_intrinsic_call, fold_const,
     frozen_native_intrinsic,
 };
 use crate::ir::{BinOp, IRModule, Instr, ValueId};
@@ -43,7 +43,21 @@ pub struct FrozenProfileRejection {
 /// construct otherwise. Recurses into function bodies, loop bodies, and if-
 /// branches so a rejected construct cannot hide inside a nested region.
 pub fn profile_frozen_admits(module: &IRModule) -> Result<(), FrozenProfileRejection> {
-    profile_frozen_admits_linked(module, &std::collections::BTreeSet::new())
+    profile_frozen_admits_linked(module, &std::collections::BTreeSet::new())?;
+    profile_frozen_admits_program(module, &[])
+}
+
+/// The whole-program half of the fence, over `user` and the IR of every std seed
+/// function it links: facts that hold only across a call (an intrinsic operand
+/// that arrives through a parameter, a callee's returned value, the bytes a call
+/// tree allocates) are proven here, after every body has passed
+/// [`profile_frozen_admits_linked`]. A native build is admitted only when both pass.
+pub fn profile_frozen_admits_program(
+    user: &IRModule,
+    linked: &[IRModule],
+) -> Result<(), FrozenProfileRejection> {
+    let parts: Vec<&IRModule> = std::iter::once(user).chain(linked).collect();
+    admit_frozen_program(&parts)
 }
 
 /// [`profile_frozen_admits`] for a module whose calls may also bind to `linked`
@@ -62,8 +76,7 @@ pub fn profile_frozen_admits_linked(
     let mut defined = linked.clone();
     collect_fn_names(&module.instrs, &mut defined);
     admit_instrs_in(&module.instrs, &defined)?;
-    admit_discard_only_results(&module.instrs)?;
-    admit_intrinsic_operand_types(module)
+    admit_discard_only_results(&module.instrs)
 }
 
 /// Admit the SOURCE-level facts the IR cannot carry. Today that is the float width:

@@ -13,7 +13,8 @@
 use std::collections::BTreeSet;
 
 use crate::ir::frozen_profile::{
-    FrozenProfileRejection, profile_frozen_admits_linked, profile_frozen_admits_source,
+    FrozenProfileRejection, profile_frozen_admits_linked, profile_frozen_admits_program,
+    profile_frozen_admits_source,
 };
 use crate::ir::native_closure::{StdSeed, reserved_names_from_text};
 
@@ -122,6 +123,26 @@ pub(super) fn fence_std_seed_fn(
     profile_frozen_admits_source(&source)?;
     let ir = seed.fn_ir(name).ok_or_else(missing)?;
     profile_frozen_admits_linked(&ir, linked)
+}
+
+/// The whole-program half of the fence: `user` together with the IR of every
+/// linked std seed function, so a fact that holds only across a call (an i64
+/// argument, a returned value, the bytes a call tree allocates) is proven at both
+/// ends. Runs after every linked body passed [`fence_std_seed_fn`].
+pub(super) fn admit_linked_program(
+    seed: &StdSeed,
+    user: &crate::ir::IRModule,
+    linked: &BTreeSet<String>,
+) -> Result<(), FrozenProfileRejection> {
+    let irs = linked
+        .iter()
+        .map(|name| {
+            seed.fn_ir(name).ok_or(FrozenProfileRejection {
+                construct: "std.linked_body_unavailable",
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    profile_frozen_admits_program(user, &irs)
 }
 
 #[cfg(test)]

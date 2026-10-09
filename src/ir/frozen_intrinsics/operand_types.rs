@@ -4,137 +4,52 @@
 //! every intrinsic operand and result as 64 raw bits, so admission proves each
 //! one is an i64 slot rather than trusting the call's name.
 
+use std::collections::{BTreeMap, BTreeSet};
+
+use super::program::{Key, Program};
 use super::{FrozenResult, frozen_native_intrinsic, reject, visit_fn_instrs};
 use crate::ir::frozen_profile::FrozenProfileRejection;
 use crate::ir::{BinOp, Instr, ValueId};
 
-/// Refuse a call to a frozen intrinsic whose operand is not PROVEN to denote an
-/// i64 slot.
+/// Refuse a program in which a frozen-intrinsic operand is not PROVEN to denote
+/// an i64 slot, an intrinsic's result is consumed as anything else, or a call
+/// into a linked std function passes an unproven value for an i64 parameter.
 ///
 /// The frozen emitter loads every operand as 64 raw bits. For an i64 that is the
 /// value; for an f64 it is the IEEE bit pattern (`__mind_wrap_i8(300.0)` is 0,
 /// `__mind_alloc(16.0)` asks for ~4.6e18 bytes), and the MLIR backend refuses the
 /// same call as a type mismatch. So admission keys on what each operand DENOTES,
-/// proven positively per function scope: an id is an i64 slot only when every
-/// definition of it, and every value that can flow into it, is one —
+/// proven positively over the WHOLE program: a value is an i64 slot only when
+/// every definition of it, and every value that can flow into it, is one —
 ///
-/// * an integer constant, an i64 / integer-named / declared-struct parameter or
-///   call result (from the module's declared signatures), a value-returning
-///   frozen intrinsic, integer arithmetic over two proven operands;
+/// * an integer constant, a value-returning frozen intrinsic, integer arithmetic
+///   over two proven operands;
+/// * a parameter declared an i64 slot whose argument at EVERY call site in the
+///   program is proven (a declaration alone proves nothing: the native bridge runs
+///   no type checker, so `fn w(x: i64)` called as `w(300.0)` receives the bits);
+/// * a call result whose callee is declared to return an i64 slot and whose every
+///   `return` value (and tail value) is proven;
 /// * an `if` result or merge whose two incoming values are proven, a loop-carried
 ///   variable whose pre-loop, back-edge, `break` and `continue` values are proven.
 ///
 /// Everything else — a float, a bool, an `i32`, a comparison, an array element,
-/// an undeclared callee, an id the scope never defines — is unproven, and an
-/// unproven operand is refused (`call.intrinsic_operand_not_i64`). Symmetrically, a
-/// value an intrinsic RETURNS must be consumed as an i64 wherever it flows
-/// (`call.intrinsic_result_not_i64`). The loop facts are solved as a greatest fixpoint
-/// (start from every id whose own definition qualifies and remove any id with an
-/// unproven input until nothing changes), so a cycle through a back edge is
-/// proven exactly when every value entering it is.
-pub(crate) fn admit_intrinsic_operand_types(
-    module: &crate::ir::IRModule,
+/// an undeclared or ambiguous callee, an id the scope never defines — is
+/// unproven, and an unproven operand is refused (`call.intrinsic_operand_not_i64`).
+/// Symmetrically, a value an intrinsic RETURNS must be consumed as an i64
+/// wherever it flows (`call.intrinsic_result_not_i64`). The facts are solved as
+/// one greatest fixpoint over every scope of the program (start from every value
+/// whose own definition qualifies and withdraw any value with an unproven input
+/// until nothing changes), so a cycle through a back edge or through recursion
+/// is proven exactly when every value entering it is.
+pub(crate) fn admit_program_operand_types(
+    prog: &Program<'_>,
 ) -> Result<(), FrozenProfileRejection> {
-    admit_operands_in_scope(module, &module.instrs, None)?;
-    admit_operands_in_nested_fns(module, &module.instrs)
-}
-
-fn admit_operands_in_nested_fns(
-    module: &crate::ir::IRModule,
-    instrs: &[Instr],
-) -> Result<(), FrozenProfileRejection> {
-    let mut result = Ok(());
-    visit_all_fndefs(instrs, &mut |scope, body| {
-        if result.is_ok() {
-            result = admit_operands_in_scope(module, body, Some(scope));
-        }
-    });
-    result
-}
-
-/// A visitor over one function: its scope and its body.
-type FnVisitor<'v> = dyn FnMut(FnScope<'_>, &[Instr]) + 'v;
-
-/// The function a scope belongs to: its name (the key of its declared
-/// signature), its parameter count and its tail value.
-#[derive(Clone, Copy)]
-struct FnScope<'a> {
-    name: &'a str,
-    n_params: usize,
-    ret_id: Option<ValueId>,
-}
-
-/// Every `FnDef` at any depth, each visited once with its own body.
-fn visit_all_fndefs(instrs: &[Instr], f: &mut FnVisitor<'_>) {
-    for instr in instrs {
-        if let Instr::FnDef {
-            name,
-            params,
-            body,
-            ret_id,
-            ..
-        } = instr
-        {
-            let scope = FnScope {
-                name,
-                n_params: params.len(),
-                ret_id: *ret_id,
-            };
-            f(scope, body);
-            visit_all_fndefs(body, f);
-            continue;
-        }
-        #[cfg(feature = "std-surface")]
-        for nested in crate::ir::instr_bodies(instr) {
-            visit_all_fndefs(nested, f);
-        }
-    }
-}
-
-/// One proof obligation on an id: it holds when every listed id is proven. An
-/// empty list is an unconditional proof; `None` can never be proven.
-type SlotFact = Option<Vec<ValueId>>;
-
-fn admit_operands_in_scope(
-    module: &crate::ir::IRModule,
-    body: &[Instr],
-    scope: Option<FnScope<'_>>,
-) -> Result<(), FrozenProfileRejection> {
-    use std::collections::{BTreeMap, BTreeSet};
-    let mut facts: BTreeMap<ValueId, Vec<SlotFact>> = BTreeMap::new();
-    let mut calls: Vec<Vec<ValueId>> = Vec::new();
-    let mut produced: BTreeSet<ValueId> = BTreeSet::new();
-    visit_fn_instrs(body, &mut |instr| {
-        if let Instr::Call {
-            name, args, dst, ..
-        } = instr
-        {
-            if let Some(row) = frozen_native_intrinsic(name) {
-                calls.push(args.clone());
-                if row.result == FrozenResult::Value {
-                    produced.insert(*dst);
-                }
-            }
-        }
-        if let Some(dst) = crate::ir::instruction_dst(instr) {
-            let fact = slot_fact(module, scope, instr);
-            facts.entry(dst).or_default().push(fact);
-        }
-        for (id, fact) in region_facts(instr) {
-            facts.entry(id).or_default().push(fact);
-        }
-    });
-    if calls.is_empty() {
+    let flow = collect_flow(prog);
+    if flow.intrinsic_calls.is_empty() && flow.std_calls.is_empty() {
         return Ok(());
     }
-    // Greatest fixpoint: assume every id whose facts are all satisfiable, then
-    // withdraw any id that depends on an unproven one, transitively.
-    let mut proven: BTreeSet<ValueId> = facts
-        .iter()
-        .filter(|(_, fs)| fs.iter().all(Option::is_some))
-        .map(|(id, _)| *id)
-        .collect();
-    let mut users: BTreeMap<ValueId, Vec<ValueId>> = BTreeMap::new();
+    let facts = program_facts(prog, &flow);
+    let mut users: BTreeMap<Key, Vec<Key>> = BTreeMap::new();
     for (id, fs) in &facts {
         for needs in fs.iter().flatten() {
             for n in needs {
@@ -142,7 +57,150 @@ fn admit_operands_in_scope(
             }
         }
     }
-    let mut work: Vec<ValueId> = facts
+    let proven = greatest_fixpoint(&facts, &users);
+    if !flow
+        .intrinsic_calls
+        .iter()
+        .all(|(s, args)| args.iter().all(|a| proven.contains(&(*s, *a))))
+    {
+        return reject("call.intrinsic_operand_not_i64");
+    }
+    // A call from the user program into a linked std function must pass a proven
+    // value for every parameter the std function declares an i64 slot, with the
+    // std function's own arity: std bodies are written against their declared
+    // types, and the native bridge runs no type checker that would refuse
+    // `mask32(1.5)` the way `mindc check` does.
+    for (s, callee, args) in &flow.std_calls {
+        let n_params = prog.scopes[*callee].func.map_or(usize::MAX, |f| f.n_params);
+        let ok = args.len() == n_params
+            && args.iter().enumerate().all(|(i, a)| {
+                !prog.param_is_slot(*callee, i, n_params) || proven.contains(&(*s, *a))
+            });
+        if !ok {
+            return reject("call.std_argument_not_i64");
+        }
+    }
+    admit_result_sinks(prog, &flow, &users, &proven)
+}
+
+/// The RESULT side: an intrinsic's i64 must stay an i64. Everything it flows into
+/// (arithmetic, an `if` value, a loop-carried variable, a parameter, a call
+/// result) must itself be a proven slot, and wherever it is finally consumed the
+/// consumer must take an i64: `let y: f64 = __mind_load_i64(p); if y == 1.5 {..}`
+/// would compare the raw bits as a double natively, while the MLIR backend
+/// refuses the program.
+fn admit_result_sinks(
+    prog: &Program<'_>,
+    flow: &Flow,
+    users: &BTreeMap<Key, Vec<Key>>,
+    proven: &BTreeSet<Key>,
+) -> Result<(), FrozenProfileRejection> {
+    let mut produced = flow.produced.clone();
+    let mut work: Vec<Key> = produced.iter().copied().collect();
+    while let Some(v) = work.pop() {
+        for user in users.get(&v).into_iter().flatten() {
+            if produced.insert(*user) {
+                work.push(*user);
+            }
+        }
+    }
+    if produced.is_empty() {
+        return Ok(());
+    }
+    let mut sinks_ok = produced.is_subset(proven);
+    for (s, scope) in prog.scopes.iter().enumerate() {
+        if let Some(r) = scope.func.and_then(|f| f.ret_id) {
+            sinks_ok &= !produced.contains(&(s, r)) || prog.ret_is_slot(s);
+        }
+        visit_fn_instrs(scope.body, &mut |instr| {
+            sinks_ok &= result_use_is_i64(prog, s, instr, &produced, proven);
+        });
+    }
+    if sinks_ok {
+        Ok(())
+    } else {
+        reject("call.intrinsic_result_not_i64")
+    }
+}
+
+/// What one walk over the program collects.
+#[derive(Default)]
+struct Flow {
+    /// Every frozen-intrinsic call: its scope and operands.
+    intrinsic_calls: Vec<(usize, Vec<ValueId>)>,
+    /// Every value a value-returning intrinsic produces.
+    produced: BTreeSet<Key>,
+    /// Callee scope -> every call site of it: (caller scope, operands).
+    call_sites: BTreeMap<usize, Vec<(usize, Vec<ValueId>)>>,
+    /// Scope -> every `return` operand in it (`None` for a bare `return`).
+    returns: BTreeMap<usize, Vec<Option<ValueId>>>,
+    /// Calls from the user program into a linked std function:
+    /// (caller scope, callee scope, operands).
+    std_calls: Vec<(usize, usize, Vec<ValueId>)>,
+}
+
+fn collect_flow(prog: &Program<'_>) -> Flow {
+    let mut flow = Flow::default();
+    for (s, scope) in prog.scopes.iter().enumerate() {
+        visit_fn_instrs(scope.body, &mut |instr| match instr {
+            Instr::Call {
+                name, args, dst, ..
+            } => {
+                if let Some(row) = frozen_native_intrinsic(name) {
+                    flow.intrinsic_calls.push((s, args.clone()));
+                    if row.result == FrozenResult::Value {
+                        flow.produced.insert((s, *dst));
+                    }
+                } else if let Some(c) = prog.callee(name) {
+                    flow.call_sites
+                        .entry(c)
+                        .or_default()
+                        .push((s, args.clone()));
+                    if scope.part == 0 && prog.scopes[c].part != 0 {
+                        flow.std_calls.push((s, c, args.clone()));
+                    }
+                }
+            }
+            Instr::Return { value } => flow.returns.entry(s).or_default().push(*value),
+            _ => {}
+        });
+    }
+    flow
+}
+
+/// One proof obligation on a value: it holds when every listed value is proven.
+/// An empty list is an unconditional proof; `None` can never be proven.
+type SlotFact = Option<Vec<Key>>;
+
+fn program_facts(prog: &Program<'_>, flow: &Flow) -> BTreeMap<Key, Vec<SlotFact>> {
+    let mut facts: BTreeMap<Key, Vec<SlotFact>> = BTreeMap::new();
+    for (s, scope) in prog.scopes.iter().enumerate() {
+        visit_fn_instrs(scope.body, &mut |instr| {
+            if let Some(dst) = crate::ir::instruction_dst(instr) {
+                let fact = slot_fact(prog, flow, s, instr);
+                facts.entry((s, dst)).or_default().push(fact);
+            }
+            for (id, fact) in region_facts(instr) {
+                let fact = fact.map(|ids| ids.into_iter().map(|v| (s, v)).collect());
+                facts.entry((s, id)).or_default().push(fact);
+            }
+        });
+    }
+    facts
+}
+
+/// Greatest fixpoint: assume every value whose facts are all satisfiable, then
+/// withdraw any value that depends on an unproven one, transitively.
+fn greatest_fixpoint(
+    facts: &BTreeMap<Key, Vec<SlotFact>>,
+    users: &BTreeMap<Key, Vec<Key>>,
+) -> BTreeSet<Key> {
+    let mut proven: BTreeSet<Key> = facts
+        .iter()
+        .filter(|(_, fs)| fs.iter().all(Option::is_some))
+        .map(|(id, _)| *id)
+        .collect();
+    let mut work: Vec<Key> = facts
         .keys()
         .chain(users.keys())
         .filter(|id| !proven.contains(id))
@@ -155,48 +213,18 @@ fn admit_operands_in_scope(
             }
         }
     }
-    if !calls
-        .iter()
-        .all(|args| args.iter().all(|a| proven.contains(a)))
-    {
-        return reject("call.intrinsic_operand_not_i64");
-    }
-    // The RESULT side: an intrinsic's i64 must stay an i64. Everything it flows
-    // into (arithmetic, an `if` value, a loop-carried variable) must itself be a
-    // proven slot, and wherever it is finally consumed the consumer must take an
-    // i64: `let y: f64 = __mind_load_i64(p); if y == 1.5 {..}` would compare the
-    // raw bits as a double natively, while the MLIR backend refuses the program.
-    let mut work: Vec<ValueId> = produced.iter().copied().collect();
-    while let Some(v) = work.pop() {
-        for user in users.get(&v).into_iter().flatten() {
-            if produced.insert(*user) {
-                work.push(*user);
-            }
-        }
-    }
-    let mut sinks_ok = produced.is_subset(&proven)
-        && scope
-            .and_then(|s| s.ret_id)
-            .is_none_or(|r| !produced.contains(&r) || fn_returns_i64_slot(module, scope));
-    visit_fn_instrs(body, &mut |instr| {
-        sinks_ok &= result_use_is_i64(module, scope, instr, &produced, &proven);
-    });
-    if sinks_ok {
-        Ok(())
-    } else {
-        reject("call.intrinsic_result_not_i64")
-    }
+    proven
 }
 
 /// Does `instr` consume every intrinsic-produced value it reads as an i64?
 fn result_use_is_i64(
-    module: &crate::ir::IRModule,
-    scope: Option<FnScope<'_>>,
+    prog: &Program<'_>,
+    s: usize,
     instr: &Instr,
-    produced: &std::collections::BTreeSet<ValueId>,
-    proven: &std::collections::BTreeSet<ValueId>,
+    produced: &BTreeSet<Key>,
+    proven: &BTreeSet<Key>,
 ) -> bool {
-    let from_intrinsic = |v: &ValueId| produced.contains(v);
+    let from_intrinsic = |v: &ValueId| produced.contains(&(s, *v));
     match instr {
         // Intrinsic operands are held to `proven` above; a user callee must DECLARE
         // an i64-slot parameter where it receives one.
@@ -204,8 +232,9 @@ fn result_use_is_i64(
             frozen_native_intrinsic(name).is_some()
                 || args.iter().enumerate().all(|(i, a)| {
                     !from_intrinsic(a)
-                        || declared_param(module, name, i, args.len())
-                            .is_some_and(|t| type_is_i64_slot(module, t))
+                        || prog
+                            .callee(name)
+                            .is_some_and(|c| prog.param_is_slot(c, i, args.len()))
                 })
         }
         // Arithmetic flows on (its dst is held to `proven`); a comparison must
@@ -213,11 +242,9 @@ fn result_use_is_i64(
         Instr::BinOp { op, lhs, rhs, .. } => {
             binop_is_integer_arith(op)
                 || !(from_intrinsic(lhs) || from_intrinsic(rhs))
-                || (proven.contains(lhs) && proven.contains(rhs))
+                || (proven.contains(&(s, *lhs)) && proven.contains(&(s, *rhs)))
         }
-        Instr::Return { value } => {
-            value.is_none_or(|v| !from_intrinsic(&v) || fn_returns_i64_slot(module, scope))
-        }
+        Instr::Return { value } => value.is_none_or(|v| !from_intrinsic(&v) || prog.ret_is_slot(s)),
         // Region results, merges and loop-carried values flow on; a condition must
         // be a comparison, not a raw intrinsic value.
         #[cfg(feature = "std-surface")]
@@ -233,47 +260,75 @@ fn result_use_is_i64(
     }
 }
 
-fn fn_returns_i64_slot(module: &crate::ir::IRModule, scope: Option<FnScope<'_>>) -> bool {
-    scope
-        .and_then(|s| declared_ret(module, s.name))
-        .is_some_and(|t| type_is_i64_slot(module, t))
-}
-
-/// The proof obligation an instruction's own `dst` carries.
-fn slot_fact(module: &crate::ir::IRModule, scope: Option<FnScope<'_>>, instr: &Instr) -> SlotFact {
+/// The proof obligation an instruction's own `dst` carries in scope `s`.
+fn slot_fact(prog: &Program<'_>, flow: &Flow, s: usize, instr: &Instr) -> SlotFact {
+    let local = |ids: &[ValueId]| Some(ids.iter().map(|v| (s, *v)).collect());
     match instr {
         Instr::ConstI64(..) => Some(Vec::new()),
-        Instr::BinOp { op, lhs, rhs, .. } => binop_is_integer_arith(op).then(|| vec![*lhs, *rhs]),
-        Instr::Param { index, .. } => {
-            let param = scope.and_then(|s| declared_param(module, s.name, *index, s.n_params));
-            param
-                .is_some_and(|t| type_is_i64_slot(module, t))
-                .then(Vec::new)
+        Instr::BinOp { op, lhs, rhs, .. } => {
+            if binop_is_integer_arith(op) {
+                local(&[*lhs, *rhs])
+            } else {
+                None
+            }
         }
-        Instr::Call { name, .. } => {
-            let slot = match frozen_native_intrinsic(name) {
-                Some(row) => row.result == FrozenResult::Value,
-                None => declared_ret(module, name).is_some_and(|t| type_is_i64_slot(module, t)),
-            };
-            slot.then(Vec::new)
-        }
+        Instr::Param { index, .. } => param_fact(prog, flow, s, *index),
+        Instr::Call { name, args, .. } => match frozen_native_intrinsic(name) {
+            Some(row) => (row.result == FrozenResult::Value).then(Vec::new),
+            None => call_result_fact(prog, flow, prog.callee(name)?, args.len()),
+        },
         #[cfg(feature = "std-surface")]
         Instr::If {
             then_result,
             else_result,
             ..
-        } => Some(vec![*then_result, *else_result]),
+        } => local(&[*then_result, *else_result]),
         // Every other definition (a float, an array element, a tensor, a region
         // result, ...) is not an i64 slot this predicate has proven.
         _ => None,
     }
 }
 
+/// A parameter is proven when its function is the one unambiguous definition of
+/// its name, declares it an i64 slot, and EVERY call site in the program passes
+/// exactly the function's arity and a proven value at this index.
+fn param_fact(prog: &Program<'_>, flow: &Flow, s: usize, index: usize) -> SlotFact {
+    let f = prog.scopes[s].func?;
+    if prog.callee(f.name) != Some(s) || !prog.param_is_slot(s, index, f.n_params) {
+        return None;
+    }
+    let mut needs = Vec::new();
+    for (caller, args) in flow.call_sites.get(&s).into_iter().flatten() {
+        if args.len() != f.n_params {
+            return None;
+        }
+        needs.push((*caller, args[index]));
+    }
+    Some(needs)
+}
+
+/// A call result is proven when the callee takes exactly this arity, declares an
+/// i64-slot return, and every value it can return — each `return` operand and its
+/// tail value — is proven. A bare `return` or a body with nothing to return is
+/// never proven.
+fn call_result_fact(prog: &Program<'_>, flow: &Flow, c: usize, arity: usize) -> SlotFact {
+    let f = prog.scopes[c].func?;
+    if f.n_params != arity || !prog.ret_is_slot(c) {
+        return None;
+    }
+    let mut needs = Vec::new();
+    for value in flow.returns.get(&c).into_iter().flatten() {
+        needs.push((c, (*value)?));
+    }
+    needs.extend(f.ret_id.map(|r| (c, r)));
+    (!needs.is_empty()).then_some(needs)
+}
+
 /// The facts a region adds for the ids it defines beyond `instruction_dst`: an
 /// `if` merge needs both incoming values; a loop-carried variable's pre-loop id
 /// (the block argument inside the loop) and its exit id need the back-edge value
 /// and every `break` / `continue` value carried under the same name.
-fn region_facts(instr: &Instr) -> Vec<(ValueId, SlotFact)> {
+fn region_facts(instr: &Instr) -> Vec<(ValueId, Option<Vec<ValueId>>)> {
     #[cfg(feature = "std-surface")]
     match instr {
         Instr::If { merges, .. } => {
@@ -336,7 +391,7 @@ fn binop_is_integer_arith(op: &BinOp) -> bool {
 /// names the MLIR backend lowers to `i64` (narrow ones are masked in the IR), a
 /// raw pointer, and a struct this module declares (an aggregate is an i64 handle
 /// in the IR). Exhaustive on purpose: a new `TypeAnn` variant must be decided here.
-fn type_is_i64_slot(module: &crate::ir::IRModule, ty: &crate::ast::TypeAnn) -> bool {
+pub(super) fn type_is_i64_slot(module: &crate::ir::IRModule, ty: &crate::ast::TypeAnn) -> bool {
     use crate::ast::TypeAnn;
     match ty {
         TypeAnn::ScalarI64 | TypeAnn::RawPtr { .. } => true,
@@ -372,7 +427,7 @@ fn declares_struct(module: &crate::ir::IRModule, name: &str) -> bool {
 /// Parameter `index` of `fn_name`'s declared signature, trusted only when the
 /// signature lists exactly `arity` parameters: a signature recorded without an
 /// implicit receiver would otherwise shift every index onto its neighbour's type.
-fn declared_param<'m>(
+pub(super) fn declared_param<'m>(
     module: &'m crate::ir::IRModule,
     fn_name: &str,
     index: usize,
@@ -386,7 +441,7 @@ fn declared_param<'m>(
 }
 
 #[cfg(feature = "std-surface")]
-fn declared_ret<'m>(
+pub(super) fn declared_ret<'m>(
     module: &'m crate::ir::IRModule,
     callee: &str,
 ) -> Option<&'m crate::ast::TypeAnn> {
@@ -402,7 +457,7 @@ fn declares_struct(_module: &crate::ir::IRModule, _name: &str) -> bool {
 }
 
 #[cfg(not(feature = "std-surface"))]
-fn declared_param<'m>(
+pub(super) fn declared_param<'m>(
     _module: &'m crate::ir::IRModule,
     _fn_name: &str,
     _index: usize,
@@ -412,7 +467,7 @@ fn declared_param<'m>(
 }
 
 #[cfg(not(feature = "std-surface"))]
-fn declared_ret<'m>(
+pub(super) fn declared_ret<'m>(
     _module: &'m crate::ir::IRModule,
     _callee: &str,
 ) -> Option<&'m crate::ast::TypeAnn> {

@@ -398,3 +398,104 @@ fn a_linked_std_body_outside_the_profile_is_refused() {
         "links std seed function `rotr32`",
     );
 }
+
+// ---- Round 3: facts that hold only across a call ---------------------------
+
+/// A declared `i64` parameter proves nothing on its own: the native bridge runs
+/// no type checker, so an f64 passed through a wrapper reached the frozen
+/// intrinsic as its IEEE bits (`w8(300.0)` exited 50 instead of being refused;
+/// MLIR refuses it). The argument at every call site must be proven, and a
+/// declared `i64` return must return proven values.
+#[test]
+fn a_float_reaching_an_intrinsic_through_a_wrapper_is_refused() {
+    for (name, src, kind) in [
+        (
+            "r3_wrap_through_fn",
+            "fn w8(x: i64) -> i64 { return __mind_wrap_i8(x); }\n\
+             fn main() -> i64 { let f: f64 = 300.0; return w8(f) + 50; }\n",
+            "call.intrinsic_operand_not_i64",
+        ),
+        (
+            "r3_store_through_fn",
+            "fn put(p: i64, v: i64) -> i64 { __mind_store_i64(p, v); return 0; }\n\
+             fn main() -> i64 { let p: i64 = __mind_alloc(8); let f: f64 = 2.0; put(p, f); \
+             return __mind_load_i64(p) & 255; }\n",
+            "call.intrinsic_operand_not_i64",
+        ),
+        (
+            "r3_write_through_fn",
+            "fn emit(p: i64, n: i64) -> i64 { return __mind_write(1, p, n, 0 - 1); }\n\
+             fn main() -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i8(p, 65); \
+             let n: f64 = 1.0; let r: i64 = emit(p, n); if r == 1 { return 1; } return 2; }\n",
+            "call.intrinsic_operand_not_i64",
+        ),
+        (
+            "r3_f64_returned_as_i64",
+            "fn g() -> i64 { let f: f64 = 2.5; return f; }\n\
+             fn main() -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i64(p, g()); \
+             if __mind_load_i64(p) == 2 { return 1; } return 3; }\n",
+            "call.intrinsic_operand_not_i64",
+        ),
+        (
+            // Through a linked std wrapper: std.io's print_bytes writes `count`.
+            "r3_std_wrapper_f64",
+            "import std.io;\nfn main() -> i64 { let p: i64 = __mind_alloc(8); \
+             __mind_store_i8(p, 65); let n: f64 = 1.0; return print_bytes(p, n); }\n",
+            "call.intrinsic_operand_not_i64",
+        ),
+        (
+            // A linked std function with no intrinsic in it still takes an i64.
+            "r3_std_arg_f64",
+            "import std.sha256;\nfn main() -> i64 { let x: f64 = 1.5; \
+             if mask32(x) == 0 { return 1; } return 2; }\n",
+            "call.std_argument_not_i64",
+        ),
+    ] {
+        refused(name, src, kind);
+    }
+}
+
+/// Positive controls: the same wrappers called with integers build and run.
+#[test]
+fn integers_through_wrappers_build_and_run() {
+    build_ok(
+        "r3_wrap_int",
+        "fn w8(x: i64) -> i64 { return __mind_wrap_i8(x); }\n\
+         fn main() -> i64 { let a: i64 = 300; return w8(a) + 50; }\n",
+        94,
+    );
+    build_ok(
+        "r3_std_wrapper_int",
+        "import std.io;\nfn main() -> i64 { let p: i64 = __mind_alloc(8); \
+         __mind_store_i8(p, 10); let n: i64 = 1; return print_bytes(p, n) + 40; }\n",
+        41,
+    );
+}
+
+/// `__mind_free` is a no-op on the frozen bump arena, so native memory is the
+/// total ever allocated while the C runtime's is the peak: a 2000 x 1 MB
+/// alloc/free loop exited 70 ("native arena exhausted") natively and 33 under
+/// MLIR. Admission now requires a static bound on the total.
+#[test]
+fn an_unbounded_or_oversized_allocation_total_is_refused() {
+    refused(
+        "r3_free_loop",
+        "fn main() -> i64 { let mut i: i64 = 0; let mut a: i64 = 0; while i < 2000 { \
+         let p: i64 = __mind_alloc(1000000); __mind_store_i64(p, i); \
+         a = a + __mind_load_i64(p) - i; let f: i64 = __mind_free(p); a = a + f; \
+         i = i + 1; } return a + 33; }\n",
+        "alloc.in_loop",
+    );
+    refused(
+        "r3_big_alloc",
+        "fn main() -> i64 { let p: i64 = __mind_alloc(900000000); if p == 0 { return 5; } \
+         __mind_store_i64(p + 899999992, 9); return __mind_load_i64(p + 899999992); }\n",
+        "alloc.total_over_budget",
+    );
+    build_ok(
+        "r3_free_once",
+        "fn main() -> i64 { let p: i64 = __mind_alloc(1000000); __mind_store_i64(p, 30); \
+         let v: i64 = __mind_load_i64(p); let f: i64 = __mind_free(p); return v + f + 3; }\n",
+        33,
+    );
+}
