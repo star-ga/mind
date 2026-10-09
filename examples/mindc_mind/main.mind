@@ -14287,7 +14287,12 @@ pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
         } else {
             0
         };
-        let _ova: i64 = mixed_while_rebind_acc_nonlocal(buf, acc, __mind_load_i64(acc_cell), w_merge, __mind_load_i64(w_nm), stmts_addr, w_upto, 0);
+        let _ova: i64 = mixed_while_rebind_acc_nonlocal(buf, acc, acc_cell, w_merge, __mind_load_i64(w_nm), stmts_addr, w_upto, 0);
+        // acc buffers hold 64 records; an append past that would overrun -> refuse.
+        if __mind_load_i64(acc_cell) > 60 {
+            __mind_store_i64(okcell, 0);
+            return s;
+        }
         // base advances past OP_WHILE vids + the trailing unit (endbase + 1).
         __mind_store_i64(base_cell, __mind_load_i64(w_end) + 1);
         return emit_mixed_walk(sw2, stmts_addr, n, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv_cell, acc, acc_cell, okcell, strbuf, offs, ncount, esc_to_lv, nlv0);
@@ -14458,23 +14463,33 @@ pub fn mixed_while_rebind(src: i64, lvbuf: i64, nlv: i64, merge: i64, nm: i64, i
 }
 
 // Mirror the exit-id rebind into the acc accumulator's then-value slot (+16), so a
-// fall-through poison/merge tail reads the carried var's post-loop value. No-op if the
-// name is not in acc (a body-local-only carried var that never reached the merge set) or
-// is declared by a top-level `let` among the block's stmts[0..upto) (a branch-local
-// shadow; upto=0 skips nothing).
-pub fn mixed_while_rebind_acc_nonlocal(src: i64, acc: i64, nacc: i64, merge: i64, nm: i64, stmts_addr: i64, upto: i64, i: i64) -> i64 {
+// fall-through poison/merge tail reads the carried var's post-loop value. A carried
+// name the block declared with a top-level `let` among stmts[0..upto) is a branch-local
+// shadow and is skipped (upto=0 skips nothing). A carried name NOT yet in acc is an
+// outer binding this block first writes INSIDE the loop: lower.rs records every
+// non-local live var of a nested While as a branch write (last_region_exit_rebindings
+// -> record_then_write, live_vars order), so it is APPENDED with its exit id.
+pub fn mixed_while_rebind_acc_nonlocal(src: i64, acc: i64, acc_cell: i64, merge: i64, nm: i64, stmts_addr: i64, upto: i64, i: i64) -> i64 {
     if i >= nm {
         return nm;
     }
     let lo: i64 = __mind_load_i64(merge + i * 24 + 0);
     let hi: i64 = __mind_load_i64(merge + i * 24 + 8);
     if block_lets_name_before(stmts_addr, upto, src, lo, hi, 0) == 0 {
+        let nacc: i64 = __mind_load_i64(acc_cell);
         let pos: i64 = lv_find(acc, nacc, src, lo, hi);
         if pos >= 0 {
             __mind_store_i64(acc + pos * 24 + 16, __mind_load_i64(merge + i * 24 + 16))
+        } else {
+            if nacc < 64 {
+                __mind_store_i64(acc + nacc * 24 + 0, lo);
+                __mind_store_i64(acc + nacc * 24 + 8, hi);
+                __mind_store_i64(acc + nacc * 24 + 16, __mind_load_i64(merge + i * 24 + 16))
+            }
+            __mind_store_i64(acc_cell, nacc + 1)
         }
     }
-    mixed_while_rebind_acc_nonlocal(src, acc, nacc, merge, nm, stmts_addr, upto, i + 1)
+    mixed_while_rebind_acc_nonlocal(src, acc, acc_cell, merge, nm, stmts_addr, upto, i + 1)
 }
 
 // Fill 32-byte bind records from the ordered NAME accumulator (acc), all POISON.
@@ -15157,7 +15172,11 @@ pub fn bind_append_dedup(acc_bind: i64, acc_cell: i64, buf: i64, src: i64, n: i6
     bind_append_dedup(acc_bind, acc_cell, buf, src, n, i + 1)
 }
 
-pub fn emit_if_seq_then_instr_lv(s: EmitState, if_node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64) -> EmitState {
+// The type-3 if-with-SEQ-then-block emitter. It also EXPOSES its merge bindings (name -> merge_id,
+// 24-byte records in bindout, count in nbind_cell), exactly like the type-5 chain
+// emitter: lower.rs binds each merged name to its merge id after the if, so a later
+// sequence-level read must resolve to it (plan type 3 escapes).
+pub fn emit_if_seq_then_instr_lv_bo(s: EmitState, if_node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64, bindout: i64, nbind_cell: i64) -> EmitState {
     if ast_child2(if_node) != 0 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
@@ -15218,6 +15237,12 @@ pub fn emit_if_seq_then_instr_lv(s: EmitState, if_node: i64, buf: i64, params_ad
     let s15: EmitState = caseA_emit_bindings(s14, lay, nb, strbuf, offs, ncount, buf, 0);
     let s16: EmitState = emit_uleb128(s15, nb);
     let s17: EmitState = caseA_emit_merges(s16, lay, nb, 0);
+    if nb > 64 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let _bo: i64 = caseA_lay_to_bindout(lay, bindout, nb, 0);
+    __mind_store_i64(nbind_cell, nb);
     __mind_store_i64(okcell, dst);
     s17
 }
@@ -17714,7 +17739,10 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                 __mind_store_i64(pr_cell, 0 - 1);
                 let pr_lvenv: i64 = __mind_alloc((nlets + 1) * 24);
                 let _prlv: i64 = seq_env_to_lvenv(env, nlets, 0, pr_lvenv, 0, 0);
-                let pr: EmitState = emit_if_seq_then_instr_lv(es_new(), stmt, src, params_addr, n_params, pr_nodes, pr_cursor, pr_vidbuf, 0, pr_cell, pr_lvenv, nlets, 0, 0, 0);
+                let pr_bo: i64 = __mind_alloc(64 * 24);
+                let pr_nb: i64 = __mind_alloc(8);
+                __mind_store_i64(pr_nb, 0);
+                let pr: EmitState = emit_if_seq_then_instr_lv_bo(es_new(), stmt, src, params_addr, n_params, pr_nodes, pr_cursor, pr_vidbuf, 0, pr_cell, pr_lvenv, nlets, 0, 0, 0, pr_bo, pr_nb);
                 let pr_dst: i64 = __mind_load_i64(pr_cell);
                 if pr_dst >= 0 {
                     __mind_store_i64(plan + p * 64 + 0, 3);
@@ -17723,6 +17751,11 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                     __mind_store_i64(plan + p * 64 + 24, params_addr);
                     __mind_store_i64(plan + p * 64 + 32, n_params);
                     __mind_store_i64(nplan_cell, p + 1);
+                    // The merged names escape (lower.rs rebinds them to the merge ids):
+                    // overlay them so a later sequence read resolves to the merge id.
+                    if seq_flatten_overlay(pr_bo, __mind_load_i64(pr_nb), nodes, cursor, env, nlets_cell, plan, p) == 0 {
+                        return 0;
+                    }
                     return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
                 }
             }
@@ -18182,6 +18215,31 @@ pub fn seq_fix_deltas(src: i64, plan: i64, nplan: i64, env: i64, names_buf: i64,
         let _pr0: i64 = nb_arena_reclaim(p_ckpt);
         return seq_fix_deltas_miss(src, plan, nplan, env, names_buf, nnames, env_k, i, nodes, cursor);
     }
+    if ty == 3 {
+        let if3: i64 = __mind_load_i64(plan + i * 64 + 8);
+        let pa3: i64 = __mind_load_i64(plan + i * 64 + 24);
+        let np3: i64 = __mind_load_i64(plan + i * 64 + 32);
+        let t_nodes: i64 = __mind_alloc(256 * 32);
+        let t_cursor: i64 = __mind_alloc(8);
+        let t_vidbuf: i64 = __mind_alloc(256 * 8);
+        let t_cell: i64 = __mind_alloc(8);
+        __mind_store_i64(t_cell, 0 - 1);
+        let t_bo: i64 = __mind_alloc(64 * 24);
+        let t_nb: i64 = __mind_alloc(8);
+        __mind_store_i64(t_nb, 0);
+        let _t: EmitState = emit_if_seq_then_instr_lv_bo(es_new(), if3, src, pa3, np3, t_nodes, t_cursor, t_vidbuf, 0, t_cell, names_buf, nnames, 0, 0, 0, t_bo, t_nb);
+        let t_dst: i64 = __mind_load_i64(t_cell);
+        if t_dst >= 0 {
+            __mind_store_i64(plan + i * 64 + 16, t_dst + 1);
+            let nb3: i64 = __mind_load_i64(t_nb);
+            let _ap3: i64 = lvenv_append_escapes(names_buf, nnames, t_bo, nb3, 0);
+            if seq_overlay_refit(src, plan, i, t_bo, nb3) == 0 {
+                return 0 - 1;
+            }
+            return seq_fix_deltas(src, plan, nplan, env, names_buf, nnames + nb3, env_k + __mind_load_i64(plan + i * 64 + 40), i + 1, nodes, cursor);
+        }
+        return seq_fix_deltas_miss(src, plan, nplan, env, names_buf, nnames, env_k, i, nodes, cursor);
+    }
     if ty == 8 {
         let if8: i64 = __mind_load_i64(plan + i * 64 + 8);
         let pa8: i64 = __mind_load_i64(plan + i * 64 + 24);
@@ -18384,6 +18442,7 @@ pub fn seq_assign_vids(nodes: i64, vidbuf: i64, plan: i64, nplan: i64, base: i64
         // consumes `next_delta` vids relative to `base` (probed at flatten time,
         // base-relative). Advance past it.
         let next_delta: i64 = __mind_load_i64(plan + i * 64 + 16);
+        let _rv3: i64 = seq_set_rebind_vids(vidbuf, __mind_load_i64(plan + i * 64 + 56), __mind_load_i64(plan + i * 64 + 48), base, 0);
         return seq_assign_vids(nodes, vidbuf, plan, nplan, base + next_delta, i + 1);
     }
     if ty == 4 {
@@ -18683,6 +18742,9 @@ pub fn resolve_tenv_lvenv(tenv: i64, tk: i64, vidbuf: i64, out: i64, i: i64) -> 
 
 // Does plan type `ty` carry a rebind overlay (escaping fall-through merge bindings)?
 pub fn seq_ty_escapes(ty: i64) -> i64 {
+    if ty == 3 {
+        return 1;
+    }
     if ty == 4 {
         return 1;
     }
@@ -18752,8 +18814,20 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let e3_vidbuf: i64 = __mind_alloc(256 * 8);
         let e3_cell: i64 = __mind_alloc(8);
         __mind_store_i64(e3_cell, 0 - 1);
-        let s3i: EmitState = emit_if_seq_then_instr_lv(s, if_node3, src, pa3, np3, e3_nodes, e3_cursor, e3_vidbuf, base, e3_cell, seq_lvbuf, seq_nlv, strbuf, offs, ncount);
-        return emit_stmt_seq(s3i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta3, i + 1, seq_lvbuf, seq_nlv, seqr, envk, eok);
+        let e3_bo: i64 = __mind_alloc(64 * 24);
+        let e3_nb: i64 = __mind_alloc(8);
+        __mind_store_i64(e3_nb, 0);
+        let s3i: EmitState = emit_if_seq_then_instr_lv_bo(s, if_node3, src, pa3, np3, e3_nodes, e3_cursor, e3_vidbuf, base, e3_cell, seq_lvbuf, seq_nlv, strbuf, offs, ncount, e3_bo, e3_nb);
+        // Emitted-length cross-check: the segment's OP_IF dst is its LAST vid, so it must
+        // land on base + planned delta - 1; a refusal (-1) or any other id means the
+        // emit walked a different layout than the pre-pass planned -> refuse.
+        if __mind_load_i64(e3_cell) != base + next_delta3 - 1 {
+            __mind_store_i64(eok, 0);
+            return s;
+        }
+        let e3_n: i64 = __mind_load_i64(e3_nb);
+        let _ap3: i64 = lvenv_append_escapes(seq_lvbuf, seq_nlv, e3_bo, e3_n, 0);
+        return emit_stmt_seq(s3i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta3, i + 1, seq_lvbuf, seq_nlv + e3_n, seqr, envk + __mind_load_i64(plan + i * 64 + 40), eok);
     }
     if ty == 4 {
         // if-with-LET-then-block (merge tail) -> ONE outer OP_IF. Self-contained
@@ -18777,6 +18851,13 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let s4i: EmitState = emit_if_let_seq_then_instr_lv(s, if_node4, src, pa4, np4, e4_nodes, e4_cursor, e4_vidbuf, base, e4_cell, seq_lvbuf, seq_nlv, e4_lvbuf, strbuf, offs, ncount, e4_bo, e4_nb);
         let e4_n: i64 = __mind_load_i64(e4_nb);
         let _ap4: i64 = lvenv_append_escapes(seq_lvbuf, seq_nlv, e4_bo, e4_n, 0);
+        // Emitted-length cross-check: the segment's OP_IF dst is its LAST vid, so it must
+        // land on base + planned delta - 1; a refusal (-1) or any other id means the
+        // emit walked a different layout than the pre-pass planned -> refuse.
+        if __mind_load_i64(e4_cell) != base + next_delta4 - 1 {
+            __mind_store_i64(eok, 0);
+            return s;
+        }
         return emit_stmt_seq(s4i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta4, i + 1, seq_lvbuf, seq_nlv + e4_n, seqr, envk + __mind_load_i64(plan + i * 64 + 40), eok);
     }
     if ty == 5 {
@@ -18797,6 +18878,13 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let s5i: EmitState = emit_if_chain_instr_lv(s, if_node5, src, pa5, np5, e5_nodes, e5_cursor, e5_vidbuf, base, e5_cell, seq_lvbuf, seq_nlv, strbuf, offs, ncount, e5_bindout, e5_nbind);
         let e5_n: i64 = __mind_load_i64(e5_nbind);
         let _ap5: i64 = lvenv_append_escapes(seq_lvbuf, seq_nlv, e5_bindout, e5_n, 0);
+        // Emitted-length cross-check: the segment's OP_IF dst is its LAST vid, so it must
+        // land on base + planned delta - 1; a refusal (-1) or any other id means the
+        // emit walked a different layout than the pre-pass planned -> refuse.
+        if __mind_load_i64(e5_cell) != base + next_delta5 - 1 {
+            __mind_store_i64(eok, 0);
+            return s;
+        }
         return emit_stmt_seq(s5i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta5, i + 1, seq_lvbuf, seq_nlv + e5_n, seqr, envk + __mind_load_i64(plan + i * 64 + 40), eok);
     }
     if ty == 7 {
@@ -18813,6 +18901,13 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         __mind_store_i64(e7_cell, 0 - 1);
         let s7i: EmitState = emit_if_expr_any_lv(s, init7, src, pa7, np7, e7_nodes, e7_cursor, e7_vidbuf, base, e7_cell, seq_lvbuf, seq_nlv, strbuf, offs, ncount, 0, 0);
         let _ap7: i64 = seq_lvenv_append_one(seq_lvbuf, seq_nlv, seqr, envk);
+        // Emitted-length cross-check: the segment's OP_IF dst is its LAST vid, so it must
+        // land on base + planned delta - 1; a refusal (-1) or any other id means the
+        // emit walked a different layout than the pre-pass planned -> refuse.
+        if __mind_load_i64(e7_cell) != base + next_delta7 - 1 {
+            __mind_store_i64(eok, 0);
+            return s;
+        }
         return emit_stmt_seq(s7i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta7, i + 1, seq_lvbuf, seq_nlv + 1, seqr, envk + 1, eok);
     }
     if ty == 6 {
@@ -18832,6 +18927,13 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let s6i: EmitState = emit_if_mixed_then_instr_lv(s, if_node6, src, pa6, np6, e6_nodes, e6_cursor, e6_vidbuf, base, e6_cell, seq_lvbuf, seq_nlv, strbuf, offs, ncount, e6_bindout, e6_nbind);
         let e6_n: i64 = __mind_load_i64(e6_nbind);
         let _ap6: i64 = lvenv_append_escapes(seq_lvbuf, seq_nlv, e6_bindout, e6_n, 0);
+        // Emitted-length cross-check: the segment's OP_IF dst is its LAST vid, so it must
+        // land on base + planned delta - 1; a refusal (-1) or any other id means the
+        // emit walked a different layout than the pre-pass planned -> refuse.
+        if __mind_load_i64(e6_cell) != base + next_delta6 - 1 {
+            __mind_store_i64(eok, 0);
+            return s;
+        }
         return emit_stmt_seq(s6i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta6, i + 1, seq_lvbuf, seq_nlv + e6_n, seqr, envk + __mind_load_i64(plan + i * 64 + 40), eok);
     }
     if ty == 8 {
@@ -18854,6 +18956,13 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let s8i: EmitState = emit_if_fallthrough_lv(s, if_node8, src, pa8, np8, e8_nodes, e8_cursor, e8_vidbuf, base, e8_cell, seq_lvbuf, seq_nlv, e8_lvbuf, strbuf, offs, ncount, e8_bo, e8_nb);
         let e8_n: i64 = __mind_load_i64(e8_nb);
         let _ap8: i64 = lvenv_append_escapes(seq_lvbuf, seq_nlv, e8_bo, e8_n, 0);
+        // Emitted-length cross-check: the segment's OP_IF dst is its LAST vid, so it must
+        // land on base + planned delta - 1; a refusal (-1) or any other id means the
+        // emit walked a different layout than the pre-pass planned -> refuse.
+        if __mind_load_i64(e8_cell) != base + next_delta8 - 1 {
+            __mind_store_i64(eok, 0);
+            return s;
+        }
         return emit_stmt_seq(s8i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta8, i + 1, seq_lvbuf, seq_nlv + e8_n, seqr, envk + __mind_load_i64(plan + i * 64 + 40), eok);
     }
     if ty == 9 {
@@ -18873,6 +18982,13 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let s9i: EmitState = emit_if_else_fallthrough_lv(s, if_node9, src, pa9, np9, e9_nodes, e9_cursor, e9_vidbuf, base, e9_cell, seq_lvbuf, seq_nlv, 0, strbuf, offs, ncount, e9_bo, e9_nb);
         let e9_n: i64 = __mind_load_i64(e9_nb);
         let _ap9: i64 = lvenv_append_escapes(seq_lvbuf, seq_nlv, e9_bo, e9_n, 0);
+        // Emitted-length cross-check: the segment's OP_IF dst is its LAST vid, so it must
+        // land on base + planned delta - 1; a refusal (-1) or any other id means the
+        // emit walked a different layout than the pre-pass planned -> refuse.
+        if __mind_load_i64(e9_cell) != base + next_delta9 - 1 {
+            __mind_store_i64(eok, 0);
+            return s;
+        }
         return emit_stmt_seq(s9i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta9, i + 1, seq_lvbuf, seq_nlv + e9_n, seqr, envk + __mind_load_i64(plan + i * 64 + 40), eok);
     }
     if ty == 10 {
@@ -31619,6 +31735,22 @@ pub fn ab_apply_loop(while_node: i64, buf: i64, params_addr: i64, n_params: i64,
     let hi: i64 = __mind_load_i64(cands + ci * 16 + 8);
     let slot: i64 = lvenv_index_of(buf, lo, hi, env, nlv);
     if slot < 0 {
+        // A PARAMETER candidate (no env entry shadows it) is still a Rust candidate
+        // (`env.contains_key`). Breaking it would rebind the param name in the seed
+        // env, which these fixed-size lv-envs cannot grow to hold. Port the decision,
+        // not the rebind: when Rust WOULD break it (a differently-named source shares
+        // the param's id and is read in cond/body) refuse (-1); otherwise it is a
+        // no-op in Rust too and the walk continues. Names that are neither env nor
+        // param bindings are body-locals (Rust filters them out) and are skipped.
+        let pi: i64 = resolve_param(params_addr, n_params, buf, lo, hi);
+        if pi >= 0 {
+            if ab_has_source(buf, env, nlv, params_addr, n_params, pi, lo, hi) == 1 {
+                let pr: i64 = ab_reads_pair(ast_child0(while_node), ast_child1(while_node), buf, params_addr, n_params, env, nlv, pi, lo, hi);
+                if pr != 0 {
+                    return 0 - 1;
+                }
+            }
+        }
         return ab_apply_loop(while_node, buf, params_addr, n_params, env, nlv, base0, ids, cands, nc, lo, hi, 1, k);
     }
     let id: i64 = __mind_load_i64(env + slot * 24 + 16);
@@ -37435,8 +37567,13 @@ pub fn nb_carry_find_rest(carry: i64, n: i64, buf: i64, lo: i64, hi: i64, i: i64
 // only updates post_id (mutated[pos].1 = new_id). init_slot is the var's current
 // let-env slot (pre-loop binding); -1 if it is not a known let/param (a defensive
 // sentinel — string_push_str's carried vars are all `let mut` so they resolve).
-pub fn nb_carry_record(carry: i64, ccell: i64, buf: i64, lo: i64, hi: i64, post_id: i64, lets: i64, lcell: i64) -> i64 {
-    let init_slot: i64 = nb_lets_lookup(lets, lcell, buf, lo, hi);
+// The init lookup is restricted to the PRE-LOOP prefix [0, entry_n): the pre-walk shares
+// the emit let-env as its count env, so bindings appended past entry_n are transient
+// count-side rebinds (an earlier body assign / nested region's slot-0 merge rebind) —
+// resolving through them seeded the copy-in from the wrong slot (measured: a var
+// reassigned before a nested loop pair restarted from its pre-reassignment value).
+pub fn nb_carry_record(carry: i64, ccell: i64, buf: i64, lo: i64, hi: i64, post_id: i64, lets: i64, entry_n: i64) -> i64 {
+    let init_slot: i64 = nb_lets_lookup_rest(lets, entry_n, buf, lo, hi, 0, 0 - 1);
     nb_carry_record_slot(carry, ccell, buf, lo, hi, post_id, init_slot)
 }
 // As nb_carry_record but with an EXPLICIT init_slot (the var's pre-loop let-env slot),
@@ -37488,6 +37625,10 @@ pub fn nb_while_carry(carry: i64, ccell: i64, next_id: i64, buf: i64, body_sa: i
     let after: i64 = if ast_kind(stmt) == ast_assign() {
         let arhs: i64 = nb_count_expr(next_id, buf, ast_child2(stmt), params_addr, n_params, clets, clcell);
         let name_leaf: i64 = ast_child0(stmt);
+        // lower.rs body_local_decls: an assign to a name an EARLIER body `let` declared
+        // writes that per-iteration shadow — it is NOT loop-carried (no carry record,
+        // the outer binding keeps its value). Ids advance exactly as for a carried write.
+        let local_w: i64 = nb_prior_let(buf, body_sa, i, ast_span_lo(name_leaf), ast_span_hi(name_leaf), 0);
         // C2 declared-width driver (carry form): a narrow-DECLARED carried var's
         // assign consumes ONE fresh wrap slot at emit (nb_stmt assign arm mints
         // `wida = s1.next_id` = arhs, then next_id = arhs+1, last_id = arhs). So the
@@ -37506,20 +37647,82 @@ pub fn nb_while_carry(carry: i64, ccell: i64, next_id: i64, buf: i64, body_sa: i
         // the exact twin of nb_stmt's assign arm. Width-64, non-captured
         // assigns keep the pre-existing (arhs - 1, arhs) — byte-identical
         // self-compile (main.mind takes no addresses).
-        if nb_bind_mints_slot(cw, ast_child2(stmt), buf, lcell) == 1 {
-            let _rw: i64 = nb_carry_record(carry, ccell, buf, ast_span_lo(name_leaf), ast_span_hi(name_leaf), arhs, lets, lcell);
+        if nb_bind_mints_slot_assign(cw, ast_child2(stmt), buf, lcell) == 1 {
+            let _rw: i64 = if local_w == 0 {
+                nb_carry_record(carry, ccell, buf, ast_span_lo(name_leaf), ast_span_hi(name_leaf), arhs, lets, entry_n)
+            } else {
+                0
+            };
             arhs + 1
         } else {
-            let _r: i64 = nb_carry_record(carry, ccell, buf, ast_span_lo(name_leaf), ast_span_hi(name_leaf), arhs - 1, lets, lcell);
+            let _r: i64 = if local_w == 0 {
+                nb_carry_record(carry, ccell, buf, ast_span_lo(name_leaf), ast_span_hi(name_leaf), arhs - 1, lets, entry_n)
+            } else {
+                0
+            };
             arhs
         }
     } else {
         // A flat 3-way `else if` value-let is NOT in the mic@3 note-emit subset
         // (nb_build_mic3 fails closed on it); keep this a 2-way value-if and push the
         // while-vs-other decision into an early-return helper (the proven subset).
-        nb_while_carry_nonassign(carry, ccell, next_id, buf, stmt, params_addr, n_params, clets, clcell, srt, lets, lcell, entry_n)
+        nb_while_carry_nonassign_scoped(carry, ccell, next_id, buf, stmt, params_addr, n_params, clets, clcell, srt, lets, lcell, entry_n, body_sa, i)
     };
     nb_while_carry(carry, ccell, after, buf, body_sa, body_sl, i + 1, params_addr, n_params, clets, clcell, srt, lets, lcell, entry_n)
+}
+
+// nb_while_carry_nonassign with the lower.rs body_local_decls rule applied to the
+// nested-region promotions: a name an EARLIER body `let` (body[0..i)) declared is a
+// per-iteration shadow, so a nested if/while writing it must neither add a carry
+// record nor move an existing record's post slot (that record belongs to the OUTER
+// var, written before the shadow). Snapshot the table, run the promotion, then restore
+// the shadowed names' pre-existing records and drop their new ones.
+pub fn nb_while_carry_nonassign_scoped(carry: i64, ccell: i64, next_id: i64, buf: i64, stmt: i64, params_addr: i64, n_params: i64, clets: i64, clcell: i64, srt: i64, lets: i64, lcell: i64, entry_n: i64, body_sa: i64, i: i64) -> i64 {
+    if i == 0 {
+        return nb_while_carry_nonassign(carry, ccell, next_id, buf, stmt, params_addr, n_params, clets, clcell, srt, lets, lcell, entry_n);
+    }
+    let n0: i64 = __mind_load_i64(ccell);
+    let snap: i64 = __mind_alloc((n0 + 1) * 4 * 8);
+    let _cp: i64 = nb_copy_words(snap, carry, n0 * 4, 0);
+    let after: i64 = nb_while_carry_nonassign(carry, ccell, next_id, buf, stmt, params_addr, n_params, clets, clcell, srt, lets, lcell, entry_n);
+    let _rs: i64 = nb_carry_restore_shadowed(carry, snap, n0, 0, buf, body_sa, i);
+    let n1: i64 = __mind_load_i64(ccell);
+    let kept: i64 = nb_carry_drop_shadowed(carry, n0, n1, n0, buf, body_sa, i);
+    __mind_store_i64(ccell, kept);
+    after
+}
+pub fn nb_copy_words(dst: i64, src: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return n;
+    }
+    __mind_store_i64(dst + i * 8, __mind_load_i64(src + i * 8));
+    nb_copy_words(dst, src, n, i + 1)
+}
+// Records [0,n0) existed before the region: a shadowed name gets its old post back.
+pub fn nb_carry_restore_shadowed(carry: i64, snap: i64, n0: i64, k: i64, buf: i64, body_sa: i64, i: i64) -> i64 {
+    if k >= n0 {
+        return 0;
+    }
+    let lo: i64 = __mind_load_i64(carry + (k * 4 + 0) * 8);
+    let hi: i64 = __mind_load_i64(carry + (k * 4 + 1) * 8);
+    if nb_prior_let(buf, body_sa, i, lo, hi, 0) == 1 {
+        __mind_store_i64(carry + (k * 4 + 3) * 8, __mind_load_i64(snap + (k * 4 + 3) * 8))
+    }
+    nb_carry_restore_shadowed(carry, snap, n0, k + 1, buf, body_sa, i)
+}
+// Records [n0,n1) are new: keep (compacted from `at`) only the non-shadowed ones.
+// Returns the new record count.
+pub fn nb_carry_drop_shadowed(carry: i64, n0: i64, n1: i64, at: i64, buf: i64, body_sa: i64, i: i64) -> i64 {
+    if n0 >= n1 {
+        return at;
+    }
+    let lo: i64 = __mind_load_i64(carry + (n0 * 4 + 0) * 8);
+    let hi: i64 = __mind_load_i64(carry + (n0 * 4 + 1) * 8);
+    if nb_prior_let(buf, body_sa, i, lo, hi, 0) == 1 {
+        return nb_carry_drop_shadowed(carry, n0 + 1, n1, at, buf, body_sa, i);
+    }
+    let _c: i64 = nb_copy_words(carry + at * 4 * 8, carry + n0 * 4 * 8, 4, 0);
+    nb_carry_drop_shadowed(carry, n0 + 1, n1, at + 1, buf, body_sa, i)
 }
 
 // Non-assign statement in a loop-carry pre-walk: a nested `while` descends into the
@@ -37728,7 +37931,7 @@ pub fn nb_carry_promote_inner(carry: i64, ccell: i64, icarry: i64, incarry: i64,
     let post: i64 = __mind_load_i64(icarry + (k * 4 + 3) * 8);
     let outer_slot: i64 = nb_lets_lookup_rest(lets, entry_n, buf, lo, hi, 0, 0 - 1);
     if outer_slot >= 0 {
-        let _r: i64 = nb_carry_record(carry, ccell, buf, lo, hi, post, lets, lcell);
+        let _r: i64 = nb_carry_record_slot(carry, ccell, buf, lo, hi, post, outer_slot);
         return nb_carry_promote_inner(carry, ccell, icarry, incarry, k + 1, buf, lets, lcell, entry_n);
     }
     nb_carry_promote_inner(carry, ccell, icarry, incarry, k + 1, buf, lets, lcell, entry_n)
@@ -37768,6 +37971,89 @@ pub fn nb_loops_top_header(loops: i64, lpcell: i64) -> i64 {
     }
     __mind_load_i64(loops + ((n - 1) * 3 + 0) * 8)
 }
+// Flush the innermost loop's carried vars at a break/continue: for each carried var
+// whose CURRENT let-env binding is not its post slot, `load cur ; store post`. No ids
+// are consumed (count side unchanged). No loop frame (or no carry) -> code unchanged.
+pub fn nb_exit_flush_carry(code: String, loops: i64, lpcell: i64, buf: i64, lets: i64, lcell: i64) -> String {
+    let n: i64 = __mind_load_i64(lpcell);
+    if n <= 0 {
+        return code;
+    }
+    let bb: i64 = __mind_load_i64(loops + ((n - 1) * 3 + 1) * 8);
+    let carry: i64 = __mind_load_i64(bb + 256 * 8);
+    let ncarry: i64 = __mind_load_i64(bb + 257 * 8);
+    nb_exit_flush_rest(code, carry, ncarry, 0, buf, lets, lcell)
+}
+pub fn nb_exit_flush_rest(code: String, carry: i64, ncarry: i64, i: i64, buf: i64, lets: i64, lcell: i64) -> String {
+    if i >= ncarry {
+        return code;
+    }
+    let lo: i64 = __mind_load_i64(carry + (i * 4 + 0) * 8);
+    let hi: i64 = __mind_load_i64(carry + (i * 4 + 1) * 8);
+    let post: i64 = __mind_load_i64(carry + (i * 4 + 3) * 8);
+    let cur: i64 = nb_lets_lookup(lets, lcell, buf, lo, hi);
+    let c1: String = nb_flush_one(code, cur, post);
+    nb_exit_flush_rest(c1, carry, ncarry, i + 1, buf, lets, lcell)
+}
+pub fn nb_flush_one(code: String, cur: i64, post: i64) -> String {
+    if cur < 0 {
+        return code;
+    }
+    if cur == post {
+        return code;
+    }
+    let a: String = nb_load_rax(code, nb_slot_disp(cur));
+    nb_store_rax(a, nb_slot_disp(post))
+}
+// 1 iff some carried name is re-declared by a `let` anywhere in block [sa,sl)
+// (descending if branches and while bodies).
+pub fn nb_carry_any_let_shadowed(carry: i64, ncarry: i64, i: i64, buf: i64, sa: i64, sl: i64) -> i64 {
+    if i >= ncarry {
+        return 0;
+    }
+    let lo: i64 = __mind_load_i64(carry + (i * 4 + 0) * 8);
+    let hi: i64 = __mind_load_i64(carry + (i * 4 + 1) * 8);
+    if nb_block_lets_name_deep(buf, sa, sl, 0, lo, hi) == 1 {
+        return 1;
+    }
+    nb_carry_any_let_shadowed(carry, ncarry, i + 1, buf, sa, sl)
+}
+pub fn nb_block_lets_name_deep(buf: i64, sa: i64, sl: i64, i: i64, lo: i64, hi: i64) -> i64 {
+    if i >= sl {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(sa + i * 8);
+    let k: i64 = ast_kind(stmt);
+    if k == ast_let() {
+        let nm: i64 = ast_child0(stmt);
+        if span_bytes_equal(buf, lo, hi, ast_span_lo(nm), ast_span_hi(nm)) == 1 {
+            return 1;
+        }
+    }
+    if nb_stmt_lets_name_region(buf, stmt, k, lo, hi) == 1 {
+        return 1;
+    }
+    nb_block_lets_name_deep(buf, sa, sl, i + 1, lo, hi)
+}
+pub fn nb_stmt_lets_name_region(buf: i64, stmt: i64, k: i64, lo: i64, hi: i64) -> i64 {
+    if k == ast_while() {
+        let wb: i64 = ast_child1(stmt);
+        return nb_block_lets_name_deep(buf, ast_child0(wb), ast_aux(wb), 0, lo, hi);
+    }
+    if k == ast_if() {
+        let tb: i64 = ast_child1(stmt);
+        if nb_block_lets_name_deep(buf, ast_child0(tb), ast_aux(tb), 0, lo, hi) == 1 {
+            return 1;
+        }
+        let eb: i64 = ast_child2(stmt);
+        if eb == 0 {
+            return 0;
+        }
+        return nb_block_lets_name_deep(buf, ast_child0(eb), ast_aux(eb), 0, lo, hi);
+    }
+    0
+}
+
 // Record a break jmp index (`which`) into the innermost loop's break list.
 pub fn nb_loops_push_break(loops: i64, lpcell: i64, which: i64) -> i64 {
     let n: i64 = __mind_load_i64(lpcell);
@@ -38267,8 +38553,20 @@ pub fn nb_emit_while(st: NbState, buf: i64, node: i64, params_addr: i64, n_param
     let je_which: i64 = __mind_load_i64(jcell) - 1;
     let s_je: NbState = NbState { code: c_je, next_id: sc.next_id, last_id: sc.last_id, ncalls: sc.ncalls };
 
-    // Push a loop frame (header + per-loop break list).
-    let breaks_buf: i64 = __mind_alloc(256 * 8);
+    // Push a loop frame (header + per-loop break list). Words 256/257 of the break
+    // buffer carry this loop's carry table + count so a `break`/`continue` can flush
+    // each carried var's CURRENT value into its post slot (nb_exit_flush_carry).
+    let breaks_buf: i64 = __mind_alloc(258 * 8);
+    __mind_store_i64(breaks_buf + 256 * 8, carry);
+    __mind_store_i64(breaks_buf + 257 * 8, ncarry);
+    // An exit flush resolves each carried name through the let-env; a body `let`
+    // re-declaring a carried name would make that resolve the per-iteration SHADOW,
+    // not the carried var. Refuse that combination (fail closed, fn-wide poison).
+    if nb_block_loop_exit(buf, body_sa, body_sl, 0) == 1 {
+        if nb_carry_any_let_shadowed(carry, ncarry, 0, buf, body_sa, body_sl) == 1 {
+            __mind_store_i64(lcell + 80, 1)
+        }
+    }
     let _lp: i64 = nb_loops_push(loops, lpcell, header, breaks_buf);
 
     // body.
@@ -38609,7 +38907,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // slots). One fresh id, mirrored by nb_bind_mints_slot on the count
         // side. Never fires during self-compile (main.mind takes no addresses).
         if ast_kind(init) == ast_ident() {
-            if nb_at_contains(__mind_load_i64(lcell + 88), buf, ast_span_lo(init), ast_span_hi(init)) == 1 {
+            if nb_bind_mints_slot(declw, init, buf, lcell) == 1 {
                 let cid: i64 = s1.next_id;
                 let cc1: String = nb_load_rax(s1.code, nb_slot_disp(s1.last_id));
                 let cc2: String = nb_store_rax(cc1, nb_slot_disp(cid));
@@ -38712,7 +39010,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // side and in nb_while_carry, so frames/ids stay locked. Never fires
         // during self-compile (main.mind takes no addresses).
         if ast_kind(rhs_node) == ast_ident() {
-            if nb_at_contains(__mind_load_i64(lcell + 88), buf, ast_span_lo(rhs_node), ast_span_hi(rhs_node)) == 1 {
+            if nb_bind_mints_slot_assign(pw, rhs_node, buf, lcell) == 1 {
                 let widr: i64 = s1.next_id;
                 let cr1: String = nb_load_rax(s1.code, nb_slot_disp(s1.last_id));
                 let cr2: String = nb_store_rax(cr1, nb_slot_disp(widr));
@@ -38774,18 +39072,24 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
     if k == ast_break() {
         // `break` — emit the leading ConstI64(unit,0) (lower.rs 5967), then a jmp
         // whose target is the loop end (patched at loop close). Record its index in
-        // the innermost loop frame's break list.
+        // the innermost loop frame's break list. Before the jmp, flush each carried
+        // var's current value into its post slot (lower.rs Break { live }): post-loop
+        // reads resolve through the post slot, which otherwise still holds the value
+        // from the previous iteration when the var was written before the break.
         let s0: NbState = nb_emit_const0(st);
-        let c1: String = nb_emit_jmp(s0.code, jmps, jcell);
+        let c0f: String = nb_exit_flush_carry(s0.code, loops, lpcell, buf, lets, lcell);
+        let c1: String = nb_emit_jmp(c0f, jmps, jcell);
         let which: i64 = __mind_load_i64(jcell) - 1;
         let _pb: i64 = nb_loops_push_break(loops, lpcell, which);
         return NbState { code: c1, next_id: s0.next_id, last_id: s0.last_id, ncalls: s0.ncalls };
     }
     if k == ast_continue() {
         // `continue` — emit leading const0 then a jmp back to the innermost loop's
-        // header (set immediately, a backward target).
+        // header (set immediately, a backward target). The cond + next iteration read
+        // the carried vars' post slots, so flush current values first (Continue{live}).
         let s0: NbState = nb_emit_const0(st);
-        let c1: String = nb_emit_jmp(s0.code, jmps, jcell);
+        let c0f: String = nb_exit_flush_carry(s0.code, loops, lpcell, buf, lets, lcell);
+        let c1: String = nb_emit_jmp(c0f, jmps, jcell);
         let which: i64 = __mind_load_i64(jcell) - 1;
         let _pc: i64 = nb_jmp_set_target(jmps, jcell, which, nb_loops_top_header(loops, lpcell));
         return NbState { code: c1, next_id: s0.next_id, last_id: s0.last_id, ncalls: s0.ncalls };
@@ -39009,7 +39313,8 @@ pub fn nb_if_stmt_merged(st: NbState, buf: i64, node: i64, params_addr: i64, n_p
     // env, NOT the then block's rebindings/local lets (which are dead on the else path).
     let branch_fork_n: i64 = __mind_load_i64(lcell);
     let s_t0: NbState = nb_emit_const0(s_je);
-    let s_tb: NbState = nb_block_stmts(s_t0, buf, then_sa, then_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
+    let t_snaps: i64 = __mind_alloc((then_sl + 1) * 8);
+    let s_tb: NbState = nb_block_stmts_snap(s_t0, buf, then_sa, then_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell, t_snaps);
     let then_result: i64 = s_tb.last_id;
 
     // Physical slot layout (walk order).
@@ -39029,7 +39334,7 @@ pub fn nb_if_stmt_merged(st: NbState, buf: i64, node: i64, params_addr: i64, n_p
 
     // then edge (only when then falls through): placeholders + merge stores +
     // dst-copy + join jmp.
-    let s_tj: NbState = nb_if_merged_then_edge(s_tb, buf, mt, nmerged, then_falls, then_result, dst_id, jmps, jcell, lets, lcell, then_sa, then_sl, outer_n);
+    let s_tj: NbState = nb_if_merged_then_edge(s_tb, buf, mt, nmerged, then_falls, then_result, dst_id, jmps, jcell, lets, lcell, then_sa, then_sl, outer_n, t_snaps);
     let jmp_which: i64 = nb_last_jmp_which_mf(then_falls, jcell);
 
     // else target = je patch.
@@ -39047,11 +39352,12 @@ pub fn nb_if_stmt_merged(st: NbState, buf: i64, node: i64, params_addr: i64, n_p
     __mind_store_i64(lcell, branch_fork_n);
     let s_e_in: NbState = NbState { code: s_tj.code, next_id: p_t, last_id: s_tj.last_id, ncalls: s_tj.ncalls };
     let s_e0: NbState = nb_emit_const0(s_e_in);
-    let s_eb: NbState = nb_block_stmts(s_e0, buf, else_sa, else_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
+    let e_snaps: i64 = __mind_alloc((else_sl + 1) * 8);
+    let s_eb: NbState = nb_block_stmts_snap(s_e0, buf, else_sa, else_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell, e_snaps);
     let else_result: i64 = s_eb.last_id;
 
     // else edge (only when else falls through): placeholders + merge stores + dst-copy.
-    let c_ej: String = nb_if_merged_else_edge(s_eb.code, buf, mt, nmerged, else_falls, else_result, dst_id, lets, lcell, else_sa, else_sl, outer_n);
+    let c_ej: String = nb_if_merged_else_edge(s_eb.code, buf, mt, nmerged, else_falls, else_result, dst_id, lets, lcell, else_sa, else_sl, outer_n, e_snaps);
 
     let end_at: i64 = string_len(c_ej);
     let _pe: i64 = nb_maybe_set_jmp(jmp_which, jmps, jcell, end_at);
@@ -39083,12 +39389,12 @@ pub fn nb_merge_zero_diverged(mt: i64, nmerged: i64, i: i64, then_falls: i64, el
 
 // then-edge of a merging if-statement: if then falls through, emit placeholders,
 // per-merge `load then_val ; store merge`, `load then_result ; store dst`, jmp.
-pub fn nb_if_merged_then_edge(s_tb: NbState, buf: i64, mt: i64, nmerged: i64, then_falls: i64, then_result: i64, dst_id: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64, then_sa: i64, then_sl: i64, outer_n: i64) -> NbState {
+pub fn nb_if_merged_then_edge(s_tb: NbState, buf: i64, mt: i64, nmerged: i64, then_falls: i64, then_result: i64, dst_id: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64, then_sa: i64, then_sl: i64, outer_n: i64, snaps: i64) -> NbState {
     if then_falls == 0 {
         return s_tb;
     }
     let c_ph: String = nb_emit_merge_phs(s_tb.code, mt, nmerged, 0, 0);
-    let c_ms: String = nb_emit_merge_stores(c_ph, buf, mt, nmerged, 0, 0, lets, lcell, then_sa, then_sl, outer_n);
+    let c_ms: String = nb_emit_merge_stores_s(c_ph, buf, mt, nmerged, 0, 0, lets, lcell, then_sa, then_sl, outer_n, snaps);
     let c1: String = nb_load_rax(c_ms, nb_slot_disp(then_result));
     let c2: String = nb_store_rax(c1, nb_slot_disp(dst_id));
     let c3: String = nb_emit_jmp(c2, jmps, jcell);
@@ -39103,12 +39409,12 @@ pub fn nb_last_jmp_which_mf(then_falls: i64, jcell: i64) -> i64 {
 }
 // else-edge of a merging if-statement: if else falls through, emit placeholders,
 // per-merge `load else_val ; store merge`, `load else_result ; store dst`.
-pub fn nb_if_merged_else_edge(code: String, buf: i64, mt: i64, nmerged: i64, else_falls: i64, else_result: i64, dst_id: i64, lets: i64, lcell: i64, else_sa: i64, else_sl: i64, outer_n: i64) -> String {
+pub fn nb_if_merged_else_edge(code: String, buf: i64, mt: i64, nmerged: i64, else_falls: i64, else_result: i64, dst_id: i64, lets: i64, lcell: i64, else_sa: i64, else_sl: i64, outer_n: i64, snaps: i64) -> String {
     if else_falls == 0 {
         return code;
     }
     let c_ph: String = nb_emit_merge_phs(code, mt, nmerged, 0, 1);
-    let c_ms: String = nb_emit_merge_stores(c_ph, buf, mt, nmerged, 0, 1, lets, lcell, else_sa, else_sl, outer_n);
+    let c_ms: String = nb_emit_merge_stores_s(c_ph, buf, mt, nmerged, 0, 1, lets, lcell, else_sa, else_sl, outer_n, snaps);
     let c1: String = nb_load_rax(c_ms, nb_slot_disp(else_result));
     nb_store_rax(c1, nb_slot_disp(dst_id))
 }
@@ -39490,6 +39796,11 @@ pub fn nb_emit_const0_slot(code: String, slot: i64) -> String {
 //   - else (has via outer, no write) -> outer-prefix lookup (the incoming value),
 //     so a SIBLING branch's pollution of the shared let-env is excluded.
 pub fn nb_emit_merge_stores(code: String, buf: i64, mt: i64, nmerged: i64, i: i64, side: i64, lets: i64, lcell: i64, sa: i64, sl: i64, outer_n: i64) -> String {
+    nb_emit_merge_stores_s(code, buf, mt, nmerged, i, side, lets, lcell, sa, sl, outer_n, 0)
+}
+// snaps != 0: the side's per-statement let-env sizes (nb_block_stmts_snap), so a merged
+// name re-declared by a branch `let` merges its frozen pre-shadow value.
+pub fn nb_emit_merge_stores_s(code: String, buf: i64, mt: i64, nmerged: i64, i: i64, side: i64, lets: i64, lcell: i64, sa: i64, sl: i64, outer_n: i64, snaps: i64) -> String {
     if i >= nmerged {
         return code;
     }
@@ -39501,14 +39812,14 @@ pub fn nb_emit_merge_stores(code: String, buf: i64, mt: i64, nmerged: i64, i: i6
         slot_word
     } else {
         if nb_branch_defines(buf, sa, sl, lo, hi) == 1 {
-            nb_lets_lookup(lets, lcell, buf, lo, hi)
+            nb_merge_side_val(buf, sa, sl, lo, hi, lets, lcell, snaps)
         } else {
             nb_lets_lookup_rest(lets, outer_n, buf, lo, hi, 0, 0 - 1)
         }
     };
     let c1: String = nb_load_rax(code, nb_slot_disp(val));
     let c2: String = nb_store_rax(c1, nb_slot_disp(merge_slot));
-    nb_emit_merge_stores(c2, buf, mt, nmerged, i + 1, side, lets, lcell, sa, sl, outer_n)
+    nb_emit_merge_stores_s(c2, buf, mt, nmerged, i + 1, side, lets, lcell, sa, sl, outer_n, snaps)
 }
 
 // Rebind each merged name's let-env to its merge slot (post-if dominating value).
@@ -39589,6 +39900,48 @@ pub fn nb_maybe_set_jmp(jmp_which: i64, jmps: i64, jcell: i64, end_at: i64) -> i
 }
 
 // Lower the body statement sequence.
+// nb_block_stmts that also records snaps[j] = the let-env size just BEFORE statement j
+// (j in [i, stmts_len)). The if-merge reads a name's frozen pre-shadow value from it.
+pub fn nb_block_stmts_snap(st: NbState, buf: i64, stmts_addr: i64, stmts_len: i64, i: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64, srt: i64, loops: i64, lpcell: i64, snaps: i64) -> NbState {
+    if i >= stmts_len {
+        return st;
+    }
+    __mind_store_i64(snaps + i * 8, __mind_load_i64(lcell));
+    let stmt_node: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let s1: NbState = nb_stmt(st, buf, stmt_node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
+    nb_block_stmts_snap(s1, buf, stmts_addr, stmts_len, i + 1, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell, snaps)
+}
+
+// Index of the first TOP-LEVEL `let` of the name [lo,hi) in sa[i..sl), or -1.
+pub fn nb_first_let_idx(buf: i64, sa: i64, sl: i64, lo: i64, hi: i64, i: i64) -> i64 {
+    if i >= sl {
+        return 0 - 1;
+    }
+    let stmt: i64 = __mind_load_i64(sa + i * 8);
+    if ast_kind(stmt) == ast_let() {
+        let nm: i64 = ast_child0(stmt);
+        if span_bytes_equal(buf, lo, hi, ast_span_lo(nm), ast_span_hi(nm)) == 1 {
+            return i;
+        }
+    }
+    nb_first_let_idx(buf, sa, sl, lo, hi, i + 1)
+}
+
+// The value a WRITING side passes to the merge for [lo,hi). lower.rs GAP 2 + #318: once a
+// top-level branch `let` re-declares the name, later writes hit the block-local shadow,
+// so the merge takes the binding live just BEFORE that first `let` (the frozen
+// pre-shadow value). No re-declaration (or no snapshots) -> the branch-exit binding.
+pub fn nb_merge_side_val(buf: i64, sa: i64, sl: i64, lo: i64, hi: i64, lets: i64, lcell: i64, snaps: i64) -> i64 {
+    if snaps == 0 {
+        return nb_lets_lookup(lets, lcell, buf, lo, hi);
+    }
+    let j0: i64 = nb_first_let_idx(buf, sa, sl, lo, hi, 0);
+    if j0 < 0 {
+        return nb_lets_lookup(lets, lcell, buf, lo, hi);
+    }
+    nb_lets_lookup_rest(lets, __mind_load_i64(snaps + j0 * 8), buf, lo, hi, 0, 0 - 1)
+}
+
 pub fn nb_block_stmts(st: NbState, buf: i64, stmts_addr: i64, stmts_len: i64, i: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64, srt: i64, loops: i64, lpcell: i64) -> NbState {
     if i >= stmts_len {
         return st;
@@ -40110,7 +40463,7 @@ pub fn nb_count_stmt(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         // i64-REFERENCES: nb_bind_mints_slot folds the narrow wrap slot with the
         // address-taken capture-copy slot (bare-ident RHS naming an address-
         // taken var) — the exact emit-side mint set of nb_stmt's assign arm.
-        if nb_bind_mints_slot(pw, ast_child2(node), buf, clcell) == 1 {
+        if nb_bind_mints_slot_assign(pw, ast_child2(node), buf, clcell) == 1 {
             return after_rhs + 1;
         }
         return after_rhs;
@@ -40698,14 +41051,103 @@ pub fn nb_at_contains_rest(at: i64, n: i64, buf: i64, lo: i64, hi: i64, i: i64) 
 // nb_count_stmt's let/assign arms and nb_while_carry so count, emit and the
 // loop-carry pre-walk stay id-locked by construction. `cell` is any threading
 // root carrying the registry at +88 (emit lcell or count clcell0).
+// LET form: a bare-ident init copies when its source is ADDRESS-TAKEN or REASSIGNED
+// anywhere in the fn (nb_at_assigned table). A reassigned source's slot can be
+// rewritten in place (a loop-carried post slot), so `let v = c; c = c + 1; .. v`
+// inside a loop would observe the later write through the alias. A never-assigned
+// source's slot is written once, so aliasing it stays sound (and main.mind, which has
+// no assignments, keeps its exact self-compile).
 pub fn nb_bind_mints_slot(w: i64, rhs_node: i64, buf: i64, cell: i64) -> i64 {
     if w < 64 {
         return 1;
     }
     if ast_kind(rhs_node) == ast_ident() {
-        if nb_at_contains(__mind_load_i64(cell + 88), buf, ast_span_lo(rhs_node), ast_span_hi(rhs_node)) == 1 {
-            return 1;
+        return nb_let_ident_copies(__mind_load_i64(cell + 88), buf, rhs_node);
+    }
+    0
+}
+
+// 1 iff a bare-ident let init `rhs_node` takes the LET copy slot: its source is
+// address-taken, or reassigned anywhere in the fn (or the assigned table overflowed).
+// Shared by nb_bind_mints_slot (count/emit/carry) and the DTK plan scan
+// (nb_dtk_scan_stmt), which cannot model the copy slot and refuses the plan instead.
+pub fn nb_let_ident_copies(at: i64, buf: i64, rhs_node: i64) -> i64 {
+    if nb_at_contains(at, buf, ast_span_lo(rhs_node), ast_span_hi(rhs_node)) == 1 {
+        return 1;
+    }
+    if at != 0 {
+        let asg: i64 = __mind_load_i64(at + nb_at_native_ctx_off() + 24);
+        if asg != 0 {
+            if __mind_load_i64(asg + 8) != 0 {
+                return 1;
+            }
+            if nb_at_contains(asg, buf, ast_span_lo(rhs_node), ast_span_hi(rhs_node)) == 1 {
+                return 1;
+            }
         }
+    }
+    0
+}
+
+// The fn's ASSIGNED-names table (same layout as the address-taken table: count,
+// overflow flag, 1024 (lo,hi) spans), hung off the atab side-channel at
+// ctx_off + 24. Overflow (flag set) makes every bare-ident let copy (always sound).
+pub fn nb_assigned_table(buf: i64, sa: i64, sl: i64) -> i64 {
+    let tab: i64 = __mind_alloc(16 + 1024 * 2 * 8);
+    __mind_store_i64(tab, 0);
+    __mind_store_i64(tab + 8, 0);
+    let _s: i64 = nb_assign_scan_stmts(tab, buf, sa, sl, 0);
+    tab
+}
+pub fn nb_assign_scan_stmts(tab: i64, buf: i64, sa: i64, sl: i64, i: i64) -> i64 {
+    if i >= sl {
+        return 0;
+    }
+    let _n: i64 = nb_assign_scan_node(tab, buf, __mind_load_i64(sa + i * 8));
+    nb_assign_scan_stmts(tab, buf, sa, sl, i + 1)
+}
+pub fn nb_assign_scan_node(tab: i64, buf: i64, node: i64) -> i64 {
+    if node == 0 {
+        return 0;
+    }
+    let k: i64 = ast_kind(node);
+    if k == ast_assign() {
+        let nm: i64 = ast_child0(node);
+        if nb_at_contains(tab, buf, ast_span_lo(nm), ast_span_hi(nm)) == 0 {
+            let _a: i64 = nb_at_add(tab, ast_span_lo(nm), ast_span_hi(nm));
+        }
+        return nb_assign_scan_node(tab, buf, ast_child2(node));
+    }
+    if k == ast_block() {
+        return nb_assign_scan_stmts(tab, buf, ast_child0(node), ast_aux(node), 0);
+    }
+    if k == ast_if() {
+        let _c: i64 = nb_assign_scan_node(tab, buf, ast_child0(node));
+        let _t: i64 = nb_assign_scan_node(tab, buf, ast_child1(node));
+        return nb_assign_scan_node(tab, buf, ast_child2(node));
+    }
+    if k == ast_while() {
+        return nb_assign_scan_node(tab, buf, ast_child1(node));
+    }
+    if k == ast_let() {
+        return nb_assign_scan_node(tab, buf, ast_child2(node));
+    }
+    0
+}
+
+// ASSIGN form (`NAME = RHS`): EVERY bare-ident RHS copies into a fresh slot. A slot is
+// not immutable once loops exist — a loop-carried var's post slot is rewritten each
+// iteration — so `w = c` aliasing c's slot would observe c's later writes, and a
+// carried `w = c` had no slot of its own (nb_while_carry's post_id = arhs-1 named an
+// unrelated earlier id). Measured: `while .. { let mut v = 2; v = v; w = c; c = c + 1; }`
+// exited with the wrong w on the native ELF while Rust/MLIR agreed. One mov pair.
+// (main.mind has no assignments at all, so its self-compile is unchanged.)
+pub fn nb_bind_mints_slot_assign(w: i64, rhs_node: i64, buf: i64, cell: i64) -> i64 {
+    if w < 64 {
+        return 1;
+    }
+    if ast_kind(rhs_node) == ast_ident() {
+        return 1;
     }
     0
 }
@@ -41527,7 +41969,8 @@ pub fn nb_dtk_zero(t: i64, n: i64, i: i64) -> i64 {
 //  +0 next_id (running SSA counter, seeded n_params) ; +8 eligible (1/0) ;
 //  +16 uses table ; +24 defs table (1 = candidate def) ; +32 scan let-env
 //  (triples lo,hi,id) ; +40 env count ; +48 buf ; +56 params_addr ;
-//  +64 n_params ; +72 table bound (nb).
+//  +64 n_params ; +72 table bound (nb) ; +80 atab (address-taken registry,
+//  assigned-names table at ctx_off + 24 — read by the let arm's copy-slot check).
 pub fn nb_dtk_fail(dsc: i64) -> i64 {
     __mind_store_i64(dsc + 8, 0);
     0
@@ -41649,12 +42092,30 @@ pub fn nb_dtk_scan_stmt(dsc: i64, node: i64, is_last: i64) -> i64 {
                 return nb_dtk_fail(dsc);
             }
         }
+        // A bare-ident init whose source is reassigned/address-taken mints the LET
+        // copy slot on the emit side (nb_bind_mints_slot), loaded through the raw
+        // stack home — not modelled here, so a reg-homed source would be read from
+        // its stale stack slot (measured: helper `let q = p; let e = q; q = 5;
+        // return e` exited 0, Rust 3). Refuse the plan; the stack scheme is exact.
+        if ast_kind(ast_child2(node)) == ast_ident() {
+            if nb_let_ident_copies(__mind_load_i64(dsc + 80), buf, ast_child2(node)) == 1 {
+                return nb_dtk_fail(dsc);
+            }
+        }
         let v: i64 = nb_dtk_scan_expr(dsc, ast_child2(node));
         let nl: i64 = ast_child0(node);
         let _e: i64 = nb_dtk_env_bind(dsc, ast_span_lo(nl), ast_span_hi(nl), v);
         return 0;
     }
     if k == ast_assign() {
+        // A bare-ident RHS (`w = y`) mints a fresh copy slot on the emit side
+        // (nb_bind_mints_slot_assign), loaded/stored through raw stack homes —
+        // not modelled here, so a reg-homed `y` would be read from its stale
+        // stack slot (measured: helper `w = y; return w` exited 0, Rust 2).
+        // Ineligible => no plan => every value lives on the stack.
+        if ast_kind(ast_child2(node)) == ast_ident() {
+            return nb_dtk_fail(dsc);
+        }
         let v: i64 = nb_dtk_scan_expr(dsc, ast_child2(node));
         let nl: i64 = ast_child0(node);
         let _e: i64 = nb_dtk_env_bind(dsc, ast_span_lo(nl), ast_span_hi(nl), v);
@@ -41767,7 +42228,8 @@ pub fn nb_dtk_plan(buf: i64, stmts_addr: i64, stmts_len: i64, params_addr: i64, 
     let _zu: i64 = nb_dtk_zero(uses, nb, 0);
     let _zd: i64 = nb_dtk_zero(defs, nb, 0);
     let env: i64 = __mind_alloc(512 * 3 * 8);
-    let dsc: i64 = __mind_alloc(80);
+    let dsc: i64 = __mind_alloc(88);
+    __mind_store_i64(dsc + 80, atab);
     __mind_store_i64(dsc + 0, n_params);
     __mind_store_i64(dsc + 8, 1);
     __mind_store_i64(dsc + 16, uses);
@@ -42029,10 +42491,11 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // this body), built BEFORE the count walk so the count-side capture-copy
     // accounting (nb_bind_mints_slot) sees it. Empty for main.mind's own prefix-
     // `&`-free source — zero count-side or emit-side effect during self-compile.
-    let atab: i64 = __mind_alloc(16 + 1024 * 2 * 8 + 24);
+    let atab: i64 = __mind_alloc(16 + 1024 * 2 * 8 + 32);
     __mind_store_i64(atab, 0);
     __mind_store_i64(atab + 8, 0);
     let _nctx: i64 = nb_at_set_native_ctx(atab, ordered, n_fns, node);
+    __mind_store_i64(atab + nb_at_native_ctx_off() + 24, nb_assigned_table(buf, stmts_addr, stmts_len));
     let _ats: i64 = nb_at_scan_stmts(atab, buf, stmts_addr, stmts_len, 0);
     __mind_store_i64(clcell0 + 88, atab);
     // Register struct-typed params into the count-lets FIRST, so the field-access
@@ -43615,9 +44078,11 @@ pub fn selftest_dtk_plan(src_addr: i64, src_len: i64, out_addr: i64) -> i64 {
     let body: i64 = ast_child2(fnode);
     let stmts_addr: i64 = ast_child0(body);
     let stmts_len: i64 = ast_aux(body);
-    let atab: i64 = __mind_alloc(16 + 1024 * 2 * 8);
+    let atab: i64 = __mind_alloc(16 + 1024 * 2 * 8 + 32);
     __mind_store_i64(atab, 0);
     __mind_store_i64(atab + 8, 0);
+    let _nz: i64 = nb_at_set_native_ctx(atab, 0, 0, 0);
+    __mind_store_i64(atab + nb_at_native_ctx_off() + 24, nb_assigned_table(src_addr, stmts_addr, stmts_len));
     let _ats: i64 = nb_at_scan_stmts(atab, src_addr, stmts_addr, stmts_len, 0);
     // Build the struct registry from the ALREADY-lexed tokens (Rule 2c: no
     // re-lex). nb_count_stmts's `let X: T = ..` arm resolves the annotation type

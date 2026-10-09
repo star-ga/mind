@@ -1,0 +1,11 @@
+// Regression class (twin-emitter review round 3, runtime leg): native ELF let alias of a carried var must not observe the var's later write.
+fn main() -> i64 {
+    let mut c: i64 = 0;
+    let mut s: i64 = 0;
+    while c < 5 {
+        let v: i64 = c;
+        c = c + 1;
+        s = s + v;
+    }
+    return s;
+}
