@@ -1,0 +1,15 @@
+// Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
+// The shadow lives in a nested then-block; the outer then-block's write survives.
+fn main() -> i64 {
+    let mut a: i64 = 1;
+    let mut x: i64 = 0;
+    if a >= 1 {
+        x = 5;
+        if a >= 0 {
+            x = 6;
+            let mut x: i64 = 7;
+            x = 9;
+        }
+    }
+    return x;
+}

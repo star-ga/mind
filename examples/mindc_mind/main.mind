@@ -14279,7 +14279,15 @@ pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
         // Overlay each carried var name -> exit_id into lvbuf (innermost binding).
         let _ov: i64 = mixed_while_rebind(buf, lvbuf, nlv, w_merge, __mind_load_i64(w_nm), 0);
         // Mirror the rebind into acc (the binding's then-value for a poison/merge tail).
-        let _ova: i64 = mixed_while_rebind_acc(buf, acc, __mind_load_i64(acc_cell), w_merge, __mind_load_i64(w_nm), 0);
+        // FALL-THROUGH walks (esc_to_lv==1) skip names this block already declared with a
+        // top-level `let`: the loop mutates that branch-local shadow, so the acc record
+        // keeps the frozen pre-shadow value (lower.rs GAP 2), as in the assign arm.
+        let w_upto: i64 = if esc_to_lv == 1 {
+            idx
+        } else {
+            0
+        };
+        let _ova: i64 = mixed_while_rebind_acc_nonlocal(buf, acc, __mind_load_i64(acc_cell), w_merge, __mind_load_i64(w_nm), stmts_addr, w_upto, 0);
         // base advances past OP_WHILE vids + the trailing unit (endbase + 1).
         __mind_store_i64(base_cell, __mind_load_i64(w_end) + 1);
         return emit_mixed_walk(sw2, stmts_addr, n, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv_cell, acc, acc_cell, okcell, strbuf, offs, ncount, esc_to_lv, nlv0);
@@ -14351,8 +14359,19 @@ pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
         let as_s: EmitState = emit_mic3_tree_body(s, nodes, an, vidbuf, buf, strbuf, offs, ncount, 0);
         __mind_store_i64(base_cell, cur_base + ann);
         __mind_store_i64(lvbuf + apos * 24 + 16, aroot);
-        let ae: i64 = lv_find(acc, __mind_load_i64(acc_cell), buf, ast_span_lo(aname), ast_span_hi(aname));
-        let _aae: i64 = mixed_walk_acc_escape(buf, acc, acc_cell, ae, apos, nlv0, aname, aroot);
+        // FALL-THROUGH walks (esc_to_lv==1): once this block has DECLARED NAME with a
+        // top-level `let`, the assign writes that branch-local shadow, not the outer
+        // binding — lower.rs keeps it out of then_writes and its merge takes the frozen
+        // PRE-SHADOW value (GAP 2), so an existing acc record must keep that value.
+        let a_shadow: i64 = if esc_to_lv == 1 {
+            block_lets_name_before(stmts_addr, idx, buf, ast_span_lo(aname), ast_span_hi(aname), 0)
+        } else {
+            0
+        };
+        if a_shadow == 0 {
+            let ae: i64 = lv_find(acc, __mind_load_i64(acc_cell), buf, ast_span_lo(aname), ast_span_hi(aname));
+            let _aae: i64 = mixed_walk_acc_escape(buf, acc, acc_cell, ae, apos, nlv0, aname, aroot);
+        }
         return emit_mixed_walk(as_s, stmts_addr, n, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv_cell, acc, acc_cell, okcell, strbuf, offs, ncount, esc_to_lv, nlv0);
     }
     if ast_kind(stmt) != ast_let() {
@@ -14440,19 +14459,22 @@ pub fn mixed_while_rebind(src: i64, lvbuf: i64, nlv: i64, merge: i64, nm: i64, i
 
 // Mirror the exit-id rebind into the acc accumulator's then-value slot (+16), so a
 // fall-through poison/merge tail reads the carried var's post-loop value. No-op if the
-// name is not in acc (a body-local-only carried var that never reached the merge set).
-pub fn mixed_while_rebind_acc(src: i64, acc: i64, nacc: i64, merge: i64, nm: i64, i: i64) -> i64 {
+// name is not in acc (a body-local-only carried var that never reached the merge set) or
+// is declared by a top-level `let` among the block's stmts[0..upto) (a branch-local
+// shadow; upto=0 skips nothing).
+pub fn mixed_while_rebind_acc_nonlocal(src: i64, acc: i64, nacc: i64, merge: i64, nm: i64, stmts_addr: i64, upto: i64, i: i64) -> i64 {
     if i >= nm {
         return nm;
     }
     let lo: i64 = __mind_load_i64(merge + i * 24 + 0);
     let hi: i64 = __mind_load_i64(merge + i * 24 + 8);
-    let exit_id: i64 = __mind_load_i64(merge + i * 24 + 16);
-    let pos: i64 = lv_find(acc, nacc, src, lo, hi);
-    if pos >= 0 {
-        __mind_store_i64(acc + pos * 24 + 16, exit_id)
+    if block_lets_name_before(stmts_addr, upto, src, lo, hi, 0) == 0 {
+        let pos: i64 = lv_find(acc, nacc, src, lo, hi);
+        if pos >= 0 {
+            __mind_store_i64(acc + pos * 24 + 16, __mind_load_i64(merge + i * 24 + 16))
+        }
     }
-    mixed_while_rebind_acc(src, acc, nacc, merge, nm, i + 1)
+    mixed_while_rebind_acc_nonlocal(src, acc, nacc, merge, nm, stmts_addr, upto, i + 1)
 }
 
 // Fill 32-byte bind records from the ordered NAME accumulator (acc), all POISON.

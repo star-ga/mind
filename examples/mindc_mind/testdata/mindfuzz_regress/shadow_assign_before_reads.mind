@@ -1,0 +1,14 @@
+// Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
+// Shadow init and post-shadow assign read the names; a second outer name reads the shadow.
+fn main() -> i64 {
+    let mut a: i64 = 1;
+    let mut x: i64 = 2;
+    let mut y: i64 = 0;
+    if a >= 1 {
+        x = x + 5;
+        let mut x: i64 = x + 7;
+        x = x + 9;
+        y = x;
+    }
+    return x + y;
+}
