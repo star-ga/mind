@@ -11621,14 +11621,6 @@ fn cconv_attr_for(callconv: crate::ast::CallConv) -> &'static str {
     }
 }
 
-/// IR-audit #1 — normalize an extern return-type token to a valid signless
-/// MLIR type. The SysV narrow-scalar tokens `u8`/`u16`/`u32`/`bool` are MIND
-/// names (chosen in `src/eval/lower.rs::extern_ret_type_to_mlir_for` so their
-/// signedness survives to `extern_ret_narrow_ext`); map them to the signless
-/// MLIR width. Every other string is already valid MLIR (`i8`/`i16`/`i32`/`i64`/
-/// `f32`/`f64`/`!llvm.ptr`, including the Win64 classifier outputs) and passes
-/// through untouched.
-#[cfg(feature = "std-surface")]
 /// The W2-trap trampoline `llvm.func internal @__mind_div_trap()`, plus the
 /// `_exit` declaration it needs. When the program declares `extern "C" fn
 /// _exit` itself, that declaration (emitted from `extern_c_fns`, whose integer
@@ -11678,6 +11670,13 @@ fn div_trap_trampoline(ctx: &LoweringContext) -> Result<String, MlirLowerError> 
     ))
 }
 
+/// IR-audit #1 — normalize an extern return-type token to a valid signless
+/// MLIR type. The SysV narrow-scalar tokens `u8`/`u16`/`u32`/`bool` are MIND
+/// names (chosen in `src/eval/lower.rs::extern_ret_type_to_mlir_for` so their
+/// signedness survives to `extern_ret_narrow_ext`); map them to the signless
+/// MLIR width. Every other string is already valid MLIR (`i8`/`i16`/`i32`/`i64`/
+/// `f32`/`f64`/`!llvm.ptr`, including the Win64 classifier outputs) and passes
+/// through untouched.
 fn extern_ret_mlir_ty(tok: &str) -> &str {
     match tok {
         "u8" => "i8",

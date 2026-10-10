@@ -127,9 +127,24 @@ with a fixed exit status. Where both backends (`--backend native` and
 For `i64` operands, `x / 0`, `x % 0`, `INT_MIN / -1` and `INT_MIN % -1` are
 a deterministic trap: the process performs no further action (in particular it
 writes nothing more to any file descriptor) and exits with status **79**. For
-`i8`/`i16`/`i32` and unsigned operands a zero divisor traps the same way; the
-narrow `MIN / -1` pair does not trap and gives `MIN` (remainder `0`), the result
-of dividing the sign-extended values as `i64` and narrowing.
+`i8`/`i16`/`i32` operands a zero divisor traps the same way; the narrow
+`MIN / -1` pair does not trap and gives `MIN` (remainder `0`), the result of
+dividing the sign-extended values as `i64` and narrowing.
+
+Unsigned operands divide as unsigned values and trap only on a zero divisor:
+
+- MLIR backend: `u8`/`u16`/`u32`/`u64` use unsigned division (`divui`/`remui`)
+  and a zero divisor traps with status 79.
+- Native backend: `u8`/`u16`/`u32` values are held zero-extended, so their
+  division gives the unsigned result and a zero divisor traps with status 79.
+  Division of 64-bit unsigned values is **not implemented natively**. The
+  native backend refuses (builds nothing) when a `/` or `%` sits in a function
+  that can hold a `u64`/`usize` value: the function's signature or body spells
+  `u64` or `usize` (an annotation, a cast, a generic argument; comments and
+  string literals do not count), or names a function whose return type spells
+  it, a struct or enum whose declaration spells it (or one of its fields or
+  variants), or a type alias, const or static of such a type. Build such a
+  program with the MLIR backend.
 
 Every other integer division truncates toward zero, and every other remainder
 has the sign of the dividend (`-7 / 2 == -3`, `-7 % 2 == -1`, `7 % -2 == 1`).
@@ -140,6 +155,12 @@ arithmetic for signed operands.
 
 The program does not need to do anything to get this behaviour. The MLIR
 backend omits the check when the divisor is a constant other than `0` and `-1`.
+
+Scope: the trap is implemented by `mindc build` with the MLIR and native
+backends. Three other evaluators do not implement it yet: the tree-walking
+interpreter, the `--emit-mlir` text export (`src/eval/mlir_export.rs`, a bare
+`arith.divsi`), and compile-time constant evaluation (`src/opt/comptime.rs`,
+which refuses a zero divisor and folds `INT_MIN / -1` to `INT_MIN`).
 
 ## Native backend: `main` parameters
 

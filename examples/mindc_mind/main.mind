@@ -32563,6 +32563,48 @@ pub fn nb_div_guarded(code: String, disp: i64, is_mod: i64) -> String {
     i5
 }
 
+// W2-trap unsigned fence (fail-closed). nb_div_guarded is the SIGNED trapping
+// idiv sequence. It is exact for i64/i32/i16/i8 and for u32/u16/u8 values (held
+// zero-extended in 64 bits, so idiv equals div on them, -1 and INT_MIN never
+// occur, and the only trap left is a zero divisor). A u64/usize operand with the
+// top bit set would instead divide wrongly or hit the INT_MIN/-1 trap, and the
+// native width lattice does not tell u64 from i64. So a `/` or `%` at byte
+// offset `pos` inside a fn that can hold a u64 value (u64x_prepare: the fn spells
+// `u64`/`usize` or names a u64-returning fn, a u64 field/variant/alias/const)
+// POISONS the fn (the whole module refuses, 0 bytes) instead of emitting signed
+// idiv. An overflowed or unbalanced scan, or a synthetic node with no source
+// position, fences every division of a module that spells the type. main.mind
+// spells neither, so self-compile is unaffected. A null frt (only the
+// float-only fp selftest drivers) is never fenced.
+// deferred: would emit `xor edx,edx ; div` with a zero-only trap for proven-u64
+// operands, refused because the width lattice has no u64 code — upgrade path:
+// give alias_annotate_call_expr a distinct u64 code and route it here.
+pub fn nb_div_unsigned_fenced(op: i64, lcell: i64, pos: i64) -> i64 {
+    if op != op_div() {
+        if op != op_mod() {
+            return 0;
+        }
+    }
+    let frt: i64 = __mind_load_i64(lcell + 16);
+    if frt == 0 {
+        return 0;
+    }
+    if frt_has_unsigned64(frt) == 0 {
+        return 0;
+    }
+    let spans: i64 = __mind_load_i64(frt + (frt_u64_word() + 2) * 8);
+    if spans == 0 {
+        return 1;
+    }
+    if u64x_count(spans) < 0 {
+        return 1;
+    }
+    if pos <= 0 {
+        return 1;
+    }
+    u64x_span_contains(spans, pos, 0)
+}
+
 // The process exit status of the integer-division trap (x/0, x%0, INT_MIN/-1,
 // INT_MIN%-1). One documented value for every backend: docs/errors.md and the
 // MLIR lowering's MIND_DIV_TRAP_EXIT_CODE use the same number. Distinct from the
@@ -35626,6 +35668,11 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         }
         // mov rax,[lhs] ; OP rax,[rhs] ; mov [dst],rax. A comparison op routes through
         // cmp+setcc+movzx (-> 0/1); Add/Sub/Mul through the in-place arith form.
+        // W2-trap unsigned fence: a `/` or `%` inside a fn that can hold a u64
+        // value poisons the module (fail-closed) instead of emitting signed idiv.
+        if nb_div_unsigned_fenced(op, lcell, ast_span_lo(node)) == 1 {
+            __mind_store_i64(lcell + 80, 1)
+        }
         let dplan: i64 = __mind_load_i64(lcell + 96);
         let c1: String = nb_val_load_rax(dplan, lhs_id, s2.code);
         let setcc: i64 = nb_setcc_opcode(op);
@@ -46922,9 +46969,74 @@ pub fn frt_slot_words() -> i64 {
 }
 
 pub fn frt_alloc() -> i64 {
-    let t: i64 = __mind_alloc((1 + frt_cap() * frt_slot_words()) * 8);
+    let t: i64 = __mind_alloc((4 + frt_cap() * frt_slot_words()) * 8);
     __mind_store_i64(t + 0, 0);
+    __mind_store_i64(t + frt_u64_word() * 8, 0);
+    __mind_store_i64(t + (frt_u64_word() + 1) * 8, 0);
+    __mind_store_i64(t + (frt_u64_word() + 2) * 8, 0);
     t
+}
+
+// W2-trap unsigned fence: three words after the last fn slot. +0 is the module-
+// wide "spells a 64-bit unsigned type" flag (frt_scan_unsigned64); when it is set,
+// +1 points at the u64-associated name list and +2 at the tainted fn-span list
+// (u64x_prepare), otherwise both stay 0.
+pub fn frt_u64_word() -> i64 {
+    1 + frt_cap() * frt_slot_words()
+}
+
+// 1 iff the module's token stream names `u64` or `usize` anywhere (a type
+// annotation, a cast target, a generic argument, an alias target, a std
+// signature in the fed closure); comments and string literals never count.
+pub fn frt_has_unsigned64(t: i64) -> i64 {
+    __mind_load_i64(t + frt_u64_word() * 8)
+}
+
+// 1 iff token `pos` is the identifier `u64` (117 54 52) or `usize`
+// (117 115 105 122 101). Byte compares only, so the per-token scan allocates
+// nothing in the native bump arena.
+pub fn tok_is_unsigned64_name(toks: Vec, buf: i64, pos: i64) -> i64 {
+    if tok_kind(toks, pos) != tk_ident() {
+        return 0;
+    }
+    let lo: i64 = tok_lo(toks, pos);
+    let n: i64 = tok_hi(toks, pos) - lo;
+    if load_byte(buf, lo) != 117 {
+        return 0;
+    }
+    if n == 3 {
+        if load_byte(buf, lo + 1) == 54 {
+            if load_byte(buf, lo + 2) == 52 {
+                return 1;
+            }
+        }
+        return 0;
+    }
+    if n == 5 {
+        if load_byte(buf, lo + 1) == 115 {
+            if load_byte(buf, lo + 2) == 105 {
+                if load_byte(buf, lo + 3) == 122 {
+                    if load_byte(buf, lo + 4) == 101 {
+                        return 1;
+                    }
+                }
+            }
+        }
+    }
+    0
+}
+
+// Scan the ALREADY-lexed token stream once (no re-lex, Rule 2c) and record
+// whether any 64-bit unsigned type is spelled. Tail-recursive like frt_collect.
+pub fn frt_scan_unsigned64(toks: Vec, buf: i64, pos: i64, t: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return t;
+    }
+    if tok_is_unsigned64_name(toks, buf, pos) == 1 {
+        __mind_store_i64(t + frt_u64_word() * 8, 1);
+        return t;
+    }
+    frt_scan_unsigned64(toks, buf, pos + 1, t)
 }
 
 pub fn frt_count(t: i64) -> i64 {
@@ -47122,6 +47234,8 @@ pub fn frt_collect(toks: Vec, buf: i64, pos: i64, t: i64) -> i64 {
 pub fn frt_build(src_addr: i64, src_len: i64) -> i64 {
     let tokens: Vec = lex(src_addr, src_len);
     let t: i64 = frt_alloc();
+    let _u: i64 = frt_scan_unsigned64(tokens, src_addr, 0, t);
+    let _x: i64 = u64x_prepare(tokens, src_addr, t);
     frt_collect(tokens, src_addr, 0, t)
 }
 
@@ -47136,7 +47250,399 @@ pub fn frt_build(src_addr: i64, src_len: i64) -> i64 {
 // fewer arena-resident lex. src_addr is still the byte source the spans key into.
 pub fn frt_build_from_tokens(tokens: Vec, src_addr: i64) -> i64 {
     let t: i64 = frt_alloc();
+    let _u: i64 = frt_scan_unsigned64(tokens, src_addr, 0, t);
+    let _x: i64 = u64x_prepare(tokens, src_addr, t);
     frt_collect(tokens, src_addr, 0, t)
+}
+
+// ===== W2-trap unsigned fence: which fns can hold a 64-bit unsigned value =====
+// Only run when the module spells `u64`/`usize` (main.mind spells neither, so
+// its self-compile skips all of this). Pass B collects, to a fixpoint, the names
+// that carry a u64 value into code that does not spell the type: fns whose
+// return type spells it, struct/enum names and their field/variant names when
+// the body spells it, type aliases and consts/statics typed with it. Pass C
+// records the span of every fn whose tokens (signature or body) spell a u64
+// type or mention one of those names. A `/` or `%` inside such a span is
+// refused natively (nb_div_unsigned_fenced). A list overflow or an unbalanced
+// body records -1, which fences every division in the module (fail-closed).
+pub fn u64x_cap() -> i64 {
+    4096
+}
+
+pub fn u64x_new() -> i64 {
+    let t: i64 = __mind_alloc((1 + 2 * u64x_cap()) * 8);
+    __mind_store_i64(t, 0);
+    t
+}
+
+pub fn u64x_count(t: i64) -> i64 {
+    __mind_load_i64(t)
+}
+
+pub fn u64x_lo(t: i64, k: i64) -> i64 {
+    __mind_load_i64(t + (1 + 2 * k) * 8)
+}
+
+pub fn u64x_hi(t: i64, k: i64) -> i64 {
+    __mind_load_i64(t + (2 + 2 * k) * 8)
+}
+
+pub fn u64x_push(t: i64, lo: i64, hi: i64) -> i64 {
+    let n: i64 = u64x_count(t);
+    if n < 0 {
+        return 0;
+    }
+    if n >= u64x_cap() {
+        __mind_store_i64(t, 0 - 1);
+        return 0;
+    }
+    __mind_store_i64(t + (1 + 2 * n) * 8, lo);
+    __mind_store_i64(t + (2 + 2 * n) * 8, hi);
+    __mind_store_i64(t, n + 1);
+    0
+}
+
+// 1 iff the name list holds the byte span buf[lo, hi) (an overflowed list holds
+// every name).
+pub fn u64x_has_name(t: i64, buf: i64, lo: i64, hi: i64, k: i64) -> i64 {
+    let n: i64 = u64x_count(t);
+    if n < 0 {
+        return 1;
+    }
+    if k >= n {
+        return 0;
+    }
+    if bytes_eq(buf, lo, hi, buf, u64x_lo(t, k), u64x_hi(t, k)) == 1 {
+        return 1;
+    }
+    u64x_has_name(t, buf, lo, hi, k + 1)
+}
+
+pub fn u64x_push_name(t: i64, toks: Vec, buf: i64, pos: i64) -> i64 {
+    if tok_kind(toks, pos) != tk_ident() {
+        return 0;
+    }
+    if u64x_has_name(t, buf, tok_lo(toks, pos), tok_hi(toks, pos), 0) == 1 {
+        return 0;
+    }
+    u64x_push(t, tok_lo(toks, pos), tok_hi(toks, pos))
+}
+
+// 1 iff token `pos` is an identifier spelling a 64-bit unsigned type or naming
+// a u64-associated declaration.
+pub fn u64x_tok_tainted(toks: Vec, buf: i64, pos: i64, names: i64) -> i64 {
+    if tok_kind(toks, pos) != tk_ident() {
+        return 0;
+    }
+    if tok_is_unsigned64_name(toks, buf, pos) == 1 {
+        return 1;
+    }
+    u64x_has_name(names, buf, tok_lo(toks, pos), tok_hi(toks, pos), 0)
+}
+
+// 1 iff token `pos` is the identifier whose bytes are b0..b5 (first n used).
+pub fn u64x_tok_word(toks: Vec, buf: i64, pos: i64, n: i64, b0: i64, b1: i64, b2: i64, b3: i64, b4: i64, b5: i64) -> i64 {
+    if tok_kind(toks, pos) != tk_ident() {
+        return 0;
+    }
+    let lo: i64 = tok_lo(toks, pos);
+    if tok_hi(toks, pos) - lo != n {
+        return 0;
+    }
+    if load_byte(buf, lo) != b0 {
+        return 0;
+    }
+    if load_byte(buf, lo + 1) != b1 {
+        return 0;
+    }
+    if load_byte(buf, lo + 2) != b2 {
+        return 0;
+    }
+    if load_byte(buf, lo + 3) != b3 {
+        return 0;
+    }
+    if n == 4 {
+        return 1;
+    }
+    if load_byte(buf, lo + 4) != b4 {
+        return 0;
+    }
+    if n == 5 {
+        return 1;
+    }
+    if load_byte(buf, lo + 5) != b5 {
+        return 0;
+    }
+    1
+}
+
+// 1 iff a token from `pos` up to the first `stop` token, `{` or EOF is tainted.
+pub fn u64x_span_spells(toks: Vec, buf: i64, pos: i64, stop: i64, names: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0;
+    }
+    let k: i64 = tok_kind(toks, pos);
+    if k == stop {
+        return 0;
+    }
+    if k == tk_lbrace() {
+        return 0;
+    }
+    if u64x_tok_tainted(toks, buf, pos, names) == 1 {
+        return 1;
+    }
+    u64x_span_spells(toks, buf, pos + 1, stop, names)
+}
+
+// 1 iff a token after the signature's `->` (up to the body `{` or `;`) is tainted.
+pub fn u64x_ret_spells(toks: Vec, buf: i64, pos: i64, seen_arrow: i64, names: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0;
+    }
+    let k: i64 = tok_kind(toks, pos);
+    if k == tk_lbrace() {
+        return 0;
+    }
+    if k == tk_semi() {
+        return 0;
+    }
+    if k == tk_arrow() {
+        return u64x_ret_spells(toks, buf, pos + 1, 1, names);
+    }
+    if seen_arrow == 1 {
+        if u64x_tok_tainted(toks, buf, pos, names) == 1 {
+            return 1;
+        }
+    }
+    u64x_ret_spells(toks, buf, pos + 1, seen_arrow, names)
+}
+
+// The index of the first `{` at or after `pos`, or -1 when a `;` or EOF comes
+// first (an extern / bodiless declaration, a tuple or unit struct).
+pub fn u64x_body_start(toks: Vec, pos: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0 - 1;
+    }
+    let k: i64 = tok_kind(toks, pos);
+    if k == tk_lbrace() {
+        return pos;
+    }
+    if k == tk_semi() {
+        return 0 - 1;
+    }
+    u64x_body_start(toks, pos + 1)
+}
+
+// Walk a brace body from just after its `{` (depth 1). Returns close*2 + tainted
+// where close is the index of the matching `}`, or -1 when EOF comes first.
+pub fn u64x_body_scan(toks: Vec, buf: i64, pos: i64, depth: i64, tainted: i64, names: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0 - 1;
+    }
+    let k: i64 = tok_kind(toks, pos);
+    if k == tk_lbrace() {
+        return u64x_body_scan(toks, buf, pos + 1, depth + 1, tainted, names);
+    }
+    if k == tk_rbrace() {
+        if depth == 1 {
+            return pos * 2 + tainted;
+        }
+        return u64x_body_scan(toks, buf, pos + 1, depth - 1, tainted, names);
+    }
+    if tainted == 0 {
+        if u64x_tok_tainted(toks, buf, pos, names) == 1 {
+            return u64x_body_scan(toks, buf, pos + 1, depth, 1, names);
+        }
+    }
+    u64x_body_scan(toks, buf, pos + 1, depth, tainted, names)
+}
+
+// Push the member names of a struct/enum body (pos just after `{`, up to the
+// index `close`): every depth-1 identifier followed by `:` (a field) or preceded
+// by `{` / `,` (a field or a variant).
+pub fn u64x_push_members(toks: Vec, buf: i64, pos: i64, close: i64, depth: i64, names: i64) -> i64 {
+    if pos >= close {
+        return 0;
+    }
+    let k: i64 = tok_kind(toks, pos);
+    if k == tk_lbrace() {
+        return u64x_push_members(toks, buf, pos + 1, close, depth + 1, names);
+    }
+    if k == tk_rbrace() {
+        return u64x_push_members(toks, buf, pos + 1, close, depth - 1, names);
+    }
+    if depth == 1 {
+        if k == tk_ident() {
+            let pk: i64 = tok_kind(toks, pos - 1);
+            if tok_kind(toks, pos + 1) == tk_colon() {
+                let _a: i64 = u64x_push_name(names, toks, buf, pos);
+            }
+            if pk == tk_lbrace() {
+                let _b: i64 = u64x_push_name(names, toks, buf, pos);
+            }
+            if pk == tk_comma() {
+                let _c: i64 = u64x_push_name(names, toks, buf, pos);
+            }
+        }
+    }
+    u64x_push_members(toks, buf, pos + 1, close, depth, names)
+}
+
+// `struct`/`enum` NAME at `pos` (the keyword's index): when the declaration
+// spells a u64 type, push NAME and its member names.
+pub fn u64x_aggregate(toks: Vec, buf: i64, pos: i64, names: i64) -> i64 {
+    let j: i64 = u64x_body_start(toks, pos + 2);
+    if j < 0 {
+        if u64x_span_spells(toks, buf, pos + 2, tk_semi(), names) == 1 {
+            return u64x_push_name(names, toks, buf, pos + 1);
+        }
+        return 0;
+    }
+    let r: i64 = u64x_body_scan(toks, buf, j + 1, 1, 0, names);
+    if r < 0 {
+        __mind_store_i64(names, 0 - 1);
+        return 0;
+    }
+    let close: i64 = r / 2;
+    let sig: i64 = u64x_span_spells(toks, buf, pos + 2, tk_semi(), names);
+    if r - close * 2 + sig == 0 {
+        return 0;
+    }
+    let _n: i64 = u64x_push_name(names, toks, buf, pos + 1);
+    u64x_push_members(toks, buf, j + 1, close, 1, names)
+}
+
+// Pass B, one sweep over the whole token stream. The recursion runs once per
+// token, so it stays a thin driver (a small native frame: the bounded profile's
+// stack must hold one frame per token of the combined source); the per-token
+// work lives in u64x_decl_at.
+pub fn u64x_scan_decls(toks: Vec, buf: i64, pos: i64, names: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0;
+    }
+    let _d: i64 = u64x_decl_at(toks, buf, pos, names);
+    u64x_scan_decls(toks, buf, pos + 1, names)
+}
+
+pub fn u64x_decl_at(toks: Vec, buf: i64, pos: i64, names: i64) -> i64 {
+    if u64x_count(names) < 0 {
+        return 0;
+    }
+    let k: i64 = tok_kind(toks, pos);
+    if k == tk_kw_fn() {
+        if tok_kind(toks, pos + 1) == tk_ident() {
+            if u64x_ret_spells(toks, buf, pos + 2, 0, names) == 1 {
+                let _f: i64 = u64x_push_name(names, toks, buf, pos + 1);
+            }
+        }
+    }
+    if k == tk_ident() {
+        if tok_kind(toks, pos + 1) == tk_ident() {
+            // struct = 115 116 114 117 99 116 ; enum = 101 110 117 109
+            if u64x_tok_word(toks, buf, pos, 6, 115, 116, 114, 117, 99, 116) == 1 {
+                let _s: i64 = u64x_aggregate(toks, buf, pos, names);
+            }
+            if u64x_tok_word(toks, buf, pos, 4, 101, 110, 117, 109, 0, 0) == 1 {
+                let _e: i64 = u64x_aggregate(toks, buf, pos, names);
+            }
+            // type = 116 121 112 101 (alias NAME = TYPE ;)
+            if u64x_tok_word(toks, buf, pos, 4, 116, 121, 112, 101, 0, 0) == 1 {
+                if u64x_span_spells(toks, buf, pos + 2, tk_semi(), names) == 1 {
+                    let _t: i64 = u64x_push_name(names, toks, buf, pos + 1);
+                }
+            }
+            // const = 99 111 110 115 116 ; static = 115 116 97 116 105 99 (NAME : TYPE =)
+            let is_const: i64 = u64x_tok_word(toks, buf, pos, 5, 99, 111, 110, 115, 116, 0);
+            let is_static: i64 = u64x_tok_word(toks, buf, pos, 6, 115, 116, 97, 116, 105, 99);
+            if is_const + is_static > 0 {
+                if u64x_span_spells(toks, buf, pos + 2, tk_eq(), names) == 1 {
+                    let _c: i64 = u64x_push_name(names, toks, buf, pos + 1);
+                }
+            }
+        }
+    }
+    0
+}
+
+// Repeat pass B until the name list stops growing (a name can be declared after
+// its first use). More than 16 sweeps marks the list overflowed (fence all).
+pub fn u64x_collect_fix(toks: Vec, buf: i64, names: i64, rounds: i64) -> i64 {
+    let before: i64 = u64x_count(names);
+    let _s: i64 = u64x_scan_decls(toks, buf, 0, names);
+    let after: i64 = u64x_count(names);
+    if after < 0 {
+        return 0;
+    }
+    if after == before {
+        return 0;
+    }
+    if rounds >= 16 {
+        __mind_store_i64(names, 0 - 1);
+        return 0;
+    }
+    u64x_collect_fix(toks, buf, names, rounds + 1)
+}
+
+// Pass C: record the [lo, hi) byte span of every tainted fn (nested fns too).
+// Thin per-token driver like u64x_scan_decls; the work is in u64x_fn_at.
+pub fn u64x_scan_fns(toks: Vec, buf: i64, pos: i64, names: i64, spans: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0;
+    }
+    let _f: i64 = u64x_fn_at(toks, buf, pos, names, spans);
+    u64x_scan_fns(toks, buf, pos + 1, names, spans)
+}
+
+pub fn u64x_fn_at(toks: Vec, buf: i64, pos: i64, names: i64, spans: i64) -> i64 {
+    if u64x_count(spans) < 0 {
+        return 0;
+    }
+    if tok_kind(toks, pos) == tk_kw_fn() {
+        let j: i64 = u64x_body_start(toks, pos + 1);
+        if j >= 0 {
+            let r: i64 = u64x_body_scan(toks, buf, j + 1, 1, 0, names);
+            if r < 0 {
+                __mind_store_i64(spans, 0 - 1);
+                return 0;
+            }
+            let close: i64 = r / 2;
+            let sig: i64 = u64x_span_spells(toks, buf, pos + 1, tk_semi(), names);
+            if r - close * 2 + sig > 0 {
+                let _p: i64 = u64x_push(spans, tok_lo(toks, pos), tok_hi(toks, close));
+            }
+        }
+    }
+    0
+}
+
+pub fn u64x_prepare(toks: Vec, buf: i64, t: i64) -> i64 {
+    if frt_has_unsigned64(t) == 0 {
+        return 0;
+    }
+    let names: i64 = u64x_new();
+    let _c: i64 = u64x_collect_fix(toks, buf, names, 0);
+    let spans: i64 = u64x_new();
+    if u64x_count(names) < 0 {
+        __mind_store_i64(spans, 0 - 1)
+    } else {
+        let _f: i64 = u64x_scan_fns(toks, buf, 0, names, spans);
+    }
+    __mind_store_i64(t + (frt_u64_word() + 1) * 8, names);
+    __mind_store_i64(t + (frt_u64_word() + 2) * 8, spans);
+    0
+}
+
+// 1 iff byte offset `pos` lies inside a recorded tainted fn span.
+pub fn u64x_span_contains(spans: i64, pos: i64, k: i64) -> i64 {
+    if k >= u64x_count(spans) {
+        return 0;
+    }
+    if pos >= u64x_lo(spans, k) {
+        if pos < u64x_hi(spans, k) {
+            return 1;
+        }
+    }
+    u64x_span_contains(spans, pos, k + 1)
 }
 
 // Apply the already-collected module-local alias table to return spans in the

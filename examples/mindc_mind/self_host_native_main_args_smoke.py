@@ -38,6 +38,8 @@ import tempfile
 _HERE = pathlib.Path(__file__).parent
 _REPO = _HERE.parents[1]
 sys.path.insert(0, str(_HERE))
+sys.path.insert(0, str(_HERE.parent.parent / "scripts"))
+from gate_assert import check  # noqa: E402  (one [PASS]/[FAIL] line per case)
 from _selfhost_so import resolve_so  # noqa: E402
 
 _STDLIB_MODULES = [
@@ -254,7 +256,7 @@ def main() -> int:
                 got_m = run(mbin, tail) if use_mlir else want
                 good = got_n == want and got_m == want
                 ok = ok and good
-                print(f"  {'PASS' if good else 'FAIL'}  {name} extra_args={len(tail)}: "
+                check(good, f"{name} extra_args={len(tail)}: "
                       f"native=(exit {got_n[0]}, stdout {got_n[1]!r}) "
                       + (f"mlir=(exit {got_m[0]}, stdout {got_m[1]!r}) " if use_mlir else "mlir=n/a ")
                       + f"expected=(exit {want[0]}, stdout {want[1]!r})")
@@ -262,7 +264,7 @@ def main() -> int:
             elf = sh.elf(prog)
             good = len(elf) == 0
             ok = ok and good
-            print(f"  {'PASS' if good else 'FAIL'}  {name}: self-host image "
+            check(good, f"{name}: self-host image "
                   f"{len(elf)}B (expected 0B refusal)")
     if ok:
         print("\nALL PASS  (native main(argc, argv) == OS argc/argv == MLIR)")

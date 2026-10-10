@@ -88,7 +88,7 @@ Its arithmetic is *guarded*. `mindc --emit-mlir` on `fn d(a: i64, b: i64) -> i64
 %2     = arith.select %disz2, %ddz2, %ddt2 : i64
 ```
 
-i.e. MIND's defined edges `x/0 = 0` and `INT_MIN/-1 = INT_MIN`.
+i.e. MIND's defined edges as they stood then (`x/0 = 0`, `INT_MIN/-1 = INT_MIN`); `mindc build` now traps on both with exit status 79 (docs/errors.md, "Integer division trap").
 
 **Reachability blind spots, all seven checked.**
 
@@ -632,8 +632,8 @@ strongest single argument for unification:
 
 | Implementation | `x / 0` | `INT_MIN / -1` |
 |---|---|---|
-| `src/mlir/lowering.rs` (engine 1) | `0` | `INT_MIN` |
-| `main.mind` native emitter (engine 4) | `0` | `INT_MIN` |
+| `src/mlir/lowering.rs` (engine 1) | trap, exit 79 | trap, exit 79 |
+| `main.mind` native emitter (engine 4) | trap, exit 79 | trap, exit 79 |
 | `src/eval/mlir_export.rs` (engine 2) | bare `arith.divsi` — **target-defined** | bare `arith.divsi` — **target-defined** |
 | `src/eval/mod.rs` (engine 6) | `Err(DivZero)` | **process panic** (release) |
 | `src/eval/ir_interp.rs` (engine 7) | **process panic** | **process panic** |

@@ -38,6 +38,8 @@ import tempfile
 
 _HERE = pathlib.Path(__file__).parent
 sys.path.insert(0, str(_HERE))
+sys.path.insert(0, str(_HERE.parent.parent / "scripts"))
+from gate_assert import check  # noqa: E402  (one [PASS]/[FAIL] line per case)
 from _selfhost_so import resolve_so  # noqa: E402
 from self_host_native_main_args_smoke import (  # noqa: E402
     SelfHost, mindc_bin, mlir_binary, run, write_exec,
@@ -181,6 +183,88 @@ USER_EXIT_PROGRAM = (
 )
 
 
+# 64-bit unsigned division (W2-trap unsigned fence). The native emitter's only
+# division is the SIGNED trapping idiv, and its width lattice cannot tell u64 from
+# i64, so a `/` or `%` in a fn that can hold a u64 value -- the fn spells `u64` /
+# `usize`, or names a u64-returning fn, a struct whose declaration spells the
+# type (or one of its fields), an alias or a const of it -- must REFUSE natively
+# (empty image) instead of computing a signed result. Each program's MLIR build
+# is the value oracle: (name, program, MLIR exit).
+U64_REFUSED = [
+    ("u64 2^63 / (2^64-1)",
+     "fn dv(a: u64, b: u64) -> u64 {\n    return a / b;\n}\n"
+     "fn main() -> i64 {\n    let a: u64 = 9223372036854775808;\n"
+     "    let b: u64 = 18446744073709551615;\n    let q: u64 = dv(a, b);\n"
+     "    return (q as i64) + 3;\n}\n", 3),
+    ("u64 2^63 % (2^64-1)",
+     "fn md(a: u64, b: u64) -> u64 {\n    return a % b;\n}\n"
+     "fn main() -> i64 {\n    let a: u64 = 9223372036854775808;\n"
+     "    let b: u64 = 18446744073709551615;\n    let r: u64 = md(a, b);\n"
+     "    if r == a {\n        return 5;\n    }\n    return 6;\n}\n", 5),
+    ("u64 MAX / 2 / 2^62",
+     "fn main() -> i64 {\n    let m: u64 = 18446744073709551615;\n"
+     "    let h: u64 = m / 2;\n    let q: u64 = h / 4611686018427387904;\n"
+     "    return q as i64;\n}\n", 1),
+    ("usize 10 / 3",
+     "fn main() -> i64 {\n    let a: usize = 10;\n    let b: usize = 3;\n"
+     "    return (a / b) as i64;\n}\n", 3),
+    ("i64 division in a module that also spells u64",
+     "fn main() -> i64 {\n    let a: i64 = 10;\n    let b: i64 = 3;\n"
+     "    let c: u64 = 5 as u64;\n    return a / b + (c as i64) - 5;\n}\n", 3),
+    ("u64 from a call, divided in a fn that never spells u64",
+     "fn g() -> u64 {\n    return 18446744073709551615;\n}\n"
+     "fn main() -> i64 {\n    let q = g() / 2;\n"
+     "    if (q as i64) == 9223372036854775807 {\n        return 4;\n    }\n    return 6;\n}\n", 4),
+    ("u64 struct field, divided in a fn that never spells u64",
+     "struct S {\n    v: u64,\n}\n"
+     "fn mk() -> S {\n    return S { v: 18446744073709551615 };\n}\n"
+     "fn main() -> i64 {\n    let s = mk();\n    let q = s.v / 2;\n"
+     "    if (q as i64) == 9223372036854775807 {\n        return 4;\n    }\n    return 6;\n}\n",
+     # MLIR is not a value oracle here: it divides the u64 field as SIGNED and
+     # exits 6 (a separate MLIR typing bug, reported). Only the native refusal
+     # is asserted for this shape.
+     None),
+    ("u64 alias",
+     "type W = u64;\n"
+     "fn dv(a: W, b: W) -> W {\n    return a / b;\n}\n"
+     "fn main() -> i64 {\n    return dv(18446744073709551615, 3) as i64;\n}\n", 0x5555555555555555 & 255),
+]
+
+# Controls for the fence: `u64` only inside a comment or a string literal is not
+# a type, so the division still builds natively and divides.
+U64_NOT_FENCED = [
+    ("u64 only in a comment",
+     "// a u64 or usize mention in a comment is not a type\n"
+     "fn main() -> i64 {\n    let a: i64 = 17;\n    let b: i64 = 5;\n"
+     "    return a / b + a % b;\n}\n", 5),
+    ("u64 confined to another fn returning i64",
+     "fn w() -> i64 {\n    let z: u64 = 3;\n    return z as i64;\n}\n"
+     "fn main() -> i64 {\n    let a: i64 = 17;\n    let b: i64 = 5;\n"
+     "    return a / b + w() - 3;\n}\n", 3),
+]
+
+# Narrow unsigned operands are held zero-extended in 64 bits, so the signed idiv
+# equals the unsigned division and only a zero divisor traps. (name, program,
+# expected exit) — the expected value is the unsigned result, checked on both.
+NARROW_UNSIGNED = [
+    ("u32 MAX / 2", "fn dv(a: u32, b: u32) -> u32 {\n    return a / b;\n}\n"
+     "fn main() -> i64 {\n    let q: u32 = dv(4294967295, 2);\n"
+     "    if q == 2147483647 {\n        return 7;\n    }\n    return 1;\n}\n", 7),
+    ("u32 MAX % 7", "fn md(a: u32, b: u32) -> u32 {\n    return a % b;\n}\n"
+     "fn main() -> i64 {\n    let r: u32 = md(4294967295, 7);\n"
+     "    return r as i64;\n}\n", 4294967295 % 7),
+    ("u16 65535 / 255", "fn dv(a: u16, b: u16) -> u16 {\n    return a / b;\n}\n"
+     "fn main() -> i64 {\n    let q: u16 = dv(65535, 255);\n"
+     "    if q == 257 {\n        return 7;\n    }\n    return 1;\n}\n", 7),
+    ("u8 255 % 16", "fn md(a: u8, b: u8) -> u8 {\n    return a % b;\n}\n"
+     "fn main() -> i64 {\n    let r: u8 = md(255, 16);\n"
+     "    return r as i64;\n}\n", 255 % 16),
+    ("u32 x / 0 traps", "fn dv(a: u32, b: u32) -> u32 {\n    return a / b;\n}\n"
+     "fn main() -> i64 {\n    let q: u32 = dv(4294967295, 0);\n"
+     "    return (q as i64) + 1;\n}\n", TRAP_EXIT),
+]
+
+
 def main() -> int:
     so = resolve_so()
     sh = SelfHost(so)
@@ -210,7 +294,7 @@ def main() -> int:
                        if got[1][i * 8:i * 8 + 8] != want[i * 8:i * 8 + 8]]
                 good = got[0] == 0 and got[1] == want
                 ok = ok and good
-                print(f"  {'PASS' if good else 'FAIL'}  matrix[{label}]: {len(cs)} results "
+                check(good, f"matrix[{label}]: {len(cs)} results "
                       f"(div/mod sign matrix + shifts), exit {got[0]}, "
                       f"{len(got[1])}B stdout, {len(bad)} wrong")
                 for (op, a, b), g, w in bad[:12]:
@@ -226,7 +310,7 @@ def main() -> int:
             gm = run(mbin, []) if mbin is not None else ("build-failed: " + diag[-160:], b"")
             good = gn == want and gm == want
             ok = ok and good
-            print(f"  {'PASS' if good else 'FAIL'}  {name}: native=(exit {gn[0]}, stdout {gn[1]!r}) "
+            check(good, f"{name}: native=(exit {gn[0]}, stdout {gn[1]!r}) "
                   f"mlir=(exit {gm[0]}, stdout {gm[1]!r}) expected=(exit {want[0]}, stdout {want[1]!r})")
         elf = sh.elf(NARROW_PROGRAM)
         mbin, diag = mlir_binary(NARROW_PROGRAM, d, "narrow")
@@ -235,17 +319,33 @@ def main() -> int:
         gm = run(mbin, []) if mbin is not None else ("build-failed: " + diag[-160:], b"")
         good = gn == want and gm == want
         ok = ok and good
-        print(f"  {'PASS' if good else 'FAIL'}  i32 MIN/-1 wraps, i32 x/0 traps: native=(exit {gn[0]}) "
+        check(good, f"i32 MIN/-1 wraps, i32 x/0 traps: native=(exit {gn[0]}) "
               f"mlir=(exit {gm[0]}) expected=(exit {want[0]})")
         mbin, diag = mlir_binary(USER_EXIT_PROGRAM, d, "user_exit")
         gm = run(mbin, []) if mbin is not None else ("build-failed: " + diag[-200:], b"")
         good = gm == (TRAP_EXIT, b"")
         ok = ok and good
-        print(f"  {'PASS' if good else 'FAIL'}  program declaring extern _exit, 7 / 0: "
+        check(good, f"program declaring extern _exit, 7 / 0: "
               f"mlir=(exit {gm[0]}) expected=(exit {TRAP_EXIT}) [native: extern calls refused]")
+        for name, prog, mlir_want in U64_REFUSED:
+            elf = sh.elf(prog)
+            mbin, diag = mlir_binary(prog, d, "u64")
+            gm = run(mbin, []) if mbin is not None else ("build-failed: " + diag[-160:], b"")
+            good = len(elf) == 0 and (mlir_want is None or gm[0] == mlir_want)
+            ok = ok and good
+            check(good, f"{name}: native image {len(elf)}B (expected 0B refusal), "
+                  f"mlir=(exit {gm[0]}) expected mlir=(exit {mlir_want})")
+        for name, prog, want_exit in U64_NOT_FENCED + NARROW_UNSIGNED:
+            elf = sh.elf(prog)
+            mbin, diag = mlir_binary(prog, d, "unsigned")
+            gn = run(write_exec(d / "unsigned.native.elf", elf), []) if elf else ("refused", b"")
+            gm = run(mbin, []) if mbin is not None else ("build-failed: " + diag[-160:], b"")
+            good = gn[0] == want_exit and gm[0] == want_exit
+            ok = ok and good
+            check(good, f"{name}: native=(exit {gn[0]}) mlir=(exit {gm[0]}) expected=(exit {want_exit})")
     if ok:
         print(f"\nALL PASS  (i64 / % trap with exit {TRAP_EXIT} on both backends; "
-              "sign matrix and shift rule agree with the model)")
+              "sign matrix and shift rule agree with the model; u64/usize division refused natively)")
         return 0
     print("\nFAIL  div-trap smoke")
     return 1

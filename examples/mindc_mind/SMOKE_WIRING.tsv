@@ -93,6 +93,7 @@ self_host_native_blas_dot_i16_smoke	ci	gate
 self_host_native_blas_dot_q16_smoke	ci	gate	
 self_host_native_cast_conv_smoke	ci	gate	
 self_host_native_diag_smoke	ci	gate	
+self_host_native_div_trap_smoke	ci	gate	
 self_host_native_dot_f32_smoke	ci	gate	
 self_host_native_dot_l1_q16_smoke	ci	gate	
 self_host_native_elf_alignment_smoke	ci	gate	
@@ -112,6 +113,7 @@ self_host_native_genf32_smoke	ci	gate
 self_host_native_intdot_i16_smoke	ci	gate	
 self_host_native_intdot_q16_smoke	ci	gate	
 self_host_native_intdot_smoke	ci	gate	
+self_host_native_main_args_smoke	ci	gate	
 self_host_native_matmul_f32_v_smoke	ci	gate	
 self_host_native_narrow_add_i8_smoke	ci,keystone	gate	
 self_host_native_narrow_arith_batch_smoke	ci,keystone	gate	

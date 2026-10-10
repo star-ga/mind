@@ -1434,6 +1434,8 @@ jobs:
             self_host_andor_smoke \
             self_host_args_from_os_smoke \
             self_host_argv_smoke \
+            self_host_native_div_trap_smoke \
+            self_host_native_main_args_smoke \
             self_host_array_smoke \
             self_host_arridx_mic3_smoke \
             self_host_check_driver_smoke \
