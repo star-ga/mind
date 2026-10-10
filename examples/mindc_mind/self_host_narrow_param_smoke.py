@@ -27,10 +27,9 @@ scan, matching the full reach of the Sub-step C carry/merge machinery
 (nb_if_carry_promote + nb_while_live_writes). The if-wrapped inner while (formerly kept
 fail-closed pre-Sub-step-C, when it dropped the carry got=2 want=6) now emits + runs
 correct at every width incl. two's-complement overflow (asserted in IF_WRAPPED_WHILE
-below), as do sibling-nested and both-branch writes (XN_SIBLING_NESTED_WRITE). Only a
-narrow write on a `break`/`continue` exit edge stays fail-closed — via the SEPARATE
-nb_fns_branch_exit_carry guard (REFUSE_NARROW_EXIT) — so no genuinely-broken shape was
-downgraded to a silent miscompile.
+below), as do sibling-nested and both-branch writes (XN_SIBLING_NESTED_WRITE). A
+narrow write on a `break`/`continue` exit edge (formerly refused by a separate
+branch-exit guard) is now carried by the exit edge itself (NARROW_EXIT_EDGE).
 
 F2 FIXED: a narrow param REASSIGNED by a while NESTED inside ANOTHER while (nested
 loops mutating an OUTER carried var) now lowers CORRECTLY. nb_while_carry descends
@@ -299,19 +298,25 @@ XN_SIBLING_NESTED_WRITE = [
     ("i8 while{ if{ x+=1 } else { if{ while{ x+=1 } } } } — else writes x via if>while (deep), 4it -> 6", 6,
      "fn f(x: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 4 {\n        if a < 2 { x = x + 1; } else { if a < 10 { let mut d: i64 = 0; while d < 2 { x = x + 1; d = d + 1; } } }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
 ]
-# RETAINED FAIL-CLOSED (regression guard): a narrow param write on a `break`/`continue`
-# EXIT edge inside an if-branch bypasses the branch's merge-phi stores when the exit is
-# taken, silently dropping the write (a running ELF with a WRONG value). Although the
-# narrow param IS reassigned (so nb_region_while_carries_narrow permits it), the SEPARATE
-# nb_fns_branch_exit_carry guard refuses the whole module 0B. MUST emit an EMPTY ELF —
-# proves the relaxation did NOT downgrade this genuinely-broken shape to a silent miscompile.
-REFUSE_NARROW_EXIT = [
+# A narrow param write on a `break`/`continue` EXIT edge inside an if-branch. A taken
+# exit used to bypass the branch's merge-phi stores and drop the write, so these were
+# refused 0B by a separate branch-exit guard. The exit edge now moves every carried
+# var's live (already width-wrapped) value into its loop slot before jumping
+# (nb_exit_edge_copies), so they MUST emit + run to the independent Python reference
+# — including a write that overflows the width right before the `break`.
+NARROW_EXIT_EDGE = [
     ("i8 break-after-write in branch: while{ if a==2 {x+=100; break;} else {x+=1} }",
+     wrap(2 + 100, 8),
      "fn f(x: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 10 {\n        if a == 2 { x = x + 100; break; } else { x = x + 1; }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
     ("i8 continue-after-write in branch: while{ a+=1; if a==3 {x+=50; continue;} x+=1 }",
+     wrap(2 + 50 + 2, 8),
      "fn f(x: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 5 {\n        a = a + 1;\n        if a == 3 { x = x + 50; continue; }\n        x = x + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
     ("i16 break-after-write in branch (mirror at wider width)",
+     wrap(2 + 100, 16),
      "fn f(x: i16) -> i64 {\n    let mut a: i64 = 0;\n    while a < 10 {\n        if a == 2 { x = x + 100; break; } else { x = x + 1; }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(0); }\n"),
+    ("i8 break-after-OVERFLOWING-write: f(120) -> 122 + 100 wraps before the break",
+     wrap(120 + 2 + 100, 8),
+     "fn f(x: i8) -> i64 {\n    let mut a: i64 = 0;\n    while a < 10 {\n        if a == 2 { x = x + 100; break; } else { x = x + 1; }\n        a = a + 1;\n    }\n    return x as i64;\n}\nfn main() -> i64 { return f(120); }\n"),
 ]
 # SUB-STEP B FIXED the single-branch part of Finding #2: i64/narrow `while{ if{ x+=1 } }`
 # now carries correct (returns 3, asserted in IF_IN_LOOP_CARRY above). Two related shapes
@@ -337,8 +342,8 @@ I64_IF_IN_WHILE_GAP_NOTE = (
     "nested regions. Gated permanently by self_host_if_region_carry_smoke.py (20 loop-carry + "
     "6 straight-line shapes vs an independent Python reference). Narrow (i8/i16/i32) "
     "if-wrapped-while shapes now ALSO emit + run correct (this change relaxed the "
-    "scan-based permit guard refuse->run via nb_region_reassigns_narrow; only a narrow "
-    "write on a break/continue exit edge stays fail-closed via a separate guard)."
+    "scan-based permit guard refuse->run via nb_region_reassigns_narrow), and a narrow "
+    "write on a break/continue exit edge is carried by the exit edge (nb_exit_edge_copies)."
 )
 
 # Regression battery for the STANDALONE both-branch-same-var if-merge else-read fix
@@ -428,7 +433,7 @@ def main() -> int:
     xn_ok = 0
     refused = 0
     if_wrapped_ok = 0
-    exit_refused = 0
+    exit_edge_ok = 0
     ran = 0
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
@@ -573,14 +578,19 @@ def main() -> int:
             print(f"  {'PASS' if ok else 'FAIL'}  narrow sibling/both-branch write carry (now "
                   f"permitted): {label} -> exit {rc} (python-ref {exp} -> byte {want})")
 
-        for label, src in REFUSE_NARROW_EXIT:
+        for label, exp, src in NARROW_EXIT_EDGE:
             elf = emit(src)
-            ok = len(elf) == 0
+            if not elf:
+                print(f"  FAIL  narrow exit-edge carry REFUSED: {label} (emit 0B, want run)")
+                all_ok = False
+                continue
+            want = exp & 0xFF
+            rc = run_elf(elf)
+            ok = rc == want
             all_ok = all_ok and ok
-            exit_refused += 1 if ok else 0
-            print(f"  {'PASS' if ok else 'FAIL'}  narrow break/continue write-on-exit-edge "
-                  f"refused (separate branch-exit guard): {label} (emit {len(elf)}B, want 0 — "
-                  f"fail-closed, NOT run)")
+            exit_edge_ok += 1 if ok else 0
+            print(f"  {'PASS' if ok else 'FAIL'}  narrow write carried across a break/continue "
+                  f"edge: {label} -> exit {rc} (python-ref {exp} -> byte {want})")
 
         for label, exp, src in BOTH_BRANCH_SAME_VAR:
             elf = emit(src)
@@ -648,10 +658,9 @@ def main() -> int:
         print("FAIL: a narrow sibling/both-branch-nested-write carry did not run correct "
               "(the sibling/both-branch write must merge + carry via nb_if_carry_promote)")
         return 1
-    if exit_refused < len(REFUSE_NARROW_EXIT):
-        print("FAIL: a narrow break/continue write-on-exit-edge shape was PERMITTED "
-              "(the separate nb_fns_branch_exit_carry guard must keep it fail-closed — "
-              "the relaxation must NOT downgrade it to a silent miscompile)")
+    if exit_edge_ok < len(NARROW_EXIT_EDGE):
+        print("FAIL: a narrow write on a break/continue exit edge did not run correct "
+              "(the exit edge must move the wrapped live value into the loop slot)")
         return 1
     if ran < 1:
         print("FAIL: vacuous (no i64 control ran)")
@@ -664,9 +673,10 @@ def main() -> int:
               "wrap incl. sign-discriminated overflow, no stale/hang) vs an independent "
               "Python ref; the widening cast-in-binop `(x as i64)+c` composes; NARROWING "
               "casts `(y as i8/i16/i32)` truncate two's-complement (movsx) + compose; while "
-              "the narrow read-only loop-carry sub-shape stays fail-closed AND a narrow "
-              "write on a break/continue exit edge stays fail-closed (separate branch-exit "
-              "guard) — no silent miscompile — and i64 fns are unaffected")
+              "the narrow read-only loop-carry sub-shape stays fail-closed — no silent "
+              "miscompile — a narrow write on a break/continue exit edge is carried "
+              "(incl. an overflowing write right before the break), and i64 fns are "
+              "unaffected")
         return 0
     print("FAIL  narrow-param carry smoke mis-behaved")
     return 1

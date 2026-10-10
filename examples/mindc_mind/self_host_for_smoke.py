@@ -13,8 +13,20 @@ still advances before the back-edge.
 
 This battery compiles each program through the pure-MIND native-ELF entry
 (`selftest_native_elf_h`), RUNS the resulting x86-64 ELF, and asserts the exit
-code (main's i64 return) matches an independent hand-computed reference. It also
-proves each `for` compiles BYTE-IDENTICALLY to its explicit `let`+`while` form.
+code (main's i64 return) matches an independent hand-computed reference. Every
+reference was also checked against the Rust MLIR build of the same program where
+that build accepts it; two do not build there (`0..n + 2` -> E5005, and the f64
+carry through `continue` -> an mlir-opt block-argument type error).
+
+Bound shapes: literal, variable, expression, parameter, call, negative, reversed,
+empty, nested (incl. an inner bound reading the outer var). Exits: `break` and
+`continue` at the loop level, inside a nested `if`, in an `else`, in inner and
+outer loops, and AFTER a write to a loop-carried var — the exit edge must move
+that var's live value into its loop slot (nb_exit_edge_copies), or the next
+iteration / the code after the loop reads the stale one. The byte-neutral desugar
+of an own-level `continue` steps VAR inside the branch (`if c { VAR = VAR + 1;
+continue; }`), so every range-for `continue` depends on that edge. Two plain
+`while` shapes pin the same root cause outside `for`.
 
 Env: MINDC_SO = pure-MIND self-host cdylib. Exit 0 = ALL PASS.
 """
@@ -101,6 +113,74 @@ CASES = [
     ("count10", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..10 { c = c + 1; } return c; }", 10),
     # for driving an accumulator that feeds the return via a helper param path
     ("call_in_body", b"fn inc(x: i64) -> i64 { return x + 1; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..4 { c = inc(c); } return c; }", 4),
+    # ---- bound shapes ----
+    # negative lower bound: 100 + (-3 -2 -1 +0 +1) = 95
+    ("neg_lo", b"fn main() -> i64 { let mut s: i64 = 100; for i in -3..2 { s = s + i; } return s; }", 95),
+    # both bounds negative: i = -5,-4,-3,-2 -> 4 iterations
+    ("neg_both", b"fn main() -> i64 { let mut c: i64 = 0; for i in -5..-1 { c = c + 1; } return c; }", 4),
+    # reversed range (LO > HI): empty
+    ("reversed", b"fn main() -> i64 { let mut c: i64 = 0; for i in 5..2 { c = c + 1; } return c; }", 0),
+    # reversed negative range: empty
+    ("reversed_neg", b"fn main() -> i64 { let mut c: i64 = 0; for i in -1..-3 { c = c + 1; } return c; }", 0),
+    # variable bounds: 2+3+4+5 = 14
+    ("var_bounds", b"fn main() -> i64 { let a: i64 = 2; let b: i64 = 6; let mut s: i64 = 0; for i in a..b { s = s + i; } return s; }", 14),
+    # variable upper bound holding 0: empty
+    ("var_empty", b"fn main() -> i64 { let n: i64 = 0; let mut c: i64 = 0; for i in 0..n { c = c + 1; } return c; }", 0),
+    # expression bound n + 2 = 5: 0+1+2+3+4 = 10
+    ("expr_bound", b"fn main() -> i64 { let n: i64 = 3; let mut s: i64 = 0; for i in 0..n + 2 { s = s + i; } return s; }", 10),
+    # parameter bound: f(5) = 0+1+2+3+4 = 10
+    ("param_bound", b"fn f(n: i64) -> i64 { let mut s: i64 = 0; for i in 0..n { s = s + i; } return s; } fn main() -> i64 { return f(5); }", 10),
+    # inner bound reads the outer induction var: 0+1+2+3 = 6
+    ("nested_dep", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..4 { for j in 0..i { c = c + 1; } } return c; }", 6),
+    # ---- break / continue, every bound shape ----
+    # A loop-carried var's write on the path to a `continue`/`break` must reach the
+    # next iteration / the code after the loop (the exit edge carries it).
+    # write then continue: 0+1+100+3+4 = 108
+    ("continue_write", b"fn main() -> i64 { let mut s: i64 = 0; for i in 0..5 { if i == 2 { s = s + 100; continue; } s = s + i; } return s; }", 108),
+    # write then break: 0+1+2+50 = 53
+    ("break_write", b"fn main() -> i64 { let mut s: i64 = 0; for i in 0..9 { if i == 3 { s = s + 50; break; } s = s + i; } return s; }", 53),
+    # continue with a variable bound: 0+2+3+4+5 = 14
+    ("continue_var_bound", b"fn main() -> i64 { let n: i64 = 6; let mut s: i64 = 0; for i in 0..n { if i == 1 { continue; } s = s + i; } return s; }", 14),
+    # continue over a negative range: 50 + (-3 -2 -1 +1 +2) = 47
+    ("continue_neg", b"fn main() -> i64 { let mut s: i64 = 50; for i in -3..3 { if i == 0 { continue; } s = s + i; } return s; }", 47),
+    # continue with a call bound (hidden-counter form): 0+2+3+4 = 9
+    ("continue_call_bound", b"fn hi() -> i64 { return 5; } fn main() -> i64 { let mut s: i64 = 0; for i in 0..hi() { if i == 1 { continue; } s = s + i; } return s; }", 9),
+    # continue in the else arm: i = 0,1,2 add 11 each -> 33
+    ("continue_else", b"fn main() -> i64 { let mut s: i64 = 0; for i in 0..6 { if i < 3 { s = s + 1; } else { continue; } s = s + 10; } return s; }", 33),
+    # two carried vars, one written before the branch: a = 6, b = 7 + 5 = 12 -> 72
+    ("continue_two_vars", b"fn main() -> i64 { let mut a: i64 = 0; let mut b: i64 = 0; for i in 0..6 { a = a + 1; if i == 2 { b = b + 7; continue; } b = b + 1; } return a * 10 + b; }", 72),
+    # continue/break nested in a second if: skip i = 3,4 -> 7 ; stop at 5 -> 5
+    ("continue_nested_if", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..9 { if i > 2 { if i < 5 { continue; } } c = c + 1; } return c; }", 7),
+    ("break_nested_if", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..9 { if i > 2 { if i == 5 { break; } } c = c + 1; } return c; }", 5),
+    # nested loops: inner continue 3*3 = 9 ; inner break 3*2 = 6 ; outer continue 3*3 = 9 ;
+    # outer break 2*3 = 6 ; both levels continue: i in {0,2,3}, j in {0,1,3} -> 27
+    ("nested_inner_continue", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { for j in 0..4 { if j == 1 { continue; } c = c + 1; } } return c; }", 9),
+    ("nested_inner_break", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { for j in 0..4 { if j == 2 { break; } c = c + 1; } } return c; }", 6),
+    ("nested_outer_continue", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..4 { if i == 1 { continue; } for j in 0..3 { c = c + 1; } } return c; }", 9),
+    ("nested_outer_break", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..4 { if i == 2 { break; } for j in 0..3 { c = c + 1; } } return c; }", 6),
+    ("nested_both_continue", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..4 { if i == 1 { continue; } for j in 0..4 { if j == 2 { continue; } c = c + i + j; } } return c; }", 27),
+    # body writes VAR, continue BEFORE that write (hidden-counter form; the body-local
+    # `let VAR = CTR` copy needs no exit move): i in {0,1,3,4} each + 10 -> 48
+    ("body_assign_continue", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..5 { if i == 2 { continue; } i = i + 10; c = c + i; } return c; }", 48),
+    # f64 carried through a continue edge: 4 * 1.0 + 10.0 = 14.0 > 13.5 -> 1 (dropped write -> 4.0 -> 2)
+    ("continue_f64", b"fn main() -> i64 { let mut a: f64 = 0.0; for i in 0..5 { if i == 2 { a = a + 10.0; continue; } a = a + 1.0; } if a > 13.5 { return 1; } return 2; }", 1),
+    # The same exit edges in a plain `while` (one root cause): x is written before the
+    # exit and again after it, so the loop slot differs from the live value at the exit.
+    # continue: x ends 11 after 5 counted rounds -> 115 (pre-fix: HANG)
+    ("while_continue_after_write", b"fn main() -> i64 { let mut x: i64 = 0; let mut n: i64 = 0; while x < 10 { x = x + 1; if x == 3 { continue; } x = x + 1; n = n + 1; } return x * 10 + n; }", 115),
+    # break: x = 3 at the break (pre-fix: 2)
+    ("while_break_after_write", b"fn main() -> i64 { let mut x: i64 = 0; while x < 100 { x = x + 1; if x == 3 { break; } x = x + 1; } return x; }", 3),
+    # positive control for REFUSE_CASES below: the same loop without the shadowing
+    # `let` compiles and runs (x == 5), so the refusal is about the shadow alone.
+    ("shadow_control", b"fn main() -> i64 { let mut x: i64 = 0; let mut a: i64 = 0; while a < 5 { a = a + 1; x = x + 1; if a == 3 { continue; } } return x; }", 5),
+]
+
+# A `let` in the loop body that SHADOWS a carried var makes the exit edge's name
+# lookup ambiguous (the let-env cannot tell the shadow from the carried binding), so
+# a needed move is refused fail-closed (empty ELF) instead of copying the shadow.
+# Source-level reference for this one is x == 5; a copied shadow would give 52.
+REFUSE_CASES = [
+    ("shadow_at_exit", b"fn main() -> i64 { let mut x: i64 = 0; let mut a: i64 = 0; while a < 5 { a = a + 1; x = x + 1; if a == 3 { let x: i64 = 50; continue; } } return x; }"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -185,6 +265,15 @@ def main() -> int:
             else:
                 print(f"  PASS  {name}: exit {got} == {want}")
 
+        for name, src in REFUSE_CASES:
+            elf = mind_elf(lib, src)
+            if elf:
+                print(f"  FAIL  {name}: emitted a {len(elf)} B ELF (exit {run_elf(elf, tmp) & 0xFF}), "
+                      f"want a fail-closed refusal (empty ELF)")
+                rc = 1
+            else:
+                print(f"  PASS  {name}: refused fail-closed (empty ELF)")
+
         for name, a, b in DESUGAR_PAIRS:
             ea, eb = mind_elf(lib, a), mind_elf(lib, b)
             if ea and eb and ea == eb:
@@ -223,8 +312,8 @@ def main() -> int:
         print(f"  xfail bookkeeping: {xfail_expected} expected self-host divergences "
               f"(Step-2 gap), {xfail_unexpected_pass} unexpected passes")
 
-    print("ALL PASS  (range-for: value-correct + byte-identical to let+while desugar; "
-          "gated hygiene self-host xfails accounted)" if rc == 0
+    print("ALL PASS  (range-for: value-correct over every bound shape and exit edge; "
+          "shadowed exit refused; gated hygiene self-host xfails accounted)" if rc == 0
           else "FAIL  (range-for battery had failures)")
     return rc
 

@@ -36982,11 +36982,17 @@ pub fn nb_carry_promote_inner(carry: i64, ccell: i64, icarry: i64, incarry: i64,
     nb_carry_promote_inner(carry, ccell, icarry, incarry, k + 1, buf, lets, lcell, entry_n)
 }
 
-// ---- loop-frame stack (header offset + break-site list) ----
-// One frame = 3 i64 words: (header_offset, breaks_buf, nbreaks). breaks_buf is a
-// per-loop buffer of recorded break jmp indices (`which` into the jmps table),
-// patched to the loop end once known. Threaded like jmps/jcell.
-pub fn nb_loops_push(loops: i64, lpcell: i64, header: i64, breaks_buf: i64) -> i64 {
+// ---- loop-frame stack (header offset + loop record) ----
+// One frame = 3 i64 words: (header_offset, lrec, nbreaks). lrec is the per-loop
+// record nb_emit_while allocates: a 4-word header (carry table, its count cell,
+// body stmts addr, body stmts len — what a break/continue needs to copy every
+// carried var's live value into its loop slot, nb_exit_edge_copies) followed by
+// the recorded break jmp indices (`which` into the jmps table) at
+// nb_lrec_breaks(), patched to the loop end once known. Threaded like jmps/jcell.
+pub fn nb_lrec_breaks() -> i64 {
+    32
+}
+pub fn nb_loops_push(loops: i64, lpcell: i64, header: i64, lrec: i64) -> i64 {
     let n: i64 = __mind_load_i64(lpcell);
     // Cap guard: the loop-frame stack is a fixed 256-entry x 3-word buffer
     // (__mind_alloc(256 * 3 * 8)). A 257th nested loop frame would overflow it and
@@ -36997,7 +37003,7 @@ pub fn nb_loops_push(loops: i64, lpcell: i64, header: i64, breaks_buf: i64) -> i
         return 0 - 1;
     }
     __mind_store_i64(loops + (n * 3 + 0) * 8, header);
-    __mind_store_i64(loops + (n * 3 + 1) * 8, breaks_buf);
+    __mind_store_i64(loops + (n * 3 + 1) * 8, lrec);
     __mind_store_i64(loops + (n * 3 + 2) * 8, 0);
     __mind_store_i64(lpcell, n + 1);
     0
@@ -37016,13 +37022,21 @@ pub fn nb_loops_top_header(loops: i64, lpcell: i64) -> i64 {
     }
     __mind_load_i64(loops + ((n - 1) * 3 + 0) * 8)
 }
+// Loop record (lrec) of the innermost active loop, or 0 when none.
+pub fn nb_loops_top_lrec(loops: i64, lpcell: i64) -> i64 {
+    let n: i64 = __mind_load_i64(lpcell);
+    if n <= 0 {
+        return 0;
+    }
+    __mind_load_i64(loops + ((n - 1) * 3 + 1) * 8)
+}
 // Record a break jmp index (`which`) into the innermost loop's break list.
 pub fn nb_loops_push_break(loops: i64, lpcell: i64, which: i64) -> i64 {
     let n: i64 = __mind_load_i64(lpcell);
     if n <= 0 {
         return 0 - 1;
     }
-    let bb: i64 = __mind_load_i64(loops + ((n - 1) * 3 + 1) * 8);
+    let bb: i64 = __mind_load_i64(loops + ((n - 1) * 3 + 1) * 8) + nb_lrec_breaks();
     let nb: i64 = __mind_load_i64(loops + ((n - 1) * 3 + 2) * 8);
     __mind_store_i64(bb + nb * 8, which);
     __mind_store_i64(loops + ((n - 1) * 3 + 2) * 8, nb + 1);
@@ -37515,9 +37529,16 @@ pub fn nb_emit_while(st: NbState, buf: i64, node: i64, params_addr: i64, n_param
     let je_which: i64 = __mind_load_i64(jcell) - 1;
     let s_je: NbState = NbState { code: c_je, next_id: sc.next_id, last_id: sc.last_id, ncalls: sc.ncalls };
 
-    // Push a loop frame (header + per-loop break list).
-    let breaks_buf: i64 = __mind_alloc(256 * 8);
-    let _lp: i64 = nb_loops_push(loops, lpcell, header, breaks_buf);
+    // Push a loop frame (header + loop record). The record carries this loop's
+    // carry table and body so a break/continue inside it can move every carried
+    // var's live value into its loop slot before jumping (nb_exit_edge_copies),
+    // then the per-loop break list.
+    let lrec: i64 = __mind_alloc(nb_lrec_breaks() + 256 * 8);
+    __mind_store_i64(lrec + 0, carry);
+    __mind_store_i64(lrec + 8, ccell);
+    __mind_store_i64(lrec + 16, body_sa);
+    __mind_store_i64(lrec + 24, nb_truncate_dead(body_sa, body_sl, 0));
+    let _lp: i64 = nb_loops_push(loops, lpcell, header, lrec);
 
     // body.
     let s_body: NbState = nb_block_stmts(s_je, buf, body_sa, nb_truncate_dead(body_sa, body_sl, 0), 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
@@ -37561,10 +37582,193 @@ pub fn nb_while_patch_breaks(loops: i64, lpcell: i64, jmps: i64, jcell: i64, end
     if i >= nb {
         return 0;
     }
-    let bb: i64 = __mind_load_i64(loops + ((n - 1) * 3 + 1) * 8);
+    let bb: i64 = __mind_load_i64(loops + ((n - 1) * 3 + 1) * 8) + nb_lrec_breaks();
     let which: i64 = __mind_load_i64(bb + i * 8);
     let _p: i64 = nb_jmp_set_target(jmps, jcell, which, end_at);
     nb_while_patch_breaks(loops, lpcell, jmps, jcell, end_at, i + 1)
+}
+
+// ===== Loop exit edges: carry live values through break/continue =====
+// A loop-carried var lives in ONE slot across iterations — its post_id (the last
+// body write, an if-merge slot, or an inner loop's exit slot). The header's cond
+// and the next iteration read that slot, and post-loop code reads it too (the
+// copy-in rebind survives the loop). On the fall-through path the body's last
+// write lands there by construction. A `continue` or `break` leaves EARLIER: the
+// var may be bound to an earlier write's slot, and jumping without moving it
+// loses that write (the next iteration, or the code after the loop, reads the
+// previous value). Measured before this: `for i in 0..5 { if i == 2 { continue; }
+// .. }` was refused outright (its parse desugar steps `i` inside the branch),
+// `while x < 10 { x = x + 1; if x == 3 { continue; } x = x + 1; }` HUNG, and the
+// `break` twin returned 2 instead of 3.
+//
+// So an exit edge copies, for every var the target loop carries, its CURRENT
+// binding into its loop slot when the two differ — the phi move the fall-through
+// path gets for free. The moves are a parallel copy (all reads before any write:
+// one var's source can be another's destination, e.g. after `t = a`), done as
+// pushes then pops in reverse. Frame slots only: a fn with a loop never gets DTK
+// register homes (nb_dtk_scan_stmt admits no while), so every value is in its
+// slot, exactly as nb_while_copyin assumes. Copies mint no SSA id, so the count
+// side (nb_count_stmt's break/continue arms) is unchanged. main.mind contains no
+// break/continue, so its self-compile emits none of this.
+
+// push qword [rbp+disp32] = FF B5 <disp32>
+pub fn nb_push_slot(code: String, disp: i64) -> String {
+    let c1: String = nb_push(code, 255);
+    let c2: String = nb_push(c1, 181);
+    nb_i32le_signed(c2, disp)
+}
+
+// pop qword [rbp+disp32] = 8F 85 <disp32>
+pub fn nb_pop_slot(code: String, disp: i64) -> String {
+    let c1: String = nb_push(code, 143);
+    let c2: String = nb_push(c1, 133);
+    nb_i32le_signed(c2, disp)
+}
+
+// Emit the exit-edge moves for the innermost loop (none outside a loop).
+pub fn nb_exit_edge_copies(code: String, buf: i64, lets: i64, lcell: i64, loops: i64, lpcell: i64) -> String {
+    let lrec: i64 = nb_loops_top_lrec(loops, lpcell);
+    if lrec == 0 {
+        return code;
+    }
+    let carry: i64 = __mind_load_i64(lrec + 0);
+    let ncarry: i64 = __mind_load_i64(__mind_load_i64(lrec + 8));
+    nb_exit_copy_rec(code, buf, lets, lcell, lrec, carry, ncarry, 0)
+}
+
+// Carry record i: push its source, recurse, then pop into its loop slot — so the
+// pops run in reverse push order (a correct parallel copy).
+pub fn nb_exit_copy_rec(code: String, buf: i64, lets: i64, lcell: i64, lrec: i64, carry: i64, ncarry: i64, i: i64) -> String {
+    if i >= ncarry {
+        return code;
+    }
+    let src: i64 = nb_exit_copy_src(buf, lets, lcell, lrec, carry, i);
+    if src < 0 {
+        return nb_exit_copy_rec(code, buf, lets, lcell, lrec, carry, ncarry, i + 1);
+    }
+    let post: i64 = __mind_load_i64(carry + (i * 4 + 3) * 8);
+    let c1: String = nb_push_slot(code, nb_slot_disp(src));
+    let c2: String = nb_exit_copy_rec(c1, buf, lets, lcell, lrec, carry, ncarry, i + 1);
+    nb_pop_slot(c2, nb_slot_disp(post))
+}
+
+// Source slot for carry record i at this exit, or -1 when no move is needed.
+// The name is resolved through the let-env, which cannot tell an assignment from
+// a `let` that SHADOWS the carried var. Two shapes are separated statically:
+//   * the loop body's first statement binding the name at any depth is a
+//     top-level `let` — the name is body-local (the hygienic range-for element
+//     copy, `let VAR = CTR`). The outer var is not written before that let, so
+//     its loop slot already holds its value: no move.
+//   * any other `let` of the name in the body (outside nested loops, whose
+//     bindings die before an exit of this loop) — the lookup may resolve the
+//     shadow, so a needed move would copy the wrong value: refuse (poison).
+pub fn nb_exit_copy_src(buf: i64, lets: i64, lcell: i64, lrec: i64, carry: i64, i: i64) -> i64 {
+    let lo: i64 = __mind_load_i64(carry + (i * 4 + 0) * 8);
+    let hi: i64 = __mind_load_i64(carry + (i * 4 + 1) * 8);
+    let post: i64 = __mind_load_i64(carry + (i * 4 + 3) * 8);
+    let cur: i64 = nb_lets_lookup(lets, lcell, buf, lo, hi);
+    if cur < 0 {
+        return 0 - 1;
+    }
+    if cur == post {
+        return 0 - 1;
+    }
+    let sa: i64 = __mind_load_i64(lrec + 16);
+    let sl: i64 = __mind_load_i64(lrec + 24);
+    if nb_body_local_first(buf, sa, sl, 0, lo, hi) == 1 {
+        return 0 - 1;
+    }
+    if nb_block_lets_name(buf, sa, sl, 0, lo, hi) == 1 {
+        __mind_store_i64(lcell + 80, 1);
+        return 0 - 1;
+    }
+    cur
+}
+
+// 1 iff the first statement of [sa,sl) that binds name [lo,hi) — a let or an
+// assign at any depth — is a top-level `let` of it.
+pub fn nb_body_local_first(buf: i64, sa: i64, sl: i64, i: i64, lo: i64, hi: i64) -> i64 {
+    if i >= sl {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(sa + i * 8);
+    if ast_kind(stmt) == ast_let() {
+        let nm: i64 = ast_child0(stmt);
+        if span_bytes_equal(buf, lo, hi, ast_span_lo(nm), ast_span_hi(nm)) == 1 {
+            return 1;
+        }
+    }
+    if nb_stmt_binds_name(buf, stmt, lo, hi) == 1 {
+        return 0;
+    }
+    nb_body_local_first(buf, sa, sl, i + 1, lo, hi)
+}
+
+// 1 iff a statement binds name [lo,hi): a let or assign of it, at any depth
+// (if branches and while bodies).
+pub fn nb_stmt_binds_name(buf: i64, stmt: i64, lo: i64, hi: i64) -> i64 {
+    let k: i64 = ast_kind(stmt);
+    if k == ast_let() {
+        let nl: i64 = ast_child0(stmt);
+        return span_bytes_equal(buf, lo, hi, ast_span_lo(nl), ast_span_hi(nl));
+    }
+    if k == ast_assign() {
+        let na: i64 = ast_child0(stmt);
+        return span_bytes_equal(buf, lo, hi, ast_span_lo(na), ast_span_hi(na));
+    }
+    if k == ast_while() {
+        let wb: i64 = ast_child1(stmt);
+        return nb_block_binds_name(buf, ast_child0(wb), ast_aux(wb), 0, lo, hi);
+    }
+    if k == ast_if() {
+        let tb: i64 = ast_child1(stmt);
+        if nb_block_binds_name(buf, ast_child0(tb), ast_aux(tb), 0, lo, hi) == 1 {
+            return 1;
+        }
+        let eb: i64 = ast_child2(stmt);
+        if eb != 0 {
+            return nb_block_binds_name(buf, ast_child0(eb), ast_aux(eb), 0, lo, hi);
+        }
+    }
+    0
+}
+pub fn nb_block_binds_name(buf: i64, sa: i64, sl: i64, i: i64, lo: i64, hi: i64) -> i64 {
+    if i >= sl {
+        return 0;
+    }
+    if nb_stmt_binds_name(buf, __mind_load_i64(sa + i * 8), lo, hi) == 1 {
+        return 1;
+    }
+    nb_block_binds_name(buf, sa, sl, i + 1, lo, hi)
+}
+
+// 1 iff [sa,sl) declares name [lo,hi) with a `let`, descending if branches but
+// not while bodies.
+pub fn nb_block_lets_name(buf: i64, sa: i64, sl: i64, i: i64, lo: i64, hi: i64) -> i64 {
+    if i >= sl {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(sa + i * 8);
+    let k: i64 = ast_kind(stmt);
+    if k == ast_let() {
+        let nm: i64 = ast_child0(stmt);
+        if span_bytes_equal(buf, lo, hi, ast_span_lo(nm), ast_span_hi(nm)) == 1 {
+            return 1;
+        }
+    }
+    if k == ast_if() {
+        let tb: i64 = ast_child1(stmt);
+        if nb_block_lets_name(buf, ast_child0(tb), ast_aux(tb), 0, lo, hi) == 1 {
+            return 1;
+        }
+        let eb: i64 = ast_child2(stmt);
+        if eb != 0 {
+            if nb_block_lets_name(buf, ast_child0(eb), ast_aux(eb), 0, lo, hi) == 1 {
+                return 1;
+            }
+        }
+    }
+    nb_block_lets_name(buf, sa, sl, i + 1, lo, hi)
 }
 
 // Lower one body statement: a `return EXPR` lowers EXPR then the return; an `if`
@@ -38022,18 +38226,24 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
     if k == ast_break() {
         // `break` — emit the leading ConstI64(unit,0) (lower.rs 5967), then a jmp
         // whose target is the loop end (patched at loop close). Record its index in
-        // the innermost loop frame's break list.
+        // the innermost loop frame's break list. The carried vars' live values
+        // move into their loop slots first (nb_exit_edge_copies) — post-loop
+        // code reads those slots.
         let s0: NbState = nb_emit_const0(st);
-        let c1: String = nb_emit_jmp(s0.code, jmps, jcell);
+        let cb: String = nb_exit_edge_copies(s0.code, buf, lets, lcell, loops, lpcell);
+        let c1: String = nb_emit_jmp(cb, jmps, jcell);
         let which: i64 = __mind_load_i64(jcell) - 1;
         let _pb: i64 = nb_loops_push_break(loops, lpcell, which);
         return NbState { code: c1, next_id: s0.next_id, last_id: s0.last_id, ncalls: s0.ncalls };
     }
     if k == ast_continue() {
-        // `continue` — emit leading const0 then a jmp back to the innermost loop's
-        // header (set immediately, a backward target).
+        // `continue` — emit leading const0, move the carried vars' live values
+        // into their loop slots (the header's cond and the next iteration read
+        // them), then a jmp back to the innermost loop's header (set immediately,
+        // a backward target).
         let s0: NbState = nb_emit_const0(st);
-        let c1: String = nb_emit_jmp(s0.code, jmps, jcell);
+        let cc: String = nb_exit_edge_copies(s0.code, buf, lets, lcell, loops, lpcell);
+        let c1: String = nb_emit_jmp(cc, jmps, jcell);
         let which: i64 = __mind_load_i64(jcell) - 1;
         let _pc: i64 = nb_jmp_set_target(jmps, jcell, which, nb_loops_top_header(loops, lpcell));
         return NbState { code: c1, next_id: s0.next_id, last_id: s0.last_id, ncalls: s0.ncalls };
@@ -40325,10 +40535,10 @@ pub fn nb_region_reassigns_narrow(buf: i64, sa: i64, sl: i64, i: i64, params_add
 // Sub-step C landed, so it was kept fail-closed); Sub-step C fixed that shape at the
 // machinery level, so the recursive descent (nb_region_reassigns_narrow) now permits it.
 //
-// The ONLY narrow loop-carry shape still genuinely broken (a write on a `break`/
-// `continue` exit edge) is refused by the SEPARATE nb_fns_branch_exit_carry guard, so it
-// stays fail-closed even though this scanner permits it. A read-only narrow param merely
-// present while a loop runs (never reassigned) yields 0 here and stays fail-closed.
+// A narrow write on a `break`/`continue` exit edge is carried like any other: the
+// exit edge moves the already-wrapped live value into the loop slot
+// (nb_exit_edge_copies). A read-only narrow param merely present while a loop runs
+// (never reassigned) yields 0 here and stays fail-closed.
 //
 // No self-host fn has a narrow param, so this never fires during self-compile and the
 // byte-identical loop is unaffected.
@@ -40381,8 +40591,8 @@ pub fn nb_region_while_carries_narrow(buf: i64, stmts_addr: i64, stmts_len: i64,
 //     read-only narrow param carried across a loop then read post-loop. The narrow
 //     loop-carry machinery records only a REASSIGNED carry slot; a read-only narrow
 //     param threaded across a loop is not yet handled. Refused until that lands.
-//   (A `break`/`continue` write-on-exit-edge shape is reassigned so it is permitted
-//   HERE, but the SEPARATE nb_fns_branch_exit_carry guard refuses it — see below.)
+//   (A `break`/`continue` write-on-exit-edge shape is reassigned, so it is permitted
+//   here; the exit edge carries the write — nb_exit_edge_copies.)
 //
 // Body-having fns only (the narrow-typed std sigs are extern `unsafe fn`, no body).
 // No self-host fn has a narrow param, so this never fires during self-compile and the
@@ -40415,151 +40625,6 @@ pub fn nb_fns_reassign_narrow_param(buf: i64, ordered: i64, n_fns: i64, k: i64) 
         }
     }
     nb_fns_reassign_narrow_param(buf, ordered, n_fns, k + 1)
-}
-
-// ===== SUB-STEP C FAIL-CLOSED GUARD: branch-exit carry bypass =====
-// A `break`/`continue` inside an if-branch that ALSO assigns a variable bypasses
-// the if's merge-phi stores when taken (the exit jumps straight out of the
-// region), so every write on that path is DROPPED from the merge/carry — a
-// running ELF with a WRONG value (`while{ if a==2 {x=x+100; break;} else {x+=1}
-// }` returned 2 want 102; bare-`=`+break returned 0 want 100; write+continue
-// dropped too). `return` is EXCLUDED: a return computes its value from the live
-// env at the return site (the branch's writes are bound), proven correct
-// empirically (write+return in branch -> 102 == ref), and main.mind's
-// early-return style depends on it. An exit-ONLY branch (no assign) is ALSO
-// correct — the merge slot retains the pre-region value, which is the var's true
-// value on that path — and stays permitted. Refuse loudly (0B) rather than emit
-// the drop; carrying writes through an exit edge properly (mirror lower.rs's
-// break-edge rebindings) is a follow-up. main.mind's own source contains ZERO
-// `break`/`continue` statements, so this never fires during self-compile and the
-// loop stays byte-identical.
-
-// 1 iff block [sa,sl) contains a `break`/`continue` binding to the ENCLOSING
-// loop: descends nested `if` branches but NOT nested `while` bodies (an exit
-// inside a nested while binds to that inner loop and the outer region's merge
-// stores still run after it completes).
-pub fn nb_block_loop_exit(buf: i64, sa: i64, sl: i64, i: i64) -> i64 {
-    if i >= sl {
-        return 0;
-    }
-    let stmt: i64 = __mind_load_i64(sa + i * 8);
-    let k: i64 = ast_kind(stmt);
-    if k == ast_break() {
-        return 1;
-    }
-    if k == ast_continue() {
-        return 1;
-    }
-    if k == ast_if() {
-        let tb: i64 = ast_child1(stmt);
-        if nb_block_loop_exit(buf, ast_child0(tb), ast_aux(tb), 0) == 1 {
-            return 1;
-        }
-        let eb: i64 = ast_child2(stmt);
-        if eb != 0 {
-            if nb_block_loop_exit(buf, ast_child0(eb), ast_aux(eb), 0) == 1 {
-                return 1;
-            }
-        }
-    }
-    nb_block_loop_exit(buf, sa, sl, i + 1)
-}
-
-// 1 iff block [sa,sl) contains ANY name-assign statement at ANY depth (descends
-// nested if branches AND while bodies): a name write anywhere in the branch is
-// merged/carried via the phi slots the exit edge bypasses. Memory stores
-// (index/deref assigns) are NOT phi-merged and persist across the exit, so only
-// ast_assign counts.
-pub fn nb_block_any_assign(buf: i64, sa: i64, sl: i64, i: i64) -> i64 {
-    if i >= sl {
-        return 0;
-    }
-    let stmt: i64 = __mind_load_i64(sa + i * 8);
-    let k: i64 = ast_kind(stmt);
-    if k == ast_assign() {
-        return 1;
-    }
-    if k == ast_while() {
-        let wb: i64 = ast_child1(stmt);
-        if nb_block_any_assign(buf, ast_child0(wb), ast_aux(wb), 0) == 1 {
-            return 1;
-        }
-    }
-    if k == ast_if() {
-        let tb: i64 = ast_child1(stmt);
-        if nb_block_any_assign(buf, ast_child0(tb), ast_aux(tb), 0) == 1 {
-            return 1;
-        }
-        let eb: i64 = ast_child2(stmt);
-        if eb != 0 {
-            if nb_block_any_assign(buf, ast_child0(eb), ast_aux(eb), 0) == 1 {
-                return 1;
-            }
-        }
-    }
-    nb_block_any_assign(buf, sa, sl, i + 1)
-}
-
-// Region walk: 1 iff any if-branch in [sa,sl) — recursing into if branches and
-// while bodies so the check re-applies inside every nested loop context — has
-// BOTH a loop-level exit (nb_block_loop_exit) and a name assign
-// (nb_block_any_assign). Per-BRANCH: a branch that only exits (H5-class) or only
-// writes stays permitted.
-pub fn nb_stmts_branch_exit_carry(buf: i64, sa: i64, sl: i64, i: i64) -> i64 {
-    if i >= sl {
-        return 0;
-    }
-    let stmt: i64 = __mind_load_i64(sa + i * 8);
-    let k: i64 = ast_kind(stmt);
-    if k == ast_if() {
-        let tb: i64 = ast_child1(stmt);
-        let tsa: i64 = ast_child0(tb);
-        let tsl: i64 = ast_aux(tb);
-        if nb_block_loop_exit(buf, tsa, tsl, 0) == 1 {
-            if nb_block_any_assign(buf, tsa, tsl, 0) == 1 {
-                return 1;
-            }
-        }
-        if nb_stmts_branch_exit_carry(buf, tsa, tsl, 0) == 1 {
-            return 1;
-        }
-        let eb: i64 = ast_child2(stmt);
-        if eb != 0 {
-            let esa: i64 = ast_child0(eb);
-            let esl: i64 = ast_aux(eb);
-            if nb_block_loop_exit(buf, esa, esl, 0) == 1 {
-                if nb_block_any_assign(buf, esa, esl, 0) == 1 {
-                    return 1;
-                }
-            }
-            if nb_stmts_branch_exit_carry(buf, esa, esl, 0) == 1 {
-                return 1;
-            }
-        }
-    }
-    if k == ast_while() {
-        let wb: i64 = ast_child1(stmt);
-        if nb_stmts_branch_exit_carry(buf, ast_child0(wb), ast_aux(wb), 0) == 1 {
-            return 1;
-        }
-    }
-    nb_stmts_branch_exit_carry(buf, sa, sl, i + 1)
-}
-
-// Per-fn driver over the pruned `ordered` set (mirror nb_fns_reassign_narrow_param):
-// 1 iff any body-having fn contains the branch-exit carry-bypass shape.
-pub fn nb_fns_branch_exit_carry(buf: i64, ordered: i64, n_fns: i64, k: i64) -> i64 {
-    if k >= n_fns {
-        return 0;
-    }
-    let node: i64 = __mind_load_i64(ordered + k * 8);
-    if ast_child2(node) != 0 {
-        let body: i64 = ast_child2(node);
-        if nb_stmts_branch_exit_carry(buf, ast_child0(body), ast_aux(body), 0) == 1 {
-            return 1;
-        }
-    }
-    nb_fns_branch_exit_carry(buf, ordered, n_fns, k + 1)
 }
 
 // round_up(x, 16)
@@ -44069,14 +44134,6 @@ pub fn selftest_native_elf_hb_from_tokens(tokens: Vec, src_addr: i64, hash_addr:
     // self-compile (no body-having self-host fn reassigns a narrow param), so the
     // loop stays byte-identical.
     if nb_fns_reassign_narrow_param(src_addr, ordered, n_fns, 0) == 1 {
-        return es_new();
-    }
-    // SUB-STEP C FAIL-CLOSED: a `break`/`continue` inside an if-branch that also
-    // assigns bypasses the branch's merge-phi stores when taken (the writes are
-    // silently DROPPED — wrong running value). Refuse the whole module (0B).
-    // `return`-in-branch and exit-only branches are permitted (proven correct).
-    // Never fires during self-compile (main.mind has zero break/continue).
-    if nb_fns_branch_exit_carry(src_addr, ordered, n_fns, 0) == 1 {
         return es_new();
     }
     // B0 f32 fail-closed pre-gate (see nb_user_float_tok above — NARROWED from
