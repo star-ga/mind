@@ -1,0 +1,34 @@
+// Narrow integer lets (i8 / i16 / i32) through the HOME lowering: every store
+// wraps to the declared width, inside a loop with && in a condition, continue,
+// a value-if assignment and an early return (A1 A6 L1 L2).
+// b wraps to -126 at i = 1, h wraps past 32767 at i = 2, w (i32) wraps
+// to -2147483296 at i = 3; seed 4 is never reached on the return path (i = 4
+// continues), so both calls return 114 * 3 + (-296) + (-32564) = -32518;
+// (-32518 + 7 * -32518) mod 256 = -48 -> exit 208.
+// expect: exit=208
+// stdout:
+// note: 2
+fn wrap8(seed: i64, n: i64) -> i64 {
+    let mut b: i8 = 100;
+    let mut w: i32 = 2147483000;
+    let mut h: i16 = 32000;
+    let mut i: i64 = 0;
+    while i < n {
+        i = i + 1;
+        b = b + 30;
+        if b < 0 && i > 2 {
+            w = w + 1000;
+            continue;
+        }
+        h = if h > 0 { h + 500 } else { h - 7 };
+        if i == seed {
+            return (b as i64) + (h as i64);
+        }
+    }
+    (b as i64) * 3 + (w as i64) % 1000 + (h as i64)
+}
+fn main() -> i64 {
+    let a: i64 = wrap8(100, 9);
+    let b: i64 = wrap8(4, 9);
+    (a + b * 7) % 256
+}

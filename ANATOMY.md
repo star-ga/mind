@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2022 | **Est. tokens:** ~3,783,733
-**Generated:** 2026-10-10 17:09 UTC
+**Files:** 2024 | **Est. tokens:** ~3,784,266
+**Generated:** 2026-10-10 17:34 UTC
 
 ## Token Budget Guide
 
@@ -67,7 +67,7 @@
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
 | `examples/mindc_mind/testdata/mindfuzz_regress_failclosed/` | 14 | ~2,935 |
-| `examples/mindc_mind/testdata/native_cf/` | 19 | ~4,062 |
+| `examples/mindc_mind/testdata/native_cf/` | 21 | ~4,595 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2,926 |
 | `examples/mindc_mind/testdata/native_record_trace/` | 13 | ~2,127 |
@@ -943,7 +943,9 @@
 - `mlir_lost_branch_assign.mind` (~118 tok, small) — Known MLIR-backend defect, pinned: a value-if passed to a call that is used
 - `mlir_lost_cond_assign.mind` (~124 tok, small) — Known MLIR-backend defect, pinned: an assignment inside a value-if branch in
 - `mlir_lost_loop_assign.mind` (~189 tok, small) — Known MLIR-backend defect, pinned: inside a loop, a store to an enclosing
+- `mlir_narrow_loop_carry.mind` (~253 tok, medium) — A narrow i32 parameter copied into an i32 let, multiplied and added past
 - `mlir_stale_read_after_vif.mind` (~132 tok, small) — Known MLIR-backend defect, pinned: a variable read AFTER a value-if in the
+- `narrow_wrap_loop.mind` (~280 tok, medium) — Narrow integer lets (i8 / i16 / i32) through the HOME lowering: every store
 - `note_kinds.mind` (~48 tok, tiny) — A program the mic@3 twin can hash keeps the IR trace-hash note (n_type 1).
 - `o_if_else_merges.mind` (~332 tok, medium) — O1 / O2 / O3: if/else outside loops that merges assigned outer variables,
 ### `examples/mindc_mind/testdata/native_elf_oracle/`
