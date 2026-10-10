@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2019 | **Est. tokens:** ~3,783,035
-**Generated:** 2026-10-10 16:35 UTC
+**Files:** 2022 | **Est. tokens:** ~3,783,733
+**Generated:** 2026-10-10 17:09 UTC
 
 ## Token Budget Guide
 
@@ -62,12 +62,12 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 177 | ~470,893 |
+| `examples/mindc_mind/` | 177 | ~470,954 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,159 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
 | `examples/mindc_mind/testdata/mindfuzz_regress_failclosed/` | 14 | ~2,935 |
-| `examples/mindc_mind/testdata/native_cf/` | 16 | ~3,425 |
+| `examples/mindc_mind/testdata/native_cf/` | 19 | ~4,062 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2,926 |
 | `examples/mindc_mind/testdata/native_record_trace/` | 13 | ~2,127 |
@@ -728,7 +728,7 @@
 - `self_host_native_blas_dot_i16_smoke.py` (~2879 tok, huge)
 - `self_host_native_blas_dot_q16_smoke.py` (~1774 tok, huge)
 - `self_host_native_cast_conv_smoke.py` (~1373 tok, large) — RI-B2 scalar-cast-conv rung (#108) — native-ELF int<->float `as`-cast chain.
-- `self_host_native_cf_smoke.py` (~4219 tok, huge) — Native stage1: general control flow (HOME lowering) — three-way behavioural gate.
+- `self_host_native_cf_smoke.py` (~4280 tok, huge) — Native stage1: general control flow (HOME lowering) — three-way behavioural gate.
 - `self_host_native_diag_smoke.py` (~1326 tok, large) — RI-D1a gate (task #313): `mindc build --backend=native` must FAIL-CLOSED with an
 - `self_host_native_dot_f32_smoke.py` (~1436 tok, large) — RI-B2-S8 STEP C (#108) — native-ELF scalar STRICT-FP f32 DOT-PRODUCT.
 - `self_host_native_dot_l1_q16_smoke.py` (~1188 tok, large) — RI-B2 L1-Q16 rung (#108) — native-ELF Q16.16 L1 distance.
@@ -933,10 +933,13 @@
 - `a9_read_then_branch_assign.mind` (~166 tok, small) — A HOME-lowered read of a variable is a copy: a value-if branch that assigns
 - `a9_vif_branch_effects.mind` (~212 tok, medium) — A9: value-if branches that assign an enclosing variable, return from the
 - `deep_nesting.mind` (~306 tok, medium) — Arbitrary nesting: six levels of if / while / value-if mixing every exit
+- `f64_loop_vif_return.mind` (~196 tok, small) — f64 values through the HOME lowering: a float accumulator assigned from a
 - `l1_return_in_loop.mind` (~306 tok, medium) — L1: `return` inside while bodies, from 1, 2 and 3 levels of nesting, inside
 - `l2_loop_if_branches.mind` (~412 tok, medium) — L2: an `if` inside a loop whose branches hold a call statement, a let, a
 - `l3_break_continue_params.mind` (~314 tok, medium) — L3: break / continue inside functions that take parameters, including
 - `mlir_break_in_cond_vif.mind` (~165 tok, small) — A `break` inside a value-if that sits in an if condition inside a loop. The
+- `mlir_f64_loop_carry_continue.mind` (~190 tok, small) — f64 values through the HOME lowering: || in an if condition inside a loop with
+- `mlir_f64_loop_carry_vif.mind` (~251 tok, medium) — f64 values through the HOME lowering: && in an if condition inside a loop, a float
 - `mlir_lost_branch_assign.mind` (~118 tok, small) — Known MLIR-backend defect, pinned: a value-if passed to a call that is used
 - `mlir_lost_cond_assign.mind` (~124 tok, small) — Known MLIR-backend defect, pinned: an assignment inside a value-if branch in
 - `mlir_lost_loop_assign.mind` (~189 tok, small) — Known MLIR-backend defect, pinned: inside a loop, a store to an enclosing

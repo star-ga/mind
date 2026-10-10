@@ -29,6 +29,8 @@ Steps
                `// expect: exit=N`, `// stdout: TEXT` (hand-derived),
                `// note: 1|2` (required PT_NOTE n_type),
                `// mlir: nobuild` (pinned MLIR limitation: must not build),
+               `// mlir: nobuild=TEXT` (pinned MLIR build failure whose
+               error tail contains TEXT),
                `// mlir: exit=N` (pinned MLIR defect: MLIR must give N).
   2. corpus    deterministic random programs (default seeds 11,12 x 160 = 320,
                fed unseeded: they call no std function);
@@ -181,10 +183,11 @@ def check_fixture(f: pathlib.Path, stage1, mindc, so):
     if note is not None and elf[-44] != int(note):
         return False, f"fixture {tag}: PT_NOTE n_type={elf[-44]} want {note}"
     mspec = header(src, "mlir")
-    if mspec == "nobuild":
-        if mres[0] != "nobuild" or MLIR_LIMIT not in mres[1]:
-            return False, f"fixture {tag}: pinned MLIR limitation changed: mlir={mres}"
-        mtxt = "MLIR refuses (pinned limitation)"
+    if mspec is not None and mspec.startswith("nobuild"):
+        why = mspec[len("nobuild="):] if mspec.startswith("nobuild=") else MLIR_LIMIT
+        if mres[0] != "nobuild" or why not in mres[1]:
+            return False, f"fixture {tag}: pinned MLIR build failure ({why!r}) changed: mlir={mres}"
+        mtxt = f"MLIR refuses to build (pinned: {why!r})"
     elif mspec is not None:
         pinned = int(mspec.split("=")[1])
         if mres[0] != pinned:
