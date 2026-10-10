@@ -4,10 +4,8 @@
 
 //! Native bridge refusals for programs it used to miscompile or crash on.
 //!
-//! * `fn main(argc: i64, argv: i64)` built natively and ran with both
-//!   parameters 0: the probe below exited 40 where the MLIR build of the same
-//!   source exits 20 + argc. The bridge now refuses an entry `main` with
-//!   parameters by name (`native.entry_main_has_params`) and writes nothing.
+//! * Parameterized entries other than the exact i64 argc/argv ABI are refused
+//!   by name (`native.entry_main_has_params`) before stage1 runs.
 //! * Undefined identifiers and symbolic tensor dimensions read as values
 //!   reached lowering's fail-closed `panic!`, so `mindc build --backend native`
 //!   died with exit 101. Every case of that negative corpus -- reduced from the
@@ -40,10 +38,10 @@ fn assert_refused(name: &str, src: &str, kind: &str) -> String {
 }
 
 #[test]
-fn an_entry_main_with_argc_argv_is_refused_not_run_with_zeros() {
+fn an_entry_main_with_an_extra_parameter_is_refused() {
     let stderr = assert_refused(
         "argc_probe",
-        "fn main(argc: i64, argv: i64) -> i64 { if argv == 0 { return 40 + argc; } \
+        "fn main(argc: i64, argv: i64, extra: i64) -> i64 { if argv == 0 { return 40 + argc; } \
          return 20 + argc; }\n",
         "native.entry_main_has_params",
     );

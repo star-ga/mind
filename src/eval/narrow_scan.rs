@@ -65,7 +65,33 @@ enum TypeLeaf<'a> {
     TensorDtype(&'a str),
 }
 
-type LeafPred = fn(TypeLeaf<'_>) -> bool;
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LeafPred {
+    Narrow,
+    NonF64,
+    NativeInteger,
+    StrictInteger,
+}
+impl LeafPred {
+    fn accepts(self, leaf: TypeLeaf<'_>) -> bool {
+        match self {
+            Self::Narrow => is_narrow_leaf(leaf),
+            Self::NonF64 => is_non_f64_float_scalar(leaf),
+            Self::StrictInteger => is_non_i64_integer_scalar(leaf),
+            Self::NativeInteger => match leaf {
+                TypeLeaf::Scalar("u64") => false,
+                _ => is_non_i64_integer_scalar(leaf),
+            },
+        }
+    }
+    fn nested(self) -> Self {
+        if self == Self::NativeInteger {
+            Self::StrictInteger
+        } else {
+            self
+        }
+    }
+}
 
 /// True when `name` is one of the four narrow integer type names that
 /// `is_named_narrow_sig_ty` (lower.rs) recognises.
@@ -80,7 +106,7 @@ fn is_narrow_leaf(leaf: TypeLeaf<'_>) -> bool {
     }
 }
 
-/// A SCALAR integer type other than `i64` and the pointer-width `isize`/`usize`
+/// The strict nested-type rule: a SCALAR integer other than `i64` and `isize`/`usize`
 /// (both an i64 on both backends). Tensor element dtypes are not counted, as for
 /// [`is_non_f64_float_scalar`].
 fn is_non_i64_integer_scalar(leaf: TypeLeaf<'_>) -> bool {
@@ -106,27 +132,32 @@ fn is_non_f64_float_scalar(leaf: TypeLeaf<'_>) -> bool {
 /// name test (over-approximation — see module doc).
 fn ty_mentions(pred: LeafPred, ty: &TypeAnn) -> bool {
     match ty {
-        TypeAnn::ScalarI32 => pred(TypeLeaf::Scalar("i32")),
-        TypeAnn::ScalarI64 => pred(TypeLeaf::Scalar("i64")),
-        TypeAnn::ScalarF32 => pred(TypeLeaf::Scalar("f32")),
-        TypeAnn::ScalarF64 => pred(TypeLeaf::Scalar("f64")),
-        TypeAnn::ScalarBool => pred(TypeLeaf::Scalar("bool")),
-        TypeAnn::ScalarU32 => pred(TypeLeaf::Scalar("u32")),
-        TypeAnn::Named(n) => pred(TypeLeaf::Scalar(n)),
+        TypeAnn::ScalarI32 => pred.accepts(TypeLeaf::Scalar("i32")),
+        TypeAnn::ScalarI64 => pred.accepts(TypeLeaf::Scalar("i64")),
+        TypeAnn::ScalarF32 => pred.accepts(TypeLeaf::Scalar("f32")),
+        TypeAnn::ScalarF64 => pred.accepts(TypeLeaf::Scalar("f64")),
+        TypeAnn::ScalarBool => pred.accepts(TypeLeaf::Scalar("bool")),
+        TypeAnn::ScalarU32 => pred.accepts(TypeLeaf::Scalar("u32")),
+        TypeAnn::Named(n) => pred.accepts(TypeLeaf::Scalar(n)),
         TypeAnn::Tensor { dtype, .. } | TypeAnn::DiffTensor { dtype, .. } => {
-            pred(TypeLeaf::TensorDtype(dtype))
+            pred.accepts(TypeLeaf::TensorDtype(dtype))
         }
         TypeAnn::Slice { element, .. } | TypeAnn::Array { element, .. } => {
-            ty_mentions(pred, element)
+            ty_mentions(pred.nested(), element)
         }
-        TypeAnn::Ref { target, .. } => ty_mentions(pred, target),
+        TypeAnn::Ref { target, .. } => ty_mentions(pred.nested(), target),
+        TypeAnn::RawPtr { pointee, .. } if pred == LeafPred::NativeInteger => {
+            !matches!(pointee.as_ref(), TypeAnn::Named(n) if n == "u8")
+        }
         TypeAnn::RawPtr { pointee, .. } => ty_mentions(pred, pointee),
-        TypeAnn::SparseTensor { element, .. } => ty_mentions(pred, element),
-        TypeAnn::Generic { args, .. } => args.iter().any(|t| ty_mentions(pred, t)),
-        TypeAnn::Tuple { elements } => elements.iter().any(|t| ty_mentions(pred, t)),
+        TypeAnn::SparseTensor { element, .. } => ty_mentions(pred.nested(), element),
+        TypeAnn::Generic { args, .. } => args.iter().any(|t| ty_mentions(pred.nested(), t)),
+        TypeAnn::Tuple { elements } => elements.iter().any(|t| ty_mentions(pred.nested(), t)),
         TypeAnn::FnPtr { params, ret } => {
-            params.iter().any(|t| ty_mentions(pred, t))
-                || ret.as_deref().is_some_and(|t| ty_mentions(pred, t))
+            params.iter().any(|t| ty_mentions(pred.nested(), t))
+                || ret
+                    .as_deref()
+                    .is_some_and(|t| ty_mentions(pred.nested(), t))
         }
     }
 }
@@ -209,14 +240,18 @@ fn node_mentions(pred: LeafPred, node: &Node) -> bool {
         Node::FieldAccess { receiver, .. } => node_mentions(pred, receiver),
         Node::Const { ty, value, .. } => opt_ty_mentions(pred, ty) || node_mentions(pred, value),
         Node::ExternConst { ty, .. } => ty_mentions(pred, ty),
-        Node::TypeAlias { target, .. } => ty_mentions(pred, target),
+        Node::TypeAlias { target, .. } => ty_mentions(pred.nested(), target),
         Node::Export { .. } => false,
-        Node::StructDef { fields, .. } => fields.iter().any(|f| ty_mentions(pred, &f.ty)),
+        Node::StructDef { fields, .. } => fields.iter().any(|f| ty_mentions(pred.nested(), &f.ty)),
         Node::EnumDef { variants, .. } => variants
             .iter()
-            .any(|v| v.payload.iter().any(|t| ty_mentions(pred, t))),
+            .any(|v| v.payload.iter().any(|t| ty_mentions(pred.nested(), t))),
         Node::Assert { cond, .. } => node_mentions(pred, cond),
-        Node::As { expr, ty, .. } => ty_mentions(pred, ty) || node_mentions(pred, expr),
+        Node::As { expr, ty, .. } => {
+            let admitted_i32_cast =
+                pred == LeafPred::NativeInteger && matches!(ty, TypeAnn::ScalarI32);
+            (!admitted_i32_cast && ty_mentions(pred, ty)) || node_mentions(pred, expr)
+        }
         Node::Logical { left, right, .. } => {
             node_mentions(pred, left) || node_mentions(pred, right)
         }
@@ -284,7 +319,7 @@ pub(crate) fn module_mentions_narrow(module: &ast::Module) -> bool {
     module
         .items
         .iter()
-        .any(|n| node_mentions(is_narrow_leaf, n))
+        .any(|n| node_mentions(LeafPred::Narrow, n))
 }
 
 /// `true` when ANY type annotation in the module names a scalar float type other
@@ -297,19 +332,15 @@ pub(crate) fn module_mentions_non_f64_float(module: &ast::Module) -> bool {
     module
         .items
         .iter()
-        .any(|n| node_mentions(is_non_f64_float_scalar, n))
+        .any(|n| node_mentions(LeafPred::NonF64, n))
 }
 
-/// `true` when ANY type annotation in the module names a scalar integer type other
-/// than `i64` (`i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `u64`), including cast targets,
-/// struct fields, aliases and nested element types. The frozen native profile uses
-/// it: a declared narrow or unsigned width lives only in the AST (an unsigned `let`
-/// lowers to a bare `BitAnd`), and the frozen compiler carries every integer in an
-/// i64 slot without re-materialising a narrow `let` or parameter at its width or
-/// comparing a `u64` unsigned.
-pub(crate) fn module_mentions_non_i64_integer(module: &ast::Module) -> bool {
+/// Native width fence, with only the wave-three exceptions: scalar u64,
+/// explicit i32 conversions, and raw byte pointers. Nested aggregate/alias
+/// types keep the strict rule; the general lowering prescan is unchanged.
+pub(crate) fn module_mentions_unsupported_native_integer(module: &ast::Module) -> bool {
     module
         .items
         .iter()
-        .any(|n| node_mentions(is_non_i64_integer_scalar, n))
+        .any(|n| node_mentions(LeafPred::NativeInteger, n))
 }

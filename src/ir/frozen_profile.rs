@@ -28,6 +28,11 @@ use crate::ir::frozen_intrinsics::{
 };
 use crate::ir::{BinOp, IRModule, Instr, ValueId};
 
+#[path = "native_scalar.rs"]
+pub(crate) mod scalar;
+#[path = "native_source.rs"]
+mod source;
+
 /// The first construct that is NOT in the frozen native profile, named for a
 /// fail-loud diagnostic. `None`-free by construction: `Ok(())` means every
 /// construct in the module is on the allowlist.
@@ -57,7 +62,17 @@ pub fn profile_frozen_admits_program(
     linked: &[IRModule],
 ) -> Result<(), FrozenProfileRejection> {
     let parts: Vec<&IRModule> = std::iter::once(user).chain(linked).collect();
-    admit_frozen_program(&parts)
+    admit_frozen_program(&parts, false)
+}
+
+/// Explicit bounded allocation policy; all non-allocation fences still apply.
+pub fn profile_frozen_admits_program_bounded(
+    user: &IRModule,
+    linked: &[IRModule],
+    bounded: bool,
+) -> Result<(), FrozenProfileRejection> {
+    let parts: Vec<&IRModule> = std::iter::once(user).chain(linked).collect();
+    admit_frozen_program(&parts, bounded)
 }
 
 /// [`profile_frozen_admits`] for a module whose calls may also bind to `linked`
@@ -70,12 +85,27 @@ pub fn profile_frozen_admits_linked(
     module: &IRModule,
     linked: &std::collections::BTreeSet<String>,
 ) -> Result<(), FrozenProfileRejection> {
+    profile_frozen_admits_linked_bounded(module, linked, false)
+}
+
+/// Body admission with an explicit allocation policy, never ambient state.
+pub fn profile_frozen_admits_linked_bounded(
+    module: &IRModule,
+    linked: &std::collections::BTreeSet<String>,
+    bounded: bool,
+) -> Result<(), FrozenProfileRejection> {
     // Collect the functions this module DEFINES. A call to one of them is in-profile
     // because its body is walked by this same predicate; a call to anything else is
     // not, and cannot be assumed proven. See `admit_call`.
     let mut defined = linked.clone();
     collect_fn_names(&module.instrs, &mut defined);
-    admit_instrs_in(&module.instrs, &defined)?;
+    admit_instrs_in(
+        &module.instrs,
+        &defined,
+        module,
+        &crate::ir::frozen_profile::scalar::types(module, None, &module.instrs),
+        bounded,
+    )?;
     admit_discard_only_results(&module.instrs)
 }
 
@@ -86,25 +116,18 @@ pub fn profile_frozen_admits_linked(
 ///   float lowering is proven for f64 alone (see `admit_binop`). The frozen stage1.elf
 ///   refuses the same programs on its own (`nb_user_float_tok` in `main.mind`); this
 ///   makes the first fence refuse them too, and name the construct.
-/// * Integer width: any integer type other than `i64` (`isize`/`usize` are i64 on both
-///   backends) is out of profile (`type.non_i64_integer`). The frozen compiler carries
-///   every integer in an i64 slot and re-materialises a declared width only on
-///   `return`: a `u8`/`u16`/`u32` `let` or parameter keeps its unmasked value and a
-///   `u64` compares signed, where the MLIR backend masks and compares unsigned
-///   (measured: `let v: u8 = 300; if v > 100 {..}` is 1 natively and 2 under MLIR; a
-///   `u64` parameter holding `-1` compared `> 5` likewise). The IR cannot see it: an
-///   unsigned `let` lowers to a bare `BitAnd`, a parameter to its own mask. This also
-///   keeps an intrinsic result out of every non-i64 `let`, which the whole-program
-///   operand proof cannot see for the same reason.
+/// * Integer width: narrow locals, parameters, aggregate elements, and aliases
+///   remain out of profile (`type.non_i64_integer`). Full-width u64 arithmetic
+///   is admitted with unsigned facts; ordered unsigned comparisons still refuse.
+///   An i32 cast and byte-pointer cast are explicit wave-three exceptions, not
+///   permission to use a narrow local/parameter ABI.
 pub fn profile_frozen_admits_source(
     module: &crate::ast::Module,
 ) -> Result<(), FrozenProfileRejection> {
     if crate::eval::narrow_scan::module_mentions_non_f64_float(module) {
         reject("type.non_f64_float")
-    } else if crate::eval::narrow_scan::module_mentions_non_i64_integer(module) {
-        reject("type.non_i64_integer")
     } else {
-        Ok(())
+        source::admit(module)
     }
 }
 
@@ -132,7 +155,8 @@ fn collect_fn_names(instrs: &[Instr], out: &mut std::collections::BTreeSet<Strin
 /// proves user-function calls, and the callee's body is walked by this predicate),
 /// and a call to one of the `frozen_intrinsics::FROZEN_NATIVE_INTRINSICS` with exactly that row's
 /// arity, for `read`/`write` an offset operand proven to be `-1`, for `alloc`/`realloc` a
-/// size proven `> 0`, and (checked module-wide afterwards) every operand proven an i64 slot.
+/// size proven `> 0` unless bounded, and (checked module-wide afterwards) every
+/// operand proven an i64 slot. Numeric conversions have their own typed rule.
 /// Out-of-profile: everything else — builtins, any other intrinsic, and any extern —
 /// because "proven for user calls" is not "proven for every name that can appear in
 /// a call".
@@ -141,7 +165,15 @@ fn admit_call(
     args: &[ValueId],
     defined: &std::collections::BTreeSet<String>,
     consts: &std::collections::BTreeMap<ValueId, i64>,
+    bounded: bool,
 ) -> Result<(), FrozenProfileRejection> {
+    if crate::ir::frozen_profile::scalar::conversion(name).is_some() {
+        return if args.len() == 1 {
+            Ok(())
+        } else {
+            reject("call.intrinsic_arity")
+        };
+    }
     if defined.contains(name) {
         return Ok(());
     }
@@ -151,99 +183,70 @@ fn admit_call(
         // in the compiler's own error when the second fence also refuses.
         return reject("call.undefined_or_builtin");
     };
-    admit_intrinsic_call(spec, args, consts)
+    admit_intrinsic_call(spec, args, consts, bounded)
 }
 
 fn reject(construct: &'static str) -> Result<(), FrozenProfileRejection> {
     Err(FrozenProfileRejection { construct })
 }
 
-/// Admit a `BinOp` by OPERATOR. The byte-identity corpus (the RI-D1 readiness gate's
-/// frozen-profile programs) proves only substrate-invariant integer ops, so the operators
-/// whose RESULT can diverge across substrate — or by operand signedness in a way this
-/// type-blind predicate cannot see — are rejected by name. `Div` and `Mod` are rejected
-/// (`i64::MIN / -1` overflow, signed-vs-unsigned quotient, sign-of-remainder — none
-/// corpus-proven; this compiler's #99 u64 div/rem/shr family). `Shl` and `Shr` are
-/// rejected (shift-count >= bit-width is platform-divergent, and `Shr` is arithmetic on
-/// signed vs logical on unsigned — a signedness split, again #99). `Add`/`Sub`/`Mul` and
-/// the bitwise ops are 2's-complement bit-exact and substrate-identical regardless of
-/// signedness, and equality (`Eq`/`Ne`) is a bit-compare, so all are admitted. The
-/// ordered comparisons (`Lt`/`Le`/`Gt`/`Ge`) ARE signedness-dependent (i64 `<` is
-/// corpus-proven; u64 `<` was the #99 miscompile) — admitted here only because the corpus
-/// proves the i64 form and rejecting them would exclude the proven for-loop; that residual
-/// u64-comparison gap is why the deferred (op, operand_type) keying below is required
-/// before the flip.
-///
-/// Ecosystem fitment (audit directive 2026-08-21): rejecting Shr KEEPS the Q16.16
-/// fixed-point tier — arch-mind metrics, mind-nerve routing, mind-runtime, MIND-Law
-/// money-path — OUT of the frozen profile, because Q16.16 multiply is `(a*b) >> 16`
-/// (needs Shr). That exclusion is CORRECT: those consumers are not yet native-byte-
-/// identity-proven, so they must stay on the MLIR backend until Shr is corpus-proven
-/// AND operand-type-keyed. Tensor/GPU consumers (mind-runtime kernels, mind-inference)
-/// are already excluded via the tensor rejections above.
-///
-/// FLOAT COMPARISON — admitted, native == MLIR proven for IEEE NaN / +-0.0 / +-inf
-/// (row 10 FLOAT_LANGUAGE_COVERAGE). This arm used to refuse every comparison in a module
-/// carrying a float literal, because the native lowering was NOT IEEE and DISAGREED WITH
-/// THE MLIR PATH on the same source:
-///
-///   old native (`examples/mindc_mind/main.mind::nb_fp_setcc_opcode`): `ucomisd` + a bare
-///     UNSIGNED `setcc`. An unordered compare sets CF=ZF=PF=1, so `setb`(Lt) / `setbe`(Le)
-///     / `sete`(Eq) read TRUE for a NaN operand and `setne`(Ne) read FALSE.
-///   MLIR (`src/mlir/lowering.rs`): `arith.cmpf "olt"/"ole"/"ogt"/"oge"/"oeq"` and `"une"`
-///     — the IEEE predicates, all false for NaN except `!=`.
-///
-/// MEASURED on `let n = h - h; /* NaN */ if n == 0.0 { if n < 0.0 { return 3; } return 1; }
-/// if n < 0.0 { return 2; } return 0;` — old native exit 3 (`n == 0.0` AND `n < 0.0` both
-/// true, the ucomisd-unordered signature) vs MLIR exit 0.
-///
-/// The native lowering now emits the IEEE-ordered forms: `a < b` / `a <= b` as
-/// `ucomisd b, a` + `seta` / `setae` (operands SWAPPED; both false when unordered),
-/// `a == b` as `sete AND setnp`, `a != b` as `setne OR setp`; `>` / `>=` were already
-/// `seta` / `setae`. PROVEN by `ri_d1_frozen_profile_gate.py::IN_PROFILE`: the historical
-/// program above plus a truth-table corpus (all six predicates over a NaN on the left, on
-/// the right, on both sides, NaN vs +-inf, ordinary finite pairs including two negatives,
-/// -0.0 vs +0.0 both ways, -inf vs +inf, inf vs inf, inf vs finite) builds through the
-/// frozen stage1.elf and returns the SAME exit as the MLIR backend AND as an IEEE-754
-/// oracle computed independently of both backends. The proof covers f64 only, and this
-/// arm is type-blind, so it cannot keep an f32 operand out by itself: a float literal
-/// lowers to `Instr::ConstF64` whatever its declared width, so `let x: f32 = 1.0;
-/// let y: f32 = 2.0; if x < y {..}` reaches here as two `ConstF64` and an `Lt` with no
-/// conversion call for `admit_call` to refuse. The f32 exclusion is therefore made on the
-/// SOURCE by [`profile_frozen_admits_source`], which the native bridge runs next to this
-/// predicate. Add f32 rows to the gate corpus before relaxing that.
-///
-/// FENCE OWNERSHIP: with the module-scoped taint gone, this profile no longer backstops the
-/// operand type of an f64-vs-integer comparison. Keeping a float compare on the f64 path is
-/// owned by the native side: the per-slot float classifier in `main.mind` (params from
-/// the signature, calls from the return registry, lets, fields, index, cast, neg, if),
-/// its mixed-dtype poison, and type-checker E2013. Whoever edits that classifier edits the
-/// fence. Encoding hazard in the same lowering: the parity fix-up (`setnp ah` / `setp ah`,
-/// then `and`/`or al, ah`) relies on NO REX prefix on those bytes; a REX byte would turn
-/// `ah` into `spl` and silently drop the NaN mask.
-///
-/// deferred: the SOUND fix for the residual u64-comparison gap noted above is
-/// (op, operand_type) keying against a corpus-DERIVED pair set — the type axis (i64 Lt
-/// proven vs u64 Lt = #99) cannot be decided on `op` alone. Thread `FnDef.value_types`
-/// into this predicate; upgrade path tracked in task #313 / the RI-D1 bijection gate.
-fn admit_binop(op: &BinOp) -> Result<(), FrozenProfileRejection> {
+/// Div/rem key on both operand types. Shifts mask the count with 63;
+/// signed right shift is arithmetic and unsigned right shift is logical.
+fn admit_binop(
+    op: &BinOp,
+    lhs: Option<crate::ir::frozen_profile::scalar::Scalar>,
+    rhs: Option<crate::ir::frozen_profile::scalar::Scalar>,
+) -> Result<(), FrozenProfileRejection> {
+    use crate::ir::frozen_profile::scalar::Scalar::{Signed, Unsigned};
+    let ints = matches!(lhs, Some(Signed | Unsigned)) && lhs == rhs;
     match op {
-        BinOp::Add | BinOp::Sub | BinOp::Mul => Ok(()),
-        BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne => Ok(()),
-        BinOp::Div => reject("binop.div"),
-        BinOp::Mod => reject("binop.mod"),
+        BinOp::Div if !ints => reject("binop.div_operand_type"),
+        BinOp::Mod if !ints => reject("binop.mod_operand_type"),
         #[cfg(feature = "std-surface")]
-        BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => Ok(()),
+        BinOp::Shl
+            if !matches!(
+                (lhs, rhs),
+                (Some(Signed | Unsigned), Some(Signed | Unsigned))
+            ) =>
+        {
+            reject("binop.shl_operand_type")
+        }
         #[cfg(feature = "std-surface")]
-        BinOp::Shl => reject("binop.shl"),
+        BinOp::Shr
+            if !matches!(
+                (lhs, rhs),
+                (Some(Signed | Unsigned), Some(Signed | Unsigned))
+            ) =>
+        {
+            reject("binop.shr_operand_type")
+        }
+        BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
+            if lhs == Some(Unsigned) || rhs == Some(Unsigned) =>
+        {
+            reject("type.non_i64_integer")
+        }
+        BinOp::Add
+        | BinOp::Sub
+        | BinOp::Mul
+        | BinOp::Div
+        | BinOp::Mod
+        | BinOp::Lt
+        | BinOp::Le
+        | BinOp::Gt
+        | BinOp::Ge
+        | BinOp::Eq
+        | BinOp::Ne => Ok(()),
         #[cfg(feature = "std-surface")]
-        BinOp::Shr => reject("binop.shr"),
+        BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => Ok(()),
     }
 }
 
 fn admit_instrs_in(
     instrs: &[Instr],
     defined: &std::collections::BTreeSet<String>,
+    module: &IRModule,
+    types: &std::collections::BTreeMap<ValueId, crate::ir::frozen_profile::scalar::Scalar>,
+    bounded: bool,
 ) -> Result<(), FrozenProfileRejection> {
     let mut consts = std::collections::BTreeMap::new();
     for instr in instrs {
@@ -258,28 +261,39 @@ fn admit_instrs_in(
             // `FROZEN_NATIVE_INTRINSICS` — the names the frozen `nb_intrinsic_id`
             // recognises, each proven by an `IN_PROFILE` behaviour row. That covers
             // the aggregate ABI (`__mind_alloc` / `__mind_store_i64` /
-            // `__mind_load_i64`) behind struct return. A full-width cast still
-            // lowers to `__mind_conv_i64`, which `nb_intrinsic_id` does not know, so
-            // `float_as_i64` stays refused `call.undefined_or_builtin` until a seed
-            // batch adds that id (W8c).
-            Instr::Call { name, args, .. } => admit_call(name, args, defined, &consts)?,
+            // `__mind_load_i64`) behind struct return. Wave-three conversions
+            // have a separate numeric operand/result contract (native_scalar).
+            Instr::Call { name, args, .. } => {
+                admit_call(name, args, defined, &consts, bounded)?;
+                if crate::ir::frozen_profile::scalar::conversion(name).is_some()
+                    && !types.contains_key(&args[0])
+                {
+                    reject("call.conversion_operand_type")?;
+                }
+            }
             Instr::ConstI64(..)
             | Instr::ConstF64(..)
             | Instr::Return { .. }
             | Instr::Param { .. }
             | Instr::Output(..) => {}
-            // BinOp admission is keyed on the OPERATOR, not the constructor (H5, cross-model
-            // + corpus audit 2026-08-21). A type-blind `BinOp {..} => {}` admitted the
-            // substrate-/signedness-divergent ops (Div/Mod/Shl/Shr) that the byte-identity
-            // corpus never proves — see admit_binop for the rejection set + fitment note.
-            Instr::BinOp { op, .. } => admit_binop(op)?,
-            Instr::FnDef { body, .. } => admit_instrs_in(body, defined)?,
+            // New arithmetic pairs require an operand-type proof, including
+            // caller/return and region edges in the whole-program fence.
+            Instr::BinOp { op, lhs, rhs, .. } => {
+                admit_binop(op, types.get(lhs).copied(), types.get(rhs).copied())?
+            }
+            Instr::FnDef { name, body, .. } => admit_instrs_in(
+                body,
+                defined,
+                module,
+                &crate::ir::frozen_profile::scalar::types(module, Some(name), body),
+                bounded,
+            )?,
             #[cfg(feature = "std-surface")]
             Instr::While {
                 cond_instrs, body, ..
             } => {
-                admit_instrs_in(cond_instrs, defined)?;
-                admit_instrs_in(body, defined)?;
+                admit_instrs_in(cond_instrs, defined, module, types, bounded)?;
+                admit_instrs_in(body, defined, module, types, bounded)?;
             }
             #[cfg(feature = "std-surface")]
             Instr::If {
@@ -288,9 +302,9 @@ fn admit_instrs_in(
                 else_instrs,
                 ..
             } => {
-                admit_instrs_in(cond_instrs, defined)?;
-                admit_instrs_in(then_instrs, defined)?;
-                admit_instrs_in(else_instrs, defined)?;
+                admit_instrs_in(cond_instrs, defined, module, types, bounded)?;
+                admit_instrs_in(then_instrs, defined, module, types, bounded)?;
+                admit_instrs_in(else_instrs, defined, module, types, bounded)?;
             }
             #[cfg(feature = "std-surface")]
             Instr::ConstArray { .. }
@@ -385,7 +399,13 @@ mod tests {
     fn admits(instrs: &[Instr]) -> Result<(), FrozenProfileRejection> {
         let mut defined = std::collections::BTreeSet::new();
         collect_fn_names(instrs, &mut defined);
-        admit_instrs_in(instrs, &defined)
+        admit_instrs_in(
+            instrs,
+            &defined,
+            &IRModule::default(),
+            &Default::default(),
+            false,
+        )
     }
 
     fn fndef(body: Vec<Instr>) -> Instr {
@@ -465,11 +485,11 @@ mod tests {
         // byte-identity corpus and must be named, not silently admitted.
         assert_eq!(
             admits(&[binop(BinOp::Div)]).unwrap_err().construct,
-            "binop.div"
+            "binop.div_operand_type"
         );
         assert_eq!(
             admits(&[binop(BinOp::Mod)]).unwrap_err().construct,
-            "binop.mod"
+            "binop.mod_operand_type"
         );
     }
 
@@ -480,11 +500,11 @@ mod tests {
         // that keep the Q16.16 `(a*b)>>16` ecosystem tier out of the frozen profile.
         assert_eq!(
             admits(&[binop(BinOp::Shl)]).unwrap_err().construct,
-            "binop.shl"
+            "binop.shl_operand_type"
         );
         assert_eq!(
             admits(&[binop(BinOp::Shr)]).unwrap_err().construct,
-            "binop.shr"
+            "binop.shr_operand_type"
         );
     }
 
@@ -536,7 +556,9 @@ mod tests {
         // directions so widening the allowlist has to update this test deliberately.
         let call = |name: &str| Instr::legacy_call(ValueId(1), name, vec![]);
         assert_eq!(
-            admits(&[call("__mind_conv_i64")]).unwrap_err().construct,
+            admits(&[call("__mind_conv_unknown")])
+                .unwrap_err()
+                .construct,
             "call.undefined_or_builtin"
         );
         // `f` IS defined by `fndef`, so a call to it is in profile.
@@ -548,7 +570,7 @@ mod tests {
         // The op-blind admission bug: a Div buried in a function body must not slip
         // through the FnDef recursion.
         let err = admits(&[fndef(vec![binop(BinOp::Div)])]).unwrap_err();
-        assert_eq!(err.construct, "binop.div");
+        assert_eq!(err.construct, "binop.div_operand_type");
     }
 
     // ---- row 10 FLOAT_LANGUAGE_COVERAGE: the NaN-compare divergence ----
@@ -601,7 +623,10 @@ mod tests {
     /// integer module.
     #[test]
     fn div_in_a_float_module_is_still_rejected() {
-        for (op, label) in [(BinOp::Div, "binop.div"), (BinOp::Mod, "binop.mod")] {
+        for (op, label) in [
+            (BinOp::Div, "binop.div_operand_type"),
+            (BinOp::Mod, "binop.mod_operand_type"),
+        ] {
             let instrs = vec![fndef(vec![
                 Instr::ConstF64(ValueId(0), 1.0),
                 Instr::ConstF64(ValueId(1), 3.0),
@@ -703,13 +728,11 @@ mod tests {
     /// natively and 2 under MLIR). The IR cannot see a let annotation (an unsigned
     /// one lowers to a bare `BitAnd`), so the refusal is made on the source.
     #[test]
-    fn every_non_i64_integer_spelling_is_rejected() {
+    fn narrow_integer_spellings_are_rejected() {
         for src in [
             "fn main() -> i64 { let v: u8 = 300; if v > 100 { return 1; } return 2; }",
             "fn f(x: u16) -> i64 { return 0; }",
             "fn f(x: u32) -> i64 { return 0; }",
-            "fn f(x: u64) -> i64 { if x > 5 { return 1; } return 2; }",
-            "fn g() -> u64 { return 0 - 1; }",
             "fn g() -> u8 { return 3; }",
             "fn f(x: i8) -> i64 { return 0; }",
             "fn f(x: i16) -> i64 { return 0; }",

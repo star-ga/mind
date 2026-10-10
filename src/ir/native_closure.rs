@@ -60,6 +60,9 @@
 use crate::ir::{IRModule, Instr, instr_bodies};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+#[path = "native_posix.rs"]
+mod posix;
+
 /// Why a closure could not be formed. `kind` is a stable label for tests and
 /// diagnostics; `detail` names the offending symbol so a refusal is actionable
 /// (the fence's own rejection carries only a construct class, never a callee).
@@ -486,6 +489,7 @@ pub fn admit_native_closure(
 
 fn is_frozen_intrinsic(name: &str) -> bool {
     crate::ir::frozen_intrinsics::frozen_native_intrinsic(name).is_some()
+        || crate::ir::frozen_profile::scalar::conversion(name).is_some()
 }
 
 /// What the std seed blob contributes to closure admission.
@@ -619,6 +623,7 @@ pub fn admit_native_closure_linked(
 ) -> Result<LinkedClosure, ClosureRejection> {
     let counts = ast_definition_counts(ast);
     reject_ambiguous_ast(ast, &BTreeSet::new())?;
+    posix::admit_externs(ast, seed)?;
     // Before the seed branch: the frozen emitter expands an intrinsic whether or
     // not std linkage is available, so the refusal must not depend on it.
     if let Some(name) = counts.keys().find(|name| is_frozen_intrinsic(name)) {

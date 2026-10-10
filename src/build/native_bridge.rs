@@ -339,8 +339,8 @@ pub fn run_native_backend_bridge_profile(
         );
         process::exit(3);
     }
-    // An entry `main` with parameters would run with them all 0 (the frozen
-    // compiler does not bind them to argc/argv): refuse it, never miscompile.
+    // Wave-three entry binding has one explicit parameterized ABI: i64 argc/argv.
+    // Every other parameterized entry is refused before stage1 runs.
     if let Err(msg) = admission::refuse_entry_main_with_params(&merged_ast, &paths[0]) {
         eprintln!("error[backend-native]: {msg}");
         process::exit(3);
@@ -351,7 +351,11 @@ pub fn run_native_backend_bridge_profile(
     // enforced-by: RI-D1-PROFILE
     // The source check covers what the IR cannot carry (a declared f32 width).
     match crate::ir::frozen_profile::profile_frozen_admits_source(&merged_ast).and_then(|()| {
-        crate::ir::frozen_profile::profile_frozen_admits_linked(&merged_ir, &std_linked)
+        crate::ir::frozen_profile::profile_frozen_admits_linked_bounded(
+            &merged_ir,
+            &std_linked,
+            layout.is_some(),
+        )
     }) {
         Ok(()) => {}
         Err(rejection) => {
@@ -371,7 +375,7 @@ pub fn run_native_backend_bridge_profile(
     // was admitted above only on that basis. Sorted order, so the first offender
     // named is deterministic.
     for name in &std_linked {
-        if let Err(rejection) = fence_std_seed_fn(&seed, name, &std_linked) {
+        if let Err(rejection) = fence_std_seed_fn(&seed, name, &std_linked, layout.is_some()) {
             eprintln!(
                 "error[backend-native]: `{}` links std seed function `{name}`, which is not \
                  in the frozen native profile (out-of-profile construct: {}).\n  \
@@ -384,7 +388,7 @@ pub fn run_native_backend_bridge_profile(
         }
     }
     // Then the facts that hold only across calls, over user + linked std together.
-    if let Err(rejection) = admit_linked_program(&seed, &merged_ir, &std_linked) {
+    if let Err(rejection) = admit_linked_program(&seed, &merged_ir, &std_linked, layout.is_some()) {
         eprintln!(
             "error[backend-native]: `{}` is not in the frozen native profile \
              (out-of-profile construct: {}).\n  Rerun with `--backend mlir` for the \

@@ -45,7 +45,7 @@ pub(crate) fn admit_program_operand_types(
     prog: &Program<'_>,
 ) -> Result<(), FrozenProfileRejection> {
     let flow = collect_flow(prog);
-    if flow.intrinsic_calls.is_empty() && flow.std_calls.is_empty() {
+    if flow.intrinsic_calls.is_empty() && flow.std_calls.is_empty() && flow.produced.is_empty() {
         return Ok(());
     }
     let facts = program_facts(prog, &flow);
@@ -146,7 +146,11 @@ fn collect_flow(prog: &Program<'_>) -> Flow {
             Instr::Call {
                 name, args, dst, ..
             } => {
-                if let Some(row) = frozen_native_intrinsic(name) {
+                if let Some(kind) = crate::ir::frozen_profile::scalar::conversion(name) {
+                    if kind == crate::ir::frozen_profile::scalar::Scalar::Signed {
+                        flow.produced.insert((s, *dst));
+                    }
+                } else if let Some(row) = frozen_native_intrinsic(name) {
                     flow.intrinsic_calls.push((s, args.clone()));
                     if row.result == FrozenResult::Value {
                         flow.produced.insert((s, *dst));
@@ -230,6 +234,7 @@ fn result_use_is_i64(
         // an i64-slot parameter where it receives one.
         Instr::Call { name, args, .. } => {
             frozen_native_intrinsic(name).is_some()
+                || crate::ir::frozen_profile::scalar::conversion(name).is_some()
                 || args.iter().enumerate().all(|(i, a)| {
                     !from_intrinsic(a)
                         || prog
@@ -273,6 +278,13 @@ fn slot_fact(prog: &Program<'_>, flow: &Flow, s: usize, instr: &Instr) -> SlotFa
             }
         }
         Instr::Param { index, .. } => param_fact(prog, flow, s, *index),
+        Instr::Call { name, .. }
+            if crate::ir::frozen_profile::scalar::conversion(name).is_some() =>
+        {
+            (crate::ir::frozen_profile::scalar::conversion(name)
+                == Some(crate::ir::frozen_profile::scalar::Scalar::Signed))
+            .then(Vec::new)
+        }
         Instr::Call { name, args, .. } => match frozen_native_intrinsic(name) {
             Some(row) => (row.result == FrozenResult::Value).then(Vec::new),
             None => call_result_fact(prog, flow, prog.callee(name)?, args.len()),
@@ -328,7 +340,7 @@ fn call_result_fact(prog: &Program<'_>, flow: &Flow, c: usize, arity: usize) -> 
 /// `if` merge needs both incoming values; a loop-carried variable's pre-loop id
 /// (the block argument inside the loop) and its exit id need the back-edge value
 /// and every `break` / `continue` value carried under the same name.
-fn region_facts(instr: &Instr) -> Vec<(ValueId, Option<Vec<ValueId>>)> {
+pub(super) fn region_facts(instr: &Instr) -> Vec<(ValueId, Option<Vec<ValueId>>)> {
     #[cfg(feature = "std-surface")]
     match instr {
         Instr::If { merges, .. } => {

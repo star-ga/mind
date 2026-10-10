@@ -125,3 +125,58 @@ Passing the Core v1 conformance suite indicates that the current build produces
 the expected diagnostics, IR, autodiff, and MLIR text for the relevant profile
 (CPU baseline or the optional GPU profile). Experimental features outside those
 profiles may still emit different errors or remain unsupported.
+
+### Native wave-three admission contracts
+
+The Rust fence admits signed i64 division/remainder and shifts and unsigned
+operations only with a proven unsigned operand type. On this base, source
+admission admits the full-width `u64` form; narrow integer locals and parameters
+remain `type.non_i64_integer` refusals until their normalization is proven.
+`FnDef.value_types` is an **aggregate** table on this base, not a scalar signedness
+map. Admission therefore derives scalar facts from signatures, constants,
+conversion tags, arithmetic, control-flow merges, and call/return dataflow.
+
+* `binop.div_operand_type` / `binop.mod_operand_type`: operands must both be
+  proven i64 or both proven unsigned. Float, unknown, mixed signedness, and
+  inconsistent call-site types refuse. These replace the unconditional
+  `binop.div` / `binop.mod` refusals.
+* `binop.shl_operand_type` / `binop.shr_operand_type`: both operands must be
+  proven integers. These replace `binop.shl` / `binop.shr`. Counts use the low six
+  bits (`count & 63`), including negative and oversized counts; signed right
+  shift is arithmetic, unsigned right shift is logical.
+* `call.conversion_operand_type`: `__mind_conv_i32`, `__mind_conv_i64`,
+  `__mind_conv_u64`, and `__mind_conv_f64` require one proven numeric scalar.
+  Unknown inputs refuse. Wrong arity remains `call.intrinsic_arity`; other
+  conversion names remain `call.undefined_or_builtin` (or an unresolved closure
+  edge). An i32 cast result is sign-extended in a native register; this does not
+  admit i32 local/parameter signatures.
+* `cast.pointer_operand_type`: casts to `*const u8` / `*mut u8` require a proven
+  integer source. Other pointees remain outside the source profile. A pointer
+  cast does not establish that the address is valid to dereference.
+* `native.entry_main_has_params`: only the exact parameterized entry
+  `main(argc: i64, argv: i64) -> i64` is admitted, alongside the existing
+  parameterless entry. Different names, order, types, return type, arity, or a
+  generic parameterized entry refuse.
+* `call.alloc_size_not_proven_positive`, `alloc.in_loop`, and
+  `alloc.total_over_budget` retain their default-profile meanings. Explicit
+  `--native-profile bounded` transfers size/loop/budget enforcement to the bounded
+  allocator (deterministic exit 70 under the 2 GiB address-space contract).
+  Dynamic sizes no longer fail the static byte sum in that mode. Intrinsic
+  arity, operand/result type checks, recursive allocation, ambiguous calls, and
+  unrelated I/O rules remain enforced.
+* `closure.extern_signature_mismatch`: an extern declaration must use the C
+  calling convention, be non-variadic, and exactly match the parameter and
+  return types of an available function listed in `std.posix`. Parameter names
+  and the informational `safe`/`unsafe` tag are not signature components.
+  A same-named function in another std module is insufficient. Linked POSIX
+  bodies must pass all the ordinary source, IR, and whole-program fences.
+
+`std/posix.mind` is absent at base `387cf368`. The admission contract is exercised
+with a small parsed/lowered fixture module in `tests/native_wave3_admission.rs`.
+The parallel seed batch must add POSIX to its manifest and source image, provide
+matching wrappers (including positioned I/O), implement the conversion and
+unsigned paths, bind process arguments, and provide the bounded allocator.
+Admission-only sentinel tests do not certify those emitter implementations.
+The parallel division batch owns its documented deterministic trap exit code
+for zero divisors and signed MIN/-1; this Rust-only change does not select or
+change that exit code or update the committed seed executables.

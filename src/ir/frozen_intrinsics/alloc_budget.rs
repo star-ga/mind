@@ -56,12 +56,15 @@ struct ScopeAllocs {
 /// * `alloc.total_over_budget` — the counted total exceeds the budget.
 ///
 /// A program with no allocation is not inspected.
-pub(crate) fn admit_alloc_budget(prog: &Program<'_>) -> Result<(), FrozenProfileRejection> {
+pub(crate) fn admit_alloc_budget(
+    prog: &Program<'_>,
+    bounded: bool,
+) -> Result<(), FrozenProfileRejection> {
     let mut infos: Vec<ScopeAllocs> = Vec::with_capacity(prog.scopes.len());
     let mut any_alloc = false;
     for scope in &prog.scopes {
         let mut info = ScopeAllocs::default();
-        walk(prog, scope.body, false, &mut info, &mut any_alloc)?;
+        walk(prog, scope.body, false, &mut info, &mut any_alloc, bounded)?;
         infos.push(info);
     }
     if !any_alloc {
@@ -72,11 +75,12 @@ pub(crate) fn admit_alloc_budget(prog: &Program<'_>) -> Result<(), FrozenProfile
     }
     let bearing = allocating_scopes(&infos);
     for info in &infos {
-        if info.alloc_in_loop
-            || info
-                .calls
-                .iter()
-                .any(|(c, in_loop)| *in_loop && bearing[*c])
+        if !bounded
+            && (info.alloc_in_loop
+                || info
+                    .calls
+                    .iter()
+                    .any(|(c, in_loop)| *in_loop && bearing[*c]))
         {
             return reject("alloc.in_loop");
         }
@@ -106,7 +110,7 @@ pub(crate) fn admit_alloc_budget(prog: &Program<'_>) -> Result<(), FrozenProfile
     if (0..infos.len()).any(|s| bearing[s] && !memo.contains_key(&s)) {
         return reject("alloc.recursive");
     }
-    if total > NATIVE_ALLOC_BUDGET {
+    if !bounded && total > NATIVE_ALLOC_BUDGET {
         return reject("alloc.total_over_budget");
     }
     Ok(())
@@ -120,6 +124,7 @@ fn walk(
     in_loop: bool,
     info: &mut ScopeAllocs,
     any_alloc: &mut bool,
+    bounded: bool,
 ) -> Result<(), FrozenProfileRejection> {
     let mut consts = BTreeMap::new();
     for instr in instrs {
@@ -130,12 +135,19 @@ fn walk(
                 Some(row) => {
                     let Some(at) = row.size_arg else { continue };
                     *any_alloc = true;
-                    let Some(bytes) = args
+                    let bytes = args
                         .get(at)
                         .and_then(|a| consts.get(a))
-                        .and_then(|n| block_bytes(*n))
-                    else {
-                        return reject("alloc.unbounded_total");
+                        .and_then(|n| block_bytes(*n));
+                    // In bounded mode count an allocation marker, not bytes:
+                    // runtime owns the size/budget, while recursion/ambiguity
+                    // remain static refusals. Unknown sizes still bear allocation.
+                    let bytes = if bounded {
+                        1
+                    } else {
+                        bytes.ok_or(FrozenProfileRejection {
+                            construct: "alloc.unbounded_total",
+                        })?
                     };
                     info.alloc_in_loop |= in_loop;
                     info.direct = match info.direct.checked_add(bytes) {
@@ -157,7 +169,7 @@ fn walk(
         {
             let loops = matches!(instr, Instr::While { .. });
             for nested in crate::ir::instr_bodies(instr) {
-                walk(prog, nested, in_loop || loops, info, any_alloc)?;
+                walk(prog, nested, in_loop || loops, info, any_alloc, bounded)?;
             }
         }
     }

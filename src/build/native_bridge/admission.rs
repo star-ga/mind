@@ -30,19 +30,29 @@ use crate::diagnostics::{
 };
 use crate::type_checker::resolve;
 
-/// Refuse an entry `main` that declares parameters.
+/// Refuse a parameterized entry outside the exact wave-three argc/argv ABI.
 pub(super) fn refuse_entry_main_with_params(ast: &Module, path: &str) -> Result<(), String> {
     for item in &ast.items {
         let Node::FnDef(f, _) = item else { continue };
         if f.name != "main" || f.params.is_empty() {
             continue;
         }
+        if f.type_params.is_empty()
+            && f.params.len() == 2
+            && f.params[0].name == "argc"
+            && f.params[1].name == "argv"
+            && f.params
+                .iter()
+                .all(|p| p.ty == crate::ast::TypeAnn::ScalarI64)
+            && f.ret_type == Some(crate::ast::TypeAnn::ScalarI64)
+        {
+            continue;
+        }
         let params: Vec<&str> = f.params.iter().map(|p| p.name.as_str()).collect();
         return Err(format!(
             "`{path}`: the entry `fn main` declares parameter(s) {params:?}, but the native \
-             backend does not bind `main`'s parameters to the process arguments yet, so the \
-             program would run with every one of them 0 (a silent miscompile). Declare \
-             `fn main()` or rerun with `--backend mlir`. No artifact written. \
+             backend admits only `fn main()` or `fn main(argc: i64, argv: i64) -> i64`. \
+             Correct the entry signature or rerun with `--backend mlir`. No artifact written. \
              (native.entry_main_has_params)"
         ));
     }

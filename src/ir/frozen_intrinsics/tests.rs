@@ -64,8 +64,6 @@ fn intrinsic_admission_is_keyed_on_callee_and_arity() {
         );
     }
     for name in [
-        "__mind_conv_i64",
-        "__mind_conv_f64",
         "__mind_bits_to_f64",
         "__mind_f64_to_bits",
         "__mind_vec_zeroed",

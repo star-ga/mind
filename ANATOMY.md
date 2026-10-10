@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1922 | **Est. tokens:** ~3788000
-**Generated:** 2026-10-10 05:02 UTC
+**Files:** 1926 | **Est. tokens:** ~3793225
+**Generated:** 2026-10-10 05:24 UTC
 
 ## Token Budget Guide
 
@@ -110,28 +110,28 @@
 | `src/autodiff/` | 3 | ~6624 |
 | `src/bin/` | 1 | ~9878 |
 | `src/bin/mindc/` | 1 | ~204 |
-| `src/build/` | 13 | ~54558 |
+| `src/build/` | 13 | ~54584 |
 | `src/build/cache/` | 3 | ~3150 |
-| `src/build/native_bridge/` | 5 | ~12492 |
+| `src/build/native_bridge/` | 5 | ~12597 |
 | `src/cache/` | 4 | ~3682 |
 | `src/check/` | 5 | ~12177 |
 | `src/deps/` | 1 | ~9388 |
 | `src/diagnostics/` | 4 | ~16999 |
 | `src/distributed/` | 6 | ~7725 |
 | `src/doc/` | 3 | ~11002 |
-| `src/eval/` | 38 | ~141513 |
+| `src/eval/` | 38 | ~141738 |
 | `src/eval/stdlib/` | 2 | ~8586 |
 | `src/eval/struct_resolver/` | 1 | ~2555 |
 | `src/exec/` | 3 | ~5522 |
 | `src/ffi/` | 3 | ~5541 |
 | `src/fmt/` | 3 | ~25460 |
 | `src/fmt/printer/` | 1 | ~1878 |
-| `src/ir/` | 11 | ~105695 |
+| `src/ir/` | 14 | ~108156 |
 | `src/ir/compact/` | 3 | ~15351 |
 | `src/ir/compact/v2/` | 9 | ~45363 |
 | `src/ir/compact/v3/` | 15 | ~76625 |
 | `src/ir/compact/v3/v04/` | 3 | ~13696 |
-| `src/ir/frozen_intrinsics/` | 5 | ~15997 |
+| `src/ir/frozen_intrinsics/` | 6 | ~18371 |
 | `src/lint/` | 2 | ~4001 |
 | `src/lint/rules/` | 6 | ~10129 |
 | `src/mlir/` | 6 | ~14931 |
@@ -151,7 +151,7 @@
 | `src/types/` | 10 | ~20759 |
 | `src/workspace/` | 1 | ~4906 |
 | `std/` | 42 | ~205452 |
-| `tests/` | 424 | ~876357 |
+| `tests/` | 424 | ~876391 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12308 |
@@ -1206,13 +1206,13 @@
 - `driver_error.rs` (~699 tok, large) — Copyright 2025 STARGA Inc.
 - `error.rs` (~2022 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~9611 tok, huge) — Copyright 2025 STARGA Inc.
-- `native_bridge.rs` (~9135 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_bridge.rs` (~9161 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/native_bridge/`
 
-- `admission.rs` (~2401 tok, huge) — Copyright 2025 STARGA Inc.
+- `admission.rs` (~2482 tok, huge) — Copyright 2025 STARGA Inc.
 - `child.rs` (~3650 tok, huge) — Copyright 2025 STARGA Inc.
 - `child_tests.rs` (~1231 tok, large) — Copyright 2025 STARGA Inc.
-- `linkage.rs` (~2475 tok, huge) — Copyright 2025 STARGA Inc.
+- `linkage.rs` (~2499 tok, huge) — Copyright 2025 STARGA Inc.
 - `seed.rs` (~2735 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
@@ -1293,7 +1293,7 @@
 - `module_bindings.rs` (~1211 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `module_globals.rs` (~1160 tok, large) — Copyright 2026 STARGA Inc.
 - `narrow_arith.rs` (~3968 tok, huge) — Copyright 2025 STARGA Inc.
-- `narrow_scan.rs` (~3832 tok, huge) — Module-wide narrow-int SURFACE prescan (compile-speed early-skip).
+- `narrow_scan.rs` (~4057 tok, huge) — Module-wide narrow-int SURFACE prescan (compile-speed early-skip).
 - `node_children.rs` (~3450 tok, huge) — Copyright 2025 STARGA Inc.
 - `slice_abi.rs` (~325 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/eval/stdlib/`
@@ -1382,19 +1382,23 @@
 
 - `evidence.rs` (~13387 tok, huge) — Copyright 2025 STARGA Inc.
 - `fp_mode.rs` (~13664 tok, huge) — FP-contract mode — the strict-vs-relaxed floating-point determinism state of
-- `frozen_intrinsics.rs` (~3470 tok, huge) — Copyright 2025 STARGA Inc.
+- `frozen_intrinsics.rs` (~3505 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/frozen_intrinsics/`
 
-- `alloc_budget.rs` (~1999 tok, huge) — Copyright 2025 STARGA Inc.
-- `operand_types.rs` (~4849 tok, huge) — Copyright 2025 STARGA Inc.
+- `alloc_budget.rs` (~2128 tok, huge) — Copyright 2025 STARGA Inc.
+- `numeric.rs` (~2089 tok, huge) — Copyright 2026 STARGA Inc.
+- `operand_types.rs` (~5019 tok, huge) — Copyright 2025 STARGA Inc.
 - `program.rs` (~1253 tok, large) — Copyright 2025 STARGA Inc.
 - `program_tests.rs` (~2316 tok, huge) — Copyright 2025 STARGA Inc.
-- `tests.rs` (~5580 tok, huge) — Copyright 2025 STARGA Inc.
+- `tests.rs` (~5566 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
-- `frozen_profile.rs` (~8787 tok, huge) — Copyright 2025 STARGA Inc.
+- `frozen_profile.rs` (~8097 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~17729 tok, huge) — Copyright 2025 STARGA Inc.
-- `native_closure.rs` (~8029 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_closure.rs` (~8067 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_posix.rs` (~581 tok, large) — Copyright 2026 STARGA Inc.
+- `native_scalar.rs` (~1304 tok, large) — Copyright 2026 STARGA Inc.
+- `native_source.rs` (~1193 tok, large) — Copyright 2026 STARGA Inc.
 - `print.rs` (~4421 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~21232 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify_ids.rs` (~1720 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2239,19 +2243,19 @@
 - `narrow_unsigned_div_zero_run.rs` (~1247 tok, large) — Copyright 2025 STARGA Inc.
 - `narrowing_check.rs` (~438 tok, medium) — Regression test for the silent i64->i32 narrowing miscompile found by MIND-Fuzz
 - `native_bridge_child_status.rs` (~3380 tok, huge) — Copyright 2025 STARGA Inc.
-- `native_bridge_refusals.rs` (~3121 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_bridge_refusals.rs` (~3083 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/native_bridge_support/`
 
 - `draining_native_compiler.rs` (~300 tok, medium) — Host-native compiler fixture for admission-only controls.
 - `mod.rs` (~2274 tok, huge) — Shared harness for the native module-bridge integration controls.
 ### `tests/`
 
-- `native_closure_admission.rs` (~5280 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_closure_admission.rs` (~5303 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_default_profile_imports.rs` (~3506 tok, huge) — Default-feature-profile controls for the native backend's import admission.
 - `native_embedded_seed.rs` (~1432 tok, large) — Copyright 2025 STARGA Inc.
 - `native_import_terminator_controls.rs` (~1315 tok, large) — Native bridge controls: an `import`/`use` item the frozen compiler would
-- `native_intrinsic_std_linkage.rs` (~5788 tok, huge) — Copyright 2025 STARGA Inc.
-- `native_module_bridge_controls.rs` (~8563 tok, huge) — Native module-bridge controls: SOURCE RESOLUTION and ADMISSION.
+- `native_intrinsic_std_linkage.rs` (~5833 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_module_bridge_controls.rs` (~8567 tok, huge) — Native module-bridge controls: SOURCE RESOLUTION and ADMISSION.
 - `native_module_bridge_visibility_controls.rs` (~3913 tok, huge) — Native module-bridge controls: VISIBILITY, EMIT KIND, CROSS-INVOCATION
 - `native_opt_wiring.rs` (~1953 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_wave3_admission.rs` (~2601 tok, huge) — Copyright 2026 STARGA Inc.

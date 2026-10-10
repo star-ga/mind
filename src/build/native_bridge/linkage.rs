@@ -13,8 +13,8 @@
 use std::collections::BTreeSet;
 
 use crate::ir::frozen_profile::{
-    FrozenProfileRejection, profile_frozen_admits_linked, profile_frozen_admits_program,
-    profile_frozen_admits_source,
+    FrozenProfileRejection, profile_frozen_admits_linked_bounded,
+    profile_frozen_admits_program_bounded, profile_frozen_admits_source,
 };
 use crate::ir::native_closure::{
     StdSeed, reserved_names_from_text, reserved_struct_names_from_text,
@@ -123,6 +123,7 @@ pub(super) fn fence_std_seed_fn(
     seed: &StdSeed,
     name: &str,
     linked: &BTreeSet<String>,
+    bounded: bool,
 ) -> Result<(), FrozenProfileRejection> {
     let missing = || FrozenProfileRejection {
         construct: "std.linked_body_unavailable",
@@ -130,7 +131,7 @@ pub(super) fn fence_std_seed_fn(
     let source = seed.fn_source(name).ok_or_else(missing)?;
     profile_frozen_admits_source(&source)?;
     let ir = seed.fn_ir(name).ok_or_else(missing)?;
-    profile_frozen_admits_linked(&ir, linked)
+    profile_frozen_admits_linked_bounded(&ir, linked, bounded)
 }
 
 /// The whole-program half of the fence: `user` together with the IR of every
@@ -141,6 +142,7 @@ pub(super) fn admit_linked_program(
     seed: &StdSeed,
     user: &crate::ir::IRModule,
     linked: &BTreeSet<String>,
+    bounded: bool,
 ) -> Result<(), FrozenProfileRejection> {
     let irs = linked
         .iter()
@@ -150,7 +152,7 @@ pub(super) fn admit_linked_program(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    profile_frozen_admits_program(user, &irs)
+    profile_frozen_admits_program_bounded(user, &irs, bounded)
 }
 
 #[cfg(test)]
@@ -234,7 +236,7 @@ mod tests {
             structs: BTreeSet::new(),
             lowered: None,
         };
-        let err = fence_std_seed_fn(&seed, "anything", &BTreeSet::new()).unwrap_err();
+        let err = fence_std_seed_fn(&seed, "anything", &BTreeSet::new(), false).unwrap_err();
         assert_eq!(err.construct, "std.linked_body_unavailable");
     }
 }

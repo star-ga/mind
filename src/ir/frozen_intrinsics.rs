@@ -23,6 +23,7 @@ pub(crate) fn admit_intrinsic_call(
     spec: &FrozenIntrinsic,
     args: &[ValueId],
     consts: &std::collections::BTreeMap<ValueId, i64>,
+    bounded: bool,
 ) -> Result<(), FrozenProfileRejection> {
     // The frozen emitter reads `ids[0..arity]` without checking how many arguments
     // the call has: a short call reads slots it never wrote, a long one drops
@@ -35,7 +36,7 @@ pub(crate) fn admit_intrinsic_call(
         // relied on by std/vec.mind) and `realloc(p, n <= 0)` frees and returns 0 on
         // the C runtime, while the frozen bump arena hands back a fresh pointer for
         // both. Only a size PROVEN positive means the same thing on both backends.
-        if !consts.get(&args[at]).is_some_and(|n| *n > 0) {
+        if !bounded && !consts.get(&args[at]).is_some_and(|n| *n > 0) {
             return reject("call.alloc_size_not_proven_positive");
         }
     }
@@ -112,9 +113,9 @@ const fn fi(
 /// itself, and `frozen_intrinsics_agree_with_the_contract_registry` checks every
 /// row the canonical intrinsic registry also describes.
 ///
-/// A name NOT in `nb_intrinsic_id` (`__mind_conv_*`, `__mind_bits_to_f64`, ...)
-/// is out of scope: it needs a new seed intrinsic id and stays a clean
-/// `call.undefined_or_builtin` refusal.
+/// Wave-three conversion admission is separate (`native_scalar::conversion`),
+/// so this table remains an exact record of the old seed's numbered memory/I-O
+/// rows. Other names (for example `__mind_bits_to_f64`) remain refused.
 ///
 /// Where the two runtimes could disagree, the rows close the gap or refuse:
 /// `alloc`/`realloc` are admitted only with a size proven `> 0` (`size_arg`), since
@@ -309,6 +310,7 @@ pub(crate) fn fold_const(instr: &Instr, consts: &mut std::collections::BTreeMap<
 }
 
 mod alloc_budget;
+mod numeric;
 mod operand_types;
 mod program;
 
@@ -318,10 +320,12 @@ mod program;
 /// and the static allocation bound (`alloc_budget::admit_alloc_budget`).
 pub(crate) fn admit_frozen_program(
     parts: &[&crate::ir::IRModule],
+    bounded: bool,
 ) -> Result<(), FrozenProfileRejection> {
     let prog = program::Program::new(parts);
+    numeric::admit(&prog)?;
     operand_types::admit_program_operand_types(&prog)?;
-    alloc_budget::admit_alloc_budget(&prog)
+    alloc_budget::admit_alloc_budget(&prog, bounded)
 }
 
 #[cfg(test)]
