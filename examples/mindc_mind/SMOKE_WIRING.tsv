@@ -70,7 +70,7 @@ self_host_carry_cap_smoke	ci,keystone	gate
 self_host_cast_mic3_smoke	ci	gate	
 self_host_alias_controls_smoke	ci	gate	
 self_host_check_driver_smoke	ci	gate	
-self_host_continue_smoke	none	gate	RED at this commit: nested_for_continue HANGS (the harness reports `HUNG (must fail-close or terminate, never hang)`) — issue #308/#286 regression gate. deferred: wire once nested `continue` inside a range-for either lowers correctly or refuses fail-closed; a hanging case must never be wired into CI as-is.
+self_host_continue_smoke	none	gate	RED at this commit against the FROZEN seed only: main.mind is fixed (nested-loop dead tails after `continue`/`break` are now truncated by every id-threading walker — nb_while_carry_wnest and nb_count_stmt's while arm, not just nb_emit_while), but testdata/selfhost_loop/stage1.elf still predates the fix, so the 12 nested fixtures still HANG through it. `self_host_continue_smoke.py <compiler.elf>` with a compiler derived from current main.mind by the frozen seed passes 29/29. deferred: wire into CI in the same change that advances the frozen seed (self_host_loop_smoke.py --advance); a hanging case must never be wired into CI as-is.
 self_host_dtype_tag_smoke	ci	gate	
 self_host_else_if_smoke	ci	gate	
 self_host_failclosed_smoke	ci,keystone	gate	
