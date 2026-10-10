@@ -170,6 +170,11 @@ CASES = [
     ("while_continue_after_write", b"fn main() -> i64 { let mut x: i64 = 0; let mut n: i64 = 0; while x < 10 { x = x + 1; if x == 3 { continue; } x = x + 1; n = n + 1; } return x * 10 + n; }", 115),
     # break: x = 3 at the break (pre-fix: 2)
     ("while_break_after_write", b"fn main() -> i64 { let mut x: i64 = 0; while x < 100 { x = x + 1; if x == 3 { break; } x = x + 1; } return x; }", 3),
+    # Exit-ONLY branches the old branch-exit guard admitted, but which still read a stale
+    # loop slot because an INNER loop wrote the carried var first (silent wrong values on
+    # the pre-fix compiler: 36 and 203). References from the Rust MLIR build.
+    ("while_inner_loop_then_continue", b"fn main() -> i64 { let mut a: i64 = 0; let mut x: i64 = 0; while a < 4 { a = a + 1; let mut k: i64 = 0; while k < 2 { x = x + 1; k = k + 1; } if a == 2 { continue; } x = x + 10; } return x; }", 38),
+    ("while_inner_break_outer_var", b"fn main() -> i64 { let mut a: i64 = 0; let mut b: i64 = 0; let mut x: i64 = 0; while a < 3 { a = a + 1; while b < 10 { b = b + 1; x = x + b; if b == 2 { break; } } if a == 2 { continue; } x = x + 100; } return x % 256; }", 255),
     # positive control for REFUSE_CASES below: the same loop without the shadowing
     # `let` compiles and runs (x == 5), so the refusal is about the shadow alone.
     ("shadow_control", b"fn main() -> i64 { let mut x: i64 = 0; let mut a: i64 = 0; while a < 5 { a = a + 1; x = x + 1; if a == 3 { continue; } } return x; }", 5),
