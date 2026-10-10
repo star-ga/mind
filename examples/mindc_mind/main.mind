@@ -36954,7 +36954,10 @@ pub fn nb_while_carry_wnest(carry: i64, ccell: i64, next_id: i64, buf: i64, stmt
     // The inner loop's own pre-loop scope bound = the let-env size at THIS point
     // (params + every let bound before the inner while, incl. an outer body-local).
     let inner_entry_n: i64 = __mind_load_i64(lcell);
-    let after_ibody: i64 = nb_while_carry(icarry, iccell, after_iwcond, buf, iw_bsa, iw_bsl, 0, params_addr, n_params, clets, clcell, srt, lets, lcell, inner_entry_n);
+    // The inner body is walked to its first unconditional terminator, exactly as
+    // nb_emit_while emits it and nb_count_stmt's while arm counts it — a dead tail
+    // counted here but never emitted shifts every later post_id of the OUTER loop.
+    let after_ibody: i64 = nb_while_carry(icarry, iccell, after_iwcond, buf, iw_bsa, nb_truncate_dead(iw_bsa, iw_bsl, 0), 0, params_addr, n_params, clets, clcell, srt, lets, lcell, inner_entry_n);
     let incarry: i64 = __mind_load_i64(iccell);
     let _pr: i64 = nb_carry_promote_inner(carry, ccell, icarry, incarry, 0, buf, lets, lcell, entry_n);
     after_ibody + incarry + 1
@@ -37437,11 +37440,10 @@ pub fn nb_truncate_dead(sa: i64, sl: i64, i: i64) -> i64 {
     // returned 0 not 1 — a wrong-value silent miscompile, audit Finding 2). return:
     // dead code after a fn-terminating return is benign but is truly dead. All three are
     // unconditional terminators -> everything after them in the same statement list is
-    // UNREACHABLE. deferred: nb_while_carry recurses into a NESTED while's body with the
-    // RAW sl (nb_while_carry_wnest); a nested-while dead-tail would re-desync there — today
-    // guarded because nested loops fail-close before emit (frontier gap), but if nested-for
-    // is ever made to lower, move truncation INTO nb_while_carry/nb_block_stmts so every
-    // consumer inherits it (audit Finding 1).
+    // UNREACHABLE. Every walk of a while body uses this same truncation — the emit and its
+    // carry pre-walk (nb_emit_while), a nested while's pre-walk (nb_while_carry_wnest) and
+    // the frame count (nb_count_stmt's while arm) — so count and emit stay in lockstep for
+    // nested loops too (audit Finding 1: the raw-sl nested walk hung nested range-fors).
     let k0: i64 = ast_kind(__mind_load_i64(sa + i * 8));
     if k0 == ast_continue() {
         return i + 1;
@@ -39542,7 +39544,13 @@ pub fn nb_count_stmt(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         let after_cond: i64 = nb_count_expr(next_id, buf, cond, params_addr, n_params, clets, clcell);
         let body_blk: i64 = ast_child1(node);
         let body_sa: i64 = ast_child0(body_blk);
-        let body_sl: i64 = ast_aux(body_blk);
+        // Count only up to the first unconditional terminator, the body nb_emit_while
+        // emits (nb_truncate_dead): ids counted for a dead tail are never emitted, so
+        // an ENCLOSING loop's carry pre-walk (which threads next_id through this arm)
+        // would place its post_ids past the slots the emit writes — the cond then
+        // re-reads a never-updated slot (`for i in 0..3 { for j in 0..3 { c = c + 1;
+        // break; } }` hung: the desugar's `j = j + 1` tail is dead after the break).
+        let body_sl: i64 = nb_truncate_dead(body_sa, ast_aux(body_blk), 0);
         // Snapshot the count-lets size BEFORE the body count grows it — this loop's
         // pre-loop scope bound, the outer-membership frontier for the F2 nested-carry
         // count (== the emit pre-walk's prewalk_lcell). Body-local lets appended during

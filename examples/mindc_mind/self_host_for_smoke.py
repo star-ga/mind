@@ -28,6 +28,9 @@ of an own-level `continue` steps VAR inside the branch (`if c { VAR = VAR + 1;
 continue; }`), so every range-for `continue` depends on that edge. Two plain
 `while` shapes pin the same root cause outside `for`.
 
+Unconditional `break`/`continue` in a NESTED range-for leave the desugar's step
+as a dead tail; every walk of the loop body must drop it the same way.
+
 Env: MINDC_SO = pure-MIND self-host cdylib. Exit 0 = ALL PASS.
 """
 import ctypes
@@ -178,6 +181,20 @@ CASES = [
     # positive control for REFUSE_CASES below: the same loop without the shadowing
     # `let` compiles and runs (x == 5), so the refusal is about the shadow alone.
     ("shadow_control", b"fn main() -> i64 { let mut x: i64 = 0; let mut a: i64 = 0; while a < 5 { a = a + 1; x = x + 1; if a == 3 { continue; } } return x; }", 5),
+    # ---- unconditional exits in a NESTED range-for ----
+    # The desugar appends `VAR = VAR + 1` after the body, so an unconditional
+    # `break`/`continue` leaves a dead tail. The loop's own emit drops it
+    # (nb_truncate_dead); the frame count and an enclosing loop's carry pre-walk
+    # must drop it too, or the outer loop's post_ids land past the slots the emit
+    # writes and the outer counter never advances (pre-fix: HANG on all four).
+    ("nested_uncond_break", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { for j in 0..3 { c = c + 1; break; } } return c; }", 3),
+    ("nested_uncond_continue", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { for j in 0..4 { c = c + 1; continue; } } return c; }", 12),
+    ("nested_dead_tail_continue", b"fn main() -> i64 { let mut c: i64 = 0; let mut i: i64 = 0; while i < 3 { i = i + 1; let mut j: i64 = 0; while j < 3 { j = j + 1; c = c + 1; continue; c = c + 100; } } return c; }", 9),
+    ("nested_dead_tail_break", b"fn main() -> i64 { let mut c: i64 = 0; let mut i: i64 = 0; while i < 3 { i = i + 1; let mut j: i64 = 0; while j < 3 { j = j + 1; c = c + 1; break; c = c + 100; } } return c; }", 3),
+    # the same dead tail with the inner loop inside an `if` of the outer body: the
+    # outer pre-walk counts the if through nb_count_stmt (its merge slots and next_id)
+    ("nested_uncond_break_in_if", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { if i >= 0 { for j in 0..3 { c = c + 1; break; } } c = c + 10; } return c; }", 33),
+    ("nested_dead_tail_in_if_merge", b"fn main() -> i64 { let mut x: i64 = 0; let mut i: i64 = 0; while i < 3 { i = i + 1; if i > 1 { let mut k: i64 = 0; while k < 5 { k = k + 1; x = x + 1; break; x = x + 100; } } x = x + 10; } return x; }", 32),
 ]
 
 # A `let` in the loop body that SHADOWS a carried var makes the exit edge's name
