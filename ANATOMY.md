@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2017 | **Est. tokens:** ~3,782,701
-**Generated:** 2026-10-10 05:45 UTC
+**Files:** 2019 | **Est. tokens:** ~3,783,035
+**Generated:** 2026-10-10 16:35 UTC
 
 ## Token Budget Guide
 
@@ -67,7 +67,7 @@
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
 | `examples/mindc_mind/testdata/mindfuzz_regress_failclosed/` | 14 | ~2,935 |
-| `examples/mindc_mind/testdata/native_cf/` | 14 | ~3,091 |
+| `examples/mindc_mind/testdata/native_cf/` | 16 | ~3,425 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2,926 |
 | `examples/mindc_mind/testdata/native_record_trace/` | 13 | ~2,127 |
@@ -927,20 +927,22 @@
 - `shadow_assign_before_while_after.mind` (~92 tok, small) — Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
 ### `examples/mindc_mind/testdata/native_cf/`
 
-- `a1_logic_in_cond.mind` (~217 tok, medium) — A1: && / || / ! and a value-if inside if and while conditions, with
-- `a6_vif_in_loop.mind` (~163 tok, small) — A6: a value-if used as a value inside a while body (let init, assignment
-- `a7_vif_nested_expr.mind` (~213 tok, medium) — A7: value-ifs nested inside expressions: binop operands, call arguments
-- `a9_vif_branch_effects.mind` (~209 tok, medium) — A9: value-if branches that assign an enclosing variable, return from the
-- `deep_nesting.mind` (~303 tok, medium) — Arbitrary nesting: six levels of if / while / value-if mixing every exit
-- `l1_return_in_loop.mind` (~303 tok, medium) — L1: `return` inside while bodies, from 1, 2 and 3 levels of nesting, inside
-- `l2_loop_if_branches.mind` (~410 tok, medium) — L2: an `if` inside a loop whose branches hold a call statement, a let, a
-- `l3_break_continue_params.mind` (~311 tok, medium) — L3: break / continue inside functions that take parameters, including
-- `mlir_break_in_cond_vif.mind` (~162 tok, small) — A `break` inside a value-if that sits in an if condition inside a loop. The
-- `mlir_lost_branch_assign.mind` (~115 tok, small) — Known MLIR-backend defect, pinned: a value-if passed to a call that is used
-- `mlir_lost_cond_assign.mind` (~121 tok, small) — Known MLIR-backend defect, pinned: an assignment inside a value-if branch in
-- `mlir_lost_loop_assign.mind` (~187 tok, small) — Known MLIR-backend defect, pinned: inside a loop, a store to an enclosing
+- `a1_logic_in_cond.mind` (~219 tok, medium) — A1: && / || / ! and a value-if inside if and while conditions, with
+- `a6_vif_in_loop.mind` (~166 tok, small) — A6: a value-if used as a value inside a while body (let init, assignment
+- `a7_vif_nested_expr.mind` (~216 tok, medium) — A7: value-ifs nested inside expressions: binop operands, call arguments
+- `a9_read_then_branch_assign.mind` (~166 tok, small) — A HOME-lowered read of a variable is a copy: a value-if branch that assigns
+- `a9_vif_branch_effects.mind` (~212 tok, medium) — A9: value-if branches that assign an enclosing variable, return from the
+- `deep_nesting.mind` (~306 tok, medium) — Arbitrary nesting: six levels of if / while / value-if mixing every exit
+- `l1_return_in_loop.mind` (~306 tok, medium) — L1: `return` inside while bodies, from 1, 2 and 3 levels of nesting, inside
+- `l2_loop_if_branches.mind` (~412 tok, medium) — L2: an `if` inside a loop whose branches hold a call statement, a let, a
+- `l3_break_continue_params.mind` (~314 tok, medium) — L3: break / continue inside functions that take parameters, including
+- `mlir_break_in_cond_vif.mind` (~165 tok, small) — A `break` inside a value-if that sits in an if condition inside a loop. The
+- `mlir_lost_branch_assign.mind` (~118 tok, small) — Known MLIR-backend defect, pinned: a value-if passed to a call that is used
+- `mlir_lost_cond_assign.mind` (~124 tok, small) — Known MLIR-backend defect, pinned: an assignment inside a value-if branch in
+- `mlir_lost_loop_assign.mind` (~189 tok, small) — Known MLIR-backend defect, pinned: inside a loop, a store to an enclosing
+- `mlir_stale_read_after_vif.mind` (~132 tok, small) — Known MLIR-backend defect, pinned: a variable read AFTER a value-if in the
 - `note_kinds.mind` (~48 tok, tiny) — A program the mic@3 twin can hash keeps the IR trace-hash note (n_type 1).
-- `o_if_else_merges.mind` (~329 tok, medium) — O1 / O2 / O3: if/else outside loops that merges assigned outer variables,
+- `o_if_else_merges.mind` (~332 tok, medium) — O1 / O2 / O3: if/else outside loops that merges assigned outer variables,
 ### `examples/mindc_mind/testdata/native_elf_oracle/`
 
 - `add.elf` (~123 tok, small) — ELF> @@@8

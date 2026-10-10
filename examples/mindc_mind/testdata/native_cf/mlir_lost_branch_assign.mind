@@ -4,6 +4,7 @@
 // store: the native backend and the interpreter both exit 8.
 // expect: exit=8
 // stdout:
+// note: 2
 // mlir: exit=1
 fn out(v: i64) -> i64 {
     v

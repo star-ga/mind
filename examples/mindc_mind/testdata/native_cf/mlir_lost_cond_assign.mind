@@ -4,6 +4,7 @@
 // backend and the interpreter exit 0.
 // expect: exit=0
 // stdout:
+// note: 2
 // mlir: exit=14
 fn main() -> i64 {
     let mut x: i64 = 14;

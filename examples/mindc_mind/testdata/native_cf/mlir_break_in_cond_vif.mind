@@ -3,6 +3,7 @@
 // continue outside a loop"), so this fixture is native-only.
 // expect: exit=8
 // stdout: BCD
+// note: 2
 // mlir: nobuild
 fn out(v: i64) -> i64 {
     let p: i64 = __mind_alloc(8);

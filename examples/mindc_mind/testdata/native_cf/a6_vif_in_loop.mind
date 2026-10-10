@@ -2,6 +2,7 @@
 // RHS, call argument), including one whose branch binds a let.
 // expect: exit=52
 // stdout: CBCCDE
+// note: 2
 fn out(v: i64) -> i64 {
     let p: i64 = __mind_alloc(8);
     __mind_store_i8(p, 65 + (v % 26 + 26) % 26);

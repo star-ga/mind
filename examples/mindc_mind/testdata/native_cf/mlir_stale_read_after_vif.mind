@@ -1,0 +1,14 @@
+// Known MLIR-backend defect, pinned: a variable read AFTER a value-if in the
+// same expression, where the taken branch assigned that variable, sees the
+// value from BEFORE the branch on MLIR (exit 130 = 3 * 10 + 100). Evaluation
+// is left to right: the branch sets x to 7 first, so the native backend and
+// the interpreter give 3 * 10 + 7 = 37.
+// expect: exit=37
+// stdout:
+// note: 2
+// mlir: exit=130
+fn main() -> i64 {
+    let mut x: i64 = 100;
+    let z: i64 = (if x > 50 { x = 7; 3 } else { 4 }) * 10 + x;
+    z
+}

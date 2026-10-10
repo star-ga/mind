@@ -8,6 +8,7 @@
 // 28 + 2 = 30.
 // expect: exit=29
 // stdout:
+// note: 2
 // mlir: exit=30
 fn main() -> i64 {
     let mut y: i64 = 2;
