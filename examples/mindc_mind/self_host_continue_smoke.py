@@ -152,6 +152,27 @@ FIXTURES = [
      "fn main() -> i64 { let mut i: i64 = 0; let mut t: i64 = 0; while i < 3 { let mut j: i64 = 0; while j < 2 { j = j + 1; break; j = j + 1; } t = t + j; i = i + 1; } return t * 10 + i; }", 33),
     ("triple_while_dead_tail",
      "fn main() -> i64 { let mut i: i64 = 0; let mut s: i64 = 0; while i < 2 { let mut j: i64 = 0; while j < 2 { let mut k: i64 = 0; while k < 2 { k = k + 1; continue; k = k + 5; } j = j + 1; s = s + k; } i = i + 1; } return s * 10 + i; }", 82),
+    # ---- adversarial: each HUNG through the pre-fix compiler; values cross-checked
+    # against the Rust MLIR path (`mindc --emit-shared`), which agrees on every one ----
+    # an outer carried var written BEFORE and AFTER the inner loop, reading the inner counter
+    ("outer_var_before_and_after_inner",
+     "fn main() -> i64 { let mut s: i64 = 0; let mut i: i64 = 0; while i < 3 { s = s + 1; let mut j: i64 = 0; while j < 2 { j = j + 1; continue; j = j + 9; } s = s + j; i = i + 1; } return s; }", 9),
+    # two sibling inner loops: the second's slots must follow the first's LIVE length
+    ("two_sequential_inner_fors_continue",
+     "fn main() -> i64 { let mut s: i64 = 0; for i in 0..3 { for j in 0..2 { s = s + 1; continue; } for k in 0..4 { s = s + 10; continue; } } return s; }", 126),
+    # an outer var written ONLY in the dead tail: never carried, never changed
+    ("dead_tail_only_write_not_carried",
+     "fn main() -> i64 { let mut z: i64 = 0; let mut i: i64 = 0; while i < 3 { let mut j: i64 = 0; while j < 2 { j = j + 1; continue; z = 7; } i = i + 1; } return z * 10 + i; }", 3),
+    ("quad_for_continue",
+     "fn main() -> i64 { let mut s: i64 = 0; for a in 0..2 { for b in 0..2 { for c in 0..2 { for d in 0..3 { s = s + 1; continue; } s = s + 10; } } } return s; }", 104),
+    ("for_outer_continue_inner_while_break_tail",
+     "fn main() -> i64 { let mut t: i64 = 0; for i in 0..4 { let mut j: i64 = 0; while j < 5 { j = j + 2; break; j = j + 1; } t = t + j; continue; } return t; }", 8),
+    # a dead `let` in the tail must not reserve a binding or a slot
+    ("inner_dead_tail_let",
+     "fn main() -> i64 { let mut i: i64 = 0; let mut s: i64 = 0; while i < 3 { let mut j: i64 = 0; while j < 2 { j = j + 1; s = s + j; continue; let q: i64 = 5; s = s + q; } i = i + 1; } return s; }", 9),
+    # dead tails at BOTH levels (the outer one after its own `continue`)
+    ("outer_while_dead_tail_after_inner",
+     "fn main() -> i64 { let mut i: i64 = 0; let mut s: i64 = 0; while i < 3 { for j in 0..2 { s = s + 1; continue; } i = i + 1; continue; i = i + 50; } return s * 10 + i; }", 63),
 ]
 # No-hang guard: shapes the native backend may REFUSE (0 bytes, honest fail-closed —
 # an if-wrapped inner loop, a `continue` on an if-branch that also writes) but must
@@ -161,6 +182,9 @@ NO_HANG = [
      "fn main() -> i64 { let mut i: i64 = 0; while i < 3 { if i >= 0 { let mut j: i64 = 0; while j < 2 { j = j + 1; continue; j = j + 1; } } i = i + 1; } return i; }", 3),
     ("nested_for_continue_in_if",
      "fn main() -> i64 { let mut s: i64 = 0; for i in 0..3 { for j in 0..4 { if j == 1 { continue; } s = s + 1; } } return s; }", 9),
+    # `return` inside a nested loop, followed by a dead tail (the MLIR path returns 40)
+    ("nested_while_return_dead_tail",
+     "fn main() -> i64 { let mut i: i64 = 0; while i < 3 { let mut j: i64 = 0; while j < 2 { j = j + 1; return i + 40; j = j + 5; } i = i + 1; } return 99; }", 40),
 ]
 # (name, program WITH an unreachable tail, the SAME program without it): the native
 # emitter must produce an identical code segment for both.
