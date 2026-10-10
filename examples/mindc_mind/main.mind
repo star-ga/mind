@@ -43111,6 +43111,143 @@ pub fn hm_fn_pregate(buf: i64, node: i64) -> i64 {
     0
 }
 
+// The SSA path keeps fixed per-function tables (512 jump records, 512 let-env
+// entries in nb_lower_fn and its count pass) with no bound check, so a giant
+// function overran them and segfaulted stage1 (an 800-statement let/if-return
+// function, census X1 class). Estimate both from the function's source bytes
+// (an over-estimate: words in comments count too) and send any function that
+// could come near a table to the HOME path, whose tables are sized from the
+// function. The largest self-host function stays far below (lets ~251, jump
+// estimate ~214 at this commit), so the self-compile never takes this branch.
+pub fn hm_over_ssa_caps(buf: i64, node: i64) -> i64 {
+    let lo: i64 = ast_span_lo(node);
+    let hi: i64 = lo + hm_fn_span(node);
+    let cells: i64 = __mind_alloc(16);
+    __mind_store_i64(cells, 0);
+    __mind_store_i64(cells + 8, 0);
+    let _c: i64 = hm_count_words(buf, lo, hi, cells);
+    if __mind_load_i64(cells) > 400 {
+        return 1;
+    }
+    if __mind_load_i64(cells + 8) > 400 {
+        return 1;
+    }
+    0
+}
+
+pub fn hm_is_word_byte(c: i64) -> i64 {
+    if c == 95 {
+        return 1;
+    }
+    if c >= 97 {
+        if c <= 122 {
+            return 1;
+        }
+    }
+    if c >= 65 {
+        if c <= 90 {
+            return 1;
+        }
+    }
+    if c >= 48 {
+        if c <= 57 {
+            return 1;
+        }
+    }
+    0
+}
+
+// 1 iff the bytes at [i, i+n) are the word `w` (given as up to 8 bytes in an
+// i64, low byte first) with no identifier byte on either side.
+pub fn hm_word_at(buf: i64, i: i64, hi: i64, w: i64, n: i64) -> i64 {
+    if i + n > hi {
+        return 0;
+    }
+    if i > 0 {
+        if hm_is_word_byte(load_byte(buf, i - 1)) == 1 {
+            return 0;
+        }
+    }
+    if i + n < hi {
+        if hm_is_word_byte(load_byte(buf, i + n)) == 1 {
+            return 0;
+        }
+    }
+    hm_bytes_match(buf, i, w, n, 0)
+}
+pub fn hm_bytes_match(buf: i64, i: i64, w: i64, n: i64, k: i64) -> i64 {
+    if k >= n {
+        return 1;
+    }
+    let want: i64 = (w / hm_pow256(k)) & 255;
+    if load_byte(buf, i + k) != want {
+        return 0;
+    }
+    hm_bytes_match(buf, i, w, n, k + 1)
+}
+pub fn hm_pow256(k: i64) -> i64 {
+    if k <= 0 {
+        return 1;
+    }
+    256 * hm_pow256(k - 1)
+}
+
+// cells+0 += lets; cells+8 += jump estimate (if/while 2, break/continue 1,
+// && / || 4: the short-circuit desugar is two value-ifs).
+pub fn hm_count_words(buf: i64, i: i64, hi: i64, cells: i64) -> i64 {
+    if i >= hi {
+        return 0;
+    }
+    let c: i64 = load_byte(buf, i);
+    let step: i64 = hm_count_one(buf, i, hi, c, cells);
+    hm_count_words(buf, i + step, hi, cells)
+}
+pub fn hm_count_one(buf: i64, i: i64, hi: i64, c: i64, cells: i64) -> i64 {
+    if c == 108 {
+        if hm_word_at(buf, i, hi, 7628140, 3) == 1 {
+            __mind_store_i64(cells, __mind_load_i64(cells) + 1);
+            return 3;
+        }
+    }
+    if c == 105 {
+        if hm_word_at(buf, i, hi, 26217, 2) == 1 {
+            __mind_store_i64(cells + 8, __mind_load_i64(cells + 8) + 2);
+            return 2;
+        }
+    }
+    if c == 119 {
+        if hm_word_at(buf, i, hi, 435610544247, 5) == 1 {
+            __mind_store_i64(cells + 8, __mind_load_i64(cells + 8) + 2);
+            return 5;
+        }
+    }
+    if c == 98 {
+        if hm_word_at(buf, i, hi, 461195539042, 5) == 1 {
+            __mind_store_i64(cells + 8, __mind_load_i64(cells + 8) + 1);
+            return 5;
+        }
+    }
+    if c == 99 {
+        if hm_word_at(buf, i, hi, 7310870969309884259, 8) == 1 {
+            __mind_store_i64(cells + 8, __mind_load_i64(cells + 8) + 1);
+            return 8;
+        }
+    }
+    if c == 38 {
+        if load_byte(buf, i + 1) == 38 {
+            __mind_store_i64(cells + 8, __mind_load_i64(cells + 8) + 4);
+            return 2;
+        }
+    }
+    if c == 124 {
+        if load_byte(buf, i + 1) == 124 {
+            __mind_store_i64(cells + 8, __mind_load_i64(cells + 8) + 4);
+            return 2;
+        }
+    }
+    1
+}
+
 pub fn hm_route_has(route: i64, lo: i64, i: i64, n: i64) -> i64 {
     if i >= n {
         return 0;
@@ -43126,6 +43263,9 @@ pub fn hm_route_home(buf: i64, node: i64, route: i64) -> i64 {
         return 0;
     }
     if hm_fn_pregate(buf, node) == 1 {
+        return 1;
+    }
+    if hm_over_ssa_caps(buf, node) == 1 {
         return 1;
     }
     if route == 0 {

@@ -30,12 +30,15 @@ Steps
                `// note: 1|2` (required PT_NOTE n_type),
                `// mlir: nobuild` (pinned MLIR limitation: must not build),
                `// mlir: exit=N` (pinned MLIR defect: MLIR must give N).
-  2. corpus    deterministic random programs (default seeds 11,12 x 160 = 320);
+  2. corpus    deterministic random programs (default seeds 11,12 x 160 = 320,
+               fed unseeded: they call no std function);
                native == Python == MLIR. An MLIR build failure is accepted only
                for the pinned "break/continue outside a loop" limitation.
-  3. capacity  giant functions (a 2500-arm else-if chain inside a loop; an
-               800-statement straight-line let/if-return function, the census
-               X1 shape) must compile and run correctly — never SIGSEGV.
+  3. capacity  giant functions (a 2500-arm else-if chain inside a loop;
+               800- and 2800-statement straight-line let/if-return functions,
+               the census X1 shape, past the mic@3 planner's old 512-record
+               table and the SSA path's 512-entry jump / let tables) must
+               compile and run correctly — never SIGSEGV.
   4. refusal   a HOME-lowered function that takes an address refuses cleanly
                (rc 3, no ELF), never a crash.
   5. twin      with MINDC_SO set, the oracle .so's selftest_native_elf_stage
@@ -80,9 +83,14 @@ def std_blob() -> bytes:
 BLOB = std_blob()
 
 
-def image(src: bytes) -> bytes:
-    comb = BLOB + src
-    return struct.pack("<qq", len(BLOB), len(comb)) + comb
+def image(src: bytes, seeded: bool = True) -> bytes:
+    """stdin image: [user_lo][len][std blob ++ program]. The generated corpus
+    calls no std function, so it is fed UNSEEDED (user_lo = 0, every function a
+    root) to keep the gate inside run_gate's time budget; every fixture and
+    capacity case takes the production seeded image."""
+    blob = BLOB if seeded else b""
+    comb = blob + src
+    return struct.pack("<qq", len(blob), len(comb)) + comb
 
 
 def nice():
@@ -102,8 +110,9 @@ def derive_stage1(td: pathlib.Path) -> pathlib.Path:
     return out
 
 
-def native_compile(stage1: pathlib.Path, src: bytes):
-    r = subprocess.run([str(stage1)], input=image(src), capture_output=True, timeout=600, preexec_fn=nice)
+def native_compile(stage1: pathlib.Path, src: bytes, seeded: bool = True):
+    r = subprocess.run([str(stage1)], input=image(src, seeded), capture_output=True, timeout=600,
+                       preexec_fn=nice)
     ok = r.returncode == 0 and r.stdout[:4] == b"\x7fELF"
     return ok, r.returncode, (r.stdout if ok else b""), r.stderr.decode(errors="replace")
 
@@ -116,8 +125,8 @@ def run_bin(path: pathlib.Path):
     return (r.returncode & 255 if r.returncode >= 0 else r.returncode, r.stdout)
 
 
-def native(stage1, src: bytes, td: pathlib.Path):
-    ok, rc, elf, err = native_compile(stage1, src)
+def native(stage1, src: bytes, td: pathlib.Path, seeded: bool = True):
+    ok, rc, elf, err = native_compile(stage1, src, seeded)
     if not ok:
         return ("refused", rc, err.strip()[-160:]), None
     p = td / "n.elf"
@@ -208,7 +217,7 @@ def corpus_case(args):
     name, src, exp, ba, stage1, mindc = args
     with tempfile.TemporaryDirectory() as tdn:
         td = pathlib.Path(tdn)
-        got, _ = native(stage1, src.encode(), td)
+        got, _ = native(stage1, src.encode(), td, seeded=False)
         mres = mlir(mindc, src, td)
     return name, src, exp, ba, got, mres
 
@@ -349,10 +358,11 @@ def main() -> int:
         rep.check(got == gexp, f"giant fn (2500-arm else-if chain in a loop, {len(gsrc)} B): "
                                f"native={got} Python={gexp}")
 
-        ssrc, sexp = straight_line_program(200)
-        got, _ = native(stage1, ssrc.encode(), td)
-        rep.check(got == sexp, f"giant straight-line fn (200 x let/if-return/store = 800 statements): "
-                               f"native={got} Python={sexp}")
+        for blocks in (200, 700):
+            ssrc, sexp = straight_line_program(blocks)
+            got, _ = native(stage1, ssrc.encode(), td)
+            rep.check(got == sexp, f"giant straight-line fn ({blocks} x let/if-return/store = "
+                                   f"{4 * blocks} statements): native={got} Python={sexp}")
 
         print("[cf] clean refusal")
         got, _ = native(stage1, REFUSE_ADDR.encode(), td)
