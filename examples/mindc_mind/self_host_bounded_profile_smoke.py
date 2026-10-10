@@ -17,8 +17,8 @@ Checks, in order (each prints PASS/FAIL; any FAIL exits 1):
                all equal to the pinned bounded seed
   5. consumer  under AS=2 GiB + CPU cap: minimal `return 42` and the 8-case
                scalar harness over 4 candidates (3 pass, 1 wrong answer refuses)
-  6. refusals  arena over-cap -> exit 70 + diagnostic, incl. the fill_0..fill_4
-               cap boundary (k<=2 refuse with 70, k>=3 fit and return 7);
+  6. refusals  address-space exhaustion -> exit 70 + diagnostic; the fill_0..fill_4
+               arena-end boundary grows into the overflow region and returns 7;
                unbounded recursion -> stack guard SIGSEGV; malformed layout request -> exit 64+reason + diagnostic;
                the DEFAULT seed under the cap still dies (the original blocker)
   7. bridge    (when MINDC_BIN is set) `mindc build --backend native
@@ -295,18 +295,21 @@ def main(argv: list[str]) -> int:
                    f"(want {want_rc})")
 
         # 6. refusals
-        big = b"fn main() -> i64 {\n    let p: i64 = __mind_alloc(900000000);\n    return 3;\n}\n"
+        big = b"fn main() -> i64 {\n    let p: i64 = __mind_alloc(1500000000);\n    return 3;\n}\n"
         rc, exe, err, wall, rss = build_run("bigalloc", big)
         run = capped([str(exe)], b"") if exe else (None, b"", b"", 0, 0)
-        report(run[0] == 70 and run[2] == b"error: native arena exhausted\n",
+        report(run[0] == 70 and run[2] == FILL_DIAG,
                "refusal/arena", f"exit={run[0]} stderr={run[2]!r}")
-        # Arena-cap boundary: the bump cursor is driven to within 8*k bytes of
-        # the arena end, then alloc(0) + alloc(8) (8 + 16 more bytes). k <= 2
-        # cannot fit and must refuse with exit 70 — for k = 0/1 the next block
-        # header would land in the unmapped guard gap, so the bounds check has
-        # to run before any write. k >= 3 fits exactly and returns the stored 7.
+        # Arena-cap boundary: one block sized to end within 8*k bytes of the
+        # arena end, then alloc(0) + alloc(8). The bounded allocator reserves
+        # the arena's last page for its state and grows on demand: a block that
+        # does not fit the primary region moves the cursor to the overflow
+        # region above the stack (mapped with MAP_FIXED_NOREPLACE), alloc(0)
+        # returns 0 (C-runtime parity), and alloc(8) lands next to it, so every
+        # k returns the stored 7 with no write into the guard gap. The
+        # address-space ceiling itself is the bigalloc case above (exit 70).
         for k in range(5):
-            want = (70, FILL_DIAG) if k <= 2 else (7, b"")
+            want = (7, b"")
             rc, exe, err, wall, rss = build_run(f"fill_{k}", fill_source(k))
             run = capped([str(exe)], b"") if exe else (None, b"", b"", 0, 0)
             report((run[0], run[2]) == want, f"refusal/fill_{k}",

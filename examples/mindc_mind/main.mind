@@ -18190,7 +18190,7 @@ pub fn seq_fix_deltas(src: i64, plan: i64, nplan: i64, env: i64, names_buf: i64,
         // escaped records in names_buf, then let the native bump arena reuse the
         // probe region before allocating the rebind slots retained by the plan.
         // The malloc-backed .so sees a safe no-op checkpoint/reclaim pair.
-        let p_ckpt: i64 = __mind_alloc(0);
+        let p_ckpt: i64 = nb_arena_mark();
         let p_nodes: i64 = __mind_alloc(256 * 32);
         let p_cursor: i64 = __mind_alloc(8);
         let p_vidbuf: i64 = __mind_alloc(256 * 8);
@@ -32246,8 +32246,7 @@ pub fn nb_layout_cell() -> i64 {
 // Word k of the published layout cell (1 arena, 2 stack, 3 guard, 4 explicit),
 // or `dflt` when no layout was published (always the case in the .so).
 pub fn nb_layout_word(k: i64, dflt: i64) -> i64 {
-    let probe: i64 = __mind_alloc(0);
-    if probe < nb_layout_cell() {
+    if nb_native_arena_run() == 0 {
         return dflt;
     }
     if __mind_load_i64(nb_layout_cell()) != nb_layout_magic() {
@@ -32263,6 +32262,29 @@ pub fn nb_stack_bytes() -> i64 {
 }
 pub fn nb_guard_bytes() -> i64 {
     nb_layout_word(3, nb_guard_bytes_default())
+}
+// 1 iff this code is running inside a native image (bump arena at
+// nb_arena_addr()), 0 in the malloc-backed .so. A historical-allocator native
+// image answers __mind_alloc(0) with an arena address. An explicit-layout image
+// returns 0 for it (C-runtime parity, like the .so), and the .so may run inside
+// a non-PIE host whose brk heap overlaps the arena window, so no address
+// comparison and no load is safe before the answer is known. open(2) on the
+// layout cell's address decides without dereferencing it in user space: the
+// native intrinsic is the raw syscall and answers -errno (the cell is mapped
+// arena memory, so -ENOENT = -2, or a descriptor if a file of that name exists),
+// while the C runtime's __mind_open folds every error, including EFAULT for an
+// unmapped address, into -1. A .so result other than -1 means the kernel read
+// the address, so the caller's cell load cannot fault there either.
+pub fn nb_native_arena_run() -> i64 {
+    let probe: i64 = __mind_alloc(0);
+    if probe >= nb_layout_cell() {
+        return 1;
+    }
+    let r: i64 = __mind_open(nb_layout_cell());
+    if r == 0 - 1 {
+        return 0;
+    }
+    1
 }
 // 1 iff the image being emitted carries an explicitly requested layout.
 pub fn nb_layout_explicit() -> i64 {
@@ -32658,7 +32680,7 @@ pub fn nb_cmp_rax_mem(code: String, setcc: i64, rhs_disp: i64) -> String {
 //   cmp r8,rdx ; jae +2 ; ud2 ; movabs r9,ARENA_ADDR ; mov [r9],rdx
 pub fn nb_emit_alloc_core(code: String) -> String {
     if nb_layout_explicit() == 1 {
-        return nb_emit_alloc_core_checked(code);
+        return nb_emit_alloc_core_grow(code);
     }
     // mov rdi,rsi = 48 89 F7 ; add rdi,8 = 48 83 C7 08
     let c1: String = nb_push(code, 72);
@@ -32719,7 +32741,10 @@ pub fn nb_emit_alloc_core(code: String) -> String {
     nb_push(c54, 17)
 }
 
-// EXPLICIT-layout alloc core: the bounds check runs BEFORE any write. The default
+// Fixed-cap EXPLICIT-layout alloc core (superseded for explicit layouts by
+// nb_emit_alloc_core_grow; kept as the check-before-write sequence the
+// deferred default-layout re-bless below would adopt). The bounds check runs
+// BEFORE any write. The default
 // sequence above stores the block header first, so with the cursor at the arena
 // end the header lands in the unmapped guard gap and the image dies on SIGSEGV
 // before reaching the over-cap check. Here the new cursor (old + header + data)
@@ -32790,6 +32815,173 @@ pub fn nb_emit_alloc_core_checked(code: String) -> String {
     nb_push(c44, 17)
 }
 
+// ---- bounded-profile (explicit layout) allocator: grow-on-demand + free-list ----
+// Only images with an explicitly requested layout use this allocator; every
+// default-profile image keeps the historical bump sequence byte-for-byte.
+//
+// State page: the LAST 4096 bytes of the arena PT_LOAD (zero-initialised, so no
+// startup code). Words 0..63 are free-list bin heads (bin k holds released
+// blocks whose capacity has its highest set bit at k); word 64 is the absolute
+// end of the mapped overflow region (0 until the arena first overflows). The
+// primary bump region is the arena minus the 8-byte cursor and the state page.
+//
+// Overflow: when a block does not fit the primary region the cursor moves (once)
+// to the overflow base, the first page after the stack top plus one guard gap,
+// and keeps bumping there. Overflow memory is mapped on demand in 1 MiB-rounded
+// steps with mmap(MAP_FIXED_NOREPLACE) at addresses that are a pure function of
+// the layout and the allocation sequence, so pointer values stay deterministic.
+// A refused mapping (RLIMIT_AS, an occupied range, or a pre-4.17 kernel that
+// ignores the flag and answers elsewhere) and any single request above 64 TiB
+// take the out-of-memory exit: "error: native arena exhausted" on fd 2 and
+// exit_group(70). Nothing faults.
+//
+// Reuse: alloc pops the head of bin k = bsr(size) when its capacity fits, else
+// the head of bin k+1 (every block there is larger than size); a reused block
+// is zeroed over its whole capacity, so explicit images keep the native
+// guarantee that fresh memory reads as zero. The C runtime makes no such
+// promise, so this is stricter than malloc, never weaker.
+pub fn nb_alloc_state_addr() -> i64 {
+    nb_arena_addr() + nb_arena_bytes() - 4096
+}
+pub fn nb_ovf_base() -> i64 {
+    nb_stack_top() + nb_guard_bytes()
+}
+
+// Explicit-layout alloc core: in rsi = rounded size (a multiple of 8, >= 8),
+// out rax = data pointer; clobbers rax rcx rdx rdi r8 r9 (rsi, r10, r11 kept).
+// 422 bytes. Assembled from this source (intel syntax; A = arena base,
+// ST = state page, CAP = primary cursor limit, OOFF/OB = overflow base as a
+// cursor offset / absolute address):
+//   movabs rax,1<<46 ; cmp rsi,rax ; ja oom ; bsr rcx,rsi ; movabs r9,ST
+//   mov rax,[r9+rcx*8] ; test rax,rax ; jz next ; cmp [rax-8],rsi ; jae pop
+//   next: add rcx,1 ; mov rax,[r9+rcx*8] ; test rax,rax ; jz bump
+//   pop: mov rdx,[rax] ; mov [r9+rcx*8],rdx ; mov rdx,rax ; mov rdi,rax
+//        mov rcx,[rax-8] ; shr rcx,3 ; xor eax,eax ; rep stosq ; mov rax,rdx ; jmp done
+//   bump: movabs r9,A ; mov rcx,[r9] ; lea rdx,[rcx+rsi+8] ; movabs r8,CAP
+//        cmp rdx,r8 ; ja slow
+//   commit: mov [r9],rdx ; movabs rax,A+8 ; add rax,rcx ; mov [rax],rsi
+//        add rax,8 ; jmp done
+//   slow: movabs r8,OOFF ; cmp rcx,r8 ; jae ovf ; mov rcx,r8 ; lea rdx,[rcx+rsi+8]
+//        movabs r8,ST ; cmp qword [r8+512],0 ; jne ovf ; movabs rax,OB
+//        mov [r8+512],rax   (the mapped end is set once; a cursor reclaimed back
+//        into the primary region re-enters the already-mapped overflow region)
+//   ovf: movabs rax,A+8 ; add rax,rdx ; movabs r8,ST ; mov rdi,[r8+512]
+//        cmp rax,rdi ; jbe commit ; add rax,0xfffff ; and rax,-0x100000
+//        push rcx,rdx,rsi,r9,r10,r11,rax ; mov rsi,rax ; sub rsi,rdi ; mov edx,3
+//        mov r10d,0x100022 ; mov r8,-1 ; xor r9d,r9d ; mov eax,9 ; syscall
+//        cmp rax,rdi ; pop rax,r11,r10,r9,rsi,rdx,rcx ; jne oom
+//        movabs r8,ST ; mov [r8+512],rax ; jmp commit
+//   oom: (the nb_emit_arena_check diagnostic: write the message, exit_group 70)
+//   done:
+pub fn nb_emit_alloc_core_grow(code: String) -> String {
+    let a: i64 = nb_arena_addr();
+    let ad: i64 = a + 8;
+    let st: i64 = nb_alloc_state_addr();
+    let cap: i64 = nb_arena_bytes() - 8 - 4096;
+    let ob: i64 = nb_ovf_base();
+    let ooff: i64 = ob - a - 8;
+    let k1: String = nb_le(code, 47176, 7);
+    let k2: String = nb_le(k1, 4440073974054976, 7);
+    let k3: String = nb_le(k2, 4301289487943047, 7);
+    let k4: String = nb_le(k3, 3108622013, 4);
+    let k5: String = nb_i64le(k4, st);
+    let k6: String = nb_le(k5, 54189743185103689, 7);
+    let k7: String = nb_le(k6, 32642783202772596, 7);
+    let k8: String = nb_le(k7, 39205293653182477, 7);
+    let k9: String = nb_le(k8, 9698519426844932, 7);
+    let k10: String = nb_le(k9, 56599050187737928, 7);
+    let k11: String = nb_le(k10, 20485590768322888, 7);
+    let k12: String = nb_le(k11, 1101441292322955, 7);
+    let k13: String = nb_le(k12, 38641972309901361, 7);
+    let k14: String = nb_le(k13, 20547673321368016, 7);
+    let k15: String = nb_le(k14, 185, 1);
+    let k16: String = nb_i64le(k15, a);
+    let k17: String = nb_le(k16, 13885239634529097, 7);
+    let k18: String = nb_le(k17, 12077320, 3);
+    let k19: String = nb_i64le(k18, cap);
+    let k20: String = nb_le(k19, 38642458426489164, 7);
+    let k21: String = nb_le(k20, 12077073, 3);
+    let k22: String = nb_i64le(k21, ad);
+    let k23: String = nb_le(k22, 20319564512887112, 7);
+    let k24: String = nb_le(k23, 1146370965635, 7);
+    let k25: String = nb_le(k24, 12077312, 3);
+    let k26: String = nb_i64le(k25, ooff);
+    let k27: String = nb_le(k26, 38645829908642124, 7);
+    let k28: String = nb_le(k27, 20556681264842945, 7);
+    let k29: String = nb_le(k28, 184, 1);
+    let k30: String = nb_i64le(k29, st);
+    let k31: String = nb_le(k30, 8602026825, 7);
+    let k32: String = nb_le(k31, 791483086080, 5);
+    let k33: String = nb_i64le(k32, ob);
+    let k34: String = nb_le(k33, 8598358345, 7);
+    let k35: String = nb_le(k34, 47176, 2);
+    let k36: String = nb_i64le(k35, ad);
+    let k37: String = nb_le(k36, 791512351048, 5);
+    let k38: String = nb_i64le(k37, st);
+    let k39: String = nb_le(k38, 8602028873, 7);
+    let k40: String = nb_le(k39, 1487112947382600, 7);
+    let k41: String = nb_le(k40, 40991168921599, 7);
+    let k42: String = nb_le(k41, 18390785049227264, 7);
+    let k43: String = nb_le(k42, 20354516831584593, 7);
+    let k44: String = nb_le(k43, 1050025707226761, 7);
+    let k45: String = nb_le(k44, 38183349780480, 7);
+    let k46: String = nb_le(k45, 72057322503471120, 7);
+    let k47: String = nb_le(k46, 2736449045004287, 7);
+    let k48: String = nb_le(k47, 16123260236201984, 7);
+    let k49: String = nb_le(k48, 18395110236575992, 7);
+    let k50: String = nb_le(k49, 20572366565957209, 7);
+    let k51: String = nb_le(k50, 184, 1);
+    let k52: String = nb_i64le(k51, st);
+    let k53: String = nb_le(k52, 8598358345, 7);
+    let k54: String = nb_le(k53, 51871660063533289, 7);
+    let k55: String = nb_le(k54, 11426315137909, 7);
+    let k56: String = nb_le(k55, 27424455903432704, 7);
+    let k57: String = nb_le(k56, 20354577617937696, 7);
+    let k58: String = nb_le(k57, 9118758504522168, 7);
+    let k59: String = nb_le(k58, 32199989506634337, 7);
+    let k60: String = nb_le(k59, 22639082835439474, 7);
+    let k61: String = nb_le(k60, 772956674326968, 7);
+    let k62: String = nb_le(k61, 52607822961049600, 7);
+    let k63: String = nb_le(k62, 51796957697409054, 7);
+    let k64: String = nb_le(k63, 77786152698087, 7);
+    let k65: String = nb_le(k64, 12159137284096, 6);
+    k65
+}
+
+// Explicit-layout free body: in rax = pointer, out rax = 0; clobbers rax rcx
+// rdx r8. Only a non-null, 8-aligned pointer inside the primary data region
+// [A+16, ST) or the mapped overflow region [OB, mapped end) is pushed onto its
+// bin; anything else (a string-literal handle, an argv pointer, a stack
+// address) is ignored exactly as the historical no-op free ignored it. 109 bytes:
+//   test rax,rax ; jz out ; test al,7 ; jnz out ; movabs rcx,A+16 ; cmp rax,rcx
+//   jb out ; movabs rcx,ST ; cmp rax,rcx ; jb ok ; movabs rcx,OB ; cmp rax,rcx
+//   jb out ; movabs rcx,ST ; cmp rax,[rcx+512] ; jae out
+//   ok: mov rdx,[rax-8] ; test rdx,rdx ; jz out ; bsr rdx,rdx ; movabs rcx,ST
+//       mov r8,[rcx+rdx*8] ; mov [rax],r8 ; mov [rcx+rdx*8],rax
+//   out: xor eax,eax
+pub fn nb_emit_free_body(code: String) -> String {
+    let a16: i64 = nb_arena_addr() + 16;
+    let st: i64 = nb_alloc_state_addr();
+    let ob: i64 = nb_ovf_base();
+    let f1: String = nb_le(code, 2155482835879240, 7);
+    let f2: String = nb_le(f1, 3108528757, 4);
+    let f3: String = nb_i64le(f2, a16);
+    let f4: String = nb_le(f3, 52152393936681288, 7);
+    let f5: String = nb_i64le(f4, st);
+    let f6: String = nb_le(f5, 52152183483283784, 7);
+    let f7: String = nb_i64le(f6, ob);
+    let f8: String = nb_le(f7, 52152265087662408, 7);
+    let f9: String = nb_i64le(f8, st);
+    let f10: String = nb_le(f9, 8598403912, 7);
+    let f11: String = nb_le(f10, 20539223140999795, 7);
+    let f12: String = nb_le(f11, 53215572937462405, 7);
+    let f13: String = nb_le(f12, 12142802, 3);
+    let f14: String = nb_i64le(f13, st);
+    let f15: String = nb_le(f14, 150963017255756, 7);
+    let f16: String = nb_le(f15, 211320192665928, 6);
+    f16
+}
+
 // The over-cap branch after `cmp r8,rdx` in nb_emit_alloc_core.
 // DEFAULT layout: jae +2 = 0F 83 02 00 00 00 ; ud2 = 0F 0B (unchanged bytes).
 // EXPLICIT layout: jae over a diagnostic block that writes
@@ -32848,6 +33040,9 @@ pub fn nb_emit_push_imm64(code: String, v: i64) -> String {
 //   mov rsi,[rbp+bytes] = 48 8B B5 <disp32> ; add rsi,7 = 48 83 C6 07 ;
 //   and rsi,-8 = 48 83 E6 F8 ; emit_alloc_core.
 pub fn nb_emit_alloc(code: String, bytes_disp: i64) -> String {
+    if nb_layout_explicit() == 1 {
+        return nb_emit_alloc_explicit(code, bytes_disp);
+    }
     let c1: String = nb_push(code, 72);
     let c2: String = nb_push(c1, 139);
     let c3: String = nb_push(c2, 181);
@@ -32861,6 +33056,76 @@ pub fn nb_emit_alloc(code: String, bytes_disp: i64) -> String {
     let c11: String = nb_push(c10, 230);
     let c12: String = nb_push(c11, 248);
     nb_emit_alloc_core(c12)
+}
+
+// Explicit-layout __mind_alloc(n): n <= 0 returns 0 and allocates nothing (the
+// C runtime's contract, runtime-support/mind_intrinsics.c); otherwise round up
+// to the 8-byte stride and run the grow core.
+//   mov rsi,[rbp+bytes] = 48 8B B5 <disp32> ; test rsi,rsi = 48 85 F6 ;
+//   jg +7 = 7F 07 ; xor eax,eax = 31 C0 ; jmp done = E9 <rel32> ;
+//   add rsi,7 = 48 83 C6 07 ; and rsi,-8 = 48 83 E6 F8 ; <grow core> ; done:
+pub fn nb_emit_alloc_explicit(code: String, bytes_disp: i64) -> String {
+    let c1: String = nb_le(code, 11897672, 3);
+    let c2: String = nb_i32le_signed(c1, bytes_disp);
+    let c3: String = nb_le(c2, 54097103809840456, 7);
+    let c4: String = nb_push(c3, 233);
+    let site: i64 = string_len(c4);
+    let c5: String = nb_u32(c4, 0);
+    let c6: String = nb_le(c5, 64883590034785096, 7);
+    let c7: String = nb_push(c6, 248);
+    let c8: String = nb_emit_alloc_core_grow(c7);
+    let done_at: i64 = string_len(c8);
+    let _p: i64 = nb_patch_rel32(string_addr(c8), site, done_at - (site + 4));
+    c8
+}
+
+// Explicit-layout __mind_free(ptr) -> 0: mov rax,[rbp+ptr] = 48 8B 85 <disp32>,
+// then the free body (rax = 0 afterwards).
+pub fn nb_emit_free_explicit(code: String, addr_disp: i64) -> String {
+    let c1: String = nb_le(code, 8751944, 3);
+    let c2: String = nb_i32le_signed(c1, addr_disp);
+    nb_emit_free_body(c2)
+}
+
+// Explicit-layout __mind_realloc(addr, n), C-runtime parity:
+//   n > 0  : grow-and-preserve (nb_emit_realloc), then release the old block;
+//   n == 0 : release addr, return 0;
+//   n < 0  : return 0 and leave addr live (the C realloc of a SIZE_MAX-class
+//            request fails and keeps the old block).
+//   mov rsi,[rbp+bytes] = 48 8B B5 <disp32> ; test rsi,rsi = 48 85 F6 ;
+//   jg grow = 0F 8F <rel32> ; jl neg = 7C <rel8> ;
+//   <free addr> ; jmp done = E9 <rel32> ;
+//   neg: xor eax,eax = 31 C0 ; jmp done = E9 <rel32> ;
+//   grow: <nb_emit_realloc> ; push rax = 50 ; <free addr> ; pop rax = 58 ; done:
+pub fn nb_emit_realloc_explicit(code: String, addr_disp: i64, bytes_disp: i64) -> String {
+    let c1: String = nb_le(code, 11897672, 3);
+    let c2: String = nb_i32le_signed(c1, bytes_disp);
+    let c3: String = nb_le(c2, 614448137544, 5);
+    let jg_site: i64 = string_len(c3);
+    let c4: String = nb_u32(c3, 0);
+    let c5: String = nb_push(c4, 124);
+    let jl_site: i64 = string_len(c5);
+    let c6: String = nb_push(c5, 0);
+    let c7: String = nb_emit_free_explicit(c6, addr_disp);
+    let c8: String = nb_push(c7, 233);
+    let j1_site: i64 = string_len(c8);
+    let c9: String = nb_u32(c8, 0);
+    let neg_at: i64 = string_len(c9);
+    let c10: String = nb_le(c9, 15319089, 3);
+    let j2_site: i64 = string_len(c10);
+    let c11: String = nb_u32(c10, 0);
+    let grow_at: i64 = string_len(c11);
+    let c12: String = nb_emit_realloc(c11, addr_disp, bytes_disp);
+    let c13: String = nb_push(c12, 80);
+    let c14: String = nb_emit_free_explicit(c13, addr_disp);
+    let c15: String = nb_push(c14, 88);
+    let done_at: i64 = string_len(c15);
+    let base: i64 = string_addr(c15);
+    let _p1: i64 = nb_patch_rel32(base, jg_site, grow_at - (jg_site + 4));
+    __mind_store_i8(base + jl_site, neg_at - (jl_site + 1));
+    let _p2: i64 = nb_patch_rel32(base, j1_site, done_at - (j1_site + 4));
+    let _p3: i64 = nb_patch_rel32(base, j2_site, done_at - (j2_site + 4));
+    c15
 }
 
 // emit_store_i64(addr_disp, val_disp): 8-byte store through the i64 handle.
@@ -33753,11 +34018,20 @@ pub fn nb_emit_intrinsic(code: String, kind: i64, ids: i64, dst_id: i64) -> Stri
         // __mind_realloc(addr, new_bytes) -> new_addr
         let a0: i64 = __mind_load_i64(ids + 0 * 8);
         let a1: i64 = __mind_load_i64(ids + 1 * 8);
+        if nb_layout_explicit() == 1 {
+            let e1: String = nb_emit_realloc_explicit(code, nb_slot_disp(a0), nb_slot_disp(a1));
+            return nb_store_rax(e1, nb_slot_disp(dst_id));
+        }
         let c1: String = nb_emit_realloc(code, nb_slot_disp(a0), nb_slot_disp(a1));
         return nb_store_rax(c1, nb_slot_disp(dst_id));
     }
     if kind == 7 {
-        // __mind_free(ptr) -> 0
+        // __mind_free(ptr) -> 0 (a free-list release in explicit-layout images)
+        if nb_layout_explicit() == 1 {
+            let a0: i64 = __mind_load_i64(ids + 0 * 8);
+            let e1: String = nb_emit_free_explicit(code, nb_slot_disp(a0));
+            return nb_store_rax(e1, nb_slot_disp(dst_id));
+        }
         let c1: String = nb_emit_free_xor(code);
         return nb_store_rax(c1, nb_slot_disp(dst_id));
     }
@@ -44769,7 +45043,7 @@ pub fn nb_emit_items(s: EmitState, src: i64, items_addr: i64, items_len: i64, st
     // If a push grew the String, its new backing store is post-checkpoint and must
     // stay live, so leave that whole region intact.  The malloc-backed .so gets a
     // zero checkpoint and therefore takes the unchanged no-reclaim path.
-    let item_ckpt: i64 = __mind_alloc(0);
+    let item_ckpt: i64 = nb_arena_mark();
     let s1: EmitState = nb_emit_one_item(s, src, item, i, strbuf, offs, ncount, tconst, kept, n_kept, ok_cell);
     if __mind_load_i64(ok_cell) == 0 {
         return s1;
@@ -45044,6 +45318,79 @@ pub fn nb_copy32(dst: i64, src: i64, i: i64) -> i64 {
     nb_copy32(dst, src, i + 1)
 }
 
+// Arena checkpoint for nb_arena_reclaim: the address the next bump allocation
+// would start at. In a historical-allocator native image that is exactly what
+// __mind_alloc(0) returns (unchanged behaviour); the malloc-backed .so gets 0
+// (reclaim is then a no-op); an explicit-layout image, whose __mind_alloc(0)
+// returns 0 (C-runtime parity), reads its bump cursor directly.
+pub fn nb_arena_mark() -> i64 {
+    let probe: i64 = __mind_alloc(0);
+    if probe != 0 {
+        return probe;
+    }
+    if nb_native_arena_run() == 0 {
+        return 0;
+    }
+    nb_arena_addr() + __mind_load_i64(nb_arena_addr()) + 16
+}
+
+// 1 iff the RUNNING image uses the explicit-layout allocator (free-list bins +
+// overflow growth, nb_emit_alloc_core_grow): native, and __mind_alloc(0) == 0.
+pub fn nb_running_free_list() -> i64 {
+    let probe: i64 = __mind_alloc(0);
+    if probe != 0 {
+        return 0;
+    }
+    nb_native_arena_run()
+}
+
+// Arena memsz of the RUNNING native image, read from its own program headers
+// (the code PT_LOAD maps file offset 0, so the ELF header sits at
+// nb_load_addr()). Callers reach this only after nb_running_free_list() == 1,
+// so the malloc-backed .so never reads these addresses. 0 if not found.
+pub fn nb_running_arena_bytes() -> i64 {
+    let base: i64 = nb_load_addr();
+    let phoff: i64 = __mind_load_i64(base + 32);
+    let phnum: i64 = __mind_load_i64(base + 56) & 65535;
+    nb_running_arena_scan(base + phoff, phnum, 0)
+}
+pub fn nb_running_arena_scan(ph: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    let p: i64 = ph + i * 56;
+    let ty: i64 = __mind_load_i64(p) & 4294967295;
+    if ty == 1 {
+        if __mind_load_i64(p + 16) == nb_arena_addr() {
+            return __mind_load_i64(p + 40);
+        }
+    }
+    nb_running_arena_scan(ph, n, i + 1)
+}
+pub fn nb_zero_words(addr: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    let _z: i64 = __mind_store_i64(addr + i * 8, 0);
+    nb_zero_words(addr, n, i + 1)
+}
+
+// Reclaim in an explicit-layout image: empty every free-list bin first (a
+// released block above the checkpoint would otherwise be handed out twice,
+// once from its bin and once by the reset bump cursor; released blocks below
+// the checkpoint are merely forgotten), then reset the cursor. The checkpoint
+// may lie in the primary region or in the overflow region; both are valid
+// cursor positions, and the overflow mapping is kept.
+pub fn nb_arena_reclaim_free_list(ckpt: i64) -> i64 {
+    let ab: i64 = nb_running_arena_bytes();
+    if ab < 1048576 {
+        return 0;
+    }
+    let _c: i64 = nb_zero_words(nb_arena_addr() + ab - 4096, 64, 0);
+    let _r: i64 = __mind_store_i64(nb_arena_addr(), ckpt - nb_arena_addr() - 8);
+    0
+}
+
 // Reset the native bump-arena cursor to reclaim everything allocated after the
 // checkpoint (the dead mic@3 scratch that nb_trace_hash built only to SHA-256).
 // `ckpt` is the pointer that `__mind_alloc(0)` returned at the checkpoint. In the
@@ -45060,6 +45407,9 @@ pub fn nb_copy32(dst: i64, src: i64, i: i64) -> i64 {
 pub fn nb_arena_reclaim(ckpt: i64) -> i64 {
     if ckpt < nb_arena_addr() + 16 {
         return 0;
+    }
+    if nb_running_free_list() == 1 {
+        return nb_arena_reclaim_free_list(ckpt);
     }
     // Upper bound of the RUNNING compiler's own arena (no profile is larger than
     // the default), not the layout requested for the image being emitted.
@@ -45088,7 +45438,7 @@ pub fn selftest_native_elf_u(src_addr: i64, src_len: i64, user_lo: i64) -> EmitS
     // region (tokens + src predate the checkpoint; the digest is copied out first), and
     // no emitted byte depends on the arena layout.
     let hslot: i64 = __mind_alloc(32);
-    let ckpt: i64 = __mind_alloc(0);
+    let ckpt: i64 = nb_arena_mark();
     // Self-compute the note hash (no oracle feed). 0 => fail closed. nb_trace_hash
     // recomputes its own prune/kept set inside nb_build_mic3_from_tokens, so the ONLY
     // input it needs is the already-lexed `tokens` (ARENA dedup — no re-lex here).
