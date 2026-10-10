@@ -148,3 +148,44 @@ fn the_budget_boundary_counts_headers() {
     admitted(&[&fits]);
     refused_as("alloc.total_over_budget", &[&over]);
 }
+
+/// An intrinsic's i64 reaches only slots declared exactly `i64` (or a struct
+/// handle). A parameter or return declared `u64` compares unsigned under MLIR and
+/// signed natively (`fn big(y: u64)` given `load_i64(p) == -1`: MLIR 1, native 2);
+/// a `u8`/`u16`/`u32` one is masked by MLIR and not natively; `bool`, `isize`,
+/// `usize` and a raw pointer are not the slot the corpus proves. Judged
+/// on the IR alone here (the source fence is not consulted), so the operand proof
+/// itself must refuse each one.
+#[test]
+fn an_intrinsic_result_reaches_only_exact_i64_slots() {
+    let load = "let p: i64 = __mind_alloc(8); __mind_store_i64(p, 0 - 1);";
+    let mut refused_srcs = Vec::new();
+    for ty in [
+        "u64", "u32", "u16", "u8", "isize", "usize", "bool", "*mut i64",
+    ] {
+        refused_srcs.push(format!(
+            "fn f(y: {ty}) -> i64 {{ return 2; }} \
+             fn main() -> i64 {{ {load} return f(__mind_load_i64(p)); }}"
+        ));
+        refused_srcs.push(format!(
+            "fn g(p: i64) -> {ty} {{ return __mind_load_i64(p); }} \
+             fn main() -> i64 {{ {load} let v = g(p); return 2; }}"
+        ));
+    }
+    let refused_refs: Vec<&str> = refused_srcs.iter().map(String::as_str).collect();
+    refused_as("call.intrinsic_result_not_i64", &refused_refs);
+    // A narrow i64-proven value passed to such a slot is not an operand proof either.
+    refused_as(
+        "call.intrinsic_operand_not_i64",
+        &["fn f(y: u64) -> i64 { return __mind_wrap_i8(y); } \
+           fn main() -> i64 { return f(300); }"],
+    );
+    admitted(&[
+        &format!(
+            "fn f(y: i64) -> i64 {{ return 2; }} fn main() -> i64 {{ {load} return f(__mind_load_i64(p)); }}"
+        ),
+        &format!(
+            "fn g(p: i64) -> i64 {{ return __mind_load_i64(p); }} fn main() -> i64 {{ {load} let v = g(p); return 2; }}"
+        ),
+    ]);
+}

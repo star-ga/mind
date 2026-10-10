@@ -162,3 +162,96 @@ fn in_tree_examples_that_panicked_are_refused_not_panics() {
         );
     }
 }
+
+/// The struct names the std seed blob declares, read from the seed rows of the
+/// std manifest the native bridge composes. Read here independently of the
+/// bridge's own scan, so the two lists are checked against each other.
+fn seed_struct_names() -> Vec<String> {
+    let manifest = std::fs::read_to_string(repo_path(
+        "examples/mindc_mind/testdata/stdlib_manifest.txt",
+    ))
+    .expect("std manifest");
+    let mut names = Vec::new();
+    for row in manifest.lines().filter(|l| !l.starts_with('#')) {
+        let cols: Vec<&str> = row.split('\t').collect();
+        if cols.get(1) != Some(&"seed") {
+            continue;
+        }
+        let src = std::fs::read_to_string(repo_path(&format!("std/{}.mind", cols[0])))
+            .expect("seed module");
+        for line in src.lines() {
+            let t = line.trim_start();
+            let t = t.strip_prefix("pub ").unwrap_or(t);
+            if let Some(rest) = t.strip_prefix("struct ") {
+                let name: String = rest
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
+                names.push(name);
+            }
+        }
+    }
+    names
+}
+
+/// A program declaring a struct with the name of a std seed struct made the
+/// frozen compiler die with SIGSEGV (exit 139) even when it never calls std:
+/// `struct Value { h: i64 }` beside the seed's `std/json.mind` `Value`. It must be
+/// a named refusal from the bridge, before the frozen compiler runs.
+#[test]
+fn a_struct_named_like_a_std_seed_struct_is_refused_not_a_crash() {
+    let names = seed_struct_names();
+    // Positive control on the scan itself: the measured collisions are all present.
+    for want in [
+        "Vec", "String", "Map", "File", "Value", "Box", "Text", "TermSize", "Args",
+    ] {
+        assert!(names.iter().any(|n| n == want), "{want} not in {names:?}");
+    }
+    for name in &names {
+        let src = format!(
+            "struct {name} {{ h: i64 }}\nfn main() -> i64 {{ let v = {name} {{ h: 33 }}; return v.h; }}\n"
+        );
+        let stderr = assert_refused(&format!("sc_{name}"), &src, "closure.std_struct_collision");
+        assert!(
+            stderr.contains(&format!("`{name}`")),
+            "{name} not named:\n{stderr}"
+        );
+    }
+    // Declared inside a module block and never used: still the same image, still refused.
+    assert_refused(
+        "sc_block",
+        "module m { struct File { a: i64 } }\nfn main() -> i64 { return 7; }\n",
+        "closure.std_struct_collision",
+    );
+}
+
+/// Positive control: a struct whose name the seed does not declare (including a
+/// case-variant of a seed name, and an enum or alias spelled like one) still builds
+/// and runs.
+#[test]
+fn a_struct_not_named_like_a_seed_struct_still_builds() {
+    for (name, src, want) in [
+        (
+            "sc_pt",
+            "struct Pt { x: i64, y: i64 }\nfn main() -> i64 { let p = Pt { x: 4, y: 5 }; \
+             return p.x * 10 + p.y; }\n",
+            45,
+        ),
+        (
+            "sc_lower",
+            "struct value { h: i64 }\nfn main() -> i64 { let v = value { h: 9 }; return v.h; }\n",
+            9,
+        ),
+        (
+            "sc_enum",
+            "enum Value { A, B }\nfn main() -> i64 { return 7; }\n",
+            7,
+        ),
+    ] {
+        let p = Project::new(name);
+        p.write("src/main.mind", src);
+        let (code, stderr, bytes) = p.build_native("src/main.mind");
+        assert_eq!(code, 0, "{name}: {stderr}");
+        assert_native_result(&p, &bytes.expect("artifact"), want, name);
+    }
+}

@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — `__mind_open` / `__mind_read` / `__mind_write` return `-errno`
+- The C runtime the MLIR backend links (`runtime-support/mind_intrinsics.c`) now returns
+  what the raw system call returns: the result, or `-errno` on failure (for example
+  `-2` ENOENT, `-9` EBADF, `-14` EFAULT), the same values the native backend's
+  syscalls produce. Previously a failure was `-1`.
+- `__mind_read` / `__mind_write` no longer short-circuit a null buffer or a
+  `count <= 0` to `0`: the kernel decides (a bad fd is EBADF whatever the count, a
+  null buffer with a nonzero count is EFAULT, a zero count is 0). `__mind_open` of a
+  null path is `-14` (EFAULT) instead of `-1`. Code that tests `< 0` is unaffected;
+  code that compared a result with `-1` or relied on `0` for an empty request must
+  test `< 0` or the count instead. On Windows the CRT's invalid-parameter abort is
+  replaced by the same EFAULT the Linux kernel reports.
+
+### Fixed — native admission refuses non-i64 integer slots and seed struct names
+- `--backend native` refuses a program that declares an integer type other than
+  `i64` (`isize` / `usize` stay admitted) anywhere in its source
+  (`type.non_i64_integer`). The frozen compiler keeps a `u8` / `u16` / `u32` `let` or
+  parameter unmasked and compares a `u64` signed, where the MLIR backend masks and
+  compares unsigned: `let v: u8 = 300; if v > 100 {..}` exited 1 natively and 2 under
+  MLIR, with or without a frozen intrinsic producing the value. The whole-program
+  operand proof now treats only a slot declared exactly `i64` (or a struct handle) as
+  an i64.
+- A program declaring a struct with the name of a std seed struct (`Vec`, `String`,
+  `Map`, `File`, `Value`, `Box`, `Text`, `TermSize`, `Args`) is refused
+  (`closure.std_struct_collision`) instead of crashing the frozen compiler with
+  SIGSEGV. The names are read from the std seed text.
+
 ### Fixed — the native bridge reports the compiler child's real outcome
 - When streaming the source image to the native compiler fails, the bridge no longer
   exits on the bare `Broken pipe`. It closes the pipe, reaps the child (5 s grace, then

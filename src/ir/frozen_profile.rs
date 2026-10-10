@@ -79,17 +79,30 @@ pub fn profile_frozen_admits_linked(
     admit_discard_only_results(&module.instrs)
 }
 
-/// Admit the SOURCE-level facts the IR cannot carry. Today that is the float width:
-/// any `f32` / `f16` / `bf16` type anywhere in the program is out of profile, because
-/// the IR records a scalar float only as `ConstF64` and every native float lowering is
-/// proven for f64 alone (see `admit_binop`). The frozen stage1.elf refuses the same
-/// programs on its own (`nb_user_float_tok` in `main.mind`); this makes the first fence
-/// refuse them too, and name the construct.
+/// Admit the SOURCE-level facts the IR cannot carry: the declared width of a scalar.
+///
+/// * Float width: any `f32` / `f16` / `bf16` type anywhere in the program is out of
+///   profile, because the IR records a scalar float only as `ConstF64` and every native
+///   float lowering is proven for f64 alone (see `admit_binop`). The frozen stage1.elf
+///   refuses the same programs on its own (`nb_user_float_tok` in `main.mind`); this
+///   makes the first fence refuse them too, and name the construct.
+/// * Integer width: any integer type other than `i64` (`isize`/`usize` are i64 on both
+///   backends) is out of profile (`type.non_i64_integer`). The frozen compiler carries
+///   every integer in an i64 slot and re-materialises a declared width only on
+///   `return`: a `u8`/`u16`/`u32` `let` or parameter keeps its unmasked value and a
+///   `u64` compares signed, where the MLIR backend masks and compares unsigned
+///   (measured: `let v: u8 = 300; if v > 100 {..}` is 1 natively and 2 under MLIR; a
+///   `u64` parameter holding `-1` compared `> 5` likewise). The IR cannot see it: an
+///   unsigned `let` lowers to a bare `BitAnd`, a parameter to its own mask. This also
+///   keeps an intrinsic result out of every non-i64 `let`, which the whole-program
+///   operand proof cannot see for the same reason.
 pub fn profile_frozen_admits_source(
     module: &crate::ast::Module,
 ) -> Result<(), FrozenProfileRejection> {
     if crate::eval::narrow_scan::module_mentions_non_f64_float(module) {
         reject("type.non_f64_float")
+    } else if crate::eval::narrow_scan::module_mentions_non_i64_integer(module) {
+        reject("type.non_i64_integer")
     } else {
         Ok(())
     }
@@ -678,6 +691,45 @@ mod tests {
             // A tensor element dtype is not a scalar width; the tensor itself is refused
             // elsewhere, under its own name.
             "fn sink(x: Tensor<f32, [4]>) -> i64 { return 0; }",
+        ] {
+            assert_eq!(source_admits(src), Ok(()), "{src}");
+        }
+    }
+
+    /// An integer declared anything but `i64` is out of profile wherever it is
+    /// written. The frozen compiler carries every integer in an i64 slot and does
+    /// not re-materialise a `u8`/`u16`/`u32` let or parameter at its width, nor
+    /// compare a `u64` unsigned (measured: `let v: u8 = 300; if v > 100` is 1
+    /// natively and 2 under MLIR). The IR cannot see a let annotation (an unsigned
+    /// one lowers to a bare `BitAnd`), so the refusal is made on the source.
+    #[test]
+    fn every_non_i64_integer_spelling_is_rejected() {
+        for src in [
+            "fn main() -> i64 { let v: u8 = 300; if v > 100 { return 1; } return 2; }",
+            "fn f(x: u16) -> i64 { return 0; }",
+            "fn f(x: u32) -> i64 { return 0; }",
+            "fn f(x: u64) -> i64 { if x > 5 { return 1; } return 2; }",
+            "fn g() -> u64 { return 0 - 1; }",
+            "fn g() -> u8 { return 3; }",
+            "fn f(x: i8) -> i64 { return 0; }",
+            "fn f(x: i16) -> i64 { return 0; }",
+            "fn f(x: i32) -> i64 { return 0; }",
+            "struct P { a: u8 }",
+            "type Word = u16;",
+            "fn f(xs: [u32; 4]) -> i64 { return 0; }",
+            "fn main() -> i64 { let a: i64 = 300; let b = a as u8; return 0; }",
+        ] {
+            assert_eq!(
+                source_admits(src).map_err(|r| r.construct),
+                Err("type.non_i64_integer"),
+                "{src}"
+            );
+        }
+        // `i64`, and `isize`/`usize` (measured identical on both backends), and `bool`.
+        for src in [
+            "fn f(x: i64) -> i64 { return x; }",
+            "fn f(x: isize) -> usize { return x; }",
+            "fn f(b: bool) -> i64 { if b { return 1; } return 2; }",
         ] {
             assert_eq!(source_admits(src), Ok(()), "{src}");
         }

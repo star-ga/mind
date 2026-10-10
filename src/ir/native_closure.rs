@@ -355,6 +355,62 @@ pub fn reserved_names_from_text(blob: &str) -> BTreeSet<String> {
     out
 }
 
+/// Struct names scanned TEXTUALLY out of the std seed blob, by the same rule as
+/// [`reserved_names_from_text`] (`struct NAME` or `pub struct NAME` at the start of a
+/// line). Over-approximation is again the safe direction: the set only refuses.
+pub fn reserved_struct_names_from_text(blob: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for line in blob.lines() {
+        let t = line.trim_start();
+        let t = t.strip_prefix("pub ").unwrap_or(t);
+        let Some(rest) = t.strip_prefix("struct ") else {
+            continue;
+        };
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        if !name.is_empty() {
+            out.insert(name);
+        }
+    }
+    out
+}
+
+/// Refuse a program that declares a struct with the name of a std seed struct.
+///
+/// The frozen compiler compiles `std blob ++ user region` as one program, so the
+/// image then declares the struct twice. It does not refuse that: it dies with
+/// SIGSEGV (measured: `struct Value { h: i64 }` beside `std/json.mind`'s `Value`,
+/// for every seed struct name, used or not, inside a module block or not, and with
+/// no call into std). Judged on every `StructDef` anywhere in the AST.
+fn reject_std_struct_collision(
+    ast: &crate::ast::Module,
+    seed_structs: &BTreeSet<String>,
+) -> Result<(), ClosureRejection> {
+    let mut found: Option<String> = None;
+    for item in &ast.items {
+        crate::type_checker::nerve_walk::walk(item, &mut |node| {
+            if let crate::ast::Node::StructDef { name, .. } = node {
+                if found.is_none() && seed_structs.contains(name) {
+                    found = Some(name.clone());
+                }
+            }
+        });
+    }
+    match found {
+        Some(name) => reject(
+            "closure.std_struct_collision",
+            format!(
+                "struct `{name}` is also declared by the std seed blob the native backend \
+                 compiles with every program; rename the program's `{name}` or build with \
+                 `--backend mlir`"
+            ),
+        ),
+        None => Ok(()),
+    }
+}
+
 /// Refuse a duplicate or reserved-colliding definition, judged on the AST.
 pub fn reject_ambiguous_ast(
     module: &crate::ast::Module,
@@ -421,6 +477,9 @@ pub struct StdSeed {
     /// Seed modules in manifest order, each with the function names its text
     /// defines (the textual scan of [`reserved_names_from_text`]).
     pub modules: Vec<(String, BTreeSet<String>)>,
+    /// Every struct name any seed module's text declares
+    /// ([`reserved_struct_names_from_text`]). A program may not declare one.
+    pub structs: BTreeSet<String>,
     /// The seed blob parsed and lowered ONCE, as one program. `None` when this
     /// build could not: then no call resolves into std and every seed name stays
     /// reserved — the behaviour before std linkage existed, which only refuses.
@@ -508,12 +567,14 @@ fn all_calls(instrs: &[Instr], out: &mut Vec<String>) {
 /// 2. a user definition of a frozen intrinsic name is refused — the frozen
 ///    emitter expands the intrinsic at every call site, lowering drops the user
 ///    body, so the definition could never be the one that runs;
-/// 3. a user definition of a name that an IMPORTED std module defines is refused:
+/// 3. a struct declared with the name of a std seed struct is refused
+///    (`closure.std_struct_collision`): the frozen compiler crashes on it;
+/// 4. a user definition of a name that an IMPORTED std module defines is refused:
 ///    the program asked for `std.<m>` and redefined one of its members, so which
 ///    one a call means is ambiguous (`closure.std_symbol_collision`);
-/// 4. entry-rooted reachability, where a call may resolve to a user function, a
+/// 5. entry-rooted reachability, where a call may resolve to a user function, a
 ///    frozen intrinsic, or a std seed function;
-/// 5. std linkage: the seed functions reachable from every user function. One
+/// 6. std linkage: the seed functions reachable from every user function. One
 ///    that calls a name the program redefines is refused
 ///    (`closure.std_callee_shadowed`) — the frozen compiler would bind that call
 ///    to the program's definition. One that calls a name with no definition is
@@ -544,6 +605,9 @@ pub fn admit_native_closure_linked(
             ),
         );
     }
+    // Also before the seed branch: the struct is in the image whether or not the
+    // seed lowered.
+    reject_std_struct_collision(ast, &seed.structs)?;
     let Some((_, std_ir)) = &seed.lowered else {
         let restricted = admit_native_closure(ast, ir, entry, &seed.all_names())?;
         return Ok(LinkedClosure {

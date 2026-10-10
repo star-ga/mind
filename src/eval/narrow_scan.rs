@@ -80,6 +80,16 @@ fn is_narrow_leaf(leaf: TypeLeaf<'_>) -> bool {
     }
 }
 
+/// A SCALAR integer type other than `i64` and the pointer-width `isize`/`usize`
+/// (both an i64 on both backends). Tensor element dtypes are not counted, as for
+/// [`is_non_f64_float_scalar`].
+fn is_non_i64_integer_scalar(leaf: TypeLeaf<'_>) -> bool {
+    match leaf {
+        TypeLeaf::Scalar(n) => matches!(n, "i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "u64"),
+        TypeLeaf::TensorDtype(_) => false,
+    }
+}
+
 /// A SCALAR floating-point type other than `f64`. Tensor element dtypes are not
 /// counted: a tensor is out of the frozen profile on its own, and the refusal
 /// should name the tensor rather than its element type.
@@ -288,4 +298,18 @@ pub(crate) fn module_mentions_non_f64_float(module: &ast::Module) -> bool {
         .items
         .iter()
         .any(|n| node_mentions(is_non_f64_float_scalar, n))
+}
+
+/// `true` when ANY type annotation in the module names a scalar integer type other
+/// than `i64` (`i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `u64`), including cast targets,
+/// struct fields, aliases and nested element types. The frozen native profile uses
+/// it: a declared narrow or unsigned width lives only in the AST (an unsigned `let`
+/// lowers to a bare `BitAnd`), and the frozen compiler carries every integer in an
+/// i64 slot without re-materialising a narrow `let` or parameter at its width or
+/// comparing a `u64` unsigned.
+pub(crate) fn module_mentions_non_i64_integer(module: &ast::Module) -> bool {
+    module
+        .items
+        .iter()
+        .any(|n| node_mentions(is_non_i64_integer_scalar, n))
 }

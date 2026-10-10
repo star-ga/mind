@@ -372,6 +372,7 @@ fn an_unlowered_seed_reserves_every_name_and_still_refuses_intrinsic_redefinitio
             "toml".to_string(),
             std::iter::once("bytes_eq".to_string()).collect(),
         )],
+        structs: BTreeSet::new(),
         lowered: None,
     };
     let collide = "fn bytes_eq(a: i64) -> i64 {\n    return a;\n}\n\n\
@@ -389,4 +390,33 @@ fn an_unlowered_seed_reserves_every_name_and_still_refuses_intrinsic_redefinitio
         .err()
         .expect("an intrinsic redefinition must refuse without linkage");
     assert_eq!(err.kind, "closure.intrinsic_redefinition");
+}
+
+/// A struct declared with the name of a std seed struct is refused on the AST,
+/// with or without a lowered seed, and wherever it is declared: the frozen
+/// compiler dies with SIGSEGV on the doubly declared struct. A different name
+/// (or the same spelling in another case) is not refused.
+#[test]
+fn a_struct_named_like_a_seed_struct_is_refused_without_linkage() {
+    let seed = StdSeed {
+        modules: Vec::new(),
+        structs: ["Value".to_string(), "Vec".to_string()]
+            .into_iter()
+            .collect(),
+        lowered: None,
+    };
+    for src in [
+        "struct Value {\n    h: i64\n}\n\nfn main() -> i64 {\n    return 7;\n}\n",
+        "module m {\n    struct Vec {\n        a: i64\n    }\n}\n\n\
+         fn main() -> i64 {\n    return 7;\n}\n",
+    ] {
+        let ast = libmind::parser::parse(src).expect("parses");
+        let err = admit_native_closure_linked(&ast, &lower(src), "main", &seed)
+            .err()
+            .expect("a seed struct name must refuse");
+        assert_eq!(err.kind, "closure.std_struct_collision", "{src}");
+    }
+    let ok = "struct value {\n    h: i64\n}\n\nfn main() -> i64 {\n    return 7;\n}\n";
+    let ast = libmind::parser::parse(ok).expect("parses");
+    assert!(admit_native_closure_linked(&ast, &lower(ok), "main", &seed).is_ok());
 }

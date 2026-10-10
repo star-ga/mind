@@ -387,21 +387,21 @@ fn binop_is_integer_arith(op: &BinOp) -> bool {
     }
 }
 
-/// Does a declared type denote ONE i64 slot on both backends? `i64`, the integer
-/// names the MLIR backend lowers to `i64` (narrow ones are masked in the IR), a
-/// raw pointer, and a struct this module declares (an aggregate is an i64 handle
-/// in the IR). Exhaustive on purpose: a new `TypeAnn` variant must be decided here.
+/// Does a declared type denote ONE i64 slot on both backends? Exactly `i64`, and a
+/// struct this module declares (an aggregate is an i64 handle in the IR). Nothing
+/// else, whatever its width: a `u64` slot compares unsigned under MLIR and signed
+/// natively, a `u8`/`u16`/`u32` slot is masked by MLIR and not natively (measured:
+/// `fn big(y: u64)` given `__mind_load_i64(p) == -1` and compared `> 5` is 1 under
+/// MLIR, 2 natively), and `i8`/`i16`/`isize`/`usize`/raw pointers/aliases are not the
+/// slot the corpus proves. Exhaustive on purpose: a new `TypeAnn` variant must be
+/// decided here.
 pub(super) fn type_is_i64_slot(module: &crate::ir::IRModule, ty: &crate::ast::TypeAnn) -> bool {
     use crate::ast::TypeAnn;
     match ty {
-        TypeAnn::ScalarI64 | TypeAnn::RawPtr { .. } => true,
-        TypeAnn::Named(name) => {
-            matches!(
-                name.as_str(),
-                "i64" | "u64" | "i8" | "u8" | "i16" | "u16" | "isize" | "usize"
-            ) || declares_struct(module, name)
-        }
-        TypeAnn::ScalarI32
+        TypeAnn::ScalarI64 => true,
+        TypeAnn::Named(name) => name == "i64" || declares_struct(module, name),
+        TypeAnn::RawPtr { .. }
+        | TypeAnn::ScalarI32
         | TypeAnn::ScalarU32
         | TypeAnn::ScalarF32
         | TypeAnn::ScalarF64

@@ -16,7 +16,9 @@ use crate::ir::frozen_profile::{
     FrozenProfileRejection, profile_frozen_admits_linked, profile_frozen_admits_program,
     profile_frozen_admits_source,
 };
-use crate::ir::native_closure::{StdSeed, reserved_names_from_text};
+use crate::ir::native_closure::{
+    StdSeed, reserved_names_from_text, reserved_struct_names_from_text,
+};
 
 /// Stack for the seed lowering thread: the seed is ~400 KB of source, lowered
 /// recursively, so it gets the same headroom a deep user program would.
@@ -31,6 +33,10 @@ const SEED_LOWERING_STACK: usize = 256 * 1024 * 1024;
 /// seed that does not parse or lower (or a thread that cannot be spawned) yields
 /// `lowered: None`, which reserves every seed name — refusal only, never a guess.
 pub(super) fn std_seed_for_linkage(modules: &[&str], sources: &[Vec<u8>], blob: &[u8]) -> StdSeed {
+    let structs = sources
+        .iter()
+        .flat_map(|src| reserved_struct_names_from_text(&String::from_utf8_lossy(src)))
+        .collect();
     let names = modules
         .iter()
         .zip(sources)
@@ -46,6 +52,7 @@ pub(super) fn std_seed_for_linkage(modules: &[&str], sources: &[Vec<u8>], blob: 
         Err(_) => {
             return StdSeed {
                 modules: names,
+                structs,
                 lowered: None,
             };
         }
@@ -59,6 +66,7 @@ pub(super) fn std_seed_for_linkage(modules: &[&str], sources: &[Vec<u8>], blob: 
         .flatten();
     StdSeed {
         modules: names,
+        structs,
         lowered,
     }
 }
@@ -200,11 +208,30 @@ mod tests {
         assert!(seed.fn_ir("no_such_seed_fn").is_none());
     }
 
+    /// The seed struct names are derived from the seed text, so a seed that gains a
+    /// struct refuses a program declaring it without a code change. Pinned to the
+    /// set measured to crash the frozen compiler when a program redeclares it.
+    #[test]
+    fn the_seed_struct_names_come_from_the_seed_text() {
+        let modules = crate::build::native_bridge::frozen_std_seed_modules();
+        let sources = super::super::seed::std_seed_sources(&modules).expect("embedded seed");
+        let blob = crate::build::native_image::compose_std_blob(&sources);
+        let seed = std_seed_for_linkage(&modules, &sources, blob.as_bytes());
+        let want: BTreeSet<String> = [
+            "Args", "Box", "File", "Map", "String", "TermSize", "Text", "Value", "Vec",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(seed.structs, want);
+    }
+
     /// A linked name with no body refuses by name instead of passing the fence.
     #[test]
     fn a_linked_name_without_a_body_is_refused() {
         let seed = StdSeed {
             modules: Vec::new(),
+            structs: BTreeSet::new(),
             lowered: None,
         };
         let err = fence_std_seed_fn(&seed, "anything", &BTreeSet::new()).unwrap_err();

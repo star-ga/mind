@@ -348,6 +348,20 @@ OUT_PROFILE = [
      "fn main()->i64{let s=string_push_ansi_sgr(string_push_byte(0, 1), 31); return 0;}",
      "closure"),
     ("std_body_fenced", "import std.sha256;\nfn main()->i64{return bsig0(5);}", "first"),
+    # Round-4: an integer declared anything but i64 (the frozen compiler keeps a u8
+    # let / parameter unmasked and compares a u64 signed: native 1 vs MLIR 2 on the
+    # first, native 2 vs MLIR 1 on the second), and a struct named like a std seed
+    # struct (the frozen compiler died with SIGSEGV on the doubly declared struct).
+    ("narrow_u8_let_cmp",
+     "fn main()->i64{let v:u8=300; if v > 100 {return 1;} return 2;}",
+     "first", "type.non_i64_integer"),
+    ("intr_u64_param_cmp",
+     "fn big(y:u64)->i64{if y > 5 {return 1;} return 2;} "
+     "fn main()->i64{let p:i64=__mind_alloc(8); __mind_store_i64(p, 0-1); "
+     "return big(__mind_load_i64(p));}",
+     "first", "type.non_i64_integer"),
+    ("std_struct_collision",
+     "struct Value{h:i64} fn main()->i64{let v=Value{h:33}; return v.h;}", "closure"),
     ("trait",
      "trait T{fn f(self)->i64;} struct S{} impl T for S{fn f(self)->i64{return 1;}} "
      "fn main()->i64{let s=S{}; return s.f();}"),
@@ -421,7 +435,7 @@ def main() -> int:
     # toolchain execve. Pin the corpus size so a silently-deleted fixture is a FAILURE,
     # not a vacuous pass. Bump deliberately when the allowlist+corpus grow together.
     PINNED_IN_PROFILE = 38
-    PINNED_OUT_PROFILE = 24
+    PINNED_OUT_PROFILE = 27
     if len(IN_PROFILE) < PINNED_IN_PROFILE or len(OUT_PROFILE) < PINNED_OUT_PROFILE:
         print(
             f"FAIL  corpus shrank below pinned floor: in={len(IN_PROFILE)}<{PINNED_IN_PROFILE} "

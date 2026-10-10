@@ -499,3 +499,75 @@ fn an_unbounded_or_oversized_allocation_total_is_refused() {
         33,
     );
 }
+
+/// A value reaching a slot declared as an integer other than `i64` ran natively
+/// with a different result than the MLIR backend. The frozen compiler carries
+/// every integer in an i64 slot and does not re-materialise a declared `u8` /
+/// `u16` / `u32` let or parameter at its width, nor compare a `u64` unsigned,
+/// while MLIR masks the narrow ones and compares `u64` unsigned. The verifier's
+/// four reproductions (native vs MLIR exit 2/1, 1/2, 1/2, 2/1), the same flow
+/// with no intrinsic at all, and a narrow value passed to a linked std function's
+/// i64 parameter are all refused by the declared type.
+#[test]
+fn a_value_reaching_a_non_i64_integer_slot_is_refused() {
+    for (name, src) in [
+        (
+            "nw_u64_intr_param_cmp",
+            "fn big(y: u64) -> i64 { if y > 5 { return 1; } return 2; }\n\
+             fn main() -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i64(p, 0 - 1); \
+             return big(__mind_load_i64(p)); }\n",
+        ),
+        (
+            "nw_u8_let_intr",
+            "fn main() -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i64(p, 300); \
+             let v: u8 = __mind_load_i64(p); if v > 100 { return 1; } return 2; }\n",
+        ),
+        (
+            "nw_u16_param_intr",
+            "fn f(x: u16) -> i64 { if x > 1000 { return 1; } return 2; }\n\
+             fn main() -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i64(p, 65537); \
+             return f(__mind_load_i64(p)); }\n",
+        ),
+        (
+            "nw_u64_intr_ret_cmp",
+            "fn get(p: i64) -> u64 { return __mind_load_i64(p); }\n\
+             fn main() -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i64(p, 0 - 1); \
+             if get(p) > 5 { return 1; } return 2; }\n",
+        ),
+        (
+            "nw_u32_param_lit",
+            "fn f(v: u32) -> i64 { if v > 200 { return 2; } return 3; }\n\
+             fn main() -> i64 { return f(4294967396); }\n",
+        ),
+        (
+            "nw_u8_let_lit",
+            "fn main() -> i64 { let v: u8 = 300; if v > 100 { return 1; } return 2; }\n",
+        ),
+        (
+            "nw_u8_to_std_i64_param",
+            "fn main() -> i64 { let v: u8 = 300; return mask32(v); }\n",
+        ),
+    ] {
+        refused(name, src, "type.non_i64_integer");
+    }
+}
+
+/// Positive control: the same flows through slots declared `i64` build and run
+/// with the value the MLIR backend computes for them.
+#[test]
+fn a_value_reaching_an_i64_slot_still_builds() {
+    build_ok(
+        "nw_i64_intr_param_cmp",
+        "fn big(y: i64) -> i64 { if y > 5 { return 1; } return 2; }\n\
+         fn main() -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i64(p, 0 - 1); \
+         return big(__mind_load_i64(p)); }\n",
+        2,
+    );
+    build_ok(
+        "nw_i64_let_intr",
+        "fn get(p: i64) -> i64 { return __mind_load_i64(p); }\n\
+         fn main() -> i64 { let p: i64 = __mind_alloc(8); __mind_store_i64(p, 300); \
+         let v: i64 = get(p); if v > 100 { return 1; } return 2; }\n",
+        1,
+    );
+}
