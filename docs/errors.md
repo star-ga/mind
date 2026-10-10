@@ -182,11 +182,11 @@ when:
   structs;
 - an `i32`/`u32` operand meets an integer literal that is not a decimal of at
   most 9 digits, or the other operand has a different 32-bit type;
-- it is a `/` with an `i32` operand whose divisor is not such a small literal,
-  unless the quotient is bound straight to an `i32` slot: the initial value of
-  a `let` or the value of an assignment of an `i32` name, the operand of a
-  `return` in a function returning `i32`, or the value stored to an `i32`
-  struct field. With `a: i32` and `b: i32`, `let x: i32 = a / b;` builds (and
+- it is a `/` with an `i32` operand when neither the divisor nor the dividend
+  is such a small literal, unless the quotient is bound straight to an `i32`
+  slot: the initial value of a `let` or the value of an assignment of an `i32`
+  name, the operand of a `return` in a function returning `i32`, or the value
+  stored to an `i32` struct field. With `a: i32` and `b: i32`, `let x: i32 = a / b;` builds (and
   `MIN / -1` gives `MIN`), while `if a / b == a`, `(a / b) as i64` and a bare
   tail expression `a / b` are refused.
 

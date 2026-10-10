@@ -449,6 +449,17 @@ NARROW_LEAVES = (
          "struct S {\n    v: i8,\n}\n"
          "fn main() -> i64 {\n    let s: S = S { v: 200 };\n    let d: i8 = s.v / 3;\n    return (d as i64) & 255;\n}\n",
          _tdiv(_wrapw(200, 8, True), 3) & 255),
+        ("i32 field divisor, quotient bound to an i32 let",
+         "struct S {\n    v: i32,\n}\n"
+         "fn main() -> i64 {\n    let s: S = S { v: 0 - 1 };\n    let q: i32 = 9 / s.v;\n"
+         "    return (q as i64) & 255;\n}\n", -9 & 255),
+        ("i32 call results, MIN / -1 bound to an i32 let",
+         "fn fa() -> i32 {\n    return 0 - 2147483647 - 1;\n}\nfn fb() -> i32 {\n    return 0 - 1;\n}\n"
+         "fn main() -> i64 {\n    let q: i32 = fa() / fb();\n    if q == fa() {\n        return 9;\n    }\n"
+         "    return 1;\n}\n", 9),
+        ("small literal / i32 stays native",
+         "fn q(a: i32) -> i64 {\n    return (7 / a) as i64;\n}\n"
+         "fn main() -> i64 {\n    return q(0 - 1) & 255;\n}\n", -7 & 255),
         ("i32 / small literal stays native",
          "fn q(a: i32) -> i64 {\n    return (a / 7) as i64;\n}\n"
          "fn main() -> i64 {\n    return q(0 - 2147483647 - 1) & 255;\n}\n", _tdiv(-(1 << 31), 7) & 255),
@@ -480,12 +491,17 @@ NARROW_LEAVES_REFUSED = [
     ("u8 divided by an i64",
      "fn q(a: u8, b: i64) -> i64 {\n    return a / b;\n}\n"
      "fn main() -> i64 {\n    return q(200, 3);\n}\n", None),
-    ("i32 divided by a literal wider than 32 bits",
-     "fn q(a: i32) -> i64 {\n    return (a / 4294967295) as i64;\n}\n"
-     "fn main() -> i64 {\n    return q(7) & 255;\n}\n", None),
+    # MLIR converts the literal to the 32-bit operand type: 4294967295 is -1 (so
+    # MIN / it is the narrow MIN / -1, giving MIN) and 4294967296 is 0 (a trap).
+    ("i32 MIN divided by a literal wider than 32 bits",
+     "fn q(a: i32) -> i64 {\n    return ((a / 4294967295) as i64) & 255;\n}\n"
+     "fn main() -> i64 {\n    return q(0 - 2147483647 - 1);\n}\n", 0),
     ("u32 remainder by 2^32",
      "fn q(a: u32) -> i64 {\n    let r: u32 = a % 4294967296;\n    return (r as i64) & 255;\n}\n"
-     "fn main() -> i64 {\n    return q(7);\n}\n", None),
+     "fn main() -> i64 {\n    return q(7);\n}\n", TRAP_EXIT),
+    ("u32 call result divided by 2^32",
+     "fn compute() -> u32 {\n    return 4294967297;\n}\n"
+     "fn main() -> i64 {\n    return compute() / 4294967296;\n}\n", TRAP_EXIT),
 ]
 
 

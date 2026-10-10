@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2005 | **Est. tokens:** ~3,785,587
-**Generated:** 2026-10-10 17:29 UTC
+**Files:** 2005 | **Est. tokens:** ~3,785,930
+**Generated:** 2026-10-10 18:34 UTC
 
 ## Token Budget Guide
 
@@ -42,7 +42,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,880 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 2 | ~3,347 |
-| `docs/` | 38 | ~112,616 |
+| `docs/` | 38 | ~112,622 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,042 |
 | `docs/design/` | 4 | ~11,498 |
@@ -62,7 +62,7 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 177 | ~471,390 |
+| `examples/mindc_mind/` | 177 | ~471,727 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,159 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
@@ -460,7 +460,7 @@
 
 - `determinism.md` (~4495 tok, huge) — The Determinism Contract
 - `ENGINE_CONSUMER_LIST.md` (~9538 tok, huge) — Engine consumer list — the evidence pack for every hand-written semantics engine
-- `errors.md` (~2932 tok, huge) — MIND Core Error Model
+- `errors.md` (~2938 tok, huge) — MIND Core Error Model
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
 ### `docs/gates/`
 
@@ -680,7 +680,7 @@
 - `param_types_smoke.py` (~1273 tok, large)
 - `_ref_add.note` (~16 tok, tiny) — fff4fc7e1d90f40c4fa6bac3799795d51008132c65cca0ff7b3b4496cf1a58af
 - `_ref_if_ret.note` (~16 tok, tiny) — 63b7ec7b7f87e25de1aa2fb591affbb2b25d10c37908ae9d711f1653af0efe64
-- `_ref_main.note` (~16 tok, tiny) — ccfb2472391c1ef235e727acfc15333c94b1f5ab4586ec1b4993946930b05d5e
+- `_ref_main.note` (~16 tok, tiny) — 3ee71d7d56e549e32cad80c8dd2f04bcbb642e893d335075b745e42b4220ba8c
 - `ref_netverify.py` (~1473 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
 - `_ref_recursion.note` (~16 tok, tiny) — babd5f8c4d6e3539fc61392e8ff14d4c8523e04e6424a528d1c823948745b9f7
 - `_ref_struct_field.note` (~16 tok, tiny) — dfcf7fa7f8ec57cf5f499ffa47833530ed978bbf38a424ec69feeede26516b27
@@ -699,7 +699,7 @@
 - `self_host_body_smoke.py` (~3055 tok, huge)
 - `self_host_bounded_profile_smoke.py` (~4122 tok, huge) — Bounded native memory profile gate: the compiler seed AND its programs load
 - `self_host_carry_cap_smoke.py` (~1169 tok, large) — Cap-guard smoke for the self-host loop-carry / loop-frame scratch tables.
-- `self_host_cast_mic3_smoke.py` (~4680 tok, huge)
+- `self_host_cast_mic3_smoke.py` (~4740 tok, huge)
 - `self_host_check_driver_smoke.py` (~2879 tok, huge)
 - `self_host_continue_smoke.py` (~1384 tok, large) — Regression gate for #308 (closes #286's break/continue fixtures): the pure-MIND
 - `selfhost_driver.mind` (~4772 tok, huge) — ===========================================================================
@@ -727,7 +727,7 @@
 - `self_host_native_blas_dot_q16_smoke.py` (~1774 tok, huge)
 - `self_host_native_cast_conv_smoke.py` (~1373 tok, large) — RI-B2 scalar-cast-conv rung (#108) — native-ELF int<->float `as`-cast chain.
 - `self_host_native_diag_smoke.py` (~1326 tok, large) — RI-D1a gate (task #313): `mindc build --backend=native` must FAIL-CLOSED with an
-- `self_host_native_div_trap_smoke.py` (~7275 tok, huge)
+- `self_host_native_div_trap_smoke.py` (~7552 tok, huge)
 - `self_host_native_dot_f32_smoke.py` (~1436 tok, large) — RI-B2-S8 STEP C (#108) — native-ELF scalar STRICT-FP f32 DOT-PRODUCT.
 - `self_host_native_dot_l1_q16_smoke.py` (~1188 tok, large) — RI-B2 L1-Q16 rung (#108) — native-ELF Q16.16 L1 distance.
 - `self_host_native_elf_alignment_smoke.py` (~1902 tok, huge) — Self-host NATIVE-ELF ABI-alignment smoke (FIX #169).

@@ -32725,10 +32725,13 @@ pub fn nb_div_unsafe(op: i64, node: i64, buf: i64, lets: i64, lcell: i64) -> i64
     if op == op_div() {
         if lc + rc > 0 {
             // an i32 operand: the divisor must be a small literal (never -1),
-            // or the quotient is bound straight to an i32 slot
+            // or the dividend one (never MIN), or the quotient is bound
+            // straight to an i32 slot
             if nb_div_small_lit(r, buf) == 0 {
-                if __mind_load_i64(node + 56) != nb_div_bound32_tag() {
-                    return 1;
+                if nb_div_small_lit(l, buf) == 0 {
+                    if __mind_load_i64(node + 56) != nb_div_bound32_tag() {
+                        return 1;
+                    }
                 }
             }
         }
@@ -32760,8 +32763,14 @@ pub fn nb_bless_bound_div(node: i64, w: i64) -> i64 {
     if ast_aux(node) != op_div() {
         return 0;
     }
-    if __mind_load_i64(node + 56) != 32 {
-        return 0;
+    // The cache is +32 for i32 identifiers and 64 when the i32 operand is a call
+    // or field leaf (the lattice keeps those neutral, as Rust does). An 8/16-bit
+    // code is never re-tagged: that quotient is wrapped to its own width first.
+    let c: i64 = __mind_load_i64(node + 56);
+    if c != 32 {
+        if c != 64 {
+            return 0;
+        }
     }
     __mind_store_i64(node + 56, nb_div_bound32_tag());
     0

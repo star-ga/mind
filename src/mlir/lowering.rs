@@ -2050,17 +2050,18 @@ impl LoweringContext {
                         } else if !unsigned
                             && matches!(op, BinOp::Div | BinOp::Mod)
                             && ity != "i1"
-                            && !self
-                                .const_i64_map
-                                .get(rhs)
-                                .is_some_and(|&v| v != -1 && v != 0)
+                            && !self.const_i64_map.get(rhs).is_some_and(|&v| {
+                                // elide only if the divisor AS `ity` is not -1/0
+                                let n = if ity == "i32" { v as i32 as i64 } else { v };
+                                n != -1 && n != 0
+                            })
                         {
                             // Signed narrow div/rem determinism — INT_MIN/-1 AND
                             // divisor-0, the same two x86-#DE-vs-AArch64 divergences
                             // closed for i64. Since W2-trap a zero divisor exits
                             // with MIND_DIV_TRAP_EXIT_CODE; MIN/-1 keeps the
                             // divisor-1 result (see the guard call below).
-                            // Elided for a constant divisor that is neither -1 nor 0.
+                            // Elided for a constant divisor (as `ity`) not -1 or 0.
                             // INT_MIN(ity) built as 1<<(w-1). Unsigned narrow div has
                             // no INT_MIN/-1 case but IS routed (this arm is
                             // signed-only) — its div-by-zero is the unsigned guard
@@ -2121,7 +2122,9 @@ impl LoweringContext {
                         } else if unsigned
                             && matches!(op, BinOp::Div | BinOp::Mod)
                             && ity != "i1"
-                            && self.const_i64_map.get(rhs).is_none_or(|&v| v == 0)
+                            && self.const_i64_map.get(rhs).is_none_or(|&v| {
+                                (if ity == "i32" { v as i32 as i64 } else { v }) == 0
+                            })
                         {
                             // Unsigned narrow div/rem determinism — divisor-0.
                             // x86 `divl`/`divq` raise #DE on a zero divisor
@@ -2132,7 +2135,7 @@ impl LoweringContext {
                             // divisor is still substituted with 1 (never UB).
                             // Unsigned division has NO INT_MIN/-1 overflow case,
                             // so unlike the signed arm this only guards zero.
-                            // Elided for a constant divisor known to be nonzero.
+                            // Elided for a constant divisor nonzero as an `ity`.
                             // Gated; an i64-only program never reaches this arm,
                             // so keystone/canary bytes are unchanged.
                             self.emit_line(&format!(

@@ -187,7 +187,10 @@ NARROW_RETURN_FIXTURES = [
     (
         "explicit_raw_u32_return",
         "fn compute() -> u32 { return 4294967297; }\n",
-        "fn main() -> i64 { return compute() / 4294967296; }\n",
+        # A 9-digit divisor: a u32 value divided by a literal that does not fit
+        # in 32 bits is refused natively (docs/errors.md, integer division trap),
+        # and 4294967297 / 100000000 = 42 still exposes a missing truncation.
+        "fn main() -> i64 { return compute() / 100000000; }\n",
         0,
     ),
     (
