@@ -188,6 +188,39 @@ static void trace(long steps, int mode) {
     }
 }
 
+// A fitting block deep in the request's own bin must be found: bin 9 holds
+// 1000 (head) then 1016; a 1016-byte request must reuse the second block
+// instead of bumping the cursor.
+static void bin_search_test(void) {
+    int64_t a = f_alloc(0, 1016), s1 = f_alloc(0, 8), b = f_alloc(0, 1000), s2 = f_alloc(0, 8);
+    f_free(a, 0);
+    f_free(b, 0);
+    uint64_t c0 = W(A);
+    int64_t q = f_alloc(0, 1016);
+    if (q != a) die("bin search missed a fitting block", q, a);
+    if (W(A) != c0) die("bin search bumped", (long)W(A), (long)c0);
+    f_free(q, 0); f_free(s1, 0); f_free(s2, 0);
+    check();
+    if (W(A) != 0) die("bin test not drained", (long)W(A), 0);
+}
+
+// A large block freed at the top gives its pages back (madvise) and the next,
+// larger block still reads zero everywhere.
+static void big_top_test(void) {
+    int64_t n = 100 << 20;
+    if ((uint64_t)n * 2 > AB) return;
+    int64_t p = f_alloc(0, n);
+    memset((void *)p, 0x5a, (size_t)n);
+    f_free(p, 0);
+    check();
+    if (W(ST + 560) > A + 8 + 4096) die("pages above the top not released", (long)W(ST + 560), 0);
+    int64_t q = f_alloc(0, n + 4096);
+    if (q != p) die("big block not reused at the top", q, p);
+    zero_ok(q, 0, n + 4096, "big reuse not zero");
+    f_free(q, 0);
+    check();
+}
+
 int main(int argc, char **argv) {
     uint64_t ab = argc > 2 ? strtoull(argv[2], 0, 0) : (16u << 20);
     long steps = argc > 3 ? atol(argv[3]) : 20000;
@@ -204,6 +237,8 @@ int main(int argc, char **argv) {
     if (f_free(0, 0) != 0 || f_free(12345, 0) != 0) die("free foreign", 0, 0);
     check();
     if (*(uint64_t *)A != 0) die("realloc(p,0) did not free", (long)*(uint64_t *)A, 0);
+    bin_search_test();
+    big_top_test();
     trace(steps, mode);
     // grow loops: in-place at top
     int64_t b = f_alloc(0, 8);
