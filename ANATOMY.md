@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2016 | **Est. tokens:** ~3,784,589
-**Generated:** 2026-10-10 02:54 UTC
+**Files:** 2016 | **Est. tokens:** ~3,785,208
+**Generated:** 2026-10-10 16:22 UTC
 
 ## Token Budget Guide
 
@@ -68,7 +68,7 @@
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
 | `examples/mindc_mind/testdata/mindfuzz_regress_failclosed/` | 14 | ~2,935 |
 | `examples/mindc_mind/testdata/native_alloc_bounded/` | 11 | ~2,384 |
-| `examples/mindc_mind/testdata/native_alloc_bounded/rt/` | 3 | ~6,507 |
+| `examples/mindc_mind/testdata/native_alloc_bounded/rt/` | 3 | ~7,126 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2,926 |
 | `examples/mindc_mind/testdata/native_record_trace/` | 13 | ~2,127 |
@@ -938,8 +938,8 @@
 - `realloc_null_zero.mind` (~144 tok, small) — realloc(NULL, 0) (verifier repro edge/e04, W11c round 2). The C runtime's
 ### `examples/mindc_mind/testdata/native_alloc_bounded/rt/`
 
-- `alloc_rt_harness.c` (~2743 tok, huge) — Standalone stress harness for the bounded-profile allocator blob (rt.bin).
-- `alloc_rt.s` (~3275 tok, huge) — .intel_syntax noprefix
+- `alloc_rt_harness.c` (~3223 tok, huge) — Standalone stress harness for the bounded-profile allocator blob (rt.bin).
+- `alloc_rt.s` (~3414 tok, huge) — .intel_syntax noprefix
 - `gen_mind.py` (~489 tok, medium) — rt.bin -> MIND byte-emitter functions (nb_le 7-byte chunks; nb_i64le for
 ### `examples/mindc_mind/testdata/native_alloc_bounded/`
 

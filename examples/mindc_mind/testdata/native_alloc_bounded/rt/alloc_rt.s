@@ -10,7 +10,9 @@
 #   0x1111111111111106 OB8  OB + 8
 # State page words: [ST+8k] bin k head (k<64); [ST+512] overflow mapped end;
 # [ST+520] non-empty-bin bitmap; [ST+536/544/552] alloc/free/realloc entry;
-# [ST+560] P-region high water; [ST+568] O-region high water.
+# [ST+560] P-region high water; [ST+568] O-region high water;
+# [ST+1024+8k] bin k size bound: no block in bin k is larger (insert raises
+# it, a fruitless scan of the bin lowers it to the largest size it saw).
 # Block: header word h = size | 1 (free) | 2 (previous block free); data at h+8.
 # Free block (size >= 24): [d] next, [d+8] prev, [d+size-8] size (footer).
 prefix:
@@ -351,6 +353,10 @@ insert:                         # rax = d, rdx = size; clobbers rcx r10
 in_h:
     mov [r9 + rcx*8], rax
     bts qword ptr [r9 + 520], rcx
+    cmp rdx, [r9 + rcx*8 + 1024]
+    jbe in_out
+    mov [r9 + rcx*8 + 1024], rdx
+in_out:
     ret
 
 zero_mark:                      # zero [rdi, rcx) below the region high water,
@@ -405,16 +411,25 @@ map_to:                         # extend the overflow mapping from rdi (= mapped
 
 do_alloc:                       # rsi = r (rounded) -> rax = zeroed block; keeps rsi
     bsr rcx, rsi
+    cmp rsi, [r9 + rcx*8 + 1024]
+    ja da_higher                # nothing in bin rcx is that large: skip the scan
     mov rax, [r9 + rcx*8]
+    xor r8d, r8d                # largest size the scan saw
 da_scan:
     test rax, rax
-    jz da_higher
+    jz da_miss
     mov rdx, [rax - 8]
     and rdx, -8
     cmp rdx, rsi
     jae da_take
+    cmp rdx, r8
+    jbe da_next
+    mov r8, rdx
+da_next:
     mov rax, [rax]
     jmp da_scan
+da_miss:
+    mov [r9 + rcx*8 + 1024], r8 # whole bin scanned: its exact largest size
 da_higher:
     mov rdx, [r9 + 520]
     inc ecx

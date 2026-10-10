@@ -28995,9 +28995,13 @@ pub fn span_cmp_loop(src: i64, alo: i64, ahi: i64, blo: i64, bhi: i64, k: i64) -
 }
 
 // Count how many struct names in registry `t` are strictly less than struct k's
-// name (lexicographically). This is k's rank in sorted order — a selection-sort
-// position without mutating the registry. (Struct names are distinct, so rank is
-// unique.)
+// name (lexicographically), plus the EQUAL names declared before k. This is k's
+// rank in sorted order — a selection-sort position without mutating the
+// registry. Distinct names give the plain lexicographic rank. Equal names occur
+// when a user struct reuses a std struct's name (both sit in the combined
+// source): the declaration-order tie-break keeps the ranks a permutation of
+// 0..N-1, so srt_sorted_kth always finds a struct and no caller indexes slot -1
+// (memory before the table).
 pub fn srt_rank_of(t: i64, src: i64, k: i64) -> i64 {
     srt_rank_loop(t, src, k, 0, 0)
 }
@@ -29008,8 +29012,14 @@ pub fn srt_rank_loop(t: i64, src: i64, k: i64, j: i64, acc: i64) -> i64 {
     if j == k {
         return srt_rank_loop(t, src, k, j + 1, acc);
     }
-    if span_cmp(src, srt_name_lo(t, j), srt_name_hi(t, j), srt_name_lo(t, k), srt_name_hi(t, k)) < 0 {
+    let c: i64 = span_cmp(src, srt_name_lo(t, j), srt_name_hi(t, j), srt_name_lo(t, k), srt_name_hi(t, k));
+    if c < 0 {
         return srt_rank_loop(t, src, k, j + 1, acc + 1);
+    }
+    if c == 0 {
+        if j < k {
+            return srt_rank_loop(t, src, k, j + 1, acc + 1);
+        }
     }
     srt_rank_loop(t, src, k, j + 1, acc)
 }
@@ -32917,20 +32927,20 @@ pub fn nb_rt_blob_p1(code: String, a: i64, a8: i64, st: i64, ob: i64, a16: i64, 
     let k6: String = nb_le(k5, 9135294793, 7);
     let k7: String = nb_le(k6, 1829080392, 7);
     let k8: String = nb_le(k7, 9269512521, 7);
-    let k9: String = nb_le(k8, 72033169385570353, 7);
-    let k10: String = nb_le(k9, 24583234520088582, 7);
+    let k9: String = nb_le(k8, 13204899253043249, 7);
+    let k10: String = nb_le(k9, 24583234520088583, 7);
     let k11: String = nb_le(k10, 18386313975779393, 7);
     let k12: String = nb_le(k11, 12142931, 3);
     let k13: String = nb_i64le(k12, st);
     let k14: String = nb_le(k13, 39986998165422129, 7);
     let k15: String = nb_le(k14, 694788269539951, 7);
-    let k16: String = nb_le(k15, 17631281152, 7);
+    let k16: String = nb_le(k15, 17933271040, 7);
     let k17: String = nb_le(k16, 23170008532279529, 7);
     let k18: String = nb_le(k17, 18385214447376214, 7);
     let k19: String = nb_le(k18, 795799142738, 5);
     let k20: String = nb_i64le(k19, st);
     let k21: String = nb_le(k20, 37515336739879400, 7);
-    let k22: String = nb_le(k21, 5879407932608, 7);
+    let k22: String = nb_le(k21, 6081271395520, 7);
     let k23: String = nb_le(k22, 2426283241728, 7);
     let k24: String = nb_le(k23, 22589841503047936, 7);
     let k25: String = nb_le(k24, 20639213317869889, 7);
@@ -32939,13 +32949,13 @@ pub fn nb_rt_blob_p1(code: String, a: i64, a8: i64, st: i64, ob: i64, a16: i64, 
     let k28: String = nb_le(k27, 54097258261480776, 7);
     let k29: String = nb_le(k28, 578927499576648, 7);
     let k30: String = nb_le(k29, 585936877649920, 7);
-    let k31: String = nb_le(k30, 15970336768, 7);
+    let k31: String = nb_le(k30, 16272326656, 7);
     let k32: String = nb_le(k31, 6964306650463721, 7);
-    let k33: String = nb_le(k32, 4023981703168, 7);
+    let k33: String = nb_le(k32, 4101291114496, 7);
     let k34: String = nb_le(k33, 20266198355601664, 7);
     let k35: String = nb_le(k34, 65319220258272901, 7);
     let k36: String = nb_le(k35, 54189739812586006, 7);
-    let k37: String = nb_le(k36, 21305492852, 7);
+    let k37: String = nb_le(k36, 22094022004, 7);
     let k38: String = nb_le(k37, 7816724529, 7);
     let k39: String = nb_le(k38, 70905305852140008, 7);
     let k40: String = nb_le(k39, 4433803321802753, 7);
@@ -32960,7 +32970,7 @@ pub fn nb_rt_blob_p2(code: String, a: i64, a8: i64, st: i64, ob: i64, a16: i64, 
     let k6: String = nb_le(k5, 69894344855914825, 7);
     let k7: String = nb_le(k6, 22954814299999560, 7);
     let k8: String = nb_le(k7, 20140064118491384, 7);
-    let k9: String = nb_le(k8, 24769798028322824, 7);
+    let k9: String = nb_le(k8, 24769798031403016, 7);
     let k10: String = nb_le(k9, 39767136553500649, 7);
     let k11: String = nb_le(k10, 3125350412, 4);
     let k12: String = nb_i64le(k11, a);
@@ -32973,7 +32983,7 @@ pub fn nb_rt_blob_p2(code: String, a: i64, a8: i64, st: i64, ob: i64, a16: i64, 
     let k19: String = nb_le(k18, 52226016775176192, 7);
     let k20: String = nb_le(k19, 70150250601382400, 7);
     let k21: String = nb_le(k20, 65524885569539446, 7);
-    let k22: String = nb_le(k21, 58979212463178386, 7);
+    let k22: String = nb_le(k21, 58979212463178404, 7);
     let k23: String = nb_le(k22, 12208474, 3);
     let k24: String = nb_i64le(k23, a8);
     let k25: String = nb_le(k24, 20779847652182345, 7);
@@ -32982,7 +32992,7 @@ pub fn nb_rt_blob_p2(code: String, a: i64, a8: i64, st: i64, ob: i64, a16: i64, 
     let k28: String = nb_le(k27, 69894353431726413, 7);
     let k29: String = nb_le(k28, 68127153549640521, 7);
     let k30: String = nb_le(k29, 17043843145828684, 7);
-    let k31: String = nb_le(k30, 65583669609555984, 7);
+    let k31: String = nb_le(k30, 65583669610735632, 7);
     let k32: String = nb_le(k31, 54387669085454577, 7);
     let k33: String = nb_le(k32, 21392098240463631, 7);
     let k34: String = nb_le(k33, 4224061517402507, 7);
@@ -33009,13 +33019,13 @@ pub fn nb_rt_blob_p3(code: String, a: i64, a8: i64, st: i64, ob: i64, a16: i64, 
     let k12: String = nb_le(k11, 3533052853651788, 7);
     let k13: String = nb_le(k12, 20271093532675096, 7);
     let k14: String = nb_le(k13, 6769200429080963, 7);
-    let k15: String = nb_le(k14, 415512588488008, 7);
+    let k15: String = nb_le(k14, 435303797787976, 7);
     let k16: String = nb_le(k15, 65392699387871232, 7);
-    let k17: String = nb_le(k16, 22621734481953271, 7);
+    let k17: String = nb_le(k16, 22621734481953289, 7);
     let k18: String = nb_le(k17, 54404184690624840, 7);
     let k19: String = nb_le(k18, 24869463890527209, 7);
-    let k20: String = nb_le(k19, 66243376550463976, 7);
-    let k21: String = nb_le(k20, 7934072617, 7);
+    let k20: String = nb_le(k19, 66243376550476008, 7);
+    let k21: String = nb_le(k20, 8236062505, 7);
     let k22: String = nb_le(k21, 22108191130159433, 7);
     let k23: String = nb_le(k22, 21395941172530424, 7);
     let k24: String = nb_le(k23, 4080053663613321, 7);
@@ -33025,7 +33035,7 @@ pub fn nb_rt_blob_p3(code: String, a: i64, a8: i64, st: i64, ob: i64, a16: i64, 
     let k28: String = nb_le(k27, 20480986858807128, 7);
     let k29: String = nb_le(k28, 18014398509482168, 7);
     let k30: String = nb_le(k29, 38016465894899712, 7);
-    let k31: String = nb_le(k30, 55876390649594881, 7);
+    let k31: String = nb_le(k30, 55876390649594928, 7);
     let k32: String = nb_le(k31, 36953455805548551, 7);
     let k33: String = nb_le(k32, 27204414281982, 7);
     let k34: String = nb_le(k33, 37516162208301056, 7);
@@ -33068,137 +33078,143 @@ pub fn nb_rt_blob_p4(code: String, a: i64, a8: i64, st: i64, ob: i64, a16: i64, 
     let k28: String = nb_le(k27, 38642355298010445, 7);
     let k29: String = nb_le(k28, 20768694620194882, 7);
     let k30: String = nb_le(k29, 8733174543, 7);
-    let k31: String = nb_le(k30, 2407623642563, 7);
-    let k32: String = nb_le(k31, 21681762891025408, 7);
-    let k33: String = nb_le(k32, 21673573243982221, 7);
-    let k34: String = nb_le(k33, 1819525201533579, 7);
-    let k35: String = nb_le(k34, 20505382032673097, 7);
-    let k36: String = nb_le(k35, 70132658657808185, 7);
-    let k37: String = nb_le(k36, 54097415261241672, 7);
-    let k38: String = nb_le(k37, 38643175164430579, 7);
-    let k39: String = nb_le(k38, 4503598562101712, 7);
-    let k40: String = nb_le(k39, 67553998177126656, 7);
+    let k31: String = nb_le(k30, 4401428446025, 7);
+    let k32: String = nb_le(k31, 56739787675563520, 7);
+    let k33: String = nb_le(k32, 39773471630164992, 7);
+    let k34: String = nb_le(k33, 16127636556361873, 7);
+    let k35: String = nb_le(k34, 15922634764546767, 7);
+    let k36: String = nb_le(k35, 21421283824631810, 7);
+    let k37: String = nb_le(k36, 2965696501176633, 7);
+    let k38: String = nb_le(k37, 32597467264026956, 7);
+    let k39: String = nb_le(k38, 65796188735621134, 7);
+    let k40: String = nb_le(k39, 48212432756232195, 7);
     nb_rt_blob_p5(k40, a, a8, st, ob, a16, ob8)
 }
 pub fn nb_rt_blob_p5(code: String, a: i64, a8: i64, st: i64, ob: i64, a16: i64, ob8: i64) -> String {
-    let k1: String = nb_le(code, 18385214549151999, 7);
-    let k2: String = nb_le(k1, 71540036629777488, 7);
-    let k3: String = nb_le(k2, 52425813923988410, 7);
-    let k4: String = nb_le(k3, 54262311876034594, 7);
-    let k5: String = nb_le(k4, 56630647036313599, 7);
-    let k6: String = nb_le(k5, 1423867557972408, 7);
-    let k7: String = nb_le(k6, 20365559594047553, 7);
-    let k8: String = nb_le(k7, 691064790382649, 7);
-    let k9: String = nb_le(k8, 563506307727360, 7);
-    let k10: String = nb_le(k9, 58191718545293312, 7);
-    let k11: String = nb_le(k10, 54189743185103689, 7);
-    let k12: String = nb_le(k11, 20539223140995700, 7);
-    let k13: String = nb_le(k12, 32635950173053571, 7);
-    let k14: String = nb_le(k13, 20804868835592233, 7);
-    let k15: String = nb_le(k14, 71776119095333259, 7);
-    let k16: String = nb_le(k15, 59256293333092545, 7);
-    let k17: String = nb_le(k16, 20497903475260532, 7);
-    let k18: String = nb_le(k17, 20487219677090049, 7);
-    let k19: String = nb_le(k18, 70054847717068939, 7);
-    let k20: String = nb_le(k19, 38643435669737704, 7);
-    let k21: String = nb_le(k20, 69950147809331664, 7);
-    let k22: String = nb_le(k21, 69894353433489952, 7);
-    let k23: String = nb_le(k22, 68127153549640521, 7);
-    let k24: String = nb_le(k23, 17043843145828684, 7);
-    let k25: String = nb_le(k24, 39772672372197680, 7);
-    let k26: String = nb_le(k25, 38647934804033872, 7);
-    let k27: String = nb_le(k26, 2330471942850308, 7);
-    let k28: String = nb_le(k27, 72056279388031308, 7);
-    let k29: String = nb_le(k28, 6733351382178047, 7);
-    let k30: String = nb_le(k29, 39768231642170184, 7);
-    let k31: String = nb_le(k30, 72057586570498108, 7);
-    let k32: String = nb_le(k31, 36952405908601164, 7);
-    let k33: String = nb_le(k32, 39767993555156263, 7);
-    let k34: String = nb_le(k33, 72057588902596620, 7);
-    let k35: String = nb_le(k34, 47689, 2);
-    let k36: String = nb_i64le(k35, a);
-    let k37: String = nb_le(k36, 800089344841, 5);
-    let k38: String = nb_i64le(k37, a8);
-    let k39: String = nb_le(k38, 23799238588927305, 7);
-    let k40: String = nb_le(k39, 25464449742407728, 7);
+    let k1: String = nb_le(code, 36391432001012568, 7);
+    let k2: String = nb_le(k1, 36390536612937664, 7);
+    let k3: String = nb_le(k2, 23170008263688416, 7);
+    let k4: String = nb_le(k3, 38645979386298710, 7);
+    let k5: String = nb_le(k4, 4101662918854, 7);
+    let k6: String = nb_le(k5, 4503748781080576, 7);
+    let k7: String = nb_le(k6, 72057592977246464, 7);
+    let k8: String = nb_le(k7, 10689254082047, 7);
+    let k9: String = nb_le(k8, 18392909767180288, 7);
+    let k10: String = nb_le(k9, 25042722861243993, 7);
+    let k11: String = nb_le(k10, 21673573249811727, 7);
+    let k12: String = nb_le(k11, 54887620492165513, 7);
+    let k13: String = nb_le(k12, 50730683995066184, 7);
+    let k14: String = nb_le(k13, 13078690812657865, 7);
+    let k15: String = nb_le(k14, 54097371323468617, 7);
+    let k16: String = nb_le(k15, 39204300227904840, 7);
+    let k17: String = nb_le(k16, 20539850072062032, 7);
+    let k18: String = nb_le(k17, 54669145026064953, 7);
+    let k19: String = nb_le(k18, 39205082256442230, 7);
+    let k20: String = nb_le(k19, 56722195570879232, 7);
+    let k21: String = nb_le(k20, 40967017271919616, 7);
+    let k22: String = nb_le(k21, 20479499283989000, 7);
+    let k23: String = nb_le(k22, 35031344640223955, 7);
+    let k24: String = nb_le(k23, 58829682417340232, 7);
+    let k25: String = nb_le(k24, 22671142863276873, 7);
+    let k26: String = nb_le(k25, 45573626900203768, 7);
+    let k27: String = nb_le(k26, 20776961370488830, 7);
+    let k28: String = nb_le(k27, 32124399071653929, 7);
+    let k29: String = nb_le(k28, 36954552801119285, 7);
+    let k30: String = nb_le(k29, 38646674230936290, 7);
+    let k31: String = nb_le(k30, 20600709926418512, 7);
+    let k32: String = nb_le(k31, 370042789750915, 7);
+    let k33: String = nb_le(k32, 1975312604170572, 7);
+    let k34: String = nb_le(k33, 38645670253250640, 7);
+    let k35: String = nb_le(k34, 25051272904108226, 7);
+    let k36: String = nb_le(k35, 36952489529084232, 7);
+    let k37: String = nb_le(k36, 4570177140095072, 7);
+    let k38: String = nb_le(k37, 16128736067720168, 7);
+    let k39: String = nb_le(k38, 71256613910246343, 7);
+    let k40: String = nb_le(k39, 4517400578328904, 7);
     nb_rt_blob_p6(k40, a, a8, st, ob, a16, ob8)
 }
 pub fn nb_rt_blob_p6(code: String, a: i64, a8: i64, st: i64, ob: i64, a16: i64, ob8: i64) -> String {
-    let k1: String = nb_le(code, 38646074772699468, 7);
-    let k2: String = nb_le(k1, 21723552787548367, 7);
-    let k3: String = nb_le(k2, 20266198359902601, 7);
-    let k4: String = nb_le(k3, 7036338755399555, 7);
-    let k5: String = nb_le(k4, 21393573774367090, 7);
-    let k6: String = nb_le(k5, 20328030975561865, 7);
-    let k7: String = nb_le(k6, 65577662122868867, 7);
-    let k8: String = nb_le(k7, 20270510470331978, 7);
-    let k9: String = nb_le(k8, 3091740809, 4);
-    let k10: String = nb_i64le(k9, ob);
-    let k11: String = nb_le(k10, 8602092361, 7);
-    let k12: String = nb_le(k11, 142426635728128, 7);
-    let k13: String = nb_le(k12, 13603764657192962, 7);
-    let k14: String = nb_le(k13, 2202136168712, 7);
-    let k15: String = nb_le(k14, 65308203159209984, 7);
-    let k16: String = nb_le(k15, 204826990345842, 6);
-    let k17: String = nb_i64le(k16, a8);
-    let k18: String = nb_le(k17, 20777648612542792, 7);
-    let k19: String = nb_le(k18, 186, 1);
-    let k20: String = nb_i64le(k19, a);
-    let k21: String = nb_le(k20, 20319564500470089, 7);
-    let k22: String = nb_le(k21, 65850341006557315, 7);
-    let k23: String = nb_le(k22, 33932341877407544, 7);
-    let k24: String = nb_le(k23, 20547673256421624, 7);
-    let k25: String = nb_le(k24, 20269387391448971, 7);
-    let k26: String = nb_le(k25, 54106194244486285, 7);
-    let k27: String = nb_le(k26, 54595187062086259, 7);
-    let k28: String = nb_le(k27, 70053748190376961, 7);
-    let k29: String = nb_le(k28, 36952421319347528, 7);
-    let k30: String = nb_le(k29, 72057583248607424, 7);
-    let k31: String = nb_le(k30, 39204347476084040, 7);
-    let k32: String = nb_le(k31, 20539184519903311, 7);
-    let k33: String = nb_le(k32, 36952595281528873, 7);
-    let k34: String = nb_le(k33, 2263158077522662, 7);
-    let k35: String = nb_le(k34, 2463469907970376, 7);
-    let k36: String = nb_le(k35, 60495129760060648, 7);
-    let k37: String = nb_le(k36, 52434644767116616, 7);
-    let k38: String = nb_i64le(k37, a);
-    let k39: String = nb_le(k38, 804384312137, 5);
-    let k40: String = nb_i64le(k39, a8);
+    let k1: String = nb_le(code, 52435709528551657, 7);
+    let k2: String = nb_i64le(k1, a);
+    let k3: String = nb_le(k2, 800089344841, 5);
+    let k4: String = nb_i64le(k3, a8);
+    let k5: String = nb_le(k4, 23799238588927305, 7);
+    let k6: String = nb_le(k5, 25464449742407728, 7);
+    let k7: String = nb_le(k6, 38646074772699468, 7);
+    let k8: String = nb_le(k7, 21723552787548367, 7);
+    let k9: String = nb_le(k8, 20266198359902601, 7);
+    let k10: String = nb_le(k9, 7036338755399555, 7);
+    let k11: String = nb_le(k10, 21393573774367090, 7);
+    let k12: String = nb_le(k11, 20328030975561865, 7);
+    let k13: String = nb_le(k12, 65577662122868867, 7);
+    let k14: String = nb_le(k13, 20270510470331931, 7);
+    let k15: String = nb_le(k14, 3091740809, 4);
+    let k16: String = nb_i64le(k15, ob);
+    let k17: String = nb_le(k16, 8602092361, 7);
+    let k18: String = nb_le(k17, 142426635728128, 7);
+    let k19: String = nb_le(k18, 13603764657192962, 7);
+    let k20: String = nb_le(k19, 2202136168712, 7);
+    let k21: String = nb_le(k20, 65308203159209984, 7);
+    let k22: String = nb_le(k21, 204826990345813, 6);
+    let k23: String = nb_i64le(k22, a8);
+    let k24: String = nb_le(k23, 20777648612542792, 7);
+    let k25: String = nb_le(k24, 186, 1);
+    let k26: String = nb_i64le(k25, a);
+    let k27: String = nb_le(k26, 20319564500470089, 7);
+    let k28: String = nb_le(k27, 65850341006557315, 7);
+    let k29: String = nb_le(k28, 33932341877407544, 7);
+    let k30: String = nb_le(k29, 20547673253341432, 7);
+    let k31: String = nb_le(k30, 20269387391448971, 7);
+    let k32: String = nb_le(k31, 54106194244486285, 7);
+    let k33: String = nb_le(k32, 54595187062086259, 7);
+    let k34: String = nb_le(k33, 70053748190376961, 7);
+    let k35: String = nb_le(k34, 36952421319347528, 7);
+    let k36: String = nb_le(k35, 72057582460078272, 7);
+    let k37: String = nb_le(k36, 39204347476084040, 7);
+    let k38: String = nb_le(k37, 20539184519903311, 7);
+    let k39: String = nb_le(k38, 36952595281528873, 7);
+    let k40: String = nb_le(k39, 2263158077522662, 7);
     nb_rt_blob_p7(k40, a, a8, st, ob, a16, ob8)
 }
 pub fn nb_rt_blob_p7(code: String, a: i64, a8: i64, st: i64, ob: i64, a16: i64, ob8: i64) -> String {
-    let k1: String = nb_le(code, 32871245659308364, 7);
-    let k2: String = nb_le(k1, 38641242192300061, 7);
-    let k3: String = nb_le(k2, 16127735685007375, 7);
-    let k4: String = nb_le(k3, 572309895410624, 7);
-    let k5: String = nb_le(k4, 71294434322910536, 7);
-    let k6: String = nb_le(k5, 11625108678967295, 7);
-    let k7: String = nb_le(k6, 40969233651812825, 7);
-    let k8: String = nb_le(k7, 58328318759404080, 7);
-    let k9: String = nb_le(k8, 625147745470322, 7);
-    let k10: String = nb_le(k9, 39767250559631360, 7);
-    let k11: String = nb_le(k10, 10493738976542599, 7);
-    let k12: String = nb_le(k11, 61231033751695360, 7);
-    let k13: String = nb_le(k12, 274333666715976, 7);
-    let k14: String = nb_le(k13, 24302683682770944, 7);
-    let k15: String = nb_le(k14, 56164464043639122, 7);
-    let k16: String = nb_le(k15, 20313966920, 7);
-    let k17: String = nb_le(k16, 4222124652541952, 7);
-    let k18: String = nb_le(k17, 25404597363886085, 7);
-    let k19: String = nb_le(k18, 33154146557189722, 7);
-    let k20: String = nb_le(k19, 51871398113134851, 7);
-    let k21: String = nb_le(k20, 11426315137909, 7);
-    let k22: String = nb_le(k21, 27424455903432704, 7);
-    let k23: String = nb_le(k22, 20354577617937696, 7);
-    let k24: String = nb_le(k23, 9118758504522168, 7);
-    let k25: String = nb_le(k24, 32199989506634337, 7);
-    let k26: String = nb_le(k25, 22639082835439474, 7);
-    let k27: String = nb_le(k26, 772956674326968, 7);
-    let k28: String = nb_le(k27, 52607822961049600, 7);
-    let k29: String = nb_le(k28, 51796957697409054, 7);
-    let k30: String = nb_le(k29, 77786152698087, 7);
-    let k31: String = nb_le(k30, 12159137284096, 6);
-    k31
+    let k1: String = nb_le(code, 2463469907970376, 7);
+    let k2: String = nb_le(k1, 60495129760048616, 7);
+    let k3: String = nb_le(k2, 52434644767116616, 7);
+    let k4: String = nb_i64le(k3, a);
+    let k5: String = nb_le(k4, 804384312137, 5);
+    let k6: String = nb_i64le(k5, a8);
+    let k7: String = nb_le(k6, 32871245659308364, 7);
+    let k8: String = nb_le(k7, 38641242192300061, 7);
+    let k9: String = nb_le(k8, 16127735685007375, 7);
+    let k10: String = nb_le(k9, 572309895410624, 7);
+    let k11: String = nb_le(k10, 71242757276405064, 7);
+    let k12: String = nb_le(k11, 11625108678967295, 7);
+    let k13: String = nb_le(k12, 40969233651812825, 7);
+    let k14: String = nb_le(k13, 58328318759404080, 7);
+    let k15: String = nb_le(k14, 625147745470322, 7);
+    let k16: String = nb_le(k15, 39767250559631360, 7);
+    let k17: String = nb_le(k16, 10493738976542599, 7);
+    let k18: String = nb_le(k17, 61231033751695360, 7);
+    let k19: String = nb_le(k18, 274333666715976, 7);
+    let k20: String = nb_le(k19, 24302683682770944, 7);
+    let k21: String = nb_le(k20, 56164464043639122, 7);
+    let k22: String = nb_le(k21, 20313966920, 7);
+    let k23: String = nb_le(k22, 4222124652541952, 7);
+    let k24: String = nb_le(k23, 25404597363886085, 7);
+    let k25: String = nb_le(k24, 33154146557189722, 7);
+    let k26: String = nb_le(k25, 51871398113134851, 7);
+    let k27: String = nb_le(k26, 11426315137909, 7);
+    let k28: String = nb_le(k27, 27424455903432704, 7);
+    let k29: String = nb_le(k28, 20354577617937696, 7);
+    let k30: String = nb_le(k29, 9118758504522168, 7);
+    let k31: String = nb_le(k30, 32199989506634337, 7);
+    let k32: String = nb_le(k31, 22639082835439474, 7);
+    let k33: String = nb_le(k32, 772956674326968, 7);
+    let k34: String = nb_le(k33, 52607822961049600, 7);
+    let k35: String = nb_le(k34, 51796957697409054, 7);
+    let k36: String = nb_le(k35, 77786152698087, 7);
+    let k37: String = nb_le(k36, 12159137284096, 6);
+    k37
 }
 
 // The over-cap branch after `cmp r8,rdx` in nb_emit_alloc_core.

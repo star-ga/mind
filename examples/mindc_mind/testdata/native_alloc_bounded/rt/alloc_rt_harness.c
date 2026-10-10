@@ -103,6 +103,7 @@ static void check(void) {
             uint64_t s = W(d - 8) & ~7ULL;
             if (!(W(d - 8) & 1)) die("binned not free", (long)d, k);
             if (63 - __builtin_clzll(s) != k) die("wrong bin", (long)d, k);
+            if (s > W(ST + 1024 + 8 * k)) die("bin bound below a binned size", (long)s, k);
             nb++;
             d = W(d);
         }
@@ -204,6 +205,39 @@ static void bin_search_test(void) {
     if (W(A) != 0) die("bin test not drained", (long)W(A), 0);
 }
 
+// Bin size bound: n 104-byte blocks (bin 6) pinned apart and freed; 120-byte
+// requests (also bin 6) must skip the bin without walking it: the bound stays
+// 104, so every 120-byte request bumps in O(1). A freed 120-byte block raises
+// the bound and is found; once it is taken the stale bound (120) is lowered to
+// 104 by the next fruitless scan, and a block that fits is still found.
+static void bin_bound_test(void) {
+    enum { N = 2000 };
+    static int64_t a[N], pin[N];
+    for (int i = 0; i < N; i++) { a[i] = f_alloc(0, 104); pin[i] = f_alloc(0, 8); }
+    int64_t big = f_alloc(0, 120), sep = f_alloc(0, 8);
+    for (int i = 0; i < N; i++) f_free(a[i], 0);
+    check();
+    if (W(ST + 1024 + 8 * 6) != 104) die("bin 6 bound after frees", (long)W(ST + 1024 + 8 * 6), 104);
+    int64_t c0 = f_alloc(0, 120);
+    if (W(ST + 1024 + 8 * 6) != 104) die("bin 6 bound after a 120 request", (long)W(ST + 1024 + 8 * 6), 104);
+    for (int i = 0; i < N; i++) if (c0 == a[i]) die("120 request reused a 104 block", c0, 0);
+    f_free(big, 0);
+    if (W(ST + 1024 + 8 * 6) != 120) die("bin 6 bound after a 120 free", (long)W(ST + 1024 + 8 * 6), 120);
+    int64_t t1 = f_alloc(0, 120);
+    if (t1 != big) die("fitting block under the bound missed", t1, big);
+    int64_t t2 = f_alloc(0, 120);
+    if (W(ST + 1024 + 8 * 6) != 104) die("stale bound not lowered by a fruitless scan", (long)W(ST + 1024 + 8 * 6), 104);
+    int64_t t3 = f_alloc(0, 100);
+    int hit = 0;
+    for (int i = 0; i < N; i++) hit |= (t3 == a[i]);
+    if (!hit) die("104 block not reused for a 100 request", t3, 0);
+    check();
+    f_free(t3, 0); f_free(t2, 0); f_free(t1, 0); f_free(sep, 0); f_free(c0, 0);
+    for (int i = 0; i < N; i++) f_free(pin[i], 0);
+    check();
+    if (W(A) != 0) die("bound test not drained", (long)W(A), 0);
+}
+
 // A large block freed at the top gives its pages back (madvise) and the next,
 // larger block still reads zero everywhere.
 static void big_top_test(void) {
@@ -238,6 +272,7 @@ int main(int argc, char **argv) {
     check();
     if (*(uint64_t *)A != 0) die("realloc(p,0) did not free", (long)*(uint64_t *)A, 0);
     bin_search_test();
+    bin_bound_test();
     big_top_test();
     trace(steps, mode);
     // grow loops: in-place at top
