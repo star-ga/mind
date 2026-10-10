@@ -6,7 +6,7 @@
 
 **Project:** `mind`
 **Files:** 1913 | **Est. tokens:** ~3,759,703
-**Generated:** 2026-10-10 11:42 UTC
+**Generated:** 2026-10-10 16:30 UTC
 
 ## Token Budget Guide
 
@@ -676,13 +676,13 @@
 - `option_netverify.py` (~2321 tok, huge) — # Canonical independent net-verify harness for SINGLE-PAYLOAD ENUMS (the
 - `oracle_parity_lint.py` (~4516 tok, huge)
 - `param_types_smoke.py` (~1273 tok, large)
-- `_ref_add.note` (~16 tok, tiny) — fff4fc7e1d90f40c4fa6bac3799795d51008132c65cca0ff7b3b4496cf1a58af
-- `_ref_if_ret.note` (~16 tok, tiny) — 63b7ec7b7f87e25de1aa2fb591affbb2b25d10c37908ae9d711f1653af0efe64
-- `_ref_main.note` (~16 tok, tiny) — 787443c9f2b9b10017083d42da5b18faa7738c52a6fc36fb84b86ee020569ecf
+- `_ref_add.note` (~16 tok, tiny) — 8c12abefe2b3250e0449fe61f954a0a88adcd6abb3987eba1bce58f4b8b0f4bc
+- `_ref_if_ret.note` (~16 tok, tiny) — 21ffcd7ed9c7cdfc205f25f3479f55d213dba6f1de1464b5c953ece3a8fa6218
+- `_ref_main.note` (~16 tok, tiny) — b9d3f35d6281f80acd54ec6333f15b04e7ed5d0a0ff6a2b3d10325d5ea865136
 - `ref_netverify.py` (~1473 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
-- `_ref_recursion.note` (~16 tok, tiny) — babd5f8c4d6e3539fc61392e8ff14d4c8523e04e6424a528d1c823948745b9f7
-- `_ref_struct_field.note` (~16 tok, tiny) — dfcf7fa7f8ec57cf5f499ffa47833530ed978bbf38a424ec69feeede26516b27
-- `_ref_value_if.note` (~16 tok, tiny) — 52ffae963503ad85946c606998b7086d786b48ba8c990042357fb4af423df02b
+- `_ref_recursion.note` (~16 tok, tiny) — b2e2cc9208c8c9010c7be1e6b3d0942cf687fbc078cf22cdc6314f955b2ad042
+- `_ref_struct_field.note` (~16 tok, tiny) — 9b421ee0723476c048de1a5deb1830350c471416a336a07efc9bb1e8eeb8b2d0
+- `_ref_value_if.note` (~16 tok, tiny) — 2e350f3cdd39f45815f3c74f33a27d750fd24489c764402adef6d715dbd5d1d6
 - `rh_f64_aggregate_canary_smoke.py` (~1597 tok, huge) — RH f64-aggregate surface canary (RH_REQUIRED_F64_AGGREGATE_SURFACE).
 - `ri_d1_frozen_profile_gate.py` (~4276 tok, huge) — RI-D1 readiness gate (task #313): prove `mindc build --backend native` is READY to be
 - `self_host_alias_controls_smoke.py` (~1447 tok, large) — Focused native alias-environment controls.
