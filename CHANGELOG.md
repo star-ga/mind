@@ -24,9 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `io_ring_try_new_flags` reports why a ring could not be created through its `err_out`
   slot: `io_uring_setup`'s `-errno` (a setup flag or ring size the kernel refuses, io_uring
   disabled), or `iouring_err_kernel_feature()` for a kernel without
-  `IORING_FEAT_SINGLE_MMAP` / `IORING_FEAT_EXT_ARG`. `io_uring_nop` and the demos return
-  that reason instead of a bare -1. `io_uring_register` results are `-errno` too. The
-  surface's own codes (`iouring_err_*`) are all at or below -4096, outside the errno range.
+  `IORING_FEAT_SINGLE_MMAP` / `IORING_FEAT_EXT_ARG`. `io_uring_nop`, the multishot recv /
+  accept demos and the O_DIRECT round-trip return that reason instead of a bare -1.
+  `io_uring_register` results are `-errno` too. The surface's own codes (`iouring_err_*`)
+  are all at or below -4096, outside the errno range.
+- `std/iouring.mind` is a native-seed module, so this change moves the std seed blob
+  (`SEED_BLOB_SHA256` 199f304b… -> 8e29ed8b…). Until the next seed event advances the
+  frozen self-host seeds (`self_host_loop_smoke.py --advance`, then the bounded seed and the
+  manifest pin), the native backend refuses to build against the unpinned blob and the
+  self-host loop verifies a new fixed point (0c9036e6…) instead of the frozen seed.
 
 ### Fixed — the native bridge reports the compiler child's real outcome
 - When streaming the source image to the native compiler fails, the bridge no longer
