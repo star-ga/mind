@@ -144,16 +144,20 @@ def header(src: str, key: str):
 class Report:
     def __init__(self):
         self.fails = []
+        self.passed = 0
 
-    def ok(self, msg):
-        print(f"  PASS  {msg}")
+    def check(self, cond: bool, msg: str) -> bool:
+        """One verdict line per checked case."""
+        if cond:
+            self.passed += 1
+            print(f"  PASS  {msg}")
+        else:
+            print(f"  FAIL  {msg}")
+            self.fails.append(msg)
+        return cond
 
-    def bad(self, msg):
-        print(f"  FAIL  {msg}")
-        self.fails.append(msg)
 
-
-def check_fixture(f: pathlib.Path, stage1, mindc, so, rep: Report):
+def check_fixture(f: pathlib.Path, stage1, mindc, so):
     src = f.read_text()
     want = (int(header(src, "expect").split("=")[1]), header(src, "stdout").encode())
     with tempfile.TemporaryDirectory() as tdn:
@@ -162,36 +166,30 @@ def check_fixture(f: pathlib.Path, stage1, mindc, so, rep: Report):
         mres = mlir(mindc, src, td)
     tag = f.name
     if got != want:
-        rep.bad(f"fixture {tag}: native={got} want={want}")
-        return
+        return False, f"fixture {tag}: native={got} want={want}"
     note = header(src, "note")
     if note is not None and elf[-44] != int(note):
-        rep.bad(f"fixture {tag}: PT_NOTE n_type={elf[-44]} want {note}")
-        return
+        return False, f"fixture {tag}: PT_NOTE n_type={elf[-44]} want {note}"
     mspec = header(src, "mlir")
     if mspec == "nobuild":
         if mres[0] != "nobuild" or MLIR_LIMIT not in mres[1]:
-            rep.bad(f"fixture {tag}: pinned MLIR limitation changed: mlir={mres}")
-            return
+            return False, f"fixture {tag}: pinned MLIR limitation changed: mlir={mres}"
         mtxt = "MLIR refuses (pinned limitation)"
     elif mspec is not None:
         pinned = int(mspec.split("=")[1])
         if mres[0] != pinned:
-            rep.bad(f"fixture {tag}: pinned MLIR defect changed: mlir={mres} pinned exit={pinned}")
-            return
+            return False, f"fixture {tag}: pinned MLIR defect changed: mlir={mres} pinned exit={pinned}"
         mtxt = f"MLIR exit={pinned} (pinned MLIR defect)"
     else:
         if mres != want:
-            rep.bad(f"fixture {tag}: mlir={mres} want={want}")
-            return
+            return False, f"fixture {tag}: mlir={mres} want={want}"
         mtxt = "== MLIR"
     if so is not None:
         so_elf = so_stage(so, src.encode())
         if so_elf != elf:
-            rep.bad(f"fixture {tag}: oracle .so stage bytes ({len(so_elf)}B) != stage1 bytes ({len(elf)}B)")
-            return
+            return False, f"fixture {tag}: oracle .so stage bytes ({len(so_elf)}B) != stage1 bytes ({len(elf)}B)"
         mtxt += " ; .so == stage1 bytes"
-    rep.ok(f"fixture {tag}: exit={want[0]} stdout={want[1].decode()!r} native == hand-derived {mtxt}")
+    return True, f"fixture {tag}: exit={want[0]} stdout={want[1].decode()!r} native == hand-derived {mtxt}"
 
 
 def so_stage(so, src: bytes) -> bytes:
@@ -264,7 +262,10 @@ def main() -> int:
         return 2
     so = None
     if os.environ.get("MINDC_SO"):
-        so = ctypes.CDLL(os.environ["MINDC_SO"])
+        # Strict freshness (an oracle older than the sources is refused). The
+        # twin leg is optional: without MINDC_SO it is skipped, never rebuilt.
+        from _selfhost_so import resolve_so
+        so = ctypes.CDLL(str(resolve_so()))
         so.selftest_native_elf_stage.restype = ctypes.c_int64
         so.selftest_native_elf_stage.argtypes = [ctypes.c_int64] * 3
     rep = Report()
@@ -282,7 +283,8 @@ def main() -> int:
 
         print("[cf] fixtures (hand-derived expectations, census rules A1 A6 A7 A9 L1 L2 L3 O1 O2 O3)")
         for f in sorted(FIXTURES.glob("*.mind")):
-            check_fixture(f, stage1, mindc, so, rep)
+            cond, msg = check_fixture(f, stage1, mindc, so)
+            rep.check(cond, msg)
 
         seeds = [int(x) for x in a.seeds.split(",") if x]
         cases = []
@@ -292,23 +294,25 @@ def main() -> int:
         st = {"three_way": 0, "native_eq_python_mlir_limit": 0, "native_eq_python_mlir_defect": 0}
         with ThreadPoolExecutor(a.jobs) as ex:
             for name, src, exp, ba, got, mres in ex.map(corpus_case, cases):
-                if got != exp:
-                    rep.bad(f"corpus {name}: native={got} python={exp}")
+                if not rep.check(got == exp, f"corpus {name}: native={got} python={exp}"):
                     if len(rep.fails) <= 3:
                         print(src)
                     continue
                 if mres[0] == "nobuild":
+                    rep.check(MLIR_LIMIT in mres[1],
+                              f"corpus {name}: native == Python; MLIR build refused: {mres[1][-90:]!r}")
                     if MLIR_LIMIT in mres[1]:
                         st["native_eq_python_mlir_limit"] += 1
-                        continue
-                    rep.bad(f"corpus {name}: MLIR build failed: {mres[1]}")
                     continue
                 if mres != exp and ba:
                     # pinned MLIR defect family (see _cf_corpus.has_branch_assign)
+                    rep.check(True, f"corpus {name}: native == Python {exp}; MLIR {mres} "
+                                    "(pinned: MLIR loses a value-if branch assignment)")
                     st["native_eq_python_mlir_defect"] += 1
                     continue
-                if mres != exp:
-                    rep.bad(f"corpus {name}: mlir={mres} python={exp} (native agrees with python)")
+                if not rep.check(mres == exp, f"corpus {name}: native == MLIR == Python {exp}"
+                                 if mres == exp else
+                                 f"corpus {name}: mlir={mres} python={exp} (native agrees with python)"):
                     if len(rep.fails) <= 3:
                         print(src)
                     continue
@@ -318,30 +322,23 @@ def main() -> int:
               f"'{MLIR_LIMIT}', {st['native_eq_python_mlir_defect']} native == Python where MLIR "
               f"loses a value-if branch assignment (pinned defect), "
               f"{len(cases) - sum(st.values())} divergent")
-        if len(cases) - sum(st.values()) == 0:
-            rep.ok(f"corpus: {len(cases)}/{len(cases)} programs agree")
 
         print("[cf] capacity (census X1: giant function)")
         gsrc, gexp = giant_program(2500)
         got, _ = native(stage1, gsrc.encode(), td)
-        if got == gexp:
-            rep.ok(f"giant fn (2500-arm else-if chain in a loop, {len(gsrc)} B): exit={gexp[0]} == Python")
-        elif got[0] == "refused" and got[1] == 3:
-            rep.ok(f"giant fn: clean refusal rc 3 ({got[2]!r})")
-        else:
-            rep.bad(f"giant fn: native={got} want={gexp} (or a clean rc-3 refusal)")
+        rep.check(got == gexp, f"giant fn (2500-arm else-if chain in a loop, {len(gsrc)} B): "
+                               f"native={got} Python={gexp}")
 
         print("[cf] clean refusal")
         got, _ = native(stage1, REFUSE_ADDR.encode(), td)
-        if got[0] == "refused" and got[1] == 3:
-            rep.ok("address-taking HOME function: refused rc 3, no ELF")
-        else:
-            rep.bad(f"address-taking HOME function: want a clean rc-3 refusal, got {got}")
+        rep.check(got[0] == "refused" and got[1] == 3,
+                  f"address-taking HOME function: clean rc-3 refusal, no ELF (got {got[:2]})")
 
+    print(f"\nSDLC-GATE self_host_native_cf ran={rep.passed + len(rep.fails)} fail={len(rep.fails)}")
     if rep.fails:
-        print(f"\nFAIL ({len(rep.fails)}): " + "; ".join(rep.fails[:6]))
+        print(f"FAIL ({len(rep.fails)}): " + "; ".join(rep.fails[:6]))
         return 1
-    print("\nALL PASS  (stage1 general control flow: fixtures == hand-derived == MLIR, "
+    print("ALL PASS  (stage1 general control flow: fixtures == hand-derived == MLIR, "
           "corpus native == MLIR == Python, giant fn compiles, clean refusal)")
     return 0
 
