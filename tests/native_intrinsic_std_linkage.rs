@@ -389,13 +389,19 @@ fn a_std_function_calling_a_shadowed_name_is_refused() {
     );
 }
 
-/// A linked std body is fenced like a user body: std.sha256's `rotr32` shifts.
+/// Linked std shifts use the same typed admission as user shifts.
 #[test]
-fn a_linked_std_body_outside_the_profile_is_refused() {
+fn linked_std_shifts_are_admitted_but_float_callers_refuse() {
+    // ROTR2(5) xor ROTR13(5) xor ROTR22(5) has low byte 1.
+    build_ok(
+        "w3_std_shift",
+        "import std.sha256;\n\nfn main() -> i64 {\n    return bsig0(5);\n}\n",
+        1,
+    );
     refused(
         "w3_std_fence",
-        "import std.sha256;\n\nfn main() -> i64 {\n    return bsig0(5);\n}\n",
-        "links std seed function `rotr32`",
+        "import std.sha256;\n\nfn main() -> i64 {\n    return bsig0(5.0);\n}\n",
+        "binop.shr_operand_type",
     );
 }
 

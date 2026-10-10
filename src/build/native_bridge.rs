@@ -106,6 +106,7 @@ pub fn run_native_backend_bridge_profile(
             process::exit(2);
         }
     };
+    let bounded = profile == "bounded";
     if let Some(l) = &layout {
         if let Err(msg) = l.validate() {
             eprintln!("error[backend-native]: invalid native layout: {msg}");
@@ -354,7 +355,7 @@ pub fn run_native_backend_bridge_profile(
         crate::ir::frozen_profile::profile_frozen_admits_linked_bounded(
             &merged_ir,
             &std_linked,
-            layout.is_some(),
+            bounded,
         )
     }) {
         Ok(()) => {}
@@ -375,7 +376,7 @@ pub fn run_native_backend_bridge_profile(
     // was admitted above only on that basis. Sorted order, so the first offender
     // named is deterministic.
     for name in &std_linked {
-        if let Err(rejection) = fence_std_seed_fn(&seed, name, &std_linked, layout.is_some()) {
+        if let Err(rejection) = fence_std_seed_fn(&seed, name, &std_linked, bounded) {
             eprintln!(
                 "error[backend-native]: `{}` links std seed function `{name}`, which is not \
                  in the frozen native profile (out-of-profile construct: {}).\n  \
@@ -388,7 +389,7 @@ pub fn run_native_backend_bridge_profile(
         }
     }
     // Then the facts that hold only across calls, over user + linked std together.
-    if let Err(rejection) = admit_linked_program(&seed, &merged_ir, &std_linked, layout.is_some()) {
+    if let Err(rejection) = admit_linked_program(&seed, &merged_ir, &std_linked, bounded) {
         eprintln!(
             "error[backend-native]: `{}` is not in the frozen native profile \
              (out-of-profile construct: {}).\n  Rerun with `--backend mlir` for the \

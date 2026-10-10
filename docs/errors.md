@@ -161,7 +161,8 @@ conversion tags, arithmetic, control-flow merges, and call/return dataflow.
   `alloc.total_over_budget` retain their default-profile meanings. Explicit
   `--native-profile bounded` transfers size/loop/budget enforcement to the bounded
   allocator (deterministic exit 70 under the 2 GiB address-space contract).
-  Dynamic sizes no longer fail the static byte sum in that mode. Intrinsic
+  The dynamic-size case of `alloc.unbounded_total` is also relaxed in that mode;
+  checked static-counter overflow still refuses. Intrinsic
   arity, operand/result type checks, recursive allocation, ambiguous calls, and
   unrelated I/O rules remain enforced.
 * `closure.extern_signature_mismatch`: an extern declaration must use the C
@@ -173,6 +174,10 @@ conversion tags, arithmetic, control-flow merges, and call/return dataflow.
 
 `std/posix.mind` is absent at base `387cf368`. The admission contract is exercised
 with a small parsed/lowered fixture module in `tests/native_wave3_admission.rs`.
+That fixture uses i64 scalar signatures and byte-pointer arguments. It does not
+claim ABI compatibility with the census's i32 libc declarations: those must
+match the eventual POSIX wrappers exactly; narrow parameter/return signatures
+remain subject to the existing source-width fence.
 The parallel seed batch must add POSIX to its manifest and source image, provide
 matching wrappers (including positioned I/O), implement the conversion and
 unsigned paths, bind process arguments, and provide the bounded allocator.

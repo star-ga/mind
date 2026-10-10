@@ -38,6 +38,13 @@ fn unsigned_ops_need_explicit_unsigned_operands() {
             "{op}"
         );
         assert!(admits(&format!("fn f(x: u64, y: f64) -> u64 {{ return x {op} y; }} fn main() -> i64 {{ return 0; }}")).is_err());
+        assert_eq!(
+            admits(&format!(
+                "fn main() -> i64 {{ let x: u64 = 17; let y: u64 = 2; let z = x {op} y; return 0; }}"
+            )),
+            Ok(()),
+            "unsigned local {op}"
+        );
     }
     use libmind::ir::{BinOp, IRModule, Instr, ValueId};
     let ir = IRModule {
@@ -77,6 +84,16 @@ fn census_conversions_pass_but_unknown_and_wrong_arity_refuse() {
         );
     }
     assert!(admits("fn main() -> i64 { return __mind_conv_unknown(1); }").is_err());
+    for (expr, ret) in [
+        ("7 as i32", "i64"),
+        ("7.0 as i64", "i64"),
+        ("7 as f64", "f64"),
+    ] {
+        assert_eq!(
+            admits(&format!("fn main() -> {ret} {{ return {expr}; }}")),
+            Ok(())
+        );
+    }
 }
 
 #[test]
@@ -218,12 +235,20 @@ fn extern_posix_requires_matching_signature_and_module() {
             structs: BTreeSet::new(),
             lowered: Some((std_ast.clone(), std_ir.clone())),
         };
-        let ast = libmind::parser::parse(&format!("extern \"C\" {{ fn close(fd: {arg}{varargs}) -> i64; }} fn main() -> i64 {{ return close(0); }}")).unwrap();
+        let ast = libmind::parser::parse(&format!("extern \"C\" {{ fn close(fd: {arg}{varargs}) -> i64; }} fn main() -> i64 {{ return __mind_conv_i64(close(0)); }}")).unwrap();
         let ir = libmind::eval::lower_to_ir(&ast).unwrap();
         let result = admit_native_closure_linked(&ast, &ir, "main", &seed);
         assert_eq!(result.is_ok(), accepted, "{module}, {arg}, {varargs}");
         if accepted {
-            assert!(result.unwrap().std_linked.contains("close"));
+            let linked = result.unwrap().std_linked;
+            assert!(linked.contains("close"));
+            profile_frozen_admits_source(&ast).unwrap();
+            libmind::ir::frozen_profile::profile_frozen_admits_linked(&ir, &linked).unwrap();
+            libmind::ir::frozen_profile::profile_frozen_admits_program(
+                &ir,
+                std::slice::from_ref(&std_ir),
+            )
+            .unwrap();
         } else {
             assert_eq!(
                 result.err().unwrap().kind,

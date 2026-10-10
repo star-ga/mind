@@ -18,8 +18,9 @@ pub(crate) fn declared(ty: &TypeAnn) -> Option<Scalar> {
         TypeAnn::ScalarU32 => Some(Scalar::Unsigned),
         TypeAnn::ScalarF64 => Some(Scalar::Float),
         TypeAnn::Named(n) => match n.as_str() {
-            "i64" | "isize" => Some(Scalar::Signed),
-            "u8" | "u16" | "u32" | "u64" | "usize" => Some(Scalar::Unsigned),
+            // The current lowering spells both pointer-width aliases as i64.
+            "i64" | "isize" | "usize" => Some(Scalar::Signed),
+            "u8" | "u16" | "u32" | "u64" => Some(Scalar::Unsigned),
             "f64" => Some(Scalar::Float),
             _ => None,
         },
@@ -149,7 +150,26 @@ fn parameter(_: &IRModule, _: Option<&str>, _: usize) -> Option<Scalar> {
 }
 #[cfg(feature = "std-surface")]
 fn returned(module: &IRModule, name: &str) -> Option<Scalar> {
-    declared(module.fn_signatures.get(name)?.1.as_ref()?)
+    if let Some((_, ret)) = module.fn_signatures.get(name) {
+        return ret.as_ref().and_then(declared);
+    }
+    // Extern declarations are represented separately from local/bundled std
+    // signatures. Closure admission has already required an exact POSIX match;
+    // the whole-program proof still checks the linked body's actual returns.
+    module.instrs.iter().find_map(|instr| match instr {
+        #[cfg(feature = "std-surface")]
+        Instr::ExternFnDecl {
+            name: callee,
+            ret_type,
+            is_varargs: false,
+            ..
+        } if callee == name => match ret_type.as_deref() {
+            Some("i64") => Some(Scalar::Signed),
+            Some("f64") => Some(Scalar::Float),
+            _ => None,
+        },
+        _ => None,
+    })
 }
 #[cfg(not(feature = "std-surface"))]
 fn returned(_: &IRModule, _: &str) -> Option<Scalar> {

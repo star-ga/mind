@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1926 | **Est. tokens:** ~3793225
-**Generated:** 2026-10-10 05:24 UTC
+**Files:** 1926 | **Est. tokens:** ~3793786
+**Generated:** 2026-10-10 05:58 UTC
 
 ## Token Budget Guide
 
@@ -46,7 +46,7 @@
 | `benchmarks/mojo/` | 8 | ~4276 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4880 |
 | `config/` | 2 | ~3347 |
-| `docs/` | 38 | ~111722 |
+| `docs/` | 38 | ~111809 |
 | `docs/backends/` | 1 | ~1482 |
 | `docs/benchmarks/` | 3 | ~9042 |
 | `docs/design/` | 4 | ~11498 |
@@ -110,7 +110,7 @@
 | `src/autodiff/` | 3 | ~6624 |
 | `src/bin/` | 1 | ~9878 |
 | `src/bin/mindc/` | 1 | ~204 |
-| `src/build/` | 13 | ~54584 |
+| `src/build/` | 13 | ~54587 |
 | `src/build/cache/` | 3 | ~3150 |
 | `src/build/native_bridge/` | 5 | ~12597 |
 | `src/cache/` | 4 | ~3682 |
@@ -126,7 +126,7 @@
 | `src/ffi/` | 3 | ~5541 |
 | `src/fmt/` | 3 | ~25460 |
 | `src/fmt/printer/` | 1 | ~1878 |
-| `src/ir/` | 14 | ~108156 |
+| `src/ir/` | 14 | ~108358 |
 | `src/ir/compact/` | 3 | ~15351 |
 | `src/ir/compact/v2/` | 9 | ~45363 |
 | `src/ir/compact/v3/` | 15 | ~76625 |
@@ -151,7 +151,7 @@
 | `src/types/` | 10 | ~20759 |
 | `src/workspace/` | 1 | ~4906 |
 | `std/` | 42 | ~205452 |
-| `tests/` | 424 | ~876391 |
+| `tests/` | 424 | ~876660 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12308 |
@@ -491,7 +491,7 @@
 ### `docs/`
 
 - `determinism.md` (~4368 tok, huge) — The Determinism Contract
-- `errors.md` (~2261 tok, huge) — MIND Core Error Model
+- `errors.md` (~2348 tok, huge) — MIND Core Error Model
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
 ### `docs/gates/`
 
@@ -1206,7 +1206,7 @@
 - `driver_error.rs` (~699 tok, large) — Copyright 2025 STARGA Inc.
 - `error.rs` (~2022 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~9611 tok, huge) — Copyright 2025 STARGA Inc.
-- `native_bridge.rs` (~9161 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_bridge.rs` (~9164 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/native_bridge/`
 
 - `admission.rs` (~2482 tok, huge) — Copyright 2025 STARGA Inc.
@@ -1397,7 +1397,7 @@
 - `mod.rs` (~17729 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_closure.rs` (~8067 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_posix.rs` (~581 tok, large) — Copyright 2026 STARGA Inc.
-- `native_scalar.rs` (~1304 tok, large) — Copyright 2026 STARGA Inc.
+- `native_scalar.rs` (~1506 tok, huge) — Copyright 2026 STARGA Inc.
 - `native_source.rs` (~1193 tok, large) — Copyright 2026 STARGA Inc.
 - `print.rs` (~4421 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~21232 tok, huge) — Copyright 2025 STARGA Inc.
@@ -2255,10 +2255,10 @@
 - `native_embedded_seed.rs` (~1432 tok, large) — Copyright 2025 STARGA Inc.
 - `native_import_terminator_controls.rs` (~1315 tok, large) — Native bridge controls: an `import`/`use` item the frozen compiler would
 - `native_intrinsic_std_linkage.rs` (~5833 tok, huge) — Copyright 2025 STARGA Inc.
-- `native_module_bridge_controls.rs` (~8567 tok, huge) — Native module-bridge controls: SOURCE RESOLUTION and ADMISSION.
+- `native_module_bridge_controls.rs` (~8574 tok, huge) — Native module-bridge controls: SOURCE RESOLUTION and ADMISSION.
 - `native_module_bridge_visibility_controls.rs` (~3913 tok, huge) — Native module-bridge controls: VISIBILITY, EMIT KIND, CROSS-INVOCATION
 - `native_opt_wiring.rs` (~1953 tok, huge) — Copyright 2025 STARGA Inc.
-- `native_wave3_admission.rs` (~2601 tok, huge) — Copyright 2026 STARGA Inc.
+- `native_wave3_admission.rs` (~2862 tok, huge) — Copyright 2026 STARGA Inc.
 - `nerve_numerics_lint.rs` (~4079 tok, huge) — Copyright 2025 STARGA Inc.
 - `nested_block_surface_run.rs` (~990 tok, large) — Copyright 2025 STARGA Inc.
 - `nested_collection_run.rs` (~772 tok, large) — Copyright 2025 STARGA Inc.

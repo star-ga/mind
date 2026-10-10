@@ -286,7 +286,7 @@ fn an_under_approximated_closure_refuses_rather_than_admits() {
 #[test]
 fn reachability_follows_a_call_in_a_while_condition() {
     let ir = lower(
-        "fn limit() -> i64 {\n    return 3 / 1;\n}\n\n\
+        "fn limit() -> i64 {\n    return 3 / 1.0;\n}\n\n\
          fn main() -> i64 {\n    let mut i: i64 = 0;\n    \
          while i < limit() {\n        i = i + 1;\n    }\n    return i;\n}\n",
     );
