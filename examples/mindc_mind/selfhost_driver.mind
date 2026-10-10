@@ -468,7 +468,7 @@ pub fn nb_main_v2(lay: i64, hdr: i64) -> i64 {
 pub fn nb_compile_image(user_lo: i64, src_len: i64) -> i64 {
     let src: i64 = __mind_alloc(src_len + 16);
     let _r: i64 = nb_read_fully(0, src, src_len, 0);
-    let es: EmitState = selftest_native_elf_u(src, src_len, user_lo);
+    let es: EmitState = selftest_native_elf_stage(src, src_len, user_lo);
     let elf_len: i64 = string_len(es.buf);
     if elf_len > 0 {
         let _w: i64 = __mind_write(1, string_addr(es.buf), elf_len, 0 - 1);

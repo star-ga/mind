@@ -1,0 +1,75 @@
+// L2: an `if` inside a loop whose branches hold a call statement, a let, a
+// nested if, a nested while, a return, assign-then-break, assign-then-continue,
+// and an else-if chain.
+// expect: exit=172
+// stdout: BCDEFDFC
+fn out(v: i64) -> i64 {
+    let p: i64 = __mind_alloc(8);
+    __mind_store_i8(p, 65 + (v % 26 + 26) % 26);
+    __mind_write(1, p, 1, 0 - 1);
+    v
+}
+fn calls() -> i64 {
+    let mut i: i64 = 0;
+    while i < 5 {
+        i = i + 1;
+        if i == 1 || i == 2 {
+            out(i);
+        } else if i == 3 {
+            out(i);
+            out(i + 1);
+        } else {
+            let k: i64 = i * 10;
+            if k > 45 {
+                out(k - 45);
+            }
+        }
+    }
+    i
+}
+fn nested_while(n: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut total: i64 = 0;
+    while i < n {
+        i = i + 1;
+        if i % 2 == 0 {
+            let mut j: i64 = 0;
+            while j < i {
+                j = j + 1;
+                total = total + j;
+            }
+        } else {
+            total = total + 100;
+        }
+    }
+    total
+}
+fn exits(n: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut hits: i64 = 0;
+    let mut last: i64 = 0;
+    while i < n {
+        i = i + 1;
+        if i % 4 == 0 {
+            hits = hits + 1;
+            continue;
+        }
+        if i > 9 {
+            last = i;
+            break;
+        }
+        if i == 50 {
+            return 0 - 1;
+        }
+    }
+    hits * 100 + last
+}
+fn main() -> i64 {
+    let a: i64 = calls();
+    let b: i64 = nested_while(4);
+    let c: i64 = exits(100);
+    out(a - 2);
+    out(b % 26);
+    out(c % 26);
+    return a + b + c;
+}

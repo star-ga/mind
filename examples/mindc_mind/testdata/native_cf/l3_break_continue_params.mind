@@ -1,0 +1,58 @@
+// L3: break / continue inside functions that take parameters, including
+// parameters assigned in the loop and a loop nested two deep.
+// expect: exit=69
+// stdout: DH
+fn out(v: i64) -> i64 {
+    let p: i64 = __mind_alloc(8);
+    __mind_store_i8(p, 65 + (v % 26 + 26) % 26);
+    __mind_write(1, p, 1, 0 - 1);
+    v
+}
+fn skip_sum(n: i64, skip: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut s: i64 = 0;
+    while i < n {
+        i = i + 1;
+        if i % skip == 0 {
+            continue;
+        }
+        if s > 40 {
+            break;
+        }
+        s = s + i;
+    }
+    s
+}
+fn countdown(x: i64, stop: i64) -> i64 {
+    while x > 0 {
+        x = x - 1;
+        if x == stop {
+            break;
+        }
+    }
+    x
+}
+fn pairs(n: i64) -> i64 {
+    let mut a: i64 = 0;
+    let mut found: i64 = 0;
+    while a < n {
+        a = a + 1;
+        let mut b: i64 = 0;
+        while b < n {
+            b = b + 1;
+            if b > a {
+                break;
+            }
+            if (a + b) % 3 != 0 {
+                continue;
+            }
+            found = found + 1;
+        }
+    }
+    found
+}
+fn main() -> i64 {
+    out(countdown(10, 3));
+    out(pairs(6));
+    return skip_sum(20, 3) + countdown(7, 100) + pairs(6) * 2 + 7;
+}

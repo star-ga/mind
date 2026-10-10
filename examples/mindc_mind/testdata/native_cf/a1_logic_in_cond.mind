@@ -1,0 +1,39 @@
+// A1: && / || / ! and a value-if inside if and while conditions, with
+// short-circuit side effects (out() prints only when evaluated).
+// expect: exit=0
+// stdout: BDYBCCE
+fn out(v: i64) -> i64 {
+    let p: i64 = __mind_alloc(8);
+    __mind_store_i8(p, 65 + (v % 26 + 26) % 26);
+    __mind_write(1, p, 1, 0 - 1);
+    v
+}
+fn pos(x: i64) -> i64 {
+    out(x);
+    x
+}
+fn main() -> i64 {
+    let a: i64 = 3;
+    let b: i64 = 0;
+    if a > 2 && pos(1) == 1 {
+        out(3);
+    }
+    if b > 0 && pos(5) > 0 {
+        out(6);
+    }
+    if a == 3 || pos(7) == 7 {
+        out(24);
+    }
+    let mut i: i64 = 0;
+    while i < 10 && !(i == 2 || i > 5) {
+        i = i + 1;
+        out(i);
+    }
+    if (if i > 1 { 4 } else { 9 }) == 4 && (if a < b { 0 } else { 1 }) == 1 {
+        out(2);
+    }
+    if !(a < 0) || pos(25) == 0 {
+        out(4);
+    }
+    return i - 2;
+}

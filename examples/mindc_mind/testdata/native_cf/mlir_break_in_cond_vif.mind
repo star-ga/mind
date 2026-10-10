@@ -1,0 +1,24 @@
+// A `break` inside a value-if that sits in an if condition inside a loop. The
+// native backend lowers it; the MLIR backend refuses to build it ("break/
+// continue outside a loop"), so this fixture is native-only.
+// expect: exit=8
+// stdout: BCD
+// mlir: nobuild
+fn out(v: i64) -> i64 {
+    let p: i64 = __mind_alloc(8);
+    __mind_store_i8(p, 65 + (v % 26 + 26) % 26);
+    __mind_write(1, p, 1, 0 - 1);
+    v
+}
+fn main() -> i64 {
+    let mut i: i64 = 0;
+    let mut s: i64 = 0;
+    while i < 10 {
+        i = i + 1;
+        if 2 == (if i > 3 { break; } else { 2 }) {
+            out(i);
+            s = s + i;
+        }
+    }
+    s + i - 2
+}

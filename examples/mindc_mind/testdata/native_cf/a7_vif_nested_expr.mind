@@ -1,0 +1,22 @@
+// A7: value-ifs nested inside expressions: binop operands, call arguments
+// (with a branch-local let, the shape that segfaulted the mic@3 collect pass),
+// nested value-ifs, and a value-if inside a value-if condition.
+// expect: exit=60
+// stdout: FO
+fn out(v: i64) -> i64 {
+    let p: i64 = __mind_alloc(8);
+    __mind_store_i8(p, 65 + (v % 26 + 26) % 26);
+    __mind_write(1, p, 1, 0 - 1);
+    v
+}
+fn add(a: i64, b: i64) -> i64 {
+    a + b
+}
+fn main() -> i64 {
+    let x: i64 = 4;
+    let y: i64 = 1 + (if x > 3 { 10 } else { 20 }) * 2;
+    let z: i64 = add(if x == 4 { let q: i64 = x * 3; q } else { 0 }, if x < 0 { 5 } else { if x > 2 { 7 } else { 8 } });
+    out(if (if x > 1 { 1 } else { 0 }) == 1 { 5 } else { 6 });
+    out(add(y, if z > 100 { 0 } else { let r: i64 = z - 12; r }) - 14);
+    return y + z + (if y > z { 1 } else { 0 }) * 20;
+}

@@ -1,0 +1,30 @@
+// A9: value-if branches that assign an enclosing variable, return from the
+// function, or break / continue the enclosing loop.
+// expect: exit=66
+// stdout: FAD
+fn out(v: i64) -> i64 {
+    let p: i64 = __mind_alloc(8);
+    __mind_store_i8(p, 65 + (v % 26 + 26) % 26);
+    __mind_write(1, p, 1, 0 - 1);
+    v
+}
+fn pick(x: i64) -> i64 {
+    let r: i64 = if x > 3 { return 9; } else { x * 2 };
+    r + 1
+}
+fn main() -> i64 {
+    let mut seen: i64 = 0;
+    let v: i64 = if pick(1) == 3 { seen = 5; 7 } else { 8 };
+    out(seen);
+    let mut i: i64 = 0;
+    let mut s: i64 = 0;
+    while i < 20 {
+        i = i + 1;
+        let w: i64 = if i % 3 == 0 { continue; } else { i };
+        let u: i64 = if w > 7 { break; } else { w };
+        s = s + u;
+    }
+    out(i - 8);
+    out(pick(4) - 6);
+    return s + v + seen + pick(7) * 3 + i;
+}

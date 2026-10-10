@@ -12800,6 +12800,13 @@ pub fn collect_fn_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, fn_node:
 // time — a shadowed earlier entry is dropped there, innermost wins). Returns the
 // new count.
 pub fn bc_env_append(ebuf: i64, en: i64, name: i64) -> i64 {
+    // A call argument is collected with NO env buffer (collect_args_strings
+    // passes 0). A value-if argument whose branch binds a `let` reached this
+    // store with ebuf == 0 and segfaulted the compiler. With no buffer there is
+    // no env to extend: keep it empty (snapshots then read nothing).
+    if ebuf == 0 {
+        return en;
+    }
     __mind_store_i64(ebuf + en * 24 + 0, ast_span_lo(name));
     __mind_store_i64(ebuf + en * 24 + 8, ast_span_hi(name));
     __mind_store_i64(ebuf + en * 24 + 16, 0);
@@ -34939,10 +34946,17 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // the let-env here exactly as before and resolves to the same param slot.
         let lslot: i64 = nb_lets_lookup(lets, lcell, buf, ast_span_lo(node), ast_span_hi(node));
         if lslot >= 0 {
+            // HOME lowering: a read copies the variable's home slot (see hm_copy_slot).
+            if hm_ctx(lcell) != 0 {
+                return hm_copy_slot(st, lslot, lcell);
+            }
             return NbState { code: st.code, next_id: st.next_id, last_id: lslot, ncalls: st.ncalls };
         }
         let idx: i64 = resolve_param(params_addr, n_params, buf, ast_span_lo(node), ast_span_hi(node));
         if idx >= 0 {
+            if hm_ctx(lcell) != 0 {
+                return hm_copy_slot(st, idx, lcell);
+            }
             return NbState { code: st.code, next_id: st.next_id, last_id: idx, ncalls: st.ncalls };
         }
         // Out of the supported subset (an UNBOUND name: an enum variant used as
@@ -35387,6 +35401,12 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // callers that lower an expression without a per-fn jump table. main.mind's own
         // source never nests a value-if in expression position, so this arm is never taken
         // during self-compile and the integer native-ELF oracle stays byte-identical.
+        // HOME lowering: a value-if anywhere in an expression (including the `&&` /
+        // `||` desugar) takes the general jump-chain path.
+        let hcx: i64 = hm_ctx(lcell);
+        if hcx != 0 {
+            return hm_if(st, buf, node, params_addr, n_params, calls, __mind_load_i64(lcell + 32), __mind_load_i64(lcell + 40), __mind_load_i64(lcell + 48), lets, lcell, __mind_load_i64(lcell + 24), hcx);
+        }
         let jmps: i64 = __mind_load_i64(lcell + 40);
         if jmps == 0 {
             return nb_emit_const0(st);
@@ -42424,6 +42444,677 @@ pub fn nb_val_epilogue(plan: i64, code: String) -> String {
     c1
 }
 
+// ===== HOME-SLOT LOWERING: general control flow for the native emitter =====
+//
+// The SSA-mirroring lowering above (nb_stmt / nb_if_* / nb_emit_while) gives
+// every VALUE its own frame slot and REBINDS a name on assignment, so every
+// control-flow join needs merge phis and every loop exit needs carry flushes.
+// It is byte-exact for the shapes it was built for, and it stays the path for
+// every function it already compiles: the frozen native oracle fixtures and the
+// self-host loop depend on those bytes.
+//
+// A function the SSA path cannot compile soundly is lowered here instead, with
+// ONE general model: every named variable (each parameter and each `let`) owns
+// a fixed HOME slot, an assignment STORES into that slot, and a read COPIES the
+// slot into a fresh temporary. Joins then need no phis and loop exits need no
+// carries, so if / else / while / break / continue / return and value-if nest
+// to any depth in any function, with or without parameters:
+//   if:        cond ; cmp/je ELSE ; then ; jmp END ; ELSE: else ; END:
+//   value-if:  the same, each branch's tail value copied into one result slot
+//   while:     HEAD: cond ; cmp/je EXIT ; body ; jmp HEAD ; EXIT:
+//   break:     jmp EXIT of the innermost loop (patched when the loop closes)
+//   continue:  jmp HEAD of the innermost loop
+//   return:    load the value, epilogue, ret, at any depth
+// `&&` / `||` reach here as the parser's short-circuit value-if desugar, so the
+// right operand is evaluated only when the left one does not decide.
+//
+// Routing (nb_lower_fn_routed) sends a function here when it trips one of the
+// SSA path's module pre-gates, when the SSA path poisons it, or when the stage
+// driver found it outside the mic@3 twin (selftest_native_elf_stage). Every
+// other function keeps its SSA bytes, so main.mind's self-compile is unchanged.
+//
+// The HOME context lives in the DTK plan word (lcell+96) as a plan with ZERO
+// register homes, which every nb_val_* wrapper treats exactly like plan == 0
+// (stack scheme). Two magic words after the count mark it as a HOME context:
+//   +0 0 (no reg homes)   +8 magic1   +16 magic2
+//   +24 breaks table (one i64 jmp record index per pending break)
+//   +32 breaks count      +40 breaks capacity
+//   +48 loop depth        +56 innermost loop header offset
+//   +72 jmps capacity     +80 lets capacity
+// Every table write is capacity-checked; an overflow poisons the function (a
+// clean refusal), never a write past the buffer.
+pub fn hm_magic1() -> i64 {
+    5207404218164838989
+}
+pub fn hm_magic2() -> i64 {
+    4995987442270671941
+}
+
+// The HOME context of this lowering, or 0 on the SSA path (plan 0, or a real
+// DTK plan with register homes, or a 104-byte selftest cell whose +96 is 0).
+pub fn hm_ctx(lcell: i64) -> i64 {
+    let plan: i64 = __mind_load_i64(lcell + 96);
+    if plan == 0 {
+        return 0;
+    }
+    if __mind_load_i64(plan) != 0 {
+        return 0;
+    }
+    if __mind_load_i64(plan + 8) != hm_magic1() {
+        return 0;
+    }
+    if __mind_load_i64(plan + 16) != hm_magic2() {
+        return 0;
+    }
+    plan
+}
+
+pub fn hm_new_ctx(bcap: i64, jcap: i64, lcap: i64) -> i64 {
+    let hc: i64 = __mind_alloc(96);
+    __mind_store_i64(hc, 0);
+    __mind_store_i64(hc + 8, hm_magic1());
+    __mind_store_i64(hc + 16, hm_magic2());
+    __mind_store_i64(hc + 24, __mind_alloc(bcap * 8 + 8));
+    __mind_store_i64(hc + 32, 0);
+    __mind_store_i64(hc + 40, bcap);
+    __mind_store_i64(hc + 48, 0);
+    __mind_store_i64(hc + 56, 0);
+    __mind_store_i64(hc + 64, 0);
+    __mind_store_i64(hc + 72, jcap);
+    __mind_store_i64(hc + 80, lcap);
+    __mind_store_i64(hc + 88, 0);
+    hc
+}
+
+pub fn hm_poison(lcell: i64) -> i64 {
+    __mind_store_i64(lcell + 80, 1);
+    0
+}
+
+// cmp [disp],0 ; je <pending>. Capacity-checked: a full jump table poisons and
+// emits nothing (the function is refused, so the missing bytes never run).
+pub fn hm_je(code: String, disp: i64, jmps: i64, jcell: i64, hc: i64, lcell: i64) -> String {
+    if __mind_load_i64(jcell) >= __mind_load_i64(hc + 72) {
+        let _p: i64 = hm_poison(lcell);
+        return code;
+    }
+    nb_emit_cmp_je_zero(code, disp, jmps, jcell)
+}
+pub fn hm_jmp(code: String, jmps: i64, jcell: i64, hc: i64, lcell: i64) -> String {
+    if __mind_load_i64(jcell) >= __mind_load_i64(hc + 72) {
+        let _p: i64 = hm_poison(lcell);
+        return code;
+    }
+    nb_emit_jmp(code, jmps, jcell)
+}
+// Index of the jump record just written, or -1 when the table was full.
+pub fn hm_last_jmp(jcell: i64, n_before: i64) -> i64 {
+    let n: i64 = __mind_load_i64(jcell);
+    if n > n_before {
+        return n - 1;
+    }
+    0 - 1
+}
+pub fn hm_set(jmps: i64, which: i64, target: i64) -> i64 {
+    if which < 0 {
+        return 0;
+    }
+    nb_jmp_set_target(jmps, 0, which, target)
+}
+
+// Bind NAME -> slot in the let-env, capacity-checked against hc+80.
+pub fn hm_bind(lets: i64, lcell: i64, hc: i64, lo: i64, hi: i64, slot: i64, desc: i64, width: i64) -> i64 {
+    if __mind_load_i64(lcell) >= __mind_load_i64(hc + 80) {
+        return hm_poison(lcell);
+    }
+    nb_lets_bind(lets, lcell, lo, hi, slot, desc, width)
+}
+
+// Copy slot `src` into a fresh temporary carrying the same dtype tag. A HOME
+// read never hands out the home slot itself: a later store to the variable
+// (from a value-if branch evaluated inside the same expression) must not change
+// a value that was already read.
+pub fn hm_copy_slot(st: NbState, src: i64, lcell: i64) -> NbState {
+    let id: i64 = st.next_id;
+    let c1: String = nb_load_rax(st.code, nb_slot_disp(src));
+    let c2: String = nb_store_rax(c1, nb_slot_disp(id));
+    let tbl: i64 = __mind_load_i64(lcell + 8);
+    let _t: i64 = nb_dtype_tag_slot(tbl, id, nb_dtype_get(tbl, src));
+    NbState { code: c2, next_id: id + 1, last_id: id, ncalls: st.ncalls }
+}
+
+// Wrap rax to a declared narrow width; full width (64) emits nothing.
+pub fn hm_wrap(code: String, w: i64) -> String {
+    if w < 64 {
+        return nb_wrap_rax_w(code, w);
+    }
+    code
+}
+
+// 1 iff a statement ends control flow on its path (return / break / continue).
+pub fn hm_is_exit(node: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_return() {
+        return 1;
+    }
+    if k == ast_break() {
+        return 1;
+    }
+    if k == ast_continue() {
+        return 1;
+    }
+    0
+}
+
+// 1 iff the block's last statement can carry a VALUE into a value-if result
+// (an expression statement or a nested if), 0 for an empty block, a binding,
+// a loop or an exit.
+pub fn hm_block_has_tail(sa: i64, sl: i64) -> i64 {
+    if sl <= 0 {
+        return 0;
+    }
+    let last: i64 = __mind_load_i64(sa + (sl - 1) * 8);
+    let k: i64 = ast_kind(last);
+    if hm_is_exit(last) == 1 {
+        return 0;
+    }
+    if k == ast_let() {
+        return 0;
+    }
+    if k == ast_assign() {
+        return 0;
+    }
+    if k == ast_while() {
+        return 0;
+    }
+    if k == ast_deref_assign() {
+        return 0;
+    }
+    if k == ast_index_assign() {
+        return 0;
+    }
+    if k == ast_field_assign() {
+        return 0;
+    }
+    1
+}
+
+// dtype of a block's tail value, classified while the block's own bindings are
+// still in scope (a tail that names a branch-local let resolves correctly).
+pub fn hm_block_tail_dtype(sa: i64, sl: i64, buf: i64, params_addr: i64, n_params: i64, lets: i64, lcell: i64) -> i64 {
+    if hm_block_has_tail(sa, sl) == 0 {
+        return nb_dtype_int();
+    }
+    let last: i64 = __mind_load_i64(sa + (sl - 1) * 8);
+    nb_node_dtype_tbl(last, __mind_load_i64(lcell + 8), lets, lcell, buf, params_addr, n_params)
+}
+
+// Append `mov rax,[from] ; mov [to],rax` when the block has a tail value.
+pub fn hm_copy_tail(code: String, sa: i64, sl: i64, from: i64, to: i64) -> String {
+    if hm_block_has_tail(sa, sl) == 0 {
+        return code;
+    }
+    if from < 0 {
+        return code;
+    }
+    let c1: String = nb_load_rax(code, nb_slot_disp(from));
+    nb_store_rax(c1, nb_slot_disp(to))
+}
+
+// Statements [i, sl) of one block, in order.
+pub fn hm_stmts(st: NbState, buf: i64, sa: i64, sl: i64, i: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64, srt: i64, hc: i64) -> NbState {
+    if i >= sl {
+        return st;
+    }
+    let node: i64 = __mind_load_i64(sa + i * 8);
+    let s1: NbState = hm_stmt(st, buf, node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, hc);
+    hm_stmts(s1, buf, sa, sl, i + 1, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, hc)
+}
+
+// A scoped block: bindings made inside it are dropped at its end.
+pub fn hm_block(st: NbState, buf: i64, sa: i64, sl: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64, srt: i64, hc: i64) -> NbState {
+    let mark: i64 = __mind_load_i64(lcell);
+    let s1: NbState = hm_stmts(st, buf, sa, sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, hc);
+    __mind_store_i64(lcell, mark);
+    s1
+}
+
+pub fn hm_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64, srt: i64, hc: i64) -> NbState {
+    let k: i64 = ast_kind(node);
+    if k == ast_let() {
+        return hm_let(st, buf, node, params_addr, n_params, calls, lets, lcell, srt, hc);
+    }
+    if k == ast_assign() {
+        return hm_assign(st, buf, node, params_addr, n_params, calls, lets, lcell, hc);
+    }
+    if k == ast_if() {
+        return hm_if(st, buf, node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, hc);
+    }
+    if k == ast_while() {
+        return hm_while(st, buf, node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, hc);
+    }
+    if k == ast_break() {
+        return hm_break(st, jmps, jcell, lcell, hc);
+    }
+    if k == ast_continue() {
+        return hm_continue(st, jmps, jcell, lcell, hc);
+    }
+    if k == ast_return() {
+        return hm_return(st, buf, node, params_addr, n_params, calls, is_entry, lets, lcell);
+    }
+    if k == ast_block() {
+        return hm_block(st, buf, ast_child0(node), ast_aux(node), params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, hc);
+    }
+    if k == ast_deref_assign() {
+        return nb_stmt(st, buf, node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, 0, 0);
+    }
+    if k == ast_index_assign() {
+        return nb_stmt(st, buf, node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, 0, 0);
+    }
+    if k == ast_field_assign() {
+        return nb_stmt(st, buf, node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, 0, 0);
+    }
+    nb_expr(st, buf, node, params_addr, n_params, calls, lets, lcell)
+}
+
+// `let NAME [: T] = INIT`: lower INIT, then copy it into NAME's own fresh home
+// slot (wrapped to a declared narrow width), tagged with its dtype.
+pub fn hm_let(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, lets: i64, lcell: i64, srt: i64, hc: i64) -> NbState {
+    let name_leaf: i64 = ast_child0(node);
+    let type_leaf: i64 = ast_child1(node);
+    let init: i64 = ast_child2(node);
+    if init == 0 {
+        let _p: i64 = hm_poison(lcell);
+        return st;
+    }
+    let s1: NbState = nb_expr(st, buf, init, params_addr, n_params, calls, lets, lcell);
+    let dtbl: i64 = __mind_load_i64(lcell + 8);
+    let ann_dt: i64 = if type_leaf != 0 {
+        nb_param_is_float(buf, type_leaf)
+    } else {
+        nb_dtype_int()
+    };
+    let init_dt_raw: i64 = nb_node_dtype_tbl(init, dtbl, lets, lcell, buf, params_addr, n_params);
+    let init_dt: i64 = if ann_dt == nb_dtype_float() {
+        nb_dtype_float()
+    } else {
+        init_dt_raw
+    };
+    let declw: i64 = nb_width_of_ann(buf, type_leaf);
+    let h: i64 = s1.next_id;
+    let c1: String = nb_load_rax(s1.code, nb_slot_disp(s1.last_id));
+    let c2: String = hm_wrap(c1, declw);
+    let c3: String = nb_store_rax(c2, nb_slot_disp(h));
+    let desc: i64 = nb_let_descriptor(init, type_leaf, buf, srt, __mind_load_i64(lcell + 16), lets, lcell);
+    let _b: i64 = hm_bind(lets, lcell, hc, ast_span_lo(name_leaf), ast_span_hi(name_leaf), h, desc, declw);
+    let _t: i64 = nb_dtype_tag_slot(dtbl, h, init_dt);
+    NbState { code: c3, next_id: h + 1, last_id: h, ncalls: s1.ncalls }
+}
+
+// `NAME = VALUE`: lower VALUE and store it into NAME's home slot (a `let` or a
+// parameter), wrapped to NAME's declared width. An address-taken or unbound
+// name poisons.
+pub fn hm_assign(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, lets: i64, lcell: i64, hc: i64) -> NbState {
+    let name_leaf: i64 = ast_child0(node);
+    let lo: i64 = ast_span_lo(name_leaf);
+    let hi: i64 = ast_span_hi(name_leaf);
+    if nb_at_contains(__mind_load_i64(lcell + 88), buf, lo, hi) == 1 {
+        let _p: i64 = hm_poison(lcell);
+    }
+    let s1: NbState = nb_expr(st, buf, ast_child2(node), params_addr, n_params, calls, lets, lcell);
+    let home: i64 = nb_lets_lookup(lets, lcell, buf, lo, hi);
+    if home < 0 {
+        let _p2: i64 = hm_poison(lcell);
+        return s1;
+    }
+    let w: i64 = nb_lets_lookup_width(lets, lcell, buf, lo, hi);
+    let c1: String = nb_load_rax(s1.code, nb_slot_disp(s1.last_id));
+    let c2: String = hm_wrap(c1, w);
+    let c3: String = nb_store_rax(c2, nb_slot_disp(home));
+    NbState { code: c3, next_id: s1.next_id, last_id: home, ncalls: s1.ncalls }
+}
+
+// if / else and value-if. The result slot R is reserved first; each branch is a
+// scoped block whose tail value (if any) is copied into R before the join.
+pub fn hm_if(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64, srt: i64, hc: i64) -> NbState {
+    let cond: i64 = ast_child0(node);
+    let then_blk: i64 = ast_child1(node);
+    let else_blk: i64 = ast_child2(node);
+    let dtbl: i64 = __mind_load_i64(lcell + 8);
+    if nb_node_dtype_tbl(cond, dtbl, lets, lcell, buf, params_addr, n_params) == nb_dtype_float() {
+        let _pf: i64 = hm_poison(lcell);
+    }
+    let r: i64 = st.next_id;
+    let s0: NbState = NbState { code: st.code, next_id: r + 1, last_id: st.last_id, ncalls: st.ncalls };
+    let sc: NbState = nb_expr(s0, buf, cond, params_addr, n_params, calls, lets, lcell);
+    let nj0: i64 = __mind_load_i64(jcell);
+    let c_je: String = hm_je(sc.code, nb_slot_disp(sc.last_id), jmps, jcell, hc, lcell);
+    let je_which: i64 = hm_last_jmp(jcell, nj0);
+    let mark: i64 = __mind_load_i64(lcell);
+    let then_sa: i64 = ast_child0(then_blk);
+    let then_sl: i64 = ast_aux(then_blk);
+    let s_t: NbState = hm_stmts(NbState { code: c_je, next_id: sc.next_id, last_id: sc.last_id, ncalls: sc.ncalls }, buf, then_sa, then_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, hc);
+    let t_dt: i64 = hm_block_tail_dtype(then_sa, then_sl, buf, params_addr, n_params, lets, lcell);
+    __mind_store_i64(lcell, mark);
+    let c_t: String = hm_copy_tail(s_t.code, then_sa, then_sl, s_t.last_id, r);
+    if else_blk == 0 {
+        let end0: i64 = string_len(c_t);
+        let _pe0: i64 = hm_set(jmps, je_which, end0);
+        let _t0: i64 = nb_dtype_tag_slot(dtbl, r, t_dt);
+        return NbState { code: c_t, next_id: s_t.next_id, last_id: r, ncalls: s_t.ncalls };
+    }
+    let nj1: i64 = __mind_load_i64(jcell);
+    let c_tj: String = hm_jmp(c_t, jmps, jcell, hc, lcell);
+    let join_which: i64 = hm_last_jmp(jcell, nj1);
+    let _pj: i64 = hm_set(jmps, je_which, string_len(c_tj));
+    let else_sa: i64 = ast_child0(else_blk);
+    let else_sl: i64 = ast_aux(else_blk);
+    let s_e: NbState = hm_stmts(NbState { code: c_tj, next_id: s_t.next_id, last_id: s_t.last_id, ncalls: s_t.ncalls }, buf, else_sa, else_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, hc);
+    let e_dt: i64 = hm_block_tail_dtype(else_sa, else_sl, buf, params_addr, n_params, lets, lcell);
+    __mind_store_i64(lcell, mark);
+    let c_e: String = hm_copy_tail(s_e.code, else_sa, else_sl, s_e.last_id, r);
+    let _pe: i64 = hm_set(jmps, join_which, string_len(c_e));
+    let r_dt: i64 = if t_dt == nb_dtype_float() {
+        t_dt
+    } else {
+        e_dt
+    };
+    let _t: i64 = nb_dtype_tag_slot(dtbl, r, r_dt);
+    NbState { code: c_e, next_id: s_e.next_id, last_id: r, ncalls: s_e.ncalls }
+}
+
+// while COND { BODY }. The loop's header offset and the breaks pending before
+// the body are saved here and restored after, so loops nest to any depth with
+// no fixed loop stack; at loop end every break recorded since the mark belongs
+// to THIS loop (inner loops consumed their own) and is patched to the exit.
+pub fn hm_while(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64, srt: i64, hc: i64) -> NbState {
+    let cond: i64 = ast_child0(node);
+    let body: i64 = ast_child1(node);
+    let dtbl: i64 = __mind_load_i64(lcell + 8);
+    if nb_node_dtype_tbl(cond, dtbl, lets, lcell, buf, params_addr, n_params) == nb_dtype_float() {
+        let _pf: i64 = hm_poison(lcell);
+    }
+    let header: i64 = string_len(st.code);
+    let sc: NbState = nb_expr(st, buf, cond, params_addr, n_params, calls, lets, lcell);
+    let nj0: i64 = __mind_load_i64(jcell);
+    let c_je: String = hm_je(sc.code, nb_slot_disp(sc.last_id), jmps, jcell, hc, lcell);
+    let je_which: i64 = hm_last_jmp(jcell, nj0);
+    let save_depth: i64 = __mind_load_i64(hc + 48);
+    let save_header: i64 = __mind_load_i64(hc + 56);
+    let brk_mark: i64 = __mind_load_i64(hc + 32);
+    __mind_store_i64(hc + 48, save_depth + 1);
+    __mind_store_i64(hc + 56, header);
+    let s_b: NbState = hm_block(NbState { code: c_je, next_id: sc.next_id, last_id: sc.last_id, ncalls: sc.ncalls }, buf, ast_child0(body), ast_aux(body), params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, hc);
+    let nj1: i64 = __mind_load_i64(jcell);
+    let c_back: String = hm_jmp(s_b.code, jmps, jcell, hc, lcell);
+    let back_which: i64 = hm_last_jmp(jcell, nj1);
+    let _pb: i64 = hm_set(jmps, back_which, header);
+    let exit_at: i64 = string_len(c_back);
+    let _px: i64 = hm_set(jmps, je_which, exit_at);
+    let _pk: i64 = hm_patch_breaks(hc, jmps, brk_mark, __mind_load_i64(hc + 32), exit_at);
+    __mind_store_i64(hc + 32, brk_mark);
+    __mind_store_i64(hc + 48, save_depth);
+    __mind_store_i64(hc + 56, save_header);
+    NbState { code: c_back, next_id: s_b.next_id, last_id: sc.last_id, ncalls: s_b.ncalls }
+}
+
+pub fn hm_patch_breaks(hc: i64, jmps: i64, i: i64, n: i64, target: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    let which: i64 = __mind_load_i64(__mind_load_i64(hc + 24) + i * 8);
+    let _s: i64 = hm_set(jmps, which, target);
+    hm_patch_breaks(hc, jmps, i + 1, n, target)
+}
+
+// break: a pending jmp to the innermost loop's exit. Outside a loop: poison.
+pub fn hm_break(st: NbState, jmps: i64, jcell: i64, lcell: i64, hc: i64) -> NbState {
+    if __mind_load_i64(hc + 48) <= 0 {
+        let _p: i64 = hm_poison(lcell);
+        return st;
+    }
+    let nb: i64 = __mind_load_i64(hc + 32);
+    if nb >= __mind_load_i64(hc + 40) {
+        let _p2: i64 = hm_poison(lcell);
+        return st;
+    }
+    let nj0: i64 = __mind_load_i64(jcell);
+    let c1: String = hm_jmp(st.code, jmps, jcell, hc, lcell);
+    let which: i64 = hm_last_jmp(jcell, nj0);
+    __mind_store_i64(__mind_load_i64(hc + 24) + nb * 8, which);
+    __mind_store_i64(hc + 32, nb + 1);
+    NbState { code: c1, next_id: st.next_id, last_id: st.last_id, ncalls: st.ncalls }
+}
+
+// continue: jmp back to the innermost loop's header. Outside a loop: poison.
+pub fn hm_continue(st: NbState, jmps: i64, jcell: i64, lcell: i64, hc: i64) -> NbState {
+    if __mind_load_i64(hc + 48) <= 0 {
+        let _p: i64 = hm_poison(lcell);
+        return st;
+    }
+    let nj0: i64 = __mind_load_i64(jcell);
+    let c1: String = hm_jmp(st.code, jmps, jcell, hc, lcell);
+    let which: i64 = hm_last_jmp(jcell, nj0);
+    let _s: i64 = hm_set(jmps, which, __mind_load_i64(hc + 56));
+    NbState { code: c1, next_id: st.next_id, last_id: st.last_id, ncalls: st.ncalls }
+}
+
+// return VALUE at any depth: load it into rax (xmm0 for a float), wrap it to the
+// declared return width, epilogue, ret (exit for the entry).
+pub fn hm_return(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, lets: i64, lcell: i64) -> NbState {
+    let v: i64 = ast_child0(node);
+    if v == 0 {
+        let _p0: i64 = hm_poison(lcell);
+        return st;
+    }
+    if nb_is_addr_of_expr(v) == 1 {
+        let _p: i64 = hm_poison(lcell);
+    }
+    if nb_return_record_owner_ok(v, buf, lets, lcell) == 0 {
+        let _p2: i64 = hm_poison(lcell);
+    }
+    let s1: NbState = nb_expr(st, buf, v, params_addr, n_params, calls, lets, lcell);
+    let dt: i64 = nb_node_dtype_tbl(v, __mind_load_i64(lcell + 8), lets, lcell, buf, params_addr, n_params);
+    let c1: String = if dt == nb_dtype_float() {
+        nb_ret_float_load(s1.code, nb_slot_disp(s1.last_id), is_entry)
+    } else {
+        nb_load_rax(s1.code, nb_slot_disp(s1.last_id))
+    };
+    let c2: String = nb_wrap_ret_w(c1, __mind_load_i64(lcell + 72));
+    let c3: String = nb_emit_return(c2, is_entry);
+    NbState { code: c3, next_id: s1.next_id, last_id: s1.last_id, ncalls: s1.ncalls }
+}
+
+// Source-span size of a fn body, the basis of every HOME table capacity.
+pub fn hm_fn_span(node: i64) -> i64 {
+    let body: i64 = ast_child2(node);
+    let a: i64 = ast_span_hi(node) - ast_span_lo(node);
+    let b: i64 = ast_span_hi(body) - ast_span_lo(body);
+    let m: i64 = if a > b {
+        a
+    } else {
+        b
+    };
+    if m < 0 {
+        return 0;
+    }
+    m
+}
+
+// Write the frame size into the prologue's `sub rsp, imm32` once it is known.
+pub fn hm_patch_frame(code: String, off: i64, frame: i64) -> i64 {
+    let a: i64 = string_addr(code);
+    __mind_store_i8(a + off + 0, frame & 255);
+    __mind_store_i8(a + off + 1, (frame / 256) & 255);
+    __mind_store_i8(a + off + 2, (frame / 65536) & 255);
+    __mind_store_i8(a + off + 3, (frame / 16777216) & 255);
+    0
+}
+
+// HOME twin of nb_lower_fn: same entry prefix, prologue, parameter spill and
+// tail return, a HOME body, and a frame sized from the final value count.
+pub fn nb_lower_fn_home(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64, srt: i64, frt: i64, uses_argv: i64, ordered: i64, n_fns: i64, rod: i64) -> NbState {
+    let params_addr: i64 = ast_child1(node);
+    let n_params: i64 = ast_aux(node) / 2;
+    let body: i64 = ast_child2(node);
+    let stmts_addr: i64 = ast_child0(body);
+    let stmts_len: i64 = ast_aux(body);
+    let span: i64 = hm_fn_span(node);
+    let idcap: i64 = span * 8 + n_params + 1024;
+    let jcap: i64 = span * 4 + 256;
+    let lcap: i64 = span + n_params + 256;
+    let hc: i64 = hm_new_ctx(span + 64, jcap, lcap);
+    let atab: i64 = __mind_alloc(16 + 1024 * 2 * 8 + 32);
+    __mind_store_i64(atab, 0);
+    __mind_store_i64(atab + 8, 0);
+    let _nctx: i64 = nb_at_set_native_ctx(atab, ordered, n_fns, node);
+    __mind_store_i64(atab + nb_at_native_ctx_off() + 24, nb_assigned_table(buf, stmts_addr, stmts_len));
+    let _ats: i64 = nb_at_scan_stmts(atab, buf, stmts_addr, stmts_len, 0);
+
+    let code0: String = string_new();
+    let codecap: String = nb_entry_prefix(code0, is_entry, uses_argv);
+    let code1: String = if is_entry == 1 {
+        let a1: String = nb_push(codecap, 72);
+        let a2: String = nb_push(a1, 188);
+        nb_i64le(a2, nb_stack_top() - 8)
+    } else {
+        codecap
+    };
+    let p1: String = nb_push(code1, 85);
+    let p2: String = nb_push(p1, 72);
+    let p3: String = nb_push(p2, 137);
+    let p4: String = nb_push(p3, 229);
+    let p5: String = nb_push(p4, 72);
+    let p6: String = nb_push(p5, 129);
+    let p7: String = nb_push(p6, 236);
+    let frame_off: i64 = string_len(p7);
+    let p8: String = nb_i32le_signed(p7, 0);
+    let st_params: NbState = NbState { code: p8, next_id: n_params, last_id: 0 - 1, ncalls: ncalls0 };
+    let st_p0: NbState = nb_emit_params(st_params, buf, params_addr, n_params, 0, 0, 0);
+    let st_p: NbState = NbState { code: nb_wrap_params_w(st_p0.code, buf, params_addr, n_params, 0), next_id: st_p0.next_id, last_id: st_p0.last_id, ncalls: st_p0.ncalls };
+
+    let jmps: i64 = __mind_alloc(jcap * 2 * 8 + 16);
+    let jcell: i64 = __mind_alloc(8);
+    __mind_store_i64(jcell, 0);
+    let lets: i64 = __mind_alloc(lcap * 5 * 8 + 40);
+    let lcell: i64 = __mind_alloc(112);
+    __mind_store_i64(lcell, 0);
+    __mind_store_i64(lcell + 104, rod);
+    __mind_store_i64(lcell + 96, hc);
+    __mind_store_i64(lcell + 88, atab);
+    __mind_store_i64(lcell + 80, 0);
+    __mind_store_i64(lcell + 8, nb_dtype_table_new(idcap));
+    __mind_store_i64(lcell + 16, frt);
+    let _tfp: i64 = nb_tag_float_params(__mind_load_i64(lcell + 8), buf, params_addr, n_params, 0);
+    let _erp: i64 = nb_register_struct_params(srt, buf, params_addr, n_params, lets, lcell, 0);
+    let loops: i64 = __mind_alloc(256 * 3 * 8);
+    let lpcell: i64 = __mind_alloc(8);
+    __mind_store_i64(lpcell, 0);
+    __mind_store_i64(lcell + 24, srt);
+    __mind_store_i64(lcell + 32, is_entry);
+    __mind_store_i64(lcell + 40, jmps);
+    __mind_store_i64(lcell + 48, jcell);
+    __mind_store_i64(lcell + 56, loops);
+    __mind_store_i64(lcell + 64, lpcell);
+    __mind_store_i64(lcell + 72, frt_lookup_width(frt, buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node))));
+    // Address-taking functions stay on the SSA path's reference machinery.
+    if __mind_load_i64(atab) > 0 {
+        let _pa: i64 = hm_poison(lcell);
+    }
+
+    let st_body0: NbState = hm_stmts(st_p, buf, stmts_addr, stmts_len, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, hc);
+    if nb_last_emits_return(stmts_addr, stmts_len) == 0 {
+        if stmts_len > 0 {
+            let tail_value: i64 = __mind_load_i64(stmts_addr + (stmts_len - 1) * 8);
+            if nb_return_record_owner_ok(tail_value, buf, lets, lcell) == 0 {
+                let _pr: i64 = hm_poison(lcell);
+            }
+            if nb_is_addr_of_expr(tail_value) == 1 {
+                let _pq: i64 = hm_poison(lcell);
+            }
+        }
+    }
+    let ret_dt: i64 = frt_lookup_dtype(frt, buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node)));
+    let st_body: NbState = nb_finish_body(st_body0, is_entry, stmts_addr, stmts_len, ret_dt, __mind_load_i64(lcell + 72), hc);
+    if nb_dtype_overflowed(__mind_load_i64(lcell + 8)) == 1 {
+        let _po: i64 = hm_poison(lcell);
+    }
+    if __mind_load_i64(lcell + 80) == 1 {
+        return nb_poison_state(ncalls0);
+    }
+    let _pf: i64 = hm_patch_frame(st_body.code, frame_off, nb_round16(8 * st_body.next_id));
+    let njmps: i64 = __mind_load_i64(jcell);
+    let _pj: i64 = nb_patch_jmps(string_addr(st_body.code), jmps, njmps, 0);
+    st_body
+}
+
+// ---- routing: which functions take the HOME lowering ----
+//
+// The SSA path refuses a whole module when ANY function trips one of its two
+// pre-gates (a loop exit inside a branch that also assigns; a reassigned narrow
+// parameter under a loop). Those are properties of ONE function, so only that
+// function moves to the HOME lowering. `route` (0 = none) is a list of
+// fn-name span_lo values the stage driver found outside the mic@3 twin.
+pub fn hm_fn_pregate(buf: i64, node: i64) -> i64 {
+    let body: i64 = ast_child2(node);
+    if body == 0 {
+        return 0;
+    }
+    let bsa: i64 = ast_child0(body);
+    let bsl: i64 = ast_aux(body);
+    if nb_stmts_branch_exit_carry(buf, bsa, bsl, 0) == 1 {
+        return 1;
+    }
+    let params_addr: i64 = ast_child1(node);
+    let n_params: i64 = ast_aux(node) / 2;
+    if nb_fn_has_narrow_param(buf, params_addr, n_params, 0) == 1 {
+        if nb_stmts_have_while(buf, bsa, bsl, 0) == 1 {
+            if nb_region_while_carries_narrow(buf, bsa, bsl, 0, params_addr, n_params) == 0 {
+                return 1;
+            }
+        }
+    }
+    0
+}
+
+pub fn hm_route_has(route: i64, lo: i64, i: i64, n: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    if __mind_load_i64(route + 8 + i * 8) == lo {
+        return 1;
+    }
+    hm_route_has(route, lo, i + 1, n)
+}
+
+pub fn hm_route_home(buf: i64, node: i64, route: i64) -> i64 {
+    if ast_child2(node) == 0 {
+        return 0;
+    }
+    if hm_fn_pregate(buf, node) == 1 {
+        return 1;
+    }
+    if route == 0 {
+        return 0;
+    }
+    hm_route_has(route, ast_span_lo(ast_child0(node)), 0, __mind_load_i64(route))
+}
+
+// Lower one fn on its routed path. A function the SSA path poisons is retried
+// on the HOME path (which keeps every expression-level refusal, so a construct
+// unsupported by both still refuses).
+pub fn nb_lower_fn_routed(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64, srt: i64, frt: i64, uses_argv: i64, ordered: i64, n_fns: i64, rod: i64, route: i64) -> NbState {
+    if hm_route_home(buf, node, route) == 1 {
+        return nb_lower_fn_home(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv, ordered, n_fns, rod);
+    }
+    let fr: NbState = nb_lower_fn(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv, ordered, n_fns, rod);
+    let frn: i64 = fr.next_id;
+    if frn < 0 {
+        return nb_lower_fn_home(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv, ordered, n_fns, rod);
+    }
+    fr
+}
+
 pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64, srt: i64, frt: i64, uses_argv: i64, ordered: i64, n_fns: i64, rod: i64) -> NbState {
     let params_addr: i64 = ast_child1(node);
     let n_params: i64 = ast_aux(node) / 2;
@@ -44810,6 +45501,13 @@ pub fn nb_build_mic3(src_addr: i64, src_len: i64, user_lo: i64) -> EmitState {
 // emit, so the mic@3 bytes (and thus the SHA-256 note) are unchanged. Mirrors
 // selftest_native_elf_hb_from_tokens' proven parse(tokens)+srt_build_from_tokens reuse.
 pub fn nb_build_mic3_from_tokens(tokens: Vec, src_addr: i64, src_len: i64, user_lo: i64) -> EmitState {
+    nb_build_mic3_from_tokens_r(tokens, src_addr, src_len, user_lo, 0)
+}
+
+// `route` != 0: do not build the module; instead lower EVERY item on its own and
+// record each kept fn the twin cannot lower into `route` (see hm_twin_fail_walk),
+// then return the empty state. route == 0 is the unchanged module build.
+pub fn nb_build_mic3_from_tokens_r(tokens: Vec, src_addr: i64, src_len: i64, user_lo: i64, route: i64) -> EmitState {
     let ast_root: i64 = parse(tokens, src_addr);
     let items_addr: i64 = ast_child0(ast_root);
     let items_len: i64 = ast_aux(ast_root);
@@ -44894,6 +45592,10 @@ pub fn nb_build_mic3_from_tokens(tokens: Vec, src_addr: i64, src_len: i64, user_
     let _sb: i64 = nb_strtab_build(strbuf, offs, ccell, src_use, tconst, items_addr, items_len, kept, n_kept, 0);
     let _si: i64 = srt_intern_all_sorted(strbuf, offs, ccell, src_addr, srt, 0);
     let ncount: i64 = __mind_load_i64(ccell);
+    if route != 0 {
+        let _fw: i64 = hm_twin_fail_walk(src_use, items_addr, items_len, strbuf, offs, ncount, tconst, kept, n_kept, 0, route);
+        return es_new();
+    }
     let total_externs: i64 = nb_sum_extern_fns(src_addr, items_addr, items_len, 0, 0);
     let s1: EmitState = emit_mic3_header(es_new());
     let s2: EmitState = emit_mic3_strtab(s1, strbuf, offs, ncount);
@@ -45109,6 +45811,99 @@ pub fn selftest_native_elf_u(src_addr: i64, src_len: i64, user_lo: i64) -> EmitS
     selftest_native_elf_hb_from_tokens(tokens, src_addr, hslot, user_lo)
 }
 
+// ---- stage-driver entry: general control flow past the mic@3 twin ----
+//
+// The PT_NOTE of a native image is the IR trace hash: mini_sha256 of the mic@3
+// serialisation, computed by the pure-MIND twin of the Rust lowering. That twin
+// covers fewer function shapes than the native emitter, and selftest_native_elf_u
+// refuses any program it cannot hash, so it also refused every program with a
+// shape only the native emitter knows.
+//
+// This entry (the one the stage driver uses) keeps the IR-hash note whenever the
+// twin can compute it. When it cannot, it does not guess one: it records which
+// functions the twin rejected, lowers exactly those on the HOME path, and marks
+// the note as a SOURCE note (n_type 2) whose 32 bytes are SHA-256 of the exact
+// compiled source buffer. A reader can always tell the two apart by n_type, so
+// no image ever carries an IR hash that was not computed from its IR. A twin
+// failure outside a function (an extern block), or more failing functions than
+// the route table holds, still refuses. selftest_native_elf_u is unchanged: it
+// remains the strict IR-note entry that the oracle gates use.
+pub fn hm_route_cap() -> i64 {
+    4096
+}
+
+pub fn selftest_native_elf_stage(src_addr: i64, src_len: i64, user_lo: i64) -> EmitState {
+    let tokens: Vec = lex(src_addr, src_len);
+    let hslot: i64 = __mind_alloc(32);
+    let route: i64 = __mind_alloc(hm_route_cap() * 8 + 16);
+    __mind_store_i64(route, 0);
+    let ckpt: i64 = __mind_alloc(0);
+    let h32: i64 = nb_trace_hash(tokens, src_addr, src_len, user_lo);
+    if h32 != 0 {
+        let _cp: i64 = nb_copy32(hslot, h32, 0);
+        let _rs: i64 = nb_arena_reclaim(ckpt);
+        return selftest_native_elf_hb_route(tokens, src_addr, hslot, user_lo, 0);
+    }
+    let _fr: EmitState = nb_build_mic3_from_tokens_r(tokens, src_addr, src_len, user_lo, route);
+    let nf: i64 = __mind_load_i64(route);
+    let _sh: i64 = nb_sha256(src_addr, src_len, hslot);
+    let _rs2: i64 = nb_arena_reclaim(ckpt);
+    if nf < 0 {
+        return es_new();
+    }
+    let es: EmitState = selftest_native_elf_hb_route(tokens, src_addr, hslot, user_lo, route);
+    hm_mark_source_note(es)
+}
+
+// Set the note's n_type (the u32 at len-44 of the 52-byte trailing note) to 2.
+pub fn hm_mark_source_note(es: EmitState) -> EmitState {
+    let n: i64 = string_len(es.buf);
+    if n < 52 {
+        return es;
+    }
+    __mind_store_i8(string_addr(es.buf) + n - 44, 2);
+    es
+}
+
+// Lower every item on its own (as nb_emit_items would, without stopping at the
+// first failure) and append the name span_lo of each kept fn the twin rejects
+// to route[1..]; route[0] counts them, or is -1 once a non-fn item fails or the
+// table is full. Each item's scratch is reclaimed after it (nothing survives).
+pub fn hm_twin_fail_walk(src: i64, items_addr: i64, items_len: i64, strbuf: i64, offs: i64, ncount: i64, tconst: i64, kept: i64, n_kept: i64, i: i64, route: i64) -> i64 {
+    if i >= items_len {
+        return 0;
+    }
+    if __mind_load_i64(route) < 0 {
+        return 0;
+    }
+    let item: i64 = __mind_load_i64(items_addr + i * 8);
+    let ok: i64 = __mind_alloc(8);
+    __mind_store_i64(ok, 1);
+    let item_ckpt: i64 = __mind_alloc(0);
+    let _s: EmitState = nb_emit_one_item(es_new(), src, item, i, strbuf, offs, ncount, tconst, kept, n_kept, ok);
+    let okv: i64 = __mind_load_i64(ok);
+    let _r: i64 = nb_arena_reclaim(item_ckpt);
+    if okv == 0 {
+        let _a: i64 = hm_route_add(route, item);
+    }
+    hm_twin_fail_walk(src, items_addr, items_len, strbuf, offs, ncount, tconst, kept, n_kept, i + 1, route)
+}
+
+pub fn hm_route_add(route: i64, item: i64) -> i64 {
+    let n: i64 = __mind_load_i64(route);
+    if ast_kind(item) != ast_fn_def() {
+        __mind_store_i64(route, 0 - 1);
+        return 0;
+    }
+    if n >= hm_route_cap() {
+        __mind_store_i64(route, 0 - 1);
+        return 0;
+    }
+    __mind_store_i64(route + 8 + n * 8, ast_span_lo(ast_child0(item)));
+    __mind_store_i64(route, n + 1);
+    0
+}
+
 // ---- FLOAT fail-closed pre-gate (B0 poison-boundary residual) ----
 //
 // The general whole-program path (this h/hb family) has NO float support and NO
@@ -45190,6 +45985,12 @@ pub fn selftest_native_elf_hb(src_addr: i64, src_len: i64, hash_addr: i64, user_
 // (src_addr, src_len) is deterministic, so every downstream registry/lowering/
 // patch step sees identical inputs and the emitted ELF is unchanged.
 pub fn selftest_native_elf_hb_from_tokens(tokens: Vec, src_addr: i64, hash_addr: i64, user_lo: i64) -> EmitState {
+    selftest_native_elf_hb_route(tokens, src_addr, hash_addr, user_lo, 0)
+}
+
+// The native emit with per-function routing: `route` (0 = none) lists fn-name
+// span_lo values to lower on the HOME path (see nb_lower_fn_routed).
+pub fn selftest_native_elf_hb_route(tokens: Vec, src_addr: i64, hash_addr: i64, user_lo: i64, route: i64) -> EmitState {
     let ast_root: i64 = parse(tokens, src_addr);
     let items_addr: i64 = ast_child0(ast_root);
     let items_len: i64 = ast_aux(ast_root);
@@ -45285,17 +46086,14 @@ pub fn selftest_native_elf_hb_from_tokens(tokens: Vec, src_addr: i64, hash_addr:
     // (roadmap C2 narrow-param-carry support is the real fix). Never fires during
     // self-compile (no body-having self-host fn reassigns a narrow param), so the
     // loop stays byte-identical.
-    if nb_fns_reassign_narrow_param(src_addr, ordered, n_fns, 0) == 1 {
-        return es_new();
-    }
+    // (Per-function since the HOME lowering: hm_fn_pregate routes such a
+    // function to nb_lower_fn_home instead of refusing the module.)
     // SUB-STEP C FAIL-CLOSED: a `break`/`continue` inside an if-branch that also
     // assigns bypasses the branch's merge-phi stores when taken (the writes are
     // silently DROPPED — wrong running value). Refuse the whole module (0B).
     // `return`-in-branch and exit-only branches are permitted (proven correct).
     // Never fires during self-compile (main.mind has zero break/continue).
-    if nb_fns_branch_exit_carry(src_addr, ordered, n_fns, 0) == 1 {
-        return es_new();
-    }
+    // (Per-function since the HOME lowering, as above.)
     // B0 f32 fail-closed pre-gate (see nb_user_float_tok above — NARROWED from
     // the original all-float gate): an `f32` type ident anywhere in the USER
     // region refuses the WHOLE module (0B) — the general float tier computes in
@@ -45318,7 +46116,7 @@ pub fn selftest_native_elf_hb_from_tokens(tokens: Vec, src_addr: i64, hash_addr:
     let rod: i64 = __mind_alloc(8 + (nb_arena_addr() - nb_rodata_addr()));
     __mind_store_i64(rod, 0);
     let acc0: NbState = NbState { code: string_new(), next_id: 0, last_id: 0, ncalls: 0 };
-    let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, entry_idx, srt, frt, uses_argv, rod);
+    let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, entry_idx, srt, frt, uses_argv, rod, route);
     // SYSTEMIC FAIL-CLOSED top gate: any fn refused during lowering (unsupported
     // construct — arrays/tuples/refs/enums/closures/unbound names/unsupported
     // struct shapes — poisons its lcell, nb_lower_fn returns the -1 sentinel,
@@ -45506,7 +46304,7 @@ pub fn nb_is_entry(k: i64, entry_idx: i64) -> i64 {
 // The guard returns the param `acc` (NOT a struct literal) so the body stays
 // inside the self-host nfn-emittable seq subset (a struct-literal guard-return in
 // a multi-statement recursive struct fn is outside it — verified empirically).
-pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, calls: i64, starts: i64, call_owner: i64, entry_idx: i64, srt: i64, frt: i64, uses_argv: i64, rod: i64) -> NbState {
+pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, calls: i64, starts: i64, call_owner: i64, entry_idx: i64, srt: i64, frt: i64, uses_argv: i64, rod: i64, route: i64) -> NbState {
     if k >= n_fns {
         return acc;
     }
@@ -45515,7 +46313,7 @@ pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, ca
     let ncalls0: i64 = acc.ncalls;
     let image: String = acc.code;
     __mind_store_i64(starts + k * 8, string_len(image));
-    let fr: NbState = nb_lower_fn(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv, ordered, n_fns, rod);
+    let fr: NbState = nb_lower_fn_routed(buf, node, is_entry, calls, ncalls0, srt, frt, uses_argv, ordered, n_fns, rod, route);
     // Record owner for each newly-added call.
     let _o: i64 = nb_set_owners(call_owner, ncalls0, fr.ncalls, k);
     let image2: String = string_push_str(image, fr.code);
@@ -45530,7 +46328,7 @@ pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, ca
     let accn: i64 = acc.next_id;
     let pn: i64 = nb_poison_merge(frn, accn);
     let acc2: NbState = NbState { code: image2, next_id: pn, last_id: 0, ncalls: fr.ncalls };
-    nb_lower_all(acc2, buf, ordered, n_fns, k + 1, calls, starts, call_owner, entry_idx, srt, frt, uses_argv, rod)
+    nb_lower_all(acc2, buf, ordered, n_fns, k + 1, calls, starts, call_owner, entry_idx, srt, frt, uses_argv, rod, route)
 }
 // The REFUSED-fn sentinel NbState (fail-closed): empty code + next_id == -1.
 // A single-expression helper (the es_new shape) so nb_lower_fn's poison gate
@@ -46170,10 +46968,25 @@ pub fn nb_fp_parity_fix(op: i64) -> i64 {
 // A per-SSA dtype table: `n` i64 slots indexed by SSA id, all initialised to INT
 // (0). nb_expr will allocate one per function body and consult it when lowering
 // each expression, exactly as it already consults the let-env for slot ids.
+// The table carries its capacity at tbl-16 and a sticky overflow flag at tbl-8:
+// an id past the capacity is never written (set) and reads back INT (get), and
+// the flag lets the HOME lowering refuse the function instead of writing past
+// the buffer. Every SSA-path table is sized past its counted ids, so the flag
+// never fires there and no emitted byte changes.
 pub fn nb_dtype_table_new(n: i64) -> i64 {
-    let tbl: i64 = __mind_alloc(n * 8);
+    let base: i64 = __mind_alloc(n * 8 + 16);
+    __mind_store_i64(base, n);
+    __mind_store_i64(base + 8, 0);
+    let tbl: i64 = base + 16;
     let _z: i64 = nb_dtype_table_init(tbl, n, 0);
     tbl
+}
+
+pub fn nb_dtype_overflowed(tbl: i64) -> i64 {
+    if tbl == 0 {
+        return 0;
+    }
+    __mind_load_i64(tbl - 8)
 }
 
 // Zero (= INT) every slot, so an un-tagged SSA id reads back INT by default.
@@ -46188,12 +47001,26 @@ pub fn nb_dtype_table_init(tbl: i64, n: i64, i: i64) -> i64 {
 
 // Tag SSA id `id` with dtype `dt`; returns the table (immutable-threading style).
 pub fn nb_dtype_set(tbl: i64, id: i64, dt: i64) -> i64 {
+    if id < 0 {
+        return tbl;
+    }
+    if id >= __mind_load_i64(tbl - 16) {
+        __mind_store_i64(tbl - 8, 1);
+        return tbl;
+    }
     __mind_store_i64(tbl + id * 8, dt);
     tbl
 }
 
 // Read the dtype tag of SSA id `id` (default INT for an un-tagged slot).
 pub fn nb_dtype_get(tbl: i64, id: i64) -> i64 {
+    if id < 0 {
+        return nb_dtype_int();
+    }
+    if id >= __mind_load_i64(tbl - 16) {
+        __mind_store_i64(tbl - 8, 1);
+        return nb_dtype_int();
+    }
     __mind_load_i64(tbl + id * 8)
 }
 
@@ -47718,7 +48545,7 @@ pub fn selftest_native_elf_fp_call(src_addr: i64, src_len: i64) -> EmitState {
 
     // Lower every fn as NON-entry (entry_idx = -1) into one image; f -> g calls recorded.
     let acc0: NbState = NbState { code: string_new(), next_id: 0, last_id: 0, ncalls: 0 };
-    let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, 0 - 1, srt, frt, 0, 0);
+    let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, 0 - 1, srt, frt, 0, 0, 0);
     // FAIL CLOSED (same top gate as selftest_native_elf_hb_from_tokens): a
     // refused fn propagates the -1 sentinel — return the empty EmitState.
     if lr.next_id < 0 {

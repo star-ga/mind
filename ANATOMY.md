@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1996 | **Est. tokens:** ~3,751,861
-**Generated:** 2026-10-09 22:13 UTC
+**Files:** 2017 | **Est. tokens:** ~3,781,990
+**Generated:** 2026-10-10 03:21 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 33 | ~31,123 |
+| `./` | 33 | ~31,656 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -62,11 +62,12 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 175 | ~461,417 |
+| `examples/mindc_mind/` | 177 | ~470,182 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,159 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
 | `examples/mindc_mind/testdata/mindfuzz_regress_failclosed/` | 14 | ~2,935 |
+| `examples/mindc_mind/testdata/native_cf/` | 14 | ~3,091 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2,926 |
 | `examples/mindc_mind/testdata/native_record_trace/` | 13 | ~2,127 |
@@ -112,9 +113,9 @@
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
 | `src/bin/mindc/` | 1 | ~204 |
-| `src/build/` | 13 | ~53,987 |
+| `src/build/` | 13 | ~54,464 |
 | `src/build/cache/` | 3 | ~3,150 |
-| `src/build/native_bridge/` | 2 | ~4,881 |
+| `src/build/native_bridge/` | 5 | ~15,307 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 5 | ~12,177 |
 | `src/deps/` | 1 | ~9,388 |
@@ -152,7 +153,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~205,452 |
-| `tests/` | 420 | ~861,169 |
+| `tests/` | 422 | ~868,006 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -245,7 +246,7 @@
 - `.bench-baseline-2026-06-01-correctness.txt` (~844 tok, large) — === Correctness-milestone baseline (mindc 0.7.0, 2026-06-01) ===
 - `.bench-pre-pratt.txt` (~32 tok, tiny) — === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
-- `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
+- `build.rs` (~767 tok, large) — Copyright 2025 STARGA Inc.
 - `Cargo.toml` (~3947 tok, huge) — [package]
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
@@ -646,6 +647,7 @@
 - `backend_native_bridge_smoke.py` (~3985 tok, huge) — RI-D slice 1 gate (task #110): `mindc build --backend native` is a byte-faithful
 - `bootstrap_smoke.py` (~2473 tok, huge)
 - `branch_shadow_crossbackend_smoke.py` (~2039 tok, huge) — #318 — branch-local `let` shadow must not leak across backends (the WEDGE gate).
+- `_cf_corpus.py` (~5204 tok, huge) — Control-flow corpus for self_host_native_cf_smoke.py (helper module, no verdict).
 - `check_driver.mind` (~9782 tok, huge) — ===========================================================================
 - `closure_netverify.py` (~1423 tok, large) — # Canonical independent net-verify harness for CLOSURES / FN-VALUES / UNRESOLVED
 - `collect_field_strings_smoke.py` (~1215 tok, large)
@@ -702,7 +704,7 @@
 - `self_host_cast_mic3_smoke.py` (~4680 tok, huge)
 - `self_host_check_driver_smoke.py` (~2879 tok, huge)
 - `self_host_continue_smoke.py` (~1384 tok, large) — Regression gate for #308 (closes #286's break/continue fixtures): the pure-MIND
-- `selfhost_driver.mind` (~4772 tok, huge) — ===========================================================================
+- `selfhost_driver.mind` (~4773 tok, huge) — ===========================================================================
 - `self_host_dtype_tag_smoke.py` (~780 tok, large) — RI-B1 per-SSA dtype-tag gate (parser <-> nb_fp_* encoder connecting construct).
 - `self_host_else_if_smoke.py` (~1715 tok, huge)
 - `self_host_failclosed_smoke.py` (~9902 tok, huge) — self_host_failclosed_smoke.py — the fail-closed boundary of the pure-MIND
@@ -726,6 +728,7 @@
 - `self_host_native_blas_dot_i16_smoke.py` (~2879 tok, huge)
 - `self_host_native_blas_dot_q16_smoke.py` (~1774 tok, huge)
 - `self_host_native_cast_conv_smoke.py` (~1373 tok, large) — RI-B2 scalar-cast-conv rung (#108) — native-ELF int<->float `as`-cast chain.
+- `self_host_native_cf_smoke.py` (~3560 tok, huge) — Native stage1: general control flow (HOME lowering) — three-way behavioural gate.
 - `self_host_native_diag_smoke.py` (~1326 tok, large) — RI-D1a gate (task #313): `mindc build --backend=native` must FAIL-CLOSED with an
 - `self_host_native_dot_f32_smoke.py` (~1436 tok, large) — RI-B2-S8 STEP C (#108) — native-ELF scalar STRICT-FP f32 DOT-PRODUCT.
 - `self_host_native_dot_l1_q16_smoke.py` (~1188 tok, large) — RI-B2 L1-Q16 rung (#108) — native-ELF Q16.16 L1 distance.
@@ -922,6 +925,22 @@
 - `shadow_assign_before_twice.mind` (~87 tok, small) — Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
 - `shadow_assign_before_two_names.mind` (~96 tok, small) — Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
 - `shadow_assign_before_while_after.mind` (~92 tok, small) — Regression class: assign-before-shadow (src/eval/lower.rs If arm, GAP 2).
+### `examples/mindc_mind/testdata/native_cf/`
+
+- `a1_logic_in_cond.mind` (~217 tok, medium) — A1: && / || / ! and a value-if inside if and while conditions, with
+- `a6_vif_in_loop.mind` (~163 tok, small) — A6: a value-if used as a value inside a while body (let init, assignment
+- `a7_vif_nested_expr.mind` (~213 tok, medium) — A7: value-ifs nested inside expressions: binop operands, call arguments
+- `a9_vif_branch_effects.mind` (~209 tok, medium) — A9: value-if branches that assign an enclosing variable, return from the
+- `deep_nesting.mind` (~303 tok, medium) — Arbitrary nesting: six levels of if / while / value-if mixing every exit
+- `l1_return_in_loop.mind` (~303 tok, medium) — L1: `return` inside while bodies, from 1, 2 and 3 levels of nesting, inside
+- `l2_loop_if_branches.mind` (~410 tok, medium) — L2: an `if` inside a loop whose branches hold a call statement, a let, a
+- `l3_break_continue_params.mind` (~311 tok, medium) — L3: break / continue inside functions that take parameters, including
+- `mlir_break_in_cond_vif.mind` (~162 tok, small) — A `break` inside a value-if that sits in an if condition inside a loop. The
+- `mlir_lost_branch_assign.mind` (~115 tok, small) — Known MLIR-backend defect, pinned: a value-if passed to a call that is used
+- `mlir_lost_cond_assign.mind` (~121 tok, small) — Known MLIR-backend defect, pinned: an assignment inside a value-if branch in
+- `mlir_lost_loop_assign.mind` (~187 tok, small) — Known MLIR-backend defect, pinned: inside a loop, a store to an enclosing
+- `note_kinds.mind` (~48 tok, tiny) — A program the mic@3 twin can hash keeps the IR trace-hash note (n_type 1).
+- `o_if_else_merges.mind` (~329 tok, medium) — O1 / O2 / O3: if/else outside loops that merges assigned outer variables,
 ### `examples/mindc_mind/testdata/native_elf_oracle/`
 
 - `add.elf` (~123 tok, small) — ELF> @@@8
@@ -1305,11 +1324,18 @@
 - `mod.rs` (~9611 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/native_bridge/`
 
+- `admission.rs` (~5064 tok, huge) — Copyright 2025 STARGA Inc.
 - `child.rs` (~3650 tok, huge) — Copyright 2025 STARGA Inc.
 - `child_tests.rs` (~1231 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
-- `native_bridge.rs` (~8564 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_bridge.rs` (~9041 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/build/native_bridge/`
+
+- `seed.rs` (~2735 tok, huge) — Copyright 2025 STARGA Inc.
+- `shadow.rs` (~2627 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/build/`
+
 - `native_image.rs` (~4296 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_scope.rs` (~6258 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_scope_tests.rs` (~5219 tok, huge) — Seam tests for the captured-source snapshot and its module identities.
@@ -2346,6 +2372,7 @@
 - `narrow_tuple_pr216_run.rs` (~1409 tok, large) — Copyright 2025 STARGA Inc.
 - `narrow_unsigned_div_zero_run.rs` (~1247 tok, large) — Copyright 2025 STARGA Inc.
 - `native_bridge_child_status.rs` (~3380 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_bridge_refusals.rs` (~5405 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/native_bridge_support/`
 
 - `draining_native_compiler.rs` (~300 tok, medium) — Host-native compiler fixture for admission-only controls.
@@ -2354,6 +2381,7 @@
 
 - `native_closure_admission.rs` (~3941 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_default_profile_imports.rs` (~3506 tok, huge) — Default-feature-profile controls for the native backend's import admission.
+- `native_embedded_seed.rs` (~1432 tok, large) — Copyright 2025 STARGA Inc.
 - `native_import_terminator_controls.rs` (~1315 tok, large) — Native bridge controls: an `import`/`use` item the frozen compiler would
 - `native_module_bridge_controls.rs` (~8330 tok, huge) — Native module-bridge controls: SOURCE RESOLUTION and ADMISSION.
 - `native_module_bridge_visibility_controls.rs` (~3913 tok, huge) — Native module-bridge controls: VISIBILITY, EMIT KIND, CROSS-INVOCATION
