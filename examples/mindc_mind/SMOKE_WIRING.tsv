@@ -66,6 +66,7 @@ self_host_array_smoke	ci	gate
 self_host_arridx_mic3_smoke	ci	gate	
 self_host_body_smoke	ci,keystone	gate	
 self_host_bounded_profile_smoke	ci	gate	Bounded native profile (768 MiB arena + 1 MiB guard + 384 MiB stack): pinned seed derives from the frozen default seed, self-reproduces and runs consumer programs under RLIMIT_AS=2 GiB, and refuses arena exhaustion (incl. the fill_0..fill_4 cap boundary), stack overflow and bad layouts fail-closed. CI only: three whole self-compiles (~4 min) are too slow for fast_keystone.sh / preflight.
+self_host_native_alloc_bounded_smoke	ci	gate	Bounded native allocator (W11c): derives the tree's bounded compiler natively (B2 == B3 under RLIMIT_AS=2 GiB), checks the allocator runtime blob byte-for-byte against its assembly source (testdata/native_alloc_bounded/rt/), runs the C stress harness over it, runs every native_alloc_bounded fixture natively and through MLIR under the cap (small-footprint alloc/free/realloc loops, C-runtime edge cases, deterministic out-of-memory exit 70) and the compiler's own arena reclaim code natively. CI only: three whole self-compiles (~5 min) are too slow for fast_keystone.sh / preflight.
 self_host_carry_cap_smoke	ci,keystone	gate	
 self_host_cast_mic3_smoke	ci	gate	
 self_host_alias_controls_smoke	ci	gate	
