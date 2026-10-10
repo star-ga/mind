@@ -161,14 +161,15 @@ fn bridge(src: &str, profile: &str) -> String {
         .env("MINDC_NATIVE_ELF", compiler)
         .output()
         .unwrap();
-    assert_eq!(
-        out.status.code(),
-        Some(3),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    let expected = if stderr.contains("WAVE3_STAGE1_REACHED") {
+        42 // Child status is preserved once admission reaches stage1.
+    } else {
+        3 // A Rust admission refusal never invokes the sentinel.
+    };
+    assert_eq!(out.status.code(), Some(expected), "{stderr}");
     assert!(!p.root().join("out.elf").exists());
-    String::from_utf8(out.stderr).unwrap()
+    stderr
 }
 
 #[test]

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1926 | **Est. tokens:** ~3793786
-**Generated:** 2026-10-10 05:58 UTC
+**Files:** 1926 | **Est. tokens:** ~3793785
+**Generated:** 2026-10-10 06:19 UTC
 
 ## Token Budget Guide
 
@@ -151,7 +151,7 @@
 | `src/types/` | 10 | ~20759 |
 | `src/workspace/` | 1 | ~4906 |
 | `std/` | 42 | ~205452 |
-| `tests/` | 424 | ~876660 |
+| `tests/` | 424 | ~876659 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12308 |
