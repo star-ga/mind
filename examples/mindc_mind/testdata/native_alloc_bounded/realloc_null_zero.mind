@@ -1,7 +1,8 @@
 // realloc(NULL, 0) (verifier repro edge/e04, W11c round 2). The C runtime's
 // __mind_realloc is glibc realloc, and realloc(NULL, 0) == malloc(0) returns a
 // non-null minimum block; native must agree. The block is usable, can be grown
-// and freed. Expected exit 104, empty stdout.
+// and freed. realloc(NULL, n < 0) is malloc of a huge size there, which fails
+// with NULL; native returns 0 too. Expected exit 104, empty stdout.
 fn main() -> i64 {
     let p: i64 = __mind_realloc(0, 0);
     let z: i64 = if p == 0 {
@@ -13,5 +14,11 @@ fn main() -> i64 {
     __mind_store_i64(q + 8, 4);
     let v: i64 = __mind_load_i64(q + 8);
     let f: i64 = __mind_free(q);
-    z + v + f
+    let n: i64 = __mind_realloc(0, 0 - 5);
+    let b: i64 = if n != 0 {
+        50
+    } else {
+        0
+    };
+    z + v + f + b
 }

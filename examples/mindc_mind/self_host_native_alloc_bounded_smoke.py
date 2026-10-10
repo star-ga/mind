@@ -69,6 +69,10 @@ BOUNDED = (768 << 20, 384 << 20, 1 << 20)  # arena, stack, guard
 DEFAULT_SEED = _HERE / "testdata" / "selfhost_loop" / "stage1.elf"
 FIX = _HERE / "testdata" / "native_alloc_bounded"
 OOM_DIAG = b"error: native arena exhausted\n"
+# A whole self-compile takes ~1 min on an idle machine but more than 15 min
+# on a heavily shared one; the derivation stages get an hour each so load
+# alone cannot kill them (rc -9) and turn the gate red.
+DERIVE_TIMEOUT = 3600
 # name -> (exit, stdout, portable: also checked against the MLIR backend)
 CASES = {
     "r18_free_loop": (33, b"", True),
@@ -82,6 +86,8 @@ CASES = {
     "big_increasing": (15, b"", True),
     "realloc_null_zero": (104, b"", True),
     "interleaved_growth": (21, b"", True),
+    "bin_fit_search": (23, b"", True),
+    "realloc_free_neighbour": (25, b"", True),
 }
 FAILS: list[str] = []
 
@@ -184,14 +190,14 @@ def describe(tag: str, r) -> str:
 
 def derive(td: pathlib.Path) -> pathlib.Path | None:
     img = v2_image(None)
-    r = run([str(DEFAULT_SEED)], img, cap=False)
+    r = run([str(DEFAULT_SEED)], img, cap=False, timeout=DERIVE_TIMEOUT)
     print("        " + describe("B1 (frozen default seed + v2, uncapped)", r), flush=True)
     if r[0] != 0 or not is_static_elf(r[1]):
         report(False, "derive/B1", f"rc={r[0]} err={r[2][-200:]!r}")
         return None
     exe, stages, peaks = write_exec(td, "B1.elf", r[1]), [], []
     for k in (2, 3):
-        r = run([str(exe)], img)
+        r = run([str(exe)], img, timeout=DERIVE_TIMEOUT)
         peaks.append(r[4])
         print("        " + describe(f"B{k} (under AS cap)", r) + f" sha256={sha(r[1])[:16]}",
               flush=True)

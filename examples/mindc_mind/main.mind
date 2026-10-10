@@ -32849,6 +32849,10 @@ pub fn nb_emit_alloc_core_checked(code: String) -> String {
 //   [ST + 536/544/552]   alloc / free / realloc entry addresses
 //   [ST + 560/568]       primary / overflow high water: memory at or above it
 //                        was never handed out and still reads zero
+//   [ST + 1024 + 8k]     bin k size bound: no block in bin k is larger (an
+//                        insert raises it; a scan of the whole bin that finds
+//                        no fit lowers it to the largest size it saw), so a
+//                        request above it skips the bin without walking it
 // A block is a header word (size | 1 if free | 2 if the physically preceding
 // block is free) followed by `size` data bytes (a multiple of 8, at least 24).
 // A free block keeps its bin links in its first two data words and its size
@@ -32860,7 +32864,8 @@ pub fn nb_emit_alloc_core_checked(code: String) -> String {
 // becomes a free block and the cursor continues in the overflow region.
 //
 //   alloc(n)       n <= 0 -> 0 (runtime-support/mind_intrinsics.c). Else
-//                  r = max(round8(n), 24): first fit in bin bsr(r), else the
+//                  r = max(round8(n), 24): first fit in bin bsr(r) (skipped
+//                  when r is above the bin's size bound), else the
 //                  head of the lowest non-empty higher bin (every block there
 //                  fits), so a large-enough free block is always found when
 //                  one exists; a remainder of >= 32 bytes is split off. With

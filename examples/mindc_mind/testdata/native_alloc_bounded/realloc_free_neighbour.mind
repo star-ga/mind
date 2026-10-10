@@ -1,0 +1,25 @@
+// realloc grows a block in place into its free successor (W11c round 3).
+// x (450 MB) is followed by y (300 MB) and a pin; c (600 MB) then takes most
+// of the address space left under the 2 GiB cap. After free(y), growing x to
+// 740 MB fits in x + y without moving. An allocator that moves instead (alloc
+// 740 MB + copy + free) has no room left for the new block and runs out
+// (exit 70). x's first and old last words survive the growth.
+// Expected exit 25, empty stdout.
+fn main() -> i64 {
+    let x: i64 = __mind_alloc(450000000);
+    let y: i64 = __mind_alloc(300000000);
+    let pin: i64 = __mind_alloc(8);
+    let c: i64 = __mind_alloc(600000000);
+    __mind_store_i64(x, 3);
+    __mind_store_i64(x + 449999992, 4);
+    __mind_store_i64(y, 9);
+    __mind_store_i64(c + 599999992, 5);
+    let fy: i64 = __mind_free(y);
+    let x2: i64 = __mind_realloc(x, 740000000);
+    __mind_store_i64(x2 + 739999992, 6);
+    let v: i64 = __mind_load_i64(x2) + __mind_load_i64(x2 + 449999992) + __mind_load_i64(x2 + 739999992) + __mind_load_i64(c + 599999992);
+    let f1: i64 = __mind_free(x2);
+    let f2: i64 = __mind_free(c);
+    let f3: i64 = __mind_free(pin);
+    v + fy + f1 + f2 + f3 + 7
+}
