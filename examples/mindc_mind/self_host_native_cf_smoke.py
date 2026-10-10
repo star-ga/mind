@@ -33,8 +33,9 @@ Steps
   2. corpus    deterministic random programs (default seeds 11,12 x 160 = 320);
                native == Python == MLIR. An MLIR build failure is accepted only
                for the pinned "break/continue outside a loop" limitation.
-  3. capacity  a giant function (a 2500-arm else-if chain inside a loop, the
-               census X1 shape) must compile and run correctly — never SIGSEGV.
+  3. capacity  giant functions (a 2500-arm else-if chain inside a loop; an
+               800-statement straight-line let/if-return function, the census
+               X1 shape) must compile and run correctly — never SIGSEGV.
   4. refusal   a HOME-lowered function that takes an address refuses cleanly
                (rc 3, no ELF), never a crash.
   5. twin      with MINDC_SO set, the oracle .so's selftest_native_elf_stage
@@ -234,6 +235,25 @@ def giant_program(arms: int) -> tuple:
     return "\n".join(lines) + "\n", (C.tmod(s, 251) & 255, b"")
 
 
+def straight_line_program(blocks: int) -> tuple:
+    """Census X1 shape (MIND-Lab nr_literals): one straight-line function of
+    `blocks` x {let, early-return if, store} — 600+ statements. The mic@3 twin's
+    statement planner had a fixed 512-record table and segfaulted the compiler
+    on it."""
+    lines = ["fn space(c: i64, n: i64) -> i64 {", "    if n > 0 {", "        return __mind_alloc(n);",
+             "    }", "    0", "}", "fn table(c: i64) -> i64 {",
+             f"    let t: i64 = space(c, {8 * blocks});", "    if t == 0 { return 0; }"]
+    for k in range(blocks):
+        lines.append(f"    let p{k}: i64 = space(c, 8);")
+        lines.append(f"    if p{k} == 0 {{ return 0; }}")
+        lines.append(f"    __mind_store_i64(p{k}, {k * 3 + 1});")
+        lines.append(f"    __mind_store_i64(t + {8 * k}, __mind_load_i64(p{k}));")
+    lines += ["    t", "}", "fn main() -> i64 {", "    let t: i64 = table(1);", "    let mut s: i64 = 0;",
+              "    let mut i: i64 = 0;", f"    while i < {blocks} {{",
+              "        s = s + __mind_load_i64(t + i * 8);", "        i = i + 1;", "    }", "    s % 251", "}"]
+    return "\n".join(lines) + "\n", (sum(k * 3 + 1 for k in range(blocks)) % 251, b"")
+
+
 REFUSE_ADDR = """fn f(n: i64) -> i64 {
     let mut x: i64 = 0;
     let r: i64 = &x;
@@ -328,6 +348,11 @@ def main() -> int:
         got, _ = native(stage1, gsrc.encode(), td)
         rep.check(got == gexp, f"giant fn (2500-arm else-if chain in a loop, {len(gsrc)} B): "
                                f"native={got} Python={gexp}")
+
+        ssrc, sexp = straight_line_program(200)
+        got, _ = native(stage1, ssrc.encode(), td)
+        rep.check(got == sexp, f"giant straight-line fn (200 x let/if-return/store = 800 statements): "
+                               f"native={got} Python={sexp}")
 
         print("[cf] clean refusal")
         got, _ = native(stage1, REFUSE_ADDR.encode(), td)

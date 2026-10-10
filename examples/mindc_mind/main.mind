@@ -21316,14 +21316,47 @@ pub fn emit_mic3_module_fndef_narrow(s: EmitState, src: i64, fn_node: i64, nidx:
         __mind_store_i64(ok_cell, 0);
         return s;
     }
-    let nodes: i64 = __mind_alloc(4096 * 32);
+    // Census X1: the planner writes one record per statement and one descriptor
+    // per lowered node with no bound check, so a giant straight-line function
+    // (600+ statements) ran off the fixed 512-record plan and segfaulted the
+    // compiler. Size every table from the function itself (never below the old
+    // fixed sizes, so every function that fit before sees the same tables).
+    let ncap: i64 = seq_cap_nodes(fn_node);
+    let nodes: i64 = __mind_alloc(ncap * 32);
     let cursor: i64 = __mind_alloc(8);
-    let vidbuf: i64 = __mind_alloc(4096 * 8);
-    let env: i64 = __mind_alloc(512 * 24);
+    let vidbuf: i64 = __mind_alloc(ncap * 8);
+    let env: i64 = __mind_alloc(seq_cap_env(fn_node, stmts_len) * 24);
     let nlets_cell: i64 = __mind_alloc(8);
-    let plan: i64 = __mind_alloc(512 * 64);
+    let plan: i64 = __mind_alloc(seq_cap_plan(stmts_len) * 64);
     let nplan_cell: i64 = __mind_alloc(8);
     emit_mic3_module_fndef_seq(s, src, fn_node, nidx, pstr, n_params, stmts_addr, stmts_len, nodes, cursor, vidbuf, env, nlets_cell, plan, nplan_cell, strbuf, offs, ncount, ok_cell)
+}
+
+// Table capacities for the statement-sequence planner (see emit_mic3_module_
+// fndef_narrow): descriptors grow with the function's source size, plan records
+// with its statement count, env entries with both. Floors = the old fixed sizes.
+pub fn seq_cap_nodes(fn_node: i64) -> i64 {
+    let span: i64 = ast_span_hi(fn_node) - ast_span_lo(fn_node);
+    let want: i64 = span * 4 + 4096;
+    if want < 4096 {
+        return 4096;
+    }
+    want
+}
+pub fn seq_cap_plan(stmts_len: i64) -> i64 {
+    let want: i64 = stmts_len * 2 + 64;
+    if want < 512 {
+        return 512;
+    }
+    want
+}
+pub fn seq_cap_env(fn_node: i64, stmts_len: i64) -> i64 {
+    let span: i64 = ast_span_hi(fn_node) - ast_span_lo(fn_node);
+    let want: i64 = stmts_len * 2 + span / 4 + 64;
+    if want < 512 {
+        return 512;
+    }
+    want
 }
 
 pub fn emit_mic3_module_fndef(s: EmitState, src: i64, fn_node: i64, strbuf: i64, offs: i64, ncount: i64, ok_cell: i64) -> EmitState {
@@ -21547,12 +21580,13 @@ pub fn emit_mic3_module_fndef(s: EmitState, src: i64, fn_node: i64, strbuf: i64,
         // single trailing `return E` / value if-expr body reaches the seq path too (the
         // narrow stmts_len==1 cases above already return before here when they match).
         if stmts_len >= 1 {
-            let hnodes: i64 = __mind_alloc(4096 * 32);
+            let hncap: i64 = seq_cap_nodes(fn_node);
+            let hnodes: i64 = __mind_alloc(hncap * 32);
             let hcursor: i64 = __mind_alloc(8);
-            let hvidbuf: i64 = __mind_alloc(4096 * 8);
-            let henv: i64 = __mind_alloc(512 * 24);
+            let hvidbuf: i64 = __mind_alloc(hncap * 8);
+            let henv: i64 = __mind_alloc(seq_cap_env(fn_node, stmts_len) * 24);
             let hnlets: i64 = __mind_alloc(8);
-            let hplan: i64 = __mind_alloc(512 * 64);
+            let hplan: i64 = __mind_alloc(seq_cap_plan(stmts_len) * 64);
             let hnplan: i64 = __mind_alloc(8);
             let sseq: EmitState = emit_mic3_module_fndef_seq(s, src, fn_node, nidx, pstr, n_params, stmts_addr, stmts_len, hnodes, hcursor, hvidbuf, henv, hnlets, hplan, hnplan, strbuf, offs, ncount, ok_cell);
             if __mind_load_i64(ok_cell) == 1 {
