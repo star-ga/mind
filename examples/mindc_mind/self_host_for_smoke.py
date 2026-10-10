@@ -37,6 +37,11 @@ in 0..hi() { .. } }`) must keep two counters: a counter is named by its span byt
 so it spans the whole `for` statement (a nested one is a strict substring of its
 parent), never the header alone.
 
+The loop-carry walk the range-for desugars onto must carry exactly the vars the
+Rust While arm carries: an OUTER var written in a nested loop (often under an
+`if`) is seeded from its binding at loop entry, and a name a top-level body
+`let` re-declared is the body-local shadow, never the outer var.
+
 A run that does not exit normally is "HANG" / "SIG<n>", never an int: a masked
 timeout sentinel read as exit 255, which is a real expected value here.
 
@@ -279,6 +284,51 @@ CASES = [
     # when the later copy sits inside a while or inside another loop.
     ("same_text_sibling_before_while", b"fn hi() -> i64 { return 2; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..hi() { c = c + 1; } let mut k: i64 = 0; while k < 3 { k = k + 1; for i in 0..hi() { c = c + 1; } } return c; }", 8),
     ("same_text_sibling_then_inner", b"fn hi() -> i64 { return 2; } fn main() -> i64 { let mut c: i64 = 0; for i in 0..hi() { c = c + 1; } for j in 0..3 { for i in 0..hi() { c = c + 1; } } return c; }", 8),
+    # ---- loop-carried vars: seed slot and body-local shadows ----
+    # An OUTER var written only inside a nested loop (here under an `if`) is promoted
+    # into the enclosing loop's carry table. Its init slot was looked up in the
+    # carry pre-walk's COUNT env, where the inner `if` had left a count-only slot-0
+    # binding of the name, so the copy-in seeded it from slot 0 — whatever var
+    # lives there (pre-fix, in order: 85, 12, 13, 6, 174, 7, 0, 21, 211, 0, 21).
+    # References from the Rust MLIR build of the same programs.
+    ("nested_for_if_count", b"fn main() -> i64 { let mut s: i64 = 5; let mut c: i64 = 0; c = c + 2; for i in 0..3 { for j in 0..3 { if j == 1 { c = c + 1; } } } return c * 10 + s; }", 55),
+    ("nested_for_diag_count", b"fn main() -> i64 { let mut a: i64 = 9; let mut c: i64 = 0; for i in 0..3 { for j in 0..3 { if j == i { c = c + 1; } } } return c + a * 0; }", 3),
+    ("while_for_if_count", b"fn main() -> i64 { let mut a: i64 = 9; let mut c: i64 = 0; let mut k: i64 = 0; while k < 2 { k = k + 1; for j in 0..3 { if j > 0 { c = c + 1; } } } return c + a * 0; }", 4),
+    ("nested_for_triple_if", b"fn main() -> i64 { let mut z: i64 = 4; let mut c: i64 = 0; for i in 0..3 { for j in 0..3 { for k in 0..3 { if i + j + k == 3 { c = c + 1; } } } } return c + z * 0; }", 7),
+    ("nested_for_if_else_two_vars", b"fn main() -> i64 { let mut z: i64 = 4; let mut a: i64 = 0; let mut b: i64 = 0; for i in 0..4 { for j in 0..4 { if i < j { a = a + 1; } else { b = b + 1; } } } return a * 16 + b + z * 0; }", 106),
+    ("nested_for_write_then_inner_if", b"fn main() -> i64 { let mut z: i64 = 4; let mut c: i64 = 1; for i in 0..3 { c = c + 10; for j in 0..2 { if j == 1 { c = c + 1; } } } return c + z * 0; }", 34),
+    ("nested_for_if_break", b"fn main() -> i64 { let mut z: i64 = 4; let mut c: i64 = 0; for i in 0..3 { for j in 0..5 { if j == i { c = c + 1; break; } } } return c + z * 0; }", 3),
+    ("while_nested_if_zero_rounds", b"fn main() -> i64 { let mut c: i64 = 0; c = c + 1; let mut k: i64 = 0; while k < 0 { k = k + 1; let mut w: i64 = 0; while w < 2 { w = w + 1; if w > 5 { c = c + 21; } } } return c; }", 1),
+    ("while_nested_if_one_round", b"fn main() -> i64 { let mut c: i64 = 0; c = c + 1; let mut k: i64 = 0; while k < 1 { k = k + 1; let mut w: i64 = 0; while w < 2 { w = w + 1; if w > 1 { c = c + 21; } } } return c; }", 22),
+    ("while_nested_if_two_vars", b"fn main() -> i64 { let mut c: i64 = 0; c = c + 1; let mut s: i64 = 0; s = s + 2; let mut k: i64 = 0; while k < 1 { k = k + 1; let mut w: i64 = 0; while w < 2 { w = w + 1; if w > 1 { c = c + 21; s = s + 1; } } } return c * 10 + s; }", 223),
+    ("for_nested_if_break_empty_outer", b"fn main() -> i64 { let mut c: i64 = 0; c = c + 1; for k in -1..-3 { let mut w: i64 = 0; while w < 2 { w = w + 1; if k > -1 { c = c + 21; break; } } break; } return c; }", 1),
+    ("for_nested_if_break_one_round", b"fn main() -> i64 { let mut c: i64 = 0; c = c + 1; for k in 0..1 { let mut w: i64 = 0; while w < 2 { w = w + 1; if k > -1 { c = c + 21; break; } } break; } return c; }", 22),
+    # the same seed slot for a TOP-LEVEL write whose first sighting comes after an
+    # inner loop whose body `let`s the same name (the inner pre-walk leaves that
+    # count-only binding in the env; pre-fix: 115 for both)
+    ("for_inner_let_then_top_write", b"fn main() -> i64 { let mut z: i64 = 7; let mut c: i64 = 1; for k in 0..2 { for w in 0..1 { let c: i64 = 9; z = z + c; } c = c + 1; } return c * 10 + z; }", 55),
+    ("while_inner_let_then_top_write", b"fn main() -> i64 { let mut z: i64 = 7; let mut c: i64 = 1; let mut k: i64 = 0; while k < 2 { k = k + 1; let mut w: i64 = 0; while w < 1 { w = w + 1; let c: i64 = 9; z = z + c; } c = c + 1; } return c * 10 + z; }", 55),
+    # A top-level body `let` re-declares an outer name: later writes in the body
+    # update the shadow, re-created every iteration (the Rust arm's body_local_decls
+    # guard). Carrying it rebound the OUTER name to the shadow's slot, so the code
+    # after the loop read the shadow (pre-fix, in order: 6, 6, 7, 11, 6, 6, 7).
+    ("for_body_let_shadow", b"fn main() -> i64 { let mut c: i64 = 1; for i in 0..3 { let mut c: i64 = 5; c = c + 1; } return c; }", 1),
+    ("for_body_let_shadow_if", b"fn main() -> i64 { let mut c: i64 = 1; for i in 0..3 { let mut c: i64 = 5; if i > 0 { c = c + 1; } } return c; }", 1),
+    ("for_body_let_shadow_inner_loop", b"fn main() -> i64 { let mut c: i64 = 1; for i in 0..3 { let mut c: i64 = 5; for j in 0..2 { c = c + 1; } } return c; }", 1),
+    ("inner_body_let_shadow", b"fn main() -> i64 { let mut c: i64 = 3; for i in 0..2 { for j in 0..2 { let mut c: i64 = 9; c = c + 1; } c = c + 1; } return c; }", 5),
+    ("while_body_let_shadow", b"fn main() -> i64 { let mut c: i64 = 1; let mut k: i64 = 0; while k < 2 { k = k + 1; let mut c: i64 = 5; c = c + 1; } return c; }", 1),
+    ("while_body_let_shadow_if", b"fn main() -> i64 { let mut c: i64 = 1; let mut k: i64 = 0; while k < 2 { k = k + 1; let mut c: i64 = 5; if k > 0 { c = c + 1; } } return c; }", 1),
+    ("while_body_let_shadow_inner_loop", b"fn main() -> i64 { let mut c: i64 = 1; let mut k: i64 = 0; while k < 2 { k = k + 1; let mut c: i64 = 5; let mut w: i64 = 0; while w < 2 { w = w + 1; c = c + 1; } } return c; }", 1),
+    # the hygienic per-iteration `let VAR = CTR` copy is exactly such a shadow: a body
+    # write to VAR must leave a parameter VAR alone (pre-fix: 209, 55)
+    ("param_body_write", b"fn f(i: i64) -> i64 { let mut c: i64 = 0; for i in 0..3 { i = i + 10; c = c + i; } return i * 100 + c; } fn main() -> i64 { return f(7) % 256; }", 221),
+    ("param_body_write_continue", b"fn f(i: i64) -> i64 { let mut c: i64 = 0; for i in 0..4 { if i == 1 { continue; } i = i + 10; c = c + i; } return i * 100 + c; } fn main() -> i64 { return f(2) % 256; }", 235),
+    # a write BEFORE the shadowing let is the outer var's, the ones after are not
+    # (pre-fix: 51)
+    ("assign_then_let_shadow", b"fn main() -> i64 { let mut c: i64 = 1; let mut k: i64 = 0; while k < 3 { k = k + 1; c = c + 1; let mut c: i64 = 50; c = c + 1; } return c; }", 4),
+    # controls that passed before: a direct inner write and an if before the inner loop
+    ("inner_direct_write_control", b"fn main() -> i64 { let mut c: i64 = 0; c = c + 1; let mut k: i64 = 0; while k < 1 { k = k + 1; let mut w: i64 = 0; while w < 2 { w = w + 1; c = c + 21; } } return c; }", 43),
+    ("if_then_inner_loop_control", b"fn main() -> i64 { let mut c: i64 = 0; c = c + 1; let mut k: i64 = 0; while k < 1 { k = k + 1; if k > 0 { c = c + 5; } let mut w: i64 = 0; while w < 2 { w = w + 1; if w > 1 { c = c + 21; } } } return c; }", 27),
     # controls: shapes the oracle keeps byte-neutral (the gate must not over-fire;
     # DESUGAR_PAIRS below pins their form, these pin their values)
     ("prior_sibling_for", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { c = c + 1; } for i in 0..2 { c = c + i; } return c; }", 4),
