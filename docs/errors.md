@@ -142,14 +142,16 @@ Unsigned operands divide as unsigned values and trap only on a zero divisor:
 - Native backend: `u8`/`u16`/`u32` values are kept zero-extended to their
   declared width. A `let`, an assignment and a parameter of such a type
   truncate the value they receive, a function returning one truncates its
-  return value, and an 8- or 16-bit result of `+`, `-`, `*` or `<<` (typed by
-  the same narrow rules the MLIR backend uses) is truncated before it is used.
-  A `/` or `%` therefore sees the wrapped values (with `a: u8 = 200` and
-  `b: u8 = 100`, both `let d: u8 = a + b; d / 3` and `(a + b) / 3` are `14`)
-  and gives the unsigned result; a zero divisor, including one produced by
-  wrapping, traps with status 79. Signed `i8`/`i16`/`i32` values are
-  sign-extended the same way. Division of 64-bit unsigned values is **not
-  implemented natively**. The
+  return value, a struct field of such a type truncates an arithmetic value
+  stored into it (in a struct literal or a field assignment), and an 8- or
+  16-bit result of `+`, `-`, `*` or `<<` (typed by the same narrow rules the
+  MLIR backend uses, including a call to a function returning an 8- or 16-bit
+  type) is truncated before it is used. A `/` or `%` therefore sees the
+  wrapped values (with `a: u8 = 200` and `b: u8 = 100`, both
+  `let d: u8 = a + b; d / 3` and `(a + b) / 3` are `14`) and gives the
+  unsigned result; a zero divisor, including one produced by wrapping, traps
+  with status 79. Signed `i8`/`i16`/`i32` values are sign-extended the same
+  way. Division of 64-bit unsigned values is **not implemented natively**. The
   native backend refuses (builds nothing) when a `/` or `%` sits in a function
   that can hold a `u64`/`usize` value: the function's signature or body spells
   `u64` or `usize` (an annotation, a cast, a generic argument; comments and
@@ -163,10 +165,30 @@ An `i32`/`u32` result of `+`, `-`, `*` or `<<` is wrapped when it is bound (a
 is bound the two backends do not yet agree on it: the MLIR backend evaluates it
 at 32 bits when its operands are parameters and at 64 bits when they are local
 variables (with `a: u32 = 0` and `b: u32 = 1` as locals,
-`let q: u32 = (a - b) / 2;` gives `0`; as parameters it gives `2147483647`). So
-the native backend refuses (builds nothing) a `/` or `%` whose operand is such
-an unbound `i32`/`u32` expression; `let d: u32 = a - b; d / 2` is `2147483647`
-on both backends.
+`let q: u32 = (a - b) / 2;` gives `0`; as parameters it gives `2147483647`).
+The same holds for an `i32` quotient: `MIN / -1` is `2147483648` at 64 bits and
+`MIN` at 32 bits. So the native backend refuses (builds nothing) a `/` or `%`
+when:
+
+- an operand is an unbound `i32`/`u32` arithmetic result (`let d: u32 = a - b;
+  d / 2` is `2147483647` on both backends);
+- an operand's unbound arithmetic involves a call to a function returning
+  `i32`/`u32`, a struct field whose name any struct declares with a narrow
+  integer type, a `u8` array element of a struct field, or a method returning a
+  narrow integer type (MLIR narrows those leaves, the native lattice does not);
+- one operand has a narrow integer type and the other is a wide integer, or a
+  narrow integer of the other signedness (an integer literal never counts as
+  a mismatch here), or a field name is declared with different types by two
+  structs;
+- an `i32`/`u32` operand meets an integer literal that is not a decimal of at
+  most 9 digits, or the other operand has a different 32-bit type;
+- it is a `/` with an `i32` operand whose divisor is not such a small literal,
+  unless the quotient is bound straight to an `i32` slot: the initial value of
+  a `let` or the value of an assignment of an `i32` name, the operand of a
+  `return` in a function returning `i32`, or the value stored to an `i32`
+  struct field. With `a: i32` and `b: i32`, `let x: i32 = a / b;` builds (and
+  `MIN / -1` gives `MIN`), while `if a / b == a`, `(a / b) as i64` and a bare
+  tail expression `a / b` are refused.
 
 Every other integer division truncates toward zero, and every other remainder
 has the sign of the dividend (`-7 / 2 == -3`, `-7 % 2 == -1`, `7 % -2 == 1`).

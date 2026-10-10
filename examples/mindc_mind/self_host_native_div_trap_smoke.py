@@ -384,6 +384,111 @@ NARROW_WRAP = [narrow_wrap_program(*t) for t in _NARROW_TYPES] + [
 ]
 
 
+def _leaf_call_program(ty: str, w: int, signed: bool):
+    """Two calls returning `ty`, summed then divided inline (verifier round 3):
+    the sum must be wrapped to `ty` before `/` and `%`, as MLIR re-masks a narrow
+    call result. Returns (name, program, expected exit)."""
+    a = (1 << (w - 1)) - 5 if signed else (1 << w) - 4
+    b = 100
+    s = _wrapw(a + b, w, signed)
+    q, m = _tdiv(s, 3), s - _tdiv(s, 3) * 3
+    want = ((q * 7 + m) & 0xff)
+    prog = (f"fn fa() -> {ty} {{\n    return {a};\n}}\n"
+            f"fn fb() -> {ty} {{\n    return {b};\n}}\n"
+            "fn main() -> i64 {\n"
+            "    let q: i64 = ((fa() + fb()) / 3) as i64;\n"
+            "    let m: i64 = ((fa() + fb()) % 3) as i64;\n"
+            "    return (q * 7 + m) & 255;\n}\n")
+    return (f"{ty} call results summed then divided inline", prog, want)
+
+
+def _leaf_field_program(ty: str, w: int, signed: bool):
+    """A struct field of type `ty` stored (in a struct literal) from arithmetic
+    over other fields, then divided: the store wraps to the field's width, so the
+    division sees what MLIR stored. (A field assignment `q.x = ...` wraps the
+    same way, but the seeded native entry refuses field assignment today.)"""
+    a = (1 << (w - 1)) - 5 if signed else (1 << w) - 4
+    b = 100
+    x = _wrapw(a + b, w, signed)
+    y = _wrapw(a * b, w, signed)
+    q, m = _tdiv(x, 3), y - _tdiv(y, 7) * 7
+    want = ((q * 7 + m) & 0xff)
+    store = "    let q: P = P { x: p.x + p.y, y: p.x * p.y };\n"
+    prog = (f"struct P {{\n    x: {ty},\n    y: {ty},\n}}\n"
+            "fn main() -> i64 {\n"
+            f"    let p: P = P {{ x: {a}, y: {b} }};\n" + store +
+            f"    let d1: {ty} = q.x / 3;\n    let d2: {ty} = q.y % 7;\n"
+            "    return ((d1 as i64) * 7 + (d2 as i64)) & 255;\n}\n")
+    return (f"{ty} field stored from field arithmetic then divided", prog, want)
+
+
+# Verifier round 3: narrow values that reach `/` or `%` through a CALL result or
+# a STRUCT FIELD. Each program's expected exit comes from the wrapping model
+# above; both backends must give it.
+NARROW_LEAVES = (
+    [_leaf_call_program(*t) for t in _NARROW_TYPES if t[1] < 32]
+    + [_leaf_field_program(*t) for t in _NARROW_TYPES]
+    + [
+        ("i32 MIN / -1 bound to an i32 let over params",
+         "fn q(a: i32, b: i32) -> i64 {\n    let x: i32 = a / b;\n    return (x as i64) & 255;\n}\n"
+         "fn main() -> i64 {\n    return q(0 - 2147483647 - 1, 0 - 1);\n}\n", 0),
+        ("i32 MIN / -1 assigned to an i32 name over locals",
+         "fn main() -> i64 {\n    let a: i32 = 0 - 2147483647 - 1;\n    let b: i32 = 0 - 1;\n"
+         "    let mut x: i32 = 5;\n    x = a / b;\n    if x == a {\n        return 9;\n    }\n"
+         "    return 1;\n}\n", 9),
+        ("i32 MIN / -1 stored to an i32 field",
+         "struct S {\n    v: i32,\n}\n"
+         "fn q(a: i32, b: i32) -> i64 {\n    let s: S = S { v: a / b };\n"
+         "    if s.v == a {\n        return 9;\n    }\n    return 1;\n}\n"
+         "fn main() -> i64 {\n    return q(0 - 2147483647 - 1, 0 - 1);\n}\n", 9),
+        ("u8 field from an out-of-range literal, then divided",
+         "struct S {\n    v: u8,\n}\n"
+         "fn main() -> i64 {\n    let s: S = S { v: 300 };\n    let d: u8 = s.v / 3;\n    return d as i64;\n}\n",
+         _wrapw(300, 8, False) // 3),
+        ("i8 field from an out-of-range literal, then divided",
+         "struct S {\n    v: i8,\n}\n"
+         "fn main() -> i64 {\n    let s: S = S { v: 200 };\n    let d: i8 = s.v / 3;\n    return (d as i64) & 255;\n}\n",
+         _tdiv(_wrapw(200, 8, True), 3) & 255),
+        ("i32 / small literal stays native",
+         "fn q(a: i32) -> i64 {\n    return (a / 7) as i64;\n}\n"
+         "fn main() -> i64 {\n    return q(0 - 2147483647 - 1) & 255;\n}\n", _tdiv(-(1 << 31), 7) & 255),
+    ]
+)
+
+# Shapes where the native i64 slots cannot reproduce MLIR's value: the native
+# emitter must REFUSE (empty image). (name, program, MLIR exit or None).
+NARROW_LEAVES_REFUSED = [
+    ("i32 MIN / -1 compared before it is bound (params)",
+     "fn q(a: i32, b: i32) -> i64 {\n    if a / b == a {\n        return 1;\n    }\n    return 0;\n}\n"
+     "fn main() -> i64 {\n    return q(0 - 2147483647 - 1, 0 - 1);\n}\n", 1),
+    ("i32 MIN / -1 widened by a cast (params)",
+     "fn q(a: i32, b: i32) -> i64 {\n    return ((a / b) as i64) & 255;\n}\n"
+     "fn main() -> i64 {\n    return q(0 - 2147483647 - 1, 0 - 1);\n}\n", 0),
+    ("i32 MIN / -1 widened by a cast (locals)",
+     "fn main() -> i64 {\n    let a: i32 = 0 - 2147483647 - 1;\n    let b: i32 = 0 - 1;\n"
+     "    return ((a / b) as i64) & 255;\n}\n", None),
+    ("i32 MIN / -1 returned from an i64 fn",
+     "fn q(a: i32, b: i32) -> i64 {\n    let r: i64 = (a / b) as i64;\n    return r & 255;\n}\n"
+     "fn main() -> i64 {\n    return q(0 - 2147483647 - 1, 0 - 1);\n}\n", 0),
+    ("i32 call results summed then divided",
+     "fn fa() -> i32 {\n    return 2147483647;\n}\nfn fb() -> i32 {\n    return 3;\n}\n"
+     "fn main() -> i64 {\n    let r: i64 = ((fa() + fb()) / 3) as i64;\n    return r & 255;\n}\n", None),
+    ("u8 fields summed then divided inline",
+     "struct P {\n    x: u8,\n    y: u8,\n}\n"
+     "fn main() -> i64 {\n    let p: P = P { x: 252, y: 100 };\n"
+     "    return ((p.x + p.y) / 3) as i64;\n}\n", 32),
+    ("u8 divided by an i64",
+     "fn q(a: u8, b: i64) -> i64 {\n    return a / b;\n}\n"
+     "fn main() -> i64 {\n    return q(200, 3);\n}\n", None),
+    ("i32 divided by a literal wider than 32 bits",
+     "fn q(a: i32) -> i64 {\n    return (a / 4294967295) as i64;\n}\n"
+     "fn main() -> i64 {\n    return q(7) & 255;\n}\n", None),
+    ("u32 remainder by 2^32",
+     "fn q(a: u32) -> i64 {\n    let r: u32 = a % 4294967296;\n    return (r as i64) & 255;\n}\n"
+     "fn main() -> i64 {\n    return q(7);\n}\n", None),
+]
+
+
 def main() -> int:
     so = resolve_so()
     sh = SelfHost(so)
@@ -446,7 +551,7 @@ def main() -> int:
         ok = ok and good
         check(good, f"program declaring extern _exit, 7 / 0: "
               f"mlir=(exit {gm[0]}) expected=(exit {TRAP_EXIT}) [native: extern calls refused]")
-        for name, prog, mlir_want in U64_REFUSED + NARROW32_INLINE_REFUSED:
+        for name, prog, mlir_want in U64_REFUSED + NARROW32_INLINE_REFUSED + NARROW_LEAVES_REFUSED:
             elf = sh.elf(prog)
             mbin, diag = mlir_binary(prog, d, "u64")
             gm = run(mbin, []) if mbin is not None else ("build-failed: " + diag[-160:], b"")
@@ -454,7 +559,7 @@ def main() -> int:
             ok = ok and good
             check(good, f"{name}: native image {len(elf)}B (expected 0B refusal), "
                   f"mlir=(exit {gm[0]}) expected mlir=(exit {mlir_want})")
-        for name, prog, want_exit in U64_NOT_FENCED + NARROW_UNSIGNED + NARROW_WRAP:
+        for name, prog, want_exit in U64_NOT_FENCED + NARROW_UNSIGNED + NARROW_WRAP + NARROW_LEAVES:
             elf = sh.elf(prog)
             mbin, diag = mlir_binary(prog, d, "unsigned")
             gn = run(write_exec(d / "unsigned.native.elf", elf), []) if elf else ("refused", b"")
@@ -464,8 +569,9 @@ def main() -> int:
             check(good, f"{name}: native=(exit {gn[0]}) mlir=(exit {gm[0]}) expected=(exit {want_exit})")
     if ok:
         print(f"\nALL PASS  (i64 / % trap with exit {TRAP_EXIT} on both backends; "
-              "sign matrix and shift rule agree with the model; narrow wrap-then-divide agrees; "
-              "u64/usize and unbound i32/u32 division refused natively)")
+              "sign matrix and shift rule agree with the model; narrow wrap-then-divide agrees, "
+              "including call-result and struct-field operands; u64/usize, unbound i32/u32 "
+              "and mixed-type division refused natively)")
         return 0
     print("\nFAIL  div-trap smoke")
     return 1
