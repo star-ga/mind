@@ -1,0 +1,9 @@
+// A8 refusal: a narrow-typed const. Native inlines only consts declared `i64`
+// (it has no typed-const model); every other declared type fails closed.
+// MLIR: K reads as the untruncated 300 (mindc-Rust neither range-checks nor
+// truncates the initializer to u8), so 300 / 2 = 150.
+fn main() -> i64 {
+    K / 2
+}
+
+const K: u8 = 300

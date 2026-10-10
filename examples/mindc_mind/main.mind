@@ -3194,6 +3194,16 @@ pub fn parse_primary_ns(toks: Vec, pos: i64, buf: i64, no_struct: i64) -> ParseR
                 return pr_new(pos + 1, mk_syn_intlit(cv));
             }
         }
+        // deferred: a top-level STRING const (`const NAME: str = "..."`) is NOT
+        // inlined, so its use stays an unresolved ident and fails closed. Native
+        // stage1 cannot yet lower ANY string literal: the self-computed trace
+        // note (nb_trace_hash -> nb_build_mic3) has no twin of mindc-Rust's
+        // Literal::Str expansion (alloc + per-byte __mind_store_i8 + a 24-byte
+        // {addr, len, cap = len} record), and the native rodata handle carries
+        // cap = 0 where MLIR's carries cap = len. Upgrade path: port that
+        // expansion into the mic@3 twin and align the native handle's cap word,
+        // then inline the decl's literal leaf here (local-wins + escape guards
+        // as for the int const above).
         let n: i64 = ast_new_leaf(ast_ident(), lo, hi);
         return pr_new(pos + 1, n);
     }
@@ -4382,8 +4392,33 @@ pub fn parse_assign(toks: Vec, pos: i64, buf: i64) -> ParseResult {
         after_v
     };
     let v_hi: i64 = ast_span_hi(pr_node(value));
-    let a: i64 = ast_new_assign(name_lo, v_hi, name, pr_node(value));
+    let vn: i64 = const_assign_guard(toks, buf, name_lo, name_hi, pr_node(value));
+    let a: i64 = ast_new_assign(name_lo, v_hi, name, vn);
     pr_new(after_semi, a)
+}
+
+// Assignment to a top-level const (`const K: i64 = 5` .. `K = 6;`): mindc-Rust
+// assigns a per-function copy, but native has no const storage (every read is
+// the inlined initializer), so the store would be silently dropped. When the
+// target names a const decl that no let/param anywhere shadows, the assigned
+// VALUE becomes the poison leaf, which the assign emit arms refuse (0 bytes) —
+// fail closed, never a dropped store. Same uppercase gate as const_resolve, so
+// main.mind's own self-compile (no top-level const) is unchanged.
+pub fn const_assign_guard(toks: Vec, buf: i64, nlo: i64, nhi: i64, value: i64) -> i64 {
+    let b0: i64 = load_byte(buf, nlo);
+    if b0 < 65 {
+        return value;
+    }
+    if b0 > 90 {
+        return value;
+    }
+    if const_find_from(toks, buf, 0, nlo, nhi) < 0 {
+        return value;
+    }
+    if const_name_bound(toks, buf, nlo, nhi) == 1 {
+        return value;
+    }
+    ast_new_leaf(ast_unsupported(), nlo, nhi)
 }
 
 // The arithmetic compound-assign operator tokens `+= -= *= /= %=`, recognised by
@@ -4427,7 +4462,7 @@ pub fn parse_compound_assign(toks: Vec, pos: i64, buf: i64, op: i64) -> ParseRes
     let after_v: i64 = pr_pos(value);
     let v_hi: i64 = ast_span_hi(pr_node(value));
     let bin: i64 = ast_new_binop(name_lo, v_hi, lhs, pr_node(value), op);
-    let a: i64 = ast_new_assign(name_lo, v_hi, tgt, bin);
+    let a: i64 = ast_new_assign(name_lo, v_hi, tgt, const_assign_guard(toks, buf, name_lo, name_hi, bin));
     let after_semi: i64 = if tok_kind(toks, after_v) == tk_semi() {
         after_v + 1
     } else {
@@ -5207,15 +5242,19 @@ pub fn const_find_from(toks: Vec, buf: i64, pos: i64, nlo: i64, nhi: i64) -> i64
 // followed directly by the next top-level item (or EOF) is the same declaration.
 // Without the `;` the int token must be IMMEDIATELY followed by an item start
 // (tok_is_item_start) or EOF, so `const K: i64 = 1 + 2` (a const-expr, no `;`)
-// still refuses instead of inlining the bare `1`. A float/bool-typed const with
-// an int initializer is a mindc-Rust type error (E2001), so it refuses here too
-// rather than inlining raw integer bits into a float context.
+// still refuses instead of inlining the bare `1`. Only a const DECLARED `i64`
+// inlines: mindc-Rust records the declared type of every const
+// (set_module_const_types) and its IR for a narrow / unsigned const is not the
+// bare int-lit this inline produces (the mic@3 trace note of `const K: u8 =
+// 300` diverges from the twin emitter's), and a float/bool-typed const with an
+// int initializer is a type error (E2001). Every non-i64 declared type
+// therefore refuses (fail closed).
 pub fn const_read_init(toks: Vec, buf: i64, np: i64) -> i64 {
     if tok_kind(toks, np + 1) == tk_colon() {
         if tok_kind(toks, np + 2) == tk_ident() {
             if tok_kind(toks, np + 3) == tk_eq() {
                 if tok_kind(toks, np + 4) == tk_int() {
-                    if const_type_not_int(buf, tok_lo(toks, np + 2), tok_hi(toks, np + 2)) == 1 {
+                    if is_ident_i64(buf, tok_lo(toks, np + 2), tok_hi(toks, np + 2)) == 0 {
                         return 0 - 1;
                     }
                     if const_init_ends(toks, buf, np + 5) == 1 {
@@ -5238,29 +5277,6 @@ pub fn const_init_ends(toks: Vec, buf: i64, pos: i64) -> i64 {
         return 1;
     }
     tok_is_item_start(toks, pos, buf)
-}
-
-// 1 iff a const's declared TYPE cannot hold an int initializer: `f32` / `f64`
-// (3 bytes, 'f'=102) or `bool` (b o o l). Every other spelling keeps the
-// pre-existing int-inline behaviour.
-pub fn const_type_not_int(buf: i64, lo: i64, hi: i64) -> i64 {
-    if hi - lo == 3 {
-        if load_byte(buf, lo) == 102 {
-            return 1;
-        }
-    }
-    if hi - lo == 4 {
-        if load_byte(buf, lo) == 98 {
-            if load_byte(buf, lo + 1) == 111 {
-                if load_byte(buf, lo + 2) == 111 {
-                    if load_byte(buf, lo + 3) == 108 {
-                        return 1;
-                    }
-                }
-            }
-        }
-    }
-    0
 }
 
 // Resolve a bare ident buf[nlo..nhi) to its const value, or -1 (refuse; see the
@@ -12940,6 +12956,13 @@ pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: 
         return collect_expr_strings(strbuf, offs, ccell, src, ast_child2(node), ebuf, en);
     }
     if k == ast_cast() {
+        // A POINTER cast (`as *const T` / `as *mut T`) is mindc-Rust's verbatim
+        // pass-through (no conversion call), so it interns no name — the twin of
+        // flatten_expr_env's pointer-cast arm. Without this the strtab carried a
+        // bogus `__mind_conv_*...` entry and the trace note diverged.
+        if ast_cast_is_ptr(src, node) == 1 {
+            return collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node), ebuf, en);
+        }
         // `EXPR as TARGET` -> CALL __mind_conv_TARGET([operand]). The call name
         // interns after the operand's strings, matching collect_instr_strings.
         let _cs: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node), ebuf, en);
@@ -24332,6 +24355,12 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         return flatten_narrow_binop_result(ast_aux(node), ast_child0(node), ast_child1(node), slot, nodes, cursor);
     }
     if k == ast_cast() {
+        // A POINTER cast (`as *const T` / `as *mut T`) is mindc-Rust's verbatim
+        // pass-through (lower.rs Node::As, the `None => val` arm: no conversion
+        // call, no instr) — its value IS the source's slot.
+        if ast_cast_is_ptr(src, node) == 1 {
+            return flatten_expr_env(ast_child0(node), src, params_addr, n_params, nodes, cursor, env, nlets);
+        }
         // Every parsed scalar cast lowers to one canonical source-kind-dependent
         // conversion call. Retain the cast node in record[1] so emission can recover
         // the exact target spelling (`i32`, `u8`, `f64`, ...).

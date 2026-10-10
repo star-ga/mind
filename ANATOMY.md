@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 1996 | **Est. tokens:** ~3,751,861
-**Generated:** 2026-10-09 22:13 UTC
+**Files:** 2031 | **Est. tokens:** ~3,776,296
+**Generated:** 2026-10-10 18:13 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 33 | ~31,123 |
+| `./` | 33 | ~31,656 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
@@ -62,12 +62,13 @@
 | `examples/grammar_mask/` | 2 | ~4,636 |
 | `examples/halbach_q16/` | 2 | ~7,856 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 175 | ~461,417 |
+| `examples/mindc_mind/` | 176 | ~463,757 |
 | `examples/mindc_mind/testdata/` | 3 | ~4,159 |
 | `examples/mindc_mind/testdata/backend_native_bridge/` | 9 | ~1,078 |
 | `examples/mindc_mind/testdata/mindfuzz_regress/` | 74 | ~9,283 |
 | `examples/mindc_mind/testdata/mindfuzz_regress_failclosed/` | 14 | ~2,935 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~913 |
+| `examples/mindc_mind/testdata/native_misc/` | 29 | ~3,822 |
 | `examples/mindc_mind/testdata/native_record_array/` | 42 | ~2,926 |
 | `examples/mindc_mind/testdata/native_record_trace/` | 13 | ~2,127 |
 | `examples/mindc_mind/testdata/selfhost_loop/` | 2 | ~2,137 |
@@ -112,9 +113,9 @@
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 1 | ~9,878 |
 | `src/bin/mindc/` | 1 | ~204 |
-| `src/build/` | 13 | ~53,987 |
+| `src/build/` | 13 | ~54,464 |
 | `src/build/cache/` | 3 | ~3,150 |
-| `src/build/native_bridge/` | 2 | ~4,881 |
+| `src/build/native_bridge/` | 5 | ~15,307 |
 | `src/cache/` | 4 | ~3,682 |
 | `src/check/` | 5 | ~12,177 |
 | `src/deps/` | 1 | ~9,388 |
@@ -152,7 +153,7 @@
 | `src/types/` | 10 | ~20,759 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 42 | ~205,452 |
-| `tests/` | 420 | ~861,169 |
+| `tests/` | 422 | ~868,006 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 3 | ~12,308 |
@@ -245,7 +246,7 @@
 - `.bench-baseline-2026-06-01-correctness.txt` (~844 tok, large) — === Correctness-milestone baseline (mindc 0.7.0, 2026-06-01) ===
 - `.bench-pre-pratt.txt` (~32 tok, tiny) — === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
-- `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
+- `build.rs` (~767 tok, large) — Copyright 2025 STARGA Inc.
 - `Cargo.toml` (~3947 tok, huge) — [package]
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
@@ -680,7 +681,7 @@
 - `param_types_smoke.py` (~1273 tok, large)
 - `_ref_add.note` (~16 tok, tiny) — fff4fc7e1d90f40c4fa6bac3799795d51008132c65cca0ff7b3b4496cf1a58af
 - `_ref_if_ret.note` (~16 tok, tiny) — 63b7ec7b7f87e25de1aa2fb591affbb2b25d10c37908ae9d711f1653af0efe64
-- `_ref_main.note` (~16 tok, tiny) — c7c797380c714c82415dbfce54eeae617b85fdc30d99c6491623b777a75a4ab5
+- `_ref_main.note` (~16 tok, tiny) — 0a5db0d39825f96c6f834808d8d9656187cfe349849b564ffed9300210bb1e92
 - `ref_netverify.py` (~1473 tok, large) — # Canonical independent net-verify harness for i64 references in the native-ELF backend.
 - `_ref_recursion.note` (~16 tok, tiny) — babd5f8c4d6e3539fc61392e8ff14d4c8523e04e6424a528d1c823948745b9f7
 - `_ref_struct_field.note` (~16 tok, tiny) — dfcf7fa7f8ec57cf5f499ffa47833530ed978bbf38a424ec69feeede26516b27
@@ -747,6 +748,7 @@
 - `self_host_native_intdot_q16_smoke.py` (~1111 tok, large) — RI-B2-S4 (#108) — native-ELF scalar Q16.16 DOT-PRODUCT, byte-identity rung.
 - `self_host_native_intdot_smoke.py` (~1165 tok, large) — RI-B2-S1 (#108) scalar i64 DOT-PRODUCT reduction native-ELF (zero MLIR/LLVM).
 - `self_host_native_matmul_f32_v_smoke.py` (~1718 tok, huge) — RI-B2-S9 (#108) — native-ELF scalar STRICT-FP f32 GEMV (matmul-f32-v).
+- `self_host_native_misc_census_smoke.py` (~2329 tok, huge) — Native stage1 census gate: top-level int consts (A8; string consts refuse), pointer casts (A2) and a
 - `self_host_native_narrow_add_i8_smoke.py` (~2260 tok, huge) — C2 — native-ELF NARROW-INT (i8) WRAP ARITHMETIC, zero MLIR/LLVM.
 - `self_host_native_narrow_arith_batch_smoke.py` (~2554 tok, huge) — C2 — native-ELF NARROW-INT WRAP ARITHMETIC batch: {sub,mul}xi8 + {add,mul}xi16.
 - `self_host_native_narrowint_smoke.py` (~1656 tok, huge) — Roadmap C2 narrow-int native-ELF rung — user-reachable i8/i16/i32 truncating
@@ -808,7 +810,7 @@
 - `self_host_value_if_expr_smoke.py` (~1557 tok, huge)
 - `sha256_hash_smoke.py` (~1284 tok, large) — # Copyright 2025 STARGA Inc.
 - `smoke_wiring_lint.py` (~8534 tok, huge) — smoke_wiring_lint.py — machine-checked contract for WHERE each
-- `SMOKE_WIRING.tsv` (~3819 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
+- `SMOKE_WIRING.tsv` (~3830 tok, huge) — # SMOKE_WIRING.tsv — the CHECKED contract for where each examples/mindc_mind s
 - `stdlib_manifest_lint.py` (~2431 tok, huge) — stdlib_manifest_lint.py — machine-checked contract for WHICH std/*.mind
 - `_stdlib_manifest.py` (~1129 tok, large) — Shared reader for the committed std/*.mind manifest.
 - `struct_fields_smoke.py` (~1076 tok, large)
@@ -930,6 +932,37 @@
 - `recursion.elf` (~175 tok, small) — ELF> @@@8
 - `struct_field.elf` (~166 tok, small) — ELF> @@@8
 - `value_if.elf` (~147 tok, small) — ELF> @@@8
+### `examples/mindc_mind/testdata/native_misc/`
+
+- `a2_ptrcast_ok.mind` (~350 tok, medium) — A2: pointer casts between PROVEN 64-bit integers and pointers are
+- `a2_refuse_ptr_let_annotation.mind` (~68 tok, small) — A2 boundary: a pointer-TYPED let annotation is not parsed by the native port
+- `a2_refuse_ptr_to_i32.mind` (~56 tok, small) — A2 fail-closed: a pointer narrowed to i32 is a truncation, not a 64-bit
+- `a2_refuse_ptr_to_u8.mind` (~35 tok, tiny) — A2 fail-closed: a pointer narrowed to u8.
+- `a2_refuse_src_cmp.mind` (~69 tok, small) — A2 fail-closed: a pointer cast whose source is not PROVEN to be a 64-bit
+- `a2_refuse_src_f64let.mind` (~69 tok, small) — A2 fail-closed: a pointer cast whose source is not PROVEN to be a 64-bit
+- `a2_refuse_src_i32let.mind` (~69 tok, small) — A2 fail-closed: a pointer cast whose source is not PROVEN to be a 64-bit
+- `a2_refuse_src_narrowcall.mind` (~46 tok, tiny) — A2 fail-closed: a pointer cast of a call whose declared return type is i32.
+- `a2_refuse_src_narrowparam.mind` (~34 tok, tiny) — A2 fail-closed: a pointer cast of an i32 PARAMETER.
+- `a2_refuse_src_u32let.mind` (~71 tok, small) — A2 fail-closed: a pointer cast whose source is not PROVEN to be a 64-bit
+- `a2_refuse_src_unannotated.mind` (~69 tok, small) — A2 fail-closed: a pointer cast whose source is not PROVEN to be a 64-bit
+- `a8_const_mixed.mind` (~91 tok, small) — A8: `;`-terminated and `;`-less consts interleaved with fns, a const
+- `a8_const_nosemi.mind` (~332 tok, medium) — A8: top-level `const` items WITHOUT a trailing `;` (the MIND-Lab SX_* table
+- `a8_refuse_const_assign.mind` (~78 tok, small) — A8 refusal: assignment to a top-level const. mindc-Rust assigns a
+- `a8_refuse_const_compound.mind` (~59 tok, small) — A8 refusal: compound assignment to a top-level const. MLIR: K += 2 on the
+- `a8_refuse_constexpr.mind` (~64 tok, small) — A8 fail-closed: a `;`-less const whose initializer is an EXPRESSION. The
+- `a8_refuse_float_const.mind` (~61 tok, small) — A8 fail-closed: an int initializer on an f64 const is a type error in
+- `a8_refuse_narrow_const.mind` (~84 tok, small) — A8 refusal: a narrow-typed const. Native inlines only consts declared `i64`
+- `a8_str_const.mind` (~300 tok, medium) — A8 refusal (deferred): string consts `const NAME: str|&str|String = "..."`,
+- `a8_str_refuse_i64type.mind` (~74 tok, small) — A8 refusal: a string initializer under an `i64` declared type. mindc-Rust
+- `st_cond_use.mind` (~237 tok, medium) — Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for
+- `st_let_init.mind` (~161 tok, small) — Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for
+- `st_main_tail.mind` (~157 tok, small) — Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for
+- `st_operand_i16.mind` (~167 tok, small) — Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for
+- `st_return_i32.mind` (~177 tok, small) — Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for
+- `st_tail_chain.mind` (~284 tok, medium) — Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for
+- `st_tail_valueif_main.mind` (~198 tok, small) — Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for
+- `st_tail_w_set.mind` (~183 tok, small) — Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for
+- `st_valueif_i8.mind` (~179 tok, small) — Store intrinsic used as a VALUE: the C runtime (MLIR build) returns 0 for
 ### `examples/mindc_mind/testdata/native_record_array/`
 
 - `aggregate_refuse.mind` (~33 tok, tiny) — fn main() -> i64 {
@@ -1305,11 +1338,18 @@
 - `mod.rs` (~9611 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/native_bridge/`
 
+- `admission.rs` (~5064 tok, huge) — Copyright 2025 STARGA Inc.
 - `child.rs` (~3650 tok, huge) — Copyright 2025 STARGA Inc.
 - `child_tests.rs` (~1231 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
-- `native_bridge.rs` (~8564 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_bridge.rs` (~9041 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/build/native_bridge/`
+
+- `seed.rs` (~2735 tok, huge) — Copyright 2025 STARGA Inc.
+- `shadow.rs` (~2627 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/build/`
+
 - `native_image.rs` (~4296 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_scope.rs` (~6258 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_scope_tests.rs` (~5219 tok, huge) — Seam tests for the captured-source snapshot and its module identities.
@@ -2346,6 +2386,7 @@
 - `narrow_tuple_pr216_run.rs` (~1409 tok, large) — Copyright 2025 STARGA Inc.
 - `narrow_unsigned_div_zero_run.rs` (~1247 tok, large) — Copyright 2025 STARGA Inc.
 - `native_bridge_child_status.rs` (~3380 tok, huge) — Copyright 2025 STARGA Inc.
+- `native_bridge_refusals.rs` (~5405 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/native_bridge_support/`
 
 - `draining_native_compiler.rs` (~300 tok, medium) — Host-native compiler fixture for admission-only controls.
@@ -2354,6 +2395,7 @@
 
 - `native_closure_admission.rs` (~3941 tok, huge) — Copyright 2025 STARGA Inc.
 - `native_default_profile_imports.rs` (~3506 tok, huge) — Default-feature-profile controls for the native backend's import admission.
+- `native_embedded_seed.rs` (~1432 tok, large) — Copyright 2025 STARGA Inc.
 - `native_import_terminator_controls.rs` (~1315 tok, large) — Native bridge controls: an `import`/`use` item the frozen compiler would
 - `native_module_bridge_controls.rs` (~8330 tok, huge) — Native module-bridge controls: SOURCE RESOLUTION and ADMISSION.
 - `native_module_bridge_visibility_controls.rs` (~3913 tok, huge) — Native module-bridge controls: VISIBILITY, EMIT KIND, CROSS-INVOCATION

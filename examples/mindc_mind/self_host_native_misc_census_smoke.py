@@ -1,4 +1,4 @@
-"""Native stage1 census gate: top-level consts (A8), pointer casts (A2) and a
+"""Native stage1 census gate: top-level int consts (A8; string consts refuse), pointer casts (A2) and a
 store intrinsic used as a value (the MIND-Lab `w_set` shape).
 
 What it proves, per fixture in testdata/native_misc/:
@@ -12,6 +12,11 @@ What it proves, per fixture in testdata/native_misc/:
     fixture text, never from either compiler), AND the MLIR build of the same
     file (`mindc build`) must produce the same exit code and stdout. Two
     independent oracles: arithmetic by hand, and the C-runtime/MLIR backend.
+  * `run` fixtures also pin the TWIN invariant: the native ELF's 32-byte trace
+    note (the pure-MIND mic@3 twin) must equal the Rust emit_mic3 reference note
+    of the same seeded program (mindfuzz_self_host.RustRef, `cargo test
+    _ref_mic3_dump`) — a construct the native path runs correctly but records
+    differently from mindc-Rust is a divergence, not a pass.
   * `refuse` fixtures: stage1 must fail CLOSED (non-zero exit, 0 bytes of ELF).
     The MLIR leg is still run and must match the hand-computed outcome, so each
     refusal is pinned against what the program would have meant.
@@ -34,6 +39,7 @@ import tempfile
 HERE = pathlib.Path(__file__).parent.resolve()
 sys.path.insert(0, str(HERE))
 from _stdlib_manifest import seed_blob  # noqa: E402
+from mindfuzz_self_host import RustRef, note_of_elf  # noqa: E402
 
 FROZEN_SEED = HERE / "testdata" / "selfhost_loop" / "stage1.elf"
 DRIVER = HERE / "selfhost_driver.mind"
@@ -49,6 +55,11 @@ CASES = [
     ("a8_const_mixed", RUN, (7, b""), (7, b"")),
     ("a8_refuse_constexpr", REFUSE, None, (3, b"")),
     ("a8_refuse_float_const", REFUSE, None, "build-fail"),
+    ("a8_refuse_narrow_const", REFUSE, None, (150, b"")),
+    ("a8_refuse_const_assign", REFUSE, None, (7, b"")),
+    ("a8_refuse_const_compound", REFUSE, None, (8, b"")),
+    ("a8_str_const", REFUSE, None, (22, b"hello hi\n")),
+    ("a8_str_refuse_i64type", REFUSE, None, (3, b"")),
     # --- A2: pointer casts ---------------------------------------------------
     ("a2_ptrcast_ok", RUN, (59, b"ptr\n"), (59, b"ptr\n")),
     ("a2_refuse_src_i32let", REFUSE, None, (6, b"")),
@@ -144,6 +155,7 @@ def main() -> int:
     stage1 = build_stage1()
     print(f"stage1 from {main_mind()} -> {stage1.name}")
     failures = []
+    rust = RustRef(HERE.parent.parent)
     with tempfile.TemporaryDirectory(prefix="native_misc_") as tdn:
         work = pathlib.Path(tdn)
         for name, kind, want, want_mlir in CASES:
@@ -159,6 +171,16 @@ def main() -> int:
                     got_run = run_exe(exe)
                     got = f"run={got_run!r}"
                     ok = got_run == want
+                    refd = work / f"ref_{name}"
+                    refd.mkdir()
+                    note = note_of_elf(out)
+                    ref = rust.seeded_note(src.read_text(), refd)
+                    nok = note is not None and ref is not None and note == ref
+                    print(f"[{'PASS' if nok else 'FAIL'}] note {name}: "
+                          f"native={note.hex()[:16] if note else None} "
+                          f"rust={ref.hex()[:16] if ref else None}")
+                    if not nok:
+                        failures.append(f"note:{name}")
                 print(f"[{'PASS' if ok else 'FAIL'}] native {name}: {got} want={want!r}")
             else:
                 ok = rc != 0 and len(out) == 0
@@ -174,7 +196,8 @@ def main() -> int:
     if failures:
         print(f"FAIL ({len(failures)}): {', '.join(failures)}")
         return 1
-    print(f"ALL PASS ({len(CASES)} fixtures: native vs hand-computed, MLIR vs hand-computed)")
+    print(f"ALL PASS ({len(CASES)} fixtures: native vs hand-computed, MLIR vs hand-computed, "
+          f"native trace note vs Rust emit_mic3 note)")
     return 0
 
 
