@@ -32,6 +32,11 @@ carried vars pins that the edge moves run as a parallel copy.
 Unconditional `break`/`continue` in a NESTED range-for leave the desugar's step
 as a dead tail; every walk of the loop body must drop it the same way.
 
+The hygiene gate: parse_for must pick the hidden-counter form wherever the Rust
+For arm goes hygienic — VAR bound in an enclosing scope (parameter, outer block
+`let`, enclosing range-for) or re-declared by a top-level body `let` — and keep
+the byte-neutral form everywhere else (DESUGAR_PAIRS pins the choice).
+
 Env: MINDC_SO = pure-MIND self-host cdylib. Exit 0 = ALL PASS.
 """
 import ctypes
@@ -204,6 +209,40 @@ CASES = [
     # outer pre-walk counts the if through nb_count_stmt (its merge slots and next_id)
     ("nested_uncond_break_in_if", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { if i >= 0 { for j in 0..3 { c = c + 1; break; } } c = c + 10; } return c; }", 33),
     ("nested_dead_tail_in_if_merge", b"fn main() -> i64 { let mut x: i64 = 0; let mut i: i64 = 0; while i < 3 { i = i + 1; if i > 1 { let mut k: i64 = 0; while k < 5 { k = k + 1; x = x + 1; break; x = x + 100; } } x = x + 10; } return x; }", 32),
+    # ---- the oracle's hygiene gate, every arm (Rust For arm, src/eval/lower.rs) ----
+    # A top-level `let VAR` in the body re-declares the loop var (body_redeclares):
+    # the step must advance the counter, not the shadow. Shadows 0,2,4,6,8.
+    ("redeclare_var", b"fn main() -> i64 { let mut s: i64 = 0; for i in 0..5 { let i: i64 = i * 2; s = s + i; } return s; }", 20),
+    ("redeclare_var_break", b"fn main() -> i64 { let mut s: i64 = 0; for i in 0..5 { let i: i64 = i * 2; if i == 6 { break; } s = s + i; } return s; }", 6),
+    ("redeclare_var_continue", b"fn main() -> i64 { let mut s: i64 = 0; for i in 0..5 { let i: i64 = i * 2; if i == 4 { continue; } s = s + i; } return s; }", 16),
+    # VAR bound OUTSIDE the for's own block (env.contains_key): a parameter, an
+    # enclosing block's `let`, or an enclosing range-for's VAR. The outer binding
+    # must survive the loop and must not be stepped by it.
+    ("param_shadow", b"fn f(i: i64) -> i64 { let mut c: i64 = 0; for i in 0..3 { c = c + 1; } return i + c * 10; } fn main() -> i64 { return f(7); }", 37),
+    ("param_shadow_continue", b"fn f(i: i64) -> i64 { let mut c: i64 = 0; for i in 0..5 { if i == 1 { continue; } c = c + i; } return i * 10 + c; } fn main() -> i64 { return f(7); }", 79),
+    ("param_shadow_break", b"fn f(i: i64) -> i64 { let mut c: i64 = 0; for i in 0..5 { if i == 3 { break; } c = c + i; } return i * 10 + c; } fn main() -> i64 { return f(7); }", 73),
+    ("second_param_shadow", b"fn f(a: i64, i: i64) -> i64 { let mut c: i64 = a; for i in 0..3 { c = c + 1; } return i + c; } fn main() -> i64 { return f(10, 20); }", 33),
+    ("outer_let_for_in_if", b"fn main() -> i64 { let i: i64 = 100; let mut c: i64 = 0; if c == 0 { for i in 0..3 { c = c + 1; } c = c + i; } return c; }", 103),
+    ("outer_let_for_in_while", b"fn main() -> i64 { let i: i64 = 50; let mut k: i64 = 0; let mut c: i64 = 0; while k < 2 { k = k + 1; for i in 0..3 { c = c + 1; } c = c + i; } return c; }", 106),
+    ("outer_let_for_in_while_continue", b"fn main() -> i64 { let i: i64 = 50; let mut k: i64 = 0; let mut c: i64 = 0; while k < 2 { k = k + 1; for i in 0..4 { if i == 2 { continue; } c = c + 1; } c = c + i; } return c; }", 106),
+    # nested same-name fors: 3 * (2 + i*10) over i = 0,1,2 -> 36 ; with an inner
+    # continue (3 counted per outer round) -> 39 ; three levels -> 1624 % 256 = 88
+    ("nested_same_var", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { for i in 0..2 { c = c + 1; } c = c + i * 10; } return c; }", 36),
+    ("nested_same_var_continue", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { for i in 0..4 { if i == 1 { continue; } c = c + 1; } c = c + i * 10; } return c; }", 39),
+    ("nested_same_var_3", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..2 { for i in 0..3 { for i in 0..4 { c = c + 1; } c = c + i * 100; } c = c + i * 1000; } return c % 256; }", 88),
+    # A write to VAR (or to an inline END) inside a NESTED loop of the body is still
+    # a body write for the oracle (collect_assign_targets descends into loops): the
+    # write hits the per-iteration copy, and END is read once. i: +20 per round in
+    # the last case, skipping i == 1 -> 20 + 22 + 23 = 65.
+    ("assign_var_in_nested_while", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { let mut k: i64 = 0; while k < 2 { i = i + 1; k = k + 1; } c = c + 1; } return c; }", 3),
+    ("assign_var_in_nested_for", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { for j in 0..2 { i = i + 1; } c = c + 1; } return c; }", 3),
+    ("end_assigned_in_nested_while", b"fn main() -> i64 { let mut n: i64 = 3; let mut c: i64 = 0; for i in 0..n { let mut k: i64 = 0; while k < 1 { n = n + 1; k = k + 1; } c = c + 1; } return c; }", 3),
+    ("assign_var_nested_while_continue", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..4 { if i == 1 { continue; } let mut k: i64 = 0; while k < 2 { i = i + 10; k = k + 1; } c = c + i; } return c; }", 65),
+    # controls: shapes the oracle keeps byte-neutral (the gate must not over-fire;
+    # DESUGAR_PAIRS below pins their form, these pin their values)
+    ("prior_sibling_for", b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { c = c + 1; } for i in 0..2 { c = c + i; } return c; }", 4),
+    ("closed_block_let_then_for", b"fn main() -> i64 { let mut c: i64 = 0; if c == 0 { let i: i64 = 9; c = c + i; } for i in 0..3 { c = c + i; } return c; }", 12),
+    ("redeclare_in_branch_only", b"fn main() -> i64 { let mut s: i64 = 0; for i in 0..4 { if i > 1 { let i: i64 = 100; s = s + i; } s = s + i; } return s; }", 206),
 ]
 
 # A `let` in the loop body that SHADOWS a carried var makes the exit edge's name
@@ -269,13 +308,44 @@ GATED_CASES = [
      3, False, "END call pre-lowered once into hidden bound"),
 ]
 
-# DESUGAR_PAIRS (byte-identity of `for` vs the NAIVE explicit `let mut i; while
-# i<HI { B; i=i+1 }` form) is RETIRED as of Step 2: the hygienic desugar emits a
-# hidden counter + a pre-lowered bound + a body-local element copy, so it is
-# deliberately NO LONGER byte-identical to the naive while form the pairs encode.
-# Value-correctness across the same shapes is covered by CASES above; the
-# hygiene-specific behavior is covered by GATED_CASES.
-DESUGAR_PAIRS = []
+# DESUGAR_PAIRS pin WHICH desugar parse_for picks, which values alone cannot: a
+# gate that over-fires still computes the right value through the hidden counter,
+# but leaves the oracle's byte-neutral form (and its mic@3 parity). Each entry is
+# (name, `for` source, the explicit byte-neutral `let VAR = LO; while VAR < HI {
+# BODY; VAR = VAR + 1; }` source, identical?). identical=True: the oracle keeps the
+# byte-neutral desugar, so the two ELFs must match byte for byte. identical=False:
+# the oracle goes hygienic (VAR in an enclosing scope, a body `let VAR`), so the
+# byte-neutral bytes would be the wrong program.
+DESUGAR_PAIRS = [
+    ("count_neutral",
+     b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..5 { c = c + 1; } return c; }",
+     b"fn main() -> i64 { let mut c: i64 = 0; let i: i64 = 0; while i < 5 { c = c + 1; i = i + 1; } return c; }",
+     True),
+    ("prior_sibling_neutral",
+     b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..3 { c = c + 1; } for i in 0..2 { c = c + i; } return c; }",
+     b"fn main() -> i64 { let mut c: i64 = 0; let i: i64 = 0; while i < 3 { c = c + 1; i = i + 1; } let i: i64 = 0; while i < 2 { c = c + i; i = i + 1; } return c; }",
+     True),
+    ("closed_let_neutral",
+     b"fn main() -> i64 { let mut c: i64 = 0; if c == 0 { let i: i64 = 9; c = c + i; } for i in 0..3 { c = c + i; } return c; }",
+     b"fn main() -> i64 { let mut c: i64 = 0; if c == 0 { let i: i64 = 9; c = c + i; } let i: i64 = 0; while i < 3 { c = c + i; i = i + 1; } return c; }",
+     True),
+    ("enclosing_other_var_neutral",
+     b"fn main() -> i64 { let mut c: i64 = 0; for i in 0..4 { for j in 0..i { c = c + j; } } return c; }",
+     b"fn main() -> i64 { let mut c: i64 = 0; let i: i64 = 0; while i < 4 { let j: i64 = 0; while j < i { c = c + j; j = j + 1; } i = i + 1; } return c; }",
+     True),
+    ("param_shadow_hygienic",
+     b"fn f(i: i64) -> i64 { let mut c: i64 = 0; for i in 0..3 { c = c + 1; } return i + c * 10; } fn main() -> i64 { return f(7); }",
+     b"fn f(i: i64) -> i64 { let mut c: i64 = 0; let i: i64 = 0; while i < 3 { c = c + 1; i = i + 1; } return i + c * 10; } fn main() -> i64 { return f(7); }",
+     False),
+    ("outer_let_hygienic",
+     b"fn main() -> i64 { let i: i64 = 100; let mut c: i64 = 0; if c == 0 { for i in 0..3 { c = c + 1; } c = c + i; } return c; }",
+     b"fn main() -> i64 { let i: i64 = 100; let mut c: i64 = 0; if c == 0 { let i: i64 = 0; while i < 3 { c = c + 1; i = i + 1; } c = c + i; } return c; }",
+     False),
+    ("redeclare_hygienic",
+     b"fn main() -> i64 { let mut s: i64 = 0; for i in 0..5 { let i: i64 = i * 2; s = s + i; } return s; }",
+     b"fn main() -> i64 { let mut s: i64 = 0; let i: i64 = 0; while i < 5 { let i: i64 = i * 2; s = s + i; i = i + 1; } return s; }",
+     False),
+]
 
 
 def main() -> int:
@@ -305,12 +375,18 @@ def main() -> int:
             else:
                 print(f"  PASS  {name}: refused fail-closed (empty ELF)")
 
-        for name, a, b in DESUGAR_PAIRS:
+        for name, a, b, identical in DESUGAR_PAIRS:
             ea, eb = mind_elf(lib, a), mind_elf(lib, b)
-            if ea and eb and ea == eb:
-                print(f"  PASS  {name}: `for` ELF byte-identical to explicit while-desugar ({len(ea)} B)")
+            if not (ea and eb):
+                print(f"  FAIL  {name}: a form failed closed (for {len(ea)} B, explicit {len(eb)} B)")
+                rc = 1
+            elif (ea == eb) == identical:
+                how = "byte-identical to" if identical else "differs from"
+                print(f"  PASS  {name}: `for` ELF {how} the byte-neutral while-desugar ({len(ea)} B)")
             else:
-                print(f"  FAIL  {name}: for form ({len(ea)} B) != explicit while-desugar ({len(eb)} B)")
+                want = "byte-neutral" if identical else "hygienic"
+                print(f"  FAIL  {name}: `for` took the wrong desugar (want {want}; "
+                      f"identical={ea == eb})")
                 rc = 1
 
         # ---- GATED hygiene cases: self-host substrate leg + xfail bookkeeping.

@@ -4091,13 +4091,18 @@ pub fn for_inject_step_if(node: i64, var_lo: i64, var_hi: i64) -> i64 {
     ast_new_if(ast_span_lo(node), ast_span_hi(node), ast_child0(node), ntb, neb)
 }
 
-// Does the loop BODY assign the loop variable VAR (`VAR = ...`) at this loop
-// level? Descends if then/else blocks (same loop level); stops at nested loops
-// (already lowered to `while`). Mirrors the oracle's `body_assigns_var` gate
-// (src/eval/lower.rs): when the body writes VAR the Rust For arm switches to the
-// HYGIENIC desugar (a per-iteration `let mut VAR = __for_i_N` copy), which the
-// self-host cannot reproduce byte-for-byte, so this steers such shapes onto the
-// fail-closed hidden-counter form instead of a wrong-bytes byte-neutral emit.
+// Does the loop BODY assign the name VAR (`VAR = ...`) anywhere? Descends if
+// then/else blocks AND nested loop bodies (a nested range-for is already a
+// `while` here) — the exact reach of the oracle's collect_assign_targets
+// (src/eval/lower.rs), which feeds both its `body_assigns_var` and its
+// `end_reads_body_assigned` gates, and so both callers here. A write in a nested
+// loop still hits the byte-neutral form's counter (`for i in 0..3 { while k < 2 {
+// i = i + 1; .. } }` ran once instead of three times), and a bound written there
+// is re-read every iteration (`for i in 0..n { while .. { n = n + 1; } }` hung).
+// When the body writes VAR the Rust For arm switches to the HYGIENIC desugar (a
+// per-iteration `let mut VAR = __for_i_N` copy), so this steers such shapes onto
+// the hidden-counter form. A nested same-name range-for is hygienic itself
+// (for_var_in_scope), so its desugar assigns its hidden counter, never VAR.
 pub fn for_body_assigns_var(sa: i64, sl: i64, buf: i64, var_lo: i64, var_hi: i64, i: i64) -> i64 {
     if i >= sl {
         return 0;
@@ -4112,6 +4117,12 @@ pub fn for_body_assigns_var(sa: i64, sl: i64, buf: i64, var_lo: i64, var_hi: i64
     }
     if k == ast_if() {
         if for_if_assigns_var(s, buf, var_lo, var_hi) == 1 {
+            return 1;
+        }
+    }
+    if k == ast_while() {
+        let wb: i64 = ast_child1(s);
+        if for_body_assigns_var(ast_child0(wb), ast_aux(wb), buf, var_lo, var_hi, 0) == 1 {
             return 1;
         }
     }
@@ -4171,6 +4182,230 @@ pub fn for_acc_declares_var(acc: Vec, buf: i64, var_lo: i64, var_hi: i64, i: i64
         }
     }
     for_acc_declares_var(acc, buf, var_lo, var_hi, i + 1)
+}
+
+// ---- Range-for hygiene gate: the arms the parse-time gate used to miss ----
+// The Rust For arm (src/eval/lower.rs) lowers HYGIENICALLY when
+//   env.contains_key(VAR) || body assigns VAR || body re-declares VAR (top-level
+//   `let VAR`, for_hygiene.rs body_redeclares) || END has a call || END reads a
+//   body-assigned var.
+// The byte-neutral desugar steps VAR itself, so taking it for a shape the oracle
+// treats hygienically is a silent wrong value, not just a mic@3 byte gap
+// (for_body_assigns_var covers the "assigns" arms, nested loops included):
+//   * a top-level `let VAR` in the body: the step advances the SHADOW
+//     (`for i in 0..5 { let i = i * 2; s = s + i; }` gave 8, oracle 20);
+//   * VAR already bound outside the block (a parameter, an enclosing block's
+//     `let`, an enclosing range-for's VAR): the binder `let VAR = LO` clobbers or
+//     re-steps the outer binding (`fn f(i)` + `for i in 0..3` returned the final
+//     counter; `for i in .. { for i in 0..2 {..} c = c + i }` read the inner one).
+// for_acc_declares_var only sees the SAME block's earlier statements; the two
+// helpers below cover the rest.
+
+// Rust body_redeclares twin: 1 iff a TOP-LEVEL body statement is an authored
+// `let VAR` (a tuple `let` is already split into sibling lets by
+// parse_block_stmts, so its names are covered). A nested range-for's generated
+// binder is a For node on the Rust side, not a Let, so it is skipped by span.
+pub fn for_body_redeclares_var(sa: i64, sl: i64, buf: i64, var_lo: i64, var_hi: i64, i: i64) -> i64 {
+    if i >= sl {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(sa + i * 8);
+    if ast_kind(stmt) == ast_let() {
+        if span_is_for_counter(buf, ast_span_lo(stmt), ast_span_hi(stmt)) == 0 {
+            let name: i64 = ast_child0(stmt);
+            if span_bytes_equal(buf, ast_span_lo(name), ast_span_hi(name), var_lo, var_hi) == 1 {
+                return 1;
+            }
+        }
+    }
+    for_body_redeclares_var(sa, sl, buf, var_lo, var_hi, i + 1)
+}
+
+// Rust env.contains_key(VAR) twin, read from the token stream: 1 iff VAR is bound
+// in a scope that encloses the `for` at token `pos` — a `let` (plain, `mut` or
+// tuple) earlier in this or an enclosing block, an enclosing range-for's VAR, or
+// a parameter of the enclosing fn. Scans backward from the `for`; `depth` counts
+// closed blocks being skipped (their bindings are out of scope). A previous
+// sibling range-for binds nothing here: its binder never outlives the loop on
+// the Rust side (cloned env), and it is a `for`, not a `let`, token.
+// deferred: match-arm pattern bindings and closure parameters are not bindings
+// the native-ELF subset produces around a `for`, so they are not scanned —
+// upgrade path: read the pattern before `=>` / between `|..|` when crossing the
+// arm's or closure's `{`.
+pub fn for_var_in_scope(toks: Vec, buf: i64, pos: i64, var_lo: i64, var_hi: i64) -> i64 {
+    for_scope_scan(toks, buf, pos - 1, 0, var_lo, var_hi)
+}
+
+pub fn for_scope_scan(toks: Vec, buf: i64, j: i64, depth: i64, var_lo: i64, var_hi: i64) -> i64 {
+    if j < 0 {
+        return 0;
+    }
+    let k: i64 = tok_kind(toks, j);
+    if k == tk_rbrace() {
+        return for_scope_scan(toks, buf, j - 1, depth + 1, var_lo, var_hi);
+    }
+    if k == tk_lbrace() {
+        if depth > 0 {
+            return for_scope_scan(toks, buf, j - 1, depth - 1, var_lo, var_hi);
+        }
+        // Leaving a block that encloses the `for`: an enclosing range-for's body
+        // has VAR in scope when its own loop variable is VAR.
+        if for_header_binds(toks, buf, j - 1, var_lo, var_hi) == 1 {
+            return 1;
+        }
+        return for_scope_scan(toks, buf, j - 1, 0, var_lo, var_hi);
+    }
+    if depth == 0 {
+        if k == tk_kw_let() {
+            if for_let_binds(toks, buf, j + 1, var_lo, var_hi) == 1 {
+                return 1;
+            }
+        }
+        if k == tk_kw_fn() {
+            // `fn(..)` is a fn-pointer TYPE inside the header; keep scanning to the
+            // declaring `fn NAME (`, whose parameters end the walk.
+            if tok_kind(toks, j + 1) != tk_lparen() {
+                if tok_kind(toks, j + 2) == tk_lparen() {
+                    return for_params_bind(toks, buf, j + 3, 1, var_lo, var_hi);
+                }
+                return 0;
+            }
+        }
+    }
+    for_scope_scan(toks, buf, j - 1, depth, var_lo, var_hi)
+}
+
+// The names a `let` binds, `p` = the token after `let`: `NAME`, `mut NAME`, or a
+// `( .. )` tuple of them.
+pub fn for_let_binds(toks: Vec, buf: i64, p: i64, var_lo: i64, var_hi: i64) -> i64 {
+    let k: i64 = tok_kind(toks, p);
+    if k == tk_lparen() {
+        return for_tuple_binds(toks, buf, p + 1, 1, var_lo, var_hi);
+    }
+    if k != tk_ident() {
+        return 0;
+    }
+    if is_ident_mut(buf, tok_lo(toks, p), tok_hi(toks, p)) == 1 {
+        if tok_kind(toks, p + 1) == tk_ident() {
+            return span_bytes_equal(buf, tok_lo(toks, p + 1), tok_hi(toks, p + 1), var_lo, var_hi);
+        }
+    }
+    span_bytes_equal(buf, tok_lo(toks, p), tok_hi(toks, p), var_lo, var_hi)
+}
+
+// Identifiers inside a tuple-let pattern (any nesting) up to its closing `)`.
+pub fn for_tuple_binds(toks: Vec, buf: i64, p: i64, pd: i64, var_lo: i64, var_hi: i64) -> i64 {
+    if at_eof(toks, p) == 1 {
+        return 0;
+    }
+    let k: i64 = tok_kind(toks, p);
+    if k == tk_lparen() {
+        return for_tuple_binds(toks, buf, p + 1, pd + 1, var_lo, var_hi);
+    }
+    if k == tk_rparen() {
+        if pd <= 1 {
+            return 0;
+        }
+        return for_tuple_binds(toks, buf, p + 1, pd - 1, var_lo, var_hi);
+    }
+    if k == tk_ident() {
+        if span_bytes_equal(buf, tok_lo(toks, p), tok_hi(toks, p), var_lo, var_hi) == 1 {
+            return 1;
+        }
+    }
+    for_tuple_binds(toks, buf, p + 1, pd, var_lo, var_hi)
+}
+
+// Parameter names of `fn NAME ( .. )`, `p` = the token after `(`: an identifier
+// at paren depth 1 directly followed by `:` and preceded by `(`, `,` or `mut`
+// (so a `::` path segment inside a type never counts).
+pub fn for_params_bind(toks: Vec, buf: i64, p: i64, pd: i64, var_lo: i64, var_hi: i64) -> i64 {
+    if at_eof(toks, p) == 1 {
+        return 0;
+    }
+    let k: i64 = tok_kind(toks, p);
+    if k == tk_lparen() {
+        return for_params_bind(toks, buf, p + 1, pd + 1, var_lo, var_hi);
+    }
+    if k == tk_rparen() {
+        if pd <= 1 {
+            return 0;
+        }
+        return for_params_bind(toks, buf, p + 1, pd - 1, var_lo, var_hi);
+    }
+    if pd == 1 {
+        if k == tk_ident() {
+            if tok_kind(toks, p + 1) == tk_colon() {
+                if for_param_name_pos(toks, buf, p - 1) == 1 {
+                    if span_bytes_equal(buf, tok_lo(toks, p), tok_hi(toks, p), var_lo, var_hi) == 1 {
+                        return 1;
+                    }
+                }
+            }
+        }
+    }
+    for_params_bind(toks, buf, p + 1, pd, var_lo, var_hi)
+}
+
+// 1 iff token `q` can precede a parameter name: `(`, `,` or `mut`.
+pub fn for_param_name_pos(toks: Vec, buf: i64, q: i64) -> i64 {
+    let k: i64 = tok_kind(toks, q);
+    if k == tk_lparen() {
+        return 1;
+    }
+    if k == tk_comma() {
+        return 1;
+    }
+    if k == tk_ident() {
+        return is_ident_mut(buf, tok_lo(toks, q), tok_hi(toks, q));
+    }
+    0
+}
+
+// The tokens before a block's `{` (from `j` backward to the previous `{`, `}` or
+// `;`) form a `for V in LO..HI` header with V == VAR. LO/HI are struct-literal-
+// free (parse_for parses them with no_struct=1), so the header holds no brace.
+pub fn for_header_binds(toks: Vec, buf: i64, j: i64, var_lo: i64, var_hi: i64) -> i64 {
+    if j < 0 {
+        return 0;
+    }
+    let k: i64 = tok_kind(toks, j);
+    if k == tk_lbrace() {
+        return 0;
+    }
+    if k == tk_rbrace() {
+        return 0;
+    }
+    if k == tk_semi() {
+        return 0;
+    }
+    if k == tk_ident() {
+        if is_ident_for(buf, tok_lo(toks, j), tok_hi(toks, j)) == 1 {
+            if for_tok_is_in(toks, buf, j + 2) == 1 {
+                return span_bytes_equal(buf, tok_lo(toks, j + 1), tok_hi(toks, j + 1), var_lo, var_hi);
+            }
+            return 0;
+        }
+    }
+    for_header_binds(toks, buf, j - 1, var_lo, var_hi)
+}
+
+// `in` (105,110) as a bare ident token at `p`.
+pub fn for_tok_is_in(toks: Vec, buf: i64, p: i64) -> i64 {
+    if tok_kind(toks, p) != tk_ident() {
+        return 0;
+    }
+    let lo: i64 = tok_lo(toks, p);
+    if tok_hi(toks, p) - lo != 2 {
+        return 0;
+    }
+    if load_byte(buf, lo) != 105 {
+        return 0;
+    }
+    if load_byte(buf, lo + 1) != 110 {
+        return 0;
+    }
+    1
 }
 
 pub fn parse_for(toks: Vec, pos: i64, buf: i64, acc: Vec, out: i64) -> i64 {
@@ -4245,7 +4480,11 @@ pub fn parse_for(toks: Vec, pos: i64, buf: i64, acc: Vec, out: i64) -> i64 {
     // lowerer even when END is otherwise inline-safe. The parser already has
     // those statements in `acc`; keep the byte-neutral form off that path so
     // the body-local binder cannot overwrite the outer binding at loop exit.
-    let shadows_outer: i64 = for_acc_declares_var(acc, buf, var_lo, var_hi, 0);
+    // The rest of the oracle's hygiene gate: VAR bound in an ENCLOSING scope (a
+    // parameter, an outer block's `let`, an enclosing range-for's VAR) and a
+    // top-level `let VAR` in the body (for_body_redeclares_var). Each sends the
+    // loop to the hidden-counter form below, as the oracle goes hygienic for it.
+    let shadows_outer: i64 = for_acc_declares_var(acc, buf, var_lo, var_hi, 0) + for_var_in_scope(toks, buf, pos, var_lo, var_hi) + for_body_redeclares_var(sa, sl, buf, var_lo, var_hi, 0);
     if has_cont == 0 {
         if body_writes == 0 {
             if end_is_inline == 1 {
@@ -4298,8 +4537,8 @@ pub fn parse_for(toks: Vec, pos: i64, buf: i64, acc: Vec, out: i64) -> i64 {
 
     // ---- Hidden-counter form (shapes the oracle lowers HYGIENICALLY) --------
     // Reached when NEITHER byte-neutral form above applies: a body write to VAR,
-    // or a non-literal END (an own-`continue` alone now takes the inject form
-    // above). The oracle emits its hygienic
+    // a non-inline END, VAR bound in an enclosing scope, or a body `let VAR` (an
+    // own-`continue` alone now takes the inject form above). The oracle emits its hygienic
     // `__for_i_N` desugar for these, which the self-host cannot yet reproduce
     // byte-for-byte — so the mic@3 nfn emit is NOT byte-exact here. These desugars
     // remain VALID for the native-ELF / MLIR backends
