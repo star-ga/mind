@@ -23716,7 +23716,7 @@ pub fn flatten_ast_lv(node: i64, buf: i64, params_addr: i64, n_params: i64, node
         // Float const leaf (descriptor kind=6) — see flatten_ast's ast_float_lit arm.
         // Dyadic-guarded fail-close; the branch value of a float value-if (`{ 1.0 }`)
         // flattens through here in the lv-aware seq/letchain path.
-        if nb_float_lit_is_dyadic(buf, ast_span_lo(node), ast_span_hi(node)) == 0 {
+        if nb_float_lit_ok(buf, ast_span_lo(node), ast_span_hi(node)) == 0 {
             return 0 - 1;
         }
         let fbits: i64 = nb_float_lit_bits(buf, ast_span_lo(node), ast_span_hi(node));
@@ -23892,7 +23892,7 @@ pub fn count_nonparam_nodes_lv(node: i64, buf: i64, params_addr: i64, n_params: 
     }
     if k == ast_float_lit() {
         // 1 instr (OP_CONST_F64) — see count_nonparam_nodes's ast_float_lit arm.
-        if nb_float_lit_is_dyadic(buf, ast_span_lo(node), ast_span_hi(node)) == 0 {
+        if nb_float_lit_ok(buf, ast_span_lo(node), ast_span_hi(node)) == 0 {
             return 0 - 1;
         }
         return 1;
@@ -24112,7 +24112,7 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         // -1 return poisons the whole fn (never partial/wrong bytes), matching the
         // native-ELF nb_expr float arm's dyadic guard. Byte-identical to flatten_ast's
         // ast_float_lit arm (env/nlets unused, mirroring the int_lit arm above).
-        if nb_float_lit_is_dyadic(src, ast_span_lo(node), ast_span_hi(node)) == 0 {
+        if nb_float_lit_ok(src, ast_span_lo(node), ast_span_hi(node)) == 0 {
             return 0 - 1;
         }
         let fbits: i64 = nb_float_lit_bits(src, ast_span_lo(node), ast_span_hi(node));
@@ -33710,7 +33710,130 @@ pub fn nb_intrinsic_id(buf: i64, lo: i64, hi: i64) -> i64 {
         }
         return 0 - 1;
     }
+    // W8c: __mind_bits_to_f64 (20) / __mind_f64_to_bits (21), both 18 bytes —
+    // same-width bit reinterprets between the GP and SSE views of one slot.
+    if n == 18 {
+        if nb_intr_sfx_eq(buf, lo + 7, 98, 105, 116, 115, 95, 116, 111, 95, 102, 54, 52) == 1 {
+            return 20;
+        }
+        if nb_intr_sfx_eq(buf, lo + 7, 102, 54, 52, 95, 116, 111, 95, 98, 105, 116, 115) == 1 {
+            return 21;
+        }
+        return 0 - 1;
+    }
     0 - 1
+}
+
+// 1 iff the 11 bytes at buf[i..i+11) are b0..b10 (an intrinsic-name suffix).
+pub fn nb_intr_sfx_eq(buf: i64, i: i64, b0: i64, b1: i64, b2: i64, b3: i64, b4: i64, b5: i64, b6: i64, b7: i64, b8: i64, b9: i64, b10: i64) -> i64 {
+    if load_byte(buf, i) != b0 {
+        return 0;
+    }
+    if load_byte(buf, i + 1) != b1 {
+        return 0;
+    }
+    if load_byte(buf, i + 2) != b2 {
+        return 0;
+    }
+    if load_byte(buf, i + 3) != b3 {
+        return 0;
+    }
+    if load_byte(buf, i + 4) != b4 {
+        return 0;
+    }
+    if load_byte(buf, i + 5) != b5 {
+        return 0;
+    }
+    if load_byte(buf, i + 6) != b6 {
+        return 0;
+    }
+    if load_byte(buf, i + 7) != b7 {
+        return 0;
+    }
+    if load_byte(buf, i + 8) != b8 {
+        return 0;
+    }
+    if load_byte(buf, i + 9) != b9 {
+        return 0;
+    }
+    if load_byte(buf, i + 10) != b10 {
+        return 0;
+    }
+    1
+}
+
+// W8c: 1 iff the callee span is the bare `sqrt` builtin (s q r t).
+pub fn nb_is_sqrt_name(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo != 4 {
+        return 0;
+    }
+    if load_byte(buf, lo) != 115 {
+        return 0;
+    }
+    if load_byte(buf, lo + 1) != 113 {
+        return 0;
+    }
+    if load_byte(buf, lo + 2) != 114 {
+        return 0;
+    }
+    if load_byte(buf, lo + 3) != 116 {
+        return 0;
+    }
+    1
+}
+
+// W8c: 1 iff a call to [lo,hi) is the IEEE `sqrt` builtin — the bare name with no
+// source-defined fn of that name in the frt registry (a user `fn sqrt` keeps the
+// ordinary call path, mirroring the MLIR lowering's defined_fns name-trust guard).
+pub fn nb_is_builtin_sqrt(frt: i64, buf: i64, lo: i64, hi: i64) -> i64 {
+    if nb_is_sqrt_name(buf, lo, hi) == 0 {
+        return 0;
+    }
+    if frt == 0 {
+        return 1;
+    }
+    if frt_find(frt, buf, lo, hi, 0) >= 0 {
+        return 0;
+    }
+    1
+}
+
+// W8c: 1 iff a call to intrinsic `intr` has an admissible operand list. Only the
+// bit reinterprets are checked here: __mind_bits_to_f64 (20) needs exactly one INT
+// operand, __mind_f64_to_bits (21) exactly one FLOAT operand. Every other id is 1
+// (their arity rules are unchanged by W8c).
+pub fn nb_intr_bits_args_ok(intr: i64, args_len: i64, arg_dts: i64) -> i64 {
+    if intr < 20 {
+        return 1;
+    }
+    if intr > 21 {
+        return 1;
+    }
+    if args_len != 1 {
+        return 0;
+    }
+    let dt: i64 = __mind_load_i64(arg_dts);
+    if intr == 20 {
+        if dt == nb_dtype_int() {
+            return 1;
+        }
+        return 0;
+    }
+    if dt == nb_dtype_float() {
+        return 1;
+    }
+    0
+}
+
+// W8c sqrt: movsd xmm0,[a0] ; sqrtsd xmm0,xmm0 (F2 0F 51 C0, IEEE correctly rounded) ;
+// movsd [dst],xmm0.
+pub fn nb_emit_sqrt(code: String, a0: i64, dst_id: i64) -> String {
+    let c1: String = nb_fp_movsd_load_xmm0(code, nb_slot_disp(a0));
+    let c2: String = nb_push(c1, 242);
+    let c3: String = nb_push(c2, 15);
+    let c4: String = nb_push(c3, 81);
+    let c5: String = nb_push(c4, 192);
+    nb_fp_movsd_store_xmm0(c5, nb_slot_disp(dst_id))
 }
 
 // nb_emit_intrinsic(code, kind, ids, args_len, dst_id): emit the inline body for a
@@ -33834,6 +33957,21 @@ pub fn nb_emit_intrinsic(code: String, kind: i64, ids: i64, dst_id: i64) -> Stri
         let c1: String = nb_load_rax(code, nb_slot_disp(a0));
         let c2: String = nb_movsxd_rax_eax(c1);
         return nb_store_rax(c2, nb_slot_disp(dst_id));
+    }
+    if kind == 20 {
+        // __mind_bits_to_f64(bits) -> f64 (W8c): a same-width reinterpret. Slots hold
+        // raw 64-bit patterns for both dtypes, so the bits copy unchanged
+        // (mov rax,[a0] ; mov [dst],rax); nb_expr tags dst FLOAT.
+        let a0: i64 = __mind_load_i64(ids + 0 * 8);
+        let c1: String = nb_load_rax(code, nb_slot_disp(a0));
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 21 {
+        // __mind_f64_to_bits(x) -> i64 (W8c): the f64 slot's exact bit pattern,
+        // NaN payload and the sign of -0.0 included.
+        let a0: i64 = __mind_load_i64(ids + 0 * 8);
+        let c1: String = nb_load_rax(code, nb_slot_disp(a0));
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
     }
     // kind == 9: __mind_read(fd, buf, count, offset) -> i64 (offset unused)
     let a0: i64 = __mind_load_i64(ids + 0 * 8);
@@ -34913,7 +35051,7 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // correctly-rounded dec2flt is the deferred L upgrade (nb_float_lit_bits
         // header). main.mind is float-free, so this arm is never taken during
         // self-compile and the integer native-ELF oracle stays byte-identical.
-        if nb_float_lit_is_dyadic(buf, ast_span_lo(node), ast_span_hi(node)) == 0 {
+        if nb_float_lit_ok(buf, ast_span_lo(node), ast_span_hi(node)) == 0 {
             // POISON (systemic fail-closed): flag lcell+80 so nb_lower_fn refuses
             // the whole fn (0-byte module), not just a -1 last_id sentinel.
             __mind_store_i64(lcell + 80, 1);
@@ -35221,8 +35359,28 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // like a regular call, so downstream slot ids are unchanged.
         let intr: i64 = nb_intrinsic_id(buf, ast_span_lo(callee), ast_span_hi(callee));
         if intr >= 0 {
+            // W8c fail-closed: the bit reinterprets take exactly ONE operand of the
+            // opposite view. Any other arity or operand dtype poisons the module (0B)
+            // instead of reinterpreting a stale or wrong-register-file slot.
+            if nb_intr_bits_args_ok(intr, args_len, arg_dts) == 0 {
+                __mind_store_i64(lcell + 80, 1)
+            }
             let c_intr: String = nb_emit_intrinsic(sa.code, intr, ids, id);
+            if intr == 20 {
+                let _tb: i64 = nb_dtype_tag_slot(__mind_load_i64(lcell + 8), id, nb_dtype_float());
+            }
             return NbState { code: c_intr, next_id: id + 1, last_id: id, ncalls: sa.ncalls };
+        }
+        // W8c: the bare `sqrt` builtin on ONE float arg inlines `sqrtsd` (IEEE exact,
+        // the native twin of MLIR's llvm.intr.sqrt). One result slot, like any call.
+        if nb_is_builtin_sqrt(__mind_load_i64(lcell + 16), buf, ast_span_lo(callee), ast_span_hi(callee)) == 1 {
+            if args_len == 1 {
+                if __mind_load_i64(arg_dts) == nb_dtype_float() {
+                    let c_sq: String = nb_emit_sqrt(sa.code, __mind_load_i64(ids), id);
+                    let _ts: i64 = nb_dtype_tag_slot(__mind_load_i64(lcell + 8), id, nb_dtype_float());
+                    return NbState { code: c_sq, next_id: id + 1, last_id: id, ncalls: sa.ncalls };
+                }
+            }
         }
         // RI-D2 S-E1: the `__mind_blas_dot_q16_v` BLAS extern INLINES the Q16.16 MAC
         // loop (the native analogue of MLIR Track-B) instead of emitting a `call` to an
@@ -45973,6 +46131,13 @@ pub fn nb_node_dtype_tbl(node: i64, tbl: i64, lets: i64, lcell: i64, buf: i64, p
     // callee, and every callee in main.mind's float-free source registers INT, so a call
     // node here classifies INT during self-compile exactly as the prior fall-through did.
     if k == ast_call() {
+        // W8c: __mind_bits_to_f64 and the builtin `sqrt` produce an f64.
+        if nb_intrinsic_id(buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node))) == 20 {
+            return nb_dtype_float();
+        }
+        if nb_is_builtin_sqrt(__mind_load_i64(lcell + 16), buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node))) == 1 {
+            return nb_dtype_float();
+        }
         return frt_lookup_dtype(__mind_load_i64(lcell + 16), buf, ast_span_lo(ast_child0(node)), ast_span_hi(ast_child0(node)));
     }
     if k == ast_field() {
@@ -46286,19 +46451,472 @@ pub fn nb_find_dot(buf: i64, lo: i64, hi: i64) -> i64 {
 // (ipart*den + fpart, nb_pow10, nb_strip_pow5) overflow-free. Do NOT call this
 // on an unguarded span: a wrapped numerator silently yields ~0.0 bits.
 pub fn nb_float_lit_bits(buf: i64, lo: i64, hi: i64) -> i64 {
-    let dot: i64 = nb_find_dot(buf, lo, hi);
-    let ipart: i64 = parse_int_span(buf, lo, dot, 0);
-    let fdigits: i64 = hi - (dot + 1);
-    let fk: i64 = if fdigits < 0 {
+    // W8b: every well-formed decimal literal (dotted, exponent, `_`-separated,
+    // any length) now lowers to its CORRECTLY ROUNDED binary64 bits through the
+    // exact bignum path below. The dyadic-only integer path above
+    // (nb_ratio_to_f64_bits / nb_strip_pow5) is kept for its selftests.
+    nb_dec2f64_bits(buf, lo, hi)
+}
+
+// ---- W8b: correctly rounded decimal -> IEEE-754 binary64 (exact, integer-only) ----
+// value = D * 10^e10 (D = the literal's digit string, e10 = exponent - fraction
+// digits) is formed EXACTLY as a ratio of two bignums N / Den. A shift t makes the
+// quotient q = floor(N * 2^t / Den) land in [2^54, 2^56); a restoring binary long
+// division produces q and the remainder (sticky). q, t and the sticky bit then round
+// to nearest, ties to even, into the 52-bit fraction — normal, subnormal, overflow to
+// +inf and underflow to +0 all fall out of the same formula
+//   bits = ((e_eff + 1022) << 52) + mant.
+// No host float and no float op: main.mind stays float-free, so self-compile bytes
+// only move by the code size of these helpers. Bignum layout: word 0 = used limb
+// count (always trimmed: the top limb is non-zero), words 1.. = base-2^30 limbs,
+// little-endian. Every limb product fits i64 (2^30 * 10^9 < 2^60).
+pub fn nb_d2f_mask() -> i64 {
+    1073741823
+}
+
+pub fn nb_f64_inf_bits() -> i64 {
+    2047 << 52
+}
+
+pub fn bn_zero_from(b: i64, i: i64, n: i64) -> i64 {
+    if i >= n {
+        return b;
+    }
+    __mind_store_i64(b + i * 8, 0);
+    bn_zero_from(b, i + 1, n)
+}
+
+pub fn bn_new(cap: i64) -> i64 {
+    let b: i64 = __mind_alloc((cap + 1) * 8);
+    bn_zero_from(b, 0, cap + 1)
+}
+
+pub fn bn_len(b: i64) -> i64 {
+    __mind_load_i64(b)
+}
+
+pub fn bn_limb(b: i64, i: i64) -> i64 {
+    __mind_load_i64(b + (i + 1) * 8)
+}
+
+pub fn bn_set_limb(b: i64, i: i64, v: i64) -> i64 {
+    __mind_store_i64(b + (i + 1) * 8, v);
+    0
+}
+
+// Limb i, or 0 past the used length n.
+pub fn bn_limb_or0(b: i64, i: i64, n: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    bn_limb(b, i)
+}
+
+// Drop zero top limbs so the length is canonical (bn_cmp relies on it).
+pub fn bn_trim(b: i64) -> i64 {
+    let n: i64 = bn_len(b);
+    if n <= 0 {
+        return 0;
+    }
+    if bn_limb(b, n - 1) != 0 {
+        return 0;
+    }
+    __mind_store_i64(b, n - 1);
+    bn_trim(b)
+}
+
+// Append a final carry limb (carry < 2^30) when non-zero.
+pub fn bn_push_carry(b: i64, n: i64, carry: i64) -> i64 {
+    if carry == 0 {
+        return 0;
+    }
+    let _s: i64 = bn_set_limb(b, n, carry);
+    __mind_store_i64(b, n + 1);
+    0
+}
+
+pub fn bn_muladd_rec(b: i64, m: i64, i: i64, n: i64, carry: i64) -> i64 {
+    if i >= n {
+        return bn_push_carry(b, n, carry);
+    }
+    let v: i64 = bn_limb(b, i) * m + carry;
+    let _s: i64 = bn_set_limb(b, i, v & nb_d2f_mask());
+    bn_muladd_rec(b, m, i + 1, n, v >> 30)
+}
+
+// b = b * m + a   (0 < m <= 10^9, 0 <= a < 2^30), in place.
+pub fn bn_muladd(b: i64, m: i64, a: i64) -> i64 {
+    bn_muladd_rec(b, m, 0, bn_len(b), a)
+}
+
+// b = b * 10^k, nine decimal digits per limb pass.
+pub fn bn_mul_pow10(b: i64, k: i64) -> i64 {
+    if k <= 0 {
+        return 0;
+    }
+    if k >= 9 {
+        let _m: i64 = bn_muladd(b, 1000000000, 0);
+        return bn_mul_pow10(b, k - 9);
+    }
+    bn_muladd(b, nb_pow10(k), 0)
+}
+
+pub fn bn_shl_bits(b: i64, bs: i64, i: i64, n: i64, carry: i64) -> i64 {
+    if i >= n {
+        return bn_push_carry(b, n, carry);
+    }
+    let v: i64 = bn_limb(b, i);
+    let _s: i64 = bn_set_limb(b, i, ((v << bs) & nb_d2f_mask()) | carry);
+    bn_shl_bits(b, bs, i + 1, n, v >> (30 - bs))
+}
+
+// Move limb i to limb i+ws, top limb first (so nothing is overwritten unread).
+pub fn bn_shl_words(b: i64, ws: i64, i: i64) -> i64 {
+    if i < 0 {
+        return 0;
+    }
+    let _s: i64 = bn_set_limb(b, i + ws, bn_limb(b, i));
+    bn_shl_words(b, ws, i - 1)
+}
+
+pub fn bn_zero_low(b: i64, i: i64, ws: i64) -> i64 {
+    if i >= ws {
+        return 0;
+    }
+    let _s: i64 = bn_set_limb(b, i, 0);
+    bn_zero_low(b, i + 1, ws)
+}
+
+// b = b << k (k >= 0), in place.
+pub fn bn_shl(b: i64, k: i64) -> i64 {
+    if bn_len(b) == 0 {
+        return 0;
+    }
+    let ws: i64 = k / 30;
+    let bs: i64 = k - ws * 30;
+    let _a: i64 = bn_shl_bits(b, bs, 0, bn_len(b), 0);
+    let n2: i64 = bn_len(b);
+    let _w: i64 = bn_shl_words(b, ws, n2 - 1);
+    let _z: i64 = bn_zero_low(b, 0, ws);
+    __mind_store_i64(b, n2 + ws);
+    0
+}
+
+pub fn bn_shr1_rec(b: i64, i: i64, n: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    let nxt: i64 = bn_limb_or0(b, i + 1, n);
+    let _s: i64 = bn_set_limb(b, i, (bn_limb(b, i) >> 1) | ((nxt & 1) << 29));
+    bn_shr1_rec(b, i + 1, n)
+}
+
+// b = b >> 1, in place.
+pub fn bn_shr1(b: i64) -> i64 {
+    let _r: i64 = bn_shr1_rec(b, 0, bn_len(b));
+    bn_trim(b)
+}
+
+pub fn bn_cmp_rec(a: i64, b: i64, i: i64) -> i64 {
+    if i < 0 {
+        return 0;
+    }
+    let x: i64 = bn_limb(a, i);
+    let y: i64 = bn_limb(b, i);
+    if x > y {
+        return 1;
+    }
+    if x < y {
+        return 0 - 1;
+    }
+    bn_cmp_rec(a, b, i - 1)
+}
+
+// -1 / 0 / 1 for a < b / a == b / a > b (both trimmed).
+pub fn bn_cmp(a: i64, b: i64) -> i64 {
+    let na: i64 = bn_len(a);
+    let nb: i64 = bn_len(b);
+    if na > nb {
+        return 1;
+    }
+    if na < nb {
+        return 0 - 1;
+    }
+    bn_cmp_rec(a, b, na - 1)
+}
+
+pub fn bn_sub_rec(a: i64, b: i64, i: i64, na: i64, nb: i64, borrow: i64) -> i64 {
+    if i >= na {
+        return 0;
+    }
+    let v: i64 = bn_limb(a, i) - bn_limb_or0(b, i, nb) - borrow;
+    if v < 0 {
+        let _s: i64 = bn_set_limb(a, i, v + 1073741824);
+        return bn_sub_rec(a, b, i + 1, na, nb, 1);
+    }
+    let _t: i64 = bn_set_limb(a, i, v);
+    bn_sub_rec(a, b, i + 1, na, nb, 0)
+}
+
+// a = a - b, requires a >= b.
+pub fn bn_sub(a: i64, b: i64) -> i64 {
+    let _r: i64 = bn_sub_rec(a, b, 0, bn_len(a), bn_len(b), 0);
+    bn_trim(a)
+}
+
+pub fn bn_bitlen(b: i64) -> i64 {
+    let n: i64 = bn_len(b);
+    if n == 0 {
+        return 0;
+    }
+    (n - 1) * 30 + nb_msb_index(bn_limb(b, n - 1)) + 1
+}
+
+// One restoring-division step at quotient bit i (c = bn_cmp(r, d)).
+pub fn bn_div_step(r: i64, d: i64, c: i64, q: i64, i: i64) -> i64 {
+    if c < 0 {
+        return q;
+    }
+    let _s: i64 = bn_sub(r, d);
+    q + (1 << i)
+}
+
+pub fn bn_shr1_if(d: i64, i: i64) -> i64 {
+    if i <= 0 {
+        return 0;
+    }
+    bn_shr1(d)
+}
+
+// q = floor(r / (d >> (55 - i)) ...) bit by bit from bit i down to 0; d enters as
+// Den << i and is halved after every step; r leaves as the exact remainder.
+pub fn bn_div_bits(r: i64, d: i64, i: i64, q: i64) -> i64 {
+    if i < 0 {
+        return q;
+    }
+    let q2: i64 = bn_div_step(r, d, bn_cmp(r, d), q, i);
+    let _h: i64 = bn_shr1_if(d, i);
+    bn_div_bits(r, d, i - 1, q2)
+}
+
+// Index of the first exponent marker 'e'/'E' in [i,hi), else hi.
+pub fn nb_d2f_find_exp(buf: i64, i: i64, hi: i64) -> i64 {
+    if i >= hi {
+        return hi;
+    }
+    let c: i64 = load_byte(buf, i);
+    if c == 101 {
+        return i;
+    }
+    if c == 69 {
+        return i;
+    }
+    nb_d2f_find_exp(buf, i + 1, hi)
+}
+
+// Exponent digits, saturated at ~1e8 (anything that large is already +inf / +0).
+pub fn nb_d2f_exp_digits(buf: i64, i: i64, hi: i64, acc: i64) -> i64 {
+    if i >= hi {
+        return acc;
+    }
+    let c: i64 = load_byte(buf, i);
+    if is_digit(c) == 0 {
+        return acc;
+    }
+    if acc > 100000000 {
+        return nb_d2f_exp_digits(buf, i + 1, hi, acc);
+    }
+    nb_d2f_exp_digits(buf, i + 1, hi, acc * 10 + (c - 48))
+}
+
+// Signed exponent value of the tail starting at the marker ep (0 when absent).
+pub fn nb_d2f_exp_val(buf: i64, ep: i64, hi: i64) -> i64 {
+    if ep + 1 >= hi {
+        return 0;
+    }
+    let s: i64 = load_byte(buf, ep + 1);
+    if s == 45 {
+        return 0 - nb_d2f_exp_digits(buf, ep + 2, hi, 0);
+    }
+    if s == 43 {
+        return nb_d2f_exp_digits(buf, ep + 2, hi, 0);
+    }
+    nb_d2f_exp_digits(buf, ep + 1, hi, 0)
+}
+
+// Fold one mantissa digit: N = N*10 + dv; ctx+8 counts fraction digits, ctx+16
+// counts significant digits (from the first non-zero one on).
+pub fn nb_d2f_digit(n: i64, ctx: i64, dv: i64) -> i64 {
+    if __mind_load_i64(ctx) == 1 {
+        __mind_store_i64(ctx + 8, __mind_load_i64(ctx + 8) + 1)
+    }
+    let _m: i64 = bn_muladd(n, 10, dv);
+    if bn_len(n) > 0 {
+        __mind_store_i64(ctx + 16, __mind_load_i64(ctx + 16) + 1)
+    }
+    0
+}
+
+// Mantissa scan over [i,end): digits fold into N, '.' flips ctx+0, '_' is skipped.
+pub fn nb_d2f_scan(buf: i64, i: i64, end: i64, n: i64, ctx: i64) -> i64 {
+    if i >= end {
+        return 0;
+    }
+    let c: i64 = load_byte(buf, i);
+    if c == 46 {
+        __mind_store_i64(ctx, 1);
+        return nb_d2f_scan(buf, i + 1, end, n, ctx);
+    }
+    if is_digit(c) == 1 {
+        let _d: i64 = nb_d2f_digit(n, ctx, c - 48);
+        return nb_d2f_scan(buf, i + 1, end, n, ctx);
+    }
+    nb_d2f_scan(buf, i + 1, end, n, ctx)
+}
+
+// Scale the exact ratio N / Den by 10^e10 (numerator for e10 >= 0, else denominator).
+pub fn nb_d2f_scale(n: i64, d: i64, e10: i64) -> i64 {
+    if e10 >= 0 {
+        return bn_mul_pow10(n, e10);
+    }
+    bn_mul_pow10(d, 0 - e10)
+}
+
+// Multiply the ratio by 2^t (shift the numerator for t >= 0, else the denominator).
+pub fn nb_d2f_align(n: i64, d: i64, t: i64) -> i64 {
+    if t >= 0 {
+        return bn_shl(n, t);
+    }
+    bn_shl(d, 0 - t)
+}
+
+pub fn nb_d2f_round_up(rbit: i64, sticky: i64, odd: i64) -> i64 {
+    if rbit == 0 {
+        return 0;
+    }
+    if sticky == 1 {
+        return 1;
+    }
+    odd
+}
+
+// Round value = (q + rem) * 2^-t, q in [2^54, 2^56), rs = (rem != 0), to binary64.
+pub fn nb_d2f_round(q: i64, t: i64, rs: i64) -> i64 {
+    let b: i64 = nb_msb_index(q);
+    let e: i64 = b - t;
+    if e > 1023 {
+        return nb_f64_inf_bits();
+    }
+    let extra: i64 = if e < 0 - 1022 {
+        (0 - 1022) - e
+    } else {
+        0
+    };
+    let s: i64 = (b - 52) + extra;
+    if s >= 57 {
+        return 0;
+    }
+    let mant: i64 = q >> s;
+    let rbit: i64 = (q >> (s - 1)) & 1;
+    let low: i64 = q & ((1 << (s - 1)) - 1);
+    let sticky: i64 = if low != 0 {
+        1
+    } else {
+        rs
+    };
+    let up: i64 = nb_d2f_round_up(rbit, sticky, mant & 1);
+    let bits: i64 = (((e + extra) + 1022) << 52) + (mant + up);
+    if bits >= nb_f64_inf_bits() {
+        return nb_f64_inf_bits();
+    }
+    bits
+}
+
+// Correctly rounded (round-half-even) binary64 bits of the unsigned decimal float
+// literal span [lo,hi): `<digits>[.<digits>][(e|E)[+|-]<digits>]`, `_` separators.
+pub fn nb_dec2f64_bits(buf: i64, lo: i64, hi: i64) -> i64 {
+    let ep: i64 = nb_d2f_find_exp(buf, lo, hi);
+    let cap: i64 = ((hi - lo) + 400) * 4 / 30 + 8;
+    let n: i64 = bn_new(cap);
+    let ctx: i64 = __mind_alloc(24);
+    __mind_store_i64(ctx, 0);
+    __mind_store_i64(ctx + 8, 0);
+    __mind_store_i64(ctx + 16, 0);
+    let _m: i64 = nb_d2f_scan(buf, lo, ep, n, ctx);
+    if bn_len(n) == 0 {
+        return 0;
+    }
+    let e10: i64 = nb_d2f_exp_val(buf, ep, hi) - __mind_load_i64(ctx + 8);
+    let dexp: i64 = __mind_load_i64(ctx + 16) + e10;
+    // value in [10^(dexp-1), 10^dexp): >= 1e309 is +inf, < 1e-324 rounds to +0.
+    if dexp >= 310 {
+        return nb_f64_inf_bits();
+    }
+    if dexp <= 0 - 324 {
+        return 0;
+    }
+    let d: i64 = bn_new(cap);
+    let _one: i64 = bn_muladd(d, 1, 1);
+    let _p: i64 = nb_d2f_scale(n, d, e10);
+    let t: i64 = 55 + bn_bitlen(d) - bn_bitlen(n);
+    let _a: i64 = nb_d2f_align(n, d, t);
+    let _w: i64 = bn_shl(d, 55);
+    let q: i64 = bn_div_bits(n, d, 55, 0);
+    let rs: i64 = if bn_len(n) == 0 {
         0
     } else {
-        fdigits
+        1
     };
-    let fpart: i64 = parse_int_span(buf, dot + 1, hi, 0);
-    let den: i64 = nb_pow10(fk);
-    let num: i64 = ipart * den + fpart;
-    let q: i64 = nb_strip_pow5(num, fk);
-    nb_ratio_to_f64_bits(q, fk)
+    nb_d2f_round(q, t, rs)
+}
+
+// 1 iff [i,hi) holds only float-literal bytes (digit _ . e E + -).
+pub fn nb_float_lit_ok_rest(buf: i64, i: i64, hi: i64) -> i64 {
+    if i >= hi {
+        return 1;
+    }
+    let c: i64 = load_byte(buf, i);
+    if is_digit(c) == 1 {
+        return nb_float_lit_ok_rest(buf, i + 1, hi);
+    }
+    if c == 95 {
+        return nb_float_lit_ok_rest(buf, i + 1, hi);
+    }
+    if c == 46 {
+        return nb_float_lit_ok_rest(buf, i + 1, hi);
+    }
+    if c == 101 {
+        return nb_float_lit_ok_rest(buf, i + 1, hi);
+    }
+    if c == 69 {
+        return nb_float_lit_ok_rest(buf, i + 1, hi);
+    }
+    if c == 43 {
+        return nb_float_lit_ok_rest(buf, i + 1, hi);
+    }
+    if c == 45 {
+        return nb_float_lit_ok_rest(buf, i + 1, hi);
+    }
+    0
+}
+
+// W8b emit guard (replaces the dyadic-only guard at every float-literal lowering
+// site): 1 iff the span is a decimal float literal nb_dec2f64_bits rounds exactly.
+// The lexer only produces well-formed spans; this stays as a fail-closed backstop.
+pub fn nb_float_lit_ok(buf: i64, lo: i64, hi: i64) -> i64 {
+    if lo >= hi {
+        return 0;
+    }
+    if is_digit(load_byte(buf, lo)) == 0 {
+        return 0;
+    }
+    nb_float_lit_ok_rest(buf, lo + 1, hi)
+}
+
+// W8b selftest export: correctly rounded binary64 bits of the literal at
+// [src_addr, src_addr+src_len). Oracle: Python struct.pack('<d', float(lit)).
+pub fn selftest_float_lit_bits(src_addr: i64, src_len: i64) -> i64 {
+    nb_float_lit_bits(src_addr, 0, src_len)
 }
 
 // 1 iff 5^k divides `num` (num >= 0). Each step requires num divisible by 5; a
