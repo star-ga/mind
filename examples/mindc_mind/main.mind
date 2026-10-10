@@ -32680,7 +32680,7 @@ pub fn nb_cmp_rax_mem(code: String, setcc: i64, rhs_disp: i64) -> String {
 //   cmp r8,rdx ; jae +2 ; ud2 ; movabs r9,ARENA_ADDR ; mov [r9],rdx
 pub fn nb_emit_alloc_core(code: String) -> String {
     if nb_layout_explicit() == 1 {
-        return nb_emit_alloc_core_grow(code);
+        return nb_emit_alloc_core_checked(code);
     }
     // mov rdi,rsi = 48 89 F7 ; add rdi,8 = 48 83 C7 08
     let c1: String = nb_push(code, 72);
@@ -32741,10 +32741,7 @@ pub fn nb_emit_alloc_core(code: String) -> String {
     nb_push(c54, 17)
 }
 
-// Fixed-cap EXPLICIT-layout alloc core (superseded for explicit layouts by
-// nb_emit_alloc_core_grow; kept as the check-before-write sequence the
-// deferred default-layout re-bless below would adopt). The bounds check runs
-// BEFORE any write. The default
+// EXPLICIT-layout alloc core: the bounds check runs BEFORE any write. The default
 // sequence above stores the block header first, so with the cursor at the arena
 // end the header lands in the unmapped guard gap and the image dies on SIGSEGV
 // before reaching the over-cap check. Here the new cursor (old + header + data)
@@ -32815,31 +32812,67 @@ pub fn nb_emit_alloc_core_checked(code: String) -> String {
     nb_push(c44, 17)
 }
 
-// ---- bounded-profile (explicit layout) allocator: grow-on-demand + free-list ----
+// ---- bounded-profile (explicit layout) allocator runtime ----
 // Only images with an explicitly requested layout use this allocator; every
 // default-profile image keeps the historical bump sequence byte-for-byte.
 //
-// State page: the LAST 4096 bytes of the arena PT_LOAD (zero-initialised, so no
-// startup code). Words 0..63 are free-list bin heads (bin k holds released
-// blocks whose capacity has its highest set bit at k); word 64 is the absolute
-// end of the mapped overflow region (0 until the arena first overflows). The
-// primary bump region is the arena minus the 8-byte cursor and the state page.
+// The allocator is ONE shared runtime blob, emitted once at code offset 0 of
+// every explicit-layout image (nb_rt_prefix / nb_rt_attach). Its first bytes run
+// at process entry: they store the alloc/free/realloc entry addresses (taken
+// rip-relative, so the blob is position-independent) into the state page and
+// jump over the blob to the program's own entry code. A call site loads its
+// arguments into rdi/rsi and calls through the state-page slot
+// (nb_emit_rt_call); the callee preserves every register except rax, and the
+// site itself clobbers r11. Assembly source, the generator of the byte chunks
+// below and a stress harness (random alloc/free/realloc traces against a model
+// with a full heap walk after every operation) live in
+// testdata/native_alloc_bounded/rt/; self_host_native_alloc_bounded_smoke.py
+// re-assembles the source and checks the emitted blob byte-for-byte.
 //
-// Overflow: when a block does not fit the primary region the cursor moves (once)
-// to the overflow base, the first page after the stack top plus one guard gap,
-// and keeps bumping there. Overflow memory is mapped on demand in 1 MiB-rounded
-// steps with mmap(MAP_FIXED_NOREPLACE) at addresses that are a pure function of
-// the layout and the allocation sequence, so pointer values stay deterministic.
-// A refused mapping (RLIMIT_AS, an occupied range, or a pre-4.17 kernel that
-// ignores the flag and answers elsewhere) and any single request above 64 TiB
-// take the out-of-memory exit: "error: native arena exhausted" on fd 2 and
-// exit_group(70). Nothing faults.
+// Memory: the arena's first word is the bump cursor, an offset from A+8 (the
+// header address of the first block, so the first block's data is A+16 — the
+// layout cell). The arena's LAST 4096 bytes are the state page (zero at load):
+//   [ST + 8k]            free-list bin k (k < 64): free blocks whose size has
+//                        its highest set bit at k, doubly linked
+//   [ST + 512]           mapped end of the overflow region (0 = never used)
+//   [ST + 520]           bitmap of the non-empty bins
+//   [ST + 536/544/552]   alloc / free / realloc entry addresses
+//   [ST + 560/568]       primary / overflow high water: memory at or above it
+//                        was never handed out and still reads zero
+// A block is a header word (size | 1 if free | 2 if the physically preceding
+// block is free) followed by `size` data bytes (a multiple of 8, at least 24).
+// A free block keeps its bin links in its first two data words and its size
+// in its last one (a boundary tag), so freeing merges with both neighbours.
+// Primary region: [A+8, ST). Overflow region: [OB, mapped end), with OB = stack
+// top + guard, mapped on demand in 1 MiB steps by mmap(MAP_FIXED_NOREPLACE) at
+// fixed addresses, so every pointer value is a pure function of the program.
+// When a block does not fit the primary region, the rest of the primary region
+// becomes a free block and the cursor continues in the overflow region.
 //
-// Reuse: alloc pops the head of bin k = bsr(size) when its capacity fits, else
-// the head of bin k+1 (every block there is larger than size); a reused block
-// is zeroed over its whole capacity, so explicit images keep the native
-// guarantee that fresh memory reads as zero. The C runtime makes no such
-// promise, so this is stricter than malloc, never weaker.
+//   alloc(n)       n <= 0 -> 0 (runtime-support/mind_intrinsics.c). Else
+//                  r = max(round8(n), 24): first fit in bin bsr(r), else the
+//                  head of the lowest non-empty higher bin (every block there
+//                  fits), so a large-enough free block is always found when
+//                  one exists; a remainder of >= 32 bytes is split off. With
+//                  no free block, bump the cursor.
+//   free(p)        p that is not a live block of this heap (null, unaligned,
+//                  a string literal, argv, the stack, already free) is
+//                  ignored. Else merge with free neighbours; a block that ends
+//                  at the cursor moves the cursor back instead (whole pages
+//                  >= 1 MiB above the new cursor go back to the kernel with
+//                  madvise(MADV_DONTNEED), so they read zero again for free).
+//   realloc(p, n)  p == 0: n < 0 -> 0, n == 0 -> a minimum block (glibc
+//                  realloc(NULL, 0) is malloc(0), which is non-null), n > 0 ->
+//                  alloc(n). p != 0: n == 0 -> free(p) and 0; n < 0 -> 0 with
+//                  p still live; n > 0 -> shrink in place, grow in place when p
+//                  ends at the cursor or its successor is free and large
+//                  enough, else alloc + copy + free. A p that is not a live
+//                  block keeps the historical native behaviour (copy
+//                  min([p-8], r) bytes into a fresh block).
+// Every block handed out reads zero (stricter than malloc); the high-water
+// marks keep never-used memory from being cleared twice. Out of memory (a
+// refused mapping, or a request above 2^46) writes "error: native arena
+// exhausted" to fd 2 and exit_group(70). Nothing faults.
 pub fn nb_alloc_state_addr() -> i64 {
     nb_arena_addr() + nb_arena_bytes() - 4096
 }
@@ -32847,139 +32880,325 @@ pub fn nb_ovf_base() -> i64 {
     nb_stack_top() + nb_guard_bytes()
 }
 
-// Explicit-layout alloc core: in rsi = rounded size (a multiple of 8, >= 8),
-// out rax = data pointer; clobbers rax rcx rdx rdi r8 r9 (rsi, r10, r11 kept).
-// 422 bytes. Assembled from this source (intel syntax; A = arena base,
-// ST = state page, CAP = primary cursor limit, OOFF/OB = overflow base as a
-// cursor offset / absolute address):
-//   movabs rax,1<<46 ; cmp rsi,rax ; ja oom ; bsr rcx,rsi ; movabs r9,ST
-//   mov rax,[r9+rcx*8] ; test rax,rax ; jz next ; cmp [rax-8],rsi ; jae pop
-//   next: add rcx,1 ; mov rax,[r9+rcx*8] ; test rax,rax ; jz bump
-//   pop: mov rdx,[rax] ; mov [r9+rcx*8],rdx ; mov rdx,rax ; mov rdi,rax
-//        mov rcx,[rax-8] ; shr rcx,3 ; xor eax,eax ; rep stosq ; mov rax,rdx ; jmp done
-//   bump: movabs r9,A ; mov rcx,[r9] ; lea rdx,[rcx+rsi+8] ; movabs r8,CAP
-//        cmp rdx,r8 ; ja slow
-//   commit: mov [r9],rdx ; movabs rax,A+8 ; add rax,rcx ; mov [rax],rsi
-//        add rax,8 ; jmp done
-//   slow: movabs r8,OOFF ; cmp rcx,r8 ; jae ovf ; mov rcx,r8 ; lea rdx,[rcx+rsi+8]
-//        movabs r8,ST ; cmp qword [r8+512],0 ; jne ovf ; movabs rax,OB
-//        mov [r8+512],rax   (the mapped end is set once; a cursor reclaimed back
-//        into the primary region re-enters the already-mapped overflow region)
-//   ovf: movabs rax,A+8 ; add rax,rdx ; movabs r8,ST ; mov rdi,[r8+512]
-//        cmp rax,rdi ; jbe commit ; add rax,0xfffff ; and rax,-0x100000
-//        push rcx,rdx,rsi,r9,r10,r11,rax ; mov rsi,rax ; sub rsi,rdi ; mov edx,3
-//        mov r10d,0x100022 ; mov r8,-1 ; xor r9d,r9d ; mov eax,9 ; syscall
-//        cmp rax,rdi ; pop rax,r11,r10,r9,rsi,rdx,rcx ; jne oom
-//        movabs r8,ST ; mov [r8+512],rax ; jmp commit
-//   oom: (the nb_emit_arena_check diagnostic: write the message, exit_group 70)
-//   done:
-pub fn nb_emit_alloc_core_grow(code: String) -> String {
+// The runtime blob for the image being emitted, layout constants patched in.
+pub fn nb_rt_blob(code: String) -> String {
     let a: i64 = nb_arena_addr();
-    let ad: i64 = a + 8;
     let st: i64 = nb_alloc_state_addr();
-    let cap: i64 = nb_arena_bytes() - 8 - 4096;
     let ob: i64 = nb_ovf_base();
-    let ooff: i64 = ob - a - 8;
-    let k1: String = nb_le(code, 47176, 7);
-    let k2: String = nb_le(k1, 4440073974054976, 7);
-    let k3: String = nb_le(k2, 4301289487943047, 7);
-    let k4: String = nb_le(k3, 3108622013, 4);
-    let k5: String = nb_i64le(k4, st);
-    let k6: String = nb_le(k5, 54189743185103689, 7);
-    let k7: String = nb_le(k6, 32642783202772596, 7);
-    let k8: String = nb_le(k7, 39205293653182477, 7);
-    let k9: String = nb_le(k8, 9698519426844932, 7);
-    let k10: String = nb_le(k9, 56599050187737928, 7);
-    let k11: String = nb_le(k10, 20485590768322888, 7);
-    let k12: String = nb_le(k11, 1101441292322955, 7);
-    let k13: String = nb_le(k12, 38641972309901361, 7);
-    let k14: String = nb_le(k13, 20547673321368016, 7);
-    let k15: String = nb_le(k14, 185, 1);
-    let k16: String = nb_i64le(k15, a);
-    let k17: String = nb_le(k16, 13885239634529097, 7);
-    let k18: String = nb_le(k17, 12077320, 3);
-    let k19: String = nb_i64le(k18, cap);
-    let k20: String = nb_le(k19, 38642458426489164, 7);
-    let k21: String = nb_le(k20, 12077073, 3);
-    let k22: String = nb_i64le(k21, ad);
-    let k23: String = nb_le(k22, 20319564512887112, 7);
-    let k24: String = nb_le(k23, 1146370965635, 7);
-    let k25: String = nb_le(k24, 12077312, 3);
-    let k26: String = nb_i64le(k25, ooff);
-    let k27: String = nb_le(k26, 38645829908642124, 7);
-    let k28: String = nb_le(k27, 20556681264842945, 7);
-    let k29: String = nb_le(k28, 184, 1);
-    let k30: String = nb_i64le(k29, st);
-    let k31: String = nb_le(k30, 8602026825, 7);
-    let k32: String = nb_le(k31, 791483086080, 5);
-    let k33: String = nb_i64le(k32, ob);
-    let k34: String = nb_le(k33, 8598358345, 7);
-    let k35: String = nb_le(k34, 47176, 2);
-    let k36: String = nb_i64le(k35, ad);
-    let k37: String = nb_le(k36, 791512351048, 5);
-    let k38: String = nb_i64le(k37, st);
-    let k39: String = nb_le(k38, 8602028873, 7);
-    let k40: String = nb_le(k39, 1487112947382600, 7);
-    let k41: String = nb_le(k40, 40991168921599, 7);
-    let k42: String = nb_le(k41, 18390785049227264, 7);
-    let k43: String = nb_le(k42, 20354516831584593, 7);
-    let k44: String = nb_le(k43, 1050025707226761, 7);
-    let k45: String = nb_le(k44, 38183349780480, 7);
-    let k46: String = nb_le(k45, 72057322503471120, 7);
-    let k47: String = nb_le(k46, 2736449045004287, 7);
-    let k48: String = nb_le(k47, 16123260236201984, 7);
-    let k49: String = nb_le(k48, 18395110236575992, 7);
-    let k50: String = nb_le(k49, 20572366565957209, 7);
-    let k51: String = nb_le(k50, 184, 1);
-    let k52: String = nb_i64le(k51, st);
-    let k53: String = nb_le(k52, 8598358345, 7);
-    let k54: String = nb_le(k53, 51871660063533289, 7);
-    let k55: String = nb_le(k54, 11426315137909, 7);
-    let k56: String = nb_le(k55, 27424455903432704, 7);
-    let k57: String = nb_le(k56, 20354577617937696, 7);
-    let k58: String = nb_le(k57, 9118758504522168, 7);
-    let k59: String = nb_le(k58, 32199989506634337, 7);
-    let k60: String = nb_le(k59, 22639082835439474, 7);
-    let k61: String = nb_le(k60, 772956674326968, 7);
-    let k62: String = nb_le(k61, 52607822961049600, 7);
-    let k63: String = nb_le(k62, 51796957697409054, 7);
-    let k64: String = nb_le(k63, 77786152698087, 7);
-    let k65: String = nb_le(k64, 12159137284096, 6);
-    k65
+    nb_rt_blob_p1(code, a, a + 8, st, ob, a + 16, ob + 8)
 }
 
-// Explicit-layout free body: in rax = pointer, out rax = 0; clobbers rax rcx
-// rdx r8. Only a non-null, 8-aligned pointer inside the primary data region
-// [A+16, ST) or the mapped overflow region [OB, mapped end) is pushed onto its
-// bin; anything else (a string-literal handle, an argv pointer, a stack
-// address) is ignored exactly as the historical no-op free ignored it. 109 bytes:
-//   test rax,rax ; jz out ; test al,7 ; jnz out ; movabs rcx,A+16 ; cmp rax,rcx
-//   jb out ; movabs rcx,ST ; cmp rax,rcx ; jb ok ; movabs rcx,OB ; cmp rax,rcx
-//   jb out ; movabs rcx,ST ; cmp rax,[rcx+512] ; jae out
-//   ok: mov rdx,[rax-8] ; test rdx,rdx ; jz out ; bsr rdx,rdx ; movabs rcx,ST
-//       mov r8,[rcx+rdx*8] ; mov [rax],r8 ; mov [rcx+rdx*8],rax
-//   out: xor eax,eax
-pub fn nb_emit_free_body(code: String) -> String {
-    let a16: i64 = nb_arena_addr() + 16;
-    let st: i64 = nb_alloc_state_addr();
-    let ob: i64 = nb_ovf_base();
-    let f1: String = nb_le(code, 2155482835879240, 7);
-    let f2: String = nb_le(f1, 3108528757, 4);
-    let f3: String = nb_i64le(f2, a16);
-    let f4: String = nb_le(f3, 52152393936681288, 7);
-    let f5: String = nb_i64le(f4, st);
-    let f6: String = nb_le(f5, 52152183483283784, 7);
-    let f7: String = nb_i64le(f6, ob);
-    let f8: String = nb_le(f7, 52152265087662408, 7);
-    let f9: String = nb_i64le(f8, st);
-    let f10: String = nb_le(f9, 8598403912, 7);
-    let f11: String = nb_le(f10, 20539223140999795, 7);
-    let f12: String = nb_le(f11, 53215572937462405, 7);
-    let f13: String = nb_le(f12, 12142802, 3);
-    let f14: String = nb_i64le(f13, st);
-    let f15: String = nb_le(f14, 150963017255756, 7);
-    let f16: String = nb_le(f15, 211320192665928, 6);
-    f16
+// The code prefix of the image being emitted: the runtime blob for an explicit
+// layout, empty (no bytes, no shift) for the default layout.
+pub fn nb_rt_prefix() -> String {
+    if nb_layout_explicit() == 1 {
+        return nb_rt_blob(string_new());
+    }
+    string_new()
+}
+
+// prefix ++ image, without copying the image when the prefix is empty.
+pub fn nb_rt_attach(rt: String, image: String) -> String {
+    if string_len(rt) == 0 {
+        return image;
+    }
+    string_push_str(rt, image)
+}
+
+// Byte chunks of testdata/native_alloc_bounded/rt/alloc_rt.s (generated by
+// rt/gen_mind.py; placeholders a, a8, st, ob, a16, ob8 = A, A+8, ST, OB, A+16,
+// OB+8).
+pub fn nb_rt_blob_p1(code: String, a: i64, a8: i64, st: i64, ob: i64, a16: i64, ob8: i64) -> String {
+    let k1: String = nb_le(code, 47433, 2);
+    let k2: String = nb_i64le(k1, st);
+    let k3: String = nb_le(k2, 755338568, 7);
+    let k4: String = nb_le(k3, 9001077065, 7);
+    let k5: String = nb_le(k4, 1325763912, 7);
+    let k6: String = nb_le(k5, 9135294793, 7);
+    let k7: String = nb_le(k6, 1829080392, 7);
+    let k8: String = nb_le(k7, 9269512521, 7);
+    let k9: String = nb_le(k8, 72033169385570353, 7);
+    let k10: String = nb_le(k9, 24583234520088582, 7);
+    let k11: String = nb_le(k10, 18386313975779393, 7);
+    let k12: String = nb_le(k11, 12142931, 3);
+    let k13: String = nb_i64le(k12, st);
+    let k14: String = nb_le(k13, 39986998165422129, 7);
+    let k15: String = nb_le(k14, 694788269539951, 7);
+    let k16: String = nb_le(k15, 17631281152, 7);
+    let k17: String = nb_le(k16, 23170008532279529, 7);
+    let k18: String = nb_le(k17, 18385214447376214, 7);
+    let k19: String = nb_le(k18, 795799142738, 5);
+    let k20: String = nb_i64le(k19, st);
+    let k21: String = nb_le(k20, 37515336739879400, 7);
+    let k22: String = nb_le(k21, 5879407932608, 7);
+    let k23: String = nb_le(k22, 2426283241728, 7);
+    let k24: String = nb_le(k23, 22589841503047936, 7);
+    let k25: String = nb_le(k24, 20639213317869889, 7);
+    let k26: String = nb_le(k25, 185, 1);
+    let k27: String = nb_i64le(k26, st);
+    let k28: String = nb_le(k27, 54097258261480776, 7);
+    let k29: String = nb_le(k28, 578927499576648, 7);
+    let k30: String = nb_le(k29, 585936877649920, 7);
+    let k31: String = nb_le(k30, 15970336768, 7);
+    let k32: String = nb_le(k31, 6964306650463721, 7);
+    let k33: String = nb_le(k32, 4023981703168, 7);
+    let k34: String = nb_le(k33, 20266198355601664, 7);
+    let k35: String = nb_le(k34, 65319220258272901, 7);
+    let k36: String = nb_le(k35, 54189739812586006, 7);
+    let k37: String = nb_le(k36, 21305492852, 7);
+    let k38: String = nb_le(k37, 7816724529, 7);
+    let k39: String = nb_le(k38, 70905305852140008, 7);
+    let k40: String = nb_le(k39, 4433803321802753, 7);
+    nb_rt_blob_p2(k40, a, a8, st, ob, a16, ob8)
+}
+pub fn nb_rt_blob_p2(code: String, a: i64, a8: i64, st: i64, ob: i64, a16: i64, ob8: i64) -> String {
+    let k1: String = nb_le(code, 16123238509811076, 7);
+    let k2: String = nb_le(k1, 20496585875683286, 7);
+    let k3: String = nb_le(k2, 4258380672201001, 7);
+    let k4: String = nb_le(k3, 21480059160340866, 7);
+    let k5: String = nb_le(k4, 812003463024779, 7);
+    let k6: String = nb_le(k5, 69894344855914825, 7);
+    let k7: String = nb_le(k6, 22954814299999560, 7);
+    let k8: String = nb_le(k7, 20140064118491384, 7);
+    let k9: String = nb_le(k8, 24769798028322824, 7);
+    let k10: String = nb_le(k9, 39767136553500649, 7);
+    let k11: String = nb_le(k10, 3125350412, 4);
+    let k12: String = nb_i64le(k11, a);
+    let k13: String = nb_le(k12, 800090393421, 5);
+    let k14: String = nb_i64le(k13, a8);
+    let k15: String = nb_le(k14, 33171412400406861, 7);
+    let k16: String = nb_le(k15, 39767342922418283, 7);
+    let k17: String = nb_le(k16, 3223558600587384, 7);
+    let k18: String = nb_le(k17, 278756527257932, 7);
+    let k19: String = nb_le(k18, 52226016775176192, 7);
+    let k20: String = nb_le(k19, 70150250601382400, 7);
+    let k21: String = nb_le(k20, 65524885569539446, 7);
+    let k22: String = nb_le(k21, 58979212463178386, 7);
+    let k23: String = nb_le(k22, 12208474, 3);
+    let k24: String = nb_i64le(k23, a8);
+    let k25: String = nb_le(k24, 20779847652182345, 7);
+    let k26: String = nb_le(k25, 186, 1);
+    let k27: String = nb_i64le(k26, a);
+    let k28: String = nb_le(k27, 69894353431726413, 7);
+    let k29: String = nb_le(k28, 68127153549640521, 7);
+    let k30: String = nb_le(k29, 17043843145828684, 7);
+    let k31: String = nb_le(k30, 65583669609555984, 7);
+    let k32: String = nb_le(k31, 54387669085454577, 7);
+    let k33: String = nb_le(k32, 21392098240463631, 7);
+    let k34: String = nb_le(k33, 4224061517402507, 7);
+    let k35: String = nb_le(k34, 36953486297961092, 7);
+    let k36: String = nb_le(k35, 2271988530739426, 7);
+    let k37: String = nb_le(k36, 141296101701961, 7);
+    let k38: String = nb_le(k37, 20357738342121472, 7);
+    let k39: String = nb_le(k38, 1691815002509, 7);
+    let k40: String = nb_le(k39, 38646014166122752, 7);
+    nb_rt_blob_p3(k40, a, a8, st, ob, a16, ob8)
+}
+pub fn nb_rt_blob_p3(code: String, a: i64, a8: i64, st: i64, ob: i64, a16: i64, ob8: i64) -> String {
+    let k1: String = nb_le(code, 70231618507851993, 7);
+    let k2: String = nb_le(k1, 69894353433686560, 7);
+    let k3: String = nb_le(k2, 68127153549640521, 7);
+    let k4: String = nb_le(k3, 17043843145828684, 7);
+    let k5: String = nb_le(k4, 39771572877346864, 7);
+    let k6: String = nb_le(k5, 38641337734267217, 7);
+    let k7: String = nb_le(k6, 20140065104596748, 7);
+    let k8: String = nb_le(k7, 424311807100936, 7);
+    let k9: String = nb_le(k8, 3533041579982848, 7);
+    let k10: String = nb_le(k9, 69894353432144688, 7);
+    let k11: String = nb_le(k10, 61371771288453961, 7);
+    let k12: String = nb_le(k11, 3533052853651788, 7);
+    let k13: String = nb_le(k12, 20271093532675096, 7);
+    let k14: String = nb_le(k13, 6769200429080963, 7);
+    let k15: String = nb_le(k14, 415512588488008, 7);
+    let k16: String = nb_le(k15, 65392699387871232, 7);
+    let k17: String = nb_le(k16, 22621734481953271, 7);
+    let k18: String = nb_le(k17, 54404184690624840, 7);
+    let k19: String = nb_le(k18, 24869463890527209, 7);
+    let k20: String = nb_le(k19, 66243376550463976, 7);
+    let k21: String = nb_le(k20, 7934072617, 7);
+    let k22: String = nb_le(k21, 22108191130159433, 7);
+    let k23: String = nb_le(k22, 21395941172530424, 7);
+    let k24: String = nb_le(k23, 4080053663613321, 7);
+    let k25: String = nb_le(k24, 65796184685511496, 7);
+    let k26: String = nb_le(k25, 46523583019173891, 7);
+    let k27: String = nb_le(k26, 18394010708171585, 7);
+    let k28: String = nb_le(k27, 20480986858807128, 7);
+    let k29: String = nb_le(k28, 18014398509482168, 7);
+    let k30: String = nb_le(k29, 38016465894899712, 7);
+    let k31: String = nb_le(k30, 55876390649594881, 7);
+    let k32: String = nb_le(k31, 36953455805548551, 7);
+    let k33: String = nb_le(k32, 27204414281982, 7);
+    let k34: String = nb_le(k33, 37516162208301056, 7);
+    let k35: String = nb_le(k34, 2190185292002559, 7);
+    let k36: String = nb_le(k35, 3108523125, 4);
+    let k37: String = nb_i64le(k36, a16);
+    let k38: String = nb_le(k37, 16127900475406664, 7);
+    let k39: String = nb_le(k38, 795778511567, 5);
+    let k40: String = nb_i64le(k39, ob8);
+    nb_rt_blob_p4(k40, a, a8, st, ob, a16, ob8)
+}
+pub fn nb_rt_blob_p4(code: String, a: i64, a8: i64, st: i64, ob: i64, a16: i64, ob8: i64) -> String {
+    let k1: String = nb_le(code, 16687465994598728, 7);
+    let k2: String = nb_le(k1, 9133643092066489, 7);
+    let k3: String = nb_le(k2, 495840960940872, 7);
+    let k4: String = nb_le(k3, 20539850072004469, 7);
+    let k5: String = nb_le(k4, 216594569, 7);
+    let k6: String = nb_le(k5, 54387669354712392, 7);
+    let k7: String = nb_le(k6, 52435450760069750, 7);
+    let k8: String = nb_i64le(k7, a);
+    let k9: String = nb_le(k8, 800088820557, 5);
+    let k10: String = nb_i64le(k9, a8);
+    let k11: String = nb_le(k10, 69894362033553741, 7);
+    let k12: String = nb_le(k11, 16128776665184589, 7);
+    let k13: String = nb_le(k12, 55108112486725320, 7);
+    let k14: String = nb_le(k13, 47689, 2);
+    let k15: String = nb_i64le(k14, ob);
+    let k16: String = nb_le(k15, 38647766939875661, 7);
+    let k17: String = nb_le(k16, 39208655703032784, 7);
+    let k18: String = nb_le(k17, 1535861066631256, 7);
+    let k19: String = nb_le(k18, 39204315097958733, 7);
+    let k20: String = nb_le(k19, 20539845777094728, 7);
+    let k21: String = nb_le(k20, 56599050266983695, 7);
+    let k22: String = nb_le(k21, 4302425335956813, 7);
+    let k23: String = nb_le(k22, 21673573240834483, 7);
+    let k24: String = nb_le(k23, 25483711784211077, 7);
+    let k25: String = nb_le(k24, 21896486560776968, 7);
+    let k26: String = nb_le(k25, 20284380207977611, 7);
+    let k27: String = nb_le(k26, 540871, 7);
+    let k28: String = nb_le(k27, 38642355298010445, 7);
+    let k29: String = nb_le(k28, 20768694620194882, 7);
+    let k30: String = nb_le(k29, 8733174543, 7);
+    let k31: String = nb_le(k30, 2407623642563, 7);
+    let k32: String = nb_le(k31, 21681762891025408, 7);
+    let k33: String = nb_le(k32, 21673573243982221, 7);
+    let k34: String = nb_le(k33, 1819525201533579, 7);
+    let k35: String = nb_le(k34, 20505382032673097, 7);
+    let k36: String = nb_le(k35, 70132658657808185, 7);
+    let k37: String = nb_le(k36, 54097415261241672, 7);
+    let k38: String = nb_le(k37, 38643175164430579, 7);
+    let k39: String = nb_le(k38, 4503598562101712, 7);
+    let k40: String = nb_le(k39, 67553998177126656, 7);
+    nb_rt_blob_p5(k40, a, a8, st, ob, a16, ob8)
+}
+pub fn nb_rt_blob_p5(code: String, a: i64, a8: i64, st: i64, ob: i64, a16: i64, ob8: i64) -> String {
+    let k1: String = nb_le(code, 18385214549151999, 7);
+    let k2: String = nb_le(k1, 71540036629777488, 7);
+    let k3: String = nb_le(k2, 52425813923988410, 7);
+    let k4: String = nb_le(k3, 54262311876034594, 7);
+    let k5: String = nb_le(k4, 56630647036313599, 7);
+    let k6: String = nb_le(k5, 1423867557972408, 7);
+    let k7: String = nb_le(k6, 20365559594047553, 7);
+    let k8: String = nb_le(k7, 691064790382649, 7);
+    let k9: String = nb_le(k8, 563506307727360, 7);
+    let k10: String = nb_le(k9, 58191718545293312, 7);
+    let k11: String = nb_le(k10, 54189743185103689, 7);
+    let k12: String = nb_le(k11, 20539223140995700, 7);
+    let k13: String = nb_le(k12, 32635950173053571, 7);
+    let k14: String = nb_le(k13, 20804868835592233, 7);
+    let k15: String = nb_le(k14, 71776119095333259, 7);
+    let k16: String = nb_le(k15, 59256293333092545, 7);
+    let k17: String = nb_le(k16, 20497903475260532, 7);
+    let k18: String = nb_le(k17, 20487219677090049, 7);
+    let k19: String = nb_le(k18, 70054847717068939, 7);
+    let k20: String = nb_le(k19, 38643435669737704, 7);
+    let k21: String = nb_le(k20, 69950147809331664, 7);
+    let k22: String = nb_le(k21, 69894353433489952, 7);
+    let k23: String = nb_le(k22, 68127153549640521, 7);
+    let k24: String = nb_le(k23, 17043843145828684, 7);
+    let k25: String = nb_le(k24, 39772672372197680, 7);
+    let k26: String = nb_le(k25, 38647934804033872, 7);
+    let k27: String = nb_le(k26, 2330471942850308, 7);
+    let k28: String = nb_le(k27, 72056279388031308, 7);
+    let k29: String = nb_le(k28, 6733351382178047, 7);
+    let k30: String = nb_le(k29, 39768231642170184, 7);
+    let k31: String = nb_le(k30, 72057586570498108, 7);
+    let k32: String = nb_le(k31, 36952405908601164, 7);
+    let k33: String = nb_le(k32, 39767993555156263, 7);
+    let k34: String = nb_le(k33, 72057588902596620, 7);
+    let k35: String = nb_le(k34, 47689, 2);
+    let k36: String = nb_i64le(k35, a);
+    let k37: String = nb_le(k36, 800089344841, 5);
+    let k38: String = nb_i64le(k37, a8);
+    let k39: String = nb_le(k38, 23799238588927305, 7);
+    let k40: String = nb_le(k39, 25464449742407728, 7);
+    nb_rt_blob_p6(k40, a, a8, st, ob, a16, ob8)
+}
+pub fn nb_rt_blob_p6(code: String, a: i64, a8: i64, st: i64, ob: i64, a16: i64, ob8: i64) -> String {
+    let k1: String = nb_le(code, 38646074772699468, 7);
+    let k2: String = nb_le(k1, 21723552787548367, 7);
+    let k3: String = nb_le(k2, 20266198359902601, 7);
+    let k4: String = nb_le(k3, 7036338755399555, 7);
+    let k5: String = nb_le(k4, 21393573774367090, 7);
+    let k6: String = nb_le(k5, 20328030975561865, 7);
+    let k7: String = nb_le(k6, 65577662122868867, 7);
+    let k8: String = nb_le(k7, 20270510470331978, 7);
+    let k9: String = nb_le(k8, 3091740809, 4);
+    let k10: String = nb_i64le(k9, ob);
+    let k11: String = nb_le(k10, 8602092361, 7);
+    let k12: String = nb_le(k11, 142426635728128, 7);
+    let k13: String = nb_le(k12, 13603764657192962, 7);
+    let k14: String = nb_le(k13, 2202136168712, 7);
+    let k15: String = nb_le(k14, 65308203159209984, 7);
+    let k16: String = nb_le(k15, 204826990345842, 6);
+    let k17: String = nb_i64le(k16, a8);
+    let k18: String = nb_le(k17, 20777648612542792, 7);
+    let k19: String = nb_le(k18, 186, 1);
+    let k20: String = nb_i64le(k19, a);
+    let k21: String = nb_le(k20, 20319564500470089, 7);
+    let k22: String = nb_le(k21, 65850341006557315, 7);
+    let k23: String = nb_le(k22, 33932341877407544, 7);
+    let k24: String = nb_le(k23, 20547673256421624, 7);
+    let k25: String = nb_le(k24, 20269387391448971, 7);
+    let k26: String = nb_le(k25, 54106194244486285, 7);
+    let k27: String = nb_le(k26, 54595187062086259, 7);
+    let k28: String = nb_le(k27, 70053748190376961, 7);
+    let k29: String = nb_le(k28, 36952421319347528, 7);
+    let k30: String = nb_le(k29, 72057583248607424, 7);
+    let k31: String = nb_le(k30, 39204347476084040, 7);
+    let k32: String = nb_le(k31, 20539184519903311, 7);
+    let k33: String = nb_le(k32, 36952595281528873, 7);
+    let k34: String = nb_le(k33, 2263158077522662, 7);
+    let k35: String = nb_le(k34, 2463469907970376, 7);
+    let k36: String = nb_le(k35, 60495129760060648, 7);
+    let k37: String = nb_le(k36, 52434644767116616, 7);
+    let k38: String = nb_i64le(k37, a);
+    let k39: String = nb_le(k38, 804384312137, 5);
+    let k40: String = nb_i64le(k39, a8);
+    nb_rt_blob_p7(k40, a, a8, st, ob, a16, ob8)
+}
+pub fn nb_rt_blob_p7(code: String, a: i64, a8: i64, st: i64, ob: i64, a16: i64, ob8: i64) -> String {
+    let k1: String = nb_le(code, 32871245659308364, 7);
+    let k2: String = nb_le(k1, 38641242192300061, 7);
+    let k3: String = nb_le(k2, 16127735685007375, 7);
+    let k4: String = nb_le(k3, 572309895410624, 7);
+    let k5: String = nb_le(k4, 71294434322910536, 7);
+    let k6: String = nb_le(k5, 11625108678967295, 7);
+    let k7: String = nb_le(k6, 40969233651812825, 7);
+    let k8: String = nb_le(k7, 58328318759404080, 7);
+    let k9: String = nb_le(k8, 625147745470322, 7);
+    let k10: String = nb_le(k9, 39767250559631360, 7);
+    let k11: String = nb_le(k10, 10493738976542599, 7);
+    let k12: String = nb_le(k11, 61231033751695360, 7);
+    let k13: String = nb_le(k12, 274333666715976, 7);
+    let k14: String = nb_le(k13, 24302683682770944, 7);
+    let k15: String = nb_le(k14, 56164464043639122, 7);
+    let k16: String = nb_le(k15, 20313966920, 7);
+    let k17: String = nb_le(k16, 4222124652541952, 7);
+    let k18: String = nb_le(k17, 25404597363886085, 7);
+    let k19: String = nb_le(k18, 33154146557189722, 7);
+    let k20: String = nb_le(k19, 51871398113134851, 7);
+    let k21: String = nb_le(k20, 11426315137909, 7);
+    let k22: String = nb_le(k21, 27424455903432704, 7);
+    let k23: String = nb_le(k22, 20354577617937696, 7);
+    let k24: String = nb_le(k23, 9118758504522168, 7);
+    let k25: String = nb_le(k24, 32199989506634337, 7);
+    let k26: String = nb_le(k25, 22639082835439474, 7);
+    let k27: String = nb_le(k26, 772956674326968, 7);
+    let k28: String = nb_le(k27, 52607822961049600, 7);
+    let k29: String = nb_le(k28, 51796957697409054, 7);
+    let k30: String = nb_le(k29, 77786152698087, 7);
+    let k31: String = nb_le(k30, 12159137284096, 6);
+    k31
 }
 
 // The over-cap branch after `cmp r8,rdx` in nb_emit_alloc_core.
@@ -33058,74 +33277,39 @@ pub fn nb_emit_alloc(code: String, bytes_disp: i64) -> String {
     nb_emit_alloc_core(c12)
 }
 
-// Explicit-layout __mind_alloc(n): n <= 0 returns 0 and allocates nothing (the
-// C runtime's contract, runtime-support/mind_intrinsics.c); otherwise round up
-// to the 8-byte stride and run the grow core.
-//   mov rsi,[rbp+bytes] = 48 8B B5 <disp32> ; test rsi,rsi = 48 85 F6 ;
-//   jg +7 = 7F 07 ; xor eax,eax = 31 C0 ; jmp done = E9 <rel32> ;
-//   add rsi,7 = 48 83 C6 07 ; and rsi,-8 = 48 83 E6 F8 ; <grow core> ; done:
+// Explicit-layout call into the runtime blob through its state-page slot:
+//   movabs r11,ST+slot = 49 BB <imm64> ; call qword [r11] = 41 FF 13
+pub fn nb_emit_rt_call(code: String, slot: i64) -> String {
+    let c1: String = nb_le(code, 47945, 2);
+    let c2: String = nb_i64le(c1, nb_alloc_state_addr() + slot);
+    nb_le(c2, 1310529, 3)
+}
+
+// Explicit-layout __mind_alloc(n) -> addr:
+//   mov rsi,[rbp+bytes] = 48 8B B5 <disp32> ; call the alloc entry.
 pub fn nb_emit_alloc_explicit(code: String, bytes_disp: i64) -> String {
     let c1: String = nb_le(code, 11897672, 3);
     let c2: String = nb_i32le_signed(c1, bytes_disp);
-    let c3: String = nb_le(c2, 54097103809840456, 7);
-    let c4: String = nb_push(c3, 233);
-    let site: i64 = string_len(c4);
-    let c5: String = nb_u32(c4, 0);
-    let c6: String = nb_le(c5, 64883590034785096, 7);
-    let c7: String = nb_push(c6, 248);
-    let c8: String = nb_emit_alloc_core_grow(c7);
-    let done_at: i64 = string_len(c8);
-    let _p: i64 = nb_patch_rel32(string_addr(c8), site, done_at - (site + 4));
-    c8
+    nb_emit_rt_call(c2, 536)
 }
 
-// Explicit-layout __mind_free(ptr) -> 0: mov rax,[rbp+ptr] = 48 8B 85 <disp32>,
-// then the free body (rax = 0 afterwards).
+// Explicit-layout __mind_free(ptr) -> 0:
+//   mov rdi,[rbp+ptr] = 48 8B BD <disp32> ; call the free entry (rax = 0).
 pub fn nb_emit_free_explicit(code: String, addr_disp: i64) -> String {
-    let c1: String = nb_le(code, 8751944, 3);
+    let c1: String = nb_le(code, 12421960, 3);
     let c2: String = nb_i32le_signed(c1, addr_disp);
-    nb_emit_free_body(c2)
+    nb_emit_rt_call(c2, 544)
 }
 
-// Explicit-layout __mind_realloc(addr, n), C-runtime parity:
-//   n > 0  : grow-and-preserve (nb_emit_realloc), then release the old block;
-//   n == 0 : release addr, return 0;
-//   n < 0  : return 0 and leave addr live (the C realloc of a SIZE_MAX-class
-//            request fails and keeps the old block).
-//   mov rsi,[rbp+bytes] = 48 8B B5 <disp32> ; test rsi,rsi = 48 85 F6 ;
-//   jg grow = 0F 8F <rel32> ; jl neg = 7C <rel8> ;
-//   <free addr> ; jmp done = E9 <rel32> ;
-//   neg: xor eax,eax = 31 C0 ; jmp done = E9 <rel32> ;
-//   grow: <nb_emit_realloc> ; push rax = 50 ; <free addr> ; pop rax = 58 ; done:
+// Explicit-layout __mind_realloc(addr, n) -> addr (C-runtime contract above):
+//   mov rdi,[rbp+addr] = 48 8B BD <disp32> ; mov rsi,[rbp+bytes] = 48 8B B5
+//   <disp32> ; call the realloc entry.
 pub fn nb_emit_realloc_explicit(code: String, addr_disp: i64, bytes_disp: i64) -> String {
-    let c1: String = nb_le(code, 11897672, 3);
-    let c2: String = nb_i32le_signed(c1, bytes_disp);
-    let c3: String = nb_le(c2, 614448137544, 5);
-    let jg_site: i64 = string_len(c3);
-    let c4: String = nb_u32(c3, 0);
-    let c5: String = nb_push(c4, 124);
-    let jl_site: i64 = string_len(c5);
-    let c6: String = nb_push(c5, 0);
-    let c7: String = nb_emit_free_explicit(c6, addr_disp);
-    let c8: String = nb_push(c7, 233);
-    let j1_site: i64 = string_len(c8);
-    let c9: String = nb_u32(c8, 0);
-    let neg_at: i64 = string_len(c9);
-    let c10: String = nb_le(c9, 15319089, 3);
-    let j2_site: i64 = string_len(c10);
-    let c11: String = nb_u32(c10, 0);
-    let grow_at: i64 = string_len(c11);
-    let c12: String = nb_emit_realloc(c11, addr_disp, bytes_disp);
-    let c13: String = nb_push(c12, 80);
-    let c14: String = nb_emit_free_explicit(c13, addr_disp);
-    let c15: String = nb_push(c14, 88);
-    let done_at: i64 = string_len(c15);
-    let base: i64 = string_addr(c15);
-    let _p1: i64 = nb_patch_rel32(base, jg_site, grow_at - (jg_site + 4));
-    __mind_store_i8(base + jl_site, neg_at - (jl_site + 1));
-    let _p2: i64 = nb_patch_rel32(base, j1_site, done_at - (j1_site + 4));
-    let _p3: i64 = nb_patch_rel32(base, j2_site, done_at - (j2_site + 4));
-    c15
+    let c1: String = nb_le(code, 12421960, 3);
+    let c2: String = nb_i32le_signed(c1, addr_disp);
+    let c3: String = nb_le(c2, 11897672, 3);
+    let c4: String = nb_i32le_signed(c3, bytes_disp);
+    nb_emit_rt_call(c4, 552)
 }
 
 // emit_store_i64(addr_disp, val_disp): 8-byte store through the i64 handle.
@@ -45055,10 +45239,16 @@ pub fn nb_emit_items(s: EmitState, src: i64, items_addr: i64, items_len: i64, st
         // That buffer and the incoming state predate item_ckpt.  A growth points
         // at a distinct post-checkpoint allocation and takes the no-reclaim arm.
         if s1_addr == string_addr(s.buf) {
-            let old_len: i64 = string_len(s.buf);
-            let _ri: i64 = nb_arena_reclaim(item_ckpt);
-            let kept_s: EmitState = nb_replay_emit_bytes(s, s1_addr, old_len, s1_len);
-            return nb_emit_items(kept_s, src, items_addr, items_len, strbuf, offs, ncount, tconst, kept, n_kept, ok_cell, i + 1);
+            // Equal capacity as well: the explicit-layout runtime grows a block
+            // that ends at the cursor IN PLACE (same address, more capacity), and
+            // that growth lies above the checkpoint. The historical allocator
+            // always moves on growth, so there both tests agree.
+            if string_cap(s1.buf) == string_cap(s.buf) {
+                let old_len: i64 = string_len(s.buf);
+                let _ri: i64 = nb_arena_reclaim(item_ckpt);
+                let kept_s: EmitState = nb_replay_emit_bytes(s, s1_addr, old_len, s1_len);
+                return nb_emit_items(kept_s, src, items_addr, items_len, strbuf, offs, ncount, tconst, kept, n_kept, ok_cell, i + 1);
+            }
         }
     }
     nb_emit_items(s1, src, items_addr, items_len, strbuf, offs, ncount, tconst, kept, n_kept, ok_cell, i + 1)
@@ -45334,8 +45524,8 @@ pub fn nb_arena_mark() -> i64 {
     nb_arena_addr() + __mind_load_i64(nb_arena_addr()) + 16
 }
 
-// 1 iff the RUNNING image uses the explicit-layout allocator (free-list bins +
-// overflow growth, nb_emit_alloc_core_grow): native, and __mind_alloc(0) == 0.
+// 1 iff the RUNNING image uses the explicit-layout allocator (the runtime blob,
+// nb_rt_blob): native, and __mind_alloc(0) == 0.
 pub fn nb_running_free_list() -> i64 {
     let probe: i64 = __mind_alloc(0);
     if probe != 0 {
@@ -45367,28 +45557,120 @@ pub fn nb_running_arena_scan(ph: i64, n: i64, i: i64) -> i64 {
     }
     nb_running_arena_scan(ph, n, i + 1)
 }
-pub fn nb_zero_words(addr: i64, n: i64, i: i64) -> i64 {
-    if i >= n {
-        return 0;
-    }
-    let _z: i64 = __mind_store_i64(addr + i * 8, 0);
-    nb_zero_words(addr, n, i + 1)
-}
-
-// Reclaim in an explicit-layout image: empty every free-list bin first (a
-// released block above the checkpoint would otherwise be handed out twice,
-// once from its bin and once by the reset bump cursor; released blocks below
-// the checkpoint are merely forgotten), then reset the cursor. The checkpoint
-// may lie in the primary region or in the overflow region; both are valid
-// cursor positions, and the overflow mapping is kept.
+// Reclaim in an explicit-layout image (the runtime blob's heap). Every block
+// whose header lies at or above t = ckpt - 8 (the cursor's header address at
+// the mark) is dead: free blocks there leave their bins. A free block below t
+// that reaches or straddles t is dead space as well and joins the bump region;
+// the cursor moves to the lowest such start (t when there is none), so the
+// next bump block starts exactly where the mark's would have and no stale word
+// sits between blocks. A cursor already at or below t has nothing above it.
+// Live blocks below t are untouched; a block a bin handed out after the mark
+// merely stays allocated.
 pub fn nb_arena_reclaim_free_list(ckpt: i64) -> i64 {
     let ab: i64 = nb_running_arena_bytes();
     if ab < 1048576 {
         return 0;
     }
-    let _c: i64 = nb_zero_words(nb_arena_addr() + ab - 4096, 64, 0);
-    let _r: i64 = __mind_store_i64(nb_arena_addr(), ckpt - nb_arena_addr() - 8);
+    let st: i64 = nb_arena_addr() + ab - 4096;
+    let a8: i64 = nb_arena_addr() + 8;
+    let t: i64 = ckpt - 8;
+    let top: i64 = a8 + __mind_load_i64(nb_arena_addr());
+    if top <= t {
+        return 0;
+    }
+    let _p: i64 = nb_rfl_purge(st, t, 0);
+    let nt: i64 = nb_rfl_settle(st, t);
+    let _c: i64 = __mind_store_i64(nb_arena_addr(), nt - a8);
     0
+}
+
+// Drop every binned free block whose header is at or above t (bins k..63).
+pub fn nb_rfl_purge(st: i64, t: i64, k: i64) -> i64 {
+    if k >= 64 {
+        return 0;
+    }
+    let _w: i64 = nb_rfl_purge_list(st, t, __mind_load_i64(st + k * 8));
+    nb_rfl_purge(st, t, k + 1)
+}
+pub fn nb_rfl_purge_list(st: i64, t: i64, d: i64) -> i64 {
+    if d == 0 {
+        return 0;
+    }
+    let nx: i64 = __mind_load_i64(d);
+    if d - 8 >= t {
+        let _u: i64 = nb_rfl_unlink(st, d);
+        return nb_rfl_purge_list(st, t, nx);
+    }
+    nb_rfl_purge_list(st, t, nx)
+}
+
+// Lowest cursor (header address) the free blocks reaching `top` allow.
+pub fn nb_rfl_settle(st: i64, top: i64) -> i64 {
+    let d: i64 = nb_rfl_find(st, top, 0);
+    if d == 0 {
+        return top;
+    }
+    let _u: i64 = nb_rfl_unlink(st, d);
+    nb_rfl_settle(st, d - 8)
+}
+
+// A binned free block whose header h satisfies h < top <= h + 8 + size, or 0.
+pub fn nb_rfl_find(st: i64, top: i64, k: i64) -> i64 {
+    if k >= 64 {
+        return 0;
+    }
+    let d: i64 = nb_rfl_find_list(top, __mind_load_i64(st + k * 8));
+    if d != 0 {
+        return d;
+    }
+    nb_rfl_find(st, top, k + 1)
+}
+pub fn nb_rfl_find_list(top: i64, d: i64) -> i64 {
+    if d == 0 {
+        return 0;
+    }
+    let h: i64 = d - 8;
+    let s: i64 = __mind_load_i64(h) & (0 - 8);
+    if h < top {
+        if h + 8 + s >= top {
+            return d;
+        }
+    }
+    nb_rfl_find_list(top, __mind_load_i64(d))
+}
+
+// Unlink free block d from its bin (the runtime blob's `unlink`): fix the
+// neighbours' links, or the bin head and, when the bin empties, its bitmap bit.
+pub fn nb_rfl_unlink(st: i64, d: i64) -> i64 {
+    let nx: i64 = __mind_load_i64(d);
+    let pv: i64 = __mind_load_i64(d + 8);
+    let _n: i64 = nb_rfl_set_prev(nx, pv);
+    if pv != 0 {
+        let _s: i64 = __mind_store_i64(pv, nx);
+        return 0;
+    }
+    let k: i64 = nb_rfl_bsr(__mind_load_i64(d - 8) & (0 - 8), 0);
+    let _h: i64 = __mind_store_i64(st + k * 8, nx);
+    if nx != 0 {
+        return 0;
+    }
+    let bm: i64 = __mind_load_i64(st + 520);
+    let _b: i64 = __mind_store_i64(st + 520, bm - (1 << k));
+    0
+}
+pub fn nb_rfl_set_prev(nx: i64, pv: i64) -> i64 {
+    if nx == 0 {
+        return 0;
+    }
+    let _s: i64 = __mind_store_i64(nx + 8, pv);
+    0
+}
+// Index of the highest set bit of s >= 1.
+pub fn nb_rfl_bsr(s: i64, k: i64) -> i64 {
+    if s < 2 {
+        return k;
+    }
+    nb_rfl_bsr(s / 2, k + 1)
 }
 
 // Reset the native bump-arena cursor to reclaim everything allocated after the
@@ -45697,12 +45979,17 @@ pub fn selftest_native_elf_hb_from_tokens(tokens: Vec, src_addr: i64, hash_addr:
     } else {
         0
     };
-    let _ss: i64 = nb_shift_starts(starts, n_fns, stub_len, 0);
-    let image: String = if entry_idx < 0 {
+    // Explicit-layout images start with the allocator runtime blob (it is the
+    // ELF entry and jumps to the stub / `main` that follows), so every fn start
+    // also shifts by its length. Default-layout images get no prefix.
+    let rt: String = nb_rt_prefix();
+    let _ss: i64 = nb_shift_starts(starts, n_fns, stub_len + string_len(rt), 0);
+    let image1: String = if entry_idx < 0 {
         string_push_str(nb_synth_entry(), image0)
     } else {
         image0
     };
+    let image: String = nb_rt_attach(rt, image1);
 
     // Patch each call's rel32. call k: owner fn = call_owner[k]; rel_off recorded
     // relative to that fn => abs_off = starts[owner] + rel_off. Resolve callee.

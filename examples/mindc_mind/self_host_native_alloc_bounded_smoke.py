@@ -20,6 +20,23 @@ each fixture's header comment, restated in CASES). When MINDC_BIN is set each
 portable fixture is also built through the MLIR backend and run under the same
 cap, as an emitter-independent oracle.
 
+Allocator runtime (testdata/native_alloc_bounded/rt/): bounded images start
+with one shared runtime blob (alloc/free/realloc, boundary-tag merging, bins
+with a non-empty bitmap, top-of-heap return, in-place realloc growth). The gate
+assembles alloc_rt.s with the system assembler, (a) runs the C stress harness
+alloc_rt_harness.c over it (random alloc/free/realloc traces against a model
+with a full heap walk after every operation, the C-runtime edge cases and the
+grow/free/interleaved loops) and (b) checks that B2 and the first fixture image
+start with exactly that blob, patched for the bounded layout (the byte chunks
+in main.mind are generated from it by rt/gen_mind.py). Missing as/objcopy or a
+C compiler prints SKIP for those checks only.
+
+Reclaim: the compiler's own arena mark/reclaim code (nb_arena_reclaim_free_list
+and helpers, extracted from main.mind by name) is compiled with a driver and
+run natively over the runtime: after each reclaim the cursor must sit exactly
+at the mark (no stale word between blocks), the heap must tile, and no binned
+block may survive above the checkpoint (exit 42; 1..12 name the failed check).
+
 Peak VmPeak (sampled from /proc/<pid>/status) and ru_maxrss (wait4) are
 printed for every compile and run.
 
@@ -60,6 +77,11 @@ CASES = {
     "vec_grow": (7, b"vec\n", True),
     "vec_std": (9, b"std\n", True),
     "oom_exit": (70, b"", False),
+    "afl_inc": (12, b"", True),
+    "grow8": (11, b"", True),
+    "big_increasing": (15, b"", True),
+    "realloc_null_zero": (104, b"", True),
+    "interleaved_growth": (21, b"", True),
 }
 FAILS: list[str] = []
 
@@ -191,6 +213,236 @@ def derive(td: pathlib.Path) -> pathlib.Path | None:
     return td / "B2.elf"
 
 
+# ---- the allocator runtime blob (testdata/native_alloc_bounded/rt/) ----
+RT = FIX / "rt"
+ARENA_ADDR = 0x100_0000
+LOAD_ADDR = 0x40_0000
+
+
+def rt_layout() -> dict[int, int]:
+    """Placeholder byte -> value for the bounded layout (see alloc_rt.s)."""
+    arena, stack, guard = BOUNDED
+    st = ARENA_ADDR + arena - 4096
+    ob = ARENA_ADDR + arena + guard + stack + guard
+    return {1: ARENA_ADDR, 2: ARENA_ADDR + 8, 3: st, 4: ob, 5: ARENA_ADDR + 16, 6: ob + 8}
+
+
+def rt_assemble(td: pathlib.Path) -> bytes | None:
+    """Assemble alloc_rt.s with the system assembler; None when unavailable."""
+    obj, binf = td / "alloc_rt.o", td / "alloc_rt.bin"
+    try:
+        a = subprocess.run(["as", "--64", "-o", str(obj), str(RT / "alloc_rt.s")],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+        if a.returncode != 0:
+            report(False, "rt/assemble", a.stderr.decode(errors="replace")[-300:])
+            return None
+        o = subprocess.run(["objcopy", "-O", "binary", "-j", ".text", str(obj), str(binf)],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+    except FileNotFoundError:
+        print("  SKIP  rt/assemble: no GNU as/objcopy on PATH")
+        return None
+    if o.returncode != 0:
+        report(False, "rt/assemble", o.stderr.decode(errors="replace")[-300:])
+        return None
+    return binf.read_bytes()
+
+
+def rt_patch(raw: bytes) -> bytes:
+    vals, out, i = rt_layout(), bytearray(raw), 0
+    while i + 8 <= len(out):
+        if out[i] in vals and out[i + 1:i + 8] == b"\x11" * 7:
+            out[i:i + 8] = struct.pack("<Q", vals[out[i]])
+            i += 8
+        else:
+            i += 1
+    return bytes(out)
+
+
+def check_blob(tag: str, elf: bytes, raw: bytes | None) -> None:
+    """The emitted image must start (at its ELF entry) with the assembled,
+    layout-patched runtime blob, byte-for-byte."""
+    if raw is None:
+        return
+    want = rt_patch(raw)
+    entry = struct.unpack_from("<Q", elf, 24)[0]
+    off = entry - LOAD_ADDR
+    got = elf[off:off + len(want)]
+    first = next((k for k in range(len(want)) if k >= len(got) or got[k] != want[k]), None)
+    report(first is None, f"rt/blob/{tag}",
+           f"{len(want)} B at entry 0x{entry:x}" + ("" if first is None else
+           f" first difference at blob offset {first}"))
+
+
+def run_rt_harness(td: pathlib.Path, raw: bytes | None) -> None:
+    """Compile and run the C stress harness over the assembled blob: random
+    alloc/free/realloc traces against a model, with a full heap walk (tiling,
+    boundary tags, bins, bitmap, no free block below the cursor) after every
+    operation, plus the C-runtime edge cases and the grow/free/interleaved loops."""
+    if raw is None:
+        return
+    binf, exe = td / "alloc_rt_raw.bin", td / "alloc_rt_harness"
+    binf.write_bytes(raw)
+    cc = os.environ.get("CC", "cc")
+    try:
+        c = subprocess.run([cc, "-O1", "-o", str(exe), str(RT / "alloc_rt_harness.c")],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=300)
+    except FileNotFoundError:
+        print(f"  SKIP  rt/harness: no C compiler ({cc})")
+        return
+    if c.returncode != 0:
+        report(False, "rt/harness-build", c.stderr.decode(errors="replace")[-300:])
+        return
+    # (arena bytes, steps, size mode, seed): small arenas force the overflow region.
+    for arena, steps, mode, seed in ((0x100_0000, 20000, 0, 1), (0x100_0000, 20000, 0, 2),
+                                     (0x1000_0000, 20000, 0, 3), (0x400_0000, 3000, 1, 4)):
+        r = run([str(exe), str(binf), hex(arena), str(steps), str(mode), str(seed)], b"",
+                cap=False, timeout=600)
+        tail = r[1].decode(errors="replace").strip().splitlines()[-1:] or [""]
+        report(r[0] == 0 and tail[0].startswith("OK"),
+               f"rt/harness/arena={arena:#x},seed={seed}",
+               f"rc={r[0]} wall={r[3]:.1f}s {tail[0]} {r[2].decode(errors='replace')[-200:]}")
+
+
+# ---- arena mark/reclaim (the compiler's own nb_arena_reclaim_free_list) ----
+# The fixture is the REAL main.mind code (extracted by name) plus a driver: it
+# runs natively over the runtime blob and checks the cursor after each reclaim
+# (exactly the mark's position: no stale word between blocks), the heap tiling
+# and that no binned block survives above the checkpoint.
+RECLAIM_FNS = ("nb_load_addr", "nb_arena_addr", "nb_running_arena_bytes",
+               "nb_running_arena_scan", "nb_arena_reclaim_free_list", "nb_rfl_purge",
+               "nb_rfl_purge_list", "nb_rfl_settle", "nb_rfl_find", "nb_rfl_find_list",
+               "nb_rfl_unlink", "nb_rfl_set_prev", "nb_rfl_bsr")
+RECLAIM_DRIVER = """
+fn mark() -> i64 {
+    nb_arena_addr() + __mind_load_i64(nb_arena_addr()) + 16
+}
+fn cur() -> i64 {
+    __mind_load_i64(nb_arena_addr())
+}
+fn want(m: i64) -> i64 {
+    m - nb_arena_addr() - 16
+}
+fn bits() -> i64 {
+    __mind_load_i64(nb_arena_addr() + nb_running_arena_bytes() - 4096 + 520)
+}
+fn walk(h: i64, top: i64, pf: i64) -> i64 {
+    if h == top {
+        if pf == 1 {
+            return 0;
+        }
+        return 1;
+    }
+    if h > top {
+        return 0;
+    }
+    let hd: i64 = __mind_load_i64(h);
+    let s: i64 = hd & (0 - 8);
+    if ((hd / 2) & 1) != pf {
+        return 0;
+    }
+    let fr: i64 = hd & 1;
+    if fr == 1 {
+        if __mind_load_i64(h + s) != s {
+            return 0;
+        }
+    }
+    walk(h + 8 + s, top, fr)
+}
+fn heap_ok() -> i64 {
+    walk(nb_arena_addr() + 8, nb_arena_addr() + 8 + cur(), 0)
+}
+fn main() -> i64 {
+    let k1: i64 = __mind_alloc(100);
+    let m1: i64 = mark();
+    let a: i64 = __mind_alloc(1000);
+    let b: i64 = __mind_alloc(64);
+    let fa: i64 = __mind_free(a);
+    let r1: i64 = nb_arena_reclaim_free_list(m1);
+    if cur() != want(m1) {
+        return 1;
+    }
+    if heap_ok() != 1 {
+        return 2;
+    }
+    if ((bits() / 512) & 1) != 0 {
+        return 3;
+    }
+    let c: i64 = __mind_alloc(5000);
+    if c != m1 {
+        return 4;
+    }
+    let fc: i64 = __mind_free(c);
+    let p1: i64 = __mind_alloc(200);
+    let m2: i64 = mark();
+    let q: i64 = __mind_alloc(300);
+    let fp: i64 = __mind_free(p1);
+    let r2: i64 = nb_arena_reclaim_free_list(m2);
+    if cur() != want(p1) {
+        return 5;
+    }
+    if heap_ok() != 1 {
+        return 6;
+    }
+    let u: i64 = __mind_alloc(64);
+    let m3: i64 = mark();
+    let fu: i64 = __mind_free(u);
+    let w: i64 = __mind_alloc(500);
+    let z: i64 = __mind_alloc(64);
+    let fw: i64 = __mind_free(w);
+    let r3: i64 = nb_arena_reclaim_free_list(m3);
+    if cur() != want(w) {
+        return 7;
+    }
+    if heap_ok() != 1 {
+        return 8;
+    }
+    let m4: i64 = mark();
+    let v: i64 = __mind_alloc(64);
+    let fv: i64 = __mind_free(v);
+    let r4: i64 = nb_arena_reclaim_free_list(m4);
+    if cur() != want(m4) {
+        return 9;
+    }
+    let m5: i64 = mark();
+    let e1: i64 = __mind_alloc(2000);
+    let e2: i64 = __mind_alloc(64);
+    let e3: i64 = __mind_alloc(3000);
+    let e4: i64 = __mind_alloc(64);
+    let f1: i64 = __mind_free(e1);
+    let f3: i64 = __mind_free(e3);
+    let r5: i64 = nb_arena_reclaim_free_list(m5);
+    if ((bits() / 1024) & 3) != 0 {
+        return 10;
+    }
+    if cur() != want(m5) {
+        return 11;
+    }
+    if heap_ok() != 1 {
+        return 12;
+    }
+    __mind_store_i64(k1, 30);
+    __mind_load_i64(k1) + 12 + fa + fc + fp + fu + fw + fv + f1 + f3 + r1 + r2 + r3 + r4 + r5 + b * 0 + q * 0 + z * 0 + e2 * 0 + e4 * 0
+}
+"""
+
+
+def extract_fns(src: str, names) -> str:
+    """Top-level `pub fn NAME(` ... first column-0 `}` for each name."""
+    lines, out = src.splitlines(), []
+    for name in names:
+        hits = [i for i, row in enumerate(lines) if row.startswith(f"pub fn {name}(")]
+        if len(hits) != 1:
+            raise KeyError(f"{name}: {len(hits)} definitions")
+        end = next(j for j in range(hits[0], len(lines)) if lines[j] == "}")
+        out.append("\n".join(lines[hits[0]:end + 1]))
+    return "\n".join(out) + "\n"
+
+
+def reclaim_fixture() -> bytes:
+    src = (_HERE / "main.mind").read_text()
+    return (extract_fns(src, RECLAIM_FNS) + RECLAIM_DRIVER).encode()
+
+
 def mlir_oracle(src: pathlib.Path, td: pathlib.Path):
     mindc = os.environ.get("MINDC_BIN")
     if not mindc:
@@ -218,6 +470,8 @@ def main(argv: list[str]) -> int:
             return 2
     with tempfile.TemporaryDirectory() as tdn:
         td = pathlib.Path(tdn)
+        raw = rt_assemble(td)
+        run_rt_harness(td, raw)
         if "--compiler" in argv:
             comp = pathlib.Path(argv[argv.index("--compiler") + 1]).resolve()
             print(f"        compiler (given): {comp} sha256={sha(comp.read_bytes())[:16]}")
@@ -234,6 +488,8 @@ def main(argv: list[str]) -> int:
                 keep.mkdir(parents=True, exist_ok=True)
                 for k in (1, 2, 3):
                     write_exec(keep, f"B{k}.elf", (td / f"B{k}.elf").read_bytes())
+            # B2 was emitted by the tree's emitter: it starts with the blob.
+            check_blob("B2", (td / "B2.elf").read_bytes(), raw)
         for name, (want_rc, want_out, portable) in CASES.items():
             src = FIX / f"{name}.mind"
             c = run([str(comp)], v2_image(src.read_bytes()))
@@ -241,6 +497,8 @@ def main(argv: list[str]) -> int:
                 report(False, f"case/{name}", describe("compile", c) + f" err={c[2][-160:]!r}")
                 continue
             exe = write_exec(td, f"{name}.elf", c[1])
+            if name == next(iter(CASES)):
+                check_blob(name, c[1], raw)
             r = run([str(exe)], b"")
             want_err = OOM_DIAG if want_rc == 70 else b""
             ok = (r[0], r[1], r[2]) == (want_rc, want_out, want_err)
@@ -261,6 +519,13 @@ def main(argv: list[str]) -> int:
                 else:
                     report((m[0], m[1]) == (want_rc, want_out), f"mlir/{name}",
                            describe("MLIR run", m) + f" stdout={m[1]!r}")
+        c = run([str(comp)], v2_image(reclaim_fixture()))
+        if c[0] != 0 or not c[1].startswith(b"\x7fELF"):
+            report(False, "reclaim", describe("compile", c) + f" err={c[2][-160:]!r}")
+        else:
+            r = run([str(write_exec(td, "reclaim.elf", c[1]))], b"")
+            report((r[0], r[1], r[2]) == (42, b"", b""), "reclaim",
+                   describe("run", r) + " (want rc=42; 1..12 name the failed check)")
     if FAILS:
         print(f"FAIL ({len(FAILS)}): {', '.join(FAILS)}")
         return 1
