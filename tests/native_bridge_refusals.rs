@@ -255,3 +255,73 @@ fn a_struct_not_named_like_a_seed_struct_still_builds() {
         assert_native_result(&p, &bytes.expect("artifact"), want, name);
     }
 }
+
+/// A struct the program itself declares twice made the frozen compiler die with
+/// SIGSEGV (exit 139), the same crash as a collision with a seed struct, in every
+/// shape measured: top level (unused, used, with differing fields), a module block
+/// beside top level, two module blocks, and twice in one function body (which the
+/// MLIR backend builds and runs, exit 3). Each must be a named refusal from the
+/// bridge, before the frozen compiler runs.
+#[test]
+fn a_struct_declared_twice_in_the_program_is_refused_not_a_crash() {
+    for (name, src) in [
+        (
+            "ds_same",
+            "struct Q { h: i64 }\nstruct Q { h: i64 }\nfn main() -> i64 { return 1; }\n",
+        ),
+        (
+            "ds_used",
+            "struct Q { h: i64 }\nstruct Q { h: i64 }\n\
+             fn main() -> i64 { let q = Q { h: 5 }; return q.h; }\n",
+        ),
+        (
+            "ds_fields",
+            "struct Q { h: i64 }\nstruct Q { a: i64, b: i64 }\n\
+             fn main() -> i64 { let q = Q { a: 5, b: 6 }; return q.b; }\n",
+        ),
+        (
+            "ds_mod_top",
+            "module m { struct Q { h: i64 } }\nstruct Q { h: i64 }\n\
+             fn main() -> i64 { return 1; }\n",
+        ),
+        (
+            "ds_two_mods",
+            "module a { struct Q { h: i64 } }\nmodule b { struct Q { h: i64 } }\n\
+             fn main() -> i64 { return 1; }\n",
+        ),
+        (
+            "ds_nested",
+            "fn main() -> i64 { struct Q { h: i64 } struct Q { h: i64 } return 3; }\n",
+        ),
+    ] {
+        let stderr = assert_refused(name, src, "closure.duplicate_struct");
+        assert!(stderr.contains("`Q`"), "{name}: `Q` not named:\n{stderr}");
+    }
+}
+
+/// Positive control for the duplicate-struct refusal: it is keyed on a STRUCT
+/// name declared twice, not on any repeated type name. A struct and an enum
+/// sharing a name builds natively and returns what the MLIR backend returns
+/// (measured: 1 on both), and two distinct struct names still build.
+#[test]
+fn a_struct_sharing_a_name_with_an_enum_still_builds() {
+    for (name, src, want) in [
+        (
+            "ds_struct_enum",
+            "struct Q { h: i64 }\nenum Q { A, B }\nfn main() -> i64 { return 1; }\n",
+            1,
+        ),
+        (
+            "ds_two_structs",
+            "struct P { h: i64 }\nstruct Q { h: i64 }\n\
+             fn main() -> i64 { let p = P { h: 2 }; let q = Q { h: 5 }; return p.h * q.h; }\n",
+            10,
+        ),
+    ] {
+        let p = Project::new(name);
+        p.write("src/main.mind", src);
+        let (code, stderr, bytes) = p.build_native("src/main.mind");
+        assert_eq!(code, 0, "{name}: {stderr}");
+        assert_native_result(&p, &bytes.expect("artifact"), want, name);
+    }
+}

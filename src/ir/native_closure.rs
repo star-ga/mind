@@ -377,28 +377,38 @@ pub fn reserved_struct_names_from_text(blob: &str) -> BTreeSet<String> {
     out
 }
 
+/// Every struct name the program declares, with how many times, judged on every
+/// `StructDef` anywhere in the AST: top level, inside a module block, and inside a
+/// function body. The frozen compiler holds struct names in one flat namespace for
+/// the whole image, so the scope a declaration sits in does not separate it.
+fn ast_struct_counts(ast: &crate::ast::Module) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for item in &ast.items {
+        crate::type_checker::nerve_walk::walk(item, &mut |node| {
+            if let crate::ast::Node::StructDef { name, .. } = node {
+                *counts.entry(name.clone()).or_insert(0) += 1;
+            }
+        });
+    }
+    counts
+}
+
 /// Refuse a program that declares a struct with the name of a std seed struct.
 ///
 /// The frozen compiler compiles `std blob ++ user region` as one program, so the
 /// image then declares the struct twice. It does not refuse that: it dies with
 /// SIGSEGV (measured: `struct Value { h: i64 }` beside `std/json.mind`'s `Value`,
 /// for every seed struct name, used or not, inside a module block or not, and with
-/// no call into std). Judged on every `StructDef` anywhere in the AST.
+/// no call into std). The program declaring one struct twice is the same crash,
+/// refused by `reject_ambiguous_ast` (`closure.duplicate_struct`).
 fn reject_std_struct_collision(
     ast: &crate::ast::Module,
     seed_structs: &BTreeSet<String>,
 ) -> Result<(), ClosureRejection> {
-    let mut found: Option<String> = None;
-    for item in &ast.items {
-        crate::type_checker::nerve_walk::walk(item, &mut |node| {
-            if let crate::ast::Node::StructDef { name, .. } = node {
-                if found.is_none() && seed_structs.contains(name) {
-                    found = Some(name.clone());
-                }
-            }
-        });
-    }
-    match found {
+    match ast_struct_counts(ast)
+        .into_keys()
+        .find(|name| seed_structs.contains(name))
+    {
         Some(name) => reject(
             "closure.std_struct_collision",
             format!(
@@ -411,11 +421,25 @@ fn reject_std_struct_collision(
     }
 }
 
-/// Refuse a duplicate or reserved-colliding definition, judged on the AST.
+/// Refuse a duplicate or reserved-colliding definition, or a struct declared more
+/// than once, judged on the AST.
 pub fn reject_ambiguous_ast(
     module: &crate::ast::Module,
     reserved: &BTreeSet<String>,
 ) -> Result<(), ClosureRejection> {
+    // A struct declared twice in one image crashed the frozen compiler (SIGSEGV)
+    // in every shape measured -- top level, module blocks, twice in one function
+    // body -- so it is refused here, before the frozen compiler runs.
+    if let Some((name, n)) = ast_struct_counts(module).into_iter().find(|(_, n)| *n > 1) {
+        return reject(
+            "closure.duplicate_struct",
+            format!(
+                "struct `{name}` is declared {n} times in the program; the native backend \
+                 holds one struct namespace for the whole image, so rename one or build \
+                 with `--backend mlir`"
+            ),
+        );
+    }
     for (name, n) in ast_definition_counts(module) {
         if n > 1 {
             return reject(
@@ -563,7 +587,8 @@ fn all_calls(instrs: &[Instr], out: &mut Vec<String>) {
 
 /// Admission for one merged program WITH std linkage, in the only correct order:
 ///
-/// 1. a duplicate user definition is refused (as in [`admit_native_closure`]);
+/// 1. a duplicate user definition, or a struct the program declares twice
+///    (`closure.duplicate_struct`), is refused (as in [`admit_native_closure`]);
 /// 2. a user definition of a frozen intrinsic name is refused — the frozen
 ///    emitter expands the intrinsic at every call site, lowering drops the user
 ///    body, so the definition could never be the one that runs;

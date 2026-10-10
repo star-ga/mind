@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Map`, `File`, `Value`, `Box`, `Text`, `TermSize`, `Args`) is refused
   (`closure.std_struct_collision`) instead of crashing the frozen compiler with
   SIGSEGV. The names are read from the std seed text.
+- A program declaring one struct name more than once (top level, module blocks, or
+  inside a function body, including two different function bodies) is refused
+  (`closure.duplicate_struct`) instead of crashing the frozen compiler with SIGSEGV.
+  The MLIR backend still builds the function-scoped shapes.
 
 ### Fixed — the native bridge reports the compiler child's real outcome
 - When streaming the source image to the native compiler fails, the bridge no longer

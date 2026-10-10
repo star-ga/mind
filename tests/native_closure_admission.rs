@@ -420,3 +420,55 @@ fn a_struct_named_like_a_seed_struct_is_refused_without_linkage() {
     let ast = libmind::parser::parse(ok).expect("parses");
     assert!(admit_native_closure_linked(&ast, &lower(ok), "main", &seed).is_ok());
 }
+
+/// The six shapes of a struct declared twice in the program itself: top level,
+/// used, differing fields, module block beside top level, two module blocks, and
+/// twice inside one function body. The frozen compiler died with SIGSEGV on every
+/// one (the same crash as a collision with a seed struct).
+/// `tests/native_bridge_refusals.rs` builds the same six end to end.
+const DUPLICATE_STRUCT_SHAPES: [&str; 6] = [
+    "struct Q { h: i64 }\nstruct Q { h: i64 }\nfn main() -> i64 { return 1; }\n",
+    "struct Q { h: i64 }\nstruct Q { h: i64 }\nfn main() -> i64 { let q = Q { h: 5 }; return q.h; }\n",
+    "struct Q { h: i64 }\nstruct Q { a: i64, b: i64 }\n\
+     fn main() -> i64 { let q = Q { a: 5, b: 6 }; return q.b; }\n",
+    "module m { struct Q { h: i64 } }\nstruct Q { h: i64 }\nfn main() -> i64 { return 1; }\n",
+    "module a { struct Q { h: i64 } }\nmodule b { struct Q { h: i64 } }\n\
+     fn main() -> i64 { return 1; }\n",
+    "fn main() -> i64 { struct Q { h: i64 } struct Q { h: i64 } return 3; }\n",
+];
+
+/// A struct the program declares more than once is refused on the AST
+/// (`closure.duplicate_struct`), through both admission entry points and with no
+/// seed struct involved. Positive controls: two distinct struct names, and a
+/// struct and an enum sharing a name (measured identical on both backends), are
+/// admitted.
+#[test]
+fn a_struct_declared_twice_in_the_program_is_refused() {
+    let seed = StdSeed {
+        modules: Vec::new(),
+        structs: BTreeSet::new(),
+        lowered: None,
+    };
+    for src in DUPLICATE_STRUCT_SHAPES {
+        let ast = libmind::parser::parse(src).expect("parses");
+        let ir = lower(src);
+        let err = admit_native_closure_linked(&ast, &ir, "main", &seed)
+            .err()
+            .expect("a doubly declared struct must refuse (linked)");
+        assert_eq!(err.kind, "closure.duplicate_struct", "{src}");
+        assert!(err.detail.contains("`Q`"), "{src}: {}", err.detail);
+        let err = admit_native_closure(&ast, &ir, "main", &BTreeSet::new())
+            .expect_err("a doubly declared struct must refuse (unlinked)");
+        assert_eq!(err.kind, "closure.duplicate_struct", "{src}");
+    }
+    for ok in [
+        "struct P { h: i64 }\nstruct Q { h: i64 }\nfn main() -> i64 { return 1; }\n",
+        "struct Q { h: i64 }\nenum Q { A, B }\nfn main() -> i64 { return 1; }\n",
+    ] {
+        let ast = libmind::parser::parse(ok).expect("parses");
+        assert!(
+            admit_native_closure_linked(&ast, &lower(ok), "main", &seed).is_ok(),
+            "{ok}"
+        );
+    }
+}
