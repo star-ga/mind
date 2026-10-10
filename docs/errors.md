@@ -133,11 +133,23 @@ dividing the sign-extended values as `i64` and narrowing.
 
 Unsigned operands divide as unsigned values and trap only on a zero divisor:
 
-- MLIR backend: `u8`/`u16`/`u32`/`u64` use unsigned division (`divui`/`remui`)
-  and a zero divisor traps with status 79.
-- Native backend: `u8`/`u16`/`u32` values are held zero-extended, so their
-  division gives the unsigned result and a zero divisor traps with status 79.
-  Division of 64-bit unsigned values is **not implemented natively**. The
+- MLIR backend: `u8`/`u16`/`u32`/`u64` locals, parameters, return values and
+  `u8`/`u16`/`u32` const items and struct fields use unsigned division (`divui`/`remui`), and a
+  zero divisor traps with status 79. **Open defect:** a `u64` `const` item and
+  a `u64` struct field lose their unsigned type on this path and are divided
+  as signed (`const BIG: u64 = 18446744073709551615;` then `BIG / 2` gives
+  `-1 / 2 == 0`); `tests/u64_tag_survival_run.rs` tracks the struct-field case.
+- Native backend: `u8`/`u16`/`u32` values are kept zero-extended to their
+  declared width. A `let`, an assignment and a parameter of such a type
+  truncate the value they receive, a function returning one truncates its
+  return value, and an 8- or 16-bit result of `+`, `-`, `*` or `<<` (typed by
+  the same narrow rules the MLIR backend uses) is truncated before it is used.
+  A `/` or `%` therefore sees the wrapped values (with `a: u8 = 200` and
+  `b: u8 = 100`, both `let d: u8 = a + b; d / 3` and `(a + b) / 3` are `14`)
+  and gives the unsigned result; a zero divisor, including one produced by
+  wrapping, traps with status 79. Signed `i8`/`i16`/`i32` values are
+  sign-extended the same way. Division of 64-bit unsigned values is **not
+  implemented natively**. The
   native backend refuses (builds nothing) when a `/` or `%` sits in a function
   that can hold a `u64`/`usize` value: the function's signature or body spells
   `u64` or `usize` (an annotation, a cast, a generic argument; comments and
@@ -145,6 +157,16 @@ Unsigned operands divide as unsigned values and trap only on a zero divisor:
   it, a struct or enum whose declaration spells it (or one of its fields or
   variants), or a type alias, const or static of such a type. Build such a
   program with the MLIR backend.
+
+An `i32`/`u32` result of `+`, `-`, `*` or `<<` is wrapped when it is bound (a
+`let`, an assignment, an argument, a return value or a struct field). Before it
+is bound the two backends do not yet agree on it: the MLIR backend evaluates it
+at 32 bits when its operands are parameters and at 64 bits when they are local
+variables (with `a: u32 = 0` and `b: u32 = 1` as locals,
+`let q: u32 = (a - b) / 2;` gives `0`; as parameters it gives `2147483647`). So
+the native backend refuses (builds nothing) a `/` or `%` whose operand is such
+an unbound `i32`/`u32` expression; `let d: u32 = a - b; d / 2` is `2147483647`
+on both backends.
 
 Every other integer division truncates toward zero, and every other remainder
 has the sign of the dividend (`-7 / 2 == -3`, `-7 % 2 == -1`, `7 % -2 == 1`).

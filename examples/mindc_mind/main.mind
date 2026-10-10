@@ -1453,6 +1453,10 @@ pub fn ast_new_binop(span_lo: i64, span_hi: i64, lhs: i64, rhs: i64, op: i64) ->
     __mind_store_i64(n + 32, rhs);
     __mind_store_i64(n + 40, 0);
     __mind_store_i64(n + 48, op);
+    // +56 = the narrow-lattice cache (alias_annotate_call_expr), read by the
+    // native binop arm (nb_binop_narrow_code). `__mind_alloc` is not zeroed, so
+    // a node the annotation pass never visits must read neutral 0, not residue.
+    __mind_store_i64(n + 56, 0);
     n
 }
 
@@ -32564,9 +32568,11 @@ pub fn nb_div_guarded(code: String, disp: i64, is_mod: i64) -> String {
 }
 
 // W2-trap unsigned fence (fail-closed). nb_div_guarded is the SIGNED trapping
-// idiv sequence. It is exact for i64/i32/i16/i8 and for u32/u16/u8 values (held
-// zero-extended in 64 bits, so idiv equals div on them, -1 and INT_MIN never
-// occur, and the only trap left is a zero divisor). A u64/usize operand with the
+// idiv sequence. It is exact for i64/i32/i16/i8 and for u32/u16/u8 values: those
+// are kept zero-extended to their declared width (nb_width_of_ann's -8/-16/-32
+// codes truncate every let, assign, param and return; nb_binop_narrow_code
+// truncates every 8/16-bit `+ - * <<` result), so idiv equals div on them, -1 and
+// INT_MIN never occur, and the only trap left is a zero divisor. A u64/usize operand with the
 // top bit set would instead divide wrongly or hit the INT_MIN/-1 trap, and the
 // native width lattice does not tell u64 from i64. So a `/` or `%` at byte
 // offset `pos` inside a fn that can hold a u64 value (u64x_prepare: the fn spells
@@ -32603,6 +32609,114 @@ pub fn nb_div_unsigned_fenced(op: i64, lcell: i64, pos: i64) -> i64 {
         return 1;
     }
     u64x_span_contains(spans, pos, 0)
+}
+
+// The narrow type of a binop's integer result, or 0 when the result is used at
+// 64 bits: the alias annotation pass caches the lattice code (signed +8/+16/+32,
+// unsigned -8/-16/-32) on every arithmetic binop it visits
+// (alias_join_narrow_code); `<<` keeps its left operand's narrow type. Only the
+// 8- and 16-bit codes count, mirroring the Rust frontend (infer_narrow_arith_ty
+// re-masks 8/16-bit arithmetic and evaluates i32/u32 arithmetic at 64 bits
+// until it is bound), so both backends compute the same value.
+pub fn nb_binop_narrow_code(node: i64, op: i64) -> i64 {
+    if alias_is_arith_op(op) == 1 {
+        return nb_narrow_8_16(__mind_load_i64(node + 56));
+    }
+    if op == op_shl() {
+        return nb_narrow_8_16(cached_narrow_expr_code(ast_child0(node)));
+    }
+    0
+}
+
+// +-32 when `node` (parens stripped) is an i32/u32 `+ - * / % <<` result: that
+// arithmetic is evaluated at 64 bits (nb_binop_narrow_code) and must be wrapped
+// where it is bound. Bindings that know their declared width (let, assign,
+// param, return) wrap by it; a struct field store does not, so it wraps by
+// this code. 0 for every other node, which is already at its width.
+pub fn nb_bound32_code(node: i64) -> i64 {
+    if ast_kind(node) == ast_paren() {
+        return nb_bound32_code(ast_child0(node));
+    }
+    if ast_kind(node) != ast_binop() {
+        return 0;
+    }
+    let op: i64 = ast_aux(node);
+    let w: i64 = if alias_is_arith_op(op) == 1 {
+        __mind_load_i64(node + 56)
+    } else {
+        if op == op_shl() {
+            cached_narrow_expr_code(ast_child0(node))
+        } else {
+            0
+        }
+    };
+    if w == 32 {
+        return 32;
+    }
+    if w == 0 - 32 {
+        return 0 - 32;
+    }
+    0
+}
+
+// 1 iff `/` or `%` divides an unbound i32/u32 arithmetic result (an operand
+// with a nonzero nb_bound32_code). That intermediate is not yet evaluated the
+// same way by the reference: MLIR computes it at 32 bits when its operands are
+// parameters and at 64 bits when they are locals. Rather than pick one, the
+// division is refused (fail-closed, the module builds nothing); binding the
+// value to a typed `let` first gives one defined result on both backends.
+pub fn nb_div_of_unbound32(op: i64, node: i64) -> i64 {
+    if op != op_div() {
+        if op != op_mod() {
+            return 0;
+        }
+    }
+    if nb_bound32_code(ast_child0(node)) != 0 {
+        return 1;
+    }
+    if nb_bound32_code(ast_child1(node)) != 0 {
+        return 1;
+    }
+    0
+}
+
+// Wrap the value `st.last_id` (the lowered `node`) in place to its i32/u32 width
+// when nb_bound32_code says it is unwrapped. The slot is the binop's own fresh
+// temporary, never a named binding, so the in-place wrap aliases nothing and
+// consumes no id. Every other value passes through with no bytes emitted.
+pub fn nb_wrap_bound32(st: NbState, node: i64, lcell: i64) -> NbState {
+    let w: i64 = nb_bound32_code(node);
+    if w == 0 {
+        return st;
+    }
+    let plan: i64 = __mind_load_i64(lcell + 96);
+    let c1: String = nb_val_load_rax(plan, st.last_id, st.code);
+    let c2: String = nb_wrap_rax_w(c1, w);
+    let c3: String = nb_val_store_rax(plan, st.last_id, c2);
+    NbState { code: c3, next_id: st.next_id, last_id: st.last_id, ncalls: st.ncalls }
+}
+
+// w when it is an 8- or 16-bit narrow code (+-8, +-16), else 0.
+pub fn nb_narrow_8_16(w: i64) -> i64 {
+    if alias_is_narrow_code(w) == 0 {
+        return 0;
+    }
+    if w == 32 {
+        return 0;
+    }
+    if w == 0 - 32 {
+        return 0;
+    }
+    w
+}
+
+// Wrap rax to narrow code w (nb_wrap_rax_w: movsx for signed, and-mask for
+// unsigned); w == 0 emits nothing. Early-return form (value-if trap rule).
+pub fn nb_wrap_narrow_result(code: String, w: i64) -> String {
+    if w == 0 {
+        return code;
+    }
+    nb_wrap_rax_w(code, w)
 }
 
 // The process exit status of the integer-division trap (x/0, x%0, INT_MIN/-1,
@@ -34601,6 +34715,13 @@ pub fn nb_width_of_ann(buf: i64, type_leaf: i64) -> i64 {
     if bytes_eq(buf, lo, hi, i32_buf, 0, 3) == 1 {
         return 32;
     }
+    // W2-trap: a direct u8/u16/u32 spelling is the unsigned code -8/-16/-32
+    // (the frt_ret_width convention), so a let, assign or param of that type is
+    // zero-extended to its width at the binding (nb_wrap_rax_w masks).
+    let uw: i64 = unsigned_cast_width(buf, lo, hi);
+    if uw > 0 {
+        return 0 - uw;
+    }
     64
 }
 
@@ -34608,7 +34729,12 @@ pub fn nb_width_of_ann(buf: i64, type_leaf: i64) -> i64 {
 // movsx rax,ax (16), movsxd rax,eax (32). Early-return statement form (the
 // struct-valued if-expr mis-lower trap — Rule: never a value-if over String calls).
 // Callers gate on w < 64, so the 32 fall-through is only ever reached for w == 32.
+// An unsigned code (-8/-16/-32) zero-extends instead (nb_mask_rax_w): before
+// W2-trap a u8 alias let fell through to movsxd and was never truncated.
 pub fn nb_wrap_rax_w(code: String, w: i64) -> String {
+    if w < 0 {
+        return nb_mask_rax_w(code, 0 - w);
+    }
     if w == 8 {
         return nb_movsx_rax_al(code);
     }
@@ -35673,6 +35799,9 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         if nb_div_unsigned_fenced(op, lcell, ast_span_lo(node)) == 1 {
             __mind_store_i64(lcell + 80, 1)
         }
+        if nb_div_of_unbound32(op, node) == 1 {
+            __mind_store_i64(lcell + 80, 1)
+        }
         let dplan: i64 = __mind_load_i64(lcell + 96);
         let c1: String = nb_val_load_rax(dplan, lhs_id, s2.code);
         let setcc: i64 = nb_setcc_opcode(op);
@@ -35681,7 +35810,12 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         } else {
             nb_val_arith_rax(dplan, rhs_id, c1, op, lcell)
         };
-        let c3: String = nb_val_store_rax(dplan, id, c2);
+        // W2-trap narrow lattice: an arithmetic result of narrow type is wrapped
+        // to its width before it is stored (the native twin of the mic@3
+        // flatten_narrow_binop_result), so `(a + b) / 3` on u8 divides the
+        // wrapped sum, as MLIR does. Wide and comparison results emit nothing.
+        let c2n: String = nb_wrap_narrow_result(c2, nb_binop_narrow_code(node, op));
+        let c3: String = nb_val_store_rax(dplan, id, c2n);
         return NbState { code: c3, next_id: id + 1, last_id: id, ncalls: s2.ncalls };
     }
     if k == ast_addr_of() {
@@ -36757,8 +36891,10 @@ pub fn nb_struct_fields(st: NbState, buf: i64, snode: i64, fields_addr: i64, nfi
         let copied: NbState = nb_copy_array_to_record_cells(sv_arr, sv_arr.last_id, 0, ptr_id, off, alen, 0, arep);
         return nb_struct_fields(copied, buf, snode, fields_addr, nfields, i + 1, ptr_id, params_addr, n_params, calls, lets, lcell);
     }
-    // Lower the field value -> its slot.
-    let sv: NbState = nb_expr(st, buf, value_node, params_addr, n_params, calls, lets, lcell);
+    // Lower the field value -> its slot (an unwrapped i32/u32 expression is
+    // wrapped as it is bound to the field, nb_wrap_bound32).
+    let sv0: NbState = nb_expr(st, buf, value_node, params_addr, n_params, calls, lets, lcell);
+    let sv: NbState = nb_wrap_bound32(sv0, value_node, lcell);
     let val_id: i64 = sv.last_id;
     let val_nc: i64 = sv.ncalls;
     // Emit the per-field store, threading the code String + next_id through a
@@ -38839,7 +38975,8 @@ pub fn nb_record_field_assign_stmt(st: NbState, buf: i64, node: i64, params_addr
     }
     let s_fa: NbState = nb_field_addr(s_fb.code, s_fb.next_id, fb_id, foff, s_fb.ncalls);
     let faddr_id: i64 = s_fa.last_id;
-    let s_fv: NbState = nb_expr(s_fa, buf, fa_v, params_addr, n_params, calls, lets, lcell);
+    let s_fv0: NbState = nb_expr(s_fa, buf, fa_v, params_addr, n_params, calls, lets, lcell);
+    let s_fv: NbState = nb_wrap_bound32(s_fv0, fa_v, lcell);
     let fdtbl: i64 = __mind_load_i64(lcell + 8);
     if nb_node_dtype_tbl(fa_v, fdtbl, lets, lcell, buf, params_addr, n_params) == nb_dtype_float() {
         __mind_store_i64(lcell + 80, 1)

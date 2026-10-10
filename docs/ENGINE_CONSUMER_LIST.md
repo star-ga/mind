@@ -348,14 +348,15 @@ constant evaluation is a separate engine, `src/opt/comptime.rs`, consumed by
 `src/opt/scev.rs:518` and `src/opt/collapse.rs:55` (see §10).
 
 **Finished and tested — but it disagrees with both code generators on MIND's
-defined arithmetic edges.** Both generators define `x/0 = 0` and
-`INT_MIN/-1 = INT_MIN` (engine 1's guard is quoted in §1; the self-host native
-emitter states the same contract at `main.mind:28438-28439`). The interpreter
-does neither:
+defined arithmetic edges.** When this audit was written both generators
+defined `x/0 = 0` and `INT_MIN/-1 = INT_MIN` (engine 1's guard is quoted in §1).
+That contract is superseded: `mindc build` (MLIR and native) now traps on `x/0`,
+`x%0` and i64 `INT_MIN/-1` with exit status 79 (docs/errors.md, "Integer
+division trap"). The interpreter does neither:
 
 ```
 $ mind eval '7 / 0'
-Evaluation error: division by zero                 <- generators say 0
+Evaluation error: division by zero                 <- generators trap (exit 79)
 
 $ mind eval '(0 - 9223372036854775807 - 1) / (0 - 1)'
 thread 'main' panicked at src/eval/mod.rs:2712:13:
@@ -395,9 +396,10 @@ and the surplus walker is deleted
    `src/test/mod.rs::eval_asserts_in_stmts` is retired — a whole surplus
    evaluator removed by *wiring*, the top rung of the ladder.
 2. Route every interpreter `Div`/`Mod` through one shared helper implementing
-   `x/0 = 0` and `INT_MIN/-1 = INT_MIN`, matching both generators, and add a
-   conformance cell per edge. This is a capability *gain*: programs on a defined
-   edge become executable instead of crashing the process.
+   the division trap of docs/errors.md (`x/0`, `x%0`, i64 `INT_MIN/-1` stop the
+   program with exit status 79), matching both generators, and add a
+   conformance cell per edge. This is a capability *gain*: a program on a
+   defined edge stops deterministically instead of crashing the process.
 
 ---
 
@@ -509,8 +511,8 @@ definition transcribed twice:
 ```
 
 Note also that this convention is a **third** answer on the defined edges:
-`wrapping_div` gives `INT_MIN/-1 = INT_MIN` (agreeing with the generators) but
-*panics* on `x/0` (agreeing with neither). The fuzzer never sees it because the
+`wrapping_div` gives `INT_MIN/-1 = INT_MIN` (the generators' answer before the
+division trap; they now exit 79) and *panics* on `x/0` (agreeing with neither). The fuzzer never sees it because the
 generator forces divisors non-zero with `x | 1` — a scope choice, not agreement.
 
 **Reachability blind spots.**

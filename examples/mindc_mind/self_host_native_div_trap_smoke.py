@@ -243,7 +243,8 @@ U64_NOT_FENCED = [
      "    return a / b + w() - 3;\n}\n", 3),
 ]
 
-# Narrow unsigned operands are held zero-extended in 64 bits, so the signed idiv
+# Narrow unsigned operands are kept zero-extended to their declared width (every
+# binding and every narrow arithmetic result is truncated), so the signed idiv
 # equals the unsigned division and only a zero divisor traps. (name, program,
 # expected exit) — the expected value is the unsigned result, checked on both.
 NARROW_UNSIGNED = [
@@ -262,6 +263,124 @@ NARROW_UNSIGNED = [
     ("u32 x / 0 traps", "fn dv(a: u32, b: u32) -> u32 {\n    return a / b;\n}\n"
      "fn main() -> i64 {\n    let q: u32 = dv(4294967295, 0);\n"
      "    return (q as i64) + 1;\n}\n", TRAP_EXIT),
+]
+
+
+# Wrap-then-divide (verifier round 2): a narrow value produced by `+ - * <<`
+# that wraps must be divided AFTER wrapping, in every way it can reach `/`/`%`:
+# a let, an assignment, a parameter, a return value, a struct field, the bare
+# inline expression and a widening cast of it. The expected values come from a
+# Python model of wrapping arithmetic, embedded in the program as constants;
+# each program returns 100 when every check holds, else the 1-based index of the
+# first wrong result. Before the fix the native image computed `(200+100)/3` on
+# u8 as 100 (the wrap never applied) where MLIR and the model give 14.
+_NARROW_TYPES = [("u8", 8, False), ("u16", 16, False), ("u32", 32, False),
+                 ("i8", 8, True), ("i16", 16, True), ("i32", 32, True)]
+
+
+def _wrapw(v: int, w: int, signed: bool) -> int:
+    v &= (1 << w) - 1
+    if signed and v >= 1 << (w - 1):
+        v -= 1 << w
+    return v
+
+
+def _tdiv(a: int, b: int) -> int:
+    q = abs(a) // abs(b)
+    return q if (a < 0) == (b < 0) else -q
+
+
+def _narrow_operands(w: int, signed: bool):
+    """(op, a, b) per wrapping operator; every pair overflows width w."""
+    if signed:
+        hi, lo = (1 << (w - 1)) - 1, -(1 << (w - 1))
+        return [("+", hi - 27, 100), ("-", lo + 5, 9), ("*", hi, 3), ("<<", hi - 27, 1)]
+    m = (1 << w) - 1
+    return [("+", m - 55, 100), ("-", 0, 1), ("*", m, 3), ("<<", m - 55, 1)]
+
+
+def narrow_wrap_program(ty: str, w: int, signed: bool):
+    """One program per width; every check binds its result, then compares it."""
+    ops = _narrow_operands(w, signed)
+    fns = [f"struct S {{\n    v: {ty},\n}}\n",
+           f"fn dv(x: {ty}, y: {ty}) -> {ty} {{\n    return x / y;\n}}\n",
+           f"fn md(x: {ty}, y: {ty}) -> {ty} {{\n    return x % y;\n}}\n"]
+    for j, (op, _a, _b) in enumerate(ops):
+        fns.append(f"fn r{j}(a: {ty}, b: {ty}) -> {ty} {{\n    return a {op} b;\n}}\n")
+    checks = []
+    calls = []
+    for j, (op, a, b) in enumerate(ops):
+        full = a << b if op == "<<" else eval(f"{a} {op} {b}")
+        r = _wrapw(full, w, signed)
+        body = []
+        for k in (3, 7):
+            q, m = _tdiv(r, k), r - _tdiv(r, k) * k
+            x = f"{j}_{k}"
+            la = f"0 - {-a}" if a < 0 else str(a)
+            body += [f"    let a{x}: {ty} = {la};", f"    let b{x}: {ty} = {b};",
+                     f"    let d{x}: {ty} = a{x} {op} b{x};",
+                     f"    let mut e{x}: {ty} = 0;", f"    e{x} = a{x} {op} b{x};",
+                     f"    let s{x} = S {{ v: a{x} {op} b{x} }};"]
+            forms = [
+                (ty, f"d{x} / {k}", q), (ty, f"d{x} % {k}", m),
+                (ty, f"dv(a{x} {op} b{x}, {k})", q), (ty, f"md(r{j}(a{x}, b{x}), {k})", m),
+                (ty, f"e{x} / {k}", q), (ty, f"s{x}.v % {k}", m),
+            ]
+            # The bare inline forms divide the unbound result. At 8/16 bits it
+            # is wrapped first (both backends); an unbound i32/u32 result is
+            # refused natively (NARROW32_INLINE_REFUSED below).
+            if w < 32:
+                forms += [(ty, f"(a{x} {op} b{x}) / {k}", q), (ty, f"(a{x} {op} b{x}) % {k}", m),
+                          ("i64", f"((a{x} {op} b{x}) as i64) / {k}", q)]
+            for t, expr, want in forms:
+                checks.append(len(checks) + 1)
+                n = checks[-1]
+                lit = f"(0 - {-want})" if want < 0 else str(want)
+                cmp = f"x{n}" if t == "i64" else f"(x{n} as i64)"
+                body += [f"    let x{n}: {t} = {expr};", f"    if {cmp} != {lit} {{",
+                         f"        return {n};", "    }"]
+        # One helper per operator keeps every fn small for the native emitter.
+        fns.append(f"fn c{j}() -> i64 {{\n" + "\n".join(body) + "\n    return 0;\n}\n")
+        calls += [f"    let k{j}: i64 = c{j}();", f"    if k{j} != 0 {{", f"        return k{j};", "    }"]
+    prog = "".join(fns) + "fn main() -> i64 {\n" + "\n".join(calls) + "\n    return 100;\n}\n"
+    return (f"{ty} wrap-then-divide ({len(checks)} checks: let/param/return/assign/"
+            f"field{'/inline/cast' if w < 32 else ''} x + - * <<)", prog, 100)
+
+
+# A `/` or `%` whose operand is an UNBOUND i32/u32 arithmetic result is refused
+# natively: MLIR evaluates that intermediate at 32 bits when its operands are
+# parameters (`fn f(a: u32, b: u32) -> u32 { return (a - b) / 2; }` gives
+# 2147483647) and at 64 bits when they are locals (the same body over two `let`s
+# gives 0), so there is no single reference value. (name, program, MLIR exit or
+# None) -- only the native refusal is asserted.
+NARROW32_INLINE_REFUSED = [
+    ("u32 (a-b)/2 over params", "fn f(a: u32, b: u32) -> u32 {\n    return (a - b) / 2;\n}\n"
+     "fn main() -> i64 {\n    return (f(0, 1) as i64) & 255;\n}\n", None),
+    ("u32 (a-b)/2 over locals", "fn main() -> i64 {\n    let a: u32 = 0;\n    let b: u32 = 1;\n"
+     "    let q: u32 = (a - b) / 2;\n    return (q as i64) & 255;\n}\n", None),
+    ("i32 (a+b)%7 over locals", "fn main() -> i64 {\n    let a: i32 = 2147483620;\n    let b: i32 = 100;\n"
+     "    let r: i32 = (a + b) % 7;\n    return (r as i64) & 255;\n}\n", None),
+    ("u32 9 / (a << b)", "fn main() -> i64 {\n    let a: u32 = 2147483648;\n    let b: u32 = 1;\n"
+     "    let q: u32 = 9 / (a << b);\n    return q as i64;\n}\n", None),
+]
+
+NARROW_WRAP = [narrow_wrap_program(*t) for t in _NARROW_TYPES] + [
+    ("u8 (200+100)/3 via let", "fn main() -> i64 {\n    let a: u8 = 200;\n    let b: u8 = 100;\n"
+     "    let d: u8 = a + b;\n    let q: u8 = d / 3;\n    return q as i64;\n}\n", 14),
+    ("u32 (0-1)/2 via let", "fn main() -> i64 {\n    let a: u32 = 0;\n    let b: u32 = 1;\n"
+     "    let d: u32 = a - b;\n    let q: u32 = d / 2;\n    return (q as i64) & 255;\n}\n", 255),
+    ("u32 0-1 compared after wrap", "fn main() -> i64 {\n    let a: u32 = 0;\n    let b: u32 = 1;\n"
+     "    let d: u32 = a - b;\n    if d > 5 {\n        return 1;\n    }\n    return 2;\n}\n", 1),
+    ("u8 literal 0-1 bound to a let", "fn main() -> i64 {\n    let x: u8 = 0 - 1;\n"
+     "    return (x / 2) as i64;\n}\n", 127),
+    ("u16 param receives 0-1", "fn dv(a: u16, c: u16) -> i64 {\n    return (a % c) as i64;\n}\n"
+     "fn main() -> i64 {\n    return dv(0 - 1, 1000);\n}\n", (65535 % 1000) & 255),
+    ("u8 alias let wraps", "type B = u8;\nfn main() -> i64 {\n    let a: B = 200;\n    let b: B = 100;\n"
+     "    let d: B = a + b;\n    return (d as i64) / 3;\n}\n", 14),
+    ("u8 wrap to a zero divisor traps", "fn main() -> i64 {\n    let a: u8 = 128;\n    let b: u8 = 2;\n"
+     "    let z: u8 = a * b;\n    let q: u8 = 7 / z;\n    return (q as i64) + 1;\n}\n", TRAP_EXIT),
+    ("u16 inline wrap to a zero divisor traps", "fn main() -> i64 {\n    let a: u16 = 256;\n"
+     "    let b: u16 = 256;\n    return (9 % (a * b)) as i64;\n}\n", TRAP_EXIT),
 ]
 
 
@@ -327,7 +446,7 @@ def main() -> int:
         ok = ok and good
         check(good, f"program declaring extern _exit, 7 / 0: "
               f"mlir=(exit {gm[0]}) expected=(exit {TRAP_EXIT}) [native: extern calls refused]")
-        for name, prog, mlir_want in U64_REFUSED:
+        for name, prog, mlir_want in U64_REFUSED + NARROW32_INLINE_REFUSED:
             elf = sh.elf(prog)
             mbin, diag = mlir_binary(prog, d, "u64")
             gm = run(mbin, []) if mbin is not None else ("build-failed: " + diag[-160:], b"")
@@ -335,7 +454,7 @@ def main() -> int:
             ok = ok and good
             check(good, f"{name}: native image {len(elf)}B (expected 0B refusal), "
                   f"mlir=(exit {gm[0]}) expected mlir=(exit {mlir_want})")
-        for name, prog, want_exit in U64_NOT_FENCED + NARROW_UNSIGNED:
+        for name, prog, want_exit in U64_NOT_FENCED + NARROW_UNSIGNED + NARROW_WRAP:
             elf = sh.elf(prog)
             mbin, diag = mlir_binary(prog, d, "unsigned")
             gn = run(write_exec(d / "unsigned.native.elf", elf), []) if elf else ("refused", b"")
@@ -345,7 +464,8 @@ def main() -> int:
             check(good, f"{name}: native=(exit {gn[0]}) mlir=(exit {gm[0]}) expected=(exit {want_exit})")
     if ok:
         print(f"\nALL PASS  (i64 / % trap with exit {TRAP_EXIT} on both backends; "
-              "sign matrix and shift rule agree with the model; u64/usize division refused natively)")
+              "sign matrix and shift rule agree with the model; narrow wrap-then-divide agrees; "
+              "u64/usize and unbound i32/u32 division refused natively)")
         return 0
     print("\nFAIL  div-trap smoke")
     return 1

@@ -11,7 +11,7 @@
 //!   and exited 40 natively where the MLIR build exited 23). The admitted shape
 //!   is therefore only CONDITIONALLY admitted: the bridge checks the emitted
 //!   entry for the argc/argv binding and refuses the artifact when it is missing
-//!   (`native_bridge::check_entry_binds_main_params`).
+//!   (`native_bridge::entry::check_entry_binds_main_params`).
 //! * The name check the MLIR build path treats as fatal (an unknown identifier
 //!   E2002, a function used as a value E2037) and an unknown enum variant
 //!   (E2008) are refused with the type checker's own diagnostics. Without the

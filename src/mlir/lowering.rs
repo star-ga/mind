@@ -69,19 +69,9 @@ const VEC_Q16_LANES: usize = 8;
 #[cfg(feature = "std-surface")]
 const MIND_INTRINSIC_PREFIX: &str = "__mind_";
 
-/// Process exit status of the integer-division trap (W2-trap, docs/errors.md
-/// "Integer division trap"): i64 `x / 0`, `x % 0`, `INT_MIN / -1` and
-/// `INT_MIN % -1` (and a zero divisor at every narrower or unsigned width)
-/// terminate the process with this status and write nothing further. The
-/// pure-MIND native emitter uses the same value (`nb_div_trap_code` in
-/// examples/mindc_mind/main.mind), so both backends agree.
-const MIND_DIV_TRAP_EXIT_CODE: i32 = 79;
-
-/// The call a division trap guard emits. `@__mind_div_trap` is an internal
-/// trampoline the module assembler defines once (scanning for this text) that
-/// calls libc `_exit(MIND_DIV_TRAP_EXIT_CODE)`; routing through it keeps the
-/// guard independent of how (or whether) the program declares `_exit` itself.
-const DIV_TRAP_CALL: &str = "llvm.call @__mind_div_trap()";
+// W2-trap integer-division trap: exit status, guard emission, trampoline.
+#[path = "div_trap.rs"]
+mod div_trap;
 
 /// The closed set of `__mind_*` intrinsics the `Instr::Call` arm lowers inline
 /// (as opposed to emitting a generic `func.call` / `llvm.call` to the
@@ -614,18 +604,6 @@ impl LoweringContext {
 
     fn emit_line(&mut self, line: &str) {
         writeln!(&mut self.body, "{line}").expect("write to string cannot fail");
-    }
-
-    /// W2-trap: emit `scf.if <bad> { __mind_div_trap() }` ahead of a guarded
-    /// division (the trampoline `_exit`s with MIND_DIV_TRAP_EXIT_CODE). `bad` is the i1 trap predicate. `_exit` runs no
-    /// atexit handler and flushes no stdio buffer, so nothing is written after
-    /// the trap (the MIND runtime's writes are unbuffered `write(2)`s already).
-    /// The divisor the caller then feeds the `arith.div*`/`rem*` stays
-    /// substituted, so the division itself is never undefined behaviour.
-    fn emit_div_trap_guard(&mut self, bad: &str) {
-        self.emit_line(&format!("    scf.if {bad} {{"));
-        self.emit_line(&format!("      {DIV_TRAP_CALL} : () -> ()"));
-        self.emit_line("    }");
     }
 
     /// Register the result `ValueKind` of an intrinsic/extern `Instr::Call`,
@@ -2135,11 +2113,8 @@ impl LoweringContext {
                                 "    %dsf{0} = arith.select %dsub{0}, %done{0}, {rhs_ref} : {ity}",
                                 dst.0
                             ));
-                            // W2-trap: a zero divisor traps. MIN/-1 at a narrow
-                            // width keeps the divisor-1 result (quotient MIN,
-                            // remainder 0) -- exactly the native backend, which
-                            // divides the sign-extended i64 values (never the i64
-                            // INT_MIN/-1 pair) and wraps to the declared width.
+                            // W2-trap: zero traps; narrow MIN/-1 keeps the divisor-1
+                            // result, as the native backend does (div_trap.rs).
                             self.emit_div_trap_guard(&format!("%disz{}", dst.0));
                             div_zero_guard = Some(format!("%disz{}", dst.0));
                             format!("%dsf{}", dst.0)
@@ -2153,10 +2128,8 @@ impl LoweringContext {
                             // (SIGFPE / process crash), while AArch64 `udiv`
                             // returns 0 with no trap — a cross-substrate
                             // divergence and a crash where the deterministic
-                            // contract (matching the signed and i64 arms) is the
-                            // W2 division trap (exit MIND_DIV_TRAP_EXIT_CODE). The
-                            // divisor is still substituted with 1 so the division
-                            // the trap path never reaches is not UB.
+                            // contract is the W2 division trap (div_trap.rs); the
+                            // divisor is still substituted with 1 (never UB).
                             // Unsigned division has NO INT_MIN/-1 overflow case,
                             // so unlike the signed arm this only guards zero.
                             // Elided for a constant divisor known to be nonzero.
@@ -2178,7 +2151,6 @@ impl LoweringContext {
                                 "    %udsf{0} = arith.select %udisz{0}, %udone{0}, {rhs_ref} : {ity}",
                                 dst.0
                             ));
-                            // W2-trap: a zero divisor traps.
                             self.emit_div_trap_guard(&format!("%udisz{}", dst.0));
                             div_zero_guard = Some(format!("%udisz{}", dst.0));
                             format!("%udsf{}", dst.0)
@@ -2381,9 +2353,8 @@ impl LoweringContext {
                             // zero divisor while AArch64 `udiv` returns 0 — a
                             // cross-substrate divergence + a crash where the
                             // deterministic contract (matching the signed i64 and
-                            // narrow arms) is the W2 division trap (exit
-                            // MIND_DIV_TRAP_EXIT_CODE); the divisor is still
-                            // substituted with 1 so the division is never UB. Unsigned
+                            // narrow arms) is the W2 division trap (div_trap.rs);
+                            // divisor 1 is still substituted (never UB). Unsigned
                             // division has NO INT_MIN/-1 overflow case, so unlike the
                             // signed arm below this guards zero only. Elided for a
                             // constant divisor known nonzero. Gated; an i64-only
@@ -2405,7 +2376,6 @@ impl LoweringContext {
                                 "    %udsf{0} = arith.select %udisz{0}, %udone{0}, {1} : i64",
                                 dst.0, rhs_base
                             ));
-                            // W2-trap: a zero divisor traps.
                             self.emit_div_trap_guard(&format!("%udisz{}", dst.0));
                             div_zero_guard = Some(format!("%udisz{}", dst.0));
                             format!("%udsf{}", dst.0)
@@ -2424,15 +2394,9 @@ impl LoweringContext {
                             //     while AArch64 `sdiv` returns INT_MIN.
                             //   * divisor == 0: x86 `idiv` raises #DE while AArch64
                             //     `sdiv` returns 0.
-                            // W2-trap: EITHER case is a deterministic trap -- the
-                            // guard below `_exit`s with MIND_DIV_TRAP_EXIT_CODE
-                            // before the division runs (docs/errors.md). The divisor
-                            // is still substituted with 1 on either case, so the
-                            // `arith.divsi`/`remsi` that follows is never UB even
-                            // though the trap path never reaches it. INT_MIN built
-                            // as 1<<63 to dodge any most-negative-literal parse
-                            // edge. Inert for the gates (no canary/keystone path
-                            // divides).
+                            // W2-trap: EITHER case traps (div_trap.rs) before the
+                            // division; divisor 1 is still substituted (never UB).
+                            // INT_MIN built as 1<<63 (most-negative-literal edge).
                             self.emit_line(&format!(
                                 "    %done{0} = arith.constant 1 : i64",
                                 dst.0
@@ -2474,9 +2438,6 @@ impl LoweringContext {
                                 "    %dsf{0} = arith.select %dsub{0}, %done{0}, {1} : i64",
                                 dst.0, rhs_base
                             ));
-                            // W2-trap: INT_MIN / -1 and a zero divisor both trap
-                            // (exit MIND_DIV_TRAP_EXIT_CODE), matching the native
-                            // emitter's nb_div_guarded.
                             self.emit_div_trap_guard(&format!("%dsub{}", dst.0));
                             div_zero_guard = Some(format!("%disz{}", dst.0));
                             format!("%dsf{}", dst.0)
@@ -2484,9 +2445,7 @@ impl LoweringContext {
                             rhs_base.clone()
                         };
                         if let Some(disz) = &div_zero_guard {
-                            // Select 0 when the original divisor was 0. Since W2-trap
-                            // that path has already exited (the trap guard above), so
-                            // the select only keeps the value well-defined.
+                            // Select 0 for a zero divisor (that path already trapped).
                             self.emit_line(&format!(
                                 "    %ddt{0} = {1} {2}, {3} : i64",
                                 dst.0, mlir_op, lhs_ref, rhs_ref
@@ -11459,25 +11418,12 @@ pub fn lower_ir_to_mlir_with_entry(
         // call. `(worker_fp, argbuf, struct_bytes, n_bands) -> void`.
         out.push_str("  llvm.func @__mind_blas_mt_dispatch(!llvm.ptr, !llvm.ptr, i64, i64)\n");
     }
+    // W2-trap: the `@__mind_div_trap` trampoline, iff a guard was emitted.
+    div_trap::append_trampoline(&ctx, &mut out)?;
     // Heap-allocation externs for the int8 BLIS macro-kernel's scratch panels
     // (C-scratch / packed-A / packed-B). Emitted once, before any function body
     // that calls @malloc / @free, so the `llvm.call`s resolve. Declared only
     // when the blocked kernel was actually lowered.
-    // W2-trap: define the internal `@__mind_div_trap` trampoline once iff a
-    // division trap guard was emitted (authoritative buffer scan, like @malloc
-    // below). It calls libc `_exit(MIND_DIV_TRAP_EXIT_CODE)`. A module with no
-    // integer division emits nothing new.
-    {
-        #[cfg(feature = "std-surface")]
-        let references_div_trap = ctx.body.contains(DIV_TRAP_CALL)
-            || ctx.user_fns.contains(DIV_TRAP_CALL)
-            || ctx.mt_workers.contains(DIV_TRAP_CALL);
-        #[cfg(not(feature = "std-surface"))]
-        let references_div_trap = ctx.body.contains(DIV_TRAP_CALL);
-        if references_div_trap {
-            out.push_str(&div_trap_trampoline(&ctx)?);
-        }
-    }
     // Declare @malloc/@free iff the assembled module actually references them.
     // `needs_malloc` is a fast-path hint set where the int8 BLIS blocked kernel is
     // lowered, but it can fail to propagate to this module-assembler ctx when the
@@ -11619,55 +11565,6 @@ fn cconv_attr_for(callconv: crate::ast::CallConv) -> &'static str {
         // SysV, C (platform default), Aapcs (Phase D) — no cconv attribute.
         _ => "",
     }
-}
-
-/// The W2-trap trampoline `llvm.func internal @__mind_div_trap()`, plus the
-/// `_exit` declaration it needs. When the program declares `extern "C" fn
-/// _exit` itself, that declaration (emitted from `extern_c_fns`, whose integer
-/// parameter may be widened to `i64`) is reused and the call is typed to match
-/// it; a declaration that does not take exactly one integer is refused rather
-/// than called with a guessed signature.
-fn div_trap_trampoline(ctx: &LoweringContext) -> Result<String, MlirLowerError> {
-    #[cfg(feature = "std-surface")]
-    let user_decl = ctx.extern_c_fns.get("_exit");
-    #[cfg(not(feature = "std-surface"))]
-    let user_decl: Option<&(Vec<String>, Option<String>)> = {
-        let _ = ctx;
-        None
-    };
-    let (decl, param, ret) = match user_decl {
-        None => (
-            "  llvm.func @_exit(i32)\n".to_string(),
-            "i32".to_string(),
-            None,
-        ),
-        Some(sig) => {
-            let (params, ret_type) = (&sig.0, &sig.1);
-            let is_int = |t: &str| matches!(t, "i8" | "i16" | "i32" | "i64");
-            if params.len() != 1 || !is_int(params[0].as_str()) {
-                return Err(MlirLowerError::ShapeError(format!(
-                    "the program declares `_exit` with parameters {params:?}; the integer \
-                     division trap calls `_exit(status)` and needs exactly one integer \
-                     parameter"
-                )));
-            }
-            let ret = ret_type
-                .as_deref()
-                .map(extern_ret_mlir_ty)
-                .unwrap_or("i64")
-                .to_string();
-            (String::new(), params[0].clone(), Some(ret))
-        }
-    };
-    let call = match &ret {
-        None => format!("    llvm.call @_exit(%0) : ({param}) -> ()\n"),
-        Some(r) => format!("    %1 = llvm.call @_exit(%0) : ({param}) -> {r}\n"),
-    };
-    Ok(format!(
-        "{decl}  llvm.func internal @__mind_div_trap() {{\n    \
-         %0 = llvm.mlir.constant({MIND_DIV_TRAP_EXIT_CODE} : {param}) : {param}\n\
-         {call}    llvm.unreachable\n  }}\n"
-    ))
 }
 
 /// IR-audit #1 — normalize an extern return-type token to a valid signless
